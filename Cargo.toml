@@ -8,6 +8,9 @@ members = [
     "crates/arch/efflux-arch-traits",
     "crates/arch/efflux-arch-x86_64",
     "crates/mm/efflux-mm-traits",
+    "crates/mm/efflux-mm-frame",
+    "crates/mm/efflux-mm-paging",
+    "crates/mm/efflux-mm-heap",
     "crates/drivers/efflux-driver-traits",
     "crates/drivers/serial/efflux-driver-uart-8250",
     "bootloader/efflux-boot-uefi",
@@ -29,6 +32,9 @@ efflux-core = { path = "crates/core/efflux-core" }
 efflux-log = { path = "crates/core/efflux-log" }
 efflux-arch-traits = { path = "crates/arch/efflux-arch-traits" }
 efflux-mm-traits = { path = "crates/mm/efflux-mm-traits" }
+efflux-mm-frame = { path = "crates/mm/efflux-mm-frame" }
+efflux-mm-paging = { path = "crates/mm/efflux-mm-paging" }
+efflux-mm-heap = { path = "crates/mm/efflux-mm-heap" }
 efflux-driver-traits = { path = "crates/drivers/efflux-driver-traits" }
 
 [profile.dev]

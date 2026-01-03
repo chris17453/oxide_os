@@ -1,7 +1,8 @@
 # Phase 1: Memory Management
 
 **Stage:** 1 - Foundation
-**Status:** Not Started
+**Status:** In Progress
+**Target:** x86_64 only
 **Dependencies:** Phase 0 (Boot + Serial)
 
 ---
@@ -16,88 +17,114 @@ Physical and virtual memory management with kernel heap.
 
 | Item | Status |
 |------|--------|
-| Memory map from firmware | [ ] |
-| Boot-time bump allocator | [ ] |
-| Buddy allocator | [ ] |
-| Kernel page tables | [ ] |
-| Slab allocator (kernel heap) | [ ] |
+| Memory map from bootloader | [ ] |
+| Physical frame allocator | [ ] |
+| Kernel page tables (4-level) | [ ] |
 | Direct physical map | [ ] |
+| Kernel heap allocator | [ ] |
+| `Box::new()` works | [ ] |
 
 ---
 
-## Architecture Status
+## Implementation Plan
 
-| Arch | MemMap | Bump | Buddy | PageTables | Slab | Done |
-|------|--------|------|-------|------------|------|------|
-| x86_64 | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
-| i686 | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
-| aarch64 | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
-| arm | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
-| mips64 | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
-| mips32 | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
-| riscv64 | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
-| riscv32 | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
+### 1. Boot Memory Map
+- Bootloader passes UEFI memory map to kernel
+- Parse usable RAM regions
+- Reserve kernel code/data regions
 
----
+### 2. Frame Allocator
+- Bitmap allocator for frame tracking
+- Frame size: 4KB (PAGE_SIZE)
+- Track total/free/used frames
 
-## Memory Map Sources
+### 3. Page Tables (x86_64 4-level)
+- PML4 → PDPT → PD → PT
+- Identity map first 1GB for early boot
+- Direct map all physical memory at 0xFFFF_8000_0000_0000
+- Map kernel at higher half
 
-| Arch | Source |
-|------|--------|
-| x86_64/i686 | UEFI GetMemoryMap / E820 |
-| aarch64 | UEFI GetMemoryMap / Device Tree |
-| arm | Device Tree / ATAGs |
-| mips64/mips32 | ARCS GetMemoryDescriptor / YAMON |
-| riscv64/riscv32 | Device Tree |
+### 4. Kernel Heap
+- Linked-list allocator initially
+- Heap region: 16MB initial
 
 ---
 
-## Page Table Formats
-
-| Arch | Format | Levels | Page Size |
-|------|--------|--------|-----------|
-| x86_64 | 4-level (5 with LA57) | 4-5 | 4KB |
-| i686 | 2-level or PAE | 2-3 | 4KB |
-| aarch64 | TTBR0/TTBR1 | 4 | 4KB/16KB/64KB |
-| arm | 2-level | 2 | 4KB |
-| mips64 | Software TLB | - | 4KB-16MB |
-| mips32 | Software TLB | - | 4KB-16MB |
-| riscv64 | Sv39/Sv48/Sv57 | 3-5 | 4KB |
-| riscv32 | Sv32 | 2 | 4KB |
-
----
-
-## Key Files to Create
+## Memory Layout (x86_64)
 
 ```
-kernel/
-├── arch/
-│   ├── x86_64/mm/
-│   │   ├── mod.rs
-│   │   ├── paging.rs           # 4/5-level page tables
-│   │   └── tlb.rs              # TLB invalidation
-│   ├── aarch64/mm/
-│   │   ├── mod.rs
-│   │   ├── paging.rs           # TTBR setup
-│   │   └── mair.rs             # Memory attributes
-│   └── ... (other arches)
-├── core/mm/
-│   ├── mod.rs                  # Public API
-│   ├── buddy.rs                # Buddy allocator
-│   ├── slab.rs                 # Slab allocator
-│   └── vmm.rs                  # Virtual memory manager
+Virtual Address Space (48-bit canonical):
+
+0x0000_0000_0000_0000 - 0x0000_7FFF_FFFF_FFFF  User space (future)
+0xFFFF_8000_0000_0000 - 0xFFFF_8FFF_FFFF_FFFF  Direct physical map
+0xFFFF_F000_0000_0000 - 0xFFFF_F000_00FF_FFFF  Kernel heap (16MB)
+0xFFFF_FFFF_8000_0000 - 0xFFFF_FFFF_FFFF_FFFF  Kernel code/data
+```
+
+---
+
+## Key Structures
+
+```rust
+// Physical frame
+pub struct PhysFrame {
+    addr: PhysAddr,
+}
+
+// Page table (512 entries × 8 bytes = 4KB)
+pub struct PageTable {
+    entries: [PageTableEntry; 512],
+}
+
+// Page table entry flags
+// Bits: Present, Writable, User, WriteThrough, CacheDisable,
+//       Accessed, Dirty, HugePage, Global, NX, Address[51:12]
+
+// Frame allocator trait
+pub trait FrameAllocator {
+    fn allocate(&mut self) -> Option<PhysFrame>;
+    fn deallocate(&mut self, frame: PhysFrame);
+}
+```
+
+---
+
+## Files to Create
+
+```
+crates/mm/
+├── efflux-mm-frame/              # Frame allocator
+│   ├── Cargo.toml
+│   └── src/
+│       ├── lib.rs
+│       └── bitmap.rs             # Bitmap allocator
+├── efflux-mm-paging/             # Page tables
+│   ├── Cargo.toml
+│   └── src/
+│       ├── lib.rs
+│       ├── entry.rs              # PageTableEntry
+│       ├── table.rs              # PageTable
+│       └── mapper.rs             # Map/unmap
+└── efflux-mm-heap/               # Kernel heap
+    ├── Cargo.toml
+    └── src/
+        ├── lib.rs
+        └── linked_list.rs
+
+crates/arch/efflux-arch-x86_64/src/
+├── paging.rs                     # CR3, TLB flush
+└── mod.rs                        # Export paging
 ```
 
 ---
 
 ## Exit Criteria
 
-- [ ] Firmware memory map parsed on all arches
-- [ ] Buddy allocator alloc/free works
-- [ ] Kernel page tables active on all arches
-- [ ] `Box::new()` works in kernel
-- [ ] Direct map covers all physical RAM
-- [ ] Page fault panics with useful info
+- [ ] Frame allocator can allocate/free frames
+- [ ] Page tables set up with direct map
+- [ ] Kernel heap functional
+- [ ] `Box::new(42)` compiles and runs
+- [ ] Memory stats printed on boot
 
 ---
 

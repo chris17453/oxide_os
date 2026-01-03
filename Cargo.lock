@@ -82,6 +82,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-mm-frame"
+version = "0.1.0"
+dependencies = [
+ "efflux-core",
+ "efflux-mm-traits",
+ "spin",
+]
+
+[[package]]
+name = "efflux-mm-heap"
+version = "0.1.0"
+dependencies = [
+ "efflux-core",
+ "spin",
+]
+
+[[package]]
+name = "efflux-mm-paging"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "efflux-core",
+ "efflux-mm-traits",
+]
+
+[[package]]
 name = "efflux-mm-traits"
 version = "0.1.0"
 dependencies = [
