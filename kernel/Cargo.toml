@@ -1,0 +1,10 @@
+[package]
+name = "efflux-kernel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+efflux-core = { workspace = true }
+efflux-arch-traits = { workspace = true }
+efflux-arch-x86_64 = { path = "../crates/arch/efflux-arch-x86_64" }

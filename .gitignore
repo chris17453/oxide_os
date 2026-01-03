@@ -1,0 +1,22 @@
+# Build artifacts
+/target/
+/build/images/
+
+# Cargo lock for libraries
+# Cargo.lock  # Keep for workspace
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# QEMU
+*.qcow2
+*.img
+*.iso

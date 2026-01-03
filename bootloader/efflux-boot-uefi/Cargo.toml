@@ -1,0 +1,8 @@
+[package]
+name = "efflux-boot-uefi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+uefi = "0.32"

@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+
+members = [
+    "kernel",
+    "crates/core/efflux-core",
+    "crates/core/efflux-log",
+    "crates/arch/efflux-arch-traits",
+    "crates/arch/efflux-arch-x86_64",
+    "crates/mm/efflux-mm-traits",
+    "crates/drivers/efflux-driver-traits",
+    "crates/drivers/serial/efflux-driver-uart-8250",
+    "bootloader/efflux-boot-uefi",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/user/efflux"
+
+[workspace.dependencies]
+bitflags = "2.4"
+spin = "0.9"
+log = { version = "0.4", default-features = false }
+
+# Internal crates
+efflux-core = { path = "crates/core/efflux-core" }
+efflux-log = { path = "crates/core/efflux-log" }
+efflux-arch-traits = { path = "crates/arch/efflux-arch-traits" }
+efflux-mm-traits = { path = "crates/mm/efflux-mm-traits" }
+efflux-driver-traits = { path = "crates/drivers/efflux-driver-traits" }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+opt-level = "z"
+lto = true
+panic = "abort"
