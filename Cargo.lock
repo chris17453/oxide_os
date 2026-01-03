@@ -72,6 +72,9 @@ dependencies = [
  "efflux-arch-traits",
  "efflux-arch-x86_64",
  "efflux-core",
+ "efflux-mm-frame",
+ "efflux-mm-heap",
+ "efflux-mm-paging",
 ]
 
 [[package]]
