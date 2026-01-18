@@ -3,6 +3,7 @@
 //! Creates and manages user-mode virtual address spaces.
 
 use alloc::vec::Vec;
+use core::cell::RefCell;
 use efflux_core::{PhysAddr, VirtAddr};
 use efflux_mm_paging::{PageTableFlags, PageMapper, PageTable, MapError as PagingMapError};
 use efflux_mm_paging::{phys_to_virt, write_cr3};
@@ -31,7 +32,7 @@ impl UserAddressSpace {
     /// Must be called with a valid frame allocator. The current page tables
     /// must have the kernel properly mapped in the higher half.
     pub unsafe fn new_with_kernel<A: FrameAllocator>(
-        allocator: &mut A,
+        allocator: &A,
         kernel_pml4: PhysAddr,
     ) -> Option<Self> {
         // Allocate a new PML4
@@ -74,7 +75,7 @@ impl UserAddressSpace {
         virt: VirtAddr,
         phys: PhysAddr,
         flags: MemoryFlags,
-        allocator: &mut A,
+        allocator: &A,
     ) -> Result<(), MapError> {
         // Verify this is a user-space address (lower half)
         if virt.as_u64() >= 0x0000_8000_0000_0000 {
@@ -93,13 +94,13 @@ impl UserAddressSpace {
         }
 
         // Use a wrapper allocator that tracks allocated frames
-        let mut tracking_allocator = TrackingAllocator {
+        let tracking_allocator = TrackingAllocator {
             inner: allocator,
-            allocated: &mut self.allocated_frames,
+            allocated: RefCell::new(&mut self.allocated_frames),
         };
 
         self.mapper
-            .map(virt, phys, pt_flags, &mut tracking_allocator)
+            .map(virt, phys, pt_flags, &tracking_allocator)
             .map_err(|e| match e {
                 PagingMapError::AlreadyMapped => MapError::AlreadyMapped,
                 PagingMapError::FrameAllocationFailed => MapError::OutOfMemory,
@@ -140,7 +141,7 @@ impl UserAddressSpace {
         phys_start: PhysAddr,
         size: usize,
         flags: MemoryFlags,
-        allocator: &mut A,
+        allocator: &A,
     ) -> Result<(), MapError> {
         let page_size = 4096;
         let pages = (size + page_size - 1) / page_size;
@@ -163,7 +164,7 @@ impl UserAddressSpace {
         virt_start: VirtAddr,
         num_pages: usize,
         flags: MemoryFlags,
-        allocator: &mut A,
+        allocator: &A,
     ) -> Result<(), MapError> {
         for i in 0..num_pages {
             let offset = (i * 4096) as u64;
@@ -213,41 +214,44 @@ impl AddressSpace for UserAddressSpace {
 
 /// Wrapper allocator that tracks allocated frames
 struct TrackingAllocator<'a, A: FrameAllocator> {
-    inner: &'a mut A,
-    allocated: &'a mut Vec<PhysAddr>,
+    inner: &'a A,
+    allocated: RefCell<&'a mut Vec<PhysAddr>>,
 }
 
 impl<'a, A: FrameAllocator> FrameAllocator for TrackingAllocator<'a, A> {
-    fn alloc_frame(&mut self) -> Option<PhysAddr> {
+    fn alloc_frame(&self) -> Option<PhysAddr> {
         let frame = self.inner.alloc_frame()?;
-        self.allocated.push(frame);
+        self.allocated.borrow_mut().push(frame);
         Some(frame)
     }
 
-    fn free_frame(&mut self, frame: PhysAddr) {
+    fn free_frame(&self, frame: PhysAddr) {
         self.inner.free_frame(frame);
         // Remove from tracking list
-        if let Some(pos) = self.allocated.iter().position(|&f| f == frame) {
-            self.allocated.remove(pos);
+        let mut allocated = self.allocated.borrow_mut();
+        if let Some(pos) = allocated.iter().position(|&f| f == frame) {
+            allocated.remove(pos);
         }
     }
 
-    fn alloc_frames(&mut self, count: usize) -> Option<PhysAddr> {
+    fn alloc_frames(&self, count: usize) -> Option<PhysAddr> {
         let frames = self.inner.alloc_frames(count)?;
         // Track all frames in the allocation
+        let mut allocated = self.allocated.borrow_mut();
         for i in 0..count {
-            self.allocated.push(PhysAddr::new(frames.as_u64() + (i as u64 * 4096)));
+            allocated.push(PhysAddr::new(frames.as_u64() + (i as u64 * 4096)));
         }
         Some(frames)
     }
 
-    fn free_frames(&mut self, addr: PhysAddr, count: usize) {
+    fn free_frames(&self, addr: PhysAddr, count: usize) {
         self.inner.free_frames(addr, count);
         // Remove all frames from tracking
+        let mut allocated = self.allocated.borrow_mut();
         for i in 0..count {
             let frame = PhysAddr::new(addr.as_u64() + (i as u64 * 4096));
-            if let Some(pos) = self.allocated.iter().position(|&f| f == frame) {
-                self.allocated.remove(pos);
+            if let Some(pos) = allocated.iter().position(|&f| f == frame) {
+                allocated.remove(pos);
             }
         }
     }

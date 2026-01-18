@@ -111,7 +111,7 @@ impl BitmapFrameAllocator {
     }
 
     /// Get number of free frames
-    pub fn free_frames(&self) -> usize {
+    pub fn free_frame_count(&self) -> usize {
         self.inner.lock().free_frames
     }
 
@@ -123,11 +123,11 @@ impl BitmapFrameAllocator {
 }
 
 impl FrameAllocator for BitmapFrameAllocator {
-    fn alloc_frame(&mut self) -> Option<PhysAddr> {
+    fn alloc_frame(&self) -> Option<PhysAddr> {
         let mut inner = self.inner.lock();
 
-        // Start searching from next_free hint
-        let start = inner.next_free / 64;
+        // Start searching from next_free hint (but never allocate frame 0)
+        let start = inner.next_free.max(1) / 64;
         for word_idx in 0..BITMAP_WORDS {
             let idx = (start + word_idx) % BITMAP_WORDS;
             let word = inner.bitmap[idx];
@@ -136,6 +136,16 @@ impl FrameAllocator for BitmapFrameAllocator {
                 // Find first zero bit
                 let bit = (!word).trailing_zeros() as usize;
                 let frame = idx * 64 + bit;
+
+                // Never allocate frame 0 (NULL page protection)
+                if frame == 0 {
+                    // Mark frame 0 as used and continue searching
+                    inner.bitmap[0] |= 1;
+                    if inner.free_frames > 0 {
+                        inner.free_frames -= 1;
+                    }
+                    continue;
+                }
 
                 if frame < inner.total_frames {
                     inner.bitmap[idx] |= 1 << bit;
@@ -149,7 +159,7 @@ impl FrameAllocator for BitmapFrameAllocator {
         None
     }
 
-    fn free_frame(&mut self, addr: PhysAddr) {
+    fn free_frame(&self, addr: PhysAddr) {
         let mut inner = self.inner.lock();
         let frame = addr.page_align_down().as_usize() / FRAME_SIZE;
 
@@ -168,7 +178,7 @@ impl FrameAllocator for BitmapFrameAllocator {
         }
     }
 
-    fn alloc_frames(&mut self, count: usize) -> Option<PhysAddr> {
+    fn alloc_frames(&self, count: usize) -> Option<PhysAddr> {
         if count == 0 {
             return None;
         }
@@ -211,7 +221,7 @@ impl FrameAllocator for BitmapFrameAllocator {
         None
     }
 
-    fn free_frames(&mut self, addr: PhysAddr, count: usize) {
+    fn free_frames(&self, addr: PhysAddr, count: usize) {
         let mut inner = self.inner.lock();
         let start_frame = addr.page_align_down().as_usize() / FRAME_SIZE;
 

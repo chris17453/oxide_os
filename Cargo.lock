@@ -88,11 +88,16 @@ dependencies = [
  "efflux-arch-x86_64",
  "efflux-boot-proto",
  "efflux-core",
+ "efflux-elf",
  "efflux-mm-frame",
  "efflux-mm-heap",
  "efflux-mm-paging",
+ "efflux-mm-traits",
+ "efflux-proc",
+ "efflux-proc-traits",
  "efflux-sched",
  "efflux-sched-traits",
+ "efflux-syscall",
  "spin",
 ]
 

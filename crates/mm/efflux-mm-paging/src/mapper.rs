@@ -60,7 +60,7 @@ impl PageMapper {
         virt: VirtAddr,
         phys: PhysAddr,
         flags: PageTableFlags,
-        allocator: &mut A,
+        allocator: &A,
     ) -> Result<(), MapError> {
         let pml4_idx = PageLevel::Pml4.index(virt);
         let pdpt_idx = PageLevel::Pdpt.index(virt);
@@ -179,7 +179,7 @@ impl PageMapper {
         &mut self,
         parent_phys: PhysAddr,
         index: usize,
-        allocator: &mut A,
+        allocator: &A,
     ) -> Result<PhysAddr, MapError> {
         let parent_virt = phys_to_virt(parent_phys);
         let parent = unsafe { &mut *parent_virt.as_mut_ptr::<PageTable>() };
