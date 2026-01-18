@@ -68,6 +68,7 @@ dependencies = [
 name = "efflux-driver-uart-8250"
 version = "0.1.0"
 dependencies = [
+ "efflux-arch-x86_64",
  "efflux-core",
  "efflux-driver-traits",
 ]
@@ -139,6 +140,8 @@ name = "efflux-mm-paging"
 version = "0.1.0"
 dependencies = [
  "bitflags",
+ "efflux-arch-traits",
+ "efflux-arch-x86_64",
  "efflux-core",
  "efflux-mm-traits",
 ]

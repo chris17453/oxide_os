@@ -10,7 +10,10 @@ mod mapper;
 
 pub use entry::{PageTableEntry, PageTableFlags};
 pub use table::PageTable;
+#[cfg(target_arch = "x86_64")]
 pub use mapper::{flush_tlb, flush_tlb_all, read_cr3, write_cr3, PageMapper, MapError};
+#[cfg(not(target_arch = "x86_64"))]
+pub use mapper::{PageMapper, MapError};
 
 use efflux_core::{PhysAddr, VirtAddr};
 

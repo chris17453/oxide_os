@@ -7,3 +7,6 @@ license.workspace = true
 [dependencies]
 efflux-core = { workspace = true }
 efflux-driver-traits = { workspace = true }
+
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+efflux-arch-x86_64 = { workspace = true }

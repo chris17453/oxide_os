@@ -4,8 +4,8 @@
 
 #![no_std]
 
-use efflux_arch_traits::Arch;
-use efflux_core::VirtAddr;
+use efflux_arch_traits::{Arch, PortIo, TlbControl};
+use efflux_core::{PhysAddr, VirtAddr};
 
 pub mod serial;
 pub mod gdt;
@@ -64,6 +64,72 @@ impl Arch for X86_64 {
         }
         // IF flag is bit 9
         (flags & (1 << 9)) != 0
+    }
+}
+
+impl TlbControl for X86_64 {
+    #[inline]
+    fn flush(addr: VirtAddr) {
+        unsafe {
+            core::arch::asm!("invlpg [{}]", in(reg) addr.as_u64(), options(nostack, preserves_flags));
+        }
+    }
+
+    #[inline]
+    fn flush_all() {
+        unsafe {
+            let cr3: u64;
+            core::arch::asm!("mov {}, cr3", out(reg) cr3, options(nomem, nostack));
+            core::arch::asm!("mov cr3, {}", in(reg) cr3, options(nostack));
+        }
+    }
+
+    #[inline]
+    fn read_root() -> PhysAddr {
+        let cr3: u64;
+        unsafe {
+            core::arch::asm!("mov {}, cr3", out(reg) cr3, options(nomem, nostack));
+        }
+        PhysAddr::new(cr3 & 0x000F_FFFF_FFFF_F000)
+    }
+
+    #[inline]
+    unsafe fn write_root(root: PhysAddr) {
+        unsafe {
+            core::arch::asm!("mov cr3, {}", in(reg) root.as_u64(), options(nostack));
+        }
+    }
+}
+
+impl PortIo for X86_64 {
+    #[inline]
+    unsafe fn inb(port: u16) -> u8 {
+        unsafe { inb(port) }
+    }
+
+    #[inline]
+    unsafe fn outb(port: u16, value: u8) {
+        unsafe { outb(port, value) }
+    }
+
+    #[inline]
+    unsafe fn inw(port: u16) -> u16 {
+        unsafe { inw(port) }
+    }
+
+    #[inline]
+    unsafe fn outw(port: u16, value: u16) {
+        unsafe { outw(port, value) }
+    }
+
+    #[inline]
+    unsafe fn inl(port: u16) -> u32 {
+        unsafe { inl(port) }
+    }
+
+    #[inline]
+    unsafe fn outl(port: u16, value: u32) {
+        unsafe { outl(port, value) }
     }
 }
 
@@ -225,3 +291,6 @@ pub unsafe fn set_scheduler_callback(callback: exceptions::SchedulerCallback) {
         exceptions::set_scheduler_callback(callback);
     }
 }
+
+/// Re-export syscall user context type and getter
+pub use syscall::{SyscallUserContext, get_user_context};

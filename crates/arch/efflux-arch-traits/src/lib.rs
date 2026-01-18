@@ -207,3 +207,72 @@ pub trait Serial: Send {
         }
     }
 }
+
+// ============================================================================
+// TLB and Page Table Operations Trait
+// ============================================================================
+
+/// TLB and page table control operations
+///
+/// These are architecture-specific operations for managing the MMU.
+pub trait TlbControl {
+    /// Flush the TLB entry for a specific virtual address
+    fn flush(addr: VirtAddr);
+
+    /// Flush the entire TLB
+    fn flush_all();
+
+    /// Read the current page table root (e.g., CR3 on x86_64)
+    fn read_root() -> PhysAddr;
+
+    /// Write a new page table root
+    ///
+    /// # Safety
+    /// The new root must point to a valid page table structure.
+    unsafe fn write_root(root: PhysAddr);
+}
+
+// ============================================================================
+// Port I/O Trait (x86-specific but needed by generic drivers)
+// ============================================================================
+
+/// Port-based I/O operations (primarily for x86 architectures)
+///
+/// On non-x86 architectures, this may be unimplemented or memory-mapped.
+pub trait PortIo {
+    /// Read a byte from an I/O port
+    ///
+    /// # Safety
+    /// Port access may have side effects on hardware.
+    unsafe fn inb(port: u16) -> u8;
+
+    /// Write a byte to an I/O port
+    ///
+    /// # Safety
+    /// Port access may have side effects on hardware.
+    unsafe fn outb(port: u16, value: u8);
+
+    /// Read a word from an I/O port
+    ///
+    /// # Safety
+    /// Port access may have side effects on hardware.
+    unsafe fn inw(port: u16) -> u16;
+
+    /// Write a word to an I/O port
+    ///
+    /// # Safety
+    /// Port access may have side effects on hardware.
+    unsafe fn outw(port: u16, value: u16);
+
+    /// Read a dword from an I/O port
+    ///
+    /// # Safety
+    /// Port access may have side effects on hardware.
+    unsafe fn inl(port: u16) -> u32;
+
+    /// Write a dword to an I/O port
+    ///
+    /// # Safety
+    /// Port access may have side effects on hardware.
+    unsafe fn outl(port: u16, value: u32);
+}

@@ -7,6 +7,9 @@
 
 use efflux_driver_traits::SerialDriver;
 
+#[cfg(target_arch = "x86_64")]
+use efflux_arch_x86_64::{inb, outb};
+
 /// UART register offsets
 mod regs {
     pub const DATA: u16 = 0;
@@ -34,18 +37,12 @@ mod lcr {
 /// 8250 UART instance
 pub struct Uart8250 {
     base: u16,
-    #[cfg(target_arch = "x86_64")]
-    _phantom: (),
 }
 
 impl Uart8250 {
     /// Create a new UART instance at the given I/O port base
     pub const fn new(base: u16) -> Self {
-        Self {
-            base,
-            #[cfg(target_arch = "x86_64")]
-            _phantom: (),
-        }
+        Self { base }
     }
 
     /// COM1 port
@@ -61,29 +58,13 @@ impl Uart8250 {
     #[cfg(target_arch = "x86_64")]
     #[inline]
     fn read_reg(&self, reg: u16) -> u8 {
-        let value: u8;
-        unsafe {
-            core::arch::asm!(
-                "in al, dx",
-                in("dx") self.base + reg,
-                out("al") value,
-                options(nomem, nostack, preserves_flags)
-            );
-        }
-        value
+        unsafe { inb(self.base + reg) }
     }
 
     #[cfg(target_arch = "x86_64")]
     #[inline]
     fn write_reg(&self, reg: u16, value: u8) {
-        unsafe {
-            core::arch::asm!(
-                "out dx, al",
-                in("dx") self.base + reg,
-                in("al") value,
-                options(nomem, nostack, preserves_flags)
-            );
-        }
+        unsafe { outb(self.base + reg, value) }
     }
 }
 

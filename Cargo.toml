@@ -39,6 +39,7 @@ log = { version = "0.4", default-features = false }
 efflux-core = { path = "crates/core/efflux-core" }
 efflux-log = { path = "crates/core/efflux-log" }
 efflux-arch-traits = { path = "crates/arch/efflux-arch-traits" }
+efflux-arch-x86_64 = { path = "crates/arch/efflux-arch-x86_64" }
 efflux-mm-traits = { path = "crates/mm/efflux-mm-traits" }
 efflux-mm-frame = { path = "crates/mm/efflux-mm-frame" }
 efflux-mm-paging = { path = "crates/mm/efflux-mm-paging" }

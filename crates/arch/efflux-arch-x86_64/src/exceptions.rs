@@ -368,12 +368,24 @@ extern "C" fn handle_general_protection(frame: *const InterruptFrame, error: u64
 }
 
 extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
+    use core::ptr::addr_of;
+
     let frame = unsafe { &*frame };
     let cr2: u64;
     unsafe {
         asm!("mov {}, cr2", out(reg) cr2, options(nomem, nostack));
     }
 
+    // Try page fault callback first (for COW handling, etc.)
+    let callback = unsafe { *addr_of!(PAGE_FAULT_CALLBACK) };
+    if let Some(handler) = callback {
+        if handler(cr2, error, frame.rip) {
+            // Fault was handled (e.g., COW page copied)
+            return;
+        }
+    }
+
+    // Fault not handled - print debug info and panic
     crate::serial_println!("PAGE FAULT!");
     crate::serial_println!("  Address: {:#x}", cr2);
     crate::serial_println!("  RIP: {:#x}", frame.rip);
@@ -408,6 +420,26 @@ extern "C" fn handle_simd(frame: *const InterruptFrame, _error: u64) {
 
 /// Timer tick counter
 static mut TIMER_TICKS: u64 = 0;
+
+/// Page fault callback type
+///
+/// Takes the faulting address, error code, and instruction pointer.
+/// Returns true if the fault was handled (e.g., COW), false to panic.
+pub type PageFaultCallback = fn(fault_addr: u64, error_code: u64, rip: u64) -> bool;
+
+/// Global page fault callback
+static mut PAGE_FAULT_CALLBACK: Option<PageFaultCallback> = None;
+
+/// Register a page fault callback (for COW handling, etc.)
+///
+/// # Safety
+/// The callback must be valid and handle page faults correctly.
+pub unsafe fn set_page_fault_callback(callback: PageFaultCallback) {
+    use core::ptr::addr_of_mut;
+    unsafe {
+        *addr_of_mut!(PAGE_FAULT_CALLBACK) = Some(callback);
+    }
+}
 
 /// Scheduler callback type
 ///

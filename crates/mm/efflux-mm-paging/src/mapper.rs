@@ -225,41 +225,41 @@ impl PageMapper {
     }
 }
 
+// TLB and CR3 operations - delegates to the arch layer
+
+#[cfg(target_arch = "x86_64")]
+use efflux_arch_x86_64::X86_64;
+
+#[cfg(target_arch = "x86_64")]
+use efflux_arch_traits::TlbControl;
+
 /// Flush the TLB for a specific virtual address
+#[cfg(target_arch = "x86_64")]
 #[inline]
 pub fn flush_tlb(addr: VirtAddr) {
-    unsafe {
-        core::arch::asm!("invlpg [{}]", in(reg) addr.as_u64(), options(nostack, preserves_flags));
-    }
+    X86_64::flush(addr);
 }
 
 /// Flush the entire TLB by reloading CR3
+#[cfg(target_arch = "x86_64")]
 #[inline]
 pub fn flush_tlb_all() {
-    unsafe {
-        let cr3: u64;
-        core::arch::asm!("mov {}, cr3", out(reg) cr3, options(nomem, nostack));
-        core::arch::asm!("mov cr3, {}", in(reg) cr3, options(nostack));
-    }
+    X86_64::flush_all();
 }
 
 /// Read the current CR3 value (PML4 physical address)
+#[cfg(target_arch = "x86_64")]
 #[inline]
 pub fn read_cr3() -> PhysAddr {
-    let cr3: u64;
-    unsafe {
-        core::arch::asm!("mov {}, cr3", out(reg) cr3, options(nomem, nostack));
-    }
-    PhysAddr::new(cr3 & 0x000F_FFFF_FFFF_F000)
+    X86_64::read_root()
 }
 
 /// Write a new CR3 value (switches page tables)
 ///
 /// # Safety
 /// The new CR3 must point to a valid PML4 table.
+#[cfg(target_arch = "x86_64")]
 #[inline]
 pub unsafe fn write_cr3(pml4: PhysAddr) {
-    unsafe {
-        core::arch::asm!("mov cr3, {}", in(reg) pml4.as_u64(), options(nostack));
-    }
+    unsafe { X86_64::write_root(pml4) };
 }

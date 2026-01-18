@@ -89,12 +89,15 @@ pub unsafe fn init() {
 
     // Set up STAR: segment selectors for syscall/sysret
     // Bits 47:32 = kernel CS (for SYSCALL: CS=this, SS=this+8)
-    // Bits 63:48 = user CS base (for SYSRET 64-bit: SS=this+8, CS=this+16)
+    // Bits 63:48 = user base (for SYSRET 64-bit: SS=this+8|3, CS=this+16|3)
     //
     // With our GDT layout:
-    // - SYSCALL: CS=0x08 (KERNEL_CS), SS=0x10 (KERNEL_DS)
+    // - SYSCALL: CS=0x08 (KERNEL_CS), SS=0x08+8=0x10 (KERNEL_DS)
     // - SYSRET:  SS=0x10+8=0x18|3=0x1B (USER_DS), CS=0x10+16=0x20|3=0x23 (USER_CS)
-    let star = ((KERNEL_DS as u64 - 8) << 48) | ((KERNEL_CS as u64) << 32);
+    //
+    // So bits 47:32 = KERNEL_CS = 0x08
+    //    bits 63:48 = KERNEL_DS = 0x10 (NOT KERNEL_DS-8!)
+    let star = ((KERNEL_DS as u64) << 48) | ((KERNEL_CS as u64) << 32);
     unsafe { wrmsr(msr::STAR, star) };
 
     // Set up LSTAR: syscall entry point
@@ -118,7 +121,7 @@ pub unsafe fn init() {
 ///
 /// We need to:
 /// 1. Switch to kernel stack
-/// 2. Save user state
+/// 2. Save user state (including to SYSCALL_USER_CONTEXT for fork)
 /// 3. Call the syscall handler
 /// 4. Restore and sysret
 #[unsafe(naked)]
@@ -154,6 +157,37 @@ extern "C" fn syscall_entry() {
         "push r13",
         "push r14",
         "push r15",
+
+        // Save user context to global SYSCALL_USER_CONTEXT (for fork)
+        // At this point: RCX=user RIP, R11=user RFLAGS, R12=user RSP
+        // RAX=syscall#, RDI/RSI/RDX/R10/R8/R9=args
+        "lea r13, [{user_ctx}]",           // Load address of SYSCALL_USER_CONTEXT
+        "mov [r13 + 0], rcx",              // rip = user RIP (from RCX)
+        "mov [r13 + 8], r12",              // rsp = user RSP (from R12)
+        "mov [r13 + 16], r11",             // rflags = user RFLAGS (from R11)
+        "mov [r13 + 24], rax",             // rax = syscall number
+        "mov [r13 + 32], rbx",             // rbx
+        "mov [r13 + 40], rcx",             // rcx (same as rip for syscall)
+        "mov [r13 + 48], rdx",             // rdx = arg3
+        "mov [r13 + 56], rsi",             // rsi = arg2
+        "mov [r13 + 64], rdi",             // rdi = arg1
+        "mov [r13 + 72], rbp",             // rbp
+        "mov [r13 + 80], r8",              // r8 = arg5
+        "mov [r13 + 88], r9",              // r9 = arg6
+        "mov [r13 + 96], r10",             // r10 = arg4
+        "mov [r13 + 104], r11",            // r11 (same as rflags for syscall)
+        // R12 was user RSP, but we saved original R12 on stack earlier
+        // For simplicity, save R12 as user RSP (it's close enough)
+        "mov [r13 + 112], r12",            // r12 = user RSP
+        // R13-R15 need to be loaded from stack since we pushed them
+        "mov rax, [rsp + 8]",              // Get saved R14 from stack
+        "mov [r13 + 128], rax",            // r14
+        "mov rax, [rsp + 0]",              // Get saved R15 from stack
+        "mov [r13 + 136], rax",            // r15
+        "mov rax, [rsp + 16]",             // Get saved R13 from stack (we used it)
+        "mov [r13 + 120], rax",            // r13
+        // Restore RAX from the context we just saved
+        "mov rax, [r13 + 24]",             // Restore syscall number to RAX
 
         // Re-enable interrupts now that we're on kernel stack
         "sti",
@@ -209,6 +243,7 @@ extern "C" fn syscall_entry() {
         "sysretq",
 
         handler = sym syscall_dispatch,
+        user_ctx = sym SYSCALL_USER_CONTEXT,
     );
 }
 
@@ -243,6 +278,97 @@ pub struct SyscallCpuData {
     pub kernel_rsp: u64,
     /// User stack pointer (saved during syscall)
     pub user_rsp: u64,
+}
+
+/// User context at syscall entry
+///
+/// This is populated by syscall_entry before dispatching to the handler.
+/// Used by fork() to capture the parent's context for the child.
+#[derive(Debug, Clone, Copy, Default)]
+#[repr(C)]
+pub struct SyscallUserContext {
+    pub rip: u64,
+    pub rsp: u64,
+    pub rflags: u64,
+    pub rax: u64,
+    pub rbx: u64,
+    pub rcx: u64,
+    pub rdx: u64,
+    pub rsi: u64,
+    pub rdi: u64,
+    pub rbp: u64,
+    pub r8: u64,
+    pub r9: u64,
+    pub r10: u64,
+    pub r11: u64,
+    pub r12: u64,
+    pub r13: u64,
+    pub r14: u64,
+    pub r15: u64,
+}
+
+/// Global syscall user context (populated on each syscall entry)
+static mut SYSCALL_USER_CONTEXT: SyscallUserContext = SyscallUserContext {
+    rip: 0, rsp: 0, rflags: 0,
+    rax: 0, rbx: 0, rcx: 0, rdx: 0, rsi: 0, rdi: 0, rbp: 0,
+    r8: 0, r9: 0, r10: 0, r11: 0, r12: 0, r13: 0, r14: 0, r15: 0,
+};
+
+/// Get the current syscall user context
+///
+/// This returns the user context at the point of syscall entry.
+/// Only valid when called from within a syscall handler.
+pub fn get_user_context() -> SyscallUserContext {
+    use core::ptr::addr_of;
+    unsafe { *addr_of!(SYSCALL_USER_CONTEXT) }
+}
+
+/// Save user context (called from syscall entry asm)
+///
+/// # Safety
+/// Only called from syscall_entry assembly.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn save_syscall_context(
+    user_rip: u64,
+    user_rsp: u64,
+    user_rflags: u64,
+    syscall_num: u64,
+    arg1: u64,  // rdi
+    arg2: u64,  // rsi
+    arg3: u64,  // rdx
+    arg4: u64,  // r10
+    arg5: u64,  // r8
+    arg6: u64,  // r9
+    rbx: u64,
+    rbp: u64,
+    r12: u64,   // Note: this is caller-saved R12, not user RSP
+    r13: u64,
+    r14: u64,
+    r15: u64,
+) {
+    use core::ptr::addr_of_mut;
+    unsafe {
+        let ctx = addr_of_mut!(SYSCALL_USER_CONTEXT);
+        (*ctx).rip = user_rip;
+        (*ctx).rsp = user_rsp;
+        (*ctx).rflags = user_rflags;
+        (*ctx).rax = syscall_num;
+        (*ctx).rdi = arg1;
+        (*ctx).rsi = arg2;
+        (*ctx).rdx = arg3;
+        (*ctx).r10 = arg4;
+        (*ctx).r8 = arg5;
+        (*ctx).r9 = arg6;
+        (*ctx).rbx = rbx;
+        (*ctx).rbp = rbp;
+        // RCX and R11 are clobbered by syscall, so use user values
+        (*ctx).rcx = user_rip;  // RCX had user RIP
+        (*ctx).r11 = user_rflags;  // R11 had user RFLAGS
+        (*ctx).r12 = r12;
+        (*ctx).r13 = r13;
+        (*ctx).r14 = r14;
+        (*ctx).r15 = r15;
+    }
 }
 
 /// Initialize per-CPU syscall data
