@@ -13,6 +13,8 @@ members = [
     "crates/mm/efflux-mm-heap",
     "crates/sched/efflux-sched-traits",
     "crates/sched/efflux-sched",
+    "crates/proc/efflux-proc-traits",
+    "crates/proc/efflux-proc",
     "crates/boot/efflux-boot-proto",
     "crates/drivers/efflux-driver-traits",
     "crates/drivers/serial/efflux-driver-uart-8250",
@@ -40,6 +42,8 @@ efflux-mm-paging = { path = "crates/mm/efflux-mm-paging" }
 efflux-mm-heap = { path = "crates/mm/efflux-mm-heap" }
 efflux-sched-traits = { path = "crates/sched/efflux-sched-traits" }
 efflux-sched = { path = "crates/sched/efflux-sched" }
+efflux-proc-traits = { path = "crates/proc/efflux-proc-traits" }
+efflux-proc = { path = "crates/proc/efflux-proc" }
 efflux-boot-proto = { path = "crates/boot/efflux-boot-proto" }
 efflux-driver-traits = { path = "crates/drivers/efflux-driver-traits" }
 

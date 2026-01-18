@@ -10,7 +10,7 @@ mod mapper;
 
 pub use entry::{PageTableEntry, PageTableFlags};
 pub use table::PageTable;
-pub use mapper::{PageMapper, MapError};
+pub use mapper::{flush_tlb, flush_tlb_all, read_cr3, write_cr3, PageMapper, MapError};
 
 use efflux_core::{PhysAddr, VirtAddr};
 

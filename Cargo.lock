@@ -129,6 +129,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-proc"
+version = "0.1.0"
+dependencies = [
+ "efflux-core",
+ "efflux-mm-paging",
+ "efflux-mm-traits",
+ "efflux-proc-traits",
+ "spin",
+]
+
+[[package]]
+name = "efflux-proc-traits"
+version = "0.1.0"
+dependencies = [
+ "efflux-core",
+]
+
+[[package]]
 name = "efflux-sched"
 version = "0.1.0"
 dependencies = [
