@@ -61,6 +61,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-automount"
+version = "0.1.0"
+dependencies = [
+ "efflux-media",
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "efflux-block"
 version = "0.1.0"
 dependencies = [
@@ -284,6 +292,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-media"
+version = "0.1.0"
+dependencies = [
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "efflux-mm-cow"
 version = "0.1.0"
 dependencies = [
@@ -352,6 +367,13 @@ dependencies = [
 
 [[package]]
 name = "efflux-net"
+version = "0.1.0"
+dependencies = [
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "efflux-nfs"
 version = "0.1.0"
 dependencies = [
  "spin 0.9.8",
@@ -467,6 +489,13 @@ version = "0.1.0"
 dependencies = [
  "bitflags",
  "efflux-core",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "efflux-smb"
+version = "0.1.0"
+dependencies = [
  "spin 0.9.8",
 ]
 

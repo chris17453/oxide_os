@@ -1,7 +1,7 @@
 # Phase 23: External Media
 
 **Stage:** 5 - Polish
-**Status:** Not Started
+**Status:** Complete (x86_64)
 **Dependencies:** Phase 11 (Storage), Phase 21 (Security)
 
 ---
@@ -16,12 +16,12 @@ Implement secure policies for USB drives and network shares.
 
 | Item | Status |
 |------|--------|
-| USB media detection | [ ] |
-| Network share mounting (SMB/NFS) | [ ] |
-| Read-only by default policy | [ ] |
-| User promotion workflow | [ ] |
-| Trust verification | [ ] |
-| Automount daemon | [ ] |
+| USB media detection | [x] |
+| Network share mounting (SMB/NFS) | [x] |
+| Read-only by default policy | [x] |
+| User promotion workflow | [x] |
+| Trust verification | [x] |
+| Automount daemon | [x] |
 
 ---
 
@@ -29,7 +29,7 @@ Implement secure policies for USB drives and network shares.
 
 | Arch | Detection | Policy | Promotion | Done |
 |------|-----------|--------|-----------|------|
-| x86_64 | [ ] | [ ] | [ ] | [ ] |
+| x86_64 | [x] | [x] | [x] | [x] |
 | i686 | [ ] | [ ] | [ ] | [ ] |
 | aarch64 | [ ] | [ ] | [ ] | [ ] |
 | arm | [ ] | [ ] | [ ] | [ ] |
@@ -319,13 +319,13 @@ userspace/media/
 
 ## Exit Criteria
 
-- [ ] USB device auto-detected on insert
-- [ ] Devices mount read-only by default
-- [ ] User can promote to read-write with auth
-- [ ] Trusted devices mount read-write automatically
-- [ ] SMB shares mountable
-- [ ] NFS shares mountable
-- [ ] Executables verified before running
+- [x] USB device auto-detected on insert
+- [x] Devices mount read-only by default
+- [x] User can promote to read-write with auth
+- [x] Trusted devices mount read-write automatically
+- [x] SMB shares mountable
+- [x] NFS shares mountable
+- [x] Executables verified before running
 - [ ] Works on all 8 architectures
 
 ---

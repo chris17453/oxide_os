@@ -67,6 +67,10 @@ members = [
     "crates/security/efflux-x509",
     "crates/async/efflux-epoll",
     "crates/async/efflux-iouring",
+    "crates/media/efflux-media",
+    "crates/media/efflux-automount",
+    "crates/net/efflux-smb",
+    "crates/net/efflux-nfs",
     "crates/tty/efflux-tty",
     "crates/tty/efflux-pty",
     "crates/signal/efflux-signal",
@@ -163,6 +167,10 @@ efflux-quarantine = { path = "crates/security/efflux-quarantine" }
 efflux-x509 = { path = "crates/security/efflux-x509" }
 efflux-epoll = { path = "crates/async/efflux-epoll" }
 efflux-iouring = { path = "crates/async/efflux-iouring" }
+efflux-media = { path = "crates/media/efflux-media" }
+efflux-automount = { path = "crates/media/efflux-automount" }
+efflux-smb = { path = "crates/net/efflux-smb" }
+efflux-nfs = { path = "crates/net/efflux-nfs" }
 
 [profile.dev]
 panic = "abort"
