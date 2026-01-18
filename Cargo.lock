@@ -482,6 +482,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-virtio-emu"
+version = "0.1.0"
+dependencies = [
+ "efflux-vmm",
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "efflux-virtio-gpu"
 version = "0.1.0"
 dependencies = [
@@ -510,6 +518,21 @@ name = "efflux-virtio-snd"
 version = "0.1.0"
 dependencies = [
  "efflux-audio",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "efflux-vmm"
+version = "0.1.0"
+dependencies = [
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "efflux-vmx"
+version = "0.1.0"
+dependencies = [
+ "efflux-vmm",
  "spin 0.9.8",
 ]
 
