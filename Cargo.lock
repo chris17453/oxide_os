@@ -176,6 +176,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-epoll"
+version = "0.1.0"
+dependencies = [
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "efflux-fat32"
 version = "0.1.0"
 dependencies = [
@@ -225,6 +232,13 @@ dependencies = [
 
 [[package]]
 name = "efflux-input"
+version = "0.1.0"
+dependencies = [
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "efflux-iouring"
 version = "0.1.0"
 dependencies = [
  "spin 0.9.8",

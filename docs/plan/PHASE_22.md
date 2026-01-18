@@ -1,7 +1,7 @@
 # Phase 22: Async I/O
 
 **Stage:** 5 - Polish
-**Status:** Not Started
+**Status:** Complete (x86_64)
 **Dependencies:** Phase 12 (Networking)
 
 ---
@@ -16,12 +16,12 @@ Implement efficient async I/O for high-performance applications.
 
 | Item | Status |
 |------|--------|
-| epoll-like interface | [ ] |
-| Async file I/O | [ ] |
-| Async network I/O | [ ] |
-| io_uring-style submission | [ ] |
-| Event loop support | [ ] |
-| Timer events | [ ] |
+| epoll-like interface | [x] |
+| Async file I/O | [x] |
+| Async network I/O | [x] |
+| io_uring-style submission | [x] |
+| Event loop support | [x] |
+| Timer events | [x] |
 
 ---
 
@@ -29,7 +29,7 @@ Implement efficient async I/O for high-performance applications.
 
 | Arch | epoll | io_uring | File AIO | Net AIO | Done |
 |------|-------|----------|----------|---------|------|
-| x86_64 | [ ] | [ ] | [ ] | [ ] | [ ] |
+| x86_64 | [x] | [x] | [x] | [x] | [x] |
 | i686 | [ ] | [ ] | [ ] | [ ] | [ ] |
 | aarch64 | [ ] | [ ] | [ ] | [ ] | [ ] |
 | arm | [ ] | [ ] | [ ] | [ ] | [ ] |
@@ -254,12 +254,12 @@ kernel/src/async/
 
 ## Exit Criteria
 
-- [ ] epoll_create/ctl/wait functional
-- [ ] Edge-triggered and level-triggered modes
-- [ ] io_uring setup and basic ops
-- [ ] Async read/write via io_uring
-- [ ] Async network I/O via io_uring
-- [ ] Works with Rust async runtimes
+- [x] epoll_create/ctl/wait functional
+- [x] Edge-triggered and level-triggered modes
+- [x] io_uring setup and basic ops
+- [x] Async read/write via io_uring
+- [x] Async network I/O via io_uring
+- [x] Works with Rust async runtimes
 - [ ] Works on all 8 architectures
 
 ---

@@ -65,6 +65,8 @@ members = [
     "crates/security/efflux-trust",
     "crates/security/efflux-quarantine",
     "crates/security/efflux-x509",
+    "crates/async/efflux-epoll",
+    "crates/async/efflux-iouring",
     "crates/tty/efflux-tty",
     "crates/tty/efflux-pty",
     "crates/signal/efflux-signal",
@@ -159,6 +161,8 @@ efflux-crypto = { path = "crates/security/efflux-crypto" }
 efflux-trust = { path = "crates/security/efflux-trust" }
 efflux-quarantine = { path = "crates/security/efflux-quarantine" }
 efflux-x509 = { path = "crates/security/efflux-x509" }
+efflux-epoll = { path = "crates/async/efflux-epoll" }
+efflux-iouring = { path = "crates/async/efflux-iouring" }
 
 [profile.dev]
 panic = "abort"
