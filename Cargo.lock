@@ -95,6 +95,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-crypto"
+version = "0.1.0"
+dependencies = [
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "efflux-devfs"
 version = "0.1.0"
 dependencies = [
@@ -404,6 +411,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-quarantine"
+version = "0.1.0"
+dependencies = [
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "efflux-sched"
 version = "0.1.0"
 dependencies = [
@@ -478,6 +492,14 @@ version = "0.1.0"
 dependencies = [
  "efflux-core",
  "efflux-vfs",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "efflux-trust"
+version = "0.1.0"
+dependencies = [
+ "efflux-crypto",
  "spin 0.9.8",
 ]
 
@@ -585,6 +607,13 @@ name = "efflux-vmx"
 version = "0.1.0"
 dependencies = [
  "efflux-vmm",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "efflux-x509"
+version = "0.1.0"
+dependencies = [
  "spin 0.9.8",
 ]
 

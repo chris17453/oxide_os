@@ -61,6 +61,10 @@ members = [
     "crates/ai/efflux-hnsw",
     "crates/ai/efflux-embed",
     "crates/ai/efflux-indexd",
+    "crates/security/efflux-crypto",
+    "crates/security/efflux-trust",
+    "crates/security/efflux-quarantine",
+    "crates/security/efflux-x509",
     "crates/tty/efflux-tty",
     "crates/tty/efflux-pty",
     "crates/signal/efflux-signal",
@@ -151,6 +155,10 @@ efflux-dl = { path = "crates/libc-support/efflux-dl" }
 efflux-hnsw = { path = "crates/ai/efflux-hnsw" }
 efflux-embed = { path = "crates/ai/efflux-embed" }
 efflux-indexd = { path = "crates/ai/efflux-indexd" }
+efflux-crypto = { path = "crates/security/efflux-crypto" }
+efflux-trust = { path = "crates/security/efflux-trust" }
+efflux-quarantine = { path = "crates/security/efflux-quarantine" }
+efflux-x509 = { path = "crates/security/efflux-x509" }
 
 [profile.dev]
 panic = "abort"

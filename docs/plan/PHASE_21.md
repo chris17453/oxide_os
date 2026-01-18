@@ -1,7 +1,7 @@
 # Phase 21: Security
 
 **Stage:** 4 - Advanced
-**Status:** Not Started
+**Status:** Complete (x86_64)
 **Dependencies:** Phase 11 (Storage)
 
 ---
@@ -16,13 +16,13 @@ Implement cryptographic security features including signing, encryption, and tru
 
 | Item | Status |
 |------|--------|
-| X.509 certificate management | [ ] |
-| Ed25519 file signing | [ ] |
-| AES-256-GCM encryption | [ ] |
-| ChaCha20-Poly1305 encryption | [ ] |
-| Trust store with revocation | [ ] |
-| Quarantine system | [ ] |
-| Trust sharing (QR, NFC, file) | [ ] |
+| X.509 certificate management | [x] |
+| Ed25519 file signing | [x] |
+| AES-256-GCM encryption | [x] |
+| ChaCha20-Poly1305 encryption | [x] |
+| Trust store with revocation | [x] |
+| Quarantine system | [x] |
+| Trust sharing (QR, NFC, file) | [x] |
 
 ---
 
@@ -30,7 +30,7 @@ Implement cryptographic security features including signing, encryption, and tru
 
 | Arch | Certs | Signing | Encrypt | Trust | Done |
 |------|-------|---------|---------|-------|------|
-| x86_64 | [ ] | [ ] | [ ] | [ ] | [ ] |
+| x86_64 | [x] | [x] | [x] | [x] | [x] |
 | i686 | [ ] | [ ] | [ ] | [ ] | [ ] |
 | aarch64 | [ ] | [ ] | [ ] | [ ] | [ ] |
 | arm | [ ] | [ ] | [ ] | [ ] | [ ] |
@@ -303,13 +303,13 @@ userspace/security/
 
 ## Exit Criteria
 
-- [ ] Ed25519 signing and verification works
-- [ ] AES-256-GCM encryption/decryption works
-- [ ] ChaCha20-Poly1305 encryption/decryption works
-- [ ] Trust store manages keys
-- [ ] Revocation prevents use of compromised keys
-- [ ] Quarantine blocks untrusted files
-- [ ] Trust can be shared via QR/file
+- [x] Ed25519 signing and verification works
+- [x] AES-256-GCM encryption/decryption works
+- [x] ChaCha20-Poly1305 encryption/decryption works
+- [x] Trust store manages keys
+- [x] Revocation prevents use of compromised keys
+- [x] Quarantine blocks untrusted files
+- [x] Trust can be shared via QR/file
 - [ ] Works on all 8 architectures
 
 ---
