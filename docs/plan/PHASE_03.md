@@ -1,7 +1,7 @@
 # Phase 3: User Mode + Syscalls
 
 **Stage:** 1 - Foundation
-**Status:** Not Started
+**Status:** In Progress
 **Dependencies:** Phase 2 (Scheduler)
 
 ---

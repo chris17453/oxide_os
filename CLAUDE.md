@@ -84,6 +84,85 @@ When implementing a feature:
 
 ---
 
+## Documentation Structure
+
+### Specifications (docs/*.md)
+
+The `docs/` folder contains **component specifications**:
+
+| File | Description |
+|------|-------------|
+| `EFFLUX_MASTER_SPEC.md` | Master specification - project principles and overview |
+| `MEMORY_SPEC.md` | Memory management (allocators, paging, zones) |
+| `SCHEDULER_SPEC.md` | Scheduler design (priorities, queues, preemption) |
+| `PROCESS_SPEC.md` | Process model (fork/exec, signals, credentials) |
+| `BOOT_SPEC.md` | Boot sequence and BootInfo structure |
+| `VFS_SPEC.md` | Virtual filesystem layer |
+| `IPC_SPEC.md` | Inter-process communication |
+| `TIMER_SPEC.md` | Timer subsystem |
+| ... | Other component specs |
+
+**Before implementing a feature, READ the relevant spec file.**
+
+### Architecture Docs (docs/arch/)
+
+Each architecture has 5 files:
+- `ABI.md` - Calling conventions, register usage
+- `BOOT.md` - Boot sequence, entry requirements
+- `CONTEXT.md` - Context switching, register save/restore
+- `MEMORY.md` - Page table format, address layout
+- `TIMER.md` - Timer hardware specifics
+
+### Implementation Plan (docs/plan/)
+
+| File | Description |
+|------|-------------|
+| `IMPLEMENTATION_PLAN.md` | 25-phase roadmap across 5 stages |
+| `PROJECT_STRUCTURE.md` | Crate hierarchy and organization |
+| `BUILD_PLAN.md` | Build system and targets |
+| `PHASE_XX.md` | Individual phase tracking |
+
+---
+
+## Phase Tracking (CRITICAL)
+
+### Always Know Current Phase
+
+Before starting work:
+1. Check `docs/plan/PHASE_*.md` files to understand current status
+2. Identify which phase is active (last incomplete phase)
+3. Review that phase's deliverables and exit criteria
+
+### Update Phase Files When Work Completes
+
+When completing work:
+1. Update the relevant `PHASE_XX.md` with:
+   - Mark deliverables as `[x]` complete
+   - Update exit criteria checkboxes
+   - Add completion date if phase is done
+   - Update status from "In Progress" to "Complete"
+2. Include test output demonstrating completion
+3. Document any notes about the implementation
+
+### Phase Status Format
+
+```markdown
+**Status:** Complete | In Progress | Not Started
+**Completed:** YYYY-MM-DD (if complete)
+
+## Deliverables
+| Item | Status |
+|------|--------|
+| Feature A | [x] Done |
+| Feature B | [ ] Pending |
+
+## Exit Criteria
+- [x] Criterion 1 met
+- [ ] Criterion 2 pending
+```
+
+---
+
 ## Documentation Guidelines
 
 ### Keep Docs Concise
@@ -106,24 +185,24 @@ Documentation should be **high-level guidelines**, NOT implementation manuals.
 
 Each arch-specific doc should be ~50-100 lines, not 500+.
 
-The implementer will figure out the details. Docs provide the roadmap.
-
 ---
 
 ## Project Context
 
 EFFLUX is a from-scratch operating system written in Rust, currently targeting x86_64.
 
-### Key Files
+### Key Locations
 
 | Path | Description |
 |------|-------------|
 | `docs/plan/IMPLEMENTATION_PLAN.md` | Phased implementation plan |
 | `docs/plan/PROJECT_STRUCTURE.md` | Crate layout and hierarchy |
-| `docs/plan/BUILD_PLAN.md` | Build process |
-| `docs/plan/PHASE_*.md` | Phase tracking |
+| `docs/plan/PHASE_*.md` | Phase tracking (check these first!) |
 | `docs/EFFLUX_MASTER_SPEC.md` | Master specification |
 | `docs/*.md` | Component specifications |
+| `kernel/` | Kernel binary (minimal, wires crates together) |
+| `crates/` | All kernel subsystem crates |
+| `bootloader/` | Architecture-specific bootloaders |
 
 ### Design Principles
 
@@ -137,6 +216,12 @@ EFFLUX is a from-scratch operating system written in Rust, currently targeting x
 
 ## Workflow Requirements
 
+### Starting a Session
+
+1. **Check phase status** - Read current `PHASE_XX.md` to understand where we are
+2. **Run tests** - `make test` to verify current state
+3. **Update todos** - Create todo list for planned work
+
 ### Task Tracking
 
 **Always use the TodoWrite tool to track work:**
@@ -145,22 +230,50 @@ EFFLUX is a from-scratch operating system written in Rust, currently targeting x
 - Add next steps as new todos
 - Keep the todo list current so we don't get lost
 
-### Git Commits
+### Completing Work
 
-**Commit after EVERY feature or logical unit of work:**
-- Small, focused commits
+1. **Test** - `make test` must pass
+2. **Update phase doc** - Mark completed items in `PHASE_XX.md`
+3. **Commit** - Git commit with descriptive message
+
+### Git Commits (CRITICAL)
+
+**COMMIT AFTER EVERY FEATURE OR LOGICAL UNIT OF WORK.**
+
+This is mandatory - do NOT batch multiple features into one commit.
+
+Guidelines:
+- Small, focused commits (one feature per commit)
 - Clear commit messages describing what was added
-- Commit working code only
-- Don't batch multiple features into one commit
+- Commit working code only (tests must pass)
 - **NEVER add Claude attribution or Co-Authored-By to commits**
+- If you implement something, commit it immediately before moving on
 
 Example workflow:
 1. Update todos with current task
-2. Implement the feature
-3. Mark todo complete
-4. Git commit with descriptive message
-5. Add next steps to todos
-6. Repeat
+2. Implement ONE feature
+3. Run `make test` to verify it works
+4. Mark todo complete
+5. **Git commit immediately** with descriptive message
+6. Move to next feature
+7. Repeat
+
+Bad: Implement syscall handler + ELF loader + Ring 3 transition → one big commit
+Good: Implement syscall handler → commit → ELF loader → commit → Ring 3 → commit
+
+---
+
+## Current Status Quick Reference
+
+**Completed Phases:**
+- Phase 0: Boot + Serial ✓
+- Phase 1: Memory Management ✓
+- Phase 2: Interrupts + Timer + Scheduler ✓
+
+**Current Phase:**
+- Phase 3: User Mode + Syscalls
+
+**Check `docs/plan/PHASE_03.md` for Phase 3 requirements.**
 
 ---
 

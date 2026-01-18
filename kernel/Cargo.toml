@@ -11,3 +11,7 @@ efflux-arch-x86_64 = { path = "../crates/arch/efflux-arch-x86_64" }
 efflux-mm-frame = { workspace = true }
 efflux-mm-paging = { workspace = true }
 efflux-mm-heap = { workspace = true }
+efflux-sched = { workspace = true }
+efflux-sched-traits = { workspace = true }
+efflux-boot-proto = { workspace = true }
+spin = { workspace = true }

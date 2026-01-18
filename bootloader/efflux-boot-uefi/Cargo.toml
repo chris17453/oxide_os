@@ -5,4 +5,5 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-uefi = "0.32"
+uefi = { version = "0.32", features = ["alloc", "global_allocator"] }
+efflux-boot-proto = { workspace = true }

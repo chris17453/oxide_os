@@ -1,12 +1,10 @@
 [package]
-name = "efflux-arch-x86_64"
+name = "efflux-sched"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Scheduler implementation for EFFLUX OS"
 
 [dependencies]
 efflux-core = { workspace = true }
-efflux-arch-traits = { workspace = true }
 efflux-sched-traits = { workspace = true }
-efflux-boot-proto = { workspace = true }
-spin = { workspace = true }

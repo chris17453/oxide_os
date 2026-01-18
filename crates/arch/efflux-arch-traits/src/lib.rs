@@ -6,6 +6,102 @@
 
 use efflux_core::{PhysAddr, VirtAddr};
 
+// ============================================================================
+// Interrupt Controller Trait
+// ============================================================================
+
+/// Interrupt controller interface
+pub trait InterruptController {
+    /// Initialize the interrupt controller
+    fn init();
+
+    /// Enable interrupts globally
+    fn enable();
+
+    /// Disable interrupts globally
+    fn disable();
+
+    /// Send end-of-interrupt signal for the given vector
+    fn end_of_interrupt(vector: u8);
+
+    /// Set handler for a specific interrupt vector
+    fn set_handler(vector: u8, handler: InterruptHandler);
+
+    /// Mask (disable) a specific interrupt
+    fn mask(irq: u8);
+
+    /// Unmask (enable) a specific interrupt
+    fn unmask(irq: u8);
+}
+
+/// Interrupt handler function type
+pub type InterruptHandler = fn(&InterruptFrame);
+
+/// Interrupt stack frame (architecture-specific layout)
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct InterruptFrame {
+    /// Instruction pointer at time of interrupt
+    pub instruction_pointer: u64,
+    /// Code segment
+    pub code_segment: u64,
+    /// CPU flags
+    pub cpu_flags: u64,
+    /// Stack pointer at time of interrupt
+    pub stack_pointer: u64,
+    /// Stack segment
+    pub stack_segment: u64,
+}
+
+// ============================================================================
+// Timer Trait
+// ============================================================================
+
+/// Timer device interface
+pub trait Timer {
+    /// Initialize the timer with the given frequency in Hz
+    fn init(frequency_hz: u32);
+
+    /// Start the timer
+    fn start();
+
+    /// Stop the timer
+    fn stop();
+
+    /// Set the timer interrupt handler
+    fn set_handler(handler: fn());
+
+    /// Get current tick count
+    fn ticks() -> u64;
+}
+
+// ============================================================================
+// Context Switch Trait
+// ============================================================================
+
+/// CPU context for context switching
+///
+/// Each architecture defines its own context layout.
+/// This trait provides the interface for creating and switching contexts.
+pub trait ContextSwitch {
+    /// Architecture-specific context type
+    type Context: Clone + Default;
+
+    /// Create a new context for a thread
+    ///
+    /// - `entry`: Function to execute when the thread starts
+    /// - `stack_top`: Top of the thread's kernel stack
+    /// - `arg`: Argument to pass to the entry function
+    fn new_context(entry: fn(usize) -> !, stack_top: usize, arg: usize) -> Self::Context;
+
+    /// Switch from the current context to a new context
+    ///
+    /// # Safety
+    /// - `old` must point to valid memory for saving the current context
+    /// - `new` must contain a valid context to switch to
+    unsafe fn switch(old: *mut Self::Context, new: *const Self::Context);
+}
+
 /// Boot information passed from bootloader to kernel
 pub trait BootInfo {
     /// Get the memory map

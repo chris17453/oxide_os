@@ -1,7 +1,8 @@
 # Phase 1: Memory Management
 
 **Stage:** 1 - Foundation
-**Status:** Partial (code written, bootloader integration pending)
+**Status:** Complete
+**Completed:** 2025-01-18
 **Target:** x86_64 only
 **Dependencies:** Phase 0 (Boot + Serial)
 
@@ -17,16 +18,23 @@ Physical and virtual memory management with kernel heap.
 
 | Item | Status |
 |------|--------|
-| Memory map from bootloader | [ ] Pending bootloader update |
+| Memory map from bootloader | [x] BootInfo with memory regions |
 | Physical frame allocator | [x] efflux-mm-frame crate |
-| Kernel page tables (4-level) | [x] efflux-mm-paging crate |
-| Direct physical map | [ ] Pending bootloader handoff |
+| Kernel page tables (4-level) | [x] efflux-mm-paging + bootloader setup |
+| Direct physical map | [x] PHYS_MAP_BASE at 0xFFFF_8000_0000_0000 |
 | Kernel heap allocator | [x] efflux-mm-heap crate |
-| `Box::new()` compiles | [x] Integrated in kernel |
+| `Box::new()` works | [x] Tested in kernel_main |
 
 ---
 
-## What's Done
+## Implementation Summary
+
+### Boot Protocol (`efflux-boot-proto`)
+- BootInfo structure with magic validation
+- Memory regions array (up to 128 regions)
+- Kernel physical/virtual base addresses
+- PML4 physical address
+- Framebuffer info
 
 ### Frame Allocator (`efflux-mm-frame`)
 - Bitmap-based allocator supporting up to 4GB RAM
@@ -38,89 +46,96 @@ Physical and virtual memory management with kernel heap.
 - PageTableEntry with all x86_64 flags (Present, Writable, User, NX, etc.)
 - PageTable structure (512 entries, 4KB aligned)
 - PageMapper for map/unmap/translate operations
-- TLB flush utilities (invlpg, CR3 reload)
-- CR3 read/write functions
+- TLB flush utilities
 
 ### Heap Allocator (`efflux-mm-heap`)
 - Linked-list allocator with block merging
 - GlobalAlloc implementation for `#[global_allocator]`
 - Thread-safe via spin mutex
+- Statistics tracking (used/free bytes)
+
+### Bootloader (`efflux-boot-uefi`)
+- Loads kernel ELF from EFI partition
+- Parses ELF headers and loads segments
+- Sets up 4-level page tables:
+  - Identity map: first 4GB (1GB huge pages)
+  - Direct physical map: 4GB at PHYS_MAP_BASE
+  - Kernel map: at 0xFFFF_FFFF_8000_0000
+- Passes BootInfo via System V ABI (rdi)
+- Uses inline assembly for reliable page table switch + jump
 
 ### Kernel Integration
-- Global heap allocator set up
-- 16MB static heap storage (temporary)
-- Box and Vec usage in kernel_main
-- Allocation error handler
+- Validates BootInfo magic on entry
+- Initializes frame allocator from memory regions
+- Marks kernel memory as used
+- 16MB static heap storage (temporary, sufficient for Phase 1)
+- Box and Vec allocations verified working
 
 ---
 
-## What's Pending
-
-### Bootloader → Kernel Handoff
-The bootloader currently doesn't load the kernel. To complete Phase 1:
-
-1. **Bootloader updates needed:**
-   - Get UEFI memory map
-   - Load kernel ELF from disk
-   - Set up initial page tables with identity + direct map
-   - Jump to kernel entry with boot info
-
-2. **Kernel updates needed:**
-   - Parse boot info with memory map
-   - Initialize frame allocator from memory map
-   - Take over page tables from bootloader
-   - Switch to kernel heap backed by frame allocator
-
----
-
-## Files Created
+## Files
 
 ```
+crates/boot/
+└── efflux-boot-proto/        # Boot protocol definitions
+
 crates/mm/
-├── efflux-mm-frame/
-│   ├── Cargo.toml
-│   └── src/
-│       ├── lib.rs              # PhysFrame, MemoryRegion
-│       └── bitmap.rs           # BitmapFrameAllocator
-├── efflux-mm-paging/
-│   ├── Cargo.toml
-│   └── src/
-│       ├── lib.rs              # PHYS_MAP_BASE, PageLevel
-│       ├── entry.rs            # PageTableEntry, PageTableFlags
-│       ├── table.rs            # PageTable
-│       └── mapper.rs           # PageMapper, TLB functions
-└── efflux-mm-heap/
-    ├── Cargo.toml
-    └── src/
-        ├── lib.rs              # LockedHeap, GlobalAlloc
-        └── linked_list.rs      # LinkedListAllocator
+├── efflux-mm-frame/          # Physical frame allocator
+├── efflux-mm-paging/         # Page table structures
+├── efflux-mm-heap/           # Kernel heap allocator
+└── efflux-mm-traits/         # Memory management traits
+
+bootloader/efflux-boot-uefi/
+├── src/main.rs               # UEFI bootloader entry
+├── src/elf.rs                # ELF parser
+└── src/paging.rs             # Page table setup
 
 kernel/
-└── src/main.rs                 # Updated with heap integration
+├── src/main.rs               # Kernel entry with MM init
+└── linker.ld                 # Kernel at 0xFFFF_FFFF_8000_0000
 ```
 
 ---
 
 ## Exit Criteria
 
-- [x] Frame allocator can allocate/free frames (code written)
-- [ ] Page tables set up with direct map (requires bootloader)
-- [x] Kernel heap functional (code written, uses static storage)
-- [x] `Box::new(42)` compiles
-- [ ] Memory stats printed on boot (requires kernel execution)
+- [x] Frame allocator initializes from boot memory map
+- [x] Page tables set up with identity + direct + kernel map
+- [x] Kernel runs in higher half (0xFFFF_FFFF_8000_0000)
+- [x] Kernel heap functional
+- [x] `Box::new(42)` allocates and returns 42
+- [x] `Vec::push()` works
+- [x] Memory stats printed on boot
+- [x] `make test` passes
+
+---
+
+## Test Output
+
+```
+[INFO] Kernel started on x86_64
+[INFO] Serial output initialized
+[INFO] Boot info validated
+[INFO] Kernel physical base: 0xcc4d000
+[INFO] Kernel virtual base: 0xffffffff80000000
+[INFO] Total usable memory: 230 MB
+[INFO] Heap initialized: 16384 KB
+[INFO] Frame allocator initialized
+[INFO] Total frames: 1048576
+[INFO] Free frames: 59116
+[INFO] Box::new(42) = 42
+[INFO] Vec: [1, 2, 3]
+EFFLUX kernel initialized successfully!
+```
 
 ---
 
 ## Notes
 
-The memory subsystem code is complete and compiles. Full testing requires
-completing the bootloader to actually load and run the kernel. The current
-bootloader only prints a message and halts.
-
-The static 16MB heap storage is a temporary solution. Once the bootloader
-passes a memory map, the kernel will use the frame allocator to back the
-heap with proper physical memory.
+The static 16MB heap storage works for Phase 1. Phase 2+ may switch to
+frame-allocator-backed heap if needed, but this is not required for the
+scheduler/interrupt work.
 
 ---
 
-*Phase 1 of EFFLUX Implementation - Partial Completion*
+*Phase 1 Complete - 2025-01-18*

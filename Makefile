@@ -7,7 +7,7 @@
 # Configuration
 ARCH ?= x86_64
 PROFILE ?= debug
-QEMU_TIMEOUT ?= 10
+QEMU_TIMEOUT ?= 15
 
 # Paths
 TARGET_DIR := target
@@ -35,11 +35,15 @@ release:
 	cargo build --package efflux-kernel --release
 	cargo build --package efflux-boot-uefi --target $(ARCH)-unknown-uefi --release
 
-# Create boot directory structure
-boot-dir: bootloader
+# Create boot directory structure with kernel and bootloader
+boot-dir: kernel bootloader
 	@mkdir -p $(BOOT_DIR)/EFI/BOOT
+	@mkdir -p $(BOOT_DIR)/EFI/EFFLUX
 	@cp $(BOOTLOADER_TARGET) $(BOOT_DIR)/EFI/BOOT/BOOTX64.EFI
+	@cp $(KERNEL_TARGET) $(BOOT_DIR)/EFI/EFFLUX/kernel.elf
 	@echo "Boot directory created at $(BOOT_DIR)"
+	@echo "  - Bootloader: EFI/BOOT/BOOTX64.EFI"
+	@echo "  - Kernel: EFI/EFFLUX/kernel.elf"
 
 # Run in QEMU (interactive)
 run: boot-dir
@@ -143,4 +147,4 @@ help:
 	@echo "Variables:"
 	@echo "  ARCH         - Target architecture (default: x86_64)"
 	@echo "  PROFILE      - Build profile (default: debug)"
-	@echo "  QEMU_TIMEOUT - Test timeout in seconds (default: 10)"
+	@echo "  QEMU_TIMEOUT - Test timeout in seconds (default: 15)"

@@ -32,14 +32,21 @@ name = "efflux-arch-x86_64"
 version = "0.1.0"
 dependencies = [
  "efflux-arch-traits",
+ "efflux-boot-proto",
  "efflux-core",
+ "efflux-sched-traits",
  "spin",
 ]
+
+[[package]]
+name = "efflux-boot-proto"
+version = "0.1.0"
 
 [[package]]
 name = "efflux-boot-uefi"
 version = "0.1.0"
 dependencies = [
+ "efflux-boot-proto",
  "uefi",
 ]
 
@@ -71,10 +78,14 @@ version = "0.1.0"
 dependencies = [
  "efflux-arch-traits",
  "efflux-arch-x86_64",
+ "efflux-boot-proto",
  "efflux-core",
  "efflux-mm-frame",
  "efflux-mm-heap",
  "efflux-mm-paging",
+ "efflux-sched",
+ "efflux-sched-traits",
+ "spin",
 ]
 
 [[package]]
@@ -112,6 +123,21 @@ dependencies = [
 
 [[package]]
 name = "efflux-mm-traits"
+version = "0.1.0"
+dependencies = [
+ "efflux-core",
+]
+
+[[package]]
+name = "efflux-sched"
+version = "0.1.0"
+dependencies = [
+ "efflux-core",
+ "efflux-sched-traits",
+]
+
+[[package]]
+name = "efflux-sched-traits"
 version = "0.1.0"
 dependencies = [
  "efflux-core",
