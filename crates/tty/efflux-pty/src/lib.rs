@@ -126,6 +126,41 @@ impl PtyMaster {
     pub fn slave_path(&self) -> String {
         format!("/dev/pts/{}", self.num)
     }
+
+    /// Write data to the PTY and check for signals
+    ///
+    /// Returns (bytes_written, optional_signal) where signal contains
+    /// (signal_number, foreground_pgid) if a signal should be delivered.
+    pub fn write_with_signal(&self, buf: &[u8]) -> VfsResult<(usize, Option<(i32, i32)>)> {
+        let mut pair = self.pair.lock();
+        let mut signal_info = None;
+
+        if !pair.slave_open {
+            return Err(VfsError::BrokenPipe);
+        }
+
+        // Process input through line discipline
+        for &c in buf {
+            let echo = pair.ldisc.input_char(c);
+
+            // Echo goes back to master (terminal emulator)
+            if !echo.is_empty() && pair.slave_to_master.len() + echo.len() <= PTY_BUF_SIZE {
+                pair.slave_to_master.extend(echo);
+            }
+
+            // Check for signals
+            if let Some(sig) = pair.ldisc.take_signal() {
+                signal_info = Some((sig.to_signo(), pair.foreground_pgid));
+            }
+        }
+
+        Ok((buf.len(), signal_info))
+    }
+
+    /// Get the foreground process group
+    pub fn get_foreground_pgid(&self) -> i32 {
+        self.pair.lock().foreground_pgid
+    }
 }
 
 impl VnodeOps for PtyMaster {

@@ -189,6 +189,7 @@ dependencies = [
  "efflux-mm-traits",
  "efflux-proc-traits",
  "efflux-sched-traits",
+ "efflux-signal",
  "efflux-vfs",
  "spin",
 ]
@@ -237,6 +238,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-signal"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "efflux-core",
+ "spin",
+]
+
+[[package]]
 name = "efflux-syscall"
 version = "0.1.0"
 dependencies = [
@@ -244,6 +254,7 @@ dependencies = [
  "efflux-mm-traits",
  "efflux-proc",
  "efflux-proc-traits",
+ "efflux-signal",
  "efflux-vfs",
  "spin",
 ]
@@ -263,6 +274,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags",
  "efflux-core",
+ "efflux-signal",
  "efflux-vfs",
  "spin",
 ]

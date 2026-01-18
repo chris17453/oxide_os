@@ -8,6 +8,7 @@ extern crate alloc;
 
 pub mod vfs;
 pub mod dir;
+pub mod signal;
 
 use efflux_core::VirtAddr;
 use efflux_proc::process_table;
@@ -49,6 +50,15 @@ pub mod nr {
 
     // TTY/device syscalls
     pub const IOCTL: u64 = 40;
+
+    // Signal syscalls
+    pub const KILL: u64 = 50;
+    pub const SIGACTION: u64 = 51;
+    pub const SIGPROCMASK: u64 = 52;
+    pub const SIGPENDING: u64 = 53;
+    pub const SIGSUSPEND: u64 = 54;
+    pub const PAUSE: u64 = 55;
+    pub const SIGRETURN: u64 = 56;
 }
 
 /// Error codes (negative return values)
@@ -70,6 +80,7 @@ pub mod errno {
     pub const ENOSPC: i64 = -28;    // No space left on device
     pub const EROFS: i64 = -30;     // Read-only file system
     pub const ENOTTY: i64 = -25;    // Not a typewriter (inappropriate ioctl)
+    pub const EINTR: i64 = -4;      // Interrupted system call
 }
 
 /// Console output callback type
@@ -188,6 +199,15 @@ pub fn dispatch(
 
         // TTY/device syscalls
         nr::IOCTL => vfs::sys_ioctl(arg1 as i32, arg2, arg3),
+
+        // Signal syscalls
+        nr::KILL => signal::sys_kill(arg1 as i32, arg2 as i32),
+        nr::SIGACTION => signal::sys_sigaction(arg1 as i32, arg2, arg3),
+        nr::SIGPROCMASK => signal::sys_sigprocmask(arg1 as i32, arg2, arg3),
+        nr::SIGPENDING => signal::sys_sigpending(arg1),
+        nr::SIGSUSPEND => signal::sys_sigsuspend(arg1),
+        nr::PAUSE => signal::sys_pause(),
+        nr::SIGRETURN => signal::sys_sigreturn(),
 
         _ => errno::ENOSYS,
     }

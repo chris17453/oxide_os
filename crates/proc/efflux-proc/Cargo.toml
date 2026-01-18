@@ -12,4 +12,5 @@ efflux-mm-cow = { path = "../../mm/efflux-mm-cow" }
 efflux-elf = { path = "../../exec/efflux-elf" }
 efflux-sched-traits = { path = "../../sched/efflux-sched-traits" }
 efflux-vfs = { path = "../../vfs/efflux-vfs" }
+efflux-signal = { path = "../../signal/efflux-signal" }
 spin = "0.9"

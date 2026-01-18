@@ -28,6 +28,7 @@ members = [
     "crates/vfs/efflux-procfs",
     "crates/tty/efflux-tty",
     "crates/tty/efflux-pty",
+    "crates/signal/efflux-signal",
     "bootloader/efflux-boot-uefi",
 ]
 
@@ -67,6 +68,7 @@ efflux-initramfs = { path = "crates/vfs/efflux-initramfs" }
 efflux-procfs = { path = "crates/vfs/efflux-procfs" }
 efflux-tty = { path = "crates/tty/efflux-tty" }
 efflux-pty = { path = "crates/tty/efflux-pty" }
+efflux-signal = { path = "crates/signal/efflux-signal" }
 
 [profile.dev]
 panic = "abort"

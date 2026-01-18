@@ -30,6 +30,17 @@ pub enum Signal {
     Tstp,
 }
 
+impl Signal {
+    /// Convert to signal number
+    pub fn to_signo(self) -> i32 {
+        match self {
+            Signal::Int => efflux_signal::SIGINT,
+            Signal::Quit => efflux_signal::SIGQUIT,
+            Signal::Tstp => efflux_signal::SIGTSTP,
+        }
+    }
+}
+
 /// Line discipline state
 pub struct LineDiscipline {
     /// Terminal settings

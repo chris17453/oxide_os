@@ -8,6 +8,7 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
 use efflux_core::{PhysAddr, VirtAddr};
 use efflux_proc_traits::{Pid, ProcessState};
+use efflux_signal::{PendingSignals, SigAction, SigSet, NSIG};
 use efflux_vfs::FdTable;
 use spin::{Mutex, RwLock};
 
@@ -122,6 +123,12 @@ pub struct Process {
     owned_frames: Vec<PhysAddr>,
     /// File descriptor table
     fd_table: FdTable,
+    /// Signal mask (blocked signals)
+    signal_mask: SigSet,
+    /// Pending signals
+    pending_signals: PendingSignals,
+    /// Signal actions (handlers)
+    sigactions: [SigAction; NSIG],
 }
 
 impl Process {
@@ -152,6 +159,9 @@ impl Process {
             children: Vec::new(),
             owned_frames: Vec::new(),
             fd_table: FdTable::new(),
+            signal_mask: SigSet::empty(),
+            pending_signals: PendingSignals::new(),
+            sigactions: [SigAction::new(); NSIG],
         }
     }
 
@@ -314,6 +324,67 @@ impl Process {
     /// Set fd table (for fork)
     pub fn set_fd_table(&mut self, fd_table: FdTable) {
         self.fd_table = fd_table;
+    }
+
+    /// Get the signal mask (blocked signals)
+    pub fn signal_mask(&self) -> &SigSet {
+        &self.signal_mask
+    }
+
+    /// Get a mutable reference to the signal mask
+    pub fn signal_mask_mut(&mut self) -> &mut SigSet {
+        &mut self.signal_mask
+    }
+
+    /// Set the signal mask
+    pub fn set_signal_mask(&mut self, mask: SigSet) {
+        self.signal_mask = mask;
+    }
+
+    /// Get pending signals
+    pub fn pending_signals(&self) -> &PendingSignals {
+        &self.pending_signals
+    }
+
+    /// Get a mutable reference to pending signals
+    pub fn pending_signals_mut(&mut self) -> &mut PendingSignals {
+        &mut self.pending_signals
+    }
+
+    /// Get a signal action
+    pub fn sigaction(&self, sig: i32) -> Option<&SigAction> {
+        if sig >= 1 && sig <= NSIG as i32 {
+            Some(&self.sigactions[(sig - 1) as usize])
+        } else {
+            None
+        }
+    }
+
+    /// Set a signal action
+    pub fn set_sigaction(&mut self, sig: i32, action: SigAction) {
+        if sig >= 1 && sig <= NSIG as i32 {
+            self.sigactions[(sig - 1) as usize] = action;
+        }
+    }
+
+    /// Get the sigactions array (for fork)
+    pub fn sigactions(&self) -> &[SigAction; NSIG] {
+        &self.sigactions
+    }
+
+    /// Set sigactions (for fork/exec)
+    pub fn set_sigactions(&mut self, actions: [SigAction; NSIG]) {
+        self.sigactions = actions;
+    }
+
+    /// Check if there are any deliverable signals
+    pub fn has_pending_signals(&self) -> bool {
+        self.pending_signals.has_deliverable(&self.signal_mask)
+    }
+
+    /// Add a pending signal
+    pub fn send_signal(&mut self, sig: i32, info: Option<efflux_signal::SigInfo>) {
+        self.pending_signals.add(sig, info);
     }
 }
 
