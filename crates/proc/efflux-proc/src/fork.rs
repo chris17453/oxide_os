@@ -80,6 +80,10 @@ pub fn do_fork<A: FrameAllocator>(
     child.set_pgid(parent.pgid());
     child.set_sid(parent.sid());
 
+    // Clone file descriptor table
+    let fd_table = parent.clone_fd_table();
+    child.set_fd_table(fd_table);
+
     // Add child to parent's children list
     parent.add_child(child_pid);
 

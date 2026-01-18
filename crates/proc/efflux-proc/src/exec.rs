@@ -155,6 +155,9 @@ pub fn do_exec<A: FrameAllocator>(
     ctx.rsp = user_stack_top.as_u64();
     ctx.rflags = 0x202; // IF set
 
+    // Close cloexec file descriptors
+    proc.fd_table_mut().close_cloexec();
+
     // Flush TLB
     flush_tlb_all();
 

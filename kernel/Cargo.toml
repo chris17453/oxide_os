@@ -19,4 +19,7 @@ efflux-proc-traits = { workspace = true }
 efflux-elf = { workspace = true }
 efflux-syscall = { workspace = true }
 efflux-boot-proto = { workspace = true }
+efflux-vfs = { workspace = true }
+efflux-devfs = { workspace = true }
+efflux-tmpfs = { workspace = true }
 spin = { workspace = true }

@@ -1,0 +1,11 @@
+[package]
+name = "efflux-tmpfs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "In-memory temporary filesystem for EFFLUX OS"
+
+[dependencies]
+efflux-vfs = { workspace = true }
+efflux-core = { workspace = true }
+spin = { workspace = true }

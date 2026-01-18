@@ -8,6 +8,7 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
 use efflux_core::{PhysAddr, VirtAddr};
 use efflux_proc_traits::{Pid, ProcessState};
+use efflux_vfs::FdTable;
 use spin::{Mutex, RwLock};
 
 use crate::UserAddressSpace;
@@ -119,6 +120,8 @@ pub struct Process {
     children: Vec<Pid>,
     /// Physical frames owned by this process (for COW tracking)
     owned_frames: Vec<PhysAddr>,
+    /// File descriptor table
+    fd_table: FdTable,
 }
 
 impl Process {
@@ -148,6 +151,7 @@ impl Process {
             entry_point,
             children: Vec::new(),
             owned_frames: Vec::new(),
+            fd_table: FdTable::new(),
         }
     }
 
@@ -290,6 +294,26 @@ impl Process {
     /// Take ownership of all owned frames (for cleanup)
     pub fn take_owned_frames(&mut self) -> Vec<PhysAddr> {
         core::mem::take(&mut self.owned_frames)
+    }
+
+    /// Get a reference to the file descriptor table
+    pub fn fd_table(&self) -> &FdTable {
+        &self.fd_table
+    }
+
+    /// Get a mutable reference to the file descriptor table
+    pub fn fd_table_mut(&mut self) -> &mut FdTable {
+        &mut self.fd_table
+    }
+
+    /// Clone fd table for fork
+    pub fn clone_fd_table(&self) -> FdTable {
+        self.fd_table.clone_for_fork()
+    }
+
+    /// Set fd table (for fork)
+    pub fn set_fd_table(&mut self, fd_table: FdTable) {
+        self.fd_table = fd_table;
     }
 }
 

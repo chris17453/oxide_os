@@ -21,6 +21,9 @@ members = [
     "crates/boot/efflux-boot-proto",
     "crates/drivers/efflux-driver-traits",
     "crates/drivers/serial/efflux-driver-uart-8250",
+    "crates/vfs/efflux-vfs",
+    "crates/vfs/efflux-devfs",
+    "crates/vfs/efflux-tmpfs",
     "bootloader/efflux-boot-uefi",
 ]
 
@@ -53,6 +56,9 @@ efflux-elf = { path = "crates/exec/efflux-elf" }
 efflux-syscall = { path = "crates/syscall/efflux-syscall" }
 efflux-boot-proto = { path = "crates/boot/efflux-boot-proto" }
 efflux-driver-traits = { path = "crates/drivers/efflux-driver-traits" }
+efflux-vfs = { path = "crates/vfs/efflux-vfs" }
+efflux-devfs = { path = "crates/vfs/efflux-devfs" }
+efflux-tmpfs = { path = "crates/vfs/efflux-tmpfs" }
 
 [profile.dev]
 panic = "abort"

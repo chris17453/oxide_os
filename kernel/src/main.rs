@@ -32,6 +32,9 @@ use efflux_proc::{
 };
 use efflux_proc_traits::{MemoryFlags, Pid, ProcessState};
 use efflux_syscall::SyscallContext;
+use efflux_vfs::{File, FileFlags, mount::GLOBAL_VFS, MountFlags, VnodeOps};
+use efflux_devfs::DevFs;
+use efflux_tmpfs::TmpDir;
 use spin::Mutex;
 
 /// Global kernel heap allocator
@@ -201,6 +204,39 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
         arch::syscall::set_syscall_handler(syscall_dispatch);
     }
 
+    // ========================================
+    // VFS Initialization
+    // ========================================
+    let _ = writeln!(writer, "[VFS] Initializing virtual filesystem...");
+
+    // Mount tmpfs as root filesystem
+    let root_fs = TmpDir::new_root();
+    if let Err(e) = GLOBAL_VFS.mount(root_fs.clone(), "/", MountFlags::empty(), "tmpfs") {
+        let _ = writeln!(writer, "[VFS] Failed to mount root: {:?}", e);
+        arch::X86_64::halt();
+    }
+    let _ = writeln!(writer, "[VFS] Mounted tmpfs at /");
+
+    // Create /dev directory
+    if let Err(e) = root_fs.mkdir("dev", efflux_vfs::Mode::DEFAULT_DIR) {
+        let _ = writeln!(writer, "[VFS] Failed to create /dev: {:?}", e);
+        arch::X86_64::halt();
+    }
+
+    // Mount devfs at /dev
+    let dev_fs = DevFs::new();
+    if let Err(e) = GLOBAL_VFS.mount(dev_fs, "/dev", MountFlags::empty(), "devfs") {
+        let _ = writeln!(writer, "[VFS] Failed to mount devfs: {:?}", e);
+        arch::X86_64::halt();
+    }
+    let _ = writeln!(writer, "[VFS] Mounted devfs at /dev");
+
+    // Set up console write function for devfs
+    unsafe {
+        efflux_devfs::devices::set_console_write(console_write_bytes);
+    }
+    let _ = writeln!(writer, "[VFS] VFS initialized");
+
     // Parse the embedded init.elf
     let _ = writeln!(writer, "[USER] Parsing init.elf ({} bytes)...", INIT_ELF.len());
     let elf = match ElfExecutable::parse(INIT_ELF) {
@@ -341,6 +377,39 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     process_table().set_current_pid(init_pid);
     let _ = writeln!(writer, "[USER] Init process registered");
 
+    // Set up standard file descriptors (stdin, stdout, stderr) for init
+    let _ = writeln!(writer, "[USER] Setting up stdin/stdout/stderr...");
+    {
+        let mut proc = init_arc.lock();
+        // Open /dev/console for stdin (fd 0), stdout (fd 1), stderr (fd 2)
+        match GLOBAL_VFS.lookup("/dev/console") {
+            Ok(console_vnode) => {
+                // stdin (read-only)
+                let stdin = Arc::new(File::new(console_vnode.clone(), FileFlags::O_RDONLY));
+                if let Err(e) = proc.fd_table_mut().insert(0, stdin) {
+                    let _ = writeln!(writer, "[USER] Failed to set up stdin: {:?}", e);
+                }
+
+                // stdout (write-only)
+                let stdout = Arc::new(File::new(console_vnode.clone(), FileFlags::O_WRONLY));
+                if let Err(e) = proc.fd_table_mut().insert(1, stdout) {
+                    let _ = writeln!(writer, "[USER] Failed to set up stdout: {:?}", e);
+                }
+
+                // stderr (write-only)
+                let stderr = Arc::new(File::new(console_vnode, FileFlags::O_WRONLY));
+                if let Err(e) = proc.fd_table_mut().insert(2, stderr) {
+                    let _ = writeln!(writer, "[USER] Failed to set up stderr: {:?}", e);
+                }
+
+                let _ = writeln!(writer, "[USER] Standard fds set up (0,1,2 -> /dev/console)");
+            }
+            Err(e) => {
+                let _ = writeln!(writer, "[USER] Failed to open /dev/console: {:?}", e);
+            }
+        }
+    }
+
     // Get the PML4 from the registered process
     let user_pml4_phys = init_arc.lock().address_space().pml4_phys();
 
@@ -447,6 +516,14 @@ fn page_fault_handler(fault_addr: u64, error_code: u64, rip: u64) -> bool {
 
 /// Console write function for syscalls
 fn console_write(data: &[u8]) {
+    let mut writer = serial::SerialWriter;
+    for &byte in data {
+        let _ = writer.write_char(byte as char);
+    }
+}
+
+/// Console write function for devfs (same as console_write but typed for devfs)
+fn console_write_bytes(data: &[u8]) {
     let mut writer = serial::SerialWriter;
     for &byte in data {
         let _ = writer.write_char(byte as char);

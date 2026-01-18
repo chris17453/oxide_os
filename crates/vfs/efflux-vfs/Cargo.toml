@@ -1,0 +1,10 @@
+[package]
+name = "efflux-vfs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+efflux-core = { workspace = true }
+spin = { workspace = true }
+bitflags = { workspace = true }

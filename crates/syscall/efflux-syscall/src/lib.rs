@@ -6,12 +6,16 @@
 
 extern crate alloc;
 
+pub mod vfs;
+pub mod dir;
+
 use efflux_core::VirtAddr;
 use efflux_proc::process_table;
 use efflux_proc_traits::Pid;
 
 /// Syscall numbers
 pub mod nr {
+    // Process syscalls
     pub const EXIT: u64 = 0;
     pub const WRITE: u64 = 1;
     pub const READ: u64 = 2;
@@ -25,6 +29,23 @@ pub mod nr {
     pub const GETPGID: u64 = 10;
     pub const SETSID: u64 = 11;
     pub const GETSID: u64 = 12;
+
+    // VFS syscalls
+    pub const OPEN: u64 = 20;
+    pub const CLOSE: u64 = 21;
+    pub const LSEEK: u64 = 22;
+    pub const FSTAT: u64 = 23;
+    pub const STAT: u64 = 24;
+    pub const DUP: u64 = 25;
+    pub const DUP2: u64 = 26;
+    pub const FTRUNCATE: u64 = 27;
+
+    // Directory syscalls
+    pub const MKDIR: u64 = 30;
+    pub const RMDIR: u64 = 31;
+    pub const UNLINK: u64 = 32;
+    pub const RENAME: u64 = 33;
+    pub const GETDENTS: u64 = 34;
 }
 
 /// Error codes (negative return values)
@@ -38,6 +59,13 @@ pub mod errno {
     pub const ECHILD: i64 = -10;    // No child processes
     pub const EAGAIN: i64 = -11;    // Resource temporarily unavailable
     pub const EPERM: i64 = -1;      // Operation not permitted
+    pub const ENOENT: i64 = -2;     // No such file or directory
+    pub const EEXIST: i64 = -17;    // File exists
+    pub const ENOTDIR: i64 = -20;   // Not a directory
+    pub const EISDIR: i64 = -21;    // Is a directory
+    pub const ENOTEMPTY: i64 = -39; // Directory not empty
+    pub const ENOSPC: i64 = -28;    // No space left on device
+    pub const EROFS: i64 = -30;     // Read-only file system
 }
 
 /// Console output callback type
@@ -117,11 +145,12 @@ pub fn dispatch(
     arg1: u64,
     arg2: u64,
     arg3: u64,
-    _arg4: u64,
+    arg4: u64,
     _arg5: u64,
     _arg6: u64,
 ) -> i64 {
     match number {
+        // Process syscalls
         nr::EXIT => sys_exit(arg1 as i32),
         nr::WRITE => sys_write(arg1 as i32, arg2, arg3 as usize),
         nr::READ => sys_read(arg1 as i32, arg2, arg3 as usize),
@@ -135,6 +164,24 @@ pub fn dispatch(
         nr::GETPGID => sys_getpgid(arg1 as Pid),
         nr::SETSID => sys_setsid(),
         nr::GETSID => sys_getsid(arg1 as Pid),
+
+        // VFS syscalls
+        nr::OPEN => vfs::sys_open(arg1, arg2 as usize, arg3 as u32, arg4 as u32),
+        nr::CLOSE => vfs::sys_close(arg1 as i32),
+        nr::LSEEK => vfs::sys_lseek(arg1 as i32, arg2 as i64, arg3 as i32),
+        nr::FSTAT => vfs::sys_fstat(arg1 as i32, arg2),
+        nr::STAT => vfs::sys_stat(arg1, arg2 as usize, arg3),
+        nr::DUP => vfs::sys_dup(arg1 as i32),
+        nr::DUP2 => vfs::sys_dup2(arg1 as i32, arg2 as i32),
+        nr::FTRUNCATE => vfs::sys_ftruncate(arg1 as i32, arg2),
+
+        // Directory syscalls
+        nr::MKDIR => dir::sys_mkdir(arg1, arg2 as usize, arg3 as u32),
+        nr::RMDIR => dir::sys_rmdir(arg1, arg2 as usize),
+        nr::UNLINK => dir::sys_unlink(arg1, arg2 as usize),
+        nr::RENAME => dir::sys_rename(arg1, arg2 as usize, arg3, arg4 as usize),
+        nr::GETDENTS => dir::sys_getdents(arg1 as i32, arg2, arg3 as usize),
+
         _ => errno::ENOSYS,
     }
 }

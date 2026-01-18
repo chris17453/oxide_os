@@ -58,6 +58,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-devfs"
+version = "0.1.0"
+dependencies = [
+ "efflux-core",
+ "efflux-vfs",
+ "spin",
+]
+
+[[package]]
 name = "efflux-driver-traits"
 version = "0.1.0"
 dependencies = [
@@ -89,6 +98,7 @@ dependencies = [
  "efflux-arch-x86_64",
  "efflux-boot-proto",
  "efflux-core",
+ "efflux-devfs",
  "efflux-elf",
  "efflux-mm-frame",
  "efflux-mm-heap",
@@ -99,6 +109,8 @@ dependencies = [
  "efflux-sched",
  "efflux-sched-traits",
  "efflux-syscall",
+ "efflux-tmpfs",
+ "efflux-vfs",
  "spin",
 ]
 
@@ -164,6 +176,7 @@ dependencies = [
  "efflux-mm-traits",
  "efflux-proc-traits",
  "efflux-sched-traits",
+ "efflux-vfs",
  "spin",
 ]
 
@@ -197,6 +210,25 @@ dependencies = [
  "efflux-mm-traits",
  "efflux-proc",
  "efflux-proc-traits",
+ "efflux-vfs",
+ "spin",
+]
+
+[[package]]
+name = "efflux-tmpfs"
+version = "0.1.0"
+dependencies = [
+ "efflux-core",
+ "efflux-vfs",
+ "spin",
+]
+
+[[package]]
+name = "efflux-vfs"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "efflux-core",
  "spin",
 ]
 

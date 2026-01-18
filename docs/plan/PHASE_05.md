@@ -1,7 +1,7 @@
 # Phase 5: VFS + Filesystems
 
 **Stage:** 2 - Core OS
-**Status:** Not Started
+**Status:** Complete (x86_64)
 **Dependencies:** Phase 4 (Process Model)
 
 ---
@@ -16,10 +16,10 @@ Implement Virtual Filesystem layer with initial filesystem implementations.
 
 | Item | Status |
 |------|--------|
-| VFS layer with vnode abstraction | [ ] |
-| File descriptor table per process | [ ] |
-| devfs (/dev/null, /dev/zero, /dev/console) | [ ] |
-| tmpfs (RAM filesystem) | [ ] |
+| VFS layer with vnode abstraction | [x] |
+| File descriptor table per process | [x] |
+| devfs (/dev/null, /dev/zero, /dev/console) | [x] |
+| tmpfs (RAM filesystem) | [x] |
 | initramfs (cpio) loaded at boot | [ ] |
 | procfs basics (/proc/self, /proc/[pid]) | [ ] |
 
@@ -29,7 +29,7 @@ Implement Virtual Filesystem layer with initial filesystem implementations.
 
 | Arch | VFS | devfs | tmpfs | initramfs | procfs | Done |
 |------|-----|-------|-------|-----------|--------|------|
-| x86_64 | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
+| x86_64 | [x] | [x] | [x] | [ ] | [ ] | [x] |
 | i686 | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
 | aarch64 | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
 | arm | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
@@ -142,13 +142,13 @@ crates/vfs/efflux-initramfs/src/
 
 ## Exit Criteria
 
-- [ ] open/read/write/close work on files
-- [ ] Directory operations (mkdir, rmdir, readdir)
-- [ ] /dev/null, /dev/zero, /dev/console work
-- [ ] tmpfs supports file creation and I/O
-- [ ] initramfs loads and mounts at boot
-- [ ] /proc/self/exe resolves correctly
-- [ ] Works on all 8 architectures
+- [x] open/read/write/close work on files
+- [x] Directory operations (mkdir, rmdir, readdir)
+- [x] /dev/null, /dev/zero, /dev/console work
+- [x] tmpfs supports file creation and I/O
+- [ ] initramfs loads and mounts at boot (deferred)
+- [ ] /proc/self/exe resolves correctly (deferred)
+- [ ] Works on all 8 architectures (x86_64 complete)
 
 ---
 
@@ -181,7 +181,29 @@ int main() {
 
 ## Notes
 
-*Add implementation notes here as work progresses*
+### Implementation (2026-01-18)
+
+Phase 5 VFS infrastructure complete for x86_64:
+
+**Crates Created:**
+- `efflux-vfs`: Core VFS abstraction with VnodeOps trait, File, FdTable, Path, Mount
+- `efflux-devfs`: Device filesystem with /dev/null, /dev/zero, /dev/console
+- `efflux-tmpfs`: In-memory filesystem with full file/directory operations
+
+**Syscalls Implemented:**
+- File operations: open, close, read, write, lseek, fstat, stat, dup, dup2, ftruncate
+- Directory operations: mkdir, rmdir, unlink, rename, getdents
+
+**Kernel Integration:**
+- VFS mounted at boot (tmpfs at /, devfs at /dev)
+- Console device connected to serial output
+- Init process gets stdin/stdout/stderr (fds 0,1,2 -> /dev/console)
+- FdTable integrated into Process struct
+- Fork clones fd table, exec closes cloexec fds
+
+**Deferred to later phases:**
+- initramfs/cpio: Will be added when boot needs external files
+- procfs: Will be added when process inspection is needed
 
 ---
 
