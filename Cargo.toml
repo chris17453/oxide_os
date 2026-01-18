@@ -49,6 +49,9 @@ members = [
     "crates/drivers/usb/efflux-xhci",
     "crates/drivers/usb/efflux-usb-msc",
     "crates/drivers/usb/efflux-usb-hid",
+    "crates/container/efflux-namespace",
+    "crates/container/efflux-cgroup",
+    "crates/container/efflux-seccomp",
     "crates/tty/efflux-tty",
     "crates/tty/efflux-pty",
     "crates/signal/efflux-signal",
@@ -126,6 +129,9 @@ efflux-usb = { path = "crates/usb/efflux-usb" }
 efflux-xhci = { path = "crates/drivers/usb/efflux-xhci" }
 efflux-usb-msc = { path = "crates/drivers/usb/efflux-usb-msc" }
 efflux-usb-hid = { path = "crates/drivers/usb/efflux-usb-hid" }
+efflux-namespace = { path = "crates/container/efflux-namespace" }
+efflux-cgroup = { path = "crates/container/efflux-cgroup" }
+efflux-seccomp = { path = "crates/container/efflux-seccomp" }
 
 [profile.dev]
 panic = "abort"

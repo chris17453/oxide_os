@@ -81,6 +81,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-cgroup"
+version = "0.1.0"
+dependencies = [
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "efflux-core"
 version = "0.1.0"
 dependencies = [
@@ -278,6 +285,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-namespace"
+version = "0.1.0"
+dependencies = [
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "efflux-net"
 version = "0.1.0"
 dependencies = [
@@ -358,6 +372,13 @@ name = "efflux-sched-traits"
 version = "0.1.0"
 dependencies = [
  "efflux-core",
+]
+
+[[package]]
+name = "efflux-seccomp"
+version = "0.1.0"
+dependencies = [
+ "spin 0.9.8",
 ]
 
 [[package]]
