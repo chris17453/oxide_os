@@ -71,6 +71,10 @@ members = [
     "crates/media/efflux-automount",
     "crates/net/efflux-smb",
     "crates/net/efflux-nfs",
+    "crates/compat/efflux-v86",
+    "crates/compat/efflux-python-sandbox",
+    "crates/compat/efflux-binfmt",
+    "crates/compat/efflux-syscall-compat",
     "crates/tty/efflux-tty",
     "crates/tty/efflux-pty",
     "crates/signal/efflux-signal",
@@ -171,6 +175,10 @@ efflux-media = { path = "crates/media/efflux-media" }
 efflux-automount = { path = "crates/media/efflux-automount" }
 efflux-smb = { path = "crates/net/efflux-smb" }
 efflux-nfs = { path = "crates/net/efflux-nfs" }
+efflux-v86 = { path = "crates/compat/efflux-v86" }
+efflux-python-sandbox = { path = "crates/compat/efflux-python-sandbox" }
+efflux-binfmt = { path = "crates/compat/efflux-binfmt" }
+efflux-syscall-compat = { path = "crates/compat/efflux-syscall-compat" }
 
 [profile.dev]
 panic = "abort"

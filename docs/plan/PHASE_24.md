@@ -1,7 +1,7 @@
 # Phase 24: Compatibility Runtimes
 
 **Stage:** 5 - Polish
-**Status:** Not Started
+**Status:** Complete (x86_64)
 **Dependencies:** Phase 8 (Libc + Userland)
 
 ---
@@ -16,11 +16,11 @@ Enable running legacy DOS programs and sandboxed Python scripts.
 
 | Item | Status |
 |------|--------|
-| DOS emulation (V86 on x86) | [ ] |
-| Python interpreter (sandboxed) | [ ] |
-| Syscall translation layers | [ ] |
-| Legacy binary detection | [ ] |
-| binfmt_misc support | [ ] |
+| DOS emulation (V86 on x86) | [x] |
+| Python interpreter (sandboxed) | [x] |
+| Syscall translation layers | [x] |
+| Legacy binary detection | [x] |
+| binfmt_misc support | [x] |
 
 ---
 
@@ -28,7 +28,7 @@ Enable running legacy DOS programs and sandboxed Python scripts.
 
 | Arch | DOS | Python | Syscall Compat | Done |
 |------|-----|--------|----------------|------|
-| x86_64 | [ ] | [ ] | [ ] | [ ] |
+| x86_64 | [x] | [x] | [x] | [x] |
 | i686 | [ ] | [ ] | [ ] | [ ] |
 | aarch64 | N/A | [ ] | [ ] | [ ] |
 | arm | N/A | [ ] | [ ] | [ ] |
@@ -276,13 +276,13 @@ userspace/compat/
 
 ## Exit Criteria
 
-- [ ] DOS .COM/.EXE programs run on x86
-- [ ] DOS games display graphics
-- [ ] Python scripts run in sandbox
-- [ ] Sandbox restricts filesystem access
-- [ ] Sandbox restricts network access
-- [ ] binfmt_misc auto-detects formats
-- [ ] Linux binary translation (basic)
+- [x] DOS .COM/.EXE programs run on x86
+- [x] DOS games display graphics
+- [x] Python scripts run in sandbox
+- [x] Sandbox restricts filesystem access
+- [x] Sandbox restricts network access
+- [x] binfmt_misc auto-detects formats
+- [x] Linux binary translation (basic)
 - [ ] Works on all 8 architectures (Python only)
 
 ---

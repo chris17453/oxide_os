@@ -69,6 +69,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-binfmt"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "efflux-block"
 version = "0.1.0"
 dependencies = [
@@ -447,6 +455,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-python-sandbox"
+version = "0.1.0"
+dependencies = [
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "efflux-quarantine"
 version = "0.1.0"
 dependencies = [
@@ -522,6 +537,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-syscall-compat"
+version = "0.1.0"
+dependencies = [
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "efflux-tcpip"
 version = "0.1.0"
 dependencies = [
@@ -578,6 +600,14 @@ name = "efflux-usb-msc"
 version = "0.1.0"
 dependencies = [
  "efflux-usb",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "efflux-v86"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
  "spin 0.9.8",
 ]
 

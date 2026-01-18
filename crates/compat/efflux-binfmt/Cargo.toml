@@ -1,0 +1,15 @@
+[package]
+name = "efflux-binfmt"
+version = "0.1.0"
+edition = "2021"
+authors = ["EFFLUX Contributors"]
+description = "Binary format detection and registration for EFFLUX OS"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+spin = "0.9"
+bitflags = "2.4"
+
+[features]
+default = []
+std = []
