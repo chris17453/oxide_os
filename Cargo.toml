@@ -21,11 +21,18 @@ members = [
     "crates/boot/efflux-boot-proto",
     "crates/drivers/efflux-driver-traits",
     "crates/drivers/serial/efflux-driver-uart-8250",
+    "crates/drivers/block/efflux-virtio-blk",
+    "crates/drivers/block/efflux-nvme",
+    "crates/drivers/block/efflux-ahci",
+    "crates/block/efflux-block",
+    "crates/block/efflux-gpt",
     "crates/vfs/efflux-vfs",
     "crates/vfs/efflux-devfs",
     "crates/vfs/efflux-tmpfs",
     "crates/vfs/efflux-initramfs",
     "crates/vfs/efflux-procfs",
+    "crates/fs/efflux-effluxfs",
+    "crates/fs/efflux-fat32",
     "crates/tty/efflux-tty",
     "crates/tty/efflux-pty",
     "crates/signal/efflux-signal",
@@ -80,6 +87,13 @@ efflux-pty = { path = "crates/tty/efflux-pty" }
 efflux-signal = { path = "crates/signal/efflux-signal" }
 efflux-smp = { path = "crates/smp/efflux-smp" }
 efflux-module = { path = "crates/module/efflux-module" }
+efflux-block = { path = "crates/block/efflux-block" }
+efflux-gpt = { path = "crates/block/efflux-gpt" }
+efflux-virtio-blk = { path = "crates/drivers/block/efflux-virtio-blk" }
+efflux-nvme = { path = "crates/drivers/block/efflux-nvme" }
+efflux-ahci = { path = "crates/drivers/block/efflux-ahci" }
+efflux-effluxfs = { path = "crates/fs/efflux-effluxfs" }
+efflux-fat32 = { path = "crates/fs/efflux-fat32" }
 
 [profile.dev]
 panic = "abort"

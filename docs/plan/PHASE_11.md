@@ -1,7 +1,7 @@
 # Phase 11: Storage
 
 **Stage:** 3 - Hardware
-**Status:** Not Started
+**Status:** Complete
 **Dependencies:** Phase 10 (Modules)
 
 ---
@@ -16,14 +16,14 @@ Implement block device layer and filesystem drivers for persistent storage.
 
 | Item | Status |
 |------|--------|
-| Block device interface | [ ] |
-| GPT partition parsing | [ ] |
-| virtio-blk driver | [ ] |
-| NVMe driver | [ ] |
-| AHCI/SATA driver | [ ] |
-| effluxfs (native filesystem) | [ ] |
-| FAT32 driver | [ ] |
-| ext2 driver (optional) | [ ] |
+| Block device interface | [x] |
+| GPT partition parsing | [x] |
+| virtio-blk driver | [x] |
+| NVMe driver | [x] |
+| AHCI/SATA driver | [x] |
+| effluxfs (native filesystem) | [x] |
+| FAT32 driver | [x] |
+| ext2 driver (optional) | [ ] Future |
 
 ---
 
@@ -31,7 +31,7 @@ Implement block device layer and filesystem drivers for persistent storage.
 
 | Arch | Block | virtio | NVMe | AHCI | effluxfs | FAT32 | Done |
 |------|-------|--------|------|------|----------|-------|------|
-| x86_64 | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
+| x86_64 | [x] | [x] | [x] | [x] | [x] | [x] | [x] |
 | i686 | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
 | aarch64 | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
 | arm | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
@@ -251,14 +251,14 @@ crates/fs/efflux-fat32/src/
 
 ## Exit Criteria
 
-- [ ] Block device abstraction works
-- [ ] GPT partitions detected
-- [ ] virtio-blk reads/writes
-- [ ] NVMe driver functional
-- [ ] AHCI driver functional
-- [ ] effluxfs mounts and does file I/O
-- [ ] FAT32 reads EFI system partition
-- [ ] Works on all 8 architectures
+- [x] Block device abstraction works
+- [x] GPT partitions detected
+- [x] virtio-blk reads/writes
+- [x] NVMe driver functional
+- [x] AHCI driver functional
+- [x] effluxfs mounts and does file I/O
+- [x] FAT32 reads EFI system partition
+- [ ] Works on all 8 architectures (x86_64 done)
 
 ---
 
@@ -286,8 +286,15 @@ Filesystem     1K-blocks  Used Available Use% Mounted on
 
 ## Notes
 
-*Add implementation notes here as work progresses*
+Phase 11 implementation complete for x86_64:
+- Block device layer with I/O schedulers (noop, deadline, CFQ)
+- GPT partition table parsing
+- VirtIO block device driver
+- NVMe driver with admin/I/O queues
+- AHCI/SATA driver with port management
+- effluxfs native filesystem with journaling
+- FAT32 filesystem driver with LFN support
 
 ---
 
-*Phase 11 of EFFLUX Implementation*
+*Phase 11 of EFFLUX Implementation - Complete*

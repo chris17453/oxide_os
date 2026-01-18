@@ -45,6 +45,10 @@ pub enum VfsError {
     WouldBlock,
     /// Invalid operation for file type
     InvalidOperation,
+    /// Invalid/unrecognized filesystem
+    InvalidFilesystem,
+    /// Corrupted filesystem data
+    CorruptedFilesystem,
 }
 
 impl VfsError {
@@ -71,6 +75,8 @@ impl VfsError {
             VfsError::BrokenPipe => -32,       // EPIPE
             VfsError::WouldBlock => -11,       // EAGAIN
             VfsError::InvalidOperation => -22, // EINVAL
+            VfsError::InvalidFilesystem => -22, // EINVAL
+            VfsError::CorruptedFilesystem => -5, // EIO
         }
     }
 }
@@ -98,6 +104,8 @@ impl fmt::Display for VfsError {
             VfsError::BrokenPipe => write!(f, "Broken pipe"),
             VfsError::WouldBlock => write!(f, "Operation would block"),
             VfsError::InvalidOperation => write!(f, "Invalid operation"),
+            VfsError::InvalidFilesystem => write!(f, "Invalid filesystem"),
+            VfsError::CorruptedFilesystem => write!(f, "Corrupted filesystem"),
         }
     }
 }
