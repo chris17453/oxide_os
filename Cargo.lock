@@ -149,6 +149,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-fb"
+version = "0.1.0"
+dependencies = [
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "efflux-gpt"
 version = "0.1.0"
 dependencies = [
@@ -420,6 +427,14 @@ version = "0.1.0"
 dependencies = [
  "efflux-block",
  "spin 0.10.0",
+]
+
+[[package]]
+name = "efflux-virtio-gpu"
+version = "0.1.0"
+dependencies = [
+ "efflux-fb",
+ "spin 0.9.8",
 ]
 
 [[package]]
