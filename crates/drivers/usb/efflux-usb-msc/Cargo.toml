@@ -1,0 +1,8 @@
+[package]
+name = "efflux-usb-msc"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+efflux-usb = { path = "../../../usb/efflux-usb" }
+spin = "0.9"
