@@ -165,6 +165,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-input"
+version = "0.1.0"
+dependencies = [
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "efflux-kernel"
 version = "0.1.0"
 dependencies = [
@@ -306,6 +313,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-ps2"
+version = "0.1.0"
+dependencies = [
+ "efflux-input",
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "efflux-pty"
 version = "0.1.0"
 dependencies = [
@@ -405,6 +420,14 @@ version = "0.1.0"
 dependencies = [
  "efflux-block",
  "spin 0.10.0",
+]
+
+[[package]]
+name = "efflux-virtio-input"
+version = "0.1.0"
+dependencies = [
+ "efflux-input",
+ "spin 0.9.8",
 ]
 
 [[package]]
