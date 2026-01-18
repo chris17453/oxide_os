@@ -11,6 +11,7 @@ members = [
     "crates/mm/efflux-mm-frame",
     "crates/mm/efflux-mm-paging",
     "crates/mm/efflux-mm-heap",
+    "crates/mm/efflux-mm-cow",
     "crates/sched/efflux-sched-traits",
     "crates/sched/efflux-sched",
     "crates/proc/efflux-proc-traits",
@@ -42,6 +43,7 @@ efflux-mm-traits = { path = "crates/mm/efflux-mm-traits" }
 efflux-mm-frame = { path = "crates/mm/efflux-mm-frame" }
 efflux-mm-paging = { path = "crates/mm/efflux-mm-paging" }
 efflux-mm-heap = { path = "crates/mm/efflux-mm-heap" }
+efflux-mm-cow = { path = "crates/mm/efflux-mm-cow" }
 efflux-sched-traits = { path = "crates/sched/efflux-sched-traits" }
 efflux-sched = { path = "crates/sched/efflux-sched" }
 efflux-proc-traits = { path = "crates/proc/efflux-proc-traits" }

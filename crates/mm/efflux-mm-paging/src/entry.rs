@@ -27,6 +27,8 @@ bitflags! {
         const GLOBAL = 1 << 8;
         /// No execute (requires NX bit in EFER)
         const NO_EXECUTE = 1 << 63;
+        /// Copy-on-Write (software-defined, bit 9)
+        const COW = 1 << 9;
     }
 }
 
@@ -67,6 +69,18 @@ impl PageTableEntry {
     #[inline]
     pub const fn is_huge(&self) -> bool {
         self.0 & PageTableFlags::HUGE_PAGE.bits() != 0
+    }
+
+    /// Check if entry is a copy-on-write page
+    #[inline]
+    pub const fn is_cow(&self) -> bool {
+        self.0 & PageTableFlags::COW.bits() != 0
+    }
+
+    /// Check if entry is writable
+    #[inline]
+    pub const fn is_writable(&self) -> bool {
+        self.0 & PageTableFlags::WRITABLE.bits() != 0
     }
 
     /// Get the flags

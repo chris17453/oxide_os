@@ -5,3 +5,7 @@ edition = "2024"
 
 [dependencies]
 efflux-core = { path = "../../core/efflux-core" }
+efflux-proc = { path = "../../proc/efflux-proc" }
+efflux-proc-traits = { path = "../../proc/efflux-proc-traits" }
+efflux-mm-traits = { path = "../../mm/efflux-mm-traits" }
+spin = "0.9"

@@ -171,6 +171,9 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
         console_write: Some(console_write),
         console_read: Some(console_read),
         exit: Some(user_exit),
+        fork: None,   // TODO: Implement fork callback
+        exec: None,   // TODO: Implement exec callback
+        wait: None,   // TODO: Implement wait callback
     };
     unsafe {
         efflux_syscall::init(syscall_ctx);

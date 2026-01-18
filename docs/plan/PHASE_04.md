@@ -18,10 +18,10 @@ Implement full UNIX-like process model with fork, exec, wait, and process groups
 |------|--------|
 | Process structure (PID, PPID, credentials) | [x] |
 | Process table and PID allocation | [x] |
-| fork() with Copy-on-Write | [ ] |
-| exec() replaces process image | [ ] |
-| wait()/waitpid() reaps children | [ ] |
-| Process groups and sessions | [ ] |
+| fork() with Copy-on-Write | [x] |
+| exec() replaces process image | [x] |
+| wait()/waitpid() reaps children | [x] |
+| Process groups and sessions | [x] |
 
 ---
 

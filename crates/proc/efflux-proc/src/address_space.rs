@@ -66,6 +66,20 @@ impl UserAddressSpace {
         self.pml4_phys
     }
 
+    /// Create from raw PML4 and frame list
+    ///
+    /// # Safety
+    /// The PML4 must be a valid page table and all frames in the list
+    /// must be owned by this address space.
+    pub unsafe fn from_raw(pml4_phys: PhysAddr, frames: Vec<PhysAddr>) -> Self {
+        let mapper = unsafe { PageMapper::new(pml4_phys) };
+        Self {
+            pml4_phys,
+            mapper,
+            allocated_frames: frames,
+        }
+    }
+
     /// Map a page in user space
     ///
     /// # Safety
