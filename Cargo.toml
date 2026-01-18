@@ -16,6 +16,7 @@ members = [
     "crates/proc/efflux-proc-traits",
     "crates/proc/efflux-proc",
     "crates/exec/efflux-elf",
+    "crates/syscall/efflux-syscall",
     "crates/boot/efflux-boot-proto",
     "crates/drivers/efflux-driver-traits",
     "crates/drivers/serial/efflux-driver-uart-8250",
@@ -46,6 +47,7 @@ efflux-sched = { path = "crates/sched/efflux-sched" }
 efflux-proc-traits = { path = "crates/proc/efflux-proc-traits" }
 efflux-proc = { path = "crates/proc/efflux-proc" }
 efflux-elf = { path = "crates/exec/efflux-elf" }
+efflux-syscall = { path = "crates/syscall/efflux-syscall" }
 efflux-boot-proto = { path = "crates/boot/efflux-boot-proto" }
 efflux-driver-traits = { path = "crates/drivers/efflux-driver-traits" }
 
