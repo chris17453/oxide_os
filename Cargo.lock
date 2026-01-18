@@ -113,6 +113,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-dl"
+version = "0.1.0"
+dependencies = [
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "efflux-dns"
 version = "0.1.0"
 dependencies = [
@@ -276,6 +283,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-mmap"
+version = "0.1.0"
+dependencies = [
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "efflux-module"
 version = "0.1.0"
 dependencies = [
@@ -345,6 +359,13 @@ name = "efflux-ps2"
 version = "0.1.0"
 dependencies = [
  "efflux-input",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "efflux-pthread"
+version = "0.1.0"
+dependencies = [
  "spin 0.9.8",
 ]
 

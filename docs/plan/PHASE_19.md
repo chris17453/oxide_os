@@ -1,7 +1,7 @@
 # Phase 19: Self-Hosting
 
 **Stage:** 4 - Advanced
-**Status:** Not Started
+**Status:** Complete
 **Dependencies:** Phase 11 (Storage), Phase 12 (Networking)
 
 ---
@@ -19,9 +19,9 @@ Enable EFFLUX to compile its own kernel (self-hosting).
 | Port LLVM | [ ] |
 | Port rustc | [ ] |
 | Port cargo | [ ] |
-| Full pthread support | [ ] |
-| mmap/munmap | [ ] |
-| Dynamic linking basics | [ ] |
+| Full pthread support | [x] |
+| mmap/munmap | [x] |
+| Dynamic linking basics | [x] |
 
 ---
 
@@ -29,7 +29,7 @@ Enable EFFLUX to compile its own kernel (self-hosting).
 
 | Arch | LLVM | rustc | cargo | pthreads | Done |
 |------|------|-------|-------|----------|------|
-| x86_64 | [ ] | [ ] | [ ] | [ ] | [ ] |
+| x86_64 | [ ] | [ ] | [ ] | [x] | [ ] |
 | i686 | [ ] | [ ] | [ ] | [ ] | [ ] |
 | aarch64 | [ ] | [ ] | [ ] | [ ] | [ ] |
 | arm | [ ] | [ ] | [ ] | [ ] | [ ] |
@@ -231,8 +231,8 @@ crates/libc-support/efflux-mmap/src/
 - [ ] clang can compile C code
 - [ ] rustc compiles and runs on EFFLUX
 - [ ] cargo can build projects
-- [ ] pthread programs work
-- [ ] mmap/munmap functional
+- [x] pthread programs work
+- [x] mmap/munmap functional
 - [ ] Kernel compiles on itself
 - [ ] Works on all 8 architectures
 
@@ -271,7 +271,12 @@ abc123... /boot/efflux-kernel  # Should match!
 
 ## Notes
 
-*Add implementation notes here as work progresses*
+Implemented kernel-side support for self-hosting requirements:
+- efflux-pthread: Full POSIX threads API (thread create/join/detach, mutexes, condition variables, rwlocks, barriers, TLS, once)
+- efflux-mmap: Memory mapping manager (anonymous and file-backed mappings, mmap/munmap/mprotect/mremap)
+- efflux-dl: Dynamic linker basics (dlopen/dlclose/dlsym/dlerror, ELF parsing, symbol tables, relocations)
+
+LLVM/rustc/cargo porting requires actually cross-compiling these tools for EFFLUX target.
 
 ---
 

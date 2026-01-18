@@ -55,6 +55,9 @@ members = [
     "crates/hypervisor/efflux-vmm",
     "crates/hypervisor/efflux-vmx",
     "crates/hypervisor/efflux-virtio-emu",
+    "crates/libc-support/efflux-pthread",
+    "crates/libc-support/efflux-mmap",
+    "crates/libc-support/efflux-dl",
     "crates/tty/efflux-tty",
     "crates/tty/efflux-pty",
     "crates/signal/efflux-signal",
@@ -138,6 +141,9 @@ efflux-seccomp = { path = "crates/container/efflux-seccomp" }
 efflux-vmm = { path = "crates/hypervisor/efflux-vmm" }
 efflux-vmx = { path = "crates/hypervisor/efflux-vmx" }
 efflux-virtio-emu = { path = "crates/hypervisor/efflux-virtio-emu" }
+efflux-pthread = { path = "crates/libc-support/efflux-pthread" }
+efflux-mmap = { path = "crates/libc-support/efflux-mmap" }
+efflux-dl = { path = "crates/libc-support/efflux-dl" }
 
 [profile.dev]
 panic = "abort"
