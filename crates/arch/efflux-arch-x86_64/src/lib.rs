@@ -14,6 +14,7 @@ pub mod exceptions;
 pub mod apic;
 pub mod context;
 pub mod syscall;
+pub mod usermode;
 
 /// x86_64 architecture implementation
 pub struct X86_64;
