@@ -20,7 +20,17 @@ impl FreeBlock {
     }
 
     fn end_addr(&self) -> usize {
-        self.start_addr() + self.size
+        // Use saturating_add to prevent overflow panic
+        self.start_addr().saturating_add(self.size)
+    }
+
+    /// Check if this block is valid (sanity check)
+    fn is_valid(&self) -> bool {
+        let start = self.start_addr();
+        // A valid block should have a reasonable size and not overflow
+        self.size > 0
+            && self.size < usize::MAX / 2
+            && start.checked_add(self.size).is_some()
     }
 }
 
@@ -82,6 +92,12 @@ impl LinkedListAllocator {
         let mut current = &mut self.head;
 
         while let Some(ref mut block) = current.next {
+            // Skip invalid blocks (corrupted)
+            if !block.is_valid() {
+                current = current.next.as_mut().unwrap();
+                continue;
+            }
+
             // Get end address before borrowing next
             let block_end = block.end_addr();
 
@@ -89,7 +105,7 @@ impl LinkedListAllocator {
             let should_merge = block
                 .next
                 .as_ref()
-                .map(|next| block_end == next.start_addr())
+                .map(|next| next.is_valid() && block_end == next.start_addr())
                 .unwrap_or(false);
 
             if should_merge {
@@ -97,7 +113,7 @@ impl LinkedListAllocator {
                 if let Some(ref mut next_block) = block.next {
                     let next_size = next_block.size;
                     let next_next = next_block.next.take();
-                    block.size += next_size;
+                    block.size = block.size.saturating_add(next_size);
                     block.next = next_next;
                     continue; // Check again for more merges
                 }
@@ -115,6 +131,12 @@ impl LinkedListAllocator {
         let mut current = &mut self.head;
 
         while let Some(ref mut block) = current.next {
+            // Skip invalid blocks
+            if !block.is_valid() {
+                current = current.next.as_mut().unwrap();
+                continue;
+            }
+
             if let Some((alloc_start, alloc_end)) = Self::alloc_from_block(block, size, align) {
                 let block_start = block.start_addr();
                 let block_end = block.end_addr();
@@ -165,15 +187,21 @@ impl LinkedListAllocator {
         size: usize,
         align: usize,
     ) -> Option<(usize, usize)> {
+        // Validate block first
+        if !block.is_valid() {
+            return None;
+        }
+
         let alloc_start = align_up(block.start_addr(), align);
         let alloc_end = alloc_start.checked_add(size)?;
+        let block_end = block.end_addr();
 
-        if alloc_end > block.end_addr() {
+        if alloc_end > block_end {
             return None;
         }
 
         // Ensure remaining space (if any) can hold a FreeBlock
-        let remaining = block.end_addr() - alloc_end;
+        let remaining = block_end.saturating_sub(alloc_end);
         if remaining > 0 && remaining < mem::size_of::<FreeBlock>() {
             return None;
         }
