@@ -395,3 +395,30 @@ pub fn sys_ftruncate(fd: i32, length: u64) -> i64 {
         Err(e) => vfs_error_to_errno(e),
     }
 }
+
+/// sys_ioctl - Device I/O control
+///
+/// # Arguments
+/// * `fd` - File descriptor
+/// * `request` - ioctl request code
+/// * `arg` - ioctl argument (request-specific)
+pub fn sys_ioctl(fd: i32, request: u64, arg: u64) -> i64 {
+    let table = process_table();
+    let proc = match table.current() {
+        Some(p) => p,
+        None => return errno::ESRCH,
+    };
+
+    let proc_guard = proc.lock();
+    let file = match proc_guard.fd_table().get(fd) {
+        Ok(fd_entry) => fd_entry.file.clone(),
+        Err(e) => return vfs_error_to_errno(e),
+    };
+    drop(proc_guard);
+
+    // Call ioctl on the file
+    match file.ioctl(request, arg) {
+        Ok(result) => result,
+        Err(e) => vfs_error_to_errno(e),
+    }
+}

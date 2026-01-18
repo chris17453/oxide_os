@@ -117,10 +117,12 @@ dependencies = [
  "efflux-proc",
  "efflux-proc-traits",
  "efflux-procfs",
+ "efflux-pty",
  "efflux-sched",
  "efflux-sched-traits",
  "efflux-syscall",
  "efflux-tmpfs",
+ "efflux-tty",
  "efflux-vfs",
  "spin",
 ]
@@ -210,6 +212,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-pty"
+version = "0.1.0"
+dependencies = [
+ "efflux-core",
+ "efflux-tty",
+ "efflux-vfs",
+ "spin",
+]
+
+[[package]]
 name = "efflux-sched"
 version = "0.1.0"
 dependencies = [
@@ -240,6 +252,16 @@ dependencies = [
 name = "efflux-tmpfs"
 version = "0.1.0"
 dependencies = [
+ "efflux-core",
+ "efflux-vfs",
+ "spin",
+]
+
+[[package]]
+name = "efflux-tty"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
  "efflux-core",
  "efflux-vfs",
  "spin",

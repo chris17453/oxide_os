@@ -179,4 +179,9 @@ impl File {
         }
         self.vnode.truncate(size)
     }
+
+    /// Perform device I/O control operation
+    pub fn ioctl(&self, request: u64, arg: u64) -> VfsResult<i64> {
+        self.vnode.ioctl(request, arg)
+    }
 }

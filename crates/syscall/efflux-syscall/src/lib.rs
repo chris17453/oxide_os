@@ -46,6 +46,9 @@ pub mod nr {
     pub const UNLINK: u64 = 32;
     pub const RENAME: u64 = 33;
     pub const GETDENTS: u64 = 34;
+
+    // TTY/device syscalls
+    pub const IOCTL: u64 = 40;
 }
 
 /// Error codes (negative return values)
@@ -66,6 +69,7 @@ pub mod errno {
     pub const ENOTEMPTY: i64 = -39; // Directory not empty
     pub const ENOSPC: i64 = -28;    // No space left on device
     pub const EROFS: i64 = -30;     // Read-only file system
+    pub const ENOTTY: i64 = -25;    // Not a typewriter (inappropriate ioctl)
 }
 
 /// Console output callback type
@@ -181,6 +185,9 @@ pub fn dispatch(
         nr::UNLINK => dir::sys_unlink(arg1, arg2 as usize),
         nr::RENAME => dir::sys_rename(arg1, arg2 as usize, arg3, arg4 as usize),
         nr::GETDENTS => dir::sys_getdents(arg1 as i32, arg2, arg3 as usize),
+
+        // TTY/device syscalls
+        nr::IOCTL => vfs::sys_ioctl(arg1 as i32, arg2, arg3),
 
         _ => errno::ENOSYS,
     }

@@ -24,4 +24,6 @@ efflux-devfs = { workspace = true }
 efflux-tmpfs = { workspace = true }
 efflux-initramfs = { workspace = true }
 efflux-procfs = { workspace = true }
+efflux-tty = { workspace = true }
+efflux-pty = { workspace = true }
 spin = { workspace = true }

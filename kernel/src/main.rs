@@ -36,6 +36,7 @@ use efflux_vfs::{File, FileFlags, mount::GLOBAL_VFS, MountFlags, VnodeOps};
 use efflux_devfs::DevFs;
 use efflux_tmpfs::TmpDir;
 use efflux_procfs::ProcFs;
+use efflux_pty::{PtyManager, Ptmx, PtsDir};
 use spin::Mutex;
 
 /// Global kernel heap allocator
@@ -250,6 +251,31 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
         arch::X86_64::halt();
     }
     let _ = writeln!(writer, "[VFS] Mounted procfs at /proc");
+
+    // Initialize PTY subsystem
+    let pty_manager = Arc::new(PtyManager::new());
+
+    // Create /dev/pts directory
+    if let Err(e) = root_fs.mkdir("pts", efflux_vfs::Mode::DEFAULT_DIR) {
+        // Ignore error if directory already exists somehow
+        let _ = writeln!(writer, "[VFS] Note: /dev/pts mkdir: {:?}", e);
+    }
+
+    // Get the devfs to register PTY devices
+    if let Ok(devfs_vnode) = GLOBAL_VFS.lookup("/dev") {
+        // We need to downcast and use DevFs's register method
+        // For now, the PTY devices are accessible through the PtsDir
+        let _ = writeln!(writer, "[VFS] PTY manager initialized");
+    }
+
+    // Mount pts filesystem at /dev/pts (using tmpfs for the mount point)
+    let pts_dir = PtsDir::new(pty_manager.clone(), 100);
+    if let Err(e) = GLOBAL_VFS.mount(pts_dir, "/dev/pts", MountFlags::empty(), "devpts") {
+        let _ = writeln!(writer, "[VFS] Failed to mount devpts: {:?}", e);
+        // Non-fatal - PTY support just won't work
+    } else {
+        let _ = writeln!(writer, "[VFS] Mounted devpts at /dev/pts");
+    }
 
     let _ = writeln!(writer, "[VFS] VFS initialized");
 

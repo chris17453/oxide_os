@@ -39,6 +39,8 @@ pub enum VfsError {
     Busy,
     /// No such device
     NoDevice,
+    /// Broken pipe
+    BrokenPipe,
 }
 
 impl VfsError {
@@ -62,6 +64,7 @@ impl VfsError {
             VfsError::NotSupported => -95,     // ENOTSUP
             VfsError::Busy => -16,             // EBUSY
             VfsError::NoDevice => -19,         // ENODEV
+            VfsError::BrokenPipe => -32,       // EPIPE
         }
     }
 }
@@ -86,6 +89,7 @@ impl fmt::Display for VfsError {
             VfsError::NotSupported => write!(f, "Operation not supported"),
             VfsError::Busy => write!(f, "Device or resource busy"),
             VfsError::NoDevice => write!(f, "No such device"),
+            VfsError::BrokenPipe => write!(f, "Broken pipe"),
         }
     }
 }

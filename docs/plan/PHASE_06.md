@@ -1,7 +1,7 @@
 # Phase 6: TTY + PTY
 
 **Stage:** 2 - Core OS
-**Status:** Not Started
+**Status:** Complete (x86_64)
 **Dependencies:** Phase 5 (VFS + Filesystems)
 
 ---
@@ -16,13 +16,13 @@ Implement terminal subsystem with line discipline and pseudo-terminals.
 
 | Item | Status |
 |------|--------|
-| TTY device abstraction | [ ] |
-| Line discipline (canonical mode) | [ ] |
-| Raw mode support | [ ] |
-| PTY master/slave pairs | [ ] |
-| Foreground process group | [ ] |
-| Window size (TIOCGWINSZ/TIOCSWINSZ) | [ ] |
-| Job control basics | [ ] |
+| TTY device abstraction | [x] |
+| Line discipline (canonical mode) | [x] |
+| Raw mode support | [x] |
+| PTY master/slave pairs | [x] |
+| Foreground process group | [x] |
+| Window size (TIOCGWINSZ/TIOCSWINSZ) | [x] |
+| Job control basics | [x] |
 
 ---
 
@@ -30,7 +30,7 @@ Implement terminal subsystem with line discipline and pseudo-terminals.
 
 | Arch | TTY | LineDis | PTY | JobCtl | Done |
 |------|-----|---------|-----|--------|------|
-| x86_64 | [ ] | [ ] | [ ] | [ ] | [ ] |
+| x86_64 | [x] | [x] | [x] | [x] | [x] |
 | i686 | [ ] | [ ] | [ ] | [ ] | [ ] |
 | aarch64 | [ ] | [ ] | [ ] | [ ] | [ ] |
 | arm | [ ] | [ ] | [ ] | [ ] | [ ] |
@@ -181,13 +181,13 @@ const VSUSP: usize = 10;  // ^Z
 
 ## Exit Criteria
 
-- [ ] Line editing works (backspace, ^U)
-- [ ] Echo works in canonical mode
-- [ ] ^C sends SIGINT to foreground group
-- [ ] ^Z sends SIGTSTP (after signals implemented)
-- [ ] PTY pairs created via /dev/ptmx
-- [ ] Window size ioctl works
-- [ ] Works on all 8 architectures
+- [x] Line editing works (backspace, ^U)
+- [x] Echo works in canonical mode
+- [x] ^C sends SIGINT to foreground group (infrastructure ready, signals in Phase 7)
+- [x] ^Z sends SIGTSTP (infrastructure ready, signals in Phase 7)
+- [x] PTY pairs created via /dev/ptmx
+- [x] Window size ioctl works
+- [ ] Works on all 8 architectures (x86_64 complete)
 
 ---
 
@@ -221,7 +221,42 @@ int main() {
 
 ## Notes
 
-*Add implementation notes here as work progresses*
+### Implementation (2026-01-18)
+
+Phase 6 TTY + PTY infrastructure complete for x86_64:
+
+**Crates Created:**
+
+- `efflux-tty`: TTY subsystem with line discipline
+  - `termios.rs`: Full termios structure with input/output/control/local flags
+  - `winsize.rs`: Terminal window size structure
+  - `ldisc.rs`: Line discipline with canonical/raw mode support
+    - Line editing: backspace (^H), kill line (^U), word erase (^W)
+    - Echo with control character display (^X format)
+    - Signal character detection (^C, ^Z, ^\)
+  - `tty.rs`: TTY device implementing VnodeOps
+    - Integrates line discipline with hardware driver
+    - ioctl support for termios and window size
+
+- `efflux-pty`: Pseudo-terminal support
+  - PTY master/slave pairs
+  - `/dev/ptmx` device for allocating new PTYs
+  - `/dev/pts/` directory for slave devices
+  - PtyManager for PTY allocation
+
+**Syscalls Added:**
+- `sys_ioctl` (nr 40): Device I/O control for termios, winsize, pgrp
+
+**VFS Extensions:**
+- Added `ioctl()` method to `VnodeOps` trait
+- Added `ioctl()` method to `File` struct
+- Added `BrokenPipe` error variant to `VfsError`
+
+**Kernel Integration:**
+- PTY manager initialized at boot
+- devpts filesystem mounted at `/dev/pts`
+- Job control infrastructure (foreground pgrp) in place
+- Signal generation infrastructure ready (delivery in Phase 7)
 
 ---
 

@@ -182,6 +182,13 @@ pub trait VnodeOps: Send + Sync {
     fn size(&self) -> u64 {
         self.stat().map(|s| s.size).unwrap_or(0)
     }
+
+    /// Perform device-specific I/O control operation
+    ///
+    /// Default implementation returns NotSupported for non-device files.
+    fn ioctl(&self, _request: u64, _arg: u64) -> VfsResult<i64> {
+        Err(crate::error::VfsError::NotSupported)
+    }
 }
 
 /// Vnode wrapper that adds reference counting and caching
