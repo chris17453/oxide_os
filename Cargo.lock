@@ -239,6 +239,7 @@ version = "0.1.0"
 dependencies = [
  "efflux-core",
  "efflux-sched-traits",
+ "spin",
 ]
 
 [[package]]
@@ -253,6 +254,15 @@ name = "efflux-signal"
 version = "0.1.0"
 dependencies = [
  "bitflags",
+ "efflux-core",
+ "spin",
+]
+
+[[package]]
+name = "efflux-smp"
+version = "0.1.0"
+dependencies = [
+ "efflux-arch-traits",
  "efflux-core",
  "spin",
 ]

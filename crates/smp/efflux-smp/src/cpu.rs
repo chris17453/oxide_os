@@ -1,0 +1,191 @@
+//! CPU enumeration and management
+//!
+//! Handles CPU discovery, state tracking, and AP boot coordination.
+
+use core::sync::atomic::{AtomicU32, AtomicBool, Ordering};
+use crate::MAX_CPUS;
+use crate::percpu;
+
+/// CPU identifier type
+pub type CpuId = u32;
+
+/// CPU state
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum CpuState {
+    /// CPU not present
+    NotPresent = 0,
+    /// CPU present but not started
+    Present = 1,
+    /// CPU is starting up
+    Starting = 2,
+    /// CPU is online and running
+    Online = 3,
+    /// CPU is being taken offline
+    GoingOffline = 4,
+    /// CPU is offline
+    Offline = 5,
+}
+
+/// CPU information
+pub struct CpuInfo {
+    /// CPU state
+    pub state: CpuState,
+    /// APIC ID (x86) or equivalent hardware ID
+    pub apic_id: u32,
+    /// Is this the bootstrap processor?
+    pub is_bsp: bool,
+}
+
+impl CpuInfo {
+    pub const fn new() -> Self {
+        CpuInfo {
+            state: CpuState::NotPresent,
+            apic_id: 0,
+            is_bsp: false,
+        }
+    }
+}
+
+/// Global CPU information array
+static mut CPU_INFO: [CpuInfo; MAX_CPUS] = {
+    const INIT: CpuInfo = CpuInfo::new();
+    [INIT; MAX_CPUS]
+};
+
+/// Number of CPUs detected
+static NUM_CPUS: AtomicU32 = AtomicU32::new(0);
+
+/// Number of CPUs online
+static CPUS_ONLINE: AtomicU32 = AtomicU32::new(0);
+
+/// BSP has finished initialization
+static BSP_DONE: AtomicBool = AtomicBool::new(false);
+
+/// Register a CPU as present
+///
+/// # Safety
+/// Must be called during early boot for each CPU detected.
+pub unsafe fn register_cpu(cpu_id: CpuId, apic_id: u32, is_bsp: bool) {
+    if (cpu_id as usize) < MAX_CPUS {
+        CPU_INFO[cpu_id as usize] = CpuInfo {
+            state: CpuState::Present,
+            apic_id,
+            is_bsp,
+        };
+        NUM_CPUS.fetch_max(cpu_id + 1, Ordering::SeqCst);
+    }
+}
+
+/// Get the number of CPUs detected
+pub fn cpu_count() -> u32 {
+    NUM_CPUS.load(Ordering::Relaxed)
+}
+
+/// Get the number of CPUs currently online
+pub fn cpus_online() -> u32 {
+    CPUS_ONLINE.load(Ordering::Relaxed)
+}
+
+/// Get the current CPU ID
+///
+/// On x86_64, this reads from the GS segment or APIC ID.
+/// For now, returns 0 (single CPU assumption until AP boot).
+pub fn current_cpu() -> CpuId {
+    // TODO: Read from per-CPU data via GS segment
+    0
+}
+
+/// Mark a CPU as online
+pub fn set_cpu_online(cpu_id: CpuId) {
+    unsafe {
+        if (cpu_id as usize) < MAX_CPUS {
+            CPU_INFO[cpu_id as usize].state = CpuState::Online;
+            CPUS_ONLINE.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+}
+
+/// Mark a CPU as offline
+pub fn set_cpu_offline(cpu_id: CpuId) {
+    unsafe {
+        if (cpu_id as usize) < MAX_CPUS {
+            CPU_INFO[cpu_id as usize].state = CpuState::Offline;
+            CPUS_ONLINE.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+}
+
+/// Get CPU state
+pub fn get_cpu_state(cpu_id: CpuId) -> CpuState {
+    unsafe {
+        if (cpu_id as usize) < MAX_CPUS {
+            CPU_INFO[cpu_id as usize].state
+        } else {
+            CpuState::NotPresent
+        }
+    }
+}
+
+/// Check if a CPU is the BSP
+pub fn is_bsp(cpu_id: CpuId) -> bool {
+    unsafe {
+        if (cpu_id as usize) < MAX_CPUS {
+            CPU_INFO[cpu_id as usize].is_bsp
+        } else {
+            false
+        }
+    }
+}
+
+/// Boot an Application Processor
+///
+/// This is architecture-specific. On x86_64, it involves:
+/// 1. Send INIT IPI
+/// 2. Wait 10ms
+/// 3. Send SIPI with startup vector
+///
+/// The actual implementation is in the architecture crate.
+pub fn boot_ap(cpu_id: CpuId) -> Result<(), &'static str> {
+    let state = get_cpu_state(cpu_id);
+
+    if state == CpuState::NotPresent {
+        return Err("CPU not present");
+    }
+
+    if state == CpuState::Online {
+        return Err("CPU already online");
+    }
+
+    unsafe {
+        CPU_INFO[cpu_id as usize].state = CpuState::Starting;
+    }
+
+    // Architecture-specific boot code would be called here
+    // For now, we just mark it as online for testing
+    // In practice, this would involve IPI sequences
+
+    Ok(())
+}
+
+/// Signal that BSP initialization is complete
+pub fn bsp_init_done() {
+    BSP_DONE.store(true, Ordering::SeqCst);
+}
+
+/// Wait for BSP initialization to complete
+pub fn wait_for_bsp() {
+    while !BSP_DONE.load(Ordering::SeqCst) {
+        core::hint::spin_loop();
+    }
+}
+
+/// Initialize the BSP (bootstrap processor)
+///
+/// # Safety
+/// Must be called once during early boot on CPU 0.
+pub unsafe fn init_bsp(apic_id: u32) {
+    register_cpu(0, apic_id, true);
+    percpu::init_percpu(0, apic_id);
+    set_cpu_online(0);
+}

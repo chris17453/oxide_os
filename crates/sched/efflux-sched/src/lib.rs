@@ -8,7 +8,9 @@ extern crate alloc;
 
 mod thread;
 mod round_robin;
+mod smp;
 
 pub use thread::KernelThread;
 pub use round_robin::RoundRobinScheduler;
+pub use smp::{SmpScheduler, PerCpuScheduler};
 pub use efflux_sched_traits::*;

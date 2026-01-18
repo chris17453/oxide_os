@@ -1,11 +1,11 @@
 [package]
-name = "efflux-sched"
+name = "efflux-smp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Scheduler implementation for EFFLUX OS"
+description = "SMP (Symmetric Multiprocessing) support for EFFLUX OS"
 
 [dependencies]
 efflux-core = { workspace = true }
-efflux-sched-traits = { workspace = true }
+efflux-arch-traits = { workspace = true }
 spin = { workspace = true }
