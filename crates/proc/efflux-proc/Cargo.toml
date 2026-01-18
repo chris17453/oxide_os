@@ -8,4 +8,6 @@ efflux-core = { path = "../../core/efflux-core" }
 efflux-proc-traits = { path = "../efflux-proc-traits" }
 efflux-mm-paging = { path = "../../mm/efflux-mm-paging" }
 efflux-mm-traits = { path = "../../mm/efflux-mm-traits" }
+efflux-elf = { path = "../../exec/efflux-elf" }
+efflux-sched-traits = { path = "../../sched/efflux-sched-traits" }
 spin = "0.9"

@@ -7,6 +7,11 @@
 extern crate alloc;
 
 mod address_space;
+mod process;
 
 pub use address_space::UserAddressSpace;
-pub use efflux_proc_traits::{AddressSpace, MapError, MemoryFlags, Pid, Process, ProcessState, UnmapError};
+pub use process::{
+    Credentials, Process, ProcessContext, ProcessTable,
+    alloc_pid, process_table,
+};
+pub use efflux_proc_traits::{AddressSpace, MapError, MemoryFlags, Pid, ProcessState, UnmapError};

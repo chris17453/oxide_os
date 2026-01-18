@@ -1,7 +1,7 @@
 # Phase 3: User Mode + Syscalls
 
 **Stage:** 1 - Foundation
-**Status:** In Progress
+**Status:** Complete (x86_64)
 **Dependencies:** Phase 2 (Scheduler)
 
 ---
@@ -16,13 +16,13 @@ Run user processes in unprivileged mode with syscall interface.
 
 | Item | Status |
 |------|--------|
-| User address space creation | [ ] |
-| Static ELF loader | [ ] |
-| Ring 0 → Ring 3 transition | [ ] |
-| Syscall entry mechanism | [ ] |
-| sys_exit | [ ] |
-| sys_write | [ ] |
-| sys_read | [ ] |
+| User address space creation | [x] |
+| Static ELF loader | [x] |
+| Ring 0 → Ring 3 transition | [x] |
+| Syscall entry mechanism | [x] |
+| sys_exit | [x] |
+| sys_write | [x] |
+| sys_read | [x] |
 
 ---
 
@@ -30,7 +30,7 @@ Run user processes in unprivileged mode with syscall interface.
 
 | Arch | UserSpace | ELF | Transition | Syscall | Done |
 |------|-----------|-----|------------|---------|------|
-| x86_64 | [ ] | [ ] | [ ] | [ ] | [ ] |
+| x86_64 | [x] | [x] | [x] | [x] | [x] |
 | i686 | [ ] | [ ] | [ ] | [ ] | [ ] |
 | aarch64 | [ ] | [ ] | [ ] | [ ] | [ ] |
 | arm | [ ] | [ ] | [ ] | [ ] | [ ] |
@@ -105,13 +105,13 @@ kernel/
 
 ## Exit Criteria
 
-- [ ] User process runs in Ring 3 (all arches)
-- [ ] Syscall traps to kernel correctly
-- [ ] sys_exit terminates process
-- [ ] sys_write outputs to serial/console
-- [ ] sys_read reads from console (basic)
-- [ ] User access to kernel memory faults
-- [ ] Works on all 8 architectures
+- [x] User process runs in Ring 3 (x86_64)
+- [x] Syscall traps to kernel correctly
+- [x] sys_exit terminates process
+- [x] sys_write outputs to serial/console
+- [x] sys_read reads from console (basic)
+- [x] User access to kernel memory faults
+- [ ] Works on all 8 architectures (x86_64 only for now)
 
 ---
 
@@ -130,7 +130,21 @@ void _start() {
 
 ## Notes
 
-*(Add implementation notes as work progresses)*
+**x86_64 Implementation Complete (2025-01-18):**
+
+Key implementation details:
+- UserAddressSpace in `efflux-proc` creates user page tables with kernel higher-half shared
+- ELF loader in `efflux-elf` parses ELF64 and loads PT_LOAD segments
+- Ring 3 transition via `iretq` with proper segment selectors (USER_CS=0x23, USER_DS=0x1B)
+- Syscall entry via `syscall` instruction using MSR configuration (STAR, LSTAR, SFMASK, EFER.SCE)
+- Kernel stack for syscalls stored in KERNEL_GS_BASE, accessed via swapgs
+- TSS.RSP0 set for interrupt handling during user mode
+
+Key fixes during implementation:
+- FrameAllocator trait changed to `&self` for interior mutability
+- Frame 0 protection added (never allocate NULL page)
+- `enter_usermode()` function created to switch kernel stacks before page tables
+- swapgs removed before iretq (KERNEL_GS_BASE must retain kernel stack)
 
 ---
 

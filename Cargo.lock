@@ -146,9 +146,11 @@ name = "efflux-proc"
 version = "0.1.0"
 dependencies = [
  "efflux-core",
+ "efflux-elf",
  "efflux-mm-paging",
  "efflux-mm-traits",
  "efflux-proc-traits",
+ "efflux-sched-traits",
  "spin",
 ]
 
