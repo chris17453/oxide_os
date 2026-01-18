@@ -73,6 +73,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-elf"
+version = "0.1.0"
+dependencies = [
+ "efflux-core",
+ "efflux-proc-traits",
+]
+
+[[package]]
 name = "efflux-kernel"
 version = "0.1.0"
 dependencies = [

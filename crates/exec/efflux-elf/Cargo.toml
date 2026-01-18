@@ -1,0 +1,8 @@
+[package]
+name = "efflux-elf"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+efflux-core = { path = "../../core/efflux-core" }
+efflux-proc-traits = { path = "../../proc/efflux-proc-traits" }
