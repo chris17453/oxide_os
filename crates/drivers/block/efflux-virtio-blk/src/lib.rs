@@ -177,89 +177,91 @@ impl VirtioBlk {
     /// # Safety
     /// The MMIO address must be valid and mapped.
     pub unsafe fn probe(mmio_base: u64) -> Option<Self> {
-        // Read magic value (offset 0x00)
-        let magic = core::ptr::read_volatile((mmio_base) as *const u32);
-        if magic != 0x74726976 {
-            // "virt" in little-endian
-            return None;
+        unsafe {
+            // Read magic value (offset 0x00)
+            let magic = core::ptr::read_volatile((mmio_base) as *const u32);
+            if magic != 0x74726976 {
+                // "virt" in little-endian
+                return None;
+            }
+
+            // Read device ID (offset 0x08)
+            let device_id = core::ptr::read_volatile((mmio_base + 0x08) as *const u32);
+            if device_id != 2 {
+                // Block device ID
+                return None;
+            }
+
+            // Initialize device
+            // 1. Reset device
+            core::ptr::write_volatile((mmio_base + 0x70) as *mut u32, 0);
+
+            // 2. Set ACKNOWLEDGE
+            core::ptr::write_volatile((mmio_base + 0x70) as *mut u32, status::ACKNOWLEDGE as u32);
+
+            // 3. Set DRIVER
+            let mut status = status::ACKNOWLEDGE | status::DRIVER;
+            core::ptr::write_volatile((mmio_base + 0x70) as *mut u32, status as u32);
+
+            // 4. Read features
+            core::ptr::write_volatile((mmio_base + 0x14) as *mut u32, 0); // Select page 0
+            let features_lo = core::ptr::read_volatile((mmio_base + 0x10) as *const u32);
+            core::ptr::write_volatile((mmio_base + 0x14) as *mut u32, 1); // Select page 1
+            let features_hi = core::ptr::read_volatile((mmio_base + 0x10) as *const u32);
+            let device_features = (features_hi as u64) << 32 | (features_lo as u64);
+
+            // 5. Negotiate features (accept what we support)
+            let accepted = device_features & (features::RO | features::BLK_SIZE | features::FLUSH);
+            core::ptr::write_volatile((mmio_base + 0x24) as *mut u32, 0);
+            core::ptr::write_volatile((mmio_base + 0x20) as *mut u32, accepted as u32);
+            core::ptr::write_volatile((mmio_base + 0x24) as *mut u32, 1);
+            core::ptr::write_volatile((mmio_base + 0x20) as *mut u32, (accepted >> 32) as u32);
+
+            // 6. Set FEATURES_OK
+            status |= status::FEATURES_OK;
+            core::ptr::write_volatile((mmio_base + 0x70) as *mut u32, status as u32);
+
+            // 7. Check FEATURES_OK was accepted
+            let status_read = core::ptr::read_volatile((mmio_base + 0x70) as *const u32);
+            if status_read & (status::FEATURES_OK as u32) == 0 {
+                return None;
+            }
+
+            // 8. Read device configuration
+            let capacity = core::ptr::read_volatile((mmio_base + 0x100) as *const u64);
+
+            let block_size = if device_features & features::BLK_SIZE != 0 {
+                core::ptr::read_volatile((mmio_base + 0x114) as *const u32)
+            } else {
+                512
+            };
+
+            let read_only = device_features & features::RO != 0;
+
+            // 9. Setup virtqueue (queue 0)
+            // ... virtqueue setup is complex, simplified here
+
+            // 10. Set DRIVER_OK
+            status |= status::DRIVER_OK;
+            core::ptr::write_volatile((mmio_base + 0x70) as *mut u32, status as u32);
+
+            // Create descriptor pool
+            let desc = Vec::with_capacity(256);
+            let mut free_desc = Vec::with_capacity(256);
+            for i in (0..256).rev() {
+                free_desc.push(i);
+            }
+
+            Some(VirtioBlk {
+                mmio_base,
+                capacity,
+                block_size,
+                read_only,
+                desc: Mutex::new(desc),
+                free_desc: Mutex::new(free_desc),
+                request_id: AtomicU64::new(0),
+            })
         }
-
-        // Read device ID (offset 0x08)
-        let device_id = core::ptr::read_volatile((mmio_base + 0x08) as *const u32);
-        if device_id != 2 {
-            // Block device ID
-            return None;
-        }
-
-        // Initialize device
-        // 1. Reset device
-        core::ptr::write_volatile((mmio_base + 0x70) as *mut u32, 0);
-
-        // 2. Set ACKNOWLEDGE
-        core::ptr::write_volatile((mmio_base + 0x70) as *mut u32, status::ACKNOWLEDGE as u32);
-
-        // 3. Set DRIVER
-        let mut status = status::ACKNOWLEDGE | status::DRIVER;
-        core::ptr::write_volatile((mmio_base + 0x70) as *mut u32, status as u32);
-
-        // 4. Read features
-        core::ptr::write_volatile((mmio_base + 0x14) as *mut u32, 0); // Select page 0
-        let features_lo = core::ptr::read_volatile((mmio_base + 0x10) as *const u32);
-        core::ptr::write_volatile((mmio_base + 0x14) as *mut u32, 1); // Select page 1
-        let features_hi = core::ptr::read_volatile((mmio_base + 0x10) as *const u32);
-        let device_features = (features_hi as u64) << 32 | (features_lo as u64);
-
-        // 5. Negotiate features (accept what we support)
-        let accepted = device_features & (features::RO | features::BLK_SIZE | features::FLUSH);
-        core::ptr::write_volatile((mmio_base + 0x24) as *mut u32, 0);
-        core::ptr::write_volatile((mmio_base + 0x20) as *mut u32, accepted as u32);
-        core::ptr::write_volatile((mmio_base + 0x24) as *mut u32, 1);
-        core::ptr::write_volatile((mmio_base + 0x20) as *mut u32, (accepted >> 32) as u32);
-
-        // 6. Set FEATURES_OK
-        status |= status::FEATURES_OK;
-        core::ptr::write_volatile((mmio_base + 0x70) as *mut u32, status as u32);
-
-        // 7. Check FEATURES_OK was accepted
-        let status_read = core::ptr::read_volatile((mmio_base + 0x70) as *const u32);
-        if status_read & (status::FEATURES_OK as u32) == 0 {
-            return None;
-        }
-
-        // 8. Read device configuration
-        let capacity = core::ptr::read_volatile((mmio_base + 0x100) as *const u64);
-
-        let block_size = if device_features & features::BLK_SIZE != 0 {
-            core::ptr::read_volatile((mmio_base + 0x114) as *const u32)
-        } else {
-            512
-        };
-
-        let read_only = device_features & features::RO != 0;
-
-        // 9. Setup virtqueue (queue 0)
-        // ... virtqueue setup is complex, simplified here
-
-        // 10. Set DRIVER_OK
-        status |= status::DRIVER_OK;
-        core::ptr::write_volatile((mmio_base + 0x70) as *mut u32, status as u32);
-
-        // Create descriptor pool
-        let desc = Vec::with_capacity(256);
-        let mut free_desc = Vec::with_capacity(256);
-        for i in (0..256).rev() {
-            free_desc.push(i);
-        }
-
-        Some(VirtioBlk {
-            mmio_base,
-            capacity,
-            block_size,
-            read_only,
-            desc: Mutex::new(desc),
-            free_desc: Mutex::new(free_desc),
-            request_id: AtomicU64::new(0),
-        })
     }
 
     /// Get MMIO base address

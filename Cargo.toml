@@ -33,6 +33,11 @@ members = [
     "crates/vfs/efflux-procfs",
     "crates/fs/efflux-effluxfs",
     "crates/fs/efflux-fat32",
+    "crates/net/efflux-net",
+    "crates/net/efflux-tcpip",
+    "crates/net/efflux-dhcp",
+    "crates/net/efflux-dns",
+    "crates/drivers/net/efflux-virtio-net",
     "crates/tty/efflux-tty",
     "crates/tty/efflux-pty",
     "crates/signal/efflux-signal",
@@ -94,6 +99,11 @@ efflux-nvme = { path = "crates/drivers/block/efflux-nvme" }
 efflux-ahci = { path = "crates/drivers/block/efflux-ahci" }
 efflux-effluxfs = { path = "crates/fs/efflux-effluxfs" }
 efflux-fat32 = { path = "crates/fs/efflux-fat32" }
+efflux-net = { path = "crates/net/efflux-net" }
+efflux-tcpip = { path = "crates/net/efflux-tcpip" }
+efflux-dhcp = { path = "crates/net/efflux-dhcp" }
+efflux-dns = { path = "crates/net/efflux-dns" }
+efflux-virtio-net = { path = "crates/drivers/net/efflux-virtio-net" }
 
 [profile.dev]
 panic = "abort"

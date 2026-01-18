@@ -1,0 +1,8 @@
+[package]
+name = "efflux-virtio-net"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+efflux-net = { path = "../../../net/efflux-net" }
+spin = "0.9"

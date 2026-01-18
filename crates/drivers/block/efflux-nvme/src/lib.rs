@@ -384,14 +384,18 @@ impl NvmeController {
 
     /// Ring the submission queue doorbell
     unsafe fn ring_sq_doorbell(&self, qid: u16, tail: u32) {
-        let addr = self.doorbell_addr(qid, false);
-        core::ptr::write_volatile(addr as *mut u32, tail);
+        unsafe {
+            let addr = self.doorbell_addr(qid, false);
+            core::ptr::write_volatile(addr as *mut u32, tail);
+        }
     }
 
     /// Ring the completion queue doorbell
     unsafe fn ring_cq_doorbell(&self, qid: u16, head: u32) {
-        let addr = self.doorbell_addr(qid, true);
-        core::ptr::write_volatile(addr as *mut u32, head);
+        unsafe {
+            let addr = self.doorbell_addr(qid, true);
+            core::ptr::write_volatile(addr as *mut u32, head);
+        }
     }
 
     /// Get next command ID

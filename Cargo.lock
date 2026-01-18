@@ -90,6 +90,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-dhcp"
+version = "0.1.0"
+dependencies = [
+ "efflux-net",
+ "efflux-tcpip",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "efflux-dns"
+version = "0.1.0"
+dependencies = [
+ "efflux-net",
+ "efflux-tcpip",
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "efflux-driver-traits"
 version = "0.1.0"
 dependencies = [
@@ -239,6 +257,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-net"
+version = "0.1.0"
+dependencies = [
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "efflux-nvme"
 version = "0.1.0"
 dependencies = [
@@ -338,6 +363,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-tcpip"
+version = "0.1.0"
+dependencies = [
+ "efflux-net",
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "efflux-tmpfs"
 version = "0.1.0"
 dependencies = [
@@ -372,6 +405,14 @@ version = "0.1.0"
 dependencies = [
  "efflux-block",
  "spin 0.10.0",
+]
+
+[[package]]
+name = "efflux-virtio-net"
+version = "0.1.0"
+dependencies = [
+ "efflux-net",
+ "spin 0.9.8",
 ]
 
 [[package]]

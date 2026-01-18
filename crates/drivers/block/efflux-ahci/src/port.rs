@@ -250,41 +250,45 @@ impl AhciPort {
     ///
     /// # Safety
     /// Port must be started.
-    pub unsafe fn read_sectors(&self, lba: u64, count: u16, buf: &mut [u8]) -> Result<(), ()> {
-        let slot = self.find_free_slot().ok_or(())?;
+    pub unsafe fn read_sectors(&self, lba: u64, count: u16, _buf: &mut [u8]) -> Result<(), ()> {
+        unsafe {
+            let slot = self.find_free_slot().ok_or(())?;
 
-        // Build FIS
-        let mut fis = FisRegH2D::new();
-        fis.command = ata_cmd::READ_DMA_EXT;
-        fis.set_lba(lba);
-        fis.set_count(count);
+            // Build FIS
+            let mut fis = FisRegH2D::new();
+            fis.command = ata_cmd::READ_DMA_EXT;
+            fis.set_lba(lba);
+            fis.set_count(count);
 
-        // In real implementation:
-        // 1. Setup command header
-        // 2. Setup command table with FIS
-        // 3. Setup PRDT
-        // 4. Issue command (write to CI)
-        // 5. Wait for completion
+            // In real implementation:
+            // 1. Setup command header
+            // 2. Setup command table with FIS
+            // 3. Setup PRDT
+            // 4. Issue command (write to CI)
+            // 5. Wait for completion
 
-        self.wait_completion(slot)
+            self.wait_completion(slot)
+        }
     }
 
     /// Write sectors
     ///
     /// # Safety
     /// Port must be started.
-    pub unsafe fn write_sectors(&self, lba: u64, count: u16, buf: &[u8]) -> Result<(), ()> {
-        let slot = self.find_free_slot().ok_or(())?;
+    pub unsafe fn write_sectors(&self, lba: u64, count: u16, _buf: &[u8]) -> Result<(), ()> {
+        unsafe {
+            let slot = self.find_free_slot().ok_or(())?;
 
-        // Build FIS
-        let mut fis = FisRegH2D::new();
-        fis.command = ata_cmd::WRITE_DMA_EXT;
-        fis.set_lba(lba);
-        fis.set_count(count);
+            // Build FIS
+            let mut fis = FisRegH2D::new();
+            fis.command = ata_cmd::WRITE_DMA_EXT;
+            fis.set_lba(lba);
+            fis.set_count(count);
 
-        // Similar to read_sectors
+            // Similar to read_sectors
 
-        self.wait_completion(slot)
+            self.wait_completion(slot)
+        }
     }
 }
 

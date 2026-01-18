@@ -9,6 +9,7 @@ extern crate alloc;
 pub mod vfs;
 pub mod dir;
 pub mod signal;
+pub mod socket;
 
 use efflux_core::VirtAddr;
 use efflux_proc::process_table;
@@ -67,6 +68,22 @@ pub mod nr {
     pub const SIGSUSPEND: u64 = 54;
     pub const PAUSE: u64 = 55;
     pub const SIGRETURN: u64 = 56;
+
+    // Socket syscalls
+    pub const SOCKET: u64 = 70;
+    pub const BIND: u64 = 71;
+    pub const LISTEN: u64 = 72;
+    pub const ACCEPT: u64 = 73;
+    pub const CONNECT: u64 = 74;
+    pub const SEND: u64 = 75;
+    pub const RECV: u64 = 76;
+    pub const SENDTO: u64 = 77;
+    pub const RECVFROM: u64 = 78;
+    pub const SHUTDOWN: u64 = 79;
+    pub const GETSOCKNAME: u64 = 80;
+    pub const GETPEERNAME: u64 = 81;
+    pub const SETSOCKOPT: u64 = 82;
+    pub const GETSOCKOPT: u64 = 83;
 }
 
 /// Error codes (negative return values)
@@ -91,6 +108,22 @@ pub mod errno {
     pub const EINTR: i64 = -4;      // Interrupted system call
     pub const ERANGE: i64 = -34;    // Result too large
     pub const EMFILE: i64 = -24;    // Too many open files
+
+    // Socket errors
+    pub const ENOTSOCK: i64 = -88;      // Socket operation on non-socket
+    pub const EADDRINUSE: i64 = -98;    // Address already in use
+    pub const EADDRNOTAVAIL: i64 = -99; // Cannot assign requested address
+    pub const ENETUNREACH: i64 = -101;  // Network is unreachable
+    pub const ECONNABORTED: i64 = -103; // Connection aborted
+    pub const ECONNRESET: i64 = -104;   // Connection reset by peer
+    pub const ENOBUFS: i64 = -105;      // No buffer space available
+    pub const EISCONN: i64 = -106;      // Transport endpoint is already connected
+    pub const ENOTCONN: i64 = -107;     // Transport endpoint is not connected
+    pub const ETIMEDOUT: i64 = -110;    // Connection timed out
+    pub const ECONNREFUSED: i64 = -111; // Connection refused
+    pub const EHOSTUNREACH: i64 = -113; // No route to host
+    pub const EALREADY: i64 = -114;     // Operation already in progress
+    pub const EINPROGRESS: i64 = -115;  // Operation now in progress
 }
 
 /// Console output callback type
@@ -171,8 +204,8 @@ pub fn dispatch(
     arg2: u64,
     arg3: u64,
     arg4: u64,
-    _arg5: u64,
-    _arg6: u64,
+    arg5: u64,
+    arg6: u64,
 ) -> i64 {
     match number {
         // Process syscalls
@@ -226,6 +259,22 @@ pub fn dispatch(
         nr::SIGSUSPEND => signal::sys_sigsuspend(arg1),
         nr::PAUSE => signal::sys_pause(),
         nr::SIGRETURN => signal::sys_sigreturn(),
+
+        // Socket syscalls
+        nr::SOCKET => socket::sys_socket(arg1 as i32, arg2 as i32, arg3 as i32),
+        nr::BIND => socket::sys_bind(arg1 as i32, arg2, arg3 as u32),
+        nr::LISTEN => socket::sys_listen(arg1 as i32, arg2 as i32),
+        nr::ACCEPT => socket::sys_accept(arg1 as i32, arg2, arg3),
+        nr::CONNECT => socket::sys_connect(arg1 as i32, arg2, arg3 as u32),
+        nr::SEND => socket::sys_send(arg1 as i32, arg2, arg3 as usize, arg4 as i32),
+        nr::RECV => socket::sys_recv(arg1 as i32, arg2, arg3 as usize, arg4 as i32),
+        nr::SENDTO => socket::sys_sendto(arg1 as i32, arg2, arg3 as usize, arg4 as i32, arg5, arg6 as u32),
+        nr::RECVFROM => socket::sys_recvfrom(arg1 as i32, arg2, arg3 as usize, arg4 as i32, arg5, arg6),
+        nr::SHUTDOWN => socket::sys_shutdown(arg1 as i32, arg2 as i32),
+        nr::GETSOCKNAME => socket::sys_getsockname(arg1 as i32, arg2, arg3),
+        nr::GETPEERNAME => socket::sys_getpeername(arg1 as i32, arg2, arg3),
+        nr::SETSOCKOPT => socket::sys_setsockopt(arg1 as i32, arg2 as i32, arg3 as i32, arg4, arg5 as u32),
+        nr::GETSOCKOPT => socket::sys_getsockopt(arg1 as i32, arg2 as i32, arg3 as i32, arg4, arg5),
 
         _ => errno::ENOSYS,
     }
