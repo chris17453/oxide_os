@@ -21,6 +21,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
+name = "coreutils"
+version = "0.1.0"
+dependencies = [
+ "efflux-libc",
+]
+
+[[package]]
 name = "efflux-arch-traits"
 version = "0.1.0"
 dependencies = [
@@ -126,6 +133,10 @@ dependencies = [
  "efflux-vfs",
  "spin",
 ]
+
+[[package]]
+name = "efflux-libc"
+version = "0.1.0"
 
 [[package]]
 name = "efflux-log"
@@ -286,6 +297,20 @@ dependencies = [
  "bitflags",
  "efflux-core",
  "spin",
+]
+
+[[package]]
+name = "esh"
+version = "0.1.0"
+dependencies = [
+ "efflux-libc",
+]
+
+[[package]]
+name = "init"
+version = "0.1.0"
+dependencies = [
+ "efflux-libc",
 ]
 
 [[package]]

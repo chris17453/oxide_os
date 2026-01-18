@@ -1,0 +1,12 @@
+[package]
+name = "init"
+version = "0.1.0"
+edition = "2024"
+description = "Init process (PID 1) for EFFLUX OS"
+
+[[bin]]
+name = "init"
+path = "src/main.rs"
+
+[dependencies]
+efflux-libc = { path = "../efflux-libc" }

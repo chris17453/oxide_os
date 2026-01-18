@@ -29,6 +29,10 @@ members = [
     "crates/tty/efflux-tty",
     "crates/tty/efflux-pty",
     "crates/signal/efflux-signal",
+    "userspace/efflux-libc",
+    "userspace/init",
+    "userspace/shell",
+    "userspace/coreutils",
     "bootloader/efflux-boot-uefi",
 ]
 

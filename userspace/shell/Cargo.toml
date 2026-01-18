@@ -1,0 +1,12 @@
+[package]
+name = "esh"
+version = "0.1.0"
+edition = "2024"
+description = "EFFLUX Shell (esh)"
+
+[[bin]]
+name = "esh"
+path = "src/main.rs"
+
+[dependencies]
+efflux-libc = { path = "../efflux-libc" }
