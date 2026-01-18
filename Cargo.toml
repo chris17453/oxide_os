@@ -30,6 +30,7 @@ members = [
     "crates/tty/efflux-pty",
     "crates/signal/efflux-signal",
     "crates/smp/efflux-smp",
+    "crates/module/efflux-module",
     "userspace/efflux-libc",
     "userspace/init",
     "userspace/shell",
@@ -75,6 +76,7 @@ efflux-tty = { path = "crates/tty/efflux-tty" }
 efflux-pty = { path = "crates/tty/efflux-pty" }
 efflux-signal = { path = "crates/signal/efflux-signal" }
 efflux-smp = { path = "crates/smp/efflux-smp" }
+efflux-module = { path = "crates/module/efflux-module" }
 
 [profile.dev]
 panic = "abort"

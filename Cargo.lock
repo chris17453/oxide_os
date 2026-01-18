@@ -190,6 +190,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-module"
+version = "0.1.0"
+dependencies = [
+ "efflux-core",
+ "efflux-elf",
+ "spin",
+]
+
+[[package]]
 name = "efflux-proc"
 version = "0.1.0"
 dependencies = [
