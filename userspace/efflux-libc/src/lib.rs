@@ -14,6 +14,15 @@ pub mod syscall;
 pub mod unistd;
 pub mod stdio;
 pub mod env;
+pub mod dirent;
+pub mod time;
+pub mod dlfcn;
+pub mod locale;
+pub mod wchar;
+pub mod math;
+pub mod poll;
+pub mod termios;
+pub mod pwd;
 
 pub use errno::*;
 pub use fcntl::*;

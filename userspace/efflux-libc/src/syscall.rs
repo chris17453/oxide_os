@@ -43,7 +43,63 @@ pub mod nr {
     pub const SIGSUSPEND: u64 = 54;
     pub const PAUSE: u64 = 55;
     pub const SIGRETURN: u64 = 56;
+    // Time syscalls
+    pub const GETTIMEOFDAY: u64 = 60;
+    pub const CLOCK_GETTIME: u64 = 61;
+    pub const CLOCK_GETRES: u64 = 62;
+    pub const NANOSLEEP: u64 = 63;
+    // Poll/select syscalls
+    pub const POLL: u64 = 70;
+    pub const PPOLL: u64 = 71;
+    pub const SELECT: u64 = 72;
+    pub const PSELECT6: u64 = 73;
+    // Directory syscalls
+    pub const GETDENTS64: u64 = 80;
+    // User/group syscalls
+    pub const GETUID: u64 = 100;
+    pub const GETEUID: u64 = 101;
+    pub const GETGID: u64 = 102;
+    pub const GETEGID: u64 = 103;
+    pub const SETUID: u64 = 104;
+    pub const SETGID: u64 = 105;
+    pub const SETEUID: u64 = 106;
+    pub const SETEGID: u64 = 107;
+    // Memory syscalls
+    pub const MMAP: u64 = 110;
+    pub const MUNMAP: u64 = 111;
+    pub const MPROTECT: u64 = 112;
+    pub const BRK: u64 = 113;
 }
+
+// Re-export syscall numbers at module level for convenience
+pub use nr::OPEN as SYS_OPEN;
+pub use nr::CLOSE as SYS_CLOSE;
+pub use nr::READ as SYS_READ;
+pub use nr::WRITE as SYS_WRITE;
+pub use nr::LSEEK as SYS_LSEEK;
+pub use nr::IOCTL as SYS_IOCTL;
+pub use nr::GETDENTS as SYS_GETDENTS;
+pub use nr::GETTIMEOFDAY as SYS_GETTIMEOFDAY;
+pub use nr::CLOCK_GETTIME as SYS_CLOCK_GETTIME;
+pub use nr::CLOCK_GETRES as SYS_CLOCK_GETRES;
+pub use nr::NANOSLEEP as SYS_NANOSLEEP;
+pub use nr::POLL as SYS_POLL;
+pub use nr::PPOLL as SYS_PPOLL;
+pub use nr::SELECT as SYS_SELECT;
+pub use nr::PSELECT6 as SYS_PSELECT6;
+pub use nr::GETDENTS64 as SYS_GETDENTS64;
+pub use nr::GETUID as SYS_GETUID;
+pub use nr::GETEUID as SYS_GETEUID;
+pub use nr::GETGID as SYS_GETGID;
+pub use nr::GETEGID as SYS_GETEGID;
+pub use nr::SETUID as SYS_SETUID;
+pub use nr::SETGID as SYS_SETGID;
+pub use nr::SETEUID as SYS_SETEUID;
+pub use nr::SETEGID as SYS_SETEGID;
+pub use nr::MMAP as SYS_MMAP;
+pub use nr::MUNMAP as SYS_MUNMAP;
+pub use nr::MPROTECT as SYS_MPROTECT;
+pub use nr::BRK as SYS_BRK;
 
 /// Raw syscall with 0 arguments
 #[inline(always)]
@@ -64,7 +120,7 @@ pub fn syscall0(nr: u64) -> i64 {
 
 /// Raw syscall with 1 argument
 #[inline(always)]
-pub fn syscall1(nr: u64, arg1: u64) -> i64 {
+pub fn syscall1(nr: u64, arg1: usize) -> i64 {
     let ret: i64;
     unsafe {
         asm!(
@@ -82,7 +138,7 @@ pub fn syscall1(nr: u64, arg1: u64) -> i64 {
 
 /// Raw syscall with 2 arguments
 #[inline(always)]
-pub fn syscall2(nr: u64, arg1: u64, arg2: u64) -> i64 {
+pub fn syscall2(nr: u64, arg1: usize, arg2: usize) -> i64 {
     let ret: i64;
     unsafe {
         asm!(
@@ -101,7 +157,7 @@ pub fn syscall2(nr: u64, arg1: u64, arg2: u64) -> i64 {
 
 /// Raw syscall with 3 arguments
 #[inline(always)]
-pub fn syscall3(nr: u64, arg1: u64, arg2: u64, arg3: u64) -> i64 {
+pub fn syscall3(nr: u64, arg1: usize, arg2: usize, arg3: usize) -> i64 {
     let ret: i64;
     unsafe {
         asm!(
@@ -121,7 +177,7 @@ pub fn syscall3(nr: u64, arg1: u64, arg2: u64, arg3: u64) -> i64 {
 
 /// Raw syscall with 4 arguments
 #[inline(always)]
-pub fn syscall4(nr: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64) -> i64 {
+pub fn syscall4(nr: u64, arg1: usize, arg2: usize, arg3: usize, arg4: usize) -> i64 {
     let ret: i64;
     unsafe {
         asm!(
@@ -140,30 +196,75 @@ pub fn syscall4(nr: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64) -> i64 {
     ret
 }
 
+/// Raw syscall with 5 arguments
+#[inline(always)]
+pub fn syscall5(nr: u64, arg1: usize, arg2: usize, arg3: usize, arg4: usize, arg5: usize) -> i64 {
+    let ret: i64;
+    unsafe {
+        asm!(
+            "syscall",
+            in("rax") nr,
+            in("rdi") arg1,
+            in("rsi") arg2,
+            in("rdx") arg3,
+            in("r10") arg4,
+            in("r8") arg5,
+            lateout("rax") ret,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack)
+        );
+    }
+    ret
+}
+
+/// Raw syscall with 6 arguments
+#[inline(always)]
+pub fn syscall6(nr: u64, arg1: usize, arg2: usize, arg3: usize, arg4: usize, arg5: usize, arg6: usize) -> i64 {
+    let ret: i64;
+    unsafe {
+        asm!(
+            "syscall",
+            in("rax") nr,
+            in("rdi") arg1,
+            in("rsi") arg2,
+            in("rdx") arg3,
+            in("r10") arg4,
+            in("r8") arg5,
+            in("r9") arg6,
+            lateout("rax") ret,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack)
+        );
+    }
+    ret
+}
+
 /// sys_exit - Terminate process
 pub fn sys_exit(status: i32) -> ! {
-    syscall1(nr::EXIT, status as u64);
+    syscall1(nr::EXIT, status as usize);
     loop {}
 }
 
 /// sys_write - Write to file descriptor
 pub fn sys_write(fd: i32, buf: &[u8]) -> isize {
-    syscall3(nr::WRITE, fd as u64, buf.as_ptr() as u64, buf.len() as u64) as isize
+    syscall3(nr::WRITE, fd as usize, buf.as_ptr() as usize, buf.len()) as isize
 }
 
 /// sys_read - Read from file descriptor
 pub fn sys_read(fd: i32, buf: &mut [u8]) -> isize {
-    syscall3(nr::READ, fd as u64, buf.as_mut_ptr() as u64, buf.len() as u64) as isize
+    syscall3(nr::READ, fd as usize, buf.as_mut_ptr() as usize, buf.len()) as isize
 }
 
 /// sys_open - Open file
 pub fn sys_open(path: &str, flags: u32, mode: u32) -> i32 {
-    syscall4(nr::OPEN, path.as_ptr() as u64, path.len() as u64, flags as u64, mode as u64) as i32
+    syscall4(nr::OPEN, path.as_ptr() as usize, path.len(), flags as usize, mode as usize) as i32
 }
 
 /// sys_close - Close file descriptor
 pub fn sys_close(fd: i32) -> i32 {
-    syscall1(nr::CLOSE, fd as u64) as i32
+    syscall1(nr::CLOSE, fd as usize) as i32
 }
 
 /// sys_fork - Create child process
@@ -173,17 +274,17 @@ pub fn sys_fork() -> i32 {
 
 /// sys_exec - Execute new program
 pub fn sys_exec(path: &str) -> i32 {
-    syscall2(nr::EXEC, path.as_ptr() as u64, path.len() as u64) as i32
+    syscall2(nr::EXEC, path.as_ptr() as usize, path.len()) as i32
 }
 
 /// sys_wait - Wait for any child
 pub fn sys_wait(status: &mut i32) -> i32 {
-    syscall1(nr::WAIT, status as *mut i32 as u64) as i32
+    syscall1(nr::WAIT, status as *mut i32 as usize) as i32
 }
 
 /// sys_waitpid - Wait for specific child
 pub fn sys_waitpid(pid: i32, status: &mut i32, options: i32) -> i32 {
-    syscall3(nr::WAITPID, pid as u64, status as *mut i32 as u64, options as u64) as i32
+    syscall3(nr::WAITPID, pid as usize, status as *mut i32 as usize, options as usize) as i32
 }
 
 /// sys_getpid - Get process ID
@@ -198,62 +299,62 @@ pub fn sys_getppid() -> i32 {
 
 /// sys_kill - Send signal to process
 pub fn sys_kill(pid: i32, sig: i32) -> i32 {
-    syscall2(nr::KILL, pid as u64, sig as u64) as i32
+    syscall2(nr::KILL, pid as usize, sig as usize) as i32
 }
 
 /// sys_dup - Duplicate file descriptor
 pub fn sys_dup(fd: i32) -> i32 {
-    syscall1(nr::DUP, fd as u64) as i32
+    syscall1(nr::DUP, fd as usize) as i32
 }
 
 /// sys_dup2 - Duplicate file descriptor to specific fd
 pub fn sys_dup2(oldfd: i32, newfd: i32) -> i32 {
-    syscall2(nr::DUP2, oldfd as u64, newfd as u64) as i32
+    syscall2(nr::DUP2, oldfd as usize, newfd as usize) as i32
 }
 
 /// sys_mkdir - Create directory
 pub fn sys_mkdir(path: &str, mode: u32) -> i32 {
-    syscall3(nr::MKDIR, path.as_ptr() as u64, path.len() as u64, mode as u64) as i32
+    syscall3(nr::MKDIR, path.as_ptr() as usize, path.len(), mode as usize) as i32
 }
 
 /// sys_rmdir - Remove directory
 pub fn sys_rmdir(path: &str) -> i32 {
-    syscall2(nr::RMDIR, path.as_ptr() as u64, path.len() as u64) as i32
+    syscall2(nr::RMDIR, path.as_ptr() as usize, path.len()) as i32
 }
 
 /// sys_unlink - Remove file
 pub fn sys_unlink(path: &str) -> i32 {
-    syscall2(nr::UNLINK, path.as_ptr() as u64, path.len() as u64) as i32
+    syscall2(nr::UNLINK, path.as_ptr() as usize, path.len()) as i32
 }
 
 /// sys_getdents - Read directory entries
 pub fn sys_getdents(fd: i32, buf: &mut [u8]) -> i32 {
-    syscall3(nr::GETDENTS, fd as u64, buf.as_mut_ptr() as u64, buf.len() as u64) as i32
+    syscall3(nr::GETDENTS, fd as usize, buf.as_mut_ptr() as usize, buf.len()) as i32
 }
 
 /// sys_ioctl - Device control
 pub fn sys_ioctl(fd: i32, request: u64, arg: u64) -> i32 {
-    syscall3(nr::IOCTL, fd as u64, request, arg) as i32
+    syscall3(nr::IOCTL, fd as usize, request as usize, arg as usize) as i32
 }
 
 /// sys_chdir - Change working directory
 pub fn sys_chdir(path: &str) -> i32 {
-    syscall2(nr::CHDIR, path.as_ptr() as u64, path.len() as u64) as i32
+    syscall2(nr::CHDIR, path.as_ptr() as usize, path.len()) as i32
 }
 
 /// sys_getcwd - Get current working directory
 pub fn sys_getcwd(buf: &mut [u8]) -> i32 {
-    syscall2(nr::GETCWD, buf.as_mut_ptr() as u64, buf.len() as u64) as i32
+    syscall2(nr::GETCWD, buf.as_mut_ptr() as usize, buf.len()) as i32
 }
 
 /// sys_pipe - Create pipe
 pub fn sys_pipe(pipefd: &mut [i32; 2]) -> i32 {
-    syscall1(nr::PIPE, pipefd.as_mut_ptr() as u64) as i32
+    syscall1(nr::PIPE, pipefd.as_mut_ptr() as usize) as i32
 }
 
 /// sys_lseek - Seek in file
 pub fn sys_lseek(fd: i32, offset: i64, whence: i32) -> i64 {
-    syscall3(nr::LSEEK, fd as u64, offset as u64, whence as u64)
+    syscall3(nr::LSEEK, fd as usize, offset as usize, whence as usize)
 }
 
 /// sys_setsid - Create new session
@@ -263,10 +364,10 @@ pub fn sys_setsid() -> i32 {
 
 /// sys_setpgid - Set process group
 pub fn sys_setpgid(pid: i32, pgid: i32) -> i32 {
-    syscall2(nr::SETPGID, pid as u64, pgid as u64) as i32
+    syscall2(nr::SETPGID, pid as usize, pgid as usize) as i32
 }
 
 /// sys_getpgid - Get process group
 pub fn sys_getpgid(pid: i32) -> i32 {
-    syscall1(nr::GETPGID, pid as u64) as i32
+    syscall1(nr::GETPGID, pid as usize) as i32
 }
