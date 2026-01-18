@@ -54,6 +54,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-audio"
+version = "0.1.0"
+dependencies = [
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "efflux-block"
 version = "0.1.0"
 dependencies = [
@@ -450,6 +457,14 @@ name = "efflux-virtio-net"
 version = "0.1.0"
 dependencies = [
  "efflux-net",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "efflux-virtio-snd"
+version = "0.1.0"
+dependencies = [
+ "efflux-audio",
  "spin 0.9.8",
 ]
 

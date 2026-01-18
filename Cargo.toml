@@ -43,6 +43,8 @@ members = [
     "crates/drivers/input/efflux-virtio-input",
     "crates/graphics/efflux-fb",
     "crates/drivers/gpu/efflux-virtio-gpu",
+    "crates/audio/efflux-audio",
+    "crates/drivers/audio/efflux-virtio-snd",
     "crates/tty/efflux-tty",
     "crates/tty/efflux-pty",
     "crates/signal/efflux-signal",
@@ -114,6 +116,8 @@ efflux-ps2 = { path = "crates/drivers/input/efflux-ps2" }
 efflux-virtio-input = { path = "crates/drivers/input/efflux-virtio-input" }
 efflux-fb = { path = "crates/graphics/efflux-fb" }
 efflux-virtio-gpu = { path = "crates/drivers/gpu/efflux-virtio-gpu" }
+efflux-audio = { path = "crates/audio/efflux-audio" }
+efflux-virtio-snd = { path = "crates/drivers/audio/efflux-virtio-snd" }
 
 [profile.dev]
 panic = "abort"
