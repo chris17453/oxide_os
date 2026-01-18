@@ -166,6 +166,19 @@ int main() {
 - Credentials (uid, gid, euid, egid)
 - Process groups and sessions (pgid, sid fields)
 
+**Syscall infrastructure complete (2025-01-18):**
+- COW tracking crate (efflux-mm-cow) with reference counting
+- fork.rs: Clone address space with COW, handle COW faults
+- exec.rs: Replace process image with new ELF
+- wait.rs: Wait for child processes
+- Syscalls 3-12 added (fork, exec, wait, waitpid, getpid, getppid, setpgid, getpgid, setsid, getsid)
+
+**Kernel integration pending:**
+- Register init process in process table
+- Implement fork/exec/wait kernel callbacks
+- Process scheduling for parent/child switching
+- Full fork-exec-wait cycle test
+
 ---
 
 *Phase 4 of EFFLUX Implementation*
