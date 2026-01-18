@@ -91,6 +91,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-initramfs"
+version = "0.1.0"
+dependencies = [
+ "efflux-core",
+ "efflux-vfs",
+ "spin",
+]
+
+[[package]]
 name = "efflux-kernel"
 version = "0.1.0"
 dependencies = [
@@ -100,12 +109,14 @@ dependencies = [
  "efflux-core",
  "efflux-devfs",
  "efflux-elf",
+ "efflux-initramfs",
  "efflux-mm-frame",
  "efflux-mm-heap",
  "efflux-mm-paging",
  "efflux-mm-traits",
  "efflux-proc",
  "efflux-proc-traits",
+ "efflux-procfs",
  "efflux-sched",
  "efflux-sched-traits",
  "efflux-syscall",
@@ -185,6 +196,17 @@ name = "efflux-proc-traits"
 version = "0.1.0"
 dependencies = [
  "efflux-core",
+]
+
+[[package]]
+name = "efflux-procfs"
+version = "0.1.0"
+dependencies = [
+ "efflux-core",
+ "efflux-proc",
+ "efflux-proc-traits",
+ "efflux-vfs",
+ "spin",
 ]
 
 [[package]]

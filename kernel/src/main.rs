@@ -35,6 +35,7 @@ use efflux_syscall::SyscallContext;
 use efflux_vfs::{File, FileFlags, mount::GLOBAL_VFS, MountFlags, VnodeOps};
 use efflux_devfs::DevFs;
 use efflux_tmpfs::TmpDir;
+use efflux_procfs::ProcFs;
 use spin::Mutex;
 
 /// Global kernel heap allocator
@@ -235,6 +236,21 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     unsafe {
         efflux_devfs::devices::set_console_write(console_write_bytes);
     }
+
+    // Create /proc directory
+    if let Err(e) = root_fs.mkdir("proc", efflux_vfs::Mode::DEFAULT_DIR) {
+        let _ = writeln!(writer, "[VFS] Failed to create /proc: {:?}", e);
+        arch::X86_64::halt();
+    }
+
+    // Mount procfs at /proc
+    let proc_fs = ProcFs::new();
+    if let Err(e) = GLOBAL_VFS.mount(proc_fs, "/proc", MountFlags::empty(), "procfs") {
+        let _ = writeln!(writer, "[VFS] Failed to mount procfs: {:?}", e);
+        arch::X86_64::halt();
+    }
+    let _ = writeln!(writer, "[VFS] Mounted procfs at /proc");
+
     let _ = writeln!(writer, "[VFS] VFS initialized");
 
     // Parse the embedded init.elf

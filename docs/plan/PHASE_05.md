@@ -20,8 +20,8 @@ Implement Virtual Filesystem layer with initial filesystem implementations.
 | File descriptor table per process | [x] |
 | devfs (/dev/null, /dev/zero, /dev/console) | [x] |
 | tmpfs (RAM filesystem) | [x] |
-| initramfs (cpio) loaded at boot | [ ] |
-| procfs basics (/proc/self, /proc/[pid]) | [ ] |
+| initramfs (cpio) loaded at boot | [x] |
+| procfs basics (/proc/self, /proc/[pid]) | [x] |
 
 ---
 
@@ -29,7 +29,7 @@ Implement Virtual Filesystem layer with initial filesystem implementations.
 
 | Arch | VFS | devfs | tmpfs | initramfs | procfs | Done |
 |------|-----|-------|-------|-----------|--------|------|
-| x86_64 | [x] | [x] | [x] | [ ] | [ ] | [x] |
+| x86_64 | [x] | [x] | [x] | [x] | [x] | [x] |
 | i686 | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
 | aarch64 | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
 | arm | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
@@ -146,8 +146,8 @@ crates/vfs/efflux-initramfs/src/
 - [x] Directory operations (mkdir, rmdir, readdir)
 - [x] /dev/null, /dev/zero, /dev/console work
 - [x] tmpfs supports file creation and I/O
-- [ ] initramfs loads and mounts at boot (deferred)
-- [ ] /proc/self/exe resolves correctly (deferred)
+- [x] initramfs loads and mounts at boot
+- [x] /proc/self/exe resolves correctly
 - [ ] Works on all 8 architectures (x86_64 complete)
 
 ---
@@ -195,15 +195,22 @@ Phase 5 VFS infrastructure complete for x86_64:
 - Directory operations: mkdir, rmdir, unlink, rename, getdents
 
 **Kernel Integration:**
-- VFS mounted at boot (tmpfs at /, devfs at /dev)
+- VFS mounted at boot (tmpfs at /, devfs at /dev, procfs at /proc)
 - Console device connected to serial output
 - Init process gets stdin/stdout/stderr (fds 0,1,2 -> /dev/console)
 - FdTable integrated into Process struct
 - Fork clones fd table, exec closes cloexec fds
 
-**Deferred to later phases:**
-- initramfs/cpio: Will be added when boot needs external files
-- procfs: Will be added when process inspection is needed
+**Additional Crates:**
+- `efflux-initramfs`: CPIO (newc format) parser for initramfs loading
+  - Supports files, directories, permissions
+  - Read-only filesystem built from CPIO archive
+- `efflux-procfs`: Process filesystem mounted at /proc
+  - /proc/self -> symlink to current PID
+  - /proc/[pid]/status - process state, credentials
+  - /proc/[pid]/cmdline - command line arguments
+  - /proc/[pid]/exe - symlink to executable
+  - /proc/[pid]/cwd - symlink to working directory
 
 ---
 

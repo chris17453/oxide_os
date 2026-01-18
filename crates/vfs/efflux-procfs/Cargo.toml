@@ -1,0 +1,13 @@
+[package]
+name = "efflux-procfs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Process filesystem for EFFLUX OS"
+
+[dependencies]
+efflux-vfs = { workspace = true }
+efflux-proc = { workspace = true }
+efflux-proc-traits = { workspace = true }
+efflux-core = { workspace = true }
+spin = { workspace = true }

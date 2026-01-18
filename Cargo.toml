@@ -24,6 +24,8 @@ members = [
     "crates/vfs/efflux-vfs",
     "crates/vfs/efflux-devfs",
     "crates/vfs/efflux-tmpfs",
+    "crates/vfs/efflux-initramfs",
+    "crates/vfs/efflux-procfs",
     "bootloader/efflux-boot-uefi",
 ]
 
@@ -59,6 +61,8 @@ efflux-driver-traits = { path = "crates/drivers/efflux-driver-traits" }
 efflux-vfs = { path = "crates/vfs/efflux-vfs" }
 efflux-devfs = { path = "crates/vfs/efflux-devfs" }
 efflux-tmpfs = { path = "crates/vfs/efflux-tmpfs" }
+efflux-initramfs = { path = "crates/vfs/efflux-initramfs" }
+efflux-procfs = { path = "crates/vfs/efflux-procfs" }
 
 [profile.dev]
 panic = "abort"

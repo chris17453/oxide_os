@@ -22,4 +22,6 @@ efflux-boot-proto = { workspace = true }
 efflux-vfs = { workspace = true }
 efflux-devfs = { workspace = true }
 efflux-tmpfs = { workspace = true }
+efflux-initramfs = { workspace = true }
+efflux-procfs = { workspace = true }
 spin = { workspace = true }
