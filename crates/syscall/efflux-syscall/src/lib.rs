@@ -47,9 +47,17 @@ pub mod nr {
     pub const UNLINK: u64 = 32;
     pub const RENAME: u64 = 33;
     pub const GETDENTS: u64 = 34;
+    pub const CHDIR: u64 = 35;
+    pub const GETCWD: u64 = 36;
+    pub const PIPE: u64 = 37;
 
     // TTY/device syscalls
     pub const IOCTL: u64 = 40;
+
+    // Module syscalls
+    pub const INIT_MODULE: u64 = 60;
+    pub const DELETE_MODULE: u64 = 61;
+    pub const QUERY_MODULE: u64 = 62;
 
     // Signal syscalls
     pub const KILL: u64 = 50;
@@ -81,6 +89,8 @@ pub mod errno {
     pub const EROFS: i64 = -30;     // Read-only file system
     pub const ENOTTY: i64 = -25;    // Not a typewriter (inappropriate ioctl)
     pub const EINTR: i64 = -4;      // Interrupted system call
+    pub const ERANGE: i64 = -34;    // Result too large
+    pub const EMFILE: i64 = -24;    // Too many open files
 }
 
 /// Console output callback type
@@ -196,9 +206,17 @@ pub fn dispatch(
         nr::UNLINK => dir::sys_unlink(arg1, arg2 as usize),
         nr::RENAME => dir::sys_rename(arg1, arg2 as usize, arg3, arg4 as usize),
         nr::GETDENTS => dir::sys_getdents(arg1 as i32, arg2, arg3 as usize),
+        nr::CHDIR => dir::sys_chdir(arg1, arg2 as usize),
+        nr::GETCWD => dir::sys_getcwd(arg1, arg2 as usize),
+        nr::PIPE => vfs::sys_pipe(arg1),
 
         // TTY/device syscalls
         nr::IOCTL => vfs::sys_ioctl(arg1 as i32, arg2, arg3),
+
+        // Module syscalls
+        nr::INIT_MODULE => sys_init_module(arg1, arg2 as usize, arg3),
+        nr::DELETE_MODULE => sys_delete_module(arg1, arg2 as u32),
+        nr::QUERY_MODULE => errno::ENOSYS, // Deprecated, not implemented
 
         // Signal syscalls
         nr::KILL => signal::sys_kill(arg1 as i32, arg2 as i32),
@@ -558,4 +576,85 @@ fn sys_getsid(pid: Pid) -> i64 {
     } else {
         errno::ESRCH
     }
+}
+
+/// sys_init_module - Load a kernel module
+///
+/// # Arguments
+/// * `image` - Pointer to module image (ELF data)
+/// * `len` - Length of module image
+/// * `params` - Pointer to module parameters string
+fn sys_init_module(image: u64, len: usize, params: u64) -> i64 {
+    // Validate image pointer
+    if image >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+    if image.saturating_add(len as u64) >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    // Get the module data
+    let data = unsafe {
+        core::slice::from_raw_parts(image as *const u8, len)
+    };
+
+    // Get params string (if provided)
+    let _params_str = if params != 0 && params < 0x0000_8000_0000_0000 {
+        // Read params string
+        let params_ptr = params as *const u8;
+        let mut params_len = 0;
+        unsafe {
+            while *params_ptr.add(params_len) != 0 && params_len < 1024 {
+                params_len += 1;
+            }
+            core::str::from_utf8_unchecked(core::slice::from_raw_parts(params_ptr, params_len))
+        }
+    } else {
+        ""
+    };
+
+    // NOTE: In full implementation, this would:
+    // 1. Parse the ELF module
+    // 2. Allocate kernel memory
+    // 3. Load and relocate sections
+    // 4. Call init_module()
+    //
+    // For now, return ENOSYS until efflux-module is integrated
+    let _ = data;
+    errno::ENOSYS
+}
+
+/// sys_delete_module - Unload a kernel module
+///
+/// # Arguments
+/// * `name_ptr` - Pointer to module name
+/// * `flags` - Removal flags
+fn sys_delete_module(name_ptr: u64, flags: u32) -> i64 {
+    // Validate name pointer
+    if name_ptr >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    // Read module name
+    let name_ptr = name_ptr as *const u8;
+    let mut name_len = 0;
+    unsafe {
+        while *name_ptr.add(name_len) != 0 && name_len < 256 {
+            name_len += 1;
+        }
+    }
+
+    let _name = unsafe {
+        core::str::from_utf8_unchecked(core::slice::from_raw_parts(name_ptr, name_len))
+    };
+    let _flags = flags;
+
+    // NOTE: In full implementation, this would:
+    // 1. Find the module by name
+    // 2. Check if it's in use
+    // 3. Call cleanup_module()
+    // 4. Free kernel memory
+    //
+    // For now, return ENOSYS until efflux-module is integrated
+    errno::ENOSYS
 }

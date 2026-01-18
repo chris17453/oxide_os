@@ -1,0 +1,9 @@
+[package]
+name = "login"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Login program for EFFLUX OS"
+
+[dependencies]
+efflux-libc = { path = "../efflux-libc" }

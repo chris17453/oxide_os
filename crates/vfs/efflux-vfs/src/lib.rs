@@ -12,6 +12,7 @@ pub mod path;
 pub mod mount;
 pub mod error;
 pub mod fd;
+pub mod pipe;
 
 pub use error::{VfsError, VfsResult};
 pub use vnode::{DirEntry, Vnode, VnodeOps, VnodeType, Stat, Mode};

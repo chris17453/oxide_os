@@ -32,6 +32,9 @@ pub mod nr {
     pub const UNLINK: u64 = 32;
     pub const RENAME: u64 = 33;
     pub const GETDENTS: u64 = 34;
+    pub const CHDIR: u64 = 35;
+    pub const GETCWD: u64 = 36;
+    pub const PIPE: u64 = 37;
     pub const IOCTL: u64 = 40;
     pub const KILL: u64 = 50;
     pub const SIGACTION: u64 = 51;
@@ -231,4 +234,39 @@ pub fn sys_getdents(fd: i32, buf: &mut [u8]) -> i32 {
 /// sys_ioctl - Device control
 pub fn sys_ioctl(fd: i32, request: u64, arg: u64) -> i32 {
     syscall3(nr::IOCTL, fd as u64, request, arg) as i32
+}
+
+/// sys_chdir - Change working directory
+pub fn sys_chdir(path: &str) -> i32 {
+    syscall2(nr::CHDIR, path.as_ptr() as u64, path.len() as u64) as i32
+}
+
+/// sys_getcwd - Get current working directory
+pub fn sys_getcwd(buf: &mut [u8]) -> i32 {
+    syscall2(nr::GETCWD, buf.as_mut_ptr() as u64, buf.len() as u64) as i32
+}
+
+/// sys_pipe - Create pipe
+pub fn sys_pipe(pipefd: &mut [i32; 2]) -> i32 {
+    syscall1(nr::PIPE, pipefd.as_mut_ptr() as u64) as i32
+}
+
+/// sys_lseek - Seek in file
+pub fn sys_lseek(fd: i32, offset: i64, whence: i32) -> i64 {
+    syscall3(nr::LSEEK, fd as u64, offset as u64, whence as u64)
+}
+
+/// sys_setsid - Create new session
+pub fn sys_setsid() -> i32 {
+    syscall0(nr::SETSID) as i32
+}
+
+/// sys_setpgid - Set process group
+pub fn sys_setpgid(pid: i32, pgid: i32) -> i32 {
+    syscall2(nr::SETPGID, pid as u64, pgid as u64) as i32
+}
+
+/// sys_getpgid - Get process group
+pub fn sys_getpgid(pid: i32) -> i32 {
+    syscall1(nr::GETPGID, pid as u64) as i32
 }

@@ -2,6 +2,8 @@
 //!
 //! Provides mkdir, rmdir, unlink, rename, getcwd, chdir, readdir
 
+extern crate alloc;
+
 use efflux_proc::process_table;
 use efflux_vfs::{Mode, mount::GLOBAL_VFS};
 
@@ -247,4 +249,75 @@ pub fn sys_getdents(fd: i32, buf: u64, count: usize) -> i64 {
     file.set_position(offset);
 
     bytes_written as i64
+}
+
+/// sys_chdir - Change current working directory
+///
+/// # Arguments
+/// * `path_ptr` - Pointer to path string
+/// * `path_len` - Length of path string
+pub fn sys_chdir(path_ptr: u64, path_len: usize) -> i64 {
+    let path = match get_path(path_ptr, path_len) {
+        Some(p) => p,
+        None => return errno::EFAULT,
+    };
+
+    // Lookup the directory
+    let vnode = match GLOBAL_VFS.lookup(path) {
+        Ok(v) => v,
+        Err(e) => return vfs_error_to_errno(e),
+    };
+
+    // Verify it's a directory
+    if vnode.vtype() != VnodeType::Directory {
+        return errno::ENOTDIR;
+    }
+
+    // Get current process
+    let table = process_table();
+    let proc = match table.current() {
+        Some(p) => p,
+        None => return errno::ESRCH,
+    };
+
+    // Update the process's current working directory
+    let mut proc_guard = proc.lock();
+    proc_guard.set_cwd(alloc::string::String::from(path));
+
+    0
+}
+
+/// sys_getcwd - Get current working directory
+///
+/// # Arguments
+/// * `buf` - User buffer for path
+/// * `size` - Size of buffer
+pub fn sys_getcwd(buf: u64, size: usize) -> i64 {
+    if !validate_user_buffer(buf, size) {
+        return errno::EFAULT;
+    }
+
+    // Get current process
+    let table = process_table();
+    let proc = match table.current() {
+        Some(p) => p,
+        None => return errno::ESRCH,
+    };
+
+    let proc_guard = proc.lock();
+    let cwd = proc_guard.cwd();
+
+    // Check buffer size
+    if cwd.len() + 1 > size {
+        return errno::ERANGE;
+    }
+
+    // Copy path to user buffer
+    unsafe {
+        let dest = buf as *mut u8;
+        core::ptr::copy_nonoverlapping(cwd.as_ptr(), dest, cwd.len());
+        *dest.add(cwd.len()) = 0; // Null terminator
+    }
+
+    cwd.len() as i64
 }

@@ -15,9 +15,14 @@ pub fn read(fd: i32, buf: &mut [u8]) -> isize {
     syscall::sys_read(fd, buf)
 }
 
-/// Open file
+/// Open file with mode
 pub fn open(path: &str, flags: u32, mode: u32) -> i32 {
     syscall::sys_open(path, flags, mode)
+}
+
+/// Open file without mode (uses 0 as default)
+pub fn open2(path: &str, flags: u32) -> i32 {
+    syscall::sys_open(path, flags, 0)
 }
 
 /// Close file descriptor
@@ -70,6 +75,11 @@ pub fn _exit(status: i32) -> ! {
     syscall::sys_exit(status)
 }
 
+/// Exit process (alias for _exit)
+pub fn exit(status: i32) -> ! {
+    syscall::sys_exit(status)
+}
+
 /// Print string to stdout
 pub fn puts(s: &str) {
     write(STDOUT_FILENO, s.as_bytes());
@@ -114,3 +124,47 @@ pub fn wifstopped(status: i32) -> bool {
 pub fn wstopsig(status: i32) -> i32 {
     (status >> 8) & 0xFF
 }
+
+/// Create a pipe
+///
+/// Creates a pair of file descriptors: pipefd[0] for reading, pipefd[1] for writing.
+pub fn pipe(pipefd: &mut [i32; 2]) -> i32 {
+    syscall::sys_pipe(pipefd)
+}
+
+/// Change current working directory
+pub fn chdir(path: &str) -> i32 {
+    syscall::sys_chdir(path)
+}
+
+/// Get current working directory
+///
+/// Returns the length of the path on success, -1 on error.
+pub fn getcwd(buf: &mut [u8]) -> i32 {
+    syscall::sys_getcwd(buf)
+}
+
+/// Seek to position in file
+pub fn lseek(fd: i32, offset: i64, whence: i32) -> i64 {
+    syscall::sys_lseek(fd, offset, whence)
+}
+
+/// Create a new session
+pub fn setsid() -> i32 {
+    syscall::sys_setsid()
+}
+
+/// Set process group
+pub fn setpgid(pid: i32, pgid: i32) -> i32 {
+    syscall::sys_setpgid(pid, pgid)
+}
+
+/// Get process group
+pub fn getpgid(pid: i32) -> i32 {
+    syscall::sys_getpgid(pid)
+}
+
+/// Seek constants
+pub const SEEK_SET: i32 = 0;
+pub const SEEK_CUR: i32 = 1;
+pub const SEEK_END: i32 = 2;

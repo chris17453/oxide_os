@@ -13,6 +13,7 @@ pub mod string;
 pub mod syscall;
 pub mod unistd;
 pub mod stdio;
+pub mod env;
 
 pub use errno::*;
 pub use fcntl::*;
@@ -22,8 +23,11 @@ pub use syscall::*;
 
 // Explicitly re-export to avoid conflicts
 pub use stdio::{print, println, eprint, eprintln, putchar, getchar, print_u64, print_i64, print_hex, getline, itoa, atoi, parse_int};
-pub use unistd::{write, read, open, close, fork, exec, wait, waitpid, getpid, getppid, dup, dup2, _exit, puts, eputs};
+pub use unistd::{write, read, open, open2, close, fork, exec, wait, waitpid, getpid, getppid, dup, dup2, _exit, exit, puts, eputs};
+pub use unistd::{pipe, chdir, getcwd, lseek, setsid, setpgid, getpgid};
 pub use unistd::{WNOHANG, WUNTRACED, WCONTINUED, wifexited, wexitstatus, wifsignaled, wtermsig, wifstopped, wstopsig};
+pub use unistd::{SEEK_SET, SEEK_CUR, SEEK_END};
+pub use env::{setenv, unsetenv, getenv, init_env};
 
 /// Global errno variable
 static mut ERRNO: i32 = 0;
@@ -41,6 +45,9 @@ pub fn set_errno(e: i32) {
 /// Entry point for userspace programs
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _start() -> ! {
+    // Initialize environment
+    env::init_env();
+
     unsafe extern "Rust" {
         fn main() -> i32;
     }

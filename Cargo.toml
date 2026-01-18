@@ -34,7 +34,10 @@ members = [
     "userspace/efflux-libc",
     "userspace/init",
     "userspace/shell",
+    "userspace/login",
+    "userspace/getty",
     "userspace/coreutils",
+    "userspace/modutils",
     "bootloader/efflux-boot-uefi",
 ]
 

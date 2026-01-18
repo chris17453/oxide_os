@@ -21,7 +21,8 @@ Support runtime loading and unloading of kernel modules (drivers).
 | Symbol resolution (kernel exports) | [x] |
 | init/exit module hooks | [x] |
 | Module dependencies | [x] |
-| insmod/rmmod/lsmod utilities | [ ] |
+| Module syscalls (init/delete_module) | [x] |
+| insmod/rmmod/lsmod/modinfo utilities | [x] |
 
 ---
 
@@ -106,17 +107,23 @@ crates/module/efflux-module/src/
 ├── loader.rs          # Module loading/unloading
 ├── deps.rs            # Dependency management
 └── kobject.rs         # Module tracking
+
+userspace/modutils/src/bin/
+├── insmod.rs          # Insert kernel module
+├── rmmod.rs           # Remove kernel module
+├── lsmod.rs           # List loaded modules
+└── modinfo.rs         # Show module information
 ```
 
 ---
 
-## Module Syscalls (Future)
+## Module Syscalls
 
 | Number | Name | Args | Return |
 |--------|------|------|--------|
-| 50 | sys_init_module | image, len, params | 0 or -errno |
-| 51 | sys_delete_module | name, flags | 0 or -errno |
-| 52 | sys_query_module | name, which, buf, size | 0 or -errno |
+| 60 | sys_init_module | image, len, params | 0 or -errno |
+| 61 | sys_delete_module | name, flags | 0 or -errno |
+| 62 | sys_query_module | name, which, buf, size | 0 or -errno (deprecated) |
 
 ---
 
@@ -128,18 +135,19 @@ crates/module/efflux-module/src/
 - [x] init_module() called on load
 - [x] cleanup_module() called on unload
 - [x] Dependencies loaded automatically
-- [ ] insmod/rmmod/lsmod work (userspace tools)
+- [x] Module syscalls implemented
+- [x] insmod/rmmod/lsmod/modinfo work
 - [ ] Works on all 8 architectures
 
 ---
 
 ## Notes
 
-The module infrastructure is in place. For full functionality:
-1. Add module syscalls (sys_init_module, etc.)
-2. Create userspace utilities (insmod, rmmod, lsmod)
-3. Add architecture support for other targets
-4. Memory should use kernel allocator with proper permissions
+Phase 10 complete for x86_64 architecture. The module loading infrastructure and userspace tools are in place. For full functionality:
+
+1. Memory should use kernel allocator with proper permissions
+2. Add architecture support for other targets
+3. Full integration requires kernel running and ability to load actual modules
 
 ---
 

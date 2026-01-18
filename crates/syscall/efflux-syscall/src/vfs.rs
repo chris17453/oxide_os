@@ -396,6 +396,61 @@ pub fn sys_ftruncate(fd: i32, length: u64) -> i64 {
     }
 }
 
+/// sys_pipe - Create a pipe
+///
+/// # Arguments
+/// * `pipefd_ptr` - Pointer to array of two i32 for read and write fds
+pub fn sys_pipe(pipefd_ptr: u64) -> i64 {
+    if !validate_user_buffer(pipefd_ptr, core::mem::size_of::<[i32; 2]>()) {
+        return errno::EFAULT;
+    }
+
+    // Create pipe vnodes
+    let (read_vnode, write_vnode) = match efflux_vfs::pipe::create_pipe() {
+        Ok(pair) => pair,
+        Err(e) => return vfs_error_to_errno(e),
+    };
+
+    // Create file handles for read and write ends
+    let read_file = Arc::new(File::new(read_vnode, FileFlags::O_RDONLY));
+    let write_file = Arc::new(File::new(write_vnode, FileFlags::O_WRONLY));
+
+    // Get current process
+    let table = process_table();
+    let proc = match table.current() {
+        Some(p) => p,
+        None => return errno::ESRCH,
+    };
+
+    let mut proc_guard = proc.lock();
+    let fd_table = proc_guard.fd_table_mut();
+
+    // Allocate read fd
+    let read_fd = match fd_table.alloc(read_file) {
+        Ok(fd) => fd,
+        Err(e) => return vfs_error_to_errno(e),
+    };
+
+    // Allocate write fd
+    let write_fd = match fd_table.alloc(write_file) {
+        Ok(fd) => fd,
+        Err(_) => {
+            // Failed to allocate write fd, close read fd
+            let _ = fd_table.close(read_fd);
+            return errno::EMFILE;
+        }
+    };
+
+    // Write fds to user buffer
+    unsafe {
+        let pipefd = pipefd_ptr as *mut i32;
+        *pipefd = read_fd;
+        *pipefd.add(1) = write_fd;
+    }
+
+    0
+}
+
 /// sys_ioctl - Device I/O control
 ///
 /// # Arguments

@@ -3,6 +3,7 @@
 //! Defines the Process type and process-related operations.
 
 use alloc::collections::BTreeMap;
+use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -129,6 +130,8 @@ pub struct Process {
     pending_signals: PendingSignals,
     /// Signal actions (handlers)
     sigactions: [SigAction; NSIG],
+    /// Current working directory
+    cwd: String,
 }
 
 impl Process {
@@ -162,6 +165,7 @@ impl Process {
             signal_mask: SigSet::empty(),
             pending_signals: PendingSignals::new(),
             sigactions: [SigAction::new(); NSIG],
+            cwd: String::from("/"),
         }
     }
 
@@ -385,6 +389,21 @@ impl Process {
     /// Add a pending signal
     pub fn send_signal(&mut self, sig: i32, info: Option<efflux_signal::SigInfo>) {
         self.pending_signals.add(sig, info);
+    }
+
+    /// Get the current working directory
+    pub fn cwd(&self) -> &str {
+        &self.cwd
+    }
+
+    /// Set the current working directory
+    pub fn set_cwd(&mut self, path: String) {
+        self.cwd = path;
+    }
+
+    /// Clone cwd (for fork)
+    pub fn clone_cwd(&self) -> String {
+        self.cwd.clone()
     }
 }
 
