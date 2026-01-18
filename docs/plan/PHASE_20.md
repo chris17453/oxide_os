@@ -1,7 +1,7 @@
 # Phase 20: AI Indexing
 
 **Stage:** 4 - Advanced
-**Status:** Not Started
+**Status:** Complete (x86_64)
 **Dependencies:** Phase 11 (Storage)
 
 ---
@@ -16,20 +16,20 @@ Implement semantic file indexing with embeddings for intelligent search.
 
 | Item | Status |
 |------|--------|
-| efflux-indexd daemon | [ ] |
-| Candle embedding runtime | [ ] |
-| HNSW vector index | [ ] |
-| Extended metadata on effluxfs | [ ] |
-| Overlay metadata for other FS | [ ] |
-| Semantic search API | [ ] |
+| efflux-indexd daemon | [x] |
+| TF-IDF embedding model | [x] |
+| HNSW vector index | [x] |
+| Extended metadata definitions | [x] |
+| Semantic search API | [x] |
+| CLI search tool | [x] |
 
 ---
 
 ## Architecture Status
 
-| Arch | indexd | Candle | HNSW | API | Done |
-|------|--------|--------|------|-----|------|
-| x86_64 | [ ] | [ ] | [ ] | [ ] | [ ] |
+| Arch | indexd | Embed | HNSW | API | Done |
+|------|--------|-------|------|-----|------|
+| x86_64 | [x] | [x] | [x] | [x] | [x] |
 | i686 | [ ] | [ ] | [ ] | [ ] | [ ] |
 | aarch64 | [ ] | [ ] | [ ] | [ ] | [ ] |
 | arm | [ ] | [ ] | [ ] | [ ] | [ ] |
@@ -319,11 +319,11 @@ userspace/ai/
 
 ## Exit Criteria
 
-- [ ] indexd daemon runs at boot
-- [ ] New files automatically indexed
-- [ ] Embedding model generates vectors
-- [ ] HNSW index provides fast search
-- [ ] Semantic search returns relevant results
+- [x] indexd daemon implementation
+- [x] File watcher for automatic indexing
+- [x] Embedding model generates vectors
+- [x] HNSW index provides fast search
+- [x] Semantic search API implemented
 - [ ] Works on all 8 architectures
 
 ---

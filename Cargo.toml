@@ -58,6 +58,9 @@ members = [
     "crates/libc-support/efflux-pthread",
     "crates/libc-support/efflux-mmap",
     "crates/libc-support/efflux-dl",
+    "crates/ai/efflux-hnsw",
+    "crates/ai/efflux-embed",
+    "crates/ai/efflux-indexd",
     "crates/tty/efflux-tty",
     "crates/tty/efflux-pty",
     "crates/signal/efflux-signal",
@@ -70,6 +73,7 @@ members = [
     "userspace/getty",
     "userspace/coreutils",
     "userspace/modutils",
+    "userspace/search",
     "bootloader/efflux-boot-uefi",
 ]
 
@@ -144,6 +148,9 @@ efflux-virtio-emu = { path = "crates/hypervisor/efflux-virtio-emu" }
 efflux-pthread = { path = "crates/libc-support/efflux-pthread" }
 efflux-mmap = { path = "crates/libc-support/efflux-mmap" }
 efflux-dl = { path = "crates/libc-support/efflux-dl" }
+efflux-hnsw = { path = "crates/ai/efflux-hnsw" }
+efflux-embed = { path = "crates/ai/efflux-embed" }
+efflux-indexd = { path = "crates/ai/efflux-indexd" }
 
 [profile.dev]
 panic = "abort"

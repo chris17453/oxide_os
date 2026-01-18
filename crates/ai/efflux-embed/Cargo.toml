@@ -1,0 +1,14 @@
+[package]
+name = "efflux-embed"
+version = "0.1.0"
+edition = "2021"
+authors = ["EFFLUX Contributors"]
+description = "Text embedding and content extraction for EFFLUX"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+spin = "0.9"
+
+[features]
+default = []
+std = []
