@@ -6,6 +6,10 @@
 #![no_std]
 #![allow(unsafe_op_in_unsafe_fn)]
 
+// Architecture-specific implementations
+pub mod arch;
+
+// Core modules
 pub mod errno;
 pub mod fcntl;
 pub mod signal;
@@ -14,6 +18,8 @@ pub mod syscall;
 pub mod unistd;
 pub mod stdio;
 pub mod env;
+
+// Extended POSIX modules
 pub mod dirent;
 pub mod time;
 pub mod dlfcn;
