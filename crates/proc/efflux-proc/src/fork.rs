@@ -12,7 +12,7 @@ use efflux_mm_traits::FrameAllocator;
 use efflux_proc_traits::Pid;
 
 use crate::{
-    Process, ProcessConfig, ProcessContext, UserAddressSpace, alloc_pid, process_table,
+    Process, ProcessContext, UserAddressSpace, alloc_pid, process_table,
 };
 
 /// Error during fork
@@ -26,65 +26,51 @@ pub enum ForkError {
     Internal,
 }
 
+// Serial port debug output
+fn serial_print(s: &str) {
+    const SERIAL: u16 = 0x3F8;
+    for b in s.bytes() {
+        unsafe {
+            loop {
+                let status: u8;
+                core::arch::asm!("in al, dx", out("al") status, in("dx") SERIAL + 5, options(nomem, nostack));
+                if status & 0x20 != 0 { break; }
+            }
+            core::arch::asm!("out dx, al", in("al") b, in("dx") SERIAL, options(nomem, nostack));
+        }
+    }
+}
+
 /// Fork the current process
 ///
 /// Creates a child process with a copy of the parent's address space.
 /// Uses Copy-on-Write to share physical frames until written.
 ///
 /// Returns the child PID to the parent, or 0 to the child.
-// Debug output via serial port
-fn debug_print(msg: &str) {
-    const SERIAL_PORT: u16 = 0x3F8;
-    for byte in msg.bytes() {
-        unsafe {
-            // Wait for transmit buffer to be empty
-            let mut status: u8;
-            loop {
-                core::arch::asm!(
-                    "in al, dx",
-                    out("al") status,
-                    in("dx") SERIAL_PORT + 5,
-                    options(nomem, nostack)
-                );
-                if status & 0x20 != 0 {
-                    break;
-                }
-                core::hint::spin_loop();
-            }
-            // Send byte
-            core::arch::asm!(
-                "out dx, al",
-                in("al") byte,
-                in("dx") SERIAL_PORT,
-                options(nomem, nostack)
-            );
-        }
-    }
-}
-
-#[inline(never)]
 pub fn do_fork<A: FrameAllocator>(
     parent_pid: Pid,
     parent_context: &ProcessContext,
     allocator: &A,
 ) -> Result<Pid, ForkError> {
-    debug_print("[do_fork] started\n");
-
+    serial_print("[do_fork] entered\n");
     let table = process_table();
 
     // Get parent process
+    serial_print("[do_fork] getting parent\n");
     let parent_arc = table.get(parent_pid).ok_or(ForkError::ParentNotFound)?;
+    serial_print("[do_fork] locking parent\n");
     let mut parent = parent_arc.lock();
 
     // Allocate child PID
+    serial_print("[do_fork] allocating child PID\n");
     let child_pid = alloc_pid();
-    debug_print("[do_fork] child PID allocated\n");
 
     // Clone address space with COW
+    serial_print("[do_fork] cloning address space\n");
     let child_address_space = unsafe {
         clone_address_space_cow(parent.address_space(), allocator)?
     };
-    debug_print("[do_fork] address space cloned\n");
+    serial_print("[do_fork] address space cloned\n");
 
     // Allocate kernel stack for child (4 pages = 16KB)
     let kernel_stack_pages = 4;
@@ -92,21 +78,20 @@ pub fn do_fork<A: FrameAllocator>(
     let kernel_stack_phys = allocator
         .alloc_frames(kernel_stack_pages)
         .ok_or(ForkError::OutOfMemory)?;
+    serial_print("[do_fork] kernel stack allocated\n");
 
-    // Create child process (using ProcessConfig to avoid stack argument corruption)
-    let config = ProcessConfig {
-        kernel_stack: kernel_stack_phys,
-        kernel_stack_size,
-        entry_point: parent.entry_point(),
-        user_stack_top: parent.user_stack_top(),
-    };
-
+    // Create child process
+    serial_print("[do_fork] creating child process\n");
     let mut child = Process::new(
         child_pid,
         parent_pid,
         child_address_space,
-        &config,
+        kernel_stack_phys,
+        kernel_stack_size,
+        parent.entry_point(),
+        parent.user_stack_top(),
     );
+    serial_print("[do_fork] child process created\n");
 
     // Copy parent's context to child (will return 0 to child)
     let mut child_context = parent_context.clone();
@@ -129,10 +114,11 @@ pub fn do_fork<A: FrameAllocator>(
     child.add_owned_frame(kernel_stack_phys);
 
     // Add child to process table
+    serial_print("[do_fork] dropping parent lock\n");
     drop(parent); // Release parent lock before adding child
+    serial_print("[do_fork] adding child to table\n");
     table.add(child);
-
-    debug_print("[do_fork] child process created and registered\n");
+    serial_print("[do_fork] done\n");
 
     Ok(child_pid)
 }

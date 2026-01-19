@@ -4,8 +4,38 @@ use core::alloc::Layout;
 use core::mem;
 use core::ptr;
 
-// Debug disabled for cleaner output
-fn alloc_debug(_msg: &str) {}
+// Serial port debug output
+fn heap_debug(s: &str) {
+    const SERIAL: u16 = 0x3F8;
+    for b in s.bytes() {
+        unsafe {
+            loop {
+                let status: u8;
+                core::arch::asm!("in al, dx", out("al") status, in("dx") SERIAL + 5, options(nomem, nostack));
+                if status & 0x20 != 0 { break; }
+            }
+            core::arch::asm!("out dx, al", in("al") b, in("dx") SERIAL, options(nomem, nostack));
+        }
+    }
+}
+
+fn print_num(n: usize) {
+    const SERIAL: u16 = 0x3F8;
+    const HEX: &[u8] = b"0123456789abcdef";
+    heap_debug("0x");
+    for i in (0..16).rev() {
+        let nibble = ((n >> (i * 4)) & 0xF) as usize;
+        let c = HEX[nibble];
+        unsafe {
+            loop {
+                let status: u8;
+                core::arch::asm!("in al, dx", out("al") status, in("dx") SERIAL + 5, options(nomem, nostack));
+                if status & 0x20 != 0 { break; }
+            }
+            core::arch::asm!("out dx, al", in("al") c, in("dx") SERIAL, options(nomem, nostack));
+        }
+    }
+}
 
 /// A free block in the heap
 struct FreeBlock {
@@ -23,25 +53,15 @@ impl FreeBlock {
     }
 
     fn end_addr(&self) -> usize {
-        // Use saturating_add to prevent overflow panic
-        self.start_addr().saturating_add(self.size)
-    }
-
-    /// Check if this block is valid (sanity check)
-    fn is_valid(&self) -> bool {
-        let start = self.start_addr();
-        // A valid block should have a reasonable size and not overflow
-        self.size > 0
-            && self.size < usize::MAX / 2
-            && start.checked_add(self.size).is_some()
+        self.start_addr() + self.size
     }
 }
 
 /// Linked-list allocator
 ///
-/// Maintains a linked list of free blocks. On allocation, finds the first
-/// block that fits. On deallocation, adds the block back to the list and
-/// merges adjacent blocks.
+/// Maintains a linked list of free blocks sorted by address.
+/// On allocation, finds the first block that fits.
+/// On deallocation, adds the block back in sorted order and merges adjacent blocks.
 pub struct LinkedListAllocator {
     head: FreeBlock,
     total_size: usize,
@@ -63,152 +83,228 @@ impl LinkedListAllocator {
     /// # Safety
     /// The memory region must be valid and unused.
     pub unsafe fn init(&mut self, heap_start: usize, heap_size: usize) {
-        unsafe {
-            self.add_free_region(heap_start, heap_size);
-        }
+        heap_debug("[HEAP:init] start=");
+        print_num(heap_start);
+        heap_debug(" size=");
+        print_num(heap_size);
+        heap_debug("\n");
+        // SAFETY: caller guarantees heap region is valid
+        unsafe { self.add_free_region(heap_start, heap_size); }
         self.total_size = heap_size;
         self.used_size = 0;
+
+        // Debug: show the block we just created
+        if let Some(ref b) = self.head.next {
+            heap_debug("[HEAP:init] block size=");
+            print_num(b.size);
+            heap_debug("\n");
+        } else {
+            heap_debug("[HEAP:init] ERROR: no block created!\n");
+        }
     }
 
-    /// Add a free region to the allocator
+    /// Add a free region to the allocator in sorted order by address
+    ///
+    /// # Safety
+    /// The memory region must be valid and not overlap with existing free regions.
     unsafe fn add_free_region(&mut self, addr: usize, size: usize) {
-        alloc_debug("[ADD_FREE] entering\n");
         // Ensure alignment and minimum size
         let aligned_addr = align_up(addr, mem::align_of::<FreeBlock>());
-        let aligned_size = size.saturating_sub(aligned_addr - addr);
+        let alignment_loss = aligned_addr - addr;
+        if size <= alignment_loss {
+            heap_debug("[HEAP:add] too small after align\n");
+            return; // Too small after alignment
+        }
+        let aligned_size = size - alignment_loss;
 
         if aligned_size < mem::size_of::<FreeBlock>() {
-            alloc_debug("[ADD_FREE] too small, returning\n");
+            heap_debug("[HEAP:add] too small for metadata\n");
             return; // Too small to hold metadata
         }
 
-        // Create a new free block
-        alloc_debug("[ADD_FREE] creating block\n");
-        let block = unsafe { &mut *(aligned_addr as *mut FreeBlock) };
-        block.size = aligned_size;
-        block.next = self.head.next.take();
-        self.head.next = Some(block);
-        alloc_debug("[ADD_FREE] block added\n");
+        heap_debug("[HEAP:add] addr=");
+        print_num(aligned_addr);
+        heap_debug(" size=");
+        print_num(aligned_size);
+        heap_debug("\n");
 
-        // TEMPORARILY DISABLED: merging causes infinite loop with corrupted heap
-        // Try to merge with adjacent blocks
-        // self.merge_free_blocks();
-        // alloc_debug("[ADD_FREE] merge done\n");
+        // Create a new free block
+        // SAFETY: aligned_addr points to valid, properly aligned memory
+        let new_block = unsafe { &mut *(aligned_addr as *mut FreeBlock) };
+        new_block.size = aligned_size;
+        new_block.next = None;
+
+        // Insert in sorted order by address
+        let mut current = &mut self.head;
+        let mut loop_count = 0usize;
+
+        loop {
+            loop_count += 1;
+            if loop_count > 100000 {
+                heap_debug("[HEAP] add_free_region: infinite loop!\n");
+                return;
+            }
+            match current.next {
+                Some(ref mut next_block) if next_block.start_addr() < aligned_addr => {
+                    // Keep searching - next block is before our new block
+                    current = current.next.as_mut().unwrap();
+                }
+                _ => {
+                    // Insert here - either no next block or next block is after our new block
+                    new_block.next = current.next.take();
+                    current.next = Some(new_block);
+                    break;
+                }
+            }
+        }
+
+        // Merge with adjacent blocks
+        self.merge_adjacent_blocks();
     }
 
     /// Merge adjacent free blocks
     ///
-    /// NOTE: Currently disabled in add_free_region due to heap corruption issues.
-    /// TODO: Investigate root cause and re-enable.
-    #[allow(dead_code)]
-    fn merge_free_blocks(&mut self) {
+    /// Since blocks are sorted by address, adjacent blocks in memory
+    /// will be consecutive in the list.
+    fn merge_adjacent_blocks(&mut self) {
         let mut current = &mut self.head;
         let mut loop_count = 0usize;
-        const MAX_LOOPS: usize = 10000;
+        let mut merged_count = 0usize;
 
         while let Some(ref mut block) = current.next {
             loop_count += 1;
-            if loop_count > MAX_LOOPS {
-                return; // Prevent infinite loop
+            if loop_count > 100000 {
+                heap_debug("[HEAP] merge: infinite loop!\n");
+                return;
             }
 
-            // Skip invalid blocks (corrupted)
-            if !block.is_valid() {
-                current = current.next.as_mut().unwrap();
-                continue;
-            }
-
-            // Get end address before borrowing next
             let block_end = block.end_addr();
 
             // Check if we can merge with the next block
-            let should_merge = block
+            let can_merge = block
                 .next
                 .as_ref()
-                .map(|next| next.is_valid() && block_end == next.start_addr())
+                .map(|next| block_end == next.start_addr())
                 .unwrap_or(false);
 
-            if should_merge {
-                // Get the next block's info before removing it
-                if let Some(ref mut next_block) = block.next {
-                    let next_size = next_block.size;
-                    let next_next = next_block.next.take();
-                    block.size = block.size.saturating_add(next_size);
-                    block.next = next_next;
-                    continue; // Check again for more merges
+            if can_merge {
+                merged_count += 1;
+                // Merge: absorb next block into current block
+                if let Some(mut next_block) = block.next.take() {
+                    block.size += next_block.size;
+                    block.next = next_block.next.take();
                 }
+                // Don't advance - check if we can merge again
+            } else {
+                // Move to next block
+                current = current.next.as_mut().unwrap();
             }
+        }
 
-            current = current.next.as_mut().unwrap();
+        if merged_count > 0 {
+            heap_debug("[HEAP:merge] merged ");
+            print_num(merged_count);
+            heap_debug(" blocks\n");
         }
     }
 
     /// Allocate memory
     pub fn allocate(&mut self, layout: Layout) -> *mut u8 {
+        heap_debug("[HEAP:alloc] start\n");
         let (size, align) = Self::size_align(layout);
+
+        // Debug: count free blocks
+        let mut block_count = 0usize;
+        let mut largest_block = 0usize;
+        {
+            let mut c = &self.head;
+            while let Some(ref b) = c.next {
+                block_count += 1;
+                if b.size > largest_block {
+                    largest_block = b.size;
+                }
+                c = c.next.as_ref().unwrap();
+            }
+        }
+        if size > 0x1000 {
+            heap_debug("[HEAP:alloc] need=");
+            print_num(size);
+            heap_debug(" blocks=");
+            print_num(block_count);
+            heap_debug(" largest=");
+            print_num(largest_block);
+            heap_debug("\n");
+        }
 
         // Find a suitable block
         let mut current = &mut self.head;
         let mut loop_count = 0usize;
-        const MAX_LOOPS: usize = 10000;
 
         while let Some(ref mut block) = current.next {
             loop_count += 1;
-            if loop_count > MAX_LOOPS {
-                // Print error and return null
-                alloc_debug("[ALLOC] ERROR: infinite loop detected!\n");
-                return core::ptr::null_mut();
+            if loop_count > 100000 {
+                heap_debug("[HEAP] allocate: infinite loop!\n");
+                return ptr::null_mut();
             }
-
-            // Skip invalid blocks
-            if !block.is_valid() {
-                current = current.next.as_mut().unwrap();
-                continue;
-            }
-
             if let Some((alloc_start, alloc_end)) = Self::alloc_from_block(block, size, align) {
-                alloc_debug("[ALLOC] found suitable block\n");
                 let block_start = block.start_addr();
                 let block_end = block.end_addr();
 
+                // Debug: show allocation details for large blocks
+                if block.size > 0x100000 {
+                    heap_debug("[HEAP:alloc] from size=");
+                    print_num(block.size);
+                    heap_debug(" alloc=");
+                    print_num(size);
+                    heap_debug(" at=");
+                    print_num(alloc_start);
+                    heap_debug("\n");
+                }
+
                 // Remove block from list
                 let next = block.next.take();
-                alloc_debug("[ALLOC] removed block from list\n");
 
-                // If there's space before the allocation, add it back
-                if alloc_start > block_start {
-                    let front_size = alloc_start - block_start;
-                    if front_size >= mem::size_of::<FreeBlock>() {
-                        alloc_debug("[ALLOC] adding front region\n");
-                        unsafe {
-                            let front = &mut *(block_start as *mut FreeBlock);
-                            front.size = front_size;
-                            front.next = next;
-                            current.next = Some(front);
-                        }
+                // Calculate front and back regions
+                let front_size = alloc_start - block_start;
+                let back_size = block_end - alloc_end;
+
+                // Debug: show split for large blocks
+                if back_size > 0x100000 {
+                    heap_debug("[HEAP:split] back at=");
+                    print_num(alloc_end);
+                    heap_debug(" size=");
+                    print_num(back_size);
+                    heap_debug("\n");
+                }
+
+                // Handle the regions
+                if front_size >= mem::size_of::<FreeBlock>() {
+                    // Keep front region in place
+                    let front = unsafe { &mut *(block_start as *mut FreeBlock) };
+                    front.size = front_size;
+
+                    if back_size >= mem::size_of::<FreeBlock>() {
+                        // Add back region after front
+                        let back = unsafe { &mut *(alloc_end as *mut FreeBlock) };
+                        back.size = back_size;
+                        back.next = next;
+                        front.next = Some(back);
                     } else {
-                        current.next = next;
+                        front.next = next;
                     }
+                    current.next = Some(front);
+                } else if back_size >= mem::size_of::<FreeBlock>() {
+                    // Only back region - put it in place of original block
+                    let back = unsafe { &mut *(alloc_end as *mut FreeBlock) };
+                    back.size = back_size;
+                    back.next = next;
+                    current.next = Some(back);
                 } else {
+                    // No remaining regions
                     current.next = next;
                 }
-                alloc_debug("[ALLOC] handled front region\n");
 
-                // If there's space after the allocation, add it back
-                if block_end > alloc_end {
-                    let back_size = block_end - alloc_end;
-                    if back_size >= mem::size_of::<FreeBlock>() {
-                        alloc_debug("[ALLOC] adding back region\n");
-                        unsafe {
-                            self.add_free_region(alloc_end, back_size);
-                        }
-                        alloc_debug("[ALLOC] back region added\n");
-                    }
-                }
-
-                alloc_debug("[ALLOC] updating used_size\n");
                 self.used_size += alloc_end - alloc_start;
-                alloc_debug("[ALLOC] returning pointer\n");
                 return alloc_start as *mut u8;
             }
 
@@ -224,11 +320,6 @@ impl LinkedListAllocator {
         size: usize,
         align: usize,
     ) -> Option<(usize, usize)> {
-        // Validate block first
-        if !block.is_valid() {
-            return None;
-        }
-
         let alloc_start = align_up(block.start_addr(), align);
         let alloc_end = alloc_start.checked_add(size)?;
         let block_end = block.end_addr();
@@ -237,9 +328,15 @@ impl LinkedListAllocator {
             return None;
         }
 
-        // Ensure remaining space (if any) can hold a FreeBlock
-        let remaining = block_end.saturating_sub(alloc_end);
-        if remaining > 0 && remaining < mem::size_of::<FreeBlock>() {
+        // Check if front region (if any) can hold a FreeBlock
+        let front_size = alloc_start - block.start_addr();
+        if front_size > 0 && front_size < mem::size_of::<FreeBlock>() {
+            return None;
+        }
+
+        // Check if back region (if any) can hold a FreeBlock
+        let back_size = block_end - alloc_end;
+        if back_size > 0 && back_size < mem::size_of::<FreeBlock>() {
             return None;
         }
 

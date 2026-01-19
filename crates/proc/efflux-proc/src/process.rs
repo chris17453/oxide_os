@@ -2,32 +2,17 @@
 //!
 //! Defines the Process type and process-related operations.
 
-// Debug output via serial port
-fn debug_print(msg: &str) {
-    const SERIAL_PORT: u16 = 0x3F8;
-    for byte in msg.bytes() {
+// Serial port debug output
+fn debug_print(s: &str) {
+    const SERIAL: u16 = 0x3F8;
+    for b in s.bytes() {
         unsafe {
-            // Wait for transmit buffer to be empty
-            let mut status: u8;
             loop {
-                core::arch::asm!(
-                    "in al, dx",
-                    out("al") status,
-                    in("dx") SERIAL_PORT + 5,
-                    options(nomem, nostack)
-                );
-                if status & 0x20 != 0 {
-                    break;
-                }
-                core::hint::spin_loop();
+                let status: u8;
+                core::arch::asm!("in al, dx", out("al") status, in("dx") SERIAL + 5, options(nomem, nostack));
+                if status & 0x20 != 0 { break; }
             }
-            // Send byte
-            core::arch::asm!(
-                "out dx, al",
-                in("al") byte,
-                in("dx") SERIAL_PORT,
-                options(nomem, nostack)
-            );
+            core::arch::asm!("out dx, al", in("al") b, in("dx") SERIAL, options(nomem, nostack));
         }
     }
 }
@@ -164,25 +149,16 @@ pub struct Process {
     cwd: String,
 }
 
-/// Configuration for creating a new process
-/// Used to reduce argument count and avoid stack argument corruption
-#[derive(Clone, Copy)]
-pub struct ProcessConfig {
-    pub kernel_stack: PhysAddr,
-    pub kernel_stack_size: usize,
-    pub entry_point: VirtAddr,
-    pub user_stack_top: VirtAddr,
-}
-
 impl Process {
     /// Create a new process
-    ///
-    /// Uses ProcessConfig to avoid stack arguments (ABI limitation)
     pub fn new(
         pid: Pid,
         ppid: Pid,
         address_space: UserAddressSpace,
-        config: &ProcessConfig,
+        kernel_stack: PhysAddr,
+        kernel_stack_size: usize,
+        entry_point: VirtAddr,
+        user_stack_top: VirtAddr,
     ) -> Self {
         Self {
             pid,
@@ -194,10 +170,10 @@ impl Process {
             sid: pid,   // New process starts a new session
             address_space,
             context: ProcessContext::default(),
-            kernel_stack: config.kernel_stack,
-            kernel_stack_size: config.kernel_stack_size,
-            user_stack_top: config.user_stack_top,
-            entry_point: config.entry_point,
+            kernel_stack,
+            kernel_stack_size,
+            user_stack_top,
+            entry_point,
             children: Vec::new(),
             owned_frames: Vec::new(),
             fd_table: FdTable::new(),
@@ -492,24 +468,25 @@ impl ProcessTable {
 
     /// Add a process to the table
     pub fn add(&self, process: Process) -> Arc<Mutex<Process>> {
+        debug_print("[PT:add] entering\n");
         let pid = process.pid();
+        debug_print("[PT:add] creating Mutex\n");
         let mutex = Mutex::new(process);
-        // Disable interrupts during Arc allocation to prevent potential heap deadlock
-        unsafe { core::arch::asm!("cli", options(nomem, nostack)) };
+        debug_print("[PT:add] Mutex created\n");
+        debug_print("[PT:add] creating Arc\n");
         let arc = Arc::new(mutex);
-        unsafe { core::arch::asm!("sti", options(nomem, nostack)) };
-        self.processes.write().insert(pid, Arc::clone(&arc));
+        debug_print("[PT:add] Arc created!\n");
+        debug_print("[PT:add] acquiring write lock\n");
+        let mut guard = self.processes.write();
+        debug_print("[PT:add] inserting\n");
+        guard.insert(pid, Arc::clone(&arc));
+        debug_print("[PT:add] done\n");
         arc
     }
 
     /// Get a process by PID
     pub fn get(&self, pid: Pid) -> Option<Arc<Mutex<Process>>> {
-        debug_print("[PTABLE] get() - acquiring read lock...\n");
-        let guard = self.processes.read();
-        debug_print("[PTABLE] get() - got read lock\n");
-        let result = guard.get(&pid).cloned();
-        debug_print("[PTABLE] get() - releasing read lock\n");
-        result
+        self.processes.read().get(&pid).cloned()
     }
 
     /// Remove a process from the table

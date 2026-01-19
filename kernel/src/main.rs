@@ -27,7 +27,7 @@ use efflux_mm_frame::{BitmapFrameAllocator, MemoryRegion};
 use efflux_mm_heap::LockedHeap;
 use efflux_mm_paging::{phys_to_virt, read_cr3};
 use efflux_proc::{
-    UserAddressSpace, Process, ProcessConfig, ProcessContext, alloc_pid, process_table,
+    UserAddressSpace, Process, ProcessContext, alloc_pid, process_table,
     do_fork, do_waitpid, WaitOptions, handle_cow_fault,
 };
 use efflux_proc_traits::{MemoryFlags, Pid};
@@ -404,19 +404,14 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(writer, "[USER] Init PID: {}", init_pid);
 
     // Create the init Process struct
-    // Note: We need to move user_space into the Process, so we'll create
-    // the process without it first, then set it up after
-    let init_config = ProcessConfig {
-        kernel_stack: PhysAddr::new(kernel_stack_ptr as u64),
-        kernel_stack_size: KERNEL_STACK_SIZE,
-        entry_point: elf.entry_point(),
-        user_stack_top,
-    };
     let init_process = Process::new(
         init_pid,
         0,  // ppid = 0 (kernel)
         user_space,
-        &init_config,
+        PhysAddr::new(kernel_stack_ptr as u64),
+        KERNEL_STACK_SIZE,
+        elf.entry_point(),
+        user_stack_top,
     );
 
     // Register in process table
