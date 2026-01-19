@@ -43,6 +43,7 @@ members = [
     "crates/drivers/input/ps2",
     "crates/drivers/input/virtio-input",
     "crates/graphics/fb",
+    "crates/terminal",
     "crates/drivers/gpu/virtio-gpu",
     "crates/audio/audio",
     "crates/drivers/audio/virtio-snd",
@@ -148,6 +149,7 @@ input = { path = "crates/input/input" }
 ps2 = { path = "crates/drivers/input/ps2" }
 virtio-input = { path = "crates/drivers/input/virtio-input" }
 fb = { path = "crates/graphics/fb" }
+terminal = { path = "crates/terminal" }
 virtio-gpu = { path = "crates/drivers/gpu/virtio-gpu" }
 audio = { path = "crates/audio/audio" }
 virtio-snd = { path = "crates/drivers/audio/virtio-snd" }

@@ -9,3 +9,4 @@ description = "Device filesystem for EFFLUX OS"
 vfs = { workspace = true }
 os_core = { workspace = true }
 spin = { workspace = true }
+terminal = { workspace = true }

@@ -123,6 +123,7 @@ version = "0.1.0"
 dependencies = [
  "os_core",
  "spin 0.9.8",
+ "terminal",
  "vfs",
 ]
 
@@ -330,6 +331,7 @@ dependencies = [
  "spin 0.9.8",
  "syscall",
  "tcpip",
+ "terminal",
  "tmpfs",
  "tty",
  "vfs",
@@ -745,6 +747,15 @@ name = "tcpip"
 version = "0.1.0"
 dependencies = [
  "net",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "terminal"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "fb",
  "spin 0.9.8",
 ]
 

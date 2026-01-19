@@ -6,6 +6,33 @@ use alloc::sync::Arc;
 
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
+/// Simple buffer writer for debug output
+struct BufWriter<'a> {
+    buf: &'a mut [u8],
+    pos: usize,
+}
+
+impl<'a> BufWriter<'a> {
+    fn new(buf: &'a mut [u8]) -> Self {
+        BufWriter { buf, pos: 0 }
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        &self.buf[..self.pos]
+    }
+}
+
+impl<'a> core::fmt::Write for BufWriter<'a> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let bytes = s.as_bytes();
+        let remaining = self.buf.len() - self.pos;
+        let to_write = bytes.len().min(remaining);
+        self.buf[self.pos..self.pos + to_write].copy_from_slice(&bytes[..to_write]);
+        self.pos += to_write;
+        Ok(())
+    }
+}
+
 /// /dev/null - discards all writes, reads return EOF
 pub struct NullDevice {
     ino: u64,
@@ -138,10 +165,10 @@ impl VnodeOps for ZeroDevice {
     }
 }
 
-/// Console write function type
-pub type ConsoleFn = fn(&[u8]);
+/// Serial-only write function type (for raw debug output)
+pub type SerialWriteFn = fn(&[u8]);
 
-/// /dev/console - writes go to system console
+/// /dev/console - writes go to system console with ANSI processing
 pub struct ConsoleDevice {
     ino: u64,
 }
@@ -152,10 +179,26 @@ impl ConsoleDevice {
     }
 }
 
-/// Global console write function (set by kernel)
+/// Global serial write function (set by kernel, for debug output)
+static mut SERIAL_WRITE: Option<SerialWriteFn> = None;
+
+/// Set the serial write function (for raw debug output)
+///
+/// # Safety
+/// Must be called during single-threaded initialization
+pub unsafe fn set_serial_write(f: SerialWriteFn) {
+    unsafe {
+        SERIAL_WRITE = Some(f);
+    }
+}
+
+/// Legacy console write function - now routes to terminal + serial
+pub type ConsoleFn = fn(&[u8]);
+
+/// Global console write function (kept for backwards compatibility)
 static mut CONSOLE_WRITE: Option<ConsoleFn> = None;
 
-/// Set the console write function
+/// Set the console write function (legacy)
 ///
 /// # Safety
 /// Must be called during single-threaded initialization
@@ -184,13 +227,26 @@ impl VnodeOps for ConsoleDevice {
     }
 
     fn write(&self, _offset: u64, buf: &[u8]) -> VfsResult<usize> {
-        // Write to the system console
-        // Safety: We only read CONSOLE_WRITE
+        // Write to serial for debugging (raw bytes)
+        // Safety: We only read SERIAL_WRITE
         unsafe {
-            if let Some(write_fn) = CONSOLE_WRITE {
-                write_fn(buf);
+            if let Some(serial_fn) = SERIAL_WRITE {
+                serial_fn(buf);
             }
         }
+
+        // Write to terminal emulator for framebuffer with ANSI processing
+        if terminal::is_initialized() {
+            terminal::write(buf);
+        } else {
+            // Fallback to legacy console write (for early boot)
+            unsafe {
+                if let Some(write_fn) = CONSOLE_WRITE {
+                    write_fn(buf);
+                }
+            }
+        }
+
         Ok(buf.len())
     }
 
@@ -424,6 +480,15 @@ static mut FB_MODE_COUNT_CALLBACK: Option<FbModeCountFn> = None;
 /// Global mode info callback
 static mut FB_MODE_INFO_CALLBACK: Option<FbModeInfoFn> = None;
 
+/// Debug: Framebuffer write count
+static mut FB_WRITE_COUNT: usize = 0;
+
+/// Debug: Total bytes written to framebuffer
+static mut FB_TOTAL_BYTES: usize = 0;
+
+/// Debug: Last framebuffer base address used
+static mut FB_LAST_BASE: usize = 0;
+
 /// Set the framebuffer info callback
 ///
 /// # Safety
@@ -452,6 +517,13 @@ pub unsafe fn set_fb_mode_info_callback(f: FbModeInfoFn) {
     unsafe {
         FB_MODE_INFO_CALLBACK = Some(f);
     }
+}
+
+/// Get framebuffer write statistics (for debugging)
+///
+/// Returns (write_count, total_bytes, last_base_address)
+pub fn get_fb_write_stats() -> (usize, usize, usize) {
+    unsafe { (FB_WRITE_COUNT, FB_TOTAL_BYTES, FB_LAST_BASE) }
 }
 
 /// /dev/fb0 - primary framebuffer device
@@ -519,6 +591,13 @@ impl VnodeOps for FramebufferDevice {
 
         let available = info.size - offset;
         let to_write = buf.len().min(available);
+
+        // Track write statistics for debugging
+        unsafe {
+            FB_WRITE_COUNT += 1;
+            FB_TOTAL_BYTES += to_write;
+            FB_LAST_BASE = info.base;
+        }
 
         // Write to framebuffer memory
         let fb_ptr = info.base as *mut u8;

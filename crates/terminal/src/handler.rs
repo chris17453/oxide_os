@@ -1,0 +1,750 @@
+//! Escape sequence handler
+//!
+//! Processes parsed escape sequences and updates terminal state.
+
+extern crate alloc;
+
+use alloc::vec;
+use alloc::vec::Vec;
+use crate::cell::{CellAttrs, CellFlags, Cursor, CursorShape};
+use crate::color::TermColor;
+use crate::buffer::{ScreenBuffer, ScrollbackBuffer};
+
+/// Terminal mode flags
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    pub struct TerminalModes: u32 {
+        /// Auto-wrap mode (DECAWM)
+        const AUTOWRAP = 0x0001;
+        /// Cursor visible (DECTCEM)
+        const CURSOR_VISIBLE = 0x0002;
+        /// Application cursor keys (DECCKM)
+        const APP_CURSOR = 0x0004;
+        /// Application keypad mode (DECKPAM)
+        const APP_KEYPAD = 0x0008;
+        /// Origin mode (DECOM)
+        const ORIGIN_MODE = 0x0010;
+        /// Insert mode
+        const INSERT_MODE = 0x0020;
+        /// Alternate screen buffer
+        const ALT_SCREEN = 0x0040;
+        /// Bracketed paste mode
+        const BRACKETED_PASTE = 0x0080;
+        /// Mouse tracking
+        const MOUSE_TRACKING = 0x0100;
+        /// Focus events
+        const FOCUS_EVENTS = 0x0200;
+    }
+}
+
+/// Saved cursor state for DECSC/DECRC
+#[derive(Debug, Clone)]
+pub struct SavedCursor {
+    pub cursor: Cursor,
+    pub attrs: CellAttrs,
+    pub origin_mode: bool,
+}
+
+impl Default for SavedCursor {
+    fn default() -> Self {
+        SavedCursor {
+            cursor: Cursor::default(),
+            attrs: CellAttrs::default(),
+            origin_mode: false,
+        }
+    }
+}
+
+/// Terminal handler for escape sequences
+pub struct Handler {
+    /// Current cell attributes
+    pub attrs: CellAttrs,
+    /// Cursor state
+    pub cursor: Cursor,
+    /// Terminal modes
+    pub modes: TerminalModes,
+    /// Scroll region top
+    pub scroll_top: u32,
+    /// Scroll region bottom
+    pub scroll_bottom: u32,
+    /// Saved cursor (primary screen)
+    pub saved_cursor: SavedCursor,
+    /// Saved cursor (alt screen)
+    pub saved_cursor_alt: SavedCursor,
+    /// Tab stops
+    pub tabs: Vec<bool>,
+    /// Terminal width
+    cols: u32,
+    /// Terminal height
+    rows: u32,
+}
+
+impl Handler {
+    /// Create a new handler
+    pub fn new(cols: u32, rows: u32) -> Self {
+        let mut tabs = vec![false; cols as usize];
+        // Set default tab stops every 8 columns
+        for i in (0..cols as usize).step_by(8) {
+            tabs[i] = true;
+        }
+
+        Handler {
+            attrs: CellAttrs::default(),
+            cursor: Cursor::default(),
+            modes: TerminalModes::AUTOWRAP | TerminalModes::CURSOR_VISIBLE,
+            scroll_top: 0,
+            scroll_bottom: rows - 1,
+            saved_cursor: SavedCursor::default(),
+            saved_cursor_alt: SavedCursor::default(),
+            tabs,
+            cols,
+            rows,
+        }
+    }
+
+    /// Get effective scroll bottom (clamped to screen)
+    fn effective_scroll_bottom(&self) -> u32 {
+        self.scroll_bottom.min(self.rows - 1)
+    }
+
+    /// Put a character at cursor position
+    pub fn put_char(&mut self, ch: char, buffer: &mut ScreenBuffer) {
+        // Handle autowrap
+        if self.cursor.col >= self.cols {
+            if self.modes.contains(TerminalModes::AUTOWRAP) {
+                self.cursor.col = 0;
+                self.linefeed(buffer, None);
+            } else {
+                self.cursor.col = self.cols - 1;
+            }
+        }
+
+        // Insert mode: shift characters right
+        if self.modes.contains(TerminalModes::INSERT_MODE) {
+            buffer.insert_chars(self.cursor.row, self.cursor.col, 1);
+        }
+
+        // Set the character
+        buffer.set_char(self.cursor.row, self.cursor.col, ch, self.attrs);
+
+        // Advance cursor
+        self.cursor.col += 1;
+    }
+
+    /// Carriage return
+    pub fn carriage_return(&mut self) {
+        self.cursor.col = 0;
+    }
+
+    /// Line feed (moves down, may scroll)
+    pub fn linefeed(&mut self, buffer: &mut ScreenBuffer, scrollback: Option<&mut ScrollbackBuffer>) {
+        if self.cursor.row >= self.effective_scroll_bottom() {
+            // At or past scroll region bottom - scroll up
+            if let Some(sb) = scrollback {
+                // Save top line to scrollback (only if at top of scroll region)
+                if self.scroll_top == 0 {
+                    if let Some(line) = buffer.get_row(self.scroll_top) {
+                        sb.push(line);
+                    }
+                }
+            }
+            buffer.scroll_up(self.scroll_top, self.effective_scroll_bottom(), 1);
+        } else {
+            self.cursor.row += 1;
+        }
+    }
+
+    /// Reverse line feed (moves up, may scroll)
+    pub fn reverse_linefeed(&mut self, buffer: &mut ScreenBuffer) {
+        if self.cursor.row <= self.scroll_top {
+            buffer.scroll_down(self.scroll_top, self.effective_scroll_bottom(), 1);
+        } else {
+            self.cursor.row -= 1;
+        }
+    }
+
+    /// Tab to next tab stop
+    pub fn tab(&mut self) {
+        let mut col = self.cursor.col + 1;
+        while col < self.cols {
+            if self.tabs.get(col as usize).copied().unwrap_or(false) {
+                break;
+            }
+            col += 1;
+        }
+        self.cursor.col = col.min(self.cols - 1);
+    }
+
+    /// Backspace
+    pub fn backspace(&mut self) {
+        if self.cursor.col > 0 {
+            self.cursor.col -= 1;
+        }
+    }
+
+    /// Handle CSI sequence
+    pub fn handle_csi(
+        &mut self,
+        params: &[i32],
+        intermediates: &[u8],
+        final_char: u8,
+        buffer: &mut ScreenBuffer,
+        mut scrollback: Option<&mut ScrollbackBuffer>,
+    ) {
+        // Check for private mode prefix
+        let is_private = intermediates.first() == Some(&b'?');
+
+        match final_char {
+            b'@' => {
+                // ICH - Insert Character
+                let n = get_param(params, 0, 1) as u32;
+                buffer.insert_chars(self.cursor.row, self.cursor.col, n);
+            }
+            b'A' => {
+                // CUU - Cursor Up
+                let n = get_param(params, 0, 1) as u32;
+                self.cursor.row = self.cursor.row.saturating_sub(n);
+                if self.cursor.row < self.scroll_top {
+                    self.cursor.row = self.scroll_top;
+                }
+            }
+            b'B' => {
+                // CUD - Cursor Down
+                let n = get_param(params, 0, 1) as u32;
+                self.cursor.row = (self.cursor.row + n).min(self.effective_scroll_bottom());
+            }
+            b'C' => {
+                // CUF - Cursor Forward
+                let n = get_param(params, 0, 1) as u32;
+                self.cursor.col = (self.cursor.col + n).min(self.cols - 1);
+            }
+            b'D' => {
+                // CUB - Cursor Back
+                let n = get_param(params, 0, 1) as u32;
+                self.cursor.col = self.cursor.col.saturating_sub(n);
+            }
+            b'E' => {
+                // CNL - Cursor Next Line
+                let n = get_param(params, 0, 1) as u32;
+                self.cursor.col = 0;
+                self.cursor.row = (self.cursor.row + n).min(self.effective_scroll_bottom());
+            }
+            b'F' => {
+                // CPL - Cursor Previous Line
+                let n = get_param(params, 0, 1) as u32;
+                self.cursor.col = 0;
+                self.cursor.row = self.cursor.row.saturating_sub(n).max(self.scroll_top);
+            }
+            b'G' => {
+                // CHA - Cursor Horizontal Absolute
+                let col = get_param(params, 0, 1) as u32;
+                self.cursor.col = (col.saturating_sub(1)).min(self.cols - 1);
+            }
+            b'H' | b'f' => {
+                // CUP/HVP - Cursor Position
+                let row = get_param(params, 0, 1) as u32;
+                let col = get_param(params, 1, 1) as u32;
+                self.cursor.row = (row.saturating_sub(1)).min(self.rows - 1);
+                self.cursor.col = (col.saturating_sub(1)).min(self.cols - 1);
+            }
+            b'J' => {
+                // ED - Erase Display
+                let mode = get_param(params, 0, 0);
+                match mode {
+                    0 => buffer.clear_to_eos(self.cursor.row, self.cursor.col),
+                    1 => buffer.clear_to_bos(self.cursor.row, self.cursor.col),
+                    2 | 3 => {
+                        buffer.clear();
+                        // Mode 3 also clears scrollback
+                        if mode == 3 {
+                            if let Some(sb) = scrollback {
+                                sb.clear();
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            b'K' => {
+                // EL - Erase Line
+                let mode = get_param(params, 0, 0);
+                match mode {
+                    0 => buffer.clear_to_eol(self.cursor.row, self.cursor.col),
+                    1 => buffer.clear_to_bol(self.cursor.row, self.cursor.col),
+                    2 => buffer.clear_row(self.cursor.row),
+                    _ => {}
+                }
+            }
+            b'L' => {
+                // IL - Insert Lines
+                let n = get_param(params, 0, 1) as u32;
+                buffer.insert_lines(self.cursor.row, n, self.effective_scroll_bottom());
+            }
+            b'M' => {
+                // DL - Delete Lines
+                let n = get_param(params, 0, 1) as u32;
+                buffer.delete_lines(self.cursor.row, n, self.effective_scroll_bottom());
+            }
+            b'P' => {
+                // DCH - Delete Character
+                let n = get_param(params, 0, 1) as u32;
+                buffer.delete_chars(self.cursor.row, self.cursor.col, n);
+            }
+            b'S' => {
+                // SU - Scroll Up
+                let n = get_param(params, 0, 1) as u32;
+                for _ in 0..n {
+                    if let Some(ref mut sb) = scrollback {
+                        if self.scroll_top == 0 {
+                            if let Some(line) = buffer.get_row(self.scroll_top) {
+                                sb.push(line);
+                            }
+                        }
+                    }
+                }
+                buffer.scroll_up(self.scroll_top, self.effective_scroll_bottom(), n);
+            }
+            b'T' => {
+                // SD - Scroll Down
+                let n = get_param(params, 0, 1) as u32;
+                buffer.scroll_down(self.scroll_top, self.effective_scroll_bottom(), n);
+            }
+            b'X' => {
+                // ECH - Erase Character
+                let n = get_param(params, 0, 1) as u32;
+                buffer.erase_chars(self.cursor.row, self.cursor.col, n);
+            }
+            b'd' => {
+                // VPA - Vertical Position Absolute
+                let row = get_param(params, 0, 1) as u32;
+                self.cursor.row = (row.saturating_sub(1)).min(self.rows - 1);
+            }
+            b'h' => {
+                // SM - Set Mode
+                if is_private {
+                    self.set_private_mode(params, true);
+                } else {
+                    self.set_mode(params, true);
+                }
+            }
+            b'l' => {
+                // RM - Reset Mode
+                if is_private {
+                    self.set_private_mode(params, false);
+                } else {
+                    self.set_mode(params, false);
+                }
+            }
+            b'm' => {
+                // SGR - Select Graphic Rendition
+                self.handle_sgr(params);
+            }
+            b'n' => {
+                // DSR - Device Status Report
+                // We just ignore these for now
+            }
+            b'r' => {
+                // DECSTBM - Set Scroll Region
+                let top = get_param(params, 0, 1) as u32;
+                let bottom = get_param(params, 1, self.rows as i32) as u32;
+                self.scroll_top = (top.saturating_sub(1)).min(self.rows - 1);
+                self.scroll_bottom = (bottom.saturating_sub(1)).min(self.rows - 1);
+                if self.scroll_top > self.scroll_bottom {
+                    core::mem::swap(&mut self.scroll_top, &mut self.scroll_bottom);
+                }
+                // Home cursor after setting scroll region
+                self.cursor.row = if self.modes.contains(TerminalModes::ORIGIN_MODE) {
+                    self.scroll_top
+                } else {
+                    0
+                };
+                self.cursor.col = 0;
+            }
+            b's' => {
+                // SCOSC - Save Cursor Position (or DECSLRM if alt)
+                self.save_cursor();
+            }
+            b'u' => {
+                // SCORC - Restore Cursor Position
+                self.restore_cursor();
+            }
+            b'`' => {
+                // HPA - Horizontal Position Absolute (same as CHA)
+                let col = get_param(params, 0, 1) as u32;
+                self.cursor.col = (col.saturating_sub(1)).min(self.cols - 1);
+            }
+            b'q' => {
+                // DECSCUSR - Set Cursor Style
+                let style = get_param(params, 0, 0);
+                self.cursor.shape = match style {
+                    0 | 1 => CursorShape::Block,
+                    2 => CursorShape::Block,
+                    3 | 4 => CursorShape::Underline,
+                    5 | 6 => CursorShape::Bar,
+                    _ => CursorShape::Block,
+                };
+            }
+            _ => {
+                // Unhandled CSI sequence
+            }
+        }
+    }
+
+    /// Handle ESC sequence
+    pub fn handle_esc(
+        &mut self,
+        intermediates: &[u8],
+        final_char: u8,
+        buffer: &mut ScreenBuffer,
+    ) {
+        match (intermediates.first(), final_char) {
+            (None, b'7') => {
+                // DECSC - Save Cursor
+                self.save_cursor();
+            }
+            (None, b'8') => {
+                // DECRC - Restore Cursor
+                self.restore_cursor();
+            }
+            (None, b'D') => {
+                // IND - Index (move down, scroll if needed)
+                self.linefeed(buffer, None);
+            }
+            (None, b'E') => {
+                // NEL - Next Line
+                self.cursor.col = 0;
+                self.linefeed(buffer, None);
+            }
+            (None, b'H') => {
+                // HTS - Horizontal Tab Set
+                if (self.cursor.col as usize) < self.tabs.len() {
+                    self.tabs[self.cursor.col as usize] = true;
+                }
+            }
+            (None, b'M') => {
+                // RI - Reverse Index
+                self.reverse_linefeed(buffer);
+            }
+            (None, b'c') => {
+                // RIS - Reset to Initial State
+                self.reset(buffer);
+            }
+            (Some(b'#'), b'8') => {
+                // DECALN - Screen Alignment Pattern (fill with E)
+                let attrs = CellAttrs::default();
+                for row in 0..self.rows {
+                    for col in 0..self.cols {
+                        buffer.set_char(row, col, 'E', attrs);
+                    }
+                }
+            }
+            _ => {
+                // Unhandled ESC sequence
+            }
+        }
+    }
+
+    /// Handle SGR (Select Graphic Rendition)
+    fn handle_sgr(&mut self, params: &[i32]) {
+        if params.is_empty() {
+            self.attrs = CellAttrs::default();
+            return;
+        }
+
+        let mut i = 0;
+        while i < params.len() {
+            let param = params[i];
+            match param {
+                0 | -1 => {
+                    // Reset
+                    self.attrs = CellAttrs::default();
+                }
+                1 => {
+                    // Bold
+                    self.attrs.flags |= CellFlags::BOLD;
+                }
+                2 => {
+                    // Dim
+                    self.attrs.flags |= CellFlags::DIM;
+                }
+                3 => {
+                    // Italic
+                    self.attrs.flags |= CellFlags::ITALIC;
+                }
+                4 => {
+                    // Underline
+                    self.attrs.flags |= CellFlags::UNDERLINE;
+                }
+                5 | 6 => {
+                    // Blink
+                    self.attrs.flags |= CellFlags::BLINK;
+                }
+                7 => {
+                    // Reverse
+                    self.attrs.flags |= CellFlags::REVERSE;
+                }
+                8 => {
+                    // Hidden
+                    self.attrs.flags |= CellFlags::HIDDEN;
+                }
+                9 => {
+                    // Strikethrough
+                    self.attrs.flags |= CellFlags::STRIKETHROUGH;
+                }
+                21 => {
+                    // Double underline (treat as underline)
+                    self.attrs.flags |= CellFlags::UNDERLINE;
+                }
+                22 => {
+                    // Normal intensity (not bold, not dim)
+                    self.attrs.flags &= !(CellFlags::BOLD | CellFlags::DIM);
+                }
+                23 => {
+                    // Not italic
+                    self.attrs.flags &= !CellFlags::ITALIC;
+                }
+                24 => {
+                    // Not underlined
+                    self.attrs.flags &= !CellFlags::UNDERLINE;
+                }
+                25 => {
+                    // Not blinking
+                    self.attrs.flags &= !CellFlags::BLINK;
+                }
+                27 => {
+                    // Not reversed
+                    self.attrs.flags &= !CellFlags::REVERSE;
+                }
+                28 => {
+                    // Not hidden
+                    self.attrs.flags &= !CellFlags::HIDDEN;
+                }
+                29 => {
+                    // Not strikethrough
+                    self.attrs.flags &= !CellFlags::STRIKETHROUGH;
+                }
+                30..=37 => {
+                    // Foreground color (standard)
+                    self.attrs.fg = TermColor::Ansi16((param - 30) as u8);
+                }
+                38 => {
+                    // Extended foreground color
+                    if let Some(color) = parse_extended_color(params, &mut i) {
+                        self.attrs.fg = color;
+                    }
+                }
+                39 => {
+                    // Default foreground
+                    self.attrs.fg = TermColor::DefaultFg;
+                }
+                40..=47 => {
+                    // Background color (standard)
+                    self.attrs.bg = TermColor::Ansi16((param - 40) as u8);
+                }
+                48 => {
+                    // Extended background color
+                    if let Some(color) = parse_extended_color(params, &mut i) {
+                        self.attrs.bg = color;
+                    }
+                }
+                49 => {
+                    // Default background
+                    self.attrs.bg = TermColor::DefaultBg;
+                }
+                90..=97 => {
+                    // Foreground color (bright)
+                    self.attrs.fg = TermColor::Ansi16((param - 90 + 8) as u8);
+                }
+                100..=107 => {
+                    // Background color (bright)
+                    self.attrs.bg = TermColor::Ansi16((param - 100 + 8) as u8);
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+    }
+
+    /// Set terminal mode
+    fn set_mode(&mut self, params: &[i32], enable: bool) {
+        for &param in params {
+            match param {
+                4 => {
+                    // Insert mode
+                    if enable {
+                        self.modes |= TerminalModes::INSERT_MODE;
+                    } else {
+                        self.modes &= !TerminalModes::INSERT_MODE;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Set private (DEC) terminal mode
+    fn set_private_mode(&mut self, params: &[i32], enable: bool) {
+        for &param in params {
+            match param {
+                1 => {
+                    // DECCKM - Application cursor keys
+                    if enable {
+                        self.modes |= TerminalModes::APP_CURSOR;
+                    } else {
+                        self.modes &= !TerminalModes::APP_CURSOR;
+                    }
+                }
+                6 => {
+                    // DECOM - Origin mode
+                    if enable {
+                        self.modes |= TerminalModes::ORIGIN_MODE;
+                    } else {
+                        self.modes &= !TerminalModes::ORIGIN_MODE;
+                    }
+                    // Home cursor
+                    self.cursor.row = if enable { self.scroll_top } else { 0 };
+                    self.cursor.col = 0;
+                }
+                7 => {
+                    // DECAWM - Auto-wrap mode
+                    if enable {
+                        self.modes |= TerminalModes::AUTOWRAP;
+                    } else {
+                        self.modes &= !TerminalModes::AUTOWRAP;
+                    }
+                }
+                25 => {
+                    // DECTCEM - Cursor visible
+                    self.cursor.visible = enable;
+                    if enable {
+                        self.modes |= TerminalModes::CURSOR_VISIBLE;
+                    } else {
+                        self.modes &= !TerminalModes::CURSOR_VISIBLE;
+                    }
+                }
+                1000 | 1002 | 1003 | 1006 | 1015 => {
+                    // Mouse tracking modes
+                    if enable {
+                        self.modes |= TerminalModes::MOUSE_TRACKING;
+                    } else {
+                        self.modes &= !TerminalModes::MOUSE_TRACKING;
+                    }
+                }
+                1004 => {
+                    // Focus events
+                    if enable {
+                        self.modes |= TerminalModes::FOCUS_EVENTS;
+                    } else {
+                        self.modes &= !TerminalModes::FOCUS_EVENTS;
+                    }
+                }
+                1049 => {
+                    // Alternate screen buffer (with save/restore cursor)
+                    if enable {
+                        self.save_cursor();
+                        self.modes |= TerminalModes::ALT_SCREEN;
+                    } else {
+                        self.modes &= !TerminalModes::ALT_SCREEN;
+                        self.restore_cursor();
+                    }
+                }
+                2004 => {
+                    // Bracketed paste mode
+                    if enable {
+                        self.modes |= TerminalModes::BRACKETED_PASTE;
+                    } else {
+                        self.modes &= !TerminalModes::BRACKETED_PASTE;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Save cursor state
+    pub fn save_cursor(&mut self) {
+        let saved = SavedCursor {
+            cursor: self.cursor,
+            attrs: self.attrs,
+            origin_mode: self.modes.contains(TerminalModes::ORIGIN_MODE),
+        };
+        if self.modes.contains(TerminalModes::ALT_SCREEN) {
+            self.saved_cursor_alt = saved;
+        } else {
+            self.saved_cursor = saved;
+        }
+    }
+
+    /// Restore cursor state
+    pub fn restore_cursor(&mut self) {
+        let saved = if self.modes.contains(TerminalModes::ALT_SCREEN) {
+            &self.saved_cursor_alt
+        } else {
+            &self.saved_cursor
+        };
+        self.cursor = saved.cursor;
+        self.attrs = saved.attrs;
+        if saved.origin_mode {
+            self.modes |= TerminalModes::ORIGIN_MODE;
+        } else {
+            self.modes &= !TerminalModes::ORIGIN_MODE;
+        }
+    }
+
+    /// Reset terminal to initial state
+    pub fn reset(&mut self, buffer: &mut ScreenBuffer) {
+        self.attrs = CellAttrs::default();
+        self.cursor = Cursor::default();
+        self.modes = TerminalModes::AUTOWRAP | TerminalModes::CURSOR_VISIBLE;
+        self.scroll_top = 0;
+        self.scroll_bottom = self.rows - 1;
+        self.saved_cursor = SavedCursor::default();
+        self.saved_cursor_alt = SavedCursor::default();
+
+        // Reset tab stops
+        for tab in self.tabs.iter_mut() {
+            *tab = false;
+        }
+        for i in (0..self.cols as usize).step_by(8) {
+            self.tabs[i] = true;
+        }
+
+        buffer.clear();
+    }
+}
+
+/// Get parameter with default value
+fn get_param(params: &[i32], index: usize, default: i32) -> i32 {
+    params.get(index).copied().unwrap_or(-1).max(0).max(default)
+}
+
+/// Parse extended color (256-color or RGB)
+fn parse_extended_color(params: &[i32], i: &mut usize) -> Option<TermColor> {
+    if *i + 1 >= params.len() {
+        return None;
+    }
+
+    match params[*i + 1] {
+        2 => {
+            // RGB color: 38;2;r;g;b
+            if *i + 4 >= params.len() {
+                return None;
+            }
+            let r = params[*i + 2].clamp(0, 255) as u8;
+            let g = params[*i + 3].clamp(0, 255) as u8;
+            let b = params[*i + 4].clamp(0, 255) as u8;
+            *i += 4;
+            Some(TermColor::Rgb(r, g, b))
+        }
+        5 => {
+            // 256-color: 38;5;n
+            if *i + 2 >= params.len() {
+                return None;
+            }
+            let n = params[*i + 2].clamp(0, 255) as u8;
+            *i += 2;
+            Some(TermColor::Ansi256(n))
+        }
+        _ => None,
+    }
+}

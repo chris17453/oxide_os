@@ -41,4 +41,5 @@ dhcp = { workspace = true }
 virtio-net = { workspace = true }
 pci = { workspace = true }
 fb = { workspace = true }
+terminal = { workspace = true }
 spin = { workspace = true }

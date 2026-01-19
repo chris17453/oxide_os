@@ -53,6 +53,7 @@ use tcpip;
 use virtio_net;
 use pci;
 use fb;
+use terminal;
 use spin::Mutex;
 
 /// Global kernel heap allocator
@@ -206,9 +207,15 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
         let mode_count = fb::get_mode_count();
         let _ = writeln!(writer, "[INFO] Video modes available: {}", mode_count);
 
+        // Initialize terminal emulator with framebuffer
+        if let Some(framebuffer) = fb::framebuffer() {
+            terminal::init(framebuffer);
+            let _ = writeln!(writer, "[INFO] Terminal emulator initialized");
+        }
+
         // Clear the screen with a dark background
-        fb::clear();
-        let _ = writeln!(writer, "[INFO] Framebuffer console ready");
+        terminal::clear();
+        let _ = writeln!(writer, "[INFO] Terminal ready");
     } else {
         let _ = writeln!(writer, "[INFO] No framebuffer available, serial-only mode");
     }
@@ -303,7 +310,12 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
     let _ = writeln!(writer, "[VFS] Mounted devfs at /dev");
 
-    // Set up console write function for devfs
+    // Set up serial write function for devfs (raw debug output)
+    unsafe {
+        devfs::devices::set_serial_write(serial_write_bytes);
+    }
+
+    // Set up legacy console write function for devfs (fallback for early boot)
     unsafe {
         devfs::devices::set_console_write(console_write_bytes);
     }
@@ -800,25 +812,39 @@ fn page_fault_handler(fault_addr: u64, error_code: u64, rip: u64) -> bool {
 
 /// Console write function for syscalls
 ///
-/// Writes to both serial and framebuffer (if initialized).
+/// Writes to serial and terminal emulator (if initialized).
 fn console_write(data: &[u8]) {
-    // Write to serial
+    // Write to serial for debugging
     let mut writer = serial::SerialWriter;
     for &byte in data {
         let _ = writer.write_char(byte as char);
     }
 
-    // Write to framebuffer console if available
-    if fb::is_initialized() {
+    // Write to terminal emulator for ANSI-processed framebuffer output
+    if terminal::is_initialized() {
+        terminal::write(data);
+    } else if fb::is_initialized() {
+        // Fallback to basic fb console before terminal is ready
         for &byte in data {
             fb::putchar(byte as char);
         }
     }
 }
 
-/// Console write function for devfs (same as console_write but typed for devfs)
+/// Serial-only write function for devfs
+///
+/// Writes only to serial port for raw debug output.
+fn serial_write_bytes(data: &[u8]) {
+    let mut writer = serial::SerialWriter;
+    for &byte in data {
+        let _ = writer.write_char(byte as char);
+    }
+}
+
+/// Console write function for devfs (legacy fallback)
 ///
 /// Writes to both serial and framebuffer (if initialized).
+/// Used before terminal emulator is initialized.
 fn console_write_bytes(data: &[u8]) {
     // Write to serial
     let mut writer = serial::SerialWriter;
@@ -826,8 +852,8 @@ fn console_write_bytes(data: &[u8]) {
         let _ = writer.write_char(byte as char);
     }
 
-    // Write to framebuffer console if available
-    if fb::is_initialized() {
+    // Write to framebuffer console if available (legacy path)
+    if fb::is_initialized() && !terminal::is_initialized() {
         for &byte in data {
             fb::putchar(byte as char);
         }
@@ -909,6 +935,14 @@ fn user_exit(status: i32) -> ! {
     // Get current process and mark as zombie
     let table = process_table();
     let current_pid = table.current_pid();
+
+    // Debug: Print framebuffer write stats on process exit
+    {
+        let (writes, bytes, base) = devfs::devices::get_fb_write_stats();
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[FB_DEBUG] Process {} exiting - FB writes={} bytes={} base={:#x}",
+            current_pid, writes, bytes, base);
+    }
 
     if let Some(proc) = table.get(current_pid) {
         proc.lock().exit(status);
@@ -1153,6 +1187,13 @@ fn kernel_wait(pid: i32, options: i32) -> i64 {
     // Now wait for zombie children
     match do_waitpid(parent_pid, pid, wait_opts) {
         Ok(result) => {
+            // Debug: print framebuffer write stats after each child exits
+            {
+                let (writes, bytes, base) = devfs::devices::get_fb_write_stats();
+                let mut writer = serial::SerialWriter;
+                let _ = writeln!(writer, "[FB_DEBUG] Child {} exited - FB writes={} bytes={} base={:#x}",
+                    result.pid, writes, bytes, base);
+            }
             // Pack pid and status into result
             ((result.pid as i64) << 32) | ((result.status as i64) & 0xFFFFFFFF)
         }
