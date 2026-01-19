@@ -12,6 +12,7 @@ efflux-mm-traits = { workspace = true }
 efflux-mm-frame = { workspace = true }
 efflux-mm-paging = { workspace = true }
 efflux-mm-heap = { workspace = true }
+efflux-mm-cow = { workspace = true }
 efflux-sched = { workspace = true }
 efflux-sched-traits = { workspace = true }
 efflux-proc = { workspace = true }

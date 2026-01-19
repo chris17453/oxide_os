@@ -14,7 +14,7 @@ mod wait;
 
 pub use address_space::UserAddressSpace;
 pub use process::{
-    Credentials, Process, ProcessContext, ProcessTable,
+    Credentials, Process, ProcessConfig, ProcessContext, ProcessTable,
     alloc_pid, process_table,
 };
 pub use fork::{do_fork, handle_cow_fault, ForkError};

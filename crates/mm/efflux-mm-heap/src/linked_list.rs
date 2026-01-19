@@ -4,6 +4,9 @@ use core::alloc::Layout;
 use core::mem;
 use core::ptr;
 
+// Debug disabled for cleaner output
+fn alloc_debug(_msg: &str) {}
+
 /// A free block in the heap
 struct FreeBlock {
     size: usize,
@@ -69,29 +72,46 @@ impl LinkedListAllocator {
 
     /// Add a free region to the allocator
     unsafe fn add_free_region(&mut self, addr: usize, size: usize) {
+        alloc_debug("[ADD_FREE] entering\n");
         // Ensure alignment and minimum size
         let aligned_addr = align_up(addr, mem::align_of::<FreeBlock>());
         let aligned_size = size.saturating_sub(aligned_addr - addr);
 
         if aligned_size < mem::size_of::<FreeBlock>() {
+            alloc_debug("[ADD_FREE] too small, returning\n");
             return; // Too small to hold metadata
         }
 
         // Create a new free block
+        alloc_debug("[ADD_FREE] creating block\n");
         let block = unsafe { &mut *(aligned_addr as *mut FreeBlock) };
         block.size = aligned_size;
         block.next = self.head.next.take();
         self.head.next = Some(block);
+        alloc_debug("[ADD_FREE] block added\n");
 
+        // TEMPORARILY DISABLED: merging causes infinite loop with corrupted heap
         // Try to merge with adjacent blocks
-        self.merge_free_blocks();
+        // self.merge_free_blocks();
+        // alloc_debug("[ADD_FREE] merge done\n");
     }
 
     /// Merge adjacent free blocks
+    ///
+    /// NOTE: Currently disabled in add_free_region due to heap corruption issues.
+    /// TODO: Investigate root cause and re-enable.
+    #[allow(dead_code)]
     fn merge_free_blocks(&mut self) {
         let mut current = &mut self.head;
+        let mut loop_count = 0usize;
+        const MAX_LOOPS: usize = 10000;
 
         while let Some(ref mut block) = current.next {
+            loop_count += 1;
+            if loop_count > MAX_LOOPS {
+                return; // Prevent infinite loop
+            }
+
             // Skip invalid blocks (corrupted)
             if !block.is_valid() {
                 current = current.next.as_mut().unwrap();
@@ -129,8 +149,17 @@ impl LinkedListAllocator {
 
         // Find a suitable block
         let mut current = &mut self.head;
+        let mut loop_count = 0usize;
+        const MAX_LOOPS: usize = 10000;
 
         while let Some(ref mut block) = current.next {
+            loop_count += 1;
+            if loop_count > MAX_LOOPS {
+                // Print error and return null
+                alloc_debug("[ALLOC] ERROR: infinite loop detected!\n");
+                return core::ptr::null_mut();
+            }
+
             // Skip invalid blocks
             if !block.is_valid() {
                 current = current.next.as_mut().unwrap();
@@ -138,16 +167,19 @@ impl LinkedListAllocator {
             }
 
             if let Some((alloc_start, alloc_end)) = Self::alloc_from_block(block, size, align) {
+                alloc_debug("[ALLOC] found suitable block\n");
                 let block_start = block.start_addr();
                 let block_end = block.end_addr();
 
                 // Remove block from list
                 let next = block.next.take();
+                alloc_debug("[ALLOC] removed block from list\n");
 
                 // If there's space before the allocation, add it back
                 if alloc_start > block_start {
                     let front_size = alloc_start - block_start;
                     if front_size >= mem::size_of::<FreeBlock>() {
+                        alloc_debug("[ALLOC] adding front region\n");
                         unsafe {
                             let front = &mut *(block_start as *mut FreeBlock);
                             front.size = front_size;
@@ -160,18 +192,23 @@ impl LinkedListAllocator {
                 } else {
                     current.next = next;
                 }
+                alloc_debug("[ALLOC] handled front region\n");
 
                 // If there's space after the allocation, add it back
                 if block_end > alloc_end {
                     let back_size = block_end - alloc_end;
                     if back_size >= mem::size_of::<FreeBlock>() {
+                        alloc_debug("[ALLOC] adding back region\n");
                         unsafe {
                             self.add_free_region(alloc_end, back_size);
                         }
+                        alloc_debug("[ALLOC] back region added\n");
                     }
                 }
 
+                alloc_debug("[ALLOC] updating used_size\n");
                 self.used_size += alloc_end - alloc_start;
+                alloc_debug("[ALLOC] returning pointer\n");
                 return alloc_start as *mut u8;
             }
 

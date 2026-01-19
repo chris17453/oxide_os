@@ -2,6 +2,36 @@
 //!
 //! Defines the Process type and process-related operations.
 
+// Debug output via serial port
+fn debug_print(msg: &str) {
+    const SERIAL_PORT: u16 = 0x3F8;
+    for byte in msg.bytes() {
+        unsafe {
+            // Wait for transmit buffer to be empty
+            let mut status: u8;
+            loop {
+                core::arch::asm!(
+                    "in al, dx",
+                    out("al") status,
+                    in("dx") SERIAL_PORT + 5,
+                    options(nomem, nostack)
+                );
+                if status & 0x20 != 0 {
+                    break;
+                }
+                core::hint::spin_loop();
+            }
+            // Send byte
+            core::arch::asm!(
+                "out dx, al",
+                in("al") byte,
+                in("dx") SERIAL_PORT,
+                options(nomem, nostack)
+            );
+        }
+    }
+}
+
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
@@ -134,16 +164,25 @@ pub struct Process {
     cwd: String,
 }
 
+/// Configuration for creating a new process
+/// Used to reduce argument count and avoid stack argument corruption
+#[derive(Clone, Copy)]
+pub struct ProcessConfig {
+    pub kernel_stack: PhysAddr,
+    pub kernel_stack_size: usize,
+    pub entry_point: VirtAddr,
+    pub user_stack_top: VirtAddr,
+}
+
 impl Process {
     /// Create a new process
+    ///
+    /// Uses ProcessConfig to avoid stack arguments (ABI limitation)
     pub fn new(
         pid: Pid,
         ppid: Pid,
         address_space: UserAddressSpace,
-        kernel_stack: PhysAddr,
-        kernel_stack_size: usize,
-        entry_point: VirtAddr,
-        user_stack_top: VirtAddr,
+        config: &ProcessConfig,
     ) -> Self {
         Self {
             pid,
@@ -155,10 +194,10 @@ impl Process {
             sid: pid,   // New process starts a new session
             address_space,
             context: ProcessContext::default(),
-            kernel_stack,
-            kernel_stack_size,
-            user_stack_top,
-            entry_point,
+            kernel_stack: config.kernel_stack,
+            kernel_stack_size: config.kernel_stack_size,
+            user_stack_top: config.user_stack_top,
+            entry_point: config.entry_point,
             children: Vec::new(),
             owned_frames: Vec::new(),
             fd_table: FdTable::new(),
@@ -454,14 +493,23 @@ impl ProcessTable {
     /// Add a process to the table
     pub fn add(&self, process: Process) -> Arc<Mutex<Process>> {
         let pid = process.pid();
-        let arc = Arc::new(Mutex::new(process));
+        let mutex = Mutex::new(process);
+        // Disable interrupts during Arc allocation to prevent potential heap deadlock
+        unsafe { core::arch::asm!("cli", options(nomem, nostack)) };
+        let arc = Arc::new(mutex);
+        unsafe { core::arch::asm!("sti", options(nomem, nostack)) };
         self.processes.write().insert(pid, Arc::clone(&arc));
         arc
     }
 
     /// Get a process by PID
     pub fn get(&self, pid: Pid) -> Option<Arc<Mutex<Process>>> {
-        self.processes.read().get(&pid).cloned()
+        debug_print("[PTABLE] get() - acquiring read lock...\n");
+        let guard = self.processes.read();
+        debug_print("[PTABLE] get() - got read lock\n");
+        let result = guard.get(&pid).cloned();
+        debug_print("[PTABLE] get() - releasing read lock\n");
+        result
     }
 
     /// Remove a process from the table

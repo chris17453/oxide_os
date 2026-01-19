@@ -14,7 +14,7 @@ use alloc::vec::Vec;
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::ptr::addr_of_mut;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use efflux_arch_traits::Arch;
 use efflux_arch_x86_64 as arch;
@@ -27,16 +27,16 @@ use efflux_mm_frame::{BitmapFrameAllocator, MemoryRegion};
 use efflux_mm_heap::LockedHeap;
 use efflux_mm_paging::{phys_to_virt, read_cr3};
 use efflux_proc::{
-    UserAddressSpace, Process, ProcessContext, alloc_pid, process_table,
+    UserAddressSpace, Process, ProcessConfig, ProcessContext, alloc_pid, process_table,
     do_fork, do_waitpid, WaitOptions, handle_cow_fault,
 };
-use efflux_proc_traits::{MemoryFlags, Pid, ProcessState};
+use efflux_proc_traits::{MemoryFlags, Pid};
 use efflux_syscall::SyscallContext;
 use efflux_vfs::{File, FileFlags, mount::GLOBAL_VFS, MountFlags, VnodeOps};
 use efflux_devfs::DevFs;
 use efflux_tmpfs::TmpDir;
 use efflux_procfs::ProcFs;
-use efflux_pty::{PtyManager, Ptmx, PtsDir};
+use efflux_pty::{PtyManager, PtsDir};
 use spin::Mutex;
 
 /// Global kernel heap allocator
@@ -374,9 +374,11 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     // Allocate kernel stack for syscalls and interrupts
     let _ = writeln!(writer, "[USER] Allocating kernel stack...");
-    let kernel_stack: Box<[u8; 16384]> = Box::new([0u8; 16384]);
+    // Allocate 64KB kernel stack to prevent stack overflow into heap
+    const KERNEL_STACK_SIZE: usize = 64 * 1024;
+    let kernel_stack: Box<[u8; KERNEL_STACK_SIZE]> = Box::new([0u8; KERNEL_STACK_SIZE]);
     let kernel_stack_ptr = Box::into_raw(kernel_stack);
-    let kernel_stack_top = unsafe { (kernel_stack_ptr as *const u8).add(16384) as u64 };
+    let kernel_stack_top = unsafe { (kernel_stack_ptr as *const u8).add(KERNEL_STACK_SIZE) as u64 };
 
     // Set kernel stack for:
     // 1. Syscalls (stored in GS base for syscall handler)
@@ -404,14 +406,17 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Create the init Process struct
     // Note: We need to move user_space into the Process, so we'll create
     // the process without it first, then set it up after
+    let init_config = ProcessConfig {
+        kernel_stack: PhysAddr::new(kernel_stack_ptr as u64),
+        kernel_stack_size: KERNEL_STACK_SIZE,
+        entry_point: elf.entry_point(),
+        user_stack_top,
+    };
     let init_process = Process::new(
         init_pid,
         0,  // ppid = 0 (kernel)
         user_space,
-        PhysAddr::new(kernel_stack_ptr as u64),
-        16384,  // kernel stack size
-        elf.entry_point(),
-        user_stack_top,
+        &init_config,
     );
 
     // Register in process table
@@ -639,6 +644,7 @@ fn kernel_fork() -> i64 {
 
     let table = process_table();
     let parent_pid = table.current_pid();
+    let _ = writeln!(writer, "[FORK] Parent PID: {}", parent_pid);
 
     // Get current process context from syscall user context
     let user_ctx = get_user_context();
@@ -668,8 +674,26 @@ fn kernel_fork() -> i64 {
     // Create wrapper for frame allocator
     let alloc_wrapper = FrameAllocatorWrapper;
 
+    // Print RSP before call to validate stack
+    let rsp_before: u64;
+    unsafe { core::arch::asm!("mov {}, rsp", out(reg) rsp_before, options(nomem, nostack)) };
+    let _ = writeln!(writer, "[FORK] RSP before do_fork: {:#x}", rsp_before);
+    // Print value at RSP to verify return address slot
+    let ret_slot = unsafe { *(rsp_before as *const u64) };
+    let _ = writeln!(writer, "[FORK] Value at RSP: {:#x}", ret_slot);
+
+    let _ = writeln!(writer, "[FORK] Calling do_fork...");
+
     // Call do_fork
-    match do_fork(parent_pid, &parent_context, &alloc_wrapper) {
+    let result = do_fork(parent_pid, &parent_context, &alloc_wrapper);
+
+    // Print RSP after return to verify stack restored
+    let rsp_after: u64;
+    unsafe { core::arch::asm!("mov {}, rsp", out(reg) rsp_after, options(nomem, nostack)) };
+    let _ = writeln!(writer, "[FORK] RSP after do_fork: {:#x}", rsp_after);
+    let _ = writeln!(writer, "[FORK] do_fork returned");
+
+    match result {
         Ok(child_pid) => {
             let _ = writeln!(writer, "[FORK] Created child process {}", child_pid);
 
@@ -763,9 +787,11 @@ fn run_child_process(child_pid: Pid) {
     let _ = writeln!(writer, "[RUN] Switching to child {} at {:#x}", child_pid, child_entry.as_u64());
 
     // Allocate a new kernel stack for the child (the one in Process is physical addr)
-    let child_kernel_stack: Box<[u8; 16384]> = Box::new([0u8; 16384]);
+    // Allocate 64KB kernel stack for child
+    const CHILD_KERNEL_STACK_SIZE: usize = 64 * 1024;
+    let child_kernel_stack: Box<[u8; CHILD_KERNEL_STACK_SIZE]> = Box::new([0u8; CHILD_KERNEL_STACK_SIZE]);
     let child_kernel_stack_ptr = Box::into_raw(child_kernel_stack);
-    let child_kernel_stack_top = unsafe { (child_kernel_stack_ptr as *const u8).add(16384) as u64 };
+    let child_kernel_stack_top = unsafe { (child_kernel_stack_ptr as *const u8).add(CHILD_KERNEL_STACK_SIZE) as u64 };
 
     // Set kernel stack for child's syscalls/interrupts
     unsafe {

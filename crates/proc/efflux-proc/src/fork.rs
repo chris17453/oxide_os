@@ -12,7 +12,7 @@ use efflux_mm_traits::FrameAllocator;
 use efflux_proc_traits::Pid;
 
 use crate::{
-    Process, ProcessContext, UserAddressSpace, alloc_pid, process_table,
+    Process, ProcessConfig, ProcessContext, UserAddressSpace, alloc_pid, process_table,
 };
 
 /// Error during fork
@@ -32,11 +32,44 @@ pub enum ForkError {
 /// Uses Copy-on-Write to share physical frames until written.
 ///
 /// Returns the child PID to the parent, or 0 to the child.
+// Debug output via serial port
+fn debug_print(msg: &str) {
+    const SERIAL_PORT: u16 = 0x3F8;
+    for byte in msg.bytes() {
+        unsafe {
+            // Wait for transmit buffer to be empty
+            let mut status: u8;
+            loop {
+                core::arch::asm!(
+                    "in al, dx",
+                    out("al") status,
+                    in("dx") SERIAL_PORT + 5,
+                    options(nomem, nostack)
+                );
+                if status & 0x20 != 0 {
+                    break;
+                }
+                core::hint::spin_loop();
+            }
+            // Send byte
+            core::arch::asm!(
+                "out dx, al",
+                in("al") byte,
+                in("dx") SERIAL_PORT,
+                options(nomem, nostack)
+            );
+        }
+    }
+}
+
+#[inline(never)]
 pub fn do_fork<A: FrameAllocator>(
     parent_pid: Pid,
     parent_context: &ProcessContext,
     allocator: &A,
 ) -> Result<Pid, ForkError> {
+    debug_print("[do_fork] started\n");
+
     let table = process_table();
 
     // Get parent process
@@ -45,11 +78,13 @@ pub fn do_fork<A: FrameAllocator>(
 
     // Allocate child PID
     let child_pid = alloc_pid();
+    debug_print("[do_fork] child PID allocated\n");
 
     // Clone address space with COW
     let child_address_space = unsafe {
         clone_address_space_cow(parent.address_space(), allocator)?
     };
+    debug_print("[do_fork] address space cloned\n");
 
     // Allocate kernel stack for child (4 pages = 16KB)
     let kernel_stack_pages = 4;
@@ -58,21 +93,24 @@ pub fn do_fork<A: FrameAllocator>(
         .alloc_frames(kernel_stack_pages)
         .ok_or(ForkError::OutOfMemory)?;
 
-    // Create child process
+    // Create child process (using ProcessConfig to avoid stack argument corruption)
+    let config = ProcessConfig {
+        kernel_stack: kernel_stack_phys,
+        kernel_stack_size,
+        entry_point: parent.entry_point(),
+        user_stack_top: parent.user_stack_top(),
+    };
+
     let mut child = Process::new(
         child_pid,
         parent_pid,
         child_address_space,
-        kernel_stack_phys,
-        kernel_stack_size,
-        parent.entry_point(),
-        parent.user_stack_top(),
+        &config,
     );
 
     // Copy parent's context to child (will return 0 to child)
     let mut child_context = parent_context.clone();
     child_context.rax = 0; // fork returns 0 to child
-
     *child.context_mut() = child_context;
 
     // Copy credentials and process group info
@@ -93,6 +131,8 @@ pub fn do_fork<A: FrameAllocator>(
     // Add child to process table
     drop(parent); // Release parent lock before adding child
     table.add(child);
+
+    debug_print("[do_fork] child process created and registered\n");
 
     Ok(child_pid)
 }

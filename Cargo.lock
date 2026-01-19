@@ -271,6 +271,7 @@ dependencies = [
  "efflux-devfs",
  "efflux-elf",
  "efflux-initramfs",
+ "efflux-mm-cow",
  "efflux-mm-frame",
  "efflux-mm-heap",
  "efflux-mm-paging",
