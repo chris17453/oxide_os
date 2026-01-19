@@ -198,8 +198,13 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
             fb_info.width, fb_info.height, fb_info.base);
         let _ = writeln!(writer, "[INFO] Stride: {} pixels, BPP: {}", fb_info.stride, fb_info.bpp);
 
-        fb::init_from_boot(fb_info, boot_info.phys_map_base);
+        // Initialize with video modes if available
+        fb::init_from_boot(fb_info, boot_info.phys_map_base, boot_info.video_modes.as_ref());
         let _ = writeln!(writer, "[INFO] Framebuffer initialized");
+
+        // Log video mode count
+        let mode_count = fb::get_mode_count();
+        let _ = writeln!(writer, "[INFO] Video modes available: {}", mode_count);
 
         // Clear the screen with a dark background
         fb::clear();
@@ -306,6 +311,8 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Set up framebuffer info callback for /dev/fb0
     unsafe {
         devfs::devices::set_fb_info_callback(get_fb_device_info);
+        devfs::devices::set_fb_mode_count_callback(get_fb_mode_count);
+        devfs::devices::set_fb_mode_info_callback(get_fb_mode_info);
     }
 
     // Create /proc directory
@@ -842,6 +849,27 @@ fn get_fb_device_info() -> Option<devfs::devices::FramebufferDeviceInfo> {
         stride: info.stride,
         bpp: info.bpp,
         is_bgr: info.is_bgr,
+    })
+}
+
+/// Get video mode count for /dev/fb0
+fn get_fb_mode_count() -> u32 {
+    fb::get_mode_count()
+}
+
+/// Get video mode info by index for /dev/fb0
+fn get_fb_mode_info(index: u32) -> Option<devfs::devices::VideoModeDeviceInfo> {
+    let mode = fb::get_mode_info(index)?;
+
+    Some(devfs::devices::VideoModeDeviceInfo {
+        mode_number: mode.mode_number,
+        width: mode.width,
+        height: mode.height,
+        bpp: mode.bpp,
+        stride: mode.stride,
+        framebuffer_size: mode.framebuffer_size,
+        is_bgr: mode.is_bgr,
+        _pad: [0; 7],
     })
 }
 

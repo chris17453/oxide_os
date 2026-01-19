@@ -86,6 +86,12 @@ fn main() -> Status {
         log_fmt(format_args!("[BOOT] Framebuffer: {}x{} @ {:#x}", fb.width, fb.height, fb.base));
     }
 
+    // Enumerate available video modes
+    let video_modes = enumerate_video_modes();
+    if let Some(ref modes) = video_modes {
+        log_fmt(format_args!("[BOOT] Found {} video modes", modes.count));
+    }
+
     // Set up page tables
     log("[BOOT] Setting up page tables...");
     let pml4_phys = paging::setup_page_tables(kernel_phys, elf_info.load_size);
@@ -103,6 +109,7 @@ fn main() -> Status {
         pml4_phys,
         &memory_regions,
         fb_info,
+        video_modes,
     );
 
     // Allocate space for boot info in a safe location
@@ -265,6 +272,72 @@ fn get_framebuffer_info() -> Option<FramebufferInfo> {
     })
 }
 
+/// Enumerate all available video modes from GOP
+fn enumerate_video_modes() -> Option<boot_proto::VideoModeList> {
+    use boot_proto::{VideoMode, VideoModeList, MAX_VIDEO_MODES};
+
+    let st = uefi::table::system_table_boot()?;
+    let bs = st.boot_services();
+
+    let gop_handle = bs.get_handle_for_protocol::<GraphicsOutput>().ok()?;
+    let gop = bs.open_protocol_exclusive::<GraphicsOutput>(gop_handle).ok()?;
+
+    let mut mode_list = VideoModeList::empty();
+
+    // Get current mode info to find which mode is active
+    let current_info = gop.current_mode_info();
+    let current_res = current_info.resolution();
+
+    // Iterate through all modes using the modes() iterator
+    for (mode_num, mode) in gop.modes().enumerate() {
+        if mode_list.count as usize >= MAX_VIDEO_MODES {
+            break;
+        }
+
+        let mode_info = mode.info();
+
+        let format = match mode_info.pixel_format() {
+            uefi::proto::console::gop::PixelFormat::Rgb => PixelFormat::Rgb,
+            uefi::proto::console::gop::PixelFormat::Bgr => PixelFormat::Bgr,
+            _ => PixelFormat::Unknown,
+        };
+
+        // Calculate BPP based on format
+        let bpp = match mode_info.pixel_format() {
+            uefi::proto::console::gop::PixelFormat::Rgb |
+            uefi::proto::console::gop::PixelFormat::Bgr => 32,
+            _ => 32, // Default assumption
+        };
+
+        let (width, height) = mode_info.resolution();
+        let stride = mode_info.stride() as u32;
+        let framebuffer_size = (stride as u64) * (height as u64) * ((bpp / 8) as u64);
+
+        mode_list.modes[mode_list.count as usize] = VideoMode {
+            mode_number: mode_num as u32,
+            width: width as u32,
+            height: height as u32,
+            bpp,
+            format,
+            stride,
+            framebuffer_size,
+        };
+
+        // Track which mode is current (compare by resolution as a heuristic)
+        if mode_info.resolution() == current_res && mode_info.stride() == current_info.stride() {
+            mode_list.current_mode = mode_list.count;
+        }
+
+        mode_list.count += 1;
+    }
+
+    if mode_list.count > 0 {
+        Some(mode_list)
+    } else {
+        None
+    }
+}
+
 /// Create boot info structure
 fn create_boot_info(
     kernel_phys: u64,
@@ -272,6 +345,7 @@ fn create_boot_info(
     pml4_phys: u64,
     memory_regions: &[MemoryRegion],
     framebuffer: Option<FramebufferInfo>,
+    video_modes: Option<boot_proto::VideoModeList>,
 ) -> BootInfo {
     let mut info = BootInfo::empty();
     info.magic = BOOT_INFO_MAGIC;
@@ -281,6 +355,7 @@ fn create_boot_info(
     info.pml4_phys = pml4_phys;
     info.phys_map_base = PHYS_MAP_BASE;
     info.framebuffer = framebuffer;
+    info.video_modes = video_modes;
 
     let count = memory_regions.len().min(MAX_MEMORY_REGIONS);
     info.memory_region_count = count as u64;

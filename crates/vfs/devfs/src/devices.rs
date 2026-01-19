@@ -374,6 +374,12 @@ pub mod fb_ioctl {
 /// Framebuffer info callback type
 pub type FbInfoFn = fn() -> Option<FramebufferDeviceInfo>;
 
+/// Mode count callback type
+pub type FbModeCountFn = fn() -> u32;
+
+/// Mode info callback type (index -> info)
+pub type FbModeInfoFn = fn(u32) -> Option<VideoModeDeviceInfo>;
+
 /// Framebuffer device info
 #[derive(Debug, Clone, Copy)]
 pub struct FramebufferDeviceInfo {
@@ -387,8 +393,36 @@ pub struct FramebufferDeviceInfo {
     pub is_bgr: bool,         // BGR vs RGB format
 }
 
+/// Video mode info for userspace
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct VideoModeDeviceInfo {
+    /// Mode number (used for set_mode)
+    pub mode_number: u32,
+    /// Width in pixels
+    pub width: u32,
+    /// Height in pixels
+    pub height: u32,
+    /// Bits per pixel
+    pub bpp: u32,
+    /// Stride in bytes per scanline
+    pub stride: u32,
+    /// Framebuffer size for this mode
+    pub framebuffer_size: u64,
+    /// Is this BGR format (vs RGB)
+    pub is_bgr: bool,
+    /// Padding for alignment
+    pub _pad: [u8; 7],
+}
+
 /// Global framebuffer info callback (set by kernel)
 static mut FB_INFO_CALLBACK: Option<FbInfoFn> = None;
+
+/// Global mode count callback
+static mut FB_MODE_COUNT_CALLBACK: Option<FbModeCountFn> = None;
+
+/// Global mode info callback
+static mut FB_MODE_INFO_CALLBACK: Option<FbModeInfoFn> = None;
 
 /// Set the framebuffer info callback
 ///
@@ -397,6 +431,26 @@ static mut FB_INFO_CALLBACK: Option<FbInfoFn> = None;
 pub unsafe fn set_fb_info_callback(f: FbInfoFn) {
     unsafe {
         FB_INFO_CALLBACK = Some(f);
+    }
+}
+
+/// Set the mode count callback
+///
+/// # Safety
+/// Must be called during single-threaded initialization
+pub unsafe fn set_fb_mode_count_callback(f: FbModeCountFn) {
+    unsafe {
+        FB_MODE_COUNT_CALLBACK = Some(f);
+    }
+}
+
+/// Set the mode info callback
+///
+/// # Safety
+/// Must be called during single-threaded initialization
+pub unsafe fn set_fb_mode_info_callback(f: FbModeInfoFn) {
+    unsafe {
+        FB_MODE_INFO_CALLBACK = Some(f);
     }
 }
 
@@ -572,8 +626,49 @@ impl VnodeOps for FramebufferDevice {
             }
 
             fb_ioctl::EFFLUX_FB_GET_MODE_COUNT => {
-                // For now, just 1 mode (current mode)
-                Ok(1)
+                // Get mode count from callback
+                let count = unsafe {
+                    if let Some(callback) = FB_MODE_COUNT_CALLBACK {
+                        callback()
+                    } else {
+                        1 // Default to 1 (current mode)
+                    }
+                };
+                Ok(count as i64)
+            }
+
+            fb_ioctl::EFFLUX_FB_GET_MODE => {
+                // arg is pointer to struct: { u32 index, [pad], VideoModeDeviceInfo info }
+                // Note: VideoModeDeviceInfo has 8-byte alignment due to u64 field,
+                // so there's padding between index and info
+                if arg == 0 {
+                    return Err(VfsError::InvalidArgument);
+                }
+
+                // Read the mode index from user (at offset 0)
+                let index = unsafe { *(arg as *const u32) };
+
+                // Get mode info from callback
+                let mode_info = unsafe {
+                    if let Some(callback) = FB_MODE_INFO_CALLBACK {
+                        callback(index)
+                    } else {
+                        None
+                    }
+                };
+
+                match mode_info {
+                    Some(info) => {
+                        // Write mode info at offset 8 (after index + 4 bytes padding for alignment)
+                        // VideoModeDeviceInfo requires 8-byte alignment due to u64 field
+                        let out_ptr = unsafe { (arg as *mut u8).add(8) as *mut VideoModeDeviceInfo };
+                        unsafe {
+                            *out_ptr = info;
+                        }
+                        Ok(0)
+                    }
+                    None => Err(VfsError::InvalidArgument),
+                }
             }
 
             _ => Err(VfsError::NotSupported),

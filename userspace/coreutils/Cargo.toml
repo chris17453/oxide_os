@@ -192,6 +192,11 @@ path = "src/bin/nslookup.rs"
 name = "nc"
 path = "src/bin/nc.rs"
 
+# Graphics utilities
+[[bin]]
+name = "fbtest"
+path = "src/bin/fbtest.rs"
+
 [dependencies]
 libc = { path = "../libc" }
 heapless = "0.8"

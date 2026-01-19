@@ -27,6 +27,22 @@ fn main() -> i32 {
     println("EFFLUX OS v0.1.0");
     println("");
 
+    // Run fbtest to test framebuffer
+    println("[init] Running framebuffer test...");
+    let fb_child = fork();
+    if fb_child == 0 {
+        let ret = exec("/initramfs/bin/fbtest");
+        if ret < 0 {
+            eprintln("[init] Failed to exec fbtest");
+        }
+        _exit(0);
+    } else if fb_child > 0 {
+        // Wait for fbtest to complete
+        let mut status: i32 = 0;
+        wait(&mut status);
+        println("[init] Framebuffer test completed");
+    }
+
     // Spawn a shell directly for now (no getty/login)
     println("[init] Spawning shell...");
 

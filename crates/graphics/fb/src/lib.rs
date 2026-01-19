@@ -17,7 +17,7 @@ pub use console::{FbConsole, Cell};
 pub use font::{Font, Glyph, PSF2_FONT};
 
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use spin::Mutex;
 
 /// Global framebuffer instance
@@ -31,6 +31,12 @@ static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 /// Physical base address of framebuffer (for /dev/fb0)
 static FB_PHYS_BASE: Mutex<u64> = Mutex::new(0);
+
+/// Video mode storage
+static VIDEO_MODES: Mutex<Option<boot_proto::VideoModeList>> = Mutex::new(None);
+
+/// Current video mode index
+static CURRENT_MODE: AtomicU32 = AtomicU32::new(0);
 
 /// Initialize framebuffer from boot info
 pub fn init(info: FramebufferInfo) {
@@ -48,7 +54,17 @@ pub fn init(info: FramebufferInfo) {
 ///
 /// Converts boot protocol framebuffer info to internal format and initializes.
 /// The `phys_map_base` is used to convert physical addresses to virtual addresses.
-pub fn init_from_boot(boot_fb: &boot_proto::FramebufferInfo, phys_map_base: u64) {
+/// If `video_modes` is provided, it stores them for mode enumeration.
+pub fn init_from_boot(
+    boot_fb: &boot_proto::FramebufferInfo,
+    phys_map_base: u64,
+    video_modes: Option<&boot_proto::VideoModeList>,
+) {
+    // Store video modes if available
+    if let Some(modes) = video_modes {
+        *VIDEO_MODES.lock() = Some(*modes);
+        CURRENT_MODE.store(modes.current_mode, Ordering::SeqCst);
+    }
     // Convert boot_proto pixel format to fb pixel format
     let format = match boot_fb.format {
         boot_proto::PixelFormat::Rgb => PixelFormat::RGBA8888,
@@ -167,4 +183,64 @@ pub fn set_colors(fg: Color, bg: Color) {
         console.set_fg_color(fg);
         console.set_bg_color(bg);
     }
+}
+
+// ============================================================================
+// Video Mode Enumeration
+// ============================================================================
+
+/// Get the number of available video modes
+pub fn get_mode_count() -> u32 {
+    VIDEO_MODES.lock().as_ref().map(|m| m.count).unwrap_or(1)
+}
+
+/// Get the current video mode index
+pub fn get_current_mode() -> u32 {
+    CURRENT_MODE.load(Ordering::SeqCst)
+}
+
+/// Video mode info for userspace
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct VideoModeInfo {
+    /// Mode number (used for set_mode)
+    pub mode_number: u32,
+    /// Width in pixels
+    pub width: u32,
+    /// Height in pixels
+    pub height: u32,
+    /// Bits per pixel
+    pub bpp: u32,
+    /// Stride in bytes per scanline
+    pub stride: u32,
+    /// Framebuffer size for this mode
+    pub framebuffer_size: u64,
+    /// Is this BGR format (vs RGB)
+    pub is_bgr: bool,
+    /// Padding for alignment
+    pub _pad: [u8; 7],
+}
+
+/// Get video mode info by index
+pub fn get_mode_info(index: u32) -> Option<VideoModeInfo> {
+    let modes_guard = VIDEO_MODES.lock();
+    let modes = modes_guard.as_ref()?;
+
+    if index >= modes.count {
+        return None;
+    }
+
+    let mode = &modes.modes[index as usize];
+    let is_bgr = matches!(mode.format, boot_proto::PixelFormat::Bgr | boot_proto::PixelFormat::Bgra8888);
+
+    Some(VideoModeInfo {
+        mode_number: mode.mode_number,
+        width: mode.width,
+        height: mode.height,
+        bpp: mode.bpp,
+        stride: mode.stride * (mode.bpp / 8), // Convert to bytes
+        framebuffer_size: mode.framebuffer_size,
+        is_bgr,
+        _pad: [0; 7],
+    })
 }
