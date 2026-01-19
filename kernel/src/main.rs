@@ -757,7 +757,7 @@ fn run_child_process(child_pid: Pid) {
     let table = process_table();
 
     // Get child process info
-    let (child_pml4, child_entry, child_stack, kernel_stack) = {
+    let (child_pml4, child_entry, _child_stack, kernel_stack_phys, kernel_stack_size) = {
         let child = match table.get(child_pid) {
             Some(c) => c,
             None => {
@@ -772,21 +772,20 @@ fn run_child_process(child_pid: Pid) {
             c.entry_point(),
             c.user_stack_top(),
             c.kernel_stack(),
+            c.kernel_stack_size(),
         )
     };
 
     // Set current process to child
-    let old_pid = table.current_pid();
+    let _old_pid = table.current_pid();
     table.set_current_pid(child_pid);
 
     let _ = writeln!(writer, "[RUN] Switching to child {} at {:#x}", child_pid, child_entry.as_u64());
 
-    // Allocate a new kernel stack for the child (the one in Process is physical addr)
-    // Allocate 128KB kernel stack for child - matches parent stack size
-    const CHILD_KERNEL_STACK_SIZE: usize = 128 * 1024;
-    let child_kernel_stack: Box<[u8; CHILD_KERNEL_STACK_SIZE]> = Box::new([0u8; CHILD_KERNEL_STACK_SIZE]);
-    let child_kernel_stack_ptr = Box::into_raw(child_kernel_stack);
-    let child_kernel_stack_top = unsafe { (child_kernel_stack_ptr as *const u8).add(CHILD_KERNEL_STACK_SIZE) as u64 };
+    // Use the kernel stack already allocated for this child (in fork)
+    // Convert physical address to virtual address using higher-half mapping
+    let kernel_stack_virt = efflux_mm_paging::phys_to_virt(kernel_stack_phys);
+    let child_kernel_stack_top = kernel_stack_virt.as_u64() + kernel_stack_size as u64;
 
     // Set kernel stack for child's syscalls/interrupts
     unsafe {

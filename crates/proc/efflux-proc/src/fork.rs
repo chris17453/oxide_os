@@ -51,9 +51,9 @@ pub fn do_fork<A: FrameAllocator>(
         clone_address_space_cow(parent.address_space(), allocator)?
     };
 
-    // Allocate kernel stack for child (4 pages = 16KB)
-    let kernel_stack_pages = 4;
-    let kernel_stack_size = kernel_stack_pages * 4096;
+    // Allocate kernel stack for child - inherit size from parent
+    let kernel_stack_size = parent.kernel_stack_size();
+    let kernel_stack_pages = kernel_stack_size / 4096;
     let kernel_stack_phys = allocator
         .alloc_frames(kernel_stack_pages)
         .ok_or(ForkError::OutOfMemory)?;
