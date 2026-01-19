@@ -448,10 +448,14 @@ pub fn reset() {
 }
 
 /// Tick function - call at 30 FPS from timer interrupt to render pending changes
+/// Uses try_lock to avoid deadlock if main thread holds the lock
 pub fn tick() {
-    if let Some(ref mut terminal) = *TERMINAL.lock() {
-        terminal.tick();
+    if let Some(mut guard) = TERMINAL.try_lock() {
+        if let Some(ref mut terminal) = *guard {
+            terminal.tick();
+        }
     }
+    // If lock is held, skip this tick - next one will catch up
 }
 
 /// Write and immediately render (for urgent/interactive output)
