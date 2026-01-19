@@ -24,6 +24,7 @@ use efflux_boot_proto::{BootInfo, MemoryType as BootMemoryType};
 use efflux_core::{PhysAddr, VirtAddr};
 use efflux_elf::ElfExecutable;
 use efflux_mm_frame::{BitmapFrameAllocator, MemoryRegion};
+use efflux_mm_traits::FrameAllocator as _;
 use efflux_mm_heap::LockedHeap;
 use efflux_mm_paging::{phys_to_virt, read_cr3};
 use efflux_proc::{
@@ -66,6 +67,13 @@ static mut KERNEL_PML4: u64 = 0;
 
 /// Child processes waiting to be run
 static PENDING_CHILDREN: Mutex<Vec<Pid>> = Mutex::new(Vec::new());
+
+/// Saved parent context for returning from child process
+/// Format: (parent_pid, parent_pml4, user_rip, user_rsp, user_rflags)
+static PARENT_CONTEXT: Mutex<Option<(u32, u64, u64, u64, u64)>> = Mutex::new(None);
+
+/// Flag indicating a child has exited and we should return to parent
+static CHILD_DONE: AtomicBool = AtomicBool::new(false);
 
 /// Kernel entry point
 ///
@@ -376,9 +384,12 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(writer, "[USER] Allocating kernel stack...");
     // Allocate 128KB kernel stack - fork+COW uses ~67KB during deep recursion
     const KERNEL_STACK_SIZE: usize = 128 * 1024;
-    let kernel_stack: Box<[u8; KERNEL_STACK_SIZE]> = Box::new([0u8; KERNEL_STACK_SIZE]);
-    let kernel_stack_ptr = Box::into_raw(kernel_stack);
-    let kernel_stack_top = unsafe { (kernel_stack_ptr as *const u8).add(KERNEL_STACK_SIZE) as u64 };
+    let kernel_stack_pages = KERNEL_STACK_SIZE / 4096;
+    let kernel_stack_phys = FRAME_ALLOCATOR.alloc_frames(kernel_stack_pages)
+        .expect("Failed to allocate kernel stack");
+    // Convert physical to virtual for the kernel to use
+    let kernel_stack_virt = phys_to_virt(kernel_stack_phys);
+    let kernel_stack_top = kernel_stack_virt.as_u64() + KERNEL_STACK_SIZE as u64;
 
     // Set kernel stack for:
     // 1. Syscalls (stored in GS base for syscall handler)
@@ -408,7 +419,7 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
         init_pid,
         0,  // ppid = 0 (kernel)
         user_space,
-        PhysAddr::new(kernel_stack_ptr as u64),
+        kernel_stack_phys,
         KERNEL_STACK_SIZE,
         elf.entry_point(),
         user_stack_top,
@@ -602,18 +613,78 @@ fn user_exit(status: i32) -> ! {
     let _ = writeln!(writer, "========================================");
     let _ = writeln!(writer);
 
-    // Check if there's a parent waiting
+    // Check if there's a saved parent context to return to
+    let parent_ctx = PARENT_CONTEXT.lock().take();
+
+    if let Some((parent_pid, parent_pml4, user_rip, user_rsp, user_rflags)) = parent_ctx {
+        let _ = writeln!(writer, "[INFO] Child {} exited, returning to parent {}", current_pid, parent_pid);
+
+        // Restore parent as current process
+        table.set_current_pid(parent_pid);
+
+        // Get parent's kernel stack
+        if let Some(parent) = table.get(parent_pid) {
+            let p = parent.lock();
+            let parent_stack_phys = p.kernel_stack();
+            let parent_stack_size = p.kernel_stack_size();
+            drop(p);
+
+            let parent_stack_virt = efflux_mm_paging::phys_to_virt(parent_stack_phys);
+            let parent_stack_top = parent_stack_virt.as_u64() + parent_stack_size as u64;
+
+            // Restore parent's kernel stack for syscalls
+            unsafe {
+                arch::syscall::set_kernel_stack(parent_stack_top);
+            }
+            arch::gdt::set_kernel_stack(parent_stack_top);
+
+            // Calculate wait result: (child_pid << 32) | status
+            let wait_result = ((current_pid as i64) << 32) | ((status as i64) & 0xFFFFFFFF);
+
+            let _ = writeln!(writer, "[INFO] Returning to parent with wait result: {:#x}", wait_result);
+
+            // Return to parent's user mode via sysretq
+            // We need to:
+            // 1. Switch to parent's page tables
+            // 2. Set up return value in rax
+            // 3. Return to user mode at parent's saved rip/rsp
+            unsafe {
+                // Switch page tables
+                core::arch::asm!(
+                    "mov cr3, {}",
+                    in(reg) parent_pml4,
+                    options(nostack)
+                );
+
+                // Return to parent's user mode
+                // sysretq expects: rcx = rip, r11 = rflags, rax = return value
+                core::arch::asm!(
+                    // Set up return value
+                    "mov rax, {result}",
+                    // Set up rip for sysretq
+                    "mov rcx, {rip}",
+                    // Set up rflags for sysretq
+                    "mov r11, {rflags}",
+                    // Set up user stack
+                    "mov rsp, {rsp}",
+                    // Return to user mode
+                    "sysretq",
+                    result = in(reg) wait_result,
+                    rip = in(reg) user_rip,
+                    rflags = in(reg) user_rflags,
+                    rsp = in(reg) user_rsp,
+                    options(noreturn)
+                );
+            }
+        }
+    }
+
+    // Check if there's a parent waiting (for processes without saved context)
     if let Some(proc) = table.get(current_pid) {
         let ppid = proc.lock().ppid();
         if ppid > 0 {
-            // Parent exists, don't halt - let parent's wait() handle it
-            // For now, just loop and let the parent detect the zombie
             let _ = writeln!(writer, "[INFO] Child {} exited, parent {} can reap", current_pid, ppid);
-
-            // Simple approach: loop forever, parent's wait will detect zombie state
-            loop {
-                core::hint::spin_loop();
-            }
+            arch::X86_64::halt();
         }
     }
 
@@ -625,7 +696,7 @@ fn user_exit(status: i32) -> ! {
     }
 
     let _ = writeln!(writer);
-    let _ = writeln!(writer, "[INFO] Phase 4 test complete. Halting.");
+    let _ = writeln!(writer, "[INFO] Test complete. Halting.");
 
     arch::X86_64::halt();
 }
@@ -751,10 +822,22 @@ fn kernel_wait(pid: i32, options: i32) -> i64 {
 }
 
 /// Run a child process to completion
+///
+/// This function saves the parent's context and enters the child.
+/// When the child exits, control returns here via return_to_parent().
 fn run_child_process(child_pid: Pid) {
     let mut writer = serial::SerialWriter;
 
     let table = process_table();
+    let parent_pid = table.current_pid();
+
+    // Get parent's PML4 for restoring later
+    let parent_pml4 = if let Some(p) = table.get(parent_pid) {
+        p.lock().address_space().pml4_phys().as_u64()
+    } else {
+        // Fallback to kernel PML4
+        unsafe { KERNEL_PML4 }
+    };
 
     // Get child process info
     let (child_pml4, child_entry, _child_stack, kernel_stack_phys, kernel_stack_size) = {
@@ -776,14 +859,22 @@ fn run_child_process(child_pid: Pid) {
         )
     };
 
+    // Save parent's kernel stack info for returning later
+    // We get the parent's kernel stack top from its Process
+    let parent_kernel_stack_top = if let Some(p) = table.get(parent_pid) {
+        let p = p.lock();
+        let stack_virt = efflux_mm_paging::phys_to_virt(p.kernel_stack());
+        stack_virt.as_u64() + p.kernel_stack_size() as u64
+    } else {
+        0
+    };
+
     // Set current process to child
-    let _old_pid = table.current_pid();
     table.set_current_pid(child_pid);
 
     let _ = writeln!(writer, "[RUN] Switching to child {} at {:#x}", child_pid, child_entry.as_u64());
 
     // Use the kernel stack already allocated for this child (in fork)
-    // Convert physical address to virtual address using higher-half mapping
     let kernel_stack_virt = efflux_mm_paging::phys_to_virt(kernel_stack_phys);
     let child_kernel_stack_top = kernel_stack_virt.as_u64() + kernel_stack_size as u64;
 
@@ -793,25 +884,33 @@ fn run_child_process(child_pid: Pid) {
     }
     arch::gdt::set_kernel_stack(child_kernel_stack_top);
 
-    // The child's context has rax=0 (fork return value)
-    // We need to set up the child to return from the "fork syscall" with 0
-
-    // For the child, we need to "return" to user mode at the point after fork syscall
-    // The child's context was saved in do_fork with rax=0
-
     // Get child's saved context
     let child_ctx = {
         let child = table.get(child_pid).unwrap();
         child.lock().context().clone()
     };
 
-    // Set up return to user mode
-    // Child should return with rax=0 (fork return value is already set in context)
     let _ = writeln!(writer, "[RUN] Child context: rip={:#x} rsp={:#x} rax={}",
         child_ctx.rip, child_ctx.rsp, child_ctx.rax);
 
-    // Enter user mode for child
-    // Use return_to_usermode since we're returning from a "syscall"
+    // Save parent's user context so we can return to parent when child exits
+    // The parent's user context is saved by the syscall handler
+    let parent_user_ctx = get_user_context();
+    {
+        // Save context for returning from child:
+        // (parent_pid, parent_pml4, user_rip, user_rsp, user_rflags)
+        *PARENT_CONTEXT.lock() = Some((
+            parent_pid,
+            parent_pml4,
+            parent_user_ctx.rip,
+            parent_user_ctx.rsp,
+            parent_user_ctx.rflags,
+        ));
+        CHILD_DONE.store(false, Ordering::SeqCst);
+    }
+
+    // Enter user mode for child - this doesn't return normally
+    // When child calls exit(), user_exit will set CHILD_DONE and we'll detect it
     unsafe {
         arch::usermode::enter_usermode(
             child_kernel_stack_top,
@@ -821,8 +920,8 @@ fn run_child_process(child_pid: Pid) {
         );
     }
 
-    // Note: We never get here because enter_usermode doesn't return
-    // The child will exit via user_exit which will mark it as zombie
+    // Note: We never reach here via normal flow.
+    // But if we did somehow return, that would be the child exit path.
 }
 
 /// Wrapper to use the global frame allocator
