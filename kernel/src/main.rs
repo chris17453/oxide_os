@@ -813,6 +813,14 @@ fn user_exit(status: i32) -> ! {
                 // r13: u64 (offset 136)
                 // r14: u64 (offset 144)
                 // r15: u64 (offset 152)
+                // Store user RSP in a static so we can access it after restoring r15
+                static mut SYSRET_USER_RSP: u64 = 0;
+                unsafe {
+                    use core::ptr::addr_of_mut;
+                    *addr_of_mut!(SYSRET_USER_RSP) = ctx.rsp;
+                }
+                let user_rsp_ptr = unsafe { core::ptr::addr_of!(SYSRET_USER_RSP) } as u64;
+
                 core::arch::asm!(
                     // r15 = context pointer, r14 = result pointer
                     "mov r15, {ctx}",
@@ -829,22 +837,28 @@ fn user_exit(status: i32) -> ! {
                     "mov r8, [r15 + 96]",     // r8 at offset 96
                     "mov r9, [r15 + 104]",    // r9 at offset 104
                     "mov r10, [r15 + 112]",   // r10 at offset 112
-                    // Set up sysretq: RAX=result, RCX=rip, R11=rflags, RSP=user_stack
+                    // Load result, rip, and rflags for sysretq
                     "mov rax, [r14]",         // result value
                     "mov rcx, [r15 + 16]",    // rip at offset 16
-                    "mov r11, [r15 + 32]",    // rflags at offset 32
-                    "mov rsp, [r15 + 24]",    // rsp at offset 24
-                    // Restore r14, r15 last (we were using them)
-                    "push rax",               // save result temporarily
-                    "mov rax, [r15 + 144]",   // r14 at offset 144
-                    "push rax",               // save r14 value
-                    "mov r15, [r15 + 152]",   // r15 at offset 152
-                    "pop r14",                // restore r14
-                    "pop rax",                // restore result
-                    // Return to user mode
+                    // Save values we need on kernel stack before restoring r14/r15
+                    "push rax",               // save result
+                    "push rcx",               // save rip
+                    "mov rax, [r15 + 32]",    // rflags at offset 32
+                    "push rax",               // save rflags
+                    // Now restore r14 and r15
+                    "mov rax, [r15 + 144]",   // load r14 value
+                    "mov r14, rax",
+                    "mov r15, [r15 + 152]",   // load r15 value (uses r15 last)
+                    // Restore rflags, rip, result from stack
+                    "pop r11",                // rflags -> r11 (for sysretq)
+                    "pop rcx",                // rip -> rcx (for sysretq)
+                    "pop rax",                // result -> rax
+                    // Load user RSP from the static and sysretq
+                    "mov rsp, [{user_rsp}]",
                     "sysretq",
                     ctx = in(reg) ctx_ptr,
                     result = in(reg) result_ptr,
+                    user_rsp = in(reg) user_rsp_ptr,
                     options(noreturn)
                 );
             }
