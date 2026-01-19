@@ -598,7 +598,40 @@ fn syscall_dispatch(
     arg5: u64,
     arg6: u64,
 ) -> i64 {
-    efflux_syscall::dispatch(number, arg1, arg2, arg3, arg4, arg5, arg6)
+    #[cfg(feature = "debug-syscall")]
+    let (pid, ctx_snapshot) = {
+        let pid = process_table().current_pid();
+        let ctx = get_user_context();
+        debug_syscall!(
+            "[SYSCALL] pid={} num={} rip={:#x} rsp={:#x} args=[{:#x},{:#x},{:#x},{:#x},{:#x},{:#x}]",
+            pid,
+            number,
+            ctx.rip,
+            ctx.rsp,
+            arg1,
+            arg2,
+            arg3,
+            arg4,
+            arg5,
+            arg6
+        );
+        (pid, ctx)
+    };
+
+    let result = efflux_syscall::dispatch(number, arg1, arg2, arg3, arg4, arg5, arg6);
+
+    #[cfg(feature = "debug-syscall")]
+    {
+        debug_syscall!(
+            "[SYSCALL] pid={} num={} rax_in={:#x} -> result={}",
+            pid,
+            number,
+            ctx_snapshot.rax,
+            result
+        );
+    }
+
+    result
 }
 
 /// Page fault handler callback (for COW and other page faults)
@@ -695,6 +728,9 @@ fn user_exit(status: i32) -> ! {
     let table = process_table();
     let current_pid = table.current_pid();
 
+    #[cfg(feature = "debug-syscall")]
+    debug_syscall!("[EXIT] pid={} status={}", current_pid, status);
+
     if let Some(proc) = table.get(current_pid) {
         proc.lock().exit(status);
     }
@@ -785,19 +821,33 @@ fn kernel_fork() -> i64 {
     let table = process_table();
     let parent_pid = table.current_pid();
 
-    // Debug: always print fork info for now
+    #[cfg(feature = "debug-fork")]
     {
-        let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[FORK] Fork called from PID {}", parent_pid);
+        let mut cr3: u64 = 0;
+        unsafe { core::arch::asm!("mov {}, cr3", out(reg) cr3, options(nostack, preserves_flags)); }
+        debug_fork!("[FORK] fork() called from PID {} (CR3={:#x})", parent_pid, cr3);
     }
 
     // Get current process context from syscall user context
     let user_ctx = get_user_context();
 
-    // Debug: print user context
+    #[cfg(feature = "debug-fork")]
     {
-        let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[FORK] user_ctx.rip={:#x} rsp={:#x}", user_ctx.rip, user_ctx.rsp);
+        debug_fork!(
+            "[FORK] user_ctx: rip={:#x} rsp={:#x} rflags={:#x} rax={:#x}",
+            user_ctx.rip,
+            user_ctx.rsp,
+            user_ctx.rflags,
+            user_ctx.rax
+        );
+        debug_fork!(
+            "[FORK] user_ctx regs: rbx={:#x} rcx={:#x} rdx={:#x} rsi={:#x} rdi={:#x}",
+            user_ctx.rbx,
+            user_ctx.rcx,
+            user_ctx.rdx,
+            user_ctx.rsi,
+            user_ctx.rdi
+        );
     }
     let parent_context = ProcessContext {
         rip: user_ctx.rip,
@@ -820,7 +870,7 @@ fn kernel_fork() -> i64 {
         r15: user_ctx.r15,
     };
 
-    debug_fork!("[FORK] Parent context: rip={:#x} rsp={:#x}", parent_context.rip, parent_context.rsp);
+    debug_fork!("[FORK] Parent context snapshot: {:?}", parent_context);
 
     // Create wrapper for frame allocator
     let alloc_wrapper = FrameAllocatorWrapper;
@@ -834,6 +884,10 @@ fn kernel_fork() -> i64 {
 
             // Add child to pending list for later execution
             PENDING_CHILDREN.lock().push(child_pid);
+            debug_fork!(
+                "[FORK] Pending children: {:?}",
+                *PENDING_CHILDREN.lock()
+            );
 
             // Return child PID to parent
             child_pid as i64
@@ -858,6 +912,9 @@ fn kernel_wait(pid: i32, options: i32) -> i64 {
         let mut pending = PENDING_CHILDREN.lock();
         if let Some(child_pid) = pending.pop() {
             drop(pending); // Release lock before running child
+
+            #[cfg(feature = "debug-fork")]
+            debug_fork!("[WAIT] Running pending child {}", child_pid);
 
             // Run the child process
             run_child_process(child_pid);
@@ -933,13 +990,31 @@ fn run_child_process(child_pid: Pid) {
         child.lock().context().clone()
     };
 
-    // Debug: print child's context (all callee-saved registers)
+    #[cfg(feature = "debug-fork")]
     {
-        let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[CHILD] PID {} entering usermode", child_pid);
-        let _ = writeln!(writer, "[CHILD] rip={:#x} rsp={:#x} rbp={:#x}", child_ctx.rip, child_ctx.rsp, child_ctx.rbp);
-        let _ = writeln!(writer, "[CHILD] rax={:#x} rbx={:#x} r12={:#x}", child_ctx.rax, child_ctx.rbx, child_ctx.r12);
-        let _ = writeln!(writer, "[CHILD] r13={:#x} r14={:#x} r15={:#x}", child_ctx.r13, child_ctx.r14, child_ctx.r15);
+        debug_fork!("[CHILD] PID {} entering usermode", child_pid);
+        debug_fork!(
+            "[CHILD] rip={:#x} rsp={:#x} rbp={:#x}",
+            child_ctx.rip,
+            child_ctx.rsp,
+            child_ctx.rbp
+        );
+        debug_fork!(
+            "[CHILD] rax={:#x} rbx={:#x} r12={:#x}",
+            child_ctx.rax,
+            child_ctx.rbx,
+            child_ctx.r12
+        );
+        debug_fork!(
+            "[CHILD] r13={:#x} r14={:#x} r15={:#x} r8={:#x} r9={:#x} r10={:#x} r11={:#x}",
+            child_ctx.r13,
+            child_ctx.r14,
+            child_ctx.r15,
+            child_ctx.r8,
+            child_ctx.r9,
+            child_ctx.r10,
+            child_ctx.r11
+        );
     }
 
     // Save parent's user context so we can return to parent when child exits
@@ -956,6 +1031,22 @@ fn run_child_process(child_pid: Pid) {
             parent_user_ctx.rflags,
         ));
         CHILD_DONE.store(false, Ordering::SeqCst);
+    }
+
+    #[cfg(feature = "debug-fork")]
+    {
+        debug_fork!(
+            "[CHILD] Saved parent context pid={} rip={:#x} rsp={:#x} rflags={:#x}",
+            parent_pid,
+            parent_user_ctx.rip,
+            parent_user_ctx.rsp,
+            parent_user_ctx.rflags
+        );
+        debug_fork!(
+            "[CHILD] child kernel_stack_top={:#x} pml4={:#x}",
+            child_kernel_stack_top,
+            child_pml4.as_u64()
+        );
     }
 
     // Build UserContext for enter_usermode_with_context
@@ -980,28 +1071,36 @@ fn run_child_process(child_pid: Pid) {
         rflags: child_ctx.rflags,
     };
 
-    // Debug: verify UserContext before entering usermode
+    #[cfg(feature = "debug-fork")]
     {
-        let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[CHILD] UserContext ptr: {:p}", &user_ctx);
-        let _ = writeln!(writer, "[CHILD] UserContext.rip={:#x} rsp={:#x}", user_ctx.rip, user_ctx.rsp);
-        let _ = writeln!(writer, "[CHILD] UserContext.rcx={:#x} rax={:#x}", user_ctx.rcx, user_ctx.rax);
-        let _ = writeln!(writer, "[CHILD] kernel_stack={:#x} pml4={:#x}", child_kernel_stack_top, child_pml4.as_u64());
+        debug_fork!("[CHILD] UserContext ptr: {:p}", &user_ctx);
+        debug_fork!(
+            "[CHILD] UserContext.rip={:#x} rsp={:#x} rcx={:#x} rax={:#x}",
+            user_ctx.rip,
+            user_ctx.rsp,
+            user_ctx.rcx,
+            user_ctx.rax
+        );
+        debug_fork!(
+            "[CHILD] kernel_stack={:#x} pml4={:#x}",
+            child_kernel_stack_top,
+            child_pml4.as_u64()
+        );
 
         // Verify by reading raw bytes at context address
         let ctx_ptr = &user_ctx as *const arch::UserContext as *const u64;
         unsafe {
-            let _ = writeln!(writer, "[CHILD] Raw ctx[0]={:#x} (rax)", *ctx_ptr.add(0));
-            let _ = writeln!(writer, "[CHILD] Raw ctx[2]={:#x} (rcx)", *ctx_ptr.add(2));
-            let _ = writeln!(writer, "[CHILD] Raw ctx[16]={:#x} (rip)", *ctx_ptr.add(16));
+            debug_fork!("[CHILD] Raw ctx[0]={:#x} (rax)", *ctx_ptr.add(0));
+            debug_fork!("[CHILD] Raw ctx[2]={:#x} (rcx)", *ctx_ptr.add(2));
+            debug_fork!("[CHILD] Raw ctx[16]={:#x} (rip)", *ctx_ptr.add(16));
         }
 
         // Test: copy context to child kernel stack and verify it's readable after CR3 switch
         // Use EXACT same address as enter_usermode_with_context: kernel_stack_top - 184
         let child_stack_base = child_kernel_stack_top - 184;
         let dest_ptr = child_stack_base as *mut u64;
-        let _ = writeln!(writer, "[CHILD] Test dest_ptr={:#x}", dest_ptr as u64);
-        let _ = writeln!(writer, "[CHILD] rcx will be at {:#x}", dest_ptr as u64 + 16);
+        debug_fork!("[CHILD] Test dest_ptr={:#x}", dest_ptr as u64);
+        debug_fork!("[CHILD] rcx will be at {:#x}", dest_ptr as u64 + 16);
         let src_ptr = &user_ctx as *const arch::UserContext as *const u64;
 
         // Copy context to child's kernel stack
@@ -1016,8 +1115,8 @@ fn run_child_process(child_pid: Pid) {
             // Read CR3 to verify current value
             let current_cr3: u64;
             core::arch::asm!("mov {}, cr3", out(reg) current_cr3);
-            let _ = writeln!(writer, "[CHILD] Current CR3: {:#x}", current_cr3);
-            let _ = writeln!(writer, "[CHILD] Child PML4: {:#x}", child_pml4.as_u64());
+            debug_fork!("[CHILD] Current CR3: {:#x}", current_cr3);
+            debug_fork!("[CHILD] Child PML4: {:#x}", child_pml4.as_u64());
 
             // Switch to child's page tables
             core::arch::asm!("mov cr3, {}", in(reg) child_pml4.as_u64());
@@ -1030,10 +1129,10 @@ fn run_child_process(child_pid: Pid) {
             // Switch back to original page tables
             core::arch::asm!("mov cr3, {}", in(reg) current_cr3);
 
-            let _ = writeln!(writer, "[CHILD] After CR3 switch and back:");
-            let _ = writeln!(writer, "[CHILD]   read_rax={:#x}", read_rax);
-            let _ = writeln!(writer, "[CHILD]   read_rcx={:#x}", read_rcx);
-            let _ = writeln!(writer, "[CHILD]   read_rip={:#x}", read_rip);
+            debug_fork!("[CHILD] After CR3 switch and back:");
+            debug_fork!("[CHILD]   read_rax={:#x}", read_rax);
+            debug_fork!("[CHILD]   read_rcx={:#x}", read_rcx);
+            debug_fork!("[CHILD]   read_rip={:#x}", read_rip);
         }
     }
 
