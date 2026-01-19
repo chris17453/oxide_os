@@ -58,17 +58,38 @@ pub fn set_errno(e: i32) {
 }
 
 /// Entry point for userspace programs
+///
+/// This must be a naked function to avoid compiler-generated prologues
+/// that would misalign the stack. At program entry, RSP is 16-byte aligned.
+/// The System V ABI requires RSP % 16 == 0 before a `call` instruction,
+/// which is already satisfied.
 #[unsafe(no_mangle)]
+#[unsafe(naked)]
 pub unsafe extern "C" fn _start() -> ! {
-    // Initialize environment
-    env::init_env();
+    core::arch::naked_asm!(
+        // RSP is already 16-byte aligned at entry
+        // Call init_env to set up environment
+        "call {init_env}",
+        // Call main
+        "call {main}",
+        // Exit with return code (in eax from main)
+        "mov edi, eax",
+        "call {exit}",
+        // Should never reach here, but just in case
+        "ud2",
+        init_env = sym env::init_env,
+        main = sym _main_wrapper,
+        exit = sym syscall::sys_exit,
+    )
+}
 
+// Wrapper to call the user's main function
+#[inline(never)]
+fn _main_wrapper() -> i32 {
     unsafe extern "Rust" {
         fn main() -> i32;
     }
-
-    let ret = unsafe { main() };
-    syscall::sys_exit(ret);
+    unsafe { main() }
 }
 
 #[panic_handler]

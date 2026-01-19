@@ -233,14 +233,17 @@ extern "C" fn syscall_entry() {
         // Enable interrupts
         "sti",
 
-        // Save R8, R9, R10 - these must be preserved for the user
+        // Save caller-saved registers that must be preserved for the user
         // (syscall only clobbers RCX and R11 according to ABI)
         "push r8",
         "push r9",
         "push r10",
+        "push rdi",                        // Save user RDI
+        "push rsi",                        // Save user RSI
+        "push rdx",                        // Save user RDX
 
         // Set up arguments: handler(number, arg1, arg2, arg3, arg4, arg5, arg6)
-        // First save arg values before we clobber them
+        // First save arg6 (r9) before we clobber it
         "mov rax, r9",                     // Save arg6 (r9) to rax temporarily
         "push rax",                        // arg6 on stack
 
@@ -256,7 +259,10 @@ extern "C" fn syscall_entry() {
         // Clean up stack arg (the pushed arg6)
         "add rsp, 8",
 
-        // Restore R8, R9, R10 from where we saved them
+        // Restore caller-saved registers
+        "pop rdx",                         // Restore user RDX
+        "pop rsi",                         // Restore user RSI
+        "pop rdi",                         // Restore user RDI
         "pop r10",
         "pop r9",
         "pop r8",
@@ -279,17 +285,20 @@ extern "C" fn syscall_entry() {
         // Now stack has: [user RSP, user RIP, user RFLAGS]
         // We need: RSP = user RSP, RCX = user RIP, R11 = user RFLAGS
         // RAX has return value - keep it there!
+        // IMPORTANT: Don't use R10 as scratch - it must be preserved for user!
 
         // DEBUG: Save stack pointer before reads
         "mov [{sysret_stack_ptr}], rsp",
 
-        // Load sysret values into registers (we have R10 free as scratch)
-        "mov r10, [rsp]",                  // User RSP -> R10
+        // Load sysret values - load RCX and R11 first (they're clobbered by sysret anyway)
         "mov rcx, [rsp + 8]",              // User RIP -> RCX (for sysret)
         "mov r11, [rsp + 16]",             // User RFLAGS -> R11 (for sysret)
 
-        // DEBUG: Save loaded values
-        "mov [{sysret_rsp}], r10",
+        // DEBUG: Save loaded values (use rcx value we just loaded for rsp debug)
+        "push rax",                        // Save return value temporarily
+        "mov rax, [rsp + 8]",              // Get user RSP (offset +8 because we pushed rax)
+        "mov [{sysret_rsp}], rax",
+        "pop rax",                         // Restore return value
         "mov [{sysret_rcx}], rcx",
         "mov [{sysret_r11}], r11",
         "mov [{sysret_rax}], rax",
@@ -297,8 +306,9 @@ extern "C" fn syscall_entry() {
         // Swap GS back to user mode (BEFORE switching RSP!)
         "swapgs",
 
-        // Switch to user stack
-        "mov rsp, r10",
+        // Switch to user stack - read [rsp] and write to rsp in one instruction
+        // This works because x86 evaluates the source before writing the destination
+        "mov rsp, [rsp]",
 
         // Return to user mode
         // RAX = return value, RCX = user RIP, R11 = user RFLAGS
