@@ -48,6 +48,10 @@ use efflux_tmpfs::TmpDir;
 use efflux_procfs::ProcFs;
 use efflux_initramfs;
 use efflux_pty::{PtyManager, PtsDir};
+use efflux_net::{self, NetworkDevice};
+use efflux_tcpip;
+use efflux_virtio_net;
+use pci;
 use spin::Mutex;
 
 /// Global kernel heap allocator
@@ -321,6 +325,71 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
 
     let _ = writeln!(writer, "[VFS] VFS initialized");
+
+    // ========================================
+    // Network Initialization
+    // ========================================
+    let _ = writeln!(writer, "[NET] Initializing network stack...");
+
+    // Enumerate PCI devices to find network cards
+    pci::enumerate();
+    let pci_devices = pci::devices();
+    let _ = writeln!(writer, "[NET] Found {} PCI devices", pci_devices.len());
+
+    // Look for VirtIO network devices
+    let virtio_net_devices = pci::find_virtio_net();
+    let _ = writeln!(writer, "[NET] Found {} VirtIO network devices", virtio_net_devices.len());
+
+    // Initialize the first VirtIO network device found
+    let net_initialized = if let Some(pci_dev) = virtio_net_devices.first() {
+        let _ = writeln!(writer, "[NET] Initializing VirtIO network device at {:02x}:{:02x}.{}",
+            pci_dev.address.bus, pci_dev.address.device, pci_dev.address.function);
+
+        match unsafe { efflux_virtio_net::VirtioNet::from_pci(pci_dev) } {
+            Some(virtio_net) => {
+                let mac = virtio_net.mac_address();
+                let _ = writeln!(writer, "[NET] VirtIO network device initialized");
+                let _ = writeln!(writer, "[NET] MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                    mac.0[0], mac.0[1], mac.0[2], mac.0[3], mac.0[4], mac.0[5]);
+
+                // Create network interface
+                let device = Arc::new(virtio_net);
+                efflux_net::register_device(device.clone());
+
+                let interface = Arc::new(efflux_net::NetworkInterface::new(device));
+                efflux_net::interface::add_interface(interface.clone());
+
+                // Initialize TCP/IP stack
+                efflux_tcpip::init(interface);
+                let _ = writeln!(writer, "[NET] TCP/IP stack initialized");
+
+                true
+            }
+            None => {
+                let _ = writeln!(writer, "[NET] Failed to initialize VirtIO network device");
+                false
+            }
+        }
+    } else {
+        let _ = writeln!(writer, "[NET] No VirtIO network device found");
+        false
+    };
+
+    // If no VirtIO, initialize loopback device at minimum
+    if !net_initialized {
+        let _ = writeln!(writer, "[NET] Initializing loopback device only");
+        let loopback = Arc::new(efflux_net::LoopbackDevice::new());
+        efflux_net::register_device(loopback.clone());
+
+        let lo_interface = Arc::new(efflux_net::NetworkInterface::new(loopback));
+        lo_interface.set_ipv4_addr(
+            efflux_net::Ipv4Addr::new(127, 0, 0, 1),
+            efflux_net::Ipv4Addr::new(255, 0, 0, 0),
+        ).ok();
+        efflux_net::interface::add_interface(lo_interface);
+    }
+
+    let _ = writeln!(writer, "[NET] Network initialization complete");
 
     // Load and mount the initramfs
     let _ = writeln!(writer, "[INITRAMFS] Loading initramfs ({} bytes)...", INITRAMFS_CPIO.len());

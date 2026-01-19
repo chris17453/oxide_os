@@ -35,4 +35,9 @@ efflux-initramfs = { workspace = true }
 efflux-procfs = { workspace = true }
 efflux-tty = { workspace = true }
 efflux-pty = { workspace = true }
+efflux-net = { workspace = true }
+efflux-tcpip = { workspace = true }
+efflux-dhcp = { workspace = true }
+efflux-virtio-net = { workspace = true }
+pci = { workspace = true }
 spin = { workspace = true }

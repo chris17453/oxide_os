@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 efflux-net = { path = "../../../net/efflux-net" }
+pci = { path = "../../pci" }
 spin = "0.9"

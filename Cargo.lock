@@ -15,6 +15,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
 
 [[package]]
+name = "byteorder"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -25,6 +31,7 @@ name = "coreutils"
 version = "0.1.0"
 dependencies = [
  "efflux-libc",
+ "heapless",
 ]
 
 [[package]]
@@ -269,6 +276,7 @@ dependencies = [
  "efflux-boot-proto",
  "efflux-core",
  "efflux-devfs",
+ "efflux-dhcp",
  "efflux-elf",
  "efflux-initramfs",
  "efflux-mm-cow",
@@ -276,6 +284,7 @@ dependencies = [
  "efflux-mm-heap",
  "efflux-mm-paging",
  "efflux-mm-traits",
+ "efflux-net",
  "efflux-proc",
  "efflux-proc-traits",
  "efflux-procfs",
@@ -283,9 +292,12 @@ dependencies = [
  "efflux-sched",
  "efflux-sched-traits",
  "efflux-syscall",
+ "efflux-tcpip",
  "efflux-tmpfs",
  "efflux-tty",
  "efflux-vfs",
+ "efflux-virtio-net",
+ "pci",
  "spin 0.9.8",
 ]
 
@@ -530,6 +542,7 @@ version = "0.1.0"
 dependencies = [
  "efflux-core",
  "efflux-mm-traits",
+ "efflux-net",
  "efflux-proc",
  "efflux-proc-traits",
  "efflux-signal",
@@ -658,6 +671,7 @@ name = "efflux-virtio-net"
 version = "0.1.0"
 dependencies = [
  "efflux-net",
+ "pci",
  "spin 0.9.8",
 ]
 
@@ -714,6 +728,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hash32"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
+name = "heapless"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
+dependencies = [
+ "hash32",
+ "stable_deref_trait",
+]
+
+[[package]]
 name = "init"
 version = "0.1.0"
 dependencies = [
@@ -747,6 +780,13 @@ name = "modutils"
 version = "0.1.0"
 dependencies = [
  "efflux-libc",
+]
+
+[[package]]
+name = "pci"
+version = "0.1.0"
+dependencies = [
+ "spin 0.9.8",
 ]
 
 [[package]]
@@ -825,6 +865,12 @@ checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
 dependencies = [
  "lock_api",
 ]
+
+[[package]]
+name = "stable_deref_trait"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "syn"

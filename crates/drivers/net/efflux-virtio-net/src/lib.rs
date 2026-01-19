@@ -1,6 +1,7 @@
 //! VirtIO Network Driver
 //!
 //! Implements the virtio-net specification for virtual network devices.
+//! Supports both MMIO and PCI-based VirtIO devices.
 
 #![no_std]
 
@@ -13,6 +14,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use spin::Mutex;
 
 use efflux_net::{DeviceFlags, MacAddress, NetError, NetResult, NetStats, NetworkDevice};
+use pci::{PciAddress, PciBar, PciDevice};
 
 /// VirtIO network header (prepended to packets)
 #[repr(C)]
@@ -143,10 +145,23 @@ pub struct VirtqUsed {
     pub avail_event: u16,
 }
 
+/// VirtIO device mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VirtioMode {
+    /// Memory-mapped I/O (VirtIO v2)
+    Mmio,
+    /// PCI I/O port (legacy transitional)
+    PciIo,
+    /// PCI memory-mapped (modern)
+    PciMem,
+}
+
 /// VirtIO network device
 pub struct VirtioNet {
-    /// MMIO base address
-    mmio_base: u64,
+    /// Device mode
+    mode: VirtioMode,
+    /// Base address (MMIO or I/O port)
+    base: u64,
     /// MAC address
     mac: MacAddress,
     /// MTU
@@ -168,44 +183,61 @@ pub struct VirtioNet {
 }
 
 impl VirtioNet {
-    /// VirtIO MMIO register offsets
-    const MAGIC_VALUE: usize = 0x000;
-    const VERSION: usize = 0x004;
-    const DEVICE_ID: usize = 0x008;
-    const VENDOR_ID: usize = 0x00C;
-    const DEVICE_FEATURES: usize = 0x010;
-    const DEVICE_FEATURES_SEL: usize = 0x014;
-    const DRIVER_FEATURES: usize = 0x020;
-    const DRIVER_FEATURES_SEL: usize = 0x024;
-    const QUEUE_SEL: usize = 0x030;
-    const QUEUE_NUM_MAX: usize = 0x034;
-    const QUEUE_NUM: usize = 0x038;
-    const QUEUE_READY: usize = 0x044;
-    const QUEUE_NOTIFY: usize = 0x050;
-    const INTERRUPT_STATUS: usize = 0x060;
-    const INTERRUPT_ACK: usize = 0x064;
-    const STATUS: usize = 0x070;
-    const QUEUE_DESC_LOW: usize = 0x080;
-    const QUEUE_DESC_HIGH: usize = 0x084;
-    const QUEUE_AVAIL_LOW: usize = 0x090;
-    const QUEUE_AVAIL_HIGH: usize = 0x094;
-    const QUEUE_USED_LOW: usize = 0x0A0;
-    const QUEUE_USED_HIGH: usize = 0x0A4;
-    const CONFIG: usize = 0x100;
+    /// VirtIO MMIO register offsets (v2)
+    const MMIO_MAGIC_VALUE: usize = 0x000;
+    const MMIO_VERSION: usize = 0x004;
+    const MMIO_DEVICE_ID: usize = 0x008;
+    const MMIO_VENDOR_ID: usize = 0x00C;
+    const MMIO_DEVICE_FEATURES: usize = 0x010;
+    const MMIO_DEVICE_FEATURES_SEL: usize = 0x014;
+    const MMIO_DRIVER_FEATURES: usize = 0x020;
+    const MMIO_DRIVER_FEATURES_SEL: usize = 0x024;
+    const MMIO_QUEUE_SEL: usize = 0x030;
+    const MMIO_QUEUE_NUM_MAX: usize = 0x034;
+    const MMIO_QUEUE_NUM: usize = 0x038;
+    const MMIO_QUEUE_READY: usize = 0x044;
+    const MMIO_QUEUE_NOTIFY: usize = 0x050;
+    const MMIO_INTERRUPT_STATUS: usize = 0x060;
+    const MMIO_INTERRUPT_ACK: usize = 0x064;
+    const MMIO_STATUS: usize = 0x070;
+    const MMIO_QUEUE_DESC_LOW: usize = 0x080;
+    const MMIO_QUEUE_DESC_HIGH: usize = 0x084;
+    const MMIO_QUEUE_AVAIL_LOW: usize = 0x090;
+    const MMIO_QUEUE_AVAIL_HIGH: usize = 0x094;
+    const MMIO_QUEUE_USED_LOW: usize = 0x0A0;
+    const MMIO_QUEUE_USED_HIGH: usize = 0x0A4;
+    const MMIO_CONFIG: usize = 0x100;
+
+    /// PCI legacy I/O port register offsets
+    const PCI_IO_DEVICE_FEATURES: u16 = 0x00;
+    const PCI_IO_DRIVER_FEATURES: u16 = 0x04;
+    const PCI_IO_QUEUE_ADDRESS: u16 = 0x08;
+    const PCI_IO_QUEUE_SIZE: u16 = 0x0C;
+    const PCI_IO_QUEUE_SELECT: u16 = 0x0E;
+    const PCI_IO_QUEUE_NOTIFY: u16 = 0x10;
+    const PCI_IO_DEVICE_STATUS: u16 = 0x12;
+    const PCI_IO_ISR_STATUS: u16 = 0x13;
+    const PCI_IO_CONFIG: u16 = 0x14;  // Device-specific config starts here
+
+    /// VirtIO device status bits
+    const STATUS_ACKNOWLEDGE: u8 = 1;
+    const STATUS_DRIVER: u8 = 2;
+    const STATUS_DRIVER_OK: u8 = 4;
+    const STATUS_FEATURES_OK: u8 = 8;
 
     /// Device ID for network
     const DEVICE_ID_NET: u32 = 1;
 
-    /// Probe for a virtio-net device
+    /// Probe for a virtio-net device at MMIO address
     ///
     /// # Safety
     /// The MMIO address must be valid and mapped.
-    pub unsafe fn probe(mmio_base: u64) -> Option<Self> {
+    pub unsafe fn probe_mmio(mmio_base: u64) -> Option<Self> {
         unsafe {
             let base = mmio_base as *mut u8;
 
             // Check magic value
-            let magic_ptr = base.add(Self::MAGIC_VALUE) as *const u32;
+            let magic_ptr = base.add(Self::MMIO_MAGIC_VALUE) as *const u32;
             let magic = core::ptr::read_volatile(magic_ptr);
             if magic != 0x74726976 {
                 // "virt"
@@ -213,22 +245,22 @@ impl VirtioNet {
             }
 
             // Check version
-            let version_ptr = base.add(Self::VERSION) as *const u32;
+            let version_ptr = base.add(Self::MMIO_VERSION) as *const u32;
             let version = core::ptr::read_volatile(version_ptr);
             if version != 2 {
                 return None;
             }
 
             // Check device ID
-            let device_id_ptr = base.add(Self::DEVICE_ID) as *const u32;
+            let device_id_ptr = base.add(Self::MMIO_DEVICE_ID) as *const u32;
             let device_id = core::ptr::read_volatile(device_id_ptr);
             if device_id != Self::DEVICE_ID_NET {
                 return None;
             }
 
             // Read device features
-            let features_sel_ptr = base.add(Self::DEVICE_FEATURES_SEL) as *mut u32;
-            let features_ptr = base.add(Self::DEVICE_FEATURES) as *const u32;
+            let features_sel_ptr = base.add(Self::MMIO_DEVICE_FEATURES_SEL) as *mut u32;
+            let features_ptr = base.add(Self::MMIO_DEVICE_FEATURES) as *const u32;
 
             core::ptr::write_volatile(features_sel_ptr, 0);
             let features_low = core::ptr::read_volatile(features_ptr) as u64;
@@ -241,8 +273,8 @@ impl VirtioNet {
             let negotiated = device_features & wanted_features;
 
             // Write driver features
-            let driver_features_sel_ptr = base.add(Self::DRIVER_FEATURES_SEL) as *mut u32;
-            let driver_features_ptr = base.add(Self::DRIVER_FEATURES) as *mut u32;
+            let driver_features_sel_ptr = base.add(Self::MMIO_DRIVER_FEATURES_SEL) as *mut u32;
+            let driver_features_ptr = base.add(Self::MMIO_DRIVER_FEATURES) as *mut u32;
 
             core::ptr::write_volatile(driver_features_sel_ptr, 0);
             core::ptr::write_volatile(driver_features_ptr, negotiated as u32);
@@ -250,7 +282,7 @@ impl VirtioNet {
             core::ptr::write_volatile(driver_features_ptr, (negotiated >> 32) as u32);
 
             // Read config
-            let config_ptr = base.add(Self::CONFIG) as *const VirtioNetConfig;
+            let config_ptr = base.add(Self::MMIO_CONFIG) as *const VirtioNetConfig;
             let config = core::ptr::read_volatile(config_ptr);
 
             let mac = MacAddress(config.mac);
@@ -261,11 +293,12 @@ impl VirtioNet {
             };
 
             // Set status to DRIVER_OK
-            let status_ptr = base.add(Self::STATUS) as *mut u32;
+            let status_ptr = base.add(Self::MMIO_STATUS) as *mut u32;
             core::ptr::write_volatile(status_ptr, 0x0F); // ACKNOWLEDGE | DRIVER | FEATURES_OK | DRIVER_OK
 
             Some(VirtioNet {
-                mmio_base,
+                mode: VirtioMode::Mmio,
+                base: mmio_base,
                 mac,
                 mtu,
                 flags: Mutex::new(DeviceFlags {
@@ -284,12 +317,120 @@ impl VirtioNet {
         }
     }
 
+    /// Create a VirtIO network device from a PCI device
+    ///
+    /// # Safety
+    /// The PCI device must be a valid VirtIO network device.
+    pub unsafe fn from_pci(pci_dev: &PciDevice) -> Option<Self> {
+        // Verify this is a VirtIO network device
+        if !pci_dev.is_virtio_net() {
+            return None;
+        }
+
+        // Enable the device
+        pci::enable_bus_master(pci_dev.address);
+        pci::enable_io_space(pci_dev.address);
+        pci::enable_memory_space(pci_dev.address);
+
+        // Get BAR0 - for legacy/transitional devices, this is I/O ports
+        let (mode, base) = match pci_dev.bars[0] {
+            PciBar::Io { port, .. } => (VirtioMode::PciIo, port as u64),
+            PciBar::Memory { address, .. } => (VirtioMode::PciMem, address),
+            PciBar::None => return None,
+        };
+
+        if mode == VirtioMode::PciIo {
+            // Legacy I/O port based initialization
+            let io_base = base as u16;
+
+            // Reset device
+            outb(io_base + Self::PCI_IO_DEVICE_STATUS, 0);
+
+            // Set ACKNOWLEDGE
+            outb(io_base + Self::PCI_IO_DEVICE_STATUS, Self::STATUS_ACKNOWLEDGE);
+
+            // Set DRIVER
+            outb(io_base + Self::PCI_IO_DEVICE_STATUS,
+                 Self::STATUS_ACKNOWLEDGE | Self::STATUS_DRIVER);
+
+            // Read device features
+            let device_features = inl(io_base + Self::PCI_IO_DEVICE_FEATURES) as u64;
+
+            // Negotiate features
+            let wanted_features = features::MAC | features::STATUS;
+            let negotiated = device_features & wanted_features;
+
+            // Write driver features
+            outl(io_base + Self::PCI_IO_DRIVER_FEATURES, negotiated as u32);
+
+            // Set FEATURES_OK
+            outb(io_base + Self::PCI_IO_DEVICE_STATUS,
+                 Self::STATUS_ACKNOWLEDGE | Self::STATUS_DRIVER | Self::STATUS_FEATURES_OK);
+
+            // Verify FEATURES_OK
+            let status = inb(io_base + Self::PCI_IO_DEVICE_STATUS);
+            if status & Self::STATUS_FEATURES_OK == 0 {
+                return None; // Feature negotiation failed
+            }
+
+            // Read MAC address from device config
+            let mut mac = [0u8; 6];
+            for i in 0..6 {
+                mac[i] = inb(io_base + Self::PCI_IO_CONFIG + i as u16);
+            }
+
+            // Set DRIVER_OK
+            outb(io_base + Self::PCI_IO_DEVICE_STATUS,
+                 Self::STATUS_ACKNOWLEDGE | Self::STATUS_DRIVER |
+                 Self::STATUS_FEATURES_OK | Self::STATUS_DRIVER_OK);
+
+            Some(VirtioNet {
+                mode,
+                base,
+                mac: MacAddress(mac),
+                mtu: 1500,
+                flags: Mutex::new(DeviceFlags {
+                    up: true,
+                    broadcast: true,
+                    multicast: true,
+                    ..Default::default()
+                }),
+                stats: Mutex::new(NetStats::default()),
+                rx_buffer: Mutex::new(Vec::new()),
+                tx_buffer: Mutex::new(Vec::new()),
+                rx_idx: AtomicU32::new(0),
+                tx_idx: AtomicU32::new(0),
+                features: negotiated,
+            })
+        } else {
+            // Memory-mapped PCI - treat like MMIO
+            // Note: Modern PCI VirtIO uses capability structures
+            // For now, try MMIO-style access on BAR0
+            // Safety: The base address was obtained from PCI BAR0
+            unsafe { Self::probe_mmio(base) }
+        }
+    }
+
+    /// Legacy probe function (alias for probe_mmio)
+    #[deprecated(note = "Use probe_mmio instead")]
+    pub unsafe fn probe(mmio_base: u64) -> Option<Self> {
+        // Safety: Caller guarantees mmio_base is valid
+        unsafe { Self::probe_mmio(mmio_base) }
+    }
+
     /// Notify the device of available buffers
     unsafe fn notify(&self, queue: u32) {
-        unsafe {
-            let base = self.mmio_base as *mut u8;
-            let notify_ptr = base.add(Self::QUEUE_NOTIFY) as *mut u32;
-            core::ptr::write_volatile(notify_ptr, queue);
+        match self.mode {
+            VirtioMode::Mmio | VirtioMode::PciMem => {
+                let base = self.base as *mut u8;
+                // Safety: base is a valid MMIO address from device initialization
+                let notify_ptr = unsafe { base.add(Self::MMIO_QUEUE_NOTIFY) as *mut u32 };
+                unsafe { core::ptr::write_volatile(notify_ptr, queue) };
+            }
+            VirtioMode::PciIo => {
+                let io_base = self.base as u16;
+                outw(io_base + Self::PCI_IO_QUEUE_NOTIFY, queue as u16);
+            }
         }
     }
 
@@ -299,12 +440,101 @@ impl VirtioNet {
             return true; // Assume up if status feature not negotiated
         }
 
-        unsafe {
-            let base = self.mmio_base as *const u8;
-            let config_ptr = base.add(Self::CONFIG) as *const VirtioNetConfig;
-            let config = core::ptr::read_volatile(config_ptr);
-            config.status & status::LINK_UP != 0
+        match self.mode {
+            VirtioMode::Mmio | VirtioMode::PciMem => {
+                unsafe {
+                    let base = self.base as *const u8;
+                    let config_ptr = base.add(Self::MMIO_CONFIG) as *const VirtioNetConfig;
+                    let config = core::ptr::read_volatile(config_ptr);
+                    config.status & status::LINK_UP != 0
+                }
+            }
+            VirtioMode::PciIo => {
+                // Status is at offset 6 in the config space for net devices
+                let io_base = self.base as u16;
+                let status = inw(io_base + Self::PCI_IO_CONFIG + 6);
+                status & status::LINK_UP != 0
+            }
         }
+    }
+}
+
+// x86_64 I/O port access functions
+#[inline]
+fn inb(port: u16) -> u8 {
+    let value: u8;
+    unsafe {
+        core::arch::asm!(
+            "in al, dx",
+            out("al") value,
+            in("dx") port,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+    value
+}
+
+#[inline]
+fn outb(port: u16, value: u8) {
+    unsafe {
+        core::arch::asm!(
+            "out dx, al",
+            in("dx") port,
+            in("al") value,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+}
+
+#[inline]
+fn inw(port: u16) -> u16 {
+    let value: u16;
+    unsafe {
+        core::arch::asm!(
+            "in ax, dx",
+            out("ax") value,
+            in("dx") port,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+    value
+}
+
+#[inline]
+fn outw(port: u16, value: u16) {
+    unsafe {
+        core::arch::asm!(
+            "out dx, ax",
+            in("dx") port,
+            in("ax") value,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+}
+
+#[inline]
+fn inl(port: u16) -> u32 {
+    let value: u32;
+    unsafe {
+        core::arch::asm!(
+            "in eax, dx",
+            out("eax") value,
+            in("dx") port,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+    value
+}
+
+#[inline]
+fn outl(port: u16, value: u32) {
+    unsafe {
+        core::arch::asm!(
+            "out dx, eax",
+            in("dx") port,
+            in("eax") value,
+            options(nomem, nostack, preserves_flags)
+        );
     }
 }
 

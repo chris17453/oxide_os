@@ -38,6 +38,7 @@ members = [
     "crates/net/efflux-dhcp",
     "crates/net/efflux-dns",
     "crates/drivers/net/efflux-virtio-net",
+    "crates/drivers/pci",
     "crates/input/efflux-input",
     "crates/drivers/input/efflux-ps2",
     "crates/drivers/input/efflux-virtio-input",
@@ -142,6 +143,7 @@ efflux-tcpip = { path = "crates/net/efflux-tcpip" }
 efflux-dhcp = { path = "crates/net/efflux-dhcp" }
 efflux-dns = { path = "crates/net/efflux-dns" }
 efflux-virtio-net = { path = "crates/drivers/net/efflux-virtio-net" }
+pci = { path = "crates/drivers/pci" }
 efflux-input = { path = "crates/input/efflux-input" }
 efflux-ps2 = { path = "crates/drivers/input/efflux-ps2" }
 efflux-virtio-input = { path = "crates/drivers/input/efflux-virtio-input" }
