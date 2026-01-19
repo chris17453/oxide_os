@@ -396,11 +396,8 @@ pub unsafe extern "C" fn enter_usermode_with_context(
         "mov gs, ax",
         "mov rax, [rsp - 16]",
 
-        // TEST: Force RAX and RCX to 0 right before iretq
-        "xor rax, rax",
-        "xor rcx, rcx",
-
         // Now RSP points to the iretq frame
+        // RAX contains the context's rax value (0 for fork child)
         "iretq",
 
         user_cs = const USER_CS as u64,

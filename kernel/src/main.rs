@@ -78,9 +78,34 @@ static mut KERNEL_PML4: u64 = 0;
 /// Child processes waiting to be run
 static PENDING_CHILDREN: Mutex<Vec<Pid>> = Mutex::new(Vec::new());
 
+/// Full parent context for returning from child process
+/// Stores all registers so parent can resume with correct state
+#[derive(Clone)]
+struct ParentContext {
+    pid: u32,
+    pml4: u64,
+    rip: u64,
+    rsp: u64,
+    rflags: u64,
+    rax: u64,
+    rbx: u64,
+    rcx: u64,
+    rdx: u64,
+    rsi: u64,
+    rdi: u64,
+    rbp: u64,
+    r8: u64,
+    r9: u64,
+    r10: u64,
+    r11: u64,
+    r12: u64,
+    r13: u64,
+    r14: u64,
+    r15: u64,
+}
+
 /// Saved parent context for returning from child process
-/// Format: (parent_pid, parent_pml4, user_rip, user_rsp, user_rflags)
-static PARENT_CONTEXT: Mutex<Option<(u32, u64, u64, u64, u64)>> = Mutex::new(None);
+static PARENT_CONTEXT: Mutex<Option<ParentContext>> = Mutex::new(None);
 
 /// Flag indicating a child has exited and we should return to parent
 static CHILD_DONE: AtomicBool = AtomicBool::new(false);
@@ -598,6 +623,12 @@ fn syscall_dispatch(
     arg5: u64,
     arg6: u64,
 ) -> i64 {
+    // Debug: log syscall 3 (fork) and 6 (waitpid) calls
+    if number == 3 || number == 6 {
+        use core::fmt::Write;
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[SYSCALL] number={} arg1={:#x}", number, arg1);
+    }
     efflux_syscall::dispatch(number, arg1, arg2, arg3, arg4, arg5, arg6)
 }
 
@@ -707,12 +738,12 @@ fn user_exit(status: i32) -> ! {
     // Check if there's a saved parent context to return to
     let parent_ctx = PARENT_CONTEXT.lock().take();
 
-    if let Some((parent_pid, parent_pml4, user_rip, user_rsp, user_rflags)) = parent_ctx {
+    if let Some(ctx) = parent_ctx {
         // Restore parent as current process
-        table.set_current_pid(parent_pid);
+        table.set_current_pid(ctx.pid);
 
         // Get parent's kernel stack
-        if let Some(parent) = table.get(parent_pid) {
+        if let Some(parent) = table.get(ctx.pid) {
             let p = parent.lock();
             let parent_stack_phys = p.kernel_stack();
             let parent_stack_size = p.kernel_stack_size();
@@ -731,35 +762,89 @@ fn user_exit(status: i32) -> ! {
             let wait_result = ((current_pid as i64) << 32) | ((status as i64) & 0xFFFFFFFF);
 
             // Return to parent's user mode via sysretq
-            // We need to:
-            // 1. Switch to parent's page tables
-            // 2. Set up return value in rax
-            // 3. Return to user mode at parent's saved rip/rsp
+            // CRITICAL: Must restore ALL registers the parent had when making the waitpid syscall
+            // sysretq clobbers RCX (uses for RIP) and R11 (uses for RFLAGS)
+            // All other registers must be restored to parent's values
+
+            // Copy context to static memory that survives the CR3 switch
+            // We use a static because inline asm can't handle this many registers
+            static mut RESTORE_CTX: ParentContext = ParentContext {
+                pid: 0, pml4: 0, rip: 0, rsp: 0, rflags: 0,
+                rax: 0, rbx: 0, rcx: 0, rdx: 0, rsi: 0, rdi: 0, rbp: 0,
+                r8: 0, r9: 0, r10: 0, r11: 0, r12: 0, r13: 0, r14: 0, r15: 0,
+            };
+            static mut RESTORE_RESULT: i64 = 0;
+
             unsafe {
-                // Switch page tables
+                use core::ptr::addr_of_mut;
+                *addr_of_mut!(RESTORE_CTX) = ctx.clone();
+                *addr_of_mut!(RESTORE_RESULT) = wait_result;
+
+                // Switch page tables first
                 core::arch::asm!(
                     "mov cr3, {}",
-                    in(reg) parent_pml4,
+                    in(reg) ctx.pml4,
                     options(nostack)
                 );
 
-                // Return to parent's user mode
-                // sysretq expects: rcx = rip, r11 = rflags, rax = return value
+                // Now restore all registers from the static context and sysretq
+                // The context is at a fixed virtual address (higher half)
+                let ctx_ptr = addr_of_mut!(RESTORE_CTX) as u64;
+                let result_ptr = addr_of_mut!(RESTORE_RESULT) as u64;
+
+                // ParentContext layout:
+                // pid: u32 (offset 0, padded to 8)
+                // pml4: u64 (offset 8)
+                // rip: u64 (offset 16)
+                // rsp: u64 (offset 24)
+                // rflags: u64 (offset 32)
+                // rax: u64 (offset 40)
+                // rbx: u64 (offset 48)
+                // rcx: u64 (offset 56)
+                // rdx: u64 (offset 64)
+                // rsi: u64 (offset 72)
+                // rdi: u64 (offset 80)
+                // rbp: u64 (offset 88)
+                // r8: u64 (offset 96)
+                // r9: u64 (offset 104)
+                // r10: u64 (offset 112)
+                // r11: u64 (offset 120)
+                // r12: u64 (offset 128)
+                // r13: u64 (offset 136)
+                // r14: u64 (offset 144)
+                // r15: u64 (offset 152)
                 core::arch::asm!(
-                    // Set up return value
-                    "mov rax, {result}",
-                    // Set up rip for sysretq
-                    "mov rcx, {rip}",
-                    // Set up rflags for sysretq
-                    "mov r11, {rflags}",
-                    // Set up user stack
-                    "mov rsp, {rsp}",
+                    // r15 = context pointer, r14 = result pointer
+                    "mov r15, {ctx}",
+                    "mov r14, {result}",
+                    // Restore callee-saved registers
+                    "mov rbx, [r15 + 48]",    // rbx at offset 48
+                    "mov rbp, [r15 + 88]",    // rbp at offset 88
+                    "mov r12, [r15 + 128]",   // r12 at offset 128
+                    "mov r13, [r15 + 136]",   // r13 at offset 136
+                    // Restore caller-saved registers (that syscall should preserve)
+                    "mov rdi, [r15 + 80]",    // rdi at offset 80
+                    "mov rsi, [r15 + 72]",    // rsi at offset 72
+                    "mov rdx, [r15 + 64]",    // rdx at offset 64
+                    "mov r8, [r15 + 96]",     // r8 at offset 96
+                    "mov r9, [r15 + 104]",    // r9 at offset 104
+                    "mov r10, [r15 + 112]",   // r10 at offset 112
+                    // Set up sysretq: RAX=result, RCX=rip, R11=rflags, RSP=user_stack
+                    "mov rax, [r14]",         // result value
+                    "mov rcx, [r15 + 16]",    // rip at offset 16
+                    "mov r11, [r15 + 32]",    // rflags at offset 32
+                    "mov rsp, [r15 + 24]",    // rsp at offset 24
+                    // Restore r14, r15 last (we were using them)
+                    "push rax",               // save result temporarily
+                    "mov rax, [r15 + 144]",   // r14 at offset 144
+                    "push rax",               // save r14 value
+                    "mov r15, [r15 + 152]",   // r15 at offset 152
+                    "pop r14",                // restore r14
+                    "pop rax",                // restore result
                     // Return to user mode
                     "sysretq",
-                    result = in(reg) wait_result,
-                    rip = in(reg) user_rip,
-                    rflags = in(reg) user_rflags,
-                    rsp = in(reg) user_rsp,
+                    ctx = in(reg) ctx_ptr,
+                    result = in(reg) result_ptr,
                     options(noreturn)
                 );
             }
@@ -942,19 +1027,33 @@ fn run_child_process(child_pid: Pid) {
         let _ = writeln!(writer, "[CHILD] r13={:#x} r14={:#x} r15={:#x}", child_ctx.r13, child_ctx.r14, child_ctx.r15);
     }
 
-    // Save parent's user context so we can return to parent when child exits
-    // The parent's user context is saved by the syscall handler
+    // Save parent's FULL user context so we can restore ALL registers when child exits
+    // This is critical because the parent's syscall handler saved registers to the
+    // kernel stack, but we're going to bypass the normal epilogue via user_exit's sysretq
     let parent_user_ctx = get_user_context();
     {
-        // Save context for returning from child:
-        // (parent_pid, parent_pml4, user_rip, user_rsp, user_rflags)
-        *PARENT_CONTEXT.lock() = Some((
-            parent_pid,
-            parent_pml4,
-            parent_user_ctx.rip,
-            parent_user_ctx.rsp,
-            parent_user_ctx.rflags,
-        ));
+        *PARENT_CONTEXT.lock() = Some(ParentContext {
+            pid: parent_pid,
+            pml4: parent_pml4,
+            rip: parent_user_ctx.rip,
+            rsp: parent_user_ctx.rsp,
+            rflags: parent_user_ctx.rflags,
+            rax: parent_user_ctx.rax,
+            rbx: parent_user_ctx.rbx,
+            rcx: parent_user_ctx.rcx,
+            rdx: parent_user_ctx.rdx,
+            rsi: parent_user_ctx.rsi,
+            rdi: parent_user_ctx.rdi,
+            rbp: parent_user_ctx.rbp,
+            r8: parent_user_ctx.r8,
+            r9: parent_user_ctx.r9,
+            r10: parent_user_ctx.r10,
+            r11: parent_user_ctx.r11,
+            r12: parent_user_ctx.r12,
+            r13: parent_user_ctx.r13,
+            r14: parent_user_ctx.r14,
+            r15: parent_user_ctx.r15,
+        });
         CHILD_DONE.store(false, Ordering::SeqCst);
     }
 
