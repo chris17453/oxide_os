@@ -242,19 +242,21 @@ impl TerminalEmulator {
 
                 let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
 
-                if is_alt {
-                    self.handler.linefeed(&mut self.alternate, None);
+                let scrolled = if is_alt {
+                    self.handler.linefeed(&mut self.alternate, None)
                 } else {
-                    self.handler.linefeed(&mut self.primary, Some(&mut self.scrollback));
-                }
+                    self.handler.linefeed(&mut self.primary, Some(&mut self.scrollback))
+                };
 
-                self.renderer.mark_dirty(old_row);
-                self.renderer.mark_dirty(self.handler.cursor.row);
-
-                // If we scrolled, mark more rows dirty
-                if self.handler.cursor.row == old_row {
-                    // We scrolled - mark scroll region dirty
-                    self.renderer.mark_all_dirty();
+                if scrolled {
+                    // Use fast framebuffer scroll instead of redrawing everything
+                    let bg = self.handler.attrs.effective_bg().to_fb_color(false);
+                    self.renderer.scroll_up(1, bg);
+                    // Only the new bottom row needs redraw
+                    self.renderer.mark_dirty(self.handler.cursor.row);
+                } else {
+                    self.renderer.mark_dirty(old_row);
+                    self.renderer.mark_dirty(self.handler.cursor.row);
                 }
             }
             0x0D => {

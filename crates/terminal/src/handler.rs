@@ -137,7 +137,8 @@ impl Handler {
     }
 
     /// Line feed (moves down, may scroll)
-    pub fn linefeed(&mut self, buffer: &mut ScreenBuffer, scrollback: Option<&mut ScrollbackBuffer>) {
+    /// Returns true if scrolling occurred
+    pub fn linefeed(&mut self, buffer: &mut ScreenBuffer, scrollback: Option<&mut ScrollbackBuffer>) -> bool {
         if self.cursor.row >= self.effective_scroll_bottom() {
             // At or past scroll region bottom - scroll up
             if let Some(sb) = scrollback {
@@ -149,8 +150,10 @@ impl Handler {
                 }
             }
             buffer.scroll_up(self.scroll_top, self.effective_scroll_bottom(), 1);
+            true // Scrolled
         } else {
             self.cursor.row += 1;
+            false // No scroll
         }
     }
 
