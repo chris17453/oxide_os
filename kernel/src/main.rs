@@ -374,8 +374,8 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     // Allocate kernel stack for syscalls and interrupts
     let _ = writeln!(writer, "[USER] Allocating kernel stack...");
-    // Allocate 64KB kernel stack to prevent stack overflow into heap
-    const KERNEL_STACK_SIZE: usize = 64 * 1024;
+    // Allocate 128KB kernel stack - fork+COW uses ~67KB during deep recursion
+    const KERNEL_STACK_SIZE: usize = 128 * 1024;
     let kernel_stack: Box<[u8; KERNEL_STACK_SIZE]> = Box::new([0u8; KERNEL_STACK_SIZE]);
     let kernel_stack_ptr = Box::into_raw(kernel_stack);
     let kernel_stack_top = unsafe { (kernel_stack_ptr as *const u8).add(KERNEL_STACK_SIZE) as u64 };
@@ -782,8 +782,8 @@ fn run_child_process(child_pid: Pid) {
     let _ = writeln!(writer, "[RUN] Switching to child {} at {:#x}", child_pid, child_entry.as_u64());
 
     // Allocate a new kernel stack for the child (the one in Process is physical addr)
-    // Allocate 64KB kernel stack for child
-    const CHILD_KERNEL_STACK_SIZE: usize = 64 * 1024;
+    // Allocate 128KB kernel stack for child - matches parent stack size
+    const CHILD_KERNEL_STACK_SIZE: usize = 128 * 1024;
     let child_kernel_stack: Box<[u8; CHILD_KERNEL_STACK_SIZE]> = Box::new([0u8; CHILD_KERNEL_STACK_SIZE]);
     let child_kernel_stack_ptr = Box::into_raw(child_kernel_stack);
     let child_kernel_stack_top = unsafe { (child_kernel_stack_ptr as *const u8).add(CHILD_KERNEL_STACK_SIZE) as u64 };

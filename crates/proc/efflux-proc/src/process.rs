@@ -2,21 +2,6 @@
 //!
 //! Defines the Process type and process-related operations.
 
-// Serial port debug output
-fn debug_print(s: &str) {
-    const SERIAL: u16 = 0x3F8;
-    for b in s.bytes() {
-        unsafe {
-            loop {
-                let status: u8;
-                core::arch::asm!("in al, dx", out("al") status, in("dx") SERIAL + 5, options(nomem, nostack));
-                if status & 0x20 != 0 { break; }
-            }
-            core::arch::asm!("out dx, al", in("al") b, in("dx") SERIAL, options(nomem, nostack));
-        }
-    }
-}
-
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
@@ -468,19 +453,9 @@ impl ProcessTable {
 
     /// Add a process to the table
     pub fn add(&self, process: Process) -> Arc<Mutex<Process>> {
-        debug_print("[PT:add] entering\n");
         let pid = process.pid();
-        debug_print("[PT:add] creating Mutex\n");
-        let mutex = Mutex::new(process);
-        debug_print("[PT:add] Mutex created\n");
-        debug_print("[PT:add] creating Arc\n");
-        let arc = Arc::new(mutex);
-        debug_print("[PT:add] Arc created!\n");
-        debug_print("[PT:add] acquiring write lock\n");
-        let mut guard = self.processes.write();
-        debug_print("[PT:add] inserting\n");
-        guard.insert(pid, Arc::clone(&arc));
-        debug_print("[PT:add] done\n");
+        let arc = Arc::new(Mutex::new(process));
+        self.processes.write().insert(pid, Arc::clone(&arc));
         arc
     }
 

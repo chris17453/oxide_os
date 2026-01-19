@@ -26,21 +26,6 @@ pub enum ForkError {
     Internal,
 }
 
-// Serial port debug output
-fn serial_print(s: &str) {
-    const SERIAL: u16 = 0x3F8;
-    for b in s.bytes() {
-        unsafe {
-            loop {
-                let status: u8;
-                core::arch::asm!("in al, dx", out("al") status, in("dx") SERIAL + 5, options(nomem, nostack));
-                if status & 0x20 != 0 { break; }
-            }
-            core::arch::asm!("out dx, al", in("al") b, in("dx") SERIAL, options(nomem, nostack));
-        }
-    }
-}
-
 /// Fork the current process
 ///
 /// Creates a child process with a copy of the parent's address space.
@@ -52,25 +37,19 @@ pub fn do_fork<A: FrameAllocator>(
     parent_context: &ProcessContext,
     allocator: &A,
 ) -> Result<Pid, ForkError> {
-    serial_print("[do_fork] entered\n");
     let table = process_table();
 
     // Get parent process
-    serial_print("[do_fork] getting parent\n");
     let parent_arc = table.get(parent_pid).ok_or(ForkError::ParentNotFound)?;
-    serial_print("[do_fork] locking parent\n");
     let mut parent = parent_arc.lock();
 
     // Allocate child PID
-    serial_print("[do_fork] allocating child PID\n");
     let child_pid = alloc_pid();
 
     // Clone address space with COW
-    serial_print("[do_fork] cloning address space\n");
     let child_address_space = unsafe {
         clone_address_space_cow(parent.address_space(), allocator)?
     };
-    serial_print("[do_fork] address space cloned\n");
 
     // Allocate kernel stack for child (4 pages = 16KB)
     let kernel_stack_pages = 4;
@@ -78,10 +57,8 @@ pub fn do_fork<A: FrameAllocator>(
     let kernel_stack_phys = allocator
         .alloc_frames(kernel_stack_pages)
         .ok_or(ForkError::OutOfMemory)?;
-    serial_print("[do_fork] kernel stack allocated\n");
 
     // Create child process
-    serial_print("[do_fork] creating child process\n");
     let mut child = Process::new(
         child_pid,
         parent_pid,
@@ -91,7 +68,6 @@ pub fn do_fork<A: FrameAllocator>(
         parent.entry_point(),
         parent.user_stack_top(),
     );
-    serial_print("[do_fork] child process created\n");
 
     // Copy parent's context to child (will return 0 to child)
     let mut child_context = parent_context.clone();
@@ -114,11 +90,8 @@ pub fn do_fork<A: FrameAllocator>(
     child.add_owned_frame(kernel_stack_phys);
 
     // Add child to process table
-    serial_print("[do_fork] dropping parent lock\n");
     drop(parent); // Release parent lock before adding child
-    serial_print("[do_fork] adding child to table\n");
     table.add(child);
-    serial_print("[do_fork] done\n");
 
     Ok(child_pid)
 }
