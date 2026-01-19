@@ -32,112 +32,112 @@ efflux/
 ├── crates/                         # ALL COMPONENT CRATES
 │   │
 │   ├── core/                       # Core utilities
-│   │   ├── efflux-core/            # Sync primitives, collections
-│   │   ├── efflux-alloc/           # Global allocator interface
-│   │   └── efflux-log/             # Logging framework
+│   │   ├── core/            # Sync primitives, collections
+│   │   ├── alloc/           # Global allocator interface
+│   │   └── log/             # Logging framework
 │   │
 │   ├── arch/                       # Architecture layer
-│   │   ├── efflux-arch-traits/     # Arch trait definitions
-│   │   ├── efflux-arch-x86_64/
-│   │   ├── efflux-arch-i686/
-│   │   ├── efflux-arch-aarch64/
-│   │   ├── efflux-arch-arm/
-│   │   ├── efflux-arch-mips64/
-│   │   ├── efflux-arch-mips32/
-│   │   ├── efflux-arch-riscv64/
-│   │   └── efflux-arch-riscv32/
+│   │   ├── arch-traits/     # Arch trait definitions
+│   │   ├── arch-x86_64/
+│   │   ├── arch-i686/
+│   │   ├── arch-aarch64/
+│   │   ├── arch-arm/
+│   │   ├── arch-mips64/
+│   │   ├── arch-mips32/
+│   │   ├── arch-riscv64/
+│   │   └── arch-riscv32/
 │   │
 │   ├── mm/                         # Memory management
-│   │   ├── efflux-mm-traits/       # MM trait definitions
-│   │   ├── efflux-mm-buddy/        # Buddy allocator
-│   │   ├── efflux-mm-slab/         # Slab allocator
-│   │   ├── efflux-mm-vmm/          # Virtual memory manager
-│   │   └── efflux-mm-heap/         # Kernel heap
+│   │   ├── mm-traits/       # MM trait definitions
+│   │   ├── mm-buddy/        # Buddy allocator
+│   │   ├── mm-slab/         # Slab allocator
+│   │   ├── mm-vmm/          # Virtual memory manager
+│   │   └── mm-heap/         # Kernel heap
 │   │
 │   ├── sched/                      # Scheduler
-│   │   ├── efflux-sched-traits/    # Scheduler traits
-│   │   ├── efflux-sched-rr/        # Round-robin scheduler
-│   │   └── efflux-sched-cfs/       # CFS-like scheduler (future)
+│   │   ├── sched-traits/    # Scheduler traits
+│   │   ├── sched-rr/        # Round-robin scheduler
+│   │   └── sched-cfs/       # CFS-like scheduler (future)
 │   │
 │   ├── process/                    # Process management
-│   │   ├── efflux-process/         # Process/thread structures
-│   │   ├── efflux-elf/             # ELF loader
-│   │   └── efflux-signal/          # Signal handling
+│   │   ├── process/         # Process/thread structures
+│   │   ├── elf/             # ELF loader
+│   │   └── signal/          # Signal handling
 │   │
 │   ├── syscall/                    # Syscall layer
-│   │   ├── efflux-syscall-traits/  # Syscall interface
-│   │   └── efflux-syscall/         # Syscall dispatch + handlers
+│   │   ├── syscall-traits/  # Syscall interface
+│   │   └── syscall/         # Syscall dispatch + handlers
 │   │
 │   ├── vfs/                        # Virtual filesystem
-│   │   ├── efflux-vfs-traits/      # VFS traits (Vnode, Filesystem)
-│   │   └── efflux-vfs/             # VFS implementation
+│   │   ├── vfs-traits/      # VFS traits (Vnode, Filesystem)
+│   │   └── vfs/             # VFS implementation
 │   │
 │   ├── fs/                         # Filesystem implementations
-│   │   ├── efflux-fs-effluxfs/     # Native filesystem
-│   │   ├── efflux-fs-fat32/        # FAT32
-│   │   ├── efflux-fs-tmpfs/        # RAM filesystem
-│   │   ├── efflux-fs-devfs/        # Device filesystem
-│   │   ├── efflux-fs-procfs/       # Process filesystem
-│   │   └── efflux-fs-initramfs/    # Initial ramdisk (cpio)
+│   │   ├── fs-effluxfs/     # Native filesystem
+│   │   ├── fs-fat32/        # FAT32
+│   │   ├── fs-tmpfs/        # RAM filesystem
+│   │   ├── fs-devfs/        # Device filesystem
+│   │   ├── fs-procfs/       # Process filesystem
+│   │   └── fs-initramfs/    # Initial ramdisk (cpio)
 │   │
 │   ├── drivers/                    # Device drivers
-│   │   ├── efflux-driver-traits/   # Driver traits
+│   │   ├── driver-traits/   # Driver traits
 │   │   ├── serial/
-│   │   │   ├── efflux-driver-uart-8250/
-│   │   │   └── efflux-driver-uart-pl011/
+│   │   │   ├── driver-uart-8250/
+│   │   │   └── driver-uart-pl011/
 │   │   ├── block/
-│   │   │   ├── efflux-driver-virtio-blk/
-│   │   │   ├── efflux-driver-nvme/
-│   │   │   └── efflux-driver-ahci/
+│   │   │   ├── driver-virtio-blk/
+│   │   │   ├── driver-nvme/
+│   │   │   └── driver-ahci/
 │   │   ├── net/
-│   │   │   ├── efflux-driver-virtio-net/
-│   │   │   └── efflux-driver-e1000/
+│   │   │   ├── driver-virtio-net/
+│   │   │   └── driver-e1000/
 │   │   ├── input/
-│   │   │   ├── efflux-driver-ps2/
-│   │   │   └── efflux-driver-virtio-input/
+│   │   │   ├── driver-ps2/
+│   │   │   └── driver-virtio-input/
 │   │   ├── gpu/
-│   │   │   ├── efflux-driver-virtio-gpu/
-│   │   │   └── efflux-driver-framebuffer/
+│   │   │   ├── driver-virtio-gpu/
+│   │   │   └── driver-framebuffer/
 │   │   ├── usb/
-│   │   │   └── efflux-driver-xhci/
+│   │   │   └── driver-xhci/
 │   │   └── timer/
-│   │       ├── efflux-driver-apic-timer/
-│   │       ├── efflux-driver-hpet/
-│   │       └── efflux-driver-arm-timer/
+│   │       ├── driver-apic-timer/
+│   │       ├── driver-hpet/
+│   │       └── driver-arm-timer/
 │   │
 │   ├── net/                        # Network stack
-│   │   ├── efflux-net-traits/      # Network traits
-│   │   ├── efflux-net-stack/       # TCP/IP stack
-│   │   └── efflux-net-socket/      # Socket API
+│   │   ├── net-traits/      # Network traits
+│   │   ├── net-stack/       # TCP/IP stack
+│   │   └── net-socket/      # Socket API
 │   │
 │   ├── ipc/                        # IPC mechanisms
-│   │   ├── efflux-ipc-pipe/        # Pipes
-│   │   ├── efflux-ipc-socket/      # Unix sockets
-│   │   └── efflux-ipc-shm/         # Shared memory
+│   │   ├── ipc-pipe/        # Pipes
+│   │   ├── ipc-socket/      # Unix sockets
+│   │   └── ipc-shm/         # Shared memory
 │   │
 │   ├── tty/                        # Terminal
-│   │   ├── efflux-tty/             # TTY subsystem
-│   │   └── efflux-pty/             # PTY pairs
+│   │   ├── tty/             # TTY subsystem
+│   │   └── pty/             # PTY pairs
 │   │
 │   ├── security/                   # Security subsystem
-│   │   ├── efflux-crypto/          # Crypto primitives
-│   │   ├── efflux-trust/           # Trust store, certs
-│   │   └── efflux-quarantine/      # Quarantine system
+│   │   ├── crypto/          # Crypto primitives
+│   │   ├── trust/           # Trust store, certs
+│   │   └── quarantine/      # Quarantine system
 │   │
 │   ├── ai/                         # AI subsystem
-│   │   ├── efflux-embeddings/      # Embedding generation
-│   │   └── efflux-search/          # Vector search
+│   │   ├── embeddings/      # Embedding generation
+│   │   └── search/          # Vector search
 │   │
 │   └── module/                     # Loadable modules
-│       └── efflux-module/          # Module loader
+│       └── module/          # Module loader
 │
 ├── bootloader/                     # BOOTLOADER CRATES
-│   ├── efflux-boot-common/         # Shared boot code
-│   ├── efflux-boot-uefi/           # UEFI bootloader
-│   ├── efflux-boot-bios/           # Legacy BIOS
-│   ├── efflux-boot-opensbi/        # RISC-V OpenSBI
-│   ├── efflux-boot-arcs/           # MIPS ARCS (SGI)
-│   └── efflux-boot-uboot/          # ARM U-Boot
+│   ├── boot-common/         # Shared boot code
+│   ├── boot-uefi/           # UEFI bootloader
+│   ├── boot-bios/           # Legacy BIOS
+│   ├── boot-opensbi/        # RISC-V OpenSBI
+│   ├── boot-arcs/           # MIPS ARCS (SGI)
+│   └── boot-uboot/          # ARM U-Boot
 │
 ├── libc/                           # CUSTOM LIBC
 │   ├── Cargo.toml
@@ -159,7 +159,7 @@ efflux/
 │   │       ├── ls.rs
 │   │       ├── cat.rs
 │   │       └── ...
-│   ├── efflux-tools/               # EFFLUX-specific tools
+│   ├── tools/               # EFFLUX-specific tools
 │   │   ├── trust/                  # Trust management CLI
 │   │   ├── sign/                   # File signing
 │   │   └── search/                 # Semantic search CLI
@@ -207,27 +207,27 @@ efflux/
 ```
 kernel (binary)
     │
-    ├── efflux-arch-{arch}          # Selected architecture
-    │   └── efflux-arch-traits
+    ├── arch-{arch}          # Selected architecture
+    │   └── arch-traits
     │
-    ├── efflux-mm-*                  # Memory management
-    │   └── efflux-mm-traits
+    ├── mm-*                  # Memory management
+    │   └── mm-traits
     │
-    ├── efflux-sched-*               # Scheduler
-    │   └── efflux-sched-traits
+    ├── sched-*               # Scheduler
+    │   └── sched-traits
     │
-    ├── efflux-vfs                   # VFS
-    │   └── efflux-vfs-traits
+    ├── vfs                   # VFS
+    │   └── vfs-traits
     │
-    ├── efflux-fs-*                  # Filesystems
+    ├── fs-*                  # Filesystems
     │
-    ├── efflux-driver-*              # Drivers
-    │   └── efflux-driver-traits
+    ├── driver-*              # Drivers
+    │   └── driver-traits
     │
-    ├── efflux-syscall               # Syscalls
+    ├── syscall               # Syscalls
     │
-    └── efflux-core                  # Core utilities
-        └── efflux-alloc
+    └── core                  # Core utilities
+        └── alloc
 ```
 
 ### Trait Crates
@@ -236,12 +236,12 @@ Every subsystem has a `-traits` crate defining interfaces:
 
 | Trait Crate | Defines |
 |-------------|---------|
-| efflux-arch-traits | `Arch`, `Mmu`, `Tlb`, `InterruptController`, `Timer`, `Context` |
-| efflux-mm-traits | `FrameAllocator`, `PageTableOps`, `HeapAllocator` |
-| efflux-sched-traits | `Scheduler`, `Thread`, `RunQueue` |
-| efflux-vfs-traits | `Filesystem`, `Vnode`, `FileOps` |
-| efflux-driver-traits | `Driver`, `BlockDevice`, `NetworkDevice`, `CharDevice` |
-| efflux-net-traits | `NetworkStack`, `Socket` |
+| arch-traits | `Arch`, `Mmu`, `Tlb`, `InterruptController`, `Timer`, `Context` |
+| mm-traits | `FrameAllocator`, `PageTableOps`, `HeapAllocator` |
+| sched-traits | `Scheduler`, `Thread`, `RunQueue` |
+| vfs-traits | `Filesystem`, `Vnode`, `FileOps` |
+| driver-traits | `Driver`, `BlockDevice`, `NetworkDevice`, `CharDevice` |
+| net-traits | `NetworkStack`, `Socket` |
 
 ---
 
@@ -285,7 +285,7 @@ use std::fs::File;  // OK - runs on host
 Crates use features for optional functionality:
 
 ```toml
-# crates/mm/efflux-mm-buddy/Cargo.toml
+# crates/mm/mm-buddy/Cargo.toml
 [features]
 default = []
 smp = []           # SMP-safe allocator
@@ -298,7 +298,7 @@ Kernel selects features:
 ```toml
 # kernel/Cargo.toml
 [dependencies]
-efflux-mm-buddy = { path = "../crates/mm/efflux-mm-buddy", features = ["smp"] }
+mm-buddy = { path = "../crates/mm/mm-buddy", features = ["smp"] }
 ```
 
 ---
@@ -311,13 +311,13 @@ The kernel can swap implementations by changing dependencies:
 # kernel/Cargo.toml
 
 # Option A: Round-robin scheduler
-efflux-sched = { package = "efflux-sched-rr", path = "../crates/sched/efflux-sched-rr" }
+sched = { package = "sched-rr", path = "../crates/sched/sched-rr" }
 
 # Option B: CFS scheduler (swap this in)
-# efflux-sched = { package = "efflux-sched-cfs", path = "../crates/sched/efflux-sched-cfs" }
+# sched = { package = "sched-cfs", path = "../crates/sched/sched-cfs" }
 ```
 
-Both implement `efflux-sched-traits::Scheduler`.
+Both implement `sched-traits::Scheduler`.
 
 ---
 
@@ -329,10 +329,10 @@ Arch is selected at build time via target:
 # kernel/Cargo.toml
 
 [target.'cfg(target_arch = "x86_64")'.dependencies]
-efflux-arch = { package = "efflux-arch-x86_64", path = "../crates/arch/efflux-arch-x86_64" }
+arch = { package = "arch-x86_64", path = "../crates/arch/arch-x86_64" }
 
 [target.'cfg(target_arch = "aarch64")'.dependencies]
-efflux-arch = { package = "efflux-arch-aarch64", path = "../crates/arch/efflux-arch-aarch64" }
+arch = { package = "arch-aarch64", path = "../crates/arch/arch-aarch64" }
 
 # ... other architectures
 ```
@@ -350,12 +350,12 @@ The kernel crate is minimal - just wires components:
 
 extern crate alloc;
 
-use efflux_arch as arch;
-use efflux_mm_buddy as frame_alloc;
-use efflux_mm_slab as heap;
-use efflux_sched as sched;
-use efflux_vfs as vfs;
-use efflux_syscall as syscall;
+use arch as arch;
+use mm_buddy as frame_alloc;
+use mm_slab as heap;
+use sched as sched;
+use vfs as vfs;
+use syscall as syscall;
 
 #[no_mangle]
 pub extern "C" fn kernel_main(boot_info: &arch::BootInfo) -> ! {
@@ -395,10 +395,10 @@ User applications link against `libc`:
 ```toml
 # apps/shell/Cargo.toml
 [package]
-name = "efflux-shell"
+name = "shell"
 
 [dependencies]
-efflux-libc = { path = "../../libc" }
+libc = { path = "../../libc" }
 
 [[bin]]
 name = "sh"
@@ -409,7 +409,7 @@ Coreutils are a single crate with multiple binaries:
 ```toml
 # apps/coreutils/Cargo.toml
 [package]
-name = "efflux-coreutils"
+name = "coreutils"
 
 [[bin]]
 name = "ls"

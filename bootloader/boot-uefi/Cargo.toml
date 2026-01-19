@@ -1,0 +1,9 @@
+[package]
+name = "boot-uefi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+uefi = { version = "0.32", features = ["alloc", "global_allocator"] }
+boot-proto = { workspace = true }

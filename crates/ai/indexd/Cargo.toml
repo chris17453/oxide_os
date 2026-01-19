@@ -1,0 +1,16 @@
+[package]
+name = "indexd"
+version = "0.1.0"
+edition = "2021"
+authors = ["EFFLUX Contributors"]
+description = "Indexing daemon for semantic file search in EFFLUX"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+spin = "0.9"
+hnsw = { path = "../hnsw" }
+embed = { path = "../embed" }
+
+[features]
+default = []
+std = []

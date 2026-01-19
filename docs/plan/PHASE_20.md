@@ -16,7 +16,7 @@ Implement semantic file indexing with embeddings for intelligent search.
 
 | Item | Status |
 |------|--------|
-| efflux-indexd daemon | [x] |
+| indexd daemon | [x] |
 | TF-IDF embedding model | [x] |
 | HNSW vector index | [x] |
 | Extended metadata definitions | [x] |
@@ -50,7 +50,7 @@ Implement semantic file indexing with embeddings for intelligent search.
                        │
                        ▼
 ┌─────────────────────────────────────────────────────┐
-│              efflux-indexd Daemon                    │
+│              indexd Daemon                    │
 │  ┌─────────────────────────────────────────────┐   │
 │  │           Query Embedding                    │   │
 │  │    "photos from vacation" → [0.1, 0.3, ...]  │   │
@@ -247,7 +247,7 @@ impl IndexDaemon {
 }
 
 // IPC interface via Unix socket
-// /run/efflux-indexd.sock
+// /run/indexd.sock
 ```
 
 ---
@@ -291,28 +291,28 @@ pub struct SearchResult {
 ## Key Files
 
 ```
-crates/ai/efflux-indexd/src/
+crates/ai/indexd/src/
 ├── lib.rs
 ├── daemon.rs          # Main daemon
 ├── watcher.rs         # Filesystem watcher
 ├── queue.rs           # Indexing queue
 └── ipc.rs             # Unix socket API
 
-crates/ai/efflux-embed/src/
+crates/ai/embed/src/
 ├── lib.rs
 ├── model.rs           # Candle model wrapper
 ├── tokenizer.rs       # Text tokenization
 └── extract.rs         # Content extraction
 
-crates/ai/efflux-hnsw/src/
+crates/ai/hnsw/src/
 ├── lib.rs
 ├── index.rs           # HNSW implementation
 ├── node.rs            # Graph nodes
 └── distance.rs        # Distance metrics
 
 userspace/ai/
-├── efflux-search      # CLI search tool
-└── efflux-index       # Manual indexing
+├── search      # CLI search tool
+└── index       # Manual indexing
 ```
 
 ---
@@ -332,7 +332,7 @@ userspace/ai/
 
 ```bash
 # Start indexing daemon
-$ systemctl start efflux-indexd
+$ systemctl start indexd
 
 # Create some test files
 $ echo "Machine learning and neural networks" > ~/docs/ml.txt
@@ -343,13 +343,13 @@ $ echo "Deep learning with transformers" > ~/docs/dl.txt
 $ sleep 5
 
 # Search
-$ efflux-search "artificial intelligence"
+$ search "artificial intelligence"
 Score: 0.92  ~/docs/ml.txt
   "Machine learning and neural networks"
 Score: 0.87  ~/docs/dl.txt
   "Deep learning with transformers"
 
-$ efflux-search "food"
+$ search "food"
 Score: 0.91  ~/docs/pasta.txt
   "Cooking recipes for pasta"
 ```

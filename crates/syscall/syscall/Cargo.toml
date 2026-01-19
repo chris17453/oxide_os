@@ -1,0 +1,14 @@
+[package]
+name = "syscall"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+os_core = { path = "../../core/os_core" }
+proc = { path = "../../proc/proc" }
+proc-traits = { path = "../../proc/proc-traits" }
+mm-traits = { path = "../../mm/mm-traits" }
+vfs = { path = "../../vfs/vfs" }
+signal = { path = "../../signal/signal" }
+net = { path = "../../net/net" }
+spin = "0.9"

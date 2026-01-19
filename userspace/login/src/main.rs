@@ -5,7 +5,7 @@
 #![no_std]
 #![no_main]
 
-use efflux_libc::*;
+use libc::*;
 
 /// Simple password entry (in real system would be in /etc/passwd)
 struct PasswdEntry {

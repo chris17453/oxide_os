@@ -1,0 +1,8 @@
+[package]
+name = "virtio-gpu"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fb = { path = "../../../graphics/fb" }
+spin = "0.9"

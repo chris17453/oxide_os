@@ -1,8 +1,0 @@
-[package]
-name = "efflux-virtio-blk"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-efflux-block = { path = "../../../block/efflux-block" }
-spin = "0.10"

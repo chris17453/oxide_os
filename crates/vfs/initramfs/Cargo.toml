@@ -1,0 +1,11 @@
+[package]
+name = "initramfs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Initramfs (cpio) filesystem for EFFLUX OS"
+
+[dependencies]
+vfs = { workspace = true }
+os_core = { workspace = true }
+spin = { workspace = true }

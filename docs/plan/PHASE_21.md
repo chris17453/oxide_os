@@ -253,7 +253,7 @@ pub fn import_trust(export: TrustExport) -> Result<()> {
 ## Key Files
 
 ```
-crates/security/efflux-crypto/src/
+crates/security/crypto/src/
 ├── lib.rs
 ├── ed25519.rs         # Ed25519 signing
 ├── aes.rs             # AES-256-GCM
@@ -261,31 +261,31 @@ crates/security/efflux-crypto/src/
 ├── x25519.rs          # Key exchange
 └── argon2.rs          # Password hashing
 
-crates/security/efflux-trust/src/
+crates/security/trust/src/
 ├── lib.rs
 ├── store.rs           # Trust store
 ├── key.rs             # Key management
 ├── revoke.rs          # Revocation
 └── share.rs           # Trust sharing
 
-crates/security/efflux-quarantine/src/
+crates/security/quarantine/src/
 ├── lib.rs
 ├── entry.rs           # Quarantine entries
 ├── policy.rs          # Auto-approval rules
 └── ui.rs              # User prompts
 
-crates/security/efflux-x509/src/
+crates/security/x509/src/
 ├── lib.rs
 ├── cert.rs            # Certificate parsing
 ├── chain.rs           # Chain validation
 └── crl.rs             # Revocation lists
 
 userspace/security/
-├── efflux-sign        # Sign files
-├── efflux-verify      # Verify signatures
-├── efflux-encrypt     # Encrypt files
-├── efflux-decrypt     # Decrypt files
-└── efflux-trust       # Trust management
+├── sign        # Sign files
+├── verify      # Verify signatures
+├── encrypt     # Encrypt files
+├── decrypt     # Decrypt files
+└── trust       # Trust management
 ```
 
 ---
@@ -318,25 +318,25 @@ userspace/security/
 
 ```bash
 # Generate key pair
-$ efflux-sign --generate-key
+$ sign --generate-key
 Generated key pair:
   Public: ~/.efflux/keys/mykey.pub
   Secret: ~/.efflux/keys/mykey.sec
   Fingerprint: a1b2c3d4...
 
 # Sign a file
-$ efflux-sign --sign mykey.sec important.txt
+$ sign --sign mykey.sec important.txt
 Signed: important.txt.sig
 
 # Verify signature
-$ efflux-verify important.txt important.txt.sig
+$ verify important.txt important.txt.sig
 Signature valid
   Signed by: mykey
   Timestamp: 2025-01-18 12:00:00
   Fingerprint: a1b2c3d4...
 
 # Import someone else's key
-$ efflux-trust --import friend.pub
+$ trust --import friend.pub
 Importing key:
   Name: Friend
   Fingerprint: x1y2z3w4...
@@ -344,7 +344,7 @@ Trust this key? [y/N] y
 Key added to trust store.
 
 # Verify their signed file
-$ efflux-verify package.tar package.tar.sig
+$ verify package.tar package.tar.sig
 Signature valid
   Signed by: Friend
   Trust level: User

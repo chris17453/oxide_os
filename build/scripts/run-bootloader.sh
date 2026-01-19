@@ -4,14 +4,14 @@
 set -e
 
 # Build the bootloader
-cargo build --package efflux-boot-uefi --target x86_64-unknown-uefi
+cargo build --package boot-uefi --target x86_64-unknown-uefi
 
 # Create EFI directory structure
 BOOT_DIR=$(mktemp -d)
 mkdir -p "$BOOT_DIR/EFI/BOOT"
 
 # Copy bootloader
-cp target/x86_64-unknown-uefi/debug/efflux-boot-uefi.efi "$BOOT_DIR/EFI/BOOT/BOOTX64.EFI"
+cp target/x86_64-unknown-uefi/debug/boot-uefi.efi "$BOOT_DIR/EFI/BOOT/BOOTX64.EFI"
 
 # Find OVMF firmware
 OVMF=""

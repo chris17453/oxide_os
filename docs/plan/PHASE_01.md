@@ -19,42 +19,42 @@ Physical and virtual memory management with kernel heap.
 | Item | Status |
 |------|--------|
 | Memory map from bootloader | [x] BootInfo with memory regions |
-| Physical frame allocator | [x] efflux-mm-frame crate |
-| Kernel page tables (4-level) | [x] efflux-mm-paging + bootloader setup |
+| Physical frame allocator | [x] mm-frame crate |
+| Kernel page tables (4-level) | [x] mm-paging + bootloader setup |
 | Direct physical map | [x] PHYS_MAP_BASE at 0xFFFF_8000_0000_0000 |
-| Kernel heap allocator | [x] efflux-mm-heap crate |
+| Kernel heap allocator | [x] mm-heap crate |
 | `Box::new()` works | [x] Tested in kernel_main |
 
 ---
 
 ## Implementation Summary
 
-### Boot Protocol (`efflux-boot-proto`)
+### Boot Protocol (`boot-proto`)
 - BootInfo structure with magic validation
 - Memory regions array (up to 128 regions)
 - Kernel physical/virtual base addresses
 - PML4 physical address
 - Framebuffer info
 
-### Frame Allocator (`efflux-mm-frame`)
+### Frame Allocator (`mm-frame`)
 - Bitmap-based allocator supporting up to 4GB RAM
 - Allocate/deallocate single and contiguous frames
 - Memory region initialization from bootloader map
 - Thread-safe via spin mutex
 
-### Page Tables (`efflux-mm-paging`)
+### Page Tables (`mm-paging`)
 - PageTableEntry with all x86_64 flags (Present, Writable, User, NX, etc.)
 - PageTable structure (512 entries, 4KB aligned)
 - PageMapper for map/unmap/translate operations
 - TLB flush utilities
 
-### Heap Allocator (`efflux-mm-heap`)
+### Heap Allocator (`mm-heap`)
 - Linked-list allocator with block merging
 - GlobalAlloc implementation for `#[global_allocator]`
 - Thread-safe via spin mutex
 - Statistics tracking (used/free bytes)
 
-### Bootloader (`efflux-boot-uefi`)
+### Bootloader (`boot-uefi`)
 - Loads kernel ELF from EFI partition
 - Parses ELF headers and loads segments
 - Sets up 4-level page tables:
@@ -77,15 +77,15 @@ Physical and virtual memory management with kernel heap.
 
 ```
 crates/boot/
-└── efflux-boot-proto/        # Boot protocol definitions
+└── boot-proto/        # Boot protocol definitions
 
 crates/mm/
-├── efflux-mm-frame/          # Physical frame allocator
-├── efflux-mm-paging/         # Page table structures
-├── efflux-mm-heap/           # Kernel heap allocator
-└── efflux-mm-traits/         # Memory management traits
+├── mm-frame/          # Physical frame allocator
+├── mm-paging/         # Page table structures
+├── mm-heap/           # Kernel heap allocator
+└── mm-traits/         # Memory management traits
 
-bootloader/efflux-boot-uefi/
+bootloader/boot-uefi/
 ├── src/main.rs               # UEFI bootloader entry
 ├── src/elf.rs                # ELF parser
 └── src/paging.rs             # Page table setup

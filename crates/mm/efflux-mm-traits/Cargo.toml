@@ -1,8 +1,0 @@
-[package]
-name = "efflux-mm-traits"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-efflux-core = { workspace = true }

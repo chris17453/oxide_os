@@ -1,0 +1,15 @@
+[package]
+name = "trust"
+version = "0.1.0"
+edition = "2021"
+authors = ["EFFLUX Contributors"]
+description = "Trust store and key management for EFFLUX OS"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+spin = "0.9"
+crypto = { path = "../crypto" }
+
+[features]
+default = []
+std = []

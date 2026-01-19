@@ -89,7 +89,7 @@ Implement POSIX signal delivery, handlers, and masking.
 ### Crates Created
 
 ```
-crates/signal/efflux-signal/src/
+crates/signal/signal/src/
 ├── lib.rs           # Module exports
 ├── signal.rs        # Signal numbers, default actions
 ├── sigset.rs        # Signal set (mask) implementation
@@ -100,7 +100,7 @@ crates/signal/efflux-signal/src/
 
 ### Process Integration
 
-Signal state added to `Process` struct in `efflux-proc`:
+Signal state added to `Process` struct in `proc`:
 - `signal_mask: SigSet` - Blocked signals
 - `pending_signals: PendingSignals` - Pending signal queue
 - `sigactions: [SigAction; NSIG]` - Signal handlers

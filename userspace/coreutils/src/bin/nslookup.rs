@@ -5,12 +5,12 @@
 #![no_std]
 #![no_main]
 
-use efflux_libc::{println, print, eprintln, putchar};
-use efflux_libc::socket::{
+use libc::{println, print, eprintln, putchar};
+use libc::socket::{
     socket, af, sock, ipproto, sockaddr_in_octets, sendto, recvfrom,
     htons, SOCKADDR_IN_SIZE, SockAddrIn,
 };
-use efflux_libc::close;
+use libc::close;
 
 const DNS_TYPE_A: u16 = 1;
 const DNS_CLASS_IN: u16 = 1;
@@ -127,13 +127,13 @@ fn parse_response(buf: &[u8], len: usize) -> Option<(u8, u8, u8, u8)> {
 }
 
 fn print_ip(ip: (u8, u8, u8, u8)) {
-    efflux_libc::print_u64(ip.0 as u64);
+    libc::print_u64(ip.0 as u64);
     putchar(b'.');
-    efflux_libc::print_u64(ip.1 as u64);
+    libc::print_u64(ip.1 as u64);
     putchar(b'.');
-    efflux_libc::print_u64(ip.2 as u64);
+    libc::print_u64(ip.2 as u64);
     putchar(b'.');
-    efflux_libc::print_u64(ip.3 as u64);
+    libc::print_u64(ip.3 as u64);
 }
 
 #[unsafe(no_mangle)]
@@ -151,7 +151,7 @@ fn main() -> i32 {
     let sock = socket(af::INET, sock::DGRAM, ipproto::UDP);
     if sock < 0 {
         print("nslookup: failed to create socket: ");
-        efflux_libc::print_i64(sock as i64);
+        libc::print_i64(sock as i64);
         println("");
         return 1;
     }
@@ -165,7 +165,7 @@ fn main() -> i32 {
     let sent = sendto(sock, &query[..query_len], 0, &dest, SOCKADDR_IN_SIZE);
     if sent < 0 {
         print("nslookup: failed to send query: ");
-        efflux_libc::print_i64(sent as i64);
+        libc::print_i64(sent as i64);
         println("");
         close(sock);
         return 1;
@@ -179,7 +179,7 @@ fn main() -> i32 {
     let received = recvfrom(sock, &mut response, 0, Some(&mut src_addr), Some(&mut src_len));
     if received < 0 {
         print("nslookup: failed to receive response: ");
-        efflux_libc::print_i64(received as i64);
+        libc::print_i64(received as i64);
         println("");
         close(sock);
         return 1;

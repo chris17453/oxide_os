@@ -1,0 +1,10 @@
+[package]
+name = "block"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Block device abstraction layer for EFFLUX OS"
+
+[dependencies]
+os_core = { workspace = true }
+spin = { workspace = true }

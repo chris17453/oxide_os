@@ -56,7 +56,7 @@ macro_rules! module {
 // drivers/example/src/lib.rs
 #![no_std]
 
-use efflux_kernel::prelude::*;
+use kernel::prelude::*;
 
 fn init() -> Result<()> {
     info!("Example module loaded");

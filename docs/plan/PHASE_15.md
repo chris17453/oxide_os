@@ -44,8 +44,8 @@ Implement audio subsystem with PCM playback.
 
 ### Crates Created
 
-- `efflux-audio` - Audio device abstraction and mixer
-- `efflux-virtio-snd` - VirtIO sound driver
+- `audio` - Audio device abstraction and mixer
+- `virtio-snd` - VirtIO sound driver
 
 ### Key Features
 

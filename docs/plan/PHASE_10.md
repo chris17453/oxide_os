@@ -43,9 +43,9 @@ Support runtime loading and unloading of kernel modules (drivers).
 
 ## Implementation Summary
 
-### efflux-module Crate
+### module Crate
 
-Created `crates/module/efflux-module/` with the following modules:
+Created `crates/module/module/` with the following modules:
 
 - **lib.rs** - Main exports, ModuleError, ModuleFlags, `module!` macro
 - **symbol.rs** - Kernel symbol table, EXPORT_SYMBOL macros
@@ -100,7 +100,7 @@ module! {
 ## Key Files
 
 ```
-crates/module/efflux-module/src/
+crates/module/module/src/
 ├── lib.rs             # Main exports, errors, flags
 ├── symbol.rs          # Symbol table management
 ├── reloc.rs           # ELF relocation processing

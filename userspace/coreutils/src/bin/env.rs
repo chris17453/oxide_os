@@ -5,7 +5,7 @@
 #![no_std]
 #![no_main]
 
-use efflux_libc::*;
+use libc::*;
 
 /// Print bytes until null terminator
 fn print_bytes(s: &[u8]) {

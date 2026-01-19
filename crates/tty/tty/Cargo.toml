@@ -1,0 +1,13 @@
+[package]
+name = "tty"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "TTY subsystem for EFFLUX OS"
+
+[dependencies]
+vfs = { workspace = true }
+os_core = { workspace = true }
+signal = { workspace = true }
+spin = { workspace = true }
+bitflags = { workspace = true }

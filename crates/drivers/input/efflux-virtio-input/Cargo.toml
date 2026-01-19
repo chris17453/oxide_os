@@ -1,8 +1,0 @@
-[package]
-name = "efflux-virtio-input"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-efflux-input = { path = "../../../input/efflux-input" }
-spin = "0.9"

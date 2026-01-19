@@ -1,0 +1,12 @@
+[package]
+name = "arch-x86_64"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+os_core = { workspace = true }
+arch-traits = { workspace = true }
+sched-traits = { workspace = true }
+boot-proto = { workspace = true }
+spin = { workspace = true }

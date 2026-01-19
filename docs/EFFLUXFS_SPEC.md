@@ -701,10 +701,10 @@ Options:
   --verify-signatures Verify all signatures
 ```
 
-### 18.3 efflux-tune
+### 18.3 tune
 
 ```bash
-efflux-tune [options] <device>
+tune [options] <device>
 
 Options:
   -L <label>          Set volume label

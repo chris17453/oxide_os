@@ -3,8 +3,8 @@
 #![no_std]
 #![no_main]
 
-use efflux_libc::*;
-use efflux_libc::pwd::geteuid;
+use libc::*;
+use libc::pwd::geteuid;
 
 #[unsafe(no_mangle)]
 fn main() -> i32 {

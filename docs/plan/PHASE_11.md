@@ -209,30 +209,30 @@ Submission Queue Entry (64 bytes):
 ## Key Files
 
 ```
-crates/block/efflux-block/src/
+crates/block/block/src/
 ├── lib.rs
 ├── device.rs          # Block device trait
 ├── request.rs         # I/O request queue
 └── scheduler.rs       # I/O scheduler
 
-crates/block/efflux-gpt/src/
+crates/block/gpt/src/
 ├── lib.rs
 └── parse.rs           # GPT parsing
 
-crates/drivers/block/efflux-virtio-blk/src/
+crates/drivers/block/virtio-blk/src/
 └── lib.rs
 
-crates/drivers/block/efflux-nvme/src/
+crates/drivers/block/nvme/src/
 ├── lib.rs
 ├── queue.rs           # Submission/completion queues
 └── commands.rs        # NVMe commands
 
-crates/drivers/block/efflux-ahci/src/
+crates/drivers/block/ahci/src/
 ├── lib.rs
 ├── hba.rs             # Host bus adapter
 └── port.rs            # Port handling
 
-crates/fs/efflux-effluxfs/src/
+crates/fs/effluxfs/src/
 ├── lib.rs
 ├── superblock.rs
 ├── inode.rs
@@ -240,7 +240,7 @@ crates/fs/efflux-effluxfs/src/
 ├── file.rs
 └── journal.rs
 
-crates/fs/efflux-fat32/src/
+crates/fs/fat32/src/
 ├── lib.rs
 ├── bpb.rs             # BIOS parameter block
 ├── fat.rs             # FAT table

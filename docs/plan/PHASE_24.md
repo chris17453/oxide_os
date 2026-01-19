@@ -249,20 +249,20 @@ pub fn translate_linux_syscall(
 ## Key Files
 
 ```
-crates/compat/efflux-v86/src/
+crates/compat/v86/src/
 ├── lib.rs
 ├── monitor.rs         # V86 monitor
 ├── memory.rs          # V86 memory management
 ├── int.rs             # Interrupt handlers
 └── dos.rs             # DOS service emulation
 
-crates/compat/efflux-python-sandbox/src/
+crates/compat/python-sandbox/src/
 ├── lib.rs
 ├── sandbox.rs         # Sandbox implementation
 ├── policy.rs          # Security policies
 └── builtin.rs         # Safe builtins
 
-crates/compat/efflux-binfmt/src/
+crates/compat/binfmt/src/
 ├── lib.rs
 ├── detect.rs          # Format detection
 └── registry.rs        # Format registry

@@ -1,0 +1,11 @@
+[package]
+name = "sched"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Scheduler implementation for EFFLUX OS"
+
+[dependencies]
+os_core = { workspace = true }
+sched-traits = { workspace = true }
+spin = { workspace = true }

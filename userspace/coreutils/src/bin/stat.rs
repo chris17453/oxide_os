@@ -3,7 +3,7 @@
 #![no_std]
 #![no_main]
 
-use efflux_libc::*;
+use libc::*;
 
 #[repr(C)]
 struct Stat {
@@ -111,7 +111,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
 }
 
 fn sys_stat(path: &str, st: &mut Stat) -> i32 {
-    use efflux_libc::syscall::{syscall4, nr};
+    use libc::syscall::{syscall4, nr};
     syscall4(nr::STAT, path.as_ptr() as usize, path.len(), st as *mut Stat as usize, 0) as i32
 }
 

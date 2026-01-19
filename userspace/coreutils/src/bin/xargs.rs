@@ -3,7 +3,7 @@
 #![no_std]
 #![no_main]
 
-use efflux_libc::*;
+use libc::*;
 
 const MAX_ARGS: usize = 64;
 const MAX_ARG_LEN: usize = 256;

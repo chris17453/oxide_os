@@ -193,5 +193,5 @@ name = "nc"
 path = "src/bin/nc.rs"
 
 [dependencies]
-efflux-libc = { path = "../efflux-libc" }
+libc = { path = "../libc" }
 heapless = "0.8"

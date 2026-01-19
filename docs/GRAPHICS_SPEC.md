@@ -33,14 +33,14 @@ All modes can coexist. A server might run headless locally but expose remote des
 │   └────┬─────┘  └────┬─────┘  └────┬─────┘  └──────────┬───────────┘   │
 │        │             │             │                    │               │
 ├────────┴─────────────┴─────────────┴────────────────────┴───────────────┤
-│                         Graphics API (libefflux-gfx)                     │
+│                         Graphics API (libgfx)                     │
 │   ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────────┐    │
 │   │ 2D Drawing  │  │ Text/Fonts  │  │    Widget Toolkit           │    │
-│   │ Primitives  │  │  Rendering  │  │    (efflux-ui)              │    │
+│   │ Primitives  │  │  Rendering  │  │    (ui)              │    │
 │   └──────┬──────┘  └──────┬──────┘  └─────────────┬───────────────┘    │
 │          │                │                        │                    │
 ├──────────┴────────────────┴────────────────────────┴────────────────────┤
-│                         Display Server (efflux-display)                  │
+│                         Display Server (display)                  │
 │   ┌────────────────┐  ┌────────────────┐  ┌──────────────────────┐     │
 │   │   Compositor   │  │ Window Manager │  │   Input Routing      │     │
 │   │   (Wayland-ish)│  │                │  │   (kbd, mouse, touch)│     │
@@ -169,7 +169,7 @@ pub enum RemoteProtocol {
 
 ---
 
-## 3) Display Server (efflux-display)
+## 3) Display Server (display)
 
 ### 3.1 Compositor
 
@@ -265,7 +265,7 @@ pub enum ServerMessage {
 
 ---
 
-## 4) Graphics API (libefflux-gfx)
+## 4) Graphics API (libgfx)
 
 ### 4.1 Low-Level: Direct Buffer Access
 
@@ -389,7 +389,7 @@ impl Path {
 }
 ```
 
-### 4.3 High-Level: Widget Toolkit (efflux-ui)
+### 4.3 High-Level: Widget Toolkit (ui)
 
 ```rust
 pub trait Widget {
@@ -1199,7 +1199,7 @@ pub enum ConsoleMode {
 
 ### 10.4 Phase 4: Full Desktop
 
-- Compositor (efflux-display)
+- Compositor (display)
 - Window manager
 - Widget toolkit
 - Remote desktop server

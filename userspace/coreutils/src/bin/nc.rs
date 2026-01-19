@@ -5,13 +5,13 @@
 #![no_std]
 #![no_main]
 
-use efflux_libc::{println, print, eprintln, putchar, getchar};
-use efflux_libc::socket::{
+use libc::{println, print, eprintln, putchar, getchar};
+use libc::socket::{
     socket, bind, listen, accept, connect, recv, shutdown,
     af, sock, ipproto, shut, sockaddr_in_octets, SOCKADDR_IN_SIZE,
     SockAddrIn, ntohs,
 };
-use efflux_libc::close;
+use libc::close;
 
 /// Parse IP address
 fn parse_ip(s: &str) -> Option<(u8, u8, u8, u8)> {
@@ -49,13 +49,13 @@ fn parse_ip(s: &str) -> Option<(u8, u8, u8, u8)> {
 }
 
 fn print_ip(ip: (u8, u8, u8, u8)) {
-    efflux_libc::print_u64(ip.0 as u64);
+    libc::print_u64(ip.0 as u64);
     putchar(b'.');
-    efflux_libc::print_u64(ip.1 as u64);
+    libc::print_u64(ip.1 as u64);
     putchar(b'.');
-    efflux_libc::print_u64(ip.2 as u64);
+    libc::print_u64(ip.2 as u64);
     putchar(b'.');
-    efflux_libc::print_u64(ip.3 as u64);
+    libc::print_u64(ip.3 as u64);
 }
 
 fn show_help() {
@@ -103,7 +103,7 @@ fn main() -> i32 {
     let sock = socket(af::INET, sock_type, protocol);
     if sock < 0 {
         print("nc: failed to create socket: ");
-        efflux_libc::print_i64(sock as i64);
+        libc::print_i64(sock as i64);
         println("");
         return 1;
     }
@@ -115,7 +115,7 @@ fn main() -> i32 {
         let ret = bind(sock, &bind_addr, SOCKADDR_IN_SIZE);
         if ret < 0 {
             print("nc: bind failed: ");
-            efflux_libc::print_i64(ret as i64);
+            libc::print_i64(ret as i64);
             println("");
             close(sock);
             return 1;
@@ -123,7 +123,7 @@ fn main() -> i32 {
 
         if verbose {
             print("Listening on 0.0.0.0:");
-            efflux_libc::print_u64(port as u64);
+            libc::print_u64(port as u64);
             println("");
         }
 
@@ -131,7 +131,7 @@ fn main() -> i32 {
             let ret = listen(sock, 1);
             if ret < 0 {
                 print("nc: listen failed: ");
-                efflux_libc::print_i64(ret as i64);
+                libc::print_i64(ret as i64);
                 println("");
                 close(sock);
                 return 1;
@@ -143,7 +143,7 @@ fn main() -> i32 {
             let client = accept(sock, Some(&mut client_addr), Some(&mut addr_len));
             if client < 0 {
                 print("nc: accept failed: ");
-                efflux_libc::print_i64(client as i64);
+                libc::print_i64(client as i64);
                 println("");
                 close(sock);
                 return 1;
@@ -165,7 +165,7 @@ fn main() -> i32 {
             print("Connecting to ");
             print_ip(ip);
             print(":");
-            efflux_libc::print_u64(port as u64);
+            libc::print_u64(port as u64);
             println("...");
         }
 
@@ -174,7 +174,7 @@ fn main() -> i32 {
         let ret = connect(sock, &dest, SOCKADDR_IN_SIZE);
         if ret < 0 {
             print("nc: connect failed: ");
-            efflux_libc::print_i64(ret as i64);
+            libc::print_i64(ret as i64);
             println("");
             close(sock);
             return 1;
@@ -188,7 +188,7 @@ fn main() -> i32 {
             print("Connection to ");
             print_ip(ip);
             print(":");
-            efflux_libc::print_u64(port as u64);
+            libc::print_u64(port as u64);
             println(" succeeded");
         } else {
             transfer_data(sock);

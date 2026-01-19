@@ -152,7 +152,7 @@ cargo build \
     --target build/targets/x86_64-efflux.json \
     --release
 
-# Output: target/x86_64-efflux/release/efflux-kernel
+# Output: target/x86_64-efflux/release/kernel
 ```
 
 ### Linker Script
@@ -193,11 +193,11 @@ SECTIONS {
 
 ```bash
 cargo build \
-    --manifest-path bootloader/efflux-boot-uefi/Cargo.toml \
+    --manifest-path bootloader/boot-uefi/Cargo.toml \
     --target x86_64-unknown-uefi \
     --release
 
-# Output: target/x86_64-unknown-uefi/release/efflux-boot.efi
+# Output: target/x86_64-unknown-uefi/release/boot.efi
 ```
 
 ### BIOS Bootloader (i686)
@@ -206,11 +206,11 @@ Requires assembly + Rust:
 
 ```bash
 # Build stage 1 (boot sector)
-nasm -f bin bootloader/efflux-boot-bios/stage1.asm -o stage1.bin
+nasm -f bin bootloader/boot-bios/stage1.asm -o stage1.bin
 
 # Build stage 2 (Rust)
 cargo build \
-    --manifest-path bootloader/efflux-boot-bios/Cargo.toml \
+    --manifest-path bootloader/boot-bios/Cargo.toml \
     --target i686-unknown-none \
     --release
 ```
@@ -332,7 +332,7 @@ mkdir -p $ISO_DIR/EFI/BOOT
 mkdir -p $ISO_DIR/efflux
 
 # Copy bootloader
-cp bootloader/target/x86_64-unknown-uefi/release/efflux-boot.efi \
+cp bootloader/target/x86_64-unknown-uefi/release/boot.efi \
    $ISO_DIR/EFI/BOOT/BOOTX64.EFI
 
 # Copy kernel and initramfs
@@ -375,7 +375,7 @@ mkfs.fat -F 32 ${LOOP}p1
 # Mount and populate EFI
 mount ${LOOP}p1 /mnt
 mkdir -p /mnt/EFI/BOOT
-cp bootloader/target/*/release/efflux-boot.efi /mnt/EFI/BOOT/BOOTX64.EFI
+cp bootloader/target/*/release/boot.efi /mnt/EFI/BOOT/BOOTX64.EFI
 cp $KERNEL /mnt/kernel
 cp $INITRAMFS /mnt/initramfs.cpio.gz
 umount /mnt
@@ -535,7 +535,7 @@ cargo build \
 case $ARCH in
     x86_64|aarch64)
         cargo build \
-            --manifest-path bootloader/efflux-boot-uefi/Cargo.toml \
+            --manifest-path bootloader/boot-uefi/Cargo.toml \
             --target $ARCH-unknown-uefi \
             --$PROFILE
         ;;
@@ -556,19 +556,19 @@ IMAGE_TYPE=$(toml get $POLICY image.type)
 case $IMAGE_TYPE in
     iso)
         ./build/scripts/mkiso-uefi.sh \
-            target/$ARCH-efflux/release/efflux-kernel \
+            target/$ARCH-efflux/release/kernel \
             build/images/initramfs.cpio.gz \
-            build/images/efflux-$ARCH.iso
+            build/images/$ARCH.iso
         ;;
     gpt-disk)
         ./build/scripts/mkdisk.sh \
-            target/$ARCH-efflux/release/efflux-kernel \
+            target/$ARCH-efflux/release/kernel \
             build/images/initramfs.cpio.gz \
-            build/images/efflux-$ARCH.img
+            build/images/$ARCH.img
         ;;
 esac
 
-echo "Done: build/images/efflux-$ARCH.*"
+echo "Done: build/images/$ARCH.*"
 ```
 
 ---
@@ -604,7 +604,7 @@ jobs:
         run: ./build/scripts/build-all.sh policies/ci-${{ matrix.arch }}.toml
 
       - name: Test
-        run: ./build/scripts/run-qemu.sh ${{ matrix.arch }} build/images/efflux-${{ matrix.arch }}.img --test
+        run: ./build/scripts/run-qemu.sh ${{ matrix.arch }} build/images/${{ matrix.arch }}.img --test
 ```
 
 ---
@@ -619,7 +619,7 @@ jobs:
 ./build/scripts/build-all.sh policies/aarch64.toml
 
 # Run in QEMU
-./build/scripts/run-qemu.sh x86_64 build/images/efflux-x86_64.img
+./build/scripts/run-qemu.sh x86_64 build/images/x86_64.img
 ```
 
 ---

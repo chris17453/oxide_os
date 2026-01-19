@@ -5,7 +5,7 @@
 #![no_std]
 #![no_main]
 
-use efflux_libc::{println, print, putchar};
+use libc::{println, print, putchar};
 
 fn show_interface(name: &str) {
     print(name);

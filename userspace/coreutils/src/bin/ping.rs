@@ -5,13 +5,13 @@
 #![no_std]
 #![no_main]
 
-use efflux_libc::{println, print, eprintln, putchar};
-use efflux_libc::socket::{
+use libc::{println, print, eprintln, putchar};
+use libc::socket::{
     socket, af, sock, ipproto, sockaddr_in_octets, connect, send, recv,
     htons, SOCKADDR_IN_SIZE,
 };
-use efflux_libc::time::sleep;
-use efflux_libc::close;
+use libc::time::sleep;
+use libc::close;
 
 const ICMP_ECHO_REQUEST: u8 = 8;
 const ICMP_ECHO_REPLY: u8 = 0;
@@ -73,13 +73,13 @@ fn parse_ip(s: &str) -> Option<(u8, u8, u8, u8)> {
 }
 
 fn print_ip(ip: (u8, u8, u8, u8)) {
-    efflux_libc::print_u64(ip.0 as u64);
+    libc::print_u64(ip.0 as u64);
     putchar(b'.');
-    efflux_libc::print_u64(ip.1 as u64);
+    libc::print_u64(ip.1 as u64);
     putchar(b'.');
-    efflux_libc::print_u64(ip.2 as u64);
+    libc::print_u64(ip.2 as u64);
     putchar(b'.');
-    efflux_libc::print_u64(ip.3 as u64);
+    libc::print_u64(ip.3 as u64);
 }
 
 #[unsafe(no_mangle)]
@@ -100,7 +100,7 @@ fn main() -> i32 {
     let sock = socket(af::INET, sock::RAW, ipproto::ICMP);
     if sock < 0 {
         print("ping: failed to create socket (need root?): ");
-        efflux_libc::print_i64(sock as i64);
+        libc::print_i64(sock as i64);
         println("");
         return 1;
     }
@@ -114,7 +114,7 @@ fn main() -> i32 {
     let ret = connect(sock, &addr, SOCKADDR_IN_SIZE);
     if ret < 0 {
         print("ping: connect failed: ");
-        efflux_libc::print_i64(ret as i64);
+        libc::print_i64(ret as i64);
         println("");
         close(sock);
         return 1;
@@ -142,7 +142,7 @@ fn main() -> i32 {
         let n = send(sock, &packet[..64], 0);
         if n < 0 {
             print("ping: send failed: ");
-            efflux_libc::print_i64(n as i64);
+            libc::print_i64(n as i64);
             println("");
             break;
         }
@@ -161,7 +161,7 @@ fn main() -> i32 {
                     print("64 bytes from ");
                     print_ip(ip);
                     print(": icmp_seq=");
-                    efflux_libc::print_u64(seq as u64);
+                    libc::print_u64(seq as u64);
                     println(" time=<1ms");
                 }
             }
@@ -180,9 +180,9 @@ fn main() -> i32 {
     print_ip(ip);
     println(" ping statistics ---");
 
-    efflux_libc::print_u64(sent as u64);
+    libc::print_u64(sent as u64);
     print(" packets transmitted, ");
-    efflux_libc::print_u64(received as u64);
+    libc::print_u64(received as u64);
     print(" received, ");
 
     let loss = if sent > 0 {
@@ -190,7 +190,7 @@ fn main() -> i32 {
     } else {
         0
     };
-    efflux_libc::print_u64(loss as u64);
+    libc::print_u64(loss as u64);
     println("% packet loss");
 
     if received == 0 { 1 } else { 0 }

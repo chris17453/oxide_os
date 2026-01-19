@@ -11,7 +11,7 @@
 #![no_std]
 #![no_main]
 
-use efflux_libc::*;
+use libc::*;
 
 /// Maximum command line length
 const MAX_LINE: usize = 256;

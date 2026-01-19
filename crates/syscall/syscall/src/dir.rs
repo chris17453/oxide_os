@@ -1,0 +1,323 @@
+//! Directory-related system calls
+//!
+//! Provides mkdir, rmdir, unlink, rename, getcwd, chdir, readdir
+
+extern crate alloc;
+
+use proc::process_table;
+use vfs::{Mode, mount::GLOBAL_VFS};
+
+use crate::errno;
+use crate::vfs::{copy_path_from_user, validate_user_buffer, vfs_error_to_errno};
+
+/// Copy a path from user space (internal helper)
+fn get_path(path_ptr: u64, path_len: usize) -> Option<&'static str> {
+    copy_path_from_user(path_ptr, path_len)
+}
+
+/// sys_mkdir - Create a directory
+///
+/// # Arguments
+/// * `path_ptr` - Pointer to path string
+/// * `path_len` - Length of path string
+/// * `mode` - Directory permissions
+pub fn sys_mkdir(path_ptr: u64, path_len: usize, mode: u32) -> i64 {
+    let path = match get_path(path_ptr, path_len) {
+        Some(p) => p,
+        None => return errno::EFAULT,
+    };
+
+    let mode = Mode::new(mode);
+
+    // Get parent directory and name
+    match GLOBAL_VFS.lookup_parent(path) {
+        Ok((parent, name)) => {
+            match parent.mkdir(&name, mode) {
+                Ok(_) => 0,
+                Err(e) => vfs_error_to_errno(e),
+            }
+        }
+        Err(e) => vfs_error_to_errno(e),
+    }
+}
+
+/// sys_rmdir - Remove a directory
+///
+/// # Arguments
+/// * `path_ptr` - Pointer to path string
+/// * `path_len` - Length of path string
+pub fn sys_rmdir(path_ptr: u64, path_len: usize) -> i64 {
+    let path = match get_path(path_ptr, path_len) {
+        Some(p) => p,
+        None => return errno::EFAULT,
+    };
+
+    // Get parent directory and name
+    match GLOBAL_VFS.lookup_parent(path) {
+        Ok((parent, name)) => {
+            match parent.rmdir(&name) {
+                Ok(()) => 0,
+                Err(e) => vfs_error_to_errno(e),
+            }
+        }
+        Err(e) => vfs_error_to_errno(e),
+    }
+}
+
+/// sys_unlink - Remove a file
+///
+/// # Arguments
+/// * `path_ptr` - Pointer to path string
+/// * `path_len` - Length of path string
+pub fn sys_unlink(path_ptr: u64, path_len: usize) -> i64 {
+    let path = match get_path(path_ptr, path_len) {
+        Some(p) => p,
+        None => return errno::EFAULT,
+    };
+
+    // Get parent directory and name
+    match GLOBAL_VFS.lookup_parent(path) {
+        Ok((parent, name)) => {
+            match parent.unlink(&name) {
+                Ok(()) => 0,
+                Err(e) => vfs_error_to_errno(e),
+            }
+        }
+        Err(e) => vfs_error_to_errno(e),
+    }
+}
+
+/// sys_rename - Rename a file or directory
+///
+/// # Arguments
+/// * `old_path_ptr` - Pointer to old path
+/// * `old_path_len` - Length of old path
+/// * `new_path_ptr` - Pointer to new path
+/// * `new_path_len` - Length of new path
+pub fn sys_rename(
+    old_path_ptr: u64,
+    old_path_len: usize,
+    new_path_ptr: u64,
+    new_path_len: usize,
+) -> i64 {
+    let old_path = match get_path(old_path_ptr, old_path_len) {
+        Some(p) => p,
+        None => return errno::EFAULT,
+    };
+
+    let new_path = match get_path(new_path_ptr, new_path_len) {
+        Some(p) => p,
+        None => return errno::EFAULT,
+    };
+
+    // Get old parent and name
+    let (old_parent, old_name) = match GLOBAL_VFS.lookup_parent(old_path) {
+        Ok(r) => r,
+        Err(e) => return vfs_error_to_errno(e),
+    };
+
+    // Get new parent and name
+    let (new_parent, new_name) = match GLOBAL_VFS.lookup_parent(new_path) {
+        Ok(r) => r,
+        Err(e) => return vfs_error_to_errno(e),
+    };
+
+    // Perform rename
+    match old_parent.rename(&old_name, new_parent.as_ref(), &new_name) {
+        Ok(()) => 0,
+        Err(e) => vfs_error_to_errno(e),
+    }
+}
+
+/// Directory entry for getdents syscall (user-space format)
+///
+/// The d_name field (null-terminated, variable length) follows in memory after d_type.
+#[repr(C)]
+pub struct UserDirEntry {
+    /// Inode number
+    pub d_ino: u64,
+    /// Offset to next entry
+    pub d_off: u64,
+    /// Length of this record
+    pub d_reclen: u16,
+    /// File type
+    pub d_type: u8,
+}
+
+/// File type constants for d_type
+pub mod d_type {
+    pub const DT_UNKNOWN: u8 = 0;
+    pub const DT_FIFO: u8 = 1;
+    pub const DT_CHR: u8 = 2;
+    pub const DT_DIR: u8 = 4;
+    pub const DT_BLK: u8 = 6;
+    pub const DT_REG: u8 = 8;
+    pub const DT_LNK: u8 = 10;
+    pub const DT_SOCK: u8 = 12;
+}
+
+use vfs::VnodeType;
+
+fn vtype_to_dtype(vtype: VnodeType) -> u8 {
+    match vtype {
+        VnodeType::File => d_type::DT_REG,
+        VnodeType::Directory => d_type::DT_DIR,
+        VnodeType::Symlink => d_type::DT_LNK,
+        VnodeType::CharDevice => d_type::DT_CHR,
+        VnodeType::BlockDevice => d_type::DT_BLK,
+        VnodeType::Fifo => d_type::DT_FIFO,
+        VnodeType::Socket => d_type::DT_SOCK,
+    }
+}
+
+/// sys_getdents - Get directory entries
+///
+/// # Arguments
+/// * `fd` - File descriptor of open directory
+/// * `buf` - User buffer for entries
+/// * `count` - Size of buffer
+pub fn sys_getdents(fd: i32, buf: u64, count: usize) -> i64 {
+    if !validate_user_buffer(buf, count) {
+        return errno::EFAULT;
+    }
+
+    let table = process_table();
+    let proc = match table.current() {
+        Some(p) => p,
+        None => return errno::ESRCH,
+    };
+
+    let proc_guard = proc.lock();
+    let file = match proc_guard.fd_table().get(fd) {
+        Ok(fd_entry) => fd_entry.file.clone(),
+        Err(e) => return vfs_error_to_errno(e),
+    };
+    drop(proc_guard);
+
+    // Check it's a directory
+    if file.vnode().vtype() != VnodeType::Directory {
+        return errno::ENOTDIR;
+    }
+
+    let mut offset = file.position();
+    let mut bytes_written: usize = 0;
+
+    loop {
+        // Read next directory entry
+        let entry = match file.vnode().readdir(offset) {
+            Ok(Some(e)) => e,
+            Ok(None) => break, // End of directory
+            Err(e) => return vfs_error_to_errno(e),
+        };
+
+        // Calculate entry size (header + name + null terminator, aligned to 8)
+        let name_len = entry.name.len();
+        let reclen = ((core::mem::size_of::<UserDirEntry>() + name_len + 1 + 7) / 8) * 8;
+
+        // Check if entry fits in remaining buffer
+        if bytes_written + reclen > count {
+            break;
+        }
+
+        // Write entry to user buffer
+        unsafe {
+            let entry_ptr = (buf + bytes_written as u64) as *mut u8;
+
+            // Write header
+            let header = entry_ptr as *mut UserDirEntry;
+            (*header).d_ino = entry.ino;
+            (*header).d_off = offset + 1;
+            (*header).d_reclen = reclen as u16;
+            (*header).d_type = vtype_to_dtype(entry.file_type);
+
+            // Write name after header
+            let name_ptr = entry_ptr.add(core::mem::size_of::<UserDirEntry>());
+            core::ptr::copy_nonoverlapping(
+                entry.name.as_ptr(),
+                name_ptr,
+                name_len,
+            );
+            // Null terminator
+            *name_ptr.add(name_len) = 0;
+        }
+
+        bytes_written += reclen;
+        offset += 1;
+    }
+
+    // Update file position
+    file.set_position(offset);
+
+    bytes_written as i64
+}
+
+/// sys_chdir - Change current working directory
+///
+/// # Arguments
+/// * `path_ptr` - Pointer to path string
+/// * `path_len` - Length of path string
+pub fn sys_chdir(path_ptr: u64, path_len: usize) -> i64 {
+    let path = match get_path(path_ptr, path_len) {
+        Some(p) => p,
+        None => return errno::EFAULT,
+    };
+
+    // Lookup the directory
+    let vnode = match GLOBAL_VFS.lookup(path) {
+        Ok(v) => v,
+        Err(e) => return vfs_error_to_errno(e),
+    };
+
+    // Verify it's a directory
+    if vnode.vtype() != VnodeType::Directory {
+        return errno::ENOTDIR;
+    }
+
+    // Get current process
+    let table = process_table();
+    let proc = match table.current() {
+        Some(p) => p,
+        None => return errno::ESRCH,
+    };
+
+    // Update the process's current working directory
+    let mut proc_guard = proc.lock();
+    proc_guard.set_cwd(alloc::string::String::from(path));
+
+    0
+}
+
+/// sys_getcwd - Get current working directory
+///
+/// # Arguments
+/// * `buf` - User buffer for path
+/// * `size` - Size of buffer
+pub fn sys_getcwd(buf: u64, size: usize) -> i64 {
+    if !validate_user_buffer(buf, size) {
+        return errno::EFAULT;
+    }
+
+    // Get current process
+    let table = process_table();
+    let proc = match table.current() {
+        Some(p) => p,
+        None => return errno::ESRCH,
+    };
+
+    let proc_guard = proc.lock();
+    let cwd = proc_guard.cwd();
+
+    // Check buffer size
+    if cwd.len() + 1 > size {
+        return errno::ERANGE;
+    }
+
+    // Copy path to user buffer
+    unsafe {
+        let dest = buf as *mut u8;
+        core::ptr::copy_nonoverlapping(cwd.as_ptr(), dest, cwd.len());
+        *dest.add(cwd.len()) = 0; // Null terminator
+    }
+
+    cwd.len() as i64
+}

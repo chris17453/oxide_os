@@ -36,10 +36,10 @@ Implement TCP/IP networking with socket API.
 
 ## Implementation
 
-### Network Device Layer (efflux-net)
+### Network Device Layer (net)
 
 ```
-crates/net/efflux-net/src/
+crates/net/net/src/
 ├── lib.rs           # Main module, device registry
 ├── device.rs        # NetworkDevice trait, LoopbackDevice
 ├── socket.rs        # Socket abstraction
@@ -47,12 +47,12 @@ crates/net/efflux-net/src/
 └── addr.rs          # Address types (MAC, IPv4, IPv6, SocketAddr)
 ```
 
-### TCP/IP Stack (efflux-tcpip)
+### TCP/IP Stack (tcpip)
 
 Custom lightweight TCP/IP implementation (no external dependencies):
 
 ```
-crates/net/efflux-tcpip/src/
+crates/net/tcpip/src/
 ├── lib.rs           # Main stack with TcpIpStack struct
 ├── ethernet.rs      # Ethernet frame handling
 ├── arp.rs           # ARP protocol and cache
@@ -66,17 +66,17 @@ crates/net/efflux-tcpip/src/
 ### Network Drivers
 
 ```
-crates/drivers/net/efflux-virtio-net/src/
+crates/drivers/net/virtio-net/src/
 └── lib.rs           # VirtIO network driver
 ```
 
 ### Network Services
 
 ```
-crates/net/efflux-dhcp/src/
+crates/net/dhcp/src/
 └── lib.rs           # DHCPv4 client (RFC 2131)
 
-crates/net/efflux-dns/src/
+crates/net/dns/src/
 └── lib.rs           # DNS resolver (RFC 1035)
 ```
 

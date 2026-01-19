@@ -245,26 +245,26 @@ struct BootMouseReport {
 ## Key Files
 
 ```
-crates/usb/efflux-usb/src/
+crates/usb/usb/src/
 ├── lib.rs
 ├── device.rs          # USB device abstraction
 ├── descriptor.rs      # Descriptor parsing
 ├── transfer.rs        # URB/transfer management
 └── hub.rs             # Hub driver
 
-crates/drivers/usb/efflux-xhci/src/
+crates/drivers/usb/xhci/src/
 ├── lib.rs
 ├── registers.rs       # xHCI registers
 ├── ring.rs            # Transfer/event rings
 ├── context.rs         # Device contexts
 └── commands.rs        # Command handling
 
-crates/drivers/usb/efflux-usb-msc/src/
+crates/drivers/usb/usb-msc/src/
 ├── lib.rs
 ├── scsi.rs            # SCSI commands
 └── transport.rs       # Bulk-only transport
 
-crates/drivers/usb/efflux-usb-hid/src/
+crates/drivers/usb/usb-hid/src/
 ├── lib.rs
 ├── keyboard.rs        # Keyboard driver
 ├── mouse.rs           # Mouse driver

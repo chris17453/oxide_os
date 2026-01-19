@@ -1,0 +1,8 @@
+[package]
+name = "tcpip"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+net = { path = "../net" }
+spin = "0.9"

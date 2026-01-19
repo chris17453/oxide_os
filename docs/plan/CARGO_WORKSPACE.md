@@ -17,74 +17,74 @@ members = [
     "kernel",
 
     # Core crates
-    "crates/core/efflux-core",
-    "crates/core/efflux-alloc",
-    "crates/core/efflux-log",
+    "crates/core/core",
+    "crates/core/alloc",
+    "crates/core/log",
 
     # Architecture crates
-    "crates/arch/efflux-arch-traits",
-    "crates/arch/efflux-arch-x86_64",
-    "crates/arch/efflux-arch-i686",
-    "crates/arch/efflux-arch-aarch64",
-    "crates/arch/efflux-arch-arm",
-    "crates/arch/efflux-arch-mips64",
-    "crates/arch/efflux-arch-mips32",
-    "crates/arch/efflux-arch-riscv64",
-    "crates/arch/efflux-arch-riscv32",
+    "crates/arch/arch-traits",
+    "crates/arch/arch-x86_64",
+    "crates/arch/arch-i686",
+    "crates/arch/arch-aarch64",
+    "crates/arch/arch-arm",
+    "crates/arch/arch-mips64",
+    "crates/arch/arch-mips32",
+    "crates/arch/arch-riscv64",
+    "crates/arch/arch-riscv32",
 
     # Memory management
-    "crates/mm/efflux-mm-traits",
-    "crates/mm/efflux-mm-buddy",
-    "crates/mm/efflux-mm-slab",
-    "crates/mm/efflux-mm-vmm",
-    "crates/mm/efflux-mm-heap",
+    "crates/mm/mm-traits",
+    "crates/mm/mm-buddy",
+    "crates/mm/mm-slab",
+    "crates/mm/mm-vmm",
+    "crates/mm/mm-heap",
 
     # Scheduler
-    "crates/sched/efflux-sched-traits",
-    "crates/sched/efflux-sched-rr",
+    "crates/sched/sched-traits",
+    "crates/sched/sched-rr",
 
     # Process
-    "crates/process/efflux-process",
-    "crates/process/efflux-elf",
-    "crates/process/efflux-signal",
+    "crates/process/process",
+    "crates/process/elf",
+    "crates/process/signal",
 
     # Syscall
-    "crates/syscall/efflux-syscall-traits",
-    "crates/syscall/efflux-syscall",
+    "crates/syscall/syscall-traits",
+    "crates/syscall/syscall",
 
     # VFS
-    "crates/vfs/efflux-vfs-traits",
-    "crates/vfs/efflux-vfs",
+    "crates/vfs/vfs-traits",
+    "crates/vfs/vfs",
 
     # Filesystems
-    "crates/fs/efflux-fs-tmpfs",
-    "crates/fs/efflux-fs-devfs",
-    "crates/fs/efflux-fs-procfs",
-    "crates/fs/efflux-fs-initramfs",
-    "crates/fs/efflux-fs-fat32",
-    "crates/fs/efflux-fs-effluxfs",
+    "crates/fs/fs-tmpfs",
+    "crates/fs/fs-devfs",
+    "crates/fs/fs-procfs",
+    "crates/fs/fs-initramfs",
+    "crates/fs/fs-fat32",
+    "crates/fs/fs-effluxfs",
 
     # Drivers
-    "crates/drivers/efflux-driver-traits",
-    "crates/drivers/serial/efflux-driver-uart-8250",
-    "crates/drivers/serial/efflux-driver-uart-pl011",
-    "crates/drivers/block/efflux-driver-virtio-blk",
-    "crates/drivers/net/efflux-driver-virtio-net",
+    "crates/drivers/driver-traits",
+    "crates/drivers/serial/driver-uart-8250",
+    "crates/drivers/serial/driver-uart-pl011",
+    "crates/drivers/block/driver-virtio-blk",
+    "crates/drivers/net/driver-virtio-net",
 
     # TTY
-    "crates/tty/efflux-tty",
-    "crates/tty/efflux-pty",
+    "crates/tty/tty",
+    "crates/tty/pty",
 
     # IPC
-    "crates/ipc/efflux-ipc-pipe",
+    "crates/ipc/ipc-pipe",
 
     # Network
-    "crates/net/efflux-net-traits",
-    "crates/net/efflux-net-stack",
+    "crates/net/net-traits",
+    "crates/net/net-stack",
 
     # Bootloader
-    "bootloader/efflux-boot-common",
-    "bootloader/efflux-boot-uefi",
+    "bootloader/boot-common",
+    "bootloader/boot-uefi",
 
     # Libc
     "libc",
@@ -108,14 +108,14 @@ spin = "0.9"
 log = { version = "0.4", default-features = false }
 
 # Internal crates (version = workspace)
-efflux-core = { path = "crates/core/efflux-core" }
-efflux-alloc = { path = "crates/core/efflux-alloc" }
-efflux-log = { path = "crates/core/efflux-log" }
-efflux-arch-traits = { path = "crates/arch/efflux-arch-traits" }
-efflux-mm-traits = { path = "crates/mm/efflux-mm-traits" }
-efflux-sched-traits = { path = "crates/sched/efflux-sched-traits" }
-efflux-vfs-traits = { path = "crates/vfs/efflux-vfs-traits" }
-efflux-driver-traits = { path = "crates/drivers/efflux-driver-traits" }
+core = { path = "crates/core/core" }
+alloc = { path = "crates/core/alloc" }
+log = { path = "crates/core/log" }
+arch-traits = { path = "crates/arch/arch-traits" }
+mm-traits = { path = "crates/mm/mm-traits" }
+sched-traits = { path = "crates/sched/sched-traits" }
+vfs-traits = { path = "crates/vfs/vfs-traits" }
+driver-traits = { path = "crates/drivers/driver-traits" }
 
 [profile.release]
 opt-level = "z"      # Optimize for size
@@ -131,63 +131,63 @@ panic = "abort"
 # /kernel/Cargo.toml
 
 [package]
-name = "efflux-kernel"
+name = "kernel"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
 # Core
-efflux-core.workspace = true
-efflux-alloc.workspace = true
-efflux-log.workspace = true
+core.workspace = true
+alloc.workspace = true
+log.workspace = true
 
 # Memory
-efflux-mm-traits.workspace = true
-efflux-mm-buddy = { path = "../crates/mm/efflux-mm-buddy" }
-efflux-mm-slab = { path = "../crates/mm/efflux-mm-slab" }
-efflux-mm-vmm = { path = "../crates/mm/efflux-mm-vmm" }
-efflux-mm-heap = { path = "../crates/mm/efflux-mm-heap" }
+mm-traits.workspace = true
+mm-buddy = { path = "../crates/mm/mm-buddy" }
+mm-slab = { path = "../crates/mm/mm-slab" }
+mm-vmm = { path = "../crates/mm/mm-vmm" }
+mm-heap = { path = "../crates/mm/mm-heap" }
 
 # Scheduler
-efflux-sched-traits.workspace = true
-efflux-sched-rr = { path = "../crates/sched/efflux-sched-rr" }
+sched-traits.workspace = true
+sched-rr = { path = "../crates/sched/sched-rr" }
 
 # Process
-efflux-process = { path = "../crates/process/efflux-process" }
-efflux-elf = { path = "../crates/process/efflux-elf" }
-efflux-signal = { path = "../crates/process/efflux-signal" }
+process = { path = "../crates/process/process" }
+elf = { path = "../crates/process/elf" }
+signal = { path = "../crates/process/signal" }
 
 # Syscall
-efflux-syscall = { path = "../crates/syscall/efflux-syscall" }
+syscall = { path = "../crates/syscall/syscall" }
 
 # VFS
-efflux-vfs = { path = "../crates/vfs/efflux-vfs" }
-efflux-fs-tmpfs = { path = "../crates/fs/efflux-fs-tmpfs" }
-efflux-fs-devfs = { path = "../crates/fs/efflux-fs-devfs" }
-efflux-fs-initramfs = { path = "../crates/fs/efflux-fs-initramfs" }
+vfs = { path = "../crates/vfs/vfs" }
+fs-tmpfs = { path = "../crates/fs/fs-tmpfs" }
+fs-devfs = { path = "../crates/fs/fs-devfs" }
+fs-initramfs = { path = "../crates/fs/fs-initramfs" }
 
 # TTY
-efflux-tty = { path = "../crates/tty/efflux-tty" }
+tty = { path = "../crates/tty/tty" }
 
 # Architecture-specific (conditional)
 [target.'cfg(target_arch = "x86_64")'.dependencies]
-efflux-arch = { package = "efflux-arch-x86_64", path = "../crates/arch/efflux-arch-x86_64" }
-efflux-driver-serial = { package = "efflux-driver-uart-8250", path = "../crates/drivers/serial/efflux-driver-uart-8250" }
+arch = { package = "arch-x86_64", path = "../crates/arch/arch-x86_64" }
+driver-serial = { package = "driver-uart-8250", path = "../crates/drivers/serial/driver-uart-8250" }
 
 [target.'cfg(target_arch = "aarch64")'.dependencies]
-efflux-arch = { package = "efflux-arch-aarch64", path = "../crates/arch/efflux-arch-aarch64" }
-efflux-driver-serial = { package = "efflux-driver-uart-pl011", path = "../crates/drivers/serial/efflux-driver-uart-pl011" }
+arch = { package = "arch-aarch64", path = "../crates/arch/arch-aarch64" }
+driver-serial = { package = "driver-uart-pl011", path = "../crates/drivers/serial/driver-uart-pl011" }
 
 [target.'cfg(target_arch = "riscv64")'.dependencies]
-efflux-arch = { package = "efflux-arch-riscv64", path = "../crates/arch/efflux-arch-riscv64" }
+arch = { package = "arch-riscv64", path = "../crates/arch/arch-riscv64" }
 
 # ... other architectures
 
 [features]
 default = []
-smp = ["efflux-mm-buddy/smp", "efflux-sched-rr/smp"]
-stats = ["efflux-mm-buddy/stats"]
+smp = ["mm-buddy/smp", "sched-rr/smp"]
+stats = ["mm-buddy/stats"]
 ```
 
 ---
@@ -195,27 +195,27 @@ stats = ["efflux-mm-buddy/stats"]
 ## Trait Crate Example
 
 ```toml
-# /crates/arch/efflux-arch-traits/Cargo.toml
+# /crates/arch/arch-traits/Cargo.toml
 
 [package]
-name = "efflux-arch-traits"
+name = "arch-traits"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-efflux-core.workspace = true
+core.workspace = true
 
 [lib]
 # No std!
 ```
 
 ```rust
-// /crates/arch/efflux-arch-traits/src/lib.rs
+// /crates/arch/arch-traits/src/lib.rs
 
 #![no_std]
 
-use efflux_core::PhysAddr;
+use core::PhysAddr;
 
 /// Architecture trait - all arch crates implement this
 pub trait Arch: Send + Sync {
@@ -274,17 +274,17 @@ pub trait Context {
 ## Arch Implementation Example
 
 ```toml
-# /crates/arch/efflux-arch-x86_64/Cargo.toml
+# /crates/arch/arch-x86_64/Cargo.toml
 
 [package]
-name = "efflux-arch-x86_64"
+name = "arch-x86_64"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-efflux-core.workspace = true
-efflux-arch-traits.workspace = true
+core.workspace = true
+arch-traits.workspace = true
 bitflags.workspace = true
 
 [features]
@@ -292,12 +292,12 @@ default = []
 ```
 
 ```rust
-// /crates/arch/efflux-arch-x86_64/src/lib.rs
+// /crates/arch/arch-x86_64/src/lib.rs
 
 #![no_std]
 #![feature(asm_const)]
 
-use efflux_arch_traits::{Arch, Mmu, Tlb, InterruptController, Timer, Context};
+use arch_traits::{Arch, Mmu, Tlb, InterruptController, Timer, Context};
 
 pub struct X86_64;
 
@@ -320,20 +320,20 @@ pub mod syscall;
 ## Driver Trait Example
 
 ```toml
-# /crates/drivers/efflux-driver-traits/Cargo.toml
+# /crates/drivers/driver-traits/Cargo.toml
 
 [package]
-name = "efflux-driver-traits"
+name = "driver-traits"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-efflux-core.workspace = true
+core.workspace = true
 ```
 
 ```rust
-// /crates/drivers/efflux-driver-traits/src/lib.rs
+// /crates/drivers/driver-traits/src/lib.rs
 
 #![no_std]
 
@@ -377,13 +377,13 @@ pub trait NetworkDevice: Send + Sync {
 # /apps/init/Cargo.toml
 
 [package]
-name = "efflux-init"
+name = "init"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-efflux-libc = { path = "../../libc" }
+libc = { path = "../../libc" }
 
 [[bin]]
 name = "init"
@@ -396,10 +396,10 @@ path = "src/main.rs"
 #![no_std]
 #![no_main]
 
-extern crate efflux_libc;
+extern crate libc;
 
-use efflux_libc::{mount, fork, exec, wait, open, dup2};
-use efflux_libc::{O_RDWR, STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO};
+use libc::{mount, fork, exec, wait, open, dup2};
+use libc::{O_RDWR, STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO};
 
 #[no_mangle]
 pub extern "C" fn main() -> i32 {
@@ -439,7 +439,7 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 # /libc/Cargo.toml
 
 [package]
-name = "efflux-libc"
+name = "libc"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -562,23 +562,23 @@ targets = [
 
 # Create directory structure
 mkdir -p kernel/src
-mkdir -p crates/core/{efflux-core,efflux-alloc,efflux-log}/src
-mkdir -p crates/arch/efflux-arch-traits/src
-mkdir -p crates/arch/efflux-arch-{x86_64,i686,aarch64,arm,mips64,mips32,riscv64,riscv32}/src
-mkdir -p crates/mm/{efflux-mm-traits,efflux-mm-buddy,efflux-mm-slab,efflux-mm-vmm,efflux-mm-heap}/src
-mkdir -p crates/sched/{efflux-sched-traits,efflux-sched-rr}/src
-mkdir -p crates/process/{efflux-process,efflux-elf,efflux-signal}/src
-mkdir -p crates/syscall/{efflux-syscall-traits,efflux-syscall}/src
-mkdir -p crates/vfs/{efflux-vfs-traits,efflux-vfs}/src
-mkdir -p crates/fs/{efflux-fs-tmpfs,efflux-fs-devfs,efflux-fs-procfs,efflux-fs-initramfs,efflux-fs-fat32,efflux-fs-effluxfs}/src
-mkdir -p crates/drivers/efflux-driver-traits/src
-mkdir -p crates/drivers/serial/{efflux-driver-uart-8250,efflux-driver-uart-pl011}/src
-mkdir -p crates/drivers/block/efflux-driver-virtio-blk/src
-mkdir -p crates/drivers/net/efflux-driver-virtio-net/src
-mkdir -p crates/tty/{efflux-tty,efflux-pty}/src
-mkdir -p crates/ipc/efflux-ipc-pipe/src
-mkdir -p crates/net/{efflux-net-traits,efflux-net-stack}/src
-mkdir -p bootloader/{efflux-boot-common,efflux-boot-uefi}/src
+mkdir -p crates/core/{core,alloc,log}/src
+mkdir -p crates/arch/arch-traits/src
+mkdir -p crates/arch/arch-{x86_64,i686,aarch64,arm,mips64,mips32,riscv64,riscv32}/src
+mkdir -p crates/mm/{mm-traits,mm-buddy,mm-slab,mm-vmm,mm-heap}/src
+mkdir -p crates/sched/{sched-traits,sched-rr}/src
+mkdir -p crates/process/{process,elf,signal}/src
+mkdir -p crates/syscall/{syscall-traits,syscall}/src
+mkdir -p crates/vfs/{vfs-traits,vfs}/src
+mkdir -p crates/fs/{fs-tmpfs,fs-devfs,fs-procfs,fs-initramfs,fs-fat32,fs-effluxfs}/src
+mkdir -p crates/drivers/driver-traits/src
+mkdir -p crates/drivers/serial/{driver-uart-8250,driver-uart-pl011}/src
+mkdir -p crates/drivers/block/driver-virtio-blk/src
+mkdir -p crates/drivers/net/driver-virtio-net/src
+mkdir -p crates/tty/{tty,pty}/src
+mkdir -p crates/ipc/ipc-pipe/src
+mkdir -p crates/net/{net-traits,net-stack}/src
+mkdir -p bootloader/{boot-common,boot-uefi}/src
 mkdir -p libc/src
 mkdir -p apps/{init,shell,coreutils}/src
 mkdir -p tools/{mkfs-efflux,mkimage,qemu-runner}/src

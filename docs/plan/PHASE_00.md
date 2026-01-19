@@ -38,14 +38,14 @@ Boot to Rust on x86_64 with serial output.
 ### Bootloader
 - Uses `uefi` crate v0.32
 - Prints banner via UEFI stdout
-- Located at `bootloader/efflux-boot-uefi/`
+- Located at `bootloader/boot-uefi/`
 - Does not yet load kernel (placeholder)
 
 ### Serial Driver
 - COM1 at 0x3F8, 115200 baud, 8N1
 - Uses spin::Mutex for thread-safe access
-- Located at `crates/drivers/serial/efflux-driver-uart-8250/`
-- Also exposed via `crates/arch/efflux-arch-x86_64/src/serial.rs`
+- Located at `crates/drivers/serial/driver-uart-8250/`
+- Also exposed via `crates/arch/arch-x86_64/src/serial.rs`
 
 ### Kernel
 - Entry point: `kernel_main()` in `kernel/src/main.rs`
@@ -70,18 +70,18 @@ kernel/
 ├── targets/x86_64-unknown-none.json    # Custom target
 crates/
 ├── core/
-│   ├── efflux-core/                    # VirtAddr, PhysAddr
-│   └── efflux-log/                     # Logging (stub)
+│   ├── core/                    # VirtAddr, PhysAddr
+│   └── log/                     # Logging (stub)
 ├── arch/
-│   ├── efflux-arch-traits/             # Arch trait
-│   └── efflux-arch-x86_64/             # x86_64 impl + serial
+│   ├── arch-traits/             # Arch trait
+│   └── arch-x86_64/             # x86_64 impl + serial
 ├── mm/
-│   └── efflux-mm-traits/               # MM traits (stub)
+│   └── mm-traits/               # MM traits (stub)
 └── drivers/
-    ├── efflux-driver-traits/           # Driver traits
-    └── serial/efflux-driver-uart-8250/ # 8250 UART driver
+    ├── driver-traits/           # Driver traits
+    └── serial/driver-uart-8250/ # 8250 UART driver
 bootloader/
-└── efflux-boot-uefi/                   # UEFI bootloader
+└── boot-uefi/                   # UEFI bootloader
 ```
 
 ---

@@ -461,7 +461,7 @@ efflux python --no-sandbox script.py
 Scripts can request elevated permissions:
 
 ```python
-#!/usr/bin/env efflux-python
+#!/usr/bin/env python
 # efflux:require network
 # efflux:require read /etc/config
 # efflux:require write /var/data

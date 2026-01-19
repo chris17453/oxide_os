@@ -6,7 +6,7 @@ license.workspace = true
 description = "Module utilities for EFFLUX OS"
 
 [dependencies]
-efflux-libc = { path = "../efflux-libc" }
+libc = { path = "../libc" }
 
 [[bin]]
 name = "insmod"

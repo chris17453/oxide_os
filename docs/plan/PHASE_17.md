@@ -228,7 +228,7 @@ pub enum SeccompAction {
 ## Key Files
 
 ```
-crates/container/efflux-namespace/src/
+crates/container/namespace/src/
 ├── lib.rs
 ├── pid.rs             # PID namespace
 ├── mount.rs           # Mount namespace
@@ -236,14 +236,14 @@ crates/container/efflux-namespace/src/
 ├── user.rs            # User namespace
 └── uts.rs             # UTS namespace
 
-crates/container/efflux-cgroup/src/
+crates/container/cgroup/src/
 ├── lib.rs
 ├── v2.rs              # Cgroups v2 implementation
 ├── cpu.rs             # CPU controller
 ├── memory.rs          # Memory controller
 └── fs.rs              # cgroupfs
 
-crates/container/efflux-seccomp/src/
+crates/container/seccomp/src/
 ├── lib.rs
 ├── filter.rs          # BPF filter
 └── bpf.rs             # BPF interpreter

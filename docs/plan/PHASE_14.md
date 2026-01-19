@@ -45,8 +45,8 @@ Implement framebuffer graphics with text console.
 
 ### Crates Created
 
-- `efflux-fb` - Framebuffer graphics abstraction
-- `efflux-virtio-gpu` - VirtIO GPU driver
+- `fb` - Framebuffer graphics abstraction
+- `virtio-gpu` - VirtIO GPU driver
 
 ### Key Features
 

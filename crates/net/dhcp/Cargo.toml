@@ -1,0 +1,9 @@
+[package]
+name = "dhcp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+net = { path = "../net" }
+tcpip = { path = "../tcpip" }
+spin = "0.9"

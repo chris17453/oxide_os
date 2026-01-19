@@ -3,7 +3,7 @@
 #![no_std]
 #![no_main]
 
-use efflux_libc::*;
+use libc::*;
 
 /// Directory entry header (matches kernel's UserDirEntry)
 #[repr(C)]

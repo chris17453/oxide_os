@@ -105,7 +105,7 @@ Session (sid)
 ## Key Files
 
 ```
-crates/proc/efflux-proc/src/
+crates/proc/proc/src/
 ├── lib.rs
 ├── address_space.rs     # User address space (existing)
 ├── process.rs           # Process structure (new)
@@ -113,7 +113,7 @@ crates/proc/efflux-proc/src/
 ├── exec.rs              # exec implementation (new)
 └── cow.rs               # COW page tracking (new)
 
-crates/syscall/efflux-syscall/src/
+crates/syscall/syscall/src/
 ├── lib.rs               # Syscall dispatch (update)
 ├── process.rs           # fork/exec/wait handlers (new)
 └── errno.rs             # Error codes (new)
@@ -167,7 +167,7 @@ int main() {
 - Process groups and sessions (pgid, sid fields)
 
 **Syscall infrastructure complete (2025-01-18):**
-- COW tracking crate (efflux-mm-cow) with reference counting
+- COW tracking crate (mm-cow) with reference counting
 - fork.rs: Clone address space with COW, handle COW faults
 - exec.rs: Replace process image with new ELF
 - wait.rs: Wait for child processes
@@ -186,7 +186,7 @@ Key implementation details:
 - SYSCALL_USER_CONTEXT populated during syscall entry, accessed via get_user_context()
 - STAR MSR correctly configured for sysret (KERNEL_DS << 48, not KERNEL_DS-8)
 - TlbControl and PortIo traits abstract arch-specific operations
-- efflux-mm-paging and uart-8250 driver use arch layer instead of inline asm
+- mm-paging and uart-8250 driver use arch layer instead of inline asm
 
 ---
 

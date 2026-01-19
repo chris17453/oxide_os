@@ -43,7 +43,7 @@ Complete POSIX libc implementation for source compatibility with Linux applicati
 
 ## Implementation Summary
 
-### Extended Libc Modules (efflux-libc)
+### Extended Libc Modules (libc)
 
 | Module | Description | Status |
 |--------|-------------|--------|
@@ -103,7 +103,7 @@ Added new syscall numbers:
 ## Key Files
 
 ```
-userspace/efflux-libc/src/
+userspace/libc/src/
 ├── lib.rs          # Main library with all module exports
 ├── syscall.rs      # Raw syscall wrappers (0-6 args)
 ├── errno.rs        # Error numbers

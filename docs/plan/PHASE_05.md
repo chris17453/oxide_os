@@ -111,29 +111,29 @@ pub trait VnodeOps {
 ## Key Files
 
 ```
-crates/vfs/efflux-vfs/src/
+crates/vfs/vfs/src/
 ├── lib.rs
 ├── vnode.rs           # Vnode abstraction
 ├── file.rs            # File handle
 ├── mount.rs           # Mount points
 └── path.rs            # Path resolution
 
-crates/vfs/efflux-devfs/src/
+crates/vfs/devfs/src/
 ├── lib.rs
 ├── null.rs            # /dev/null
 ├── zero.rs            # /dev/zero
 └── console.rs         # /dev/console
 
-crates/vfs/efflux-tmpfs/src/
+crates/vfs/tmpfs/src/
 ├── lib.rs
 └── inode.rs           # In-memory inodes
 
-crates/vfs/efflux-procfs/src/
+crates/vfs/procfs/src/
 ├── lib.rs
 ├── self.rs            # /proc/self
 └── pid.rs             # /proc/[pid]
 
-crates/vfs/efflux-initramfs/src/
+crates/vfs/initramfs/src/
 ├── lib.rs
 └── cpio.rs            # CPIO parser
 ```
@@ -186,9 +186,9 @@ int main() {
 Phase 5 VFS infrastructure complete for x86_64:
 
 **Crates Created:**
-- `efflux-vfs`: Core VFS abstraction with VnodeOps trait, File, FdTable, Path, Mount
-- `efflux-devfs`: Device filesystem with /dev/null, /dev/zero, /dev/console
-- `efflux-tmpfs`: In-memory filesystem with full file/directory operations
+- `vfs`: Core VFS abstraction with VnodeOps trait, File, FdTable, Path, Mount
+- `devfs`: Device filesystem with /dev/null, /dev/zero, /dev/console
+- `tmpfs`: In-memory filesystem with full file/directory operations
 
 **Syscalls Implemented:**
 - File operations: open, close, read, write, lseek, fstat, stat, dup, dup2, ftruncate
@@ -202,10 +202,10 @@ Phase 5 VFS infrastructure complete for x86_64:
 - Fork clones fd table, exec closes cloexec fds
 
 **Additional Crates:**
-- `efflux-initramfs`: CPIO (newc format) parser for initramfs loading
+- `initramfs`: CPIO (newc format) parser for initramfs loading
   - Supports files, directories, permissions
   - Read-only filesystem built from CPIO archive
-- `efflux-procfs`: Process filesystem mounted at /proc
+- `procfs`: Process filesystem mounted at /proc
   - /proc/self -> symlink to current PID
   - /proc/[pid]/status - process state, credentials
   - /proc/[pid]/cmdline - command line arguments

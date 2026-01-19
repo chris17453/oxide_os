@@ -92,14 +92,14 @@ This document explains how EFFLUX routes display output and handles input across
 │   └──────────────────────────┬───────────────────────────────┘              │
 │                              │                                              │
 │                              ▼                                              │
-│   Display Server Protocol (Unix socket: /run/efflux-display)                │
+│   Display Server Protocol (Unix socket: /run/display)                │
 │   ┌──────────────────────────────────────────────────────────┐              │
 │   │  Client → Server IPC messages                            │              │
 │   │  • CreateBuffer, Attach, Commit, Damage                  │              │
 │   └──────────────────────────┬───────────────────────────────┘              │
 │                              │                                              │
 │                              ▼                                              │
-│   Display Server (efflux-display)                                           │
+│   Display Server (display)                                           │
 │   ┌──────────────────────────────────────────────────────────┐              │
 │   │  Compositor                                              │              │
 │   │  • Combines all window surfaces                          │              │
@@ -566,10 +566,10 @@ impl SessionManager {
 ### 7.3 Running GUI Application
 
 ```
-1. Display server (efflux-display) running
+1. Display server (display) running
 2. User runs: python my_gui_app.py
 3. App: window = gfx.Window("Title", 800, 600)
-   → connects to /run/efflux-display socket
+   → connects to /run/display socket
    → sends CreateSurface message
 4. Display server: creates surface, allocates shared memory buffer
    → sends BufferCreated { handle, fd } to app
@@ -634,9 +634,9 @@ vnc_port = 5900
 vnc_password = ""  # Empty = no auth (dangerous!)
 
 # Native EFFLUX remote
-efflux_remote_enabled = true
-efflux_remote_port = 5800
-efflux_remote_encryption = true
+remote_enabled = true
+remote_port = 5800
+remote_encryption = true
 ```
 
 ---

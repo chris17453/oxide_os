@@ -1,8 +1,8 @@
 [package]
-name = "efflux-search"
+name = "search"
 version = "0.1.0"
 edition = "2021"
 description = "Semantic file search tool for Efflux OS"
 
 [dependencies]
-efflux-libc = { path = "../efflux-libc" }
+libc = { path = "../libc" }

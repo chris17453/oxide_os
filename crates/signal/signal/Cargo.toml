@@ -1,0 +1,11 @@
+[package]
+name = "signal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Signal handling for EFFLUX OS"
+
+[dependencies]
+os_core = { workspace = true }
+bitflags = { workspace = true }
+spin = { workspace = true }

@@ -109,15 +109,15 @@ pub enum ThreadState {
 
 ## Crates to Create
 
-**Architecture Rule:** ALL assembly and hardware-specific code goes in `efflux-arch-*` crates.
+**Architecture Rule:** ALL assembly and hardware-specific code goes in `arch-*` crates.
 The scheduler crate uses traits, never inline assembly.
 
 ```
 crates/
 ├── arch/
-│   ├── efflux-arch-traits/     # Trait definitions (already exists)
+│   ├── arch-traits/     # Trait definitions (already exists)
 │   │   └── src/lib.rs          # Add: InterruptController, Timer, Context traits
-│   └── efflux-arch-x86_64/     # x86_64 implementation (already exists)
+│   └── arch-x86_64/     # x86_64 implementation (already exists)
 │       └── src/
 │           ├── lib.rs          # Arch trait impl
 │           ├── idt.rs          # IDT setup (assembly here)
@@ -126,9 +126,9 @@ crates/
 │           ├── timer.rs        # APIC timer
 │           └── context.rs      # Context switch (assembly here)
 ├── sched/
-│   ├── efflux-sched-traits/    # Scheduler trait definitions
+│   ├── sched-traits/    # Scheduler trait definitions
 │   │   └── src/lib.rs          # Scheduler, Thread traits
-│   └── efflux-sched/           # Generic scheduler (NO assembly)
+│   └── sched/           # Generic scheduler (NO assembly)
 │       └── src/
 │           ├── lib.rs          # Public API
 │           ├── thread.rs       # Thread structure
@@ -139,7 +139,7 @@ crates/
 **Key Traits to Define:**
 
 ```rust
-// In efflux-arch-traits
+// In arch-traits
 pub trait InterruptController {
     fn init();
     fn enable();
@@ -259,11 +259,11 @@ let thread2 = Thread::spawn(|| {
 ### Completed (2026-01-18)
 
 **All deliverables complete:**
-- `efflux-arch-x86_64`: Full IDT with exception handlers (gdt.rs, idt.rs, exceptions.rs)
-- `efflux-arch-x86_64`: Local APIC driver with timer (apic.rs)
-- `efflux-arch-x86_64`: Context switch via timer interrupt (context.rs, exceptions.rs)
-- `efflux-sched-traits`: Scheduler trait definitions
-- `efflux-sched`: Round-robin scheduler with thread management
+- `arch-x86_64`: Full IDT with exception handlers (gdt.rs, idt.rs, exceptions.rs)
+- `arch-x86_64`: Local APIC driver with timer (apic.rs)
+- `arch-x86_64`: Context switch via timer interrupt (context.rs, exceptions.rs)
+- `sched-traits`: Scheduler trait definitions
+- `sched`: Round-robin scheduler with thread management
 - Kernel integration: arch init, timer @ 100Hz, thread creation
 - **Preemptive multitasking working**: Timer interrupt triggers context switches
 

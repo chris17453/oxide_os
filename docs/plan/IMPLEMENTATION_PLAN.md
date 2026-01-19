@@ -216,7 +216,7 @@ This plan organizes EFFLUX development into 5 stages with 25 phases. Each phase 
 | 17 | Containers | Phase 9 | Namespaces, cgroups, seccomp |
 | 18 | Hypervisor | Phase 9 | VT-x/EL2, nested paging, VM lifecycle |
 | 19 | Self-Hosting | Phase 11,12 | LLVM, rustc, cargo on EFFLUX |
-| 20 | AI Indexing | Phase 11 | efflux-indexd, embeddings, semantic search |
+| 20 | AI Indexing | Phase 11 | indexd, embeddings, semantic search |
 | 21 | Security | Phase 11 | Signing, encryption, trust store, quarantine |
 
 ### Phase 17: Containers
@@ -247,7 +247,7 @@ This plan organizes EFFLUX development into 5 stages with 25 phases. Each phase 
 **Exit:** Kernel compiles on itself
 
 ### Phase 20: AI Indexing
-- efflux-indexd daemon
+- indexd daemon
 - Candle embedding runtime
 - HNSW vector index
 - Extended metadata on effluxfs

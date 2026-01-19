@@ -12,8 +12,8 @@ extern crate alloc;
 mod debug;
 
 /// Get a serial writer for debug output
-pub fn serial_writer() -> efflux_arch_x86_64::serial::SerialWriter {
-    efflux_arch_x86_64::serial::SerialWriter
+pub fn serial_writer() -> arch_x86_64::serial::SerialWriter {
+    arch_x86_64::serial::SerialWriter
 }
 
 use alloc::boxed::Box;
@@ -25,33 +25,34 @@ use core::panic::PanicInfo;
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use efflux_arch_traits::Arch;
-use efflux_arch_x86_64 as arch;
-use efflux_arch_x86_64::serial;
-use efflux_arch_x86_64::get_user_context;
-use efflux_boot_proto::{BootInfo, MemoryType as BootMemoryType};
-use efflux_core::{PhysAddr, VirtAddr};
-use efflux_elf::ElfExecutable;
-use efflux_mm_frame::{BitmapFrameAllocator, MemoryRegion};
-use efflux_mm_traits::FrameAllocator as _;
-use efflux_mm_heap::LockedHeap;
-use efflux_mm_paging::{phys_to_virt, read_cr3, write_cr3, flush_tlb_all};
-use efflux_proc::{
+use arch_traits::Arch;
+use arch_x86_64 as arch;
+use arch_x86_64::serial;
+use arch_x86_64::get_user_context;
+use boot_proto::{BootInfo, MemoryType as BootMemoryType};
+use os_core::{PhysAddr, VirtAddr};
+use elf::ElfExecutable;
+use mm_frame::{BitmapFrameAllocator, MemoryRegion};
+use mm_traits::FrameAllocator as _;
+use mm_heap::LockedHeap;
+use mm_paging::{phys_to_virt, read_cr3, write_cr3, flush_tlb_all};
+use proc::{
     UserAddressSpace, Process, ProcessContext, alloc_pid, process_table,
     do_fork, do_exec, do_waitpid, WaitOptions, handle_cow_fault,
 };
-use efflux_proc_traits::{MemoryFlags, Pid};
-use efflux_syscall::SyscallContext;
-use efflux_vfs::{File, FileFlags, mount::GLOBAL_VFS, MountFlags, VnodeOps, VnodeType};
-use efflux_devfs::DevFs;
-use efflux_tmpfs::TmpDir;
-use efflux_procfs::ProcFs;
-use efflux_initramfs;
-use efflux_pty::{PtyManager, PtsDir};
-use efflux_net::{self, NetworkDevice};
-use efflux_tcpip;
-use efflux_virtio_net;
+use proc_traits::{MemoryFlags, Pid};
+use syscall::SyscallContext;
+use vfs::{File, FileFlags, mount::GLOBAL_VFS, MountFlags, VnodeOps, VnodeType};
+use devfs::DevFs;
+use tmpfs::TmpDir;
+use procfs::ProcFs;
+use initramfs;
+use pty::{PtyManager, PtsDir};
+use net::{self, NetworkDevice};
+use tcpip;
+use virtio_net;
 use pci;
+use fb;
 use spin::Mutex;
 
 /// Global kernel heap allocator
@@ -173,7 +174,7 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     for boot_region in boot_info.memory_regions() {
         let usable = matches!(boot_region.ty, BootMemoryType::Usable | BootMemoryType::BootServices);
         regions.push(MemoryRegion::new(
-            efflux_core::PhysAddr::new(boot_region.start),
+            os_core::PhysAddr::new(boot_region.start),
             boot_region.len,
             usable,
         ));
@@ -182,13 +183,30 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     // Mark kernel memory as used
     FRAME_ALLOCATOR.mark_used(
-        efflux_core::PhysAddr::new(boot_info.kernel_phys_base),
+        os_core::PhysAddr::new(boot_info.kernel_phys_base),
         boot_info.kernel_size as usize,
     );
 
     let _ = writeln!(writer, "[INFO] Frame allocator initialized");
     let _ = writeln!(writer, "[INFO] Total frames: {}", FRAME_ALLOCATOR.total_frames());
     let _ = writeln!(writer, "[INFO] Free frames: {}", FRAME_ALLOCATOR.free_frame_count());
+
+    // Initialize framebuffer if available
+    if let Some(ref fb_info) = boot_info.framebuffer {
+        let _ = writeln!(writer, "[INFO] Initializing framebuffer...");
+        let _ = writeln!(writer, "[INFO] Framebuffer: {}x{} @ {:#x}",
+            fb_info.width, fb_info.height, fb_info.base);
+        let _ = writeln!(writer, "[INFO] Stride: {} pixels, BPP: {}", fb_info.stride, fb_info.bpp);
+
+        fb::init_from_boot(fb_info, boot_info.phys_map_base);
+        let _ = writeln!(writer, "[INFO] Framebuffer initialized");
+
+        // Clear the screen with a dark background
+        fb::clear();
+        let _ = writeln!(writer, "[INFO] Framebuffer console ready");
+    } else {
+        let _ = writeln!(writer, "[INFO] No framebuffer available, serial-only mode");
+    }
 
     // Initialize architecture components (GDT, IDT, APIC)
     let _ = writeln!(writer, "[INFO] Initializing x86_64 architecture...");
@@ -245,7 +263,7 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
         wait: Some(kernel_wait),
     };
     unsafe {
-        efflux_syscall::init(syscall_ctx);
+        syscall::init(syscall_ctx);
     }
 
     // Register the syscall dispatch function
@@ -267,7 +285,7 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(writer, "[VFS] Mounted tmpfs at /");
 
     // Create /dev directory
-    if let Err(e) = root_fs.mkdir("dev", efflux_vfs::Mode::DEFAULT_DIR) {
+    if let Err(e) = root_fs.mkdir("dev", vfs::Mode::DEFAULT_DIR) {
         let _ = writeln!(writer, "[VFS] Failed to create /dev: {:?}", e);
         arch::X86_64::halt();
     }
@@ -282,11 +300,16 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     // Set up console write function for devfs
     unsafe {
-        efflux_devfs::devices::set_console_write(console_write_bytes);
+        devfs::devices::set_console_write(console_write_bytes);
+    }
+
+    // Set up framebuffer info callback for /dev/fb0
+    unsafe {
+        devfs::devices::set_fb_info_callback(get_fb_device_info);
     }
 
     // Create /proc directory
-    if let Err(e) = root_fs.mkdir("proc", efflux_vfs::Mode::DEFAULT_DIR) {
+    if let Err(e) = root_fs.mkdir("proc", vfs::Mode::DEFAULT_DIR) {
         let _ = writeln!(writer, "[VFS] Failed to create /proc: {:?}", e);
         arch::X86_64::halt();
     }
@@ -303,7 +326,7 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let pty_manager = Arc::new(PtyManager::new());
 
     // Create /dev/pts directory
-    if let Err(e) = root_fs.mkdir("pts", efflux_vfs::Mode::DEFAULT_DIR) {
+    if let Err(e) = root_fs.mkdir("pts", vfs::Mode::DEFAULT_DIR) {
         // Ignore error if directory already exists somehow
         let _ = writeln!(writer, "[VFS] Note: /dev/pts mkdir: {:?}", e);
     }
@@ -345,7 +368,7 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
         let _ = writeln!(writer, "[NET] Initializing VirtIO network device at {:02x}:{:02x}.{}",
             pci_dev.address.bus, pci_dev.address.device, pci_dev.address.function);
 
-        match unsafe { efflux_virtio_net::VirtioNet::from_pci(pci_dev) } {
+        match unsafe { virtio_net::VirtioNet::from_pci(pci_dev) } {
             Some(virtio_net) => {
                 let mac = virtio_net.mac_address();
                 let _ = writeln!(writer, "[NET] VirtIO network device initialized");
@@ -354,13 +377,13 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
                 // Create network interface
                 let device = Arc::new(virtio_net);
-                efflux_net::register_device(device.clone());
+                net::register_device(device.clone());
 
-                let interface = Arc::new(efflux_net::NetworkInterface::new(device));
-                efflux_net::interface::add_interface(interface.clone());
+                let interface = Arc::new(net::NetworkInterface::new(device));
+                net::interface::add_interface(interface.clone());
 
                 // Initialize TCP/IP stack
-                efflux_tcpip::init(interface);
+                tcpip::init(interface);
                 let _ = writeln!(writer, "[NET] TCP/IP stack initialized");
 
                 true
@@ -378,22 +401,22 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // If no VirtIO, initialize loopback device at minimum
     if !net_initialized {
         let _ = writeln!(writer, "[NET] Initializing loopback device only");
-        let loopback = Arc::new(efflux_net::LoopbackDevice::new());
-        efflux_net::register_device(loopback.clone());
+        let loopback = Arc::new(net::LoopbackDevice::new());
+        net::register_device(loopback.clone());
 
-        let lo_interface = Arc::new(efflux_net::NetworkInterface::new(loopback));
+        let lo_interface = Arc::new(net::NetworkInterface::new(loopback));
         lo_interface.set_ipv4_addr(
-            efflux_net::Ipv4Addr::new(127, 0, 0, 1),
-            efflux_net::Ipv4Addr::new(255, 0, 0, 0),
+            net::Ipv4Addr::new(127, 0, 0, 1),
+            net::Ipv4Addr::new(255, 0, 0, 0),
         ).ok();
-        efflux_net::interface::add_interface(lo_interface);
+        net::interface::add_interface(lo_interface);
     }
 
     let _ = writeln!(writer, "[NET] Network initialization complete");
 
     // Load and mount the initramfs
     let _ = writeln!(writer, "[INITRAMFS] Loading initramfs ({} bytes)...", INITRAMFS_CPIO.len());
-    let initramfs_root = match efflux_initramfs::load(INITRAMFS_CPIO) {
+    let initramfs_root = match initramfs::load(INITRAMFS_CPIO) {
         Ok(root) => root,
         Err(e) => {
             let _ = writeln!(writer, "[INITRAMFS] Failed to load initramfs: {:?}", e);
@@ -408,8 +431,8 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
     let _ = writeln!(writer, "[INITRAMFS] Mounted at /initramfs");
 
-    // Load /initramfs/bin/init
-    let init_path = "/initramfs/bin/init";
+    // Load /initramfs/sbin/init
+    let init_path = "/initramfs/sbin/init";
     let _ = writeln!(writer, "[USER] Loading {}...", init_path);
     let init_vnode = match GLOBAL_VFS.lookup(init_path) {
         Ok(v) => v,
@@ -471,9 +494,9 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Load ELF segments into user address space
     // Handle overlapping segments by checking if pages are already mapped
     for seg in elf.segments() {
-        let (page_base, page_size) = efflux_elf::ElfLoader::segment_pages(seg);
+        let (page_base, page_size) = elf::ElfLoader::segment_pages(seg);
         let num_pages = page_size / 4096;
-        let _page_offset = efflux_elf::ElfLoader::segment_page_offset(seg);
+        let _page_offset = elf::ElfLoader::segment_page_offset(seg);
 
         // Allocate pages that aren't already mapped, or update flags if already mapped
         for i in 0..num_pages {
@@ -698,7 +721,7 @@ fn syscall_dispatch(
         let mut writer = serial::SerialWriter;
         let _ = writeln!(writer, "[SYSCALL] number={} arg1={:#x}", number, arg1);
     }
-    efflux_syscall::dispatch(number, arg1, arg2, arg3, arg4, arg5, arg6)
+    syscall::dispatch(number, arg1, arg2, arg3, arg4, arg5, arg6)
 }
 
 /// Page fault handler callback (for COW and other page faults)
@@ -708,8 +731,17 @@ fn page_fault_handler(fault_addr: u64, error_code: u64, rip: u64) -> bool {
     let is_write = error_code & 2 != 0;
     let is_user = error_code & 4 != 0;
 
-    debug_cow!("[COW] Page fault at {:#x}, error={:#x}, rip={:#x}", fault_addr, error_code, rip);
-    debug_cow!("[COW] present={}, write={}, user={}", is_present, is_write, is_user);
+    // Get actual CR3 to compare with what process_table says
+    let actual_cr3: u64;
+    unsafe {
+        core::arch::asm!("mov {}, cr3", out(reg) actual_cr3);
+    }
+
+    {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[PF] fault_addr={:#x} error={:#x} rip={:#x}", fault_addr, error_code, rip);
+        let _ = writeln!(writer, "[PF] present={} write={} user={} actual_cr3={:#x}", is_present, is_write, is_user, actual_cr3);
+    }
 
     // COW faults are: present + write + user mode
     if is_present && is_write && is_user {
@@ -717,72 +749,127 @@ fn page_fault_handler(fault_addr: u64, error_code: u64, rip: u64) -> bool {
         let table = process_table();
         let current_pid = table.current_pid();
 
-        debug_cow!("[COW] Current PID: {}", current_pid);
+        {
+            let mut writer = serial::SerialWriter;
+            let _ = writeln!(writer, "[PF] COW check: current_pid={}", current_pid);
+        }
 
         if let Some(proc) = table.get(current_pid) {
             let pml4 = proc.lock().address_space().pml4_phys();
             let alloc = FrameAllocatorWrapper;
 
-            debug_cow!("[COW] PML4: {:#x}, attempting COW handling...", pml4.as_u64());
+            {
+                let mut writer = serial::SerialWriter;
+                let _ = writeln!(writer, "[PF] PML4={:#x}, calling handle_cow_fault", pml4.as_u64());
+            }
 
             // Try to handle as COW fault
             if handle_cow_fault(VirtAddr::new(fault_addr), pml4, &alloc) {
-                debug_cow!("[COW] COW fault handled successfully!");
+                {
+                    let mut writer = serial::SerialWriter;
+                    let _ = writeln!(writer, "[PF] COW handled OK");
+                }
                 return true; // Fault handled
             } else {
-                debug_cow!("[COW] COW handler returned false");
+                {
+                    let mut writer = serial::SerialWriter;
+                    let _ = writeln!(writer, "[PF] COW handler failed");
+                }
             }
         } else {
-            debug_cow!("[COW] Process not found!");
+            {
+                let mut writer = serial::SerialWriter;
+                let _ = writeln!(writer, "[PF] Process {} not found!", current_pid);
+            }
         }
     }
 
-    debug_cow!("[COW] Fault not handled");
+    {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[PF] Fault NOT handled - will panic");
+    }
     false // Fault not handled - will panic
 }
 
 /// Console write function for syscalls
+///
+/// Writes to both serial and framebuffer (if initialized).
 fn console_write(data: &[u8]) {
+    // Write to serial
     let mut writer = serial::SerialWriter;
     for &byte in data {
         let _ = writer.write_char(byte as char);
+    }
+
+    // Write to framebuffer console if available
+    if fb::is_initialized() {
+        for &byte in data {
+            fb::putchar(byte as char);
+        }
     }
 }
 
 /// Console write function for devfs (same as console_write but typed for devfs)
+///
+/// Writes to both serial and framebuffer (if initialized).
 fn console_write_bytes(data: &[u8]) {
+    // Write to serial
     let mut writer = serial::SerialWriter;
     for &byte in data {
         let _ = writer.write_char(byte as char);
     }
+
+    // Write to framebuffer console if available
+    if fb::is_initialized() {
+        for &byte in data {
+            fb::putchar(byte as char);
+        }
+    }
+}
+
+/// Get framebuffer device info for /dev/fb0
+///
+/// Returns information needed by the devfs framebuffer device.
+fn get_fb_device_info() -> Option<devfs::devices::FramebufferDeviceInfo> {
+    let info = fb::get_fb_info()?;
+
+    Some(devfs::devices::FramebufferDeviceInfo {
+        base: info.base,
+        phys_base: info.phys_base,
+        size: info.size,
+        width: info.width,
+        height: info.height,
+        stride: info.stride,
+        bpp: info.bpp,
+        is_bgr: info.is_bgr,
+    })
 }
 
 /// Console read function for syscalls
 fn console_read(buf: &mut [u8]) -> usize {
     // Read from serial port (blocking read of one character at a time)
+    // NOTE: No echo here - the application (shell) handles echoing
     let mut count = 0;
     for byte in buf.iter_mut() {
-        // Poll for input with a simple busy wait
+        // Poll for input - use halt to avoid burning CPU
         loop {
             if let Some(b) = serial::read_byte() {
                 *byte = b;
-                // Echo the character back (for interactive use)
-                let _ = serial::SerialWriter.write_char(b as char);
                 count += 1;
                 // Return on newline for line-buffered input
                 if b == b'\n' || b == b'\r' {
                     if b == b'\r' {
                         // Convert CR to LF
                         *byte = b'\n';
-                        let _ = serial::SerialWriter.write_char('\n');
                     }
                     return count;
                 }
                 break;
             }
-            // Small busy wait to avoid burning CPU
-            for _ in 0..10000 {
-                core::hint::spin_loop();
+            // Use HLT instruction to wait for interrupt instead of busy-spin
+            // This saves CPU and wakes on timer/serial interrupts
+            unsafe {
+                core::arch::asm!("hlt", options(nomem, nostack));
             }
         }
     }
@@ -818,7 +905,7 @@ fn user_exit(status: i32) -> ! {
             let parent_stack_size = p.kernel_stack_size();
             drop(p);
 
-            let parent_stack_virt = efflux_mm_paging::phys_to_virt(parent_stack_phys);
+            let parent_stack_virt = mm_paging::phys_to_virt(parent_stack_phys);
             let parent_stack_top = parent_stack_virt.as_u64() + parent_stack_size as u64;
 
             // Restore parent's kernel stack for syscalls
@@ -1043,10 +1130,10 @@ fn kernel_wait(pid: i32, options: i32) -> i64 {
         }
         Err(e) => {
             match e {
-                efflux_proc::WaitError::NoChildren => -10,  // ECHILD
-                efflux_proc::WaitError::WouldBlock => -11,  // EAGAIN
-                efflux_proc::WaitError::InvalidPid => -3,   // ESRCH
-                efflux_proc::WaitError::Interrupted => -4,  // EINTR
+                proc::WaitError::NoChildren => -10,  // ECHILD
+                proc::WaitError::WouldBlock => -11,  // EAGAIN
+                proc::WaitError::InvalidPid => -3,   // ESRCH
+                proc::WaitError::Interrupted => -4,  // EINTR
             }
         }
     }
@@ -1087,9 +1174,14 @@ fn run_child_process(child_pid: Pid) {
 
     // Set current process to child
     table.set_current_pid(child_pid);
+    {
+        let mut writer = serial::SerialWriter;
+        let verify_pid = table.current_pid();
+        let _ = writeln!(writer, "[RUN_CHILD] set_current_pid({}) done, verify={}", child_pid, verify_pid);
+    }
 
     // Use the kernel stack already allocated for this child (in fork)
-    let kernel_stack_virt = efflux_mm_paging::phys_to_virt(kernel_stack_phys);
+    let kernel_stack_virt = mm_paging::phys_to_virt(kernel_stack_phys);
     let child_kernel_stack_top = kernel_stack_virt.as_u64() + kernel_stack_size as u64;
 
     // Set kernel stack for child's syscalls/interrupts
@@ -1438,23 +1530,23 @@ fn kernel_exec(path_ptr: *const u8, path_len: usize, argv_ptr: *const *const u8,
         Err(e) => {
             let mut writer = serial::SerialWriter;
             let code = match e {
-                efflux_proc::ExecError::InvalidElf => {
+                proc::ExecError::InvalidElf => {
                     let _ = writeln!(writer, "[EXEC] Error: InvalidElf");
                     -8 // ENOEXEC
                 }
-                efflux_proc::ExecError::OutOfMemory => {
+                proc::ExecError::OutOfMemory => {
                     let _ = writeln!(writer, "[EXEC] Error: OutOfMemory");
                     -12 // ENOMEM
                 }
-                efflux_proc::ExecError::ProcessNotFound => {
+                proc::ExecError::ProcessNotFound => {
                     let _ = writeln!(writer, "[EXEC] Error: ProcessNotFound");
                     -3 // ESRCH
                 }
-                efflux_proc::ExecError::InvalidAddress => {
+                proc::ExecError::InvalidAddress => {
                     let _ = writeln!(writer, "[EXEC] Error: InvalidAddress");
                     -14 // EFAULT
                 }
-                efflux_proc::ExecError::InvalidArgument => {
+                proc::ExecError::InvalidArgument => {
                     let _ = writeln!(writer, "[EXEC] Error: InvalidArgument");
                     -22 // EINVAL
                 }
@@ -1467,7 +1559,7 @@ fn kernel_exec(path_ptr: *const u8, path_len: usize, argv_ptr: *const *const u8,
 /// Wrapper to use the global frame allocator
 struct FrameAllocatorWrapper;
 
-impl efflux_mm_traits::FrameAllocator for FrameAllocatorWrapper {
+impl mm_traits::FrameAllocator for FrameAllocatorWrapper {
     fn alloc_frame(&self) -> Option<PhysAddr> {
         FRAME_ALLOCATOR.alloc_frame()
     }

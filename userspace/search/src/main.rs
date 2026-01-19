@@ -13,7 +13,7 @@
 #![no_std]
 #![no_main]
 
-extern crate efflux_libc;
+extern crate libc;
 
 use core::fmt::Write;
 

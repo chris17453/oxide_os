@@ -1,5 +1,5 @@
 [package]
-name = "efflux-kernel"
+name = "kernel"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -13,31 +13,32 @@ debug-proc = []       # Enable process management debug output
 debug-all = ["debug-syscall", "debug-fork", "debug-cow", "debug-proc"]
 
 [dependencies]
-efflux-core = { workspace = true }
-efflux-arch-traits = { workspace = true }
-efflux-arch-x86_64 = { path = "../crates/arch/efflux-arch-x86_64" }
-efflux-mm-traits = { workspace = true }
-efflux-mm-frame = { workspace = true }
-efflux-mm-paging = { workspace = true }
-efflux-mm-heap = { workspace = true }
-efflux-mm-cow = { workspace = true }
-efflux-sched = { workspace = true }
-efflux-sched-traits = { workspace = true }
-efflux-proc = { workspace = true }
-efflux-proc-traits = { workspace = true }
-efflux-elf = { workspace = true }
-efflux-syscall = { workspace = true }
-efflux-boot-proto = { workspace = true }
-efflux-vfs = { workspace = true }
-efflux-devfs = { workspace = true }
-efflux-tmpfs = { workspace = true }
-efflux-initramfs = { workspace = true }
-efflux-procfs = { workspace = true }
-efflux-tty = { workspace = true }
-efflux-pty = { workspace = true }
-efflux-net = { workspace = true }
-efflux-tcpip = { workspace = true }
-efflux-dhcp = { workspace = true }
-efflux-virtio-net = { workspace = true }
+os_core = { workspace = true }
+arch-traits = { workspace = true }
+arch-x86_64 = { path = "../crates/arch/arch-x86_64" }
+mm-traits = { workspace = true }
+mm-frame = { workspace = true }
+mm-paging = { workspace = true }
+mm-heap = { workspace = true }
+mm-cow = { workspace = true }
+sched = { workspace = true }
+sched-traits = { workspace = true }
+proc = { workspace = true }
+proc-traits = { workspace = true }
+elf = { workspace = true }
+syscall = { workspace = true }
+boot-proto = { workspace = true }
+vfs = { workspace = true }
+devfs = { workspace = true }
+tmpfs = { workspace = true }
+initramfs = { workspace = true }
+procfs = { workspace = true }
+tty = { workspace = true }
+pty = { workspace = true }
+net = { workspace = true }
+tcpip = { workspace = true }
+dhcp = { workspace = true }
+virtio-net = { workspace = true }
 pci = { workspace = true }
+fb = { workspace = true }
 spin = { workspace = true }

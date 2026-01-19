@@ -5,7 +5,7 @@
 #![no_std]
 #![no_main]
 
-use efflux_libc::*;
+use libc::*;
 
 /// Syscall number for delete_module
 const SYS_DELETE_MODULE: u64 = 51;

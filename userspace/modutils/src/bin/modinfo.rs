@@ -5,7 +5,7 @@
 #![no_std]
 #![no_main]
 
-use efflux_libc::*;
+use libc::*;
 
 /// Main entry point
 #[unsafe(no_mangle)]

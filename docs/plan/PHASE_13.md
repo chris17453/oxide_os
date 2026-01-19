@@ -45,9 +45,9 @@ Implement input subsystem for keyboard and mouse.
 
 ### Crates Created
 
-- `efflux-input` - Input event subsystem with Linux evdev compatible events
-- `efflux-ps2` - PS/2 controller and keyboard/mouse drivers
-- `efflux-virtio-input` - VirtIO input device driver
+- `input` - Input event subsystem with Linux evdev compatible events
+- `ps2` - PS/2 controller and keyboard/mouse drivers
+- `virtio-input` - VirtIO input device driver
 
 ### Key Features
 

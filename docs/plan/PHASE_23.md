@@ -288,31 +288,31 @@ impl AutomountDaemon {
 ## Key Files
 
 ```
-crates/media/efflux-media/src/
+crates/media/media/src/
 ├── lib.rs
 ├── manager.rs         # Media manager
 ├── usb.rs             # USB device handling
 ├── trust.rs           # Trust database
 └── policy.rs          # Mount policies
 
-crates/media/efflux-automount/src/
+crates/media/automount/src/
 ├── lib.rs
 ├── daemon.rs          # Automount daemon
 ├── mount.rs           # Mount operations
 └── config.rs          # Configuration
 
-crates/net/efflux-smb/src/
+crates/net/smb/src/
 ├── lib.rs
 └── mount.rs           # SMB mounting
 
-crates/net/efflux-nfs/src/
+crates/net/nfs/src/
 ├── lib.rs
 └── mount.rs           # NFS mounting
 
 userspace/media/
-├── efflux-mount       # Manual mount tool
-├── efflux-eject       # Eject tool
-└── efflux-media-ctl   # Media control
+├── mount       # Manual mount tool
+├── eject       # Eject tool
+└── media-ctl   # Media control
 ```
 
 ---
@@ -342,7 +342,7 @@ $ touch /media/usb0/test.txt
 touch: cannot touch '/media/usb0/test.txt': Read-only file system
 
 # Promote to read-write
-$ efflux-media-ctl promote /media/usb0
+$ media-ctl promote /media/usb0
 Password: ******
 [automount] Promoted /media/usb0 to read-write
 
@@ -352,11 +352,11 @@ $ ls /media/usb0/test.txt
 /media/usb0/test.txt
 
 # Trust this device for future use
-$ efflux-media-ctl trust /media/usb0
+$ media-ctl trust /media/usb0
 Device "SanDisk Cruzer" (serial: ABC123) added to trusted list.
 
 # Eject
-$ efflux-eject /media/usb0
+$ eject /media/usb0
 Unmounted /media/usb0
 Safe to remove device.
 ```

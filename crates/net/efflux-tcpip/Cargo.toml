@@ -1,8 +1,0 @@
-[package]
-name = "efflux-tcpip"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-efflux-net = { path = "../efflux-net" }
-spin = "0.9"

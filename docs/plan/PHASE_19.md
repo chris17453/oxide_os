@@ -133,7 +133,7 @@ const PROT_EXEC: i32 = 0x4;
 1. Cross-compile LLVM for EFFLUX
    $ cmake -G Ninja \
        -DCMAKE_SYSTEM_NAME=EFFLUX \
-       -DCMAKE_C_COMPILER=efflux-cc \
+       -DCMAKE_C_COMPILER=cc \
        -DLLVM_HOST_TRIPLE=x86_64-unknown-efflux \
        -DLLVM_DEFAULT_TARGET_TRIPLE=x86_64-unknown-efflux \
        ../llvm
@@ -158,14 +158,14 @@ const PROT_EXEC: i32 = 0x4;
 
 ```
 1. Create EFFLUX target spec
-   // efflux-x86_64.json
+   // x86_64.json
    {
      "llvm-target": "x86_64-unknown-efflux",
      "data-layout": "e-m:e-p270:32:32-...",
      "arch": "x86_64",
      "os": "efflux",
      "env": "",
-     "linker": "efflux-ld",
+     "linker": "ld",
      "executables": true,
      ...
    }
@@ -203,7 +203,7 @@ userspace/toolchain/
     ├── pthread.c          # pthread implementation
     └── pthread.h          # pthread header
 
-crates/libc-support/efflux-mmap/src/
+crates/libc-support/mmap/src/
 ├── lib.rs
 ├── anonymous.rs           # Anonymous mappings
 ├── file.rs                # File-backed mappings
@@ -251,20 +251,20 @@ $ cargo --version
 cargo 1.75.0
 
 # Clone kernel source
-$ git clone /mnt/efflux-source /tmp/efflux
+$ git clone /mnt/source /tmp/efflux
 $ cd /tmp/efflux
 
 # Build kernel
 $ cargo build --release
 
 # Verify
-$ file target/release/efflux-kernel
+$ file target/release/kernel
 ELF 64-bit LSB executable, x86-64, ...
 
 # Compare with running kernel
-$ md5sum target/release/efflux-kernel /boot/efflux-kernel
-abc123... target/release/efflux-kernel
-abc123... /boot/efflux-kernel  # Should match!
+$ md5sum target/release/kernel /boot/kernel
+abc123... target/release/kernel
+abc123... /boot/kernel  # Should match!
 ```
 
 ---
@@ -272,9 +272,9 @@ abc123... /boot/efflux-kernel  # Should match!
 ## Notes
 
 Implemented kernel-side support for self-hosting requirements:
-- efflux-pthread: Full POSIX threads API (thread create/join/detach, mutexes, condition variables, rwlocks, barriers, TLS, once)
-- efflux-mmap: Memory mapping manager (anonymous and file-backed mappings, mmap/munmap/mprotect/mremap)
-- efflux-dl: Dynamic linker basics (dlopen/dlclose/dlsym/dlerror, ELF parsing, symbol tables, relocations)
+- pthread: Full POSIX threads API (thread create/join/detach, mutexes, condition variables, rwlocks, barriers, TLS, once)
+- mmap: Memory mapping manager (anonymous and file-backed mappings, mmap/munmap/mprotect/mremap)
+- dl: Dynamic linker basics (dlopen/dlclose/dlsym/dlerror, ELF parsing, symbol tables, relocations)
 
 LLVM/rustc/cargo porting requires actually cross-compiling these tools for EFFLUX target.
 

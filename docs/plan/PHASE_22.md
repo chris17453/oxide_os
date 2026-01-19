@@ -217,13 +217,13 @@ pub struct IoUringInstance {
 ## Key Files
 
 ```
-crates/async/efflux-epoll/src/
+crates/async/epoll/src/
 ├── lib.rs
 ├── instance.rs        # epoll instance
 ├── interest.rs        # Interest management
 └── ready.rs           # Ready list
 
-crates/async/efflux-iouring/src/
+crates/async/iouring/src/
 ├── lib.rs
 ├── instance.rs        # io_uring instance
 ├── submit.rs          # Submission handling

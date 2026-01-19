@@ -1,0 +1,16 @@
+[package]
+name = "proc"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+os_core = { path = "../../core/os_core" }
+proc-traits = { path = "../proc-traits" }
+mm-paging = { path = "../../mm/mm-paging" }
+mm-traits = { path = "../../mm/mm-traits" }
+mm-cow = { path = "../../mm/mm-cow" }
+elf = { path = "../../exec/elf" }
+sched-traits = { path = "../../sched/sched-traits" }
+vfs = { path = "../../vfs/vfs" }
+signal = { path = "../../signal/signal" }
+spin = "0.9"

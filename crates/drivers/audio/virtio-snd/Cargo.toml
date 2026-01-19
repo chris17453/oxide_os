@@ -1,0 +1,8 @@
+[package]
+name = "virtio-snd"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+audio = { path = "../../../audio/audio" }
+spin = "0.9"

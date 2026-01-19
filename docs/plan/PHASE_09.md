@@ -43,9 +43,9 @@ Enable multi-core operation with per-CPU data and work-stealing scheduler.
 
 ## Implementation Summary
 
-### efflux-smp Crate
+### smp Crate
 
-Created `crates/smp/efflux-smp/` with the following modules:
+Created `crates/smp/smp/` with the following modules:
 
 - **lib.rs** - Main crate exports, MAX_CPUS constant (256)
 - **percpu.rs** - Per-CPU data structure with preemption control, IRQ tracking, stats
@@ -53,7 +53,7 @@ Created `crates/smp/efflux-smp/` with the following modules:
 - **ipi.rs** - Inter-Processor Interrupt support with handlers and vector definitions
 - **tlb.rs** - TLB shootdown using IPIs, INVLPG instruction support
 
-### SMP Scheduler (efflux-sched)
+### SMP Scheduler (sched)
 
 Added `smp.rs` module with:
 
@@ -114,14 +114,14 @@ Uses atomic state for safe multi-CPU coordination:
 ## Key Files
 
 ```
-crates/smp/efflux-smp/src/
+crates/smp/smp/src/
 ├── lib.rs             # Crate entry, MAX_CPUS
 ├── percpu.rs          # Per-CPU data structure
 ├── cpu.rs             # CPU enumeration and boot
 ├── ipi.rs             # Inter-processor interrupts
 └── tlb.rs             # TLB shootdown
 
-crates/sched/efflux-sched/src/
+crates/sched/sched/src/
 ├── smp.rs             # SMP scheduler with work-stealing
 ```
 

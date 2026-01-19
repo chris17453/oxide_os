@@ -9,4 +9,4 @@ name = "esh"
 path = "src/main.rs"
 
 [dependencies]
-efflux-libc = { path = "../efflux-libc" }
+libc = { path = "../libc" }

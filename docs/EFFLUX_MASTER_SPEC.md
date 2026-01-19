@@ -146,11 +146,11 @@ efflux/
 │   ├── login/
 │   ├── shell/
 │   ├── coreutils/
-│   └── efflux-tools/           # Trust, signing, quarantine CLI
+│   └── tools/           # Trust, signing, quarantine CLI
 ├── indexer/                    # AI indexing daemon
 │   ├── embeddings/             # Embedding models (Candle)
 │   ├── search/                 # Vector search, HNSW
-│   └── daemon/                 # efflux-indexd
+│   └── daemon/                 # indexd
 ├── bootloader/
 │   ├── uefi/                   # UEFI bootloader (x86_64, aarch64)
 │   ├── bios/                   # Legacy BIOS (i686, x86_64)
@@ -1127,7 +1127,7 @@ pub enum VmExit {
 **Goal:** AI-native file metadata and search.
 
 ### 24.1 Deliverables
-- efflux-indexd daemon
+- indexd daemon
 - Embedding generation (Candle runtime)
 - Vector search index (HNSW)
 - Extended metadata on efflux.fs
@@ -1173,7 +1173,7 @@ pub struct ExtendedMeta {
 ### 24.5 Search API
 
 ```rust
-// IPC to efflux-indexd
+// IPC to indexd
 pub enum SearchQuery {
     Text(String),                           // Full-text search
     Semantic(String),                       // Vector similarity
@@ -1190,7 +1190,7 @@ pub struct SearchResult {
 ```
 
 ### 24.6 Exit Criteria
-- [ ] efflux-indexd runs and indexes files
+- [ ] indexd runs and indexes files
 - [ ] Embeddings generated for text files
 - [ ] Semantic search returns relevant results
 - [ ] Works with efflux.fs and overlay

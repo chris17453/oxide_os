@@ -1,0 +1,15 @@
+[package]
+name = "automount"
+version = "0.1.0"
+edition = "2021"
+authors = ["EFFLUX Contributors"]
+description = "Automount daemon for EFFLUX OS"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+spin = "0.9"
+media = { path = "../media" }
+
+[features]
+default = []
+std = []

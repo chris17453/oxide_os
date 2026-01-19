@@ -3,7 +3,7 @@
 #![no_std]
 #![no_main]
 
-use efflux_libc::*;
+use libc::*;
 
 const MAX_PATH: usize = 512;
 const MAX_DEPTH: usize = 32;

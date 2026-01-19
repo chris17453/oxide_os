@@ -1,9 +1,0 @@
-[package]
-name = "efflux-usb-hid"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-efflux-usb = { path = "../../../usb/efflux-usb" }
-efflux-input = { path = "../../../input/efflux-input" }
-spin = "0.9"

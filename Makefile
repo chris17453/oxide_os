@@ -4,7 +4,7 @@
 
 SHELL := /usr/bin/bash
 
-.PHONY: all build kernel bootloader userspace initramfs clean run test check fmt clippy
+.PHONY: all build kernel bootloader userspace initramfs clean run run-no-net run-headless run-headless-no-net test check fmt clippy
 
 # Configuration
 ARCH ?= x86_64
@@ -13,16 +13,16 @@ QEMU_TIMEOUT ?= 15
 
 # Paths
 TARGET_DIR := target
-KERNEL_TARGET := $(TARGET_DIR)/$(ARCH)-unknown-none/$(PROFILE)/efflux-kernel
-BOOTLOADER_TARGET := $(TARGET_DIR)/$(ARCH)-unknown-uefi/$(PROFILE)/efflux-boot-uefi.efi
+KERNEL_TARGET := $(TARGET_DIR)/$(ARCH)-unknown-none/$(PROFILE)/kernel
+BOOTLOADER_TARGET := $(TARGET_DIR)/$(ARCH)-unknown-uefi/$(PROFILE)/boot-uefi.efi
 BOOT_DIR := $(TARGET_DIR)/boot
 INITRAMFS := $(TARGET_DIR)/initramfs.cpio
 OVMF := $(shell for p in /usr/share/OVMF/OVMF_CODE.fd /usr/share/edk2-ovmf/x64/OVMF_CODE.fd /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/qemu/OVMF.fd; do [ -f "$$p" ] && echo "$$p" && break; done)
 
 # Userspace configuration
-USERSPACE_TARGET := userspace/x86_64-efflux-user.json
-USERSPACE_OUT := $(TARGET_DIR)/x86_64-efflux-user/$(PROFILE)
-USERSPACE_OUT_RELEASE := $(TARGET_DIR)/x86_64-efflux-user/release
+USERSPACE_TARGET := userspace/x86_64-user.json
+USERSPACE_OUT := $(TARGET_DIR)/x86_64-user/$(PROFILE)
+USERSPACE_OUT_RELEASE := $(TARGET_DIR)/x86_64-user/release
 CARGO_USER_FLAGS := -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem
 
 # Userspace packages to build
@@ -41,18 +41,18 @@ build: kernel bootloader
 # Build with userspace
 build-full: kernel bootloader userspace initramfs
 
-# Build kernel
-kernel:
-	cargo build --package efflux-kernel
+# Build kernel (depends on initramfs for include_bytes!)
+kernel: initramfs
+	cargo build --package kernel
 
 # Build bootloader
 bootloader:
-	cargo build --package efflux-boot-uefi --target $(ARCH)-unknown-uefi
+	cargo build --package boot-uefi --target $(ARCH)-unknown-uefi
 
 # Build release
 release:
-	cargo build --package efflux-kernel --release
-	cargo build --package efflux-boot-uefi --target $(ARCH)-unknown-uefi --release
+	cargo build --package kernel --release
+	cargo build --package boot-uefi --target $(ARCH)-unknown-uefi --release
 
 # Build all userspace programs
 userspace:
@@ -175,7 +175,7 @@ boot-dir: kernel bootloader
 	@echo "  - Bootloader: EFI/BOOT/BOOTX64.EFI"
 	@echo "  - Kernel: EFI/EFFLUX/kernel.elf"
 
-# Run in QEMU (interactive)
+# Run in QEMU (interactive, with networking)
 run: boot-dir
 	@if [ -z "$(OVMF)" ]; then \
 		echo "Error: OVMF firmware not found"; \
@@ -183,60 +183,68 @@ run: boot-dir
 		echo "         sudo dnf install edk2-ovmf (Fedora)"; \
 		exit 1; \
 	fi
-	qemu-system-x86_64 \
+	@mkdir -p /tmp/qemu-efflux
+	TMPDIR=/tmp/qemu-efflux qemu-system-x86_64 \
 		-machine q35 \
 		-m 256M \
 		-bios "$(OVMF)" \
-		-drive format=raw,file=fat:rw:$(BOOT_DIR) \
+		-drive format=raw,file=fat:rw:$(BOOT_DIR),if=none,id=disk \
+		-device ide-hd,drive=disk \
+		-device virtio-net-pci,netdev=net0 \
+		-netdev user,id=net0,hostfwd=tcp::2222-:22 \
 		-serial stdio \
 		-no-reboot
 
-# Run in QEMU with networking (interactive)
-run-net: boot-dir
+# Run in QEMU without networking (for minimal testing)
+run-no-net: boot-dir
 	@if [ -z "$(OVMF)" ]; then \
 		echo "Error: OVMF firmware not found"; \
 		echo "Install: sudo apt install ovmf (Debian/Ubuntu)"; \
 		echo "         sudo dnf install edk2-ovmf (Fedora)"; \
 		exit 1; \
 	fi
-	qemu-system-x86_64 \
+	@mkdir -p /tmp/qemu-efflux
+	TMPDIR=/tmp/qemu-efflux qemu-system-x86_64 \
 		-machine q35 \
 		-m 256M \
 		-bios "$(OVMF)" \
-		-drive format=raw,file=fat:rw:$(BOOT_DIR) \
-		-device virtio-net-pci,netdev=net0 \
-		-netdev user,id=net0,hostfwd=tcp::2222-:22 \
+		-drive format=raw,file=fat:rw:$(BOOT_DIR),if=none,id=disk \
+		-device ide-hd,drive=disk \
 		-serial stdio \
 		-no-reboot
 
-# Run headless (for testing)
+# Run headless (for testing, with networking)
 run-headless: boot-dir
 	@if [ -z "$(OVMF)" ]; then \
 		echo "Error: OVMF firmware not found"; \
 		exit 1; \
 	fi
-	qemu-system-x86_64 \
+	@mkdir -p /tmp/qemu-efflux
+	TMPDIR=/tmp/qemu-efflux qemu-system-x86_64 \
 		-machine q35 \
 		-m 256M \
 		-bios "$(OVMF)" \
-		-drive format=raw,file=fat:rw:$(BOOT_DIR) \
+		-drive format=raw,file=fat:rw:$(BOOT_DIR),if=none,id=disk \
+		-device ide-hd,drive=disk \
+		-device virtio-net-pci,netdev=net0 \
+		-netdev user,id=net0,hostfwd=tcp::2222-:22 \
 		-serial stdio \
 		-display none \
 		-no-reboot
 
-# Run headless with networking
-run-headless-net: boot-dir
+# Run headless without networking
+run-headless-no-net: boot-dir
 	@if [ -z "$(OVMF)" ]; then \
 		echo "Error: OVMF firmware not found"; \
 		exit 1; \
 	fi
-	qemu-system-x86_64 \
+	@mkdir -p /tmp/qemu-efflux
+	TMPDIR=/tmp/qemu-efflux qemu-system-x86_64 \
 		-machine q35 \
 		-m 256M \
 		-bios "$(OVMF)" \
-		-drive format=raw,file=fat:rw:$(BOOT_DIR) \
-		-device virtio-net-pci,netdev=net0 \
-		-netdev user,id=net0,hostfwd=tcp::2222-:22 \
+		-drive format=raw,file=fat:rw:$(BOOT_DIR),if=none,id=disk \
+		-device ide-hd,drive=disk \
 		-serial stdio \
 		-display none \
 		-no-reboot
@@ -248,11 +256,13 @@ test: boot-dir
 		echo "Error: OVMF firmware not found"; \
 		exit 1; \
 	fi
-	@timeout $(QEMU_TIMEOUT) qemu-system-x86_64 \
+	@mkdir -p /tmp/qemu-efflux
+	@TMPDIR=/tmp/qemu-efflux timeout $(QEMU_TIMEOUT) qemu-system-x86_64 \
 		-machine q35 \
 		-m 256M \
 		-bios "$(OVMF)" \
-		-drive format=raw,file=fat:rw:$(BOOT_DIR) \
+		-drive format=raw,file=fat:rw:$(BOOT_DIR),if=none,id=disk \
+		-device ide-hd,drive=disk \
 		-serial file:$(TARGET_DIR)/serial.log \
 		-display none \
 		-no-reboot \
@@ -307,10 +317,10 @@ help:
 	@echo "  initramfs-debug - Create initramfs (debug)"
 	@echo "  list-bins      - List all userspace binaries"
 	@echo "  release        - Build kernel/bootloader in release mode"
-	@echo "  run            - Run in QEMU (interactive)"
-	@echo "  run-net        - Run in QEMU with networking"
-	@echo "  run-headless   - Run in QEMU without display"
-	@echo "  run-headless-net - Run headless with networking"
+	@echo "  run            - Run in QEMU (interactive, with networking)"
+	@echo "  run-no-net     - Run in QEMU without networking"
+	@echo "  run-headless   - Run in QEMU without display (with networking)"
+	@echo "  run-headless-no-net - Run headless without networking"
 	@echo "  test           - Automated boot test"
 	@echo "  check          - Quick syntax/type check"
 	@echo "  fmt            - Format code"
@@ -326,4 +336,4 @@ help:
 	@echo "Examples:"
 	@echo "  make build-full          - Build everything"
 	@echo "  make userspace-pkg PKG=coreutils - Build only coreutils"
-	@echo "  make initramfs && make run - Build and run with userspace"
+	@echo "  make run                 - Build and run (includes initramfs + net)"

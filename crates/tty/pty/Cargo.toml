@@ -1,0 +1,12 @@
+[package]
+name = "pty"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pseudo-terminal (PTY) support for EFFLUX OS"
+
+[dependencies]
+vfs = { workspace = true }
+tty = { workspace = true }
+os_core = { workspace = true }
+spin = { workspace = true }

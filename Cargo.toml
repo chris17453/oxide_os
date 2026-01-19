@@ -3,85 +3,85 @@ resolver = "2"
 
 members = [
     "kernel",
-    "crates/core/efflux-core",
-    "crates/core/efflux-log",
-    "crates/arch/efflux-arch-traits",
-    "crates/arch/efflux-arch-x86_64",
-    "crates/mm/efflux-mm-traits",
-    "crates/mm/efflux-mm-frame",
-    "crates/mm/efflux-mm-paging",
-    "crates/mm/efflux-mm-heap",
-    "crates/mm/efflux-mm-cow",
-    "crates/sched/efflux-sched-traits",
-    "crates/sched/efflux-sched",
-    "crates/proc/efflux-proc-traits",
-    "crates/proc/efflux-proc",
-    "crates/exec/efflux-elf",
-    "crates/syscall/efflux-syscall",
-    "crates/boot/efflux-boot-proto",
-    "crates/drivers/efflux-driver-traits",
-    "crates/drivers/serial/efflux-driver-uart-8250",
-    "crates/drivers/block/efflux-virtio-blk",
-    "crates/drivers/block/efflux-nvme",
-    "crates/drivers/block/efflux-ahci",
-    "crates/block/efflux-block",
-    "crates/block/efflux-gpt",
-    "crates/vfs/efflux-vfs",
-    "crates/vfs/efflux-devfs",
-    "crates/vfs/efflux-tmpfs",
-    "crates/vfs/efflux-initramfs",
-    "crates/vfs/efflux-procfs",
-    "crates/fs/efflux-effluxfs",
-    "crates/fs/efflux-fat32",
-    "crates/net/efflux-net",
-    "crates/net/efflux-tcpip",
-    "crates/net/efflux-dhcp",
-    "crates/net/efflux-dns",
-    "crates/drivers/net/efflux-virtio-net",
+    "crates/core/os_core",
+    "crates/core/os_log",
+    "crates/arch/arch-traits",
+    "crates/arch/arch-x86_64",
+    "crates/mm/mm-traits",
+    "crates/mm/mm-frame",
+    "crates/mm/mm-paging",
+    "crates/mm/mm-heap",
+    "crates/mm/mm-cow",
+    "crates/sched/sched-traits",
+    "crates/sched/sched",
+    "crates/proc/proc-traits",
+    "crates/proc/proc",
+    "crates/exec/elf",
+    "crates/syscall/syscall",
+    "crates/boot/boot-proto",
+    "crates/drivers/driver-traits",
+    "crates/drivers/serial/driver-uart-8250",
+    "crates/drivers/block/virtio-blk",
+    "crates/drivers/block/nvme",
+    "crates/drivers/block/ahci",
+    "crates/block/block",
+    "crates/block/gpt",
+    "crates/vfs/vfs",
+    "crates/vfs/devfs",
+    "crates/vfs/tmpfs",
+    "crates/vfs/initramfs",
+    "crates/vfs/procfs",
+    "crates/fs/effluxfs",
+    "crates/fs/fat32",
+    "crates/net/net",
+    "crates/net/tcpip",
+    "crates/net/dhcp",
+    "crates/net/dns",
+    "crates/drivers/net/virtio-net",
     "crates/drivers/pci",
-    "crates/input/efflux-input",
-    "crates/drivers/input/efflux-ps2",
-    "crates/drivers/input/efflux-virtio-input",
-    "crates/graphics/efflux-fb",
-    "crates/drivers/gpu/efflux-virtio-gpu",
-    "crates/audio/efflux-audio",
-    "crates/drivers/audio/efflux-virtio-snd",
-    "crates/usb/efflux-usb",
-    "crates/drivers/usb/efflux-xhci",
-    "crates/drivers/usb/efflux-usb-msc",
-    "crates/drivers/usb/efflux-usb-hid",
-    "crates/container/efflux-namespace",
-    "crates/container/efflux-cgroup",
-    "crates/container/efflux-seccomp",
-    "crates/hypervisor/efflux-vmm",
-    "crates/hypervisor/efflux-vmx",
-    "crates/hypervisor/efflux-virtio-emu",
-    "crates/libc-support/efflux-pthread",
-    "crates/libc-support/efflux-mmap",
-    "crates/libc-support/efflux-dl",
-    "crates/ai/efflux-hnsw",
-    "crates/ai/efflux-embed",
-    "crates/ai/efflux-indexd",
-    "crates/security/efflux-crypto",
-    "crates/security/efflux-trust",
-    "crates/security/efflux-quarantine",
-    "crates/security/efflux-x509",
-    "crates/async/efflux-epoll",
-    "crates/async/efflux-iouring",
-    "crates/media/efflux-media",
-    "crates/media/efflux-automount",
-    "crates/net/efflux-smb",
-    "crates/net/efflux-nfs",
-    "crates/compat/efflux-v86",
-    "crates/compat/efflux-python-sandbox",
-    "crates/compat/efflux-binfmt",
-    "crates/compat/efflux-syscall-compat",
-    "crates/tty/efflux-tty",
-    "crates/tty/efflux-pty",
-    "crates/signal/efflux-signal",
-    "crates/smp/efflux-smp",
-    "crates/module/efflux-module",
-    "userspace/efflux-libc",
+    "crates/input/input",
+    "crates/drivers/input/ps2",
+    "crates/drivers/input/virtio-input",
+    "crates/graphics/fb",
+    "crates/drivers/gpu/virtio-gpu",
+    "crates/audio/audio",
+    "crates/drivers/audio/virtio-snd",
+    "crates/usb/usb",
+    "crates/drivers/usb/xhci",
+    "crates/drivers/usb/usb-msc",
+    "crates/drivers/usb/usb-hid",
+    "crates/container/namespace",
+    "crates/container/cgroup",
+    "crates/container/seccomp",
+    "crates/hypervisor/vmm",
+    "crates/hypervisor/vmx",
+    "crates/hypervisor/virtio-emu",
+    "crates/libc-support/pthread",
+    "crates/libc-support/mmap",
+    "crates/libc-support/dl",
+    "crates/ai/hnsw",
+    "crates/ai/embed",
+    "crates/ai/indexd",
+    "crates/security/crypto",
+    "crates/security/trust",
+    "crates/security/quarantine",
+    "crates/security/x509",
+    "crates/async/epoll",
+    "crates/async/iouring",
+    "crates/media/media",
+    "crates/media/automount",
+    "crates/net/smb",
+    "crates/net/nfs",
+    "crates/compat/v86",
+    "crates/compat/python-sandbox",
+    "crates/compat/binfmt",
+    "crates/compat/syscall-compat",
+    "crates/tty/tty",
+    "crates/tty/pty",
+    "crates/signal/signal",
+    "crates/smp/smp",
+    "crates/module/module",
+    "userspace/libc",
     "userspace/init",
     "userspace/shell",
     "userspace/login",
@@ -89,7 +89,7 @@ members = [
     "userspace/coreutils",
     "userspace/modutils",
     "userspace/search",
-    "bootloader/efflux-boot-uefi",
+    "bootloader/boot-uefi",
 ]
 
 [workspace.package]
@@ -104,83 +104,83 @@ spin = "0.9"
 log = { version = "0.4", default-features = false }
 
 # Internal crates
-efflux-core = { path = "crates/core/efflux-core" }
-efflux-log = { path = "crates/core/efflux-log" }
-efflux-arch-traits = { path = "crates/arch/efflux-arch-traits" }
-efflux-arch-x86_64 = { path = "crates/arch/efflux-arch-x86_64" }
-efflux-mm-traits = { path = "crates/mm/efflux-mm-traits" }
-efflux-mm-frame = { path = "crates/mm/efflux-mm-frame" }
-efflux-mm-paging = { path = "crates/mm/efflux-mm-paging" }
-efflux-mm-heap = { path = "crates/mm/efflux-mm-heap" }
-efflux-mm-cow = { path = "crates/mm/efflux-mm-cow" }
-efflux-sched-traits = { path = "crates/sched/efflux-sched-traits" }
-efflux-sched = { path = "crates/sched/efflux-sched" }
-efflux-proc-traits = { path = "crates/proc/efflux-proc-traits" }
-efflux-proc = { path = "crates/proc/efflux-proc" }
-efflux-elf = { path = "crates/exec/efflux-elf" }
-efflux-syscall = { path = "crates/syscall/efflux-syscall" }
-efflux-boot-proto = { path = "crates/boot/efflux-boot-proto" }
-efflux-driver-traits = { path = "crates/drivers/efflux-driver-traits" }
-efflux-vfs = { path = "crates/vfs/efflux-vfs" }
-efflux-devfs = { path = "crates/vfs/efflux-devfs" }
-efflux-tmpfs = { path = "crates/vfs/efflux-tmpfs" }
-efflux-initramfs = { path = "crates/vfs/efflux-initramfs" }
-efflux-procfs = { path = "crates/vfs/efflux-procfs" }
-efflux-tty = { path = "crates/tty/efflux-tty" }
-efflux-pty = { path = "crates/tty/efflux-pty" }
-efflux-signal = { path = "crates/signal/efflux-signal" }
-efflux-smp = { path = "crates/smp/efflux-smp" }
-efflux-module = { path = "crates/module/efflux-module" }
-efflux-block = { path = "crates/block/efflux-block" }
-efflux-gpt = { path = "crates/block/efflux-gpt" }
-efflux-virtio-blk = { path = "crates/drivers/block/efflux-virtio-blk" }
-efflux-nvme = { path = "crates/drivers/block/efflux-nvme" }
-efflux-ahci = { path = "crates/drivers/block/efflux-ahci" }
-efflux-effluxfs = { path = "crates/fs/efflux-effluxfs" }
-efflux-fat32 = { path = "crates/fs/efflux-fat32" }
-efflux-net = { path = "crates/net/efflux-net" }
-efflux-tcpip = { path = "crates/net/efflux-tcpip" }
-efflux-dhcp = { path = "crates/net/efflux-dhcp" }
-efflux-dns = { path = "crates/net/efflux-dns" }
-efflux-virtio-net = { path = "crates/drivers/net/efflux-virtio-net" }
+os_core = { path = "crates/core/os_core" }
+os_log = { path = "crates/core/os_log" }
+arch-traits = { path = "crates/arch/arch-traits" }
+arch-x86_64 = { path = "crates/arch/arch-x86_64" }
+mm-traits = { path = "crates/mm/mm-traits" }
+mm-frame = { path = "crates/mm/mm-frame" }
+mm-paging = { path = "crates/mm/mm-paging" }
+mm-heap = { path = "crates/mm/mm-heap" }
+mm-cow = { path = "crates/mm/mm-cow" }
+sched-traits = { path = "crates/sched/sched-traits" }
+sched = { path = "crates/sched/sched" }
+proc-traits = { path = "crates/proc/proc-traits" }
+proc = { path = "crates/proc/proc" }
+elf = { path = "crates/exec/elf" }
+syscall = { path = "crates/syscall/syscall" }
+boot-proto = { path = "crates/boot/boot-proto" }
+driver-traits = { path = "crates/drivers/driver-traits" }
+vfs = { path = "crates/vfs/vfs" }
+devfs = { path = "crates/vfs/devfs" }
+tmpfs = { path = "crates/vfs/tmpfs" }
+initramfs = { path = "crates/vfs/initramfs" }
+procfs = { path = "crates/vfs/procfs" }
+tty = { path = "crates/tty/tty" }
+pty = { path = "crates/tty/pty" }
+signal = { path = "crates/signal/signal" }
+smp = { path = "crates/smp/smp" }
+module = { path = "crates/module/module" }
+block = { path = "crates/block/block" }
+gpt = { path = "crates/block/gpt" }
+virtio-blk = { path = "crates/drivers/block/virtio-blk" }
+nvme = { path = "crates/drivers/block/nvme" }
+ahci = { path = "crates/drivers/block/ahci" }
+effluxfs = { path = "crates/fs/effluxfs" }
+fat32 = { path = "crates/fs/fat32" }
+net = { path = "crates/net/net" }
+tcpip = { path = "crates/net/tcpip" }
+dhcp = { path = "crates/net/dhcp" }
+dns = { path = "crates/net/dns" }
+virtio-net = { path = "crates/drivers/net/virtio-net" }
 pci = { path = "crates/drivers/pci" }
-efflux-input = { path = "crates/input/efflux-input" }
-efflux-ps2 = { path = "crates/drivers/input/efflux-ps2" }
-efflux-virtio-input = { path = "crates/drivers/input/efflux-virtio-input" }
-efflux-fb = { path = "crates/graphics/efflux-fb" }
-efflux-virtio-gpu = { path = "crates/drivers/gpu/efflux-virtio-gpu" }
-efflux-audio = { path = "crates/audio/efflux-audio" }
-efflux-virtio-snd = { path = "crates/drivers/audio/efflux-virtio-snd" }
-efflux-usb = { path = "crates/usb/efflux-usb" }
-efflux-xhci = { path = "crates/drivers/usb/efflux-xhci" }
-efflux-usb-msc = { path = "crates/drivers/usb/efflux-usb-msc" }
-efflux-usb-hid = { path = "crates/drivers/usb/efflux-usb-hid" }
-efflux-namespace = { path = "crates/container/efflux-namespace" }
-efflux-cgroup = { path = "crates/container/efflux-cgroup" }
-efflux-seccomp = { path = "crates/container/efflux-seccomp" }
-efflux-vmm = { path = "crates/hypervisor/efflux-vmm" }
-efflux-vmx = { path = "crates/hypervisor/efflux-vmx" }
-efflux-virtio-emu = { path = "crates/hypervisor/efflux-virtio-emu" }
-efflux-pthread = { path = "crates/libc-support/efflux-pthread" }
-efflux-mmap = { path = "crates/libc-support/efflux-mmap" }
-efflux-dl = { path = "crates/libc-support/efflux-dl" }
-efflux-hnsw = { path = "crates/ai/efflux-hnsw" }
-efflux-embed = { path = "crates/ai/efflux-embed" }
-efflux-indexd = { path = "crates/ai/efflux-indexd" }
-efflux-crypto = { path = "crates/security/efflux-crypto" }
-efflux-trust = { path = "crates/security/efflux-trust" }
-efflux-quarantine = { path = "crates/security/efflux-quarantine" }
-efflux-x509 = { path = "crates/security/efflux-x509" }
-efflux-epoll = { path = "crates/async/efflux-epoll" }
-efflux-iouring = { path = "crates/async/efflux-iouring" }
-efflux-media = { path = "crates/media/efflux-media" }
-efflux-automount = { path = "crates/media/efflux-automount" }
-efflux-smb = { path = "crates/net/efflux-smb" }
-efflux-nfs = { path = "crates/net/efflux-nfs" }
-efflux-v86 = { path = "crates/compat/efflux-v86" }
-efflux-python-sandbox = { path = "crates/compat/efflux-python-sandbox" }
-efflux-binfmt = { path = "crates/compat/efflux-binfmt" }
-efflux-syscall-compat = { path = "crates/compat/efflux-syscall-compat" }
+input = { path = "crates/input/input" }
+ps2 = { path = "crates/drivers/input/ps2" }
+virtio-input = { path = "crates/drivers/input/virtio-input" }
+fb = { path = "crates/graphics/fb" }
+virtio-gpu = { path = "crates/drivers/gpu/virtio-gpu" }
+audio = { path = "crates/audio/audio" }
+virtio-snd = { path = "crates/drivers/audio/virtio-snd" }
+usb = { path = "crates/usb/usb" }
+xhci = { path = "crates/drivers/usb/xhci" }
+usb-msc = { path = "crates/drivers/usb/usb-msc" }
+usb-hid = { path = "crates/drivers/usb/usb-hid" }
+namespace = { path = "crates/container/namespace" }
+cgroup = { path = "crates/container/cgroup" }
+seccomp = { path = "crates/container/seccomp" }
+vmm = { path = "crates/hypervisor/vmm" }
+vmx = { path = "crates/hypervisor/vmx" }
+virtio-emu = { path = "crates/hypervisor/virtio-emu" }
+pthread = { path = "crates/libc-support/pthread" }
+mmap = { path = "crates/libc-support/mmap" }
+dl = { path = "crates/libc-support/dl" }
+hnsw = { path = "crates/ai/hnsw" }
+embed = { path = "crates/ai/embed" }
+indexd = { path = "crates/ai/indexd" }
+crypto = { path = "crates/security/crypto" }
+trust = { path = "crates/security/trust" }
+quarantine = { path = "crates/security/quarantine" }
+x509 = { path = "crates/security/x509" }
+epoll = { path = "crates/async/epoll" }
+iouring = { path = "crates/async/iouring" }
+media = { path = "crates/media/media" }
+automount = { path = "crates/media/automount" }
+smb = { path = "crates/net/smb" }
+nfs = { path = "crates/net/nfs" }
+v86 = { path = "crates/compat/v86" }
+python-sandbox = { path = "crates/compat/python-sandbox" }
+binfmt = { path = "crates/compat/binfmt" }
+syscall-compat = { path = "crates/compat/syscall-compat" }
 
 [profile.dev]
 panic = "abort"

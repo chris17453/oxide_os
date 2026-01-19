@@ -5,7 +5,7 @@
 #![no_std]
 #![no_main]
 
-use efflux_libc::{println, print};
+use libc::{println, print};
 
 fn show_usage() {
     println("Usage: ip [OPTIONS] OBJECT { COMMAND | help }");

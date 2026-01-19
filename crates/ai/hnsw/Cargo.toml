@@ -1,0 +1,15 @@
+[package]
+name = "hnsw"
+version = "0.1.0"
+edition = "2021"
+authors = ["EFFLUX Contributors"]
+description = "Hierarchical Navigable Small World (HNSW) vector index for EFFLUX"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+spin = "0.9"
+rand = { version = "0.8", default-features = false, features = ["small_rng"] }
+
+[features]
+default = []
+std = []

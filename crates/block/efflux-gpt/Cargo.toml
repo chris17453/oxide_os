@@ -1,7 +1,0 @@
-[package]
-name = "efflux-gpt"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-efflux-block = { path = "../efflux-block" }

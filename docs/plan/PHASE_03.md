@@ -133,8 +133,8 @@ void _start() {
 **x86_64 Implementation Complete (2025-01-18):**
 
 Key implementation details:
-- UserAddressSpace in `efflux-proc` creates user page tables with kernel higher-half shared
-- ELF loader in `efflux-elf` parses ELF64 and loads PT_LOAD segments
+- UserAddressSpace in `proc` creates user page tables with kernel higher-half shared
+- ELF loader in `elf` parses ELF64 and loads PT_LOAD segments
 - Ring 3 transition via `iretq` with proper segment selectors (USER_CS=0x23, USER_DS=0x1B)
 - Syscall entry via `syscall` instruction using MSR configuration (STAR, LSTAR, SFMASK, EFER.SCE)
 - Kernel stack for syscalls stored in KERNEL_GS_BASE, accessed via swapgs

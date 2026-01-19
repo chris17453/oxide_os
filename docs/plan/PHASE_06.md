@@ -134,14 +134,14 @@ Implement terminal subsystem with line discipline and pseudo-terminals.
 ## Key Files
 
 ```
-crates/tty/efflux-tty/src/
+crates/tty/tty/src/
 ├── lib.rs
 ├── tty.rs             # TTY device
 ├── ldisc.rs           # Line discipline
 ├── termios.rs         # termios structure
 └── winsize.rs         # Window size
 
-crates/tty/efflux-pty/src/
+crates/tty/pty/src/
 ├── lib.rs
 ├── master.rs          # PTY master
 ├── slave.rs           # PTY slave
@@ -227,7 +227,7 @@ Phase 6 TTY + PTY infrastructure complete for x86_64:
 
 **Crates Created:**
 
-- `efflux-tty`: TTY subsystem with line discipline
+- `tty`: TTY subsystem with line discipline
   - `termios.rs`: Full termios structure with input/output/control/local flags
   - `winsize.rs`: Terminal window size structure
   - `ldisc.rs`: Line discipline with canonical/raw mode support
@@ -238,7 +238,7 @@ Phase 6 TTY + PTY infrastructure complete for x86_64:
     - Integrates line discipline with hardware driver
     - ioctl support for termios and window size
 
-- `efflux-pty`: Pseudo-terminal support
+- `pty`: Pseudo-terminal support
   - PTY master/slave pairs
   - `/dev/ptmx` device for allocating new PTYs
   - `/dev/pts/` directory for slave devices

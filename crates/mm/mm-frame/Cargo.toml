@@ -1,0 +1,10 @@
+[package]
+name = "mm-frame"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+os_core = { workspace = true }
+mm-traits = { workspace = true }
+spin = { workspace = true }

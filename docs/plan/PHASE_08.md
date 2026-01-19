@@ -16,7 +16,7 @@ Build custom C library and essential userland programs for a bootable system.
 
 | Item | Status |
 |------|--------|
-| Custom libc (efflux-libc) | [x] |
+| Custom libc (libc) | [x] |
 | init (PID 1) | [x] |
 | login | [x] |
 | shell (esh) | [x] |
@@ -42,7 +42,7 @@ Build custom C library and essential userland programs for a bootable system.
 
 ## Implementation
 
-### efflux-libc
+### libc
 
 Written in Rust (no_std), provides:
 
@@ -114,7 +114,7 @@ Note: Most utilities need argument passing from kernel to be fully functional.
 
 ```
 userspace/
-├── efflux-libc/
+├── libc/
 │   └── src/
 │       ├── lib.rs       # Entry point, panic handler
 │       ├── syscall.rs   # Raw syscall interface

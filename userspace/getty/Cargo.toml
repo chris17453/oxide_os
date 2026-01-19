@@ -6,4 +6,4 @@ license.workspace = true
 description = "Getty terminal manager for EFFLUX OS"
 
 [dependencies]
-efflux-libc = { path = "../efflux-libc" }
+libc = { path = "../libc" }

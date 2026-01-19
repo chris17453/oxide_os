@@ -238,7 +238,7 @@ pub trait VirtioDevice: Send + Sync {
 ## Key Files
 
 ```
-crates/hypervisor/efflux-vmm/src/
+crates/hypervisor/vmm/src/
 ├── lib.rs
 ├── vm.rs              # VM management
 ├── vcpu.rs            # VCPU handling
@@ -246,13 +246,13 @@ crates/hypervisor/efflux-vmm/src/
 ├── exit.rs            # VM exit handling
 └── device.rs          # Device emulation
 
-crates/hypervisor/efflux-vmx/src/
+crates/hypervisor/vmx/src/
 ├── lib.rs
 ├── vmcs.rs            # VMCS management
 ├── ept.rs             # EPT page tables
 └── vmx.rs             # VMX instructions
 
-crates/hypervisor/efflux-virtio-emu/src/
+crates/hypervisor/virtio-emu/src/
 ├── lib.rs
 ├── console.rs         # virtio-console
 ├── block.rs           # virtio-blk
@@ -294,7 +294,7 @@ crates/hypervisor/efflux-virtio-emu/src/
 ```c
 int main() {
     // Create VM
-    int vm_fd = open("/dev/efflux-vm", O_RDWR);
+    int vm_fd = open("/dev/vm", O_RDWR);
     ioctl(vm_fd, VM_CREATE, NULL);
 
     // Set up guest memory (1MB at 0x0)

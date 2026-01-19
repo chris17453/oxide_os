@@ -3,7 +3,7 @@
 #![no_std]
 #![no_main]
 
-use efflux_libc::*;
+use libc::*;
 
 const MAX_LINES: usize = 1000;
 const LINE_SIZE: usize = 1024;

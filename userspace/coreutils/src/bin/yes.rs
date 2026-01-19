@@ -3,7 +3,7 @@
 #![no_std]
 #![no_main]
 
-use efflux_libc::*;
+use libc::*;
 
 #[unsafe(no_mangle)]
 fn main(argc: i32, argv: *const *const u8) -> i32 {
