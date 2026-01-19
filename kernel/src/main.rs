@@ -813,18 +813,27 @@ fn user_exit(status: i32) -> ! {
                 // r13: u64 (offset 136)
                 // r14: u64 (offset 144)
                 // r15: u64 (offset 152)
-                // Store user RSP in a static so we can access it after restoring r15
+                // Store values in statics so we can access them after restoring all registers
                 static mut SYSRET_USER_RSP: u64 = 0;
+                static mut SYSRET_USER_RIP: u64 = 0;
+                static mut SYSRET_USER_RFLAGS: u64 = 0;
+                static mut SYSRET_RESULT: i64 = 0;
+                static mut SYSRET_R14: u64 = 0;
+                static mut SYSRET_R15: u64 = 0;
+
                 unsafe {
                     use core::ptr::addr_of_mut;
                     *addr_of_mut!(SYSRET_USER_RSP) = ctx.rsp;
+                    *addr_of_mut!(SYSRET_USER_RIP) = ctx.rip;
+                    *addr_of_mut!(SYSRET_USER_RFLAGS) = ctx.rflags;
+                    *addr_of_mut!(SYSRET_RESULT) = wait_result;
+                    *addr_of_mut!(SYSRET_R14) = ctx.r14;
+                    *addr_of_mut!(SYSRET_R15) = ctx.r15;
                 }
-                let user_rsp_ptr = unsafe { core::ptr::addr_of!(SYSRET_USER_RSP) } as u64;
 
                 core::arch::asm!(
-                    // r15 = context pointer, r14 = result pointer
+                    // r15 = context pointer (only used for loading registers, not for sysret values)
                     "mov r15, {ctx}",
-                    "mov r14, {result}",
                     // Restore callee-saved registers
                     "mov rbx, [r15 + 48]",    // rbx at offset 48
                     "mov rbp, [r15 + 88]",    // rbp at offset 88
@@ -837,28 +846,22 @@ fn user_exit(status: i32) -> ! {
                     "mov r8, [r15 + 96]",     // r8 at offset 96
                     "mov r9, [r15 + 104]",    // r9 at offset 104
                     "mov r10, [r15 + 112]",   // r10 at offset 112
-                    // Load result, rip, and rflags for sysretq
-                    "mov rax, [r14]",         // result value
-                    "mov rcx, [r15 + 16]",    // rip at offset 16
-                    // Save values we need on kernel stack before restoring r14/r15
-                    "push rax",               // save result
-                    "push rcx",               // save rip
-                    "mov rax, [r15 + 32]",    // rflags at offset 32
-                    "push rax",               // save rflags
-                    // Now restore r14 and r15
-                    "mov rax, [r15 + 144]",   // load r14 value
-                    "mov r14, rax",
-                    "mov r15, [r15 + 152]",   // load r15 value (uses r15 last)
-                    // Restore rflags, rip, result from stack
-                    "pop r11",                // rflags -> r11 (for sysretq)
-                    "pop rcx",                // rip -> rcx (for sysretq)
-                    "pop rax",                // result -> rax
-                    // Load user RSP from the static and sysretq
-                    "mov rsp, [{user_rsp}]",
+                    // Now load sysret values and r14/r15 from statics (using absolute addresses)
+                    "mov rax, [{result}]",    // result value
+                    "mov rcx, [{rip}]",       // user rip
+                    "mov r11, [{rflags}]",    // user rflags
+                    "mov r14, [{r14_val}]",   // restore r14
+                    "mov r15, [{r15_val}]",   // restore r15
+                    // Load user RSP last and sysretq
+                    "mov rsp, [{rsp_val}]",
                     "sysretq",
                     ctx = in(reg) ctx_ptr,
-                    result = in(reg) result_ptr,
-                    user_rsp = in(reg) user_rsp_ptr,
+                    result = sym SYSRET_RESULT,
+                    rip = sym SYSRET_USER_RIP,
+                    rflags = sym SYSRET_USER_RFLAGS,
+                    r14_val = sym SYSRET_R14,
+                    r15_val = sym SYSRET_R15,
+                    rsp_val = sym SYSRET_USER_RSP,
                     options(noreturn)
                 );
             }
