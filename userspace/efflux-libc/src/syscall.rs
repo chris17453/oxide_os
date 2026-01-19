@@ -37,7 +37,10 @@ pub mod nr {
     pub const CHDIR: u64 = 35;
     pub const GETCWD: u64 = 36;
     pub const PIPE: u64 = 37;
+    pub const LINK: u64 = 38;
+    pub const SYMLINK: u64 = 39;
     pub const IOCTL: u64 = 40;
+    pub const READLINK: u64 = 41;
     pub const KILL: u64 = 50;
     pub const SIGACTION: u64 = 51;
     pub const SIGPROCMASK: u64 = 52;
@@ -50,13 +53,28 @@ pub mod nr {
     pub const CLOCK_GETTIME: u64 = 61;
     pub const CLOCK_GETRES: u64 = 62;
     pub const NANOSLEEP: u64 = 63;
-    // Poll/select syscalls
-    pub const POLL: u64 = 70;
-    pub const PPOLL: u64 = 71;
-    pub const SELECT: u64 = 72;
-    pub const PSELECT6: u64 = 73;
+    // Socket syscalls (must match kernel)
+    pub const SOCKET: u64 = 70;
+    pub const BIND: u64 = 71;
+    pub const LISTEN: u64 = 72;
+    pub const ACCEPT: u64 = 73;
+    pub const CONNECT: u64 = 74;
+    pub const SEND: u64 = 75;
+    pub const RECV: u64 = 76;
+    pub const SENDTO: u64 = 77;
+    pub const RECVFROM: u64 = 78;
+    pub const SHUTDOWN: u64 = 79;
+    pub const GETSOCKNAME: u64 = 80;
+    pub const GETPEERNAME: u64 = 81;
+    pub const SETSOCKOPT: u64 = 82;
+    pub const GETSOCKOPT: u64 = 83;
     // Directory syscalls
-    pub const GETDENTS64: u64 = 80;
+    pub const GETDENTS64: u64 = 84;
+    // Poll/select syscalls
+    pub const POLL: u64 = 90;
+    pub const PPOLL: u64 = 91;
+    pub const SELECT: u64 = 92;
+    pub const PSELECT6: u64 = 93;
     // User/group syscalls
     pub const GETUID: u64 = 100;
     pub const GETEUID: u64 = 101;
@@ -191,6 +209,37 @@ pub fn sys_rmdir(path: &str) -> i32 {
 /// sys_unlink - Remove file
 pub fn sys_unlink(path: &str) -> i32 {
     syscall2(nr::UNLINK, path.as_ptr() as usize, path.len()) as i32
+}
+
+/// sys_rename - Rename/move file
+pub fn sys_rename(old: &str, new: &str) -> i32 {
+    syscall4(nr::RENAME, old.as_ptr() as usize, old.len(), new.as_ptr() as usize, new.len()) as i32
+}
+
+/// sys_link - Create hard link
+pub fn sys_link(target: &str, link_name: &str) -> i32 {
+    syscall4(nr::LINK, target.as_ptr() as usize, target.len(), link_name.as_ptr() as usize, link_name.len()) as i32
+}
+
+/// sys_symlink - Create symbolic link
+pub fn sys_symlink(target: &str, link_name: &str) -> i32 {
+    syscall4(nr::SYMLINK, target.as_ptr() as usize, target.len(), link_name.as_ptr() as usize, link_name.len()) as i32
+}
+
+/// sys_readlink - Read value of symbolic link
+pub fn sys_readlink(path: &str, buf: &mut [u8]) -> i32 {
+    syscall4(nr::READLINK, path.as_ptr() as usize, path.len(), buf.as_mut_ptr() as usize, buf.len()) as i32
+}
+
+/// sys_nanosleep - High resolution sleep
+pub fn sys_nanosleep(seconds: u64, nanoseconds: u64) -> i32 {
+    // Pack seconds and nanoseconds
+    syscall2(nr::NANOSLEEP, seconds as usize, nanoseconds as usize) as i32
+}
+
+/// sys_gettimeofday - Get current time
+pub fn sys_gettimeofday(tv_sec: &mut i64, tv_usec: &mut i64) -> i32 {
+    syscall2(nr::GETTIMEOFDAY, tv_sec as *mut i64 as usize, tv_usec as *mut i64 as usize) as i32
 }
 
 /// sys_getdents - Read directory entries

@@ -29,6 +29,8 @@ pub mod math;
 pub mod poll;
 pub mod termios;
 pub mod pwd;
+pub mod socket;
+pub mod dns;
 
 pub use errno::*;
 pub use fcntl::*;
@@ -42,7 +44,7 @@ pub use unistd::{write, read, open, open2, close, fork, exec, wait, waitpid, get
 pub use unistd::{pipe, chdir, getcwd, lseek, setsid, setpgid, getpgid};
 pub use unistd::{WNOHANG, WUNTRACED, WCONTINUED, wifexited, wexitstatus, wifsignaled, wtermsig, wifstopped, wstopsig};
 pub use unistd::{SEEK_SET, SEEK_CUR, SEEK_END};
-pub use env::{setenv, unsetenv, getenv, init_env};
+pub use env::{setenv, unsetenv, getenv, init_env, env_iter};
 
 /// Global errno variable
 static mut ERRNO: i32 = 0;

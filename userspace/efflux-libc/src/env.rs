@@ -138,3 +138,26 @@ pub fn init_env() {
     setenv("TERM", "vt100");
     setenv("SHELL", "/bin/esh");
 }
+
+/// Iterate over all environment variables
+///
+/// Calls the callback with (name, value) for each set variable.
+/// Returns the number of variables iterated.
+pub fn env_iter<F>(mut callback: F) -> usize
+where
+    F: FnMut(&[u8], &[u8]),
+{
+    let mut count = 0;
+    unsafe {
+        let env_ptr = addr_of_mut!(ENV);
+        let env = &*env_ptr;
+
+        for var in env.iter() {
+            if var.used {
+                callback(&var.name, &var.value);
+                count += 1;
+            }
+        }
+    }
+    count
+}
