@@ -323,7 +323,7 @@ fn sys_exit(status: i32) -> i64 {
 /// sys_write - Write to a file descriptor
 ///
 /// # Arguments
-/// * `fd` - File descriptor (1 = stdout, 2 = stderr)
+/// * `fd` - File descriptor
 /// * `buf` - User buffer address
 /// * `count` - Number of bytes to write
 ///
@@ -332,11 +332,6 @@ fn sys_exit(status: i32) -> i64 {
 fn sys_write(fd: i32, buf: u64, count: usize) -> i64 {
     use core::ptr::addr_of;
 
-    // Only support stdout (1) and stderr (2) for now
-    if fd != 1 && fd != 2 {
-        return errno::EBADF;
-    }
-
     // Validate count
     if count == 0 {
         return 0;
@@ -353,29 +348,32 @@ fn sys_write(fd: i32, buf: u64, count: usize) -> i64 {
         return errno::EFAULT;
     }
 
-    // Get the buffer slice
-    // NOTE: In a real implementation, we'd need to verify the pages are mapped
-    // and copy to a kernel buffer. For simplicity, we directly access it here.
-    let buffer = unsafe {
-        core::slice::from_raw_parts(buf as *const u8, count)
-    };
+    // Handle stdout (1) and stderr (2) via console callback
+    if fd == 1 || fd == 2 {
+        let buffer = unsafe {
+            core::slice::from_raw_parts(buf as *const u8, count)
+        };
 
-    unsafe {
-        let ctx = addr_of!(SYSCALL_CONTEXT);
-        if let Some(write_fn) = (*ctx).console_write {
-            write_fn(buffer);
-            return count as i64;
+        unsafe {
+            let ctx = addr_of!(SYSCALL_CONTEXT);
+            if let Some(write_fn) = (*ctx).console_write {
+                write_fn(buffer);
+                return count as i64;
+            }
         }
+
+        // No console configured
+        return errno::ENOSYS;
     }
 
-    // No console configured
-    errno::ENOSYS
+    // All other file descriptors go through VFS
+    vfs::sys_write_vfs(fd, buf, count)
 }
 
 /// sys_read - Read from a file descriptor
 ///
 /// # Arguments
-/// * `fd` - File descriptor (0 = stdin)
+/// * `fd` - File descriptor
 /// * `buf` - User buffer address
 /// * `count` - Maximum number of bytes to read
 ///
@@ -384,11 +382,6 @@ fn sys_write(fd: i32, buf: u64, count: usize) -> i64 {
 fn sys_read(fd: i32, buf: u64, count: usize) -> i64 {
     use core::ptr::addr_of;
 
-    // Only support stdin (0) for now
-    if fd != 0 {
-        return errno::EBADF;
-    }
-
     // Validate count
     if count == 0 {
         return 0;
@@ -405,21 +398,26 @@ fn sys_read(fd: i32, buf: u64, count: usize) -> i64 {
         return errno::EFAULT;
     }
 
-    // Get the buffer slice
-    let buffer = unsafe {
-        core::slice::from_raw_parts_mut(buf as *mut u8, count)
-    };
+    // Handle stdin (0) via console callback
+    if fd == 0 {
+        let buffer = unsafe {
+            core::slice::from_raw_parts_mut(buf as *mut u8, count)
+        };
 
-    unsafe {
-        let ctx = addr_of!(SYSCALL_CONTEXT);
-        if let Some(read_fn) = (*ctx).console_read {
-            let bytes_read = read_fn(buffer);
-            return bytes_read as i64;
+        unsafe {
+            let ctx = addr_of!(SYSCALL_CONTEXT);
+            if let Some(read_fn) = (*ctx).console_read {
+                let bytes_read = read_fn(buffer);
+                return bytes_read as i64;
+            }
         }
+
+        // No console configured, return 0 (EOF)
+        return 0;
     }
 
-    // No console configured, return 0 (EOF)
-    0
+    // All other file descriptors go through VFS
+    vfs::sys_read_vfs(fd, buf, count)
 }
 
 /// sys_fork - Create a child process
