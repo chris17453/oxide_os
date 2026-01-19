@@ -8,7 +8,16 @@
 
 extern crate alloc;
 
+#[macro_use]
+mod debug;
+
+/// Get a serial writer for debug output
+pub fn serial_writer() -> efflux_arch_x86_64::serial::SerialWriter {
+    efflux_arch_x86_64::serial::SerialWriter
+}
+
 use alloc::boxed::Box;
+use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::fmt::Write;
@@ -26,17 +35,18 @@ use efflux_elf::ElfExecutable;
 use efflux_mm_frame::{BitmapFrameAllocator, MemoryRegion};
 use efflux_mm_traits::FrameAllocator as _;
 use efflux_mm_heap::LockedHeap;
-use efflux_mm_paging::{phys_to_virt, read_cr3};
+use efflux_mm_paging::{phys_to_virt, read_cr3, write_cr3, flush_tlb_all};
 use efflux_proc::{
     UserAddressSpace, Process, ProcessContext, alloc_pid, process_table,
-    do_fork, do_waitpid, WaitOptions, handle_cow_fault,
+    do_fork, do_exec, do_waitpid, WaitOptions, handle_cow_fault,
 };
 use efflux_proc_traits::{MemoryFlags, Pid};
 use efflux_syscall::SyscallContext;
-use efflux_vfs::{File, FileFlags, mount::GLOBAL_VFS, MountFlags, VnodeOps};
+use efflux_vfs::{File, FileFlags, mount::GLOBAL_VFS, MountFlags, VnodeOps, VnodeType};
 use efflux_devfs::DevFs;
 use efflux_tmpfs::TmpDir;
 use efflux_procfs::ProcFs;
+use efflux_initramfs;
 use efflux_pty::{PtyManager, PtsDir};
 use spin::Mutex;
 
@@ -53,8 +63,8 @@ static mut HEAP_STORAGE: [u8; HEAP_SIZE] = [0; HEAP_SIZE];
 /// Global frame allocator
 static FRAME_ALLOCATOR: BitmapFrameAllocator = BitmapFrameAllocator::new();
 
-/// User program (init.elf) embedded in kernel
-static INIT_ELF: &[u8] = include_bytes!("../../userspace/init/init.elf");
+/// Initramfs CPIO embedded in kernel
+static INITRAMFS_CPIO: &[u8] = include_bytes!("../../target/initramfs.cpio");
 
 /// Flag to track if user process has exited
 static USER_EXITED: AtomicBool = AtomicBool::new(false);
@@ -202,7 +212,7 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
         console_read: Some(console_read),
         exit: Some(user_exit),
         fork: Some(kernel_fork),
-        exec: None,   // exec not needed for fork-wait test
+        exec: Some(kernel_exec),
         wait: Some(kernel_wait),
     };
     unsafe {
@@ -287,21 +297,60 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     let _ = writeln!(writer, "[VFS] VFS initialized");
 
-    // Parse the embedded init.elf
-    let _ = writeln!(writer, "[USER] Parsing init.elf ({} bytes)...", INIT_ELF.len());
-    let elf = match ElfExecutable::parse(INIT_ELF) {
+    // Load and mount the initramfs
+    let _ = writeln!(writer, "[INITRAMFS] Loading initramfs ({} bytes)...", INITRAMFS_CPIO.len());
+    let initramfs_root = match efflux_initramfs::load(INITRAMFS_CPIO) {
+        Ok(root) => root,
+        Err(e) => {
+            let _ = writeln!(writer, "[INITRAMFS] Failed to load initramfs: {:?}", e);
+            arch::X86_64::halt();
+        }
+    };
+
+    // Mount initramfs at /initramfs (we can overlay onto root later)
+    if let Err(e) = GLOBAL_VFS.mount(initramfs_root, "/initramfs", MountFlags::empty(), "initramfs") {
+        let _ = writeln!(writer, "[INITRAMFS] Failed to mount initramfs: {:?}", e);
+        arch::X86_64::halt();
+    }
+    let _ = writeln!(writer, "[INITRAMFS] Mounted at /initramfs");
+
+    // Load /initramfs/bin/init
+    let init_path = "/initramfs/bin/init";
+    let _ = writeln!(writer, "[USER] Loading {}...", init_path);
+    let init_vnode = match GLOBAL_VFS.lookup(init_path) {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = writeln!(writer, "[USER] Failed to find {}: {:?}", init_path, e);
+            arch::X86_64::halt();
+        }
+    };
+
+    // Read init binary
+    let init_size = init_vnode.size() as usize;
+    let mut init_data = alloc::vec![0u8; init_size];
+    match init_vnode.read(0, &mut init_data) {
+        Ok(n) if n == init_size => {}
+        Ok(n) => {
+            let _ = writeln!(writer, "[USER] Short read: {} of {} bytes", n, init_size);
+            arch::X86_64::halt();
+        }
+        Err(e) => {
+            let _ = writeln!(writer, "[USER] Failed to read init: {:?}", e);
+            arch::X86_64::halt();
+        }
+    }
+    let _ = writeln!(writer, "[USER] Read {} bytes from init", init_size);
+
+    // Parse the ELF
+    let elf = match ElfExecutable::parse(&init_data) {
         Ok(e) => e,
         Err(err) => {
-            let _ = writeln!(writer, "[USER] Failed to parse ELF: {:?}", err);
+            let _ = writeln!(writer, "[USER] Failed to parse init ELF: {:?}", err);
             arch::X86_64::halt();
         }
     };
 
     let _ = writeln!(writer, "[USER] ELF entry point: {:#x}", elf.entry_point().as_u64());
-    for seg in elf.segments() {
-        let _ = writeln!(writer, "[USER]   Segment: vaddr={:#x} memsz={:#x} flags={:?}",
-            seg.vaddr.as_u64(), seg.mem_size, seg.flags.bits());
-    }
 
     // Create user address space
     let _ = writeln!(writer, "[USER] Creating user address space...");
@@ -326,49 +375,103 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(writer, "[USER] User PML4: {:#x}", user_space.pml4_phys().as_u64());
 
     // Load ELF segments into user address space
-    let _ = writeln!(writer, "[USER] Loading ELF segments...");
+    // Handle overlapping segments by checking if pages are already mapped
     for seg in elf.segments() {
-        // Allocate pages for this segment
         let (page_base, page_size) = efflux_elf::ElfLoader::segment_pages(seg);
         let num_pages = page_size / 4096;
-        let page_offset = efflux_elf::ElfLoader::segment_page_offset(seg);
+        let _page_offset = efflux_elf::ElfLoader::segment_page_offset(seg);
 
-        let _ = writeln!(writer, "[USER]   Loading segment at {:#x} ({} pages)",
-            page_base.as_u64(), num_pages);
-
-        // Allocate pages
-        if let Err(e) = user_space.allocate_pages(page_base, num_pages, seg.flags, &alloc_wrapper) {
-            let _ = writeln!(writer, "[USER] Failed to allocate pages: {:?}", e);
-            arch::X86_64::halt();
-        }
-
-        // Copy segment data
-        let seg_data = elf.segment_data(seg);
-        if !seg_data.is_empty() {
-            // Get the physical address of the first page
-            let phys = user_space.translate(page_base).unwrap();
-            let dest_virt = phys_to_virt(phys);
-            let dest = unsafe { dest_virt.as_mut_ptr::<u8>().add(page_offset) };
-
-            unsafe {
-                core::ptr::copy_nonoverlapping(seg_data.as_ptr(), dest, seg_data.len());
-            }
-
-            // Zero any remaining memory (BSS)
-            if seg.mem_size > seg.file_size {
-                let bss_start = unsafe { dest.add(seg.file_size) };
-                let bss_size = seg.mem_size - seg.file_size;
-                unsafe {
-                    core::ptr::write_bytes(bss_start, 0, bss_size);
+        // Allocate pages that aren't already mapped, or update flags if already mapped
+        for i in 0..num_pages {
+            let page_addr = VirtAddr::new(page_base.as_u64() + (i as u64 * 4096));
+            // Check if page is already mapped
+            let existing = user_space.translate(page_addr);
+            if existing.is_none() {
+                // Allocate single page
+                if let Err(e) = user_space.allocate_pages(page_addr, 1, seg.flags, &alloc_wrapper) {
+                    let _ = writeln!(writer, "[USER] Failed to allocate page at {:#x}: {:?}",
+                        page_addr.as_u64(), e);
+                    arch::X86_64::halt();
+                }
+            } else {
+                // Page already mapped - upgrade permissions if this segment needs more
+                // (e.g., .data segment may need write permission on a page that .text only needed read)
+                if seg.flags.writable() {
+                    user_space.update_user_page_flags(page_addr, MemoryFlags::WRITE);
                 }
             }
         }
+
+        // Copy segment data page by page (physical pages may not be contiguous!)
+        let seg_data = elf.segment_data(seg);
+        let seg_vaddr_start = seg.vaddr.as_u64();
+        let mut data_offset = 0usize;
+        let mut mem_offset = 0usize;
+
+        while data_offset < seg_data.len() || mem_offset < seg.mem_size {
+            // Calculate which virtual page we're on
+            let current_vaddr = seg_vaddr_start + mem_offset as u64;
+            let page_vaddr = VirtAddr::new(current_vaddr & !0xFFF);
+            let in_page_offset = (current_vaddr & 0xFFF) as usize;
+            let bytes_remaining_in_page = 4096 - in_page_offset;
+
+            // Get physical address for this page
+            let phys = match user_space.translate(page_vaddr) {
+                Some(p) => p,
+                None => {
+                    let _ = writeln!(writer, "[USER] translate({:#x}) failed!", page_vaddr.as_u64());
+                    arch::X86_64::halt();
+                }
+            };
+
+            let dest_virt = phys_to_virt(phys);
+            let dest = unsafe { dest_virt.as_mut_ptr::<u8>().add(in_page_offset) };
+
+            // Copy file data for this page
+            let file_bytes_remaining = seg_data.len().saturating_sub(data_offset);
+            let copy_len = bytes_remaining_in_page.min(file_bytes_remaining);
+
+            if copy_len > 0 {
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        seg_data.as_ptr().add(data_offset),
+                        dest,
+                        copy_len,
+                    );
+                }
+                data_offset += copy_len;
+            }
+
+            // Zero BSS portion of this page (if any)
+            let bss_start_in_seg = seg.file_size;
+            let bss_end_in_seg = seg.mem_size;
+
+            if mem_offset + bytes_remaining_in_page > bss_start_in_seg && mem_offset < bss_end_in_seg {
+                // There's some BSS in this page
+                let bss_start_in_page = if mem_offset < bss_start_in_seg {
+                    (bss_start_in_seg - mem_offset).min(bytes_remaining_in_page)
+                } else {
+                    0
+                };
+                let bss_end_in_page = (bss_end_in_seg - mem_offset).min(bytes_remaining_in_page);
+                let bss_len = bss_end_in_page - bss_start_in_page;
+
+                if bss_len > 0 {
+                    unsafe {
+                        core::ptr::write_bytes(dest.add(bss_start_in_page), 0, bss_len);
+                    }
+                }
+            }
+
+            mem_offset += bytes_remaining_in_page;
+        }
     }
 
-    // Allocate user stack
+    // Allocate user stack (larger to accommodate typical program needs)
     let _ = writeln!(writer, "[USER] Allocating user stack...");
-    let user_stack_base = VirtAddr::new(0x7FFF_F000_0000);
-    let user_stack_pages = 4; // 16 KB stack
+    let user_stack_pages = 64; // 256 KB stack
+    // Stack grows down, so allocate below the top address
+    let user_stack_base = VirtAddr::new(0x7FFF_F000_0000 - (user_stack_pages * 4096) as u64);
     let stack_flags = MemoryFlags::READ.union(MemoryFlags::WRITE).union(MemoryFlags::USER);
 
     if let Err(e) = user_space.allocate_pages(user_stack_base, user_stack_pages, stack_flags, &alloc_wrapper) {
@@ -467,35 +570,8 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let user_pml4_phys = init_arc.lock().address_space().pml4_phys();
 
     let _ = writeln!(writer);
-    let _ = writeln!(writer, "[USER] Jumping to user mode at {:#x}...", entry_point);
+    let _ = writeln!(writer, "[USER] Entering user mode at {:#x}...", entry_point);
     let _ = writeln!(writer);
-
-    // Debug: verify user page table entries before switching
-    let _ = writeln!(writer, "[USER] Verifying page tables...");
-
-    // Print kernel PML4 entries
-    let kernel_pml4_virt = efflux_mm_paging::phys_to_virt(PhysAddr::new(boot_info.pml4_phys));
-    unsafe {
-        let pml4 = &*(kernel_pml4_virt.as_ptr::<efflux_mm_paging::PageTable>());
-        let _ = writeln!(writer, "[USER] Kernel PML4[256] = {:#x}", pml4[256].raw());
-        let _ = writeln!(writer, "[USER] Kernel PML4[511] = {:#x}", pml4[511].raw());
-    }
-
-    // Print user PML4 entries
-    let user_pml4_virt = efflux_mm_paging::phys_to_virt(user_pml4_phys);
-    unsafe {
-        let pml4 = &*(user_pml4_virt.as_ptr::<efflux_mm_paging::PageTable>());
-        let _ = writeln!(writer, "[USER] User PML4[256] = {:#x}", pml4[256].raw());
-        let _ = writeln!(writer, "[USER] User PML4[511] = {:#x}", pml4[511].raw());
-    }
-
-    // Check user code mapping at 0x400000
-    let _ = writeln!(writer, "[USER] User code mapping test:");
-    if let Some(phys) = init_arc.lock().address_space().translate(VirtAddr::new(0x400000)) {
-        let _ = writeln!(writer, "[USER]   0x400000 -> {:#x}", phys.as_u64());
-    } else {
-        let _ = writeln!(writer, "[USER]   0x400000 -> NOT MAPPED!");
-    }
 
     // Use the combined enter_usermode function that:
     // 1. Switches to kernel stack (in higher half)
@@ -526,11 +602,14 @@ fn syscall_dispatch(
 }
 
 /// Page fault handler callback (for COW and other page faults)
-fn page_fault_handler(fault_addr: u64, error_code: u64, _rip: u64) -> bool {
+fn page_fault_handler(fault_addr: u64, error_code: u64, rip: u64) -> bool {
     // Check if this is a write fault on a present page (potential COW)
     let is_present = error_code & 1 != 0;
     let is_write = error_code & 2 != 0;
     let is_user = error_code & 4 != 0;
+
+    debug_cow!("[COW] Page fault at {:#x}, error={:#x}, rip={:#x}", fault_addr, error_code, rip);
+    debug_cow!("[COW] present={}, write={}, user={}", is_present, is_write, is_user);
 
     // COW faults are: present + write + user mode
     if is_present && is_write && is_user {
@@ -538,17 +617,27 @@ fn page_fault_handler(fault_addr: u64, error_code: u64, _rip: u64) -> bool {
         let table = process_table();
         let current_pid = table.current_pid();
 
+        debug_cow!("[COW] Current PID: {}", current_pid);
+
         if let Some(proc) = table.get(current_pid) {
             let pml4 = proc.lock().address_space().pml4_phys();
             let alloc = FrameAllocatorWrapper;
 
+            debug_cow!("[COW] PML4: {:#x}, attempting COW handling...", pml4.as_u64());
+
             // Try to handle as COW fault
             if handle_cow_fault(VirtAddr::new(fault_addr), pml4, &alloc) {
+                debug_cow!("[COW] COW fault handled successfully!");
                 return true; // Fault handled
+            } else {
+                debug_cow!("[COW] COW handler returned false");
             }
+        } else {
+            debug_cow!("[COW] Process not found!");
         }
     }
 
+    debug_cow!("[COW] Fault not handled");
     false // Fault not handled - will panic
 }
 
@@ -569,9 +658,35 @@ fn console_write_bytes(data: &[u8]) {
 }
 
 /// Console read function for syscalls
-fn console_read(_buf: &mut [u8]) -> usize {
-    // For now, just return 0 (EOF)
-    0
+fn console_read(buf: &mut [u8]) -> usize {
+    // Read from serial port (blocking read of one character at a time)
+    let mut count = 0;
+    for byte in buf.iter_mut() {
+        // Poll for input with a simple busy wait
+        loop {
+            if let Some(b) = serial::read_byte() {
+                *byte = b;
+                // Echo the character back (for interactive use)
+                let _ = serial::SerialWriter.write_char(b as char);
+                count += 1;
+                // Return on newline for line-buffered input
+                if b == b'\n' || b == b'\r' {
+                    if b == b'\r' {
+                        // Convert CR to LF
+                        *byte = b'\n';
+                        let _ = serial::SerialWriter.write_char('\n');
+                    }
+                    return count;
+                }
+                break;
+            }
+            // Small busy wait to avoid burning CPU
+            for _ in 0..10000 {
+                core::hint::spin_loop();
+            }
+        }
+    }
+    count
 }
 
 /// User exit function
@@ -670,8 +785,20 @@ fn kernel_fork() -> i64 {
     let table = process_table();
     let parent_pid = table.current_pid();
 
+    // Debug: always print fork info for now
+    {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[FORK] Fork called from PID {}", parent_pid);
+    }
+
     // Get current process context from syscall user context
     let user_ctx = get_user_context();
+
+    // Debug: print user context
+    {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[FORK] user_ctx.rip={:#x} rsp={:#x}", user_ctx.rip, user_ctx.rsp);
+    }
     let parent_context = ProcessContext {
         rip: user_ctx.rip,
         rsp: user_ctx.rsp,
@@ -693,6 +820,8 @@ fn kernel_fork() -> i64 {
         r15: user_ctx.r15,
     };
 
+    debug_fork!("[FORK] Parent context: rip={:#x} rsp={:#x}", parent_context.rip, parent_context.rsp);
+
     // Create wrapper for frame allocator
     let alloc_wrapper = FrameAllocatorWrapper;
 
@@ -701,13 +830,18 @@ fn kernel_fork() -> i64 {
 
     match result {
         Ok(child_pid) => {
+            debug_fork!("[FORK] Created child process {}", child_pid);
+
             // Add child to pending list for later execution
             PENDING_CHILDREN.lock().push(child_pid);
 
             // Return child PID to parent
             child_pid as i64
         }
-        Err(_) => -1, // EAGAIN
+        Err(e) => {
+            debug_fork!("[FORK] Fork failed: {:?}", e);
+            -1 // EAGAIN
+        }
     }
 }
 
@@ -799,6 +933,15 @@ fn run_child_process(child_pid: Pid) {
         child.lock().context().clone()
     };
 
+    // Debug: print child's context (all callee-saved registers)
+    {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[CHILD] PID {} entering usermode", child_pid);
+        let _ = writeln!(writer, "[CHILD] rip={:#x} rsp={:#x} rbp={:#x}", child_ctx.rip, child_ctx.rsp, child_ctx.rbp);
+        let _ = writeln!(writer, "[CHILD] rax={:#x} rbx={:#x} r12={:#x}", child_ctx.rax, child_ctx.rbx, child_ctx.r12);
+        let _ = writeln!(writer, "[CHILD] r13={:#x} r14={:#x} r15={:#x}", child_ctx.r13, child_ctx.r14, child_ctx.r15);
+    }
+
     // Save parent's user context so we can return to parent when child exits
     // The parent's user context is saved by the syscall handler
     let parent_user_ctx = get_user_context();
@@ -815,19 +958,265 @@ fn run_child_process(child_pid: Pid) {
         CHILD_DONE.store(false, Ordering::SeqCst);
     }
 
-    // Enter user mode for child - this doesn't return normally
+    // Build UserContext for enter_usermode_with_context
+    let user_ctx = arch::UserContext {
+        rax: child_ctx.rax,
+        rbx: child_ctx.rbx,
+        rcx: child_ctx.rcx,
+        rdx: child_ctx.rdx,
+        rsi: child_ctx.rsi,
+        rdi: child_ctx.rdi,
+        rbp: child_ctx.rbp,
+        rsp: child_ctx.rsp,
+        r8: child_ctx.r8,
+        r9: child_ctx.r9,
+        r10: child_ctx.r10,
+        r11: child_ctx.r11,
+        r12: child_ctx.r12,
+        r13: child_ctx.r13,
+        r14: child_ctx.r14,
+        r15: child_ctx.r15,
+        rip: child_ctx.rip,
+        rflags: child_ctx.rflags,
+    };
+
+    // Debug: verify UserContext before entering usermode
+    {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[CHILD] UserContext ptr: {:p}", &user_ctx);
+        let _ = writeln!(writer, "[CHILD] UserContext.rip={:#x} rsp={:#x}", user_ctx.rip, user_ctx.rsp);
+        let _ = writeln!(writer, "[CHILD] UserContext.rcx={:#x} rax={:#x}", user_ctx.rcx, user_ctx.rax);
+        let _ = writeln!(writer, "[CHILD] kernel_stack={:#x} pml4={:#x}", child_kernel_stack_top, child_pml4.as_u64());
+
+        // Verify by reading raw bytes at context address
+        let ctx_ptr = &user_ctx as *const arch::UserContext as *const u64;
+        unsafe {
+            let _ = writeln!(writer, "[CHILD] Raw ctx[0]={:#x} (rax)", *ctx_ptr.add(0));
+            let _ = writeln!(writer, "[CHILD] Raw ctx[2]={:#x} (rcx)", *ctx_ptr.add(2));
+            let _ = writeln!(writer, "[CHILD] Raw ctx[16]={:#x} (rip)", *ctx_ptr.add(16));
+        }
+
+        // Test: copy context to child kernel stack and verify it's readable after CR3 switch
+        // Use EXACT same address as enter_usermode_with_context: kernel_stack_top - 184
+        let child_stack_base = child_kernel_stack_top - 184;
+        let dest_ptr = child_stack_base as *mut u64;
+        let _ = writeln!(writer, "[CHILD] Test dest_ptr={:#x}", dest_ptr as u64);
+        let _ = writeln!(writer, "[CHILD] rcx will be at {:#x}", dest_ptr as u64 + 16);
+        let src_ptr = &user_ctx as *const arch::UserContext as *const u64;
+
+        // Copy context to child's kernel stack
+        for i in 0..18 {
+            unsafe {
+                *dest_ptr.add(i) = *src_ptr.add(i);
+            }
+        }
+
+        // Now switch to child's page tables and read back
+        unsafe {
+            // Read CR3 to verify current value
+            let current_cr3: u64;
+            core::arch::asm!("mov {}, cr3", out(reg) current_cr3);
+            let _ = writeln!(writer, "[CHILD] Current CR3: {:#x}", current_cr3);
+            let _ = writeln!(writer, "[CHILD] Child PML4: {:#x}", child_pml4.as_u64());
+
+            // Switch to child's page tables
+            core::arch::asm!("mov cr3, {}", in(reg) child_pml4.as_u64());
+
+            // Read back from the copied context
+            let read_rax = *dest_ptr.add(0);
+            let read_rcx = *dest_ptr.add(2);
+            let read_rip = *dest_ptr.add(16);
+
+            // Switch back to original page tables
+            core::arch::asm!("mov cr3, {}", in(reg) current_cr3);
+
+            let _ = writeln!(writer, "[CHILD] After CR3 switch and back:");
+            let _ = writeln!(writer, "[CHILD]   read_rax={:#x}", read_rax);
+            let _ = writeln!(writer, "[CHILD]   read_rcx={:#x}", read_rcx);
+            let _ = writeln!(writer, "[CHILD]   read_rip={:#x}", read_rip);
+        }
+    }
+
+    // Enter user mode for child with full context restoration
     // When child calls exit(), user_exit will set CHILD_DONE and we'll detect it
     unsafe {
-        arch::usermode::enter_usermode(
+        arch::enter_usermode_with_context(
             child_kernel_stack_top,
             child_pml4.as_u64(),
-            child_ctx.rip,
-            child_ctx.rsp,
+            &user_ctx,
         );
     }
 
     // Note: We never reach here via normal flow.
     // But if we did somehow return, that would be the child exit path.
+}
+
+/// Exec callback for syscalls
+///
+/// Replaces the current process image with a new executable.
+fn kernel_exec(path_ptr: *const u8, path_len: usize, argv_ptr: *const *const u8, envp_ptr: *const *const u8) -> i64 {
+    let table = process_table();
+    let current_pid = table.current_pid();
+
+    // Read path from user space
+    let path = unsafe {
+        if path_ptr.is_null() || path_len == 0 {
+            return -22; // EINVAL
+        }
+        let slice = core::slice::from_raw_parts(path_ptr, path_len);
+        match core::str::from_utf8(slice) {
+            Ok(s) => s,
+            Err(_) => return -22, // EINVAL
+        }
+    };
+
+    // Read argv from user space
+    let mut argv: Vec<String> = Vec::new();
+    if !argv_ptr.is_null() {
+        unsafe {
+            let mut i = 0;
+            loop {
+                let arg_ptr = *argv_ptr.add(i);
+                if arg_ptr.is_null() {
+                    break;
+                }
+                // Read null-terminated string
+                let mut len = 0;
+                while *arg_ptr.add(len) != 0 && len < 4096 {
+                    len += 1;
+                }
+                let arg_slice = core::slice::from_raw_parts(arg_ptr, len);
+                if let Ok(s) = core::str::from_utf8(arg_slice) {
+                    argv.push(String::from(s));
+                }
+                i += 1;
+                if i > 1024 {
+                    break; // Safety limit
+                }
+            }
+        }
+    }
+    // If no argv provided, use the path as argv[0]
+    if argv.is_empty() {
+        argv.push(String::from(path));
+    }
+
+    // Read envp from user space
+    let mut envp: Vec<String> = Vec::new();
+    if !envp_ptr.is_null() {
+        unsafe {
+            let mut i = 0;
+            loop {
+                let env_ptr = *envp_ptr.add(i);
+                if env_ptr.is_null() {
+                    break;
+                }
+                // Read null-terminated string
+                let mut len = 0;
+                while *env_ptr.add(len) != 0 && len < 4096 {
+                    len += 1;
+                }
+                let env_slice = core::slice::from_raw_parts(env_ptr, len);
+                if let Ok(s) = core::str::from_utf8(env_slice) {
+                    envp.push(String::from(s));
+                }
+                i += 1;
+                if i > 1024 {
+                    break; // Safety limit
+                }
+            }
+        }
+    }
+
+    // Look up the file in VFS
+    let vnode = match GLOBAL_VFS.lookup(path) {
+        Ok(v) => v,
+        Err(_) => return -2, // ENOENT
+    };
+
+    // Check it's a regular file
+    if vnode.vtype() != VnodeType::File {
+        return -21; // EISDIR or not a file
+    }
+
+    // Read the file contents
+    let size = vnode.size() as usize;
+
+    let mut elf_data = alloc::vec![0u8; size];
+    let read_result = vnode.read(0, &mut elf_data);
+    let bytes_read = match read_result {
+        Ok(n) => n,
+        Err(_) => return -5, // EIO
+    };
+
+    if bytes_read != size {
+        return -5; // EIO - short read
+    }
+
+    // Get kernel PML4 for creating new address space
+    let kernel_pml4 = PhysAddr::new(unsafe { KERNEL_PML4 });
+    let alloc_wrapper = FrameAllocatorWrapper;
+
+    // Call do_exec
+    match do_exec(current_pid, &elf_data, &argv, &envp, &alloc_wrapper, kernel_pml4) {
+        Ok((_entry_point, _stack_ptr)) => {
+            // Get the new PML4 and switch to it
+            if let Some(proc) = table.get(current_pid) {
+                let p = proc.lock();
+                let new_pml4 = p.address_space().pml4_phys();
+                let ctx = p.context().clone();
+                drop(p);
+
+                // Debug: print exec return values
+                let mut writer = serial::SerialWriter;
+                let _ = writeln!(writer, "[EXEC] Switching to PML4={:#x}", new_pml4.as_u64());
+                let _ = writeln!(writer, "[EXEC] rip={:#x} rsp={:#x}", ctx.rip, ctx.rsp);
+                let _ = writeln!(writer, "[EXEC] argc={} argv={:#x} envp={:#x}", ctx.rdi, ctx.rsi, ctx.rdx);
+
+                // Switch to new address space and jump to entry point
+                unsafe {
+                    write_cr3(new_pml4);
+                    flush_tlb_all();
+
+                    // Return to user mode at new entry point
+                    // We use sysretq which expects: rcx = rip, r11 = rflags
+                    core::arch::asm!(
+                        // Set up return value (execve returns 0 on success, but we go to entry)
+                        "xor rax, rax",
+                        // Set up rip for sysretq
+                        "mov rcx, {rip}",
+                        // Set up rflags for sysretq
+                        "mov r11, {rflags}",
+                        // Set up user stack
+                        "mov rsp, {rsp}",
+                        // Set up argc, argv, envp in registers per System V ABI
+                        "mov rdi, {argc}",
+                        "mov rsi, {argv}",
+                        "mov rdx, {envp}",
+                        // Return to user mode
+                        "sysretq",
+                        rip = in(reg) ctx.rip,
+                        rflags = in(reg) 0x202u64, // IF set
+                        rsp = in(reg) ctx.rsp,
+                        argc = in(reg) ctx.rdi,
+                        argv = in(reg) ctx.rsi,
+                        envp = in(reg) ctx.rdx,
+                        options(noreturn)
+                    );
+                }
+            }
+            0 // Never reached
+        }
+        Err(e) => {
+            match e {
+                efflux_proc::ExecError::InvalidElf => -8, // ENOEXEC
+                efflux_proc::ExecError::OutOfMemory => -12, // ENOMEM
+                efflux_proc::ExecError::ProcessNotFound => -3, // ESRCH
+                efflux_proc::ExecError::InvalidAddress => -14, // EFAULT
+                efflux_proc::ExecError::InvalidArgument => -22, // EINVAL
+            }
+        }
+    }
 }
 
 /// Wrapper to use the global frame allocator

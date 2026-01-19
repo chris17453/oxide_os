@@ -137,6 +137,30 @@ impl UserAddressSpace {
         self.mapper.translate(virt)
     }
 
+    /// Update flags for an already-mapped user page
+    ///
+    /// Adds additional permissions (union with existing flags).
+    /// Returns true if successful, false if page is not mapped.
+    pub fn update_user_page_flags(&mut self, virt: VirtAddr, add_flags: MemoryFlags) -> bool {
+        // Verify this is a user-space address
+        if virt.as_u64() >= 0x0000_8000_0000_0000 {
+            return false;
+        }
+
+        // Convert MemoryFlags to PageTableFlags
+        let mut pt_flags = PageTableFlags::empty();
+
+        if add_flags.writable() {
+            pt_flags |= PageTableFlags::WRITABLE;
+        }
+
+        // Note: We don't need to add PRESENT or USER since page is already mapped
+        // For NO_EXECUTE, we'd need to handle it specially (it's a "remove" operation)
+        // For now we only handle adding WRITABLE permission
+
+        self.mapper.update_flags(virt, pt_flags)
+    }
+
     /// Switch to this address space
     ///
     /// # Safety

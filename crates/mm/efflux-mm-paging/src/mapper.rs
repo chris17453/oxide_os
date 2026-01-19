@@ -89,6 +89,48 @@ impl PageMapper {
         Ok(())
     }
 
+    /// Update flags for an already-mapped page
+    ///
+    /// Adds the given flags to the existing entry (union operation).
+    /// Returns true if the entry was updated, false if not mapped.
+    pub fn update_flags(&mut self, virt: VirtAddr, add_flags: PageTableFlags) -> bool {
+        let pml4_idx = PageLevel::Pml4.index(virt);
+        let pdpt_idx = PageLevel::Pdpt.index(virt);
+        let pd_idx = PageLevel::Pd.index(virt);
+        let pt_idx = PageLevel::Pt.index(virt);
+
+        // Walk PML4 -> PDPT
+        let pdpt = match self.get_table(self.pml4_phys, pml4_idx) {
+            Some(p) => p,
+            None => return false,
+        };
+
+        // Walk PDPT -> PD (skip huge page check for simplicity)
+        let pd = match self.get_table(pdpt, pdpt_idx) {
+            Some(p) => p,
+            None => return false,
+        };
+
+        // Walk PD -> PT
+        let pt = match self.get_table(pd, pd_idx) {
+            Some(p) => p,
+            None => return false,
+        };
+
+        // Get PT entry
+        let pt_virt = phys_to_virt(pt);
+        let pt_table = unsafe { &mut *pt_virt.as_mut_ptr::<PageTable>() };
+        let entry = &mut pt_table[pt_idx];
+
+        if !entry.is_present() {
+            return false;
+        }
+
+        // Add the new flags to existing flags
+        entry.add_flags(add_flags);
+        true
+    }
+
     /// Unmap a virtual address
     ///
     /// Returns the physical address that was mapped, or None if not mapped.

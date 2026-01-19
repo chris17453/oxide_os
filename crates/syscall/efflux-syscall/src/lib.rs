@@ -31,6 +31,13 @@ pub mod nr {
     pub const GETPGID: u64 = 10;
     pub const SETSID: u64 = 11;
     pub const GETSID: u64 = 12;
+    pub const EXECVE: u64 = 13;  // exec with argv/envp
+    pub const GETUID: u64 = 14;
+    pub const GETGID: u64 = 15;
+    pub const GETEUID: u64 = 16;
+    pub const GETEGID: u64 = 17;
+    pub const SETUID: u64 = 18;
+    pub const SETGID: u64 = 19;
 
     // VFS syscalls
     pub const OPEN: u64 = 20;
@@ -138,8 +145,13 @@ pub type ExitFn = fn(i32) -> !;
 /// Fork callback type - returns child PID to parent, 0 to child, or negative error
 pub type ForkFn = fn() -> i64;
 
-/// Exec callback type - path, returns error code (doesn't return on success)
-pub type ExecFn = fn(*const u8, usize) -> i64;
+/// Exec callback type - path, argv, envp; returns error code (doesn't return on success)
+/// Arguments:
+/// - path: pointer to path string
+/// - path_len: length of path
+/// - argv: pointer to null-terminated array of string pointers
+/// - envp: pointer to null-terminated array of string pointers
+pub type ExecFn = fn(*const u8, usize, *const *const u8, *const *const u8) -> i64;
 
 /// Wait callback type - returns (child_pid, status) packed as (pid << 32) | (status & 0xFFFFFFFF)
 pub type WaitFn = fn(i32, i32) -> i64;
@@ -213,7 +225,8 @@ pub fn dispatch(
         nr::WRITE => sys_write(arg1 as i32, arg2, arg3 as usize),
         nr::READ => sys_read(arg1 as i32, arg2, arg3 as usize),
         nr::FORK => sys_fork(),
-        nr::EXEC => sys_exec(arg1, arg2 as usize),
+        nr::EXEC => sys_exec(arg1, arg2 as usize, core::ptr::null(), core::ptr::null()),
+        nr::EXECVE => sys_exec(arg1, arg2 as usize, arg3 as *const *const u8, arg4 as *const *const u8),
         nr::WAIT => sys_wait(arg1),
         nr::WAITPID => sys_waitpid(arg1 as i32, arg2, arg3 as i32),
         nr::GETPID => sys_getpid(),
@@ -222,6 +235,12 @@ pub fn dispatch(
         nr::GETPGID => sys_getpgid(arg1 as Pid),
         nr::SETSID => sys_setsid(),
         nr::GETSID => sys_getsid(arg1 as Pid),
+        nr::GETUID => sys_getuid(),
+        nr::GETGID => sys_getgid(),
+        nr::GETEUID => sys_geteuid(),
+        nr::GETEGID => sys_getegid(),
+        nr::SETUID => sys_setuid(arg1 as u32),
+        nr::SETGID => sys_setgid(arg1 as u32),
 
         // VFS syscalls
         nr::OPEN => vfs::sys_open(arg1, arg2 as usize, arg3 as u32, arg4 as u32),
@@ -422,7 +441,9 @@ fn sys_fork() -> i64 {
 /// # Arguments
 /// * `path` - Pointer to path string
 /// * `path_len` - Length of path string
-fn sys_exec(path: u64, path_len: usize) -> i64 {
+/// * `argv` - Pointer to null-terminated array of string pointers
+/// * `envp` - Pointer to null-terminated array of string pointers
+fn sys_exec(path: u64, path_len: usize, argv: *const *const u8, envp: *const *const u8) -> i64 {
     use core::ptr::addr_of;
 
     // Validate path is in user space
@@ -434,10 +455,18 @@ fn sys_exec(path: u64, path_len: usize) -> i64 {
         return errno::EFAULT;
     }
 
+    // Validate argv and envp pointers (if non-null)
+    if !argv.is_null() && (argv as u64) >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+    if !envp.is_null() && (envp as u64) >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
     unsafe {
         let ctx = addr_of!(SYSCALL_CONTEXT);
         if let Some(exec_fn) = (*ctx).exec {
-            return exec_fn(path as *const u8, path_len);
+            return exec_fn(path as *const u8, path_len, argv, envp);
         }
     }
 
@@ -622,6 +651,122 @@ fn sys_getsid(pid: Pid) -> i64 {
 
     if let Some(proc) = table.get(target_pid) {
         proc.lock().sid() as i64
+    } else {
+        errno::ESRCH
+    }
+}
+
+/// sys_getuid - Get real user ID
+fn sys_getuid() -> i64 {
+    let table = process_table();
+    if let Some(proc) = table.current() {
+        proc.lock().credentials().uid as i64
+    } else {
+        0 // Kernel context
+    }
+}
+
+/// sys_getgid - Get real group ID
+fn sys_getgid() -> i64 {
+    let table = process_table();
+    if let Some(proc) = table.current() {
+        proc.lock().credentials().gid as i64
+    } else {
+        0 // Kernel context
+    }
+}
+
+/// sys_geteuid - Get effective user ID
+fn sys_geteuid() -> i64 {
+    let table = process_table();
+    if let Some(proc) = table.current() {
+        proc.lock().credentials().euid as i64
+    } else {
+        0 // Kernel context
+    }
+}
+
+/// sys_getegid - Get effective group ID
+fn sys_getegid() -> i64 {
+    let table = process_table();
+    if let Some(proc) = table.current() {
+        proc.lock().credentials().egid as i64
+    } else {
+        0 // Kernel context
+    }
+}
+
+/// sys_setuid - Set user ID
+///
+/// # Arguments
+/// * `uid` - New user ID
+fn sys_setuid(uid: u32) -> i64 {
+    let table = process_table();
+    if let Some(proc) = table.current() {
+        let mut p = proc.lock();
+        let creds = p.credentials();
+
+        // If effective UID is 0 (root), set all UIDs
+        if creds.euid == 0 {
+            let new_creds = efflux_proc::Credentials {
+                uid,
+                gid: creds.gid,
+                euid: uid,
+                egid: creds.egid,
+            };
+            p.set_credentials(new_creds);
+            0
+        } else if uid == creds.uid || uid == creds.euid {
+            // Non-root can only set euid to real or saved uid
+            let new_creds = efflux_proc::Credentials {
+                uid: creds.uid,
+                gid: creds.gid,
+                euid: uid,
+                egid: creds.egid,
+            };
+            p.set_credentials(new_creds);
+            0
+        } else {
+            errno::EPERM
+        }
+    } else {
+        errno::ESRCH
+    }
+}
+
+/// sys_setgid - Set group ID
+///
+/// # Arguments
+/// * `gid` - New group ID
+fn sys_setgid(gid: u32) -> i64 {
+    let table = process_table();
+    if let Some(proc) = table.current() {
+        let mut p = proc.lock();
+        let creds = p.credentials();
+
+        // If effective UID is 0 (root), set all GIDs
+        if creds.euid == 0 {
+            let new_creds = efflux_proc::Credentials {
+                uid: creds.uid,
+                gid,
+                euid: creds.euid,
+                egid: gid,
+            };
+            p.set_credentials(new_creds);
+            0
+        } else if gid == creds.gid || gid == creds.egid {
+            // Non-root can only set egid to real or saved gid
+            let new_creds = efflux_proc::Credentials {
+                uid: creds.uid,
+                gid: creds.gid,
+                euid: creds.euid,
+                egid: gid,
+            };
+            p.set_credentials(new_creds);
+            0
+        } else {
+            errno::EPERM
+        }
     } else {
         errno::ESRCH
     }

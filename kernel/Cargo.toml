@@ -4,6 +4,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+debug-syscall = []    # Enable syscall debug output
+debug-fork = []       # Enable fork/exec debug output
+debug-cow = []        # Enable COW page fault debug output
+debug-proc = []       # Enable process management debug output
+debug-all = ["debug-syscall", "debug-fork", "debug-cow", "debug-proc"]
+
 [dependencies]
 efflux-core = { workspace = true }
 efflux-arch-traits = { workspace = true }

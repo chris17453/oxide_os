@@ -294,3 +294,6 @@ pub unsafe fn set_scheduler_callback(callback: exceptions::SchedulerCallback) {
 
 /// Re-export syscall user context type and getter
 pub use syscall::{SyscallUserContext, get_user_context};
+
+/// Re-export usermode transition functions and types
+pub use usermode::{enter_usermode, enter_usermode_with_context, jump_to_usermode, return_to_usermode, UserContext};

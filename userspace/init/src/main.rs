@@ -33,16 +33,17 @@ fn main() -> i32 {
     let child = fork();
     if child == 0 {
         // Child process - exec shell
-        let ret = exec("/bin/sh");
-        if ret < 0 {
-            // Try alternate paths
-            let ret = exec("/bin/esh");
-            if ret < 0 {
-                eprintln("[init] Failed to exec shell");
-                _exit(1);
+        // Try initramfs paths first, then /bin paths
+        let paths = ["/initramfs/bin/esh", "/initramfs/bin/sh", "/bin/esh", "/bin/sh"];
+        for path in paths.iter() {
+            let ret = exec(path);
+            if ret >= 0 {
+                // exec succeeded, should not return
+                break;
             }
         }
-        _exit(0);
+        eprintln("[init] Failed to exec shell");
+        _exit(1);
     } else if child > 0 {
         // Parent - reap zombies forever
         println("[init] Shell started");
@@ -82,8 +83,10 @@ fn reap_zombies() -> ! {
             println("[init] Respawning shell...");
             let child = fork();
             if child == 0 {
-                let _ = exec("/bin/sh");
-                let _ = exec("/bin/esh");
+                let paths = ["/initramfs/bin/esh", "/initramfs/bin/sh", "/bin/esh", "/bin/sh"];
+                for path in paths.iter() {
+                    let _ = exec(path);
+                }
                 eprintln("[init] Failed to exec shell");
                 _exit(1);
             }

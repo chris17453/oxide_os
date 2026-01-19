@@ -386,15 +386,41 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
     }
 
     // Fault not handled - print debug info and panic
+    // The saved registers are on stack before the frame:
+    // frame is at: stack + 15*8 (saved regs) + 8 (error code)
+    // So saved regs are at frame - 15*8 - 8
+    // RCX is at offset 96 from the start of saved regs (see exception_handler_error macro)
+    let frame_ptr = frame as *const InterruptFrame as *const u8;
+    let saved_regs_ptr = frame_ptr.wrapping_sub(15 * 8 + 8);
+    let saved_rcx = unsafe { *(saved_regs_ptr.wrapping_add(96) as *const u64) };
+    let saved_rax = unsafe { *(saved_regs_ptr.wrapping_add(112) as *const u64) };
+
     crate::serial_println!("PAGE FAULT!");
     crate::serial_println!("  Address: {:#x}", cr2);
     crate::serial_println!("  RIP: {:#x}", frame.rip);
+    crate::serial_println!("  RSP: {:#x}", frame.rsp);
+    crate::serial_println!("  RCX: {:#x}", saved_rcx);
+    crate::serial_println!("  RAX: {:#x}", saved_rax);
     crate::serial_println!("  Error: {:#x}", error);
     crate::serial_println!("    Present: {}", error & 1 != 0);
     crate::serial_println!("    Write: {}", error & 2 != 0);
     crate::serial_println!("    User: {}", error & 4 != 0);
     crate::serial_println!("    Reserved: {}", error & 8 != 0);
     crate::serial_println!("    Instruction: {}", error & 16 != 0);
+
+    // Print debug values from enter_usermode_with_context
+    unsafe {
+        use core::ptr::addr_of;
+        use crate::usermode::{DEBUG_R15_VALUE, DEBUG_RCX_READ, DEBUG_RIP_READ, DEBUG_RSP_READ, DEBUG_RCX_ACTUAL, DEBUG_RAX_ACTUAL, DEBUG_IRETQ_RIP, DEBUG_IRETQ_CS, DEBUG_IRETQ_RSP};
+        crate::serial_println!("  DEBUG from enter_usermode_with_context:");
+        crate::serial_println!("    r15 value: {:#x}", *addr_of!(DEBUG_R15_VALUE));
+        crate::serial_println!("    [r15+16] (rcx pre): {:#x}", *addr_of!(DEBUG_RCX_READ));
+        crate::serial_println!("    rcx after load: {:#x}", *addr_of!(DEBUG_RCX_ACTUAL));
+        crate::serial_println!("    rax after load: {:#x}", *addr_of!(DEBUG_RAX_ACTUAL));
+        crate::serial_println!("    iretq frame RIP: {:#x}", *addr_of!(DEBUG_IRETQ_RIP));
+        crate::serial_println!("    iretq frame CS: {:#x}", *addr_of!(DEBUG_IRETQ_CS));
+        crate::serial_println!("    iretq frame RSP: {:#x}", *addr_of!(DEBUG_IRETQ_RSP));
+    }
 
     panic!("Page fault");
 }

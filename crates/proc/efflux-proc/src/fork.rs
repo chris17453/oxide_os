@@ -83,6 +83,13 @@ pub fn do_fork<A: FrameAllocator>(
     let fd_table = parent.clone_fd_table();
     child.set_fd_table(fd_table);
 
+    // Clone cmdline and environ
+    child.set_cmdline(parent.clone_cmdline());
+    child.set_environ(parent.clone_environ());
+
+    // Clone cwd
+    child.set_cwd(parent.clone_cwd());
+
     // Add child to parent's children list
     parent.add_child(child_pid);
 

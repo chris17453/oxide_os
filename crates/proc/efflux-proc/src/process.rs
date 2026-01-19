@@ -132,6 +132,10 @@ pub struct Process {
     sigactions: [SigAction; NSIG],
     /// Current working directory
     cwd: String,
+    /// Command line arguments (for /proc/[pid]/cmdline)
+    cmdline: Vec<String>,
+    /// Environment variables (for /proc/[pid]/environ)
+    environ: Vec<String>,
 }
 
 impl Process {
@@ -166,6 +170,8 @@ impl Process {
             pending_signals: PendingSignals::new(),
             sigactions: [SigAction::new(); NSIG],
             cwd: String::from("/"),
+            cmdline: Vec::new(),
+            environ: Vec::new(),
         }
     }
 
@@ -404,6 +410,36 @@ impl Process {
     /// Clone cwd (for fork)
     pub fn clone_cwd(&self) -> String {
         self.cwd.clone()
+    }
+
+    /// Get the command line arguments
+    pub fn cmdline(&self) -> &[String] {
+        &self.cmdline
+    }
+
+    /// Set the command line arguments
+    pub fn set_cmdline(&mut self, cmdline: Vec<String>) {
+        self.cmdline = cmdline;
+    }
+
+    /// Get the environment variables
+    pub fn environ(&self) -> &[String] {
+        &self.environ
+    }
+
+    /// Set the environment variables
+    pub fn set_environ(&mut self, environ: Vec<String>) {
+        self.environ = environ;
+    }
+
+    /// Clone cmdline (for fork)
+    pub fn clone_cmdline(&self) -> Vec<String> {
+        self.cmdline.clone()
+    }
+
+    /// Clone environ (for fork)
+    pub fn clone_environ(&self) -> Vec<String> {
+        self.environ.clone()
     }
 }
 

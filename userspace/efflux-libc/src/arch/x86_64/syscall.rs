@@ -11,12 +11,13 @@ pub fn syscall0(nr: u64) -> i64 {
     let ret: i64;
     unsafe {
         asm!(
+            "push rcx",
             "syscall",
+            "pop rcx",
             in("rax") nr,
             lateout("rax") ret,
             lateout("rcx") _,
             lateout("r11") _,
-            options(nostack)
         );
     }
     ret
@@ -28,13 +29,14 @@ pub fn syscall1(nr: u64, arg1: usize) -> i64 {
     let ret: i64;
     unsafe {
         asm!(
+            "push rcx",
             "syscall",
+            "pop rcx",
             in("rax") nr,
             in("rdi") arg1,
             lateout("rax") ret,
             lateout("rcx") _,
             lateout("r11") _,
-            options(nostack)
         );
     }
     ret
@@ -46,14 +48,15 @@ pub fn syscall2(nr: u64, arg1: usize, arg2: usize) -> i64 {
     let ret: i64;
     unsafe {
         asm!(
+            "push rcx",
             "syscall",
+            "pop rcx",
             in("rax") nr,
             in("rdi") arg1,
             in("rsi") arg2,
             lateout("rax") ret,
             lateout("rcx") _,
             lateout("r11") _,
-            options(nostack)
         );
     }
     ret
@@ -65,7 +68,9 @@ pub fn syscall3(nr: u64, arg1: usize, arg2: usize, arg3: usize) -> i64 {
     let ret: i64;
     unsafe {
         asm!(
+            "push rcx",
             "syscall",
+            "pop rcx",
             in("rax") nr,
             in("rdi") arg1,
             in("rsi") arg2,
@@ -73,7 +78,6 @@ pub fn syscall3(nr: u64, arg1: usize, arg2: usize, arg3: usize) -> i64 {
             lateout("rax") ret,
             lateout("rcx") _,
             lateout("r11") _,
-            options(nostack)
         );
     }
     ret
@@ -85,7 +89,9 @@ pub fn syscall4(nr: u64, arg1: usize, arg2: usize, arg3: usize, arg4: usize) -> 
     let ret: i64;
     unsafe {
         asm!(
+            "push rcx",
             "syscall",
+            "pop rcx",
             in("rax") nr,
             in("rdi") arg1,
             in("rsi") arg2,
@@ -94,7 +100,6 @@ pub fn syscall4(nr: u64, arg1: usize, arg2: usize, arg3: usize, arg4: usize) -> 
             lateout("rax") ret,
             lateout("rcx") _,
             lateout("r11") _,
-            options(nostack)
         );
     }
     ret
@@ -106,7 +111,9 @@ pub fn syscall5(nr: u64, arg1: usize, arg2: usize, arg3: usize, arg4: usize, arg
     let ret: i64;
     unsafe {
         asm!(
+            "push rcx",
             "syscall",
+            "pop rcx",
             in("rax") nr,
             in("rdi") arg1,
             in("rsi") arg2,
@@ -116,7 +123,6 @@ pub fn syscall5(nr: u64, arg1: usize, arg2: usize, arg3: usize, arg4: usize, arg
             lateout("rax") ret,
             lateout("rcx") _,
             lateout("r11") _,
-            options(nostack)
         );
     }
     ret
@@ -128,7 +134,9 @@ pub fn syscall6(nr: u64, arg1: usize, arg2: usize, arg3: usize, arg4: usize, arg
     let ret: i64;
     unsafe {
         asm!(
+            "push rcx",
             "syscall",
+            "pop rcx",
             in("rax") nr,
             in("rdi") arg1,
             in("rsi") arg2,
@@ -139,7 +147,6 @@ pub fn syscall6(nr: u64, arg1: usize, arg2: usize, arg3: usize, arg4: usize, arg
             lateout("rax") ret,
             lateout("rcx") _,
             lateout("r11") _,
-            options(nostack)
         );
     }
     ret
