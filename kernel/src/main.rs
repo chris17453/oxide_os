@@ -231,6 +231,14 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
         arch::exceptions::set_page_fault_callback(page_fault_handler);
     }
 
+    // Register terminal tick callback for 30 FPS rendering
+    if terminal::is_initialized() {
+        unsafe {
+            arch::set_terminal_tick_callback(terminal_tick);
+        }
+        let _ = writeln!(writer, "[INFO] Terminal tick callback registered (30 FPS)");
+    }
+
     // Start timer at 100Hz
     let _ = writeln!(writer, "[INFO] Starting APIC timer at 100Hz...");
     arch::start_timer(100);
@@ -829,6 +837,11 @@ fn console_write(data: &[u8]) {
             fb::putchar(byte as char);
         }
     }
+}
+
+/// Terminal tick callback - called at 30 FPS from timer interrupt
+fn terminal_tick() {
+    terminal::tick();
 }
 
 /// Serial-only write function for devfs

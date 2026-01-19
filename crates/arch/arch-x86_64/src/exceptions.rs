@@ -550,6 +550,15 @@ extern "C" fn handle_simd(frame: *const InterruptFrame, _error: u64) {
 /// Timer tick counter
 static mut TIMER_TICKS: u64 = 0;
 
+/// Terminal tick callback (called at 30 FPS)
+static mut TERMINAL_TICK_CALLBACK: Option<fn()> = None;
+
+/// Ticks between terminal updates (for 30 FPS at 100 Hz timer = 3 ticks)
+const TERMINAL_TICK_INTERVAL: u64 = 3;
+
+/// Last tick when terminal was updated
+static mut LAST_TERMINAL_TICK: u64 = 0;
+
 /// Page fault callback type
 ///
 /// Takes the faulting address, error code, and instruction pointer.
@@ -594,6 +603,18 @@ pub unsafe fn set_scheduler_callback(callback: SchedulerCallback) {
     }
 }
 
+/// Register a terminal tick callback (called at ~30 FPS)
+///
+/// # Safety
+/// The callback must be valid and thread-safe.
+pub unsafe fn set_terminal_tick_callback(callback: fn()) {
+    use core::ptr::addr_of_mut;
+    unsafe {
+        let cb_ptr = addr_of_mut!(TERMINAL_TICK_CALLBACK);
+        *cb_ptr = Some(callback);
+    }
+}
+
 /// Timer interrupt handler
 ///
 /// Takes current RSP, returns RSP to restore from (may be different for context switch)
@@ -601,13 +622,26 @@ extern "C" fn handle_timer(current_rsp: u64) -> u64 {
     use core::ptr::{addr_of, addr_of_mut};
 
     // Increment tick counter
-    unsafe {
+    let current_tick = unsafe {
         let ticks_ptr = addr_of_mut!(TIMER_TICKS);
         *ticks_ptr += 1;
-    }
+        *ticks_ptr
+    };
 
     // Send EOI to APIC first (before potentially long scheduler work)
     crate::apic::end_of_interrupt();
+
+    // Call terminal tick callback at ~30 FPS
+    unsafe {
+        let last_tick_ptr = addr_of_mut!(LAST_TERMINAL_TICK);
+        if current_tick - *last_tick_ptr >= TERMINAL_TICK_INTERVAL {
+            *last_tick_ptr = current_tick;
+            let cb_ptr = addr_of!(TERMINAL_TICK_CALLBACK);
+            if let Some(callback) = *cb_ptr {
+                callback();
+            }
+        }
+    }
 
     // Call scheduler callback if registered
     let new_rsp = unsafe {

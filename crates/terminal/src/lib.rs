@@ -82,6 +82,8 @@ pub struct TerminalEmulator {
     cols: u32,
     /// Terminal height in rows
     rows: u32,
+    /// Whether a render is needed (dirty flag)
+    needs_render: bool,
 }
 
 impl TerminalEmulator {
@@ -100,6 +102,7 @@ impl TerminalEmulator {
             scroll_offset: 0,
             cols,
             rows,
+            needs_render: true,
         }
     }
 
@@ -118,14 +121,40 @@ impl TerminalEmulator {
         &self.handler.attrs
     }
 
-    /// Write bytes to the terminal
+    /// Write bytes to the terminal (rendering deferred to tick())
     pub fn write(&mut self, data: &[u8]) {
         for &byte in data {
             self.process_byte(byte);
         }
+        self.needs_render = true;
+    }
 
-        // Render after processing
+    /// Tick function - call from timer at desired FPS to render
+    pub fn tick(&mut self) {
+        if self.needs_render {
+            self.render();
+            self.needs_render = false;
+        }
+    }
+
+    /// Force immediate render
+    pub fn flush(&mut self) {
         self.render();
+        self.needs_render = false;
+    }
+
+    /// Write and immediately render (for urgent output)
+    pub fn write_immediate(&mut self, data: &[u8]) {
+        for &byte in data {
+            self.process_byte(byte);
+        }
+        self.render();
+        self.needs_render = false;
+    }
+
+    /// Check if render is pending
+    pub fn needs_render(&self) -> bool {
+        self.needs_render
     }
 
     /// Write a string to the terminal
@@ -205,8 +234,12 @@ impl TerminalEmulator {
                 self.handler.tab();
             }
             0x0A | 0x0B | 0x0C => {
-                // LF, VT, FF - Line feed
+                // LF, VT, FF - Line feed with implicit CR (standard terminal behavior)
                 let old_row = self.handler.cursor.row;
+
+                // Implicit carriage return - most terminal output expects this
+                self.handler.carriage_return();
+
                 let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
 
                 if is_alt {
@@ -225,7 +258,7 @@ impl TerminalEmulator {
                 }
             }
             0x0D => {
-                // CR - Carriage return
+                // CR - Carriage return (explicit, move to column 0)
                 self.handler.carriage_return();
             }
             0x0E => {
@@ -411,6 +444,29 @@ pub fn toggle_cursor_blink() {
 pub fn reset() {
     if let Some(ref mut terminal) = *TERMINAL.lock() {
         terminal.reset();
+    }
+}
+
+/// Tick function - call at 30 FPS from timer interrupt to render pending changes
+pub fn tick() {
+    if let Some(ref mut terminal) = *TERMINAL.lock() {
+        terminal.tick();
+    }
+}
+
+/// Write and immediately render (for urgent/interactive output)
+pub fn write_immediate(data: &[u8]) {
+    if let Some(ref mut terminal) = *TERMINAL.lock() {
+        terminal.write_immediate(data);
+    }
+}
+
+/// Check if render is needed
+pub fn is_dirty() -> bool {
+    if let Some(ref terminal) = *TERMINAL.lock() {
+        terminal.needs_render()
+    } else {
+        false
     }
 }
 

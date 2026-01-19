@@ -292,6 +292,16 @@ pub unsafe fn set_scheduler_callback(callback: exceptions::SchedulerCallback) {
     }
 }
 
+/// Register a terminal tick callback (called at ~30 FPS from timer interrupt)
+///
+/// # Safety
+/// The callback must be valid and thread-safe.
+pub unsafe fn set_terminal_tick_callback(callback: fn()) {
+    unsafe {
+        exceptions::set_terminal_tick_callback(callback);
+    }
+}
+
 /// Re-export syscall user context type and getter
 pub use syscall::{SyscallUserContext, get_user_context};
 
