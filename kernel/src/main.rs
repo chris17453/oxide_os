@@ -526,16 +526,11 @@ fn syscall_dispatch(
 }
 
 /// Page fault handler callback (for COW and other page faults)
-fn page_fault_handler(fault_addr: u64, error_code: u64, rip: u64) -> bool {
-    let mut writer = serial::SerialWriter;
-
+fn page_fault_handler(fault_addr: u64, error_code: u64, _rip: u64) -> bool {
     // Check if this is a write fault on a present page (potential COW)
     let is_present = error_code & 1 != 0;
     let is_write = error_code & 2 != 0;
     let is_user = error_code & 4 != 0;
-
-    let _ = writeln!(writer, "[COW] Page fault at {:#x}, error={:#x}, rip={:#x}", fault_addr, error_code, rip);
-    let _ = writeln!(writer, "[COW] present={}, write={}, user={}", is_present, is_write, is_user);
 
     // COW faults are: present + write + user mode
     if is_present && is_write && is_user {
@@ -543,27 +538,17 @@ fn page_fault_handler(fault_addr: u64, error_code: u64, rip: u64) -> bool {
         let table = process_table();
         let current_pid = table.current_pid();
 
-        let _ = writeln!(writer, "[COW] Current PID: {}", current_pid);
-
         if let Some(proc) = table.get(current_pid) {
             let pml4 = proc.lock().address_space().pml4_phys();
             let alloc = FrameAllocatorWrapper;
 
-            let _ = writeln!(writer, "[COW] PML4: {:#x}, attempting COW handling...", pml4.as_u64());
-
             // Try to handle as COW fault
             if handle_cow_fault(VirtAddr::new(fault_addr), pml4, &alloc) {
-                let _ = writeln!(writer, "[COW] COW fault handled successfully!");
                 return true; // Fault handled
-            } else {
-                let _ = writeln!(writer, "[COW] COW handler returned false");
             }
-        } else {
-            let _ = writeln!(writer, "[COW] Process not found!");
         }
     }
 
-    let _ = writeln!(writer, "[COW] Fault not handled");
     false // Fault not handled - will panic
 }
 
@@ -591,8 +576,6 @@ fn console_read(_buf: &mut [u8]) -> usize {
 
 /// User exit function
 fn user_exit(status: i32) -> ! {
-    let mut writer = serial::SerialWriter;
-
     // Get current process and mark as zombie
     let table = process_table();
     let current_pid = table.current_pid();
@@ -606,19 +589,10 @@ fn user_exit(status: i32) -> ! {
     }
     USER_EXITED.store(true, Ordering::SeqCst);
 
-    let _ = writeln!(writer);
-    let _ = writeln!(writer, "========================================");
-    let _ = writeln!(writer, "  User Process {} Exited", current_pid);
-    let _ = writeln!(writer, "  Exit Status: {}", status);
-    let _ = writeln!(writer, "========================================");
-    let _ = writeln!(writer);
-
     // Check if there's a saved parent context to return to
     let parent_ctx = PARENT_CONTEXT.lock().take();
 
     if let Some((parent_pid, parent_pml4, user_rip, user_rsp, user_rflags)) = parent_ctx {
-        let _ = writeln!(writer, "[INFO] Child {} exited, returning to parent {}", current_pid, parent_pid);
-
         // Restore parent as current process
         table.set_current_pid(parent_pid);
 
@@ -640,8 +614,6 @@ fn user_exit(status: i32) -> ! {
 
             // Calculate wait result: (child_pid << 32) | status
             let wait_result = ((current_pid as i64) << 32) | ((status as i64) & 0xFFFFFFFF);
-
-            let _ = writeln!(writer, "[INFO] Returning to parent with wait result: {:#x}", wait_result);
 
             // Return to parent's user mode via sysretq
             // We need to:
@@ -683,21 +655,11 @@ fn user_exit(status: i32) -> ! {
     if let Some(proc) = table.get(current_pid) {
         let ppid = proc.lock().ppid();
         if ppid > 0 {
-            let _ = writeln!(writer, "[INFO] Child {} exited, parent {} can reap", current_pid, ppid);
             arch::X86_64::halt();
         }
     }
 
-    // No parent or init process exiting
-    if status == 0 {
-        let _ = writeln!(writer, "SUCCESS: User process completed successfully!");
-    } else {
-        let _ = writeln!(writer, "User process exited with non-zero status");
-    }
-
-    let _ = writeln!(writer);
-    let _ = writeln!(writer, "[INFO] Test complete. Halting.");
-
+    // Init process or orphan exiting - halt the system
     arch::X86_64::halt();
 }
 
@@ -705,12 +667,8 @@ fn user_exit(status: i32) -> ! {
 ///
 /// Creates a child process and returns child PID to parent, 0 to child.
 fn kernel_fork() -> i64 {
-    let mut writer = serial::SerialWriter;
-    let _ = writeln!(writer, "[FORK] Fork called");
-
     let table = process_table();
     let parent_pid = table.current_pid();
-    let _ = writeln!(writer, "[FORK] Parent PID: {}", parent_pid);
 
     // Get current process context from syscall user context
     let user_ctx = get_user_context();
@@ -735,44 +693,21 @@ fn kernel_fork() -> i64 {
         r15: user_ctx.r15,
     };
 
-    let _ = writeln!(writer, "[FORK] Parent context: rip={:#x} rsp={:#x}", parent_context.rip, parent_context.rsp);
-
     // Create wrapper for frame allocator
     let alloc_wrapper = FrameAllocatorWrapper;
-
-    // Print RSP before call to validate stack
-    let rsp_before: u64;
-    unsafe { core::arch::asm!("mov {}, rsp", out(reg) rsp_before, options(nomem, nostack)) };
-    let _ = writeln!(writer, "[FORK] RSP before do_fork: {:#x}", rsp_before);
-    // Print value at RSP to verify return address slot
-    let ret_slot = unsafe { *(rsp_before as *const u64) };
-    let _ = writeln!(writer, "[FORK] Value at RSP: {:#x}", ret_slot);
-
-    let _ = writeln!(writer, "[FORK] Calling do_fork...");
 
     // Call do_fork
     let result = do_fork(parent_pid, &parent_context, &alloc_wrapper);
 
-    // Print RSP after return to verify stack restored
-    let rsp_after: u64;
-    unsafe { core::arch::asm!("mov {}, rsp", out(reg) rsp_after, options(nomem, nostack)) };
-    let _ = writeln!(writer, "[FORK] RSP after do_fork: {:#x}", rsp_after);
-    let _ = writeln!(writer, "[FORK] do_fork returned");
-
     match result {
         Ok(child_pid) => {
-            let _ = writeln!(writer, "[FORK] Created child process {}", child_pid);
-
             // Add child to pending list for later execution
             PENDING_CHILDREN.lock().push(child_pid);
 
             // Return child PID to parent
             child_pid as i64
         }
-        Err(e) => {
-            let _ = writeln!(writer, "[FORK] Fork failed: {:?}", e);
-            -1 // EAGAIN
-        }
+        Err(_) => -1, // EAGAIN
     }
 }
 
@@ -780,9 +715,6 @@ fn kernel_fork() -> i64 {
 ///
 /// Waits for child process and returns (pid << 32) | status.
 fn kernel_wait(pid: i32, options: i32) -> i64 {
-    let mut writer = serial::SerialWriter;
-    let _ = writeln!(writer, "[WAIT] Wait called for pid={}", pid);
-
     let table = process_table();
     let parent_pid = table.current_pid();
     let wait_opts = WaitOptions::from(options);
@@ -793,24 +725,18 @@ fn kernel_wait(pid: i32, options: i32) -> i64 {
         if let Some(child_pid) = pending.pop() {
             drop(pending); // Release lock before running child
 
-            let _ = writeln!(writer, "[WAIT] Running pending child {}", child_pid);
-
             // Run the child process
             run_child_process(child_pid);
-
-            let _ = writeln!(writer, "[WAIT] Child {} finished", child_pid);
         }
     }
 
     // Now wait for zombie children
     match do_waitpid(parent_pid, pid, wait_opts) {
         Ok(result) => {
-            let _ = writeln!(writer, "[WAIT] Reaped child {} with status {}", result.pid, result.status);
             // Pack pid and status into result
             ((result.pid as i64) << 32) | ((result.status as i64) & 0xFFFFFFFF)
         }
         Err(e) => {
-            let _ = writeln!(writer, "[WAIT] Wait failed: {:?}", e);
             match e {
                 efflux_proc::WaitError::NoChildren => -10,  // ECHILD
                 efflux_proc::WaitError::WouldBlock => -11,  // EAGAIN
@@ -824,10 +750,8 @@ fn kernel_wait(pid: i32, options: i32) -> i64 {
 /// Run a child process to completion
 ///
 /// This function saves the parent's context and enters the child.
-/// When the child exits, control returns here via return_to_parent().
+/// When the child exits, control returns to parent via sysretq.
 fn run_child_process(child_pid: Pid) {
-    let mut writer = serial::SerialWriter;
-
     let table = process_table();
     let parent_pid = table.current_pid();
 
@@ -840,13 +764,10 @@ fn run_child_process(child_pid: Pid) {
     };
 
     // Get child process info
-    let (child_pml4, child_entry, _child_stack, kernel_stack_phys, kernel_stack_size) = {
+    let (child_pml4, _child_entry, _child_stack, kernel_stack_phys, kernel_stack_size) = {
         let child = match table.get(child_pid) {
             Some(c) => c,
-            None => {
-                let _ = writeln!(writer, "[RUN] Child {} not found!", child_pid);
-                return;
-            }
+            None => return,
         };
 
         let c = child.lock();
@@ -859,20 +780,8 @@ fn run_child_process(child_pid: Pid) {
         )
     };
 
-    // Save parent's kernel stack info for returning later
-    // We get the parent's kernel stack top from its Process
-    let parent_kernel_stack_top = if let Some(p) = table.get(parent_pid) {
-        let p = p.lock();
-        let stack_virt = efflux_mm_paging::phys_to_virt(p.kernel_stack());
-        stack_virt.as_u64() + p.kernel_stack_size() as u64
-    } else {
-        0
-    };
-
     // Set current process to child
     table.set_current_pid(child_pid);
-
-    let _ = writeln!(writer, "[RUN] Switching to child {} at {:#x}", child_pid, child_entry.as_u64());
 
     // Use the kernel stack already allocated for this child (in fork)
     let kernel_stack_virt = efflux_mm_paging::phys_to_virt(kernel_stack_phys);
@@ -889,9 +798,6 @@ fn run_child_process(child_pid: Pid) {
         let child = table.get(child_pid).unwrap();
         child.lock().context().clone()
     };
-
-    let _ = writeln!(writer, "[RUN] Child context: rip={:#x} rsp={:#x} rax={}",
-        child_ctx.rip, child_ctx.rsp, child_ctx.rax);
 
     // Save parent's user context so we can return to parent when child exits
     // The parent's user context is saved by the syscall handler
