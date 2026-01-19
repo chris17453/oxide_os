@@ -1061,14 +1061,25 @@ fn kernel_exec(path_ptr: *const u8, path_len: usize, argv_ptr: *const *const u8,
     // Read path from user space
     let path = unsafe {
         if path_ptr.is_null() || path_len == 0 {
+            let mut writer = serial::SerialWriter;
+            let _ = writeln!(writer, "[EXEC] Invalid path (null or zero len)");
             return -22; // EINVAL
         }
         let slice = core::slice::from_raw_parts(path_ptr, path_len);
         match core::str::from_utf8(slice) {
             Ok(s) => s,
-            Err(_) => return -22, // EINVAL
+            Err(_) => {
+                let mut writer = serial::SerialWriter;
+                let _ = writeln!(writer, "[EXEC] Invalid UTF-8 in path");
+                return -22; // EINVAL
+            }
         }
     };
+
+    {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[EXEC] PID {} exec(\"{}\")", current_pid, path);
+    }
 
     // Read argv from user space
     let mut argv: Vec<String> = Vec::new();
@@ -1131,26 +1142,46 @@ fn kernel_exec(path_ptr: *const u8, path_len: usize, argv_ptr: *const *const u8,
     // Look up the file in VFS
     let vnode = match GLOBAL_VFS.lookup(path) {
         Ok(v) => v,
-        Err(_) => return -2, // ENOENT
+        Err(e) => {
+            let mut writer = serial::SerialWriter;
+            let _ = writeln!(writer, "[EXEC] VFS lookup failed for '{}': {:?}", path, e);
+            return -2; // ENOENT
+        }
     };
 
     // Check it's a regular file
     if vnode.vtype() != VnodeType::File {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[EXEC] Not a regular file: {:?}", vnode.vtype());
         return -21; // EISDIR or not a file
     }
 
     // Read the file contents
     let size = vnode.size() as usize;
+    {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[EXEC] File size: {} bytes", size);
+    }
 
     let mut elf_data = alloc::vec![0u8; size];
     let read_result = vnode.read(0, &mut elf_data);
     let bytes_read = match read_result {
         Ok(n) => n,
-        Err(_) => return -5, // EIO
+        Err(e) => {
+            let mut writer = serial::SerialWriter;
+            let _ = writeln!(writer, "[EXEC] Read failed: {:?}", e);
+            return -5; // EIO
+        }
     };
 
     if bytes_read != size {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[EXEC] Short read: {} of {} bytes", bytes_read, size);
         return -5; // EIO - short read
+    }
+    {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[EXEC] Read {} bytes, calling do_exec", bytes_read);
     }
 
     // Get kernel PML4 for creating new address space
@@ -1180,10 +1211,9 @@ fn kernel_exec(path_ptr: *const u8, path_len: usize, argv_ptr: *const *const u8,
 
                     // Return to user mode at new entry point
                     // We use sysretq which expects: rcx = rip, r11 = rflags
+                    // Need to set up segments and do swapgs first
                     core::arch::asm!(
-                        // Set up return value (execve returns 0 on success, but we go to entry)
-                        "xor rax, rax",
-                        // Set up rip for sysretq
+                        // Set up rip for sysretq (do this first while we have free regs)
                         "mov rcx, {rip}",
                         // Set up rflags for sysretq
                         "mov r11, {rflags}",
@@ -1193,6 +1223,19 @@ fn kernel_exec(path_ptr: *const u8, path_len: usize, argv_ptr: *const *const u8,
                         "mov rdi, {argc}",
                         "mov rsi, {argv}",
                         "mov rdx, {envp}",
+                        // Load user data segment selectors for DS/ES/FS (0x1B = USER_DS | 3)
+                        // NOTE: Do NOT load GS - swapgs will handle it
+                        "mov ax, 0x1b",
+                        "mov ds, ax",
+                        "mov es, ax",
+                        "mov fs, ax",
+                        // Clear rax for return value
+                        "xor rax, rax",
+                        // Swap GS back to user mode (required before sysretq)
+                        // This swaps GS.base <-> KERNEL_GS_BASE
+                        // Currently: GS.base = kernel data, KERNEL_GS_BASE = user's GS (likely 0)
+                        // After: GS.base = 0, KERNEL_GS_BASE = kernel data
+                        "swapgs",
                         // Return to user mode
                         "sysretq",
                         rip = in(reg) ctx.rip,
@@ -1208,13 +1251,30 @@ fn kernel_exec(path_ptr: *const u8, path_len: usize, argv_ptr: *const *const u8,
             0 // Never reached
         }
         Err(e) => {
-            match e {
-                efflux_proc::ExecError::InvalidElf => -8, // ENOEXEC
-                efflux_proc::ExecError::OutOfMemory => -12, // ENOMEM
-                efflux_proc::ExecError::ProcessNotFound => -3, // ESRCH
-                efflux_proc::ExecError::InvalidAddress => -14, // EFAULT
-                efflux_proc::ExecError::InvalidArgument => -22, // EINVAL
-            }
+            let mut writer = serial::SerialWriter;
+            let code = match e {
+                efflux_proc::ExecError::InvalidElf => {
+                    let _ = writeln!(writer, "[EXEC] Error: InvalidElf");
+                    -8 // ENOEXEC
+                }
+                efflux_proc::ExecError::OutOfMemory => {
+                    let _ = writeln!(writer, "[EXEC] Error: OutOfMemory");
+                    -12 // ENOMEM
+                }
+                efflux_proc::ExecError::ProcessNotFound => {
+                    let _ = writeln!(writer, "[EXEC] Error: ProcessNotFound");
+                    -3 // ESRCH
+                }
+                efflux_proc::ExecError::InvalidAddress => {
+                    let _ = writeln!(writer, "[EXEC] Error: InvalidAddress");
+                    -14 // EFAULT
+                }
+                efflux_proc::ExecError::InvalidArgument => {
+                    let _ = writeln!(writer, "[EXEC] Error: InvalidArgument");
+                    -22 // EINVAL
+                }
+            };
+            code
         }
     }
 }

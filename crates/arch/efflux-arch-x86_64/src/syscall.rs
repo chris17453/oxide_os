@@ -229,8 +229,17 @@ extern "C" fn syscall_entry() {
         // Enable interrupts
         "sti",
 
+        // Save R8, R9, R10 - these must be preserved for the user
+        // (syscall only clobbers RCX and R11 according to ABI)
+        "push r8",
+        "push r9",
+        "push r10",
+
         // Set up arguments: handler(number, arg1, arg2, arg3, arg4, arg5, arg6)
-        "push r9",                         // arg6 on stack
+        // First save arg values before we clobber them
+        "mov rax, r9",                     // Save arg6 (r9) to rax temporarily
+        "push rax",                        // arg6 on stack
+
         "mov r9, r8",                      // arg5 (was in r8)
         "mov r8, r10",                     // arg4 (was in r10)
         "mov rcx, rdx",                    // arg3 (was in rdx)
@@ -240,8 +249,13 @@ extern "C" fn syscall_entry() {
 
         "call {handler}",
 
-        // Clean up stack arg
+        // Clean up stack arg (the pushed arg6)
         "add rsp, 8",
+
+        // Restore R8, R9, R10 from where we saved them
+        "pop r10",
+        "pop r9",
+        "pop r8",
 
         // === EPILOGUE: Restore and sysret ===
         // RAX = return value (preserve it!)
@@ -262,10 +276,19 @@ extern "C" fn syscall_entry() {
         // We need: RSP = user RSP, RCX = user RIP, R11 = user RFLAGS
         // RAX has return value - keep it there!
 
+        // DEBUG: Save stack pointer before reads
+        "mov [{sysret_stack_ptr}], rsp",
+
         // Load sysret values into registers (we have R10 free as scratch)
         "mov r10, [rsp]",                  // User RSP -> R10
         "mov rcx, [rsp + 8]",              // User RIP -> RCX (for sysret)
         "mov r11, [rsp + 16]",             // User RFLAGS -> R11 (for sysret)
+
+        // DEBUG: Save loaded values
+        "mov [{sysret_rsp}], r10",
+        "mov [{sysret_rcx}], rcx",
+        "mov [{sysret_r11}], r11",
+        "mov [{sysret_rax}], rax",
 
         // Swap GS back to user mode (BEFORE switching RSP!)
         "swapgs",
@@ -279,6 +302,11 @@ extern "C" fn syscall_entry() {
 
         handler = sym syscall_dispatch,
         user_ctx = sym SYSCALL_USER_CONTEXT,
+        sysret_stack_ptr = sym SYSRET_DEBUG_STACK_PTR,
+        sysret_rsp = sym SYSRET_DEBUG_RSP,
+        sysret_rcx = sym SYSRET_DEBUG_RCX,
+        sysret_r11 = sym SYSRET_DEBUG_R11,
+        sysret_rax = sym SYSRET_DEBUG_RAX,
     );
 }
 
@@ -360,6 +388,18 @@ static mut SYSCALL_USER_CONTEXT: SyscallUserContext = SyscallUserContext {
     rax: 0, rbx: 0, rcx: 0, rdx: 0, rsi: 0, rdi: 0, rbp: 0,
     r8: 0, r9: 0, r10: 0, r11: 0, r12: 0, r13: 0, r14: 0, r15: 0,
 };
+
+/// Debug: capture values before sysretq
+#[unsafe(no_mangle)]
+pub static mut SYSRET_DEBUG_RSP: u64 = 0xDEAD;
+#[unsafe(no_mangle)]
+pub static mut SYSRET_DEBUG_RCX: u64 = 0xDEAD;
+#[unsafe(no_mangle)]
+pub static mut SYSRET_DEBUG_R11: u64 = 0xDEAD;
+#[unsafe(no_mangle)]
+pub static mut SYSRET_DEBUG_RAX: u64 = 0xDEAD;
+#[unsafe(no_mangle)]
+pub static mut SYSRET_DEBUG_STACK_PTR: u64 = 0xDEAD;
 
 /// Get the current syscall user context
 ///

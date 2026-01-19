@@ -60,7 +60,7 @@ pub fn do_exec<A: FrameAllocator>(
     kernel_pml4: PhysAddr,
 ) -> Result<(VirtAddr, VirtAddr), ExecError> {
     // Parse ELF
-    let elf = ElfExecutable::parse(elf_data).map_err(|_| ExecError::InvalidElf)?;
+    let elf = ElfExecutable::parse(elf_data).map_err(|_e| ExecError::InvalidElf)?;
 
     // Get process
     let table = process_table();
@@ -85,13 +85,34 @@ pub fn do_exec<A: FrameAllocator>(
         // Allocate and map each page
         for i in 0..num_pages {
             let page_virt = VirtAddr::new(page_start.as_u64() + (i as u64 * 4096));
-            let frame = allocator.alloc_frame().ok_or(ExecError::OutOfMemory)?;
 
-            // Zero the frame
-            let frame_virt = phys_to_virt(frame);
-            unsafe {
-                core::ptr::write_bytes(frame_virt.as_mut_ptr::<u8>(), 0, 4096);
-            }
+            // Check if this page is already mapped (overlapping segments)
+            let frame_virt = if let Some(existing_phys) = new_address_space.translate(page_virt) {
+                // Page already mapped, use existing frame
+                // But we need to update permissions if the new segment needs write access
+                if segment.flags.contains(MemoryFlags::WRITE) {
+                    new_address_space.update_user_page_flags(page_virt, MemoryFlags::WRITE);
+                }
+                phys_to_virt(existing_phys)
+            } else {
+                // Allocate new frame
+                let frame = allocator.alloc_frame().ok_or(ExecError::OutOfMemory)?;
+
+                // Zero the frame
+                let frame_virt = phys_to_virt(frame);
+                unsafe {
+                    core::ptr::write_bytes(frame_virt.as_mut_ptr::<u8>(), 0, 4096);
+                }
+
+                // Map the page
+                unsafe {
+                    new_address_space
+                        .map_user_page(page_virt, frame, segment.flags, allocator)
+                        .map_err(|_| ExecError::OutOfMemory)?;
+                }
+
+                frame_virt
+            };
 
             // Copy data from segment
             let page_start_in_segment = i * 4096;
@@ -122,13 +143,6 @@ pub fn do_exec<A: FrameAllocator>(
                         );
                     }
                 }
-            }
-
-            // Map the page
-            unsafe {
-                new_address_space
-                    .map_user_page(page_virt, frame, segment.flags, allocator)
-                    .map_err(|_| ExecError::OutOfMemory)?;
             }
         }
     }

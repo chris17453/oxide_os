@@ -308,9 +308,9 @@ extern "C" fn handle_divide_error(frame: *const InterruptFrame, _error: u64) {
     panic!("DIVIDE ERROR at {:#x}", frame.rip);
 }
 
-extern "C" fn handle_debug(frame: *const InterruptFrame, _error: u64) {
-    let frame = unsafe { &*frame };
-    crate::serial_println!("[DEBUG] Debug exception at {:#x}", frame.rip);
+extern "C" fn handle_debug(_frame: *const InterruptFrame, _error: u64) {
+    // Debug exceptions can occur from hardware debug registers or TF flag
+    // Silently ignore for now - the user's process can handle these if needed
 }
 
 extern "C" fn handle_nmi(_frame: *const InterruptFrame, _error: u64) {
@@ -411,7 +411,7 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
     // Print debug values from enter_usermode_with_context
     unsafe {
         use core::ptr::addr_of;
-        use crate::usermode::{DEBUG_R15_VALUE, DEBUG_RCX_READ, DEBUG_RIP_READ, DEBUG_RSP_READ, DEBUG_RCX_ACTUAL, DEBUG_RAX_ACTUAL, DEBUG_IRETQ_RIP, DEBUG_IRETQ_CS, DEBUG_IRETQ_RSP};
+        use crate::usermode::{DEBUG_R15_VALUE, DEBUG_RCX_READ, DEBUG_RCX_ACTUAL, DEBUG_RAX_ACTUAL, DEBUG_IRETQ_RIP, DEBUG_IRETQ_CS, DEBUG_IRETQ_RSP};
         crate::serial_println!("  DEBUG from enter_usermode_with_context:");
         crate::serial_println!("    r15 value: {:#x}", *addr_of!(DEBUG_R15_VALUE));
         crate::serial_println!("    [r15+16] (rcx pre): {:#x}", *addr_of!(DEBUG_RCX_READ));
@@ -420,6 +420,18 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
         crate::serial_println!("    iretq frame RIP: {:#x}", *addr_of!(DEBUG_IRETQ_RIP));
         crate::serial_println!("    iretq frame CS: {:#x}", *addr_of!(DEBUG_IRETQ_CS));
         crate::serial_println!("    iretq frame RSP: {:#x}", *addr_of!(DEBUG_IRETQ_RSP));
+    }
+
+    // Print debug values from syscall sysretq path
+    unsafe {
+        use core::ptr::addr_of;
+        use crate::syscall::{SYSRET_DEBUG_STACK_PTR, SYSRET_DEBUG_RSP, SYSRET_DEBUG_RCX, SYSRET_DEBUG_R11, SYSRET_DEBUG_RAX};
+        crate::serial_println!("  DEBUG from syscall sysretq:");
+        crate::serial_println!("    kernel stack ptr: {:#x}", *addr_of!(SYSRET_DEBUG_STACK_PTR));
+        crate::serial_println!("    loaded RSP: {:#x}", *addr_of!(SYSRET_DEBUG_RSP));
+        crate::serial_println!("    loaded RCX (user RIP): {:#x}", *addr_of!(SYSRET_DEBUG_RCX));
+        crate::serial_println!("    loaded R11 (user RFLAGS): {:#x}", *addr_of!(SYSRET_DEBUG_R11));
+        crate::serial_println!("    RAX (return value): {:#x}", *addr_of!(SYSRET_DEBUG_RAX));
     }
 
     panic!("Page fault");
