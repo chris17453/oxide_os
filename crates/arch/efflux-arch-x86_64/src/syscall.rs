@@ -137,12 +137,14 @@ extern "C" fn syscall_entry() {
 
         // CRITICAL: Save user values BEFORE using any register as scratch
         // GS layout: [0]=kernel_rsp, [8]=scratch_rsp, [16]=scratch_rax,
-        //             [24]=scratch_r12, [32]=scratch_rcx
+        //             [24]=scratch_r12, [32]=scratch_rcx (unused now)
+        // Note: RCX contains user RIP (set by syscall instruction)
+        //       R11 contains user RFLAGS (set by syscall instruction)
+        //       User's original RCX/R11 are NOT recoverable - this is the syscall ABI
         "mov gs:[8], rsp",                 // Save user RSP
         "mov gs:[16], rax",                // Save syscall number (user RAX)
         "mov gs:[24], r12",                // Save user R12
-        "mov r12, [rsp]",                  // Load user's original RCX (pushed by libc)
-        "mov gs:[32], r12",                // Save user RCX for fork context
+        // gs:[32] is unused - we no longer read from user stack
 
         // Now switch to kernel stack
         "mov rsp, gs:[0]",
@@ -204,7 +206,9 @@ extern "C" fn syscall_entry() {
 
         // Other registers (still have user values)
         "mov [r13 + 32], rbx",
-        "mov r12, gs:[32]",                // Original user RCX saved in scratch space
+        // Note: RCX was clobbered by syscall instruction (now contains user RIP)
+        // Store user RIP as RCX - this is what sysret will restore anyway
+        "mov r12, [rsp + 56]",             // User RIP (same as what was in RCX)
         "mov [r13 + 40], r12",
         "mov [r13 + 48], rdx",             // arg3
         "mov [r13 + 56], rsi",             // arg2

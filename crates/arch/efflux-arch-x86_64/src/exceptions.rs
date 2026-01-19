@@ -334,6 +334,30 @@ extern "C" fn handle_bound_range(frame: *const InterruptFrame, _error: u64) {
 
 extern "C" fn handle_invalid_opcode(frame: *const InterruptFrame, _error: u64) {
     let frame = unsafe { &*frame };
+
+    // Read saved registers from stack (they were pushed before the frame pointer)
+    // Stack layout: [r15][r14][r13][r12][r11][r10][r9][r8][rbp][rdi][rsi][rdx][rcx][rbx][rax][rip][cs][rflags][rsp][ss]
+    let regs_ptr = unsafe { (frame as *const InterruptFrame).cast::<u64>().sub(15) };
+    let regs = unsafe { core::slice::from_raw_parts(regs_ptr, 15) };
+
+    // Print debug info
+    crate::serial_println!("\n=== INVALID OPCODE ===");
+    crate::serial_println!("RIP: {:#x}  CS: {:#x}", frame.rip, frame.cs);
+    crate::serial_println!("RSP: {:#x}  SS: {:#x}", frame.rsp, frame.ss);
+    crate::serial_println!("RFLAGS: {:#x}", frame.rflags);
+    crate::serial_println!("RAX: {:#x}  RBX: {:#x}  RCX: {:#x}", regs[14], regs[13], regs[12]);
+    crate::serial_println!("RDX: {:#x}  RSI: {:#x}  RDI: {:#x}", regs[11], regs[10], regs[9]);
+    crate::serial_println!("RBP: {:#x}  R8:  {:#x}  R9:  {:#x}", regs[8], regs[7], regs[6]);
+    crate::serial_println!("R10: {:#x}  R11: {:#x}  R12: {:#x}", regs[5], regs[4], regs[3]);
+    crate::serial_println!("R13: {:#x}  R14: {:#x}  R15: {:#x}", regs[2], regs[1], regs[0]);
+
+    // Try to read bytes at RIP if it's in user space
+    if frame.rip < 0x8000_0000_0000_0000 {
+        // Try to read instruction bytes (may fault)
+        crate::serial_println!("Trying to read bytes at RIP...");
+        // Can't safely read user memory here without proper page table handling
+    }
+
     panic!("INVALID OPCODE at {:#x}", frame.rip);
 }
 
@@ -364,6 +388,73 @@ extern "C" fn handle_stack_segment(frame: *const InterruptFrame, error: u64) {
 
 extern "C" fn handle_general_protection(frame: *const InterruptFrame, error: u64) {
     let frame = unsafe { &*frame };
+
+    // Get saved registers from stack (same layout as page fault handler)
+    let frame_ptr = frame as *const InterruptFrame as *const u8;
+    let saved_regs_ptr = frame_ptr.wrapping_sub(15 * 8 + 8);
+
+    // Extract saved register values
+    let saved_r15 = unsafe { *(saved_regs_ptr.wrapping_add(0) as *const u64) };
+    let saved_r14 = unsafe { *(saved_regs_ptr.wrapping_add(8) as *const u64) };
+    let saved_r13 = unsafe { *(saved_regs_ptr.wrapping_add(16) as *const u64) };
+    let saved_r12 = unsafe { *(saved_regs_ptr.wrapping_add(24) as *const u64) };
+    let saved_r11 = unsafe { *(saved_regs_ptr.wrapping_add(32) as *const u64) };
+    let saved_r10 = unsafe { *(saved_regs_ptr.wrapping_add(40) as *const u64) };
+    let saved_r9 = unsafe { *(saved_regs_ptr.wrapping_add(48) as *const u64) };
+    let saved_r8 = unsafe { *(saved_regs_ptr.wrapping_add(56) as *const u64) };
+    let saved_rbp = unsafe { *(saved_regs_ptr.wrapping_add(64) as *const u64) };
+    let saved_rdi = unsafe { *(saved_regs_ptr.wrapping_add(72) as *const u64) };
+    let saved_rsi = unsafe { *(saved_regs_ptr.wrapping_add(80) as *const u64) };
+    let saved_rdx = unsafe { *(saved_regs_ptr.wrapping_add(88) as *const u64) };
+    let saved_rcx = unsafe { *(saved_regs_ptr.wrapping_add(96) as *const u64) };
+    let saved_rbx = unsafe { *(saved_regs_ptr.wrapping_add(104) as *const u64) };
+    let saved_rax = unsafe { *(saved_regs_ptr.wrapping_add(112) as *const u64) };
+
+    crate::serial_println!("========================================");
+    crate::serial_println!("  GENERAL PROTECTION FAULT");
+    crate::serial_println!("========================================");
+    crate::serial_println!("  RIP: {:#x}", frame.rip);
+    crate::serial_println!("  RSP: {:#x}", frame.rsp);
+    crate::serial_println!("  CS:  {:#x}", frame.cs);
+    crate::serial_println!("  SS:  {:#x}", frame.ss);
+    crate::serial_println!("  RFLAGS: {:#x}", frame.rflags);
+    crate::serial_println!("  Error code: {:#x}", error);
+    crate::serial_println!("");
+    crate::serial_println!("  Saved registers:");
+    crate::serial_println!("    RAX: {:#018x}  RBX: {:#018x}", saved_rax, saved_rbx);
+    crate::serial_println!("    RCX: {:#018x}  RDX: {:#018x}", saved_rcx, saved_rdx);
+    crate::serial_println!("    RSI: {:#018x}  RDI: {:#018x}", saved_rsi, saved_rdi);
+    crate::serial_println!("    RBP: {:#018x}  R8:  {:#018x}", saved_rbp, saved_r8);
+    crate::serial_println!("    R9:  {:#018x}  R10: {:#018x}", saved_r9, saved_r10);
+    crate::serial_println!("    R11: {:#018x}  R12: {:#018x}", saved_r11, saved_r12);
+    crate::serial_println!("    R13: {:#018x}  R14: {:#018x}", saved_r13, saved_r14);
+    crate::serial_println!("    R15: {:#018x}", saved_r15);
+    crate::serial_println!("");
+
+    // Check if this is a user-mode fault
+    let is_user = (frame.cs & 3) == 3;
+    crate::serial_println!("  Fault from: {}", if is_user { "User mode (Ring 3)" } else { "Kernel mode (Ring 0)" });
+
+    // Print debug values from sysret path
+    unsafe {
+        use core::ptr::addr_of;
+        use crate::syscall::{SYSRET_DEBUG_STACK_PTR, SYSRET_DEBUG_RSP, SYSRET_DEBUG_RCX, SYSRET_DEBUG_R11, SYSRET_DEBUG_RAX};
+        crate::serial_println!("");
+        crate::serial_println!("  Last syscall sysret debug:");
+        crate::serial_println!("    kernel stack ptr: {:#x}", *addr_of!(SYSRET_DEBUG_STACK_PTR));
+        crate::serial_println!("    user RSP: {:#x}", *addr_of!(SYSRET_DEBUG_RSP));
+        crate::serial_println!("    user RIP (RCX): {:#x}", *addr_of!(SYSRET_DEBUG_RCX));
+        crate::serial_println!("    user RFLAGS (R11): {:#x}", *addr_of!(SYSRET_DEBUG_R11));
+        crate::serial_println!("    return value (RAX): {:#x}", *addr_of!(SYSRET_DEBUG_RAX));
+    }
+
+    // Try to read the instruction bytes at RIP if accessible
+    if is_user && frame.rip < 0x0000_8000_0000_0000 {
+        crate::serial_println!("");
+        crate::serial_println!("  Attempting to read instruction bytes at RIP...");
+        // Note: This might fault if the page isn't mapped in kernel, but it's worth trying
+    }
+
     panic!("GENERAL PROTECTION FAULT at {:#x}, error: {:#x}", frame.rip, error);
 }
 

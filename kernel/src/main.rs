@@ -1211,18 +1211,21 @@ fn kernel_exec(path_ptr: *const u8, path_len: usize, argv_ptr: *const *const u8,
 
                     // Return to user mode at new entry point
                     // We use sysretq which expects: rcx = rip, r11 = rflags
-                    // Need to set up segments and do swapgs first
+                    // Use explicit registers to prevent compiler from reusing registers
+                    // that we overwrite before their values are consumed
                     core::arch::asm!(
-                        // Set up rip for sysretq (do this first while we have free regs)
-                        "mov rcx, {rip}",
+                        // Set up rip for sysretq
+                        "mov rcx, r8",
                         // Set up rflags for sysretq
-                        "mov r11, {rflags}",
-                        // Set up user stack
-                        "mov rsp, {rsp}",
+                        "mov r11, r9",
+                        // Set up user stack - do this AFTER loading values into rcx/r11
+                        // to avoid any chance of compiler putting inputs in rsp
+                        "mov rsp, r10",
                         // Set up argc, argv, envp in registers per System V ABI
-                        "mov rdi, {argc}",
-                        "mov rsi, {argv}",
-                        "mov rdx, {envp}",
+                        // These are already loaded into r12, r13, r14 respectively
+                        "mov rdi, r12",
+                        "mov rsi, r13",
+                        "mov rdx, r14",
                         // Load user data segment selectors for DS/ES/FS (0x1B = USER_DS | 3)
                         // NOTE: Do NOT load GS - swapgs will handle it
                         "mov ax, 0x1b",
@@ -1232,18 +1235,15 @@ fn kernel_exec(path_ptr: *const u8, path_len: usize, argv_ptr: *const *const u8,
                         // Clear rax for return value
                         "xor rax, rax",
                         // Swap GS back to user mode (required before sysretq)
-                        // This swaps GS.base <-> KERNEL_GS_BASE
-                        // Currently: GS.base = kernel data, KERNEL_GS_BASE = user's GS (likely 0)
-                        // After: GS.base = 0, KERNEL_GS_BASE = kernel data
                         "swapgs",
                         // Return to user mode
                         "sysretq",
-                        rip = in(reg) ctx.rip,
-                        rflags = in(reg) 0x202u64, // IF set
-                        rsp = in(reg) ctx.rsp,
-                        argc = in(reg) ctx.rdi,
-                        argv = in(reg) ctx.rsi,
-                        envp = in(reg) ctx.rdx,
+                        in("r8") ctx.rip,
+                        in("r9") 0x202u64, // IF set
+                        in("r10") ctx.rsp,
+                        in("r12") ctx.rdi,
+                        in("r13") ctx.rsi,
+                        in("r14") ctx.rdx,
                         options(noreturn)
                     );
                 }

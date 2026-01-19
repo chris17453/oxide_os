@@ -130,16 +130,17 @@ fn main() -> Status {
 
     // Switch to our page tables and jump to kernel
     // Use inline assembly to ensure correct register setup
+    // Use explicit registers to prevent the compiler from reusing registers
     unsafe {
         core::arch::asm!(
             // Load new CR3 (switch page tables)
-            "mov cr3, {pml4}",
+            "mov cr3, rax",
             // Jump to kernel with boot_info in rdi (System V ABI)
-            "mov rdi, {boot_info}",
-            "jmp {entry}",
-            pml4 = in(reg) pml4_phys,
-            boot_info = in(reg) boot_info_virt,
-            entry = in(reg) kernel_entry_virt,
+            "mov rdi, rsi",
+            "jmp rcx",
+            in("rax") pml4_phys,
+            in("rsi") boot_info_virt,
+            in("rcx") kernel_entry_virt,
             options(noreturn)
         );
     }

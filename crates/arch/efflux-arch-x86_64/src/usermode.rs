@@ -38,10 +38,8 @@ pub unsafe extern "C" fn jump_to_usermode(entry: u64, user_stack: u64) -> ! {
         "push rsi",
 
         // Push RFLAGS with IF set (interrupts enabled)
-        "pushfq",
-        "pop rax",
-        "or rax, 0x200",          // Set IF (interrupt flag)
-        "and rax, 0xFFFFFFFFFFFFF6FF",  // Clear IOPL, NT, TF
+        // Use known safe value: IF=1, IOPL=0, NT=0, TF=0
+        "mov rax, 0x202",
         "push rax",
 
         // Push CS (user code segment with RPL=3)
@@ -144,10 +142,8 @@ pub unsafe extern "C" fn enter_usermode(
         "push r9",
 
         // Push RFLAGS with IF set (interrupts enabled)
-        "pushfq",
-        "pop rax",
-        "or rax, 0x200",          // Set IF (interrupt flag)
-        "and rax, 0xFFFFFFFFFFFFF6FF",  // Clear IOPL, NT, TF
+        // Use known safe value: IF=1, IOPL=0, NT=0, TF=0
+        "mov rax, 0x202",
         "push rax",
 
         // Push CS (user code segment with RPL=3)
@@ -333,8 +329,8 @@ pub unsafe extern "C" fn enter_usermode_with_context(
         "mov rax, {user_cs}",
         "mov [rsp + 152], rax",
 
-        // Store RFLAGS (TEST: Use fixed value with IF=0 to disable interrupts in user mode)
-        "mov rax, 0x2",           // Just reserved bit 1, IF=0
+        // Store RFLAGS - use safe value with IF=1 (interrupts enabled)
+        "mov rax, 0x202",         // Reserved bit 1 + IF, IOPL=0, NT=0, TF=0
         "mov [rsp + 160], rax",
 
         // Store user RSP
