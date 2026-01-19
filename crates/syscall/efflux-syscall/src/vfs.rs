@@ -10,6 +10,7 @@ use efflux_vfs::{
 };
 
 use crate::errno;
+use crate::socket;
 
 /// Maximum path length for syscalls
 const MAX_PATH: usize = 4096;
@@ -142,6 +143,11 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
 /// # Arguments
 /// * `fd` - File descriptor to close
 pub fn sys_close(fd: i32) -> i64 {
+    // Check if this is a socket FD first
+    if socket::is_socket_fd(fd) {
+        return socket::close_socket(fd);
+    }
+
     let table = process_table();
     let proc = match table.current() {
         Some(p) => p,

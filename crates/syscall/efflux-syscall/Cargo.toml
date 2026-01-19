@@ -10,4 +10,5 @@ efflux-proc-traits = { path = "../../proc/efflux-proc-traits" }
 efflux-mm-traits = { path = "../../mm/efflux-mm-traits" }
 efflux-vfs = { path = "../../vfs/efflux-vfs" }
 efflux-signal = { path = "../../signal/efflux-signal" }
+efflux-net = { path = "../../net/efflux-net" }
 spin = "0.9"
