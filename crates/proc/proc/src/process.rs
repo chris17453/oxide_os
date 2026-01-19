@@ -507,12 +507,12 @@ impl ProcessTable {
 
     /// Get the current process PID
     pub fn current_pid(&self) -> Pid {
-        self.current_pid.load(Ordering::Relaxed)
+        self.current_pid.load(Ordering::SeqCst)
     }
 
     /// Set the current process PID
     pub fn set_current_pid(&self, pid: Pid) {
-        self.current_pid.store(pid, Ordering::Relaxed);
+        self.current_pid.store(pid, Ordering::SeqCst);
     }
 
     /// Get the current process

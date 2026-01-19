@@ -217,6 +217,7 @@ dependencies = [
 name = "fb"
 version = "0.1.0"
 dependencies = [
+ "boot-proto",
  "spin 0.9.8",
 ]
 
@@ -310,6 +311,7 @@ dependencies = [
  "devfs",
  "dhcp",
  "elf",
+ "fb",
  "initramfs",
  "mm-cow",
  "mm-frame",

@@ -337,3 +337,23 @@ help:
 	@echo "  make build-full          - Build everything"
 	@echo "  make userspace-pkg PKG=coreutils - Build only coreutils"
 	@echo "  make run                 - Build and run (includes initramfs + net)"
+
+
+
+claude:
+	bwrap \
+	--ro-bind /usr /usr \
+	--ro-bind /etc /etc \
+	--ro-bind /lib /lib \
+	--ro-bind /lib64 /lib64 \
+	--ro-bind /run /run \
+	--ro-bind /home/nd /home/nd \
+	--bind /home/nd/.claude.json /home/nd/.claude.json \
+	--bind /home/nd/.claude /home/nd/.claude \
+	--bind "$(CURDIR)" "$(CURDIR)" \
+	--bind /tmp /tmp \
+	--dev /dev \
+	--proc /proc \
+	--chdir "$(CURDIR)" \
+	--die-with-parent \
+	-- /usr/bin/node /usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js --dangerously-skip-permissions
