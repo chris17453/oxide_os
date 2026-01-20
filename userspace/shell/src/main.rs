@@ -323,7 +323,7 @@ fn handle_tab_completion(buf: &mut [u8], len: &mut usize) {
     let mut num_completions = 0;
 
     if is_first_word && !has_slash {
-        // Complete commands from /initramfs/bin
+        // Complete commands from /bin
         num_completions = complete_commands(prefix, prefix_len, &mut completions);
     } else {
         // Complete file paths
@@ -421,7 +421,7 @@ const BUILTINS: &[&[u8]] = &[
     b"umask", b"unalias", b"unset", b"wait",
 ];
 
-/// Complete commands from /initramfs/bin directory and builtins
+/// Complete commands from /bin directory and builtins
 fn complete_commands(prefix: &[u8], prefix_len: usize, completions: &mut [[u8; 64]; MAX_COMPLETIONS]) -> usize {
     let mut count = 0;
 
@@ -443,8 +443,8 @@ fn complete_commands(prefix: &[u8], prefix_len: usize, completions: &mut [[u8; 6
         }
     }
 
-    // Then add commands from /initramfs/bin
-    let fd = open2("/initramfs/bin", O_RDONLY | O_DIRECTORY);
+    // Then add commands from /bin
+    let fd = open2("/bin", O_RDONLY | O_DIRECTORY);
     if fd < 0 {
         return count;
     }
@@ -1635,16 +1635,16 @@ fn builtin_type(cmd: &Command) -> i32 {
         }
 
         if !found {
-            // Check if command exists in /initramfs/bin
-            // "/initramfs/bin/" is 15 characters
+            // Check if command exists in /bin
+            // "/bin/" is 5 characters
             let mut path = [0u8; 128];
-            path[..15].copy_from_slice(b"/initramfs/bin/");
+            path[..5].copy_from_slice(b"/bin/");
             let mut j = 0;
             while j < 63 && name[j] != 0 {
-                path[15 + j] = name[j];
+                path[5 + j] = name[j];
                 j += 1;
             }
-            path[15 + j] = 0;
+            path[5 + j] = 0;
 
             let path_str = bytes_to_str(&path);
             let fd = open2(path_str, O_RDONLY);
@@ -2111,19 +2111,19 @@ fn execute_external(cmd: &Command) {
         return;
     }
 
-    // Search in /initramfs/bin
+    // Search in /bin
     eprintlns("[DBG] about to create path buffer");
     let mut path = [0u8; 128];
     eprintlns("[DBG] path buffer created, copying prefix");
-    // "/initramfs/bin/" is 15 characters
-    path[..15].copy_from_slice(b"/initramfs/bin/");
+    // "/bin/" is 5 characters
+    path[..5].copy_from_slice(b"/bin/");
     eprintlns("[DBG] prefix copied, copying command name");
     let mut i = 0;
     while i < 63 && arg[i] != 0 {
-        path[15 + i] = arg[i];
+        path[5 + i] = arg[i];
         i += 1;
     }
-    path[15 + i] = 0;
+    path[5 + i] = 0;
     eprintlns("[DBG] path complete");
 
     eprints("[DBG] trying path: ");

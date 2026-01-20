@@ -488,15 +488,15 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
         }
     };
 
-    // Mount initramfs at /initramfs (we can overlay onto root later)
-    if let Err(e) = GLOBAL_VFS.mount(initramfs_root, "/initramfs", MountFlags::empty(), "initramfs") {
+    // Mount initramfs as root filesystem
+    if let Err(e) = GLOBAL_VFS.mount(initramfs_root, "/", MountFlags::empty(), "initramfs") {
         let _ = writeln!(writer, "[INITRAMFS] Failed to mount initramfs: {:?}", e);
         arch::X86_64::halt();
     }
-    let _ = writeln!(writer, "[INITRAMFS] Mounted at /initramfs");
+    let _ = writeln!(writer, "[INITRAMFS] Mounted as root filesystem at /");
 
-    // Load /initramfs/sbin/init
-    let init_path = "/initramfs/sbin/init";
+    // Load /sbin/init
+    let init_path = "/sbin/init";
     let _ = writeln!(writer, "[USER] Loading {}...", init_path);
     let init_vnode = match GLOBAL_VFS.lookup(init_path) {
         Ok(v) => v,

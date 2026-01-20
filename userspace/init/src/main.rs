@@ -31,7 +31,7 @@ fn main() -> i32 {
     printlns("[init] Running framebuffer test...");
     let fb_child = fork();
     if fb_child == 0 {
-        let ret = exec("/initramfs/bin/fbtest");
+        let ret = exec("/bin/fbtest");
         if ret < 0 {
             eprintlns("[init] Failed to exec fbtest");
         }
@@ -49,8 +49,7 @@ fn main() -> i32 {
     let child = fork();
     if child == 0 {
         // Child process - exec shell
-        // Try initramfs paths first, then /bin paths
-        let paths = ["/initramfs/bin/esh", "/initramfs/bin/sh", "/bin/esh", "/bin/sh"];
+        let paths = ["/bin/esh", "/bin/sh"];
         for path in paths.iter() {
             let ret = exec(path);
             if ret >= 0 {
@@ -99,7 +98,7 @@ fn reap_zombies() -> ! {
             printlns("[init] Respawning shell...");
             let child = fork();
             if child == 0 {
-                let paths = ["/initramfs/bin/esh", "/initramfs/bin/sh", "/bin/esh", "/bin/sh"];
+                let paths = ["/bin/esh", "/bin/sh"];
                 for path in paths.iter() {
                     let _ = exec(path);
                 }

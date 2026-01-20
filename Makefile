@@ -4,7 +4,7 @@
 
 SHELL := /usr/bin/bash
 
-.PHONY: all build kernel bootloader userspace initramfs clean run run-no-net run-headless run-headless-no-net run-kvm test check fmt clippy boot-image
+.PHONY: all build kernel bootloader userspace initramfs clean run run-no-net run-headless run-headless-no-net run-kvm run-kvm-vnc run-kvm-serial test check fmt clippy boot-image
 
 # Configuration
 ARCH ?= x86_64
@@ -306,6 +306,12 @@ run-kvm: boot-image
 		echo "Install: sudo dnf install qemu-kvm"; \
 		exit 1; \
 	fi
+	@echo "=========================================="
+	@echo "RHEL qemu-kvm uses VNC by default"
+	@echo "Connect with: vncviewer localhost:5900"
+	@echo "Or install tigervnc for GUI access"
+	@echo "=========================================="
+	@echo ""
 	@# Create a writable copy of OVMF_VARS.fd for this session
 	@mkdir -p $(TARGET_DIR)
 	@cp /usr/share/edk2/ovmf/OVMF_VARS.fd $(TARGET_DIR)/OVMF_VARS.fd 2>/dev/null || true
@@ -318,7 +324,54 @@ run-kvm: boot-image
 		-drive if=pflash,format=raw,file=$(TARGET_DIR)/OVMF_VARS.fd \
 		-drive format=raw,file=$(TARGET_DIR)/boot.img,if=none,id=disk \
 		-device ide-hd,drive=disk \
+		-vnc :0 \
 		-serial stdio \
+		-no-reboot
+
+# Run with qemu-kvm and auto-launch VNC viewer
+run-kvm-vnc: boot-image
+	@if ! command -v vncviewer >/dev/null 2>&1; then \
+		echo "Error: vncviewer not found"; \
+		echo "Install: sudo dnf install tigervnc"; \
+		exit 1; \
+	fi
+	@# Create a writable copy of OVMF_VARS.fd for this session
+	@mkdir -p $(TARGET_DIR)
+	@cp /usr/share/edk2/ovmf/OVMF_VARS.fd $(TARGET_DIR)/OVMF_VARS.fd 2>/dev/null || true
+	@mkdir -p /tmp/qemu-oxide
+	@echo "Starting QEMU in background..."
+	@TMPDIR=/tmp/qemu-oxide /usr/libexec/qemu-kvm \
+		-machine q35 \
+		-cpu max \
+		-m 256M \
+		-drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE.fd \
+		-drive if=pflash,format=raw,file=$(TARGET_DIR)/OVMF_VARS.fd \
+		-drive format=raw,file=$(TARGET_DIR)/boot.img,if=none,id=disk \
+		-device ide-hd,drive=disk \
+		-vnc :0 \
+		-no-reboot & \
+	QEMU_PID=$$!; \
+	echo "QEMU started with PID $$QEMU_PID"; \
+	sleep 1; \
+	echo "Launching VNC viewer..."; \
+	vncviewer localhost:5900; \
+	kill $$QEMU_PID 2>/dev/null || true
+
+# Run with qemu-kvm using serial console only (no graphics/VNC)
+run-kvm-serial: boot-image
+	@# Create a writable copy of OVMF_VARS.fd for this session
+	@mkdir -p $(TARGET_DIR)
+	@cp /usr/share/edk2/ovmf/OVMF_VARS.fd $(TARGET_DIR)/OVMF_VARS.fd 2>/dev/null || true
+	@mkdir -p /tmp/qemu-oxide
+	TMPDIR=/tmp/qemu-oxide /usr/libexec/qemu-kvm \
+		-machine q35 \
+		-cpu max \
+		-m 256M \
+		-drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE.fd \
+		-drive if=pflash,format=raw,file=$(TARGET_DIR)/OVMF_VARS.fd \
+		-drive format=raw,file=$(TARGET_DIR)/boot.img,if=none,id=disk \
+		-device ide-hd,drive=disk \
+		-nographic \
 		-no-reboot
 
 # Automated test: boot and check for expected output
@@ -403,7 +456,9 @@ help:
 	@echo "  run-no-net     - Run in QEMU without networking"
 	@echo "  run-headless   - Run in QEMU without display (with networking)"
 	@echo "  run-headless-no-net - Run headless without networking"
-	@echo "  run-kvm        - Run with qemu-kvm using disk image (RHEL 10)"
+	@echo "  run-kvm        - Run with qemu-kvm (VNC on :5900, serial on stdio)"
+	@echo "  run-kvm-vnc    - Run with qemu-kvm and auto-launch VNC viewer"
+	@echo "  run-kvm-serial - Run with qemu-kvm serial console only (no graphics)"
 	@echo "  test           - Automated boot test"
 	@echo "  check          - Quick syntax/type check"
 	@echo "  fmt            - Format code"
@@ -425,10 +480,13 @@ help:
 	@echo "  make show-config         - Show detected QEMU and OVMF paths"
 	@echo ""
 	@echo "RHEL 10 Note:"
-	@echo "  RHEL 10 uses qemu-kvm which lacks fat: protocol support"
+	@echo "  RHEL only ships qemu-kvm (no qemu-system-x86_64 with SDL/GTK)"
 	@echo "  Install: sudo dnf install qemu-kvm edk2-ovmf parted dosfstools"
-	@echo "  Use 'make run-kvm' instead of 'make run' on RHEL 10"
-	@echo "  run-kvm creates a real disk image (requires sudo for loopback mount)"
+	@echo "  "
+	@echo "  Three ways to run on RHEL 10:"
+	@echo "    make run-kvm        - VNC on :5900 + serial console (manual VNC connect)"
+	@echo "    make run-kvm-vnc    - Auto-launches VNC viewer (needs remmina or vncviewer)"
+	@echo "    make run-kvm-serial - Serial console only, no graphics"
 
 
 
