@@ -4,6 +4,71 @@
 
 use crate::fcntl::*;
 use crate::syscall;
+use core::fmt::{self, Write};
+
+/// Writer for stdout
+pub struct StdoutWriter;
+
+impl Write for StdoutWriter {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        syscall::sys_write(STDOUT_FILENO, s.as_bytes());
+        Ok(())
+    }
+}
+
+/// Writer for stderr
+pub struct StderrWriter;
+
+impl Write for StderrWriter {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        syscall::sys_write(STDERR_FILENO, s.as_bytes());
+        Ok(())
+    }
+}
+
+/// Print formatted text to stdout
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => {{
+        use core::fmt::Write;
+        let _ = write!($crate::stdio::StdoutWriter, $($arg)*);
+    }};
+}
+
+/// Print formatted text to stdout with newline
+#[macro_export]
+macro_rules! println {
+    () => {{
+        $crate::print!("\n");
+    }};
+    ($($arg:tt)*) => {{
+        use core::fmt::Write;
+        let _ = write!($crate::stdio::StdoutWriter, $($arg)*);
+        let _ = write!($crate::stdio::StdoutWriter, "\n");
+    }};
+}
+
+/// Print formatted text to stderr
+#[macro_export]
+macro_rules! eprint {
+    ($($arg:tt)*) => {{
+        use core::fmt::Write;
+        let _ = write!($crate::stdio::StderrWriter, $($arg)*);
+    }};
+}
+
+/// Print formatted text to stderr with newline
+#[macro_export]
+macro_rules! eprintln {
+    () => {{
+        $crate::eprint!("\n");
+    }};
+    ($($arg:tt)*) => {{
+        use core::fmt::Write;
+        let _ = write!($crate::stdio::StderrWriter, $($arg)*);
+        let _ = write!($crate::stdio::StderrWriter, "\n");
+    }};
+}
 
 /// Print a formatted string to stdout
 pub fn print(s: &str) {

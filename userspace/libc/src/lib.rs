@@ -18,6 +18,7 @@ pub mod syscall;
 pub mod unistd;
 pub mod stdio;
 pub mod env;
+pub mod stat;
 
 // Extended POSIX modules
 pub mod dirent;
@@ -39,12 +40,23 @@ pub use string::*;
 pub use syscall::*;
 
 // Explicitly re-export to avoid conflicts
-pub use stdio::{print, println, eprint, eprintln, putchar, getchar, print_u64, print_i64, print_hex, getline, itoa, atoi, parse_int};
+// Note: print, println, eprint, eprintln are macros exported at crate root
+pub use stdio::{StdoutWriter, StderrWriter, putchar, getchar, print_u64, print_i64, print_hex, getline, itoa, atoi, parse_int};
 pub use unistd::{write, read, open, open2, close, fork, exec, wait, waitpid, getpid, getppid, dup, dup2, _exit, exit, puts, eputs};
 pub use unistd::{pipe, chdir, getcwd, lseek, setsid, setpgid, getpgid};
 pub use unistd::{WNOHANG, WUNTRACED, WCONTINUED, wifexited, wexitstatus, wifsignaled, wtermsig, wifstopped, wstopsig};
 pub use unistd::{SEEK_SET, SEEK_CUR, SEEK_END};
 pub use env::{setenv, unsetenv, getenv, init_env, env_iter};
+
+// Stat functions
+pub use stat::{stat, fstat, lstat, Stat, S_IFMT, S_IFREG, S_IFDIR, S_IFLNK, S_IFCHR, S_IFBLK, S_IFIFO, S_IFSOCK};
+
+// User/group functions
+pub use pwd::{getuid, getgid, geteuid, getegid, setuid, setgid, seteuid, setegid};
+
+// Additional syscall wrappers
+pub use syscall::{sys_kill as kill, sys_mkdir as mkdir, sys_rmdir as rmdir, sys_unlink as unlink, sys_rename as rename};
+pub use syscall::{sys_gettid as gettid, sys_getdents as getdents};
 
 /// Global errno variable
 static mut ERRNO: i32 = 0;
