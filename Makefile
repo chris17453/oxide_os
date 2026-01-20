@@ -197,22 +197,24 @@ boot-dir: kernel bootloader initramfs
 boot-image: boot-dir
 	@echo "Creating boot disk image..."
 	@# Create 100MB disk image
-	@dd if=/dev/zero of=$(TARGET_DIR)/boot.img bs=1M count=100 status=none
+	@dd if=/dev/zero of=$(TARGET_DIR)/boot.img bs=1M count=100 status=none 2>&1
 	@# Create GPT partition table and ESP partition
 	@parted -s $(TARGET_DIR)/boot.img mklabel gpt
 	@parted -s $(TARGET_DIR)/boot.img mkpart ESP fat32 1MiB 99MiB
 	@parted -s $(TARGET_DIR)/boot.img set 1 esp on
-	@# Format the partition
-	@LOOP=$$(sudo losetup -f); \
-	sudo losetup $$LOOP $(TARGET_DIR)/boot.img; \
-	sudo partprobe $$LOOP; \
-	sudo mkfs.vfat -F 32 $${LOOP}p1; \
-	sudo mkdir -p /tmp/oxide-mount; \
-	sudo mount $${LOOP}p1 /tmp/oxide-mount; \
-	sudo cp -r $(BOOT_DIR)/* /tmp/oxide-mount/; \
-	sudo umount /tmp/oxide-mount; \
-	sudo losetup -d $$LOOP
-	@echo "Boot disk image created: $(TARGET_DIR)/boot.img"
+	@# Format partition using mtools (no sudo needed!)
+	@# Partition starts at 1MiB = 2048 sectors of 512 bytes
+	@mformat -i $(TARGET_DIR)/boot.img@@1M -F -v OXIDE ::
+	@# Create directory structure
+	@mmd -i $(TARGET_DIR)/boot.img@@1M ::/EFI
+	@mmd -i $(TARGET_DIR)/boot.img@@1M ::/EFI/BOOT
+	@mmd -i $(TARGET_DIR)/boot.img@@1M ::/EFI/OXIDE
+	@# Copy bootloader
+	@mcopy -i $(TARGET_DIR)/boot.img@@1M $(BOOT_DIR)/EFI/BOOT/BOOTX64.EFI ::/EFI/BOOT/
+	@# Copy kernel and initramfs
+	@mcopy -i $(TARGET_DIR)/boot.img@@1M $(BOOT_DIR)/EFI/OXIDE/kernel.elf ::/EFI/OXIDE/
+	@mcopy -i $(TARGET_DIR)/boot.img@@1M $(BOOT_DIR)/EFI/OXIDE/initramfs.cpio ::/EFI/OXIDE/
+	@echo "Boot disk image created: $(TARGET_DIR)/boot.img (no sudo needed!)"
 
 # Run in QEMU (interactive, with networking)
 run: boot-dir
@@ -485,12 +487,14 @@ help:
 	@echo ""
 	@echo "RHEL 10 Note:"
 	@echo "  RHEL only ships qemu-kvm (no qemu-system-x86_64 with SDL/GTK)"
-	@echo "  Install: sudo dnf install qemu-kvm edk2-ovmf parted dosfstools"
+	@echo "  Install: sudo dnf install qemu-kvm edk2-ovmf parted mtools"
 	@echo "  "
 	@echo "  Three ways to run on RHEL 10:"
-	@echo "    make run-kvm        - VNC on :5900 + serial console (manual VNC connect)"
-	@echo "    make run-kvm-vnc    - Auto-launches VNC viewer (needs remmina or vncviewer)"
+	@echo "    make run-kvm        - VNC on :5900 + serial (auto-launches VNC viewer)"
+	@echo "    make run-kvm-vnc    - Same as run-kvm (explicitly launch VNC viewer)"
 	@echo "    make run-kvm-serial - Serial console only, no graphics"
+	@echo "  "
+	@echo "  Note: No sudo required! mtools manipulates FAT without mounting."
 
 
 
