@@ -40,6 +40,17 @@ pub fn exec(path: &str) -> i32 {
     syscall::sys_exec(path)
 }
 
+/// Execute program with arguments (NULL-terminated argv array)
+/// argv[0] should be the program name, argv[argc] must be NULL
+pub fn execv(path: &str, argv: *const *const u8) -> i32 {
+    syscall::sys_execve(path, argv, core::ptr::null())
+}
+
+/// Execute program with arguments and environment
+pub fn execve(path: &str, argv: *const *const u8, envp: *const *const u8) -> i32 {
+    syscall::sys_execve(path, argv, envp)
+}
+
 /// Wait for any child
 pub fn wait(status: &mut i32) -> i32 {
     syscall::sys_wait(status)

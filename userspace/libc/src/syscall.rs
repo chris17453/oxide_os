@@ -21,6 +21,7 @@ pub mod nr {
     pub const GETPGID: u64 = 10;
     pub const SETSID: u64 = 11;
     pub const GETSID: u64 = 12;
+    pub const EXECVE: u64 = 13;
     pub const OPEN: u64 = 20;
     pub const CLOSE: u64 = 21;
     pub const LSEEK: u64 = 22;
@@ -178,6 +179,17 @@ pub fn sys_fork() -> i32 {
 /// sys_exec - Execute new program
 pub fn sys_exec(path: &str) -> i32 {
     syscall2(nr::EXEC, path.as_ptr() as usize, path.len()) as i32
+}
+
+/// sys_execve - Execute new program with arguments and environment
+pub fn sys_execve(path: &str, argv: *const *const u8, envp: *const *const u8) -> i32 {
+    syscall4(
+        nr::EXECVE,
+        path.as_ptr() as usize,
+        path.len(),
+        argv as usize,
+        envp as usize,
+    ) as i32
 }
 
 /// sys_wait - Wait for any child
