@@ -53,16 +53,16 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         let path = unsafe { cstr_to_str(*argv.add(i as usize)) };
 
         if multiple {
-            print("==> ");
+            prints("==> ");
             print(path);
-            println(" <==");
+            printlns(" <==");
         }
 
         let fd = open2(path, O_RDONLY);
         if fd < 0 {
-            eprint("head: cannot open '");
+            eprints("head: cannot open '");
             print(path);
-            eprintln("'");
+            eprintlns("'");
             status = 1;
             continue;
         }
@@ -71,7 +71,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         close(fd);
 
         if multiple && i < argc - 1 {
-            println("");
+            printlns("");
         }
     }
 

@@ -91,7 +91,7 @@ fn main() -> i32 {
     let ip = match parse_ip(target) {
         Some(ip) => ip,
         None => {
-            eprintln("ping: hostname resolution not implemented, use IP address");
+            eprintlns("ping: hostname resolution not implemented, use IP address");
             return 1;
         }
     };
@@ -99,23 +99,23 @@ fn main() -> i32 {
     // Create raw socket for ICMP
     let sock = socket(af::INET, sock::RAW, ipproto::ICMP);
     if sock < 0 {
-        print("ping: failed to create socket (need root?): ");
+        prints("ping: failed to create socket (need root?): ");
         libc::print_i64(sock as i64);
-        println("");
+        printlns("");
         return 1;
     }
 
-    print("PING ");
+    prints("PING ");
     print_ip(ip);
-    println(" 56(84) bytes of data.");
+    printlns(" 56(84) bytes of data.");
 
     let addr = sockaddr_in_octets(0, ip.0, ip.1, ip.2, ip.3);
 
     let ret = connect(sock, &addr, SOCKADDR_IN_SIZE);
     if ret < 0 {
-        print("ping: connect failed: ");
+        prints("ping: connect failed: ");
         libc::print_i64(ret as i64);
-        println("");
+        printlns("");
         close(sock);
         return 1;
     }
@@ -141,9 +141,9 @@ fn main() -> i32 {
         // Send packet
         let n = send(sock, &packet[..64], 0);
         if n < 0 {
-            print("ping: send failed: ");
+            prints("ping: send failed: ");
             libc::print_i64(n as i64);
-            println("");
+            printlns("");
             break;
         }
         sent += 1;
@@ -158,11 +158,11 @@ fn main() -> i32 {
             if (n as usize) > icmp_offset {
                 let icmp_type = reply[icmp_offset];
                 if icmp_type == ICMP_ECHO_REPLY {
-                    print("64 bytes from ");
+                    prints("64 bytes from ");
                     print_ip(ip);
-                    print(": icmp_seq=");
+                    prints(": icmp_seq=");
                     libc::print_u64(seq as u64);
-                    println(" time=<1ms");
+                    printlns(" time=<1ms");
                 }
             }
         }
@@ -175,15 +175,15 @@ fn main() -> i32 {
 
     close(sock);
 
-    println("");
-    print("--- ");
+    printlns("");
+    prints("--- ");
     print_ip(ip);
-    println(" ping statistics ---");
+    printlns(" ping statistics ---");
 
     libc::print_u64(sent as u64);
-    print(" packets transmitted, ");
+    prints(" packets transmitted, ");
     libc::print_u64(received as u64);
-    print(" received, ");
+    prints(" received, ");
 
     let loss = if sent > 0 {
         ((sent - received) * 100) / sent
@@ -191,7 +191,7 @@ fn main() -> i32 {
         0
     };
     libc::print_u64(loss as u64);
-    println("% packet loss");
+    printlns("% packet loss");
 
     if received == 0 { 1 } else { 0 }
 }

@@ -8,7 +8,7 @@ use libc::*;
 #[unsafe(no_mangle)]
 fn main(argc: i32, argv: *const *const u8) -> i32 {
     if argc < 2 {
-        eprintln("usage: sleep <seconds>");
+        eprintlns("usage: sleep <seconds>");
         return 1;
     }
 
@@ -26,7 +26,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
             continue;
         }
         if c < b'0' || c > b'9' {
-            eprintln("sleep: invalid time interval");
+            eprintlns("sleep: invalid time interval");
             return 1;
         }
         let digit = (c - b'0') as u64;

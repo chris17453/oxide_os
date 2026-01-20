@@ -8,7 +8,7 @@ use libc::*;
 #[unsafe(no_mangle)]
 fn main(argc: i32, argv: *const *const u8) -> i32 {
     if argc < 2 {
-        eprintln("usage: dirname <path>");
+        eprintlns("usage: dirname <path>");
         return 1;
     }
 
@@ -24,14 +24,14 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     }
 
     match last_slash {
-        Some(0) => println("/"),
+        Some(0) => printlns("/"),
         Some(pos) => {
             for i in 0..pos {
                 putchar(bytes[i]);
             }
-            println("");
+            printlns("");
         }
-        None => println("."),
+        None => printlns("."),
     }
 
     0

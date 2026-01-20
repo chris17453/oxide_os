@@ -29,7 +29,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     }
 
     if arg_idx >= argc {
-        eprintln("usage: tr [-ds] set1 [set2]");
+        eprintlns("usage: tr [-ds] set1 [set2]");
         return 1;
     }
 

@@ -10,7 +10,7 @@ const MAX_LINE: usize = 4096;
 #[unsafe(no_mangle)]
 fn main(argc: i32, argv: *const *const u8) -> i32 {
     if argc < 2 {
-        eprintln("usage: grep [-i] [-v] [-n] <pattern> [file...]");
+        eprintlns("usage: grep [-i] [-v] [-n] <pattern> [file...]");
         return 2;
     }
 
@@ -38,7 +38,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     }
 
     if arg_idx >= argc {
-        eprintln("grep: no pattern specified");
+        eprintlns("grep: no pattern specified");
         return 2;
     }
 
@@ -57,9 +57,9 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
             let path = unsafe { cstr_to_str(*argv.add(i as usize)) };
             let fd = open2(path, O_RDONLY);
             if fd < 0 {
-                eprint("grep: ");
+                eprints("grep: ");
                 print(path);
-                eprintln(": No such file");
+                eprintlns(": No such file");
                 continue;
             }
 
@@ -96,11 +96,11 @@ fn grep_fd(fd: i32, pattern: &str, filename: &str, ignore_case: bool, invert: bo
                     found = true;
                     if show_filename {
                         print(filename);
-                        print(":");
+                        prints(":");
                     }
                     if line_numbers {
                         print_u64(line_num);
-                        print(":");
+                        prints(":");
                     }
                     for j in 0..line_len {
                         putchar(line[j]);
@@ -125,11 +125,11 @@ fn grep_fd(fd: i32, pattern: &str, filename: &str, ignore_case: bool, invert: bo
             found = true;
             if show_filename {
                 print(filename);
-                print(":");
+                prints(":");
             }
             if line_numbers {
                 print_u64(line_num);
-                print(":");
+                prints(":");
             }
             for j in 0..line_len {
                 putchar(line[j]);

@@ -70,24 +70,46 @@ macro_rules! eprintln {
     }};
 }
 
-/// Print a formatted string to stdout
+/// Print a string to stdout (use `prints` to avoid macro conflict)
 pub fn print(s: &str) {
     syscall::sys_write(STDOUT_FILENO, s.as_bytes());
 }
 
-/// Print a formatted string to stdout with newline
+/// Alias for `print` - prints a string to stdout
+pub fn prints(s: &str) {
+    syscall::sys_write(STDOUT_FILENO, s.as_bytes());
+}
+
+/// Print a string to stdout with newline (use `printlns` to avoid macro conflict)
 pub fn println(s: &str) {
     syscall::sys_write(STDOUT_FILENO, s.as_bytes());
     syscall::sys_write(STDOUT_FILENO, b"\n");
 }
 
-/// Print to stderr
+/// Alias for `println` - prints a string to stdout with newline
+pub fn printlns(s: &str) {
+    syscall::sys_write(STDOUT_FILENO, s.as_bytes());
+    syscall::sys_write(STDOUT_FILENO, b"\n");
+}
+
+/// Print to stderr (use `eprints` to avoid macro conflict)
 pub fn eprint(s: &str) {
     syscall::sys_write(STDERR_FILENO, s.as_bytes());
 }
 
-/// Print to stderr with newline
+/// Alias for `eprint` - prints a string to stderr
+pub fn eprints(s: &str) {
+    syscall::sys_write(STDERR_FILENO, s.as_bytes());
+}
+
+/// Print to stderr with newline (use `eprintlns` to avoid macro conflict)
 pub fn eprintln(s: &str) {
+    syscall::sys_write(STDERR_FILENO, s.as_bytes());
+    syscall::sys_write(STDERR_FILENO, b"\n");
+}
+
+/// Alias for `eprintln` - prints a string to stderr with newline
+pub fn eprintlns(s: &str) {
     syscall::sys_write(STDERR_FILENO, s.as_bytes());
     syscall::sys_write(STDERR_FILENO, b"\n");
 }

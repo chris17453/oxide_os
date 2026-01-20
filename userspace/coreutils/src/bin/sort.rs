@@ -46,9 +46,9 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
             let path = unsafe { cstr_to_str(*argv.add(i as usize)) };
             let fd = open2(path, O_RDONLY);
             if fd < 0 {
-                eprint("sort: ");
+                eprints("sort: ");
                 print(path);
-                eprintln(": No such file");
+                eprintlns(": No such file");
                 continue;
             }
             line_count = read_lines(fd, &mut lines, &mut line_lens, line_count);

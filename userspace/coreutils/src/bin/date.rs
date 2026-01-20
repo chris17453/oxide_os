@@ -11,7 +11,7 @@ fn main(_argc: i32, _argv: *const *const u8) -> i32 {
     let mut tv_usec: i64 = 0;
 
     if sys_gettimeofday(&mut tv_sec, &mut tv_usec) < 0 {
-        eprintln("date: cannot get time");
+        eprintlns("date: cannot get time");
         return 1;
     }
 
@@ -35,19 +35,19 @@ fn main(_argc: i32, _argv: *const *const u8) -> i32 {
 
     // Print: "Wed Jan 15 14:30:00 UTC 2025"
     print(dow_names[dow]);
-    print(" ");
+    prints(" ");
     print(month_names[(month - 1) as usize]);
-    print(" ");
+    prints(" ");
     print_num(day as u64, 2);
-    print(" ");
+    prints(" ");
     print_num(hours as u64, 2);
-    print(":");
+    prints(":");
     print_num(minutes as u64, 2);
-    print(":");
+    prints(":");
     print_num(seconds as u64, 2);
-    print(" UTC ");
+    prints(" UTC ");
     print_u64(year as u64);
-    println("");
+    printlns("");
 
     0
 }

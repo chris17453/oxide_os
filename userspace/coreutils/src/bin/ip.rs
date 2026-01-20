@@ -8,55 +8,55 @@
 use libc::{println, print};
 
 fn show_usage() {
-    println("Usage: ip [OPTIONS] OBJECT { COMMAND | help }");
-    println("");
-    println("OBJECT :=");
-    println("  address   - protocol (IP or IPv6) address on a device");
-    println("  link      - network device");
-    println("  route     - routing table entry");
-    println("  neighbor  - ARP or NDISC cache entry");
-    println("");
-    println("OPTIONS :=");
-    println("  -4        - use IPv4");
-    println("  -6        - use IPv6");
-    println("  -h, -help - display this help");
-    println("");
-    println("Examples:");
-    println("  ip addr show");
-    println("  ip link show");
-    println("  ip route show");
+    printlns("Usage: ip [OPTIONS] OBJECT { COMMAND | help }");
+    printlns("");
+    printlns("OBJECT :=");
+    printlns("  address   - protocol (IP or IPv6) address on a device");
+    printlns("  link      - network device");
+    printlns("  route     - routing table entry");
+    printlns("  neighbor  - ARP or NDISC cache entry");
+    printlns("");
+    printlns("OPTIONS :=");
+    printlns("  -4        - use IPv4");
+    printlns("  -6        - use IPv6");
+    printlns("  -h, -help - display this help");
+    printlns("");
+    printlns("Examples:");
+    printlns("  ip addr show");
+    printlns("  ip link show");
+    printlns("  ip route show");
 }
 
 fn show_addr() {
-    println("1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000");
-    println("    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00");
-    println("    inet 127.0.0.1/8 scope host lo");
-    println("       valid_lft forever preferred_lft forever");
-    println("    inet6 ::1/128 scope host");
-    println("       valid_lft forever preferred_lft forever");
-    println("2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP group default qlen 1000");
-    println("    link/ether 52:54:00:12:34:56 brd ff:ff:ff:ff:ff:ff");
-    println("    inet 10.0.2.15/24 brd 10.0.2.255 scope global dynamic eth0");
-    println("       valid_lft 86399sec preferred_lft 86399sec");
-    println("    inet6 fe80::5054:ff:fe12:3456/64 scope link");
-    println("       valid_lft forever preferred_lft forever");
+    printlns("1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000");
+    printlns("    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00");
+    printlns("    inet 127.0.0.1/8 scope host lo");
+    printlns("       valid_lft forever preferred_lft forever");
+    printlns("    inet6 ::1/128 scope host");
+    printlns("       valid_lft forever preferred_lft forever");
+    printlns("2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP group default qlen 1000");
+    printlns("    link/ether 52:54:00:12:34:56 brd ff:ff:ff:ff:ff:ff");
+    printlns("    inet 10.0.2.15/24 brd 10.0.2.255 scope global dynamic eth0");
+    printlns("       valid_lft 86399sec preferred_lft 86399sec");
+    printlns("    inet6 fe80::5054:ff:fe12:3456/64 scope link");
+    printlns("       valid_lft forever preferred_lft forever");
 }
 
 fn show_link() {
-    println("1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000");
-    println("    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00");
-    println("2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP mode DEFAULT group default qlen 1000");
-    println("    link/ether 52:54:00:12:34:56 brd ff:ff:ff:ff:ff:ff");
+    printlns("1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000");
+    printlns("    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00");
+    printlns("2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP mode DEFAULT group default qlen 1000");
+    printlns("    link/ether 52:54:00:12:34:56 brd ff:ff:ff:ff:ff:ff");
 }
 
 fn show_route() {
-    println("default via 10.0.2.2 dev eth0 proto dhcp metric 100");
-    println("10.0.2.0/24 dev eth0 proto kernel scope link src 10.0.2.15 metric 100");
+    printlns("default via 10.0.2.2 dev eth0 proto dhcp metric 100");
+    printlns("10.0.2.0/24 dev eth0 proto kernel scope link src 10.0.2.15 metric 100");
 }
 
 fn show_neighbor() {
-    println("10.0.2.2 dev eth0 lladdr 52:54:00:12:35:02 REACHABLE");
-    println("10.0.2.3 dev eth0 lladdr 52:54:00:12:35:03 STALE");
+    printlns("10.0.2.2 dev eth0 lladdr 52:54:00:12:35:02 REACHABLE");
+    printlns("10.0.2.3 dev eth0 lladdr 52:54:00:12:35:03 STALE");
 }
 
 #[unsafe(no_mangle)]

@@ -9,6 +9,6 @@ use libc::*;
 fn main() -> i32 {
     // In a real implementation, we'd get args from the kernel
     // For now, just print a placeholder
-    eprintln("mkdir: argument passing not implemented");
+    eprintlns("mkdir: argument passing not implemented");
     1
 }

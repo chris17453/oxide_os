@@ -8,7 +8,7 @@ use libc::*;
 #[unsafe(no_mangle)]
 fn main(argc: i32, argv: *const *const u8) -> i32 {
     if argc < 2 {
-        eprintln("usage: touch <file>...");
+        eprintlns("usage: touch <file>...");
         return 1;
     }
 
@@ -20,9 +20,9 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         // Try to open existing file, or create new one
         let fd = open(path, O_WRONLY | O_CREAT, 0o644);
         if fd < 0 {
-            eprint("touch: cannot touch '");
+            eprints("touch: cannot touch '");
             print(path);
-            eprintln("'");
+            eprintlns("'");
             status = 1;
         } else {
             close(fd);

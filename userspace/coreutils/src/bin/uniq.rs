@@ -39,9 +39,9 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         let path = unsafe { cstr_to_str(*argv.add(arg_idx as usize)) };
         let fd = open2(path, O_RDONLY);
         if fd < 0 {
-            eprint("uniq: ");
+            eprints("uniq: ");
             print(path);
-            eprintln(": No such file");
+            eprintlns(": No such file");
             return 1;
         }
         fd
@@ -135,7 +135,7 @@ fn output_line(line: &[u8], count_val: u64, show_count: bool, repeated: bool, un
 
     if show_count {
         print_u64_padded(count_val, 7);
-        print(" ");
+        prints(" ");
     }
 
     for &b in line {

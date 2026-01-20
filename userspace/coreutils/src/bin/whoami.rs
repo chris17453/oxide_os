@@ -11,12 +11,12 @@ fn main() -> i32 {
     let euid = geteuid();
 
     if euid == 0 {
-        println("root");
+        printlns("root");
     } else {
         // For now, just print the UID if not root
-        print("user");
+        prints("user");
         print_u64(euid as u64);
-        println("");
+        printlns("");
     }
 
     0

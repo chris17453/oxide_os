@@ -39,9 +39,12 @@ pub use signal::*;
 pub use string::*;
 pub use syscall::*;
 
-// Explicitly re-export to avoid conflicts
-// Note: print, println, eprint, eprintln are macros exported at crate root
+// Explicitly re-export stdio functions
+// Note: print!, println!, eprint!, eprintln! macros exist for formatted output
+// Use the `prints`, `printlns`, `eprints`, `eprintlns` functions for simple string printing
+// to avoid macro name conflicts
 pub use stdio::{StdoutWriter, StderrWriter, putchar, getchar, print_u64, print_i64, print_hex, getline, itoa, atoi, parse_int};
+pub use stdio::{prints, printlns, eprints, eprintlns};
 pub use unistd::{write, read, open, open2, close, fork, exec, wait, waitpid, getpid, getppid, dup, dup2, _exit, exit, puts, eputs};
 pub use unistd::{pipe, chdir, getcwd, lseek, setsid, setpgid, getpgid};
 pub use unistd::{WNOHANG, WUNTRACED, WCONTINUED, wifexited, wexitstatus, wifsignaled, wtermsig, wifstopped, wstopsig};

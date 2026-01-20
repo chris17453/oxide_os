@@ -22,9 +22,9 @@ fn main() -> i32 {
     // Print all environment variables
     env_iter(|name, value| {
         print_bytes(name);
-        print("=");
+        prints("=");
         print_bytes(value);
-        println("");
+        printlns("");
     });
     0
 }

@@ -142,17 +142,17 @@ fn main() -> i32 {
     let hostname = "example.com";
     let dns_server = (8, 8, 8, 8);
 
-    print("Server:  ");
+    prints("Server:  ");
     print_ip(dns_server);
-    println("");
-    println("");
+    printlns("");
+    printlns("");
 
     // Create UDP socket
     let sock = socket(af::INET, sock::DGRAM, ipproto::UDP);
     if sock < 0 {
-        print("nslookup: failed to create socket: ");
+        prints("nslookup: failed to create socket: ");
         libc::print_i64(sock as i64);
-        println("");
+        printlns("");
         return 1;
     }
 
@@ -164,9 +164,9 @@ fn main() -> i32 {
     let dest = sockaddr_in_octets(53, dns_server.0, dns_server.1, dns_server.2, dns_server.3);
     let sent = sendto(sock, &query[..query_len], 0, &dest, SOCKADDR_IN_SIZE);
     if sent < 0 {
-        print("nslookup: failed to send query: ");
+        prints("nslookup: failed to send query: ");
         libc::print_i64(sent as i64);
-        println("");
+        printlns("");
         close(sock);
         return 1;
     }
@@ -178,27 +178,27 @@ fn main() -> i32 {
 
     let received = recvfrom(sock, &mut response, 0, Some(&mut src_addr), Some(&mut src_len));
     if received < 0 {
-        print("nslookup: failed to receive response: ");
+        prints("nslookup: failed to receive response: ");
         libc::print_i64(received as i64);
-        println("");
+        printlns("");
         close(sock);
         return 1;
     }
 
     close(sock);
 
-    println("Non-authoritative answer:");
-    print("Name: ");
+    printlns("Non-authoritative answer:");
+    prints("Name: ");
     println(hostname);
 
     match parse_response(&response, received as usize) {
         Some(ip) => {
-            print("Address: ");
+            prints("Address: ");
             print_ip(ip);
-            println("");
+            printlns("");
         }
         None => {
-            println("No A record found");
+            printlns("No A record found");
         }
     }
 

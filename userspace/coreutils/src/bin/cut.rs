@@ -70,7 +70,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     }
 
     if !use_fields && !use_chars {
-        eprintln("cut: you must specify a list of fields or characters");
+        eprintlns("cut: you must specify a list of fields or characters");
         return 1;
     }
 
@@ -85,9 +85,9 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
             } else {
                 let fd = open2(path, O_RDONLY);
                 if fd < 0 {
-                    eprint("cut: ");
+                    eprints("cut: ");
                     print(path);
-                    eprintln(": No such file");
+                    eprintlns(": No such file");
                     continue;
                 }
                 process_fd(fd, delimiter, &fields[..field_count], &chars[..char_count], use_fields);

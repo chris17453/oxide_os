@@ -37,9 +37,9 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         };
         let fd = open(path, flags, 0o644);
         if fd < 0 {
-            eprint("tee: cannot open '");
+            eprints("tee: cannot open '");
             print(path);
-            eprintln("'");
+            eprintlns("'");
         } else {
             fds[num_fds] = fd;
             num_fds += 1;

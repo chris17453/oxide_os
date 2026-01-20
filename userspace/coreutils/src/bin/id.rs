@@ -13,31 +13,31 @@ fn main() -> i32 {
     let euid = geteuid();
     let egid = getegid();
 
-    print("uid=");
+    prints("uid=");
     print_u64(uid as u64);
 
     if uid == 0 {
-        print("(root)");
+        prints("(root)");
     }
 
-    print(" gid=");
+    prints(" gid=");
     print_u64(gid as u64);
 
     if gid == 0 {
-        print("(root)");
+        prints("(root)");
     }
 
     if euid != uid {
-        print(" euid=");
+        prints(" euid=");
         print_u64(euid as u64);
     }
 
     if egid != gid {
-        print(" egid=");
+        prints(" egid=");
         print_u64(egid as u64);
     }
 
-    println("");
+    printlns("");
 
     0
 }

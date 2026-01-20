@@ -110,9 +110,9 @@ fn list_directory(path: &[u8], args: &Args) -> i32 {
 
     let fd = open(path_str, O_RDONLY | O_DIRECTORY, 0);
     if fd < 0 {
-        eprint("ls: cannot access '");
+        eprints("ls: cannot access '");
         print_name(path);
-        eprintln("': No such file or directory");
+        eprintlns("': No such file or directory");
         return 1;
     }
 
@@ -145,11 +145,11 @@ fn list_directory(path: &[u8], args: &Args) -> i32 {
             if args.long_format {
                 // Print type
                 putchar(type_char(entry.d_type));
-                print("  ");
+                prints("  ");
 
                 // Print inode
                 print_u64(entry.d_ino);
-                print("  ");
+                prints("  ");
             }
 
             // Print name
@@ -160,7 +160,7 @@ fn list_directory(path: &[u8], args: &Args) -> i32 {
                 putchar(b'/');
             }
 
-            println("");
+            printlns("");
 
             // Move to next entry
             offset += entry.d_reclen as usize;

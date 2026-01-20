@@ -55,9 +55,9 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
 
         let fd = open2(path, O_RDONLY);
         if fd < 0 {
-            eprint("wc: ");
+            eprints("wc: ");
             print(path);
-            eprintln(": No such file");
+            eprintlns(": No such file");
             continue;
         }
 
@@ -131,10 +131,10 @@ fn print_counts(lines: u64, words: u64, bytes: u64, name: &str, show_l: bool, sh
         print_u64_padded(bytes, 8);
     }
     if !name.is_empty() {
-        print(" ");
+        prints(" ");
         print(name);
     }
-    println("");
+    printlns("");
 }
 
 fn print_u64_padded(n: u64, width: usize) {

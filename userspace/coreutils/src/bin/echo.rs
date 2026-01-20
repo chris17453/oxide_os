@@ -9,6 +9,6 @@ use libc::*;
 fn main() -> i32 {
     // In a real implementation, we'd get args from the kernel
     // For now, just print a placeholder
-    println("echo: argument passing not implemented");
+    printlns("echo: argument passing not implemented");
     0
 }

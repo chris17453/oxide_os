@@ -25,7 +25,7 @@ struct Stat {
 #[unsafe(no_mangle)]
 fn main(argc: i32, argv: *const *const u8) -> i32 {
     if argc < 2 {
-        eprintln("usage: stat <file>...");
+        eprintlns("usage: stat <file>...");
         return 1;
     }
 
@@ -52,58 +52,58 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
 
         let result = sys_stat(path, &mut st);
         if result < 0 {
-            eprint("stat: cannot stat '");
+            eprints("stat: cannot stat '");
             print(path);
-            eprintln("': No such file or directory");
+            eprintlns("': No such file or directory");
             status = 1;
             continue;
         }
 
-        print("  File: ");
+        prints("  File: ");
         println(path);
 
-        print("  Size: ");
+        prints("  Size: ");
         print_i64(st.st_size);
-        print("\t\tBlocks: ");
+        prints("\t\tBlocks: ");
         print_i64(st.st_blocks);
-        print("\t\tIO Block: ");
+        prints("\t\tIO Block: ");
         print_i64(st.st_blksize);
-        print("\t");
+        prints("\t");
         print_file_type(st.st_mode);
-        println("");
+        printlns("");
 
-        print("Device: ");
+        prints("Device: ");
         print_u64(st.st_dev);
-        print("\tInode: ");
+        prints("\tInode: ");
         print_u64(st.st_ino);
-        print("\tLinks: ");
+        prints("\tLinks: ");
         print_u64(st.st_nlink as u64);
-        println("");
+        printlns("");
 
-        print("Access: (");
+        prints("Access: (");
         print_octal(st.st_mode & 0o7777);
-        print("/");
+        prints("/");
         print_perms(st.st_mode);
-        print(")  Uid: (");
+        prints(")  Uid: (");
         print_u64(st.st_uid as u64);
-        print(")   Gid: (");
+        prints(")   Gid: (");
         print_u64(st.st_gid as u64);
-        println(")");
+        printlns(")");
 
-        print("Access: ");
+        prints("Access: ");
         print_time(st.st_atime);
-        println("");
+        printlns("");
 
-        print("Modify: ");
+        prints("Modify: ");
         print_time(st.st_mtime);
-        println("");
+        printlns("");
 
-        print("Change: ");
+        prints("Change: ");
         print_time(st.st_ctime);
-        println("");
+        printlns("");
 
         if i < argc - 1 {
-            println("");
+            printlns("");
         }
     }
 
@@ -118,14 +118,14 @@ fn sys_stat(path: &str, st: &mut Stat) -> i32 {
 fn print_file_type(mode: u32) {
     let file_type = mode & 0o170000;
     match file_type {
-        0o140000 => print("socket"),
-        0o120000 => print("symbolic link"),
-        0o100000 => print("regular file"),
-        0o060000 => print("block special file"),
-        0o040000 => print("directory"),
-        0o020000 => print("character special file"),
-        0o010000 => print("FIFO"),
-        _ => print("unknown"),
+        0o140000 => prints("socket"),
+        0o120000 => prints("symbolic link"),
+        0o100000 => prints("regular file"),
+        0o060000 => prints("block special file"),
+        0o040000 => prints("directory"),
+        0o020000 => prints("character special file"),
+        0o010000 => prints("FIFO"),
+        _ => prints("unknown"),
     }
 }
 

@@ -159,22 +159,22 @@ const DT_DIR: u8 = 4;
 #[unsafe(no_mangle)]
 fn main() -> i32 {
     // Print welcome message
-    println("EFFLUX Shell (esh)");
-    println("Type 'help' for available commands");
-    println("");
+    printlns("EFFLUX Shell (esh)");
+    printlns("Type 'help' for available commands");
+    printlns("");
 
     // Main shell loop
     let mut line = [0u8; MAX_LINE];
 
     loop {
         // Print prompt
-        print("esh> ");
+        prints("esh> ");
 
         // Read command line with tab completion
         let len = read_line_with_completion(&mut line);
         if len == 0 {
             // EOF
-            println("");
+            printlns("");
             break;
         }
 
@@ -266,12 +266,12 @@ fn read_line_with_completion(buf: &mut [u8]) -> usize {
                     len -= 1;
                     buf[len] = 0;
                     // Erase character on terminal
-                    print("\x08 \x08");
+                    prints("\x08 \x08");
                 }
             }
             0x03 => {
                 // Ctrl-C - cancel line
-                println("^C");
+                printlns("^C");
                 buf[0] = 0;
                 return 0;
             }
@@ -363,13 +363,13 @@ fn handle_tab_completion(buf: &mut [u8], len: &mut usize) {
         }
     } else {
         // Multiple completions - show them and find common prefix
-        println("");
+        printlns("");
 
         for i in 0..num_completions {
             print_bytes(&completions[i]);
-            print("  ");
+            prints("  ");
         }
-        println("");
+        printlns("");
 
         // Find common prefix among completions
         let common = find_common_prefix(&completions, num_completions, prefix_len);
@@ -385,7 +385,7 @@ fn handle_tab_completion(buf: &mut [u8], len: &mut usize) {
         }
 
         // Reprint prompt and current line
-        print("esh> ");
+        prints("esh> ");
         for i in 0..*len {
             putchar(buf[i]);
         }
@@ -715,7 +715,7 @@ fn split_pipes(line: &[u8], commands: &mut [Command; MAX_PIPES]) -> usize {
         }
         if line[i] == b'|' {
             if num_commands >= MAX_PIPES {
-                eprintln("esh: too many pipes");
+                eprintlns("esh: too many pipes");
                 return 0;
             }
             parse_command(&line[start..i], &mut commands[num_commands]);
@@ -814,7 +814,7 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
     let mut pipes: [[i32; 2]; MAX_PIPES] = [[0; 2]; MAX_PIPES];
     for i in 0..(num_commands - 1) {
         if pipe(&mut pipes[i]) < 0 {
-            eprintln("esh: pipe failed");
+            eprintlns("esh: pipe failed");
             return;
         }
     }
@@ -825,7 +825,7 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
         let pid = fork();
         if pid == 0 {
             // Child process
-            eprintln("[DBG] Child process started");
+            eprintlns("[DBG] Child process started");
 
             // Setup input
             if i > 0 {
@@ -836,9 +836,9 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
                 let path = bytes_to_str(&commands[i].input_file);
                 let fd = open2(path, O_RDONLY);
                 if fd < 0 {
-                    eprint("esh: ");
+                    eprints("esh: ");
                     print_bytes(&commands[i].input_file);
-                    eprintln(": No such file");
+                    eprintlns(": No such file");
                     _exit(1);
                 }
                 dup2(fd, 0);
@@ -855,9 +855,9 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
                         let path = bytes_to_str(&commands[i].output_file);
                         let fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0o644);
                         if fd < 0 {
-                            eprint("esh: ");
+                            eprints("esh: ");
                             print_bytes(&commands[i].output_file);
-                            eprintln(": Cannot create file");
+                            eprintlns(": Cannot create file");
                             _exit(1);
                         }
                         dup2(fd, 1);
@@ -867,9 +867,9 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
                         let path = bytes_to_str(&commands[i].output_file);
                         let fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o644);
                         if fd < 0 {
-                            eprint("esh: ");
+                            eprints("esh: ");
                             print_bytes(&commands[i].output_file);
-                            eprintln(": Cannot create file");
+                            eprintlns(": Cannot create file");
                             _exit(1);
                         }
                         dup2(fd, 1);
@@ -891,7 +891,7 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
         } else if pid > 0 {
             pids[i] = pid;
         } else {
-            eprintln("esh: fork failed");
+            eprintlns("esh: fork failed");
         }
     }
 
@@ -908,9 +908,9 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
             waitpid(pids[i], &mut status, 0);
         }
     } else {
-        print("[");
+        prints("[");
         print_i64(pids[num_commands - 1] as i64);
-        println("]");
+        printlns("]");
     }
 }
 
@@ -967,55 +967,55 @@ fn execute_builtin(cmd: &Command) {
     } else if bytes_eq(&cmd.args[0], b"echo") {
         for i in 1..cmd.argc {
             if i > 1 {
-                print(" ");
+                prints(" ");
             }
             print_bytes(&cmd.args[i]);
         }
-        println("");
+        printlns("");
     } else if bytes_eq(&cmd.args[0], b"cd") {
         if cmd.argc < 2 {
-            eprintln("esh: cd: missing argument");
+            eprintlns("esh: cd: missing argument");
         } else {
             let path = bytes_to_str(&cmd.args[1]);
             if chdir(path) < 0 {
-                eprint("esh: cd: ");
+                eprints("esh: cd: ");
                 print_bytes(&cmd.args[1]);
-                eprintln(": No such directory");
+                eprintlns(": No such directory");
             }
         }
     } else if bytes_eq(&cmd.args[0], b"pwd") {
         let mut buf = [0u8; 256];
         if getcwd(&mut buf) >= 0 {
             print_bytes(&buf);
-            println("");
+            printlns("");
         } else {
-            eprintln("esh: pwd: failed");
+            eprintlns("esh: pwd: failed");
         }
     } else if bytes_eq(&cmd.args[0], b"help") {
-        println("EFFLUX Shell (esh) - Built-in commands:");
-        println("  echo [args...]  - Print arguments");
-        println("  cd <dir>        - Change directory");
-        println("  pwd             - Print working directory");
-        println("  export          - List all environment variables");
-        println("  export VAR=val  - Set environment variable");
-        println("  export VAR      - Export variable (set empty if unset)");
-        println("  unset VAR...    - Unset environment variable(s)");
-        println("  exit [code]     - Exit shell");
-        println("  help            - Show this help");
-        println("");
-        println("I/O Redirection:");
-        println("  cmd < file      - Read input from file");
-        println("  cmd > file      - Write output to file");
-        println("  cmd >> file     - Append output to file");
-        println("");
-        println("Pipes:");
-        println("  cmd1 | cmd2     - Pipe output of cmd1 to cmd2");
-        println("");
-        println("Background:");
-        println("  cmd &           - Run command in background");
-        println("");
-        println("Tab Completion:");
-        println("  Press TAB to complete commands and file paths");
+        printlns("EFFLUX Shell (esh) - Built-in commands:");
+        printlns("  echo [args...]  - Print arguments");
+        printlns("  cd <dir>        - Change directory");
+        printlns("  pwd             - Print working directory");
+        printlns("  export          - List all environment variables");
+        printlns("  export VAR=val  - Set environment variable");
+        printlns("  export VAR      - Export variable (set empty if unset)");
+        printlns("  unset VAR...    - Unset environment variable(s)");
+        printlns("  exit [code]     - Exit shell");
+        printlns("  help            - Show this help");
+        printlns("");
+        printlns("I/O Redirection:");
+        printlns("  cmd < file      - Read input from file");
+        printlns("  cmd > file      - Write output to file");
+        printlns("  cmd >> file     - Append output to file");
+        printlns("");
+        printlns("Pipes:");
+        printlns("  cmd1 | cmd2     - Pipe output of cmd1 to cmd2");
+        printlns("");
+        printlns("Background:");
+        printlns("  cmd &           - Run command in background");
+        printlns("");
+        printlns("Tab Completion:");
+        printlns("  Press TAB to complete commands and file paths");
     } else if bytes_eq(&cmd.args[0], b"true") {
         // Do nothing, exit 0
     } else if bytes_eq(&cmd.args[0], b"false") {
@@ -1024,11 +1024,11 @@ fn execute_builtin(cmd: &Command) {
         if cmd.argc < 2 {
             // List all environment variables (like Linux export without args)
             env_iter(|name, value| {
-                print("export ");
+                prints("export ");
                 print_bytes(name);
-                print("=\"");
+                prints("=\"");
                 print_bytes(value);
-                println("\"");
+                printlns("\"");
             });
         } else {
             // Parse VAR=value or just VAR
@@ -1060,7 +1060,7 @@ fn execute_builtin(cmd: &Command) {
                 let name_str = bytes_to_str(&name);
                 let value_str = bytes_to_str(&value);
                 if setenv(name_str, value_str) < 0 {
-                    eprintln("esh: export: failed");
+                    eprintlns("esh: export: failed");
                 }
             } else {
                 // Just VAR - check if it exists, if not set to empty
@@ -1068,7 +1068,7 @@ fn execute_builtin(cmd: &Command) {
                 if getenv(name_str).is_none() {
                     // Set to empty string (like bash does for export VAR)
                     if setenv(name_str, "") < 0 {
-                        eprintln("esh: export: failed");
+                        eprintlns("esh: export: failed");
                     }
                 }
                 // If it exists, it's already exported (we don't have separate export flag)
@@ -1076,7 +1076,7 @@ fn execute_builtin(cmd: &Command) {
         }
     } else if bytes_eq(&cmd.args[0], b"unset") {
         if cmd.argc < 2 {
-            eprintln("esh: unset: not enough arguments");
+            eprintlns("esh: unset: not enough arguments");
         } else {
             for i in 1..cmd.argc {
                 let name_str = bytes_to_str(&cmd.args[i]);
@@ -1090,7 +1090,7 @@ fn execute_builtin(cmd: &Command) {
         shell().last_status = builtin_test(cmd);
     } else if bytes_eq(&cmd.args[0], b"source") || bytes_eq(&cmd.args[0], b".") {
         if cmd.argc < 2 {
-            eprintln("esh: source: filename argument required");
+            eprintlns("esh: source: filename argument required");
             shell().last_status = 1;
         } else {
             shell().last_status = builtin_source(&cmd.args[1]);
@@ -1131,9 +1131,9 @@ fn execute_builtin(cmd: &Command) {
             if is_builtin(&new_cmd.args[0]) {
                 execute_builtin(&new_cmd);
             } else {
-                eprint("esh: builtin: ");
+                eprints("esh: builtin: ");
                 print_bytes(&cmd.args[1]);
-                eprintln(": not a shell builtin");
+                eprintlns(": not a shell builtin");
                 shell().last_status = 1;
             }
         }
@@ -1156,10 +1156,10 @@ fn execute_builtin(cmd: &Command) {
     } else if bytes_eq(&cmd.args[0], b"umask") {
         shell().last_status = builtin_umask(cmd);
     } else if bytes_eq(&cmd.args[0], b"jobs") {
-        println("esh: jobs: job control not yet implemented");
+        printlns("esh: jobs: job control not yet implemented");
         shell().last_status = 1;
     } else if bytes_eq(&cmd.args[0], b"fg") || bytes_eq(&cmd.args[0], b"bg") {
-        println("esh: job control not yet implemented");
+        printlns("esh: job control not yet implemented");
         shell().last_status = 1;
     } else if bytes_eq(&cmd.args[0], b"wait") {
         shell().last_status = builtin_wait(cmd);
@@ -1168,7 +1168,7 @@ fn execute_builtin(cmd: &Command) {
     } else if bytes_eq(&cmd.args[0], b"history") {
         shell().last_status = builtin_history(cmd);
     } else if bytes_eq(&cmd.args[0], b"getopts") {
-        eprintln("esh: getopts: not yet implemented");
+        eprintlns("esh: getopts: not yet implemented");
         shell().last_status = 1;
     }
 }
@@ -1181,7 +1181,7 @@ fn builtin_test(cmd: &Command) -> i32 {
     // For [, check for closing ]
     if is_bracket {
         if argc < 2 || !bytes_eq(&cmd.args[argc - 1], b"]") {
-            eprintln("esh: [: missing ']'");
+            eprintlns("esh: [: missing ']'");
             return 2;
         }
         argc -= 1; // Don't include ] in argument processing
@@ -1298,7 +1298,7 @@ fn builtin_test(cmd: &Command) -> i32 {
     }
 
     // Unsupported expression
-    eprintln("esh: test: unsupported expression");
+    eprintlns("esh: test: unsupported expression");
     2
 }
 
@@ -1307,9 +1307,9 @@ fn builtin_source(filename: &[u8]) -> i32 {
     let path = bytes_to_str(filename);
     let fd = open2(path, O_RDONLY);
     if fd < 0 {
-        eprint("esh: source: ");
+        eprints("esh: source: ");
         print_bytes(filename);
-        eprintln(": No such file");
+        eprintlns(": No such file");
         return 1;
     }
 
@@ -1361,7 +1361,7 @@ fn builtin_source(filename: &[u8]) -> i32 {
 /// read builtin - read a line from stdin
 fn builtin_read(cmd: &Command) -> i32 {
     if cmd.argc < 2 {
-        eprintln("esh: read: variable name required");
+        eprintlns("esh: read: variable name required");
         return 1;
     }
 
@@ -1478,11 +1478,11 @@ fn builtin_alias(cmd: &Command) -> i32 {
         // List all aliases
         for alias in state.aliases.iter() {
             if alias.used {
-                print("alias ");
+                prints("alias ");
                 print_bytes(&alias.name);
-                print("='");
+                prints("='");
                 print_bytes(&alias.value);
-                println("'");
+                printlns("'");
             }
         }
         return 0;
@@ -1538,7 +1538,7 @@ fn builtin_alias(cmd: &Command) -> i32 {
                 state.aliases[idx].value = value;
                 state.aliases[idx].used = true;
             } else {
-                eprintln("esh: alias: too many aliases");
+                eprintlns("esh: alias: too many aliases");
                 return 1;
             }
         } else {
@@ -1546,19 +1546,19 @@ fn builtin_alias(cmd: &Command) -> i32 {
             let mut found = false;
             for alias in state.aliases.iter() {
                 if alias.used && bytes_eq(&alias.name, arg) {
-                    print("alias ");
+                    prints("alias ");
                     print_bytes(&alias.name);
-                    print("='");
+                    prints("='");
                     print_bytes(&alias.value);
-                    println("'");
+                    printlns("'");
                     found = true;
                     break;
                 }
             }
             if !found {
-                eprint("esh: alias: ");
+                eprints("esh: alias: ");
                 print_bytes(arg);
-                eprintln(": not found");
+                eprintlns(": not found");
                 return 1;
             }
         }
@@ -1569,7 +1569,7 @@ fn builtin_alias(cmd: &Command) -> i32 {
 /// unalias builtin - remove aliases
 fn builtin_unalias(cmd: &Command) -> i32 {
     if cmd.argc < 2 {
-        eprintln("esh: unalias: argument required");
+        eprintlns("esh: unalias: argument required");
         return 1;
     }
 
@@ -1594,9 +1594,9 @@ fn builtin_unalias(cmd: &Command) -> i32 {
             }
         }
         if !found {
-            eprint("esh: unalias: ");
+            eprints("esh: unalias: ");
             print_bytes(&cmd.args[i]);
-            eprintln(": not found");
+            eprintlns(": not found");
             status = 1;
         }
     }
@@ -1620,9 +1620,9 @@ fn builtin_type(cmd: &Command) -> i32 {
         for alias in state.aliases.iter() {
             if alias.used && bytes_eq(&alias.name, name) {
                 print_bytes(name);
-                print(" is aliased to '");
+                prints(" is aliased to '");
                 print_bytes(&alias.value);
-                println("'");
+                printlns("'");
                 found = true;
                 break;
             }
@@ -1630,7 +1630,7 @@ fn builtin_type(cmd: &Command) -> i32 {
 
         if !found && is_builtin(name) {
             print_bytes(name);
-            println(" is a shell builtin");
+            printlns(" is a shell builtin");
             found = true;
         }
 
@@ -1651,17 +1651,17 @@ fn builtin_type(cmd: &Command) -> i32 {
             if fd >= 0 {
                 close(fd);
                 print_bytes(name);
-                print(" is ");
+                prints(" is ");
                 print_bytes(&path);
-                println("");
+                printlns("");
                 found = true;
             }
         }
 
         if !found {
-            eprint("esh: type: ");
+            eprints("esh: type: ");
             print_bytes(name);
-            eprintln(": not found");
+            eprintlns(": not found");
             status = 1;
         }
     }
@@ -1676,9 +1676,9 @@ fn builtin_set(cmd: &Command) -> i32 {
         // Print all variables
         env_iter(|name, value| {
             print_bytes(name);
-            print("=");
+            prints("=");
             print_bytes(value);
-            println("");
+            printlns("");
         });
         return 0;
     }
@@ -1704,7 +1704,7 @@ fn builtin_shift(cmd: &Command) -> i32 {
     };
 
     if n > state.positional_count {
-        eprintln("esh: shift: shift count out of range");
+        eprintlns("esh: shift: shift count out of range");
         return 1;
     }
 
@@ -1721,11 +1721,11 @@ fn builtin_declare(cmd: &Command) -> i32 {
     if cmd.argc < 2 {
         // List all variables
         env_iter(|name, value| {
-            print("declare -- ");
+            prints("declare -- ");
             print_bytes(name);
-            print("=\"");
+            prints("=\"");
             print_bytes(value);
-            println("\"");
+            printlns("\"");
         });
         return 0;
     }
@@ -1780,7 +1780,7 @@ fn builtin_declare(cmd: &Command) -> i32 {
 /// let builtin - evaluate arithmetic expressions
 fn builtin_let(cmd: &Command) -> i32 {
     if cmd.argc < 2 {
-        eprintln("esh: let: expression expected");
+        eprintlns("esh: let: expression expected");
         return 1;
     }
 
@@ -1957,11 +1957,11 @@ fn builtin_umask(cmd: &Command) -> i32 {
 
     if cmd.argc < 2 {
         // Print current umask
-        print("0");
+        prints("0");
         print_u64((state.umask >> 6 & 7) as u64);
         print_u64((state.umask >> 3 & 7) as u64);
         print_u64((state.umask & 7) as u64);
-        println("");
+        printlns("");
         return 0;
     }
 
@@ -1975,7 +1975,7 @@ fn builtin_umask(cmd: &Command) -> i32 {
         if c >= b'0' && c <= b'7' {
             mask = mask * 8 + (c - b'0') as u32;
         } else {
-            eprintln("esh: umask: invalid octal number");
+            eprintlns("esh: umask: invalid octal number");
             return 1;
         }
         i += 1;
@@ -2009,7 +2009,7 @@ fn builtin_wait(cmd: &Command) -> i32 {
 /// kill builtin - send signal to process
 fn builtin_kill(cmd: &Command) -> i32 {
     if cmd.argc < 2 {
-        eprintln("esh: kill: usage: kill [-signal] pid");
+        eprintlns("esh: kill: usage: kill [-signal] pid");
         return 1;
     }
 
@@ -2019,7 +2019,7 @@ fn builtin_kill(cmd: &Command) -> i32 {
     // Check for signal argument
     if cmd.args[1][0] == b'-' {
         if cmd.argc < 3 {
-            eprintln("esh: kill: pid required");
+            eprintlns("esh: kill: pid required");
             return 1;
         }
         // Parse signal number
@@ -2046,15 +2046,15 @@ fn builtin_kill(cmd: &Command) -> i32 {
     for i in pid_arg..cmd.argc {
         if let Some(pid) = parse_int_bytes(&cmd.args[i]) {
             if sys_kill(pid as i32, signal) < 0 {
-                eprint("esh: kill: ");
+                eprints("esh: kill: ");
                 print_bytes(&cmd.args[i]);
-                eprintln(": no such process");
+                eprintlns(": no such process");
                 status = 1;
             }
         } else {
-            eprint("esh: kill: ");
+            eprints("esh: kill: ");
             print_bytes(&cmd.args[i]);
-            eprintln(": invalid pid");
+            eprintlns(": invalid pid");
             status = 1;
         }
     }
@@ -2077,11 +2077,11 @@ fn builtin_history(cmd: &Command) -> i32 {
     };
 
     for i in start..state.history_count {
-        print("  ");
+        prints("  ");
         print_i64((i + 1) as i64);
-        print("  ");
+        prints("  ");
         print_bytes(&state.history[i]);
-        println("");
+        printlns("");
     }
     0
 }
@@ -2091,54 +2091,54 @@ fn execute_external(cmd: &Command) {
     let arg = &cmd.args[0];
 
     // Debug: print that we're in execute_external
-    eprint("[DBG] execute_external: ");
+    eprints("[DBG] execute_external: ");
     print_bytes(arg);
-    eprintln("");
+    eprintlns("");
 
     // Try direct path first if it starts with /
     if arg[0] == b'/' {
-        eprintln("[DBG] trying absolute path");
+        eprintlns("[DBG] trying absolute path");
         let path = bytes_to_str(arg);
         let ret = exec(path);
-        eprint("[DBG] exec returned: ");
+        eprints("[DBG] exec returned: ");
         print_i64(ret as i64);
-        eprintln("");
+        eprintlns("");
         if ret < 0 {
-            eprint("esh: ");
+            eprints("esh: ");
             print_bytes(arg);
-            eprintln(": not found");
+            eprintlns(": not found");
         }
         return;
     }
 
     // Search in /initramfs/bin
-    eprintln("[DBG] about to create path buffer");
+    eprintlns("[DBG] about to create path buffer");
     let mut path = [0u8; 128];
-    eprintln("[DBG] path buffer created, copying prefix");
+    eprintlns("[DBG] path buffer created, copying prefix");
     // "/initramfs/bin/" is 15 characters
     path[..15].copy_from_slice(b"/initramfs/bin/");
-    eprintln("[DBG] prefix copied, copying command name");
+    eprintlns("[DBG] prefix copied, copying command name");
     let mut i = 0;
     while i < 63 && arg[i] != 0 {
         path[15 + i] = arg[i];
         i += 1;
     }
     path[15 + i] = 0;
-    eprintln("[DBG] path complete");
+    eprintlns("[DBG] path complete");
 
-    eprint("[DBG] trying path: ");
+    eprints("[DBG] trying path: ");
     print_bytes(&path);
-    eprintln("");
+    eprintlns("");
 
     let path_str = bytes_to_str(&path);
     let ret = exec(path_str);
-    eprint("[DBG] exec returned: ");
+    eprints("[DBG] exec returned: ");
     print_i64(ret as i64);
-    eprintln("");
+    eprintlns("");
     if ret < 0 {
-        eprint("esh: ");
+        eprints("esh: ");
         print_bytes(arg);
-        eprintln(": command not found");
+        eprintlns(": command not found");
     }
 }
 

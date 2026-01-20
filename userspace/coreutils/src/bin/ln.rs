@@ -8,7 +8,7 @@ use libc::*;
 #[unsafe(no_mangle)]
 fn main(argc: i32, argv: *const *const u8) -> i32 {
     if argc < 3 {
-        eprintln("usage: ln [-s] <target> <link_name>");
+        eprintlns("usage: ln [-s] <target> <link_name>");
         return 1;
     }
 
@@ -21,7 +21,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         symbolic = true;
         arg_start = 2;
         if argc < 4 {
-            eprintln("usage: ln [-s] <target> <link_name>");
+            eprintlns("usage: ln [-s] <target> <link_name>");
             return 1;
         }
     }
@@ -36,15 +36,15 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     };
 
     if result < 0 {
-        eprint("ln: failed to create ");
+        eprints("ln: failed to create ");
         if symbolic {
-            eprint("symbolic ");
+            eprints("symbolic ");
         }
-        eprint("link '");
+        eprints("link '");
         print(link_name);
-        eprint("' -> '");
+        eprints("' -> '");
         print(target);
-        eprintln("'");
+        eprintlns("'");
         return 1;
     }
 

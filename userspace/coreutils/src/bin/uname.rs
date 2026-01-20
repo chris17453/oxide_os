@@ -7,6 +7,6 @@ use libc::*;
 
 #[unsafe(no_mangle)]
 fn main() -> i32 {
-    println("EFFLUX");
+    printlns("EFFLUX");
     0
 }

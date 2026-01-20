@@ -22,12 +22,12 @@ fn main() -> i32 {
                 }
                 putchar(buf[i]);
             }
-            println("");
+            printlns("");
             return 0;
         }
     }
 
     // Fallback
-    println("localhost");
+    printlns("localhost");
     0
 }

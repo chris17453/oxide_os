@@ -8,7 +8,7 @@ use libc::*;
 #[unsafe(no_mangle)]
 fn main(argc: i32, argv: *const *const u8) -> i32 {
     if argc < 2 {
-        eprintln("usage: seq [first [incr]] last");
+        eprintlns("usage: seq [first [incr]] last");
         return 1;
     }
 
@@ -31,7 +31,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     };
 
     if incr == 0 {
-        eprintln("seq: zero increment");
+        eprintlns("seq: zero increment");
         return 1;
     }
 
@@ -39,13 +39,13 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     if incr > 0 {
         while i <= last {
             print_i64(i);
-            println("");
+            printlns("");
             i += incr;
         }
     } else {
         while i >= last {
             print_i64(i);
-            println("");
+            printlns("");
             i += incr;
         }
     }

@@ -59,17 +59,17 @@ fn print_ip(ip: (u8, u8, u8, u8)) {
 }
 
 fn show_help() {
-    println("Usage: nc [OPTIONS] [hostname] port");
-    println("       nc -l [OPTIONS] port");
-    println("");
-    println("Arbitrary TCP/UDP connections and listens.");
-    println("");
-    println("Options:");
-    println("  -l          Listen mode, for inbound connections");
-    println("  -u          Use UDP instead of TCP");
-    println("  -v          Verbose output");
-    println("  -z          Zero-I/O mode (scan)");
-    println("  -h          Show this help");
+    printlns("Usage: nc [OPTIONS] [hostname] port");
+    printlns("       nc -l [OPTIONS] port");
+    printlns("");
+    printlns("Arbitrary TCP/UDP connections and listens.");
+    printlns("");
+    printlns("Options:");
+    printlns("  -l          Listen mode, for inbound connections");
+    printlns("  -u          Use UDP instead of TCP");
+    printlns("  -v          Verbose output");
+    printlns("  -z          Zero-I/O mode (scan)");
+    printlns("  -h          Show this help");
 }
 
 /// Transfer data between stdin/stdout and socket
@@ -102,9 +102,9 @@ fn main() -> i32 {
 
     let sock = socket(af::INET, sock_type, protocol);
     if sock < 0 {
-        print("nc: failed to create socket: ");
+        prints("nc: failed to create socket: ");
         libc::print_i64(sock as i64);
-        println("");
+        printlns("");
         return 1;
     }
 
@@ -114,25 +114,25 @@ fn main() -> i32 {
 
         let ret = bind(sock, &bind_addr, SOCKADDR_IN_SIZE);
         if ret < 0 {
-            print("nc: bind failed: ");
+            prints("nc: bind failed: ");
             libc::print_i64(ret as i64);
-            println("");
+            printlns("");
             close(sock);
             return 1;
         }
 
         if verbose {
-            print("Listening on 0.0.0.0:");
+            prints("Listening on 0.0.0.0:");
             libc::print_u64(port as u64);
-            println("");
+            printlns("");
         }
 
         if !use_udp {
             let ret = listen(sock, 1);
             if ret < 0 {
-                print("nc: listen failed: ");
+                prints("nc: listen failed: ");
                 libc::print_i64(ret as i64);
-                println("");
+                printlns("");
                 close(sock);
                 return 1;
             }
@@ -142,15 +142,15 @@ fn main() -> i32 {
 
             let client = accept(sock, Some(&mut client_addr), Some(&mut addr_len));
             if client < 0 {
-                print("nc: accept failed: ");
+                prints("nc: accept failed: ");
                 libc::print_i64(client as i64);
-                println("");
+                printlns("");
                 close(sock);
                 return 1;
             }
 
             if verbose {
-                println("Connection received");
+                printlns("Connection received");
             }
 
             if !zero_io {
@@ -162,34 +162,34 @@ fn main() -> i32 {
     } else {
         // Client mode
         if verbose {
-            print("Connecting to ");
+            prints("Connecting to ");
             print_ip(ip);
-            print(":");
+            prints(":");
             libc::print_u64(port as u64);
-            println("...");
+            printlns("...");
         }
 
         let dest = sockaddr_in_octets(port, ip.0, ip.1, ip.2, ip.3);
 
         let ret = connect(sock, &dest, SOCKADDR_IN_SIZE);
         if ret < 0 {
-            print("nc: connect failed: ");
+            prints("nc: connect failed: ");
             libc::print_i64(ret as i64);
-            println("");
+            printlns("");
             close(sock);
             return 1;
         }
 
         if verbose {
-            println("Connected!");
+            printlns("Connected!");
         }
 
         if zero_io {
-            print("Connection to ");
+            prints("Connection to ");
             print_ip(ip);
-            print(":");
+            prints(":");
             libc::print_u64(port as u64);
-            println(" succeeded");
+            printlns(" succeeded");
         } else {
             transfer_data(sock);
         }

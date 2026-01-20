@@ -157,7 +157,7 @@ fn main() -> i32 {
     let (host, port, path) = match parse_url(url) {
         Some(parsed) => parsed,
         None => {
-            eprintln("wget: invalid URL format");
+            eprintlns("wget: invalid URL format");
             return 1;
         }
     };
@@ -166,23 +166,23 @@ fn main() -> i32 {
     let ip = match parse_ip(host) {
         Some(ip) => ip,
         None => {
-            eprintln("wget: hostname resolution not implemented, use IP address");
+            eprintlns("wget: hostname resolution not implemented, use IP address");
             return 1;
         }
     };
 
-    print("Connecting to ");
+    prints("Connecting to ");
     print_ip(ip);
-    print(":");
+    prints(":");
     libc::print_u64(port as u64);
-    println("...");
+    printlns("...");
 
     // Create TCP socket
     let sock = tcp_socket();
     if sock < 0 {
-        print("wget: failed to create socket: ");
+        prints("wget: failed to create socket: ");
         libc::print_i64(sock as i64);
-        println("");
+        printlns("");
         return 1;
     }
 
@@ -190,14 +190,14 @@ fn main() -> i32 {
     let addr = sockaddr_in_octets(port, ip.0, ip.1, ip.2, ip.3);
     let ret = connect(sock, &addr, SOCKADDR_IN_SIZE);
     if ret < 0 {
-        print("wget: failed to connect: ");
+        prints("wget: failed to connect: ");
         libc::print_i64(ret as i64);
-        println("");
+        printlns("");
         close(sock);
         return 1;
     }
 
-    println("Connected.");
+    printlns("Connected.");
 
     // Build HTTP request
     let mut request = [0u8; 1024];
@@ -206,14 +206,14 @@ fn main() -> i32 {
     // Send request
     let sent = send(sock, &request[..req_len], 0);
     if sent < 0 {
-        print("wget: failed to send request: ");
+        prints("wget: failed to send request: ");
         libc::print_i64(sent as i64);
-        println("");
+        printlns("");
         close(sock);
         return 1;
     }
 
-    println("HTTP request sent, awaiting response...");
+    printlns("HTTP request sent, awaiting response...");
 
     // Receive response
     let mut buffer = [0u8; 4096];
@@ -224,9 +224,9 @@ fn main() -> i32 {
     loop {
         let received = recv(sock, &mut buffer[total_received..], 0);
         if received < 0 {
-            print("wget: receive error: ");
+            prints("wget: receive error: ");
             libc::print_i64(received as i64);
-            println("");
+            printlns("");
             break;
         }
         if received == 0 {
@@ -270,10 +270,10 @@ fn main() -> i32 {
     shutdown(sock, shut::RDWR);
     close(sock);
 
-    println("");
-    print("Downloaded ");
+    printlns("");
+    prints("Downloaded ");
     libc::print_u64(body_received as u64);
-    println(" bytes.");
+    printlns(" bytes.");
 
     0
 }
