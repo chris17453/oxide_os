@@ -248,20 +248,12 @@ impl TerminalEmulator {
                     self.handler.linefeed(&mut self.primary, Some(&mut self.scrollback))
                 };
 
-                if scrolled {
-                    // Render any pending dirty rows BEFORE scrolling
-                    // This ensures content is on screen before we copy framebuffer
-                    let buffer = if is_alt { &self.alternate } else { &self.primary };
-                    self.renderer.render(buffer, &self.handler.cursor);
+                self.renderer.mark_dirty(old_row);
+                self.renderer.mark_dirty(self.handler.cursor.row);
 
-                    // Now do fast framebuffer scroll
-                    let bg = self.handler.attrs.effective_bg().to_fb_color(false);
-                    self.renderer.scroll_up(1, bg);
-                    // Only the new bottom row needs redraw
-                    self.renderer.mark_dirty(self.handler.cursor.row);
-                } else {
-                    self.renderer.mark_dirty(old_row);
-                    self.renderer.mark_dirty(self.handler.cursor.row);
+                // If we scrolled (cursor stayed at same row), mark all rows for redraw
+                if self.handler.cursor.row == old_row {
+                    self.renderer.mark_all_dirty();
                 }
             }
             0x0D => {
