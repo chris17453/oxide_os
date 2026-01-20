@@ -70,8 +70,10 @@ userspace-release:
 		echo "  Building $$pkg (release)..."; \
 		cargo build --package $$pkg --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1; \
 	done
+	@echo "  Building gwbasic (release)..."
+	@cargo build --package efflux-gwbasic --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) --features efflux || exit 1
 	@echo "Stripping binaries..."
-	@for prog in init esh login $(COREUTILS_BINS); do \
+	@for prog in init esh login gwbasic $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
 			strip "$(USERSPACE_OUT_RELEASE)/$$prog" 2>/dev/null || true; \
 		fi; \
@@ -105,6 +107,8 @@ initramfs: userspace-release
 	@ln -sf /bin/esh "$(TARGET_DIR)/initramfs/bin/sh"
 	@# Copy login
 	@cp "$(USERSPACE_OUT_RELEASE)/login" "$(TARGET_DIR)/initramfs/bin/login"
+	@# Copy gwbasic
+	@cp "$(USERSPACE_OUT_RELEASE)/gwbasic" "$(TARGET_DIR)/initramfs/bin/gwbasic"
 	@# Copy coreutils
 	@for prog in $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
@@ -117,7 +121,7 @@ initramfs: userspace-release
 	@# Create etc files
 	@echo "root:x:0:0:root:/root:/bin/esh" > $(TARGET_DIR)/initramfs/etc/passwd
 	@echo "root:x:0:" > $(TARGET_DIR)/initramfs/etc/group
-	@echo "PATH=/bin:/sbin" > $(TARGET_DIR)/initramfs/etc/profile
+	@echo "PATH=/initramfs/bin:/initramfs/sbin:/bin:/sbin" > $(TARGET_DIR)/initramfs/etc/profile
 	@echo "export PATH" >> $(TARGET_DIR)/initramfs/etc/profile
 	@echo "EFFLUX" > $(TARGET_DIR)/initramfs/etc/hostname
 	@# Create CPIO archive
@@ -152,7 +156,7 @@ initramfs-debug: userspace
 	@ln -sf /bin/true "$(TARGET_DIR)/initramfs/bin/:" 2>/dev/null || true
 	@echo "root:x:0:0:root:/root:/bin/esh" > $(TARGET_DIR)/initramfs/etc/passwd
 	@echo "root:x:0:" > $(TARGET_DIR)/initramfs/etc/group
-	@echo "PATH=/bin:/sbin" > $(TARGET_DIR)/initramfs/etc/profile
+	@echo "PATH=/initramfs/bin:/initramfs/sbin:/bin:/sbin" > $(TARGET_DIR)/initramfs/etc/profile
 	@echo "export PATH" >> $(TARGET_DIR)/initramfs/etc/profile
 	@cd $(TARGET_DIR)/initramfs && find . | cpio -o -H newc > ../initramfs.cpio 2>/dev/null
 	@echo "Initramfs created (debug): $(INITRAMFS)"
@@ -163,6 +167,7 @@ list-bins:
 	@echo "Userspace binaries:"
 	@echo "  System: init login"
 	@echo "  Shell: esh (sh)"
+	@echo "  Apps: gwbasic"
 	@echo "  Coreutils: $(COREUTILS_BINS)"
 
 # Create boot directory structure with kernel and bootloader
