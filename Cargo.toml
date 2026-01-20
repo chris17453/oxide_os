@@ -91,6 +91,7 @@ members = [
     "userspace/modutils",
     "userspace/search",
     "userspace/efflux-std",
+    "userspace/syscall-tests",
     "bootloader/boot-uefi",
     "apps/gwbasic",
 ]
