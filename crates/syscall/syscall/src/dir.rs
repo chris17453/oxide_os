@@ -4,15 +4,22 @@
 
 extern crate alloc;
 
+use alloc::string::String;
 use proc::process_table;
 use vfs::{Mode, mount::GLOBAL_VFS};
 
 use crate::errno;
-use crate::vfs::{copy_path_from_user, validate_user_buffer, vfs_error_to_errno};
+use crate::vfs::{copy_path_from_user, resolve_path, validate_user_buffer, vfs_error_to_errno};
 
 /// Copy a path from user space (internal helper)
 fn get_path(path_ptr: u64, path_len: usize) -> Option<&'static str> {
     copy_path_from_user(path_ptr, path_len)
+}
+
+/// Get path and resolve against cwd
+fn get_resolved_path(path_ptr: u64, path_len: usize) -> Option<String> {
+    let raw = get_path(path_ptr, path_len)?;
+    Some(resolve_path(raw))
 }
 
 /// sys_mkdir - Create a directory
@@ -22,7 +29,7 @@ fn get_path(path_ptr: u64, path_len: usize) -> Option<&'static str> {
 /// * `path_len` - Length of path string
 /// * `mode` - Directory permissions
 pub fn sys_mkdir(path_ptr: u64, path_len: usize, mode: u32) -> i64 {
-    let path = match get_path(path_ptr, path_len) {
+    let path = match get_resolved_path(path_ptr, path_len) {
         Some(p) => p,
         None => return errno::EFAULT,
     };
@@ -30,7 +37,7 @@ pub fn sys_mkdir(path_ptr: u64, path_len: usize, mode: u32) -> i64 {
     let mode = Mode::new(mode);
 
     // Get parent directory and name
-    match GLOBAL_VFS.lookup_parent(path) {
+    match GLOBAL_VFS.lookup_parent(&path) {
         Ok((parent, name)) => {
             match parent.mkdir(&name, mode) {
                 Ok(_) => 0,
@@ -47,13 +54,13 @@ pub fn sys_mkdir(path_ptr: u64, path_len: usize, mode: u32) -> i64 {
 /// * `path_ptr` - Pointer to path string
 /// * `path_len` - Length of path string
 pub fn sys_rmdir(path_ptr: u64, path_len: usize) -> i64 {
-    let path = match get_path(path_ptr, path_len) {
+    let path = match get_resolved_path(path_ptr, path_len) {
         Some(p) => p,
         None => return errno::EFAULT,
     };
 
     // Get parent directory and name
-    match GLOBAL_VFS.lookup_parent(path) {
+    match GLOBAL_VFS.lookup_parent(&path) {
         Ok((parent, name)) => {
             match parent.rmdir(&name) {
                 Ok(()) => 0,
@@ -70,13 +77,13 @@ pub fn sys_rmdir(path_ptr: u64, path_len: usize) -> i64 {
 /// * `path_ptr` - Pointer to path string
 /// * `path_len` - Length of path string
 pub fn sys_unlink(path_ptr: u64, path_len: usize) -> i64 {
-    let path = match get_path(path_ptr, path_len) {
+    let path = match get_resolved_path(path_ptr, path_len) {
         Some(p) => p,
         None => return errno::EFAULT,
     };
 
     // Get parent directory and name
-    match GLOBAL_VFS.lookup_parent(path) {
+    match GLOBAL_VFS.lookup_parent(&path) {
         Ok((parent, name)) => {
             match parent.unlink(&name) {
                 Ok(()) => 0,
@@ -100,24 +107,24 @@ pub fn sys_rename(
     new_path_ptr: u64,
     new_path_len: usize,
 ) -> i64 {
-    let old_path = match get_path(old_path_ptr, old_path_len) {
+    let old_path = match get_resolved_path(old_path_ptr, old_path_len) {
         Some(p) => p,
         None => return errno::EFAULT,
     };
 
-    let new_path = match get_path(new_path_ptr, new_path_len) {
+    let new_path = match get_resolved_path(new_path_ptr, new_path_len) {
         Some(p) => p,
         None => return errno::EFAULT,
     };
 
     // Get old parent and name
-    let (old_parent, old_name) = match GLOBAL_VFS.lookup_parent(old_path) {
+    let (old_parent, old_name) = match GLOBAL_VFS.lookup_parent(&old_path) {
         Ok(r) => r,
         Err(e) => return vfs_error_to_errno(e),
     };
 
     // Get new parent and name
-    let (new_parent, new_name) = match GLOBAL_VFS.lookup_parent(new_path) {
+    let (new_parent, new_name) = match GLOBAL_VFS.lookup_parent(&new_path) {
         Ok(r) => r,
         Err(e) => return vfs_error_to_errno(e),
     };
@@ -257,13 +264,13 @@ pub fn sys_getdents(fd: i32, buf: u64, count: usize) -> i64 {
 /// * `path_ptr` - Pointer to path string
 /// * `path_len` - Length of path string
 pub fn sys_chdir(path_ptr: u64, path_len: usize) -> i64 {
-    let path = match get_path(path_ptr, path_len) {
+    let path = match get_resolved_path(path_ptr, path_len) {
         Some(p) => p,
         None => return errno::EFAULT,
     };
 
     // Lookup the directory
-    let vnode = match GLOBAL_VFS.lookup(path) {
+    let vnode = match GLOBAL_VFS.lookup(&path) {
         Ok(v) => v,
         Err(e) => return vfs_error_to_errno(e),
     };
@@ -282,7 +289,7 @@ pub fn sys_chdir(path_ptr: u64, path_len: usize) -> i64 {
 
     // Update the process's current working directory
     let mut proc_guard = proc.lock();
-    proc_guard.set_cwd(alloc::string::String::from(path));
+    proc_guard.set_cwd(path);
 
     0
 }

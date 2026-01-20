@@ -2,6 +2,8 @@
 //!
 //! Provides open, close, read, write, lseek, stat, etc.
 
+use alloc::format;
+use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use proc::process_table;
 use vfs::{
@@ -14,6 +16,39 @@ use crate::socket;
 
 /// Maximum path length for syscalls
 const MAX_PATH: usize = 4096;
+
+/// Resolve a path against the current process's working directory
+///
+/// If path is absolute (starts with /), returns it as-is.
+/// If relative, prepends the process's cwd.
+pub fn resolve_path(path: &str) -> String {
+    if path.starts_with('/') {
+        // Absolute path - use as-is
+        String::from(path)
+    } else {
+        // Relative path - prepend cwd
+        let table = process_table();
+        let cwd = match table.current() {
+            Some(p) => {
+                let proc = p.lock();
+                proc.cwd().to_string()
+            }
+            None => String::from("/"),
+        };
+
+        // Handle special case of "." and ".."
+        if path == "." {
+            return cwd;
+        }
+
+        // Join cwd and path
+        if cwd == "/" {
+            format!("/{}", path)
+        } else {
+            format!("{}/{}", cwd, path)
+        }
+    }
+}
 
 /// Copy a path from user space
 ///
@@ -64,10 +99,13 @@ pub fn vfs_error_to_errno(e: VfsError) -> i64 {
 /// * `flags` - Open flags
 /// * `mode` - File creation mode (for O_CREAT)
 pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
-    let path = match copy_path_from_user(path_ptr, path_len) {
+    let raw_path = match copy_path_from_user(path_ptr, path_len) {
         Some(p) => p,
         None => return errno::EFAULT,
     };
+
+    // Resolve relative paths against cwd
+    let path = resolve_path(raw_path);
 
     let flags = FileFlags::from_bits_truncate(flags);
     let mode = Mode::new(mode);
@@ -75,7 +113,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
     // Try to look up the file
     let vnode = if flags.contains(FileFlags::O_CREAT) {
         // O_CREAT: create if not exists
-        match GLOBAL_VFS.lookup(path) {
+        match GLOBAL_VFS.lookup(&path) {
             Ok(vnode) => {
                 if flags.contains(FileFlags::O_EXCL) {
                     // O_EXCL with O_CREAT: fail if exists
@@ -85,7 +123,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
             }
             Err(VfsError::NotFound) => {
                 // Create the file
-                match GLOBAL_VFS.lookup_parent(path) {
+                match GLOBAL_VFS.lookup_parent(&path) {
                     Ok((parent, name)) => {
                         match parent.create(&name, mode) {
                             Ok(vnode) => vnode,
@@ -98,7 +136,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
             Err(e) => return vfs_error_to_errno(e),
         }
     } else {
-        match GLOBAL_VFS.lookup(path) {
+        match GLOBAL_VFS.lookup(&path) {
             Ok(vnode) => vnode,
             Err(e) => return vfs_error_to_errno(e),
         }
@@ -314,16 +352,19 @@ pub fn sys_fstat(fd: i32, stat_buf: u64) -> i64 {
 /// * `path_len` - Length of path string
 /// * `stat_buf` - Pointer to stat structure
 pub fn sys_stat(path_ptr: u64, path_len: usize, stat_buf: u64) -> i64 {
-    let path = match copy_path_from_user(path_ptr, path_len) {
+    let raw_path = match copy_path_from_user(path_ptr, path_len) {
         Some(p) => p,
         None => return errno::EFAULT,
     };
+
+    // Resolve relative paths against cwd
+    let path = resolve_path(raw_path);
 
     if !validate_user_buffer(stat_buf, core::mem::size_of::<vfs::Stat>()) {
         return errno::EFAULT;
     }
 
-    let vnode = match GLOBAL_VFS.lookup(path) {
+    let vnode = match GLOBAL_VFS.lookup(&path) {
         Ok(v) => v,
         Err(e) => return vfs_error_to_errno(e),
     };
