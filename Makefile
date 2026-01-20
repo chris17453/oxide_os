@@ -4,12 +4,23 @@
 
 SHELL := /usr/bin/bash
 
-.PHONY: all build kernel bootloader userspace initramfs clean run run-no-net run-headless run-headless-no-net test check fmt clippy
+.PHONY: all build kernel bootloader userspace initramfs clean run run-no-net run-headless run-headless-no-net run-kvm test check fmt clippy boot-image
 
 # Configuration
 ARCH ?= x86_64
 PROFILE ?= debug
 QEMU_TIMEOUT ?= 15
+
+# QEMU command auto-detection (can be overridden with QEMU=command)
+# Prefer qemu-system-x86_64 as it supports all features (including fat: protocol)
+# Note: qemu-kvm on RHEL doesn't support fat: protocol needed for boot testing
+# On RHEL 10: sudo dnf install qemu-system-x86
+QEMU ?= $(shell \
+	if command -v qemu-system-x86_64 >/dev/null 2>&1; then \
+		echo "qemu-system-x86_64"; \
+	else \
+		echo "qemu-system-x86_64"; \
+	fi)
 
 # Paths
 TARGET_DIR := target
@@ -182,16 +193,43 @@ boot-dir: kernel bootloader initramfs
 	@echo "  - Kernel: EFI/OXIDE/kernel.elf"
 	@echo "  - Initramfs: EFI/OXIDE/initramfs.cpio"
 
+# Create a real disk image (for qemu-kvm compatibility on RHEL)
+boot-image: boot-dir
+	@echo "Creating boot disk image..."
+	@# Create 100MB disk image
+	@dd if=/dev/zero of=$(TARGET_DIR)/boot.img bs=1M count=100 status=none
+	@# Create GPT partition table and ESP partition
+	@parted -s $(TARGET_DIR)/boot.img mklabel gpt
+	@parted -s $(TARGET_DIR)/boot.img mkpart ESP fat32 1MiB 99MiB
+	@parted -s $(TARGET_DIR)/boot.img set 1 esp on
+	@# Format the partition
+	@LOOP=$$(sudo losetup -f); \
+	sudo losetup $$LOOP $(TARGET_DIR)/boot.img; \
+	sudo partprobe $$LOOP; \
+	sudo mkfs.vfat -F 32 $${LOOP}p1; \
+	sudo mkdir -p /tmp/oxide-mount; \
+	sudo mount $${LOOP}p1 /tmp/oxide-mount; \
+	sudo cp -r $(BOOT_DIR)/* /tmp/oxide-mount/; \
+	sudo umount /tmp/oxide-mount; \
+	sudo losetup -d $$LOOP
+	@echo "Boot disk image created: $(TARGET_DIR)/boot.img"
+
 # Run in QEMU (interactive, with networking)
 run: boot-dir
 	@if [ -z "$(OVMF)" ]; then \
 		echo "Error: OVMF firmware not found"; \
 		echo "Install: sudo apt install ovmf (Debian/Ubuntu)"; \
-		echo "         sudo dnf install edk2-ovmf (Fedora)"; \
+		echo "         sudo dnf install edk2-ovmf (Fedora/RHEL)"; \
+		exit 1; \
+	fi
+	@if ! command -v $(QEMU) >/dev/null 2>&1; then \
+		echo "Error: QEMU command '$(QEMU)' not found"; \
+		echo "Install: sudo apt install qemu-system-x86 (Debian/Ubuntu)"; \
+		echo "         sudo dnf install qemu-system-x86 (Fedora/RHEL)"; \
 		exit 1; \
 	fi
 	@mkdir -p /tmp/qemu-oxide
-	TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
+	TMPDIR=/tmp/qemu-oxide $(QEMU) \
 		-machine q35 \
 		-m 256M \
 		-bios "$(OVMF)" \
@@ -207,11 +245,11 @@ run-no-net: boot-dir
 	@if [ -z "$(OVMF)" ]; then \
 		echo "Error: OVMF firmware not found"; \
 		echo "Install: sudo apt install ovmf (Debian/Ubuntu)"; \
-		echo "         sudo dnf install edk2-ovmf (Fedora)"; \
+		echo "         sudo dnf install edk2-ovmf (Fedora/RHEL)"; \
 		exit 1; \
 	fi
 	@mkdir -p /tmp/qemu-oxide
-	TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
+	TMPDIR=/tmp/qemu-oxide $(QEMU) \
 		-machine q35 \
 		-m 256M \
 		-bios "$(OVMF)" \
@@ -227,7 +265,7 @@ run-headless: boot-dir
 		exit 1; \
 	fi
 	@mkdir -p /tmp/qemu-oxide
-	TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
+	TMPDIR=/tmp/qemu-oxide $(QEMU) \
 		-machine q35 \
 		-m 256M \
 		-bios "$(OVMF)" \
@@ -246,7 +284,7 @@ run-headless-no-net: boot-dir
 		exit 1; \
 	fi
 	@mkdir -p /tmp/qemu-oxide
-	TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
+	TMPDIR=/tmp/qemu-oxide $(QEMU) \
 		-machine q35 \
 		-m 256M \
 		-bios "$(OVMF)" \
@@ -254,6 +292,33 @@ run-headless-no-net: boot-dir
 		-device ide-hd,drive=disk \
 		-serial stdio \
 		-display none \
+		-no-reboot
+
+# Run with qemu-kvm using disk image (RHEL 10 compatible)
+run-kvm: boot-image
+	@if [ ! -f /usr/share/edk2/ovmf/OVMF_CODE.fd ]; then \
+		echo "Error: OVMF firmware not found"; \
+		echo "Install: sudo dnf install edk2-ovmf"; \
+		exit 1; \
+	fi
+	@if [ ! -f /usr/libexec/qemu-kvm ]; then \
+		echo "Error: /usr/libexec/qemu-kvm not found"; \
+		echo "Install: sudo dnf install qemu-kvm"; \
+		exit 1; \
+	fi
+	@# Create a writable copy of OVMF_VARS.fd for this session
+	@mkdir -p $(TARGET_DIR)
+	@cp /usr/share/edk2/ovmf/OVMF_VARS.fd $(TARGET_DIR)/OVMF_VARS.fd 2>/dev/null || true
+	@mkdir -p /tmp/qemu-oxide
+	TMPDIR=/tmp/qemu-oxide /usr/libexec/qemu-kvm \
+		-machine q35 \
+		-cpu max \
+		-m 256M \
+		-drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE.fd \
+		-drive if=pflash,format=raw,file=$(TARGET_DIR)/OVMF_VARS.fd \
+		-drive format=raw,file=$(TARGET_DIR)/boot.img,if=none,id=disk \
+		-device ide-hd,drive=disk \
+		-serial stdio \
 		-no-reboot
 
 # Automated test: boot and check for expected output
@@ -264,7 +329,7 @@ test: boot-dir
 		exit 1; \
 	fi
 	@mkdir -p /tmp/qemu-oxide
-	@TMPDIR=/tmp/qemu-oxide timeout $(QEMU_TIMEOUT) qemu-system-x86_64 \
+	@TMPDIR=/tmp/qemu-oxide timeout $(QEMU_TIMEOUT) $(QEMU) \
 		-machine q35 \
 		-m 256M \
 		-bios "$(OVMF)" \
@@ -308,6 +373,15 @@ clean:
 	cargo clean
 	rm -rf $(BOOT_DIR)
 
+# Show detected configuration
+show-config:
+	@echo "Configuration:"
+	@echo "  ARCH:         $(ARCH)"
+	@echo "  PROFILE:      $(PROFILE)"
+	@echo "  QEMU:         $(QEMU)"
+	@echo "  OVMF:         $(OVMF)"
+	@echo "  QEMU_TIMEOUT: $(QEMU_TIMEOUT)"
+
 # Show help
 help:
 	@echo "OXIDE OS Build System"
@@ -322,28 +396,39 @@ help:
 	@echo "  userspace-pkg  - Build single package (PKG=name)"
 	@echo "  initramfs      - Create initramfs (release)"
 	@echo "  initramfs-debug - Create initramfs (debug)"
+	@echo "  boot-image     - Create bootable disk image (for qemu-kvm)"
 	@echo "  list-bins      - List all userspace binaries"
 	@echo "  release        - Build kernel/bootloader in release mode"
 	@echo "  run            - Run in QEMU (interactive, with networking)"
 	@echo "  run-no-net     - Run in QEMU without networking"
 	@echo "  run-headless   - Run in QEMU without display (with networking)"
 	@echo "  run-headless-no-net - Run headless without networking"
+	@echo "  run-kvm        - Run with qemu-kvm using disk image (RHEL 10)"
 	@echo "  test           - Automated boot test"
 	@echo "  check          - Quick syntax/type check"
 	@echo "  fmt            - Format code"
 	@echo "  fmt-check      - Check formatting"
 	@echo "  clippy         - Run clippy linter"
 	@echo "  clean          - Remove build artifacts"
+	@echo "  show-config    - Show detected configuration (QEMU, OVMF, etc.)"
 	@echo ""
 	@echo "Variables:"
 	@echo "  ARCH           - Target architecture (default: x86_64)"
 	@echo "  PROFILE        - Build profile (default: debug)"
 	@echo "  QEMU_TIMEOUT   - Test timeout in seconds (default: 15)"
+	@echo "  QEMU           - QEMU command (auto-detected, override if needed)"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make build-full          - Build everything"
 	@echo "  make userspace-pkg PKG=coreutils - Build only coreutils"
 	@echo "  make run                 - Build and run (includes initramfs + net)"
+	@echo "  make show-config         - Show detected QEMU and OVMF paths"
+	@echo ""
+	@echo "RHEL 10 Note:"
+	@echo "  RHEL 10 uses qemu-kvm which lacks fat: protocol support"
+	@echo "  Install: sudo dnf install qemu-kvm edk2-ovmf parted dosfstools"
+	@echo "  Use 'make run-kvm' instead of 'make run' on RHEL 10"
+	@echo "  run-kvm creates a real disk image (requires sudo for loopback mount)"
 
 
 
