@@ -70,6 +70,7 @@ static DECIMAL_POINT: &[u8] = b".\0";
 static THOUSANDS_SEP: &[u8] = b"\0";
 static GROUPING: &[u8] = b"\0";
 static EMPTY: &[u8] = b"\0";
+#[allow(dead_code)]
 static CHAR_MAX: i8 = 127;
 
 /// Default lconv for C locale

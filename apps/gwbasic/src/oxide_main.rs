@@ -111,7 +111,11 @@ pub extern "C" fn watos_timer_syscall() -> u64 {
 #[no_mangle]
 pub extern "C" fn watos_get_free_memory() -> usize {
     // Return remaining heap space
-    unsafe { HEAP.len().saturating_sub(HEAP_POS) }
+    unsafe {
+        let heap_len = core::ptr::addr_of!(HEAP).read().len();
+        let heap_pos = core::ptr::addr_of!(HEAP_POS).read();
+        heap_len.saturating_sub(heap_pos)
+    }
 }
 
 /// Get key without waiting - used by INKEY$
@@ -268,15 +272,22 @@ unsafe impl alloc::alloc::GlobalAlloc for OxideAllocator {
         let align = layout.align();
         let size = layout.size();
 
-        // Align the position
-        let aligned_pos = (HEAP_POS + align - 1) & !(align - 1);
+        // Use raw pointers to avoid creating references to mutable statics
+        let heap_pos_ptr = core::ptr::addr_of_mut!(HEAP_POS);
+        let heap_ptr = core::ptr::addr_of_mut!(HEAP);
 
-        if aligned_pos + size > HEAP.len() {
+        let current_pos = heap_pos_ptr.read();
+        let heap_len = (*heap_ptr).len();
+
+        // Align the position
+        let aligned_pos = (current_pos + align - 1) & !(align - 1);
+
+        if aligned_pos + size > heap_len {
             return core::ptr::null_mut();
         }
 
-        HEAP_POS = aligned_pos + size;
-        HEAP.as_mut_ptr().add(aligned_pos)
+        heap_pos_ptr.write(aligned_pos + size);
+        (*heap_ptr).as_mut_ptr().add(aligned_pos)
     }
 
     unsafe fn dealloc(&self, _ptr: *mut u8, _layout: alloc::alloc::Layout) {
