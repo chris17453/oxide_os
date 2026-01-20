@@ -19,7 +19,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
 
         if sys_rmdir(path) < 0 {
             eprints("rmdir: failed to remove '");
-            print(path);
+            prints(path);
             eprintlns("'");
             status = 1;
         }

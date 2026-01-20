@@ -51,7 +51,7 @@ fn read_line(buf: &mut [u8], echo: bool) -> usize {
 
         if c[0] == b'\n' || c[0] == b'\r' {
             if echo {
-                print("\n");
+                prints("\n");
             }
             break;
         }
@@ -61,7 +61,7 @@ fn read_line(buf: &mut [u8], echo: bool) -> usize {
             if i > 0 {
                 i -= 1;
                 if echo {
-                    print("\x08 \x08");
+                    prints("\x08 \x08");
                 }
             }
             continue;
@@ -73,7 +73,7 @@ fn read_line(buf: &mut [u8], echo: bool) -> usize {
             if echo {
                 let s = [c[0]];
                 if let Ok(ch) = core::str::from_utf8(&s) {
-                    print(ch);
+                    prints(ch);
                 }
             }
         }
@@ -128,7 +128,7 @@ pub fn main() -> i32 {
 
     loop {
         // Print login prompt
-        print("\nEFFLUX OS login: ");
+        prints("\nEFFLUX OS login: ");
 
         // Read username
         let mut username = [0u8; MAX_INPUT];
@@ -141,10 +141,10 @@ pub fn main() -> i32 {
         let entry = match lookup_user(&username) {
             Some(e) => e,
             None => {
-                print("Login incorrect\n");
+                prints("Login incorrect\n");
                 attempts += 1;
                 if attempts >= MAX_ATTEMPTS {
-                    print("Too many failed attempts\n");
+                    prints("Too many failed attempts\n");
                     return 1;
                 }
                 continue;
@@ -153,16 +153,16 @@ pub fn main() -> i32 {
 
         // Prompt for password (if user has one)
         if !entry.password_hash.is_empty() {
-            print("Password: ");
+            prints("Password: ");
             let mut password = [0u8; MAX_INPUT];
             read_line(&mut password, false);
-            print("\n");
+            prints("\n");
 
             if !verify_password(entry, &password) {
-                print("Login incorrect\n");
+                prints("Login incorrect\n");
                 attempts += 1;
                 if attempts >= MAX_ATTEMPTS {
-                    print("Too many failed attempts\n");
+                    prints("Too many failed attempts\n");
                     return 1;
                 }
                 continue;
@@ -170,21 +170,21 @@ pub fn main() -> i32 {
         }
 
         // Successful login - print welcome and spawn shell
-        print("Welcome to EFFLUX OS, ");
-        print(entry.username);
-        print("!\n\n");
+        prints("Welcome to EFFLUX OS, ");
+        prints(entry.username);
+        prints("!\n\n");
 
         // Fork and exec shell
         let pid = fork();
         if pid < 0 {
-            print("Failed to fork\n");
+            prints("Failed to fork\n");
             return 1;
         }
 
         if pid == 0 {
             // Child - exec shell
             exec(entry.shell);
-            print("Failed to exec shell\n");
+            prints("Failed to exec shell\n");
             exit(1);
         } else {
             // Parent - wait for shell
@@ -192,7 +192,7 @@ pub fn main() -> i32 {
             waitpid(pid, &mut status, 0);
 
             // Shell exited - loop back to login prompt
-            print("\n");
+            prints("\n");
         }
 
         attempts = 0; // Reset after successful login

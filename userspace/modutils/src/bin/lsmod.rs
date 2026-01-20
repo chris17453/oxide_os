@@ -14,12 +14,12 @@ pub fn main() -> i32 {
     let fd = open2("/proc/modules", O_RDONLY);
     if fd < 0 {
         // /proc/modules not available, show header only
-        println("Module                  Size  Used by");
+        printlns("Module                  Size  Used by");
         return 0;
     }
 
     // Print header
-    println("Module                  Size  Used by");
+    printlns("Module                  Size  Used by");
 
     // Read and print module list
     let mut buf = [0u8; 4096];

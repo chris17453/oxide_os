@@ -6,7 +6,7 @@
 #![no_main]
 
 use libc::{
-    println, eprintln, print, putchar,
+    printlns, eprintlns, prints, putchar,
     socket::{
         tcp_socket, connect, send, recv, shutdown, sockaddr_in_octets,
         shut, SOCKADDR_IN_SIZE,
@@ -245,7 +245,7 @@ fn main() -> i32 {
                 let headers = &buffer[..pos];
                 if let Some(first_line_end) = find_pattern(headers, b"\r\n") {
                     if let Ok(status_line) = core::str::from_utf8(&headers[..first_line_end]) {
-                        println(status_line);
+                        printlns(status_line);
                     }
                 }
 

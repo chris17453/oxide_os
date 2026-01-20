@@ -47,12 +47,12 @@ pub fn main() -> i32 {
     // For now, just print usage since we don't have argv
     // In full implementation, we'd parse arguments
 
-    println("insmod: Insert a kernel module");
-    println("");
-    println("Usage: insmod <module.ko> [params...]");
-    println("");
-    println("Note: Full implementation requires argument passing from kernel.");
-    println("");
+    printlns("insmod: Insert a kernel module");
+    printlns("");
+    printlns("Usage: insmod <module.ko> [params...]");
+    printlns("");
+    printlns("Note: Full implementation requires argument passing from kernel.");
+    printlns("");
 
     // Demo: If we had arguments, we would:
     // 1. Open the .ko file
@@ -65,8 +65,8 @@ pub fn main() -> i32 {
     let mut buf = [0u8; MAX_MODULE_SIZE];
     let size = read_file(path, &mut buf);
     if size < 0 {
-        eprint("insmod: cannot read ");
-        eprintln(path);
+        eprints("insmod: cannot read ");
+        eprintlns(path);
         return 1;
     }
 
@@ -80,7 +80,7 @@ pub fn main() -> i32 {
 
     let ret = syscall3(SYS_INIT_MODULE, buf.as_ptr() as u64, size as u64, params.as_ptr() as u64);
     if ret < 0 {
-        eprintln("insmod: failed to insert module");
+        eprintlns("insmod: failed to insert module");
         return 1;
     }
     */

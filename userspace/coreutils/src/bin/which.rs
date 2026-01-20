@@ -31,7 +31,7 @@ fn find_command(cmd: &str) -> bool {
         let fd = open2(cmd, O_RDONLY);
         if fd >= 0 {
             close(fd);
-            println(cmd);
+            printlns(cmd);
             return true;
         }
         return false;
@@ -54,7 +54,7 @@ fn find_command(cmd: &str) -> bool {
         let fd = open2(path_str, O_RDONLY);
         if fd >= 0 {
             close(fd);
-            println(path_str);
+            printlns(path_str);
             return true;
         }
     }

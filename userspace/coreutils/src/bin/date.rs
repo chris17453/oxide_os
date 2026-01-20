@@ -34,9 +34,9 @@ fn main(_argc: i32, _argv: *const *const u8) -> i32 {
                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
     // Print: "Wed Jan 15 14:30:00 UTC 2025"
-    print(dow_names[dow]);
+    prints(dow_names[dow]);
     prints(" ");
-    print(month_names[(month - 1) as usize]);
+    prints(month_names[(month - 1) as usize]);
     prints(" ");
     print_num(day as u64, 2);
     prints(" ");

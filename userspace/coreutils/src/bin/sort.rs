@@ -47,7 +47,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
             let fd = open2(path, O_RDONLY);
             if fd < 0 {
                 eprints("sort: ");
-                print(path);
+                prints(path);
                 eprintlns(": No such file");
                 continue;
             }

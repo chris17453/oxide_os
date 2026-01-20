@@ -19,7 +19,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     let src_fd = open2(src, O_RDONLY);
     if src_fd < 0 {
         eprints("cp: cannot open '");
-        print(src);
+        prints(src);
         eprintlns("'");
         return 1;
     }
@@ -28,7 +28,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     let dst_fd = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0o644);
     if dst_fd < 0 {
         eprints("cp: cannot create '");
-        print(dst);
+        prints(dst);
         eprintlns("'");
         close(src_fd);
         return 1;

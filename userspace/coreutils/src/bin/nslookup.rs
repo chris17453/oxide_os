@@ -5,7 +5,7 @@
 #![no_std]
 #![no_main]
 
-use libc::{println, print, eprintln, putchar};
+use libc::{printlns, prints, eprintlns, putchar};
 use libc::socket::{
     socket, af, sock, ipproto, sockaddr_in_octets, sendto, recvfrom,
     htons, SOCKADDR_IN_SIZE, SockAddrIn,
@@ -189,7 +189,7 @@ fn main() -> i32 {
 
     printlns("Non-authoritative answer:");
     prints("Name: ");
-    println(hostname);
+    printlns(hostname);
 
     match parse_response(&response, received as usize) {
         Some(ip) => {

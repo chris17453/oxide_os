@@ -20,16 +20,16 @@ pub fn main() -> i32 {
     // For now, just print usage since we don't have argv
     // In full implementation, we'd parse arguments
 
-    println("rmmod: Remove a kernel module");
-    println("");
-    println("Usage: rmmod [-f] [-w] <module>");
-    println("");
-    println("Options:");
-    println("  -f    Force removal (even if in use)");
-    println("  -w    Wait for module to become unused");
-    println("");
-    println("Note: Full implementation requires argument passing from kernel.");
-    println("");
+    printlns("rmmod: Remove a kernel module");
+    printlns("");
+    printlns("Usage: rmmod [-f] [-w] <module>");
+    printlns("");
+    printlns("Options:");
+    printlns("  -f    Force removal (even if in use)");
+    printlns("  -w    Wait for module to become unused");
+    printlns("");
+    printlns("Note: Full implementation requires argument passing from kernel.");
+    printlns("");
 
     // Example implementation (commented out until argv works):
     /*
@@ -48,7 +48,7 @@ pub fn main() -> i32 {
     }
 
     if module_name.is_empty() {
-        eprintln("rmmod: no module specified");
+        eprintlns("rmmod: no module specified");
         return 1;
     }
 
@@ -57,8 +57,8 @@ pub fn main() -> i32 {
 
     let ret = syscall2(SYS_DELETE_MODULE, module_name.as_ptr() as u64, flags as u64);
     if ret < 0 {
-        eprint("rmmod: cannot unload ");
-        eprintln(module_name);
+        eprints("rmmod: cannot unload ");
+        eprintlns(module_name);
         return 1;
     }
     */

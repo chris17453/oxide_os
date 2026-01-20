@@ -13,21 +13,21 @@ pub fn main() -> i32 {
     // For now, just print usage since we don't have argv
     // In full implementation, we'd parse the .modinfo section of the .ko file
 
-    println("modinfo: Show information about a kernel module");
-    println("");
-    println("Usage: modinfo <module.ko>");
-    println("");
-    println("Displays:");
-    println("  filename    - Path to module file");
-    println("  name        - Module name");
-    println("  version     - Module version");
-    println("  author      - Module author");
-    println("  description - Module description");
-    println("  license     - Module license");
-    println("  depends     - Module dependencies");
-    println("");
-    println("Note: Full implementation requires argument passing from kernel.");
-    println("");
+    printlns("modinfo: Show information about a kernel module");
+    printlns("");
+    printlns("Usage: modinfo <module.ko>");
+    printlns("");
+    printlns("Displays:");
+    printlns("  filename    - Path to module file");
+    printlns("  name        - Module name");
+    printlns("  version     - Module version");
+    printlns("  author      - Module author");
+    printlns("  description - Module description");
+    printlns("  license     - Module license");
+    printlns("  depends     - Module dependencies");
+    printlns("");
+    printlns("Note: Full implementation requires argument passing from kernel.");
+    printlns("");
 
     // Example implementation (commented out until argv works):
     /*
@@ -36,8 +36,8 @@ pub fn main() -> i32 {
     // Open and read the .ko file
     let fd = open(path, O_RDONLY);
     if fd < 0 {
-        eprint("modinfo: cannot open ");
-        eprintln(path);
+        eprints("modinfo: cannot open ");
+        eprintlns(path);
         return 1;
     }
 
@@ -45,8 +45,8 @@ pub fn main() -> i32 {
     // The .modinfo section contains key=value pairs separated by nulls
 
     // Print info
-    print("filename:       ");
-    println(path);
+    prints("filename:       ");
+    printlns(path);
     // ... parse and print other fields
 
     close(fd);

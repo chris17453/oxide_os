@@ -14,7 +14,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     };
 
     loop {
-        println(msg);
+        printlns(msg);
     }
 }
 

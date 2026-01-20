@@ -41,9 +41,9 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
             eprints("symbolic ");
         }
         eprints("link '");
-        print(link_name);
+        prints(link_name);
         eprints("' -> '");
-        print(target);
+        prints(target);
         eprintlns("'");
         return 1;
     }

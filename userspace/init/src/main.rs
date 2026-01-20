@@ -14,37 +14,37 @@ use libc::*;
 /// Main init entry point
 #[unsafe(no_mangle)]
 fn main() -> i32 {
-    println("EFFLUX init starting...");
+    printlns("EFFLUX init starting...");
 
     // We're PID 1
     let pid = getpid();
     if pid != 1 {
-        eprintln("Warning: init is not PID 1!");
+        eprintlns("Warning: init is not PID 1!");
     }
 
     // Print startup message
-    println("");
-    println("EFFLUX OS v0.1.0");
-    println("");
+    printlns("");
+    printlns("EFFLUX OS v0.1.0");
+    printlns("");
 
     // Run fbtest to test framebuffer
-    println("[init] Running framebuffer test...");
+    printlns("[init] Running framebuffer test...");
     let fb_child = fork();
     if fb_child == 0 {
         let ret = exec("/initramfs/bin/fbtest");
         if ret < 0 {
-            eprintln("[init] Failed to exec fbtest");
+            eprintlns("[init] Failed to exec fbtest");
         }
         _exit(0);
     } else if fb_child > 0 {
         // Wait for fbtest to complete
         let mut status: i32 = 0;
         wait(&mut status);
-        println("[init] Framebuffer test completed");
+        printlns("[init] Framebuffer test completed");
     }
 
     // Spawn a shell directly for now (no getty/login)
-    println("[init] Spawning shell...");
+    printlns("[init] Spawning shell...");
 
     let child = fork();
     if child == 0 {
@@ -58,14 +58,14 @@ fn main() -> i32 {
                 break;
             }
         }
-        eprintln("[init] Failed to exec shell");
+        eprintlns("[init] Failed to exec shell");
         _exit(1);
     } else if child > 0 {
         // Parent - reap zombies forever
-        println("[init] Shell started");
+        printlns("[init] Shell started");
         reap_zombies();
     } else {
-        eprintln("[init] Fork failed");
+        eprintlns("[init] Fork failed");
     }
 
     // Should never reach here
@@ -80,30 +80,30 @@ fn reap_zombies() -> ! {
 
         if pid > 0 {
             // Child exited
-            print("[init] Reaped process ");
+            prints("[init] Reaped process ");
             print_i64(pid as i64);
 
             if wifexited(status) {
-                print(" (exit status ");
+                prints(" (exit status ");
                 print_i64(wexitstatus(status) as i64);
-                println(")");
+                printlns(")");
             } else if wifsignaled(status) {
-                print(" (killed by signal ");
+                prints(" (killed by signal ");
                 print_i64(wtermsig(status) as i64);
-                println(")");
+                printlns(")");
             } else {
-                println("");
+                printlns("");
             }
 
             // If shell died, spawn a new one
-            println("[init] Respawning shell...");
+            printlns("[init] Respawning shell...");
             let child = fork();
             if child == 0 {
                 let paths = ["/initramfs/bin/esh", "/initramfs/bin/sh", "/bin/esh", "/bin/sh"];
                 for path in paths.iter() {
                     let _ = exec(path);
                 }
-                eprintln("[init] Failed to exec shell");
+                eprintlns("[init] Failed to exec shell");
                 _exit(1);
             }
         }

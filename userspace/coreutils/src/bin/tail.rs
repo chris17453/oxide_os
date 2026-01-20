@@ -55,14 +55,14 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
 
         if multiple {
             prints("==> ");
-            print(path);
+            prints(path);
             printlns(" <==");
         }
 
         let fd = open2(path, O_RDONLY);
         if fd < 0 {
             eprints("tail: cannot open '");
-            print(path);
+            prints(path);
             eprintlns("'");
             status = 1;
             continue;

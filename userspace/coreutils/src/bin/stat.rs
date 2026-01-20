@@ -53,14 +53,14 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         let result = sys_stat(path, &mut st);
         if result < 0 {
             eprints("stat: cannot stat '");
-            print(path);
+            prints(path);
             eprintlns("': No such file or directory");
             status = 1;
             continue;
         }
 
         prints("  File: ");
-        println(path);
+        printlns(path);
 
         prints("  Size: ");
         print_i64(st.st_size);

@@ -21,7 +21,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         let fd = open(path, O_WRONLY | O_CREAT, 0o644);
         if fd < 0 {
             eprints("touch: cannot touch '");
-            print(path);
+            prints(path);
             eprintlns("'");
             status = 1;
         } else {

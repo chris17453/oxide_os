@@ -5,7 +5,7 @@
 #![no_std]
 #![no_main]
 
-use libc::{println, print};
+use libc::{printlns, prints};
 
 fn show_usage() {
     printlns("Usage: ip [OPTIONS] OBJECT { COMMAND | help }");

@@ -5,10 +5,10 @@
 #![no_std]
 #![no_main]
 
-use libc::{println, print, putchar};
+use libc::{printlns, prints, putchar};
 
 fn show_interface(name: &str) {
-    print(name);
+    prints(name);
     printlns(": flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500");
 
     if name == "lo" {

@@ -30,15 +30,15 @@ impl Default for TermConfig {
 
 /// Clear screen escape sequence
 fn clear_screen() {
-    print("\x1b[2J\x1b[H");
+    prints("\x1b[2J\x1b[H");
 }
 
 /// Print system identification banner
 fn print_banner() {
-    print("\n");
-    print("EFFLUX OS v0.1.0\n");
-    print("================\n");
-    print("\n");
+    prints("\n");
+    prints("EFFLUX OS v0.1.0\n");
+    prints("================\n");
+    prints("\n");
 }
 
 /// Open and configure terminal device
@@ -98,14 +98,14 @@ pub fn main() -> i32 {
         print_banner();
 
         // Print terminal info
-        print("Terminal: ");
-        print(config.device);
-        print("\n\n");
+        prints("Terminal: ");
+        prints(config.device);
+        prints("\n\n");
 
         // Fork and exec login
         let pid = fork();
         if pid < 0 {
-            print("getty: fork failed\n");
+            prints("getty: fork failed\n");
             exit(1);
         }
 
@@ -114,7 +114,7 @@ pub fn main() -> i32 {
             exec("/bin/login");
             // If exec fails, try shell directly
             exec("/bin/esh");
-            print("getty: failed to exec login\n");
+            prints("getty: failed to exec login\n");
             exit(1);
         }
 

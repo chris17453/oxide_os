@@ -5,7 +5,7 @@
 #![no_std]
 #![no_main]
 
-use libc::{println, print, eprintln, putchar};
+use libc::{printlns, prints, eprintlns, putchar};
 use libc::socket::{
     socket, af, sock, ipproto, sockaddr_in_octets, connect, send, recv,
     htons, SOCKADDR_IN_SIZE,

@@ -58,7 +58,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
             let fd = open2(path, O_RDONLY);
             if fd < 0 {
                 eprints("grep: ");
-                print(path);
+                prints(path);
                 eprintlns(": No such file");
                 continue;
             }
@@ -95,7 +95,7 @@ fn grep_fd(fd: i32, pattern: &str, filename: &str, ignore_case: bool, invert: bo
                 if should_print {
                     found = true;
                     if show_filename {
-                        print(filename);
+                        prints(filename);
                         prints(":");
                     }
                     if line_numbers {
@@ -124,7 +124,7 @@ fn grep_fd(fd: i32, pattern: &str, filename: &str, ignore_case: bool, invert: bo
         if should_print {
             found = true;
             if show_filename {
-                print(filename);
+                prints(filename);
                 prints(":");
             }
             if line_numbers {
