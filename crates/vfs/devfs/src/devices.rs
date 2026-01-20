@@ -735,7 +735,7 @@ impl VnodeOps for FramebufferDevice {
 
                 let mut fix_info = FbFixScreenInfo::default();
                 // Set id to "OXIDE FB"
-                let id = b"OXIDE FB\0\0\0\0\0\0\0";
+                let id = b"OXIDE FB\0\0\0\0\0\0\0\0";
                 fix_info.id.copy_from_slice(id);
                 fix_info.smem_start = info.phys_base;
                 fix_info.smem_len = info.size as u32;
