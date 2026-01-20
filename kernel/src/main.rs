@@ -268,6 +268,12 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     arch::X86_64::enable_interrupts();
     let _ = writeln!(writer, "[INFO] Interrupts enabled");
 
+    // Debug: Check keyboard initialization status
+    let init_status = ps2::init_status();
+    let _ = writeln!(writer, "[DEBUG] PS/2 init status: {} (0=not started, 1=ctrl failed, 2=kbd failed, 3=kbd ok, 4=mouse failed, 5=both ok)", init_status);
+    let _ = writeln!(writer, "[DEBUG] PS/2 Keyboard initialized: {}", ps2::is_keyboard_initialized());
+    let _ = writeln!(writer);
+
     // Test heap allocation
     let _ = writeln!(writer, "[INFO] Testing heap allocation...");
     let boxed_value = Box::new(42u32);

@@ -8,7 +8,7 @@ extern crate alloc;
 
 use alloc::string::String;
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use spin::Mutex;
 
 use input::{
@@ -180,18 +180,10 @@ impl Ps2Keyboard {
 
     /// Initialize the keyboard
     pub fn init(&self) -> bool {
-        // Reset keyboard
-        send_data(kbd_cmd::RESET);
-        if read_data() != Some(0xAA) {
-            return false;
-        }
-
-        // Enable scanning
+        // Don't reinitialize - BIOS/UEFI already set up the keyboard
+        // Just enable scanning to make sure it's active
         send_data(kbd_cmd::ENABLE_SCANNING);
-        if read_data() != Some(0xFA) {
-            return false;
-        }
-
+        let _ = read_data(); // Ignore response
         true
     }
 
@@ -671,9 +663,20 @@ fn push_to_console(data: &[u8]) {
     }
 }
 
+/// Debug flag to track init status
+static INIT_STATUS: AtomicU8 = AtomicU8::new(0);
+// 0 = not started, 1 = controller init failed, 2 = keyboard init failed,
+// 3 = keyboard init success, 4 = mouse init failed, 5 = both success
+
+/// Get initialization status for debugging
+pub fn init_status() -> u8 {
+    INIT_STATUS.load(Ordering::Relaxed)
+}
+
 /// Initialize PS/2 devices
 pub fn init() -> bool {
     if !init_controller() {
+        INIT_STATUS.store(1, Ordering::Relaxed);
         return false;
     }
 
@@ -683,6 +686,9 @@ pub fn init() -> bool {
         let id = input::register_device(keyboard.clone());
         keyboard.set_device_id(id as u8);
         *KEYBOARD.lock() = Some(keyboard);
+        INIT_STATUS.store(3, Ordering::Relaxed);
+    } else {
+        INIT_STATUS.store(2, Ordering::Relaxed);
     }
 
     // Initialize mouse
@@ -691,17 +697,43 @@ pub fn init() -> bool {
         let id = input::register_device(mouse.clone());
         mouse.set_device_id(id as u8);
         *MOUSE.lock() = Some(mouse);
+        if INIT_STATUS.load(Ordering::Relaxed) == 3 {
+            INIT_STATUS.store(5, Ordering::Relaxed);
+        }
+    } else if INIT_STATUS.load(Ordering::Relaxed) == 3 {
+        INIT_STATUS.store(4, Ordering::Relaxed);
     }
 
     true
 }
 
+/// Debug counter for keyboard interrupts
+static KEYBOARD_IRQ_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+/// Last scancode received (for debugging)
+static LAST_SCANCODE: AtomicU8 = AtomicU8::new(0);
+
+/// Scancode log for debugging (lock-free, only written by IRQ handler)
+static mut SCANCODE_LOG: [u8; 20] = [0; 20];
+
+/// Get last scancode (for debugging)
+pub fn last_scancode() -> u8 {
+    LAST_SCANCODE.load(Ordering::Relaxed)
+}
+
 /// Handle keyboard interrupt (IRQ 1)
 pub fn handle_keyboard_irq() {
+    KEYBOARD_IRQ_COUNT.fetch_add(1, Ordering::Relaxed);
+
     if let Some(keyboard) = KEYBOARD.lock().as_ref() {
         let scancode = unsafe { inb(DATA_PORT) };
         keyboard.handle_scancode(scancode);
     }
+}
+
+/// Get scancode log for debugging
+pub fn get_scancode_log() -> [u8; 20] {
+    unsafe { SCANCODE_LOG }
 }
 
 /// Handle mouse interrupt (IRQ 12)
@@ -720,4 +752,19 @@ pub fn keyboard() -> Option<Arc<Ps2Keyboard>> {
 /// Get mouse device
 pub fn mouse() -> Option<Arc<Ps2Mouse>> {
     MOUSE.lock().clone()
+}
+
+/// Get keyboard IRQ count (for debugging)
+pub fn keyboard_irq_count() -> usize {
+    KEYBOARD_IRQ_COUNT.load(Ordering::Relaxed)
+}
+
+/// Check if keyboard is initialized
+pub fn is_keyboard_initialized() -> bool {
+    KEYBOARD.lock().is_some()
+}
+
+/// Read PS/2 status register (for debugging)
+pub fn read_status() -> u8 {
+    unsafe { inb(STATUS_PORT) }
 }
