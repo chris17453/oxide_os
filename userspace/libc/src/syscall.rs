@@ -92,6 +92,13 @@ pub mod nr {
     // Keyboard layout syscalls
     pub const SETKEYMAP: u64 = 120;
     pub const GETKEYMAP: u64 = 121;
+
+    // Thread syscalls (Linux-compatible numbers)
+    pub const CLONE: u64 = 56;
+    pub const GETTID: u64 = 186;
+    pub const FUTEX: u64 = 202;
+    pub const SET_TID_ADDRESS: u64 = 218;
+    pub const EXIT_GROUP: u64 = 231;
 }
 
 // Re-export syscall numbers at module level for convenience
@@ -125,6 +132,11 @@ pub use nr::SETKEYMAP as SYS_SETKEYMAP;
 pub use nr::GETKEYMAP as SYS_GETKEYMAP;
 pub use nr::MPROTECT as SYS_MPROTECT;
 pub use nr::BRK as SYS_BRK;
+pub use nr::CLONE as SYS_CLONE;
+pub use nr::GETTID as SYS_GETTID;
+pub use nr::FUTEX as SYS_FUTEX;
+pub use nr::SET_TID_ADDRESS as SYS_SET_TID_ADDRESS;
+pub use nr::EXIT_GROUP as SYS_EXIT_GROUP;
 
 // ============================================================================
 // High-level syscall wrappers (architecture-independent)
@@ -290,4 +302,96 @@ pub fn sys_setpgid(pid: i32, pgid: i32) -> i32 {
 /// sys_getpgid - Get process group
 pub fn sys_getpgid(pid: i32) -> i32 {
     syscall1(nr::GETPGID, pid as usize) as i32
+}
+
+// ============================================================================
+// Thread syscall wrappers
+// ============================================================================
+
+/// Clone flags
+pub mod clone_flags {
+    pub const CLONE_VM: u32 = 0x0000_0100;
+    pub const CLONE_FS: u32 = 0x0000_0200;
+    pub const CLONE_FILES: u32 = 0x0000_0400;
+    pub const CLONE_SIGHAND: u32 = 0x0000_0800;
+    pub const CLONE_THREAD: u32 = 0x0001_0000;
+    pub const CLONE_SETTLS: u32 = 0x0008_0000;
+    pub const CLONE_CHILD_SETTID: u32 = 0x0100_0000;
+    pub const CLONE_CHILD_CLEARTID: u32 = 0x0020_0000;
+    pub const CLONE_PARENT_SETTID: u32 = 0x0010_0000;
+}
+
+/// Futex operations
+pub mod futex_op {
+    pub const FUTEX_WAIT: i32 = 0;
+    pub const FUTEX_WAKE: i32 = 1;
+    pub const FUTEX_PRIVATE_FLAG: i32 = 128;
+    pub const FUTEX_WAIT_PRIVATE: i32 = FUTEX_WAIT | FUTEX_PRIVATE_FLAG;
+    pub const FUTEX_WAKE_PRIVATE: i32 = FUTEX_WAKE | FUTEX_PRIVATE_FLAG;
+}
+
+/// sys_clone - Create a new process or thread
+///
+/// # Arguments
+/// * `flags` - Clone flags (CLONE_VM, CLONE_THREAD, etc.)
+/// * `stack` - New stack pointer (0 to inherit parent's)
+/// * `parent_tid` - Location to store parent TID
+/// * `child_tid` - Location to store child TID
+/// * `tls` - Thread-local storage pointer
+pub fn sys_clone(flags: u32, stack: *mut u8, parent_tid: *mut u32, child_tid: *mut u32, tls: u64) -> i32 {
+    syscall5(
+        nr::CLONE,
+        flags as usize,
+        stack as usize,
+        parent_tid as usize,
+        child_tid as usize,
+        tls as usize,
+    ) as i32
+}
+
+/// sys_gettid - Get thread ID
+pub fn sys_gettid() -> i32 {
+    syscall0(nr::GETTID) as i32
+}
+
+/// sys_futex - Fast userspace mutex operations
+///
+/// # Arguments
+/// * `addr` - Address of the futex word
+/// * `op` - Operation (FUTEX_WAIT, FUTEX_WAKE, etc.)
+/// * `val` - Value (expected value for WAIT, count for WAKE)
+/// * `timeout` - Timeout in nanoseconds (0 = infinite)
+/// * `addr2` - Second address (for some operations)
+/// * `val3` - Third value (for some operations)
+pub fn sys_futex(addr: *mut u32, op: i32, val: u32, timeout: u64, addr2: *mut u32, val3: u32) -> i32 {
+    syscall6(
+        nr::FUTEX,
+        addr as usize,
+        op as usize,
+        val as usize,
+        timeout as usize,
+        addr2 as usize,
+        val3 as usize,
+    ) as i32
+}
+
+/// sys_futex_wait - Wait on a futex
+pub fn sys_futex_wait(addr: *mut u32, expected: u32, timeout_ns: u64) -> i32 {
+    sys_futex(addr, futex_op::FUTEX_WAIT_PRIVATE, expected, timeout_ns, core::ptr::null_mut(), 0)
+}
+
+/// sys_futex_wake - Wake waiters on a futex
+pub fn sys_futex_wake(addr: *mut u32, count: u32) -> i32 {
+    sys_futex(addr, futex_op::FUTEX_WAKE_PRIVATE, count, 0, core::ptr::null_mut(), 0)
+}
+
+/// sys_set_tid_address - Set clear_child_tid pointer
+pub fn sys_set_tid_address(tidptr: *mut u32) -> i32 {
+    syscall1(nr::SET_TID_ADDRESS, tidptr as usize) as i32
+}
+
+/// sys_exit_group - Exit all threads in thread group
+pub fn sys_exit_group(status: i32) -> ! {
+    syscall1(nr::EXIT_GROUP, status as usize);
+    loop {}
 }

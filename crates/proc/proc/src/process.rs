@@ -1,17 +1,47 @@
 //! Process structure and management
 //!
 //! Defines the Process type and process-related operations.
+//!
+//! In EFFLUX, threads are implemented using the Linux model where threads
+//! are processes that share certain resources. Each thread has a unique TID
+//! (Thread ID) but shares a TGID (Thread Group ID) with other threads in
+//! the same thread group. The TGID is what userspace sees as the "PID".
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicI32, Ordering};
 use os_core::{PhysAddr, VirtAddr};
 use proc_traits::{Pid, ProcessState};
 use signal::{PendingSignals, SigAction, SigSet, NSIG};
 use vfs::FdTable;
 use spin::{Mutex, RwLock};
+
+/// Thread ID type (same as Pid internally but semantically different)
+pub type Tid = u32;
+
+/// Clone flags for clone() syscall
+pub mod clone_flags {
+    /// Share virtual memory (threads share address space)
+    pub const CLONE_VM: u32 = 0x0000_0100;
+    /// Share filesystem information (cwd, root)
+    pub const CLONE_FS: u32 = 0x0000_0200;
+    /// Share file descriptor table
+    pub const CLONE_FILES: u32 = 0x0000_0400;
+    /// Share signal handlers
+    pub const CLONE_SIGHAND: u32 = 0x0000_0800;
+    /// Create in same thread group (share PID)
+    pub const CLONE_THREAD: u32 = 0x0001_0000;
+    /// Set thread-local storage pointer
+    pub const CLONE_SETTLS: u32 = 0x0008_0000;
+    /// Store child TID at location in child memory
+    pub const CLONE_CHILD_SETTID: u32 = 0x0100_0000;
+    /// Clear child TID at location in child memory on exit
+    pub const CLONE_CHILD_CLEARTID: u32 = 0x0020_0000;
+    /// Store child TID at location in parent memory
+    pub const CLONE_PARENT_SETTID: u32 = 0x0010_0000;
+}
 
 use crate::UserAddressSpace;
 
@@ -90,10 +120,15 @@ pub struct ProcessContext {
 
 /// Process structure
 ///
-/// Represents a user process with its own address space.
+/// Represents a user process/thread with its own context.
+/// Threads are processes that share address space and other resources.
 pub struct Process {
-    /// Process ID
+    /// Process/Thread ID - unique identifier for this task
     pid: Pid,
+    /// Thread ID - same as pid for the main thread, unique per thread
+    tid: Tid,
+    /// Thread Group ID - shared by all threads in a process (the "PID" seen by userspace)
+    tgid: Pid,
     /// Parent process ID (0 for init)
     ppid: Pid,
     /// Process state
@@ -106,8 +141,10 @@ pub struct Process {
     pgid: Pid,
     /// Session ID
     sid: Pid,
-    /// Address space
+    /// Address space (shared between threads via Arc)
     address_space: UserAddressSpace,
+    /// Shared address space reference (for threads)
+    shared_address_space: Option<Arc<Mutex<UserAddressSpace>>>,
     /// Saved context for user mode
     context: ProcessContext,
     /// Kernel stack for this process (physical address of top)
@@ -122,8 +159,10 @@ pub struct Process {
     children: Vec<Pid>,
     /// Physical frames owned by this process (for COW tracking)
     owned_frames: Vec<PhysAddr>,
-    /// File descriptor table
+    /// File descriptor table (may be shared between threads)
     fd_table: FdTable,
+    /// Shared file descriptor table (for threads with CLONE_FILES)
+    shared_fd_table: Option<Arc<Mutex<FdTable>>>,
     /// Signal mask (blocked signals)
     signal_mask: SigSet,
     /// Pending signals
@@ -136,10 +175,18 @@ pub struct Process {
     cmdline: Vec<String>,
     /// Environment variables (for /proc/[pid]/environ)
     environ: Vec<String>,
+    /// Thread-local storage pointer (for CLONE_SETTLS)
+    tls: u64,
+    /// Address to clear and futex wake on thread exit (for CLONE_CHILD_CLEARTID)
+    clear_child_tid: u64,
+    /// Is this the thread group leader?
+    is_thread_leader: bool,
+    /// Thread group members (TIDs of threads in this group, only valid for leader)
+    thread_group: Vec<Tid>,
 }
 
 impl Process {
-    /// Create a new process
+    /// Create a new process (thread group leader)
     pub fn new(
         pid: Pid,
         ppid: Pid,
@@ -151,6 +198,8 @@ impl Process {
     ) -> Self {
         Self {
             pid,
+            tid: pid,  // TID == PID for thread group leader
+            tgid: pid, // TGID == PID for thread group leader
             ppid,
             state: ProcessState::Ready,
             exit_status: 0,
@@ -158,6 +207,7 @@ impl Process {
             pgid: pid,  // New process is its own process group leader
             sid: pid,   // New process starts a new session
             address_space,
+            shared_address_space: None,
             context: ProcessContext::default(),
             kernel_stack,
             kernel_stack_size,
@@ -166,12 +216,75 @@ impl Process {
             children: Vec::new(),
             owned_frames: Vec::new(),
             fd_table: FdTable::new(),
+            shared_fd_table: None,
             signal_mask: SigSet::empty(),
             pending_signals: PendingSignals::new(),
             sigactions: [SigAction::new(); NSIG],
             cwd: String::from("/"),
             cmdline: Vec::new(),
             environ: Vec::new(),
+            tls: 0,
+            clear_child_tid: 0,
+            is_thread_leader: true,
+            thread_group: Vec::new(),
+        }
+    }
+
+    /// Create a new thread (shares resources with parent based on flags)
+    pub fn new_thread(
+        tid: Tid,
+        tgid: Pid,
+        ppid: Pid,
+        kernel_stack: PhysAddr,
+        kernel_stack_size: usize,
+        entry_point: VirtAddr,
+        user_stack_top: VirtAddr,
+        shared_address_space: Arc<Mutex<UserAddressSpace>>,
+        shared_fd_table: Option<Arc<Mutex<FdTable>>>,
+        credentials: Credentials,
+        pgid: Pid,
+        sid: Pid,
+        sigactions: [SigAction; NSIG],
+        cwd: String,
+    ) -> Self {
+        // For threads, we use the shared address space's data
+        let address_space = {
+            let locked = shared_address_space.lock();
+            // Create a minimal address space for the thread with the same PML4
+            unsafe { UserAddressSpace::from_raw(locked.pml4_phys(), Vec::new()) }
+        };
+
+        Self {
+            pid: tid as Pid, // Internal PID is unique per thread
+            tid,
+            tgid,
+            ppid,
+            state: ProcessState::Ready,
+            exit_status: 0,
+            credentials,
+            pgid,
+            sid,
+            address_space,
+            shared_address_space: Some(shared_address_space),
+            context: ProcessContext::default(),
+            kernel_stack,
+            kernel_stack_size,
+            user_stack_top,
+            entry_point,
+            children: Vec::new(),
+            owned_frames: Vec::new(),
+            fd_table: FdTable::new(),
+            shared_fd_table,
+            signal_mask: SigSet::empty(),
+            pending_signals: PendingSignals::new(),
+            sigactions,
+            cwd,
+            cmdline: Vec::new(),
+            environ: Vec::new(),
+            tls: 0,
+            clear_child_tid: 0,
+            is_thread_leader: false,
+            thread_group: Vec::new(),
         }
     }
 
@@ -183,6 +296,68 @@ impl Process {
     /// Get the parent process ID
     pub fn ppid(&self) -> Pid {
         self.ppid
+    }
+
+    /// Get the thread ID
+    pub fn tid(&self) -> Tid {
+        self.tid
+    }
+
+    /// Get the thread group ID (the "PID" seen by userspace)
+    pub fn tgid(&self) -> Pid {
+        self.tgid
+    }
+
+    /// Check if this is the thread group leader
+    pub fn is_thread_leader(&self) -> bool {
+        self.is_thread_leader
+    }
+
+    /// Get the TLS (thread-local storage) pointer
+    pub fn tls(&self) -> u64 {
+        self.tls
+    }
+
+    /// Set the TLS pointer
+    pub fn set_tls(&mut self, tls: u64) {
+        self.tls = tls;
+    }
+
+    /// Get the clear_child_tid address
+    pub fn clear_child_tid(&self) -> u64 {
+        self.clear_child_tid
+    }
+
+    /// Set the clear_child_tid address (for CLONE_CHILD_CLEARTID)
+    pub fn set_clear_child_tid(&mut self, addr: u64) {
+        self.clear_child_tid = addr;
+    }
+
+    /// Get the thread group members
+    pub fn thread_group(&self) -> &[Tid] {
+        &self.thread_group
+    }
+
+    /// Add a thread to the thread group (only valid for leader)
+    pub fn add_thread(&mut self, tid: Tid) {
+        if self.is_thread_leader {
+            self.thread_group.push(tid);
+        }
+    }
+
+    /// Remove a thread from the thread group
+    pub fn remove_thread(&mut self, tid: Tid) {
+        self.thread_group.retain(|&t| t != tid);
+    }
+
+    /// Get shared address space (for threads)
+    pub fn shared_address_space(&self) -> Option<&Arc<Mutex<UserAddressSpace>>> {
+        self.shared_address_space.as_ref()
+    }
+
+    /// Get shared file descriptor table (for threads)
+    pub fn shared_fd_table(&self) -> Option<&Arc<Mutex<FdTable>>> {
+        self.shared_fd_table.as_ref()
     }
 
     /// Get the process state

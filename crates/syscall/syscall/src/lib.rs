@@ -39,6 +39,13 @@ pub mod nr {
     pub const SETUID: u64 = 18;
     pub const SETGID: u64 = 19;
 
+    // Thread syscalls
+    pub const CLONE: u64 = 56;       // Create thread/process
+    pub const GETTID: u64 = 186;     // Get thread ID
+    pub const FUTEX: u64 = 202;      // Fast userspace locking
+    pub const SET_TID_ADDRESS: u64 = 218; // Set clear_child_tid address
+    pub const EXIT_GROUP: u64 = 231; // Exit all threads in group
+
     // VFS syscalls
     pub const OPEN: u64 = 20;
     pub const CLOSE: u64 = 21;
@@ -245,6 +252,13 @@ pub fn dispatch(
         nr::GETEGID => sys_getegid(),
         nr::SETUID => sys_setuid(arg1 as u32),
         nr::SETGID => sys_setgid(arg1 as u32),
+
+        // Thread syscalls
+        nr::CLONE => sys_clone(arg1 as u32, arg2, arg3, arg4, arg5),
+        nr::GETTID => sys_gettid(),
+        nr::FUTEX => sys_futex(arg1, arg2 as i32, arg3 as u32, arg4, arg5, arg6 as u32),
+        nr::SET_TID_ADDRESS => sys_set_tid_address(arg1),
+        nr::EXIT_GROUP => sys_exit_group(arg1 as i32),
 
         // VFS syscalls
         nr::OPEN => vfs::sys_open(arg1, arg2 as usize, arg3 as u32, arg4 as u32),
@@ -920,4 +934,134 @@ fn sys_getkeymap(buf_ptr: u64, buf_len: usize) -> i64 {
     buf[name_bytes.len()] = 0; // Null terminate
 
     name_bytes.len() as i64
+}
+
+// ============================================================================
+// Thread syscalls
+// ============================================================================
+
+/// Clone callback type - returns child TID to parent, 0 to child
+pub type CloneFn = fn(u32, u64, u64, u64, u64) -> i64;
+
+/// sys_clone - Create a new process or thread
+///
+/// # Arguments
+/// * `flags` - Clone flags (CLONE_VM, CLONE_THREAD, etc.)
+/// * `stack` - New stack pointer (0 to inherit parent's)
+/// * `parent_tid` - Location to store parent TID
+/// * `child_tid` - Location to store child TID
+/// * `tls` - Thread-local storage pointer
+fn sys_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls: u64) -> i64 {
+    // Validate pointers are in user space
+    if parent_tid != 0 && parent_tid >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+    if child_tid != 0 && child_tid >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+    if stack != 0 && stack >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    // For now, we need a callback from the kernel to handle clone
+    // The actual clone implementation requires access to the frame allocator
+    // and the current process context, which are in the kernel
+    use core::ptr::addr_of;
+
+    // If no CLONE_VM flag, this is like fork
+    if flags & proc::clone_flags::CLONE_VM == 0 {
+        return sys_fork();
+    }
+
+    // Thread creation requires kernel support
+    // For now, return ENOSYS until we wire up the clone callback
+    // In a full implementation, we'd call into the kernel's clone handler
+    errno::ENOSYS
+}
+
+/// sys_gettid - Get thread ID
+fn sys_gettid() -> i64 {
+    let table = process_table();
+    if let Some(proc) = table.current() {
+        proc.lock().tid() as i64
+    } else {
+        0
+    }
+}
+
+/// Futex operations
+mod futex_op {
+    pub const FUTEX_WAIT: i32 = 0;
+    pub const FUTEX_WAKE: i32 = 1;
+    pub const FUTEX_PRIVATE_FLAG: i32 = 128;
+}
+
+/// sys_futex - Fast userspace mutex operations
+///
+/// # Arguments
+/// * `addr` - Address of the futex word
+/// * `op` - Operation (FUTEX_WAIT, FUTEX_WAKE, etc.)
+/// * `val` - Value (expected value for WAIT, count for WAKE)
+/// * `timeout` - Timeout for WAIT operations (nanoseconds, 0 = infinite)
+/// * `addr2` - Second address (for some operations)
+/// * `val3` - Third value (for some operations)
+fn sys_futex(addr: u64, op: i32, val: u32, timeout: u64, _addr2: u64, _val3: u32) -> i64 {
+    // Validate address
+    if addr == 0 || addr >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    // Strip private flag for operation dispatch
+    let op_masked = op & !futex_op::FUTEX_PRIVATE_FLAG;
+
+    match op_masked {
+        futex_op::FUTEX_WAIT => {
+            match proc::futex_wait(addr, val, timeout) {
+                Ok(()) => 0,
+                Err(proc::FutexError::WouldBlock) => errno::EAGAIN,
+                Err(proc::FutexError::InvalidAddress) => errno::EFAULT,
+                Err(proc::FutexError::TimedOut) => errno::ETIMEDOUT,
+                Err(proc::FutexError::Interrupted) => errno::EINTR,
+                Err(_) => errno::EINVAL,
+            }
+        }
+        futex_op::FUTEX_WAKE => {
+            match proc::futex_wake(addr, val as i32) {
+                Ok(n) => n as i64,
+                Err(proc::FutexError::InvalidAddress) => errno::EFAULT,
+                Err(_) => errno::EINVAL,
+            }
+        }
+        _ => errno::ENOSYS,
+    }
+}
+
+/// sys_set_tid_address - Set pointer to thread ID
+///
+/// Sets the clear_child_tid address and returns the current thread ID.
+/// When the thread exits, the kernel will write 0 to this address
+/// and wake any futex waiters.
+fn sys_set_tid_address(tidptr: u64) -> i64 {
+    // Validate pointer
+    if tidptr != 0 && tidptr >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    let table = process_table();
+    if let Some(proc) = table.current() {
+        let mut p = proc.lock();
+        p.set_clear_child_tid(tidptr);
+        p.tid() as i64
+    } else {
+        errno::ESRCH
+    }
+}
+
+/// sys_exit_group - Exit all threads in the current thread group
+///
+/// Terminates all threads in the thread group and exits with the given status.
+fn sys_exit_group(status: i32) -> i64 {
+    // For now, just exit the current thread
+    // In a full implementation, we'd send SIGKILL to all threads in the group
+    sys_exit(status)
 }
