@@ -524,3 +524,139 @@ pub fn sys_ioctl(fd: i32, request: u64, arg: u64) -> i64 {
         Err(e) => vfs_error_to_errno(e),
     }
 }
+
+/// sys_chmod - Change file mode bits
+///
+/// # Arguments
+/// * `path_ptr` - Pointer to path string
+/// * `path_len` - Length of path
+/// * `mode` - New mode bits
+pub fn sys_chmod(path_ptr: u64, path_len: usize, mode: u32) -> i64 {
+    if !validate_user_buffer(path_ptr, path_len) {
+        return errno::EFAULT;
+    }
+
+    if path_len == 0 || path_len > MAX_PATH {
+        return errno::EINVAL;
+    }
+
+    let path_slice = unsafe {
+        core::slice::from_raw_parts(path_ptr as *const u8, path_len)
+    };
+
+    let path_str = match core::str::from_utf8(path_slice) {
+        Ok(s) => s,
+        Err(_) => return errno::EINVAL,
+    };
+
+    let full_path = resolve_path(path_str);
+
+    // Look up the vnode
+    match GLOBAL_VFS.lookup(&full_path) {
+        Ok(vnode) => {
+            // Try to set mode
+            match vnode.chmod(mode) {
+                Ok(()) => 0,
+                Err(e) => vfs_error_to_errno(e),
+            }
+        }
+        Err(e) => vfs_error_to_errno(e),
+    }
+}
+
+/// sys_fchmod - Change file mode bits by file descriptor
+///
+/// # Arguments
+/// * `fd` - File descriptor
+/// * `mode` - New mode bits
+pub fn sys_fchmod(fd: i32, mode: u32) -> i64 {
+    let table = process_table();
+    let proc = match table.current() {
+        Some(p) => p,
+        None => return errno::ESRCH,
+    };
+
+    let proc_guard = proc.lock();
+    let file = match proc_guard.fd_table().get(fd) {
+        Ok(fd_entry) => fd_entry.file.clone(),
+        Err(e) => return vfs_error_to_errno(e),
+    };
+    drop(proc_guard);
+
+    // Get the vnode and set mode
+    match file.vnode().chmod(mode) {
+        Ok(()) => 0,
+        Err(e) => vfs_error_to_errno(e),
+    }
+}
+
+/// sys_chown - Change file owner and group
+///
+/// # Arguments
+/// * `path_ptr` - Pointer to path string
+/// * `path_len` - Length of path
+/// * `uid` - New user ID (-1 to leave unchanged)
+/// * `gid` - New group ID (-1 to leave unchanged)
+pub fn sys_chown(path_ptr: u64, path_len: usize, uid: i32, gid: i32) -> i64 {
+    if !validate_user_buffer(path_ptr, path_len) {
+        return errno::EFAULT;
+    }
+
+    if path_len == 0 || path_len > MAX_PATH {
+        return errno::EINVAL;
+    }
+
+    let path_slice = unsafe {
+        core::slice::from_raw_parts(path_ptr as *const u8, path_len)
+    };
+
+    let path_str = match core::str::from_utf8(path_slice) {
+        Ok(s) => s,
+        Err(_) => return errno::EINVAL,
+    };
+
+    let full_path = resolve_path(path_str);
+
+    // Look up the vnode
+    match GLOBAL_VFS.lookup(&full_path) {
+        Ok(vnode) => {
+            match vnode.chown(
+                if uid >= 0 { Some(uid as u32) } else { None },
+                if gid >= 0 { Some(gid as u32) } else { None },
+            ) {
+                Ok(()) => 0,
+                Err(e) => vfs_error_to_errno(e),
+            }
+        }
+        Err(e) => vfs_error_to_errno(e),
+    }
+}
+
+/// sys_fchown - Change file owner and group by file descriptor
+///
+/// # Arguments
+/// * `fd` - File descriptor
+/// * `uid` - New user ID (-1 to leave unchanged)
+/// * `gid` - New group ID (-1 to leave unchanged)
+pub fn sys_fchown(fd: i32, uid: i32, gid: i32) -> i64 {
+    let table = process_table();
+    let proc = match table.current() {
+        Some(p) => p,
+        None => return errno::ESRCH,
+    };
+
+    let proc_guard = proc.lock();
+    let file = match proc_guard.fd_table().get(fd) {
+        Ok(fd_entry) => fd_entry.file.clone(),
+        Err(e) => return vfs_error_to_errno(e),
+    };
+    drop(proc_guard);
+
+    match file.vnode().chown(
+        if uid >= 0 { Some(uid as u32) } else { None },
+        if gid >= 0 { Some(gid as u32) } else { None },
+    ) {
+        Ok(()) => 0,
+        Err(e) => vfs_error_to_errno(e),
+    }
+}

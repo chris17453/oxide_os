@@ -87,6 +87,10 @@ path = "src/bin/sleep.rs"
 name = "clear"
 path = "src/bin/clear.rs"
 
+[[bin]]
+name = "chmod"
+path = "src/bin/chmod.rs"
+
 # User utilities
 [[bin]]
 name = "id"
@@ -121,6 +125,11 @@ path = "src/bin/dirname.rs"
 [[bin]]
 name = "which"
 path = "src/bin/which.rs"
+
+# Shell utilities
+[[bin]]
+name = "test"
+path = "src/bin/test.rs"
 
 # Misc utilities
 [[bin]]

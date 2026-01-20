@@ -95,6 +95,12 @@ pub mod nr {
     pub const MREMAP: u64 = 93;
     pub const BRK: u64 = 94;
 
+    // File permission syscalls
+    pub const CHMOD: u64 = 150;
+    pub const FCHMOD: u64 = 151;
+    pub const CHOWN: u64 = 152;
+    pub const FCHOWN: u64 = 153;
+
     // Socket syscalls
     pub const SOCKET: u64 = 70;
     pub const BIND: u64 = 71;
@@ -313,6 +319,12 @@ pub fn dispatch(
         nr::MPROTECT => memory::sys_mprotect(arg1, arg2, arg3 as i32),
         nr::MREMAP => memory::sys_mremap(arg1, arg2, arg3, arg4 as i32, arg5),
         nr::BRK => memory::sys_brk(arg1),
+
+        // File permission syscalls
+        nr::CHMOD => vfs::sys_chmod(arg1, arg2 as usize, arg3 as u32),
+        nr::FCHMOD => vfs::sys_fchmod(arg1 as i32, arg2 as u32),
+        nr::CHOWN => vfs::sys_chown(arg1, arg2 as usize, arg3 as i32, arg4 as i32),
+        nr::FCHOWN => vfs::sys_fchown(arg1 as i32, arg2 as i32, arg3 as i32),
 
         // Socket syscalls
         nr::SOCKET => socket::sys_socket(arg1 as i32, arg2 as i32, arg3 as i32),

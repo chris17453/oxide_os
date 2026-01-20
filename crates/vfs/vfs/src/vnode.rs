@@ -189,6 +189,41 @@ pub trait VnodeOps: Send + Sync {
     fn ioctl(&self, _request: u64, _arg: u64) -> VfsResult<i64> {
         Err(crate::error::VfsError::NotSupported)
     }
+
+    /// Change file mode bits
+    ///
+    /// Default implementation returns NotSupported.
+    fn chmod(&self, _mode: u32) -> VfsResult<()> {
+        Err(crate::error::VfsError::NotSupported)
+    }
+
+    /// Change file owner and group
+    ///
+    /// Default implementation returns NotSupported.
+    fn chown(&self, _uid: Option<u32>, _gid: Option<u32>) -> VfsResult<()> {
+        Err(crate::error::VfsError::NotSupported)
+    }
+
+    /// Create a hard link
+    ///
+    /// Default implementation returns NotSupported.
+    fn link(&self, _name: &str, _target: &dyn VnodeOps) -> VfsResult<()> {
+        Err(crate::error::VfsError::NotSupported)
+    }
+
+    /// Create a symbolic link
+    ///
+    /// Default implementation returns NotSupported.
+    fn symlink(&self, _name: &str, _target: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(crate::error::VfsError::NotSupported)
+    }
+
+    /// Read symbolic link target
+    ///
+    /// Default implementation returns NotSupported.
+    fn readlink(&self) -> VfsResult<String> {
+        Err(crate::error::VfsError::NotSupported)
+    }
 }
 
 /// Vnode wrapper that adds reference counting and caching
@@ -228,6 +263,16 @@ impl Vnode {
     /// Is this a regular file?
     pub fn is_file(&self) -> bool {
         self.vtype() == VnodeType::File
+    }
+
+    /// Change file mode bits
+    pub fn chmod(&self, mode: u32) -> VfsResult<()> {
+        self.ops.chmod(mode)
+    }
+
+    /// Change file owner and group
+    pub fn chown(&self, uid: Option<u32>, gid: Option<u32>) -> VfsResult<()> {
+        self.ops.chown(uid, gid)
     }
 }
 
