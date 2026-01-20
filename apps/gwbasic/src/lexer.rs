@@ -1,5 +1,8 @@
 //! Lexical analyzer for GW-BASIC
 
+#[cfg(not(feature = "std"))]
+use alloc::{string::String, vec::Vec, format, string::ToString};
+
 use crate::error::{Error, Result};
 
 /// Token types in GW-BASIC

@@ -1,37 +1,40 @@
 //! Error types for the GW-BASIC interpreter
 
-use std::fmt;
+#[cfg(not(feature = "std"))]
+use alloc::string::String;
+
+use core::fmt;
 
 /// Result type alias for GW-BASIC operations
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = core::result::Result<T, Error>;
 
 /// Error types that can occur during lexing, parsing, or interpretation
 #[derive(Debug, Clone, PartialEq)]
 pub enum Error {
     /// Syntax error during lexing or parsing
     SyntaxError(String),
-    
+
     /// Runtime error during interpretation
     RuntimeError(String),
-    
+
     /// Type mismatch error
     TypeError(String),
-    
+
     /// Undefined variable or label
     UndefinedError(String),
-    
+
     /// Division by zero
     DivisionByZero,
-    
+
     /// Out of memory
     OutOfMemory,
-    
+
     /// I/O error
     IoError(String),
-    
+
     /// Line number error
     LineNumberError(String),
-    
+
     /// Program termination (END statement)
     ProgramEnd,
 }
@@ -52,15 +55,18 @@ impl fmt::Display for Error {
     }
 }
 
+#[cfg(feature = "std")]
 impl std::error::Error for Error {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(feature = "std"))]
+    use alloc::string::ToString;
 
     #[test]
     fn test_error_display() {
-        let err = Error::SyntaxError("unexpected token".to_string());
+        let err = Error::SyntaxError("unexpected token".into());
         assert_eq!(err.to_string(), "Syntax error: unexpected token");
     }
 

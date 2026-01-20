@@ -1,14 +1,25 @@
 //! Graphics backend module
 //!
 //! Provides abstraction for different graphics rendering backends:
-//! - ASCII: Terminal-based rendering with characters
-//! - Window: GUI window with pixel-based rendering
+//! - ASCII: Terminal-based rendering with characters (always available)
+//! - Window: GUI window with pixel-based rendering (std/host only)
+//! - WatosVga: VGA/SVGA graphics for WATOS (watos/no_std only)
 
 pub mod ascii;
+
+#[cfg(feature = "host")]
 pub mod window;
 
+#[cfg(not(feature = "std"))]
+pub mod watos_vga;
+
 pub use ascii::AsciiBackend;
+
+#[cfg(feature = "host")]
 pub use window::WindowBackend;
+
+#[cfg(not(feature = "std"))]
+pub use watos_vga::{WatosVgaBackend, VideoMode};
 
 use crate::error::Result;
 

@@ -1,9 +1,9 @@
 [package]
-name = "rust-gwbasic"
+name = "efflux-gwbasic"
 version = "0.1.0"
 authors = ["chris17453"]
 edition = "2021"
-description = "Reimplementation of GW-BASIC in safe, modern Rust."
+description = "GW-BASIC in modern Rust - for EFFLUX OS and host systems"
 license = "MIT"
 
 [lib]
@@ -13,6 +13,27 @@ path = "src/lib.rs"
 [[bin]]
 name = "rust-gwbasic"
 path = "src/main.rs"
+required-features = ["host"]
+
+[[bin]]
+name = "gwbasic"
+path = "src/efflux_main.rs"
+required-features = ["efflux"]
+
+[features]
+# Default is no_std for kernel builds. Use `--features host` on host systems.
+default = []
+host = ["std", "dep:minifb"]
+efflux = ["dep:libc"]
+std = []
 
 [dependencies]
-minifb = "0.25"
+minifb = { version = "0.25", optional = true }
+libm = "0.2"
+libc = { path = "../../userspace/libc", optional = true }
+
+[profile.release]
+opt-level = "z"
+lto = true
+panic = "abort"
+codegen-units = 1

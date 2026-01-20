@@ -2,6 +2,20 @@
 //!
 //! This crate provides a reimplementation of the classic GW-BASIC interpreter
 //! in safe, modern Rust with full feature parity and compatibility.
+//!
+//! Supports both `std` (host systems) and `no_std` (WATOS bare metal) builds.
+
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg(not(feature = "std"))]
+extern crate alloc;
+
+// Platform abstraction layer
+pub mod platform;
+
+// Console output macros (must come before modules that use them)
+#[macro_use]
+pub mod console;
 
 pub mod lexer;
 pub mod parser;

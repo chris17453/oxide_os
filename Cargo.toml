@@ -90,7 +90,9 @@ members = [
     "userspace/coreutils",
     "userspace/modutils",
     "userspace/search",
+    "userspace/efflux-std",
     "bootloader/boot-uefi",
+    "apps/gwbasic",
 ]
 
 [workspace.package]

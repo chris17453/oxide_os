@@ -1,9 +1,14 @@
 //! ASCII terminal graphics backend
+//!
+//! Platform-agnostic ASCII rendering for text-based graphics output.
+
+#[cfg(not(feature = "std"))]
+use alloc::{vec, vec::Vec, format};
 
 use crate::error::{Error, Result};
 use crate::graphics_backend::GraphicsBackend;
 
-/// ASCII-based graphics backend that renders to terminal
+/// ASCII-based graphics backend that renders to terminal/console
 pub struct AsciiBackend {
     width: usize,
     height: usize,
@@ -25,6 +30,11 @@ impl AsciiBackend {
             fg_color: 7,
             bg_color: 0,
         }
+    }
+
+    /// Get the internal buffer for custom rendering
+    pub fn get_buffer(&self) -> &Vec<Vec<char>> {
+        &self.buffer
     }
 }
 
@@ -127,15 +137,26 @@ impl GraphicsBackend for AsciiBackend {
     }
 
     fn display(&mut self) {
-        println!("\n{}", "=".repeat(self.width + 2));
-        for row in &self.buffer {
-            print!("|");
-            for &ch in row {
-                print!("{}", ch);
+        // Platform-specific display implementation
+        #[cfg(feature = "std")]
+        {
+            println!("\n{}", "=".repeat(self.width + 2));
+            for row in &self.buffer {
+                print!("|");
+                for &ch in row {
+                    print!("{}", ch);
+                }
+                println!("|");
             }
-            println!("|");
+            println!("{}", "=".repeat(self.width + 2));
         }
-        println!("{}", "=".repeat(self.width + 2));
+
+        #[cfg(not(feature = "std"))]
+        {
+            // For WATOS, we'll use syscalls to write to console
+            // This is a placeholder - actual implementation will use platform module
+            // The buffer can be read by the WATOS graphics backend
+        }
     }
 
     fn get_size(&self) -> (usize, usize) {

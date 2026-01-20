@@ -1,5 +1,8 @@
 //! Parser for GW-BASIC
 
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, vec, format};
+
 use crate::error::{Error, Result};
 use crate::lexer::{Token, TokenType};
 use crate::value::Value;

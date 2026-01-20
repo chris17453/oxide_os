@@ -1,5 +1,8 @@
 //! Graphics module for GW-BASIC
 
+#[cfg(not(feature = "std"))]
+use alloc::boxed::Box;
+
 use crate::error::Result;
 use crate::graphics_backend::{GraphicsBackend, AsciiBackend};
 

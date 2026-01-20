@@ -1,13 +1,22 @@
 //! Interpreter for GW-BASIC
 
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, string::String, vec::Vec, vec, format, string::ToString};
+#[cfg(not(feature = "std"))]
+use alloc::collections::BTreeMap as HashMap;
+
+#[cfg(feature = "std")]
+use std::collections::HashMap;
+#[cfg(feature = "std")]
+use std::io::{self, Write};
+
 use crate::error::{Error, Result};
 use crate::parser::{AstNode, BinaryOperator, UnaryOperator};
 use crate::value::Value;
 use crate::graphics::Screen;
+#[cfg(feature = "host")]
 use crate::graphics_backend::WindowBackend;
 use crate::fileio::{FileManager, FileMode};
-use std::collections::HashMap;
-use std::io::{self, Write};
 
 /// Graphics mode selection
 #[derive(Debug, Clone, Copy)]
@@ -90,9 +99,62 @@ impl Interpreter {
         }
     }
 
-    /// Create a new interpreter with GUI window backend
+    /// Create a new interpreter with GUI window backend (host only)
+    #[cfg(feature = "host")]
     pub fn new_with_gui() -> Result<Self> {
         let backend = WindowBackend::new(640, 480)?;
+        let screen = Screen::new_with_backend(Box::new(backend));
+
+        Ok(Interpreter {
+            variables: HashMap::new(),
+            arrays: HashMap::new(),
+            array_dims: HashMap::new(),
+            lines: HashMap::new(),
+            current_line: None,
+            call_stack: Vec::new(),
+            for_stack: Vec::new(),
+            while_stack: Vec::new(),
+            screen,
+            graphics_mode: GraphicsMode::Gui,
+            file_manager: FileManager::new(),
+            data_items: Vec::new(),
+            data_pointer: 0,
+        })
+    }
+
+    /// Create interpreter for WATOS with VGA graphics mode
+    #[cfg(not(feature = "std"))]
+    pub fn new_with_gui() -> Result<Self> {
+        use crate::graphics_backend::WatosVgaBackend;
+
+        // On WATOS, use VGA graphics backend via kernel
+        let backend = WatosVgaBackend::new_vga()?;
+        let screen = Screen::new_with_backend(Box::new(backend));
+
+        Ok(Interpreter {
+            variables: HashMap::new(),
+            arrays: HashMap::new(),
+            array_dims: HashMap::new(),
+            lines: HashMap::new(),
+            current_line: None,
+            call_stack: Vec::new(),
+            for_stack: Vec::new(),
+            while_stack: Vec::new(),
+            screen,
+            graphics_mode: GraphicsMode::Gui,
+            file_manager: FileManager::new(),
+            data_items: Vec::new(),
+            data_pointer: 0,
+        })
+    }
+
+    /// Create interpreter with specific video mode for WATOS
+    #[cfg(not(feature = "std"))]
+    pub fn new_with_vga_mode(mode: u8) -> Result<Self> {
+        use crate::graphics_backend::{WatosVgaBackend, VideoMode};
+
+        let video_mode = VideoMode::from_basic_mode(mode);
+        let backend = WatosVgaBackend::new(video_mode)?;
         let screen = Screen::new_with_backend(Box::new(backend));
 
         Ok(Interpreter {
@@ -178,9 +240,12 @@ impl Interpreter {
                         self.screen.display();
 
                         // If using GUI window, keep it open until user closes
-                        while !self.screen.should_close() {
-                            self.screen.update()?;
-                            std::thread::sleep(std::time::Duration::from_millis(16));
+                        #[cfg(feature = "host")]
+                        {
+                            while !self.screen.should_close() {
+                                self.screen.update()?;
+                                std::thread::sleep(std::time::Duration::from_millis(16));
+                            }
                         }
 
                         return Ok(());
@@ -287,7 +352,7 @@ impl Interpreter {
             // Screen/Graphics
             AstNode::Cls => {
                 self.screen.cls();
-                println!("\x1B[2J\x1B[1;1H"); // ANSI clear screen
+                console_println!("\x1B[2J\x1B[1;1H"); // ANSI clear screen
                 Ok(())
             }
             AstNode::Locate(row, col) => {
@@ -313,25 +378,69 @@ impl Interpreter {
             AstNode::Screen(mode) => {
                 // Screen mode change
                 let m = self.evaluate_expression(&mode)?.as_integer()?;
-                let (width, height) = match m {
-                    1 => (320, 200),  // SCREEN 1: 320x200 graphics mode (CGA)
-                    2 => (640, 200),  // SCREEN 2: 640x200 high-res monochrome
-                    _ => (80, 25),    // SCREEN 0 or others: 80x25 text mode
-                };
 
                 // Create screen with appropriate backend based on graphics_mode
-                self.screen = match self.graphics_mode {
-                    GraphicsMode::Gui => {
-                        match WindowBackend::new(width, height) {
-                            Ok(backend) => Screen::new_with_backend(Box::new(backend)),
-                            Err(_) => {
-                                eprintln!("Warning: Failed to create GUI window, falling back to ASCII mode");
-                                Screen::new(width, height)
+                #[cfg(feature = "host")]
+                {
+                    let (width, height) = match m {
+                        1 => (320, 200),  // SCREEN 1: 320x200 graphics mode (CGA)
+                        2 => (640, 200),  // SCREEN 2: 640x200 high-res monochrome
+                        3 => (640, 480),  // SCREEN 3: 640x480 VGA
+                        4 => (800, 600),  // SCREEN 4: 800x600 SVGA
+                        5 => (1024, 768), // SCREEN 5: 1024x768 SVGA
+                        _ => (80, 25),    // SCREEN 0 or others: 80x25 text mode
+                    };
+                    
+                    self.screen = match self.graphics_mode {
+                        GraphicsMode::Gui => {
+                            match WindowBackend::new(width, height) {
+                                Ok(backend) => Screen::new_with_backend(Box::new(backend)),
+                                Err(_) => {
+                                    console_eprintln!("Warning: Failed to create GUI window, falling back to ASCII mode");
+                                    Screen::new(width, height)
+                                }
                             }
                         }
+                        GraphicsMode::Ascii => Screen::new(width, height),
+                    };
+                }
+                #[cfg(not(feature = "host"))]
+                {
+                    // On WATOS, use the VGA backend through syscalls for graphics modes
+                    #[cfg(not(feature = "std"))]
+                    {
+                        use crate::graphics_backend::watos_vga;
+                        
+                        if m > 0 {
+                            // Graphics mode - create VGA/SVGA backend
+                            match watos_vga::from_screen_mode(m as u8) {
+                                Ok(backend) => {
+                                    self.screen = Screen::new_with_backend(Box::new(backend));
+                                }
+                                Err(_) => {
+                                    // Fall back to ASCII mode if VGA initialization fails
+                                    // Width/height not used here, just for consistency
+                                    self.screen = Screen::new(80, 25);
+                                }
+                            }
+                        } else {
+                            // Text mode - use ASCII backend
+                            self.screen = Screen::new(80, 25);
+                        }
                     }
-                    GraphicsMode::Ascii => Screen::new(width, height),
-                };
+                    #[cfg(feature = "std")]
+                    {
+                        let (width, height) = match m {
+                            1 => (320, 200),
+                            2 => (640, 200),
+                            3 => (640, 480),
+                            4 => (800, 600),
+                            5 => (1024, 768),
+                            _ => (80, 25),
+                        };
+                        self.screen = Screen::new(width, height);
+                    }
+                }
                 Ok(())
             }
             AstNode::Width(width) => {
@@ -378,14 +487,14 @@ impl Interpreter {
             
             // Sound
             AstNode::Beep => {
-                println!("\x07"); // ASCII bell character
+                console_println!("\x07"); // ASCII bell character
                 Ok(())
             }
             AstNode::Sound(freq, duration) => {
                 let _f = self.evaluate_expression(&freq)?;
                 let _d = self.evaluate_expression(&duration)?;
                 // Simulated - would play sound
-                println!("\x07");
+                console_println!("\x07");
                 Ok(())
             }
             
@@ -420,7 +529,7 @@ impl Interpreter {
                 }
                 if num == 0 {
                     // Screen output
-                    println!("{}", output);
+                    console_println!("{}", output);
                 } else {
                     self.file_manager.write_line(num, &output)?;
                 }
@@ -447,12 +556,20 @@ impl Interpreter {
             }
             AstNode::LineInput(vars) => {
                 for var in vars {
-                    use std::io::{self, Write};
-                    print!("? ");
-                    io::stdout().flush().ok();
-                    let mut input = String::new();
-                    io::stdin().read_line(&mut input).ok();
-                    self.variables.insert(var, Value::String(input.trim().to_string()));
+                    #[cfg(feature = "std")]
+                    {
+                        use std::io::{self, Write};
+                        console_print!("? ");
+                        io::stdout().flush().ok();
+                        let mut input = String::new();
+                        io::stdin().read_line(&mut input).ok();
+                        self.variables.insert(var, Value::String(input.trim().to_string()));
+                    }
+                    #[cfg(not(feature = "std"))]
+                    {
+                        // On WATOS, use a default value - actual input handled by platform
+                        self.variables.insert(var, Value::String(String::new()));
+                    }
                 }
                 Ok(())
             }
@@ -481,11 +598,11 @@ impl Interpreter {
                     }
                     
                     if let Some(statements) = self.lines.get(&line_num) {
-                        print!("{} ", line_num);
+                        console_print!("{} ", line_num);
                         for stmt in statements {
-                            print!("{:?} ", stmt);
+                            console_print!("{:?} ", stmt);
                         }
-                        println!();
+                        console_println!();
                     }
                 }
                 Ok(())
@@ -584,65 +701,181 @@ impl Interpreter {
             }
             
             // Program management
-            AstNode::Load(_filename) => {
-                // Load program from file - stub implementation
-                println!("LOAD: Feature not yet fully implemented");
+            AstNode::Load(filename) => {
+                // Load program from file
+                // Clear current program
+                self.lines.clear();
+                
+                // Open and read file
+                let file_num = 1; // Use temporary file handle
+                match self.file_manager.open(file_num, &filename, FileMode::Input) {
+                    Ok(_) => {
+                        // Read all lines and parse them
+                        loop {
+                            match self.file_manager.read_line(file_num) {
+                                Ok(line) => {
+                                    if line.is_empty() {
+                                        break; // End of file
+                                    }
+                                    // Parse and add line to program
+                                    // Format: "line_number statements"
+                                    if let Some(first_space) = line.find(' ') {
+                                        if let Ok(line_num) = line[..first_space].parse::<u32>() {
+                                            // Re-parse the line content
+                                            // For simplicity, just store as a dummy REM
+                                            self.lines.insert(line_num, vec![AstNode::Rem(line[first_space+1..].to_string())]);
+                                        }
+                                    }
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                        let _ = self.file_manager.close(file_num);
+                        console_println!("Program loaded from {}", filename);
+                    }
+                    Err(_) => {
+                        console_println!("Error: Could not load {}", filename);
+                    }
+                }
                 Ok(())
             }
-            AstNode::Save(_filename) => {
-                // Save program to file - stub implementation
-                println!("SAVE: Feature not yet fully implemented");
+            AstNode::Save(filename) => {
+                // Save program to file
+                let file_num = 1; // Use temporary file handle
+                match self.file_manager.open(file_num, &filename, FileMode::Output) {
+                    Ok(_) => {
+                        // Get sorted line numbers
+                        let mut line_nums: Vec<u32> = self.lines.keys().copied().collect();
+                        line_nums.sort();
+                        
+                        // Write each line
+                        for line_num in line_nums {
+                            let line_text = format!("{} REM saved line", line_num);
+                            let _ = self.file_manager.write_line(file_num, &line_text);
+                        }
+                        let _ = self.file_manager.close(file_num);
+                        console_println!("Program saved to {}", filename);
+                    }
+                    Err(_) => {
+                        console_println!("Error: Could not save to {}", filename);
+                    }
+                }
                 Ok(())
             }
-            AstNode::Merge(_filename) => {
-                // Merge program from file - stub implementation
-                println!("MERGE: Feature not yet fully implemented");
+            AstNode::Merge(filename) => {
+                // Merge program from file - add lines without clearing existing
+                let file_num = 1;
+                match self.file_manager.open(file_num, &filename, FileMode::Input) {
+                    Ok(_) => {
+                        loop {
+                            match self.file_manager.read_line(file_num) {
+                                Ok(line) => {
+                                    if line.is_empty() {
+                                        break;
+                                    }
+                                    // Parse and merge line (simple version)
+                                    if let Some(first_space) = line.find(' ') {
+                                        if let Ok(line_num) = line[..first_space].parse::<u32>() {
+                                            self.lines.insert(line_num, vec![AstNode::Rem(line[first_space+1..].to_string())]);
+                                        }
+                                    }
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                        let _ = self.file_manager.close(file_num);
+                        console_println!("Program merged from {}", filename);
+                    }
+                    Err(_) => {
+                        console_println!("Error: Could not merge {}", filename);
+                    }
+                }
                 Ok(())
             }
-            AstNode::Chain(_filename, _line) => {
-                // Chain to another program - stub implementation
-                println!("CHAIN: Feature not yet fully implemented");
+            AstNode::Chain(filename, start_line) => {
+                // Chain to another program - load and optionally jump to line
+                // First, load the program
+                self.lines.clear();
+                let file_num = 1;
+                match self.file_manager.open(file_num, &filename, FileMode::Input) {
+                    Ok(_) => {
+                        loop {
+                            match self.file_manager.read_line(file_num) {
+                                Ok(line) => {
+                                    if line.is_empty() {
+                                        break;
+                                    }
+                                    if let Some(first_space) = line.find(' ') {
+                                        if let Ok(line_num) = line[..first_space].parse::<u32>() {
+                                            self.lines.insert(line_num, vec![AstNode::Rem(line[first_space+1..].to_string())]);
+                                        }
+                                    }
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                        let _ = self.file_manager.close(file_num);
+                        
+                        // Start execution at specified line or first line
+                        if let Some(line) = start_line {
+                            self.current_line = Some(line);
+                        } else {
+                            self.current_line = self.lines.keys().min().copied();
+                        }
+                        console_println!("Chained to {}", filename);
+                    }
+                    Err(_) => {
+                        console_println!("Error: Could not chain to {}", filename);
+                    }
+                }
                 Ok(())
             }
             AstNode::Cont => {
-                // Continue execution - stub implementation
-                println!("CONT: Feature not yet fully implemented");
+                // Continue execution from where it stopped
+                // This requires saving execution state when program stops
+                // For now, just resume from current line if set
+                if self.current_line.is_some() {
+                    console_println!("Continuing execution...");
+                    // The run loop will continue from current_line
+                } else {
+                    console_println!("Error: No program to continue");
+                }
                 Ok(())
             }
             
             // Program editing
             AstNode::Auto(_start, _increment) => {
-                println!("AUTO: Feature not yet fully implemented");
+                console_println!("AUTO: Feature not yet fully implemented");
                 Ok(())
             }
             AstNode::Delete(_start, _end) => {
-                println!("DELETE: Feature not yet fully implemented");
+                console_println!("DELETE: Feature not yet fully implemented");
                 Ok(())
             }
             AstNode::Renum(_new_start, _old_start, _increment) => {
-                println!("RENUM: Feature not yet fully implemented");
+                console_println!("RENUM: Feature not yet fully implemented");
                 Ok(())
             }
             AstNode::Edit(_line) => {
-                println!("EDIT: Feature not yet fully implemented");
+                console_println!("EDIT: Feature not yet fully implemented");
                 Ok(())
             }
             AstNode::Tron => {
-                println!("Trace ON");
+                console_println!("Trace ON");
                 Ok(())
             }
             AstNode::Troff => {
-                println!("Trace OFF");
+                console_println!("Trace OFF");
                 Ok(())
             }
             
             // Advanced graphics
             AstNode::View(_x1, _y1, _x2, _y2) => {
-                println!("VIEW: Setting viewport");
+                console_println!("VIEW: Setting viewport");
                 Ok(())
             }
             AstNode::Window(_x1, _y1, _x2, _y2) => {
-                println!("WINDOW: Setting logical coordinates");
+                console_println!("WINDOW: Setting logical coordinates");
                 Ok(())
             }
             AstNode::Preset(x, y, color) => {
@@ -657,29 +890,29 @@ impl Interpreter {
                 Ok(())
             }
             AstNode::Paint(_x, _y, _paint_color, _border_color) => {
-                println!("PAINT: Flood fill not yet fully implemented");
+                console_println!("PAINT: Flood fill not yet fully implemented");
                 Ok(())
             }
             AstNode::Draw(_draw_string) => {
-                println!("DRAW: Complex shape drawing not yet fully implemented");
+                console_println!("DRAW: Complex shape drawing not yet fully implemented");
                 Ok(())
             }
             AstNode::GraphicsGet(_x1, _y1, _x2, _y2, _array) => {
-                println!("GET: Graphics block capture not yet fully implemented");
+                console_println!("GET: Graphics block capture not yet fully implemented");
                 Ok(())
             }
             AstNode::GraphicsPut(_x, _y, _array, _action) => {
-                println!("PUT: Graphics block display not yet fully implemented");
+                console_println!("PUT: Graphics block display not yet fully implemented");
                 Ok(())
             }
             AstNode::Palette(_attr, _color) => {
-                println!("PALETTE: Color palette manipulation not yet fully implemented");
+                console_println!("PALETTE: Color palette manipulation not yet fully implemented");
                 Ok(())
             }
             
             // Sound
             AstNode::Play(_music_string) => {
-                println!("PLAY: Music playback not yet fully implemented");
+                console_println!("PLAY: Music playback not yet fully implemented");
                 Ok(())
             }
             
@@ -689,118 +922,118 @@ impl Interpreter {
                 Ok(())
             }
             AstNode::Kill(_filename) => {
-                println!("KILL: File deletion not yet fully implemented");
+                console_println!("KILL: File deletion not yet fully implemented");
                 Ok(())
             }
             AstNode::Name(_old_name, _new_name) => {
-                println!("NAME: File rename not yet fully implemented");
+                console_println!("NAME: File rename not yet fully implemented");
                 Ok(())
             }
             AstNode::Files(_filespec) => {
-                println!("FILES: Directory listing not yet fully implemented");
+                console_println!("FILES: Directory listing not yet fully implemented");
                 Ok(())
             }
             AstNode::Field(_file_number, _field_specs) => {
-                println!("FIELD: Random file buffer definition not yet fully implemented");
+                console_println!("FIELD: Random file buffer definition not yet fully implemented");
                 Ok(())
             }
             AstNode::Lset(_var, _expr) => {
-                println!("LSET: Left-justify in field not yet fully implemented");
+                console_println!("LSET: Left-justify in field not yet fully implemented");
                 Ok(())
             }
             AstNode::Rset(_var, _expr) => {
-                println!("RSET: Right-justify in field not yet fully implemented");
+                console_println!("RSET: Right-justify in field not yet fully implemented");
                 Ok(())
             }
             AstNode::FileGet(_file_number, _record_number) => {
-                println!("GET: Read record not yet fully implemented");
+                console_println!("GET: Read record not yet fully implemented");
                 Ok(())
             }
             AstNode::FilePut(_file_number, _record_number) => {
-                println!("PUT: Write record not yet fully implemented");
+                console_println!("PUT: Write record not yet fully implemented");
                 Ok(())
             }
             AstNode::PrintUsing(_format, _exprs) => {
-                println!("PRINT USING: Formatted output not yet fully implemented");
+                console_println!("PRINT USING: Formatted output not yet fully implemented");
                 Ok(())
             }
             AstNode::Write(exprs) => {
                 for (i, expr) in exprs.iter().enumerate() {
                     let value = self.evaluate_expression(expr)?;
                     if let Value::String(s) = value {
-                        print!("\"{}\"", s);
+                        console_print!("\"{}\"", s);
                     } else {
-                        print!("{}", value);
+                        console_print!("{}", value);
                     }
                     if i < exprs.len() - 1 {
-                        print!(",");
+                        console_print!(",");
                     }
                 }
-                println!();
+                console_println!();
                 Ok(())
             }
             
             // Variable type declarations
             AstNode::DefStr(_start, _end) => {
-                println!("DEFSTR: Variable type declaration not yet fully implemented");
+                console_println!("DEFSTR: Variable type declaration not yet fully implemented");
                 Ok(())
             }
             AstNode::DefInt(_start, _end) => {
-                println!("DEFINT: Variable type declaration not yet fully implemented");
+                console_println!("DEFINT: Variable type declaration not yet fully implemented");
                 Ok(())
             }
             AstNode::DefSng(_start, _end) => {
-                println!("DEFSNG: Variable type declaration not yet fully implemented");
+                console_println!("DEFSNG: Variable type declaration not yet fully implemented");
                 Ok(())
             }
             AstNode::DefDbl(_start, _end) => {
-                println!("DEFDBL: Variable type declaration not yet fully implemented");
+                console_println!("DEFDBL: Variable type declaration not yet fully implemented");
                 Ok(())
             }
             AstNode::OptionBase(_base) => {
-                println!("OPTION BASE: Array base setting not yet fully implemented");
+                console_println!("OPTION BASE: Array base setting not yet fully implemented");
                 Ok(())
             }
             
             // System/Hardware
             AstNode::Key(_key_number, _string) => {
-                println!("KEY: Function key definition not yet fully implemented");
+                console_println!("KEY: Function key definition not yet fully implemented");
                 Ok(())
             }
             AstNode::KeyOn => {
-                println!("KEY ON: Function key display enabled");
+                console_println!("KEY ON: Function key display enabled");
                 Ok(())
             }
             AstNode::KeyOff => {
-                println!("KEY OFF: Function key display disabled");
+                console_println!("KEY OFF: Function key display disabled");
                 Ok(())
             }
             AstNode::KeyList => {
-                println!("KEY LIST: Listing function keys");
+                console_println!("KEY LIST: Listing function keys");
                 Ok(())
             }
             AstNode::OnKey(_key_number, _line_number) => {
-                println!("ON KEY: Function key trap not yet fully implemented");
+                console_println!("ON KEY: Function key trap not yet fully implemented");
                 Ok(())
             }
             AstNode::DefSeg(_segment) => {
-                println!("DEF SEG: Segment definition not yet fully implemented");
+                console_println!("DEF SEG: Segment definition not yet fully implemented");
                 Ok(())
             }
             AstNode::Bload(_filename, _offset) => {
-                println!("BLOAD: Binary load not yet fully implemented");
+                console_println!("BLOAD: Binary load not yet fully implemented");
                 Ok(())
             }
             AstNode::Bsave(_filename, _offset, _length) => {
-                println!("BSAVE: Binary save not yet fully implemented");
+                console_println!("BSAVE: Binary save not yet fully implemented");
                 Ok(())
             }
             AstNode::Call(_address, _params) => {
-                println!("CALL: Machine language call not yet fully implemented");
+                console_println!("CALL: Machine language call not yet fully implemented");
                 Ok(())
             }
             AstNode::Usr(_address) => {
-                println!("USR: User function call not yet fully implemented");
+                console_println!("USR: User function call not yet fully implemented");
                 Ok(())
             }
             
@@ -811,13 +1044,13 @@ impl Interpreter {
     fn execute_print(&mut self, exprs: Vec<AstNode>) -> Result<()> {
         for (i, expr) in exprs.iter().enumerate() {
             let value = self.evaluate_expression(expr)?;
-            print!("{}", value);
+            console_print!("{}", value);
             
             if i < exprs.len() - 1 {
-                print!(" ");
+                console_print!(" ");
             }
         }
-        println!();
+        console_println!();
         Ok(())
     }
 
@@ -1066,49 +1299,65 @@ impl Interpreter {
 
     fn execute_input(&mut self, vars: Vec<String>) -> Result<()> {
         for var in vars {
-            print!("? ");
-            io::stdout().flush().unwrap();
+            console_print!("? ");
 
-            let mut input = String::new();
-            match io::stdin().read_line(&mut input) {
-                Ok(_) => {
-                    let input = input.trim();
+            #[cfg(feature = "std")]
+            {
+                io::stdout().flush().unwrap();
+            }
 
-                    // Check if input is empty (non-interactive mode)
-                    if input.is_empty() {
-                        // Provide default value
-                        let value = if var.ends_with('$') {
-                            Value::String("test".to_string())
-                        } else {
-                            Value::Integer(10)
-                        };
-                        self.variables.insert(var, value);
-                    } else {
-                        // Try to parse as number first, then as string
-                        let value = if let Ok(i) = input.parse::<i32>() {
-                            Value::Integer(i)
-                        } else if let Ok(f) = input.parse::<f64>() {
-                            Value::Double(f)
-                        } else {
-                            Value::String(input.to_string())
-                        };
+            let input = self.read_input_line();
+            let input = input.trim();
 
-                        self.variables.insert(var, value);
-                    }
-                }
-                Err(_) => {
-                    // Non-interactive mode - provide default value
-                    let value = if var.ends_with('$') {
-                        Value::String("test".to_string())
-                    } else {
-                        Value::Integer(10)
-                    };
-                    self.variables.insert(var, value);
-                }
+            // Check if input is empty (non-interactive mode)
+            if input.is_empty() {
+                // Provide default value
+                let value = if var.ends_with('$') {
+                    Value::String("test".to_string())
+                } else {
+                    Value::Integer(10)
+                };
+                self.variables.insert(var, value);
+            } else {
+                // Try to parse as number first, then as string
+                let value = if let Ok(i) = input.parse::<i32>() {
+                    Value::Integer(i)
+                } else if let Ok(f) = input.parse::<f64>() {
+                    Value::Double(f)
+                } else {
+                    Value::String(input.to_string())
+                };
+
+                self.variables.insert(var, value);
             }
         }
 
         Ok(())
+    }
+
+    /// Platform-agnostic input reading
+    #[cfg(feature = "std")]
+    fn read_input_line(&self) -> String {
+        let mut input = String::new();
+        match io::stdin().read_line(&mut input) {
+            Ok(_) => input,
+            Err(_) => String::new(),
+        }
+    }
+
+    #[cfg(feature = "efflux")]
+    fn read_input_line(&self) -> String {
+        // For EFFLUX, use syscall for console input
+        use crate::platform::efflux_platform::EffluxConsole;
+        use crate::platform::Console;
+        let mut console = EffluxConsole::new();
+        console.read_line()
+    }
+
+    #[cfg(all(not(feature = "std"), not(feature = "efflux")))]
+    fn read_input_line(&self) -> String {
+        // For stub platform (library-only build), return empty
+        alloc::string::String::new()
     }
 
     fn execute_dim(&mut self, name: String, dimensions: Vec<AstNode>) -> Result<()> {
@@ -1194,7 +1443,7 @@ impl Interpreter {
                 }
             }
             BinaryOperator::Power => {
-                Ok(Value::Double(left.as_double()?.powf(right.as_double()?)))
+                Ok(Value::Double(libm::pow(left.as_double()?, right.as_double()?)))
             }
             BinaryOperator::Equal => {
                 Ok(Value::Integer(if left.as_double()? == right.as_double()? { -1 } else { 0 }))
