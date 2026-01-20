@@ -112,3 +112,32 @@ pub fn raise(sig: i32) -> i32 {
     let pid = crate::syscall::sys_getpid();
     kill(pid, sig)
 }
+
+/// Set signal handler (simple interface)
+/// Returns previous handler on success, SIG_ERR on error
+pub fn signal(sig: i32, handler: u64) -> u64 {
+    let mut new_action = SigAction {
+        sa_handler: handler,
+        sa_flags: SA_RESTART,
+        sa_restorer: 0,
+        sa_mask: SigSet::empty(),
+    };
+
+    let mut old_action = SigAction::default();
+
+    if sigaction(sig, Some(&new_action), Some(&mut old_action)) < 0 {
+        return !0u64; // SIG_ERR
+    }
+
+    old_action.sa_handler
+}
+
+/// Set signal action
+pub fn sigaction(sig: i32, act: Option<&SigAction>, oldact: Option<&mut SigAction>) -> i32 {
+    crate::syscall::syscall3(
+        crate::syscall::nr::SIGACTION,
+        sig as usize,
+        act.map_or(0, |a| a as *const _ as usize),
+        oldact.map_or(0, |a| a as *mut _ as usize),
+    ) as i32
+}

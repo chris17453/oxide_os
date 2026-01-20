@@ -158,6 +158,10 @@ const DT_DIR: u8 = 4;
 /// Main shell entry point
 #[unsafe(no_mangle)]
 fn main() -> i32 {
+    // Ignore SIGINT (Ctrl+C) in the shell itself
+    // Child processes will inherit default SIGINT behavior
+    signal(SIGINT, SIG_IGN);
+
     // Print welcome message
     printlns("OXIDE Shell (esh)");
     printlns("Type 'help' for available commands");
@@ -2088,6 +2092,10 @@ fn builtin_history(cmd: &Command) -> i32 {
 
 /// Execute an external command
 fn execute_external(cmd: &Command) {
+    // Reset SIGINT to default behavior for child process
+    // (shell ignores it, but child should be interruptible)
+    signal(SIGINT, SIG_DFL);
+
     let arg = &cmd.args[0];
 
     // Build argv array (NULL-terminated array of pointers)
