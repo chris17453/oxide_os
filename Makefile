@@ -314,36 +314,36 @@ run-kvm: boot-image
 	@mkdir -p /tmp/qemu-oxide
 	@echo "Starting QEMU..."
 	@TMPDIR=/tmp/qemu-oxide /usr/libexec/qemu-kvm \
-		-machine q35 \
-		-cpu max \
+		-machine q35,accel=kvm:tcg \
+		-cpu max,+invtsc \
+		-smp 2 \
 		-m 256M \
 		-drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE.fd \
 		-drive if=pflash,format=raw,file=$(TARGET_DIR)/OVMF_VARS.fd \
-		-drive format=raw,file=$(TARGET_DIR)/boot.img,if=ide \
+		-drive file=$(TARGET_DIR)/boot.img,format=raw,if=none,id=bootdisk \
+		-device ide-hd,drive=bootdisk,bus=ide.0 \
 		-vga std \
 		-vnc :0 \
-		-k en-us \
-		-serial telnet:localhost:4444,server,nowait \
+		-chardev stdio,id=char0,mux=on \
+		-serial chardev:char0 \
 		-no-reboot & \
 	QEMU_PID=$$!; \
-	echo "QEMU started (PID: $$QEMU_PID), serial on telnet localhost:4444"; \
+	echo "QEMU started (PID: $$QEMU_PID)"; \
 	sleep 2; \
 	if command -v vncviewer >/dev/null 2>&1; then \
-		echo "Launching VNC viewer..."; \
-		vncviewer localhost:5900 & \
+		echo "Launching VNC viewer window..."; \
+		vncviewer localhost:5900 2>/dev/null; \
 	elif flatpak list --app 2>/dev/null | grep -q tigervnc; then \
-		echo "Launching VNC viewer (Flatpak)..."; \
-		flatpak run org.tigervnc.vncviewer localhost:5900 & \
+		echo "Launching VNC viewer window (Flatpak)..."; \
+		flatpak run org.tigervnc.vncviewer localhost:5900 2>/dev/null; \
 	else \
-		echo "VNC viewer not found!"; \
+		echo "VNC viewer not found - connect manually to localhost:5900"; \
 		echo "Install: sudo dnf install tigervnc"; \
+		wait $$QEMU_PID; \
 	fi; \
-	echo ""; \
-	echo "Serial console: telnet localhost 4444"; \
-	echo "Press Ctrl+C to stop QEMU"; \
-	echo ""; \
-	telnet localhost 4444; \
-	kill $$QEMU_PID 2>/dev/null || true
+	echo "VNC viewer closed, stopping QEMU..."; \
+	kill $$QEMU_PID 2>/dev/null || true; \
+	wait $$QEMU_PID 2>/dev/null || true
 
 # Run with qemu-kvm and auto-launch VNC viewer
 run-kvm-vnc: boot-image

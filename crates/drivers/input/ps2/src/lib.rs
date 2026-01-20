@@ -180,10 +180,9 @@ impl Ps2Keyboard {
 
     /// Initialize the keyboard
     pub fn init(&self) -> bool {
-        // Don't reinitialize - BIOS/UEFI already set up the keyboard
-        // Just enable scanning to make sure it's active
+        // BIOS/UEFI already initialized keyboard - just enable scanning
         send_data(kbd_cmd::ENABLE_SCANNING);
-        let _ = read_data(); // Ignore response
+        let _ = read_data();
         true
     }
 
