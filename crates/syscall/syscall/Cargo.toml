@@ -11,4 +11,5 @@ mm-traits = { path = "../../mm/mm-traits" }
 vfs = { path = "../../vfs/vfs" }
 signal = { path = "../../signal/signal" }
 net = { path = "../../net/net" }
+input = { path = "../../input/input" }
 spin = "0.9"

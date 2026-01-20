@@ -301,6 +301,85 @@ pub extern "C" fn spurious_interrupt() {
     );
 }
 
+/// Keyboard IRQ callback type
+pub type KeyboardCallback = fn();
+
+/// Keyboard callback
+static mut KEYBOARD_CALLBACK: Option<KeyboardCallback> = None;
+
+/// Set keyboard callback
+///
+/// # Safety
+/// Must be called during initialization.
+pub unsafe fn set_keyboard_callback(callback: KeyboardCallback) {
+    unsafe {
+        use core::ptr::addr_of_mut;
+        *addr_of_mut!(KEYBOARD_CALLBACK) = Some(callback);
+    }
+}
+
+// Keyboard interrupt handler (IRQ 1, vector 33)
+#[unsafe(naked)]
+pub extern "C" fn keyboard_interrupt() {
+    naked_asm!(
+        // Save all registers
+        "push rax",
+        "push rbx",
+        "push rcx",
+        "push rdx",
+        "push rsi",
+        "push rdi",
+        "push rbp",
+        "push r8",
+        "push r9",
+        "push r10",
+        "push r11",
+        "push r12",
+        "push r13",
+        "push r14",
+        "push r15",
+
+        // Call keyboard handler
+        "call {}",
+
+        // Restore all registers
+        "pop r15",
+        "pop r14",
+        "pop r13",
+        "pop r12",
+        "pop r11",
+        "pop r10",
+        "pop r9",
+        "pop r8",
+        "pop rbp",
+        "pop rdi",
+        "pop rsi",
+        "pop rdx",
+        "pop rcx",
+        "pop rbx",
+        "pop rax",
+
+        "iretq",
+        sym handle_keyboard,
+    );
+}
+
+/// Keyboard handler - called from interrupt context
+extern "C" fn handle_keyboard() {
+    use core::ptr::addr_of;
+
+    // Send EOI to APIC first
+    crate::apic::end_of_interrupt();
+
+    // Call keyboard callback if registered
+    unsafe {
+        let cb_ptr = addr_of!(KEYBOARD_CALLBACK);
+        if let Some(callback) = *cb_ptr {
+            callback();
+        }
+    }
+}
+
 // Rust handlers
 
 extern "C" fn handle_divide_error(frame: *const InterruptFrame, _error: u64) {

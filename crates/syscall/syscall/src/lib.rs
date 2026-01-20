@@ -62,6 +62,10 @@ pub mod nr {
     // TTY/device syscalls
     pub const IOCTL: u64 = 40;
 
+    // Keyboard layout syscalls
+    pub const SETKEYMAP: u64 = 120;   // Set keyboard layout
+    pub const GETKEYMAP: u64 = 121;   // Get current keyboard layout name
+
     // Module syscalls
     pub const INIT_MODULE: u64 = 60;
     pub const DELETE_MODULE: u64 = 61;
@@ -264,6 +268,8 @@ pub fn dispatch(
 
         // TTY/device syscalls
         nr::IOCTL => vfs::sys_ioctl(arg1 as i32, arg2, arg3),
+        nr::SETKEYMAP => sys_setkeymap(arg1, arg2 as usize),
+        nr::GETKEYMAP => sys_getkeymap(arg1, arg2 as usize),
 
         // Module syscalls
         nr::INIT_MODULE => sys_init_module(arg1, arg2 as usize, arg3),
@@ -849,4 +855,69 @@ fn sys_delete_module(name_ptr: u64, flags: u32) -> i64 {
     //
     // For now, return ENOSYS until module is integrated
     errno::ENOSYS
+}
+
+/// sys_setkeymap - Set keyboard layout
+///
+/// # Arguments
+/// * `name_ptr` - Pointer to layout name string
+/// * `name_len` - Length of layout name
+fn sys_setkeymap(name_ptr: u64, name_len: usize) -> i64 {
+    // Validate pointer
+    if name_ptr >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+    if name_ptr.saturating_add(name_len as u64) >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+    if name_len > 32 {
+        return errno::EINVAL;
+    }
+
+    // Read layout name
+    let name = unsafe {
+        core::str::from_utf8_unchecked(core::slice::from_raw_parts(name_ptr as *const u8, name_len))
+    };
+
+    // Try to set the layout
+    if input::keymap::set_layout(name) {
+        0
+    } else {
+        errno::EINVAL // Layout not found
+    }
+}
+
+/// sys_getkeymap - Get current keyboard layout name
+///
+/// # Arguments
+/// * `buf_ptr` - Pointer to buffer for layout name
+/// * `buf_len` - Size of buffer
+///
+/// # Returns
+/// Length of layout name written, or negative error
+fn sys_getkeymap(buf_ptr: u64, buf_len: usize) -> i64 {
+    // Validate pointer
+    if buf_ptr >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+    if buf_ptr.saturating_add(buf_len as u64) >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    let layout = input::keymap::current_layout();
+    let name = layout.name;
+    let name_bytes = name.as_bytes();
+
+    if name_bytes.len() >= buf_len {
+        return errno::ENOSPC; // Buffer too small
+    }
+
+    // Copy layout name to user buffer
+    let buf = unsafe {
+        core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len)
+    };
+    buf[..name_bytes.len()].copy_from_slice(name_bytes);
+    buf[name_bytes.len()] = 0; // Null terminate
+
+    name_bytes.len() as i64
 }

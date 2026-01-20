@@ -227,6 +227,113 @@ pub fn init() {
 
     crate::serial_println!("[APIC] Initialized, ID: {}, Version: {}",
         id(), version());
+
+    // Initialize IOAPIC for legacy IRQs
+    init_ioapic();
+}
+
+// ============================================================================
+// IOAPIC Support
+// ============================================================================
+
+/// IOAPIC base address (standard location)
+const IOAPIC_BASE: u64 = 0xFEC0_0000;
+
+/// IOAPIC register select
+const IOAPIC_REGSEL: u32 = 0x00;
+/// IOAPIC data register
+const IOAPIC_DATA: u32 = 0x10;
+
+/// IOAPIC registers
+mod ioapic_reg {
+    pub const ID: u32 = 0x00;
+    pub const VERSION: u32 = 0x01;
+    pub const REDTBL_BASE: u32 = 0x10;
+}
+
+/// IOAPIC virtual address
+fn ioapic_base() -> u64 {
+    boot_proto::PHYS_MAP_BASE + IOAPIC_BASE
+}
+
+/// Write to IOAPIC register select
+fn ioapic_select(reg: u32) {
+    unsafe {
+        write_volatile((ioapic_base() + IOAPIC_REGSEL as u64) as *mut u32, reg);
+    }
+}
+
+/// Read from IOAPIC data register
+fn ioapic_read() -> u32 {
+    unsafe {
+        read_volatile((ioapic_base() + IOAPIC_DATA as u64) as *const u32)
+    }
+}
+
+/// Write to IOAPIC data register
+fn ioapic_write(value: u32) {
+    unsafe {
+        write_volatile((ioapic_base() + IOAPIC_DATA as u64) as *mut u32, value);
+    }
+}
+
+/// Read IOAPIC register
+fn ioapic_read_reg(reg: u32) -> u32 {
+    ioapic_select(reg);
+    ioapic_read()
+}
+
+/// Write IOAPIC register
+fn ioapic_write_reg(reg: u32, value: u32) {
+    ioapic_select(reg);
+    ioapic_write(value);
+}
+
+/// Configure IOAPIC redirection entry
+///
+/// - `irq`: Legacy IRQ number (0-23)
+/// - `vector`: Interrupt vector to route to
+/// - `dest_apic`: Destination APIC ID
+/// - `masked`: Whether the interrupt is masked
+fn ioapic_set_irq(irq: u8, vector: u8, dest_apic: u8, masked: bool) {
+    let reg_base = ioapic_reg::REDTBL_BASE + (irq as u32 * 2);
+
+    // Low 32 bits: vector, delivery mode (0=fixed), destination mode (0=physical),
+    // polarity (0=high), trigger (0=edge), mask
+    let low: u32 = (vector as u32)
+        | (0 << 8)   // Delivery mode: Fixed
+        | (0 << 11)  // Destination mode: Physical
+        | (0 << 13)  // Polarity: Active high
+        | (0 << 15)  // Trigger mode: Edge
+        | (if masked { 1 << 16 } else { 0 }); // Mask
+
+    // High 32 bits: destination APIC ID
+    let high: u32 = (dest_apic as u32) << 24;
+
+    ioapic_write_reg(reg_base, low);
+    ioapic_write_reg(reg_base + 1, high);
+}
+
+/// Initialize IOAPIC
+fn init_ioapic() {
+    // Check IOAPIC version
+    let version = ioapic_read_reg(ioapic_reg::VERSION);
+    let max_redir = ((version >> 16) & 0xFF) as u8;
+    crate::serial_println!("[IOAPIC] Version: {:#x}, Max redirections: {}",
+        version & 0xFF, max_redir + 1);
+
+    // Mask all IRQs first
+    for irq in 0..=max_redir {
+        ioapic_set_irq(irq, 0, 0, true);
+    }
+
+    // Get local APIC ID
+    let apic_id = id();
+
+    // Route keyboard IRQ 1 to vector 33
+    ioapic_set_irq(1, crate::idt::vector::KEYBOARD, apic_id, false);
+    crate::serial_println!("[IOAPIC] Keyboard IRQ 1 -> vector {} (APIC {})",
+        crate::idt::vector::KEYBOARD, apic_id);
 }
 
 /// Start the APIC timer for scheduling

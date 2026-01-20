@@ -3,8 +3,50 @@
 //! Provides /dev/null, /dev/zero, /dev/console, /dev/fb0, etc.
 
 use alloc::sync::Arc;
+use alloc::collections::VecDeque;
+use spin::Mutex;
 
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
+
+// ============================================================================
+// Console Keyboard Input Buffer
+// ============================================================================
+
+/// Maximum keyboard input buffer size
+const KEYBOARD_BUFFER_SIZE: usize = 1024;
+
+/// Keyboard input buffer for console
+static KEYBOARD_BUFFER: Mutex<VecDeque<u8>> = Mutex::new(VecDeque::new());
+
+/// Push a character to the console keyboard input buffer
+pub fn console_push_char(ch: u8) {
+    let mut buffer = KEYBOARD_BUFFER.lock();
+    if buffer.len() >= KEYBOARD_BUFFER_SIZE {
+        buffer.pop_front(); // Drop oldest if full
+    }
+    buffer.push_back(ch);
+}
+
+/// Push a string to the console keyboard input buffer
+pub fn console_push_str(s: &[u8]) {
+    let mut buffer = KEYBOARD_BUFFER.lock();
+    for &ch in s {
+        if buffer.len() >= KEYBOARD_BUFFER_SIZE {
+            buffer.pop_front();
+        }
+        buffer.push_back(ch);
+    }
+}
+
+/// Pop a character from the console keyboard input buffer
+fn console_pop_char() -> Option<u8> {
+    KEYBOARD_BUFFER.lock().pop_front()
+}
+
+/// Check if keyboard input is available
+pub fn console_has_input() -> bool {
+    !KEYBOARD_BUFFER.lock().is_empty()
+}
 
 /// Simple buffer writer for debug output
 struct BufWriter<'a> {
@@ -221,9 +263,18 @@ impl VnodeOps for ConsoleDevice {
         Err(VfsError::NotDirectory)
     }
 
-    fn read(&self, _offset: u64, _buf: &mut [u8]) -> VfsResult<usize> {
-        // Console read would require keyboard input - return EOF for now
-        Ok(0)
+    fn read(&self, _offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        // Read from keyboard input buffer
+        let mut count = 0;
+        while count < buf.len() {
+            if let Some(ch) = console_pop_char() {
+                buf[count] = ch;
+                count += 1;
+            } else {
+                break;
+            }
+        }
+        Ok(count)
     }
 
     fn write(&self, _offset: u64, buf: &[u8]) -> VfsResult<usize> {

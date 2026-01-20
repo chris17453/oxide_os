@@ -158,8 +158,10 @@ pub struct Ps2Keyboard {
     shift: AtomicBool,
     /// Ctrl pressed
     ctrl: AtomicBool,
-    /// Alt pressed
+    /// Alt pressed (left alt)
     alt: AtomicBool,
+    /// AltGr pressed (right alt)
+    altgr: AtomicBool,
 }
 
 impl Ps2Keyboard {
@@ -172,6 +174,7 @@ impl Ps2Keyboard {
             shift: AtomicBool::new(false),
             ctrl: AtomicBool::new(false),
             alt: AtomicBool::new(false),
+            altgr: AtomicBool::new(false),
         }
     }
 
@@ -215,8 +218,12 @@ impl Ps2Keyboard {
                 input::KEY_LEFTCTRL | input::KEY_RIGHTCTRL => {
                     self.ctrl.store(pressed, Ordering::SeqCst);
                 }
-                input::KEY_LEFTALT | input::KEY_RIGHTALT => {
+                input::KEY_LEFTALT => {
                     self.alt.store(pressed, Ordering::SeqCst);
+                }
+                input::KEY_RIGHTALT => {
+                    // Right Alt = AltGr on most international layouts
+                    self.altgr.store(pressed, Ordering::SeqCst);
                 }
                 _ => {}
             }
@@ -225,6 +232,91 @@ impl Ps2Keyboard {
             let value = if pressed { KeyValue::Pressed } else { KeyValue::Released };
             input::report_key(self.device_id() as usize, keycode, value);
             input::report_sync(self.device_id() as usize);
+
+            // Push to console on key press (not release)
+            if pressed {
+                let shift = self.shift.load(Ordering::SeqCst);
+                let ctrl = self.ctrl.load(Ordering::SeqCst);
+                let altgr = self.altgr.load(Ordering::SeqCst);
+
+                // Handle Ctrl+key combinations (send control codes)
+                // But not if AltGr is pressed (Ctrl+Alt is often used for AltGr on some systems)
+                if ctrl && !altgr {
+                    let ctrl_char = match keycode {
+                        input::KEY_A => Some(0x01), // Ctrl+A
+                        input::KEY_B => Some(0x02),
+                        input::KEY_C => Some(0x03), // Ctrl+C (SIGINT)
+                        input::KEY_D => Some(0x04), // Ctrl+D (EOF)
+                        input::KEY_E => Some(0x05),
+                        input::KEY_F => Some(0x06),
+                        input::KEY_G => Some(0x07),
+                        input::KEY_H => Some(0x08),
+                        input::KEY_I => Some(0x09),
+                        input::KEY_J => Some(0x0A),
+                        input::KEY_K => Some(0x0B),
+                        input::KEY_L => Some(0x0C),
+                        input::KEY_M => Some(0x0D),
+                        input::KEY_N => Some(0x0E),
+                        input::KEY_O => Some(0x0F),
+                        input::KEY_P => Some(0x10),
+                        input::KEY_Q => Some(0x11),
+                        input::KEY_R => Some(0x12),
+                        input::KEY_S => Some(0x13),
+                        input::KEY_T => Some(0x14),
+                        input::KEY_U => Some(0x15),
+                        input::KEY_V => Some(0x16),
+                        input::KEY_W => Some(0x17),
+                        input::KEY_X => Some(0x18),
+                        input::KEY_Y => Some(0x19),
+                        input::KEY_Z => Some(0x1A), // Ctrl+Z (SIGTSTP)
+                        _ => None,
+                    };
+                    if let Some(ch) = ctrl_char {
+                        push_to_console(&[ch]);
+                        return;
+                    }
+                }
+
+                // Handle special keys (arrow keys, etc.) - send ANSI escape sequences
+                let ansi_seq: Option<&[u8]> = match keycode {
+                    input::KEY_UP => Some(b"\x1b[A"),
+                    input::KEY_DOWN => Some(b"\x1b[B"),
+                    input::KEY_RIGHT => Some(b"\x1b[C"),
+                    input::KEY_LEFT => Some(b"\x1b[D"),
+                    input::KEY_HOME => Some(b"\x1b[H"),
+                    input::KEY_END => Some(b"\x1b[F"),
+                    input::KEY_INSERT => Some(b"\x1b[2~"),
+                    input::KEY_DELETE => Some(b"\x1b[3~"),
+                    input::KEY_PAGEUP => Some(b"\x1b[5~"),
+                    input::KEY_PAGEDOWN => Some(b"\x1b[6~"),
+                    input::KEY_F1 => Some(b"\x1bOP"),
+                    input::KEY_F2 => Some(b"\x1bOQ"),
+                    input::KEY_F3 => Some(b"\x1bOR"),
+                    input::KEY_F4 => Some(b"\x1bOS"),
+                    input::KEY_F5 => Some(b"\x1b[15~"),
+                    input::KEY_F6 => Some(b"\x1b[17~"),
+                    input::KEY_F7 => Some(b"\x1b[18~"),
+                    input::KEY_F8 => Some(b"\x1b[19~"),
+                    input::KEY_F9 => Some(b"\x1b[20~"),
+                    input::KEY_F10 => Some(b"\x1b[21~"),
+                    input::KEY_F11 => Some(b"\x1b[23~"),
+                    input::KEY_F12 => Some(b"\x1b[24~"),
+                    input::KEY_ESC => Some(b"\x1b"),
+                    _ => None,
+                };
+
+                if let Some(seq) = ansi_seq {
+                    push_to_console(seq);
+                    return;
+                }
+
+                // Convert to character using current keyboard layout (with AltGr support)
+                if let Some(ch) = input::keymap::keycode_to_char_current(keycode, shift, altgr) {
+                    let mut buf = [0u8; 4];
+                    let s = ch.encode_utf8(&mut buf);
+                    push_to_console(s.as_bytes());
+                }
+            }
         }
     }
 
@@ -552,6 +644,32 @@ static KEYBOARD: Mutex<Option<Arc<Ps2Keyboard>>> = Mutex::new(None);
 
 /// Global mouse instance
 static MOUSE: Mutex<Option<Arc<Ps2Mouse>>> = Mutex::new(None);
+
+/// Console character callback type
+/// Called with bytes to push to console input buffer (may be single char or ANSI sequence)
+pub type ConsoleCharCallback = fn(&[u8]);
+
+/// Global console callback
+static mut CONSOLE_CALLBACK: Option<ConsoleCharCallback> = None;
+
+/// Set the console character callback
+///
+/// # Safety
+/// Must be called during single-threaded initialization
+pub unsafe fn set_console_callback(callback: ConsoleCharCallback) {
+    unsafe {
+        CONSOLE_CALLBACK = Some(callback);
+    }
+}
+
+/// Call the console callback with character(s)
+fn push_to_console(data: &[u8]) {
+    unsafe {
+        if let Some(callback) = CONSOLE_CALLBACK {
+            callback(data);
+        }
+    }
+}
 
 /// Initialize PS/2 devices
 pub fn init() -> bool {

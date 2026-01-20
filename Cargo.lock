@@ -314,6 +314,7 @@ dependencies = [
  "elf",
  "fb",
  "initramfs",
+ "input",
  "mm-cow",
  "mm-frame",
  "mm-heap",
@@ -325,6 +326,7 @@ dependencies = [
  "proc",
  "proc-traits",
  "procfs",
+ "ps2",
  "pty",
  "sched",
  "sched-traits",
@@ -725,6 +727,7 @@ dependencies = [
 name = "syscall"
 version = "0.1.0"
 dependencies = [
+ "input",
  "mm-traits",
  "net",
  "os_core",

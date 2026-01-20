@@ -37,6 +37,9 @@ pub mod vector {
     /// Timer interrupt
     pub const TIMER: u8 = IRQ_BASE;
 
+    /// Keyboard interrupt (IRQ 1)
+    pub const KEYBOARD: u8 = IRQ_BASE + 1;
+
     /// Spurious interrupt vector for APIC
     pub const SPURIOUS: u8 = 0xFF;
 }
@@ -189,6 +192,9 @@ pub unsafe fn init() {
 
         // Timer interrupt
         (*idt_ptr).set_handler(vector::TIMER, exceptions::timer_interrupt as *const () as u64, GateType::Interrupt);
+
+        // Keyboard interrupt (IRQ 1)
+        (*idt_ptr).set_handler(vector::KEYBOARD, exceptions::keyboard_interrupt as *const () as u64, GateType::Interrupt);
 
         // Spurious interrupt
         (*idt_ptr).set_handler(vector::SPURIOUS, exceptions::spurious_interrupt as *const () as u64, GateType::Interrupt);

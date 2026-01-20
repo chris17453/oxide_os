@@ -89,6 +89,9 @@ pub mod nr {
     pub const MUNMAP: u64 = 111;
     pub const MPROTECT: u64 = 112;
     pub const BRK: u64 = 113;
+    // Keyboard layout syscalls
+    pub const SETKEYMAP: u64 = 120;
+    pub const GETKEYMAP: u64 = 121;
 }
 
 // Re-export syscall numbers at module level for convenience
@@ -118,6 +121,8 @@ pub use nr::SETEUID as SYS_SETEUID;
 pub use nr::SETEGID as SYS_SETEGID;
 pub use nr::MMAP as SYS_MMAP;
 pub use nr::MUNMAP as SYS_MUNMAP;
+pub use nr::SETKEYMAP as SYS_SETKEYMAP;
+pub use nr::GETKEYMAP as SYS_GETKEYMAP;
 pub use nr::MPROTECT as SYS_MPROTECT;
 pub use nr::BRK as SYS_BRK;
 

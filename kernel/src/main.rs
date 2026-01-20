@@ -54,6 +54,8 @@ use virtio_net;
 use pci;
 use fb;
 use terminal;
+use input;
+use ps2;
 use spin::Mutex;
 
 /// Global kernel heap allocator
@@ -237,6 +239,24 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
             arch::set_terminal_tick_callback(terminal_tick);
         }
         let _ = writeln!(writer, "[INFO] Terminal tick callback registered (30 FPS)");
+    }
+
+    // Initialize PS/2 keyboard
+    let _ = writeln!(writer, "[INFO] Initializing PS/2 keyboard...");
+    if ps2::init() {
+        // Set up keyboard callback to handle IRQs
+        unsafe {
+            arch::set_keyboard_callback(keyboard_irq);
+        }
+
+        // Set up console callback for PS/2 to push characters
+        unsafe {
+            ps2::set_console_callback(keyboard_to_console);
+        }
+
+        let _ = writeln!(writer, "[INFO] PS/2 keyboard initialized");
+    } else {
+        let _ = writeln!(writer, "[WARN] PS/2 keyboard initialization failed");
     }
 
     // Start timer at 100Hz
@@ -844,6 +864,16 @@ fn terminal_tick() {
     terminal::tick();
 }
 
+/// Keyboard IRQ callback - called from keyboard interrupt handler
+fn keyboard_irq() {
+    ps2::handle_keyboard_irq();
+}
+
+/// Console callback for PS/2 keyboard - pushes characters to console input buffer
+fn keyboard_to_console(data: &[u8]) {
+    devfs::console_push_str(data);
+}
+
 /// Serial-only write function for devfs
 ///
 /// Writes only to serial port for raw debug output.
@@ -914,12 +944,39 @@ fn get_fb_mode_info(index: u32) -> Option<devfs::devices::VideoModeDeviceInfo> {
 
 /// Console read function for syscalls
 fn console_read(buf: &mut [u8]) -> usize {
-    // Read from serial port (blocking read of one character at a time)
+    // Read from keyboard buffer (PS/2) or serial port
     // NOTE: No echo here - the application (shell) handles echoing
     let mut count = 0;
     for byte in buf.iter_mut() {
-        // Poll for input - use halt to avoid burning CPU
+        // Poll for input from either keyboard buffer or serial
         loop {
+            // First check keyboard buffer (PS/2 console input)
+            if devfs::console_has_input() {
+                // Read from console (keyboard) buffer via VFS-like mechanism
+                // The console_push_str pushed bytes, we need to pop them
+                // But we can't directly pop - we use a temp buffer approach
+                let mut temp = [0u8; 1];
+                // Read one byte from console device
+                if let Ok(vnode) = vfs::mount::GLOBAL_VFS.lookup("/dev/console") {
+                    if let Ok(n) = vnode.read(0, &mut temp) {
+                        if n > 0 {
+                            let b = temp[0];
+                            *byte = b;
+                            count += 1;
+                            // Return on newline for line-buffered input
+                            if b == b'\n' || b == b'\r' {
+                                if b == b'\r' {
+                                    *byte = b'\n';
+                                }
+                                return count;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Fallback to serial port (for serial console / QEMU)
             if let Some(b) = serial::read_byte() {
                 *byte = b;
                 count += 1;
@@ -933,8 +990,9 @@ fn console_read(buf: &mut [u8]) -> usize {
                 }
                 break;
             }
+
             // Use HLT instruction to wait for interrupt instead of busy-spin
-            // This saves CPU and wakes on timer/serial interrupts
+            // This saves CPU and wakes on timer/serial/keyboard interrupts
             unsafe {
                 core::arch::asm!("hlt", options(nomem, nostack));
             }

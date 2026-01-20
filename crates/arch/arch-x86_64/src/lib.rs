@@ -302,6 +302,16 @@ pub unsafe fn set_terminal_tick_callback(callback: fn()) {
     }
 }
 
+/// Register a keyboard interrupt callback (called on keyboard IRQ)
+///
+/// # Safety
+/// The callback must be valid and thread-safe.
+pub unsafe fn set_keyboard_callback(callback: fn()) {
+    unsafe {
+        exceptions::set_keyboard_callback(callback);
+    }
+}
+
 /// Re-export syscall user context type and getter
 pub use syscall::{SyscallUserContext, get_user_context};
 

@@ -197,6 +197,11 @@ path = "src/bin/nc.rs"
 name = "fbtest"
 path = "src/bin/fbtest.rs"
 
+# Keyboard utilities
+[[bin]]
+name = "loadkeys"
+path = "src/bin/loadkeys.rs"
+
 [dependencies]
 libc = { path = "../libc" }
 heapless = "0.8"

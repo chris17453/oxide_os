@@ -19,6 +19,9 @@ use vfs::{
 
 use devices::{ConsoleDevice, FramebufferDevice, NullDevice, ZeroDevice};
 
+// Re-export console input functions
+pub use devices::{console_push_char, console_push_str, console_has_input};
+
 /// The devfs root directory
 pub struct DevFs {
     /// Registered devices

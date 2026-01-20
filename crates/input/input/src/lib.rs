@@ -10,11 +10,13 @@ pub mod event;
 pub mod device;
 pub mod keymap;
 pub mod keycodes;
+pub mod layouts;
 
 pub use event::{InputEvent, EventType, SynCode, KeyValue};
 pub use device::{InputDevice, InputDeviceInfo, InputDeviceType};
 pub use keymap::Keymap;
 pub use keycodes::*;
+pub use layouts::{KeyboardLayout, LAYOUTS, get_layout, default_layout};
 
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;

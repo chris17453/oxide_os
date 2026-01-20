@@ -319,67 +319,37 @@ impl Default for Keymap {
 }
 
 /// Convert keycode to ASCII character (US layout, lowercase)
+/// This is the legacy function - prefer keycode_to_char with a layout
 pub fn keycode_to_ascii(keycode: u16, shift: bool) -> Option<char> {
-    let normal = match keycode {
-        KEY_A => 'a',
-        KEY_B => 'b',
-        KEY_C => 'c',
-        KEY_D => 'd',
-        KEY_E => 'e',
-        KEY_F => 'f',
-        KEY_G => 'g',
-        KEY_H => 'h',
-        KEY_I => 'i',
-        KEY_J => 'j',
-        KEY_K => 'k',
-        KEY_L => 'l',
-        KEY_M => 'm',
-        KEY_N => 'n',
-        KEY_O => 'o',
-        KEY_P => 'p',
-        KEY_Q => 'q',
-        KEY_R => 'r',
-        KEY_S => 's',
-        KEY_T => 't',
-        KEY_U => 'u',
-        KEY_V => 'v',
-        KEY_W => 'w',
-        KEY_X => 'x',
-        KEY_Y => 'y',
-        KEY_Z => 'z',
-        KEY_1 => if shift { '!' } else { '1' },
-        KEY_2 => if shift { '@' } else { '2' },
-        KEY_3 => if shift { '#' } else { '3' },
-        KEY_4 => if shift { '$' } else { '4' },
-        KEY_5 => if shift { '%' } else { '5' },
-        KEY_6 => if shift { '^' } else { '6' },
-        KEY_7 => if shift { '&' } else { '7' },
-        KEY_8 => if shift { '*' } else { '8' },
-        KEY_9 => if shift { '(' } else { '9' },
-        KEY_0 => if shift { ')' } else { '0' },
-        KEY_MINUS => if shift { '_' } else { '-' },
-        KEY_EQUAL => if shift { '+' } else { '=' },
-        KEY_LEFTBRACE => if shift { '{' } else { '[' },
-        KEY_RIGHTBRACE => if shift { '}' } else { ']' },
-        KEY_SEMICOLON => if shift { ':' } else { ';' },
-        KEY_APOSTROPHE => if shift { '"' } else { '\'' },
-        KEY_GRAVE => if shift { '~' } else { '`' },
-        KEY_BACKSLASH => if shift { '|' } else { '\\' },
-        KEY_COMMA => if shift { '<' } else { ',' },
-        KEY_DOT => if shift { '>' } else { '.' },
-        KEY_SLASH => if shift { '?' } else { '/' },
-        KEY_SPACE => ' ',
-        KEY_ENTER | KEY_KPENTER => '\n',
-        KEY_TAB => '\t',
-        KEY_BACKSPACE => '\x08',
-        _ => return None,
-    };
+    // Use the default (US) layout
+    crate::layouts::default_layout().get_char(keycode, shift, false)
+}
 
-    let c = if shift && ('a'..='z').contains(&normal) {
-        normal.to_ascii_uppercase()
+/// Convert keycode to character using the specified layout
+pub fn keycode_to_char(keycode: u16, layout: &crate::layouts::KeyboardLayout, shift: bool, altgr: bool) -> Option<char> {
+    layout.get_char(keycode, shift, altgr)
+}
+
+/// Global current keyboard layout
+static CURRENT_LAYOUT: spin::Mutex<&'static crate::layouts::KeyboardLayout> =
+    spin::Mutex::new(&crate::layouts::LAYOUT_US);
+
+/// Set the current keyboard layout by name
+pub fn set_layout(name: &str) -> bool {
+    if let Some(layout) = crate::layouts::get_layout(name) {
+        *CURRENT_LAYOUT.lock() = layout;
+        true
     } else {
-        normal
-    };
+        false
+    }
+}
 
-    Some(c)
+/// Get the current keyboard layout
+pub fn current_layout() -> &'static crate::layouts::KeyboardLayout {
+    *CURRENT_LAYOUT.lock()
+}
+
+/// Convert keycode to character using the current layout
+pub fn keycode_to_char_current(keycode: u16, shift: bool, altgr: bool) -> Option<char> {
+    current_layout().get_char(keycode, shift, altgr)
 }
