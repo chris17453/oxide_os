@@ -306,27 +306,33 @@ run-kvm: boot-image
 		echo "Install: sudo dnf install qemu-kvm"; \
 		exit 1; \
 	fi
-	@echo "=========================================="
-	@echo "RHEL qemu-kvm uses VNC by default"
-	@echo "Connect with: vncviewer localhost:5900"
-	@echo "Or install tigervnc for GUI access"
-	@echo "=========================================="
-	@echo ""
 	@# Create a writable copy of OVMF_VARS.fd for this session
 	@mkdir -p $(TARGET_DIR)
 	@cp /usr/share/edk2/ovmf/OVMF_VARS.fd $(TARGET_DIR)/OVMF_VARS.fd 2>/dev/null || true
 	@mkdir -p /tmp/qemu-oxide
-	TMPDIR=/tmp/qemu-oxide /usr/libexec/qemu-kvm \
-		-machine q35 \
+	@echo "Starting QEMU..."
+	@TMPDIR=/tmp/qemu-oxide /usr/libexec/qemu-kvm \
+		-machine pc \
 		-cpu max \
 		-m 256M \
 		-drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE.fd \
 		-drive if=pflash,format=raw,file=$(TARGET_DIR)/OVMF_VARS.fd \
-		-drive format=raw,file=$(TARGET_DIR)/boot.img,if=none,id=disk \
-		-device ide-hd,drive=disk \
-		-vnc :0 \
-		-serial stdio \
-		-no-reboot
+		-drive format=raw,file=$(TARGET_DIR)/boot.img,if=ide \
+		-vnc :0,lossy=off \
+		-serial mon:stdio \
+		-no-reboot & \
+	QEMU_PID=$$!; \
+	sleep 1; \
+	if command -v vncviewer >/dev/null 2>&1; then \
+		echo "Launching VNC viewer..."; \
+		vncviewer localhost:5900 & \
+		VNC_PID=$$!; \
+	else \
+		echo "VNC viewer not found. Install with: sudo dnf install tigervnc"; \
+		echo "Or connect manually to: localhost:5900"; \
+	fi; \
+	wait $$QEMU_PID; \
+	kill $$VNC_PID 2>/dev/null || true
 
 # Run with qemu-kvm and auto-launch VNC viewer
 run-kvm-vnc: boot-image
@@ -341,13 +347,12 @@ run-kvm-vnc: boot-image
 	@mkdir -p /tmp/qemu-oxide
 	@echo "Starting QEMU in background..."
 	@TMPDIR=/tmp/qemu-oxide /usr/libexec/qemu-kvm \
-		-machine q35 \
+		-machine pc \
 		-cpu max \
 		-m 256M \
 		-drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE.fd \
 		-drive if=pflash,format=raw,file=$(TARGET_DIR)/OVMF_VARS.fd \
-		-drive format=raw,file=$(TARGET_DIR)/boot.img,if=none,id=disk \
-		-device ide-hd,drive=disk \
+		-drive format=raw,file=$(TARGET_DIR)/boot.img,if=ide \
 		-vnc :0 \
 		-no-reboot & \
 	QEMU_PID=$$!; \
@@ -364,13 +369,12 @@ run-kvm-serial: boot-image
 	@cp /usr/share/edk2/ovmf/OVMF_VARS.fd $(TARGET_DIR)/OVMF_VARS.fd 2>/dev/null || true
 	@mkdir -p /tmp/qemu-oxide
 	TMPDIR=/tmp/qemu-oxide /usr/libexec/qemu-kvm \
-		-machine q35 \
+		-machine pc \
 		-cpu max \
 		-m 256M \
 		-drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE.fd \
 		-drive if=pflash,format=raw,file=$(TARGET_DIR)/OVMF_VARS.fd \
-		-drive format=raw,file=$(TARGET_DIR)/boot.img,if=none,id=disk \
-		-device ide-hd,drive=disk \
+		-drive format=raw,file=$(TARGET_DIR)/boot.img,if=ide \
 		-nographic \
 		-no-reboot
 
