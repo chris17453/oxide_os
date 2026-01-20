@@ -1192,7 +1192,9 @@ name = "syscall"
 version = "0.1.0"
 dependencies = [
  "input",
+ "mm-frame",
  "mm-traits",
+ "mmap",
  "net",
  "os_core",
  "proc",

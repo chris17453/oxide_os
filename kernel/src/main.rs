@@ -184,6 +184,9 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
     FRAME_ALLOCATOR.init(&regions);
 
+    // Initialize global frame allocator reference for syscalls
+    unsafe { mm_frame::init_global_allocator(&FRAME_ALLOCATOR) };
+
     // Mark kernel memory as used
     FRAME_ALLOCATOR.mark_used(
         os_core::PhysAddr::new(boot_info.kernel_phys_base),

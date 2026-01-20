@@ -633,6 +633,205 @@ fn test_kill_self() -> TestResult {
 }
 
 // ============================================================================
+// Memory mapping syscalls tests
+// ============================================================================
+
+fn test_mmap_anonymous() -> TestResult {
+    use libc::syscall::{sys_mmap, sys_munmap, prot, map_flags, MAP_FAILED};
+
+    // Map 4KB of anonymous memory
+    let addr = sys_mmap(
+        core::ptr::null_mut(),
+        4096,
+        prot::PROT_READ | prot::PROT_WRITE,
+        map_flags::MAP_PRIVATE | map_flags::MAP_ANONYMOUS,
+        -1,
+        0,
+    );
+
+    if addr == MAP_FAILED {
+        libc::println!("  mmap returned MAP_FAILED");
+        return TestResult::Fail;
+    }
+
+    // Write to the mapped memory
+    unsafe {
+        let ptr = addr as *mut u8;
+        ptr.write(0x42);
+        ptr.add(4095).write(0x99);
+
+        // Read back
+        if ptr.read() != 0x42 {
+            libc::println!("  first byte mismatch");
+            sys_munmap(addr, 4096);
+            return TestResult::Fail;
+        }
+        if ptr.add(4095).read() != 0x99 {
+            libc::println!("  last byte mismatch");
+            sys_munmap(addr, 4096);
+            return TestResult::Fail;
+        }
+    }
+
+    // Unmap
+    let result = sys_munmap(addr, 4096);
+    if result != 0 {
+        libc::println!("  munmap returned {}", result);
+        return TestResult::Fail;
+    }
+
+    TestResult::Pass
+}
+
+fn test_mmap_large() -> TestResult {
+    use libc::syscall::{sys_mmap, sys_munmap, prot, map_flags, MAP_FAILED};
+
+    // Map 64KB of memory
+    let size = 64 * 1024;
+    let addr = sys_mmap(
+        core::ptr::null_mut(),
+        size,
+        prot::PROT_READ | prot::PROT_WRITE,
+        map_flags::MAP_PRIVATE | map_flags::MAP_ANONYMOUS,
+        -1,
+        0,
+    );
+
+    if addr == MAP_FAILED {
+        libc::println!("  mmap 64KB failed");
+        return TestResult::Fail;
+    }
+
+    // Write pattern to verify all pages
+    unsafe {
+        for i in 0..16 {
+            let offset = i * 4096;
+            let ptr = (addr as *mut u8).add(offset);
+            ptr.write(i as u8);
+        }
+
+        // Verify
+        for i in 0..16 {
+            let offset = i * 4096;
+            let ptr = (addr as *mut u8).add(offset);
+            if ptr.read() != i as u8 {
+                libc::println!("  page {} data mismatch", i);
+                sys_munmap(addr, size);
+                return TestResult::Fail;
+            }
+        }
+    }
+
+    sys_munmap(addr, size);
+    TestResult::Pass
+}
+
+fn test_mmap_hint_addr() -> TestResult {
+    use libc::syscall::{sys_mmap, sys_munmap, prot, map_flags, MAP_FAILED};
+
+    // Request mapping at a specific hint address
+    let hint = 0x1000_0000 as *mut u8;
+    let addr = sys_mmap(
+        hint,
+        4096,
+        prot::PROT_READ | prot::PROT_WRITE,
+        map_flags::MAP_PRIVATE | map_flags::MAP_ANONYMOUS,
+        -1,
+        0,
+    );
+
+    if addr == MAP_FAILED {
+        libc::println!("  mmap with hint failed");
+        return TestResult::Fail;
+    }
+
+    // Note: The system may or may not honor the hint
+    // Success is getting a valid address back
+
+    sys_munmap(addr, 4096);
+    TestResult::Pass
+}
+
+fn test_mmap_fixed() -> TestResult {
+    use libc::syscall::{sys_mmap, sys_munmap, prot, map_flags, MAP_FAILED};
+
+    // First allocate some memory to get a valid address
+    let temp = sys_mmap(
+        core::ptr::null_mut(),
+        4096,
+        prot::PROT_READ | prot::PROT_WRITE,
+        map_flags::MAP_PRIVATE | map_flags::MAP_ANONYMOUS,
+        -1,
+        0,
+    );
+
+    if temp == MAP_FAILED {
+        return TestResult::Skip;
+    }
+
+    // Unmap it
+    sys_munmap(temp, 4096);
+
+    // Now try to map at that exact address with MAP_FIXED
+    let addr = sys_mmap(
+        temp,
+        4096,
+        prot::PROT_READ | prot::PROT_WRITE,
+        map_flags::MAP_PRIVATE | map_flags::MAP_ANONYMOUS | map_flags::MAP_FIXED,
+        -1,
+        0,
+    );
+
+    if addr == MAP_FAILED {
+        libc::println!("  MAP_FIXED at {} failed", temp as usize);
+        return TestResult::Fail;
+    }
+
+    if addr != temp {
+        libc::println!("  MAP_FIXED returned different address");
+        sys_munmap(addr, 4096);
+        return TestResult::Fail;
+    }
+
+    sys_munmap(addr, 4096);
+    TestResult::Pass
+}
+
+fn test_mprotect() -> TestResult {
+    use libc::syscall::{sys_mmap, sys_munmap, sys_mprotect, prot, map_flags, MAP_FAILED};
+
+    // Allocate read-only memory
+    let addr = sys_mmap(
+        core::ptr::null_mut(),
+        4096,
+        prot::PROT_READ,
+        map_flags::MAP_PRIVATE | map_flags::MAP_ANONYMOUS,
+        -1,
+        0,
+    );
+
+    if addr == MAP_FAILED {
+        return TestResult::Fail;
+    }
+
+    // Change to read-write
+    let result = sys_mprotect(addr, 4096, prot::PROT_READ | prot::PROT_WRITE);
+    if result != 0 {
+        libc::println!("  mprotect failed: {}", result);
+        sys_munmap(addr, 4096);
+        return TestResult::Fail;
+    }
+
+    // Now we should be able to write
+    unsafe {
+        (addr as *mut u8).write(0x42);
+    }
+
+    sys_munmap(addr, 4096);
+    TestResult::Pass
+}
+
+// ============================================================================
 // Main entry point
 // ============================================================================
 
@@ -715,6 +914,22 @@ pub extern "Rust" fn main() -> i32 {
     let result = test_kill_self();
     report("kill (signal 0)", result, "");
     stats.record(result);
+
+    // Memory mapping syscalls
+    libc::println!("");
+    libc::println!("-- Memory mapping syscalls --");
+    let tests = [
+        ("mmap anonymous", test_mmap_anonymous as fn() -> TestResult),
+        ("mmap large", test_mmap_large),
+        ("mmap hint addr", test_mmap_hint_addr),
+        ("mmap fixed", test_mmap_fixed),
+        ("mprotect", test_mprotect),
+    ];
+    for (name, test) in tests {
+        let result = test();
+        report(name, result, "");
+        stats.record(result);
+    }
 
     // Summary
     libc::println!("");

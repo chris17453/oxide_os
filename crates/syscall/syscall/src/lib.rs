@@ -10,6 +10,7 @@ pub mod vfs;
 pub mod dir;
 pub mod signal;
 pub mod socket;
+pub mod memory;
 
 use os_core::VirtAddr;
 use proc::process_table;
@@ -86,6 +87,13 @@ pub mod nr {
     pub const SIGSUSPEND: u64 = 54;
     pub const PAUSE: u64 = 55;
     pub const SIGRETURN: u64 = 56;
+
+    // Memory mapping syscalls
+    pub const MMAP: u64 = 90;
+    pub const MUNMAP: u64 = 91;
+    pub const MPROTECT: u64 = 92;
+    pub const MREMAP: u64 = 93;
+    pub const BRK: u64 = 94;
 
     // Socket syscalls
     pub const SOCKET: u64 = 70;
@@ -298,6 +306,13 @@ pub fn dispatch(
         nr::SIGSUSPEND => signal::sys_sigsuspend(arg1),
         nr::PAUSE => signal::sys_pause(),
         nr::SIGRETURN => signal::sys_sigreturn(),
+
+        // Memory mapping syscalls
+        nr::MMAP => memory::sys_mmap(arg1, arg2, arg3 as i32, arg4 as i32, arg5 as i32, arg6 as i64),
+        nr::MUNMAP => memory::sys_munmap(arg1, arg2),
+        nr::MPROTECT => memory::sys_mprotect(arg1, arg2, arg3 as i32),
+        nr::MREMAP => memory::sys_mremap(arg1, arg2, arg3, arg4 as i32, arg5),
+        nr::BRK => memory::sys_brk(arg1),
 
         // Socket syscalls
         nr::SOCKET => socket::sys_socket(arg1 as i32, arg2 as i32, arg3 as i32),

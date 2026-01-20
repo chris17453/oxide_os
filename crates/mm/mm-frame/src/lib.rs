@@ -9,6 +9,30 @@ mod bitmap;
 pub use bitmap::BitmapFrameAllocator;
 
 use os_core::PhysAddr;
+use core::sync::atomic::{AtomicPtr, Ordering};
+
+/// Global frame allocator pointer
+static GLOBAL_ALLOCATOR: AtomicPtr<BitmapFrameAllocator> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Initialize the global frame allocator reference
+///
+/// # Safety
+/// Must be called once during kernel initialization with a reference
+/// to a static allocator that will outlive all uses.
+pub unsafe fn init_global_allocator(allocator: &'static BitmapFrameAllocator) {
+    GLOBAL_ALLOCATOR.store(allocator as *const _ as *mut _, Ordering::Release);
+}
+
+/// Get a reference to the global frame allocator
+///
+/// Returns None if the allocator hasn't been initialized.
+pub fn frame_allocator() -> &'static BitmapFrameAllocator {
+    let ptr = GLOBAL_ALLOCATOR.load(Ordering::Acquire);
+    if ptr.is_null() {
+        panic!("Frame allocator not initialized");
+    }
+    unsafe { &*ptr }
+}
 
 /// Size of a physical frame (4KB)
 pub const FRAME_SIZE: usize = 4096;

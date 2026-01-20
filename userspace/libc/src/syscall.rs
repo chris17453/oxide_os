@@ -84,11 +84,12 @@ pub mod nr {
     pub const SETGID: u64 = 105;
     pub const SETEUID: u64 = 106;
     pub const SETEGID: u64 = 107;
-    // Memory syscalls
-    pub const MMAP: u64 = 110;
-    pub const MUNMAP: u64 = 111;
-    pub const MPROTECT: u64 = 112;
-    pub const BRK: u64 = 113;
+    // Memory syscalls (must match kernel)
+    pub const MMAP: u64 = 90;
+    pub const MUNMAP: u64 = 91;
+    pub const MPROTECT: u64 = 92;
+    pub const MREMAP: u64 = 93;
+    pub const BRK: u64 = 94;
     // Keyboard layout syscalls
     pub const SETKEYMAP: u64 = 120;
     pub const GETKEYMAP: u64 = 121;
@@ -128,10 +129,11 @@ pub use nr::SETEUID as SYS_SETEUID;
 pub use nr::SETEGID as SYS_SETEGID;
 pub use nr::MMAP as SYS_MMAP;
 pub use nr::MUNMAP as SYS_MUNMAP;
+pub use nr::MPROTECT as SYS_MPROTECT;
+pub use nr::MREMAP as SYS_MREMAP;
+pub use nr::BRK as SYS_BRK;
 pub use nr::SETKEYMAP as SYS_SETKEYMAP;
 pub use nr::GETKEYMAP as SYS_GETKEYMAP;
-pub use nr::MPROTECT as SYS_MPROTECT;
-pub use nr::BRK as SYS_BRK;
 pub use nr::CLONE as SYS_CLONE;
 pub use nr::GETTID as SYS_GETTID;
 pub use nr::FUTEX as SYS_FUTEX;
@@ -394,4 +396,128 @@ pub fn sys_set_tid_address(tidptr: *mut u32) -> i32 {
 pub fn sys_exit_group(status: i32) -> ! {
     syscall1(nr::EXIT_GROUP, status as usize);
     loop {}
+}
+
+// ============================================================================
+// Memory mapping syscall wrappers
+// ============================================================================
+
+/// Protection flags for mmap/mprotect
+pub mod prot {
+    pub const PROT_NONE: i32 = 0x0;
+    pub const PROT_READ: i32 = 0x1;
+    pub const PROT_WRITE: i32 = 0x2;
+    pub const PROT_EXEC: i32 = 0x4;
+}
+
+/// Map flags for mmap
+pub mod map_flags {
+    pub const MAP_SHARED: i32 = 0x01;
+    pub const MAP_PRIVATE: i32 = 0x02;
+    pub const MAP_FIXED: i32 = 0x10;
+    pub const MAP_ANONYMOUS: i32 = 0x20;
+    pub const MAP_ANON: i32 = MAP_ANONYMOUS;
+    pub const MAP_GROWSDOWN: i32 = 0x0100;
+    pub const MAP_STACK: i32 = 0x20000;
+}
+
+/// Mremap flags
+pub mod mremap_flags {
+    pub const MREMAP_MAYMOVE: i32 = 1;
+    pub const MREMAP_FIXED: i32 = 2;
+}
+
+/// Failed mmap result
+pub const MAP_FAILED: *mut u8 = usize::MAX as *mut u8;
+
+/// sys_mmap - Map memory
+///
+/// # Arguments
+/// * `addr` - Requested address (hint or fixed)
+/// * `length` - Size of mapping
+/// * `prot` - Protection flags (PROT_READ, PROT_WRITE, PROT_EXEC)
+/// * `flags` - Mapping flags (MAP_ANONYMOUS, MAP_PRIVATE, etc.)
+/// * `fd` - File descriptor (for file-backed mappings, -1 for anonymous)
+/// * `offset` - Offset in file
+///
+/// # Returns
+/// Address of mapping on success, MAP_FAILED on error
+pub fn sys_mmap(addr: *mut u8, length: usize, prot: i32, flags: i32, fd: i32, offset: i64) -> *mut u8 {
+    let result = syscall6(
+        nr::MMAP,
+        addr as usize,
+        length,
+        prot as usize,
+        flags as usize,
+        fd as usize,
+        offset as usize,
+    );
+
+    if (result as i64) < 0 {
+        MAP_FAILED
+    } else {
+        result as *mut u8
+    }
+}
+
+/// sys_munmap - Unmap memory
+///
+/// # Arguments
+/// * `addr` - Start address of mapping
+/// * `length` - Size to unmap
+///
+/// # Returns
+/// 0 on success, -1 on error
+pub fn sys_munmap(addr: *mut u8, length: usize) -> i32 {
+    syscall2(nr::MUNMAP, addr as usize, length) as i32
+}
+
+/// sys_mprotect - Change memory protection
+///
+/// # Arguments
+/// * `addr` - Start address
+/// * `length` - Size of region
+/// * `prot` - New protection flags
+///
+/// # Returns
+/// 0 on success, -1 on error
+pub fn sys_mprotect(addr: *mut u8, length: usize, prot: i32) -> i32 {
+    syscall3(nr::MPROTECT, addr as usize, length, prot as usize) as i32
+}
+
+/// sys_mremap - Remap memory
+///
+/// # Arguments
+/// * `old_addr` - Current address
+/// * `old_size` - Current size
+/// * `new_size` - New size
+/// * `flags` - Remap flags (MREMAP_MAYMOVE, etc.)
+///
+/// # Returns
+/// New address on success, MAP_FAILED on error
+pub fn sys_mremap(old_addr: *mut u8, old_size: usize, new_size: usize, flags: i32) -> *mut u8 {
+    let result = syscall4(
+        nr::MREMAP,
+        old_addr as usize,
+        old_size,
+        new_size,
+        flags as usize,
+    );
+
+    if (result as i64) < 0 {
+        MAP_FAILED
+    } else {
+        result as *mut u8
+    }
+}
+
+/// sys_brk - Change data segment size
+///
+/// # Arguments
+/// * `addr` - New end of data segment (null to query current)
+///
+/// # Returns
+/// Current/new end of data segment, or null on error
+pub fn sys_brk(addr: *mut u8) -> *mut u8 {
+    syscall1(nr::BRK, addr as usize) as *mut u8
 }
