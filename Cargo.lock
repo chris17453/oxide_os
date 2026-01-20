@@ -218,12 +218,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "efflux-ar"
+version = "0.1.0"
+dependencies = [
+ "libc 0.1.0",
+]
+
+[[package]]
+name = "efflux-as"
+version = "0.1.0"
+dependencies = [
+ "libc 0.1.0",
+]
+
+[[package]]
 name = "efflux-gwbasic"
 version = "0.1.0"
 dependencies = [
  "libc 0.1.0",
  "libm",
  "minifb",
+]
+
+[[package]]
+name = "efflux-ld"
+version = "0.1.0"
+dependencies = [
+ "libc 0.1.0",
+]
+
+[[package]]
+name = "efflux-make"
+version = "0.1.0"
+dependencies = [
+ "libc 0.1.0",
 ]
 
 [[package]]

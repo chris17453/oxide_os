@@ -95,6 +95,7 @@ members = [
     "userspace/as",
     "userspace/ld",
     "userspace/ar",
+    "userspace/make",
     "bootloader/boot-uefi",
     "apps/gwbasic",
 ]
