@@ -2,8 +2,8 @@
 name = "dl"
 version = "0.1.0"
 edition = "2021"
-authors = ["EFFLUX Contributors"]
-description = "Dynamic linker/loader (dlopen/dlsym) for EFFLUX"
+authors = ["OXIDE Contributors"]
+description = "Dynamic linker/loader (dlopen/dlsym) for OXIDE"
 license = "MIT OR Apache-2.0"
 
 [dependencies]

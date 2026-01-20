@@ -3,7 +3,7 @@ name = "tmpfs"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "In-memory temporary filesystem for EFFLUX OS"
+description = "In-memory temporary filesystem for OXIDE OS"
 
 [dependencies]
 vfs = { workspace = true }

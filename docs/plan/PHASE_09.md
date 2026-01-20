@@ -148,4 +148,4 @@ Phase 9 provides the SMP infrastructure. Actual AP boot requires:
 
 ---
 
-*Phase 9 of EFFLUX Implementation - Complete*
+*Phase 9 of OXIDE Implementation - Complete*

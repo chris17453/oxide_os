@@ -2,7 +2,7 @@
 name = "vmm"
 version = "0.1.0"
 edition = "2024"
-description = "Virtual Machine Monitor for Efflux OS"
+description = "Virtual Machine Monitor for Oxide OS"
 license = "MIT OR Apache-2.0"
 
 [dependencies]

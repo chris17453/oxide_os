@@ -1,6 +1,6 @@
-//! EFFLUX Shell (esh)
+//! OXIDE Shell (esh)
 //!
-//! A simple shell for EFFLUX OS with:
+//! A simple shell for OXIDE OS with:
 //! - Command execution
 //! - Builtin commands (cd, exit, echo, pwd, export, unset, help)
 //! - I/O redirection (<, >, >>)
@@ -159,7 +159,7 @@ const DT_DIR: u8 = 4;
 #[unsafe(no_mangle)]
 fn main() -> i32 {
     // Print welcome message
-    printlns("EFFLUX Shell (esh)");
+    printlns("OXIDE Shell (esh)");
     printlns("Type 'help' for available commands");
     printlns("");
 
@@ -992,7 +992,7 @@ fn execute_builtin(cmd: &Command) {
             eprintlns("esh: pwd: failed");
         }
     } else if bytes_eq(&cmd.args[0], b"help") {
-        printlns("EFFLUX Shell (esh) - Built-in commands:");
+        printlns("OXIDE Shell (esh) - Built-in commands:");
         printlns("  echo [args...]  - Print arguments");
         printlns("  cd <dir>        - Change directory");
         printlns("  pwd             - Print working directory");

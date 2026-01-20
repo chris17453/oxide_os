@@ -1,4 +1,4 @@
-//! Binary Format Detection and Registration for EFFLUX OS
+//! Binary Format Detection and Registration for OXIDE OS
 //!
 //! Provides binfmt_misc-like functionality for automatic interpreter selection.
 
@@ -424,8 +424,8 @@ pub mod syscall_compat {
         pub fn new() -> Self {
             let mut map = BTreeMap::new();
 
-            // Map Linux syscalls to EFFLUX syscalls
-            // These would be actual EFFLUX syscall numbers
+            // Map Linux syscalls to OXIDE syscalls
+            // These would be actual OXIDE syscall numbers
             map.insert(linux_x86_64::SYS_READ, 0);
             map.insert(linux_x86_64::SYS_WRITE, 1);
             map.insert(linux_x86_64::SYS_OPEN, 2);

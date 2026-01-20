@@ -1,6 +1,6 @@
 //! wget - Download files from the web
 //!
-//! A minimal wget implementation for EFFLUX.
+//! A minimal wget implementation for OXIDE.
 
 #![no_std]
 #![no_main]
@@ -105,7 +105,7 @@ fn build_request(path: &str, host: &str, buf: &mut [u8]) -> usize {
     len += copy_str(&mut buf[len..], "\r\n");
 
     // User-Agent
-    len += copy_str(&mut buf[len..], "User-Agent: wget/efflux\r\n");
+    len += copy_str(&mut buf[len..], "User-Agent: wget/oxide\r\n");
 
     // Connection: close
     len += copy_str(&mut buf[len..], "Connection: close\r\n");

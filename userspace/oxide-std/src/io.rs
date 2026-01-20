@@ -420,7 +420,7 @@ impl Stderr {
 
 impl Write for Stderr {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        // Write to stderr (fd 2), but EFFLUX may not have separate stderr
+        // Write to stderr (fd 2), but OXIDE may not have separate stderr
         // so we write to stdout for now
         let n = libc::write(libc::STDOUT_FILENO, buf);
         if n < 0 {

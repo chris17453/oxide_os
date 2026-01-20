@@ -2,8 +2,8 @@
 name = "quarantine"
 version = "0.1.0"
 edition = "2021"
-authors = ["EFFLUX Contributors"]
-description = "File quarantine system for EFFLUX OS"
+authors = ["OXIDE Contributors"]
+description = "File quarantine system for OXIDE OS"
 license = "MIT OR Apache-2.0"
 
 [dependencies]

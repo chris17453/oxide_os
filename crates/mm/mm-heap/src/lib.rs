@@ -1,4 +1,4 @@
-//! EFFLUX Kernel Heap Allocator
+//! OXIDE Kernel Heap Allocator
 //!
 //! A simple linked-list allocator for the kernel heap.
 

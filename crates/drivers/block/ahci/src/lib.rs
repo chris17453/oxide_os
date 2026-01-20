@@ -1,4 +1,4 @@
-//! AHCI (Advanced Host Controller Interface) Driver for EFFLUX OS
+//! AHCI (Advanced Host Controller Interface) Driver for OXIDE OS
 //!
 //! Implements the AHCI 1.3 specification for SATA storage devices.
 

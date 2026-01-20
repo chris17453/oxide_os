@@ -2,7 +2,7 @@
 //!
 //! Defines the Process type and process-related operations.
 //!
-//! In EFFLUX, threads are implemented using the Linux model where threads
+//! In OXIDE, threads are implemented using the Linux model where threads
 //! are processes that share certain resources. Each thread has a unique TID
 //! (Thread ID) but shares a TGID (Thread Group ID) with other threads in
 //! the same thread group. The TGID is what userspace sees as the "PID".

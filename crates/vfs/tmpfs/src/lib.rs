@@ -1,4 +1,4 @@
-//! In-memory temporary filesystem (tmpfs) for EFFLUX OS
+//! In-memory temporary filesystem (tmpfs) for OXIDE OS
 //!
 //! Provides a fully functional in-memory filesystem for storing files and directories.
 

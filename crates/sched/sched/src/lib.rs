@@ -1,4 +1,4 @@
-//! Scheduler implementation for EFFLUX OS
+//! Scheduler implementation for OXIDE OS
 //!
 //! Provides a round-robin scheduler for kernel threads.
 

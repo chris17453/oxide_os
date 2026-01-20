@@ -1,4 +1,4 @@
-//! Loadable Kernel Module support for EFFLUX OS
+//! Loadable Kernel Module support for OXIDE OS
 //!
 //! This crate provides:
 //! - Module binary format parsing (relocatable ELF)

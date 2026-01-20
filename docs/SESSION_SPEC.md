@@ -1,4 +1,4 @@
-# EFFLUX Session & Display Routing Specification
+# OXIDE Session & Display Routing Specification
 
 **Version:** 1.0
 **Status:** Draft
@@ -8,7 +8,7 @@
 
 ## 0) Overview
 
-This document explains how EFFLUX routes display output and handles input across different session types, whether running on bare metal or in a VM.
+This document explains how OXIDE routes display output and handles input across different session types, whether running on bare metal or in a VM.
 
 **The key principle:** All process I/O goes through the TTY layer. The TTY is then connected to a *backend* (hardware console, PTY, serial, etc.).
 
@@ -364,7 +364,7 @@ pub enum BackendType {
     DrmKms,         // Real hardware via DRM/KMS
     VncServer,      // Remote via VNC protocol
     RdpServer,      // Remote via RDP protocol
-    EffluxRemote,   // Native EFFLUX remote protocol
+    OxideRemote,   // Native OXIDE remote protocol
 }
 ```
 
@@ -589,7 +589,7 @@ impl SessionManager {
 ### 8.1 Console Configuration
 
 ```toml
-# /etc/efflux/console.conf
+# /etc/oxide/console.conf
 
 [console]
 # Number of virtual consoles (1-12)
@@ -615,7 +615,7 @@ baud = 115200
 ### 8.2 Display Server Configuration
 
 ```toml
-# /etc/efflux/display.conf
+# /etc/oxide/display.conf
 
 [compositor]
 # Backend priority (first available is used)
@@ -633,7 +633,7 @@ vnc_enabled = true
 vnc_port = 5900
 vnc_password = ""  # Empty = no auth (dangerous!)
 
-# Native EFFLUX remote
+# Native OXIDE remote
 remote_enabled = true
 remote_port = 5800
 remote_encryption = true
@@ -654,4 +654,4 @@ remote_encryption = true
 
 ---
 
-*End of EFFLUX Session & Display Routing Specification*
+*End of OXIDE Session & Display Routing Specification*

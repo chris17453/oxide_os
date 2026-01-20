@@ -2,8 +2,8 @@
 name = "v86"
 version = "0.1.0"
 edition = "2021"
-authors = ["EFFLUX Contributors"]
-description = "Virtual 8086 mode DOS emulation for EFFLUX OS"
+authors = ["OXIDE Contributors"]
+description = "Virtual 8086 mode DOS emulation for OXIDE OS"
 license = "MIT OR Apache-2.0"
 
 [dependencies]

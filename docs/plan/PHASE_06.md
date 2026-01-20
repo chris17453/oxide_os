@@ -260,4 +260,4 @@ Phase 6 TTY + PTY infrastructure complete for x86_64:
 
 ---
 
-*Phase 6 of EFFLUX Implementation*
+*Phase 6 of OXIDE Implementation*

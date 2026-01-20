@@ -3,7 +3,7 @@ name = "devfs"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Device filesystem for EFFLUX OS"
+description = "Device filesystem for OXIDE OS"
 
 [dependencies]
 vfs = { workspace = true }

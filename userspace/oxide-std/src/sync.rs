@@ -1,4 +1,4 @@
-//! Synchronization primitives for EFFLUX OS
+//! Synchronization primitives for OXIDE OS
 //!
 //! Provides std::sync-like APIs using futex syscalls.
 

@@ -1,6 +1,6 @@
 //! TCP/IP Stack Implementation
 //!
-//! A lightweight TCP/IP network stack for Efflux OS.
+//! A lightweight TCP/IP network stack for Oxide OS.
 
 #![no_std]
 

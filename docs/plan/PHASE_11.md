@@ -21,7 +21,7 @@ Implement block device layer and filesystem drivers for persistent storage.
 | virtio-blk driver | [x] |
 | NVMe driver | [x] |
 | AHCI/SATA driver | [x] |
-| effluxfs (native filesystem) | [x] |
+| oxidefs (native filesystem) | [x] |
 | FAT32 driver | [x] |
 | ext2 driver (optional) | [ ] Future |
 
@@ -29,7 +29,7 @@ Implement block device layer and filesystem drivers for persistent storage.
 
 ## Architecture Status
 
-| Arch | Block | virtio | NVMe | AHCI | effluxfs | FAT32 | Done |
+| Arch | Block | virtio | NVMe | AHCI | oxidefs | FAT32 | Done |
 |------|-------|--------|------|------|----------|-------|------|
 | x86_64 | [x] | [x] | [x] | [x] | [x] | [x] | [x] |
 | i686 | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] | [ ] |
@@ -77,7 +77,7 @@ pub trait BlockDevice: Send + Sync {
 └──────────────┬──────────────┘
                │
 ┌──────────────▼──────────────┐
-│   Filesystem (effluxfs)     │
+│   Filesystem (oxidefs)     │
 └──────────────┬──────────────┘
                │
 ┌──────────────▼──────────────┐
@@ -131,12 +131,12 @@ pub trait BlockDevice: Send + Sync {
 
 ---
 
-## effluxfs Layout
+## oxidefs Layout
 
 ```
 ┌────────────────────────────┐ Block 0
 │  Superblock                │
-│  - Magic: "EFFLUX"         │
+│  - Magic: "OXIDE"         │
 │  - Version                 │
 │  - Block size              │
 │  - Total blocks            │
@@ -158,7 +158,7 @@ pub trait BlockDevice: Send + Sync {
 └────────────────────────────┘
 ```
 
-**effluxfs Features:**
+**oxidefs Features:**
 - 64-bit block addresses
 - Extended attributes (for AI metadata)
 - Copy-on-write snapshots (future)
@@ -232,7 +232,7 @@ crates/drivers/block/ahci/src/
 ├── hba.rs             # Host bus adapter
 └── port.rs            # Port handling
 
-crates/fs/effluxfs/src/
+crates/fs/oxidefs/src/
 ├── lib.rs
 ├── superblock.rs
 ├── inode.rs
@@ -256,7 +256,7 @@ crates/fs/fat32/src/
 - [x] virtio-blk reads/writes
 - [x] NVMe driver functional
 - [x] AHCI driver functional
-- [x] effluxfs mounts and does file I/O
+- [x] oxidefs mounts and does file I/O
 - [x] FAT32 reads EFI system partition
 - [ ] Works on all 8 architectures (x86_64 done)
 
@@ -265,8 +265,8 @@ crates/fs/fat32/src/
 ## Test
 
 ```bash
-# Create effluxfs filesystem
-$ mkfs.effluxfs /dev/nvme0n1p2
+# Create oxidefs filesystem
+$ mkfs.oxidefs /dev/nvme0n1p2
 
 # Mount it
 $ mount /dev/nvme0n1p2 /mnt
@@ -292,9 +292,9 @@ Phase 11 implementation complete for x86_64:
 - VirtIO block device driver
 - NVMe driver with admin/I/O queues
 - AHCI/SATA driver with port management
-- effluxfs native filesystem with journaling
+- oxidefs native filesystem with journaling
 - FAT32 filesystem driver with LFN support
 
 ---
 
-*Phase 11 of EFFLUX Implementation - Complete*
+*Phase 11 of OXIDE Implementation - Complete*

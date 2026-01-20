@@ -1,4 +1,4 @@
-# EFFLUX Timer and Clock Specification
+# OXIDE Timer and Clock Specification
 
 **Version:** 1.0
 **Status:** Draft
@@ -705,6 +705,6 @@ These files contain:
 
 ---
 
-*End of EFFLUX Timer and Clock Specification*
+*End of OXIDE Timer and Clock Specification*
 
 *See `docs/arch/<arch>/TIMER.md` for architecture-specific details.*

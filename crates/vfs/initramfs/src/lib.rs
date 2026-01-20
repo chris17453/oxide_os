@@ -1,4 +1,4 @@
-//! Initramfs filesystem for EFFLUX OS
+//! Initramfs filesystem for OXIDE OS
 //!
 //! Provides a read-only filesystem loaded from a CPIO archive at boot time.
 

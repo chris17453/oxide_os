@@ -1,4 +1,4 @@
-//! X.509 Certificate Handling for EFFLUX OS
+//! X.509 Certificate Handling for OXIDE OS
 //!
 //! Parsing and validation of X.509 certificates.
 

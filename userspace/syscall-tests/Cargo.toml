@@ -3,7 +3,7 @@ name = "syscall-tests"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "Syscall test suite for EFFLUX OS"
+description = "Syscall test suite for OXIDE OS"
 
 [dependencies]
 libc = { path = "../libc" }

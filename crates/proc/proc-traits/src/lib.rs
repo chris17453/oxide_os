@@ -1,4 +1,4 @@
-//! Process management traits for EFFLUX
+//! Process management traits for OXIDE
 //!
 //! Defines the interfaces for process and address space management.
 

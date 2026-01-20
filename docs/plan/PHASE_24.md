@@ -43,7 +43,7 @@ Enable running legacy DOS programs and sandboxed Python scripts.
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                  EFFLUX Kernel                       │
+│                  OXIDE Kernel                       │
 │                                                      │
 │  ┌─────────────────────────────────────────────┐   │
 │  │            V86 Monitor                       │   │
@@ -229,14 +229,14 @@ bitflags! {
 ```rust
 // For running Linux binaries (future)
 pub struct SyscallTranslator {
-    /// Linux → EFFLUX syscall mapping
+    /// Linux → OXIDE syscall mapping
     syscall_map: HashMap<u64, SyscallHandler>,
 }
 
 // Example translations:
-// Linux read(2) → EFFLUX sys_read
-// Linux write(2) → EFFLUX sys_write
-// Linux open(2) → EFFLUX sys_open (with flag translation)
+// Linux read(2) → OXIDE sys_read
+// Linux write(2) → OXIDE sys_write
+// Linux open(2) → OXIDE sys_open (with flag translation)
 
 pub fn translate_linux_syscall(
     num: u64,
@@ -330,4 +330,4 @@ $ python-sandbox --read=/data --no-write script2.py
 
 ---
 
-*Phase 24 of EFFLUX Implementation*
+*Phase 24 of OXIDE Implementation*

@@ -1,7 +1,7 @@
-//! EFFLUX OS platform implementation (no_std)
+//! OXIDE OS platform implementation (no_std)
 //!
-//! This module provides platform abstractions for running on EFFLUX OS.
-//! It interfaces with the kernel through the efflux-std and libc libraries.
+//! This module provides platform abstractions for running on OXIDE OS.
+//! It interfaces with the kernel through the oxide-std and libc libraries.
 
 extern crate alloc;
 
@@ -9,17 +9,17 @@ use super::{Console, FileSystem, Graphics, System, FileOpenMode, FileHandle};
 use alloc::string::{String, ToString};
 use alloc::collections::BTreeMap;
 
-/// EFFLUX Console implementation
-pub struct EffluxConsole {
+/// OXIDE Console implementation
+pub struct OxideConsole {
     cursor_row: usize,
     cursor_col: usize,
     input_buffer: [u8; 256],
     input_len: usize,
 }
 
-impl EffluxConsole {
+impl OxideConsole {
     pub fn new() -> Self {
-        EffluxConsole {
+        OxideConsole {
             cursor_row: 0,
             cursor_col: 0,
             input_buffer: [0; 256],
@@ -28,13 +28,13 @@ impl EffluxConsole {
     }
 }
 
-impl Default for EffluxConsole {
+impl Default for OxideConsole {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Console for EffluxConsole {
+impl Console for OxideConsole {
     fn print(&mut self, s: &str) {
         let bytes = s.as_bytes();
         libc::write(libc::STDOUT_FILENO, bytes);
@@ -153,28 +153,28 @@ impl Console for EffluxConsole {
     }
 }
 
-/// EFFLUX File System implementation
-pub struct EffluxFileSystem {
+/// OXIDE File System implementation
+pub struct OxideFileSystem {
     open_files: BTreeMap<i32, i32>, // our handle -> fd
     next_handle: i32,
 }
 
-impl EffluxFileSystem {
+impl OxideFileSystem {
     pub fn new() -> Self {
-        EffluxFileSystem {
+        OxideFileSystem {
             open_files: BTreeMap::new(),
             next_handle: 1,
         }
     }
 }
 
-impl Default for EffluxFileSystem {
+impl Default for OxideFileSystem {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl FileSystem for EffluxFileSystem {
+impl FileSystem for OxideFileSystem {
     fn open(&mut self, path: &str, mode: FileOpenMode) -> Result<FileHandle, &'static str> {
         let flags = match mode {
             FileOpenMode::Input => libc::O_RDONLY,
@@ -248,31 +248,31 @@ impl FileSystem for EffluxFileSystem {
     }
 }
 
-/// EFFLUX Graphics implementation
+/// OXIDE Graphics implementation
 ///
 /// Uses ANSI escape sequences for basic graphics in text mode.
 /// Full graphics would require framebuffer access.
-pub struct EffluxGraphics {
+pub struct OxideGraphics {
     width: usize,
     height: usize,
 }
 
-impl EffluxGraphics {
+impl OxideGraphics {
     pub fn new() -> Self {
-        EffluxGraphics {
+        OxideGraphics {
             width: 80,
             height: 25,
         }
     }
 }
 
-impl Default for EffluxGraphics {
+impl Default for OxideGraphics {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Graphics for EffluxGraphics {
+impl Graphics for OxideGraphics {
     fn pset(&mut self, _x: i32, _y: i32, _color: u8) {
         // Text mode doesn't support pixel drawing
         // Would need framebuffer access
@@ -312,28 +312,28 @@ impl Graphics for EffluxGraphics {
     }
 }
 
-/// EFFLUX System implementation
-pub struct EffluxSystem {
+/// OXIDE System implementation
+pub struct OxideSystem {
     rng_state: u64,
 }
 
-impl EffluxSystem {
+impl OxideSystem {
     pub fn new() -> Self {
         // Initialize RNG with current time
         let time = libc::time::time(None);
-        EffluxSystem {
+        OxideSystem {
             rng_state: time as u64 ^ 12345,
         }
     }
 }
 
-impl Default for EffluxSystem {
+impl Default for OxideSystem {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl System for EffluxSystem {
+impl System for OxideSystem {
     fn timer(&self) -> f32 {
         // Get current time and convert to seconds since midnight
         let time = libc::time::time(None);

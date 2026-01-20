@@ -1,4 +1,4 @@
-# EFFLUX Graphics & Display Specification
+# OXIDE Graphics & Display Specification
 
 **Version:** 1.0
 **Status:** Draft
@@ -8,7 +8,7 @@
 
 ## 0) Overview
 
-EFFLUX provides a unified graphics architecture supporting multiple display modes:
+OXIDE provides a unified graphics architecture supporting multiple display modes:
 
 | Mode | Description | Use Case |
 |------|-------------|----------|
@@ -162,7 +162,7 @@ pub struct RemoteDesktop {
 
 pub enum RemoteProtocol {
     Vnc { security: VncSecurity },
-    Efflux { encryption: bool },      // Native protocol
+    Oxide { encryption: bool },      // Native protocol
     Spice { compression: SpiceCodec },
 }
 ```
@@ -525,7 +525,7 @@ pub struct DisplayMode {
 
 ### 5.4 Remote Display Backend
 
-For VNC, RDP, and native EFFLUX remote protocol.
+For VNC, RDP, and native OXIDE remote protocol.
 
 ```rust
 pub struct RemoteDisplayBackend {
@@ -562,8 +562,8 @@ pub enum VncEncoding {
     TightPNG,
 }
 
-// Native EFFLUX Protocol (better compression, encryption)
-pub struct EffluxRemoteProtocol {
+// Native OXIDE Protocol (better compression, encryption)
+pub struct OxideRemoteProtocol {
     encryption: Option<ChaCha20Poly1305>,
     compression: ZstdCompressor,
     video_codec: Option<VideoCodec>,
@@ -625,7 +625,7 @@ impl RemoteDesktopClient {
 
 ### 6.3 Features
 
-| Feature | VNC | EFFLUX Native | RDP (future) |
+| Feature | VNC | OXIDE Native | RDP (future) |
 |---------|-----|---------------|--------------|
 | Encryption | TLS wrap | Built-in ChaCha20 | TLS |
 | Compression | Tight/ZRLE | Zstd + H.264 | RemoteFX |
@@ -682,10 +682,10 @@ Supported formats:
 
 ## 8) Python Graphics Bindings
 
-### 8.1 Python Module: `efflux.graphics`
+### 8.1 Python Module: `oxide.graphics`
 
 ```python
-import efflux.graphics as gfx
+import oxide.graphics as gfx
 
 # Create a window
 window = gfx.Window("My App", 800, 600)
@@ -707,7 +707,7 @@ canvas.draw_circle(400, 300, 50)
 # Draw text
 canvas.set_font("sans-serif", 24)
 canvas.set_fill_color(gfx.Color(0, 0, 0))
-canvas.draw_text("Hello, EFFLUX!", 100, 400)
+canvas.draw_text("Hello, OXIDE!", 100, 400)
 
 # Draw image
 img = gfx.Image.load("/path/to/image.png")
@@ -731,7 +731,7 @@ while window.is_open():
 ### 8.2 Turtle Graphics (for education)
 
 ```python
-import efflux.turtle as turtle
+import oxide.turtle as turtle
 
 t = turtle.Turtle()
 t.speed(5)
@@ -752,7 +752,7 @@ turtle.done()
 ### 8.3 Matplotlib-like Plotting
 
 ```python
-import efflux.plot as plt
+import oxide.plot as plt
 import numpy as np
 
 x = np.linspace(0, 2 * np.pi, 100)
@@ -838,7 +838,7 @@ pub enum RenderBackendType {
     AmdGpu,         // AMD discrete/integrated
     NvidiaGpu,      // NVIDIA (nouveau or proprietary)
     VncRemote,      // Remote rendering via VNC
-    EffluxRemote,   // Native EFFLUX remote protocol
+    OxideRemote,   // Native OXIDE remote protocol
 }
 
 bitflags! {
@@ -1278,4 +1278,4 @@ pub enum ConsoleMode {
 
 ---
 
-*End of EFFLUX Graphics Specification*
+*End of OXIDE Graphics Specification*

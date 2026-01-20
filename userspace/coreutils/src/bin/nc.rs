@@ -1,6 +1,6 @@
 //! nc (netcat) - Arbitrary TCP and UDP connections and listens
 //!
-//! A simple implementation of netcat for EFFLUX.
+//! A simple implementation of netcat for OXIDE.
 
 #![no_std]
 #![no_main]

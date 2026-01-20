@@ -1,6 +1,6 @@
-//! EFFLUX Linker (ld)
+//! OXIDE Linker (ld)
 //!
-//! A minimal ELF64 linker for EFFLUX OS.
+//! A minimal ELF64 linker for OXIDE OS.
 //! Links relocatable object files into executables.
 
 #![no_std]

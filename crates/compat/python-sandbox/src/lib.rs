@@ -1,4 +1,4 @@
-//! Python Sandbox for EFFLUX OS
+//! Python Sandbox for OXIDE OS
 //!
 //! Provides secure Python script execution with resource limits.
 

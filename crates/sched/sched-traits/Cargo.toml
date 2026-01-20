@@ -3,7 +3,7 @@ name = "sched-traits"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Scheduler trait definitions for EFFLUX OS"
+description = "Scheduler trait definitions for OXIDE OS"
 
 [dependencies]
 os_core = { workspace = true }

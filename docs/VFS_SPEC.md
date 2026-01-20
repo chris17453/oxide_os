@@ -1,4 +1,4 @@
-# EFFLUX Virtual Filesystem (VFS) Specification
+# OXIDE Virtual Filesystem (VFS) Specification
 
 **Version:** 1.0  
 **Status:** Draft  
@@ -99,7 +99,7 @@ pub fn resolve_path(path: &str) -> Result<PathBuf> {
 
 | Name | Type | Purpose |
 |------|------|---------|
-| efflux.fs | Disk | Native filesystem |
+| oxide.fs | Disk | Native filesystem |
 | FAT32 | Disk | Boot, USB compatibility |
 | tmpfs | RAM | Temporary files |
 | devfs | Virtual | Device nodes |
@@ -187,4 +187,4 @@ pub fn resolve_path(path: &str) -> Result<PathBuf> {
 
 ---
 
-*End of EFFLUX VFS Specification*
+*End of OXIDE VFS Specification*

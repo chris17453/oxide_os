@@ -1,6 +1,6 @@
-//! EFFLUXFS - EFFLUX Native Filesystem
+//! OXIDEFS - OXIDE Native Filesystem
 //!
-//! A modern filesystem designed for EFFLUX OS with:
+//! A modern filesystem designed for OXIDE OS with:
 //! - 64-bit block addresses
 //! - Extended attributes
 //! - Metadata checksums
@@ -30,8 +30,8 @@ use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 pub use superblock::Superblock;
 pub use inode::{Inode, InodeData};
 
-/// EFFLUXFS magic number ("EFFLUX" + version)
-pub const EFFLUXFS_MAGIC: u64 = 0x4546464C5558_0001; // "EFFLUX" + version 1
+/// OXIDEFS magic number ("OXIDE" + version)
+pub const OXIDEFS_MAGIC: u64 = 0x4546464C5558_0001; // "OXIDE" + version 1
 
 /// Block size (4KB)
 pub const BLOCK_SIZE: u32 = 4096;
@@ -48,9 +48,9 @@ pub const MAX_NAME_LEN: usize = 255;
 /// Maximum file size (16 EB with 64-bit addressing)
 pub const MAX_FILE_SIZE: u64 = u64::MAX;
 
-/// EFFLUXFS error types
+/// OXIDEFS error types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EffluxfsError {
+pub enum OxidefsError {
     /// Invalid magic number
     InvalidMagic,
     /// Corrupted superblock
@@ -81,34 +81,34 @@ pub enum EffluxfsError {
     InvalidArgument,
 }
 
-impl From<BlockError> for EffluxfsError {
+impl From<BlockError> for OxidefsError {
     fn from(_: BlockError) -> Self {
-        EffluxfsError::IoError
+        OxidefsError::IoError
     }
 }
 
-impl From<EffluxfsError> for VfsError {
-    fn from(e: EffluxfsError) -> Self {
+impl From<OxidefsError> for VfsError {
+    fn from(e: OxidefsError) -> Self {
         match e {
-            EffluxfsError::NotFound => VfsError::NotFound,
-            EffluxfsError::NoSpace => VfsError::NoSpace,
-            EffluxfsError::NotDirectory => VfsError::NotDirectory,
-            EffluxfsError::IsDirectory => VfsError::IsDirectory,
-            EffluxfsError::NotEmpty => VfsError::NotEmpty,
-            EffluxfsError::FileExists => VfsError::AlreadyExists,
-            EffluxfsError::NameTooLong => VfsError::NameTooLong,
-            EffluxfsError::ReadOnly => VfsError::ReadOnly,
-            EffluxfsError::IoError => VfsError::IoError,
+            OxidefsError::NotFound => VfsError::NotFound,
+            OxidefsError::NoSpace => VfsError::NoSpace,
+            OxidefsError::NotDirectory => VfsError::NotDirectory,
+            OxidefsError::IsDirectory => VfsError::IsDirectory,
+            OxidefsError::NotEmpty => VfsError::NotEmpty,
+            OxidefsError::FileExists => VfsError::AlreadyExists,
+            OxidefsError::NameTooLong => VfsError::NameTooLong,
+            OxidefsError::ReadOnly => VfsError::ReadOnly,
+            OxidefsError::IoError => VfsError::IoError,
             _ => VfsError::IoError,
         }
     }
 }
 
-/// Result type for effluxfs operations
-pub type EffluxfsResult<T> = Result<T, EffluxfsError>;
+/// Result type for oxidefs operations
+pub type OxidefsResult<T> = Result<T, OxidefsError>;
 
-/// EFFLUXFS filesystem instance
-pub struct Effluxfs {
+/// OXIDEFS filesystem instance
+pub struct Oxidefs {
     /// Block device
     device: Arc<dyn BlockDevice>,
     /// Superblock
@@ -121,9 +121,9 @@ pub struct Effluxfs {
     read_only: bool,
 }
 
-impl Effluxfs {
-    /// Mount an EFFLUXFS filesystem from a block device
-    pub fn mount(device: Arc<dyn BlockDevice>, read_only: bool) -> EffluxfsResult<Arc<Self>> {
+impl Oxidefs {
+    /// Mount an OXIDEFS filesystem from a block device
+    pub fn mount(device: Arc<dyn BlockDevice>, read_only: bool) -> OxidefsResult<Arc<Self>> {
         let block_size = device.block_size() as usize;
 
         // Read superblock (block 0)
@@ -133,8 +133,8 @@ impl Effluxfs {
         let sb = Superblock::parse(&buf)?;
 
         // Verify magic
-        if sb.magic != EFFLUXFS_MAGIC {
-            return Err(EffluxfsError::InvalidMagic);
+        if sb.magic != OXIDEFS_MAGIC {
+            return Err(OxidefsError::InvalidMagic);
         }
 
         // Load block bitmap
@@ -155,7 +155,7 @@ impl Effluxfs {
             sb.total_inodes as usize,
         )?;
 
-        Ok(Arc::new(Effluxfs {
+        Ok(Arc::new(Oxidefs {
             device,
             superblock: RwLock::new(sb),
             block_bitmap: Mutex::new(block_bitmap),
@@ -164,8 +164,8 @@ impl Effluxfs {
         }))
     }
 
-    /// Create a new EFFLUXFS filesystem on a block device
-    pub fn mkfs(device: Arc<dyn BlockDevice>) -> EffluxfsResult<()> {
+    /// Create a new OXIDEFS filesystem on a block device
+    pub fn mkfs(device: Arc<dyn BlockDevice>) -> OxidefsResult<()> {
         let block_size = device.block_size() as usize;
         let total_blocks = device.block_count();
 
@@ -183,7 +183,7 @@ impl Effluxfs {
 
         // Create superblock
         let sb = Superblock {
-            magic: EFFLUXFS_MAGIC,
+            magic: OXIDEFS_MAGIC,
             version: 1,
             block_size: block_size as u32,
             total_blocks,
@@ -262,11 +262,11 @@ impl Effluxfs {
     }
 
     /// Get the root inode
-    pub fn root(&self) -> EffluxfsResult<Arc<dyn VnodeOps>> {
+    pub fn root(&self) -> OxidefsResult<Arc<dyn VnodeOps>> {
         let sb = self.superblock.read();
         let inode_data = inode::read_inode(&*self.device, &sb, ROOT_INO)?;
 
-        Ok(Arc::new(EffluxfsVnode::new(
+        Ok(Arc::new(OxidefsVnode::new(
             Arc::new(self.clone_ref()),
             ROOT_INO,
             inode_data,
@@ -274,17 +274,17 @@ impl Effluxfs {
     }
 
     /// Clone a reference to self (for vnodes)
-    fn clone_ref(&self) -> EffluxfsRef {
-        EffluxfsRef {
+    fn clone_ref(&self) -> OxidefsRef {
+        OxidefsRef {
             device: Arc::clone(&self.device),
             read_only: self.read_only,
         }
     }
 
     /// Allocate a block
-    pub fn alloc_block(&self) -> EffluxfsResult<u64> {
+    pub fn alloc_block(&self) -> OxidefsResult<u64> {
         if self.read_only {
-            return Err(EffluxfsError::ReadOnly);
+            return Err(OxidefsError::ReadOnly);
         }
 
         let mut bitmap = self.block_bitmap.lock();
@@ -301,14 +301,14 @@ impl Effluxfs {
 
             Ok(block as u64)
         } else {
-            Err(EffluxfsError::NoSpace)
+            Err(OxidefsError::NoSpace)
         }
     }
 
     /// Free a block
-    pub fn free_block(&self, block: u64) -> EffluxfsResult<()> {
+    pub fn free_block(&self, block: u64) -> OxidefsResult<()> {
         if self.read_only {
-            return Err(EffluxfsError::ReadOnly);
+            return Err(OxidefsError::ReadOnly);
         }
 
         let mut bitmap = self.block_bitmap.lock();
@@ -322,9 +322,9 @@ impl Effluxfs {
     }
 
     /// Allocate an inode
-    pub fn alloc_inode(&self) -> EffluxfsResult<u64> {
+    pub fn alloc_inode(&self) -> OxidefsResult<u64> {
         if self.read_only {
-            return Err(EffluxfsError::ReadOnly);
+            return Err(OxidefsError::ReadOnly);
         }
 
         let mut bitmap = self.inode_bitmap.lock();
@@ -340,14 +340,14 @@ impl Effluxfs {
 
             Ok(ino as u64)
         } else {
-            Err(EffluxfsError::NoInodes)
+            Err(OxidefsError::NoInodes)
         }
     }
 
     /// Free an inode
-    pub fn free_inode(&self, ino: u64) -> EffluxfsResult<()> {
+    pub fn free_inode(&self, ino: u64) -> OxidefsResult<()> {
         if self.read_only {
-            return Err(EffluxfsError::ReadOnly);
+            return Err(OxidefsError::ReadOnly);
         }
 
         let mut bitmap = self.inode_bitmap.lock();
@@ -362,24 +362,24 @@ impl Effluxfs {
 }
 
 /// Reference to filesystem (for vnodes)
-struct EffluxfsRef {
+struct OxidefsRef {
     device: Arc<dyn BlockDevice>,
     read_only: bool,
 }
 
-/// EFFLUXFS vnode implementation
-pub struct EffluxfsVnode {
+/// OXIDEFS vnode implementation
+pub struct OxidefsVnode {
     /// Reference to filesystem
-    fs: Arc<EffluxfsRef>,
+    fs: Arc<OxidefsRef>,
     /// Inode number
     ino: u64,
     /// Cached inode data
     inode: RwLock<InodeData>,
 }
 
-impl EffluxfsVnode {
-    fn new(fs: Arc<EffluxfsRef>, ino: u64, inode: InodeData) -> Self {
-        EffluxfsVnode {
+impl OxidefsVnode {
+    fn new(fs: Arc<OxidefsRef>, ino: u64, inode: InodeData) -> Self {
+        OxidefsVnode {
             fs,
             ino,
             inode: RwLock::new(inode),
@@ -401,7 +401,7 @@ impl EffluxfsVnode {
     }
 }
 
-impl VnodeOps for EffluxfsVnode {
+impl VnodeOps for OxidefsVnode {
     fn vtype(&self) -> VnodeType {
         self.inode_type()
     }

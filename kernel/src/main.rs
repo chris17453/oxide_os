@@ -1,4 +1,4 @@
-//! EFFLUX Kernel
+//! OXIDE Kernel
 //!
 //! Main kernel entry point.
 
@@ -128,7 +128,7 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Print boot banner
     let _ = writeln!(writer);
     let _ = writeln!(writer, "========================================");
-    let _ = writeln!(writer, "  EFFLUX Operating System");
+    let _ = writeln!(writer, "  OXIDE Operating System");
     let _ = writeln!(writer, "  Version 0.1.0");
     let _ = writeln!(writer, "========================================");
     let _ = writeln!(writer);
@@ -274,7 +274,7 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(writer, "[INFO] Box::new(42) = {}", *boxed_value);
 
     let _ = writeln!(writer);
-    let _ = writeln!(writer, "EFFLUX kernel initialized successfully!");
+    let _ = writeln!(writer, "OXIDE kernel initialized successfully!");
     let _ = writeln!(writer);
 
     // ========================================

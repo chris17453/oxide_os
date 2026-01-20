@@ -125,7 +125,7 @@ kernel/
 [INFO] Free frames: 59116
 [INFO] Box::new(42) = 42
 [INFO] Vec: [1, 2, 3]
-EFFLUX kernel initialized successfully!
+OXIDE kernel initialized successfully!
 ```
 
 ---

@@ -1,4 +1,4 @@
-# EFFLUX Build Plan
+# OXIDE Build Plan
 
 **Status:** Draft
 **Goal:** Source code → Bootable image for any architecture
@@ -7,7 +7,7 @@
 
 ## Overview
 
-Building EFFLUX produces:
+Building OXIDE produces:
 1. Kernel binary (ELF)
 2. Bootloader (arch-specific)
 3. Initramfs (apps, config)
@@ -19,14 +19,14 @@ Building EFFLUX produces:
 
 | Architecture | Rust Target | QEMU Machine | Image Type |
 |--------------|-------------|--------------|------------|
-| x86_64 | x86_64-efflux | q35 | ISO, GPT disk |
-| i686 | i686-efflux | pc | ISO, GPT disk |
-| aarch64 | aarch64-efflux | virt | GPT disk |
-| arm | arm-efflux | virt | GPT disk |
-| mips64 | mips64-efflux | malta | Raw binary |
-| mips32 | mips32-efflux | malta | Raw binary |
-| riscv64 | riscv64-efflux | virt | GPT disk |
-| riscv32 | riscv32-efflux | virt | GPT disk |
+| x86_64 | x86_64-oxide | q35 | ISO, GPT disk |
+| i686 | i686-oxide | pc | ISO, GPT disk |
+| aarch64 | aarch64-oxide | virt | GPT disk |
+| arm | arm-oxide | virt | GPT disk |
+| mips64 | mips64-oxide | malta | Raw binary |
+| mips32 | mips32-oxide | malta | Raw binary |
+| riscv64 | riscv64-oxide | virt | GPT disk |
+| riscv32 | riscv32-oxide | virt | GPT disk |
 
 ---
 
@@ -125,7 +125,7 @@ dnf install qemu-system-x86 qemu-system-arm qemu-system-riscv \
 Each architecture needs a target spec in `build/targets/`:
 
 ```json
-// build/targets/x86_64-efflux.json
+// build/targets/x86_64-oxide.json
 {
     "llvm-target": "x86_64-unknown-none",
     "data-layout": "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128",
@@ -149,10 +149,10 @@ Each architecture needs a target spec in `build/targets/`:
 # Build kernel for x86_64
 cargo build \
     --manifest-path kernel/Cargo.toml \
-    --target build/targets/x86_64-efflux.json \
+    --target build/targets/x86_64-oxide.json \
     --release
 
-# Output: target/x86_64-efflux/release/kernel
+# Output: target/x86_64-oxide/release/kernel
 ```
 
 ### Linker Script
@@ -237,7 +237,7 @@ cargo build \
 ```bash
 cargo build \
     --manifest-path libc/Cargo.toml \
-    --target build/targets/x86_64-efflux.json \
+    --target build/targets/x86_64-oxide.json \
     --release
 ```
 
@@ -247,13 +247,13 @@ cargo build \
 # Build all apps
 cargo build \
     --manifest-path apps/Cargo.toml \
-    --target build/targets/x86_64-efflux.json \
+    --target build/targets/x86_64-oxide.json \
     --release
 
 # Outputs:
-# - target/x86_64-efflux/release/init
-# - target/x86_64-efflux/release/sh
-# - target/x86_64-efflux/release/ls
+# - target/x86_64-oxide/release/init
+# - target/x86_64-oxide/release/sh
+# - target/x86_64-oxide/release/ls
 # - etc.
 ```
 
@@ -297,7 +297,7 @@ INITRAMFS_DIR=$(mktemp -d)
 mkdir -p $INITRAMFS_DIR/{bin,dev,proc,tmp,etc,lib}
 
 for bin in init sh ls cat cp mv rm mkdir rmdir pwd echo; do
-    cp target/$ARCH-efflux/release/$bin $INITRAMFS_DIR/bin/
+    cp target/$ARCH-oxide/release/$bin $INITRAMFS_DIR/bin/
 done
 
 # Create etc files
@@ -329,15 +329,15 @@ ISO_DIR=$(mktemp -d)
 
 # Create EFI structure
 mkdir -p $ISO_DIR/EFI/BOOT
-mkdir -p $ISO_DIR/efflux
+mkdir -p $ISO_DIR/oxide
 
 # Copy bootloader
 cp bootloader/target/x86_64-unknown-uefi/release/boot.efi \
    $ISO_DIR/EFI/BOOT/BOOTX64.EFI
 
 # Copy kernel and initramfs
-cp $KERNEL $ISO_DIR/efflux/kernel
-cp $INITRAMFS $ISO_DIR/efflux/initramfs.cpio.gz
+cp $KERNEL $ISO_DIR/oxide/kernel
+cp $INITRAMFS $ISO_DIR/oxide/initramfs.cpio.gz
 
 # Create ISO
 xorriso -as mkisofs \
@@ -366,7 +366,7 @@ dd if=/dev/zero of=$OUTPUT bs=1M count=$SIZE_MB
 # Create GPT
 sgdisk -o $OUTPUT
 sgdisk -n 1:2048:+100M -t 1:ef00 -c 1:"EFI" $OUTPUT   # EFI partition
-sgdisk -n 2:0:0 -t 2:8300 -c 2:"EFFLUX" $OUTPUT       # Root partition
+sgdisk -n 2:0:0 -t 2:8300 -c 2:"OXIDE" $OUTPUT       # Root partition
 
 # Format EFI partition
 LOOP=$(losetup -f --show -P $OUTPUT)
@@ -380,8 +380,8 @@ cp $KERNEL /mnt/kernel
 cp $INITRAMFS /mnt/initramfs.cpio.gz
 umount /mnt
 
-# Format root partition with effluxfs (when available)
-# mkfs.efflux ${LOOP}p2
+# Format root partition with oxidefs (when available)
+# mkfs.oxide ${LOOP}p2
 
 losetup -d $LOOP
 ```
@@ -459,7 +459,7 @@ include = [
 [image]
 type = "gpt-disk"
 size_mb = 256
-filesystem = "effluxfs"
+filesystem = "oxidefs"
 
 [initramfs]
 include = [
@@ -523,12 +523,12 @@ POLICY=${1:-policies/default.toml}
 ARCH=$(toml get $POLICY build.arch)
 PROFILE=$(toml get $POLICY build.profile)
 
-echo "Building EFFLUX for $ARCH ($PROFILE)"
+echo "Building OXIDE for $ARCH ($PROFILE)"
 
 # 1. Build kernel
 cargo build \
     --manifest-path kernel/Cargo.toml \
-    --target build/targets/$ARCH-efflux.json \
+    --target build/targets/$ARCH-oxide.json \
     --$PROFILE
 
 # 2. Build bootloader
@@ -545,7 +545,7 @@ esac
 # 3. Build userland
 cargo build \
     --manifest-path apps/Cargo.toml \
-    --target build/targets/$ARCH-efflux.json \
+    --target build/targets/$ARCH-oxide.json \
     --$PROFILE
 
 # 4. Create initramfs
@@ -556,13 +556,13 @@ IMAGE_TYPE=$(toml get $POLICY image.type)
 case $IMAGE_TYPE in
     iso)
         ./build/scripts/mkiso-uefi.sh \
-            target/$ARCH-efflux/release/kernel \
+            target/$ARCH-oxide/release/kernel \
             build/images/initramfs.cpio.gz \
             build/images/$ARCH.iso
         ;;
     gpt-disk)
         ./build/scripts/mkdisk.sh \
-            target/$ARCH-efflux/release/kernel \
+            target/$ARCH-oxide/release/kernel \
             build/images/initramfs.cpio.gz \
             build/images/$ARCH.img
         ;;
@@ -624,4 +624,4 @@ jobs:
 
 ---
 
-*EFFLUX Build Plan*
+*OXIDE Build Plan*

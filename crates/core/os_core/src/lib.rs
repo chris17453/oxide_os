@@ -1,6 +1,6 @@
-//! EFFLUX Core - Fundamental types and utilities
+//! OXIDE Core - Fundamental types and utilities
 //!
-//! This crate provides core types used throughout the EFFLUX kernel.
+//! This crate provides core types used throughout the OXIDE kernel.
 //! All types are `#![no_std]` compatible.
 
 #![no_std]

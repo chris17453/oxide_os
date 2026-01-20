@@ -2,7 +2,7 @@
 name = "libc"
 version = "0.1.0"
 edition = "2024"
-description = "Custom libc for EFFLUX OS userspace"
+description = "Custom libc for OXIDE OS userspace"
 
 [dependencies]
 

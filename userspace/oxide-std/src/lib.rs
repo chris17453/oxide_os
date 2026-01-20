@@ -1,12 +1,12 @@
-//! EFFLUX Standard Library Compatibility Layer
+//! OXIDE Standard Library Compatibility Layer
 //!
-//! Provides `std`-like APIs for EFFLUX OS userspace applications.
+//! Provides `std`-like APIs for OXIDE OS userspace applications.
 //! This allows porting applications that use Rust's standard library
 //! with minimal changes.
 //!
 //! # Usage
 //!
-//! Instead of `use std::io::Write;` use `use efflux_std::io::Write;`
+//! Instead of `use std::io::Write;` use `use oxide_std::io::Write;`
 //!
 //! # Modules
 //!

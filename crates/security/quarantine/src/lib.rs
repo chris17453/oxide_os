@@ -1,4 +1,4 @@
-//! File Quarantine System for EFFLUX OS
+//! File Quarantine System for OXIDE OS
 //!
 //! Manages quarantine of untrusted files from external sources.
 

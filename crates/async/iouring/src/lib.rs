@@ -1,4 +1,4 @@
-//! io_uring Async I/O for EFFLUX OS
+//! io_uring Async I/O for OXIDE OS
 //!
 //! High-performance async I/O using submission/completion queues.
 

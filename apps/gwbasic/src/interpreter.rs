@@ -1345,16 +1345,16 @@ impl Interpreter {
         }
     }
 
-    #[cfg(feature = "efflux")]
+    #[cfg(feature = "oxide")]
     fn read_input_line(&self) -> String {
-        // For EFFLUX, use syscall for console input
-        use crate::platform::efflux_platform::EffluxConsole;
+        // For OXIDE, use syscall for console input
+        use crate::platform::oxide_platform::OxideConsole;
         use crate::platform::Console;
-        let mut console = EffluxConsole::new();
+        let mut console = OxideConsole::new();
         console.read_line()
     }
 
-    #[cfg(all(not(feature = "std"), not(feature = "efflux")))]
+    #[cfg(all(not(feature = "std"), not(feature = "oxide")))]
     fn read_input_line(&self) -> String {
         // For stub platform (library-only build), return empty
         alloc::string::String::new()

@@ -1,4 +1,4 @@
-# EFFLUX Process Specification
+# OXIDE Process Specification
 
 **Version:** 1.0
 **Status:** Draft
@@ -177,4 +177,4 @@ Processes are isolated execution environments containing one or more threads, an
 
 ---
 
-*End of EFFLUX Process Specification*
+*End of OXIDE Process Specification*

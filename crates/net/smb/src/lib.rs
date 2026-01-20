@@ -1,4 +1,4 @@
-//! SMB/CIFS Client for EFFLUX OS
+//! SMB/CIFS Client for OXIDE OS
 //!
 //! Provides SMB share mounting and file access.
 

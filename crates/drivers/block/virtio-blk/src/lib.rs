@@ -1,4 +1,4 @@
-//! VirtIO Block Device Driver for EFFLUX OS
+//! VirtIO Block Device Driver for OXIDE OS
 //!
 //! Implements the virtio-blk specification for virtual block devices.
 

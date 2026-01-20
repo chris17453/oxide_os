@@ -1,4 +1,4 @@
-# EFFLUX Application Binary Interface (ABI) Specification
+# OXIDE Application Binary Interface (ABI) Specification
 
 **Version:** 1.0
 **Status:** Draft
@@ -8,7 +8,7 @@
 
 ## 0) Overview
 
-This specification defines the ABI for EFFLUX OS across all supported architectures:
+This specification defines the ABI for OXIDE OS across all supported architectures:
 
 - Calling conventions (function calls)
 - Syscall conventions (user → kernel)
@@ -178,7 +178,7 @@ pub trait SyscallAbi {
 
 ### 4.3 Syscall Numbers
 
-EFFLUX uses its own syscall numbers (not Linux-compatible numbers):
+OXIDE uses its own syscall numbers (not Linux-compatible numbers):
 
 ```rust
 /// Syscall number definitions (same across all architectures)
@@ -332,8 +332,8 @@ pub const PT_NOTE: u32 = 4;    // Auxiliary info
 pub const PT_PHDR: u32 = 6;    // Program header table
 pub const PT_TLS: u32 = 7;     // Thread-local storage
 
-/// EFFLUX-specific
-pub const PT_EFFLUX_TRUST: u32 = 0x60000001; // Trust/signature info
+/// OXIDE-specific
+pub const PT_OXIDE_TRUST: u32 = 0x60000001; // Trust/signature info
 ```
 
 ### 6.3 Relocation Types
@@ -346,7 +346,7 @@ Each architecture has its own relocation types. See `docs/arch/<arch>/ABI.md`.
 
 ### 7.1 TLS Model
 
-EFFLUX uses the ELF TLS model with architecture-specific implementations:
+OXIDE uses the ELF TLS model with architecture-specific implementations:
 
 ```rust
 /// TLS descriptor
@@ -467,7 +467,7 @@ int __vdso_getcpu(unsigned *cpu, unsigned *node, void *unused);
 ### 10.2 vDSO Symbol Versioning
 
 ```
-EFFLUX_1.0 {
+OXIDE_1.0 {
     global:
         __vdso_clock_gettime;
         __vdso_gettimeofday;
@@ -509,6 +509,6 @@ Contents:
 
 ---
 
-*End of EFFLUX ABI Specification*
+*End of OXIDE ABI Specification*
 
 *See `docs/arch/<arch>/ABI.md` for architecture-specific details.*

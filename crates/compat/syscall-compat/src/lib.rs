@@ -1,4 +1,4 @@
-//! Syscall Compatibility Layer for EFFLUX OS
+//! Syscall Compatibility Layer for OXIDE OS
 //!
 //! Provides syscall translation for running foreign binaries.
 
@@ -297,9 +297,9 @@ pub mod open_flags {
         pub const O_CLOEXEC: i32 = 0o2000000;
     }
 
-    /// Translate Linux open flags to EFFLUX
+    /// Translate Linux open flags to OXIDE
     pub fn translate_open_flags(linux_flags: i32) -> i32 {
-        // Direct mapping for now (would translate to EFFLUX flags)
+        // Direct mapping for now (would translate to OXIDE flags)
         linux_flags
     }
 }
@@ -354,7 +354,7 @@ pub mod signals {
     pub const SIGTTIN: i32 = 21;
     pub const SIGTTOU: i32 = 22;
 
-    /// Translate Linux signal to EFFLUX
+    /// Translate Linux signal to OXIDE
     pub fn translate_signal(linux_sig: i32) -> i32 {
         linux_sig // Direct mapping for most signals
     }

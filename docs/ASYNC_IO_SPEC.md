@@ -1,4 +1,4 @@
-# EFFLUX Async I/O Specification
+# OXIDE Async I/O Specification
 
 **Version:** 1.0  
 **Status:** Draft  
@@ -8,7 +8,7 @@
 
 ## 0) Overview
 
-EFFLUX provides Linux-compatible async I/O APIs for high-performance applications.
+OXIDE provides Linux-compatible async I/O APIs for high-performance applications.
 
 **Supported APIs:**
 - epoll (primary)
@@ -364,4 +364,4 @@ pub trait FileOps {
 
 ---
 
-*End of EFFLUX Async I/O Specification*
+*End of OXIDE Async I/O Specification*

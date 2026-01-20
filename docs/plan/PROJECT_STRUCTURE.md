@@ -1,4 +1,4 @@
-# EFFLUX Project Structure
+# OXIDE Project Structure
 
 **Status:** Draft
 **Principle:** Everything is a crate. Kernel is minimal glue.
@@ -18,7 +18,7 @@
 ## Repository Layout
 
 ```
-efflux/
+oxide/
 ├── Cargo.toml                      # Workspace root
 ├── rust-toolchain.toml             # Nightly + targets
 ├── .cargo/
@@ -73,7 +73,7 @@ efflux/
 │   │   └── vfs/             # VFS implementation
 │   │
 │   ├── fs/                         # Filesystem implementations
-│   │   ├── fs-effluxfs/     # Native filesystem
+│   │   ├── fs-oxidefs/     # Native filesystem
 │   │   ├── fs-fat32/        # FAT32
 │   │   ├── fs-tmpfs/        # RAM filesystem
 │   │   ├── fs-devfs/        # Device filesystem
@@ -159,7 +159,7 @@ efflux/
 │   │       ├── ls.rs
 │   │       ├── cat.rs
 │   │       └── ...
-│   ├── tools/               # EFFLUX-specific tools
+│   ├── tools/               # OXIDE-specific tools
 │   │   ├── trust/                  # Trust management CLI
 │   │   ├── sign/                   # File signing
 │   │   └── search/                 # Semantic search CLI
@@ -169,7 +169,7 @@ efflux/
 │       └── ...
 │
 ├── tools/                          # BUILD TOOLS (host)
-│   ├── mkfs-efflux/                # Create effluxfs image
+│   ├── mkfs-oxide/                # Create oxidefs image
 │   ├── mkimage/                    # Create boot image
 │   ├── qemu-runner/                # QEMU test runner
 │   └── ci/                         # CI scripts
@@ -187,8 +187,8 @@ efflux/
 │   │   ├── build-image.sh
 │   │   └── run-qemu.sh
 │   ├── targets/                    # Target specs (.json)
-│   │   ├── x86_64-efflux.json
-│   │   ├── aarch64-efflux.json
+│   │   ├── x86_64-oxide.json
+│   │   ├── aarch64-oxide.json
 │   │   └── ...
 │   └── images/                     # Output images (gitignored)
 │
@@ -274,7 +274,7 @@ use std::*;
 Crates in `tools/` run on host and may use `std`:
 
 ```rust
-// tools/mkfs-efflux/src/main.rs
+// tools/mkfs-oxide/src/main.rs
 use std::fs::File;  // OK - runs on host
 ```
 
@@ -433,4 +433,4 @@ path = "src/bin/cat.rs"
 
 ---
 
-*EFFLUX Project Structure*
+*OXIDE Project Structure*

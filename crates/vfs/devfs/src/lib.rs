@@ -1,4 +1,4 @@
-//! Device filesystem (devfs) for EFFLUX OS
+//! Device filesystem (devfs) for OXIDE OS
 //!
 //! Provides virtual device files like /dev/null, /dev/zero, /dev/console.
 

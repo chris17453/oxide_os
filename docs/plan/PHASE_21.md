@@ -149,7 +149,7 @@ pub enum TrustLevel {
     Untrusted,   // Explicitly untrusted
 }
 
-// Storage: ~/.efflux/trust/
+// Storage: ~/.oxide/trust/
 // - keys/       - Public key files
 // - revoked/    - Revocation entries
 // - config      - Trust configuration
@@ -320,8 +320,8 @@ userspace/security/
 # Generate key pair
 $ sign --generate-key
 Generated key pair:
-  Public: ~/.efflux/keys/mykey.pub
-  Secret: ~/.efflux/keys/mykey.sec
+  Public: ~/.oxide/keys/mykey.pub
+  Secret: ~/.oxide/keys/mykey.sec
   Fingerprint: a1b2c3d4...
 
 # Sign a file
@@ -358,4 +358,4 @@ Signature valid
 
 ---
 
-*Phase 21 of EFFLUX Implementation*
+*Phase 21 of OXIDE Implementation*

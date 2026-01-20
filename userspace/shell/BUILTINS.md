@@ -1,4 +1,4 @@
-# EFFLUX Shell (esh) - Builtin Commands
+# OXIDE Shell (esh) - Builtin Commands
 
 This document tracks the implementation status of shell builtin commands.
 

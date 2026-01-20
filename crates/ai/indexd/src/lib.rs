@@ -21,15 +21,15 @@ pub use config::IndexConfig;
 /// Extended attribute names for indexed metadata
 pub mod xattr {
     /// Embedding vector (compressed)
-    pub const EMBED: &str = "user.efflux.embed";
+    pub const EMBED: &str = "user.oxide.embed";
     /// Content hash for change detection
-    pub const HASH: &str = "user.efflux.hash";
+    pub const HASH: &str = "user.oxide.hash";
     /// Last indexed timestamp
-    pub const INDEXED: &str = "user.efflux.indexed";
+    pub const INDEXED: &str = "user.oxide.indexed";
     /// Extracted text summary
-    pub const SUMMARY: &str = "user.efflux.summary";
+    pub const SUMMARY: &str = "user.oxide.summary";
     /// Auto-generated tags
-    pub const TAGS: &str = "user.efflux.tags";
+    pub const TAGS: &str = "user.oxide.tags";
 }
 
 /// Result type for indexd operations

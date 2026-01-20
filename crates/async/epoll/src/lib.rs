@@ -1,4 +1,4 @@
-//! epoll Event Notification for EFFLUX OS
+//! epoll Event Notification for OXIDE OS
 //!
 //! Scalable I/O event notification mechanism.
 

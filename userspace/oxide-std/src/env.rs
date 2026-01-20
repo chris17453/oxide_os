@@ -1,6 +1,6 @@
 //! Environment variables and process arguments
 //!
-//! Provides std::env-like APIs for EFFLUX OS.
+//! Provides std::env-like APIs for OXIDE OS.
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -210,7 +210,7 @@ pub fn set_current_dir(path: &str) -> crate::io::Result<()> {
 
 /// Returns the full filesystem path of the current running executable
 ///
-/// Note: This is not implemented on EFFLUX yet
+/// Note: This is not implemented on OXIDE yet
 pub fn current_exe() -> crate::io::Result<String> {
     Err(crate::io::Error::new(crate::io::ErrorKind::Other, "current_exe not implemented"))
 }

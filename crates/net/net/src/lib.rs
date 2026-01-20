@@ -1,4 +1,4 @@
-//! EFFLUX Network Device Layer
+//! OXIDE Network Device Layer
 //!
 //! Provides the network device abstraction and management.
 

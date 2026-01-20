@@ -2,7 +2,7 @@
 name = "esh"
 version = "0.1.0"
 edition = "2024"
-description = "EFFLUX Shell (esh)"
+description = "OXIDE Shell (esh)"
 
 [[bin]]
 name = "esh"

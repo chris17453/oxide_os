@@ -275,7 +275,7 @@ impl AutomountDaemon {
 }
 
 // Systemd-style unit
-// /etc/efflux/automount.conf
+// /etc/oxide/automount.conf
 // [Automount]
 // MountBase=/media
 // DefaultMode=ro
@@ -369,4 +369,4 @@ Safe to remove device.
 
 ---
 
-*Phase 23 of EFFLUX Implementation*
+*Phase 23 of OXIDE Implementation*

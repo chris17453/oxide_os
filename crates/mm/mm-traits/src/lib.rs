@@ -1,4 +1,4 @@
-//! EFFLUX Memory Management Traits
+//! OXIDE Memory Management Traits
 //!
 //! Defines interfaces for memory allocators and page table operations.
 

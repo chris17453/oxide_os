@@ -311,4 +311,4 @@ $ cat /dev/input/event1
 
 ---
 
-*Phase 16 of EFFLUX Implementation*
+*Phase 16 of OXIDE Implementation*

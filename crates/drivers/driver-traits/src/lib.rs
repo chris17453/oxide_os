@@ -1,4 +1,4 @@
-//! EFFLUX Driver Traits
+//! OXIDE Driver Traits
 //!
 //! Defines interfaces for device drivers.
 

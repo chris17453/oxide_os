@@ -1,4 +1,4 @@
-//! Cryptographic Primitives for EFFLUX OS
+//! Cryptographic Primitives for OXIDE OS
 //!
 //! Provides Ed25519 signing, AES-256-GCM and ChaCha20-Poly1305 encryption,
 //! X25519 key exchange, and Argon2id password hashing.

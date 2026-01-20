@@ -1,8 +1,8 @@
 [package]
-name = "efflux-as"
+name = "oxide-as"
 version = "0.1.0"
 edition = "2024"
-description = "EFFLUX OS assembler - minimal x86_64 assembler"
+description = "OXIDE OS assembler - minimal x86_64 assembler"
 
 [[bin]]
 name = "as"

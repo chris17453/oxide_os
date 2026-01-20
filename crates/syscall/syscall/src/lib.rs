@@ -1,4 +1,4 @@
-//! System call handlers for EFFLUX
+//! System call handlers for OXIDE
 //!
 //! Provides the syscall dispatch table and handlers.
 

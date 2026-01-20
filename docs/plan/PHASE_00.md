@@ -27,7 +27,7 @@ Boot to Rust on x86_64 with serial output.
 
 ## Exit Criteria
 
-- [x] "EFFLUX" prints on serial for x86_64
+- [x] "OXIDE" prints on serial for x86_64
 - [x] Panic handler prints message and halts
 - [x] `make test` passes (automated boot verification)
 
@@ -49,13 +49,13 @@ Boot to Rust on x86_64 with serial output.
 
 ### Kernel
 - Entry point: `kernel_main()` in `kernel/src/main.rs`
-- Prints banner and "Hello from EFFLUX!" to serial
+- Prints banner and "Hello from OXIDE!" to serial
 - Panic handler outputs location and message
 
 ### Build System
 - `make build` - build kernel and bootloader
 - `make run` - run in QEMU with display
-- `make test` - automated headless test (checks for "EFFLUX" in serial output)
+- `make test` - automated headless test (checks for "OXIDE" in serial output)
 
 ---
 

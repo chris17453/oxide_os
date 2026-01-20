@@ -1,4 +1,4 @@
-//! TTY subsystem for EFFLUX OS
+//! TTY subsystem for OXIDE OS
 //!
 //! Provides terminal device abstraction with line discipline support.
 //!

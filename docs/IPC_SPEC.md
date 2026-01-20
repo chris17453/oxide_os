@@ -1,4 +1,4 @@
-# EFFLUX IPC Specification
+# OXIDE IPC Specification
 
 **Version:** 1.0  
 **Status:** Draft  
@@ -8,7 +8,7 @@
 
 ## 0) Overview
 
-EFFLUX supports standard POSIX IPC mechanisms:
+OXIDE supports standard POSIX IPC mechanisms:
 
 - Pipes (anonymous and named)
 - Unix domain sockets
@@ -256,4 +256,4 @@ Fast userspace notification mechanism. 8-byte counter.
 
 ---
 
-*End of EFFLUX IPC Specification*
+*End of OXIDE IPC Specification*

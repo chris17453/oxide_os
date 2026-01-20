@@ -1,4 +1,4 @@
-//! EFFLUX Virtual Filesystem
+//! OXIDE Virtual Filesystem
 //!
 //! Provides the VFS abstraction layer for filesystem operations.
 

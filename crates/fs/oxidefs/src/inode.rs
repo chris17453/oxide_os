@@ -1,7 +1,7 @@
-//! EFFLUXFS Inode structures
+//! OXIDEFS Inode structures
 
 use crate::superblock::Superblock;
-use crate::{EffluxfsError, EffluxfsResult, INODE_SIZE};
+use crate::{OxidefsError, OxidefsResult, INODE_SIZE};
 use block::BlockDevice;
 
 /// Inode data structure (256 bytes)
@@ -63,9 +63,9 @@ impl Default for InodeData {
 
 impl InodeData {
     /// Parse inode from bytes
-    pub fn parse(data: &[u8]) -> EffluxfsResult<Self> {
+    pub fn parse(data: &[u8]) -> OxidefsResult<Self> {
         if data.len() < INODE_SIZE as usize {
-            return Err(EffluxfsError::CorruptedInode);
+            return Err(OxidefsError::CorruptedInode);
         }
 
         let mut direct = [0u64; 12];
@@ -161,7 +161,7 @@ impl InodeData {
 }
 
 /// Read an inode from disk
-pub fn read_inode(device: &dyn BlockDevice, sb: &Superblock, ino: u64) -> EffluxfsResult<InodeData> {
+pub fn read_inode(device: &dyn BlockDevice, sb: &Superblock, ino: u64) -> OxidefsResult<InodeData> {
     let block_size = sb.block_size as usize;
     let inodes_per_block = block_size / INODE_SIZE as usize;
 
@@ -175,7 +175,7 @@ pub fn read_inode(device: &dyn BlockDevice, sb: &Superblock, ino: u64) -> Efflux
 }
 
 /// Write an inode to disk
-pub fn write_inode(device: &dyn BlockDevice, sb: &Superblock, ino: u64, inode: &InodeData) -> EffluxfsResult<()> {
+pub fn write_inode(device: &dyn BlockDevice, sb: &Superblock, ino: u64, inode: &InodeData) -> OxidefsResult<()> {
     let block_size = sb.block_size as usize;
     let inodes_per_block = block_size / INODE_SIZE as usize;
 

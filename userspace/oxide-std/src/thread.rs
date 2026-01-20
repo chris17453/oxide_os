@@ -1,6 +1,6 @@
-//! Thread support for EFFLUX OS
+//! Thread support for OXIDE OS
 //!
-//! Provides std::thread-like APIs using EFFLUX syscalls.
+//! Provides std::thread-like APIs using OXIDE syscalls.
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
@@ -227,14 +227,14 @@ pub fn sleep(dur: Duration) {
 
 /// Yield execution to another thread
 pub fn yield_now() {
-    // On EFFLUX, we don't have a dedicated yield syscall
+    // On OXIDE, we don't have a dedicated yield syscall
     // Sleep for 0 time as a hint to the scheduler
     libc::sys_nanosleep(0, 0);
 }
 
 /// Get the number of available CPUs
 ///
-/// Returns 1 since EFFLUX is currently single-CPU
+/// Returns 1 since OXIDE is currently single-CPU
 pub fn available_parallelism() -> usize {
     1
 }

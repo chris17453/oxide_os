@@ -1,4 +1,4 @@
-//! GPT Partition Table Parser for EFFLUX OS
+//! GPT Partition Table Parser for OXIDE OS
 //!
 //! Provides GPT (GUID Partition Table) parsing and partition enumeration.
 
@@ -72,8 +72,8 @@ pub mod partition_types {
         0x84, 0xe5, 0x09, 0x33, 0xc8, 0x4b, 0x4f, 0x4f,
     ];
 
-    /// EFFLUX filesystem
-    pub const EFFLUX_FS: [u8; 16] = [
+    /// OXIDE filesystem
+    pub const OXIDE_FS: [u8; 16] = [
         0x45, 0x46, 0x46, 0x4c, 0x55, 0x58, 0x46, 0x53,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
     ];
@@ -266,9 +266,9 @@ impl GptEntry {
         self.type_guid == partition_types::LINUX_FS
     }
 
-    /// Check if this is an EFFLUX filesystem partition
+    /// Check if this is an OXIDE filesystem partition
     pub fn is_fs(&self) -> bool {
-        self.type_guid == partition_types::EFFLUX_FS
+        self.type_guid == partition_types::OXIDE_FS
     }
 }
 

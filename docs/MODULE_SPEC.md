@@ -1,4 +1,4 @@
-# EFFLUX Loadable Kernel Modules Specification
+# OXIDE Loadable Kernel Modules Specification
 
 **Version:** 1.0  
 **Status:** Draft  
@@ -8,7 +8,7 @@
 
 ## 0) Overview
 
-EFFLUX supports runtime loading/unloading of kernel modules (drivers, filesystems, etc.) without kernel recompilation.
+OXIDE supports runtime loading/unloading of kernel modules (drivers, filesystems, etc.) without kernel recompilation.
 
 ---
 
@@ -207,19 +207,19 @@ pub fn sys_delete_module(name: *const u8, flags: u32) -> Result<()>;
 
 ```bash
 # Load module
-efflux insmod /lib/modules/example.ko
+oxide insmod /lib/modules/example.ko
 
 # Load module with dependencies
-efflux modprobe example
+oxide modprobe example
 
 # Unload module
-efflux rmmod example
+oxide rmmod example
 
 # List loaded modules
-efflux lsmod
+oxide lsmod
 
 # Show module info
-efflux modinfo /lib/modules/example.ko
+oxide modinfo /lib/modules/example.ko
 ```
 
 ---
@@ -231,7 +231,7 @@ efflux modinfo /lib/modules/example.ko
 ├── example.ko
 ├── virtio_blk.ko
 ├── virtio_net.ko
-├── effluxfs.ko
+├── oxidefs.ko
 ├── fat32.ko
 ├── e1000.ko
 └── modules.dep        # Dependency info
@@ -268,4 +268,4 @@ pub fn verify_module_signature(elf: &[u8]) -> Result<TrustLevel> {
 
 ---
 
-*End of EFFLUX Module Loader Specification*
+*End of OXIDE Module Loader Specification*

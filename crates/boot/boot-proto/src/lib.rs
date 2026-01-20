@@ -1,4 +1,4 @@
-//! EFFLUX Boot Protocol
+//! OXIDE Boot Protocol
 //!
 //! Defines the interface between bootloader and kernel.
 //! This crate is shared by both the UEFI bootloader and the kernel.

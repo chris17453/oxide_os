@@ -1,4 +1,4 @@
-/* EFFLUX Kernel Linker Script */
+/* OXIDE Kernel Linker Script */
 
 ENTRY(kernel_main)
 

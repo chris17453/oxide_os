@@ -1,6 +1,6 @@
-//! EFFLUX C Library (libc)
+//! OXIDE C Library (libc)
 //!
-//! Provides a minimal POSIX-like API for EFFLUX userspace programs.
+//! Provides a minimal POSIX-like API for OXIDE userspace programs.
 //! Written in Rust but provides C-compatible interfaces.
 
 #![no_std]

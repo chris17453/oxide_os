@@ -1,6 +1,6 @@
 //! System call interface
 //!
-//! Provides syscall wrappers for EFFLUX userspace.
+//! Provides syscall wrappers for OXIDE userspace.
 //! Architecture-specific raw syscall implementations are in arch/.
 
 // Re-export arch-specific raw syscall functions

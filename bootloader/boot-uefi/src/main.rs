@@ -1,6 +1,6 @@
-//! EFFLUX UEFI Bootloader
+//! OXIDE UEFI Bootloader
 //!
-//! Loads the EFFLUX kernel and transfers control to it.
+//! Loads the OXIDE kernel and transfers control to it.
 
 #![no_std]
 #![no_main]
@@ -27,10 +27,10 @@ mod elf;
 mod paging;
 
 /// Kernel file path on the EFI partition
-const KERNEL_PATH: &str = "\\EFI\\EFFLUX\\kernel.elf";
+const KERNEL_PATH: &str = "\\EFI\\OXIDE\\kernel.elf";
 
 /// Initramfs file path on the EFI partition
-const INITRAMFS_PATH: &str = "\\EFI\\EFFLUX\\initramfs.cpio";
+const INITRAMFS_PATH: &str = "\\EFI\\OXIDE\\initramfs.cpio";
 
 /// Page size
 const PAGE_SIZE: u64 = 4096;
@@ -42,7 +42,7 @@ fn main() -> Status {
 
     log("");
     log("========================================");
-    log("  EFFLUX UEFI Bootloader");
+    log("  OXIDE UEFI Bootloader");
     log("  Version 0.1.0");
     log("========================================");
     log("");
@@ -191,7 +191,7 @@ fn load_kernel_file() -> Result<Vec<u8>, &'static str> {
     // Open the kernel file
     let kernel_handle = root
         .open(
-            cstr16!("\\EFI\\EFFLUX\\kernel.elf"),
+            cstr16!("\\EFI\\OXIDE\\kernel.elf"),
             FileMode::Read,
             FileAttribute::empty(),
         )
@@ -239,7 +239,7 @@ fn load_initramfs() -> Result<(u64, u64), &'static str> {
     // Open the initramfs file
     let initramfs_handle = root
         .open(
-            cstr16!("\\EFI\\EFFLUX\\initramfs.cpio"),
+            cstr16!("\\EFI\\OXIDE\\initramfs.cpio"),
             FileMode::Read,
             FileAttribute::empty(),
         )

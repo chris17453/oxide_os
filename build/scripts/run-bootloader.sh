@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run EFFLUX UEFI bootloader in QEMU
+# Run OXIDE UEFI bootloader in QEMU
 
 set -e
 

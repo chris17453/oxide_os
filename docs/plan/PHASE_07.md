@@ -141,4 +141,4 @@ Phase 7 complete for x86_64 architecture. Signal handling infrastructure is in p
 
 ---
 
-*Phase 7 of EFFLUX Implementation - Complete*
+*Phase 7 of OXIDE Implementation - Complete*

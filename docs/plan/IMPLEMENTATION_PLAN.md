@@ -1,4 +1,4 @@
-# EFFLUX Implementation Plan
+# OXIDE Implementation Plan
 
 **Status:** Active
 **Target:** All 8 architectures (x86_64, i686, aarch64, arm, mips64, mips32, riscv64, riscv32)
@@ -7,7 +7,7 @@
 
 ## Overview
 
-This plan organizes EFFLUX development into 5 stages with 25 phases. Each phase builds on previous phases. All phases must work on all supported architectures.
+This plan organizes OXIDE development into 5 stages with 25 phases. Each phase builds on previous phases. All phases must work on all supported architectures.
 
 ---
 
@@ -28,7 +28,7 @@ This plan organizes EFFLUX development into 5 stages with 25 phases. Each phase 
 - Serial output on all architectures
 - Panic handler with halt
 
-**Exit:** "Hello from EFFLUX" on serial for all 8 architectures
+**Exit:** "Hello from OXIDE" on serial for all 8 architectures
 
 ### Phase 1: Memory
 - Boot-time bump allocator
@@ -127,7 +127,7 @@ This plan organizes EFFLUX development into 5 stages with 25 phases. Each phase 
 |-------|------|--------------|--------------|
 | 9 | SMP | Phase 8 | AP boot, per-CPU data, TLB shootdown |
 | 10 | Modules | Phase 9 | Loadable kernel modules, insmod/rmmod |
-| 11 | Storage | Phase 10 | Block devices, GPT, effluxfs, FAT32 |
+| 11 | Storage | Phase 10 | Block devices, GPT, oxidefs, FAT32 |
 | 12 | Network | Phase 11 | TCP/IP, virtio-net, sockets |
 | 13 | Input | Phase 8 | Keyboard, mouse, input events |
 | 14 | Graphics | Phase 8 | Framebuffer, virtio-gpu |
@@ -158,10 +158,10 @@ This plan organizes EFFLUX development into 5 stages with 25 phases. Each phase 
 - virtio-blk driver
 - NVMe driver
 - AHCI/SATA driver
-- effluxfs driver (native)
+- oxidefs driver (native)
 - FAT32 driver (EFI/compat)
 
-**Exit:** Mount effluxfs root, read/write files
+**Exit:** Mount oxidefs root, read/write files
 
 ### Phase 12: Network
 - Network device interface
@@ -215,7 +215,7 @@ This plan organizes EFFLUX development into 5 stages with 25 phases. Each phase 
 |-------|------|--------------|--------------|
 | 17 | Containers | Phase 9 | Namespaces, cgroups, seccomp |
 | 18 | Hypervisor | Phase 9 | VT-x/EL2, nested paging, VM lifecycle |
-| 19 | Self-Hosting | Phase 11,12 | LLVM, rustc, cargo on EFFLUX |
+| 19 | Self-Hosting | Phase 11,12 | LLVM, rustc, cargo on OXIDE |
 | 20 | AI Indexing | Phase 11 | indexd, embeddings, semantic search |
 | 21 | Security | Phase 11 | Signing, encryption, trust store, quarantine |
 
@@ -250,7 +250,7 @@ This plan organizes EFFLUX development into 5 stages with 25 phases. Each phase 
 - indexd daemon
 - Candle embedding runtime
 - HNSW vector index
-- Extended metadata on effluxfs
+- Extended metadata on oxidefs
 - Overlay metadata for other FS
 - Semantic search API
 
@@ -400,11 +400,11 @@ Phase 24 (Compat)
 
 ## Start Here
 
-1. Read EFFLUX_MASTER_SPEC.md for full context
+1. Read OXIDE_MASTER_SPEC.md for full context
 2. Review arch-specific docs in docs/arch/*/
 3. Begin Phase 0: Boot + Serial
 4. Update PHASE_00.md as you progress
 
 ---
 
-*End of EFFLUX Implementation Plan*
+*End of OXIDE Implementation Plan*

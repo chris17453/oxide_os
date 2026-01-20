@@ -1,6 +1,6 @@
-//! EFFLUX Assembler (as)
+//! OXIDE Assembler (as)
 //!
-//! A minimal x86_64 assembler for EFFLUX OS.
+//! A minimal x86_64 assembler for OXIDE OS.
 //! Supports AT&T syntax and generates ELF64 relocatable object files.
 
 #![no_std]

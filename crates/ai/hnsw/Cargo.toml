@@ -2,8 +2,8 @@
 name = "hnsw"
 version = "0.1.0"
 edition = "2021"
-authors = ["EFFLUX Contributors"]
-description = "Hierarchical Navigable Small World (HNSW) vector index for EFFLUX"
+authors = ["OXIDE Contributors"]
+description = "Hierarchical Navigable Small World (HNSW) vector index for OXIDE"
 license = "MIT OR Apache-2.0"
 
 [dependencies]

@@ -1,4 +1,4 @@
-//! Process management for EFFLUX
+//! Process management for OXIDE
 //!
 //! Provides process, thread, and address space management.
 

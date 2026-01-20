@@ -2,7 +2,7 @@
 name = "mm-cow"
 version = "0.1.0"
 edition = "2024"
-description = "Copy-on-Write page tracking for EFFLUX"
+description = "Copy-on-Write page tracking for OXIDE"
 
 [dependencies]
 os_core = { path = "../../core/os_core" }

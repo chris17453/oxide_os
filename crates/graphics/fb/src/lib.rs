@@ -1,4 +1,4 @@
-//! Framebuffer Graphics for EFFLUX OS
+//! Framebuffer Graphics for OXIDE OS
 //!
 //! Provides framebuffer abstraction, text console, and font rendering.
 

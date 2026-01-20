@@ -1,4 +1,4 @@
-//! USB Core Framework for EFFLUX OS
+//! USB Core Framework for OXIDE OS
 //!
 //! Provides USB device abstraction, enumeration, and class driver framework.
 

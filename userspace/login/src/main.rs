@@ -1,4 +1,4 @@
-//! Login program for EFFLUX OS
+//! Login program for OXIDE OS
 //!
 //! Prompts for username and password, authenticates, and spawns shell.
 
@@ -128,7 +128,7 @@ pub fn main() -> i32 {
 
     loop {
         // Print login prompt
-        prints("\nEFFLUX OS login: ");
+        prints("\nOXIDE OS login: ");
 
         // Read username
         let mut username = [0u8; MAX_INPUT];
@@ -170,7 +170,7 @@ pub fn main() -> i32 {
         }
 
         // Successful login - print welcome and spawn shell
-        prints("Welcome to EFFLUX OS, ");
+        prints("Welcome to OXIDE OS, ");
         prints(entry.username);
         prints("!\n\n");
 

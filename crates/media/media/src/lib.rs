@@ -1,4 +1,4 @@
-//! External Media Management for EFFLUX OS
+//! External Media Management for OXIDE OS
 //!
 //! Provides USB device detection, trust management, and mount policies.
 

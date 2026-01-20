@@ -28,7 +28,7 @@ impl UtsNamespace {
         UtsNamespace {
             id: alloc_ns_id(),
             parent: None,
-            hostname: RwLock::new(String::from("efflux")),
+            hostname: RwLock::new(String::from("oxide")),
             domainname: RwLock::new(String::from("(none)")),
         }
     }
@@ -38,7 +38,7 @@ impl UtsNamespace {
         let (hostname, domainname) = if let Some(ref p) = parent {
             (p.hostname.read().clone(), p.domainname.read().clone())
         } else {
-            (String::from("efflux"), String::from("(none)"))
+            (String::from("oxide"), String::from("(none)"))
         };
 
         UtsNamespace {
@@ -85,7 +85,7 @@ impl UtsNamespace {
     /// Get uname info
     pub fn uname(&self) -> UnameInfo {
         UnameInfo {
-            sysname: String::from("Efflux"),
+            sysname: String::from("Oxide"),
             nodename: self.hostname.read().clone(),
             release: String::from("0.1.0"),
             version: String::from("#1"),

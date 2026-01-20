@@ -1,4 +1,4 @@
-//! EFFLUX Logging - Kernel logging infrastructure
+//! OXIDE Logging - Kernel logging infrastructure
 //!
 //! Provides macros for logging at different levels.
 //! Output is directed to the registered serial writer.

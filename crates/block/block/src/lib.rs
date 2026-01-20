@@ -1,4 +1,4 @@
-//! Block device abstraction layer for EFFLUX OS
+//! Block device abstraction layer for OXIDE OS
 //!
 //! Provides:
 //! - Block device trait

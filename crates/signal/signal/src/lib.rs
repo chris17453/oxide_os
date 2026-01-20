@@ -1,4 +1,4 @@
-//! Signal handling for EFFLUX OS
+//! Signal handling for OXIDE OS
 //!
 //! This crate provides POSIX-compatible signal handling including:
 //! - Signal numbers and default actions

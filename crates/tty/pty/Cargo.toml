@@ -3,7 +3,7 @@ name = "pty"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Pseudo-terminal (PTY) support for EFFLUX OS"
+description = "Pseudo-terminal (PTY) support for OXIDE OS"
 
 [dependencies]
 vfs = { workspace = true }

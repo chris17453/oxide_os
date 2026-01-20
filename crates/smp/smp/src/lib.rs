@@ -1,4 +1,4 @@
-//! SMP (Symmetric Multiprocessing) support for EFFLUX OS
+//! SMP (Symmetric Multiprocessing) support for OXIDE OS
 //!
 //! This crate provides multi-core support including:
 //! - Per-CPU data structures

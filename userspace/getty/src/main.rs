@@ -1,4 +1,4 @@
-//! Getty - terminal manager for EFFLUX OS
+//! Getty - terminal manager for OXIDE OS
 //!
 //! Opens a terminal device, configures it, and spawns login.
 //! Typically started by init for each configured terminal.
@@ -36,7 +36,7 @@ fn clear_screen() {
 /// Print system identification banner
 fn print_banner() {
     prints("\n");
-    prints("EFFLUX OS v0.1.0\n");
+    prints("OXIDE OS v0.1.0\n");
     prints("================\n");
     prints("\n");
 }

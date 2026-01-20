@@ -1,4 +1,4 @@
-//! Scheduler trait definitions for EFFLUX OS
+//! Scheduler trait definitions for OXIDE OS
 //!
 //! Provides architecture-independent interfaces for thread scheduling.
 

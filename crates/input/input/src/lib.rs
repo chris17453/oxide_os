@@ -1,4 +1,4 @@
-//! Input Subsystem for EFFLUX OS
+//! Input Subsystem for OXIDE OS
 //!
 //! Provides the input event abstraction and device management.
 

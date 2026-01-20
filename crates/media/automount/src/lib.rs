@@ -1,4 +1,4 @@
-//! Automount Daemon for EFFLUX OS
+//! Automount Daemon for OXIDE OS
 //!
 //! Automatic mounting of external media with security policies.
 

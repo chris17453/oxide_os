@@ -1,6 +1,6 @@
-# EFFLUX Cargo Workspace
+# OXIDE Cargo Workspace
 
-This document shows the Cargo workspace configuration for EFFLUX.
+This document shows the Cargo workspace configuration for OXIDE.
 
 ---
 
@@ -62,7 +62,7 @@ members = [
     "crates/fs/fs-procfs",
     "crates/fs/fs-initramfs",
     "crates/fs/fs-fat32",
-    "crates/fs/fs-effluxfs",
+    "crates/fs/fs-oxidefs",
 
     # Drivers
     "crates/drivers/driver-traits",
@@ -99,7 +99,7 @@ members = [
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/user/efflux"
+repository = "https://github.com/user/oxide"
 
 [workspace.dependencies]
 # Shared no_std dependencies
@@ -494,22 +494,22 @@ pub type gid_t = u32;
 [build]
 # Default target for `cargo build`
 # Override with --target flag
-target = "build/targets/x86_64-efflux.json"
+target = "build/targets/x86_64-oxide.json"
 
-[target.x86_64-efflux]
+[target.x86_64-oxide]
 linker = "rust-lld"
 rustflags = [
     "-C", "link-arg=-Tbuild/targets/x86_64-linker.ld",
     "-C", "code-model=kernel",
 ]
 
-[target.aarch64-efflux]
+[target.aarch64-oxide]
 linker = "rust-lld"
 rustflags = [
     "-C", "link-arg=-Tbuild/targets/aarch64-linker.ld",
 ]
 
-[target.riscv64-efflux]
+[target.riscv64-oxide]
 linker = "rust-lld"
 rustflags = [
     "-C", "link-arg=-Tbuild/targets/riscv64-linker.ld",
@@ -570,7 +570,7 @@ mkdir -p crates/sched/{sched-traits,sched-rr}/src
 mkdir -p crates/process/{process,elf,signal}/src
 mkdir -p crates/syscall/{syscall-traits,syscall}/src
 mkdir -p crates/vfs/{vfs-traits,vfs}/src
-mkdir -p crates/fs/{fs-tmpfs,fs-devfs,fs-procfs,fs-initramfs,fs-fat32,fs-effluxfs}/src
+mkdir -p crates/fs/{fs-tmpfs,fs-devfs,fs-procfs,fs-initramfs,fs-fat32,fs-oxidefs}/src
 mkdir -p crates/drivers/driver-traits/src
 mkdir -p crates/drivers/serial/{driver-uart-8250,driver-uart-pl011}/src
 mkdir -p crates/drivers/block/driver-virtio-blk/src
@@ -581,7 +581,7 @@ mkdir -p crates/net/{net-traits,net-stack}/src
 mkdir -p bootloader/{boot-common,boot-uefi}/src
 mkdir -p libc/src
 mkdir -p apps/{init,shell,coreutils}/src
-mkdir -p tools/{mkfs-efflux,mkimage,qemu-runner}/src
+mkdir -p tools/{mkfs-oxide,mkimage,qemu-runner}/src
 mkdir -p policies
 mkdir -p build/{scripts,targets,images}
 
@@ -590,4 +590,4 @@ echo "Directory structure created!"
 
 ---
 
-*EFFLUX Cargo Workspace Configuration*
+*OXIDE Cargo Workspace Configuration*

@@ -1,6 +1,6 @@
 //! Filesystem operations compatible with std::fs
 //!
-//! Provides basic file operations using EFFLUX syscalls.
+//! Provides basic file operations using OXIDE syscalls.
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;

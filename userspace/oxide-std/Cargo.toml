@@ -1,0 +1,8 @@
+[package]
+name = "oxide-std"
+version = "0.1.0"
+edition = "2024"
+description = "Standard library compatibility layer for OXIDE OS userspace"
+
+[dependencies]
+libc = { path = "../libc" }

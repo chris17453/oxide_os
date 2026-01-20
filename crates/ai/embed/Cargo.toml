@@ -2,8 +2,8 @@
 name = "embed"
 version = "0.1.0"
 edition = "2021"
-authors = ["EFFLUX Contributors"]
-description = "Text embedding and content extraction for EFFLUX"
+authors = ["OXIDE Contributors"]
+description = "Text embedding and content extraction for OXIDE"
 license = "MIT OR Apache-2.0"
 
 [dependencies]

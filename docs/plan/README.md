@@ -1,6 +1,6 @@
-# EFFLUX Implementation Plan
+# OXIDE Implementation Plan
 
-This folder contains the phased implementation plan for EFFLUX OS.
+This folder contains the phased implementation plan for OXIDE OS.
 
 ---
 
@@ -61,10 +61,10 @@ Update checkboxes as work completes.
 
 ## Related Docs
 
-- [../EFFLUX_MASTER_SPEC.md](../EFFLUX_MASTER_SPEC.md) - Full specification
+- [../OXIDE_MASTER_SPEC.md](../OXIDE_MASTER_SPEC.md) - Full specification
 - [../arch/](../arch/) - Architecture-specific docs
 - [../MEMORY_SPEC.md](../MEMORY_SPEC.md), [../SCHEDULER_SPEC.md](../SCHEDULER_SPEC.md), etc.
 
 ---
 
-*EFFLUX Implementation Plan*
+*OXIDE Implementation Plan*

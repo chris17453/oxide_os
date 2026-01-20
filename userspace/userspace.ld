@@ -1,4 +1,4 @@
-/* Common linker script for EFFLUX userspace programs */
+/* Common linker script for OXIDE userspace programs */
 
 ENTRY(_start)
 

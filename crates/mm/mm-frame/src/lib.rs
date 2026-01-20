@@ -1,4 +1,4 @@
-//! EFFLUX Frame Allocator
+//! OXIDE Frame Allocator
 //!
 //! Physical frame allocation using a bitmap allocator.
 

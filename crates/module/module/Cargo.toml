@@ -3,7 +3,7 @@ name = "module"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Loadable kernel module support for EFFLUX OS"
+description = "Loadable kernel module support for OXIDE OS"
 
 [dependencies]
 os_core = { workspace = true }

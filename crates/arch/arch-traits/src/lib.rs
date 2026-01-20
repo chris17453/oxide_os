@@ -1,4 +1,4 @@
-//! EFFLUX Architecture Traits
+//! OXIDE Architecture Traits
 //!
 //! Defines the interface that all architecture implementations must provide.
 

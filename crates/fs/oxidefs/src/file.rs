@@ -1,10 +1,10 @@
-//! EFFLUXFS File operations
+//! OXIDEFS File operations
 
 use alloc::vec::Vec;
 
 use crate::inode::InodeData;
 use crate::superblock::Superblock;
-use crate::{EffluxfsError, EffluxfsResult, BLOCK_SIZE};
+use crate::{OxidefsError, OxidefsResult, BLOCK_SIZE};
 use block::BlockDevice;
 
 /// Read file data
@@ -14,7 +14,7 @@ pub fn read_file(
     inode: &InodeData,
     offset: u64,
     buf: &mut [u8],
-) -> EffluxfsResult<usize> {
+) -> OxidefsResult<usize> {
     if offset >= inode.size {
         return Ok(0);
     }
@@ -61,8 +61,8 @@ pub fn write_file(
     inode: &mut InodeData,
     offset: u64,
     buf: &[u8],
-    alloc_block: impl Fn() -> EffluxfsResult<u64>,
-) -> EffluxfsResult<usize> {
+    alloc_block: impl Fn() -> OxidefsResult<u64>,
+) -> OxidefsResult<usize> {
     let block_size = sb.block_size as u64;
     let mut bytes_written = 0usize;
     let mut current_offset = offset;
@@ -104,7 +104,7 @@ fn get_block(
     sb: &Superblock,
     inode: &InodeData,
     block_num: u64,
-) -> EffluxfsResult<u64> {
+) -> OxidefsResult<u64> {
     let block_size = sb.block_size as u64;
     let ptrs_per_block = block_size / 8; // 64-bit pointers
 
@@ -162,7 +162,7 @@ fn get_block(
         return read_indirect_ptr(device, s_indirect, idx3 as usize, block_size);
     }
 
-    Err(EffluxfsError::InvalidArgument)
+    Err(OxidefsError::InvalidArgument)
 }
 
 /// Get or allocate a physical block
@@ -171,8 +171,8 @@ fn get_or_alloc_block(
     sb: &Superblock,
     inode: &mut InodeData,
     block_num: u64,
-    alloc_block: &impl Fn() -> EffluxfsResult<u64>,
-) -> EffluxfsResult<u64> {
+    alloc_block: &impl Fn() -> OxidefsResult<u64>,
+) -> OxidefsResult<u64> {
     let existing = get_block(device, sb, inode, block_num)?;
     if existing != 0 {
         return Ok(existing);
@@ -193,8 +193,8 @@ fn set_block(
     inode: &mut InodeData,
     block_num: u64,
     phys_block: u64,
-    alloc_block: &impl Fn() -> EffluxfsResult<u64>,
-) -> EffluxfsResult<()> {
+    alloc_block: &impl Fn() -> OxidefsResult<u64>,
+) -> OxidefsResult<()> {
     let block_size = sb.block_size as u64;
     let ptrs_per_block = block_size / 8;
 
@@ -221,7 +221,7 @@ fn set_block(
     // Double and triple indirect would follow similar patterns
     // Simplified for now
 
-    Err(EffluxfsError::NoSpace)
+    Err(OxidefsError::NoSpace)
 }
 
 /// Read a pointer from an indirect block
@@ -230,7 +230,7 @@ fn read_indirect_ptr(
     indirect_block: u64,
     index: usize,
     block_size: u64,
-) -> EffluxfsResult<u64> {
+) -> OxidefsResult<u64> {
     let mut buf = alloc::vec![0u8; block_size as usize];
     device.read(indirect_block, &mut buf)?;
 
@@ -248,7 +248,7 @@ fn write_indirect_ptr(
     index: usize,
     value: u64,
     block_size: u64,
-) -> EffluxfsResult<()> {
+) -> OxidefsResult<()> {
     let mut buf = alloc::vec![0u8; block_size as usize];
     device.read(indirect_block, &mut buf)?;
 
@@ -265,8 +265,8 @@ pub fn truncate_file(
     sb: &Superblock,
     inode: &mut InodeData,
     new_size: u64,
-    free_block: impl Fn(u64) -> EffluxfsResult<()>,
-) -> EffluxfsResult<()> {
+    free_block: impl Fn(u64) -> OxidefsResult<()>,
+) -> OxidefsResult<()> {
     if new_size >= inode.size {
         // Extending - just update size
         inode.size = new_size;

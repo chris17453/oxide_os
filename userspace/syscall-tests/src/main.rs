@@ -1,4 +1,4 @@
-//! Syscall Test Suite for EFFLUX OS
+//! Syscall Test Suite for OXIDE OS
 //!
 //! Tests kernel syscalls and reports pass/fail status.
 
@@ -169,7 +169,7 @@ fn test_write_file() -> TestResult {
         return TestResult::Fail;
     }
 
-    let data = b"Hello, EFFLUX!";
+    let data = b"Hello, OXIDE!";
     let n = libc::write(fd, data);
     libc::close(fd);
 
@@ -837,7 +837,7 @@ fn test_mprotect() -> TestResult {
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn main() -> i32 {
-    libc::println!("=== EFFLUX Syscall Test Suite ===");
+    libc::println!("=== OXIDE Syscall Test Suite ===");
     libc::println!("");
 
     let mut stats = Stats::new();

@@ -31,7 +31,7 @@ members = [
     "crates/vfs/tmpfs",
     "crates/vfs/initramfs",
     "crates/vfs/procfs",
-    "crates/fs/effluxfs",
+    "crates/fs/oxidefs",
     "crates/fs/fat32",
     "crates/net/net",
     "crates/net/tcpip",
@@ -90,7 +90,7 @@ members = [
     "userspace/coreutils",
     "userspace/modutils",
     "userspace/search",
-    "userspace/efflux-std",
+    "userspace/oxide-std",
     "userspace/syscall-tests",
     "userspace/as",
     "userspace/ld",
@@ -104,7 +104,7 @@ members = [
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/user/efflux"
+repository = "https://github.com/user/oxide"
 
 [workspace.dependencies]
 bitflags = "2.4"
@@ -144,7 +144,7 @@ gpt = { path = "crates/block/gpt" }
 virtio-blk = { path = "crates/drivers/block/virtio-blk" }
 nvme = { path = "crates/drivers/block/nvme" }
 ahci = { path = "crates/drivers/block/ahci" }
-effluxfs = { path = "crates/fs/effluxfs" }
+oxidefs = { path = "crates/fs/oxidefs" }
 fat32 = { path = "crates/fs/fat32" }
 net = { path = "crates/net/net" }
 tcpip = { path = "crates/net/tcpip" }

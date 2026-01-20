@@ -1,4 +1,4 @@
-//! EFFLUX Init Process (PID 1)
+//! OXIDE Init Process (PID 1)
 //!
 //! First userspace process that:
 //! - Mounts essential filesystems
@@ -14,7 +14,7 @@ use libc::*;
 /// Main init entry point
 #[unsafe(no_mangle)]
 fn main() -> i32 {
-    printlns("EFFLUX init starting...");
+    printlns("OXIDE init starting...");
 
     // We're PID 1
     let pid = getpid();
@@ -24,7 +24,7 @@ fn main() -> i32 {
 
     // Print startup message
     printlns("");
-    printlns("EFFLUX OS v0.1.0");
+    printlns("OXIDE OS v0.1.0");
     printlns("");
 
     // Run fbtest to test framebuffer

@@ -1,6 +1,6 @@
-# EFFLUX OS - Claude Code Instructions
+# OXIDE OS - Claude Code Instructions
 
-This file contains mandatory instructions for Claude when working on the EFFLUX operating system project.
+This file contains mandatory instructions for Claude when working on the OXIDE operating system project.
 
 ---
 
@@ -92,7 +92,7 @@ The `docs/` folder contains **component specifications**:
 
 | File | Description |
 |------|-------------|
-| `EFFLUX_MASTER_SPEC.md` | Master specification - project principles and overview |
+| `OXIDE_MASTER_SPEC.md` | Master specification - project principles and overview |
 | `MEMORY_SPEC.md` | Memory management (allocators, paging, zones) |
 | `SCHEDULER_SPEC.md` | Scheduler design (priorities, queues, preemption) |
 | `PROCESS_SPEC.md` | Process model (fork/exec, signals, credentials) |
@@ -189,7 +189,7 @@ Each arch-specific doc should be ~50-100 lines, not 500+.
 
 ## Project Context
 
-EFFLUX is a from-scratch operating system written in Rust, currently targeting x86_64.
+OXIDE is a from-scratch operating system written in Rust, currently targeting x86_64.
 
 ### Key Locations
 
@@ -198,7 +198,7 @@ EFFLUX is a from-scratch operating system written in Rust, currently targeting x
 | `docs/plan/IMPLEMENTATION_PLAN.md` | Phased implementation plan |
 | `docs/plan/PROJECT_STRUCTURE.md` | Crate layout and hierarchy |
 | `docs/plan/PHASE_*.md` | Phase tracking (check these first!) |
-| `docs/EFFLUX_MASTER_SPEC.md` | Master specification |
+| `docs/OXIDE_MASTER_SPEC.md` | Master specification |
 | `docs/*.md` | Component specifications |
 | `kernel/` | Kernel binary (minimal, wires crates together) |
 | `crates/` | All kernel subsystem crates |

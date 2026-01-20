@@ -1,4 +1,4 @@
-//! Process filesystem (procfs) for EFFLUX OS
+//! Process filesystem (procfs) for OXIDE OS
 //!
 //! Provides /proc with process information.
 //!

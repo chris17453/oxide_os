@@ -1,4 +1,4 @@
-# EFFLUX Coreutils - Utilities Roadmap
+# OXIDE Coreutils - Utilities Roadmap
 
 ## Currently Implemented
 

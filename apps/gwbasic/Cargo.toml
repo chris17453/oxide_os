@@ -1,9 +1,9 @@
 [package]
-name = "efflux-gwbasic"
+name = "oxide-gwbasic"
 version = "0.1.0"
 authors = ["chris17453"]
 edition = "2021"
-description = "GW-BASIC in modern Rust - for EFFLUX OS and host systems"
+description = "GW-BASIC in modern Rust - for OXIDE OS and host systems"
 license = "MIT"
 
 [lib]
@@ -17,14 +17,14 @@ required-features = ["host"]
 
 [[bin]]
 name = "gwbasic"
-path = "src/efflux_main.rs"
-required-features = ["efflux"]
+path = "src/oxide_main.rs"
+required-features = ["oxide"]
 
 [features]
 # Default is no_std for kernel builds. Use `--features host` on host systems.
 default = []
 host = ["std", "dep:minifb"]
-efflux = ["dep:libc"]
+oxide = ["dep:libc"]
 std = []
 
 [dependencies]

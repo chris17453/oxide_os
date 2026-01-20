@@ -1,4 +1,4 @@
-# efflux.fs — Filesystem Specification
+# oxide.fs — Filesystem Specification
 
 **Version:** 1.0  
 **Status:** Draft  
@@ -8,7 +8,7 @@
 
 ## 0) Overview
 
-efflux.fs is the native filesystem for EFFLUX OS. It is designed with:
+oxide.fs is the native filesystem for OXIDE OS. It is designed with:
 
 - Modern on-disk structures (B-tree, extents, COW)
 - AI-native extended metadata (embeddings, tags, semantic data)
@@ -32,7 +32,7 @@ efflux.fs is the native filesystem for EFFLUX OS. It is designed with:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ Block 0: Boot sector (reserved, unused by efflux.fs)            │
+│ Block 0: Boot sector (reserved, unused by oxide.fs)            │
 ├─────────────────────────────────────────────────────────────────┤
 │ Block 1: Primary Superblock                                     │
 ├─────────────────────────────────────────────────────────────────┤
@@ -392,19 +392,19 @@ pub struct XattrBlockHeader {
 
 | Namespace | Name | Description |
 |-----------|------|-------------|
-| user | efflux.type | MIME type |
-| user | efflux.description | Human description |
-| user | efflux.tags | Comma-separated tags |
-| user | efflux.source | Origin URL/path |
-| user | efflux.created_by | Creator identity |
-| user | efflux.ai_summary | AI-generated summary |
-| user | efflux.confidence | AI confidence score |
-| security | efflux.signature | Detached signature |
-| security | efflux.signer_cert | Signer certificate |
-| security | efflux.trust_level | Trust level (system/vendor/user/untrusted) |
-| security | efflux.encryption_iv | Encryption IV |
-| system | efflux.embedding | Vector embedding |
-| system | efflux.relationships | Related files (JSON) |
+| user | oxide.type | MIME type |
+| user | oxide.description | Human description |
+| user | oxide.tags | Comma-separated tags |
+| user | oxide.source | Origin URL/path |
+| user | oxide.created_by | Creator identity |
+| user | oxide.ai_summary | AI-generated summary |
+| user | oxide.confidence | AI confidence score |
+| security | oxide.signature | Detached signature |
+| security | oxide.signer_cert | Signer certificate |
+| security | oxide.trust_level | Trust level (system/vendor/user/untrusted) |
+| security | oxide.encryption_iv | Encryption IV |
+| system | oxide.embedding | Vector embedding |
+| system | oxide.relationships | Related files (JSON) |
 
 ---
 
@@ -669,10 +669,10 @@ pub struct TrustStoreEntry {
 
 ## 18) Utilities
 
-### 18.1 mkfs.efflux
+### 18.1 mkfs.oxide
 
 ```bash
-mkfs.efflux [options] <device>
+mkfs.oxide [options] <device>
 
 Options:
   -L <label>          Volume label
@@ -686,10 +686,10 @@ Options:
   --cow               Enable copy-on-write mode
 ```
 
-### 18.2 fsck.efflux
+### 18.2 fsck.oxide
 
 ```bash
-fsck.efflux [options] <device>
+fsck.oxide [options] <device>
 
 Options:
   -a                  Auto-repair
@@ -731,7 +731,7 @@ Unknown compatible features are ignored. Unknown incompatible features prevent m
 ### 19.3 Migration
 
 Tools provided to:
-- Convert ext4 to efflux.fs (offline)
+- Convert ext4 to oxide.fs (offline)
 - Add encryption to existing filesystem
 - Enable COW mode (requires reformat)
 
@@ -839,4 +839,4 @@ Tools provided to:
 
 ---
 
-*End of efflux.fs Specification*
+*End of oxide.fs Specification*

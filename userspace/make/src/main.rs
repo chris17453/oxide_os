@@ -1,6 +1,6 @@
-//! EFFLUX Make - Minimal Build Automation
+//! OXIDE Make - Minimal Build Automation
 //!
-//! A minimal make utility for EFFLUX OS.
+//! A minimal make utility for OXIDE OS.
 //!
 //! Usage:
 //!   make [target]   - Build the specified target (or first target)

@@ -2,8 +2,8 @@
 name = "indexd"
 version = "0.1.0"
 edition = "2021"
-authors = ["EFFLUX Contributors"]
-description = "Indexing daemon for semantic file search in EFFLUX"
+authors = ["OXIDE Contributors"]
+description = "Indexing daemon for semantic file search in OXIDE"
 license = "MIT OR Apache-2.0"
 
 [dependencies]

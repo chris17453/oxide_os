@@ -67,7 +67,7 @@ fn print_help() {
     let mut out = StdOut;
     let _ = writeln!(out, "Usage: search [OPTIONS] <query>");
     let _ = writeln!(out, "");
-    let _ = writeln!(out, "Semantic file search tool for Efflux OS");
+    let _ = writeln!(out, "Semantic file search tool for Oxide OS");
     let _ = writeln!(out, "");
     let _ = writeln!(out, "Options:");
     let _ = writeln!(out, "  -n, --limit <N>       Maximum number of results (default: 10)");

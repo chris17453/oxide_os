@@ -1,4 +1,4 @@
-//! Terminal Emulator for EFFLUX OS
+//! Terminal Emulator for OXIDE OS
 //!
 //! Provides VT100/ANSI terminal emulation at the kernel driver level.
 //! Applications write bytes to stdout; this crate parses escape sequences,

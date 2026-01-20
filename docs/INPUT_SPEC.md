@@ -1,4 +1,4 @@
-# EFFLUX Input Subsystem Specification
+# OXIDE Input Subsystem Specification
 
 **Version:** 1.0
 **Status:** Draft
@@ -8,7 +8,7 @@
 
 ## 0) Overview
 
-EFFLUX provides a unified input subsystem supporting:
+OXIDE provides a unified input subsystem supporting:
 
 - Keyboard (PS/2, USB HID, virtio-input)
 - Mouse/Trackpad (PS/2, USB HID, virtio-input)
@@ -581,7 +581,7 @@ static DEAD_KEYS_DE: [DeadKeyDef; 3] = [
 
 ### 5.1 UTF-8 Throughout
 
-EFFLUX uses **UTF-8** as the native character encoding everywhere:
+OXIDE uses **UTF-8** as the native character encoding everywhere:
 - Terminal I/O
 - File names
 - Text files
@@ -1030,7 +1030,7 @@ struct VirtioInputEvent {
 ### 9.1 Keyboard Configuration
 
 ```toml
-# /etc/efflux/keyboard.conf
+# /etc/oxide/keyboard.conf
 
 [keyboard]
 # Default layout
@@ -1068,11 +1068,11 @@ natural_scrolling = false
 scroll_speed = 3
 ```
 
-### 9.2 /etc/efflux/keyboard.d/
+### 9.2 /etc/oxide/keyboard.d/
 
 Additional layout files:
 ```
-/etc/efflux/keyboard.d/
+/etc/oxide/keyboard.d/
 ├── custom.layout       # User-defined layout
 └── programmer.layout   # Programming-optimized layout
 ```
@@ -1122,4 +1122,4 @@ Additional layout files:
 
 ---
 
-*End of EFFLUX Input Subsystem Specification*
+*End of OXIDE Input Subsystem Specification*

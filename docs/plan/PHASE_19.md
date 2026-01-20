@@ -8,7 +8,7 @@
 
 ## Goal
 
-Enable EFFLUX to compile its own kernel (self-hosting).
+Enable OXIDE to compile its own kernel (self-hosting).
 
 ---
 
@@ -130,24 +130,24 @@ const PROT_EXEC: i32 = 0x4;
 ## LLVM Porting Steps
 
 ```
-1. Cross-compile LLVM for EFFLUX
+1. Cross-compile LLVM for OXIDE
    $ cmake -G Ninja \
-       -DCMAKE_SYSTEM_NAME=EFFLUX \
+       -DCMAKE_SYSTEM_NAME=OXIDE \
        -DCMAKE_C_COMPILER=cc \
-       -DLLVM_HOST_TRIPLE=x86_64-unknown-efflux \
-       -DLLVM_DEFAULT_TARGET_TRIPLE=x86_64-unknown-efflux \
+       -DLLVM_HOST_TRIPLE=x86_64-unknown-oxide \
+       -DLLVM_DEFAULT_TARGET_TRIPLE=x86_64-unknown-oxide \
        ../llvm
 
-2. Add EFFLUX target support
+2. Add OXIDE target support
    - llvm/lib/Target/X86/X86TargetMachine.cpp
-   - Add efflux to Triple.cpp
+   - Add oxide to Triple.cpp
 
 3. Build minimal configuration
    - X86 target only (or host arch)
    - No debug info
    - Static linking initially
 
-4. Test on EFFLUX
+4. Test on OXIDE
    $ llc --version
    $ clang --version
 ```
@@ -157,13 +157,13 @@ const PROT_EXEC: i32 = 0x4;
 ## Rust Porting Steps
 
 ```
-1. Create EFFLUX target spec
+1. Create OXIDE target spec
    // x86_64.json
    {
-     "llvm-target": "x86_64-unknown-efflux",
+     "llvm-target": "x86_64-unknown-oxide",
      "data-layout": "e-m:e-p270:32:32-...",
      "arch": "x86_64",
-     "os": "efflux",
+     "os": "oxide",
      "env": "",
      "linker": "ld",
      "executables": true,
@@ -172,13 +172,13 @@ const PROT_EXEC: i32 = 0x4;
 
 2. Bootstrap rustc
    - Use cross-compiled Stage 0
-   - Build Stage 1 on EFFLUX
+   - Build Stage 1 on OXIDE
    - Build Stage 2 for final compiler
 
 3. Build standard library
    - core (no_std)
    - alloc
-   - std (with EFFLUX syscalls)
+   - std (with OXIDE syscalls)
 
 4. Test
    $ rustc --version
@@ -193,11 +193,11 @@ const PROT_EXEC: i32 = 0x4;
 ```
 userspace/toolchain/
 ├── llvm/
-│   ├── patches/           # EFFLUX-specific patches
+│   ├── patches/           # OXIDE-specific patches
 │   └── build.sh           # Build script
 ├── rust/
 │   ├── src/               # Forked rust source
-│   ├── library/std/       # EFFLUX std implementation
+│   ├── library/std/       # OXIDE std implementation
 │   └── build.sh           # Bootstrap script
 └── pthread/
     ├── pthread.c          # pthread implementation
@@ -227,9 +227,9 @@ crates/libc-support/mmap/src/
 
 ## Exit Criteria
 
-- [ ] LLVM compiles and runs on EFFLUX
+- [ ] LLVM compiles and runs on OXIDE
 - [ ] clang can compile C code
-- [ ] rustc compiles and runs on EFFLUX
+- [ ] rustc compiles and runs on OXIDE
 - [ ] cargo can build projects
 - [x] pthread programs work
 - [x] mmap/munmap functional
@@ -241,18 +241,18 @@ crates/libc-support/mmap/src/
 ## Test: Self-Compile
 
 ```bash
-# On EFFLUX:
+# On OXIDE:
 
 # Check toolchain
 $ rustc --version
-rustc 1.75.0 (efflux)
+rustc 1.75.0 (oxide)
 
 $ cargo --version
 cargo 1.75.0
 
 # Clone kernel source
-$ git clone /mnt/source /tmp/efflux
-$ cd /tmp/efflux
+$ git clone /mnt/source /tmp/oxide
+$ cd /tmp/oxide
 
 # Build kernel
 $ cargo build --release
@@ -276,8 +276,8 @@ Implemented kernel-side support for self-hosting requirements:
 - mmap: Memory mapping manager (anonymous and file-backed mappings, mmap/munmap/mprotect/mremap)
 - dl: Dynamic linker basics (dlopen/dlclose/dlsym/dlerror, ELF parsing, symbol tables, relocations)
 
-LLVM/rustc/cargo porting requires actually cross-compiling these tools for EFFLUX target.
+LLVM/rustc/cargo porting requires actually cross-compiling these tools for OXIDE target.
 
 ---
 
-*Phase 19 of EFFLUX Implementation*
+*Phase 19 of OXIDE Implementation*

@@ -2,7 +2,7 @@
 name = "vmx"
 version = "0.1.0"
 edition = "2024"
-description = "Intel VT-x (VMX) support for Efflux OS hypervisor"
+description = "Intel VT-x (VMX) support for Oxide OS hypervisor"
 license = "MIT OR Apache-2.0"
 
 [dependencies]

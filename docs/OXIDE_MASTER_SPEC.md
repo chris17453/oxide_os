@@ -1,8 +1,8 @@
-# EFFLUX Operating System — Master Specification
+# OXIDE Operating System — Master Specification
 
 **Version:** 1.0
 **Status:** Draft
-**Project Name:** EFFLUX
+**Project Name:** OXIDE
 **License:** MIT
 **Targets:** x86_64, i686, AArch64, ARM32, MIPS64, MIPS32, RISC-V 64/32
 **Boot:** UEFI, BIOS, ARCS (SGI), OpenSBI, U-Boot, bare
@@ -66,7 +66,7 @@
 ## 2) Repository Structure
 
 ```
-efflux/
+oxide/
 ├── kernel/
 │   ├── arch/
 │   │   ├── mod.rs              # Arch trait definitions (Mmu, Tlb, Context, etc.)
@@ -135,7 +135,7 @@ efflux/
 │   │   └── usb/                # USB host controller, HID
 │   └── lib.rs
 ├── fs/
-│   ├── effluxfs/               # Native EFFLUX filesystem
+│   ├── oxidefs/               # Native OXIDE filesystem
 │   ├── fat32/                  # FAT32 driver
 │   ├── devfs/                  # Device filesystem
 │   ├── procfs/                 # Process filesystem
@@ -158,8 +158,8 @@ efflux/
 │   ├── arcs/                   # ARCS loader (mips64 SGI)
 │   └── uboot/                  # U-Boot integration (arm, embedded)
 └── tools/
-    ├── mkfs.efflux/            # Filesystem creation
-    ├── fsck.efflux/            # Filesystem check
+    ├── mkfs.oxide/            # Filesystem creation
+    ├── fsck.oxide/            # Filesystem check
     └── pxe/                    # PXE boot server config
 ```
 
@@ -256,7 +256,7 @@ pub trait Serial {
 ### 4.5 Exit Criteria
 - [ ] Boots on QEMU x86_64 (UEFI)
 - [ ] Boots on QEMU aarch64 (UEFI)
-- [ ] Serial "Hello from EFFLUX" on both
+- [ ] Serial "Hello from OXIDE" on both
 - [ ] Panic prints backtrace and halts
 - [ ] PXE boot works on x86_64
 
@@ -778,7 +778,7 @@ pub fn register_driver(driver: &Driver) -> Result<()> { ... }
 
 ## 15) Phase 11: Block Storage + Real Filesystem
 
-**Goal:** Persistent storage with native efflux.fs and FAT32 support.
+**Goal:** Persistent storage with native oxide.fs and FAT32 support.
 
 ### 15.1 Deliverables
 - Block device interface
@@ -786,7 +786,7 @@ pub fn register_driver(driver: &Driver) -> Result<()> { ... }
 - virtio-blk driver (QEMU)
 - NVMe driver
 - AHCI/SATA driver
-- efflux.fs driver (native filesystem)
+- oxide.fs driver (native filesystem)
 - FAT32 driver (boot partition, compatibility)
 
 ### 15.2 Block Device Interface
@@ -805,7 +805,7 @@ pub trait BlockDevice: Send + Sync {
 
 | Filesystem | Use case |
 |------------|----------|
-| efflux.fs | Root, data partitions, full features |
+| oxide.fs | Root, data partitions, full features |
 | FAT32 | EFI system partition, USB compatibility |
 
 ### 15.4 Mount Alias System
@@ -833,7 +833,7 @@ BACKUP:/file.txt
 ### 15.5 Exit Criteria
 - [ ] virtio-blk works in QEMU
 - [ ] GPT partition parsing works
-- [ ] efflux.fs mounts and works
+- [ ] oxide.fs mounts and works
 - [ ] FAT32 mounts and works
 - [ ] Mount aliases work
 - [ ] Works on both arches
@@ -1101,7 +1101,7 @@ pub enum VmExit {
 
 ## 23) Phase 19: Self-Hosting
 
-**Goal:** Compile Rust on EFFLUX.
+**Goal:** Compile Rust on OXIDE.
 
 ### 23.1 Deliverables
 - Port LLVM
@@ -1130,7 +1130,7 @@ pub enum VmExit {
 - indexd daemon
 - Embedding generation (Candle runtime)
 - Vector search index (HNSW)
-- Extended metadata on efflux.fs
+- Extended metadata on oxide.fs
 - Overlay metadata for non-native filesystems
 - Search API
 
@@ -1143,7 +1143,7 @@ pub enum VmExit {
 | medium | 768 | Documents, code | 3 KB |
 | large | 1536 | High-fidelity search | 6 KB |
 
-### 24.3 Extended Metadata (efflux.fs)
+### 24.3 Extended Metadata (oxide.fs)
 
 ```rust
 pub struct ExtendedMeta {
@@ -1160,10 +1160,10 @@ pub struct ExtendedMeta {
 }
 ```
 
-### 24.4 Overlay Store (non-efflux.fs)
+### 24.4 Overlay Store (non-oxide.fs)
 
 ```
-/var/efflux/meta/
+/var/oxide/meta/
   └── <mount-uuid>/
       ├── index.db        # SQLite metadata
       ├── vectors.bin     # Packed embeddings
@@ -1193,7 +1193,7 @@ pub struct SearchResult {
 - [ ] indexd runs and indexes files
 - [ ] Embeddings generated for text files
 - [ ] Semantic search returns relevant results
-- [ ] Works with efflux.fs and overlay
+- [ ] Works with oxide.fs and overlay
 - [ ] Works on both arches
 
 ---
@@ -1213,7 +1213,7 @@ pub struct SearchResult {
 ### 25.2 Trust Hierarchy
 
 ```
-EFFLUX Root CA (built into OS)
+OXIDE Root CA (built into OS)
     ├── Vendor CAs (third-party apps, drivers)
     └── User CAs (personal certificates)
 ```
@@ -1232,7 +1232,7 @@ pub struct FileIntegrity {
 }
 
 pub enum TrustLevel {
-    System,     // EFFLUX root CA
+    System,     // OXIDE root CA
     Vendor,     // Vendor sub-CA
     User,       // User cert
     Untrusted,  // No signature
@@ -1242,7 +1242,7 @@ pub enum TrustLevel {
 ### 25.4 Quarantine System
 
 ```
-/var/efflux/quarantine/
+/var/oxide/quarantine/
   └── <file-uuid>/
       ├── content.bin       # Encrypted, non-executable
       ├── metadata.json
@@ -1262,14 +1262,14 @@ pub enum TrustLevel {
 ### 25.6 CLI Tools
 
 ```bash
-efflux trust list|add|remove|revoke|export|share|discover
-efflux sign <file>
-efflux verify <file>
-efflux seal <file>
-efflux inspect <file>
-efflux quarantine list|inspect|accept|reject
-efflux encrypt <file>
-efflux decrypt <file>
+oxide trust list|add|remove|revoke|export|share|discover
+oxide sign <file>
+oxide verify <file>
+oxide seal <file>
+oxide inspect <file>
+oxide quarantine list|inspect|accept|reject
+oxide encrypt <file>
+oxide decrypt <file>
 ```
 
 ### 25.7 Exit Criteria
@@ -1344,7 +1344,7 @@ Each component requires:
 | 8 | Userland | Shell runs |
 | 9 | SMP | Multi-core works |
 | 10 | Modules | Drivers load dynamically |
-| 11 | Storage | efflux.fs + FAT32 work |
+| 11 | Storage | oxide.fs + FAT32 work |
 | 12 | Network | TCP/IP works |
 | 13 | Input | Keyboard/mouse work |
 | 14 | Graphics | Framebuffer/GPU works |
@@ -1352,7 +1352,7 @@ Each component requires:
 | 16 | USB | USB devices work |
 | 17 | Containers | Isolation works |
 | 18 | Hypervisor | VMs run |
-| 19 | Self-host | Compile Rust on EFFLUX |
+| 19 | Self-host | Compile Rust on OXIDE |
 | 20 | AI Search | Semantic search works |
 | 21 | Security | Signing + encryption work |
 | 22 | Async I/O | epoll/kqueue equivalent works |
@@ -1366,13 +1366,13 @@ Each component requires:
 
 | Item | Decision |
 |------|----------|
-| Project name | EFFLUX |
+| Project name | OXIDE |
 | License | MIT |
 | Kernel model | Monolithic + loadable modules |
 | Targets | x86_64, AArch64 |
 | Boot | Custom UEFI, PXE |
 | Compatibility | Source compat, POSIX-ish, custom libc |
-| Native filesystem | efflux.fs |
+| Native filesystem | oxide.fs |
 | Boot filesystem | FAT32 |
 | Drive letters | A:/B: reserved, start at C: |
 | Network stack | smoltcp |
@@ -1396,7 +1396,7 @@ Each component requires:
 | Document | Description |
 |----------|-------------|
 | MEMORY_SPEC.md | Physical/virtual memory, buddy, slab, CoW, no-MMU |
-| EFFLUXFS_SPEC.md | efflux.fs on-disk format |
+| OXIDEFS_SPEC.md | oxide.fs on-disk format |
 | SECURITY_SPEC.md | Security and trust system |
 | LIBC_SPEC.md | C library API |
 | SCHEDULER_SPEC.md | Scheduler design |
@@ -1418,7 +1418,7 @@ Each component requires:
 ## 31) Next Steps
 
 1. Review and approve this spec
-2. Review efflux.fs spec
+2. Review oxide.fs spec
 3. Review security spec
 4. Review all component specs
 5. Set up repository structure
@@ -1426,4 +1426,4 @@ Each component requires:
 
 ---
 
-*End of EFFLUX Master Specification*
+*End of OXIDE Master Specification*

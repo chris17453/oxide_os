@@ -1,8 +1,8 @@
 [package]
-name = "efflux-ar"
+name = "oxide-ar"
 version = "0.1.0"
 edition = "2024"
-description = "EFFLUX OS archive tool - create and manage static libraries"
+description = "OXIDE OS archive tool - create and manage static libraries"
 
 [[bin]]
 name = "ar"

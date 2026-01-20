@@ -1,4 +1,4 @@
-# EFFLUX libc Specification
+# OXIDE libc Specification
 
 **Version:** 1.0  
 **Status:** Draft  
@@ -8,7 +8,7 @@
 
 ## 0) Overview
 
-EFFLUX libc is a custom C library providing Linux source compatibility. Apps recompile against EFFLUX libc to run on EFFLUX OS.
+OXIDE libc is a custom C library providing Linux source compatibility. Apps recompile against OXIDE libc to run on OXIDE OS.
 
 **Goals:**
 - POSIX.1-2017 core compliance
@@ -29,7 +29,7 @@ EFFLUX libc is a custom C library providing Linux source compatibility. Apps rec
 ┌─────────────────────────────────────────────┐
 │  Application (C/C++/Rust FFI)               │
 ├─────────────────────────────────────────────┤
-│  EFFLUX libc (Rust with C ABI)              │
+│  OXIDE libc (Rust with C ABI)              │
 │  ├── stdio                                  │
 │  ├── stdlib                                 │
 │  ├── string                                 │
@@ -40,7 +40,7 @@ EFFLUX libc is a custom C library providing Linux source compatibility. Apps rec
 ├─────────────────────────────────────────────┤
 │  Syscall layer (inline asm)                 │
 ├─────────────────────────────────────────────┤
-│  EFFLUX Kernel                              │
+│  OXIDE Kernel                              │
 └─────────────────────────────────────────────┘
 ```
 
@@ -616,7 +616,7 @@ int select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 int pselect(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
             const struct timespec *timeout, const sigset_t *sigmask);
 
-// epoll (EFFLUX equivalent)
+// epoll (OXIDE equivalent)
 int epoll_create(int size);
 int epoll_create1(int flags);
 int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
@@ -836,4 +836,4 @@ Basic C locale by default. UTF-8 assumed for multibyte.
 
 ---
 
-*End of EFFLUX libc Specification*
+*End of OXIDE libc Specification*

@@ -98,4 +98,4 @@ Resolution switching deferred for future enhancement.
 
 ---
 
-*Phase 14 of EFFLUX Implementation*
+*Phase 14 of OXIDE Implementation*

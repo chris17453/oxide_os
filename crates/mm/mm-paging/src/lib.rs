@@ -1,4 +1,4 @@
-//! EFFLUX Paging
+//! OXIDE Paging
 //!
 //! Page table structures and mapping operations for x86_64.
 

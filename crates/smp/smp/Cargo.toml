@@ -3,7 +3,7 @@ name = "smp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "SMP (Symmetric Multiprocessing) support for EFFLUX OS"
+description = "SMP (Symmetric Multiprocessing) support for OXIDE OS"
 
 [dependencies]
 os_core = { workspace = true }

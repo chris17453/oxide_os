@@ -104,8 +104,8 @@ File Created/Modified
           │
           ▼
 ┌───────────────────┐
-│ effluxfs xattr    │
-│ user.efflux.embed │
+│ oxidefs xattr    │
+│ user.oxide.embed │
 └───────────────────┘
 ```
 
@@ -185,29 +185,29 @@ impl HnswIndex {
 
 ---
 
-## effluxfs Extended Attributes
+## oxidefs Extended Attributes
 
 ```rust
 // Extended attributes for AI metadata
 // Stored in inode's xattr area
 
 /// Embedding vector (compressed)
-const XATTR_EMBED: &str = "user.efflux.embed";
+const XATTR_EMBED: &str = "user.oxide.embed";
 
 /// Content hash (for change detection)
-const XATTR_HASH: &str = "user.efflux.hash";
+const XATTR_HASH: &str = "user.oxide.hash";
 
 /// Last indexed timestamp
-const XATTR_INDEXED: &str = "user.efflux.indexed";
+const XATTR_INDEXED: &str = "user.oxide.indexed";
 
 /// Extracted text summary
-const XATTR_SUMMARY: &str = "user.efflux.summary";
+const XATTR_SUMMARY: &str = "user.oxide.summary";
 
 /// Tags (auto-generated)
-const XATTR_TAGS: &str = "user.efflux.tags";
+const XATTR_TAGS: &str = "user.oxide.tags";
 
-// For non-effluxfs filesystems, store in overlay database
-// ~/.efflux/metadata.db
+// For non-oxidefs filesystems, store in overlay database
+// ~/.oxide/metadata.db
 ```
 
 ---
@@ -362,4 +362,4 @@ Score: 0.91  ~/docs/pasta.txt
 
 ---
 
-*Phase 20 of EFFLUX Implementation*
+*Phase 20 of OXIDE Implementation*

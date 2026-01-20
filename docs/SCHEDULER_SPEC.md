@@ -1,4 +1,4 @@
-# EFFLUX Scheduler Specification
+# OXIDE Scheduler Specification
 
 **Version:** 1.0
 **Status:** Draft
@@ -8,7 +8,7 @@
 
 ## 0) Overview
 
-EFFLUX uses a preemptive priority-based scheduler with per-CPU run queues.
+OXIDE uses a preemptive priority-based scheduler with per-CPU run queues.
 
 ---
 
@@ -129,4 +129,4 @@ Default user priority: 20
 
 ---
 
-*End of EFFLUX Scheduler Specification*
+*End of OXIDE Scheduler Specification*

@@ -1,4 +1,4 @@
-//! NFS Client for EFFLUX OS
+//! NFS Client for OXIDE OS
 //!
 //! Provides NFS share mounting and file access.
 

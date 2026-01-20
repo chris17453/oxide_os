@@ -469,13 +469,13 @@ pub mod fb_ioctl {
     /// Blank display
     pub const FBIOBLANK: u64 = 0x4611;
 
-    // EFFLUX-specific extensions
+    // OXIDE-specific extensions
     /// Get mode count
-    pub const EFFLUX_FB_GET_MODE_COUNT: u64 = 0x4700;
+    pub const OXIDE_FB_GET_MODE_COUNT: u64 = 0x4700;
     /// Get mode info by index
-    pub const EFFLUX_FB_GET_MODE: u64 = 0x4701;
+    pub const OXIDE_FB_GET_MODE: u64 = 0x4701;
     /// Set display mode
-    pub const EFFLUX_FB_SET_MODE: u64 = 0x4702;
+    pub const OXIDE_FB_SET_MODE: u64 = 0x4702;
 }
 
 /// Framebuffer info callback type
@@ -734,8 +734,8 @@ impl VnodeOps for FramebufferDevice {
                 }
 
                 let mut fix_info = FbFixScreenInfo::default();
-                // Set id to "EFFLUX FB"
-                let id = b"EFFLUX FB\0\0\0\0\0\0\0";
+                // Set id to "OXIDE FB"
+                let id = b"OXIDE FB\0\0\0\0\0\0\0";
                 fix_info.id.copy_from_slice(id);
                 fix_info.smem_start = info.phys_base;
                 fix_info.smem_len = info.size as u32;
@@ -755,7 +755,7 @@ impl VnodeOps for FramebufferDevice {
                 Ok(0)
             }
 
-            fb_ioctl::EFFLUX_FB_GET_MODE_COUNT => {
+            fb_ioctl::OXIDE_FB_GET_MODE_COUNT => {
                 // Get mode count from callback
                 let count = unsafe {
                     if let Some(callback) = FB_MODE_COUNT_CALLBACK {
@@ -767,7 +767,7 @@ impl VnodeOps for FramebufferDevice {
                 Ok(count as i64)
             }
 
-            fb_ioctl::EFFLUX_FB_GET_MODE => {
+            fb_ioctl::OXIDE_FB_GET_MODE => {
                 // arg is pointer to struct: { u32 index, [pad], VideoModeDeviceInfo info }
                 // Note: VideoModeDeviceInfo has 8-byte alignment due to u64 field,
                 // so there's padding between index and info

@@ -13,16 +13,16 @@ pub mod watos_platform;
 #[cfg(feature = "watos")]
 pub use watos_platform::*;
 
-// EFFLUX platform: when efflux feature is enabled
-#[cfg(feature = "efflux")]
-pub mod efflux_platform;
-#[cfg(feature = "efflux")]
-pub use efflux_platform::*;
+// OXIDE platform: when oxide feature is enabled
+#[cfg(feature = "oxide")]
+pub mod oxide_platform;
+#[cfg(feature = "oxide")]
+pub use oxide_platform::*;
 
-// Fallback stub platform for library-only builds (no std, no watos, no efflux)
-#[cfg(all(not(feature = "std"), not(feature = "watos"), not(feature = "efflux")))]
+// Fallback stub platform for library-only builds (no std, no watos, no oxide)
+#[cfg(all(not(feature = "std"), not(feature = "watos"), not(feature = "oxide")))]
 pub mod stub_platform;
-#[cfg(all(not(feature = "std"), not(feature = "watos"), not(feature = "efflux")))]
+#[cfg(all(not(feature = "std"), not(feature = "watos"), not(feature = "oxide")))]
 pub use stub_platform::*;
 
 // Re-export alloc types for no_std

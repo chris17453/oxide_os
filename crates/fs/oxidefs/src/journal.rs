@@ -1,10 +1,10 @@
-//! EFFLUXFS Journal for crash recovery
+//! OXIDEFS Journal for crash recovery
 //!
 //! Simple write-ahead logging journal.
 
 use alloc::vec::Vec;
 
-use crate::{EffluxfsError, EffluxfsResult};
+use crate::{OxidefsError, OxidefsResult};
 use block::BlockDevice;
 
 /// Journal magic number
@@ -41,9 +41,9 @@ pub struct JournalHeader {
 
 impl JournalHeader {
     /// Parse from bytes
-    pub fn parse(data: &[u8]) -> EffluxfsResult<Self> {
+    pub fn parse(data: &[u8]) -> OxidefsResult<Self> {
         if data.len() < 24 {
-            return Err(EffluxfsError::IoError);
+            return Err(OxidefsError::IoError);
         }
 
         Ok(JournalHeader {
@@ -122,7 +122,7 @@ pub struct Journal {
 
 impl Journal {
     /// Initialize a new journal
-    pub fn init(device: &dyn BlockDevice, start_block: u64, size: u32) -> EffluxfsResult<Self> {
+    pub fn init(device: &dyn BlockDevice, start_block: u64, size: u32) -> OxidefsResult<Self> {
         let block_size = device.block_size();
 
         // Write journal header
@@ -149,7 +149,7 @@ impl Journal {
     }
 
     /// Load existing journal
-    pub fn load(device: &dyn BlockDevice, start_block: u64) -> EffluxfsResult<Self> {
+    pub fn load(device: &dyn BlockDevice, start_block: u64) -> OxidefsResult<Self> {
         let block_size = device.block_size();
 
         let mut buf = alloc::vec![0u8; block_size as usize];
@@ -157,7 +157,7 @@ impl Journal {
 
         let header = JournalHeader::parse(&buf)?;
         if header.magic != JOURNAL_MAGIC {
-            return Err(EffluxfsError::IoError);
+            return Err(OxidefsError::IoError);
         }
 
         Ok(Journal {
@@ -178,7 +178,7 @@ impl Journal {
     }
 
     /// Commit a transaction
-    pub fn commit(&mut self, device: &dyn BlockDevice, tx: Transaction) -> EffluxfsResult<()> {
+    pub fn commit(&mut self, device: &dyn BlockDevice, tx: Transaction) -> OxidefsResult<()> {
         // 1. Write transaction start block
         let start_block = self.start_block + 1 + self.head as u64;
         let mut buf = alloc::vec![0u8; self.block_size as usize];
@@ -240,7 +240,7 @@ impl Journal {
     }
 
     /// Sync journal header to disk
-    fn sync_header(&self, device: &dyn BlockDevice) -> EffluxfsResult<()> {
+    fn sync_header(&self, device: &dyn BlockDevice) -> OxidefsResult<()> {
         let header = JournalHeader {
             magic: JOURNAL_MAGIC,
             size: self.size,
@@ -258,7 +258,7 @@ impl Journal {
     }
 
     /// Recover from journal after crash
-    pub fn recover(&mut self, device: &dyn BlockDevice) -> EffluxfsResult<()> {
+    pub fn recover(&mut self, device: &dyn BlockDevice) -> OxidefsResult<()> {
         // Scan journal for committed transactions that weren't checkpointed
         let mut pos = self.tail;
 

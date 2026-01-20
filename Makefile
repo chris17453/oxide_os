@@ -1,6 +1,6 @@
-# EFFLUX OS Makefile
+# OXIDE OS Makefile
 #
-# Build and test the EFFLUX operating system
+# Build and test the OXIDE operating system
 
 SHELL := /usr/bin/bash
 
@@ -71,7 +71,7 @@ userspace-release:
 		cargo build --package $$pkg --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1; \
 	done
 	@echo "  Building gwbasic (release)..."
-	@cargo build --package efflux-gwbasic --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) --features efflux || exit 1
+	@cargo build --package oxide-gwbasic --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) --features oxide || exit 1
 	@echo "Stripping binaries..."
 	@for prog in init esh login gwbasic $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
@@ -123,7 +123,7 @@ initramfs: userspace-release
 	@echo "root:x:0:" > $(TARGET_DIR)/initramfs/etc/group
 	@echo "PATH=/initramfs/bin:/initramfs/sbin:/bin:/sbin" > $(TARGET_DIR)/initramfs/etc/profile
 	@echo "export PATH" >> $(TARGET_DIR)/initramfs/etc/profile
-	@echo "EFFLUX" > $(TARGET_DIR)/initramfs/etc/hostname
+	@echo "OXIDE" > $(TARGET_DIR)/initramfs/etc/hostname
 	@# Create CPIO archive
 	@cd $(TARGET_DIR)/initramfs && find . | cpio -o -H newc > ../initramfs.cpio 2>/dev/null
 	@echo "Initramfs created: $(INITRAMFS)"
@@ -173,14 +173,14 @@ list-bins:
 # Create boot directory structure with kernel, bootloader, and initramfs
 boot-dir: kernel bootloader initramfs
 	@mkdir -p $(BOOT_DIR)/EFI/BOOT
-	@mkdir -p $(BOOT_DIR)/EFI/EFFLUX
+	@mkdir -p $(BOOT_DIR)/EFI/OXIDE
 	@cp $(BOOTLOADER_TARGET) $(BOOT_DIR)/EFI/BOOT/BOOTX64.EFI
-	@cp $(KERNEL_TARGET) $(BOOT_DIR)/EFI/EFFLUX/kernel.elf
-	@cp $(TARGET_DIR)/initramfs.cpio $(BOOT_DIR)/EFI/EFFLUX/initramfs.cpio
+	@cp $(KERNEL_TARGET) $(BOOT_DIR)/EFI/OXIDE/kernel.elf
+	@cp $(TARGET_DIR)/initramfs.cpio $(BOOT_DIR)/EFI/OXIDE/initramfs.cpio
 	@echo "Boot directory created at $(BOOT_DIR)"
 	@echo "  - Bootloader: EFI/BOOT/BOOTX64.EFI"
-	@echo "  - Kernel: EFI/EFFLUX/kernel.elf"
-	@echo "  - Initramfs: EFI/EFFLUX/initramfs.cpio"
+	@echo "  - Kernel: EFI/OXIDE/kernel.elf"
+	@echo "  - Initramfs: EFI/OXIDE/initramfs.cpio"
 
 # Run in QEMU (interactive, with networking)
 run: boot-dir
@@ -190,8 +190,8 @@ run: boot-dir
 		echo "         sudo dnf install edk2-ovmf (Fedora)"; \
 		exit 1; \
 	fi
-	@mkdir -p /tmp/qemu-efflux
-	TMPDIR=/tmp/qemu-efflux qemu-system-x86_64 \
+	@mkdir -p /tmp/qemu-oxide
+	TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
 		-machine q35 \
 		-m 256M \
 		-bios "$(OVMF)" \
@@ -210,8 +210,8 @@ run-no-net: boot-dir
 		echo "         sudo dnf install edk2-ovmf (Fedora)"; \
 		exit 1; \
 	fi
-	@mkdir -p /tmp/qemu-efflux
-	TMPDIR=/tmp/qemu-efflux qemu-system-x86_64 \
+	@mkdir -p /tmp/qemu-oxide
+	TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
 		-machine q35 \
 		-m 256M \
 		-bios "$(OVMF)" \
@@ -226,8 +226,8 @@ run-headless: boot-dir
 		echo "Error: OVMF firmware not found"; \
 		exit 1; \
 	fi
-	@mkdir -p /tmp/qemu-efflux
-	TMPDIR=/tmp/qemu-efflux qemu-system-x86_64 \
+	@mkdir -p /tmp/qemu-oxide
+	TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
 		-machine q35 \
 		-m 256M \
 		-bios "$(OVMF)" \
@@ -245,8 +245,8 @@ run-headless-no-net: boot-dir
 		echo "Error: OVMF firmware not found"; \
 		exit 1; \
 	fi
-	@mkdir -p /tmp/qemu-efflux
-	TMPDIR=/tmp/qemu-efflux qemu-system-x86_64 \
+	@mkdir -p /tmp/qemu-oxide
+	TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
 		-machine q35 \
 		-m 256M \
 		-bios "$(OVMF)" \
@@ -263,8 +263,8 @@ test: boot-dir
 		echo "Error: OVMF firmware not found"; \
 		exit 1; \
 	fi
-	@mkdir -p /tmp/qemu-efflux
-	@TMPDIR=/tmp/qemu-efflux timeout $(QEMU_TIMEOUT) qemu-system-x86_64 \
+	@mkdir -p /tmp/qemu-oxide
+	@TMPDIR=/tmp/qemu-oxide timeout $(QEMU_TIMEOUT) qemu-system-x86_64 \
 		-machine q35 \
 		-m 256M \
 		-bios "$(OVMF)" \
@@ -277,13 +277,13 @@ test: boot-dir
 	@echo "--- Serial Output ---"
 	@cat $(TARGET_DIR)/serial.log 2>/dev/null || echo "(no output)"
 	@echo "--- End Output ---"
-	@if grep -q "EFFLUX" $(TARGET_DIR)/serial.log 2>/dev/null; then \
+	@if grep -q "OXIDE" $(TARGET_DIR)/serial.log 2>/dev/null; then \
 		echo ""; \
 		echo "TEST PASSED: Boot message found"; \
 		exit 0; \
 	else \
 		echo ""; \
-		echo "TEST FAILED: Expected 'EFFLUX' in output"; \
+		echo "TEST FAILED: Expected 'OXIDE' in output"; \
 		exit 1; \
 	fi
 
@@ -310,7 +310,7 @@ clean:
 
 # Show help
 help:
-	@echo "EFFLUX OS Build System"
+	@echo "OXIDE OS Build System"
 	@echo ""
 	@echo "Targets:"
 	@echo "  all            - Build kernel and bootloader (default)"

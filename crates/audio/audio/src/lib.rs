@@ -1,4 +1,4 @@
-//! Audio Subsystem for EFFLUX OS
+//! Audio Subsystem for OXIDE OS
 //!
 //! Provides audio device abstraction, PCM playback/capture, and mixing.
 

@@ -1,4 +1,4 @@
-//! EFFLUX Archive Tool (ar)
+//! OXIDE Archive Tool (ar)
 //!
 //! Create and manipulate archive files (static libraries).
 //!

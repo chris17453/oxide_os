@@ -1,6 +1,6 @@
-//! EFFLUXFS Superblock
+//! OXIDEFS Superblock
 
-use crate::{EffluxfsError, EffluxfsResult, EFFLUXFS_MAGIC};
+use crate::{OxidefsError, OxidefsResult, OXIDEFS_MAGIC};
 
 /// Superblock structure
 #[derive(Debug, Clone)]
@@ -45,9 +45,9 @@ pub struct Superblock {
 
 impl Superblock {
     /// Parse superblock from bytes
-    pub fn parse(data: &[u8]) -> EffluxfsResult<Self> {
+    pub fn parse(data: &[u8]) -> OxidefsResult<Self> {
         if data.len() < 128 {
-            return Err(EffluxfsError::CorruptedSuperblock);
+            return Err(OxidefsError::CorruptedSuperblock);
         }
 
         let magic = u64::from_le_bytes([
@@ -55,8 +55,8 @@ impl Superblock {
             data[4], data[5], data[6], data[7],
         ]);
 
-        if magic != EFFLUXFS_MAGIC {
-            return Err(EffluxfsError::InvalidMagic);
+        if magic != OXIDEFS_MAGIC {
+            return Err(OxidefsError::InvalidMagic);
         }
 
         Ok(Superblock {

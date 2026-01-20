@@ -1,9 +1,9 @@
-//! EFFLUXFS Directory handling
+//! OXIDEFS Directory handling
 
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::{EffluxfsError, EffluxfsResult, MAX_NAME_LEN};
+use crate::{OxidefsError, OxidefsResult, MAX_NAME_LEN};
 
 /// Directory entry (on-disk format)
 #[repr(C)]
@@ -23,9 +23,9 @@ pub struct DirEntry {
 
 impl DirEntry {
     /// Create a new directory entry
-    pub fn new(ino: u64, name: &str, file_type: u8) -> EffluxfsResult<Self> {
+    pub fn new(ino: u64, name: &str, file_type: u8) -> OxidefsResult<Self> {
         if name.len() > MAX_NAME_LEN {
-            return Err(EffluxfsError::NameTooLong);
+            return Err(OxidefsError::NameTooLong);
         }
 
         let mut entry = DirEntry {
@@ -45,9 +45,9 @@ impl DirEntry {
     }
 
     /// Parse from bytes
-    pub fn parse(data: &[u8]) -> EffluxfsResult<Self> {
+    pub fn parse(data: &[u8]) -> OxidefsResult<Self> {
         if data.len() < 12 {
-            return Err(EffluxfsError::CorruptedInode);
+            return Err(OxidefsError::CorruptedInode);
         }
 
         let ino = u64::from_le_bytes([
@@ -60,7 +60,7 @@ impl DirEntry {
         let file_type = data[11];
 
         if data.len() < 12 + name_len as usize {
-            return Err(EffluxfsError::CorruptedInode);
+            return Err(OxidefsError::CorruptedInode);
         }
 
         let mut name = [0u8; MAX_NAME_LEN + 1];
@@ -185,7 +185,7 @@ impl<'a> Iterator for DirIterator<'a> {
 /// Add an entry to a directory block
 ///
 /// Returns true if the entry was added, false if no space.
-pub fn add_entry(buf: &mut [u8], ino: u64, name: &str, ftype: u8) -> EffluxfsResult<bool> {
+pub fn add_entry(buf: &mut [u8], ino: u64, name: &str, ftype: u8) -> OxidefsResult<bool> {
     let new_entry = DirEntry::new(ino, name, ftype)?;
     let needed_len = new_entry.rec_len as usize;
 
@@ -222,7 +222,7 @@ pub fn add_entry(buf: &mut [u8], ino: u64, name: &str, ftype: u8) -> EffluxfsRes
 }
 
 /// Remove an entry from a directory block
-pub fn remove_entry(buf: &mut [u8], name: &str) -> EffluxfsResult<bool> {
+pub fn remove_entry(buf: &mut [u8], name: &str) -> OxidefsResult<bool> {
     let mut offset = 0;
     let mut prev_offset: Option<usize> = None;
 

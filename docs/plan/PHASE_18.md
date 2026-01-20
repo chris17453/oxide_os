@@ -66,7 +66,7 @@ Implement Type-2 hypervisor using hardware virtualization.
 │                  VM Exit                         │
 │                       ▼                          │
 ├─────────────────────────────────────────────────┤
-│              EFFLUX Hypervisor                   │
+│              OXIDE Hypervisor                   │
 │  ┌─────────────┐  ┌─────────────┐              │
 │  │ VMCS/VGIC   │  │  EPT/Stage2 │              │
 │  │ Management  │  │  Page Tables │              │
@@ -76,7 +76,7 @@ Implement Type-2 hypervisor using hardware virtualization.
 │  │  (console, block, net)                  │   │
 │  └─────────────────────────────────────────┘   │
 ├─────────────────────────────────────────────────┤
-│                EFFLUX Kernel                     │
+│                OXIDE Kernel                     │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -346,4 +346,4 @@ int main() {
 
 ---
 
-*Phase 18 of EFFLUX Implementation*
+*Phase 18 of OXIDE Implementation*

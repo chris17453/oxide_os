@@ -154,4 +154,4 @@ USB HID support deferred to Phase 16.
 
 ---
 
-*Phase 13 of EFFLUX Implementation*
+*Phase 13 of OXIDE Implementation*

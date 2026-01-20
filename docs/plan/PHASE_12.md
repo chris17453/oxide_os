@@ -166,4 +166,4 @@ Implements DNS (RFC 1035):
 
 ---
 
-*Phase 12 of EFFLUX Implementation - Complete*
+*Phase 12 of OXIDE Implementation - Complete*

@@ -2,7 +2,7 @@
 name = "coreutils"
 version = "0.1.0"
 edition = "2024"
-description = "Core utilities for EFFLUX OS"
+description = "Core utilities for OXIDE OS"
 
 # File operations
 [[bin]]

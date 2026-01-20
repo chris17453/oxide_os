@@ -2,8 +2,8 @@
 name = "iouring"
 version = "0.1.0"
 edition = "2021"
-authors = ["EFFLUX Contributors"]
-description = "io_uring async I/O for EFFLUX OS"
+authors = ["OXIDE Contributors"]
+description = "io_uring async I/O for OXIDE OS"
 license = "MIT OR Apache-2.0"
 
 [dependencies]

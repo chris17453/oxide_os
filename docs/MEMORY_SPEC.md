@@ -1,4 +1,4 @@
-# EFFLUX Memory Management Specification
+# OXIDE Memory Management Specification
 
 **Version:** 1.0
 **Status:** Draft
@@ -8,7 +8,7 @@
 
 ## 0) Overview
 
-EFFLUX implements a modern memory management system:
+OXIDE implements a modern memory management system:
 
 - **Physical Memory**: Buddy allocator for scalability
 - **Kernel Heap**: Slab allocator for efficiency
@@ -280,4 +280,4 @@ When out of memory:
 
 ---
 
-*End of EFFLUX Memory Specification*
+*End of OXIDE Memory Specification*

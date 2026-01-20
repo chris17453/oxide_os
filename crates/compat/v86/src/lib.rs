@@ -1,4 +1,4 @@
-//! Virtual 8086 Mode DOS Emulation for EFFLUX OS
+//! Virtual 8086 Mode DOS Emulation for OXIDE OS
 //!
 //! Provides DOS program execution on x86 platforms using V86 mode.
 

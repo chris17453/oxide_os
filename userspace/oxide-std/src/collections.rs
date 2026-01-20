@@ -1,4 +1,4 @@
-//! Collection types for EFFLUX OS
+//! Collection types for OXIDE OS
 //!
 //! Provides std::collections-like APIs using alloc.
 //!

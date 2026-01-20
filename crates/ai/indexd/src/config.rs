@@ -47,7 +47,7 @@ impl Default for IndexConfig {
                 String::from("pyc"), String::from("class"),
             ],
             max_file_size: 10 * 1024 * 1024, // 10MB
-            db_path: String::from("/var/lib/efflux/index"),
+            db_path: String::from("/var/lib/oxide/index"),
             socket_path: String::from("/run/indexd.sock"),
             num_workers: 4,
             batch_size: 100,

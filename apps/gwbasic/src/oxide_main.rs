@@ -1,7 +1,7 @@
-//! EFFLUX OS GW-BASIC Entry Point
+//! OXIDE OS GW-BASIC Entry Point
 //!
 //! This is the main entry point for the GW-BASIC interpreter when running
-//! as a native application on EFFLUX OS.
+//! as a native application on OXIDE OS.
 
 #![no_std]
 #![no_main]
@@ -10,16 +10,16 @@ extern crate alloc;
 
 use alloc::string::String;
 use rust_gwbasic::{Lexer, Parser, Interpreter};
-use rust_gwbasic::platform::{EffluxConsole, Console};
+use rust_gwbasic::platform::{OxideConsole, Console};
 
 /// Main function called by libc's _start
 #[no_mangle]
 pub extern "Rust" fn main() -> i32 {
-    let mut console = EffluxConsole::new();
+    let mut console = OxideConsole::new();
 
     console.print("GW-BASIC (Rust) v");
     console.print(rust_gwbasic::VERSION);
-    console.print(" for EFFLUX OS\n");
+    console.print(" for OXIDE OS\n");
     console.print("Type BASIC statements or 'EXIT' to quit\n\n");
 
     let mut interpreter = Interpreter::new();
@@ -72,7 +72,7 @@ pub extern "Rust" fn main() -> i32 {
 // Note: Panic handler is provided by libc crate
 
 // ============================================================================
-// WATOS compatibility stubs - redirect to EFFLUX libc calls
+// WATOS compatibility stubs - redirect to OXIDE libc calls
 // These are required because the gwbasic library has extern "C" declarations
 // for watos_* functions that must be provided by the executable.
 // ============================================================================
@@ -118,7 +118,7 @@ pub extern "C" fn watos_get_free_memory() -> usize {
 #[no_mangle]
 pub extern "C" fn watos_get_key_no_wait() -> u8 {
     // Non-blocking read - return 0 if no key available
-    // EFFLUX doesn't have non-blocking stdin yet, return 0
+    // OXIDE doesn't have non-blocking stdin yet, return 0
     0
 }
 
@@ -255,15 +255,15 @@ pub extern "C" fn watos_file_size(handle: u64) -> u64 {
 
 /// Global allocator - uses libc mmap for heap
 #[global_allocator]
-static ALLOCATOR: EffluxAllocator = EffluxAllocator;
+static ALLOCATOR: OxideAllocator = OxideAllocator;
 
-struct EffluxAllocator;
+struct OxideAllocator;
 
 // Static heap for the allocator
 static mut HEAP: [u8; 2 * 1024 * 1024] = [0; 2 * 1024 * 1024]; // 2MB heap
 static mut HEAP_POS: usize = 0;
 
-unsafe impl alloc::alloc::GlobalAlloc for EffluxAllocator {
+unsafe impl alloc::alloc::GlobalAlloc for OxideAllocator {
     unsafe fn alloc(&self, layout: alloc::alloc::Layout) -> *mut u8 {
         let align = layout.align();
         let size = layout.size();

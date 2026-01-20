@@ -79,7 +79,7 @@ struct VideoModeInfo {
     _pad: [u8; 7],
 }
 
-/// Request structure for EFFLUX_FB_GET_MODE
+/// Request structure for OXIDE_FB_GET_MODE
 #[repr(C)]
 struct GetModeRequest {
     index: u32,
@@ -90,9 +90,9 @@ struct GetModeRequest {
 const FBIOGET_VSCREENINFO: u64 = 0x4600;
 const FBIOGET_FSCREENINFO: u64 = 0x4602;
 
-// EFFLUX-specific IOCTL commands
-const EFFLUX_FB_GET_MODE_COUNT: u64 = 0x4700;
-const EFFLUX_FB_GET_MODE: u64 = 0x4701;
+// OXIDE-specific IOCTL commands
+const OXIDE_FB_GET_MODE_COUNT: u64 = 0x4700;
+const OXIDE_FB_GET_MODE: u64 = 0x4701;
 
 fn print_str(s: &str) {
     write(STDOUT_FILENO, s.as_bytes());
@@ -168,7 +168,7 @@ fn main() -> i32 {
 
     // Enumerate available video modes
     print_str("=== Available Video Modes ===\n");
-    let mode_count = syscall::sys_ioctl(fd, EFFLUX_FB_GET_MODE_COUNT, 0);
+    let mode_count = syscall::sys_ioctl(fd, OXIDE_FB_GET_MODE_COUNT, 0);
     if mode_count > 0 {
         print_str("Mode count: ");
         print_num(mode_count as u32);
@@ -178,7 +178,7 @@ fn main() -> i32 {
             let mut request: GetModeRequest = unsafe { core::mem::zeroed() };
             request.index = i;
 
-            let ret = syscall::sys_ioctl(fd, EFFLUX_FB_GET_MODE, &mut request as *mut _ as u64);
+            let ret = syscall::sys_ioctl(fd, OXIDE_FB_GET_MODE, &mut request as *mut _ as u64);
             if ret == 0 {
                 print_str("Mode ");
                 print_num(i);

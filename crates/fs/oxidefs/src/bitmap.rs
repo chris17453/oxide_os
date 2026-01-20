@@ -1,8 +1,8 @@
-//! EFFLUXFS Bitmap for block/inode allocation
+//! OXIDEFS Bitmap for block/inode allocation
 
 use alloc::vec::Vec;
 
-use crate::{EffluxfsError, EffluxfsResult};
+use crate::{OxidefsError, OxidefsResult};
 use block::BlockDevice;
 
 /// Bitmap for tracking allocation
@@ -32,7 +32,7 @@ impl Bitmap {
         start_block: u64,
         num_blocks: usize,
         size: usize,
-    ) -> EffluxfsResult<Self> {
+    ) -> OxidefsResult<Self> {
         let block_size = device.block_size() as usize;
         let mut data = alloc::vec![0u8; num_blocks * block_size];
 
@@ -52,7 +52,7 @@ impl Bitmap {
     }
 
     /// Save bitmap to disk
-    pub fn save(&self, device: &dyn BlockDevice, start_block: u64) -> EffluxfsResult<()> {
+    pub fn save(&self, device: &dyn BlockDevice, start_block: u64) -> OxidefsResult<()> {
         let block_size = device.block_size() as usize;
         let num_blocks = (self.data.len() + block_size - 1) / block_size;
 

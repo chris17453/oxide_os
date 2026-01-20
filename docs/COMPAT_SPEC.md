@@ -1,4 +1,4 @@
-# EFFLUX Compatibility Runtimes Specification
+# OXIDE Compatibility Runtimes Specification
 
 **Version:** 1.0  
 **Status:** Draft  
@@ -8,7 +8,7 @@
 
 ## 0) Overview
 
-EFFLUX provides sandboxed compatibility runtimes for legacy and scripting environments:
+OXIDE provides sandboxed compatibility runtimes for legacy and scripting environments:
 
 - **DOS 16-bit** — V86 mode for real-mode DOS programs
 - **Python** — Native CPython port with sandboxing
@@ -34,7 +34,7 @@ All runtimes operate in isolated sandboxes with controlled file access.
 │  ├── Seccomp-like syscall filter                       │
 │  └── COW Overlay Filesystem                            │
 ├─────────────────────────────────────────────────────────┤
-│  EFFLUX Kernel                                          │
+│  OXIDE Kernel                                          │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -121,7 +121,7 @@ Sandbox view:     /home/user/file.txt
                   └──────────┘
 
 Storage:
-/var/efflux/sandbox/<sandbox-id>/
+/var/oxide/sandbox/<sandbox-id>/
 ├── upper/          # Writes go here
 ├── work/           # Overlay workdir
 └── merged/         # Union mount point
@@ -152,14 +152,14 @@ x86_64 does not support V86 mode directly. Options:
 │  V86 Monitor (32-bit kernel mode)                       │
 │  ├── Trap INT instructions                             │
 │  ├── Emulate sensitive instructions                    │
-│  └── Translate DOS calls to EFFLUX syscalls            │
+│  └── Translate DOS calls to OXIDE syscalls            │
 ├─────────────────────────────────────────────────────────┤
 │  DOS Environment                                        │
 │  ├── Virtual memory map (640K conventional)            │
 │  ├── Emulated devices (video, keyboard, disk)          │
 │  └── DOS data structures (PSP, MCB, etc.)              │
 ├─────────────────────────────────────────────────────────┤
-│  EFFLUX Kernel                                          │
+│  OXIDE Kernel                                          │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -245,7 +245,7 @@ DOS paths translated to sandbox paths:
 ```
 DOS:      C:\GAMES\DOOM\DOOM.EXE
 Sandbox:  /sandbox/dos/drives/c/games/doom/doom.exe
-Actual:   /var/efflux/sandbox/<id>/upper/drives/c/games/doom/doom.exe
+Actual:   /var/oxide/sandbox/<id>/upper/drives/c/games/doom/doom.exe
           (or lower layer if not modified)
 ```
 
@@ -279,19 +279,19 @@ Text mode maps to PTY. Graphics modes render to virtual framebuffer, composited 
 
 ```bash
 # Run DOS program
-efflux dos run DOOM.EXE [args...]
+oxide dos run DOOM.EXE [args...]
 
 # Run with specific drive mappings
-efflux dos run --drive C:/path/to/c --drive D:/path/to/d GAME.EXE
+oxide dos run --drive C:/path/to/c --drive D:/path/to/d GAME.EXE
 
 # Configure sandbox
-efflux dos config --memory 16M --sound-blaster
+oxide dos config --memory 16M --sound-blaster
 
 # List available DOS environments
-efflux dos list
+oxide dos list
 
 # Create DOS environment
-efflux dos create --name "Games" --base freedos
+oxide dos create --name "Games" --base freedos
 ```
 
 ---
@@ -300,7 +300,7 @@ efflux dos create --name "Games" --base freedos
 
 ### 4.1 Overview
 
-Native CPython port compiled for EFFLUX, running in sandbox.
+Native CPython port compiled for OXIDE, running in sandbox.
 
 **NOT emulated** — full native performance, just restricted.
 
@@ -310,17 +310,17 @@ Native CPython port compiled for EFFLUX, running in sandbox.
 ┌─────────────────────────────────────────────────────────┐
 │  Python Script                                          │
 ├─────────────────────────────────────────────────────────┤
-│  CPython Interpreter (native EFFLUX build)             │
+│  CPython Interpreter (native OXIDE build)             │
 │  ├── Standard library                                  │
 │  ├── pip packages (sandboxed)                          │
-│  └── EFFLUX-specific modules                           │
+│  └── OXIDE-specific modules                           │
 ├─────────────────────────────────────────────────────────┤
 │  Sandbox Container                                      │
 │  ├── Restricted syscalls                               │
 │  ├── COW filesystem                                    │
 │  └── Resource limits                                   │
 ├─────────────────────────────────────────────────────────┤
-│  EFFLUX Kernel                                          │
+│  OXIDE Kernel                                          │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -337,7 +337,7 @@ pub fn python_sandbox_policy() -> SandboxConfig {
                 PathBuf::from("/usr/lib/python3"),
                 PathBuf::from("/usr/share/python3"),
             ],
-            upper: PathBuf::from("/var/efflux/sandbox/python/upper"),
+            upper: PathBuf::from("/var/oxide/sandbox/python/upper"),
         },
         
         max_memory: 512 * 1024 * 1024,  // 512 MB
@@ -414,46 +414,46 @@ pub fn python_syscall_whitelist() -> Vec<Syscall> {
 }
 ```
 
-### 4.5 EFFLUX Python Modules
+### 4.5 OXIDE Python Modules
 
 ```python
-# efflux.sandbox - Query sandbox environment
-import efflux.sandbox
-print(efflux.sandbox.is_sandboxed())    # True
-print(efflux.sandbox.get_limits())      # {'memory': 536870912, ...}
-print(efflux.sandbox.request_network()) # Request network access (prompts user)
+# oxide.sandbox - Query sandbox environment
+import oxide.sandbox
+print(oxide.sandbox.is_sandboxed())    # True
+print(oxide.sandbox.get_limits())      # {'memory': 536870912, ...}
+print(oxide.sandbox.request_network()) # Request network access (prompts user)
 
-# efflux.trust - File trust operations
-import efflux.trust
-efflux.trust.verify('/path/to/file')    # Verify signature
-efflux.trust.is_trusted('/path/to/file') # Check trust level
+# oxide.trust - File trust operations
+import oxide.trust
+oxide.trust.verify('/path/to/file')    # Verify signature
+oxide.trust.is_trusted('/path/to/file') # Check trust level
 
-# efflux.search - AI search
-import efflux.search
-results = efflux.search.semantic("documents about quarterly reports")
-results = efflux.search.similar("/path/to/file")
+# oxide.search - AI search
+import oxide.search
+results = oxide.search.semantic("documents about quarterly reports")
+results = oxide.search.similar("/path/to/file")
 ```
 
 ### 4.6 CLI
 
 ```bash
 # Run Python script (sandboxed)
-efflux python script.py [args...]
+oxide python script.py [args...]
 
 # Run with network access
-efflux python --network script.py
+oxide python --network script.py
 
 # Run with file access
-efflux python --read /data --write /output script.py
+oxide python --read /data --write /output script.py
 
 # Interactive REPL
-efflux python
+oxide python
 
 # Install packages (to sandbox)
-efflux python -m pip install numpy
+oxide python -m pip install numpy
 
 # Run unsandboxed (requires trust)
-efflux python --no-sandbox script.py
+oxide python --no-sandbox script.py
 ```
 
 ### 4.7 Trust Elevation
@@ -462,12 +462,12 @@ Scripts can request elevated permissions:
 
 ```python
 #!/usr/bin/env python
-# efflux:require network
-# efflux:require read /etc/config
-# efflux:require write /var/data
+# oxide:require network
+# oxide:require read /etc/config
+# oxide:require write /var/data
 
-import efflux.sandbox
-if not efflux.sandbox.check_permissions():
+import oxide.sandbox
+if not oxide.sandbox.check_permissions():
     print("This script requires additional permissions")
     sys.exit(1)
 ```
@@ -625,46 +625,46 @@ pub fn sys_sandbox_mount(id: SandboxId, source: *const u8, target: *const u8,
 
 ## 7) CLI Tools
 
-### efflux sandbox
+### oxide sandbox
 
 ```bash
 # List sandboxes
-efflux sandbox list
+oxide sandbox list
 
 # Create sandbox
-efflux sandbox create --name "dev" --config /etc/efflux/sandbox/dev.toml
+oxide sandbox create --name "dev" --config /etc/oxide/sandbox/dev.toml
 
 # Run in sandbox
-efflux sandbox run --name "dev" -- /bin/bash
+oxide sandbox run --name "dev" -- /bin/bash
 
 # Show sandbox status
-efflux sandbox status "dev"
+oxide sandbox status "dev"
 
 # Destroy sandbox
-efflux sandbox destroy "dev"
+oxide sandbox destroy "dev"
 
 # Persist/discard overlay
-efflux sandbox persist "dev"
-efflux sandbox discard "dev"
+oxide sandbox persist "dev"
+oxide sandbox discard "dev"
 ```
 
-### efflux mount (with policies)
+### oxide mount (with policies)
 
 ```bash
 # Mount with read-only (default for external)
-efflux mount /dev/sdb1 /mnt/usb
+oxide mount /dev/sdb1 /mnt/usb
 
 # Mount with explicit mode
-efflux mount --mode rw /dev/sdb1 /mnt/usb
+oxide mount --mode rw /dev/sdb1 /mnt/usb
 
 # Mount network share
-efflux mount //server/share /mnt/share --mode ro
+oxide mount //server/share /mnt/share --mode ro
 
 # Show mount policies
-efflux mount policy list
+oxide mount policy list
 
 # Set policy
-efflux mount policy set removable --default-mode ro
+oxide mount policy set removable --default-mode ro
 ```
 
 ---
@@ -692,7 +692,7 @@ efflux mount policy set removable --default-mode ro
 ### Phase 4: Python Runtime
 - [ ] CPython port
 - [ ] Sandbox integration
-- [ ] EFFLUX modules
+- [ ] OXIDE modules
 - [ ] pip support
 
 ### Phase 5: Advanced DOS
@@ -729,4 +729,4 @@ efflux mount policy set removable --default-mode ro
 
 ---
 
-*End of EFFLUX Compatibility Runtimes Specification*
+*End of OXIDE Compatibility Runtimes Specification*

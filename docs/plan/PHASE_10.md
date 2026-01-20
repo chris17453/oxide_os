@@ -89,7 +89,7 @@ module! {
     name: "hello",
     init: hello_init,
     exit: hello_exit,
-    author: "EFFLUX Team",
+    author: "OXIDE Team",
     description: "Hello World module",
     license: "MIT"
 }
@@ -151,4 +151,4 @@ Phase 10 complete for x86_64 architecture. The module loading infrastructure and
 
 ---
 
-*Phase 10 of EFFLUX Implementation - Complete*
+*Phase 10 of OXIDE Implementation - Complete*

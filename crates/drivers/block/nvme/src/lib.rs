@@ -1,4 +1,4 @@
-//! NVMe Driver for EFFLUX OS
+//! NVMe Driver for OXIDE OS
 //!
 //! Implements the NVMe 1.4 specification for NVM Express storage devices.
 

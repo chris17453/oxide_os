@@ -80,7 +80,7 @@ User authentication:
 - Password verification
 - Spawns user's shell on success
 
-### esh (EFFLUX Shell)
+### esh (OXIDE Shell)
 
 Full-featured command shell with:
 - Command execution via fork/exec
@@ -174,4 +174,4 @@ Phase 8 complete for x86_64 architecture. Userspace programs are written in Rust
 
 ---
 
-*Phase 8 of EFFLUX Implementation - Complete*
+*Phase 8 of OXIDE Implementation - Complete*

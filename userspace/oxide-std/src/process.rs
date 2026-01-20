@@ -1,6 +1,6 @@
-//! Process management for EFFLUX OS
+//! Process management for OXIDE OS
 //!
-//! Provides std::process-like APIs using EFFLUX syscalls.
+//! Provides std::process-like APIs using OXIDE syscalls.
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;

@@ -1,8 +1,8 @@
 [package]
-name = "efflux-ld"
+name = "oxide-ld"
 version = "0.1.0"
 edition = "2024"
-description = "EFFLUX OS linker - minimal ELF64 linker"
+description = "OXIDE OS linker - minimal ELF64 linker"
 
 [[bin]]
 name = "ld"

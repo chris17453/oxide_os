@@ -3,7 +3,7 @@ name = "sched"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Scheduler implementation for EFFLUX OS"
+description = "Scheduler implementation for OXIDE OS"
 
 [dependencies]
 os_core = { workspace = true }

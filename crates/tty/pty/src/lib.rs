@@ -1,4 +1,4 @@
-//! Pseudo-terminal (PTY) support for EFFLUX OS
+//! Pseudo-terminal (PTY) support for OXIDE OS
 //!
 //! PTYs provide a bidirectional communication channel between a terminal emulator
 //! (master side) and a shell/application (slave side).

@@ -3,7 +3,7 @@ name = "login"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Login program for EFFLUX OS"
+description = "Login program for OXIDE OS"
 
 [dependencies]
 libc = { path = "../libc" }

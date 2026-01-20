@@ -1,4 +1,4 @@
-# EFFLUX Boot Specification
+# OXIDE Boot Specification
 
 **Version:** 0.1.0
 **Status:** Draft
@@ -7,7 +7,7 @@
 
 ## 1) Overview
 
-This specification defines the boot sequence for EFFLUX across all supported architectures. The boot process is divided into platform-specific early boot and architecture-independent kernel initialization.
+This specification defines the boot sequence for OXIDE across all supported architectures. The boot process is divided into platform-specific early boot and architecture-independent kernel initialization.
 
 ### 1.1 Boot Phases
 

@@ -82,7 +82,7 @@ Implement Virtual Filesystem layer with initial filesystem implementations.
         ┌──────────┬───────┼───────┬──────────┐
         ▼          ▼       ▼       ▼          ▼
     ┌──────┐  ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐
-    │devfs │  │tmpfs │ │procfs│ │initrd│ │efflux│
+    │devfs │  │tmpfs │ │procfs│ │initrd│ │oxide│
     └──────┘  └──────┘ └──────┘ └──────┘ └──────┘
 ```
 
@@ -214,4 +214,4 @@ Phase 5 VFS infrastructure complete for x86_64:
 
 ---
 
-*Phase 5 of EFFLUX Implementation*
+*Phase 5 of OXIDE Implementation*

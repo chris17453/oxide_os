@@ -1,4 +1,4 @@
-# EFFLUX Network Stack Specification
+# OXIDE Network Stack Specification
 
 **Version:** 1.0
 **Status:** Draft
@@ -8,7 +8,7 @@
 
 ## 0) Overview
 
-EFFLUX implements a full TCP/IP network stack with BSD socket compatibility.
+OXIDE implements a full TCP/IP network stack with BSD socket compatibility.
 
 **Goals:**
 - POSIX socket API compatibility
@@ -1375,7 +1375,7 @@ impl PerCpuNetStack {
 ### 11.1 Network Configuration Files
 
 ```
-/etc/efflux/network/
+/etc/oxide/network/
 ├── interfaces          # Interface configuration
 ├── routes              # Static routes
 ├── resolv.conf         # DNS servers
@@ -1386,7 +1386,7 @@ impl PerCpuNetStack {
 ### 11.2 Interface Configuration
 
 ```toml
-# /etc/efflux/network/interfaces
+# /etc/oxide/network/interfaces
 
 [eth0]
 type = "ethernet"
@@ -1480,4 +1480,4 @@ netmask = "255.0.0.0"
 
 ---
 
-*End of EFFLUX Network Specification*
+*End of OXIDE Network Specification*

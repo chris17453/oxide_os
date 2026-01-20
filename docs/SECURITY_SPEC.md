@@ -1,4 +1,4 @@
-# EFFLUX Security and Trust Specification
+# OXIDE Security and Trust Specification
 
 **Version:** 1.0  
 **Status:** Draft  
@@ -8,7 +8,7 @@
 
 ## 0) Overview
 
-The EFFLUX security model provides:
+The OXIDE security model provides:
 
 - File integrity verification (hashing)
 - File signing (certificates)
@@ -59,7 +59,7 @@ pub const ARGON2_OUTPUT_LEN: usize = 32;
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                  EFFLUX Root CA                         │
+│                  OXIDE Root CA                         │
 │         (Built into OS, immutable)                      │
 └─────────────────────┬───────────────────────────────────┘
                       │
@@ -80,7 +80,7 @@ pub const ARGON2_OUTPUT_LEN: usize = 32;
 
 ```rust
 pub enum TrustLevel {
-    System,     // Signed by EFFLUX root CA or vendor CA
+    System,     // Signed by OXIDE root CA or vendor CA
     Vendor,     // Signed by approved vendor
     User,       // Signed by user-accepted certificate
     Untrusted,  // No signature or unknown signer
@@ -105,9 +105,9 @@ pub enum TrustLevel {
 ### 4.1 Trust Store Layout
 
 ```
-/etc/efflux/trust/
+/etc/oxide/trust/
 ├── system/                     # Read-only, OS updates only
-│   ├── root-ca.pem            # EFFLUX root CA
+│   ├── root-ca.pem            # OXIDE root CA
 │   └── vendor/                # Approved vendor CAs
 ├── user/                      # User-accepted certificates
 ├── revoked/                   # Revoked certificates
@@ -249,7 +249,7 @@ pub enum KeySource {
 ### 7.2 Quarantine Storage
 
 ```
-/var/efflux/quarantine/
+/var/oxide/quarantine/
 └── <uuid>/
     ├── manifest.json       # Metadata
     ├── content.enc         # Encrypted content
@@ -413,44 +413,44 @@ pub fn sys_quarantine_reject(uuid: *const Uuid) -> Result<()>;
 
 ## 12) CLI Tools
 
-### 12.1 efflux trust
+### 12.1 oxide trust
 
 ```bash
-efflux trust list [--level <level>]
-efflux trust add <cert.pem> [--alias <name>]
-efflux trust remove <fingerprint>
-efflux trust revoke <fingerprint> --reason <reason>
-efflux trust export [--qr]
-efflux trust share --advertise
-efflux trust discover
+oxide trust list [--level <level>]
+oxide trust add <cert.pem> [--alias <name>]
+oxide trust remove <fingerprint>
+oxide trust revoke <fingerprint> --reason <reason>
+oxide trust export [--qr]
+oxide trust share --advertise
+oxide trust discover
 ```
 
-### 12.2 efflux sign
+### 12.2 oxide sign
 
 ```bash
-efflux sign <file>
-efflux verify <file>
-efflux seal <file>
-efflux inspect <file>
+oxide sign <file>
+oxide verify <file>
+oxide seal <file>
+oxide inspect <file>
 ```
 
-### 12.3 efflux crypt
+### 12.3 oxide crypt
 
 ```bash
-efflux encrypt <file>
-efflux decrypt <file>
-efflux crypt add-key
-efflux crypt remove-key --slot <n>
-efflux crypt change-key --slot <n>
+oxide encrypt <file>
+oxide decrypt <file>
+oxide crypt add-key
+oxide crypt remove-key --slot <n>
+oxide crypt change-key --slot <n>
 ```
 
-### 12.4 efflux quarantine
+### 12.4 oxide quarantine
 
 ```bash
-efflux quarantine list
-efflux quarantine inspect <uuid>
-efflux quarantine accept <uuid> [--trust-signer]
-efflux quarantine reject <uuid>
+oxide quarantine list
+oxide quarantine inspect <uuid>
+oxide quarantine accept <uuid> [--trust-signer]
+oxide quarantine reject <uuid>
 ```
 
 ---
@@ -468,7 +468,7 @@ efflux quarantine reject <uuid>
 - [ ] Signature creation
 - [ ] Signature verification
 - [ ] Certificate chain validation
-- [ ] efflux.fs integration
+- [ ] oxide.fs integration
 
 ### Phase 3: Trust Store
 - [ ] Trust database
@@ -524,4 +524,4 @@ efflux quarantine reject <uuid>
 
 ---
 
-*End of EFFLUX Security and Trust Specification*
+*End of OXIDE Security and Trust Specification*

@@ -1,4 +1,4 @@
-//! Trust Store and Key Management for EFFLUX OS
+//! Trust Store and Key Management for OXIDE OS
 //!
 //! Manages trusted public keys, revocation, and trust levels.
 
@@ -73,7 +73,7 @@ pub struct TrustConfig {
 impl Default for TrustConfig {
     fn default() -> Self {
         TrustConfig {
-            store_path: String::from("/etc/efflux/trust"),
+            store_path: String::from("/etc/oxide/trust"),
             allow_system: true,
             allow_user_import: true,
             require_confirmation: true,

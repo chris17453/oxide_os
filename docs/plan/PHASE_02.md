@@ -275,4 +275,4 @@ let thread2 = Thread::spawn(|| {
 
 ---
 
-*Phase 2 of EFFLUX Implementation - x86_64 Target*
+*Phase 2 of OXIDE Implementation - x86_64 Target*

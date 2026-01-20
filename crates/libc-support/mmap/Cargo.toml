@@ -2,8 +2,8 @@
 name = "mmap"
 version = "0.1.0"
 edition = "2021"
-authors = ["EFFLUX Contributors"]
-description = "Memory mapping (mmap) implementation for EFFLUX"
+authors = ["OXIDE Contributors"]
+description = "Memory mapping (mmap) implementation for OXIDE"
 license = "MIT OR Apache-2.0"
 
 [dependencies]

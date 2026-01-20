@@ -1,8 +1,8 @@
 [package]
-name = "efflux-make"
+name = "oxide-make"
 version = "0.1.0"
 edition = "2024"
-description = "EFFLUX OS make - minimal build automation tool"
+description = "OXIDE OS make - minimal build automation tool"
 
 [[bin]]
 name = "make"

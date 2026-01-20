@@ -1,4 +1,4 @@
-//! EFFLUX x86_64 Architecture Implementation
+//! OXIDE x86_64 Architecture Implementation
 //!
 //! Provides x86_64-specific implementations of architecture traits.
 
