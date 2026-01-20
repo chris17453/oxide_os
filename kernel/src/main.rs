@@ -71,9 +71,6 @@ static mut HEAP_STORAGE: [u8; HEAP_SIZE] = [0; HEAP_SIZE];
 /// Global frame allocator
 static FRAME_ALLOCATOR: BitmapFrameAllocator = BitmapFrameAllocator::new();
 
-/// Initramfs CPIO embedded in kernel
-static INITRAMFS_CPIO: &[u8] = include_bytes!("../../target/initramfs.cpio");
-
 /// Flag to track if user process has exited
 static USER_EXITED: AtomicBool = AtomicBool::new(false);
 
@@ -364,6 +361,11 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
         arch::X86_64::halt();
     }
 
+    // Set memory stats callback for procfs
+    unsafe {
+        procfs::set_memory_stats_callback(get_memory_stats);
+    }
+
     // Mount procfs at /proc
     let proc_fs = ProcFs::new();
     if let Err(e) = GLOBAL_VFS.mount(proc_fs, "/proc", MountFlags::empty(), "procfs") {
@@ -464,9 +466,21 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     let _ = writeln!(writer, "[NET] Network initialization complete");
 
-    // Load and mount the initramfs
-    let _ = writeln!(writer, "[INITRAMFS] Loading initramfs ({} bytes)...", INITRAMFS_CPIO.len());
-    let initramfs_root = match initramfs::load(INITRAMFS_CPIO) {
+    // Load and mount the initramfs (loaded from disk by bootloader)
+    let initramfs_data = match boot_info.initramfs() {
+        Some(data) => {
+            let _ = writeln!(writer, "[INITRAMFS] Initramfs at phys {:#x}, {} bytes",
+                boot_info.initramfs_phys, boot_info.initramfs_size);
+            data
+        }
+        None => {
+            let _ = writeln!(writer, "[INITRAMFS] ERROR: No initramfs loaded by bootloader!");
+            arch::X86_64::halt();
+        }
+    };
+
+    let _ = writeln!(writer, "[INITRAMFS] Loading initramfs ({} bytes)...", initramfs_data.len());
+    let initramfs_root = match initramfs::load(initramfs_data) {
         Ok(root) => root,
         Err(e) => {
             let _ = writeln!(writer, "[INITRAMFS] Failed to load initramfs: {:?}", e);
@@ -943,6 +957,27 @@ fn get_fb_mode_info(index: u32) -> Option<devfs::devices::VideoModeDeviceInfo> {
         is_bgr: mode.is_bgr,
         _pad: [0; 7],
     })
+}
+
+/// Get memory statistics for /proc/meminfo
+fn get_memory_stats() -> procfs::MemoryStats {
+    // Get frame allocator stats
+    let total_frames = FRAME_ALLOCATOR.total_frames();
+    let free_frames = FRAME_ALLOCATOR.free_frame_count();
+    let page_size = 4096u64;
+
+    // Get heap stats
+    let heap_used = HEAP_ALLOCATOR.used() as u64;
+    let heap_free = HEAP_ALLOCATOR.free() as u64;
+
+    procfs::MemoryStats {
+        total_mem: (total_frames as u64) * page_size,
+        free_mem: (free_frames as u64) * page_size,
+        total_swap: 0, // No swap
+        free_swap: 0,
+        heap_used,
+        heap_free,
+    }
 }
 
 /// Console read function for syscalls

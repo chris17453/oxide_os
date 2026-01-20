@@ -4,6 +4,7 @@
 //!
 //! Structure:
 //! - /proc/self -> symlink to current process
+//! - /proc/meminfo - memory information
 //! - /proc/[pid]/status - process status
 //! - /proc/[pid]/cmdline - command line
 //! - /proc/[pid]/exe - executable path (symlink)
@@ -20,6 +21,54 @@ use proc::process_table;
 use proc_traits::ProcessState;
 use proc_traits::Pid;
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
+
+// ============================================================================
+// Memory info callback
+// ============================================================================
+
+/// Memory statistics structure
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MemoryStats {
+    /// Total physical memory in bytes
+    pub total_mem: u64,
+    /// Free physical memory in bytes
+    pub free_mem: u64,
+    /// Total swap in bytes
+    pub total_swap: u64,
+    /// Free swap in bytes
+    pub free_swap: u64,
+    /// Kernel heap used in bytes
+    pub heap_used: u64,
+    /// Kernel heap free in bytes
+    pub heap_free: u64,
+}
+
+/// Callback type for getting memory stats
+pub type MemoryStatsCallback = fn() -> MemoryStats;
+
+/// Global memory stats callback
+static mut MEMORY_STATS_CALLBACK: Option<MemoryStatsCallback> = None;
+
+/// Set the memory stats callback
+///
+/// # Safety
+/// Must be called during single-threaded initialization
+pub unsafe fn set_memory_stats_callback(callback: MemoryStatsCallback) {
+    unsafe {
+        MEMORY_STATS_CALLBACK = Some(callback);
+    }
+}
+
+/// Get current memory stats
+fn get_memory_stats() -> MemoryStats {
+    unsafe {
+        if let Some(callback) = MEMORY_STATS_CALLBACK {
+            callback()
+        } else {
+            MemoryStats::default()
+        }
+    }
+}
 
 /// The /proc root directory
 pub struct ProcFs {
@@ -48,6 +97,11 @@ impl VnodeOps for ProcFs {
         // Handle "self" symlink
         if name == "self" {
             return Ok(Arc::new(ProcSelf { ino: 2 }));
+        }
+
+        // Handle "meminfo" file
+        if name == "meminfo" {
+            return Ok(Arc::new(ProcMeminfo { ino: 3 }));
         }
 
         // Try to parse as PID
@@ -103,11 +157,20 @@ impl VnodeOps for ProcFs {
             }));
         }
 
+        // "meminfo" file
+        if offset == 3 {
+            return Ok(Some(DirEntry {
+                name: "meminfo".to_string(),
+                ino: 3,
+                file_type: VnodeType::File,
+            }));
+        }
+
         // Process directories
         let table = process_table();
         let pids = table.all_pids();
 
-        let pid_idx = offset - 3;
+        let pid_idx = offset - 4;
         if pid_idx < pids.len() {
             let pid = pids[pid_idx];
             return Ok(Some(DirEntry {
@@ -657,6 +720,114 @@ impl VnodeOps for ProcPidCwd {
 
     fn stat(&self) -> VfsResult<Stat> {
         Ok(Stat::new(VnodeType::Symlink, Mode::new(0o777), 1, self.ino))
+    }
+
+    fn truncate(&self, _size: u64) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+}
+
+/// /proc/meminfo - memory information
+pub struct ProcMeminfo {
+    ino: u64,
+}
+
+impl ProcMeminfo {
+    fn generate_content(&self) -> String {
+        let stats = get_memory_stats();
+
+        // Format in Linux /proc/meminfo style (values in kB)
+        let total_kb = stats.total_mem / 1024;
+        let free_kb = stats.free_mem / 1024;
+        let used_kb = total_kb.saturating_sub(free_kb);
+        let buffers_kb = 0u64; // Not tracked
+        let cached_kb = 0u64;  // Not tracked
+        let swap_total_kb = stats.total_swap / 1024;
+        let swap_free_kb = stats.free_swap / 1024;
+
+        format!(
+            "MemTotal:       {:8} kB\n\
+             MemFree:        {:8} kB\n\
+             MemAvailable:   {:8} kB\n\
+             Buffers:        {:8} kB\n\
+             Cached:         {:8} kB\n\
+             SwapTotal:      {:8} kB\n\
+             SwapFree:       {:8} kB\n\
+             HeapUsed:       {:8} kB\n\
+             HeapFree:       {:8} kB\n",
+            total_kb,
+            free_kb,
+            free_kb, // MemAvailable ~= MemFree for now
+            buffers_kb,
+            cached_kb,
+            swap_total_kb,
+            swap_free_kb,
+            stats.heap_used / 1024,
+            stats.heap_free / 1024,
+        )
+    }
+}
+
+impl VnodeOps for ProcMeminfo {
+    fn vtype(&self) -> VnodeType {
+        VnodeType::File
+    }
+
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        let content = self.generate_content();
+        let bytes = content.as_bytes();
+
+        let offset = offset as usize;
+        if offset >= bytes.len() {
+            return Ok(0);
+        }
+
+        let available = bytes.len() - offset;
+        let to_read = buf.len().min(available);
+        buf[..to_read].copy_from_slice(&bytes[offset..offset + to_read]);
+        Ok(to_read)
+    }
+
+    fn write(&self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rmdir(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn unlink(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn stat(&self) -> VfsResult<Stat> {
+        let content = self.generate_content();
+        Ok(Stat::new(
+            VnodeType::File,
+            Mode::new(0o444),
+            content.len() as u64,
+            self.ino,
+        ))
     }
 
     fn truncate(&self, _size: u64) -> VfsResult<()> {

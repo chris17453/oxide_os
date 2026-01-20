@@ -29,6 +29,9 @@ mod paging;
 /// Kernel file path on the EFI partition
 const KERNEL_PATH: &str = "\\EFI\\EFFLUX\\kernel.elf";
 
+/// Initramfs file path on the EFI partition
+const INITRAMFS_PATH: &str = "\\EFI\\EFFLUX\\initramfs.cpio";
+
 /// Page size
 const PAGE_SIZE: u64 = 4096;
 
@@ -80,6 +83,19 @@ fn main() -> Status {
     elf::load_segments(&kernel_data, &elf_info, kernel_phys);
     log("[BOOT] Kernel loaded");
 
+    // Load initramfs
+    log_fmt(format_args!("[BOOT] Loading initramfs from {}...", INITRAMFS_PATH));
+    let (initramfs_phys, initramfs_size) = match load_initramfs() {
+        Ok((phys, size)) => {
+            log_fmt(format_args!("[BOOT] Initramfs loaded: {} bytes at {:#x}", size, phys));
+            (phys, size)
+        }
+        Err(e) => {
+            log_fmt(format_args!("[BOOT] WARNING: No initramfs loaded: {}", e));
+            (0, 0)
+        }
+    };
+
     // Get framebuffer info
     let fb_info = get_framebuffer_info();
     if let Some(ref fb) = fb_info {
@@ -110,6 +126,8 @@ fn main() -> Status {
         &memory_regions,
         fb_info,
         video_modes,
+        initramfs_phys,
+        initramfs_size,
     );
 
     // Allocate space for boot info in a safe location
@@ -198,6 +216,62 @@ fn load_kernel_file() -> Result<Vec<u8>, &'static str> {
         .map_err(|_| "Failed to read kernel file")?;
 
     Ok(data)
+}
+
+/// Load the initramfs file from the EFI system partition
+/// Returns (physical address, size) of the loaded initramfs
+fn load_initramfs() -> Result<(u64, u64), &'static str> {
+    let st = uefi::table::system_table_boot().ok_or("No boot services")?;
+    let bs = st.boot_services();
+
+    // Get the filesystem protocol
+    let fs_handle = bs
+        .get_handle_for_protocol::<SimpleFileSystem>()
+        .map_err(|_| "No filesystem")?;
+
+    let mut fs = bs
+        .open_protocol_exclusive::<SimpleFileSystem>(fs_handle)
+        .map_err(|_| "Failed to open filesystem")?;
+
+    // Open the root directory
+    let mut root = fs.open_volume().map_err(|_| "Failed to open volume")?;
+
+    // Open the initramfs file
+    let initramfs_handle = root
+        .open(
+            cstr16!("\\EFI\\EFFLUX\\initramfs.cpio"),
+            FileMode::Read,
+            FileAttribute::empty(),
+        )
+        .map_err(|_| "Initramfs file not found")?;
+
+    let mut initramfs_file = match initramfs_handle.into_type().map_err(|_| "Invalid file type")? {
+        FileType::Regular(f) => f,
+        FileType::Dir(_) => return Err("Initramfs path is a directory"),
+    };
+
+    // Get file size
+    let mut info_buf = [0u8; 256];
+    let info = initramfs_file
+        .get_info::<FileInfo>(&mut info_buf)
+        .map_err(|_| "Failed to get file info")?;
+    let file_size = info.file_size() as u64;
+
+    if file_size == 0 {
+        return Err("Initramfs is empty");
+    }
+
+    // Allocate memory for the initramfs
+    let pages = (file_size + PAGE_SIZE - 1) / PAGE_SIZE;
+    let phys_addr = allocate_pages(pages as usize).ok_or("Failed to allocate initramfs memory")?;
+
+    // Read directly into the allocated memory
+    let buffer = unsafe { core::slice::from_raw_parts_mut(phys_addr as *mut u8, file_size as usize) };
+    initramfs_file
+        .read(buffer)
+        .map_err(|_| "Failed to read initramfs file")?;
+
+    Ok((phys_addr, file_size))
 }
 
 /// Allocate pages of memory
@@ -346,6 +420,8 @@ fn create_boot_info(
     memory_regions: &[MemoryRegion],
     framebuffer: Option<FramebufferInfo>,
     video_modes: Option<boot_proto::VideoModeList>,
+    initramfs_phys: u64,
+    initramfs_size: u64,
 ) -> BootInfo {
     let mut info = BootInfo::empty();
     info.magic = BOOT_INFO_MAGIC;
@@ -356,6 +432,8 @@ fn create_boot_info(
     info.phys_map_base = PHYS_MAP_BASE;
     info.framebuffer = framebuffer;
     info.video_modes = video_modes;
+    info.initramfs_phys = initramfs_phys;
+    info.initramfs_size = initramfs_size;
 
     let count = memory_regions.len().min(MAX_MEMORY_REGIONS);
     info.memory_region_count = count as u64;

@@ -35,6 +35,10 @@ pub struct BootInfo {
     pub framebuffer: Option<FramebufferInfo>,
     /// Available video modes (if enumerated)
     pub video_modes: Option<VideoModeList>,
+    /// Initramfs physical address (0 if not loaded)
+    pub initramfs_phys: u64,
+    /// Initramfs size in bytes (0 if not loaded)
+    pub initramfs_size: u64,
 }
 
 impl BootInfo {
@@ -51,6 +55,8 @@ impl BootInfo {
             memory_regions: [MemoryRegion::empty(); MAX_MEMORY_REGIONS],
             framebuffer: None,
             video_modes: None,
+            initramfs_phys: 0,
+            initramfs_size: 0,
         }
     }
 
@@ -62,6 +68,21 @@ impl BootInfo {
     /// Get memory regions as a slice
     pub fn memory_regions(&self) -> &[MemoryRegion] {
         &self.memory_regions[..self.memory_region_count as usize]
+    }
+
+    /// Get initramfs as a virtual address slice (through physical map)
+    /// Returns None if no initramfs was loaded
+    pub fn initramfs(&self) -> Option<&[u8]> {
+        if self.initramfs_phys == 0 || self.initramfs_size == 0 {
+            return None;
+        }
+        let virt = self.phys_map_base + self.initramfs_phys;
+        unsafe {
+            Some(core::slice::from_raw_parts(
+                virt as *const u8,
+                self.initramfs_size as usize,
+            ))
+        }
     }
 }
 

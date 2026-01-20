@@ -41,8 +41,8 @@ build: kernel bootloader
 # Build with userspace
 build-full: kernel bootloader userspace initramfs
 
-# Build kernel (depends on initramfs for include_bytes!)
-kernel: initramfs
+# Build kernel
+kernel:
 	cargo build --package kernel
 
 # Build bootloader
@@ -170,15 +170,17 @@ list-bins:
 	@echo "  Apps: gwbasic"
 	@echo "  Coreutils: $(COREUTILS_BINS)"
 
-# Create boot directory structure with kernel and bootloader
-boot-dir: kernel bootloader
+# Create boot directory structure with kernel, bootloader, and initramfs
+boot-dir: kernel bootloader initramfs
 	@mkdir -p $(BOOT_DIR)/EFI/BOOT
 	@mkdir -p $(BOOT_DIR)/EFI/EFFLUX
 	@cp $(BOOTLOADER_TARGET) $(BOOT_DIR)/EFI/BOOT/BOOTX64.EFI
 	@cp $(KERNEL_TARGET) $(BOOT_DIR)/EFI/EFFLUX/kernel.elf
+	@cp $(TARGET_DIR)/initramfs.cpio $(BOOT_DIR)/EFI/EFFLUX/initramfs.cpio
 	@echo "Boot directory created at $(BOOT_DIR)"
 	@echo "  - Bootloader: EFI/BOOT/BOOTX64.EFI"
 	@echo "  - Kernel: EFI/EFFLUX/kernel.elf"
+	@echo "  - Initramfs: EFI/EFFLUX/initramfs.cpio"
 
 # Run in QEMU (interactive, with networking)
 run: boot-dir
