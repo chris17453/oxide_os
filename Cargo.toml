@@ -93,6 +93,7 @@ members = [
     "userspace/efflux-std",
     "userspace/syscall-tests",
     "userspace/as",
+    "userspace/ld",
     "bootloader/boot-uefi",
     "apps/gwbasic",
 ]

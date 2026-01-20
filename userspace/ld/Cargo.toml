@@ -1,0 +1,12 @@
+[package]
+name = "efflux-ld"
+version = "0.1.0"
+edition = "2024"
+description = "EFFLUX OS linker - minimal ELF64 linker"
+
+[[bin]]
+name = "ld"
+path = "src/main.rs"
+
+[dependencies]
+libc = { path = "../libc" }
