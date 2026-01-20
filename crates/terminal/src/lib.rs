@@ -249,7 +249,12 @@ impl TerminalEmulator {
                 };
 
                 if scrolled {
-                    // Use fast framebuffer scroll instead of redrawing everything
+                    // Render any pending dirty rows BEFORE scrolling
+                    // This ensures content is on screen before we copy framebuffer
+                    let buffer = if is_alt { &self.alternate } else { &self.primary };
+                    self.renderer.render(buffer, &self.handler.cursor);
+
+                    // Now do fast framebuffer scroll
                     let bg = self.handler.attrs.effective_bg().to_fb_color(false);
                     self.renderer.scroll_up(1, bg);
                     // Only the new bottom row needs redraw
