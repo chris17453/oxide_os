@@ -216,6 +216,57 @@ path = "src/bin/fbtest.rs"
 name = "loadkeys"
 path = "src/bin/loadkeys.rs"
 
+# System info utilities
+[[bin]]
+name = "uptime"
+path = "src/bin/uptime.rs"
+
+[[bin]]
+name = "df"
+path = "src/bin/df.rs"
+
+[[bin]]
+name = "dmesg"
+path = "src/bin/dmesg.rs"
+
+# Network monitoring
+[[bin]]
+name = "netstat"
+path = "src/bin/netstat.rs"
+
+# Binary/Debug utilities
+[[bin]]
+name = "hexdump"
+path = "src/bin/hexdump.rs"
+
+[[bin]]
+name = "strings"
+path = "src/bin/strings.rs"
+
+[[bin]]
+name = "readlink"
+path = "src/bin/readlink.rs"
+
+[[bin]]
+name = "du"
+path = "src/bin/du.rs"
+
+[[bin]]
+name = "od"
+path = "src/bin/od.rs"
+
+[[bin]]
+name = "pwd"
+path = "src/bin/pwd.rs"
+
+[[bin]]
+name = "file"
+path = "src/bin/file.rs"
+
+[[bin]]
+name = "more"
+path = "src/bin/more.rs"
+
 [dependencies]
 libc = { path = "../libc" }
 heapless = "0.8"
