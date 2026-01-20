@@ -94,6 +94,7 @@ members = [
     "userspace/syscall-tests",
     "userspace/as",
     "userspace/ld",
+    "userspace/ar",
     "bootloader/boot-uefi",
     "apps/gwbasic",
 ]
