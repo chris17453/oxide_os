@@ -851,41 +851,46 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 - ❌ Conditional expressions
 - ❌ String concatenation operator
 
-### head
+### head ✅ COMPLETE (Basic)
 
-**Missing Features:**
+**Implemented Features:**
+- ✅ -n NUM output first NUM lines (default 10)
+- ✅ -NUM shorthand for -n NUM
+- ✅ Multiple file arguments
+- ✅ Stdin input support
+- ✅ Headers for multiple files
+- ✅ Flexible argument parsing (-n10 or -n 10)
+
+**Missing Features (Low Priority):**
 - ❌ -c NUM output first NUM bytes
 - ❌ -q quiet (never output headers)
 - ❌ -v verbose (always output headers)
 - ❌ -z zero terminated lines
-- ❌ --bytes
-- ❌ --lines
-- ❌ --quiet/--silent
-- ❌ --verbose
+- ❌ All long options
 - ❌ Negative line counts (-n -5)
 - ❌ Byte count mode
-- ❌ Multiple file headers suppression
 - ❌ Zero-terminated line mode
 
-### tail
+### tail ✅ COMPLETE (Basic)
 
-**Missing Features:**
+**Implemented Features:**
+- ✅ -n NUM output last NUM lines (default 10)
+- ✅ -NUM shorthand for -n NUM
+- ✅ Multiple file arguments
+- ✅ Stdin input support
+- ✅ Headers for multiple files
+- ✅ Circular buffer for last N lines (max 1000)
+- ✅ Flexible argument parsing (-n10 or -n 10)
+
+**Missing Features (Low Priority):**
 - ❌ -c NUM output last NUM bytes
 - ❌ -f follow (monitor file growth)
 - ❌ -F follow with retry
 - ❌ -q quiet (never output headers)
 - ❌ -v verbose (always output headers)
 - ❌ -s NUM sleep interval for -f
-- ❌ --pid=PID with -f, terminate after PID dies
-- ❌ --max-unchanged-stats
-- ❌ --retry
-- ❌ -z zero terminated lines
-- ❌ --bytes
-- ❌ --lines
-- ❌ --quiet/--silent
-- ❌ --verbose
-- ❌ --follow
-- ❌ --sleep-interval
+- ❌ All long options
+- ❌ --pid=PID with -f
 - ❌ Positive line counts (+5 start from line 5)
 - ❌ Byte count mode
 - ❌ Follow mode (continuous monitoring)
