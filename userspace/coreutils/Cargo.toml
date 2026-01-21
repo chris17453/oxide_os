@@ -211,6 +211,10 @@ path = "src/bin/nc.rs"
 name = "fbtest"
 path = "src/bin/fbtest.rs"
 
+[[bin]]
+name = "fbperf"
+path = "src/bin/fbperf.rs"
+
 # Keyboard utilities
 [[bin]]
 name = "loadkeys"

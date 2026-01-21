@@ -10,6 +10,7 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::ptr::{read_volatile, write_volatile};
+use core::sync::atomic::{AtomicU16, Ordering};
 use fb::{Color, Framebuffer, FramebufferInfo, PixelFormat};
 use spin::Mutex;
 
@@ -229,10 +230,10 @@ pub struct VirtioGpu {
     used: *mut VirtqUsed,
     /// Queue size
     queue_size: u16,
-    /// Next descriptor
-    next_desc: u16,
-    /// Last used index
-    last_used: u16,
+    /// Next descriptor (uses interior mutability for flush)
+    next_desc: AtomicU16,
+    /// Last used index (uses interior mutability for flush)
+    last_used: AtomicU16,
     /// Display width
     width: u32,
     /// Display height
@@ -268,8 +269,8 @@ impl VirtioGpu {
             available: core::ptr::null_mut(),
             used: core::ptr::null_mut(),
             queue_size: 0,
-            next_desc: 0,
-            last_used: 0,
+            next_desc: AtomicU16::new(0),
+            last_used: AtomicU16::new(0),
             width: 0,
             height: 0,
             resource_id: 1,
@@ -497,13 +498,12 @@ impl VirtioGpu {
     }
 
     /// Send a command and wait for response
-    fn send_command<C, R>(&mut self, cmd: &C, resp: &mut R) -> Result<(), &'static str> {
+    fn send_command<C, R>(&self, cmd: &C, resp: &mut R) -> Result<(), &'static str> {
         let cmd_size = core::mem::size_of::<C>();
         let resp_size = core::mem::size_of::<R>();
 
-        // Setup descriptors
-        let desc_idx = self.next_desc;
-        self.next_desc = (self.next_desc + 2) % self.queue_size;
+        // Setup descriptors (use atomic operations for thread-safety)
+        let desc_idx = self.next_desc.fetch_add(2, Ordering::SeqCst) % self.queue_size;
 
         unsafe {
             // Command descriptor
@@ -532,10 +532,11 @@ impl VirtioGpu {
         self.write_reg(VIRTIO_MMIO_QUEUE_NOTIFY, VIRTIO_GPU_CONTROLQ);
 
         // Wait for completion
+        let last_used = self.last_used.load(Ordering::Acquire);
         loop {
             let used_idx = unsafe { read_volatile(&(*self.used).idx) };
-            if used_idx != self.last_used {
-                self.last_used = used_idx;
+            if used_idx != last_used {
+                self.last_used.store(used_idx, Ordering::Release);
                 break;
             }
             core::hint::spin_loop();
@@ -544,8 +545,13 @@ impl VirtioGpu {
         Ok(())
     }
 
-    /// Flush framebuffer to display
-    pub fn flush(&mut self) {
+    /// Flush framebuffer to display (full screen)
+    pub fn flush(&self) {
+        self.flush_region(0, 0, self.width, self.height);
+    }
+    
+    /// Flush a specific region to display (optimized for partial updates)
+    pub fn flush_region(&self, x: u32, y: u32, width: u32, height: u32) {
         if self.framebuffer.is_none() {
             return;
         }
@@ -557,10 +563,10 @@ impl VirtioGpu {
                 ..Default::default()
             },
             r: Rect {
-                x: 0,
-                y: 0,
-                width: self.width,
-                height: self.height,
+                x,
+                y,
+                width,
+                height,
             },
             offset: 0,
             resource_id: self.resource_id,
@@ -577,10 +583,10 @@ impl VirtioGpu {
                 ..Default::default()
             },
             r: Rect {
-                x: 0,
-                y: 0,
-                width: self.width,
-                height: self.height,
+                x,
+                y,
+                width,
+                height,
             },
             resource_id: self.resource_id,
             padding: 0,
@@ -639,8 +645,8 @@ impl Framebuffer for VirtioGpu {
     }
 
     fn flush(&self) {
-        // Note: This requires &mut self, but trait has &self
-        // In practice, flush is called on the mutable instance
+        // Call flush_region for full screen flush
+        self.flush_region(0, 0, self.width, self.height);
     }
 }
 
@@ -666,7 +672,7 @@ pub fn init(mmio_base: usize) -> Result<(), &'static str> {
 
 /// Flush the display
 pub fn flush() {
-    if let Some(ref mut gpu) = *VIRTIO_GPU.lock() {
+    if let Some(ref gpu) = *VIRTIO_GPU.lock() {
         gpu.flush();
     }
 }

@@ -10,11 +10,13 @@ pub mod color;
 pub mod framebuffer;
 pub mod console;
 pub mod font;
+pub mod perf;
 
 pub use color::{Color, PixelFormat};
 pub use framebuffer::{Framebuffer, FramebufferInfo, LinearFramebuffer};
 pub use console::{FbConsole, Cell};
 pub use font::{Font, Glyph, PSF2_FONT};
+pub use perf::{record_frame, record_pixels, record_flush, get_fps, get_stats, reset_stats};
 
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
