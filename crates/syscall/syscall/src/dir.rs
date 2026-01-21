@@ -328,3 +328,131 @@ pub fn sys_getcwd(buf: u64, size: usize) -> i64 {
 
     cwd.len() as i64
 }
+
+/// sys_link - Create hard link
+///
+/// # Arguments
+/// * `target_ptr` - Pointer to target path
+/// * `target_len` - Length of target path
+/// * `link_ptr` - Pointer to link path
+/// * `link_len` - Length of link path
+pub fn sys_link(
+    target_ptr: u64,
+    target_len: usize,
+    link_ptr: u64,
+    link_len: usize,
+) -> i64 {
+    let target_path = match get_resolved_path(target_ptr, target_len) {
+        Some(p) => p,
+        None => return errno::EFAULT,
+    };
+
+    let link_path = match get_resolved_path(link_ptr, link_len) {
+        Some(p) => p,
+        None => return errno::EFAULT,
+    };
+
+    // Lookup the target
+    let target_vnode = match GLOBAL_VFS.lookup(&target_path) {
+        Ok(v) => v,
+        Err(e) => return vfs_error_to_errno(e),
+    };
+
+    // Get link parent directory and name
+    let (link_parent, link_name) = match GLOBAL_VFS.lookup_parent(&link_path) {
+        Ok(r) => r,
+        Err(e) => return vfs_error_to_errno(e),
+    };
+
+    // Create the hard link
+    match link_parent.link(&link_name, target_vnode) {
+        Ok(()) => 0,
+        Err(e) => vfs_error_to_errno(e),
+    }
+}
+
+/// sys_symlink - Create symbolic link
+///
+/// # Arguments
+/// * `target_ptr` - Pointer to target path (not resolved, stored as-is)
+/// * `target_len` - Length of target path
+/// * `link_ptr` - Pointer to link path
+/// * `link_len` - Length of link path
+pub fn sys_symlink(
+    target_ptr: u64,
+    target_len: usize,
+    link_ptr: u64,
+    link_len: usize,
+) -> i64 {
+    // For symlink, target is NOT resolved - it's stored as-is
+    let target_path = match get_path(target_ptr, target_len) {
+        Some(p) => p,
+        None => return errno::EFAULT,
+    };
+
+    let link_path = match get_resolved_path(link_ptr, link_len) {
+        Some(p) => p,
+        None => return errno::EFAULT,
+    };
+
+    // Get link parent directory and name
+    let (link_parent, link_name) = match GLOBAL_VFS.lookup_parent(&link_path) {
+        Ok(r) => r,
+        Err(e) => return vfs_error_to_errno(e),
+    };
+
+    // Create the symbolic link
+    match link_parent.symlink(&link_name, target_path) {
+        Ok(()) => 0,
+        Err(e) => vfs_error_to_errno(e),
+    }
+}
+
+/// sys_readlink - Read value of symbolic link
+///
+/// # Arguments
+/// * `path_ptr` - Pointer to symlink path
+/// * `path_len` - Length of symlink path
+/// * `buf` - User buffer for target path
+/// * `bufsize` - Size of buffer
+pub fn sys_readlink(
+    path_ptr: u64,
+    path_len: usize,
+    buf: u64,
+    bufsize: usize,
+) -> i64 {
+    if !validate_user_buffer(buf, bufsize) {
+        return errno::EFAULT;
+    }
+
+    let path = match get_resolved_path(path_ptr, path_len) {
+        Some(p) => p,
+        None => return errno::EFAULT,
+    };
+
+    // Lookup the symlink (don't follow it)
+    let vnode = match GLOBAL_VFS.lookup_no_follow(&path) {
+        Ok(v) => v,
+        Err(e) => return vfs_error_to_errno(e),
+    };
+
+    // Verify it's a symlink
+    if vnode.vtype() != VnodeType::Symlink {
+        return errno::EINVAL;
+    }
+
+    // Read the symlink target
+    let target = match vnode.readlink() {
+        Ok(t) => t,
+        Err(e) => return vfs_error_to_errno(e),
+    };
+
+    // Copy to user buffer (up to bufsize, no null terminator per POSIX)
+    let copy_len = core::cmp::min(target.len(), bufsize);
+    unsafe {
+        let dest = buf as *mut u8;
+        core::ptr::copy_nonoverlapping(target.as_ptr(), dest, copy_len);
+    }
+
+    copy_len as i64
+}

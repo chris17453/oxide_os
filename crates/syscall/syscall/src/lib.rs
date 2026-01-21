@@ -66,6 +66,9 @@ pub mod nr {
     pub const CHDIR: u64 = 35;
     pub const GETCWD: u64 = 36;
     pub const PIPE: u64 = 37;
+    pub const LINK: u64 = 38;
+    pub const SYMLINK: u64 = 39;
+    pub const READLINK: u64 = 41;
 
     // TTY/device syscalls
     pub const IOCTL: u64 = 40;
@@ -73,6 +76,16 @@ pub mod nr {
     // Keyboard layout syscalls
     pub const SETKEYMAP: u64 = 120;   // Set keyboard layout
     pub const GETKEYMAP: u64 = 121;   // Get current keyboard layout name
+
+    // Process priority syscalls
+    pub const NICE: u64 = 122;
+    pub const GETPRIORITY: u64 = 123;
+    pub const SETPRIORITY: u64 = 124;
+
+    // Timer/alarm syscalls
+    pub const ALARM: u64 = 125;
+    pub const SETITIMER: u64 = 126;
+    pub const GETITIMER: u64 = 127;
 
     // Module syscalls
     pub const INIT_MODULE: u64 = 60;
@@ -292,6 +305,9 @@ pub fn dispatch(
         nr::GETDENTS => dir::sys_getdents(arg1 as i32, arg2, arg3 as usize),
         nr::CHDIR => dir::sys_chdir(arg1, arg2 as usize),
         nr::GETCWD => dir::sys_getcwd(arg1, arg2 as usize),
+        nr::LINK => dir::sys_link(arg1, arg2 as usize, arg3, arg4 as usize),
+        nr::SYMLINK => dir::sys_symlink(arg1, arg2 as usize, arg3, arg4 as usize),
+        nr::READLINK => dir::sys_readlink(arg1, arg2 as usize, arg3, arg4 as usize),
         nr::PIPE => vfs::sys_pipe(arg1),
 
         // TTY/device syscalls
