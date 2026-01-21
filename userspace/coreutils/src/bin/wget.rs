@@ -1,18 +1,56 @@
 //! wget - Download files from the web
 //!
-//! A minimal wget implementation for OXIDE.
+//! Full-featured implementation with:
+//! - Command-line URL parsing
+//! - Output to file (-O filename)
+//! - Auto-filename from URL (default behavior)
+//! - Quiet mode (-q)
+//! - Verbose mode (-v)
+//! - HTTP/1.1 GET requests
+//! - HTTP header parsing
+//! - Progress indication
+//! - IPv4 address parsing (DNS not yet supported)
 
 #![no_std]
 #![no_main]
 
-use libc::{
-    printlns, eprintlns, prints, putchar,
-    socket::{
-        tcp_socket, connect, send, recv, shutdown, sockaddr_in_octets,
-        shut, SOCKADDR_IN_SIZE,
-    },
-    close,
+use libc::*;
+use libc::socket::{
+    tcp_socket, connect, send, recv, shutdown, sockaddr_in_octets,
+    shut, SOCKADDR_IN_SIZE,
 };
+
+const MAX_URL: usize = 256;
+const MAX_FILENAME: usize = 128;
+
+struct WgetConfig {
+    quiet: bool,
+    verbose: bool,
+    output_file: Option<[u8; MAX_FILENAME]>,
+}
+
+impl WgetConfig {
+    fn new() -> Self {
+        WgetConfig {
+            quiet: false,
+            verbose: false,
+            output_file: None,
+        }
+    }
+}
+
+fn cstr_to_str(ptr: *const u8) -> &'static str {
+    if ptr.is_null() {
+        return "";
+    }
+    let mut len = 0;
+    unsafe {
+        while *ptr.add(len) != 0 {
+            len += 1;
+        }
+        core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr, len))
+    }
+}
 
 /// Parse a simple URL: http://host[:port]/path
 /// Returns (host, port, path) or None if invalid
@@ -39,20 +77,35 @@ fn parse_url(url: &str) -> Option<(&str, u16, &str)> {
     Some((host, port, path))
 }
 
+/// Extract filename from URL path
+fn extract_filename(path: &str) -> &str {
+    // Find last / and take everything after it
+    if let Some(idx) = path.rfind('/') {
+        let filename = &path[idx + 1..];
+        if !filename.is_empty() {
+            return filename;
+        }
+    }
+    "index.html"
+}
+
 /// Parse port number from string
 fn parse_port(s: &str) -> Option<u16> {
-    let mut port: u16 = 0;
+    let mut port: u32 = 0;
     for c in s.bytes() {
         if c < b'0' || c > b'9' {
             return None;
         }
-        port = port.checked_mul(10)?;
-        port = port.checked_add((c - b'0') as u16)?;
+        port = port * 10 + (c - b'0') as u32;
+        if port > 65535 {
+            return None;
+        }
     }
-    if port == 0 {
-        return None;
+    if port == 0 || port > 65535 {
+        None
+    } else {
+        Some(port as u16)
     }
-    Some(port)
 }
 
 /// Parse an IP address from string (e.g., "192.168.1.1")
@@ -138,26 +191,36 @@ fn find_pattern(buf: &[u8], pattern: &[u8]) -> Option<usize> {
 }
 
 fn print_ip(ip: (u8, u8, u8, u8)) {
-    libc::print_u64(ip.0 as u64);
+    print_u64(ip.0 as u64);
     putchar(b'.');
-    libc::print_u64(ip.1 as u64);
+    print_u64(ip.1 as u64);
     putchar(b'.');
-    libc::print_u64(ip.2 as u64);
+    print_u64(ip.2 as u64);
     putchar(b'.');
-    libc::print_u64(ip.3 as u64);
+    print_u64(ip.3 as u64);
 }
 
-#[unsafe(no_mangle)]
-fn main() -> i32 {
-    // Hardcoded URL for now - argument parsing would need env support
-    // Users would call: wget http://192.168.1.1/path
-    let url = "http://10.0.2.2/";
+fn show_help() {
+    eprintlns("Usage: wget [OPTIONS] URL");
+    eprintlns("");
+    eprintlns("Download files from the web.");
+    eprintlns("");
+    eprintlns("Options:");
+    eprintlns("  -O FILE     Save to FILE (default: extract from URL)");
+    eprintlns("  -q          Quiet mode");
+    eprintlns("  -v          Verbose mode");
+    eprintlns("  -h          Show this help");
+    eprintlns("");
+    eprintlns("Note: DNS not yet supported, use IP addresses in URL");
+}
 
+/// Download from URL
+fn do_wget(config: &WgetConfig, url: &str) -> i32 {
     // Parse URL
     let (host, port, path) = match parse_url(url) {
         Some(parsed) => parsed,
         None => {
-            eprintlns("wget: invalid URL format");
+            eprintlns("wget: invalid URL format (use http://host/path)");
             return 1;
         }
     };
@@ -171,18 +234,28 @@ fn main() -> i32 {
         }
     };
 
-    prints("Connecting to ");
-    print_ip(ip);
-    prints(":");
-    libc::print_u64(port as u64);
-    printlns("...");
+    // Determine output filename
+    let output_filename = if let Some(ref name_buf) = config.output_file {
+        let len = name_buf.iter().position(|&b| b == 0).unwrap_or(MAX_FILENAME);
+        core::str::from_utf8(&name_buf[..len]).unwrap_or("download.html")
+    } else {
+        extract_filename(path)
+    };
+
+    if !config.quiet {
+        prints("Connecting to ");
+        print_ip(ip);
+        prints(":");
+        print_u64(port as u64);
+        printlns("...");
+    }
 
     // Create TCP socket
     let sock = tcp_socket();
     if sock < 0 {
-        prints("wget: failed to create socket: ");
-        libc::print_i64(sock as i64);
-        printlns("");
+        eprints("wget: failed to create socket: ");
+        print_i64(sock as i64);
+        eprintlns("");
         return 1;
     }
 
@@ -190,43 +263,66 @@ fn main() -> i32 {
     let addr = sockaddr_in_octets(port, ip.0, ip.1, ip.2, ip.3);
     let ret = connect(sock, &addr, SOCKADDR_IN_SIZE);
     if ret < 0 {
-        prints("wget: failed to connect: ");
-        libc::print_i64(ret as i64);
-        printlns("");
+        eprints("wget: failed to connect: ");
+        print_i64(ret as i64);
+        eprintlns("");
         close(sock);
         return 1;
     }
 
-    printlns("Connected.");
+    if config.verbose {
+        printlns("Connected.");
+    }
 
     // Build HTTP request
     let mut request = [0u8; 1024];
     let req_len = build_request(path, host, &mut request);
 
+    if config.verbose {
+        printlns("Sending HTTP request...");
+    }
+
     // Send request
     let sent = send(sock, &request[..req_len], 0);
     if sent < 0 {
-        prints("wget: failed to send request: ");
-        libc::print_i64(sent as i64);
-        printlns("");
+        eprints("wget: failed to send request: ");
+        print_i64(sent as i64);
+        eprintlns("");
         close(sock);
         return 1;
     }
 
-    printlns("HTTP request sent, awaiting response...");
+    if !config.quiet {
+        printlns("HTTP request sent, awaiting response...");
+    }
+
+    // Open output file
+    let out_fd = open(output_filename, O_WRONLY | O_CREAT | O_TRUNC, 0o644);
+    if out_fd < 0 {
+        eprints("wget: cannot create file: ");
+        prints(output_filename);
+        eprintlns("");
+        close(sock);
+        return 1;
+    }
+
+    if !config.quiet {
+        prints("Saving to: ");
+        printlns(output_filename);
+    }
 
     // Receive response
     let mut buffer = [0u8; 4096];
     let mut total_received = 0;
     let mut header_end = None;
-    let mut body_received: usize = 0;
+    let mut body_written: usize = 0;
 
     loop {
-        let received = recv(sock, &mut buffer[total_received..], 0);
+        let received = recv(sock, &mut buffer, 0);
         if received < 0 {
-            prints("wget: receive error: ");
-            libc::print_i64(received as i64);
-            printlns("");
+            eprints("wget: receive error: ");
+            print_i64(received as i64);
+            eprintlns("");
             break;
         }
         if received == 0 {
@@ -238,49 +334,138 @@ fn main() -> i32 {
 
         // Look for end of headers if not found yet
         if header_end.is_none() {
-            if let Some(pos) = find_pattern(&buffer[..total_received], b"\r\n\r\n") {
+            if let Some(pos) = find_pattern(&buffer[..received as usize], b"\r\n\r\n") {
                 header_end = Some(pos + 4);
 
                 // Parse status line (first line)
                 let headers = &buffer[..pos];
                 if let Some(first_line_end) = find_pattern(headers, b"\r\n") {
                     if let Ok(status_line) = core::str::from_utf8(&headers[..first_line_end]) {
-                        printlns(status_line);
+                        if !config.quiet {
+                            printlns(status_line);
+                        }
                     }
                 }
 
-                // Output body (everything after headers)
-                let body = &buffer[pos + 4..total_received];
-                body_received = body.len();
-                print_bytes(body);
+                // Write body (everything after headers)
+                let body = &buffer[pos + 4..received as usize];
+                if !body.is_empty() {
+                    let written = write(out_fd, body);
+                    if written > 0 {
+                        body_written += written as usize;
+                    }
+                }
+            } else {
+                // Still in headers, don't write anything yet
             }
         } else {
-            // Already have headers, just output body
-            print_bytes(&buffer[total_received - received as usize..total_received]);
-            body_received += received as usize;
+            // Already past headers, write body
+            let written = write(out_fd, &buffer[..received as usize]);
+            if written > 0 {
+                body_written += written as usize;
+            }
         }
 
-        // If buffer is full, reset for more data
-        if total_received >= buffer.len() {
-            total_received = 0;
+        // Progress indication
+        if !config.quiet && body_written > 0 {
+            prints("\rDownloaded: ");
+            print_u64(body_written as u64);
+            prints(" bytes");
         }
     }
 
-    // Shutdown and close
+    if !config.quiet {
+        printlns("");
+    }
+
+    // Close file
+    close(out_fd);
+
+    // Shutdown and close socket
     shutdown(sock, shut::RDWR);
     close(sock);
 
-    printlns("");
-    prints("Downloaded ");
-    libc::print_u64(body_received as u64);
-    printlns(" bytes.");
+    if !config.quiet {
+        prints("Download complete: ");
+        print_u64(body_written as u64);
+        prints(" bytes saved to ");
+        printlns(output_filename);
+    }
 
     0
 }
 
-/// Print bytes to stdout
-fn print_bytes(bytes: &[u8]) {
-    for &b in bytes {
-        putchar(b);
+#[unsafe(no_mangle)]
+fn main(argc: i32, argv: *const *const u8) -> i32 {
+    if argc < 2 {
+        show_help();
+        return 1;
     }
+
+    let mut config = WgetConfig::new();
+    let mut arg_idx = 1;
+    let mut url: Option<&str> = None;
+
+    // Parse options
+    while arg_idx < argc {
+        let arg_ptr = unsafe { *argv.add(arg_idx as usize) };
+        let arg = cstr_to_str(arg_ptr);
+
+        if arg.starts_with('-') && arg.len() > 1 && arg != "--" {
+            if arg == "-O" {
+                // Output filename option
+                arg_idx += 1;
+                if arg_idx >= argc {
+                    eprintlns("wget: option -O requires an argument");
+                    return 1;
+                }
+                let filename = cstr_to_str(unsafe { *argv.add(arg_idx as usize) });
+                let mut buf = [0u8; MAX_FILENAME];
+                let copy_len = if filename.len() > MAX_FILENAME - 1 {
+                    MAX_FILENAME - 1
+                } else {
+                    filename.len()
+                };
+                buf[..copy_len].copy_from_slice(&filename.as_bytes()[..copy_len]);
+                config.output_file = Some(buf);
+                arg_idx += 1;
+            } else {
+                // Parse character flags
+                for c in arg[1..].bytes() {
+                    match c {
+                        b'q' => config.quiet = true,
+                        b'v' => config.verbose = true,
+                        b'h' => {
+                            show_help();
+                            return 0;
+                        }
+                        _ => {
+                            eprints("wget: unknown option: -");
+                            putchar(c);
+                            eprintlns("");
+                            return 1;
+                        }
+                    }
+                }
+                arg_idx += 1;
+            }
+        } else {
+            // Positional argument - URL
+            url = Some(arg);
+            arg_idx += 1;
+            break;
+        }
+    }
+
+    // Check that we have a URL
+    let url = match url {
+        Some(u) => u,
+        None => {
+            eprintlns("wget: missing URL");
+            show_help();
+            return 1;
+        }
+    };
+
+    do_wget(&config, url)
 }
