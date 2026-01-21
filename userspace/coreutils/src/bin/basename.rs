@@ -60,6 +60,32 @@ fn str_starts_with(s: &str, prefix: &str) -> bool {
     true
 }
 
+fn basename_core<'a>(path: &'a str) -> &'a str {
+    let bytes = path.as_bytes();
+    let mut end = bytes.len();
+    while end > 0 && bytes[end - 1] == b'/' {
+        end -= 1;
+    }
+    if end == 0 {
+        return "/";
+    }
+    let mut start = end;
+    while start > 0 && bytes[start - 1] != b'/' {
+        start -= 1;
+    }
+    &path[start..end]
+}
+
+fn strip_suffix<'a>(name: &'a str, suffix: Option<&'a str>) -> &'a str {
+    if let Some(suf) = suffix {
+        if name.ends_with(suf) {
+            let new_len = name.len() - suf.len();
+            return &name[..new_len];
+        }
+    }
+    name
+}
+
 fn show_help() {
     eprintlns("Usage: basename NAME [SUFFIX]");
     eprintlns("   or: basename OPTION... NAME...");
@@ -172,35 +198,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
 }
 
 fn print_basename(path: &str, config: &BasenameConfig) {
-    let bytes = path.as_bytes();
-
-    // Handle empty path
-    if bytes.is_empty() {
-        return;
-    }
-
-    // Remove trailing slashes
-    let mut end = bytes.len();
-    while end > 1 && bytes[end - 1] == b'/' {
-        end -= 1;
-    }
-
-    // Special case: if everything is slashes, return "/"
-    if end == 1 && bytes[0] == b'/' {
-        write(STDOUT_FILENO, b"/");
-        return;
-    }
-
-    // Find last / before the trailing slashes were removed
-    let mut start = 0;
-    for i in 0..end {
-        if bytes[i] == b'/' {
-            start = i + 1;
-        }
-    }
-
-    // Extract basename
-    let mut base = &bytes[start..end];
+    let mut base = basename_core(path).as_bytes();
 
     // Remove suffix if specified
     if let Some(ref suffix_buf) = config.suffix {
