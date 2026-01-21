@@ -54,6 +54,8 @@ pub struct FbConsole {
     cursor_visible: bool,
     /// Tab width
     tab_width: u32,
+    /// Dirty cells for batched rendering
+    dirty_cells: Vec<(u32, u32)>,
 }
 
 impl FbConsole {
@@ -80,6 +82,7 @@ impl FbConsole {
             buffer,
             cursor_visible: true,
             tab_width: 8,
+            dirty_cells: Vec::new(),
         };
 
         // Clear screen
@@ -210,8 +213,8 @@ impl FbConsole {
             dirty: true,
         };
 
-        // Draw immediately
-        self.draw_cell(x, y);
+        // Mark for batched rendering instead of immediate draw
+        self.dirty_cells.push((x, y));
     }
 
     /// Draw a cell to the framebuffer
@@ -222,8 +225,8 @@ impl FbConsole {
         let px = col * self.font.width;
         let py = row * self.font.height;
 
-        // Draw background
-        self.fb.fill_rect(px, py, self.font.width, self.font.height, cell.bg);
+        // Fast background fill using optimized rect fill
+        self.fast_fill_rect(px, py, self.font.width, self.font.height, cell.bg);
 
         // Draw character
         if cell.ch != ' ' {
@@ -231,14 +234,62 @@ impl FbConsole {
         }
     }
 
-    /// Draw a glyph at pixel position
+    /// Draw a glyph at pixel position (optimized)
     fn draw_glyph(&self, px: u32, py: u32, ch: char, color: Color) {
         let glyph = self.font.glyph_or_replacement(ch);
+        let bpp = self.fb.format().bytes_per_pixel() as usize;
+        let stride = self.fb.stride() as usize;
+        let buffer = self.fb.buffer();
+        
+        // Convert color to raw bytes
+        let color_bytes = color.to_bytes(self.fb.format());
+        
+        unsafe {
+            // Draw glyph line by line for better cache efficiency
+            for y in 0..glyph.height {
+                let line_offset = ((py + y) as usize * stride) + (px as usize * bpp);
+                let line_ptr = buffer.add(line_offset);
+                
+                for x in 0..glyph.width {
+                    if glyph.pixel(x, y) {
+                        let pixel_offset = x as usize * bpp;
+                        core::ptr::copy_nonoverlapping(
+                            color_bytes.as_ptr(),
+                            line_ptr.add(pixel_offset),
+                            bpp
+                        );
+                    }
+                }
+            }
+        }
+    }
 
-        for y in 0..glyph.height {
-            for x in 0..glyph.width {
-                if glyph.pixel(x, y) {
-                    self.fb.set_pixel(px + x, py + y, color);
+    /// Fast rectangle fill optimized for small character backgrounds
+    fn fast_fill_rect(&self, x: u32, y: u32, width: u32, height: u32, color: Color) {
+        let bpp = self.fb.format().bytes_per_pixel() as usize;
+        let stride = self.fb.stride() as usize;
+        let buffer = self.fb.buffer();
+        let color_bytes = color.to_bytes(self.fb.format());
+        
+        unsafe {
+            for row in 0..height {
+                let line_offset = ((y + row) as usize * stride) + (x as usize * bpp);
+                let line_ptr = buffer.add(line_offset);
+                
+                // For small widths (character cells), just copy pixels directly
+                if width <= 32 {
+                    for col in 0..width {
+                        let pixel_offset = col as usize * bpp;
+                        core::ptr::copy_nonoverlapping(
+                            color_bytes.as_ptr(),
+                            line_ptr.add(pixel_offset),
+                            bpp
+                        );
+                    }
+                } else {
+                    // For larger widths, delegate to standard fill_rect
+                    // (this path rarely used for character rendering)
+                    self.fb.fill_rect(x, y + row, width, 1, color);
                 }
             }
         }
@@ -285,6 +336,9 @@ impl FbConsole {
             self.bg_color,
         );
 
+        // Clear dirty cells since we just scrolled everything
+        self.dirty_cells.clear();
+
         self.cursor_y = self.rows - 1;
     }
 
@@ -293,6 +347,8 @@ impl FbConsole {
         for ch in s.chars() {
             self.putchar(ch);
         }
+        // Flush batched rendering after writing string
+        self.flush();
     }
 
     /// Write with ANSI escape sequence parsing (basic subset)
@@ -505,6 +561,15 @@ impl FbConsole {
             color.g.saturating_add(64),
             color.b.saturating_add(64),
         )
+    }
+
+    /// Flush all dirty cells to the framebuffer
+    pub fn flush(&mut self) {
+        // Render all dirty cells in batch
+        for &(x, y) in &self.dirty_cells {
+            self.draw_cell(x, y);
+        }
+        self.dirty_cells.clear();
     }
 }
 

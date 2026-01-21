@@ -72,6 +72,21 @@ impl Color {
         (r << 11) | (g << 5) | b
     }
 
+    /// Convert to byte array for given format
+    pub fn to_bytes(&self, format: PixelFormat) -> [u8; 4] {
+        match format {
+            PixelFormat::RGB888 => [self.r, self.g, self.b, 0],
+            PixelFormat::BGR888 => [self.b, self.g, self.r, 0],
+            PixelFormat::RGBA8888 => [self.r, self.g, self.b, self.a],
+            PixelFormat::BGRA8888 => [self.b, self.g, self.r, self.a],
+            PixelFormat::RGB565 => {
+                let rgb565 = self.to_rgb565();
+                [rgb565 as u8, (rgb565 >> 8) as u8, 0, 0]
+            }
+            PixelFormat::Unknown => [self.b, self.g, self.r, self.a], // Default to BGRA
+        }
+    }
+
     /// Write to framebuffer in given format
     pub fn write_to(&self, buffer: &mut [u8], format: PixelFormat) {
         match format {
