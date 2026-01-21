@@ -453,9 +453,16 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 - ❌ Pattern matching/wildcards
 - ❌ Multiple directory arguments
 
-### cat
+### cat ⏸️ BASIC IMPLEMENTATION
 
-**Missing Features:**
+**Implemented Features:**
+- ✅ Read from stdin
+- ✅ Write to stdout
+- ✅ 1024-byte buffer streaming
+
+**Missing Features (Needs Enhancement):**
+- ❌ File argument support (only reads stdin currently)
+- ❌ Multiple file arguments
 - ❌ -A show all (equivalent to -vET)
 - ❌ -b number non-blank lines
 - ❌ -e equivalent to -vE
@@ -466,11 +473,8 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 - ❌ -T show tabs as ^I
 - ❌ -u unbuffered output
 - ❌ -v show non-printing chars
-- ❌ Multiple file arguments (only reads stdin)
-- ❌ File argument support (must redirect)
 - ❌ Error handling for missing files
 - ❌ Binary file handling
-- ❌ Large file streaming
 
 ### cp ✅ COMPLETED (P2)
 
@@ -556,9 +560,19 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 - ❌ Directory moves across filesystems
 - ❌ Wildcard expansion
 
-### rm
+### rm ⚠️ HAS COMPILATION ERROR
 
-**Missing Features:**
+**Implemented Features:**
+- ✅ Multiple file arguments
+- ✅ Basic file removal with sys_unlink
+- ✅ Error reporting
+
+**Issues:**
+- ⚠️ Uses wrong function signature (unlink with 2 args instead of sys_unlink)
+- ⚠️ Uses non-existent eputchar function
+- ⚠️ Needs fixing before it compiles
+
+**Missing Features (After fixing):**
 - ❌ -f force (ignore nonexistent, no prompt)
 - ❌ -i interactive (prompt for each)
 - ❌ -I prompt once for >3 files or recursive
@@ -566,32 +580,33 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 - ❌ -R recursive
 - ❌ -d remove empty directories
 - ❌ -v verbose
-- ❌ --one-file-system
-- ❌ --no-preserve-root
-- ❌ --preserve-root
-- ❌ --interactive
-- ❌ Directory removal (only removes files)
+- ❌ Long options
+- ❌ Directory removal
 - ❌ Recursive directory removal
 - ❌ Prompting before deletion
-- ❌ Special file handling
-- ❌ Error messages with reason
-- ❌ Wildcard expansion
 - ❌ Protection against removing /
 
-### mkdir
+### mkdir ⚠️ HAS COMPILATION ERROR
 
-**Missing Features:**
+**Implemented Features:**
+- ✅ Multiple directory arguments
+- ✅ Basic directory creation with sys_mkdir
+- ✅ Fixed mode (0o755)
+- ✅ Error reporting
+
+**Issues:**
+- ⚠️ Uses wrong function signature (mkdir with 3 args)
+- ⚠️ Uses non-existent eputchar function
+- ⚠️ Needs fixing before it compiles
+
+**Missing Features (After fixing):**
 - ❌ -m mode specification
 - ❌ -p create parent directories
 - ❌ -v verbose
 - ❌ -Z set SELinux context
-- ❌ --context
-- ❌ Parent directory creation (-p)
-- ❌ Mode/permissions specification (-m)
-- ❌ Verbose output
+- ❌ Long options
+- ❌ Parent directory creation
 - ❌ Intermediate directory creation
-- ❌ Atomic operations
-- ❌ Error messages with reason
 
 ### chmod
 
@@ -659,9 +674,15 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 - ❌ Interactive prompting
 - ❌ Wildcard expansion
 
-### touch
+### touch ⏸️ BASIC IMPLEMENTATION
 
-**Missing Features:**
+**Implemented Features:**
+- ✅ Create new files with default permissions (0o644)
+- ✅ Multiple file arguments
+- ✅ Error handling for each file
+
+**Missing Features (Needs Enhancement):**
+- ❌ Timestamp modification (currently only creates files)
 - ❌ -a change access time only
 - ❌ -c do not create file
 - ❌ -d use specified time
@@ -669,11 +690,8 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 - ❌ -m change modification time only
 - ❌ -r use file's time
 - ❌ -t use specified timestamp (YYMMDDHHMM)
-- ❌ --time (access, atime, modify, mtime, use)
-- ❌ --no-create
-- ❌ --no-dereference
-- ❌ --reference
-- ❌ Timestamp modification (only creates or doesn't change)
+- ❌ All long options
+- ❌ utimensat/futimens syscall usage for timestamp updates
 - ❌ Access time vs modification time control
 - ❌ Specific timestamp setting
 - ❌ Reference file time copying
@@ -876,14 +894,24 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 - ❌ Zero-terminated line mode
 - ❌ PID monitoring
 
-### wc
+### wc ✅ COMPLETE (Basic)
 
-**Missing Features:**
+**Implemented Features:**
+- ✅ -l count lines
+- ✅ -w count words
+- ✅ -c count bytes
+- ✅ -m count characters (treated as bytes)
+- ✅ Multiple file arguments
+- ✅ Stdin input support
+- ✅ Total line for multiple files
+- ✅ Default: show all counts
+
+**Missing Features (Low Priority):**
 - ❌ -L print longest line length
 - ❌ --files0-from=F read input from file list
 - ❌ --max-line-length
 - ❌ Tab width different from 8
-- ❌ Large file handling (counts may overflow)
+- ❌ Large file handling (counts may overflow on huge files)
 
 ### sort
 
@@ -1448,11 +1476,14 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 
 ## SYSTEM INFORMATION
 
-### uname
+### uname ⏸️ MINIMAL IMPLEMENTATION
 
-**Missing Features:**
+**Implemented Features:**
+- ✅ Prints system name "OXIDE"
+
+**Missing Features (Needs Enhancement):**
 - ❌ -a all information
-- ❌ -s system name (only this is partially implemented)
+- ❌ -s system name option
 - ❌ -n network node hostname
 - ❌ -r kernel release
 - ❌ -v kernel version
@@ -1460,16 +1491,9 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 - ❌ -p processor type
 - ❌ -i hardware platform
 - ❌ -o operating system
-- ❌ --kernel-name
-- ❌ --nodename
-- ❌ --kernel-release
-- ❌ --kernel-version
-- ❌ --machine
-- ❌ --processor
-- ❌ --hardware-platform
-- ❌ --operating-system
+- ❌ All long options
 - ❌ uname() syscall invocation
-- ❌ Actual system information (prints only "OXIDE")
+- ❌ Actual system information from kernel
 
 ### uptime
 
@@ -1667,13 +1691,18 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 - ❌ SELinux context
 - ❌ Birth time (if supported)
 
-### whoami
+### whoami ⏸️ BASIC IMPLEMENTATION
 
-**Missing Features:**
+**Implemented Features:**
+- ✅ Get effective user ID (geteuid)
+- ✅ Display "root" for UID 0
+- ✅ Display "userNNN" for other UIDs
+
+**Missing Features (Needs Enhancement):**
 - ❌ Username lookup from /etc/passwd
-- ❌ Only shows "root" or "userNNN" format
 - ❌ getpwuid() equivalent
 - ❌ No /etc/passwd parsing
+- ❌ Actual username display
 
 ### id
 
@@ -1791,9 +1820,14 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 
 ## OUTPUT & FORMATTING
 
-### echo
+### echo ⏸️ BASIC IMPLEMENTATION
 
-**Missing Features:**
+**Implemented Features:**
+- ✅ Print arguments separated by spaces
+- ✅ Trailing newline
+- ✅ Multiple argument support
+
+**Missing Features (Needs Enhancement):**
 - ❌ -n no trailing newline
 - ❌ -e enable escape sequences
 - ❌ -E disable escape sequences (default)
@@ -1812,8 +1846,6 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
   - \v vertical tab
   - \0NNN octal byte
   - \xHH hexadecimal byte
-- ❌ All escape processing (always literal)
-- ❌ -n flag support (always adds newline)
 
 ### printf
 
@@ -1833,9 +1865,14 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 
 ## PATH & FILESYSTEM
 
-### pwd
+### pwd ✅ COMPLETE (Basic)
 
-**Missing Features:**
+**Implemented Features:**
+- ✅ Print current working directory
+- ✅ getcwd syscall integration
+- ✅ Error handling
+
+**Missing Features (Low Priority):**
 - ❌ -L logical (follow symlinks)
 - ❌ -P physical (no symlinks)
 - ❌ --logical
@@ -2210,14 +2247,19 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 - ❌ File timestamp display
 - ❌ Only shows basic hardcoded format
 
-### sleep
+### sleep ⏸️ BASIC IMPLEMENTATION
 
-**Missing Features:**
+**Implemented Features:**
+- ✅ Sleep for specified seconds
+- ✅ Decimal second support (0.5, 1.5, etc.)
+- ✅ Fractional seconds with nanosleep
+- ✅ Argument parsing
+
+**Missing Features (Low Priority):**
 - ❌ Suffix support (s, m, h, d)
 - ❌ Multiple duration arguments
 - ❌ --help
 - ❌ --version
-- ❌ Only supports seconds (decimal supported)
 
 ### seq
 
@@ -2235,12 +2277,16 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 - ❌ Zero padding
 - ❌ Floating point support (only integers)
 
-### true/false
+### true/false ✅ COMPLETE
 
-**Missing Features:**
-- ❌ --help (but this would violate spec)
-- ❌ --version (but this would violate spec)
-- ✅ Work correctly - no features missing
+**Implemented Features:**
+- ✅ true returns 0
+- ✅ false returns 1
+- ✅ Minimal, correct implementation per POSIX spec
+
+**Missing Features (Intentionally omitted per spec):**
+- ❌ --help (would violate POSIX spec)
+- ❌ --version (would violate POSIX spec)
 
 ### test / [
 
