@@ -95,6 +95,16 @@ pub mod nr {
     pub const SETKEYMAP: u64 = 120;
     pub const GETKEYMAP: u64 = 121;
 
+    // Process priority syscalls
+    pub const NICE: u64 = 122;
+    pub const GETPRIORITY: u64 = 123;
+    pub const SETPRIORITY: u64 = 124;
+
+    // Timer/alarm syscalls
+    pub const ALARM: u64 = 125;
+    pub const SETITIMER: u64 = 126;
+    pub const GETITIMER: u64 = 127;
+
     // Thread syscalls (Linux-compatible numbers)
     pub const CLONE: u64 = 56;
     pub const GETTID: u64 = 186;
@@ -532,4 +542,107 @@ pub fn sys_mremap(old_addr: *mut u8, old_size: usize, new_size: usize, flags: i3
 /// Current/new end of data segment, or null on error
 pub fn sys_brk(addr: *mut u8) -> *mut u8 {
     syscall1(nr::BRK, addr as usize) as *mut u8
+}
+
+// ============================================================================
+// Process priority syscall wrappers
+// ============================================================================
+
+/// Priority target types
+pub mod prio {
+    pub const PRIO_PROCESS: i32 = 0;
+    pub const PRIO_PGRP: i32 = 1;
+    pub const PRIO_USER: i32 = 2;
+}
+
+/// sys_nice - Change process priority
+///
+/// # Arguments
+/// * `inc` - Priority increment (positive = lower priority)
+///
+/// # Returns
+/// New nice value on success, -1 on error
+pub fn sys_nice(inc: i32) -> i32 {
+    syscall1(nr::NICE, inc as usize) as i32
+}
+
+/// sys_getpriority - Get scheduling priority
+///
+/// # Arguments
+/// * `which` - PRIO_PROCESS, PRIO_PGRP, or PRIO_USER
+/// * `who` - Process ID, group ID, or user ID (0 = current)
+///
+/// # Returns
+/// Priority value (0-40) on success, -1 on error
+pub fn sys_getpriority(which: i32, who: i32) -> i32 {
+    syscall2(nr::GETPRIORITY, which as usize, who as usize) as i32
+}
+
+/// sys_setpriority - Set scheduling priority
+///
+/// # Arguments
+/// * `which` - PRIO_PROCESS, PRIO_PGRP, or PRIO_USER
+/// * `who` - Process ID, group ID, or user ID (0 = current)
+/// * `prio` - New priority (0-40, where 0 is highest)
+///
+/// # Returns
+/// 0 on success, -1 on error
+pub fn sys_setpriority(which: i32, who: i32, prio: i32) -> i32 {
+    syscall3(nr::SETPRIORITY, which as usize, who as usize, prio as usize) as i32
+}
+
+// ============================================================================
+// Timer/alarm syscall wrappers
+// ============================================================================
+
+/// Interval timer structure
+#[repr(C)]
+pub struct ITimerVal {
+    pub it_interval_sec: i64,  // Timer interval (seconds)
+    pub it_interval_usec: i64, // Timer interval (microseconds)
+    pub it_value_sec: i64,     // Current value (seconds)
+    pub it_value_usec: i64,    // Current value (microseconds)
+}
+
+/// Timer types
+pub mod itimer {
+    pub const ITIMER_REAL: i32 = 0;    // Real time (SIGALRM)
+    pub const ITIMER_VIRTUAL: i32 = 1; // User time (SIGVTALRM)
+    pub const ITIMER_PROF: i32 = 2;    // User + system time (SIGPROF)
+}
+
+/// sys_alarm - Set alarm signal
+///
+/// # Arguments
+/// * `seconds` - Seconds until SIGALRM (0 = cancel)
+///
+/// # Returns
+/// Seconds remaining from previous alarm
+pub fn sys_alarm(seconds: u32) -> u32 {
+    syscall1(nr::ALARM, seconds as usize) as u32
+}
+
+/// sys_setitimer - Set interval timer
+///
+/// # Arguments
+/// * `which` - ITIMER_REAL, ITIMER_VIRTUAL, or ITIMER_PROF
+/// * `new_value` - New timer value
+/// * `old_value` - Optional old timer value (may be null)
+///
+/// # Returns
+/// 0 on success, -1 on error
+pub fn sys_setitimer(which: i32, new_value: *const ITimerVal, old_value: *mut ITimerVal) -> i32 {
+    syscall3(nr::SETITIMER, which as usize, new_value as usize, old_value as usize) as i32
+}
+
+/// sys_getitimer - Get interval timer
+///
+/// # Arguments
+/// * `which` - ITIMER_REAL, ITIMER_VIRTUAL, or ITIMER_PROF
+/// * `curr_value` - Current timer value
+///
+/// # Returns
+/// 0 on success, -1 on error
+pub fn sys_getitimer(which: i32, curr_value: *mut ITimerVal) -> i32 {
+    syscall2(nr::GETITIMER, which as usize, curr_value as usize) as i32
 }
