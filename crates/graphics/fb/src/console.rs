@@ -602,6 +602,9 @@ impl FbConsole {
 
     /// Flush all dirty cells to the framebuffer
     pub fn flush(&mut self) {
+        // Count pixels for performance tracking
+        let pixel_count = self.dirty_cells.len() * (self.font.width * self.font.height) as usize;
+        
         // Render all dirty cells in batch
         for &(x, y) in &self.dirty_cells {
             self.draw_cell(x, y);
@@ -610,6 +613,10 @@ impl FbConsole {
         
         // Flush to hardware if using hardware-accelerated framebuffer
         self.fb.flush();
+        
+        // Record performance metrics
+        crate::perf::record_pixels(pixel_count as u64);
+        crate::perf::record_flush();
     }
 }
 

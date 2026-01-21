@@ -545,8 +545,13 @@ impl VirtioGpu {
         Ok(())
     }
 
-    /// Flush framebuffer to display
+    /// Flush framebuffer to display (full screen)
     pub fn flush(&self) {
+        self.flush_region(0, 0, self.width, self.height);
+    }
+    
+    /// Flush a specific region to display (optimized for partial updates)
+    pub fn flush_region(&self, x: u32, y: u32, width: u32, height: u32) {
         if self.framebuffer.is_none() {
             return;
         }
@@ -558,10 +563,10 @@ impl VirtioGpu {
                 ..Default::default()
             },
             r: Rect {
-                x: 0,
-                y: 0,
-                width: self.width,
-                height: self.height,
+                x,
+                y,
+                width,
+                height,
             },
             offset: 0,
             resource_id: self.resource_id,
@@ -578,10 +583,10 @@ impl VirtioGpu {
                 ..Default::default()
             },
             r: Rect {
-                x: 0,
-                y: 0,
-                width: self.width,
-                height: self.height,
+                x,
+                y,
+                width,
+                height,
             },
             resource_id: self.resource_id,
             padding: 0,

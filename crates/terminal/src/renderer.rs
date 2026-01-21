@@ -129,15 +129,18 @@ impl Renderer {
     /// Render the entire screen
     pub fn render(&mut self, buffer: &ScreenBuffer, cursor: &Cursor) {
         // Render dirty rows
+        let mut pixel_count = 0u64;
         for row in 0..self.rows {
             if self.dirty.is_row_dirty(row) {
                 self.render_row(buffer, row);
+                pixel_count += (self.cols * self.font.width * self.font.height) as u64;
             }
         }
 
         // Render cursor
         if cursor.visible && cursor.blink_on {
             self.render_cursor(buffer, cursor);
+            pixel_count += (self.font.width * self.font.height) as u64;
         }
 
         // Clear dirty flags
@@ -150,6 +153,10 @@ impl Renderer {
         
         // Flush to hardware for immediate display
         self.fb.flush();
+        
+        // Record performance metrics
+        fb::record_pixels(pixel_count);
+        fb::record_flush();
     }
 
     /// Render a single row
