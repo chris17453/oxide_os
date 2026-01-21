@@ -365,7 +365,7 @@ pub fn sys_link(
     };
 
     // Create the hard link
-    match link_parent.link(&link_name, target_vnode) {
+    match link_parent.link(&link_name, target_vnode.as_ref()) {
         Ok(()) => 0,
         Err(e) => vfs_error_to_errno(e),
     }
@@ -403,7 +403,7 @@ pub fn sys_symlink(
 
     // Create the symbolic link
     match link_parent.symlink(&link_name, target_path) {
-        Ok(()) => 0,
+        Ok(_) => 0,  // Returns Arc<dyn VnodeOps> but we don't need it
         Err(e) => vfs_error_to_errno(e),
     }
 }
@@ -430,8 +430,9 @@ pub fn sys_readlink(
         None => return errno::EFAULT,
     };
 
-    // Lookup the symlink (don't follow it)
-    let vnode = match GLOBAL_VFS.lookup_no_follow(&path) {
+    // Lookup the symlink
+    // Note: VFS lookup returns the symlink vnode itself for symlinks
+    let vnode = match GLOBAL_VFS.lookup(&path) {
         Ok(v) => v,
         Err(e) => return vfs_error_to_errno(e),
     };

@@ -891,7 +891,7 @@ fn sys_getpriority(which: i32, who: i32) -> i64 {
             let target_pid = if who == 0 {
                 table.current_pid()
             } else {
-                who
+                who as u32
             };
 
             if let Some(proc) = table.get(target_pid) {
@@ -939,7 +939,7 @@ fn sys_setpriority(which: i32, who: i32, prio: i32) -> i64 {
             let target_pid = if who == 0 {
                 table.current_pid()
             } else {
-                who
+                who as u32
             };
 
             if let Some(proc) = table.get(target_pid) {
@@ -1008,6 +1008,7 @@ fn sys_alarm(seconds: u32) -> i64 {
 
 /// Interval timer structure (matches userspace struct itimerval)
 #[repr(C)]
+#[derive(Copy, Clone)]
 struct ITimerVal {
     it_interval_sec: i64,  // Timer interval (seconds)
     it_interval_usec: i64, // Timer interval (microseconds)

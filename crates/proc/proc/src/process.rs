@@ -183,6 +183,18 @@ pub struct Process {
     is_thread_leader: bool,
     /// Thread group members (TIDs of threads in this group, only valid for leader)
     thread_group: Vec<Tid>,
+    /// Process nice value (priority: -20 to +19, default 0)
+    nice: i32,
+    /// Alarm remaining time in seconds (0 = no alarm)
+    alarm_remaining: u32,
+    /// Interval timer - interval seconds
+    itimer_interval_sec: i64,
+    /// Interval timer - interval microseconds
+    itimer_interval_usec: i64,
+    /// Interval timer - current value seconds
+    itimer_value_sec: i64,
+    /// Interval timer - current value microseconds
+    itimer_value_usec: i64,
 }
 
 impl Process {
@@ -227,6 +239,12 @@ impl Process {
             clear_child_tid: 0,
             is_thread_leader: true,
             thread_group: Vec::new(),
+            nice: 0,  // Default priority
+            alarm_remaining: 0,
+            itimer_interval_sec: 0,
+            itimer_interval_usec: 0,
+            itimer_value_sec: 0,
+            itimer_value_usec: 0,
         }
     }
 
@@ -285,6 +303,12 @@ impl Process {
             clear_child_tid: 0,
             is_thread_leader: false,
             thread_group: Vec::new(),
+            nice: 0,  // Default priority
+            alarm_remaining: 0,
+            itimer_interval_sec: 0,
+            itimer_interval_usec: 0,
+            itimer_value_sec: 0,
+            itimer_value_usec: 0,
         }
     }
 
@@ -615,6 +639,59 @@ impl Process {
     /// Clone environ (for fork)
     pub fn clone_environ(&self) -> Vec<String> {
         self.environ.clone()
+    }
+
+    /// Get nice value (process priority)
+    pub fn nice(&self) -> i32 {
+        self.nice
+    }
+
+    /// Set nice value (process priority)
+    pub fn set_nice(&mut self, nice: i32) {
+        self.nice = nice;
+    }
+
+    /// Get alarm remaining time
+    pub fn get_alarm_remaining(&self) -> u32 {
+        self.alarm_remaining
+    }
+
+    /// Set alarm
+    pub fn set_alarm(&mut self, seconds: u32) {
+        self.alarm_remaining = seconds;
+    }
+
+    /// Clear alarm
+    pub fn clear_alarm(&mut self) {
+        self.alarm_remaining = 0;
+    }
+
+    /// Get interval timer interval seconds
+    pub fn get_itimer_interval_sec(&self) -> i64 {
+        self.itimer_interval_sec
+    }
+
+    /// Get interval timer interval microseconds
+    pub fn get_itimer_interval_usec(&self) -> i64 {
+        self.itimer_interval_usec
+    }
+
+    /// Get interval timer value seconds
+    pub fn get_itimer_value_sec(&self) -> i64 {
+        self.itimer_value_sec
+    }
+
+    /// Get interval timer value microseconds
+    pub fn get_itimer_value_usec(&self) -> i64 {
+        self.itimer_value_usec
+    }
+
+    /// Set interval timer
+    pub fn set_itimer(&mut self, interval_sec: i64, interval_usec: i64, value_sec: i64, value_usec: i64) {
+        self.itimer_interval_sec = interval_sec;
+        self.itimer_interval_usec = interval_usec;
+        self.itimer_value_sec = value_sec;
+        self.itimer_value_usec = value_usec;
     }
 }
 
