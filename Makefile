@@ -359,12 +359,18 @@ run-kvm-vnc: boot-image
 	@mkdir -p /tmp/qemu-oxide
 	@echo "Starting QEMU in background..."
 	@TMPDIR=/tmp/qemu-oxide /usr/libexec/qemu-kvm \
-		-machine pc \
-		-cpu max \
+		-machine q35,accel=kvm:tcg \
+		-cpu max,+invtsc \
+		-smp 2 \
 		-m 256M \
 		-drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE.fd \
 		-drive if=pflash,format=raw,file=$(TARGET_DIR)/OVMF_VARS.fd \
-		-drive format=raw,file=$(TARGET_DIR)/boot.img,if=ide \
+		-drive file=$(TARGET_DIR)/boot.img,format=raw,if=none,id=bootdisk \
+		-device ide-hd,drive=bootdisk,bus=ide.0 \
+		-vga std \
+		-usb \
+		-device usb-kbd \
+		-device usb-mouse \
 		-vnc :0 \
 		-no-reboot & \
 	QEMU_PID=$$!; \
