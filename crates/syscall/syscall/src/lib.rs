@@ -153,6 +153,7 @@ pub mod errno {
     pub const EINTR: i64 = -4;      // Interrupted system call
     pub const ERANGE: i64 = -34;    // Result too large
     pub const EMFILE: i64 = -24;    // Too many open files
+    pub const EIO: i64 = -5;        // I/O error
 
     // Socket errors
     pub const ENOTSOCK: i64 = -88;      // Socket operation on non-socket

@@ -56,12 +56,34 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
     // Page-align length
     let length = (length + 0xFFF) & !0xFFF;
 
-    // For now, only support anonymous private mappings
-    if map_flags & flags::MAP_ANONYMOUS == 0 {
-        // File-backed mappings not yet implemented
-        // TODO: Implement file-backed mmap
-        return errno::ENOSYS;
-    }
+    // Check if this is file-backed or anonymous
+    let is_anonymous = (map_flags & flags::MAP_ANONYMOUS) != 0;
+
+    // If file-backed, validate fd and offset
+    let file_opt = if !is_anonymous {
+        // Validate offset is page-aligned
+        if offset < 0 || (offset as u64 & 0xFFF) != 0 {
+            return errno::EINVAL;
+        }
+
+        // Get the file from the file descriptor
+        let table = process_table();
+        let proc = match table.current() {
+            Some(p) => p,
+            None => return errno::ESRCH,
+        };
+
+        let proc_guard = proc.lock();
+        let file = match proc_guard.fd_table().get(fd) {
+            Ok(fd_entry) => fd_entry.file.clone(),
+            Err(_) => return errno::EBADF,
+        };
+        drop(proc_guard);
+
+        Some(file)
+    } else {
+        None
+    };
 
     // Determine mapping address
     let map_addr = if map_flags & flags::MAP_FIXED != 0 {
@@ -121,6 +143,44 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
             Ok(()) => {}
             Err(_) => return errno::ENOMEM,
         }
+    }
+
+    // If file-backed, read file contents into the mapped pages
+    if let Some(file) = file_opt {
+        // Seek to the offset
+        use vfs::SeekFrom;
+        match file.seek(SeekFrom::Start(offset as u64)) {
+            Ok(_) => {},
+            Err(_) => {
+                // Failed to seek - unmap and return error
+                let _ = sys_munmap(map_addr, length);
+                return errno::EIO;
+            }
+        }
+
+        // Read file data into the mapped region
+        let buffer = unsafe {
+            core::slice::from_raw_parts_mut(map_addr as *mut u8, length as usize)
+        };
+
+        match file.read(buffer) {
+            Ok(bytes_read) => {
+                // Zero-fill the rest if file is smaller than mapping
+                if bytes_read < length as usize {
+                    buffer[bytes_read..].fill(0);
+                }
+            }
+            Err(_) => {
+                // Failed to read - unmap and return error
+                let _ = sys_munmap(map_addr, length);
+                return errno::EIO;
+            }
+        }
+
+        // Note: MAP_SHARED vs MAP_PRIVATE handling
+        // For MAP_PRIVATE, we've already made a copy (COW not yet implemented)
+        // For MAP_SHARED, writes will go to memory but won't be synced to file
+        // Full msync() support would be needed for proper MAP_SHARED
     }
 
     map_addr as i64
