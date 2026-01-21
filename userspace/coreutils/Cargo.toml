@@ -273,6 +273,10 @@ name = "pgrep"
 path = "src/bin/pgrep.rs"
 
 [[bin]]
+name = "pkill"
+path = "src/bin/pkill.rs"
+
+[[bin]]
 name = "nice"
 path = "src/bin/nice.rs"
 

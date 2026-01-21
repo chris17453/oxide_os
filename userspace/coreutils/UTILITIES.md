@@ -61,7 +61,7 @@
 | Utility | Description | Status |
 |---------|-------------|--------|
 | `pgrep` | Find processes by name | DONE (needs /proc) |
-| `pkill` | Kill processes by name | TODO |
+| `pkill` | Kill processes by name | DONE (needs /proc) |
 | `nice` | Run with modified priority | DONE (needs kernel support) |
 | `nohup` | Run immune to hangups | DONE (needs signal support) |
 | `timeout` | Run with time limit | DONE (needs timer support) |
