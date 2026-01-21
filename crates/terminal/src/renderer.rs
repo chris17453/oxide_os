@@ -147,6 +147,9 @@ impl Renderer {
         self.last_cursor_row = cursor.row;
         self.last_cursor_col = cursor.col;
         self.last_cursor_visible = cursor.visible && cursor.blink_on;
+        
+        // Flush to hardware for immediate display
+        self.fb.flush();
     }
 
     /// Render a single row
@@ -197,11 +200,54 @@ impl Renderer {
     /// Draw a glyph
     fn draw_glyph(&self, px: u32, py: u32, ch: char, color: Color) {
         let glyph = self.font.glyph_or_replacement(ch);
+        let bpp = self.fb.format().bytes_per_pixel() as usize;
+        let stride = self.fb.stride() as usize;
+        let buffer = self.fb.buffer();
+        let color_bytes = color.to_bytes(self.fb.format());
 
-        for y in 0..glyph.height {
-            for x in 0..glyph.width {
-                if glyph.pixel(x, y) {
-                    self.fb.set_pixel(px + x, py + y, color);
+        unsafe {
+            match bpp {
+                4 => {
+                    // 32-bit: optimized u32 writes
+                    let pixel_value = u32::from_le_bytes([
+                        color_bytes[0], color_bytes[1], color_bytes[2], color_bytes[3]
+                    ]);
+                    
+                    for y in 0..glyph.height {
+                        let line_offset = ((py + y) as usize * stride) + (px as usize * 4);
+                        let line_ptr = buffer.add(line_offset) as *mut u32;
+                        
+                        for x in 0..glyph.width {
+                            if glyph.pixel(x, y) {
+                                core::ptr::write(line_ptr.add(x as usize), pixel_value);
+                            }
+                        }
+                    }
+                },
+                2 => {
+                    // 16-bit: optimized u16 writes
+                    let pixel_value = u16::from_le_bytes([color_bytes[0], color_bytes[1]]);
+                    
+                    for y in 0..glyph.height {
+                        let line_offset = ((py + y) as usize * stride) + (px as usize * 2);
+                        let line_ptr = buffer.add(line_offset) as *mut u16;
+                        
+                        for x in 0..glyph.width {
+                            if glyph.pixel(x, y) {
+                                core::ptr::write(line_ptr.add(x as usize), pixel_value);
+                            }
+                        }
+                    }
+                },
+                _ => {
+                    // Fallback: pixel-by-pixel
+                    for y in 0..glyph.height {
+                        for x in 0..glyph.width {
+                            if glyph.pixel(x, y) {
+                                self.fb.set_pixel(px + x, py + y, color);
+                            }
+                        }
+                    }
                 }
             }
         }

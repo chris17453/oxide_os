@@ -197,6 +197,11 @@ impl FbConsole {
                 }
             }
         }
+        
+        // Auto-flush dirty cells for immediate display updates
+        if self.dirty_cells.len() >= 16 {
+            self.flush();
+        }
     }
 
     /// Put a character at a specific position
@@ -256,27 +261,11 @@ impl FbConsole {
                         let line_offset = ((py + y) as usize * stride) + (px as usize * 4);
                         let line_ptr = buffer.add(line_offset) as *mut u32;
                         
-                        // Batch pixels horizontally - write up to 8 pixels at once
-                        let mut x = 0;
-                        while x < glyph.width {
-                            let batch_end = (x + 8).min(glyph.width);
-                            let mut batch_mask = 0u8;
-                            
-                            // Build bitmask for this batch
-                            for bx in x..batch_end {
-                                if glyph.pixel(bx, y) {
-                                    batch_mask |= 1 << (bx - x);
-                                }
+                        // Write pixels directly without volatile - batch the entire line
+                        for x in 0..glyph.width {
+                            if glyph.pixel(x, y) {
+                                core::ptr::write(line_ptr.add(x as usize), pixel_value);
                             }
-                            
-                            // Write pixels in batch based on mask
-                            for bx in x..batch_end {
-                                if (batch_mask >> (bx - x)) & 1 != 0 {
-                                    core::ptr::write_volatile(line_ptr.add((bx) as usize), pixel_value);
-                                }
-                            }
-                            
-                            x = batch_end;
                         }
                     }
                 },
@@ -286,37 +275,13 @@ impl FbConsole {
                         let line_offset = ((py + y) as usize * stride) + (px as usize * 3);
                         let line_ptr = buffer.add(line_offset);
                         
-                        // Collect consecutive pixels into runs for bulk copying
-                        let mut run_start = None;
+                        // Write pixels directly
                         for x in 0..glyph.width {
                             if glyph.pixel(x, y) {
-                                if run_start.is_none() {
-                                    run_start = Some(x);
-                                }
-                            } else {
-                                if let Some(start) = run_start {
-                                    // Copy run of pixels
-                                    let run_len = x - start;
-                                    let run_offset = start as usize * 3;
-                                    for px_offset in (0..run_len as usize * 3).step_by(3) {
-                                        core::ptr::copy_nonoverlapping(
-                                            color_bytes.as_ptr(),
-                                            line_ptr.add(run_offset + px_offset),
-                                            3
-                                        );
-                                    }
-                                    run_start = None;
-                                }
-                            }
-                        }
-                        // Handle final run
-                        if let Some(start) = run_start {
-                            let run_len = glyph.width - start;
-                            let run_offset = start as usize * 3;
-                            for px_offset in (0..run_len as usize * 3).step_by(3) {
+                                let pixel_offset = x as usize * 3;
                                 core::ptr::copy_nonoverlapping(
                                     color_bytes.as_ptr(),
-                                    line_ptr.add(run_offset + px_offset),
+                                    line_ptr.add(pixel_offset),
                                     3
                                 );
                             }
@@ -333,13 +298,13 @@ impl FbConsole {
                         
                         for x in 0..glyph.width {
                             if glyph.pixel(x, y) {
-                                core::ptr::write_volatile(line_ptr.add(x as usize), pixel_value);
+                                core::ptr::write(line_ptr.add(x as usize), pixel_value);
                             }
                         }
                     }
                 },
                 _ => {
-                    // Fallback for unknown formats - still optimized line-by-line
+                    // Fallback for unknown formats
                     for y in 0..glyph.height {
                         let line_offset = ((py + y) as usize * stride) + (px as usize * bpp);
                         let line_ptr = buffer.add(line_offset);
@@ -642,6 +607,9 @@ impl FbConsole {
             self.draw_cell(x, y);
         }
         self.dirty_cells.clear();
+        
+        // Flush to hardware if using hardware-accelerated framebuffer
+        self.fb.flush();
     }
 }
 

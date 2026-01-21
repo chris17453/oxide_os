@@ -120,7 +120,6 @@ pub trait Framebuffer: Send + Sync {
             for row in y..y_end {
                 let line_start = (row as usize * stride) + (x as usize * bpp);
                 let pixels_to_fill = (x_end - x) as usize;
-                let bytes_to_fill = pixels_to_fill * bpp;
                 
                 // Use optimized filling based on pixel format
                 match bpp {
@@ -130,17 +129,16 @@ pub trait Framebuffer: Send + Sync {
                             color_bytes[0], color_bytes[1], color_bytes[2], color_bytes[3]
                         ]);
                         let line_ptr = buffer.add(line_start) as *mut u32;
+                        // Use regular write instead of write_volatile for bulk operations
                         for i in 0..pixels_to_fill {
-                            ptr::write_volatile(line_ptr.add(i), pixel_value);
+                            ptr::write(line_ptr.add(i), pixel_value);
                         }
                     },
                     3 => {
-                        // 24-bit pixels - fill in chunks of 4 pixels at a time when possible
+                        // 24-bit pixels - use memset-style pattern filling
                         let line_ptr = buffer.add(line_start);
-                        let full_chunks = pixels_to_fill / 4;
-                        let remaining = pixels_to_fill % 4;
                         
-                        // Create a 12-byte pattern for 4 pixels
+                        // Create a 12-byte pattern for 4 pixels at once
                         let pattern = [
                             color_bytes[0], color_bytes[1], color_bytes[2], // pixel 1
                             color_bytes[0], color_bytes[1], color_bytes[2], // pixel 2  
@@ -148,12 +146,14 @@ pub trait Framebuffer: Send + Sync {
                             color_bytes[0], color_bytes[1], color_bytes[2], // pixel 4
                         ];
                         
-                        // Fill 4 pixels at a time
+                        // Fill in chunks of 4 pixels (12 bytes)
+                        let full_chunks = pixels_to_fill / 4;
                         for i in 0..full_chunks {
                             ptr::copy_nonoverlapping(pattern.as_ptr(), line_ptr.add(i * 12), 12);
                         }
                         
                         // Handle remaining pixels
+                        let remaining = pixels_to_fill % 4;
                         for i in 0..remaining {
                             let pixel_offset = (full_chunks * 12) + (i * 3);
                             ptr::copy_nonoverlapping(color_bytes.as_ptr(), line_ptr.add(pixel_offset), 3);
@@ -164,7 +164,7 @@ pub trait Framebuffer: Send + Sync {
                         let pixel_value = u16::from_le_bytes([color_bytes[0], color_bytes[1]]);
                         let line_ptr = buffer.add(line_start) as *mut u16;
                         for i in 0..pixels_to_fill {
-                            ptr::write_volatile(line_ptr.add(i), pixel_value);
+                            ptr::write(line_ptr.add(i), pixel_value);
                         }
                     },
                     _ => {
@@ -184,7 +184,6 @@ pub trait Framebuffer: Send + Sync {
     fn clear(&self, color: Color) {
         let bpp = self.format().bytes_per_pixel() as usize;
         let total_pixels = (self.width() * self.height()) as usize;
-        let total_bytes = total_pixels * bpp;
         let buffer = self.buffer();
         let mut color_bytes = [0u8; 4];
         color.write_to(&mut color_bytes, self.format());
@@ -192,26 +191,26 @@ pub trait Framebuffer: Send + Sync {
         unsafe {
             match bpp {
                 4 => {
-                    // 32-bit: Use fast u32 writes
+                    // 32-bit: Use fast u32 writes (non-volatile for bulk)
                     let pixel_value = u32::from_le_bytes([
                         color_bytes[0], color_bytes[1], color_bytes[2], color_bytes[3]
                     ]);
                     let buffer_u32 = buffer as *mut u32;
                     for i in 0..total_pixels {
-                        ptr::write_volatile(buffer_u32.add(i), pixel_value);
+                        ptr::write(buffer_u32.add(i), pixel_value);
                     }
                 },
                 3 => {
                     // 24-bit: Use chunked copying for better performance
-                    let chunks_of_4 = total_pixels / 4;
-                    let remaining = total_pixels % 4;
-                    
                     let pattern = [
                         color_bytes[0], color_bytes[1], color_bytes[2], // pixel 1
                         color_bytes[0], color_bytes[1], color_bytes[2], // pixel 2  
                         color_bytes[0], color_bytes[1], color_bytes[2], // pixel 3
                         color_bytes[0], color_bytes[1], color_bytes[2], // pixel 4
                     ];
+                    
+                    let chunks_of_4 = total_pixels / 4;
+                    let remaining = total_pixels % 4;
                     
                     for i in 0..chunks_of_4 {
                         ptr::copy_nonoverlapping(pattern.as_ptr(), buffer.add(i * 12), 12);
@@ -228,7 +227,7 @@ pub trait Framebuffer: Send + Sync {
                     let pixel_value = u16::from_le_bytes([color_bytes[0], color_bytes[1]]);
                     let buffer_u16 = buffer as *mut u16;
                     for i in 0..total_pixels {
-                        ptr::write_volatile(buffer_u16.add(i), pixel_value);
+                        ptr::write(buffer_u16.add(i), pixel_value);
                     }
                 },
                 _ => {
