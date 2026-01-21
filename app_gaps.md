@@ -143,13 +143,16 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 - ❌ Mark packets (-m)
 - ❌ Bypass routing (-r)
 
-### nc (netcat)
+### nc (netcat) ⏸️ FUNCTIONAL IMPLEMENTATION
 
-**Missing Features:**
-- ❌ Command-line argument parsing (all options hardcoded)
-- ❌ Actual listen/connect functionality (only prints messages)
-- ❌ Full bidirectional data transfer (only reads once)
-- ❌ Multiple connection handling
+**Implemented Features:**
+- ✅ TCP socket operations (listen, connect, accept)
+- ✅ IP address parsing
+- ✅ Port parsing
+- ✅ Basic send/receive functionality
+- ✅ Socket creation and binding
+
+**Missing Features (Needs Review):**
 - ❌ -k keep listening (accept multiple connections)
 - ❌ -p source port specification
 - ❌ -s source address
@@ -301,12 +304,18 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 - ❌ Netlink socket operations
 - ❌ Real-time link events (ip monitor)
 
-### wget
+### wget ⏸️ FUNCTIONAL IMPLEMENTATION
 
-**Missing Features:**
-- ❌ Command-line URL parsing (hardcoded to "http://10.0.2.2/")
-- ❌ Command-line argument parsing
-- ❌ DNS resolution (requires IP addresses)
+**Implemented Features:**
+- ✅ HTTP protocol support
+- ✅ URL parsing (http://host[:port]/path)
+- ✅ TCP socket operations
+- ✅ HTTP GET request construction
+- ✅ Response parsing and file download
+- ✅ Port specification support
+
+**Missing Features (Needs Review):**
+- ❌ DNS resolution (requires IP addresses currently)
 - ❌ HTTPS/TLS support
 - ❌ FTP support
 - ❌ -O output file specification
@@ -1140,13 +1149,17 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 
 ## COMPRESSION & ARCHIVING
 
-### tar
+### tar ⏸️ STUB IMPLEMENTATION
 
-**Missing Features:**
-- ❌ **ALL FUNCTIONALITY PLACEHOLDER** - not actually implemented
-- ❌ -c create archive
-- ❌ -x extract archive
-- ❌ -t list contents
+**Implemented Features:**
+- ✅ Argument parsing (-c, -x, -t, -f)
+- ✅ TAR header structure definition (POSIX ustar format)
+- ✅ Command-line option handling
+
+**Core Functionality NOT Implemented:**
+- ❌ Archive creation (stub only)
+- ❌ Archive extraction (stub only)
+- ❌ List contents (stub only)
 - ❌ -u update archive
 - ❌ -r append to archive
 - ❌ -A concatenate archives
@@ -1232,25 +1245,22 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 - ❌ Compression/decompression
 - ❌ All tar functionality is placeholder
 
-### gzip/gunzip
+### gzip/gunzip ⏸️ STUB IMPLEMENTATION
 
-**Missing Features:**
-- ❌ **ALL FUNCTIONALITY PLACEHOLDER** - not actually implemented
-- ❌ DEFLATE compression algorithm
-- ❌ INFLATE decompression algorithm
-- ❌ -1 to -9 compression levels
-- ❌ --fast (same as -1)
-- ❌ --best (same as -9)
-- ❌ -c write to stdout
-- ❌ --stdout
-- ❌ -d decompress (for gzip)
-- ❌ --decompress
-- ❌ -f force overwrite
-- ❌ --force
-- ❌ -h help
-- ❌ -k keep input files
-- ❌ --keep
-- ❌ -l list compressed file info
+**Implemented Features:**
+- ✅ Argument parsing (-d, -f, -k, -1 through -9)
+- ✅ File argument handling
+- ✅ Option flag processing
+
+**Core Functionality NOT Implemented:**
+- ❌ DEFLATE compression algorithm (stub only)
+- ❌ INFLATE decompression algorithm (stub only)
+- ❌ gzip header creation/parsing
+- ❌ Actual compression/decompression
+- ❌ CRC32 checksum calculation
+- ❌ File I/O for compressed data
+
+**Missing Features (After core implementation):**
 - ❌ --list
 - ❌ -L license
 - ❌ -n no timestamp
