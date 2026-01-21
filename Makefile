@@ -328,6 +328,7 @@ run-kvm: boot-image
 		-serial chardev:char0 \
 		-no-reboot & \
 	QEMU_PID=$$!; \
+	trap 'kill $$QEMU_PID 2>/dev/null; exit' INT TERM; \
 	echo "QEMU started (PID: $$QEMU_PID)"; \
 	sleep 2; \
 	if command -v vncviewer >/dev/null 2>&1; then \
@@ -374,6 +375,7 @@ run-kvm-vnc: boot-image
 		-vnc :0 \
 		-no-reboot & \
 	QEMU_PID=$$!; \
+	trap 'kill $$QEMU_PID 2>/dev/null; exit' INT TERM; \
 	echo "QEMU started with PID $$QEMU_PID"; \
 	sleep 1; \
 	if command -v vncviewer >/dev/null 2>&1; then \
@@ -383,7 +385,8 @@ run-kvm-vnc: boot-image
 		echo "Launching VNC viewer (Flatpak)..."; \
 		flatpak run org.tigervnc.vncviewer localhost:5900; \
 	fi; \
-	kill $$QEMU_PID 2>/dev/null || true
+	kill $$QEMU_PID 2>/dev/null || true; \
+	wait $$QEMU_PID 2>/dev/null || true
 
 # Run with qemu-kvm using serial console only (no graphics/VNC)
 run-kvm-serial: boot-image
