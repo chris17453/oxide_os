@@ -100,21 +100,143 @@ pub trait Framebuffer: Send + Sync {
         }
     }
 
-    /// Fill a rectangle with a color
+    /// Fill a rectangle with a color (OPTIMIZED)
     fn fill_rect(&self, x: u32, y: u32, w: u32, h: u32, color: Color) {
         let x_end = (x + w).min(self.width());
         let y_end = (y + h).min(self.height());
-
-        for py in y..y_end {
-            for px in x..x_end {
-                self.set_pixel(px, py, color);
+        
+        if x >= x_end || y >= y_end {
+            return;
+        }
+        
+        let bpp = self.format().bytes_per_pixel() as usize;
+        let stride = self.stride() as usize;
+        let buffer = self.buffer();
+        let mut color_bytes = [0u8; 4];
+        color.write_to(&mut color_bytes, self.format());
+        
+        unsafe {
+            // For each row, use bulk memory operations
+            for row in y..y_end {
+                let line_start = (row as usize * stride) + (x as usize * bpp);
+                let pixels_to_fill = (x_end - x) as usize;
+                let bytes_to_fill = pixels_to_fill * bpp;
+                
+                // Use optimized filling based on pixel format
+                match bpp {
+                    4 => {
+                        // 32-bit pixels - fill as u32s for maximum speed
+                        let pixel_value = u32::from_le_bytes([
+                            color_bytes[0], color_bytes[1], color_bytes[2], color_bytes[3]
+                        ]);
+                        let line_ptr = buffer.add(line_start) as *mut u32;
+                        for i in 0..pixels_to_fill {
+                            ptr::write_volatile(line_ptr.add(i), pixel_value);
+                        }
+                    },
+                    3 => {
+                        // 24-bit pixels - fill in chunks of 4 pixels at a time when possible
+                        let line_ptr = buffer.add(line_start);
+                        let full_chunks = pixels_to_fill / 4;
+                        let remaining = pixels_to_fill % 4;
+                        
+                        // Create a 12-byte pattern for 4 pixels
+                        let pattern = [
+                            color_bytes[0], color_bytes[1], color_bytes[2], // pixel 1
+                            color_bytes[0], color_bytes[1], color_bytes[2], // pixel 2  
+                            color_bytes[0], color_bytes[1], color_bytes[2], // pixel 3
+                            color_bytes[0], color_bytes[1], color_bytes[2], // pixel 4
+                        ];
+                        
+                        // Fill 4 pixels at a time
+                        for i in 0..full_chunks {
+                            ptr::copy_nonoverlapping(pattern.as_ptr(), line_ptr.add(i * 12), 12);
+                        }
+                        
+                        // Handle remaining pixels
+                        for i in 0..remaining {
+                            let pixel_offset = (full_chunks * 12) + (i * 3);
+                            ptr::copy_nonoverlapping(color_bytes.as_ptr(), line_ptr.add(pixel_offset), 3);
+                        }
+                    },
+                    2 => {
+                        // 16-bit pixels - fill as u16s
+                        let pixel_value = u16::from_le_bytes([color_bytes[0], color_bytes[1]]);
+                        let line_ptr = buffer.add(line_start) as *mut u16;
+                        for i in 0..pixels_to_fill {
+                            ptr::write_volatile(line_ptr.add(i), pixel_value);
+                        }
+                    },
+                    _ => {
+                        // Fallback for unknown formats
+                        let line_ptr = buffer.add(line_start);
+                        for i in 0..pixels_to_fill {
+                            let pixel_offset = i * bpp;
+                            ptr::copy_nonoverlapping(color_bytes.as_ptr(), line_ptr.add(pixel_offset), bpp);
+                        }
+                    }
+                }
             }
         }
     }
 
-    /// Fill the entire screen with a color
+    /// Fill the entire screen with a color (ULTRA-FAST)
     fn clear(&self, color: Color) {
-        self.fill_rect(0, 0, self.width(), self.height(), color);
+        let bpp = self.format().bytes_per_pixel() as usize;
+        let total_pixels = (self.width() * self.height()) as usize;
+        let total_bytes = total_pixels * bpp;
+        let buffer = self.buffer();
+        let mut color_bytes = [0u8; 4];
+        color.write_to(&mut color_bytes, self.format());
+        
+        unsafe {
+            match bpp {
+                4 => {
+                    // 32-bit: Use fast u32 writes
+                    let pixel_value = u32::from_le_bytes([
+                        color_bytes[0], color_bytes[1], color_bytes[2], color_bytes[3]
+                    ]);
+                    let buffer_u32 = buffer as *mut u32;
+                    for i in 0..total_pixels {
+                        ptr::write_volatile(buffer_u32.add(i), pixel_value);
+                    }
+                },
+                3 => {
+                    // 24-bit: Use chunked copying for better performance
+                    let chunks_of_4 = total_pixels / 4;
+                    let remaining = total_pixels % 4;
+                    
+                    let pattern = [
+                        color_bytes[0], color_bytes[1], color_bytes[2], // pixel 1
+                        color_bytes[0], color_bytes[1], color_bytes[2], // pixel 2  
+                        color_bytes[0], color_bytes[1], color_bytes[2], // pixel 3
+                        color_bytes[0], color_bytes[1], color_bytes[2], // pixel 4
+                    ];
+                    
+                    for i in 0..chunks_of_4 {
+                        ptr::copy_nonoverlapping(pattern.as_ptr(), buffer.add(i * 12), 12);
+                    }
+                    
+                    // Handle remaining pixels
+                    for i in 0..remaining {
+                        let offset = (chunks_of_4 * 12) + (i * 3);
+                        ptr::copy_nonoverlapping(color_bytes.as_ptr(), buffer.add(offset), 3);
+                    }
+                },
+                2 => {
+                    // 16-bit: Use fast u16 writes
+                    let pixel_value = u16::from_le_bytes([color_bytes[0], color_bytes[1]]);
+                    let buffer_u16 = buffer as *mut u16;
+                    for i in 0..total_pixels {
+                        ptr::write_volatile(buffer_u16.add(i), pixel_value);
+                    }
+                },
+                _ => {
+                    // Fallback: use fill_rect for safety
+                    self.fill_rect(0, 0, self.width(), self.height(), color);
+                }
+            }
+        }
     }
 
     /// Copy rectangle from one location to another
