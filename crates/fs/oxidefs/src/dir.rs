@@ -1,7 +1,5 @@
 //! OXIDEFS Directory handling
 
-use alloc::string::String;
-use alloc::vec::Vec;
 
 use crate::{OxidefsError, OxidefsResult, MAX_NAME_LEN};
 
@@ -148,7 +146,7 @@ pub fn find_entry(buf: &[u8], name: &str) -> Option<DirEntry> {
 }
 
 /// Iterate over directory entries
-pub fn iter_entries(buf: &[u8]) -> DirIterator {
+pub fn iter_entries(buf: &[u8]) -> DirIterator<'_> {
     DirIterator { buf, offset: 0 }
 }
 

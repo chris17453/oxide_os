@@ -5,8 +5,8 @@
 #![no_std]
 
 extern crate alloc;
-use alloc::vec::Vec;
 
+mod deflate_impl;
 pub mod deflate;
 pub mod tar;
 

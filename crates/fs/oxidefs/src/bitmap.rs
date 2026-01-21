@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use crate::{OxidefsError, OxidefsResult};
+use crate::OxidefsResult;
 use block::BlockDevice;
 
 /// Bitmap for tracking allocation

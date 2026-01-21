@@ -277,7 +277,7 @@ impl Journal {
             match block_type {
                 t if t == JournalBlockType::Start as u32 => {
                     // Start of transaction - replay it
-                    let tid = u64::from_le_bytes([
+                    let _tid = u64::from_le_bytes([
                         buf[8], buf[9], buf[10], buf[11],
                         buf[12], buf[13], buf[14], buf[15],
                     ]);

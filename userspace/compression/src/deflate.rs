@@ -1,10 +1,8 @@
 //! DEFLATE compression/decompression
 //!
 //! Provides DEFLATE (RFC 1951) and GZIP (RFC 1952) support.
-//!
-//! NOTE: This is a stub implementation. Full DEFLATE algorithm needs to be added.
 
-use crate::{CompressionError, CompressionLevel, Result};
+use crate::{deflate_impl, CompressionError, CompressionLevel, Result};
 use alloc::vec::Vec;
 
 /// GZIP header magic bytes
@@ -51,32 +49,7 @@ impl Default for GzipHeader {
 /// # Returns
 /// Compressed data
 pub fn deflate(input: &[u8], level: CompressionLevel) -> Result<Vec<u8>> {
-    // Stub implementation: Return uncompressed data with minimal DEFLATE framing
-    // TODO: Implement actual DEFLATE compression
-
-    if level.value() == 0 {
-        // Store uncompressed
-        let mut output = Vec::with_capacity(input.len() + 5);
-
-        // DEFLATE uncompressed block format:
-        // - 1 bit final block (1)
-        // - 2 bits block type (00 = uncompressed)
-        // - Skip to byte boundary
-        // - 2 bytes LEN
-        // - 2 bytes NLEN (one's complement of LEN)
-        // - Data
-
-        output.push(0x01); // Final uncompressed block
-        let len = input.len() as u16;
-        output.extend_from_slice(&len.to_le_bytes());
-        output.extend_from_slice(&(!len).to_le_bytes());
-        output.extend_from_slice(input);
-
-        Ok(output)
-    } else {
-        // For now, return error indicating not implemented
-        Err(CompressionError::NotImplemented)
-    }
+    deflate_impl::compress_deflate(input, level.value())
 }
 
 /// Decompress DEFLATE data
@@ -87,32 +60,11 @@ pub fn deflate(input: &[u8], level: CompressionLevel) -> Result<Vec<u8>> {
 /// # Returns
 /// Decompressed data
 pub fn inflate(input: &[u8]) -> Result<Vec<u8>> {
-    // Stub implementation: Handle uncompressed blocks only
-    // TODO: Implement full DEFLATE decompression
-
     if input.is_empty() {
         return Err(CompressionError::InvalidData);
     }
 
-    // Check if it's an uncompressed block
-    if input[0] == 0x01 && input.len() >= 5 {
-        let len = u16::from_le_bytes([input[1], input[2]]) as usize;
-        let nlen = u16::from_le_bytes([input[3], input[4]]);
-
-        // Verify length complement
-        if nlen != !u16::from_le_bytes([input[1], input[2]]) {
-            return Err(CompressionError::InvalidData);
-        }
-
-        if input.len() < 5 + len {
-            return Err(CompressionError::InvalidData);
-        }
-
-        Ok(input[5..5 + len].to_vec())
-    } else {
-        // Compressed data not yet supported
-        Err(CompressionError::NotImplemented)
-    }
+    deflate_impl::decompress_deflate(input)
 }
 
 /// Compress data to GZIP format

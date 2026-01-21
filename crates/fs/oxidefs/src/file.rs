@@ -1,10 +1,9 @@
 //! OXIDEFS File operations
 
-use alloc::vec::Vec;
 
 use crate::inode::InodeData;
 use crate::superblock::Superblock;
-use crate::{OxidefsError, OxidefsResult, BLOCK_SIZE};
+use crate::{OxidefsError, OxidefsResult};
 use block::BlockDevice;
 
 /// Read file data

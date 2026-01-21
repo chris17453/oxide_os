@@ -371,6 +371,7 @@ impl OxidefsVnode {
     }
 
     /// Read inode from disk and update cache
+    #[allow(dead_code)]
     fn reload_inode(&self) -> OxidefsResult<()> {
         let sb = self.fs.superblock.read();
         let inode_data = inode::read_inode(&*self.fs.device, &sb, self.ino)?;
@@ -926,7 +927,7 @@ impl VnodeOps for OxidefsVnode {
         // Try to add to new directory
         // For simplicity, only support rename within same directory for now
         // Full cross-directory rename is complex
-        if (new_dir as *const dyn VnodeOps) != (self as *const dyn VnodeOps) {
+        if !core::ptr::addr_eq(new_dir as *const dyn VnodeOps, self as *const dyn VnodeOps) {
             // Cross-directory rename - would need to handle link counts, "..", etc.
             // Restore the entry we removed and return error
             let file_type = match target.vtype() {
