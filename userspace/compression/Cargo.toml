@@ -1,0 +1,13 @@
+[package]
+name = "compression"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "compression"
+path = "src/lib.rs"
+
+[dependencies]
+
+[features]
+default = []
