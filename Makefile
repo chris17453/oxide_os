@@ -595,7 +595,7 @@ claude:
 	--ro-bind /lib /lib \
 	--ro-bind /lib64 /lib64 \
 	--ro-bind /run /run \
-	--ro-bind $(HOME) $(HOME) \
+	--bind $(HOME) $(HOME) \
 	--bind $(HOME)/.claude.json $(HOME)/.claude.json \
 	--bind $(HOME)/.claude $(HOME)/.claude \
 	--bind "$(CURDIR)" "$(CURDIR)" \
