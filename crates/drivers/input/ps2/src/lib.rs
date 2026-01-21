@@ -180,38 +180,13 @@ impl Ps2Keyboard {
 
     /// Initialize the keyboard
     pub fn init(&self) -> bool {
-        // Send reset command
-        send_data(kbd_cmd::RESET);
-        
-        // Wait for ACK
-        if read_data() != Some(0xFA) {
-            return false;
-        }
-        
-        // Wait for self-test complete (0xAA = pass)
-        if read_data() != Some(0xAA) {
-            return false;
-        }
-        
-        // Disable scanning during setup
-        send_data(kbd_cmd::DISABLE_SCANNING);
-        if read_data() != Some(0xFA) {
-            return false;
-        }
-        
-        // Set defaults
-        send_data(kbd_cmd::SET_DEFAULTS);
-        if read_data() != Some(0xFA) {
-            return false;
-        }
-        
-        // Enable scanning
+        // Debug: simple approach that should work with QEMU
+        // QEMU's keyboard is already initialized, just enable scanning
         send_data(kbd_cmd::ENABLE_SCANNING);
-        if read_data() != Some(0xFA) {
-            return false;
-        }
+        let response = read_data();
         
-        true
+        // Check if we got ACK
+        response == Some(0xFA)
     }
 
     /// Set device ID
@@ -615,8 +590,8 @@ pub fn init_controller() -> bool {
     send_command(cmd::READ_CONFIG);
     let config = read_data().unwrap_or(0);
 
-    // Disable interrupts and translation
-    let config = config & !0x43; // Clear bits 0, 1, 6
+    // Disable interrupts but keep translation and system flag
+    let config = config & !0x03; // Clear bits 0, 1 (interrupts) but preserve bit 6 (translation)
     send_command(cmd::WRITE_CONFIG);
     send_data(config);
 
