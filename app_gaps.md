@@ -53,7 +53,7 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 | du | Phase 3 | File - disk usage enhance | ⏸️ EXISTS (needs review) |
 | cp | Phase 3 | File - enhance with all options | ✅ COMPLETED |
 | mv | Phase 3 | File - enhance with all options | ✅ COMPLETED |
-| rm | Phase 3 | File - enhance with all options | ⏸️ EXISTS (needs review) |
+| rm | Phase 3 | File - enhance with all options | ✅ COMPLETED |
 | sort | Phase 3 | Text - improve algorithm | ⏸️ EXISTS (needs review) |
 | diff | Phase 3 | Text - proper diff algorithm | ⏸️ EXISTS (needs review) |
 
@@ -462,28 +462,30 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 - ❌ Pattern matching/wildcards
 - ❌ Multiple directory arguments
 
-### cat ⏸️ BASIC IMPLEMENTATION
+### cat ✅ COMPLETED
 
 **Implemented Features:**
 - ✅ Read from stdin
 - ✅ Write to stdout
-- ✅ 1024-byte buffer streaming
+- ✅ File argument support
+- ✅ Multiple file arguments
+- ✅ Explicit stdin support with "-"
+- ✅ -A show all (equivalent to -vET)
+- ✅ -b number non-blank lines
+- ✅ -e equivalent to -vE
+- ✅ -E show $ at end of lines
+- ✅ -n number all lines
+- ✅ -s squeeze blank lines
+- ✅ -t equivalent to -vT
+- ✅ -T show tabs as ^I
+- ✅ -v show non-printing chars (^X format for control, M-X for high-bit)
+- ✅ Error handling for missing files
+- ✅ Line-by-line state tracking for proper -b and -s behavior
+- ✅ 4096-byte buffer streaming
 
-**Missing Features (Needs Enhancement):**
-- ❌ File argument support (only reads stdin currently)
-- ❌ Multiple file arguments
-- ❌ -A show all (equivalent to -vET)
-- ❌ -b number non-blank lines
-- ❌ -e equivalent to -vE
-- ❌ -E show $ at end of lines
-- ❌ -n number all lines
-- ❌ -s squeeze blank lines
-- ❌ -t equivalent to -vT
-- ❌ -T show tabs as ^I
+**Still Missing (Low Priority):**
 - ❌ -u unbuffered output
-- ❌ -v show non-printing chars
-- ❌ Error handling for missing files
-- ❌ Binary file handling
+- ❌ Special binary file handling
 
 ### cp ✅ COMPLETED (P2)
 
@@ -569,44 +571,44 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 - ❌ Directory moves across filesystems
 - ❌ Wildcard expansion
 
-### rm ⚠️ HAS COMPILATION ERROR
+### rm ✅ COMPLETED
 
 **Implemented Features:**
 - ✅ Multiple file arguments
-- ✅ Basic file removal with sys_unlink
-- ✅ Error reporting
+- ✅ File removal with sys_unlink
+- ✅ -f force (ignore nonexistent, no prompt)
+- ✅ -i interactive (prompt for each)
+- ✅ -r recursive directory removal
+- ✅ -R recursive directory removal (same as -r)
+- ✅ -v verbose output
+- ✅ Directory removal with sys_rmdir
+- ✅ Full recursive directory tree traversal
+- ✅ Proper getdents-based directory reading
+- ✅ Depth limiting for safety (MAX_DEPTH = 32)
+- ✅ Skip . and .. entries
+- ✅ Interactive confirmation for files and directories
+- ✅ Proper error handling
+- ✅ Fixed-size buffers (no heap allocation)
 
-**Issues:**
-- ⚠️ Uses wrong function signature (unlink with 2 args instead of sys_unlink)
-- ⚠️ Uses non-existent eputchar function
-- ⚠️ Needs fixing before it compiles
-
-**Missing Features (After fixing):**
-- ❌ -f force (ignore nonexistent, no prompt)
-- ❌ -i interactive (prompt for each)
+**Still Missing (Low Priority):**
 - ❌ -I prompt once for >3 files or recursive
-- ❌ -r recursive
-- ❌ -R recursive
-- ❌ -d remove empty directories
-- ❌ -v verbose
-- ❌ Long options
-- ❌ Directory removal
-- ❌ Recursive directory removal
-- ❌ Prompting before deletion
-- ❌ Protection against removing /
+- ❌ -d remove empty directories specifically
+- ❌ Long options (--force, --interactive, etc.)
+- ❌ Protection against removing / (safety check)
 
-### mkdir ⚠️ HAS COMPILATION ERROR
+### mkdir ✅ COMPLETED
 
 **Implemented Features:**
 - ✅ Multiple directory arguments
-- ✅ Basic directory creation with sys_mkdir
-- ✅ Fixed mode (0o755)
-- ✅ Error reporting
-
-**Issues:**
-- ⚠️ Uses wrong function signature (mkdir with 3 args)
-- ⚠️ Uses non-existent eputchar function
-- ⚠️ Needs fixing before it compiles
+- ✅ Directory creation with sys_mkdir
+- ✅ -p parent directory creation (recursive)
+- ✅ -m mode specification with octal parsing (e.g., 755, 0755)
+- ✅ -v verbose output
+- ✅ Default mode (0o755)
+- ✅ Combined options (-pv, -m755)
+- ✅ Proper error handling
+- ✅ Recursive parent path traversal
+- ✅ Fixed-size buffers (no heap allocation)
 
 **Missing Features (After fixing):**
 - ❌ -m mode specification
@@ -683,29 +685,34 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 - ❌ Interactive prompting
 - ❌ Wildcard expansion
 
-### touch ⏸️ BASIC IMPLEMENTATION
+### touch ✅ COMPLETED
 
 **Implemented Features:**
 - ✅ Create new files with default permissions (0o644)
 - ✅ Multiple file arguments
 - ✅ Error handling for each file
+- ✅ -a change access time only
+- ✅ -c do not create file
+- ✅ -m change modification time only
+- ✅ -r use reference file's times
+- ✅ -t use specified timestamp in [[CC]YY]MMDDhhmm[.ss] format
+- ✅ Full timestamp parsing (8, 10, 12 digit formats)
+- ✅ Reference file stat() lookup
+- ✅ sys_utimes syscall for timestamp modification
+- ✅ Separate atime and mtime control
+- ✅ Fallback to file creation if doesn't exist
+- ✅ Fixed-size buffers (no heap allocation)
 
-**Missing Features (Needs Enhancement):**
-- ❌ Timestamp modification (currently only creates files)
-- ❌ -a change access time only
-- ❌ -c do not create file
-- ❌ -d use specified time
+**Infrastructure Added:**
+- ✅ UTIMES syscall (154) in kernel
+- ✅ set_times() method in VnodeOps trait
+- ✅ Implementation in oxidefs and tmpfs
+
+**Still Missing (Low Priority):**
+- ❌ -d use specified date string
 - ❌ -h affect symlink, not target
-- ❌ -m change modification time only
-- ❌ -r use file's time
-- ❌ -t use specified timestamp (YYMMDDHHMM)
-- ❌ All long options
-- ❌ utimensat/futimens syscall usage for timestamp updates
-- ❌ Access time vs modification time control
-- ❌ Specific timestamp setting
-- ❌ Reference file time copying
-- ❌ Symlink handling
-- ❌ Multiple file arguments
+- ❌ Long options
+- ❌ Nanosecond precision
 
 ---
 
@@ -1491,24 +1498,29 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 
 ## SYSTEM INFORMATION
 
-### uname ⏸️ MINIMAL IMPLEMENTATION
+### uname ✅ COMPLETED
 
 **Implemented Features:**
-- ✅ Prints system name "OXIDE"
+- ✅ -a all information (all flags combined)
+- ✅ -s system name (OXIDE)
+- ✅ -n network node hostname (localhost)
+- ✅ -r kernel release (0.1.0)
+- ✅ -v kernel version (#1 Mon Jan 20 2026)
+- ✅ -m machine hardware name (x86_64)
+- ✅ -o operating system (OXIDE)
+- ✅ Multiple option support
+- ✅ Proper field ordering
+- ✅ Space-separated output
+- ✅ Default to -s if no options specified
+- ✅ Error handling for unknown options
+- ✅ UtsName structure ready for syscall integration
 
-**Missing Features (Needs Enhancement):**
-- ❌ -a all information
-- ❌ -s system name option
-- ❌ -n network node hostname
-- ❌ -r kernel release
-- ❌ -v kernel version
-- ❌ -m machine hardware name
+**Still Missing (Low Priority):**
 - ❌ -p processor type
 - ❌ -i hardware platform
-- ❌ -o operating system
-- ❌ All long options
-- ❌ uname() syscall invocation
-- ❌ Actual system information from kernel
+- ❌ Long options (--all, --kernel-name, etc.)
+- ❌ uname() syscall (currently uses hardcoded values)
+- ❌ Dynamic system information from kernel
 
 ### uptime
 
@@ -1706,18 +1718,22 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 - ❌ SELinux context
 - ❌ Birth time (if supported)
 
-### whoami ⏸️ BASIC IMPLEMENTATION
+### whoami ✅ COMPLETED
 
 **Implemented Features:**
 - ✅ Get effective user ID (geteuid)
-- ✅ Display "root" for UID 0
-- ✅ Display "userNNN" for other UIDs
+- ✅ /etc/passwd file parsing
+- ✅ Username lookup by UID
+- ✅ Colon-separated field parsing (username:password:uid:gid:...)
+- ✅ Line-by-line file processing
+- ✅ Fallback to numeric UID display if passwd not available
+- ✅ Fixed-size buffers (no heap allocation)
+- ✅ Proper error handling
+- ✅ Support for users without passwd entries
 
-**Missing Features (Needs Enhancement):**
-- ❌ Username lookup from /etc/passwd
-- ❌ getpwuid() equivalent
-- ❌ No /etc/passwd parsing
-- ❌ Actual username display
+**Still Missing (Low Priority):**
+- ❌ Long options (--help, --version)
+- ❌ getpwuid() library function (implemented manually instead)
 
 ### id
 
@@ -1835,29 +1851,36 @@ Updated: 2026-01-21 with completion status for P0, P1 (partial), and P2 (partial
 
 ## OUTPUT & FORMATTING
 
-### echo ⏸️ BASIC IMPLEMENTATION
+### echo ✅ COMPLETED
 
 **Implemented Features:**
 - ✅ Print arguments separated by spaces
-- ✅ Trailing newline
+- ✅ Trailing newline (default)
 - ✅ Multiple argument support
-
-**Missing Features (Needs Enhancement):**
-- ❌ -n no trailing newline
-- ❌ -e enable escape sequences
-- ❌ -E disable escape sequences (default)
-- ❌ --help
-- ❌ --version
-- ❌ Escape sequences:
+- ✅ -n no trailing newline
+- ✅ -e enable escape sequences
+- ✅ -E disable escape sequences (default)
+- ✅ All standard escape sequences:
   - \\ backslash
-  - \a alert (bell)
-  - \b backspace
-  - \c no trailing newline
-  - \e escape character
-  - \f form feed
+  - \a alert (bell - 0x07)
+  - \b backspace (0x08)
+  - \c stop printing, suppress newline
+  - \e escape character (0x1B)
+  - \f form feed (0x0C)
   - \n newline
   - \r carriage return
   - \t horizontal tab
+  - \v vertical tab (0x0B)
+  - \0NNN octal value (up to 3 digits)
+  - \xHH hexadecimal value (up to 2 digits)
+- ✅ Octal parsing with wrapping arithmetic
+- ✅ Hexadecimal parsing (both uppercase and lowercase)
+- ✅ Special \c handling (stops output immediately)
+- ✅ Fixed-size buffer processing
+
+**Still Missing (Low Priority):**
+- ❌ --help option
+- ❌ --version option
   - \v vertical tab
   - \0NNN octal byte
   - \xHH hexadecimal byte
