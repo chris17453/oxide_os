@@ -338,3 +338,4 @@ path = "src/bin/chown.rs"
 [dependencies]
 libc = { path = "../libc" }
 heapless = "0.8"
+compression = { path = "../compression" }
