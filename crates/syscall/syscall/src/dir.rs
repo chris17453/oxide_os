@@ -457,3 +457,47 @@ pub fn sys_readlink(
 
     copy_len as i64
 }
+
+/// sys_utimes - Set file access and modification times
+///
+/// # Arguments
+/// * `path_ptr` - Pointer to file path
+/// * `path_len` - Length of file path
+/// * `atime_sec` - Access time in seconds since epoch (u64::MAX = don't change)
+/// * `mtime_sec` - Modification time in seconds since epoch (u64::MAX = don't change)
+pub fn sys_utimes(
+    path_ptr: u64,
+    path_len: usize,
+    atime_sec: u64,
+    mtime_sec: u64,
+) -> i64 {
+    let path = match get_resolved_path(path_ptr, path_len) {
+        Some(p) => p,
+        None => return errno::EFAULT,
+    };
+
+    // Lookup the file/directory
+    let vnode = match GLOBAL_VFS.lookup(&path) {
+        Ok(v) => v,
+        Err(e) => return vfs_error_to_errno(e),
+    };
+
+    // Convert u64::MAX to None (= don't change)
+    let atime = if atime_sec == u64::MAX {
+        None
+    } else {
+        Some(atime_sec)
+    };
+
+    let mtime = if mtime_sec == u64::MAX {
+        None
+    } else {
+        Some(mtime_sec)
+    };
+
+    // Set the times
+    match vnode.set_times(atime, mtime) {
+        Ok(()) => 0,
+        Err(e) => vfs_error_to_errno(e),
+    }
+}

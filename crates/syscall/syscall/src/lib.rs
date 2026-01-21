@@ -113,6 +113,8 @@ pub mod nr {
     pub const FCHMOD: u64 = 151;
     pub const CHOWN: u64 = 152;
     pub const FCHOWN: u64 = 153;
+    pub const UTIMES: u64 = 154;
+    pub const FUTIMES: u64 = 155;
 
     // Socket syscalls
     pub const SOCKET: u64 = 70;
@@ -352,6 +354,7 @@ pub fn dispatch(
         nr::FCHMOD => vfs::sys_fchmod(arg1 as i32, arg2 as u32),
         nr::CHOWN => vfs::sys_chown(arg1, arg2 as usize, arg3 as i32, arg4 as i32),
         nr::FCHOWN => vfs::sys_fchown(arg1 as i32, arg2 as i32, arg3 as i32),
+        nr::UTIMES => dir::sys_utimes(arg1, arg2 as usize, arg3, arg4),
 
         // Socket syscalls
         nr::SOCKET => socket::sys_socket(arg1 as i32, arg2 as i32, arg3 as i32),

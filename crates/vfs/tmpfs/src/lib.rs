@@ -249,6 +249,12 @@ impl VnodeOps for TmpDir {
     fn truncate(&self, _size: u64) -> VfsResult<()> {
         Err(VfsError::IsDirectory)
     }
+
+    fn set_times(&self, _atime: Option<u64>, _mtime: Option<u64>) -> VfsResult<()> {
+        // tmpfs doesn't track timestamps (it's in-memory only)
+        // Just return Ok to make utilities happy
+        Ok(())
+    }
 }
 
 /// A tmpfs file
@@ -346,6 +352,12 @@ impl VnodeOps for TmpFile {
 
     fn size(&self) -> u64 {
         self.data.read().len() as u64
+    }
+
+    fn set_times(&self, _atime: Option<u64>, _mtime: Option<u64>) -> VfsResult<()> {
+        // tmpfs doesn't track timestamps (it's in-memory only)
+        // Just return Ok to make utilities happy
+        Ok(())
     }
 }
 

@@ -110,6 +110,8 @@ pub mod nr {
     pub const FCHMOD: u64 = 151;
     pub const CHOWN: u64 = 152;
     pub const FCHOWN: u64 = 153;
+    pub const UTIMES: u64 = 154;
+    pub const FUTIMES: u64 = 155;
 
     // Thread syscalls (Linux-compatible numbers)
     pub const CLONE: u64 = 56;
@@ -281,6 +283,16 @@ pub fn sys_chown(path: &str, uid: i32, gid: i32) -> i32 {
 /// chown - Change file owner and group (raw pointer version)
 pub fn chown(path_ptr: *const u8, path_len: usize, uid: i32, gid: i32) -> i32 {
     syscall4(nr::CHOWN, path_ptr as usize, path_len, uid as usize, gid as usize) as i32
+}
+
+/// sys_utimes - Set file access and modification times
+///
+/// # Arguments
+/// * `path` - Path to file
+/// * `atime_sec` - Access time in seconds since epoch (u64::MAX = don't change)
+/// * `mtime_sec` - Modification time in seconds since epoch (u64::MAX = don't change)
+pub fn sys_utimes(path: &str, atime_sec: u64, mtime_sec: u64) -> i32 {
+    syscall4(nr::UTIMES, path.as_ptr() as usize, path.len(), atime_sec as usize, mtime_sec as usize) as i32
 }
 
 /// sys_rename - Rename/move file

@@ -224,6 +224,17 @@ pub trait VnodeOps: Send + Sync {
     fn readlink(&self) -> VfsResult<String> {
         Err(crate::error::VfsError::NotSupported)
     }
+
+    /// Set file access and modification times
+    ///
+    /// # Arguments
+    /// * `atime` - Optional new access time (seconds since epoch), None = don't change
+    /// * `mtime` - Optional new modification time (seconds since epoch), None = don't change
+    ///
+    /// Default implementation returns NotSupported.
+    fn set_times(&self, _atime: Option<u64>, _mtime: Option<u64>) -> VfsResult<()> {
+        Err(crate::error::VfsError::NotSupported)
+    }
 }
 
 /// Vnode wrapper that adds reference counting and caching

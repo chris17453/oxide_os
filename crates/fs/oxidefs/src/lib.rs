@@ -1016,4 +1016,29 @@ impl VnodeOps for OxidefsVnode {
 
         Ok(())
     }
+
+    fn set_times(&self, atime: Option<u64>, mtime: Option<u64>) -> VfsResult<()> {
+        if self.fs.read_only {
+            return Err(VfsError::ReadOnly);
+        }
+
+        let mut inode_data = self.inode.write();
+
+        // Update times if specified
+        if let Some(t) = atime {
+            inode_data.atime = t;
+        }
+        if let Some(t) = mtime {
+            inode_data.mtime = t;
+        }
+
+        // Always update ctime when metadata changes
+        inode_data.ctime = 0; // TODO: use actual current time
+
+        drop(inode_data);
+
+        self.sync_inode().map_err(|e| -> VfsError { e.into() })?;
+
+        Ok(())
+    }
 }
