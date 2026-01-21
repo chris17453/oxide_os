@@ -105,6 +105,12 @@ pub mod nr {
     pub const SETITIMER: u64 = 126;
     pub const GETITIMER: u64 = 127;
 
+    // File permission syscalls
+    pub const CHMOD: u64 = 150;
+    pub const FCHMOD: u64 = 151;
+    pub const CHOWN: u64 = 152;
+    pub const FCHOWN: u64 = 153;
+
     // Thread syscalls (Linux-compatible numbers)
     pub const CLONE: u64 = 56;
     pub const GETTID: u64 = 186;
@@ -242,6 +248,11 @@ pub fn sys_mkdir(path: &str, mode: u32) -> i32 {
     syscall3(nr::MKDIR, path.as_ptr() as usize, path.len(), mode as usize) as i32
 }
 
+/// mkdir - Create directory (raw pointer version)
+pub fn mkdir(path_ptr: *const u8, path_len: usize, mode: u32) -> i32 {
+    syscall3(nr::MKDIR, path_ptr as usize, path_len, mode as usize) as i32
+}
+
 /// sys_rmdir - Remove directory
 pub fn sys_rmdir(path: &str) -> i32 {
     syscall2(nr::RMDIR, path.as_ptr() as usize, path.len()) as i32
@@ -250,6 +261,26 @@ pub fn sys_rmdir(path: &str) -> i32 {
 /// sys_unlink - Remove file
 pub fn sys_unlink(path: &str) -> i32 {
     syscall2(nr::UNLINK, path.as_ptr() as usize, path.len()) as i32
+}
+
+/// unlink - Remove file (raw pointer version)
+pub fn unlink(path_ptr: *const u8, path_len: usize) -> i32 {
+    syscall2(nr::UNLINK, path_ptr as usize, path_len) as i32
+}
+
+/// sys_chmod - Change file mode
+pub fn sys_chmod(path: &str, mode: u32) -> i32 {
+    syscall3(nr::CHMOD, path.as_ptr() as usize, path.len(), mode as usize) as i32
+}
+
+/// sys_chown - Change file owner and group
+pub fn sys_chown(path: &str, uid: i32, gid: i32) -> i32 {
+    syscall4(nr::CHOWN, path.as_ptr() as usize, path.len(), uid as usize, gid as usize) as i32
+}
+
+/// chown - Change file owner and group (raw pointer version)
+pub fn chown(path_ptr: *const u8, path_len: usize, uid: i32, gid: i32) -> i32 {
+    syscall4(nr::CHOWN, path_ptr as usize, path_len, uid as usize, gid as usize) as i32
 }
 
 /// sys_rename - Rename/move file
