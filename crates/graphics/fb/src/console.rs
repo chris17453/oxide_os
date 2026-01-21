@@ -234,30 +234,126 @@ impl FbConsole {
         }
     }
 
-    /// Draw a glyph at pixel position (optimized)
+    /// Draw a glyph at pixel position (ULTRA-OPTIMIZED)
     fn draw_glyph(&self, px: u32, py: u32, ch: char, color: Color) {
         let glyph = self.font.glyph_or_replacement(ch);
         let bpp = self.fb.format().bytes_per_pixel() as usize;
         let stride = self.fb.stride() as usize;
         let buffer = self.fb.buffer();
         
-        // Convert color to raw bytes
+        // Convert color to raw bytes for all pixel formats
         let color_bytes = color.to_bytes(self.fb.format());
         
         unsafe {
-            // Draw glyph line by line for better cache efficiency
-            for y in 0..glyph.height {
-                let line_offset = ((py + y) as usize * stride) + (px as usize * bpp);
-                let line_ptr = buffer.add(line_offset);
-                
-                for x in 0..glyph.width {
-                    if glyph.pixel(x, y) {
-                        let pixel_offset = x as usize * bpp;
-                        core::ptr::copy_nonoverlapping(
-                            color_bytes.as_ptr(),
-                            line_ptr.add(pixel_offset),
-                            bpp
-                        );
+            match bpp {
+                4 => {
+                    // 32-bit pixels: Use u32 writes for maximum speed
+                    let pixel_value = u32::from_le_bytes([
+                        color_bytes[0], color_bytes[1], color_bytes[2], color_bytes[3]
+                    ]);
+                    
+                    for y in 0..glyph.height {
+                        let line_offset = ((py + y) as usize * stride) + (px as usize * 4);
+                        let line_ptr = buffer.add(line_offset) as *mut u32;
+                        
+                        // Batch pixels horizontally - write up to 8 pixels at once
+                        let mut x = 0;
+                        while x < glyph.width {
+                            let batch_end = (x + 8).min(glyph.width);
+                            let mut batch_mask = 0u8;
+                            
+                            // Build bitmask for this batch
+                            for bx in x..batch_end {
+                                if glyph.pixel(bx, y) {
+                                    batch_mask |= 1 << (bx - x);
+                                }
+                            }
+                            
+                            // Write pixels in batch based on mask
+                            for bx in x..batch_end {
+                                if (batch_mask >> (bx - x)) & 1 != 0 {
+                                    core::ptr::write_volatile(line_ptr.add((bx) as usize), pixel_value);
+                                }
+                            }
+                            
+                            x = batch_end;
+                        }
+                    }
+                },
+                3 => {
+                    // 24-bit pixels: Use optimized line copying
+                    for y in 0..glyph.height {
+                        let line_offset = ((py + y) as usize * stride) + (px as usize * 3);
+                        let line_ptr = buffer.add(line_offset);
+                        
+                        // Collect consecutive pixels into runs for bulk copying
+                        let mut run_start = None;
+                        for x in 0..glyph.width {
+                            if glyph.pixel(x, y) {
+                                if run_start.is_none() {
+                                    run_start = Some(x);
+                                }
+                            } else {
+                                if let Some(start) = run_start {
+                                    // Copy run of pixels
+                                    let run_len = x - start;
+                                    let run_offset = start as usize * 3;
+                                    for px_offset in (0..run_len as usize * 3).step_by(3) {
+                                        core::ptr::copy_nonoverlapping(
+                                            color_bytes.as_ptr(),
+                                            line_ptr.add(run_offset + px_offset),
+                                            3
+                                        );
+                                    }
+                                    run_start = None;
+                                }
+                            }
+                        }
+                        // Handle final run
+                        if let Some(start) = run_start {
+                            let run_len = glyph.width - start;
+                            let run_offset = start as usize * 3;
+                            for px_offset in (0..run_len as usize * 3).step_by(3) {
+                                core::ptr::copy_nonoverlapping(
+                                    color_bytes.as_ptr(),
+                                    line_ptr.add(run_offset + px_offset),
+                                    3
+                                );
+                            }
+                        }
+                    }
+                },
+                2 => {
+                    // 16-bit pixels: Use u16 writes
+                    let pixel_value = u16::from_le_bytes([color_bytes[0], color_bytes[1]]);
+                    
+                    for y in 0..glyph.height {
+                        let line_offset = ((py + y) as usize * stride) + (px as usize * 2);
+                        let line_ptr = buffer.add(line_offset) as *mut u16;
+                        
+                        for x in 0..glyph.width {
+                            if glyph.pixel(x, y) {
+                                core::ptr::write_volatile(line_ptr.add(x as usize), pixel_value);
+                            }
+                        }
+                    }
+                },
+                _ => {
+                    // Fallback for unknown formats - still optimized line-by-line
+                    for y in 0..glyph.height {
+                        let line_offset = ((py + y) as usize * stride) + (px as usize * bpp);
+                        let line_ptr = buffer.add(line_offset);
+                        
+                        for x in 0..glyph.width {
+                            if glyph.pixel(x, y) {
+                                let pixel_offset = x as usize * bpp;
+                                core::ptr::copy_nonoverlapping(
+                                    color_bytes.as_ptr(),
+                                    line_ptr.add(pixel_offset),
+                                    bpp
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -266,33 +362,9 @@ impl FbConsole {
 
     /// Fast rectangle fill optimized for small character backgrounds
     fn fast_fill_rect(&self, x: u32, y: u32, width: u32, height: u32, color: Color) {
-        let bpp = self.fb.format().bytes_per_pixel() as usize;
-        let stride = self.fb.stride() as usize;
-        let buffer = self.fb.buffer();
-        let color_bytes = color.to_bytes(self.fb.format());
-        
-        unsafe {
-            for row in 0..height {
-                let line_offset = ((y + row) as usize * stride) + (x as usize * bpp);
-                let line_ptr = buffer.add(line_offset);
-                
-                // For small widths (character cells), just copy pixels directly
-                if width <= 32 {
-                    for col in 0..width {
-                        let pixel_offset = col as usize * bpp;
-                        core::ptr::copy_nonoverlapping(
-                            color_bytes.as_ptr(),
-                            line_ptr.add(pixel_offset),
-                            bpp
-                        );
-                    }
-                } else {
-                    // For larger widths, delegate to standard fill_rect
-                    // (this path rarely used for character rendering)
-                    self.fb.fill_rect(x, y + row, width, 1, color);
-                }
-            }
-        }
+        // Always use the framebuffer's optimized fill_rect - it's much faster
+        // than our pixel-by-pixel approach, even for small rectangles
+        self.fb.fill_rect(x, y, width, height, color);
     }
 
     /// Scroll the console up by one line
