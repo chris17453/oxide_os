@@ -1,0 +1,13 @@
+#!/bin/bash
+#
+# OXIDE C Preprocessor (oxide-cpp)
+#
+# Preprocesses C source files.
+
+set -e
+
+# Use clang as preprocessor
+CPP="${CPP:-clang -E}"
+
+# Forward arguments
+exec $CPP "$@"

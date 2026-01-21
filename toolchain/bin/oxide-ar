@@ -1,0 +1,27 @@
+#!/bin/bash
+#
+# OXIDE Archiver Wrapper (oxide-ar)
+#
+# Creates and manipulates static library archives.
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Find OXIDE archiver (built from userspace/ar)
+OXIDE_AR="$PROJECT_ROOT/target/x86_64-user/release/ar"
+
+# If not built, fall back to system archiver
+if [[ ! -f "$OXIDE_AR" ]]; then
+    OXIDE_AR="ar"
+    if ! command -v "$OXIDE_AR" &> /dev/null; then
+        echo "Error: Neither OXIDE ar nor system ar found" >&2
+        echo "  Build OXIDE archiver: cargo build --package ar --target userspace/x86_64-user.json --release" >&2
+        echo "  Or install binutils: sudo apt install binutils" >&2
+        exit 1
+    fi
+fi
+
+# Forward all arguments
+exec "$OXIDE_AR" "$@"

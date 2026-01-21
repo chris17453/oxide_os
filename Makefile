@@ -4,7 +4,7 @@
 
 SHELL := /usr/bin/bash
 
-.PHONY: all build kernel bootloader userspace initramfs clean run run-no-net run-headless run-headless-no-net run-kvm run-kvm-vnc run-kvm-serial test check fmt clippy boot-image
+.PHONY: all build kernel bootloader userspace initramfs clean run run-no-net run-headless run-headless-no-net run-kvm run-kvm-vnc run-kvm-serial test check fmt clippy boot-image toolchain install-toolchain test-toolchain clean-toolchain
 
 # Configuration
 ARCH ?= x86_64
@@ -488,6 +488,12 @@ help:
 	@echo "  clean          - Remove build artifacts"
 	@echo "  show-config    - Show detected configuration (QEMU, OVMF, etc.)"
 	@echo ""
+	@echo "Cross-Compiler Toolchain:"
+	@echo "  toolchain      - Build OXIDE cross-compiler toolchain"
+	@echo "  test-toolchain - Test toolchain with examples"
+	@echo "  install-toolchain - Install toolchain (PREFIX=/usr/local/oxide)"
+	@echo "  clean-toolchain - Clean toolchain artifacts"
+	@echo ""
 	@echo "Variables:"
 	@echo "  ARCH           - Target architecture (default: x86_64)"
 	@echo "  PROFILE        - Build profile (default: debug)"
@@ -512,6 +518,66 @@ help:
 	@echo "  Note: No sudo required! mtools manipulates FAT without mounting."
 
 
+
+# Build toolchain components
+toolchain:
+	@echo "Building OXIDE cross-compiler toolchain..."
+	@echo "  Building assembler (as)..."
+	@cargo build --package oxide-as --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS)
+	@echo "  Building linker (ld)..."
+	@cargo build --package oxide-ld --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS)
+	@echo "  Building archiver (ar)..."
+	@cargo build --package oxide-ar --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS)
+	@echo "  Building libc..."
+	@cargo build --package libc --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS)
+	@echo ""
+	@echo "Installing toolchain components to sysroot..."
+	@mkdir -p toolchain/sysroot/lib
+	@# Copy libc.a to sysroot
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/liblibc.rlib" ]; then \
+		cp "$(USERSPACE_OUT_RELEASE)/liblibc.rlib" "toolchain/sysroot/lib/liboxide_libc.a"; \
+	fi
+	@echo ""
+	@echo "OXIDE toolchain built successfully!"
+	@echo ""
+	@echo "To use the toolchain:"
+	@echo "  export PATH=$(CURDIR)/toolchain/bin:\$$PATH"
+	@echo "  oxide-cc -o hello hello.c"
+	@echo ""
+	@echo "See toolchain/README.md for documentation."
+	@echo "See toolchain/examples/ for examples."
+
+# Install toolchain to system
+INSTALL_PREFIX ?= /usr/local/oxide
+install-toolchain: toolchain
+	@echo "Installing OXIDE toolchain to $(INSTALL_PREFIX)..."
+	@install -d $(INSTALL_PREFIX)/bin
+	@install -d $(INSTALL_PREFIX)/sysroot
+	@install -d $(INSTALL_PREFIX)/cmake
+	@install -m 755 toolchain/bin/* $(INSTALL_PREFIX)/bin/
+	@cp -r toolchain/sysroot/* $(INSTALL_PREFIX)/sysroot/
+	@cp toolchain/cmake/oxide-toolchain.cmake $(INSTALL_PREFIX)/cmake/
+	@echo "Toolchain installed to $(INSTALL_PREFIX)"
+	@echo "Add $(INSTALL_PREFIX)/bin to your PATH"
+
+# Test toolchain with examples
+test-toolchain: toolchain
+	@echo "Testing OXIDE toolchain..."
+	@cd toolchain/examples/hello && $(MAKE) clean && $(MAKE)
+	@echo "  ✓ Hello example built"
+	@cd toolchain/examples/echo && $(MAKE) clean && $(MAKE)
+	@echo "  ✓ Echo example built"
+	@cd toolchain/examples/calculator && $(MAKE) clean && $(MAKE)
+	@echo "  ✓ Calculator example built"
+	@echo ""
+	@echo "All toolchain tests passed!"
+
+# Clean toolchain
+clean-toolchain:
+	@rm -rf toolchain/sysroot/lib/*.a
+	@cd toolchain/examples/hello && $(MAKE) clean || true
+	@cd toolchain/examples/echo && $(MAKE) clean || true
+	@cd toolchain/examples/calculator && $(MAKE) clean || true
 
 claude:
 	bwrap \
