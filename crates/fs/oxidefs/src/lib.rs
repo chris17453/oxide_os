@@ -18,13 +18,11 @@ pub mod file;
 pub mod bitmap;
 pub mod journal;
 
-use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 use spin::{Mutex, RwLock};
 
-use block::{BlockDevice, BlockError, BlockResult};
+use block::{BlockDevice, BlockError};
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
 pub use superblock::Superblock;
@@ -262,23 +260,15 @@ impl Oxidefs {
     }
 
     /// Get the root inode
-    pub fn root(&self) -> OxidefsResult<Arc<dyn VnodeOps>> {
+    pub fn root(self: &Arc<Self>) -> OxidefsResult<Arc<dyn VnodeOps>> {
         let sb = self.superblock.read();
         let inode_data = inode::read_inode(&*self.device, &sb, ROOT_INO)?;
 
         Ok(Arc::new(OxidefsVnode::new(
-            Arc::new(self.clone_ref()),
+            Arc::clone(self),
             ROOT_INO,
             inode_data,
         )))
-    }
-
-    /// Clone a reference to self (for vnodes)
-    fn clone_ref(&self) -> OxidefsRef {
-        OxidefsRef {
-            device: Arc::clone(&self.device),
-            read_only: self.read_only,
-        }
     }
 
     /// Allocate a block
@@ -361,16 +351,10 @@ impl Oxidefs {
     }
 }
 
-/// Reference to filesystem (for vnodes)
-struct OxidefsRef {
-    device: Arc<dyn BlockDevice>,
-    read_only: bool,
-}
-
 /// OXIDEFS vnode implementation
 pub struct OxidefsVnode {
     /// Reference to filesystem
-    fs: Arc<OxidefsRef>,
+    fs: Arc<Oxidefs>,
     /// Inode number
     ino: u64,
     /// Cached inode data
@@ -378,12 +362,118 @@ pub struct OxidefsVnode {
 }
 
 impl OxidefsVnode {
-    fn new(fs: Arc<OxidefsRef>, ino: u64, inode: InodeData) -> Self {
+    fn new(fs: Arc<Oxidefs>, ino: u64, inode: InodeData) -> Self {
         OxidefsVnode {
             fs,
             ino,
             inode: RwLock::new(inode),
         }
+    }
+
+    /// Read inode from disk and update cache
+    fn reload_inode(&self) -> OxidefsResult<()> {
+        let sb = self.fs.superblock.read();
+        let inode_data = inode::read_inode(&*self.fs.device, &sb, self.ino)?;
+        *self.inode.write() = inode_data;
+        Ok(())
+    }
+
+    /// Write inode cache to disk
+    fn sync_inode(&self) -> OxidefsResult<()> {
+        let sb = self.fs.superblock.read();
+        let inode_data = self.inode.read();
+        inode::write_inode(&*self.fs.device, &sb, self.ino, &*inode_data)?;
+        Ok(())
+    }
+
+    /// Add a directory entry
+    fn add_dir_entry(&self, name: &str, ino: u64, file_type: u8) -> OxidefsResult<()> {
+        let sb = self.fs.superblock.read();
+        let mut inode_data = self.inode.write();
+        let block_size = sb.block_size as usize;
+
+        // Try to add to existing blocks first
+        let num_blocks = ((inode_data.size + block_size as u64 - 1) / block_size as u64) as usize;
+
+        for block_idx in 0..num_blocks {
+            let block_num = if block_idx < 12 {
+                inode_data.direct[block_idx]
+            } else {
+                break; // Only support direct blocks for now
+            };
+
+            if block_num == 0 {
+                continue;
+            }
+
+            let mut dir_buf = alloc::vec![0u8; block_size];
+            self.fs.device.read(block_num, &mut dir_buf)?;
+
+            if dir::add_entry(&mut dir_buf, ino, name, file_type)? {
+                self.fs.device.write(block_num, &dir_buf)?;
+                return Ok(());
+            }
+        }
+
+        // Need to allocate a new block
+        let new_block = self.fs.alloc_block()?;
+
+        // Add to direct blocks
+        if num_blocks < 12 {
+            inode_data.direct[num_blocks] = new_block;
+            inode_data.blocks += 1;
+            inode_data.size += block_size as u64;
+
+            // Initialize new block with entry
+            let mut dir_buf = alloc::vec![0u8; block_size];
+            dir::add_entry(&mut dir_buf, ino, name, file_type)?;
+            self.fs.device.write(new_block, &dir_buf)?;
+
+            // Write updated inode
+            drop(inode_data);
+            drop(sb);
+            self.sync_inode()?;
+
+            Ok(())
+        } else {
+            Err(OxidefsError::NoSpace)
+        }
+    }
+
+    /// Remove a directory entry
+    fn remove_dir_entry(&self, name: &str) -> OxidefsResult<u64> {
+        let sb = self.fs.superblock.read();
+        let inode_data = self.inode.read();
+        let block_size = sb.block_size as usize;
+
+        let num_blocks = ((inode_data.size + block_size as u64 - 1) / block_size as u64) as usize;
+
+        for block_idx in 0..num_blocks {
+            let block_num = if block_idx < 12 {
+                inode_data.direct[block_idx]
+            } else {
+                break;
+            };
+
+            if block_num == 0 {
+                continue;
+            }
+
+            let mut dir_buf = alloc::vec![0u8; block_size];
+            self.fs.device.read(block_num, &mut dir_buf)?;
+
+            // Get the inode number before removing
+            if let Some(entry) = dir::find_entry(&dir_buf, name) {
+                let found_ino = entry.ino;
+
+                if dir::remove_entry(&mut dir_buf, name)? {
+                    self.fs.device.write(block_num, &dir_buf)?;
+                    return Ok(found_ino);
+                }
+            }
+        }
+
+        Err(OxidefsError::NotFound)
     }
 
     fn inode_type(&self) -> VnodeType {
@@ -411,8 +501,44 @@ impl VnodeOps for OxidefsVnode {
             return Err(VfsError::NotDirectory);
         }
 
-        // Read directory and find entry
-        // Stub implementation
+        let sb = self.fs.superblock.read();
+        let inode_data = self.inode.read();
+        let block_size = sb.block_size as usize;
+
+        // Read directory blocks and search for entry
+        let num_blocks = ((inode_data.size + block_size as u64 - 1) / block_size as u64) as usize;
+
+        for block_idx in 0..num_blocks {
+            // Get block number directly from inode
+            let block_num = if block_idx < 12 {
+                inode_data.direct[block_idx]
+            } else {
+                // For now, only support direct blocks in directories
+                break;
+            };
+
+            if block_num == 0 {
+                continue;
+            }
+
+            let mut dir_buf = alloc::vec![0u8; block_size];
+            self.fs.device.read(block_num, &mut dir_buf)
+                .map_err(|_| VfsError::IoError)?;
+
+            // Search for entry in this block
+            if let Some(entry) = dir::find_entry(&dir_buf, name) {
+                // Found it! Load the inode
+                let found_inode = inode::read_inode(&*self.fs.device, &sb, entry.ino)
+                    .map_err(|e| -> VfsError { e.into() })?;
+
+                return Ok(Arc::new(OxidefsVnode::new(
+                    Arc::clone(&self.fs),
+                    entry.ino,
+                    found_inode,
+                )));
+            }
+        }
+
         Err(VfsError::NotFound)
     }
 
@@ -425,9 +551,59 @@ impl VnodeOps for OxidefsVnode {
             return Err(VfsError::ReadOnly);
         }
 
-        // Allocate inode, create file
-        // Stub implementation
-        Err(VfsError::NotSupported)
+        if name.len() > MAX_NAME_LEN {
+            return Err(VfsError::NameTooLong);
+        }
+
+        // Check if file already exists
+        if self.lookup(name).is_ok() {
+            return Err(VfsError::AlreadyExists);
+        }
+
+        // Allocate new inode
+        let new_ino = self.fs.alloc_inode().map_err(|e| -> VfsError { e.into() })?;
+
+        // Create inode data
+        let new_inode = InodeData {
+            mode: mode.bits() | 0o100000, // Regular file
+            uid: 0, // TODO: Get current uid
+            gid: 0, // TODO: Get current gid
+            size: 0,
+            atime: 0, // TODO: Get current time
+            mtime: 0,
+            ctime: 0,
+            links: 1,
+            blocks: 0,
+            flags: 0,
+            direct: [0; 12],
+            indirect: 0,
+            double_indirect: 0,
+            triple_indirect: 0,
+            checksum: 0,
+        };
+
+        // Write new inode to disk
+        let sb = self.fs.superblock.read();
+        inode::write_inode(&*self.fs.device, &sb, new_ino, &new_inode)
+            .map_err(|e| -> VfsError { e.into() })?;
+
+        // Add directory entry
+        let file_type = dir::file_type::REG_FILE;
+        self.add_dir_entry(name, new_ino, file_type)?;
+
+        // Update directory inode link count and timestamps
+        {
+            let mut inode_data = self.inode.write();
+            inode_data.mtime = 0; // TODO: current time
+            inode_data.ctime = 0;
+        }
+        self.sync_inode().map_err(|e| -> VfsError { e.into() })?;
+
+        Ok(Arc::new(OxidefsVnode::new(
+            Arc::clone(&self.fs),
+            new_ino,
+            new_inode,
+        )))
     }
 
     fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
@@ -435,14 +611,15 @@ impl VnodeOps for OxidefsVnode {
             return Err(VfsError::IsDirectory);
         }
 
+        let sb = self.fs.superblock.read();
         let inode = self.inode.read();
+
         if offset >= inode.size {
             return Ok(0);
         }
 
-        // Read file data
-        // Stub implementation
-        Ok(0)
+        file::read_file(&*self.fs.device, &sb, &*inode, offset, buf)
+            .map_err(|e| -> VfsError { e.into() })
     }
 
     fn write(&self, offset: u64, buf: &[u8]) -> VfsResult<usize> {
@@ -454,9 +631,29 @@ impl VnodeOps for OxidefsVnode {
             return Err(VfsError::ReadOnly);
         }
 
-        // Write file data
-        // Stub implementation
-        Ok(0)
+        let sb = self.fs.superblock.read();
+        let mut inode = self.inode.write();
+
+        let bytes_written = file::write_file(
+            &*self.fs.device,
+            &sb,
+            &mut *inode,
+            offset,
+            buf,
+            || self.fs.alloc_block(),
+        )
+        .map_err(|e| -> VfsError { e.into() })?;
+
+        // Update timestamps
+        inode.mtime = 0; // TODO: current time
+        inode.ctime = 0;
+
+        drop(inode);
+        drop(sb);
+
+        self.sync_inode().map_err(|e| -> VfsError { e.into() })?;
+
+        Ok(bytes_written)
     }
 
     fn readdir(&self, offset: u64) -> VfsResult<Option<DirEntry>> {
@@ -464,8 +661,52 @@ impl VnodeOps for OxidefsVnode {
             return Err(VfsError::NotDirectory);
         }
 
-        // Read directory entries
-        // Stub implementation
+        let sb = self.fs.superblock.read();
+        let inode_data = self.inode.read();
+        let block_size = sb.block_size as usize;
+
+        let num_blocks = ((inode_data.size + block_size as u64 - 1) / block_size as u64) as usize;
+        let mut entry_index = 0u64;
+
+        for block_idx in 0..num_blocks {
+            let block_num = if block_idx < 12 {
+                inode_data.direct[block_idx]
+            } else {
+                break;
+            };
+
+            if block_num == 0 {
+                continue;
+            }
+
+            let mut dir_buf = alloc::vec![0u8; block_size];
+            self.fs.device.read(block_num, &mut dir_buf)
+                .map_err(|_| VfsError::IoError)?;
+
+            for entry in dir::iter_entries(&dir_buf) {
+                if entry_index >= offset {
+                    // Convert file type
+                    let file_type = match entry.file_type {
+                        dir::file_type::REG_FILE => VnodeType::File,
+                        dir::file_type::DIR => VnodeType::Directory,
+                        dir::file_type::SYMLINK => VnodeType::Symlink,
+                        dir::file_type::CHRDEV => VnodeType::CharDevice,
+                        dir::file_type::BLKDEV => VnodeType::BlockDevice,
+                        dir::file_type::FIFO => VnodeType::Fifo,
+                        dir::file_type::SOCK => VnodeType::Socket,
+                        _ => VnodeType::File,
+                    };
+
+                    return Ok(Some(DirEntry {
+                        name: String::from(entry.name_str()),
+                        ino: entry.ino,
+                        file_type,
+                    }));
+                }
+                entry_index += 1;
+            }
+        }
+
         Ok(None)
     }
 
@@ -478,9 +719,75 @@ impl VnodeOps for OxidefsVnode {
             return Err(VfsError::ReadOnly);
         }
 
-        // Create directory
-        // Stub implementation
-        Err(VfsError::NotSupported)
+        if name.len() > MAX_NAME_LEN {
+            return Err(VfsError::NameTooLong);
+        }
+
+        // Check if already exists
+        if self.lookup(name).is_ok() {
+            return Err(VfsError::AlreadyExists);
+        }
+
+        // Allocate new inode
+        let new_ino = self.fs.alloc_inode().map_err(|e| -> VfsError { e.into() })?;
+
+        // Allocate block for directory data
+        let data_block = self.fs.alloc_block().map_err(|e| -> VfsError { e.into() })?;
+
+        // Create directory inode
+        let new_inode = InodeData {
+            mode: mode.bits() | 0o040000, // Directory
+            uid: 0,
+            gid: 0,
+            size: BLOCK_SIZE as u64,
+            atime: 0,
+            mtime: 0,
+            ctime: 0,
+            links: 2, // . and parent reference
+            blocks: 1,
+            flags: 0,
+            direct: {
+                let mut d = [0u64; 12];
+                d[0] = data_block;
+                d
+            },
+            indirect: 0,
+            double_indirect: 0,
+            triple_indirect: 0,
+            checksum: 0,
+        };
+
+        // Initialize directory with . and ..
+        let block_size = BLOCK_SIZE as usize;
+        let mut dir_buf = alloc::vec![0u8; block_size];
+        dir::init_directory(&mut dir_buf, new_ino, self.ino);
+        self.fs.device.write(data_block, &dir_buf)
+            .map_err(|_| VfsError::IoError)?;
+
+        // Write new inode
+        let sb = self.fs.superblock.read();
+        inode::write_inode(&*self.fs.device, &sb, new_ino, &new_inode)
+            .map_err(|e| -> VfsError { e.into() })?;
+
+        // Add directory entry to parent
+        let file_type = dir::file_type::DIR;
+        self.add_dir_entry(name, new_ino, file_type)
+            .map_err(|e| -> VfsError { e.into() })?;
+
+        // Update parent directory link count (for ".." in new dir)
+        {
+            let mut inode_data = self.inode.write();
+            inode_data.links += 1;
+            inode_data.mtime = 0;
+            inode_data.ctime = 0;
+        }
+        self.sync_inode().map_err(|e| -> VfsError { e.into() })?;
+
+        Ok(Arc::new(OxidefsVnode::new(
+            Arc::clone(&self.fs),
+            new_ino,
+            new_inode,
+        )))
     }
 
     fn rmdir(&self, name: &str) -> VfsResult<()> {
@@ -492,9 +799,46 @@ impl VnodeOps for OxidefsVnode {
             return Err(VfsError::ReadOnly);
         }
 
-        // Remove directory
-        // Stub implementation
-        Err(VfsError::NotSupported)
+        // Cannot remove . or ..
+        if name == "." || name == ".." {
+            return Err(VfsError::InvalidArgument);
+        }
+
+        // Lookup the directory
+        let target = self.lookup(name)?;
+        if target.vtype() != VnodeType::Directory {
+            return Err(VfsError::NotDirectory);
+        }
+
+        // Check if directory is empty (only has . and ..)
+        let mut entry_count = 0;
+        let mut offset = 0;
+        while let Some(_entry) = target.readdir(offset)? {
+            entry_count += 1;
+            offset += 1;
+            if entry_count > 2 {
+                return Err(VfsError::NotEmpty);
+            }
+        }
+
+        // Remove the directory entry from parent
+        let removed_ino = self.remove_dir_entry(name)
+            .map_err(|e| -> VfsError { e.into() })?;
+
+        // Free the inode
+        self.fs.free_inode(removed_ino)
+            .map_err(|e| -> VfsError { e.into() })?;
+
+        // Update parent link count (was pointing to this dir via "..")
+        {
+            let mut inode_data = self.inode.write();
+            inode_data.links -= 1;
+            inode_data.mtime = 0;
+            inode_data.ctime = 0;
+        }
+        self.sync_inode().map_err(|e| -> VfsError { e.into() })?;
+
+        Ok(())
     }
 
     fn unlink(&self, name: &str) -> VfsResult<()> {
@@ -506,9 +850,57 @@ impl VnodeOps for OxidefsVnode {
             return Err(VfsError::ReadOnly);
         }
 
-        // Unlink file
-        // Stub implementation
-        Err(VfsError::NotSupported)
+        // Cannot unlink . or ..
+        if name == "." || name == ".." {
+            return Err(VfsError::InvalidArgument);
+        }
+
+        // Lookup the file
+        let target = self.lookup(name)?;
+        if target.vtype() == VnodeType::Directory {
+            return Err(VfsError::IsDirectory);
+        }
+
+        // Remove directory entry
+        let removed_ino = self.remove_dir_entry(name)
+            .map_err(|e| -> VfsError { e.into() })?;
+
+        // Read the inode to decrement link count
+        let sb = self.fs.superblock.read();
+        let mut inode_data = inode::read_inode(&*self.fs.device, &sb, removed_ino)
+            .map_err(|e| -> VfsError { e.into() })?;
+
+        inode_data.links -= 1;
+
+        // If no more links, free the inode and its blocks
+        if inode_data.links == 0 {
+            // Free all blocks
+            let num_blocks = inode_data.blocks;
+            for block_idx in 0..num_blocks {
+                if block_idx < 12 && inode_data.direct[block_idx as usize] != 0 {
+                    self.fs.free_block(inode_data.direct[block_idx as usize])
+                        .map_err(|e| -> VfsError { e.into() })?;
+                }
+            }
+
+            // Free the inode
+            self.fs.free_inode(removed_ino)
+                .map_err(|e| -> VfsError { e.into() })?;
+        } else {
+            // Still has links, just update inode
+            inode::write_inode(&*self.fs.device, &sb, removed_ino, &inode_data)
+                .map_err(|e| -> VfsError { e.into() })?;
+        }
+
+        // Update parent directory timestamps
+        {
+            let mut parent_inode = self.inode.write();
+            parent_inode.mtime = 0;
+            parent_inode.ctime = 0;
+        }
+        self.sync_inode().map_err(|e| -> VfsError { e.into() })?;
+
+        Ok(())
     }
 
     fn rename(&self, old_name: &str, new_dir: &dyn VnodeOps, new_name: &str) -> VfsResult<()> {
@@ -516,9 +908,61 @@ impl VnodeOps for OxidefsVnode {
             return Err(VfsError::ReadOnly);
         }
 
-        // Rename
-        // Stub implementation
-        Err(VfsError::NotSupported)
+        if old_name == "." || old_name == ".." || new_name == "." || new_name == ".." {
+            return Err(VfsError::InvalidArgument);
+        }
+
+        if new_name.len() > MAX_NAME_LEN {
+            return Err(VfsError::NameTooLong);
+        }
+
+        // Lookup the source file
+        let target = self.lookup(old_name)?;
+
+        // Get the target inode number before removing
+        let removed_ino = self.remove_dir_entry(old_name)
+            .map_err(|e| -> VfsError { e.into() })?;
+
+        // Try to add to new directory
+        // For simplicity, only support rename within same directory for now
+        // Full cross-directory rename is complex
+        if (new_dir as *const dyn VnodeOps) != (self as *const dyn VnodeOps) {
+            // Cross-directory rename - would need to handle link counts, "..", etc.
+            // Restore the entry we removed and return error
+            let file_type = match target.vtype() {
+                VnodeType::File => dir::file_type::REG_FILE,
+                VnodeType::Directory => dir::file_type::DIR,
+                VnodeType::Symlink => dir::file_type::SYMLINK,
+                _ => dir::file_type::REG_FILE,
+            };
+            self.add_dir_entry(old_name, removed_ino, file_type)
+                .map_err(|e| -> VfsError { e.into() })?;
+            return Err(VfsError::NotSupported);
+        }
+
+        // Same directory rename - just add with new name
+        let file_type = match target.vtype() {
+            VnodeType::File => dir::file_type::REG_FILE,
+            VnodeType::Directory => dir::file_type::DIR,
+            VnodeType::Symlink => dir::file_type::SYMLINK,
+            VnodeType::CharDevice => dir::file_type::CHRDEV,
+            VnodeType::BlockDevice => dir::file_type::BLKDEV,
+            VnodeType::Fifo => dir::file_type::FIFO,
+            VnodeType::Socket => dir::file_type::SOCK,
+        };
+
+        self.add_dir_entry(new_name, removed_ino, file_type)
+            .map_err(|e| -> VfsError { e.into() })?;
+
+        // Update timestamps
+        {
+            let mut inode_data = self.inode.write();
+            inode_data.mtime = 0;
+            inode_data.ctime = 0;
+        }
+        self.sync_inode().map_err(|e| -> VfsError { e.into() })?;
+
+        Ok(())
     }
 
     fn stat(&self) -> VfsResult<Stat> {
@@ -540,7 +984,7 @@ impl VnodeOps for OxidefsVnode {
         })
     }
 
-    fn truncate(&self, size: u64) -> VfsResult<()> {
+    fn truncate(&self, new_size: u64) -> VfsResult<()> {
         if self.vtype() == VnodeType::Directory {
             return Err(VfsError::IsDirectory);
         }
@@ -549,8 +993,26 @@ impl VnodeOps for OxidefsVnode {
             return Err(VfsError::ReadOnly);
         }
 
-        // Truncate file
-        // Stub implementation
+        let sb = self.fs.superblock.read();
+        let mut inode_data = self.inode.write();
+
+        file::truncate_file(
+            &*self.fs.device,
+            &sb,
+            &mut *inode_data,
+            new_size,
+            |block| self.fs.free_block(block),
+        )
+        .map_err(|e| -> VfsError { e.into() })?;
+
+        inode_data.mtime = 0;
+        inode_data.ctime = 0;
+
+        drop(inode_data);
+        drop(sb);
+
+        self.sync_inode().map_err(|e| -> VfsError { e.into() })?;
+
         Ok(())
     }
 }
