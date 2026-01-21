@@ -101,6 +101,9 @@ pub trait Framebuffer: Send + Sync {
     }
 
     /// Fill a rectangle with a color (OPTIMIZED)
+    /// 
+    /// For memory-mapped framebuffers, uses volatile writes.
+    /// For buffered framebuffers (like VirtIO GPU), uses regular writes + flush.
     fn fill_rect(&self, x: u32, y: u32, w: u32, h: u32, color: Color) {
         let x_end = (x + w).min(self.width());
         let y_end = (y + h).min(self.height());
@@ -129,7 +132,9 @@ pub trait Framebuffer: Send + Sync {
                             color_bytes[0], color_bytes[1], color_bytes[2], color_bytes[3]
                         ]);
                         let line_ptr = buffer.add(line_start) as *mut u32;
-                        // Use regular write instead of write_volatile for bulk operations
+                        // Use regular write for buffered framebuffers (VirtIO GPU)
+                        // Driver will flush to hardware. For direct mapped buffers,
+                        // LinearFramebuffer overrides this to use volatile writes.
                         for i in 0..pixels_to_fill {
                             ptr::write(line_ptr.add(i), pixel_value);
                         }
@@ -362,16 +367,32 @@ impl Framebuffer for LinearFramebuffer {
         let mut pixel_data = [0u8; 4];
         color.write_to(&mut pixel_data, self.format());
 
-        for py in y..y_end {
-            let row_start = (py * stride + x * bpp) as usize;
-            for px in 0..(x_end - x) {
-                let offset = row_start + (px * bpp) as usize;
-                unsafe {
-                    ptr::copy_nonoverlapping(
-                        pixel_data.as_ptr(),
-                        buffer.add(offset),
-                        bpp as usize,
-                    );
+        // For direct-mapped framebuffers, use volatile writes
+        unsafe {
+            for py in y..y_end {
+                let row_start = (py * stride + x * bpp) as usize;
+                for px in 0..(x_end - x) {
+                    let offset = row_start + (px * bpp) as usize;
+                    // Use volatile writes for direct hardware access
+                    match bpp {
+                        4 => {
+                            let pixel_value = u32::from_le_bytes([
+                                pixel_data[0], pixel_data[1], pixel_data[2], pixel_data[3]
+                            ]);
+                            ptr::write_volatile((buffer as *mut u32).add(offset / 4), pixel_value);
+                        },
+                        2 => {
+                            let pixel_value = u16::from_le_bytes([pixel_data[0], pixel_data[1]]);
+                            ptr::write_volatile((buffer as *mut u16).add(offset / 2), pixel_value);
+                        },
+                        _ => {
+                            ptr::copy_nonoverlapping(
+                                pixel_data.as_ptr(),
+                                buffer.add(offset),
+                                bpp as usize,
+                            );
+                        }
+                    }
                 }
             }
         }

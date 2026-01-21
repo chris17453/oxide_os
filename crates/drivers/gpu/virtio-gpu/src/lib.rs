@@ -645,8 +645,8 @@ impl Framebuffer for VirtioGpu {
     }
 
     fn flush(&self) {
-        // Now callable with immutable reference thanks to interior mutability
-        self.flush();
+        // Call flush_region for full screen flush
+        self.flush_region(0, 0, self.width, self.height);
     }
 }
 
