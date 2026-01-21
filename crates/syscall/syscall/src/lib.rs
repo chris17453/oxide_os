@@ -320,6 +320,11 @@ pub fn dispatch(
         nr::GETPRIORITY => sys_getpriority(arg1 as i32, arg2 as i32),
         nr::SETPRIORITY => sys_setpriority(arg1 as i32, arg2 as i32, arg3 as i32),
 
+        // Timer/alarm syscalls
+        nr::ALARM => sys_alarm(arg1 as u32),
+        nr::SETITIMER => sys_setitimer(arg1 as i32, arg2, arg3),
+        nr::GETITIMER => sys_getitimer(arg1 as i32, arg2),
+
         // Module syscalls
         nr::INIT_MODULE => sys_init_module(arg1, arg2 as usize, arg3),
         nr::DELETE_MODULE => sys_delete_module(arg1, arg2 as u32),
@@ -960,6 +965,154 @@ fn sys_setpriority(which: i32, who: i32, prio: i32) -> i64 {
         }
         priority::PRIO_USER => {
             errno::ENOSYS // User priority not fully implemented
+        }
+        _ => errno::EINVAL,
+    }
+}
+
+/// Timer constants
+mod timer {
+    pub const ITIMER_REAL: i32 = 0;    // Real time (SIGALRM)
+    pub const ITIMER_VIRTUAL: i32 = 1; // User time (SIGVTALRM)
+    pub const ITIMER_PROF: i32 = 2;    // User + system time (SIGPROF)
+}
+
+/// sys_alarm - Set an alarm clock for delivery of a signal
+///
+/// # Arguments
+/// * `seconds` - Seconds until SIGALRM (0 = cancel alarm)
+///
+/// # Returns
+/// Seconds remaining from previous alarm, or 0
+fn sys_alarm(seconds: u32) -> i64 {
+    let table = process_table();
+    if let Some(proc) = table.current() {
+        let mut p = proc.lock();
+
+        // Get remaining time from previous alarm
+        let remaining = p.get_alarm_remaining();
+
+        if seconds == 0 {
+            // Cancel alarm
+            p.clear_alarm();
+        } else {
+            // Set new alarm
+            p.set_alarm(seconds);
+        }
+
+        remaining as i64
+    } else {
+        0
+    }
+}
+
+/// Interval timer structure (matches userspace struct itimerval)
+#[repr(C)]
+struct ITimerVal {
+    it_interval_sec: i64,  // Timer interval (seconds)
+    it_interval_usec: i64, // Timer interval (microseconds)
+    it_value_sec: i64,     // Current value (seconds)
+    it_value_usec: i64,    // Current value (microseconds)
+}
+
+/// sys_setitimer - Set value of an interval timer
+///
+/// # Arguments
+/// * `which` - ITIMER_REAL, ITIMER_VIRTUAL, or ITIMER_PROF
+/// * `new_value` - Pointer to new timer value
+/// * `old_value` - Pointer to receive old timer value (may be null)
+fn sys_setitimer(which: i32, new_value: u64, old_value: u64) -> i64 {
+    // Validate pointers
+    if new_value == 0 || new_value >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    if old_value != 0 && old_value >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    let table = process_table();
+    let proc = match table.current() {
+        Some(p) => p,
+        None => return errno::ESRCH,
+    };
+
+    match which {
+        timer::ITIMER_REAL => {
+            let mut p = proc.lock();
+
+            // Read old value if requested
+            if old_value != 0 {
+                let old_timer = ITimerVal {
+                    it_interval_sec: p.get_itimer_interval_sec(),
+                    it_interval_usec: p.get_itimer_interval_usec(),
+                    it_value_sec: p.get_itimer_value_sec(),
+                    it_value_usec: p.get_itimer_value_usec(),
+                };
+
+                unsafe {
+                    let dest = old_value as *mut ITimerVal;
+                    *dest = old_timer;
+                }
+            }
+
+            // Read new value
+            let new_timer = unsafe { *(new_value as *const ITimerVal) };
+
+            // Set new timer
+            p.set_itimer(
+                new_timer.it_interval_sec,
+                new_timer.it_interval_usec,
+                new_timer.it_value_sec,
+                new_timer.it_value_usec,
+            );
+
+            0
+        }
+        timer::ITIMER_VIRTUAL | timer::ITIMER_PROF => {
+            errno::ENOSYS // Virtual and prof timers not yet implemented
+        }
+        _ => errno::EINVAL,
+    }
+}
+
+/// sys_getitimer - Get value of an interval timer
+///
+/// # Arguments
+/// * `which` - ITIMER_REAL, ITIMER_VIRTUAL, or ITIMER_PROF
+/// * `curr_value` - Pointer to receive current timer value
+fn sys_getitimer(which: i32, curr_value: u64) -> i64 {
+    // Validate pointer
+    if curr_value == 0 || curr_value >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    let table = process_table();
+    let proc = match table.current() {
+        Some(p) => p,
+        None => return errno::ESRCH,
+    };
+
+    match which {
+        timer::ITIMER_REAL => {
+            let p = proc.lock();
+
+            let timer = ITimerVal {
+                it_interval_sec: p.get_itimer_interval_sec(),
+                it_interval_usec: p.get_itimer_interval_usec(),
+                it_value_sec: p.get_itimer_value_sec(),
+                it_value_usec: p.get_itimer_value_usec(),
+            };
+
+            unsafe {
+                let dest = curr_value as *mut ITimerVal;
+                *dest = timer;
+            }
+
+            0
+        }
+        timer::ITIMER_VIRTUAL | timer::ITIMER_PROF => {
+            errno::ENOSYS // Virtual and prof timers not yet implemented
         }
         _ => errno::EINVAL,
     }
