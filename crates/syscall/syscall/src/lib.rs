@@ -315,6 +315,11 @@ pub fn dispatch(
         nr::SETKEYMAP => sys_setkeymap(arg1, arg2 as usize),
         nr::GETKEYMAP => sys_getkeymap(arg1, arg2 as usize),
 
+        // Process priority syscalls
+        nr::NICE => sys_nice(arg1 as i32),
+        nr::GETPRIORITY => sys_getpriority(arg1 as i32, arg2 as i32),
+        nr::SETPRIORITY => sys_setpriority(arg1 as i32, arg2 as i32, arg3 as i32),
+
         // Module syscalls
         nr::INIT_MODULE => sys_init_module(arg1, arg2 as usize, arg3),
         nr::DELETE_MODULE => sys_delete_module(arg1, arg2 as u32),
@@ -830,6 +835,133 @@ fn sys_setgid(gid: u32) -> i64 {
         }
     } else {
         errno::ESRCH
+    }
+}
+
+/// Priority constants
+mod priority {
+    pub const PRIO_PROCESS: i32 = 0;
+    pub const PRIO_PGRP: i32 = 1;
+    pub const PRIO_USER: i32 = 2;
+}
+
+/// sys_nice - Change process priority by increment
+///
+/// # Arguments
+/// * `inc` - Priority increment (positive = lower priority, negative = higher)
+fn sys_nice(inc: i32) -> i64 {
+    let table = process_table();
+    if let Some(proc) = table.current() {
+        let mut p = proc.lock();
+        let current_nice = p.nice();
+
+        // Calculate new nice value (-20 to +19)
+        let new_nice = (current_nice + inc).max(-20).min(19);
+
+        // Check permissions for increasing priority (lowering nice value)
+        if new_nice < current_nice {
+            let creds = p.credentials();
+            if creds.euid != 0 {
+                return errno::EPERM;
+            }
+        }
+
+        p.set_nice(new_nice);
+        new_nice as i64
+    } else {
+        errno::ESRCH
+    }
+}
+
+/// sys_getpriority - Get scheduling priority
+///
+/// # Arguments
+/// * `which` - PRIO_PROCESS, PRIO_PGRP, or PRIO_USER
+/// * `who` - Process ID, process group ID, or user ID (0 = current)
+fn sys_getpriority(which: i32, who: i32) -> i64 {
+    let table = process_table();
+
+    match which {
+        priority::PRIO_PROCESS => {
+            let target_pid = if who == 0 {
+                table.current_pid()
+            } else {
+                who
+            };
+
+            if let Some(proc) = table.get(target_pid) {
+                let nice = proc.lock().nice();
+                // Return 20 - nice to match POSIX (0 to 40 range)
+                (20 - nice) as i64
+            } else {
+                errno::ESRCH
+            }
+        }
+        priority::PRIO_PGRP => {
+            // For now, just return current process priority if who == 0
+            if who == 0 {
+                if let Some(proc) = table.current() {
+                    let nice = proc.lock().nice();
+                    (20 - nice) as i64
+                } else {
+                    errno::ESRCH
+                }
+            } else {
+                errno::ENOSYS // Process group priority not fully implemented
+            }
+        }
+        priority::PRIO_USER => {
+            errno::ENOSYS // User priority not fully implemented
+        }
+        _ => errno::EINVAL,
+    }
+}
+
+/// sys_setpriority - Set scheduling priority
+///
+/// # Arguments
+/// * `which` - PRIO_PROCESS, PRIO_PGRP, or PRIO_USER
+/// * `who` - Process ID, process group ID, or user ID (0 = current)
+/// * `prio` - New priority (0-40, where 0 is highest priority)
+fn sys_setpriority(which: i32, who: i32, prio: i32) -> i64 {
+    let table = process_table();
+
+    // Convert POSIX priority (0-40) to nice value (-20 to +19)
+    let nice_value = 20 - prio.max(0).min(40);
+
+    match which {
+        priority::PRIO_PROCESS => {
+            let target_pid = if who == 0 {
+                table.current_pid()
+            } else {
+                who
+            };
+
+            if let Some(proc) = table.get(target_pid) {
+                let mut p = proc.lock();
+                let current_nice = p.nice();
+
+                // Check permissions for increasing priority
+                if nice_value < current_nice {
+                    let creds = p.credentials();
+                    if creds.euid != 0 {
+                        return errno::EPERM;
+                    }
+                }
+
+                p.set_nice(nice_value);
+                0
+            } else {
+                errno::ESRCH
+            }
+        }
+        priority::PRIO_PGRP => {
+            errno::ENOSYS // Process group priority not fully implemented
+        }
+        priority::PRIO_USER => {
+            errno::ENOSYS // User priority not fully implemented
+        }
+        _ => errno::EINVAL,
     }
 }
 
