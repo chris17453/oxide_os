@@ -1,0 +1,2385 @@
+# OXIDE OS - Comprehensive Application Gap Analysis
+
+This document lists EVERY missing feature from EVERY application in the `userspace/coreutils/src/bin/` directory compared to their full Linux/POSIX equivalents.
+
+Date: 2026-01-21
+Updated: 2026-01-21 with Priority/Phase assignments
+
+---
+
+## IMPLEMENTATION PRIORITY & PHASE ASSIGNMENTS
+
+### Priority Levels
+- **P0**: CRITICAL - User complained, must fix immediately
+- **P1**: HIGH - Essential functionality, high value
+- **P2**: MEDIUM - Important but not critical
+- **P3**: LOW - Nice to have, low priority
+
+### Phase Assignments
+- **Phase 3**: Basic userspace apps using existing syscalls
+- **Phase 4**: Advanced apps requiring additional syscall support
+- **Phase 5+**: Complex apps requiring full subsystem support
+
+### Implementation Order (By Priority)
+
+#### P0 - CRITICAL (Implement First)
+| App | Phase | Reason |
+|-----|-------|--------|
+| nslookup | Phase 3 | User specifically complained about reverse DNS |
+
+#### P1 - HIGH PRIORITY
+| App | Phase | Category |
+|-----|-------|----------|
+| ping | Phase 3 | Network - basic diagnostic |
+| nc (netcat) | Phase 3 | Network - essential utility |
+| wget | Phase 3 | Network - file download |
+| tar | Phase 3 | Compression - archiving |
+| gzip/gunzip | Phase 3 | Compression - basic compression |
+| sed | Phase 3 | Text processing - stream editor |
+| awk | Phase 3 | Text processing - text processor |
+| ps | Phase 3 | Process - viewing processes |
+| grep | Phase 3 | Text - search (enhance existing) |
+| ls | Phase 3 | File - enhance existing |
+
+#### P2 - MEDIUM PRIORITY
+| App | Phase | Category |
+|-----|-------|----------|
+| ifconfig | Phase 4 | Network - config (needs netlink) |
+| ip | Phase 4 | Network - config (needs netlink) |
+| netstat | Phase 4 | Network - stats (needs /proc) |
+| top | Phase 4 | Process - monitor (needs /proc) |
+| df | Phase 3 | System info - enhance |
+| du | Phase 3 | File - disk usage enhance |
+| cp/mv/rm | Phase 3 | File - enhance with all options |
+| sort | Phase 3 | Text - improve algorithm |
+| diff | Phase 3 | Text - proper diff algorithm |
+
+#### P3 - LOW PRIORITY
+| App | Phase | Category |
+|-----|-------|----------|
+| hostname | Phase 3 | Network - simple |
+| bzip2/xz/zip | Phase 4 | Compression - additional formats |
+| vi/vim/nano | Phase 5 | Editor - complex |
+| less | Phase 4 | Viewer - pager |
+| printf | Phase 3 | Output - formatting |
+| time/watch | Phase 3 | Misc - utilities |
+| All other utilities | Phase 3-4 | Various |
+
+---
+
+## NETWORK UTILITIES
+
+### nslookup
+
+**Critical Missing Features:**
+- ❌ **REVERSE DNS LOOKUPS** - Cannot resolve IP addresses to hostnames (user specifically complained about this)
+- ❌ Command-line hostname argument parsing (hardcoded to "example.com")
+- ❌ Command-line DNS server specification (hardcoded to 8.8.8.8)
+- ❌ IPv6 support (AAAA records)
+- ❌ MX record queries
+- ❌ NS record queries
+- ❌ SOA record queries
+- ❌ TXT record queries
+- ❌ CNAME record queries
+- ❌ PTR record queries (reverse DNS)
+- ❌ ANY record queries
+- ❌ Iterative queries (non-recursive mode)
+- ❌ TCP mode for large responses
+- ❌ Query timeout configuration
+- ❌ Retry count configuration
+- ❌ Port specification
+- ❌ Debug mode (-d)
+- ❌ Query class specification (CH, HS, etc.)
+- ❌ Multiple query support
+- ❌ Batch mode from file
+- ❌ Authority section display
+- ❌ Additional section display
+- ❌ Query statistics
+- ❌ TTL display in responses
+- ❌ Multiple answer processing
+- ❌ EDNS0 support
+- ❌ DNSSEC validation
+- ❌ Search domain handling
+- ❌ /etc/resolv.conf parsing
+
+### ping
+
+**Missing Features:**
+- ❌ Command-line hostname/IP parsing (hardcoded to "10.0.2.2")
+- ❌ Command-line count specification (hardcoded to 4)
+- ❌ DNS hostname resolution
+- ❌ -i interval option
+- ❌ -w timeout option
+- ❌ -t TTL option
+- ❌ -s packet size option
+- ❌ -c count option (implementation exists but hardcoded)
+- ❌ -q quiet mode
+- ❌ -v verbose mode
+- ❌ -f flood mode
+- ❌ -I interface selection
+- ❌ -n numeric output only
+- ❌ -a audible ping
+- ❌ -b broadcast ping
+- ❌ -D print timestamp
+- ❌ -L suppress loopback
+- ❌ -p pattern specification
+- ❌ -Q TOS option
+- ❌ -R record route
+- ❌ -U print full user-to-user latency
+- ❌ -W deadline option
+- ❌ IPv6 support (ping6)
+- ❌ Adaptive ping (-A)
+- ❌ Flood ping statistics
+- ❌ RTT min/max/avg/mdev statistics (only shows "<1ms")
+- ❌ Packet loss percentage calculation is basic
+- ❌ Timestamp display
+- ❌ Source address specification (-S)
+- ❌ Routing options (-g, -G)
+- ❌ Mark packets (-m)
+- ❌ Preload packets (-l)
+- ❌ Bypass routing (-r)
+
+### nc (netcat)
+
+**Missing Features:**
+- ❌ Command-line argument parsing (all options hardcoded)
+- ❌ Actual listen/connect functionality (only prints messages)
+- ❌ Full bidirectional data transfer (only reads once)
+- ❌ Multiple connection handling
+- ❌ -k keep listening (accept multiple connections)
+- ❌ -p source port specification
+- ❌ -s source address
+- ❌ -w timeout
+- ❌ -n numeric-only IP addresses
+- ❌ -4 force IPv4
+- ❌ -6 force IPv6
+- ❌ -C send CRLF as line-ending
+- ❌ -c execute command on connect (OpenBSD nc)
+- ❌ -d detach from stdin
+- ❌ -i idle timeout
+- ❌ -q seconds after EOF on stdin
+- ❌ -X proxy protocol (SOCKS4/5, HTTPS)
+- ❌ -x proxy address
+- ❌ --ssl/--ssl-verify SSL/TLS support
+- ❌ Unix domain socket support (-U)
+- ❌ SCTP support (--sctp)
+- ❌ Port range scanning
+- ❌ -z zero-I/O mode is hardcoded, not functional
+- ❌ Telnet option negotiation
+- ❌ Line-by-line reading
+- ❌ Full stdin/stdout redirection handling
+- ❌ Exec mode with shell
+- ❌ File transfer mode
+- ❌ Hex dump mode
+
+### netstat
+
+**Missing Features:**
+- ❌ All functionality missing - shows only placeholder headers
+- ❌ -a all sockets
+- ❌ -t TCP sockets
+- ❌ -u UDP sockets
+- ❌ -l listening sockets only
+- ❌ -n numeric addresses
+- ❌ -p show PID/program name
+- ❌ -r routing table
+- ❌ -i interface statistics
+- ❌ -s protocol statistics
+- ❌ -c continuous output
+- ❌ -e extended information
+- ❌ -o show timers
+- ❌ -A address family selection
+- ❌ -g multicast group membership
+- ❌ -M masqueraded connections
+- ❌ -v verbose mode
+- ❌ -W wide output
+- ❌ --numeric-hosts
+- ❌ --numeric-ports
+- ❌ --numeric-users
+- ❌ --protocol={inet,inet6,unix,ax25,netrom,ddp,bluetooth,etc.}
+- ❌ --extend
+- ❌ --program
+- ❌ --timers
+- ❌ /proc/net/tcp parsing
+- ❌ /proc/net/udp parsing
+- ❌ /proc/net/unix parsing
+- ❌ Socket state display (ESTABLISHED, LISTEN, etc.)
+- ❌ Queue sizes
+- ❌ Local/foreign address display
+- ❌ Connection timers
+
+### ifconfig
+
+**Missing Features:**
+- ❌ Shows only hardcoded placeholder data
+- ❌ Command-line interface specification
+- ❌ Address assignment (ifconfig eth0 192.168.1.100)
+- ❌ Netmask configuration
+- ❌ Broadcast address configuration
+- ❌ MTU setting
+- ❌ up/down interface
+- ❌ promisc mode
+- ❌ allmulti mode
+- ❌ Metric configuration
+- ❌ Hardware address setting
+- ❌ Point-to-point configuration
+- ❌ ARP enable/disable
+- ❌ Multicast enable/disable
+- ❌ Dynamic/static configuration
+- ❌ Media type selection
+- ❌ Add/delete route
+- ❌ Tunnel configuration
+- ❌ VLAN configuration
+- ❌ Bridge configuration
+- ❌ Real-time statistics
+- ❌ Driver information (-d on some systems)
+- ❌ Module statistics
+- ❌ IPv6 address configuration
+- ❌ Scope configuration
+- ❌ Zone ID configuration
+- ❌ Interface aliasing (eth0:0)
+- ❌ Wireless configuration
+- ❌ /proc/net/dev parsing for real stats
+
+### ip
+
+**Missing Features:**
+- ❌ Shows only hardcoded placeholder data
+- ❌ Command-line argument parsing
+- ❌ `ip addr add` - add address to interface
+- ❌ `ip addr del` - delete address from interface
+- ❌ `ip addr flush` - flush addresses
+- ❌ `ip addr show` - real data from kernel
+- ❌ `ip link set` - configure link properties
+- ❌ `ip link set up/down` - bring interface up/down
+- ❌ `ip link set mtu` - set MTU
+- ❌ `ip link set address` - set MAC address
+- ❌ `ip link set name` - rename interface
+- ❌ `ip link set master` - set master device (bridge)
+- ❌ `ip link add` - add virtual interface
+- ❌ `ip link del` - delete interface
+- ❌ `ip link show` - real link status
+- ❌ `ip route add` - add route
+- ❌ `ip route del` - delete route
+- ❌ `ip route change` - change route
+- ❌ `ip route replace` - replace route
+- ❌ `ip route show` - real routing table
+- ❌ `ip route flush` - flush routes
+- ❌ `ip route get` - get route for destination
+- ❌ `ip neigh add` - add neighbor entry
+- ❌ `ip neigh del` - delete neighbor entry
+- ❌ `ip neigh show` - real ARP/ND cache
+- ❌ `ip neigh flush` - flush neighbor cache
+- ❌ `ip rule` - routing policy database
+- ❌ `ip tunnel` - tunnel configuration
+- ❌ `ip tuntap` - TUN/TAP device management
+- ❌ `ip maddr` - multicast addresses
+- ❌ `ip mroute` - multicast routing cache
+- ❌ `ip xfrm` - IPsec policy
+- ❌ `ip netns` - network namespace management
+- ❌ `ip l2tp` - L2TP tunnel configuration
+- ❌ `ip fou` - Foo-over-UDP configuration
+- ❌ `ip macsec` - MACsec configuration
+- ❌ `ip tcp_metrics` - TCP metrics management
+- ❌ `ip token` - IPv6 token management
+- ❌ VRF support
+- ❌ VLAN filtering bridge support
+- ❌ Color output (-c)
+- ❌ JSON output (-j)
+- ❌ Pretty JSON (-p)
+- ❌ Brief output (-br)
+- ❌ Statistics (-s)
+- ❌ Details (-d)
+- ❌ Timestamp (-t)
+- ❌ Batch mode (-b)
+- ❌ Force execution (-f)
+- ❌ All namespaces (-a)
+- ❌ Netlink socket operations
+- ❌ Real-time link events (ip monitor)
+
+### wget
+
+**Missing Features:**
+- ❌ Command-line URL parsing (hardcoded to "http://10.0.2.2/")
+- ❌ Command-line argument parsing
+- ❌ DNS resolution (requires IP addresses)
+- ❌ HTTPS/TLS support
+- ❌ FTP support
+- ❌ -O output file specification
+- ❌ -c continue/resume downloads
+- ❌ -q quiet mode
+- ❌ -v verbose mode
+- ❌ -d debug mode
+- ❌ -t retry count
+- ❌ -T timeout
+- ❌ -w wait between retrievals
+- ❌ --limit-rate
+- ❌ --no-check-certificate
+- ❌ --user/--password authentication
+- ❌ --header custom headers
+- ❌ --post-data/--post-file POST requests
+- ❌ --method HTTP method specification
+- ❌ --proxy proxy support
+- ❌ --no-proxy
+- ❌ --cookies/--load-cookies cookie handling
+- ❌ --keep-session-cookies
+- ❌ --save-cookies
+- ❌ -r recursive download
+- ❌ -l recursion depth
+- ❌ -k convert links
+- ❌ -p page requisites
+- ❌ -nc no-clobber
+- ❌ -N timestamping
+- ❌ -S server response headers
+- ❌ --spider check existence only
+- ❌ -U user-agent string
+- ❌ --referer
+- ❌ -i input file with URLs
+- ❌ -B base URL
+- ❌ --accept/--reject file patterns
+- ❌ --domains/--exclude-domains
+- ❌ --follow-ftp
+- ❌ --no-parent
+- ❌ --cut-dirs
+- ❌ --protocol-directories
+- ❌ --content-disposition
+- ❌ --adjust-extension
+- ❌ --progress indicator types
+- ❌ Multiple URL support
+- ❌ Redirect following (Location header)
+- ❌ Content-Length progress display
+- ❌ Transfer encoding (chunked) support
+- ❌ Compression support (gzip, deflate)
+- ❌ Range requests
+- ❌ If-Modified-Since support
+- ❌ ETag support
+- ❌ IPv6 support
+- ❌ Background operation
+- ❌ Connection reuse
+
+### hostname
+
+**Missing Features:**
+- ❌ -s short hostname
+- ❌ -f FQDN (fully qualified domain name)
+- ❌ -d domain name
+- ❌ -i IP addresses
+- ❌ -I all IP addresses
+- ❌ -y NIS/YP domain name
+- ❌ -a alias names
+- ❌ Setting hostname (hostname newname)
+- ❌ -F file (read hostname from file)
+- ❌ /etc/hostname proper parsing
+- ❌ DNS resolution
+- ❌ sethostname() syscall for setting
+- ❌ Multiple alias handling
+- ❌ IPv6 address display
+- ❌ Error handling for unset hostname
+
+---
+
+## FILE MANAGEMENT UTILITIES
+
+### ls
+
+**Missing Features:**
+- ❌ -A almost-all (hide . and ..)
+- ❌ -B ignore backups (~)
+- ❌ -c sort by ctime
+- ❌ -C list entries by columns
+- ❌ -d list directories themselves
+- ❌ -f do not sort
+- ❌ -F classify (append indicator)
+- ❌ -g like -l but no owner
+- ❌ -G no group names in -l
+- ❌ -h human-readable sizes
+- ❌ -H follow symlinks on command line
+- ❌ -i inode numbers
+- ❌ -k kibibytes (1024 bytes)
+- ❌ -L follow all symlinks
+- ❌ -m comma-separated list
+- ❌ -n numeric UID/GID
+- ❌ -N print raw entry names
+- ❌ -o like -l but no group
+- ❌ -p append / to directories
+- ❌ -q print ? for non-printable chars
+- ❌ -Q quote entry names
+- ❌ -r reverse order
+- ❌ -R recursive
+- ❌ -s print allocated sizes
+- ❌ -S sort by size
+- ❌ -t sort by time
+- ❌ -T tab width
+- ❌ -u sort by atime
+- ❌ -U do not sort
+- ❌ -v natural sort
+- ❌ -w set output width
+- ❌ -x list entries by lines
+- ❌ -X sort by extension
+- ❌ -1 one entry per line
+- ❌ --color colorized output
+- ❌ --block-size
+- ❌ --classify
+- ❌ --dereference
+- ❌ --file-type
+- ❌ --format
+- ❌ --full-time
+- ❌ --group-directories-first
+- ❌ --hide
+- ❌ --indicator-style
+- ❌ --quoting-style
+- ❌ --show-control-chars
+- ❌ --si (powers of 1000)
+- ❌ --sort
+- ❌ --time
+- ❌ --time-style
+- ❌ Only shows: inode, type char, name, trailing /
+- ❌ Missing: permissions, links, owner, group, size, time
+- ❌ Sorting (always outputs in directory order)
+- ❌ Color support
+- ❌ Symlink following
+- ❌ Recursive traversal
+- ❌ Pattern matching/wildcards
+- ❌ Multiple directory arguments
+
+### cat
+
+**Missing Features:**
+- ❌ -A show all (equivalent to -vET)
+- ❌ -b number non-blank lines
+- ❌ -e equivalent to -vE
+- ❌ -E show $ at end of lines
+- ❌ -n number all lines
+- ❌ -s squeeze blank lines
+- ❌ -t equivalent to -vT
+- ❌ -T show tabs as ^I
+- ❌ -u unbuffered output
+- ❌ -v show non-printing chars
+- ❌ Multiple file arguments (only reads stdin)
+- ❌ File argument support (must redirect)
+- ❌ Error handling for missing files
+- ❌ Binary file handling
+- ❌ Large file streaming
+
+### cp
+
+**Missing Features:**
+- ❌ -a archive mode (preserve all)
+- ❌ -b backup before overwrite
+- ❌ -d copy symlinks as symlinks
+- ❌ -f force overwrite
+- ❌ -i interactive (prompt)
+- ❌ -l hard link instead of copy
+- ❌ -L follow symlinks
+- ❌ -n no-clobber
+- ❌ -P never follow symlinks
+- ❌ -p preserve attributes
+- ❌ -r recursive copy
+- ❌ -R recursive copy
+- ❌ -s make symlinks
+- ❌ -t target directory
+- ❌ -T treat dest as normal file
+- ❌ -u update (copy only when newer)
+- ❌ -v verbose
+- ❌ -x stay on same filesystem
+- ❌ --attributes-only
+- ❌ --backup
+- ❌ --copy-contents
+- ❌ --no-dereference
+- ❌ --preserve
+- ❌ --no-preserve
+- ❌ --parents
+- ❌ --reflink
+- ❌ --remove-destination
+- ❌ --sparse
+- ❌ --strip-trailing-slashes
+- ❌ --suffix
+- ❌ -Z set SELinux context
+- ❌ --context
+- ❌ Directory copying
+- ❌ Symlink handling
+- ❌ Attribute preservation (ownership, permissions, timestamps)
+- ❌ Progress indicator
+- ❌ Multiple source files
+- ❌ Wildcard expansion
+- ❌ Error recovery
+
+### mv
+
+**Missing Features:**
+- ❌ -b backup before overwrite
+- ❌ -f force overwrite
+- ❌ -i interactive (prompt)
+- ❌ -n no-clobber
+- ❌ -t target directory
+- ❌ -T treat dest as normal file
+- ❌ -u update (move only when newer)
+- ❌ -v verbose
+- ❌ --backup
+- ❌ --strip-trailing-slashes
+- ❌ --suffix
+- ❌ -Z set SELinux context
+- ❌ --context
+- ❌ Multiple source files
+- ❌ Directory moving across filesystems (incomplete fallback)
+- ❌ Atomic moves
+- ❌ Progress indicator
+- ❌ Error recovery on partial copy
+- ❌ Attribute preservation verification
+- ❌ Cross-device directory moves
+- ❌ Wildcard expansion
+
+### rm
+
+**Missing Features:**
+- ❌ -f force (ignore nonexistent, no prompt)
+- ❌ -i interactive (prompt for each)
+- ❌ -I prompt once for >3 files or recursive
+- ❌ -r recursive
+- ❌ -R recursive
+- ❌ -d remove empty directories
+- ❌ -v verbose
+- ❌ --one-file-system
+- ❌ --no-preserve-root
+- ❌ --preserve-root
+- ❌ --interactive
+- ❌ Directory removal (only removes files)
+- ❌ Recursive directory removal
+- ❌ Prompting before deletion
+- ❌ Special file handling
+- ❌ Error messages with reason
+- ❌ Wildcard expansion
+- ❌ Protection against removing /
+
+### mkdir
+
+**Missing Features:**
+- ❌ -m mode specification
+- ❌ -p create parent directories
+- ❌ -v verbose
+- ❌ -Z set SELinux context
+- ❌ --context
+- ❌ Parent directory creation (-p)
+- ❌ Mode/permissions specification (-m)
+- ❌ Verbose output
+- ❌ Intermediate directory creation
+- ❌ Atomic operations
+- ❌ Error messages with reason
+
+### chmod
+
+**Missing Features:**
+- ❌ -c verbose only when change made
+- ❌ -f suppress error messages
+- ❌ -v verbose
+- ❌ -R recursive
+- ❌ --preserve-root
+- ❌ --no-preserve-root
+- ❌ --reference=RFILE use RFILE's mode
+- ❌ Recursive directory changes
+- ❌ Multiple file arguments
+- ❌ Wildcard expansion
+- ❌ --changes (like -v but report only when changed)
+- ❌ --silent/--quiet
+- ❌ Complex symbolic modes (u+rwx,g+rx,o=)
+- ❌ Conditional execute (X)
+- ❌ Copy permissions from another file
+
+### chown
+
+**Missing Features:**
+- ❌ -c verbose only when change made
+- ❌ -f suppress error messages
+- ❌ -v verbose
+- ❌ -R recursive
+- ❌ -H follow symlinks on command line
+- ❌ -L follow all symlinks
+- ❌ -P never follow symlinks
+- ❌ --dereference
+- ❌ --no-dereference
+- ❌ --from=CURRENT_OWNER:CURRENT_GROUP
+- ❌ --preserve-root
+- ❌ --no-preserve-root
+- ❌ --reference=RFILE use RFILE's owner/group
+- ❌ Username/groupname lookup (only accepts numeric IDs)
+- ❌ /etc/passwd and /etc/group parsing
+- ❌ Recursive directory changes
+- ❌ Multiple file arguments
+- ❌ Wildcard expansion
+- ❌ Symlink handling options
+- ❌ User:group syntax parsing is basic
+
+### ln
+
+**Missing Features:**
+- ❌ -b backup before overwrite
+- ❌ -d allow superuser to hardlink directories
+- ❌ -f force (remove existing destination)
+- ❌ -i interactive (prompt)
+- ❌ -L dereference target if symlink
+- ❌ -n treat link target as normal file
+- ❌ -P don't dereference symlinks
+- ❌ -r relative symbolic links
+- ❌ -t target directory
+- ❌ -T treat link as normal file
+- ❌ -v verbose
+- ❌ --backup
+- ❌ --suffix
+- ❌ Multiple source files
+- ❌ Directory target handling (ln file1 file2 dir/)
+- ❌ Backup of existing links
+- ❌ Relative path calculation for -r
+- ❌ Interactive prompting
+- ❌ Wildcard expansion
+
+### touch
+
+**Missing Features:**
+- ❌ -a change access time only
+- ❌ -c do not create file
+- ❌ -d use specified time
+- ❌ -h affect symlink, not target
+- ❌ -m change modification time only
+- ❌ -r use file's time
+- ❌ -t use specified timestamp (YYMMDDHHMM)
+- ❌ --time (access, atime, modify, mtime, use)
+- ❌ --no-create
+- ❌ --no-dereference
+- ❌ --reference
+- ❌ Timestamp modification (only creates or doesn't change)
+- ❌ Access time vs modification time control
+- ❌ Specific timestamp setting
+- ❌ Reference file time copying
+- ❌ Symlink handling
+- ❌ Multiple file arguments
+
+---
+
+## TEXT PROCESSING UTILITIES
+
+### grep
+
+**Missing Features:**
+- ❌ -A NUM lines after match
+- ❌ -B NUM lines before match
+- ❌ -C NUM lines around match
+- ❌ -c count matches only
+- ❌ -color colorize output
+- ❌ -e PATTERN (multiple patterns)
+- ❌ -E extended regex (ERE)
+- ❌ -f FILE read patterns from file
+- ❌ -F fixed strings (not regex)
+- ❌ -G basic regex (default but explicit)
+- ❌ -h suppress filename in output
+- ❌ -H always print filename
+- ❌ -I ignore binary files
+- ❌ -l files with matches only
+- ❌ -L files without matches
+- ❌ -m NUM max matches per file
+- ❌ -o print only matching part
+- ❌ -P Perl regex
+- ❌ -q quiet (exit status only)
+- ❌ -r recursive
+- ❌ -R recursive follow symlinks
+- ❌ -s suppress error messages
+- ❌ -w match whole words
+- ❌ -x match whole lines
+- ❌ -Z output null after filename
+- ❌ --binary-files
+- ❌ --line-buffered
+- ❌ --label
+- ❌ --include/--exclude patterns
+- ❌ --exclude-dir
+- ❌ --exclude-from
+- ❌ --color=always/never/auto
+- ❌ --context
+- ❌ --count
+- ❌ --devices
+- ❌ --directories
+- ❌ --max-count
+- ❌ --null
+- ❌ --only-matching
+- ❌ --perl-regexp
+- ❌ --recursive
+- ❌ --no-messages
+- ❌ Regular expressions (only literal string search)
+- ❌ Context lines display
+- ❌ Color output
+- ❌ Count mode
+- ❌ Filename-only output
+- ❌ Binary file detection
+- ❌ Recursive directory search
+- ❌ Multiple pattern support
+- ❌ Pattern file reading
+- ❌ Word/line boundary matching
+
+### sed
+
+**Missing Feature:**
+- ❌ **ENTIRE UTILITY NOT IMPLEMENTED** (file doesn't exist)
+- ❌ All sed functionality missing:
+  - s/pattern/replacement/ substitution
+  - d delete lines
+  - p print lines
+  - a\text append
+  - i\text insert
+  - c\text change
+  - = print line number
+  - n next line
+  - q quit
+  - r file read file
+  - w file write to file
+  - y/source/dest/ transliterate
+  - {} command groups
+  - ! negate
+  - -n quiet mode
+  - -e script multiple commands
+  - -f file script file
+  - -i in-place editing
+  - -r extended regex
+  - -s separate files
+  - Address ranges (1,10)
+  - Regex addresses (/pattern/)
+  - $ last line
+  - Hold buffer (h, H, g, G, x)
+  - Pattern space manipulation
+  - Branch and test (b, t)
+  - All other sed commands
+
+### awk
+
+**Missing Feature:**
+- ❌ **ENTIRE UTILITY NOT IMPLEMENTED**
+- ❌ All awk functionality missing:
+  - Pattern matching
+  - Field processing
+  - BEGIN/END blocks
+  - Variables
+  - Arrays
+  - Functions (built-in and user-defined)
+  - Operators (arithmetic, string, logical)
+  - Control flow (if, for, while, do-while)
+  - printf formatting
+  - String functions (length, substr, index, split, etc.)
+  - Math functions (sin, cos, exp, log, sqrt, etc.)
+  - I/O functions (getline, print, printf)
+  - -F field separator
+  - -v variable assignment
+  - -f program file
+  - Multiple input files
+  - Patterns and actions
+  - Record and field separators (RS, FS, ORS, OFS)
+  - Built-in variables (NF, NR, FNR, FILENAME, etc.)
+  - User-defined functions
+  - Associative arrays
+  - Regular expressions in patterns
+
+### head
+
+**Missing Features:**
+- ❌ -c NUM output first NUM bytes
+- ❌ -q quiet (never output headers)
+- ❌ -v verbose (always output headers)
+- ❌ -z zero terminated lines
+- ❌ --bytes
+- ❌ --lines
+- ❌ --quiet/--silent
+- ❌ --verbose
+- ❌ Negative line counts (-n -5)
+- ❌ Byte count mode
+- ❌ Multiple file headers suppression
+- ❌ Zero-terminated line mode
+
+### tail
+
+**Missing Features:**
+- ❌ -c NUM output last NUM bytes
+- ❌ -f follow (monitor file growth)
+- ❌ -F follow with retry
+- ❌ -q quiet (never output headers)
+- ❌ -v verbose (always output headers)
+- ❌ -s NUM sleep interval for -f
+- ❌ --pid=PID with -f, terminate after PID dies
+- ❌ --max-unchanged-stats
+- ❌ --retry
+- ❌ -z zero terminated lines
+- ❌ --bytes
+- ❌ --lines
+- ❌ --quiet/--silent
+- ❌ --verbose
+- ❌ --follow
+- ❌ --sleep-interval
+- ❌ Positive line counts (+5 start from line 5)
+- ❌ Byte count mode
+- ❌ Follow mode (continuous monitoring)
+- ❌ Multiple file following
+- ❌ Retry on file rotation
+- ❌ Zero-terminated line mode
+- ❌ PID monitoring
+
+### wc
+
+**Missing Features:**
+- ❌ -L print longest line length
+- ❌ --files0-from=F read input from file list
+- ❌ --max-line-length
+- ❌ Tab width different from 8
+- ❌ Large file handling (counts may overflow)
+
+### sort
+
+**Missing Features:**
+- ❌ -b ignore leading blanks
+- ❌ -d dictionary order
+- ❌ -f ignore case
+- ❌ -g general numeric sort
+- ❌ -i ignore non-printing characters
+- ❌ -M month sort
+- ❌ -h human numeric sort
+- ❌ -V version sort
+- ❌ -R random sort
+- ❌ -c check if sorted
+- ❌ -C check silently
+- ❌ -k key definition
+- ❌ -m merge sorted files
+- ❌ -o output file
+- ❌ -s stable sort
+- ❌ -t field separator
+- ❌ -z zero terminated
+- ❌ -T temp directory
+- ❌ -S buffer size
+- ❌ --parallel
+- ❌ --batch-size
+- ❌ --compress-program
+- ❌ --debug
+- ❌ --files0-from
+- ❌ Key-based sorting (-k)
+- ❌ Multiple sort keys
+- ❌ Field-based sorting
+- ❌ Custom field separator
+- ❌ Locale-aware sorting
+- ❌ Month name sorting
+- ❌ Human-readable number sorting (K, M, G)
+- ❌ Version number sorting
+- ❌ Check if sorted mode
+- ❌ Stable sort guarantee
+- ❌ Merge pre-sorted files
+- ❌ External sorting (temp files) for large datasets
+- ❌ Only bubble sort (O(n²)) - needs better algorithm for large files
+
+### uniq
+
+**Missing Features:**
+- ❌ -f NUM skip fields
+- ❌ -s NUM skip characters
+- ❌ -w NUM compare only N characters
+- ❌ -z zero terminated
+- ❌ --skip-fields
+- ❌ --skip-chars
+- ❌ --check-chars
+- ❌ --zero-terminated
+- ❌ Field skipping
+- ❌ Character skipping
+- ❌ Limited character comparison
+- ❌ Zero-terminated line mode
+
+### cut
+
+**Missing Features:**
+- ❌ -b byte positions
+- ❌ --complement
+- ❌ --output-delimiter
+- ❌ -z zero terminated
+- ❌ --only-delimited
+- ❌ --zero-terminated
+- ❌ Byte position mode (only has character and field modes)
+- ❌ Complement selection
+- ❌ Custom output delimiter
+- ❌ Only-delimited mode (suppress lines with no delimiter)
+- ❌ Zero-terminated line mode
+- ❌ Range validation
+- ❌ Multiple range support is limited
+
+### tr
+
+**Missing Features:**
+- ❌ -c complement set1
+- ❌ -C complement set1 (different from -c)
+- ❌ -t truncate set1 to length of set2
+- ❌ --truncate-set1
+- ❌ --complement
+- ❌ Character equivalence classes ([=e=])
+- ❌ More character classes ([:punct:], [:cntrl:], etc.)
+- ❌ Octal escape sequences (\NNN)
+- ❌ Hexadecimal escapes (\xHH)
+- ❌ Unicode escapes (\uHHHH, \UHHHHHHHH)
+- ❌ Repeat count notation ([c*n])
+- ❌ Set complement is basic
+- ❌ Set truncation
+- ❌ Only supports basic character classes
+
+### tee
+
+**Missing Features:**
+- ❌ -i ignore interrupt signals
+- ❌ -p diagnose errors writing to non-pipes
+- ❌ --ignore-interrupts
+- ❌ --output-error
+- ❌ Error handling for write failures
+- ❌ Signal handling
+- ❌ Non-pipe error diagnostics
+- ❌ Unlimited file count (has MAX_FILES=8)
+
+### xargs
+
+**Missing Features:**
+- ❌ -0 null separated input
+- ❌ -a file read from file
+- ❌ -d delim custom delimiter
+- ❌ -E eof-str logical EOF string
+- ❌ -e same as -E
+- ❌ -I replace-str replace string in arguments
+- ❌ -i same as -I
+- ❌ -L max-lines
+- ❌ -l same as -L
+- ❌ -n max-args per command (only supports -n 1)
+- ❌ -P max-procs parallel execution
+- ❌ -p interactive prompt
+- ❌ -r no-run if empty
+- ❌ -s max-chars command line size
+- ❌ -t verbose (print command)
+- ❌ -x exit if size exceeded
+- ❌ --null
+- ❌ --arg-file
+- ❌ --delimiter
+- ❌ --eof
+- ❌ --replace
+- ❌ --max-lines
+- ❌ --max-args
+- ❌ --max-chars
+- ❌ --max-procs
+- ❌ --interactive
+- ❌ --no-run-if-empty
+- ❌ --verbose
+- ❌ --exit
+- ❌ --show-limits
+- ❌ Multiple arguments per invocation (besides -n 1)
+- ❌ Placeholder replacement (-I)
+- ❌ Parallel execution (-P)
+- ❌ Interactive mode
+- ❌ Command line size limits
+- ❌ Custom delimiters
+- ❌ EOF string handling
+- ❌ Read from file
+
+### diff
+
+**Missing Features:**
+- ❌ -q brief (report only if different)
+- ❌ -s report identical files
+- ❌ -c context format
+- ❌ -C NUM context with NUM lines
+- ❌ -u unified format
+- ❌ -U NUM unified with NUM lines
+- ❌ -e ed script output
+- ❌ -n RCS format
+- ❌ -y side-by-side
+- ❌ -W width for -y
+- ❌ --suppress-common-lines
+- ❌ -p show C function names
+- ❌ -F show most recent matching line
+- ❌ --label
+- ❌ -r recursive
+- ❌ -N treat absent files as empty
+- ❌ -a treat as text
+- ❌ --binary
+- ❌ -i ignore case
+- ❌ -E ignore trailing space
+- ❌ -Z ignore trailing whitespace
+- ❌ -b ignore space changes
+- ❌ -w ignore all whitespace
+- ❌ -B ignore blank lines
+- ❌ -I ignore matching lines
+- ❌ -t expand tabs
+- ❌ -T initial tab
+- ❌ --tabsize
+- ❌ -x exclude pattern
+- ❌ -X exclude from file
+- ❌ -S start with file
+- ❌ --from-file
+- ❌ --to-file
+- ❌ --horizon-lines
+- ❌ -d minimal diff
+- ❌ --speed-large-files
+- ❌ --color
+- ❌ Unified diff format
+- ❌ Context diff format
+- ❌ Side-by-side format
+- ❌ Ed script format
+- ❌ RCS format
+- ❌ Directory comparison
+- ❌ Recursive comparison
+- ❌ Whitespace/case insensitive comparison
+- ❌ Pattern exclusion
+- ❌ Optimal diff algorithm (uses naive line-by-line)
+- ❌ Binary file detection
+- ❌ Line matching algorithm
+
+### expr
+
+**Missing Features:**
+- ❌ String operations (substr, index, length, match)
+- ❌ : (colon) - regex matching
+- ❌ match string regex
+- ❌ substr string pos length
+- ❌ index string chars
+- ❌ length string
+- ❌ + token interpretation
+- ❌ Boolean operators (&, |)
+- ❌ Parentheses for grouping
+- ❌ Multiple expression support (currently only one operation)
+- ❌ exit status based on result (0 for false, 1 for true)
+- ❌ String concatenation
+- ❌ Quote removal
+- ❌ Only supports basic arithmetic and simple comparisons
+- ❌ No support for floating point
+
+---
+
+## COMPRESSION & ARCHIVING
+
+### tar
+
+**Missing Features:**
+- ❌ **ALL FUNCTIONALITY PLACEHOLDER** - not actually implemented
+- ❌ -c create archive
+- ❌ -x extract archive
+- ❌ -t list contents
+- ❌ -u update archive
+- ❌ -r append to archive
+- ❌ -A concatenate archives
+- ❌ -d diff archive vs filesystem
+- ❌ --delete delete from archive
+- ❌ -f archive file
+- ❌ -v verbose
+- ❌ -z gzip compression
+- ❌ -j bzip2 compression
+- ❌ -J xz compression
+- ❌ --lzip
+- ❌ --lzma
+- ❌ --lzop
+- ❌ -Z compress
+- ❌ -a auto-compress from extension
+- ❌ -C directory change to directory
+- ❌ -p preserve permissions
+- ❌ --preserve
+- ❌ --same-owner
+- ❌ --no-same-owner
+- ❌ --numeric-owner
+- ❌ --same-permissions
+- ❌ --no-same-permissions
+- ❌ --preserve-order
+- ❌ --acls
+- ❌ --selinux
+- ❌ --xattrs
+- ❌ -k don't overwrite
+- ❌ -U unlink before extracting
+- ❌ --remove-files
+- ❌ -W verify archive
+- ❌ --exclude pattern
+- ❌ --exclude-from file
+- ❌ -X file exclude file
+- ❌ --anchored
+- ❌ --no-anchored
+- ❌ --ignore-case
+- ❌ --no-ignore-case
+- ❌ --wildcards
+- ❌ --no-wildcards
+- ❌ --wildcards-match-slash
+- ❌ --no-wildcards-match-slash
+- ❌ -P absolute paths
+- ❌ --transform/--xform
+- ❌ --strip-components
+- ❌ --show-transformed-names
+- ❌ --sparse
+- ❌ -S sparse file handling
+- ❌ --incremental
+- ❌ --listed-incremental
+- ❌ --level
+- ❌ -g same as --listed-incremental
+- ❌ --ignore-failed-read
+- ❌ --occurrence
+- ❌ --restrict
+- ❌ --to-command
+- ❌ --info-script
+- ❌ -F run script
+- ❌ --new-volume-script
+- ❌ --volno-file
+- ❌ -M multi-volume
+- ❌ -L tape length
+- ❌ --tape-length
+- ❌ --blocking-factor
+- ❌ -b blocking
+- ❌ --record-size
+- ❌ -i ignore zeros
+- ❌ --checkpoint
+- ❌ --totals
+- ❌ --index-file
+- ❌ --no-check-device
+- ❌ --no-seek
+- ❌ --force-local
+- ❌ --rsh-command
+- ❌ POSIX.1-1988 (ustar) format
+- ❌ GNU format
+- ❌ oldgnu format
+- ❌ POSIX.1-2001 (pax) format
+- ❌ v7 format
+- ❌ Header parsing
+- ❌ File data extraction
+- ❌ Archive creation
+- ❌ Compression/decompression
+- ❌ All tar functionality is placeholder
+
+### gzip/gunzip
+
+**Missing Features:**
+- ❌ **ALL FUNCTIONALITY PLACEHOLDER** - not actually implemented
+- ❌ DEFLATE compression algorithm
+- ❌ INFLATE decompression algorithm
+- ❌ -1 to -9 compression levels
+- ❌ --fast (same as -1)
+- ❌ --best (same as -9)
+- ❌ -c write to stdout
+- ❌ --stdout
+- ❌ -d decompress (for gzip)
+- ❌ --decompress
+- ❌ -f force overwrite
+- ❌ --force
+- ❌ -h help
+- ❌ -k keep input files
+- ❌ --keep
+- ❌ -l list compressed file info
+- ❌ --list
+- ❌ -L license
+- ❌ -n no timestamp
+- ❌ --no-name
+- ❌ -N save/restore name and timestamp
+- ❌ --name
+- ❌ -q quiet
+- ❌ --quiet/--silent
+- ❌ -r recursive
+- ❌ --recursive
+- ❌ -S suffix
+- ❌ --suffix
+- ❌ -t test integrity
+- ❌ --test
+- ❌ -v verbose
+- ❌ --verbose
+- ❌ -V version
+- ❌ --version
+- ❌ --rsyncable
+- ❌ gzip header creation
+- ❌ gzip header parsing
+- ❌ CRC32 checksums
+- ❌ File metadata preservation
+- ❌ Multiple file support
+- ❌ Compression
+- ❌ Decompression
+- ❌ Integrity testing
+- ❌ All gzip/gunzip functionality is placeholder
+
+### bzip2/bunzip2
+
+**Missing Feature:**
+- ❌ **ENTIRE UTILITY NOT IMPLEMENTED**
+- ❌ All bzip2/bunzip2 functionality
+
+### xz/unxz
+
+**Missing Feature:**
+- ❌ **ENTIRE UTILITY NOT IMPLEMENTED**
+- ❌ All xz/unxz functionality
+
+### zip/unzip
+
+**Missing Feature:**
+- ❌ **ENTIRE UTILITY NOT IMPLEMENTED**
+- ❌ All zip/unzip functionality
+
+---
+
+## PROCESS MANAGEMENT
+
+### ps
+
+**Missing Features:**
+- ❌ **Placeholder** - shows only current process
+- ❌ -A all processes
+- ❌ -a all with tty except session leaders
+- ❌ -e all processes (same as -A)
+- ❌ -f full format
+- ❌ -F extra full format
+- ❌ -l long format
+- ❌ -o format specification
+- ❌ -j jobs format
+- ❌ -u user format
+- ❌ -v virtual memory format
+- ❌ -X register format
+- ❌ -y do not show flags
+- ❌ -H show hierarchy
+- ❌ --forest
+- ❌ -C cmdlist by command name
+- ❌ -G grplist by group
+- ❌ -p pidlist by PID
+- ❌ -s sesslist by session
+- ❌ -t ttylist by terminal
+- ❌ -u userlist by user
+- ❌ -U userlist by real user
+- ❌ --sort
+- ❌ --Group
+- ❌ --User
+- ❌ --pid
+- ❌ --ppid
+- ❌ --sid
+- ❌ -T all processes on this terminal
+- ❌ -r restrict to running processes
+- ❌ -x processes without controlling ttys
+- ❌ BSD-style options (ax, aux, etc.)
+- ❌ /proc parsing for process info
+- ❌ Process state display (R, S, D, Z, T)
+- ❌ Parent PID display
+- ❌ CPU usage
+- ❌ Memory usage (RSS, VSZ)
+- ❌ Start time
+- ❌ CPU time
+- ❌ Priority/nice value
+- ❌ User/group display
+- ❌ Command arguments display
+- ❌ Process hierarchy
+- ❌ Thread display
+- ❌ Wide output mode
+- ❌ Custom column selection
+
+### kill
+
+**Missing Features:**
+- ❌ -l list signals
+- ❌ -L list signals (verbose)
+- ❌ -s signal name specification
+- ❌ --signal
+- ❌ -a all processes
+- ❌ -p print PID only
+- ❌ -q use sigqueue instead of kill
+- ❌ --timeout
+- ❌ Named signal support (besides numeric)
+- ❌ Signal name parsing (SIGTERM, TERM, etc.)
+- ❌ Signal number to name conversion
+- ❌ All signal definitions (only supports what's in hardcoded parsing)
+- ❌ Process group kill (negative PID)
+- ❌ Broadcast signal (-1)
+- ❌ Check if process exists (kill -0 PID)
+
+### pgrep/pkill
+
+**Missing Features:**
+- ❌ **Placeholder** - not implemented, needs /proc support
+- ❌ -c count matching processes
+- ❌ -d delimiter for output
+- ❌ -f match against full command line
+- ❌ -g pgrp match process group
+- ❌ -G gid match real group ID
+- ❌ -i ignore case
+- ❌ -l list name and PID
+- ❌ -a list name and arguments
+- ❌ -n newest only
+- ❌ -o oldest only
+- ❌ -P ppid match parent PID
+- ❌ -s session match session ID
+- ❌ -t term match terminal
+- ❌ -u euid match effective user
+- ❌ -U uid match real user
+- ❌ -v inverse match
+- ❌ -w show full command line
+- ❌ -x exact match
+- ❌ --signal (pkill)
+- ❌ --count
+- ❌ --delimiter
+- ❌ --list-name
+- ❌ --list-full
+- ❌ --newest
+- ❌ --oldest
+- ❌ --parent
+- ❌ --session
+- ❌ --terminal
+- ❌ --euid
+- ❌ --uid
+- ❌ --inverse
+- ❌ --exact
+- ❌ --full
+- ❌ Pattern matching (regex)
+- ❌ /proc/*/cmdline reading
+- ❌ /proc/*/status reading
+- ❌ All process matching logic
+- ❌ Process attribute filtering
+
+### nice
+
+**Missing Features:**
+- ❌ **Placeholder** - setpriority syscall not implemented
+- ❌ Actual niceness adjustment
+- ❌ Command execution
+- ❌ -n without argument (print current nice)
+- ❌ Short form (-5 instead of -n 5)
+- ❌ Parsing of negative values
+- ❌ setpriority() syscall invocation
+- ❌ execve() for command execution
+- ❌ Error handling for permission denied
+- ❌ Nice value validation (-20 to 19)
+
+### nohup
+
+**Missing Features:**
+- ❌ **Placeholder** - signal handling not implemented
+- ❌ SIGHUP signal ignoring
+- ❌ Stdout/stderr redirection to nohup.out
+- ❌ Append to nohup.out if exists
+- ❌ Fallback to ~/nohup.out
+- ❌ Command execution
+- ❌ sigaction() syscall
+- ❌ isatty() check for terminal
+- ❌ File descriptor manipulation
+- ❌ Process detachment
+- ❌ Exit code preservation
+
+### timeout
+
+**Missing Features:**
+- ❌ **Placeholder** - timer syscalls not implemented
+- ❌ Time limit enforcement
+- ❌ Command execution with timeout
+- ❌ SIGTERM on timeout
+- ❌ SIGKILL after grace period
+- ❌ -s signal specification
+- ❌ -k kill after duration
+- ❌ --foreground
+- ❌ --preserve-status
+- ❌ --signal
+- ❌ --kill-after
+- ❌ Duration parsing (s, m, h, d)
+- ❌ Floating point durations
+- ❌ alarm() or timer_create() syscall
+- ❌ Fork and wait with timeout
+- ❌ Signal delivery to child
+- ❌ Exit code 124 on timeout
+- ❌ Exit code preservation on normal exit
+
+### top
+
+**Missing Feature:**
+- ❌ **ENTIRE UTILITY NOT IMPLEMENTED**
+- ❌ All top functionality
+
+### htop
+
+**Missing Feature:**
+- ❌ **ENTIRE UTILITY NOT IMPLEMENTED**
+- ❌ All htop functionality
+
+---
+
+## SYSTEM INFORMATION
+
+### uname
+
+**Missing Features:**
+- ❌ -a all information
+- ❌ -s system name (only this is partially implemented)
+- ❌ -n network node hostname
+- ❌ -r kernel release
+- ❌ -v kernel version
+- ❌ -m machine hardware name
+- ❌ -p processor type
+- ❌ -i hardware platform
+- ❌ -o operating system
+- ❌ --kernel-name
+- ❌ --nodename
+- ❌ --kernel-release
+- ❌ --kernel-version
+- ❌ --machine
+- ❌ --processor
+- ❌ --hardware-platform
+- ❌ --operating-system
+- ❌ uname() syscall invocation
+- ❌ Actual system information (prints only "OXIDE")
+
+### uptime
+
+**Missing Features:**
+- ❌ -p pretty format
+- ❌ -s since (boot time)
+- ❌ --pretty
+- ❌ --since
+- ❌ Real load averages (shows 0.00)
+- ❌ Load average calculation from /proc/loadavg
+- ❌ User count from /var/run/utmp or who
+- ❌ Actual uptime from /proc/uptime (parsing is incomplete)
+- ❌ Boot time calculation
+
+### free
+
+**Missing Features:**
+- ❌ -b bytes
+- ❌ -k kibibytes (default, but explicit)
+- ❌ -m mebibytes
+- ❌ -g gibibytes
+- ❌ -h human readable
+- ❌ -c count (repeat)
+- ❌ -l detailed low/high memory stats
+- ❌ -o old format
+- ❌ -s seconds (repeat interval)
+- ❌ -t total line
+- ❌ -v version
+- ❌ --wide
+- ❌ --total
+- ❌ --bytes
+- ❌ --kilo
+- ❌ --mega
+- ❌ --giga
+- ❌ --tera
+- ❌ --peta
+- ❌ --si (powers of 1000)
+- ❌ --human
+- ❌ --lohi
+- ❌ --seconds
+- ❌ --count
+- ❌ Continuous monitoring mode
+- ❌ Detailed memory breakdown
+- ❌ Slab memory info
+- ❌ Kernel memory info
+- ❌ More /proc/meminfo fields (SReclaimable, SUnreclaim, etc.)
+
+### df
+
+**Missing Features:**
+- ❌ **Placeholder** - shows hardcoded data
+- ❌ -a all filesystems
+- ❌ -B size block size
+- ❌ -h human readable
+- ❌ -H powers of 1000
+- ❌ -i inodes instead of blocks
+- ❌ -k kibibytes
+- ❌ -l local filesystems only
+- ❌ -m mebibytes
+- ❌ --output columns
+- ❌ -P POSIX format
+- ❌ -t type show only this filesystem type
+- ❌ -T show filesystem type
+- ❌ -x type exclude this filesystem type
+- ❌ --total
+- ❌ --sync
+- ❌ --no-sync
+- ❌ --block-size
+- ❌ --exclude-type
+- ❌ --print-type
+- ❌ --local
+- ❌ /proc/mounts parsing
+- ❌ statfs() syscall for each mount
+- ❌ Real filesystem data
+- ❌ Inode statistics
+- ❌ Filesystem type display
+- ❌ Multiple filesystem support
+
+### du
+
+**Missing Features:**
+- ❌ -a all files, not just directories
+- ❌ -b bytes (apparent size)
+- ❌ -c total at end
+- ❌ -d depth (--max-depth)
+- ❌ -D dereference command line symlinks
+- ❌ -H same as -D
+- ❌ -k kibibytes
+- ❌ -l count hard links multiple times
+- ❌ -L follow all symlinks
+- ❌ -m mebibytes
+- ❌ -P don't follow symlinks
+- ❌ -S don't include subdirectories
+- ❌ -x one filesystem
+- ❌ -X exclude from file
+- ❌ -0 null-separated output
+- ❌ --exclude pattern
+- ❌ --exclude-from file
+- ❌ --max-depth
+- ❌ --time
+- ❌ --time-style
+- ❌ --all
+- ❌ --apparent-size
+- ❌ --block-size
+- ❌ --bytes
+- ❌ --total
+- ❌ --dereference
+- ❌ --dereference-args
+- ❌ --files0-from
+- ❌ --count-links
+- ❌ --one-file-system
+- ❌ --separate-dirs
+- ❌ --si (powers of 1000)
+- ❌ --null
+- ❌ Hard link detection (counts multiple times)
+- ❌ Sparse file handling
+- ❌ Depth limiting
+- ❌ Pattern exclusion
+- ❌ Time-based output
+- ❌ One filesystem limiting
+- ❌ Apparent size vs disk usage
+
+### dmesg
+
+**Missing Features:**
+- ❌ **Placeholder** - shows dummy messages
+- ❌ -C clear buffer
+- ❌ -c read and clear
+- ❌ -D disable printing to console
+- ❌ -d show delta timestamps
+- ❌ -e readable timestamps
+- ❌ -E enable printing to console
+- ❌ -F file read from file
+- ❌ -f facility restrict to facilities
+- ❌ -H human readable
+- ❌ -k kernel messages only
+- ❌ -L color
+- ❌ -l level restrict to levels
+- ❌ -n level set console level
+- ❌ -P don't decode facility/level
+- ❌ -r raw messages
+- ❌ -S toggle SYSLOG_ACTION_SIZE_BUFFER
+- ❌ -s buffer size
+- ❌ -t don't show timestamps
+- ❌ -T readable ctime timestamps
+- ❌ -u show userspace messages
+- ❌ -w follow new messages
+- ❌ -x decode facility/level
+- ❌ --clear
+- ❌ --read-clear
+- ❌ --console-level
+- ❌ --console-on
+- ❌ --console-off
+- ❌ --decode
+- ❌ --file
+- ❌ --facility
+- ❌ --follow
+- ❌ --human
+- ❌ --kernel
+- ❌ --color
+- ❌ --level
+- ❌ --notime
+- ❌ --nopager
+- ❌ --raw
+- ❌ --syslog
+- ❌ --time-format
+- ❌ syslog() syscall
+- ❌ SYSLOG_ACTION_READ_ALL
+- ❌ /dev/kmsg reading
+- ❌ /proc/kmsg reading
+- ❌ Real kernel messages
+- ❌ Timestamp parsing
+- ❌ Facility/level parsing
+- ❌ Color output
+- ❌ Follow mode
+- ❌ Buffer management
+
+### stat
+
+**Missing Features:**
+- ❌ -c format string
+- ❌ -f filesystem information
+- ❌ -L follow symlinks
+- ❌ -t terse output
+- ❌ --dereference
+- ❌ --file-system
+- ❌ --format
+- ❌ --printf
+- ❌ --terse
+- ❌ Format specifiers (%a, %A, %b, %B, etc.)
+- ❌ Filesystem statistics
+- ❌ Custom output format
+- ❌ Terse mode
+- ❌ Human-readable timestamp display (shows raw epoch)
+- ❌ SELinux context
+- ❌ Birth time (if supported)
+
+### whoami
+
+**Missing Features:**
+- ❌ Username lookup from /etc/passwd
+- ❌ Only shows "root" or "userNNN" format
+- ❌ getpwuid() equivalent
+- ❌ No /etc/passwd parsing
+
+### id
+
+**Missing Features:**
+- ❌ -a ignored (compatibility)
+- ❌ -g show GID only
+- ❌ -G show all GIDs
+- ❌ -n show names instead of numbers
+- ❌ -r show real ID
+- ❌ -u show UID only
+- ❌ -z zero separated output
+- ❌ --groups
+- ❌ --group
+- ❌ --name
+- ❌ --real
+- ❌ --user
+- ❌ --zero
+- ❌ -Z SELinux context
+- ❌ --context
+- ❌ Username lookup from /etc/passwd
+- ❌ Group name lookup from /etc/group
+- ❌ Supplementary groups display
+- ❌ getgroups() syscall
+- ❌ User/group name resolution (only shows numeric IDs with hardcoded "root")
+
+### env
+
+**Missing Features:**
+- ❌ -i start with empty environment
+- ❌ -0 zero separated output
+- ❌ -u name unset variable
+- ❌ -C dir change directory
+- ❌ -S process and split string
+- ❌ --ignore-environment
+- ❌ --null
+- ❌ --unset
+- ❌ --chdir
+- ❌ --split-string
+- ❌ var=value assignment
+- ❌ Command execution with modified environment
+- ❌ Environment modification
+- ❌ execve() with custom environment
+- ❌ String splitting for -S
+
+### hostname
+
+**Missing Features:**
+- (Already listed in Network Utilities section)
+
+---
+
+## FILE VIEWING & EDITING
+
+### more
+
+**Missing Features:**
+- ❌ -d display help
+- ❌ -f count logical lines
+- ❌ -l ignore form feed
+- ❌ -p clear screen instead of scroll
+- ❌ -c page from top
+- ❌ -s squeeze blank lines
+- ❌ -u suppress underlining
+- ❌ +num start at line num
+- ❌ +/pattern start at pattern
+- ❌ Interactive commands:
+  - h help
+  - / search forward
+  - ? search backward
+  - n next search
+  - N previous search
+  - v invoke editor
+  - = show line number
+  - :f show filename and line
+  - . repeat previous command
+  - ! shell command
+  - :n next file
+  - :p previous file
+  - :q quit
+  - b back one page
+  - Ctrl+L redraw
+- ❌ Multiple key bindings (currently only q, Space, Enter)
+- ❌ Search functionality
+- ❌ Jump to line
+- ❌ Shell escape
+- ❌ Editor invocation
+- ❌ Better pagination control
+- ❌ Configurable page size
+
+### less
+
+**Missing Feature:**
+- ❌ **ENTIRE UTILITY NOT IMPLEMENTED**
+- ❌ All less functionality
+
+### vi/vim
+
+**Missing Feature:**
+- ❌ **ENTIRE UTILITY NOT IMPLEMENTED**
+- ❌ All vi/vim functionality
+
+### nano
+
+**Missing Feature:**
+- ❌ **ENTIRE UTILITY NOT IMPLEMENTED**
+- ❌ All nano functionality
+
+### emacs
+
+**Missing Feature:**
+- ❌ **ENTIRE UTILITY NOT IMPLEMENTED**
+- ❌ All emacs functionality
+
+---
+
+## OUTPUT & FORMATTING
+
+### echo
+
+**Missing Features:**
+- ❌ -n no trailing newline
+- ❌ -e enable escape sequences
+- ❌ -E disable escape sequences (default)
+- ❌ --help
+- ❌ --version
+- ❌ Escape sequences:
+  - \\ backslash
+  - \a alert (bell)
+  - \b backspace
+  - \c no trailing newline
+  - \e escape character
+  - \f form feed
+  - \n newline
+  - \r carriage return
+  - \t horizontal tab
+  - \v vertical tab
+  - \0NNN octal byte
+  - \xHH hexadecimal byte
+- ❌ All escape processing (always literal)
+- ❌ -n flag support (always adds newline)
+
+### printf
+
+**Missing Feature:**
+- ❌ **ENTIRE UTILITY NOT IMPLEMENTED**
+- ❌ All printf functionality
+
+### yes
+
+**Missing Features:**
+- ❌ No features missing - works correctly
+- ✅ Repeats message forever
+- ✅ Accepts custom string argument
+- ✅ Defaults to "y"
+
+---
+
+## PATH & FILESYSTEM
+
+### pwd
+
+**Missing Features:**
+- ❌ -L logical (follow symlinks)
+- ❌ -P physical (no symlinks)
+- ❌ --logical
+- ❌ --physical
+- ❌ Symlink handling (always physical)
+- ❌ OLDPWD environment variable
+
+### which
+
+**Missing Features:**
+- ❌ -a show all matches
+- ❌ --all
+- ❌ --read-alias
+- ❌ --read-functions
+- ❌ --skip-alias
+- ❌ --skip-functions
+- ❌ --skip-dot
+- ❌ --skip-tilde
+- ❌ --show-dot
+- ❌ --show-tilde
+- ❌ --tty-only
+- ❌ PATH environment variable reading (hardcoded paths)
+- ❌ Shell alias expansion
+- ❌ Shell function expansion
+- ❌ Show all matches (-a)
+- ❌ Only checks 4 hardcoded directories
+
+### basename
+
+**Missing Features:**
+- ❌ -a multiple paths
+- ❌ -s suffix for all arguments
+- ❌ -z zero separated output
+- ❌ --multiple
+- ❌ --suffix
+- ❌ --zero
+- ❌ Multiple path arguments
+- ❌ Zero-terminated output
+
+### dirname
+
+**Missing Features:**
+- ❌ -z zero separated output
+- ❌ --zero
+- ❌ Multiple path arguments
+- ❌ Zero-terminated output
+- ❌ Trailing slash handling could be improved
+
+### readlink
+
+**Missing Features:**
+- ❌ -f canonicalize (recursive symlink resolution)
+- ❌ -e canonicalize (must exist)
+- ❌ -m canonicalize (may not exist)
+- ❌ -n no trailing newline
+- ❌ -q quiet mode
+- ❌ -s silent mode
+- ❌ -v verbose
+- ❌ -z zero terminated
+- ❌ --canonicalize
+- ❌ --canonicalize-existing
+- ❌ --canonicalize-missing
+- ❌ --no-newline
+- ❌ --quiet/--silent
+- ❌ --verbose
+- ❌ --zero
+- ❌ Multiple file arguments
+- ❌ Recursive symlink resolution
+- ❌ Path canonicalization
+- ❌ -f functionality is basic (doesn't fully resolve)
+
+### realpath
+
+**Missing Features:**
+- ❌ -e all components must exist
+- ❌ -m no components need exist
+- ❌ -L logical (follow symlinks)
+- ❌ -P physical (don't follow)
+- ❌ -q quiet
+- ❌ -s no error messages
+- ❌ -z zero separated
+- ❌ --canonicalize-existing
+- ❌ --canonicalize-missing
+- ❌ --logical
+- ❌ --physical
+- ❌ --quiet
+- ❌ --strip
+- ❌ --no-symlinks
+- ❌ --relative-to
+- ❌ --relative-base
+- ❌ --zero
+- ❌ Multiple file arguments
+- ❌ Symlink resolution (doesn't resolve symlinks at all)
+- ❌ Existence checking
+- ❌ Relative path calculation
+- ❌ Only does path normalization (. and .. handling)
+
+### rmdir
+
+**Missing Features:**
+- ❌ -p remove parent directories
+- ❌ -v verbose
+- ❌ --ignore-fail-on-non-empty
+- ❌ --parents
+- ❌ --verbose
+- ❌ Parent directory removal
+- ❌ Verbose output
+- ❌ Ignore failure on non-empty
+- ❌ Multiple directory arguments work but no options
+
+---
+
+## BINARY & HEX UTILITIES
+
+### hexdump
+
+**Missing Features:**
+- ❌ -b one-octet-octal
+- ❌ -c one-octet-character
+- ❌ -d two-octet-decimal
+- ❌ -e format string
+- ❌ -f format file
+- ❌ -n length
+- ❌ -s offset
+- ❌ -v no duplicate lines
+- ❌ -x two-octet-hexadecimal
+- ❌ --no-squeezing
+- ❌ --format
+- ❌ --length
+- ❌ --skip
+- ❌ Custom format strings
+- ❌ Format file reading
+- ❌ Length limiting
+- ❌ Offset starting
+- ❌ Duplicate line suppression (* notation)
+- ❌ Multiple format modes
+- ❌ Only has default and -C (canonical)
+
+### od
+
+**Missing Features:**
+- ❌ -A radix (address base)
+- ❌ -j bytes skip bytes
+- ❌ -N count limit bytes
+- ❌ -S bytes strings of at least bytes
+- ❌ -t type format specification
+- ❌ -v no duplicate suppression
+- ❌ -w width
+- ❌ --address-radix
+- ❌ --endian
+- ❌ --format
+- ❌ --output-duplicates
+- ❌ --read-bytes
+- ❌ --skip-bytes
+- ❌ --strings
+- ❌ --traditional
+- ❌ --width
+- ❌ Type specifications (a, c, d, f, o, u, x)
+- ❌ Multiple type codes (e.g., -t x1z)
+- ❌ Size modifiers (C, S, I, L)
+- ❌ Floating point format
+- ❌ Named character format
+- ❌ Address radix control (only octal)
+- ❌ Width control
+- ❌ Byte limit
+- ❌ Offset skip
+- ❌ String extraction with minimum length
+- ❌ Duplicate line suppression
+
+### strings
+
+**Missing Features:**
+- ❌ -a scan entire file
+- ❌ -t radix show offset
+- ❌ -e encoding
+- ❌ -T bfdname (for object files)
+- ❌ -f show filename
+- ❌ -o octal offset (same as -t o)
+- ❌ -d decimal offset (same as -t d)
+- ❌ -x hex offset (same as -t x)
+- ❌ -w show warnings
+- ❌ --all
+- ❌ --print-file-name
+- ❌ --bytes
+- ❌ --radix
+- ❌ --target
+- ❌ --encoding
+- ❌ --help
+- ❌ --version
+- ❌ Encoding support (s, S, b, l, B, L for various encodings)
+- ❌ Offset display
+- ❌ Filename display (multiple files)
+- ❌ Object file scanning
+- ❌ Only scans for printable ASCII
+
+### file
+
+**Missing Features:**
+- ❌ -b brief (no filename)
+- ❌ -c check magic file
+- ❌ -C compile magic file
+- ❌ -d debugging
+- ❌ -e exclude test
+- ❌ -f namefile
+- ❌ -F separator
+- ❌ -i MIME type
+- ❌ -k keep going
+- ❌ -l follow symlinks
+- ❌ -L follow all symlinks (default for non-symlinks)
+- ❌ -m magicfiles
+- ❌ -n no buffer flush
+- ❌ -N no pad
+- ❌ -p preserve times
+- ❌ -P parameter
+- ❌ -r raw mode
+- ❌ -s special files
+- ❌ -v version
+- ❌ -z compressed files
+- ❌ -0 null separated
+- ❌ -Z compressed
+- ❌ --apple
+- ❌ --brief
+- ❌ --check-encoding
+- ❌ --compile
+- ❌ --debug
+- ❌ --exclude
+- ❌ --exclude-quiet
+- ❌ --extension
+- ❌ --files-from
+- ❌ --help
+- ❌ --keep-going
+- ❌ --list
+- ❌ --magic-file
+- ❌ --mime
+- ❌ --mime-type
+- ❌ --mime-encoding
+- ❌ --no-buffer
+- ❌ --no-pad
+- ❌ --preserve-date
+- ❌ --print0
+- ❌ --raw
+- ❌ --separator
+- ❌ --special-files
+- ❌ --uncompress
+- ❌ --version
+- ❌ Magic file database (/usr/share/misc/magic)
+- ❌ Magic file compilation
+- ❌ Extensive file type detection (has basic types only)
+- ❌ MIME type output
+- ❌ Compressed file detection (doesn't look inside)
+- ❌ Archive content detection
+- ❌ Encoding detection
+- ❌ Special file handling
+- ❌ Following symlinks option
+- ❌ Multiple file from file list
+- ❌ Many file formats not detected
+
+---
+
+## TERMINAL & DISPLAY
+
+### clear
+
+**Missing Features:**
+- ❌ -V version
+- ❌ -x do not clear scrollback
+- ❌ -T terminal type
+- ❌ --version
+- ❌ terminfo database reading
+- ❌ Terminal capability detection
+- ❌ Only uses hardcoded ANSI sequences
+
+### reset
+
+**Missing Features:**
+- ❌ -e escape character
+- ❌ -I no initialization
+- ❌ -Q no prompt
+- ❌ -V version
+- ❌ -w width
+- ❌ --version
+- ❌ terminfo database reading
+- ❌ Terminal type detection
+- ❌ stty integration
+- ❌ More complete terminal reset
+- ❌ Only uses hardcoded ANSI sequences
+- ❌ Terminal size restoration
+
+### tput
+
+**Missing Feature:**
+- ❌ **ENTIRE UTILITY NOT IMPLEMENTED**
+- ❌ All tput functionality
+
+### stty
+
+**Missing Feature:**
+- ❌ **ENTIRE UTILITY NOT IMPLEMENTED**
+- ❌ All stty functionality
+
+---
+
+## MISCELLANEOUS
+
+### date
+
+**Missing Features:**
+- ❌ -d string display time from string
+- ❌ -f file read dates from file
+- ❌ -I ISO 8601 format
+- ❌ -R RFC 5322 format
+- ❌ -r file show file modification time
+- ❌ -s string set time
+- ❌ -u UTC
+- ❌ --date
+- ❌ --file
+- ❌ --iso-8601
+- ❌ --rfc-3339
+- ❌ --rfc-email
+- ❌ --reference
+- ❌ --set
+- ❌ --utc/--universal
+- ❌ +FORMAT custom format string
+- ❌ Format specifiers:
+  - %a abbreviated weekday
+  - %A full weekday
+  - %b abbreviated month
+  - %B full month
+  - %c date and time
+  - %C century
+  - %d day of month (01-31)
+  - %D date (mm/dd/yy)
+  - %e day of month ( 1-31)
+  - %F date (yyyy-mm-dd)
+  - %g year (00-99)
+  - %G year
+  - %h abbreviated month (same as %b)
+  - %H hour (00-23)
+  - %I hour (01-12)
+  - %j day of year (001-366)
+  - %k hour ( 0-23)
+  - %l hour ( 1-12)
+  - %m month (01-12)
+  - %M minute (00-59)
+  - %n newline
+  - %N nanoseconds
+  - %p AM or PM
+  - %P am or pm
+  - %r time (hh:mm:ss AM/PM)
+  - %R time (hh:mm)
+  - %s seconds since epoch
+  - %S second (00-60)
+  - %t tab
+  - %T time (hh:mm:ss)
+  - %u day of week (1-7, Monday=1)
+  - %U week number (00-53, Sunday)
+  - %V ISO week number (01-53)
+  - %w day of week (0-6, Sunday=0)
+  - %W week number (00-53, Monday)
+  - %x locale date
+  - %X locale time
+  - %y year (00-99)
+  - %Y year
+  - %z timezone offset
+  - %Z timezone name
+  - %% percent
+- ❌ Setting system time
+- ❌ Timezone handling (always shows UTC)
+- ❌ Locale support
+- ❌ Custom format strings
+- ❌ Parsing date strings
+- ❌ File timestamp display
+- ❌ Only shows basic hardcoded format
+
+### sleep
+
+**Missing Features:**
+- ❌ Suffix support (s, m, h, d)
+- ❌ Multiple duration arguments
+- ❌ --help
+- ❌ --version
+- ❌ Only supports seconds (decimal supported)
+
+### seq
+
+**Missing Features:**
+- ❌ -f format printf-style format
+- ❌ -s separator
+- ❌ -w equal width (pad with zeros)
+- ❌ --format
+- ❌ --separator
+- ❌ --equal-width
+- ❌ --help
+- ❌ --version
+- ❌ Custom output format
+- ❌ Custom separator (always newline)
+- ❌ Zero padding
+- ❌ Floating point support (only integers)
+
+### true/false
+
+**Missing Features:**
+- ❌ --help (but this would violate spec)
+- ❌ --version (but this would violate spec)
+- ✅ Work correctly - no features missing
+
+### test / [
+
+**Missing Features:**
+- ❌ -G file owned by effective GID
+- ❌ -k file has sticky bit
+- ❌ -N file modified since last read
+- ❌ -O file owned by effective UID
+- ❌ -t FD file descriptor is terminal
+- ❌ Complex expressions with -a, -o, !, (, )
+- ❌ String operators: <, > (lexicographic)
+- ❌ Extended test [[ ]] (bash-specific)
+- ❌ Pattern matching operators (bash [[)
+- ❌ Regex matching operator (bash [[)
+- ❌ Proper precedence handling for complex expressions
+- ❌ More robust expression parsing
+- ❌ Some tests are basic or use stat (should use access for -r, -w, -x)
+
+### time
+
+**Missing Feature:**
+- ❌ **ENTIRE UTILITY NOT IMPLEMENTED**
+- ❌ All time command functionality
+
+### watch
+
+**Missing Feature:**
+- ❌ **ENTIRE UTILITY NOT IMPLEMENTED**
+- ❌ All watch functionality
+
+### cal
+
+**Missing Feature:**
+- ❌ **ENTIRE UTILITY NOT IMPLEMENTED**
+- ❌ All cal functionality
+
+### bc
+
+**Missing Feature:**
+- ❌ **ENTIRE UTILITY NOT IMPLEMENTED**
+- ❌ All bc calculator functionality
+
+### dd
+
+**Missing Features:**
+- ❌ conv=CONV conversions
+  - ascii (EBCDIC to ASCII)
+  - ebcdic (ASCII to EBCDIC)
+  - ibm (alternative EBCDIC)
+  - block/unblock
+  - lcase/ucase
+  - swab (swap bytes)
+  - sync (pad with nulls)
+  - excl (fail if output exists)
+  - nocreat (don't create output)
+  - notrunc (don't truncate output)
+  - noerror (continue on errors)
+  - fdatasync/fsync
+  - sparse (seek on null blocks)
+- ❌ iflag=FLAG input flags
+- ❌ oflag=FLAG output flags
+  - append
+  - direct
+  - directory
+  - dsync
+  - sync
+  - fullblock
+  - nonblock
+  - noatime
+  - nocache
+  - noctty
+  - nofollow
+  - count_bytes
+  - skip_bytes
+  - seek_bytes
+- ❌ status=LEVEL
+  - none
+  - noxfer
+  - progress
+- ❌ cbs=BYTES conversion block size
+- ❌ ibs=BYTES input block size (different from obs)
+- ❌ obs=BYTES output block size (different from ibs)
+- ❌ Suffix support (K, M, G, etc.)
+- ❌ Signal handling (USR1 for stats)
+- ❌ Progress indicator
+- ❌ Error recovery options
+- ❌ Conversion modes
+- ❌ Proper statistics formatting
+- ❌ Large block size support (limited to 4096 bytes)
+
+### loadkeys
+
+**Missing Features:**
+- ❌ -a ascii mode
+- ❌ -b bkeymap format
+- ❌ -c clear compose table
+- ❌ -C console device
+- ❌ -d default keymap
+- ❌ -m load compose definitions
+- ❌ -p parse only
+- ❌ -q quiet
+- ❌ -s clear string definitions
+- ❌ -u unicode mode
+- ❌ -v verbose
+- ❌ --help
+- ❌ --version
+- ❌ Keymap file parsing (can only set predefined layouts)
+- ❌ Compose table loading
+- ❌ Multiple keymap merging
+- ❌ Console specification
+- ❌ Parse-only mode
+- ❌ Only supports 4 hardcoded layouts (us, uk, de, fr)
+- ❌ No custom keymap file loading
+
+### fbtest/fbperf
+
+**Missing Features (fbtest):**
+- ❌ Command-line test selection
+- ❌ Benchmarking mode
+- ❌ More test patterns
+- ❌ Performance metrics
+- ❌ Frame timing
+- ❌ Double buffering test
+- ❌ Alpha blending test
+- ❌ Line drawing test
+- ❌ Circle/ellipse drawing
+- ❌ Text rendering test
+- ❌ Image scaling test
+- ❌ Rotation test
+- ❌ Scrolling test
+- ❌ Video mode switching test
+
+**Missing Features (fbperf):**
+- ❌ Actual performance measurements
+- ❌ Pixel fill rate
+- ❌ Blit rate
+- ❌ Line drawing rate
+- ❌ Text rendering rate
+- ❌ 2D operation benchmarks
+- ❌ 3D operation benchmarks (if applicable)
+- ❌ Memory bandwidth test
+- ❌ Latency measurements
+- ❌ FPS counter
+- ❌ Comparison with baseline
+- ❌ CSV/JSON output
+- ❌ ioctl for performance stats (noted in output)
+
+---
+
+## SUMMARY
+
+**Total Applications Analyzed:** 79
+
+**Applications with Major Missing Functionality:**
+- **Network utilities:** ALL network utilities are severely incomplete (nslookup, ping, nc, netstat, ifconfig, ip, wget, hostname)
+- **Compression:** tar, gzip, gunzip (completely placeholder)
+- **Process management:** ps, pgrep, pkill, nice, nohup, timeout (placeholder or incomplete)
+- **System info:** uname, df, dmesg (placeholder data)
+- **Not implemented at all:** sed, awk, less, vi/vim, nano, printf, time, watch, cal, bc, bzip2, xz, zip, top, htop, tput, stty
+
+**Critical User-Reported Issue:**
+- ❌ **nslookup REVERSE DNS is completely missing** - This was specifically complained about by the user
+
+**Completeness Scale (0-100%):**
+- Network utilities: 15%
+- File management: 45%
+- Text processing: 35%
+- Compression: 5%
+- Process management: 25%
+- System information: 30%
+- Binary utilities: 50%
+- Terminal utilities: 40%
+- Overall: 30%
+
+**Most Complete Applications:**
+- true, false, yes, echo (basic functionality works)
+
+**Least Complete Applications:**
+- sed, awk, tar, gzip/gunzip (not implemented or complete placeholders)
+- Network utilities (nslookup, nc, netstat, ifconfig, ip - mostly placeholders)
+
+---
+
+## CONCLUSION
+
+This gap analysis reveals that OXIDE OS coreutils are at approximately 30% feature parity with full Linux coreutils. Most utilities have basic functionality but lack:
+- Advanced options and flags
+- Error handling
+- Edge case handling
+- Performance optimizations
+- Complete POSIX compliance
+- Full Linux compatibility
+
+Priority should be given to:
+1. **Network utilities** (especially reverse DNS in nslookup)
+2. **Compression/archiving** (tar, gzip)
+3. **Text processing** (sed, awk)
+4. **Process management** (full ps, top)
+5. **File operations** (recursive operations, advanced options)
+
+Every application needs significant additional work to reach Linux/POSIX parity.
