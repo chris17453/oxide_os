@@ -1,0 +1,21 @@
+# Don't commit built binaries in sysroot/lib
+sysroot/lib/*.rlib
+sysroot/lib/*.so
+sysroot/lib/*.so.*
+
+# Don't commit test artifacts
+tests/*.o
+tests/test
+tests/a.out
+
+# Don't commit example binaries
+examples/*/hello
+examples/*/echo
+examples/*/calculator
+examples/*/*.o
+
+# Don't commit temporary files
+*.swp
+*.swo
+*~
+.DS_Store

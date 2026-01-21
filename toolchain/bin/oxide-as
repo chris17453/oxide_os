@@ -1,0 +1,27 @@
+#!/bin/bash
+#
+# OXIDE Assembler Wrapper (oxide-as)
+#
+# Assembles x86_64 AT&T syntax assembly to ELF object files.
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Find OXIDE assembler (built from userspace/as)
+OXIDE_AS="$PROJECT_ROOT/target/x86_64-user/release/as"
+
+# If not built, fall back to system assembler
+if [[ ! -f "$OXIDE_AS" ]]; then
+    OXIDE_AS="as"
+    if ! command -v "$OXIDE_AS" &> /dev/null; then
+        echo "Error: Neither OXIDE as nor system as found" >&2
+        echo "  Build OXIDE assembler: cargo build --package as --target userspace/x86_64-user.json --release" >&2
+        echo "  Or install binutils: sudo apt install binutils" >&2
+        exit 1
+    fi
+fi
+
+# Forward all arguments
+exec "$OXIDE_AS" "$@"

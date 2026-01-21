@@ -1,0 +1,81 @@
+#!/bin/bash
+#
+# OXIDE pkg-config Implementation
+#
+# Provides library configuration information for OXIDE libraries.
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TOOLCHAIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SYSROOT="$TOOLCHAIN_ROOT/sysroot"
+
+# Parse arguments
+CFLAGS=false
+LIBS=false
+MODVERSION=false
+PACKAGES=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --cflags)
+            CFLAGS=true
+            shift
+            ;;
+        --libs)
+            LIBS=true
+            shift
+            ;;
+        --modversion)
+            MODVERSION=true
+            shift
+            ;;
+        --version)
+            echo "0.1.0"
+            exit 0
+            ;;
+        -*)
+            # Unknown flag, ignore
+            shift
+            ;;
+        *)
+            PACKAGES+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Output for each package
+for pkg in "${PACKAGES[@]}"; do
+    if $MODVERSION; then
+        echo "0.1.0"
+    fi
+    
+    if $CFLAGS; then
+        case "$pkg" in
+            oxide)
+                echo "-I$SYSROOT/include"
+                ;;
+            *)
+                echo "-I$SYSROOT/include"
+                ;;
+        esac
+    fi
+    
+    if $LIBS; then
+        case "$pkg" in
+            oxide|c)
+                echo "-L$SYSROOT/lib -loxide_libc"
+                ;;
+            m|math)
+                echo "-L$SYSROOT/lib -lm"
+                ;;
+            pthread)
+                echo "-L$SYSROOT/lib -lpthread"
+                ;;
+            *)
+                echo "-L$SYSROOT/lib -l$pkg"
+                ;;
+        esac
+    fi
+done

@@ -1,0 +1,79 @@
+#!/bin/bash
+#
+# OXIDE C++ Compiler Wrapper (oxide-c++)
+#
+# This script provides a G++-compatible interface for compiling C++ code
+# for OXIDE OS. It uses Clang/LLVM as the backend compiler.
+
+set -e
+
+# Detect script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TOOLCHAIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SYSROOT="$TOOLCHAIN_ROOT/sysroot"
+PROJECT_ROOT="$(cd "$TOOLCHAIN_ROOT/.." && pwd)"
+
+# Target specification
+TARGET="x86_64-unknown-none"
+
+# Find clang++ compiler
+CLANGXX="${CLANGXX:-clang++}"
+if ! command -v "$CLANGXX" &> /dev/null; then
+    echo "Error: clang++ not found. Please install LLVM/Clang." >&2
+    exit 1
+fi
+
+# Default flags for OXIDE target
+OXIDE_CXXFLAGS=(
+    "--target=x86_64-unknown-none-elf"
+    "-ffreestanding"
+    "-fno-stack-protector"
+    "-fno-pic"
+    "-fno-pie"
+    "-mno-red-zone"
+    "-mcmodel=small"
+    "-nostdlib"
+    "-nostdinc++"
+    "-fno-exceptions"
+    "-fno-rtti"
+    "-isystem" "$SYSROOT/include"
+)
+
+OXIDE_LDFLAGS=(
+    "-fuse-ld=lld"
+    "-Wl,-T,$PROJECT_ROOT/userspace/userspace.ld"
+    "-Wl,-e,_start"
+    "-Wl,--gc-sections"
+    "-L$SYSROOT/lib"
+    "-static"
+)
+
+# Parse and forward to clang++
+CMD=("$CLANGXX")
+CMD+=("${OXIDE_CXXFLAGS[@]}")
+
+LINK=true
+for arg in "$@"; do
+    case "$arg" in
+        -c|-S|-E)
+            LINK=false
+            ;;
+    esac
+done
+
+if $LINK; then
+    CMD+=("$@" "${OXIDE_LDFLAGS[@]}")
+    # Add libc if exists
+    if [[ -f "$SYSROOT/lib/liboxide_libc.a" ]]; then
+        CMD+=("-loxide_libc")
+    fi
+else
+    CMD+=("$@")
+fi
+
+# Execute
+if [[ -n "${OXIDE_CC_VERBOSE:-}" ]]; then
+    echo "+ ${CMD[@]}" >&2
+fi
+
+exec "${CMD[@]}"

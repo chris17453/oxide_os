@@ -1,0 +1,123 @@
+#!/bin/bash
+#
+# OXIDE Linker Driver (oxide-ld)
+#
+# Links object files into OXIDE executables using the OXIDE linker.
+
+set -e
+
+# Detect directories
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TOOLCHAIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SYSROOT="$TOOLCHAIN_ROOT/sysroot"
+PROJECT_ROOT="$(cd "$TOOLCHAIN_ROOT/.." && pwd)"
+
+# Find our custom linker (built from userspace/ld)
+OXIDE_LD="$PROJECT_ROOT/target/x86_64-user/release/ld"
+
+# If custom linker not built, fall back to lld
+if [[ ! -f "$OXIDE_LD" ]]; then
+    OXIDE_LD="ld.lld"
+    if ! command -v "$OXIDE_LD" &> /dev/null; then
+        echo "Error: Neither OXIDE ld nor ld.lld found" >&2
+        echo "  Build OXIDE linker: cargo build --package ld --target userspace/x86_64-user.json --release" >&2
+        echo "  Or install lld: sudo apt install lld" >&2
+        exit 1
+    fi
+fi
+
+# Default linker flags
+LDFLAGS=(
+    "-T" "$PROJECT_ROOT/userspace/userspace.ld"
+    "-e" "_start"
+    "--gc-sections"
+    "-L$SYSROOT/lib"
+    "-static"
+)
+
+# Parse arguments
+OUTPUT=""
+OBJECTS=()
+LIBS=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o)
+            OUTPUT="$2"
+            shift 2
+            ;;
+        -L*)
+            LDFLAGS+=("$1")
+            shift
+            ;;
+        -l*)
+            LIBS+=("$1")
+            shift
+            ;;
+        -T)
+            # Custom linker script
+            LDFLAGS+=("$1" "$2")
+            shift 2
+            ;;
+        -e)
+            # Custom entry point
+            LDFLAGS+=("$1" "$2")
+            shift 2
+            ;;
+        --gc-sections|--build-id|--hash-style=*)
+            LDFLAGS+=("$1")
+            shift
+            ;;
+        -v|--version)
+            "$OXIDE_LD" --version 2>/dev/null || echo "OXIDE linker driver v1.0"
+            exit 0
+            ;;
+        -h|--help)
+            cat <<EOF
+OXIDE Linker Driver (oxide-ld)
+
+Usage: oxide-ld [options] file...
+
+Options:
+  -o <file>         Set output file name
+  -L <dir>          Add library search directory
+  -l <library>      Link with library
+  -T <script>       Use custom linker script
+  -e <symbol>       Set entry point
+  --gc-sections     Enable dead code elimination
+  -v, --version     Show version
+  -h, --help        Show this help
+
+Examples:
+  oxide-ld -o hello hello.o
+  oxide-ld -o app main.o utils.o -lm
+
+EOF
+            exit 0
+            ;;
+        *)
+            # Object file
+            OBJECTS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Build command
+CMD=("$OXIDE_LD")
+CMD+=("${LDFLAGS[@]}")
+CMD+=("${OBJECTS[@]}")
+
+if [[ -n "$OUTPUT" ]]; then
+    CMD+=("-o" "$OUTPUT")
+fi
+
+# Add libraries
+CMD+=("${LIBS[@]}")
+
+# Execute
+if [[ -n "${OXIDE_LD_VERBOSE:-}" ]]; then
+    echo "+ ${CMD[@]}" >&2
+fi
+
+exec "${CMD[@]}"

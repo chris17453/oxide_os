@@ -1,0 +1,184 @@
+#!/bin/bash
+#
+# OXIDE C Compiler Wrapper (oxide-cc)
+#
+# This script provides a GCC-compatible interface for compiling C code
+# for OXIDE OS. It uses Clang/LLVM as the backend compiler.
+
+set -e
+
+# Detect script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TOOLCHAIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SYSROOT="$TOOLCHAIN_ROOT/sysroot"
+PROJECT_ROOT="$(cd "$TOOLCHAIN_ROOT/.." && pwd)"
+
+# Target specification
+TARGET="x86_64-unknown-none"
+TARGET_JSON="$PROJECT_ROOT/userspace/x86_64-user.json"
+
+# Find clang compiler
+CLANG="${CLANG:-clang}"
+if ! command -v "$CLANG" &> /dev/null; then
+    echo "Error: clang not found. Please install LLVM/Clang." >&2
+    echo "  Ubuntu/Debian: sudo apt install clang lld" >&2
+    echo "  Fedora/RHEL: sudo dnf install clang lld" >&2
+    exit 1
+fi
+
+# Default flags for OXIDE target
+OXIDE_CFLAGS=(
+    "--target=x86_64-unknown-none-elf"
+    "-ffreestanding"
+    "-fno-stack-protector"
+    "-fno-pic"
+    "-fno-pie"
+    "-mno-red-zone"
+    "-mcmodel=small"
+    "-nostdlib"
+    "-nostdinc"
+    "-isystem" "$SYSROOT/include"
+)
+
+OXIDE_LDFLAGS=(
+    "-fuse-ld=lld"
+    "-Wl,-T,$PROJECT_ROOT/userspace/userspace.ld"
+    "-Wl,-e,_start"
+    "-Wl,--gc-sections"
+    "-L$SYSROOT/lib"
+    "-static"
+)
+
+# Parse arguments
+LINK=true
+COMPILE_ONLY=false
+OUTPUT=""
+SOURCES=()
+USER_CFLAGS=()
+USER_LDFLAGS=()
+LIBS=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -c)
+            COMPILE_ONLY=true
+            LINK=false
+            USER_CFLAGS+=("$1")
+            shift
+            ;;
+        -o)
+            OUTPUT="$2"
+            shift 2
+            ;;
+        -L*)
+            USER_LDFLAGS+=("$1")
+            shift
+            ;;
+        -l*)
+            LIBS+=("$1")
+            shift
+            ;;
+        -Wl,*)
+            USER_LDFLAGS+=("$1")
+            shift
+            ;;
+        -I*|-D*|-U*|-O*|-g*|-f*|-m*|-W*|-std=*)
+            USER_CFLAGS+=("$1")
+            shift
+            ;;
+        -S|-E)
+            LINK=false
+            USER_CFLAGS+=("$1")
+            shift
+            ;;
+        -v|--version)
+            "$CLANG" --version
+            echo "OXIDE toolchain wrapper version 1.0"
+            exit 0
+            ;;
+        -h|--help)
+            cat <<EOF
+OXIDE C Compiler (oxide-cc)
+
+Usage: oxide-cc [options] file...
+
+Options:
+  -c              Compile only, do not link
+  -o <file>       Place output in <file>
+  -O<level>       Optimization level (0, 1, 2, 3, s, z)
+  -g              Generate debug information
+  -I<dir>         Add include directory
+  -D<macro>       Define preprocessor macro
+  -L<dir>         Add library search directory
+  -l<library>     Link with library
+  -std=<standard> C standard (c99, c11, c17, c23)
+  -Wall           Enable common warnings
+  -Werror         Treat warnings as errors
+  -v, --version   Show version information
+  -h, --help      Show this help
+
+Environment:
+  CLANG           Path to clang compiler (default: clang)
+
+Examples:
+  oxide-cc -o hello hello.c
+  oxide-cc -c -O2 -Wall main.c
+  oxide-cc -o app main.o utils.o -lm
+
+EOF
+            exit 0
+            ;;
+        -*)
+            # Unknown flag, pass through
+            USER_CFLAGS+=("$1")
+            shift
+            ;;
+        *)
+            # Source/object file
+            SOURCES+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Check if we have input files
+if [[ ${#SOURCES[@]} -eq 0 ]]; then
+    echo "Error: no input files" >&2
+    exit 1
+fi
+
+# Build command
+CMD=("$CLANG")
+CMD+=("${OXIDE_CFLAGS[@]}")
+CMD+=("${USER_CFLAGS[@]}")
+CMD+=("${SOURCES[@]}")
+
+if [[ -n "$OUTPUT" ]]; then
+    CMD+=("-o" "$OUTPUT")
+fi
+
+if $LINK; then
+    CMD+=("${OXIDE_LDFLAGS[@]}")
+    CMD+=("${USER_LDFLAGS[@]}")
+    
+    # Link with libc (always, unless -nostdlib specified)
+    if [[ ! " ${USER_LDFLAGS[@]} " =~ " -nostdlib " ]]; then
+        # Check if libc.a exists
+        if [[ -f "$SYSROOT/lib/liboxide_libc.a" ]]; then
+            CMD+=("-loxide_libc")
+        else
+            echo "Warning: libc not found at $SYSROOT/lib/liboxide_libc.a" >&2
+            echo "  Build it with: make toolchain-libs" >&2
+        fi
+    fi
+    
+    # Add user libraries
+    CMD+=("${LIBS[@]}")
+fi
+
+# Execute command
+if [[ -n "${OXIDE_CC_VERBOSE:-}" ]]; then
+    echo "+ ${CMD[@]}" >&2
+fi
+
+exec "${CMD[@]}"
