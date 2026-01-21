@@ -20,88 +20,88 @@
 
 | Utility | Description | Status |
 |---------|-------------|--------|
-| `cp` | Copy files | TODO |
-| `mv` | Move/rename files | TODO |
-| `touch` | Create file / update timestamp | TODO |
-| `ln` | Create links | TODO |
-| `rmdir` | Remove empty directories | TODO |
-| `chmod` | Change file permissions | TODO |
-| `chown` | Change file ownership | TODO |
-| `stat` | Display file status | TODO |
+| `cp` | Copy files | DONE |
+| `mv` | Move/rename files | DONE |
+| `touch` | Create file / update timestamp | DONE |
+| `ln` | Create links | DONE |
+| `rmdir` | Remove empty directories | DONE |
+| `chmod` | Change file permissions | DONE |
+| `chown` | Change file ownership | DONE (needs kernel support) |
+| `stat` | Display file status | DONE |
 
 ## Priority 2: Text Processing
 
 | Utility | Description | Status |
 |---------|-------------|--------|
-| `head` | Output first lines of file | TODO |
-| `tail` | Output last lines of file | TODO |
-| `wc` | Word/line/byte count | TODO |
-| `grep` | Search for patterns | TODO |
-| `sort` | Sort lines | TODO |
-| `uniq` | Filter duplicate lines | TODO |
-| `cut` | Remove sections from lines | TODO |
-| `tr` | Translate characters | TODO |
-| `tee` | Pipe to file and stdout | TODO |
+| `head` | Output first lines of file | DONE |
+| `tail` | Output last lines of file | DONE |
+| `wc` | Word/line/byte count | DONE |
+| `grep` | Search for patterns | DONE |
+| `sort` | Sort lines | DONE |
+| `uniq` | Filter duplicate lines | DONE |
+| `cut` | Remove sections from lines | DONE |
+| `tr` | Translate characters | DONE |
+| `tee` | Pipe to file and stdout | DONE |
 
 ## Priority 3: System Utilities
 
 | Utility | Description | Status |
 |---------|-------------|--------|
-| `date` | Print/set date and time | TODO |
-| `sleep` | Pause for specified time | TODO |
-| `id` | Print user/group IDs | TODO |
-| `whoami` | Print current user | TODO |
-| `hostname` | Print/set hostname | TODO |
-| `uptime` | Show system uptime | TODO |
-| `clear` | Clear terminal screen | TODO |
-| `reset` | Reset terminal | TODO |
+| `date` | Print/set date and time | DONE |
+| `sleep` | Pause for specified time | DONE |
+| `id` | Print user/group IDs | DONE |
+| `whoami` | Print current user | DONE |
+| `hostname` | Print/set hostname | DONE |
+| `uptime` | Show system uptime | DONE |
+| `clear` | Clear terminal screen | DONE |
+| `reset` | Reset terminal | DONE |
 
 ## Priority 4: Process Utilities
 
 | Utility | Description | Status |
 |---------|-------------|--------|
-| `pgrep` | Find processes by name | TODO |
+| `pgrep` | Find processes by name | DONE (needs /proc) |
 | `pkill` | Kill processes by name | TODO |
-| `nice` | Run with modified priority | TODO |
-| `nohup` | Run immune to hangups | TODO |
-| `timeout` | Run with time limit | TODO |
+| `nice` | Run with modified priority | DONE (needs kernel support) |
+| `nohup` | Run immune to hangups | DONE (needs signal support) |
+| `timeout` | Run with time limit | DONE (needs timer support) |
 
 ## Priority 5: Network Utilities
 
 | Utility | Description | Status |
 |---------|-------------|--------|
-| `wget` | Download files from web | TODO |
-| `ping` | Send ICMP echo requests | TODO |
-| `ifconfig` | Configure network interfaces | TODO |
-| `netstat` | Network statistics | TODO |
-| `nc` | Netcat - network Swiss army knife | TODO |
+| `wget` | Download files from web | DONE (needs network stack) |
+| `ping` | Send ICMP echo requests | DONE (needs ICMP support) |
+| `ifconfig` | Configure network interfaces | DONE (needs network stack) |
+| `netstat` | Network statistics | DONE (needs network stack) |
+| `nc` | Netcat - network Swiss army knife | DONE (needs network stack) |
 
 ## Priority 6: Archive/Compression
 
 | Utility | Description | Status |
 |---------|-------------|--------|
-| `tar` | Archive utility | TODO |
-| `gzip` | Compress files | TODO |
-| `gunzip` | Decompress files | TODO |
+| `tar` | Archive utility | DONE (needs full implementation) |
+| `gzip` | Compress files | DONE (needs DEFLATE algorithm) |
+| `gunzip` | Decompress files | DONE (needs INFLATE algorithm) |
 
 ## Priority 7: Advanced Utilities
 
 | Utility | Description | Status |
 |---------|-------------|--------|
-| `find` | Search for files | TODO |
-| `xargs` | Build command lines from stdin | TODO |
-| `which` | Locate command | TODO |
-| `seq` | Print sequence of numbers | TODO |
-| `yes` | Output string repeatedly | TODO |
-| `expr` | Evaluate expressions | TODO |
-| `basename` | Strip directory from path | TODO |
-| `dirname` | Strip filename from path | TODO |
-| `readlink` | Print resolved symlink | TODO |
-| `realpath` | Print resolved path | TODO |
-| `dd` | Convert and copy files | TODO |
-| `hexdump` | Display file in hex | TODO |
-| `od` | Octal dump | TODO |
-| `diff` | Compare files | TODO |
+| `find` | Search for files | DONE |
+| `xargs` | Build command lines from stdin | DONE |
+| `which` | Locate command | DONE |
+| `seq` | Print sequence of numbers | DONE |
+| `yes` | Output string repeatedly | DONE |
+| `expr` | Evaluate expressions | DONE |
+| `basename` | Strip directory from path | DONE |
+| `dirname` | Strip filename from path | DONE |
+| `readlink` | Print resolved symlink | DONE |
+| `realpath` | Print resolved path | DONE |
+| `dd` | Convert and copy files | DONE |
+| `hexdump` | Display file in hex | DONE |
+| `od` | Octal dump | DONE |
+| `diff` | Compare files | DONE |
 
 ## Implementation Notes
 

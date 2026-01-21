@@ -267,6 +267,66 @@ path = "src/bin/file.rs"
 name = "more"
 path = "src/bin/more.rs"
 
+# Process utilities
+[[bin]]
+name = "pgrep"
+path = "src/bin/pgrep.rs"
+
+[[bin]]
+name = "nice"
+path = "src/bin/nice.rs"
+
+[[bin]]
+name = "nohup"
+path = "src/bin/nohup.rs"
+
+[[bin]]
+name = "timeout"
+path = "src/bin/timeout.rs"
+
+# Path utilities
+[[bin]]
+name = "realpath"
+path = "src/bin/realpath.rs"
+
+# Archive utilities
+[[bin]]
+name = "tar"
+path = "src/bin/tar.rs"
+
+[[bin]]
+name = "gzip"
+path = "src/bin/gzip.rs"
+
+[[bin]]
+name = "gunzip"
+path = "src/bin/gunzip.rs"
+
+# File comparison
+[[bin]]
+name = "diff"
+path = "src/bin/diff.rs"
+
+# Binary utilities
+[[bin]]
+name = "dd"
+path = "src/bin/dd.rs"
+
+# Expression evaluator
+[[bin]]
+name = "expr"
+path = "src/bin/expr.rs"
+
+# Terminal utilities
+[[bin]]
+name = "reset"
+path = "src/bin/reset.rs"
+
+# Ownership utilities
+[[bin]]
+name = "chown"
+path = "src/bin/chown.rs"
+
 [dependencies]
 libc = { path = "../libc" }
 heapless = "0.8"
