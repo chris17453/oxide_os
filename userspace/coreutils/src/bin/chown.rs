@@ -61,27 +61,22 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         (uid, 0xFFFFFFFF)
     };
 
-    // Call chown syscall (not yet implemented in kernel, so this is a placeholder)
-    // In a real implementation, this would be:
-    // if sys_chown(file, uid, gid) < 0 {
-    //     eprintlns("chown: cannot change ownership");
-    //     return 1;
-    // }
-    
-    // For now, just report what would be done
-    prints("chown: would change owner of '");
-    prints(file);
-    prints("' to uid=");
-    print_u64(uid as u64);
-    if gid != 0xFFFFFFFF {
-        prints(", gid=");
-        print_u64(gid as u64);
+    // Call chown syscall
+    let file_ptr = unsafe { *argv.add(2) };
+    let mut file_len = 0;
+    while unsafe { *file_ptr.add(file_len) != 0 } {
+        file_len += 1;
     }
-    printlns("");
 
-    // Note: This syscall is not yet implemented in OXIDE kernel
-    eprintlns("chown: syscall not yet implemented");
-    1
+    let result = chown(file_ptr, file_len, uid as i32, gid as i32);
+    if result < 0 {
+        eprints("chown: cannot change ownership of '");
+        eprints(file);
+        eprintlns("'");
+        return 1;
+    }
+
+    0
 }
 
 fn parse_int(s: &[u8]) -> Option<i64> {
