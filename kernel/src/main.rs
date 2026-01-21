@@ -889,11 +889,26 @@ fn terminal_tick() {
 
 /// Keyboard IRQ callback - called from keyboard interrupt handler
 fn keyboard_irq() {
+    let mut writer = serial::SerialWriter;
+    let _ = writeln!(writer, "[KERNEL] keyboard_irq() called");
+    
     ps2::handle_keyboard_irq();
+    
+    // Print debug info after handling
+    let irq_count = ps2::keyboard_irq_count();
+    let last_scancode = ps2::last_scancode();
+    let _ = writeln!(writer, "[KERNEL] IRQ count: {}, last scancode: 0x{:02x}", irq_count, last_scancode);
 }
 
 /// Console callback for PS/2 keyboard - pushes characters to console input buffer
 fn keyboard_to_console(data: &[u8]) {
+    let mut writer = serial::SerialWriter;
+    let _ = write!(writer, "[KERNEL] keyboard_to_console: ");
+    for &b in data {
+        let _ = write!(writer, "0x{:02x} ", b);
+    }
+    let _ = writeln!(writer, "(len={})", data.len());
+    
     devfs::console_push_str(data);
 }
 

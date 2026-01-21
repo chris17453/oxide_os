@@ -180,9 +180,37 @@ impl Ps2Keyboard {
 
     /// Initialize the keyboard
     pub fn init(&self) -> bool {
-        // BIOS/UEFI already initialized keyboard - just enable scanning
+        // Send reset command
+        send_data(kbd_cmd::RESET);
+        
+        // Wait for ACK
+        if read_data() != Some(0xFA) {
+            return false;
+        }
+        
+        // Wait for self-test complete (0xAA = pass)
+        if read_data() != Some(0xAA) {
+            return false;
+        }
+        
+        // Disable scanning during setup
+        send_data(kbd_cmd::DISABLE_SCANNING);
+        if read_data() != Some(0xFA) {
+            return false;
+        }
+        
+        // Set defaults
+        send_data(kbd_cmd::SET_DEFAULTS);
+        if read_data() != Some(0xFA) {
+            return false;
+        }
+        
+        // Enable scanning
         send_data(kbd_cmd::ENABLE_SCANNING);
-        let _ = read_data();
+        if read_data() != Some(0xFA) {
+            return false;
+        }
+        
         true
     }
 
@@ -713,7 +741,7 @@ static KEYBOARD_IRQ_COUNT: AtomicUsize = AtomicUsize::new(0);
 static LAST_SCANCODE: AtomicU8 = AtomicU8::new(0);
 
 /// Scancode log for debugging (lock-free, only written by IRQ handler)
-static mut SCANCODE_LOG: [u8; 20] = [0; 20];
+static SCANCODE_LOG: Mutex<[u8; 20]> = Mutex::new([0; 20]);
 
 /// Get last scancode (for debugging)
 pub fn last_scancode() -> u8 {
@@ -726,13 +754,23 @@ pub fn handle_keyboard_irq() {
 
     if let Some(keyboard) = KEYBOARD.lock().as_ref() {
         let scancode = unsafe { inb(DATA_PORT) };
+        
+        // Store in debug log
+        let count = KEYBOARD_IRQ_COUNT.load(Ordering::Relaxed);
+        if count <= 50 {  // Increase debug window
+            let mut log = SCANCODE_LOG.lock();
+            let len = log.len();
+            log[(count - 1) % len] = scancode;
+        }
+        LAST_SCANCODE.store(scancode, Ordering::Relaxed);
+        
         keyboard.handle_scancode(scancode);
     }
 }
 
 /// Get scancode log for debugging
 pub fn get_scancode_log() -> [u8; 20] {
-    unsafe { SCANCODE_LOG }
+    *SCANCODE_LOG.lock()
 }
 
 /// Handle mouse interrupt (IRQ 12)
