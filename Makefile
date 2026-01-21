@@ -312,7 +312,8 @@ run-kvm: boot-image
 	@mkdir -p $(TARGET_DIR)
 	@cp /usr/share/edk2/ovmf/OVMF_VARS.fd $(TARGET_DIR)/OVMF_VARS.fd 2>/dev/null || true
 	@mkdir -p /tmp/qemu-oxide
-	@echo "Starting QEMU..."
+	@echo "Starting QEMU with graphics window and serial console..."
+	@echo "NOTE: Input will work in THIS terminal. Graphics shown in QEMU window."
 	@TMPDIR=/tmp/qemu-oxide /usr/libexec/qemu-kvm \
 		-machine q35,accel=kvm:tcg \
 		-cpu max,+invtsc \
@@ -323,27 +324,11 @@ run-kvm: boot-image
 		-drive file=$(TARGET_DIR)/boot.img,format=raw,if=none,id=bootdisk \
 		-device ide-hd,drive=bootdisk,bus=ide.0 \
 		-vga std \
-		-vnc :0 \
-		-chardev stdio,id=char0,mux=on \
+		-chardev stdio,id=char0,mux=on,signal=off \
 		-serial chardev:char0 \
-		-no-reboot & \
-	QEMU_PID=$$!; \
-	echo "QEMU started (PID: $$QEMU_PID)"; \
-	sleep 2; \
-	if command -v vncviewer >/dev/null 2>&1; then \
-		echo "Launching VNC viewer window..."; \
-		vncviewer localhost:5900 2>/dev/null; \
-	elif flatpak list --app 2>/dev/null | grep -q tigervnc; then \
-		echo "Launching VNC viewer window (Flatpak)..."; \
-		flatpak run org.tigervnc.vncviewer localhost:5900 2>/dev/null; \
-	else \
-		echo "VNC viewer not found - connect manually to localhost:5900"; \
-		echo "Install: sudo dnf install tigervnc"; \
-		wait $$QEMU_PID; \
-	fi; \
-	echo "VNC viewer closed, stopping QEMU..."; \
-	kill $$QEMU_PID 2>/dev/null || true; \
-	wait $$QEMU_PID 2>/dev/null || true
+		-mon chardev:char0,mode=readline \
+		-display gtk \
+		-no-reboot
 
 # Run with qemu-kvm and auto-launch VNC viewer
 run-kvm-vnc: boot-image
