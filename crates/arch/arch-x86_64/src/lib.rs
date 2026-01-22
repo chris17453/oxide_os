@@ -4,6 +4,8 @@
 
 #![no_std]
 
+extern crate ps2;
+
 use arch_traits::{Arch, PortIo, TlbControl};
 use os_core::{PhysAddr, VirtAddr};
 
@@ -300,6 +302,11 @@ pub unsafe fn set_terminal_tick_callback(callback: fn()) {
     unsafe {
         exceptions::set_terminal_tick_callback(callback);
     }
+}
+
+/// Get a scancode from the keyboard buffer
+pub fn get_scancode() -> Option<u8> {
+    exceptions::get_scancode()
 }
 
 /// Register a keyboard interrupt callback (called on keyboard IRQ)

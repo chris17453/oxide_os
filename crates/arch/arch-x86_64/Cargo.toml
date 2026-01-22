@@ -9,4 +9,5 @@ os_core = { workspace = true }
 arch-traits = { workspace = true }
 sched-traits = { workspace = true }
 boot-proto = { workspace = true }
+ps2 = { workspace = true }
 spin = { workspace = true }

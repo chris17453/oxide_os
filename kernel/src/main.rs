@@ -55,7 +55,6 @@ use pci;
 use fb;
 use terminal;
 use input;
-use ps2;
 use spin::Mutex;
 
 /// Global kernel heap allocator
@@ -241,23 +240,8 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
         let _ = writeln!(writer, "[INFO] Terminal tick callback registered (30 FPS)");
     }
 
-    // Initialize PS/2 keyboard
-    let _ = writeln!(writer, "[INFO] Initializing PS/2 keyboard...");
-    if ps2::init() {
-        // Set up keyboard callback to handle IRQs
-        unsafe {
-            arch::set_keyboard_callback(keyboard_irq);
-        }
-
-        // Set up console callback for PS/2 to push characters
-        unsafe {
-            ps2::set_console_callback(keyboard_to_console);
-        }
-
-        let _ = writeln!(writer, "[INFO] PS/2 keyboard initialized");
-    } else {
-        let _ = writeln!(writer, "[WARN] PS/2 keyboard initialization failed");
-    }
+    // Keyboard is handled by WATOS-style interrupt handler - no initialization needed
+    let _ = writeln!(writer, "[INFO] Keyboard ready (WATOS-style)");
 
     // Start timer at 100Hz
     let _ = writeln!(writer, "[INFO] Starting APIC timer at 100Hz...");
@@ -268,10 +252,6 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     arch::X86_64::enable_interrupts();
     let _ = writeln!(writer, "[INFO] Interrupts enabled");
 
-    // Debug: Check keyboard initialization status
-    let init_status = ps2::init_status();
-    let _ = writeln!(writer, "[DEBUG] PS/2 init status: {} (0=not started, 1=ctrl failed, 2=kbd failed, 3=kbd ok, 4=mouse failed, 5=both ok)", init_status);
-    let _ = writeln!(writer, "[DEBUG] PS/2 Keyboard initialized: {}", ps2::is_keyboard_initialized());
     let _ = writeln!(writer);
 
     // Test heap allocation
@@ -884,33 +864,47 @@ fn console_write(data: &[u8]) {
 
 /// Terminal tick callback - called at 30 FPS from timer interrupt
 fn terminal_tick() {
+    // Process keyboard scancodes
+    while let Some(scancode) = arch::get_scancode() {
+        // Convert scancode to ASCII character (basic mapping)
+        if let Some(ch) = scancode_to_char(scancode) {
+            // Push character to terminal
+            terminal::putchar(ch);
+        }
+    }
+    
     terminal::tick();
 }
 
-/// Keyboard IRQ callback - called from keyboard interrupt handler
-fn keyboard_irq() {
-    let mut writer = serial::SerialWriter;
-    let _ = writeln!(writer, "[KERNEL] keyboard_irq() called");
+/// Convert PS/2 scancode to ASCII character (basic US keyboard layout)
+fn scancode_to_char(scancode: u8) -> Option<char> {
+    // Handle key release (high bit set) - ignore for now
+    if scancode & 0x80 != 0 {
+        return None;
+    }
     
-    ps2::handle_keyboard_irq();
+    // Basic scancode to ASCII conversion (subset from WATOS)
+    let ascii = match scancode {
+        // Numbers
+        0x02 => '1', 0x03 => '2', 0x04 => '3', 0x05 => '4', 0x06 => '5',
+        0x07 => '6', 0x08 => '7', 0x09 => '8', 0x0A => '9', 0x0B => '0',
+        // Letters
+        0x1E => 'a', 0x30 => 'b', 0x2E => 'c', 0x20 => 'd', 0x12 => 'e',
+        0x21 => 'f', 0x22 => 'g', 0x23 => 'h', 0x17 => 'i', 0x24 => 'j',
+        0x25 => 'k', 0x26 => 'l', 0x32 => 'm', 0x31 => 'n', 0x18 => 'o',
+        0x19 => 'p', 0x10 => 'q', 0x13 => 'r', 0x1F => 's', 0x14 => 't',
+        0x16 => 'u', 0x2F => 'v', 0x11 => 'w', 0x2D => 'x', 0x15 => 'y',
+        0x2C => 'z',
+        // Special keys
+        0x39 => ' ',  // Space
+        0x1C => '\n', // Enter
+        0x0E => '\x08', // Backspace
+        _ => return None,
+    };
     
-    // Print debug info after handling
-    let irq_count = ps2::keyboard_irq_count();
-    let last_scancode = ps2::last_scancode();
-    let _ = writeln!(writer, "[KERNEL] IRQ count: {}, last scancode: 0x{:02x}", irq_count, last_scancode);
+    Some(ascii)
 }
 
-/// Console callback for PS/2 keyboard - pushes characters to console input buffer
-fn keyboard_to_console(data: &[u8]) {
-    let mut writer = serial::SerialWriter;
-    let _ = write!(writer, "[KERNEL] keyboard_to_console: ");
-    for &b in data {
-        let _ = write!(writer, "0x{:02x} ", b);
-    }
-    let _ = writeln!(writer, "(len={})", data.len());
-    
-    devfs::console_push_str(data);
-}
 
 /// Serial-only write function for devfs
 ///

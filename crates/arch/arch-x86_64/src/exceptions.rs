@@ -364,20 +364,29 @@ pub extern "C" fn keyboard_interrupt() {
     );
 }
 
-/// Keyboard handler - called from interrupt context
+/// Keyboard handler - simplified non-naked version
 extern "C" fn handle_keyboard() {
-    use core::ptr::addr_of;
+    // Read scancode
+    let scancode = unsafe {
+        let mut value: u8;
+        core::arch::asm!("in al, 0x60", out("al") value, options(nomem, nostack, preserves_flags));
+        value
+    };
 
-    // Send EOI to APIC first
-    crate::apic::end_of_interrupt();
-
-    // Call keyboard callback if registered
+    // Store in buffer (WATOS-style but safe)
     unsafe {
-        let cb_ptr = addr_of!(KEYBOARD_CALLBACK);
-        if let Some(callback) = *cb_ptr {
-            callback();
+        let write_pos = KEY_WRITE_POS;
+        let next_pos = (write_pos + 1) & 31;
+        
+        // Check if buffer is full
+        if next_pos != KEY_READ_POS {
+            KEY_BUFFER[write_pos] = scancode;
+            KEY_WRITE_POS = next_pos;
         }
     }
+
+    // Send EOI to APIC
+    crate::apic::end_of_interrupt();
 }
 
 // Rust handlers
@@ -739,4 +748,26 @@ extern "C" fn handle_timer(current_rsp: u64) -> u64 {
 pub fn ticks() -> u64 {
     use core::ptr::addr_of;
     unsafe { *addr_of!(TIMER_TICKS) }
+}
+
+// ============================================================================
+// WATOS-Style Keyboard Buffer
+// ============================================================================
+
+/// Keyboard buffer (exactly like WATOS)
+pub static mut KEY_BUFFER: [u8; 32] = [0; 32];
+pub static mut KEY_READ_POS: usize = 0;
+pub static mut KEY_WRITE_POS: usize = 0;
+
+/// Get a scancode from keyboard buffer (exactly like WATOS)
+pub fn get_scancode() -> Option<u8> {
+    unsafe {
+        if KEY_READ_POS != KEY_WRITE_POS {
+            let scancode = KEY_BUFFER[KEY_READ_POS];
+            KEY_READ_POS = (KEY_READ_POS + 1) & 31;
+            Some(scancode)
+        } else {
+            None
+        }
+    }
 }
