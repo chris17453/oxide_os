@@ -8,6 +8,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+use alloc::format;
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::ptr;
@@ -17,11 +18,13 @@ use boot_proto::{
     BOOT_INFO_MAGIC, MAX_MEMORY_REGIONS, KERNEL_VIRT_BASE, PHYS_MAP_BASE,
 };
 use uefi::prelude::*;
-use uefi::proto::console::gop::GraphicsOutput;
+use uefi::proto::console::gop::{GraphicsOutput, BltOp, BltPixel};
+use uefi::proto::console::text::{Key, ScanCode};
 use uefi::proto::media::file::{File, FileAttribute, FileInfo, FileMode, FileType};
 use uefi::proto::media::fs::SimpleFileSystem;
 use uefi::table::boot::{AllocateType, MemoryType as UefiMemoryType};
 use uefi::mem::memory_map::MemoryMap;
+use uefi::{Char16};
 
 mod elf;
 mod paging;
@@ -35,14 +38,55 @@ const INITRAMFS_PATH: &str = "\\EFI\\OXIDE\\initramfs.cpio";
 /// Page size
 const PAGE_SIZE: u64 = 4096;
 
+/// Boot screen timeout in seconds
+const BOOT_TIMEOUT_SECONDS: u8 = 15;
+
+/// Boot display modes
+#[derive(Clone, Copy, PartialEq)]
+enum DisplayMode {
+    Graphical,
+    Ascii,
+    Text,  // Traditional text-only
+}
+
+/// Boot configuration
+struct BootConfig {
+    display_mode: DisplayMode,
+    timeout_seconds: u8,
+}
+
 #[entry]
 fn main() -> Status {
     // Initialize UEFI services
     uefi::helpers::init().expect("Failed to initialize UEFI helpers");
 
-    // Clear screen and display logo
+    // Default boot configuration
+    let mut config = BootConfig {
+        display_mode: DisplayMode::Graphical,
+        timeout_seconds: BOOT_TIMEOUT_SECONDS,
+    };
+
+    // Show interactive boot screen and handle user input
+    config = show_boot_screen(config);
+    
+    // Clear screen for boot process
     clear_screen();
-    display_logo();
+    
+    // Display logo based on selected mode
+    match config.display_mode {
+        DisplayMode::Graphical => {
+            if !display_graphical_logo() {
+                // Fallback to ASCII if graphics not available
+                display_ascii_logo();
+            }
+        }
+        DisplayMode::Ascii => display_ascii_logo(),
+        DisplayMode::Text => {
+            // Skip logo, go straight to text boot
+            log("OXIDE UEFI Bootloader - Text Mode");
+            log("=====================================");
+        }
+    }
     
     // Initialize progress tracking
     let total_steps = 12;
@@ -164,8 +208,225 @@ fn clear_screen() {
     }
 }
 
-/// Display the OXIDE OS logo
-fn display_logo() {
+/// Show interactive boot screen with user options
+fn show_boot_screen(mut config: BootConfig) -> BootConfig {
+    clear_screen();
+    
+    // Display boot options screen
+    log("");
+    log("        ██████╗ ██╗  ██╗██╗██████╗ ███████╗");
+    log("       ██╔═══██╗╚██╗██╔╝██║██╔══██╗██╔════╝");
+    log("       ██║   ██║ ╚███╔╝ ██║██║  ██║█████╗  ");
+    log("       ██║   ██║ ██╔██╗ ██║██║  ██║██╔══╝  ");
+    log("       ╚██████╔╝██╔╝ ██╗██║██████╔╝███████╗");
+    log("        ╚═════╝ ╚═╝  ╚═╝╚═╝╚═════╝ ╚══════╝");
+    log("");
+    log("            Operating System - Version 0.1.0");
+    log("");
+    log("═══════════════════════════════════════════════════");
+    // Use format! to include dynamic timeout
+    let timeout_msg = format!("  Boot Options - Press key within {} seconds:", config.timeout_seconds);
+    log(&timeout_msg);
+    log("═══════════════════════════════════════════════════");
+    log("");
+    
+    match config.display_mode {
+        DisplayMode::Graphical => log("  Current Mode: [GRAPHICAL] ASCII  TEXT"),
+        DisplayMode::Ascii => log("  Current Mode:  GRAPHICAL [ASCII]  TEXT"),
+        DisplayMode::Text => log("  Current Mode:  GRAPHICAL  ASCII [TEXT]"),
+    }
+    log("");
+    log("  [TAB]   - Cycle display modes");
+    log("  [ESC]   - Skip to text mode");
+    log("  [ENTER] - Continue with current mode");
+    log("");
+    
+    // Wait for user input with timeout
+    let start_time = get_time_ms();
+    let timeout_ms = config.timeout_seconds as u64 * 1000;
+    
+    loop {
+        // Check for timeout
+        if get_time_ms() - start_time > timeout_ms {
+            break;
+        }
+        
+        // Check for key input
+        if let Some(key) = check_key_press() {
+            match key {
+                Key::Special(ScanCode::ESCAPE) => {
+                    config.display_mode = DisplayMode::Text;
+                    break;
+                }
+                Key::Printable(c) if c == Char16::try_from('\t').unwrap_or(Char16::try_from(' ').unwrap()) => {
+                    config.display_mode = match config.display_mode {
+                        DisplayMode::Graphical => DisplayMode::Ascii,
+                        DisplayMode::Ascii => DisplayMode::Text,
+                        DisplayMode::Text => DisplayMode::Graphical,
+                    };
+                    // Refresh display
+                    return show_boot_screen(config);
+                }
+                Key::Printable(c) if c == Char16::try_from('\r').unwrap_or(Char16::try_from(' ').unwrap()) || c == Char16::try_from('\n').unwrap_or(Char16::try_from(' ').unwrap()) => {
+                    break;
+                }
+                _ => {}
+            }
+        }
+        
+        // Small delay to prevent busy waiting
+        spin_wait_ms(50);
+    }
+    
+    config
+}
+
+/// Display graphical logo (if graphics available)
+fn display_graphical_logo() -> bool {
+    // Try to get graphics output protocol
+    let st = match uefi::table::system_table_boot() {
+        Some(st) => st,
+        None => return false,
+    };
+    let bs = st.boot_services();
+    
+    // Get graphics output protocol
+    let gop_handle = match bs.get_handle_for_protocol::<GraphicsOutput>() {
+        Ok(handle) => handle,
+        Err(_) => return false,
+    };
+    
+    let mut gop = match bs.open_protocol_exclusive::<GraphicsOutput>(gop_handle) {
+        Ok(gop) => gop,
+        Err(_) => return false,
+    };
+    
+    let mode = gop.current_mode_info();
+    let (width, height) = mode.resolution();
+    
+    // Draw a simple graphical logo
+    draw_oxide_logo(&mut *gop, width, height);
+    
+    // Display text information
+    log("");
+    log("            Operating System - Version 0.1.0");
+    log("              UEFI Bootloader Starting...");
+    log("");
+    
+    true
+}
+
+/// Draw the OXIDE logo graphically
+fn draw_oxide_logo(gop: &mut GraphicsOutput, width: usize, height: usize) {
+    let logo_width = 400;
+    let logo_height = 200;
+    let start_x = (width - logo_width) / 2;
+    let start_y = (height - logo_height) / 2;
+    
+    // Create a simple geometric logo
+    let oxide_color = BltPixel::new(0, 150, 255); // Blue
+    let bg_color = BltPixel::new(20, 20, 20);     // Dark background
+    
+    // Draw background rectangle
+    for y in start_y..start_y + logo_height {
+        for x in start_x..start_x + logo_width {
+            let _ = gop.blt(BltOp::VideoFill {
+                color: bg_color,
+                dest: (x, y),
+                dims: (1, 1),
+            });
+        }
+    }
+    
+    // Draw OXIDE text pattern (simplified geometric representation)
+    // This is a basic implementation - in a real system you'd use proper font rendering
+    draw_letter_o(gop, start_x + 50, start_y + 60, oxide_color);
+    draw_letter_x(gop, start_x + 120, start_y + 60, oxide_color);
+    draw_letter_i(gop, start_x + 190, start_y + 60, oxide_color);
+    draw_letter_d(gop, start_x + 230, start_y + 60, oxide_color);
+    draw_letter_e(gop, start_x + 300, start_y + 60, oxide_color);
+}
+
+/// Draw letter shapes (simplified geometric versions)
+fn draw_letter_o(gop: &mut GraphicsOutput, x: usize, y: usize, color: BltPixel) {
+    // Draw a circle-like shape for 'O'
+    for dy in 0..60 {
+        for dx in 0..40 {
+            if (dx == 0 || dx == 39 || dy == 0 || dy == 59) ||
+               (dx > 5 && dx < 35 && (dy < 8 || dy > 52)) {
+                let _ = gop.blt(BltOp::VideoFill {
+                    color,
+                    dest: (x + dx, y + dy),
+                    dims: (1, 1),
+                });
+            }
+        }
+    }
+}
+
+fn draw_letter_x(gop: &mut GraphicsOutput, x: usize, y: usize, color: BltPixel) {
+    // Draw an X shape
+    for dy in 0..60 {
+        for dx in 0..40 {
+            if dx == dy * 40 / 60 || dx == 40 - dy * 40 / 60 {
+                let _ = gop.blt(BltOp::VideoFill {
+                    color,
+                    dest: (x + dx, y + dy),
+                    dims: (2, 2),
+                });
+            }
+        }
+    }
+}
+
+fn draw_letter_i(gop: &mut GraphicsOutput, x: usize, y: usize, color: BltPixel) {
+    // Draw an I shape
+    for dy in 0..60 {
+        for dx in 0..20 {
+            if dx > 6 && dx < 14 {
+                let _ = gop.blt(BltOp::VideoFill {
+                    color,
+                    dest: (x + dx, y + dy),
+                    dims: (1, 1),
+                });
+            }
+        }
+    }
+}
+
+fn draw_letter_d(gop: &mut GraphicsOutput, x: usize, y: usize, color: BltPixel) {
+    // Draw a D shape
+    for dy in 0..60 {
+        for dx in 0..40 {
+            if dx == 0 || (dx > 20 && ((dy < 8 && dx < 35) || (dy > 52 && dx < 35) || 
+                                      (dy >= 8 && dy <= 52 && dx == 35))) {
+                let _ = gop.blt(BltOp::VideoFill {
+                    color,
+                    dest: (x + dx, y + dy),
+                    dims: (1, 1),
+                });
+            }
+        }
+    }
+}
+
+fn draw_letter_e(gop: &mut GraphicsOutput, x: usize, y: usize, color: BltPixel) {
+    // Draw an E shape
+    for dy in 0..60 {
+        for dx in 0..35 {
+            if dx == 0 || dy == 0 || dy == 30 || dy == 59 {
+                let _ = gop.blt(BltOp::VideoFill {
+                    color,
+                    dest: (x + dx, y + dy),
+                    dims: (1, 1),
+                });
+            }
+        }
+    }
+}
+
+/// Display ASCII logo
+fn display_ascii_logo() {
     log("");
     log("        ██████╗ ██╗  ██╗██╗██████╗ ███████╗");
     log("       ██╔═══██╗╚██╗██╔╝██║██╔══██╗██╔════╝");
@@ -212,6 +473,38 @@ fn display_progress(current: usize, total: usize, message: &str) {
 fn update_progress(step: &mut usize, total: usize, message: &str) {
     *step += 1;
     display_progress(*step, total, message);
+}
+
+/// Check for key press without blocking
+fn check_key_press() -> Option<Key> {
+    let mut st = uefi::table::system_table_boot()?;
+    let stdin = st.stdin();
+    
+    // Check if a key is available
+    match stdin.read_key() {
+        Ok(Some(key)) => Some(key),
+        _ => None,
+    }
+}
+
+/// Get current time in milliseconds (simplified)
+fn get_time_ms() -> u64 {
+    // UEFI doesn't have a simple millisecond timer, so we'll use a simple counter
+    // In a real implementation, you'd use UEFI time services
+    static mut TIME_COUNTER: u64 = 0;
+    unsafe {
+        TIME_COUNTER += 1;
+        TIME_COUNTER * 10 // Approximate milliseconds
+    }
+}
+
+/// Spin wait for specified milliseconds
+fn spin_wait_ms(ms: u64) {
+    let start = get_time_ms();
+    while get_time_ms() - start < ms {
+        // Busy wait - in real UEFI you'd use proper delays
+        unsafe { core::arch::asm!("pause") };
+    }
 }
 
 /// Load the kernel file from the EFI system partition
