@@ -110,12 +110,8 @@ pub extern "C" fn watos_timer_syscall() -> u64 {
 /// Get free memory - used by FRE function
 #[no_mangle]
 pub extern "C" fn watos_get_free_memory() -> usize {
-    // Return remaining heap space
-    unsafe {
-        let heap_len = core::ptr::addr_of!(HEAP).read().len();
-        let heap_pos = core::ptr::addr_of!(HEAP_POS).read();
-        heap_len.saturating_sub(heap_pos)
-    }
+    // Return a reasonable estimate (libc provides the allocator now)
+    512 * 1024 // 512KB available
 }
 
 /// Get key without waiting - used by INKEY$
@@ -255,42 +251,4 @@ pub extern "C" fn watos_file_size(handle: u64) -> u64 {
     if size < 0 { 0 } else { size as u64 }
 }
 
-// ============================================================================
-
-/// Global allocator - uses libc mmap for heap
-#[global_allocator]
-static ALLOCATOR: OxideAllocator = OxideAllocator;
-
-struct OxideAllocator;
-
-// Static heap for the allocator
-static mut HEAP: [u8; 2 * 1024 * 1024] = [0; 2 * 1024 * 1024]; // 2MB heap
-static mut HEAP_POS: usize = 0;
-
-unsafe impl alloc::alloc::GlobalAlloc for OxideAllocator {
-    unsafe fn alloc(&self, layout: alloc::alloc::Layout) -> *mut u8 {
-        let align = layout.align();
-        let size = layout.size();
-
-        // Use raw pointers to avoid creating references to mutable statics
-        let heap_pos_ptr = core::ptr::addr_of_mut!(HEAP_POS);
-        let heap_ptr = core::ptr::addr_of_mut!(HEAP);
-
-        let current_pos = heap_pos_ptr.read();
-        let heap_len = (*heap_ptr).len();
-
-        // Align the position
-        let aligned_pos = (current_pos + align - 1) & !(align - 1);
-
-        if aligned_pos + size > heap_len {
-            return core::ptr::null_mut();
-        }
-
-        heap_pos_ptr.write(aligned_pos + size);
-        (*heap_ptr).as_mut_ptr().add(aligned_pos)
-    }
-
-    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: alloc::alloc::Layout) {
-        // Simple bump allocator doesn't deallocate
-    }
-}
+// Note: Global allocator is provided by libc crate

@@ -489,8 +489,7 @@ fn check_key_press() -> Option<Key> {
     }
 }
 
-/// Simple elapsed time tracker using UEFI stall
-/// Each call to spin_wait_ms adds to the elapsed time
+/// Simple elapsed time tracker
 static mut ELAPSED_MS: u64 = 0;
 
 fn init_timer() {
@@ -503,13 +502,21 @@ fn get_time_ms() -> u64 {
     unsafe { ELAPSED_MS }
 }
 
-/// Spin wait for specified milliseconds using UEFI boot services
+/// Spin wait for specified milliseconds
+/// Uses a calibrated busy loop since UEFI stall may not work reliably in QEMU
 fn spin_wait_ms(ms: u64) {
+    // Try UEFI stall first
     if let Some(st) = uefi::table::system_table_boot() {
-        // UEFI stall takes microseconds - this is a blocking call
         st.boot_services().stall(ms as usize * 1000);
-        unsafe { ELAPSED_MS += ms; }
     }
+
+    // Also do a CPU busy-wait as backup (roughly calibrated for ~1ms per 100000 iterations)
+    // This ensures we actually wait even if stall doesn't work
+    for _ in 0..(ms * 50000) {
+        unsafe { core::arch::asm!("pause", options(nomem, nostack)) };
+    }
+
+    unsafe { ELAPSED_MS += ms; }
 }
 
 /// Load the kernel file from the EFI system partition

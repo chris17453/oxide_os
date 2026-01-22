@@ -19,34 +19,63 @@ const MAX_PATH: usize = 4096;
 
 /// Resolve a path against the current process's working directory
 ///
-/// If path is absolute (starts with /), returns it as-is.
-/// If relative, prepends the process's cwd.
+/// If path is absolute (starts with /), normalizes and returns it.
+/// If relative, prepends the process's cwd and normalizes.
+/// Handles . and .. path components.
 pub fn resolve_path(path: &str) -> String {
-    if path.starts_with('/') {
-        // Absolute path - use as-is
+    let table = process_table();
+    let cwd = match table.current() {
+        Some(p) => {
+            let proc = p.lock();
+            proc.cwd().to_string()
+        }
+        None => String::from("/"),
+    };
+
+    // Build full path
+    let full_path = if path.starts_with('/') {
         String::from(path)
+    } else if cwd == "/" {
+        format!("/{}", path)
     } else {
-        // Relative path - prepend cwd
-        let table = process_table();
-        let cwd = match table.current() {
-            Some(p) => {
-                let proc = p.lock();
-                proc.cwd().to_string()
+        format!("{}/{}", cwd, path)
+    };
+
+    // Normalize the path: handle . and .. components
+    normalize_path(&full_path)
+}
+
+/// Normalize a path by resolving . and .. components
+fn normalize_path(path: &str) -> String {
+    use alloc::vec::Vec;
+
+    let mut components: Vec<&str> = Vec::new();
+
+    for component in path.split('/') {
+        match component {
+            "" | "." => {
+                // Skip empty components and current directory markers
             }
-            None => String::from("/"),
-        };
-
-        // Handle special case of "." and ".."
-        if path == "." {
-            return cwd;
+            ".." => {
+                // Go up one directory (pop last component if any)
+                components.pop();
+            }
+            name => {
+                components.push(name);
+            }
         }
+    }
 
-        // Join cwd and path
-        if cwd == "/" {
-            format!("/{}", path)
-        } else {
-            format!("{}/{}", cwd, path)
+    // Build result path
+    if components.is_empty() {
+        String::from("/")
+    } else {
+        let mut result = String::new();
+        for component in components {
+            result.push('/');
+            result.push_str(component);
         }
+        result
     }
 }
 

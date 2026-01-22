@@ -97,7 +97,23 @@ const KEY_M: usize = 50;
 const KEY_COMMA: usize = 51;
 const KEY_DOT: usize = 52;
 const KEY_SLASH: usize = 53;
+const KEY_KPASTERISK: usize = 55;
 const KEY_SPACE: usize = 57;
+const KEY_KP7: usize = 71;
+const KEY_KP8: usize = 72;
+const KEY_KP9: usize = 73;
+const KEY_KPMINUS: usize = 74;
+const KEY_KP4: usize = 75;
+const KEY_KP5: usize = 76;
+const KEY_KP6: usize = 77;
+const KEY_KPPLUS: usize = 78;
+const KEY_KP1: usize = 79;
+const KEY_KP2: usize = 80;
+const KEY_KP3: usize = 81;
+const KEY_KP0: usize = 82;
+const KEY_KPDOT: usize = 83;
+const KEY_KPENTER: usize = 96;
+const KEY_KPSLASH: usize = 98;
 
 /// Helper macro to create a character map array
 macro_rules! charmap {
@@ -129,7 +145,16 @@ static US_NORMAL: [char; 128] = charmap! {
     KEY_Z => 'z', KEY_X => 'x', KEY_C => 'c', KEY_V => 'v', KEY_B => 'b',
     KEY_N => 'n', KEY_M => 'm',
     KEY_COMMA => ',', KEY_DOT => '.', KEY_SLASH => '/',
+    KEY_KPASTERISK => '*',
     KEY_SPACE => ' ',
+    KEY_KP7 => '7', KEY_KP8 => '8', KEY_KP9 => '9',
+    KEY_KPMINUS => '-',
+    KEY_KP4 => '4', KEY_KP5 => '5', KEY_KP6 => '6',
+    KEY_KPPLUS => '+',
+    KEY_KP1 => '1', KEY_KP2 => '2', KEY_KP3 => '3',
+    KEY_KP0 => '0', KEY_KPDOT => '.',
+    KEY_KPENTER => '\n',
+    KEY_KPSLASH => '/',
 };
 
 static US_SHIFT: [char; 128] = charmap! {
@@ -149,7 +174,16 @@ static US_SHIFT: [char; 128] = charmap! {
     KEY_Z => 'Z', KEY_X => 'X', KEY_C => 'C', KEY_V => 'V', KEY_B => 'B',
     KEY_N => 'N', KEY_M => 'M',
     KEY_COMMA => '<', KEY_DOT => '>', KEY_SLASH => '?',
+    KEY_KPASTERISK => '*',
     KEY_SPACE => ' ',
+    KEY_KP7 => '7', KEY_KP8 => '8', KEY_KP9 => '9',
+    KEY_KPMINUS => '-',
+    KEY_KP4 => '4', KEY_KP5 => '5', KEY_KP6 => '6',
+    KEY_KPPLUS => '+',
+    KEY_KP1 => '1', KEY_KP2 => '2', KEY_KP3 => '3',
+    KEY_KP0 => '0', KEY_KPDOT => '.',
+    KEY_KPENTER => '\n',
+    KEY_KPSLASH => '/',
 };
 
 static US_ALTGR: [char; 128] = ['\0'; 128];  // US has no AltGr mappings

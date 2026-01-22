@@ -646,9 +646,70 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
         arch::X86_64::halt();
     }
 
-    let user_stack_top = VirtAddr::new(user_stack_base.as_u64() + (user_stack_pages * 4096) as u64);
+    let user_stack_end = VirtAddr::new(user_stack_base.as_u64() + (user_stack_pages * 4096) as u64);
     let _ = writeln!(writer, "[USER] User stack: {:#x} - {:#x}",
-        user_stack_base.as_u64(), user_stack_top.as_u64());
+        user_stack_base.as_u64(), user_stack_end.as_u64());
+
+    // Set up argc/argv for init on the stack
+    // Stack layout (growing down from top):
+    //   [string]     - "/bin/init\0"
+    //   [padding]
+    //   [NULL]       - envp terminator
+    //   [NULL]       - argv terminator
+    //   [argv[0]]    - pointer to "/bin/init"
+    //   [argc]       <- RSP points here
+    let init_path = b"/bin/init\0";
+    let mut stack_ptr = user_stack_end.as_u64();
+
+    // Write string "/bin/init\0" near top of stack
+    stack_ptr -= init_path.len() as u64;
+    stack_ptr &= !0xF; // 16-byte align
+    let string_addr = stack_ptr;
+
+    // Write string to stack
+    {
+        let page_vaddr = VirtAddr::new(string_addr & !0xFFF);
+        let page_offset = (string_addr & 0xFFF) as usize;
+        let phys = user_space.translate(page_vaddr).expect("Stack page not mapped");
+        let dest_virt = phys_to_virt(phys);
+        unsafe {
+            let dest = dest_virt.as_mut_ptr::<u8>().add(page_offset);
+            core::ptr::copy_nonoverlapping(init_path.as_ptr(), dest, init_path.len());
+        }
+    }
+
+    // Space for: argc, argv[0], argv[1]=NULL, envp[0]=NULL (4 * 8 = 32 bytes)
+    stack_ptr -= 32;
+    stack_ptr &= !0xF;
+    let final_rsp = stack_ptr;
+
+    // Helper to write a u64 to the user stack
+    let write_u64 = |addr: u64, value: u64| {
+        let page_vaddr = VirtAddr::new(addr & !0xFFF);
+        let page_offset = (addr & 0xFFF) as usize;
+        let phys = user_space.translate(page_vaddr).expect("Stack page not mapped");
+        let dest_virt = phys_to_virt(phys);
+        unsafe {
+            let dest = dest_virt.as_mut_ptr::<u8>().add(page_offset) as *mut u64;
+            *dest = value;
+        }
+    };
+
+    // Write argc = 1
+    write_u64(stack_ptr, 1);
+    stack_ptr += 8;
+    // Write argv[0] = pointer to string
+    write_u64(stack_ptr, string_addr);
+    stack_ptr += 8;
+    // Write argv[1] = NULL (terminator)
+    write_u64(stack_ptr, 0);
+    stack_ptr += 8;
+    // Write envp[0] = NULL (terminator)
+    write_u64(stack_ptr, 0);
+
+    let user_stack_top = VirtAddr::new(final_rsp);
+    let _ = writeln!(writer, "[USER] Init stack set up: argc=1 argv={:#x} rsp={:#x}",
+        string_addr, final_rsp);
 
     // Allocate kernel stack for syscalls and interrupts
     let _ = writeln!(writer, "[USER] Allocating kernel stack...");
