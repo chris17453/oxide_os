@@ -1,6 +1,6 @@
 //! V86 mode monitor
 
-use crate::{V86Action, V86Context, V86Error, EmulatedOp};
+use crate::{EmulatedOp, V86Action, V86Context, V86Error};
 
 /// V86 monitor for handling GPFs and privileged operations
 pub struct V86Monitor {
@@ -149,7 +149,7 @@ impl V86Monitor {
                     Ok(V86Action::Emulate(EmulatedOp::Out {
                         port,
                         size: 1,
-                        value: ctx.regs.al() as u32
+                        value: ctx.regs.al() as u32,
                     }))
                 } else {
                     Err(V86Error::IoNotAllowed)
@@ -167,7 +167,7 @@ impl V86Monitor {
                     Ok(V86Action::Emulate(EmulatedOp::Out {
                         port,
                         size: 2,
-                        value: ctx.regs.ax() as u32
+                        value: ctx.regs.ax() as u32,
                     }))
                 } else {
                     Err(V86Error::IoNotAllowed)
@@ -215,7 +215,7 @@ impl V86Monitor {
                     Ok(V86Action::Emulate(EmulatedOp::Out {
                         port,
                         size: 1,
-                        value: ctx.regs.al() as u32
+                        value: ctx.regs.al() as u32,
                     }))
                 } else {
                     Err(V86Error::IoNotAllowed)
@@ -233,7 +233,7 @@ impl V86Monitor {
                     Ok(V86Action::Emulate(EmulatedOp::Out {
                         port,
                         size: 2,
-                        value: ctx.regs.ax() as u32
+                        value: ctx.regs.ax() as u32,
                     }))
                 } else {
                     Err(V86Error::IoNotAllowed)

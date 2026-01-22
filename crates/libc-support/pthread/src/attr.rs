@@ -2,7 +2,7 @@
 
 use core::ffi::c_int;
 
-use crate::{ESUCCESS, EINVAL, PTHREAD_CREATE_JOINABLE, PTHREAD_CREATE_DETACHED};
+use crate::{EINVAL, ESUCCESS, PTHREAD_CREATE_DETACHED, PTHREAD_CREATE_JOINABLE};
 
 /// Default stack size (2MB)
 const DEFAULT_STACK_SIZE: usize = 2 * 1024 * 1024;
@@ -71,7 +71,10 @@ pub unsafe extern "C" fn pthread_attr_destroy(attr: *mut pthread_attr_t) -> c_in
 
 /// Set detach state
 #[no_mangle]
-pub unsafe extern "C" fn pthread_attr_setdetachstate(attr: *mut pthread_attr_t, detachstate: c_int) -> c_int {
+pub unsafe extern "C" fn pthread_attr_setdetachstate(
+    attr: *mut pthread_attr_t,
+    detachstate: c_int,
+) -> c_int {
     if attr.is_null() {
         return EINVAL;
     }
@@ -86,7 +89,10 @@ pub unsafe extern "C" fn pthread_attr_setdetachstate(attr: *mut pthread_attr_t, 
 
 /// Get detach state
 #[no_mangle]
-pub unsafe extern "C" fn pthread_attr_getdetachstate(attr: *const pthread_attr_t, detachstate: *mut c_int) -> c_int {
+pub unsafe extern "C" fn pthread_attr_getdetachstate(
+    attr: *const pthread_attr_t,
+    detachstate: *mut c_int,
+) -> c_int {
     if attr.is_null() || detachstate.is_null() {
         return EINVAL;
     }
@@ -96,7 +102,10 @@ pub unsafe extern "C" fn pthread_attr_getdetachstate(attr: *const pthread_attr_t
 
 /// Set stack size
 #[no_mangle]
-pub unsafe extern "C" fn pthread_attr_setstacksize(attr: *mut pthread_attr_t, stacksize: usize) -> c_int {
+pub unsafe extern "C" fn pthread_attr_setstacksize(
+    attr: *mut pthread_attr_t,
+    stacksize: usize,
+) -> c_int {
     if attr.is_null() {
         return EINVAL;
     }
@@ -109,7 +118,10 @@ pub unsafe extern "C" fn pthread_attr_setstacksize(attr: *mut pthread_attr_t, st
 
 /// Get stack size
 #[no_mangle]
-pub unsafe extern "C" fn pthread_attr_getstacksize(attr: *const pthread_attr_t, stacksize: *mut usize) -> c_int {
+pub unsafe extern "C" fn pthread_attr_getstacksize(
+    attr: *const pthread_attr_t,
+    stacksize: *mut usize,
+) -> c_int {
     if attr.is_null() || stacksize.is_null() {
         return EINVAL;
     }
@@ -119,7 +131,10 @@ pub unsafe extern "C" fn pthread_attr_getstacksize(attr: *const pthread_attr_t, 
 
 /// Set guard size
 #[no_mangle]
-pub unsafe extern "C" fn pthread_attr_setguardsize(attr: *mut pthread_attr_t, guardsize: usize) -> c_int {
+pub unsafe extern "C" fn pthread_attr_setguardsize(
+    attr: *mut pthread_attr_t,
+    guardsize: usize,
+) -> c_int {
     if attr.is_null() {
         return EINVAL;
     }
@@ -129,7 +144,10 @@ pub unsafe extern "C" fn pthread_attr_setguardsize(attr: *mut pthread_attr_t, gu
 
 /// Get guard size
 #[no_mangle]
-pub unsafe extern "C" fn pthread_attr_getguardsize(attr: *const pthread_attr_t, guardsize: *mut usize) -> c_int {
+pub unsafe extern "C" fn pthread_attr_getguardsize(
+    attr: *const pthread_attr_t,
+    guardsize: *mut usize,
+) -> c_int {
     if attr.is_null() || guardsize.is_null() {
         return EINVAL;
     }
@@ -139,7 +157,11 @@ pub unsafe extern "C" fn pthread_attr_getguardsize(attr: *const pthread_attr_t, 
 
 /// Set stack
 #[no_mangle]
-pub unsafe extern "C" fn pthread_attr_setstack(attr: *mut pthread_attr_t, stackaddr: *mut u8, stacksize: usize) -> c_int {
+pub unsafe extern "C" fn pthread_attr_setstack(
+    attr: *mut pthread_attr_t,
+    stackaddr: *mut u8,
+    stacksize: usize,
+) -> c_int {
     if attr.is_null() {
         return EINVAL;
     }
@@ -153,7 +175,11 @@ pub unsafe extern "C" fn pthread_attr_setstack(attr: *mut pthread_attr_t, stacka
 
 /// Get stack
 #[no_mangle]
-pub unsafe extern "C" fn pthread_attr_getstack(attr: *const pthread_attr_t, stackaddr: *mut *mut u8, stacksize: *mut usize) -> c_int {
+pub unsafe extern "C" fn pthread_attr_getstack(
+    attr: *const pthread_attr_t,
+    stackaddr: *mut *mut u8,
+    stacksize: *mut usize,
+) -> c_int {
     if attr.is_null() || stackaddr.is_null() || stacksize.is_null() {
         return EINVAL;
     }
@@ -164,7 +190,10 @@ pub unsafe extern "C" fn pthread_attr_getstack(attr: *const pthread_attr_t, stac
 
 /// Set scheduling policy
 #[no_mangle]
-pub unsafe extern "C" fn pthread_attr_setschedpolicy(attr: *mut pthread_attr_t, policy: c_int) -> c_int {
+pub unsafe extern "C" fn pthread_attr_setschedpolicy(
+    attr: *mut pthread_attr_t,
+    policy: c_int,
+) -> c_int {
     if attr.is_null() {
         return EINVAL;
     }
@@ -174,7 +203,10 @@ pub unsafe extern "C" fn pthread_attr_setschedpolicy(attr: *mut pthread_attr_t, 
 
 /// Get scheduling policy
 #[no_mangle]
-pub unsafe extern "C" fn pthread_attr_getschedpolicy(attr: *const pthread_attr_t, policy: *mut c_int) -> c_int {
+pub unsafe extern "C" fn pthread_attr_getschedpolicy(
+    attr: *const pthread_attr_t,
+    policy: *mut c_int,
+) -> c_int {
     if attr.is_null() || policy.is_null() {
         return EINVAL;
     }

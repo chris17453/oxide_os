@@ -45,8 +45,12 @@ impl ModuleInfo {
     pub fn is_gpl_compatible(&self) -> bool {
         matches!(
             self.license,
-            "GPL" | "GPL v2" | "GPL and additional rights" | "Dual BSD/GPL"
-                | "Dual MIT/GPL" | "Dual MPL/GPL"
+            "GPL"
+                | "GPL v2"
+                | "GPL and additional rights"
+                | "Dual BSD/GPL"
+                | "Dual MIT/GPL"
+                | "Dual MPL/GPL"
         )
     }
 }
@@ -131,15 +135,19 @@ pub fn list_modules() -> Vec<String> {
 /// Get module information by name
 pub fn get_module_info(name: &str) -> Option<(String, ModuleState, usize, usize)> {
     let modules = MODULES.lock();
-    modules.iter().find(|m| m.name == name).map(|m| {
-        (m.version.clone(), m.state, m.base_addr, m.size)
-    })
+    modules
+        .iter()
+        .find(|m| m.name == name)
+        .map(|m| (m.version.clone(), m.state, m.base_addr, m.size))
 }
 
 /// Find which module contains an address
 pub fn find_module_by_addr(addr: usize) -> Option<String> {
     let modules = MODULES.lock();
-    modules.iter().find(|m| m.contains_addr(addr)).map(|m| m.name.clone())
+    modules
+        .iter()
+        .find(|m| m.contains_addr(addr))
+        .map(|m| m.name.clone())
 }
 
 /// Get the number of loaded modules
@@ -150,5 +158,7 @@ pub fn module_count() -> usize {
 /// Check if a module is loaded
 pub fn is_module_loaded(name: &str) -> bool {
     let modules = MODULES.lock();
-    modules.iter().any(|m| m.name == name && m.state == ModuleState::Live)
+    modules
+        .iter()
+        .any(|m| m.name == name && m.state == ModuleState::Live)
 }

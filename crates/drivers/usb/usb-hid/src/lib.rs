@@ -6,36 +6,28 @@
 
 extern crate alloc;
 
-use alloc::sync::Arc;
-use alloc::vec::Vec;
-use alloc::vec;
 use alloc::string::String;
-use spin::Mutex;
-use usb::{UsbDevice, UsbResult, UsbError, UsbClassDriver, TransferDirection};
-use usb::descriptor::TransferType;
+use alloc::sync::Arc;
+use alloc::vec;
+use alloc::vec::Vec;
 use input::{
-    InputEvent, EventType, report_event, register_device_info,
-    InputDeviceInfo, InputDeviceType,
-    KEY_A, KEY_B, KEY_C, KEY_D, KEY_E, KEY_F, KEY_G, KEY_H, KEY_I, KEY_J,
-    KEY_K, KEY_L, KEY_M, KEY_N, KEY_O, KEY_P, KEY_Q, KEY_R, KEY_S, KEY_T,
-    KEY_U, KEY_V, KEY_W, KEY_X, KEY_Y, KEY_Z,
-    KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9, KEY_0,
-    KEY_ENTER, KEY_ESC, KEY_BACKSPACE, KEY_TAB, KEY_SPACE,
-    KEY_MINUS, KEY_EQUAL, KEY_LEFTBRACE, KEY_RIGHTBRACE, KEY_BACKSLASH,
-    KEY_SEMICOLON, KEY_APOSTROPHE, KEY_GRAVE, KEY_COMMA, KEY_DOT, KEY_SLASH,
-    KEY_CAPSLOCK, KEY_F1, KEY_F2, KEY_F3, KEY_F4, KEY_F5, KEY_F6,
-    KEY_F7, KEY_F8, KEY_F9, KEY_F10, KEY_F11, KEY_F12,
-    KEY_SYSRQ, KEY_SCROLLLOCK, KEY_PAUSE, KEY_INSERT, KEY_HOME,
-    KEY_PAGEUP, KEY_DELETE, KEY_END, KEY_PAGEDOWN,
-    KEY_RIGHT, KEY_LEFT, KEY_DOWN, KEY_UP,
-    KEY_NUMLOCK, KEY_KPSLASH, KEY_KPASTERISK, KEY_KPMINUS, KEY_KPPLUS,
-    KEY_KPENTER, KEY_KP1, KEY_KP2, KEY_KP3, KEY_KP4, KEY_KP5,
-    KEY_KP6, KEY_KP7, KEY_KP8, KEY_KP9, KEY_KP0, KEY_KPDOT,
-    KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_LEFTALT, KEY_LEFTMETA,
-    KEY_RIGHTCTRL, KEY_RIGHTSHIFT, KEY_RIGHTALT, KEY_RIGHTMETA,
-    BTN_LEFT, BTN_RIGHT, BTN_MIDDLE,
-    REL_X, REL_Y,
+    BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, EventType, InputDeviceInfo, InputDeviceType, InputEvent,
+    KEY_0, KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9, KEY_A, KEY_APOSTROPHE,
+    KEY_B, KEY_BACKSLASH, KEY_BACKSPACE, KEY_C, KEY_CAPSLOCK, KEY_COMMA, KEY_D, KEY_DELETE,
+    KEY_DOT, KEY_DOWN, KEY_E, KEY_END, KEY_ENTER, KEY_EQUAL, KEY_ESC, KEY_F, KEY_F1, KEY_F2,
+    KEY_F3, KEY_F4, KEY_F5, KEY_F6, KEY_F7, KEY_F8, KEY_F9, KEY_F10, KEY_F11, KEY_F12, KEY_G,
+    KEY_GRAVE, KEY_H, KEY_HOME, KEY_I, KEY_INSERT, KEY_J, KEY_K, KEY_KP0, KEY_KP1, KEY_KP2,
+    KEY_KP3, KEY_KP4, KEY_KP5, KEY_KP6, KEY_KP7, KEY_KP8, KEY_KP9, KEY_KPASTERISK, KEY_KPDOT,
+    KEY_KPENTER, KEY_KPMINUS, KEY_KPPLUS, KEY_KPSLASH, KEY_L, KEY_LEFT, KEY_LEFTALT, KEY_LEFTBRACE,
+    KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTSHIFT, KEY_M, KEY_MINUS, KEY_N, KEY_NUMLOCK, KEY_O, KEY_P,
+    KEY_PAGEDOWN, KEY_PAGEUP, KEY_PAUSE, KEY_Q, KEY_R, KEY_RIGHT, KEY_RIGHTALT, KEY_RIGHTBRACE,
+    KEY_RIGHTCTRL, KEY_RIGHTMETA, KEY_RIGHTSHIFT, KEY_S, KEY_SCROLLLOCK, KEY_SEMICOLON, KEY_SLASH,
+    KEY_SPACE, KEY_SYSRQ, KEY_T, KEY_TAB, KEY_U, KEY_UP, KEY_V, KEY_W, KEY_X, KEY_Y, KEY_Z, REL_X,
+    REL_Y, register_device_info, report_event,
 };
+use spin::Mutex;
+use usb::descriptor::TransferType;
+use usb::{TransferDirection, UsbClassDriver, UsbDevice, UsbError, UsbResult};
 
 /// HID class code
 pub const USB_CLASS_HID: u8 = 0x03;
@@ -374,9 +366,7 @@ impl UsbHid {
                 hid_protocol = interface.interface_protocol;
 
                 for endpoint in &interface.endpoints {
-                    if endpoint.transfer_type() == TransferType::Interrupt
-                        && endpoint.is_in()
-                    {
+                    if endpoint.transfer_type() == TransferType::Interrupt && endpoint.is_in() {
                         interrupt_in = Some(endpoint.endpoint_address);
                         break;
                     }
@@ -482,7 +472,10 @@ impl UsbHid {
     pub fn poll(&self) -> UsbResult<()> {
         let mut buffer = [0u8; 8];
 
-        match self.device.interrupt_transfer(self.interrupt_in, &mut buffer, TransferDirection::In) {
+        match self
+            .device
+            .interrupt_transfer(self.interrupt_in, &mut buffer, TransferDirection::In)
+        {
             Ok(_) => {
                 self.process_input(&buffer);
                 Ok(())

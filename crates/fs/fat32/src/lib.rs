@@ -13,9 +13,7 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use block::BlockDevice;
-use vfs::{
-    DirEntry as VfsDirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType,
-};
+use vfs::{DirEntry as VfsDirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
 mod bpb;
 mod dir;
@@ -60,7 +58,8 @@ impl Fat32 {
         }
 
         // Calculate filesystem parameters
-        let root_dir_sectors = ((bpb.root_entry_count as u32 * 32) + (bpb.bytes_per_sector as u32 - 1))
+        let root_dir_sectors = ((bpb.root_entry_count as u32 * 32)
+            + (bpb.bytes_per_sector as u32 - 1))
             / bpb.bytes_per_sector as u32;
 
         let fat_size = if bpb.fat_size_16 != 0 {
@@ -108,8 +107,8 @@ impl Fat32 {
             return Err(VfsError::InvalidArgument);
         }
 
-        let first_sector = self.first_data_sector
-            + ((cluster - 2) as u64 * self.bpb.sectors_per_cluster as u64);
+        let first_sector =
+            self.first_data_sector + ((cluster - 2) as u64 * self.bpb.sectors_per_cluster as u64);
 
         let sector_size = self.bpb.bytes_per_sector as usize;
         let block_size = self.device.block_size() as usize;
@@ -121,7 +120,9 @@ impl Fat32 {
             let offset_in_block = (sector % sectors_per_block as u64) as usize * sector_size;
 
             let mut block_buf = vec![0u8; block_size];
-            self.device.read(block, &mut block_buf).map_err(|_| VfsError::IoError)?;
+            self.device
+                .read(block, &mut block_buf)
+                .map_err(|_| VfsError::IoError)?;
 
             let dest_offset = i * sector_size;
             buf[dest_offset..dest_offset + sector_size]
@@ -237,8 +238,8 @@ impl VnodeOps for Fat32Vnode {
                 };
 
                 if entry_name.eq_ignore_ascii_case(name) {
-                    let first_cluster = ((entry.first_cluster_hi as u32) << 16)
-                        | entry.first_cluster_lo as u32;
+                    let first_cluster =
+                        ((entry.first_cluster_hi as u32) << 16) | entry.first_cluster_lo as u32;
 
                     return Ok(Arc::new(Fat32Vnode {
                         ino: self.fs.next_ino(),
@@ -282,7 +283,8 @@ impl VnodeOps for Fat32Vnode {
             }
 
             let mut cluster_buf = vec![0u8; cluster_size];
-            self.fs.read_cluster(chain[cluster_index], &mut cluster_buf)?;
+            self.fs
+                .read_cluster(chain[cluster_index], &mut cluster_buf)?;
 
             let to_read = (cluster_size - cluster_offset).min(max_read - bytes_read);
             buf[bytes_read..bytes_read + to_read]
@@ -301,7 +303,11 @@ impl VnodeOps for Fat32Vnode {
 
     fn stat(&self) -> VfsResult<Stat> {
         let vtype = self.vtype();
-        let mode = if self.is_dir { Mode::DEFAULT_DIR } else { Mode::DEFAULT_FILE };
+        let mode = if self.is_dir {
+            Mode::DEFAULT_DIR
+        } else {
+            Mode::DEFAULT_FILE
+        };
         Ok(Stat::new(vtype, mode, self.size, self.ino))
     }
 
@@ -360,8 +366,8 @@ impl VnodeOps for Fat32Vnode {
                         entry.name_83()
                     };
 
-                    let first_cluster = ((entry.first_cluster_hi as u32) << 16)
-                        | entry.first_cluster_lo as u32;
+                    let first_cluster =
+                        ((entry.first_cluster_hi as u32) << 16) | entry.first_cluster_lo as u32;
 
                     let file_type = if entry.is_directory() {
                         VnodeType::Directory

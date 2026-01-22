@@ -81,7 +81,8 @@ impl FileBuffer {
                     last_was_blank = is_blank;
 
                     if self.line_count < MAX_LINES {
-                        self.lines[self.line_count][..current_len].copy_from_slice(&current_line[..current_len]);
+                        self.lines[self.line_count][..current_len]
+                            .copy_from_slice(&current_line[..current_len]);
                         self.line_lens[self.line_count] = current_len;
                         self.line_count += 1;
                     }
@@ -95,7 +96,8 @@ impl FileBuffer {
 
         // Handle last line without newline
         if current_len > 0 && self.line_count < MAX_LINES {
-            self.lines[self.line_count][..current_len].copy_from_slice(&current_line[..current_len]);
+            self.lines[self.line_count][..current_len]
+                .copy_from_slice(&current_line[..current_len]);
             self.line_lens[self.line_count] = current_len;
             self.line_count += 1;
         }
@@ -309,7 +311,13 @@ fn view_buffer(config: &LessConfig, buffer: &FileBuffer, filename: &str) -> i32 
             Action::SearchForward => {
                 last_search_forward = true;
                 if search_len > 0 {
-                    if let Some(found_line) = search_buffer(config, buffer, &search_pattern[..search_len], top_line + 1, true) {
+                    if let Some(found_line) = search_buffer(
+                        config,
+                        buffer,
+                        &search_pattern[..search_len],
+                        top_line + 1,
+                        true,
+                    ) {
                         top_line = found_line;
                     }
                 }
@@ -318,7 +326,13 @@ fn view_buffer(config: &LessConfig, buffer: &FileBuffer, filename: &str) -> i32 
                 last_search_forward = false;
                 if search_len > 0 {
                     if top_line > 0 {
-                        if let Some(found_line) = search_buffer(config, buffer, &search_pattern[..search_len], top_line - 1, false) {
+                        if let Some(found_line) = search_buffer(
+                            config,
+                            buffer,
+                            &search_pattern[..search_len],
+                            top_line - 1,
+                            false,
+                        ) {
                             top_line = found_line;
                         }
                     }
@@ -326,16 +340,38 @@ fn view_buffer(config: &LessConfig, buffer: &FileBuffer, filename: &str) -> i32 
             }
             Action::RepeatSearch => {
                 if search_len > 0 {
-                    let start = if last_search_forward { top_line + 1 } else if top_line > 0 { top_line - 1 } else { 0 };
-                    if let Some(found_line) = search_buffer(config, buffer, &search_pattern[..search_len], start, last_search_forward) {
+                    let start = if last_search_forward {
+                        top_line + 1
+                    } else if top_line > 0 {
+                        top_line - 1
+                    } else {
+                        0
+                    };
+                    if let Some(found_line) = search_buffer(
+                        config,
+                        buffer,
+                        &search_pattern[..search_len],
+                        start,
+                        last_search_forward,
+                    ) {
                         top_line = found_line;
                     }
                 }
             }
             Action::RepeatSearchReverse => {
                 if search_len > 0 {
-                    let start = if last_search_forward && top_line > 0 { top_line - 1 } else { top_line + 1 };
-                    if let Some(found_line) = search_buffer(config, buffer, &search_pattern[..search_len], start, !last_search_forward) {
+                    let start = if last_search_forward && top_line > 0 {
+                        top_line - 1
+                    } else {
+                        top_line + 1
+                    };
+                    if let Some(found_line) = search_buffer(
+                        config,
+                        buffer,
+                        &search_pattern[..search_len],
+                        start,
+                        !last_search_forward,
+                    ) {
                         top_line = found_line;
                     }
                 }
@@ -501,7 +537,13 @@ fn read_search_pattern(tty_fd: i32, pattern: &mut [u8; MAX_SEARCH], len: &mut us
     }
 }
 
-fn search_buffer(config: &LessConfig, buffer: &FileBuffer, pattern: &[u8], start: usize, forward: bool) -> Option<usize> {
+fn search_buffer(
+    config: &LessConfig,
+    buffer: &FileBuffer,
+    pattern: &[u8],
+    start: usize,
+    forward: bool,
+) -> Option<usize> {
     if pattern.is_empty() {
         return None;
     }
@@ -556,11 +598,7 @@ fn line_contains(config: &LessConfig, line: &[u8], pattern: &[u8]) -> bool {
 }
 
 fn to_lower(c: u8) -> u8 {
-    if c >= b'A' && c <= b'Z' {
-        c + 32
-    } else {
-        c
-    }
+    if c >= b'A' && c <= b'Z' { c + 32 } else { c }
 }
 
 fn show_interactive_help() {

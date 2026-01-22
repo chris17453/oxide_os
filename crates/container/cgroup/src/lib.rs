@@ -7,8 +7,8 @@
 extern crate alloc;
 
 pub mod cpu;
-pub mod memory;
 pub mod io;
+pub mod memory;
 pub mod pids;
 
 use alloc::string::String;
@@ -18,8 +18,8 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use spin::{Mutex, RwLock};
 
 pub use cpu::CpuController;
-pub use memory::MemoryController;
 pub use io::IoController;
+pub use memory::MemoryController;
 pub use pids::PidsController;
 
 /// Cgroup error type

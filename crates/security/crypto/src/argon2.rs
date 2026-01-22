@@ -2,8 +2,8 @@
 //!
 //! Memory-hard key derivation function.
 
+use crate::{CryptoError, CryptoResult};
 use alloc::vec::Vec;
-use crate::{CryptoResult, CryptoError};
 
 /// Argon2 parameters
 #[derive(Debug, Clone)]
@@ -30,11 +30,7 @@ impl Default for Argon2Params {
 }
 
 /// Argon2id hash
-pub fn argon2id_hash(
-    password: &[u8],
-    salt: &[u8],
-    params: &Argon2Params,
-) -> CryptoResult<Vec<u8>> {
+pub fn argon2id_hash(password: &[u8], salt: &[u8], params: &Argon2Params) -> CryptoResult<Vec<u8>> {
     if salt.len() < 8 {
         return Err(CryptoError::InvalidInput);
     }

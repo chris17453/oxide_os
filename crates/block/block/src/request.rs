@@ -114,7 +114,9 @@ impl RequestQueue {
             return Err(crate::BlockError::Busy);
         }
 
-        request.id = self.next_id.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        request.id = self
+            .next_id
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         let id = request.id;
         pending.push_back(request);
 

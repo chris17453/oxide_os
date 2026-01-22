@@ -3,13 +3,13 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use hnsw::{HnswIndex, HnswConfig, FileId};
-use embed::{EmbeddingModel, SimpleTfIdfModel, EmbeddingConfig, ContentExtractor, FileType};
+use embed::{ContentExtractor, EmbeddingConfig, EmbeddingModel, FileType, SimpleTfIdfModel};
+use hnsw::{FileId, HnswConfig, HnswIndex};
 
-use crate::{IndexResult, IndexError, IndexConfig};
-use crate::watcher::{FsWatcher, FsEvent, EventKind};
-use crate::queue::{IndexQueue, QueueItem};
 use crate::ipc::{IpcServer, SearchRequest, SearchResponse, SearchResult};
+use crate::queue::{IndexQueue, QueueItem};
+use crate::watcher::{EventKind, FsEvent, FsWatcher};
+use crate::{IndexConfig, IndexError, IndexResult};
 
 /// Main indexing daemon
 pub struct IndexDaemon {
@@ -130,20 +130,20 @@ impl IndexDaemon {
         let content = self.read_file(path)?;
 
         // Detect file type
-        let file_type = FileType::from_extension(
-            path.rsplit('.').next().unwrap_or("")
-        );
+        let file_type = FileType::from_extension(path.rsplit('.').next().unwrap_or(""));
 
         // Extract text content
-        let extracted = ContentExtractor::extract(&content, file_type)
-            .map_err(|_| IndexError::EmbedError)?;
+        let extracted =
+            ContentExtractor::extract(&content, file_type).map_err(|_| IndexError::EmbedError)?;
 
         if extracted.text.is_empty() {
             return Ok(());
         }
 
         // Generate embedding
-        let embedding = self.model.embed(&extracted.text)
+        let embedding = self
+            .model
+            .embed(&extracted.text)
             .map_err(|_| IndexError::EmbedError)?;
 
         // Get or create file ID
@@ -158,7 +158,8 @@ impl IndexDaemon {
         };
 
         // Insert into index
-        self.index.insert(file_id, embedding)
+        self.index
+            .insert(file_id, embedding)
             .map_err(|_| IndexError::IndexError)?;
 
         Ok(())
@@ -182,7 +183,8 @@ impl IndexDaemon {
         let results = self.index.search(&query_embedding, request.limit);
 
         // Convert to response
-        let search_results: Vec<SearchResult> = results.iter()
+        let search_results: Vec<SearchResult> = results
+            .iter()
             .filter_map(|r| {
                 let path = self.id_to_path.get(&r.id)?;
 

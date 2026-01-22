@@ -2,8 +2,8 @@
 //!
 //! Defines SigAction structure for signal handlers.
 
-use bitflags::bitflags;
 use crate::sigset::SigSet;
+use bitflags::bitflags;
 
 /// Signal handler type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -217,28 +217,28 @@ impl SigInfo {
 }
 
 // Signal codes (si_code)
-pub const SI_USER: i32 = 0;      // Sent by kill()
-pub const SI_KERNEL: i32 = 128;  // Sent by kernel
-pub const SI_QUEUE: i32 = -1;    // Sent by sigqueue()
-pub const SI_TIMER: i32 = -2;    // Timer expired
-pub const SI_MESGQ: i32 = -3;    // Message queue state changed
-pub const SI_ASYNCIO: i32 = -4;  // AIO completed
-pub const SI_SIGIO: i32 = -5;    // SIGIO queued
-pub const SI_TKILL: i32 = -6;    // Sent by tkill()
+pub const SI_USER: i32 = 0; // Sent by kill()
+pub const SI_KERNEL: i32 = 128; // Sent by kernel
+pub const SI_QUEUE: i32 = -1; // Sent by sigqueue()
+pub const SI_TIMER: i32 = -2; // Timer expired
+pub const SI_MESGQ: i32 = -3; // Message queue state changed
+pub const SI_ASYNCIO: i32 = -4; // AIO completed
+pub const SI_SIGIO: i32 = -5; // SIGIO queued
+pub const SI_TKILL: i32 = -6; // Sent by tkill()
 
 // SIGCHLD codes
-pub const CLD_EXITED: i32 = 1;    // Child exited
-pub const CLD_KILLED: i32 = 2;    // Child killed by signal
-pub const CLD_DUMPED: i32 = 3;    // Child dumped core
-pub const CLD_TRAPPED: i32 = 4;   // Traced child trapped
-pub const CLD_STOPPED: i32 = 5;   // Child stopped
+pub const CLD_EXITED: i32 = 1; // Child exited
+pub const CLD_KILLED: i32 = 2; // Child killed by signal
+pub const CLD_DUMPED: i32 = 3; // Child dumped core
+pub const CLD_TRAPPED: i32 = 4; // Traced child trapped
+pub const CLD_STOPPED: i32 = 5; // Child stopped
 pub const CLD_CONTINUED: i32 = 6; // Child continued
 
 // SIGSEGV codes
-pub const SEGV_MAPERR: i32 = 1;   // Address not mapped
-pub const SEGV_ACCERR: i32 = 2;   // Invalid permissions
+pub const SEGV_MAPERR: i32 = 1; // Address not mapped
+pub const SEGV_ACCERR: i32 = 2; // Invalid permissions
 
 // SIGBUS codes
-pub const BUS_ADRALN: i32 = 1;    // Invalid address alignment
-pub const BUS_ADRERR: i32 = 2;    // Non-existent physical address
-pub const BUS_OBJERR: i32 = 3;    // Object-specific hardware error
+pub const BUS_ADRALN: i32 = 1; // Invalid address alignment
+pub const BUS_ADRERR: i32 = 2; // Non-existent physical address
+pub const BUS_OBJERR: i32 = 3; // Object-specific hardware error

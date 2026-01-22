@@ -242,7 +242,13 @@ impl TcpConnection {
     }
 
     /// Check if connection matches
-    pub fn matches(&self, remote_ip: Ipv4Addr, remote_port: u16, local_ip: Ipv4Addr, local_port: u16) -> bool {
+    pub fn matches(
+        &self,
+        remote_ip: Ipv4Addr,
+        remote_port: u16,
+        local_ip: Ipv4Addr,
+        local_port: u16,
+    ) -> bool {
         self.remote_ip == remote_ip
             && self.remote_port == remote_port
             && self.local_ip == local_ip
@@ -303,7 +309,8 @@ impl TcpConnection {
             TcpState::Listen => {
                 if header.flags & TcpFlags::SYN != 0 {
                     // Handle incoming SYN
-                    self.rcv_nxt.store(header.seq_num.wrapping_add(1), Ordering::SeqCst);
+                    self.rcv_nxt
+                        .store(header.seq_num.wrapping_add(1), Ordering::SeqCst);
                     *state = TcpState::SynReceived;
                     // Send SYN-ACK
                 }
@@ -312,12 +319,14 @@ impl TcpConnection {
                 if header.flags & TcpFlags::SYN != 0 && header.flags & TcpFlags::ACK != 0 {
                     // SYN-ACK received
                     self.snd_una.store(header.ack_num, Ordering::SeqCst);
-                    self.rcv_nxt.store(header.seq_num.wrapping_add(1), Ordering::SeqCst);
+                    self.rcv_nxt
+                        .store(header.seq_num.wrapping_add(1), Ordering::SeqCst);
                     *state = TcpState::Established;
                     // Send ACK
                 } else if header.flags & TcpFlags::SYN != 0 {
                     // Simultaneous open
-                    self.rcv_nxt.store(header.seq_num.wrapping_add(1), Ordering::SeqCst);
+                    self.rcv_nxt
+                        .store(header.seq_num.wrapping_add(1), Ordering::SeqCst);
                     *state = TcpState::SynReceived;
                     // Send SYN-ACK
                 }

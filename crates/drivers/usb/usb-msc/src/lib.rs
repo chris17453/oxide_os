@@ -7,12 +7,12 @@
 extern crate alloc;
 
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 use alloc::vec;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
 use spin::Mutex;
-use usb::{UsbDevice, UsbResult, UsbError, UsbClassDriver, TransferDirection};
 use usb::descriptor::TransferType;
+use usb::{TransferDirection, UsbClassDriver, UsbDevice, UsbError, UsbResult};
 
 /// Mass storage class code
 pub const USB_CLASS_MASS_STORAGE: u8 = 0x08;
@@ -362,23 +362,26 @@ impl UsbMassStorage {
         let cbw = CommandBlockWrapper::new(tag, data_len, direction_in, lun, command);
         let cbw_bytes = cbw.to_bytes();
         let mut cbw_buf = cbw_bytes;
-        self.device.bulk_transfer(self.bulk_out, &mut cbw_buf, TransferDirection::Out)?;
+        self.device
+            .bulk_transfer(self.bulk_out, &mut cbw_buf, TransferDirection::Out)?;
 
         // Data phase (if any)
         if let Some(buf) = data {
             if direction_in {
-                self.device.bulk_transfer(self.bulk_in, buf, TransferDirection::In)?;
+                self.device
+                    .bulk_transfer(self.bulk_in, buf, TransferDirection::In)?;
             } else {
-                self.device.bulk_transfer(self.bulk_out, buf, TransferDirection::Out)?;
+                self.device
+                    .bulk_transfer(self.bulk_out, buf, TransferDirection::Out)?;
             }
         }
 
         // Receive CSW
         let mut csw_bytes = [0u8; 13];
-        self.device.bulk_transfer(self.bulk_in, &mut csw_bytes, TransferDirection::In)?;
+        self.device
+            .bulk_transfer(self.bulk_in, &mut csw_bytes, TransferDirection::In)?;
 
-        let csw = CommandStatusWrapper::from_bytes(&csw_bytes)
-            .ok_or(UsbError::ProtocolError)?;
+        let csw = CommandStatusWrapper::from_bytes(&csw_bytes).ok_or(UsbError::ProtocolError)?;
 
         if csw.tag != tag {
             return Err(UsbError::ProtocolError);
@@ -423,7 +426,10 @@ impl UsbMassStorage {
         let last_lba = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as u64;
         let block_size = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
 
-        let response = ReadCapacityResponse { last_lba, block_size };
+        let response = ReadCapacityResponse {
+            last_lba,
+            block_size,
+        };
         *self.capacity.lock() = Some(response);
 
         Ok(response)
@@ -434,20 +440,33 @@ impl UsbMassStorage {
         let cmd = [
             scsi::READ_CAPACITY_16,
             0x10, // Service action
-            0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 32, // Allocation length
-            0, 0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            32, // Allocation length
+            0,
+            0,
         ];
         let mut data = [0u8; 32];
         self.execute_command(lun, &cmd, Some(&mut data), true)?;
 
         let last_lba = u64::from_be_bytes([
-            data[0], data[1], data[2], data[3],
-            data[4], data[5], data[6], data[7],
+            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
         ]);
         let block_size = u32::from_be_bytes([data[8], data[9], data[10], data[11]]);
 
-        let response = ReadCapacityResponse { last_lba, block_size };
+        let response = ReadCapacityResponse {
+            last_lba,
+            block_size,
+        };
         *self.capacity.lock() = Some(response);
 
         Ok(response)

@@ -6,15 +6,15 @@
 
 extern crate alloc;
 
-pub mod index;
-pub mod node;
 pub mod distance;
+pub mod index;
 pub mod layer;
+pub mod node;
 
+pub use distance::{cosine_distance, euclidean_distance, Distance};
 pub use index::HnswIndex;
-pub use node::{NodeId, Node};
-pub use distance::{Distance, cosine_distance, euclidean_distance};
 pub use layer::Layer;
+pub use node::{Node, NodeId};
 
 /// File identifier for indexed documents
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -49,7 +49,7 @@ pub struct HnswConfig {
 impl Default for HnswConfig {
     fn default() -> Self {
         Self {
-            dim: 384,          // all-MiniLM-L6-v2 dimension
+            dim: 384, // all-MiniLM-L6-v2 dimension
             m: 16,
             m_max: 32,
             ef_construction: 200,

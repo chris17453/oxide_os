@@ -3,8 +3,8 @@
 //! Tracks signals that have been sent but not yet delivered.
 
 use crate::action::SigInfo;
-use crate::sigset::SigSet;
 use crate::signal::NSIG;
+use crate::sigset::SigSet;
 
 /// A pending signal with optional siginfo
 #[derive(Debug, Clone, Copy)]

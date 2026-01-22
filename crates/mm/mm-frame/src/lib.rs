@@ -8,8 +8,8 @@ mod bitmap;
 
 pub use bitmap::BitmapFrameAllocator;
 
-use os_core::PhysAddr;
 use core::sync::atomic::{AtomicPtr, Ordering};
+use os_core::PhysAddr;
 
 /// Global frame allocator pointer
 static GLOBAL_ALLOCATOR: AtomicPtr<BitmapFrameAllocator> = AtomicPtr::new(core::ptr::null_mut());

@@ -9,10 +9,10 @@ use alloc::sync::Arc;
 use spin::Mutex;
 
 use crate::errno;
+use net::socket::Shutdown;
 use net::{
     IpAddr, Ipv4Addr, NetError, Socket, SocketAddr, SocketDomain, SocketProtocol, SocketType,
 };
-use net::socket::Shutdown;
 
 /// Socket file descriptor offset (to distinguish from file FDs)
 const SOCKET_FD_BASE: i32 = 1000;

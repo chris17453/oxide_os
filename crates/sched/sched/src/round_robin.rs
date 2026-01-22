@@ -108,12 +108,14 @@ impl<C: Context> RoundRobinScheduler<C> {
 
     /// Get the current thread's context pointer (for switching)
     pub fn current_context_ptr(&mut self) -> Option<*mut C> {
-        self.current.map(|idx| self.threads[idx].context_mut() as *mut C)
+        self.current
+            .map(|idx| self.threads[idx].context_mut() as *mut C)
     }
 
     /// Get the next thread's context pointer (for switching)
     pub fn next_context_ptr(&self) -> Option<*const C> {
-        self.current.map(|idx| self.threads[idx].context() as *const C)
+        self.current
+            .map(|idx| self.threads[idx].context() as *const C)
     }
 }
 

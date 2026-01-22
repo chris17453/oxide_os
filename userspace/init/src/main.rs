@@ -22,46 +22,27 @@ fn main() -> i32 {
         eprintlns("Warning: init is not PID 1!");
     }
 
-    // Print startup message
+    // Print startup message (no framebuffer self-test)
     printlns("");
     printlns("OXIDE OS v0.1.0");
+    printlns("[init] Framebuffer test disabled; booting directly");
     printlns("");
 
-    // Run fbtest to test framebuffer
-    printlns("[init] Running framebuffer test...");
-    let fb_child = fork();
-    if fb_child == 0 {
-        let ret = exec("/bin/fbtest");
-        if ret < 0 {
-            eprintlns("[init] Failed to exec fbtest");
-        }
-        _exit(0);
-    } else if fb_child > 0 {
-        // Wait for fbtest to complete
-        let mut status: i32 = 0;
-        wait(&mut status);
-        printlns("[init] Framebuffer test completed");
-    }
-
-    // Spawn a shell directly for now (no getty/login)
-    printlns("[init] Spawning shell...");
-
+    // Spawn getty/login on the primary TTY
+    printlns("[init] Spawning getty/login...");
     let child = fork();
     if child == 0 {
-        // Child process - exec shell
-        let paths = ["/bin/esh", "/bin/sh"];
-        for path in paths.iter() {
-            let ret = exec(path);
-            if ret >= 0 {
-                // exec succeeded, should not return
-                break;
-            }
-        }
-        eprintlns("[init] Failed to exec shell");
+        // Child process - exec getty which launches login
+        exec("/bin/getty");
+        // Fallback to login directly
+        exec("/bin/login");
+        // Last resort: shell
+        exec("/bin/esh");
+        eprintlns("[init] Failed to exec getty/login/shell");
         _exit(1);
     } else if child > 0 {
         // Parent - reap zombies forever
-        printlns("[init] Shell started");
+        printlns("[init] Getty started");
         reap_zombies();
     } else {
         eprintlns("[init] Fork failed");
@@ -94,15 +75,14 @@ fn reap_zombies() -> ! {
                 printlns("");
             }
 
-            // If shell died, spawn a new one
-            printlns("[init] Respawning shell...");
+            // If session died, respawn getty/login
+            printlns("[init] Respawning getty...");
             let child = fork();
             if child == 0 {
-                let paths = ["/bin/esh", "/bin/sh"];
-                for path in paths.iter() {
-                    let _ = exec(path);
-                }
-                eprintlns("[init] Failed to exec shell");
+                let _ = exec("/bin/getty");
+                let _ = exec("/bin/login");
+                let _ = exec("/bin/esh");
+                eprintlns("[init] Failed to exec getty/login/shell");
                 _exit(1);
             }
         }

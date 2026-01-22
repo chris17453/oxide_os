@@ -1,8 +1,8 @@
 //! Bitmap-based frame allocator
 
-use crate::{MemoryRegion, PhysFrame, FRAME_SIZE};
-use os_core::PhysAddr;
+use crate::{FRAME_SIZE, MemoryRegion, PhysFrame};
 use mm_traits::FrameAllocator;
+use os_core::PhysAddr;
 use spin::Mutex;
 
 /// Maximum physical memory we support (4GB for now)

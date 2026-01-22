@@ -7,10 +7,15 @@
 
 use libc::*;
 
+#[unsafe(no_mangle)]
+pub static mut ROOT_PASSWORD: [u8; MAX_INPUT] = [0; MAX_INPUT];
+#[unsafe(no_mangle)]
+pub static mut ROOT_PASSWORD_LEN: usize = 0;
+
 /// Simple password entry (in real system would be in /etc/passwd)
 struct PasswdEntry {
     username: &'static str,
-    password_hash: &'static str,
+    default_password: &'static str,
     uid: u32,
     gid: u32,
     home: &'static str,
@@ -21,7 +26,7 @@ struct PasswdEntry {
 static USERS: &[PasswdEntry] = &[
     PasswdEntry {
         username: "root",
-        password_hash: "", // Empty password for root in testing
+        default_password: "root",
         uid: 0,
         gid: 0,
         home: "/root",
@@ -29,7 +34,7 @@ static USERS: &[PasswdEntry] = &[
     },
     PasswdEntry {
         username: "user",
-        password_hash: "", // Empty password
+        default_password: "user",
         uid: 1000,
         gid: 1000,
         home: "/home/user",
@@ -101,13 +106,143 @@ fn str_eq(a: &[u8], b: &str) -> bool {
 
 /// Verify password (trivial implementation - just checks empty or matching)
 fn verify_password(entry: &PasswdEntry, password: &[u8]) -> bool {
-    // Empty password hash means no password required
-    if entry.password_hash.is_empty() {
-        return true;
+    let expected = load_password(entry.username, entry.default_password);
+    let pw_len = password_len(password);
+    prints("[DEBUG] expected_len=");
+    print_i64(expected.len as i64);
+    if let Ok(s) = core::str::from_utf8(&expected.data[..expected.len]) {
+        prints(" expected=\"");
+        prints(s);
+        prints("\"\n");
+    } else {
+        prints(" expected=<non-utf8>\n");
+    }
+    prints("[DEBUG] input_len=");
+    print_i64(pw_len as i64);
+    if let Ok(s) = core::str::from_utf8(&password[..pw_len]) {
+        prints(" input=\"");
+        prints(s);
+        prints("\"\n");
+    } else {
+        prints(" input=<non-utf8>\n");
+    }
+    if pw_len != expected.len {
+        return false;
+    }
+    for i in 0..pw_len {
+        if password[i] != expected.data[i] {
+            return false;
+        }
+    }
+    true
+}
+
+struct PasswordBuf {
+    data: [u8; MAX_INPUT],
+    len: usize,
+}
+
+/// Load password from /etc/passwd (format: username:password\n).
+/// Falls back to default if file missing or entry not found.
+fn load_password(username: &str, default: &str) -> PasswordBuf {
+    let mut buf = [0u8; MAX_INPUT];
+    let mut len = 0usize;
+
+    // Override for root from in-memory update
+    if username == "root" {
+        unsafe {
+            if ROOT_PASSWORD_LEN > 0 && ROOT_PASSWORD_LEN < MAX_INPUT {
+                len = ROOT_PASSWORD_LEN;
+                buf[..len].copy_from_slice(&ROOT_PASSWORD[..len]);
+                buf[len] = 0;
+                prints("[DEBUG] using in-memory root password override\n");
+                return PasswordBuf { data: buf, len };
+            }
+        }
     }
 
-    // In a real system, this would hash the password and compare
-    str_eq(password, entry.password_hash)
+    // Try to read /etc/passwd
+    let fd = open2("/etc/passwd", O_RDONLY);
+    if fd >= 0 {
+        let mut file = [0u8; 1024];
+        let n = read(fd, &mut file);
+        close(fd);
+        if n > 0 {
+            let total = n as usize;
+            let uname_bytes = username.as_bytes();
+            let mut idx = 0;
+            while idx < total {
+                let start = idx;
+                while idx < total && file[idx] != b'\n' {
+                    idx += 1;
+                }
+                let line_end = idx;
+                if idx < total && file[idx] == b'\n' {
+                    idx += 1;
+                }
+                // Find colon separator
+                let mut colon = line_end;
+                let mut j = start;
+                while j < line_end {
+                    if file[j] == b':' {
+                        colon = j;
+                        break;
+                    }
+                    j += 1;
+                }
+                if colon == line_end {
+                    continue;
+                }
+                let name_len = colon - start;
+                if name_len == uname_bytes.len() && file[start..colon] == *uname_bytes {
+                    prints("[DEBUG] /etc/passwd entry found for user\n");
+                    // Copy password portion up to next colon (passwd fields: user:password:uid:gid:...)
+                    let pw_start = colon + 1;
+                    let mut pw_end = line_end;
+                    let mut p = pw_start;
+                    while p < line_end {
+                        if file[p] == b':' {
+                            pw_end = p;
+                            break;
+                        }
+                        p += 1;
+                    }
+                    let mut k = pw_start;
+                    while k < pw_end && len < buf.len() - 1 {
+                        buf[len] = file[k];
+                        len += 1;
+                        k += 1;
+                    }
+                    buf[len] = 0;
+                    return PasswordBuf { data: buf, len };
+                }
+            }
+        }
+    }
+
+    // Fallback to default
+    prints("[DEBUG] using default password\n");
+    let def_bytes = default.as_bytes();
+    len = def_bytes.len().min(buf.len() - 1);
+    buf[..len].copy_from_slice(&def_bytes[..len]);
+    buf[len] = 0;
+    PasswordBuf { data: buf, len }
+}
+
+fn password_len(buf: &[u8]) -> usize {
+    buf.iter().position(|&c| c == 0).unwrap_or(buf.len())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn login_set_root_password(ptr: *const u8, len: usize) {
+    unsafe {
+        let copy_len = len.min(MAX_INPUT - 1);
+        for i in 0..copy_len {
+            ROOT_PASSWORD[i] = *ptr.add(i);
+        }
+        ROOT_PASSWORD[copy_len] = 0;
+        ROOT_PASSWORD_LEN = copy_len;
+    }
 }
 
 /// Look up user in database
@@ -151,22 +286,22 @@ pub fn main() -> i32 {
             }
         };
 
-        // Prompt for password (if user has one)
-        if !entry.password_hash.is_empty() {
-            prints("Password: ");
-            let mut password = [0u8; MAX_INPUT];
-            read_line(&mut password, false);
-            prints("\n");
+        // Prompt for password
+        prints("Password: ");
+        let mut password = [0u8; MAX_INPUT];
+        let pw_len = read_line(&mut password, false);
+        prints("\n");
 
-            if !verify_password(entry, &password) {
-                prints("Login incorrect\n");
-                attempts += 1;
-                if attempts >= MAX_ATTEMPTS {
-                    prints("Too many failed attempts\n");
-                    return 1;
-                }
-                continue;
+        if pw_len == 0 && load_password(entry.username, entry.default_password).len == 0 {
+            prints("[DEBUG] accepting empty password\n");
+        } else if !verify_password(entry, &password) {
+            prints("Login incorrect\n");
+            attempts += 1;
+            if attempts >= MAX_ATTEMPTS {
+                prints("Too many failed attempts\n");
+                return 1;
             }
+            continue;
         }
 
         // Successful login - print welcome and spawn shell
@@ -183,6 +318,19 @@ pub fn main() -> i32 {
 
         if pid == 0 {
             // Child - exec shell
+            // Set environment for session
+            setenv("HOME", entry.home);
+            setenv("USER", entry.username);
+            setenv("SHELL", entry.shell);
+            setenv("PWD", entry.home);
+
+            // Switch to user's home
+            let _ = chdir(entry.home);
+
+            // Drop privileges to user (best-effort)
+            let _ = setgid(entry.gid);
+            let _ = setuid(entry.uid);
+
             exec(entry.shell);
             prints("Failed to exec shell\n");
             exit(1);

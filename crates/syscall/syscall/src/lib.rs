@@ -6,11 +6,11 @@
 
 extern crate alloc;
 
-pub mod vfs;
 pub mod dir;
+pub mod memory;
 pub mod signal;
 pub mod socket;
-pub mod memory;
+pub mod vfs;
 
 use os_core::VirtAddr;
 use proc::process_table;
@@ -32,7 +32,7 @@ pub mod nr {
     pub const GETPGID: u64 = 10;
     pub const SETSID: u64 = 11;
     pub const GETSID: u64 = 12;
-    pub const EXECVE: u64 = 13;  // exec with argv/envp
+    pub const EXECVE: u64 = 13; // exec with argv/envp
     pub const GETUID: u64 = 14;
     pub const GETGID: u64 = 15;
     pub const GETEUID: u64 = 16;
@@ -41,9 +41,9 @@ pub mod nr {
     pub const SETGID: u64 = 19;
 
     // Thread syscalls
-    pub const CLONE: u64 = 56;       // Create thread/process
-    pub const GETTID: u64 = 186;     // Get thread ID
-    pub const FUTEX: u64 = 202;      // Fast userspace locking
+    pub const CLONE: u64 = 56; // Create thread/process
+    pub const GETTID: u64 = 186; // Get thread ID
+    pub const FUTEX: u64 = 202; // Fast userspace locking
     pub const SET_TID_ADDRESS: u64 = 218; // Set clear_child_tid address
     pub const EXIT_GROUP: u64 = 231; // Exit all threads in group
 
@@ -74,8 +74,8 @@ pub mod nr {
     pub const IOCTL: u64 = 40;
 
     // Keyboard layout syscalls
-    pub const SETKEYMAP: u64 = 120;   // Set keyboard layout
-    pub const GETKEYMAP: u64 = 121;   // Get current keyboard layout name
+    pub const SETKEYMAP: u64 = 120; // Set keyboard layout
+    pub const GETKEYMAP: u64 = 121; // Get current keyboard layout name
 
     // Process priority syscalls
     pub const NICE: u64 = 122;
@@ -135,43 +135,43 @@ pub mod nr {
 
 /// Error codes (negative return values)
 pub mod errno {
-    pub const ENOSYS: i64 = -38;    // Function not implemented
-    pub const EBADF: i64 = -9;      // Bad file descriptor
-    pub const EFAULT: i64 = -14;    // Bad address
-    pub const EINVAL: i64 = -22;    // Invalid argument
-    pub const ENOMEM: i64 = -12;    // Out of memory
-    pub const ESRCH: i64 = -3;      // No such process
-    pub const ECHILD: i64 = -10;    // No child processes
-    pub const EAGAIN: i64 = -11;    // Resource temporarily unavailable
-    pub const EPERM: i64 = -1;      // Operation not permitted
-    pub const ENOENT: i64 = -2;     // No such file or directory
-    pub const EEXIST: i64 = -17;    // File exists
-    pub const ENOTDIR: i64 = -20;   // Not a directory
-    pub const EISDIR: i64 = -21;    // Is a directory
+    pub const ENOSYS: i64 = -38; // Function not implemented
+    pub const EBADF: i64 = -9; // Bad file descriptor
+    pub const EFAULT: i64 = -14; // Bad address
+    pub const EINVAL: i64 = -22; // Invalid argument
+    pub const ENOMEM: i64 = -12; // Out of memory
+    pub const ESRCH: i64 = -3; // No such process
+    pub const ECHILD: i64 = -10; // No child processes
+    pub const EAGAIN: i64 = -11; // Resource temporarily unavailable
+    pub const EPERM: i64 = -1; // Operation not permitted
+    pub const ENOENT: i64 = -2; // No such file or directory
+    pub const EEXIST: i64 = -17; // File exists
+    pub const ENOTDIR: i64 = -20; // Not a directory
+    pub const EISDIR: i64 = -21; // Is a directory
     pub const ENOTEMPTY: i64 = -39; // Directory not empty
-    pub const ENOSPC: i64 = -28;    // No space left on device
-    pub const EROFS: i64 = -30;     // Read-only file system
-    pub const ENOTTY: i64 = -25;    // Not a typewriter (inappropriate ioctl)
-    pub const EINTR: i64 = -4;      // Interrupted system call
-    pub const ERANGE: i64 = -34;    // Result too large
-    pub const EMFILE: i64 = -24;    // Too many open files
-    pub const EIO: i64 = -5;        // I/O error
+    pub const ENOSPC: i64 = -28; // No space left on device
+    pub const EROFS: i64 = -30; // Read-only file system
+    pub const ENOTTY: i64 = -25; // Not a typewriter (inappropriate ioctl)
+    pub const EINTR: i64 = -4; // Interrupted system call
+    pub const ERANGE: i64 = -34; // Result too large
+    pub const EMFILE: i64 = -24; // Too many open files
+    pub const EIO: i64 = -5; // I/O error
 
     // Socket errors
-    pub const ENOTSOCK: i64 = -88;      // Socket operation on non-socket
-    pub const EADDRINUSE: i64 = -98;    // Address already in use
+    pub const ENOTSOCK: i64 = -88; // Socket operation on non-socket
+    pub const EADDRINUSE: i64 = -98; // Address already in use
     pub const EADDRNOTAVAIL: i64 = -99; // Cannot assign requested address
-    pub const ENETUNREACH: i64 = -101;  // Network is unreachable
+    pub const ENETUNREACH: i64 = -101; // Network is unreachable
     pub const ECONNABORTED: i64 = -103; // Connection aborted
-    pub const ECONNRESET: i64 = -104;   // Connection reset by peer
-    pub const ENOBUFS: i64 = -105;      // No buffer space available
-    pub const EISCONN: i64 = -106;      // Transport endpoint is already connected
-    pub const ENOTCONN: i64 = -107;     // Transport endpoint is not connected
-    pub const ETIMEDOUT: i64 = -110;    // Connection timed out
+    pub const ECONNRESET: i64 = -104; // Connection reset by peer
+    pub const ENOBUFS: i64 = -105; // No buffer space available
+    pub const EISCONN: i64 = -106; // Transport endpoint is already connected
+    pub const ENOTCONN: i64 = -107; // Transport endpoint is not connected
+    pub const ETIMEDOUT: i64 = -110; // Connection timed out
     pub const ECONNREFUSED: i64 = -111; // Connection refused
     pub const EHOSTUNREACH: i64 = -113; // No route to host
-    pub const EALREADY: i64 = -114;     // Operation already in progress
-    pub const EINPROGRESS: i64 = -115;  // Operation now in progress
+    pub const EALREADY: i64 = -114; // Operation already in progress
+    pub const EINPROGRESS: i64 = -115; // Operation now in progress
 }
 
 /// Console output callback type
@@ -267,7 +267,12 @@ pub fn dispatch(
         nr::READ => sys_read(arg1 as i32, arg2, arg3 as usize),
         nr::FORK => sys_fork(),
         nr::EXEC => sys_exec(arg1, arg2 as usize, core::ptr::null(), core::ptr::null()),
-        nr::EXECVE => sys_exec(arg1, arg2 as usize, arg3 as *const *const u8, arg4 as *const *const u8),
+        nr::EXECVE => sys_exec(
+            arg1,
+            arg2 as usize,
+            arg3 as *const *const u8,
+            arg4 as *const *const u8,
+        ),
         nr::WAIT => sys_wait(arg1),
         nr::WAITPID => sys_waitpid(arg1 as i32, arg2, arg3 as i32),
         nr::GETPID => sys_getpid(),
@@ -343,7 +348,14 @@ pub fn dispatch(
         nr::SIGRETURN => signal::sys_sigreturn(),
 
         // Memory mapping syscalls
-        nr::MMAP => memory::sys_mmap(arg1, arg2, arg3 as i32, arg4 as i32, arg5 as i32, arg6 as i64),
+        nr::MMAP => memory::sys_mmap(
+            arg1,
+            arg2,
+            arg3 as i32,
+            arg4 as i32,
+            arg5 as i32,
+            arg6 as i64,
+        ),
         nr::MUNMAP => memory::sys_munmap(arg1, arg2),
         nr::MPROTECT => memory::sys_mprotect(arg1, arg2, arg3 as i32),
         nr::MREMAP => memory::sys_mremap(arg1, arg2, arg3, arg4 as i32, arg5),
@@ -364,12 +376,23 @@ pub fn dispatch(
         nr::CONNECT => socket::sys_connect(arg1 as i32, arg2, arg3 as u32),
         nr::SEND => socket::sys_send(arg1 as i32, arg2, arg3 as usize, arg4 as i32),
         nr::RECV => socket::sys_recv(arg1 as i32, arg2, arg3 as usize, arg4 as i32),
-        nr::SENDTO => socket::sys_sendto(arg1 as i32, arg2, arg3 as usize, arg4 as i32, arg5, arg6 as u32),
-        nr::RECVFROM => socket::sys_recvfrom(arg1 as i32, arg2, arg3 as usize, arg4 as i32, arg5, arg6),
+        nr::SENDTO => socket::sys_sendto(
+            arg1 as i32,
+            arg2,
+            arg3 as usize,
+            arg4 as i32,
+            arg5,
+            arg6 as u32,
+        ),
+        nr::RECVFROM => {
+            socket::sys_recvfrom(arg1 as i32, arg2, arg3 as usize, arg4 as i32, arg5, arg6)
+        }
         nr::SHUTDOWN => socket::sys_shutdown(arg1 as i32, arg2 as i32),
         nr::GETSOCKNAME => socket::sys_getsockname(arg1 as i32, arg2, arg3),
         nr::GETPEERNAME => socket::sys_getpeername(arg1 as i32, arg2, arg3),
-        nr::SETSOCKOPT => socket::sys_setsockopt(arg1 as i32, arg2 as i32, arg3 as i32, arg4, arg5 as u32),
+        nr::SETSOCKOPT => {
+            socket::sys_setsockopt(arg1 as i32, arg2 as i32, arg3 as i32, arg4, arg5 as u32)
+        }
         nr::GETSOCKOPT => socket::sys_getsockopt(arg1 as i32, arg2 as i32, arg3 as i32, arg4, arg5),
 
         _ => errno::ENOSYS,
@@ -427,9 +450,7 @@ fn sys_write(fd: i32, buf: u64, count: usize) -> i64 {
 
     // Handle stdout (1) and stderr (2) via console callback
     if fd == 1 || fd == 2 {
-        let buffer = unsafe {
-            core::slice::from_raw_parts(buf as *const u8, count)
-        };
+        let buffer = unsafe { core::slice::from_raw_parts(buf as *const u8, count) };
 
         unsafe {
             let ctx = addr_of!(SYSCALL_CONTEXT);
@@ -477,9 +498,7 @@ fn sys_read(fd: i32, buf: u64, count: usize) -> i64 {
 
     // Handle stdin (0) via console callback
     if fd == 0 {
-        let buffer = unsafe {
-            core::slice::from_raw_parts_mut(buf as *mut u8, count)
-        };
+        let buffer = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, count) };
 
         unsafe {
             let ctx = addr_of!(SYSCALL_CONTEXT);
@@ -641,18 +660,10 @@ fn sys_setpgid(pid: Pid, pgid: Pid) -> i64 {
     let table = process_table();
 
     // Get target PID
-    let target_pid = if pid == 0 {
-        table.current_pid()
-    } else {
-        pid
-    };
+    let target_pid = if pid == 0 { table.current_pid() } else { pid };
 
     // Get target PGID
-    let target_pgid = if pgid == 0 {
-        target_pid
-    } else {
-        pgid
-    };
+    let target_pgid = if pgid == 0 { target_pid } else { pgid };
 
     // Get the process
     if let Some(proc) = table.get(target_pid) {
@@ -670,11 +681,7 @@ fn sys_setpgid(pid: Pid, pgid: Pid) -> i64 {
 fn sys_getpgid(pid: Pid) -> i64 {
     let table = process_table();
 
-    let target_pid = if pid == 0 {
-        table.current_pid()
-    } else {
-        pid
-    };
+    let target_pid = if pid == 0 { table.current_pid() } else { pid };
 
     if let Some(proc) = table.get(target_pid) {
         proc.lock().pgid() as i64
@@ -718,11 +725,7 @@ fn sys_setsid() -> i64 {
 fn sys_getsid(pid: Pid) -> i64 {
     let table = process_table();
 
-    let target_pid = if pid == 0 {
-        table.current_pid()
-    } else {
-        pid
-    };
+    let target_pid = if pid == 0 { table.current_pid() } else { pid };
 
     if let Some(proc) = table.get(target_pid) {
         proc.lock().sid() as i64
@@ -976,9 +979,9 @@ fn sys_setpriority(which: i32, who: i32, prio: i32) -> i64 {
 
 /// Timer constants
 mod timer {
-    pub const ITIMER_REAL: i32 = 0;    // Real time (SIGALRM)
+    pub const ITIMER_REAL: i32 = 0; // Real time (SIGALRM)
     pub const ITIMER_VIRTUAL: i32 = 1; // User time (SIGVTALRM)
-    pub const ITIMER_PROF: i32 = 2;    // User + system time (SIGPROF)
+    pub const ITIMER_PROF: i32 = 2; // User + system time (SIGPROF)
 }
 
 /// sys_alarm - Set an alarm clock for delivery of a signal
@@ -1139,9 +1142,7 @@ fn sys_init_module(image: u64, len: usize, params: u64) -> i64 {
     }
 
     // Get the module data
-    let data = unsafe {
-        core::slice::from_raw_parts(image as *const u8, len)
-    };
+    let data = unsafe { core::slice::from_raw_parts(image as *const u8, len) };
 
     // Get params string (if provided)
     let _params_str = if params != 0 && params < 0x0000_8000_0000_0000 {
@@ -1189,9 +1190,8 @@ fn sys_delete_module(name_ptr: u64, flags: u32) -> i64 {
         }
     }
 
-    let _name = unsafe {
-        core::str::from_utf8_unchecked(core::slice::from_raw_parts(name_ptr, name_len))
-    };
+    let _name =
+        unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(name_ptr, name_len)) };
     let _flags = flags;
 
     // NOTE: In full implementation, this would:
@@ -1260,9 +1260,7 @@ fn sys_getkeymap(buf_ptr: u64, buf_len: usize) -> i64 {
     }
 
     // Copy layout name to user buffer
-    let buf = unsafe {
-        core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len)
-    };
+    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len) };
     buf[..name_bytes.len()].copy_from_slice(name_bytes);
     buf[name_bytes.len()] = 0; // Null terminate
 
@@ -1348,23 +1346,19 @@ fn sys_futex(addr: u64, op: i32, val: u32, timeout: u64, _addr2: u64, _val3: u32
     let op_masked = op & !futex_op::FUTEX_PRIVATE_FLAG;
 
     match op_masked {
-        futex_op::FUTEX_WAIT => {
-            match proc::futex_wait(addr, val, timeout) {
-                Ok(()) => 0,
-                Err(proc::FutexError::WouldBlock) => errno::EAGAIN,
-                Err(proc::FutexError::InvalidAddress) => errno::EFAULT,
-                Err(proc::FutexError::TimedOut) => errno::ETIMEDOUT,
-                Err(proc::FutexError::Interrupted) => errno::EINTR,
-                Err(_) => errno::EINVAL,
-            }
-        }
-        futex_op::FUTEX_WAKE => {
-            match proc::futex_wake(addr, val as i32) {
-                Ok(n) => n as i64,
-                Err(proc::FutexError::InvalidAddress) => errno::EFAULT,
-                Err(_) => errno::EINVAL,
-            }
-        }
+        futex_op::FUTEX_WAIT => match proc::futex_wait(addr, val, timeout) {
+            Ok(()) => 0,
+            Err(proc::FutexError::WouldBlock) => errno::EAGAIN,
+            Err(proc::FutexError::InvalidAddress) => errno::EFAULT,
+            Err(proc::FutexError::TimedOut) => errno::ETIMEDOUT,
+            Err(proc::FutexError::Interrupted) => errno::EINTR,
+            Err(_) => errno::EINVAL,
+        },
+        futex_op::FUTEX_WAKE => match proc::futex_wake(addr, val as i32) {
+            Ok(n) => n as i64,
+            Err(proc::FutexError::InvalidAddress) => errno::EFAULT,
+            Err(_) => errno::EINVAL,
+        },
         _ => errno::ENOSYS,
     }
 }

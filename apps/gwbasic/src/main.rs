@@ -1,7 +1,7 @@
-use rust_gwbasic::{Lexer, Parser, Interpreter};
-use std::io::{self, Write};
-use std::fs;
+use rust_gwbasic::{Interpreter, Lexer, Parser};
 use std::env;
+use std::fs;
+use std::io::{self, Write};
 
 fn main() {
     let args: Vec<String> = env::args().collect();

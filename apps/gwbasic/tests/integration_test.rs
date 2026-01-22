@@ -1,24 +1,31 @@
 //! Integration tests for GW-BASIC interpreter
 
-use rust_gwbasic::{Lexer, Parser, Interpreter};
+use rust_gwbasic::{Interpreter, Lexer, Parser};
 
 fn run_program(code: &str) -> Result<String, String> {
     // Trim each line to remove leading/trailing whitespace
-    let cleaned_code: String = code.lines()
+    let cleaned_code: String = code
+        .lines()
         .map(|line| line.trim())
         .filter(|line| !line.is_empty())
         .collect::<Vec<&str>>()
         .join("\n");
 
     let mut lexer = Lexer::new(&cleaned_code);
-    let tokens = lexer.tokenize().map_err(|e| format!("Lexer error: {}", e))?;
+    let tokens = lexer
+        .tokenize()
+        .map_err(|e| format!("Lexer error: {}", e))?;
 
     let mut parser = Parser::new(tokens);
     let ast = parser.parse().map_err(|e| format!("Parser error: {}", e))?;
 
     let mut interpreter = Interpreter::new();
-    interpreter.execute(ast).map_err(|e| format!("Runtime error: {}", e))?;
-    interpreter.run_stored_program().map_err(|e| format!("Runtime error: {}", e))?;
+    interpreter
+        .execute(ast)
+        .map_err(|e| format!("Runtime error: {}", e))?;
+    interpreter
+        .run_stored_program()
+        .map_err(|e| format!("Runtime error: {}", e))?;
 
     Ok("Success".to_string())
 }
@@ -103,7 +110,9 @@ fn test_randomize_timer() {
     let result = run_program(code);
     match result {
         Ok(_) => assert!(true),
-        Err(e) => assert!(e.contains("RANDOMIZE") || e.contains("TIMER") || e.contains("Unexpected token")),
+        Err(e) => assert!(
+            e.contains("RANDOMIZE") || e.contains("TIMER") || e.contains("Unexpected token")
+        ),
     }
 }
 

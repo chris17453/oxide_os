@@ -38,7 +38,7 @@ impl XargsConfig {
     fn new() -> Self {
         XargsConfig {
             null_separated: false,
-            delimiter: 0,  // 0 means whitespace
+            delimiter: 0, // 0 means whitespace
             replace_str: None,
             replace_len: 0,
             max_args: MAX_ARGS,
@@ -148,7 +148,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
             buf[..copy_len].copy_from_slice(&replace.as_bytes()[..copy_len]);
             config.replace_str = Some(buf);
             config.replace_len = copy_len;
-            config.max_args = 1;  // -I implies -n 1
+            config.max_args = 1; // -I implies -n 1
             arg_idx += 1;
         } else if arg == "-n" {
             arg_idx += 1;
@@ -245,7 +245,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     } else if config.delimiter != 0 {
         config.delimiter
     } else {
-        0  // Whitespace mode
+        0 // Whitespace mode
     };
 
     if !read_args(&config, delimiter, &mut args, &mut arg_lens, &mut arg_count) {
@@ -258,13 +258,18 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     }
 
     // Execute commands
-    execute_all(&config, &cmd_parts, &cmd_lens, cmd_count, &args, &arg_lens, arg_count)
+    execute_all(
+        &config, &cmd_parts, &cmd_lens, cmd_count, &args, &arg_lens, arg_count,
+    )
 }
 
-fn read_args(config: &XargsConfig, delimiter: u8,
-             args: &mut [[u8; MAX_ARG_LEN]; MAX_ARGS],
-             arg_lens: &mut [usize; MAX_ARGS],
-             arg_count: &mut usize) -> bool {
+fn read_args(
+    config: &XargsConfig,
+    delimiter: u8,
+    args: &mut [[u8; MAX_ARG_LEN]; MAX_ARGS],
+    arg_lens: &mut [usize; MAX_ARGS],
+    arg_count: &mut usize,
+) -> bool {
     let mut buf = [0u8; 4096];
     let mut current_arg = [0u8; MAX_ARG_LEN];
     let mut current_len = 0;
@@ -289,7 +294,8 @@ fn read_args(config: &XargsConfig, delimiter: u8,
                 if current_len > 0 {
                     // Store completed argument
                     if *arg_count < MAX_ARGS {
-                        args[*arg_count][..current_len].copy_from_slice(&current_arg[..current_len]);
+                        args[*arg_count][..current_len]
+                            .copy_from_slice(&current_arg[..current_len]);
                         arg_lens[*arg_count] = current_len;
                         *arg_count += 1;
                     } else {
@@ -320,20 +326,28 @@ fn read_args(config: &XargsConfig, delimiter: u8,
     true
 }
 
-fn execute_all(config: &XargsConfig,
-               cmd_parts: &[[u8; MAX_ARG_LEN]; MAX_ARGS],
-               cmd_lens: &[usize; MAX_ARGS],
-               cmd_count: usize,
-               args: &[[u8; MAX_ARG_LEN]; MAX_ARGS],
-               arg_lens: &[usize; MAX_ARGS],
-               arg_count: usize) -> i32 {
+fn execute_all(
+    config: &XargsConfig,
+    cmd_parts: &[[u8; MAX_ARG_LEN]; MAX_ARGS],
+    cmd_lens: &[usize; MAX_ARGS],
+    cmd_count: usize,
+    args: &[[u8; MAX_ARG_LEN]; MAX_ARGS],
+    arg_lens: &[usize; MAX_ARGS],
+    arg_count: usize,
+) -> i32 {
     let mut status = 0;
 
     if config.replace_str.is_some() {
         // Replace mode: execute once for each argument
         for i in 0..arg_count {
-            if execute_with_replace(config, cmd_parts, cmd_lens, cmd_count,
-                                   &args[i][..arg_lens[i]]) != 0 {
+            if execute_with_replace(
+                config,
+                cmd_parts,
+                cmd_lens,
+                cmd_count,
+                &args[i][..arg_lens[i]],
+            ) != 0
+            {
                 status = 1;
             }
         }
@@ -342,8 +356,10 @@ fn execute_all(config: &XargsConfig,
         let mut i = 0;
         while i < arg_count {
             let batch_size = (arg_count - i).min(config.max_args);
-            if execute_batch(config, cmd_parts, cmd_lens, cmd_count,
-                           args, arg_lens, i, batch_size) != 0 {
+            if execute_batch(
+                config, cmd_parts, cmd_lens, cmd_count, args, arg_lens, i, batch_size,
+            ) != 0
+            {
                 status = 1;
             }
             i += batch_size;
@@ -351,8 +367,7 @@ fn execute_all(config: &XargsConfig,
 
         // Handle case where there are no arguments but we should run anyway
         if arg_count == 0 && !config.no_run_if_empty {
-            if execute_batch(config, cmd_parts, cmd_lens, cmd_count,
-                           args, arg_lens, 0, 0) != 0 {
+            if execute_batch(config, cmd_parts, cmd_lens, cmd_count, args, arg_lens, 0, 0) != 0 {
                 status = 1;
             }
         }
@@ -361,11 +376,13 @@ fn execute_all(config: &XargsConfig,
     status
 }
 
-fn execute_with_replace(config: &XargsConfig,
-                       cmd_parts: &[[u8; MAX_ARG_LEN]; MAX_ARGS],
-                       cmd_lens: &[usize; MAX_ARGS],
-                       cmd_count: usize,
-                       replacement: &[u8]) -> i32 {
+fn execute_with_replace(
+    config: &XargsConfig,
+    cmd_parts: &[[u8; MAX_ARG_LEN]; MAX_ARGS],
+    cmd_lens: &[usize; MAX_ARGS],
+    cmd_count: usize,
+    replacement: &[u8],
+) -> i32 {
     let replace_pattern = match &config.replace_str {
         Some(buf) => &buf[..config.replace_len],
         None => return 1,
@@ -419,14 +436,16 @@ fn contains_pattern(haystack: &[u8], needle: &[u8]) -> bool {
     false
 }
 
-fn execute_batch(config: &XargsConfig,
-                cmd_parts: &[[u8; MAX_ARG_LEN]; MAX_ARGS],
-                cmd_lens: &[usize; MAX_ARGS],
-                cmd_count: usize,
-                args: &[[u8; MAX_ARG_LEN]; MAX_ARGS],
-                arg_lens: &[usize; MAX_ARGS],
-                start_idx: usize,
-                count: usize) -> i32 {
+fn execute_batch(
+    config: &XargsConfig,
+    cmd_parts: &[[u8; MAX_ARG_LEN]; MAX_ARGS],
+    cmd_lens: &[usize; MAX_ARGS],
+    cmd_count: usize,
+    args: &[[u8; MAX_ARG_LEN]; MAX_ARGS],
+    arg_lens: &[usize; MAX_ARGS],
+    start_idx: usize,
+    count: usize,
+) -> i32 {
     // Build combined command
     let mut final_cmd: [[u8; MAX_ARG_LEN]; MAX_ARGS] = [[0; MAX_ARG_LEN]; MAX_ARGS];
     let mut final_lens: [usize; MAX_ARGS] = [0; MAX_ARGS];
@@ -448,7 +467,8 @@ fn execute_batch(config: &XargsConfig,
             break;
         }
         let arg_idx = start_idx + i;
-        final_cmd[final_count][..arg_lens[arg_idx]].copy_from_slice(&args[arg_idx][..arg_lens[arg_idx]]);
+        final_cmd[final_count][..arg_lens[arg_idx]]
+            .copy_from_slice(&args[arg_idx][..arg_lens[arg_idx]]);
         final_lens[final_count] = arg_lens[arg_idx];
         final_count += 1;
     }
@@ -456,10 +476,12 @@ fn execute_batch(config: &XargsConfig,
     execute_command(config, &final_cmd, &final_lens, final_count)
 }
 
-fn execute_command(config: &XargsConfig,
-                  cmd_parts: &[[u8; MAX_ARG_LEN]; MAX_ARGS],
-                  cmd_lens: &[usize; MAX_ARGS],
-                  cmd_count: usize) -> i32 {
+fn execute_command(
+    config: &XargsConfig,
+    cmd_parts: &[[u8; MAX_ARG_LEN]; MAX_ARGS],
+    cmd_lens: &[usize; MAX_ARGS],
+    cmd_count: usize,
+) -> i32 {
     // Build command string for display
     let mut cmd_str = [0u8; MAX_CMD_LEN];
     let mut pos = 0;

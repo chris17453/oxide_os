@@ -5,8 +5,8 @@
 
 use crate::action::{SigAction, SigFlags, SigHandler, SigInfo};
 use crate::pending::PendingSignal;
+use crate::signal::{DefaultAction, NSIG, SIGKILL, SIGSTOP, default_action};
 use crate::sigset::SigSet;
-use crate::signal::{default_action, DefaultAction, SIGKILL, SIGSTOP, NSIG};
 
 /// Signal frame structure pushed onto user stack
 ///
@@ -127,15 +127,13 @@ pub fn determine_action(
 
     match action.handler() {
         SigHandler::Ignore => SignalResult::Ignore,
-        SigHandler::Default => {
-            match default_action(sig) {
-                DefaultAction::Terminate => SignalResult::Terminate,
-                DefaultAction::CoreDump => SignalResult::CoreDump,
-                DefaultAction::Ignore => SignalResult::Ignore,
-                DefaultAction::Stop => SignalResult::Stop,
-                DefaultAction::Continue => SignalResult::Continue,
-            }
-        }
+        SigHandler::Default => match default_action(sig) {
+            DefaultAction::Terminate => SignalResult::Terminate,
+            DefaultAction::CoreDump => SignalResult::CoreDump,
+            DefaultAction::Ignore => SignalResult::Ignore,
+            DefaultAction::Stop => SignalResult::Stop,
+            DefaultAction::Continue => SignalResult::Continue,
+        },
         SigHandler::Handler(addr) => {
             // Calculate mask to apply during handler execution
             let flags = action.flags();
@@ -264,7 +262,11 @@ pub fn restore_from_frame(frame: &SignalFrame) -> (u64, u64, u64, SigSet, SavedR
 /// Check if a process should be interrupted due to signals
 ///
 /// Called when a process is blocked (e.g., in a sleep or wait syscall)
-pub fn should_interrupt_for_signal(pending: &SigSet, blocked: &SigSet, sigactions: &[SigAction; NSIG]) -> bool {
+pub fn should_interrupt_for_signal(
+    pending: &SigSet,
+    blocked: &SigSet,
+    sigactions: &[SigAction; NSIG],
+) -> bool {
     // Check each pending signal that isn't blocked
     let deliverable = pending.difference(blocked);
 

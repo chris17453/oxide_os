@@ -11,7 +11,7 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::ptr::{read_volatile, write_volatile};
-use input::{InputDeviceInfo, InputDeviceType, InputEvent, EventType, KeyValue};
+use input::{EventType, InputDeviceInfo, InputDeviceType, InputEvent, KeyValue};
 use spin::Mutex;
 
 /// VirtIO input device configuration select values
@@ -237,8 +237,10 @@ impl VirtioInput {
         self.write_reg(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACKNOWLEDGE);
 
         // Driver loaded
-        self.write_reg(VIRTIO_MMIO_STATUS,
-            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
+        self.write_reg(
+            VIRTIO_MMIO_STATUS,
+            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+        );
 
         // Read device features
         self.write_reg(VIRTIO_MMIO_DEVICE_FEATURES_SEL, 0);
@@ -249,8 +251,10 @@ impl VirtioInput {
         self.write_reg(VIRTIO_MMIO_DRIVER_FEATURES, 0);
 
         // Features OK
-        self.write_reg(VIRTIO_MMIO_STATUS,
-            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK);
+        self.write_reg(
+            VIRTIO_MMIO_STATUS,
+            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+        );
 
         // Verify features accepted
         let status = self.read_reg(VIRTIO_MMIO_STATUS);
@@ -267,9 +271,13 @@ impl VirtioInput {
         self.init_status_queue()?;
 
         // Driver ready
-        self.write_reg(VIRTIO_MMIO_STATUS,
-            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER |
-            VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK);
+        self.write_reg(
+            VIRTIO_MMIO_STATUS,
+            VIRTIO_STATUS_ACKNOWLEDGE
+                | VIRTIO_STATUS_DRIVER
+                | VIRTIO_STATUS_FEATURES_OK
+                | VIRTIO_STATUS_DRIVER_OK,
+        );
 
         // Register with input subsystem
         let device_type = match self.device_type {
@@ -487,18 +495,14 @@ impl VirtioInput {
     /// Process pending input events
     fn process_events(&mut self) {
         loop {
-            let used_idx = unsafe {
-                read_volatile(&(*self.event_queue.used).idx)
-            };
+            let used_idx = unsafe { read_volatile(&(*self.event_queue.used).idx) };
 
             if self.event_queue.last_used == used_idx {
                 break;
             }
 
             let idx = (self.event_queue.last_used % self.event_queue.size) as usize;
-            let used_elem = unsafe {
-                read_volatile(&(*self.event_queue.used).ring[idx])
-            };
+            let used_elem = unsafe { read_volatile(&(*self.event_queue.used).ring[idx]) };
 
             let desc_idx = used_elem.id as usize;
             if desc_idx < self.event_queue.buffers.len() {
@@ -507,9 +511,7 @@ impl VirtioInput {
             }
 
             // Re-add buffer to available ring
-            let avail_idx = unsafe {
-                read_volatile(&(*self.event_queue.available).idx)
-            };
+            let avail_idx = unsafe { read_volatile(&(*self.event_queue.available).idx) };
             unsafe {
                 let avail = &mut *self.event_queue.available;
                 avail.ring[(avail_idx % self.event_queue.size) as usize] = desc_idx as u16;
@@ -568,9 +570,7 @@ impl VirtioInput {
         };
 
         // Find a free descriptor
-        let avail_idx = unsafe {
-            read_volatile(&(*self.status_queue.available).idx)
-        };
+        let avail_idx = unsafe { read_volatile(&(*self.status_queue.available).idx) };
         let desc_idx = (avail_idx % self.status_queue.size) as usize;
 
         // Set up descriptor
@@ -628,12 +628,12 @@ impl VirtQueue {
     }
 
     fn new(size: u16) -> Result<Self, &'static str> {
-        use alloc::alloc::{alloc_zeroed, Layout};
+        use alloc::alloc::{Layout, alloc_zeroed};
 
         // Allocate descriptor table
         let desc_size = size as usize * core::mem::size_of::<VirtqDesc>();
-        let desc_layout = Layout::from_size_align(desc_size, 16)
-            .map_err(|_| "Invalid descriptor layout")?;
+        let desc_layout =
+            Layout::from_size_align(desc_size, 16).map_err(|_| "Invalid descriptor layout")?;
         let descriptors = unsafe { alloc_zeroed(desc_layout) } as *mut VirtqDesc;
         if descriptors.is_null() {
             return Err("Failed to allocate descriptors");
@@ -641,8 +641,8 @@ impl VirtQueue {
 
         // Allocate available ring
         let avail_size = core::mem::size_of::<VirtqAvail>();
-        let avail_layout = Layout::from_size_align(avail_size, 2)
-            .map_err(|_| "Invalid available ring layout")?;
+        let avail_layout =
+            Layout::from_size_align(avail_size, 2).map_err(|_| "Invalid available ring layout")?;
         let available = unsafe { alloc_zeroed(avail_layout) } as *mut VirtqAvail;
         if available.is_null() {
             return Err("Failed to allocate available ring");
@@ -650,8 +650,8 @@ impl VirtQueue {
 
         // Allocate used ring
         let used_size = core::mem::size_of::<VirtqUsed>();
-        let used_layout = Layout::from_size_align(used_size, 4)
-            .map_err(|_| "Invalid used ring layout")?;
+        let used_layout =
+            Layout::from_size_align(used_size, 4).map_err(|_| "Invalid used ring layout")?;
         let used = unsafe { alloc_zeroed(used_layout) } as *mut VirtqUsed;
         if used.is_null() {
             return Err("Failed to allocate used ring");

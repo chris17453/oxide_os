@@ -50,13 +50,16 @@ impl Error {
     /// Create an error from a raw OS error code
     pub fn from_raw_os_error(code: i32) -> Self {
         let kind = match code {
-            -2 => ErrorKind::NotFound,        // ENOENT
+            -2 => ErrorKind::NotFound,          // ENOENT
             -13 => ErrorKind::PermissionDenied, // EACCES
-            -17 => ErrorKind::AlreadyExists,  // EEXIST
-            -9 => ErrorKind::InvalidInput,    // EBADF
+            -17 => ErrorKind::AlreadyExists,    // EEXIST
+            -9 => ErrorKind::InvalidInput,      // EBADF
             _ => ErrorKind::Other,
         };
-        Error { kind, message: None }
+        Error {
+            kind,
+            message: None,
+        }
     }
 
     /// Get the error kind
@@ -92,7 +95,12 @@ pub trait Read {
         let mut total = 0;
         while total < buf.len() {
             match self.read(&mut buf[total..]) {
-                Ok(0) => return Err(Error::new(ErrorKind::UnexpectedEof, "unexpected end of file")),
+                Ok(0) => {
+                    return Err(Error::new(
+                        ErrorKind::UnexpectedEof,
+                        "unexpected end of file",
+                    ));
+                }
                 Ok(n) => total += n,
                 Err(e) if e.kind() == ErrorKind::Interrupted => continue,
                 Err(e) => return Err(e),
@@ -132,7 +140,10 @@ pub trait Read {
     }
 
     /// Create a buffered reader
-    fn bytes(self) -> Bytes<Self> where Self: Sized {
+    fn bytes(self) -> Bytes<Self>
+    where
+        Self: Sized,
+    {
         Bytes { inner: self }
     }
 }
@@ -201,14 +212,18 @@ pub trait Write {
             }
         }
 
-        let mut writer = FmtWriter { writer: self, error: None };
+        let mut writer = FmtWriter {
+            writer: self,
+            error: None,
+        };
         match fmt::write(&mut writer, fmt) {
             Ok(()) => Ok(()),
-            Err(_) => Err(writer.error.unwrap_or_else(|| Error::new(ErrorKind::Other, "format error"))),
+            Err(_) => Err(writer
+                .error
+                .unwrap_or_else(|| Error::new(ErrorKind::Other, "format error"))),
         }
     }
 }
-
 
 // ============================================================================
 // BufRead Trait
@@ -250,7 +265,10 @@ pub trait BufRead: Read {
     }
 
     /// Get lines iterator
-    fn lines(self) -> Lines<Self> where Self: Sized {
+    fn lines(self) -> Lines<Self>
+    where
+        Self: Sized,
+    {
         Lines { inner: self }
     }
 }
@@ -310,7 +328,9 @@ pub struct Stdin {
 impl Stdin {
     /// Lock stdin (no-op in single-threaded context)
     pub fn lock(&self) -> StdinLock<'_> {
-        StdinLock { _marker: core::marker::PhantomData }
+        StdinLock {
+            _marker: core::marker::PhantomData,
+        }
     }
 
     /// Read a line from stdin
@@ -362,7 +382,9 @@ pub struct Stdout {
 impl Stdout {
     /// Lock stdout (no-op in single-threaded context)
     pub fn lock(&self) -> StdoutLock<'_> {
-        StdoutLock { _marker: core::marker::PhantomData }
+        StdoutLock {
+            _marker: core::marker::PhantomData,
+        }
     }
 }
 
@@ -414,7 +436,9 @@ pub struct Stderr {
 impl Stderr {
     /// Lock stderr
     pub fn lock(&self) -> StderrLock<'_> {
-        StderrLock { _marker: core::marker::PhantomData }
+        StderrLock {
+            _marker: core::marker::PhantomData,
+        }
     }
 }
 
@@ -544,7 +568,9 @@ impl<W: Write> BufWriter<W> {
     pub fn into_inner(mut self) -> core::result::Result<W, Error> {
         self.flush_internal()?;
         // Take the inner writer, leaving None (drop won't try to flush)
-        self.inner.take().ok_or_else(|| Error::new(ErrorKind::Other, "already consumed"))
+        self.inner
+            .take()
+            .ok_or_else(|| Error::new(ErrorKind::Other, "already consumed"))
     }
 
     fn flush_internal(&mut self) -> Result<()> {

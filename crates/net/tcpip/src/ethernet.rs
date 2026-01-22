@@ -71,15 +71,15 @@ impl EthernetHeader {
             return Err(NetError::InvalidArgument);
         }
 
-        let dst = MacAddress([
-            data[0], data[1], data[2], data[3], data[4], data[5],
-        ]);
-        let src = MacAddress([
-            data[6], data[7], data[8], data[9], data[10], data[11],
-        ]);
+        let dst = MacAddress([data[0], data[1], data[2], data[3], data[4], data[5]]);
+        let src = MacAddress([data[6], data[7], data[8], data[9], data[10], data[11]]);
         let ethertype = EtherType::from(u16::from_be_bytes([data[12], data[13]]));
 
-        Ok(EthernetHeader { dst, src, ethertype })
+        Ok(EthernetHeader {
+            dst,
+            src,
+            ethertype,
+        })
     }
 
     /// Serialize header to bytes
@@ -105,7 +105,11 @@ impl EthernetFrame {
     /// Create a new Ethernet frame
     pub fn new(dst: MacAddress, src: MacAddress, ethertype: EtherType, payload: &[u8]) -> Self {
         EthernetFrame {
-            header: EthernetHeader { dst, src, ethertype },
+            header: EthernetHeader {
+                dst,
+                src,
+                ethertype,
+            },
             payload: payload.to_vec(),
         }
     }

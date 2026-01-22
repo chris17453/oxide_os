@@ -28,22 +28,22 @@ pub use stub_platform::*;
 // Re-export alloc types for no_std
 #[cfg(not(feature = "std"))]
 pub use alloc::{
-    string::{String, ToString},
-    vec::Vec,
-    vec,
-    format,
     boxed::Box,
     collections::BTreeMap as HashMap,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
 };
 
 #[cfg(feature = "std")]
 pub use std::{
-    string::{String, ToString},
-    vec::Vec,
-    vec,
-    format,
     boxed::Box,
     collections::HashMap,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
 };
 
 /// Console trait for text I/O

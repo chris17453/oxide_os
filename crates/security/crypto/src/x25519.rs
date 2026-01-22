@@ -2,7 +2,7 @@
 //!
 //! Elliptic curve Diffie-Hellman using Curve25519.
 
-use crate::{CryptoResult, CryptoError};
+use crate::{CryptoError, CryptoResult};
 
 /// X25519 secret key (32 bytes)
 #[derive(Clone)]
@@ -89,18 +89,28 @@ fn x25519_scalarmult(scalar: &[u8; 32], point: &[u8; 32]) -> [u8; 32] {
     // Field arithmetic for Curve25519
     type Fe = [i64; 10];
 
-    fn fe_0() -> Fe { [0; 10] }
-    fn fe_1() -> Fe { let mut r = [0; 10]; r[0] = 1; r }
+    fn fe_0() -> Fe {
+        [0; 10]
+    }
+    fn fe_1() -> Fe {
+        let mut r = [0; 10];
+        r[0] = 1;
+        r
+    }
 
     fn fe_add(f: &Fe, g: &Fe) -> Fe {
         let mut h = [0i64; 10];
-        for i in 0..10 { h[i] = f[i] + g[i]; }
+        for i in 0..10 {
+            h[i] = f[i] + g[i];
+        }
         h
     }
 
     fn fe_sub(f: &Fe, g: &Fe) -> Fe {
         let mut h = [0i64; 10];
-        for i in 0..10 { h[i] = f[i] - g[i]; }
+        for i in 0..10 {
+            h[i] = f[i] - g[i];
+        }
         h
     }
 
@@ -114,11 +124,15 @@ fn x25519_scalarmult(scalar: &[u8; 32], point: &[u8; 32]) -> [u8; 32] {
             }
         }
         let mut result = [0i64; 10];
-        for i in 0..10 { result[i] = h[i] as i64; }
+        for i in 0..10 {
+            result[i] = h[i] as i64;
+        }
         fe_reduce(&result)
     }
 
-    fn fe_sq(f: &Fe) -> Fe { fe_mul(f, f) }
+    fn fe_sq(f: &Fe) -> Fe {
+        fe_mul(f, f)
+    }
 
     fn fe_reduce(h: &Fe) -> Fe {
         let mut r = *h;
@@ -144,28 +158,44 @@ fn x25519_scalarmult(scalar: &[u8; 32], point: &[u8; 32]) -> [u8; 32] {
         let mut t2 = fe_sq(&t0);
         t1 = fe_mul(&t1, &t2);
         t2 = fe_sq(&t1);
-        for _ in 0..4 { t2 = fe_sq(&t2); }
+        for _ in 0..4 {
+            t2 = fe_sq(&t2);
+        }
         t1 = fe_mul(&t1, &t2);
         t2 = fe_sq(&t1);
-        for _ in 0..9 { t2 = fe_sq(&t2); }
+        for _ in 0..9 {
+            t2 = fe_sq(&t2);
+        }
         t2 = fe_mul(&t2, &t1);
         let mut t3 = fe_sq(&t2);
-        for _ in 0..19 { t3 = fe_sq(&t3); }
+        for _ in 0..19 {
+            t3 = fe_sq(&t3);
+        }
         t2 = fe_mul(&t2, &t3);
         t2 = fe_sq(&t2);
-        for _ in 0..9 { t2 = fe_sq(&t2); }
+        for _ in 0..9 {
+            t2 = fe_sq(&t2);
+        }
         t1 = fe_mul(&t1, &t2);
         t2 = fe_sq(&t1);
-        for _ in 0..49 { t2 = fe_sq(&t2); }
+        for _ in 0..49 {
+            t2 = fe_sq(&t2);
+        }
         t2 = fe_mul(&t2, &t1);
         t3 = fe_sq(&t2);
-        for _ in 0..99 { t3 = fe_sq(&t3); }
+        for _ in 0..99 {
+            t3 = fe_sq(&t3);
+        }
         t2 = fe_mul(&t2, &t3);
         t2 = fe_sq(&t2);
-        for _ in 0..49 { t2 = fe_sq(&t2); }
+        for _ in 0..49 {
+            t2 = fe_sq(&t2);
+        }
         t1 = fe_mul(&t1, &t2);
         t1 = fe_sq(&t1);
-        for _ in 0..4 { t1 = fe_sq(&t1); }
+        for _ in 0..4 {
+            t1 = fe_sq(&t1);
+        }
         fe_mul(&t0, &t1)
     }
 
@@ -236,7 +266,11 @@ fn x25519_scalarmult(scalar: &[u8; 32], point: &[u8; 32]) -> [u8; 32] {
         x3 = fe_sq(&fe_add(&da, &cb));
         z3 = fe_mul(&x1, &fe_sq(&fe_sub(&da, &cb)));
         x2 = fe_mul(&aa, &bb);
-        let a121665 = { let mut f = fe_0(); f[0] = 121665; f };
+        let a121665 = {
+            let mut f = fe_0();
+            f[0] = 121665;
+            f
+        };
         z2 = fe_mul(&e, &fe_add(&aa, &fe_mul(&a121665, &e)));
     }
 

@@ -12,16 +12,16 @@
 
 extern crate alloc;
 
-pub mod symbol;
-pub mod reloc;
-pub mod loader;
 pub mod deps;
 pub mod kobject;
+pub mod loader;
+pub mod reloc;
+pub mod symbol;
 
-pub use kobject::{Module, ModuleState, ModuleInfo};
-pub use symbol::{KernelSymbol, SymbolTable};
-pub use loader::{load_module, unload_module};
 pub use deps::DependencyResolver;
+pub use kobject::{Module, ModuleInfo, ModuleState};
+pub use loader::{load_module, unload_module};
+pub use symbol::{KernelSymbol, SymbolTable};
 
 /// Module init function type
 pub type ModuleInitFn = extern "C" fn() -> i32;

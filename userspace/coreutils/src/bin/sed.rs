@@ -26,9 +26,9 @@ const MAX_COMMANDS: usize = 16;
 
 #[derive(Clone, Copy)]
 enum CommandType {
-    Substitute,  // s/pattern/replacement/flags
-    Delete,      // d
-    Print,       // p
+    Substitute, // s/pattern/replacement/flags
+    Delete,     // d
+    Print,      // p
 }
 
 #[derive(Clone, Copy)]
@@ -179,7 +179,8 @@ fn parse_command(cmd_str: &str) -> Option<Command> {
             if cmd.pattern_len > MAX_PATTERN - 1 {
                 cmd.pattern_len = MAX_PATTERN - 1;
             }
-            cmd.pattern[..cmd.pattern_len].copy_from_slice(&bytes[pattern_start..pattern_start + cmd.pattern_len]);
+            cmd.pattern[..cmd.pattern_len]
+                .copy_from_slice(&bytes[pattern_start..pattern_start + cmd.pattern_len]);
             pos += 1; // skip /
 
             // Extract replacement
@@ -192,7 +193,9 @@ fn parse_command(cmd_str: &str) -> Option<Command> {
                 cmd.replacement_len = MAX_REPLACEMENT - 1;
             }
             if cmd.replacement_len > 0 {
-                cmd.replacement[..cmd.replacement_len].copy_from_slice(&bytes[replacement_start..replacement_start + cmd.replacement_len]);
+                cmd.replacement[..cmd.replacement_len].copy_from_slice(
+                    &bytes[replacement_start..replacement_start + cmd.replacement_len],
+                );
             }
             if pos < bytes.len() {
                 pos += 1; // skip /
@@ -265,8 +268,16 @@ fn find_pattern(line: &[u8], pattern: &[u8], ignore_case: bool) -> Option<usize>
     for i in 0..=(line.len() - pattern.len()) {
         let mut matches = true;
         for j in 0..pattern.len() {
-            let l = if ignore_case { to_lower(line[i + j]) } else { line[i + j] };
-            let p = if ignore_case { to_lower(pattern[j]) } else { pattern[j] };
+            let l = if ignore_case {
+                to_lower(line[i + j])
+            } else {
+                line[i + j]
+            };
+            let p = if ignore_case {
+                to_lower(pattern[j])
+            } else {
+                pattern[j]
+            };
             if l != p {
                 matches = false;
                 break;
@@ -279,7 +290,14 @@ fn find_pattern(line: &[u8], pattern: &[u8], ignore_case: bool) -> Option<usize>
     None
 }
 
-fn substitute_line(line: &[u8], pattern: &[u8], replacement: &[u8], global: bool, ignore_case: bool, output: &mut [u8]) -> usize {
+fn substitute_line(
+    line: &[u8],
+    pattern: &[u8],
+    replacement: &[u8],
+    global: bool,
+    ignore_case: bool,
+    output: &mut [u8],
+) -> usize {
     let mut out_len = 0;
     let mut pos = 0;
 
@@ -370,7 +388,7 @@ fn process_stream(fd: i32, config: &SedConfig) -> i32 {
                                 &cmd.replacement[..cmd.replacement_len],
                                 cmd.global,
                                 cmd.ignore_case,
-                                &mut temp_line
+                                &mut temp_line,
                             );
                             output_line[..output_len].copy_from_slice(&temp_line[..output_len]);
                             if cmd.print {
@@ -428,7 +446,7 @@ fn process_stream(fd: i32, config: &SedConfig) -> i32 {
                         &cmd.replacement[..cmd.replacement_len],
                         cmd.global,
                         cmd.ignore_case,
-                        &mut temp_line
+                        &mut temp_line,
                     );
                     output_line[..output_len].copy_from_slice(&temp_line[..output_len]);
                     if cmd.print {

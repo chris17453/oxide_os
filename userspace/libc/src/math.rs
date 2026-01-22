@@ -251,9 +251,13 @@ pub fn expf(x: f32) -> f32 {
 pub fn sin(x: f64) -> f64 {
     // Reduce to [-π, π]
     let x = fmod(x, 2.0 * consts::PI);
-    let x = if x > consts::PI { x - 2.0 * consts::PI }
-            else if x < -consts::PI { x + 2.0 * consts::PI }
-            else { x };
+    let x = if x > consts::PI {
+        x - 2.0 * consts::PI
+    } else if x < -consts::PI {
+        x + 2.0 * consts::PI
+    } else {
+        x
+    };
 
     // Taylor series: sin(x) = x - x³/3! + x⁵/5! - ...
     let x2 = x * x;
@@ -277,9 +281,13 @@ pub fn sinf(x: f32) -> f32 {
 pub fn cos(x: f64) -> f64 {
     // Reduce to [-π, π]
     let x = fmod(x, 2.0 * consts::PI);
-    let x = if x > consts::PI { x - 2.0 * consts::PI }
-            else if x < -consts::PI { x + 2.0 * consts::PI }
-            else { x };
+    let x = if x > consts::PI {
+        x - 2.0 * consts::PI
+    } else if x < -consts::PI {
+        x + 2.0 * consts::PI
+    } else {
+        x
+    };
 
     // Taylor series: cos(x) = 1 - x²/2! + x⁴/4! - ...
     let x2 = x * x;
@@ -348,8 +356,12 @@ pub fn atanf(x: f32) -> f32 {
 /// Two-argument arctangent
 pub fn atan2(y: f64, x: f64) -> f64 {
     if x == 0.0 {
-        if y > 0.0 { return consts::PI_2; }
-        if y < 0.0 { return -consts::PI_2; }
+        if y > 0.0 {
+            return consts::PI_2;
+        }
+        if y < 0.0 {
+            return -consts::PI_2;
+        }
         return 0.0;
     }
 
@@ -444,15 +456,23 @@ pub fn isfinite(x: f64) -> bool {
 
 /// Minimum
 pub fn fmin(x: f64, y: f64) -> f64 {
-    if isnan(x) { return y; }
-    if isnan(y) { return x; }
+    if isnan(x) {
+        return y;
+    }
+    if isnan(y) {
+        return x;
+    }
     if x < y { x } else { y }
 }
 
 /// Maximum
 pub fn fmax(x: f64, y: f64) -> f64 {
-    if isnan(x) { return y; }
-    if isnan(y) { return x; }
+    if isnan(x) {
+        return y;
+    }
+    if isnan(y) {
+        return x;
+    }
     if x > y { x } else { y }
 }
 

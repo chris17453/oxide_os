@@ -327,8 +327,12 @@ pub fn iswpunct(wc: WintT) -> bool {
 
 /// Check if wide character is whitespace
 pub fn iswspace(wc: WintT) -> bool {
-    wc == ' ' as WintT || wc == '\t' as WintT || wc == '\n' as WintT
-        || wc == '\r' as WintT || wc == '\x0b' as WintT || wc == '\x0c' as WintT
+    wc == ' ' as WintT
+        || wc == '\t' as WintT
+        || wc == '\n' as WintT
+        || wc == '\r' as WintT
+        || wc == '\x0b' as WintT
+        || wc == '\x0c' as WintT
 }
 
 /// Check if wide character is uppercase
@@ -345,18 +349,10 @@ pub fn iswxdigit(wc: WintT) -> bool {
 
 /// Convert wide character to lowercase
 pub fn towlower(wc: WintT) -> WintT {
-    if iswupper(wc) {
-        wc + 32
-    } else {
-        wc
-    }
+    if iswupper(wc) { wc + 32 } else { wc }
 }
 
 /// Convert wide character to uppercase
 pub fn towupper(wc: WintT) -> WintT {
-    if iswlower(wc) {
-        wc - 32
-    } else {
-        wc
-    }
+    if iswlower(wc) { wc - 32 } else { wc }
 }

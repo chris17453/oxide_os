@@ -128,9 +128,9 @@ impl MountOptions {
         MountOptions {
             mode,
             fs_type: None,
-            noexec: true,  // Safe default
-            nosuid: true,  // Safe default
-            nodev: true,   // Safe default
+            noexec: true, // Safe default
+            nosuid: true, // Safe default
+            nodev: true,  // Safe default
             sync: false,
             fallback_ro: true,
             uid: None,

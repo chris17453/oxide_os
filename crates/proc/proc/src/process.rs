@@ -11,12 +11,12 @@ use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU32, AtomicI32, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use os_core::{PhysAddr, VirtAddr};
 use proc_traits::{Pid, ProcessState};
-use signal::{PendingSignals, SigAction, SigSet, NSIG};
-use vfs::FdTable;
+use signal::{NSIG, PendingSignals, SigAction, SigSet};
 use spin::{Mutex, RwLock};
+use vfs::FdTable;
 
 /// Thread ID type (same as Pid internally but semantically different)
 pub type Tid = u32;
@@ -216,8 +216,8 @@ impl Process {
             state: ProcessState::Ready,
             exit_status: 0,
             credentials: Credentials::default(),
-            pgid: pid,  // New process is its own process group leader
-            sid: pid,   // New process starts a new session
+            pgid: pid, // New process is its own process group leader
+            sid: pid,  // New process starts a new session
             address_space,
             shared_address_space: None,
             context: ProcessContext::default(),
@@ -239,7 +239,7 @@ impl Process {
             clear_child_tid: 0,
             is_thread_leader: true,
             thread_group: Vec::new(),
-            nice: 0,  // Default priority
+            nice: 0, // Default priority
             alarm_remaining: 0,
             itimer_interval_sec: 0,
             itimer_interval_usec: 0,
@@ -303,7 +303,7 @@ impl Process {
             clear_child_tid: 0,
             is_thread_leader: false,
             thread_group: Vec::new(),
-            nice: 0,  // Default priority
+            nice: 0, // Default priority
             alarm_remaining: 0,
             itimer_interval_sec: 0,
             itimer_interval_usec: 0,
@@ -687,7 +687,13 @@ impl Process {
     }
 
     /// Set interval timer
-    pub fn set_itimer(&mut self, interval_sec: i64, interval_usec: i64, value_sec: i64, value_usec: i64) {
+    pub fn set_itimer(
+        &mut self,
+        interval_sec: i64,
+        interval_usec: i64,
+        value_sec: i64,
+        value_usec: i64,
+    ) {
         self.itimer_interval_sec = interval_sec;
         self.itimer_interval_usec = interval_usec;
         self.itimer_value_sec = value_sec;
@@ -770,11 +776,7 @@ impl ProcessTable {
     /// Get the current process
     pub fn current(&self) -> Option<Arc<Mutex<Process>>> {
         let pid = self.current_pid();
-        if pid == 0 {
-            None
-        } else {
-            self.get(pid)
-        }
+        if pid == 0 { None } else { self.get(pid) }
     }
 
     /// Get all process PIDs

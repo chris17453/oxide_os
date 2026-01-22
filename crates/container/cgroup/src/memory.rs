@@ -130,7 +130,8 @@ impl MemoryController {
 
     /// Disable OOM killer
     pub fn set_oom_disabled(&self, disabled: bool) {
-        self.oom_disabled.store(if disabled { 1 } else { 0 }, Ordering::SeqCst);
+        self.oom_disabled
+            .store(if disabled { 1 } else { 0 }, Ordering::SeqCst);
     }
 
     /// Check if OOM killer is disabled

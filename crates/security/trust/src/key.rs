@@ -1,8 +1,8 @@
 //! Key management
 
+use crate::Timestamp;
 use alloc::string::String;
 use crypto::PublicKey;
-use crate::Timestamp;
 
 /// Key identifier (SHA-256 hash of public key)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

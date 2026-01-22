@@ -138,7 +138,9 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         let mut arg_len = 0;
         while arg_len < 255 {
             let c = unsafe { *arg_ptr.add(arg_len) };
-            if c == 0 { break; }
+            if c == 0 {
+                break;
+            }
             arg_buf[arg_len] = c;
             arg_len += 1;
         }
@@ -251,7 +253,9 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     let mut pattern_len = 0;
     while pattern_len < 255 {
         let c = unsafe { *pattern_ptr.add(pattern_len) };
-        if c == 0 { break; }
+        if c == 0 {
+            break;
+        }
         pattern_buf[pattern_len] = c;
         pattern_len += 1;
     }
@@ -280,7 +284,9 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
             let mut path_len = 0;
             while path_len < 255 {
                 let c = unsafe { *path_ptr.add(path_len) };
-                if c == 0 { break; }
+                if c == 0 {
+                    break;
+                }
                 path_buf[path_len] = c;
                 path_len += 1;
             }
@@ -488,8 +494,16 @@ fn contains(haystack: &[u8], needle: &str, ignore_case: bool) -> bool {
     for i in 0..=(haystack.len() - needle_bytes.len()) {
         let mut matches = true;
         for j in 0..needle_bytes.len() {
-            let h = if ignore_case { to_lower(haystack[i + j]) } else { haystack[i + j] };
-            let n = if ignore_case { to_lower(needle_bytes[j]) } else { needle_bytes[j] };
+            let h = if ignore_case {
+                to_lower(haystack[i + j])
+            } else {
+                haystack[i + j]
+            };
+            let n = if ignore_case {
+                to_lower(needle_bytes[j])
+            } else {
+                needle_bytes[j]
+            };
             if h != n {
                 matches = false;
                 break;

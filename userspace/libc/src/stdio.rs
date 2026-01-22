@@ -123,11 +123,7 @@ pub fn putchar(c: u8) {
 pub fn getchar() -> i32 {
     let mut buf = [0u8; 1];
     let ret = syscall::sys_read(STDIN_FILENO, &mut buf);
-    if ret <= 0 {
-        -1
-    } else {
-        buf[0] as i32
-    }
+    if ret <= 0 { -1 } else { buf[0] as i32 }
 }
 
 /// Print an unsigned integer

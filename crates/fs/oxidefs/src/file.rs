@@ -1,6 +1,5 @@
 //! OXIDEFS File operations
 
-
 use crate::inode::InodeData;
 use crate::superblock::Superblock;
 use crate::{OxidefsError, OxidefsResult};
@@ -132,7 +131,8 @@ fn get_block(
         let idx1 = block_num / ptrs_per_block;
         let idx2 = block_num % ptrs_per_block;
 
-        let indirect_block = read_indirect_ptr(device, inode.double_indirect, idx1 as usize, block_size)?;
+        let indirect_block =
+            read_indirect_ptr(device, inode.double_indirect, idx1 as usize, block_size)?;
         if indirect_block == 0 {
             return Ok(0);
         }
@@ -150,7 +150,8 @@ fn get_block(
         let idx2 = (block_num / ptrs_per_block) % ptrs_per_block;
         let idx3 = block_num % ptrs_per_block;
 
-        let d_indirect = read_indirect_ptr(device, inode.triple_indirect, idx1 as usize, block_size)?;
+        let d_indirect =
+            read_indirect_ptr(device, inode.triple_indirect, idx1 as usize, block_size)?;
         if d_indirect == 0 {
             return Ok(0);
         }
@@ -214,7 +215,13 @@ fn set_block(
             let zeros = alloc::vec![0u8; block_size as usize];
             device.write(inode.indirect, &zeros)?;
         }
-        return write_indirect_ptr(device, inode.indirect, block_num as usize, phys_block, block_size);
+        return write_indirect_ptr(
+            device,
+            inode.indirect,
+            block_num as usize,
+            phys_block,
+            block_size,
+        );
     }
 
     // Double and triple indirect would follow similar patterns
@@ -235,8 +242,14 @@ fn read_indirect_ptr(
 
     let offset = index * 8;
     Ok(u64::from_le_bytes([
-        buf[offset], buf[offset + 1], buf[offset + 2], buf[offset + 3],
-        buf[offset + 4], buf[offset + 5], buf[offset + 6], buf[offset + 7],
+        buf[offset],
+        buf[offset + 1],
+        buf[offset + 2],
+        buf[offset + 3],
+        buf[offset + 4],
+        buf[offset + 5],
+        buf[offset + 6],
+        buf[offset + 7],
     ]))
 }
 

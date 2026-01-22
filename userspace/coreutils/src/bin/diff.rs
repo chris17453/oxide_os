@@ -75,11 +75,7 @@ fn str_starts_with(s: &str, prefix: &str) -> bool {
 
 /// Convert to lowercase
 fn to_lower(c: u8) -> u8 {
-    if c >= b'A' && c <= b'Z' {
-        c + 32
-    } else {
-        c
-    }
+    if c >= b'A' && c <= b'Z' { c + 32 } else { c }
 }
 
 /// Strip whitespace from line
@@ -124,8 +120,16 @@ fn lines_equal(config: &DiffConfig, a: &[u8], b: &[u8]) -> bool {
     }
 
     for i in 0..a_len {
-        let ac = if config.ignore_case { to_lower(a_cmp[i]) } else { a_cmp[i] };
-        let bc = if config.ignore_case { to_lower(b_cmp[i]) } else { b_cmp[i] };
+        let ac = if config.ignore_case {
+            to_lower(a_cmp[i])
+        } else {
+            a_cmp[i]
+        };
+        let bc = if config.ignore_case {
+            to_lower(b_cmp[i])
+        } else {
+            b_cmp[i]
+        };
 
         if ac != bc {
             return false;
@@ -136,8 +140,11 @@ fn lines_equal(config: &DiffConfig, a: &[u8], b: &[u8]) -> bool {
 }
 
 /// Read all lines from file
-fn read_all_lines(fd: i32, lines: &mut [[u8; MAX_LINE_LEN]; MAX_LINES],
-                 lens: &mut [usize; MAX_LINES]) -> usize {
+fn read_all_lines(
+    fd: i32,
+    lines: &mut [[u8; MAX_LINE_LEN]; MAX_LINES],
+    lens: &mut [usize; MAX_LINES],
+) -> usize {
     let mut buf = [0u8; 4096];
     let mut current_line = [0u8; MAX_LINE_LEN];
     let mut current_len = 0;
@@ -175,9 +182,15 @@ fn read_all_lines(fd: i32, lines: &mut [[u8; MAX_LINE_LEN]; MAX_LINES],
 }
 
 /// Simple LCS-based diff (Myers algorithm simplified)
-fn compute_diff(config: &DiffConfig,
-                lines1: &[[u8; MAX_LINE_LEN]], lens1: &[usize], count1: usize,
-                lines2: &[[u8; MAX_LINE_LEN]], lens2: &[usize], count2: usize) {
+fn compute_diff(
+    config: &DiffConfig,
+    lines1: &[[u8; MAX_LINE_LEN]],
+    lens1: &[usize],
+    count1: usize,
+    lines2: &[[u8; MAX_LINE_LEN]],
+    lens2: &[usize],
+    count2: usize,
+) {
     // For simplicity, use a basic line-by-line comparison
     // A full LCS implementation would be more complex
 
@@ -185,8 +198,10 @@ fn compute_diff(config: &DiffConfig,
     let mut j = 0;
 
     while i < count1 || j < count2 {
-        if i < count1 && j < count2 &&
-           lines_equal(config, &lines1[i][..lens1[i]], &lines2[j][..lens2[j]]) {
+        if i < count1
+            && j < count2
+            && lines_equal(config, &lines1[i][..lens1[i]], &lines2[j][..lens2[j]])
+        {
             // Lines match, continue
             i += 1;
             j += 1;
@@ -198,9 +213,14 @@ fn compute_diff(config: &DiffConfig,
             let mut add_end = j;
 
             // Collect consecutive different lines
-            while del_end < count1 && add_end < count2 &&
-                  !lines_equal(config, &lines1[del_end][..lens1[del_end]],
-                              &lines2[add_end][..lens2[add_end]]) {
+            while del_end < count1
+                && add_end < count2
+                && !lines_equal(
+                    config,
+                    &lines1[del_end][..lens1[del_end]],
+                    &lines2[add_end][..lens2[add_end]],
+                )
+            {
                 del_end += 1;
                 add_end += 1;
             }
@@ -213,8 +233,16 @@ fn compute_diff(config: &DiffConfig,
             }
 
             // Print the diff
-            print_diff_section(del_start + 1, del_end, add_start + 1, add_end,
-                             lines1, lens1, lines2, lens2);
+            print_diff_section(
+                del_start + 1,
+                del_end,
+                add_start + 1,
+                add_end,
+                lines1,
+                lens1,
+                lines2,
+                lens2,
+            );
 
             i = del_end;
             j = add_end;
@@ -223,9 +251,16 @@ fn compute_diff(config: &DiffConfig,
 }
 
 /// Print a diff section
-fn print_diff_section(start1: usize, end1: usize, start2: usize, end2: usize,
-                     lines1: &[[u8; MAX_LINE_LEN]], lens1: &[usize],
-                     lines2: &[[u8; MAX_LINE_LEN]], lens2: &[usize]) {
+fn print_diff_section(
+    start1: usize,
+    end1: usize,
+    start2: usize,
+    end2: usize,
+    lines1: &[[u8; MAX_LINE_LEN]],
+    lens1: &[usize],
+    lines2: &[[u8; MAX_LINE_LEN]],
+    lens2: &[usize],
+) {
     let has_del = end1 > start1 - 1;
     let has_add = end2 > start2 - 1;
 

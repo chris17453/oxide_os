@@ -6,10 +6,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use proc::process_table;
-use vfs::{
-    File, FileFlags, Mode, SeekFrom, VfsError, VnodeType,
-    mount::GLOBAL_VFS,
-};
+use vfs::{File, FileFlags, Mode, SeekFrom, VfsError, VnodeType, mount::GLOBAL_VFS};
 
 use crate::errno;
 use crate::socket;
@@ -97,9 +94,7 @@ pub fn copy_path_from_user(path_ptr: u64, path_len: usize) -> Option<&'static st
     }
 
     // Get the path slice
-    let path_bytes = unsafe {
-        core::slice::from_raw_parts(path_ptr as *const u8, path_len)
-    };
+    let path_bytes = unsafe { core::slice::from_raw_parts(path_ptr as *const u8, path_len) };
 
     core::str::from_utf8(path_bytes).ok()
 }
@@ -153,12 +148,10 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
             Err(VfsError::NotFound) => {
                 // Create the file
                 match GLOBAL_VFS.lookup_parent(&path) {
-                    Ok((parent, name)) => {
-                        match parent.create(&name, mode) {
-                            Ok(vnode) => vnode,
-                            Err(e) => return vfs_error_to_errno(e),
-                        }
-                    }
+                    Ok((parent, name)) => match parent.create(&name, mode) {
+                        Ok(vnode) => vnode,
+                        Err(e) => return vfs_error_to_errno(e),
+                    },
                     Err(e) => return vfs_error_to_errno(e),
                 }
             }
@@ -257,9 +250,7 @@ pub fn sys_read_vfs(fd: i32, buf: u64, count: usize) -> i64 {
     drop(proc_guard);
 
     // Read into user buffer
-    let buffer = unsafe {
-        core::slice::from_raw_parts_mut(buf as *mut u8, count)
-    };
+    let buffer = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, count) };
 
     match file.read(buffer) {
         Ok(n) => n as i64,
@@ -296,9 +287,7 @@ pub fn sys_write_vfs(fd: i32, buf: u64, count: usize) -> i64 {
     drop(proc_guard);
 
     // Get user buffer
-    let buffer = unsafe {
-        core::slice::from_raw_parts(buf as *const u8, count)
-    };
+    let buffer = unsafe { core::slice::from_raw_parts(buf as *const u8, count) };
 
     match file.write(buffer) {
         Ok(n) => n as i64,
@@ -328,8 +317,8 @@ pub fn sys_lseek(fd: i32, offset: i64, whence: i32) -> i64 {
 
     let from = match whence {
         0 => SeekFrom::Start(offset as u64), // SEEK_SET
-        1 => SeekFrom::Current(offset),       // SEEK_CUR
-        2 => SeekFrom::End(offset),           // SEEK_END
+        1 => SeekFrom::Current(offset),      // SEEK_CUR
+        2 => SeekFrom::End(offset),          // SEEK_END
         _ => return errno::EINVAL,
     };
 
@@ -569,9 +558,7 @@ pub fn sys_chmod(path_ptr: u64, path_len: usize, mode: u32) -> i64 {
         return errno::EINVAL;
     }
 
-    let path_slice = unsafe {
-        core::slice::from_raw_parts(path_ptr as *const u8, path_len)
-    };
+    let path_slice = unsafe { core::slice::from_raw_parts(path_ptr as *const u8, path_len) };
 
     let path_str = match core::str::from_utf8(path_slice) {
         Ok(s) => s,
@@ -635,9 +622,7 @@ pub fn sys_chown(path_ptr: u64, path_len: usize, uid: i32, gid: i32) -> i64 {
         return errno::EINVAL;
     }
 
-    let path_slice = unsafe {
-        core::slice::from_raw_parts(path_ptr as *const u8, path_len)
-    };
+    let path_slice = unsafe { core::slice::from_raw_parts(path_ptr as *const u8, path_len) };
 
     let path_str = match core::str::from_utf8(path_slice) {
         Ok(s) => s,

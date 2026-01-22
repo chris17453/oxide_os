@@ -6,8 +6,8 @@
 
 extern crate alloc;
 
-mod queue;
 mod commands;
+mod queue;
 
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -21,27 +21,27 @@ use block::{BlockDevice, BlockDeviceInfo, BlockError, BlockResult};
 #[repr(C)]
 pub struct NvmeRegs {
     /// Controller Capabilities
-    pub cap: u64,        // 0x00
+    pub cap: u64, // 0x00
     /// Version
-    pub vs: u32,         // 0x08
+    pub vs: u32, // 0x08
     /// Interrupt Mask Set
-    pub intms: u32,      // 0x0C
+    pub intms: u32, // 0x0C
     /// Interrupt Mask Clear
-    pub intmc: u32,      // 0x10
+    pub intmc: u32, // 0x10
     /// Controller Configuration
-    pub cc: u32,         // 0x14
-    _reserved1: u32,     // 0x18
+    pub cc: u32, // 0x14
+    _reserved1: u32, // 0x18
     /// Controller Status
-    pub csts: u32,       // 0x1C
+    pub csts: u32, // 0x1C
     /// NVM Subsystem Reset
-    pub nssr: u32,       // 0x20
+    pub nssr: u32, // 0x20
     /// Admin Queue Attributes
-    pub aqa: u32,        // 0x24
+    pub aqa: u32, // 0x24
     /// Admin Submission Queue Base Address
-    pub asq: u64,        // 0x28
+    pub asq: u64, // 0x28
     /// Admin Completion Queue Base Address
-    pub acq: u64,        // 0x30
-    // More registers follow...
+    pub acq: u64, // 0x30
+                     // More registers follow...
 }
 
 /// NVMe capability bits
@@ -344,7 +344,7 @@ impl NvmeController {
                 | cc::CSS_NVM
                 | (0 << cc::MPS_SHIFT)      // 4KB pages
                 | (6 << cc::IOSQES_SHIFT)   // 64-byte SQE
-                | (4 << cc::IOCQES_SHIFT);  // 16-byte CQE
+                | (4 << cc::IOCQES_SHIFT); // 16-byte CQE
             core::ptr::write_volatile(cc_ptr, cc);
 
             // Wait for ready

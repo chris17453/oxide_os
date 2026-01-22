@@ -13,14 +13,12 @@ use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use spin::RwLock;
 
-use vfs::{
-    DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType,
-};
+use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
 use devices::{ConsoleDevice, FramebufferDevice, NullDevice, ZeroDevice};
 
 // Re-export console input functions
-pub use devices::{console_push_char, console_push_str, console_has_input};
+pub use devices::{console_has_input, console_push_char, console_push_str};
 
 /// The devfs root directory
 pub struct DevFs {
@@ -80,10 +78,7 @@ impl VnodeOps for DevFs {
 
     fn lookup(&self, name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
         let devices = self.devices.read();
-        devices
-            .get(name)
-            .cloned()
-            .ok_or(VfsError::NotFound)
+        devices.get(name).cloned().ok_or(VfsError::NotFound)
     }
 
     fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
@@ -153,7 +148,12 @@ impl VnodeOps for DevFs {
     }
 
     fn stat(&self) -> VfsResult<Stat> {
-        Ok(Stat::new(VnodeType::Directory, Mode::DEFAULT_DIR, 0, self.ino))
+        Ok(Stat::new(
+            VnodeType::Directory,
+            Mode::DEFAULT_DIR,
+            0,
+            self.ino,
+        ))
     }
 
     fn truncate(&self, _size: u64) -> VfsResult<()> {

@@ -24,45 +24,45 @@ pub const DNS_MAX_UDP_SIZE: usize = 512;
 
 /// DNS class values
 pub mod class {
-    pub const IN: u16 = 1;  // Internet
-    pub const CS: u16 = 2;  // CSNET
-    pub const CH: u16 = 3;  // CHAOS
-    pub const HS: u16 = 4;  // Hesiod
+    pub const IN: u16 = 1; // Internet
+    pub const CS: u16 = 2; // CSNET
+    pub const CH: u16 = 3; // CHAOS
+    pub const HS: u16 = 4; // Hesiod
 }
 
 /// DNS record types
 pub mod record_type {
-    pub const A: u16 = 1;      // IPv4 address
-    pub const NS: u16 = 2;     // Name server
-    pub const CNAME: u16 = 5;  // Canonical name
-    pub const SOA: u16 = 6;    // Start of authority
-    pub const PTR: u16 = 12;   // Pointer
-    pub const MX: u16 = 15;    // Mail exchange
-    pub const TXT: u16 = 16;   // Text
-    pub const AAAA: u16 = 28;  // IPv6 address
-    pub const SRV: u16 = 33;   // Service
-    pub const ANY: u16 = 255;  // Any
+    pub const A: u16 = 1; // IPv4 address
+    pub const NS: u16 = 2; // Name server
+    pub const CNAME: u16 = 5; // Canonical name
+    pub const SOA: u16 = 6; // Start of authority
+    pub const PTR: u16 = 12; // Pointer
+    pub const MX: u16 = 15; // Mail exchange
+    pub const TXT: u16 = 16; // Text
+    pub const AAAA: u16 = 28; // IPv6 address
+    pub const SRV: u16 = 33; // Service
+    pub const ANY: u16 = 255; // Any
 }
 
 /// DNS response codes
 pub mod rcode {
-    pub const NOERROR: u8 = 0;   // No error
-    pub const FORMERR: u8 = 1;   // Format error
-    pub const SERVFAIL: u8 = 2;  // Server failure
-    pub const NXDOMAIN: u8 = 3;  // Non-existent domain
-    pub const NOTIMP: u8 = 4;    // Not implemented
-    pub const REFUSED: u8 = 5;   // Query refused
+    pub const NOERROR: u8 = 0; // No error
+    pub const FORMERR: u8 = 1; // Format error
+    pub const SERVFAIL: u8 = 2; // Server failure
+    pub const NXDOMAIN: u8 = 3; // Non-existent domain
+    pub const NOTIMP: u8 = 4; // Not implemented
+    pub const REFUSED: u8 = 5; // Query refused
 }
 
 /// DNS header flags
 pub mod flags {
-    pub const QR: u16 = 0x8000;       // Query/Response
-    pub const OPCODE: u16 = 0x7800;   // Opcode
-    pub const AA: u16 = 0x0400;       // Authoritative answer
-    pub const TC: u16 = 0x0200;       // Truncated
-    pub const RD: u16 = 0x0100;       // Recursion desired
-    pub const RA: u16 = 0x0080;       // Recursion available
-    pub const RCODE: u16 = 0x000F;    // Response code
+    pub const QR: u16 = 0x8000; // Query/Response
+    pub const OPCODE: u16 = 0x7800; // Opcode
+    pub const AA: u16 = 0x0400; // Authoritative answer
+    pub const TC: u16 = 0x0200; // Truncated
+    pub const RD: u16 = 0x0100; // Recursion desired
+    pub const RA: u16 = 0x0080; // Recursion available
+    pub const RCODE: u16 = 0x000F; // Response code
 }
 
 /// DNS header
@@ -149,7 +149,11 @@ impl DnsQuestion {
         let qclass = u16::from_be_bytes([data[new_offset + 2], data[new_offset + 3]]);
 
         Some((
-            DnsQuestion { name, qtype, qclass },
+            DnsQuestion {
+                name,
+                qtype,
+                qclass,
+            },
             new_offset + 4,
         ))
     }
@@ -215,7 +219,12 @@ impl DnsRecord {
     /// Get IPv4 address from A record
     pub fn as_ipv4(&self) -> Option<Ipv4Addr> {
         if self.rtype == record_type::A && self.rdata.len() == 4 {
-            Some(Ipv4Addr([self.rdata[0], self.rdata[1], self.rdata[2], self.rdata[3]]))
+            Some(Ipv4Addr([
+                self.rdata[0],
+                self.rdata[1],
+                self.rdata[2],
+                self.rdata[3],
+            ]))
         } else {
             None
         }

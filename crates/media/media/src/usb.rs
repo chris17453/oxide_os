@@ -1,8 +1,8 @@
 //! USB device handling
 
+use crate::{Partition, UsbId};
 use alloc::string::String;
 use alloc::vec::Vec;
-use crate::{Partition, UsbId};
 
 /// USB device class codes
 pub mod class {

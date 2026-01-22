@@ -37,7 +37,10 @@ impl Bitmap {
         let mut data = alloc::vec![0u8; num_blocks * block_size];
 
         for i in 0..num_blocks {
-            device.read(start_block + i as u64, &mut data[i * block_size..(i + 1) * block_size])?;
+            device.read(
+                start_block + i as u64,
+                &mut data[i * block_size..(i + 1) * block_size],
+            )?;
         }
 
         // Trim to actual size
@@ -60,7 +63,10 @@ impl Bitmap {
         buf[..self.data.len()].copy_from_slice(&self.data);
 
         for i in 0..num_blocks {
-            device.write(start_block + i as u64, &buf[i * block_size..(i + 1) * block_size])?;
+            device.write(
+                start_block + i as u64,
+                &buf[i * block_size..(i + 1) * block_size],
+            )?;
         }
 
         Ok(())

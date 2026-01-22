@@ -9,12 +9,12 @@ extern crate ps2;
 use arch_traits::{Arch, PortIo, TlbControl};
 use os_core::{PhysAddr, VirtAddr};
 
-pub mod serial;
-pub mod gdt;
-pub mod idt;
-pub mod exceptions;
 pub mod apic;
 pub mod context;
+pub mod exceptions;
+pub mod gdt;
+pub mod idt;
+pub mod serial;
 pub mod syscall;
 pub mod usermode;
 
@@ -260,7 +260,7 @@ pub unsafe fn init() {
         static mut DOUBLE_FAULT_STACK: [u8; 4096 * 5] = [0; 4096 * 5];
         let stack_ptr = addr_of_mut!(DOUBLE_FAULT_STACK);
         let stack_top = (stack_ptr as *const u8).add((*stack_ptr).len()) as u64;
-        gdt::set_ist(0, stack_top);  // IST1 (index 0)
+        gdt::set_ist(0, stack_top); // IST1 (index 0)
 
         // Initialize IDT
         idt::init();
@@ -323,4 +323,6 @@ pub unsafe fn set_keyboard_callback(callback: fn()) {
 pub use syscall::{SyscallUserContext, get_user_context};
 
 /// Re-export usermode transition functions and types
-pub use usermode::{enter_usermode, enter_usermode_with_context, jump_to_usermode, return_to_usermode, UserContext};
+pub use usermode::{
+    UserContext, enter_usermode, enter_usermode_with_context, jump_to_usermode, return_to_usermode,
+};

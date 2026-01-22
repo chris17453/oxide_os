@@ -29,8 +29,8 @@ struct TailConfig {
     quiet: bool,
     verbose: bool,
     zero_terminated: bool,
-    from_start: bool,  // +N form
-    sleep_interval: i32,  // for -f
+    from_start: bool,    // +N form
+    sleep_interval: i32, // for -f
 }
 
 impl TailConfig {
@@ -97,7 +97,7 @@ fn parse_int(s: &[u8]) -> Option<i64> {
     if s.is_empty() || s.len() == start_idx {
         None
     } else if from_start {
-        Some(-result)  // Negative indicates from start
+        Some(-result) // Negative indicates from start
     } else {
         Some(result)
     }
@@ -457,7 +457,8 @@ fn tail_lines(config: &TailConfig, fd: i32) {
             if buf[i] == delimiter {
                 // Store complete line
                 if current_len < LINE_SIZE {
-                    lines[line_idx % num_lines][..current_len].copy_from_slice(&current_line[..current_len]);
+                    lines[line_idx % num_lines][..current_len]
+                        .copy_from_slice(&current_line[..current_len]);
                     line_lens[line_idx % num_lines] = current_len;
                 }
                 line_idx += 1;
@@ -473,7 +474,8 @@ fn tail_lines(config: &TailConfig, fd: i32) {
     // Handle last line without delimiter
     if current_len > 0 {
         if current_len < LINE_SIZE {
-            lines[line_idx % num_lines][..current_len].copy_from_slice(&current_line[..current_len]);
+            lines[line_idx % num_lines][..current_len]
+                .copy_from_slice(&current_line[..current_len]);
             line_lens[line_idx % num_lines] = current_len;
         }
         total_lines += 1;

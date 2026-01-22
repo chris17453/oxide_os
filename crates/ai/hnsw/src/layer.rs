@@ -1,7 +1,7 @@
 //! HNSW layer management
 
-use alloc::collections::BTreeSet;
 use crate::node::NodeId;
+use alloc::collections::BTreeSet;
 
 /// A layer in the HNSW graph
 #[derive(Debug, Clone)]

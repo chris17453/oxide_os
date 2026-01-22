@@ -1,11 +1,11 @@
 //! PID Namespace
 
+use crate::{NsError, NsResult, alloc_ns_id};
 use alloc::collections::BTreeMap;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
 use spin::{Mutex, RwLock};
-use crate::{alloc_ns_id, NsResult, NsError};
 
 /// Process ID type
 pub type Pid = u32;

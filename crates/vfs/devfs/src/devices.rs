@@ -2,8 +2,8 @@
 //!
 //! Provides /dev/null, /dev/zero, /dev/console, /dev/fb0, etc.
 
-use alloc::sync::Arc;
 use alloc::collections::VecDeque;
+use alloc::sync::Arc;
 use spin::Mutex;
 
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
@@ -386,22 +386,38 @@ pub struct FbVarScreenInfo {
 impl Default for FbVarScreenInfo {
     fn default() -> Self {
         FbVarScreenInfo {
-            xres: 0, yres: 0,
-            xres_virtual: 0, yres_virtual: 0,
-            xoffset: 0, yoffset: 0,
-            bits_per_pixel: 0, grayscale: 0,
-            red_offset: 0, red_length: 0,
-            green_offset: 0, green_length: 0,
-            blue_offset: 0, blue_length: 0,
-            transp_offset: 0, transp_length: 0,
-            nonstd: 0, activate: 0,
-            height: 0, width: 0,
+            xres: 0,
+            yres: 0,
+            xres_virtual: 0,
+            yres_virtual: 0,
+            xoffset: 0,
+            yoffset: 0,
+            bits_per_pixel: 0,
+            grayscale: 0,
+            red_offset: 0,
+            red_length: 0,
+            green_offset: 0,
+            green_length: 0,
+            blue_offset: 0,
+            blue_length: 0,
+            transp_offset: 0,
+            transp_length: 0,
+            nonstd: 0,
+            activate: 0,
+            height: 0,
+            width: 0,
             accel_flags: 0,
             pixclock: 0,
-            left_margin: 0, right_margin: 0,
-            upper_margin: 0, lower_margin: 0,
-            hsync_len: 0, vsync_len: 0,
-            sync: 0, vmode: 0, rotate: 0, colorspace: 0,
+            left_margin: 0,
+            right_margin: 0,
+            upper_margin: 0,
+            lower_margin: 0,
+            hsync_len: 0,
+            vsync_len: 0,
+            sync: 0,
+            vmode: 0,
+            rotate: 0,
+            colorspace: 0,
             reserved: [0; 4],
         }
     }
@@ -490,14 +506,14 @@ pub type FbModeInfoFn = fn(u32) -> Option<VideoModeDeviceInfo>;
 /// Framebuffer device info
 #[derive(Debug, Clone, Copy)]
 pub struct FramebufferDeviceInfo {
-    pub base: usize,          // Virtual address
-    pub phys_base: u64,       // Physical address
-    pub size: usize,          // Total size in bytes
-    pub width: u32,           // Width in pixels
-    pub height: u32,          // Height in pixels
-    pub stride: u32,          // Bytes per scanline
-    pub bpp: u32,             // Bits per pixel
-    pub is_bgr: bool,         // BGR vs RGB format
+    pub base: usize,    // Virtual address
+    pub phys_base: u64, // Physical address
+    pub size: usize,    // Total size in bytes
+    pub width: u32,     // Width in pixels
+    pub height: u32,    // Height in pixels
+    pub stride: u32,    // Bytes per scanline
+    pub bpp: u32,       // Bits per pixel
+    pub is_bgr: bool,   // BGR vs RGB format
 }
 
 /// Video mode info for userspace
@@ -740,7 +756,7 @@ impl VnodeOps for FramebufferDevice {
                 fix_info.smem_start = info.phys_base;
                 fix_info.smem_len = info.size as u32;
                 fix_info.fb_type = 0; // FB_TYPE_PACKED_PIXELS
-                fix_info.visual = 2;  // FB_VISUAL_TRUECOLOR
+                fix_info.visual = 2; // FB_VISUAL_TRUECOLOR
                 fix_info.line_length = info.stride;
 
                 let out_ptr = arg as *mut FbFixScreenInfo;
@@ -791,7 +807,8 @@ impl VnodeOps for FramebufferDevice {
                     Some(info) => {
                         // Write mode info at offset 8 (after index + 4 bytes padding for alignment)
                         // VideoModeDeviceInfo requires 8-byte alignment due to u64 field
-                        let out_ptr = unsafe { (arg as *mut u8).add(8) as *mut VideoModeDeviceInfo };
+                        let out_ptr =
+                            unsafe { (arg as *mut u8).add(8) as *mut VideoModeDeviceInfo };
                         unsafe {
                             *out_ptr = info;
                         }

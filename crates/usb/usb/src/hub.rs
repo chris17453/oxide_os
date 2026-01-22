@@ -1,8 +1,8 @@
 //! USB Hub Driver
 
+use crate::{SetupPacket, UsbDevice, UsbError, UsbResult};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use crate::{UsbDevice, UsbResult, UsbError, SetupPacket};
 
 /// USB hub status
 #[repr(C, packed)]
@@ -207,8 +207,7 @@ impl UsbHub {
             Some(&mut buf),
         )?;
 
-        let descriptor = HubDescriptor::from_bytes(&buf)
-            .ok_or(UsbError::InvalidDescriptor)?;
+        let descriptor = HubDescriptor::from_bytes(&buf).ok_or(UsbError::InvalidDescriptor)?;
 
         let num_ports = descriptor.num_ports as usize;
         let port_status = alloc::vec![PortStatusBits::default(); num_ports];
@@ -263,13 +262,8 @@ impl UsbHub {
 
     /// Clear port feature
     pub fn clear_port_feature(&self, port: u8, feature: u16) -> UsbResult<()> {
-        self.device.control_transfer(
-            0x23,
-            request::CLEAR_FEATURE,
-            feature,
-            port as u16,
-            None,
-        )?;
+        self.device
+            .control_transfer(0x23, request::CLEAR_FEATURE, feature, port as u16, None)?;
         Ok(())
     }
 

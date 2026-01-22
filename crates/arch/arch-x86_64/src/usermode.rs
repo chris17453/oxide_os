@@ -2,8 +2,8 @@
 //!
 //! Provides the mechanism to transition from Ring 0 to Ring 3.
 
-use core::arch::naked_asm;
 use crate::gdt::{USER_CS, USER_DS};
+use core::arch::naked_asm;
 
 /// Jump to user mode
 ///
@@ -107,10 +107,10 @@ pub unsafe extern "C" fn jump_to_usermode(entry: u64, user_stack: u64) -> ! {
 /// entry, not for returning from fork (use enter_usermode_with_context instead).
 #[unsafe(naked)]
 pub unsafe extern "C" fn enter_usermode(
-    kernel_stack: u64,  // rdi
-    pml4_phys: u64,     // rsi
-    entry: u64,         // rdx
-    user_stack: u64,    // rcx
+    kernel_stack: u64, // rdi
+    pml4_phys: u64,    // rsi
+    entry: u64,        // rdx
+    user_stack: u64,   // rcx
 ) -> ! {
     naked_asm!(
         // Disable interrupts during the transition
@@ -193,11 +193,24 @@ pub unsafe extern "C" fn enter_usermode(
 /// User context structure for enter_usermode_with_context
 #[repr(C)]
 pub struct UserContext {
-    pub rax: u64, pub rbx: u64, pub rcx: u64, pub rdx: u64,
-    pub rsi: u64, pub rdi: u64, pub rbp: u64, pub rsp: u64,
-    pub r8: u64, pub r9: u64, pub r10: u64, pub r11: u64,
-    pub r12: u64, pub r13: u64, pub r14: u64, pub r15: u64,
-    pub rip: u64, pub rflags: u64,
+    pub rax: u64,
+    pub rbx: u64,
+    pub rcx: u64,
+    pub rdx: u64,
+    pub rsi: u64,
+    pub rdi: u64,
+    pub rbp: u64,
+    pub rsp: u64,
+    pub r8: u64,
+    pub r9: u64,
+    pub r10: u64,
+    pub r11: u64,
+    pub r12: u64,
+    pub r13: u64,
+    pub r14: u64,
+    pub r15: u64,
+    pub rip: u64,
+    pub rflags: u64,
 }
 
 /// Debug variables to capture what enter_usermode_with_context reads
@@ -234,9 +247,9 @@ pub static mut DEBUG_IRETQ_CS: u64 = 0xDEADDEADDEADDEAD;
 /// The context pointer must be valid and all values must be safe for user mode.
 #[unsafe(naked)]
 pub unsafe extern "C" fn enter_usermode_with_context(
-    kernel_stack: u64,  // rdi
-    pml4_phys: u64,     // rsi
-    ctx: *const UserContext,  // rdx
+    kernel_stack: u64,       // rdi
+    pml4_phys: u64,          // rsi
+    ctx: *const UserContext, // rdx
 ) -> ! {
     naked_asm!(
         // Disable interrupts during the transition

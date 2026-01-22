@@ -202,8 +202,9 @@ impl PixelFormat {
         match self {
             PixelFormat::Indexed8 | PixelFormat::Grayscale8 => 8,
             PixelFormat::Rgb565 => 16,
-            PixelFormat::Rgb | PixelFormat::Bgr |
-            PixelFormat::Rgba8888 | PixelFormat::Bgra8888 => 32,
+            PixelFormat::Rgb | PixelFormat::Bgr | PixelFormat::Rgba8888 | PixelFormat::Bgra8888 => {
+                32
+            }
             PixelFormat::Unknown => 32, // Assume 32 for unknown
         }
     }

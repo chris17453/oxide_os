@@ -4,17 +4,16 @@
 //! - A new process (like fork, with separate address space)
 //! - A new thread (shares address space with parent)
 
-use alloc::sync::Arc;
+use crate::fork::{ForkError, do_fork};
+use crate::{
+    Process, ProcessContext, Tid, UserAddressSpace, alloc_pid, clone_flags::*, process_table,
+};
 use alloc::string::ToString;
-use os_core::VirtAddr;
+use alloc::sync::Arc;
 use mm_traits::FrameAllocator;
+use os_core::VirtAddr;
 use proc_traits::Pid;
 use spin::Mutex;
-use crate::{
-    Process, Tid, UserAddressSpace, alloc_pid, process_table,
-    clone_flags::*, ProcessContext,
-};
-use crate::fork::{do_fork, ForkError};
 
 /// Error during clone
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,7 +168,7 @@ pub fn do_clone<A: FrameAllocator>(
         parent.ppid(),
         kernel_stack_phys,
         kernel_stack_size,
-        VirtAddr::new(parent_context.rip),  // Entry point is return address
+        VirtAddr::new(parent_context.rip), // Entry point is return address
         child_stack,
         shared_address_space,
         shared_fd_table,

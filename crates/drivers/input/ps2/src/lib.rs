@@ -12,8 +12,8 @@ use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use spin::Mutex;
 
 use input::{
-    InputDevice, InputDeviceInfo, InputDeviceType, KeyValue, Keymap,
-    REL_X, REL_Y, REL_WHEEL, BTN_LEFT, BTN_RIGHT, BTN_MIDDLE,
+    BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, InputDevice, InputDeviceInfo, InputDeviceType, KeyValue,
+    Keymap, REL_WHEEL, REL_X, REL_Y,
 };
 
 /// 8042 controller data port
@@ -219,7 +219,11 @@ impl Ps2Keyboard {
             }
 
             // Report to input subsystem
-            let value = if pressed { KeyValue::Pressed } else { KeyValue::Released };
+            let value = if pressed {
+                KeyValue::Pressed
+            } else {
+                KeyValue::Released
+            };
             input::report_key(self.device_id() as usize, keycode, value);
             input::report_sync(self.device_id() as usize);
 
@@ -478,7 +482,11 @@ impl Ps2Mouse {
         packet[idx as usize] = byte;
         let next_idx = idx + 1;
 
-        let packet_size = if self.has_wheel.load(Ordering::SeqCst) { 4 } else { 3 };
+        let packet_size = if self.has_wheel.load(Ordering::SeqCst) {
+            4
+        } else {
+            3
+        };
 
         if next_idx >= packet_size {
             // Complete packet
@@ -504,19 +512,31 @@ impl Ps2Mouse {
 
         // Left button
         if (old_buttons ^ new_buttons) & 0x01 != 0 {
-            let value = if new_buttons & 0x01 != 0 { KeyValue::Pressed } else { KeyValue::Released };
+            let value = if new_buttons & 0x01 != 0 {
+                KeyValue::Pressed
+            } else {
+                KeyValue::Released
+            };
             input::report_key(device_id, BTN_LEFT, value);
         }
 
         // Right button
         if (old_buttons ^ new_buttons) & 0x02 != 0 {
-            let value = if new_buttons & 0x02 != 0 { KeyValue::Pressed } else { KeyValue::Released };
+            let value = if new_buttons & 0x02 != 0 {
+                KeyValue::Pressed
+            } else {
+                KeyValue::Released
+            };
             input::report_key(device_id, BTN_RIGHT, value);
         }
 
         // Middle button
         if (old_buttons ^ new_buttons) & 0x04 != 0 {
-            let value = if new_buttons & 0x04 != 0 { KeyValue::Pressed } else { KeyValue::Released };
+            let value = if new_buttons & 0x04 != 0 {
+                KeyValue::Pressed
+            } else {
+                KeyValue::Released
+            };
             input::report_key(device_id, BTN_MIDDLE, value);
         }
 
@@ -575,7 +595,7 @@ impl InputDevice for Ps2Mouse {
 pub fn init_controller() -> bool {
     // Minimal approach: just ensure keyboard interrupts are enabled
     // QEMU/BIOS has already set up the controller correctly
-    
+
     // Flush any pending data
     while unsafe { inb(STATUS_PORT) } & status::OUTPUT_FULL != 0 {
         let _ = unsafe { inb(DATA_PORT) };
@@ -690,16 +710,17 @@ pub fn handle_keyboard_irq() {
 
     if let Some(keyboard) = KEYBOARD.lock().as_ref() {
         let scancode = unsafe { inb(DATA_PORT) };
-        
+
         // Store in debug log
         let count = KEYBOARD_IRQ_COUNT.load(Ordering::Relaxed);
-        if count <= 50 {  // Increase debug window
+        if count <= 50 {
+            // Increase debug window
             let mut log = SCANCODE_LOG.lock();
             let len = log.len();
             log[(count - 1) % len] = scancode;
         }
         LAST_SCANCODE.store(scancode, Ordering::Relaxed);
-        
+
         keyboard.handle_scancode(scancode);
     }
 }

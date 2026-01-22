@@ -51,7 +51,9 @@ impl LinkedListAllocator {
     /// The memory region must be valid and unused.
     pub unsafe fn init(&mut self, heap_start: usize, heap_size: usize) {
         // SAFETY: caller guarantees heap region is valid
-        unsafe { self.add_free_region(heap_start, heap_size); }
+        unsafe {
+            self.add_free_region(heap_start, heap_size);
+        }
         self.total_size = heap_size;
         self.used_size = 0;
     }
@@ -84,7 +86,11 @@ impl LinkedListAllocator {
         let mut current = &mut self.head;
 
         // Walk until we find a block at higher address or reach end
-        while current.next.as_ref().map_or(false, |b| b.start_addr() < aligned_addr) {
+        while current
+            .next
+            .as_ref()
+            .map_or(false, |b| b.start_addr() < aligned_addr)
+        {
             current = current.next.as_mut().unwrap();
         }
 
@@ -184,11 +190,7 @@ impl LinkedListAllocator {
     }
 
     /// Check if a block can satisfy an allocation
-    fn alloc_from_block(
-        block: &FreeBlock,
-        size: usize,
-        align: usize,
-    ) -> Option<(usize, usize)> {
+    fn alloc_from_block(block: &FreeBlock, size: usize, align: usize) -> Option<(usize, usize)> {
         let alloc_start = align_up(block.start_addr(), align);
         let alloc_end = alloc_start.checked_add(size)?;
         let block_end = block.end_addr();

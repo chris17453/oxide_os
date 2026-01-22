@@ -1,9 +1,9 @@
 //! Device trust database
 
+use crate::{DeviceId, MediaError, ShareUrl, Timestamp, UsbId};
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use spin::RwLock;
-use crate::{DeviceId, MediaError, Timestamp, UsbId, ShareUrl};
 
 /// Trust level for devices
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -205,22 +205,42 @@ impl DeviceTrustDb {
     }
 
     /// Block USB device
-    pub fn block_usb(&self, id: &UsbId, name: String, timestamp: Timestamp) -> Result<(), MediaError> {
+    pub fn block_usb(
+        &self,
+        id: &UsbId,
+        name: String,
+        timestamp: Timestamp,
+    ) -> Result<(), MediaError> {
         self.set_usb_trust(id, name, TrustLevel::Blocked, timestamp)
     }
 
     /// Block network share
-    pub fn block_share(&self, url: &ShareUrl, name: String, timestamp: Timestamp) -> Result<(), MediaError> {
+    pub fn block_share(
+        &self,
+        url: &ShareUrl,
+        name: String,
+        timestamp: Timestamp,
+    ) -> Result<(), MediaError> {
         self.set_share_trust(url, name, TrustLevel::Blocked, timestamp)
     }
 
     /// Trust USB device
-    pub fn trust_usb(&self, id: &UsbId, name: String, timestamp: Timestamp) -> Result<(), MediaError> {
+    pub fn trust_usb(
+        &self,
+        id: &UsbId,
+        name: String,
+        timestamp: Timestamp,
+    ) -> Result<(), MediaError> {
         self.set_usb_trust(id, name, TrustLevel::Trusted, timestamp)
     }
 
     /// Trust network share
-    pub fn trust_share(&self, url: &ShareUrl, name: String, timestamp: Timestamp) -> Result<(), MediaError> {
+    pub fn trust_share(
+        &self,
+        url: &ShareUrl,
+        name: String,
+        timestamp: Timestamp,
+    ) -> Result<(), MediaError> {
         self.set_share_trust(url, name, TrustLevel::Trusted, timestamp)
     }
 

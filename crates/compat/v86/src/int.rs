@@ -143,7 +143,7 @@ fn handle_int13(ctx: &mut V86Context) -> Result<bool, V86Error> {
             // Return floppy parameters for drive 0
             if ctx.regs.dl() == 0 {
                 ctx.regs.set_ah(0);
-                ctx.regs.set_dh(1);  // max head number
+                ctx.regs.set_dh(1); // max head number
                 ctx.regs.ecx = (79 << 8) | 18; // max cylinder, sectors
                 ctx.regs.set_carry(false);
             } else {

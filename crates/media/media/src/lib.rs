@@ -6,15 +6,15 @@
 
 extern crate alloc;
 
-pub mod usb;
-pub mod trust;
-pub mod policy;
 pub mod manager;
+pub mod policy;
+pub mod trust;
+pub mod usb;
 
-pub use usb::*;
-pub use trust::*;
-pub use policy::*;
 pub use manager::*;
+pub use policy::*;
+pub use trust::*;
+pub use usb::*;
 
 use alloc::string::String;
 

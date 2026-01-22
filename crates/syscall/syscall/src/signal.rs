@@ -3,9 +3,7 @@
 //! Implements kill, sigaction, sigprocmask, sigpending, etc.
 
 use proc::process_table;
-use signal::{
-    can_catch, is_valid, SigAction, SigHow, SigInfo, SigSet, SIGKILL, SIGSTOP,
-};
+use signal::{SIGKILL, SIGSTOP, SigAction, SigHow, SigInfo, SigSet, can_catch, is_valid};
 
 use crate::errno;
 
@@ -52,11 +50,7 @@ pub fn sys_kill(pid: i32, sig: i32) -> i64 {
                 }
             }
         }
-        if sent {
-            0
-        } else {
-            errno::ESRCH
-        }
+        if sent { 0 } else { errno::ESRCH }
     } else {
         // Send to process group |pid|
         let pgid = (-pid) as u32;
@@ -99,11 +93,7 @@ fn send_signal_to_pgrp(pgid: u32, sig: i32, sender_pid: u32, sender_uid: u32) ->
         }
     }
 
-    if sent {
-        0
-    } else {
-        errno::ESRCH
-    }
+    if sent { 0 } else { errno::ESRCH }
 }
 
 /// sys_sigaction - Get/set signal handler

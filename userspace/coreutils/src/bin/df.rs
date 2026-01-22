@@ -101,7 +101,8 @@ fn parse_mount_line(line: &[u8], mount: &mut MountPoint) -> bool {
                     1 => {
                         // Mount point
                         let len = (i - field_start).min(MAX_PATH - 1);
-                        mount.mount_point[..len].copy_from_slice(&line[field_start..field_start + len]);
+                        mount.mount_point[..len]
+                            .copy_from_slice(&line[field_start..field_start + len]);
                     }
                     2 => {
                         // FS type
@@ -242,7 +243,11 @@ fn print_cstr(buf: &[u8]) {
 
 /// Display filesystem info
 fn display_filesystem(config: &DfConfig, mount: &MountPoint) {
-    let mount_point_len = mount.mount_point.iter().position(|&c| c == 0).unwrap_or(MAX_PATH);
+    let mount_point_len = mount
+        .mount_point
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(MAX_PATH);
     let mount_path = match core::str::from_utf8(&mount.mount_point[..mount_point_len]) {
         Ok(s) => s,
         Err(_) => return,
@@ -262,7 +267,7 @@ fn display_filesystem(config: &DfConfig, mount: &MountPoint) {
     let (total_kb, used_kb, avail_kb) = match fs_type {
         "tmpfs" => (1048576, 0, 1048576), // 1GB tmpfs
         "ext4" | "ext3" | "ext2" => (10485760, 5242880, 5242880), // 10GB disk, 50% used
-        _ => (0, 0, 0), // Virtual filesystems
+        _ => (0, 0, 0),                   // Virtual filesystems
     };
 
     // Device name
@@ -431,8 +436,12 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
 
         // Skip pseudo filesystems unless -a specified
         if !config.show_all {
-            if fs_type == "proc" || fs_type == "sysfs" || fs_type == "devfs" ||
-               fs_type == "devpts" || fs_type == "tmpfs" {
+            if fs_type == "proc"
+                || fs_type == "sysfs"
+                || fs_type == "devfs"
+                || fs_type == "devpts"
+                || fs_type == "tmpfs"
+            {
                 continue;
             }
         }

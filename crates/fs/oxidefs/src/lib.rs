@@ -11,12 +11,12 @@
 
 extern crate alloc;
 
-pub mod superblock;
-pub mod inode;
+pub mod bitmap;
 pub mod dir;
 pub mod file;
-pub mod bitmap;
+pub mod inode;
 pub mod journal;
+pub mod superblock;
 
 use alloc::string::String;
 use alloc::sync::Arc;
@@ -25,8 +25,8 @@ use spin::{Mutex, RwLock};
 use block::{BlockDevice, BlockError};
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
-pub use superblock::Superblock;
 pub use inode::{Inode, InodeData};
+pub use superblock::Superblock;
 
 /// OXIDEFS magic number ("OXIDE" + version)
 pub const OXIDEFS_MAGIC: u64 = 0x4546464C5558_0001; // "OXIDE" + version 1
@@ -136,7 +136,8 @@ impl Oxidefs {
         }
 
         // Load block bitmap
-        let block_bitmap_blocks = (sb.total_blocks + 8 * block_size as u64 - 1) / (8 * block_size as u64);
+        let block_bitmap_blocks =
+            (sb.total_blocks + 8 * block_size as u64 - 1) / (8 * block_size as u64);
         let block_bitmap = bitmap::Bitmap::load(
             &*device,
             sb.block_bitmap_start,
@@ -145,7 +146,8 @@ impl Oxidefs {
         )?;
 
         // Load inode bitmap
-        let inode_bitmap_blocks = (sb.total_inodes + 8 * block_size as u64 - 1) / (8 * block_size as u64);
+        let inode_bitmap_blocks =
+            (sb.total_inodes + 8 * block_size as u64 - 1) / (8 * block_size as u64);
         let inode_bitmap = bitmap::Bitmap::load(
             &*device,
             sb.inode_bitmap_start,
@@ -172,11 +174,15 @@ impl Oxidefs {
         let total_inodes = (total_blocks * block_size as u64 / inode_ratio).max(128);
 
         let superblock_blocks = 1u64;
-        let block_bitmap_blocks = (total_blocks + 8 * block_size as u64 - 1) / (8 * block_size as u64);
-        let inode_bitmap_blocks = (total_inodes + 8 * block_size as u64 - 1) / (8 * block_size as u64);
-        let inode_table_blocks = (total_inodes * INODE_SIZE as u64 + block_size as u64 - 1) / block_size as u64;
+        let block_bitmap_blocks =
+            (total_blocks + 8 * block_size as u64 - 1) / (8 * block_size as u64);
+        let inode_bitmap_blocks =
+            (total_inodes + 8 * block_size as u64 - 1) / (8 * block_size as u64);
+        let inode_table_blocks =
+            (total_inodes * INODE_SIZE as u64 + block_size as u64 - 1) / block_size as u64;
 
-        let metadata_blocks = superblock_blocks + block_bitmap_blocks + inode_bitmap_blocks + inode_table_blocks;
+        let metadata_blocks =
+            superblock_blocks + block_bitmap_blocks + inode_bitmap_blocks + inode_table_blocks;
         let first_data_block = metadata_blocks;
 
         // Create superblock
@@ -523,7 +529,9 @@ impl VnodeOps for OxidefsVnode {
             }
 
             let mut dir_buf = alloc::vec![0u8; block_size];
-            self.fs.device.read(block_num, &mut dir_buf)
+            self.fs
+                .device
+                .read(block_num, &mut dir_buf)
                 .map_err(|_| VfsError::IoError)?;
 
             // Search for entry in this block
@@ -562,13 +570,16 @@ impl VnodeOps for OxidefsVnode {
         }
 
         // Allocate new inode
-        let new_ino = self.fs.alloc_inode().map_err(|e| -> VfsError { e.into() })?;
+        let new_ino = self
+            .fs
+            .alloc_inode()
+            .map_err(|e| -> VfsError { e.into() })?;
 
         // Create inode data
         let new_inode = InodeData {
             mode: mode.bits() | 0o100000, // Regular file
-            uid: 0, // TODO: Get current uid
-            gid: 0, // TODO: Get current gid
+            uid: 0,                       // TODO: Get current uid
+            gid: 0,                       // TODO: Get current gid
             size: 0,
             atime: 0, // TODO: Get current time
             mtime: 0,
@@ -635,15 +646,11 @@ impl VnodeOps for OxidefsVnode {
         let sb = self.fs.superblock.read();
         let mut inode = self.inode.write();
 
-        let bytes_written = file::write_file(
-            &*self.fs.device,
-            &sb,
-            &mut *inode,
-            offset,
-            buf,
-            || self.fs.alloc_block(),
-        )
-        .map_err(|e| -> VfsError { e.into() })?;
+        let bytes_written =
+            file::write_file(&*self.fs.device, &sb, &mut *inode, offset, buf, || {
+                self.fs.alloc_block()
+            })
+            .map_err(|e| -> VfsError { e.into() })?;
 
         // Update timestamps
         inode.mtime = 0; // TODO: current time
@@ -681,7 +688,9 @@ impl VnodeOps for OxidefsVnode {
             }
 
             let mut dir_buf = alloc::vec![0u8; block_size];
-            self.fs.device.read(block_num, &mut dir_buf)
+            self.fs
+                .device
+                .read(block_num, &mut dir_buf)
                 .map_err(|_| VfsError::IoError)?;
 
             for entry in dir::iter_entries(&dir_buf) {
@@ -730,10 +739,16 @@ impl VnodeOps for OxidefsVnode {
         }
 
         // Allocate new inode
-        let new_ino = self.fs.alloc_inode().map_err(|e| -> VfsError { e.into() })?;
+        let new_ino = self
+            .fs
+            .alloc_inode()
+            .map_err(|e| -> VfsError { e.into() })?;
 
         // Allocate block for directory data
-        let data_block = self.fs.alloc_block().map_err(|e| -> VfsError { e.into() })?;
+        let data_block = self
+            .fs
+            .alloc_block()
+            .map_err(|e| -> VfsError { e.into() })?;
 
         // Create directory inode
         let new_inode = InodeData {
@@ -762,7 +777,9 @@ impl VnodeOps for OxidefsVnode {
         let block_size = BLOCK_SIZE as usize;
         let mut dir_buf = alloc::vec![0u8; block_size];
         dir::init_directory(&mut dir_buf, new_ino, self.ino);
-        self.fs.device.write(data_block, &dir_buf)
+        self.fs
+            .device
+            .write(data_block, &dir_buf)
             .map_err(|_| VfsError::IoError)?;
 
         // Write new inode
@@ -823,11 +840,13 @@ impl VnodeOps for OxidefsVnode {
         }
 
         // Remove the directory entry from parent
-        let removed_ino = self.remove_dir_entry(name)
+        let removed_ino = self
+            .remove_dir_entry(name)
             .map_err(|e| -> VfsError { e.into() })?;
 
         // Free the inode
-        self.fs.free_inode(removed_ino)
+        self.fs
+            .free_inode(removed_ino)
             .map_err(|e| -> VfsError { e.into() })?;
 
         // Update parent link count (was pointing to this dir via "..")
@@ -863,7 +882,8 @@ impl VnodeOps for OxidefsVnode {
         }
 
         // Remove directory entry
-        let removed_ino = self.remove_dir_entry(name)
+        let removed_ino = self
+            .remove_dir_entry(name)
             .map_err(|e| -> VfsError { e.into() })?;
 
         // Read the inode to decrement link count
@@ -879,13 +899,15 @@ impl VnodeOps for OxidefsVnode {
             let num_blocks = inode_data.blocks;
             for block_idx in 0..num_blocks {
                 if block_idx < 12 && inode_data.direct[block_idx as usize] != 0 {
-                    self.fs.free_block(inode_data.direct[block_idx as usize])
+                    self.fs
+                        .free_block(inode_data.direct[block_idx as usize])
                         .map_err(|e| -> VfsError { e.into() })?;
                 }
             }
 
             // Free the inode
-            self.fs.free_inode(removed_ino)
+            self.fs
+                .free_inode(removed_ino)
                 .map_err(|e| -> VfsError { e.into() })?;
         } else {
             // Still has links, just update inode
@@ -921,7 +943,8 @@ impl VnodeOps for OxidefsVnode {
         let target = self.lookup(old_name)?;
 
         // Get the target inode number before removing
-        let removed_ino = self.remove_dir_entry(old_name)
+        let removed_ino = self
+            .remove_dir_entry(old_name)
             .map_err(|e| -> VfsError { e.into() })?;
 
         // Try to add to new directory
@@ -997,13 +1020,9 @@ impl VnodeOps for OxidefsVnode {
         let sb = self.fs.superblock.read();
         let mut inode_data = self.inode.write();
 
-        file::truncate_file(
-            &*self.fs.device,
-            &sb,
-            &mut *inode_data,
-            new_size,
-            |block| self.fs.free_block(block),
-        )
+        file::truncate_file(&*self.fs.device, &sb, &mut *inode_data, new_size, |block| {
+            self.fs.free_block(block)
+        })
         .map_err(|e| -> VfsError { e.into() })?;
 
         inode_data.mtime = 0;

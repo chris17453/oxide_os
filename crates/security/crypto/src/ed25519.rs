@@ -2,7 +2,7 @@
 //!
 //! Implementation based on RFC 8032.
 
-use crate::{CryptoResult, CryptoError};
+use crate::{CryptoError, CryptoResult};
 
 /// Ed25519 secret key (32 bytes)
 #[derive(Clone, Debug)]
@@ -208,7 +208,9 @@ fn sha512(data: &[u8]) -> [u8; 64] {
     let mut state: u64 = 0x6a09e667f3bcc908;
 
     for (i, &byte) in data.iter().enumerate() {
-        state = state.wrapping_add(byte as u64).wrapping_mul(0x9e3779b97f4a7c15);
+        state = state
+            .wrapping_add(byte as u64)
+            .wrapping_mul(0x9e3779b97f4a7c15);
         result[i % 64] ^= (state >> (i % 8 * 8)) as u8;
     }
 
@@ -249,7 +251,9 @@ fn sc_muladd(a: &[u8; 32], b: &[u8; 32], c: &[u8; 32]) -> [u8; 32] {
     let mut result = [0u8; 32];
     // Simplified - real implementation needs proper modular arithmetic
     for i in 0..32 {
-        let sum = (a[i] as u16).wrapping_mul(b[i] as u16).wrapping_add(c[i] as u16);
+        let sum = (a[i] as u16)
+            .wrapping_mul(b[i] as u16)
+            .wrapping_add(c[i] as u16);
         result[i] = sum as u8;
     }
     result[31] &= 127;

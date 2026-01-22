@@ -2,8 +2,8 @@
 //!
 //! Implements the wait() and waitpid() system calls for reaping child processes.
 
-use proc_traits::{Pid, ProcessState};
 use crate::process_table;
+use proc_traits::{Pid, ProcessState};
 
 /// Wait options
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,8 +29,8 @@ impl WaitOptions {
 impl From<i32> for WaitOptions {
     fn from(flags: i32) -> Self {
         Self {
-            nohang: flags & 1 != 0,      // WNOHANG = 1
-            untraced: flags & 2 != 0,    // WUNTRACED = 2
+            nohang: flags & 1 != 0,   // WNOHANG = 1
+            untraced: flags & 2 != 0, // WUNTRACED = 2
         }
     }
 }
@@ -75,7 +75,11 @@ pub fn do_wait(parent_pid: Pid, options: WaitOptions) -> Result<WaitResult, Wait
 ///   - 0: Wait for any child in same process group
 ///   - < -1: Wait for any child in process group |pid|
 /// * `options` - Wait options
-pub fn do_waitpid(parent_pid: Pid, wait_pid: i32, options: WaitOptions) -> Result<WaitResult, WaitError> {
+pub fn do_waitpid(
+    parent_pid: Pid,
+    wait_pid: i32,
+    options: WaitOptions,
+) -> Result<WaitResult, WaitError> {
     let table = process_table();
 
     loop {
@@ -156,9 +160,7 @@ pub fn do_waitpid(parent_pid: Pid, wait_pid: i32, options: WaitOptions) -> Resul
         // For specific PID, check if it exists and is our child
         if wait_pid > 0 {
             let target_pid = wait_pid as Pid;
-            let is_our_child = table
-                .find_children(parent_pid)
-                .contains(&target_pid);
+            let is_our_child = table.find_children(parent_pid).contains(&target_pid);
 
             if !is_our_child {
                 return Err(WaitError::InvalidPid);

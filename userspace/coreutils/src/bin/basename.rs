@@ -127,7 +127,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
             buf[..copy_len].copy_from_slice(&suffix_str.as_bytes()[..copy_len]);
             config.suffix = Some(buf);
             config.suffix_len = copy_len;
-            config.multiple = true;  // -s implies -a
+            config.multiple = true; // -s implies -a
             arg_idx += 1;
         } else if arg == "-z" || arg == "--zero" {
             config.zero_terminated = true;

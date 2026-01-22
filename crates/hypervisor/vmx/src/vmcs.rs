@@ -2,8 +2,8 @@
 
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use vmm::{VmmResult, VmmError};
 use crate::vmx::{vmclear, vmptrld, vmread, vmwrite};
+use vmm::{VmmError, VmmResult};
 
 /// Read MSR
 #[inline]
@@ -258,15 +258,20 @@ impl Vmcs {
             core::arch::asm!("sgdt [{}]", in(reg) gdtr.as_mut_ptr());
             core::arch::asm!("sidt [{}]", in(reg) idtr.as_mut_ptr());
         }
-        let gdtr_base = u64::from_le_bytes([gdtr[2], gdtr[3], gdtr[4], gdtr[5], gdtr[6], gdtr[7], gdtr[8], gdtr[9]]);
-        let idtr_base = u64::from_le_bytes([idtr[2], idtr[3], idtr[4], idtr[5], idtr[6], idtr[7], idtr[8], idtr[9]]);
+        let gdtr_base = u64::from_le_bytes([
+            gdtr[2], gdtr[3], gdtr[4], gdtr[5], gdtr[6], gdtr[7], gdtr[8], gdtr[9],
+        ]);
+        let idtr_base = u64::from_le_bytes([
+            idtr[2], idtr[3], idtr[4], idtr[5], idtr[6], idtr[7], idtr[8], idtr[9],
+        ]);
 
         vmwrite(VmcsField::HostGdtrBase as u32, gdtr_base).map_err(|_| VmmError::VmcsError)?;
         vmwrite(VmcsField::HostIdtrBase as u32, idtr_base).map_err(|_| VmmError::VmcsError)?;
 
         // Host RSP/RIP will be set at VM entry
         vmwrite(VmcsField::HostRsp as u32, 0).map_err(|_| VmmError::VmcsError)?;
-        vmwrite(VmcsField::HostRip as u32, vmexit_handler as u64).map_err(|_| VmmError::VmcsError)?;
+        vmwrite(VmcsField::HostRip as u32, vmexit_handler as u64)
+            .map_err(|_| VmmError::VmcsError)?;
 
         // Host FS/GS base
         let fs_base = rdmsr(0xC0000100);
@@ -300,11 +305,36 @@ impl Vmcs {
 
         // DS/ES/FS/GS/SS
         for (sel, base, limit, ar) in [
-            (VmcsField::GuestDsSelector, VmcsField::GuestDsBase, VmcsField::GuestDsLimit, VmcsField::GuestDsAccessRights),
-            (VmcsField::GuestEsSelector, VmcsField::GuestEsBase, VmcsField::GuestEsLimit, VmcsField::GuestEsAccessRights),
-            (VmcsField::GuestFsSelector, VmcsField::GuestFsBase, VmcsField::GuestFsLimit, VmcsField::GuestFsAccessRights),
-            (VmcsField::GuestGsSelector, VmcsField::GuestGsBase, VmcsField::GuestGsLimit, VmcsField::GuestGsAccessRights),
-            (VmcsField::GuestSsSelector, VmcsField::GuestSsBase, VmcsField::GuestSsLimit, VmcsField::GuestSsAccessRights),
+            (
+                VmcsField::GuestDsSelector,
+                VmcsField::GuestDsBase,
+                VmcsField::GuestDsLimit,
+                VmcsField::GuestDsAccessRights,
+            ),
+            (
+                VmcsField::GuestEsSelector,
+                VmcsField::GuestEsBase,
+                VmcsField::GuestEsLimit,
+                VmcsField::GuestEsAccessRights,
+            ),
+            (
+                VmcsField::GuestFsSelector,
+                VmcsField::GuestFsBase,
+                VmcsField::GuestFsLimit,
+                VmcsField::GuestFsAccessRights,
+            ),
+            (
+                VmcsField::GuestGsSelector,
+                VmcsField::GuestGsBase,
+                VmcsField::GuestGsLimit,
+                VmcsField::GuestGsAccessRights,
+            ),
+            (
+                VmcsField::GuestSsSelector,
+                VmcsField::GuestSsBase,
+                VmcsField::GuestSsLimit,
+                VmcsField::GuestSsAccessRights,
+            ),
         ] {
             vmwrite(sel as u32, 0).map_err(|_| VmmError::VmcsError)?;
             vmwrite(base as u32, 0).map_err(|_| VmmError::VmcsError)?;
@@ -316,7 +346,8 @@ impl Vmcs {
         vmwrite(VmcsField::GuestLdtrSelector as u32, 0).map_err(|_| VmmError::VmcsError)?;
         vmwrite(VmcsField::GuestLdtrBase as u32, 0).map_err(|_| VmmError::VmcsError)?;
         vmwrite(VmcsField::GuestLdtrLimit as u32, 0).map_err(|_| VmmError::VmcsError)?;
-        vmwrite(VmcsField::GuestLdtrAccessRights as u32, 0x10000).map_err(|_| VmmError::VmcsError)?;
+        vmwrite(VmcsField::GuestLdtrAccessRights as u32, 0x10000)
+            .map_err(|_| VmmError::VmcsError)?;
 
         // TR
         vmwrite(VmcsField::GuestTrSelector as u32, 0).map_err(|_| VmmError::VmcsError)?;
@@ -342,13 +373,15 @@ impl Vmcs {
         vmwrite(VmcsField::GuestActivityState as u32, 0).map_err(|_| VmmError::VmcsError)?;
 
         // Interruptibility state
-        vmwrite(VmcsField::GuestInterruptibilityState as u32, 0).map_err(|_| VmmError::VmcsError)?;
+        vmwrite(VmcsField::GuestInterruptibilityState as u32, 0)
+            .map_err(|_| VmmError::VmcsError)?;
 
         // Pending debug exceptions
         vmwrite(VmcsField::GuestPendingDbgExceptions as u32, 0).map_err(|_| VmmError::VmcsError)?;
 
         // VMCS link pointer
-        vmwrite(VmcsField::VmcsLinkPointer as u32, 0xFFFF_FFFF_FFFF_FFFF).map_err(|_| VmmError::VmcsError)?;
+        vmwrite(VmcsField::VmcsLinkPointer as u32, 0xFFFF_FFFF_FFFF_FFFF)
+            .map_err(|_| VmmError::VmcsError)?;
 
         Ok(())
     }
@@ -363,28 +396,36 @@ impl Vmcs {
 
         // Pin-based controls
         let pin_based = adjust_controls(0, pin_based_caps);
-        vmwrite(VmcsField::PinBasedVmExecControls as u32, pin_based as u64).map_err(|_| VmmError::VmcsError)?;
+        vmwrite(VmcsField::PinBasedVmExecControls as u32, pin_based as u64)
+            .map_err(|_| VmmError::VmcsError)?;
 
         // Primary processor-based controls
         let mut proc_based = (1u32 << 7) | (1 << 24) | (1 << 28) | (1 << 31);
         proc_based = adjust_controls(proc_based, proc_based_caps);
-        vmwrite(VmcsField::CpuBasedVmExecControls as u32, proc_based as u64).map_err(|_| VmmError::VmcsError)?;
+        vmwrite(VmcsField::CpuBasedVmExecControls as u32, proc_based as u64)
+            .map_err(|_| VmmError::VmcsError)?;
 
         // Secondary processor-based controls
         let proc_based2_caps = rdmsr(0x48B);
         let mut proc_based2 = (1u32 << 1) | (1 << 5);
         proc_based2 = adjust_controls(proc_based2, proc_based2_caps);
-        vmwrite(VmcsField::SecondaryVmExecControls as u32, proc_based2 as u64).map_err(|_| VmmError::VmcsError)?;
+        vmwrite(
+            VmcsField::SecondaryVmExecControls as u32,
+            proc_based2 as u64,
+        )
+        .map_err(|_| VmmError::VmcsError)?;
 
         // VM-exit controls
         let mut exit_controls = (1u32 << 9) | (1 << 15);
         exit_controls = adjust_controls(exit_controls, exit_caps);
-        vmwrite(VmcsField::VmExitControls as u32, exit_controls as u64).map_err(|_| VmmError::VmcsError)?;
+        vmwrite(VmcsField::VmExitControls as u32, exit_controls as u64)
+            .map_err(|_| VmmError::VmcsError)?;
 
         // VM-entry controls
         let mut entry_controls = 1u32 << 9;
         entry_controls = adjust_controls(entry_controls, entry_caps);
-        vmwrite(VmcsField::VmEntryControls as u32, entry_controls as u64).map_err(|_| VmmError::VmcsError)?;
+        vmwrite(VmcsField::VmEntryControls as u32, entry_controls as u64)
+            .map_err(|_| VmmError::VmcsError)?;
 
         // Exception bitmap
         vmwrite(VmcsField::ExceptionBitmap as u32, 0).map_err(|_| VmmError::VmcsError)?;

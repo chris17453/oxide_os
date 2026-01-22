@@ -2,8 +2,8 @@
 //!
 //! Standard UNIX functions like read, write, fork, exec, etc.
 
-use crate::syscall;
 use crate::fcntl::*;
+use crate::syscall;
 
 /// Write bytes to file descriptor
 pub fn write(fd: i32, buf: &[u8]) -> isize {

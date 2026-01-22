@@ -70,16 +70,31 @@ fn print_help() {
     let _ = writeln!(out, "Semantic file search tool for Oxide OS");
     let _ = writeln!(out, "");
     let _ = writeln!(out, "Options:");
-    let _ = writeln!(out, "  -n, --limit <N>       Maximum number of results (default: 10)");
-    let _ = writeln!(out, "  -p, --path <PREFIX>   Only search in paths matching prefix");
-    let _ = writeln!(out, "  -t, --type <EXT>      Filter by file type (can be repeated)");
+    let _ = writeln!(
+        out,
+        "  -n, --limit <N>       Maximum number of results (default: 10)"
+    );
+    let _ = writeln!(
+        out,
+        "  -p, --path <PREFIX>   Only search in paths matching prefix"
+    );
+    let _ = writeln!(
+        out,
+        "  -t, --type <EXT>      Filter by file type (can be repeated)"
+    );
     let _ = writeln!(out, "  -j, --json            Output results as JSON");
-    let _ = writeln!(out, "  -v, --verbose         Show detailed results with snippets");
+    let _ = writeln!(
+        out,
+        "  -v, --verbose         Show detailed results with snippets"
+    );
     let _ = writeln!(out, "  -h, --help            Show this help");
     let _ = writeln!(out, "");
     let _ = writeln!(out, "Examples:");
     let _ = writeln!(out, "  search \"rust memory management\"");
-    let _ = writeln!(out, "  search -n 5 -p /home/user/projects \"error handling\"");
+    let _ = writeln!(
+        out,
+        "  search -n 5 -p /home/user/projects \"error handling\""
+    );
     let _ = writeln!(out, "  search -t rs -t md \"async await\"");
 }
 

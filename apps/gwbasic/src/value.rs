@@ -1,9 +1,9 @@
 //! Value types for the GW-BASIC interpreter
 
 #[cfg(not(feature = "std"))]
-use alloc::string::String;
-#[cfg(not(feature = "std"))]
 use alloc::format;
+#[cfg(not(feature = "std"))]
+use alloc::string::String;
 
 use crate::error::{Error, Result};
 use core::fmt;
@@ -65,7 +65,10 @@ impl Value {
 
     /// Check if value is numeric
     pub fn is_numeric(&self) -> bool {
-        matches!(self, Value::Integer(_) | Value::Single(_) | Value::Double(_))
+        matches!(
+            self,
+            Value::Integer(_) | Value::Single(_) | Value::Double(_)
+        )
     }
 
     /// Check if value is string
@@ -114,7 +117,9 @@ fn parse_i32(s: &str) -> Option<i32> {
         if !c.is_ascii_digit() {
             return None;
         }
-        result = result.checked_mul(10)?.checked_add((c as u8 - b'0') as i32)?;
+        result = result
+            .checked_mul(10)?
+            .checked_add((c as u8 - b'0') as i32)?;
     }
 
     Some(result * sign)

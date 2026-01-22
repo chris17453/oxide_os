@@ -6,15 +6,15 @@
 
 extern crate alloc;
 
-pub mod store;
 pub mod key;
 pub mod revoke;
 pub mod share;
+pub mod store;
 
-pub use store::TrustStore;
-pub use key::{TrustedKey, KeyId, TrustLevel};
+pub use key::{KeyId, TrustLevel, TrustedKey};
 pub use revoke::RevocationEntry;
-pub use share::{TrustExport, ExportFormat};
+pub use share::{ExportFormat, TrustExport};
+pub use store::TrustStore;
 
 use alloc::string::String;
 

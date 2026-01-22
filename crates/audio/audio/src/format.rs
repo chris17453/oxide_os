@@ -46,20 +46,24 @@ impl SampleFormat {
             SampleFormat::U8 | SampleFormat::S8 => 1,
             SampleFormat::S16LE | SampleFormat::S16BE => 2,
             SampleFormat::S24LE | SampleFormat::S24BE => 3,
-            SampleFormat::S24LE32 | SampleFormat::S24BE32 |
-            SampleFormat::S32LE | SampleFormat::S32BE |
-            SampleFormat::F32LE | SampleFormat::F32BE => 4,
+            SampleFormat::S24LE32
+            | SampleFormat::S24BE32
+            | SampleFormat::S32LE
+            | SampleFormat::S32BE
+            | SampleFormat::F32LE
+            | SampleFormat::F32BE => 4,
             SampleFormat::F64LE | SampleFormat::F64BE => 8,
-            SampleFormat::ImaAdpcm => 1,  // Variable, approximate
+            SampleFormat::ImaAdpcm => 1, // Variable, approximate
             SampleFormat::MuLaw | SampleFormat::ALaw => 1,
         }
     }
 
     /// Check if format is floating point
     pub fn is_float(&self) -> bool {
-        matches!(self,
-            SampleFormat::F32LE | SampleFormat::F32BE |
-            SampleFormat::F64LE | SampleFormat::F64BE)
+        matches!(
+            self,
+            SampleFormat::F32LE | SampleFormat::F32BE | SampleFormat::F64LE | SampleFormat::F64BE
+        )
     }
 
     /// Check if format is signed
@@ -69,23 +73,34 @@ impl SampleFormat {
 
     /// Check if format is little-endian
     pub fn is_little_endian(&self) -> bool {
-        matches!(self,
-            SampleFormat::U8 | SampleFormat::S8 |
-            SampleFormat::S16LE | SampleFormat::S24LE | SampleFormat::S24LE32 |
-            SampleFormat::S32LE | SampleFormat::F32LE | SampleFormat::F64LE |
-            SampleFormat::ImaAdpcm | SampleFormat::MuLaw | SampleFormat::ALaw)
+        matches!(
+            self,
+            SampleFormat::U8
+                | SampleFormat::S8
+                | SampleFormat::S16LE
+                | SampleFormat::S24LE
+                | SampleFormat::S24LE32
+                | SampleFormat::S32LE
+                | SampleFormat::F32LE
+                | SampleFormat::F64LE
+                | SampleFormat::ImaAdpcm
+                | SampleFormat::MuLaw
+                | SampleFormat::ALaw
+        )
     }
 
     /// Get bits per sample
     pub fn bits_per_sample(&self) -> u32 {
         match self {
-            SampleFormat::U8 | SampleFormat::S8 |
-            SampleFormat::MuLaw | SampleFormat::ALaw => 8,
+            SampleFormat::U8 | SampleFormat::S8 | SampleFormat::MuLaw | SampleFormat::ALaw => 8,
             SampleFormat::S16LE | SampleFormat::S16BE => 16,
             SampleFormat::S24LE | SampleFormat::S24BE => 24,
-            SampleFormat::S24LE32 | SampleFormat::S24BE32 |
-            SampleFormat::S32LE | SampleFormat::S32BE |
-            SampleFormat::F32LE | SampleFormat::F32BE => 32,
+            SampleFormat::S24LE32
+            | SampleFormat::S24BE32
+            | SampleFormat::S32LE
+            | SampleFormat::S32BE
+            | SampleFormat::F32LE
+            | SampleFormat::F32BE => 32,
             SampleFormat::F64LE | SampleFormat::F64BE => 64,
             SampleFormat::ImaAdpcm => 4,
         }
@@ -149,7 +164,11 @@ pub struct AudioFormat {
 
 impl AudioFormat {
     /// Create a new audio format
-    pub fn new(sample_format: SampleFormat, channel_layout: ChannelLayout, sample_rate: u32) -> Self {
+    pub fn new(
+        sample_format: SampleFormat,
+        channel_layout: ChannelLayout,
+        sample_rate: u32,
+    ) -> Self {
         AudioFormat {
             sample_format,
             channel_layout,

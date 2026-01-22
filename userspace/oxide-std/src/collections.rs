@@ -6,17 +6,11 @@
 //! Use BTreeMap and BTreeSet instead, which have O(log n) operations.
 
 // Re-export from alloc::collections
-pub use alloc::collections::{
-    BTreeMap,
-    BTreeSet,
-    BinaryHeap,
-    LinkedList,
-    VecDeque,
-};
+pub use alloc::collections::{BTreeMap, BTreeSet, BinaryHeap, LinkedList, VecDeque};
 
 // Re-export Vec and String as they're often used with collections
-pub use alloc::vec::Vec;
 pub use alloc::string::String;
+pub use alloc::vec::Vec;
 
 // Type aliases for compatibility (use BTree* as fallback)
 // These have O(log n) instead of O(1) for lookups, but work in no_std

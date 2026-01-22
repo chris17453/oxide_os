@@ -168,7 +168,11 @@ fn remove_directory(path: &str, config: &RmConfig, depth: usize) -> i32 {
                 if !(name[0] == b'.' && (name_len == 1 || (name_len == 2 && name[1] == b'.'))) {
                     if entry_count < 64 {
                         // Store entry for processing after closing directory
-                        let copy_len = if name_len > MAX_PATH - 1 { MAX_PATH - 1 } else { name_len };
+                        let copy_len = if name_len > MAX_PATH - 1 {
+                            MAX_PATH - 1
+                        } else {
+                            name_len
+                        };
                         entries[entry_count][..copy_len].copy_from_slice(&name[..copy_len]);
                         entry_types[entry_count] = d_type;
                         entry_count += 1;
@@ -213,7 +217,8 @@ fn remove_directory(path: &str, config: &RmConfig, depth: usize) -> i32 {
         let full_path_str = core::str::from_utf8(&full_path[..pos]).unwrap_or("");
 
         // Remove entry
-        if entry_types[i] == 4 {  // DT_DIR
+        if entry_types[i] == 4 {
+            // DT_DIR
             if remove_directory(full_path_str, config, depth + 1) != 0 {
                 ret = 1;
             }

@@ -3,7 +3,7 @@
 //! Platform-agnostic ASCII rendering for text-based graphics output.
 
 #[cfg(not(feature = "std"))]
-use alloc::{vec, vec::Vec, format};
+use alloc::{format, vec, vec::Vec};
 
 use crate::error::{Error, Result};
 use crate::graphics_backend::GraphicsBackend;

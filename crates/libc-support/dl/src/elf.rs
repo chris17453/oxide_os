@@ -28,10 +28,10 @@ pub enum ElfData {
 #[repr(u16)]
 pub enum ElfType {
     None = 0,
-    Rel = 1,     // Relocatable
-    Exec = 2,    // Executable
-    Dyn = 3,     // Shared object
-    Core = 4,    // Core file
+    Rel = 1,  // Relocatable
+    Exec = 2, // Executable
+    Dyn = 3,  // Shared object
+    Core = 4, // Core file
 }
 
 /// Program header type
@@ -160,9 +160,15 @@ impl ElfHeader {
             abiversion: data[8],
             elf_type,
             machine: u16::from_le_bytes([data[18], data[19]]),
-            entry: u64::from_le_bytes([data[24], data[25], data[26], data[27], data[28], data[29], data[30], data[31]]),
-            phoff: u64::from_le_bytes([data[32], data[33], data[34], data[35], data[36], data[37], data[38], data[39]]),
-            shoff: u64::from_le_bytes([data[40], data[41], data[42], data[43], data[44], data[45], data[46], data[47]]),
+            entry: u64::from_le_bytes([
+                data[24], data[25], data[26], data[27], data[28], data[29], data[30], data[31],
+            ]),
+            phoff: u64::from_le_bytes([
+                data[32], data[33], data[34], data[35], data[36], data[37], data[38], data[39],
+            ]),
+            shoff: u64::from_le_bytes([
+                data[40], data[41], data[42], data[43], data[44], data[45], data[46], data[47],
+            ]),
             flags: u32::from_le_bytes([data[48], data[49], data[50], data[51]]),
             ehsize: u16::from_le_bytes([data[52], data[53]]),
             phentsize: u16::from_le_bytes([data[54], data[55]]),
@@ -210,12 +216,24 @@ impl ProgramHeader {
         Some(ProgramHeader {
             p_type: u32::from_le_bytes([data[0], data[1], data[2], data[3]]),
             p_flags: u32::from_le_bytes([data[4], data[5], data[6], data[7]]),
-            p_offset: u64::from_le_bytes([data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15]]),
-            p_vaddr: u64::from_le_bytes([data[16], data[17], data[18], data[19], data[20], data[21], data[22], data[23]]),
-            p_paddr: u64::from_le_bytes([data[24], data[25], data[26], data[27], data[28], data[29], data[30], data[31]]),
-            p_filesz: u64::from_le_bytes([data[32], data[33], data[34], data[35], data[36], data[37], data[38], data[39]]),
-            p_memsz: u64::from_le_bytes([data[40], data[41], data[42], data[43], data[44], data[45], data[46], data[47]]),
-            p_align: u64::from_le_bytes([data[48], data[49], data[50], data[51], data[52], data[53], data[54], data[55]]),
+            p_offset: u64::from_le_bytes([
+                data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
+            ]),
+            p_vaddr: u64::from_le_bytes([
+                data[16], data[17], data[18], data[19], data[20], data[21], data[22], data[23],
+            ]),
+            p_paddr: u64::from_le_bytes([
+                data[24], data[25], data[26], data[27], data[28], data[29], data[30], data[31],
+            ]),
+            p_filesz: u64::from_le_bytes([
+                data[32], data[33], data[34], data[35], data[36], data[37], data[38], data[39],
+            ]),
+            p_memsz: u64::from_le_bytes([
+                data[40], data[41], data[42], data[43], data[44], data[45], data[46], data[47],
+            ]),
+            p_align: u64::from_le_bytes([
+                data[48], data[49], data[50], data[51], data[52], data[53], data[54], data[55],
+            ]),
         })
     }
 
@@ -275,14 +293,26 @@ impl SectionHeader {
         Some(SectionHeader {
             sh_name: u32::from_le_bytes([data[0], data[1], data[2], data[3]]),
             sh_type: u32::from_le_bytes([data[4], data[5], data[6], data[7]]),
-            sh_flags: u64::from_le_bytes([data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15]]),
-            sh_addr: u64::from_le_bytes([data[16], data[17], data[18], data[19], data[20], data[21], data[22], data[23]]),
-            sh_offset: u64::from_le_bytes([data[24], data[25], data[26], data[27], data[28], data[29], data[30], data[31]]),
-            sh_size: u64::from_le_bytes([data[32], data[33], data[34], data[35], data[36], data[37], data[38], data[39]]),
+            sh_flags: u64::from_le_bytes([
+                data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
+            ]),
+            sh_addr: u64::from_le_bytes([
+                data[16], data[17], data[18], data[19], data[20], data[21], data[22], data[23],
+            ]),
+            sh_offset: u64::from_le_bytes([
+                data[24], data[25], data[26], data[27], data[28], data[29], data[30], data[31],
+            ]),
+            sh_size: u64::from_le_bytes([
+                data[32], data[33], data[34], data[35], data[36], data[37], data[38], data[39],
+            ]),
             sh_link: u32::from_le_bytes([data[40], data[41], data[42], data[43]]),
             sh_info: u32::from_le_bytes([data[44], data[45], data[46], data[47]]),
-            sh_addralign: u64::from_le_bytes([data[48], data[49], data[50], data[51], data[52], data[53], data[54], data[55]]),
-            sh_entsize: u64::from_le_bytes([data[56], data[57], data[58], data[59], data[60], data[61], data[62], data[63]]),
+            sh_addralign: u64::from_le_bytes([
+                data[48], data[49], data[50], data[51], data[52], data[53], data[54], data[55],
+            ]),
+            sh_entsize: u64::from_le_bytes([
+                data[56], data[57], data[58], data[59], data[60], data[61], data[62], data[63],
+            ]),
         })
     }
 }
@@ -316,8 +346,12 @@ impl Symbol {
             st_info: data[4],
             st_other: data[5],
             st_shndx: u16::from_le_bytes([data[6], data[7]]),
-            st_value: u64::from_le_bytes([data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15]]),
-            st_size: u64::from_le_bytes([data[16], data[17], data[18], data[19], data[20], data[21], data[22], data[23]]),
+            st_value: u64::from_le_bytes([
+                data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
+            ]),
+            st_size: u64::from_le_bytes([
+                data[16], data[17], data[18], data[19], data[20], data[21], data[22], data[23],
+            ]),
         })
     }
 

@@ -7,8 +7,8 @@
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use spin::Mutex;
 use proc_traits::{Pid, ProcessState};
+use spin::Mutex;
 
 use crate::process_table;
 

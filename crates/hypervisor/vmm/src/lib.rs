@@ -6,11 +6,11 @@
 
 extern crate alloc;
 
-pub mod vm;
-pub mod vcpu;
-pub mod memory;
-pub mod exit;
 pub mod device;
+pub mod exit;
+pub mod memory;
+pub mod vcpu;
+pub mod vm;
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
@@ -18,11 +18,14 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 use spin::{Mutex, RwLock};
 
-pub use vm::{VirtualMachine, VmState, VmId};
+pub use device::{DeviceType, VirtioDevice};
+pub use exit::{
+    CpuidInfo, CrAccessInfo, EptViolationInfo, ExceptionInfo, ExitData, ExitReason, HypercallInfo,
+    IoInfo, MsrAccessInfo, VmExit,
+};
+pub use memory::{GpaRange, GuestMemory, GuestMemoryRegion};
 pub use vcpu::{Vcpu, VcpuId, VcpuRegs};
-pub use memory::{GuestMemory, GuestMemoryRegion, GpaRange};
-pub use exit::{VmExit, ExitReason, ExitData, IoInfo, CpuidInfo, MsrAccessInfo, EptViolationInfo, ExceptionInfo, CrAccessInfo, HypercallInfo};
-pub use device::{VirtioDevice, DeviceType};
+pub use vm::{VirtualMachine, VmId, VmState};
 
 /// VMM error type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,7 +98,11 @@ pub trait VmmBackend: Send + Sync {
     fn disable(&self) -> VmmResult<()>;
 
     /// Create VCPU state structure
-    fn create_vcpu_state(&self, vm: &VirtualMachine, vcpu_id: VcpuId) -> VmmResult<Box<dyn VcpuState>>;
+    fn create_vcpu_state(
+        &self,
+        vm: &VirtualMachine,
+        vcpu_id: VcpuId,
+    ) -> VmmResult<Box<dyn VcpuState>>;
 }
 
 /// Architecture-specific VCPU state
@@ -205,9 +212,7 @@ pub fn init(backend: Arc<dyn VmmBackend>) -> VmmResult<()> {
 /// Get VMM instance
 pub fn vmm() -> Option<&'static Vmm> {
     // Safety: We only set this once during init
-    unsafe {
-        VMM.read().as_ref().map(|v| &*(v as *const Vmm))
-    }
+    unsafe { VMM.read().as_ref().map(|v| &*(v as *const Vmm)) }
 }
 
 /// Create a new VM

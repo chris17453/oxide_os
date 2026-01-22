@@ -5,7 +5,7 @@
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::{ESUCCESS, EINVAL};
+use crate::{EINVAL, ESUCCESS};
 
 /// Return value for one thread at barrier
 pub const PTHREAD_BARRIER_SERIAL_THREAD: c_int = -1;
@@ -40,9 +40,7 @@ pub struct pthread_barrierattr_t {
 
 impl pthread_barrierattr_t {
     pub const fn new() -> Self {
-        Self {
-            pshared: 0,
-        }
+        Self { pshared: 0 }
     }
 }
 

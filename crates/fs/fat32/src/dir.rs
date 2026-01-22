@@ -90,13 +90,9 @@ impl DirEntry {
 
     /// Get 8.3 name as string
     pub fn name_83(&self) -> String {
-        let name = core::str::from_utf8(&self.name)
-            .unwrap_or("")
-            .trim_end();
+        let name = core::str::from_utf8(&self.name).unwrap_or("").trim_end();
 
-        let ext = core::str::from_utf8(&self.ext)
-            .unwrap_or("")
-            .trim_end();
+        let ext = core::str::from_utf8(&self.ext).unwrap_or("").trim_end();
 
         if ext.is_empty() {
             String::from(name)
@@ -397,9 +393,11 @@ pub fn fat_to_unix_time(date: u16, time: u16) -> u64 {
     let second = ((time & 0x1F) * 2) as u64;
 
     // Simplified calculation (doesn't handle all edge cases)
-    let days_since_1970 = (year - 1970) * 365 + (year - 1969) / 4
+    let days_since_1970 = (year - 1970) * 365
+        + (year - 1969) / 4
         + days_before_month(month, is_leap_year(year))
-        + day - 1;
+        + day
+        - 1;
 
     days_since_1970 * 86400 + hour * 3600 + minute * 60 + second
 }

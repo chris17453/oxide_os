@@ -1,9 +1,9 @@
 //! Trust sharing (export/import)
 
+use crate::key::TrustedKey;
 use alloc::string::String;
 use alloc::vec::Vec;
 use crypto::PublicKey;
-use crate::key::TrustedKey;
 
 /// Export format
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,7 +74,11 @@ impl TrustExport {
     /// Serialize to bytes
     pub fn to_bytes(&self) -> Vec<u8> {
         match self {
-            TrustExport::QrCode { public_key, name, fingerprint } => {
+            TrustExport::QrCode {
+                public_key,
+                name,
+                fingerprint,
+            } => {
                 let mut data = Vec::new();
                 data.push(0x01); // Type: QR
                 data.extend_from_slice(public_key.as_bytes());

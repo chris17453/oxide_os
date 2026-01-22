@@ -3,9 +3,9 @@
 //! Provides the CPU context structure and preemptive context switching
 //! via timer interrupts.
 
+use crate::exceptions::InterruptContext;
 use core::mem::size_of;
 use sched_traits::Context;
-use crate::exceptions::InterruptContext;
 
 /// x86_64 thread context for preemptive multitasking
 ///

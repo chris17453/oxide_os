@@ -1,7 +1,7 @@
 //! Key revocation
 
+use crate::{KeyId, Timestamp};
 use alloc::string::String;
-use crate::{Timestamp, KeyId};
 
 /// Revocation entry
 #[derive(Debug, Clone)]

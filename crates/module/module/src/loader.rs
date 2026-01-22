@@ -6,11 +6,11 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::ptr;
 
-use crate::{ModuleError, ModuleFlags, ModuleResult, ModuleInitFn, ModuleCleanupFn};
-use crate::kobject::{Module, ModuleState, ModuleInfo, MODULES};
-use crate::reloc::{apply_relocations_x86_64, Rela64, Sym64};
-use crate::symbol::register_module_symbol;
 use crate::deps::resolve_dependencies;
+use crate::kobject::{MODULES, Module, ModuleInfo, ModuleState};
+use crate::reloc::{Rela64, Sym64, apply_relocations_x86_64};
+use crate::symbol::register_module_symbol;
+use crate::{ModuleCleanupFn, ModuleError, ModuleFlags, ModuleInitFn, ModuleResult};
 
 /// ELF header magic
 const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
@@ -197,8 +197,8 @@ pub fn load_module(data: &[u8], _params: &str, flags: ModuleFlags) -> ModuleResu
             continue;
         }
 
-        let aligned_offset = (total_size + shdr.sh_addralign as usize - 1)
-            & !(shdr.sh_addralign as usize - 1);
+        let aligned_offset =
+            (total_size + shdr.sh_addralign as usize - 1) & !(shdr.sh_addralign as usize - 1);
         total_size = aligned_offset + shdr.sh_size as usize;
 
         sections_to_load.push((i, name.to_string(), aligned_offset, shdr.sh_size as usize));
@@ -424,10 +424,9 @@ fn find_symbol_addr(symtab: &[Sym64], strtab: &[u8], name: &str, base: usize) ->
 fn allocate_module_memory(size: usize) -> ModuleResult<*mut u8> {
     // In a real implementation, this would use the memory allocator
     // to get executable memory pages
-    use alloc::alloc::{alloc, Layout};
+    use alloc::alloc::{Layout, alloc};
 
-    let layout = Layout::from_size_align(size, 4096)
-        .map_err(|_| ModuleError::OutOfMemory)?;
+    let layout = Layout::from_size_align(size, 4096).map_err(|_| ModuleError::OutOfMemory)?;
 
     let ptr = unsafe { alloc(layout) };
     if ptr.is_null() {
@@ -439,7 +438,7 @@ fn allocate_module_memory(size: usize) -> ModuleResult<*mut u8> {
 
 /// Free module memory
 fn free_module_memory(ptr: *mut u8, size: usize) {
-    use alloc::alloc::{dealloc, Layout};
+    use alloc::alloc::{Layout, dealloc};
 
     if let Ok(layout) = Layout::from_size_align(size, 4096) {
         unsafe { dealloc(ptr, layout) };

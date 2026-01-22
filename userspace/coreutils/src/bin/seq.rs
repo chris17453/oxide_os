@@ -175,9 +175,17 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
 
     // Calculate decimal places for equal width
     let decimal_places = if config.equal_width {
-        let first_decimals = count_decimal_places(unsafe { cstr_to_str(*argv.add(arg_idx as usize)) });
-        let last_idx = if remaining == 1 { arg_idx } else if remaining == 2 { arg_idx + 1 } else { arg_idx + 2 };
-        let last_decimals = count_decimal_places(unsafe { cstr_to_str(*argv.add(last_idx as usize)) });
+        let first_decimals =
+            count_decimal_places(unsafe { cstr_to_str(*argv.add(arg_idx as usize)) });
+        let last_idx = if remaining == 1 {
+            arg_idx
+        } else if remaining == 2 {
+            arg_idx + 1
+        } else {
+            arg_idx + 2
+        };
+        let last_decimals =
+            count_decimal_places(unsafe { cstr_to_str(*argv.add(last_idx as usize)) });
         first_decimals.max(last_decimals)
     } else {
         0
@@ -197,7 +205,8 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     let mut is_first = true;
 
     if incr > 0.0 {
-        while current <= last + 0.0000001 {  // Small epsilon for floating point comparison
+        while current <= last + 0.0000001 {
+            // Small epsilon for floating point comparison
             if !is_first {
                 write(STDOUT_FILENO, &config.separator[..config.separator_len]);
             }
@@ -278,7 +287,7 @@ fn format_number_width(num: f64, decimal_places: usize) -> usize {
     let abs_num = if num < 0.0 { -num } else { num };
 
     if num < 0.0 {
-        width += 1;  // Minus sign
+        width += 1; // Minus sign
     }
 
     // Count integer digits
@@ -294,7 +303,7 @@ fn format_number_width(num: f64, decimal_places: usize) -> usize {
     }
 
     if decimal_places > 0 {
-        width += 1 + decimal_places;  // Dot + decimal digits
+        width += 1 + decimal_places; // Dot + decimal digits
     }
 
     width

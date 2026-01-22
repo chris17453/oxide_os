@@ -7,9 +7,8 @@ use core::sync::atomic::{AtomicU8, Ordering};
 use spin::Mutex;
 
 use crate::{
-    UsbHostController, UsbResult, UsbError,
-    DeviceDescriptor, ConfigDescriptor, InterfaceDescriptor, EndpointDescriptor,
-    SetupPacket, TransferDirection,
+    ConfigDescriptor, DeviceDescriptor, EndpointDescriptor, InterfaceDescriptor, SetupPacket,
+    TransferDirection, UsbError, UsbHostController, UsbResult,
 };
 
 /// USB device speed
@@ -188,9 +187,9 @@ impl UsbDevice {
         let mut buf = [0u8; 4];
         self.control_transfer(
             0x80,
-            6, // GET_DESCRIPTOR
+            6,                       // GET_DESCRIPTOR
             (3 << 8) | index as u16, // String descriptor
-            0x0409, // English
+            0x0409,                  // English
             Some(&mut buf),
         )?;
 
@@ -230,25 +229,13 @@ impl UsbDevice {
     pub fn get_configuration(&self, index: u8) -> UsbResult<ConfigDescriptor> {
         // Get first 9 bytes for total length
         let mut buf = [0u8; 9];
-        self.control_transfer(
-            0x80,
-            6,
-            (2 << 8) | index as u16,
-            0,
-            Some(&mut buf),
-        )?;
+        self.control_transfer(0x80, 6, (2 << 8) | index as u16, 0, Some(&mut buf))?;
 
         let total_length = u16::from_le_bytes([buf[2], buf[3]]) as usize;
 
         // Get full configuration
         let mut full_buf = alloc::vec![0u8; total_length];
-        self.control_transfer(
-            0x80,
-            6,
-            (2 << 8) | index as u16,
-            0,
-            Some(&mut full_buf),
-        )?;
+        self.control_transfer(0x80, 6, (2 << 8) | index as u16, 0, Some(&mut full_buf))?;
 
         ConfigDescriptor::from_bytes(&full_buf).ok_or(UsbError::InvalidDescriptor)
     }
@@ -276,7 +263,10 @@ impl UsbDevice {
         } else {
             // Get the active configuration
             let configs = self.configs.lock();
-            configs.iter().find(|c| c.configuration_value == active).cloned()
+            configs
+                .iter()
+                .find(|c| c.configuration_value == active)
+                .cloned()
                 .or_else(|| self.get_configuration(active.saturating_sub(1)).ok())
         }
     }
@@ -288,7 +278,8 @@ impl UsbDevice {
         data: &mut [u8],
         direction: TransferDirection,
     ) -> UsbResult<usize> {
-        self.controller.bulk_transfer(self.slot, endpoint, data, direction)
+        self.controller
+            .bulk_transfer(self.slot, endpoint, data, direction)
     }
 
     /// Interrupt transfer
@@ -298,7 +289,8 @@ impl UsbDevice {
         data: &mut [u8],
         direction: TransferDirection,
     ) -> UsbResult<usize> {
-        self.controller.interrupt_transfer(self.slot, endpoint, data, direction)
+        self.controller
+            .interrupt_transfer(self.slot, endpoint, data, direction)
     }
 
     /// Get device info
@@ -308,9 +300,15 @@ impl UsbDevice {
             return info.clone();
         }
 
-        let manufacturer = self.get_string(self.device_descriptor.manufacturer).unwrap_or_default();
-        let product = self.get_string(self.device_descriptor.product).unwrap_or_default();
-        let serial = self.get_string(self.device_descriptor.serial_number).unwrap_or_default();
+        let manufacturer = self
+            .get_string(self.device_descriptor.manufacturer)
+            .unwrap_or_default();
+        let product = self
+            .get_string(self.device_descriptor.product)
+            .unwrap_or_default();
+        let serial = self
+            .get_string(self.device_descriptor.serial_number)
+            .unwrap_or_default();
 
         let info = UsbDeviceInfo {
             vendor_id: self.vendor_id(),

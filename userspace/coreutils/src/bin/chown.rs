@@ -29,7 +29,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         // Both owner and group specified
         let owner_str = &owner_bytes[..pos];
         let group_str = &owner_bytes[pos + 1..];
-        
+
         let uid = match parse_int(owner_str) {
             Some(v) => v as u32,
             None => {
@@ -37,7 +37,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
                 return 1;
             }
         };
-        
+
         let gid = match parse_int(group_str) {
             Some(v) => v as u32,
             None => {
@@ -45,7 +45,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
                 return 1;
             }
         };
-        
+
         (uid, gid)
     } else {
         // Only owner specified
@@ -56,7 +56,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
                 return 1;
             }
         };
-        
+
         // Keep existing group (-1 means don't change)
         (uid, 0xFFFFFFFF)
     };

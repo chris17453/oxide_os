@@ -3,7 +3,7 @@
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-use crate::{ESUCCESS, EINVAL, EBUSY, EDEADLK, pthread_self};
+use crate::{pthread_self, EBUSY, EDEADLK, EINVAL, ESUCCESS};
 
 /// RWLock state encoding:
 /// - High bit (31): write lock held
@@ -99,12 +99,11 @@ pub unsafe extern "C" fn pthread_rwlock_rdlock(rwlock: *mut pthread_rwlock_t) ->
 
         // Try to increment reader count
         let new_state = state + 1;
-        if (*rwlock).state.compare_exchange_weak(
-            state,
-            new_state,
-            Ordering::AcqRel,
-            Ordering::Relaxed
-        ).is_ok() {
+        if (*rwlock)
+            .state
+            .compare_exchange_weak(state, new_state, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+        {
             return ESUCCESS;
         }
 
@@ -128,12 +127,11 @@ pub unsafe extern "C" fn pthread_rwlock_tryrdlock(rwlock: *mut pthread_rwlock_t)
 
     // Try to increment reader count
     let new_state = state + 1;
-    if (*rwlock).state.compare_exchange(
-        state,
-        new_state,
-        Ordering::AcqRel,
-        Ordering::Relaxed
-    ).is_ok() {
+    if (*rwlock)
+        .state
+        .compare_exchange(state, new_state, Ordering::AcqRel, Ordering::Relaxed)
+        .is_ok()
+    {
         ESUCCESS
     } else {
         EBUSY
@@ -159,12 +157,11 @@ pub unsafe extern "C" fn pthread_rwlock_wrlock(rwlock: *mut pthread_rwlock_t) ->
 
     loop {
         // Try to acquire when unlocked (state == 0)
-        if (*rwlock).state.compare_exchange_weak(
-            0,
-            WRITE_LOCKED,
-            Ordering::AcqRel,
-            Ordering::Relaxed
-        ).is_ok() {
+        if (*rwlock)
+            .state
+            .compare_exchange_weak(0, WRITE_LOCKED, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+        {
             (*rwlock).waiting_writers.fetch_sub(1, Ordering::SeqCst);
             (*rwlock).writer.store(self_id, Ordering::Release);
             return ESUCCESS;
@@ -184,12 +181,11 @@ pub unsafe extern "C" fn pthread_rwlock_trywrlock(rwlock: *mut pthread_rwlock_t)
     let self_id = pthread_self();
 
     // Try to acquire when unlocked
-    if (*rwlock).state.compare_exchange(
-        0,
-        WRITE_LOCKED,
-        Ordering::AcqRel,
-        Ordering::Relaxed
-    ).is_ok() {
+    if (*rwlock)
+        .state
+        .compare_exchange(0, WRITE_LOCKED, Ordering::AcqRel, Ordering::Relaxed)
+        .is_ok()
+    {
         (*rwlock).writer.store(self_id, Ordering::Release);
         ESUCCESS
     } else {

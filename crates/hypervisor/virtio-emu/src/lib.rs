@@ -6,8 +6,8 @@
 
 extern crate alloc;
 
-pub mod console;
 pub mod block;
+pub mod console;
 pub mod net;
 pub mod transport;
 
@@ -15,8 +15,8 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use spin::Mutex;
 
-use vmm::device::{Virtqueue, status};
 use vmm::device::mmio as mmio_regs;
+use vmm::device::{Virtqueue, status};
 
 /// virtio device base implementation
 pub struct VirtioDeviceBase {
@@ -70,7 +70,8 @@ impl VirtioDeviceBase {
 
     /// Acknowledge features
     pub fn ack_features(&self, features: u64) {
-        self.acked_features.store(features & self.features, Ordering::SeqCst);
+        self.acked_features
+            .store(features & self.features, Ordering::SeqCst);
     }
 
     /// Get acked features
@@ -175,7 +176,9 @@ impl VirtioDeviceBase {
             mmio_regs::QUEUE_NUM_MAX => 256,
             mmio_regs::QUEUE_READY => {
                 let sel = self.queue_sel();
-                self.queue(sel).map(|q| if q.ready { 1 } else { 0 }).unwrap_or(0)
+                self.queue(sel)
+                    .map(|q| if q.ready { 1 } else { 0 })
+                    .unwrap_or(0)
             }
             mmio_regs::INTERRUPT_STATUS => self.interrupt_status(),
             mmio_regs::STATUS => self.status(),
@@ -198,7 +201,9 @@ impl VirtioDeviceBase {
             1 => data[0] as u32,
             2 => u16::from_le_bytes([data[0], data[1]]) as u32,
             4 => u32::from_le_bytes([data[0], data[1], data[2], data[3]]),
-            8 => u64::from_le_bytes([data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7]]) as u32,
+            8 => u64::from_le_bytes([
+                data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+            ]) as u32,
             _ => return,
         };
 
@@ -211,7 +216,10 @@ impl VirtioDeviceBase {
                 let shift = if sel == 0 { 0 } else { 32 };
                 let mask = 0xFFFF_FFFF << shift;
                 let current = self.acked_features.load(Ordering::SeqCst);
-                self.acked_features.store((current & !mask) | ((value as u64) << shift), Ordering::SeqCst);
+                self.acked_features.store(
+                    (current & !mask) | ((value as u64) << shift),
+                    Ordering::SeqCst,
+                );
             }
             mmio_regs::DRIVER_FEATURES_SEL => {
                 self.queue_sel.store(value, Ordering::SeqCst);

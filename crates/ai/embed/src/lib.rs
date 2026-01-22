@@ -6,13 +6,13 @@
 
 extern crate alloc;
 
-pub mod tokenizer;
 pub mod extract;
 pub mod model;
+pub mod tokenizer;
 
+pub use extract::{ContentExtractor, ExtractedContent, FileType};
+pub use model::{EmbeddingConfig, EmbeddingModel, SimpleTfIdfModel};
 pub use tokenizer::Tokenizer;
-pub use extract::{ContentExtractor, FileType, ExtractedContent};
-pub use model::{EmbeddingModel, EmbeddingConfig, SimpleTfIdfModel};
 
 /// Embedding dimension for all-MiniLM-L6-v2
 pub const EMBEDDING_DIM: usize = 384;

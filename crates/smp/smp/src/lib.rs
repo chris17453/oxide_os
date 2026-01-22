@@ -11,14 +11,14 @@
 
 extern crate alloc;
 
-pub mod percpu;
 pub mod cpu;
 pub mod ipi;
+pub mod percpu;
 pub mod tlb;
 
-pub use percpu::PerCpu;
-pub use cpu::{CpuId, CpuState, cpu_count, current_cpu, boot_ap};
+pub use cpu::{CpuId, CpuState, boot_ap, cpu_count, current_cpu};
 pub use ipi::{IpiTarget, send_ipi};
+pub use percpu::PerCpu;
 pub use tlb::tlb_shootdown;
 
 /// Maximum number of CPUs supported

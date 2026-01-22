@@ -15,7 +15,10 @@ pub struct Timespec {
 impl Timespec {
     /// Create new timespec
     pub const fn new(sec: i64, nsec: i64) -> Self {
-        Timespec { tv_sec: sec, tv_nsec: nsec }
+        Timespec {
+            tv_sec: sec,
+            tv_nsec: nsec,
+        }
     }
 
     /// Create from milliseconds
@@ -50,7 +53,10 @@ pub struct Timeval {
 impl Timeval {
     /// Create new timeval
     pub const fn new(sec: i64, usec: i64) -> Self {
-        Timeval { tv_sec: sec, tv_usec: usec }
+        Timeval {
+            tv_sec: sec,
+            tv_usec: usec,
+        }
     }
 }
 
@@ -158,7 +164,9 @@ pub fn clock_getres(clk_id: i32, res: &mut Timespec) -> i32 {
 
 /// Sleep for specified time
 pub fn nanosleep(req: &Timespec, rem: Option<&mut Timespec>) -> i32 {
-    let rem_ptr = rem.map(|r| r as *mut Timespec).unwrap_or(core::ptr::null_mut());
+    let rem_ptr = rem
+        .map(|r| r as *mut Timespec)
+        .unwrap_or(core::ptr::null_mut());
     unsafe {
         syscall::syscall2(
             syscall::SYS_NANOSLEEP,

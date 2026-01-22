@@ -5,14 +5,14 @@
 use crate::syscall;
 
 /// File type and mode
-pub const S_IFMT: u32 = 0o170000;   // Type of file mask
+pub const S_IFMT: u32 = 0o170000; // Type of file mask
 pub const S_IFSOCK: u32 = 0o140000; // Socket
-pub const S_IFLNK: u32 = 0o120000;  // Symbolic link
-pub const S_IFREG: u32 = 0o100000;  // Regular file
-pub const S_IFBLK: u32 = 0o060000;  // Block device
-pub const S_IFDIR: u32 = 0o040000;  // Directory
-pub const S_IFCHR: u32 = 0o020000;  // Character device
-pub const S_IFIFO: u32 = 0o010000;  // FIFO
+pub const S_IFLNK: u32 = 0o120000; // Symbolic link
+pub const S_IFREG: u32 = 0o100000; // Regular file
+pub const S_IFBLK: u32 = 0o060000; // Block device
+pub const S_IFDIR: u32 = 0o040000; // Directory
+pub const S_IFCHR: u32 = 0o020000; // Character device
+pub const S_IFIFO: u32 = 0o010000; // FIFO
 
 /// Stat structure matching kernel's format exactly
 ///

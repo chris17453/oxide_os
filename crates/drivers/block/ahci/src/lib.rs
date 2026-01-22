@@ -22,100 +22,100 @@ pub use port::{AhciPort, PortType};
 
 /// AHCI signature values
 mod signature {
-    pub const SATA: u32 = 0x00000101;  // SATA drive
+    pub const SATA: u32 = 0x00000101; // SATA drive
     pub const ATAPI: u32 = 0xEB140101; // SATAPI drive
-    pub const SEMB: u32 = 0xC33C0101;  // Enclosure management bridge
-    pub const PM: u32 = 0x96690101;    // Port multiplier
+    pub const SEMB: u32 = 0xC33C0101; // Enclosure management bridge
+    pub const PM: u32 = 0x96690101; // Port multiplier
 }
 
 /// AHCI capability bits
 mod cap {
-    pub const S64A: u32 = 1 << 31;    // 64-bit addressing
-    pub const SNCQ: u32 = 1 << 30;    // Native Command Queuing
-    pub const SSNTF: u32 = 1 << 29;   // SNotification register
-    pub const SMPS: u32 = 1 << 28;    // Mechanical presence switch
-    pub const SSS: u32 = 1 << 27;     // Staggered spin-up
-    pub const SALP: u32 = 1 << 26;    // Aggressive link power management
-    pub const SAL: u32 = 1 << 25;     // Activity LED
-    pub const SCLO: u32 = 1 << 24;    // Command list override
+    pub const S64A: u32 = 1 << 31; // 64-bit addressing
+    pub const SNCQ: u32 = 1 << 30; // Native Command Queuing
+    pub const SSNTF: u32 = 1 << 29; // SNotification register
+    pub const SMPS: u32 = 1 << 28; // Mechanical presence switch
+    pub const SSS: u32 = 1 << 27; // Staggered spin-up
+    pub const SALP: u32 = 1 << 26; // Aggressive link power management
+    pub const SAL: u32 = 1 << 25; // Activity LED
+    pub const SCLO: u32 = 1 << 24; // Command list override
     pub const ISS_MASK: u32 = 0xF << 20; // Interface speed
-    pub const SAM: u32 = 1 << 18;     // AHCI mode only
-    pub const SPM: u32 = 1 << 17;     // Port multiplier
-    pub const FBSS: u32 = 1 << 16;    // FIS-based switching
-    pub const PMD: u32 = 1 << 15;     // PIO multiple DRQ block
-    pub const SSC: u32 = 1 << 14;     // Slumber state capable
-    pub const PSC: u32 = 1 << 13;     // Partial state capable
+    pub const SAM: u32 = 1 << 18; // AHCI mode only
+    pub const SPM: u32 = 1 << 17; // Port multiplier
+    pub const FBSS: u32 = 1 << 16; // FIS-based switching
+    pub const PMD: u32 = 1 << 15; // PIO multiple DRQ block
+    pub const SSC: u32 = 1 << 14; // Slumber state capable
+    pub const PSC: u32 = 1 << 13; // Partial state capable
     pub const NCS_MASK: u32 = 0x1F << 8; // Number of command slots
-    pub const CCCS: u32 = 1 << 7;     // Command completion coalescing
-    pub const EMS: u32 = 1 << 6;      // Enclosure management
-    pub const SXS: u32 = 1 << 5;      // External SATA
-    pub const NP_MASK: u32 = 0x1F;    // Number of ports
+    pub const CCCS: u32 = 1 << 7; // Command completion coalescing
+    pub const EMS: u32 = 1 << 6; // Enclosure management
+    pub const SXS: u32 = 1 << 5; // External SATA
+    pub const NP_MASK: u32 = 0x1F; // Number of ports
 }
 
 /// AHCI GHC (Global HBA Control) bits
 mod ghc {
-    pub const AE: u32 = 1 << 31;      // AHCI Enable
-    pub const MRSM: u32 = 1 << 2;     // MSI Revert to Single Message
-    pub const IE: u32 = 1 << 1;       // Interrupt Enable
-    pub const HR: u32 = 1 << 0;       // HBA Reset
+    pub const AE: u32 = 1 << 31; // AHCI Enable
+    pub const MRSM: u32 = 1 << 2; // MSI Revert to Single Message
+    pub const IE: u32 = 1 << 1; // Interrupt Enable
+    pub const HR: u32 = 1 << 0; // HBA Reset
 }
 
 /// AHCI port command bits
 mod pxcmd {
-    pub const ASP: u32 = 1 << 27;     // Aggressive Slumber/Partial
-    pub const ALPE: u32 = 1 << 26;    // Aggressive Link Power Enable
-    pub const DLAE: u32 = 1 << 25;    // Drive LED on ATAPI Enable
-    pub const ATAPI: u32 = 1 << 24;   // Device is ATAPI
-    pub const APSTE: u32 = 1 << 23;   // Auto Partial to Slumber
-    pub const FBSCP: u32 = 1 << 22;   // FIS-based Switch Capable Port
-    pub const ESP: u32 = 1 << 21;     // External SATA Port
-    pub const CPD: u32 = 1 << 20;     // Cold Presence Detection
-    pub const MPSP: u32 = 1 << 19;    // Mechanical Presence Switch
-    pub const HPCP: u32 = 1 << 18;    // Hot Plug Capable
-    pub const PMA: u32 = 1 << 17;     // Port Multiplier Attached
-    pub const CPS: u32 = 1 << 16;     // Cold Presence State
-    pub const CR: u32 = 1 << 15;      // Command List Running
-    pub const FR: u32 = 1 << 14;      // FIS Receive Running
-    pub const MPSS: u32 = 1 << 13;    // Mechanical Presence State
+    pub const ASP: u32 = 1 << 27; // Aggressive Slumber/Partial
+    pub const ALPE: u32 = 1 << 26; // Aggressive Link Power Enable
+    pub const DLAE: u32 = 1 << 25; // Drive LED on ATAPI Enable
+    pub const ATAPI: u32 = 1 << 24; // Device is ATAPI
+    pub const APSTE: u32 = 1 << 23; // Auto Partial to Slumber
+    pub const FBSCP: u32 = 1 << 22; // FIS-based Switch Capable Port
+    pub const ESP: u32 = 1 << 21; // External SATA Port
+    pub const CPD: u32 = 1 << 20; // Cold Presence Detection
+    pub const MPSP: u32 = 1 << 19; // Mechanical Presence Switch
+    pub const HPCP: u32 = 1 << 18; // Hot Plug Capable
+    pub const PMA: u32 = 1 << 17; // Port Multiplier Attached
+    pub const CPS: u32 = 1 << 16; // Cold Presence State
+    pub const CR: u32 = 1 << 15; // Command List Running
+    pub const FR: u32 = 1 << 14; // FIS Receive Running
+    pub const MPSS: u32 = 1 << 13; // Mechanical Presence State
     pub const CCS_MASK: u32 = 0x1F << 8; // Current Command Slot
-    pub const FRE: u32 = 1 << 4;      // FIS Receive Enable
-    pub const CLO: u32 = 1 << 3;      // Command List Override
-    pub const POD: u32 = 1 << 2;      // Power On Device
-    pub const SUD: u32 = 1 << 1;      // Spin-Up Device
-    pub const ST: u32 = 1 << 0;       // Start
+    pub const FRE: u32 = 1 << 4; // FIS Receive Enable
+    pub const CLO: u32 = 1 << 3; // Command List Override
+    pub const POD: u32 = 1 << 2; // Power On Device
+    pub const SUD: u32 = 1 << 1; // Spin-Up Device
+    pub const ST: u32 = 1 << 0; // Start
 }
 
 /// AHCI interrupt status bits
 mod pxis {
-    pub const CPDS: u32 = 1 << 31;    // Cold Port Detect Status
-    pub const TFES: u32 = 1 << 30;    // Task File Error Status
-    pub const HBFS: u32 = 1 << 29;    // Host Bus Fatal Error Status
-    pub const HBDS: u32 = 1 << 28;    // Host Bus Data Error Status
-    pub const IFS: u32 = 1 << 27;     // Interface Fatal Error Status
-    pub const INFS: u32 = 1 << 26;    // Interface Non-Fatal Error Status
-    pub const OFS: u32 = 1 << 24;     // Overflow Status
-    pub const IPMS: u32 = 1 << 23;    // Incorrect Port Multiplier Status
-    pub const PRCS: u32 = 1 << 22;    // PhyRdy Change Status
-    pub const DMPS: u32 = 1 << 7;     // Device Mechanical Presence Status
-    pub const PCS: u32 = 1 << 6;      // Port Connect Change Status
-    pub const DPS: u32 = 1 << 5;      // Descriptor Processed Status
-    pub const UFS: u32 = 1 << 4;      // Unknown FIS Interrupt
-    pub const SDBS: u32 = 1 << 3;     // Set Device Bits Interrupt
-    pub const DSS: u32 = 1 << 2;      // DMA Setup FIS Interrupt
-    pub const PSS: u32 = 1 << 1;      // PIO Setup FIS Interrupt
-    pub const DHRS: u32 = 1 << 0;     // Device to Host Register FIS Interrupt
+    pub const CPDS: u32 = 1 << 31; // Cold Port Detect Status
+    pub const TFES: u32 = 1 << 30; // Task File Error Status
+    pub const HBFS: u32 = 1 << 29; // Host Bus Fatal Error Status
+    pub const HBDS: u32 = 1 << 28; // Host Bus Data Error Status
+    pub const IFS: u32 = 1 << 27; // Interface Fatal Error Status
+    pub const INFS: u32 = 1 << 26; // Interface Non-Fatal Error Status
+    pub const OFS: u32 = 1 << 24; // Overflow Status
+    pub const IPMS: u32 = 1 << 23; // Incorrect Port Multiplier Status
+    pub const PRCS: u32 = 1 << 22; // PhyRdy Change Status
+    pub const DMPS: u32 = 1 << 7; // Device Mechanical Presence Status
+    pub const PCS: u32 = 1 << 6; // Port Connect Change Status
+    pub const DPS: u32 = 1 << 5; // Descriptor Processed Status
+    pub const UFS: u32 = 1 << 4; // Unknown FIS Interrupt
+    pub const SDBS: u32 = 1 << 3; // Set Device Bits Interrupt
+    pub const DSS: u32 = 1 << 2; // DMA Setup FIS Interrupt
+    pub const PSS: u32 = 1 << 1; // PIO Setup FIS Interrupt
+    pub const DHRS: u32 = 1 << 0; // Device to Host Register FIS Interrupt
 }
 
 /// FIS types
 mod fis_type {
-    pub const REG_H2D: u8 = 0x27;     // Register FIS - Host to Device
-    pub const REG_D2H: u8 = 0x34;     // Register FIS - Device to Host
-    pub const DMA_ACT: u8 = 0x39;     // DMA Activate FIS
-    pub const DMA_SETUP: u8 = 0x41;   // DMA Setup FIS
-    pub const DATA: u8 = 0x46;        // Data FIS
-    pub const BIST: u8 = 0x58;        // BIST Activate FIS
-    pub const PIO_SETUP: u8 = 0x5F;   // PIO Setup FIS
-    pub const DEV_BITS: u8 = 0xA1;    // Set Device Bits FIS
+    pub const REG_H2D: u8 = 0x27; // Register FIS - Host to Device
+    pub const REG_D2H: u8 = 0x34; // Register FIS - Device to Host
+    pub const DMA_ACT: u8 = 0x39; // DMA Activate FIS
+    pub const DMA_SETUP: u8 = 0x41; // DMA Setup FIS
+    pub const DATA: u8 = 0x46; // Data FIS
+    pub const BIST: u8 = 0x58; // BIST Activate FIS
+    pub const PIO_SETUP: u8 = 0x5F; // PIO Setup FIS
+    pub const DEV_BITS: u8 = 0xA1; // Set Device Bits FIS
 }
 
 /// ATA commands

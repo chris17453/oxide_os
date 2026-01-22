@@ -125,9 +125,15 @@ impl Relocation {
             return None;
         }
 
-        let offset = u64::from_le_bytes([data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7]]);
-        let info = u64::from_le_bytes([data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15]]);
-        let addend = i64::from_le_bytes([data[16], data[17], data[18], data[19], data[20], data[21], data[22], data[23]]);
+        let offset = u64::from_le_bytes([
+            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+        ]);
+        let info = u64::from_le_bytes([
+            data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
+        ]);
+        let addend = i64::from_le_bytes([
+            data[16], data[17], data[18], data[19], data[20], data[21], data[22], data[23],
+        ]);
 
         let r_type = RelocationType::from_raw((info & 0xFFFFFFFF) as u32)?;
         let sym_idx = (info >> 32) as u32;
@@ -146,8 +152,12 @@ impl Relocation {
             return None;
         }
 
-        let offset = u64::from_le_bytes([data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7]]);
-        let info = u64::from_le_bytes([data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15]]);
+        let offset = u64::from_le_bytes([
+            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
+        ]);
+        let info = u64::from_le_bytes([
+            data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
+        ]);
 
         let r_type = RelocationType::from_raw((info & 0xFFFFFFFF) as u32)?;
         let sym_idx = (info >> 32) as u32;
@@ -192,7 +202,9 @@ pub fn apply_relocation(
         RelocationType::R_X86_64_64 => {
             // S + A
             let value = sym_value.wrapping_add(reloc.addend as usize);
-            unsafe { *(target as *mut u64) = value as u64; }
+            unsafe {
+                *(target as *mut u64) = value as u64;
+            }
         }
 
         RelocationType::R_X86_64_PC32 => {
@@ -200,7 +212,9 @@ pub fn apply_relocation(
             let value = (sym_value as i64)
                 .wrapping_add(reloc.addend)
                 .wrapping_sub(target as i64);
-            unsafe { *(target as *mut i32) = value as i32; }
+            unsafe {
+                *(target as *mut i32) = value as i32;
+            }
         }
 
         RelocationType::R_X86_64_PLT32 => {
@@ -208,7 +222,9 @@ pub fn apply_relocation(
             let value = (sym_value as i64)
                 .wrapping_add(reloc.addend)
                 .wrapping_sub(target as i64);
-            unsafe { *(target as *mut i32) = value as i32; }
+            unsafe {
+                *(target as *mut i32) = value as i32;
+            }
         }
 
         RelocationType::R_X86_64_COPY => {
@@ -218,36 +234,46 @@ pub fn apply_relocation(
 
         RelocationType::R_X86_64_GLOB_DAT | RelocationType::R_X86_64_JUMP_SLOT => {
             // S (direct symbol address)
-            unsafe { *(target as *mut u64) = sym_value as u64; }
+            unsafe {
+                *(target as *mut u64) = sym_value as u64;
+            }
         }
 
         RelocationType::R_X86_64_RELATIVE => {
             // B + A
             let value = (base as i64).wrapping_add(reloc.addend) as u64;
-            unsafe { *(target as *mut u64) = value; }
+            unsafe {
+                *(target as *mut u64) = value;
+            }
         }
 
-        RelocationType::R_X86_64_GOTPCREL |
-        RelocationType::R_X86_64_GOTPCRELX |
-        RelocationType::R_X86_64_REX_GOTPCRELX => {
+        RelocationType::R_X86_64_GOTPCREL
+        | RelocationType::R_X86_64_GOTPCRELX
+        | RelocationType::R_X86_64_REX_GOTPCRELX => {
             // G + GOT + A - P
             // Simplified: just compute PC-relative to GOT entry containing S
             let value = (got as i64)
                 .wrapping_add(reloc.addend)
                 .wrapping_sub(target as i64);
-            unsafe { *(target as *mut i32) = value as i32; }
+            unsafe {
+                *(target as *mut i32) = value as i32;
+            }
         }
 
         RelocationType::R_X86_64_32 => {
             // S + A (truncated to 32 bits, zero-extended)
             let value = sym_value.wrapping_add(reloc.addend as usize) as u32;
-            unsafe { *(target as *mut u32) = value; }
+            unsafe {
+                *(target as *mut u32) = value;
+            }
         }
 
         RelocationType::R_X86_64_32S => {
             // S + A (truncated to 32 bits, sign-extended)
             let value = (sym_value as i64).wrapping_add(reloc.addend) as i32;
-            unsafe { *(target as *mut i32) = value; }
+            unsafe {
+                *(target as *mut i32) = value;
+            }
         }
 
         RelocationType::R_X86_64_IRELATIVE => {
@@ -256,7 +282,9 @@ pub fn apply_relocation(
             let func_addr = (base as i64).wrapping_add(reloc.addend) as usize;
             let resolver: extern "C" fn() -> usize = unsafe { core::mem::transmute(func_addr) };
             let resolved = resolver();
-            unsafe { *(target as *mut u64) = resolved as u64; }
+            unsafe {
+                *(target as *mut u64) = resolved as u64;
+            }
         }
 
         _ => {

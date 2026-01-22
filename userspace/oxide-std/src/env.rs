@@ -7,9 +7,7 @@ use alloc::vec::Vec;
 
 /// Returns the arguments which this program was started with
 pub fn args() -> Args {
-    Args {
-        inner: args_os(),
-    }
+    Args { inner: args_os() }
 }
 
 /// Returns the arguments which this program was started with, as OsStrings
@@ -97,9 +95,7 @@ pub fn remove_var(key: &str) {
 
 /// Returns an iterator of (variable, value) pairs of strings
 pub fn vars() -> Vars {
-    Vars {
-        inner: vars_os(),
-    }
+    Vars { inner: vars_os() }
 }
 
 /// Returns an iterator of environment variables
@@ -107,19 +103,22 @@ pub fn vars_os() -> VarsOs {
     let mut pairs = Vec::new();
     libc::env_iter(|key_bytes, value_bytes| {
         // Convert bytes to str - find null terminator
-        let key_len = key_bytes.iter().position(|&c| c == 0).unwrap_or(key_bytes.len());
-        let val_len = value_bytes.iter().position(|&c| c == 0).unwrap_or(value_bytes.len());
+        let key_len = key_bytes
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(key_bytes.len());
+        let val_len = value_bytes
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(value_bytes.len());
         if let (Ok(key), Ok(val)) = (
             core::str::from_utf8(&key_bytes[..key_len]),
-            core::str::from_utf8(&value_bytes[..val_len])
+            core::str::from_utf8(&value_bytes[..val_len]),
         ) {
             pairs.push((key.to_string(), val.to_string()));
         }
     });
-    VarsOs {
-        pairs,
-        index: 0,
-    }
+    VarsOs { pairs, index: 0 }
 }
 
 /// Iterator over environment variables
@@ -177,7 +176,9 @@ impl core::fmt::Display for VarError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             VarError::NotPresent => write!(f, "environment variable not found"),
-            VarError::NotUnicode(s) => write!(f, "environment variable was not valid unicode: {}", s),
+            VarError::NotUnicode(s) => {
+                write!(f, "environment variable was not valid unicode: {}", s)
+            }
         }
     }
 }
@@ -187,13 +188,19 @@ pub fn current_dir() -> crate::io::Result<String> {
     let mut buf = [0u8; 4096];
     let len = libc::getcwd(&mut buf);
     if len < 0 {
-        Err(crate::io::Error::new(crate::io::ErrorKind::Other, "failed to get current directory"))
+        Err(crate::io::Error::new(
+            crate::io::ErrorKind::Other,
+            "failed to get current directory",
+        ))
     } else {
         // Find null terminator or use returned length
         let path_len = buf.iter().position(|&c| c == 0).unwrap_or(len as usize);
         match core::str::from_utf8(&buf[..path_len]) {
             Ok(s) => Ok(s.to_string()),
-            Err(_) => Err(crate::io::Error::new(crate::io::ErrorKind::InvalidData, "invalid UTF-8 in path")),
+            Err(_) => Err(crate::io::Error::new(
+                crate::io::ErrorKind::InvalidData,
+                "invalid UTF-8 in path",
+            )),
         }
     }
 }
@@ -212,7 +219,10 @@ pub fn set_current_dir(path: &str) -> crate::io::Result<()> {
 ///
 /// Note: This is not implemented on OXIDE yet
 pub fn current_exe() -> crate::io::Result<String> {
-    Err(crate::io::Error::new(crate::io::ErrorKind::Other, "current_exe not implemented"))
+    Err(crate::io::Error::new(
+        crate::io::ErrorKind::Other,
+        "current_exe not implemented",
+    ))
 }
 
 /// Returns the path of a temporary directory

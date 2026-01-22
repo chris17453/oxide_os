@@ -44,7 +44,10 @@ mod allocator {
                     return core::ptr::null_mut();
                 }
 
-                if HEAP_POS.compare_exchange_weak(pos, new_pos, Ordering::SeqCst, Ordering::Relaxed).is_ok() {
+                if HEAP_POS
+                    .compare_exchange_weak(pos, new_pos, Ordering::SeqCst, Ordering::Relaxed)
+                    .is_ok()
+                {
                     return (HEAP.data.get() as *mut u8).add(aligned);
                 }
             }
@@ -63,28 +66,28 @@ static ALLOCATOR: allocator::BumpAllocator = allocator::BumpAllocator;
 pub mod arch;
 
 // Core modules
+pub mod env;
 pub mod errno;
 pub mod fcntl;
 pub mod signal;
+pub mod stat;
+pub mod stdio;
 pub mod string;
 pub mod syscall;
 pub mod unistd;
-pub mod stdio;
-pub mod env;
-pub mod stat;
 
 // Extended POSIX modules
 pub mod dirent;
-pub mod time;
 pub mod dlfcn;
+pub mod dns;
 pub mod locale;
-pub mod wchar;
 pub mod math;
 pub mod poll;
-pub mod termios;
 pub mod pwd;
 pub mod socket;
-pub mod dns;
+pub mod termios;
+pub mod time;
+pub mod wchar;
 
 pub use errno::*;
 pub use fcntl::*;
@@ -96,23 +99,38 @@ pub use syscall::*;
 // Note: print!, println!, eprint!, eprintln! macros exist for formatted output
 // Use the `prints`, `printlns`, `eprints`, `eprintlns` functions for simple string printing
 // to avoid macro name conflicts
-pub use stdio::{StdoutWriter, StderrWriter, putchar, getchar, print_u64, print_i64, print_hex, getline, itoa, atoi, parse_int};
-pub use stdio::{prints, printlns, eprints, eprintlns};
-pub use unistd::{write, read, open, open2, close, fork, exec, execv, execve, wait, waitpid, getpid, getppid, dup, dup2, _exit, exit, puts, eputs};
-pub use unistd::{pipe, chdir, getcwd, lseek, setsid, setpgid, getpgid};
-pub use unistd::{WNOHANG, WUNTRACED, WCONTINUED, wifexited, wexitstatus, wifsignaled, wtermsig, wifstopped, wstopsig};
-pub use unistd::{SEEK_SET, SEEK_CUR, SEEK_END};
-pub use env::{setenv, unsetenv, getenv, init_env, env_iter};
+pub use env::{env_iter, getenv, init_env, setenv, unsetenv};
+pub use stdio::{
+    StderrWriter, StdoutWriter, atoi, getchar, getline, itoa, parse_int, print_hex, print_i64,
+    print_u64, putchar,
+};
+pub use stdio::{eprintlns, eprints, printlns, prints};
+pub use unistd::{
+    _exit, close, dup, dup2, eputs, exec, execv, execve, exit, fork, getpid, getppid, open, open2,
+    puts, read, wait, waitpid, write,
+};
+pub use unistd::{SEEK_CUR, SEEK_END, SEEK_SET};
+pub use unistd::{
+    WCONTINUED, WNOHANG, WUNTRACED, wexitstatus, wifexited, wifsignaled, wifstopped, wstopsig,
+    wtermsig,
+};
+pub use unistd::{chdir, getcwd, getpgid, lseek, pipe, setpgid, setsid};
 
 // Stat functions
-pub use stat::{stat, fstat, lstat, Stat, S_IFMT, S_IFREG, S_IFDIR, S_IFLNK, S_IFCHR, S_IFBLK, S_IFIFO, S_IFSOCK};
+pub use stat::{
+    S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFMT, S_IFREG, S_IFSOCK, Stat, fstat, lstat,
+    stat,
+};
 
 // User/group functions
-pub use pwd::{getuid, getgid, geteuid, getegid, setuid, setgid, seteuid, setegid};
+pub use pwd::{getegid, geteuid, getgid, getuid, setegid, seteuid, setgid, setuid};
 
 // Additional syscall wrappers
-pub use syscall::{sys_kill as kill, sys_mkdir as mkdir, sys_rmdir as rmdir, sys_unlink as unlink, sys_rename as rename};
-pub use syscall::{sys_gettid as gettid, sys_getdents as getdents};
+pub use syscall::{sys_getdents as getdents, sys_gettid as gettid};
+pub use syscall::{
+    sys_kill as kill, sys_mkdir as mkdir, sys_rename as rename, sys_rmdir as rmdir,
+    sys_unlink as unlink,
+};
 
 /// Global errno variable
 static mut ERRNO: i32 = 0;

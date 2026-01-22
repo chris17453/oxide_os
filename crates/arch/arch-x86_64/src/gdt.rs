@@ -11,10 +11,10 @@ pub const KERNEL_CS: u16 = 0x08;
 pub const KERNEL_DS: u16 = 0x10;
 
 /// User data segment selector (with RPL=3)
-pub const USER_DS: u16 = 0x1B;  // 0x18 | 3
+pub const USER_DS: u16 = 0x1B; // 0x18 | 3
 
 /// User code segment selector (with RPL=3)
-pub const USER_CS: u16 = 0x23;  // 0x20 | 3
+pub const USER_CS: u16 = 0x23; // 0x20 | 3
 
 /// TSS segment selector
 pub const TSS_SELECTOR: u16 = 0x28;
@@ -50,8 +50,8 @@ impl GdtEntry {
             limit_low: 0xFFFF,
             base_low: 0,
             base_middle: 0,
-            access: 0x9A,       // Present, Ring 0, Code, Execute/Read
-            granularity: 0xAF,  // Long mode, 4KB granularity
+            access: 0x9A,      // Present, Ring 0, Code, Execute/Read
+            granularity: 0xAF, // Long mode, 4KB granularity
             base_high: 0,
         }
     }
@@ -62,8 +62,8 @@ impl GdtEntry {
             limit_low: 0xFFFF,
             base_low: 0,
             base_middle: 0,
-            access: 0x92,       // Present, Ring 0, Data, Read/Write
-            granularity: 0xCF,  // 4KB granularity, 32-bit (ignored in long mode)
+            access: 0x92,      // Present, Ring 0, Data, Read/Write
+            granularity: 0xCF, // 4KB granularity, 32-bit (ignored in long mode)
             base_high: 0,
         }
     }
@@ -74,8 +74,8 @@ impl GdtEntry {
             limit_low: 0xFFFF,
             base_low: 0,
             base_middle: 0,
-            access: 0xF2,       // Present, Ring 3, Data, Read/Write
-            granularity: 0xCF,  // 4KB granularity
+            access: 0xF2,      // Present, Ring 3, Data, Read/Write
+            granularity: 0xCF, // 4KB granularity
             base_high: 0,
         }
     }
@@ -86,8 +86,8 @@ impl GdtEntry {
             limit_low: 0xFFFF,
             base_low: 0,
             base_middle: 0,
-            access: 0xFA,       // Present, Ring 3, Code, Execute/Read
-            granularity: 0xAF,  // Long mode, 4KB granularity
+            access: 0xFA,      // Present, Ring 3, Code, Execute/Read
+            granularity: 0xAF, // Long mode, 4KB granularity
             base_high: 0,
         }
     }
@@ -131,7 +131,7 @@ impl TssEntry {
             limit_low: limit,
             base_low: base as u16,
             base_middle: (base >> 16) as u8,
-            access: 0x89,  // Present, 64-bit TSS (available)
+            access: 0x89, // Present, 64-bit TSS (available)
             granularity: 0,
             base_high: (base >> 24) as u8,
             base_upper: (base >> 32) as u32,

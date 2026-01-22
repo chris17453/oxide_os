@@ -41,7 +41,11 @@ impl<T: ?Sized> Mutex<T> {
     /// Acquires a mutex, blocking the current thread until it is able to do so
     pub fn lock(&self) -> MutexGuard<'_, T> {
         // Fast path: try to acquire immediately
-        if self.state.compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+        if self
+            .state
+            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
             return MutexGuard { mutex: self };
         }
 
@@ -58,7 +62,11 @@ impl<T: ?Sized> Mutex<T> {
 
             // If unlocked, try to acquire
             if state == 0 {
-                if self.state.compare_exchange(0, 2, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+                if self
+                    .state
+                    .compare_exchange(0, 2, Ordering::Acquire, Ordering::Relaxed)
+                    .is_ok()
+                {
                     return;
                 }
                 continue;
@@ -66,7 +74,9 @@ impl<T: ?Sized> Mutex<T> {
 
             // Mark that there are waiters
             if state == 1 {
-                self.state.compare_exchange(1, 2, Ordering::Relaxed, Ordering::Relaxed).ok();
+                self.state
+                    .compare_exchange(1, 2, Ordering::Relaxed, Ordering::Relaxed)
+                    .ok();
                 state = 2;
             }
 
@@ -79,7 +89,11 @@ impl<T: ?Sized> Mutex<T> {
             }
 
             // Try to acquire again
-            if self.state.compare_exchange(0, 2, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+            if self
+                .state
+                .compare_exchange(0, 2, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
                 return;
             }
         }
@@ -87,7 +101,11 @@ impl<T: ?Sized> Mutex<T> {
 
     /// Attempts to acquire this lock without blocking
     pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
-        if self.state.compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+        if self
+            .state
+            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
             Some(MutexGuard { mutex: self })
         } else {
             None
@@ -180,7 +198,11 @@ impl<T: ?Sized> RwLock<T> {
             // If no writer, try to add a reader
             if state & WRITER_BIT == 0 {
                 let new_state = state + 1;
-                if self.state.compare_exchange(state, new_state, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+                if self
+                    .state
+                    .compare_exchange(state, new_state, Ordering::Acquire, Ordering::Relaxed)
+                    .is_ok()
+                {
                     return RwLockReadGuard { lock: self };
                 }
             } else {
@@ -200,7 +222,11 @@ impl<T: ?Sized> RwLock<T> {
 
             // If unlocked, try to acquire writer
             if state == 0 {
-                if self.state.compare_exchange(0, WRITER_BIT, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+                if self
+                    .state
+                    .compare_exchange(0, WRITER_BIT, Ordering::Acquire, Ordering::Relaxed)
+                    .is_ok()
+                {
                     return RwLockWriteGuard { lock: self };
                 }
             } else {
@@ -218,7 +244,11 @@ impl<T: ?Sized> RwLock<T> {
         let state = self.state.load(Ordering::Relaxed);
         if state & WRITER_BIT == 0 {
             let new_state = state + 1;
-            if self.state.compare_exchange(state, new_state, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+            if self
+                .state
+                .compare_exchange(state, new_state, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
                 return Some(RwLockReadGuard { lock: self });
             }
         }
@@ -227,7 +257,11 @@ impl<T: ?Sized> RwLock<T> {
 
     /// Attempts to acquire write access without blocking
     pub fn try_write(&self) -> Option<RwLockWriteGuard<'_, T>> {
-        if self.state.compare_exchange(0, WRITER_BIT, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+        if self
+            .state
+            .compare_exchange(0, WRITER_BIT, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
             Some(RwLockWriteGuard { lock: self })
         } else {
             None
@@ -400,12 +434,16 @@ impl Once {
             match state {
                 ONCE_INCOMPLETE => {
                     // Try to start initialization
-                    if self.state.compare_exchange(
-                        ONCE_INCOMPLETE,
-                        ONCE_RUNNING,
-                        Ordering::Acquire,
-                        Ordering::Relaxed,
-                    ).is_ok() {
+                    if self
+                        .state
+                        .compare_exchange(
+                            ONCE_INCOMPLETE,
+                            ONCE_RUNNING,
+                            Ordering::Acquire,
+                            Ordering::Relaxed,
+                        )
+                        .is_ok()
+                    {
                         // We won, run the initialization
                         f();
                         self.state.store(ONCE_COMPLETE, Ordering::Release);

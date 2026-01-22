@@ -38,12 +38,10 @@ pub fn sys_mkdir(path_ptr: u64, path_len: usize, mode: u32) -> i64 {
 
     // Get parent directory and name
     match GLOBAL_VFS.lookup_parent(&path) {
-        Ok((parent, name)) => {
-            match parent.mkdir(&name, mode) {
-                Ok(_) => 0,
-                Err(e) => vfs_error_to_errno(e),
-            }
-        }
+        Ok((parent, name)) => match parent.mkdir(&name, mode) {
+            Ok(_) => 0,
+            Err(e) => vfs_error_to_errno(e),
+        },
         Err(e) => vfs_error_to_errno(e),
     }
 }
@@ -61,12 +59,10 @@ pub fn sys_rmdir(path_ptr: u64, path_len: usize) -> i64 {
 
     // Get parent directory and name
     match GLOBAL_VFS.lookup_parent(&path) {
-        Ok((parent, name)) => {
-            match parent.rmdir(&name) {
-                Ok(()) => 0,
-                Err(e) => vfs_error_to_errno(e),
-            }
-        }
+        Ok((parent, name)) => match parent.rmdir(&name) {
+            Ok(()) => 0,
+            Err(e) => vfs_error_to_errno(e),
+        },
         Err(e) => vfs_error_to_errno(e),
     }
 }
@@ -84,12 +80,10 @@ pub fn sys_unlink(path_ptr: u64, path_len: usize) -> i64 {
 
     // Get parent directory and name
     match GLOBAL_VFS.lookup_parent(&path) {
-        Ok((parent, name)) => {
-            match parent.unlink(&name) {
-                Ok(()) => 0,
-                Err(e) => vfs_error_to_errno(e),
-            }
-        }
+        Ok((parent, name)) => match parent.unlink(&name) {
+            Ok(()) => 0,
+            Err(e) => vfs_error_to_errno(e),
+        },
         Err(e) => vfs_error_to_errno(e),
     }
 }
@@ -239,11 +233,7 @@ pub fn sys_getdents(fd: i32, buf: u64, count: usize) -> i64 {
 
             // Write name after header
             let name_ptr = entry_ptr.add(core::mem::size_of::<UserDirEntry>());
-            core::ptr::copy_nonoverlapping(
-                entry.name.as_ptr(),
-                name_ptr,
-                name_len,
-            );
+            core::ptr::copy_nonoverlapping(entry.name.as_ptr(), name_ptr, name_len);
             // Null terminator
             *name_ptr.add(name_len) = 0;
         }
@@ -336,12 +326,7 @@ pub fn sys_getcwd(buf: u64, size: usize) -> i64 {
 /// * `target_len` - Length of target path
 /// * `link_ptr` - Pointer to link path
 /// * `link_len` - Length of link path
-pub fn sys_link(
-    target_ptr: u64,
-    target_len: usize,
-    link_ptr: u64,
-    link_len: usize,
-) -> i64 {
+pub fn sys_link(target_ptr: u64, target_len: usize, link_ptr: u64, link_len: usize) -> i64 {
     let target_path = match get_resolved_path(target_ptr, target_len) {
         Some(p) => p,
         None => return errno::EFAULT,
@@ -378,12 +363,7 @@ pub fn sys_link(
 /// * `target_len` - Length of target path
 /// * `link_ptr` - Pointer to link path
 /// * `link_len` - Length of link path
-pub fn sys_symlink(
-    target_ptr: u64,
-    target_len: usize,
-    link_ptr: u64,
-    link_len: usize,
-) -> i64 {
+pub fn sys_symlink(target_ptr: u64, target_len: usize, link_ptr: u64, link_len: usize) -> i64 {
     // For symlink, target is NOT resolved - it's stored as-is
     let target_path = match get_path(target_ptr, target_len) {
         Some(p) => p,
@@ -403,7 +383,7 @@ pub fn sys_symlink(
 
     // Create the symbolic link
     match link_parent.symlink(&link_name, target_path) {
-        Ok(_) => 0,  // Returns Arc<dyn VnodeOps> but we don't need it
+        Ok(_) => 0, // Returns Arc<dyn VnodeOps> but we don't need it
         Err(e) => vfs_error_to_errno(e),
     }
 }
@@ -415,12 +395,7 @@ pub fn sys_symlink(
 /// * `path_len` - Length of symlink path
 /// * `buf` - User buffer for target path
 /// * `bufsize` - Size of buffer
-pub fn sys_readlink(
-    path_ptr: u64,
-    path_len: usize,
-    buf: u64,
-    bufsize: usize,
-) -> i64 {
+pub fn sys_readlink(path_ptr: u64, path_len: usize, buf: u64, bufsize: usize) -> i64 {
     if !validate_user_buffer(buf, bufsize) {
         return errno::EFAULT;
     }
@@ -465,12 +440,7 @@ pub fn sys_readlink(
 /// * `path_len` - Length of file path
 /// * `atime_sec` - Access time in seconds since epoch (u64::MAX = don't change)
 /// * `mtime_sec` - Modification time in seconds since epoch (u64::MAX = don't change)
-pub fn sys_utimes(
-    path_ptr: u64,
-    path_len: usize,
-    atime_sec: u64,
-    mtime_sec: u64,
-) -> i64 {
+pub fn sys_utimes(path_ptr: u64, path_len: usize, atime_sec: u64, mtime_sec: u64) -> i64 {
     let path = match get_resolved_path(path_ptr, path_len) {
         Some(p) => p,
         None => return errno::EFAULT,

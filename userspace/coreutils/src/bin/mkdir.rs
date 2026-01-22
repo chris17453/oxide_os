@@ -188,7 +188,8 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
                         b'v' => config.verbose = true,
                         b'm' => {
                             // -m might be combined like -m755
-                            let rest = &arg[(arg.as_bytes().iter().position(|&x| x == b'm').unwrap() + 1)..];
+                            let rest = &arg
+                                [(arg.as_bytes().iter().position(|&x| x == b'm').unwrap() + 1)..];
                             if !rest.is_empty() {
                                 match parse_mode(rest) {
                                     Some(mode) => config.mode = mode,

@@ -28,16 +28,16 @@ const MAX_ACTIONS: usize = 16;
 
 #[derive(Clone, Copy)]
 enum ActionType {
-    Print,       // Print fields/expression
-    PrintAll,    // Print whole line
+    Print,    // Print fields/expression
+    PrintAll, // Print whole line
 }
 
 #[derive(Clone, Copy)]
 enum BlockType {
     Begin,
     End,
-    Pattern,     // Pattern with action
-    Always,      // Action only (no pattern)
+    Pattern, // Pattern with action
+    Always,  // Action only (no pattern)
 }
 
 #[derive(Clone, Copy)]
@@ -46,7 +46,7 @@ struct Action {
     pattern: [u8; 256],
     pattern_len: usize,
     action_type: ActionType,
-    field_nums: [usize; 16],  // Which fields to print (0 = all)
+    field_nums: [usize; 16], // Which fields to print (0 = all)
     field_count: usize,
 }
 
@@ -158,7 +158,8 @@ fn parse_program(prog: &str, config: &mut AwkConfig) -> bool {
         if action.pattern_len > 255 {
             action.pattern_len = 255;
         }
-        action.pattern[..action.pattern_len].copy_from_slice(&bytes[pattern_start..pattern_start + action.pattern_len]);
+        action.pattern[..action.pattern_len]
+            .copy_from_slice(&bytes[pattern_start..pattern_start + action.pattern_len]);
         action.block_type = BlockType::Pattern;
         pos += 1; // skip closing /
     }
@@ -178,7 +179,7 @@ fn parse_program(prog: &str, config: &mut AwkConfig) -> bool {
         }
 
         // Check for print statement
-        if pos + 5 <= bytes.len() && &bytes[pos..pos+5] == b"print" {
+        if pos + 5 <= bytes.len() && &bytes[pos..pos + 5] == b"print" {
             pos += 5;
 
             // Skip whitespace
@@ -209,7 +210,8 @@ fn parse_program(prog: &str, config: &mut AwkConfig) -> bool {
                         }
 
                         if field_num_len > 0 {
-                            let field_str = core::str::from_utf8(&field_num_str[..field_num_len]).unwrap_or("0");
+                            let field_str = core::str::from_utf8(&field_num_str[..field_num_len])
+                                .unwrap_or("0");
                             if let Some(num) = parse_number(field_str) {
                                 if action.field_count < 16 {
                                     action.field_nums[action.field_count] = num;
@@ -229,7 +231,9 @@ fn parse_program(prog: &str, config: &mut AwkConfig) -> bool {
                     }
 
                     // Skip separators (comma, space)
-                    while pos < bytes.len() && (bytes[pos] == b',' || bytes[pos] == b' ' || bytes[pos] == b'\t') {
+                    while pos < bytes.len()
+                        && (bytes[pos] == b',' || bytes[pos] == b' ' || bytes[pos] == b'\t')
+                    {
                         pos += 1;
                     }
                 }
@@ -348,7 +352,7 @@ fn process_stream(fd: i32, config: &AwkConfig) -> i32 {
     let mut buf = [0u8; 4096];
     let mut line = [0u8; MAX_LINE];
     let mut line_len = 0;
-    let mut nr = 0u64;  // Record number
+    let mut nr = 0u64; // Record number
 
     loop {
         let n = read(fd, &mut buf);
@@ -371,7 +375,10 @@ fn process_stream(fd: i32, config: &AwkConfig) -> i32 {
                     match action.block_type {
                         BlockType::Begin | BlockType::End => continue,
                         BlockType::Pattern => {
-                            if !matches_pattern(&line[..line_len], &action.pattern[..action.pattern_len]) {
+                            if !matches_pattern(
+                                &line[..line_len],
+                                &action.pattern[..action.pattern_len],
+                            ) {
                                 continue;
                             }
                         }
@@ -402,7 +409,8 @@ fn process_stream(fd: i32, config: &AwkConfig) -> i32 {
                                 } else if field_num <= nf {
                                     // Print field
                                     let field = &fields[field_num - 1];
-                                    let field_len = field.iter().position(|&c| c == 0).unwrap_or(256);
+                                    let field_len =
+                                        field.iter().position(|&c| c == 0).unwrap_or(256);
                                     for m in 0..field_len {
                                         putchar(field[m]);
                                     }
@@ -477,12 +485,10 @@ fn process_stream(fd: i32, config: &AwkConfig) -> i32 {
     for i in 0..config.action_count {
         let action = &config.actions[i];
         match action.block_type {
-            BlockType::End => {
-                match action.action_type {
-                    ActionType::PrintAll => printlns(""),
-                    ActionType::Print => printlns(""),
-                }
-            }
+            BlockType::End => match action.action_type {
+                ActionType::PrintAll => printlns(""),
+                ActionType::Print => printlns(""),
+            },
             _ => {}
         }
     }

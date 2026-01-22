@@ -6,15 +6,15 @@
 
 extern crate alloc;
 
+pub mod dos;
+pub mod int;
 pub mod memory;
 pub mod monitor;
-pub mod int;
-pub mod dos;
 
+pub use dos::*;
+pub use int::*;
 pub use memory::*;
 pub use monitor::*;
-pub use int::*;
-pub use dos::*;
 
 use alloc::string::String;
 use bitflags::bitflags;

@@ -4,9 +4,9 @@ use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use spin::RwLock;
 
-use crate::{TrustResult, TrustError, Timestamp};
-use crate::key::{TrustedKey, KeyId, TrustLevel};
+use crate::key::{KeyId, TrustLevel, TrustedKey};
 use crate::revoke::RevocationEntry;
+use crate::{Timestamp, TrustError, TrustResult};
 
 /// Trust store
 pub struct TrustStore {
@@ -97,7 +97,12 @@ impl TrustStore {
     }
 
     /// Revoke a key
-    pub fn revoke_key(&self, key_id: &KeyId, reason: &str, timestamp: Timestamp) -> TrustResult<()> {
+    pub fn revoke_key(
+        &self,
+        key_id: &KeyId,
+        reason: &str,
+        timestamp: Timestamp,
+    ) -> TrustResult<()> {
         let entry = RevocationEntry::new(*key_id, reason, timestamp);
         self.revoked.write().insert(*key_id, entry);
         Ok(())

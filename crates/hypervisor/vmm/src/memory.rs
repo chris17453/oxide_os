@@ -3,7 +3,7 @@
 use alloc::vec::Vec;
 use core::ops::Range;
 
-use crate::{VmmResult, VmmError};
+use crate::{VmmError, VmmResult};
 
 /// Guest physical address
 pub type Gpa = u64;
@@ -205,11 +205,7 @@ impl GuestMemory {
 
         // Safety: HVA should be valid host memory
         unsafe {
-            core::ptr::copy_nonoverlapping(
-                hva as *const u8,
-                buf.as_mut_ptr(),
-                buf.len(),
-            );
+            core::ptr::copy_nonoverlapping(hva as *const u8, buf.as_mut_ptr(), buf.len());
         }
         Ok(())
     }
@@ -226,11 +222,7 @@ impl GuestMemory {
 
         // Safety: HVA should be valid host memory
         unsafe {
-            core::ptr::copy_nonoverlapping(
-                buf.as_ptr(),
-                hva as *mut u8,
-                buf.len(),
-            );
+            core::ptr::copy_nonoverlapping(buf.as_ptr(), hva as *mut u8, buf.len());
         }
         Ok(())
     }

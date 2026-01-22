@@ -1,8 +1,8 @@
 //! DOS service emulation (INT 21h)
 
+use crate::{V86Context, V86Error};
 use alloc::string::String;
 use alloc::vec::Vec;
-use crate::{V86Context, V86Error};
 
 /// DOS version to report
 pub const DOS_VERSION_MAJOR: u8 = 5;
@@ -239,7 +239,8 @@ impl DosServices {
             // Set interrupt vector
             0x25 => {
                 let int_num = ctx.regs.al();
-                ctx.memory.set_int_vector(int_num, ctx.segments.ds, ctx.regs.dx())?;
+                ctx.memory
+                    .set_int_vector(int_num, ctx.segments.ds, ctx.regs.dx())?;
                 Ok(false)
             }
 
@@ -539,7 +540,8 @@ pub fn load_exe(ctx: &mut V86Context, data: &[u8], load_segment: u16) -> Result<
 
         let reloc_addr = load_addr + ((segment as u32) << 4) + offset as u32;
         let current_val = ctx.memory.read_u16(reloc_addr)?;
-        ctx.memory.write_u16(reloc_addr, current_val.wrapping_add(load_segment))?;
+        ctx.memory
+            .write_u16(reloc_addr, current_val.wrapping_add(load_segment))?;
     }
 
     // Set up segments

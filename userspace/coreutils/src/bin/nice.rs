@@ -54,11 +54,11 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     // In a full implementation, we would:
     // 1. Call setpriority() syscall to adjust niceness
     // 2. Execute the command with exec()
-    
+
     prints("nice: would run with niceness ");
     print_i64(niceness as i64);
     prints(": ");
-    
+
     for i in cmd_start..argc {
         let arg = unsafe { cstr_to_str(*argv.add(i as usize)) };
         prints(arg);
@@ -70,7 +70,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
 
     // Note: setpriority syscall not yet implemented
     eprintlns("nice: setpriority syscall not yet implemented");
-    
+
     1
 }
 

@@ -13,13 +13,13 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     }
 
     let path = unsafe { cstr_to_str(*argv.add(1)) };
-    
+
     // For now, we'll do a simple implementation
     // In a full implementation, we'd:
     // 1. Resolve symlinks
     // 2. Handle . and ..
     // 3. Make path absolute
-    
+
     let mut resolved = [0u8; 4096];
     let mut pos = 0;
 
@@ -32,7 +32,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
             return 1;
         }
         pos = cwd_len as usize;
-        
+
         // Add separator if needed
         if pos > 0 && resolved[pos - 1] != b'/' {
             resolved[pos] = b'/';
@@ -43,7 +43,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     // Copy path
     let path_bytes = path.as_bytes();
     let mut i = 0;
-    
+
     // Skip leading / if absolute path
     if !path_bytes.is_empty() && path_bytes[0] == b'/' {
         resolved[0] = b'/';
@@ -68,14 +68,14 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         while i < path_bytes.len() && path_bytes[i] != b'/' {
             i += 1;
         }
-        
+
         let component = &path_bytes[start..i];
-        
+
         // Handle . (current directory) - skip it
         if component == b"." {
             continue;
         }
-        
+
         // Handle .. (parent directory)
         if component == b".." {
             // Remove last component
@@ -87,7 +87,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
             }
             continue;
         }
-        
+
         // Copy component
         for &byte in component {
             if pos >= resolved.len() {

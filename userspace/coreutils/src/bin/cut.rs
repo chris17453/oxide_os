@@ -70,7 +70,7 @@ impl RangeList {
 #[derive(Copy, Clone)]
 struct Range {
     start: usize,
-    end: usize,  // usize::MAX means open-ended
+    end: usize, // usize::MAX means open-ended
 }
 
 impl CutConfig {
@@ -295,7 +295,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     // Validate options
     if config.only_delimited {
         match config.mode {
-            CutMode::Fields(_) => {},
+            CutMode::Fields(_) => {}
             _ => {
                 eprintlns("cut: suppressing non-delimited lines makes sense only with fields");
                 return 1;
@@ -345,37 +345,49 @@ fn parse_range_list(s: &str) -> Option<RangeList> {
             if in_range {
                 // End of range N-M
                 let end = if has_current { current } else { usize::MAX };
-                list.add_range(Range { start: range_start, end });
+                list.add_range(Range {
+                    start: range_start,
+                    end,
+                });
                 in_range = false;
             } else if has_current {
                 // Single number
-                list.add_range(Range { start: current, end: current });
+                list.add_range(Range {
+                    start: current,
+                    end: current,
+                });
             } else {
-                return None;  // Invalid: empty before comma
+                return None; // Invalid: empty before comma
             }
             current = 0;
             has_current = false;
         } else if c == b'-' {
             if in_range {
-                return None;  // Invalid: double dash
+                return None; // Invalid: double dash
             }
             range_start = if has_current { current } else { 1 };
             in_range = true;
             current = 0;
             has_current = false;
         } else {
-            return None;  // Invalid character
+            return None; // Invalid character
         }
     }
 
     // Handle last item
     if in_range {
         let end = if has_current { current } else { usize::MAX };
-        list.add_range(Range { start: range_start, end });
+        list.add_range(Range {
+            start: range_start,
+            end,
+        });
     } else if has_current {
-        list.add_range(Range { start: current, end: current });
+        list.add_range(Range {
+            start: current,
+            end: current,
+        });
     } else if list.count == 0 {
-        return None;  // Empty list
+        return None; // Empty list
     }
 
     Some(list)
@@ -417,15 +429,19 @@ fn process_line(config: &CutConfig, line: &[u8]) {
         CutMode::Bytes(ranges) => cut_bytes(config, line, ranges),
         CutMode::Chars(ranges) => cut_chars(config, line, ranges),
         CutMode::Fields(ranges) => cut_fields(config, line, ranges),
-        CutMode::None => {},
+        CutMode::None => {}
     }
 }
 
 fn cut_bytes(config: &CutConfig, line: &[u8], ranges: &RangeList) {
     for i in 0..line.len() {
-        let pos = i + 1;  // 1-indexed
+        let pos = i + 1; // 1-indexed
         let in_range = ranges.contains(pos);
-        let should_print = if config.complement { !in_range } else { in_range };
+        let should_print = if config.complement {
+            !in_range
+        } else {
+            in_range
+        };
 
         if should_print {
             write(STDOUT_FILENO, &[line[i]]);
@@ -482,7 +498,10 @@ fn cut_fields(config: &CutConfig, line: &[u8], ranges: &RangeList) {
                     write(STDOUT_FILENO, &[output_delim]);
                 }
                 let field_idx = f - 1;
-                write(STDOUT_FILENO, &line[field_starts[field_idx]..field_ends[field_idx]]);
+                write(
+                    STDOUT_FILENO,
+                    &line[field_starts[field_idx]..field_ends[field_idx]],
+                );
                 first = false;
             }
         }
@@ -492,7 +511,11 @@ fn cut_fields(config: &CutConfig, line: &[u8], ranges: &RangeList) {
         for i in 0..ranges.count {
             let range = ranges.ranges[i];
             let start_field = range.start;
-            let end_field = if range.end == usize::MAX { num_fields } else { range.end };
+            let end_field = if range.end == usize::MAX {
+                num_fields
+            } else {
+                range.end
+            };
 
             for f in start_field..=end_field {
                 if f > 0 && f <= num_fields {
@@ -500,7 +523,10 @@ fn cut_fields(config: &CutConfig, line: &[u8], ranges: &RangeList) {
                         write(STDOUT_FILENO, &[output_delim]);
                     }
                     let field_idx = f - 1;
-                    write(STDOUT_FILENO, &line[field_starts[field_idx]..field_ends[field_idx]]);
+                    write(
+                        STDOUT_FILENO,
+                        &line[field_starts[field_idx]..field_ends[field_idx]],
+                    );
                     first = false;
                 }
             }

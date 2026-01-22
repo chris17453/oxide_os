@@ -37,11 +37,7 @@ impl KeyboardLayout {
             (false, true) => self.altgr[idx],
             (true, true) => self.shift_altgr[idx],
         };
-        if ch == '\0' {
-            None
-        } else {
-            Some(ch)
-        }
+        if ch == '\0' { None } else { Some(ch) }
     }
 }
 
@@ -186,7 +182,7 @@ static US_SHIFT: [char; 128] = charmap! {
     KEY_KPSLASH => '/',
 };
 
-static US_ALTGR: [char; 128] = ['\0'; 128];  // US has no AltGr mappings
+static US_ALTGR: [char; 128] = ['\0'; 128]; // US has no AltGr mappings
 static US_SHIFT_ALTGR: [char; 128] = ['\0'; 128];
 
 /// US QWERTY keyboard layout
@@ -393,12 +389,7 @@ pub static LAYOUT_FR: KeyboardLayout = KeyboardLayout {
 // ============================================================================
 
 /// All available keyboard layouts
-pub static LAYOUTS: &[&KeyboardLayout] = &[
-    &LAYOUT_US,
-    &LAYOUT_UK,
-    &LAYOUT_DE,
-    &LAYOUT_FR,
-];
+pub static LAYOUTS: &[&KeyboardLayout] = &[&LAYOUT_US, &LAYOUT_UK, &LAYOUT_DE, &LAYOUT_FR];
 
 /// Get a layout by name
 pub fn get_layout(name: &str) -> Option<&'static KeyboardLayout> {

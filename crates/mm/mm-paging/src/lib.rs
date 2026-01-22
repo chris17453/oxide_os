@@ -5,15 +5,15 @@
 #![no_std]
 
 mod entry;
-mod table;
 mod mapper;
+mod table;
 
 pub use entry::{PageTableEntry, PageTableFlags};
-pub use table::PageTable;
-#[cfg(target_arch = "x86_64")]
-pub use mapper::{flush_tlb, flush_tlb_all, read_cr3, write_cr3, PageMapper, MapError};
 #[cfg(not(target_arch = "x86_64"))]
-pub use mapper::{PageMapper, MapError};
+pub use mapper::{MapError, PageMapper};
+#[cfg(target_arch = "x86_64")]
+pub use mapper::{MapError, PageMapper, flush_tlb, flush_tlb_all, read_cr3, write_cr3};
+pub use table::PageTable;
 
 use os_core::{PhysAddr, VirtAddr};
 

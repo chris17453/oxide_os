@@ -88,9 +88,7 @@ impl<T> JoinHandle<T> {
 
         // Thread completed - get result
         // Safety: Thread is done, we have exclusive access
-        unsafe {
-            (*self.inner.result.get()).take().ok_or(())
-        }
+        unsafe { (*self.inner.result.get()).take().ok_or(()) }
     }
 
     /// Get the thread's ID
@@ -122,9 +120,7 @@ impl Thread {
 /// Get the current thread's ID
 pub fn current() -> Thread {
     let tid = libc::sys_gettid() as u32;
-    Thread {
-        id: ThreadId(tid),
-    }
+    Thread { id: ThreadId(tid) }
 }
 
 /// Spawn a new thread

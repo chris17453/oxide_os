@@ -1,9 +1,9 @@
 //! User Namespace
 
+use crate::{NsError, NsResult, alloc_ns_id};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use spin::RwLock;
-use crate::{alloc_ns_id, NsResult, NsError};
 
 /// UID/GID mapping entry
 #[derive(Clone, Copy)]

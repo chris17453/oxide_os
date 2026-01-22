@@ -16,12 +16,12 @@ mod msr {
 
 /// EFER bits
 mod efer {
-    pub const SCE: u64 = 1 << 0;  // System Call Extensions
+    pub const SCE: u64 = 1 << 0; // System Call Extensions
 }
 
 /// RFLAGS bits to mask on syscall entry
 /// We clear: IF (interrupts), DF (direction), TF (trap), AC (alignment check)
-const SFMASK_VALUE: u64 = 0x4700;  // IF=0x200, DF=0x400, TF=0x100, AC=0x4_0000
+const SFMASK_VALUE: u64 = 0x4700; // IF=0x200, DF=0x400, TF=0x100, AC=0x4_0000
 
 /// Read a Model Specific Register
 #[inline]
@@ -358,15 +358,15 @@ extern "C" fn syscall_dispatch(
 #[repr(C)]
 pub struct SyscallCpuData {
     /// Kernel stack pointer for syscall entry
-    pub kernel_rsp: u64,        // offset 0
+    pub kernel_rsp: u64, // offset 0
     /// Scratch space for user RSP
-    pub scratch_rsp: u64,       // offset 8
+    pub scratch_rsp: u64, // offset 8
     /// Scratch space for syscall number (RAX)
-    pub scratch_rax: u64,       // offset 16
+    pub scratch_rax: u64, // offset 16
     /// Scratch space for user R12
-    pub scratch_r12: u64,       // offset 24
+    pub scratch_r12: u64, // offset 24
     /// Scratch space for original user RCX (saved by libc before syscall)
-    pub scratch_rcx: u64,       // offset 32
+    pub scratch_rcx: u64, // offset 32
 }
 
 /// User context at syscall entry
@@ -398,9 +398,24 @@ pub struct SyscallUserContext {
 
 /// Global syscall user context (populated on each syscall entry)
 static mut SYSCALL_USER_CONTEXT: SyscallUserContext = SyscallUserContext {
-    rip: 0, rsp: 0, rflags: 0,
-    rax: 0, rbx: 0, rcx: 0, rdx: 0, rsi: 0, rdi: 0, rbp: 0,
-    r8: 0, r9: 0, r10: 0, r11: 0, r12: 0, r13: 0, r14: 0, r15: 0,
+    rip: 0,
+    rsp: 0,
+    rflags: 0,
+    rax: 0,
+    rbx: 0,
+    rcx: 0,
+    rdx: 0,
+    rsi: 0,
+    rdi: 0,
+    rbp: 0,
+    r8: 0,
+    r9: 0,
+    r10: 0,
+    r11: 0,
+    r12: 0,
+    r13: 0,
+    r14: 0,
+    r15: 0,
 };
 
 /// Debug: capture values before sysretq
@@ -434,15 +449,15 @@ unsafe extern "C" fn save_syscall_context(
     user_rsp: u64,
     user_rflags: u64,
     syscall_num: u64,
-    arg1: u64,  // rdi
-    arg2: u64,  // rsi
-    arg3: u64,  // rdx
-    arg4: u64,  // r10
-    arg5: u64,  // r8
-    arg6: u64,  // r9
+    arg1: u64, // rdi
+    arg2: u64, // rsi
+    arg3: u64, // rdx
+    arg4: u64, // r10
+    arg5: u64, // r8
+    arg6: u64, // r9
     rbx: u64,
     rbp: u64,
-    r12: u64,   // Note: this is caller-saved R12, not user RSP
+    r12: u64, // Note: this is caller-saved R12, not user RSP
     r13: u64,
     r14: u64,
     r15: u64,
@@ -463,8 +478,8 @@ unsafe extern "C" fn save_syscall_context(
         (*ctx).rbx = rbx;
         (*ctx).rbp = rbp;
         // RCX and R11 are clobbered by syscall, so use user values
-        (*ctx).rcx = user_rip;  // RCX had user RIP
-        (*ctx).r11 = user_rflags;  // R11 had user RFLAGS
+        (*ctx).rcx = user_rip; // RCX had user RIP
+        (*ctx).r11 = user_rflags; // R11 had user RFLAGS
         (*ctx).r12 = r12;
         (*ctx).r13 = r13;
         (*ctx).r14 = r14;

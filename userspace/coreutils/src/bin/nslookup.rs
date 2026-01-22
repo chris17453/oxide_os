@@ -11,36 +11,35 @@
 #![no_std]
 #![no_main]
 
-use libc::{printlns, prints, eprintlns, putchar, strlen};
-use libc::socket::{
-    socket, af, sock, ipproto, sockaddr_in_octets, sendto, recvfrom,
-    SOCKADDR_IN_SIZE, SockAddrIn,
-};
 use libc::close;
+use libc::socket::{
+    SOCKADDR_IN_SIZE, SockAddrIn, af, ipproto, recvfrom, sendto, sock, sockaddr_in_octets, socket,
+};
+use libc::{eprintlns, printlns, prints, putchar, strlen};
 
 // DNS constants
-const DNS_TYPE_A: u16 = 1;       // IPv4 address
-const DNS_TYPE_NS: u16 = 2;      // Nameserver
-const DNS_TYPE_CNAME: u16 = 5;   // Canonical name
-const DNS_TYPE_SOA: u16 = 6;     // Start of authority
-const DNS_TYPE_PTR: u16 = 12;    // Pointer record (reverse DNS)
-const DNS_TYPE_MX: u16 = 15;     // Mail exchange
-const DNS_TYPE_TXT: u16 = 16;    // Text record
-const DNS_TYPE_AAAA: u16 = 28;   // IPv6 address
-const DNS_TYPE_ANY: u16 = 255;   // Any record
+const DNS_TYPE_A: u16 = 1; // IPv4 address
+const DNS_TYPE_NS: u16 = 2; // Nameserver
+const DNS_TYPE_CNAME: u16 = 5; // Canonical name
+const DNS_TYPE_SOA: u16 = 6; // Start of authority
+const DNS_TYPE_PTR: u16 = 12; // Pointer record (reverse DNS)
+const DNS_TYPE_MX: u16 = 15; // Mail exchange
+const DNS_TYPE_TXT: u16 = 16; // Text record
+const DNS_TYPE_AAAA: u16 = 28; // IPv6 address
+const DNS_TYPE_ANY: u16 = 255; // Any record
 
-const DNS_CLASS_IN: u16 = 1;     // Internet class
-const DNS_CLASS_CH: u16 = 3;     // Chaos class
-const DNS_CLASS_HS: u16 = 4;     // Hesiod class
+const DNS_CLASS_IN: u16 = 1; // Internet class
+const DNS_CLASS_CH: u16 = 3; // Chaos class
+const DNS_CLASS_HS: u16 = 4; // Hesiod class
 
-const DNS_RD: u16 = 0x0100;      // Recursion desired flag
+const DNS_RD: u16 = 0x0100; // Recursion desired flag
 
 // DNS header flags
-const DNS_FLAG_QR: u16 = 0x8000;     // Query/Response
-const DNS_FLAG_AA: u16 = 0x0400;     // Authoritative answer
-const DNS_FLAG_TC: u16 = 0x0200;     // Truncated
-const DNS_FLAG_RD: u16 = 0x0100;     // Recursion desired
-const DNS_FLAG_RA: u16 = 0x0080;     // Recursion available
+const DNS_FLAG_QR: u16 = 0x8000; // Query/Response
+const DNS_FLAG_AA: u16 = 0x0400; // Authoritative answer
+const DNS_FLAG_TC: u16 = 0x0200; // Truncated
+const DNS_FLAG_RD: u16 = 0x0100; // Recursion desired
+const DNS_FLAG_RA: u16 = 0x0080; // Recursion available
 
 // DNS response codes
 const DNS_RCODE_OK: u16 = 0;
@@ -69,7 +68,7 @@ impl QueryConfig {
         QueryConfig {
             hostname: [0; 256],
             hostname_len: 0,
-            dns_server: (8, 8, 8, 8),  // Default to Google DNS
+            dns_server: (8, 8, 8, 8), // Default to Google DNS
             query_type: DNS_TYPE_A,
             query_class: DNS_CLASS_IN,
             debug: false,
@@ -264,7 +263,8 @@ fn decode_name(buf: &[u8], mut pos: usize, result: &mut [u8]) -> (usize, usize) 
             }
             pos = offset;
             jumps += 1;
-            if jumps > 10 {  // Prevent infinite loops
+            if jumps > 10 {
+                // Prevent infinite loops
                 break;
             }
             continue;
@@ -356,7 +356,7 @@ fn parse_and_display_response(buf: &[u8], len: usize, config: &QueryConfig) -> b
         let mut name_buf = [0u8; 256];
         let (new_pos, _) = decode_name(buf, pos, &mut name_buf);
         pos = new_pos;
-        pos += 4;  // Skip QTYPE and QCLASS
+        pos += 4; // Skip QTYPE and QCLASS
     }
 
     // Display authority status
@@ -420,8 +420,10 @@ fn parse_and_display_record(buf: &[u8], len: usize, pos: &mut usize, config: &Qu
     *pos += 2;
     let rclass = ((buf[*pos] as u16) << 8) | (buf[*pos + 1] as u16);
     *pos += 2;
-    let ttl = ((buf[*pos] as u32) << 24) | ((buf[*pos + 1] as u32) << 16)
-            | ((buf[*pos + 2] as u32) << 8) | (buf[*pos + 3] as u32);
+    let ttl = ((buf[*pos] as u32) << 24)
+        | ((buf[*pos + 1] as u32) << 16)
+        | ((buf[*pos + 2] as u32) << 8)
+        | (buf[*pos + 3] as u32);
     *pos += 4;
     let rdlength = ((buf[*pos] as u16) << 8) | (buf[*pos + 1] as u16);
     *pos += 2;
@@ -595,8 +597,10 @@ fn parse_and_display_record(buf: &[u8], len: usize, pos: &mut usize, config: &Qu
 
 // Helper functions
 fn read_u32(buf: &[u8], pos: usize) -> u32 {
-    ((buf[pos] as u32) << 24) | ((buf[pos + 1] as u32) << 16)
-    | ((buf[pos + 2] as u32) << 8) | (buf[pos + 3] as u32)
+    ((buf[pos] as u32) << 24)
+        | ((buf[pos + 1] as u32) << 16)
+        | ((buf[pos + 2] as u32) << 8)
+        | (buf[pos + 3] as u32)
 }
 
 fn print_name(buf: &[u8], len: usize) {
@@ -707,7 +711,8 @@ fn parse_args(argc: i32, argv: *const *const u8, config: &mut QueryConfig) -> bo
             // Parse option
             let opt = core::str::from_utf8(unsafe {
                 core::slice::from_raw_parts(arg.add(1), arg_len - 1)
-            }).unwrap_or("");
+            })
+            .unwrap_or("");
 
             if opt.starts_with("type=") {
                 let type_str = &opt[5..];
@@ -767,9 +772,9 @@ fn parse_args(argc: i32, argv: *const *const u8, config: &mut QueryConfig) -> bo
             }
         } else {
             // Hostname/IP argument
-            let hostname = core::str::from_utf8(unsafe {
-                core::slice::from_raw_parts(arg, arg_len)
-            }).unwrap_or("");
+            let hostname =
+                core::str::from_utf8(unsafe { core::slice::from_raw_parts(arg, arg_len) })
+                    .unwrap_or("");
 
             config.set_hostname(hostname);
             hostname_set = true;
@@ -853,8 +858,12 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
 
     // Display server info
     prints("Server:  ");
-    print_ipv4(&[config.dns_server.0, config.dns_server.1,
-                  config.dns_server.2, config.dns_server.3]);
+    print_ipv4(&[
+        config.dns_server.0,
+        config.dns_server.1,
+        config.dns_server.2,
+        config.dns_server.3,
+    ]);
     printlns("");
     printlns("");
 
@@ -883,7 +892,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         config.dns_server.0,
         config.dns_server.1,
         config.dns_server.2,
-        config.dns_server.3
+        config.dns_server.3,
     );
     let sent = sendto(sock, &query[..query_len], 0, &dest, SOCKADDR_IN_SIZE);
     if sent < 0 {
@@ -899,7 +908,13 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     let mut src_addr = SockAddrIn::default();
     let mut src_len = SOCKADDR_IN_SIZE;
 
-    let received = recvfrom(sock, &mut response, 0, Some(&mut src_addr), Some(&mut src_len));
+    let received = recvfrom(
+        sock,
+        &mut response,
+        0,
+        Some(&mut src_addr),
+        Some(&mut src_len),
+    );
     if received < 0 {
         prints("nslookup: failed to receive response: ");
         libc::print_i64(received as i64);

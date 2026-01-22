@@ -217,7 +217,7 @@ impl VirtioNet {
     const PCI_IO_QUEUE_NOTIFY: u16 = 0x10;
     const PCI_IO_DEVICE_STATUS: u16 = 0x12;
     const PCI_IO_ISR_STATUS: u16 = 0x13;
-    const PCI_IO_CONFIG: u16 = 0x14;  // Device-specific config starts here
+    const PCI_IO_CONFIG: u16 = 0x14; // Device-specific config starts here
 
     /// VirtIO device status bits
     const STATUS_ACKNOWLEDGE: u8 = 1;
@@ -347,11 +347,16 @@ impl VirtioNet {
             outb(io_base + Self::PCI_IO_DEVICE_STATUS, 0);
 
             // Set ACKNOWLEDGE
-            outb(io_base + Self::PCI_IO_DEVICE_STATUS, Self::STATUS_ACKNOWLEDGE);
+            outb(
+                io_base + Self::PCI_IO_DEVICE_STATUS,
+                Self::STATUS_ACKNOWLEDGE,
+            );
 
             // Set DRIVER
-            outb(io_base + Self::PCI_IO_DEVICE_STATUS,
-                 Self::STATUS_ACKNOWLEDGE | Self::STATUS_DRIVER);
+            outb(
+                io_base + Self::PCI_IO_DEVICE_STATUS,
+                Self::STATUS_ACKNOWLEDGE | Self::STATUS_DRIVER,
+            );
 
             // Read device features
             let device_features = inl(io_base + Self::PCI_IO_DEVICE_FEATURES) as u64;
@@ -364,8 +369,10 @@ impl VirtioNet {
             outl(io_base + Self::PCI_IO_DRIVER_FEATURES, negotiated as u32);
 
             // Set FEATURES_OK
-            outb(io_base + Self::PCI_IO_DEVICE_STATUS,
-                 Self::STATUS_ACKNOWLEDGE | Self::STATUS_DRIVER | Self::STATUS_FEATURES_OK);
+            outb(
+                io_base + Self::PCI_IO_DEVICE_STATUS,
+                Self::STATUS_ACKNOWLEDGE | Self::STATUS_DRIVER | Self::STATUS_FEATURES_OK,
+            );
 
             // Verify FEATURES_OK
             let status = inb(io_base + Self::PCI_IO_DEVICE_STATUS);
@@ -380,9 +387,13 @@ impl VirtioNet {
             }
 
             // Set DRIVER_OK
-            outb(io_base + Self::PCI_IO_DEVICE_STATUS,
-                 Self::STATUS_ACKNOWLEDGE | Self::STATUS_DRIVER |
-                 Self::STATUS_FEATURES_OK | Self::STATUS_DRIVER_OK);
+            outb(
+                io_base + Self::PCI_IO_DEVICE_STATUS,
+                Self::STATUS_ACKNOWLEDGE
+                    | Self::STATUS_DRIVER
+                    | Self::STATUS_FEATURES_OK
+                    | Self::STATUS_DRIVER_OK,
+            );
 
             Some(VirtioNet {
                 mode,
@@ -441,14 +452,12 @@ impl VirtioNet {
         }
 
         match self.mode {
-            VirtioMode::Mmio | VirtioMode::PciMem => {
-                unsafe {
-                    let base = self.base as *const u8;
-                    let config_ptr = base.add(Self::MMIO_CONFIG) as *const VirtioNetConfig;
-                    let config = core::ptr::read_volatile(config_ptr);
-                    config.status & status::LINK_UP != 0
-                }
-            }
+            VirtioMode::Mmio | VirtioMode::PciMem => unsafe {
+                let base = self.base as *const u8;
+                let config_ptr = base.add(Self::MMIO_CONFIG) as *const VirtioNetConfig;
+                let config = core::ptr::read_volatile(config_ptr);
+                config.status & status::LINK_UP != 0
+            },
             VirtioMode::PciIo => {
                 // Status is at offset 6 in the config space for net devices
                 let io_base = self.base as u16;

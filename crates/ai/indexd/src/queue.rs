@@ -1,7 +1,7 @@
 //! Indexing queue
 
-use alloc::string::String;
 use alloc::collections::VecDeque;
+use alloc::string::String;
 use spin::Mutex;
 
 /// Queue item

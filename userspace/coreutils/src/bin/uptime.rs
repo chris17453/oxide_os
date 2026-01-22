@@ -16,10 +16,14 @@ fn main() -> i32 {
 
     // Print current time
     prints(" ");
-    if hours < 10 { prints("0"); }
+    if hours < 10 {
+        prints("0");
+    }
     print_u64(hours as u64);
     prints(":");
-    if mins < 10 { prints("0"); }
+    if mins < 10 {
+        prints("0");
+    }
     print_u64(mins as u64);
 
     // Get uptime from /proc/uptime (seconds since boot)
@@ -75,9 +79,13 @@ fn print_uptime(secs: u64) {
         }
     }
 
-    if hours < 10 { prints(" "); }
+    if hours < 10 {
+        prints(" ");
+    }
     print_u64(hours);
     prints(":");
-    if mins < 10 { prints("0"); }
+    if mins < 10 {
+        prints("0");
+    }
     print_u64(mins);
 }

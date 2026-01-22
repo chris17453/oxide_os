@@ -1,8 +1,8 @@
 //! Text tokenization for embedding models
 
+use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
-use alloc::collections::BTreeMap;
 
 /// Token ID type
 pub type TokenId = u32;
@@ -27,9 +27,7 @@ pub struct Tokenizer {
 impl Tokenizer {
     /// Create a new tokenizer with vocabulary
     pub fn new(vocab: BTreeMap<String, TokenId>, max_len: usize) -> Self {
-        let id_to_token = vocab.iter()
-            .map(|(k, &v)| (v, k.clone()))
-            .collect();
+        let id_to_token = vocab.iter().map(|(k, &v)| (v, k.clone())).collect();
 
         Tokenizer {
             vocab,
@@ -49,10 +47,9 @@ impl Tokenizer {
 
         // Add some common words for testing
         let common_words = [
-            "the", "a", "an", "is", "are", "was", "were", "be", "been",
-            "and", "or", "not", "of", "to", "in", "for", "on", "with",
-            "machine", "learning", "deep", "neural", "network", "data",
-            "file", "image", "text", "photo", "document", "video",
+            "the", "a", "an", "is", "are", "was", "were", "be", "been", "and", "or", "not", "of",
+            "to", "in", "for", "on", "with", "machine", "learning", "deep", "neural", "network",
+            "data", "file", "image", "text", "photo", "document", "video",
         ];
 
         for (i, word) in common_words.iter().enumerate() {

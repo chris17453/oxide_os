@@ -70,20 +70,12 @@ impl CellAttrs {
 
     /// Get effective foreground color (accounting for reverse)
     pub fn effective_fg(&self) -> TermColor {
-        if self.is_reverse() {
-            self.bg
-        } else {
-            self.fg
-        }
+        if self.is_reverse() { self.bg } else { self.fg }
     }
 
     /// Get effective background color (accounting for reverse)
     pub fn effective_bg(&self) -> TermColor {
-        if self.is_reverse() {
-            self.fg
-        } else {
-            self.bg
-        }
+        if self.is_reverse() { self.fg } else { self.bg }
     }
 }
 

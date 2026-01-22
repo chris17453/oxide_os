@@ -3,8 +3,8 @@
 //! Implements RFC 1951 DEFLATE compressed data format.
 //! Uses fixed Huffman codes for simplicity while maintaining compatibility.
 
-use alloc::vec::Vec;
 use crate::{CompressionError, Result};
+use alloc::vec::Vec;
 
 /// Bit writer for packing bits into bytes
 struct BitWriter {
@@ -106,21 +106,69 @@ impl<'a> BitReader<'a> {
 
 /// Length codes for DEFLATE (base_length, extra_bits, code)
 const LENGTH_CODES: [(u16, u8, u16); 29] = [
-    (3, 0, 257), (4, 0, 258), (5, 0, 259), (6, 0, 260), (7, 0, 261),
-    (8, 0, 262), (9, 0, 263), (10, 0, 264), (11, 1, 265), (13, 1, 266),
-    (15, 1, 267), (17, 1, 268), (19, 2, 269), (23, 2, 270), (27, 2, 271),
-    (31, 2, 272), (35, 3, 273), (43, 3, 274), (51, 3, 275), (59, 3, 276),
-    (67, 4, 277), (83, 4, 278), (99, 4, 279), (115, 4, 280), (131, 5, 281),
-    (163, 5, 282), (195, 5, 283), (227, 5, 284), (258, 0, 285),
+    (3, 0, 257),
+    (4, 0, 258),
+    (5, 0, 259),
+    (6, 0, 260),
+    (7, 0, 261),
+    (8, 0, 262),
+    (9, 0, 263),
+    (10, 0, 264),
+    (11, 1, 265),
+    (13, 1, 266),
+    (15, 1, 267),
+    (17, 1, 268),
+    (19, 2, 269),
+    (23, 2, 270),
+    (27, 2, 271),
+    (31, 2, 272),
+    (35, 3, 273),
+    (43, 3, 274),
+    (51, 3, 275),
+    (59, 3, 276),
+    (67, 4, 277),
+    (83, 4, 278),
+    (99, 4, 279),
+    (115, 4, 280),
+    (131, 5, 281),
+    (163, 5, 282),
+    (195, 5, 283),
+    (227, 5, 284),
+    (258, 0, 285),
 ];
 
 /// Distance codes for DEFLATE
 const DISTANCE_CODES: [(u16, u8); 30] = [
-    (1, 0), (2, 0), (3, 0), (4, 0), (5, 1), (7, 1), (9, 2), (13, 2),
-    (17, 3), (25, 3), (33, 4), (49, 4), (65, 5), (97, 5), (129, 6), (193, 6),
-    (257, 7), (385, 7), (513, 8), (769, 8), (1025, 9), (1537, 9),
-    (2049, 10), (3073, 10), (4097, 11), (6145, 11), (8193, 12), (12289, 12),
-    (16385, 13), (24577, 13),
+    (1, 0),
+    (2, 0),
+    (3, 0),
+    (4, 0),
+    (5, 1),
+    (7, 1),
+    (9, 2),
+    (13, 2),
+    (17, 3),
+    (25, 3),
+    (33, 4),
+    (49, 4),
+    (65, 5),
+    (97, 5),
+    (129, 6),
+    (193, 6),
+    (257, 7),
+    (385, 7),
+    (513, 8),
+    (769, 8),
+    (1025, 9),
+    (1537, 9),
+    (2049, 10),
+    (3073, 10),
+    (4097, 11),
+    (6145, 11),
+    (8193, 12),
+    (12289, 12),
+    (16385, 13),
+    (24577, 13),
 ];
 
 /// Find length code for a given length
@@ -205,13 +253,15 @@ pub fn compress_deflate(input: &[u8], level: u8) -> Result<Vec<u8>> {
 
         if best_length >= 3 {
             // Emit length/distance pair
-            let (length_code, length_extra_bits, length_extra) = get_length_code(best_length as u16);
+            let (length_code, length_extra_bits, length_extra) =
+                get_length_code(best_length as u16);
             write_fixed_literal(&mut writer, length_code);
             if length_extra_bits > 0 {
                 writer.write_bits(length_extra, length_extra_bits);
             }
 
-            let (distance_code, distance_extra_bits, distance_extra) = get_distance_code(best_distance as u16);
+            let (distance_code, distance_extra_bits, distance_extra) =
+                get_distance_code(best_distance as u16);
             writer.write_bits(distance_code as u16, 5); // Fixed distance code is 5 bits
             if distance_extra_bits > 0 {
                 writer.write_bits(distance_extra, distance_extra_bits);

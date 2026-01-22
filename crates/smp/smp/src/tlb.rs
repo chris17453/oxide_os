@@ -3,10 +3,10 @@
 //! When page tables are modified, other CPUs may have stale TLB entries.
 //! TLB shootdown uses IPIs to coordinate TLB invalidation across CPUs.
 
-use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use crate::IpiTarget;
-use crate::ipi::{send_ipi, vector};
 use crate::cpu::cpus_online;
+use crate::ipi::{send_ipi, vector};
+use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// TLB shootdown request stored in atomics for safe access
 struct TlbShootdownState {
@@ -50,11 +50,11 @@ pub fn tlb_shootdown(start: u64, end: u64, asid: u64) {
     }
 
     // Acquire the shootdown lock (simple spinlock)
-    while TLB_STATE.in_progress.compare_exchange(
-        0, 1,
-        Ordering::Acquire,
-        Ordering::Relaxed
-    ).is_err() {
+    while TLB_STATE
+        .in_progress
+        .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
         core::hint::spin_loop();
     }
 

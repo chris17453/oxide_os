@@ -278,14 +278,7 @@ pub fn tcsendbreak(fd: i32, duration: i32) -> i32 {
 
 /// Drain output
 pub fn tcdrain(fd: i32) -> i32 {
-    unsafe {
-        syscall::syscall3(
-            syscall::SYS_IOCTL,
-            fd as usize,
-            TCSBRK as usize,
-            1,
-        ) as i32
-    }
+    unsafe { syscall::syscall3(syscall::SYS_IOCTL, fd as usize, TCSBRK as usize, 1) as i32 }
 }
 
 /// Get input speed
@@ -319,8 +312,14 @@ pub fn cfsetspeed(termios: &mut Termios, speed: Speed) -> i32 {
 
 /// Make raw mode
 pub fn cfmakeraw(termios: &mut Termios) {
-    termios.c_iflag &= !(iflag::IGNBRK | iflag::BRKINT | iflag::PARMRK | iflag::ISTRIP
-        | iflag::INLCR | iflag::IGNCR | iflag::ICRNL | iflag::IXON);
+    termios.c_iflag &= !(iflag::IGNBRK
+        | iflag::BRKINT
+        | iflag::PARMRK
+        | iflag::ISTRIP
+        | iflag::INLCR
+        | iflag::IGNCR
+        | iflag::ICRNL
+        | iflag::IXON);
     termios.c_oflag &= !oflag::OPOST;
     termios.c_lflag &= !(lflag::ECHO | lflag::ECHONL | lflag::ICANON | lflag::ISIG | lflag::IEXTEN);
     termios.c_cflag &= !(cflag::CSIZE | cflag::PARENB);

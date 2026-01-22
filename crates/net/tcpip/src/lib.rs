@@ -21,8 +21,8 @@ use core::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use spin::Mutex;
 
 use net::{
-    IpAddr, Ipv4Addr, MacAddress, NetError, NetResult, NetworkDevice, NetworkInterface,
-    Socket, SocketAddr, SocketDomain, SocketProtocol, SocketState, SocketType,
+    IpAddr, Ipv4Addr, MacAddress, NetError, NetResult, NetworkDevice, NetworkInterface, Socket,
+    SocketAddr, SocketDomain, SocketProtocol, SocketState, SocketType,
 };
 
 pub use arp::ArpCache;
@@ -77,7 +77,8 @@ impl TcpIpStack {
     pub fn alloc_ephemeral_port(&self) -> u16 {
         let port = self.next_ephemeral_port.fetch_add(1, Ordering::SeqCst);
         if port >= Self::EPHEMERAL_PORT_END {
-            self.next_ephemeral_port.store(Self::EPHEMERAL_PORT_START, Ordering::SeqCst);
+            self.next_ephemeral_port
+                .store(Self::EPHEMERAL_PORT_START, Ordering::SeqCst);
         }
         port
     }
@@ -126,7 +127,8 @@ impl TcpIpStack {
     fn process_arp(&self, payload: &[u8]) -> NetResult<()> {
         if let Some(arp_packet) = arp::ArpPacket::parse(payload) {
             // Update cache with sender info
-            self.arp_cache.insert(arp_packet.sender_ip, arp_packet.sender_mac);
+            self.arp_cache
+                .insert(arp_packet.sender_ip, arp_packet.sender_mac);
 
             // Handle ARP request
             if arp_packet.operation == arp::ARP_REQUEST {
@@ -149,12 +151,7 @@ impl TcpIpStack {
             let packet = reply.to_bytes();
 
             // Wrap in Ethernet frame
-            let frame = ethernet::EthernetFrame::new(
-                target_mac,
-                our_mac,
-                EtherType::Arp,
-                &packet,
-            );
+            let frame = ethernet::EthernetFrame::new(target_mac, our_mac, EtherType::Arp, &packet);
 
             self.interface.device.transmit(&frame.to_bytes())?;
         }
@@ -214,7 +211,12 @@ impl TcpIpStack {
         if let Some(icmp_packet) = icmp::IcmpPacket::parse(payload) {
             if icmp_packet.icmp_type == icmp::ICMP_ECHO_REQUEST {
                 // Send echo reply
-                self.send_icmp_reply(src_ip, icmp_packet.identifier, icmp_packet.sequence, &icmp_packet.data)?;
+                self.send_icmp_reply(
+                    src_ip,
+                    icmp_packet.identifier,
+                    icmp_packet.sequence,
+                    &icmp_packet.data,
+                )?;
             }
         }
         Ok(())
@@ -269,7 +271,12 @@ impl TcpIpStack {
     }
 
     /// Send IPv4 packet
-    pub fn send_ipv4_packet(&self, dst_ip: Ipv4Addr, protocol: IpProtocol, payload: &[u8]) -> NetResult<()> {
+    pub fn send_ipv4_packet(
+        &self,
+        dst_ip: Ipv4Addr,
+        protocol: IpProtocol,
+        payload: &[u8],
+    ) -> NetResult<()> {
         let src_ip = self.interface.ipv4_addr().ok_or(NetError::NotConnected)?;
 
         // Build IP packet
@@ -282,7 +289,10 @@ impl TcpIpStack {
             self.resolve_mac(dst_ip)?
         } else {
             // Use gateway
-            let gateway = self.interface.ipv4_gateway().ok_or(NetError::NetworkUnreachable)?;
+            let gateway = self
+                .interface
+                .ipv4_gateway()
+                .ok_or(NetError::NetworkUnreachable)?;
             self.resolve_mac(gateway)?
         };
 

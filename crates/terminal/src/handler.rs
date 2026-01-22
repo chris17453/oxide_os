@@ -4,11 +4,11 @@
 
 extern crate alloc;
 
-use alloc::vec;
-use alloc::vec::Vec;
+use crate::buffer::{ScreenBuffer, ScrollbackBuffer};
 use crate::cell::{CellAttrs, CellFlags, Cursor, CursorShape};
 use crate::color::TermColor;
-use crate::buffer::{ScreenBuffer, ScrollbackBuffer};
+use alloc::vec;
+use alloc::vec::Vec;
 
 /// Terminal mode flags
 bitflags::bitflags! {
@@ -138,7 +138,11 @@ impl Handler {
 
     /// Line feed (moves down, may scroll)
     /// Returns true if scrolling occurred
-    pub fn linefeed(&mut self, buffer: &mut ScreenBuffer, scrollback: Option<&mut ScrollbackBuffer>) -> bool {
+    pub fn linefeed(
+        &mut self,
+        buffer: &mut ScreenBuffer,
+        scrollback: Option<&mut ScrollbackBuffer>,
+    ) -> bool {
         if self.cursor.row >= self.effective_scroll_bottom() {
             // At or past scroll region bottom - scroll up
             if let Some(sb) = scrollback {
@@ -394,12 +398,7 @@ impl Handler {
     }
 
     /// Handle ESC sequence
-    pub fn handle_esc(
-        &mut self,
-        intermediates: &[u8],
-        final_char: u8,
-        buffer: &mut ScreenBuffer,
-    ) {
+    pub fn handle_esc(&mut self, intermediates: &[u8], final_char: u8, buffer: &mut ScreenBuffer) {
         match (intermediates.first(), final_char) {
             (None, b'7') => {
                 // DECSC - Save Cursor

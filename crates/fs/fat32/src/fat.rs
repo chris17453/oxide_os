@@ -69,14 +69,18 @@ impl FatTable {
         for i in 0..size_sectors as usize {
             let sector = first_sector + i as u64;
             let block = sector / sectors_per_block as u64;
-            let offset_in_block = (sector % sectors_per_block as u64) as usize * bytes_per_sector as usize;
+            let offset_in_block =
+                (sector % sectors_per_block as u64) as usize * bytes_per_sector as usize;
 
             let mut block_buf = vec![0u8; block_size];
-            device.read(block, &mut block_buf).map_err(|_| VfsError::IoError)?;
+            device
+                .read(block, &mut block_buf)
+                .map_err(|_| VfsError::IoError)?;
 
             let dest_offset = i * bytes_per_sector as usize;
-            fat_data[dest_offset..dest_offset + bytes_per_sector as usize]
-                .copy_from_slice(&block_buf[offset_in_block..offset_in_block + bytes_per_sector as usize]);
+            fat_data[dest_offset..dest_offset + bytes_per_sector as usize].copy_from_slice(
+                &block_buf[offset_in_block..offset_in_block + bytes_per_sector as usize],
+            );
         }
 
         // Parse FAT entries
@@ -131,7 +135,12 @@ impl FatTable {
             if entry == fat_entry::FREE {
                 // Try to allocate (CAS)
                 if self.entries[i]
-                    .compare_exchange(fat_entry::FREE, fat_entry::EOC, Ordering::SeqCst, Ordering::SeqCst)
+                    .compare_exchange(
+                        fat_entry::FREE,
+                        fat_entry::EOC,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    )
                     .is_ok()
                 {
                     self.dirty.store(true, Ordering::SeqCst);
@@ -239,20 +248,27 @@ impl FatTable {
         for i in 0..self.size_sectors as usize {
             let sector = self.first_sector + i as u64;
             let block = sector / sectors_per_block as u64;
-            let offset_in_block = (sector % sectors_per_block as u64) as usize * self.bytes_per_sector as usize;
+            let offset_in_block =
+                (sector % sectors_per_block as u64) as usize * self.bytes_per_sector as usize;
 
             let mut block_buf = vec![0u8; block_size];
 
             // Read-modify-write for partial blocks
             if (self.bytes_per_sector as usize) < block_size {
-                device.read(block, &mut block_buf).map_err(|_| VfsError::IoError)?;
+                device
+                    .read(block, &mut block_buf)
+                    .map_err(|_| VfsError::IoError)?;
             }
 
             let src_offset = i * self.bytes_per_sector as usize;
             block_buf[offset_in_block..offset_in_block + self.bytes_per_sector as usize]
-                .copy_from_slice(&fat_data[src_offset..src_offset + self.bytes_per_sector as usize]);
+                .copy_from_slice(
+                    &fat_data[src_offset..src_offset + self.bytes_per_sector as usize],
+                );
 
-            device.write(block, &block_buf).map_err(|_| VfsError::IoError)?;
+            device
+                .write(block, &block_buf)
+                .map_err(|_| VfsError::IoError)?;
         }
 
         self.dirty.store(false, Ordering::SeqCst);

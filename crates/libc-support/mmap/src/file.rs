@@ -191,11 +191,17 @@ impl FileMapping {
 
     /// Get number of dirty pages
     pub fn dirty_pages(&self) -> usize {
-        self.pages.iter().filter(|p| matches!(p, PageState::Dirty(_))).count()
+        self.pages
+            .iter()
+            .filter(|p| matches!(p, PageState::Dirty(_)))
+            .count()
     }
 
     /// Get number of allocated pages
     pub fn allocated_pages(&self) -> usize {
-        self.pages.iter().filter(|p| !matches!(p, PageState::NotPresent)).count()
+        self.pages
+            .iter()
+            .filter(|p| !matches!(p, PageState::NotPresent))
+            .count()
     }
 }

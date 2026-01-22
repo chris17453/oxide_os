@@ -1,8 +1,8 @@
 //! Content extraction from various file types
 
+use crate::{EmbedError, EmbedResult};
 use alloc::string::String;
 use alloc::vec::Vec;
-use crate::{EmbedResult, EmbedError};
 
 /// Detected file type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,9 +79,10 @@ impl FileType {
         }
 
         // Check if it looks like text
-        let is_text = data.iter().take(1024).all(|&b| {
-            b.is_ascii_graphic() || b.is_ascii_whitespace() || b > 127
-        });
+        let is_text = data
+            .iter()
+            .take(1024)
+            .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace() || b > 127);
 
         if is_text {
             if data.starts_with(b"<!DOCTYPE") || data.starts_with(b"<html") {
@@ -101,9 +102,14 @@ impl FileType {
 
     /// Check if file type can be indexed as text
     pub fn is_indexable(&self) -> bool {
-        matches!(self,
-            FileType::PlainText | FileType::Markdown | FileType::SourceCode |
-            FileType::Html | FileType::Xml | FileType::Json
+        matches!(
+            self,
+            FileType::PlainText
+                | FileType::Markdown
+                | FileType::SourceCode
+                | FileType::Html
+                | FileType::Xml
+                | FileType::Json
         )
     }
 }
@@ -160,8 +166,7 @@ impl ContentExtractor {
 
     /// Extract plain text content
     fn extract_text(data: &[u8], file_type: FileType) -> EmbedResult<ExtractedContent> {
-        let text = core::str::from_utf8(data)
-            .map_err(|_| EmbedError::FileReadError)?;
+        let text = core::str::from_utf8(data).map_err(|_| EmbedError::FileReadError)?;
 
         Ok(ExtractedContent {
             text: String::from(text),
@@ -175,8 +180,7 @@ impl ContentExtractor {
 
     /// Extract from HTML (basic, strips tags)
     fn extract_html(data: &[u8]) -> EmbedResult<ExtractedContent> {
-        let text = core::str::from_utf8(data)
-            .map_err(|_| EmbedError::FileReadError)?;
+        let text = core::str::from_utf8(data).map_err(|_| EmbedError::FileReadError)?;
 
         // Very basic HTML stripping
         let mut result = String::new();
@@ -226,8 +230,7 @@ impl ContentExtractor {
 
     /// Extract from JSON (extracts string values)
     fn extract_json(data: &[u8]) -> EmbedResult<ExtractedContent> {
-        let text = core::str::from_utf8(data)
-            .map_err(|_| EmbedError::FileReadError)?;
+        let text = core::str::from_utf8(data).map_err(|_| EmbedError::FileReadError)?;
 
         // Very basic JSON string extraction
         let mut result = Vec::new();

@@ -1,6 +1,6 @@
 //! Standard library platform implementation (for host systems)
 
-use super::{Console, FileSystem, Graphics, System, FileOpenMode, FileHandle};
+use super::{Console, FileHandle, FileOpenMode, FileSystem, Graphics, System};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
@@ -138,8 +138,12 @@ impl FileSystem for StdFileSystem {
                     .create(true)
                     .open(path)
                     .map_err(|_| "Cannot open random file")?;
-                (Some(BufReader::new(file.try_clone().map_err(|_| "Cannot clone file")?)),
-                 Some(BufWriter::new(file)))
+                (
+                    Some(BufReader::new(
+                        file.try_clone().map_err(|_| "Cannot clone file")?,
+                    )),
+                    Some(BufWriter::new(file)),
+                )
             }
         };
 
@@ -210,9 +214,7 @@ impl Default for StdSystem {
 
 impl System for StdSystem {
     fn timer(&self) -> f32 {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         (now.as_secs() % 86400) as f32 + (now.subsec_nanos() as f32 / 1_000_000_000.0)
     }
 

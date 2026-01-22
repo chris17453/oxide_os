@@ -2,8 +2,8 @@
 //!
 //! RFC 8439 compliant implementation.
 
+use crate::{CryptoError, CryptoResult};
 use alloc::vec::Vec;
-use crate::{CryptoResult, CryptoError};
 
 /// ChaCha20 key (32 bytes)
 pub type ChaChaKey = [u8; 32];
@@ -44,7 +44,12 @@ impl ChaCha20Poly1305 {
     }
 
     /// Decrypt ciphertext with associated data
-    pub fn decrypt(&self, nonce: &ChaChaNonce, ciphertext: &[u8], aad: &[u8]) -> CryptoResult<Vec<u8>> {
+    pub fn decrypt(
+        &self,
+        nonce: &ChaChaNonce,
+        ciphertext: &[u8],
+        aad: &[u8],
+    ) -> CryptoResult<Vec<u8>> {
         if ciphertext.len() < 16 {
             return Err(CryptoError::InvalidInput);
         }
@@ -202,7 +207,8 @@ fn poly1305_mac(key: &[u8; 32], ciphertext: &[u8], aad: &[u8]) -> Poly1305Tag {
     // Final: tag = (acc + s) mod 2^128
     let mut tag = [0u8; 16];
     let f = acc[0] as u128 + ((acc[1] as u128) << 44) + ((acc[2] as u128) << 88);
-    let s128 = s[0] as u128 + ((s[1] as u128) << 32) + ((s[2] as u128) << 64) + ((s[3] as u128) << 96);
+    let s128 =
+        s[0] as u128 + ((s[1] as u128) << 32) + ((s[2] as u128) << 64) + ((s[3] as u128) << 96);
     let result = f.wrapping_add(s128);
 
     tag[..8].copy_from_slice(&(result as u64).to_le_bytes());

@@ -6,24 +6,24 @@
 
 extern crate alloc;
 
-pub mod pid;
+pub mod ipc;
 pub mod mount;
 pub mod net;
+pub mod pid;
 pub mod user;
 pub mod uts;
-pub mod ipc;
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 use spin::RwLock;
 
-pub use pid::PidNamespace;
+pub use ipc::IpcNamespace;
 pub use mount::MountNamespace;
 pub use net::NetNamespace;
+pub use pid::PidNamespace;
 pub use user::UserNamespace;
 pub use uts::UtsNamespace;
-pub use ipc::IpcNamespace;
 
 /// Namespace clone flags
 pub mod flags {

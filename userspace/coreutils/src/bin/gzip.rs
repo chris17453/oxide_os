@@ -17,9 +17,9 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use libc::*;
-use compression::deflate::{gzip_compress, GzipHeader};
 use compression::CompressionLevel;
+use compression::deflate::{GzipHeader, gzip_compress};
+use libc::*;
 
 // Uses libc's global allocator
 
@@ -233,7 +233,10 @@ fn compress_file(config: &GzipConfig, input_path: &str) -> i32 {
     } else {
         // Write to file
         let output_name = build_output_name(input_path, false);
-        let output_len = output_name.iter().position(|&c| c == 0).unwrap_or(MAX_FILENAME);
+        let output_len = output_name
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(MAX_FILENAME);
         let output_path = core::str::from_utf8(&output_name[..output_len]).unwrap_or("");
 
         // Check if output exists and -f not specified

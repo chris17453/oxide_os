@@ -21,7 +21,11 @@ pub struct Dirent {
 impl Dirent {
     /// Get filename as str
     pub fn name(&self) -> &str {
-        let len = self.d_name.iter().position(|&b| b == 0).unwrap_or(self.d_name.len());
+        let len = self
+            .d_name
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(self.d_name.len());
         core::str::from_utf8(&self.d_name[..len]).unwrap_or("")
     }
 }
@@ -68,12 +72,10 @@ pub fn opendir(path: &str) -> Option<Dir> {
     }
     path_buf[..bytes.len()].copy_from_slice(bytes);
 
-    let fd = unsafe { syscall::syscall3(syscall::SYS_OPEN, path_buf.as_ptr() as usize, 0o200000, 0) as i32 }; // O_DIRECTORY
-    if fd < 0 {
-        None
-    } else {
-        Some(Dir::from_fd(fd))
-    }
+    let fd = unsafe {
+        syscall::syscall3(syscall::SYS_OPEN, path_buf.as_ptr() as usize, 0o200000, 0) as i32
+    }; // O_DIRECTORY
+    if fd < 0 { None } else { Some(Dir::from_fd(fd)) }
 }
 
 /// Read directory entry

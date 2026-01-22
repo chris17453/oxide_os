@@ -1,7 +1,7 @@
 //! Virtual Memory Area
 
-use crate::prot;
 use crate::flags;
+use crate::prot;
 
 /// VMA flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,9 +44,15 @@ impl VmaFlags {
     /// Convert to protection flags
     pub fn to_prot(&self) -> i32 {
         let mut p = 0;
-        if self.read { p |= prot::PROT_READ; }
-        if self.write { p |= prot::PROT_WRITE; }
-        if self.exec { p |= prot::PROT_EXEC; }
+        if self.read {
+            p |= prot::PROT_READ;
+        }
+        if self.write {
+            p |= prot::PROT_WRITE;
+        }
+        if self.exec {
+            p |= prot::PROT_EXEC;
+        }
         p
     }
 }
@@ -142,7 +148,10 @@ impl VirtualMemoryArea {
 
     /// Check if anonymous
     pub fn is_anonymous(&self) -> bool {
-        matches!(self.vma_type, VmaType::Anonymous | VmaType::Stack | VmaType::Heap)
+        matches!(
+            self.vma_type,
+            VmaType::Anonymous | VmaType::Stack | VmaType::Heap
+        )
     }
 
     /// Check if file-backed
@@ -180,9 +189,16 @@ impl VirtualMemoryArea {
             (VmaType::Anonymous, VmaType::Anonymous) => true,
             (VmaType::Stack, VmaType::Stack) => true,
             (VmaType::Heap, VmaType::Heap) => true,
-            (VmaType::FileBacked { fd: fd1, offset: off1 }, VmaType::FileBacked { fd: fd2, offset: off2 }) => {
-                fd1 == fd2 && *off1 + self.size() as u64 == *off2
-            }
+            (
+                VmaType::FileBacked {
+                    fd: fd1,
+                    offset: off1,
+                },
+                VmaType::FileBacked {
+                    fd: fd2,
+                    offset: off2,
+                },
+            ) => fd1 == fd2 && *off1 + self.size() as u64 == *off2,
             _ => false,
         }
     }

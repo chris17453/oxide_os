@@ -26,35 +26,35 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use arch_traits::Arch;
 use arch_x86_64 as arch;
-use arch_x86_64::serial;
 use arch_x86_64::get_user_context;
+use arch_x86_64::serial;
 use boot_proto::{BootInfo, MemoryType as BootMemoryType};
-use os_core::{PhysAddr, VirtAddr};
+use devfs::DevFs;
 use elf::ElfExecutable;
+use fb;
+use initramfs;
+use input;
 use mm_frame::{BitmapFrameAllocator, MemoryRegion};
-use mm_traits::FrameAllocator as _;
 use mm_heap::LockedHeap;
-use mm_paging::{phys_to_virt, read_cr3, write_cr3, flush_tlb_all};
+use mm_paging::{flush_tlb_all, phys_to_virt, read_cr3, write_cr3};
+use mm_traits::FrameAllocator as _;
+use net::{self, NetworkDevice};
+use os_core::{PhysAddr, VirtAddr};
+use pci;
 use proc::{
-    UserAddressSpace, Process, ProcessContext, alloc_pid, process_table,
-    do_fork, do_exec, do_waitpid, WaitOptions, handle_cow_fault,
+    Process, ProcessContext, UserAddressSpace, WaitOptions, alloc_pid, do_exec, do_fork,
+    do_waitpid, handle_cow_fault, process_table,
 };
 use proc_traits::{MemoryFlags, Pid};
-use syscall::SyscallContext;
-use vfs::{File, FileFlags, mount::GLOBAL_VFS, MountFlags, VnodeOps, VnodeType};
-use devfs::DevFs;
-use tmpfs::TmpDir;
 use procfs::ProcFs;
-use initramfs;
-use pty::{PtyManager, PtsDir};
-use net::{self, NetworkDevice};
-use tcpip;
-use virtio_net;
-use pci;
-use fb;
-use terminal;
-use input;
+use pty::{PtsDir, PtyManager};
 use spin::Mutex;
+use syscall::SyscallContext;
+use tcpip;
+use terminal;
+use tmpfs::TmpDir;
+use vfs::{File, FileFlags, MountFlags, VnodeOps, VnodeType, mount::GLOBAL_VFS};
+use virtio_net;
 
 /// Global kernel heap allocator
 #[global_allocator]
@@ -86,7 +86,7 @@ static PENDING_CHILDREN: Mutex<Vec<Pid>> = Mutex::new(Vec::new());
 #[derive(Clone)]
 #[repr(C)]
 struct ParentContext {
-    pid: u64,  // Changed from u32 to u64 for consistent 8-byte alignment
+    pid: u64, // Changed from u32 to u64 for consistent 8-byte alignment
     pml4: u64,
     rip: u64,
     rsp: u64,
@@ -143,21 +143,48 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(writer, "[INFO] Boot info validated");
 
     // Print boot info
-    let _ = writeln!(writer, "[INFO] Kernel physical base: {:#x}", boot_info.kernel_phys_base);
-    let _ = writeln!(writer, "[INFO] Kernel virtual base: {:#x}", boot_info.kernel_virt_base);
-    let _ = writeln!(writer, "[INFO] Kernel size: {} bytes", boot_info.kernel_size);
-    let _ = writeln!(writer, "[INFO] Physical map base: {:#x}", boot_info.phys_map_base);
+    let _ = writeln!(
+        writer,
+        "[INFO] Kernel physical base: {:#x}",
+        boot_info.kernel_phys_base
+    );
+    let _ = writeln!(
+        writer,
+        "[INFO] Kernel virtual base: {:#x}",
+        boot_info.kernel_virt_base
+    );
+    let _ = writeln!(
+        writer,
+        "[INFO] Kernel size: {} bytes",
+        boot_info.kernel_size
+    );
+    let _ = writeln!(
+        writer,
+        "[INFO] Physical map base: {:#x}",
+        boot_info.phys_map_base
+    );
     let _ = writeln!(writer, "[INFO] PML4 physical: {:#x}", boot_info.pml4_phys);
 
     // Print memory regions
-    let _ = writeln!(writer, "[INFO] Memory regions: {}", boot_info.memory_region_count);
+    let _ = writeln!(
+        writer,
+        "[INFO] Memory regions: {}",
+        boot_info.memory_region_count
+    );
     let mut total_usable = 0u64;
     for region in boot_info.memory_regions() {
-        if matches!(region.ty, BootMemoryType::Usable | BootMemoryType::BootServices) {
+        if matches!(
+            region.ty,
+            BootMemoryType::Usable | BootMemoryType::BootServices
+        ) {
             total_usable += region.len;
         }
     }
-    let _ = writeln!(writer, "[INFO] Total usable memory: {} MB", total_usable / (1024 * 1024));
+    let _ = writeln!(
+        writer,
+        "[INFO] Total usable memory: {} MB",
+        total_usable / (1024 * 1024)
+    );
 
     // Initialize heap with static storage for now
     let _ = writeln!(writer, "[INFO] Initializing heap allocator...");
@@ -171,7 +198,10 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(writer, "[INFO] Initializing frame allocator...");
     let mut regions: Vec<MemoryRegion> = Vec::new();
     for boot_region in boot_info.memory_regions() {
-        let usable = matches!(boot_region.ty, BootMemoryType::Usable | BootMemoryType::BootServices);
+        let usable = matches!(
+            boot_region.ty,
+            BootMemoryType::Usable | BootMemoryType::BootServices
+        );
         regions.push(MemoryRegion::new(
             os_core::PhysAddr::new(boot_region.start),
             boot_region.len,
@@ -190,18 +220,37 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     );
 
     let _ = writeln!(writer, "[INFO] Frame allocator initialized");
-    let _ = writeln!(writer, "[INFO] Total frames: {}", FRAME_ALLOCATOR.total_frames());
-    let _ = writeln!(writer, "[INFO] Free frames: {}", FRAME_ALLOCATOR.free_frame_count());
+    let _ = writeln!(
+        writer,
+        "[INFO] Total frames: {}",
+        FRAME_ALLOCATOR.total_frames()
+    );
+    let _ = writeln!(
+        writer,
+        "[INFO] Free frames: {}",
+        FRAME_ALLOCATOR.free_frame_count()
+    );
 
     // Initialize framebuffer if available
     if let Some(ref fb_info) = boot_info.framebuffer {
         let _ = writeln!(writer, "[INFO] Initializing framebuffer...");
-        let _ = writeln!(writer, "[INFO] Framebuffer: {}x{} @ {:#x}",
-            fb_info.width, fb_info.height, fb_info.base);
-        let _ = writeln!(writer, "[INFO] Stride: {} pixels, BPP: {}", fb_info.stride, fb_info.bpp);
+        let _ = writeln!(
+            writer,
+            "[INFO] Framebuffer: {}x{} @ {:#x}",
+            fb_info.width, fb_info.height, fb_info.base
+        );
+        let _ = writeln!(
+            writer,
+            "[INFO] Stride: {} pixels, BPP: {}",
+            fb_info.stride, fb_info.bpp
+        );
 
         // Initialize with video modes if available
-        fb::init_from_boot(fb_info, boot_info.phys_map_base, boot_info.video_modes.as_ref());
+        fb::init_from_boot(
+            fb_info,
+            boot_info.phys_map_base,
+            boot_info.video_modes.as_ref(),
+        );
         let _ = writeln!(writer, "[INFO] Framebuffer initialized");
 
         // Log video mode count
@@ -399,19 +448,29 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     // Look for VirtIO network devices
     let virtio_net_devices = pci::find_virtio_net();
-    let _ = writeln!(writer, "[NET] Found {} VirtIO network devices", virtio_net_devices.len());
+    let _ = writeln!(
+        writer,
+        "[NET] Found {} VirtIO network devices",
+        virtio_net_devices.len()
+    );
 
     // Initialize the first VirtIO network device found
     let net_initialized = if let Some(pci_dev) = virtio_net_devices.first() {
-        let _ = writeln!(writer, "[NET] Initializing VirtIO network device at {:02x}:{:02x}.{}",
-            pci_dev.address.bus, pci_dev.address.device, pci_dev.address.function);
+        let _ = writeln!(
+            writer,
+            "[NET] Initializing VirtIO network device at {:02x}:{:02x}.{}",
+            pci_dev.address.bus, pci_dev.address.device, pci_dev.address.function
+        );
 
         match unsafe { virtio_net::VirtioNet::from_pci(pci_dev) } {
             Some(virtio_net) => {
                 let mac = virtio_net.mac_address();
                 let _ = writeln!(writer, "[NET] VirtIO network device initialized");
-                let _ = writeln!(writer, "[NET] MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-                    mac.0[0], mac.0[1], mac.0[2], mac.0[3], mac.0[4], mac.0[5]);
+                let _ = writeln!(
+                    writer,
+                    "[NET] MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                    mac.0[0], mac.0[1], mac.0[2], mac.0[3], mac.0[4], mac.0[5]
+                );
 
                 // Create network interface
                 let device = Arc::new(virtio_net);
@@ -443,10 +502,12 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
         net::register_device(loopback.clone());
 
         let lo_interface = Arc::new(net::NetworkInterface::new(loopback));
-        lo_interface.set_ipv4_addr(
-            net::Ipv4Addr::new(127, 0, 0, 1),
-            net::Ipv4Addr::new(255, 0, 0, 0),
-        ).ok();
+        lo_interface
+            .set_ipv4_addr(
+                net::Ipv4Addr::new(127, 0, 0, 1),
+                net::Ipv4Addr::new(255, 0, 0, 0),
+            )
+            .ok();
         net::interface::add_interface(lo_interface);
     }
 
@@ -455,17 +516,27 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Load and mount the initramfs (loaded from disk by bootloader)
     let initramfs_data = match boot_info.initramfs() {
         Some(data) => {
-            let _ = writeln!(writer, "[INITRAMFS] Initramfs at phys {:#x}, {} bytes",
-                boot_info.initramfs_phys, boot_info.initramfs_size);
+            let _ = writeln!(
+                writer,
+                "[INITRAMFS] Initramfs at phys {:#x}, {} bytes",
+                boot_info.initramfs_phys, boot_info.initramfs_size
+            );
             data
         }
         None => {
-            let _ = writeln!(writer, "[INITRAMFS] ERROR: No initramfs loaded by bootloader!");
+            let _ = writeln!(
+                writer,
+                "[INITRAMFS] ERROR: No initramfs loaded by bootloader!"
+            );
             arch::X86_64::halt();
         }
     };
 
-    let _ = writeln!(writer, "[INITRAMFS] Loading initramfs ({} bytes)...", initramfs_data.len());
+    let _ = writeln!(
+        writer,
+        "[INITRAMFS] Loading initramfs ({} bytes)...",
+        initramfs_data.len()
+    );
     let initramfs_root = match initramfs::load(initramfs_data) {
         Ok(root) => root,
         Err(e) => {
@@ -517,7 +588,11 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
         }
     };
 
-    let _ = writeln!(writer, "[USER] ELF entry point: {:#x}", elf.entry_point().as_u64());
+    let _ = writeln!(
+        writer,
+        "[USER] ELF entry point: {:#x}",
+        elf.entry_point().as_u64()
+    );
 
     // Create user address space
     let _ = writeln!(writer, "[USER] Creating user address space...");
@@ -532,14 +607,19 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Create a wrapper that implements FrameAllocator
     let alloc_wrapper = FrameAllocatorWrapper;
 
-    let mut user_space = match unsafe { UserAddressSpace::new_with_kernel(&alloc_wrapper, kernel_pml4) } {
-        Some(s) => s,
-        None => {
-            let _ = writeln!(writer, "[USER] Failed to create user address space!");
-            arch::X86_64::halt();
-        }
-    };
-    let _ = writeln!(writer, "[USER] User PML4: {:#x}", user_space.pml4_phys().as_u64());
+    let mut user_space =
+        match unsafe { UserAddressSpace::new_with_kernel(&alloc_wrapper, kernel_pml4) } {
+            Some(s) => s,
+            None => {
+                let _ = writeln!(writer, "[USER] Failed to create user address space!");
+                arch::X86_64::halt();
+            }
+        };
+    let _ = writeln!(
+        writer,
+        "[USER] User PML4: {:#x}",
+        user_space.pml4_phys().as_u64()
+    );
 
     // Load ELF segments into user address space
     // Handle overlapping segments by checking if pages are already mapped
@@ -556,8 +636,12 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
             if existing.is_none() {
                 // Allocate single page
                 if let Err(e) = user_space.allocate_pages(page_addr, 1, seg.flags, &alloc_wrapper) {
-                    let _ = writeln!(writer, "[USER] Failed to allocate page at {:#x}: {:?}",
-                        page_addr.as_u64(), e);
+                    let _ = writeln!(
+                        writer,
+                        "[USER] Failed to allocate page at {:#x}: {:?}",
+                        page_addr.as_u64(),
+                        e
+                    );
                     arch::X86_64::halt();
                 }
             } else {
@@ -586,7 +670,11 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
             let phys = match user_space.translate(page_vaddr) {
                 Some(p) => p,
                 None => {
-                    let _ = writeln!(writer, "[USER] translate({:#x}) failed!", page_vaddr.as_u64());
+                    let _ = writeln!(
+                        writer,
+                        "[USER] translate({:#x}) failed!",
+                        page_vaddr.as_u64()
+                    );
                     arch::X86_64::halt();
                 }
             };
@@ -613,7 +701,9 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
             let bss_start_in_seg = seg.file_size;
             let bss_end_in_seg = seg.mem_size;
 
-            if mem_offset + bytes_remaining_in_page > bss_start_in_seg && mem_offset < bss_end_in_seg {
+            if mem_offset + bytes_remaining_in_page > bss_start_in_seg
+                && mem_offset < bss_end_in_seg
+            {
                 // There's some BSS in this page
                 let bss_start_in_page = if mem_offset < bss_start_in_seg {
                     (bss_start_in_seg - mem_offset).min(bytes_remaining_in_page)
@@ -639,16 +729,27 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let user_stack_pages = 64; // 256 KB stack
     // Stack grows down, so allocate below the top address
     let user_stack_base = VirtAddr::new(0x7FFF_F000_0000 - (user_stack_pages * 4096) as u64);
-    let stack_flags = MemoryFlags::READ.union(MemoryFlags::WRITE).union(MemoryFlags::USER);
+    let stack_flags = MemoryFlags::READ
+        .union(MemoryFlags::WRITE)
+        .union(MemoryFlags::USER);
 
-    if let Err(e) = user_space.allocate_pages(user_stack_base, user_stack_pages, stack_flags, &alloc_wrapper) {
+    if let Err(e) = user_space.allocate_pages(
+        user_stack_base,
+        user_stack_pages,
+        stack_flags,
+        &alloc_wrapper,
+    ) {
         let _ = writeln!(writer, "[USER] Failed to allocate user stack: {:?}", e);
         arch::X86_64::halt();
     }
 
     let user_stack_end = VirtAddr::new(user_stack_base.as_u64() + (user_stack_pages * 4096) as u64);
-    let _ = writeln!(writer, "[USER] User stack: {:#x} - {:#x}",
-        user_stack_base.as_u64(), user_stack_end.as_u64());
+    let _ = writeln!(
+        writer,
+        "[USER] User stack: {:#x} - {:#x}",
+        user_stack_base.as_u64(),
+        user_stack_end.as_u64()
+    );
 
     // Set up argc/argv for init on the stack
     // Stack layout (growing down from top):
@@ -670,7 +771,9 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     {
         let page_vaddr = VirtAddr::new(string_addr & !0xFFF);
         let page_offset = (string_addr & 0xFFF) as usize;
-        let phys = user_space.translate(page_vaddr).expect("Stack page not mapped");
+        let phys = user_space
+            .translate(page_vaddr)
+            .expect("Stack page not mapped");
         let dest_virt = phys_to_virt(phys);
         unsafe {
             let dest = dest_virt.as_mut_ptr::<u8>().add(page_offset);
@@ -687,7 +790,9 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let write_u64 = |addr: u64, value: u64| {
         let page_vaddr = VirtAddr::new(addr & !0xFFF);
         let page_offset = (addr & 0xFFF) as usize;
-        let phys = user_space.translate(page_vaddr).expect("Stack page not mapped");
+        let phys = user_space
+            .translate(page_vaddr)
+            .expect("Stack page not mapped");
         let dest_virt = phys_to_virt(phys);
         unsafe {
             let dest = dest_virt.as_mut_ptr::<u8>().add(page_offset) as *mut u64;
@@ -708,15 +813,19 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     write_u64(stack_ptr, 0);
 
     let user_stack_top = VirtAddr::new(final_rsp);
-    let _ = writeln!(writer, "[USER] Init stack set up: argc=1 argv={:#x} rsp={:#x}",
-        string_addr, final_rsp);
+    let _ = writeln!(
+        writer,
+        "[USER] Init stack set up: argc=1 argv={:#x} rsp={:#x}",
+        string_addr, final_rsp
+    );
 
     // Allocate kernel stack for syscalls and interrupts
     let _ = writeln!(writer, "[USER] Allocating kernel stack...");
     // Allocate 128KB kernel stack - fork+COW uses ~67KB during deep recursion
     const KERNEL_STACK_SIZE: usize = 128 * 1024;
     let kernel_stack_pages = KERNEL_STACK_SIZE / 4096;
-    let kernel_stack_phys = FRAME_ALLOCATOR.alloc_frames(kernel_stack_pages)
+    let kernel_stack_phys = FRAME_ALLOCATOR
+        .alloc_frames(kernel_stack_pages)
         .expect("Failed to allocate kernel stack");
     // Convert physical to virtual for the kernel to use
     let kernel_stack_virt = phys_to_virt(kernel_stack_phys);
@@ -728,13 +837,13 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     unsafe {
         arch::syscall::set_kernel_stack(kernel_stack_top);
     }
-    arch::gdt::set_kernel_stack(kernel_stack_top);  // TSS.RSP0 for interrupts
+    arch::gdt::set_kernel_stack(kernel_stack_top); // TSS.RSP0 for interrupts
 
     // Allocate a stack for double fault handling (IST1)
     let df_stack: Box<[u8; 8192]> = Box::new([0u8; 8192]);
     let df_stack_ptr = Box::into_raw(df_stack);
     let df_stack_top = unsafe { (df_stack_ptr as *const u8).add(8192) as u64 };
-    arch::gdt::set_ist(0, df_stack_top);  // IST1 = ist[0]
+    arch::gdt::set_ist(0, df_stack_top); // IST1 = ist[0]
 
     // Get the entry point before switching
     let entry_point = elf.entry_point().as_u64();
@@ -748,7 +857,7 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Create the init Process struct
     let init_process = Process::new(
         init_pid,
-        0,  // ppid = 0 (kernel)
+        0, // ppid = 0 (kernel)
         user_space,
         kernel_stack_phys,
         KERNEL_STACK_SIZE,
@@ -850,8 +959,16 @@ fn page_fault_handler(fault_addr: u64, error_code: u64, rip: u64) -> bool {
 
     {
         let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[PF] fault_addr={:#x} error={:#x} rip={:#x}", fault_addr, error_code, rip);
-        let _ = writeln!(writer, "[PF] present={} write={} user={} actual_cr3={:#x}", is_present, is_write, is_user, actual_cr3);
+        let _ = writeln!(
+            writer,
+            "[PF] fault_addr={:#x} error={:#x} rip={:#x}",
+            fault_addr, error_code, rip
+        );
+        let _ = writeln!(
+            writer,
+            "[PF] present={} write={} user={} actual_cr3={:#x}",
+            is_present, is_write, is_user, actual_cr3
+        );
     }
 
     // COW faults are: present + write + user mode
@@ -871,7 +988,11 @@ fn page_fault_handler(fault_addr: u64, error_code: u64, rip: u64) -> bool {
 
             {
                 let mut writer = serial::SerialWriter;
-                let _ = writeln!(writer, "[PF] PML4={:#x}, calling handle_cow_fault", pml4.as_u64());
+                let _ = writeln!(
+                    writer,
+                    "[PF] PML4={:#x}, calling handle_cow_fault",
+                    pml4.as_u64()
+                );
             }
 
             // Try to handle as COW fault
@@ -927,45 +1048,141 @@ fn console_write(data: &[u8]) {
 fn terminal_tick() {
     // Process keyboard scancodes
     while let Some(scancode) = arch::get_scancode() {
-        // Convert scancode to ASCII character (basic mapping)
-        if let Some(ch) = scancode_to_char(scancode) {
+        if let Some(byte) = process_scancode(scancode) {
             // Push character to console input buffer (handles both stdin and display)
-            devfs::console_push_char(ch as u8);
+            devfs::console_push_char(byte);
         }
     }
-    
-    terminal::tick();
-}
 
-/// Convert PS/2 scancode to ASCII character (basic US keyboard layout)
-fn scancode_to_char(scancode: u8) -> Option<char> {
-    // Handle key release (high bit set) - ignore for now
-    if scancode & 0x80 != 0 {
-        return None;
+    // Drive the active display: prefer terminal emulator, otherwise also tick fb cursor
+    if terminal::is_initialized() {
+        terminal::toggle_cursor_blink();
+        terminal::tick();
     }
-    
-    // Basic scancode to ASCII conversion (subset from WATOS)
-    let ascii = match scancode {
-        // Numbers
-        0x02 => '1', 0x03 => '2', 0x04 => '3', 0x05 => '4', 0x06 => '5',
-        0x07 => '6', 0x08 => '7', 0x09 => '8', 0x0A => '9', 0x0B => '0',
-        // Letters
-        0x1E => 'a', 0x30 => 'b', 0x2E => 'c', 0x20 => 'd', 0x12 => 'e',
-        0x21 => 'f', 0x22 => 'g', 0x23 => 'h', 0x17 => 'i', 0x24 => 'j',
-        0x25 => 'k', 0x26 => 'l', 0x32 => 'm', 0x31 => 'n', 0x18 => 'o',
-        0x19 => 'p', 0x10 => 'q', 0x13 => 'r', 0x1F => 's', 0x14 => 't',
-        0x16 => 'u', 0x2F => 'v', 0x11 => 'w', 0x2D => 'x', 0x15 => 'y',
-        0x2C => 'z',
-        // Special keys
-        0x39 => ' ',  // Space
-        0x1C => '\n', // Enter
-        0x0E => '\x08', // Backspace
-        _ => return None,
-    };
-    
-    Some(ascii)
+    if fb::is_initialized() {
+        fb::blink_cursor();
+    }
 }
 
+/// Track modifier state for basic scancode decoding
+static mut SHIFT_PRESSED: bool = false;
+static mut CTRL_PRESSED: bool = false;
+static mut EXTENDED_SCANCODE: bool = false;
+
+/// Process a single PS/2 scancode and return an ASCII byte (if any)
+fn process_scancode(scancode: u8) -> Option<u8> {
+    unsafe {
+        // Handle extended prefix
+        if scancode == 0xE0 {
+            EXTENDED_SCANCODE = true;
+            return None;
+        }
+
+        let is_release = scancode & 0x80 != 0;
+        let code = scancode & 0x7F;
+
+        // Update modifier state
+        match code {
+            0x2A | 0x36 => {
+                SHIFT_PRESSED = !is_release;
+                EXTENDED_SCANCODE = false;
+                return None;
+            }
+            0x1D => {
+                CTRL_PRESSED = !is_release;
+                EXTENDED_SCANCODE = false;
+                return None;
+            }
+            _ => {}
+        }
+
+        // Ignore key releases for non-modifiers
+        if is_release {
+            EXTENDED_SCANCODE = false;
+            return None;
+        }
+
+        // Clear extended flag after handling the follow-up byte
+        let _extended = EXTENDED_SCANCODE;
+        EXTENDED_SCANCODE = false;
+
+        // Map scancode to ASCII
+        if let Some(ch) = scancode_to_ascii(code, SHIFT_PRESSED) {
+            // Ctrl modifies alphabetic characters into control codes
+            if CTRL_PRESSED && ch.is_ascii_alphabetic() {
+                return Some((ch.to_ascii_lowercase() as u8 - b'a' + 1) as u8);
+            }
+            return Some(ch as u8);
+        }
+    }
+    None
+}
+
+/// Convert PS/2 set 1 scancode to ASCII using US layout with Shift support
+fn scancode_to_ascii(scancode: u8, shift: bool) -> Option<char> {
+    match scancode {
+        // Numbers
+        0x02 => Some(if shift { '!' } else { '1' }),
+        0x03 => Some(if shift { '@' } else { '2' }),
+        0x04 => Some(if shift { '#' } else { '3' }),
+        0x05 => Some(if shift { '$' } else { '4' }),
+        0x06 => Some(if shift { '%' } else { '5' }),
+        0x07 => Some(if shift { '^' } else { '6' }),
+        0x08 => Some(if shift { '&' } else { '7' }),
+        0x09 => Some(if shift { '*' } else { '8' }),
+        0x0A => Some(if shift { '(' } else { '9' }),
+        0x0B => Some(if shift { ')' } else { '0' }),
+        0x0C => Some(if shift { '_' } else { '-' }),
+        0x0D => Some(if shift { '+' } else { '=' }),
+
+        // Letters
+        0x10 => Some(if shift { 'Q' } else { 'q' }),
+        0x11 => Some(if shift { 'W' } else { 'w' }),
+        0x12 => Some(if shift { 'E' } else { 'e' }),
+        0x13 => Some(if shift { 'R' } else { 'r' }),
+        0x14 => Some(if shift { 'T' } else { 't' }),
+        0x15 => Some(if shift { 'Y' } else { 'y' }),
+        0x16 => Some(if shift { 'U' } else { 'u' }),
+        0x17 => Some(if shift { 'I' } else { 'i' }),
+        0x18 => Some(if shift { 'O' } else { 'o' }),
+        0x19 => Some(if shift { 'P' } else { 'p' }),
+        0x1E => Some(if shift { 'A' } else { 'a' }),
+        0x1F => Some(if shift { 'S' } else { 's' }),
+        0x20 => Some(if shift { 'D' } else { 'd' }),
+        0x21 => Some(if shift { 'F' } else { 'f' }),
+        0x22 => Some(if shift { 'G' } else { 'g' }),
+        0x23 => Some(if shift { 'H' } else { 'h' }),
+        0x24 => Some(if shift { 'J' } else { 'j' }),
+        0x25 => Some(if shift { 'K' } else { 'k' }),
+        0x26 => Some(if shift { 'L' } else { 'l' }),
+        0x2C => Some(if shift { 'Z' } else { 'z' }),
+        0x2D => Some(if shift { 'X' } else { 'x' }),
+        0x2E => Some(if shift { 'C' } else { 'c' }),
+        0x2F => Some(if shift { 'V' } else { 'v' }),
+        0x30 => Some(if shift { 'B' } else { 'b' }),
+        0x31 => Some(if shift { 'N' } else { 'n' }),
+        0x32 => Some(if shift { 'M' } else { 'm' }),
+
+        // Punctuation
+        0x1A => Some(if shift { '{' } else { '[' }),
+        0x1B => Some(if shift { '}' } else { ']' }),
+        0x27 => Some(if shift { ':' } else { ';' }),
+        0x28 => Some(if shift { '"' } else { '\'' }),
+        0x29 => Some(if shift { '~' } else { '`' }),
+        0x2B => Some(if shift { '|' } else { '\\' }),
+        0x33 => Some(if shift { '<' } else { ',' }),
+        0x34 => Some(if shift { '>' } else { '.' }),
+        0x35 => Some(if shift { '?' } else { '/' }),
+
+        // Whitespace and control
+        0x39 => Some(' '),
+        0x0F => Some('\t'),
+        0x1C => Some('\n'),
+        0x0E => Some('\x08'),
+
+        _ => None,
+    }
+}
 
 /// Serial-only write function for devfs
 ///
@@ -1125,8 +1342,11 @@ fn user_exit(status: i32) -> ! {
     {
         let (writes, bytes, base) = devfs::devices::get_fb_write_stats();
         let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[FB_DEBUG] Process {} exiting - FB writes={} bytes={} base={:#x}",
-            current_pid, writes, bytes, base);
+        let _ = writeln!(
+            writer,
+            "[FB_DEBUG] Process {} exiting - FB writes={} bytes={} base={:#x}",
+            current_pid, writes, bytes, base
+        );
     }
 
     if let Some(proc) = table.get(current_pid) {
@@ -1172,9 +1392,26 @@ fn user_exit(status: i32) -> ! {
             // Copy context to static memory that survives the CR3 switch
             // We use a static because inline asm can't handle this many registers
             static mut RESTORE_CTX: ParentContext = ParentContext {
-                pid: 0, pml4: 0, rip: 0, rsp: 0, rflags: 0,
-                rax: 0, rbx: 0, rcx: 0, rdx: 0, rsi: 0, rdi: 0, rbp: 0,
-                r8: 0, r9: 0, r10: 0, r11: 0, r12: 0, r13: 0, r14: 0, r15: 0,
+                pid: 0,
+                pml4: 0,
+                rip: 0,
+                rsp: 0,
+                rflags: 0,
+                rax: 0,
+                rbx: 0,
+                rcx: 0,
+                rdx: 0,
+                rsi: 0,
+                rdi: 0,
+                rbp: 0,
+                r8: 0,
+                r9: 0,
+                r10: 0,
+                r11: 0,
+                r12: 0,
+                r13: 0,
+                r14: 0,
+                r15: 0,
             };
             static mut RESTORE_RESULT: i64 = 0;
 
@@ -1302,7 +1539,11 @@ fn kernel_fork() -> i64 {
     // Debug: print user context
     {
         let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[FORK] user_ctx.rip={:#x} rsp={:#x}", user_ctx.rip, user_ctx.rsp);
+        let _ = writeln!(
+            writer,
+            "[FORK] user_ctx.rip={:#x} rsp={:#x}",
+            user_ctx.rip, user_ctx.rsp
+        );
     }
     let parent_context = ProcessContext {
         rip: user_ctx.rip,
@@ -1325,7 +1566,11 @@ fn kernel_fork() -> i64 {
         r15: user_ctx.r15,
     };
 
-    debug_fork!("[FORK] Parent context: rip={:#x} rsp={:#x}", parent_context.rip, parent_context.rsp);
+    debug_fork!(
+        "[FORK] Parent context: rip={:#x} rsp={:#x}",
+        parent_context.rip,
+        parent_context.rsp
+    );
 
     // Create wrapper for frame allocator
     let alloc_wrapper = FrameAllocatorWrapper;
@@ -1376,18 +1621,21 @@ fn kernel_wait(pid: i32, options: i32) -> i64 {
             {
                 let (writes, bytes, base) = devfs::devices::get_fb_write_stats();
                 let mut writer = serial::SerialWriter;
-                let _ = writeln!(writer, "[FB_DEBUG] Child {} exited - FB writes={} bytes={} base={:#x}",
-                    result.pid, writes, bytes, base);
+                let _ = writeln!(
+                    writer,
+                    "[FB_DEBUG] Child {} exited - FB writes={} bytes={} base={:#x}",
+                    result.pid, writes, bytes, base
+                );
             }
             // Pack pid and status into result
             ((result.pid as i64) << 32) | ((result.status as i64) & 0xFFFFFFFF)
         }
         Err(e) => {
             match e {
-                proc::WaitError::NoChildren => -10,  // ECHILD
-                proc::WaitError::WouldBlock => -11,  // EAGAIN
-                proc::WaitError::InvalidPid => -3,   // ESRCH
-                proc::WaitError::Interrupted => -4,  // EINTR
+                proc::WaitError::NoChildren => -10, // ECHILD
+                proc::WaitError::WouldBlock => -11, // EAGAIN
+                proc::WaitError::InvalidPid => -3,  // ESRCH
+                proc::WaitError::Interrupted => -4, // EINTR
             }
         }
     }
@@ -1431,7 +1679,11 @@ fn run_child_process(child_pid: Pid) {
     {
         let mut writer = serial::SerialWriter;
         let verify_pid = table.current_pid();
-        let _ = writeln!(writer, "[RUN_CHILD] set_current_pid({}) done, verify={}", child_pid, verify_pid);
+        let _ = writeln!(
+            writer,
+            "[RUN_CHILD] set_current_pid({}) done, verify={}",
+            child_pid, verify_pid
+        );
     }
 
     // Use the kernel stack already allocated for this child (in fork)
@@ -1454,9 +1706,21 @@ fn run_child_process(child_pid: Pid) {
     {
         let mut writer = serial::SerialWriter;
         let _ = writeln!(writer, "[CHILD] PID {} entering usermode", child_pid);
-        let _ = writeln!(writer, "[CHILD] rip={:#x} rsp={:#x} rbp={:#x}", child_ctx.rip, child_ctx.rsp, child_ctx.rbp);
-        let _ = writeln!(writer, "[CHILD] rax={:#x} rbx={:#x} r12={:#x}", child_ctx.rax, child_ctx.rbx, child_ctx.r12);
-        let _ = writeln!(writer, "[CHILD] r13={:#x} r14={:#x} r15={:#x}", child_ctx.r13, child_ctx.r14, child_ctx.r15);
+        let _ = writeln!(
+            writer,
+            "[CHILD] rip={:#x} rsp={:#x} rbp={:#x}",
+            child_ctx.rip, child_ctx.rsp, child_ctx.rbp
+        );
+        let _ = writeln!(
+            writer,
+            "[CHILD] rax={:#x} rbx={:#x} r12={:#x}",
+            child_ctx.rax, child_ctx.rbx, child_ctx.r12
+        );
+        let _ = writeln!(
+            writer,
+            "[CHILD] r13={:#x} r14={:#x} r15={:#x}",
+            child_ctx.r13, child_ctx.r14, child_ctx.r15
+        );
     }
 
     // Save parent's FULL user context so we can restore ALL registers when child exits
@@ -1515,9 +1779,22 @@ fn run_child_process(child_pid: Pid) {
     {
         let mut writer = serial::SerialWriter;
         let _ = writeln!(writer, "[CHILD] UserContext ptr: {:p}", &user_ctx);
-        let _ = writeln!(writer, "[CHILD] UserContext.rip={:#x} rsp={:#x}", user_ctx.rip, user_ctx.rsp);
-        let _ = writeln!(writer, "[CHILD] UserContext.rcx={:#x} rax={:#x}", user_ctx.rcx, user_ctx.rax);
-        let _ = writeln!(writer, "[CHILD] kernel_stack={:#x} pml4={:#x}", child_kernel_stack_top, child_pml4.as_u64());
+        let _ = writeln!(
+            writer,
+            "[CHILD] UserContext.rip={:#x} rsp={:#x}",
+            user_ctx.rip, user_ctx.rsp
+        );
+        let _ = writeln!(
+            writer,
+            "[CHILD] UserContext.rcx={:#x} rax={:#x}",
+            user_ctx.rcx, user_ctx.rax
+        );
+        let _ = writeln!(
+            writer,
+            "[CHILD] kernel_stack={:#x} pml4={:#x}",
+            child_kernel_stack_top,
+            child_pml4.as_u64()
+        );
 
         // Verify by reading raw bytes at context address
         let ctx_ptr = &user_ctx as *const arch::UserContext as *const u64;
@@ -1571,11 +1848,7 @@ fn run_child_process(child_pid: Pid) {
     // Enter user mode for child with full context restoration
     // When child calls exit(), user_exit will set CHILD_DONE and we'll detect it
     unsafe {
-        arch::enter_usermode_with_context(
-            child_kernel_stack_top,
-            child_pml4.as_u64(),
-            &user_ctx,
-        );
+        arch::enter_usermode_with_context(child_kernel_stack_top, child_pml4.as_u64(), &user_ctx);
     }
 
     // Note: We never reach here via normal flow.
@@ -1585,7 +1858,12 @@ fn run_child_process(child_pid: Pid) {
 /// Exec callback for syscalls
 ///
 /// Replaces the current process image with a new executable.
-fn kernel_exec(path_ptr: *const u8, path_len: usize, argv_ptr: *const *const u8, envp_ptr: *const *const u8) -> i64 {
+fn kernel_exec(
+    path_ptr: *const u8,
+    path_len: usize,
+    argv_ptr: *const *const u8,
+    envp_ptr: *const *const u8,
+) -> i64 {
     let table = process_table();
     let current_pid = table.current_pid();
 
@@ -1622,18 +1900,45 @@ fn kernel_exec(path_ptr: *const u8, path_len: usize, argv_ptr: *const *const u8,
                 if arg_ptr.is_null() {
                     break;
                 }
-                // Read null-terminated string
+                // Validate pointer is in user space before touching
+                let arg_addr = arg_ptr as u64;
+                if arg_addr == 0 || arg_addr >= 0x0000_8000_0000_0000 {
+                    let mut writer = serial::SerialWriter;
+                    let _ = writeln!(
+                        writer,
+                        "[EXEC] argv[{i}] pointer out of user space: {:#x}",
+                        arg_addr
+                    );
+                    return -14; // EFAULT
+                }
+                // Read null-terminated string with a hard cap
                 let mut len = 0;
-                while *arg_ptr.add(len) != 0 && len < 4096 {
+                while len < 4096 {
+                    let ch = *arg_ptr.add(len);
+                    if ch == 0 {
+                        break;
+                    }
                     len += 1;
                 }
+                if len == 4096 {
+                    let mut writer = serial::SerialWriter;
+                    let _ = writeln!(writer, "[EXEC] argv[{i}] exceeds 4096 bytes");
+                    return -22; // EINVAL
+                }
                 let arg_slice = core::slice::from_raw_parts(arg_ptr, len);
-                if let Ok(s) = core::str::from_utf8(arg_slice) {
-                    argv.push(String::from(s));
+                match core::str::from_utf8(arg_slice) {
+                    Ok(s) => argv.push(String::from(s)),
+                    Err(_) => {
+                        let mut writer = serial::SerialWriter;
+                        let _ = writeln!(writer, "[EXEC] argv[{i}] invalid UTF-8");
+                        return -22; // EINVAL
+                    }
                 }
                 i += 1;
                 if i > 1024 {
-                    break; // Safety limit
+                    let mut writer = serial::SerialWriter;
+                    let _ = writeln!(writer, "[EXEC] argv too long (>1024)");
+                    return -22; // EINVAL
                 }
             }
         }
@@ -1653,18 +1958,44 @@ fn kernel_exec(path_ptr: *const u8, path_len: usize, argv_ptr: *const *const u8,
                 if env_ptr.is_null() {
                     break;
                 }
-                // Read null-terminated string
+                let env_addr = env_ptr as u64;
+                if env_addr == 0 || env_addr >= 0x0000_8000_0000_0000 {
+                    let mut writer = serial::SerialWriter;
+                    let _ = writeln!(
+                        writer,
+                        "[EXEC] envp[{i}] pointer out of user space: {:#x}",
+                        env_addr
+                    );
+                    return -14; // EFAULT
+                }
+                // Read null-terminated string with a hard cap
                 let mut len = 0;
-                while *env_ptr.add(len) != 0 && len < 4096 {
+                while len < 4096 {
+                    let ch = *env_ptr.add(len);
+                    if ch == 0 {
+                        break;
+                    }
                     len += 1;
                 }
+                if len == 4096 {
+                    let mut writer = serial::SerialWriter;
+                    let _ = writeln!(writer, "[EXEC] envp[{i}] exceeds 4096 bytes");
+                    return -22; // EINVAL
+                }
                 let env_slice = core::slice::from_raw_parts(env_ptr, len);
-                if let Ok(s) = core::str::from_utf8(env_slice) {
-                    envp.push(String::from(s));
+                match core::str::from_utf8(env_slice) {
+                    Ok(s) => envp.push(String::from(s)),
+                    Err(_) => {
+                        let mut writer = serial::SerialWriter;
+                        let _ = writeln!(writer, "[EXEC] envp[{i}] invalid UTF-8");
+                        return -22; // EINVAL
+                    }
                 }
                 i += 1;
                 if i > 1024 {
-                    break; // Safety limit
+                    let mut writer = serial::SerialWriter;
+                    let _ = writeln!(writer, "[EXEC] envp too long (>1024)");
+                    return -22; // EINVAL
                 }
             }
         }
@@ -1707,7 +2038,11 @@ fn kernel_exec(path_ptr: *const u8, path_len: usize, argv_ptr: *const *const u8,
 
     if bytes_read != size {
         let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[EXEC] Short read: {} of {} bytes", bytes_read, size);
+        let _ = writeln!(
+            writer,
+            "[EXEC] Short read: {} of {} bytes",
+            bytes_read, size
+        );
         return -5; // EIO - short read
     }
     {
@@ -1720,7 +2055,14 @@ fn kernel_exec(path_ptr: *const u8, path_len: usize, argv_ptr: *const *const u8,
     let alloc_wrapper = FrameAllocatorWrapper;
 
     // Call do_exec
-    match do_exec(current_pid, &elf_data, &argv, &envp, &alloc_wrapper, kernel_pml4) {
+    match do_exec(
+        current_pid,
+        &elf_data,
+        &argv,
+        &envp,
+        &alloc_wrapper,
+        kernel_pml4,
+    ) {
         Ok((_entry_point, _stack_ptr)) => {
             // Get the new PML4 and switch to it
             if let Some(proc) = table.get(current_pid) {
@@ -1733,7 +2075,11 @@ fn kernel_exec(path_ptr: *const u8, path_len: usize, argv_ptr: *const *const u8,
                 let mut writer = serial::SerialWriter;
                 let _ = writeln!(writer, "[EXEC] Switching to PML4={:#x}", new_pml4.as_u64());
                 let _ = writeln!(writer, "[EXEC] rip={:#x} rsp={:#x}", ctx.rip, ctx.rsp);
-                let _ = writeln!(writer, "[EXEC] argc={} argv={:#x} envp={:#x}", ctx.rdi, ctx.rsi, ctx.rdx);
+                let _ = writeln!(
+                    writer,
+                    "[EXEC] argc={} argv={:#x} envp={:#x}",
+                    ctx.rdi, ctx.rsi, ctx.rdx
+                );
 
                 // Switch to new address space and jump to entry point
                 unsafe {
@@ -1842,7 +2188,9 @@ fn panic(info: &PanicInfo) -> ! {
     let _ = writeln!(writer, "========================================");
 
     if let Some(location) = info.location() {
-        let _ = writeln!(writer, "Location: {}:{}:{}",
+        let _ = writeln!(
+            writer,
+            "Location: {}:{}:{}",
             location.file(),
             location.line(),
             location.column()
@@ -1856,4 +2204,3 @@ fn panic(info: &PanicInfo) -> ! {
 
     arch::X86_64::halt()
 }
-

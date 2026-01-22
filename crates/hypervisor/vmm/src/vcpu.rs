@@ -5,7 +5,7 @@ use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, Ordering};
 use spin::Mutex;
 
-use crate::{VmmResult, VmmError, VcpuState, VmExit, VirtualMachine};
+use crate::{VcpuState, VirtualMachine, VmExit, VmmError, VmmResult};
 
 /// VCPU identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

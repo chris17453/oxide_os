@@ -154,10 +154,12 @@ impl File {
             }
             SeekFrom::Current(offset) => {
                 if offset < 0 {
-                    current.checked_sub((-offset) as u64)
+                    current
+                        .checked_sub((-offset) as u64)
                         .ok_or(VfsError::InvalidArgument)?
                 } else {
-                    current.checked_add(offset as u64)
+                    current
+                        .checked_add(offset as u64)
                         .ok_or(VfsError::InvalidArgument)?
                 }
             }

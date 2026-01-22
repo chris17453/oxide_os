@@ -2,8 +2,8 @@
 //!
 //! Each CPU has its own private data area for thread-local state.
 
-use core::sync::atomic::{AtomicU32, Ordering};
 use crate::MAX_CPUS;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 /// Per-CPU data structure
 ///

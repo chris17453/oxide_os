@@ -139,7 +139,7 @@ struct LinkerSymbol {
     name: [u8; 64],
     value: u64,
     size: u64,
-    section: u8,  // 0=undef, 1=text, 2=data, 3=bss
+    section: u8, // 0=undef, 1=text, 2=data, 3=bss
     binding: u8,
     defined: bool,
     file_idx: usize,
@@ -162,11 +162,11 @@ impl LinkerSymbol {
 /// Linker relocation
 #[derive(Clone, Copy)]
 struct LinkerReloc {
-    offset: u64,      // Offset in output section
-    sym_idx: usize,   // Symbol index
+    offset: u64,    // Offset in output section
+    sym_idx: usize, // Symbol index
     rtype: u32,
     addend: i64,
-    section: u8,      // 1=text, 2=data
+    section: u8, // 1=text, 2=data
 }
 
 impl LinkerReloc {
@@ -185,10 +185,10 @@ impl LinkerReloc {
 struct InputFile {
     data: [u8; FILE_BUF_SIZE],
     size: usize,
-    text_offset: u64,    // Offset into output text section
-    data_offset: u64,    // Offset into output data section
-    bss_offset: u64,     // Offset into output bss
-    first_sym: usize,    // First symbol index in global table
+    text_offset: u64, // Offset into output text section
+    data_offset: u64, // Offset into output data section
+    bss_offset: u64,  // Offset into output bss
+    first_sym: usize, // First symbol index in global table
 }
 
 impl InputFile {
@@ -367,9 +367,8 @@ impl Linker {
         let mut strtab_offset: usize = 0;
 
         for i in 0..shnum {
-            let shdr = unsafe {
-                &*((data.as_ptr() as usize + shoff + i * shentsize) as *const Elf64Shdr)
-            };
+            let shdr =
+                unsafe { &*((data.as_ptr() as usize + shoff + i * shentsize) as *const Elf64Shdr) };
 
             if shdr.sh_type == SHT_SYMTAB {
                 symtab_shdr = Some(shdr);
@@ -386,16 +385,16 @@ impl Linker {
 
         // Process sections - copy text and data
         for i in 0..shnum {
-            let shdr = unsafe {
-                &*((data.as_ptr() as usize + shoff + i * shentsize) as *const Elf64Shdr)
-            };
+            let shdr =
+                unsafe { &*((data.as_ptr() as usize + shoff + i * shentsize) as *const Elf64Shdr) };
 
             // Get section name
             let name_off = shdr.sh_name as usize;
             let name = get_cstring(&shstrtab[name_off..]);
 
             if shdr.sh_type == SHT_PROGBITS && (shdr.sh_flags & SHF_ALLOC) != 0 {
-                let src = &data[shdr.sh_offset as usize..shdr.sh_offset as usize + shdr.sh_size as usize];
+                let src =
+                    &data[shdr.sh_offset as usize..shdr.sh_offset as usize + shdr.sh_size as usize];
 
                 if (shdr.sh_flags & SHF_EXECINSTR) != 0 || bytes_eq_len(name, b".text") {
                     // Text section
@@ -417,9 +416,11 @@ impl Linker {
             let sym_count = (symtab.sh_size / symtab.sh_entsize) as usize;
             let strtab = &data[strtab_offset..];
 
-            for j in 1..sym_count {  // Skip NULL symbol
+            for j in 1..sym_count {
+                // Skip NULL symbol
                 let sym = unsafe {
-                    &*((data.as_ptr() as usize + symtab.sh_offset as usize + j * 24) as *const Elf64Sym)
+                    &*((data.as_ptr() as usize + symtab.sh_offset as usize + j * 24)
+                        as *const Elf64Sym)
                 };
 
                 let name = get_cstring(&strtab[sym.st_name as usize..]);
@@ -433,7 +434,8 @@ impl Linker {
                 } else {
                     // Look up section to determine if text/data/bss
                     let sec_shdr = unsafe {
-                        &*((data.as_ptr() as usize + shoff + sym.st_shndx as usize * shentsize) as *const Elf64Shdr)
+                        &*((data.as_ptr() as usize + shoff + sym.st_shndx as usize * shentsize)
+                            as *const Elf64Shdr)
                     };
                     if (sec_shdr.sh_flags & SHF_EXECINSTR) != 0 {
                         1 // text
@@ -459,20 +461,28 @@ impl Linker {
                     0
                 };
 
-                self.add_symbol(name, value, sym.st_size, section, binding, defined, file_idx);
+                self.add_symbol(
+                    name,
+                    value,
+                    sym.st_size,
+                    section,
+                    binding,
+                    defined,
+                    file_idx,
+                );
             }
         }
 
         // Process relocations
         for i in 0..shnum {
-            let shdr = unsafe {
-                &*((data.as_ptr() as usize + shoff + i * shentsize) as *const Elf64Shdr)
-            };
+            let shdr =
+                unsafe { &*((data.as_ptr() as usize + shoff + i * shentsize) as *const Elf64Shdr) };
 
             if shdr.sh_type == SHT_RELA {
                 // Get the section this applies to
                 let target_shdr = unsafe {
-                    &*((data.as_ptr() as usize + shoff + shdr.sh_info as usize * shentsize) as *const Elf64Shdr)
+                    &*((data.as_ptr() as usize + shoff + shdr.sh_info as usize * shentsize)
+                        as *const Elf64Shdr)
                 };
 
                 let target_section = if (target_shdr.sh_flags & SHF_EXECINSTR) != 0 {
@@ -485,7 +495,8 @@ impl Linker {
 
                 for j in 0..rela_count {
                     let rela = unsafe {
-                        &*((data.as_ptr() as usize + shdr.sh_offset as usize + j * 24) as *const Elf64Rela)
+                        &*((data.as_ptr() as usize + shdr.sh_offset as usize + j * 24)
+                            as *const Elf64Rela)
                     };
 
                     let sym_idx = (rela.r_info >> 32) as usize;
@@ -508,7 +519,16 @@ impl Linker {
     }
 
     /// Add a symbol
-    fn add_symbol(&mut self, name: &[u8], value: u64, size: u64, section: u8, binding: u8, defined: bool, file_idx: usize) {
+    fn add_symbol(
+        &mut self,
+        name: &[u8],
+        value: u64,
+        size: u64,
+        section: u8,
+        binding: u8,
+        defined: bool,
+        file_idx: usize,
+    ) {
         // Check if symbol already exists
         for i in 0..self.num_symbols {
             if bytes_eq_len(&self.symbols[i].name, name) {
@@ -771,7 +791,11 @@ impl Linker {
 
 /// Copy bytes
 fn copy_bytes(dst: &mut [u8], src: &[u8]) {
-    let len = src.iter().position(|&c| c == 0).unwrap_or(src.len()).min(dst.len() - 1);
+    let len = src
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(src.len())
+        .min(dst.len() - 1);
     dst[..len].copy_from_slice(&src[..len]);
     dst[len] = 0;
 }

@@ -29,19 +29,19 @@ const MAX_MEMBERS: usize = 256;
 /// Archive member header (60 bytes, ASCII)
 #[repr(C)]
 struct ArHeader {
-    ar_name: [u8; 16],   // Member name (/ terminated or space padded)
-    ar_date: [u8; 12],   // Modification time
-    ar_uid: [u8; 6],     // Owner UID
-    ar_gid: [u8; 6],     // Owner GID
-    ar_mode: [u8; 8],    // File mode (octal)
-    ar_size: [u8; 10],   // File size (decimal)
-    ar_fmag: [u8; 2],    // Magic: "`\n"
+    ar_name: [u8; 16], // Member name (/ terminated or space padded)
+    ar_date: [u8; 12], // Modification time
+    ar_uid: [u8; 6],   // Owner UID
+    ar_gid: [u8; 6],   // Owner GID
+    ar_mode: [u8; 8],  // File mode (octal)
+    ar_size: [u8; 10], // File size (decimal)
+    ar_fmag: [u8; 2],  // Magic: "`\n"
 }
 
 /// Archive member info
 struct MemberInfo {
     name: [u8; 64],
-    offset: usize,      // Offset in archive file
+    offset: usize, // Offset in archive file
     size: usize,
 }
 
@@ -80,9 +80,8 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
                 eprintlns("ar: no files specified");
                 return 1;
             }
-            let files: &[*const u8] = unsafe {
-                core::slice::from_raw_parts(argv.add(3), (argc - 3) as usize)
-            };
+            let files: &[*const u8] =
+                unsafe { core::slice::from_raw_parts(argv.add(3), (argc - 3) as usize) };
             ar_replace(archive, files)
         }
         b't' => {
@@ -104,9 +103,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
                 eprintlns("ar: no files specified");
                 return 1;
             }
-            let files = unsafe {
-                core::slice::from_raw_parts(argv.add(3), (argc - 3) as usize)
-            };
+            let files = unsafe { core::slice::from_raw_parts(argv.add(3), (argc - 3) as usize) };
             ar_delete(archive, files)
         }
         _ => {
@@ -408,7 +405,11 @@ fn write_member(fd: i32, name: &[u8], content: &[u8]) {
     };
 
     // Copy name (max 15 chars + /)
-    let name_len = name.iter().position(|&c| c == 0).unwrap_or(name.len()).min(15);
+    let name_len = name
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(name.len())
+        .min(15);
     hdr.ar_name[..name_len].copy_from_slice(&name[..name_len]);
     hdr.ar_name[name_len] = b'/';
 
@@ -428,9 +429,8 @@ fn write_member(fd: i32, name: &[u8], content: &[u8]) {
     copy_to_field(&mut hdr.ar_size, size_str);
 
     // Write header
-    let hdr_bytes = unsafe {
-        core::slice::from_raw_parts(&hdr as *const ArHeader as *const u8, AR_HDR_SIZE)
-    };
+    let hdr_bytes =
+        unsafe { core::slice::from_raw_parts(&hdr as *const ArHeader as *const u8, AR_HDR_SIZE) };
     syscall::sys_write(fd, hdr_bytes);
 
     // Write content
@@ -509,7 +509,11 @@ fn read_file(name: &[u8], buf: &mut [u8]) -> isize {
 
 /// Copy bytes
 fn copy_bytes(dst: &mut [u8], src: &[u8]) {
-    let len = src.iter().position(|&c| c == 0).unwrap_or(src.len()).min(dst.len() - 1);
+    let len = src
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(src.len())
+        .min(dst.len() - 1);
     dst[..len].copy_from_slice(&src[..len]);
     if len < dst.len() {
         dst[len] = 0;
@@ -518,8 +522,14 @@ fn copy_bytes(dst: &mut [u8], src: &[u8]) {
 
 /// Compare names (null-terminated or space-terminated)
 fn bytes_eq_name(a: &[u8], b: &[u8]) -> bool {
-    let a_len = a.iter().position(|&c| c == 0 || c == b' ' || c == b'/').unwrap_or(a.len());
-    let b_len = b.iter().position(|&c| c == 0 || c == b' ' || c == b'/').unwrap_or(b.len());
+    let a_len = a
+        .iter()
+        .position(|&c| c == 0 || c == b' ' || c == b'/')
+        .unwrap_or(a.len());
+    let b_len = b
+        .iter()
+        .position(|&c| c == 0 || c == b' ' || c == b'/')
+        .unwrap_or(b.len());
     if a_len != b_len {
         return false;
     }

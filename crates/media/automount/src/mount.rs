@@ -23,7 +23,13 @@ pub struct MountInfo {
 
 impl MountInfo {
     /// Create new mount info
-    pub fn new(source: String, mount_point: String, fs_type: String, mode: MountMode, timestamp: u64) -> Self {
+    pub fn new(
+        source: String,
+        mount_point: String,
+        fs_type: String,
+        mode: MountMode,
+        timestamp: u64,
+    ) -> Self {
         MountInfo {
             source,
             mount_point,
@@ -127,11 +133,13 @@ pub fn detect_filesystem(device: &[u8]) -> Option<&'static str> {
         let magic = u16::from_le_bytes([device[1080], device[1081]]);
         if magic == 0xEF53 {
             // Check features to distinguish ext2/3/4
-            let compat = u32::from_le_bytes([device[1116], device[1117], device[1118], device[1119]]);
+            let compat =
+                u32::from_le_bytes([device[1116], device[1117], device[1118], device[1119]]);
             if compat & 0x40 != 0 {
                 return Some("ext4");
             }
-            let incompat = u32::from_le_bytes([device[1120], device[1121], device[1122], device[1123]]);
+            let incompat =
+                u32::from_le_bytes([device[1120], device[1121], device[1122], device[1123]]);
             if incompat & 0x04 != 0 {
                 return Some("ext3");
             }

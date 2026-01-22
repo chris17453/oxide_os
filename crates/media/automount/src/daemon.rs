@@ -7,8 +7,8 @@ use alloc::vec::Vec;
 use spin::RwLock;
 
 use media::{
-    ActiveMount, DeviceTrustDb, MediaError, MediaManager, MediaPolicy, MountMode,
-    MountOptions, TrustLevel, UsbDevice, UsbEvent, UsbEventType,
+    ActiveMount, DeviceTrustDb, MediaError, MediaManager, MediaPolicy, MountMode, MountOptions,
+    TrustLevel, UsbDevice, UsbEvent, UsbEventType,
 };
 
 use crate::config::AutomountConfig;
@@ -39,7 +39,11 @@ pub struct AuthToken {
 impl AuthToken {
     /// Create new auth token
     pub fn new(uid: u32, token: [u8; 32], expires: u64) -> Self {
-        AuthToken { uid, token, expires }
+        AuthToken {
+            uid,
+            token,
+            expires,
+        }
     }
 
     /// Check if token is expired
@@ -154,7 +158,11 @@ impl AutomountDaemon {
     }
 
     /// Handle device connected event
-    pub fn on_device_connected(&self, device: UsbDevice, timestamp: u64) -> Result<MountInfo, MediaError> {
+    pub fn on_device_connected(
+        &self,
+        device: UsbDevice,
+        timestamp: u64,
+    ) -> Result<MountInfo, MediaError> {
         if *self.state.read() != DaemonState::Running {
             return Err(MediaError::InvalidOperation);
         }
@@ -170,9 +178,7 @@ impl AutomountDaemon {
 
         // Get mount info
         let mounts = self.media.list_mounts();
-        let mount = mounts
-            .last()
-            .ok_or(MediaError::MountFailed)?;
+        let mount = mounts.last().ok_or(MediaError::MountFailed)?;
 
         Ok(MountInfo::new(
             device.path.clone(),
@@ -205,7 +211,12 @@ impl AutomountDaemon {
     }
 
     /// Handle promotion request
-    pub fn handle_promotion(&self, mount_point: &str, auth: &AuthToken, timestamp: u64) -> Result<(), MediaError> {
+    pub fn handle_promotion(
+        &self,
+        mount_point: &str,
+        auth: &AuthToken,
+        timestamp: u64,
+    ) -> Result<(), MediaError> {
         // Check auth token
         if auth.is_expired(timestamp) {
             return Err(MediaError::AuthRequired);

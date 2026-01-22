@@ -13,7 +13,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     }
 
     let duration_str = unsafe { cstr_to_str(*argv.add(1)) };
-    
+
     // Parse duration (in seconds)
     let duration = match parse_int(duration_str.as_bytes()) {
         Some(v) => v,
@@ -31,7 +31,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     prints("timeout: would run command with ");
     print_i64(duration);
     prints("s timeout: ");
-    
+
     for i in 2..argc {
         let arg = unsafe { cstr_to_str(*argv.add(i as usize)) };
         prints(arg);
@@ -57,7 +57,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     // - kill() - available
 
     eprintlns("timeout: timer syscalls not yet implemented");
-    
+
     1
 }
 

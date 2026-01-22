@@ -175,14 +175,12 @@ impl SeccompFilter {
     /// Create a simple filter that allows all syscalls
     pub fn allow_all() -> Self {
         SeccompFilter {
-            program: alloc::vec![
-                BpfInsn {
-                    code: bpf::BPF_RET | bpf::BPF_K,
-                    jt: 0,
-                    jf: 0,
-                    k: SeccompAction::Allow as u32,
-                },
-            ],
+            program: alloc::vec![BpfInsn {
+                code: bpf::BPF_RET | bpf::BPF_K,
+                jt: 0,
+                jf: 0,
+                k: SeccompAction::Allow as u32,
+            },],
         }
     }
 

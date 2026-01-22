@@ -18,8 +18,8 @@ use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 
 use proc::process_table;
-use proc_traits::ProcessState;
 use proc_traits::Pid;
+use proc_traits::ProcessState;
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
 // ============================================================================
@@ -200,7 +200,12 @@ impl VnodeOps for ProcFs {
     }
 
     fn stat(&self) -> VfsResult<Stat> {
-        Ok(Stat::new(VnodeType::Directory, Mode::new(0o555), 0, self.ino))
+        Ok(Stat::new(
+            VnodeType::Directory,
+            Mode::new(0o555),
+            0,
+            self.ino,
+        ))
     }
 
     fn truncate(&self, _size: u64) -> VfsResult<()> {
@@ -391,7 +396,12 @@ impl VnodeOps for ProcPid {
         if table.get(self.pid).is_none() {
             return Err(VfsError::NotFound);
         }
-        Ok(Stat::new(VnodeType::Directory, Mode::new(0o555), 0, self.ino))
+        Ok(Stat::new(
+            VnodeType::Directory,
+            Mode::new(0o555),
+            0,
+            self.ino,
+        ))
     }
 
     fn truncate(&self, _size: u64) -> VfsResult<()> {
@@ -762,7 +772,7 @@ impl ProcMeminfo {
         let free_kb = stats.free_mem / 1024;
         let used_kb = total_kb.saturating_sub(free_kb);
         let buffers_kb = 0u64; // Not tracked
-        let cached_kb = 0u64;  // Not tracked
+        let cached_kb = 0u64; // Not tracked
         let swap_total_kb = stats.total_swap / 1024;
         let swap_free_kb = stats.free_swap / 1024;
 

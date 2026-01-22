@@ -66,9 +66,8 @@ impl TarHeader {
 
     /// Calculate checksum for header
     fn calculate_checksum(&self) -> u32 {
-        let bytes = unsafe {
-            core::slice::from_raw_parts(self as *const _ as *const u8, BLOCK_SIZE)
-        };
+        let bytes =
+            unsafe { core::slice::from_raw_parts(self as *const _ as *const u8, BLOCK_SIZE) };
 
         let mut sum = 0u32;
         for i in 0..BLOCK_SIZE {
@@ -239,9 +238,8 @@ fn add_file(archive_fd: i32, path: &str, config: &TarConfig) -> i32 {
 
     // Build and write header
     let header = build_header(path, &statbuf);
-    let header_bytes = unsafe {
-        core::slice::from_raw_parts(&header as *const _ as *const u8, BLOCK_SIZE)
-    };
+    let header_bytes =
+        unsafe { core::slice::from_raw_parts(&header as *const _ as *const u8, BLOCK_SIZE) };
 
     if write(archive_fd, header_bytes) < 0 {
         eprintlns("tar: write error");
@@ -311,7 +309,10 @@ fn add_file(archive_fd: i32, path: &str, config: &TarConfig) -> i32 {
 fn do_create(config: &TarConfig, files: &[&str]) -> i32 {
     // Open archive file
     let archive_fd = if let Some(ref path_buf) = config.archive_file {
-        let len = path_buf.iter().position(|&c| c == 0).unwrap_or(MAX_PATH_LEN);
+        let len = path_buf
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(MAX_PATH_LEN);
         let path = core::str::from_utf8(&path_buf[..len]).unwrap_or("");
 
         let fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0o644);
@@ -351,7 +352,11 @@ fn do_create(config: &TarConfig, files: &[&str]) -> i32 {
 /// Extract one file from archive
 fn extract_file(header: &TarHeader, archive_fd: i32, config: &TarConfig) -> i32 {
     // Get filename (find null terminator)
-    let name_len = header.name.iter().position(|&c| c == 0).unwrap_or(NAME_SIZE);
+    let name_len = header
+        .name
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(NAME_SIZE);
     let filename = match core::str::from_utf8(&header.name[..name_len]) {
         Ok(s) => s,
         Err(_) => {
@@ -436,7 +441,10 @@ fn extract_file(header: &TarHeader, archive_fd: i32, config: &TarConfig) -> i32 
 fn do_extract(config: &TarConfig) -> i32 {
     // Open archive file
     let archive_fd = if let Some(ref path_buf) = config.archive_file {
-        let len = path_buf.iter().position(|&c| c == 0).unwrap_or(MAX_PATH_LEN);
+        let len = path_buf
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(MAX_PATH_LEN);
         let path = core::str::from_utf8(&path_buf[..len]).unwrap_or("");
 
         let fd = open2(path, O_RDONLY);
@@ -490,7 +498,10 @@ fn do_extract(config: &TarConfig) -> i32 {
 fn do_list(config: &TarConfig) -> i32 {
     // Open archive file
     let archive_fd = if let Some(ref path_buf) = config.archive_file {
-        let len = path_buf.iter().position(|&c| c == 0).unwrap_or(MAX_PATH_LEN);
+        let len = path_buf
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(MAX_PATH_LEN);
         let path = core::str::from_utf8(&path_buf[..len]).unwrap_or("");
 
         let fd = open2(path, O_RDONLY);
@@ -529,7 +540,11 @@ fn do_list(config: &TarConfig) -> i32 {
         }
 
         // Get filename
-        let name_len = header.name.iter().position(|&c| c == 0).unwrap_or(NAME_SIZE);
+        let name_len = header
+            .name
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(NAME_SIZE);
         if let Ok(filename) = core::str::from_utf8(&header.name[..name_len]) {
             if config.verbose {
                 // Verbose: show permissions, size, name

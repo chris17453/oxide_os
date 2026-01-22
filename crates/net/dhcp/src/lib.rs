@@ -162,7 +162,12 @@ impl DhcpPacket {
     }
 
     /// Create a new DHCP Request packet
-    pub fn new_request(mac: MacAddress, xid: u32, requested_ip: Ipv4Addr, server_ip: Ipv4Addr) -> Self {
+    pub fn new_request(
+        mac: MacAddress,
+        xid: u32,
+        requested_ip: Ipv4Addr,
+        server_ip: Ipv4Addr,
+    ) -> Self {
         let mut chaddr = [0u8; 16];
         chaddr[..6].copy_from_slice(&mac.0);
 
@@ -492,7 +497,8 @@ impl DhcpClient {
 
     /// Process DHCP ACK
     pub fn process_ack(&self, packet: &DhcpPacket) -> NetResult<Option<DhcpLease>> {
-        if *self.state.lock() != DhcpState::Requesting && *self.state.lock() != DhcpState::Renewing {
+        if *self.state.lock() != DhcpState::Requesting && *self.state.lock() != DhcpState::Renewing
+        {
             return Ok(None);
         }
 

@@ -2,13 +2,13 @@
 //!
 //! Provides BSD socket API for network programming.
 
-use crate::syscall::{syscall3, syscall4, syscall5, syscall6, nr};
+use crate::syscall::{nr, syscall3, syscall4, syscall5, syscall6};
 
 /// Address families
 pub mod af {
     pub const UNSPEC: i32 = 0;
     pub const UNIX: i32 = 1;
-    pub const LOCAL: i32 = 1;  // Alias for UNIX
+    pub const LOCAL: i32 = 1; // Alias for UNIX
     pub const INET: i32 = 2;
     pub const INET6: i32 = 10;
     pub const NETLINK: i32 = 16;
@@ -17,9 +17,9 @@ pub mod af {
 
 /// Socket types
 pub mod sock {
-    pub const STREAM: i32 = 1;    // TCP
-    pub const DGRAM: i32 = 2;     // UDP
-    pub const RAW: i32 = 3;       // Raw socket
+    pub const STREAM: i32 = 1; // TCP
+    pub const DGRAM: i32 = 2; // UDP
+    pub const RAW: i32 = 3; // Raw socket
     pub const SEQPACKET: i32 = 5; // Sequential packet
     pub const NONBLOCK: i32 = 0x800;
     pub const CLOEXEC: i32 = 0x80000;
@@ -95,27 +95,27 @@ pub mod msg {
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct SockAddrIn {
-    pub sin_family: u16,      // AF_INET
-    pub sin_port: u16,        // Port (network byte order)
-    pub sin_addr: InAddr,     // IPv4 address
-    pub sin_zero: [u8; 8],    // Padding
+    pub sin_family: u16,   // AF_INET
+    pub sin_port: u16,     // Port (network byte order)
+    pub sin_addr: InAddr,  // IPv4 address
+    pub sin_zero: [u8; 8], // Padding
 }
 
 /// IPv4 address
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct InAddr {
-    pub s_addr: u32,          // IPv4 address (network byte order)
+    pub s_addr: u32, // IPv4 address (network byte order)
 }
 
 /// IPv6 socket address
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct SockAddrIn6 {
-    pub sin6_family: u16,     // AF_INET6
-    pub sin6_port: u16,       // Port (network byte order)
+    pub sin6_family: u16, // AF_INET6
+    pub sin6_port: u16,   // Port (network byte order)
     pub sin6_flowinfo: u32,
-    pub sin6_addr: In6Addr,   // IPv6 address
+    pub sin6_addr: In6Addr, // IPv6 address
     pub sin6_scope_id: u32,
 }
 
@@ -148,8 +148,8 @@ impl Default for In6Addr {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct SockAddrUn {
-    pub sun_family: u16,      // AF_UNIX
-    pub sun_path: [u8; 108],  // Path name
+    pub sun_family: u16,     // AF_UNIX
+    pub sun_path: [u8; 108], // Path name
 }
 
 impl Default for SockAddrUn {
@@ -250,7 +250,12 @@ pub const INADDR_BROADCAST: u32 = 0xffffffff;
 /// # Returns
 /// Socket file descriptor or negative errno
 pub fn socket(domain: i32, type_: i32, protocol: i32) -> i32 {
-    syscall3(nr::SOCKET, domain as usize, type_ as usize, protocol as usize) as i32
+    syscall3(
+        nr::SOCKET,
+        domain as usize,
+        type_ as usize,
+        protocol as usize,
+    ) as i32
 }
 
 /// Bind a socket to an address
@@ -504,7 +509,13 @@ pub fn setsockopt_raw(sockfd: i32, level: i32, optname: i32, optval: &[u8]) -> i
 }
 
 /// Get socket option
-pub fn getsockopt<T>(sockfd: i32, level: i32, optname: i32, optval: &mut T, optlen: &mut u32) -> i32 {
+pub fn getsockopt<T>(
+    sockfd: i32,
+    level: i32,
+    optname: i32,
+    optval: &mut T,
+    optlen: &mut u32,
+) -> i32 {
     syscall5(
         nr::GETSOCKOPT,
         sockfd as usize,

@@ -201,14 +201,18 @@ pub struct Socket {
 
 impl Socket {
     /// Create a new socket
-    pub fn new(domain: SocketDomain, sock_type: SocketType, protocol: SocketProtocol) -> NetResult<Arc<Self>> {
+    pub fn new(
+        domain: SocketDomain,
+        sock_type: SocketType,
+        protocol: SocketProtocol,
+    ) -> NetResult<Arc<Self>> {
         // Validate combination
         match (sock_type, protocol) {
-            (SocketType::Stream, SocketProtocol::Default) |
-            (SocketType::Stream, SocketProtocol::Tcp) |
-            (SocketType::Dgram, SocketProtocol::Default) |
-            (SocketType::Dgram, SocketProtocol::Udp) |
-            (SocketType::Raw, _) => {}
+            (SocketType::Stream, SocketProtocol::Default)
+            | (SocketType::Stream, SocketProtocol::Tcp)
+            | (SocketType::Dgram, SocketProtocol::Default)
+            | (SocketType::Dgram, SocketProtocol::Udp)
+            | (SocketType::Raw, _) => {}
             _ => return Err(NetError::ProtocolNotSupported),
         }
 

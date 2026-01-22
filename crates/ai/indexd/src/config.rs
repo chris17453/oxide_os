@@ -37,14 +37,24 @@ impl Default for IndexConfig {
                 String::from("/home/*/.local/share/Trash"),
             ],
             include_extensions: alloc::vec![
-                String::from("txt"), String::from("md"),
-                String::from("rs"), String::from("py"), String::from("js"),
-                String::from("html"), String::from("json"), String::from("xml"),
-                String::from("c"), String::from("cpp"), String::from("h"),
+                String::from("txt"),
+                String::from("md"),
+                String::from("rs"),
+                String::from("py"),
+                String::from("js"),
+                String::from("html"),
+                String::from("json"),
+                String::from("xml"),
+                String::from("c"),
+                String::from("cpp"),
+                String::from("h"),
             ],
             exclude_extensions: alloc::vec![
-                String::from("o"), String::from("so"), String::from("a"),
-                String::from("pyc"), String::from("class"),
+                String::from("o"),
+                String::from("so"),
+                String::from("a"),
+                String::from("pyc"),
+                String::from("class"),
             ],
             max_file_size: 10 * 1024 * 1024, // 10MB
             db_path: String::from("/var/lib/oxide/index"),
@@ -92,12 +102,12 @@ impl IndexConfig {
         if pattern.contains('*') {
             // Very basic glob: just handle leading/trailing *
             if pattern.starts_with('*') && pattern.ends_with('*') {
-                let inner = &pattern[1..pattern.len()-1];
+                let inner = &pattern[1..pattern.len() - 1];
                 path.contains(inner)
             } else if pattern.starts_with('*') {
                 path.ends_with(&pattern[1..])
             } else if pattern.ends_with('*') {
-                path.starts_with(&pattern[..pattern.len()-1])
+                path.starts_with(&pattern[..pattern.len() - 1])
             } else {
                 // Middle * - split and check
                 let parts: Vec<_> = pattern.split('*').collect();

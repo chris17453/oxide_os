@@ -6,10 +6,10 @@
 
 extern crate alloc;
 
-pub mod daemon;
 pub mod config;
+pub mod daemon;
 pub mod mount;
 
-pub use daemon::*;
 pub use config::*;
+pub use daemon::*;
 pub use mount::*;

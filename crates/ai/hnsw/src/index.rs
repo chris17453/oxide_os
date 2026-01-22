@@ -5,10 +5,10 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 
-use crate::{FileId, HnswConfig, SearchResult};
 use crate::distance::cosine_distance;
-use crate::node::{Node, NodeId};
 use crate::layer::Layer;
+use crate::node::{Node, NodeId};
+use crate::{FileId, HnswConfig, SearchResult};
 
 /// Natural log approximation for no_std
 fn ln_f64(x: f64) -> f64 {
@@ -52,7 +52,10 @@ impl PartialOrd for Candidate {
 impl Ord for Candidate {
     fn cmp(&self, other: &Self) -> Ordering {
         // Reverse for min-heap (BinaryHeap is max-heap by default)
-        other.distance.partial_cmp(&self.distance).unwrap_or(Ordering::Equal)
+        other
+            .distance
+            .partial_cmp(&self.distance)
+            .unwrap_or(Ordering::Equal)
     }
 }
 
@@ -130,7 +133,13 @@ impl HnswIndex {
             self.layers.push(Layer::new(self.layers.len()));
         }
 
-        let node = Node::new(node_id, file_id, vector.clone(), max_layer, self.config.m_max);
+        let node = Node::new(
+            node_id,
+            file_id,
+            vector.clone(),
+            max_layer,
+            self.config.m_max,
+        );
         self.nodes.insert(node_id, node);
         self.file_to_node.insert(file_id, node_id);
 
@@ -155,14 +164,16 @@ impl HnswIndex {
 
             // Insert at each layer
             for layer in (0..=max_layer).rev() {
-                let neighbors = self.search_layer(&vector, curr_obj, self.config.ef_construction, layer);
+                let neighbors =
+                    self.search_layer(&vector, curr_obj, self.config.ef_construction, layer);
 
                 // Select M best neighbors
-                let m = if layer == 0 { self.config.m * 2 } else { self.config.m };
-                let selected: Vec<NodeId> = neighbors.iter()
-                    .take(m)
-                    .map(|c| c.node_id)
-                    .collect();
+                let m = if layer == 0 {
+                    self.config.m * 2
+                } else {
+                    self.config.m
+                };
+                let selected: Vec<NodeId> = neighbors.iter().take(m).map(|c| c.node_id).collect();
 
                 // Connect bidirectionally
                 if let Some(node) = self.nodes.get_mut(&node_id) {
@@ -225,7 +236,8 @@ impl HnswIndex {
         let candidates = self.search_layer(query, curr_obj, self.config.ef_search.max(k), 0);
 
         // Return top k
-        candidates.into_iter()
+        candidates
+            .into_iter()
             .take(k)
             .map(|c| {
                 let file_id = self.nodes[&c.node_id].file_id;
@@ -272,15 +284,27 @@ impl HnswIndex {
     }
 
     /// Search within a single layer
-    fn search_layer(&self, query: &[f32], entry: NodeId, ef: usize, layer: usize) -> Vec<Candidate> {
+    fn search_layer(
+        &self,
+        query: &[f32],
+        entry: NodeId,
+        ef: usize,
+        layer: usize,
+    ) -> Vec<Candidate> {
         let mut visited = BTreeMap::new();
         let mut candidates = BinaryHeap::new();
         let mut results = BinaryHeap::new();
 
         let entry_dist = self.distance_to(query, entry);
         visited.insert(entry, true);
-        candidates.push(Candidate { distance: entry_dist, node_id: entry });
-        results.push(Candidate { distance: -entry_dist, node_id: entry }); // Max-heap for worst result
+        candidates.push(Candidate {
+            distance: entry_dist,
+            node_id: entry,
+        });
+        results.push(Candidate {
+            distance: -entry_dist,
+            node_id: entry,
+        }); // Max-heap for worst result
 
         while let Some(current) = candidates.pop() {
             // Get worst result distance
@@ -310,8 +334,14 @@ impl HnswIndex {
                     };
 
                     if dist < worst_dist || results.len() < ef {
-                        candidates.push(Candidate { distance: dist, node_id: neighbor_id });
-                        results.push(Candidate { distance: -dist, node_id: neighbor_id });
+                        candidates.push(Candidate {
+                            distance: dist,
+                            node_id: neighbor_id,
+                        });
+                        results.push(Candidate {
+                            distance: -dist,
+                            node_id: neighbor_id,
+                        });
 
                         if results.len() > ef {
                             results.pop(); // Remove worst
@@ -322,10 +352,18 @@ impl HnswIndex {
         }
 
         // Convert results to vec (sorted by distance)
-        let mut result_vec: Vec<_> = results.into_iter()
-            .map(|c| Candidate { distance: -c.distance, node_id: c.node_id })
+        let mut result_vec: Vec<_> = results
+            .into_iter()
+            .map(|c| Candidate {
+                distance: -c.distance,
+                node_id: c.node_id,
+            })
             .collect();
-        result_vec.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(Ordering::Equal));
+        result_vec.sort_by(|a, b| {
+            a.distance
+                .partial_cmp(&b.distance)
+                .unwrap_or(Ordering::Equal)
+        });
         result_vec
     }
 

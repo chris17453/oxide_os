@@ -179,7 +179,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         // Write to all open files
         for i in 0..num_fds {
             if !fd_valid[i] {
-                continue;  // Skip files that have failed
+                continue; // Skip files that have failed
             }
 
             let write_result = write(fds[i], &buf[..bytes_read]);
@@ -187,9 +187,8 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
                 // Write failed
                 if config.output_error {
                     eprints("tee: write error to '");
-                    let path_str = unsafe {
-                        core::str::from_utf8_unchecked(&paths[i][..path_lens[i]])
-                    };
+                    let path_str =
+                        unsafe { core::str::from_utf8_unchecked(&paths[i][..path_lens[i]]) };
                     prints(path_str);
                     eprintlns("'");
                 }
@@ -210,9 +209,5 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         }
     }
 
-    if had_errors {
-        1
-    } else {
-        0
-    }
+    if had_errors { 1 } else { 0 }
 }

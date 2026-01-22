@@ -21,13 +21,13 @@
 
 extern crate alloc;
 
-pub mod io;
-pub mod fs;
-pub mod env;
 pub mod collections;
+pub mod env;
+pub mod fs;
+pub mod io;
 pub mod process;
-pub mod thread;
 pub mod sync;
+pub mod thread;
 
 // Re-export common types from alloc
 pub mod string {
@@ -48,10 +48,10 @@ pub mod fmt {
 
 // Prelude - commonly used items
 pub mod prelude {
-    pub use crate::io::{Read, Write, BufRead};
+    pub use crate::boxed::Box;
+    pub use crate::io::{BufRead, Read, Write};
     pub use crate::string::{String, ToString};
     pub use crate::vec::Vec;
-    pub use crate::boxed::Box;
     pub use alloc::format;
 }
 

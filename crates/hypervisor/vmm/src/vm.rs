@@ -7,10 +7,8 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use spin::{Mutex, RwLock};
 
 use crate::{
-    VmmBackend, VmmResult, VmmError,
-    Vcpu, VcpuId, VcpuRegs, VcpuState,
-    GuestMemory, GuestMemoryRegion, GpaRange,
-    VirtioDevice,
+    GpaRange, GuestMemory, GuestMemoryRegion, Vcpu, VcpuId, VcpuRegs, VcpuState, VirtioDevice,
+    VmmBackend, VmmError, VmmResult,
 };
 
 /// VM identifier
@@ -112,7 +110,8 @@ impl VirtualMachine {
 
     /// Get device by type
     pub fn get_device(&self, device_type: u32) -> Option<usize> {
-        self.devices.lock()
+        self.devices
+            .lock()
             .iter()
             .position(|d| d.device_type() == device_type)
     }

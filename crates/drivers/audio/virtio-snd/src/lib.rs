@@ -11,12 +11,12 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use audio::{
+    AudioDevice, AudioDeviceInfo, AudioError, AudioResult, RingBuffer, SampleFormat, StreamConfig,
+    StreamState,
+};
 use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{AtomicU8, AtomicU64, Ordering};
-use audio::{
-    AudioDevice, AudioDeviceInfo, AudioError, AudioResult,
-    SampleFormat, StreamConfig, StreamState, RingBuffer,
-};
 use spin::Mutex;
 
 /// VirtIO sound control commands
@@ -235,7 +235,7 @@ struct VirtioSndConfig {
 
 /// PCM stream info parsed
 struct StreamInfo {
-    direction: u8,  // 0 = output, 1 = input
+    direction: u8, // 0 = output, 1 = input
     channels_min: u8,
     channels_max: u8,
     formats: u64,
@@ -398,7 +398,7 @@ impl VirtioSnd {
         self.queue_size = size;
         self.write_reg(VIRTIO_MMIO_QUEUE_NUM, size as u32);
 
-        use alloc::alloc::{alloc_zeroed, Layout};
+        use alloc::alloc::{Layout, alloc_zeroed};
 
         let desc_size = size as usize * core::mem::size_of::<VirtqDesc>();
         let desc_layout = Layout::from_size_align(desc_size, 16).unwrap();
@@ -509,7 +509,9 @@ impl VirtioSnd {
             desc0.flags = VIRTQ_DESC_F_NEXT;
             desc0.next = (desc_idx + 1) % self.queue_size;
 
-            let desc1 = &mut *self.ctrl_desc.add(((desc_idx + 1) % self.queue_size) as usize);
+            let desc1 = &mut *self
+                .ctrl_desc
+                .add(((desc_idx + 1) % self.queue_size) as usize);
             desc1.addr = resp as *mut R as u64;
             desc1.len = resp_size as u32;
             desc1.flags = VIRTQ_DESC_F_WRITE;
@@ -623,7 +625,10 @@ impl AudioDevice for VirtioSnd {
     }
 
     fn write_available(&self) -> usize {
-        self.buffer.as_ref().map(|b| b.write_available()).unwrap_or(0)
+        self.buffer
+            .as_ref()
+            .map(|b| b.write_available())
+            .unwrap_or(0)
     }
 
     fn read_available(&self) -> usize {

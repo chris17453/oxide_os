@@ -1,9 +1,9 @@
 //! Embedding model abstraction
 
+use crate::tokenizer::Tokenizer;
+use crate::{EmbedError, EmbedResult, EMBEDDING_DIM};
 use alloc::string::String;
 use alloc::vec::Vec;
-use crate::{EmbedResult, EmbedError, EMBEDDING_DIM};
-use crate::tokenizer::Tokenizer;
 
 /// Square root approximation for no_std
 fn sqrt_f32(x: f32) -> f32 {

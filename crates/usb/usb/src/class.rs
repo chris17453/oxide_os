@@ -1,7 +1,7 @@
 //! USB Class Driver Framework
 
-use alloc::sync::Arc;
 use crate::{UsbDevice, UsbResult};
+use alloc::sync::Arc;
 
 /// USB class driver trait
 pub trait UsbClassDriver: Send + Sync {

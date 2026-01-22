@@ -4,7 +4,7 @@
 use alloc::boxed::Box;
 
 use crate::error::Result;
-use crate::graphics_backend::{GraphicsBackend, AsciiBackend};
+use crate::graphics_backend::{AsciiBackend, GraphicsBackend};
 
 /// Screen manager that wraps a graphics backend
 pub struct Screen {

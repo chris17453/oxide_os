@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use spin::Mutex;
 
 use crate::hba::HbaPort;
-use crate::{ata_cmd, fis_type, pxcmd, pxis, signature, CommandHeader, FisRegH2D, PrdtEntry};
+use crate::{CommandHeader, FisRegH2D, PrdtEntry, ata_cmd, fis_type, pxcmd, pxis, signature};
 
 /// Port type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -144,8 +144,8 @@ impl NfsMountOptions {
             read_only: false,
             timeout: Duration::from_secs(60),
             retries: 3,
-            rsize: 1048576,  // 1MB
-            wsize: 1048576,  // 1MB
+            rsize: 1048576, // 1MB
+            wsize: 1048576, // 1MB
             tcp: true,
             hard: true,
             intr: true,
@@ -505,7 +505,12 @@ impl NfsSession {
     }
 
     /// Create file
-    pub fn create(&self, dir_handle: &NfsHandle, name: &str, mode: u32) -> Result<(NfsHandle, NfsAttr), NfsError> {
+    pub fn create(
+        &self,
+        dir_handle: &NfsHandle,
+        name: &str,
+        mode: u32,
+    ) -> Result<(NfsHandle, NfsAttr), NfsError> {
         if !*self.connected.lock() {
             return Err(NfsError::NotConnected);
         }
@@ -542,7 +547,12 @@ impl NfsSession {
     }
 
     /// Create directory
-    pub fn mkdir(&self, dir_handle: &NfsHandle, name: &str, mode: u32) -> Result<(NfsHandle, NfsAttr), NfsError> {
+    pub fn mkdir(
+        &self,
+        dir_handle: &NfsHandle,
+        name: &str,
+        mode: u32,
+    ) -> Result<(NfsHandle, NfsAttr), NfsError> {
         if !*self.connected.lock() {
             return Err(NfsError::NotConnected);
         }

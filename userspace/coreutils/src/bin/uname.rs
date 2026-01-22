@@ -13,11 +13,11 @@ use libc::*;
 
 /// System information (utsname structure)
 struct UtsName {
-    sysname: &'static str,    // OS name
-    nodename: &'static str,   // Network node hostname
-    release: &'static str,    // OS release
-    version: &'static str,    // OS version
-    machine: &'static str,    // Hardware type
+    sysname: &'static str,  // OS name
+    nodename: &'static str, // Network node hostname
+    release: &'static str,  // OS release
+    version: &'static str,  // OS version
+    machine: &'static str,  // Hardware type
 }
 
 impl UtsName {
@@ -57,8 +57,12 @@ impl UnameConfig {
 
     /// Check if any flag is set
     fn any_set(&self) -> bool {
-        self.show_sysname || self.show_nodename || self.show_release ||
-        self.show_version || self.show_machine || self.show_os
+        self.show_sysname
+            || self.show_nodename
+            || self.show_release
+            || self.show_version
+            || self.show_machine
+            || self.show_os
     }
 
     /// Set all flags (for -a option)
@@ -176,7 +180,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         if !first {
             putchar(b' ');
         }
-        prints("OXIDE");  // Operating system name
+        prints("OXIDE"); // Operating system name
         first = false;
     }
 

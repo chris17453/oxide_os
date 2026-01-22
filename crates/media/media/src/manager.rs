@@ -7,8 +7,8 @@ use alloc::vec::Vec;
 use spin::RwLock;
 
 use crate::{
-    DeviceId, DeviceTrustDb, MediaError, MediaPolicy, MountMode, MountOptions,
-    TrustLevel, UsbDevice, UsbEvent, UsbEventType, UsbId, UsbMonitor,
+    DeviceId, DeviceTrustDb, MediaError, MediaPolicy, MountMode, MountOptions, TrustLevel,
+    UsbDevice, UsbEvent, UsbEventType, UsbId, UsbMonitor,
 };
 
 /// Active mount information
@@ -146,7 +146,9 @@ impl MediaManager {
         let usb_id = device.id();
 
         // Store device
-        self.usb_devices.write().insert(path.clone(), device.clone());
+        self.usb_devices
+            .write()
+            .insert(path.clone(), device.clone());
 
         // Check if it's a mass storage device
         if !device.is_mass_storage() {
@@ -178,10 +180,14 @@ impl MediaManager {
         );
 
         // Store mount
-        self.mounts.write().insert(mount_point.clone(), mount.clone());
+        self.mounts
+            .write()
+            .insert(mount_point.clone(), mount.clone());
 
         // Update trust DB (record seeing this device)
-        let _ = self.trust_db.set_usb_trust(&usb_id, device.display_name(), trust, timestamp);
+        let _ = self
+            .trust_db
+            .set_usb_trust(&usb_id, device.display_name(), trust, timestamp);
 
         // Notify handlers
         let handlers = self.handlers.read();

@@ -1,10 +1,10 @@
 //! Network Namespace
 
+use crate::{NsError, NsResult, alloc_ns_id};
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use spin::RwLock;
-use crate::{alloc_ns_id, NsResult, NsError};
 
 /// Network device in namespace
 #[derive(Clone)]
@@ -156,7 +156,8 @@ impl NetNamespace {
 
     /// Get device by index
     pub fn get_device(&self, ifindex: u32) -> Option<NetDevice> {
-        self.devices.read()
+        self.devices
+            .read()
             .iter()
             .find(|d| d.ifindex == ifindex)
             .cloned()
@@ -164,10 +165,7 @@ impl NetNamespace {
 
     /// Get device by name
     pub fn get_device_by_name(&self, name: &str) -> Option<NetDevice> {
-        self.devices.read()
-            .iter()
-            .find(|d| d.name == name)
-            .cloned()
+        self.devices.read().iter().find(|d| d.name == name).cloned()
     }
 
     /// List all devices

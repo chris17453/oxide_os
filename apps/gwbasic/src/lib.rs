@@ -17,23 +17,23 @@ pub mod platform;
 #[macro_use]
 pub mod console;
 
-pub mod lexer;
-pub mod parser;
-pub mod interpreter;
 pub mod error;
-pub mod value;
+pub mod fileio;
 pub mod functions;
 pub mod graphics;
 pub mod graphics_backend;
-pub mod fileio;
+pub mod interpreter;
+pub mod lexer;
+pub mod parser;
+pub mod value;
 
 pub use error::{Error, Result};
+pub use fileio::{FileManager, FileMode};
+pub use graphics::Screen;
 pub use interpreter::Interpreter;
 pub use lexer::{Lexer, Token, TokenType};
-pub use parser::{Parser, AstNode};
+pub use parser::{AstNode, Parser};
 pub use value::Value;
-pub use graphics::Screen;
-pub use fileio::{FileManager, FileMode};
 
 /// Version information for the GW-BASIC interpreter
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

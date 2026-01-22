@@ -19,7 +19,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     // Parse arguments (format: dd if=input of=output bs=512 count=10)
     for i in 1..argc {
         let arg = unsafe { cstr_to_str(*argv.add(i as usize)) };
-        
+
         if let Some(val) = arg.strip_prefix("if=") {
             input_file = Some(val);
         } else if let Some(val) = arg.strip_prefix("of=") {
@@ -68,12 +68,12 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
             eprintlns("'");
             return 1;
         }
-        
+
         // Skip blocks if requested
         if skip > 0 {
             lseek(fd, (skip * block_size) as i64, SEEK_SET);
         }
-        
+
         fd
     } else {
         STDIN_FILENO
@@ -91,12 +91,12 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
             }
             return 1;
         }
-        
+
         // Seek if requested
         if seek > 0 {
             lseek(fd, (seek * block_size) as i64, SEEK_SET);
         }
-        
+
         fd
     } else {
         STDOUT_FILENO
@@ -105,7 +105,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     // Allocate buffer on stack (limited size)
     let mut buffer = [0u8; 4096];
     let buf_size = if block_size > 4096 { 4096 } else { block_size };
-    
+
     let mut blocks_copied = 0usize;
     let mut bytes_copied = 0usize;
 

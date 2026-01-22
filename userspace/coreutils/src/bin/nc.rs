@@ -12,12 +12,11 @@
 #![no_std]
 #![no_main]
 
-use libc::*;
 use libc::socket::{
-    socket, bind, listen, accept, connect, recv, send, shutdown,
-    af, sock, ipproto, shut, sockaddr_in_octets, SOCKADDR_IN_SIZE,
-    SockAddrIn,
+    SOCKADDR_IN_SIZE, SockAddrIn, accept, af, bind, connect, ipproto, listen, recv, send, shut,
+    shutdown, sock, sockaddr_in_octets, socket,
 };
+use libc::*;
 
 const MAX_BACKLOG: i32 = 5;
 
@@ -25,7 +24,7 @@ struct NcConfig {
     listen_mode: bool,
     use_udp: bool,
     verbose: bool,
-    zero_io: bool,  // Port scanning mode
+    zero_io: bool, // Port scanning mode
 }
 
 impl NcConfig {
@@ -159,8 +158,16 @@ fn transfer_data(sock_fd: i32) {
 
 /// Run in client mode (connect to remote)
 fn run_client(config: &NcConfig, ip: (u8, u8, u8, u8), port: u16) -> i32 {
-    let sock_type = if config.use_udp { sock::DGRAM } else { sock::STREAM };
-    let protocol = if config.use_udp { ipproto::UDP } else { ipproto::TCP };
+    let sock_type = if config.use_udp {
+        sock::DGRAM
+    } else {
+        sock::STREAM
+    };
+    let protocol = if config.use_udp {
+        ipproto::UDP
+    } else {
+        ipproto::TCP
+    };
 
     let sock = socket(af::INET, sock_type, protocol);
     if sock < 0 {
@@ -217,8 +224,16 @@ fn run_client(config: &NcConfig, ip: (u8, u8, u8, u8), port: u16) -> i32 {
 
 /// Run in server mode (listen for incoming)
 fn run_server(config: &NcConfig, port: u16) -> i32 {
-    let sock_type = if config.use_udp { sock::DGRAM } else { sock::STREAM };
-    let protocol = if config.use_udp { ipproto::UDP } else { ipproto::TCP };
+    let sock_type = if config.use_udp {
+        sock::DGRAM
+    } else {
+        sock::STREAM
+    };
+    let protocol = if config.use_udp {
+        ipproto::UDP
+    } else {
+        ipproto::TCP
+    };
 
     let sock = socket(af::INET, sock_type, protocol);
     if sock < 0 {

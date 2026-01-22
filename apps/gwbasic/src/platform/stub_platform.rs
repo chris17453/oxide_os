@@ -6,7 +6,7 @@
 
 extern crate alloc;
 
-use super::{Console, FileSystem, Graphics, System, FileOpenMode, FileHandle};
+use super::{Console, FileHandle, FileOpenMode, FileSystem, Graphics, System};
 use alloc::string::String;
 
 /// Stub console that panics on any operation
@@ -173,7 +173,10 @@ impl System for StubSystem {
             self.random_state = s as u32;
         }
         // Simple LCG
-        self.random_state = self.random_state.wrapping_mul(1103515245).wrapping_add(12345);
+        self.random_state = self
+            .random_state
+            .wrapping_mul(1103515245)
+            .wrapping_add(12345);
         (self.random_state as f32 / u32::MAX as f32)
     }
 }

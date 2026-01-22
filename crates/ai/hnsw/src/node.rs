@@ -1,7 +1,7 @@
 //! HNSW graph nodes
 
-use alloc::vec::Vec;
 use crate::FileId;
+use alloc::vec::Vec;
 
 /// Node identifier in the graph
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -24,7 +24,13 @@ pub struct Node {
 
 impl Node {
     /// Create a new node
-    pub fn new(id: NodeId, file_id: FileId, vector: Vec<f32>, max_layer: usize, m_max: usize) -> Self {
+    pub fn new(
+        id: NodeId,
+        file_id: FileId,
+        vector: Vec<f32>,
+        max_layer: usize,
+        m_max: usize,
+    ) -> Self {
         let mut connections = Vec::with_capacity(max_layer + 1);
         for _ in 0..=max_layer {
             connections.push(Vec::with_capacity(m_max));

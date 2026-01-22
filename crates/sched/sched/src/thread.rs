@@ -1,7 +1,7 @@
 //! Kernel thread implementation
 
 use os_core::VirtAddr;
-use sched_traits::{Context, Priority, Thread, ThreadId, ThreadState, DEFAULT_PRIORITY};
+use sched_traits::{Context, DEFAULT_PRIORITY, Priority, Thread, ThreadId, ThreadState};
 
 /// Kernel thread structure
 ///

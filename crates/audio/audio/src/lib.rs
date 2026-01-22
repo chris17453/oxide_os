@@ -6,15 +6,15 @@
 
 extern crate alloc;
 
+pub mod buffer;
 pub mod device;
 pub mod format;
 pub mod mixer;
-pub mod buffer;
 
-pub use device::{AudioDevice, AudioDeviceInfo, StreamConfig, StreamState};
-pub use format::{SampleFormat, AudioFormat, ChannelLayout};
-pub use mixer::{Mixer, MixerChannel};
 pub use buffer::RingBuffer;
+pub use device::{AudioDevice, AudioDeviceInfo, StreamConfig, StreamState};
+pub use format::{AudioFormat, ChannelLayout, SampleFormat};
+pub use mixer::{Mixer, MixerChannel};
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -87,5 +87,9 @@ pub fn set_master_volume(volume: u8) {
 
 /// Get master volume
 pub fn get_master_volume() -> u8 {
-    MIXER.lock().as_ref().map(|m| m.master_volume()).unwrap_or(100)
+    MIXER
+        .lock()
+        .as_ref()
+        .map(|m| m.master_volume())
+        .unwrap_or(100)
 }

@@ -3,7 +3,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use alloc::vec::Vec;
-use vmm::{VmmResult, VmmError};
+use vmm::{VmmError, VmmResult};
 
 /// EPT memory type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,11 +42,23 @@ impl EptEntry {
     }
 
     /// Create entry for 4KB page
-    pub fn page_4k(phys_addr: u64, read: bool, write: bool, execute: bool, mem_type: EptMemoryType) -> Self {
+    pub fn page_4k(
+        phys_addr: u64,
+        read: bool,
+        write: bool,
+        execute: bool,
+        mem_type: EptMemoryType,
+    ) -> Self {
         let mut entry = phys_addr & flags::ADDR_MASK;
-        if read { entry |= flags::READ; }
-        if write { entry |= flags::WRITE; }
-        if execute { entry |= flags::EXECUTE; }
+        if read {
+            entry |= flags::READ;
+        }
+        if write {
+            entry |= flags::WRITE;
+        }
+        if execute {
+            entry |= flags::EXECUTE;
+        }
         entry |= (mem_type as u64) << flags::MEMORY_TYPE_SHIFT;
         EptEntry(entry)
     }
@@ -107,7 +119,9 @@ impl EptTable {
     }
 
     fn set_entry(&mut self, index: usize, entry: EptEntry) {
-        unsafe { *self.entries.add(index) = entry; }
+        unsafe {
+            *self.entries.add(index) = entry;
+        }
     }
 }
 
@@ -152,7 +166,15 @@ impl Ept {
     }
 
     /// Map guest physical address to host physical address
-    pub fn map(&mut self, gpa: u64, hpa: u64, size: u64, read: bool, write: bool, execute: bool) -> VmmResult<()> {
+    pub fn map(
+        &mut self,
+        gpa: u64,
+        hpa: u64,
+        size: u64,
+        read: bool,
+        write: bool,
+        execute: bool,
+    ) -> VmmResult<()> {
         let mem_type = EptMemoryType::WriteBack;
 
         let mut offset = 0u64;
@@ -167,7 +189,15 @@ impl Ept {
     }
 
     /// Map a single 4KB page
-    fn map_4k(&mut self, gpa: u64, hpa: u64, read: bool, write: bool, execute: bool, mem_type: EptMemoryType) -> VmmResult<()> {
+    fn map_4k(
+        &mut self,
+        gpa: u64,
+        hpa: u64,
+        read: bool,
+        write: bool,
+        execute: bool,
+        mem_type: EptMemoryType,
+    ) -> VmmResult<()> {
         let pml4_idx = ((gpa >> 39) & 0x1FF) as usize;
         let pdpt_idx = ((gpa >> 30) & 0x1FF) as usize;
         let pd_idx = ((gpa >> 21) & 0x1FF) as usize;
@@ -176,7 +206,8 @@ impl Ept {
         // Ensure PDPT exists
         if !self.pml4.entry(pml4_idx).is_present() {
             let table = EptTable::new()?;
-            self.pml4.set_entry(pml4_idx, EptEntry::table(table.phys_addr));
+            self.pml4
+                .set_entry(pml4_idx, EptEntry::table(table.phys_addr));
             self.tables.push(table);
         }
 
@@ -206,13 +237,17 @@ impl Ept {
         let pt_idx_in_tables = self.find_table_index(pd_entry.phys_addr())?;
 
         // Set PT entry
-        self.tables[pt_idx_in_tables].set_entry(pt_idx, EptEntry::page_4k(hpa, read, write, execute, mem_type));
+        self.tables[pt_idx_in_tables].set_entry(
+            pt_idx,
+            EptEntry::page_4k(hpa, read, write, execute, mem_type),
+        );
 
         Ok(())
     }
 
     fn find_table_index(&self, phys_addr: u64) -> VmmResult<usize> {
-        self.tables.iter()
+        self.tables
+            .iter()
             .position(|t| t.phys_addr == phys_addr)
             .ok_or(VmmError::InvalidMemory)
     }

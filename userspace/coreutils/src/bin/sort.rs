@@ -83,11 +83,7 @@ fn skip_blanks(s: &[u8]) -> &[u8] {
 
 /// Convert byte to lowercase
 fn to_lower(c: u8) -> u8 {
-    if c >= b'A' && c <= b'Z' {
-        c + 32
-    } else {
-        c
-    }
+    if c >= b'A' && c <= b'Z' { c + 32 } else { c }
 }
 
 /// Compare strings with options
@@ -197,8 +193,12 @@ fn lines_equal(a: &[u8], b: &[u8]) -> bool {
     true
 }
 
-fn read_lines(fd: i32, lines: &mut [[u8; MAX_LINE_LEN]; MAX_LINES],
-              lens: &mut [usize; MAX_LINES], mut count: usize) -> usize {
+fn read_lines(
+    fd: i32,
+    lines: &mut [[u8; MAX_LINE_LEN]; MAX_LINES],
+    lens: &mut [usize; MAX_LINES],
+    mut count: usize,
+) -> usize {
     let mut buf = [0u8; 4096];
     let mut current_line = [0u8; MAX_LINE_LEN];
     let mut current_len = 0;
@@ -235,7 +235,12 @@ fn read_lines(fd: i32, lines: &mut [[u8; MAX_LINE_LEN]; MAX_LINES],
 }
 
 /// Check if lines are already sorted
-fn check_sorted(config: &SortConfig, lines: &[[u8; MAX_LINE_LEN]], lens: &[usize], count: usize) -> bool {
+fn check_sorted(
+    config: &SortConfig,
+    lines: &[[u8; MAX_LINE_LEN]],
+    lens: &[usize],
+    count: usize,
+) -> bool {
     for i in 0..count - 1 {
         let cmp = compare_lines(config, &lines[i][..lens[i]], &lines[i + 1][..lens[i + 1]]);
         let is_ordered = if config.reverse { cmp >= 0 } else { cmp <= 0 };
@@ -372,9 +377,11 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     // (Good enough for small inputs; could use quicksort for larger)
     for i in 0..line_count {
         for j in 0..line_count - i - 1 {
-            let cmp = compare_lines(&config,
-                                   &lines[indices[j]][..line_lens[indices[j]]],
-                                   &lines[indices[j + 1]][..line_lens[indices[j + 1]]]);
+            let cmp = compare_lines(
+                &config,
+                &lines[indices[j]][..line_lens[indices[j]]],
+                &lines[indices[j + 1]][..line_lens[indices[j + 1]]],
+            );
 
             let should_swap = if config.reverse { cmp < 0 } else { cmp > 0 };
             if should_swap {
@@ -410,8 +417,10 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         // Skip duplicates if -u flag
         if config.unique {
             if let Some(prev) = last_idx {
-                if lines_equal(&lines[prev][..line_lens[prev]],
-                              &lines[idx][..line_lens[idx]]) {
+                if lines_equal(
+                    &lines[prev][..line_lens[prev]],
+                    &lines[idx][..line_lens[idx]],
+                ) {
                     continue;
                 }
             }

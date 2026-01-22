@@ -26,9 +26,9 @@ const EM_X86_64: u16 = 0x3E;
 const PT_LOAD: u32 = 1;
 
 /// Program header flags
-const PF_X: u32 = 1;  // Execute
-const PF_W: u32 = 2;  // Write
-const PF_R: u32 = 4;  // Read
+const PF_X: u32 = 1; // Execute
+const PF_W: u32 = 2; // Write
+const PF_R: u32 = 4; // Read
 
 /// ELF64 file header
 #[repr(C)]

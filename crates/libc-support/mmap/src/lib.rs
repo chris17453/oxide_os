@@ -9,9 +9,9 @@
 
 extern crate alloc;
 
-pub mod vma;
 pub mod anonymous;
 pub mod file;
+pub mod vma;
 
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
@@ -19,9 +19,9 @@ use alloc::vec::Vec;
 use core::ffi::c_int;
 use spin::Mutex;
 
-pub use vma::{VirtualMemoryArea, VmaFlags, VmaType};
 pub use anonymous::AnonymousMapping;
 pub use file::FileMapping;
+pub use vma::{VirtualMemoryArea, VmaFlags, VmaType};
 
 /// Protection flags
 pub mod prot {
@@ -108,8 +108,8 @@ impl MmapManager {
     pub fn new() -> Self {
         MmapManager {
             vmas: BTreeMap::new(),
-            next_addr: 0x0000_7000_0000_0000, // User space hint
-            mmap_min_addr: 0x0000_1000,       // 4KB minimum
+            next_addr: 0x0000_7000_0000_0000,     // User space hint
+            mmap_min_addr: 0x0000_1000,           // 4KB minimum
             mmap_max_addr: 0x0000_7FFF_FFFF_F000, // User space maximum
         }
     }
@@ -162,7 +162,10 @@ impl MmapManager {
         let vma_type = if map_flags & flags::MAP_ANONYMOUS != 0 {
             VmaType::Anonymous
         } else {
-            VmaType::FileBacked { fd, offset: offset as u64 }
+            VmaType::FileBacked {
+                fd,
+                offset: offset as u64,
+            }
         };
 
         let vma = VirtualMemoryArea {
@@ -210,7 +213,9 @@ impl MmapManager {
         let end = addr + len;
 
         // Find all VMAs that overlap with the range
-        let overlapping: Vec<usize> = self.vmas.iter()
+        let overlapping: Vec<usize> = self
+            .vmas
+            .iter()
             .filter(|(_, vma)| vma.start < end && vma.end > addr)
             .map(|(&k, _)| k)
             .collect();
@@ -259,7 +264,9 @@ impl MmapManager {
         }
 
         // Growing
-        let can_extend = self.vmas.range((old_addr + old_size)..)
+        let can_extend = self
+            .vmas
+            .range((old_addr + old_size)..)
             .next()
             .map(|(_, next)| next.start >= old_addr + new_size)
             .unwrap_or(true);
@@ -278,7 +285,9 @@ impl MmapManager {
         }
 
         // Find new location
-        let new_addr = self.find_free_region(self.next_addr, new_size).ok_or(ENOMEM)?;
+        let new_addr = self
+            .find_free_region(self.next_addr, new_size)
+            .ok_or(ENOMEM)?;
 
         // Copy VMA to new location
         if let Some(mut vma) = self.vmas.remove(&old_addr) {
@@ -303,7 +312,9 @@ impl MmapManager {
             }
 
             // Check if region is free
-            let conflicts = self.vmas.iter()
+            let conflicts = self
+                .vmas
+                .iter()
                 .any(|(_, vma)| vma.start < addr + size && vma.end > addr);
 
             if !conflicts {
@@ -311,7 +322,11 @@ impl MmapManager {
             }
 
             // Skip to end of conflicting VMA
-            if let Some((_, vma)) = self.vmas.iter().find(|(_, vma)| vma.start < addr + size && vma.end > addr) {
+            if let Some((_, vma)) = self
+                .vmas
+                .iter()
+                .find(|(_, vma)| vma.start < addr + size && vma.end > addr)
+            {
                 addr = (vma.end + 0xFFF) & !0xFFF;
             } else {
                 addr += 0x1000;
@@ -321,14 +336,20 @@ impl MmapManager {
         // Wrap around and try from minimum
         addr = self.mmap_min_addr;
         while addr < hint && addr + size <= self.mmap_max_addr {
-            let conflicts = self.vmas.iter()
+            let conflicts = self
+                .vmas
+                .iter()
                 .any(|(_, vma)| vma.start < addr + size && vma.end > addr);
 
             if !conflicts {
                 return Some(addr);
             }
 
-            if let Some((_, vma)) = self.vmas.iter().find(|(_, vma)| vma.start < addr + size && vma.end > addr) {
+            if let Some((_, vma)) = self
+                .vmas
+                .iter()
+                .find(|(_, vma)| vma.start < addr + size && vma.end > addr)
+            {
                 addr = (vma.end + 0xFFF) & !0xFFF;
             } else {
                 addr += 0x1000;
@@ -343,7 +364,9 @@ impl MmapManager {
         let end = addr + len;
 
         // Collect VMAs to remove or modify
-        let overlapping: Vec<(usize, VirtualMemoryArea)> = self.vmas.iter()
+        let overlapping: Vec<(usize, VirtualMemoryArea)> = self
+            .vmas
+            .iter()
             .filter(|(_, vma)| vma.start < end && vma.end > addr)
             .map(|(&k, v)| (k, v.clone()))
             .collect();
@@ -369,7 +392,8 @@ impl MmapManager {
 
     /// Get VMA containing address
     pub fn find_vma(&self, addr: usize) -> Option<&VirtualMemoryArea> {
-        self.vmas.iter()
+        self.vmas
+            .iter()
             .find(|(_, vma)| vma.start <= addr && vma.end > addr)
             .map(|(_, vma)| vma)
     }

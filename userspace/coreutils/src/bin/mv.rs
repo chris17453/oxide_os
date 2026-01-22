@@ -31,7 +31,7 @@ struct MvConfig {
 impl MvConfig {
     fn new() -> Self {
         MvConfig {
-            force: true,  // Default to force
+            force: true, // Default to force
             interactive: false,
             no_clobber: false,
             verbose: false,
@@ -46,7 +46,11 @@ impl MvConfig {
     fn add_source(&mut self, s: &str) {
         if self.source_count < 64 {
             let bytes = s.as_bytes();
-            let len = if bytes.len() > MAX_PATH - 1 { MAX_PATH - 1 } else { bytes.len() };
+            let len = if bytes.len() > MAX_PATH - 1 {
+                MAX_PATH - 1
+            } else {
+                bytes.len()
+            };
             self.sources[self.source_count][..len].copy_from_slice(&bytes[..len]);
             self.source_count += 1;
         }
@@ -54,7 +58,11 @@ impl MvConfig {
 
     fn set_dest(&mut self, s: &str) {
         let bytes = s.as_bytes();
-        self.dest_len = if bytes.len() > MAX_PATH - 1 { MAX_PATH - 1 } else { bytes.len() };
+        self.dest_len = if bytes.len() > MAX_PATH - 1 {
+            MAX_PATH - 1
+        } else {
+            bytes.len()
+        };
         self.dest[..self.dest_len].copy_from_slice(&bytes[..self.dest_len]);
     }
 
@@ -92,7 +100,8 @@ fn parse_args(argc: i32, argv: *const *const u8) -> Option<MvConfig> {
     let mut arg_idx = 1;
 
     // Parse options
-    while arg_idx < argc - 1 {  // Leave at least one arg for dest
+    while arg_idx < argc - 1 {
+        // Leave at least one arg for dest
         let arg_ptr = unsafe { *argv.add(arg_idx as usize) };
         let arg = cstr_to_str(arg_ptr);
 
@@ -303,7 +312,10 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     let mut ret = 0;
 
     for i in 0..config.source_count {
-        let src_len = config.sources[i].iter().position(|&c| c == 0).unwrap_or(MAX_PATH);
+        let src_len = config.sources[i]
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(MAX_PATH);
         let src = core::str::from_utf8(&config.sources[i][..src_len]).unwrap_or("");
 
         // Determine actual destination path

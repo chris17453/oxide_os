@@ -43,7 +43,14 @@ pub struct SymbolInfo {
 
 impl SymbolInfo {
     /// Create new symbol info
-    pub fn new(name: String, offset: usize, size: usize, binding: SymbolBinding, sym_type: SymbolType, section: u16) -> Self {
+    pub fn new(
+        name: String,
+        offset: usize,
+        size: usize,
+        binding: SymbolBinding,
+        sym_type: SymbolType,
+        section: u16,
+    ) -> Self {
         SymbolInfo {
             name,
             offset,
@@ -133,7 +140,9 @@ impl SymbolTable {
 
     /// Get all exported symbols
     pub fn exported(&self) -> impl Iterator<Item = &SymbolInfo> {
-        self.by_name.values().filter(|s| s.is_exported() && s.is_defined())
+        self.by_name
+            .values()
+            .filter(|s| s.is_exported() && s.is_defined())
     }
 }
 
@@ -152,9 +161,7 @@ pub struct SymbolResolver {
 impl SymbolResolver {
     /// Create new resolver
     pub fn new() -> Self {
-        SymbolResolver {
-            tables: Vec::new(),
-        }
+        SymbolResolver { tables: Vec::new() }
     }
 
     /// Add a symbol table to the search

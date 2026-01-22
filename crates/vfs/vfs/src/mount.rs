@@ -134,9 +134,7 @@ impl VFS {
         }
 
         let mut mounts = self.mounts.write();
-        mounts
-            .remove(mount_point)
-            .ok_or(VfsError::NotFound)?;
+        mounts.remove(mount_point).ok_or(VfsError::NotFound)?;
         Ok(())
     }
 
@@ -165,9 +163,7 @@ impl VFS {
             let remaining = if mp == "/" {
                 path.to_string()
             } else {
-                path.strip_prefix(mp.as_str())
-                    .unwrap_or(path)
-                    .to_string()
+                path.strip_prefix(mp.as_str()).unwrap_or(path).to_string()
             };
             (mount.clone(), remaining)
         })
@@ -178,9 +174,7 @@ impl VFS {
         let normalized = Path::new(path).normalize();
         let path_str = normalized.to_string();
 
-        let (mount, remaining) = self
-            .find_mount(&path_str)
-            .ok_or(VfsError::NotFound)?;
+        let (mount, remaining) = self.find_mount(&path_str).ok_or(VfsError::NotFound)?;
 
         let mut current = mount.root().clone();
 

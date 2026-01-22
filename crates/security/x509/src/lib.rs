@@ -287,9 +287,10 @@ pub fn verify_chain(
     // Find issuer
     let issuer = if cert.is_self_signed() {
         // Check against trust anchors
-        if trust_anchors.iter().any(|ta| {
-            ta.subject.display() == cert.subject.display()
-        }) {
+        if trust_anchors
+            .iter()
+            .any(|ta| ta.subject.display() == cert.subject.display())
+        {
             return Ok(());
         }
         return Err(X509Error::ChainInvalid);

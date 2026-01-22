@@ -1,11 +1,11 @@
 //! IPC Namespace (System V IPC)
 
+use crate::{NsError, NsResult, alloc_ns_id};
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
 use spin::RwLock;
-use crate::{alloc_ns_id, NsResult, NsError};
 
 /// IPC key type
 pub type IpcKey = i32;
@@ -130,12 +130,20 @@ impl IpcNamespace {
     // Shared Memory operations
 
     /// Create shared memory segment
-    pub fn shmget(&self, key: IpcKey, size: usize, flags: u32, uid: u32, gid: u32) -> NsResult<IpcId> {
+    pub fn shmget(
+        &self,
+        key: IpcKey,
+        size: usize,
+        flags: u32,
+        uid: u32,
+        gid: u32,
+    ) -> NsResult<IpcId> {
         // Check if key already exists (unless IPC_PRIVATE)
         if key != 0 {
             let segments = self.shm_segments.read();
             if let Some(seg) = segments.values().find(|s| s.key == key) {
-                if flags & 0x200 != 0 { // IPC_EXCL
+                if flags & 0x200 != 0 {
+                    // IPC_EXCL
                     return Err(NsError::InvalidOperation);
                 }
                 return Ok(seg.id);
@@ -176,7 +184,14 @@ impl IpcNamespace {
     // Semaphore operations
 
     /// Create semaphore set
-    pub fn semget(&self, key: IpcKey, nsems: u32, flags: u32, uid: u32, gid: u32) -> NsResult<IpcId> {
+    pub fn semget(
+        &self,
+        key: IpcKey,
+        nsems: u32,
+        flags: u32,
+        uid: u32,
+        gid: u32,
+    ) -> NsResult<IpcId> {
         if key != 0 {
             let sets = self.sem_sets.read();
             if let Some(set) = sets.values().find(|s| s.key == key) {

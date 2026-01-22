@@ -1,7 +1,7 @@
 //! Lexical analyzer for GW-BASIC
 
 #[cfg(not(feature = "std"))]
-use alloc::{string::String, vec::Vec, format, string::ToString};
+use alloc::{format, string::String, string::ToString, vec::Vec};
 
 use crate::error::{Error, Result};
 
@@ -12,7 +12,7 @@ pub enum TokenType {
     Integer(i32),
     Float(f64),
     String(String),
-    
+
     // Keywords - Control Flow
     Print,
     Let,
@@ -31,7 +31,7 @@ pub enum TokenType {
     End,
     Stop,
     Cont,
-    
+
     // Keywords - I/O
     Input,
     LineInput,
@@ -43,7 +43,7 @@ pub enum TokenType {
     Run,
     List,
     New,
-    
+
     // Keywords - Data
     Dim,
     Rem,
@@ -54,12 +54,12 @@ pub enum TokenType {
     Defint,
     Defsng,
     Defdbl,
-    
+
     // Keywords - Array/Memory
     Erase,
     Clear,
     Swap,
-    
+
     // Keywords - Screen/Graphics
     Cls,
     Locate,
@@ -76,12 +76,12 @@ pub enum TokenType {
     Draw,
     Get,
     Put,
-    
+
     // Keywords - Sound
     Beep,
     Sound,
     Play,
-    
+
     // Keywords - System
     Key,
     On,
@@ -103,7 +103,7 @@ pub enum TokenType {
     Option,
     Base,
     Palette,
-    
+
     // Keywords - File Operations
     Files,
     Kill,
@@ -116,20 +116,20 @@ pub enum TokenType {
     Reset,
     Using,
     As,
-    ForMode,   // FOR in OPEN statement
+    ForMode, // FOR in OPEN statement
     Append,
     Random,
     Output,
     Binary,
-    
+
     // Keywords - Error Handling
     Error,
     Resume,
-    
+
     // Keywords - Functions (can also be identifiers)
     Def,
     Fn,
-    
+
     // Keywords - Program Control
     Auto,
     Delete,
@@ -137,13 +137,13 @@ pub enum TokenType {
     Edit,
     Tron,
     Troff,
-    
+
     // Operators
     Plus,
     Minus,
     Multiply,
     Divide,
-    IntDivide,     // Backslash
+    IntDivide, // Backslash
     Mod,
     Power,
     Equal,
@@ -158,18 +158,18 @@ pub enum TokenType {
     Xor,
     Eqv,
     Imp,
-    
+
     // Delimiters
     LeftParen,
     RightParen,
     Comma,
     Colon,
     Semicolon,
-    Dollar,        // For string variables
-    Percent,       // For integer variables
-    Exclamation,   // For single precision
-    Hash,          // For double precision or file numbers
-    
+    Dollar,      // For string variables
+    Percent,     // For integer variables
+    Exclamation, // For single precision
+    Hash,        // For double precision or file numbers
+
     // Other
     Identifier(String),
     LineNumber(u32),
@@ -187,7 +187,11 @@ pub struct Token {
 
 impl Token {
     pub fn new(token_type: TokenType, line: usize, column: usize) -> Self {
-        Token { token_type, line, column }
+        Token {
+            token_type,
+            line,
+            column,
+        }
     }
 }
 
@@ -244,22 +248,70 @@ impl Lexer {
 
         // Operators and delimiters
         let token_type = match ch {
-            '+' => { self.advance(); TokenType::Plus }
-            '-' => { self.advance(); TokenType::Minus }
-            '*' => { self.advance(); TokenType::Multiply }
-            '/' => { self.advance(); TokenType::Divide }
-            '\\' => { self.advance(); TokenType::IntDivide }
-            '^' => { self.advance(); TokenType::Power }
-            '(' => { self.advance(); TokenType::LeftParen }
-            ')' => { self.advance(); TokenType::RightParen }
-            ',' => { self.advance(); TokenType::Comma }
-            ':' => { self.advance(); TokenType::Colon }
-            ';' => { self.advance(); TokenType::Semicolon }
-            '$' => { self.advance(); TokenType::Dollar }
-            '%' => { self.advance(); TokenType::Percent }
-            '!' => { self.advance(); TokenType::Exclamation }
-            '#' => { self.advance(); TokenType::Hash }
-            '=' => { self.advance(); TokenType::Equal }
+            '+' => {
+                self.advance();
+                TokenType::Plus
+            }
+            '-' => {
+                self.advance();
+                TokenType::Minus
+            }
+            '*' => {
+                self.advance();
+                TokenType::Multiply
+            }
+            '/' => {
+                self.advance();
+                TokenType::Divide
+            }
+            '\\' => {
+                self.advance();
+                TokenType::IntDivide
+            }
+            '^' => {
+                self.advance();
+                TokenType::Power
+            }
+            '(' => {
+                self.advance();
+                TokenType::LeftParen
+            }
+            ')' => {
+                self.advance();
+                TokenType::RightParen
+            }
+            ',' => {
+                self.advance();
+                TokenType::Comma
+            }
+            ':' => {
+                self.advance();
+                TokenType::Colon
+            }
+            ';' => {
+                self.advance();
+                TokenType::Semicolon
+            }
+            '$' => {
+                self.advance();
+                TokenType::Dollar
+            }
+            '%' => {
+                self.advance();
+                TokenType::Percent
+            }
+            '!' => {
+                self.advance();
+                TokenType::Exclamation
+            }
+            '#' => {
+                self.advance();
+                TokenType::Hash
+            }
+            '=' => {
+                self.advance();
+                TokenType::Equal
+            }
             '<' => {
                 self.advance();
                 if !self.is_at_end() && self.current_char() == '=' {
@@ -289,7 +341,10 @@ impl Lexer {
                 return Ok(token);
             }
             _ => {
-                return Err(Error::SyntaxError(format!("Unexpected character: '{}'", ch)));
+                return Err(Error::SyntaxError(format!(
+                    "Unexpected character: '{}'",
+                    ch
+                )));
             }
         };
 
@@ -330,10 +385,15 @@ impl Lexer {
             self.advance();
         }
 
-        let num: u32 = num_str.parse()
+        let num: u32 = num_str
+            .parse()
             .map_err(|_| Error::SyntaxError(format!("Invalid line number: {}", num_str)))?;
 
-        Ok(Token::new(TokenType::LineNumber(num), start_line, start_column))
+        Ok(Token::new(
+            TokenType::LineNumber(num),
+            start_line,
+            start_column,
+        ))
     }
 
     fn read_number(&mut self) -> Result<Token> {
@@ -357,11 +417,13 @@ impl Lexer {
         }
 
         let token_type = if is_float {
-            let val: f64 = num_str.parse()
+            let val: f64 = num_str
+                .parse()
                 .map_err(|_| Error::SyntaxError(format!("Invalid float: {}", num_str)))?;
             TokenType::Float(val)
         } else {
-            let val: i32 = num_str.parse()
+            let val: i32 = num_str
+                .parse()
                 .map_err(|_| Error::SyntaxError(format!("Invalid integer: {}", num_str)))?;
             TokenType::Integer(val)
         };
@@ -372,7 +434,7 @@ impl Lexer {
     fn read_string(&mut self) -> Result<Token> {
         let start_line = self.line;
         let start_column = self.column;
-        
+
         self.advance(); // Skip opening quote
         let mut string = String::new();
 
@@ -386,7 +448,11 @@ impl Lexer {
         }
 
         self.advance(); // Skip closing quote
-        Ok(Token::new(TokenType::String(string), start_line, start_column))
+        Ok(Token::new(
+            TokenType::String(string),
+            start_line,
+            start_column,
+        ))
     }
 
     fn read_identifier(&mut self) -> Result<Token> {
@@ -423,7 +489,7 @@ impl Lexer {
             "END" => TokenType::End,
             "STOP" => TokenType::Stop,
             "CONT" => TokenType::Cont,
-            
+
             // I/O
             "INPUT" => TokenType::Input,
             "WRITE" => TokenType::Write,
@@ -435,7 +501,7 @@ impl Lexer {
             "RUN" => TokenType::Run,
             "LIST" => TokenType::List,
             "NEW" => TokenType::New,
-            
+
             // Data
             "DIM" => TokenType::Dim,
             "REM" => TokenType::Rem,
@@ -446,12 +512,12 @@ impl Lexer {
             "DEFINT" => TokenType::Defint,
             "DEFSNG" => TokenType::Defsng,
             "DEFDBL" => TokenType::Defdbl,
-            
+
             // Array/Memory
             "ERASE" => TokenType::Erase,
             "CLEAR" => TokenType::Clear,
             "SWAP" => TokenType::Swap,
-            
+
             // Screen/Graphics
             "CLS" => TokenType::Cls,
             "LOCATE" => TokenType::Locate,
@@ -467,12 +533,12 @@ impl Lexer {
             "DRAW" => TokenType::Draw,
             "GET" => TokenType::Get,
             "PUT" => TokenType::Put,
-            
+
             // Sound
             "BEEP" => TokenType::Beep,
             "SOUND" => TokenType::Sound,
             "PLAY" => TokenType::Play,
-            
+
             // System
             "KEY" => TokenType::Key,
             "ON" => TokenType::On,
@@ -494,7 +560,7 @@ impl Lexer {
             "OPTION" => TokenType::Option,
             "BASE" => TokenType::Base,
             "PALETTE" => TokenType::Palette,
-            
+
             // File Operations
             "FILES" => TokenType::Files,
             "KILL" => TokenType::Kill,
@@ -511,15 +577,15 @@ impl Lexer {
             "RANDOM" => TokenType::Random,
             "OUTPUT" => TokenType::Output,
             "BINARY" => TokenType::Binary,
-            
+
             // Error Handling
             "ERROR" => TokenType::Error,
             "RESUME" => TokenType::Resume,
-            
+
             // Functions
             "DEF" => TokenType::Def,
             "FN" => TokenType::Fn,
-            
+
             // Program Control
             "AUTO" => TokenType::Auto,
             "DELETE" => TokenType::Delete,
@@ -527,7 +593,7 @@ impl Lexer {
             "EDIT" => TokenType::Edit,
             "TRON" => TokenType::Tron,
             "TROFF" => TokenType::Troff,
-            
+
             // Logical Operators
             "AND" => TokenType::And,
             "OR" => TokenType::Or,
@@ -536,7 +602,7 @@ impl Lexer {
             "EQV" => TokenType::Eqv,
             "IMP" => TokenType::Imp,
             "MOD" => TokenType::Mod,
-            
+
             _ => TokenType::Identifier(ident),
         };
 

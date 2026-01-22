@@ -27,7 +27,9 @@ pub fn setup_page_tables(kernel_phys: u64, kernel_size: u64) -> u64 {
     let pml4 = pml4_phys as *mut [u64; ENTRIES_PER_TABLE];
 
     // Zero the PML4
-    unsafe { ptr::write_bytes(pml4, 0, 1); }
+    unsafe {
+        ptr::write_bytes(pml4, 0, 1);
+    }
 
     // Set up identity mapping for first 4GB using 2MB huge pages
     // This allows bootloader code to continue running after CR3 switch
@@ -54,7 +56,9 @@ fn setup_identity_mapping(pml4_phys: u64) {
     }
 
     let pdpt = pdpt_phys as *mut [u64; ENTRIES_PER_TABLE];
-    unsafe { ptr::write_bytes(pdpt, 0, 1); }
+    unsafe {
+        ptr::write_bytes(pdpt, 0, 1);
+    }
 
     // Map first 4GB with 1GB huge pages (PDPT entries)
     // Note: 1GB pages require PDPE.PS bit, which we use here
@@ -81,7 +85,9 @@ fn setup_physical_map(pml4_phys: u64) {
     }
 
     let pdpt = pdpt_phys as *mut [u64; ENTRIES_PER_TABLE];
-    unsafe { ptr::write_bytes(pdpt, 0, 1); }
+    unsafe {
+        ptr::write_bytes(pdpt, 0, 1);
+    }
 
     // Map first 4GB with 1GB huge pages
     for i in 0..4 {
@@ -107,7 +113,9 @@ fn setup_kernel_mapping(pml4_phys: u64, kernel_phys: u64, kernel_size: u64) {
     }
 
     let pdpt = pdpt_phys as *mut [u64; ENTRIES_PER_TABLE];
-    unsafe { ptr::write_bytes(pdpt, 0, 1); }
+    unsafe {
+        ptr::write_bytes(pdpt, 0, 1);
+    }
 
     // PDPT index for KERNEL_VIRT_BASE: bits 38:30 = 510
     let pdpt_idx = ((KERNEL_VIRT_BASE >> 30) & 0x1FF) as usize;
@@ -119,7 +127,9 @@ fn setup_kernel_mapping(pml4_phys: u64, kernel_phys: u64, kernel_size: u64) {
     }
 
     let pd = pd_phys as *mut [u64; ENTRIES_PER_TABLE];
-    unsafe { ptr::write_bytes(pd, 0, 1); }
+    unsafe {
+        ptr::write_bytes(pd, 0, 1);
+    }
 
     // Map kernel using 4KB pages (kernel may not be 2MB aligned)
     let kernel_pages_4kb = (kernel_size + PAGE_SIZE - 1) / PAGE_SIZE;
@@ -171,4 +181,3 @@ fn allocate_page_table() -> u64 {
 
     addr
 }
-

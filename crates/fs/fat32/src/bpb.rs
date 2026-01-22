@@ -156,7 +156,8 @@ impl Bpb {
 
     /// Get volume label as string
     pub fn volume_label_str(&self) -> &str {
-        let len = self.volume_label
+        let len = self
+            .volume_label
             .iter()
             .rposition(|&c| c != b' ')
             .map(|i| i + 1)
@@ -193,7 +194,10 @@ impl FsInfo {
         let struc_sig = u32::from_le_bytes([data[484], data[485], data[486], data[487]]);
         let trail_sig = u32::from_le_bytes([data[508], data[509], data[510], data[511]]);
 
-        if lead_sig != Self::LEAD_SIG || struc_sig != Self::STRUC_SIG || trail_sig != Self::TRAIL_SIG {
+        if lead_sig != Self::LEAD_SIG
+            || struc_sig != Self::STRUC_SIG
+            || trail_sig != Self::TRAIL_SIG
+        {
             return Err(VfsError::InvalidFilesystem);
         }
 

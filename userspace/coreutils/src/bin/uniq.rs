@@ -26,7 +26,7 @@ struct UniqConfig {
     ignore_case: bool,
     skip_fields: usize,
     skip_chars: usize,
-    check_chars: usize,  // 0 means unlimited
+    check_chars: usize, // 0 means unlimited
     zero_terminated: bool,
 }
 
@@ -123,14 +123,12 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
             }
             let num_str = unsafe { cstr_to_str(*argv.add(arg_idx as usize)) };
             match parse_number(num_str) {
-                Some(n) => {
-                    match arg {
-                        "-f" => config.skip_fields = n,
-                        "-s" => config.skip_chars = n,
-                        "-w" => config.check_chars = n,
-                        _ => {}
-                    }
-                }
+                Some(n) => match arg {
+                    "-f" => config.skip_fields = n,
+                    "-s" => config.skip_chars = n,
+                    "-w" => config.check_chars = n,
+                    _ => {}
+                },
                 None => {
                     eprints("uniq: invalid number: ");
                     prints(num_str);
@@ -230,11 +228,21 @@ fn process_file(config: &UniqConfig, input_fd: i32, output_fd: i32) -> i32 {
         for i in 0..n as usize {
             if buf[i] == delimiter {
                 if has_prev {
-                    let same = lines_equal_with_options(config, &prev_line[..prev_len], &curr_line[..curr_len]);
+                    let same = lines_equal_with_options(
+                        config,
+                        &prev_line[..prev_len],
+                        &curr_line[..curr_len],
+                    );
                     if same {
                         repeat_count += 1;
                     } else {
-                        output_line(config, output_fd, &prev_line[..prev_len], repeat_count, delimiter);
+                        output_line(
+                            config,
+                            output_fd,
+                            &prev_line[..prev_len],
+                            repeat_count,
+                            delimiter,
+                        );
                         // Copy current to previous
                         prev_line[..curr_len].copy_from_slice(&curr_line[..curr_len]);
                         prev_len = curr_len;
@@ -258,11 +266,18 @@ fn process_file(config: &UniqConfig, input_fd: i32, output_fd: i32) -> i32 {
     // Handle last line without delimiter
     if curr_len > 0 {
         if has_prev {
-            let same = lines_equal_with_options(config, &prev_line[..prev_len], &curr_line[..curr_len]);
+            let same =
+                lines_equal_with_options(config, &prev_line[..prev_len], &curr_line[..curr_len]);
             if same {
                 repeat_count += 1;
             } else {
-                output_line(config, output_fd, &prev_line[..prev_len], repeat_count, delimiter);
+                output_line(
+                    config,
+                    output_fd,
+                    &prev_line[..prev_len],
+                    repeat_count,
+                    delimiter,
+                );
                 prev_line[..curr_len].copy_from_slice(&curr_line[..curr_len]);
                 prev_len = curr_len;
                 repeat_count = 1;
@@ -277,7 +292,13 @@ fn process_file(config: &UniqConfig, input_fd: i32, output_fd: i32) -> i32 {
 
     // Output last line
     if has_prev {
-        output_line(config, output_fd, &prev_line[..prev_len], repeat_count, delimiter);
+        output_line(
+            config,
+            output_fd,
+            &prev_line[..prev_len],
+            repeat_count,
+            delimiter,
+        );
     }
 
     0
@@ -343,8 +364,16 @@ fn lines_equal_with_options(config: &UniqConfig, a: &[u8], b: &[u8]) -> bool {
 
     // Compare with case sensitivity option
     for i in 0..cmp_len {
-        let ca = if config.ignore_case { to_lower(a_slice[i]) } else { a_slice[i] };
-        let cb = if config.ignore_case { to_lower(b_slice[i]) } else { b_slice[i] };
+        let ca = if config.ignore_case {
+            to_lower(a_slice[i])
+        } else {
+            a_slice[i]
+        };
+        let cb = if config.ignore_case {
+            to_lower(b_slice[i])
+        } else {
+            b_slice[i]
+        };
         if ca != cb {
             return false;
         }
@@ -391,9 +420,5 @@ fn skip_fields_and_chars(line: &[u8], skip_fields: usize, skip_chars: usize) -> 
 }
 
 fn to_lower(c: u8) -> u8 {
-    if c >= b'A' && c <= b'Z' {
-        c + 32
-    } else {
-        c
-    }
+    if c >= b'A' && c <= b'Z' { c + 32 } else { c }
 }

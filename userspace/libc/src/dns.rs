@@ -2,11 +2,11 @@
 //!
 //! Provides hostname resolution using DNS queries.
 
-use crate::socket::{
-    socket, af, sock, ipproto, sockaddr_in_octets, sendto, recvfrom,
-    htons, SOCKADDR_IN_SIZE, SockAddrIn,
-};
 use crate::close;
+use crate::socket::{
+    SOCKADDR_IN_SIZE, SockAddrIn, af, htons, ipproto, recvfrom, sendto, sock, sockaddr_in_octets,
+    socket,
+};
 
 /// Default DNS server (Google Public DNS)
 pub const DEFAULT_DNS_SERVER: (u8, u8, u8, u8) = (8, 8, 8, 8);
@@ -27,7 +27,7 @@ pub const DNS_TYPE_AAAA: u16 = 28;
 pub const DNS_CLASS_IN: u16 = 1;
 
 /// DNS header flags
-const DNS_RD: u16 = 0x0100;  // Recursion Desired
+const DNS_RD: u16 = 0x0100; // Recursion Desired
 
 /// Result of DNS resolution
 #[derive(Clone, Copy)]
@@ -94,7 +94,7 @@ fn build_query(hostname: &str, qtype: u16, buf: &mut [u8]) -> usize {
         buf[pos..pos + label_bytes.len()].copy_from_slice(label_bytes);
         pos += label_bytes.len();
     }
-    buf[pos] = 0;  // End of QNAME
+    buf[pos] = 0; // End of QNAME
     pos += 1;
 
     // QTYPE
@@ -139,7 +139,7 @@ fn parse_response(buf: &[u8], len: usize) -> ResolvedAddr {
     if pos < len && buf[pos] == 0 {
         pos += 1;
     }
-    pos += 4;  // QTYPE + QCLASS
+    pos += 4; // QTYPE + QCLASS
 
     // Parse answer records
     for _ in 0..ancount {
@@ -240,7 +240,13 @@ pub fn resolve(hostname: &str, dns_server: Option<(u8, u8, u8, u8)>) -> Option<(
     let mut src_addr = SockAddrIn::default();
     let mut src_len = SOCKADDR_IN_SIZE;
 
-    let received = recvfrom(sock, &mut response, 0, Some(&mut src_addr), Some(&mut src_len));
+    let received = recvfrom(
+        sock,
+        &mut response,
+        0,
+        Some(&mut src_addr),
+        Some(&mut src_len),
+    );
     close(sock);
 
     if received < 0 {
@@ -287,7 +293,13 @@ pub fn resolve_full(hostname: &str, dns_server: Option<(u8, u8, u8, u8)>) -> Res
         let mut src_addr = SockAddrIn::default();
         let mut src_len = SOCKADDR_IN_SIZE;
 
-        let received = recvfrom(sock, &mut response, 0, Some(&mut src_addr), Some(&mut src_len));
+        let received = recvfrom(
+            sock,
+            &mut response,
+            0,
+            Some(&mut src_addr),
+            Some(&mut src_len),
+        );
         if received > 0 {
             let res = parse_response(&response, received as usize);
             result.ipv4 = res.ipv4;
@@ -302,7 +314,13 @@ pub fn resolve_full(hostname: &str, dns_server: Option<(u8, u8, u8, u8)>) -> Res
         let mut src_addr = SockAddrIn::default();
         let mut src_len = SOCKADDR_IN_SIZE;
 
-        let received = recvfrom(sock, &mut response, 0, Some(&mut src_addr), Some(&mut src_len));
+        let received = recvfrom(
+            sock,
+            &mut response,
+            0,
+            Some(&mut src_addr),
+            Some(&mut src_len),
+        );
         if received > 0 {
             let res = parse_response(&response, received as usize);
             result.ipv6 = res.ipv6;

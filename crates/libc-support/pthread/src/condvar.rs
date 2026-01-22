@@ -3,8 +3,8 @@
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::{ESUCCESS, EINVAL, ETIMEDOUT};
-use crate::mutex::{pthread_mutex_t, pthread_mutex_lock, pthread_mutex_unlock};
+use crate::mutex::{pthread_mutex_lock, pthread_mutex_t, pthread_mutex_unlock};
+use crate::{EINVAL, ESUCCESS, ETIMEDOUT};
 
 /// Condition variable structure
 #[repr(C)]
@@ -222,7 +222,10 @@ pub unsafe extern "C" fn pthread_condattr_destroy(attr: *mut pthread_condattr_t)
 
 /// Set clock ID
 #[no_mangle]
-pub unsafe extern "C" fn pthread_condattr_setclock(attr: *mut pthread_condattr_t, clock_id: c_int) -> c_int {
+pub unsafe extern "C" fn pthread_condattr_setclock(
+    attr: *mut pthread_condattr_t,
+    clock_id: c_int,
+) -> c_int {
     if attr.is_null() {
         return EINVAL;
     }
@@ -232,7 +235,10 @@ pub unsafe extern "C" fn pthread_condattr_setclock(attr: *mut pthread_condattr_t
 
 /// Get clock ID
 #[no_mangle]
-pub unsafe extern "C" fn pthread_condattr_getclock(attr: *const pthread_condattr_t, clock_id: *mut c_int) -> c_int {
+pub unsafe extern "C" fn pthread_condattr_getclock(
+    attr: *const pthread_condattr_t,
+    clock_id: *mut c_int,
+) -> c_int {
     if attr.is_null() || clock_id.is_null() {
         return EINVAL;
     }

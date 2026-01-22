@@ -2,8 +2,8 @@
 //!
 //! NIST-approved AEAD cipher.
 
+use crate::{CryptoError, CryptoResult};
 use alloc::vec::Vec;
-use crate::{CryptoResult, CryptoError};
 
 /// AES-256 key (32 bytes)
 pub type AesKey = [u8; 32];
@@ -60,7 +60,12 @@ impl Aes256Gcm {
     }
 
     /// Decrypt ciphertext with associated data
-    pub fn decrypt(&self, nonce: &AesNonce, ciphertext: &[u8], aad: &[u8]) -> CryptoResult<Vec<u8>> {
+    pub fn decrypt(
+        &self,
+        nonce: &AesNonce,
+        ciphertext: &[u8],
+        aad: &[u8],
+    ) -> CryptoResult<Vec<u8>> {
         if ciphertext.len() < 16 {
             return Err(CryptoError::InvalidInput);
         }
@@ -183,7 +188,9 @@ const SBOX: [u8; 256] = [
 ];
 
 /// Round constants
-const RCON: [u8; 11] = [0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36];
+const RCON: [u8; 11] = [
+    0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36,
+];
 
 /// Key expansion for AES-256
 fn key_expansion(key: &AesKey) -> [[u8; 16]; 15] {
@@ -195,7 +202,7 @@ fn key_expansion(key: &AesKey) -> [[u8; 16]; 15] {
 
     // Generate remaining words
     for i in 8..60 {
-        let mut temp = [w[i*4-4], w[i*4-3], w[i*4-2], w[i*4-1]];
+        let mut temp = [w[i * 4 - 4], w[i * 4 - 3], w[i * 4 - 2], w[i * 4 - 1]];
 
         if i % 8 == 0 {
             // Rotate
@@ -211,15 +218,15 @@ fn key_expansion(key: &AesKey) -> [[u8; 16]; 15] {
             temp[3] = SBOX[temp[3] as usize];
         }
 
-        w[i*4] = w[i*4 - 32] ^ temp[0];
-        w[i*4 + 1] = w[i*4 - 31] ^ temp[1];
-        w[i*4 + 2] = w[i*4 - 30] ^ temp[2];
-        w[i*4 + 3] = w[i*4 - 29] ^ temp[3];
+        w[i * 4] = w[i * 4 - 32] ^ temp[0];
+        w[i * 4 + 1] = w[i * 4 - 31] ^ temp[1];
+        w[i * 4 + 2] = w[i * 4 - 30] ^ temp[2];
+        w[i * 4 + 3] = w[i * 4 - 29] ^ temp[3];
     }
 
     // Copy to round keys
     for i in 0..15 {
-        round_keys[i].copy_from_slice(&w[i*16..(i+1)*16]);
+        round_keys[i].copy_from_slice(&w[i * 16..(i + 1) * 16]);
     }
 
     round_keys

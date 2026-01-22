@@ -1,7 +1,7 @@
 //! Page table structure
 
-use crate::entry::PageTableEntry;
 use crate::ENTRIES_PER_TABLE;
+use crate::entry::PageTableEntry;
 
 /// A page table (512 entries, 4KB total)
 #[repr(C, align(4096))]

@@ -86,6 +86,8 @@ members = [
     "userspace/init",
     "userspace/shell",
     "userspace/login",
+    "userspace/passwd",
+    "userspace/passwd",
     "userspace/getty",
     "userspace/coreutils",
     "userspace/modutils",

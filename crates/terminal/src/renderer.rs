@@ -4,12 +4,12 @@
 
 extern crate alloc;
 
+use crate::buffer::ScreenBuffer;
+use crate::cell::{Cell, CellAttrs, CellFlags, Cursor, CursorShape};
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
-use fb::{Framebuffer, Color, Font, PSF2_FONT};
-use crate::cell::{Cell, CellAttrs, CellFlags, Cursor, CursorShape};
-use crate::buffer::ScreenBuffer;
+use fb::{Color, Font, Framebuffer, PSF2_FONT};
 
 /// Dirty region tracking
 pub struct DirtyRegion {
@@ -150,10 +150,10 @@ impl Renderer {
         self.last_cursor_row = cursor.row;
         self.last_cursor_col = cursor.col;
         self.last_cursor_visible = cursor.visible && cursor.blink_on;
-        
+
         // Flush to hardware for immediate display
         self.fb.flush();
-        
+
         // Record performance metrics
         fb::record_pixels(pixel_count);
         fb::record_flush();
@@ -184,7 +184,8 @@ impl Renderer {
         };
 
         // Draw background
-        self.fb.fill_rect(px, py, self.font.width, self.font.height, bg_color);
+        self.fb
+            .fill_rect(px, py, self.font.width, self.font.height, bg_color);
 
         // Draw character (if not space and not hidden)
         if cell.ch != ' ' && !cell.attrs.flags.contains(CellFlags::HIDDEN) {
@@ -217,35 +218,38 @@ impl Renderer {
                 4 => {
                     // 32-bit: optimized u32 writes
                     let pixel_value = u32::from_le_bytes([
-                        color_bytes[0], color_bytes[1], color_bytes[2], color_bytes[3]
+                        color_bytes[0],
+                        color_bytes[1],
+                        color_bytes[2],
+                        color_bytes[3],
                     ]);
-                    
+
                     for y in 0..glyph.height {
                         let line_offset = ((py + y) as usize * stride) + (px as usize * 4);
                         let line_ptr = buffer.add(line_offset) as *mut u32;
-                        
+
                         for x in 0..glyph.width {
                             if glyph.pixel(x, y) {
                                 core::ptr::write(line_ptr.add(x as usize), pixel_value);
                             }
                         }
                     }
-                },
+                }
                 2 => {
                     // 16-bit: optimized u16 writes
                     let pixel_value = u16::from_le_bytes([color_bytes[0], color_bytes[1]]);
-                    
+
                     for y in 0..glyph.height {
                         let line_offset = ((py + y) as usize * stride) + (px as usize * 2);
                         let line_ptr = buffer.add(line_offset) as *mut u16;
-                        
+
                         for x in 0..glyph.width {
                             if glyph.pixel(x, y) {
                                 core::ptr::write(line_ptr.add(x as usize), pixel_value);
                             }
                         }
                     }
-                },
+                }
                 _ => {
                     // Fallback: pixel-by-pixel
                     for y in 0..glyph.height {
@@ -270,7 +274,8 @@ impl Renderer {
         let py = cursor.row * self.font.height;
 
         // Get cell under cursor
-        let cell = buffer.get(cursor.row, cursor.col)
+        let cell = buffer
+            .get(cursor.row, cursor.col)
             .copied()
             .unwrap_or_default();
 
@@ -281,7 +286,8 @@ impl Renderer {
         match cursor.shape {
             CursorShape::Block => {
                 // Draw inverted cell
-                self.fb.fill_rect(px, py, self.font.width, self.font.height, bg_color);
+                self.fb
+                    .fill_rect(px, py, self.font.width, self.font.height, bg_color);
                 if cell.ch != ' ' {
                     self.draw_glyph(px, py, cell.ch, fg_color);
                 }
@@ -289,7 +295,8 @@ impl Renderer {
             CursorShape::Underline => {
                 // Draw underline cursor
                 let cursor_y = py + self.font.height - 2;
-                self.fb.fill_rect(px, cursor_y, self.font.width, 2, bg_color);
+                self.fb
+                    .fill_rect(px, cursor_y, self.font.width, 2, bg_color);
             }
             CursorShape::Bar => {
                 // Draw vertical bar cursor
@@ -313,15 +320,18 @@ impl Renderer {
         if scroll_pixels < total_height {
             // Copy screen content up
             self.fb.copy_rect(
-                0, scroll_pixels,
-                0, 0,
+                0,
+                scroll_pixels,
+                0,
+                0,
                 self.fb.width(),
                 total_height - scroll_pixels,
             );
 
             // Clear bottom area
             self.fb.fill_rect(
-                0, total_height - scroll_pixels,
+                0,
+                total_height - scroll_pixels,
                 self.fb.width(),
                 scroll_pixels,
                 bg_color,
@@ -341,19 +351,17 @@ impl Renderer {
         if scroll_pixels < total_height {
             // Copy screen content down
             self.fb.copy_rect(
-                0, 0,
-                0, scroll_pixels,
+                0,
+                0,
+                0,
+                scroll_pixels,
                 self.fb.width(),
                 total_height - scroll_pixels,
             );
 
             // Clear top area
-            self.fb.fill_rect(
-                0, 0,
-                self.fb.width(),
-                scroll_pixels,
-                bg_color,
-            );
+            self.fb
+                .fill_rect(0, 0, self.fb.width(), scroll_pixels, bg_color);
         } else {
             self.fb.clear(bg_color);
         }

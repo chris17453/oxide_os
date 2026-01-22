@@ -5,9 +5,9 @@
 
 extern crate alloc;
 
-use super::{Console, FileSystem, Graphics, System, FileOpenMode, FileHandle};
-use alloc::string::{String, ToString};
+use super::{Console, FileHandle, FileOpenMode, FileSystem, Graphics, System};
 use alloc::collections::BTreeMap;
+use alloc::string::{String, ToString};
 
 /// OXIDE Console implementation
 pub struct OxideConsole {
@@ -62,7 +62,8 @@ impl Console for OxideConsole {
             if key == b'\r' || key == b'\n' {
                 break;
             }
-            if key == 0x08 || key == 0x7f { // Backspace or DEL
+            if key == 0x08 || key == 0x7f {
+                // Backspace or DEL
                 if self.input_len > 0 {
                     self.input_len -= 1;
                     self.print_char('\x08');
@@ -221,7 +222,8 @@ impl FileSystem for OxideFileSystem {
                 if ch[0] == b'\n' {
                     break;
                 }
-                if ch[0] != b'\r' { // Skip CR
+                if ch[0] != b'\r' {
+                    // Skip CR
                     buffer[pos] = ch[0];
                     pos += 1;
                 }

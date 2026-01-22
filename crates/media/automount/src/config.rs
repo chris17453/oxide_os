@@ -153,7 +153,11 @@ impl AutomountConfig {
              LogOperations={}\n\
              NotifyOnMount={}\n",
             self.mount_base,
-            if self.default_mode == MountMode::ReadWrite { "rw" } else { "ro" },
+            if self.default_mode == MountMode::ReadWrite {
+                "rw"
+            } else {
+                "ro"
+            },
             self.require_auth_for_rw,
             self.auto_eject_minutes,
             self.enable_usb,

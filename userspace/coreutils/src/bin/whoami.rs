@@ -77,7 +77,11 @@ fn get_username(target_uid: u32) -> Option<[u8; 32]> {
                         if uid == target_uid {
                             // Found matching entry
                             let mut name = [0u8; 32];
-                            let copy_len = if username.len() > 31 { 31 } else { username.len() };
+                            let copy_len = if username.len() > 31 {
+                                31
+                            } else {
+                                username.len()
+                            };
                             name[..copy_len].copy_from_slice(&username[..copy_len]);
                             result = Some(name);
                             break;
@@ -101,7 +105,11 @@ fn get_username(target_uid: u32) -> Option<[u8; 32]> {
         if let Some((username, uid)) = parse_passwd_line(&line_buf[..line_len]) {
             if uid == target_uid {
                 let mut name = [0u8; 32];
-                let copy_len = if username.len() > 31 { 31 } else { username.len() };
+                let copy_len = if username.len() > 31 {
+                    31
+                } else {
+                    username.len()
+                };
                 name[..copy_len].copy_from_slice(&username[..copy_len]);
                 result = Some(name);
             }

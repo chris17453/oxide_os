@@ -7,18 +7,18 @@
 
 extern crate alloc;
 
-pub mod ed25519;
 pub mod aes;
-pub mod chacha;
-pub mod x25519;
 pub mod argon2;
+pub mod chacha;
+pub mod ed25519;
 pub mod random;
+pub mod x25519;
 
-pub use ed25519::{SecretKey, PublicKey, Signature, Keypair};
 pub use aes::{Aes256Gcm, AesKey, AesNonce};
+pub use argon2::{argon2id_hash, Argon2Params};
 pub use chacha::{ChaCha20Poly1305, ChaChaKey, ChaChaNonce};
-pub use x25519::{X25519SecretKey, X25519PublicKey, SharedSecret};
-pub use argon2::{Argon2Params, argon2id_hash};
+pub use ed25519::{Keypair, PublicKey, SecretKey, Signature};
+pub use x25519::{SharedSecret, X25519PublicKey, X25519SecretKey};
 
 /// Cryptographic error types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

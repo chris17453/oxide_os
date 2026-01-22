@@ -124,7 +124,15 @@ pub fn syscall5(nr: u64, arg1: usize, arg2: usize, arg3: usize, arg4: usize, arg
 
 /// Raw syscall with 6 arguments
 #[inline(always)]
-pub fn syscall6(nr: u64, arg1: usize, arg2: usize, arg3: usize, arg4: usize, arg5: usize, arg6: usize) -> i64 {
+pub fn syscall6(
+    nr: u64,
+    arg1: usize,
+    arg2: usize,
+    arg3: usize,
+    arg4: usize,
+    arg5: usize,
+    arg6: usize,
+) -> i64 {
     let ret: i64;
     unsafe {
         asm!(

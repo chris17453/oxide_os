@@ -9,8 +9,8 @@
 extern crate alloc;
 
 use alloc::string::String;
-use rust_gwbasic::{Lexer, Parser, Interpreter};
-use rust_gwbasic::platform::{OxideConsole, Console};
+use rust_gwbasic::platform::{Console, OxideConsole};
+use rust_gwbasic::{Interpreter, Lexer, Parser};
 
 /// Main function called by libc's _start
 #[no_mangle]
@@ -95,7 +95,11 @@ pub extern "C" fn watos_console_read(buf: *mut u8, max_len: usize) -> usize {
     }
     let slice = unsafe { core::slice::from_raw_parts_mut(buf, max_len) };
     let n = libc::read(libc::STDIN_FILENO, slice);
-    if n < 0 { 0 } else { n as usize }
+    if n < 0 {
+        0
+    } else {
+        n as usize
+    }
 }
 
 /// Timer syscall - returns ticks (used by TIMER function)
@@ -210,7 +214,11 @@ pub extern "C" fn watos_file_read(handle: u64, buf: *mut u8, len: usize) -> usiz
     }
     let slice = unsafe { core::slice::from_raw_parts_mut(buf, len) };
     let n = libc::read(handle as i32, slice);
-    if n < 0 { 0 } else { n as usize }
+    if n < 0 {
+        0
+    } else {
+        n as usize
+    }
 }
 
 /// File write - used by PRINT#, WRITE#
@@ -221,7 +229,11 @@ pub extern "C" fn watos_file_write(handle: u64, buf: *const u8, len: usize) -> u
     }
     let slice = unsafe { core::slice::from_raw_parts(buf, len) };
     let n = libc::write(handle as i32, slice);
-    if n < 0 { 0 } else { n as usize }
+    if n < 0 {
+        0
+    } else {
+        n as usize
+    }
 }
 
 /// File tell - get current position
@@ -231,7 +243,11 @@ pub extern "C" fn watos_file_tell(handle: u64) -> u64 {
         return 0;
     }
     let pos = libc::lseek(handle as i32, 0, libc::SEEK_CUR);
-    if pos < 0 { 0 } else { pos as u64 }
+    if pos < 0 {
+        0
+    } else {
+        pos as u64
+    }
 }
 
 /// File size - get file size
@@ -248,7 +264,11 @@ pub extern "C" fn watos_file_size(handle: u64) -> u64 {
     if cur >= 0 {
         libc::lseek(handle as i32, cur, libc::SEEK_SET);
     }
-    if size < 0 { 0 } else { size as u64 }
+    if size < 0 {
+        0
+    } else {
+        size as u64
+    }
 }
 
 // Note: Global allocator is provided by libc crate

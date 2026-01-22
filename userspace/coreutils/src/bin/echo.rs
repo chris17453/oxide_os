@@ -207,9 +207,8 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         while unsafe { *arg_ptr.add(len) != 0 } {
             len += 1;
         }
-        let arg_str = unsafe {
-            core::str::from_utf8_unchecked(core::slice::from_raw_parts(arg_ptr, len))
-        };
+        let arg_str =
+            unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(arg_ptr, len)) };
 
         if interpret_escapes {
             if !print_with_escapes(arg_str) {

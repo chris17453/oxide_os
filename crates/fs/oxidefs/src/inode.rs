@@ -1,7 +1,7 @@
 //! OXIDEFS Inode structures
 
 use crate::superblock::Superblock;
-use crate::{OxidefsError, OxidefsResult, INODE_SIZE};
+use crate::{INODE_SIZE, OxidefsError, OxidefsResult};
 use block::BlockDevice;
 
 /// Inode data structure (256 bytes)
@@ -72,8 +72,14 @@ impl InodeData {
         for i in 0..12 {
             let offset = 48 + i * 8;
             direct[i] = u64::from_le_bytes([
-                data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
-                data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7],
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+                data[offset + 4],
+                data[offset + 5],
+                data[offset + 6],
+                data[offset + 7],
             ]);
         }
 
@@ -82,39 +88,35 @@ impl InodeData {
             uid: u32::from_le_bytes([data[4], data[5], data[6], data[7]]),
             gid: u32::from_le_bytes([data[8], data[9], data[10], data[11]]),
             size: u64::from_le_bytes([
-                data[12], data[13], data[14], data[15],
-                data[16], data[17], data[18], data[19],
+                data[12], data[13], data[14], data[15], data[16], data[17], data[18], data[19],
             ]),
             atime: u64::from_le_bytes([
-                data[20], data[21], data[22], data[23],
-                data[24], data[25], data[26], data[27],
+                data[20], data[21], data[22], data[23], data[24], data[25], data[26], data[27],
             ]),
             mtime: u64::from_le_bytes([
-                data[28], data[29], data[30], data[31],
-                data[32], data[33], data[34], data[35],
+                data[28], data[29], data[30], data[31], data[32], data[33], data[34], data[35],
             ]),
             ctime: u64::from_le_bytes([
-                data[36], data[37], data[38], data[39],
-                data[40], data[41], data[42], data[43],
+                data[36], data[37], data[38], data[39], data[40], data[41], data[42], data[43],
             ]),
             links: u32::from_le_bytes([data[44], data[45], data[46], data[47]]),
             blocks: u64::from_le_bytes([
-                data[144], data[145], data[146], data[147],
-                data[148], data[149], data[150], data[151],
+                data[144], data[145], data[146], data[147], data[148], data[149], data[150],
+                data[151],
             ]),
             flags: u32::from_le_bytes([data[152], data[153], data[154], data[155]]),
             direct,
             indirect: u64::from_le_bytes([
-                data[156], data[157], data[158], data[159],
-                data[160], data[161], data[162], data[163],
+                data[156], data[157], data[158], data[159], data[160], data[161], data[162],
+                data[163],
             ]),
             double_indirect: u64::from_le_bytes([
-                data[164], data[165], data[166], data[167],
-                data[168], data[169], data[170], data[171],
+                data[164], data[165], data[166], data[167], data[168], data[169], data[170],
+                data[171],
             ]),
             triple_indirect: u64::from_le_bytes([
-                data[172], data[173], data[174], data[175],
-                data[176], data[177], data[178], data[179],
+                data[172], data[173], data[174], data[175], data[176], data[177], data[178],
+                data[179],
             ]),
             checksum: u32::from_le_bytes([data[180], data[181], data[182], data[183]]),
         })
@@ -175,7 +177,12 @@ pub fn read_inode(device: &dyn BlockDevice, sb: &Superblock, ino: u64) -> Oxidef
 }
 
 /// Write an inode to disk
-pub fn write_inode(device: &dyn BlockDevice, sb: &Superblock, ino: u64, inode: &InodeData) -> OxidefsResult<()> {
+pub fn write_inode(
+    device: &dyn BlockDevice,
+    sb: &Superblock,
+    ino: u64,
+    inode: &InodeData,
+) -> OxidefsResult<()> {
     let block_size = sb.block_size as usize;
     let inodes_per_block = block_size / INODE_SIZE as usize;
 

@@ -19,7 +19,7 @@ pub use ascii::AsciiBackend;
 pub use window::WindowBackend;
 
 #[cfg(not(feature = "std"))]
-pub use watos_vga::{WatosVgaBackend, VideoMode};
+pub use watos_vga::{VideoMode, WatosVgaBackend};
 
 use crate::error::Result;
 

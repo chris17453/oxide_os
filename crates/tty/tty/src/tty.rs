@@ -11,7 +11,10 @@ use spin::Mutex;
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
 use crate::ldisc::{LineDiscipline, Signal};
-use crate::termios::{Termios, TCGETS, TCSETS, TCSETSW, TCSETSF, TIOCGWINSZ, TIOCSWINSZ, TIOCGPGRP, TIOCSPGRP, FIONREAD};
+use crate::termios::{
+    FIONREAD, TCGETS, TCSETS, TCSETSF, TCSETSW, TIOCGPGRP, TIOCGWINSZ, TIOCSPGRP, TIOCSWINSZ,
+    Termios,
+};
 use crate::winsize::Winsize;
 
 /// TTY driver operations - implemented by the actual hardware driver

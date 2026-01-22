@@ -1,10 +1,10 @@
 //! Framebuffer Text Console
 
+use crate::color::Color;
+use crate::font::{Font, PSF2_FONT};
+use crate::framebuffer::Framebuffer;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use crate::color::Color;
-use crate::framebuffer::Framebuffer;
-use crate::font::{Font, PSF2_FONT};
 
 /// Console cell
 #[derive(Clone, Copy)]
@@ -52,6 +52,8 @@ pub struct FbConsole {
     buffer: Vec<Cell>,
     /// Cursor visible
     cursor_visible: bool,
+    /// Cursor blink state
+    blink_on: bool,
     /// Tab width
     tab_width: u32,
     /// Dirty cells for batched rendering
@@ -81,6 +83,7 @@ impl FbConsole {
             bg_color: Color::VGA_BLACK,
             buffer,
             cursor_visible: true,
+            blink_on: true,
             tab_width: 8,
             dirty_cells: Vec::new(),
         };
@@ -152,6 +155,8 @@ impl FbConsole {
 
     /// Put a character at current cursor position
     pub fn putchar(&mut self, ch: char) {
+        // Force cursor visible when typing
+        self.blink_on = true;
         match ch {
             '\n' => {
                 self.cursor_x = 0;
@@ -197,11 +202,14 @@ impl FbConsole {
                 }
             }
         }
-        
+
         // Auto-flush dirty cells for immediate display updates
         if self.dirty_cells.len() >= 16 {
             self.flush();
         }
+
+        // Redraw cursor at new position for immediate visibility
+        self.draw_cursor();
     }
 
     /// Put a character at a specific position
@@ -245,22 +253,25 @@ impl FbConsole {
         let bpp = self.fb.format().bytes_per_pixel() as usize;
         let stride = self.fb.stride() as usize;
         let buffer = self.fb.buffer();
-        
+
         // Convert color to raw bytes for all pixel formats
         let color_bytes = color.to_bytes(self.fb.format());
-        
+
         unsafe {
             match bpp {
                 4 => {
                     // 32-bit pixels: Use u32 writes for maximum speed
                     let pixel_value = u32::from_le_bytes([
-                        color_bytes[0], color_bytes[1], color_bytes[2], color_bytes[3]
+                        color_bytes[0],
+                        color_bytes[1],
+                        color_bytes[2],
+                        color_bytes[3],
                     ]);
-                    
+
                     for y in 0..glyph.height {
                         let line_offset = ((py + y) as usize * stride) + (px as usize * 4);
                         let line_ptr = buffer.add(line_offset) as *mut u32;
-                        
+
                         // Write pixels directly without volatile - batch the entire line
                         for x in 0..glyph.width {
                             if glyph.pixel(x, y) {
@@ -268,13 +279,13 @@ impl FbConsole {
                             }
                         }
                     }
-                },
+                }
                 3 => {
                     // 24-bit pixels: Use optimized line copying
                     for y in 0..glyph.height {
                         let line_offset = ((py + y) as usize * stride) + (px as usize * 3);
                         let line_ptr = buffer.add(line_offset);
-                        
+
                         // Write pixels directly
                         for x in 0..glyph.width {
                             if glyph.pixel(x, y) {
@@ -282,40 +293,40 @@ impl FbConsole {
                                 core::ptr::copy_nonoverlapping(
                                     color_bytes.as_ptr(),
                                     line_ptr.add(pixel_offset),
-                                    3
+                                    3,
                                 );
                             }
                         }
                     }
-                },
+                }
                 2 => {
                     // 16-bit pixels: Use u16 writes
                     let pixel_value = u16::from_le_bytes([color_bytes[0], color_bytes[1]]);
-                    
+
                     for y in 0..glyph.height {
                         let line_offset = ((py + y) as usize * stride) + (px as usize * 2);
                         let line_ptr = buffer.add(line_offset) as *mut u16;
-                        
+
                         for x in 0..glyph.width {
                             if glyph.pixel(x, y) {
                                 core::ptr::write(line_ptr.add(x as usize), pixel_value);
                             }
                         }
                     }
-                },
+                }
                 _ => {
                     // Fallback for unknown formats
                     for y in 0..glyph.height {
                         let line_offset = ((py + y) as usize * stride) + (px as usize * bpp);
                         let line_ptr = buffer.add(line_offset);
-                        
+
                         for x in 0..glyph.width {
                             if glyph.pixel(x, y) {
                                 let pixel_offset = x as usize * bpp;
                                 core::ptr::copy_nonoverlapping(
                                     color_bytes.as_ptr(),
                                     line_ptr.add(pixel_offset),
-                                    bpp
+                                    bpp,
                                 );
                             }
                         }
@@ -358,8 +369,10 @@ impl FbConsole {
         let total_height = self.rows * line_height;
 
         self.fb.copy_rect(
-            0, line_height,  // src
-            0, 0,            // dst
+            0,
+            line_height, // src
+            0,
+            0, // dst
             self.fb.width(),
             total_height - line_height,
         );
@@ -604,19 +617,51 @@ impl FbConsole {
     pub fn flush(&mut self) {
         // Count pixels for performance tracking
         let pixel_count = self.dirty_cells.len() * (self.font.width * self.font.height) as usize;
-        
+
         // Render all dirty cells in batch
         for &(x, y) in &self.dirty_cells {
             self.draw_cell(x, y);
         }
         self.dirty_cells.clear();
-        
+
         // Flush to hardware if using hardware-accelerated framebuffer
         self.fb.flush();
-        
+
         // Record performance metrics
         crate::perf::record_pixels(pixel_count as u64);
         crate::perf::record_flush();
+    }
+
+    /// Toggle cursor blink and redraw cursor cell.
+    pub fn blink(&mut self) {
+        self.blink_on = !self.blink_on;
+        self.draw_cursor();
+    }
+
+    fn draw_cursor(&mut self) {
+        if !self.cursor_visible {
+            return;
+        }
+        let x = self.cursor_x;
+        let y = self.cursor_y;
+        let index = (y * self.cols + x) as usize;
+        if index >= self.buffer.len() {
+            return;
+        }
+        let cell = self.buffer[index];
+        let px = x * self.font.width;
+        let py = y * self.font.height;
+        // If blink_on, invert; otherwise normal
+        if self.blink_on {
+            self.fast_fill_rect(px, py, self.font.width, self.font.height, cell.fg);
+            if cell.ch != ' ' {
+                self.draw_glyph(px, py, cell.ch, cell.bg);
+            }
+        } else {
+            self.draw_cell(x, y);
+        }
+        // Ensure cursor update is visible immediately
+        self.fb.flush();
     }
 }
 

@@ -66,9 +66,13 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     0
 }
 
-fn find_recursive(path: &mut [u8; MAX_PATH], path_len: usize,
-                  name_pattern: Option<&str>, type_filter: Option<u8>,
-                  depth: usize) {
+fn find_recursive(
+    path: &mut [u8; MAX_PATH],
+    path_len: usize,
+    name_pattern: Option<&str>,
+    type_filter: Option<u8>,
+    depth: usize,
+) {
     if depth >= MAX_DEPTH {
         return;
     }
@@ -142,7 +146,13 @@ fn find_recursive(path: &mut [u8; MAX_PATH], path_len: usize,
                     let is_dir = dtype == 4; // DT_DIR
 
                     if is_dir {
-                        find_recursive(&mut new_path, new_len, name_pattern, type_filter, depth + 1);
+                        find_recursive(
+                            &mut new_path,
+                            new_len,
+                            name_pattern,
+                            type_filter,
+                            depth + 1,
+                        );
                     } else {
                         // Check if file matches
                         if check_match(&new_path[..new_len], name_pattern, type_filter, false) {
@@ -159,7 +169,12 @@ fn find_recursive(path: &mut [u8; MAX_PATH], path_len: usize,
     close(fd);
 }
 
-fn check_match(path: &[u8], name_pattern: Option<&str>, type_filter: Option<u8>, is_dir: bool) -> bool {
+fn check_match(
+    path: &[u8],
+    name_pattern: Option<&str>,
+    type_filter: Option<u8>,
+    is_dir: bool,
+) -> bool {
     // Check type filter
     if let Some(t) = type_filter {
         match t {

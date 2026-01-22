@@ -3,8 +3,10 @@
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-use crate::{ESUCCESS, EINVAL, EBUSY, EDEADLK, PTHREAD_MUTEX_NORMAL, PTHREAD_MUTEX_RECURSIVE,
-            PTHREAD_MUTEX_ERRORCHECK, pthread_self};
+use crate::{
+    pthread_self, EBUSY, EDEADLK, EINVAL, ESUCCESS, PTHREAD_MUTEX_ERRORCHECK, PTHREAD_MUTEX_NORMAL,
+    PTHREAD_MUTEX_RECURSIVE,
+};
 
 /// Mutex state
 const MUTEX_UNLOCKED: u32 = 0;
@@ -103,12 +105,16 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut pthread_mutex_t) -> c_in
     match kind {
         PTHREAD_MUTEX_NORMAL => {
             // Simple spinlock (would use futex in real implementation)
-            while (*mutex).state.compare_exchange_weak(
-                MUTEX_UNLOCKED,
-                MUTEX_LOCKED,
-                Ordering::Acquire,
-                Ordering::Relaxed
-            ).is_err() {
+            while (*mutex)
+                .state
+                .compare_exchange_weak(
+                    MUTEX_UNLOCKED,
+                    MUTEX_LOCKED,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                )
+                .is_err()
+            {
                 core::hint::spin_loop();
             }
             (*mutex).owner.store(self_id, Ordering::Release);
@@ -122,12 +128,16 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut pthread_mutex_t) -> c_in
             }
 
             // Try to acquire
-            while (*mutex).state.compare_exchange_weak(
-                MUTEX_UNLOCKED,
-                MUTEX_LOCKED,
-                Ordering::Acquire,
-                Ordering::Relaxed
-            ).is_err() {
+            while (*mutex)
+                .state
+                .compare_exchange_weak(
+                    MUTEX_UNLOCKED,
+                    MUTEX_LOCKED,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                )
+                .is_err()
+            {
                 core::hint::spin_loop();
             }
             (*mutex).owner.store(self_id, Ordering::Release);
@@ -139,12 +149,16 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut pthread_mutex_t) -> c_in
                 return EDEADLK;
             }
 
-            while (*mutex).state.compare_exchange_weak(
-                MUTEX_UNLOCKED,
-                MUTEX_LOCKED,
-                Ordering::Acquire,
-                Ordering::Relaxed
-            ).is_err() {
+            while (*mutex)
+                .state
+                .compare_exchange_weak(
+                    MUTEX_UNLOCKED,
+                    MUTEX_LOCKED,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                )
+                .is_err()
+            {
                 core::hint::spin_loop();
             }
             (*mutex).owner.store(self_id, Ordering::Release);
@@ -167,12 +181,16 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut pthread_mutex_t) -> c
 
     match kind {
         PTHREAD_MUTEX_NORMAL => {
-            if (*mutex).state.compare_exchange(
-                MUTEX_UNLOCKED,
-                MUTEX_LOCKED,
-                Ordering::Acquire,
-                Ordering::Relaxed
-            ).is_ok() {
+            if (*mutex)
+                .state
+                .compare_exchange(
+                    MUTEX_UNLOCKED,
+                    MUTEX_LOCKED,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
+            {
                 (*mutex).owner.store(self_id, Ordering::Release);
                 ESUCCESS
             } else {
@@ -186,12 +204,16 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut pthread_mutex_t) -> c
                 return ESUCCESS;
             }
 
-            if (*mutex).state.compare_exchange(
-                MUTEX_UNLOCKED,
-                MUTEX_LOCKED,
-                Ordering::Acquire,
-                Ordering::Relaxed
-            ).is_ok() {
+            if (*mutex)
+                .state
+                .compare_exchange(
+                    MUTEX_UNLOCKED,
+                    MUTEX_LOCKED,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
+            {
                 (*mutex).owner.store(self_id, Ordering::Release);
                 (*mutex).count.store(1, Ordering::Release);
                 ESUCCESS
@@ -205,12 +227,16 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut pthread_mutex_t) -> c
                 return EDEADLK;
             }
 
-            if (*mutex).state.compare_exchange(
-                MUTEX_UNLOCKED,
-                MUTEX_LOCKED,
-                Ordering::Acquire,
-                Ordering::Relaxed
-            ).is_ok() {
+            if (*mutex)
+                .state
+                .compare_exchange(
+                    MUTEX_UNLOCKED,
+                    MUTEX_LOCKED,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
+            {
                 (*mutex).owner.store(self_id, Ordering::Release);
                 ESUCCESS
             } else {
@@ -280,7 +306,10 @@ pub unsafe extern "C" fn pthread_mutexattr_destroy(attr: *mut pthread_mutexattr_
 
 /// Set mutex type
 #[no_mangle]
-pub unsafe extern "C" fn pthread_mutexattr_settype(attr: *mut pthread_mutexattr_t, kind: c_int) -> c_int {
+pub unsafe extern "C" fn pthread_mutexattr_settype(
+    attr: *mut pthread_mutexattr_t,
+    kind: c_int,
+) -> c_int {
     if attr.is_null() {
         return EINVAL;
     }
@@ -295,7 +324,10 @@ pub unsafe extern "C" fn pthread_mutexattr_settype(attr: *mut pthread_mutexattr_
 
 /// Get mutex type
 #[no_mangle]
-pub unsafe extern "C" fn pthread_mutexattr_gettype(attr: *const pthread_mutexattr_t, kind: *mut c_int) -> c_int {
+pub unsafe extern "C" fn pthread_mutexattr_gettype(
+    attr: *const pthread_mutexattr_t,
+    kind: *mut c_int,
+) -> c_int {
     if attr.is_null() || kind.is_null() {
         return EINVAL;
     }

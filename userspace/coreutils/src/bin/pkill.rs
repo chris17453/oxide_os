@@ -49,22 +49,22 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     }
 
     let pattern = unsafe { cstr_to_str(*argv.add(pattern_idx as usize)) };
-    
+
     // In a full implementation, we would:
     // 1. Read /proc directory
     // 2. For each process, read its cmdline
     // 3. Match against pattern
     // 4. Send signal to matching processes
-    
+
     prints("pkill: would send signal ");
     print_i64(signal as i64);
     prints(" to processes matching '");
     prints(pattern);
     printlns("'");
-    
+
     // Note: This requires /proc filesystem support
     eprintlns("pkill: /proc filesystem not yet fully implemented");
-    
+
     1
 }
 

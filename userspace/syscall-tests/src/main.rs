@@ -25,7 +25,11 @@ struct Stats {
 
 impl Stats {
     fn new() -> Self {
-        Stats { passed: 0, failed: 0, skipped: 0 }
+        Stats {
+            passed: 0,
+            failed: 0,
+            skipped: 0,
+        }
     }
 
     fn record(&mut self, result: TestResult) {
@@ -163,7 +167,11 @@ fn test_read_file() -> TestResult {
 
 fn test_write_file() -> TestResult {
     // Create a test file
-    let fd = libc::open("/tmp/test_write", libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC, 0o644);
+    let fd = libc::open(
+        "/tmp/test_write",
+        libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC,
+        0o644,
+    );
     if fd < 0 {
         libc::println!("  open for write failed: {}", fd);
         return TestResult::Fail;
@@ -637,7 +645,7 @@ fn test_kill_self() -> TestResult {
 // ============================================================================
 
 fn test_mmap_anonymous() -> TestResult {
-    use libc::syscall::{sys_mmap, sys_munmap, prot, map_flags, MAP_FAILED};
+    use libc::syscall::{MAP_FAILED, map_flags, prot, sys_mmap, sys_munmap};
 
     // Map 4KB of anonymous memory
     let addr = sys_mmap(
@@ -684,7 +692,7 @@ fn test_mmap_anonymous() -> TestResult {
 }
 
 fn test_mmap_large() -> TestResult {
-    use libc::syscall::{sys_mmap, sys_munmap, prot, map_flags, MAP_FAILED};
+    use libc::syscall::{MAP_FAILED, map_flags, prot, sys_mmap, sys_munmap};
 
     // Map 64KB of memory
     let size = 64 * 1024;
@@ -727,7 +735,7 @@ fn test_mmap_large() -> TestResult {
 }
 
 fn test_mmap_hint_addr() -> TestResult {
-    use libc::syscall::{sys_mmap, sys_munmap, prot, map_flags, MAP_FAILED};
+    use libc::syscall::{MAP_FAILED, map_flags, prot, sys_mmap, sys_munmap};
 
     // Request mapping at a specific hint address
     let hint = 0x1000_0000 as *mut u8;
@@ -753,7 +761,7 @@ fn test_mmap_hint_addr() -> TestResult {
 }
 
 fn test_mmap_fixed() -> TestResult {
-    use libc::syscall::{sys_mmap, sys_munmap, prot, map_flags, MAP_FAILED};
+    use libc::syscall::{MAP_FAILED, map_flags, prot, sys_mmap, sys_munmap};
 
     // First allocate some memory to get a valid address
     let temp = sys_mmap(
@@ -798,7 +806,7 @@ fn test_mmap_fixed() -> TestResult {
 }
 
 fn test_mprotect() -> TestResult {
-    use libc::syscall::{sys_mmap, sys_munmap, sys_mprotect, prot, map_flags, MAP_FAILED};
+    use libc::syscall::{MAP_FAILED, map_flags, prot, sys_mmap, sys_mprotect, sys_munmap};
 
     // Allocate read-only memory
     let addr = sys_mmap(
@@ -939,11 +947,7 @@ pub extern "Rust" fn main() -> i32 {
     libc::println!("Skipped: {}", stats.skipped);
     libc::println!("Total:   {}", stats.passed + stats.failed + stats.skipped);
 
-    if stats.failed > 0 {
-        1
-    } else {
-        0
-    }
+    if stats.failed > 0 { 1 } else { 0 }
 }
 
 // Global allocator

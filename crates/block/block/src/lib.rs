@@ -11,14 +11,14 @@
 extern crate alloc;
 
 pub mod device;
+pub mod partition;
 pub mod request;
 pub mod scheduler;
-pub mod partition;
 
 pub use device::{BlockDevice, BlockDeviceInfo};
-pub use request::{Request, RequestType, RequestQueue};
-pub use scheduler::{Scheduler, NoopScheduler};
 pub use partition::Partition;
+pub use request::{Request, RequestQueue, RequestType};
+pub use scheduler::{NoopScheduler, Scheduler};
 
 use alloc::boxed::Box;
 use alloc::string::String;

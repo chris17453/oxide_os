@@ -6,11 +6,11 @@
 
 extern crate alloc;
 
-mod thread;
 mod round_robin;
 mod smp;
+mod thread;
 
-pub use thread::KernelThread;
 pub use round_robin::RoundRobinScheduler;
-pub use smp::{SmpScheduler, PerCpuScheduler};
 pub use sched_traits::*;
+pub use smp::{PerCpuScheduler, SmpScheduler};
+pub use thread::KernelThread;

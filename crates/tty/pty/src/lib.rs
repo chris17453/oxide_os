@@ -60,11 +60,7 @@ static NEXT_PTY_NUM: AtomicU32 = AtomicU32::new(0);
 /// Allocate a new PTY number
 fn alloc_pty_num() -> Option<u32> {
     let num = NEXT_PTY_NUM.fetch_add(1, Ordering::Relaxed);
-    if num < MAX_PTYS {
-        Some(num)
-    } else {
-        None
-    }
+    if num < MAX_PTYS { Some(num) } else { None }
 }
 
 /// Shared state between master and slave
@@ -667,7 +663,12 @@ impl VnodeOps for PtsDir {
     }
 
     fn stat(&self) -> VfsResult<Stat> {
-        Ok(Stat::new(VnodeType::Directory, Mode::new(0o755), 0, self.ino))
+        Ok(Stat::new(
+            VnodeType::Directory,
+            Mode::new(0o755),
+            0,
+            self.ino,
+        ))
     }
 
     fn truncate(&self, _size: u64) -> VfsResult<()> {

@@ -59,11 +59,7 @@ fn print_help() {
 
 fn show_current_layout() {
     let mut buf = [0u8; 32];
-    let result = syscall::syscall2(
-        syscall::SYS_GETKEYMAP,
-        buf.as_mut_ptr() as usize,
-        buf.len(),
-    );
+    let result = syscall::syscall2(syscall::SYS_GETKEYMAP, buf.as_mut_ptr() as usize, buf.len());
 
     if result >= 0 {
         puts("Current keyboard layout: ");
@@ -89,11 +85,7 @@ fn list_layouts() {
 }
 
 fn set_layout(name: &str) -> bool {
-    let result = syscall::syscall2(
-        syscall::SYS_SETKEYMAP,
-        name.as_ptr() as usize,
-        name.len(),
-    );
+    let result = syscall::syscall2(syscall::SYS_SETKEYMAP, name.as_ptr() as usize, name.len());
     result == 0
 }
 

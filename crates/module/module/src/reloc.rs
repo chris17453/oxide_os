@@ -2,8 +2,8 @@
 //!
 //! Handles architecture-specific relocations for module loading.
 
-use crate::{ModuleError, ModuleResult};
 use crate::symbol::lookup_symbol;
+use crate::{ModuleError, ModuleResult};
 
 /// x86_64 relocation types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,8 +123,7 @@ pub unsafe fn apply_relocations_x86_64(
     strtab: &[u8],
 ) -> ModuleResult<()> {
     for rel in rela {
-        let r_type = RelocX86_64::from_u32(rel.r_type())
-            .ok_or(ModuleError::UnknownRelocation)?;
+        let r_type = RelocX86_64::from_u32(rel.r_type()).ok_or(ModuleError::UnknownRelocation)?;
 
         if r_type == RelocX86_64::None {
             continue;

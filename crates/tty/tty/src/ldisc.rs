@@ -7,8 +7,10 @@ extern crate alloc;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
-use crate::termios::{LocalFlags, InputFlags, OutputFlags, Termios};
-use crate::termios::{VINTR, VQUIT, VERASE, VKILL, VEOF, VSUSP, VWERASE, VREPRINT, VLNEXT, VMIN, VTIME};
+use crate::termios::{InputFlags, LocalFlags, OutputFlags, Termios};
+use crate::termios::{
+    VEOF, VERASE, VINTR, VKILL, VLNEXT, VMIN, VQUIT, VREPRINT, VSUSP, VTIME, VWERASE,
+};
 
 /// Maximum input buffer size
 const INPUT_BUF_SIZE: usize = 4096;
@@ -169,9 +171,7 @@ impl LineDiscipline {
     /// Process character in canonical mode
     fn process_canonical(&mut self, c: u8, echo_buf: &mut Vec<u8>) -> Vec<u8> {
         // Handle VLNEXT (^V) - make next char literal
-        if self.termios.c_lflag.contains(LocalFlags::IEXTEN)
-            && c == self.termios.c_cc[VLNEXT]
-        {
+        if self.termios.c_lflag.contains(LocalFlags::IEXTEN) && c == self.termios.c_cc[VLNEXT] {
             self.literal_next = true;
             if self.termios.c_lflag.contains(LocalFlags::ECHO) {
                 echo_buf.push(b'^');
@@ -322,9 +322,9 @@ impl LineDiscipline {
                 // Backspace-space-backspace to erase
                 let width = self.char_width(c);
                 for _ in 0..width {
-                    echo_buf.push(8);  // backspace
+                    echo_buf.push(8); // backspace
                     echo_buf.push(b' ');
-                    echo_buf.push(8);  // backspace
+                    echo_buf.push(8); // backspace
                 }
                 self.column = self.column.saturating_sub(width);
             }
@@ -353,14 +353,22 @@ impl LineDiscipline {
     fn erase_word(&mut self, echo_buf: &mut Vec<u8>) {
         // Skip trailing whitespace
         while !self.edit_buf.is_empty()
-            && self.edit_buf.last().map(|&c| c == b' ' || c == b'\t').unwrap_or(false)
+            && self
+                .edit_buf
+                .last()
+                .map(|&c| c == b' ' || c == b'\t')
+                .unwrap_or(false)
         {
             self.erase_char(echo_buf);
         }
 
         // Erase word
         while !self.edit_buf.is_empty()
-            && self.edit_buf.last().map(|&c| c != b' ' && c != b'\t').unwrap_or(false)
+            && self
+                .edit_buf
+                .last()
+                .map(|&c| c != b' ' && c != b'\t')
+                .unwrap_or(false)
         {
             self.erase_char(echo_buf);
         }

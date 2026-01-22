@@ -2,7 +2,7 @@
 //!
 //! CSPRNG for key generation and nonces.
 
-use crate::{CryptoResult, CryptoError};
+use crate::{CryptoError, CryptoResult};
 use spin::Mutex;
 
 /// Global CSPRNG state
@@ -20,8 +20,7 @@ impl ChaChaRng {
     const fn new() -> Self {
         ChaChaRng {
             state: [
-                0x61707865, 0x3320646e, 0x79622d32, 0x6b206574,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0x61707865, 0x3320646e, 0x79622d32, 0x6b206574, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             ],
             buffer: [0; 64],
             index: 64,

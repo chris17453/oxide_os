@@ -2,8 +2,8 @@
 //!
 //! A vnode represents a file, directory, or other filesystem object.
 
-use alloc::sync::Arc;
 use alloc::string::String;
+use alloc::sync::Arc;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::VfsResult;
@@ -100,13 +100,13 @@ pub struct Stat {
 impl Stat {
     pub fn new(vtype: VnodeType, mode: Mode, size: u64, ino: u64) -> Self {
         let type_bits = match vtype {
-            VnodeType::File => 0o100000,       // S_IFREG
-            VnodeType::Directory => 0o040000,  // S_IFDIR
-            VnodeType::Symlink => 0o120000,    // S_IFLNK
-            VnodeType::CharDevice => 0o020000, // S_IFCHR
-            VnodeType::BlockDevice => 0o060000,// S_IFBLK
-            VnodeType::Fifo => 0o010000,       // S_IFIFO
-            VnodeType::Socket => 0o140000,     // S_IFSOCK
+            VnodeType::File => 0o100000,        // S_IFREG
+            VnodeType::Directory => 0o040000,   // S_IFDIR
+            VnodeType::Symlink => 0o120000,     // S_IFLNK
+            VnodeType::CharDevice => 0o020000,  // S_IFCHR
+            VnodeType::BlockDevice => 0o060000, // S_IFBLK
+            VnodeType::Fifo => 0o010000,        // S_IFIFO
+            VnodeType::Socket => 0o140000,      // S_IFSOCK
         };
 
         Stat {

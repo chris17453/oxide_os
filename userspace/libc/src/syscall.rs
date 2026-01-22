@@ -4,7 +4,9 @@
 //! Architecture-specific raw syscall implementations are in arch/.
 
 // Re-export arch-specific raw syscall functions
-pub use crate::arch::syscall::{syscall0, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6};
+pub use crate::arch::syscall::{
+    syscall0, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6,
+};
 
 /// Syscall numbers (must match kernel)
 pub mod nr {
@@ -122,42 +124,42 @@ pub mod nr {
 }
 
 // Re-export syscall numbers at module level for convenience
-pub use nr::OPEN as SYS_OPEN;
-pub use nr::CLOSE as SYS_CLOSE;
-pub use nr::READ as SYS_READ;
-pub use nr::WRITE as SYS_WRITE;
-pub use nr::LSEEK as SYS_LSEEK;
-pub use nr::IOCTL as SYS_IOCTL;
-pub use nr::GETDENTS as SYS_GETDENTS;
-pub use nr::GETTIMEOFDAY as SYS_GETTIMEOFDAY;
-pub use nr::CLOCK_GETTIME as SYS_CLOCK_GETTIME;
+pub use nr::BRK as SYS_BRK;
 pub use nr::CLOCK_GETRES as SYS_CLOCK_GETRES;
-pub use nr::NANOSLEEP as SYS_NANOSLEEP;
-pub use nr::POLL as SYS_POLL;
-pub use nr::PPOLL as SYS_PPOLL;
-pub use nr::SELECT as SYS_SELECT;
-pub use nr::PSELECT6 as SYS_PSELECT6;
+pub use nr::CLOCK_GETTIME as SYS_CLOCK_GETTIME;
+pub use nr::CLONE as SYS_CLONE;
+pub use nr::CLOSE as SYS_CLOSE;
+pub use nr::EXIT_GROUP as SYS_EXIT_GROUP;
+pub use nr::FUTEX as SYS_FUTEX;
+pub use nr::GETDENTS as SYS_GETDENTS;
 pub use nr::GETDENTS64 as SYS_GETDENTS64;
-pub use nr::GETUID as SYS_GETUID;
+pub use nr::GETEGID as SYS_GETEGID;
 pub use nr::GETEUID as SYS_GETEUID;
 pub use nr::GETGID as SYS_GETGID;
-pub use nr::GETEGID as SYS_GETEGID;
-pub use nr::SETUID as SYS_SETUID;
-pub use nr::SETGID as SYS_SETGID;
-pub use nr::SETEUID as SYS_SETEUID;
-pub use nr::SETEGID as SYS_SETEGID;
+pub use nr::GETKEYMAP as SYS_GETKEYMAP;
+pub use nr::GETTID as SYS_GETTID;
+pub use nr::GETTIMEOFDAY as SYS_GETTIMEOFDAY;
+pub use nr::GETUID as SYS_GETUID;
+pub use nr::IOCTL as SYS_IOCTL;
+pub use nr::LSEEK as SYS_LSEEK;
 pub use nr::MMAP as SYS_MMAP;
-pub use nr::MUNMAP as SYS_MUNMAP;
 pub use nr::MPROTECT as SYS_MPROTECT;
 pub use nr::MREMAP as SYS_MREMAP;
-pub use nr::BRK as SYS_BRK;
-pub use nr::SETKEYMAP as SYS_SETKEYMAP;
-pub use nr::GETKEYMAP as SYS_GETKEYMAP;
-pub use nr::CLONE as SYS_CLONE;
-pub use nr::GETTID as SYS_GETTID;
-pub use nr::FUTEX as SYS_FUTEX;
+pub use nr::MUNMAP as SYS_MUNMAP;
+pub use nr::NANOSLEEP as SYS_NANOSLEEP;
+pub use nr::OPEN as SYS_OPEN;
+pub use nr::POLL as SYS_POLL;
+pub use nr::PPOLL as SYS_PPOLL;
+pub use nr::PSELECT6 as SYS_PSELECT6;
+pub use nr::READ as SYS_READ;
+pub use nr::SELECT as SYS_SELECT;
 pub use nr::SET_TID_ADDRESS as SYS_SET_TID_ADDRESS;
-pub use nr::EXIT_GROUP as SYS_EXIT_GROUP;
+pub use nr::SETEGID as SYS_SETEGID;
+pub use nr::SETEUID as SYS_SETEUID;
+pub use nr::SETGID as SYS_SETGID;
+pub use nr::SETKEYMAP as SYS_SETKEYMAP;
+pub use nr::SETUID as SYS_SETUID;
+pub use nr::WRITE as SYS_WRITE;
 
 // ============================================================================
 // High-level syscall wrappers (architecture-independent)
@@ -181,7 +183,13 @@ pub fn sys_read(fd: i32, buf: &mut [u8]) -> isize {
 
 /// sys_open - Open file
 pub fn sys_open(path: &str, flags: u32, mode: u32) -> i32 {
-    syscall4(nr::OPEN, path.as_ptr() as usize, path.len(), flags as usize, mode as usize) as i32
+    syscall4(
+        nr::OPEN,
+        path.as_ptr() as usize,
+        path.len(),
+        flags as usize,
+        mode as usize,
+    ) as i32
 }
 
 /// sys_close - Close file descriptor
@@ -217,7 +225,12 @@ pub fn sys_wait(status: &mut i32) -> i32 {
 
 /// sys_waitpid - Wait for specific child
 pub fn sys_waitpid(pid: i32, status: &mut i32, options: i32) -> i32 {
-    syscall3(nr::WAITPID, pid as usize, status as *mut i32 as usize, options as usize) as i32
+    syscall3(
+        nr::WAITPID,
+        pid as usize,
+        status as *mut i32 as usize,
+        options as usize,
+    ) as i32
 }
 
 /// sys_getpid - Get process ID
@@ -277,12 +290,24 @@ pub fn sys_chmod(path: &str, mode: u32) -> i32 {
 
 /// sys_chown - Change file owner and group
 pub fn sys_chown(path: &str, uid: i32, gid: i32) -> i32 {
-    syscall4(nr::CHOWN, path.as_ptr() as usize, path.len(), uid as usize, gid as usize) as i32
+    syscall4(
+        nr::CHOWN,
+        path.as_ptr() as usize,
+        path.len(),
+        uid as usize,
+        gid as usize,
+    ) as i32
 }
 
 /// chown - Change file owner and group (raw pointer version)
 pub fn chown(path_ptr: *const u8, path_len: usize, uid: i32, gid: i32) -> i32 {
-    syscall4(nr::CHOWN, path_ptr as usize, path_len, uid as usize, gid as usize) as i32
+    syscall4(
+        nr::CHOWN,
+        path_ptr as usize,
+        path_len,
+        uid as usize,
+        gid as usize,
+    ) as i32
 }
 
 /// sys_utimes - Set file access and modification times
@@ -292,27 +317,57 @@ pub fn chown(path_ptr: *const u8, path_len: usize, uid: i32, gid: i32) -> i32 {
 /// * `atime_sec` - Access time in seconds since epoch (u64::MAX = don't change)
 /// * `mtime_sec` - Modification time in seconds since epoch (u64::MAX = don't change)
 pub fn sys_utimes(path: &str, atime_sec: u64, mtime_sec: u64) -> i32 {
-    syscall4(nr::UTIMES, path.as_ptr() as usize, path.len(), atime_sec as usize, mtime_sec as usize) as i32
+    syscall4(
+        nr::UTIMES,
+        path.as_ptr() as usize,
+        path.len(),
+        atime_sec as usize,
+        mtime_sec as usize,
+    ) as i32
 }
 
 /// sys_rename - Rename/move file
 pub fn sys_rename(old: &str, new: &str) -> i32 {
-    syscall4(nr::RENAME, old.as_ptr() as usize, old.len(), new.as_ptr() as usize, new.len()) as i32
+    syscall4(
+        nr::RENAME,
+        old.as_ptr() as usize,
+        old.len(),
+        new.as_ptr() as usize,
+        new.len(),
+    ) as i32
 }
 
 /// sys_link - Create hard link
 pub fn sys_link(target: &str, link_name: &str) -> i32 {
-    syscall4(nr::LINK, target.as_ptr() as usize, target.len(), link_name.as_ptr() as usize, link_name.len()) as i32
+    syscall4(
+        nr::LINK,
+        target.as_ptr() as usize,
+        target.len(),
+        link_name.as_ptr() as usize,
+        link_name.len(),
+    ) as i32
 }
 
 /// sys_symlink - Create symbolic link
 pub fn sys_symlink(target: &str, link_name: &str) -> i32 {
-    syscall4(nr::SYMLINK, target.as_ptr() as usize, target.len(), link_name.as_ptr() as usize, link_name.len()) as i32
+    syscall4(
+        nr::SYMLINK,
+        target.as_ptr() as usize,
+        target.len(),
+        link_name.as_ptr() as usize,
+        link_name.len(),
+    ) as i32
 }
 
 /// sys_readlink - Read value of symbolic link
 pub fn sys_readlink(path: &str, buf: &mut [u8]) -> i32 {
-    syscall4(nr::READLINK, path.as_ptr() as usize, path.len(), buf.as_mut_ptr() as usize, buf.len()) as i32
+    syscall4(
+        nr::READLINK,
+        path.as_ptr() as usize,
+        path.len(),
+        buf.as_mut_ptr() as usize,
+        buf.len(),
+    ) as i32
 }
 
 /// sys_nanosleep - High resolution sleep
@@ -323,12 +378,21 @@ pub fn sys_nanosleep(seconds: u64, nanoseconds: u64) -> i32 {
 
 /// sys_gettimeofday - Get current time
 pub fn sys_gettimeofday(tv_sec: &mut i64, tv_usec: &mut i64) -> i32 {
-    syscall2(nr::GETTIMEOFDAY, tv_sec as *mut i64 as usize, tv_usec as *mut i64 as usize) as i32
+    syscall2(
+        nr::GETTIMEOFDAY,
+        tv_sec as *mut i64 as usize,
+        tv_usec as *mut i64 as usize,
+    ) as i32
 }
 
 /// sys_getdents - Read directory entries
 pub fn sys_getdents(fd: i32, buf: &mut [u8]) -> i32 {
-    syscall3(nr::GETDENTS, fd as usize, buf.as_mut_ptr() as usize, buf.len()) as i32
+    syscall3(
+        nr::GETDENTS,
+        fd as usize,
+        buf.as_mut_ptr() as usize,
+        buf.len(),
+    ) as i32
 }
 
 /// sys_ioctl - Device control
@@ -405,7 +469,13 @@ pub mod futex_op {
 /// * `parent_tid` - Location to store parent TID
 /// * `child_tid` - Location to store child TID
 /// * `tls` - Thread-local storage pointer
-pub fn sys_clone(flags: u32, stack: *mut u8, parent_tid: *mut u32, child_tid: *mut u32, tls: u64) -> i32 {
+pub fn sys_clone(
+    flags: u32,
+    stack: *mut u8,
+    parent_tid: *mut u32,
+    child_tid: *mut u32,
+    tls: u64,
+) -> i32 {
     syscall5(
         nr::CLONE,
         flags as usize,
@@ -430,7 +500,14 @@ pub fn sys_gettid() -> i32 {
 /// * `timeout` - Timeout in nanoseconds (0 = infinite)
 /// * `addr2` - Second address (for some operations)
 /// * `val3` - Third value (for some operations)
-pub fn sys_futex(addr: *mut u32, op: i32, val: u32, timeout: u64, addr2: *mut u32, val3: u32) -> i32 {
+pub fn sys_futex(
+    addr: *mut u32,
+    op: i32,
+    val: u32,
+    timeout: u64,
+    addr2: *mut u32,
+    val3: u32,
+) -> i32 {
     syscall6(
         nr::FUTEX,
         addr as usize,
@@ -444,12 +521,26 @@ pub fn sys_futex(addr: *mut u32, op: i32, val: u32, timeout: u64, addr2: *mut u3
 
 /// sys_futex_wait - Wait on a futex
 pub fn sys_futex_wait(addr: *mut u32, expected: u32, timeout_ns: u64) -> i32 {
-    sys_futex(addr, futex_op::FUTEX_WAIT_PRIVATE, expected, timeout_ns, core::ptr::null_mut(), 0)
+    sys_futex(
+        addr,
+        futex_op::FUTEX_WAIT_PRIVATE,
+        expected,
+        timeout_ns,
+        core::ptr::null_mut(),
+        0,
+    )
 }
 
 /// sys_futex_wake - Wake waiters on a futex
 pub fn sys_futex_wake(addr: *mut u32, count: u32) -> i32 {
-    sys_futex(addr, futex_op::FUTEX_WAKE_PRIVATE, count, 0, core::ptr::null_mut(), 0)
+    sys_futex(
+        addr,
+        futex_op::FUTEX_WAKE_PRIVATE,
+        count,
+        0,
+        core::ptr::null_mut(),
+        0,
+    )
 }
 
 /// sys_set_tid_address - Set clear_child_tid pointer
@@ -507,7 +598,14 @@ pub const MAP_FAILED: *mut u8 = usize::MAX as *mut u8;
 ///
 /// # Returns
 /// Address of mapping on success, MAP_FAILED on error
-pub fn sys_mmap(addr: *mut u8, length: usize, prot: i32, flags: i32, fd: i32, offset: i64) -> *mut u8 {
+pub fn sys_mmap(
+    addr: *mut u8,
+    length: usize,
+    prot: i32,
+    flags: i32,
+    fd: i32,
+    offset: i64,
+) -> *mut u8 {
     let result = syscall6(
         nr::MMAP,
         addr as usize,
@@ -649,9 +747,9 @@ pub struct ITimerVal {
 
 /// Timer types
 pub mod itimer {
-    pub const ITIMER_REAL: i32 = 0;    // Real time (SIGALRM)
+    pub const ITIMER_REAL: i32 = 0; // Real time (SIGALRM)
     pub const ITIMER_VIRTUAL: i32 = 1; // User time (SIGVTALRM)
-    pub const ITIMER_PROF: i32 = 2;    // User + system time (SIGPROF)
+    pub const ITIMER_PROF: i32 = 2; // User + system time (SIGPROF)
 }
 
 /// sys_alarm - Set alarm signal
@@ -675,7 +773,12 @@ pub fn sys_alarm(seconds: u32) -> u32 {
 /// # Returns
 /// 0 on success, -1 on error
 pub fn sys_setitimer(which: i32, new_value: *const ITimerVal, old_value: *mut ITimerVal) -> i32 {
-    syscall3(nr::SETITIMER, which as usize, new_value as usize, old_value as usize) as i32
+    syscall3(
+        nr::SETITIMER,
+        which as usize,
+        new_value as usize,
+        old_value as usize,
+    ) as i32
 }
 
 /// sys_getitimer - Get interval timer

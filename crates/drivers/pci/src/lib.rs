@@ -29,8 +29,8 @@ pub mod vendor {
 
 /// VirtIO device IDs (transitional)
 pub mod virtio_device {
-    pub const NET: u16 = 0x1000;     // Network card
-    pub const BLOCK: u16 = 0x1001;   // Block device
+    pub const NET: u16 = 0x1000; // Network card
+    pub const BLOCK: u16 = 0x1001; // Block device
     pub const CONSOLE: u16 = 0x1003; // Console
     pub const ENTROPY: u16 = 0x1005; // Entropy source
     pub const BALLOON: u16 = 0x1002; // Memory balloon
@@ -38,8 +38,8 @@ pub mod virtio_device {
 
 /// VirtIO device IDs (modern, non-transitional)
 pub mod virtio_modern {
-    pub const NET: u16 = 0x1041;     // Network card
-    pub const BLOCK: u16 = 0x1042;   // Block device
+    pub const NET: u16 = 0x1041; // Network card
+    pub const BLOCK: u16 = 0x1042; // Block device
 }
 
 /// PCI device address
@@ -52,7 +52,11 @@ pub struct PciAddress {
 
 impl PciAddress {
     pub fn new(bus: u8, device: u8, function: u8) -> Self {
-        PciAddress { bus, device, function }
+        PciAddress {
+            bus,
+            device,
+            function,
+        }
     }
 
     /// Create config address for given register offset
@@ -76,10 +80,7 @@ pub enum PciBar {
         is_64bit: bool,
     },
     /// Port I/O
-    Io {
-        port: u32,
-        size: u32,
-    },
+    Io { port: u32, size: u32 },
     /// Not present or invalid
     None,
 }

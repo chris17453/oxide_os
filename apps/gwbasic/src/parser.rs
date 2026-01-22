@@ -1,7 +1,13 @@
 //! Parser for GW-BASIC
 
 #[cfg(not(feature = "std"))]
-use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, vec, format};
+use alloc::{
+    boxed::Box,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 
 use crate::error::{Error, Result};
 use crate::lexer::{Token, TokenType};
@@ -14,7 +20,7 @@ pub enum AstNode {
     Print(Vec<AstNode>),
     Input(Vec<String>),
     Let(String, Box<AstNode>),
-    ArrayAssign(String, Vec<AstNode>, Box<AstNode>),  // name, indices, value
+    ArrayAssign(String, Vec<AstNode>, Box<AstNode>), // name, indices, value
 
     // Statements - Control Flow
     If(Box<AstNode>, Vec<AstNode>, Option<Vec<AstNode>>),
@@ -29,112 +35,144 @@ pub enum AstNode {
     Return,
     End,
     Stop,
-    
+
     // Statements - Data
     Dim(String, Vec<AstNode>),
     Read(Vec<String>),
     Data(Vec<AstNode>),
     Restore(Option<u32>),
     Rem(String),
-    
+
     // Statements - Screen/Graphics
     Cls,
     Locate(Box<AstNode>, Box<AstNode>),
     Color(Option<Box<AstNode>>, Option<Box<AstNode>>),
     Screen(Box<AstNode>),
     Width(Box<AstNode>),
-    View(Option<Box<AstNode>>, Option<Box<AstNode>>, Option<Box<AstNode>>, Option<Box<AstNode>>), // x1, y1, x2, y2
-    Window(Option<Box<AstNode>>, Option<Box<AstNode>>, Option<Box<AstNode>>, Option<Box<AstNode>>), // x1, y1, x2, y2
+    View(
+        Option<Box<AstNode>>,
+        Option<Box<AstNode>>,
+        Option<Box<AstNode>>,
+        Option<Box<AstNode>>,
+    ), // x1, y1, x2, y2
+    Window(
+        Option<Box<AstNode>>,
+        Option<Box<AstNode>>,
+        Option<Box<AstNode>>,
+        Option<Box<AstNode>>,
+    ), // x1, y1, x2, y2
     Pset(Box<AstNode>, Box<AstNode>, Option<Box<AstNode>>),
     Preset(Box<AstNode>, Box<AstNode>, Option<Box<AstNode>>),
-    DrawLine(Box<AstNode>, Box<AstNode>, Box<AstNode>, Box<AstNode>, Option<Box<AstNode>>),
-    Circle(Box<AstNode>, Box<AstNode>, Box<AstNode>, Option<Box<AstNode>>),
-    Paint(Box<AstNode>, Box<AstNode>, Option<Box<AstNode>>, Option<Box<AstNode>>), // x, y, paint_color, border_color
-    Draw(String),                            // draw string
-    GraphicsGet(Box<AstNode>, Box<AstNode>, Box<AstNode>, Box<AstNode>, String), // x1, y1, x2, y2, array
+    DrawLine(
+        Box<AstNode>,
+        Box<AstNode>,
+        Box<AstNode>,
+        Box<AstNode>,
+        Option<Box<AstNode>>,
+    ),
+    Circle(
+        Box<AstNode>,
+        Box<AstNode>,
+        Box<AstNode>,
+        Option<Box<AstNode>>,
+    ),
+    Paint(
+        Box<AstNode>,
+        Box<AstNode>,
+        Option<Box<AstNode>>,
+        Option<Box<AstNode>>,
+    ), // x, y, paint_color, border_color
+    Draw(String), // draw string
+    GraphicsGet(
+        Box<AstNode>,
+        Box<AstNode>,
+        Box<AstNode>,
+        Box<AstNode>,
+        String,
+    ), // x1, y1, x2, y2, array
     GraphicsPut(Box<AstNode>, Box<AstNode>, String, Option<String>), // x, y, array, action
-    Palette(Box<AstNode>, Box<AstNode>),    // attribute, color
-    
+    Palette(Box<AstNode>, Box<AstNode>), // attribute, color
+
     // Statements - Sound
     Beep,
     Sound(Box<AstNode>, Box<AstNode>),
-    Play(String),                            // music string
-    
+    Play(String), // music string
+
     // Statements - File I/O
-    Open(String, Box<AstNode>, String),  // filename, file_number, mode
+    Open(String, Box<AstNode>, String), // filename, file_number, mode
     Close(Vec<i32>),
-    Reset,                                   // close all files
-    PrintFile(Box<AstNode>, Vec<AstNode>),  // file_number, expressions
-    InputFile(Box<AstNode>, Vec<String>),   // file_number, variables
-    WriteFile(Box<AstNode>, Vec<AstNode>),  // file_number, expressions
-    LineInput(Vec<String>),                  // variables
-    LineInputFile(Box<AstNode>, String),    // file_number, variable
-    Kill(String),                            // filename
-    Name(String, String),                    // old_name, new_name
-    Files(Option<String>),                   // optional filespec
-    Field(Box<AstNode>, Vec<(u32, String)>), // file_number, field_specs (width, var)
-    Lset(String, Box<AstNode>),             // variable, expression
-    Rset(String, Box<AstNode>),             // variable, expression
+    Reset,                                       // close all files
+    PrintFile(Box<AstNode>, Vec<AstNode>),       // file_number, expressions
+    InputFile(Box<AstNode>, Vec<String>),        // file_number, variables
+    WriteFile(Box<AstNode>, Vec<AstNode>),       // file_number, expressions
+    LineInput(Vec<String>),                      // variables
+    LineInputFile(Box<AstNode>, String),         // file_number, variable
+    Kill(String),                                // filename
+    Name(String, String),                        // old_name, new_name
+    Files(Option<String>),                       // optional filespec
+    Field(Box<AstNode>, Vec<(u32, String)>),     // file_number, field_specs (width, var)
+    Lset(String, Box<AstNode>),                  // variable, expression
+    Rset(String, Box<AstNode>),                  // variable, expression
     FileGet(Box<AstNode>, Option<Box<AstNode>>), // file_number, optional record_number
     FilePut(Box<AstNode>, Option<Box<AstNode>>), // file_number, optional record_number
-    PrintUsing(String, Vec<AstNode>),        // format string, expressions
-    Write(Vec<AstNode>),                     // expressions to screen
-    
+    PrintUsing(String, Vec<AstNode>),            // format string, expressions
+    Write(Vec<AstNode>),                         // expressions to screen
+
     // Statements - Program Control
-    List(Option<u32>, Option<u32>),         // start_line, end_line
+    List(Option<u32>, Option<u32>), // start_line, end_line
     New,
-    Run(Option<u32>),                       // optional start line
-    Load(String),                           // filename
-    Save(String),                           // filename
-    Merge(String),                          // filename
-    Chain(String, Option<u32>),             // filename, optional line
-    Cont,                                   // continue after STOP
-    
+    Run(Option<u32>),           // optional start line
+    Load(String),               // filename
+    Save(String),               // filename
+    Merge(String),              // filename
+    Chain(String, Option<u32>), // filename, optional line
+    Cont,                       // continue after STOP
+
     // Statements - Program Editing
-    Auto(Option<u32>, Option<u32>),         // start, increment
-    Delete(u32, Option<u32>),               // start, optional end
+    Auto(Option<u32>, Option<u32>),               // start, increment
+    Delete(u32, Option<u32>),                     // start, optional end
     Renum(Option<u32>, Option<u32>, Option<u32>), // new_start, old_start, increment
-    Edit(u32),                              // line number
-    Tron,                                   // trace on
-    Troff,                                  // trace off
-    
+    Edit(u32),                                    // line number
+    Tron,                                         // trace on
+    Troff,                                        // trace off
+
     // Statements - Error Handling
-    OnError(u32),                           // line number for error handler
-    Resume(Option<u32>),                    // optional line number
-    ErrorStmt(Box<AstNode>),                // error number to raise
-    
+    OnError(u32),            // line number for error handler
+    Resume(Option<u32>),     // optional line number
+    ErrorStmt(Box<AstNode>), // error number to raise
+
     // Statements - System
     Randomize(Option<Box<AstNode>>),
     Swap(String, String),
     Clear,
     Erase(Vec<String>),
-    Out(Box<AstNode>, Box<AstNode>),       // port, value
-    Poke(Box<AstNode>, Box<AstNode>),      // address, value
-    Wait(Box<AstNode>, Box<AstNode>),      // port, mask
+    Out(Box<AstNode>, Box<AstNode>),          // port, value
+    Poke(Box<AstNode>, Box<AstNode>),         // address, value
+    Wait(Box<AstNode>, Box<AstNode>),         // port, mask
     DefFn(String, Vec<String>, Box<AstNode>), // name, params, expression
-    DefStr(String, String),                 // start_letter, end_letter
-    DefInt(String, String),                 // start_letter, end_letter
-    DefSng(String, String),                 // start_letter, end_letter
-    DefDbl(String, String),                 // start_letter, end_letter
-    OptionBase(u8),                         // 0 or 1
-    Key(Box<AstNode>, String),              // key_number, string
+    DefStr(String, String),                   // start_letter, end_letter
+    DefInt(String, String),                   // start_letter, end_letter
+    DefSng(String, String),                   // start_letter, end_letter
+    DefDbl(String, String),                   // start_letter, end_letter
+    OptionBase(u8),                           // 0 or 1
+    Key(Box<AstNode>, String),                // key_number, string
     KeyOn,
     KeyOff,
     KeyList,
-    OnKey(Box<AstNode>, u32),               // key_number, line_number
-    DefSeg(Option<Box<AstNode>>),           // optional segment
-    Bload(String, Option<Box<AstNode>>),    // filename, optional offset
+    OnKey(Box<AstNode>, u32),                  // key_number, line_number
+    DefSeg(Option<Box<AstNode>>),              // optional segment
+    Bload(String, Option<Box<AstNode>>),       // filename, optional offset
     Bsave(String, Box<AstNode>, Box<AstNode>), // filename, offset, length
-    Call(Box<AstNode>, Vec<AstNode>),       // address, parameters
-    Usr(Box<AstNode>),                      // address
-    
+    Call(Box<AstNode>, Vec<AstNode>),          // address, parameters
+    Usr(Box<AstNode>),                         // address
+
     // Expressions
     Literal(Value),
     Variable(String),
     BinaryOp(BinaryOperator, Box<AstNode>, Box<AstNode>),
     UnaryOp(UnaryOperator, Box<AstNode>),
     FunctionCall(String, Vec<AstNode>),
-    
+
     // Program structure
     Line(u32, Vec<AstNode>),
     Program(Vec<AstNode>),
@@ -179,7 +217,10 @@ pub struct Parser {
 impl Parser {
     /// Create a new parser from a vector of tokens
     pub fn new(tokens: Vec<Token>) -> Self {
-        Parser { tokens, position: 0 }
+        Parser {
+            tokens,
+            position: 0,
+        }
     }
 
     /// Parse the entire program
@@ -260,7 +301,7 @@ impl Parser {
             TokenType::Print => self.parse_print(),
             TokenType::Input => self.parse_input(),
             TokenType::Let => self.parse_let(),
-            
+
             // Control Flow
             TokenType::If => self.parse_if(),
             TokenType::For => self.parse_for(),
@@ -326,11 +367,11 @@ impl Parser {
                 if let TokenType::Hash = self.current_token().token_type {
                     self.advance();
                     let file_num = self.parse_expression()?;
-                    
+
                     if let TokenType::Comma = self.current_token().token_type {
                         self.advance();
                     }
-                    
+
                     let mut expressions = Vec::new();
                     while !self.is_at_end() {
                         match &self.current_token().token_type {
@@ -343,7 +384,7 @@ impl Parser {
                             }
                         }
                     }
-                    
+
                     Ok(AstNode::WriteFile(Box::new(file_num), expressions))
                 } else {
                     // Regular WRITE (to screen)
@@ -359,14 +400,17 @@ impl Parser {
                             }
                         }
                     }
-                    
-                    Ok(AstNode::PrintFile(Box::new(AstNode::Literal(Value::Integer(0))), expressions))
+
+                    Ok(AstNode::PrintFile(
+                        Box::new(AstNode::Literal(Value::Integer(0))),
+                        expressions,
+                    ))
                 }
             }
             TokenType::On => {
                 self.advance();
                 let expr = self.parse_expression()?;
-                
+
                 // Check for GOTO or GOSUB
                 let is_goto = if let TokenType::Goto = self.current_token().token_type {
                     self.advance();
@@ -375,9 +419,11 @@ impl Parser {
                     self.advance();
                     false
                 } else {
-                    return Err(Error::SyntaxError("Expected GOTO or GOSUB after ON".to_string()));
+                    return Err(Error::SyntaxError(
+                        "Expected GOTO or GOSUB after ON".to_string(),
+                    ));
                 };
-                
+
                 // Parse line numbers
                 let mut lines = vec![];
                 loop {
@@ -393,14 +439,14 @@ impl Parser {
                         break;
                     }
                 }
-                
+
                 if is_goto {
                     Ok(AstNode::OnGoto(Box::new(expr), lines))
                 } else {
                     Ok(AstNode::OnGosub(Box::new(expr), lines))
                 }
             }
-            
+
             // Data
             TokenType::Dim => self.parse_dim(),
             TokenType::Rem => self.parse_rem(),
@@ -452,7 +498,7 @@ impl Parser {
                 };
                 Ok(AstNode::Restore(line))
             }
-            
+
             // Screen/Graphics
             TokenType::Cls => {
                 self.advance();
@@ -469,14 +515,20 @@ impl Parser {
             }
             TokenType::Color => {
                 self.advance();
-                let fg = if matches!(self.current_token().token_type, TokenType::Comma | TokenType::Newline | TokenType::Eof) {
+                let fg = if matches!(
+                    self.current_token().token_type,
+                    TokenType::Comma | TokenType::Newline | TokenType::Eof
+                ) {
                     None
                 } else {
                     Some(Box::new(self.parse_expression()?))
                 };
                 let bg = if let TokenType::Comma = self.current_token().token_type {
                     self.advance();
-                    if !matches!(self.current_token().token_type, TokenType::Newline | TokenType::Eof) {
+                    if !matches!(
+                        self.current_token().token_type,
+                        TokenType::Newline | TokenType::Eof
+                    ) {
                         Some(Box::new(self.parse_expression()?))
                     } else {
                         None
@@ -555,7 +607,12 @@ impl Parser {
                     self.advance();
                     let _ = self.parse_expression()?;
                 }
-                Ok(AstNode::Circle(Box::new(x), Box::new(y), Box::new(radius), color))
+                Ok(AstNode::Circle(
+                    Box::new(x),
+                    Box::new(y),
+                    Box::new(radius),
+                    color,
+                ))
             }
             TokenType::Line => {
                 self.advance();
@@ -574,7 +631,9 @@ impl Parser {
                 if let TokenType::Minus = self.current_token().token_type {
                     self.advance();
                 } else {
-                    return Err(Error::SyntaxError("Expected '-' in LINE statement".to_string()));
+                    return Err(Error::SyntaxError(
+                        "Expected '-' in LINE statement".to_string(),
+                    ));
                 }
                 if let TokenType::LeftParen = self.current_token().token_type {
                     self.advance();
@@ -593,7 +652,13 @@ impl Parser {
                 } else {
                     None
                 };
-                Ok(AstNode::DrawLine(Box::new(x1), Box::new(y1), Box::new(x2), Box::new(y2), color))
+                Ok(AstNode::DrawLine(
+                    Box::new(x1),
+                    Box::new(y1),
+                    Box::new(x2),
+                    Box::new(y2),
+                    color,
+                ))
             }
             TokenType::Paint => {
                 self.advance();
@@ -620,9 +685,14 @@ impl Parser {
                 } else {
                     None
                 };
-                Ok(AstNode::Paint(Box::new(x), Box::new(y), paint_color, border_color))
+                Ok(AstNode::Paint(
+                    Box::new(x),
+                    Box::new(y),
+                    paint_color,
+                    border_color,
+                ))
             }
-            
+
             // Sound
             TokenType::Beep => {
                 self.advance();
@@ -637,7 +707,7 @@ impl Parser {
                 let duration = self.parse_expression()?;
                 Ok(AstNode::Sound(Box::new(freq), Box::new(duration)))
             }
-            
+
             // System
             TokenType::Randomize => {
                 self.advance();
@@ -647,7 +717,10 @@ impl Parser {
                     // RANDOMIZE TIMER - use current time as seed
                     return Ok(AstNode::Randomize(None));
                 }
-                let seed = if matches!(self.current_token().token_type, TokenType::Newline | TokenType::Eof | TokenType::Colon) {
+                let seed = if matches!(
+                    self.current_token().token_type,
+                    TokenType::Newline | TokenType::Eof | TokenType::Colon
+                ) {
                     None
                 } else {
                     Some(Box::new(self.parse_expression()?))
@@ -661,7 +734,9 @@ impl Parser {
                     self.advance();
                     v
                 } else {
-                    return Err(Error::SyntaxError("Expected variable name after SWAP".to_string()));
+                    return Err(Error::SyntaxError(
+                        "Expected variable name after SWAP".to_string(),
+                    ));
                 };
                 if let TokenType::Comma = self.current_token().token_type {
                     self.advance();
@@ -671,11 +746,13 @@ impl Parser {
                     self.advance();
                     v
                 } else {
-                    return Err(Error::SyntaxError("Expected second variable name in SWAP".to_string()));
+                    return Err(Error::SyntaxError(
+                        "Expected second variable name in SWAP".to_string(),
+                    ));
                 };
                 Ok(AstNode::Swap(var1, var2))
             }
-            
+
             TokenType::Identifier(_) => {
                 // Could be an assignment without LET
                 let name = if let TokenType::Identifier(n) = &self.current_token().token_type {
@@ -690,30 +767,38 @@ impl Parser {
                     let expr = self.parse_expression()?;
                     Ok(AstNode::Let(name, Box::new(expr)))
                 } else {
-                    Err(Error::SyntaxError(format!("Unexpected token after identifier: {:?}", self.current_token().token_type)))
+                    Err(Error::SyntaxError(format!(
+                        "Unexpected token after identifier: {:?}",
+                        self.current_token().token_type
+                    )))
                 }
             }
-            _ => Err(Error::SyntaxError(format!("Unexpected token: {:?}", self.current_token().token_type))),
+            _ => Err(Error::SyntaxError(format!(
+                "Unexpected token: {:?}",
+                self.current_token().token_type
+            ))),
         }
     }
 
     fn parse_print(&mut self) -> Result<AstNode> {
         self.advance(); // Skip PRINT
-        
+
         // Check if it's PRINT# (file output)
         if let TokenType::Hash = self.current_token().token_type {
             self.advance();
             let file_num = self.parse_expression()?;
-            
+
             // Expect comma after file number
             if let TokenType::Comma = self.current_token().token_type {
                 self.advance();
             }
-            
+
             let mut expressions = Vec::new();
             while !self.is_at_end() {
                 match &self.current_token().token_type {
-                    TokenType::Eof | TokenType::Newline | TokenType::Colon | TokenType::Else => break,
+                    TokenType::Eof | TokenType::Newline | TokenType::Colon | TokenType::Else => {
+                        break
+                    }
                     TokenType::Semicolon | TokenType::Comma => {
                         self.advance();
                     }
@@ -725,7 +810,7 @@ impl Parser {
 
             return Ok(AstNode::PrintFile(Box::new(file_num), expressions));
         }
-        
+
         // Regular PRINT
         let mut expressions = Vec::new();
 
@@ -773,7 +858,9 @@ impl Parser {
             if let TokenType::Equal = self.current_token().token_type {
                 self.advance();
             } else {
-                return Err(Error::SyntaxError("Expected '=' in array assignment".to_string()));
+                return Err(Error::SyntaxError(
+                    "Expected '=' in array assignment".to_string(),
+                ));
             }
 
             let expr = self.parse_expression()?;
@@ -784,7 +871,9 @@ impl Parser {
         if let TokenType::Equal = self.current_token().token_type {
             self.advance();
         } else {
-            return Err(Error::SyntaxError("Expected '=' in LET statement".to_string()));
+            return Err(Error::SyntaxError(
+                "Expected '=' in LET statement".to_string(),
+            ));
         }
 
         let expr = self.parse_expression()?;
@@ -799,7 +888,9 @@ impl Parser {
         if let TokenType::Then = self.current_token().token_type {
             self.advance();
         } else {
-            return Err(Error::SyntaxError("Expected THEN after IF condition".to_string()));
+            return Err(Error::SyntaxError(
+                "Expected THEN after IF condition".to_string(),
+            ));
         }
 
         let then_statements = self.parse_statements()?;
@@ -811,7 +902,11 @@ impl Parser {
             None
         };
 
-        Ok(AstNode::If(Box::new(condition), then_statements, else_statements))
+        Ok(AstNode::If(
+            Box::new(condition),
+            then_statements,
+            else_statements,
+        ))
     }
 
     fn parse_for(&mut self) -> Result<AstNode> {
@@ -820,14 +915,18 @@ impl Parser {
         let var = if let TokenType::Identifier(n) = &self.current_token().token_type {
             n.clone()
         } else {
-            return Err(Error::SyntaxError("Expected variable after FOR".to_string()));
+            return Err(Error::SyntaxError(
+                "Expected variable after FOR".to_string(),
+            ));
         };
         self.advance();
 
         if let TokenType::Equal = self.current_token().token_type {
             self.advance();
         } else {
-            return Err(Error::SyntaxError("Expected '=' in FOR statement".to_string()));
+            return Err(Error::SyntaxError(
+                "Expected '=' in FOR statement".to_string(),
+            ));
         }
 
         let start = self.parse_expression()?;
@@ -835,7 +934,9 @@ impl Parser {
         if let TokenType::To = self.current_token().token_type {
             self.advance();
         } else {
-            return Err(Error::SyntaxError("Expected TO in FOR statement".to_string()));
+            return Err(Error::SyntaxError(
+                "Expected TO in FOR statement".to_string(),
+            ));
         }
 
         let end = self.parse_expression()?;
@@ -881,7 +982,9 @@ impl Parser {
             self.advance();
             Ok(AstNode::Goto(line as u32))
         } else {
-            Err(Error::SyntaxError("Expected line number after GOTO".to_string()))
+            Err(Error::SyntaxError(
+                "Expected line number after GOTO".to_string(),
+            ))
         }
     }
 
@@ -892,23 +995,25 @@ impl Parser {
             self.advance();
             Ok(AstNode::Gosub(line as u32))
         } else {
-            Err(Error::SyntaxError("Expected line number after GOSUB".to_string()))
+            Err(Error::SyntaxError(
+                "Expected line number after GOSUB".to_string(),
+            ))
         }
     }
 
     fn parse_input(&mut self) -> Result<AstNode> {
         self.advance(); // Skip INPUT
-        
+
         // Check if it's INPUT# (file input)
         if let TokenType::Hash = self.current_token().token_type {
             self.advance();
             let file_num = self.parse_expression()?;
-            
+
             // Expect comma after file number
             if let TokenType::Comma = self.current_token().token_type {
                 self.advance();
             }
-            
+
             let mut vars = Vec::new();
             while !self.is_at_end() {
                 match &self.current_token().token_type {
@@ -925,7 +1030,7 @@ impl Parser {
                     _ => break,
                 }
             }
-            
+
             return Ok(AstNode::InputFile(Box::new(file_num), vars));
         }
 
@@ -935,7 +1040,10 @@ impl Parser {
             _prompt = Some(s.clone());
             self.advance();
             // Skip semicolon or comma after prompt
-            if matches!(&self.current_token().token_type, TokenType::Semicolon | TokenType::Comma) {
+            if matches!(
+                &self.current_token().token_type,
+                TokenType::Semicolon | TokenType::Comma
+            ) {
                 self.advance();
             }
         }
@@ -973,7 +1081,9 @@ impl Parser {
         if let TokenType::LeftParen = self.current_token().token_type {
             self.advance();
         } else {
-            return Err(Error::SyntaxError("Expected '(' after array name".to_string()));
+            return Err(Error::SyntaxError(
+                "Expected '(' after array name".to_string(),
+            ));
         }
 
         let mut dimensions = Vec::new();
@@ -986,7 +1096,11 @@ impl Parser {
                     self.advance();
                     break;
                 }
-                _ => return Err(Error::SyntaxError("Expected ',' or ')' in DIM statement".to_string())),
+                _ => {
+                    return Err(Error::SyntaxError(
+                        "Expected ',' or ')' in DIM statement".to_string(),
+                    ))
+                }
             }
         }
 
@@ -1166,7 +1280,11 @@ impl Parser {
                                 self.advance();
                                 break;
                             }
-                            _ => return Err(Error::SyntaxError("Expected ',' or ')' in function call".to_string())),
+                            _ => {
+                                return Err(Error::SyntaxError(
+                                    "Expected ',' or ')' in function call".to_string(),
+                                ))
+                            }
                         }
                     }
 
@@ -1183,10 +1301,15 @@ impl Parser {
                     self.advance();
                     Ok(expr)
                 } else {
-                    Err(Error::SyntaxError("Expected ')' after expression".to_string()))
+                    Err(Error::SyntaxError(
+                        "Expected ')' after expression".to_string(),
+                    ))
                 }
             }
-            _ => Err(Error::SyntaxError(format!("Unexpected token in expression: {:?}", self.current_token().token_type))),
+            _ => Err(Error::SyntaxError(format!(
+                "Unexpected token in expression: {:?}",
+                self.current_token().token_type
+            ))),
         }
     }
 
@@ -1274,7 +1397,7 @@ mod tests {
                         assert_eq!(exprs.len(), 1);
                         // Should be a binary operation
                         match &exprs[0] {
-                            AstNode::BinaryOp(BinaryOperator::Add, _, _) => {},
+                            AstNode::BinaryOp(BinaryOperator::Add, _, _) => {}
                             _ => panic!("Expected binary operation"),
                         }
                     }

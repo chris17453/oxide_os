@@ -2,9 +2,9 @@
 //!
 //! Handles CPU discovery, state tracking, and AP boot coordination.
 
-use core::sync::atomic::{AtomicU32, AtomicBool, Ordering};
 use crate::MAX_CPUS;
 use crate::percpu;
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// CPU identifier type
 pub type CpuId = u32;

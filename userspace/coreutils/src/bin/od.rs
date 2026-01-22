@@ -23,10 +23,10 @@ fn ptr_to_str(ptr: *const u8) -> &'static str {
 
 #[derive(Clone, Copy, PartialEq)]
 enum OutputFormat {
-    Octal,      // -o (default)
-    Hex,        // -x
-    Decimal,    // -d
-    Char,       // -c
+    Octal,   // -o (default)
+    Hex,     // -x
+    Decimal, // -d
+    Char,    // -c
 }
 
 #[unsafe(no_mangle)]

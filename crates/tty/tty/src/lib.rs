@@ -50,13 +50,13 @@
 
 extern crate alloc;
 
-pub mod termios;
-pub mod winsize;
 pub mod ldisc;
+pub mod termios;
 pub mod tty;
+pub mod winsize;
 
-pub use termios::{Termios, InputFlags, OutputFlags, ControlFlags, LocalFlags};
-pub use termios::{TCGETS, TCSETS, TCSETSW, TCSETSF, TIOCGWINSZ, TIOCSWINSZ, TIOCGPGRP, TIOCSPGRP};
-pub use winsize::Winsize;
 pub use ldisc::{LineDiscipline, Signal};
-pub use tty::{Tty, TtyDriver, CallbackDriver};
+pub use termios::{ControlFlags, InputFlags, LocalFlags, OutputFlags, Termios};
+pub use termios::{TCGETS, TCSETS, TCSETSF, TCSETSW, TIOCGPGRP, TIOCGWINSZ, TIOCSPGRP, TIOCSWINSZ};
+pub use tty::{CallbackDriver, Tty, TtyDriver};
+pub use winsize::Winsize;

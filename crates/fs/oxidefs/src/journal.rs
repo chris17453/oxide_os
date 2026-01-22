@@ -52,8 +52,7 @@ impl JournalHeader {
             head: u32::from_le_bytes([data[8], data[9], data[10], data[11]]),
             tail: u32::from_le_bytes([data[12], data[13], data[14], data[15]]),
             next_tid: u64::from_le_bytes([
-                data[16], data[17], data[18], data[19],
-                data[20], data[21], data[22], data[23],
+                data[16], data[17], data[18], data[19], data[20], data[21], data[22], data[23],
             ]),
         })
     }
@@ -278,8 +277,7 @@ impl Journal {
                 t if t == JournalBlockType::Start as u32 => {
                     // Start of transaction - replay it
                     let _tid = u64::from_le_bytes([
-                        buf[8], buf[9], buf[10], buf[11],
-                        buf[12], buf[13], buf[14], buf[15],
+                        buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15],
                     ]);
                     let num_blocks = u32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]]);
 
@@ -290,8 +288,7 @@ impl Journal {
                         let block = self.start_block + 1 + pos as u64;
                         device.read(block, &mut buf)?;
                         let dest = u64::from_le_bytes([
-                            buf[8], buf[9], buf[10], buf[11],
-                            buf[12], buf[13], buf[14], buf[15],
+                            buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15],
                         ]);
 
                         pos = (pos + 1) % (self.size - 1);

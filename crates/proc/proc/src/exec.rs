@@ -7,10 +7,10 @@ extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use os_core::{PhysAddr, VirtAddr};
 use elf::{ElfExecutable, ElfLoader};
-use mm_paging::{phys_to_virt, flush_tlb_all};
+use mm_paging::{flush_tlb_all, phys_to_virt};
 use mm_traits::FrameAllocator;
+use os_core::{PhysAddr, VirtAddr};
 use proc_traits::MemoryFlags;
 
 use crate::{UserAddressSpace, process_table};
@@ -69,8 +69,7 @@ pub fn do_exec<A: FrameAllocator>(
 
     // Create new address space
     let mut new_address_space = unsafe {
-        UserAddressSpace::new_with_kernel(allocator, kernel_pml4)
-            .ok_or(ExecError::OutOfMemory)?
+        UserAddressSpace::new_with_kernel(allocator, kernel_pml4).ok_or(ExecError::OutOfMemory)?
     };
 
     // Load segments
@@ -155,7 +154,9 @@ pub fn do_exec<A: FrameAllocator>(
         .allocate_pages(
             stack_bottom,
             stack_pages,
-            MemoryFlags::READ.union(MemoryFlags::WRITE).union(MemoryFlags::USER),
+            MemoryFlags::READ
+                .union(MemoryFlags::WRITE)
+                .union(MemoryFlags::USER),
             allocator,
         )
         .map_err(|_| ExecError::OutOfMemory)?;
@@ -323,7 +324,11 @@ fn write_to_user_stack(
             core::ptr::copy_nonoverlapping(data.as_ptr(), dest, remaining_in_page);
         }
         // Write remainder to next page
-        write_to_user_stack(address_space, vaddr + remaining_in_page as u64, &data[remaining_in_page..])?;
+        write_to_user_stack(
+            address_space,
+            vaddr + remaining_in_page as u64,
+            &data[remaining_in_page..],
+        )?;
     }
 
     Ok(())

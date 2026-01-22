@@ -6,8 +6,8 @@
 
 extern crate alloc;
 
-mod deflate_impl;
 pub mod deflate;
+mod deflate_impl;
 pub mod tar;
 
 /// Compression error types

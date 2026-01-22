@@ -1,8 +1,8 @@
 //! Audio Device Trait
 
+use crate::{AudioError, AudioFormat, AudioResult, ChannelLayout, SampleFormat};
 use alloc::string::String;
 use alloc::vec::Vec;
-use crate::{AudioError, AudioResult, AudioFormat, SampleFormat, ChannelLayout};
 
 /// Audio device information
 #[derive(Debug, Clone)]

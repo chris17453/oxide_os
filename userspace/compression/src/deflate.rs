@@ -13,10 +13,10 @@ const GZIP_METHOD_DEFLATE: u8 = 8;
 
 /// GZIP flags
 pub mod gzip_flags {
-    pub const FTEXT: u8 = 0x01;    // Text file
-    pub const FHCRC: u8 = 0x02;    // Header CRC
-    pub const FEXTRA: u8 = 0x04;   // Extra fields
-    pub const FNAME: u8 = 0x08;    // Original filename
+    pub const FTEXT: u8 = 0x01; // Text file
+    pub const FHCRC: u8 = 0x02; // Header CRC
+    pub const FEXTRA: u8 = 0x04; // Extra fields
+    pub const FNAME: u8 = 0x08; // Original filename
     pub const FCOMMENT: u8 = 0x10; // Comment
 }
 
@@ -76,7 +76,11 @@ pub fn inflate(input: &[u8]) -> Result<Vec<u8>> {
 ///
 /// # Returns
 /// GZIP compressed data
-pub fn gzip_compress(input: &[u8], level: CompressionLevel, header: &GzipHeader) -> Result<Vec<u8>> {
+pub fn gzip_compress(
+    input: &[u8],
+    level: CompressionLevel,
+    header: &GzipHeader,
+) -> Result<Vec<u8>> {
     let mut output = Vec::new();
 
     // GZIP header

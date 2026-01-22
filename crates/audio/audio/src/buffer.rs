@@ -88,11 +88,7 @@ impl RingBuffer {
         unsafe {
             let buf_ptr = self.data.as_ptr() as *mut u8;
 
-            core::ptr::copy_nonoverlapping(
-                data.as_ptr(),
-                buf_ptr.add(write_pos),
-                first_chunk,
-            );
+            core::ptr::copy_nonoverlapping(data.as_ptr(), buf_ptr.add(write_pos), first_chunk);
 
             if second_chunk > 0 {
                 core::ptr::copy_nonoverlapping(

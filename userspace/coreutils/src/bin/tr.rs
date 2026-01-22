@@ -314,9 +314,9 @@ fn parse_set(s: &str, set: &mut CharSet) -> bool {
             }
 
             if i >= bytes.len() || bytes[i] != b']' {
-                return false;  // Invalid: missing ]
+                return false; // Invalid: missing ]
             }
-            i += 1;  // Skip ]
+            i += 1; // Skip ]
 
             // Parse count
             let count = if count_len == 0 {
@@ -329,7 +329,7 @@ fn parse_set(s: &str, set: &mut CharSet) -> bool {
                     if count_str[j] >= b'0' && count_str[j] <= b'9' {
                         num = num * 10 + (count_str[j] - b'0') as usize;
                     } else {
-                        return false;  // Invalid number
+                        return false; // Invalid number
                     }
                 }
                 num
@@ -379,10 +379,10 @@ fn parse_set(s: &str, set: &mut CharSet) -> bool {
                     b'n' => b'\n',
                     b't' => b'\t',
                     b'r' => b'\r',
-                    b'v' => 0x0b,  // vertical tab
-                    b'f' => 0x0c,  // form feed
+                    b'v' => 0x0b, // vertical tab
+                    b'f' => 0x0c, // form feed
                     b'\\' => b'\\',
-                    c => c,  // Unknown escape, use literal
+                    c => c, // Unknown escape, use literal
                 };
                 set.add(escaped);
                 i += 1;
@@ -457,7 +457,7 @@ fn expand_class(class: &[u8], set: &mut CharSet) -> bool {
             for c in 0..=31u8 {
                 set.add(c);
             }
-            set.add(127);  // DEL
+            set.add(127); // DEL
         }
         b"graph" => {
             for c in 33..=126u8 {
@@ -486,7 +486,7 @@ fn expand_class(class: &[u8], set: &mut CharSet) -> bool {
             }
         }
         _ => {
-            return false;  // Unknown class
+            return false; // Unknown class
         }
     }
     true

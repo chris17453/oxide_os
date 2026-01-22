@@ -5,8 +5,8 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 use spin::Mutex;
 
-use vmm::device::VirtioDevice;
 use crate::VirtioDeviceBase;
+use vmm::device::VirtioDevice;
 
 /// virtio-net device type
 pub const VIRTIO_NET_DEVICE_TYPE: u32 = 1;
@@ -67,7 +67,7 @@ impl Default for NetConfig {
     fn default() -> Self {
         NetConfig {
             mac: [0x52, 0x54, 0x00, 0x12, 0x34, 0x56], // QEMU-style MAC
-            status: 1, // Link up
+            status: 1,                                 // Link up
             max_virtqueue_pairs: 1,
             mtu: 1500,
         }
@@ -175,7 +175,8 @@ impl VirtioNet {
     /// Transmit packet (from guest to host)
     fn transmit(&self, packet: &[u8]) {
         self.tx_packets.fetch_add(1, Ordering::Relaxed);
-        self.tx_bytes.fetch_add(packet.len() as u64, Ordering::Relaxed);
+        self.tx_bytes
+            .fetch_add(packet.len() as u64, Ordering::Relaxed);
 
         if let Some(callback) = *self.tx_callback.lock() {
             callback(packet);

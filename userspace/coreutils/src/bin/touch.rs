@@ -114,8 +114,7 @@ fn parse_timestamp(s: &str) -> Option<u64> {
     };
 
     // Validate ranges
-    if month < 1 || month > 12 || day < 1 || day > 31 ||
-       hour > 23 || minute > 59 || second > 59 {
+    if month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59 {
         return None;
     }
 
@@ -238,8 +237,16 @@ fn touch_file(path: &str, config: &TouchConfig) -> i32 {
     };
 
     // Set the appropriate timestamps
-    let atime = if config.change_atime { timestamp } else { u64::MAX };
-    let mtime = if config.change_mtime { timestamp } else { u64::MAX };
+    let atime = if config.change_atime {
+        timestamp
+    } else {
+        u64::MAX
+    };
+    let mtime = if config.change_mtime {
+        timestamp
+    } else {
+        u64::MAX
+    };
 
     if sys_utimes(path, atime, mtime) < 0 {
         eprints("touch: cannot set times for '");

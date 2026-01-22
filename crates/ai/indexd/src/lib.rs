@@ -6,17 +6,17 @@
 
 extern crate alloc;
 
-pub mod daemon;
-pub mod watcher;
-pub mod queue;
-pub mod ipc;
 pub mod config;
+pub mod daemon;
+pub mod ipc;
+pub mod queue;
+pub mod watcher;
 
-pub use daemon::IndexDaemon;
-pub use watcher::{FsWatcher, FsEvent, EventKind};
-pub use queue::IndexQueue;
-pub use ipc::{IpcServer, SearchRequest, SearchResponse};
 pub use config::IndexConfig;
+pub use daemon::IndexDaemon;
+pub use ipc::{IpcServer, SearchRequest, SearchResponse};
+pub use queue::IndexQueue;
+pub use watcher::{EventKind, FsEvent, FsWatcher};
 
 /// Extended attribute names for indexed metadata
 pub mod xattr {

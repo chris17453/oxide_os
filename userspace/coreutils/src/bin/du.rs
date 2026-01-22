@@ -82,7 +82,7 @@ fn str_starts_with(s: &str, prefix: &str) -> bool {
 fn parse_number(s: &str) -> Option<i32> {
     let mut result = 0i32;
     for b in s.bytes() {
-        if b >= b'0' && b<= b'9' {
+        if b >= b'0' && b <= b'9' {
             result = result * 10 + (b - b'0') as i32;
         } else {
             return None;

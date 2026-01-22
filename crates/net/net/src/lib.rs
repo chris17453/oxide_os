@@ -6,15 +6,15 @@
 
 extern crate alloc;
 
-pub mod device;
-pub mod socket;
-pub mod interface;
 pub mod addr;
+pub mod device;
+pub mod interface;
+pub mod socket;
 
-pub use device::{NetworkDevice, NetworkDeviceInfo, DeviceFlags, LoopbackDevice};
-pub use socket::{Socket, SocketType, SocketDomain, SocketProtocol, SocketState};
-pub use interface::{NetworkInterface, InterfaceConfig};
-pub use addr::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, MacAddress};
+pub use addr::{IpAddr, Ipv4Addr, Ipv6Addr, MacAddress, SocketAddr};
+pub use device::{DeviceFlags, LoopbackDevice, NetworkDevice, NetworkDeviceInfo};
+pub use interface::{InterfaceConfig, NetworkInterface};
+pub use socket::{Socket, SocketDomain, SocketProtocol, SocketState, SocketType};
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;

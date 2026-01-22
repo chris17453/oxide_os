@@ -50,21 +50,21 @@ impl Default for Termios {
         };
 
         // Set default control characters
-        termios.c_cc[VINTR] = 0x03;    // ^C
-        termios.c_cc[VQUIT] = 0x1C;    // ^\
-        termios.c_cc[VERASE] = 0x7F;   // DEL
-        termios.c_cc[VKILL] = 0x15;    // ^U
-        termios.c_cc[VEOF] = 0x04;     // ^D
+        termios.c_cc[VINTR] = 0x03; // ^C
+        termios.c_cc[VQUIT] = 0x1C; // ^\
+        termios.c_cc[VERASE] = 0x7F; // DEL
+        termios.c_cc[VKILL] = 0x15; // ^U
+        termios.c_cc[VEOF] = 0x04; // ^D
         termios.c_cc[VTIME] = 0;
         termios.c_cc[VMIN] = 1;
-        termios.c_cc[VSTART] = 0x11;   // ^Q
-        termios.c_cc[VSTOP] = 0x13;    // ^S
-        termios.c_cc[VSUSP] = 0x1A;    // ^Z
+        termios.c_cc[VSTART] = 0x11; // ^Q
+        termios.c_cc[VSTOP] = 0x13; // ^S
+        termios.c_cc[VSUSP] = 0x1A; // ^Z
         termios.c_cc[VEOL] = 0;
         termios.c_cc[VREPRINT] = 0x12; // ^R
         termios.c_cc[VDISCARD] = 0x0F; // ^O
-        termios.c_cc[VWERASE] = 0x17;  // ^W
-        termios.c_cc[VLNEXT] = 0x16;   // ^V
+        termios.c_cc[VWERASE] = 0x17; // ^W
+        termios.c_cc[VLNEXT] = 0x16; // ^V
         termios.c_cc[VEOL2] = 0;
 
         termios
@@ -103,23 +103,23 @@ impl Termios {
 }
 
 // Control character indices
-pub const VINTR: usize = 0;    // Interrupt (^C)
-pub const VQUIT: usize = 1;    // Quit (^\)
-pub const VERASE: usize = 2;   // Erase character (DEL/^H)
-pub const VKILL: usize = 3;    // Kill line (^U)
-pub const VEOF: usize = 4;     // End of file (^D)
-pub const VTIME: usize = 5;    // Timeout for non-canonical read
-pub const VMIN: usize = 6;     // Minimum characters for non-canonical read
-pub const VSWTC: usize = 7;    // Switch character
-pub const VSTART: usize = 8;   // Start output (^Q)
-pub const VSTOP: usize = 9;    // Stop output (^S)
-pub const VSUSP: usize = 10;   // Suspend (^Z)
-pub const VEOL: usize = 11;    // End of line
+pub const VINTR: usize = 0; // Interrupt (^C)
+pub const VQUIT: usize = 1; // Quit (^\)
+pub const VERASE: usize = 2; // Erase character (DEL/^H)
+pub const VKILL: usize = 3; // Kill line (^U)
+pub const VEOF: usize = 4; // End of file (^D)
+pub const VTIME: usize = 5; // Timeout for non-canonical read
+pub const VMIN: usize = 6; // Minimum characters for non-canonical read
+pub const VSWTC: usize = 7; // Switch character
+pub const VSTART: usize = 8; // Start output (^Q)
+pub const VSTOP: usize = 9; // Stop output (^S)
+pub const VSUSP: usize = 10; // Suspend (^Z)
+pub const VEOL: usize = 11; // End of line
 pub const VREPRINT: usize = 12; // Reprint line (^R)
 pub const VDISCARD: usize = 13; // Discard pending output (^O)
-pub const VWERASE: usize = 14;  // Word erase (^W)
-pub const VLNEXT: usize = 15;   // Literal next (^V)
-pub const VEOL2: usize = 16;    // Second end of line
+pub const VWERASE: usize = 14; // Word erase (^W)
+pub const VLNEXT: usize = 15; // Literal next (^V)
+pub const VEOL2: usize = 16; // Second end of line
 
 bitflags! {
     /// Input mode flags (c_iflag)
@@ -271,43 +271,43 @@ pub const B115200: u32 = 0o010002;
 pub const B230400: u32 = 0o010003;
 
 // ioctl request codes for termios
-pub const TCGETS: u64 = 0x5401;      // Get termios
-pub const TCSETS: u64 = 0x5402;      // Set termios immediately
-pub const TCSETSW: u64 = 0x5403;     // Set termios after drain
-pub const TCSETSF: u64 = 0x5404;     // Set termios after flush
-pub const TCGETA: u64 = 0x5405;      // Get termio (old)
-pub const TCSETA: u64 = 0x5406;      // Set termio (old)
-pub const TCSETAW: u64 = 0x5407;     // Set termio after drain (old)
-pub const TCSETAF: u64 = 0x5408;     // Set termio after flush (old)
-pub const TCSBRK: u64 = 0x5409;      // Send break
-pub const TCXONC: u64 = 0x540A;      // Flow control
-pub const TCFLSH: u64 = 0x540B;      // Flush queues
-pub const TIOCEXCL: u64 = 0x540C;    // Set exclusive mode
-pub const TIOCNXCL: u64 = 0x540D;    // Clear exclusive mode
-pub const TIOCSCTTY: u64 = 0x540E;   // Set controlling terminal
-pub const TIOCGPGRP: u64 = 0x540F;   // Get foreground process group
-pub const TIOCSPGRP: u64 = 0x5410;   // Set foreground process group
-pub const TIOCOUTQ: u64 = 0x5411;    // Output queue size
-pub const TIOCSTI: u64 = 0x5412;     // Simulate terminal input
-pub const TIOCGWINSZ: u64 = 0x5413;  // Get window size
-pub const TIOCSWINSZ: u64 = 0x5414;  // Set window size
-pub const TIOCMGET: u64 = 0x5415;    // Get modem status
-pub const TIOCMBIS: u64 = 0x5416;    // Set modem bits
-pub const TIOCMBIC: u64 = 0x5417;    // Clear modem bits
-pub const TIOCMSET: u64 = 0x5418;    // Set modem status
+pub const TCGETS: u64 = 0x5401; // Get termios
+pub const TCSETS: u64 = 0x5402; // Set termios immediately
+pub const TCSETSW: u64 = 0x5403; // Set termios after drain
+pub const TCSETSF: u64 = 0x5404; // Set termios after flush
+pub const TCGETA: u64 = 0x5405; // Get termio (old)
+pub const TCSETA: u64 = 0x5406; // Set termio (old)
+pub const TCSETAW: u64 = 0x5407; // Set termio after drain (old)
+pub const TCSETAF: u64 = 0x5408; // Set termio after flush (old)
+pub const TCSBRK: u64 = 0x5409; // Send break
+pub const TCXONC: u64 = 0x540A; // Flow control
+pub const TCFLSH: u64 = 0x540B; // Flush queues
+pub const TIOCEXCL: u64 = 0x540C; // Set exclusive mode
+pub const TIOCNXCL: u64 = 0x540D; // Clear exclusive mode
+pub const TIOCSCTTY: u64 = 0x540E; // Set controlling terminal
+pub const TIOCGPGRP: u64 = 0x540F; // Get foreground process group
+pub const TIOCSPGRP: u64 = 0x5410; // Set foreground process group
+pub const TIOCOUTQ: u64 = 0x5411; // Output queue size
+pub const TIOCSTI: u64 = 0x5412; // Simulate terminal input
+pub const TIOCGWINSZ: u64 = 0x5413; // Get window size
+pub const TIOCSWINSZ: u64 = 0x5414; // Set window size
+pub const TIOCMGET: u64 = 0x5415; // Get modem status
+pub const TIOCMBIS: u64 = 0x5416; // Set modem bits
+pub const TIOCMBIC: u64 = 0x5417; // Clear modem bits
+pub const TIOCMSET: u64 = 0x5418; // Set modem status
 pub const TIOCGSOFTCAR: u64 = 0x5419; // Get software carrier
 pub const TIOCSSOFTCAR: u64 = 0x541A; // Set software carrier
-pub const FIONREAD: u64 = 0x541B;    // Bytes available for read
-pub const TIOCLINUX: u64 = 0x541C;   // Linux-specific
-pub const TIOCCONS: u64 = 0x541D;    // Console redirect
+pub const FIONREAD: u64 = 0x541B; // Bytes available for read
+pub const TIOCLINUX: u64 = 0x541C; // Linux-specific
+pub const TIOCCONS: u64 = 0x541D; // Console redirect
 pub const TIOCGSERIAL: u64 = 0x541E; // Get serial info
 pub const TIOCSSERIAL: u64 = 0x541F; // Set serial info
-pub const TIOCPKT: u64 = 0x5420;     // Packet mode
-pub const FIONBIO: u64 = 0x5421;     // Non-blocking I/O
-pub const TIOCNOTTY: u64 = 0x5422;   // Release controlling terminal
-pub const TIOCSETD: u64 = 0x5423;    // Set line discipline
-pub const TIOCGETD: u64 = 0x5424;    // Get line discipline
-pub const TCSBRKP: u64 = 0x5425;     // Send break (timed)
-pub const TIOCSBRK: u64 = 0x5427;    // Set break
-pub const TIOCCBRK: u64 = 0x5428;    // Clear break
-pub const TIOCGSID: u64 = 0x5429;    // Get session ID
+pub const TIOCPKT: u64 = 0x5420; // Packet mode
+pub const FIONBIO: u64 = 0x5421; // Non-blocking I/O
+pub const TIOCNOTTY: u64 = 0x5422; // Release controlling terminal
+pub const TIOCSETD: u64 = 0x5423; // Set line discipline
+pub const TIOCGETD: u64 = 0x5424; // Get line discipline
+pub const TCSBRKP: u64 = 0x5425; // Send break (timed)
+pub const TIOCSBRK: u64 = 0x5427; // Set break
+pub const TIOCCBRK: u64 = 0x5428; // Clear break
+pub const TIOCGSID: u64 = 0x5429; // Get session ID

@@ -192,8 +192,12 @@ pub mod ctype {
 
     /// Check if character is whitespace
     pub fn isspace(c: i32) -> bool {
-        c == b' ' as i32 || c == b'\t' as i32 || c == b'\n' as i32
-            || c == b'\r' as i32 || c == b'\x0b' as i32 || c == b'\x0c' as i32
+        c == b' ' as i32
+            || c == b'\t' as i32
+            || c == b'\n' as i32
+            || c == b'\r' as i32
+            || c == b'\x0b' as i32
+            || c == b'\x0c' as i32
     }
 
     /// Check if character is uppercase
@@ -203,25 +207,18 @@ pub mod ctype {
 
     /// Check if character is hexadecimal digit
     pub fn isxdigit(c: i32) -> bool {
-        isdigit(c) || (c >= b'A' as i32 && c <= b'F' as i32)
+        isdigit(c)
+            || (c >= b'A' as i32 && c <= b'F' as i32)
             || (c >= b'a' as i32 && c <= b'f' as i32)
     }
 
     /// Convert to lowercase
     pub fn tolower(c: i32) -> i32 {
-        if isupper(c) {
-            c + 32
-        } else {
-            c
-        }
+        if isupper(c) { c + 32 } else { c }
     }
 
     /// Convert to uppercase
     pub fn toupper(c: i32) -> i32 {
-        if islower(c) {
-            c - 32
-        } else {
-            c
-        }
+        if islower(c) { c - 32 } else { c }
     }
 }

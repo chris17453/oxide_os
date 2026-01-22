@@ -1,7 +1,6 @@
 //! OXIDEFS Directory handling
 
-
-use crate::{OxidefsError, OxidefsResult, MAX_NAME_LEN};
+use crate::{MAX_NAME_LEN, OxidefsError, OxidefsResult};
 
 /// Directory entry (on-disk format)
 #[repr(C)]
@@ -49,8 +48,7 @@ impl DirEntry {
         }
 
         let ino = u64::from_le_bytes([
-            data[0], data[1], data[2], data[3],
-            data[4], data[5], data[6], data[7],
+            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
         ]);
 
         let rec_len = u16::from_le_bytes([data[8], data[9]]);
@@ -79,15 +77,12 @@ impl DirEntry {
         buf[8..10].copy_from_slice(&self.rec_len.to_le_bytes());
         buf[10] = self.name_len;
         buf[11] = self.file_type;
-        buf[12..12 + self.name_len as usize]
-            .copy_from_slice(&self.name[..self.name_len as usize]);
+        buf[12..12 + self.name_len as usize].copy_from_slice(&self.name[..self.name_len as usize]);
     }
 
     /// Get name as string
     pub fn name_str(&self) -> &str {
-        unsafe {
-            core::str::from_utf8_unchecked(&self.name[..self.name_len as usize])
-        }
+        unsafe { core::str::from_utf8_unchecked(&self.name[..self.name_len as usize]) }
     }
 
     /// Check if this is a deleted entry

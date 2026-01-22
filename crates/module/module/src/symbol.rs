@@ -70,9 +70,8 @@ impl SymbolTable {
 
     /// Unregister module symbols by address range
     pub fn unregister_module_symbols(&mut self, start: usize, end: usize) {
-        self.module_symbols.retain(|_, &mut addr| {
-            addr < start || addr >= end
-        });
+        self.module_symbols
+            .retain(|_, &mut addr| addr < start || addr >= end);
     }
 
     /// Look up a symbol by name
@@ -148,10 +147,8 @@ macro_rules! EXPORT_SYMBOL {
         const _: () = {
             #[used]
             #[link_section = ".ksymtab"]
-            static KSYM: $crate::symbol::KernelSymbol = $crate::symbol::KernelSymbol::new(
-                stringify!($sym),
-                $sym as *const () as usize,
-            );
+            static KSYM: $crate::symbol::KernelSymbol =
+                $crate::symbol::KernelSymbol::new(stringify!($sym), $sym as *const () as usize);
         };
     };
 }
@@ -167,10 +164,8 @@ macro_rules! EXPORT_SYMBOL_GPL {
         const _: () = {
             #[used]
             #[link_section = ".ksymtab.gpl"]
-            static KSYM_GPL: $crate::symbol::KernelSymbol = $crate::symbol::KernelSymbol::gpl(
-                stringify!($sym),
-                $sym as *const () as usize,
-            );
+            static KSYM_GPL: $crate::symbol::KernelSymbol =
+                $crate::symbol::KernelSymbol::gpl(stringify!($sym), $sym as *const () as usize);
         };
     };
 }

@@ -13,9 +13,7 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 use spin::RwLock;
 
-use vfs::{
-    DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType,
-};
+use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
 /// Inode allocator for tmpfs
 static TMPFS_INODE: AtomicU64 = AtomicU64::new(1);

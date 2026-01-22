@@ -168,7 +168,8 @@ impl MixerChannel {
         self.volume_left.store(left.min(100), Ordering::SeqCst);
         self.volume_right.store(right.min(100), Ordering::SeqCst);
         // Update mono volume to average
-        self.volume.store((left.min(100) + right.min(100)) / 2, Ordering::SeqCst);
+        self.volume
+            .store((left.min(100) + right.min(100)) / 2, Ordering::SeqCst);
     }
 
     /// Check if muted

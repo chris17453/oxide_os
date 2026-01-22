@@ -348,7 +348,7 @@ impl VirtioGpu {
         self.write_reg(VIRTIO_MMIO_QUEUE_NUM, size as u32);
 
         // Allocate queue structures
-        use alloc::alloc::{alloc_zeroed, Layout};
+        use alloc::alloc::{Layout, alloc_zeroed};
 
         let desc_size = size as usize * core::mem::size_of::<VirtqDesc>();
         let desc_layout = Layout::from_size_align(desc_size, 16).unwrap();
@@ -514,7 +514,9 @@ impl VirtioGpu {
             desc0.next = (desc_idx + 1) % self.queue_size;
 
             // Response descriptor
-            let desc1 = &mut *self.descriptors.add(((desc_idx + 1) % self.queue_size) as usize);
+            let desc1 = &mut *self
+                .descriptors
+                .add(((desc_idx + 1) % self.queue_size) as usize);
             desc1.addr = resp as *mut R as u64;
             desc1.len = resp_size as u32;
             desc1.flags = VIRTQ_DESC_F_WRITE;
@@ -549,7 +551,7 @@ impl VirtioGpu {
     pub fn flush(&self) {
         self.flush_region(0, 0, self.width, self.height);
     }
-    
+
     /// Flush a specific region to display (optimized for partial updates)
     pub fn flush_region(&self, x: u32, y: u32, width: u32, height: u32) {
         if self.framebuffer.is_none() {
@@ -679,5 +681,8 @@ pub fn flush() {
 
 /// Get display dimensions
 pub fn dimensions() -> Option<(u32, u32)> {
-    VIRTIO_GPU.lock().as_ref().map(|gpu| (gpu.width, gpu.height))
+    VIRTIO_GPU
+        .lock()
+        .as_ref()
+        .map(|gpu| (gpu.width, gpu.height))
 }

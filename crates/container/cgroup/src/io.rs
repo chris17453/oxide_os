@@ -80,33 +80,41 @@ impl IoController {
     /// Set read bytes per second limit for device
     pub fn set_rbps(&self, device: DeviceId, bps: u64) {
         let mut limits = self.limits.write();
-        limits.entry(device)
+        limits
+            .entry(device)
             .or_insert_with(DeviceIoLimits::new)
-            .rbps.store(bps, Ordering::SeqCst);
+            .rbps
+            .store(bps, Ordering::SeqCst);
     }
 
     /// Set write bytes per second limit for device
     pub fn set_wbps(&self, device: DeviceId, bps: u64) {
         let mut limits = self.limits.write();
-        limits.entry(device)
+        limits
+            .entry(device)
             .or_insert_with(DeviceIoLimits::new)
-            .wbps.store(bps, Ordering::SeqCst);
+            .wbps
+            .store(bps, Ordering::SeqCst);
     }
 
     /// Set read IOPS limit for device
     pub fn set_riops(&self, device: DeviceId, iops: u64) {
         let mut limits = self.limits.write();
-        limits.entry(device)
+        limits
+            .entry(device)
             .or_insert_with(DeviceIoLimits::new)
-            .riops.store(iops, Ordering::SeqCst);
+            .riops
+            .store(iops, Ordering::SeqCst);
     }
 
     /// Set write IOPS limit for device
     pub fn set_wiops(&self, device: DeviceId, iops: u64) {
         let mut limits = self.limits.write();
-        limits.entry(device)
+        limits
+            .entry(device)
             .or_insert_with(DeviceIoLimits::new)
-            .wiops.store(iops, Ordering::SeqCst);
+            .wiops
+            .store(iops, Ordering::SeqCst);
     }
 
     /// Check if read is allowed

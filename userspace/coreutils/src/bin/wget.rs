@@ -14,11 +14,10 @@
 #![no_std]
 #![no_main]
 
-use libc::*;
 use libc::socket::{
-    tcp_socket, connect, send, recv, shutdown, sockaddr_in_octets,
-    shut, SOCKADDR_IN_SIZE,
+    SOCKADDR_IN_SIZE, connect, recv, send, shut, shutdown, sockaddr_in_octets, tcp_socket,
 };
+use libc::*;
 
 const MAX_URL: usize = 256;
 const MAX_FILENAME: usize = 128;
@@ -236,7 +235,10 @@ fn do_wget(config: &WgetConfig, url: &str) -> i32 {
 
     // Determine output filename
     let output_filename = if let Some(ref name_buf) = config.output_file {
-        let len = name_buf.iter().position(|&b| b == 0).unwrap_or(MAX_FILENAME);
+        let len = name_buf
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(MAX_FILENAME);
         core::str::from_utf8(&name_buf[..len]).unwrap_or("download.html")
     } else {
         extract_filename(path)

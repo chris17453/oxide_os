@@ -22,17 +22,17 @@ impl AnonymousMapping {
             pages.push(None);
         }
 
-        AnonymousMapping {
-            start,
-            size,
-            pages,
-        }
+        AnonymousMapping { start, size, pages }
     }
 
     /// Handle page fault for this mapping
     ///
     /// Returns physical address of the page to map
-    pub fn handle_fault(&mut self, addr: usize, allocate_page: impl FnOnce() -> Option<usize>) -> Option<usize> {
+    pub fn handle_fault(
+        &mut self,
+        addr: usize,
+        allocate_page: impl FnOnce() -> Option<usize>,
+    ) -> Option<usize> {
         if addr < self.start || addr >= self.start + self.size {
             return None;
         }

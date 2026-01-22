@@ -111,8 +111,14 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
 }
 
 fn sys_stat(path: &str, st: &mut Stat) -> i32 {
-    use libc::syscall::{syscall4, nr};
-    syscall4(nr::STAT, path.as_ptr() as usize, path.len(), st as *mut Stat as usize, 0) as i32
+    use libc::syscall::{nr, syscall4};
+    syscall4(
+        nr::STAT,
+        path.as_ptr() as usize,
+        path.len(),
+        st as *mut Stat as usize,
+        0,
+    ) as i32
 }
 
 fn print_file_type(mode: u32) {

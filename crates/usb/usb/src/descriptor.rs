@@ -246,7 +246,10 @@ impl ConfigDescriptor {
                                 descriptor_type: data[offset + 1],
                                 endpoint_address: data[offset + 2],
                                 attributes: data[offset + 3],
-                                max_packet_size: u16::from_le_bytes([data[offset + 4], data[offset + 5]]),
+                                max_packet_size: u16::from_le_bytes([
+                                    data[offset + 4],
+                                    data[offset + 5],
+                                ]),
                                 interval: data[offset + 6],
                             });
                         }

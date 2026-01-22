@@ -7,3 +7,4 @@ license.workspace = true
 [dependencies]
 uefi = { version = "0.32", features = ["alloc", "global_allocator"] }
 boot-proto = { workspace = true }
+fb = { workspace = true }

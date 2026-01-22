@@ -12,20 +12,19 @@
 #![no_std]
 #![no_main]
 
-use libc::{printlns, prints, eprintlns, putchar, strlen, getpid};
+use libc::close;
 use libc::socket::{
-    socket, af, sock, ipproto, sockaddr_in_octets, connect, send, recv,
-    htons, SOCKADDR_IN_SIZE,
+    SOCKADDR_IN_SIZE, af, connect, htons, ipproto, recv, send, sock, sockaddr_in_octets, socket,
 };
 use libc::time::sleep;
-use libc::close;
+use libc::{eprintlns, getpid, printlns, prints, putchar, strlen};
 
 const ICMP_ECHO_REQUEST: u8 = 8;
 const ICMP_ECHO_REPLY: u8 = 0;
 const DEFAULT_PACKET_SIZE: usize = 56;
-const DEFAULT_COUNT: u32 = u32::MAX;  // Unlimited by default
-const DEFAULT_INTERVAL: u32 = 1;  // 1 second
-const DEFAULT_TIMEOUT: u32 = 5;  // 5 seconds
+const DEFAULT_COUNT: u32 = u32::MAX; // Unlimited by default
+const DEFAULT_INTERVAL: u32 = 1; // 1 second
+const DEFAULT_TIMEOUT: u32 = 5; // 5 seconds
 const DEFAULT_TTL: u8 = 64;
 
 /// Configuration for ping
@@ -33,13 +32,13 @@ struct PingConfig {
     target: [u8; 256],
     target_len: usize,
     count: u32,
-    interval: u32,  // seconds (not milliseconds for simplicity)
-    timeout: u32,   // seconds
+    interval: u32, // seconds (not milliseconds for simplicity)
+    timeout: u32,  // seconds
     ttl: u8,
     packet_size: usize,
     quiet: bool,
     verbose: bool,
-    numeric: bool,  // Don't resolve hostnames
+    numeric: bool, // Don't resolve hostnames
     timestamp: bool,
     flood: bool,
     audible: bool,
@@ -255,7 +254,8 @@ fn parse_args(argc: i32, argv: *const *const u8, config: &mut PingConfig) -> boo
                         let val_arg = unsafe { *argv.add(i as usize) };
                         let val_len = strlen(val_arg);
                         unsafe {
-                            core::str::from_utf8(core::slice::from_raw_parts(val_arg, val_len)).unwrap_or("")
+                            core::str::from_utf8(core::slice::from_raw_parts(val_arg, val_len))
+                                .unwrap_or("")
                         }
                     } else {
                         eprintlns("ping: option requires an argument -- 'c'");
@@ -279,7 +279,8 @@ fn parse_args(argc: i32, argv: *const *const u8, config: &mut PingConfig) -> boo
                         let val_arg = unsafe { *argv.add(i as usize) };
                         let val_len = strlen(val_arg);
                         unsafe {
-                            core::str::from_utf8(core::slice::from_raw_parts(val_arg, val_len)).unwrap_or("")
+                            core::str::from_utf8(core::slice::from_raw_parts(val_arg, val_len))
+                                .unwrap_or("")
                         }
                     } else {
                         eprintlns("ping: option requires an argument -- 'i'");
@@ -303,7 +304,8 @@ fn parse_args(argc: i32, argv: *const *const u8, config: &mut PingConfig) -> boo
                         let val_arg = unsafe { *argv.add(i as usize) };
                         let val_len = strlen(val_arg);
                         unsafe {
-                            core::str::from_utf8(core::slice::from_raw_parts(val_arg, val_len)).unwrap_or("")
+                            core::str::from_utf8(core::slice::from_raw_parts(val_arg, val_len))
+                                .unwrap_or("")
                         }
                     } else {
                         eprintlns("ping: option requires an argument -- 's'");
@@ -327,7 +329,8 @@ fn parse_args(argc: i32, argv: *const *const u8, config: &mut PingConfig) -> boo
                         let val_arg = unsafe { *argv.add(i as usize) };
                         let val_len = strlen(val_arg);
                         unsafe {
-                            core::str::from_utf8(core::slice::from_raw_parts(val_arg, val_len)).unwrap_or("")
+                            core::str::from_utf8(core::slice::from_raw_parts(val_arg, val_len))
+                                .unwrap_or("")
                         }
                     } else {
                         eprintlns("ping: option requires an argument -- 't'");
@@ -351,7 +354,8 @@ fn parse_args(argc: i32, argv: *const *const u8, config: &mut PingConfig) -> boo
                         let val_arg = unsafe { *argv.add(i as usize) };
                         let val_len = strlen(val_arg);
                         unsafe {
-                            core::str::from_utf8(core::slice::from_raw_parts(val_arg, val_len)).unwrap_or("")
+                            core::str::from_utf8(core::slice::from_raw_parts(val_arg, val_len))
+                                .unwrap_or("")
                         }
                     } else {
                         eprintlns("ping: option requires an argument -- 'w'");
@@ -375,7 +379,8 @@ fn parse_args(argc: i32, argv: *const *const u8, config: &mut PingConfig) -> boo
                         let val_arg = unsafe { *argv.add(i as usize) };
                         let val_len = strlen(val_arg);
                         unsafe {
-                            core::str::from_utf8(core::slice::from_raw_parts(val_arg, val_len)).unwrap_or("")
+                            core::str::from_utf8(core::slice::from_raw_parts(val_arg, val_len))
+                                .unwrap_or("")
                         }
                     } else {
                         eprintlns("ping: option requires an argument -- 'l'");
@@ -419,7 +424,6 @@ fn parse_args(argc: i32, argv: *const *const u8, config: &mut PingConfig) -> boo
 
     true
 }
-
 
 #[unsafe(no_mangle)]
 fn main(argc: i32, argv: *const *const u8) -> i32 {
@@ -537,7 +541,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
             let n = recv(sock, &mut reply, 0);
 
             if n > 0 {
-                let icmp_offset = 20;  // IP header is 20 bytes
+                let icmp_offset = 20; // IP header is 20 bytes
                 if (n as usize) > icmp_offset {
                     let icmp_type = reply[icmp_offset];
                     if icmp_type == ICMP_ECHO_REPLY {
@@ -553,11 +557,11 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
                             print_u64(config.ttl as u64);
                             printlns(" time<1ms");
                         } else if config.flood {
-                            putchar(b'\x08');  // Backspace
+                            putchar(b'\x08'); // Backspace
                         }
 
                         if config.audible {
-                            putchar(0x07);  // BEL character
+                            putchar(0x07); // BEL character
                         }
                     }
                 }

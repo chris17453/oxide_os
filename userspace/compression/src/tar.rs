@@ -162,9 +162,8 @@ impl TarHeader {
         // Checksum is calculated with checksum field set to spaces
         self.checksum = [b' '; 8];
 
-        let bytes = unsafe {
-            core::slice::from_raw_parts(self as *const Self as *const u8, BLOCK_SIZE)
-        };
+        let bytes =
+            unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, BLOCK_SIZE) };
 
         let sum: u32 = bytes.iter().map(|&b| b as u32).sum();
         write_octal(&mut self.checksum[..7], sum as u64);
@@ -176,9 +175,8 @@ impl TarHeader {
         let mut temp = self.clone();
         temp.checksum = [b' '; 8];
 
-        let bytes = unsafe {
-            core::slice::from_raw_parts(&temp as *const Self as *const u8, BLOCK_SIZE)
-        };
+        let bytes =
+            unsafe { core::slice::from_raw_parts(&temp as *const Self as *const u8, BLOCK_SIZE) };
 
         let sum: u32 = bytes.iter().map(|&b| b as u32).sum();
         let stored_sum = parse_octal(&self.checksum[..7]).unwrap_or(0);
@@ -281,12 +279,14 @@ impl TarBuilder {
 
     /// Add a file
     pub fn add_file(&mut self, name: &str, data: Vec<u8>) {
-        self.entries.push(TarEntry::new(name, data, FileType::Regular));
+        self.entries
+            .push(TarEntry::new(name, data, FileType::Regular));
     }
 
     /// Add a directory
     pub fn add_directory(&mut self, name: &str) {
-        self.entries.push(TarEntry::new(name, Vec::new(), FileType::Directory));
+        self.entries
+            .push(TarEntry::new(name, Vec::new(), FileType::Directory));
     }
 
     /// Build the TAR archive
@@ -386,7 +386,10 @@ fn write_octal(buf: &mut [u8], value: u64) {
 /// Helper: Parse an octal number from a byte buffer
 fn parse_octal(buf: &[u8]) -> Result<u64> {
     // Find the end (null or space)
-    let end = buf.iter().position(|&b| b == 0 || b == b' ').unwrap_or(buf.len());
+    let end = buf
+        .iter()
+        .position(|&b| b == 0 || b == b' ')
+        .unwrap_or(buf.len());
 
     // Parse octal
     let s = str::from_utf8(&buf[..end]).map_err(|_| CompressionError::InvalidData)?;

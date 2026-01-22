@@ -2,9 +2,9 @@
 //!
 //! Provides basic file operations using OXIDE syscalls.
 
+use crate::io::{self, Error, ErrorKind, Read, Result, Seek, SeekFrom, Write};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use crate::io::{self, Read, Write, Seek, SeekFrom, Error, ErrorKind, Result};
 
 // ============================================================================
 // File Type
@@ -23,7 +23,10 @@ impl File {
 
     /// Create a new file for writing (truncates if exists)
     pub fn create(path: &str) -> Result<File> {
-        Self::open_with_options(path, OpenOptions::new().write(true).create(true).truncate(true))
+        Self::open_with_options(
+            path,
+            OpenOptions::new().write(true).create(true).truncate(true),
+        )
     }
 
     /// Open with specific options

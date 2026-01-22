@@ -3,9 +3,9 @@
 //! Provides file operations for both std (host) and no_std (WATOS) environments.
 
 #[cfg(not(feature = "std"))]
-use alloc::{string::String, format};
-#[cfg(not(feature = "std"))]
 use alloc::collections::BTreeMap as HashMap;
+#[cfg(not(feature = "std"))]
+use alloc::{format, string::String};
 
 #[cfg(feature = "std")]
 use std::collections::HashMap;
@@ -85,8 +85,9 @@ impl FileManager {
         }
 
         let file = match mode {
-            FileMode::Input => File::open(path)
-                .map_err(|e| Error::IoError(format!("Cannot open file: {}", e)))?,
+            FileMode::Input => {
+                File::open(path).map_err(|e| Error::IoError(format!("Cannot open file: {}", e)))?
+            }
             FileMode::Output => File::create(path)
                 .map_err(|e| Error::IoError(format!("Cannot create file: {}", e)))?,
             FileMode::Append => OpenOptions::new()
@@ -103,10 +104,9 @@ impl FileManager {
         };
 
         let reader = if mode == FileMode::Input {
-            Some(BufReader::new(
-                File::open(path)
-                    .map_err(|e| Error::IoError(format!("Cannot open file: {}", e)))?,
-            ))
+            Some(BufReader::new(File::open(path).map_err(|e| {
+                Error::IoError(format!("Cannot open file: {}", e))
+            })?))
         } else {
             None
         };
@@ -149,13 +149,8 @@ impl FileManager {
 
         // Call WATOS kernel to open file
         let path_bytes = path.as_bytes();
-        let kernel_handle = unsafe {
-            watos_file_open(
-                path_bytes.as_ptr(),
-                path_bytes.len(),
-                mode.to_watos_mode(),
-            )
-        };
+        let kernel_handle =
+            unsafe { watos_file_open(path_bytes.as_ptr(), path_bytes.len(), mode.to_watos_mode()) };
 
         if kernel_handle == u64::MAX {
             return Err(Error::IoError(format!("Cannot open file: {}", path)));

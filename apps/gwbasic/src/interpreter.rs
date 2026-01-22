@@ -1,9 +1,9 @@
 //! Interpreter for GW-BASIC
 
 #[cfg(not(feature = "std"))]
-use alloc::{boxed::Box, string::String, vec::Vec, vec, format, string::ToString};
-#[cfg(not(feature = "std"))]
 use alloc::collections::BTreeMap as HashMap;
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, format, string::String, string::ToString, vec, vec::Vec};
 
 #[cfg(feature = "std")]
 use std::collections::HashMap;
@@ -11,12 +11,12 @@ use std::collections::HashMap;
 use std::io::{self, Write};
 
 use crate::error::{Error, Result};
-use crate::parser::{AstNode, BinaryOperator, UnaryOperator};
-use crate::value::Value;
+use crate::fileio::{FileManager, FileMode};
 use crate::graphics::Screen;
 #[cfg(feature = "host")]
 use crate::graphics_backend::WindowBackend;
-use crate::fileio::{FileManager, FileMode};
+use crate::parser::{AstNode, BinaryOperator, UnaryOperator};
+use crate::value::Value;
 
 /// Graphics mode selection
 #[derive(Debug, Clone, Copy)]
@@ -151,7 +151,7 @@ impl Interpreter {
     /// Create interpreter with specific video mode for WATOS
     #[cfg(not(feature = "std"))]
     pub fn new_with_vga_mode(mode: u8) -> Result<Self> {
-        use crate::graphics_backend::{WatosVgaBackend, VideoMode};
+        use crate::graphics_backend::{VideoMode, WatosVgaBackend};
 
         let video_mode = VideoMode::from_basic_mode(mode);
         let backend = WatosVgaBackend::new(video_mode)?;
@@ -234,7 +234,7 @@ impl Interpreter {
             // Execute all statements on this line
             for stmt in statements {
                 match self.execute_node(stmt) {
-                    Ok(_) => {},
+                    Ok(_) => {}
                     Err(Error::ProgramEnd) => {
                         // END statement reached - display graphics before exiting
                         self.screen.display();
@@ -257,9 +257,7 @@ impl Interpreter {
             // Move to next line (unless GOTO/GOSUB changed it)
             if self.current_line == Some(current) {
                 // Find next line number
-                let next_line = line_nums.iter()
-                    .find(|&&n| n > current)
-                    .copied();
+                let next_line = line_nums.iter().find(|&&n| n > current).copied();
                 self.current_line = next_line;
             }
         }
@@ -284,12 +282,14 @@ impl Interpreter {
                 self.lines.insert(num, statements);
                 Ok(())
             }
-            
+
             // Basic I/O
             AstNode::Print(exprs) => self.execute_print(exprs),
             AstNode::Input(vars) => self.execute_input(vars),
             AstNode::Let(name, expr) => self.execute_let(name, *expr),
-            AstNode::ArrayAssign(name, indices, expr) => self.execute_array_assign(name, indices, *expr),
+            AstNode::ArrayAssign(name, indices, expr) => {
+                self.execute_array_assign(name, indices, *expr)
+            }
 
             // Control Flow
             AstNode::If(condition, then_stmts, else_stmts) => {
@@ -322,7 +322,7 @@ impl Interpreter {
             AstNode::Return => self.execute_return(),
             AstNode::End => Err(Error::ProgramEnd),
             AstNode::Stop => Err(Error::ProgramEnd),
-            
+
             // Data
             AstNode::Dim(name, dimensions) => self.execute_dim(name, dimensions),
             AstNode::Rem(_) => Ok(()), // Comments are no-ops
@@ -331,7 +331,8 @@ impl Interpreter {
                     if self.data_pointer >= self.data_items.len() {
                         return Err(Error::RuntimeError("Out of DATA".to_string()));
                     }
-                    self.variables.insert(var, self.data_items[self.data_pointer].clone());
+                    self.variables
+                        .insert(var, self.data_items[self.data_pointer].clone());
                     self.data_pointer += 1;
                 }
                 Ok(())
@@ -348,7 +349,7 @@ impl Interpreter {
                 // In full implementation, would restore to specific line
                 Ok(())
             }
-            
+
             // Screen/Graphics
             AstNode::Cls => {
                 self.screen.cls();
@@ -358,7 +359,8 @@ impl Interpreter {
             AstNode::Locate(row, col) => {
                 let r = self.evaluate_expression(&row)?.as_integer()? as usize;
                 let c = self.evaluate_expression(&col)?.as_integer()? as usize;
-                self.screen.locate(r.saturating_sub(1), c.saturating_sub(1))?;
+                self.screen
+                    .locate(r.saturating_sub(1), c.saturating_sub(1))?;
                 Ok(())
             }
             AstNode::Color(fg, bg) => {
@@ -390,17 +392,15 @@ impl Interpreter {
                         5 => (1024, 768), // SCREEN 5: 1024x768 SVGA
                         _ => (80, 25),    // SCREEN 0 or others: 80x25 text mode
                     };
-                    
+
                     self.screen = match self.graphics_mode {
-                        GraphicsMode::Gui => {
-                            match WindowBackend::new(width, height) {
-                                Ok(backend) => Screen::new_with_backend(Box::new(backend)),
-                                Err(_) => {
-                                    console_eprintln!("Warning: Failed to create GUI window, falling back to ASCII mode");
-                                    Screen::new(width, height)
-                                }
+                        GraphicsMode::Gui => match WindowBackend::new(width, height) {
+                            Ok(backend) => Screen::new_with_backend(Box::new(backend)),
+                            Err(_) => {
+                                console_eprintln!("Warning: Failed to create GUI window, falling back to ASCII mode");
+                                Screen::new(width, height)
                             }
-                        }
+                        },
                         GraphicsMode::Ascii => Screen::new(width, height),
                     };
                 }
@@ -410,7 +410,7 @@ impl Interpreter {
                     #[cfg(not(feature = "std"))]
                     {
                         use crate::graphics_backend::watos_vga;
-                        
+
                         if m > 0 {
                             // Graphics mode - create VGA/SVGA backend
                             match watos_vga::from_screen_mode(m as u8) {
@@ -484,7 +484,7 @@ impl Interpreter {
                 self.screen.circle(x_val, y_val, r_val, c_val)?;
                 Ok(())
             }
-            
+
             // Sound
             AstNode::Beep => {
                 console_println!("\x07"); // ASCII bell character
@@ -497,7 +497,7 @@ impl Interpreter {
                 console_println!("\x07");
                 Ok(())
             }
-            
+
             // File I/O
             AstNode::Open(filename, filenum, mode) => {
                 let num = self.evaluate_expression(&filenum)?.as_integer()?;
@@ -563,7 +563,8 @@ impl Interpreter {
                         io::stdout().flush().ok();
                         let mut input = String::new();
                         io::stdin().read_line(&mut input).ok();
-                        self.variables.insert(var, Value::String(input.trim().to_string()));
+                        self.variables
+                            .insert(var, Value::String(input.trim().to_string()));
                     }
                     #[cfg(not(feature = "std"))]
                     {
@@ -579,12 +580,12 @@ impl Interpreter {
                 self.variables.insert(var, Value::String(line));
                 Ok(())
             }
-            
+
             // Program Control
             AstNode::List(start, end) => {
                 let mut line_nums: Vec<u32> = self.lines.keys().copied().collect();
                 line_nums.sort();
-                
+
                 for line_num in line_nums {
                     if let Some(start_line) = start {
                         if line_num < start_line {
@@ -596,7 +597,7 @@ impl Interpreter {
                             break;
                         }
                     }
-                    
+
                     if let Some(statements) = self.lines.get(&line_num) {
                         console_print!("{} ", line_num);
                         for stmt in statements {
@@ -622,14 +623,14 @@ impl Interpreter {
                     nums.sort();
                     nums.first().copied()
                 });
-                
+
                 if let Some(line) = self.current_line {
                     self.execute_goto(line)
                 } else {
                     Ok(())
                 }
             }
-            
+
             // Error Handling
             AstNode::OnError(_line) => {
                 // Store error handler line (simplified)
@@ -647,7 +648,7 @@ impl Interpreter {
                 let num = self.evaluate_expression(&error_num)?.as_integer()?;
                 Err(Error::RuntimeError(format!("Error {}", num)))
             }
-            
+
             // File I/O
             AstNode::Randomize(seed) => {
                 // Set RNG seed - handled by RND function
@@ -657,10 +658,12 @@ impl Interpreter {
                 Ok(())
             }
             AstNode::Swap(var1, var2) => {
-                let val1 = self.variables.get(&var1).cloned()
-                    .ok_or_else(|| Error::UndefinedError(format!("Variable {} not defined", var1)))?;
-                let val2 = self.variables.get(&var2).cloned()
-                    .ok_or_else(|| Error::UndefinedError(format!("Variable {} not defined", var2)))?;
+                let val1 = self.variables.get(&var1).cloned().ok_or_else(|| {
+                    Error::UndefinedError(format!("Variable {} not defined", var1))
+                })?;
+                let val2 = self.variables.get(&var2).cloned().ok_or_else(|| {
+                    Error::UndefinedError(format!("Variable {} not defined", var2))
+                })?;
                 self.variables.insert(var1, val2);
                 self.variables.insert(var2, val1);
                 Ok(())
@@ -699,13 +702,13 @@ impl Interpreter {
                 // Would need to store params and expression for later evaluation
                 Ok(())
             }
-            
+
             // Program management
             AstNode::Load(filename) => {
                 // Load program from file
                 // Clear current program
                 self.lines.clear();
-                
+
                 // Open and read file
                 let file_num = 1; // Use temporary file handle
                 match self.file_manager.open(file_num, &filename, FileMode::Input) {
@@ -723,7 +726,12 @@ impl Interpreter {
                                         if let Ok(line_num) = line[..first_space].parse::<u32>() {
                                             // Re-parse the line content
                                             // For simplicity, just store as a dummy REM
-                                            self.lines.insert(line_num, vec![AstNode::Rem(line[first_space+1..].to_string())]);
+                                            self.lines.insert(
+                                                line_num,
+                                                vec![AstNode::Rem(
+                                                    line[first_space + 1..].to_string(),
+                                                )],
+                                            );
                                         }
                                     }
                                 }
@@ -742,12 +750,15 @@ impl Interpreter {
             AstNode::Save(filename) => {
                 // Save program to file
                 let file_num = 1; // Use temporary file handle
-                match self.file_manager.open(file_num, &filename, FileMode::Output) {
+                match self
+                    .file_manager
+                    .open(file_num, &filename, FileMode::Output)
+                {
                     Ok(_) => {
                         // Get sorted line numbers
                         let mut line_nums: Vec<u32> = self.lines.keys().copied().collect();
                         line_nums.sort();
-                        
+
                         // Write each line
                         for line_num in line_nums {
                             let line_text = format!("{} REM saved line", line_num);
@@ -776,7 +787,12 @@ impl Interpreter {
                                     // Parse and merge line (simple version)
                                     if let Some(first_space) = line.find(' ') {
                                         if let Ok(line_num) = line[..first_space].parse::<u32>() {
-                                            self.lines.insert(line_num, vec![AstNode::Rem(line[first_space+1..].to_string())]);
+                                            self.lines.insert(
+                                                line_num,
+                                                vec![AstNode::Rem(
+                                                    line[first_space + 1..].to_string(),
+                                                )],
+                                            );
                                         }
                                     }
                                 }
@@ -807,7 +823,12 @@ impl Interpreter {
                                     }
                                     if let Some(first_space) = line.find(' ') {
                                         if let Ok(line_num) = line[..first_space].parse::<u32>() {
-                                            self.lines.insert(line_num, vec![AstNode::Rem(line[first_space+1..].to_string())]);
+                                            self.lines.insert(
+                                                line_num,
+                                                vec![AstNode::Rem(
+                                                    line[first_space + 1..].to_string(),
+                                                )],
+                                            );
                                         }
                                     }
                                 }
@@ -815,7 +836,7 @@ impl Interpreter {
                             }
                         }
                         let _ = self.file_manager.close(file_num);
-                        
+
                         // Start execution at specified line or first line
                         if let Some(line) = start_line {
                             self.current_line = Some(line);
@@ -842,7 +863,7 @@ impl Interpreter {
                 }
                 Ok(())
             }
-            
+
             // Program editing
             AstNode::Auto(_start, _increment) => {
                 console_println!("AUTO: Feature not yet fully implemented");
@@ -868,7 +889,7 @@ impl Interpreter {
                 console_println!("Trace OFF");
                 Ok(())
             }
-            
+
             // Advanced graphics
             AstNode::View(_x1, _y1, _x2, _y2) => {
                 console_println!("VIEW: Setting viewport");
@@ -909,13 +930,13 @@ impl Interpreter {
                 console_println!("PALETTE: Color palette manipulation not yet fully implemented");
                 Ok(())
             }
-            
+
             // Sound
             AstNode::Play(_music_string) => {
                 console_println!("PLAY: Music playback not yet fully implemented");
                 Ok(())
             }
-            
+
             // File operations
             AstNode::Reset => {
                 self.file_manager.close_all()?;
@@ -972,7 +993,7 @@ impl Interpreter {
                 console_println!();
                 Ok(())
             }
-            
+
             // Variable type declarations
             AstNode::DefStr(_start, _end) => {
                 console_println!("DEFSTR: Variable type declaration not yet fully implemented");
@@ -994,7 +1015,7 @@ impl Interpreter {
                 console_println!("OPTION BASE: Array base setting not yet fully implemented");
                 Ok(())
             }
-            
+
             // System/Hardware
             AstNode::Key(_key_number, _string) => {
                 console_println!("KEY: Function key definition not yet fully implemented");
@@ -1036,8 +1057,11 @@ impl Interpreter {
                 console_println!("USR: User function call not yet fully implemented");
                 Ok(())
             }
-            
-            _ => Err(Error::RuntimeError(format!("Cannot execute node: {:?}", node))),
+
+            _ => Err(Error::RuntimeError(format!(
+                "Cannot execute node: {:?}",
+                node
+            ))),
         }
     }
 
@@ -1045,7 +1069,7 @@ impl Interpreter {
         for (i, expr) in exprs.iter().enumerate() {
             let value = self.evaluate_expression(expr)?;
             console_print!("{}", value);
-            
+
             if i < exprs.len() - 1 {
                 console_print!(" ");
             }
@@ -1060,7 +1084,12 @@ impl Interpreter {
         Ok(())
     }
 
-    fn execute_array_assign(&mut self, name: String, indices: Vec<AstNode>, expr: AstNode) -> Result<()> {
+    fn execute_array_assign(
+        &mut self,
+        name: String,
+        indices: Vec<AstNode>,
+        expr: AstNode,
+    ) -> Result<()> {
         // Evaluate the value to assign
         let value = self.evaluate_expression(&expr)?;
 
@@ -1073,10 +1102,15 @@ impl Interpreter {
         }
 
         // Build key: "name_idx1_idx2_..."
-        let key = format!("{}_{}", name, idx_values.iter()
-            .map(|i| i.to_string())
-            .collect::<Vec<_>>()
-            .join("_"));
+        let key = format!(
+            "{}_{}",
+            name,
+            idx_values
+                .iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join("_")
+        );
 
         self.arrays.insert(key, value);
         Ok(())
@@ -1149,13 +1183,17 @@ impl Interpreter {
                 )));
             }
 
-            let current = self.variables
+            let current = self
+                .variables
                 .get(&state.variable)
-                .ok_or_else(|| Error::UndefinedError(format!("Variable {} not defined", state.variable)))?
+                .ok_or_else(|| {
+                    Error::UndefinedError(format!("Variable {} not defined", state.variable))
+                })?
                 .as_double()?;
 
             let new_value = current + state.step;
-            self.variables.insert(state.variable.clone(), Value::Double(new_value));
+            self.variables
+                .insert(state.variable.clone(), Value::Double(new_value));
 
             // Check if loop should continue
             let should_continue = if state.step > 0.0 {
@@ -1168,7 +1206,8 @@ impl Interpreter {
                 // Jump back to the line after FOR
                 let mut line_nums: Vec<u32> = self.lines.keys().copied().collect();
                 line_nums.sort();
-                if let Some(next_line) = line_nums.iter().find(|&&n| n > state.return_line).copied() {
+                if let Some(next_line) = line_nums.iter().find(|&&n| n > state.return_line).copied()
+                {
                     self.current_line = Some(next_line);
                 }
             } else {
@@ -1211,9 +1250,8 @@ impl Interpreter {
                                     depth -= 1;
                                     if depth == 0 {
                                         // Found matching WEND, jump past it
-                                        self.current_line = line_nums.iter()
-                                            .find(|&&n| n > line_num)
-                                            .copied();
+                                        self.current_line =
+                                            line_nums.iter().find(|&&n| n > line_num).copied();
                                         return Ok(());
                                     }
                                 }
@@ -1381,12 +1419,11 @@ impl Interpreter {
     fn evaluate_expression(&mut self, node: &AstNode) -> Result<Value> {
         match node {
             AstNode::Literal(val) => Ok(val.clone()),
-            AstNode::Variable(name) => {
-                self.variables
-                    .get(name)
-                    .cloned()
-                    .ok_or_else(|| Error::UndefinedError(format!("Variable {} not defined", name)))
-            }
+            AstNode::Variable(name) => self
+                .variables
+                .get(name)
+                .cloned()
+                .ok_or_else(|| Error::UndefinedError(format!("Variable {} not defined", name))),
             AstNode::BinaryOp(op, left, right) => {
                 let left_val = self.evaluate_expression(left)?;
                 let right_val = self.evaluate_expression(right)?;
@@ -1396,28 +1433,34 @@ impl Interpreter {
                 let val = self.evaluate_expression(expr)?;
                 self.evaluate_unary_op(op, val)
             }
-            AstNode::FunctionCall(name, args) => {
-                self.evaluate_function_call(name, args)
-            }
-            _ => Err(Error::RuntimeError(format!("Cannot evaluate node: {:?}", node))),
+            AstNode::FunctionCall(name, args) => self.evaluate_function_call(name, args),
+            _ => Err(Error::RuntimeError(format!(
+                "Cannot evaluate node: {:?}",
+                node
+            ))),
         }
     }
 
-    fn evaluate_binary_op(&mut self, op: &BinaryOperator, left: Value, right: Value) -> Result<Value> {
+    fn evaluate_binary_op(
+        &mut self,
+        op: &BinaryOperator,
+        left: Value,
+        right: Value,
+    ) -> Result<Value> {
         match op {
             BinaryOperator::Add => {
                 if left.is_string() || right.is_string() {
-                    Ok(Value::String(format!("{}{}", left.as_string(), right.as_string())))
+                    Ok(Value::String(format!(
+                        "{}{}",
+                        left.as_string(),
+                        right.as_string()
+                    )))
                 } else {
                     Ok(Value::Double(left.as_double()? + right.as_double()?))
                 }
             }
-            BinaryOperator::Subtract => {
-                Ok(Value::Double(left.as_double()? - right.as_double()?))
-            }
-            BinaryOperator::Multiply => {
-                Ok(Value::Double(left.as_double()? * right.as_double()?))
-            }
+            BinaryOperator::Subtract => Ok(Value::Double(left.as_double()? - right.as_double()?)),
+            BinaryOperator::Multiply => Ok(Value::Double(left.as_double()? * right.as_double()?)),
             BinaryOperator::Divide => {
                 let right_val = right.as_double()?;
                 if right_val == 0.0 {
@@ -1442,26 +1485,51 @@ impl Interpreter {
                     Ok(Value::Integer(left.as_integer()? % right_val))
                 }
             }
-            BinaryOperator::Power => {
-                Ok(Value::Double(libm::pow(left.as_double()?, right.as_double()?)))
-            }
+            BinaryOperator::Power => Ok(Value::Double(libm::pow(
+                left.as_double()?,
+                right.as_double()?,
+            ))),
             BinaryOperator::Equal => {
-                Ok(Value::Integer(if left.as_double()? == right.as_double()? { -1 } else { 0 }))
+                Ok(Value::Integer(if left.as_double()? == right.as_double()? {
+                    -1
+                } else {
+                    0
+                }))
             }
             BinaryOperator::NotEqual => {
-                Ok(Value::Integer(if left.as_double()? != right.as_double()? { -1 } else { 0 }))
+                Ok(Value::Integer(if left.as_double()? != right.as_double()? {
+                    -1
+                } else {
+                    0
+                }))
             }
             BinaryOperator::LessThan => {
-                Ok(Value::Integer(if left.as_double()? < right.as_double()? { -1 } else { 0 }))
+                Ok(Value::Integer(if left.as_double()? < right.as_double()? {
+                    -1
+                } else {
+                    0
+                }))
             }
             BinaryOperator::GreaterThan => {
-                Ok(Value::Integer(if left.as_double()? > right.as_double()? { -1 } else { 0 }))
+                Ok(Value::Integer(if left.as_double()? > right.as_double()? {
+                    -1
+                } else {
+                    0
+                }))
             }
             BinaryOperator::LessEqual => {
-                Ok(Value::Integer(if left.as_double()? <= right.as_double()? { -1 } else { 0 }))
+                Ok(Value::Integer(if left.as_double()? <= right.as_double()? {
+                    -1
+                } else {
+                    0
+                }))
             }
             BinaryOperator::GreaterEqual => {
-                Ok(Value::Integer(if left.as_double()? >= right.as_double()? { -1 } else { 0 }))
+                Ok(Value::Integer(if left.as_double()? >= right.as_double()? {
+                    -1
+                } else {
+                    0
+                }))
             }
             BinaryOperator::And => {
                 let l = left.as_integer()?;
@@ -1493,12 +1561,8 @@ impl Interpreter {
 
     fn evaluate_unary_op(&mut self, op: &UnaryOperator, val: Value) -> Result<Value> {
         match op {
-            UnaryOperator::Negate => {
-                Ok(Value::Double(-val.as_double()?))
-            }
-            UnaryOperator::Not => {
-                Ok(Value::Integer(!val.as_integer()?))
-            }
+            UnaryOperator::Negate => Ok(Value::Double(-val.as_double()?)),
+            UnaryOperator::Not => Ok(Value::Integer(!val.as_integer()?)),
         }
     }
 
@@ -1506,7 +1570,12 @@ impl Interpreter {
         use crate::functions::*;
 
         // Check if this is an array access
-        if self.array_dims.contains_key(name) || self.arrays.keys().any(|k| k.starts_with(&format!("{}_", name))) {
+        if self.array_dims.contains_key(name)
+            || self
+                .arrays
+                .keys()
+                .any(|k| k.starts_with(&format!("{}_", name)))
+        {
             // Evaluate indices
             let mut idx_values = Vec::new();
             for idx_node in args {
@@ -1516,17 +1585,23 @@ impl Interpreter {
             }
 
             // Build key: "name_idx1_idx2_..."
-            let key = format!("{}_{}", name, idx_values.iter()
-                .map(|i| i.to_string())
-                .collect::<Vec<_>>()
-                .join("_"));
+            let key = format!(
+                "{}_{}",
+                name,
+                idx_values
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join("_")
+            );
 
             // Return array value or default 0 if not set
             return Ok(self.arrays.get(&key).cloned().unwrap_or(Value::Integer(0)));
         }
 
         // Evaluate all arguments for function calls
-        let eval_args: Vec<Value> = args.iter()
+        let eval_args: Vec<Value> = args
+            .iter()
             .map(|arg| self.evaluate_expression(arg))
             .collect::<Result<Vec<Value>>>()?;
 
@@ -1616,7 +1691,7 @@ impl Interpreter {
                 }
                 sgn_fn(eval_args[0].clone())
             }
-            
+
             // String functions
             "LEN" => {
                 if eval_args.len() != 1 {
@@ -1650,19 +1725,25 @@ impl Interpreter {
             }
             "LEFT$" | "LEFT" => {
                 if eval_args.len() != 2 {
-                    return Err(Error::RuntimeError("LEFT$ requires 2 arguments".to_string()));
+                    return Err(Error::RuntimeError(
+                        "LEFT$ requires 2 arguments".to_string(),
+                    ));
                 }
                 left_fn(eval_args[0].clone(), eval_args[1].clone())
             }
             "RIGHT$" | "RIGHT" => {
                 if eval_args.len() != 2 {
-                    return Err(Error::RuntimeError("RIGHT$ requires 2 arguments".to_string()));
+                    return Err(Error::RuntimeError(
+                        "RIGHT$ requires 2 arguments".to_string(),
+                    ));
                 }
                 right_fn(eval_args[0].clone(), eval_args[1].clone())
             }
             "MID$" | "MID" => {
                 if eval_args.len() < 2 || eval_args.len() > 3 {
-                    return Err(Error::RuntimeError("MID$ requires 2 or 3 arguments".to_string()));
+                    return Err(Error::RuntimeError(
+                        "MID$ requires 2 or 3 arguments".to_string(),
+                    ));
                 }
                 let len = if eval_args.len() == 3 {
                     Some(eval_args[2].clone())
@@ -1673,22 +1754,32 @@ impl Interpreter {
             }
             "SPACE$" | "SPACE" => {
                 if eval_args.len() != 1 {
-                    return Err(Error::RuntimeError("SPACE$ requires 1 argument".to_string()));
+                    return Err(Error::RuntimeError(
+                        "SPACE$ requires 1 argument".to_string(),
+                    ));
                 }
                 space_fn(eval_args[0].clone())
             }
             "STRING$" | "STRING" => {
                 if eval_args.len() != 2 {
-                    return Err(Error::RuntimeError("STRING$ requires 2 arguments".to_string()));
+                    return Err(Error::RuntimeError(
+                        "STRING$ requires 2 arguments".to_string(),
+                    ));
                 }
                 string_fn(eval_args[0].clone(), eval_args[1].clone())
             }
             "INSTR" => {
                 if eval_args.len() < 2 || eval_args.len() > 3 {
-                    return Err(Error::RuntimeError("INSTR requires 2 or 3 arguments".to_string()));
+                    return Err(Error::RuntimeError(
+                        "INSTR requires 2 or 3 arguments".to_string(),
+                    ));
                 }
                 if eval_args.len() == 3 {
-                    instr_fn(Some(eval_args[0].clone()), eval_args[1].clone(), eval_args[2].clone())
+                    instr_fn(
+                        Some(eval_args[0].clone()),
+                        eval_args[1].clone(),
+                        eval_args[2].clone(),
+                    )
                 } else {
                     instr_fn(None, eval_args[0].clone(), eval_args[1].clone())
                 }
@@ -1707,19 +1798,25 @@ impl Interpreter {
             }
             "LCASE$" | "LCASE" => {
                 if eval_args.len() != 1 {
-                    return Err(Error::RuntimeError("LCASE$ requires 1 argument".to_string()));
+                    return Err(Error::RuntimeError(
+                        "LCASE$ requires 1 argument".to_string(),
+                    ));
                 }
                 lcase_fn(eval_args[0].clone())
             }
             "UCASE$" | "UCASE" => {
                 if eval_args.len() != 1 {
-                    return Err(Error::RuntimeError("UCASE$ requires 1 argument".to_string()));
+                    return Err(Error::RuntimeError(
+                        "UCASE$ requires 1 argument".to_string(),
+                    ));
                 }
                 ucase_fn(eval_args[0].clone())
             }
             "INPUT$" | "INPUT" => {
                 if eval_args.len() < 1 || eval_args.len() > 2 {
-                    return Err(Error::RuntimeError("INPUT$ requires 1 or 2 arguments".to_string()));
+                    return Err(Error::RuntimeError(
+                        "INPUT$ requires 1 or 2 arguments".to_string(),
+                    ));
                 }
                 let file_num = if eval_args.len() == 2 {
                     Some(eval_args[1].clone())
@@ -1728,7 +1825,7 @@ impl Interpreter {
                 };
                 input_fn(eval_args[0].clone(), file_num)
             }
-            
+
             // Conversion functions
             "CVI" => {
                 if eval_args.len() != 1 {
@@ -1766,7 +1863,7 @@ impl Interpreter {
                 }
                 mkd_fn(eval_args[0].clone())
             }
-            
+
             // System functions
             "RND" => {
                 if eval_args.is_empty() {
@@ -1774,12 +1871,16 @@ impl Interpreter {
                 } else if eval_args.len() == 1 {
                     rnd_fn(Some(eval_args[0].clone()))
                 } else {
-                    Err(Error::RuntimeError("RND requires 0 or 1 arguments".to_string()))
+                    Err(Error::RuntimeError(
+                        "RND requires 0 or 1 arguments".to_string(),
+                    ))
                 }
             }
             "TIMER" => {
                 if !eval_args.is_empty() {
-                    return Err(Error::RuntimeError("TIMER requires 0 arguments".to_string()));
+                    return Err(Error::RuntimeError(
+                        "TIMER requires 0 arguments".to_string(),
+                    ));
                 }
                 timer_fn()
             }
@@ -1803,25 +1904,33 @@ impl Interpreter {
             }
             "VARPTR" => {
                 if eval_args.len() != 1 {
-                    return Err(Error::RuntimeError("VARPTR requires 1 argument".to_string()));
+                    return Err(Error::RuntimeError(
+                        "VARPTR requires 1 argument".to_string(),
+                    ));
                 }
                 varptr_fn(eval_args[0].clone())
             }
             "INKEY$" | "INKEY" => {
                 if !eval_args.is_empty() {
-                    return Err(Error::RuntimeError("INKEY$ requires 0 arguments".to_string()));
+                    return Err(Error::RuntimeError(
+                        "INKEY$ requires 0 arguments".to_string(),
+                    ));
                 }
                 inkey_fn()
             }
             "DATE$" | "DATE" => {
                 if !eval_args.is_empty() {
-                    return Err(Error::RuntimeError("DATE$ requires 0 arguments".to_string()));
+                    return Err(Error::RuntimeError(
+                        "DATE$ requires 0 arguments".to_string(),
+                    ));
                 }
                 date_fn()
             }
             "TIME$" | "TIME" => {
                 if !eval_args.is_empty() {
-                    return Err(Error::RuntimeError("TIME$ requires 0 arguments".to_string()));
+                    return Err(Error::RuntimeError(
+                        "TIME$ requires 0 arguments".to_string(),
+                    ));
                 }
                 time_fn()
             }
@@ -1833,7 +1942,9 @@ impl Interpreter {
             }
             "CSRLIN" => {
                 if !eval_args.is_empty() {
-                    return Err(Error::RuntimeError("CSRLIN requires 0 arguments".to_string()));
+                    return Err(Error::RuntimeError(
+                        "CSRLIN requires 0 arguments".to_string(),
+                    ));
                 }
                 csrlin_fn()
             }
@@ -1857,13 +1968,17 @@ impl Interpreter {
             }
             "POINT" => {
                 if eval_args.len() != 2 {
-                    return Err(Error::RuntimeError("POINT requires 2 arguments".to_string()));
+                    return Err(Error::RuntimeError(
+                        "POINT requires 2 arguments".to_string(),
+                    ));
                 }
                 point_fn(eval_args[0].clone(), eval_args[1].clone())
             }
             "SCREEN" => {
                 if eval_args.len() < 2 || eval_args.len() > 3 {
-                    return Err(Error::RuntimeError("SCREEN requires 2 or 3 arguments".to_string()));
+                    return Err(Error::RuntimeError(
+                        "SCREEN requires 2 or 3 arguments".to_string(),
+                    ));
                 }
                 let color_num = if eval_args.len() == 3 {
                     Some(eval_args[2].clone())
@@ -1872,7 +1987,7 @@ impl Interpreter {
                 };
                 screen_fn(eval_args[0].clone(), eval_args[1].clone(), color_num)
             }
-            
+
             // Error handling functions
             "ERL" => {
                 if !eval_args.is_empty() {
@@ -1888,37 +2003,47 @@ impl Interpreter {
             }
             "ERDEV" => {
                 if !eval_args.is_empty() {
-                    return Err(Error::RuntimeError("ERDEV requires 0 arguments".to_string()));
+                    return Err(Error::RuntimeError(
+                        "ERDEV requires 0 arguments".to_string(),
+                    ));
                 }
                 erdev_fn()
             }
             "ERDEV$" => {
                 if !eval_args.is_empty() {
-                    return Err(Error::RuntimeError("ERDEV$ requires 0 arguments".to_string()));
+                    return Err(Error::RuntimeError(
+                        "ERDEV$ requires 0 arguments".to_string(),
+                    ));
                 }
                 erdev_string_fn()
             }
-            
+
             // Environment and file functions
             "ENVIRON$" | "ENVIRON" => {
                 if eval_args.len() != 1 {
-                    return Err(Error::RuntimeError("ENVIRON$ requires 1 argument".to_string()));
+                    return Err(Error::RuntimeError(
+                        "ENVIRON$ requires 1 argument".to_string(),
+                    ));
                 }
                 environ_fn(eval_args[0].clone())
             }
             "IOCTL$" | "IOCTL" => {
                 if eval_args.len() != 1 {
-                    return Err(Error::RuntimeError("IOCTL$ requires 1 argument".to_string()));
+                    return Err(Error::RuntimeError(
+                        "IOCTL$ requires 1 argument".to_string(),
+                    ));
                 }
                 ioctl_fn(eval_args[0].clone())
             }
             "FILEATTR" => {
                 if eval_args.len() != 2 {
-                    return Err(Error::RuntimeError("FILEATTR requires 2 arguments".to_string()));
+                    return Err(Error::RuntimeError(
+                        "FILEATTR requires 2 arguments".to_string(),
+                    ));
                 }
                 fileattr_fn(eval_args[0].clone(), eval_args[1].clone())
             }
-            
+
             // Joystick functions
             "STICK" => {
                 if eval_args.len() != 1 {
@@ -1932,10 +2057,10 @@ impl Interpreter {
                 }
                 strig_fn(eval_args[0].clone())
             }
-            
+
             // Machine language functions
-            "USR" | "USR0" | "USR1" | "USR2" | "USR3" | "USR4" | 
-            "USR5" | "USR6" | "USR7" | "USR8" | "USR9" => {
+            "USR" | "USR0" | "USR1" | "USR2" | "USR3" | "USR4" | "USR5" | "USR6" | "USR7"
+            | "USR8" | "USR9" => {
                 if eval_args.len() != 1 {
                     return Err(Error::RuntimeError("USR requires 1 argument".to_string()));
                 }
@@ -1951,8 +2076,11 @@ impl Interpreter {
                 };
                 usr_fn(index, eval_args[0].clone())
             }
-            
-            _ => Err(Error::UndefinedError(format!("Function {} not defined", name))),
+
+            _ => Err(Error::UndefinedError(format!(
+                "Function {} not defined",
+                name
+            ))),
         }
     }
 
@@ -2004,7 +2132,7 @@ mod tests {
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-        
+
         // Should not error
         assert!(interp.execute(ast).is_ok());
     }
@@ -2016,7 +2144,7 @@ mod tests {
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-        
+
         interp.execute(ast).unwrap();
         assert_eq!(interp.variables.get("A").unwrap().as_integer().unwrap(), 42);
     }
@@ -2028,7 +2156,7 @@ mod tests {
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-        
+
         interp.execute(ast).unwrap();
         // 2 + 3 * 4 = 2 + 12 = 14
         assert_eq!(interp.variables.get("A").unwrap().as_integer().unwrap(), 14);
@@ -2041,7 +2169,7 @@ mod tests {
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse().unwrap();
-        
+
         let result = interp.execute(ast);
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), Error::DivisionByZero);
@@ -2112,7 +2240,10 @@ mod tests {
         interp.execute(ast).unwrap();
         interp.run_stored_program().unwrap();
         // Sum should be 1+2+3+4+5 = 15
-        assert_eq!(interp.variables.get("SUM").unwrap().as_integer().unwrap(), 15);
+        assert_eq!(
+            interp.variables.get("SUM").unwrap().as_integer().unwrap(),
+            15
+        );
     }
 
     #[test]
@@ -2152,7 +2283,8 @@ mod tests {
     #[test]
     fn test_gosub_return() {
         let mut interp = Interpreter::new();
-        let code = "10 LET X = 1\n20 GOSUB 100\n30 LET X = X + 10\n40 END\n100 LET X = X + 5\n110 RETURN";
+        let code =
+            "10 LET X = 1\n20 GOSUB 100\n30 LET X = X + 10\n40 END\n100 LET X = X + 5\n110 RETURN";
         let mut lexer = Lexer::new(code);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens);

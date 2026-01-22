@@ -32,7 +32,7 @@ impl CpConfig {
         CpConfig {
             recursive: false,
             verbose: false,
-            force: true,  // Default to force for simplicity
+            force: true, // Default to force for simplicity
             no_clobber: false,
             interactive: false,
             sources: [[0; MAX_PATH]; 64],
@@ -45,7 +45,11 @@ impl CpConfig {
     fn add_source(&mut self, s: &str) {
         if self.source_count < 64 {
             let bytes = s.as_bytes();
-            let len = if bytes.len() > MAX_PATH - 1 { MAX_PATH - 1 } else { bytes.len() };
+            let len = if bytes.len() > MAX_PATH - 1 {
+                MAX_PATH - 1
+            } else {
+                bytes.len()
+            };
             self.sources[self.source_count][..len].copy_from_slice(&bytes[..len]);
             self.source_count += 1;
         }
@@ -53,7 +57,11 @@ impl CpConfig {
 
     fn set_dest(&mut self, s: &str) {
         let bytes = s.as_bytes();
-        self.dest_len = if bytes.len() > MAX_PATH - 1 { MAX_PATH - 1 } else { bytes.len() };
+        self.dest_len = if bytes.len() > MAX_PATH - 1 {
+            MAX_PATH - 1
+        } else {
+            bytes.len()
+        };
         self.dest[..self.dest_len].copy_from_slice(&bytes[..self.dest_len]);
     }
 
@@ -91,7 +99,8 @@ fn parse_args(argc: i32, argv: *const *const u8) -> Option<CpConfig> {
     let mut arg_idx = 1;
 
     // Parse options
-    while arg_idx < argc - 1 {  // Leave at least one arg for dest
+    while arg_idx < argc - 1 {
+        // Leave at least one arg for dest
         let arg_ptr = unsafe { *argv.add(arg_idx as usize) };
         let arg = cstr_to_str(arg_ptr);
 
@@ -238,7 +247,8 @@ fn copy_directory(src: &str, dst: &str, config: &CpConfig) -> i32 {
 
     // Create destination directory
     let mkdir_ret = sys_mkdir(dst, 0o755);
-    if mkdir_ret < 0 && mkdir_ret != -17 {  // -17 is EEXIST
+    if mkdir_ret < 0 && mkdir_ret != -17 {
+        // -17 is EEXIST
         eprints("cp: cannot create directory '");
         prints(dst);
         eprintlns("'");
@@ -333,7 +343,8 @@ fn copy_directory(src: &str, dst: &str, config: &CpConfig) -> i32 {
                     let dst_path_str = core::str::from_utf8(&dst_path[..pos]).unwrap_or("");
 
                     // Recursively copy
-                    if d_type == 4 {  // DT_DIR
+                    if d_type == 4 {
+                        // DT_DIR
                         if copy_directory(src_path_str, dst_path_str, config) != 0 {
                             ret = 1;
                         }
@@ -372,7 +383,10 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     let mut ret = 0;
 
     for i in 0..config.source_count {
-        let src_len = config.sources[i].iter().position(|&c| c == 0).unwrap_or(MAX_PATH);
+        let src_len = config.sources[i]
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(MAX_PATH);
         let src = core::str::from_utf8(&config.sources[i][..src_len]).unwrap_or("");
 
         let src_is_dir = is_directory(src);

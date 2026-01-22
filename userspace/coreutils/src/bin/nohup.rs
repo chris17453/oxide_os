@@ -16,7 +16,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     // 1. Ignore SIGHUP signal
     // 2. Redirect stdout/stderr to nohup.out if they're terminals
     // 3. Execute the command
-    
+
     prints("nohup: would run: ");
     for i in 1..argc {
         let arg = unsafe { cstr_to_str(*argv.add(i as usize)) };
@@ -42,7 +42,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     // This would use execv/execve
 
     eprintlns("nohup: signal handling not yet fully implemented");
-    
+
     1
 }
 

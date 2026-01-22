@@ -143,11 +143,9 @@ impl NetPolicy {
             return false;
         }
 
-        let host_ok = self.allowed_hosts.is_empty() ||
-            self.allowed_hosts.iter().any(|h| h == host);
+        let host_ok = self.allowed_hosts.is_empty() || self.allowed_hosts.iter().any(|h| h == host);
 
-        let port_ok = self.allowed_ports.is_empty() ||
-            self.allowed_ports.contains(&port);
+        let port_ok = self.allowed_ports.is_empty() || self.allowed_ports.contains(&port);
 
         host_ok && port_ok
     }
@@ -445,30 +443,89 @@ impl SafeBuiltins {
     /// Get list of safe builtin functions
     pub fn safe_functions() -> &'static [&'static str] {
         &[
-            "abs", "all", "any", "ascii", "bin", "bool", "bytearray", "bytes",
-            "callable", "chr", "complex", "dict", "divmod", "enumerate",
-            "filter", "float", "format", "frozenset", "getattr", "hasattr",
-            "hash", "hex", "id", "int", "isinstance", "issubclass", "iter",
-            "len", "list", "map", "max", "min", "next", "object", "oct",
-            "ord", "pow", "print", "range", "repr", "reversed", "round",
-            "set", "slice", "sorted", "str", "sum", "tuple", "type", "zip",
+            "abs",
+            "all",
+            "any",
+            "ascii",
+            "bin",
+            "bool",
+            "bytearray",
+            "bytes",
+            "callable",
+            "chr",
+            "complex",
+            "dict",
+            "divmod",
+            "enumerate",
+            "filter",
+            "float",
+            "format",
+            "frozenset",
+            "getattr",
+            "hasattr",
+            "hash",
+            "hex",
+            "id",
+            "int",
+            "isinstance",
+            "issubclass",
+            "iter",
+            "len",
+            "list",
+            "map",
+            "max",
+            "min",
+            "next",
+            "object",
+            "oct",
+            "ord",
+            "pow",
+            "print",
+            "range",
+            "repr",
+            "reversed",
+            "round",
+            "set",
+            "slice",
+            "sorted",
+            "str",
+            "sum",
+            "tuple",
+            "type",
+            "zip",
         ]
     }
 
     /// Get list of unsafe builtin functions to remove
     pub fn unsafe_functions() -> &'static [&'static str] {
         &[
-            "compile", "eval", "exec", "globals", "locals", "open",
-            "__import__", "input", "memoryview", "vars",
+            "compile",
+            "eval",
+            "exec",
+            "globals",
+            "locals",
+            "open",
+            "__import__",
+            "input",
+            "memoryview",
+            "vars",
         ]
     }
 
     /// Get list of unsafe attributes to block
     pub fn unsafe_attributes() -> &'static [&'static str] {
         &[
-            "__class__", "__bases__", "__subclasses__", "__mro__",
-            "__code__", "__globals__", "__builtins__", "__dict__",
-            "__func__", "__self__", "__module__",
+            "__class__",
+            "__bases__",
+            "__subclasses__",
+            "__mro__",
+            "__code__",
+            "__globals__",
+            "__builtins__",
+            "__dict__",
+            "__func__",
+            "__self__",
+            "__module__",
         ]
     }
 }
@@ -506,9 +563,9 @@ impl SandboxContext {
     pub fn can_continue(&self, current_time: u64) -> Result<(), SandboxError> {
         // Check step limit
         if self.steps >= self.sandbox.limits.max_steps {
-            return Err(SandboxError::ResourceLimitExceeded(
-                String::from("max execution steps")
-            ));
+            return Err(SandboxError::ResourceLimitExceeded(String::from(
+                "max execution steps",
+            )));
         }
 
         // Check time limit
@@ -519,16 +576,14 @@ impl SandboxContext {
 
         // Check memory limit
         if self.memory_used > self.sandbox.limits.memory {
-            return Err(SandboxError::ResourceLimitExceeded(
-                String::from("memory")
-            ));
+            return Err(SandboxError::ResourceLimitExceeded(String::from("memory")));
         }
 
         // Check recursion limit
         if self.recursion_depth > self.sandbox.limits.max_recursion {
-            return Err(SandboxError::ResourceLimitExceeded(
-                String::from("recursion depth")
-            ));
+            return Err(SandboxError::ResourceLimitExceeded(String::from(
+                "recursion depth",
+            )));
         }
 
         Ok(())
@@ -543,9 +598,9 @@ impl SandboxContext {
     pub fn enter_function(&mut self) -> Result<(), SandboxError> {
         self.recursion_depth += 1;
         if self.recursion_depth > self.sandbox.limits.max_recursion {
-            Err(SandboxError::ResourceLimitExceeded(
-                String::from("recursion depth")
-            ))
+            Err(SandboxError::ResourceLimitExceeded(String::from(
+                "recursion depth",
+            )))
         } else {
             Ok(())
         }

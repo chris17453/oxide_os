@@ -4,9 +4,9 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
-use alloc::collections::VecDeque;
 use crate::cell::{Cell, CellAttrs};
+use alloc::collections::VecDeque;
+use alloc::vec::Vec;
 
 /// Screen buffer for terminal content
 pub struct ScreenBuffer {

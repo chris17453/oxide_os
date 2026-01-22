@@ -5,8 +5,8 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use crate::kobject::{MODULES, ModuleInfo, ModuleState};
 use crate::{ModuleError, ModuleFlags, ModuleResult};
-use crate::kobject::{ModuleInfo, ModuleState, MODULES};
 
 /// Dependency resolver for module loading
 pub struct DependencyResolver {
@@ -56,9 +56,9 @@ impl DependencyResolver {
         for dep_name in modinfo.depends {
             // Check if dependency is already loaded
             let modules = MODULES.lock();
-            let is_loaded = modules.iter().any(|m| {
-                m.name == *dep_name && m.state == ModuleState::Live
-            });
+            let is_loaded = modules
+                .iter()
+                .any(|m| m.name == *dep_name && m.state == ModuleState::Live);
             drop(modules);
 
             if !is_loaded {
@@ -93,9 +93,9 @@ pub fn resolve_dependencies(modinfo: &ModuleInfo, flags: ModuleFlags) -> ModuleR
     let modules = MODULES.lock();
 
     for dep_name in modinfo.depends {
-        let dep_loaded = modules.iter().any(|m| {
-            m.name == *dep_name && m.state == ModuleState::Live
-        });
+        let dep_loaded = modules
+            .iter()
+            .any(|m| m.name == *dep_name && m.state == ModuleState::Live);
 
         if !dep_loaded {
             return Err(ModuleError::DependencyMissing);

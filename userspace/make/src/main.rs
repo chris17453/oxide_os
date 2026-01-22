@@ -119,7 +119,11 @@ impl Make {
     fn get_var(&self, name: &[u8]) -> Option<&[u8]> {
         for i in 0..self.num_vars {
             if self.variables[i].used && bytes_eq_trimmed(&self.variables[i].name, name) {
-                let len = self.variables[i].value.iter().position(|&c| c == 0).unwrap_or(self.variables[i].value.len());
+                let len = self.variables[i]
+                    .value
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(self.variables[i].value.len());
                 return Some(&self.variables[i].value[..len]);
             }
         }
@@ -161,7 +165,10 @@ impl Make {
                 let rule_idx = current_rule.unwrap();
                 if self.rules[rule_idx].num_commands < 8 {
                     let cmd_idx = self.rules[rule_idx].num_commands;
-                    copy_bytes(&mut self.rules[rule_idx].commands[cmd_idx], &data[line_start..pos]);
+                    copy_bytes(
+                        &mut self.rules[rule_idx].commands[cmd_idx],
+                        &data[line_start..pos],
+                    );
                     self.rules[rule_idx].num_commands += 1;
                 }
                 continue;
@@ -534,7 +541,11 @@ fn copy_trimmed(dst: &mut [u8], src: &[u8]) {
 
 /// Copy bytes
 fn copy_bytes(dst: &mut [u8], src: &[u8]) {
-    let len = src.iter().position(|&c| c == 0 || c == b'\n' || c == b'\r').unwrap_or(src.len()).min(dst.len() - 1);
+    let len = src
+        .iter()
+        .position(|&c| c == 0 || c == b'\n' || c == b'\r')
+        .unwrap_or(src.len())
+        .min(dst.len() - 1);
     dst[..len].copy_from_slice(&src[..len]);
     dst[len] = 0;
 }

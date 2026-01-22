@@ -40,6 +40,12 @@ const MAX_ALIASES: usize = 64;
 /// Maximum history entries
 const MAX_HISTORY: usize = 100;
 
+/// Default prompt config paths
+const GLOBAL_PROMPT_PATH: &str = "/etc/prompt";
+const USER_PROMPT_FILENAME: &str = ".esh_prompt";
+/// Fallback prompt string (POSIX-ish)
+const DEFAULT_PROMPT: &str = "\\u@\\h:\\w$ ";
+
 /// Alias entry
 struct Alias {
     name: [u8; 32],
@@ -55,6 +61,222 @@ impl Alias {
             used: false,
         }
     }
+}
+
+/// Print shell prompt with fallback hierarchy:
+/// 1. $ESH_PROMPT environment variable
+/// 2. ~/.esh_prompt if readable
+/// 3. /etc/prompt if readable
+/// 4. DEFAULT_PROMPT
+fn print_prompt() {
+    // 1) ESH_PROMPT env
+    if let Some(prompt) = getenv("ESH_PROMPT") {
+        prints(prompt);
+        return;
+    }
+
+    // Helper to try loading prompt from a file path
+    fn load_prompt(path: &str, buf: &mut [u8]) -> Option<usize> {
+        let fd = open2(path, O_RDONLY);
+        if fd < 0 {
+            return None;
+        }
+        let n = read(fd, buf);
+        close(fd);
+        if n > 0 { Some(n as usize) } else { None }
+    }
+
+    // 2) User prompt file (~/.esh_prompt)
+    let mut prompt_buf = [0u8; 256];
+    let home = getenv("HOME");
+    if let Some(home_str) = home {
+        if !home_str.is_empty() {
+            let mut path_buf = [0u8; 256];
+            let mut idx = 0;
+            for b in home_str.as_bytes() {
+                if idx < path_buf.len() - 1 {
+                    path_buf[idx] = *b;
+                    idx += 1;
+                }
+            }
+            if idx < path_buf.len() - 1 {
+                path_buf[idx] = b'/';
+                idx += 1;
+            }
+            for b in USER_PROMPT_FILENAME.as_bytes() {
+                if idx < path_buf.len() - 1 {
+                    path_buf[idx] = *b;
+                    idx += 1;
+                }
+            }
+            path_buf[idx] = 0;
+
+            let path = bytes_to_str(&path_buf);
+            if let Some(n) = load_prompt(path, &mut prompt_buf) {
+                let parsed = render_prompt(&prompt_buf[..n]);
+                prints(parsed);
+                return;
+            }
+        }
+    }
+
+    // 3) Global prompt file (/etc/prompt)
+    if let Some(n) = load_prompt(GLOBAL_PROMPT_PATH, &mut prompt_buf) {
+        let parsed = render_prompt(&prompt_buf[..n]);
+        prints(parsed);
+        return;
+    }
+
+    // 4) Fallback
+    prints(render_prompt(DEFAULT_PROMPT.as_bytes()));
+}
+
+/// Render a prompt template supporting minimal escapes:
+/// \u user, \h host, \w cwd, \\ literal backslash, \$ root/user sign
+fn render_prompt(template: &[u8]) -> &str {
+    // Static scratch buffer
+    static mut PROMPT_OUT: [u8; 256] = [0; 256];
+    let out_ptr = unsafe { &raw mut PROMPT_OUT };
+    let out: &mut [u8] = unsafe { &mut *out_ptr };
+    let mut len = 0usize;
+
+    let user = getenv("USER").unwrap_or("user");
+    let host = getenv("HOSTNAME").unwrap_or("oxide");
+    let cwd = {
+        static mut CWD_BUF: [u8; 128] = [0; 128];
+        let buf_ptr = unsafe { &raw mut CWD_BUF };
+        let buf: &mut [u8; 128] = unsafe { &mut *buf_ptr };
+        let res = getcwd(buf);
+        if res < 0 { "/" } else { bytes_to_str(buf) }
+    };
+    let is_root = unsafe { geteuid() == 0 };
+
+    let mut i = 0;
+    while i < template.len() && len + 1 < out.len() {
+        let b = template[i];
+        if b == b'\\' && i + 1 < template.len() {
+            let esc = template[i + 1];
+            match esc {
+                b'u' => len += push_str(out, len, user),
+                b'h' => len += push_str(out, len, host),
+                b'w' => len += push_str(out, len, cwd),
+                b'\\' => {
+                    out[len] = b'\\';
+                    len += 1;
+                }
+                b'$' => {
+                    out[len] = if is_root { b'#' } else { b'$' };
+                    len += 1;
+                }
+                _ => {
+                    // Unknown escape, emit literally
+                    out[len] = b'\\';
+                    len += 1;
+                    if len < out.len() {
+                        out[len] = esc;
+                        len += 1;
+                    }
+                }
+            }
+            i += 2;
+        } else {
+            out[len] = b;
+            len += 1;
+            i += 1;
+        }
+    }
+    if len >= out.len() {
+        len = out.len() - 1;
+    }
+    out[len] = 0;
+    unsafe { core::str::from_utf8_unchecked(&out[..len]) }
+}
+
+/// Copy a string into buffer starting at offset, returns bytes written
+fn push_str(out: &mut [u8], offset: usize, s: &str) -> usize {
+    let mut written = 0;
+    for &b in s.as_bytes() {
+        if offset + written >= out.len() - 1 {
+            break;
+        }
+        out[offset + written] = b;
+        written += 1;
+    }
+    written
+}
+
+/// Print a C-style string without allocation
+unsafe fn prints_raw(ptr: *const i8) {
+    let mut p = ptr;
+    while *p != 0 {
+        putchar(*p as u8);
+        p = p.add(1);
+    }
+}
+
+/// Convert C string pointer to &str
+unsafe fn cstr_to_str<'a>(ptr: *const i8) -> &'a str {
+    let mut len = 0;
+    while *ptr.add(len) != 0 {
+        len += 1;
+    }
+    core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr as *const u8, len))
+}
+
+/// Expand leading ~ or ~/ using $HOME into the provided buffer and return &str
+fn expand_tilde_to_buf<'a>(input: &[u8], out: &'a mut [u8]) -> &'a str {
+    // Determine input length (stop at NUL)
+    let mut in_len = 0usize;
+    while in_len < input.len() && input[in_len] != 0 {
+        in_len += 1;
+    }
+
+    let tilde_prefix = in_len > 0 && input[0] == b'~' && (in_len == 1 || input[1] == b'/');
+
+    if tilde_prefix {
+        let home = getenv("HOME").unwrap_or("/");
+
+        let mut o = 0usize;
+        for &b in home.as_bytes() {
+            if o >= out.len() - 1 {
+                break;
+            }
+            out[o] = b;
+            o += 1;
+        }
+
+        if in_len > 1 {
+            if o > 0 && out[o - 1] != b'/' && o < out.len() - 1 {
+                out[o] = b'/';
+                o += 1;
+            }
+            for i in 2..in_len {
+                if o >= out.len() - 1 {
+                    break;
+                }
+                out[o] = input[i];
+                o += 1;
+            }
+        }
+
+        if o >= out.len() {
+            o = out.len() - 1;
+        }
+        out[o] = 0;
+        return bytes_to_str(out);
+    }
+
+    // Fallback: copy input as-is
+    let mut o = 0usize;
+    for i in 0..in_len {
+        if o >= out.len() - 1 {
+            break;
+        }
+        out[o] = input[i];
+        o += 1;
+    }
+    out[o] = 0;
+    bytes_to_str(out)
 }
 
 /// Shell state
@@ -162,6 +384,9 @@ fn main() -> i32 {
     // Child processes will inherit default SIGINT behavior
     signal(SIGINT, SIG_IGN);
 
+    // Enable visible blinking cursor if terminal supports it
+    prints("\x1b[?25h\x1b[?12h");
+
     // Print welcome message
     printlns("OXIDE Shell (esh)");
     printlns("Type 'help' for available commands");
@@ -172,7 +397,7 @@ fn main() -> i32 {
 
     loop {
         // Print prompt
-        prints("esh> ");
+        print_prompt();
 
         // Read command line with tab completion
         let len = read_line_with_completion(&mut line);
@@ -418,15 +643,51 @@ fn prefix_matches(prefix: &[u8], prefix_len: usize, name: &[u8]) -> bool {
 
 /// Builtin command names for tab completion
 const BUILTINS: &[&[u8]] = &[
-    b".", b":", b"[", b"alias", b"bg", b"builtin", b"cd", b"command", b"declare",
-    b"echo", b"eval", b"exec", b"exit", b"export", b"false", b"fg", b"getopts",
-    b"help", b"history", b"jobs", b"kill", b"let", b"local", b"printf", b"pwd",
-    b"read", b"readonly", b"set", b"shift", b"source", b"test", b"true", b"type",
-    b"umask", b"unalias", b"unset", b"wait",
+    b".",
+    b":",
+    b"[",
+    b"alias",
+    b"bg",
+    b"builtin",
+    b"cd",
+    b"command",
+    b"declare",
+    b"echo",
+    b"eval",
+    b"exec",
+    b"exit",
+    b"export",
+    b"false",
+    b"fg",
+    b"getopts",
+    b"help",
+    b"history",
+    b"jobs",
+    b"kill",
+    b"let",
+    b"local",
+    b"printf",
+    b"pwd",
+    b"read",
+    b"readonly",
+    b"set",
+    b"shift",
+    b"source",
+    b"test",
+    b"true",
+    b"type",
+    b"umask",
+    b"unalias",
+    b"unset",
+    b"wait",
 ];
 
 /// Complete commands from /bin directory and builtins
-fn complete_commands(prefix: &[u8], prefix_len: usize, completions: &mut [[u8; 64]; MAX_COMPLETIONS]) -> usize {
+fn complete_commands(
+    prefix: &[u8],
+    prefix_len: usize,
+    completions: &mut [[u8; 64]; MAX_COMPLETIONS],
+) -> usize {
     let mut count = 0;
 
     // First, add matching builtins
@@ -529,7 +790,11 @@ fn bytes_eq_raw(a: &[u8], b: &[u8]) -> bool {
 }
 
 /// Complete file paths
-fn complete_paths(prefix: &[u8], prefix_len: usize, completions: &mut [[u8; 64]; MAX_COMPLETIONS]) -> usize {
+fn complete_paths(
+    prefix: &[u8],
+    prefix_len: usize,
+    completions: &mut [[u8; 64]; MAX_COMPLETIONS],
+) -> usize {
     // Find directory and filename parts
     let mut last_slash = 0;
     let mut has_slash = false;
@@ -542,7 +807,11 @@ fn complete_paths(prefix: &[u8], prefix_len: usize, completions: &mut [[u8; 64];
 
     let (dir_path, file_prefix, file_prefix_len) = if has_slash {
         let dir_end = last_slash + 1;
-        (&prefix[..dir_end], &prefix[dir_end..prefix_len], prefix_len - dir_end)
+        (
+            &prefix[..dir_end],
+            &prefix[dir_end..prefix_len],
+            prefix_len - dir_end,
+        )
     } else {
         (b".".as_slice(), prefix, prefix_len)
     };
@@ -628,7 +897,11 @@ fn is_completion_dir(completion: &[u8; 64], _is_path: bool) -> bool {
 }
 
 /// Find common prefix length among completions
-fn find_common_prefix(completions: &[[u8; 64]; MAX_COMPLETIONS], count: usize, start: usize) -> usize {
+fn find_common_prefix(
+    completions: &[[u8; 64]; MAX_COMPLETIONS],
+    count: usize,
+    start: usize,
+) -> usize {
     if count == 0 {
         return start;
     }
@@ -698,9 +971,9 @@ fn execute_line(line: &[u8]) {
         return;
     }
 
-    // Single command without pipes - check for builtin
+    // Single command without pipes - check for builtin (apply redirections)
     if num_commands == 1 && is_builtin(&commands[0].args[0]) {
-        execute_builtin(&commands[0]);
+        execute_builtin_with_redirs(&commands[0]);
         return;
     }
 
@@ -763,8 +1036,14 @@ fn parse_command(line: &[u8], cmd: &mut Command) {
             }
             // Read filename
             let mut j = 0;
-            while i < line.len() && line[i] != 0 && line[i] != b' ' &&
-                  line[i] != b'\t' && line[i] != b'<' && line[i] != b'>' && j < 63 {
+            while i < line.len()
+                && line[i] != 0
+                && line[i] != b' '
+                && line[i] != b'\t'
+                && line[i] != b'<'
+                && line[i] != b'>'
+                && j < 63
+            {
                 cmd.input_file[j] = line[i];
                 j += 1;
                 i += 1;
@@ -784,8 +1063,14 @@ fn parse_command(line: &[u8], cmd: &mut Command) {
             }
             // Read filename
             let mut j = 0;
-            while i < line.len() && line[i] != 0 && line[i] != b' ' &&
-                  line[i] != b'\t' && line[i] != b'<' && line[i] != b'>' && j < 63 {
+            while i < line.len()
+                && line[i] != 0
+                && line[i] != b' '
+                && line[i] != b'\t'
+                && line[i] != b'<'
+                && line[i] != b'>'
+                && j < 63
+            {
                 cmd.output_file[j] = line[i];
                 j += 1;
                 i += 1;
@@ -797,9 +1082,15 @@ fn parse_command(line: &[u8], cmd: &mut Command) {
                 break;
             }
             let mut j = 0;
-            while i < line.len() && line[i] != 0 && line[i] != b' ' &&
-                  line[i] != b'\t' && line[i] != b'<' && line[i] != b'>' &&
-                  line[i] != b'|' && j < 63 {
+            while i < line.len()
+                && line[i] != 0
+                && line[i] != b' '
+                && line[i] != b'\t'
+                && line[i] != b'<'
+                && line[i] != b'>'
+                && line[i] != b'|'
+                && j < 63
+            {
                 cmd.args[cmd.argc][j] = line[i];
                 j += 1;
                 i += 1;
@@ -829,7 +1120,6 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
         let pid = fork();
         if pid == 0 {
             // Child process
-            eprintlns("[DBG] Child process started");
 
             // Setup input
             if i > 0 {
@@ -837,7 +1127,8 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
                 dup2(pipes[i - 1][0], 0);
             } else if let Redirect::Input = commands[i].input_redir {
                 // Redirect from file
-                let path = bytes_to_str(&commands[i].input_file);
+                let expanded = expand_path(&commands[i].input_file);
+                let path = bytes_to_str(&expanded);
                 let fd = open2(path, O_RDONLY);
                 if fd < 0 {
                     eprints("esh: ");
@@ -856,7 +1147,8 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
             } else {
                 match commands[i].output_redir {
                     Redirect::Output => {
-                        let path = bytes_to_str(&commands[i].output_file);
+                        let expanded = expand_path(&commands[i].output_file);
+                        let path = bytes_to_str(&expanded);
                         let fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0o644);
                         if fd < 0 {
                             eprints("esh: ");
@@ -868,7 +1160,8 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
                         close(fd);
                     }
                     Redirect::Append => {
-                        let path = bytes_to_str(&commands[i].output_file);
+                        let expanded = expand_path(&commands[i].output_file);
+                        let path = bytes_to_str(&expanded);
                         let fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o644);
                         if fd < 0 {
                             eprints("esh: ");
@@ -920,43 +1213,120 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
 
 /// Check if command is a builtin
 fn is_builtin(cmd: &[u8]) -> bool {
-    bytes_eq(cmd, b"cd") ||
-    bytes_eq(cmd, b"exit") ||
-    bytes_eq(cmd, b"echo") ||
-    bytes_eq(cmd, b"pwd") ||
-    bytes_eq(cmd, b"help") ||
-    bytes_eq(cmd, b"export") ||
-    bytes_eq(cmd, b"unset") ||
-    bytes_eq(cmd, b"true") ||
-    bytes_eq(cmd, b"false") ||
-    bytes_eq(cmd, b":") ||
-    bytes_eq(cmd, b"[") ||
-    bytes_eq(cmd, b"test") ||
-    bytes_eq(cmd, b"source") ||
-    bytes_eq(cmd, b".") ||
-    bytes_eq(cmd, b"read") ||
-    bytes_eq(cmd, b"printf") ||
-    bytes_eq(cmd, b"alias") ||
-    bytes_eq(cmd, b"unalias") ||
-    bytes_eq(cmd, b"type") ||
-    bytes_eq(cmd, b"command") ||
-    bytes_eq(cmd, b"builtin") ||
-    bytes_eq(cmd, b"set") ||
-    bytes_eq(cmd, b"shift") ||
-    bytes_eq(cmd, b"local") ||
-    bytes_eq(cmd, b"declare") ||
-    bytes_eq(cmd, b"readonly") ||
-    bytes_eq(cmd, b"let") ||
-    bytes_eq(cmd, b"exec") ||
-    bytes_eq(cmd, b"eval") ||
-    bytes_eq(cmd, b"umask") ||
-    bytes_eq(cmd, b"jobs") ||
-    bytes_eq(cmd, b"fg") ||
-    bytes_eq(cmd, b"bg") ||
-    bytes_eq(cmd, b"wait") ||
-    bytes_eq(cmd, b"kill") ||
-    bytes_eq(cmd, b"history") ||
-    bytes_eq(cmd, b"getopts")
+    bytes_eq(cmd, b"cd")
+        || bytes_eq(cmd, b"exit")
+        || bytes_eq(cmd, b"echo")
+        || bytes_eq(cmd, b"pwd")
+        || bytes_eq(cmd, b"help")
+        || bytes_eq(cmd, b"export")
+        || bytes_eq(cmd, b"unset")
+        || bytes_eq(cmd, b"true")
+        || bytes_eq(cmd, b"false")
+        || bytes_eq(cmd, b":")
+        || bytes_eq(cmd, b"[")
+        || bytes_eq(cmd, b"test")
+        || bytes_eq(cmd, b"source")
+        || bytes_eq(cmd, b".")
+        || bytes_eq(cmd, b"read")
+        || bytes_eq(cmd, b"printf")
+        || bytes_eq(cmd, b"alias")
+        || bytes_eq(cmd, b"unalias")
+        || bytes_eq(cmd, b"type")
+        || bytes_eq(cmd, b"command")
+        || bytes_eq(cmd, b"builtin")
+        || bytes_eq(cmd, b"set")
+        || bytes_eq(cmd, b"shift")
+        || bytes_eq(cmd, b"local")
+        || bytes_eq(cmd, b"declare")
+        || bytes_eq(cmd, b"readonly")
+        || bytes_eq(cmd, b"let")
+        || bytes_eq(cmd, b"exec")
+        || bytes_eq(cmd, b"eval")
+        || bytes_eq(cmd, b"umask")
+        || bytes_eq(cmd, b"jobs")
+        || bytes_eq(cmd, b"fg")
+        || bytes_eq(cmd, b"bg")
+        || bytes_eq(cmd, b"wait")
+        || bytes_eq(cmd, b"kill")
+        || bytes_eq(cmd, b"history")
+        || bytes_eq(cmd, b"getopts")
+}
+
+/// Execute a builtin command with optional redirections applied
+fn execute_builtin_with_redirs(cmd: &Command) {
+    // Handle input redirection
+    let mut saved_stdin: Option<i32> = None;
+    if let Redirect::Input = cmd.input_redir {
+        let path = bytes_to_str(&cmd.input_file);
+        let fd = open2(path, O_RDONLY);
+        if fd < 0 {
+            eprints("esh: ");
+            print_bytes(&cmd.input_file);
+            eprintlns(": No such file");
+            shell().last_status = 1;
+            return;
+        }
+        let backup = dup(0);
+        if backup >= 0 {
+            saved_stdin = Some(backup);
+            dup2(fd, 0);
+        }
+        close(fd);
+    }
+
+    // Handle output redirection
+    let mut saved_stdout: Option<i32> = None;
+    match cmd.output_redir {
+        Redirect::Output => {
+            let expanded = expand_path(&cmd.output_file);
+            let path = bytes_to_str(&expanded);
+            let fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0o644);
+            if fd < 0 {
+                eprints("esh: ");
+                print_bytes(&cmd.output_file);
+                eprintlns(": Cannot create file");
+                shell().last_status = 1;
+                return;
+            }
+            let backup = dup(1);
+            if backup >= 0 {
+                saved_stdout = Some(backup);
+                dup2(fd, 1);
+            }
+            close(fd);
+        }
+        Redirect::Append => {
+            let expanded = expand_path(&cmd.output_file);
+            let path = bytes_to_str(&expanded);
+            let fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o644);
+            if fd < 0 {
+                eprints("esh: ");
+                print_bytes(&cmd.output_file);
+                eprintlns(": Cannot create file");
+                shell().last_status = 1;
+                return;
+            }
+            let backup = dup(1);
+            if backup >= 0 {
+                saved_stdout = Some(backup);
+                dup2(fd, 1);
+            }
+            close(fd);
+        }
+        _ => {}
+    }
+
+    execute_builtin(cmd);
+
+    // Restore fds
+    if let Some(fd) = saved_stdin {
+        dup2(fd, 0);
+        close(fd);
+    }
+    if let Some(fd) = saved_stdout {
+        dup2(fd, 1);
+        close(fd);
+    }
 }
 
 /// Execute a builtin command
@@ -980,7 +1350,8 @@ fn execute_builtin(cmd: &Command) {
         if cmd.argc < 2 {
             eprintlns("esh: cd: missing argument");
         } else {
-            let path = bytes_to_str(&cmd.args[1]);
+            let expanded = expand_path(&cmd.args[1]);
+            let path = bytes_to_str(&expanded);
             if chdir(path) < 0 {
                 eprints("esh: cd: ");
                 print_bytes(&cmd.args[1]);
@@ -1870,8 +2241,20 @@ fn apply_op(left: i64, right: i64, op: u8) -> i64 {
         b'+' => left + right,
         b'-' => left - right,
         b'*' => left * right,
-        b'/' => if right != 0 { left / right } else { 0 },
-        b'%' => if right != 0 { left % right } else { 0 },
+        b'/' => {
+            if right != 0 {
+                left / right
+            } else {
+                0
+            }
+        }
+        b'%' => {
+            if right != 0 {
+                left % right
+            } else {
+                0
+            }
+        }
         _ => right,
     }
 }
@@ -2103,15 +2486,16 @@ fn execute_external(cmd: &Command) {
     for i in 0..cmd.argc {
         argv_ptrs[i] = cmd.args[i].as_ptr();
     }
-    argv_ptrs[cmd.argc] = core::ptr::null();  // NULL terminator
+    argv_ptrs[cmd.argc] = core::ptr::null(); // NULL terminator
 
-    // Try direct path first if it starts with /
-    if arg[0] == b'/' {
-        let path = bytes_to_str(arg);
+    // Try direct path first if it starts with / or ~
+    if arg[0] == b'/' || arg[0] == b'~' {
+        let expanded = expand_path(arg);
+        let path = bytes_to_str(&expanded);
         let ret = execv(path, argv_ptrs.as_ptr());
         if ret < 0 {
             eprints("esh: ");
-            print_bytes(arg);
+            print_bytes(&expanded);
             eprintlns(": not found");
         }
         return;
@@ -2195,4 +2579,19 @@ fn bytes_to_str(bytes: &[u8]) -> &str {
         len += 1;
     }
     unsafe { core::str::from_utf8_unchecked(&bytes[..len]) }
+}
+
+/// Convert a path with optional leading ~ or ~/ into absolute path using HOME
+fn expand_path(bytes: &[u8]) -> [u8; 128] {
+    let mut out = [0u8; 128];
+    let expanded = expand_tilde_to_buf(bytes, &mut out);
+    let mut final_buf = [0u8; 128];
+    let bytes = expanded.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() && i < final_buf.len() - 1 {
+        final_buf[i] = bytes[i];
+        i += 1;
+    }
+    final_buf[i] = 0;
+    final_buf
 }

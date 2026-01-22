@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use core::ffi::{c_int, c_void};
 use spin::Mutex;
 
-use crate::{ESUCCESS, EINVAL, EAGAIN, pthread_self};
+use crate::{pthread_self, EAGAIN, EINVAL, ESUCCESS};
 
 /// TLS key type
 pub type pthread_key_t = u32;
@@ -44,7 +44,8 @@ impl TlsValue {
 static TLS_KEYS: Mutex<Option<Vec<TlsKey>>> = Mutex::new(None);
 
 /// Per-thread TLS values: thread_id -> (key -> value)
-static TLS_VALUES: Mutex<Option<BTreeMap<u64, BTreeMap<pthread_key_t, TlsValue>>>> = Mutex::new(None);
+static TLS_VALUES: Mutex<Option<BTreeMap<u64, BTreeMap<pthread_key_t, TlsValue>>>> =
+    Mutex::new(None);
 
 fn get_keys() -> spin::MutexGuard<'static, Option<Vec<TlsKey>>> {
     let mut keys = TLS_KEYS.lock();
@@ -61,7 +62,8 @@ fn get_keys() -> spin::MutexGuard<'static, Option<Vec<TlsKey>>> {
     keys
 }
 
-fn get_values() -> spin::MutexGuard<'static, Option<BTreeMap<u64, BTreeMap<pthread_key_t, TlsValue>>>> {
+fn get_values(
+) -> spin::MutexGuard<'static, Option<BTreeMap<u64, BTreeMap<pthread_key_t, TlsValue>>>> {
     let mut values = TLS_VALUES.lock();
     if values.is_none() {
         *values = Some(BTreeMap::new());

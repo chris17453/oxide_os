@@ -4,10 +4,10 @@
 
 use alloc::vec::Vec;
 use core::cell::RefCell;
-use os_core::{PhysAddr, VirtAddr};
-use mm_paging::{PageTableFlags, PageMapper, PageTable, MapError as PagingMapError};
+use mm_paging::{MapError as PagingMapError, PageMapper, PageTable, PageTableFlags};
 use mm_paging::{phys_to_virt, write_cr3};
 use mm_traits::FrameAllocator;
+use os_core::{PhysAddr, VirtAddr};
 use proc_traits::{AddressSpace, MapError, MemoryFlags, UnmapError};
 
 /// User virtual address space
@@ -235,7 +235,12 @@ impl AddressSpace for UserAddressSpace {
         self.pml4_phys
     }
 
-    unsafe fn map(&mut self, _virt: VirtAddr, _phys: PhysAddr, _flags: MemoryFlags) -> Result<(), MapError> {
+    unsafe fn map(
+        &mut self,
+        _virt: VirtAddr,
+        _phys: PhysAddr,
+        _flags: MemoryFlags,
+    ) -> Result<(), MapError> {
         // This trait method doesn't have an allocator, so we can't implement it properly
         // Use map_user_page instead
         Err(MapError::OutOfMemory)

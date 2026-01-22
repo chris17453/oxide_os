@@ -7,8 +7,8 @@
 
 extern crate alloc;
 
-pub mod vmcs;
 pub mod ept;
+pub mod vmcs;
 pub mod vmx;
 
 use alloc::boxed::Box;
@@ -17,15 +17,13 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use spin::Mutex;
 
 use vmm::{
-    VmmBackend, VmmCapabilities, VmmResult, VmmError,
-    VcpuState, VcpuRegs, VmExit, ExitReason, ExitData,
-    VirtualMachine, VcpuId,
-    IoInfo, CpuidInfo, MsrAccessInfo, EptViolationInfo,
+    CpuidInfo, EptViolationInfo, ExitData, ExitReason, IoInfo, MsrAccessInfo, VcpuId, VcpuRegs,
+    VcpuState, VirtualMachine, VmExit, VmmBackend, VmmCapabilities, VmmError, VmmResult,
 };
 
-pub use vmcs::{Vmcs, VmcsField};
 pub use ept::{Ept, EptEntry, EptViolation};
-pub use vmx::{vmxon, vmxoff, vmclear, vmptrld, vmlaunch, vmresume, vmread, vmwrite};
+pub use vmcs::{Vmcs, VmcsField};
+pub use vmx::{vmclear, vmlaunch, vmptrld, vmread, vmresume, vmwrite, vmxoff, vmxon};
 
 /// Read MSR
 #[inline]
@@ -162,9 +160,7 @@ impl VmmBackend for VmxBackend {
 
         // Allocate VMXON region (4KB aligned)
         let vmxon_region = unsafe {
-            alloc::alloc::alloc(
-                alloc::alloc::Layout::from_size_align(4096, 4096).unwrap()
-            ) as u64
+            alloc::alloc::alloc(alloc::alloc::Layout::from_size_align(4096, 4096).unwrap()) as u64
         };
 
         // Set revision ID
@@ -192,7 +188,11 @@ impl VmmBackend for VmxBackend {
         Ok(())
     }
 
-    fn create_vcpu_state(&self, vm: &VirtualMachine, vcpu_id: VcpuId) -> VmmResult<Box<dyn VcpuState>> {
+    fn create_vcpu_state(
+        &self,
+        vm: &VirtualMachine,
+        vcpu_id: VcpuId,
+    ) -> VmmResult<Box<dyn VcpuState>> {
         let state = VmxVcpuState::new(vm, vcpu_id)?;
         Ok(Box::new(state))
     }
@@ -310,19 +310,15 @@ impl VcpuState for VmxVcpuState {
                     data: self.regs.rax as u32,
                 })
             }
-            ExitReason::Cpuid => {
-                ExitData::Cpuid(CpuidInfo {
-                    leaf: self.regs.rax as u32,
-                    subleaf: self.regs.rcx as u32,
-                })
-            }
-            ExitReason::Rdmsr | ExitReason::Wrmsr => {
-                ExitData::MsrAccess(MsrAccessInfo {
-                    index: self.regs.rcx as u32,
-                    is_write: reason == ExitReason::Wrmsr,
-                    value: ((self.regs.rdx << 32) | (self.regs.rax & 0xFFFF_FFFF)),
-                })
-            }
+            ExitReason::Cpuid => ExitData::Cpuid(CpuidInfo {
+                leaf: self.regs.rax as u32,
+                subleaf: self.regs.rcx as u32,
+            }),
+            ExitReason::Rdmsr | ExitReason::Wrmsr => ExitData::MsrAccess(MsrAccessInfo {
+                index: self.regs.rcx as u32,
+                is_write: reason == ExitReason::Wrmsr,
+                value: ((self.regs.rdx << 32) | (self.regs.rax & 0xFFFF_FFFF)),
+            }),
             ExitReason::EptViolation => {
                 let qualification = vmread(VmcsField::ExitQualification as u32).unwrap_or(0);
                 let gpa = vmread(VmcsField::GuestPhysicalAddress as u32).unwrap_or(0);

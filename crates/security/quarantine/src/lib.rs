@@ -15,7 +15,7 @@ use alloc::vec::Vec;
 use spin::RwLock;
 
 pub use entry::{QuarantineEntry, QuarantineSource, QuarantineStatus};
-pub use policy::{QuarantinePolicy, PolicyAction};
+pub use policy::{PolicyAction, QuarantinePolicy};
 
 /// Quarantine error types
 #[derive(Debug, Clone)]

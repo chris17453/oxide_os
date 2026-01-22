@@ -25,8 +25,8 @@ const MAX_OUTPUT: usize = 65536;
 struct Symbol {
     name: [u8; 64],
     value: u64,
-    section: u8,      // 0=undefined, 1=text, 2=data, 3=bss
-    binding: u8,      // 0=local, 1=global
+    section: u8, // 0=undefined, 1=text, 2=data, 3=bss
+    binding: u8, // 0=local, 1=global
     defined: bool,
 }
 
@@ -47,9 +47,9 @@ impl Symbol {
 struct Reloc {
     offset: u64,
     sym_idx: usize,
-    rtype: u32,       // R_X86_64_* type
+    rtype: u32, // R_X86_64_* type
     addend: i64,
-    section: u8,      // Which section the relocation is in
+    section: u8, // Which section the relocation is in
 }
 
 impl Reloc {
@@ -145,7 +145,9 @@ impl Assembler {
     fn emit_byte(&mut self, b: u8) {
         let (ptr, len) = self.current_output();
         if *len < MAX_OUTPUT {
-            unsafe { *ptr.add(*len) = b; }
+            unsafe {
+                *ptr.add(*len) = b;
+            }
             *len += 1;
         }
     }
@@ -187,7 +189,14 @@ impl Assembler {
     }
 
     /// Add or find a symbol
-    fn add_symbol(&mut self, name: &[u8], value: u64, section: u8, binding: u8, defined: bool) -> usize {
+    fn add_symbol(
+        &mut self,
+        name: &[u8],
+        value: u64,
+        section: u8,
+        binding: u8,
+        defined: bool,
+    ) -> usize {
         // Check if symbol already exists
         for i in 0..self.num_symbols {
             if bytes_eq_len(&self.symbols[i].name, name) {
@@ -283,7 +292,13 @@ impl Assembler {
         if token[token.len() - 1] == b':' {
             // Define label
             let name = &token[..token.len() - 1];
-            self.add_symbol(name, self.current_offset() as u64, self.current_section, 0, true);
+            self.add_symbol(
+                name,
+                self.current_offset() as u64,
+                self.current_section,
+                0,
+                true,
+            );
 
             // Continue parsing rest of line
             while pos < self.source_len && (self.source[pos] == b' ' || self.source[pos] == b'\t') {
@@ -347,7 +362,9 @@ impl Assembler {
                 loop {
                     let (val, new_pos) = self.get_token(pos);
                     pos = new_pos;
-                    if val.is_empty() { break; }
+                    if val.is_empty() {
+                        break;
+                    }
                     if let Some(n) = parse_number(&val) {
                         self.emit_byte(n as u8);
                     }
@@ -357,53 +374,58 @@ impl Assembler {
                     }
                 }
             }
-            b".word" | b".short" => {
-                loop {
-                    let (val, new_pos) = self.get_token(pos);
-                    pos = new_pos;
-                    if val.is_empty() { break; }
-                    if let Some(n) = parse_number(&val) {
-                        self.emit_u16(n as u16);
-                    }
-                    while pos < self.source_len && self.source[pos] == b',' {
-                        pos += 1;
-                    }
+            b".word" | b".short" => loop {
+                let (val, new_pos) = self.get_token(pos);
+                pos = new_pos;
+                if val.is_empty() {
+                    break;
                 }
-            }
-            b".long" | b".int" => {
-                loop {
-                    let (val, new_pos) = self.get_token(pos);
-                    pos = new_pos;
-                    if val.is_empty() { break; }
-                    if let Some(n) = parse_number(&val) {
-                        self.emit_u32(n as u32);
-                    }
-                    while pos < self.source_len && self.source[pos] == b',' {
-                        pos += 1;
-                    }
+                if let Some(n) = parse_number(&val) {
+                    self.emit_u16(n as u16);
                 }
-            }
-            b".quad" => {
-                loop {
-                    let (val, new_pos) = self.get_token(pos);
-                    pos = new_pos;
-                    if val.is_empty() { break; }
-                    if let Some(n) = parse_number(&val) {
-                        self.emit_u64(n as u64);
-                    }
-                    while pos < self.source_len && self.source[pos] == b',' {
-                        pos += 1;
-                    }
+                while pos < self.source_len && self.source[pos] == b',' {
+                    pos += 1;
                 }
-            }
+            },
+            b".long" | b".int" => loop {
+                let (val, new_pos) = self.get_token(pos);
+                pos = new_pos;
+                if val.is_empty() {
+                    break;
+                }
+                if let Some(n) = parse_number(&val) {
+                    self.emit_u32(n as u32);
+                }
+                while pos < self.source_len && self.source[pos] == b',' {
+                    pos += 1;
+                }
+            },
+            b".quad" => loop {
+                let (val, new_pos) = self.get_token(pos);
+                pos = new_pos;
+                if val.is_empty() {
+                    break;
+                }
+                if let Some(n) = parse_number(&val) {
+                    self.emit_u64(n as u64);
+                }
+                while pos < self.source_len && self.source[pos] == b',' {
+                    pos += 1;
+                }
+            },
             b".ascii" => {
                 // Skip whitespace
-                while pos < self.source_len && (self.source[pos] == b' ' || self.source[pos] == b'\t') {
+                while pos < self.source_len
+                    && (self.source[pos] == b' ' || self.source[pos] == b'\t')
+                {
                     pos += 1;
                 }
                 if pos < self.source_len && self.source[pos] == b'"' {
                     pos += 1;
-                    while pos < self.source_len && self.source[pos] != b'"' && self.source[pos] != b'\n' {
+                    while pos < self.source_len
+                        && self.source[pos] != b'"'
+                        && self.source[pos] != b'\n'
+                    {
                         if self.source[pos] == b'\\' && pos + 1 < self.source_len {
                             pos += 1;
                             match self.source[pos] {
@@ -427,12 +449,17 @@ impl Assembler {
             }
             b".asciz" | b".string" => {
                 // Skip whitespace
-                while pos < self.source_len && (self.source[pos] == b' ' || self.source[pos] == b'\t') {
+                while pos < self.source_len
+                    && (self.source[pos] == b' ' || self.source[pos] == b'\t')
+                {
                     pos += 1;
                 }
                 if pos < self.source_len && self.source[pos] == b'"' {
                     pos += 1;
-                    while pos < self.source_len && self.source[pos] != b'"' && self.source[pos] != b'\n' {
+                    while pos < self.source_len
+                        && self.source[pos] != b'"'
+                        && self.source[pos] != b'\n'
+                    {
                         if self.source[pos] == b'\\' && pos + 1 < self.source_len {
                             pos += 1;
                             match self.source[pos] {
@@ -493,12 +520,17 @@ impl Assembler {
 
         while num_ops < 3 {
             // Skip whitespace
-            while cur_pos < self.source_len && (self.source[cur_pos] == b' ' || self.source[cur_pos] == b'\t') {
+            while cur_pos < self.source_len
+                && (self.source[cur_pos] == b' ' || self.source[cur_pos] == b'\t')
+            {
                 cur_pos += 1;
             }
 
-            if cur_pos >= self.source_len || self.source[cur_pos] == b'\n' ||
-               self.source[cur_pos] == b'#' || self.source[cur_pos] == b';' {
+            if cur_pos >= self.source_len
+                || self.source[cur_pos] == b'\n'
+                || self.source[cur_pos] == b'#'
+                || self.source[cur_pos] == b';'
+            {
                 break;
             }
 
@@ -527,11 +559,16 @@ impl Assembler {
                 if c == b' ' || c == b'\t' {
                     // Peek ahead - if next non-whitespace is comma or EOL, stop
                     let mut peek = cur_pos;
-                    while peek < self.source_len && (self.source[peek] == b' ' || self.source[peek] == b'\t') {
+                    while peek < self.source_len
+                        && (self.source[peek] == b' ' || self.source[peek] == b'\t')
+                    {
                         peek += 1;
                     }
-                    if peek >= self.source_len || self.source[peek] == b',' ||
-                       self.source[peek] == b'\n' || self.source[peek] == b'#' {
+                    if peek >= self.source_len
+                        || self.source[peek] == b','
+                        || self.source[peek] == b'\n'
+                        || self.source[peek] == b'#'
+                    {
                         break;
                     }
                 }
@@ -869,7 +906,9 @@ impl Assembler {
                         if need_rex_w && (imm > 0x7FFFFFFF || imm < -0x80000000i64) {
                             // 64-bit immediate
                             let mut rex = 0x48;
-                            if reg >= 8 { rex |= 0x01; }
+                            if reg >= 8 {
+                                rex |= 0x01;
+                            }
                             self.emit_byte(rex);
                             self.emit_byte(0xB8 + (reg & 7));
                             self.emit_u64(imm as u64);
@@ -877,7 +916,9 @@ impl Assembler {
                             // 32-bit immediate
                             if need_rex_w || reg >= 8 {
                                 let mut rex = if need_rex_w { 0x48 } else { 0x40 };
-                                if reg >= 8 { rex |= 0x01; }
+                                if reg >= 8 {
+                                    rex |= 0x01;
+                                }
                                 self.emit_byte(rex);
                             }
                             self.emit_byte(0xC7);
@@ -898,7 +939,9 @@ impl Assembler {
                     if let Some(reg) = parse_reg64(&dst[1..]) {
                         // mov $symbol, %reg -> need relocation
                         let mut rex = 0x48;
-                        if reg >= 8 { rex |= 0x01; }
+                        if reg >= 8 {
+                            rex |= 0x01;
+                        }
                         self.emit_byte(rex);
                         self.emit_byte(0xB8 + (reg & 7));
                         self.add_reloc(sym_idx, 1, 0); // R_X86_64_64
@@ -908,10 +951,15 @@ impl Assembler {
             }
         } else if src[0] == b'%' && dst[0] == b'%' {
             // Register to register
-            if let (Some(src_reg), Some(dst_reg)) = (parse_reg64(&src[1..]), parse_reg64(&dst[1..])) {
+            if let (Some(src_reg), Some(dst_reg)) = (parse_reg64(&src[1..]), parse_reg64(&dst[1..]))
+            {
                 let mut rex = if need_rex_w { 0x48 } else { 0x40 };
-                if src_reg >= 8 { rex |= 0x04; }
-                if dst_reg >= 8 { rex |= 0x01; }
+                if src_reg >= 8 {
+                    rex |= 0x04;
+                }
+                if dst_reg >= 8 {
+                    rex |= 0x01;
+                }
                 if rex != 0x40 || need_rex_w {
                     self.emit_byte(rex);
                 }
@@ -959,7 +1007,9 @@ impl Assembler {
         if dst[0] == b'%' {
             if let Some(dst_reg) = parse_reg64(&dst[1..]) {
                 let mut rex = 0x48;
-                if dst_reg >= 8 { rex |= 0x04; }
+                if dst_reg >= 8 {
+                    rex |= 0x04;
+                }
                 self.emit_byte(rex);
                 self.emit_byte(0x0F);
                 self.emit_byte(if src_size == 1 { 0xB6 } else { 0xB7 });
@@ -985,7 +1035,9 @@ impl Assembler {
         if dst[0] == b'%' {
             if let Some(dst_reg) = parse_reg64(&dst[1..]) {
                 let mut rex = 0x48;
-                if dst_reg >= 8 { rex |= 0x04; }
+                if dst_reg >= 8 {
+                    rex |= 0x04;
+                }
                 self.emit_byte(rex);
                 self.emit_byte(0x0F);
                 self.emit_byte(if src_size == 1 { 0xBE } else { 0xBF });
@@ -1013,7 +1065,9 @@ impl Assembler {
                 if dst[0] == b'%' {
                     if let Some(reg) = parse_reg64(&dst[1..]) {
                         let mut rex = 0x48;
-                        if reg >= 8 { rex |= 0x01; }
+                        if reg >= 8 {
+                            rex |= 0x01;
+                        }
                         self.emit_byte(rex);
 
                         if imm >= -128 && imm <= 127 {
@@ -1030,10 +1084,15 @@ impl Assembler {
             }
         } else if src[0] == b'%' && dst[0] == b'%' {
             // Register to register
-            if let (Some(src_reg), Some(dst_reg)) = (parse_reg64(&src[1..]), parse_reg64(&dst[1..])) {
+            if let (Some(src_reg), Some(dst_reg)) = (parse_reg64(&src[1..]), parse_reg64(&dst[1..]))
+            {
                 let mut rex = 0x48;
-                if src_reg >= 8 { rex |= 0x04; }
-                if dst_reg >= 8 { rex |= 0x01; }
+                if src_reg >= 8 {
+                    rex |= 0x04;
+                }
+                if dst_reg >= 8 {
+                    rex |= 0x01;
+                }
                 self.emit_byte(rex);
                 self.emit_byte(base_op + 1);
                 self.emit_byte(0xC0 + ((src_reg & 7) << 3) + (dst_reg & 7));
@@ -1061,7 +1120,9 @@ impl Assembler {
                 if dst[0] == b'%' {
                     if let Some(reg) = parse_reg64(&dst[1..]) {
                         let mut rex = 0x48;
-                        if reg >= 8 { rex |= 0x01; }
+                        if reg >= 8 {
+                            rex |= 0x01;
+                        }
                         self.emit_byte(rex);
                         self.emit_byte(0xF7);
                         self.emit_byte(0xC0 + (reg & 7));
@@ -1070,10 +1131,15 @@ impl Assembler {
                 }
             }
         } else if src[0] == b'%' && dst[0] == b'%' {
-            if let (Some(src_reg), Some(dst_reg)) = (parse_reg64(&src[1..]), parse_reg64(&dst[1..])) {
+            if let (Some(src_reg), Some(dst_reg)) = (parse_reg64(&src[1..]), parse_reg64(&dst[1..]))
+            {
                 let mut rex = 0x48;
-                if src_reg >= 8 { rex |= 0x04; }
-                if dst_reg >= 8 { rex |= 0x01; }
+                if src_reg >= 8 {
+                    rex |= 0x04;
+                }
+                if dst_reg >= 8 {
+                    rex |= 0x01;
+                }
                 self.emit_byte(rex);
                 self.emit_byte(0x85);
                 self.emit_byte(0xC0 + ((src_reg & 7) << 3) + (dst_reg & 7));
@@ -1089,7 +1155,9 @@ impl Assembler {
         if dst[0] == b'%' {
             if let Some(reg) = parse_reg64(&dst[1..]) {
                 let mut rex = 0x48;
-                if reg >= 8 { rex |= 0x01; }
+                if reg >= 8 {
+                    rex |= 0x01;
+                }
                 self.emit_byte(rex);
 
                 if src[0] == b'$' {
@@ -1129,7 +1197,9 @@ impl Assembler {
         if op[0] == b'%' {
             if let Some(reg) = parse_reg64(&op[1..]) {
                 let mut rex = 0x48;
-                if reg >= 8 { rex |= 0x01; }
+                if reg >= 8 {
+                    rex |= 0x01;
+                }
                 self.emit_byte(rex);
                 self.emit_byte(base_op);
                 self.emit_byte(0xC0 + (ext << 3) + (reg & 7));
@@ -1143,10 +1213,15 @@ impl Assembler {
         let dst = trim_bytes(dst);
 
         if src[0] == b'%' && dst[0] == b'%' {
-            if let (Some(src_reg), Some(dst_reg)) = (parse_reg64(&src[1..]), parse_reg64(&dst[1..])) {
+            if let (Some(src_reg), Some(dst_reg)) = (parse_reg64(&src[1..]), parse_reg64(&dst[1..]))
+            {
                 let mut rex = 0x48;
-                if dst_reg >= 8 { rex |= 0x04; }
-                if src_reg >= 8 { rex |= 0x01; }
+                if dst_reg >= 8 {
+                    rex |= 0x04;
+                }
+                if src_reg >= 8 {
+                    rex |= 0x01;
+                }
                 self.emit_byte(rex);
                 self.emit_byte(0x0F);
                 self.emit_byte(0xAF);
@@ -1193,7 +1268,9 @@ impl Assembler {
             let sym_idx = self.add_symbol(sym_name, 0, 0, 0, false);
 
             let mut rex = if need_rex_w { 0x48 } else { 0x40 };
-            if reg >= 8 { rex |= 0x04; }
+            if reg >= 8 {
+                rex |= 0x04;
+            }
             if rex != 0x40 || need_rex_w {
                 self.emit_byte(rex);
             }
@@ -1207,9 +1284,15 @@ impl Assembler {
 
         // Build REX prefix
         let mut rex = if need_rex_w { 0x48 } else { 0x40 };
-        if reg >= 8 { rex |= 0x04; }
-        if base >= 8 { rex |= 0x01; }
-        if index >= 8 { rex |= 0x02; }
+        if reg >= 8 {
+            rex |= 0x04;
+        }
+        if base >= 8 {
+            rex |= 0x01;
+        }
+        if index >= 8 {
+            rex |= 0x02;
+        }
 
         if rex != 0x40 || need_rex_w {
             self.emit_byte(rex);
@@ -1267,8 +1350,11 @@ impl Assembler {
             pos += 1;
         }
 
-        if pos >= self.source_len || self.source[pos] == b'\n' ||
-           self.source[pos] == b'#' || self.source[pos] == b';' {
+        if pos >= self.source_len
+            || self.source[pos] == b'\n'
+            || self.source[pos] == b'#'
+            || self.source[pos] == b';'
+        {
             return (token, pos);
         }
 
@@ -1499,7 +1585,8 @@ fn parse_number(s: &[u8]) -> Option<i64> {
         return None;
     }
 
-    let (base, start) = if s.len() > i + 1 && s[i] == b'0' && (s[i + 1] == b'x' || s[i + 1] == b'X') {
+    let (base, start) = if s.len() > i + 1 && s[i] == b'0' && (s[i + 1] == b'x' || s[i + 1] == b'X')
+    {
         (16, i + 2)
     } else if s[i] == b'0' && s.len() > i + 1 {
         (8, i + 1)
@@ -1532,8 +1619,15 @@ fn parse_number(s: &[u8]) -> Option<i64> {
 
 /// Trim whitespace from byte slice
 fn trim_bytes(s: &[u8]) -> &[u8] {
-    let start = s.iter().position(|&c| c != b' ' && c != b'\t' && c != 0).unwrap_or(s.len());
-    let end = s.iter().rposition(|&c| c != b' ' && c != b'\t' && c != 0).map(|p| p + 1).unwrap_or(start);
+    let start = s
+        .iter()
+        .position(|&c| c != b' ' && c != b'\t' && c != 0)
+        .unwrap_or(s.len());
+    let end = s
+        .iter()
+        .rposition(|&c| c != b' ' && c != b'\t' && c != 0)
+        .map(|p| p + 1)
+        .unwrap_or(start);
     &s[start..end]
 }
 
@@ -1554,18 +1648,18 @@ fn bytes_eq_len(a: &[u8], b: &[u8]) -> bool {
 
 /// Copy bytes
 fn copy_bytes(dst: &mut [u8], src: &[u8]) {
-    let len = src.iter().position(|&c| c == 0).unwrap_or(src.len()).min(dst.len() - 1);
+    let len = src
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(src.len())
+        .min(dst.len() - 1);
     dst[..len].copy_from_slice(&src[..len]);
     dst[len] = 0;
 }
 
 /// Convert to lowercase
 fn to_lower(c: u8) -> u8 {
-    if c >= b'A' && c <= b'Z' {
-        c + 32
-    } else {
-        c
-    }
+    if c >= b'A' && c <= b'Z' { c + 32 } else { c }
 }
 
 // ELF constants
@@ -1810,7 +1904,10 @@ impl Assembler {
         write_u32(&mut symtab_shdr[0..], shname_symtab as u32);
         write_u32(&mut symtab_shdr[4..], SHT_SYMTAB);
         write_u64(&mut symtab_shdr[24..], symtab_off as u64);
-        write_u64(&mut symtab_shdr[32..], ((4 + self.num_symbols) * sym_size) as u64);
+        write_u64(
+            &mut symtab_shdr[32..],
+            ((4 + self.num_symbols) * sym_size) as u64,
+        );
         write_u32(&mut symtab_shdr[40..], 7); // sh_link = .strtab
         write_u32(&mut symtab_shdr[44..], num_local_syms as u32); // sh_info = first global
         write_u64(&mut symtab_shdr[48..], 8);
@@ -1893,13 +1990,22 @@ impl Assembler {
                 }
 
                 let name_off = strtab_len;
-                let name_len = self.symbols[i].name.iter().position(|&c| c == 0).unwrap_or(0);
-                strtab[strtab_len..strtab_len + name_len].copy_from_slice(&self.symbols[i].name[..name_len]);
+                let name_len = self.symbols[i]
+                    .name
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(0);
+                strtab[strtab_len..strtab_len + name_len]
+                    .copy_from_slice(&self.symbols[i].name[..name_len]);
                 strtab_len += name_len + 1;
 
                 let mut sym = [0u8; 24];
                 write_u32(&mut sym[0..], name_off as u32);
-                sym[4] = if is_global { (STB_GLOBAL << 4) | STT_NOTYPE } else { STT_NOTYPE };
+                sym[4] = if is_global {
+                    (STB_GLOBAL << 4) | STT_NOTYPE
+                } else {
+                    STT_NOTYPE
+                };
 
                 let shndx = if self.symbols[i].defined {
                     self.symbols[i].section as u16
@@ -2024,7 +2130,11 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     }
 
     // Write output
-    let out_fd = open(bytes_to_str(output_file), O_WRONLY | O_CREAT | O_TRUNC, 0o644);
+    let out_fd = open(
+        bytes_to_str(output_file),
+        O_WRONLY | O_CREAT | O_TRUNC,
+        0o644,
+    );
     if out_fd < 0 {
         eprints("as: cannot create ");
         eprintlns(bytes_to_str(output_file));

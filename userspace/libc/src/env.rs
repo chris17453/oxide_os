@@ -123,7 +123,11 @@ pub fn getenv(name: &str) -> Option<&'static str> {
 
         for var in env.iter() {
             if var.used && str_eq_buf(&var.name, name) {
-                let len = var.value.iter().position(|&c| c == 0).unwrap_or(var.value.len());
+                let len = var
+                    .value
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(var.value.len());
                 return Some(core::str::from_utf8_unchecked(&var.value[..len]));
             }
         }
@@ -137,6 +141,8 @@ pub fn init_env() {
     setenv("HOME", "/");
     setenv("TERM", "vt100");
     setenv("SHELL", "/bin/esh");
+    setenv("USER", "root");
+    setenv("PWD", "/");
 }
 
 /// Iterate over all environment variables

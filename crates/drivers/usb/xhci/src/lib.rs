@@ -10,12 +10,12 @@ use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::ptr::{read_volatile, write_volatile};
-use core::sync::atomic::{AtomicU16, AtomicU8, Ordering};
-use usb::{
-    UsbHostController, UsbResult, UsbError, PortStatus, DeviceSpeed,
-    SetupPacket, EndpointDescriptor, TransferDirection,
-};
+use core::sync::atomic::{AtomicU8, AtomicU16, Ordering};
 use spin::Mutex;
+use usb::{
+    DeviceSpeed, EndpointDescriptor, PortStatus, SetupPacket, TransferDirection, UsbError,
+    UsbHostController, UsbResult,
+};
 
 /// xHCI capability registers
 #[repr(C)]
@@ -337,7 +337,10 @@ impl XhciController {
             write_volatile(&mut (*self.op_regs).config, self.max_slots as u32);
 
             // Set DCBAA
-            write_volatile(&mut (*self.op_regs).dcbaap, self.dcbaa.lock().as_ptr() as u64);
+            write_volatile(
+                &mut (*self.op_regs).dcbaap,
+                self.dcbaa.lock().as_ptr() as u64,
+            );
 
             // Set command ring
             let cmd_ring = self.command_ring.lock();
@@ -614,16 +617,19 @@ impl UsbHostController for XhciController {
         data: Option<&mut [u8]>,
     ) -> UsbResult<usize> {
         let mut rings = self.transfer_rings.lock();
-        let ring = rings[slot as usize][0].as_mut()
+        let ring = rings[slot as usize][0]
+            .as_mut()
             .ok_or(UsbError::InvalidEndpoint)?;
 
-        let direction = if request.request_type & 0x80 != 0 { 1 } else { 0 };
+        let direction = if request.request_type & 0x80 != 0 {
+            1
+        } else {
+            0
+        };
 
         // Setup stage TRB
         let setup_trb = Trb {
-            parameter: unsafe {
-                core::mem::transmute::<SetupPacket, u64>(request)
-            },
+            parameter: unsafe { core::mem::transmute::<SetupPacket, u64>(request) },
             status: 8, // TRB transfer length = 8
             control: (trb_type::SETUP_STAGE << 10) | (1 << 6) | (direction << 16), // IDT, TRT
         };
@@ -676,7 +682,8 @@ impl UsbHostController for XhciController {
         } as usize;
 
         let mut rings = self.transfer_rings.lock();
-        let ring = rings[slot as usize].get_mut(ep_idx)
+        let ring = rings[slot as usize]
+            .get_mut(ep_idx)
             .and_then(|r| r.as_mut())
             .ok_or(UsbError::InvalidEndpoint)?;
 
@@ -724,8 +731,7 @@ static XHCI: Mutex<Option<Arc<XhciController>>> = Mutex::new(None);
 
 /// Initialize xHCI from MMIO base
 pub fn init(base: usize) -> Result<(), &'static str> {
-    let mut controller = XhciController::probe(base)
-        .ok_or("xHCI controller not found")?;
+    let mut controller = XhciController::probe(base).ok_or("xHCI controller not found")?;
     controller.init()?;
 
     let arc_controller = Arc::new(controller);

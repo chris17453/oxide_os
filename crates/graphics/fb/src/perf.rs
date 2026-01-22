@@ -1,6 +1,6 @@
 //! Performance monitoring for framebuffer operations
 
-use core::sync::atomic::{AtomicU64, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 /// Performance statistics for framebuffer operations
 pub struct PerfStats {
@@ -34,12 +34,14 @@ impl PerfStats {
     /// Record a frame rendered
     pub fn record_frame(&self, time: u64) {
         self.frames.fetch_add(1, Ordering::Relaxed);
-        
+
         let last_time = self.last_frame_time.swap(time, Ordering::Relaxed);
         if last_time > 0 {
             let frame_time = time.saturating_sub(last_time);
-            let accum = self.frame_time_accum.fetch_add(frame_time, Ordering::Relaxed);
-            
+            let accum = self
+                .frame_time_accum
+                .fetch_add(frame_time, Ordering::Relaxed);
+
             // Update FPS every ~1000 frames or ~1 second worth of frames
             let frames_count = self.frames.load(Ordering::Relaxed);
             if frames_count % 100 == 0 || accum > 1000 {

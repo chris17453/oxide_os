@@ -5,8 +5,8 @@
 #![no_std]
 #![no_main]
 
-use libc::*;
 use libc::syscall::sys_readlink;
+use libc::*;
 
 /// Convert a C string pointer to a Rust str slice
 fn ptr_to_str(ptr: *const u8) -> &'static str {

@@ -4,10 +4,10 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use core::ffi::{c_int, c_void};
-use core::sync::atomic::{AtomicU64, AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use spin::Mutex;
 
-use crate::{ESUCCESS, EINVAL, ENOMEM, EAGAIN, pthread_attr_t, PTHREAD_CREATE_JOINABLE};
+use crate::{pthread_attr_t, EAGAIN, EINVAL, ENOMEM, ESUCCESS, PTHREAD_CREATE_JOINABLE};
 
 /// Thread handle
 pub type pthread_t = u64;
@@ -259,7 +259,11 @@ pub extern "C" fn pthread_self() -> pthread_t {
 /// Compare thread IDs
 #[no_mangle]
 pub extern "C" fn pthread_equal(t1: pthread_t, t2: pthread_t) -> c_int {
-    if t1 == t2 { 1 } else { 0 }
+    if t1 == t2 {
+        1
+    } else {
+        0
+    }
 }
 
 /// Yield execution

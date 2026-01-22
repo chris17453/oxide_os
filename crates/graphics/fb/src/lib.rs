@@ -7,16 +7,16 @@
 extern crate alloc;
 
 pub mod color;
-pub mod framebuffer;
 pub mod console;
 pub mod font;
+pub mod framebuffer;
 pub mod perf;
 
 pub use color::{Color, PixelFormat};
-pub use framebuffer::{Framebuffer, FramebufferInfo, LinearFramebuffer};
-pub use console::{FbConsole, Cell};
+pub use console::{Cell, FbConsole};
 pub use font::{Font, Glyph, PSF2_FONT};
-pub use perf::{record_frame, record_pixels, record_flush, get_fps, get_stats, reset_stats};
+pub use framebuffer::{Framebuffer, FramebufferInfo, LinearFramebuffer};
+pub use perf::{get_fps, get_stats, record_flush, record_frame, record_pixels, reset_stats};
 
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -136,14 +136,14 @@ pub fn get_fb_info() -> Option<FbDeviceInfo> {
 /// Framebuffer device info for /dev/fb0
 #[derive(Debug, Clone, Copy)]
 pub struct FbDeviceInfo {
-    pub base: usize,      // Virtual address
-    pub phys_base: u64,   // Physical address
-    pub size: usize,      // Total size in bytes
-    pub width: u32,       // Width in pixels
-    pub height: u32,      // Height in pixels
-    pub stride: u32,      // Bytes per scanline
-    pub bpp: u32,         // Bits per pixel
-    pub is_bgr: bool,     // BGR vs RGB format
+    pub base: usize,    // Virtual address
+    pub phys_base: u64, // Physical address
+    pub size: usize,    // Total size in bytes
+    pub width: u32,     // Width in pixels
+    pub height: u32,    // Height in pixels
+    pub stride: u32,    // Bytes per scanline
+    pub bpp: u32,       // Bits per pixel
+    pub is_bgr: bool,   // BGR vs RGB format
 }
 
 /// Get the framebuffer
@@ -154,6 +154,13 @@ pub fn framebuffer() -> Option<Arc<dyn Framebuffer>> {
 /// Get the console
 pub fn console() -> &'static Mutex<Option<FbConsole>> {
     &CONSOLE
+}
+
+/// Toggle console cursor blink (call from timer/heartbeat)
+pub fn blink_cursor() {
+    if let Some(ref mut console) = *CONSOLE.lock() {
+        console.blink();
+    }
 }
 
 /// Write a character to the console
@@ -233,7 +240,10 @@ pub fn get_mode_info(index: u32) -> Option<VideoModeInfo> {
     }
 
     let mode = &modes.modes[index as usize];
-    let is_bgr = matches!(mode.format, boot_proto::PixelFormat::Bgr | boot_proto::PixelFormat::Bgra8888);
+    let is_bgr = matches!(
+        mode.format,
+        boot_proto::PixelFormat::Bgr | boot_proto::PixelFormat::Bgra8888
+    );
 
     Some(VideoModeInfo {
         mode_number: mode.mode_number,

@@ -138,134 +138,134 @@ pub static SCANCODE_SET1: [u16; 128] = [
 
 /// Extended scan codes (0xE0 prefix) to keycode mapping
 pub static SCANCODE_SET1_EXT: [u16; 128] = [
-    KEY_RESERVED,   // 0x00
-    KEY_RESERVED,   // 0x01
-    KEY_RESERVED,   // 0x02
-    KEY_RESERVED,   // 0x03
-    KEY_RESERVED,   // 0x04
-    KEY_RESERVED,   // 0x05
-    KEY_RESERVED,   // 0x06
-    KEY_RESERVED,   // 0x07
-    KEY_RESERVED,   // 0x08
-    KEY_RESERVED,   // 0x09
-    KEY_RESERVED,   // 0x0A
-    KEY_RESERVED,   // 0x0B
-    KEY_RESERVED,   // 0x0C
-    KEY_RESERVED,   // 0x0D
-    KEY_RESERVED,   // 0x0E
-    KEY_RESERVED,   // 0x0F
-    KEY_RESERVED,   // 0x10
-    KEY_RESERVED,   // 0x11
-    KEY_RESERVED,   // 0x12
-    KEY_RESERVED,   // 0x13
-    KEY_RESERVED,   // 0x14
-    KEY_RESERVED,   // 0x15
-    KEY_RESERVED,   // 0x16
-    KEY_RESERVED,   // 0x17
-    KEY_RESERVED,   // 0x18
-    KEY_RESERVED,   // 0x19
-    KEY_RESERVED,   // 0x1A
-    KEY_RESERVED,   // 0x1B
-    KEY_KPENTER,    // 0x1C
-    KEY_RIGHTCTRL,  // 0x1D
-    KEY_RESERVED,   // 0x1E
-    KEY_RESERVED,   // 0x1F
-    KEY_RESERVED,   // 0x20
-    KEY_RESERVED,   // 0x21
-    KEY_RESERVED,   // 0x22
-    KEY_RESERVED,   // 0x23
-    KEY_RESERVED,   // 0x24
-    KEY_RESERVED,   // 0x25
-    KEY_RESERVED,   // 0x26
-    KEY_RESERVED,   // 0x27
-    KEY_RESERVED,   // 0x28
-    KEY_RESERVED,   // 0x29
-    KEY_RESERVED,   // 0x2A
-    KEY_RESERVED,   // 0x2B
-    KEY_RESERVED,   // 0x2C
-    KEY_RESERVED,   // 0x2D
-    KEY_RESERVED,   // 0x2E
-    KEY_RESERVED,   // 0x2F
-    KEY_RESERVED,   // 0x30
-    KEY_RESERVED,   // 0x31
-    KEY_RESERVED,   // 0x32
-    KEY_RESERVED,   // 0x33
-    KEY_RESERVED,   // 0x34
-    KEY_KPSLASH,    // 0x35
-    KEY_RESERVED,   // 0x36
-    KEY_SYSRQ,      // 0x37
-    KEY_RIGHTALT,   // 0x38
-    KEY_RESERVED,   // 0x39
-    KEY_RESERVED,   // 0x3A
-    KEY_RESERVED,   // 0x3B
-    KEY_RESERVED,   // 0x3C
-    KEY_RESERVED,   // 0x3D
-    KEY_RESERVED,   // 0x3E
-    KEY_RESERVED,   // 0x3F
-    KEY_RESERVED,   // 0x40
-    KEY_RESERVED,   // 0x41
-    KEY_RESERVED,   // 0x42
-    KEY_RESERVED,   // 0x43
-    KEY_RESERVED,   // 0x44
-    KEY_RESERVED,   // 0x45
-    KEY_RESERVED,   // 0x46
-    KEY_HOME,       // 0x47
-    KEY_UP,         // 0x48
-    KEY_PAGEUP,     // 0x49
-    KEY_RESERVED,   // 0x4A
-    KEY_LEFT,       // 0x4B
-    KEY_RESERVED,   // 0x4C
-    KEY_RIGHT,      // 0x4D
-    KEY_RESERVED,   // 0x4E
-    KEY_END,        // 0x4F
-    KEY_DOWN,       // 0x50
-    KEY_PAGEDOWN,   // 0x51
-    KEY_INSERT,     // 0x52
-    KEY_DELETE,     // 0x53
-    KEY_RESERVED,   // 0x54
-    KEY_RESERVED,   // 0x55
-    KEY_RESERVED,   // 0x56
-    KEY_RESERVED,   // 0x57
-    KEY_RESERVED,   // 0x58
-    KEY_RESERVED,   // 0x59
-    KEY_RESERVED,   // 0x5A
-    KEY_LEFTMETA,   // 0x5B
-    KEY_RIGHTMETA,  // 0x5C
-    KEY_COMPOSE,    // 0x5D
-    KEY_POWER,      // 0x5E
-    KEY_RESERVED,   // 0x5F
-    KEY_RESERVED,   // 0x60
-    KEY_RESERVED,   // 0x61
-    KEY_RESERVED,   // 0x62
-    KEY_RESERVED,   // 0x63
-    KEY_RESERVED,   // 0x64
-    KEY_RESERVED,   // 0x65
-    KEY_RESERVED,   // 0x66
-    KEY_RESERVED,   // 0x67
-    KEY_RESERVED,   // 0x68
-    KEY_RESERVED,   // 0x69
-    KEY_RESERVED,   // 0x6A
-    KEY_RESERVED,   // 0x6B
-    KEY_RESERVED,   // 0x6C
-    KEY_RESERVED,   // 0x6D
-    KEY_RESERVED,   // 0x6E
-    KEY_RESERVED,   // 0x6F
-    KEY_RESERVED,   // 0x70
-    KEY_RESERVED,   // 0x71
-    KEY_RESERVED,   // 0x72
-    KEY_RESERVED,   // 0x73
-    KEY_RESERVED,   // 0x74
-    KEY_RESERVED,   // 0x75
-    KEY_RESERVED,   // 0x76
-    KEY_RESERVED,   // 0x77
-    KEY_RESERVED,   // 0x78
-    KEY_RESERVED,   // 0x79
-    KEY_RESERVED,   // 0x7A
-    KEY_RESERVED,   // 0x7B
-    KEY_RESERVED,   // 0x7C
-    KEY_RESERVED,   // 0x7D
-    KEY_RESERVED,   // 0x7E
-    KEY_RESERVED,   // 0x7F
+    KEY_RESERVED,  // 0x00
+    KEY_RESERVED,  // 0x01
+    KEY_RESERVED,  // 0x02
+    KEY_RESERVED,  // 0x03
+    KEY_RESERVED,  // 0x04
+    KEY_RESERVED,  // 0x05
+    KEY_RESERVED,  // 0x06
+    KEY_RESERVED,  // 0x07
+    KEY_RESERVED,  // 0x08
+    KEY_RESERVED,  // 0x09
+    KEY_RESERVED,  // 0x0A
+    KEY_RESERVED,  // 0x0B
+    KEY_RESERVED,  // 0x0C
+    KEY_RESERVED,  // 0x0D
+    KEY_RESERVED,  // 0x0E
+    KEY_RESERVED,  // 0x0F
+    KEY_RESERVED,  // 0x10
+    KEY_RESERVED,  // 0x11
+    KEY_RESERVED,  // 0x12
+    KEY_RESERVED,  // 0x13
+    KEY_RESERVED,  // 0x14
+    KEY_RESERVED,  // 0x15
+    KEY_RESERVED,  // 0x16
+    KEY_RESERVED,  // 0x17
+    KEY_RESERVED,  // 0x18
+    KEY_RESERVED,  // 0x19
+    KEY_RESERVED,  // 0x1A
+    KEY_RESERVED,  // 0x1B
+    KEY_KPENTER,   // 0x1C
+    KEY_RIGHTCTRL, // 0x1D
+    KEY_RESERVED,  // 0x1E
+    KEY_RESERVED,  // 0x1F
+    KEY_RESERVED,  // 0x20
+    KEY_RESERVED,  // 0x21
+    KEY_RESERVED,  // 0x22
+    KEY_RESERVED,  // 0x23
+    KEY_RESERVED,  // 0x24
+    KEY_RESERVED,  // 0x25
+    KEY_RESERVED,  // 0x26
+    KEY_RESERVED,  // 0x27
+    KEY_RESERVED,  // 0x28
+    KEY_RESERVED,  // 0x29
+    KEY_RESERVED,  // 0x2A
+    KEY_RESERVED,  // 0x2B
+    KEY_RESERVED,  // 0x2C
+    KEY_RESERVED,  // 0x2D
+    KEY_RESERVED,  // 0x2E
+    KEY_RESERVED,  // 0x2F
+    KEY_RESERVED,  // 0x30
+    KEY_RESERVED,  // 0x31
+    KEY_RESERVED,  // 0x32
+    KEY_RESERVED,  // 0x33
+    KEY_RESERVED,  // 0x34
+    KEY_KPSLASH,   // 0x35
+    KEY_RESERVED,  // 0x36
+    KEY_SYSRQ,     // 0x37
+    KEY_RIGHTALT,  // 0x38
+    KEY_RESERVED,  // 0x39
+    KEY_RESERVED,  // 0x3A
+    KEY_RESERVED,  // 0x3B
+    KEY_RESERVED,  // 0x3C
+    KEY_RESERVED,  // 0x3D
+    KEY_RESERVED,  // 0x3E
+    KEY_RESERVED,  // 0x3F
+    KEY_RESERVED,  // 0x40
+    KEY_RESERVED,  // 0x41
+    KEY_RESERVED,  // 0x42
+    KEY_RESERVED,  // 0x43
+    KEY_RESERVED,  // 0x44
+    KEY_RESERVED,  // 0x45
+    KEY_RESERVED,  // 0x46
+    KEY_HOME,      // 0x47
+    KEY_UP,        // 0x48
+    KEY_PAGEUP,    // 0x49
+    KEY_RESERVED,  // 0x4A
+    KEY_LEFT,      // 0x4B
+    KEY_RESERVED,  // 0x4C
+    KEY_RIGHT,     // 0x4D
+    KEY_RESERVED,  // 0x4E
+    KEY_END,       // 0x4F
+    KEY_DOWN,      // 0x50
+    KEY_PAGEDOWN,  // 0x51
+    KEY_INSERT,    // 0x52
+    KEY_DELETE,    // 0x53
+    KEY_RESERVED,  // 0x54
+    KEY_RESERVED,  // 0x55
+    KEY_RESERVED,  // 0x56
+    KEY_RESERVED,  // 0x57
+    KEY_RESERVED,  // 0x58
+    KEY_RESERVED,  // 0x59
+    KEY_RESERVED,  // 0x5A
+    KEY_LEFTMETA,  // 0x5B
+    KEY_RIGHTMETA, // 0x5C
+    KEY_COMPOSE,   // 0x5D
+    KEY_POWER,     // 0x5E
+    KEY_RESERVED,  // 0x5F
+    KEY_RESERVED,  // 0x60
+    KEY_RESERVED,  // 0x61
+    KEY_RESERVED,  // 0x62
+    KEY_RESERVED,  // 0x63
+    KEY_RESERVED,  // 0x64
+    KEY_RESERVED,  // 0x65
+    KEY_RESERVED,  // 0x66
+    KEY_RESERVED,  // 0x67
+    KEY_RESERVED,  // 0x68
+    KEY_RESERVED,  // 0x69
+    KEY_RESERVED,  // 0x6A
+    KEY_RESERVED,  // 0x6B
+    KEY_RESERVED,  // 0x6C
+    KEY_RESERVED,  // 0x6D
+    KEY_RESERVED,  // 0x6E
+    KEY_RESERVED,  // 0x6F
+    KEY_RESERVED,  // 0x70
+    KEY_RESERVED,  // 0x71
+    KEY_RESERVED,  // 0x72
+    KEY_RESERVED,  // 0x73
+    KEY_RESERVED,  // 0x74
+    KEY_RESERVED,  // 0x75
+    KEY_RESERVED,  // 0x76
+    KEY_RESERVED,  // 0x77
+    KEY_RESERVED,  // 0x78
+    KEY_RESERVED,  // 0x79
+    KEY_RESERVED,  // 0x7A
+    KEY_RESERVED,  // 0x7B
+    KEY_RESERVED,  // 0x7C
+    KEY_RESERVED,  // 0x7D
+    KEY_RESERVED,  // 0x7E
+    KEY_RESERVED,  // 0x7F
 ];
 
 /// Keymap for translating scan codes to keycodes
@@ -299,9 +299,15 @@ impl Keymap {
 
         let keycode = if self.extended {
             self.extended = false;
-            SCANCODE_SET1_EXT.get(code as usize).copied().unwrap_or(KEY_RESERVED)
+            SCANCODE_SET1_EXT
+                .get(code as usize)
+                .copied()
+                .unwrap_or(KEY_RESERVED)
         } else {
-            SCANCODE_SET1.get(code as usize).copied().unwrap_or(KEY_RESERVED)
+            SCANCODE_SET1
+                .get(code as usize)
+                .copied()
+                .unwrap_or(KEY_RESERVED)
         };
 
         if keycode != KEY_RESERVED {
@@ -326,7 +332,12 @@ pub fn keycode_to_ascii(keycode: u16, shift: bool) -> Option<char> {
 }
 
 /// Convert keycode to character using the specified layout
-pub fn keycode_to_char(keycode: u16, layout: &crate::layouts::KeyboardLayout, shift: bool, altgr: bool) -> Option<char> {
+pub fn keycode_to_char(
+    keycode: u16,
+    layout: &crate::layouts::KeyboardLayout,
+    shift: bool,
+    altgr: bool,
+) -> Option<char> {
     layout.get_char(keycode, shift, altgr)
 }
 

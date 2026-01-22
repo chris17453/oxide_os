@@ -48,8 +48,8 @@ pub mod vector {
 #[repr(u8)]
 #[derive(Debug, Clone, Copy)]
 pub enum GateType {
-    Interrupt = 0xE,  // 64-bit interrupt gate
-    Trap = 0xF,       // 64-bit trap gate
+    Interrupt = 0xE, // 64-bit interrupt gate
+    Trap = 0xF,      // 64-bit trap gate
 }
 
 /// IDT entry (gate descriptor)
@@ -93,7 +93,7 @@ impl IdtEntry {
             ist: ist & 0x7,
             type_attr: (1 << 7)             // Present
                 | ((dpl & 0x3) << 5)        // DPL
-                | (gate_type as u8),        // Type
+                | (gate_type as u8), // Type
             offset_mid: (handler >> 16) as u16,
             offset_high: (handler >> 32) as u32,
             reserved: 0,
@@ -125,23 +125,13 @@ impl Idt {
     /// Set an interrupt handler
     pub fn set_handler(&mut self, vector: u8, handler: u64, gate_type: GateType) {
         self.entries[vector as usize] = IdtEntry::new(
-            handler,
-            KERNEL_CS,
-            0,
-            gate_type,
-            0,  // Ring 0 only
+            handler, KERNEL_CS, 0, gate_type, 0, // Ring 0 only
         );
     }
 
     /// Set an interrupt handler with IST
     pub fn set_handler_ist(&mut self, vector: u8, handler: u64, gate_type: GateType, ist: u8) {
-        self.entries[vector as usize] = IdtEntry::new(
-            handler,
-            KERNEL_CS,
-            ist,
-            gate_type,
-            0,
-        );
+        self.entries[vector as usize] = IdtEntry::new(handler, KERNEL_CS, ist, gate_type, 0);
     }
 }
 
@@ -168,36 +158,121 @@ pub unsafe fn init() {
         let idt_ptr = addr_of_mut!(IDT);
 
         // Set up exception handlers
-        (*idt_ptr).set_handler(vector::DIVIDE_ERROR, exceptions::divide_error as *const () as u64, GateType::Trap);
-        (*idt_ptr).set_handler(vector::DEBUG, exceptions::debug as *const () as u64, GateType::Trap);
-        (*idt_ptr).set_handler(vector::NMI, exceptions::nmi as *const () as u64, GateType::Interrupt);
-        (*idt_ptr).set_handler(vector::BREAKPOINT, exceptions::breakpoint as *const () as u64, GateType::Trap);
-        (*idt_ptr).set_handler(vector::OVERFLOW, exceptions::overflow as *const () as u64, GateType::Trap);
-        (*idt_ptr).set_handler(vector::BOUND_RANGE, exceptions::bound_range as *const () as u64, GateType::Trap);
-        (*idt_ptr).set_handler(vector::INVALID_OPCODE, exceptions::invalid_opcode as *const () as u64, GateType::Trap);
-        (*idt_ptr).set_handler(vector::DEVICE_NOT_AVAILABLE, exceptions::device_not_available as *const () as u64, GateType::Trap);
+        (*idt_ptr).set_handler(
+            vector::DIVIDE_ERROR,
+            exceptions::divide_error as *const () as u64,
+            GateType::Trap,
+        );
+        (*idt_ptr).set_handler(
+            vector::DEBUG,
+            exceptions::debug as *const () as u64,
+            GateType::Trap,
+        );
+        (*idt_ptr).set_handler(
+            vector::NMI,
+            exceptions::nmi as *const () as u64,
+            GateType::Interrupt,
+        );
+        (*idt_ptr).set_handler(
+            vector::BREAKPOINT,
+            exceptions::breakpoint as *const () as u64,
+            GateType::Trap,
+        );
+        (*idt_ptr).set_handler(
+            vector::OVERFLOW,
+            exceptions::overflow as *const () as u64,
+            GateType::Trap,
+        );
+        (*idt_ptr).set_handler(
+            vector::BOUND_RANGE,
+            exceptions::bound_range as *const () as u64,
+            GateType::Trap,
+        );
+        (*idt_ptr).set_handler(
+            vector::INVALID_OPCODE,
+            exceptions::invalid_opcode as *const () as u64,
+            GateType::Trap,
+        );
+        (*idt_ptr).set_handler(
+            vector::DEVICE_NOT_AVAILABLE,
+            exceptions::device_not_available as *const () as u64,
+            GateType::Trap,
+        );
 
         // Double fault uses IST1 for a known-good stack
-        (*idt_ptr).set_handler_ist(vector::DOUBLE_FAULT, exceptions::double_fault as *const () as u64, GateType::Trap, 1);
+        (*idt_ptr).set_handler_ist(
+            vector::DOUBLE_FAULT,
+            exceptions::double_fault as *const () as u64,
+            GateType::Trap,
+            1,
+        );
 
-        (*idt_ptr).set_handler(vector::INVALID_TSS, exceptions::invalid_tss as *const () as u64, GateType::Trap);
-        (*idt_ptr).set_handler(vector::SEGMENT_NOT_PRESENT, exceptions::segment_not_present as *const () as u64, GateType::Trap);
-        (*idt_ptr).set_handler(vector::STACK_SEGMENT, exceptions::stack_segment as *const () as u64, GateType::Trap);
-        (*idt_ptr).set_handler(vector::GENERAL_PROTECTION, exceptions::general_protection as *const () as u64, GateType::Trap);
-        (*idt_ptr).set_handler(vector::PAGE_FAULT, exceptions::page_fault as *const () as u64, GateType::Trap);
-        (*idt_ptr).set_handler(vector::X87_FPU, exceptions::x87_fpu as *const () as u64, GateType::Trap);
-        (*idt_ptr).set_handler(vector::ALIGNMENT_CHECK, exceptions::alignment_check as *const () as u64, GateType::Trap);
-        (*idt_ptr).set_handler(vector::MACHINE_CHECK, exceptions::machine_check as *const () as u64, GateType::Interrupt);
-        (*idt_ptr).set_handler(vector::SIMD, exceptions::simd as *const () as u64, GateType::Trap);
+        (*idt_ptr).set_handler(
+            vector::INVALID_TSS,
+            exceptions::invalid_tss as *const () as u64,
+            GateType::Trap,
+        );
+        (*idt_ptr).set_handler(
+            vector::SEGMENT_NOT_PRESENT,
+            exceptions::segment_not_present as *const () as u64,
+            GateType::Trap,
+        );
+        (*idt_ptr).set_handler(
+            vector::STACK_SEGMENT,
+            exceptions::stack_segment as *const () as u64,
+            GateType::Trap,
+        );
+        (*idt_ptr).set_handler(
+            vector::GENERAL_PROTECTION,
+            exceptions::general_protection as *const () as u64,
+            GateType::Trap,
+        );
+        (*idt_ptr).set_handler(
+            vector::PAGE_FAULT,
+            exceptions::page_fault as *const () as u64,
+            GateType::Trap,
+        );
+        (*idt_ptr).set_handler(
+            vector::X87_FPU,
+            exceptions::x87_fpu as *const () as u64,
+            GateType::Trap,
+        );
+        (*idt_ptr).set_handler(
+            vector::ALIGNMENT_CHECK,
+            exceptions::alignment_check as *const () as u64,
+            GateType::Trap,
+        );
+        (*idt_ptr).set_handler(
+            vector::MACHINE_CHECK,
+            exceptions::machine_check as *const () as u64,
+            GateType::Interrupt,
+        );
+        (*idt_ptr).set_handler(
+            vector::SIMD,
+            exceptions::simd as *const () as u64,
+            GateType::Trap,
+        );
 
         // Timer interrupt
-        (*idt_ptr).set_handler(vector::TIMER, exceptions::timer_interrupt as *const () as u64, GateType::Interrupt);
+        (*idt_ptr).set_handler(
+            vector::TIMER,
+            exceptions::timer_interrupt as *const () as u64,
+            GateType::Interrupt,
+        );
 
         // Keyboard interrupt (IRQ 1)
-        (*idt_ptr).set_handler(vector::KEYBOARD, exceptions::keyboard_interrupt as *const () as u64, GateType::Interrupt);
+        (*idt_ptr).set_handler(
+            vector::KEYBOARD,
+            exceptions::keyboard_interrupt as *const () as u64,
+            GateType::Interrupt,
+        );
 
         // Spurious interrupt
-        (*idt_ptr).set_handler(vector::SPURIOUS, exceptions::spurious_interrupt as *const () as u64, GateType::Interrupt);
+        (*idt_ptr).set_handler(
+            vector::SPURIOUS,
+            exceptions::spurious_interrupt as *const () as u64,
+            GateType::Interrupt,
+        );
 
         // Load the IDT
         let descriptor = IdtDescriptor {

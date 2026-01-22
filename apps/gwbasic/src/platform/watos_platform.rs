@@ -5,11 +5,11 @@
 
 extern crate alloc;
 
-use super::{Console, FileSystem, Graphics, System, FileOpenMode, FileHandle};
-use alloc::string::{String, ToString};
+use super::{Console, FileHandle, FileOpenMode, FileSystem, Graphics, System};
 use alloc::collections::BTreeMap;
+use alloc::string::{String, ToString};
 
-// Use shared WATOS syscall interface  
+// Use shared WATOS syscall interface
 #[cfg(feature = "watos")]
 use watos_syscall::{numbers as syscall, raw_syscall0, raw_syscall1, raw_syscall2, raw_syscall3};
 
@@ -17,7 +17,7 @@ use watos_syscall::{numbers as syscall, raw_syscall0, raw_syscall1, raw_syscall2
 #[cfg(feature = "watos")]
 mod console_syscalls {
     pub const SYS_CONSOLE_IN: u32 = 20;
-    pub const SYS_CONSOLE_OUT: u32 = 21; 
+    pub const SYS_CONSOLE_OUT: u32 = 21;
     pub const SYS_CONSOLE_ERR: u32 = 22;
 }
 
@@ -98,12 +98,24 @@ impl WatosConsole {
         let stdout_handle = unsafe { syscall0(console_syscalls::SYS_CONSOLE_OUT) };
         let stdin_handle = unsafe { syscall0(console_syscalls::SYS_CONSOLE_IN) };
         let stderr_handle = unsafe { syscall0(console_syscalls::SYS_CONSOLE_ERR) };
-        
+
         // Check if handles are valid (errors are > 2^32)
-        let stdout = if stdout_handle < 0x100000000 { Some(stdout_handle) } else { None };
-        let stdin = if stdin_handle < 0x100000000 { Some(stdin_handle) } else { None };
-        let stderr = if stderr_handle < 0x100000000 { Some(stderr_handle) } else { None };
-        
+        let stdout = if stdout_handle < 0x100000000 {
+            Some(stdout_handle)
+        } else {
+            None
+        };
+        let stdin = if stdin_handle < 0x100000000 {
+            Some(stdin_handle)
+        } else {
+            None
+        };
+        let stderr = if stderr_handle < 0x100000000 {
+            Some(stderr_handle)
+        } else {
+            None
+        };
+
         WatosConsole {
             cursor_row: 0,
             cursor_col: 0,
@@ -127,7 +139,12 @@ impl Console for WatosConsole {
         if let Some(handle) = self.stdout_handle {
             let bytes = s.as_bytes();
             unsafe {
-                syscall3(syscall::SYS_WRITE, handle, bytes.as_ptr() as u64, bytes.len() as u64);
+                syscall3(
+                    syscall::SYS_WRITE,
+                    handle,
+                    bytes.as_ptr() as u64,
+                    bytes.len() as u64,
+                );
             }
         }
         // Fallback to putchar if no stdout handle
@@ -152,13 +169,16 @@ impl Console for WatosConsole {
             let key = unsafe { syscall0(syscall::SYS_GETKEY) } as u8;
             if key == 0 {
                 // Small delay to avoid busy-waiting at 100% CPU
-                unsafe { syscall1(syscall::SYS_SLEEP, 10); } // 10ms
+                unsafe {
+                    syscall1(syscall::SYS_SLEEP, 10);
+                } // 10ms
                 continue;
             }
             if key == b'\r' || key == b'\n' {
                 break;
             }
-            if key == 0x08 { // Backspace
+            if key == 0x08 {
+                // Backspace
                 if self.input_len > 0 {
                     self.input_len -= 1;
                     self.print_char('\x08');
@@ -190,7 +210,7 @@ impl Console for WatosConsole {
                 }
             }
         }
-        
+
         // Fallback to direct keyboard input
         let key = unsafe { syscall0(syscall::SYS_GETKEY) } as u8;
         if key == 0 {
@@ -258,14 +278,19 @@ impl FileSystem for WatosFileSystem {
         };
         let bytes = path.as_bytes();
         let watos_handle = unsafe {
-            syscall3(syscall::SYS_OPEN, bytes.as_ptr() as u64, bytes.len() as u64, mode_num)
+            syscall3(
+                syscall::SYS_OPEN,
+                bytes.as_ptr() as u64,
+                bytes.len() as u64,
+                mode_num,
+            )
         };
-        
+
         // Check for error (WATOS returns error codes > 2^32 for failures)
         if watos_handle > 0x100000000 {
             return Err("Cannot open file");
         }
-        
+
         let handle = self.next_handle;
         self.next_handle += 1;
         self.open_files.insert(handle, watos_handle);
@@ -287,12 +312,19 @@ impl FileSystem for WatosFileSystem {
         if let Some(&watos_handle) = self.open_files.get(&handle.0) {
             let mut buffer = [0u8; 256];
             let len = unsafe {
-                syscall3(syscall::SYS_READ, watos_handle, buffer.as_mut_ptr() as u64, 256)
+                syscall3(
+                    syscall::SYS_READ,
+                    watos_handle,
+                    buffer.as_mut_ptr() as u64,
+                    256,
+                )
             } as usize;
             if len == 0 {
                 return Err("EOF");
             }
-            Ok(String::from_utf8_lossy(&buffer[..len]).trim_end().to_string())
+            Ok(String::from_utf8_lossy(&buffer[..len])
+                .trim_end()
+                .to_string())
         } else {
             Err("File not open")
         }
@@ -302,7 +334,12 @@ impl FileSystem for WatosFileSystem {
         if let Some(&watos_handle) = self.open_files.get(&handle.0) {
             let bytes = data.as_bytes();
             unsafe {
-                syscall3(syscall::SYS_WRITE, watos_handle, bytes.as_ptr() as u64, bytes.len() as u64);
+                syscall3(
+                    syscall::SYS_WRITE,
+                    watos_handle,
+                    bytes.as_ptr() as u64,
+                    bytes.len() as u64,
+                );
             }
             // Write newline
             unsafe {
@@ -349,13 +386,26 @@ impl Graphics for WatosGraphics {
 
     fn line(&mut self, x1: i32, y1: i32, x2: i32, y2: i32, color: u8) {
         unsafe {
-            syscall5(syscall::SYS_GFX_LINE, x1 as u64, y1 as u64, x2 as u64, y2 as u64, color as u64);
+            syscall5(
+                syscall::SYS_GFX_LINE,
+                x1 as u64,
+                y1 as u64,
+                x2 as u64,
+                y2 as u64,
+                color as u64,
+            );
         }
     }
 
     fn circle(&mut self, x: i32, y: i32, radius: i32, color: u8) {
         unsafe {
-            syscall4(syscall::SYS_GFX_CIRCLE, x as u64, y as u64, radius as u64, color as u64);
+            syscall4(
+                syscall::SYS_GFX_CIRCLE,
+                x as u64,
+                y as u64,
+                radius as u64,
+                color as u64,
+            );
         }
     }
 
@@ -398,9 +448,7 @@ pub struct WatosSystem {
 
 impl WatosSystem {
     pub fn new() -> Self {
-        WatosSystem {
-            rng_state: 12345,
-        }
+        WatosSystem { rng_state: 12345 }
     }
 }
 

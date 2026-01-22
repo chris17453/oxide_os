@@ -1,8 +1,8 @@
 //! Quarantine policies
 
+use crate::entry::QuarantineSource;
 use alloc::string::String;
 use alloc::vec::Vec;
-use crate::entry::QuarantineSource;
 
 /// Policy action
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -13,18 +13,18 @@ const APIC_BASE_PHYS: u64 = 0xFEE0_0000;
 mod reg {
     pub const ID: u32 = 0x020;
     pub const VERSION: u32 = 0x030;
-    pub const TPR: u32 = 0x080;        // Task Priority Register
-    pub const EOI: u32 = 0x0B0;        // End of Interrupt
-    pub const SPURIOUS: u32 = 0x0F0;   // Spurious Interrupt Vector
-    pub const ICR_LOW: u32 = 0x300;    // Interrupt Command Register (low)
-    pub const ICR_HIGH: u32 = 0x310;   // Interrupt Command Register (high)
-    pub const LVT_TIMER: u32 = 0x320;  // LVT Timer Register
-    pub const LVT_LINT0: u32 = 0x350;  // LVT LINT0
-    pub const LVT_LINT1: u32 = 0x360;  // LVT LINT1
-    pub const LVT_ERROR: u32 = 0x370;  // LVT Error
+    pub const TPR: u32 = 0x080; // Task Priority Register
+    pub const EOI: u32 = 0x0B0; // End of Interrupt
+    pub const SPURIOUS: u32 = 0x0F0; // Spurious Interrupt Vector
+    pub const ICR_LOW: u32 = 0x300; // Interrupt Command Register (low)
+    pub const ICR_HIGH: u32 = 0x310; // Interrupt Command Register (high)
+    pub const LVT_TIMER: u32 = 0x320; // LVT Timer Register
+    pub const LVT_LINT0: u32 = 0x350; // LVT LINT0
+    pub const LVT_LINT1: u32 = 0x360; // LVT LINT1
+    pub const LVT_ERROR: u32 = 0x370; // LVT Error
     pub const TIMER_INIT: u32 = 0x380; // Timer Initial Count
     pub const TIMER_CURR: u32 = 0x390; // Timer Current Count
-    pub const TIMER_DIV: u32 = 0x3E0;  // Timer Divide Configuration
+    pub const TIMER_DIV: u32 = 0x3E0; // Timer Divide Configuration
 }
 
 /// Timer mode
@@ -57,9 +57,7 @@ fn apic_base() -> u64 {
 
 /// Read an APIC register
 fn read(offset: u32) -> u32 {
-    unsafe {
-        read_volatile((apic_base() + offset as u64) as *const u32)
-    }
+    unsafe { read_volatile((apic_base() + offset as u64) as *const u32) }
 }
 
 /// Write an APIC register
@@ -183,8 +181,8 @@ pub fn calibrate_timer() -> u32 {
 
     unsafe {
         // Set PIT to one-shot mode, channel 2
-        crate::outb(0x61, (crate::inb(0x61) & 0xFD) | 0x01);  // Gate high, speaker off
-        crate::outb(0x43, 0xB0);  // Channel 2, lobyte/hibyte, mode 0, binary
+        crate::outb(0x61, (crate::inb(0x61) & 0xFD) | 0x01); // Gate high, speaker off
+        crate::outb(0x43, 0xB0); // Channel 2, lobyte/hibyte, mode 0, binary
 
         // Set PIT count
         crate::outb(0x42, (pit_count & 0xFF) as u8);
@@ -193,7 +191,7 @@ pub fn calibrate_timer() -> u32 {
 
     // Set APIC timer to maximum count
     write(reg::TIMER_DIV, TimerDivide::Div16 as u32);
-    write(reg::LVT_TIMER, 1 << 16);  // Masked, one-shot
+    write(reg::LVT_TIMER, 1 << 16); // Masked, one-shot
     write(reg::TIMER_INIT, 0xFFFF_FFFF);
 
     // Wait for PIT to count down
@@ -225,8 +223,7 @@ pub fn init() {
 
     enable();
 
-    crate::serial_println!("[APIC] Initialized, ID: {}, Version: {}",
-        id(), version());
+    crate::serial_println!("[APIC] Initialized, ID: {}, Version: {}", id(), version());
 
     // Initialize IOAPIC for legacy IRQs
     init_ioapic();
@@ -265,9 +262,7 @@ fn ioapic_select(reg: u32) {
 
 /// Read from IOAPIC data register
 fn ioapic_read() -> u32 {
-    unsafe {
-        read_volatile((ioapic_base() + IOAPIC_DATA as u64) as *const u32)
-    }
+    unsafe { read_volatile((ioapic_base() + IOAPIC_DATA as u64) as *const u32) }
 }
 
 /// Write to IOAPIC data register
@@ -319,8 +314,11 @@ fn init_ioapic() {
     // Check IOAPIC version
     let version = ioapic_read_reg(ioapic_reg::VERSION);
     let max_redir = ((version >> 16) & 0xFF) as u8;
-    crate::serial_println!("[IOAPIC] Version: {:#x}, Max redirections: {}",
-        version & 0xFF, max_redir + 1);
+    crate::serial_println!(
+        "[IOAPIC] Version: {:#x}, Max redirections: {}",
+        version & 0xFF,
+        max_redir + 1
+    );
 
     // Mask all IRQs first
     for irq in 0..=max_redir {
@@ -332,8 +330,11 @@ fn init_ioapic() {
 
     // Route keyboard IRQ 1 to vector 33
     ioapic_set_irq(1, crate::idt::vector::KEYBOARD, apic_id, false);
-    crate::serial_println!("[IOAPIC] Keyboard IRQ 1 -> vector {} (APIC {})",
-        crate::idt::vector::KEYBOARD, apic_id);
+    crate::serial_println!(
+        "[IOAPIC] Keyboard IRQ 1 -> vector {} (APIC {})",
+        crate::idt::vector::KEYBOARD,
+        apic_id
+    );
 }
 
 /// Start the APIC timer for scheduling
@@ -347,8 +348,11 @@ pub fn start_timer(frequency_hz: u32) {
     let interval_ms = 1000 / frequency_hz;
     let initial_count = ticks_per_ms * interval_ms;
 
-    crate::serial_println!("[APIC] Starting timer at {}Hz (count: {})",
-        frequency_hz, initial_count);
+    crate::serial_println!(
+        "[APIC] Starting timer at {}Hz (count: {})",
+        frequency_hz,
+        initial_count
+    );
 
     configure_timer(
         crate::idt::vector::TIMER,

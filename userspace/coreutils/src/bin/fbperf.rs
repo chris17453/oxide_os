@@ -66,7 +66,10 @@ extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
     write(1, b"\n  Colors: Done\n");
 
     write(1, b"\n\x1b[1;32m=== Benchmark Complete ===\x1b[0m\n");
-    write(1, b"\nNote: Performance stats will be available via ioctl in future updates.\n");
+    write(
+        1,
+        b"\nNote: Performance stats will be available via ioctl in future updates.\n",
+    );
 
     close(fd);
     0

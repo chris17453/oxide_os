@@ -13,11 +13,11 @@
 
 extern crate alloc;
 
-use alloc::vec;
-use alloc::vec::Vec;
-use alloc::format;
 use crate::error::{Error, Result};
 use crate::graphics_backend::GraphicsBackend;
+use alloc::format;
+use alloc::vec;
+use alloc::vec::Vec;
 
 /// Color palette for VGA (EGA/CGA compatible 16 colors)
 pub const PALETTE_16: [u32; 16] = [
@@ -44,17 +44,47 @@ pub const PALETTE_16: [u32; 16] = [
 pub struct VideoMode {
     pub width: usize,
     pub height: usize,
-    pub bpp: u8,        // Bits per pixel (4, 8, 16, 24, 32)
-    pub mode_num: u8,   // Mode number for syscall
+    pub bpp: u8,      // Bits per pixel (4, 8, 16, 24, 32)
+    pub mode_num: u8, // Mode number for syscall
 }
 
 impl VideoMode {
-    pub const TEXT_80X25: Self = VideoMode { width: 80, height: 25, bpp: 0, mode_num: 0 };
-    pub const VGA_320X200: Self = VideoMode { width: 320, height: 200, bpp: 8, mode_num: 1 };
-    pub const VGA_640X200: Self = VideoMode { width: 640, height: 200, bpp: 4, mode_num: 2 };
-    pub const VGA_640X480: Self = VideoMode { width: 640, height: 480, bpp: 4, mode_num: 3 };
-    pub const SVGA_800X600: Self = VideoMode { width: 800, height: 600, bpp: 32, mode_num: 4 };
-    pub const SVGA_1024X768: Self = VideoMode { width: 1024, height: 768, bpp: 32, mode_num: 5 };
+    pub const TEXT_80X25: Self = VideoMode {
+        width: 80,
+        height: 25,
+        bpp: 0,
+        mode_num: 0,
+    };
+    pub const VGA_320X200: Self = VideoMode {
+        width: 320,
+        height: 200,
+        bpp: 8,
+        mode_num: 1,
+    };
+    pub const VGA_640X200: Self = VideoMode {
+        width: 640,
+        height: 200,
+        bpp: 4,
+        mode_num: 2,
+    };
+    pub const VGA_640X480: Self = VideoMode {
+        width: 640,
+        height: 480,
+        bpp: 4,
+        mode_num: 3,
+    };
+    pub const SVGA_800X600: Self = VideoMode {
+        width: 800,
+        height: 600,
+        bpp: 32,
+        mode_num: 4,
+    };
+    pub const SVGA_1024X768: Self = VideoMode {
+        width: 1024,
+        height: 768,
+        bpp: 32,
+        mode_num: 5,
+    };
 
     pub fn from_basic_mode(mode: u8) -> Self {
         match mode {
@@ -72,7 +102,7 @@ impl VideoMode {
 /// WATOS VGA/SVGA graphics backend
 pub struct WatosVgaBackend {
     mode: VideoMode,
-    framebuffer: Vec<u8>,    // Pixel data - size depends on bpp (8-bit indexed or 32-bit RGBA)
+    framebuffer: Vec<u8>, // Pixel data - size depends on bpp (8-bit indexed or 32-bit RGBA)
     cursor_x: usize,
     cursor_y: usize,
     fg_color: u8,
@@ -174,7 +204,11 @@ impl WatosVgaBackend {
         // For 8-bit modes: 1 byte per pixel (indexed color)
         // For 32-bit modes: 4 bytes per pixel (RGBA)
         // Formula: (bpp + 7) / 8 rounds up to nearest byte
-        let bytes_per_pixel = if mode.bpp <= 8 { 1 } else { (mode.bpp as usize + 7) / 8 };
+        let bytes_per_pixel = if mode.bpp <= 8 {
+            1
+        } else {
+            (mode.bpp as usize + 7) / 8
+        };
         let buffer_size = mode.width * mode.height * bytes_per_pixel;
         let framebuffer = vec![0u8; buffer_size];
 
@@ -214,8 +248,8 @@ impl WatosVgaBackend {
             framebuffer,
             cursor_x: 0,
             cursor_y: 0,
-            fg_color: 15,  // White
-            bg_color: 0,   // Black
+            fg_color: 15, // White
+            bg_color: 0,  // Black
             dirty: true,
             session_id,
         })
@@ -263,7 +297,7 @@ impl WatosVgaBackend {
                 // 32-bit RGBA color - expand 8-bit color index to RGBA
                 let bytes_per_pixel = (self.mode.bpp as usize + 7) / 8;
                 let idx = (y * self.mode.width + x) * bytes_per_pixel;
-                
+
                 // Map 8-bit color to RGB (simple palette mapping)
                 // For now, use EGA-style 16-color palette
                 let rgb = if color < 16 {
@@ -273,13 +307,13 @@ impl WatosVgaBackend {
                     let gray = color;
                     ((gray as u32) << 16) | ((gray as u32) << 8) | (gray as u32)
                 };
-                
+
                 // Write BGRA (assuming BGR pixel format)
-                self.framebuffer[idx] = (rgb & 0xFF) as u8;     // B
-                self.framebuffer[idx + 1] = ((rgb >> 8) & 0xFF) as u8;  // G
+                self.framebuffer[idx] = (rgb & 0xFF) as u8; // B
+                self.framebuffer[idx + 1] = ((rgb >> 8) & 0xFF) as u8; // G
                 self.framebuffer[idx + 2] = ((rgb >> 16) & 0xFF) as u8; // R
                 if bytes_per_pixel == 4 {
-                    self.framebuffer[idx + 3] = 0xFF;           // A
+                    self.framebuffer[idx + 3] = 0xFF; // A
                 }
             }
             self.dirty = true;
@@ -319,7 +353,7 @@ impl WatosVgaBackend {
                 self.framebuffer.as_ptr() as u64,
                 self.mode.width as u64,
                 self.mode.height as u64,
-                self.mode.width as u64,  // stride = width for packed buffer
+                self.mode.width as u64, // stride = width for packed buffer
             );
 
             // Flip to display

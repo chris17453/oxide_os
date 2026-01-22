@@ -56,7 +56,9 @@ impl MemoryFlags {
     }
 
     pub const fn union(self, other: Self) -> Self {
-        Self { bits: self.bits | other.bits }
+        Self {
+            bits: self.bits | other.bits,
+        }
     }
 
     pub const fn readable(&self) -> bool {
@@ -81,7 +83,9 @@ impl MemoryFlags {
 /// Represents a process's virtual address space.
 pub trait AddressSpace {
     /// Create a new empty address space
-    fn new() -> Self where Self: Sized;
+    fn new() -> Self
+    where
+        Self: Sized;
 
     /// Get the physical address of the page table root
     fn page_table_root(&self) -> PhysAddr;
@@ -91,7 +95,12 @@ pub trait AddressSpace {
     /// # Safety
     /// The physical address must be valid and the mapping must not
     /// conflict with existing mappings in unsafe ways.
-    unsafe fn map(&mut self, virt: VirtAddr, phys: PhysAddr, flags: MemoryFlags) -> Result<(), MapError>;
+    unsafe fn map(
+        &mut self,
+        virt: VirtAddr,
+        phys: PhysAddr,
+        flags: MemoryFlags,
+    ) -> Result<(), MapError>;
 
     /// Unmap a virtual address
     ///

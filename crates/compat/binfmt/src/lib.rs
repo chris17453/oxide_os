@@ -168,47 +168,49 @@ impl BinfmtRegistry {
         // DOS executables
         registry.register(
             BinfmtEntry::magic("dos-com", &[], "/usr/bin/dosbox")
-                .with_flags(BinfmtFlags::PRESERVE_ARGV0)
+                .with_flags(BinfmtFlags::PRESERVE_ARGV0),
         );
         registry.register(
             BinfmtEntry::extension("dos-com-ext", "com", "/usr/bin/dosbox")
-                .with_flags(BinfmtFlags::PRESERVE_ARGV0)
+                .with_flags(BinfmtFlags::PRESERVE_ARGV0),
         );
         registry.register(
             BinfmtEntry::magic("dos-exe", b"MZ", "/usr/bin/dosbox")
-                .with_flags(BinfmtFlags::PRESERVE_ARGV0)
+                .with_flags(BinfmtFlags::PRESERVE_ARGV0),
         );
 
         // Python scripts
-        registry.register(
-            BinfmtEntry::extension("python", "py", "/usr/bin/python-sandbox")
-        );
-        registry.register(
-            BinfmtEntry::magic("python-shebang", b"#!/usr/bin/python", "/usr/bin/python-sandbox")
-        );
+        registry.register(BinfmtEntry::extension(
+            "python",
+            "py",
+            "/usr/bin/python-sandbox",
+        ));
+        registry.register(BinfmtEntry::magic(
+            "python-shebang",
+            b"#!/usr/bin/python",
+            "/usr/bin/python-sandbox",
+        ));
 
         // Shell scripts
-        registry.register(
-            BinfmtEntry::magic("bash", b"#!/bin/bash", "/bin/bash")
-        );
-        registry.register(
-            BinfmtEntry::magic("sh", b"#!/bin/sh", "/bin/sh")
-        );
+        registry.register(BinfmtEntry::magic("bash", b"#!/bin/bash", "/bin/bash"));
+        registry.register(BinfmtEntry::magic("sh", b"#!/bin/sh", "/bin/sh"));
 
         // Java bytecode
         registry.register(
             BinfmtEntry::magic("java", &[0xCA, 0xFE, 0xBA, 0xBE], "/usr/bin/java")
-                .with_flags(BinfmtFlags::PRESERVE_ARGV0)
+                .with_flags(BinfmtFlags::PRESERVE_ARGV0),
         );
         registry.register(
             BinfmtEntry::extension("jar", "jar", "/usr/bin/java")
-                .with_flags(BinfmtFlags::PRESERVE_ARGV0)
+                .with_flags(BinfmtFlags::PRESERVE_ARGV0),
         );
 
         // WebAssembly
-        registry.register(
-            BinfmtEntry::magic("wasm", &[0x00, 0x61, 0x73, 0x6D], "/usr/bin/wasmtime")
-        );
+        registry.register(BinfmtEntry::magic(
+            "wasm",
+            &[0x00, 0x61, 0x73, 0x6D],
+            "/usr/bin/wasmtime",
+        ));
 
         registry
     }
@@ -294,9 +296,8 @@ pub fn detect_file_type(header: &[u8]) -> FileType {
     if header.len() >= 2 && &header[0..2] == b"MZ" {
         // Check for PE header (Windows)
         if header.len() >= 64 {
-            let pe_offset = u32::from_le_bytes([
-                header[60], header[61], header[62], header[63]
-            ]) as usize;
+            let pe_offset =
+                u32::from_le_bytes([header[60], header[61], header[62], header[63]]) as usize;
             if header.len() > pe_offset + 4 {
                 if &header[pe_offset..pe_offset + 4] == b"PE\x00\x00" {
                     return FileType::Pe;

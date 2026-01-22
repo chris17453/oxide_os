@@ -6,17 +6,17 @@
 
 extern crate alloc;
 
-pub mod event;
 pub mod device;
-pub mod keymap;
+pub mod event;
 pub mod keycodes;
+pub mod keymap;
 pub mod layouts;
 
-pub use event::{InputEvent, EventType, SynCode, KeyValue};
 pub use device::{InputDevice, InputDeviceInfo, InputDeviceType};
-pub use keymap::Keymap;
+pub use event::{EventType, InputEvent, KeyValue, SynCode};
 pub use keycodes::*;
-pub use layouts::{KeyboardLayout, LAYOUTS, get_layout, default_layout};
+pub use keymap::Keymap;
+pub use layouts::{KeyboardLayout, LAYOUTS, default_layout, get_layout};
 
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;

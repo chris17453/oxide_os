@@ -25,9 +25,9 @@ mod status {
 
 /// VirtIO block request types
 mod req_type {
-    pub const IN: u32 = 0;     // Read
-    pub const OUT: u32 = 1;    // Write
-    pub const FLUSH: u32 = 4;  // Flush
+    pub const IN: u32 = 0; // Read
+    pub const OUT: u32 = 1; // Write
+    pub const FLUSH: u32 = 4; // Flush
     pub const DISCARD: u32 = 11;
     pub const WRITE_ZEROES: u32 = 13;
 }
@@ -354,8 +354,8 @@ pub unsafe fn probe_all() -> Vec<VirtioBlk> {
 
     // Standard virtio-blk MMIO addresses in QEMU
     let addresses: [u64; 8] = [
-        0x10001000, 0x10002000, 0x10003000, 0x10004000,
-        0x10005000, 0x10006000, 0x10007000, 0x10008000,
+        0x10001000, 0x10002000, 0x10003000, 0x10004000, 0x10005000, 0x10006000, 0x10007000,
+        0x10008000,
     ];
 
     for addr in addresses {

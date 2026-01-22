@@ -1,6 +1,6 @@
 //! NVMe Command Builders
 
-use crate::{opcode, NvmeSqe};
+use crate::{NvmeSqe, opcode};
 
 /// Build an Identify Controller command
 pub fn identify_controller(cid: u16, prp1: u64) -> NvmeSqe {

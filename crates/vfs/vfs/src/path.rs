@@ -33,7 +33,10 @@ impl Path {
             })
             .collect();
 
-        Path { components, absolute }
+        Path {
+            components,
+            absolute,
+        }
     }
 
     /// Is this an absolute path?

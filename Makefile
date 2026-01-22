@@ -130,7 +130,7 @@ initramfs: userspace-release
 	@ln -sf /bin/true "$(TARGET_DIR)/initramfs/bin/:" 2>/dev/null || true
 	@ln -sf /bin/ls "$(TARGET_DIR)/initramfs/bin/dir" 2>/dev/null || true
 	@# Create etc files
-	@echo "root:x:0:0:root:/root:/bin/esh" > $(TARGET_DIR)/initramfs/etc/passwd
+	@echo "root:root:0:0:root:/root:/bin/esh" > $(TARGET_DIR)/initramfs/etc/passwd
 	@echo "root:x:0:" > $(TARGET_DIR)/initramfs/etc/group
 	@echo "PATH=/initramfs/bin:/initramfs/sbin:/bin:/sbin" > $(TARGET_DIR)/initramfs/etc/profile
 	@echo "export PATH" >> $(TARGET_DIR)/initramfs/etc/profile
@@ -194,15 +194,14 @@ boot-dir: kernel bootloader initramfs
 	@echo "  - Initramfs: EFI/OXIDE/initramfs.cpio"
 
 # Quick boot directory update - kernel/bootloader only, use existing initramfs
-boot-quick: kernel bootloader
+boot-quick: kernel bootloader initramfs
+	@rm -rf $(BOOT_DIR)
 	@mkdir -p $(BOOT_DIR)/EFI/BOOT
 	@mkdir -p $(BOOT_DIR)/EFI/OXIDE
 	@cp $(BOOTLOADER_TARGET) $(BOOT_DIR)/EFI/BOOT/BOOTX64.EFI
 	@cp $(KERNEL_TARGET) $(BOOT_DIR)/EFI/OXIDE/kernel.elf
-	@if [ -f $(TARGET_DIR)/initramfs.cpio ]; then \
-		cp $(TARGET_DIR)/initramfs.cpio $(BOOT_DIR)/EFI/OXIDE/initramfs.cpio; \
-	fi
-	@echo "Boot directory updated (kernel/bootloader only)"
+	@cp $(TARGET_DIR)/initramfs.cpio $(BOOT_DIR)/EFI/OXIDE/initramfs.cpio
+	@echo "Boot directory updated (kernel/bootloader/initramfs)"
 
 # Create a real disk image (for qemu-kvm compatibility on RHEL)
 boot-image: boot-dir

@@ -66,7 +66,9 @@ pub fn poll(fds: &mut [PollFd], timeout: i32) -> i32 {
 
 /// Poll with signal mask
 pub fn ppoll(fds: &mut [PollFd], timeout: Option<&Timespec>, sigmask: Option<&[u64]>) -> i32 {
-    let timeout_ptr = timeout.map(|t| t as *const Timespec).unwrap_or(core::ptr::null());
+    let timeout_ptr = timeout
+        .map(|t| t as *const Timespec)
+        .unwrap_or(core::ptr::null());
     let sigmask_ptr = sigmask.map(|s| s.as_ptr()).unwrap_or(core::ptr::null());
 
     unsafe {
@@ -155,10 +157,18 @@ pub fn select(
     exceptfds: Option<&mut FdSet>,
     timeout: Option<&mut Timeval>,
 ) -> i32 {
-    let readfds_ptr = readfds.map(|f| f as *mut FdSet).unwrap_or(core::ptr::null_mut());
-    let writefds_ptr = writefds.map(|f| f as *mut FdSet).unwrap_or(core::ptr::null_mut());
-    let exceptfds_ptr = exceptfds.map(|f| f as *mut FdSet).unwrap_or(core::ptr::null_mut());
-    let timeout_ptr = timeout.map(|t| t as *mut Timeval).unwrap_or(core::ptr::null_mut());
+    let readfds_ptr = readfds
+        .map(|f| f as *mut FdSet)
+        .unwrap_or(core::ptr::null_mut());
+    let writefds_ptr = writefds
+        .map(|f| f as *mut FdSet)
+        .unwrap_or(core::ptr::null_mut());
+    let exceptfds_ptr = exceptfds
+        .map(|f| f as *mut FdSet)
+        .unwrap_or(core::ptr::null_mut());
+    let timeout_ptr = timeout
+        .map(|t| t as *mut Timeval)
+        .unwrap_or(core::ptr::null_mut());
 
     unsafe {
         syscall::syscall5(
@@ -181,10 +191,18 @@ pub fn pselect(
     timeout: Option<&Timespec>,
     sigmask: Option<&[u64]>,
 ) -> i32 {
-    let readfds_ptr = readfds.map(|f| f as *mut FdSet).unwrap_or(core::ptr::null_mut());
-    let writefds_ptr = writefds.map(|f| f as *mut FdSet).unwrap_or(core::ptr::null_mut());
-    let exceptfds_ptr = exceptfds.map(|f| f as *mut FdSet).unwrap_or(core::ptr::null_mut());
-    let timeout_ptr = timeout.map(|t| t as *const Timespec).unwrap_or(core::ptr::null());
+    let readfds_ptr = readfds
+        .map(|f| f as *mut FdSet)
+        .unwrap_or(core::ptr::null_mut());
+    let writefds_ptr = writefds
+        .map(|f| f as *mut FdSet)
+        .unwrap_or(core::ptr::null_mut());
+    let exceptfds_ptr = exceptfds
+        .map(|f| f as *mut FdSet)
+        .unwrap_or(core::ptr::null_mut());
+    let timeout_ptr = timeout
+        .map(|t| t as *const Timespec)
+        .unwrap_or(core::ptr::null());
     let sigmask_ptr = sigmask.map(|s| s.as_ptr()).unwrap_or(core::ptr::null());
 
     unsafe {

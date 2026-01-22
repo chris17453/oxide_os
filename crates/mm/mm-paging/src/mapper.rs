@@ -2,9 +2,9 @@
 
 use crate::entry::PageTableFlags;
 use crate::table::PageTable;
-use crate::{phys_to_virt, PageLevel};
-use os_core::{PhysAddr, VirtAddr};
+use crate::{PageLevel, phys_to_virt};
 use mm_traits::FrameAllocator;
+use os_core::{PhysAddr, VirtAddr};
 
 /// Errors that can occur during page mapping
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -6,16 +6,16 @@
 
 extern crate alloc;
 
-pub mod device;
-pub mod descriptor;
-pub mod transfer;
-pub mod hub;
 pub mod class;
+pub mod descriptor;
+pub mod device;
+pub mod hub;
+pub mod transfer;
 
-pub use device::{UsbDevice, UsbDeviceInfo, DeviceSpeed};
-pub use descriptor::*;
-pub use transfer::{UsbTransfer, TransferType, TransferDirection, EndpointDescriptor};
 pub use class::UsbClassDriver;
+pub use descriptor::*;
+pub use device::{DeviceSpeed, UsbDevice, UsbDeviceInfo};
+pub use transfer::{EndpointDescriptor, TransferDirection, TransferType, UsbTransfer};
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -253,8 +253,7 @@ fn enumerate_port(controller: Arc<dyn UsbHostController>, port: u8) -> UsbResult
 
     controller.control_transfer(slot, setup, Some(&mut desc_buf))?;
 
-    let device_desc = DeviceDescriptor::from_bytes(&desc_buf)
-        .ok_or(UsbError::InvalidDescriptor)?;
+    let device_desc = DeviceDescriptor::from_bytes(&desc_buf).ok_or(UsbError::InvalidDescriptor)?;
 
     // Create device
     let device = Arc::new(UsbDevice::new(

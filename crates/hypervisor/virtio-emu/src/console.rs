@@ -4,8 +4,8 @@ use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use spin::Mutex;
 
-use vmm::device::VirtioDevice;
 use crate::VirtioDeviceBase;
+use vmm::device::VirtioDevice;
 
 /// virtio-console device type
 pub const VIRTIO_CONSOLE_DEVICE_TYPE: u32 = 3;

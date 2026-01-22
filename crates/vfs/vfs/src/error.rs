@@ -55,27 +55,27 @@ impl VfsError {
     /// Convert to errno value
     pub fn to_errno(self) -> i32 {
         match self {
-            VfsError::NotFound => -2,         // ENOENT
-            VfsError::PermissionDenied => -13, // EACCES
-            VfsError::AlreadyExists => -17,    // EEXIST
-            VfsError::NotDirectory => -20,     // ENOTDIR
-            VfsError::IsDirectory => -21,      // EISDIR
-            VfsError::InvalidArgument => -22,  // EINVAL
-            VfsError::NoSpace => -28,          // ENOSPC
-            VfsError::ReadOnly => -30,         // EROFS
-            VfsError::TooManyOpenFiles => -24, // EMFILE
-            VfsError::BadFd => -9,             // EBADF
-            VfsError::NotEmpty => -39,         // ENOTEMPTY
-            VfsError::CrossDevice => -18,      // EXDEV
-            VfsError::NameTooLong => -36,      // ENAMETOOLONG
-            VfsError::IoError => -5,           // EIO
-            VfsError::NotSupported => -95,     // ENOTSUP
-            VfsError::Busy => -16,             // EBUSY
-            VfsError::NoDevice => -19,         // ENODEV
-            VfsError::BrokenPipe => -32,       // EPIPE
-            VfsError::WouldBlock => -11,       // EAGAIN
-            VfsError::InvalidOperation => -22, // EINVAL
-            VfsError::InvalidFilesystem => -22, // EINVAL
+            VfsError::NotFound => -2,            // ENOENT
+            VfsError::PermissionDenied => -13,   // EACCES
+            VfsError::AlreadyExists => -17,      // EEXIST
+            VfsError::NotDirectory => -20,       // ENOTDIR
+            VfsError::IsDirectory => -21,        // EISDIR
+            VfsError::InvalidArgument => -22,    // EINVAL
+            VfsError::NoSpace => -28,            // ENOSPC
+            VfsError::ReadOnly => -30,           // EROFS
+            VfsError::TooManyOpenFiles => -24,   // EMFILE
+            VfsError::BadFd => -9,               // EBADF
+            VfsError::NotEmpty => -39,           // ENOTEMPTY
+            VfsError::CrossDevice => -18,        // EXDEV
+            VfsError::NameTooLong => -36,        // ENAMETOOLONG
+            VfsError::IoError => -5,             // EIO
+            VfsError::NotSupported => -95,       // ENOTSUP
+            VfsError::Busy => -16,               // EBUSY
+            VfsError::NoDevice => -19,           // ENODEV
+            VfsError::BrokenPipe => -32,         // EPIPE
+            VfsError::WouldBlock => -11,         // EAGAIN
+            VfsError::InvalidOperation => -22,   // EINVAL
+            VfsError::InvalidFilesystem => -22,  // EINVAL
             VfsError::CorruptedFilesystem => -5, // EIO
         }
     }

@@ -5,8 +5,8 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 use spin::Mutex;
 
-use vmm::device::VirtioDevice;
 use crate::VirtioDeviceBase;
+use vmm::device::VirtioDevice;
 
 /// virtio-blk device type
 pub const VIRTIO_BLK_DEVICE_TYPE: u32 = 2;
@@ -258,7 +258,8 @@ impl VirtioBlock {
                 // Read
                 match self.backend.read(header.sector, data) {
                     Ok(()) => {
-                        self.sectors_read.fetch_add((data.len() / 512) as u64, Ordering::Relaxed);
+                        self.sectors_read
+                            .fetch_add((data.len() / 512) as u64, Ordering::Relaxed);
                         status::VIRTIO_BLK_S_OK
                     }
                     Err(()) => status::VIRTIO_BLK_S_IOERR,
@@ -268,18 +269,17 @@ impl VirtioBlock {
                 // Write
                 match self.backend.write(header.sector, data) {
                     Ok(()) => {
-                        self.sectors_written.fetch_add((data.len() / 512) as u64, Ordering::Relaxed);
+                        self.sectors_written
+                            .fetch_add((data.len() / 512) as u64, Ordering::Relaxed);
                         status::VIRTIO_BLK_S_OK
                     }
                     Err(()) => status::VIRTIO_BLK_S_IOERR,
                 }
             }
-            request_type::VIRTIO_BLK_T_FLUSH => {
-                match self.backend.flush() {
-                    Ok(()) => status::VIRTIO_BLK_S_OK,
-                    Err(()) => status::VIRTIO_BLK_S_IOERR,
-                }
-            }
+            request_type::VIRTIO_BLK_T_FLUSH => match self.backend.flush() {
+                Ok(()) => status::VIRTIO_BLK_S_OK,
+                Err(()) => status::VIRTIO_BLK_S_IOERR,
+            },
             _ => status::VIRTIO_BLK_S_UNSUPP,
         }
     }

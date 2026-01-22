@@ -7,21 +7,20 @@
 extern crate alloc;
 
 mod address_space;
-mod process;
-mod fork;
 mod clone;
 mod exec;
-mod wait;
+mod fork;
 mod futex;
+mod process;
+mod wait;
 
 pub use address_space::UserAddressSpace;
-pub use process::{
-    Credentials, Process, ProcessContext, ProcessTable, Tid,
-    alloc_pid, process_table, clone_flags,
-};
-pub use fork::{do_fork, handle_cow_fault, ForkError};
-pub use clone::{do_clone, CloneError, CloneArgs};
-pub use exec::{do_exec, ExecError};
-pub use wait::{do_wait, do_waitpid, WaitError, WaitOptions, WaitResult, has_children, is_child};
-pub use futex::{futex_wait, futex_wake, FutexError};
+pub use clone::{CloneArgs, CloneError, do_clone};
+pub use exec::{ExecError, do_exec};
+pub use fork::{ForkError, do_fork, handle_cow_fault};
+pub use futex::{FutexError, futex_wait, futex_wake};
 pub use proc_traits::{AddressSpace, MapError, MemoryFlags, Pid, ProcessState, UnmapError};
+pub use process::{
+    Credentials, Process, ProcessContext, ProcessTable, Tid, alloc_pid, clone_flags, process_table,
+};
+pub use wait::{WaitError, WaitOptions, WaitResult, do_wait, do_waitpid, has_children, is_child};

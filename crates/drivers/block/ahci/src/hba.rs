@@ -5,27 +5,27 @@
 pub struct HbaMemory {
     // Generic Host Control (0x00 - 0x2B)
     /// Host Capabilities
-    pub cap: u32,         // 0x00
+    pub cap: u32, // 0x00
     /// Global Host Control
-    pub ghc: u32,         // 0x04
+    pub ghc: u32, // 0x04
     /// Interrupt Status
-    pub is: u32,          // 0x08
+    pub is: u32, // 0x08
     /// Ports Implemented
-    pub pi: u32,          // 0x0C
+    pub pi: u32, // 0x0C
     /// Version
-    pub vs: u32,          // 0x10
+    pub vs: u32, // 0x10
     /// Command Completion Coalescing Control
-    pub ccc_ctl: u32,     // 0x14
+    pub ccc_ctl: u32, // 0x14
     /// Command Completion Coalescing Ports
-    pub ccc_ports: u32,   // 0x18
+    pub ccc_ports: u32, // 0x18
     /// Enclosure Management Location
-    pub em_loc: u32,      // 0x1C
+    pub em_loc: u32, // 0x1C
     /// Enclosure Management Control
-    pub em_ctl: u32,      // 0x20
+    pub em_ctl: u32, // 0x20
     /// Host Capabilities Extended
-    pub cap2: u32,        // 0x24
+    pub cap2: u32, // 0x24
     /// BIOS/OS Handoff Control and Status
-    pub bohc: u32,        // 0x28
+    pub bohc: u32, // 0x28
 
     // Reserved (0x2C - 0x9F)
     _reserved: [u8; 0x74],
@@ -42,45 +42,45 @@ pub struct HbaMemory {
 #[repr(C)]
 pub struct HbaPort {
     /// Command List Base Address (low)
-    pub clb: u32,         // 0x00
+    pub clb: u32, // 0x00
     /// Command List Base Address (high)
-    pub clbu: u32,        // 0x04
+    pub clbu: u32, // 0x04
     /// FIS Base Address (low)
-    pub fb: u32,          // 0x08
+    pub fb: u32, // 0x08
     /// FIS Base Address (high)
-    pub fbu: u32,         // 0x0C
+    pub fbu: u32, // 0x0C
     /// Interrupt Status
-    pub is: u32,          // 0x10
+    pub is: u32, // 0x10
     /// Interrupt Enable
-    pub ie: u32,          // 0x14
+    pub ie: u32, // 0x14
     /// Command and Status
-    pub cmd: u32,         // 0x18
+    pub cmd: u32, // 0x18
     /// Reserved
-    _reserved0: u32,      // 0x1C
+    _reserved0: u32, // 0x1C
     /// Task File Data
-    pub tfd: u32,         // 0x20
+    pub tfd: u32, // 0x20
     /// Signature
-    pub sig: u32,         // 0x24
+    pub sig: u32, // 0x24
     /// Serial ATA Status
-    pub ssts: u32,        // 0x28
+    pub ssts: u32, // 0x28
     /// Serial ATA Control
-    pub sctl: u32,        // 0x2C
+    pub sctl: u32, // 0x2C
     /// Serial ATA Error
-    pub serr: u32,        // 0x30
+    pub serr: u32, // 0x30
     /// Serial ATA Active
-    pub sact: u32,        // 0x34
+    pub sact: u32, // 0x34
     /// Command Issue
-    pub ci: u32,          // 0x38
+    pub ci: u32, // 0x38
     /// Serial ATA Notification
-    pub sntf: u32,        // 0x3C
+    pub sntf: u32, // 0x3C
     /// FIS-based Switching Control
-    pub fbs: u32,         // 0x40
+    pub fbs: u32, // 0x40
     /// Device Sleep
-    pub devslp: u32,      // 0x44
+    pub devslp: u32, // 0x44
     /// Reserved
     _reserved1: [u32; 10], // 0x48 - 0x6F
     /// Vendor Specific
-    _vendor: [u32; 4],    // 0x70 - 0x7F
+    _vendor: [u32; 4], // 0x70 - 0x7F
 }
 
 /// Received FIS structure

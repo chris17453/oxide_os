@@ -134,12 +134,8 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
         // Use the frame allocator to allocate and map pages
         let allocator = frame_allocator();
 
-        match address_space.allocate_pages(
-            VirtAddr::new(map_addr),
-            num_pages,
-            mem_flags,
-            allocator,
-        ) {
+        match address_space.allocate_pages(VirtAddr::new(map_addr), num_pages, mem_flags, allocator)
+        {
             Ok(()) => {}
             Err(_) => return errno::ENOMEM,
         }
@@ -150,7 +146,7 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
         // Seek to the offset
         use vfs::SeekFrom;
         match file.seek(SeekFrom::Start(offset as u64)) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(_) => {
                 // Failed to seek - unmap and return error
                 let _ = sys_munmap(map_addr, length);
@@ -159,9 +155,8 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
         }
 
         // Read file data into the mapped region
-        let buffer = unsafe {
-            core::slice::from_raw_parts_mut(map_addr as *mut u8, length as usize)
-        };
+        let buffer =
+            unsafe { core::slice::from_raw_parts_mut(map_addr as *mut u8, length as usize) };
 
         match file.read(buffer) {
             Ok(bytes_read) => {
@@ -290,7 +285,13 @@ pub fn sys_mprotect(addr: u64, length: u64, prot: i32) -> i64 {
 ///
 /// # Returns
 /// New address on success, negative errno on error
-pub fn sys_mremap(old_addr: u64, old_size: u64, new_size: u64, mremap_flags: i32, _new_addr: u64) -> i64 {
+pub fn sys_mremap(
+    old_addr: u64,
+    old_size: u64,
+    new_size: u64,
+    mremap_flags: i32,
+    _new_addr: u64,
+) -> i64 {
     const MREMAP_MAYMOVE: i32 = 1;
 
     // Validate old address

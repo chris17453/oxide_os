@@ -38,11 +38,11 @@
 
 extern crate alloc;
 
+pub mod buffer;
 pub mod cell;
 pub mod color;
-pub mod buffer;
-pub mod parser;
 pub mod handler;
+pub mod parser;
 pub mod renderer;
 
 use alloc::sync::Arc;
@@ -52,7 +52,7 @@ use spin::Mutex;
 use crate::buffer::{ScreenBuffer, ScrollbackBuffer};
 use crate::cell::{CellAttrs, Cursor};
 use crate::handler::Handler;
-use crate::parser::{Parser, Action};
+use crate::parser::{Action, Parser};
 use crate::renderer::Renderer;
 
 pub use crate::cell::{Cell, CellFlags, CursorShape};
@@ -173,14 +173,22 @@ impl TerminalEmulator {
         match action {
             Action::Print(ch) => {
                 let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
-                let buffer = if is_alt { &mut self.alternate } else { &mut self.primary };
+                let buffer = if is_alt {
+                    &mut self.alternate
+                } else {
+                    &mut self.primary
+                };
                 self.handler.put_char(ch, buffer);
                 self.renderer.mark_dirty(self.handler.cursor.row);
             }
             Action::Execute(byte) => {
                 self.execute_control(byte);
             }
-            Action::CsiDispatch { params, intermediates, final_char } => {
+            Action::CsiDispatch {
+                params,
+                intermediates,
+                final_char,
+            } => {
                 // Need scrollback only if not on alternate screen
                 let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
 
@@ -205,9 +213,16 @@ impl TerminalEmulator {
                 // Mark affected rows dirty
                 self.renderer.mark_all_dirty();
             }
-            Action::EscDispatch { intermediates, final_char } => {
+            Action::EscDispatch {
+                intermediates,
+                final_char,
+            } => {
                 let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
-                let buffer = if is_alt { &mut self.alternate } else { &mut self.primary };
+                let buffer = if is_alt {
+                    &mut self.alternate
+                } else {
+                    &mut self.primary
+                };
                 self.handler.handle_esc(&intermediates, final_char, buffer);
                 self.renderer.mark_all_dirty();
             }
@@ -245,7 +260,8 @@ impl TerminalEmulator {
                 let scrolled = if is_alt {
                     self.handler.linefeed(&mut self.alternate, None)
                 } else {
-                    self.handler.linefeed(&mut self.primary, Some(&mut self.scrollback))
+                    self.handler
+                        .linefeed(&mut self.primary, Some(&mut self.scrollback))
                 };
 
                 self.renderer.mark_dirty(old_row);
@@ -276,7 +292,11 @@ impl TerminalEmulator {
         self.scroll_offset = 0;
 
         let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
-        let buffer = if is_alt { &self.alternate } else { &self.primary };
+        let buffer = if is_alt {
+            &self.alternate
+        } else {
+            &self.primary
+        };
         let cursor = self.handler.cursor;
         self.renderer.render(buffer, &cursor);
     }
@@ -284,7 +304,11 @@ impl TerminalEmulator {
     /// Clear the terminal
     pub fn clear(&mut self) {
         let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
-        let buffer = if is_alt { &mut self.alternate } else { &mut self.primary };
+        let buffer = if is_alt {
+            &mut self.alternate
+        } else {
+            &mut self.primary
+        };
         buffer.clear();
         self.handler.cursor.row = 0;
         self.handler.cursor.col = 0;
@@ -299,7 +323,11 @@ impl TerminalEmulator {
         if self.handler.cursor.visible {
             // Re-render cursor
             let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
-            let buffer = if is_alt { &self.alternate } else { &self.primary };
+            let buffer = if is_alt {
+                &self.alternate
+            } else {
+                &self.primary
+            };
             let cursor = self.handler.cursor;
             self.renderer.render(buffer, &cursor);
         }

@@ -30,8 +30,9 @@ fn main(_argc: i32, _argv: *const *const u8) -> i32 {
     // Day of week
     let dow = ((days_since_epoch + 4) % 7) as usize; // Jan 1, 1970 was Thursday
     let dow_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    let month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let month_names = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
 
     // Print: "Wed Jan 15 14:30:00 UTC 2025"
     prints(dow_names[dow]);

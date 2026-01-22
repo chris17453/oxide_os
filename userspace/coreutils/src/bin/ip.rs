@@ -28,13 +28,17 @@ fn show_usage() {
 }
 
 fn show_addr() {
-    printlns("1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000");
+    printlns(
+        "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000",
+    );
     printlns("    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00");
     printlns("    inet 127.0.0.1/8 scope host lo");
     printlns("       valid_lft forever preferred_lft forever");
     printlns("    inet6 ::1/128 scope host");
     printlns("       valid_lft forever preferred_lft forever");
-    printlns("2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP group default qlen 1000");
+    printlns(
+        "2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP group default qlen 1000",
+    );
     printlns("    link/ether 52:54:00:12:34:56 brd ff:ff:ff:ff:ff:ff");
     printlns("    inet 10.0.2.15/24 brd 10.0.2.255 scope global dynamic eth0");
     printlns("       valid_lft 86399sec preferred_lft 86399sec");
@@ -43,9 +47,13 @@ fn show_addr() {
 }
 
 fn show_link() {
-    printlns("1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000");
+    printlns(
+        "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000",
+    );
     printlns("    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00");
-    printlns("2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP mode DEFAULT group default qlen 1000");
+    printlns(
+        "2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP mode DEFAULT group default qlen 1000",
+    );
     printlns("    link/ether 52:54:00:12:34:56 brd ff:ff:ff:ff:ff:ff");
 }
 

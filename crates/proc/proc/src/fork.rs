@@ -3,17 +3,13 @@
 //! Implements the fork() system call, creating a child process
 //! with a copy of the parent's address space using COW semantics.
 
-use os_core::{PhysAddr, VirtAddr};
 use mm_cow::cow_tracker;
-use mm_paging::{
-    phys_to_virt, PageTable, PageTableFlags, flush_tlb,
-};
+use mm_paging::{PageTable, PageTableFlags, flush_tlb, phys_to_virt};
 use mm_traits::FrameAllocator;
+use os_core::{PhysAddr, VirtAddr};
 use proc_traits::Pid;
 
-use crate::{
-    Process, ProcessContext, UserAddressSpace, alloc_pid, process_table,
-};
+use crate::{Process, ProcessContext, UserAddressSpace, alloc_pid, process_table};
 
 /// Error during fork
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,9 +43,8 @@ pub fn do_fork<A: FrameAllocator>(
     let child_pid = alloc_pid();
 
     // Clone address space with COW
-    let child_address_space = unsafe {
-        clone_address_space_cow(parent.address_space(), allocator)?
-    };
+    let child_address_space =
+        unsafe { clone_address_space_cow(parent.address_space(), allocator)? };
 
     // Allocate kernel stack for child - inherit size from parent
     let kernel_stack_size = parent.kernel_stack_size();
@@ -156,7 +151,10 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
         // Set child PML4 entry
         child_pml4[pml4_idx].set(
             child_pdpt_phys,
-            pml4_entry.flags() | PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER,
+            pml4_entry.flags()
+                | PageTableFlags::PRESENT
+                | PageTableFlags::WRITABLE
+                | PageTableFlags::USER,
         );
 
         for pdpt_idx in 0..512 {
@@ -170,7 +168,10 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
                 if pdpt_entry.is_writable() {
                     let flags = pdpt_entry.flags();
                     pdpt_entry.set_flags(flags & !PageTableFlags::WRITABLE | PageTableFlags::COW);
-                    child_pdpt[pdpt_idx].set(pdpt_entry.addr(), flags & !PageTableFlags::WRITABLE | PageTableFlags::COW);
+                    child_pdpt[pdpt_idx].set(
+                        pdpt_entry.addr(),
+                        flags & !PageTableFlags::WRITABLE | PageTableFlags::COW,
+                    );
                     cow_tracker().increment(pdpt_entry.addr());
                 } else {
                     child_pdpt[pdpt_idx] = *pdpt_entry;
@@ -192,7 +193,10 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
             // Set child PDPT entry
             child_pdpt[pdpt_idx].set(
                 child_pd_phys,
-                pdpt_entry.flags() | PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER,
+                pdpt_entry.flags()
+                    | PageTableFlags::PRESENT
+                    | PageTableFlags::WRITABLE
+                    | PageTableFlags::USER,
             );
 
             for pd_idx in 0..512 {
@@ -206,7 +210,10 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
                     if pd_entry.is_writable() {
                         let flags = pd_entry.flags();
                         pd_entry.set_flags(flags & !PageTableFlags::WRITABLE | PageTableFlags::COW);
-                        child_pd[pd_idx].set(pd_entry.addr(), flags & !PageTableFlags::WRITABLE | PageTableFlags::COW);
+                        child_pd[pd_idx].set(
+                            pd_entry.addr(),
+                            flags & !PageTableFlags::WRITABLE | PageTableFlags::COW,
+                        );
                         cow_tracker().increment(pd_entry.addr());
                     } else {
                         child_pd[pd_idx] = *pd_entry;
@@ -228,7 +235,10 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
                 // Set child PD entry
                 child_pd[pd_idx].set(
                     child_pt_phys,
-                    pd_entry.flags() | PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER,
+                    pd_entry.flags()
+                        | PageTableFlags::PRESENT
+                        | PageTableFlags::WRITABLE
+                        | PageTableFlags::USER,
                 );
 
                 // Clone individual pages
@@ -261,9 +271,7 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
     }
 
     // Create child address space
-    let child_as = unsafe {
-        UserAddressSpace::from_raw(child_pml4_phys, child_frames)
-    };
+    let child_as = unsafe { UserAddressSpace::from_raw(child_pml4_phys, child_frames) };
 
     Ok(child_as)
 }

@@ -11,20 +11,20 @@
 extern crate alloc;
 
 pub mod elf;
-pub mod symbol;
 pub mod reloc;
+pub mod symbol;
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::ffi::{c_int, c_void, c_char};
+use core::ffi::{c_char, c_int, c_void};
 use core::sync::atomic::{AtomicU64, Ordering};
 use spin::Mutex;
 
 pub use elf::{ElfFile, ElfHeader, ProgramHeader, SectionHeader, Symbol as ElfSymbol};
-pub use symbol::{SymbolTable, SymbolInfo};
-pub use reloc::{Relocation, RelocationType, apply_relocation};
+pub use reloc::{apply_relocation, Relocation, RelocationType};
+pub use symbol::{SymbolInfo, SymbolTable};
 
 /// dlopen flags
 pub mod flags {

@@ -22,7 +22,7 @@ impl CpuController {
     /// Create new CPU controller
     pub fn new() -> Self {
         CpuController {
-            quota_us: AtomicU64::new(0), // Unlimited
+            quota_us: AtomicU64::new(0),       // Unlimited
             period_us: AtomicU64::new(100000), // 100ms
             usage_us: AtomicU64::new(0),
             total_usage_us: AtomicU64::new(0),

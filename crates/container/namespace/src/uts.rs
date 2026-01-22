@@ -1,9 +1,9 @@
 //! UTS Namespace (hostname and domain name)
 
+use crate::{NsError, NsResult, alloc_ns_id};
 use alloc::string::String;
 use alloc::sync::Arc;
 use spin::RwLock;
-use crate::{alloc_ns_id, NsResult, NsError};
 
 /// Maximum hostname length
 pub const HOST_NAME_MAX: usize = 64;

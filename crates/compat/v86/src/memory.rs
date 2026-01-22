@@ -1,8 +1,8 @@
 //! V86 memory management
 
+use crate::V86Error;
 use alloc::vec;
 use alloc::vec::Vec;
-use crate::V86Error;
 
 /// V86 memory (1MB address space)
 #[derive(Clone)]
@@ -19,8 +19,8 @@ impl V86Memory {
     /// Create new V86 memory
     pub fn new() -> Self {
         V86Memory {
-            conventional: vec![0; 640 * 1024],  // 640KB
-            uma: vec![0; 384 * 1024],           // 384KB UMA
+            conventional: vec![0; 640 * 1024], // 640KB
+            uma: vec![0; 384 * 1024],          // 384KB UMA
             xms: None,
         }
     }
@@ -129,7 +129,11 @@ impl V86Memory {
     }
 
     /// Read string from linear address (null-terminated)
-    pub fn read_string(&self, addr: u32, max_len: usize) -> Result<alloc::string::String, V86Error> {
+    pub fn read_string(
+        &self,
+        addr: u32,
+        max_len: usize,
+    ) -> Result<alloc::string::String, V86Error> {
         let mut result = alloc::string::String::new();
         for i in 0..max_len {
             let byte = self.read_u8(addr + i as u32)?;
@@ -142,7 +146,11 @@ impl V86Memory {
     }
 
     /// Read DOS-style string ($-terminated)
-    pub fn read_dos_string(&self, addr: u32, max_len: usize) -> Result<alloc::string::String, V86Error> {
+    pub fn read_dos_string(
+        &self,
+        addr: u32,
+        max_len: usize,
+    ) -> Result<alloc::string::String, V86Error> {
         let mut result = alloc::string::String::new();
         for i in 0..max_len {
             let byte = self.read_u8(addr + i as u32)?;
@@ -183,7 +191,12 @@ impl V86Memory {
     }
 
     /// Set interrupt vector
-    pub fn set_int_vector(&mut self, int_num: u8, segment: u16, offset: u16) -> Result<(), V86Error> {
+    pub fn set_int_vector(
+        &mut self,
+        int_num: u8,
+        segment: u16,
+        offset: u16,
+    ) -> Result<(), V86Error> {
         let addr = (int_num as u32) * 4;
         self.write_u16(addr, offset)?;
         self.write_u16(addr + 2, segment)?;

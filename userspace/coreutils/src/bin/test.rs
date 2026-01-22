@@ -114,8 +114,20 @@ fn evaluate(start: usize, end: usize) -> i32 {
 fn evaluate_unary(op: &[u8], arg: &[u8]) -> i32 {
     match op {
         // String tests
-        b"-n" => if !arg.is_empty() { 0 } else { 1 },
-        b"-z" => if arg.is_empty() { 0 } else { 1 },
+        b"-n" => {
+            if !arg.is_empty() {
+                0
+            } else {
+                1
+            }
+        }
+        b"-z" => {
+            if arg.is_empty() {
+                0
+            } else {
+                1
+            }
+        }
 
         // File tests
         b"-e" | b"-a" => file_exists(arg),
@@ -142,8 +154,20 @@ fn evaluate_unary(op: &[u8], arg: &[u8]) -> i32 {
 fn evaluate_binary(left: &[u8], op: &[u8], right: &[u8]) -> i32 {
     match op {
         // String comparison
-        b"=" | b"==" => if left == right { 0 } else { 1 },
-        b"!=" => if left != right { 0 } else { 1 },
+        b"=" | b"==" => {
+            if left == right {
+                0
+            } else {
+                1
+            }
+        }
+        b"!=" => {
+            if left != right {
+                0
+            } else {
+                1
+            }
+        }
 
         // Numeric comparison
         b"-eq" => int_cmp(left, right, |a, b| a == b),
@@ -168,7 +192,13 @@ fn evaluate_binary(left: &[u8], op: &[u8], right: &[u8]) -> i32 {
 /// Integer comparison helper
 fn int_cmp<F: Fn(i64, i64) -> bool>(left: &[u8], right: &[u8], cmp: F) -> i32 {
     match (parse_int(left), parse_int(right)) {
-        (Some(a), Some(b)) => if cmp(a, b) { 0 } else { 1 },
+        (Some(a), Some(b)) => {
+            if cmp(a, b) {
+                0
+            } else {
+                1
+            }
+        }
         _ => {
             eputs("test: integer expression expected\n");
             2
@@ -346,5 +376,9 @@ fn same_file(file1: &[u8], file2: &[u8]) -> i32 {
         Some(st) => st,
         None => return 1,
     };
-    if st1.dev == st2.dev && st1.ino == st2.ino { 0 } else { 1 }
+    if st1.dev == st2.dev && st1.ino == st2.ino {
+        0
+    } else {
+        1
+    }
 }

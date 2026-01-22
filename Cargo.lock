@@ -93,6 +93,7 @@ name = "boot-uefi"
 version = "0.1.0"
 dependencies = [
  "boot-proto",
+ "fb",
  "uefi",
 ]
 
@@ -840,6 +841,14 @@ dependencies = [
  "block",
  "spin 0.10.0",
  "vfs",
+]
+
+[[package]]
+name = "passwd"
+version = "0.1.0"
+dependencies = [
+ "libc 0.1.0",
+ "login",
 ]
 
 [[package]]

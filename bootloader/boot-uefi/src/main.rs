@@ -7,24 +7,23 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
-use alloc::format;
+use alloc::{format, string::String, vec::Vec};
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::ptr;
 
 use boot_proto::{
-    BootInfo, FramebufferInfo, MemoryRegion, MemoryType, PixelFormat,
-    BOOT_INFO_MAGIC, MAX_MEMORY_REGIONS, KERNEL_VIRT_BASE, PHYS_MAP_BASE,
+    BOOT_INFO_MAGIC, BootInfo, FramebufferInfo, KERNEL_VIRT_BASE, MAX_MEMORY_REGIONS, MemoryRegion,
+    MemoryType, PHYS_MAP_BASE, PixelFormat,
 };
+use uefi::Char16;
+use uefi::mem::memory_map::MemoryMap;
 use uefi::prelude::*;
-use uefi::proto::console::gop::{GraphicsOutput, BltOp, BltPixel};
+use uefi::proto::console::gop::{BltOp, BltPixel, GraphicsOutput};
 use uefi::proto::console::text::{Key, ScanCode};
 use uefi::proto::media::file::{File, FileAttribute, FileInfo, FileMode, FileType};
 use uefi::proto::media::fs::SimpleFileSystem;
 use uefi::table::boot::{AllocateType, MemoryType as UefiMemoryType};
-use uefi::mem::memory_map::MemoryMap;
-use uefi::{Char16};
 
 mod elf;
 mod paging;
@@ -41,53 +40,28 @@ const PAGE_SIZE: u64 = 4096;
 /// Boot screen timeout in seconds
 const BOOT_TIMEOUT_SECONDS: u8 = 15;
 
-/// Boot display modes
-#[derive(Clone, Copy, PartialEq)]
-enum DisplayMode {
-    Graphical,
-    Ascii,
-    Text,  // Traditional text-only
+#[derive(Clone, Copy)]
+struct ProgressLayout {
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    text_y: usize,
 }
 
-/// Boot configuration
-struct BootConfig {
-    display_mode: DisplayMode,
-    timeout_seconds: u8,
-}
+static mut PROGRESS_LAYOUT: Option<ProgressLayout> = None;
 
 #[entry]
 fn main() -> Status {
     // Initialize UEFI services
     uefi::helpers::init().expect("Failed to initialize UEFI helpers");
 
-    // Default boot configuration
-    let mut config = BootConfig {
-        display_mode: DisplayMode::Graphical,
-        timeout_seconds: BOOT_TIMEOUT_SECONDS,
-    };
+    // Show graphical logo (non-blocking) and continue boot
+    let _ = display_graphical_logo();
 
-    // Show interactive boot screen and handle user input
-    config = show_boot_screen(config);
-    
     // Clear screen for boot process
     clear_screen();
-    
-    // Display logo based on selected mode
-    match config.display_mode {
-        DisplayMode::Graphical => {
-            if !display_graphical_logo() {
-                // Fallback to ASCII if graphics not available
-                display_ascii_logo();
-            }
-        }
-        DisplayMode::Ascii => display_ascii_logo(),
-        DisplayMode::Text => {
-            // Skip logo, go straight to text boot
-            log("OXIDE UEFI Bootloader - Text Mode");
-            log("=====================================");
-        }
-    }
-    
+
     // Initialize progress tracking
     let total_steps = 12;
     let mut current_step = 0;
@@ -113,10 +87,14 @@ fn main() -> Status {
     };
 
     // Step 3: Allocate memory for kernel
-    update_progress(&mut current_step, total_steps, "Allocating kernel memory...");
+    update_progress(
+        &mut current_step,
+        total_steps,
+        "Allocating kernel memory...",
+    );
     let kernel_pages = (elf_info.load_size + PAGE_SIZE - 1) / PAGE_SIZE;
-    let kernel_phys = allocate_pages(kernel_pages as usize)
-        .expect("Failed to allocate memory for kernel");
+    let kernel_phys =
+        allocate_pages(kernel_pages as usize).expect("Failed to allocate memory for kernel");
 
     // Step 4: Load kernel segments
     update_progress(&mut current_step, total_steps, "Loading kernel segments...");
@@ -126,7 +104,7 @@ fn main() -> Status {
     update_progress(&mut current_step, total_steps, "Loading initramfs...");
     let (initramfs_phys, initramfs_size) = match load_initramfs() {
         Ok((phys, size)) => (phys, size),
-        Err(_) => (0, 0) // Non-fatal
+        Err(_) => (0, 0), // Non-fatal
     };
 
     // Step 6: Initialize graphics
@@ -146,7 +124,11 @@ fn main() -> Status {
     let memory_regions = get_memory_map();
 
     // Step 10: Create boot info
-    update_progress(&mut current_step, total_steps, "Creating boot information...");
+    update_progress(
+        &mut current_step,
+        total_steps,
+        "Creating boot information...",
+    );
     let boot_info = create_boot_info(
         kernel_phys,
         elf_info.load_size,
@@ -170,8 +152,15 @@ fn main() -> Status {
     let boot_info_virt = PHYS_MAP_BASE + boot_info_phys;
 
     // Step 12: Transfer control to kernel
-    update_progress(&mut current_step, total_steps, "Transferring control to kernel...");
-    
+    update_progress(
+        &mut current_step,
+        total_steps,
+        "Transferring control to kernel...",
+    );
+
+    // Ensure splash visibility up to BOOT_TIMEOUT_SECONDS while boot work ran concurrently
+    spin_wait_ms(BOOT_TIMEOUT_SECONDS as u64 * 1000);
+
     // Show final boot message
     log("");
     log("🚀 Boot complete! Launching OXIDE OS...");
@@ -208,79 +197,9 @@ fn clear_screen() {
     }
 }
 
-/// Show interactive boot screen with user options
-fn show_boot_screen(mut config: BootConfig) -> BootConfig {
-    // Initialize timer for accurate timeout tracking
-    init_timer();
-    clear_screen();
-    
-    // Display boot options screen
-    log("");
-    log("        ██████╗ ██╗  ██╗██╗██████╗ ███████╗");
-    log("       ██╔═══██╗╚██╗██╔╝██║██╔══██╗██╔════╝");
-    log("       ██║   ██║ ╚███╔╝ ██║██║  ██║█████╗  ");
-    log("       ██║   ██║ ██╔██╗ ██║██║  ██║██╔══╝  ");
-    log("       ╚██████╔╝██╔╝ ██╗██║██████╔╝███████╗");
-    log("        ╚═════╝ ╚═╝  ╚═╝╚═╝╚═════╝ ╚══════╝");
-    log("");
-    log("            Operating System - Version 0.1.0");
-    log("");
-    log("═══════════════════════════════════════════════════");
-    // Use format! to include dynamic timeout
-    let timeout_msg = format!("  Boot Options - Press key within {} seconds:", config.timeout_seconds);
-    log(&timeout_msg);
-    log("═══════════════════════════════════════════════════");
-    log("");
-    
-    match config.display_mode {
-        DisplayMode::Graphical => log("  Current Mode: [GRAPHICAL] ASCII  TEXT"),
-        DisplayMode::Ascii => log("  Current Mode:  GRAPHICAL [ASCII]  TEXT"),
-        DisplayMode::Text => log("  Current Mode:  GRAPHICAL  ASCII [TEXT]"),
-    }
-    log("");
-    log("  [TAB]   - Cycle display modes");
-    log("  [ESC]   - Skip to text mode");
-    log("  [ENTER] - Continue with current mode");
-    log("");
-    
-    // Wait for user input with timeout
-    let start_time = get_time_ms();
-    let timeout_ms = config.timeout_seconds as u64 * 1000;
-    
-    loop {
-        // Check for timeout (use saturating_sub to prevent overflow)
-        if get_time_ms().saturating_sub(start_time) > timeout_ms {
-            break;
-        }
-        
-        // Check for key input
-        if let Some(key) = check_key_press() {
-            match key {
-                Key::Special(ScanCode::ESCAPE) => {
-                    config.display_mode = DisplayMode::Text;
-                    break;
-                }
-                Key::Printable(c) if c == Char16::try_from('\t').unwrap_or(Char16::try_from(' ').unwrap()) => {
-                    config.display_mode = match config.display_mode {
-                        DisplayMode::Graphical => DisplayMode::Ascii,
-                        DisplayMode::Ascii => DisplayMode::Text,
-                        DisplayMode::Text => DisplayMode::Graphical,
-                    };
-                    // Refresh display
-                    return show_boot_screen(config);
-                }
-                Key::Printable(c) if c == Char16::try_from('\r').unwrap_or(Char16::try_from(' ').unwrap()) || c == Char16::try_from('\n').unwrap_or(Char16::try_from(' ').unwrap()) => {
-                    break;
-                }
-                _ => {}
-            }
-        }
-        
-        // Small delay to prevent busy waiting
-        spin_wait_ms(50);
-    }
-    
-    config
+/// Busy-wait helper (not used for boot delay anymore)
+fn wait_boot_delay(seconds: u8) {
+    let _ = seconds;
 }
 
 /// Display graphical logo (if graphics available)
@@ -291,30 +210,47 @@ fn display_graphical_logo() -> bool {
         None => return false,
     };
     let bs = st.boot_services();
-    
+
     // Get graphics output protocol
     let gop_handle = match bs.get_handle_for_protocol::<GraphicsOutput>() {
         Ok(handle) => handle,
         Err(_) => return false,
     };
-    
+
     let mut gop = match bs.open_protocol_exclusive::<GraphicsOutput>(gop_handle) {
         Ok(gop) => gop,
         Err(_) => return false,
     };
-    
+
     let mode = gop.current_mode_info();
     let (width, height) = mode.resolution();
-    
+
     // Draw a simple graphical logo
     draw_oxide_logo(&mut *gop, width, height);
-    
+
+    // Prepare progress layout near bottom of screen
+    let bar_width = width.saturating_mul(2) / 3;
+    let bar_height = 24;
+    let bar_x = (width - bar_width) / 2;
+    let bar_y = height.saturating_sub(80);
+    unsafe {
+        PROGRESS_LAYOUT = Some(ProgressLayout {
+            x: bar_x,
+            y: bar_y,
+            width: bar_width,
+            height: bar_height,
+            text_y: bar_y.saturating_sub(30),
+        });
+    }
+    // Draw initial empty bar
+    draw_progress_bar(&mut *gop, 0, 1, "Starting...");
+
     // Display text information
     log("");
     log("            Operating System - Version 0.1.0");
     log("              UEFI Bootloader Starting...");
     log("");
-    
+
     true
 }
 
@@ -324,11 +260,11 @@ fn draw_oxide_logo(gop: &mut GraphicsOutput, width: usize, height: usize) {
     let logo_height = 200;
     let start_x = (width - logo_width) / 2;
     let start_y = (height - logo_height) / 2;
-    
+
     // Create a simple geometric logo
     let oxide_color = BltPixel::new(0, 150, 255); // Blue
-    let bg_color = BltPixel::new(20, 20, 20);     // Dark background
-    
+    let bg_color = BltPixel::new(20, 20, 20); // Dark background
+
     // Draw background rectangle
     for y in start_y..start_y + logo_height {
         for x in start_x..start_x + logo_width {
@@ -339,7 +275,7 @@ fn draw_oxide_logo(gop: &mut GraphicsOutput, width: usize, height: usize) {
             });
         }
     }
-    
+
     // Draw OXIDE text pattern (simplified geometric representation)
     // This is a basic implementation - in a real system you'd use proper font rendering
     draw_letter_o(gop, start_x + 50, start_y + 60, oxide_color);
@@ -354,8 +290,9 @@ fn draw_letter_o(gop: &mut GraphicsOutput, x: usize, y: usize, color: BltPixel) 
     // Draw a circle-like shape for 'O'
     for dy in 0..60 {
         for dx in 0..40 {
-            if (dx == 0 || dx == 39 || dy == 0 || dy == 59) ||
-               (dx > 5 && dx < 35 && (dy < 8 || dy > 52)) {
+            if (dx == 0 || dx == 39 || dy == 0 || dy == 59)
+                || (dx > 5 && dx < 35 && (dy < 8 || dy > 52))
+            {
                 let _ = gop.blt(BltOp::VideoFill {
                     color,
                     dest: (x + dx, y + dy),
@@ -400,8 +337,12 @@ fn draw_letter_d(gop: &mut GraphicsOutput, x: usize, y: usize, color: BltPixel) 
     // Draw a D shape
     for dy in 0..60 {
         for dx in 0..40 {
-            if dx == 0 || (dx > 20 && ((dy < 8 && dx < 35) || (dy > 52 && dx < 35) || 
-                                      (dy >= 8 && dy <= 52 && dx == 35))) {
+            if dx == 0
+                || (dx > 20
+                    && ((dy < 8 && dx < 35)
+                        || (dy > 52 && dx < 35)
+                        || (dy >= 8 && dy <= 52 && dx == 35)))
+            {
                 let _ = gop.blt(BltOp::VideoFill {
                     color,
                     dest: (x + dx, y + dy),
@@ -447,7 +388,7 @@ fn display_progress(current: usize, total: usize, message: &str) {
     let progress_width = 40;
     let filled = (current * progress_width) / total;
     let empty = progress_width - filled;
-    
+
     let mut progress_bar = alloc::string::String::new();
     progress_bar.push('[');
     for _ in 0..filled {
@@ -457,18 +398,26 @@ fn display_progress(current: usize, total: usize, message: &str) {
         progress_bar.push('░');
     }
     progress_bar.push(']');
-    
+
     let percentage = (current * 100) / total;
-    
-    // Clear previous lines and display new progress
+
+    // Draw to serial (existing)
     if let Some(mut st) = uefi::table::system_table_boot() {
-        // Move cursor up and clear lines
-        let _ = st.stdout().write_str("\x1b[2K\r"); // Clear current line
-        let _ = st.stdout().write_str("\x1b[1A\x1b[2K\r"); // Move up and clear previous line
+        let _ = st.stdout().write_str("\x1b[2K\r");
+        let _ = st.stdout().write_str("\x1b[1A\x1b[2K\r");
+        log_fmt(format_args!("{} {}% {}", progress_bar, percentage, message));
+        log("");
     }
-    
-    log_fmt(format_args!("{} {}% {}", progress_bar, percentage, message));
-    log("");
+
+    // Draw to graphics if available
+    if let Some(st) = uefi::table::system_table_boot() {
+        let bs = st.boot_services();
+        if let Ok(handle) = bs.get_handle_for_protocol::<GraphicsOutput>() {
+            if let Ok(mut gop) = bs.open_protocol_exclusive::<GraphicsOutput>(handle) {
+                draw_progress_bar(&mut *gop, current, total, message);
+            }
+        }
+    }
 }
 
 /// Update progress and display current operation
@@ -477,11 +426,253 @@ fn update_progress(step: &mut usize, total: usize, message: &str) {
     display_progress(*step, total, message);
 }
 
+fn draw_progress_bar(gop: &mut GraphicsOutput, current: usize, total: usize, message: &str) {
+    let mode = gop.current_mode_info();
+    let (width, _height) = mode.resolution();
+    let layout = unsafe {
+        PROGRESS_LAYOUT.unwrap_or(ProgressLayout {
+            x: width / 6,
+            y: _height.saturating_sub(80),
+            width: width * 2 / 3,
+            height: 24,
+            text_y: _height.saturating_sub(110),
+        })
+    };
+
+    let bg = BltPixel::new(30, 30, 30);
+    let fill = BltPixel::new(30, 180, 50);
+    let border = BltPixel::new(80, 80, 80);
+    let text_color = BltPixel::new(220, 220, 220);
+
+    // Background and border
+    fill_rect(gop, layout.x, layout.y, layout.width, layout.height, bg);
+    fill_rect(gop, layout.x, layout.y, layout.width, 2, border);
+    fill_rect(
+        gop,
+        layout.x,
+        layout.y + layout.height - 2,
+        layout.width,
+        2,
+        border,
+    );
+    fill_rect(gop, layout.x, layout.y, 2, layout.height, border);
+    fill_rect(
+        gop,
+        layout.x + layout.width - 2,
+        layout.y,
+        2,
+        layout.height,
+        border,
+    );
+
+    // Fill bar
+    let inner_x = layout.x + 3;
+    let inner_y = layout.y + 3;
+    let inner_w = layout.width.saturating_sub(6);
+    let inner_h = layout.height.saturating_sub(6);
+    let filled_w = if total == 0 {
+        0
+    } else {
+        (inner_w * current.min(total)) / total
+    };
+    fill_rect(gop, inner_x, inner_y, inner_w, inner_h, bg);
+    if filled_w > 0 {
+        fill_rect(gop, inner_x, inner_y, filled_w, inner_h, fill);
+    }
+
+    // Render message and percentage
+    let pct = if total == 0 {
+        0
+    } else {
+        (current * 100) / total
+    };
+    let mut upper = String::new();
+    for ch in message.chars() {
+        upper.extend(ch.to_uppercase());
+    }
+    let msg = format!("{}% {}", pct, upper);
+    let max_chars = layout.width / 8;
+    let truncated = if msg.len() > max_chars {
+        &msg[..max_chars]
+    } else {
+        &msg
+    };
+    draw_text(gop, layout.x, layout.text_y, truncated, text_color, bg);
+}
+
+fn fill_rect(gop: &mut GraphicsOutput, x: usize, y: usize, w: usize, h: usize, color: BltPixel) {
+    for yy in y..y + h {
+        for xx in x..x + w {
+            let _ = gop.blt(BltOp::VideoFill {
+                color,
+                dest: (xx, yy),
+                dims: (1, 1),
+            });
+        }
+    }
+}
+
+fn draw_text(gop: &mut GraphicsOutput, x: usize, y: usize, text: &str, fg: BltPixel, bg: BltPixel) {
+    let mut cursor_x = x;
+    for ch in text.chars() {
+        draw_char(gop, cursor_x, y, ch, fg, bg);
+        cursor_x += 8;
+    }
+}
+
+fn draw_char(gop: &mut GraphicsOutput, x: usize, y: usize, ch: char, fg: BltPixel, bg: BltPixel) {
+    let glyph = glyph_for(ch);
+    for (row, bits) in glyph.iter().enumerate() {
+        for col in 0..5 {
+            let color = if (bits >> (4 - col)) & 1 == 1 { fg } else { bg };
+            let _ = gop.blt(BltOp::VideoFill {
+                color,
+                dest: (x + col, y + row),
+                dims: (1, 1),
+            });
+        }
+    }
+}
+
+fn glyph_for(ch: char) -> [u8; 7] {
+    match ch {
+        'A' => [
+            0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
+        ],
+        'B' => [
+            0b11110, 0b10001, 0b11110, 0b10001, 0b10001, 0b10001, 0b11110,
+        ],
+        'C' => [
+            0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110,
+        ],
+        'D' => [
+            0b11100, 0b10010, 0b10001, 0b10001, 0b10001, 0b10010, 0b11100,
+        ],
+        'E' => [
+            0b11111, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000, 0b11111,
+        ],
+        'F' => [
+            0b11111, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000, 0b10000,
+        ],
+        'G' => [
+            0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110,
+        ],
+        'H' => [
+            0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001, 0b10001,
+        ],
+        'I' => [
+            0b01110, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
+        ],
+        'J' => [
+            0b00001, 0b00001, 0b00001, 0b00001, 0b10001, 0b10001, 0b01110,
+        ],
+        'K' => [
+            0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001,
+        ],
+        'L' => [
+            0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111,
+        ],
+        'M' => [
+            0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001,
+        ],
+        'N' => [
+            0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001,
+        ],
+        'O' => [
+            0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
+        ],
+        'P' => [
+            0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000,
+        ],
+        'Q' => [
+            0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101,
+        ],
+        'R' => [
+            0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001,
+        ],
+        'S' => [
+            0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110,
+        ],
+        'T' => [
+            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
+        ],
+        'U' => [
+            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
+        ],
+        'V' => [
+            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100,
+        ],
+        'W' => [
+            0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b10101, 0b01010,
+        ],
+        'X' => [
+            0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001,
+        ],
+        'Y' => [
+            0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100,
+        ],
+        'Z' => [
+            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111,
+        ],
+        '0' => [
+            0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110,
+        ],
+        '1' => [
+            0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
+        ],
+        '2' => [
+            0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111,
+        ],
+        '3' => [
+            0b11110, 0b00001, 0b00001, 0b00110, 0b00001, 0b00001, 0b11110,
+        ],
+        '4' => [
+            0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010,
+        ],
+        '5' => [
+            0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b00001, 0b11110,
+        ],
+        '6' => [
+            0b01110, 0b10000, 0b11110, 0b10001, 0b10001, 0b10001, 0b01110,
+        ],
+        '7' => [
+            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b10000,
+        ],
+        '8' => [
+            0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110,
+        ],
+        '9' => [
+            0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b01110,
+        ],
+        ':' => [
+            0b00000, 0b00100, 0b00000, 0b00000, 0b00000, 0b00100, 0b00000,
+        ],
+        '.' => [
+            0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00100, 0b00000,
+        ],
+        '-' => [
+            0b00000, 0b00000, 0b00000, 0b01110, 0b00000, 0b00000, 0b00000,
+        ],
+        '/' => [
+            0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b00000, 0b00000,
+        ],
+        ' ' => [
+            0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000,
+        ],
+        '_' => [
+            0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b11111,
+        ],
+        _ => [
+            0b11111, 0b10001, 0b10101, 0b10001, 0b10101, 0b10001, 0b11111,
+        ],
+    }
+}
+
 /// Check for key press without blocking
 fn check_key_press() -> Option<Key> {
     let mut st = uefi::table::system_table_boot()?;
     let stdin = st.stdin();
-    
+
     // Check if a key is available
     match stdin.read_key() {
         Ok(Some(key)) => Some(key),
@@ -489,34 +680,11 @@ fn check_key_press() -> Option<Key> {
     }
 }
 
-/// Simple elapsed time tracker
-static mut ELAPSED_MS: u64 = 0;
-
-fn init_timer() {
-    unsafe {
-        ELAPSED_MS = 0;
-    }
-}
-
-fn get_time_ms() -> u64 {
-    unsafe { ELAPSED_MS }
-}
-
-/// Spin wait for specified milliseconds
-/// Uses a calibrated busy loop since UEFI stall may not work reliably in QEMU
+/// Spin wait for specified milliseconds (UEFI stall only)
 fn spin_wait_ms(ms: u64) {
-    // Try UEFI stall first
     if let Some(st) = uefi::table::system_table_boot() {
         st.boot_services().stall(ms as usize * 1000);
     }
-
-    // Also do a CPU busy-wait as backup (roughly calibrated for ~1ms per 100000 iterations)
-    // This ensures we actually wait even if stall doesn't work
-    for _ in 0..(ms * 50000) {
-        unsafe { core::arch::asm!("pause", options(nomem, nostack)) };
-    }
-
-    unsafe { ELAPSED_MS += ms; }
 }
 
 /// Load the kernel file from the EFI system partition
@@ -593,7 +761,10 @@ fn load_initramfs() -> Result<(u64, u64), &'static str> {
         )
         .map_err(|_| "Initramfs file not found")?;
 
-    let mut initramfs_file = match initramfs_handle.into_type().map_err(|_| "Invalid file type")? {
+    let mut initramfs_file = match initramfs_handle
+        .into_type()
+        .map_err(|_| "Invalid file type")?
+    {
         FileType::Regular(f) => f,
         FileType::Dir(_) => return Err("Initramfs path is a directory"),
     };
@@ -614,7 +785,8 @@ fn load_initramfs() -> Result<(u64, u64), &'static str> {
     let phys_addr = allocate_pages(pages as usize).ok_or("Failed to allocate initramfs memory")?;
 
     // Read directly into the allocated memory
-    let buffer = unsafe { core::slice::from_raw_parts_mut(phys_addr as *mut u8, file_size as usize) };
+    let buffer =
+        unsafe { core::slice::from_raw_parts_mut(phys_addr as *mut u8, file_size as usize) };
     initramfs_file
         .read(buffer)
         .map_err(|_| "Failed to read initramfs file")?;
@@ -627,12 +799,8 @@ fn allocate_pages(count: usize) -> Option<u64> {
     let st = uefi::table::system_table_boot()?;
     let bs = st.boot_services();
 
-    bs.allocate_pages(
-        AllocateType::AnyPages,
-        UefiMemoryType::LOADER_DATA,
-        count,
-    )
-    .ok()
+    bs.allocate_pages(AllocateType::AnyPages, UefiMemoryType::LOADER_DATA, count)
+        .ok()
 }
 
 /// Get the memory map from UEFI
@@ -640,7 +808,9 @@ fn get_memory_map() -> Vec<MemoryRegion> {
     let st = uefi::table::system_table_boot().expect("Boot services not available");
     let bs = st.boot_services();
 
-    let mmap = bs.memory_map(UefiMemoryType::LOADER_DATA).expect("Failed to get memory map");
+    let mmap = bs
+        .memory_map(UefiMemoryType::LOADER_DATA)
+        .expect("Failed to get memory map");
 
     let mut regions = Vec::new();
 
@@ -672,7 +842,9 @@ fn get_framebuffer_info() -> Option<FramebufferInfo> {
     let bs = st.boot_services();
 
     let gop_handle = bs.get_handle_for_protocol::<GraphicsOutput>().ok()?;
-    let mut gop = bs.open_protocol_exclusive::<GraphicsOutput>(gop_handle).ok()?;
+    let mut gop = bs
+        .open_protocol_exclusive::<GraphicsOutput>(gop_handle)
+        .ok()?;
 
     let mode = gop.current_mode_info();
     let mut fb = gop.frame_buffer();
@@ -696,13 +868,15 @@ fn get_framebuffer_info() -> Option<FramebufferInfo> {
 
 /// Enumerate all available video modes from GOP
 fn enumerate_video_modes() -> Option<boot_proto::VideoModeList> {
-    use boot_proto::{VideoMode, VideoModeList, MAX_VIDEO_MODES};
+    use boot_proto::{MAX_VIDEO_MODES, VideoMode, VideoModeList};
 
     let st = uefi::table::system_table_boot()?;
     let bs = st.boot_services();
 
     let gop_handle = bs.get_handle_for_protocol::<GraphicsOutput>().ok()?;
-    let gop = bs.open_protocol_exclusive::<GraphicsOutput>(gop_handle).ok()?;
+    let gop = bs
+        .open_protocol_exclusive::<GraphicsOutput>(gop_handle)
+        .ok()?;
 
     let mut mode_list = VideoModeList::empty();
 
@@ -726,8 +900,8 @@ fn enumerate_video_modes() -> Option<boot_proto::VideoModeList> {
 
         // Calculate BPP based on format
         let bpp = match mode_info.pixel_format() {
-            uefi::proto::console::gop::PixelFormat::Rgb |
-            uefi::proto::console::gop::PixelFormat::Bgr => 32,
+            uefi::proto::console::gop::PixelFormat::Rgb
+            | uefi::proto::console::gop::PixelFormat::Bgr => 32,
             _ => 32, // Default assumption
         };
 

@@ -1,11 +1,11 @@
 //! Mount Namespace
 
+use crate::{NsError, NsResult, alloc_ns_id};
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 use spin::RwLock;
-use crate::{alloc_ns_id, NsResult, NsError};
 
 /// Mount point
 #[derive(Clone)]
@@ -150,9 +150,7 @@ impl MountNamespace {
         let id = self.alloc_mount_id();
 
         // Find parent mount
-        let parent_id = self.find_mount_at(target)
-            .map(|m| m.id)
-            .unwrap_or(1);
+        let parent_id = self.find_mount_at(target).map(|m| m.id).unwrap_or(1);
 
         let mount = Mount {
             id,
@@ -191,7 +189,8 @@ impl MountNamespace {
         let mounts = self.mounts.read();
 
         // Find longest matching mountpoint
-        mounts.iter()
+        mounts
+            .iter()
             .filter(|m| path.starts_with(&m.mountpoint))
             .max_by_key(|m| m.mountpoint.len())
             .cloned()
@@ -205,8 +204,7 @@ impl MountNamespace {
     /// Pivot root
     pub fn pivot_root(&self, new_root: &str, put_old: &str) -> NsResult<()> {
         // Verify new_root is a mount point
-        let new_mount = self.find_mount_at(new_root)
-            .ok_or(NsError::NotFound)?;
+        let new_mount = self.find_mount_at(new_root).ok_or(NsError::NotFound)?;
 
         if new_mount.mountpoint != new_root {
             return Err(NsError::InvalidOperation);
@@ -220,7 +218,8 @@ impl MountNamespace {
 
     /// Get root path
     pub fn root_path(&self) -> String {
-        self.root.read()
+        self.root
+            .read()
             .as_ref()
             .map(|m| m.mountpoint.clone())
             .unwrap_or_else(|| String::from("/"))
