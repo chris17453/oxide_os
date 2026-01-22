@@ -67,7 +67,9 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
                     if c == 0 {
                         break;
                     }
-                    eputchar(c as i32);
+                    let ch_array = [c];
+                    let ch_str = core::str::from_utf8(&ch_array).unwrap_or("?");
+                    eprints(ch_str);
                     j += 1;
                 }
                 eprintlns("'");
