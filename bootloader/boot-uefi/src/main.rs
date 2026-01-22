@@ -40,85 +40,69 @@ fn main() -> Status {
     // Initialize UEFI services
     uefi::helpers::init().expect("Failed to initialize UEFI helpers");
 
-    log("");
-    log("========================================");
-    log("  OXIDE UEFI Bootloader");
-    log("  Version 0.1.0");
-    log("========================================");
-    log("");
+    // Clear screen and display logo
+    clear_screen();
+    display_logo();
+    
+    // Initialize progress tracking
+    let total_steps = 12;
+    let mut current_step = 0;
 
-    // Load kernel
-    log_fmt(format_args!("[BOOT] Loading kernel from {}...", KERNEL_PATH));
+    // Step 1: Load kernel
+    update_progress(&mut current_step, total_steps, "Loading kernel file...");
     let kernel_data = match load_kernel_file() {
         Ok(data) => data,
         Err(e) => {
-            log_fmt(format_args!("[BOOT] ERROR: Failed to load kernel: {}", e));
+            log_fmt(format_args!("[ERROR] Failed to load kernel: {}", e));
             halt();
         }
     };
-    log_fmt(format_args!("[BOOT] Kernel file loaded: {} bytes", kernel_data.len()));
 
-    // Parse ELF
-    log("[BOOT] Parsing ELF...");
+    // Step 2: Parse ELF
+    update_progress(&mut current_step, total_steps, "Parsing ELF headers...");
     let elf_info = match elf::parse_elf(&kernel_data) {
         Ok(info) => info,
         Err(e) => {
-            log_fmt(format_args!("[BOOT] ERROR: Failed to parse ELF: {}", e));
+            log_fmt(format_args!("[ERROR] Failed to parse ELF: {}", e));
             halt();
         }
     };
-    log_fmt(format_args!("[BOOT] Kernel entry point: {:#x}", elf_info.entry));
-    log_fmt(format_args!("[BOOT] Kernel load address: {:#x}", elf_info.load_base));
-    log_fmt(format_args!("[BOOT] Kernel size: {} bytes", elf_info.load_size));
 
-    // Allocate memory for kernel
-    log("[BOOT] Allocating memory for kernel...");
+    // Step 3: Allocate memory for kernel
+    update_progress(&mut current_step, total_steps, "Allocating kernel memory...");
     let kernel_pages = (elf_info.load_size + PAGE_SIZE - 1) / PAGE_SIZE;
     let kernel_phys = allocate_pages(kernel_pages as usize)
         .expect("Failed to allocate memory for kernel");
-    log_fmt(format_args!("[BOOT] Kernel physical address: {:#x}", kernel_phys));
 
-    // Load kernel segments
-    log("[BOOT] Loading kernel segments...");
+    // Step 4: Load kernel segments
+    update_progress(&mut current_step, total_steps, "Loading kernel segments...");
     elf::load_segments(&kernel_data, &elf_info, kernel_phys);
-    log("[BOOT] Kernel loaded");
 
-    // Load initramfs
-    log_fmt(format_args!("[BOOT] Loading initramfs from {}...", INITRAMFS_PATH));
+    // Step 5: Load initramfs
+    update_progress(&mut current_step, total_steps, "Loading initramfs...");
     let (initramfs_phys, initramfs_size) = match load_initramfs() {
-        Ok((phys, size)) => {
-            log_fmt(format_args!("[BOOT] Initramfs loaded: {} bytes at {:#x}", size, phys));
-            (phys, size)
-        }
-        Err(e) => {
-            log_fmt(format_args!("[BOOT] WARNING: No initramfs loaded: {}", e));
-            (0, 0)
-        }
+        Ok((phys, size)) => (phys, size),
+        Err(_) => (0, 0) // Non-fatal
     };
 
-    // Get framebuffer info
+    // Step 6: Initialize graphics
+    update_progress(&mut current_step, total_steps, "Initializing graphics...");
     let fb_info = get_framebuffer_info();
-    if let Some(ref fb) = fb_info {
-        log_fmt(format_args!("[BOOT] Framebuffer: {}x{} @ {:#x}", fb.width, fb.height, fb.base));
-    }
 
-    // Enumerate available video modes
+    // Step 7: Enumerate video modes
+    update_progress(&mut current_step, total_steps, "Enumerating video modes...");
     let video_modes = enumerate_video_modes();
-    if let Some(ref modes) = video_modes {
-        log_fmt(format_args!("[BOOT] Found {} video modes", modes.count));
-    }
 
-    // Set up page tables
-    log("[BOOT] Setting up page tables...");
+    // Step 8: Set up page tables
+    update_progress(&mut current_step, total_steps, "Setting up page tables...");
     let pml4_phys = paging::setup_page_tables(kernel_phys, elf_info.load_size);
-    log_fmt(format_args!("[BOOT] PML4 at {:#x}", pml4_phys));
 
-    // Get memory map
-    log("[BOOT] Getting memory map...");
+    // Step 9: Get memory map
+    update_progress(&mut current_step, total_steps, "Getting memory map...");
     let memory_regions = get_memory_map();
-    log_fmt(format_args!("[BOOT] Found {} memory regions", memory_regions.len()));
 
-    // Create boot info
+    // Step 10: Create boot info
+    update_progress(&mut current_step, total_steps, "Creating boot information...");
     let boot_info = create_boot_info(
         kernel_phys,
         elf_info.load_size,
@@ -130,21 +114,23 @@ fn main() -> Status {
         initramfs_size,
     );
 
-    // Allocate space for boot info in a safe location
+    // Step 11: Allocate boot info page
+    update_progress(&mut current_step, total_steps, "Finalizing boot setup...");
     let boot_info_phys = allocate_pages(1).expect("Failed to allocate boot info page");
     unsafe {
         ptr::write(boot_info_phys as *mut BootInfo, boot_info);
     }
 
-    log_fmt(format_args!("[BOOT] Boot info at {:#x}", boot_info_phys));
-
-    // Calculate kernel entry virtual address
+    // Calculate addresses for kernel jump
     let kernel_entry_virt = KERNEL_VIRT_BASE + (elf_info.entry - elf_info.load_base);
-
-    // Boot info virtual address (through direct physical map)
     let boot_info_virt = PHYS_MAP_BASE + boot_info_phys;
 
-    log_fmt(format_args!("[BOOT] Jumping to kernel at {:#x}...", kernel_entry_virt));
+    // Step 12: Transfer control to kernel
+    update_progress(&mut current_step, total_steps, "Transferring control to kernel...");
+    
+    // Show final boot message
+    log("");
+    log("🚀 Boot complete! Launching OXIDE OS...");
     log("");
 
     // Exit boot services - after this, no more UEFI calls!
@@ -169,6 +155,63 @@ fn main() -> Status {
             options(noreturn)
         );
     }
+}
+
+/// Clear the screen
+fn clear_screen() {
+    if let Some(mut st) = uefi::table::system_table_boot() {
+        let _ = st.stdout().clear();
+    }
+}
+
+/// Display the OXIDE OS logo
+fn display_logo() {
+    log("");
+    log("        ██████╗ ██╗  ██╗██╗██████╗ ███████╗");
+    log("       ██╔═══██╗╚██╗██╔╝██║██╔══██╗██╔════╝");
+    log("       ██║   ██║ ╚███╔╝ ██║██║  ██║█████╗  ");
+    log("       ██║   ██║ ██╔██╗ ██║██║  ██║██╔══╝  ");
+    log("       ╚██████╔╝██╔╝ ██╗██║██████╔╝███████╗");
+    log("        ╚═════╝ ╚═╝  ╚═╝╚═╝╚═════╝ ╚══════╝");
+    log("");
+    log("            Operating System - Version 0.1.0");
+    log("              UEFI Bootloader Starting...");
+    log("");
+}
+
+/// Display a progress bar
+fn display_progress(current: usize, total: usize, message: &str) {
+    let progress_width = 40;
+    let filled = (current * progress_width) / total;
+    let empty = progress_width - filled;
+    
+    let mut progress_bar = alloc::string::String::new();
+    progress_bar.push('[');
+    for _ in 0..filled {
+        progress_bar.push('█');
+    }
+    for _ in 0..empty {
+        progress_bar.push('░');
+    }
+    progress_bar.push(']');
+    
+    let percentage = (current * 100) / total;
+    
+    // Clear previous lines and display new progress
+    if let Some(mut st) = uefi::table::system_table_boot() {
+        // Move cursor up and clear lines
+        let _ = st.stdout().write_str("\x1b[2K\r"); // Clear current line
+        let _ = st.stdout().write_str("\x1b[1A\x1b[2K\r"); // Move up and clear previous line
+    }
+    
+    log_fmt(format_args!("{} {}% {}", progress_bar, percentage, message));
+    log("");
+}
+
+/// Update progress and display current operation
+fn update_progress(step: &mut usize, total: usize, message: &str) {
+    *step += 1;
+    display_progress(*step, total, message);
 }
 
 /// Load the kernel file from the EFI system partition
