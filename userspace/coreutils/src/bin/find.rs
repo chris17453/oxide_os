@@ -8,6 +8,15 @@ use libc::*;
 const MAX_PATH: usize = 512;
 const MAX_DEPTH: usize = 32;
 
+/// Directory entry header (matches kernel's UserDirEntry)
+#[repr(C)]
+struct DirEntry {
+    d_ino: u64,
+    d_off: u64,
+    d_reclen: u16,
+    d_type: u8,
+}
+
 #[unsafe(no_mangle)]
 fn main(argc: i32, argv: *const *const u8) -> i32 {
     let mut start_path = ".";
@@ -95,21 +104,25 @@ fn find_recursive(path: &mut [u8; MAX_PATH], path_len: usize,
 
         let mut offset = 0;
         while offset < n as usize {
-            // Parse dirent structure
-            // struct dirent { u64 ino, u64 off, u16 reclen, u8 type, char name[] }
-            if offset + 19 > n as usize {
+            // Parse dirent structure using the same approach as ls.rs
+            let header_size = core::mem::size_of::<DirEntry>();
+            if offset + header_size > n as usize {
                 break;
             }
 
-            let reclen = u16::from_ne_bytes([buf[offset + 16], buf[offset + 17]]) as usize;
+            // Cast buffer to DirEntry struct pointer
+            let entry_ptr = buf.as_ptr().wrapping_add(offset) as *const DirEntry;
+            let entry = unsafe { &*entry_ptr };
+
+            let reclen = entry.d_reclen as usize;
             if reclen == 0 {
                 break;
             }
 
-            let dtype = buf[offset + 18];
+            let dtype = entry.d_type;
 
-            // Get name (null-terminated after d_type)
-            let name_start = offset + 19;
+            // Get name (starts after the header struct)
+            let name_start = offset + header_size;
             let mut name_len = 0;
             while name_start + name_len < offset + reclen && buf[name_start + name_len] != 0 {
                 name_len += 1;
