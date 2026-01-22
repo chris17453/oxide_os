@@ -868,9 +868,8 @@ fn terminal_tick() {
     while let Some(scancode) = arch::get_scancode() {
         // Convert scancode to ASCII character (basic mapping)
         if let Some(ch) = scancode_to_char(scancode) {
-            // Push character to console input buffer (for stdin) AND display
+            // Push character to console input buffer (handles both stdin and display)
             devfs::console_push_char(ch as u8);
-            terminal::putchar(ch);
         }
     }
     
