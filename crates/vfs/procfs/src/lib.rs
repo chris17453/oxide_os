@@ -227,19 +227,40 @@ impl VnodeOps for ProcSelf {
     }
 
     fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
-        // Read the symlink target (current PID)
+        // Read the symlink target (current PID) without allocating
         let pid = process_table().current_pid();
-        let target = format!("{}", pid);
-        let target_bytes = target.as_bytes();
+
+        // Convert PID to string without allocation (max u32 = 10 digits)
+        let mut pid_buf = [0u8; 12];
+        let mut pid_len = 0;
+
+        if pid == 0 {
+            pid_buf[0] = b'0';
+            pid_len = 1;
+        } else {
+            let mut n = pid;
+            let mut temp = [0u8; 12];
+            let mut temp_len = 0;
+            while n > 0 {
+                temp[temp_len] = b'0' + (n % 10) as u8;
+                n /= 10;
+                temp_len += 1;
+            }
+            // Reverse
+            for i in 0..temp_len {
+                pid_buf[i] = temp[temp_len - 1 - i];
+            }
+            pid_len = temp_len;
+        }
 
         let offset = offset as usize;
-        if offset >= target_bytes.len() {
+        if offset >= pid_len {
             return Ok(0);
         }
 
-        let available = target_bytes.len() - offset;
+        let available = pid_len - offset;
         let to_read = buf.len().min(available);
-        buf[..to_read].copy_from_slice(&target_bytes[offset..offset + to_read]);
+        buf[..to_read].copy_from_slice(&pid_buf[offset..offset + to_read]);
         Ok(to_read)
     }
 

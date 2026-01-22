@@ -210,6 +210,8 @@ fn clear_screen() {
 
 /// Show interactive boot screen with user options
 fn show_boot_screen(mut config: BootConfig) -> BootConfig {
+    // Initialize timer for accurate timeout tracking
+    init_timer();
     clear_screen();
     
     // Display boot options screen
@@ -246,8 +248,8 @@ fn show_boot_screen(mut config: BootConfig) -> BootConfig {
     let timeout_ms = config.timeout_seconds as u64 * 1000;
     
     loop {
-        // Check for timeout
-        if get_time_ms() - start_time > timeout_ms {
+        // Check for timeout (use saturating_sub to prevent overflow)
+        if get_time_ms().saturating_sub(start_time) > timeout_ms {
             break;
         }
         
@@ -487,23 +489,26 @@ fn check_key_press() -> Option<Key> {
     }
 }
 
-/// Get current time in milliseconds (simplified)
-fn get_time_ms() -> u64 {
-    // UEFI doesn't have a simple millisecond timer, so we'll use a simple counter
-    // In a real implementation, you'd use UEFI time services
-    static mut TIME_COUNTER: u64 = 0;
+/// Simple elapsed time tracker using UEFI stall
+/// Each call to spin_wait_ms adds to the elapsed time
+static mut ELAPSED_MS: u64 = 0;
+
+fn init_timer() {
     unsafe {
-        TIME_COUNTER += 1;
-        TIME_COUNTER * 10 // Approximate milliseconds
+        ELAPSED_MS = 0;
     }
 }
 
-/// Spin wait for specified milliseconds
+fn get_time_ms() -> u64 {
+    unsafe { ELAPSED_MS }
+}
+
+/// Spin wait for specified milliseconds using UEFI boot services
 fn spin_wait_ms(ms: u64) {
-    let start = get_time_ms();
-    while get_time_ms() - start < ms {
-        // Busy wait - in real UEFI you'd use proper delays
-        unsafe { core::arch::asm!("pause") };
+    if let Some(st) = uefi::table::system_table_boot() {
+        // UEFI stall takes microseconds - this is a blocking call
+        st.boot_services().stall(ms as usize * 1000);
+        unsafe { ELAPSED_MS += ms; }
     }
 }
 
