@@ -4,7 +4,6 @@
 
 #![no_std]
 #![no_main]
-#![feature(alloc_error_handler)]
 
 extern crate alloc;
 
@@ -85,8 +84,9 @@ static PENDING_CHILDREN: Mutex<Vec<Pid>> = Mutex::new(Vec::new());
 /// Full parent context for returning from child process
 /// Stores all registers so parent can resume with correct state
 #[derive(Clone)]
+#[repr(C)]
 struct ParentContext {
-    pid: u32,
+    pid: u64,  // Changed from u32 to u64 for consistent 8-byte alignment
     pml4: u64,
     rip: u64,
     rsp: u64,
@@ -1082,10 +1082,10 @@ fn user_exit(status: i32) -> ! {
 
     if let Some(ctx) = parent_ctx {
         // Restore parent as current process
-        table.set_current_pid(ctx.pid);
+        table.set_current_pid(ctx.pid as u32);
 
         // Get parent's kernel stack
-        if let Some(parent) = table.get(ctx.pid) {
+        if let Some(parent) = table.get(ctx.pid as u32) {
             let p = parent.lock();
             let parent_stack_phys = p.kernel_stack();
             let parent_stack_size = p.kernel_stack_size();
@@ -1404,7 +1404,7 @@ fn run_child_process(child_pid: Pid) {
     let parent_user_ctx = get_user_context();
     {
         *PARENT_CONTEXT.lock() = Some(ParentContext {
-            pid: parent_pid,
+            pid: parent_pid as u64,
             pml4: parent_pml4,
             rip: parent_user_ctx.rip,
             rsp: parent_user_ctx.rsp,
@@ -1796,11 +1796,3 @@ fn panic(info: &PanicInfo) -> ! {
     arch::X86_64::halt()
 }
 
-/// Allocation error handler
-#[alloc_error_handler]
-fn alloc_error(layout: core::alloc::Layout) -> ! {
-    let mut writer = serial::SerialWriter;
-    let _ = writeln!(writer, "ALLOCATION ERROR: size={}, align={}",
-        layout.size(), layout.align());
-    arch::X86_64::halt()
-}

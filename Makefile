@@ -30,11 +30,11 @@ BOOT_DIR := $(TARGET_DIR)/boot
 INITRAMFS := $(TARGET_DIR)/initramfs.cpio
 OVMF := $(shell for p in /usr/share/OVMF/OVMF_CODE.fd /usr/share/edk2-ovmf/x64/OVMF_CODE.fd /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/qemu/OVMF.fd; do [ -f "$$p" ] && echo "$$p" && break; done)
 
-# Userspace configuration
-USERSPACE_TARGET := userspace/x86_64-user.json
-USERSPACE_OUT := $(TARGET_DIR)/x86_64-user/$(PROFILE)
-USERSPACE_OUT_RELEASE := $(TARGET_DIR)/x86_64-user/release
-CARGO_USER_FLAGS := -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem
+# Userspace configuration - use standard target with Fedora's pre-built std
+USERSPACE_TARGET := x86_64-unknown-none
+USERSPACE_OUT := $(TARGET_DIR)/$(USERSPACE_TARGET)/$(PROFILE)
+USERSPACE_OUT_RELEASE := $(TARGET_DIR)/$(USERSPACE_TARGET)/release
+CARGO_USER_FLAGS :=
 
 # Userspace packages to build
 USERSPACE_PACKAGES := init esh login coreutils
@@ -70,7 +70,7 @@ userspace:
 	@echo "Building userspace programs..."
 	@for pkg in $(USERSPACE_PACKAGES); do \
 		echo "  Building $$pkg..."; \
-		cargo build --package $$pkg --target $(USERSPACE_TARGET) $(CARGO_USER_FLAGS) || exit 1; \
+		RUSTFLAGS="-C linker=ld.lld -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package $$pkg --target $(USERSPACE_TARGET) $(CARGO_USER_FLAGS) || exit 1; \
 	done
 	@echo "Userspace programs built."
 
@@ -79,10 +79,10 @@ userspace-release:
 	@echo "Building userspace programs (release)..."
 	@for pkg in $(USERSPACE_PACKAGES); do \
 		echo "  Building $$pkg (release)..."; \
-		cargo build --package $$pkg --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1; \
+		RUSTFLAGS="-C linker=ld.lld -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package $$pkg --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1; \
 	done
 	@echo "  Building gwbasic (release)..."
-	@cargo build --package oxide-gwbasic --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) --features oxide || exit 1
+	@RUSTFLAGS="-C linker=ld.lld -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package oxide-gwbasic --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) --features oxide || exit 1
 	@echo "Stripping binaries..."
 	@for prog in init esh login gwbasic $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
@@ -193,6 +193,17 @@ boot-dir: kernel bootloader initramfs
 	@echo "  - Kernel: EFI/OXIDE/kernel.elf"
 	@echo "  - Initramfs: EFI/OXIDE/initramfs.cpio"
 
+# Quick boot directory update - kernel/bootloader only, use existing initramfs
+boot-quick: kernel bootloader
+	@mkdir -p $(BOOT_DIR)/EFI/BOOT
+	@mkdir -p $(BOOT_DIR)/EFI/OXIDE
+	@cp $(BOOTLOADER_TARGET) $(BOOT_DIR)/EFI/BOOT/BOOTX64.EFI
+	@cp $(KERNEL_TARGET) $(BOOT_DIR)/EFI/OXIDE/kernel.elf
+	@if [ -f $(TARGET_DIR)/initramfs.cpio ]; then \
+		cp $(TARGET_DIR)/initramfs.cpio $(BOOT_DIR)/EFI/OXIDE/initramfs.cpio; \
+	fi
+	@echo "Boot directory updated (kernel/bootloader only)"
+
 # Create a real disk image (for qemu-kvm compatibility on RHEL)
 boot-image: boot-dir
 	@echo "Creating boot disk image..."
@@ -217,7 +228,7 @@ boot-image: boot-dir
 	@echo "Boot disk image created: $(TARGET_DIR)/boot.img (no sudo needed!)"
 
 # Run in QEMU (interactive, with networking)
-run: boot-dir
+run: boot-quick
 	@if [ -z "$(OVMF)" ]; then \
 		echo "Error: OVMF firmware not found"; \
 		echo "Install: sudo apt install ovmf (Debian/Ubuntu)"; \
@@ -243,7 +254,7 @@ run: boot-dir
 		-no-reboot
 
 # Run in QEMU without networking (for minimal testing)
-run-no-net: boot-dir
+run-no-net: boot-quick
 	@if [ -z "$(OVMF)" ]; then \
 		echo "Error: OVMF firmware not found"; \
 		echo "Install: sudo apt install ovmf (Debian/Ubuntu)"; \
@@ -261,7 +272,7 @@ run-no-net: boot-dir
 		-no-reboot
 
 # Run headless (for testing, with networking)
-run-headless: boot-dir
+run-headless: boot-quick
 	@if [ -z "$(OVMF)" ]; then \
 		echo "Error: OVMF firmware not found"; \
 		exit 1; \
@@ -280,7 +291,7 @@ run-headless: boot-dir
 		-no-reboot
 
 # Run headless without networking
-run-headless-no-net: boot-dir
+run-headless-no-net: boot-quick
 	@if [ -z "$(OVMF)" ]; then \
 		echo "Error: OVMF firmware not found"; \
 		exit 1; \
@@ -405,7 +416,7 @@ run-kvm-serial: boot-image
 		-no-reboot
 
 # Automated test: boot and check for expected output
-test: boot-dir
+test: boot-quick
 	@echo "Running automated boot test..."
 	@if [ -z "$(OVMF)" ]; then \
 		echo "Error: OVMF firmware not found"; \

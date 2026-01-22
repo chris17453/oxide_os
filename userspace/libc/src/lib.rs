@@ -6,6 +6,59 @@
 #![no_std]
 #![allow(unsafe_op_in_unsafe_fn)]
 
+extern crate alloc;
+
+// Simple bump allocator for userspace
+mod allocator {
+    use core::alloc::{GlobalAlloc, Layout};
+    use core::cell::UnsafeCell;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    const HEAP_SIZE: usize = 1024 * 1024; // 1MB heap
+
+    #[repr(C, align(16))]
+    struct HeapStorage {
+        data: UnsafeCell<[u8; HEAP_SIZE]>,
+    }
+
+    unsafe impl Sync for HeapStorage {}
+
+    static HEAP: HeapStorage = HeapStorage {
+        data: UnsafeCell::new([0; HEAP_SIZE]),
+    };
+    static HEAP_POS: AtomicUsize = AtomicUsize::new(0);
+
+    pub struct BumpAllocator;
+
+    unsafe impl GlobalAlloc for BumpAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let size = layout.size();
+            let align = layout.align();
+
+            loop {
+                let pos = HEAP_POS.load(Ordering::Relaxed);
+                let aligned = (pos + align - 1) & !(align - 1);
+                let new_pos = aligned + size;
+
+                if new_pos > HEAP_SIZE {
+                    return core::ptr::null_mut();
+                }
+
+                if HEAP_POS.compare_exchange_weak(pos, new_pos, Ordering::SeqCst, Ordering::Relaxed).is_ok() {
+                    return (HEAP.data.get() as *mut u8).add(aligned);
+                }
+            }
+        }
+
+        unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
+            // Bump allocator doesn't free - memory is reclaimed when process exits
+        }
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: allocator::BumpAllocator = allocator::BumpAllocator;
+
 // Architecture-specific implementations
 pub mod arch;
 
@@ -76,18 +129,30 @@ pub fn set_errno(e: i32) {
 
 /// Entry point for userspace programs
 ///
-/// This must be a naked function to avoid compiler-generated prologues
-/// that would misalign the stack. At program entry, RSP is 16-byte aligned.
-/// The System V ABI requires RSP % 16 == 0 before a `call` instruction,
-/// which is already satisfied.
+/// Stack layout at entry (set up by exec):
+///   [rsp+0]  = argc
+///   [rsp+8]  = argv[0]
+///   [rsp+16] = argv[1]
+///   ...
+///   [rsp+8*(argc+1)] = NULL
+///   [rsp+8*(argc+2)] = envp[0]
+///   ...
+///
+/// We read argc/argv from the stack, not registers, for robustness.
 #[unsafe(no_mangle)]
 #[unsafe(naked)]
 pub unsafe extern "C" fn _start() -> ! {
     core::arch::naked_asm!(
-        // RSP is already 16-byte aligned at entry
+        // Read argc from stack
+        "mov r12, [rsp]",        // argc -> r12 (callee-saved)
+        // Calculate argv pointer (rsp + 8)
+        "lea r13, [rsp + 8]",    // argv -> r13 (callee-saved)
         // Call init_env to set up environment
         "call {init_env}",
-        // Call main
+        // Set up arguments for main(argc, argv)
+        "mov edi, r12d",         // argc (32-bit)
+        "mov rsi, r13",          // argv
+        // Call main(argc, argv)
         "call {main}",
         // Exit with return code (in eax from main)
         "mov edi, eax",
@@ -100,13 +165,13 @@ pub unsafe extern "C" fn _start() -> ! {
     )
 }
 
-// Wrapper to call the user's main function
+// Wrapper to call the user's main function with argc/argv
 #[inline(never)]
-fn _main_wrapper() -> i32 {
+fn _main_wrapper(argc: i32, argv: *const *const u8) -> i32 {
     unsafe extern "Rust" {
-        fn main() -> i32;
+        fn main(argc: i32, argv: *const *const u8) -> i32;
     }
-    unsafe { main() }
+    unsafe { main(argc, argv) }
 }
 
 #[panic_handler]

@@ -13,7 +13,6 @@
 
 #![no_std]
 #![no_main]
-#![feature(default_alloc_error_handler)]
 
 extern crate alloc;
 
@@ -22,39 +21,7 @@ use libc::*;
 use compression::deflate::{gzip_compress, GzipHeader};
 use compression::CompressionLevel;
 
-// Simple bump allocator for gzip
-static mut HEAP: [u8; 1024 * 1024] = [0; 1024 * 1024]; // 1MB heap
-static mut HEAP_POS: usize = 0;
-
-struct BumpAllocator;
-
-unsafe impl core::alloc::GlobalAlloc for BumpAllocator {
-    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
-        let size = layout.size();
-        let align = layout.align();
-
-        // Align heap_pos
-        let heap_pos_ptr = core::ptr::addr_of_mut!(HEAP_POS);
-        let pos = (*heap_pos_ptr + align - 1) & !(align - 1);
-
-        let heap_ptr = core::ptr::addr_of_mut!(HEAP);
-        let heap_len = (*heap_ptr).len();
-
-        if pos + size > heap_len {
-            return core::ptr::null_mut();
-        }
-
-        *heap_pos_ptr = pos + size;
-        (*heap_ptr).as_mut_ptr().add(pos)
-    }
-
-    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: core::alloc::Layout) {
-        // Bump allocator doesn't free
-    }
-}
-
-#[global_allocator]
-static ALLOCATOR: BumpAllocator = BumpAllocator;
+// Uses libc's global allocator
 
 const MAX_FILENAME: usize = 256;
 

@@ -1,0 +1,16 @@
+//! poweroff - power off the system
+
+#![no_std]
+#![no_main]
+
+use libc::{printlns, eprintlns, reboot, reboot_cmd};
+
+#[unsafe(no_mangle)]
+fn main(_argc: i32, _argv: *const *const u8) -> i32 {
+    printlns("Powering off system...");
+    reboot(reboot_cmd::POWER_OFF);
+
+    // Should not reach here
+    eprintlns("poweroff: failed to power off");
+    1
+}

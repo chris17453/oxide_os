@@ -1,0 +1,16 @@
+//! reboot - restart the system
+
+#![no_std]
+#![no_main]
+
+use libc::{printlns, eprintlns, reboot, reboot_cmd};
+
+#[unsafe(no_mangle)]
+fn main(_argc: i32, _argv: *const *const u8) -> i32 {
+    printlns("Rebooting system...");
+    reboot(reboot_cmd::RESTART);
+
+    // Should not reach here
+    eprintlns("reboot: failed to reboot");
+    1
+}
