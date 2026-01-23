@@ -37,9 +37,7 @@ pub fn fork() -> i32 {
 
 /// Execute program
 pub fn exec(path: &str) -> i32 {
-    // Provide argv[0] to match expected user stack layout
-    let argv: [*const u8; 2] = [path.as_ptr(), core::ptr::null()];
-    syscall::sys_execve(path, argv.as_ptr(), core::ptr::null())
+    syscall::sys_exec(path)
 }
 
 /// Execute program with arguments (NULL-terminated argv array)
