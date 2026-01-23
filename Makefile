@@ -4,7 +4,7 @@
 
 SHELL := /usr/bin/bash
 
-.PHONY: all build kernel bootloader userspace initramfs clean run run-no-net run-headless run-headless-no-net run-kvm run-kvm-vnc run-kvm-serial test check fmt clippy boot-image toolchain install-toolchain test-toolchain clean-toolchain
+.PHONY: all build build-full kernel bootloader userspace userspace-release userspace-pkg initramfs initramfs-debug boot-dir boot-quick boot-image release clean run run-no-net run-headless run-headless-no-net run-kvm run-kvm-clean run-kvm-vnc run-kvm-serial test check fmt fmt-check clippy list-bins show-config help toolchain install-toolchain test-toolchain clean-toolchain claude
 
 # Configuration
 ARCH ?= x86_64
@@ -54,11 +54,13 @@ build-full: kernel bootloader userspace initramfs
 
 # Build kernel
 kernel:
-	cargo build --package kernel
+	@echo "Building kernel..."
+	@cargo build --package kernel
 
 # Build bootloader
 bootloader:
-	cargo build --package boot-uefi --target $(ARCH)-unknown-uefi
+	@echo "Building bootloader..."
+	@cargo build --package boot-uefi --target $(ARCH)-unknown-uefi
 
 # Build release
 release:
@@ -70,7 +72,7 @@ userspace:
 	@echo "Building userspace programs..."
 	@for pkg in $(USERSPACE_PACKAGES); do \
 		echo "  Building $$pkg..."; \
-		RUSTFLAGS="-C linker=ld.lld -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package $$pkg --target $(USERSPACE_TARGET) $(CARGO_USER_FLAGS) || exit 1; \
+		RUSTFLAGS="-C linker=rust-lld -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package $$pkg --target $(USERSPACE_TARGET) $(CARGO_USER_FLAGS) || exit 1; \
 	done
 	@echo "Userspace programs built."
 
@@ -79,10 +81,10 @@ userspace-release:
 	@echo "Building userspace programs (release)..."
 	@for pkg in $(USERSPACE_PACKAGES); do \
 		echo "  Building $$pkg (release)..."; \
-		RUSTFLAGS="-C linker=ld.lld -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package $$pkg --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1; \
+		RUSTFLAGS="-C linker=rust-lld -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package $$pkg --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1; \
 	done
 	@echo "  Building gwbasic (release)..."
-	@RUSTFLAGS="-C linker=ld.lld -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package oxide-gwbasic --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) --features oxide || exit 1
+	@RUSTFLAGS="-C linker=rust-lld -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package oxide-gwbasic --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) --features oxide || exit 1
 	@echo "Stripping binaries..."
 	@for prog in init esh login gwbasic $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
@@ -182,7 +184,9 @@ list-bins:
 	@echo "  Coreutils: $(COREUTILS_BINS)"
 
 # Create boot directory structure with kernel, bootloader, and initramfs
+# NOTE: This target rebuilds kernel, bootloader, and initramfs before creating boot dir
 boot-dir: kernel bootloader initramfs
+	@echo "Creating boot directory..."
 	@mkdir -p $(BOOT_DIR)/EFI/BOOT
 	@mkdir -p $(BOOT_DIR)/EFI/OXIDE
 	@cp $(BOOTLOADER_TARGET) $(BOOT_DIR)/EFI/BOOT/BOOTX64.EFI
@@ -307,7 +311,9 @@ run-headless-no-net: boot-quick
 		-no-reboot
 
 # Run with qemu-kvm using disk image (RHEL 10 compatible)
+# NOTE: This target rebuilds kernel, bootloader, and userspace before running
 run-kvm: boot-image
+	@echo "Preparing to launch OXIDE OS with qemu-kvm..."
 	@if [ ! -f /usr/share/edk2/ovmf/OVMF_CODE.fd ]; then \
 		echo "Error: OVMF firmware not found"; \
 		echo "Install: sudo dnf install edk2-ovmf"; \
@@ -355,6 +361,9 @@ run-kvm: boot-image
 	echo "VNC viewer closed, stopping QEMU..."; \
 	kill $$QEMU_PID 2>/dev/null || true; \
 	wait $$QEMU_PID 2>/dev/null || true
+
+# Run with qemu-kvm after full clean rebuild (paranoid mode - no incremental builds)
+run-kvm-clean: clean run-kvm
 
 # Run with qemu-kvm and auto-launch VNC viewer
 run-kvm-vnc: boot-image
@@ -497,6 +506,7 @@ help:
 	@echo "  run-headless   - Run in QEMU without display (with networking)"
 	@echo "  run-headless-no-net - Run headless without networking"
 	@echo "  run-kvm        - Run with qemu-kvm (VNC on :5900, serial on stdio)"
+	@echo "  run-kvm-clean  - Run with qemu-kvm after full clean rebuild"
 	@echo "  run-kvm-vnc    - Run with qemu-kvm and auto-launch VNC viewer"
 	@echo "  run-kvm-serial - Run with qemu-kvm serial console only (no graphics)"
 	@echo "  test           - Automated boot test"
