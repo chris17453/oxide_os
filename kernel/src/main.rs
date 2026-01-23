@@ -276,6 +276,25 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
         arch::init();
     }
 
+    // Initialize SMP subsystem for Bootstrap Processor
+    let _ = writeln!(writer, "[INFO] Initializing SMP subsystem...");
+    let bsp_apic_id = arch::apic::id();
+    unsafe {
+        smp::cpu::init_bsp(bsp_apic_id as u32);
+        // Note: init_bsp() already calls set_cpu_online(0)
+    }
+    let _ = writeln!(
+        writer,
+        "[SMP] Bootstrap Processor initialized (CPU 0, APIC ID {})",
+        bsp_apic_id
+    );
+    let _ = writeln!(
+        writer,
+        "[SMP] CPUs online: {}/{}",
+        smp::cpu::cpus_online(),
+        smp::cpu::cpu_count()
+    );
+
     // Register page fault callback for COW handling
     unsafe {
         arch::exceptions::set_page_fault_callback(page_fault_handler);
