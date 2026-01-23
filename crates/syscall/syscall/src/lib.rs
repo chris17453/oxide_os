@@ -567,6 +567,47 @@ fn sys_exec(path: u64, path_len: usize, argv: *const *const u8, envp: *const *co
     errno::ENOSYS
 }
 
+/// Pre-fault userspace pages by writing a byte to trigger COW
+/// This must be done BEFORE copy_to_user to avoid deadlocks in the page fault handler
+unsafe fn prefault_pages(user_ptr: u64, len: usize) {
+    if len == 0 {
+        return;
+    }
+
+    let page_size = 4096u64;
+    let start_page = user_ptr / page_size;
+    let end_page = (user_ptr + len as u64 - 1) / page_size;
+
+    // Touch each page to trigger COW faults NOW (while we don't hold locks)
+    // These faults will be from kernel mode but the COW handler can't deadlock
+    // because we're not in a page fault context yet
+    for page in start_page..=end_page {
+        let addr = page * page_size;
+        let ptr = addr as *mut u8;
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            // Read-modify-write to trigger COW without changing data
+            // Use volatile to prevent optimization
+            core::arch::asm!(
+                "stac",                    // Enable user page access
+                "mov al, byte ptr [rdi]",  // Read current value
+                "mov byte ptr [rdi], al",  // Write it back (triggers COW)
+                "clac",                    // Disable user page access
+                in("rdi") ptr,
+                out("al") _,
+                options(nostack)
+            );
+        }
+
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            let val = ptr.read_volatile();
+            ptr.write_volatile(val);
+        }
+    }
+}
+
 /// Copy data to userspace memory safely
 ///
 /// Validates and copies to a userspace buffer from kernel context.
@@ -586,6 +627,10 @@ pub(crate) unsafe fn copy_to_user(user_ptr: u64, kernel_data: &[u8]) -> bool {
     if user_ptr.checked_add(len as u64).is_none() {
         return false;
     }
+
+    // Pre-fault all pages to trigger COW BEFORE we start the actual copy
+    // This prevents deadlocks in the page fault handler
+    prefault_pages(user_ptr, len);
 
     #[cfg(target_arch = "x86_64")]
     {
