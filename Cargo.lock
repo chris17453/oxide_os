@@ -522,6 +522,7 @@ dependencies = [
  "pty",
  "sched",
  "sched-traits",
+ "smp",
  "spin 0.9.8",
  "syscall",
  "tcpip",
@@ -888,6 +889,7 @@ dependencies = [
  "proc-traits",
  "sched-traits",
  "signal",
+ "smp",
  "spin 0.9.8",
  "vfs",
 ]

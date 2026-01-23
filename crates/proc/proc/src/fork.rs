@@ -416,14 +416,12 @@ pub fn handle_cow_fault<A: FrameAllocator>(
         cow.decrement(old_phys);
     }
 
-    // Flush TLB for this page
-    // On single-CPU systems, flush_tlb is sufficient
-    // On multi-CPU systems, this needs TLB shootdown (TODO: add when SMP is enabled)
-    flush_tlb(fault_addr);
-
-    // TODO: When SMP is fully enabled, use:
-    // let page_start = fault_addr.as_u64() & !0xFFF;
-    // smp::tlb::tlb_shootdown(page_start, page_start + 0x1000, 0);
+    // Flush TLB for this page on ALL CPUs
+    // This is critical for multi-CPU correctness - other CPUs may have stale
+    // TLB entries marking the page as read-only
+    let page_start = fault_addr.as_u64() & !0xFFF;
+    let page_end = page_start + 0x1000;
+    smp::tlb_shootdown(page_start, page_end, 0);
 
     true
 }

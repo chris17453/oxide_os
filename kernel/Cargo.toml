@@ -44,4 +44,5 @@ fb = { workspace = true }
 terminal = { workspace = true }
 input = { workspace = true }
 ps2 = { workspace = true }
+smp = { workspace = true }
 spin = { workspace = true }
