@@ -38,7 +38,13 @@ pub fn fork() -> i32 {
 /// Execute program
 pub fn exec(path: &str) -> i32 {
     // Provide argv[0] so exec receives a valid argument vector
-    let argv: [*const u8; 2] = [path.as_ptr(), core::ptr::null()];
+    let mut argv0_buf = [0u8; 256];
+    let path_bytes = path.as_bytes();
+    let copy_len = path_bytes.len().min(argv0_buf.len() - 1);
+    argv0_buf[..copy_len].copy_from_slice(&path_bytes[..copy_len]);
+    argv0_buf[copy_len] = 0;
+
+    let argv: [*const u8; 2] = [argv0_buf.as_ptr(), core::ptr::null()];
     syscall::sys_execve(path, argv.as_ptr(), core::ptr::null())
 }
 
