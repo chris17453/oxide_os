@@ -3,6 +3,7 @@
 //! Implements mmap, munmap, mprotect, mremap, and brk syscalls.
 
 use crate::errno;
+use crate::copy_to_user;
 use mm_frame::frame_allocator;
 use os_core::VirtAddr;
 use proc::process_table;
@@ -353,14 +354,35 @@ pub fn sys_mremap(
     }
 
     // Copy data from old to new
-    // Note: This is a simple memcpy - in a real implementation we'd use
-    // the kernel's safe copy mechanism
+    // Use STAC/CLAC to allow kernel access to user pages during the copy
     unsafe {
-        core::ptr::copy_nonoverlapping(
-            old_addr as *const u8,
-            new_addr as *mut u8,
-            old_size as usize,
-        );
+        #[cfg(target_arch = "x86_64")]
+        {
+            core::arch::asm!(
+                "stac",                                      // Enable user page access
+                "mov rcx, {len}",                           // Length in RCX
+                "mov rsi, {src}",                           // Source in RSI
+                "mov rdi, {dst}",                           // Destination in RDI
+                "rep movsb",                                 // Copy bytes
+                "clac",                                      // Disable user page access
+                src = in(reg) old_addr,
+                dst = in(reg) new_addr,
+                len = in(reg) old_size,
+                out("rcx") _,
+                out("rsi") _,
+                out("rdi") _,
+                options(nostack)
+            );
+        }
+
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            core::ptr::copy_nonoverlapping(
+                old_addr as *const u8,
+                new_addr as *mut u8,
+                old_size as usize,
+            );
+        }
     }
 
     // Unmap old region

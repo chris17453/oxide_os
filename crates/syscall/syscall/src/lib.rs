@@ -567,27 +567,63 @@ fn sys_exec(path: u64, path_len: usize, argv: *const *const u8, envp: *const *co
     errno::ENOSYS
 }
 
-/// Write a value to userspace memory safely
+/// Copy data to userspace memory safely
 ///
-/// Validates and writes to a userspace pointer from kernel context.
-/// The address must be properly mapped in the current process's page tables.
-unsafe fn write_user_i32(user_ptr: u64, value: i32) -> bool {
+/// Validates and copies to a userspace buffer from kernel context.
+/// Uses STAC/CLAC on x86_64 to temporarily allow supervisor access to user pages.
+pub(crate) unsafe fn copy_to_user(user_ptr: u64, kernel_data: &[u8]) -> bool {
     // Validate address is in userspace (canonical form check)
     if user_ptr == 0 || user_ptr >= 0x0000_8000_0000_0000 {
         return false;
     }
 
-    // Ensure alignment
-    if user_ptr & 0x3 != 0 {
+    let len = kernel_data.len();
+    if len == 0 {
+        return true;
+    }
+
+    // Check for overflow
+    if user_ptr.checked_add(len as u64).is_none() {
         return false;
     }
 
-    // Write directly - the page tables should have USER bit set
-    // which allows kernel access when running in ring 0
-    let ptr = user_ptr as *mut i32;
-    ptr.write_volatile(value);
+    #[cfg(target_arch = "x86_64")]
+    {
+        // On x86_64, use STAC/CLAC to temporarily allow supervisor access to user pages
+        // STAC = Set AC flag in EFLAGS (bit 18) to allow access
+        // CLAC = Clear AC flag to restore protection
+        // These are only available if SMAP is supported, but are safe NOPs otherwise
+        core::arch::asm!(
+            "stac",                                      // Enable user page access
+            "mov rcx, {len}",                           // Length in RCX
+            "mov rsi, {src}",                           // Source (kernel) in RSI
+            "mov rdi, {dst}",                           // Destination (user) in RDI
+            "rep movsb",                                 // Copy bytes
+            "clac",                                      // Disable user page access
+            src = in(reg) kernel_data.as_ptr(),
+            dst = in(reg) user_ptr,
+            len = in(reg) len,
+            out("rcx") _,
+            out("rsi") _,
+            out("rdi") _,
+            options(nostack)
+        );
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        core::ptr::copy_nonoverlapping(kernel_data.as_ptr(), user_ptr as *mut u8, len);
+    }
 
     true
+}
+
+/// Write a value to userspace memory safely
+///
+/// Validates and writes to a userspace pointer from kernel context.
+unsafe fn write_user_i32(user_ptr: u64, value: i32) -> bool {
+    let bytes = value.to_ne_bytes();
+    copy_to_user(user_ptr, &bytes)
 }
 
 /// sys_wait - Wait for any child process

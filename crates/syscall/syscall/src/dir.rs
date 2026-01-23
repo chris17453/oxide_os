@@ -10,6 +10,7 @@ use vfs::{Mode, mount::GLOBAL_VFS};
 
 use crate::errno;
 use crate::vfs::{copy_path_from_user, resolve_path, validate_user_buffer, vfs_error_to_errno};
+use crate::copy_to_user;
 
 /// Copy a path from user space (internal helper)
 fn get_path(path_ptr: u64, path_len: usize) -> Option<&'static str> {
@@ -222,20 +223,36 @@ pub fn sys_getdents(fd: i32, buf: u64, count: usize) -> i64 {
 
         // Write entry to user buffer
         unsafe {
-            let entry_ptr = (buf + bytes_written as u64) as *mut u8;
+            let entry_ptr = buf + bytes_written as u64;
+
+            // Prepare header
+            let mut header = UserDirEntry {
+                d_ino: entry.ino,
+                d_off: offset + 1,
+                d_reclen: reclen as u16,
+                d_type: vtype_to_dtype(entry.file_type),
+            };
 
             // Write header
-            let header = entry_ptr as *mut UserDirEntry;
-            (*header).d_ino = entry.ino;
-            (*header).d_off = offset + 1;
-            (*header).d_reclen = reclen as u16;
-            (*header).d_type = vtype_to_dtype(entry.file_type);
+            let header_bytes = core::slice::from_raw_parts(
+                &header as *const UserDirEntry as *const u8,
+                core::mem::size_of::<UserDirEntry>(),
+            );
+            if !copy_to_user(entry_ptr, header_bytes) {
+                return errno::EFAULT;
+            }
 
             // Write name after header
-            let name_ptr = entry_ptr.add(core::mem::size_of::<UserDirEntry>());
-            core::ptr::copy_nonoverlapping(entry.name.as_ptr(), name_ptr, name_len);
-            // Null terminator
-            *name_ptr.add(name_len) = 0;
+            let name_ptr = entry_ptr + core::mem::size_of::<UserDirEntry>() as u64;
+            if !copy_to_user(name_ptr, entry.name.as_bytes()) {
+                return errno::EFAULT;
+            }
+
+            // Write null terminator
+            let null_byte = [0u8];
+            if !copy_to_user(name_ptr + name_len as u64, &null_byte) {
+                return errno::EFAULT;
+            }
         }
 
         bytes_written += reclen;
@@ -311,9 +328,15 @@ pub fn sys_getcwd(buf: u64, size: usize) -> i64 {
 
     // Copy path to user buffer
     unsafe {
-        let dest = buf as *mut u8;
-        core::ptr::copy_nonoverlapping(cwd.as_ptr(), dest, cwd.len());
-        *dest.add(cwd.len()) = 0; // Null terminator
+        if !copy_to_user(buf, cwd.as_bytes()) {
+            return errno::EFAULT;
+        }
+
+        // Write null terminator
+        let null_byte = [0u8];
+        if !copy_to_user(buf + cwd.len() as u64, &null_byte) {
+            return errno::EFAULT;
+        }
     }
 
     cwd.len() as i64
@@ -426,8 +449,9 @@ pub fn sys_readlink(path_ptr: u64, path_len: usize, buf: u64, bufsize: usize) ->
     // Copy to user buffer (up to bufsize, no null terminator per POSIX)
     let copy_len = core::cmp::min(target.len(), bufsize);
     unsafe {
-        let dest = buf as *mut u8;
-        core::ptr::copy_nonoverlapping(target.as_ptr(), dest, copy_len);
+        if !copy_to_user(buf, &target.as_bytes()[..copy_len]) {
+            return errno::EFAULT;
+        }
     }
 
     copy_len as i64
