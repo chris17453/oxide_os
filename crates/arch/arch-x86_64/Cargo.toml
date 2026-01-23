@@ -11,3 +11,6 @@ sched-traits = { workspace = true }
 boot-proto = { workspace = true }
 ps2 = { workspace = true }
 spin = { workspace = true }
+
+[build-dependencies]
+cc = "1.0"

@@ -82,20 +82,47 @@ pub fn send_ipi(target: IpiTarget, vector: u8) {
     }
 }
 
-/// Send IPI to a specific CPU (platform stub)
-fn send_ipi_to_cpu(_cpu_id: CpuId, _vector: u8) {
-    // This would be implemented by the architecture crate
-    // using APIC ICR writes on x86_64
+/// Send IPI to a specific CPU
+fn send_ipi_to_cpu(cpu_id: CpuId, vector: u8) {
+    // Get the APIC ID for the target CPU
+    let apic_id = match crate::cpu::get_apic_id(cpu_id) {
+        Some(id) => id,
+        None => return, // CPU not present
+    };
+
+    // Send IPI to specific APIC ID
+    arch_x86_64::apic::send_ipi(
+        apic_id as u8,
+        vector,
+        arch_x86_64::apic::DeliveryMode::Fixed,
+        arch_x86_64::apic::DestShorthand::None,
+    );
 }
 
-/// Send broadcast IPI (platform stub)
-fn send_ipi_broadcast(_vector: u8, _include_self: bool) {
-    // This would be implemented by the architecture crate
+/// Send broadcast IPI
+fn send_ipi_broadcast(vector: u8, include_self: bool) {
+    let shorthand = if include_self {
+        arch_x86_64::apic::DestShorthand::All
+    } else {
+        arch_x86_64::apic::DestShorthand::AllExceptSelf
+    };
+
+    arch_x86_64::apic::send_ipi(
+        0, // Ignored for broadcast
+        vector,
+        arch_x86_64::apic::DeliveryMode::Fixed,
+        shorthand,
+    );
 }
 
-/// Send self IPI (platform stub)
-fn send_ipi_self(_vector: u8) {
-    // This would be implemented by the architecture crate
+/// Send self IPI
+fn send_ipi_self(vector: u8) {
+    arch_x86_64::apic::send_ipi(
+        0, // Ignored for self
+        vector,
+        arch_x86_64::apic::DeliveryMode::Fixed,
+        arch_x86_64::apic::DestShorthand::Self_,
+    );
 }
 
 /// Send a reschedule IPI to a CPU

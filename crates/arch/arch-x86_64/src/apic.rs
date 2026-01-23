@@ -50,6 +50,28 @@ pub enum TimerDivide {
     Div1 = 0b1011,
 }
 
+/// IPI Delivery Mode
+#[repr(u32)]
+#[derive(Debug, Clone, Copy)]
+pub enum DeliveryMode {
+    Fixed = 0b000 << 8,
+    LowestPriority = 0b001 << 8,
+    Smi = 0b010 << 8,
+    Nmi = 0b100 << 8,
+    Init = 0b101 << 8,
+    Startup = 0b110 << 8,
+}
+
+/// IPI Destination Shorthand
+#[repr(u32)]
+#[derive(Debug, Clone, Copy)]
+pub enum DestShorthand {
+    None = 0b00 << 18,        // Use destination field
+    Self_ = 0b01 << 18,       // Send to self
+    All = 0b10 << 18,         // Send to all CPUs
+    AllExceptSelf = 0b11 << 18, // Send to all except self
+}
+
 /// Virtual address of APIC (through direct physical map)
 fn apic_base() -> u64 {
     PHYS_MAP_BASE + APIC_BASE_PHYS
@@ -136,6 +158,45 @@ pub fn version() -> u8 {
 /// Send end-of-interrupt signal
 pub fn end_of_interrupt() {
     write(reg::EOI, 0);
+}
+
+/// Send an Inter-Processor Interrupt
+///
+/// - `dest_apic`: Destination APIC ID (ignored if shorthand is not None)
+/// - `vector`: Interrupt vector (0-255)
+/// - `mode`: Delivery mode (INIT, STARTUP, etc.)
+/// - `shorthand`: Destination shorthand (None, All, AllExceptSelf, etc.)
+///
+/// For INIT-SIPI-SIPI sequence:
+/// 1. send_ipi(apic_id, 0, DeliveryMode::Init, DestShorthand::None) - INIT
+/// 2. Wait 10ms
+/// 3. send_ipi(apic_id, start_page, DeliveryMode::Startup, DestShorthand::None) - SIPI
+/// 4. Wait 200us
+/// 5. send_ipi(apic_id, start_page, DeliveryMode::Startup, DestShorthand::None) - SIPI
+pub fn send_ipi(dest_apic: u8, vector: u8, mode: DeliveryMode, shorthand: DestShorthand) {
+    // Wait for any pending IPI to complete
+    while (read(reg::ICR_LOW) & (1 << 12)) != 0 {
+        core::hint::spin_loop();
+    }
+
+    // Write destination APIC ID to ICR high (bits 56-63 = bits 24-31 of high word)
+    write(reg::ICR_HIGH, (dest_apic as u32) << 24);
+
+    // Build ICR low value
+    let icr_low: u32 = (vector as u32)        // Vector (bits 0-7)
+        | (mode as u32)                       // Delivery mode (bits 8-10)
+        | (0 << 11)                           // Destination mode: physical (bit 11)
+        | (1 << 14)                           // Level: assert (bit 14)
+        | (0 << 15)                           // Trigger mode: edge (bit 15)
+        | (shorthand as u32);                 // Destination shorthand (bits 18-19)
+
+    // Write ICR low to send the IPI
+    write(reg::ICR_LOW, icr_low);
+
+    // Wait for IPI to be accepted
+    while (read(reg::ICR_LOW) & (1 << 12)) != 0 {
+        core::hint::spin_loop();
+    }
 }
 
 /// Configure and start the APIC timer

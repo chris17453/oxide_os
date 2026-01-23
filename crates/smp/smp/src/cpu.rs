@@ -138,15 +138,33 @@ pub fn is_bsp(cpu_id: CpuId) -> bool {
     }
 }
 
+/// Get the APIC ID for a CPU
+pub fn get_apic_id(cpu_id: CpuId) -> Option<u32> {
+    unsafe {
+        if (cpu_id as usize) < MAX_CPUS {
+            let info = &CPU_INFO[cpu_id as usize];
+            if info.state != CpuState::NotPresent {
+                Some(info.apic_id)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+}
+
 /// Boot an Application Processor
 ///
 /// This is architecture-specific. On x86_64, it involves:
 /// 1. Send INIT IPI
 /// 2. Wait 10ms
 /// 3. Send SIPI with startup vector
+/// 4. Wait 200us
+/// 5. Send second SIPI
 ///
-/// The actual implementation is in the architecture crate.
-pub fn boot_ap(cpu_id: CpuId) -> Result<(), &'static str> {
+/// The trampoline code must be set up before calling this function.
+pub fn boot_ap(cpu_id: CpuId, trampoline_page: u8) -> Result<(), &'static str> {
     let state = get_cpu_state(cpu_id);
 
     if state == CpuState::NotPresent {
@@ -157,15 +175,63 @@ pub fn boot_ap(cpu_id: CpuId) -> Result<(), &'static str> {
         return Err("CPU already online");
     }
 
+    // Get the APIC ID for the target CPU
+    let apic_id = get_apic_id(cpu_id).ok_or("CPU has no APIC ID")?;
+
     unsafe {
         CPU_INFO[cpu_id as usize].state = CpuState::Starting;
     }
 
-    // Architecture-specific boot code would be called here
-    // For now, we just mark it as online for testing
-    // In practice, this would involve IPI sequences
+    // Send INIT IPI to reset the AP
+    arch_x86_64::apic::send_ipi(
+        apic_id as u8,
+        0, // Vector ignored for INIT
+        arch_x86_64::apic::DeliveryMode::Init,
+        arch_x86_64::apic::DestShorthand::None,
+    );
 
-    Ok(())
+    // Wait 10ms for INIT to take effect
+    arch_x86_64::delay_ms(10);
+
+    // Send first SIPI with startup vector (page number where trampoline is located)
+    arch_x86_64::apic::send_ipi(
+        apic_id as u8,
+        trampoline_page, // Startup vector = page number (e.g., 0x08 = 0x8000)
+        arch_x86_64::apic::DeliveryMode::Startup,
+        arch_x86_64::apic::DestShorthand::None,
+    );
+
+    // Wait 200 microseconds
+    arch_x86_64::delay_us(200);
+
+    // Send second SIPI (per Intel spec, for reliability)
+    arch_x86_64::apic::send_ipi(
+        apic_id as u8,
+        trampoline_page,
+        arch_x86_64::apic::DeliveryMode::Startup,
+        arch_x86_64::apic::DestShorthand::None,
+    );
+
+    // Wait for AP to come online (with timeout)
+    let timeout_ms = 1000; // 1 second timeout
+    let start = arch_x86_64::read_tsc();
+    let tsc_per_ms = arch_x86_64::tsc_frequency() / 1000;
+    let timeout_tsc = start + (timeout_ms * tsc_per_ms);
+
+    loop {
+        if get_cpu_state(cpu_id) == CpuState::Online {
+            return Ok(());
+        }
+
+        if arch_x86_64::read_tsc() > timeout_tsc {
+            unsafe {
+                CPU_INFO[cpu_id as usize].state = CpuState::Present;
+            }
+            return Err("AP boot timeout");
+        }
+
+        core::hint::spin_loop();
+    }
 }
 
 /// Signal that BSP initialization is complete

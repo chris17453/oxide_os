@@ -23,6 +23,7 @@ version = "0.1.0"
 dependencies = [
  "arch-traits",
  "boot-proto",
+ "cc",
  "os_core",
  "ps2",
  "sched-traits",
@@ -1181,6 +1182,7 @@ name = "smp"
 version = "0.1.0"
 dependencies = [
  "arch-traits",
+ "arch-x86_64",
  "os_core",
  "spin 0.9.8",
 ]
