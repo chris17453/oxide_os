@@ -288,12 +288,30 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
         "[SMP] Bootstrap Processor initialized (CPU 0, APIC ID {})",
         bsp_apic_id
     );
+
+    // TEMPORARY: Manually register CPU 1 for testing
+    // TODO: Replace with proper ACPI MADT enumeration and AP boot
+    let _ = writeln!(writer, "[SMP] Detecting additional CPUs...");
+    unsafe {
+        // Register CPU 1 as present but not online (needs proper AP boot)
+        smp::cpu::register_cpu(1, 1, false); // CPU 1, APIC ID 1, not BSP
+        // Note: NOT calling set_cpu_online(1) - CPU is registered but offline
+        // Need to implement INIT-SIPI-SIPI sequence to actually boot it
+    }
+    let _ = writeln!(writer, "[SMP] CPU 1 detected (APIC ID 1) - offline, needs AP boot");
+
     let _ = writeln!(
         writer,
-        "[SMP] CPUs online: {}/{}",
-        smp::cpu::cpus_online(),
-        smp::cpu::cpu_count()
+        "[SMP] CPUs detected: {}, CPUs online: {}",
+        smp::cpu::cpu_count(),
+        smp::cpu::cpus_online()
     );
+
+    if smp::cpu::cpus_online() > 1 {
+        let _ = writeln!(writer, "[SMP] Multi-CPU mode: TLB shootdown will use IPIs");
+    } else {
+        let _ = writeln!(writer, "[SMP] Single-CPU mode: TLB shootdown uses local flush only");
+    }
 
     // Register page fault callback for COW handling
     unsafe {
