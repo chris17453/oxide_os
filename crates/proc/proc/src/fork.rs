@@ -8,8 +8,21 @@ use mm_paging::{PageTable, PageTableFlags, flush_tlb, phys_to_virt};
 use mm_traits::FrameAllocator;
 use os_core::{PhysAddr, VirtAddr};
 use proc_traits::Pid;
+use spin::Mutex;
 
 use crate::{Process, ProcessContext, UserAddressSpace, alloc_pid, process_table};
+
+/// Global lock for COW fault handling
+///
+/// This lock protects the critical section in handle_cow_fault() where we:
+/// 1. Check if page is COW
+/// 2. Check reference count
+/// 3. Either make writable or allocate+copy
+/// 4. Update PTE
+///
+/// This prevents races where multiple CPUs handle COW faults on the same page.
+/// It's a global lock (not ideal for performance) but ensures correctness.
+static COW_FAULT_LOCK: Mutex<()> = Mutex::new(());
 
 /// Error during fork
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -303,6 +316,10 @@ pub fn handle_cow_fault<A: FrameAllocator>(
     pml4_phys: PhysAddr,
     allocator: &A,
 ) -> bool {
+    // Acquire global COW fault lock to prevent races
+    // This ensures only one CPU handles COW faults at a time
+    let _guard = COW_FAULT_LOCK.lock();
+
     // Walk page tables to find the faulting entry
     let pml4_virt = phys_to_virt(pml4_phys);
     let pml4 = unsafe { &mut *pml4_virt.as_mut_ptr::<PageTable>() };
@@ -346,8 +363,18 @@ pub fn handle_cow_fault<A: FrameAllocator>(
     let pt = unsafe { &mut *pt_virt.as_mut_ptr::<PageTable>() };
     let pt_entry = &mut pt[pt_idx];
 
-    if !pt_entry.is_present() || !pt_entry.is_cow() {
+    // Double-check after acquiring lock: another CPU might have handled this
+    if !pt_entry.is_present() {
         return false;
+    }
+
+    if !pt_entry.is_cow() {
+        // Already writable - another CPU handled it
+        // Check if it's actually writable now
+        if pt_entry.is_writable() {
+            return true;  // Success - already fixed
+        }
+        return false;  // Not COW and not writable = error
     }
 
     let old_phys = pt_entry.addr();
@@ -390,7 +417,13 @@ pub fn handle_cow_fault<A: FrameAllocator>(
     }
 
     // Flush TLB for this page
+    // On single-CPU systems, flush_tlb is sufficient
+    // On multi-CPU systems, this needs TLB shootdown (TODO: add when SMP is enabled)
     flush_tlb(fault_addr);
+
+    // TODO: When SMP is fully enabled, use:
+    // let page_start = fault_addr.as_u64() & !0xFFF;
+    // smp::tlb::tlb_shootdown(page_start, page_start + 0x1000, 0);
 
     true
 }
