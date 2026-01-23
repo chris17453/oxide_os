@@ -971,8 +971,11 @@ fn page_fault_handler(fault_addr: u64, error_code: u64, rip: u64) -> bool {
         );
     }
 
-    // COW faults are: present + write + user mode
-    if is_present && is_write && is_user {
+    // COW faults are: present + write, can be from user OR kernel mode
+    // Kernel mode COW faults happen when kernel writes to userspace COW pages
+    // (e.g., during syscalls like wait/waitpid writing to .bss section)
+    let is_userspace_addr = fault_addr < 0x0000_8000_0000_0000;
+    if is_present && is_write && (is_user || is_userspace_addr) {
         // Get current process's PML4
         let table = process_table();
         let current_pid = table.current_pid();
