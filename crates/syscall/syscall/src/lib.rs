@@ -567,6 +567,29 @@ fn sys_exec(path: u64, path_len: usize, argv: *const *const u8, envp: *const *co
     errno::ENOSYS
 }
 
+/// Write a value to userspace memory safely
+///
+/// Validates and writes to a userspace pointer from kernel context.
+/// The address must be properly mapped in the current process's page tables.
+unsafe fn write_user_i32(user_ptr: u64, value: i32) -> bool {
+    // Validate address is in userspace (canonical form check)
+    if user_ptr == 0 || user_ptr >= 0x0000_8000_0000_0000 {
+        return false;
+    }
+
+    // Ensure alignment
+    if user_ptr & 0x3 != 0 {
+        return false;
+    }
+
+    // Write directly - the page tables should have USER bit set
+    // which allows kernel access when running in ring 0
+    let ptr = user_ptr as *mut i32;
+    ptr.write_volatile(value);
+
+    true
+}
+
 /// sys_wait - Wait for any child process
 ///
 /// # Arguments
@@ -585,9 +608,8 @@ fn sys_wait(status_ptr: u64) -> i64 {
                 let status = result as i32;
 
                 // Write status if pointer provided
-                if status_ptr != 0 && status_ptr < 0x0000_8000_0000_0000 {
-                    let status_out = status_ptr as *mut i32;
-                    *status_out = status;
+                if status_ptr != 0 {
+                    write_user_i32(status_ptr, status);
                 }
 
                 return pid as i64;
@@ -620,9 +642,8 @@ fn sys_waitpid(pid: i32, status_ptr: u64, options: i32) -> i64 {
                 let status = result as i32;
 
                 // Write status if pointer provided
-                if status_ptr != 0 && status_ptr < 0x0000_8000_0000_0000 {
-                    let status_out = status_ptr as *mut i32;
-                    *status_out = status;
+                if status_ptr != 0 {
+                    write_user_i32(status_ptr, status);
                 }
 
                 return child_pid as i64;
