@@ -20,7 +20,6 @@ use uefi::Char16;
 use uefi::mem::memory_map::MemoryMap;
 use uefi::prelude::*;
 use uefi::proto::console::gop::{BltOp, BltPixel, GraphicsOutput};
-use uefi::proto::console::text::{Key, ScanCode};
 use uefi::proto::media::file::{File, FileAttribute, FileInfo, FileMode, FileType};
 use uefi::proto::media::fs::SimpleFileSystem;
 use uefi::table::boot::{AllocateType, MemoryType as UefiMemoryType};
@@ -36,9 +35,6 @@ const INITRAMFS_PATH: &str = "\\EFI\\OXIDE\\initramfs.cpio";
 
 /// Page size
 const PAGE_SIZE: u64 = 4096;
-
-/// Boot screen timeout in seconds
-const BOOT_TIMEOUT_SECONDS: u8 = 15;
 
 #[derive(Clone, Copy)]
 struct ProgressLayout {
@@ -158,9 +154,6 @@ fn main() -> Status {
         "Transferring control to kernel...",
     );
 
-    // Ensure splash visibility up to BOOT_TIMEOUT_SECONDS while boot work ran concurrently
-    spin_wait_ms(BOOT_TIMEOUT_SECONDS as u64 * 1000);
-
     // Show final boot message
     log("");
     log("🚀 Boot complete! Launching OXIDE OS...");
@@ -195,11 +188,6 @@ fn clear_screen() {
     if let Some(mut st) = uefi::table::system_table_boot() {
         let _ = st.stdout().clear();
     }
-}
-
-/// Busy-wait helper (not used for boot delay anymore)
-fn wait_boot_delay(seconds: u8) {
-    let _ = seconds;
 }
 
 /// Display graphical logo (if graphics available)
@@ -665,25 +653,6 @@ fn glyph_for(ch: char) -> [u8; 7] {
         _ => [
             0b11111, 0b10001, 0b10101, 0b10001, 0b10101, 0b10001, 0b11111,
         ],
-    }
-}
-
-/// Check for key press without blocking
-fn check_key_press() -> Option<Key> {
-    let mut st = uefi::table::system_table_boot()?;
-    let stdin = st.stdin();
-
-    // Check if a key is available
-    match stdin.read_key() {
-        Ok(Some(key)) => Some(key),
-        _ => None,
-    }
-}
-
-/// Spin wait for specified milliseconds (UEFI stall only)
-fn spin_wait_ms(ms: u64) {
-    if let Some(st) = uefi::table::system_table_boot() {
-        st.boot_services().stall(ms as usize * 1000);
     }
 }
 
