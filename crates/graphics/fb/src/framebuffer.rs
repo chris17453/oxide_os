@@ -1,7 +1,6 @@
 //! Framebuffer Abstraction
 
 use crate::color::{Color, PixelFormat};
-use alloc::vec::Vec;
 use core::ptr;
 
 /// Framebuffer information from bootloader
@@ -344,51 +343,6 @@ pub trait Framebuffer: Send + Sync {
     }
 }
 
-/// Display information for the active mode
-#[derive(Debug, Clone, Copy)]
-pub struct DisplayInfo {
-    pub width: u32,
-    pub height: u32,
-    pub stride: u32,
-    pub format: PixelFormat,
-}
-
-/// Rectangle for partial flushes
-#[derive(Debug, Clone, Copy)]
-pub struct Rect {
-    pub x: u32,
-    pub y: u32,
-    pub width: u32,
-    pub height: u32,
-}
-
-/// Display mode description
-#[derive(Debug, Clone, Copy)]
-pub struct Mode {
-    pub width: u32,
-    pub height: u32,
-    pub stride: u32,
-    pub bpp: u32,
-    pub format: PixelFormat,
-}
-
-/// Errors returned by display backends
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DisplayError {
-    Unsupported,
-    DeviceLost,
-    InvalidParameter,
-}
-
-/// Display trait extends framebuffer with mode control and flushing
-pub trait Display: Framebuffer {
-    fn get_info(&self) -> DisplayInfo;
-    fn get_modes(&self) -> Vec<Mode>;
-    fn set_mode(&self, mode: Mode) -> Result<(), DisplayError>;
-    fn framebuffer_mut(&self) -> &mut [u8];
-    fn flush(&self, rect: Option<Rect>) -> Result<(), DisplayError>;
-}
-
 /// Linear framebuffer implementation
 pub struct LinearFramebuffer {
     info: FramebufferInfo,
@@ -475,39 +429,6 @@ impl Framebuffer for LinearFramebuffer {
                 }
             }
         }
-    }
-}
-
-impl Display for LinearFramebuffer {
-    fn get_info(&self) -> DisplayInfo {
-        DisplayInfo {
-            width: self.info.width,
-            height: self.info.height,
-            stride: self.info.stride,
-            format: self.info.format,
-        }
-    }
-
-    fn get_modes(&self) -> Vec<Mode> {
-        Vec::from([Mode {
-            width: self.info.width,
-            height: self.info.height,
-            stride: self.info.stride,
-            bpp: self.info.format.bytes_per_pixel() * 8,
-            format: self.info.format,
-        }])
-    }
-
-    fn set_mode(&self, _mode: Mode) -> Result<(), DisplayError> {
-        Err(DisplayError::Unsupported)
-    }
-
-    fn framebuffer_mut(&self) -> &mut [u8] {
-        unsafe { core::slice::from_raw_parts_mut(self.buffer(), self.size()) }
-    }
-
-    fn flush(&self, _rect: Option<Rect>) -> Result<(), DisplayError> {
-        Ok(())
     }
 }
 
