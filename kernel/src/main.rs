@@ -971,50 +971,47 @@ fn page_fault_handler(fault_addr: u64, error_code: u64, rip: u64) -> bool {
         );
     }
 
-    // COW faults are: present + write + user mode
-    // NOTE: We do NOT handle kernel-mode writes to userspace here because
-    // the page fault handler can't safely acquire locks in exception context.
-    // Instead, copy_to_user must handle COW pages before writing.
-    if is_present && is_write && is_user {
-        // Get current process's PML4
-        let table = process_table();
-        let current_pid = table.current_pid();
+    // COW faults are: present + write
+    // Can occur from user mode OR kernel mode (e.g., copy_to_user)
+    let is_userspace_addr = fault_addr < 0x0000_8000_0000_0000;
+
+    if is_present && is_write {
+        let pml4 = if is_user || is_userspace_addr {
+            // For user-mode faults or kernel-mode faults to userspace:
+            // Use current CR3 directly to avoid lock acquisition in exception context
+            PhysAddr::new(actual_cr3 & !0xFFF) // Mask off flags
+        } else {
+            // Not a userspace access
+            {
+                let mut writer = serial::SerialWriter;
+                let _ = writeln!(writer, "[PF] Not userspace access, skipping COW");
+            }
+            return false;
+        };
 
         {
             let mut writer = serial::SerialWriter;
-            let _ = writeln!(writer, "[PF] COW check: current_pid={}", current_pid);
+            let _ = writeln!(
+                writer,
+                "[PF] COW check: fault_addr={:#x} pml4={:#x}",
+                fault_addr, pml4.as_u64()
+            );
         }
 
-        if let Some(proc) = table.get(current_pid) {
-            let pml4 = proc.lock().address_space().pml4_phys();
-            let alloc = FrameAllocatorWrapper;
+        let alloc = FrameAllocatorWrapper;
 
+        // Try to handle as COW fault
+        // This is safe from exception context because handle_cow_fault doesn't acquire locks
+        if handle_cow_fault(VirtAddr::new(fault_addr), pml4, &alloc) {
             {
                 let mut writer = serial::SerialWriter;
-                let _ = writeln!(
-                    writer,
-                    "[PF] PML4={:#x}, calling handle_cow_fault",
-                    pml4.as_u64()
-                );
+                let _ = writeln!(writer, "[PF] COW handled OK");
             }
-
-            // Try to handle as COW fault
-            if handle_cow_fault(VirtAddr::new(fault_addr), pml4, &alloc) {
-                {
-                    let mut writer = serial::SerialWriter;
-                    let _ = writeln!(writer, "[PF] COW handled OK");
-                }
-                return true; // Fault handled
-            } else {
-                {
-                    let mut writer = serial::SerialWriter;
-                    let _ = writeln!(writer, "[PF] COW handler failed");
-                }
-            }
+            return true; // Fault handled
         } else {
             {
                 let mut writer = serial::SerialWriter;
-                let _ = writeln!(writer, "[PF] Process {} not found!", current_pid);
+                let _ = writeln!(writer, "[PF] COW handler failed - not a COW page");
             }
         }
     }
