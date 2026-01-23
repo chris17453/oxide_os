@@ -11,6 +11,8 @@ pub mod console;
 pub mod font;
 pub mod framebuffer;
 pub mod perf;
+#[cfg(test)]
+mod tests;
 
 pub use color::{Color, PixelFormat};
 pub use console::{Cell, FbConsole};
@@ -160,101 +162,27 @@ pub fn console() -> &'static Mutex<Option<FbConsole>> {
 
 /// Toggle console cursor blink (call from timer/heartbeat)
 pub fn blink_cursor() {
-    if let Some(ref mut console) = *CONSOLE.lock() {
-        console.blink();
+    if let Some(console) = CONSOLE.lock().as_mut() {
+        console.toggle_cursor();
     }
 }
 
-/// Write a character to the console
-pub fn putchar(ch: char) {
-    if let Some(ref mut console) = *CONSOLE.lock() {
-        console.putchar(ch);
+/// Handle timer tick for console cursor blinking
+pub fn tick() {
+    blink_cursor();
+}
+
+/// Enumerate available video modes (if provided by bootloader)
+pub fn video_modes() -> Option<boot_proto::VideoModeList> {
+    VIDEO_MODES.lock().clone()
+}
+
+/// Get the current video mode index (if available)
+pub fn current_mode() -> Option<u32> {
+    let modes = VIDEO_MODES.lock();
+    if modes.is_some() {
+        Some(CURRENT_MODE.load(Ordering::SeqCst))
+    } else {
+        None
     }
-}
-
-/// Write a string to the console
-pub fn puts(s: &str) {
-    if let Some(ref mut console) = *CONSOLE.lock() {
-        for ch in s.chars() {
-            console.putchar(ch);
-        }
-    }
-}
-
-/// Clear the console
-pub fn clear() {
-    if let Some(ref mut console) = *CONSOLE.lock() {
-        console.clear();
-    }
-}
-
-/// Set console colors
-pub fn set_colors(fg: Color, bg: Color) {
-    if let Some(ref mut console) = *CONSOLE.lock() {
-        console.set_fg_color(fg);
-        console.set_bg_color(bg);
-    }
-}
-
-// ============================================================================
-// Video Mode Enumeration
-// ============================================================================
-
-/// Get the number of available video modes
-pub fn get_mode_count() -> u32 {
-    VIDEO_MODES.lock().as_ref().map(|m| m.count).unwrap_or(1)
-}
-
-/// Get the current video mode index
-pub fn get_current_mode() -> u32 {
-    CURRENT_MODE.load(Ordering::SeqCst)
-}
-
-/// Video mode info for userspace
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-pub struct VideoModeInfo {
-    /// Mode number (used for set_mode)
-    pub mode_number: u32,
-    /// Width in pixels
-    pub width: u32,
-    /// Height in pixels
-    pub height: u32,
-    /// Bits per pixel
-    pub bpp: u32,
-    /// Stride in bytes per scanline
-    pub stride: u32,
-    /// Framebuffer size for this mode
-    pub framebuffer_size: u64,
-    /// Is this BGR format (vs RGB)
-    pub is_bgr: bool,
-    /// Padding for alignment
-    pub _pad: [u8; 7],
-}
-
-/// Get video mode info by index
-pub fn get_mode_info(index: u32) -> Option<VideoModeInfo> {
-    let modes_guard = VIDEO_MODES.lock();
-    let modes = modes_guard.as_ref()?;
-
-    if index >= modes.count {
-        return None;
-    }
-
-    let mode = &modes.modes[index as usize];
-    let is_bgr = matches!(
-        mode.format,
-        boot_proto::PixelFormat::Bgr | boot_proto::PixelFormat::Bgra8888
-    );
-
-    Some(VideoModeInfo {
-        mode_number: mode.mode_number,
-        width: mode.width,
-        height: mode.height,
-        bpp: mode.bpp,
-        stride: mode.stride * (mode.bpp / 8), // Convert to bytes
-        framebuffer_size: mode.framebuffer_size,
-        is_bgr,
-        _pad: [0; 7],
-    })
 }
