@@ -42,6 +42,12 @@ pub mod vector {
 
     /// Spurious interrupt vector for APIC
     pub const SPURIOUS: u8 = 0xFF;
+
+    /// IPI vectors (Inter-Processor Interrupts)
+    pub const IPI_RESCHEDULE: u8 = 0xF0;
+    pub const IPI_TLB_SHOOTDOWN: u8 = 0xF1;
+    pub const IPI_CALL_FUNCTION: u8 = 0xF2;
+    pub const IPI_STOP: u8 = 0xF3;
 }
 
 /// IDT gate types
@@ -271,6 +277,13 @@ pub unsafe fn init() {
         (*idt_ptr).set_handler(
             vector::SPURIOUS,
             exceptions::spurious_interrupt as *const () as u64,
+            GateType::Interrupt,
+        );
+
+        // IPI handlers (Inter-Processor Interrupts)
+        (*idt_ptr).set_handler(
+            vector::IPI_TLB_SHOOTDOWN,
+            exceptions::ipi_tlb_shootdown as *const () as u64,
             GateType::Interrupt,
         );
 

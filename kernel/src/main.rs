@@ -313,6 +313,57 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
         let _ = writeln!(writer, "[SMP] Single-CPU mode: TLB shootdown uses local flush only");
     }
 
+    // Register TLB shootdown IPI callback
+    unsafe {
+        arch::set_tlb_shootdown_callback(smp::tlb::handle_tlb_shootdown);
+    }
+
+    // Boot Application Processors if detected
+    if smp::cpu::cpu_count() > 1 {
+        let _ = writeln!(writer, "[SMP] Booting Application Processors...");
+
+        // Allocate AP kernel stack (16KB)
+        let ap_stack_phys = mm_frame::frame_allocator()
+            .alloc_frames(4)
+            .expect("Failed to allocate AP stack");
+        let ap_stack_virt = mm_paging::phys_to_virt(ap_stack_phys).as_u64() + (4 * 4096);
+
+        // Get CR3 for APs to use (current page table)
+        let cr3 = <arch::X86_64 as arch_traits::TlbControl>::read_root();
+
+        // Set up trampoline code at 0x8000
+        unsafe {
+            arch::ap_boot::setup_trampoline(
+                cr3,
+                ap_stack_virt,
+                arch::ap_boot::ap_entry_rust as u64,
+            );
+        }
+        let _ = writeln!(writer, "[SMP] AP trampoline set up at 0x{:x}", arch::ap_boot::TRAMPOLINE_PHYS);
+
+        // Register AP initialization callback
+        unsafe {
+            arch::ap_boot::register_ap_init_callback(ap_init_callback);
+        }
+
+        // Boot CPU 1
+        let _ = writeln!(writer, "[SMP] Sending INIT-SIPI-SIPI to CPU 1...");
+        match smp::cpu::boot_ap(1, arch::ap_boot::TRAMPOLINE_PAGE) {
+            Ok(()) => {
+                let _ = writeln!(writer, "[SMP] CPU 1 is now online!");
+                let _ = writeln!(
+                    writer,
+                    "[SMP] CPUs online: {}/{}",
+                    smp::cpu::cpus_online(),
+                    smp::cpu::cpu_count()
+                );
+            }
+            Err(e) => {
+                let _ = writeln!(writer, "[SMP] Failed to boot CPU 1: {}", e);
+            }
+        }
+    }
+
     // Register page fault callback for COW handling
     unsafe {
         arch::exceptions::set_page_fault_callback(page_fault_handler);
@@ -1098,6 +1149,32 @@ fn terminal_tick() {
     }
     if fb::is_initialized() {
         fb::blink_cursor();
+    }
+}
+
+/// AP initialization callback - called when an Application Processor starts
+///
+/// This is called from the AP boot trampoline with the AP's APIC ID.
+fn ap_init_callback(apic_id: u8) -> ! {
+    // Find which CPU ID corresponds to this APIC ID and mark it online
+    for cpu_id in 0..smp::MAX_CPUS as u32 {
+        if let Some(id) = smp::cpu::get_apic_id(cpu_id) {
+            if id == apic_id as u32 {
+                smp::cpu::set_cpu_online(cpu_id);
+                break;
+            }
+        }
+    }
+
+    // Enable interrupts so we can receive IPIs for TLB shootdown
+    arch::X86_64::enable_interrupts();
+
+    // AP is now online - enter idle loop
+    // In a full system, this would call the scheduler
+    loop {
+        unsafe {
+            core::arch::asm!("hlt");
+        }
     }
 }
 

@@ -9,6 +9,7 @@ extern crate ps2;
 use arch_traits::{Arch, PortIo, TlbControl};
 use os_core::{PhysAddr, VirtAddr};
 
+pub mod ap_boot;
 pub mod apic;
 pub mod context;
 pub mod exceptions;
@@ -319,6 +320,16 @@ pub unsafe fn set_keyboard_callback(callback: fn()) {
     }
 }
 
+/// Register a TLB shootdown IPI callback (called on IPI from other CPUs)
+///
+/// # Safety
+/// The callback must be valid and thread-safe.
+pub unsafe fn set_tlb_shootdown_callback(callback: fn()) {
+    unsafe {
+        exceptions::set_tlb_shootdown_callback(callback);
+    }
+}
+
 /// Re-export syscall user context type and getter
 pub use syscall::{SyscallUserContext, get_user_context};
 
@@ -326,3 +337,47 @@ pub use syscall::{SyscallUserContext, get_user_context};
 pub use usermode::{
     UserContext, enter_usermode, enter_usermode_with_context, jump_to_usermode, return_to_usermode,
 };
+
+/// Read the Time Stamp Counter
+#[inline]
+pub fn read_tsc() -> u64 {
+    let lo: u32;
+    let hi: u32;
+    unsafe {
+        core::arch::asm!(
+            "rdtsc",
+            out("eax") lo,
+            out("edx") hi,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+    ((hi as u64) << 32) | (lo as u64)
+}
+
+/// Get TSC frequency in Hz (estimated)
+///
+/// This is a rough approximation and should be calibrated properly in production.
+/// For now, we assume a typical modern CPU frequency.
+pub fn tsc_frequency() -> u64 {
+    // TODO: Calibrate properly using APIC timer or HPET
+    // For now, assume ~2.5 GHz
+    2_500_000_000
+}
+
+/// Delay for a given number of milliseconds using TSC
+pub fn delay_ms(ms: u64) {
+    let ticks_per_ms = tsc_frequency() / 1000;
+    let end = read_tsc() + (ms * ticks_per_ms);
+    while read_tsc() < end {
+        core::hint::spin_loop();
+    }
+}
+
+/// Delay for a given number of microseconds using TSC
+pub fn delay_us(us: u64) {
+    let ticks_per_us = tsc_frequency() / 1_000_000;
+    let end = read_tsc() + (us * ticks_per_us);
+    while read_tsc() < end {
+        core::hint::spin_loop();
+    }
+}

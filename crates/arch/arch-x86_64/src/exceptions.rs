@@ -389,6 +389,86 @@ extern "C" fn handle_keyboard() {
     crate::apic::end_of_interrupt();
 }
 
+// ============================================================================
+// IPI Handlers (Inter-Processor Interrupts)
+// ============================================================================
+
+/// IPI callback type
+pub type IpiCallback = fn();
+
+/// TLB shootdown IPI callback
+static mut TLB_SHOOTDOWN_CALLBACK: Option<IpiCallback> = None;
+
+/// Register TLB shootdown IPI callback
+///
+/// # Safety
+/// Must be called during initialization.
+pub unsafe fn set_tlb_shootdown_callback(callback: IpiCallback) {
+    unsafe {
+        use core::ptr::addr_of_mut;
+        *addr_of_mut!(TLB_SHOOTDOWN_CALLBACK) = Some(callback);
+    }
+}
+
+/// TLB shootdown IPI handler (vector 0xF1)
+#[unsafe(naked)]
+pub extern "C" fn ipi_tlb_shootdown() {
+    naked_asm!(
+        // Save all registers
+        "push rax",
+        "push rbx",
+        "push rcx",
+        "push rdx",
+        "push rsi",
+        "push rdi",
+        "push rbp",
+        "push r8",
+        "push r9",
+        "push r10",
+        "push r11",
+        "push r12",
+        "push r13",
+        "push r14",
+        "push r15",
+
+        // Call TLB shootdown handler
+        "call {}",
+
+        // Restore all registers
+        "pop r15",
+        "pop r14",
+        "pop r13",
+        "pop r12",
+        "pop r11",
+        "pop r10",
+        "pop r9",
+        "pop r8",
+        "pop rbp",
+        "pop rdi",
+        "pop rsi",
+        "pop rdx",
+        "pop rcx",
+        "pop rbx",
+        "pop rax",
+
+        "iretq",
+        sym handle_ipi_tlb_shootdown,
+    );
+}
+
+/// Handle TLB shootdown IPI
+extern "C" fn handle_ipi_tlb_shootdown() {
+    // Call the registered TLB shootdown callback
+    unsafe {
+        if let Some(callback) = TLB_SHOOTDOWN_CALLBACK {
+            callback();
+        }
+    }
+
+    // Send EOI to APIC
+    crate::apic::end_of_interrupt();
+}
+
 // Rust handlers
 
 extern "C" fn handle_divide_error(frame: *const InterruptFrame, _error: u64) {
