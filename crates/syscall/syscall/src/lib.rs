@@ -643,10 +643,11 @@ fn sys_wait(status_ptr: u64) -> i64 {
                 let pid = (result >> 32) as i32;
                 let status = result as i32;
 
-                // Write status if pointer provided
-                if status_ptr != 0 {
-                    write_user_i32(status_ptr, status);
-                }
+                // TEMPORARY: Skip writing status due to page fault issues
+                // TODO: Fix userspace memory access properly
+                // if status_ptr != 0 {
+                //     write_user_i32(status_ptr, status);
+                // }
 
                 return pid as i64;
             }
@@ -677,10 +678,11 @@ fn sys_waitpid(pid: i32, status_ptr: u64, options: i32) -> i64 {
                 let child_pid = (result >> 32) as i32;
                 let status = result as i32;
 
-                // Write status if pointer provided
-                if status_ptr != 0 {
-                    write_user_i32(status_ptr, status);
-                }
+                // TEMPORARY: Skip writing status due to page fault issues
+                // TODO: Fix userspace memory access properly
+                // if status_ptr != 0 {
+                //     let _ = write_user_i32(status_ptr, status);
+                // }
 
                 return child_pid as i64;
             }
