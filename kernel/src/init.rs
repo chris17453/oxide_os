@@ -968,5 +968,12 @@ fn syscall_dispatch(
         let mut writer = serial::SerialWriter;
         let _ = writeln!(writer, "[SYSCALL] number={} arg1={:#x}", number, arg1);
     }
+
+    // Handle sched_yield specially - it needs to context switch
+    const SCHED_YIELD: u64 = 130;
+    if number == SCHED_YIELD {
+        return scheduler::kernel_yield();
+    }
+
     syscall::dispatch(number, arg1, arg2, arg3, arg4, arg5, arg6)
 }
