@@ -275,10 +275,22 @@ pub fn sys_ppoll(fds_ptr: usize, nfds: usize, timeout_ptr: usize, sigmask_ptr: u
         }
     };
 
-    // TODO: Apply signal mask from sigmask_ptr
-    let _ = sigmask_ptr;
+    // Apply signal mask if provided (temporarily set during poll)
+    let mut old_mask: Option<signal::SigSet> = None;
+    if sigmask_ptr != 0 {
+        if let Some(sigset) = crate::signal::read_sigset(sigmask_ptr) {
+            old_mask = Some(crate::signal::swap_signal_mask(sigset));
+        }
+    }
 
-    sys_poll(fds_ptr, nfds, timeout_ms)
+    let ret = sys_poll(fds_ptr, nfds, timeout_ms);
+
+    // Restore previous mask
+    if let Some(mask) = old_mask {
+        crate::signal::set_signal_mask(mask);
+    }
+
+    ret
 }
 
 /// FD set for select() - bitmap of file descriptors
@@ -518,13 +530,22 @@ pub fn sys_pselect6(
     timeout_ptr: usize,
     sigmask_ptr: usize,
 ) -> i64 {
-    // TODO: Apply signal mask from sigmask_ptr
-    let _ = sigmask_ptr;
+    // Apply signal mask if provided
+    let mut old_mask: Option<signal::SigSet> = None;
+    if sigmask_ptr != 0 {
+        if let Some(sigset) = crate::signal::read_sigset(sigmask_ptr) {
+            old_mask = Some(crate::signal::swap_signal_mask(sigset));
+        }
+    }
 
     // Convert timespec to timeval for sys_select
     // For now, just call select with the timespec converted
     if timeout_ptr == 0 {
-        return sys_select(nfds, readfds_ptr, writefds_ptr, exceptfds_ptr, 0);
+        let ret = sys_select(nfds, readfds_ptr, writefds_ptr, exceptfds_ptr, 0);
+        if let Some(mask) = old_mask {
+            crate::signal::set_signal_mask(mask);
+        }
+        return ret;
     }
 
     let ts: Timespec = unsafe {
@@ -649,12 +670,19 @@ pub fn sys_pselect6(
                 }
                 core::arch::asm!("clac", options(nomem, nostack));
             }
-            return ready_count;
+            let res = ready_count;
+            if let Some(mask) = old_mask {
+                crate::signal::set_signal_mask(mask);
+            }
+            return res;
         }
 
         let current_pid = process_table().current_pid();
         if let Some(proc) = process_table().get(current_pid) {
             if proc.lock().has_pending_signals() {
+                if let Some(mask) = old_mask {
+                    crate::signal::set_signal_mask(mask);
+                }
                 return errno::EINTR;
             }
         }

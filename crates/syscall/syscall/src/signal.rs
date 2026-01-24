@@ -280,3 +280,59 @@ pub fn sys_sigreturn() -> i64 {
     // For now, just return success (actual implementation is arch-specific)
     0
 }
+
+
+/// Read a SigSet from user memory
+///
+/// Returns None if the pointer is invalid or in kernel space
+pub fn read_sigset(ptr: usize) -> Option<SigSet> {
+    if ptr == 0 || ptr >= 0x0000_8000_0000_0000 {
+        return None;
+    }
+
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+        let sigset = core::ptr::read_volatile(ptr as *const SigSet);
+        core::arch::asm!("clac", options(nomem, nostack));
+        Some(sigset)
+    }
+}
+
+/// Atomically swap the current process's signal mask
+///
+/// Sets the new mask and returns the old mask
+pub fn swap_signal_mask(new_mask: SigSet) -> SigSet {
+    let table = process_table();
+    let current_pid = table.current_pid();
+
+    if let Some(proc) = table.get(current_pid) {
+        let mut p = proc.lock();
+        let old_mask = *p.signal_mask();
+
+        // Apply new mask (but never block SIGKILL or SIGSTOP)
+        let mut sanitized = new_mask;
+        sanitized.remove(SIGKILL);
+        sanitized.remove(SIGSTOP);
+        p.set_signal_mask(sanitized);
+
+        old_mask
+    } else {
+        SigSet::empty()
+    }
+}
+
+/// Set the current process's signal mask
+pub fn set_signal_mask(mask: SigSet) {
+    let table = process_table();
+    let current_pid = table.current_pid();
+
+    if let Some(proc) = table.get(current_pid) {
+        let mut p = proc.lock();
+
+        // Apply mask (but never block SIGKILL or SIGSTOP)
+        let mut sanitized = mask;
+        sanitized.remove(SIGKILL);
+        sanitized.remove(SIGSTOP);
+        p.set_signal_mask(sanitized);
+    }
+}
