@@ -186,4 +186,24 @@ impl File {
     pub fn ioctl(&self, request: u64, arg: u64) -> VfsResult<i64> {
         self.vnode.ioctl(request, arg)
     }
+
+    /// Check if file can be read from (for poll/select)
+    ///
+    /// Returns true if:
+    /// - File is opened for reading AND
+    /// - Data is available (for now, always true for regular files)
+    pub fn can_read(&self) -> bool {
+        self.flags.readable()
+        // TODO: For sockets/pipes, check if data is available in buffer
+    }
+
+    /// Check if file can be written to (for poll/select)
+    ///
+    /// Returns true if:
+    /// - File is opened for writing AND
+    /// - Write would not block (for now, always true for regular files)
+    pub fn can_write(&self) -> bool {
+        self.flags.writable()
+        // TODO: For sockets/pipes, check if buffer has space
+    }
 }

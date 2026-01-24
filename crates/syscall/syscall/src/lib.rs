@@ -9,8 +9,10 @@ extern crate alloc;
 pub mod dir;
 pub mod firewall;
 pub mod memory;
+pub mod poll;
 pub mod signal;
 pub mod socket;
+pub mod time;
 pub mod vfs;
 
 use os_core::VirtAddr;
@@ -93,10 +95,22 @@ pub mod nr {
     // Scheduler syscalls
     pub const SCHED_YIELD: u64 = 130;
 
-    // Module syscalls
-    pub const INIT_MODULE: u64 = 60;
-    pub const DELETE_MODULE: u64 = 61;
-    pub const QUERY_MODULE: u64 = 62;
+    // Time syscalls
+    pub const GETTIMEOFDAY: u64 = 60;
+    pub const CLOCK_GETTIME: u64 = 61;
+    pub const CLOCK_GETRES: u64 = 62;
+    pub const NANOSLEEP: u64 = 63;
+
+    // Poll/Select syscalls
+    pub const POLL: u64 = 95;
+    pub const PPOLL: u64 = 96;
+    pub const SELECT: u64 = 97;
+    pub const PSELECT6: u64 = 98;
+
+    // Module syscalls (not implemented, moved to higher numbers)
+    pub const INIT_MODULE: u64 = 160;
+    pub const DELETE_MODULE: u64 = 161;
+    pub const QUERY_MODULE: u64 = 162;
 
     // Signal syscalls
     pub const KILL: u64 = 50;
@@ -355,6 +369,31 @@ pub fn dispatch(
 
         // Scheduler syscalls
         nr::SCHED_YIELD => sys_sched_yield(),
+
+        // Time syscalls
+        nr::GETTIMEOFDAY => time::sys_gettimeofday(arg1 as usize, arg2 as usize),
+        nr::CLOCK_GETTIME => time::sys_clock_gettime(arg1 as i32, arg2 as usize),
+        nr::CLOCK_GETRES => time::sys_clock_getres(arg1 as i32, arg2 as usize),
+        nr::NANOSLEEP => time::sys_nanosleep(arg1 as usize, arg2 as usize),
+
+        // Poll/Select syscalls
+        nr::POLL => poll::sys_poll(arg1 as usize, arg2 as usize, arg3 as i32),
+        nr::PPOLL => poll::sys_ppoll(arg1 as usize, arg2 as usize, arg3 as usize, arg4 as usize),
+        nr::SELECT => poll::sys_select(
+            arg1 as i32,
+            arg2 as usize,
+            arg3 as usize,
+            arg4 as usize,
+            arg5 as usize,
+        ),
+        nr::PSELECT6 => poll::sys_pselect6(
+            arg1 as i32,
+            arg2 as usize,
+            arg3 as usize,
+            arg4 as usize,
+            arg5 as usize,
+            arg6 as usize,
+        ),
 
         // Module syscalls
         nr::INIT_MODULE => sys_init_module(arg1, arg2 as usize, arg3),

@@ -932,6 +932,50 @@ pub fn is_socket_fd(fd: i32) -> bool {
     fd >= SOCKET_FD_BASE && SOCKET_TABLE.lock().contains_key(&fd)
 }
 
+/// Get socket state information for poll operations
+///
+/// Returns: (is_connected, has_data, can_send, is_listening, has_pending_connection)
+pub fn get_socket_info(fd: i32) -> Option<(bool, bool, bool, bool, bool)> {
+    let socket = get_socket(fd)?;
+
+    let state = *socket.state.lock();
+
+    let is_connected = matches!(state, SocketState::Established | SocketState::CloseWait);
+    let is_listening = state == SocketState::Listen;
+
+    // Check if receive buffer has data
+    let has_data = !socket.recv_buf.lock().is_empty();
+
+    // Check if socket can send (connected and not shut down for writing)
+    // For loopback sockets, check if peer is still alive
+    let can_send = if is_connected {
+        // Check if peer socket still exists for loopback
+        let peer_fd = SOCKET_PAIRS.lock().get(&fd).copied();
+        if let Some(peer) = peer_fd {
+            // Loopback socket - check peer state
+            if let Some(peer_socket) = get_socket(peer) {
+                !peer_socket.closed.load(core::sync::atomic::Ordering::SeqCst)
+            } else {
+                false // Peer gone
+            }
+        } else {
+            // Non-loopback socket - assume writable if connected
+            true
+        }
+    } else {
+        false
+    };
+
+    // Check for pending connections (listening sockets)
+    let has_pending_connection = if is_listening {
+        !socket.pending.lock().is_empty()
+    } else {
+        false
+    };
+
+    Some((is_connected, has_data, can_send, is_listening, has_pending_connection))
+}
+
 // Keep the constants for compatibility
 /// Socket option levels
 pub mod sol {
