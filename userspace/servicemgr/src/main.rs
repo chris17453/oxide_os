@@ -180,6 +180,19 @@ fn load_services() {
 
 /// Add default services if no configuration exists
 fn add_default_services(services: &mut [Service; MAX_SERVICES], count: &mut usize) {
+    // Add networkd as default service (should start first for network)
+    if *count < MAX_SERVICES {
+        let service = &mut services[*count];
+        let name = b"networkd";
+        let path = b"/bin/networkd";
+        service.name[..name.len()].copy_from_slice(name);
+        service.name_len = name.len();
+        service.path[..path.len()].copy_from_slice(path);
+        service.path_len = path.len();
+        service.restart = true;
+        *count += 1;
+    }
+
     // Add sshd as default service
     if *count < MAX_SERVICES {
         let service = &mut services[*count];
