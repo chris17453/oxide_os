@@ -80,14 +80,13 @@ pub fn opendir(path: &str) -> Option<Dir> {
 pub fn readdir(dir: &mut Dir) -> Option<&Dirent> {
     // If buffer exhausted, read more
     if dir.pos >= dir.len {
-        let ret = unsafe {
-            syscall::syscall3(
-                syscall::SYS_GETDENTS64,
-                dir.fd as usize,
-                dir.buf.as_mut_ptr() as usize,
-                dir.buf.len(),
-            ) as isize
-        };
+        // Use GETDENTS (34), not GETDENTS64 (84) - kernel only implements 34
+        let ret = syscall::syscall3(
+            syscall::SYS_GETDENTS,
+            dir.fd as usize,
+            dir.buf.as_mut_ptr() as usize,
+            dir.buf.len(),
+        ) as isize;
         if ret <= 0 {
             return None;
         }
