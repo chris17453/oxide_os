@@ -259,16 +259,19 @@ fn display_filesystem(config: &DfConfig, mount: &MountPoint) {
         return;
     }
 
-    // TODO: Use statfs() syscall when available
-    // For now, provide reasonable default values
-    let fs_type_len = mount.fs_type.iter().position(|&c| c == 0).unwrap_or(64);
-    let fs_type = core::str::from_utf8(&mount.fs_type[..fs_type_len]).unwrap_or("");
+    // Get filesystem statistics via statfs syscall
+    let mut fsstat = libc::Statfs::new();
+    let _ = libc::statfs(mount_path, &mut fsstat);
 
-    let (total_kb, used_kb, avail_kb) = match fs_type {
-        "tmpfs" => (1048576, 0, 1048576), // 1GB tmpfs
-        "ext4" | "ext3" | "ext2" => (10485760, 5242880, 5242880), // 10GB disk, 50% used
-        _ => (0, 0, 0),                   // Virtual filesystems
+    // Calculate sizes in KB (block size is typically in bytes)
+    let block_size = if fsstat.f_bsize > 0 {
+        fsstat.f_bsize as u64
+    } else {
+        4096
     };
+    let total_kb = (fsstat.f_blocks * block_size) / 1024;
+    let avail_kb = (fsstat.f_bavail * block_size) / 1024;
+    let used_kb = total_kb.saturating_sub((fsstat.f_bfree * block_size) / 1024);
 
     // Device name
     print_cstr(&mount.device);
@@ -281,13 +284,10 @@ fn display_filesystem(config: &DfConfig, mount: &MountPoint) {
     }
 
     if config.show_inodes {
-        // Show inode information
-        // TODO: Get from statfs() when available
-        let (total_inodes, used_inodes, free_inodes) = match fs_type {
-            "tmpfs" => (262144_u64, 0_u64, 262144_u64), // 256K inodes
-            "ext4" | "ext3" | "ext2" => (655360_u64, 32768_u64, 622592_u64), // 640K inodes, 5% used
-            _ => (0_u64, 0_u64, 0_u64),
-        };
+        // Show inode information from statfs
+        let total_inodes = fsstat.f_files;
+        let free_inodes = fsstat.f_ffree;
+        let used_inodes = total_inodes.saturating_sub(free_inodes);
 
         let mut buf = [0u8; 16];
         let len = format_u64(total_inodes, &mut buf);

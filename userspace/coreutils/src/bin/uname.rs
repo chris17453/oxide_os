@@ -11,26 +11,37 @@
 
 use libc::*;
 
-/// System information (utsname structure)
-struct UtsName {
-    sysname: &'static str,  // OS name
-    nodename: &'static str, // Network node hostname
-    release: &'static str,  // OS release
-    version: &'static str,  // OS version
-    machine: &'static str,  // Hardware type
+/// System information wrapper
+struct SysInfo {
+    utsname: libc::UtsName,
 }
 
-impl UtsName {
-    /// Get system information
-    /// TODO: Replace with actual uname() syscall when available
+impl SysInfo {
+    /// Get system information via uname syscall
     fn get() -> Self {
-        UtsName {
-            sysname: "OXIDE",
-            nodename: "localhost",
-            release: "0.1.0",
-            version: "#1 Mon Jan 20 2026",
-            machine: "x86_64",
-        }
+        let mut utsname = libc::UtsName::new();
+        let _ = libc::sys_uname(&mut utsname);
+        SysInfo { utsname }
+    }
+
+    fn sysname(&self) -> &str {
+        libc::UtsName::get_str(&self.utsname.sysname)
+    }
+
+    fn nodename(&self) -> &str {
+        libc::UtsName::get_str(&self.utsname.nodename)
+    }
+
+    fn release(&self) -> &str {
+        libc::UtsName::get_str(&self.utsname.release)
+    }
+
+    fn version(&self) -> &str {
+        libc::UtsName::get_str(&self.utsname.version)
+    }
+
+    fn machine(&self) -> &str {
+        libc::UtsName::get_str(&self.utsname.machine)
     }
 }
 
@@ -130,8 +141,8 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         config.show_sysname = true;
     }
 
-    // Get system information
-    let utsname = UtsName::get();
+    // Get system information via uname syscall
+    let sysinfo = SysInfo::get();
 
     let mut first = true;
 
@@ -140,7 +151,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         if !first {
             putchar(b' ');
         }
-        prints(utsname.sysname);
+        prints(sysinfo.sysname());
         first = false;
     }
 
@@ -148,7 +159,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         if !first {
             putchar(b' ');
         }
-        prints(utsname.nodename);
+        prints(sysinfo.nodename());
         first = false;
     }
 
@@ -156,7 +167,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         if !first {
             putchar(b' ');
         }
-        prints(utsname.release);
+        prints(sysinfo.release());
         first = false;
     }
 
@@ -164,7 +175,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         if !first {
             putchar(b' ');
         }
-        prints(utsname.version);
+        prints(sysinfo.version());
         first = false;
     }
 
@@ -172,7 +183,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         if !first {
             putchar(b' ');
         }
-        prints(utsname.machine);
+        prints(sysinfo.machine());
         first = false;
     }
 

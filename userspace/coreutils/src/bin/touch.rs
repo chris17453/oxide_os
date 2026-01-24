@@ -162,10 +162,15 @@ fn is_leap_year(year: i32) -> bool {
     (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
 }
 
-/// Get current time (simplified - returns 0 for now)
+/// Get current time using gettimeofday (seconds since epoch)
 fn get_current_time() -> u64 {
-    // TODO: implement actual time syscall
-    0
+    let mut tv = Timeval::new(0, 0);
+    let ret = gettimeofday(&mut tv, None);
+    if ret == 0 && tv.tv_sec >= 0 {
+        tv.tv_sec as u64
+    } else {
+        0
+    }
 }
 
 /// Get file timestamps from reference file
