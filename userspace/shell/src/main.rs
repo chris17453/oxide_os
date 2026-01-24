@@ -301,11 +301,11 @@ struct ShellState {
     history_count: usize,
     /// Current history position (for navigation)
     history_pos: usize,
-    /// In-progress line buffer for editing
-    edit_buf: [u8; MAX_LINE],
-    /// Current edit length
-    edit_len: usize,
-    /// Current cursor column (only supports end-of-line editing for now)
+/// In-progress line buffer for editing
+edit_buf: [u8; MAX_LINE],
+/// Current edit length
+edit_len: usize,
+    /// Current cursor position in edit buffer
     cursor: usize,
 }
 
@@ -493,7 +493,7 @@ fn read_line_with_completion(buf: &mut [u8]) -> usize {
 
         let c = c as u8;
 
-        // Handle escape sequences for arrows
+        // Handle escape sequences for arrows and navigation
         if c == ESC {
             let next = getchar();
             if next == b'[' as i32 {
@@ -520,6 +520,54 @@ fn read_line_with_completion(buf: &mut [u8]) -> usize {
                             replace_line(&[0], &mut state.edit_len);
                         }
                         continue;
+                    }
+                    b'C' => {
+                        // Right arrow
+                        if state.cursor < state.edit_len {
+                            state.cursor += 1;
+                            prints("\x1b[C");
+                        }
+                        continue;
+                    }
+                    b'D' => {
+                        // Left arrow
+                        if state.cursor > 0 {
+                            state.cursor -= 1;
+                            prints("\x1b[D");
+                        }
+                        continue;
+                    }
+                    b'H' => {
+                        // Home
+                        move_cursor_to(0, state.cursor);
+                        state.cursor = 0;
+                        continue;
+                    }
+                    b'F' => {
+                        // End
+                        move_cursor_to(state.edit_len, state.cursor);
+                        state.cursor = state.edit_len;
+                        continue;
+                    }
+                    // CSI 1;5D / 1;5C for Ctrl+Left/Right (terminals often emit)
+                    b'1' => {
+                        // Read optional ; modifier
+                        let semi = getchar();
+                        if semi == b';' as i32 {
+                            let modch = getchar() as u8;
+                            let last = getchar() as u8;
+                            if modch == b'5' {
+                                if last == b'D' {
+                                    // Ctrl+Left: move to prev word
+                                    move_prev_word(&mut state.cursor, state.edit_buf, state.edit_len);
+                                    continue;
+                                } else if last == b'C' {
+                                    // Ctrl+Right: move to next word
+                                    move_next_word(&mut state.cursor, state.edit_buf, state.edit_len);
+                                    continue;
+                                }
+                            }
+                        }
                     }
                     _ => {}
                 }
@@ -560,16 +608,29 @@ fn read_line_with_completion(buf: &mut [u8]) -> usize {
             }
             0x04 => {
                 // Ctrl-D - EOF if line is empty
-                if len == 0 {
+                if state.edit_len == 0 {
                     return 0;
                 }
             }
             _ => {
                 // Regular character
                 if state.edit_len < buf.len() - 2 && c >= 0x20 {
-                    state.edit_buf[state.edit_len] = c;
-                    state.edit_len += 1;
-                    putchar(c);
+                    // Insert at cursor (simple: only support end or middle by shifting right)
+                    if state.cursor == state.edit_len {
+                        state.edit_buf[state.edit_len] = c;
+                        state.edit_len += 1;
+                        state.cursor += 1;
+                        putchar(c);
+                    } else {
+                        // shift
+                        for i in (state.cursor..=state.edit_len).rev() {
+                            state.edit_buf[i + 1] = state.edit_buf[i];
+                        }
+                        state.edit_buf[state.cursor] = c;
+                        state.edit_len += 1;
+                        state.cursor += 1;
+                        redraw_line(state.edit_buf, state.edit_len, state.cursor);
+                    }
                 }
             }
         }
@@ -593,6 +654,64 @@ fn replace_line(line: &[u8], len_out: &mut usize) {
     state.edit_len = len;
     state.cursor = len;
     *len_out = len;
+}
+
+fn move_cursor_to(target: usize, current: usize) {
+    if target > current {
+        let diff = target - current;
+        prints("\x1b[");
+        print_i64(diff as i64);
+        prints("C");
+    } else if current > target {
+        let diff = current - target;
+        prints("\x1b[");
+        print_i64(diff as i64);
+        prints("D");
+    }
+}
+
+fn move_prev_word(cursor: &mut usize, buf: [u8; MAX_LINE], len: usize) {
+    if *cursor == 0 {
+        return;
+    }
+    let mut pos = *cursor;
+    // Skip spaces left
+    while pos > 0 && buf[pos - 1] == b' ' {
+        pos -= 1;
+    }
+    // Skip word
+    while pos > 0 && buf[pos - 1] != b' ' {
+        pos -= 1;
+    }
+    move_cursor_to(pos, *cursor);
+    *cursor = pos;
+}
+
+fn move_next_word(cursor: &mut usize, buf: [u8; MAX_LINE], len: usize) {
+    if *cursor >= len {
+        return;
+    }
+    let mut pos = *cursor;
+    // Skip current word
+    while pos < len && buf[pos] != b' ' {
+        pos += 1;
+    }
+    // Skip spaces
+    while pos < len && buf[pos] == b' ' {
+        pos += 1;
+    }
+    move_cursor_to(pos, *cursor);
+    *cursor = pos;
+}
+
+fn redraw_line(buf: [u8; MAX_LINE], len: usize, cursor: usize) {
+    // Move to line start and clear
+    prints("\r\x1b[2K");
+    print_prompt();
+    for i in 0..len {
+        putchar(buf[i]);
+    }
+    move_cursor_to(cursor, len);
 }
 
 /// Handle tab completion
