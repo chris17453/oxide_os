@@ -57,6 +57,10 @@ pub mod nr {
     pub const CLOCK_GETTIME: u64 = 61;
     pub const CLOCK_GETRES: u64 = 62;
     pub const NANOSLEEP: u64 = 63;
+    // System info syscalls
+    pub const UNAME: u64 = 64;
+    pub const STATFS: u64 = 65;
+    pub const FSTATFS: u64 = 66;
     // Socket syscalls (must match kernel)
     pub const SOCKET: u64 = 70;
     pub const BIND: u64 = 71;
@@ -1002,4 +1006,140 @@ pub fn sys_getrandom(buf: &mut [u8], flags: u32) -> isize {
 /// Number of bytes written on success, negative errno on error
 pub fn getrandom(buf: *mut u8, buflen: usize, flags: u32) -> isize {
     syscall3(nr::GETRANDOM, buf as usize, buflen, flags as usize) as isize
+}
+
+// ============================================================================
+// System Information Syscalls
+// ============================================================================
+
+/// UtsName structure for uname syscall
+#[repr(C)]
+pub struct UtsName {
+    /// Operating system name
+    pub sysname: [u8; 65],
+    /// Network node hostname
+    pub nodename: [u8; 65],
+    /// Operating system release
+    pub release: [u8; 65],
+    /// Operating system version
+    pub version: [u8; 65],
+    /// Hardware identifier (machine)
+    pub machine: [u8; 65],
+    /// Domain name (Linux extension)
+    pub domainname: [u8; 65],
+}
+
+impl UtsName {
+    /// Create a zeroed UtsName
+    pub const fn new() -> Self {
+        UtsName {
+            sysname: [0; 65],
+            nodename: [0; 65],
+            release: [0; 65],
+            version: [0; 65],
+            machine: [0; 65],
+            domainname: [0; 65],
+        }
+    }
+
+    /// Get a field as a string slice (stops at null terminator)
+    pub fn get_str(field: &[u8; 65]) -> &str {
+        let len = field.iter().position(|&c| c == 0).unwrap_or(64);
+        core::str::from_utf8(&field[..len]).unwrap_or("")
+    }
+}
+
+/// sys_uname - Get system identification
+///
+/// # Arguments
+/// * `buf` - Pointer to UtsName structure
+///
+/// # Returns
+/// 0 on success, negative errno on error
+pub fn sys_uname(buf: &mut UtsName) -> i32 {
+    syscall1(nr::UNAME, buf as *mut UtsName as usize) as i32
+}
+
+/// uname - Get system identification (C-style interface)
+pub fn uname(buf: *mut UtsName) -> i32 {
+    syscall1(nr::UNAME, buf as usize) as i32
+}
+
+/// Statfs structure for filesystem statistics
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct Statfs {
+    /// Filesystem type
+    pub f_type: i64,
+    /// Optimal transfer block size
+    pub f_bsize: i64,
+    /// Total data blocks in filesystem
+    pub f_blocks: u64,
+    /// Free blocks in filesystem
+    pub f_bfree: u64,
+    /// Free blocks available to unprivileged user
+    pub f_bavail: u64,
+    /// Total file nodes in filesystem
+    pub f_files: u64,
+    /// Free file nodes in filesystem
+    pub f_ffree: u64,
+    /// Filesystem ID
+    pub f_fsid: [i32; 2],
+    /// Maximum length of filenames
+    pub f_namelen: i64,
+    /// Fragment size
+    pub f_frsize: i64,
+    /// Mount flags
+    pub f_flags: i64,
+    /// Spare bytes
+    pub f_spare: [i64; 4],
+}
+
+impl Statfs {
+    /// Create a zeroed Statfs structure
+    pub const fn new() -> Self {
+        Statfs {
+            f_type: 0,
+            f_bsize: 0,
+            f_blocks: 0,
+            f_bfree: 0,
+            f_bavail: 0,
+            f_files: 0,
+            f_ffree: 0,
+            f_fsid: [0, 0],
+            f_namelen: 0,
+            f_frsize: 0,
+            f_flags: 0,
+            f_spare: [0; 4],
+        }
+    }
+}
+
+/// statfs - Get filesystem statistics for a path
+///
+/// # Arguments
+/// * `path` - Path to file on the filesystem
+/// * `buf` - Pointer to Statfs structure
+///
+/// # Returns
+/// 0 on success, negative errno on error
+pub fn statfs(path: &str, buf: &mut Statfs) -> i32 {
+    syscall3(
+        nr::STATFS,
+        path.as_ptr() as usize,
+        path.len(),
+        buf as *mut Statfs as usize,
+    ) as i32
+}
+
+/// fstatfs - Get filesystem statistics for a file descriptor
+///
+/// # Arguments
+/// * `fd` - File descriptor
+/// * `buf` - Pointer to Statfs structure
+///
+/// # Returns
+/// 0 on success, negative errno on error
+pub fn fstatfs(fd: i32, buf: &mut Statfs) -> i32 {
+    syscall2(nr::FSTATFS, fd as usize, buf as *mut Statfs as usize) as i32
 }
