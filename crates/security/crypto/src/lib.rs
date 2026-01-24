@@ -11,13 +11,17 @@ pub mod aes;
 pub mod argon2;
 pub mod chacha;
 pub mod ed25519;
+pub mod hmac;
 pub mod random;
+pub mod sha512;
 pub mod x25519;
 
 pub use aes::{Aes256Gcm, AesKey, AesNonce};
 pub use argon2::{argon2id_hash, Argon2Params};
 pub use chacha::{ChaCha20Poly1305, ChaChaKey, ChaChaNonce};
 pub use ed25519::{Keypair, PublicKey, SecretKey, Signature};
+pub use hmac::{hmac_sha256, hmac_sha512, HmacSha256, HmacSha512};
+pub use sha512::{sha256, sha512, Sha256, Sha512};
 pub use x25519::{SharedSecret, X25519PublicKey, X25519SecretKey};
 
 /// Cryptographic error types

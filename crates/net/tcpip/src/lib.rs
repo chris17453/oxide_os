@@ -9,6 +9,7 @@ extern crate alloc;
 pub mod arp;
 pub mod checksum;
 pub mod ethernet;
+pub mod filter;
 pub mod icmp;
 pub mod ip;
 pub mod tcp;
@@ -27,6 +28,11 @@ use net::{
 
 pub use arp::ArpCache;
 pub use ethernet::EtherType;
+pub use filter::{
+    add_rule, delete_rule, filter_input, filter_output, flush_all, flush_chain, get_policy,
+    rule_count, set_policy, with_rules, ConnState, FilterChain, FilterRule, FilterVerdict,
+    IpMatch, PacketInfo, PortMatch,
+};
 pub use ip::IpProtocol;
 pub use tcp::TcpConnection;
 pub use udp::UdpSocket;
@@ -190,6 +196,41 @@ impl TcpIpStack {
             }
         }
 
+        // Build packet info for filtering
+        let mut pkt_info = filter::PacketInfo::new(
+            ip_header.src,
+            ip_header.dst,
+            ip_header.protocol,
+        );
+
+        // Extract port information for TCP/UDP
+        match ip_header.protocol {
+            IpProtocol::Tcp if ip_payload.len() >= 4 => {
+                let src_port = u16::from_be_bytes([ip_payload[0], ip_payload[1]]);
+                let dst_port = u16::from_be_bytes([ip_payload[2], ip_payload[3]]);
+                pkt_info = pkt_info.with_ports(src_port, dst_port);
+            }
+            IpProtocol::Udp if ip_payload.len() >= 4 => {
+                let src_port = u16::from_be_bytes([ip_payload[0], ip_payload[1]]);
+                let dst_port = u16::from_be_bytes([ip_payload[2], ip_payload[3]]);
+                pkt_info = pkt_info.with_ports(src_port, dst_port);
+            }
+            IpProtocol::Icmp if !ip_payload.is_empty() => {
+                pkt_info = pkt_info.with_icmp_type(ip_payload[0]);
+            }
+            _ => {}
+        }
+
+        // Apply INPUT chain filter
+        match filter::filter_input(&pkt_info) {
+            filter::FilterVerdict::Accept => {}
+            filter::FilterVerdict::Drop => return Ok(()), // Silently drop
+            filter::FilterVerdict::Reject => {
+                // TODO: Send ICMP unreachable or TCP RST
+                return Ok(());
+            }
+        }
+
         match ip_header.protocol {
             IpProtocol::Icmp => {
                 self.process_icmp(ip_header.src, ip_payload)?;
@@ -278,6 +319,34 @@ impl TcpIpStack {
         payload: &[u8],
     ) -> NetResult<()> {
         let src_ip = self.interface.ipv4_addr().ok_or(NetError::NotConnected)?;
+
+        // Build packet info for filtering
+        let mut pkt_info = filter::PacketInfo::new(src_ip, dst_ip, protocol);
+
+        // Extract port information for TCP/UDP
+        match protocol {
+            IpProtocol::Tcp if payload.len() >= 4 => {
+                let src_port = u16::from_be_bytes([payload[0], payload[1]]);
+                let dst_port = u16::from_be_bytes([payload[2], payload[3]]);
+                pkt_info = pkt_info.with_ports(src_port, dst_port);
+            }
+            IpProtocol::Udp if payload.len() >= 4 => {
+                let src_port = u16::from_be_bytes([payload[0], payload[1]]);
+                let dst_port = u16::from_be_bytes([payload[2], payload[3]]);
+                pkt_info = pkt_info.with_ports(src_port, dst_port);
+            }
+            IpProtocol::Icmp if !payload.is_empty() => {
+                pkt_info = pkt_info.with_icmp_type(payload[0]);
+            }
+            _ => {}
+        }
+
+        // Apply OUTPUT chain filter
+        match filter::filter_output(&pkt_info) {
+            filter::FilterVerdict::Accept => {}
+            filter::FilterVerdict::Drop => return Ok(()), // Silently drop
+            filter::FilterVerdict::Reject => return Err(NetError::ConnectionRefused),
+        }
 
         // Build IP packet
         let ip_packet = ip::Ipv4Packet::new(src_ip, dst_ip, protocol, payload);
