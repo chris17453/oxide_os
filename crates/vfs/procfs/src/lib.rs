@@ -435,13 +435,28 @@ impl ProcPidStatus {
                 ProcessState::Zombie => "Z (zombie)",
             };
 
+            // Get process name from cmdline (first arg, basename only)
+            let cmdline = p.cmdline();
+            let name = if cmdline.is_empty() {
+                "unknown".to_string()
+            } else {
+                // Get basename of first argument
+                let arg0 = &cmdline[0];
+                if let Some(pos) = arg0.rfind('/') {
+                    arg0[pos + 1..].to_string()
+                } else {
+                    arg0.clone()
+                }
+            };
+
             format!(
-                "Name:\tinit\n\
+                "Name:\t{}\n\
                  State:\t{}\n\
                  Pid:\t{}\n\
                  PPid:\t{}\n\
                  Uid:\t{}\t{}\t{}\t{}\n\
                  Gid:\t{}\t{}\t{}\t{}\n",
+                name,
                 state,
                 self.pid,
                 p.ppid(),
@@ -542,6 +557,34 @@ impl ProcPidCmdline {
     }
 }
 
+impl ProcPidCmdline {
+    fn generate_content(&self) -> alloc::vec::Vec<u8> {
+        let table = process_table();
+
+        if let Some(proc) = table.get(self.pid) {
+            let p = proc.lock();
+            let cmdline = p.cmdline();
+
+            if cmdline.is_empty() {
+                return alloc::vec![0u8];
+            }
+
+            // Join args with NUL bytes, end with NUL
+            let mut result = alloc::vec::Vec::new();
+            for (i, arg) in cmdline.iter().enumerate() {
+                if i > 0 {
+                    result.push(0);
+                }
+                result.extend_from_slice(arg.as_bytes());
+            }
+            result.push(0);
+            result
+        } else {
+            alloc::vec![0u8]
+        }
+    }
+}
+
 impl VnodeOps for ProcPidCmdline {
     fn vtype(&self) -> VnodeType {
         VnodeType::File
@@ -556,9 +599,7 @@ impl VnodeOps for ProcPidCmdline {
     }
 
     fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
-        // For now, just return "init" as cmdline
-        // In a real implementation, we'd store the actual command line
-        let content = b"init\0";
+        let content = self.generate_content();
 
         let offset = offset as usize;
         if offset >= content.len() {
@@ -596,7 +637,13 @@ impl VnodeOps for ProcPidCmdline {
     }
 
     fn stat(&self) -> VfsResult<Stat> {
-        Ok(Stat::new(VnodeType::File, Mode::new(0o444), 5, self.ino))
+        let content = self.generate_content();
+        Ok(Stat::new(
+            VnodeType::File,
+            Mode::new(0o444),
+            content.len() as u64,
+            self.ino,
+        ))
     }
 
     fn truncate(&self, _size: u64) -> VfsResult<()> {
