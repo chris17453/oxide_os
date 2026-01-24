@@ -82,6 +82,60 @@ When implementing a feature:
 - If implementing in phases, clearly document what remains and get approval
 - Test implications on ALL supported architectures (at least conceptually)
 
+### 6. Structured Code Over Manual Manipulation
+
+**Always use proper structs, enums, and named types. Never use raw arrays or manual byte/bit manipulation when a structured approach exists.**
+
+This ensures:
+- Self-documenting code through named fields
+- Compile-time type safety
+- Consistent, repeatable patterns across the codebase
+- Easier maintenance and debugging
+
+**DO:**
+```rust
+// Named struct with clear fields
+#[repr(C)]
+struct PollFd {
+    fd: i32,
+    events: i16,
+    revents: i16,
+}
+
+// Named constants in a module
+mod events {
+    pub const POLLIN: i16 = 0x0001;
+    pub const POLLOUT: i16 = 0x0004;
+}
+
+// Bitflags crate for flag sets
+bitflags! {
+    pub struct FileFlags: u32 {
+        const O_RDONLY = 0;
+        const O_WRONLY = 1;
+    }
+}
+```
+
+**DO NOT:**
+```rust
+// Raw arrays instead of structs
+let pollfd: [u8; 8] = [0; 8];
+pollfd[0..4].copy_from_slice(&fd.to_ne_bytes());
+
+// Magic numbers instead of constants
+if flags & 0x0001 != 0 { ... }
+
+// Manual bit packing instead of bitflags
+let flags = (readable as u32) | ((writable as u32) << 1);
+```
+
+When interfacing with hardware or external protocols:
+- Use `#[repr(C)]` structs that match the expected layout
+- Define named constants for register offsets and magic values
+- Use the `bitflags!` macro for flag fields
+- Document the source of any magic numbers (spec reference, etc.)
+
 ---
 
 ## Documentation Structure
