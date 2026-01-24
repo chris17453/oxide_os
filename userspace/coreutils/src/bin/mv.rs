@@ -235,9 +235,25 @@ fn move_file(src: &str, dst: &str, config: &MvConfig) -> i32 {
         return 1;
     }
 
-    // For -u option, would need stat to compare times
-    // Since we don't have stat yet, skip this for now
-    // TODO: Implement proper stat-based update check
+    // For -u option, check if destination is newer than source
+    if config.update {
+        let mut src_stat = Stat::zeroed();
+        let mut dst_stat = Stat::zeroed();
+
+        if fstat(src_fd, &mut src_stat) == 0 && stat(dst, &mut dst_stat) == 0 {
+            // If destination exists and is newer or same age, skip
+            if dst_stat.mtime >= src_stat.mtime {
+                if config.verbose {
+                    eprints("mv: '");
+                    prints(dst);
+                    eprintlns("' is newer, skipping");
+                }
+                close(src_fd);
+                return 0; // Success - nothing to do
+            }
+        }
+        // If destination doesn't exist or source is newer, continue with move
+    }
 
     // Open/create destination
     let flags = if config.force {
