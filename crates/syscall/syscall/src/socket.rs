@@ -15,7 +15,8 @@ use spin::Mutex;
 use crate::errno;
 use net::socket::{Shutdown, SocketState};
 use net::{
-    IpAddr, Ipv4Addr, NetError, Socket, SocketAddr, SocketDomain, SocketProtocol, SocketType,
+    IpAddr, Ipv4Addr, Ipv6Addr, NetError, Socket, SocketAddr, SocketDomain, SocketProtocol,
+    SocketType,
 };
 
 /// Socket file descriptor offset (to distinguish from file FDs)
@@ -223,6 +224,39 @@ fn parse_sockaddr_in(addr: u64, addrlen: u32) -> Option<SocketAddr> {
     }
 }
 
+/// Parse sockaddr_in6 structure from user memory
+fn parse_sockaddr_in6(addr: u64, addrlen: u32) -> Option<SocketAddr> {
+    // sockaddr_in6: family (2), port (2), flowinfo (4), addr (16), scope_id (4)
+    if addrlen < 28 {
+        return None;
+    }
+
+    unsafe {
+        let ptr = addr as *const u8;
+
+        let family = u16::from_ne_bytes([*ptr, *ptr.add(1)]);
+        if family != 10 {
+            // AF_INET6
+            return None;
+        }
+
+        let port = u16::from_be_bytes([*ptr.add(2), *ptr.add(3)]);
+        let mut ip_bytes = [0u8; 16];
+        for i in 0..16 {
+            ip_bytes[i] = *ptr.add(8 + i);
+        }
+        let ip = Ipv6Addr(ip_bytes);
+
+        Some(SocketAddr::new(IpAddr::V6(ip), port))
+    }
+}
+
+/// Parse sockaddr (IPv4 or IPv6) from user memory
+fn parse_sockaddr(addr: u64, addrlen: u32) -> Option<SocketAddr> {
+    // Try IPv4 first, then IPv6
+    parse_sockaddr_in(addr, addrlen).or_else(|| parse_sockaddr_in6(addr, addrlen))
+}
+
 /// Write sockaddr_in structure to user memory
 fn write_sockaddr_in(addr: u64, addrlen: u64, socket_addr: &SocketAddr) -> i64 {
     if addr == 0 {
@@ -402,16 +436,13 @@ pub fn sys_connect(fd: i32, addr: u64, addrlen: u32) -> i64 {
         None => return errno::EBADF,
     };
 
-    let socket_addr = match parse_sockaddr_in(addr, addrlen) {
+    let socket_addr = match parse_sockaddr(addr, addrlen) {
         Some(a) => a,
         None => return errno::EINVAL,
     };
 
-    // Check if this is a loopback connection
-    let is_loopback = match socket_addr.ip {
-        IpAddr::V4(ip) => ip.is_loopback(),
-        IpAddr::V6(_) => false, // TODO: IPv6 loopback
-    };
+    // Check if this is a loopback connection (IPv4 or IPv6)
+    let is_loopback = socket_addr.ip.is_loopback();
 
     if is_loopback && socket.sock_type == SocketType::Stream {
         // Handle loopback TCP connection
