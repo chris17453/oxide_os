@@ -12,6 +12,7 @@ mm-frame = { path = "../../mm/mm-frame" }
 vfs = { path = "../../vfs/vfs" }
 signal = { path = "../../signal/signal" }
 net = { path = "../../net/net" }
+tcpip = { path = "../../net/tcpip" }
 input = { path = "../../input/input" }
 mmap = { path = "../../libc-support/mmap" }
 spin = "0.9"

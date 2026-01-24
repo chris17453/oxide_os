@@ -7,6 +7,7 @@
 extern crate alloc;
 
 pub mod dir;
+pub mod firewall;
 pub mod memory;
 pub mod signal;
 pub mod socket;
@@ -131,6 +132,14 @@ pub mod nr {
     pub const GETPEERNAME: u64 = 81;
     pub const SETSOCKOPT: u64 = 82;
     pub const GETSOCKOPT: u64 = 83;
+
+    // Firewall syscalls
+    pub const FW_ADD_RULE: u64 = 200;
+    pub const FW_DEL_RULE: u64 = 201;
+    pub const FW_LIST_RULES: u64 = 202;
+    pub const FW_SET_POLICY: u64 = 203;
+    pub const FW_FLUSH: u64 = 204;
+    pub const FW_GET_CONNTRACK: u64 = 205;
 }
 
 /// Error codes (negative return values)
@@ -394,6 +403,14 @@ pub fn dispatch(
             socket::sys_setsockopt(arg1 as i32, arg2 as i32, arg3 as i32, arg4, arg5 as u32)
         }
         nr::GETSOCKOPT => socket::sys_getsockopt(arg1 as i32, arg2 as i32, arg3 as i32, arg4, arg5),
+
+        // Firewall syscalls
+        nr::FW_ADD_RULE => firewall::sys_fw_add_rule(VirtAddr::new(arg1)),
+        nr::FW_DEL_RULE => firewall::sys_fw_del_rule(arg1 as usize),
+        nr::FW_LIST_RULES => firewall::sys_fw_list_rules(VirtAddr::new(arg1), arg2 as usize),
+        nr::FW_SET_POLICY => firewall::sys_fw_set_policy(arg1 as u8, arg2 as u8),
+        nr::FW_FLUSH => firewall::sys_fw_flush(arg1 as u8),
+        nr::FW_GET_CONNTRACK => firewall::sys_fw_get_conntrack(VirtAddr::new(arg1)),
 
         _ => errno::ENOSYS,
     }

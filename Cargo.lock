@@ -1261,6 +1261,7 @@ dependencies = [
  "proc-traits",
  "signal",
  "spin 0.9.8",
+ "tcpip",
  "vfs",
 ]
 
