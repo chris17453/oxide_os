@@ -3,6 +3,43 @@
 use arch_x86_64 as arch;
 use arch_x86_64::serial;
 use core::fmt::Write;
+use proc::process_table;
+use signal::SigInfo;
+
+/// Send signal to the current foreground process only
+///
+/// Skips system processes (init, login, shell) that shouldn't be killed by Ctrl+C
+fn signal_foreground(sig: i32) {
+    let table = process_table();
+    let current_pid = table.current_pid();
+
+    // Don't signal init or PID 0
+    if current_pid <= 1 {
+        return;
+    }
+
+    if let Some(proc) = table.get(current_pid) {
+        // Check process name from cmdline - don't signal login or shell
+        let should_skip = {
+            let p = proc.lock();
+            let cmdline = p.cmdline();
+            if let Some(first) = cmdline.first() {
+                // Extract just the binary name from path
+                let name = first.rsplit('/').next().unwrap_or(first);
+                name == "login" || name == "esh" || name == "init"
+            } else {
+                false
+            }
+        };
+
+        if should_skip {
+            return;
+        }
+
+        let info = SigInfo::kill(sig, 0, 0);
+        proc.lock().send_signal(sig, Some(info));
+    }
+}
 
 /// Console write function for syscalls
 ///
@@ -30,6 +67,11 @@ pub fn terminal_tick() {
     // Process keyboard scancodes
     while let Some(scancode) = arch::get_scancode() {
         if let Some(byte) = process_scancode(scancode) {
+            // Debug: show control characters (Ctrl+C = 0x03, Ctrl+D = 0x04)
+            if byte < 0x20 && byte != b'\n' && byte != b'\r' && byte != b'\t' {
+                let mut writer = serial::SerialWriter;
+                let _ = write!(writer, "[KB:0x{:02x}]", byte);
+            }
             // Push character to console input buffer (handles both stdin and display)
             devfs::console_push_char(byte);
         }
@@ -65,6 +107,18 @@ pub fn console_read(buf: &mut [u8]) -> usize {
     for byte in buf.iter_mut() {
         // Poll for input from either keyboard buffer or serial
         loop {
+            // Check for pending signals that should interrupt the read
+            {
+                let table = process_table();
+                let current_pid = table.current_pid();
+                if let Some(proc) = table.get(current_pid) {
+                    if proc.lock().has_pending_signals() {
+                        // Return what we have so far - signal will be delivered on return to usermode
+                        return count;
+                    }
+                }
+            }
+
             // First check keyboard buffer (PS/2 console input)
             if devfs::console_has_input() {
                 // Read from console (keyboard) buffer via VFS-like mechanism
@@ -93,17 +147,37 @@ pub fn console_read(buf: &mut [u8]) -> usize {
 
             // Fallback to serial port (for serial console / QEMU)
             if let Some(b) = serial::read_byte() {
-                *byte = b;
-                count += 1;
-                // Return on newline for line-buffered input
-                if b == b'\n' || b == b'\r' {
-                    if b == b'\r' {
-                        // Convert CR to LF
-                        *byte = b'\n';
+                // Handle control characters for serial input
+                match b {
+                    0x03 => {
+                        // Ctrl+C: send SIGINT to foreground processes
+                        signal_foreground(signal::SIGINT);
+                        // Return 0 to indicate interrupted (caller should check for signals)
+                        return 0;
                     }
-                    return count;
+                    0x04 => {
+                        // Ctrl+D: EOF - return what we have (or 0 if nothing)
+                        return count;
+                    }
+                    0x1C => {
+                        // Ctrl+\: send SIGQUIT
+                        signal_foreground(signal::SIGQUIT);
+                        return 0;
+                    }
+                    _ => {
+                        *byte = b;
+                        count += 1;
+                        // Return on newline for line-buffered input
+                        if b == b'\n' || b == b'\r' {
+                            if b == b'\r' {
+                                // Convert CR to LF
+                                *byte = b'\n';
+                            }
+                            return count;
+                        }
+                        break;
+                    }
                 }
-                break;
             }
 
             // Use HLT instruction to wait for interrupt instead of busy-spin

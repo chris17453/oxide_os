@@ -27,6 +27,7 @@ proc = { workspace = true }
 proc-traits = { workspace = true }
 elf = { workspace = true }
 syscall = { workspace = true }
+signal = { workspace = true }
 boot-proto = { workspace = true }
 vfs = { workspace = true }
 devfs = { workspace = true }

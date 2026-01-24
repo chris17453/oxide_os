@@ -424,6 +424,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         devfs::set_random_fill_callback(crypto::random::fill_bytes);
     }
 
+    // Set up signal callback for Ctrl+C handling on console
+    unsafe {
+        devfs::set_signal_fg_callback(signal_foreground_pgrp);
+    }
+
     // Create /proc directory
     if let Err(e) = root_fs.mkdir("proc", vfs::Mode::DEFAULT_DIR) {
         let _ = writeln!(writer, "[VFS] Failed to create /proc: {:?}", e);
@@ -964,6 +969,45 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             entry_point,
             user_stack_top.as_u64(),
         );
+    }
+}
+
+/// Send signal to the current foreground process
+///
+/// This is called by the console device when Ctrl+C or Ctrl+\ is pressed.
+/// Only signals the current process (the one doing I/O), not the whole process group.
+/// Skips system processes (init, login, shell) that shouldn't be killed by Ctrl+C.
+fn signal_foreground_pgrp(sig: i32) {
+    use signal::SigInfo;
+
+    let table = process_table();
+    let current_pid = table.current_pid();
+
+    // Don't signal init or PID 0
+    if current_pid <= 1 {
+        return;
+    }
+
+    if let Some(proc) = table.get(current_pid) {
+        // Check process name from cmdline - don't signal login or shell
+        let should_skip = {
+            let p = proc.lock();
+            let cmdline = p.cmdline();
+            if let Some(first) = cmdline.first() {
+                // Extract just the binary name from path
+                let name = first.rsplit('/').next().unwrap_or(first);
+                name == "login" || name == "esh" || name == "init"
+            } else {
+                false
+            }
+        };
+
+        if should_skip {
+            return;
+        }
+
+        let info = SigInfo::kill(sig, 0, 0); // Kernel-generated signal
+        proc.lock().send_signal(sig, Some(info));
     }
 }
 

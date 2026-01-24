@@ -18,13 +18,77 @@ const KEYBOARD_BUFFER_SIZE: usize = 1024;
 /// Keyboard input buffer for console
 static KEYBOARD_BUFFER: Mutex<VecDeque<u8>> = Mutex::new(VecDeque::new());
 
-/// Push a character to the console keyboard input buffer
-pub fn console_push_char(ch: u8) {
-    let mut buffer = KEYBOARD_BUFFER.lock();
-    if buffer.len() >= KEYBOARD_BUFFER_SIZE {
-        buffer.pop_front(); // Drop oldest if full
+/// EOF pending flag (set by Ctrl+D)
+static CONSOLE_EOF_PENDING: Mutex<bool> = Mutex::new(false);
+
+/// Callback type for sending signals to the foreground process group
+pub type SignalFgFn = fn(i32);
+
+/// Global signal callback (set by kernel)
+static mut SIGNAL_FG_CALLBACK: Option<SignalFgFn> = None;
+
+/// Set the signal callback for sending signals to foreground process
+///
+/// # Safety
+/// Must be called during single-threaded initialization
+pub unsafe fn set_signal_fg_callback(f: SignalFgFn) {
+    unsafe {
+        SIGNAL_FG_CALLBACK = Some(f);
     }
-    buffer.push_back(ch);
+}
+
+/// Signal numbers
+pub const SIGINT: i32 = 2;
+pub const SIGQUIT: i32 = 3;
+
+/// Push a character to the console keyboard input buffer
+///
+/// Handles special characters:
+/// - Ctrl+C (0x03): sends SIGINT to foreground process group
+/// - Ctrl+D (0x04): sets EOF flag for next read
+/// - Ctrl+\ (0x1C): sends SIGQUIT to foreground process group
+pub fn console_push_char(ch: u8) {
+    match ch {
+        0x03 => {
+            // Ctrl+C: send SIGINT to foreground process group
+            unsafe {
+                if let Some(signal_fn) = SIGNAL_FG_CALLBACK {
+                    signal_fn(SIGINT);
+                }
+            }
+            // Clear the input buffer
+            KEYBOARD_BUFFER.lock().clear();
+        }
+        0x04 => {
+            // Ctrl+D: set EOF flag
+            // If there's data in the buffer, commit it first (return what we have)
+            // If buffer is empty, next read will return 0 (EOF)
+            let buffer = KEYBOARD_BUFFER.lock();
+            if buffer.is_empty() {
+                *CONSOLE_EOF_PENDING.lock() = true;
+            }
+            // If buffer has data, the data will be returned and Ctrl+D is ignored
+            // (matching Unix behavior where Ctrl+D commits the current line)
+        }
+        0x1C => {
+            // Ctrl+\: send SIGQUIT to foreground process group
+            unsafe {
+                if let Some(signal_fn) = SIGNAL_FG_CALLBACK {
+                    signal_fn(SIGQUIT);
+                }
+            }
+            // Clear the input buffer
+            KEYBOARD_BUFFER.lock().clear();
+        }
+        _ => {
+            // Normal character: add to buffer
+            let mut buffer = KEYBOARD_BUFFER.lock();
+            if buffer.len() >= KEYBOARD_BUFFER_SIZE {
+                buffer.pop_front(); // Drop oldest if full
+            }
+            buffer.push_back(ch);
+        }
+    }
 }
 
 /// Push a string to the console keyboard input buffer
@@ -264,6 +328,15 @@ impl VnodeOps for ConsoleDevice {
     }
 
     fn read(&self, _offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        // Check for EOF (Ctrl+D on empty buffer)
+        {
+            let mut eof_pending = CONSOLE_EOF_PENDING.lock();
+            if *eof_pending {
+                *eof_pending = false;
+                return Ok(0); // Return EOF
+            }
+        }
+
         // Read from keyboard input buffer
         let mut count = 0;
         while count < buf.len() {
