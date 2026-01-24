@@ -263,7 +263,25 @@ impl TcpIpStack {
             filter::FilterVerdict::Accept => {}
             filter::FilterVerdict::Drop => return Ok(()), // Silently drop
             filter::FilterVerdict::Reject => {
-                // TODO: Send ICMP unreachable or TCP RST
+                // Send ICMP unreachable for UDP/others, TCP RST for TCP
+                match ip_header.protocol {
+                    IpProtocol::Tcp => {
+                        // Parse TCP header to send proper RST
+                        if let Ok(tcp_header) = tcp::TcpHeader::parse(ip_payload) {
+                            let header_len = tcp_header.data_offset() * 4;
+                            let payload_len = ip_payload.len().saturating_sub(header_len);
+                            self.send_tcp_rst(&tcp_header, ip_header.src, ip_header.dst, payload_len)?;
+                        }
+                    }
+                    _ => {
+                        // Destination unreachable (port unreachable)
+                        let icmp = icmp::IcmpPacket::new_dest_unreachable(
+                            icmp::dest_unreachable::PORT_UNREACHABLE,
+                            payload,
+                        );
+                        let _ = self.send_ipv4_packet(ip_header.src, IpProtocol::Icmp, &icmp.to_bytes());
+                    }
+                }
                 return Ok(());
             }
         }
@@ -312,6 +330,37 @@ impl TcpIpStack {
         self.send_ipv4_packet(dst_ip, IpProtocol::Icmp, &request.to_bytes())
     }
 
+    /// Send TCP RST in response to unexpected packets
+    fn send_tcp_rst(
+        &self,
+        header: &tcp::TcpHeader,
+        src_ip: Ipv4Addr,
+        dst_ip: Ipv4Addr,
+        payload_len: usize,
+    ) -> NetResult<()> {
+        // Compute acknowledgment for received data + SYN/FIN
+        let mut ack = header.seq_num.wrapping_add(payload_len as u32);
+        if header.flags & tcp::TcpFlags::SYN != 0 {
+            ack = ack.wrapping_add(1);
+        }
+        if header.flags & tcp::TcpFlags::FIN != 0 {
+            ack = ack.wrapping_add(1);
+        }
+
+        // Build minimal RST+ACK segment with seq=0 and zero window
+        let segment = tcp::TcpSegment::new(
+            header.dst_port,
+            header.src_port,
+            0,
+            ack,
+            tcp::TcpFlags::RST | tcp::TcpFlags::ACK,
+            0,
+            &[],
+        );
+        let bytes = segment.to_bytes(dst_ip, src_ip);
+        self.send_ipv4_packet(src_ip, IpProtocol::Tcp, &bytes)
+    }
+
     /// Process TCP segment
     fn process_tcp(&self, src_ip: Ipv4Addr, dst_ip: Ipv4Addr, payload: &[u8]) -> NetResult<()> {
         let tcp_header = tcp::TcpHeader::parse(payload)?;
@@ -331,6 +380,8 @@ impl TcpIpStack {
             // Handle new connection (would add to pending queue)
         }
 
+        // No matching connection; send RST to refuse
+        self.send_tcp_rst(&tcp_header, src_ip, dst_ip, payload.len())?;
         Ok(())
     }
 
