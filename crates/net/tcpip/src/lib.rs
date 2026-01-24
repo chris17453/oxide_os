@@ -270,7 +270,12 @@ impl TcpIpStack {
                         if let Ok(tcp_header) = tcp::TcpHeader::parse(ip_payload) {
                             let header_len = tcp_header.data_offset() * 4;
                             let payload_len = ip_payload.len().saturating_sub(header_len);
-                            self.send_tcp_rst(&tcp_header, ip_header.src, ip_header.dst, payload_len)?;
+                            self.send_tcp_rst(
+                                &tcp_header,
+                                ip_header.src,
+                                ip_header.dst,
+                                payload_len,
+                            )?;
                         }
                     }
                     _ => {
@@ -279,7 +284,11 @@ impl TcpIpStack {
                             icmp::dest_unreachable::PORT_UNREACHABLE,
                             payload,
                         );
-                        let _ = self.send_ipv4_packet(ip_header.src, IpProtocol::Icmp, &icmp.to_bytes());
+                        let _ = self.send_ipv4_packet(
+                            ip_header.src,
+                            IpProtocol::Icmp,
+                            &icmp.to_bytes(),
+                        );
                     }
                 }
                 return Ok(());

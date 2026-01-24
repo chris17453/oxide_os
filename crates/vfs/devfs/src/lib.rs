@@ -46,7 +46,10 @@ impl DevFs {
             devices.insert("zero".to_string(), Arc::new(ZeroDevice::new(3)));
             devices.insert("console".to_string(), Arc::new(ConsoleDevice::new(4)));
             devices.insert("fb0".to_string(), Arc::new(FramebufferDevice::new(5)));
-            devices.insert("urandom".to_string(), Arc::new(RandomDevice::new_urandom(6)));
+            devices.insert(
+                "urandom".to_string(),
+                Arc::new(RandomDevice::new_urandom(6)),
+            );
             devices.insert("random".to_string(), Arc::new(RandomDevice::new_random(7)));
         }
 

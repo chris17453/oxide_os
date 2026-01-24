@@ -19,8 +19,12 @@ pub struct Dirent {
 impl Dirent {
     /// Parse from raw buffer at given offset
     fn from_bytes(buf: &[u8]) -> Self {
-        let d_ino = u64::from_le_bytes([buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]]);
-        let d_off = i64::from_le_bytes([buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15]]);
+        let d_ino = u64::from_le_bytes([
+            buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
+        ]);
+        let d_off = i64::from_le_bytes([
+            buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15],
+        ]);
         let d_reclen = u16::from_le_bytes([buf[16], buf[17]]);
         let d_type = buf[18];
 
@@ -29,12 +33,22 @@ impl Dirent {
         let name_len = (d_reclen as usize).saturating_sub(name_start).min(255);
         d_name[..name_len].copy_from_slice(&buf[name_start..name_start + name_len]);
 
-        Dirent { d_ino, d_off, d_reclen, d_type, d_name }
+        Dirent {
+            d_ino,
+            d_off,
+            d_reclen,
+            d_type,
+            d_name,
+        }
     }
 
     /// Get filename as str
     pub fn name(&self) -> &str {
-        let len = self.d_name.iter().position(|&b| b == 0).unwrap_or(self.d_name.len());
+        let len = self
+            .d_name
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(self.d_name.len());
         core::str::from_utf8(&self.d_name[..len]).unwrap_or("")
     }
 }

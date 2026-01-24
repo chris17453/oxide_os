@@ -107,7 +107,8 @@ pub fn console_read(buf: &mut [u8]) -> usize {
             }
 
             // Use HLT instruction to wait for interrupt instead of busy-spin
-            // This saves CPU and wakes on timer/serial/keyboard interrupts
+            // Note: This doesn't yield to other processes (scheduler only preempts user mode)
+            // TODO: Implement proper blocking I/O with wait queues
             unsafe {
                 core::arch::asm!("hlt", options(nomem, nostack));
             }

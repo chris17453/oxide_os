@@ -281,7 +281,6 @@ pub fn sys_sigreturn() -> i64 {
     0
 }
 
-
 /// Read a SigSet from user memory
 ///
 /// Returns None if the pointer is invalid or in kernel space

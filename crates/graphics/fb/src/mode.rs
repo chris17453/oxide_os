@@ -52,10 +52,7 @@ pub fn set_mode(index: u32) -> Option<VideoModeInfo> {
         PixelFormat::BGRA8888 | PixelFormat::RGBA8888 => 32,
         _ => mode.bpp,
     };
-    let is_bgr = matches!(
-        fb_info.format,
-        PixelFormat::BGR888 | PixelFormat::BGRA8888
-    );
+    let is_bgr = matches!(fb_info.format, PixelFormat::BGR888 | PixelFormat::BGRA8888);
     Some(VideoModeInfo {
         mode_number: mode.mode_number,
         width: fb_info.width,

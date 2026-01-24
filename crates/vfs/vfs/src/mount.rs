@@ -245,13 +245,13 @@ impl VFS {
     /// Convert filesystem type name to magic number
     fn fs_type_magic(&self, fs_type: &str) -> u32 {
         match fs_type {
-            "initramfs" => 0x01021994,  // INITRAMFS_MAGIC
-            "oxidefs" => 0x4F584944,    // "OXID"
-            "tmpfs" => 0x01021994,      // TMPFS_MAGIC
-            "devfs" => 0x1373,          // DEVFS_MAGIC
-            "procfs" => 0x9FA0,         // PROC_SUPER_MAGIC
-            "sysfs" => 0x62656572,      // SYSFS_MAGIC
-            _ => 0x4F584944,            // Default: OXID
+            "initramfs" => 0x01021994, // INITRAMFS_MAGIC
+            "oxidefs" => 0x4F584944,   // "OXID"
+            "tmpfs" => 0x01021994,     // TMPFS_MAGIC
+            "devfs" => 0x1373,         // DEVFS_MAGIC
+            "procfs" => 0x9FA0,        // PROC_SUPER_MAGIC
+            "sysfs" => 0x62656572,     // SYSFS_MAGIC
+            _ => 0x4F584944,           // Default: OXID
         }
     }
 }

@@ -238,15 +238,14 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
     let start_ticks = get_ticks();
     let wake_ticks = start_ticks + sleep_ticks;
 
-    // Sleep by yielding until wake time
-    // TODO: Implement proper sleep queue in scheduler for efficiency
+    // Sleep by yielding to other processes until wake time
+    // We use HLT to wait for timer interrupts, allowing other processes to run
     while get_ticks() < wake_ticks {
         // Check for pending signals
         let current_pid = process_table().current_pid();
         if let Some(proc) = process_table().get(current_pid) {
             let has_signals = proc.lock().has_pending_signals();
             if has_signals {
-                // Interrupted by signal
                 let elapsed_ticks = get_ticks() - start_ticks;
                 let remaining_ticks = sleep_ticks.saturating_sub(elapsed_ticks);
 
@@ -269,9 +268,18 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
             }
         }
 
-        // Yield to other processes - just return, timer interrupt will schedule
-        // We loop here checking ticks, which is not ideal but works
-        core::hint::spin_loop();
+        // Allow scheduler to preempt us while we wait
+        arch::allow_kernel_preempt();
+
+        // HLT yields CPU until next interrupt
+        // With KERNEL_PREEMPT_OK set, scheduler will switch to other processes
+        unsafe {
+            core::arch::asm!("sti"); // Ensure interrupts enabled
+            core::arch::asm!("hlt", options(nomem, nostack));
+        }
+
+        // Clear preempt flag if we're still running (no switch occurred)
+        arch::disallow_kernel_preempt();
     }
 
     // Sleep complete, set remaining to zero if requested

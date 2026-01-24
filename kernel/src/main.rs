@@ -23,11 +23,11 @@ mod process;
 mod scheduler;
 mod smp_init;
 
-use core::panic::PanicInfo;
-use core::fmt::Write;
+use arch_traits::Arch;
 use arch_x86_64 as arch;
 use arch_x86_64::serial;
-use arch_traits::Arch;
+use core::fmt::Write;
+use core::panic::PanicInfo;
 
 /// Get a serial writer for debug output
 pub fn serial_writer() -> serial::SerialWriter {

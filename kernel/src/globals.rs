@@ -3,12 +3,15 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+use core::ops::{Deref, DerefMut};
 use core::sync::atomic::AtomicBool;
 
+use arch_traits::Arch;
+use arch_x86_64::X86_64;
 use mm_frame::BitmapFrameAllocator;
 use mm_heap::LockedHeap;
 use proc_traits::Pid;
-use spin::Mutex;
+use spin::{Mutex, MutexGuard};
 
 /// Global kernel heap allocator
 #[global_allocator]
@@ -32,9 +35,68 @@ pub static mut USER_EXIT_STATUS: i32 = 0;
 /// Kernel PML4 physical address (for creating new address spaces)
 pub static mut KERNEL_PML4: u64 = 0;
 
+/// Mutex that disables preemption while locked so the scheduler interrupt
+/// doesn't deadlock trying to take a lock already held by the preempted task.
+pub struct InterruptMutex<T> {
+    inner: Mutex<T>,
+}
+
+impl<T> InterruptMutex<T> {
+    /// Create a new interrupt-safe mutex
+    pub const fn new(value: T) -> Self {
+        Self {
+            inner: Mutex::new(value),
+        }
+    }
+
+    /// Lock the mutex, disabling interrupts if they were previously enabled
+    pub fn lock(&self) -> InterruptMutexGuard<'_, T> {
+        let interrupts_were_enabled = X86_64::interrupts_enabled();
+        if interrupts_were_enabled {
+            X86_64::disable_interrupts();
+        }
+        InterruptMutexGuard {
+            guard: Some(self.inner.lock()),
+            interrupts_were_enabled,
+        }
+    }
+}
+
+/// RAII guard for InterruptMutex that re-enables interrupts on drop if needed
+pub struct InterruptMutexGuard<'a, T> {
+    guard: Option<MutexGuard<'a, T>>,
+    interrupts_were_enabled: bool,
+}
+
+impl<T> Deref for InterruptMutexGuard<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.guard.as_ref().unwrap()
+    }
+}
+
+impl<T> DerefMut for InterruptMutexGuard<'_, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.guard.as_mut().unwrap()
+    }
+}
+
+impl<T> Drop for InterruptMutexGuard<'_, T> {
+    fn drop(&mut self) {
+        // First drop the inner guard to release the lock
+        self.guard.take();
+        // Then re-enable interrupts if they were enabled before
+        if self.interrupts_were_enabled {
+            X86_64::enable_interrupts();
+        }
+    }
+}
+
 /// Ready queue - processes that are ready to run
 /// The scheduler picks from this queue on each timer tick
-pub static READY_QUEUE: Mutex<Vec<Pid>> = Mutex::new(Vec::new());
+/// Uses InterruptMutex to prevent deadlock when scheduler_tick accesses it
+pub static READY_QUEUE: InterruptMutex<Vec<Pid>> = InterruptMutex::new(Vec::new());
 
 /// Full parent context for returning from child process
 /// Stores all registers so parent can resume with correct state

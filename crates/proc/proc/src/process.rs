@@ -92,13 +92,14 @@ impl Default for Credentials {
 /// Process context saved during context switch
 ///
 /// This contains the user-mode state that needs to be saved/restored.
+/// Also includes CS/SS for proper kernel-mode preemption support.
 #[derive(Debug, Clone, Default)]
 pub struct ProcessContext {
-    /// User instruction pointer
+    /// Instruction pointer
     pub rip: u64,
-    /// User stack pointer
+    /// Stack pointer
     pub rsp: u64,
-    /// User flags
+    /// Flags
     pub rflags: u64,
     /// General purpose registers
     pub rax: u64,
@@ -116,6 +117,10 @@ pub struct ProcessContext {
     pub r13: u64,
     pub r14: u64,
     pub r15: u64,
+    /// Code segment selector (for kernel/user mode distinction)
+    pub cs: u64,
+    /// Stack segment selector
+    pub ss: u64,
 }
 
 /// Process structure
@@ -195,6 +200,11 @@ pub struct Process {
     itimer_value_sec: i64,
     /// Interval timer - current value microseconds
     itimer_value_usec: i64,
+    /// PID of child being waited for (None = not waiting, Some(-1) = any child, Some(pid) = specific)
+    waiting_for_child: Option<i32>,
+    /// Saved kernel context for resuming blocked syscalls (RIP, RSP when blocked)
+    blocked_kernel_rip: u64,
+    blocked_kernel_rsp: u64,
 }
 
 impl Process {
@@ -245,6 +255,9 @@ impl Process {
             itimer_interval_usec: 0,
             itimer_value_sec: 0,
             itimer_value_usec: 0,
+            waiting_for_child: None,
+            blocked_kernel_rip: 0,
+            blocked_kernel_rsp: 0,
         }
     }
 
@@ -309,6 +322,9 @@ impl Process {
             itimer_interval_usec: 0,
             itimer_value_sec: 0,
             itimer_value_usec: 0,
+            waiting_for_child: None,
+            blocked_kernel_rip: 0,
+            blocked_kernel_rsp: 0,
         }
     }
 
@@ -403,6 +419,49 @@ impl Process {
     pub fn exit(&mut self, status: i32) {
         self.exit_status = status;
         self.state = ProcessState::Zombie;
+    }
+
+    /// Get which child this process is waiting for
+    /// None = not waiting, Some(-1) = any child, Some(pid) = specific child
+    pub fn waiting_for_child(&self) -> Option<i32> {
+        self.waiting_for_child
+    }
+
+    /// Set which child this process is waiting for and block
+    pub fn wait_for_child(&mut self, child_pid: i32) {
+        self.waiting_for_child = Some(child_pid);
+        self.state = ProcessState::Blocked;
+    }
+
+    /// Clear waiting state and unblock
+    pub fn clear_waiting(&mut self) {
+        self.waiting_for_child = None;
+        self.state = ProcessState::Ready;
+    }
+
+    /// Check if this process is waiting for a specific child
+    pub fn is_waiting_for(&self, child_pid: Pid) -> bool {
+        match self.waiting_for_child {
+            None => false,
+            Some(-1) => true, // Waiting for any child
+            Some(pid) => pid as Pid == child_pid,
+        }
+    }
+
+    /// Save kernel context when blocking
+    pub fn save_blocked_kernel_context(&mut self, rip: u64, rsp: u64) {
+        self.blocked_kernel_rip = rip;
+        self.blocked_kernel_rsp = rsp;
+    }
+
+    /// Get saved kernel RIP for resuming blocked syscall
+    pub fn blocked_kernel_rip(&self) -> u64 {
+        self.blocked_kernel_rip
+    }
+
+    /// Get saved kernel RSP for resuming blocked syscall
+    pub fn blocked_kernel_rsp(&self) -> u64 {
+        self.blocked_kernel_rsp
     }
 
     /// Get credentials

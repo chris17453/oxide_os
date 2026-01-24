@@ -20,8 +20,8 @@ mod transport;
 
 use alloc::vec::Vec;
 use libc::socket::{
-    INADDR_ANY, SOCKADDR_IN_SIZE, SockAddrIn, accept, bind, listen, setsockopt, so,
-    sockaddr_in, sol, tcp_socket,
+    INADDR_ANY, SOCKADDR_IN_SIZE, SockAddrIn, accept, bind, listen, setsockopt, so, sockaddr_in,
+    sol, tcp_socket,
 };
 use libc::*;
 

@@ -277,6 +277,8 @@ pub fn do_exec<A: FrameAllocator>(
     ctx.rip = entry_point.as_u64();
     ctx.rsp = final_rsp.as_u64();
     ctx.rflags = 0x202; // IF set
+    ctx.cs = 0x23; // User code segment
+    ctx.ss = 0x1B; // User data segment
 
     // Set up arguments in registers per System V ABI:
     // rdi = argc

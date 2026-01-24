@@ -263,12 +263,14 @@ impl GroupStorage {
 
         // Copy name
         let name_len = (field_ends[0] - field_starts[0]).min(self.name_buf.len() - 1);
-        self.name_buf[..name_len].copy_from_slice(&line[field_starts[0]..field_starts[0] + name_len]);
+        self.name_buf[..name_len]
+            .copy_from_slice(&line[field_starts[0]..field_starts[0] + name_len]);
         self.name_buf[name_len] = 0;
 
         // Copy password
         let passwd_len = (field_ends[1] - field_starts[1]).min(self.passwd_buf.len() - 1);
-        self.passwd_buf[..passwd_len].copy_from_slice(&line[field_starts[1]..field_starts[1] + passwd_len]);
+        self.passwd_buf[..passwd_len]
+            .copy_from_slice(&line[field_starts[1]..field_starts[1] + passwd_len]);
         self.passwd_buf[passwd_len] = 0;
 
         // Parse GID
@@ -383,11 +385,7 @@ fn split_colon_fields(line: &[u8]) -> Option<[&[u8]; 7]> {
         }
     }
 
-    if field_idx == 7 {
-        Some(fields)
-    } else {
-        None
-    }
+    if field_idx == 7 { Some(fields) } else { None }
 }
 
 /// Parse a u32 from ASCII bytes
@@ -408,7 +406,7 @@ fn parse_u32(bytes: &[u8]) -> Option<u32> {
 
 /// Read a file into buffer
 fn read_file_to_buf(path: &str, buf: &mut [u8]) -> Option<usize> {
-    use crate::{close, open, read, O_RDONLY};
+    use crate::{O_RDONLY, close, open, read};
 
     let fd = open(path, O_RDONLY as u32, 0);
     if fd < 0 {
@@ -418,11 +416,7 @@ fn read_file_to_buf(path: &str, buf: &mut [u8]) -> Option<usize> {
     let n = read(fd, buf);
     close(fd);
 
-    if n > 0 {
-        Some(n as usize)
-    } else {
-        None
-    }
+    if n > 0 { Some(n as usize) } else { None }
 }
 
 /// Line iterator for a buffer

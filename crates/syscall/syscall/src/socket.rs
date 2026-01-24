@@ -985,7 +985,9 @@ pub fn get_socket_info(fd: i32) -> Option<(bool, bool, bool, bool, bool)> {
         if let Some(peer) = peer_fd {
             // Loopback socket - check peer state
             if let Some(peer_socket) = get_socket(peer) {
-                !peer_socket.closed.load(core::sync::atomic::Ordering::SeqCst)
+                !peer_socket
+                    .closed
+                    .load(core::sync::atomic::Ordering::SeqCst)
             } else {
                 false // Peer gone
             }
@@ -1004,7 +1006,13 @@ pub fn get_socket_info(fd: i32) -> Option<(bool, bool, bool, bool, bool)> {
         false
     };
 
-    Some((is_connected, has_data, can_send, is_listening, has_pending_connection))
+    Some((
+        is_connected,
+        has_data,
+        can_send,
+        is_listening,
+        has_pending_connection,
+    ))
 }
 
 // Keep the constants for compatibility

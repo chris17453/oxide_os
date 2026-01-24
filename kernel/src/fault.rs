@@ -20,11 +20,16 @@ pub fn page_fault_handler(fault_addr: u64, error_code: u64, _rip: u64) -> bool {
 
     debug_cow!(
         "[PF] fault_addr={:#x} error={:#x} rip={:#x}",
-        fault_addr, error_code, _rip
+        fault_addr,
+        error_code,
+        _rip
     );
     debug_cow!(
         "[PF] present={} write={} user={} actual_cr3={:#x}",
-        is_present, is_write, is_user, actual_cr3
+        is_present,
+        is_write,
+        is_user,
+        actual_cr3
     );
 
     // COW faults are: present + write

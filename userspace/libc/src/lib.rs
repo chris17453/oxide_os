@@ -126,14 +126,14 @@ pub use stat::{
 pub use pwd::{getegid, geteuid, getgid, getuid, setegid, seteuid, setgid, setuid};
 
 // Time functions
-pub use time::{
-    clock, clock_getres, clock_gettime, gettimeofday, gmtime_r, mktime, nanosleep, sleep, time,
-    usleep, Timespec, Timeval, Timezone, Tm,
-};
 pub use time::clocks;
+pub use time::{
+    Timespec, Timeval, Timezone, Tm, clock, clock_getres, clock_gettime, gettimeofday, gmtime_r,
+    mktime, nanosleep, sleep, time, usleep,
+};
 
 // System info functions
-pub use syscall::{fstatfs, statfs, sys_uname, uname, Statfs, UtsName};
+pub use syscall::{Statfs, UtsName, fstatfs, statfs, sys_uname, uname};
 
 // Additional syscall wrappers
 pub use syscall::{sys_getdents as getdents, sys_gettid as gettid};

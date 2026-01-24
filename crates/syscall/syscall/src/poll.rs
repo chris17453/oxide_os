@@ -234,8 +234,18 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
             }
         }
 
-        // Yield and try again
-        core::hint::spin_loop();
+        // Allow scheduler to preempt us while we wait
+        arch_x86_64::allow_kernel_preempt();
+
+        // HLT yields CPU until next interrupt
+        // With KERNEL_PREEMPT_OK set, scheduler will switch to other processes
+        unsafe {
+            core::arch::asm!("sti"); // Ensure interrupts enabled
+            core::arch::asm!("hlt", options(nomem, nostack));
+        }
+
+        // Clear preempt flag if we're still running (no switch occurred)
+        arch_x86_64::disallow_kernel_preempt();
     }
 }
 

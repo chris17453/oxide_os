@@ -1,10 +1,13 @@
 //! Preemptive scheduler for the OXIDE kernel.
 //!
 //! Implements round-robin scheduling via timer interrupts.
+//! Supports both user-mode and kernel-mode preemption.
 
 use arch_x86_64 as arch;
+use core::fmt::Write;
 use mm_paging::phys_to_virt;
 use proc::process_table;
+use proc_traits::ProcessState;
 
 use crate::globals::READY_QUEUE;
 
@@ -43,14 +46,30 @@ pub struct InterruptFrame {
 pub fn scheduler_tick(current_rsp: u64) -> u64 {
     let frame = unsafe { &*(current_rsp as *const InterruptFrame) };
 
-    // Only preempt user mode (CS = 0x23)
-    // Don't preempt kernel - could cause issues with locks
-    if frame.cs != 0x23 {
+    let table = process_table();
+    let current_pid = table.current_pid();
+
+    // Check if kernel code has explicitly allowed preemption (e.g., poll, nanosleep)
+    let kernel_preempt_ok = arch::is_kernel_preempt_allowed();
+
+    // Only preempt:
+    // - User mode (CS = 0x23) - always safe
+    // - Kernel mode if KERNEL_PREEMPT_OK flag is set (blocking syscalls)
+    let in_kernel = frame.cs != 0x23;
+    if in_kernel && !kernel_preempt_ok {
         return current_rsp;
     }
 
-    let table = process_table();
-    let current_pid = table.current_pid();
+    // Debug: log kernel preemption
+    if in_kernel && kernel_preempt_ok {
+        let mut writer = arch::serial::SerialWriter;
+        let _ = writeln!(writer, "[SCHED] Kernel preempt PID {} at rip={:#x}", current_pid, frame.rip);
+    }
+
+    // Clear the preempt flag after checking (it's per-yield-point)
+    if kernel_preempt_ok {
+        arch::clear_kernel_preempt();
+    }
 
     // Check if there's another process to run
     let next_pid = {
@@ -68,6 +87,7 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     }
 
     // Save current process context from interrupt frame
+    // Include CS/SS for proper kernel/user mode restoration
     if let Some(current) = table.get(current_pid) {
         let mut proc = current.lock();
         let ctx = proc.context_mut();
@@ -89,9 +109,13 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         ctx.r13 = frame.r13;
         ctx.r14 = frame.r14;
         ctx.r15 = frame.r15;
+        ctx.cs = frame.cs;
+        ctx.ss = frame.ss;
 
-        // Put current process back in ready queue
-        READY_QUEUE.lock().push(current_pid);
+        // Only put back in ready queue if NOT blocked
+        if proc.state() != ProcessState::Blocked {
+            READY_QUEUE.lock().push(current_pid);
+        }
     }
 
     // Get next process info
@@ -101,24 +125,22 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
             None => return current_rsp,
         };
         let proc = next.lock();
-        (
-            proc.context().clone(),
-            proc.address_space().pml4_phys(),
-            {
-                let ks_virt = phys_to_virt(proc.kernel_stack());
-                ks_virt.as_u64() + proc.kernel_stack_size() as u64
-            },
-        )
+        (proc.context().clone(), proc.address_space().pml4_phys(), {
+            let ks_virt = phys_to_virt(proc.kernel_stack());
+            ks_virt.as_u64() + proc.kernel_stack_size() as u64
+        })
     };
 
     // Switch to next process
     table.set_current_pid(next_pid);
 
-    // Update kernel stack pointers
-    unsafe {
-        arch::syscall::set_kernel_stack(kernel_stack_top);
+    // Update kernel stack pointers (only needed if switching to user mode)
+    if next_ctx.cs == 0x23 {
+        unsafe {
+            arch::syscall::set_kernel_stack(kernel_stack_top);
+        }
+        arch::gdt::set_kernel_stack(kernel_stack_top);
     }
-    arch::gdt::set_kernel_stack(kernel_stack_top);
 
     // Switch page tables
     unsafe {
@@ -126,14 +148,19 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     }
 
     // Build interrupt frame for next process
-    let new_frame_ptr = (kernel_stack_top - core::mem::size_of::<InterruptFrame>() as u64)
-        as *mut InterruptFrame;
+    // Use saved CS/SS to properly return to either user or kernel mode
+    let new_frame_ptr =
+        (kernel_stack_top - core::mem::size_of::<InterruptFrame>() as u64) as *mut InterruptFrame;
 
     unsafe {
-        (*new_frame_ptr).ss = 0x1B; // USER_DS
+        // Use saved segment selectors - default to user mode if not set
+        let ss = if next_ctx.ss != 0 { next_ctx.ss } else { 0x1B };
+        let cs = if next_ctx.cs != 0 { next_ctx.cs } else { 0x23 };
+
+        (*new_frame_ptr).ss = ss;
         (*new_frame_ptr).rsp = next_ctx.rsp;
         (*new_frame_ptr).rflags = next_ctx.rflags | 0x200; // Ensure IF set
-        (*new_frame_ptr).cs = 0x23; // USER_CS
+        (*new_frame_ptr).cs = cs;
         (*new_frame_ptr).rip = next_ctx.rip;
         (*new_frame_ptr).rax = next_ctx.rax;
         (*new_frame_ptr).rbx = next_ctx.rbx;
@@ -153,6 +180,24 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     }
 
     new_frame_ptr as u64
+}
+
+/// Wake up a process that was blocked waiting for a child
+///
+/// Called from user_exit when a child process exits.
+/// Puts the parent back in the ready queue so it can continue its waitpid().
+pub fn wake_parent(parent_pid: u32) {
+    let table = process_table();
+
+    if let Some(parent) = table.get(parent_pid) {
+        let mut p = parent.lock();
+        if p.state() == ProcessState::Blocked {
+            p.clear_waiting();
+            // Put back in ready queue
+            drop(p); // Release lock before accessing READY_QUEUE
+            READY_QUEUE.lock().push(parent_pid);
+        }
+    }
 }
 
 /// Voluntary yield - called from sched_yield syscall
@@ -203,6 +248,8 @@ pub fn kernel_yield() -> i64 {
         ctx.r13 = user_ctx.r13;
         ctx.r14 = user_ctx.r14;
         ctx.r15 = user_ctx.r15;
+        ctx.cs = 0x23; // User mode
+        ctx.ss = 0x1B;
 
         // Put current process back in ready queue
         READY_QUEUE.lock().push(current_pid);
@@ -215,14 +262,10 @@ pub fn kernel_yield() -> i64 {
             None => return 0,
         };
         let proc = next.lock();
-        (
-            proc.context().clone(),
-            proc.address_space().pml4_phys(),
-            {
-                let ks_virt = phys_to_virt(proc.kernel_stack());
-                ks_virt.as_u64() + proc.kernel_stack_size() as u64
-            },
-        )
+        (proc.context().clone(), proc.address_space().pml4_phys(), {
+            let ks_virt = phys_to_virt(proc.kernel_stack());
+            ks_virt.as_u64() + proc.kernel_stack_size() as u64
+        })
     };
 
     // Switch to next process
@@ -237,9 +280,26 @@ pub fn kernel_yield() -> i64 {
     // Switch page tables and return to next process via sysretq
     // Use a static to hold context since we run out of registers
     static mut YIELD_CTX: proc::ProcessContext = proc::ProcessContext {
-        rip: 0, rsp: 0, rflags: 0, rax: 0, rbx: 0, rcx: 0, rdx: 0,
-        rsi: 0, rdi: 0, rbp: 0, r8: 0, r9: 0, r10: 0, r11: 0,
-        r12: 0, r13: 0, r14: 0, r15: 0,
+        rip: 0,
+        rsp: 0,
+        rflags: 0,
+        rax: 0,
+        rbx: 0,
+        rcx: 0,
+        rdx: 0,
+        rsi: 0,
+        rdi: 0,
+        rbp: 0,
+        r8: 0,
+        r9: 0,
+        r10: 0,
+        r11: 0,
+        r12: 0,
+        r13: 0,
+        r14: 0,
+        r15: 0,
+        cs: 0,
+        ss: 0,
     };
 
     unsafe {

@@ -56,7 +56,7 @@ pub mod nr {
     pub const LSEEK: u64 = 22;
     pub const FSTAT: u64 = 23;
     pub const STAT: u64 = 24;
-    pub const LSTAT: u64 = 28;  // stat without following symlinks
+    pub const LSTAT: u64 = 28; // stat without following symlinks
     pub const DUP: u64 = 25;
     pub const DUP2: u64 = 26;
     pub const FTRUNCATE: u64 = 27;

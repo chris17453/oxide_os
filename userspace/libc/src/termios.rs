@@ -441,7 +441,7 @@ fn minor(rdev: u64) -> u64 {
 ///
 /// Note: This function is not thread-safe (uses static buffer per POSIX).
 pub fn ttyname(fd: i32) -> *const u8 {
-    use crate::stat::{fstat, Stat, S_IFCHR, S_IFMT};
+    use crate::stat::{S_IFCHR, S_IFMT, Stat, fstat};
 
     // First check if fd is a TTY
     if !isatty(fd) {
@@ -517,7 +517,7 @@ pub fn ttyname(fd: i32) -> *const u8 {
 /// Scan /dev directory for a device with matching rdev
 fn scan_dev_for_tty(target_rdev: u64) -> Option<*const u8> {
     use crate::dirent::{closedir, opendir, readdir};
-    use crate::stat::{stat, Stat, S_IFCHR, S_IFMT};
+    use crate::stat::{S_IFCHR, S_IFMT, Stat, stat};
 
     let dir = opendir("/dev")?;
     let mut dir = dir;
@@ -544,8 +544,8 @@ fn scan_dev_for_tty(target_rdev: u64) -> Option<*const u8> {
             buf[prefix.len()..prefix.len() + name_bytes.len()].copy_from_slice(name_bytes);
             buf[prefix.len() + name_bytes.len()] = 0;
 
-            let path_str = core::str::from_utf8(&buf[..prefix.len() + name_bytes.len()])
-                .unwrap_or("");
+            let path_str =
+                core::str::from_utf8(&buf[..prefix.len() + name_bytes.len()]).unwrap_or("");
 
             let mut stat_buf = Stat::zeroed();
             if stat(path_str, &mut stat_buf) == 0 {
@@ -567,7 +567,7 @@ fn scan_dev_for_tty(target_rdev: u64) -> Option<*const u8> {
 /// Returns 0 on success, or an error code on failure.
 pub fn ttyname_r(fd: i32, buf: &mut [u8]) -> i32 {
     use crate::errno::{EBADF, ENOTTY, ERANGE};
-    use crate::stat::{fstat, Stat, S_IFCHR, S_IFMT};
+    use crate::stat::{S_IFCHR, S_IFMT, Stat, fstat};
 
     if buf.is_empty() {
         return ERANGE;

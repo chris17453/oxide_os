@@ -301,10 +301,10 @@ struct ShellState {
     history_count: usize,
     /// Current history position (for navigation)
     history_pos: usize,
-/// In-progress line buffer for editing
-edit_buf: [u8; MAX_LINE],
-/// Current edit length
-edit_len: usize,
+    /// In-progress line buffer for editing
+    edit_buf: [u8; MAX_LINE],
+    /// Current edit length
+    edit_len: usize,
     /// Current cursor position in edit buffer
     cursor: usize,
 }
@@ -559,11 +559,19 @@ fn read_line_with_completion(buf: &mut [u8]) -> usize {
                             if modch == b'5' {
                                 if last == b'D' {
                                     // Ctrl+Left: move to prev word
-                                    move_prev_word(&mut state.cursor, state.edit_buf, state.edit_len);
+                                    move_prev_word(
+                                        &mut state.cursor,
+                                        state.edit_buf,
+                                        state.edit_len,
+                                    );
                                     continue;
                                 } else if last == b'C' {
                                     // Ctrl+Right: move to next word
-                                    move_next_word(&mut state.cursor, state.edit_buf, state.edit_len);
+                                    move_next_word(
+                                        &mut state.cursor,
+                                        state.edit_buf,
+                                        state.edit_len,
+                                    );
                                     continue;
                                 }
                             }

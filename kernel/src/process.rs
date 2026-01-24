@@ -21,14 +21,38 @@ use vfs::{VnodeType, mount::GLOBAL_VFS};
 
 #[allow(unused_imports)]
 use crate::debug_fork;
-use crate::globals::{CHILD_DONE, KERNEL_PML4, PARENT_CONTEXT, ParentContext, READY_QUEUE, USER_EXITED, USER_EXIT_STATUS};
+use crate::globals::{
+    CHILD_DONE, KERNEL_PML4, PARENT_CONTEXT, ParentContext, READY_QUEUE, USER_EXIT_STATUS,
+    USER_EXITED,
+};
 use crate::memory::FrameAllocatorWrapper;
+use crate::scheduler::wake_parent;
 
 /// User exit function
 pub fn user_exit(status: i32) -> ! {
     // Get current process and mark as zombie
     let table = process_table();
     let current_pid = table.current_pid();
+
+    // Debug: Print exit info and ready queue state
+    {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(
+            writer,
+            "[EXIT] Process {} exiting with status {}",
+            current_pid, status
+        );
+
+        // Print ready queue contents
+        let queue = READY_QUEUE.lock();
+        let _ = writeln!(
+            writer,
+            "[EXIT] Ready queue has {} processes: {:?}",
+            queue.len(),
+            &*queue
+        );
+        drop(queue);
+    }
 
     // Debug: Print framebuffer write stats on process exit
     {
@@ -41,16 +65,30 @@ pub fn user_exit(status: i32) -> ! {
         );
     }
 
-    if let Some(proc) = table.get(current_pid) {
-        proc.lock().exit(status);
-    }
+    // Get parent PID before marking as zombie
+    let parent_pid = if let Some(proc) = table.get(current_pid) {
+        let mut p = proc.lock();
+        let ppid = p.ppid();
+        p.exit(status);
+        ppid
+    } else {
+        0
+    };
 
     unsafe {
         USER_EXIT_STATUS = status;
     }
     USER_EXITED.store(true, Ordering::SeqCst);
 
-    // Check if there's a saved parent context to return to
+    // Wake parent if it's blocked waiting for us
+    // This puts the parent back in the ready queue
+    if parent_pid > 0 {
+        wake_parent(parent_pid);
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[EXIT] Woke parent {}", parent_pid);
+    }
+
+    // Check if there's a saved parent context to return to (legacy path)
     let parent_ctx = PARENT_CONTEXT.lock().take();
 
     if let Some(ctx) = parent_ctx {
@@ -200,11 +238,28 @@ pub fn user_exit(status: i32) -> ! {
     // Process exited - switch to next ready process
     // We can't rely on timer preemption here since we're in kernel mode
     // Must actively switch to another process
+    {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[EXIT] Looking for next process in ready queue...");
+    }
     loop {
         let next_pid = {
             let mut queue = READY_QUEUE.lock();
+            {
+                let mut writer = serial::SerialWriter;
+                let _ = writeln!(
+                    writer,
+                    "[EXIT] Queue check: {} processes: {:?}",
+                    queue.len(),
+                    &*queue
+                );
+            }
             if queue.is_empty() {
                 // No other processes - halt the system
+                {
+                    let mut writer = serial::SerialWriter;
+                    let _ = writeln!(writer, "[EXIT] READY_QUEUE EMPTY! System halting.");
+                }
                 drop(queue);
                 arch::X86_64::halt();
             }
@@ -218,15 +273,19 @@ pub fn user_exit(status: i32) -> ! {
                 None => continue, // Process gone, try next
             };
             let proc = next.lock();
-            (
-                proc.context().clone(),
-                proc.address_space().pml4_phys(),
-                {
-                    let ks_virt = phys_to_virt(proc.kernel_stack());
-                    ks_virt.as_u64() + proc.kernel_stack_size() as u64
-                },
-            )
+            (proc.context().clone(), proc.address_space().pml4_phys(), {
+                let ks_virt = phys_to_virt(proc.kernel_stack());
+                ks_virt.as_u64() + proc.kernel_stack_size() as u64
+            })
         };
+
+        // Debug: print the context we're about to restore
+        {
+            let mut writer = serial::SerialWriter;
+            let _ = writeln!(writer, "[EXIT] Switching to PID {}", next_pid);
+            let _ = writeln!(writer, "[EXIT] Context: rip={:#x} rsp={:#x} cs={:#x} ss={:#x}",
+                next_ctx.rip, next_ctx.rsp, next_ctx.cs, next_ctx.ss);
+        }
 
         // Switch to next process
         table.set_current_pid(next_pid);
@@ -239,45 +298,100 @@ pub fn user_exit(status: i32) -> ! {
 
         // Use same context switch mechanism as kernel_yield
         static mut EXIT_CTX: ProcessContext = ProcessContext {
-            rip: 0, rsp: 0, rflags: 0, rax: 0, rbx: 0, rcx: 0, rdx: 0,
-            rsi: 0, rdi: 0, rbp: 0, r8: 0, r9: 0, r10: 0, r11: 0,
-            r12: 0, r13: 0, r14: 0, r15: 0,
+            rip: 0,
+            rsp: 0,
+            rflags: 0,
+            rax: 0,
+            rbx: 0,
+            rcx: 0,
+            rdx: 0,
+            rsi: 0,
+            rdi: 0,
+            rbp: 0,
+            r8: 0,
+            r9: 0,
+            r10: 0,
+            r11: 0,
+            r12: 0,
+            r13: 0,
+            r14: 0,
+            r15: 0,
+            cs: 0,
+            ss: 0,
         };
 
         unsafe {
-            *addr_of_mut!(EXIT_CTX) = next_ctx;
+            *addr_of_mut!(EXIT_CTX) = next_ctx.clone();
 
             // Switch page tables
             core::arch::asm!("mov cr3, {}", in(reg) next_pml4.as_u64());
 
             let ctx_ptr = addr_of_mut!(EXIT_CTX) as u64;
 
-            // Restore registers and sysretq to next process
-            core::arch::asm!(
-                "mov rax, {ctx}",
-                "mov rcx, [rax]",       // rip -> rcx for sysret
-                "mov r11, [rax + 16]",  // rflags -> r11 for sysret
-                "or r11, 0x200",        // Ensure IF set
-                "mov rbx, [rax + 32]",
-                "mov rbp, [rax + 72]",
-                "mov r12, [rax + 112]",
-                "mov r13, [rax + 120]",
-                "mov r14, [rax + 128]",
-                "mov r15, [rax + 136]",
-                "mov rdi, [rax + 64]",
-                "mov rsi, [rax + 56]",
-                "mov rdx, [rax + 48]",
-                "mov r8, [rax + 80]",
-                "mov r9, [rax + 88]",
-                "mov r10, [rax + 96]",
-                "push qword ptr [rax + 8]",  // Push user rsp
-                "mov rax, [rax + 24]",       // Load return value
-                "pop rsp",
-                "swapgs",
-                "sysretq",
-                ctx = in(reg) ctx_ptr,
-                options(noreturn)
-            );
+            // Check if returning to user mode or kernel mode
+            if next_ctx.cs == 0x23 {
+                // User mode - use sysretq
+                core::arch::asm!(
+                    "mov rax, {ctx}",
+                    "mov rcx, [rax]",       // rip -> rcx for sysret
+                    "mov r11, [rax + 16]",  // rflags -> r11 for sysret
+                    "or r11, 0x200",        // Ensure IF set
+                    "mov rbx, [rax + 32]",
+                    "mov rbp, [rax + 72]",
+                    "mov r12, [rax + 112]",
+                    "mov r13, [rax + 120]",
+                    "mov r14, [rax + 128]",
+                    "mov r15, [rax + 136]",
+                    "mov rdi, [rax + 64]",
+                    "mov rsi, [rax + 56]",
+                    "mov rdx, [rax + 48]",
+                    "mov r8, [rax + 80]",
+                    "mov r9, [rax + 88]",
+                    "mov r10, [rax + 96]",
+                    "push qword ptr [rax + 8]",  // Push user rsp
+                    "mov rax, [rax + 24]",       // Load return value
+                    "pop rsp",
+                    "swapgs",
+                    "sysretq",
+                    ctx = in(reg) ctx_ptr,
+                    options(noreturn)
+                );
+            } else {
+                // Kernel mode - use iretq
+                // Build iretq frame on stack: SS, RSP, RFLAGS, CS, RIP
+                core::arch::asm!(
+                    "mov rax, {ctx}",
+                    // Load all GP registers first
+                    "mov rbx, [rax + 32]",
+                    "mov rcx, [rax + 40]",
+                    "mov rdx, [rax + 48]",
+                    "mov rsi, [rax + 56]",
+                    "mov rdi, [rax + 64]",
+                    "mov rbp, [rax + 72]",
+                    "mov r8, [rax + 80]",
+                    "mov r9, [rax + 88]",
+                    "mov r10, [rax + 96]",
+                    "mov r11, [rax + 104]",
+                    "mov r12, [rax + 112]",
+                    "mov r13, [rax + 120]",
+                    "mov r14, [rax + 128]",
+                    "mov r15, [rax + 136]",
+                    // Build iretq frame (push in reverse order)
+                    "push qword ptr [rax + 152]", // SS (offset of ss in ProcessContext)
+                    "push qword ptr [rax + 8]",   // RSP
+                    "mov r11, [rax + 16]",        // RFLAGS
+                    "or r11, 0x200",              // Ensure IF set
+                    "push r11",
+                    "push qword ptr [rax + 144]", // CS (offset of cs in ProcessContext)
+                    "push qword ptr [rax]",       // RIP
+                    // Load rax last
+                    "mov rax, [rax + 24]",
+                    // No swapgs for kernel mode
+                    "iretq",
+                    ctx = in(reg) ctx_ptr,
+                    options(noreturn)
+                );
+            }
         }
     }
 }
@@ -296,7 +410,8 @@ pub fn kernel_fork() -> i64 {
 
     debug_fork!(
         "[FORK] user_ctx.rip={:#x} rsp={:#x}",
-        user_ctx.rip, user_ctx.rsp
+        user_ctx.rip,
+        user_ctx.rsp
     );
     let parent_context = ProcessContext {
         rip: user_ctx.rip,
@@ -317,6 +432,8 @@ pub fn kernel_fork() -> i64 {
         r13: user_ctx.r13,
         r14: user_ctx.r14,
         r15: user_ctx.r15,
+        cs: 0x23, // User mode
+        ss: 0x1B,
     };
 
     debug_fork!(
@@ -358,6 +475,8 @@ pub fn kernel_fork() -> i64 {
                 ctx.r13 = parent_context.r13;
                 ctx.r14 = parent_context.r14;
                 ctx.r15 = parent_context.r15;
+                ctx.cs = 0x23; // User mode
+                ctx.ss = 0x1B;
             }
 
             // Put parent in ready queue
@@ -370,14 +489,10 @@ pub fn kernel_fork() -> i64 {
                     None => return -1,
                 };
                 let proc = child.lock();
-                (
-                    proc.context().clone(),
-                    proc.address_space().pml4_phys(),
-                    {
-                        let ks_virt = phys_to_virt(proc.kernel_stack());
-                        ks_virt.as_u64() + proc.kernel_stack_size() as u64
-                    },
-                )
+                (proc.context().clone(), proc.address_space().pml4_phys(), {
+                    let ks_virt = phys_to_virt(proc.kernel_stack());
+                    ks_virt.as_u64() + proc.kernel_stack_size() as u64
+                })
             };
 
             // Switch to child process
@@ -391,9 +506,26 @@ pub fn kernel_fork() -> i64 {
 
             // Switch to child via sysretq (child's fork returns 0)
             static mut FORK_CHILD_CTX: ProcessContext = ProcessContext {
-                rip: 0, rsp: 0, rflags: 0, rax: 0, rbx: 0, rcx: 0, rdx: 0,
-                rsi: 0, rdi: 0, rbp: 0, r8: 0, r9: 0, r10: 0, r11: 0,
-                r12: 0, r13: 0, r14: 0, r15: 0,
+                rip: 0,
+                rsp: 0,
+                rflags: 0,
+                rax: 0,
+                rbx: 0,
+                rcx: 0,
+                rdx: 0,
+                rsi: 0,
+                rdi: 0,
+                rbp: 0,
+                r8: 0,
+                r9: 0,
+                r10: 0,
+                r11: 0,
+                r12: 0,
+                r13: 0,
+                r14: 0,
+                r15: 0,
+                cs: 0,
+                ss: 0,
             };
 
             unsafe {
@@ -442,35 +574,61 @@ pub fn kernel_fork() -> i64 {
 /// Wait callback for syscalls
 ///
 /// Waits for child process and returns (pid << 32) | status.
-/// Note: This does NOT run children - the scheduler handles that.
-/// This just checks for zombie children to reap.
+/// Properly blocks until a child exits (unless WNOHANG is set).
 pub fn kernel_wait(pid: i32, options: i32) -> i64 {
     let table = process_table();
     let parent_pid = table.current_pid();
     let wait_opts = WaitOptions::from(options);
 
-    // Just check for zombie children - scheduler runs processes
-    match do_waitpid(parent_pid, pid, wait_opts) {
-        Ok(result) => {
-            // Debug: print framebuffer write stats after each child exits
-            {
-                let (writes, bytes, base) = devfs::devices::get_fb_write_stats();
-                let mut writer = serial::SerialWriter;
-                let _ = writeln!(
-                    writer,
-                    "[FB_DEBUG] Child {} exited - FB writes={} bytes={} base={:#x}",
-                    result.pid, writes, bytes, base
-                );
+    loop {
+        // Check for zombie children
+        match do_waitpid(parent_pid, pid, wait_opts) {
+            Ok(result) => {
+                // Debug: print framebuffer write stats after each child exits
+                {
+                    let (writes, bytes, base) = devfs::devices::get_fb_write_stats();
+                    let mut writer = serial::SerialWriter;
+                    let _ = writeln!(
+                        writer,
+                        "[FB_DEBUG] Child {} exited - FB writes={} bytes={} base={:#x}",
+                        result.pid, writes, bytes, base
+                    );
+                }
+                // Pack pid and status into result
+                return ((result.pid as i64) << 32) | ((result.status as i64) & 0xFFFFFFFF);
             }
-            // Pack pid and status into result
-            ((result.pid as i64) << 32) | ((result.status as i64) & 0xFFFFFFFF)
-        }
-        Err(e) => {
-            match e {
-                proc::WaitError::NoChildren => -10, // ECHILD
-                proc::WaitError::WouldBlock => -11, // EAGAIN
-                proc::WaitError::InvalidPid => -3,  // ESRCH
-                proc::WaitError::Interrupted => -4, // EINTR
+            Err(e) => {
+                match e {
+                    proc::WaitError::NoChildren => return -10, // ECHILD
+                    proc::WaitError::InvalidPid => return -3,  // ESRCH
+                    proc::WaitError::Interrupted => return -4, // EINTR
+                    proc::WaitError::WouldBlock => {
+                        // If WNOHANG, return immediately
+                        if wait_opts.nohang {
+                            return 0; // No child exited yet
+                        }
+
+                        // Mark this process as waiting for the child
+                        // This allows user_exit to find us and wake us up
+                        if let Some(proc) = table.get(parent_pid) {
+                            proc.lock().wait_for_child(pid);
+                        }
+
+                        // Allow scheduler to preempt us while we wait
+                        arch::allow_kernel_preempt();
+
+                        // Wait for timer interrupt - scheduler will run other processes
+                        // When child exits, wake_parent() will set us to Ready
+                        unsafe {
+                            core::arch::asm!("sti"); // Ensure interrupts enabled
+                            core::arch::asm!("hlt", options(nomem, nostack));
+                        }
+
+                        // Clear preempt flag if we're still running
+                        arch::disallow_kernel_preempt();
+                        continue;
+                    }
+                }
             }
         }
     }
@@ -517,7 +675,8 @@ pub fn run_child_process(child_pid: Pid) {
         let verify_pid = table.current_pid();
         debug_fork!(
             "[RUN_CHILD] set_current_pid({}) done, verify={}",
-            child_pid, verify_pid
+            child_pid,
+            verify_pid
         );
     }
 
@@ -541,15 +700,21 @@ pub fn run_child_process(child_pid: Pid) {
     debug_fork!("[CHILD] PID {} entering usermode", child_pid);
     debug_fork!(
         "[CHILD] rip={:#x} rsp={:#x} rbp={:#x}",
-        child_ctx.rip, child_ctx.rsp, child_ctx.rbp
+        child_ctx.rip,
+        child_ctx.rsp,
+        child_ctx.rbp
     );
     debug_fork!(
         "[CHILD] rax={:#x} rbx={:#x} r12={:#x}",
-        child_ctx.rax, child_ctx.rbx, child_ctx.r12
+        child_ctx.rax,
+        child_ctx.rbx,
+        child_ctx.r12
     );
     debug_fork!(
         "[CHILD] r13={:#x} r14={:#x} r15={:#x}",
-        child_ctx.r13, child_ctx.r14, child_ctx.r15
+        child_ctx.r13,
+        child_ctx.r14,
+        child_ctx.r15
     );
 
     // Save parent's FULL user context so we can restore ALL registers when child exits
@@ -610,11 +775,13 @@ pub fn run_child_process(child_pid: Pid) {
         debug_fork!("[CHILD] UserContext ptr: {:p}", &user_ctx);
         debug_fork!(
             "[CHILD] UserContext.rip={:#x} rsp={:#x}",
-            user_ctx.rip, user_ctx.rsp
+            user_ctx.rip,
+            user_ctx.rsp
         );
         debug_fork!(
             "[CHILD] UserContext.rcx={:#x} rax={:#x}",
-            user_ctx.rcx, user_ctx.rax
+            user_ctx.rcx,
+            user_ctx.rax
         );
         debug_fork!(
             "[CHILD] kernel_stack={:#x} pml4={:#x}",
@@ -852,7 +1019,11 @@ pub fn kernel_exec(
         vnode = match GLOBAL_VFS.lookup(&resolved_path) {
             Ok(v) => v,
             Err(_e) => {
-                debug_fork!("[EXEC] Symlink target lookup failed for '{}': {:?}", resolved_path, _e);
+                debug_fork!(
+                    "[EXEC] Symlink target lookup failed for '{}': {:?}",
+                    resolved_path,
+                    _e
+                );
                 return -2; // ENOENT
             }
         };
@@ -879,10 +1050,7 @@ pub fn kernel_exec(
     };
 
     if bytes_read != size {
-        debug_fork!(
-            "[EXEC] Short read: {} of {} bytes",
-            bytes_read, size
-        );
+        debug_fork!("[EXEC] Short read: {} of {} bytes", bytes_read, size);
         return -5; // EIO - short read
     }
     debug_fork!("[EXEC] Read {} bytes, calling do_exec", bytes_read);
@@ -913,7 +1081,9 @@ pub fn kernel_exec(
                 debug_fork!("[EXEC] rip={:#x} rsp={:#x}", ctx.rip, ctx.rsp);
                 debug_fork!(
                     "[EXEC] argc={} argv={:#x} envp={:#x}",
-                    ctx.rdi, ctx.rsi, ctx.rdx
+                    ctx.rdi,
+                    ctx.rsi,
+                    ctx.rdx
                 );
 
                 // Switch to new address space and jump to entry point
