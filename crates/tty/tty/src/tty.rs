@@ -305,6 +305,15 @@ impl VnodeOps for Tty {
     fn truncate(&self, _size: u64) -> VfsResult<()> {
         Ok(())
     }
+
+    fn poll_read_ready(&self) -> bool {
+        self.ldisc.lock().can_read()
+    }
+
+    fn poll_write_ready(&self) -> bool {
+        // TTYs are always ready for writing (output buffer is unbounded)
+        true
+    }
 }
 
 /// Simple driver that writes to a callback function

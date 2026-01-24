@@ -239,6 +239,18 @@ impl VnodeOps for PtyMaster {
     fn truncate(&self, _size: u64) -> VfsResult<()> {
         Ok(())
     }
+
+    fn poll_read_ready(&self) -> bool {
+        let pair = self.pair.lock();
+        // Master can read if there's output from slave or slave is closed
+        !pair.slave_to_master.is_empty() || !pair.slave_open
+    }
+
+    fn poll_write_ready(&self) -> bool {
+        let pair = self.pair.lock();
+        // Master can write if slave is open
+        pair.slave_open
+    }
 }
 
 impl Drop for PtyMaster {
@@ -431,6 +443,18 @@ impl VnodeOps for PtySlave {
 
     fn truncate(&self, _size: u64) -> VfsResult<()> {
         Ok(())
+    }
+
+    fn poll_read_ready(&self) -> bool {
+        let pair = self.pair.lock();
+        // Slave can read if line discipline has data or master is closed
+        pair.ldisc.can_read() || !pair.master_open
+    }
+
+    fn poll_write_ready(&self) -> bool {
+        let pair = self.pair.lock();
+        // Slave can write if there's buffer space and master is open
+        pair.master_open && pair.slave_to_master.len() < PTY_BUF_SIZE
     }
 }
 

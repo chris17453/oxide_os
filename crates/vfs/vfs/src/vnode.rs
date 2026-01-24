@@ -235,6 +235,24 @@ pub trait VnodeOps: Send + Sync {
     fn set_times(&self, _atime: Option<u64>, _mtime: Option<u64>) -> VfsResult<()> {
         Err(crate::error::VfsError::NotSupported)
     }
+
+    /// Check if data is available for reading (for poll/select)
+    ///
+    /// Returns true if a read would not block. For regular files, this is always
+    /// true. Sockets, pipes, and TTYs should override this to check their buffers.
+    fn poll_read_ready(&self) -> bool {
+        // Default: regular files are always readable
+        true
+    }
+
+    /// Check if buffer has space for writing (for poll/select)
+    ///
+    /// Returns true if a write would not block. For regular files, this is always
+    /// true. Sockets, pipes, and TTYs should override this to check buffer space.
+    fn poll_write_ready(&self) -> bool {
+        // Default: regular files are always writable
+        true
+    }
 }
 
 /// Vnode wrapper that adds reference counting and caching

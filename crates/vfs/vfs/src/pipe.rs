@@ -170,6 +170,17 @@ impl VnodeOps for PipeRead {
     fn truncate(&self, _size: u64) -> VfsResult<()> {
         Err(VfsError::NotSupported)
     }
+
+    fn poll_read_ready(&self) -> bool {
+        let buffer = self.buffer.lock();
+        // Read end is ready if there's data or no writers (EOF condition)
+        buffer.count > 0 || !buffer.has_writers()
+    }
+
+    fn poll_write_ready(&self) -> bool {
+        // Read end cannot be written to
+        false
+    }
 }
 
 /// Write end of a pipe
@@ -251,6 +262,17 @@ impl VnodeOps for PipeWrite {
 
     fn truncate(&self, _size: u64) -> VfsResult<()> {
         Err(VfsError::NotSupported)
+    }
+
+    fn poll_read_ready(&self) -> bool {
+        // Write end cannot be read from
+        false
+    }
+
+    fn poll_write_ready(&self) -> bool {
+        let buffer = self.buffer.lock();
+        // Write end is ready if there's buffer space and there are readers
+        buffer.count < PIPE_BUF_SIZE && buffer.has_readers()
     }
 }
 
