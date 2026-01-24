@@ -524,6 +524,7 @@ dependencies = [
  "pty",
  "sched",
  "sched-traits",
+ "signal",
  "smp",
  "spin 0.9.8",
  "syscall",
@@ -733,6 +734,13 @@ name = "net"
 version = "0.1.0"
 dependencies = [
  "spin 0.9.8",
+]
+
+[[package]]
+name = "networkd"
+version = "0.1.0"
+dependencies = [
+ "libc 0.1.0",
 ]
 
 [[package]]

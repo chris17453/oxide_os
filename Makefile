@@ -38,7 +38,7 @@ USERSPACE_OUT_RELEASE := $(TARGET_DIR)/$(USERSPACE_TARGET)/release
 CARGO_USER_FLAGS :=
 
 # Userspace packages to build
-USERSPACE_PACKAGES := init esh login coreutils ssh sshd service
+USERSPACE_PACKAGES := init esh login coreutils ssh sshd service networkd
 
 # Coreutils binaries (auto-detected from Cargo.toml [[bin]] entries)
 # Extract binary names from [[bin]] sections in coreutils/Cargo.toml
@@ -89,7 +89,7 @@ userspace-release:
 	@echo "  Building testcolors (release)..."
 	@RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package coreutils --bin testcolors --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1
 	@echo "Stripping binaries..."
-	@for prog in init esh login gwbasic ssh sshd service $(COREUTILS_BINS); do \
+	@for prog in init esh login gwbasic ssh sshd service networkd $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
 			strip "$(USERSPACE_OUT_RELEASE)/$$prog" 2>/dev/null || true; \
 		fi; \
@@ -152,11 +152,27 @@ initramfs: userspace-release
 	@echo "PATH=/initramfs/bin:/initramfs/sbin:/bin:/sbin" > $(TARGET_DIR)/initramfs/etc/profile
 	@echo "export PATH" >> $(TARGET_DIR)/initramfs/etc/profile
 	@echo "OXIDE" > $(TARGET_DIR)/initramfs/etc/hostname
+	@# Copy networkd
+	@cp "$(USERSPACE_OUT_RELEASE)/networkd" "$(TARGET_DIR)/initramfs/bin/networkd"
 	@# Create services.d directory with service definitions
 	@mkdir -p $(TARGET_DIR)/initramfs/etc/services.d
+	@echo "PATH=/bin/networkd" > $(TARGET_DIR)/initramfs/etc/services.d/networkd
+	@echo "ENABLED=yes" >> $(TARGET_DIR)/initramfs/etc/services.d/networkd
+	@echo "RESTART=yes" >> $(TARGET_DIR)/initramfs/etc/services.d/networkd
 	@echo "PATH=/bin/sshd" > $(TARGET_DIR)/initramfs/etc/services.d/sshd
 	@echo "ENABLED=yes" >> $(TARGET_DIR)/initramfs/etc/services.d/sshd
 	@echo "RESTART=yes" >> $(TARGET_DIR)/initramfs/etc/services.d/sshd
+	@# Create network configuration directory
+	@mkdir -p $(TARGET_DIR)/initramfs/etc/network
+	@echo "# eth0 network configuration" > $(TARGET_DIR)/initramfs/etc/network/eth0.conf
+	@echo "mode=dhcp" >> $(TARGET_DIR)/initramfs/etc/network/eth0.conf
+	@# Create default resolv.conf
+	@echo "# DNS servers" > $(TARGET_DIR)/initramfs/etc/resolv.conf
+	@echo "nameserver 8.8.8.8" >> $(TARGET_DIR)/initramfs/etc/resolv.conf
+	@echo "nameserver 8.8.4.4" >> $(TARGET_DIR)/initramfs/etc/resolv.conf
+	@# Create default hosts file
+	@echo "127.0.0.1 localhost" > $(TARGET_DIR)/initramfs/etc/hosts
+	@echo "::1 localhost" >> $(TARGET_DIR)/initramfs/etc/hosts
 	@# Create CPIO archive
 	@cd $(TARGET_DIR)/initramfs && find . | cpio -o -H newc > ../initramfs.cpio 2>/dev/null
 	@echo "Initramfs created: $(INITRAMFS)"
