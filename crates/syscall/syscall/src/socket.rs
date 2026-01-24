@@ -1,15 +1,19 @@
 //! Socket System Calls
 //!
-//! Implements BSD socket API by connecting to the net network stack.
+//! Implements BSD socket API with loopback networking support.
+//!
+//! For connections to localhost (127.0.0.0/8), this module implements
+//! in-kernel loopback that directly routes data between sockets.
 
 extern crate alloc;
 
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use spin::Mutex;
 
 use crate::errno;
-use net::socket::Shutdown;
+use net::socket::{Shutdown, SocketState};
 use net::{
     IpAddr, Ipv4Addr, NetError, Socket, SocketAddr, SocketDomain, SocketProtocol, SocketType,
 };
@@ -25,6 +29,17 @@ static SOCKET_TABLE: Mutex<BTreeMap<i32, Arc<Socket>>> = Mutex::new(BTreeMap::ne
 
 /// Next socket FD
 static NEXT_SOCKET_FD: Mutex<i32> = Mutex::new(SOCKET_FD_BASE);
+
+/// Listening sockets by port (for loopback connections)
+/// Maps port -> (socket fd, socket arc)
+static LISTENING_SOCKETS: Mutex<BTreeMap<u16, (i32, Arc<Socket>)>> = Mutex::new(BTreeMap::new());
+
+/// Connected socket pairs (for loopback data routing)
+/// Maps socket fd -> peer socket fd
+static SOCKET_PAIRS: Mutex<BTreeMap<i32, i32>> = Mutex::new(BTreeMap::new());
+
+/// Next ephemeral port for client sockets
+static NEXT_EPHEMERAL_PORT: Mutex<u16> = Mutex::new(49152);
 
 /// Allocate a new socket file descriptor
 fn alloc_socket_fd(socket: Arc<Socket>) -> i64 {
@@ -229,8 +244,18 @@ pub fn sys_listen(fd: i32, backlog: i32) -> i64 {
         None => return errno::EBADF,
     };
 
+    // Get bound port
+    let port = match socket.local_addr() {
+        Some(addr) => addr.port,
+        None => return errno::EINVAL, // Must bind before listen
+    };
+
     match socket.listen(backlog as u32) {
-        Ok(()) => 0,
+        Ok(()) => {
+            // Register as listening socket for loopback connections
+            LISTENING_SOCKETS.lock().insert(port, (fd, socket));
+            0
+        }
         Err(e) => net_error_to_errno(e),
     }
 }
@@ -250,19 +275,46 @@ pub fn sys_accept(fd: i32, addr: u64, addrlen: u64) -> i64 {
         None => return errno::EBADF,
     };
 
-    match socket.accept() {
-        Ok(new_socket) => {
-            // Write peer address if requested
-            if addr != 0 {
-                if let Some(peer) = new_socket.peer_addr() {
-                    write_sockaddr_in(addr, addrlen, &peer);
-                }
-            }
-
-            alloc_socket_fd(new_socket)
-        }
-        Err(e) => net_error_to_errno(e),
+    // Check socket state
+    let state = *socket.state.lock();
+    if state != SocketState::Listen {
+        return errno::EINVAL;
     }
+
+    // Try to get a pending connection
+    let mut pending = socket.pending.lock();
+    if let Some(new_socket) = pending.pop() {
+        // Write peer address if requested
+        if addr != 0 {
+            if let Some(peer) = new_socket.peer_addr() {
+                write_sockaddr_in(addr, addrlen, &peer);
+            }
+        }
+
+        // Allocate FD for new socket
+        let new_fd = alloc_socket_fd(new_socket.clone());
+        if new_fd < 0 {
+            return new_fd;
+        }
+
+        // The peer fd was stored in the socket's backlog count temporarily
+        // We need to set up the socket pair properly
+        // The pending socket already has its peer connection set up
+
+        new_fd
+    } else {
+        // No pending connections - would block
+        // For blocking sockets, we should wait; for now return EAGAIN
+        errno::EAGAIN
+    }
+}
+
+/// Allocate an ephemeral port
+fn alloc_ephemeral_port() -> u16 {
+    let mut port = NEXT_EPHEMERAL_PORT.lock();
+    let p = *port;
+    *port = if p >= 65535 { 49152 } else { p + 1 };
+    p
 }
 
 /// sys_connect - Connect a socket to a remote address
@@ -281,10 +333,80 @@ pub fn sys_connect(fd: i32, addr: u64, addrlen: u32) -> i64 {
         None => return errno::EINVAL,
     };
 
+    // Check if this is a loopback connection
+    let is_loopback = match socket_addr.ip {
+        IpAddr::V4(ip) => ip.is_loopback(),
+        IpAddr::V6(_) => false, // TODO: IPv6 loopback
+    };
+
+    if is_loopback && socket.sock_type == SocketType::Stream {
+        // Handle loopback TCP connection
+        return loopback_connect(fd, socket, socket_addr);
+    }
+
+    // Non-loopback: use standard connect (stub for now)
     match socket.connect(socket_addr) {
         Ok(()) => 0,
         Err(e) => net_error_to_errno(e),
     }
+}
+
+/// Handle loopback TCP connection
+fn loopback_connect(client_fd: i32, client_socket: Arc<Socket>, addr: SocketAddr) -> i64 {
+    let port = addr.port;
+
+    // Find listening socket for this port
+    let listener = {
+        let listeners = LISTENING_SOCKETS.lock();
+        listeners.get(&port).cloned()
+    };
+
+    let (listener_fd, listener_socket) = match listener {
+        Some(l) => l,
+        None => return errno::ECONNREFUSED, // No one listening
+    };
+
+    // Allocate ephemeral port for client
+    let client_port = alloc_ephemeral_port();
+    let client_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), client_port);
+
+    // Set client's local and remote addresses
+    *client_socket.local_addr.lock() = Some(client_addr);
+    *client_socket.remote_addr.lock() = Some(addr);
+    *client_socket.state.lock() = SocketState::Established;
+
+    // Create server-side socket for this connection
+    let server_socket = match Socket::new(
+        client_socket.domain,
+        client_socket.sock_type,
+        client_socket.protocol,
+    ) {
+        Ok(s) => s,
+        Err(_) => return errno::ENOMEM,
+    };
+
+    // Set server socket's addresses (reverse of client)
+    *server_socket.local_addr.lock() = Some(addr);
+    *server_socket.remote_addr.lock() = Some(client_addr);
+    *server_socket.state.lock() = SocketState::Established;
+
+    // Allocate FD for server socket
+    let server_fd = alloc_socket_fd(server_socket.clone());
+    if server_fd < 0 {
+        return server_fd;
+    }
+
+    // Create socket pair for data routing
+    {
+        let mut pairs = SOCKET_PAIRS.lock();
+        pairs.insert(client_fd, server_fd as i32);
+        pairs.insert(server_fd as i32, client_fd);
+    }
+
+    // Add server socket to listener's pending queue
+    listener_socket.pending.lock().push(server_socket);
+
+    0
 }
 
 /// sys_send - Send data on a connected socket
@@ -301,8 +423,44 @@ pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
         None => return errno::EBADF,
     };
 
+    // Check socket state
+    let state = *socket.state.lock();
+    if state != SocketState::Established && state != SocketState::CloseWait {
+        return errno::ENOTCONN;
+    }
+
     let data = unsafe { core::slice::from_raw_parts(buf as *const u8, len) };
 
+    // Check if this is a loopback socket pair
+    let peer_fd = SOCKET_PAIRS.lock().get(&fd).copied();
+
+    if let Some(peer_fd) = peer_fd {
+        // Loopback: send data directly to peer's recv buffer
+        let peer_socket = match get_socket(peer_fd) {
+            Some(s) => s,
+            None => {
+                // Peer closed - remove from pairs and signal error
+                SOCKET_PAIRS.lock().remove(&fd);
+                return errno::EPIPE;
+            }
+        };
+
+        // Check peer state
+        let peer_state = *peer_socket.state.lock();
+        if peer_socket
+            .closed
+            .load(core::sync::atomic::Ordering::SeqCst)
+            || peer_state == SocketState::Closed
+        {
+            return errno::EPIPE;
+        }
+
+        // Add data to peer's receive buffer
+        peer_socket.recv_buf.lock().extend_from_slice(data);
+        return len as i64;
+    }
+
+    // Non-loopback: use standard socket send (stub for now)
     // Handle MSG_DONTWAIT
     let was_nonblocking = socket.is_nonblocking();
     if flags & 0x40 != 0 && !was_nonblocking {
@@ -336,25 +494,52 @@ pub fn sys_recv(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
         None => return errno::EBADF,
     };
 
+    // Check socket state
+    let state = *socket.state.lock();
+    match state {
+        SocketState::Established | SocketState::CloseWait => {}
+        SocketState::Closed => return errno::ENOTCONN,
+        _ => return errno::EINVAL,
+    }
+
     let data = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len) };
 
-    // Handle MSG_DONTWAIT
-    let was_nonblocking = socket.is_nonblocking();
-    if flags & 0x40 != 0 && !was_nonblocking {
-        socket.set_nonblocking(true);
+    // For loopback sockets, data arrives directly in recv_buf
+    // Check if there's data available
+    {
+        let mut recv_buf = socket.recv_buf.lock();
+        if !recv_buf.is_empty() {
+            let to_read = len.min(recv_buf.len());
+            data[..to_read].copy_from_slice(&recv_buf[..to_read]);
+            recv_buf.drain(..to_read);
+            return to_read as i64;
+        }
     }
 
-    let result = match socket.recv(data) {
-        Ok(n) => n as i64,
-        Err(e) => net_error_to_errno(e),
-    };
-
-    // Restore nonblocking state
-    if flags & 0x40 != 0 && !was_nonblocking {
-        socket.set_nonblocking(false);
+    // No data available
+    // Check if peer is closed (for loopback sockets)
+    let peer_fd = SOCKET_PAIRS.lock().get(&fd).copied();
+    if let Some(peer_fd) = peer_fd {
+        let peer_socket = get_socket(peer_fd);
+        if peer_socket.is_none() {
+            // Peer closed - EOF
+            return 0;
+        }
+        let peer = peer_socket.unwrap();
+        if peer.closed.load(core::sync::atomic::Ordering::SeqCst) {
+            return 0; // EOF
+        }
     }
 
-    result
+    // Handle MSG_DONTWAIT or nonblocking
+    let is_nonblocking = socket.is_nonblocking() || (flags & 0x40 != 0);
+    if is_nonblocking {
+        return errno::EAGAIN;
+    }
+
+    // For blocking sockets, we should wait for data
+    // For now, return EAGAIN (would need proper blocking support)
+    errno::EAGAIN
 }
 
 /// sys_sendto - Send data to a specific address (UDP)
@@ -637,6 +822,25 @@ pub fn sys_getsockopt(fd: i32, level: i32, optname: i32, optval: u64, optlen: u6
 
 /// Close a socket (called from close syscall)
 pub fn close_socket(fd: i32) -> i64 {
+    // Remove from socket pairs
+    let peer_fd = SOCKET_PAIRS.lock().remove(&fd);
+    if let Some(peer) = peer_fd {
+        SOCKET_PAIRS.lock().remove(&peer);
+    }
+
+    // Remove from listening sockets if this was a listener
+    {
+        let mut listeners = LISTENING_SOCKETS.lock();
+        // Find and remove by fd
+        let port_to_remove = listeners
+            .iter()
+            .find(|(_, (f, _))| *f == fd)
+            .map(|(p, _)| *p);
+        if let Some(port) = port_to_remove {
+            listeners.remove(&port);
+        }
+    }
+
     match remove_socket(fd) {
         Some(socket) => {
             let _ = socket.close();

@@ -181,6 +181,7 @@ pub mod errno {
     pub const EHOSTUNREACH: i64 = -113; // No route to host
     pub const EALREADY: i64 = -114; // Operation already in progress
     pub const EINPROGRESS: i64 = -115; // Operation now in progress
+    pub const EPIPE: i64 = -32; // Broken pipe
 }
 
 /// Console output callback type
