@@ -133,8 +133,9 @@ pub fn sys_rename(
 
 /// Directory entry for getdents syscall (user-space format)
 ///
+/// Matches Linux's struct linux_dirent64 exactly.
 /// The d_name field (null-terminated, variable length) follows in memory after d_type.
-#[repr(C)]
+#[repr(C, packed)]
 pub struct UserDirEntry {
     /// Inode number
     pub d_ino: u64,
@@ -144,6 +145,7 @@ pub struct UserDirEntry {
     pub d_reclen: u16,
     /// File type
     pub d_type: u8,
+    // d_name follows immediately (no padding)
 }
 
 /// File type constants for d_type
@@ -226,14 +228,14 @@ pub fn sys_getdents(fd: i32, buf: u64, count: usize) -> i64 {
             let entry_ptr = buf + bytes_written as u64;
 
             // Prepare header
-            let mut header = UserDirEntry {
+            let header = UserDirEntry {
                 d_ino: entry.ino,
                 d_off: offset + 1,
                 d_reclen: reclen as u16,
                 d_type: vtype_to_dtype(entry.file_type),
             };
 
-            // Write header
+            // Write header (packed struct, no padding)
             let header_bytes = core::slice::from_raw_parts(
                 &header as *const UserDirEntry as *const u8,
                 core::mem::size_of::<UserDirEntry>(),
@@ -242,7 +244,7 @@ pub fn sys_getdents(fd: i32, buf: u64, count: usize) -> i64 {
                 return errno::EFAULT;
             }
 
-            // Write name after header
+            // Write name immediately after header
             let name_ptr = entry_ptr + core::mem::size_of::<UserDirEntry>() as u64;
             if !copy_to_user(name_ptr, entry.name.as_bytes()) {
                 return errno::EFAULT;

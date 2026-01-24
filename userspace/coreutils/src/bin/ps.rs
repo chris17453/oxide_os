@@ -187,7 +187,10 @@ fn main() -> i32 {
 
     // Open /proc directory
     let dir = match opendir("/proc") {
-        Some(d) => d,
+        Some(d) => {
+            prints("[DEBUG] opendir(/proc) succeeded\n");
+            d
+        }
         None => {
             eprintlns("ps: cannot open /proc");
             return 1;
@@ -197,10 +200,15 @@ fn main() -> i32 {
     // Collect PIDs first (to sort them)
     let mut pids = [0u32; 64];
     let mut pid_count = 0;
+    let mut entry_count = 0;
 
     let mut dir = dir;
     while let Some(entry) = readdir(&mut dir) {
+        entry_count += 1;
         let name = entry.name();
+        prints("[DEBUG] entry: ");
+        prints(name);
+        prints("\n");
         // Check if name is numeric (a PID directory)
         if let Some(pid) = parse_num(name.as_bytes()) {
             if pid_count < pids.len() {
@@ -209,6 +217,11 @@ fn main() -> i32 {
             }
         }
     }
+    prints("[DEBUG] total entries: ");
+    print_i64(entry_count as i64);
+    prints(", PIDs found: ");
+    print_i64(pid_count as i64);
+    prints("\n");
     closedir(dir);
 
     // Simple bubble sort to show PIDs in order

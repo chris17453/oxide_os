@@ -2,9 +2,9 @@
 
 use crate::syscall;
 
-/// Directory entry structure
-#[repr(C)]
-#[derive(Debug, Clone)]
+/// Directory entry structure (matches Linux's struct linux_dirent64)
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy)]
 pub struct Dirent {
     /// Inode number
     pub d_ino: u64,
