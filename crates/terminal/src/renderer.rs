@@ -128,6 +128,15 @@ impl Renderer {
 
     /// Render the entire screen
     pub fn render(&mut self, buffer: &ScreenBuffer, cursor: &Cursor) {
+        // Ensure rows containing current and previous cursor are redrawn so the cursor
+        // doesn't leave artifacts when moving or blinking.
+        if self.last_cursor_visible && self.last_cursor_row < self.rows {
+            self.dirty.mark_row(self.last_cursor_row);
+        }
+        if cursor.visible && cursor.blink_on && cursor.row < self.rows {
+            self.dirty.mark_row(cursor.row);
+        }
+
         // Render dirty rows
         let mut pixel_count = 0u64;
         for row in 0..self.rows {

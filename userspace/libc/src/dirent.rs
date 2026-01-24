@@ -2,10 +2,7 @@
 
 use crate::syscall;
 
-/// Directory entry structure (matches Linux's struct linux_dirent64)
-/// Note: d_name starts at offset 19 (arrays have alignment 1 in C)
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
+/// Directory entry - parsed from raw bytes
 pub struct Dirent {
     /// Inode number
     pub d_ino: u64,
@@ -20,13 +17,24 @@ pub struct Dirent {
 }
 
 impl Dirent {
+    /// Parse from raw buffer at given offset
+    fn from_bytes(buf: &[u8]) -> Self {
+        let d_ino = u64::from_le_bytes([buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]]);
+        let d_off = i64::from_le_bytes([buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15]]);
+        let d_reclen = u16::from_le_bytes([buf[16], buf[17]]);
+        let d_type = buf[18];
+
+        let mut d_name = [0u8; 256];
+        let name_start = 19;
+        let name_len = (d_reclen as usize).saturating_sub(name_start).min(255);
+        d_name[..name_len].copy_from_slice(&buf[name_start..name_start + name_len]);
+
+        Dirent { d_ino, d_off, d_reclen, d_type, d_name }
+    }
+
     /// Get filename as str
     pub fn name(&self) -> &str {
-        let len = self
-            .d_name
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(self.d_name.len());
+        let len = self.d_name.iter().position(|&b| b == 0).unwrap_or(self.d_name.len());
         core::str::from_utf8(&self.d_name[..len]).unwrap_or("")
     }
 }
@@ -50,6 +58,8 @@ pub struct Dir {
     buf: [u8; 4096],
     pos: usize,
     len: usize,
+    /// Current parsed entry
+    current: Dirent,
 }
 
 impl Dir {
@@ -60,19 +70,25 @@ impl Dir {
             buf: [0; 4096],
             pos: 0,
             len: 0,
+            current: Dirent {
+                d_ino: 0,
+                d_off: 0,
+                d_reclen: 0,
+                d_type: 0,
+                d_name: [0; 256],
+            },
         }
     }
 }
 
 /// Open directory
 pub fn opendir(path: &str) -> Option<Dir> {
-    // Use syscall4 with proper path length - kernel expects (path_ptr, path_len, flags, mode)
     let fd = syscall::syscall4(
         syscall::SYS_OPEN,
         path.as_ptr() as usize,
         path.len(),
         0o200000, // O_DIRECTORY
-        0,        // mode (not used for directories)
+        0,
     ) as i32;
     if fd < 0 { None } else { Some(Dir::from_fd(fd)) }
 }
@@ -94,11 +110,11 @@ pub fn readdir(dir: &mut Dir) -> Option<&Dirent> {
         dir.pos = 0;
     }
 
-    // Return next entry
+    // Parse next entry
     if dir.pos < dir.len {
-        let entry = unsafe { &*(dir.buf.as_ptr().add(dir.pos) as *const Dirent) };
-        dir.pos += entry.d_reclen as usize;
-        Some(entry)
+        dir.current = Dirent::from_bytes(&dir.buf[dir.pos..]);
+        dir.pos += dir.current.d_reclen as usize;
+        Some(&dir.current)
     } else {
         None
     }
@@ -106,24 +122,24 @@ pub fn readdir(dir: &mut Dir) -> Option<&Dirent> {
 
 /// Close directory
 pub fn closedir(dir: Dir) -> i32 {
-    unsafe { syscall::syscall1(syscall::SYS_CLOSE, dir.fd as usize) as i32 }
+    syscall::syscall1(syscall::SYS_CLOSE, dir.fd as usize) as i32
 }
 
 /// Rewind directory to beginning
 pub fn rewinddir(dir: &mut Dir) {
-    unsafe { syscall::syscall3(syscall::SYS_LSEEK, dir.fd as usize, 0, 0) };
+    syscall::syscall3(syscall::SYS_LSEEK, dir.fd as usize, 0, 0);
     dir.pos = 0;
     dir.len = 0;
 }
 
 /// Get current position in directory
 pub fn telldir(dir: &Dir) -> i64 {
-    unsafe { syscall::syscall3(syscall::SYS_LSEEK, dir.fd as usize, 0, 1) as i64 }
+    syscall::syscall3(syscall::SYS_LSEEK, dir.fd as usize, 0, 1) as i64
 }
 
 /// Seek to position in directory
 pub fn seekdir(dir: &mut Dir, pos: i64) {
-    unsafe { syscall::syscall3(syscall::SYS_LSEEK, dir.fd as usize, pos as usize, 0) };
+    syscall::syscall3(syscall::SYS_LSEEK, dir.fd as usize, pos as usize, 0);
     dir.pos = 0;
     dir.len = 0;
 }
