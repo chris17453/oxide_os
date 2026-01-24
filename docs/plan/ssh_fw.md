@@ -7,10 +7,11 @@
 | SSH-1 | Fix crypto primitives (SHA-512, HMAC, Ed25519) | ✅ Complete |
 | FW-1 | Add filter hooks to network stack | ✅ Complete |
 | FW-2 | Filter rule engine | ✅ Complete |
-| SSH-2 | SSH daemon structure and transport layer | 🔄 In Progress |
-| SSH-3 | Key exchange (curve25519-sha256) | ⏳ Pending |
-| SSH-4 | Authentication (password) | ⏳ Pending |
-| SSH-5 | Channels, PTY, shell sessions | ⏳ Pending |
+| SSH-2 | SSH daemon structure and transport layer | ✅ Complete |
+| SSH-3 | Key exchange (curve25519-sha256) | ✅ Complete |
+| SSH-4 | Authentication (password) | ✅ Complete |
+| SSH-5 | Channels, PTY, shell sessions | ✅ Complete |
+| SVCMGR | Service manager for OXIDE | ✅ Complete |
 | FW-3 | Connection tracking | ⏳ Pending |
 | FW-4 | Firewall syscalls | ⏳ Pending |
 | FW-5 | fw CLI tool | ⏳ Pending |
@@ -149,14 +150,14 @@ userspace/sshd/
 
 ### Tasks
 
-- [ ] Implement curve25519-sha256 key exchange
-- [ ] Implement session key derivation
-- [ ] Implement host key signing/verification
-- [ ] Enable encrypted transport
+- [x] Implement curve25519-sha256 key exchange
+- [x] Implement session key derivation
+- [x] Implement host key signing/verification
+- [x] Enable encrypted transport
 
 ---
 
-## Phase FW-2: Filter Rule Engine
+## Phase FW-2: Filter Rule Engine ✅
 
 ### Rule Structure
 
@@ -175,32 +176,51 @@ pub struct FilterRule {
 
 ### Tasks
 
-- [ ] Implement FilterRule struct
-- [ ] Implement rule matching logic
-- [ ] Implement rule chain evaluation
-- [ ] Add default policies per chain
+- [x] Implement FilterRule struct
+- [x] Implement rule matching logic
+- [x] Implement rule chain evaluation
+- [x] Add default policies per chain
 
 ---
 
-## Phase SSH-4: Authentication
+## Phase SSH-4: Authentication ✅
 
 ### Tasks
 
-- [ ] Implement password authentication
-- [ ] Integrate with `/etc/passwd` checking
-- [ ] Handle authentication failure limits
+- [x] Implement password authentication
+- [x] Integrate with `/etc/passwd` checking
+- [x] Handle authentication failure limits
 - [ ] (Future) Public key authentication
 
 ---
 
-## Phase SSH-5: Channels and Sessions
+## Phase SSH-5: Channels and Sessions ✅
 
 ### Tasks
 
-- [ ] Implement channel multiplexing (RFC 4254)
-- [ ] Implement PTY-req handling
-- [ ] Implement shell channel
-- [ ] Implement session management
+- [x] Implement channel multiplexing (RFC 4254)
+- [x] Implement PTY-req handling
+- [x] Implement shell channel
+- [x] Implement session management
+
+---
+
+## Service Manager ✅
+
+Added `userspace/servicemgr/` with:
+- Service definition loading from `/etc/services.d/`
+- Start/stop/restart/status commands
+- Daemon mode with auto-restart
+- Default sshd service configuration
+
+### Usage
+```bash
+servicemgr daemon        # Run as daemon (started by init)
+servicemgr start sshd    # Start a service
+servicemgr stop sshd     # Stop a service
+servicemgr status        # Show all service status
+servicemgr list          # List services
+```
 
 ---
 
