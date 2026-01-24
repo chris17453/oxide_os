@@ -1,8 +1,13 @@
 //! DNS resolution support
 //!
 //! Provides hostname resolution using DNS queries.
+//!
+//! Resolution order:
+//! 1. Check if input is already an IP address
+//! 2. Check /etc/hosts for static mappings
+//! 3. Use DNS servers from /etc/resolv.conf (or fallback to default)
 
-use crate::close;
+use crate::{O_RDONLY, close, open2, read};
 use crate::socket::{
     SOCKADDR_IN_SIZE, SockAddrIn, af, htons, ipproto, recvfrom, sendto, sock, sockaddr_in_octets,
     socket,
@@ -10,6 +15,12 @@ use crate::socket::{
 
 /// Default DNS server (Google Public DNS)
 pub const DEFAULT_DNS_SERVER: (u8, u8, u8, u8) = (8, 8, 8, 8);
+
+/// Path to hosts file
+pub const HOSTS_FILE: &str = "/etc/hosts";
+
+/// Path to resolv.conf
+pub const RESOLV_CONF: &str = "/etc/resolv.conf";
 
 /// DNS port
 pub const DNS_PORT: u16 = 53;
@@ -202,13 +213,109 @@ fn parse_response(buf: &[u8], len: usize) -> ResolvedAddr {
     result
 }
 
+/// Lookup hostname in /etc/hosts
+///
+/// Returns IPv4 address if found, None otherwise.
+pub fn lookup_hosts_file(hostname: &str) -> Option<(u8, u8, u8, u8)> {
+    let fd = open2(HOSTS_FILE, O_RDONLY);
+    if fd < 0 {
+        return None;
+    }
+
+    let mut buf = [0u8; 2048];
+    let n = read(fd, &mut buf);
+    close(fd);
+
+    if n <= 0 {
+        return None;
+    }
+
+    let content = core::str::from_utf8(&buf[..n as usize]).ok()?;
+
+    // Parse hosts file: each line is "IP hostname [aliases...]"
+    for line in content.lines() {
+        let line = line.trim();
+
+        // Skip comments and empty lines
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        // Split by whitespace
+        let mut parts = line.split_whitespace();
+        let ip_str = parts.next()?;
+
+        // Check if any hostname matches
+        for name in parts {
+            if name.eq_ignore_ascii_case(hostname) {
+                return parse_ip(ip_str);
+            }
+        }
+    }
+
+    None
+}
+
+/// Get DNS servers from /etc/resolv.conf
+///
+/// Returns a list of DNS server IPs (up to 3).
+pub fn get_dns_servers() -> [(u8, u8, u8, u8); 3] {
+    let mut servers = [DEFAULT_DNS_SERVER; 3];
+    let mut count = 0;
+
+    let fd = open2(RESOLV_CONF, O_RDONLY);
+    if fd < 0 {
+        return servers;
+    }
+
+    let mut buf = [0u8; 1024];
+    let n = read(fd, &mut buf);
+    close(fd);
+
+    if n <= 0 {
+        return servers;
+    }
+
+    if let Ok(content) = core::str::from_utf8(&buf[..n as usize]) {
+        for line in content.lines() {
+            let line = line.trim();
+
+            // Skip comments and empty lines
+            if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+                continue;
+            }
+
+            // Look for "nameserver IP" lines
+            if line.starts_with("nameserver") {
+                let rest = line["nameserver".len()..].trim();
+                if let Some(ip) = parse_ip(rest) {
+                    if count < 3 {
+                        servers[count] = ip;
+                        count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    servers
+}
+
+/// Get the first configured DNS server
+pub fn get_primary_dns_server() -> (u8, u8, u8, u8) {
+    get_dns_servers()[0]
+}
+
 /// Resolve a hostname to an IP address
 ///
-/// Returns the first IPv4 address found, or None if resolution fails.
+/// Resolution order:
+/// 1. Check if already an IP address
+/// 2. Check /etc/hosts
+/// 3. Query DNS servers from /etc/resolv.conf
 ///
 /// # Arguments
 /// * `hostname` - The hostname to resolve
-/// * `dns_server` - Optional DNS server IP (uses 8.8.8.8 if None)
+/// * `dns_server` - Optional DNS server IP (reads from resolv.conf if None)
 ///
 /// # Returns
 /// IPv4 address as (a, b, c, d) tuple, or None if resolution fails.
@@ -218,7 +325,13 @@ pub fn resolve(hostname: &str, dns_server: Option<(u8, u8, u8, u8)>) -> Option<(
         return Some(ip);
     }
 
-    let server = dns_server.unwrap_or(DEFAULT_DNS_SERVER);
+    // Check /etc/hosts first
+    if let Some(ip) = lookup_hosts_file(hostname) {
+        return Some(ip);
+    }
+
+    // Get DNS server (from parameter, or resolv.conf, or default)
+    let server = dns_server.unwrap_or_else(get_primary_dns_server);
 
     // Create UDP socket
     let sock = socket(af::INET, sock::DGRAM, ipproto::UDP);
@@ -263,6 +376,11 @@ pub fn resolve(hostname: &str, dns_server: Option<(u8, u8, u8, u8)>) -> Option<(
 
 /// Resolve hostname with full results (IPv4 and IPv6)
 ///
+/// Resolution order:
+/// 1. Check if already an IP address
+/// 2. Check /etc/hosts
+/// 3. Query DNS servers
+///
 /// # Arguments
 /// * `hostname` - The hostname to resolve
 /// * `dns_server` - Optional DNS server IP
@@ -278,7 +396,13 @@ pub fn resolve_full(hostname: &str, dns_server: Option<(u8, u8, u8, u8)>) -> Res
         return result;
     }
 
-    let server = dns_server.unwrap_or(DEFAULT_DNS_SERVER);
+    // Check /etc/hosts first
+    if let Some(ip) = lookup_hosts_file(hostname) {
+        result.ipv4 = Some(ip);
+        return result;
+    }
+
+    let server = dns_server.unwrap_or_else(get_primary_dns_server);
 
     // Create UDP socket
     let sock = socket(af::INET, sock::DGRAM, ipproto::UDP);
@@ -678,7 +802,7 @@ pub fn gethostbyaddr(addr: u32) -> Option<&'static str> {
 ///
 /// # Arguments
 /// * `addr` - IPv4 address in network byte order
-/// * `dns_server` - Optional DNS server IP (uses default if None)
+/// * `dns_server` - Optional DNS server IP (reads from resolv.conf if None)
 ///
 /// # Returns
 /// Hostname string, or None if resolution fails.
@@ -686,7 +810,7 @@ pub fn gethostbyaddr_with_server(
     addr: u32,
     dns_server: Option<(u8, u8, u8, u8)>,
 ) -> Option<&'static str> {
-    let server = dns_server.unwrap_or(DEFAULT_DNS_SERVER);
+    let server = dns_server.unwrap_or_else(get_primary_dns_server);
 
     // Create UDP socket
     let sock = socket(af::INET, sock::DGRAM, ipproto::UDP);
@@ -795,7 +919,7 @@ pub fn gethostbyaddr_r(addr: u32, result: &mut HostEntry) -> i32 {
 /// # Arguments
 /// * `addr` - IPv4 address in network byte order
 /// * `result` - Buffer to store the HostEntry result
-/// * `dns_server` - Optional DNS server IP
+/// * `dns_server` - Optional DNS server IP (reads from resolv.conf if None)
 ///
 /// # Returns
 /// 0 on success, negative error code on failure
@@ -804,7 +928,7 @@ pub fn gethostbyaddr_r_with_server(
     result: &mut HostEntry,
     dns_server: Option<(u8, u8, u8, u8)>,
 ) -> i32 {
-    let server = dns_server.unwrap_or(DEFAULT_DNS_SERVER);
+    let server = dns_server.unwrap_or_else(get_primary_dns_server);
 
     // Create UDP socket
     let sock = socket(af::INET, sock::DGRAM, ipproto::UDP);
