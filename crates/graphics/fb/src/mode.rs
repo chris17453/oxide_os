@@ -8,9 +8,10 @@ extern crate alloc;
 use alloc::sync::Arc;
 use spin::Mutex;
 
-use boot_proto::{PixelFormat, VideoMode};
+use boot_proto::VideoMode;
 
-use crate::{Framebuffer, FramebufferInfo, LinearFramebuffer, VIDEO_MODES, VideoModeInfo};
+use crate::color::PixelFormat;
+use crate::{FramebufferInfo, LinearFramebuffer, VIDEO_MODES, VideoModeInfo};
 
 /// Hook to let platform-specific code actually perform the mode switch.
 /// Takes boot-time VideoMode and returns new framebuffer info for that mode.
@@ -49,11 +50,11 @@ pub fn set_mode(index: u32) -> Option<VideoModeInfo> {
     let bpp = match fb_info.format {
         PixelFormat::RGB565 => 16,
         PixelFormat::BGRA8888 | PixelFormat::RGBA8888 => 32,
-        PixelFormat::Unknown => mode.bpp,
+        _ => mode.bpp,
     };
     let is_bgr = matches!(
         fb_info.format,
-        PixelFormat::Bgr | PixelFormat::Bgra8888 | PixelFormat::BGRA8888
+        PixelFormat::BGR888 | PixelFormat::BGRA8888
     );
     Some(VideoModeInfo {
         mode_number: mode.mode_number,

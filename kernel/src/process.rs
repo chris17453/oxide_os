@@ -1,0 +1,840 @@
+//! Process management callbacks for the OXIDE kernel.
+//!
+//! Implements fork, exec, wait, and exit syscall handlers.
+
+extern crate alloc;
+
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::fmt::Write;
+use core::ptr::addr_of_mut;
+use core::sync::atomic::Ordering;
+
+use arch_traits::Arch;
+use arch_x86_64 as arch;
+use arch_x86_64::serial;
+use mm_paging::{flush_tlb_all, phys_to_virt, write_cr3};
+use os_core::PhysAddr;
+use proc::{ProcessContext, WaitOptions, do_exec, do_fork, do_waitpid, process_table};
+use proc_traits::Pid;
+use vfs::{VnodeType, mount::GLOBAL_VFS};
+
+#[allow(unused_imports)]
+use crate::debug_fork;
+use crate::globals::{CHILD_DONE, KERNEL_PML4, PARENT_CONTEXT, ParentContext, READY_QUEUE, USER_EXITED, USER_EXIT_STATUS};
+use crate::memory::FrameAllocatorWrapper;
+
+/// User exit function
+pub fn user_exit(status: i32) -> ! {
+    // Get current process and mark as zombie
+    let table = process_table();
+    let current_pid = table.current_pid();
+
+    // Debug: Print framebuffer write stats on process exit
+    {
+        let (writes, bytes, base) = devfs::devices::get_fb_write_stats();
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(
+            writer,
+            "[FB_DEBUG] Process {} exiting - FB writes={} bytes={} base={:#x}",
+            current_pid, writes, bytes, base
+        );
+    }
+
+    if let Some(proc) = table.get(current_pid) {
+        proc.lock().exit(status);
+    }
+
+    unsafe {
+        USER_EXIT_STATUS = status;
+    }
+    USER_EXITED.store(true, Ordering::SeqCst);
+
+    // Check if there's a saved parent context to return to
+    let parent_ctx = PARENT_CONTEXT.lock().take();
+
+    if let Some(ctx) = parent_ctx {
+        // Restore parent as current process
+        table.set_current_pid(ctx.pid as u32);
+
+        // Get parent's kernel stack
+        if let Some(parent) = table.get(ctx.pid as u32) {
+            let p = parent.lock();
+            let parent_stack_phys = p.kernel_stack();
+            let parent_stack_size = p.kernel_stack_size();
+            drop(p);
+
+            let parent_stack_virt = phys_to_virt(parent_stack_phys);
+            let parent_stack_top = parent_stack_virt.as_u64() + parent_stack_size as u64;
+
+            // Restore parent's kernel stack for syscalls
+            unsafe {
+                arch::syscall::set_kernel_stack(parent_stack_top);
+            }
+            arch::gdt::set_kernel_stack(parent_stack_top);
+
+            // Calculate wait result: (child_pid << 32) | status
+            let wait_result = ((current_pid as i64) << 32) | ((status as i64) & 0xFFFFFFFF);
+
+            // Return to parent's user mode via sysretq
+            // CRITICAL: Must restore ALL registers the parent had when making the waitpid syscall
+            // sysretq clobbers RCX (uses for RIP) and R11 (uses for RFLAGS)
+            // All other registers must be restored to parent's values
+
+            // Copy context to static memory that survives the CR3 switch
+            // We use a static because inline asm can't handle this many registers
+            static mut RESTORE_CTX: ParentContext = ParentContext {
+                pid: 0,
+                pml4: 0,
+                rip: 0,
+                rsp: 0,
+                rflags: 0,
+                rax: 0,
+                rbx: 0,
+                rcx: 0,
+                rdx: 0,
+                rsi: 0,
+                rdi: 0,
+                rbp: 0,
+                r8: 0,
+                r9: 0,
+                r10: 0,
+                r11: 0,
+                r12: 0,
+                r13: 0,
+                r14: 0,
+                r15: 0,
+            };
+            static mut RESTORE_RESULT: i64 = 0;
+
+            unsafe {
+                use core::ptr::addr_of_mut;
+                *addr_of_mut!(RESTORE_CTX) = ctx.clone();
+                *addr_of_mut!(RESTORE_RESULT) = wait_result;
+
+                // Switch page tables first
+                core::arch::asm!(
+                    "mov cr3, {}",
+                    in(reg) ctx.pml4,
+                    options(nostack)
+                );
+
+                // Now restore all registers from the static context and sysretq
+                // The context is at a fixed virtual address (higher half)
+                let ctx_ptr = addr_of_mut!(RESTORE_CTX) as u64;
+                let _result_ptr = addr_of_mut!(RESTORE_RESULT) as u64;
+
+                // ParentContext layout:
+                // pid: u32 (offset 0, padded to 8)
+                // pml4: u64 (offset 8)
+                // rip: u64 (offset 16)
+                // rsp: u64 (offset 24)
+                // rflags: u64 (offset 32)
+                // rax: u64 (offset 40)
+                // rbx: u64 (offset 48)
+                // rcx: u64 (offset 56)
+                // rdx: u64 (offset 64)
+                // rsi: u64 (offset 72)
+                // rdi: u64 (offset 80)
+                // rbp: u64 (offset 88)
+                // r8: u64 (offset 96)
+                // r9: u64 (offset 104)
+                // r10: u64 (offset 112)
+                // r11: u64 (offset 120)
+                // r12: u64 (offset 128)
+                // r13: u64 (offset 136)
+                // r14: u64 (offset 144)
+                // r15: u64 (offset 152)
+                // Store values in statics so we can access them after restoring all registers
+                static mut SYSRET_USER_RSP: u64 = 0;
+                static mut SYSRET_USER_RIP: u64 = 0;
+                static mut SYSRET_USER_RFLAGS: u64 = 0;
+                static mut SYSRET_RESULT: i64 = 0;
+                static mut SYSRET_R14: u64 = 0;
+                static mut SYSRET_R15: u64 = 0;
+
+                *addr_of_mut!(SYSRET_USER_RSP) = ctx.rsp;
+                *addr_of_mut!(SYSRET_USER_RIP) = ctx.rip;
+                *addr_of_mut!(SYSRET_USER_RFLAGS) = ctx.rflags;
+                *addr_of_mut!(SYSRET_RESULT) = wait_result;
+                *addr_of_mut!(SYSRET_R14) = ctx.r14;
+                *addr_of_mut!(SYSRET_R15) = ctx.r15;
+
+                core::arch::asm!(
+                    // r15 = context pointer (only used for loading registers, not for sysret values)
+                    "mov r15, {ctx}",
+                    // Restore callee-saved registers
+                    "mov rbx, [r15 + 48]",    // rbx at offset 48
+                    "mov rbp, [r15 + 88]",    // rbp at offset 88
+                    "mov r12, [r15 + 128]",   // r12 at offset 128
+                    "mov r13, [r15 + 136]",   // r13 at offset 136
+                    // Restore caller-saved registers (that syscall should preserve)
+                    "mov rdi, [r15 + 80]",    // rdi at offset 80
+                    "mov rsi, [r15 + 72]",    // rsi at offset 72
+                    "mov rdx, [r15 + 64]",    // rdx at offset 64
+                    "mov r8, [r15 + 96]",     // r8 at offset 96
+                    "mov r9, [r15 + 104]",    // r9 at offset 104
+                    "mov r10, [r15 + 112]",   // r10 at offset 112
+                    // Now load sysret values and r14/r15 from statics (using absolute addresses)
+                    "mov rax, [{result}]",    // result value
+                    "mov rcx, [{rip}]",       // user rip
+                    "mov r11, [{rflags}]",    // user rflags
+                    "mov r14, [{r14_val}]",   // restore r14
+                    "mov r15, [{r15_val}]",   // restore r15
+                    // Load user RSP last and sysretq
+                    "mov rsp, [{rsp_val}]",
+                    "sysretq",
+                    ctx = in(reg) ctx_ptr,
+                    result = sym SYSRET_RESULT,
+                    rip = sym SYSRET_USER_RIP,
+                    rflags = sym SYSRET_USER_RFLAGS,
+                    r14_val = sym SYSRET_R14,
+                    r15_val = sym SYSRET_R15,
+                    rsp_val = sym SYSRET_USER_RSP,
+                    options(noreturn)
+                );
+            }
+        }
+    }
+
+    // Check if there are other processes to run
+    // With preemptive scheduling, the scheduler will pick the next process
+    if !READY_QUEUE.lock().is_empty() {
+        // There are other processes - scheduler will handle them
+        // Just halt this CPU; timer interrupt will trigger scheduler
+        loop {
+            unsafe { core::arch::asm!("hlt") }
+        }
+    }
+
+    // No other processes and init exited - halt the system
+    arch::X86_64::halt();
+}
+
+/// Fork callback for syscalls
+///
+/// Creates a child process and returns child PID to parent, 0 to child.
+pub fn kernel_fork() -> i64 {
+    let table = process_table();
+    let parent_pid = table.current_pid();
+
+    // Debug: always print fork info for now
+    {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[FORK] Fork called from PID {}", parent_pid);
+    }
+
+    // Get current process context from syscall user context
+    let user_ctx = arch::get_user_context();
+
+    // Debug: print user context
+    {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(
+            writer,
+            "[FORK] user_ctx.rip={:#x} rsp={:#x}",
+            user_ctx.rip, user_ctx.rsp
+        );
+    }
+    let parent_context = ProcessContext {
+        rip: user_ctx.rip,
+        rsp: user_ctx.rsp,
+        rflags: user_ctx.rflags,
+        rax: user_ctx.rax,
+        rbx: user_ctx.rbx,
+        rcx: user_ctx.rcx,
+        rdx: user_ctx.rdx,
+        rsi: user_ctx.rsi,
+        rdi: user_ctx.rdi,
+        rbp: user_ctx.rbp,
+        r8: user_ctx.r8,
+        r9: user_ctx.r9,
+        r10: user_ctx.r10,
+        r11: user_ctx.r11,
+        r12: user_ctx.r12,
+        r13: user_ctx.r13,
+        r14: user_ctx.r14,
+        r15: user_ctx.r15,
+    };
+
+    debug_fork!(
+        "[FORK] Parent context: rip={:#x} rsp={:#x}",
+        parent_context.rip,
+        parent_context.rsp
+    );
+
+    // Create wrapper for frame allocator
+    let alloc_wrapper = FrameAllocatorWrapper;
+
+    // Call do_fork
+    let result = do_fork(parent_pid, &parent_context, &alloc_wrapper);
+
+    match result {
+        Ok(child_pid) => {
+            debug_fork!("[FORK] Created child process {}", child_pid);
+
+            // Add child to ready queue - scheduler will run it
+            READY_QUEUE.lock().push(child_pid);
+
+            // Return child PID to parent
+            child_pid as i64
+        }
+        Err(_e) => {
+            debug_fork!("[FORK] Fork failed: {:?}", _e);
+            -1 // EAGAIN
+        }
+    }
+}
+
+/// Wait callback for syscalls
+///
+/// Waits for child process and returns (pid << 32) | status.
+/// Note: This does NOT run children - the scheduler handles that.
+/// This just checks for zombie children to reap.
+pub fn kernel_wait(pid: i32, options: i32) -> i64 {
+    let table = process_table();
+    let parent_pid = table.current_pid();
+    let wait_opts = WaitOptions::from(options);
+
+    // Just check for zombie children - scheduler runs processes
+    match do_waitpid(parent_pid, pid, wait_opts) {
+        Ok(result) => {
+            // Debug: print framebuffer write stats after each child exits
+            {
+                let (writes, bytes, base) = devfs::devices::get_fb_write_stats();
+                let mut writer = serial::SerialWriter;
+                let _ = writeln!(
+                    writer,
+                    "[FB_DEBUG] Child {} exited - FB writes={} bytes={} base={:#x}",
+                    result.pid, writes, bytes, base
+                );
+            }
+            // Pack pid and status into result
+            ((result.pid as i64) << 32) | ((result.status as i64) & 0xFFFFFFFF)
+        }
+        Err(e) => {
+            match e {
+                proc::WaitError::NoChildren => -10, // ECHILD
+                proc::WaitError::WouldBlock => -11, // EAGAIN
+                proc::WaitError::InvalidPid => -3,  // ESRCH
+                proc::WaitError::Interrupted => -4, // EINTR
+            }
+        }
+    }
+}
+
+/// Run a child process to completion
+///
+/// This function saves the parent's context and enters the child.
+/// When the child exits, control returns to parent via sysretq.
+#[allow(dead_code)]
+pub fn run_child_process(child_pid: Pid) {
+    let table = process_table();
+    let parent_pid = table.current_pid();
+
+    // Get parent's PML4 for restoring later
+    let _parent_pml4 = if let Some(p) = table.get(parent_pid) {
+        p.lock().address_space().pml4_phys().as_u64()
+    } else {
+        // Fallback to kernel PML4
+        unsafe { KERNEL_PML4 }
+    };
+
+    // Get child process info
+    let (child_pml4, _child_entry, _child_stack, kernel_stack_phys, kernel_stack_size) = {
+        let child = match table.get(child_pid) {
+            Some(c) => c,
+            None => return,
+        };
+
+        let c = child.lock();
+        (
+            c.address_space().pml4_phys(),
+            c.entry_point(),
+            c.user_stack_top(),
+            c.kernel_stack(),
+            c.kernel_stack_size(),
+        )
+    };
+
+    // Set current process to child
+    table.set_current_pid(child_pid);
+    {
+        let mut writer = serial::SerialWriter;
+        let verify_pid = table.current_pid();
+        let _ = writeln!(
+            writer,
+            "[RUN_CHILD] set_current_pid({}) done, verify={}",
+            child_pid, verify_pid
+        );
+    }
+
+    // Use the kernel stack already allocated for this child (in fork)
+    let kernel_stack_virt = phys_to_virt(kernel_stack_phys);
+    let child_kernel_stack_top = kernel_stack_virt.as_u64() + kernel_stack_size as u64;
+
+    // Set kernel stack for child's syscalls/interrupts
+    unsafe {
+        arch::syscall::set_kernel_stack(child_kernel_stack_top);
+    }
+    arch::gdt::set_kernel_stack(child_kernel_stack_top);
+
+    // Get child's saved context
+    let child_ctx = {
+        let child = table.get(child_pid).unwrap();
+        child.lock().context().clone()
+    };
+
+    // Debug: print child's context (all callee-saved registers)
+    {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[CHILD] PID {} entering usermode", child_pid);
+        let _ = writeln!(
+            writer,
+            "[CHILD] rip={:#x} rsp={:#x} rbp={:#x}",
+            child_ctx.rip, child_ctx.rsp, child_ctx.rbp
+        );
+        let _ = writeln!(
+            writer,
+            "[CHILD] rax={:#x} rbx={:#x} r12={:#x}",
+            child_ctx.rax, child_ctx.rbx, child_ctx.r12
+        );
+        let _ = writeln!(
+            writer,
+            "[CHILD] r13={:#x} r14={:#x} r15={:#x}",
+            child_ctx.r13, child_ctx.r14, child_ctx.r15
+        );
+    }
+
+    // Save parent's FULL user context so we can restore ALL registers when child exits
+    // This is critical because the parent's syscall handler saved registers to the
+    // kernel stack, but we're going to bypass the normal epilogue via user_exit's sysretq
+    let parent_user_ctx = arch::get_user_context();
+    {
+        *PARENT_CONTEXT.lock() = Some(ParentContext {
+            pid: parent_pid as u64,
+            pml4: _parent_pml4,
+            rip: parent_user_ctx.rip,
+            rsp: parent_user_ctx.rsp,
+            rflags: parent_user_ctx.rflags,
+            rax: parent_user_ctx.rax,
+            rbx: parent_user_ctx.rbx,
+            rcx: parent_user_ctx.rcx,
+            rdx: parent_user_ctx.rdx,
+            rsi: parent_user_ctx.rsi,
+            rdi: parent_user_ctx.rdi,
+            rbp: parent_user_ctx.rbp,
+            r8: parent_user_ctx.r8,
+            r9: parent_user_ctx.r9,
+            r10: parent_user_ctx.r10,
+            r11: parent_user_ctx.r11,
+            r12: parent_user_ctx.r12,
+            r13: parent_user_ctx.r13,
+            r14: parent_user_ctx.r14,
+            r15: parent_user_ctx.r15,
+        });
+        CHILD_DONE.store(false, Ordering::SeqCst);
+    }
+
+    // Build UserContext for enter_usermode_with_context
+    let user_ctx = arch::UserContext {
+        rax: child_ctx.rax,
+        rbx: child_ctx.rbx,
+        rcx: child_ctx.rcx,
+        rdx: child_ctx.rdx,
+        rsi: child_ctx.rsi,
+        rdi: child_ctx.rdi,
+        rbp: child_ctx.rbp,
+        rsp: child_ctx.rsp,
+        r8: child_ctx.r8,
+        r9: child_ctx.r9,
+        r10: child_ctx.r10,
+        r11: child_ctx.r11,
+        r12: child_ctx.r12,
+        r13: child_ctx.r13,
+        r14: child_ctx.r14,
+        r15: child_ctx.r15,
+        rip: child_ctx.rip,
+        rflags: child_ctx.rflags,
+    };
+
+    // Debug: verify UserContext before entering usermode
+    {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[CHILD] UserContext ptr: {:p}", &user_ctx);
+        let _ = writeln!(
+            writer,
+            "[CHILD] UserContext.rip={:#x} rsp={:#x}",
+            user_ctx.rip, user_ctx.rsp
+        );
+        let _ = writeln!(
+            writer,
+            "[CHILD] UserContext.rcx={:#x} rax={:#x}",
+            user_ctx.rcx, user_ctx.rax
+        );
+        let _ = writeln!(
+            writer,
+            "[CHILD] kernel_stack={:#x} pml4={:#x}",
+            child_kernel_stack_top,
+            child_pml4.as_u64()
+        );
+
+        // Verify by reading raw bytes at context address
+        let ctx_ptr = &user_ctx as *const arch::UserContext as *const u64;
+        unsafe {
+            let _ = writeln!(writer, "[CHILD] Raw ctx[0]={:#x} (rax)", *ctx_ptr.add(0));
+            let _ = writeln!(writer, "[CHILD] Raw ctx[2]={:#x} (rcx)", *ctx_ptr.add(2));
+            let _ = writeln!(writer, "[CHILD] Raw ctx[16]={:#x} (rip)", *ctx_ptr.add(16));
+        }
+
+        // Test: copy context to child kernel stack and verify it's readable after CR3 switch
+        // Use EXACT same address as enter_usermode_with_context: kernel_stack_top - 184
+        let child_stack_base = child_kernel_stack_top - 184;
+        let dest_ptr = child_stack_base as *mut u64;
+        let _ = writeln!(writer, "[CHILD] Test dest_ptr={:#x}", dest_ptr as u64);
+        let _ = writeln!(writer, "[CHILD] rcx will be at {:#x}", dest_ptr as u64 + 16);
+        let src_ptr = &user_ctx as *const arch::UserContext as *const u64;
+
+        // Copy context to child's kernel stack
+        for i in 0..18 {
+            unsafe {
+                *dest_ptr.add(i) = *src_ptr.add(i);
+            }
+        }
+
+        // Now switch to child's page tables and read back
+        unsafe {
+            // Read CR3 to verify current value
+            let current_cr3: u64;
+            core::arch::asm!("mov {}, cr3", out(reg) current_cr3);
+            let _ = writeln!(writer, "[CHILD] Current CR3: {:#x}", current_cr3);
+            let _ = writeln!(writer, "[CHILD] Child PML4: {:#x}", child_pml4.as_u64());
+
+            // Switch to child's page tables
+            core::arch::asm!("mov cr3, {}", in(reg) child_pml4.as_u64());
+
+            // Read back from the copied context
+            let read_rax = *dest_ptr.add(0);
+            let read_rcx = *dest_ptr.add(2);
+            let read_rip = *dest_ptr.add(16);
+
+            // Switch back to original page tables
+            core::arch::asm!("mov cr3, {}", in(reg) current_cr3);
+
+            let _ = writeln!(writer, "[CHILD] After CR3 switch and back:");
+            let _ = writeln!(writer, "[CHILD]   read_rax={:#x}", read_rax);
+            let _ = writeln!(writer, "[CHILD]   read_rcx={:#x}", read_rcx);
+            let _ = writeln!(writer, "[CHILD]   read_rip={:#x}", read_rip);
+        }
+    }
+
+    // Enter user mode for child with full context restoration
+    // When child calls exit(), user_exit will set CHILD_DONE and we'll detect it
+    unsafe {
+        arch::enter_usermode_with_context(child_kernel_stack_top, child_pml4.as_u64(), &user_ctx);
+    }
+
+    // Note: We never reach here via normal flow.
+    // But if we did somehow return, that would be the child exit path.
+}
+
+/// Exec callback for syscalls
+///
+/// Replaces the current process image with a new executable.
+pub fn kernel_exec(
+    path_ptr: *const u8,
+    path_len: usize,
+    argv_ptr: *const *const u8,
+    envp_ptr: *const *const u8,
+) -> i64 {
+    let table = process_table();
+    let current_pid = table.current_pid();
+
+    // Read path from user space
+    let path = unsafe {
+        if path_ptr.is_null() || path_len == 0 {
+            let mut writer = serial::SerialWriter;
+            let _ = writeln!(writer, "[EXEC] Invalid path (null or zero len)");
+            return -22; // EINVAL
+        }
+        let slice = core::slice::from_raw_parts(path_ptr, path_len);
+        match core::str::from_utf8(slice) {
+            Ok(s) => s,
+            Err(_) => {
+                let mut writer = serial::SerialWriter;
+                let _ = writeln!(writer, "[EXEC] Invalid UTF-8 in path");
+                return -22; // EINVAL
+            }
+        }
+    };
+
+    {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[EXEC] PID {} exec(\"{}\")", current_pid, path);
+    }
+
+    // Read argv from user space
+    let mut argv: Vec<String> = Vec::new();
+    if !argv_ptr.is_null() {
+        unsafe {
+            let mut i = 0;
+            loop {
+                let arg_ptr = *argv_ptr.add(i);
+                if arg_ptr.is_null() {
+                    break;
+                }
+                // Validate pointer is in user space before touching
+                let arg_addr = arg_ptr as u64;
+                if arg_addr == 0 || arg_addr >= 0x0000_8000_0000_0000 {
+                    let mut writer = serial::SerialWriter;
+                    let _ = writeln!(
+                        writer,
+                        "[EXEC] argv[{i}] pointer out of user space: {:#x}",
+                        arg_addr
+                    );
+                    return -14; // EFAULT
+                }
+                // Read null-terminated string with a hard cap
+                let mut len = 0;
+                while len < 4096 {
+                    let ch = *arg_ptr.add(len);
+                    if ch == 0 {
+                        break;
+                    }
+                    len += 1;
+                }
+                if len == 4096 {
+                    let mut writer = serial::SerialWriter;
+                    let _ = writeln!(writer, "[EXEC] argv[{i}] exceeds 4096 bytes");
+                    return -22; // EINVAL
+                }
+                let arg_slice = core::slice::from_raw_parts(arg_ptr, len);
+                match core::str::from_utf8(arg_slice) {
+                    Ok(s) => argv.push(String::from(s)),
+                    Err(_) => {
+                        let mut writer = serial::SerialWriter;
+                        let _ = writeln!(writer, "[EXEC] argv[{i}] invalid UTF-8");
+                        return -22; // EINVAL
+                    }
+                }
+                i += 1;
+                if i > 1024 {
+                    let mut writer = serial::SerialWriter;
+                    let _ = writeln!(writer, "[EXEC] argv too long (>1024)");
+                    return -22; // EINVAL
+                }
+            }
+        }
+    }
+    // If no argv provided, use the path as argv[0]
+    if argv.is_empty() {
+        argv.push(String::from(path));
+    }
+
+    // Read envp from user space
+    let mut envp: Vec<String> = Vec::new();
+    if !envp_ptr.is_null() {
+        unsafe {
+            let mut i = 0;
+            loop {
+                let env_ptr = *envp_ptr.add(i);
+                if env_ptr.is_null() {
+                    break;
+                }
+                let env_addr = env_ptr as u64;
+                if env_addr == 0 || env_addr >= 0x0000_8000_0000_0000 {
+                    let mut writer = serial::SerialWriter;
+                    let _ = writeln!(
+                        writer,
+                        "[EXEC] envp[{i}] pointer out of user space: {:#x}",
+                        env_addr
+                    );
+                    return -14; // EFAULT
+                }
+                // Read null-terminated string with a hard cap
+                let mut len = 0;
+                while len < 4096 {
+                    let ch = *env_ptr.add(len);
+                    if ch == 0 {
+                        break;
+                    }
+                    len += 1;
+                }
+                if len == 4096 {
+                    let mut writer = serial::SerialWriter;
+                    let _ = writeln!(writer, "[EXEC] envp[{i}] exceeds 4096 bytes");
+                    return -22; // EINVAL
+                }
+                let env_slice = core::slice::from_raw_parts(env_ptr, len);
+                match core::str::from_utf8(env_slice) {
+                    Ok(s) => envp.push(String::from(s)),
+                    Err(_) => {
+                        let mut writer = serial::SerialWriter;
+                        let _ = writeln!(writer, "[EXEC] envp[{i}] invalid UTF-8");
+                        return -22; // EINVAL
+                    }
+                }
+                i += 1;
+                if i > 1024 {
+                    let mut writer = serial::SerialWriter;
+                    let _ = writeln!(writer, "[EXEC] envp too long (>1024)");
+                    return -22; // EINVAL
+                }
+            }
+        }
+    }
+
+    // Look up the file in VFS
+    let vnode = match GLOBAL_VFS.lookup(path) {
+        Ok(v) => v,
+        Err(e) => {
+            let mut writer = serial::SerialWriter;
+            let _ = writeln!(writer, "[EXEC] VFS lookup failed for '{}': {:?}", path, e);
+            return -2; // ENOENT
+        }
+    };
+
+    // Check it's a regular file
+    if vnode.vtype() != VnodeType::File {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[EXEC] Not a regular file: {:?}", vnode.vtype());
+        return -21; // EISDIR or not a file
+    }
+
+    // Read the file contents
+    let size = vnode.size() as usize;
+    {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[EXEC] File size: {} bytes", size);
+    }
+
+    let mut elf_data = alloc::vec![0u8; size];
+    let read_result = vnode.read(0, &mut elf_data);
+    let bytes_read = match read_result {
+        Ok(n) => n,
+        Err(e) => {
+            let mut writer = serial::SerialWriter;
+            let _ = writeln!(writer, "[EXEC] Read failed: {:?}", e);
+            return -5; // EIO
+        }
+    };
+
+    if bytes_read != size {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(
+            writer,
+            "[EXEC] Short read: {} of {} bytes",
+            bytes_read, size
+        );
+        return -5; // EIO - short read
+    }
+    {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[EXEC] Read {} bytes, calling do_exec", bytes_read);
+    }
+
+    // Get kernel PML4 for creating new address space
+    let kernel_pml4 = PhysAddr::new(unsafe { KERNEL_PML4 });
+    let alloc_wrapper = FrameAllocatorWrapper;
+
+    // Call do_exec
+    match do_exec(
+        current_pid,
+        &elf_data,
+        &argv,
+        &envp,
+        &alloc_wrapper,
+        kernel_pml4,
+    ) {
+        Ok((_entry_point, _stack_ptr)) => {
+            // Get the new PML4 and switch to it
+            if let Some(proc) = table.get(current_pid) {
+                let p = proc.lock();
+                let new_pml4 = p.address_space().pml4_phys();
+                let ctx = p.context().clone();
+                drop(p);
+
+                // Debug: print exec return values
+                let mut writer = serial::SerialWriter;
+                let _ = writeln!(writer, "[EXEC] Switching to PML4={:#x}", new_pml4.as_u64());
+                let _ = writeln!(writer, "[EXEC] rip={:#x} rsp={:#x}", ctx.rip, ctx.rsp);
+                let _ = writeln!(
+                    writer,
+                    "[EXEC] argc={} argv={:#x} envp={:#x}",
+                    ctx.rdi, ctx.rsi, ctx.rdx
+                );
+
+                // Switch to new address space and jump to entry point
+                unsafe {
+                    write_cr3(new_pml4);
+                    flush_tlb_all();
+
+                    // Return to user mode at new entry point
+                    // We use sysretq which expects: rcx = rip, r11 = rflags
+                    // Use explicit registers to prevent compiler from reusing registers
+                    // that we overwrite before their values are consumed
+                    core::arch::asm!(
+                        // Set up rip for sysretq
+                        "mov rcx, r8",
+                        // Set up rflags for sysretq
+                        "mov r11, r9",
+                        // Set up user stack - do this AFTER loading values into rcx/r11
+                        // to avoid any chance of compiler putting inputs in rsp
+                        "mov rsp, r10",
+                        // Set up argc, argv, envp in registers per System V ABI
+                        // These are already loaded into r12, r13, r14 respectively
+                        "mov rdi, r12",
+                        "mov rsi, r13",
+                        "mov rdx, r14",
+                        // Load user data segment selectors for DS/ES/FS (0x1B = USER_DS | 3)
+                        // NOTE: Do NOT load GS - swapgs will handle it
+                        "mov ax, 0x1b",
+                        "mov ds, ax",
+                        "mov es, ax",
+                        "mov fs, ax",
+                        // Clear rax for return value
+                        "xor rax, rax",
+                        // Swap GS back to user mode (required before sysretq)
+                        "swapgs",
+                        // Return to user mode
+                        "sysretq",
+                        in("r8") ctx.rip,
+                        in("r9") 0x202u64, // IF set
+                        in("r10") ctx.rsp,
+                        in("r12") ctx.rdi,
+                        in("r13") ctx.rsi,
+                        in("r14") ctx.rdx,
+                        options(noreturn)
+                    );
+                }
+            }
+            0 // Never reached
+        }
+        Err(e) => {
+            let mut writer = serial::SerialWriter;
+            let code = match e {
+                proc::ExecError::InvalidElf => {
+                    let _ = writeln!(writer, "[EXEC] Error: InvalidElf");
+                    -8 // ENOEXEC
+                }
+                proc::ExecError::OutOfMemory => {
+                    let _ = writeln!(writer, "[EXEC] Error: OutOfMemory");
+                    -12 // ENOMEM
+                }
+                proc::ExecError::ProcessNotFound => {
+                    let _ = writeln!(writer, "[EXEC] Error: ProcessNotFound");
+                    -3 // ESRCH
+                }
+                proc::ExecError::InvalidAddress => {
+                    let _ = writeln!(writer, "[EXEC] Error: InvalidAddress");
+                    -14 // EFAULT
+                }
+                proc::ExecError::InvalidArgument => {
+                    let _ = writeln!(writer, "[EXEC] Error: InvalidArgument");
+                    -22 // EINVAL
+                }
+            };
+            code
+        }
+    }
+}
