@@ -114,7 +114,7 @@ pub use unistd::{
     WCONTINUED, WNOHANG, WUNTRACED, wexitstatus, wifexited, wifsignaled, wifstopped, wstopsig,
     wtermsig,
 };
-pub use unistd::{chdir, getcwd, getpgid, lseek, pipe, setpgid, setsid};
+pub use unistd::{chdir, getcwd, getpgid, lseek, pipe, sched_yield, setpgid, setsid};
 
 // Stat functions
 pub use stat::{

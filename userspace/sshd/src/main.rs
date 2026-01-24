@@ -165,8 +165,9 @@ pub fn main() -> i32 {
         log_to_file("Waiting for connection...");
         let client_fd = accept(server_fd, Some(&mut client_addr), Some(&mut addr_len));
         if client_fd < 0 {
-            log("Accept failed");
-            log_to_file("accept() returned negative fd");
+            // No connection pending - yield to let other processes run
+            // This prevents sshd from spinning and hogging the CPU
+            sched_yield();
             continue;
         }
 

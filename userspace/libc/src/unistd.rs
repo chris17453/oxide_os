@@ -87,6 +87,11 @@ pub fn waitpid(pid: i32, status: &mut i32, options: i32) -> i32 {
     }
 }
 
+/// Yield the processor to other processes
+pub fn sched_yield() {
+    syscall::sys_sched_yield();
+}
+
 /// Get process ID
 pub fn getpid() -> i32 {
     syscall::sys_getpid()
