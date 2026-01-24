@@ -289,24 +289,15 @@ pub fn kernel_fork() -> i64 {
     let table = process_table();
     let parent_pid = table.current_pid();
 
-    // Debug: always print fork info for now
-    {
-        let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[FORK] Fork called from PID {}", parent_pid);
-    }
+    debug_fork!("[FORK] Fork called from PID {}", parent_pid);
 
     // Get current process context from syscall user context
     let user_ctx = arch::get_user_context();
 
-    // Debug: print user context
-    {
-        let mut writer = serial::SerialWriter;
-        let _ = writeln!(
-            writer,
-            "[FORK] user_ctx.rip={:#x} rsp={:#x}",
-            user_ctx.rip, user_ctx.rsp
-        );
-    }
+    debug_fork!(
+        "[FORK] user_ctx.rip={:#x} rsp={:#x}",
+        user_ctx.rip, user_ctx.rsp
+    );
     let parent_context = ProcessContext {
         rip: user_ctx.rip,
         rsp: user_ctx.rsp,
@@ -521,11 +512,10 @@ pub fn run_child_process(child_pid: Pid) {
 
     // Set current process to child
     table.set_current_pid(child_pid);
+    #[cfg(feature = "debug-fork")]
     {
-        let mut writer = serial::SerialWriter;
         let verify_pid = table.current_pid();
-        let _ = writeln!(
-            writer,
+        debug_fork!(
             "[RUN_CHILD] set_current_pid({}) done, verify={}",
             child_pid, verify_pid
         );
@@ -548,25 +538,19 @@ pub fn run_child_process(child_pid: Pid) {
     };
 
     // Debug: print child's context (all callee-saved registers)
-    {
-        let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[CHILD] PID {} entering usermode", child_pid);
-        let _ = writeln!(
-            writer,
-            "[CHILD] rip={:#x} rsp={:#x} rbp={:#x}",
-            child_ctx.rip, child_ctx.rsp, child_ctx.rbp
-        );
-        let _ = writeln!(
-            writer,
-            "[CHILD] rax={:#x} rbx={:#x} r12={:#x}",
-            child_ctx.rax, child_ctx.rbx, child_ctx.r12
-        );
-        let _ = writeln!(
-            writer,
-            "[CHILD] r13={:#x} r14={:#x} r15={:#x}",
-            child_ctx.r13, child_ctx.r14, child_ctx.r15
-        );
-    }
+    debug_fork!("[CHILD] PID {} entering usermode", child_pid);
+    debug_fork!(
+        "[CHILD] rip={:#x} rsp={:#x} rbp={:#x}",
+        child_ctx.rip, child_ctx.rsp, child_ctx.rbp
+    );
+    debug_fork!(
+        "[CHILD] rax={:#x} rbx={:#x} r12={:#x}",
+        child_ctx.rax, child_ctx.rbx, child_ctx.r12
+    );
+    debug_fork!(
+        "[CHILD] r13={:#x} r14={:#x} r15={:#x}",
+        child_ctx.r13, child_ctx.r14, child_ctx.r15
+    );
 
     // Save parent's FULL user context so we can restore ALL registers when child exits
     // This is critical because the parent's syscall handler saved registers to the
@@ -621,21 +605,18 @@ pub fn run_child_process(child_pid: Pid) {
     };
 
     // Debug: verify UserContext before entering usermode
+    #[cfg(feature = "debug-fork")]
     {
-        let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[CHILD] UserContext ptr: {:p}", &user_ctx);
-        let _ = writeln!(
-            writer,
+        debug_fork!("[CHILD] UserContext ptr: {:p}", &user_ctx);
+        debug_fork!(
             "[CHILD] UserContext.rip={:#x} rsp={:#x}",
             user_ctx.rip, user_ctx.rsp
         );
-        let _ = writeln!(
-            writer,
+        debug_fork!(
             "[CHILD] UserContext.rcx={:#x} rax={:#x}",
             user_ctx.rcx, user_ctx.rax
         );
-        let _ = writeln!(
-            writer,
+        debug_fork!(
             "[CHILD] kernel_stack={:#x} pml4={:#x}",
             child_kernel_stack_top,
             child_pml4.as_u64()
@@ -644,17 +625,17 @@ pub fn run_child_process(child_pid: Pid) {
         // Verify by reading raw bytes at context address
         let ctx_ptr = &user_ctx as *const arch::UserContext as *const u64;
         unsafe {
-            let _ = writeln!(writer, "[CHILD] Raw ctx[0]={:#x} (rax)", *ctx_ptr.add(0));
-            let _ = writeln!(writer, "[CHILD] Raw ctx[2]={:#x} (rcx)", *ctx_ptr.add(2));
-            let _ = writeln!(writer, "[CHILD] Raw ctx[16]={:#x} (rip)", *ctx_ptr.add(16));
+            debug_fork!("[CHILD] Raw ctx[0]={:#x} (rax)", *ctx_ptr.add(0));
+            debug_fork!("[CHILD] Raw ctx[2]={:#x} (rcx)", *ctx_ptr.add(2));
+            debug_fork!("[CHILD] Raw ctx[16]={:#x} (rip)", *ctx_ptr.add(16));
         }
 
         // Test: copy context to child kernel stack and verify it's readable after CR3 switch
         // Use EXACT same address as enter_usermode_with_context: kernel_stack_top - 184
         let child_stack_base = child_kernel_stack_top - 184;
         let dest_ptr = child_stack_base as *mut u64;
-        let _ = writeln!(writer, "[CHILD] Test dest_ptr={:#x}", dest_ptr as u64);
-        let _ = writeln!(writer, "[CHILD] rcx will be at {:#x}", dest_ptr as u64 + 16);
+        debug_fork!("[CHILD] Test dest_ptr={:#x}", dest_ptr as u64);
+        debug_fork!("[CHILD] rcx will be at {:#x}", dest_ptr as u64 + 16);
         let src_ptr = &user_ctx as *const arch::UserContext as *const u64;
 
         // Copy context to child's kernel stack
@@ -669,8 +650,8 @@ pub fn run_child_process(child_pid: Pid) {
             // Read CR3 to verify current value
             let current_cr3: u64;
             core::arch::asm!("mov {}, cr3", out(reg) current_cr3);
-            let _ = writeln!(writer, "[CHILD] Current CR3: {:#x}", current_cr3);
-            let _ = writeln!(writer, "[CHILD] Child PML4: {:#x}", child_pml4.as_u64());
+            debug_fork!("[CHILD] Current CR3: {:#x}", current_cr3);
+            debug_fork!("[CHILD] Child PML4: {:#x}", child_pml4.as_u64());
 
             // Switch to child's page tables
             core::arch::asm!("mov cr3, {}", in(reg) child_pml4.as_u64());
@@ -683,10 +664,10 @@ pub fn run_child_process(child_pid: Pid) {
             // Switch back to original page tables
             core::arch::asm!("mov cr3, {}", in(reg) current_cr3);
 
-            let _ = writeln!(writer, "[CHILD] After CR3 switch and back:");
-            let _ = writeln!(writer, "[CHILD]   read_rax={:#x}", read_rax);
-            let _ = writeln!(writer, "[CHILD]   read_rcx={:#x}", read_rcx);
-            let _ = writeln!(writer, "[CHILD]   read_rip={:#x}", read_rip);
+            debug_fork!("[CHILD] After CR3 switch and back:");
+            debug_fork!("[CHILD]   read_rax={:#x}", read_rax);
+            debug_fork!("[CHILD]   read_rcx={:#x}", read_rcx);
+            debug_fork!("[CHILD]   read_rip={:#x}", read_rip);
         }
     }
 
@@ -715,25 +696,20 @@ pub fn kernel_exec(
     // Read path from user space
     let path = unsafe {
         if path_ptr.is_null() || path_len == 0 {
-            let mut writer = serial::SerialWriter;
-            let _ = writeln!(writer, "[EXEC] Invalid path (null or zero len)");
+            debug_fork!("[EXEC] Invalid path (null or zero len)");
             return -22; // EINVAL
         }
         let slice = core::slice::from_raw_parts(path_ptr, path_len);
         match core::str::from_utf8(slice) {
             Ok(s) => s,
             Err(_) => {
-                let mut writer = serial::SerialWriter;
-                let _ = writeln!(writer, "[EXEC] Invalid UTF-8 in path");
+                debug_fork!("[EXEC] Invalid UTF-8 in path");
                 return -22; // EINVAL
             }
         }
     };
 
-    {
-        let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[EXEC] PID {} exec(\"{}\")", current_pid, path);
-    }
+    debug_fork!("[EXEC] PID {} exec(\"{}\")", current_pid, path);
 
     // Read argv from user space
     let mut argv: Vec<String> = Vec::new();
@@ -748,9 +724,7 @@ pub fn kernel_exec(
                 // Validate pointer is in user space before touching
                 let arg_addr = arg_ptr as u64;
                 if arg_addr == 0 || arg_addr >= 0x0000_8000_0000_0000 {
-                    let mut writer = serial::SerialWriter;
-                    let _ = writeln!(
-                        writer,
+                    debug_fork!(
                         "[EXEC] argv[{i}] pointer out of user space: {:#x}",
                         arg_addr
                     );
@@ -766,23 +740,20 @@ pub fn kernel_exec(
                     len += 1;
                 }
                 if len == 4096 {
-                    let mut writer = serial::SerialWriter;
-                    let _ = writeln!(writer, "[EXEC] argv[{i}] exceeds 4096 bytes");
+                    debug_fork!("[EXEC] argv[{i}] exceeds 4096 bytes");
                     return -22; // EINVAL
                 }
                 let arg_slice = core::slice::from_raw_parts(arg_ptr, len);
                 match core::str::from_utf8(arg_slice) {
                     Ok(s) => argv.push(String::from(s)),
                     Err(_) => {
-                        let mut writer = serial::SerialWriter;
-                        let _ = writeln!(writer, "[EXEC] argv[{i}] invalid UTF-8");
+                        debug_fork!("[EXEC] argv[{i}] invalid UTF-8");
                         return -22; // EINVAL
                     }
                 }
                 i += 1;
                 if i > 1024 {
-                    let mut writer = serial::SerialWriter;
-                    let _ = writeln!(writer, "[EXEC] argv too long (>1024)");
+                    debug_fork!("[EXEC] argv too long (>1024)");
                     return -22; // EINVAL
                 }
             }
@@ -805,9 +776,7 @@ pub fn kernel_exec(
                 }
                 let env_addr = env_ptr as u64;
                 if env_addr == 0 || env_addr >= 0x0000_8000_0000_0000 {
-                    let mut writer = serial::SerialWriter;
-                    let _ = writeln!(
-                        writer,
+                    debug_fork!(
                         "[EXEC] envp[{i}] pointer out of user space: {:#x}",
                         env_addr
                     );
@@ -823,23 +792,20 @@ pub fn kernel_exec(
                     len += 1;
                 }
                 if len == 4096 {
-                    let mut writer = serial::SerialWriter;
-                    let _ = writeln!(writer, "[EXEC] envp[{i}] exceeds 4096 bytes");
+                    debug_fork!("[EXEC] envp[{i}] exceeds 4096 bytes");
                     return -22; // EINVAL
                 }
                 let env_slice = core::slice::from_raw_parts(env_ptr, len);
                 match core::str::from_utf8(env_slice) {
                     Ok(s) => envp.push(String::from(s)),
                     Err(_) => {
-                        let mut writer = serial::SerialWriter;
-                        let _ = writeln!(writer, "[EXEC] envp[{i}] invalid UTF-8");
+                        debug_fork!("[EXEC] envp[{i}] invalid UTF-8");
                         return -22; // EINVAL
                     }
                 }
                 i += 1;
                 if i > 1024 {
-                    let mut writer = serial::SerialWriter;
-                    let _ = writeln!(writer, "[EXEC] envp too long (>1024)");
+                    debug_fork!("[EXEC] envp too long (>1024)");
                     return -22; // EINVAL
                 }
             }
@@ -849,9 +815,8 @@ pub fn kernel_exec(
     // Look up the file in VFS, following symlinks
     let mut vnode = match GLOBAL_VFS.lookup(path) {
         Ok(v) => v,
-        Err(e) => {
-            let mut writer = serial::SerialWriter;
-            let _ = writeln!(writer, "[EXEC] VFS lookup failed for '{}': {:?}", path, e);
+        Err(_e) => {
+            debug_fork!("[EXEC] VFS lookup failed for '{}': {:?}", path, _e);
             return -2; // ENOENT
         }
     };
@@ -861,17 +826,15 @@ pub fn kernel_exec(
     while vnode.vtype() == VnodeType::Symlink {
         symlink_count += 1;
         if symlink_count > 40 {
-            let mut writer = serial::SerialWriter;
-            let _ = writeln!(writer, "[EXEC] Too many symlinks (>40)");
+            debug_fork!("[EXEC] Too many symlinks (>40)");
             return -40; // ELOOP
         }
 
         // Read the symlink target
         let target = match vnode.readlink() {
             Ok(t) => t,
-            Err(e) => {
-                let mut writer = serial::SerialWriter;
-                let _ = writeln!(writer, "[EXEC] Failed to read symlink: {:?}", e);
+            Err(_e) => {
+                debug_fork!("[EXEC] Failed to read symlink: {:?}", _e);
                 return -2; // ENOENT
             }
         };
@@ -888,9 +851,8 @@ pub fn kernel_exec(
         // Look up the target
         vnode = match GLOBAL_VFS.lookup(&resolved_path) {
             Ok(v) => v,
-            Err(e) => {
-                let mut writer = serial::SerialWriter;
-                let _ = writeln!(writer, "[EXEC] Symlink target lookup failed for '{}': {:?}", resolved_path, e);
+            Err(_e) => {
+                debug_fork!("[EXEC] Symlink target lookup failed for '{}': {:?}", resolved_path, _e);
                 return -2; // ENOENT
             }
         };
@@ -898,42 +860,32 @@ pub fn kernel_exec(
 
     // Check it's a regular file
     if vnode.vtype() != VnodeType::File {
-        let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[EXEC] Not a regular file: {:?}", vnode.vtype());
+        debug_fork!("[EXEC] Not a regular file: {:?}", vnode.vtype());
         return -21; // EISDIR or not a file
     }
 
     // Read the file contents
     let size = vnode.size() as usize;
-    {
-        let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[EXEC] File size: {} bytes", size);
-    }
+    debug_fork!("[EXEC] File size: {} bytes", size);
 
     let mut elf_data = alloc::vec![0u8; size];
     let read_result = vnode.read(0, &mut elf_data);
     let bytes_read = match read_result {
         Ok(n) => n,
-        Err(e) => {
-            let mut writer = serial::SerialWriter;
-            let _ = writeln!(writer, "[EXEC] Read failed: {:?}", e);
+        Err(_e) => {
+            debug_fork!("[EXEC] Read failed: {:?}", _e);
             return -5; // EIO
         }
     };
 
     if bytes_read != size {
-        let mut writer = serial::SerialWriter;
-        let _ = writeln!(
-            writer,
+        debug_fork!(
             "[EXEC] Short read: {} of {} bytes",
             bytes_read, size
         );
         return -5; // EIO - short read
     }
-    {
-        let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[EXEC] Read {} bytes, calling do_exec", bytes_read);
-    }
+    debug_fork!("[EXEC] Read {} bytes, calling do_exec", bytes_read);
 
     // Get kernel PML4 for creating new address space
     let kernel_pml4 = PhysAddr::new(unsafe { KERNEL_PML4 });
@@ -957,11 +909,9 @@ pub fn kernel_exec(
                 drop(p);
 
                 // Debug: print exec return values
-                let mut writer = serial::SerialWriter;
-                let _ = writeln!(writer, "[EXEC] Switching to PML4={:#x}", new_pml4.as_u64());
-                let _ = writeln!(writer, "[EXEC] rip={:#x} rsp={:#x}", ctx.rip, ctx.rsp);
-                let _ = writeln!(
-                    writer,
+                debug_fork!("[EXEC] Switching to PML4={:#x}", new_pml4.as_u64());
+                debug_fork!("[EXEC] rip={:#x} rsp={:#x}", ctx.rip, ctx.rsp);
+                debug_fork!(
                     "[EXEC] argc={} argv={:#x} envp={:#x}",
                     ctx.rdi, ctx.rsi, ctx.rdx
                 );
@@ -1013,26 +963,25 @@ pub fn kernel_exec(
             0 // Never reached
         }
         Err(e) => {
-            let mut writer = serial::SerialWriter;
             let code = match e {
                 proc::ExecError::InvalidElf => {
-                    let _ = writeln!(writer, "[EXEC] Error: InvalidElf");
+                    debug_fork!("[EXEC] Error: InvalidElf");
                     -8 // ENOEXEC
                 }
                 proc::ExecError::OutOfMemory => {
-                    let _ = writeln!(writer, "[EXEC] Error: OutOfMemory");
+                    debug_fork!("[EXEC] Error: OutOfMemory");
                     -12 // ENOMEM
                 }
                 proc::ExecError::ProcessNotFound => {
-                    let _ = writeln!(writer, "[EXEC] Error: ProcessNotFound");
+                    debug_fork!("[EXEC] Error: ProcessNotFound");
                     -3 // ESRCH
                 }
                 proc::ExecError::InvalidAddress => {
-                    let _ = writeln!(writer, "[EXEC] Error: InvalidAddress");
+                    debug_fork!("[EXEC] Error: InvalidAddress");
                     -14 // EFAULT
                 }
                 proc::ExecError::InvalidArgument => {
-                    let _ = writeln!(writer, "[EXEC] Error: InvalidArgument");
+                    debug_fork!("[EXEC] Error: InvalidArgument");
                     -22 // EINVAL
                 }
             };

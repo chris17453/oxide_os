@@ -970,8 +970,9 @@ fn syscall_dispatch(
     arg5: u64,
     arg6: u64,
 ) -> i64 {
-    // Debug: log syscall 3 (fork) and 6 (waitpid) calls
-    if number == 3 || number == 6 {
+    // Debug: log syscalls (enabled via debug-syscall feature)
+    #[cfg(feature = "debug-syscall")]
+    {
         use core::fmt::Write;
         let mut writer = serial::SerialWriter;
         let _ = writeln!(writer, "[SYSCALL] number={} arg1={:#x}", number, arg1);
