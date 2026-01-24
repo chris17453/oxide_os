@@ -11,7 +11,7 @@
 | SSH-3 | Key exchange (curve25519-sha256) | ✅ Complete |
 | SSH-4 | Authentication (password) | ✅ Complete |
 | SSH-5 | Channels, PTY, shell sessions | ✅ Complete |
-| SVCMGR | Service manager for OXIDE | ✅ Complete |
+| SVCMGR | Service manager for OXIDE | ✅ Complete (binary renamed to `service`) |
 | FW-3 | Connection tracking | ✅ Complete |
 | FW-4 | Firewall syscalls | ✅ Complete |
 | FW-5 | fw CLI tool | ✅ Complete |
