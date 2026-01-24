@@ -4,7 +4,7 @@
 
 SHELL := /usr/bin/bash
 
-.PHONY: all build build-full kernel bootloader userspace userspace-release userspace-pkg initramfs initramfs-debug boot-dir boot-quick boot-image release clean run run-no-net run-headless run-headless-no-net run-kvm run-kvm-clean run-kvm-vnc run-kvm-serial test check fmt fmt-check clippy list-bins show-config help toolchain install-toolchain test-toolchain clean-toolchain claude
+.PHONY: all build build-full kernel bootloader userspace userspace-release userspace-pkg initramfs initramfs-debug boot-dir boot-quick boot-image release clean run run-debug run-no-net run-headless run-headless-no-net run-kvm run-kvm-clean run-kvm-vnc run-kvm-serial test check fmt fmt-check clippy list-bins show-config help toolchain install-toolchain test-toolchain clean-toolchain claude
 
 # Configuration
 ARCH ?= x86_64
@@ -86,6 +86,8 @@ userspace-release:
 	done
 	@echo "  Building gwbasic (release)..."
 	@RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package oxide-gwbasic --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) --features oxide || exit 1
+	@echo "  Building testcolors (release)..."
+	@RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package coreutils --bin testcolors --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1
 	@echo "Stripping binaries..."
 	@for prog in init esh login gwbasic ssh sshd service $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
@@ -137,6 +139,10 @@ initramfs: userspace-release
 			cp "$(USERSPACE_OUT_RELEASE)/$$prog" "$(TARGET_DIR)/initramfs/bin/"; \
 		fi; \
 	done
+	@# Copy testcolors
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/testcolors" ]; then \
+		cp "$(USERSPACE_OUT_RELEASE)/testcolors" "$(TARGET_DIR)/initramfs/bin/"; \
+	fi
 	@# Create symlinks for common aliases
 	@ln -sf /bin/true "$(TARGET_DIR)/initramfs/bin/:" 2>/dev/null || true
 	@ln -sf /bin/ls "$(TARGET_DIR)/initramfs/bin/dir" 2>/dev/null || true
@@ -256,6 +262,35 @@ run: boot-quick
 		echo "Error: QEMU command '$(QEMU)' not found"; \
 		echo "Install: sudo apt install qemu-system-x86 (Debian/Ubuntu)"; \
 		echo "         sudo dnf install qemu-system-x86 (Fedora/RHEL)"; \
+		exit 1; \
+	fi
+	@mkdir -p /tmp/qemu-oxide
+	TMPDIR=/tmp/qemu-oxide $(QEMU) \
+		-machine q35 \
+		-cpu qemu64,+smap,+smep \
+		-m 256M \
+		-bios "$(OVMF)" \
+		-drive format=raw,file=fat:rw:$(BOOT_DIR),if=none,id=disk \
+		-device ide-hd,drive=disk \
+		-device virtio-net-pci,netdev=net0 \
+		-netdev user,id=net0,hostfwd=tcp::2222-:22 \
+		-serial stdio \
+		-no-reboot
+
+# Run with all kernel debug output enabled
+run-debug: userspace-release initramfs
+	@echo "Building bootloader (release)..."
+	@cargo build --package boot-uefi --target $(ARCH)-unknown-uefi --release
+	@echo "Building kernel with debug features..."
+	@cargo build --package kernel --release --features debug-all
+	@rm -rf $(BOOT_DIR)
+	@mkdir -p $(BOOT_DIR)/EFI/BOOT
+	@mkdir -p $(BOOT_DIR)/EFI/OXIDE
+	@cp $(TARGET_DIR)/$(ARCH)-unknown-uefi/release/boot-uefi.efi $(BOOT_DIR)/EFI/BOOT/BOOTX64.EFI
+	@cp $(TARGET_DIR)/$(ARCH)-unknown-none/release/kernel $(BOOT_DIR)/EFI/OXIDE/kernel.elf
+	@cp $(TARGET_DIR)/initramfs.cpio $(BOOT_DIR)/EFI/OXIDE/initramfs.cpio
+	@if [ -z "$(OVMF)" ]; then \
+		echo "Error: OVMF firmware not found"; \
 		exit 1; \
 	fi
 	@mkdir -p /tmp/qemu-oxide
