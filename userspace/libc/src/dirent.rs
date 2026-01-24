@@ -65,16 +65,14 @@ impl Dir {
 
 /// Open directory
 pub fn opendir(path: &str) -> Option<Dir> {
-    let mut path_buf = [0u8; 256];
-    let bytes = path.as_bytes();
-    if bytes.len() >= path_buf.len() {
-        return None;
-    }
-    path_buf[..bytes.len()].copy_from_slice(bytes);
-
-    let fd = unsafe {
-        syscall::syscall3(syscall::SYS_OPEN, path_buf.as_ptr() as usize, 0o200000, 0) as i32
-    }; // O_DIRECTORY
+    // Use syscall4 with proper path length - kernel expects (path_ptr, path_len, flags, mode)
+    let fd = syscall::syscall4(
+        syscall::SYS_OPEN,
+        path.as_ptr() as usize,
+        path.len(),
+        0o200000, // O_DIRECTORY
+        0,        // mode (not used for directories)
+    ) as i32;
     if fd < 0 { None } else { Some(Dir::from_fd(fd)) }
 }
 
