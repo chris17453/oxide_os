@@ -1,0 +1,44 @@
+{
+  "llvm-target": "x86_64-unknown-none",
+  "data-layout": "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
+  "arch": "x86_64",
+  "target-endian": "little",
+  "target-pointer-width": "64",
+  "target-c-int-width": "32",
+  "os": "oxide",
+  "env": "",
+  "vendor": "unknown",
+  "linker-flavor": "gnu-lld-cc",
+  "linker": "clang",
+  "pre-link-args": {
+    "gnu-lld-cc": [
+      "-fuse-ld=lld",
+      "--target=x86_64-unknown-none",
+      "-nostdlib",
+      "-static"
+    ]
+  },
+  "link-args": {
+    "gnu-lld-cc": []
+  },
+  "dynamic-linking": false,
+  "executables": true,
+  "has-rpath": false,
+  "position-independent-executables": false,
+  "static-position-independent-executables": false,
+  "relocation-model": "static",
+  "code-model": "small",
+  "tls-model": "local-exec",
+  "disable-redzone": true,
+  "frame-pointer": "always",
+  "function-sections": true,
+  "exe-suffix": "",
+  "panic-strategy": "abort",
+  "features": "-mmx,-sse,-sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-avx,-avx2,+soft-float",
+  "stack-probes": { "kind": "none" },
+  "singlethread": false,
+  "crt-static-default": true,
+  "crt-static-respected": true,
+  "crt-static-allows-dylibs": false,
+  "max-atomic-width": 64
+}
