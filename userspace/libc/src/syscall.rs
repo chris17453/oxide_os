@@ -29,6 +29,7 @@ pub mod nr {
     pub const LSEEK: u64 = 22;
     pub const FSTAT: u64 = 23;
     pub const STAT: u64 = 24;
+    pub const LSTAT: u64 = 28;
     pub const DUP: u64 = 25;
     pub const DUP2: u64 = 26;
     pub const FTRUNCATE: u64 = 27;
@@ -132,6 +133,9 @@ pub mod nr {
     pub const FW_SET_POLICY: u64 = 203;
     pub const FW_FLUSH: u64 = 204;
     pub const FW_GET_CONNTRACK: u64 = 205;
+
+    // Random number generation
+    pub const GETRANDOM: u64 = 318;
 }
 
 // Re-export syscall numbers at module level for convenience
@@ -950,4 +954,52 @@ pub fn sys_fw_flush(chain: u8) -> i32 {
 /// Number of tracked connections, negative errno on error
 pub fn sys_fw_get_conntrack(stats: *mut ConntrackStats) -> i32 {
     syscall1(nr::FW_GET_CONNTRACK, stats as usize) as i32
+}
+
+// ============================================================================
+// Random number generation syscall wrappers
+// ============================================================================
+
+/// Flags for getrandom()
+pub mod grnd_flags {
+    /// Non-blocking mode - return EAGAIN if not enough entropy
+    pub const GRND_NONBLOCK: u32 = 0x0001;
+    /// Use /dev/random pool (blocking pool, more conservative)
+    pub const GRND_RANDOM: u32 = 0x0002;
+    /// Use insecure pool (for early boot, before initialization)
+    pub const GRND_INSECURE: u32 = 0x0004;
+}
+
+/// Re-export getrandom syscall number
+pub use nr::GETRANDOM as SYS_GETRANDOM;
+
+/// sys_getrandom - Get random bytes from kernel CSPRNG
+///
+/// # Arguments
+/// * `buf` - Buffer to fill with random bytes
+/// * `buflen` - Size of buffer
+/// * `flags` - GRND_NONBLOCK, GRND_RANDOM, etc.
+///
+/// # Returns
+/// Number of bytes written on success, negative errno on error
+pub fn sys_getrandom(buf: &mut [u8], flags: u32) -> isize {
+    syscall3(
+        nr::GETRANDOM,
+        buf.as_mut_ptr() as usize,
+        buf.len(),
+        flags as usize,
+    ) as isize
+}
+
+/// getrandom - Get random bytes (raw pointer version)
+///
+/// # Arguments
+/// * `buf` - Pointer to buffer
+/// * `buflen` - Size of buffer
+/// * `flags` - GRND_NONBLOCK, GRND_RANDOM, etc.
+///
+/// # Returns
+/// Number of bytes written on success, negative errno on error
+pub fn getrandom(buf: *mut u8, buflen: usize, flags: u32) -> isize {
+    syscall3(nr::GETRANDOM, buf as usize, buflen, flags as usize) as isize
 }

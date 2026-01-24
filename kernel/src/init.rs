@@ -417,6 +417,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         devfs::devices::set_fb_mode_set_callback(memory::set_fb_mode);
     }
 
+    // Set up random number generator callback for /dev/urandom and /dev/random
+    unsafe {
+        devfs::set_random_fill_callback(crypto::random::fill_bytes);
+    }
+
     // Create /proc directory
     if let Err(e) = root_fs.mkdir("proc", vfs::Mode::DEFAULT_DIR) {
         let _ = writeln!(writer, "[VFS] Failed to create /proc: {:?}", e);

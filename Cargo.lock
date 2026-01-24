@@ -502,6 +502,7 @@ dependencies = [
  "arch-traits",
  "arch-x86_64",
  "boot-proto",
+ "crypto",
  "devfs",
  "dhcp",
  "elf",
@@ -1258,6 +1259,7 @@ dependencies = [
 name = "syscall"
 version = "0.1.0"
 dependencies = [
+ "crypto",
  "input",
  "mm-frame",
  "mm-traits",

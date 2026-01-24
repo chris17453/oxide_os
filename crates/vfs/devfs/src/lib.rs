@@ -15,10 +15,13 @@ use spin::RwLock;
 
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
-use devices::{ConsoleDevice, FramebufferDevice, NullDevice, ZeroDevice};
+use devices::{ConsoleDevice, FramebufferDevice, NullDevice, RandomDevice, ZeroDevice};
 
 // Re-export console input functions
 pub use devices::{console_has_input, console_push_char, console_push_str};
+
+// Re-export random device callback setter
+pub use devices::set_random_fill_callback;
 
 /// The devfs root directory
 pub struct DevFs {
@@ -43,6 +46,8 @@ impl DevFs {
             devices.insert("zero".to_string(), Arc::new(ZeroDevice::new(3)));
             devices.insert("console".to_string(), Arc::new(ConsoleDevice::new(4)));
             devices.insert("fb0".to_string(), Arc::new(FramebufferDevice::new(5)));
+            devices.insert("urandom".to_string(), Arc::new(RandomDevice::new_urandom(6)));
+            devices.insert("random".to_string(), Arc::new(RandomDevice::new_random(7)));
         }
 
         devfs

@@ -54,6 +54,7 @@ pub mod nr {
     pub const LSEEK: u64 = 22;
     pub const FSTAT: u64 = 23;
     pub const STAT: u64 = 24;
+    pub const LSTAT: u64 = 28;  // stat without following symlinks
     pub const DUP: u64 = 25;
     pub const DUP2: u64 = 26;
     pub const FTRUNCATE: u64 = 27;
@@ -144,6 +145,9 @@ pub mod nr {
     pub const FW_SET_POLICY: u64 = 203;
     pub const FW_FLUSH: u64 = 204;
     pub const FW_GET_CONNTRACK: u64 = 205;
+
+    // Random number generation
+    pub const GETRANDOM: u64 = 318;
 }
 
 /// Error codes (negative return values)
@@ -315,6 +319,7 @@ pub fn dispatch(
         nr::LSEEK => vfs::sys_lseek(arg1 as i32, arg2 as i64, arg3 as i32),
         nr::FSTAT => vfs::sys_fstat(arg1 as i32, arg2),
         nr::STAT => vfs::sys_stat(arg1, arg2 as usize, arg3),
+        nr::LSTAT => vfs::sys_lstat(arg1, arg2 as usize, arg3),
         nr::DUP => vfs::sys_dup(arg1 as i32),
         nr::DUP2 => vfs::sys_dup2(arg1 as i32, arg2 as i32),
         nr::FTRUNCATE => vfs::sys_ftruncate(arg1 as i32, arg2),
@@ -420,6 +425,9 @@ pub fn dispatch(
         nr::FW_SET_POLICY => firewall::sys_fw_set_policy(arg1 as u8, arg2 as u8),
         nr::FW_FLUSH => firewall::sys_fw_flush(arg1 as u8),
         nr::FW_GET_CONNTRACK => firewall::sys_fw_get_conntrack(VirtAddr::new(arg1)),
+
+        // Random number generation
+        nr::GETRANDOM => sys_getrandom(arg1, arg2 as usize, arg3 as u32),
 
         _ => errno::ENOSYS,
     }
@@ -1532,4 +1540,92 @@ fn sys_sched_yield() -> i64 {
     // The key is that returning from this syscall puts us back in user mode,
     // where the scheduler can preempt us.
     0
+}
+
+// ============================================================================
+// Random number generation
+// ============================================================================
+
+/// getrandom flags
+mod grnd_flags {
+    /// Block until enough entropy available (ignored, we always have enough)
+    pub const GRND_RANDOM: u32 = 0x0002;
+    /// Non-blocking mode (return EAGAIN if not enough entropy)
+    pub const GRND_NONBLOCK: u32 = 0x0001;
+    /// Use /dev/random pool instead of /dev/urandom
+    pub const GRND_INSECURE: u32 = 0x0004;
+}
+
+/// sys_getrandom - Get random bytes
+///
+/// # Arguments
+/// * `buf` - User buffer to fill with random bytes
+/// * `buflen` - Size of buffer
+/// * `flags` - GRND_RANDOM, GRND_NONBLOCK, etc.
+///
+/// # Returns
+/// Number of bytes written, or negative errno
+fn sys_getrandom(buf: u64, buflen: usize, flags: u32) -> i64 {
+    // Validate buffer pointer
+    if buf == 0 || buf >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    // Check for buffer overflow into kernel space
+    if buf.saturating_add(buflen as u64) >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    // Limit to reasonable size
+    let len = buflen.min(256 * 1024); // Max 256KB per call
+
+    // Pre-fault pages for write access
+    unsafe {
+        prefault_pages(buf, len);
+    }
+
+    // Generate random bytes directly into user buffer
+    // Using STAC/CLAC for safe user-space access
+    #[cfg(target_arch = "x86_64")]
+    {
+        // Generate random data into a stack buffer first, then copy
+        // (crypto::random doesn't take arbitrary pointers)
+        let mut temp = [0u8; 4096];
+        let mut written = 0;
+
+        while written < len {
+            let chunk_size = (len - written).min(4096);
+            crypto::random::fill_bytes(&mut temp[..chunk_size]);
+
+            // Copy to userspace
+            unsafe {
+                let dest = (buf + written as u64) as *mut u8;
+                core::arch::asm!(
+                    "stac",
+                    "mov rcx, {len}",
+                    "mov rsi, {src}",
+                    "mov rdi, {dst}",
+                    "rep movsb",
+                    "clac",
+                    src = in(reg) temp.as_ptr(),
+                    dst = in(reg) dest,
+                    len = in(reg) chunk_size,
+                    out("rcx") _,
+                    out("rsi") _,
+                    out("rdi") _,
+                    options(nostack)
+                );
+            }
+
+            written += chunk_size;
+        }
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let user_buf = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len) };
+        crypto::random::fill_bytes(user_buf);
+    }
+
+    len as i64
 }

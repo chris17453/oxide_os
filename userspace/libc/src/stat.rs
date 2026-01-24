@@ -125,7 +125,13 @@ pub fn fstat(fd: i32, statbuf: &mut Stat) -> i32 {
 }
 
 /// Get file status by path, not following symlinks
+///
+/// Returns information about the symbolic link itself rather than its target.
 pub fn lstat(path: &str, statbuf: &mut Stat) -> i32 {
-    // For now, just use stat - lstat would need a separate syscall
-    stat(path, statbuf)
+    syscall::syscall3(
+        syscall::nr::LSTAT,
+        path.as_ptr() as usize,
+        path.len(),
+        statbuf as *mut Stat as usize,
+    ) as i32
 }

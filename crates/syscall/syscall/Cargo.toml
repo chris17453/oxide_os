@@ -15,4 +15,5 @@ net = { path = "../../net/net" }
 tcpip = { path = "../../net/tcpip" }
 input = { path = "../../input/input" }
 mmap = { path = "../../libc-support/mmap" }
+crypto = { path = "../../security/crypto" }
 spin = "0.9"

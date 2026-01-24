@@ -859,3 +859,118 @@ impl VnodeOps for FramebufferDevice {
         }
     }
 }
+
+// ============================================================================
+// Random Device (/dev/urandom, /dev/random)
+// ============================================================================
+
+/// Random number callback type
+pub type RandomFillFn = fn(&mut [u8]);
+
+/// Global random fill callback (set by kernel)
+static mut RANDOM_FILL_CALLBACK: Option<RandomFillFn> = None;
+
+/// Set the random fill callback
+///
+/// # Safety
+/// Must be called during single-threaded initialization
+pub unsafe fn set_random_fill_callback(f: RandomFillFn) {
+    unsafe {
+        RANDOM_FILL_CALLBACK = Some(f);
+    }
+}
+
+/// /dev/urandom and /dev/random - cryptographically secure random bytes
+///
+/// Both devices behave identically in modern Linux (since 4.8), providing
+/// high-quality random data from the kernel's CSPRNG.
+pub struct RandomDevice {
+    ino: u64,
+    /// Whether this is /dev/random (true) or /dev/urandom (false)
+    /// In our implementation they're identical, but stat() shows different minor numbers
+    is_blocking: bool,
+}
+
+impl RandomDevice {
+    /// Create /dev/urandom device
+    pub fn new_urandom(ino: u64) -> Self {
+        RandomDevice {
+            ino,
+            is_blocking: false,
+        }
+    }
+
+    /// Create /dev/random device
+    pub fn new_random(ino: u64) -> Self {
+        RandomDevice {
+            ino,
+            is_blocking: true,
+        }
+    }
+}
+
+impl VnodeOps for RandomDevice {
+    fn vtype(&self) -> VnodeType {
+        VnodeType::CharDevice
+    }
+
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn read(&self, _offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        // Fill buffer with random bytes
+        unsafe {
+            if let Some(fill_fn) = RANDOM_FILL_CALLBACK {
+                fill_fn(buf);
+            } else {
+                // Fallback: fill with zeros (should not happen in properly initialized system)
+                buf.fill(0);
+            }
+        }
+        Ok(buf.len())
+    }
+
+    fn write(&self, _offset: u64, buf: &[u8]) -> VfsResult<usize> {
+        // Writing to /dev/urandom adds entropy to the pool
+        // We accept the write but don't actually need to do anything special
+        // since our CSPRNG is always seeded
+        Ok(buf.len())
+    }
+
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rmdir(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn unlink(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn stat(&self) -> VfsResult<Stat> {
+        let mut stat = Stat::new(VnodeType::CharDevice, Mode::new(0o666), 0, self.ino);
+        // Major 1: memory devices
+        // Minor 8: /dev/random, Minor 9: /dev/urandom
+        stat.rdev = make_dev(1, if self.is_blocking { 8 } else { 9 });
+        Ok(stat)
+    }
+
+    fn truncate(&self, _size: u64) -> VfsResult<()> {
+        Ok(())
+    }
+}

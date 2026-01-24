@@ -368,8 +368,275 @@ pub fn isatty(fd: i32) -> bool {
     tcgetattr(fd, &mut termios) == 0
 }
 
+/// Static buffer for ttyname result (POSIX requirement)
+/// Using UnsafeCell to allow interior mutability without undefined behavior
+use core::cell::UnsafeCell;
+
+struct TtynameBuf {
+    data: UnsafeCell<[u8; 256]>,
+}
+
+unsafe impl Sync for TtynameBuf {}
+
+static TTYNAME_BUF: TtynameBuf = TtynameBuf {
+    data: UnsafeCell::new([0; 256]),
+};
+
+impl TtynameBuf {
+    fn get(&self) -> *mut [u8; 256] {
+        self.data.get()
+    }
+}
+
+/// Known TTY device paths to check
+/// Maps device minor numbers to paths for common TTY devices
+struct TtyDeviceInfo {
+    /// Major device number
+    major: u64,
+    /// Minor device number
+    minor: u64,
+    /// Device path (null-terminated)
+    path: &'static [u8],
+}
+
+/// List of known TTY devices (console, pts/N, etc.)
+const KNOWN_TTYS: &[TtyDeviceInfo] = &[
+    // Console device (major 5, minor 1)
+    TtyDeviceInfo {
+        major: 5,
+        minor: 1,
+        path: b"/dev/console\0",
+    },
+    // TTY device (major 5, minor 0)
+    TtyDeviceInfo {
+        major: 5,
+        minor: 0,
+        path: b"/dev/tty\0",
+    },
+    // Virtual console 0 (major 4, minor 0)
+    TtyDeviceInfo {
+        major: 4,
+        minor: 0,
+        path: b"/dev/tty0\0",
+    },
+];
+
+/// Extract major device number from rdev
+#[inline]
+fn major(rdev: u64) -> u64 {
+    (rdev >> 8) & 0xfff
+}
+
+/// Extract minor device number from rdev
+#[inline]
+fn minor(rdev: u64) -> u64 {
+    (rdev & 0xff) | ((rdev >> 12) & !0xff)
+}
+
 /// Get terminal name
-pub fn ttyname(_fd: i32) -> *const u8 {
-    // In a real implementation, this would look up the device name
+///
+/// Returns a pointer to a static buffer containing the pathname of the
+/// terminal associated with the file descriptor, or null if the fd is
+/// not associated with a terminal.
+///
+/// Note: This function is not thread-safe (uses static buffer per POSIX).
+pub fn ttyname(fd: i32) -> *const u8 {
+    use crate::stat::{fstat, Stat, S_IFCHR, S_IFMT};
+
+    // First check if fd is a TTY
+    if !isatty(fd) {
+        return core::ptr::null();
+    }
+
+    // Get device info via fstat
+    let mut stat = Stat::zeroed();
+    if fstat(fd, &mut stat) != 0 {
+        return core::ptr::null();
+    }
+
+    // Must be a character device
+    if (stat.mode & S_IFMT) != S_IFCHR {
+        return core::ptr::null();
+    }
+
+    let dev_major = major(stat.rdev);
+    let dev_minor = minor(stat.rdev);
+
+    // Check known TTY devices first
+    for tty in KNOWN_TTYS {
+        if tty.major == dev_major && tty.minor == dev_minor {
+            return tty.path.as_ptr();
+        }
+    }
+
+    // Check for PTY devices (major 136+, minor N maps to /dev/pts/N)
+    // PTY master: major 128-143 (we use 5 for ptmx)
+    // PTY slave: major 136-143, minor N
+    if dev_major >= 136 && dev_major <= 143 {
+        // Build /dev/pts/N path
+        unsafe {
+            let buf = &mut *TTYNAME_BUF.get();
+            let prefix = b"/dev/pts/";
+            buf[..prefix.len()].copy_from_slice(prefix);
+
+            // Convert minor to decimal string
+            let mut pos = prefix.len();
+            let mut n = dev_minor;
+            if n == 0 {
+                buf[pos] = b'0';
+                pos += 1;
+            } else {
+                // Build digits in reverse
+                let mut digits = [0u8; 20];
+                let mut digit_count = 0;
+                while n > 0 {
+                    digits[digit_count] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    digit_count += 1;
+                }
+                // Copy in correct order
+                for i in (0..digit_count).rev() {
+                    buf[pos] = digits[i];
+                    pos += 1;
+                }
+            }
+            buf[pos] = 0; // Null terminate
+            return buf.as_ptr();
+        }
+    }
+
+    // Fallback: scan /dev directory for matching device
+    // This is expensive but handles custom device setups
+    if let Some(path) = scan_dev_for_tty(stat.rdev) {
+        return path;
+    }
+
     core::ptr::null()
+}
+
+/// Scan /dev directory for a device with matching rdev
+fn scan_dev_for_tty(target_rdev: u64) -> Option<*const u8> {
+    use crate::dirent::{closedir, opendir, readdir};
+    use crate::stat::{stat, Stat, S_IFCHR, S_IFMT};
+
+    let dir = opendir("/dev")?;
+    let mut dir = dir;
+
+    while let Some(entry) = readdir(&mut dir) {
+        let name = entry.name();
+
+        // Skip . and ..
+        if name == "." || name == ".." {
+            continue;
+        }
+
+        // Build path: /dev/<name>
+        unsafe {
+            let buf = &mut *TTYNAME_BUF.get();
+            let prefix = b"/dev/";
+            let name_bytes = name.as_bytes();
+
+            if prefix.len() + name_bytes.len() >= buf.len() {
+                continue;
+            }
+
+            buf[..prefix.len()].copy_from_slice(prefix);
+            buf[prefix.len()..prefix.len() + name_bytes.len()].copy_from_slice(name_bytes);
+            buf[prefix.len() + name_bytes.len()] = 0;
+
+            let path_str = core::str::from_utf8(&buf[..prefix.len() + name_bytes.len()])
+                .unwrap_or("");
+
+            let mut stat_buf = Stat::zeroed();
+            if stat(path_str, &mut stat_buf) == 0 {
+                // Check if it's a character device with matching rdev
+                if (stat_buf.mode & S_IFMT) == S_IFCHR && stat_buf.rdev == target_rdev {
+                    closedir(dir);
+                    return Some(buf.as_ptr());
+                }
+            }
+        }
+    }
+
+    closedir(dir);
+    None
+}
+
+/// Get terminal name into user-supplied buffer (thread-safe variant)
+///
+/// Returns 0 on success, or an error code on failure.
+pub fn ttyname_r(fd: i32, buf: &mut [u8]) -> i32 {
+    use crate::errno::{EBADF, ENOTTY, ERANGE};
+    use crate::stat::{fstat, Stat, S_IFCHR, S_IFMT};
+
+    if buf.is_empty() {
+        return ERANGE;
+    }
+
+    // First check if fd is a TTY
+    if !isatty(fd) {
+        return ENOTTY;
+    }
+
+    // Get device info via fstat
+    let mut stat = Stat::zeroed();
+    if fstat(fd, &mut stat) != 0 {
+        return EBADF;
+    }
+
+    // Must be a character device
+    if (stat.mode & S_IFMT) != S_IFCHR {
+        return ENOTTY;
+    }
+
+    let dev_major = major(stat.rdev);
+    let dev_minor = minor(stat.rdev);
+
+    // Check known TTY devices
+    for tty in KNOWN_TTYS {
+        if tty.major == dev_major && tty.minor == dev_minor {
+            let path_len = tty.path.len() - 1; // Exclude null terminator
+            if path_len >= buf.len() {
+                return ERANGE;
+            }
+            buf[..path_len].copy_from_slice(&tty.path[..path_len]);
+            buf[path_len] = 0;
+            return 0;
+        }
+    }
+
+    // Check for PTY devices
+    if dev_major >= 136 && dev_major <= 143 {
+        let prefix = b"/dev/pts/";
+        let mut temp = [0u8; 32];
+        let mut pos = prefix.len();
+        temp[..prefix.len()].copy_from_slice(prefix);
+
+        let mut n = dev_minor;
+        if n == 0 {
+            temp[pos] = b'0';
+            pos += 1;
+        } else {
+            let mut digits = [0u8; 20];
+            let mut digit_count = 0;
+            while n > 0 {
+                digits[digit_count] = b'0' + (n % 10) as u8;
+                n /= 10;
+                digit_count += 1;
+            }
+            for i in (0..digit_count).rev() {
+                temp[pos] = digits[i];
+                pos += 1;
+            }
+        }
+
+        if pos >= buf.len() {
+            return ERANGE;
+        }
+        buf[..pos].copy_from_slice(&temp[..pos]);
+        buf[pos] = 0;
+        return 0;
+    }
+
+    ENOTTY
 }

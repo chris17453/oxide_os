@@ -399,6 +399,45 @@ pub fn sys_stat(path_ptr: u64, path_len: usize, stat_buf: u64) -> i64 {
     }
 }
 
+/// sys_lstat - Get file status by path, not following symlinks
+///
+/// Returns information about the symbolic link itself, not its target.
+///
+/// # Arguments
+/// * `path_ptr` - Pointer to path string
+/// * `path_len` - Length of path string
+/// * `stat_buf` - Pointer to stat structure
+pub fn sys_lstat(path_ptr: u64, path_len: usize, stat_buf: u64) -> i64 {
+    let raw_path = match copy_path_from_user(path_ptr, path_len) {
+        Some(p) => p,
+        None => return errno::EFAULT,
+    };
+
+    // Resolve relative paths against cwd
+    let path = resolve_path(raw_path);
+
+    if !validate_user_buffer(stat_buf, core::mem::size_of::<vfs::Stat>()) {
+        return errno::EFAULT;
+    }
+
+    // Use lookup which doesn't follow symlinks (returns the symlink vnode itself)
+    let vnode = match GLOBAL_VFS.lookup(&path) {
+        Ok(v) => v,
+        Err(e) => return vfs_error_to_errno(e),
+    };
+
+    match vnode.stat() {
+        Ok(stat) => {
+            unsafe {
+                let stat_ptr = stat_buf as *mut vfs::Stat;
+                *stat_ptr = stat;
+            }
+            0
+        }
+        Err(e) => vfs_error_to_errno(e),
+    }
+}
+
 /// sys_dup - Duplicate file descriptor
 ///
 /// # Arguments
