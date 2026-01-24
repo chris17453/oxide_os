@@ -3,7 +3,8 @@
 use crate::syscall;
 
 /// Directory entry structure (matches Linux's struct linux_dirent64)
-#[repr(C, packed)]
+/// Note: d_name starts at offset 19 (arrays have alignment 1 in C)
+#[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct Dirent {
     /// Inode number
