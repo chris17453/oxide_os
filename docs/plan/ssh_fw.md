@@ -12,10 +12,10 @@
 | SSH-4 | Authentication (password) | ✅ Complete |
 | SSH-5 | Channels, PTY, shell sessions | ✅ Complete |
 | SVCMGR | Service manager for OXIDE | ✅ Complete |
-| FW-3 | Connection tracking | ⏳ Pending |
-| FW-4 | Firewall syscalls | ⏳ Pending |
-| FW-5 | fw CLI tool | ⏳ Pending |
-| FW-6 | Boot integration | ⏳ Pending |
+| FW-3 | Connection tracking | ✅ Complete |
+| FW-4 | Firewall syscalls | ✅ Complete |
+| FW-5 | fw CLI tool | ✅ Complete |
+| FW-6 | Boot integration | ✅ Complete |
 
 ---
 
@@ -224,18 +224,21 @@ servicemgr list          # List services
 
 ---
 
-## Phase FW-3: Connection Tracking
+## Phase FW-3: Connection Tracking ✅
 
 ### Tasks
 
-- [ ] Implement connection state table
-- [ ] Track TCP connection states
-- [ ] Track UDP "connections" by timeout
-- [ ] Enable stateful rule matching
+- [x] Implement connection state table
+- [x] Track TCP connection states
+- [x] Track UDP "connections" by timeout
+- [x] Enable stateful rule matching
+
+Implemented in `crates/net/tcpip/src/conntrack.rs` with full TCP state machine,
+UDP timeout tracking, ICMP tracking, and integration with packet filter hooks.
 
 ---
 
-## Phase FW-4: Firewall Syscalls
+## Phase FW-4: Firewall Syscalls ✅
 
 ### Syscalls
 
@@ -246,16 +249,19 @@ servicemgr list          # List services
 | `sys_fw_list_rules` | List all rules |
 | `sys_fw_set_policy` | Set chain default policy |
 | `sys_fw_flush` | Flush all rules in chain |
+| `sys_fw_get_conntrack` | Get connection tracking stats |
 
 ### Tasks
 
-- [ ] Add syscall numbers
-- [ ] Implement syscall handlers
-- [ ] Add root-only permission check
+- [x] Add syscall numbers (200-205)
+- [x] Implement syscall handlers
+- [x] Add root-only permission check
+
+Implemented in `crates/syscall/syscall/src/firewall.rs`.
 
 ---
 
-## Phase FW-5: fw CLI Tool
+## Phase FW-5: fw CLI Tool ✅
 
 ### Commands
 
@@ -266,25 +272,33 @@ fw add input -j drop
 fw policy input drop
 fw list
 fw flush input
-fw save > /etc/fw.rules
-fw restore < /etc/fw.rules
+fw save
+fw restore /etc/fw.rules
+fw conntrack
 ```
 
 ### Tasks
 
-- [ ] Create `userspace/coreutils/src/bin/fw.rs`
-- [ ] Implement command parsing
-- [ ] Implement rule file format
+- [x] Create `userspace/coreutils/src/bin/fw.rs`
+- [x] Implement command parsing
+- [x] Implement rule file format
+- [x] Implement restore from file
+
+Full implementation with IP/CIDR matching, port ranges, stateful matching,
+and save/restore functionality.
 
 ---
 
-## Phase FW-6: Boot Integration
+## Phase FW-6: Boot Integration ✅
 
 ### Tasks
 
-- [ ] Modify `userspace/init/src/main.rs`
-- [ ] Load `/etc/fw.rules` at boot
-- [ ] Start sshd at boot
+- [x] Modify `userspace/init/src/main.rs`
+- [x] Load `/etc/fw.rules` at boot
+- [x] Start servicemgr daemon at boot
+
+Init now loads firewall rules early in boot and starts the service manager
+which can manage sshd and other services.
 
 ---
 
