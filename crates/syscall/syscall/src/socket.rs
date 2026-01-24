@@ -41,6 +41,58 @@ static SOCKET_PAIRS: Mutex<BTreeMap<i32, i32>> = Mutex::new(BTreeMap::new());
 /// Next ephemeral port for client sockets
 static NEXT_EPHEMERAL_PORT: Mutex<u16> = Mutex::new(49152);
 
+/// Debug print helper (kernel debug output)
+#[allow(dead_code)]
+fn debug_print(msg: &str) {
+    use core::ptr::addr_of;
+    unsafe {
+        let ctx = addr_of!(crate::SYSCALL_CONTEXT);
+        if let Some(write_fn) = (*ctx).console_write {
+            write_fn(b"[SOCK] ");
+            write_fn(msg.as_bytes());
+            write_fn(b"\n");
+        }
+    }
+}
+
+/// Debug print with number
+#[allow(dead_code)]
+fn debug_print_num(msg: &str, num: i64) {
+    use core::ptr::addr_of;
+    unsafe {
+        let ctx = addr_of!(crate::SYSCALL_CONTEXT);
+        if let Some(write_fn) = (*ctx).console_write {
+            write_fn(b"[SOCK] ");
+            write_fn(msg.as_bytes());
+            // Simple number to string
+            let mut buf = [0u8; 20];
+            let mut n = if num < 0 {
+                write_fn(b"-");
+                (-num) as u64
+            } else {
+                num as u64
+            };
+            let mut i = 0;
+            if n == 0 {
+                buf[0] = b'0';
+                i = 1;
+            } else {
+                while n > 0 {
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    i += 1;
+                }
+            }
+            // Reverse
+            for j in 0..i/2 {
+                buf.swap(j, i - 1 - j);
+            }
+            write_fn(&buf[..i]);
+            write_fn(b"\n");
+        }
+    }
+}
+
 /// Allocate a new socket file descriptor
 fn alloc_socket_fd(socket: Arc<Socket>) -> i64 {
     let mut next_fd = NEXT_SOCKET_FD.lock();
@@ -216,6 +268,8 @@ fn write_sockaddr_in(addr: u64, addrlen: u64, socket_addr: &SocketAddr) -> i64 {
 
 /// sys_bind - Bind a socket to an address
 pub fn sys_bind(fd: i32, addr: u64, addrlen: u32) -> i64 {
+    debug_print_num("bind: fd=", fd as i64);
+
     // Validate address pointer
     if addr >= 0x0000_8000_0000_0000 {
         return errno::EFAULT;
@@ -227,36 +281,56 @@ pub fn sys_bind(fd: i32, addr: u64, addrlen: u32) -> i64 {
     };
 
     let socket_addr = match parse_sockaddr_in(addr, addrlen) {
-        Some(a) => a,
+        Some(a) => {
+            debug_print_num("bind: port=", a.port as i64);
+            a
+        }
         None => return errno::EINVAL,
     };
 
     match socket.bind(socket_addr) {
-        Ok(()) => 0,
+        Ok(()) => {
+            debug_print("bind: success");
+            0
+        }
         Err(e) => net_error_to_errno(e),
     }
 }
 
 /// sys_listen - Listen for connections on a socket
 pub fn sys_listen(fd: i32, backlog: i32) -> i64 {
+    debug_print_num("listen: fd=", fd as i64);
+
     let socket = match get_socket(fd) {
         Some(s) => s,
-        None => return errno::EBADF,
+        None => {
+            debug_print("listen: socket not found");
+            return errno::EBADF;
+        }
     };
 
     // Get bound port
     let port = match socket.local_addr() {
         Some(addr) => addr.port,
-        None => return errno::EINVAL, // Must bind before listen
+        None => {
+            debug_print("listen: socket not bound");
+            return errno::EINVAL; // Must bind before listen
+        }
     };
+
+    debug_print_num("listen: port=", port as i64);
 
     match socket.listen(backlog as u32) {
         Ok(()) => {
             // Register as listening socket for loopback connections
             LISTENING_SOCKETS.lock().insert(port, (fd, socket));
+            debug_print_num("listen: registered on port ", port as i64);
             0
         }
-        Err(e) => net_error_to_errno(e),
+        Err(e) => {
+            debug_print("listen: failed");
+            net_error_to_errno(e)
+        }
     }
 }
 
@@ -354,16 +428,27 @@ pub fn sys_connect(fd: i32, addr: u64, addrlen: u32) -> i64 {
 /// Handle loopback TCP connection
 fn loopback_connect(client_fd: i32, client_socket: Arc<Socket>, addr: SocketAddr) -> i64 {
     let port = addr.port;
+    debug_print_num("loopback_connect: port=", port as i64);
 
     // Find listening socket for this port
     let listener = {
         let listeners = LISTENING_SOCKETS.lock();
+        debug_print_num("loopback_connect: num_listeners=", listeners.len() as i64);
+        for (p, _) in listeners.iter() {
+            debug_print_num("loopback_connect: listening_port=", *p as i64);
+        }
         listeners.get(&port).cloned()
     };
 
     let (listener_fd, listener_socket) = match listener {
-        Some(l) => l,
-        None => return errno::ECONNREFUSED, // No one listening
+        Some(l) => {
+            debug_print_num("loopback_connect: found listener fd=", l.0 as i64);
+            l
+        }
+        None => {
+            debug_print("loopback_connect: no listener - ECONNREFUSED");
+            return errno::ECONNREFUSED; // No one listening
+        }
     };
 
     // Allocate ephemeral port for client
