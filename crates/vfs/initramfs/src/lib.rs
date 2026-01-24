@@ -44,6 +44,8 @@ fn mode_to_vtype(mode: u32) -> VnodeType {
 enum InitramfsEntry {
     File(Arc<InitramfsFile>),
     Dir(Arc<InitramfsDir>),
+    Symlink(Arc<InitramfsSymlink>),
+    Device(Arc<InitramfsDevice>),
 }
 
 impl InitramfsEntry {
@@ -51,6 +53,8 @@ impl InitramfsEntry {
         match self {
             InitramfsEntry::File(f) => f.clone(),
             InitramfsEntry::Dir(d) => d.clone(),
+            InitramfsEntry::Symlink(s) => s.clone(),
+            InitramfsEntry::Device(dev) => dev.clone(),
         }
     }
 
@@ -58,6 +62,8 @@ impl InitramfsEntry {
         match self {
             InitramfsEntry::File(_) => VnodeType::File,
             InitramfsEntry::Dir(_) => VnodeType::Directory,
+            InitramfsEntry::Symlink(_) => VnodeType::Symlink,
+            InitramfsEntry::Device(d) => d.vtype,
         }
     }
 
@@ -65,6 +71,8 @@ impl InitramfsEntry {
         match self {
             InitramfsEntry::File(f) => f.ino,
             InitramfsEntry::Dir(d) => d.ino,
+            InitramfsEntry::Symlink(s) => s.ino,
+            InitramfsEntry::Device(d) => d.ino,
         }
     }
 }
@@ -143,6 +151,143 @@ impl VnodeOps for InitramfsFile {
 
     fn size(&self) -> u64 {
         self.data.len() as u64
+    }
+}
+
+/// A symbolic link in the initramfs
+pub struct InitramfsSymlink {
+    /// Link target path
+    target: String,
+    /// Inode number
+    ino: u64,
+    /// Link mode (permissions)
+    mode: Mode,
+}
+
+impl VnodeOps for InitramfsSymlink {
+    fn vtype(&self) -> VnodeType {
+        VnodeType::Symlink
+    }
+
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn read(&self, _offset: u64, _buf: &mut [u8]) -> VfsResult<usize> {
+        Err(VfsError::InvalidOperation)
+    }
+
+    fn write(&self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rmdir(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn unlink(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn stat(&self) -> VfsResult<Stat> {
+        Ok(Stat::new(
+            VnodeType::Symlink,
+            self.mode,
+            self.target.len() as u64,
+            self.ino,
+        ))
+    }
+
+    fn truncate(&self, _size: u64) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn readlink(&self) -> VfsResult<String> {
+        Ok(self.target.clone())
+    }
+}
+
+/// A device node in the initramfs
+pub struct InitramfsDevice {
+    /// Device type (char or block)
+    vtype: VnodeType,
+    /// Device major number
+    major: u32,
+    /// Device minor number
+    minor: u32,
+    /// Inode number
+    ino: u64,
+    /// Device mode (permissions)
+    mode: Mode,
+}
+
+impl VnodeOps for InitramfsDevice {
+    fn vtype(&self) -> VnodeType {
+        self.vtype
+    }
+
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn read(&self, _offset: u64, _buf: &mut [u8]) -> VfsResult<usize> {
+        // Device reads should go through the device driver
+        Err(VfsError::NotSupported)
+    }
+
+    fn write(&self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> {
+        // Device writes should go through the device driver
+        Err(VfsError::NotSupported)
+    }
+
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rmdir(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn unlink(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn stat(&self) -> VfsResult<Stat> {
+        let mut stat = Stat::new(self.vtype, self.mode, 0, self.ino);
+        stat.rdev = ((self.major as u64) << 8) | (self.minor as u64 & 0xFF);
+        Ok(stat)
+    }
+
+    fn truncate(&self, _size: u64) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
     }
 }
 
@@ -335,8 +480,33 @@ pub fn load(data: &[u8]) -> Result<Arc<InitramfsDir>, InitramfsError> {
                 mode: Mode::new(perms),
             });
             current_dir.add_entry(name, InitramfsEntry::File(file));
+        } else if entry.is_symlink() {
+            // Create symlink
+            let target = entry.symlink_target().unwrap_or("").to_string();
+            let symlink = Arc::new(InitramfsSymlink {
+                target,
+                ino: alloc_inode(),
+                mode: Mode::new(entry.permissions()),
+            });
+            current_dir.add_entry(name, InitramfsEntry::Symlink(symlink));
+        } else if entry.is_char_device() || entry.is_block_device() {
+            // Create device node
+            let vtype = if entry.is_char_device() {
+                VnodeType::CharDevice
+            } else {
+                VnodeType::BlockDevice
+            };
+            let (major, minor) = entry.device_numbers();
+            let device = Arc::new(InitramfsDevice {
+                vtype,
+                major,
+                minor,
+                ino: alloc_inode(),
+                mode: Mode::new(entry.permissions()),
+            });
+            current_dir.add_entry(name, InitramfsEntry::Device(device));
         }
-        // TODO: Handle symlinks, devices, etc.
+        // FIFOs and sockets are skipped (not typically in initramfs)
     }
 
     Ok(root)

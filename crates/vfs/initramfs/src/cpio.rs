@@ -42,6 +42,10 @@ pub struct CpioEntry {
     pub nlink: u32,
     /// Modification time
     pub mtime: u32,
+    /// Device major number (for device files)
+    pub rdev_major: u32,
+    /// Device minor number (for device files)
+    pub rdev_minor: u32,
     /// File data
     pub data: Vec<u8>,
 }
@@ -62,9 +66,49 @@ impl CpioEntry {
         (self.mode & 0o170000) == 0o120000
     }
 
+    /// Is this a character device?
+    pub fn is_char_device(&self) -> bool {
+        (self.mode & 0o170000) == 0o020000
+    }
+
+    /// Is this a block device?
+    pub fn is_block_device(&self) -> bool {
+        (self.mode & 0o170000) == 0o060000
+    }
+
+    /// Is this a FIFO (named pipe)?
+    pub fn is_fifo(&self) -> bool {
+        (self.mode & 0o170000) == 0o010000
+    }
+
+    /// Is this a socket?
+    pub fn is_socket(&self) -> bool {
+        (self.mode & 0o170000) == 0o140000
+    }
+
     /// Get permission bits only
     pub fn permissions(&self) -> u32 {
         self.mode & 0o7777
+    }
+
+    /// Get symlink target (data interpreted as UTF-8 string)
+    pub fn symlink_target(&self) -> Option<&str> {
+        if self.is_symlink() {
+            core::str::from_utf8(&self.data).ok()
+        } else {
+            None
+        }
+    }
+
+    /// Get device numbers (for char/block devices)
+    /// Returns (major, minor)
+    pub fn device_numbers(&self) -> (u32, u32) {
+        (self.rdev_major, self.rdev_minor)
+    }
+
+    /// Get combined device number (major << 8 | minor)
+    pub fn rdev(&self) -> u64 {
+        ((self.rdev_major as u64) << 8) | (self.rdev_minor as u64 & 0xFF)
     }
 }
 
@@ -106,12 +150,19 @@ impl<'a> CpioIterator<'a> {
         }
 
         // Parse header fields
+        // newc format:
+        // 0-6: magic, 6-14: ino, 14-22: mode, 22-30: uid, 30-38: gid
+        // 38-46: nlink, 46-54: mtime, 54-62: filesize, 62-70: devmajor
+        // 70-78: devminor, 78-86: rdevmajor, 86-94: rdevminor, 94-102: namesize
+        // 102-110: check
         let mode = parse_hex(&header[14..22])?;
         let uid = parse_hex(&header[22..30])?;
         let gid = parse_hex(&header[30..38])?;
         let nlink = parse_hex(&header[38..46])?;
         let mtime = parse_hex(&header[46..54])?;
         let filesize = parse_hex(&header[54..62])? as usize;
+        let rdev_major = parse_hex(&header[78..86])?;
+        let rdev_minor = parse_hex(&header[86..94])?;
         let namesize = parse_hex(&header[94..102])? as usize;
 
         // Move past header
@@ -154,6 +205,8 @@ impl<'a> CpioIterator<'a> {
             gid,
             nlink,
             mtime,
+            rdev_major,
+            rdev_minor,
             data,
         }))
     }
