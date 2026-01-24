@@ -120,9 +120,13 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         }
     }
 
-    // Try to get terminal size (fallback to default)
-    // TODO: Implement proper terminal size detection when ioctl is available
-    config.lines_per_page = DEFAULT_LINES;
+    // Try to get terminal size via ioctl
+    let mut ws = libc::termios::Winsize::default();
+    if libc::termios::tcgetwinsize(STDOUT_FILENO, &mut ws) == 0 && ws.ws_row > 0 {
+        config.lines_per_page = (ws.ws_row as usize).saturating_sub(1); // Reserve one line for prompt
+    } else {
+        config.lines_per_page = DEFAULT_LINES;
+    }
 
     // Read from stdin if no file specified
     if arg_idx >= argc {
