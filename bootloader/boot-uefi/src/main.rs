@@ -111,13 +111,14 @@ fn main() -> Status {
     update_progress(&mut current_step, total_steps, "Enumerating video modes...");
     let video_modes = enumerate_video_modes();
 
-    // Step 8: Set up page tables
-    update_progress(&mut current_step, total_steps, "Setting up page tables...");
-    let pml4_phys = paging::setup_page_tables(kernel_phys, elf_info.load_size);
-
-    // Step 9: Get memory map
+    // Step 8: Get memory map BEFORE page table setup
+    // (to avoid buffer allocation corrupting page tables)
     update_progress(&mut current_step, total_steps, "Getting memory map...");
     let memory_regions = get_memory_map();
+
+    // Step 9: Set up page tables (after memory map to avoid corruption)
+    update_progress(&mut current_step, total_steps, "Setting up page tables...");
+    let pml4_phys = paging::setup_page_tables(kernel_phys, elf_info.load_size);
 
     // Step 10: Create boot info
     update_progress(
@@ -137,8 +138,10 @@ fn main() -> Status {
     );
 
     // Step 11: Allocate boot info page
+    // BootInfo is larger than one page (~5KB due to memory_regions and video_modes arrays),
+    // so we must allocate 2 pages to avoid overwriting adjacent page table memory
     update_progress(&mut current_step, total_steps, "Finalizing boot setup...");
-    let boot_info_phys = allocate_pages(1).expect("Failed to allocate boot info page");
+    let boot_info_phys = allocate_pages(2).expect("Failed to allocate boot info pages");
     unsafe {
         ptr::write(boot_info_phys as *mut BootInfo, boot_info);
     }
@@ -944,7 +947,7 @@ fn log(msg: &str) {
 }
 
 /// Log a formatted message
-fn log_fmt(args: core::fmt::Arguments) {
+pub fn log_fmt(args: core::fmt::Arguments) {
     if let Some(mut st) = uefi::table::system_table_boot() {
         let _ = st.stdout().write_fmt(args);
         let _ = st.stdout().write_str("\r\n");
