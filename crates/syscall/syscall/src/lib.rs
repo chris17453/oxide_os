@@ -70,6 +70,7 @@ pub mod nr {
     pub const LINK: u64 = 38;
     pub const SYMLINK: u64 = 39;
     pub const READLINK: u64 = 41;
+    pub const GETDENTS64: u64 = 84;
 
     // TTY/device syscalls
     pub const IOCTL: u64 = 40;
@@ -324,6 +325,7 @@ pub fn dispatch(
         nr::UNLINK => dir::sys_unlink(arg1, arg2 as usize),
         nr::RENAME => dir::sys_rename(arg1, arg2 as usize, arg3, arg4 as usize),
         nr::GETDENTS => dir::sys_getdents(arg1 as i32, arg2, arg3 as usize),
+        nr::GETDENTS64 => dir::sys_getdents(arg1 as i32, arg2, arg3 as usize),
         nr::CHDIR => dir::sys_chdir(arg1, arg2 as usize),
         nr::GETCWD => dir::sys_getcwd(arg1, arg2 as usize),
         nr::LINK => dir::sys_link(arg1, arg2 as usize, arg3, arg4 as usize),
