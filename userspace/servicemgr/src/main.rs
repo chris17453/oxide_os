@@ -303,6 +303,111 @@ fn start_service(name: &str) -> bool {
     false
 }
 
+/// Write PID file for a service
+fn write_pid_file(name: &str, pid: i32) {
+    // Create /run/services directory if it doesn't exist
+    let _ = mkdir("/run/services", 0o755);
+
+    // Build path: /run/services/<name>.pid
+    let mut path_buf = [0u8; 64];
+    let prefix = b"/run/services/";
+    let suffix = b".pid";
+    let name_bytes = name.as_bytes();
+
+    let total_len = prefix.len() + name_bytes.len() + suffix.len();
+    if total_len >= path_buf.len() {
+        return;
+    }
+
+    path_buf[..prefix.len()].copy_from_slice(prefix);
+    path_buf[prefix.len()..prefix.len() + name_bytes.len()].copy_from_slice(name_bytes);
+    path_buf[prefix.len() + name_bytes.len()..total_len].copy_from_slice(suffix);
+
+    let path_str = core::str::from_utf8(&path_buf[..total_len]).unwrap_or("");
+
+    // Write PID to file
+    let fd = open(path_str, (O_WRONLY | O_CREAT | O_TRUNC) as u32, 0o644);
+    if fd >= 0 {
+        let mut buf = [0u8; 16];
+        let len = itoa(pid as i64, &mut buf);
+        let _ = write(fd, &buf[..len]);
+        close(fd);
+    }
+}
+
+/// Remove PID file for a service
+fn remove_pid_file(name: &str) {
+    let mut path_buf = [0u8; 64];
+    let prefix = b"/run/services/";
+    let suffix = b".pid";
+    let name_bytes = name.as_bytes();
+
+    let total_len = prefix.len() + name_bytes.len() + suffix.len();
+    if total_len >= path_buf.len() {
+        return;
+    }
+
+    path_buf[..prefix.len()].copy_from_slice(prefix);
+    path_buf[prefix.len()..prefix.len() + name_bytes.len()].copy_from_slice(name_bytes);
+    path_buf[prefix.len() + name_bytes.len()..total_len].copy_from_slice(suffix);
+
+    let path_str = core::str::from_utf8(&path_buf[..total_len]).unwrap_or("");
+    let _ = unlink(path_str);
+}
+
+/// Read PID from file for a service (returns 0 if not found or invalid)
+fn read_pid_file(name: &str) -> i32 {
+    let mut path_buf = [0u8; 64];
+    let prefix = b"/run/services/";
+    let suffix = b".pid";
+    let name_bytes = name.as_bytes();
+
+    let total_len = prefix.len() + name_bytes.len() + suffix.len();
+    if total_len >= path_buf.len() {
+        return 0;
+    }
+
+    path_buf[..prefix.len()].copy_from_slice(prefix);
+    path_buf[prefix.len()..prefix.len() + name_bytes.len()].copy_from_slice(name_bytes);
+    path_buf[prefix.len() + name_bytes.len()..total_len].copy_from_slice(suffix);
+
+    let path_str = core::str::from_utf8(&path_buf[..total_len]).unwrap_or("");
+
+    let fd = open2(path_str, O_RDONLY);
+    if fd < 0 {
+        return 0;
+    }
+
+    let mut buf = [0u8; 16];
+    let n = read(fd, &mut buf);
+    close(fd);
+
+    if n <= 0 {
+        return 0;
+    }
+
+    // Parse PID
+    let mut pid: i32 = 0;
+    for i in 0..n as usize {
+        let ch = buf[i];
+        if ch >= b'0' && ch <= b'9' {
+            pid = pid * 10 + (ch - b'0') as i32;
+        } else if ch == b'\n' || ch == b'\r' {
+            break;
+        }
+    }
+    pid
+}
+
+/// Check if a process with given PID exists
+fn process_exists(pid: i32) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    // Use kill(pid, 0) to check if process exists
+    kill(pid, 0) == 0
+}
+
 /// Start service by index
 fn start_service_by_index(index: usize) -> bool {
     unsafe {
@@ -346,6 +451,10 @@ fn start_service_by_index(index: usize) -> bool {
         // Parent
         service.pid = pid;
         service.state = ServiceState::Running;
+
+        // Write PID file for external status queries
+        write_pid_file(service.name_str(), pid);
+
         log_service(service.name_str(), "Started with PID ");
         print_i64(pid as i64);
         prints("\n");
@@ -394,6 +503,8 @@ fn stop_service_by_index(index: usize) -> bool {
             if result > 0 {
                 service.state = ServiceState::Stopped;
                 service.pid = 0;
+                // Remove PID file
+                remove_pid_file(service.name_str());
                 log_service(service.name_str(), "Stopped");
                 return true;
             }
@@ -401,6 +512,8 @@ fn stop_service_by_index(index: usize) -> bool {
 
         service.state = ServiceState::Stopped;
         service.pid = 0;
+        // Remove PID file
+        remove_pid_file(service.name_str());
         true
     }
 }
@@ -428,15 +541,27 @@ fn print_service_status(service: &Service) {
     prints(service.name_str());
     prints(": ");
 
-    match service.state {
-        ServiceState::Stopped => prints("stopped"),
-        ServiceState::Starting => prints("starting"),
-        ServiceState::Running => {
+    // Check if we have in-memory state (running as daemon) or need to check PID file
+    if service.state == ServiceState::Running && service.pid > 0 {
+        // In-memory state from daemon
+        prints("running (pid ");
+        print_i64(service.pid as i64);
+        prints(")");
+    } else {
+        // Check PID file (for standalone service list command)
+        let pid = read_pid_file(service.name_str());
+        if pid > 0 && process_exists(pid) {
             prints("running (pid ");
-            print_i64(service.pid as i64);
+            print_i64(pid as i64);
             prints(")");
+        } else {
+            match service.state {
+                ServiceState::Stopped => prints("stopped"),
+                ServiceState::Starting => prints("starting"),
+                ServiceState::Running => prints("stopped"), // PID file gone or process dead
+                ServiceState::Failed => prints("failed"),
+            }
         }
-        ServiceState::Failed => prints("failed"),
     }
 
     // Show enabled/disabled status
@@ -482,7 +607,8 @@ fn check_services() {
                 let result = waitpid(service.pid, &mut status, WNOHANG);
 
                 if result > 0 {
-                    // Process exited
+                    // Process exited - remove PID file
+                    remove_pid_file(service.name_str());
                     service.state = ServiceState::Failed;
                     service.pid = 0;
                     log_service(service.name_str(), "Process exited");
