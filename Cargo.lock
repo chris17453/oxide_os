@@ -1271,6 +1271,8 @@ dependencies = [
  "os_core",
  "proc",
  "proc-traits",
+ "sched",
+ "sched-traits",
  "signal",
  "spin 0.9.8",
  "tcpip",
