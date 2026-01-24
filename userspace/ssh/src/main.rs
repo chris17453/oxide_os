@@ -483,12 +483,14 @@ fn print_error(context: &str, error: TransportError) {
     prints(context);
     prints(" failed: ");
     match error {
+        TransportError::SendFailed => printlns("send failed"),
+        TransportError::RecvFailed => printlns("recv failed"),
         TransportError::Io => printlns("I/O error"),
         TransportError::Protocol => printlns("protocol error"),
         TransportError::InvalidPacket => printlns("invalid packet"),
         TransportError::Decryption => printlns("decryption error"),
         TransportError::KeyExchange => printlns("key exchange error"),
-        TransportError::Closed => printlns("connection closed"),
+        TransportError::Closed => printlns("connection closed by server"),
         TransportError::HostKeyVerification => printlns("host key verification failed"),
         TransportError::AuthFailed => printlns("authentication failed"),
     }

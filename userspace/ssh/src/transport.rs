@@ -68,6 +68,10 @@ pub mod disconnect {
 /// SSH transport error
 #[derive(Debug)]
 pub enum TransportError {
+    /// I/O error on send
+    SendFailed,
+    /// I/O error on receive
+    RecvFailed,
     /// I/O error
     Io,
     /// Protocol error
@@ -129,15 +133,18 @@ impl SshTransport {
     /// Perform SSH version exchange (client initiates)
     pub fn version_exchange(&mut self) -> TransportResult<()> {
         // Client sends version string first
-        self.send_raw(SSH_CLIENT_VERSION)?;
+        self.send_raw(SSH_CLIENT_VERSION).map_err(|_| TransportError::SendFailed)?;
 
         // Read server version string
         let mut version = Vec::with_capacity(256);
         loop {
             let mut buf = [0u8; 1];
             let n = recv(self.fd, &mut buf, 0);
-            if n <= 0 {
-                return Err(TransportError::Io);
+            if n < 0 {
+                return Err(TransportError::RecvFailed);
+            }
+            if n == 0 {
+                return Err(TransportError::Closed);
             }
 
             version.push(buf[0]);
