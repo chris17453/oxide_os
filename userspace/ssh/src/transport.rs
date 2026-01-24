@@ -137,10 +137,24 @@ impl SshTransport {
             .map_err(|_| TransportError::SendFailed)?;
 
         // Read server version string
+        // Retry on EAGAIN since server may not have responded yet
         let mut version = Vec::with_capacity(256);
+        let mut retry_count = 0;
+        const MAX_RETRIES: i32 = 1000;
+        const EAGAIN: isize = -11;
+
         loop {
             let mut buf = [0u8; 1];
             let n = recv(self.fd, &mut buf, 0);
+            if n == EAGAIN {
+                retry_count += 1;
+                if retry_count > MAX_RETRIES {
+                    return Err(TransportError::RecvFailed);
+                }
+                // Yield to let server process run
+                libc::sched_yield();
+                continue;
+            }
             if n < 0 {
                 return Err(TransportError::RecvFailed);
             }
@@ -148,6 +162,7 @@ impl SshTransport {
                 return Err(TransportError::Closed);
             }
 
+            retry_count = 0; // Reset on successful read
             version.push(buf[0]);
 
             // Look for \r\n or \n

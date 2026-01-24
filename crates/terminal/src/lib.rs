@@ -320,17 +320,15 @@ impl TerminalEmulator {
     /// Toggle cursor blink state (called by timer)
     pub fn toggle_cursor_blink(&mut self) {
         self.handler.cursor.blink_on = !self.handler.cursor.blink_on;
-        if self.handler.cursor.visible {
-            // Re-render cursor
-            let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
-            let buffer = if is_alt {
-                &self.alternate
-            } else {
-                &self.primary
-            };
-            let cursor = self.handler.cursor;
-            self.renderer.render(buffer, &cursor);
-        }
+        // Always render so the previous cursor cell is cleared; mark both rows dirty happens in renderer
+        let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
+        let buffer = if is_alt {
+            &self.alternate
+        } else {
+            &self.primary
+        };
+        let cursor = self.handler.cursor;
+        self.renderer.render(buffer, &cursor);
     }
 
     /// Scroll up in scrollback (for viewing history)

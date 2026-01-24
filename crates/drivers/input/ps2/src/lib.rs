@@ -185,6 +185,8 @@ impl Ps2Keyboard {
     pub fn init(&self) -> bool {
         // Minimal approach: keyboard should already be working in QEMU
         // Just verify it's responsive
+        // Set initial LED state (Num Lock on by default)
+        self.update_leds();
         true
     }
 
@@ -309,6 +311,33 @@ impl Ps2Keyboard {
                     };
                     if let Some(seq) = nav_seq {
                         push_to_console(seq);
+                        return;
+                    }
+                }
+
+                // Handle keypad in numeric mode (Num Lock on) to ensure digits always emit
+                if numlock {
+                    let kp_char: Option<u8> = match keycode {
+                        input::KEY_KP0 => Some(b'0'),
+                        input::KEY_KP1 => Some(b'1'),
+                        input::KEY_KP2 => Some(b'2'),
+                        input::KEY_KP3 => Some(b'3'),
+                        input::KEY_KP4 => Some(b'4'),
+                        input::KEY_KP5 => Some(b'5'),
+                        input::KEY_KP6 => Some(b'6'),
+                        input::KEY_KP7 => Some(b'7'),
+                        input::KEY_KP8 => Some(b'8'),
+                        input::KEY_KP9 => Some(b'9'),
+                        input::KEY_KPDOT => Some(b'.'),
+                        input::KEY_KPENTER => Some(b'\n'),
+                        input::KEY_KPPLUS => Some(b'+'),
+                        input::KEY_KPMINUS => Some(b'-'),
+                        input::KEY_KPASTERISK => Some(b'*'),
+                        input::KEY_KPSLASH => Some(b'/'),
+                        _ => None,
+                    };
+                    if let Some(ch) = kp_char {
+                        push_to_console(&[ch]);
                         return;
                     }
                 }

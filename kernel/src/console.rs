@@ -35,12 +35,24 @@ pub fn terminal_tick() {
         }
     }
 
-    // Drive the active display: prefer terminal emulator, otherwise also tick fb cursor
+    // Drive the active display: prefer terminal emulator; disable legacy fb cursor to avoid double cursor
     if terminal::is_initialized() {
-        terminal::toggle_cursor_blink();
+        // Blink at ~2.5Hz (every 12 frames at 30 FPS)
+        static mut BLINK_TICKS: u8 = 0;
+        unsafe {
+            BLINK_TICKS = BLINK_TICKS.wrapping_add(1);
+            if BLINK_TICKS >= 12 {
+                BLINK_TICKS = 0;
+                terminal::toggle_cursor_blink();
+            } else {
+                // Still render pending output without toggling blink state
+                terminal::tick();
+            }
+        }
+        // Ensure any pending render happens at least once per tick
         terminal::tick();
-    }
-    if fb::is_initialized() {
+    } else if fb::is_initialized() {
+        // Fallback pre-terminal: allow fb console cursor only when terminal is not active
         fb::blink_cursor();
     }
 }

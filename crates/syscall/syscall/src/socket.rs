@@ -601,14 +601,12 @@ pub fn sys_recv(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
         }
     }
 
-    // No data available
     // Check if peer is closed (for loopback sockets)
     let peer_fd = SOCKET_PAIRS.lock().get(&fd).copied();
     if let Some(peer_fd) = peer_fd {
         let peer_socket = get_socket(peer_fd);
         if peer_socket.is_none() {
-            // Peer closed - EOF
-            return 0;
+            return 0; // EOF - peer closed
         }
         let peer = peer_socket.unwrap();
         if peer.closed.load(core::sync::atomic::Ordering::SeqCst) {
@@ -616,14 +614,8 @@ pub fn sys_recv(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
         }
     }
 
-    // Handle MSG_DONTWAIT or nonblocking
-    let is_nonblocking = socket.is_nonblocking() || (flags & 0x40 != 0);
-    if is_nonblocking {
-        return errno::EAGAIN;
-    }
-
-    // For blocking sockets, we should wait for data
-    // For now, return EAGAIN (would need proper blocking support)
+    // No data available - return EAGAIN
+    // Userspace should retry with sched_yield() to let sender run
     errno::EAGAIN
 }
 
