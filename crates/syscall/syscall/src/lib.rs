@@ -94,6 +94,13 @@ pub mod nr {
 
     // Scheduler syscalls
     pub const SCHED_YIELD: u64 = 130;
+    pub const SCHED_SETSCHEDULER: u64 = 131;
+    pub const SCHED_GETSCHEDULER: u64 = 132;
+    pub const SCHED_SETPARAM: u64 = 133;
+    pub const SCHED_GETPARAM: u64 = 134;
+    pub const SCHED_SETAFFINITY: u64 = 135;
+    pub const SCHED_GETAFFINITY: u64 = 136;
+    pub const SCHED_RR_GET_INTERVAL: u64 = 137;
 
     // Time syscalls
     pub const GETTIMEOFDAY: u64 = 60;
@@ -374,6 +381,13 @@ pub fn dispatch(
 
         // Scheduler syscalls
         nr::SCHED_YIELD => sys_sched_yield(),
+        nr::SCHED_SETSCHEDULER => sys_sched_setscheduler(arg1 as i32, arg2 as i32, arg3),
+        nr::SCHED_GETSCHEDULER => sys_sched_getscheduler(arg1 as i32),
+        nr::SCHED_SETPARAM => sys_sched_setparam(arg1 as i32, arg2),
+        nr::SCHED_GETPARAM => sys_sched_getparam(arg1 as i32, arg2),
+        nr::SCHED_SETAFFINITY => sys_sched_setaffinity(arg1 as i32, arg2 as usize, arg3),
+        nr::SCHED_GETAFFINITY => sys_sched_getaffinity(arg1 as i32, arg2 as usize, arg3),
+        nr::SCHED_RR_GET_INTERVAL => sys_sched_rr_get_interval(arg1 as i32, arg2),
 
         // Time syscalls
         nr::GETTIMEOFDAY => time::sys_gettimeofday(arg1 as usize, arg2 as usize),
@@ -1586,6 +1600,348 @@ fn sys_sched_yield() -> i64 {
     // Just return success - the timer interrupt will handle scheduling
     // The key is that returning from this syscall puts us back in user mode,
     // where the scheduler can preempt us.
+    0
+}
+
+/// sched_param structure for scheduler syscalls
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct SchedParam {
+    /// RT priority (1-99 for FIFO/RR, 0 for normal)
+    sched_priority: i32,
+}
+
+/// Scheduling policies (matches Linux)
+mod sched_policy {
+    pub const SCHED_NORMAL: i32 = 0;
+    pub const SCHED_FIFO: i32 = 1;
+    pub const SCHED_RR: i32 = 2;
+    pub const SCHED_BATCH: i32 = 3;
+    pub const SCHED_IDLE: i32 = 5;
+}
+
+/// Convert syscall policy to SchedPolicy
+fn policy_from_syscall(policy: i32) -> Option<sched::SchedPolicy> {
+    match policy {
+        sched_policy::SCHED_NORMAL => Some(sched::SchedPolicy::Normal),
+        sched_policy::SCHED_FIFO => Some(sched::SchedPolicy::Fifo),
+        sched_policy::SCHED_RR => Some(sched::SchedPolicy::RoundRobin),
+        sched_policy::SCHED_BATCH => Some(sched::SchedPolicy::Batch),
+        sched_policy::SCHED_IDLE => Some(sched::SchedPolicy::Idle),
+        _ => None,
+    }
+}
+
+/// Convert SchedPolicy to syscall policy
+fn policy_to_syscall(policy: sched::SchedPolicy) -> i32 {
+    match policy {
+        sched::SchedPolicy::Normal => sched_policy::SCHED_NORMAL,
+        sched::SchedPolicy::Fifo => sched_policy::SCHED_FIFO,
+        sched::SchedPolicy::RoundRobin => sched_policy::SCHED_RR,
+        sched::SchedPolicy::Batch => sched_policy::SCHED_BATCH,
+        sched::SchedPolicy::Idle => sched_policy::SCHED_IDLE,
+    }
+}
+
+/// sys_sched_setscheduler - Set scheduling policy and parameters
+///
+/// # Arguments
+/// * `pid` - Process ID (0 = current)
+/// * `policy` - Scheduling policy (SCHED_NORMAL, SCHED_FIFO, etc.)
+/// * `param_ptr` - Pointer to sched_param structure
+fn sys_sched_setscheduler(pid: i32, policy: i32, param_ptr: u64) -> i64 {
+    // Validate param pointer
+    if param_ptr == 0 || param_ptr >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    // Get target PID
+    let table = process_table();
+    let target_pid = if pid == 0 { table.current_pid() } else { pid as u32 };
+
+    // Validate process exists
+    if table.get(target_pid).is_none() {
+        return errno::ESRCH;
+    }
+
+    // Parse policy
+    let sched_policy = match policy_from_syscall(policy) {
+        Some(p) => p,
+        None => return errno::EINVAL,
+    };
+
+    // Read param from userspace
+    let param: SchedParam = unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+        let p = core::ptr::read_volatile(param_ptr as *const SchedParam);
+        core::arch::asm!("clac", options(nomem, nostack));
+        p
+    };
+
+    // Validate priority for RT policies
+    if sched_policy.is_realtime() {
+        if param.sched_priority < 1 || param.sched_priority > 99 {
+            return errno::EINVAL;
+        }
+    }
+
+    // Check permissions - only root can set RT policies
+    let current = table.current();
+    if let Some(proc) = current {
+        if sched_policy.is_realtime() && proc.lock().credentials().euid != 0 {
+            return errno::EPERM;
+        }
+    }
+
+    // Set the scheduler
+    sched::set_scheduler(target_pid, sched_policy, param.sched_priority as u8);
+
+    0
+}
+
+/// sys_sched_getscheduler - Get scheduling policy
+///
+/// # Arguments
+/// * `pid` - Process ID (0 = current)
+fn sys_sched_getscheduler(pid: i32) -> i64 {
+    let table = process_table();
+    let target_pid = if pid == 0 { table.current_pid() } else { pid as u32 };
+
+    // Validate process exists
+    if table.get(target_pid).is_none() {
+        return errno::ESRCH;
+    }
+
+    match sched::get_scheduler(target_pid) {
+        Some((policy, _)) => policy_to_syscall(policy) as i64,
+        None => errno::ESRCH,
+    }
+}
+
+/// sys_sched_setparam - Set scheduling parameters
+///
+/// # Arguments
+/// * `pid` - Process ID (0 = current)
+/// * `param_ptr` - Pointer to sched_param structure
+fn sys_sched_setparam(pid: i32, param_ptr: u64) -> i64 {
+    // Validate param pointer
+    if param_ptr == 0 || param_ptr >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    let table = process_table();
+    let target_pid = if pid == 0 { table.current_pid() } else { pid as u32 };
+
+    // Validate process exists
+    if table.get(target_pid).is_none() {
+        return errno::ESRCH;
+    }
+
+    // Read param from userspace
+    let param: SchedParam = unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+        let p = core::ptr::read_volatile(param_ptr as *const SchedParam);
+        core::arch::asm!("clac", options(nomem, nostack));
+        p
+    };
+
+    // Get current policy
+    let (current_policy, _) = match sched::get_scheduler(target_pid) {
+        Some(p) => p,
+        None => return errno::ESRCH,
+    };
+
+    // Validate priority for RT policies
+    if current_policy.is_realtime() {
+        if param.sched_priority < 1 || param.sched_priority > 99 {
+            return errno::EINVAL;
+        }
+    }
+
+    // Set the scheduler with same policy but new param
+    sched::set_scheduler(target_pid, current_policy, param.sched_priority as u8);
+
+    0
+}
+
+/// sys_sched_getparam - Get scheduling parameters
+///
+/// # Arguments
+/// * `pid` - Process ID (0 = current)
+/// * `param_ptr` - Pointer to sched_param structure
+fn sys_sched_getparam(pid: i32, param_ptr: u64) -> i64 {
+    // Validate param pointer
+    if param_ptr == 0 || param_ptr >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    let table = process_table();
+    let target_pid = if pid == 0 { table.current_pid() } else { pid as u32 };
+
+    // Validate process exists
+    if table.get(target_pid).is_none() {
+        return errno::ESRCH;
+    }
+
+    let (_, priority) = match sched::get_scheduler(target_pid) {
+        Some(p) => p,
+        None => return errno::ESRCH,
+    };
+
+    let param = SchedParam {
+        sched_priority: priority as i32,
+    };
+
+    // Write param to userspace
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+        core::ptr::write_volatile(param_ptr as *mut SchedParam, param);
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
+
+    0
+}
+
+/// sys_sched_setaffinity - Set CPU affinity mask
+///
+/// # Arguments
+/// * `pid` - Process ID (0 = current)
+/// * `cpusetsize` - Size of CPU mask in bytes
+/// * `mask_ptr` - Pointer to CPU mask
+fn sys_sched_setaffinity(pid: i32, cpusetsize: usize, mask_ptr: u64) -> i64 {
+    // Validate mask pointer
+    if mask_ptr == 0 || mask_ptr >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+    if cpusetsize == 0 || cpusetsize > 32 {
+        return errno::EINVAL;
+    }
+
+    let table = process_table();
+    let target_pid = if pid == 0 { table.current_pid() } else { pid as u32 };
+
+    // Validate process exists
+    if table.get(target_pid).is_none() {
+        return errno::ESRCH;
+    }
+
+    // Read mask from userspace
+    let mut mask_bytes = [0u8; 32];
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+        let src = mask_ptr as *const u8;
+        for i in 0..cpusetsize {
+            mask_bytes[i] = core::ptr::read_volatile(src.add(i));
+        }
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
+
+    // Convert to CpuSet
+    let mut bits = [0u64; 4];
+    for i in 0..4.min((cpusetsize + 7) / 8) {
+        for j in 0..8 {
+            let byte_idx = i * 8 + j;
+            if byte_idx < cpusetsize {
+                bits[i] |= (mask_bytes[byte_idx] as u64) << (j * 8);
+            }
+        }
+    }
+
+    let cpuset = sched::CpuSet::from_bits(bits);
+
+    // Verify at least one CPU is set
+    if cpuset.is_empty() {
+        return errno::EINVAL;
+    }
+
+    sched::set_affinity(target_pid, cpuset);
+
+    0
+}
+
+/// sys_sched_getaffinity - Get CPU affinity mask
+///
+/// # Arguments
+/// * `pid` - Process ID (0 = current)
+/// * `cpusetsize` - Size of CPU mask in bytes
+/// * `mask_ptr` - Pointer to CPU mask buffer
+fn sys_sched_getaffinity(pid: i32, cpusetsize: usize, mask_ptr: u64) -> i64 {
+    // Validate mask pointer
+    if mask_ptr == 0 || mask_ptr >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+    if cpusetsize == 0 {
+        return errno::EINVAL;
+    }
+
+    let table = process_table();
+    let target_pid = if pid == 0 { table.current_pid() } else { pid as u32 };
+
+    // Validate process exists
+    if table.get(target_pid).is_none() {
+        return errno::ESRCH;
+    }
+
+    let cpuset = match sched::get_affinity(target_pid) {
+        Some(c) => c,
+        None => sched::CpuSet::all(), // Default to all CPUs
+    };
+
+    // Convert to bytes
+    let bits = cpuset.as_bits();
+    let mut mask_bytes = [0u8; 32];
+    for i in 0..4 {
+        for j in 0..8 {
+            let byte_idx = i * 8 + j;
+            if byte_idx < 32 {
+                mask_bytes[byte_idx] = ((bits[i] >> (j * 8)) & 0xFF) as u8;
+            }
+        }
+    }
+
+    // Write to userspace (only up to cpusetsize bytes)
+    let write_size = cpusetsize.min(32);
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+        let dest = mask_ptr as *mut u8;
+        for i in 0..write_size {
+            core::ptr::write_volatile(dest.add(i), mask_bytes[i]);
+        }
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
+
+    write_size as i64
+}
+
+/// sys_sched_rr_get_interval - Get round-robin time quantum
+///
+/// # Arguments
+/// * `pid` - Process ID (0 = current)
+/// * `tp_ptr` - Pointer to timespec structure
+fn sys_sched_rr_get_interval(pid: i32, tp_ptr: u64) -> i64 {
+    // Validate pointer
+    if tp_ptr == 0 || tp_ptr >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    let table = process_table();
+    let target_pid = if pid == 0 { table.current_pid() } else { pid as u32 };
+
+    // Validate process exists
+    if table.get(target_pid).is_none() {
+        return errno::ESRCH;
+    }
+
+    // Return the RR time slice (100ms = 0.1s)
+    // timespec: tv_sec (i64), tv_nsec (i64)
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+        let tp = tp_ptr as *mut i64;
+        core::ptr::write_volatile(tp, 0); // tv_sec
+        core::ptr::write_volatile(tp.add(1), 100_000_000); // tv_nsec = 100ms
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
+
     0
 }
 
