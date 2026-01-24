@@ -162,6 +162,8 @@ pub struct Ps2Keyboard {
     alt: AtomicBool,
     /// AltGr pressed (right alt)
     altgr: AtomicBool,
+    /// Num Lock state
+    numlock: AtomicBool,
 }
 
 impl Ps2Keyboard {
@@ -170,11 +172,12 @@ impl Ps2Keyboard {
         Ps2Keyboard {
             device_id: AtomicU8::new(255),
             keymap: Mutex::new(Keymap::new()),
-            leds: AtomicU8::new(0),
+            leds: AtomicU8::new(0x02), // Num Lock on by default
             shift: AtomicBool::new(false),
             ctrl: AtomicBool::new(false),
             alt: AtomicBool::new(false),
             altgr: AtomicBool::new(false),
+            numlock: AtomicBool::new(true),
         }
     }
 
@@ -215,6 +218,22 @@ impl Ps2Keyboard {
                     // Right Alt = AltGr on most international layouts
                     self.altgr.store(pressed, Ordering::SeqCst);
                 }
+                input::KEY_NUMLOCK => {
+                    if pressed {
+                        let new_state = !self.numlock.load(Ordering::SeqCst);
+                        self.numlock.store(new_state, Ordering::SeqCst);
+                        let mut leds = self.leds.load(Ordering::SeqCst);
+                        if new_state {
+                            leds |= 0x02;
+                        } else {
+                            leds &= !0x02;
+                        }
+                        self.leds.store(leds, Ordering::SeqCst);
+                        self.update_leds();
+                    }
+                    // Don't forward NumLock itself to console
+                    return;
+                }
                 _ => {}
             }
 
@@ -232,6 +251,7 @@ impl Ps2Keyboard {
                 let shift = self.shift.load(Ordering::SeqCst);
                 let ctrl = self.ctrl.load(Ordering::SeqCst);
                 let altgr = self.altgr.load(Ordering::SeqCst);
+                let numlock = self.numlock.load(Ordering::SeqCst);
 
                 // Handle Ctrl+key combinations (send control codes)
                 // But not if AltGr is pressed (Ctrl+Alt is often used for AltGr on some systems)
@@ -267,6 +287,28 @@ impl Ps2Keyboard {
                     };
                     if let Some(ch) = ctrl_char {
                         push_to_console(&[ch]);
+                        return;
+                    }
+                }
+
+                // Handle keypad in navigation mode (Num Lock off)
+                if !numlock {
+                    let nav_seq: Option<&[u8]> = match keycode {
+                        input::KEY_KP8 => Some(b"\x1b[A"),
+                        input::KEY_KP2 => Some(b"\x1b[B"),
+                        input::KEY_KP6 => Some(b"\x1b[C"),
+                        input::KEY_KP4 => Some(b"\x1b[D"),
+                        input::KEY_KP7 => Some(b"\x1b[H"),
+                        input::KEY_KP1 => Some(b"\x1b[F"),
+                        input::KEY_KP9 => Some(b"\x1b[5~"),
+                        input::KEY_KP3 => Some(b"\x1b[6~"),
+                        input::KEY_KP0 => Some(b"\x1b[2~"),
+                        input::KEY_KPDOT => Some(b"\x1b[3~"),
+                        input::KEY_KP5 => Some(b"\x1b[E"),
+                        _ => None,
+                    };
+                    if let Some(seq) = nav_seq {
+                        push_to_console(seq);
                         return;
                     }
                 }
