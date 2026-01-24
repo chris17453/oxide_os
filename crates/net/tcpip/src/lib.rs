@@ -358,7 +358,12 @@ impl TcpIpStack {
         protocol: IpProtocol,
         payload: &[u8],
     ) -> NetResult<()> {
-        let src_ip = self.interface.ipv4_addr().ok_or(NetError::NotConnected)?;
+        // For loopback addresses, use 127.0.0.1 as source
+        let src_ip = if dst_ip.is_loopback() {
+            Ipv4Addr::LOCALHOST
+        } else {
+            self.interface.ipv4_addr().ok_or(NetError::NotConnected)?
+        };
 
         // Build packet info for filtering
         let mut pkt_info = filter::PacketInfo::new(src_ip, dst_ip, protocol);
@@ -391,6 +396,12 @@ impl TcpIpStack {
         // Build IP packet
         let ip_packet = ip::Ipv4Packet::new(src_ip, dst_ip, protocol, payload);
         let ip_bytes = ip_packet.to_bytes();
+
+        // Handle loopback: feed packet directly back to receive path
+        // This includes 127.0.0.0/8 addresses and our own interface IP
+        if dst_ip.is_loopback() || Some(dst_ip) == self.interface.ipv4_addr() {
+            return self.process_ipv4(&ip_bytes);
+        }
 
         // Resolve MAC address
         let dst_mac = if dst_ip.is_broadcast() || self.interface.same_network(dst_ip) {

@@ -117,6 +117,18 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         }
     };
 
+    if config.verbose {
+        prints("ssh: resolved to ");
+        print_i64(((ip >> 24) & 0xff) as i64);
+        prints(".");
+        print_i64(((ip >> 16) & 0xff) as i64);
+        prints(".");
+        print_i64(((ip >> 8) & 0xff) as i64);
+        prints(".");
+        print_i64((ip & 0xff) as i64);
+        printlns("");
+    }
+
     // Connect to server
     let fd = match connect_to_server(ip, config.port) {
         Ok(fd) => fd,
