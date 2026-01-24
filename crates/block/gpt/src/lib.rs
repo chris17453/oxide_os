@@ -6,10 +6,11 @@
 
 extern crate alloc;
 
+use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use block::{BlockDevice, BlockError, BlockResult, Partition};
+use block::{BlockDevice, BlockError, Partition};
 
 /// GPT signature
 const GPT_SIGNATURE: u64 = 0x5452415020494645; // "EFI PART" in little-endian
@@ -315,13 +316,20 @@ impl Gpt {
             .iter()
             .enumerate()
             .map(|(i, entry)| {
+                // Convert partition name to &'static str by leaking
+                // This is acceptable since partition names live for the kernel lifetime
+                let name = entry.name_string();
+                let name: &'static str = if name.is_empty() {
+                    "partition"
+                } else {
+                    Box::leak(name.into_boxed_str())
+                };
                 Partition::new(
                     Arc::clone(&device),
                     entry.first_lba,
                     entry.size_blocks(),
                     (i + 1) as u8,
-                    // TODO: Use entry.name_string() - need to make name &'static
-                    "partition",
+                    name,
                 )
             })
             .collect()
