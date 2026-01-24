@@ -46,6 +46,59 @@ pub const MAX_NAME_LEN: usize = 255;
 /// Maximum file size (16 EB with 64-bit addressing)
 pub const MAX_FILE_SIZE: u64 = u64::MAX;
 
+// ============================================================================
+// Kernel integration helpers
+// ============================================================================
+
+/// Get current user ID
+#[cfg(feature = "kernel")]
+fn get_current_uid() -> u32 {
+    if let Some(proc) = proc::process_table().current() {
+        proc.lock().credentials().uid
+    } else {
+        0 // Default to root if no process context
+    }
+}
+
+#[cfg(not(feature = "kernel"))]
+fn get_current_uid() -> u32 {
+    0 // Default to root when not in kernel context
+}
+
+/// Get current group ID
+#[cfg(feature = "kernel")]
+fn get_current_gid() -> u32 {
+    if let Some(proc) = proc::process_table().current() {
+        proc.lock().credentials().gid
+    } else {
+        0 // Default to root if no process context
+    }
+}
+
+#[cfg(not(feature = "kernel"))]
+fn get_current_gid() -> u32 {
+    0 // Default to root when not in kernel context
+}
+
+/// Get current timestamp (seconds since epoch)
+#[cfg(feature = "kernel")]
+fn get_current_time() -> u64 {
+    // Get ticks and convert to seconds
+    // Timer runs at 100 Hz, so NS_PER_TICK = 10,000,000
+    let ticks = arch_x86_64::timer_ticks();
+    let ns_per_tick: u64 = 10_000_000; // 100 Hz = 10ms per tick
+    let uptime_secs = (ticks * ns_per_tick) / 1_000_000_000;
+    // Assume boot time of 2024-01-01 00:00:00 UTC (Unix timestamp)
+    let boot_time: u64 = 1704067200;
+    boot_time + uptime_secs
+}
+
+#[cfg(not(feature = "kernel"))]
+fn get_current_time() -> u64 {
+    // Default to 2024-01-01 when not in kernel context
+    1704067200
+}
+
 /// OXIDEFS error types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OxidefsError {
@@ -575,15 +628,16 @@ impl VnodeOps for OxidefsVnode {
             .alloc_inode()
             .map_err(|e| -> VfsError { e.into() })?;
 
-        // Create inode data
+        // Create inode data with current uid/gid/time
+        let now = get_current_time();
         let new_inode = InodeData {
             mode: mode.bits() | 0o100000, // Regular file
-            uid: 0,                       // TODO: Get current uid
-            gid: 0,                       // TODO: Get current gid
+            uid: get_current_uid(),
+            gid: get_current_gid(),
             size: 0,
-            atime: 0, // TODO: Get current time
-            mtime: 0,
-            ctime: 0,
+            atime: now,
+            mtime: now,
+            ctime: now,
             links: 1,
             blocks: 0,
             flags: 0,
@@ -603,11 +657,11 @@ impl VnodeOps for OxidefsVnode {
         let file_type = dir::file_type::REG_FILE;
         self.add_dir_entry(name, new_ino, file_type)?;
 
-        // Update directory inode link count and timestamps
+        // Update directory inode timestamps
         {
             let mut inode_data = self.inode.write();
-            inode_data.mtime = 0; // TODO: current time
-            inode_data.ctime = 0;
+            inode_data.mtime = now;
+            inode_data.ctime = now;
         }
         self.sync_inode().map_err(|e| -> VfsError { e.into() })?;
 
@@ -653,8 +707,9 @@ impl VnodeOps for OxidefsVnode {
             .map_err(|e| -> VfsError { e.into() })?;
 
         // Update timestamps
-        inode.mtime = 0; // TODO: current time
-        inode.ctime = 0;
+        let now = get_current_time();
+        inode.mtime = now;
+        inode.ctime = now;
 
         drop(inode);
         drop(sb);
@@ -796,8 +851,9 @@ impl VnodeOps for OxidefsVnode {
         {
             let mut inode_data = self.inode.write();
             inode_data.links += 1;
-            inode_data.mtime = 0;
-            inode_data.ctime = 0;
+            let now = get_current_time();
+            inode_data.mtime = now;
+            inode_data.ctime = now;
         }
         self.sync_inode().map_err(|e| -> VfsError { e.into() })?;
 
@@ -853,8 +909,9 @@ impl VnodeOps for OxidefsVnode {
         {
             let mut inode_data = self.inode.write();
             inode_data.links -= 1;
-            inode_data.mtime = 0;
-            inode_data.ctime = 0;
+            let now = get_current_time();
+            inode_data.mtime = now;
+            inode_data.ctime = now;
         }
         self.sync_inode().map_err(|e| -> VfsError { e.into() })?;
 
@@ -918,8 +975,9 @@ impl VnodeOps for OxidefsVnode {
         // Update parent directory timestamps
         {
             let mut parent_inode = self.inode.write();
-            parent_inode.mtime = 0;
-            parent_inode.ctime = 0;
+            let now = get_current_time();
+            parent_inode.mtime = now;
+            parent_inode.ctime = now;
         }
         self.sync_inode().map_err(|e| -> VfsError { e.into() })?;
 
@@ -981,8 +1039,9 @@ impl VnodeOps for OxidefsVnode {
         // Update timestamps
         {
             let mut inode_data = self.inode.write();
-            inode_data.mtime = 0;
-            inode_data.ctime = 0;
+            let now = get_current_time();
+            inode_data.mtime = now;
+            inode_data.ctime = now;
         }
         self.sync_inode().map_err(|e| -> VfsError { e.into() })?;
 
@@ -1025,8 +1084,9 @@ impl VnodeOps for OxidefsVnode {
         })
         .map_err(|e| -> VfsError { e.into() })?;
 
-        inode_data.mtime = 0;
-        inode_data.ctime = 0;
+        let now = get_current_time();
+        inode_data.mtime = now;
+        inode_data.ctime = now;
 
         drop(inode_data);
         drop(sb);
@@ -1052,7 +1112,7 @@ impl VnodeOps for OxidefsVnode {
         }
 
         // Always update ctime when metadata changes
-        inode_data.ctime = 0; // TODO: use actual current time
+        inode_data.ctime = get_current_time();
 
         drop(inode_data);
 

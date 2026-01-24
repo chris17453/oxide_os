@@ -7,3 +7,11 @@ edition = "2024"
 block = { path = "../../block/block" }
 vfs = { path = "../../vfs/vfs" }
 spin = "0.10"
+
+# Optional dependencies for kernel integration
+proc = { path = "../../proc/proc", optional = true }
+arch-x86_64 = { path = "../../arch/arch-x86_64", optional = true }
+
+[features]
+default = ["kernel"]
+kernel = ["proc", "arch-x86_64"]
