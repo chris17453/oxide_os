@@ -20,7 +20,7 @@ mod transport;
 
 use alloc::vec::Vec;
 use libc::socket::{
-    INADDR_ANY, SOCKADDR_IN_SIZE, SockAddrIn, accept, bind, listen, ntohl, ntohs, setsockopt, so,
+    INADDR_ANY, SOCKADDR_IN_SIZE, SockAddrIn, accept, bind, listen, setsockopt, so,
     sockaddr_in, sol, tcp_socket,
 };
 use libc::*;
@@ -36,13 +36,6 @@ const MAX_CONNECTIONS: usize = 10;
 /// Log file for debugging (since stdout is redirected to /dev/null by servicemgr)
 const LOG_FILE: &str = "/var/log/sshd.log";
 
-/// Print to console (may go to /dev/null)
-fn log_console(msg: &str) {
-    prints("[sshd] ");
-    prints(msg);
-    prints("\n");
-}
-
 /// Write to log file for persistent debugging
 fn log_to_file(msg: &str) {
     let fd = open(LOG_FILE, (O_WRONLY | O_CREAT | O_APPEND) as u32, 0o644);
@@ -55,9 +48,8 @@ fn log_to_file(msg: &str) {
     }
 }
 
-/// Print helper - writes to both console and log file
+/// Print helper - daemon should only write to log file, not console
 fn log(msg: &str) {
-    log_console(msg);
     log_to_file(msg);
 }
 
@@ -171,20 +163,8 @@ pub fn main() -> i32 {
             continue;
         }
 
-        // Log client address
-        let ip = ntohl(client_addr.sin_addr.s_addr);
+        // Log client address to file only (daemon shouldn't write to console)
         log_to_file("Connection accepted");
-        prints("[sshd] Connection from ");
-        print_i64(((ip >> 24) & 0xff) as i64);
-        prints(".");
-        print_i64(((ip >> 16) & 0xff) as i64);
-        prints(".");
-        print_i64(((ip >> 8) & 0xff) as i64);
-        prints(".");
-        print_i64((ip & 0xff) as i64);
-        prints(":");
-        print_i64(ntohs(client_addr.sin_port) as i64);
-        prints("\n");
 
         // Fork to handle connection
         let pid = fork();
