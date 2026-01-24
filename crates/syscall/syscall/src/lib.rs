@@ -88,6 +88,9 @@ pub mod nr {
     pub const SETITIMER: u64 = 126;
     pub const GETITIMER: u64 = 127;
 
+    // Scheduler syscalls
+    pub const SCHED_YIELD: u64 = 130;
+
     // Module syscalls
     pub const INIT_MODULE: u64 = 60;
     pub const DELETE_MODULE: u64 = 61;
@@ -342,6 +345,9 @@ pub fn dispatch(
         nr::ALARM => sys_alarm(arg1 as u32),
         nr::SETITIMER => sys_setitimer(arg1 as i32, arg2, arg3),
         nr::GETITIMER => sys_getitimer(arg1 as i32, arg2),
+
+        // Scheduler syscalls
+        nr::SCHED_YIELD => sys_sched_yield(),
 
         // Module syscalls
         nr::INIT_MODULE => sys_init_module(arg1, arg2 as usize, arg3),
@@ -1512,4 +1518,16 @@ fn sys_exit_group(status: i32) -> i64 {
     // For now, just exit the current thread
     // In a full implementation, we'd send SIGKILL to all threads in the group
     sys_exit(status)
+}
+
+/// sys_sched_yield - Yield the processor
+///
+/// This syscall voluntarily yields the CPU. The actual yielding happens
+/// when we return from the syscall to usermode, where the timer interrupt
+/// can preempt us and schedule other processes.
+fn sys_sched_yield() -> i64 {
+    // Just return success - the timer interrupt will handle scheduling
+    // The key is that returning from this syscall puts us back in user mode,
+    // where the scheduler can preempt us.
+    0
 }

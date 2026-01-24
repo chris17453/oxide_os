@@ -61,12 +61,30 @@ pub fn execve(path: &str, argv: *const *const u8, envp: *const *const u8) -> i32
 
 /// Wait for any child
 pub fn wait(status: &mut i32) -> i32 {
-    syscall::sys_wait(status)
+    waitpid(-1, status, 0)
 }
 
 /// Wait for specific child
+///
+/// If options does not include WNOHANG and kernel returns EAGAIN,
+/// we yield and retry. This allows the scheduler to run child processes.
 pub fn waitpid(pid: i32, status: &mut i32, options: i32) -> i32 {
-    syscall::sys_waitpid(pid, status, options)
+    const WNOHANG: i32 = 1;
+    const EAGAIN: i32 = -11;
+
+    loop {
+        let result = syscall::sys_waitpid(pid, status, options);
+
+        // If WNOHANG set or not EAGAIN, return immediately
+        if (options & WNOHANG) != 0 || result != EAGAIN {
+            return result;
+        }
+
+        // Yield to scheduler then retry
+        // This brief return to usermode allows timer interrupt to
+        // preempt us and schedule child processes
+        syscall::sys_sched_yield();
+    }
 }
 
 /// Get process ID

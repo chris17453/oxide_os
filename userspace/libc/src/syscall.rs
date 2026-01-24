@@ -107,6 +107,9 @@ pub mod nr {
     pub const SETITIMER: u64 = 126;
     pub const GETITIMER: u64 = 127;
 
+    // Scheduler syscalls
+    pub const SCHED_YIELD: u64 = 130;
+
     // File permission syscalls
     pub const CHMOD: u64 = 150;
     pub const FCHMOD: u64 = 151;
@@ -249,6 +252,11 @@ pub fn sys_getpid() -> i32 {
 /// sys_getppid - Get parent process ID
 pub fn sys_getppid() -> i32 {
     syscall0(nr::GETPPID) as i32
+}
+
+/// sys_sched_yield - Yield the processor
+pub fn sys_sched_yield() -> i32 {
+    syscall0(nr::SCHED_YIELD) as i32
 }
 
 /// sys_kill - Send signal to process

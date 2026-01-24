@@ -167,19 +167,12 @@ pub fn do_waitpid(
             }
         }
 
-        // If WNOHANG, return immediately
-        if options.nohang {
-            return Err(WaitError::WouldBlock);
-        }
-
-        // Block and retry
-        // In a real implementation, this would:
-        // 1. Mark the process as blocked waiting for children
-        // 2. Yield the CPU
-        // 3. Wake up when a child exits (via SIGCHLD or similar)
-        //
-        // For now, we just spin (not ideal but works for testing)
-        core::hint::spin_loop();
+        // Return WouldBlock - caller (kernel) must handle yielding/blocking
+        // We can't spin here because:
+        // 1. We're in kernel mode
+        // 2. Scheduler only preempts user mode
+        // 3. Child processes never get scheduled -> deadlock
+        return Err(WaitError::WouldBlock);
     }
 }
 
