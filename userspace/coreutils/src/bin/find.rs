@@ -9,7 +9,8 @@ const MAX_PATH: usize = 512;
 const MAX_DEPTH: usize = 32;
 
 /// Directory entry header (matches kernel's UserDirEntry)
-#[repr(C)]
+/// MUST be packed to match kernel's packed struct (19 bytes, not 24)
+#[repr(C, packed)]
 struct DirEntry {
     d_ino: u64,
     d_off: u64,
