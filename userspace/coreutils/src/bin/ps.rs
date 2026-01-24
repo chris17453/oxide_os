@@ -1,4 +1,8 @@
 //! ps - report a snapshot of current processes
+//!
+//! Shows processes with services/daemons in brackets like Linux:
+//! - Kernel threads (no cmdline) shown in brackets: [kworker]
+//! - Services registered in /etc/services.d shown in brackets: [sshd]
 
 #![no_std]
 #![no_main]
@@ -65,34 +69,35 @@ fn parse_status_line<'a>(line: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {
 /// Process info
 struct ProcInfo {
     pid: u32,
+    ppid: u32,
     state: u8,
     name: [u8; 64],
     name_len: usize,
+    is_daemon: bool,    // Kernel thread or daemon service
+    is_service: bool,   // Registered service from /etc/services.d
 }
 
 impl ProcInfo {
     fn new() -> Self {
         ProcInfo {
             pid: 0,
+            ppid: 0,
             state: b'?',
             name: [0; 64],
             name_len: 0,
+            is_daemon: false,
+            is_service: false,
         }
+    }
+
+    /// Get name as str
+    fn name_str(&self) -> &str {
+        core::str::from_utf8(&self.name[..self.name_len]).unwrap_or("???")
     }
 }
 
-/// Read process info from /proc/[pid]/status
-fn read_proc_info(pid: u32) -> Option<ProcInfo> {
-    let mut info = ProcInfo::new();
-    info.pid = pid;
-
-    // Build path: /proc/[pid]/status
-    let mut path = [0u8; 32];
-    let prefix = b"/proc/";
-    path[..prefix.len()].copy_from_slice(prefix);
-    let mut pos = prefix.len();
-
-    // Convert PID to string
+/// Convert PID to path component
+fn pid_to_path(pid: u32, path: &mut [u8], start: usize) -> usize {
     let mut pid_str = [0u8; 12];
     let mut pid_len = 0;
     let mut n = pid;
@@ -108,8 +113,74 @@ fn read_proc_info(pid: u32) -> Option<ProcInfo> {
         // Reverse
         pid_str[..pid_len].reverse();
     }
-    path[pos..pos + pid_len].copy_from_slice(&pid_str[..pid_len]);
-    pos += pid_len;
+    path[start..start + pid_len].copy_from_slice(&pid_str[..pid_len]);
+    pid_len
+}
+
+/// Check if process has a cmdline (kernel threads don't)
+fn has_cmdline(pid: u32) -> bool {
+    let mut path = [0u8; 32];
+    let prefix = b"/proc/";
+    path[..prefix.len()].copy_from_slice(prefix);
+    let mut pos = prefix.len();
+    pos += pid_to_path(pid, &mut path, pos);
+
+    let suffix = b"/cmdline";
+    path[pos..pos + suffix.len()].copy_from_slice(suffix);
+    pos += suffix.len();
+
+    let path_str = match core::str::from_utf8(&path[..pos]) {
+        Ok(s) => s,
+        Err(_) => return true,
+    };
+
+    let mut buf = [0u8; 16];
+    let n = read_file(path_str, &mut buf);
+
+    // Kernel threads have empty cmdline
+    n > 0
+}
+
+/// Check if process is registered as a service in /etc/services.d
+fn is_registered_service(name: &str) -> bool {
+    // Try to open /etc/services.d/<name>
+    let mut path = [0u8; 128];
+    let prefix = b"/etc/services.d/";
+    let name_bytes = name.as_bytes();
+
+    if prefix.len() + name_bytes.len() >= 128 {
+        return false;
+    }
+
+    path[..prefix.len()].copy_from_slice(prefix);
+    path[prefix.len()..prefix.len() + name_bytes.len()].copy_from_slice(name_bytes);
+    let path_len = prefix.len() + name_bytes.len();
+
+    let path_str = match core::str::from_utf8(&path[..path_len]) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    // Just check if file exists
+    let fd = open(path_str, O_RDONLY as u32, 0);
+    if fd >= 0 {
+        close(fd);
+        return true;
+    }
+    false
+}
+
+/// Read process info from /proc/[pid]/status
+fn read_proc_info(pid: u32) -> Option<ProcInfo> {
+    let mut info = ProcInfo::new();
+    info.pid = pid;
+
+    // Build path: /proc/[pid]/status
+    let mut path = [0u8; 32];
+    let prefix = b"/proc/";
+    path[..prefix.len()].copy_from_slice(prefix);
+    let mut pos = prefix.len();
+    pos += pid_to_path(pid, &mut path, pos);
 
     let suffix = b"/status";
     path[pos..pos + suffix.len()].copy_from_slice(suffix);
@@ -140,10 +211,27 @@ fn read_proc_info(pid: u32) -> Option<ProcInfo> {
                 if !val.is_empty() {
                     info.state = val[0];
                 }
+            } else if let Some(val) = parse_status_line(line, b"PPid") {
+                // Parse PPID
+                if let Some(ppid) = parse_num(val) {
+                    info.ppid = ppid;
+                }
             }
 
             line_start = i + 1;
         }
+    }
+
+    // Check 1: Kernel thread (no cmdline)
+    if !has_cmdline(pid) {
+        info.is_daemon = true;
+    }
+
+    // Check 2: Registered as a service in /etc/services.d
+    // Need to copy name to avoid borrow conflict
+    let name_str = core::str::from_utf8(&info.name[..info.name_len]).unwrap_or("");
+    if is_registered_service(name_str) {
+        info.is_service = true;
     }
 
     Some(info)
@@ -235,10 +323,14 @@ fn main() -> i32 {
             prints("00:00:00 ");
 
             // CMD (process name)
-            if info.name_len > 0 {
-                if let Ok(name) = core::str::from_utf8(&info.name[..info.name_len]) {
-                    prints(name);
-                }
+            // Show in brackets if it's a kernel thread or registered service
+            let name = info.name_str();
+            if info.is_daemon || info.is_service {
+                prints("[");
+                prints(name);
+                prints("]");
+            } else if !name.is_empty() {
+                prints(name);
             } else {
                 prints("???");
             }
