@@ -16,7 +16,7 @@ use sched_traits::{CpuSet, Pid, SchedPolicy, TaskState, nice_to_weight, NICE_0_W
 /// Saved CPU context for context switching
 ///
 /// Contains all registers that need to be saved/restored when switching tasks.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 #[repr(C)]
 pub struct TaskContext {
     /// Instruction pointer

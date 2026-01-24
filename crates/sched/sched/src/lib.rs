@@ -105,6 +105,9 @@ pub use crate::core::{
     preempt_disable, preempt_enable, preempt_disabled,
     // Clock
     global_clock, update_clock,
+    // Context switching support
+    get_task_context, set_task_context, get_task_pml4,
+    get_task_kernel_stack, get_task_switch_info,
 };
 
 // Re-export task types

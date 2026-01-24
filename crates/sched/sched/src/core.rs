@@ -352,6 +352,73 @@ pub fn get_task_state(pid: Pid) -> Option<TaskState> {
     None
 }
 
+/// Get task context (for context switching)
+pub fn get_task_context(pid: Pid) -> Option<crate::task::TaskContext> {
+    for cpu in 0..num_cpus() {
+        if let Some(ctx) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.context.clone())).flatten() {
+            return Some(ctx);
+        }
+    }
+    None
+}
+
+/// Update task context (for context switching)
+pub fn set_task_context(pid: Pid, context: crate::task::TaskContext) {
+    for cpu in 0..num_cpus() {
+        let found = with_rq(cpu, |rq| {
+            if let Some(task) = rq.get_task_mut(pid) {
+                task.context = context;
+                true
+            } else {
+                false
+            }
+        });
+
+        if found == Some(true) {
+            break;
+        }
+    }
+}
+
+/// Get task PML4 physical address (for address space switching)
+pub fn get_task_pml4(pid: Pid) -> Option<PhysAddr> {
+    for cpu in 0..num_cpus() {
+        if let Some(pml4) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.pml4_phys)).flatten() {
+            return Some(pml4);
+        }
+    }
+    None
+}
+
+/// Get task kernel stack info (for context switching)
+pub fn get_task_kernel_stack(pid: Pid) -> Option<(PhysAddr, usize)> {
+    for cpu in 0..num_cpus() {
+        if let Some(info) = with_rq(cpu, |rq| {
+            rq.get_task(pid).map(|t| (t.kernel_stack, t.kernel_stack_size))
+        }).flatten() {
+            return Some(info);
+        }
+    }
+    None
+}
+
+/// Get all context switch info for a task in one call (more efficient)
+pub fn get_task_switch_info(pid: Pid) -> Option<(crate::task::TaskContext, PhysAddr, PhysAddr, usize)> {
+    for cpu in 0..num_cpus() {
+        if let Some(info) = with_rq(cpu, |rq| {
+            rq.get_task(pid).map(|t| (
+                t.context.clone(),
+                t.pml4_phys,
+                t.kernel_stack,
+                t.kernel_stack_size,
+            ))
+        }).flatten() {
+            return Some(info);
+        }
+    }
+    None
+}
+
 /// Set task CPU affinity
 pub fn set_affinity(pid: Pid, cpuset: CpuSet) {
     for cpu in 0..num_cpus() {
