@@ -16,6 +16,7 @@
 | FW-4 | Firewall syscalls | ✅ Complete |
 | FW-5 | fw CLI tool | ✅ Complete |
 | FW-6 | Boot integration | ✅ Complete |
+| SSH-C | SSH client | ✅ Complete |
 
 ---
 
@@ -324,6 +325,47 @@ fw flush input
 
 ---
 
+## Phase SSH-C: SSH Client ✅
+
+### Tasks
+
+- [x] Implement client transport layer (version exchange order)
+- [x] Implement client-side key exchange (send ECDH_INIT, receive ECDH_REPLY)
+- [x] Implement host key verification (Ed25519)
+- [x] Implement password authentication
+- [x] Implement interactive shell session with PTY
+
+### Directory Structure
+
+```
+userspace/ssh/
+├── Cargo.toml
+└── src/
+    ├── main.rs      # CLI entry, argument parsing
+    ├── transport.rs # Binary packet protocol (client side)
+    ├── kex.rs       # Client-side key exchange
+    ├── crypto.rs    # Crypto operations
+    └── session.rs   # Channel, PTY, interactive session
+```
+
+### Usage
+
+```bash
+# Basic connection
+ssh root@192.168.1.1
+
+# Specify port
+ssh -p 2222 user@hostname
+
+# Verbose mode
+ssh -v user@hostname
+
+# Specify username
+ssh -l root hostname
+```
+
+---
+
 ## Key Files Summary
 
 | Purpose | File |
@@ -337,4 +379,5 @@ fw flush input
 | FW syscalls | `crates/syscall/syscall/src/firewall.rs` |
 | FW CLI | `userspace/coreutils/src/bin/fw.rs` |
 | SSH daemon | `userspace/sshd/` |
+| SSH client | `userspace/ssh/` |
 | Init | `userspace/init/src/main.rs` |
