@@ -74,11 +74,11 @@ pub mod nr {
     pub const GETSOCKOPT: u64 = 83;
     // Directory syscalls
     pub const GETDENTS64: u64 = 84;
-    // Poll/select syscalls
-    pub const POLL: u64 = 90;
-    pub const PPOLL: u64 = 91;
-    pub const SELECT: u64 = 92;
-    pub const PSELECT6: u64 = 93;
+    // Poll/select syscalls (must match kernel - avoid collision with MMAP)
+    pub const POLL: u64 = 95;
+    pub const PPOLL: u64 = 96;
+    pub const SELECT: u64 = 97;
+    pub const PSELECT6: u64 = 98;
     // User/group syscalls
     pub const GETUID: u64 = 100;
     pub const GETEUID: u64 = 101;
