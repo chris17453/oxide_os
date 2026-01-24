@@ -8,6 +8,7 @@ extern crate alloc;
 
 pub mod arp;
 pub mod checksum;
+pub mod conntrack;
 pub mod ethernet;
 pub mod filter;
 pub mod icmp;
@@ -28,6 +29,10 @@ use net::{
 
 pub use arp::ArpCache;
 pub use ethernet::EtherType;
+pub use conntrack::{
+    connection_count, gc as conntrack_gc, lookup_state, remove_connection, tick as conntrack_tick,
+    track_icmp, track_packet, ConnEntry, ConnTrackTable, ConnTuple, TcpFlags, TcpState,
+};
 pub use filter::{
     add_rule, delete_rule, filter_input, filter_output, flush_all, flush_chain, get_policy,
     rule_count, set_policy, with_rules, ConnState, FilterChain, FilterRule, FilterVerdict,
@@ -203,23 +208,58 @@ impl TcpIpStack {
             ip_header.protocol,
         );
 
-        // Extract port information for TCP/UDP
-        match ip_header.protocol {
-            IpProtocol::Tcp if ip_payload.len() >= 4 => {
+        // Extract port information and track connection state
+        let conn_state = match ip_header.protocol {
+            IpProtocol::Tcp if ip_payload.len() >= 14 => {
                 let src_port = u16::from_be_bytes([ip_payload[0], ip_payload[1]]);
                 let dst_port = u16::from_be_bytes([ip_payload[2], ip_payload[3]]);
                 pkt_info = pkt_info.with_ports(src_port, dst_port);
+
+                // Extract TCP flags for connection tracking
+                let flags = conntrack::TcpFlags::from_byte(ip_payload[13]);
+                conntrack::track_packet(
+                    ip_header.protocol,
+                    ip_header.src,
+                    src_port,
+                    ip_header.dst,
+                    dst_port,
+                    Some(flags),
+                    payload.len(),
+                )
             }
             IpProtocol::Udp if ip_payload.len() >= 4 => {
                 let src_port = u16::from_be_bytes([ip_payload[0], ip_payload[1]]);
                 let dst_port = u16::from_be_bytes([ip_payload[2], ip_payload[3]]);
                 pkt_info = pkt_info.with_ports(src_port, dst_port);
+
+                conntrack::track_packet(
+                    ip_header.protocol,
+                    ip_header.src,
+                    src_port,
+                    ip_header.dst,
+                    dst_port,
+                    None,
+                    payload.len(),
+                )
             }
-            IpProtocol::Icmp if !ip_payload.is_empty() => {
-                pkt_info = pkt_info.with_icmp_type(ip_payload[0]);
+            IpProtocol::Icmp if ip_payload.len() >= 2 => {
+                let icmp_type = ip_payload[0];
+                let icmp_code = ip_payload[1];
+                pkt_info = pkt_info.with_icmp_type(icmp_type);
+
+                conntrack::track_icmp(
+                    ip_header.src,
+                    ip_header.dst,
+                    icmp_type,
+                    icmp_code,
+                    payload.len(),
+                )
             }
-            _ => {}
-        }
+            _ => filter::ConnState::New,
+        };
+
+        // Set connection state for filtering
+        pkt_info = pkt_info.with_state(conn_state);
 
         // Apply INPUT chain filter
         match filter::filter_input(&pkt_info) {
