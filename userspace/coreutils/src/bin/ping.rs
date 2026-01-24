@@ -13,8 +13,9 @@
 #![no_main]
 
 use libc::close;
+use libc::dns;
 use libc::socket::{
-    SOCKADDR_IN_SIZE, af, connect, htons, ipproto, recv, send, sock, sockaddr_in_octets, socket,
+    SOCKADDR_IN_SIZE, af, connect, ipproto, recv, send, sock, sockaddr_in_octets, socket,
 };
 use libc::time::sleep;
 use libc::{eprintlns, getpid, printlns, prints, putchar, strlen};
@@ -115,41 +116,6 @@ fn checksum(data: &[u8]) -> u16 {
     !sum as u16
 }
 
-/// Parse IP address from string
-fn parse_ip(s: &str) -> Option<(u8, u8, u8, u8)> {
-    let mut octets = [0u8; 4];
-    let mut octet_idx = 0;
-    let mut current: u16 = 0;
-    let mut has_digit = false;
-
-    for c in s.bytes() {
-        if c == b'.' {
-            if !has_digit || octet_idx >= 3 || current > 255 {
-                return None;
-            }
-            octets[octet_idx] = current as u8;
-            octet_idx += 1;
-            current = 0;
-            has_digit = false;
-        } else if c >= b'0' && c <= b'9' {
-            current = current * 10 + (c - b'0') as u16;
-            has_digit = true;
-            if current > 255 {
-                return None;
-            }
-        } else {
-            return None;
-        }
-    }
-
-    if !has_digit || octet_idx != 3 || current > 255 {
-        return None;
-    }
-    octets[octet_idx] = current as u8;
-
-    Some((octets[0], octets[1], octets[2], octets[3]))
-}
-
 fn print_ip(ip: (u8, u8, u8, u8)) {
     libc::print_u64(ip.0 as u64);
     putchar(b'.');
@@ -179,9 +145,8 @@ fn parse_u32(s: &str) -> Option<u32> {
 
 /// Resolve hostname using DNS (simple A record lookup)
 fn resolve_hostname(hostname: &str) -> Option<(u8, u8, u8, u8)> {
-    // For now, we'll skip DNS resolution and require IP addresses
-    // TODO: Implement DNS resolution by calling nslookup logic
-    parse_ip(hostname)
+    // Use the libc DNS resolver which handles both IP addresses and hostnames
+    dns::resolve(hostname, None)
 }
 
 /// Print usage information

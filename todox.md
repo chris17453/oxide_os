@@ -32,8 +32,8 @@
 
 ### Phase 4 (user tools/parity)
 - [x] userspace/coreutils/src/bin/more.rs — terminal size detection via tcgetwinsize ioctl
-- userspace/coreutils/src/bin/ping.rs:183 — implement DNS resolution by calling nslookup logic
-- apps/gwbasic/src/oxide_main.rs:133 — implement proper RTC reading via syscall
+- [x] userspace/coreutils/src/bin/ping.rs — implement DNS resolution (uses libc::dns::resolve)
+- [x] apps/gwbasic/src/oxide_main.rs — implement proper RTC reading (uses libc::time::gmtime_r)
 
 ### Deferred (awaiting supporting kernel features)
 - Statfs/uname/RTC/time syscalls depend on Phase 1/2 kernel timekeeping & syscall work; revisit after those land.

@@ -129,9 +129,18 @@ pub extern "C" fn watos_get_key_no_wait() -> u8 {
 /// Get current date - used by DATE$ function
 #[no_mangle]
 pub extern "C" fn watos_get_date() -> (u16, u8, u8) {
-    // Return a placeholder date (2025-01-01)
-    // TODO: implement proper RTC reading via syscall
-    (2025, 1, 19)
+    // Get current time and convert to date
+    let t = libc::time::time(None);
+    let mut tm = libc::time::Tm::default();
+    if libc::time::gmtime_r(&t, &mut tm).is_some() {
+        let year = (tm.tm_year + 1900) as u16;
+        let month = (tm.tm_mon + 1) as u8; // tm_mon is 0-11
+        let day = tm.tm_mday as u8;
+        (year, month, day)
+    } else {
+        // Fallback if gmtime fails
+        (2025, 1, 1)
+    }
 }
 
 /// Get current time - used by TIME$ function
