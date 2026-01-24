@@ -121,6 +121,14 @@ pub mod nr {
     pub const FUTEX: u64 = 202;
     pub const SET_TID_ADDRESS: u64 = 218;
     pub const EXIT_GROUP: u64 = 231;
+
+    // Firewall syscalls
+    pub const FW_ADD_RULE: u64 = 200;
+    pub const FW_DEL_RULE: u64 = 201;
+    pub const FW_LIST_RULES: u64 = 202;
+    pub const FW_SET_POLICY: u64 = 203;
+    pub const FW_FLUSH: u64 = 204;
+    pub const FW_GET_CONNTRACK: u64 = 205;
 }
 
 // Re-export syscall numbers at module level for convenience
@@ -791,4 +799,147 @@ pub fn sys_setitimer(which: i32, new_value: *const ITimerVal, old_value: *mut IT
 /// 0 on success, -1 on error
 pub fn sys_getitimer(which: i32, curr_value: *mut ITimerVal) -> i32 {
     syscall2(nr::GETITIMER, which as usize, curr_value as usize) as i32
+}
+
+// ============================================================================
+// Firewall syscall wrappers
+// ============================================================================
+
+/// Firewall rule structure (matches kernel FwRule)
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct FwRule {
+    /// Chain: 0=Input, 1=Output, 2=Forward
+    pub chain: u8,
+    /// Action: 0=Accept, 1=Drop, 2=Reject
+    pub action: u8,
+    /// Protocol: 0=Any, 1=ICMP, 6=TCP, 17=UDP
+    pub protocol: u8,
+    /// Connection state: 0=Any, 1=New, 2=Established, 3=Related, 4=Invalid
+    pub state: u8,
+    /// Source IP address (network byte order)
+    pub src_ip: u32,
+    /// Source IP prefix length (0-32)
+    pub src_prefix: u8,
+    /// Destination IP address (network byte order)
+    pub dst_ip: u32,
+    /// Destination IP prefix length (0-32)
+    pub dst_prefix: u8,
+    /// Source port start
+    pub src_port_start: u16,
+    /// Source port end
+    pub src_port_end: u16,
+    /// Destination port start
+    pub dst_port_start: u16,
+    /// Destination port end
+    pub dst_port_end: u16,
+    /// Padding for alignment
+    pub _pad: [u8; 2],
+}
+
+/// Connection tracking statistics
+#[repr(C)]
+pub struct ConntrackStats {
+    pub count: u64,
+    pub max: u64,
+}
+
+/// Firewall chain constants
+pub mod fw_chain {
+    pub const INPUT: u8 = 0;
+    pub const OUTPUT: u8 = 1;
+    pub const FORWARD: u8 = 2;
+    pub const ALL: u8 = 255;
+}
+
+/// Firewall action constants
+pub mod fw_action {
+    pub const ACCEPT: u8 = 0;
+    pub const DROP: u8 = 1;
+    pub const REJECT: u8 = 2;
+}
+
+/// Firewall protocol constants
+pub mod fw_proto {
+    pub const ANY: u8 = 0;
+    pub const ICMP: u8 = 1;
+    pub const TCP: u8 = 6;
+    pub const UDP: u8 = 17;
+}
+
+/// Connection state constants
+pub mod fw_state {
+    pub const ANY: u8 = 0;
+    pub const NEW: u8 = 1;
+    pub const ESTABLISHED: u8 = 2;
+    pub const RELATED: u8 = 3;
+    pub const INVALID: u8 = 4;
+}
+
+/// sys_fw_add_rule - Add a firewall rule
+///
+/// # Arguments
+/// * `rule` - Pointer to FwRule structure
+///
+/// # Returns
+/// 0 on success, negative errno on error
+pub fn sys_fw_add_rule(rule: *const FwRule) -> i32 {
+    syscall1(nr::FW_ADD_RULE, rule as usize) as i32
+}
+
+/// sys_fw_del_rule - Delete a firewall rule by index
+///
+/// # Arguments
+/// * `index` - Rule index to delete
+///
+/// # Returns
+/// 0 on success, negative errno on error
+pub fn sys_fw_del_rule(index: usize) -> i32 {
+    syscall1(nr::FW_DEL_RULE, index) as i32
+}
+
+/// sys_fw_list_rules - List firewall rules
+///
+/// # Arguments
+/// * `buf` - Buffer for FwRule array (null to just get count)
+/// * `buf_len` - Maximum number of rules to return
+///
+/// # Returns
+/// Number of rules copied (or total count if buf is null), negative errno on error
+pub fn sys_fw_list_rules(buf: *mut FwRule, buf_len: usize) -> i32 {
+    syscall2(nr::FW_LIST_RULES, buf as usize, buf_len) as i32
+}
+
+/// sys_fw_set_policy - Set chain default policy
+///
+/// # Arguments
+/// * `chain` - 0=Input, 1=Output, 2=Forward
+/// * `policy` - 0=Accept, 1=Drop, 2=Reject
+///
+/// # Returns
+/// 0 on success, negative errno on error
+pub fn sys_fw_set_policy(chain: u8, policy: u8) -> i32 {
+    syscall2(nr::FW_SET_POLICY, chain as usize, policy as usize) as i32
+}
+
+/// sys_fw_flush - Flush rules from a chain
+///
+/// # Arguments
+/// * `chain` - 0=Input, 1=Output, 2=Forward, 255=All
+///
+/// # Returns
+/// 0 on success, negative errno on error
+pub fn sys_fw_flush(chain: u8) -> i32 {
+    syscall1(nr::FW_FLUSH, chain as usize) as i32
+}
+
+/// sys_fw_get_conntrack - Get connection tracking statistics
+///
+/// # Arguments
+/// * `stats` - Optional pointer to ConntrackStats structure
+///
+/// # Returns
+/// Number of tracked connections, negative errno on error
+pub fn sys_fw_get_conntrack(stats: *mut ConntrackStats) -> i32 {
+    syscall1(nr::FW_GET_CONNTRACK, stats as usize) as i32
 }

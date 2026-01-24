@@ -335,6 +335,11 @@ path = "src/bin/reset.rs"
 name = "chown"
 path = "src/bin/chown.rs"
 
+# Firewall utilities
+[[bin]]
+name = "fw"
+path = "src/bin/fw.rs"
+
 [dependencies]
 libc = { path = "../libc" }
 heapless = "0.8"
