@@ -103,6 +103,7 @@ members = [
     "userspace/ssh",
     "userspace/ssh_old",
     "userspace/servicemgr",
+    "userspace/networkd",
     "bootloader/boot-uefi",
     "apps/gwbasic",
 ]
