@@ -27,6 +27,7 @@ use crate::globals::{
 };
 use crate::memory::FrameAllocatorWrapper;
 use crate::scheduler::{wake_parent, add_process};
+use sched::TaskContext;
 
 /// User exit function
 pub fn user_exit(status: i32) -> ! {
@@ -474,33 +475,65 @@ pub fn kernel_fork() -> i64 {
 
             // Save parent context with fork return value (child_pid)
             // Then switch to child immediately - child runs first
+            let parent_task_ctx = TaskContext {
+                rip: parent_context.rip,
+                rsp: parent_context.rsp,
+                rflags: parent_context.rflags,
+                rax: child_pid as u64, // Parent's fork() returns child_pid
+                rbx: parent_context.rbx,
+                rcx: parent_context.rcx,
+                rdx: parent_context.rdx,
+                rsi: parent_context.rsi,
+                rdi: parent_context.rdi,
+                rbp: parent_context.rbp,
+                r8: parent_context.r8,
+                r9: parent_context.r9,
+                r10: parent_context.r10,
+                r11: parent_context.r11,
+                r12: parent_context.r12,
+                r13: parent_context.r13,
+                r14: parent_context.r14,
+                r15: parent_context.r15,
+                cs: 0x23, // User mode
+                ss: 0x1B,
+            };
+
+            // Update parent's context in the scheduler's Task
+            // This is critical - the scheduler uses Task.context for context switching
+            sched::set_task_context(parent_pid, parent_task_ctx);
+
+            // Also update Process.context for backward compatibility
             if let Some(parent) = table.get(parent_pid) {
                 let mut proc = parent.lock();
                 let ctx = proc.context_mut();
-                ctx.rip = parent_context.rip;
-                ctx.rsp = parent_context.rsp;
-                ctx.rflags = parent_context.rflags;
-                ctx.rax = child_pid as u64; // Parent's fork() returns child_pid
-                ctx.rbx = parent_context.rbx;
-                ctx.rcx = parent_context.rcx;
-                ctx.rdx = parent_context.rdx;
-                ctx.rsi = parent_context.rsi;
-                ctx.rdi = parent_context.rdi;
-                ctx.rbp = parent_context.rbp;
-                ctx.r8 = parent_context.r8;
-                ctx.r9 = parent_context.r9;
-                ctx.r10 = parent_context.r10;
-                ctx.r11 = parent_context.r11;
-                ctx.r12 = parent_context.r12;
-                ctx.r13 = parent_context.r13;
-                ctx.r14 = parent_context.r14;
-                ctx.r15 = parent_context.r15;
-                ctx.cs = 0x23; // User mode
-                ctx.ss = 0x1B;
+                ctx.rip = parent_task_ctx.rip;
+                ctx.rsp = parent_task_ctx.rsp;
+                ctx.rflags = parent_task_ctx.rflags;
+                ctx.rax = parent_task_ctx.rax;
+                ctx.rbx = parent_task_ctx.rbx;
+                ctx.rcx = parent_task_ctx.rcx;
+                ctx.rdx = parent_task_ctx.rdx;
+                ctx.rsi = parent_task_ctx.rsi;
+                ctx.rdi = parent_task_ctx.rdi;
+                ctx.rbp = parent_task_ctx.rbp;
+                ctx.r8 = parent_task_ctx.r8;
+                ctx.r9 = parent_task_ctx.r9;
+                ctx.r10 = parent_task_ctx.r10;
+                ctx.r11 = parent_task_ctx.r11;
+                ctx.r12 = parent_task_ctx.r12;
+                ctx.r13 = parent_task_ctx.r13;
+                ctx.r14 = parent_task_ctx.r14;
+                ctx.r15 = parent_task_ctx.r15;
+                ctx.cs = parent_task_ctx.cs;
+                ctx.ss = parent_task_ctx.ss;
             }
 
             // Add child process to scheduler
             add_process(child_pid);
+
+            // Tell scheduler we're switching from parent to child
+            // This re-enqueues the parent so it can run later
+            sched::switch_to(child_pid);
 
             // Get child's context and switch to it
             let (child_ctx, child_pml4, child_kstack_top) = {
