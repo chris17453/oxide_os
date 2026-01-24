@@ -344,11 +344,102 @@ pub fn kernel_fork() -> i64 {
         Ok(child_pid) => {
             debug_fork!("[FORK] Created child process {}", child_pid);
 
-            // Add child to ready queue - scheduler will run it
-            READY_QUEUE.lock().push(child_pid);
+            // Save parent context with fork return value (child_pid)
+            // Then switch to child immediately - child runs first
+            if let Some(parent) = table.get(parent_pid) {
+                let mut proc = parent.lock();
+                let ctx = proc.context_mut();
+                ctx.rip = parent_context.rip;
+                ctx.rsp = parent_context.rsp;
+                ctx.rflags = parent_context.rflags;
+                ctx.rax = child_pid as u64; // Parent's fork() returns child_pid
+                ctx.rbx = parent_context.rbx;
+                ctx.rcx = parent_context.rcx;
+                ctx.rdx = parent_context.rdx;
+                ctx.rsi = parent_context.rsi;
+                ctx.rdi = parent_context.rdi;
+                ctx.rbp = parent_context.rbp;
+                ctx.r8 = parent_context.r8;
+                ctx.r9 = parent_context.r9;
+                ctx.r10 = parent_context.r10;
+                ctx.r11 = parent_context.r11;
+                ctx.r12 = parent_context.r12;
+                ctx.r13 = parent_context.r13;
+                ctx.r14 = parent_context.r14;
+                ctx.r15 = parent_context.r15;
+            }
 
-            // Return child PID to parent
-            child_pid as i64
+            // Put parent in ready queue
+            READY_QUEUE.lock().push(parent_pid);
+
+            // Get child's context and switch to it
+            let (child_ctx, child_pml4, child_kstack_top) = {
+                let child = match table.get(child_pid) {
+                    Some(c) => c,
+                    None => return -1,
+                };
+                let proc = child.lock();
+                (
+                    proc.context().clone(),
+                    proc.address_space().pml4_phys(),
+                    {
+                        let ks_virt = phys_to_virt(proc.kernel_stack());
+                        ks_virt.as_u64() + proc.kernel_stack_size() as u64
+                    },
+                )
+            };
+
+            // Switch to child process
+            table.set_current_pid(child_pid);
+
+            // Update kernel stack
+            unsafe {
+                arch::syscall::set_kernel_stack(child_kstack_top);
+            }
+            arch::gdt::set_kernel_stack(child_kstack_top);
+
+            // Switch to child via sysretq (child's fork returns 0)
+            static mut FORK_CHILD_CTX: ProcessContext = ProcessContext {
+                rip: 0, rsp: 0, rflags: 0, rax: 0, rbx: 0, rcx: 0, rdx: 0,
+                rsi: 0, rdi: 0, rbp: 0, r8: 0, r9: 0, r10: 0, r11: 0,
+                r12: 0, r13: 0, r14: 0, r15: 0,
+            };
+
+            unsafe {
+                *addr_of_mut!(FORK_CHILD_CTX) = child_ctx;
+
+                // Switch page tables
+                core::arch::asm!("mov cr3, {}", in(reg) child_pml4.as_u64());
+
+                let ctx_ptr = addr_of_mut!(FORK_CHILD_CTX) as u64;
+
+                // Child's fork() returns 0 (already set in do_fork)
+                core::arch::asm!(
+                    "mov rax, {ctx}",
+                    "mov rcx, [rax]",       // rip
+                    "mov r11, [rax + 16]",  // rflags
+                    "or r11, 0x200",        // Ensure IF
+                    "mov rbx, [rax + 32]",
+                    "mov rbp, [rax + 72]",
+                    "mov r12, [rax + 112]",
+                    "mov r13, [rax + 120]",
+                    "mov r14, [rax + 128]",
+                    "mov r15, [rax + 136]",
+                    "mov rdi, [rax + 64]",
+                    "mov rsi, [rax + 56]",
+                    "mov rdx, [rax + 48]",
+                    "mov r8, [rax + 80]",
+                    "mov r9, [rax + 88]",
+                    "mov r10, [rax + 96]",
+                    "push qword ptr [rax + 8]",
+                    "mov rax, [rax + 24]",  // rax = 0 (child return)
+                    "pop rsp",
+                    "swapgs",
+                    "sysretq",
+                    ctx = in(reg) ctx_ptr,
+                    options(noreturn)
+                );
+            }
         }
         Err(_e) => {
             debug_fork!("[FORK] Fork failed: {:?}", _e);

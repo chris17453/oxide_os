@@ -36,6 +36,13 @@ const MAX_CONNECTIONS: usize = 10;
 /// Log file for debugging (since stdout is redirected to /dev/null by servicemgr)
 const LOG_FILE: &str = "/var/log/sshd.log";
 
+/// Print to console
+fn log_console(msg: &str) {
+    prints("[sshd] ");
+    prints(msg);
+    prints("\n");
+}
+
 /// Write to log file for persistent debugging
 fn log_to_file(msg: &str) {
     let fd = open(LOG_FILE, (O_WRONLY | O_CREAT | O_APPEND) as u32, 0o644);
@@ -48,8 +55,9 @@ fn log_to_file(msg: &str) {
     }
 }
 
-/// Print helper - daemon should only write to log file, not console
+/// Print helper - writes to both console and log file
 fn log(msg: &str) {
+    log_console(msg);
     log_to_file(msg);
 }
 
