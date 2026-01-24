@@ -22,11 +22,11 @@ use vfs::{VnodeType, mount::GLOBAL_VFS};
 #[allow(unused_imports)]
 use crate::debug_fork;
 use crate::globals::{
-    CHILD_DONE, KERNEL_PML4, PARENT_CONTEXT, ParentContext, READY_QUEUE, USER_EXIT_STATUS,
+    CHILD_DONE, KERNEL_PML4, PARENT_CONTEXT, ParentContext, USER_EXIT_STATUS,
     USER_EXITED,
 };
 use crate::memory::FrameAllocatorWrapper;
-use crate::scheduler::wake_parent;
+use crate::scheduler::{wake_parent, add_process};
 
 /// User exit function
 pub fn user_exit(status: i32) -> ! {
@@ -34,7 +34,7 @@ pub fn user_exit(status: i32) -> ! {
     let table = process_table();
     let current_pid = table.current_pid();
 
-    // Debug: Print exit info and ready queue state
+    // Debug: Print exit info
     {
         let mut writer = serial::SerialWriter;
         let _ = writeln!(
@@ -42,16 +42,6 @@ pub fn user_exit(status: i32) -> ! {
             "[EXIT] Process {} exiting with status {}",
             current_pid, status
         );
-
-        // Print ready queue contents
-        let queue = READY_QUEUE.lock();
-        let _ = writeln!(
-            writer,
-            "[EXIT] Ready queue has {} processes: {:?}",
-            queue.len(),
-            &*queue
-        );
-        drop(queue);
     }
 
     // Debug: Print framebuffer write stats on process exit
@@ -240,30 +230,60 @@ pub fn user_exit(status: i32) -> ! {
     // Must actively switch to another process
     {
         let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[EXIT] Looking for next process in ready queue...");
+        let _ = writeln!(writer, "[EXIT] Looking for next process (parent={})...", parent_pid);
     }
+
+    // Remove exiting process from scheduler
+    crate::scheduler::remove_process(current_pid);
+
     loop {
-        let next_pid = {
-            let mut queue = READY_QUEUE.lock();
-            {
-                let mut writer = serial::SerialWriter;
-                let _ = writeln!(
-                    writer,
-                    "[EXIT] Queue check: {} processes: {:?}",
-                    queue.len(),
-                    &*queue
-                );
+        // Prioritize switching to the parent if it's ready (it was just woken)
+        let next_pid = if parent_pid > 0 {
+            if let Some(parent) = table.get(parent_pid) {
+                let state = parent.lock().state();
+                if state == proc_traits::ProcessState::Ready
+                    || state == proc_traits::ProcessState::Running {
+                    Some(parent_pid)
+                } else {
+                    None
+                }
+            } else {
+                None
             }
-            if queue.is_empty() {
+        } else {
+            None
+        };
+
+        // Fall back to finding any ready process if parent isn't ready
+        let next_pid = next_pid.or_else(|| {
+            let all_pids = table.all_pids();
+            all_pids.iter().find_map(|&pid| {
+                if pid == current_pid {
+                    return None;
+                }
+                table.get(pid).and_then(|proc_arc| {
+                    let proc = proc_arc.lock();
+                    if proc.state() == proc_traits::ProcessState::Ready
+                        || proc.state() == proc_traits::ProcessState::Running
+                    {
+                        Some(pid)
+                    } else {
+                        None
+                    }
+                })
+            })
+        });
+
+        let next_pid = match next_pid {
+            Some(pid) => pid,
+            None => {
                 // No other processes - halt the system
                 {
                     let mut writer = serial::SerialWriter;
-                    let _ = writeln!(writer, "[EXIT] READY_QUEUE EMPTY! System halting.");
+                    let _ = writeln!(writer, "[EXIT] No ready processes! System halting.");
                 }
-                drop(queue);
                 arch::X86_64::halt();
             }
-            queue.remove(0)
         };
 
         // Get next process info
@@ -479,8 +499,8 @@ pub fn kernel_fork() -> i64 {
                 ctx.ss = 0x1B;
             }
 
-            // Put parent in ready queue
-            READY_QUEUE.lock().push(parent_pid);
+            // Add child process to scheduler
+            add_process(child_pid);
 
             // Get child's context and switch to it
             let (child_ctx, child_pml4, child_kstack_top) = {
