@@ -34,6 +34,10 @@ const BACKSPACE: u8 = 0x7F;
 /// Ctrl-H (alternate backspace)
 const CTRL_H: u8 = 0x08;
 
+/// ANSI escape introducer
+const ESC: u8 = 0x1B;
+const CSI: u8 = b'[';
+
 /// Maximum number of aliases
 const MAX_ALIASES: usize = 64;
 
@@ -297,6 +301,12 @@ struct ShellState {
     history_count: usize,
     /// Current history position (for navigation)
     history_pos: usize,
+    /// In-progress line buffer for editing
+    edit_buf: [u8; MAX_LINE],
+    /// Current edit length
+    edit_len: usize,
+    /// Current cursor column (only supports end-of-line editing for now)
+    cursor: usize,
 }
 
 impl ShellState {
@@ -313,6 +323,9 @@ impl ShellState {
             history: [EMPTY_LINE; MAX_HISTORY],
             history_count: 0,
             history_pos: 0,
+            edit_buf: [0; MAX_LINE],
+            edit_len: 0,
+            cursor: 0,
         }
     }
 }
@@ -466,7 +479,10 @@ fn add_to_history(line: &[u8]) {
 
 /// Read a line with tab completion support
 fn read_line_with_completion(buf: &mut [u8]) -> usize {
-    let mut len: usize = 0;
+    let state = shell();
+    state.edit_len = 0;
+    state.edit_buf.fill(0);
+    state.cursor = 0;
 
     loop {
         let c = getchar();
@@ -477,24 +493,62 @@ fn read_line_with_completion(buf: &mut [u8]) -> usize {
 
         let c = c as u8;
 
+        // Handle escape sequences for arrows
+        if c == ESC {
+            let next = getchar();
+            if next == b'[' as i32 {
+                let code = getchar() as u8;
+                match code {
+                    b'A' => {
+                        // Up arrow: previous history
+                        if state.history_count > 0 && state.history_pos > 0 {
+                            state.history_pos -= 1;
+                            let line = &state.history[state.history_pos];
+                            replace_line(line, &mut state.edit_len);
+                        }
+                        continue;
+                    }
+                    b'B' => {
+                        // Down arrow: next history
+                        if state.history_pos + 1 < state.history_count {
+                            state.history_pos += 1;
+                            let line = &state.history[state.history_pos];
+                            replace_line(line, &mut state.edit_len);
+                        } else {
+                            // Beyond last: clear line
+                            state.history_pos = state.history_count;
+                            replace_line(&[0], &mut state.edit_len);
+                        }
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         match c {
             b'\n' | b'\r' => {
-                buf[len] = b'\n';
-                len += 1;
-                buf[len] = 0;
+                buf[..state.edit_len].copy_from_slice(&state.edit_buf[..state.edit_len]);
+                buf[state.edit_len] = b'\n';
+                let len = state.edit_len + 1;
+                if len < buf.len() {
+                    buf[len] = 0;
+                }
                 putchar(b'\n');
                 return len;
             }
             TAB => {
                 // Tab completion
-                handle_tab_completion(buf, &mut len);
+                buf[..state.edit_len].copy_from_slice(&state.edit_buf[..state.edit_len]);
+                handle_tab_completion(buf, &mut state.edit_len);
+                state.edit_buf[..state.edit_len].copy_from_slice(&buf[..state.edit_len]);
             }
             BACKSPACE | CTRL_H => {
                 // Backspace
-                if len > 0 {
-                    len -= 1;
-                    buf[len] = 0;
-                    // Erase character on terminal
+                if state.edit_len > 0 {
+                    state.edit_len -= 1;
+                    state.edit_buf[state.edit_len] = 0;
+                    // Erase character on terminal (only supports end-of-line editing)
                     prints("\x08 \x08");
                 }
             }
@@ -512,14 +566,33 @@ fn read_line_with_completion(buf: &mut [u8]) -> usize {
             }
             _ => {
                 // Regular character
-                if len < buf.len() - 2 && c >= 0x20 {
-                    buf[len] = c;
-                    len += 1;
+                if state.edit_len < buf.len() - 2 && c >= 0x20 {
+                    state.edit_buf[state.edit_len] = c;
+                    state.edit_len += 1;
                     putchar(c);
                 }
             }
         }
     }
+}
+
+/// Replace current input line with provided content and redraw
+fn replace_line(line: &[u8], len_out: &mut usize) {
+    // Clear current line (rudimentary: carriage return + clear to end)
+    prints("\r\x1b[2K");
+    print_prompt();
+
+    let mut len = 0;
+    while len < line.len() && line[len] != 0 && len < MAX_LINE - 1 {
+        putchar(line[len]);
+        len += 1;
+    }
+
+    let state = shell();
+    state.edit_buf[..len].copy_from_slice(&line[..len]);
+    state.edit_len = len;
+    state.cursor = len;
+    *len_out = len;
 }
 
 /// Handle tab completion

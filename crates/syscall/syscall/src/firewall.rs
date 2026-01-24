@@ -13,8 +13,8 @@ use net::Ipv4Addr;
 use os_core::VirtAddr;
 use proc::process_table;
 use tcpip::{
-    add_rule, connection_count, delete_rule, flush_chain, get_policy, rule_count, set_policy,
-    with_rules, ConnState, FilterChain, FilterRule, FilterVerdict, IpMatch, IpProtocol, PortMatch,
+    ConnState, FilterChain, FilterRule, FilterVerdict, IpMatch, IpProtocol, PortMatch, add_rule,
+    connection_count, delete_rule, flush_chain, get_policy, rule_count, set_policy, with_rules,
 };
 
 /// Rule structure for userspace communication
@@ -131,30 +131,45 @@ impl FwRule {
 
         let protocol = rule.protocol.map(|p| u8::from(p)).unwrap_or(0);
 
-        let (src_ip, src_prefix) = rule.src_ip.as_ref().map(|m| {
-            let bytes = m.addr.as_bytes();
-            (u32::from_be_bytes(*bytes), m.prefix)
-        }).unwrap_or((0, 0));
+        let (src_ip, src_prefix) = rule
+            .src_ip
+            .as_ref()
+            .map(|m| {
+                let bytes = m.addr.as_bytes();
+                (u32::from_be_bytes(*bytes), m.prefix)
+            })
+            .unwrap_or((0, 0));
 
-        let (dst_ip, dst_prefix) = rule.dst_ip.as_ref().map(|m| {
-            let bytes = m.addr.as_bytes();
-            (u32::from_be_bytes(*bytes), m.prefix)
-        }).unwrap_or((0, 0));
+        let (dst_ip, dst_prefix) = rule
+            .dst_ip
+            .as_ref()
+            .map(|m| {
+                let bytes = m.addr.as_bytes();
+                (u32::from_be_bytes(*bytes), m.prefix)
+            })
+            .unwrap_or((0, 0));
 
-        let (src_port_start, src_port_end) = rule.src_port.as_ref()
+        let (src_port_start, src_port_end) = rule
+            .src_port
+            .as_ref()
             .map(|p| (p.start, p.end))
             .unwrap_or((0, 0));
 
-        let (dst_port_start, dst_port_end) = rule.dst_port.as_ref()
+        let (dst_port_start, dst_port_end) = rule
+            .dst_port
+            .as_ref()
             .map(|p| (p.start, p.end))
             .unwrap_or((0, 0));
 
-        let state = rule.state.map(|s| match s {
-            ConnState::New => 1,
-            ConnState::Established => 2,
-            ConnState::Related => 3,
-            ConnState::Invalid => 4,
-        }).unwrap_or(0);
+        let state = rule
+            .state
+            .map(|s| match s {
+                ConnState::New => 1,
+                ConnState::Established => 2,
+                ConnState::Related => 3,
+                ConnState::Invalid => 4,
+            })
+            .unwrap_or(0);
 
         FwRule {
             chain,

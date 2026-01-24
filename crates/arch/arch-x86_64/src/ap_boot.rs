@@ -2,9 +2,9 @@
 //!
 //! Provides trampoline code and setup for booting APs from real mode to long mode.
 
+use boot_proto::PHYS_MAP_BASE;
 use core::arch::asm;
 use os_core::PhysAddr;
-use boot_proto::PHYS_MAP_BASE;
 
 /// Physical address where trampoline code is copied
 pub const TRAMPOLINE_PHYS: u64 = 0x8000;

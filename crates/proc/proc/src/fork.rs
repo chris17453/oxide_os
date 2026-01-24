@@ -372,9 +372,9 @@ pub fn handle_cow_fault<A: FrameAllocator>(
         // Already writable - another CPU handled it
         // Check if it's actually writable now
         if pt_entry.is_writable() {
-            return true;  // Success - already fixed
+            return true; // Success - already fixed
         }
-        return false;  // Not COW and not writable = error
+        return false; // Not COW and not writable = error
     }
 
     let old_phys = pt_entry.addr();

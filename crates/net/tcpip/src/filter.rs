@@ -568,7 +568,10 @@ mod tests {
             IpProtocol::Tcp,
         )
         .with_ports(12345, 22);
-        assert_eq!(table.filter(FilterChain::Input, &ssh_pkt), FilterVerdict::Accept);
+        assert_eq!(
+            table.filter(FilterChain::Input, &ssh_pkt),
+            FilterVerdict::Accept
+        );
 
         // HTTP should be dropped
         let http_pkt = PacketInfo::new(
@@ -577,6 +580,9 @@ mod tests {
             IpProtocol::Tcp,
         )
         .with_ports(12345, 80);
-        assert_eq!(table.filter(FilterChain::Input, &http_pkt), FilterVerdict::Drop);
+        assert_eq!(
+            table.filter(FilterChain::Input, &http_pkt),
+            FilterVerdict::Drop
+        );
     }
 }

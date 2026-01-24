@@ -76,8 +76,8 @@ impl Entry {
     }
 
     fn is_dot_or_dotdot(&self) -> bool {
-        (self.name[0] == b'.' && self.name[1] == 0) ||
-        (self.name[0] == b'.' && self.name[1] == b'.' && self.name[2] == 0)
+        (self.name[0] == b'.' && self.name[1] == 0)
+            || (self.name[0] == b'.' && self.name[1] == b'.' && self.name[2] == 0)
     }
 }
 
@@ -147,7 +147,11 @@ fn format_number(n: u64, buf: &mut [u8], width: usize) -> usize {
     }
 
     // Pad with spaces
-    let start = if width > buf.len() - pos { 0 } else { buf.len() - width };
+    let start = if width > buf.len() - pos {
+        0
+    } else {
+        buf.len() - width
+    };
     for i in start..pos {
         buf[i] = b' ';
     }
@@ -363,7 +367,12 @@ fn print_columns(entries: &[Entry], count: usize, args: &Args) {
     let mut max_len = 0;
     for i in 0..count {
         let len = entries[i].name_len();
-        let extra = if args.classify && indicator_char(entries[i].d_type, entries[i].mode).is_some() { 1 } else { 0 };
+        let extra = if args.classify && indicator_char(entries[i].d_type, entries[i].mode).is_some()
+        {
+            1
+        } else {
+            0
+        };
         if len + extra > max_len {
             max_len = len + extra;
         }
@@ -374,7 +383,11 @@ fn print_columns(entries: &[Entry], count: usize, args: &Args) {
 
     // Assume 80 column terminal
     let term_width = 80;
-    let num_cols = if col_width > 0 { term_width / col_width } else { 1 };
+    let num_cols = if col_width > 0 {
+        term_width / col_width
+    } else {
+        1
+    };
     let num_cols = if num_cols == 0 { 1 } else { num_cols };
 
     // Print in columns (row-major order like Linux ls)
@@ -587,8 +600,16 @@ fn list_directory(path: &[u8], args: &Args, depth: usize, show_header: bool) -> 
 fn compare_names(a: &[u8], b: &[u8]) -> i32 {
     let mut i = 0;
     loop {
-        let ca = if a[i] >= b'A' && a[i] <= b'Z' { a[i] + 32 } else { a[i] };
-        let cb = if b[i] >= b'A' && b[i] <= b'Z' { b[i] + 32 } else { b[i] };
+        let ca = if a[i] >= b'A' && a[i] <= b'Z' {
+            a[i] + 32
+        } else {
+            a[i]
+        };
+        let cb = if b[i] >= b'A' && b[i] <= b'Z' {
+            b[i] + 32
+        } else {
+            b[i]
+        };
 
         if ca == 0 && cb == 0 {
             return 0;

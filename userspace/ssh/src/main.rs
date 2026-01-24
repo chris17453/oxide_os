@@ -15,12 +15,9 @@ extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use libc::*;
-use libc::socket::{
-    socket, connect, SockAddrIn, SOCKADDR_IN_SIZE, InAddr,
-    af, sock,
-};
 use libc::dns;
+use libc::socket::{InAddr, SOCKADDR_IN_SIZE, SockAddrIn, af, connect, sock, socket};
+use libc::*;
 
 mod crypto;
 mod kex;
@@ -28,7 +25,7 @@ mod session;
 mod transport;
 
 use kex::perform_key_exchange;
-use session::{authenticate_password, request_userauth_service, run_session, SshChannel};
+use session::{SshChannel, authenticate_password, request_userauth_service, run_session};
 use transport::{SshTransport, TransportError};
 
 /// SSH client configuration
@@ -191,7 +188,8 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     if config.verbose {
         printlns("ssh: authenticating");
     }
-    if let Err(e) = authenticate_password(&mut transport, username.as_bytes(), password.as_bytes()) {
+    if let Err(e) = authenticate_password(&mut transport, username.as_bytes(), password.as_bytes())
+    {
         match e {
             TransportError::AuthFailed => {
                 eprintlns("ssh: authentication failed");
@@ -327,11 +325,7 @@ fn parse_port(s: &str) -> Option<u16> {
         port = port.checked_mul(10)?;
         port = port.checked_add((c as u16) - ('0' as u16))?;
     }
-    if port == 0 {
-        None
-    } else {
-        Some(port)
-    }
+    if port == 0 { None } else { Some(port) }
 }
 
 /// Resolve hostname to IP address
@@ -375,11 +369,7 @@ fn parse_u8(s: &str) -> Option<u8> {
         val = val.checked_mul(10)?;
         val = val.checked_add((c as u16) - ('0' as u16))?;
     }
-    if val > 255 {
-        None
-    } else {
-        Some(val as u8)
-    }
+    if val > 255 { None } else { Some(val as u8) }
 }
 
 /// Connect to SSH server

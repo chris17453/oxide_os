@@ -84,7 +84,7 @@ fn debug_print_num(msg: &str, num: i64) {
                 }
             }
             // Reverse
-            for j in 0..i/2 {
+            for j in 0..i / 2 {
                 buf.swap(j, i - 1 - j);
             }
             write_fn(&buf[..i]);

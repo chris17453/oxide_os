@@ -7,12 +7,14 @@
 //! - I/O multiplexing between client and shell
 
 use alloc::vec::Vec;
+use libc::socket::{msg as sock_msg, recv};
 use libc::*;
-use libc::socket::{recv, msg as sock_msg};
 
 use crate::auth::authenticated_user;
-use crate::channel::{send_channel_failure, send_channel_success, ChannelManager, ChannelState};
-use crate::transport::{decode_string, decode_u32, decode_u8, msg, SshTransport, TransportError, TransportResult};
+use crate::channel::{ChannelManager, ChannelState, send_channel_failure, send_channel_success};
+use crate::transport::{
+    SshTransport, TransportError, TransportResult, decode_string, decode_u8, decode_u32, msg,
+};
 
 /// Run the session after authentication
 pub fn run_session(transport: &mut SshTransport) -> TransportResult<()> {
@@ -102,7 +104,9 @@ fn handle_channel_request(
     let request_type = decode_string(payload, &mut offset)?;
     let want_reply = decode_u8(payload, &mut offset)?;
 
-    let channel = channels.get_mut(recipient).ok_or(TransportError::Protocol)?;
+    let channel = channels
+        .get_mut(recipient)
+        .ok_or(TransportError::Protocol)?;
     let remote_id = channel.remote_id;
 
     let success = match request_type.as_slice() {
@@ -319,7 +323,10 @@ fn resize_pty(channel: &mut crate::channel::Channel, width: u32, height: u32) ->
 }
 
 /// Poll PTY for output and send to client
-fn poll_pty_output(transport: &mut SshTransport, channels: &mut ChannelManager) -> TransportResult<()> {
+fn poll_pty_output(
+    transport: &mut SshTransport,
+    channels: &mut ChannelManager,
+) -> TransportResult<()> {
     // This is a simplified version - in production, we'd use poll/select
     // Collect channel info first to avoid borrow conflicts
     let channel_ids: Vec<u32> = (0..channels.next_id).collect();

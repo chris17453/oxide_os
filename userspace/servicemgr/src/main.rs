@@ -1,4 +1,4 @@
-//! OXIDE Service Manager
+//! OXIDE Service Manager (service)
 //!
 //! A simple service manager that:
 //! - Reads service definitions from /etc/services.d/
@@ -6,12 +6,12 @@
 //! - Provides a CLI for service control
 //!
 //! Usage:
-//!   servicemgr daemon   - Run as daemon (started by init)
-//!   servicemgr start <service>
-//!   servicemgr stop <service>
-//!   servicemgr restart <service>
-//!   servicemgr status [service]
-//!   servicemgr list
+//!   service daemon   - Run as daemon (started by init)
+//!   service start <service>
+//!   service stop <service>
+//!   service restart <service>
+//!   service status [service]
+//!   service list
 
 #![no_std]
 #![no_main]
@@ -20,9 +20,9 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 use core::cell::UnsafeCell;
-use libc::*;
-use libc::dirent::{opendir, readdir, closedir};
+use libc::dirent::{closedir, opendir, readdir};
 use libc::time::usleep;
+use libc::*;
 
 /// Maximum number of services
 const MAX_SERVICES: usize = 32;
@@ -97,22 +97,23 @@ impl<T> SyncUnsafeCell<T> {
 }
 
 /// Service registry
-static SERVICES: SyncUnsafeCell<[Service; MAX_SERVICES]> = SyncUnsafeCell::new([const { Service::empty() }; MAX_SERVICES]);
+static SERVICES: SyncUnsafeCell<[Service; MAX_SERVICES]> =
+    SyncUnsafeCell::new([const { Service::empty() }; MAX_SERVICES]);
 static SERVICE_COUNT: SyncUnsafeCell<usize> = SyncUnsafeCell::new(0);
 
 /// PID file path
-const PID_FILE: &str = "/run/servicemgr.pid";
+const PID_FILE: &str = "/run/service.pid";
 
 /// Print helper
 fn log(msg: &str) {
-    prints("[servicemgr] ");
+    prints("[service] ");
     prints(msg);
     prints("\n");
 }
 
 /// Print with service name
 fn log_service(service: &str, msg: &str) {
-    prints("[servicemgr] ");
+    prints("[service] ");
     prints(service);
     prints(": ");
     prints(msg);
@@ -250,7 +251,9 @@ fn parse_service_file(name: &str, service: &mut Service) -> bool {
 
 /// Find bytes in slice
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 /// Find newline in slice

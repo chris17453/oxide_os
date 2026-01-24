@@ -90,9 +90,10 @@ struct GetModeRequest {
 const FBIOGET_VSCREENINFO: u64 = 0x4600;
 const FBIOGET_FSCREENINFO: u64 = 0x4602;
 
-// OXIDE-specific IOCTL commands
-const OXIDE_FB_GET_MODE_COUNT: u64 = 0x4700;
-const OXIDE_FB_GET_MODE: u64 = 0x4701;
+// Framebuffer IOCTL commands
+const FB_GET_MODE_COUNT: u64 = 0x4700;
+const FB_GET_MODE: u64 = 0x4701;
+const FB_SET_MODE: u64 = 0x4702;
 
 fn print_str(s: &str) {
     write(STDOUT_FILENO, s.as_bytes());
@@ -166,9 +167,9 @@ fn main() -> i32 {
     print_num(fd as u32);
     print_str(")\n\n");
 
-    // Enumerate available video modes
-    print_str("=== Available Video Modes ===\n");
-    let mode_count = syscall::sys_ioctl(fd, OXIDE_FB_GET_MODE_COUNT, 0);
+    // Enumerate available video modes from driver
+    print_str("=== Available Video Modes (driver) ===\n");
+    let mode_count = syscall::sys_ioctl(fd, FB_GET_MODE_COUNT, 0);
     if mode_count > 0 {
         print_str("Mode count: ");
         print_num(mode_count as u32);
@@ -178,7 +179,7 @@ fn main() -> i32 {
             let mut request: GetModeRequest = unsafe { core::mem::zeroed() };
             request.index = i;
 
-            let ret = syscall::sys_ioctl(fd, OXIDE_FB_GET_MODE, &mut request as *mut _ as u64);
+            let ret = syscall::sys_ioctl(fd, FB_GET_MODE, &mut request as *mut _ as u64);
             if ret == 0 {
                 print_str("Mode ");
                 print_num(i);
@@ -199,6 +200,10 @@ fn main() -> i32 {
                 print_str(" size=");
                 print_num64(request.info.framebuffer_size);
                 print_str("\n");
+            } else {
+                print_str("Mode ");
+                print_num(i);
+                print_str(": <query failed>\n");
             }
         }
     } else {
@@ -273,26 +278,9 @@ fn main() -> i32 {
 
     print_str("\n=== Drawing Test Pattern ===\n");
 
-    let width = var_info.xres as usize;
-    let height = var_info.yres as usize;
-    let stride = fix_info.line_length as usize;
-    let bpp = (var_info.bits_per_pixel / 8) as usize;
-
-    print_str("fbtest: width=");
-    print_num(width as u32);
-    print_str(" height=");
-    print_num(height as u32);
-    print_str(" stride=");
-    print_num(stride as u32);
-    print_str(" bpp=");
-    print_num(bpp as u32);
-    print_str("\n");
-
-    // Create a line buffer
-    let mut line_buf = [0u8; 5120]; // 1280 pixels * 4 bytes max
-
-    // Draw colored stripes (top portion of screen)
-    let stripe_height = height / 8;
+    // Create reusable chunk buffers to avoid stack overflows on large modes
+    let mut line_buf = [0u8; 4096];
+    let mut border_buf = [0u8; 40]; // 10 pixels * 4 bytes (updated below)
     let colors: [(u8, u8, u8); 8] = [
         (255, 0, 0),     // Red
         (0, 255, 0),     // Green
@@ -304,94 +292,225 @@ fn main() -> i32 {
         (128, 128, 128), // Gray
     ];
 
-    // Test pixel creation
-    let test_pixel = make_pixel(255, 0, 0); // Red
-    print_str("fbtest: Test red pixel value: 0x");
-    print_hex(test_pixel);
-    print_str("\n");
+    for i in 0..mode_count as u32 {
+        let mut request: GetModeRequest = unsafe { core::mem::zeroed() };
+        request.index = i;
 
-    for stripe in 0..8 {
-        let (r, g, b) = colors[stripe];
-        let pixel = make_pixel(r, g, b);
-
-        if stripe == 0 {
-            print_str("fbtest: Stripe 0 pixel (red): 0x");
-            print_hex(pixel);
+        // Fetch mode info
+        let ret = syscall::sys_ioctl(fd, FB_GET_MODE, &mut request as *mut _ as u64);
+        if ret != 0 {
+            print_str("Failed to get mode ");
+            print_num(i);
             print_str("\n");
+            continue;
         }
 
-        // Fill line buffer with this color
-        for x in 0..width {
-            let offset = x * bpp;
-            if offset + 4 <= line_buf.len() {
-                line_buf[offset] = (pixel & 0xFF) as u8;
-                line_buf[offset + 1] = ((pixel >> 8) & 0xFF) as u8;
-                line_buf[offset + 2] = ((pixel >> 16) & 0xFF) as u8;
-                line_buf[offset + 3] = ((pixel >> 24) & 0xFF) as u8;
+        // Attempt to switch to this mode
+        let set_ret = syscall::sys_ioctl(fd, FB_SET_MODE, &mut request as *mut _ as u64);
+        if set_ret != 0 {
+            print_str("Failed to set mode ");
+            print_num(i);
+            print_str("\n");
+            continue;
+        }
+
+        // Refresh mode info after switch (driver may adjust parameters)
+        let ret = syscall::sys_ioctl(fd, FB_GET_MODE, &mut request as *mut _ as u64);
+        if ret != 0 {
+            print_str("Failed to refresh mode ");
+            print_num(i);
+            print_str("\n");
+            continue;
+        }
+
+        let width = request.info.width as usize;
+        let height = request.info.height as usize;
+        let stride = request.info.stride as usize;
+        let bpp_bits = request.info.bpp as usize;
+        let fb_size = request.info.framebuffer_size as usize;
+
+        if stride == 0 || bpp_bits == 0 || fb_size == 0 {
+            print_str("Invalid framebuffer parameters; skipping\n");
+            continue;
+        }
+
+        let bpp = bpp_bits / 8;
+        if bpp == 0 {
+            print_str("Unsupported bpp; skipping\n");
+            continue;
+        }
+
+        let usable_height = core::cmp::min(height, fb_size / stride);
+        if usable_height == 0 {
+            print_str("Framebuffer too small for one row; skipping\n");
+            continue;
+        }
+
+        print_str("Testing mode ");
+        print_num(i);
+        print_str(": ");
+        print_num(width as u32);
+        print_str("x");
+        print_num(height as u32);
+        print_str(" @ ");
+        print_num(request.info.bpp);
+        print_str("bpp\n");
+
+        let make_pixel: fn(u8, u8, u8) -> u32 = if request.info.is_bgr {
+            make_pixel_bgra
+        } else {
+            make_pixel_rgba
+        };
+
+        // Helper: fill chunk buffer with repeated pixel value
+        let fill_chunk = |buf: &mut [u8], pixel: u32, bpp: usize| {
+            let chunk_pixels = buf.len() / bpp;
+            for i in 0..chunk_pixels {
+                let offset = i * bpp;
+                buf[offset] = (pixel & 0xFF) as u8;
+                buf[offset + 1] = ((pixel >> 8) & 0xFF) as u8;
+                buf[offset + 2] = ((pixel >> 16) & 0xFF) as u8;
+                if bpp > 3 {
+                    buf[offset + 3] = ((pixel >> 24) & 0xFF) as u8;
+                }
+            }
+            let remainder = buf.len() % bpp;
+            if remainder > 0 {
+                let offset = chunk_pixels * bpp;
+                buf[offset] = (pixel & 0xFF) as u8;
+                if remainder > 1 {
+                    buf[offset + 1] = ((pixel >> 8) & 0xFF) as u8;
+                }
+                if remainder > 2 {
+                    buf[offset + 2] = ((pixel >> 16) & 0xFF) as u8;
+                }
+                if remainder > 3 {
+                    buf[offset + 3] = ((pixel >> 24) & 0xFF) as u8;
+                }
+            }
+            chunk_pixels * bpp + remainder
+        };
+
+        // Helper: write a solid line safely in chunks
+        let mut write_solid_line = |fd: i32, file_offset: i64, pixel: u32, line_bytes: usize| {
+            let mut written = 0;
+            lseek(fd, file_offset, SEEK_SET);
+            while written < line_bytes {
+                let chunk_size = core::cmp::min(line_bytes - written, line_buf.len());
+                let filled = fill_chunk(&mut line_buf[..chunk_size], pixel, bpp);
+                let to_write = core::cmp::min(chunk_size, filled);
+                if to_write == 0 {
+                    break;
+                }
+                write(fd, &line_buf[..to_write]);
+                written += to_write;
+            }
+        };
+
+        // Draw colored stripes (top portion of screen)
+        let stripe_height = core::cmp::max(1, usable_height / 8);
+
+        for stripe in 0..8 {
+            let (r, g, b) = colors[stripe];
+            let pixel = make_pixel(r, g, b);
+
+            // Write this line for stripe_height rows (clamp to screen height)
+            let start_y = stripe * stripe_height;
+            if start_y >= usable_height {
+                break;
+            }
+            let end_y = core::cmp::min(usable_height, start_y + stripe_height);
+            let base_line_bytes = core::cmp::min(width * bpp, stride);
+            for y in start_y..end_y {
+                let file_offset = (y * stride) as i64;
+                let remaining = fb_size.saturating_sub(y * stride);
+                let line_bytes = core::cmp::min(base_line_bytes, remaining);
+                if line_bytes == 0 {
+                    break;
+                }
+                write_solid_line(fd, file_offset, pixel, line_bytes);
             }
         }
 
-        // Write this line for stripe_height rows
-        let start_y = stripe * stripe_height;
-        for y in start_y..(start_y + stripe_height) {
+        // Draw a white border/frame
+        let border = 10;
+        let frame_color = make_pixel(255, 255, 255);
+
+        // Fill border chunk with white (max border 10 pixels)
+        let border_pixels = core::cmp::min(border, width);
+        border_buf.fill(0);
+        for i in 0..border_pixels {
+            let offset = i * bpp;
+            if offset >= border_buf.len() {
+                break;
+            }
+            border_buf[offset] = (frame_color & 0xFF) as u8;
+            if offset + 1 < border_buf.len() {
+                border_buf[offset + 1] = ((frame_color >> 8) & 0xFF) as u8;
+            }
+            if offset + 2 < border_buf.len() {
+                border_buf[offset + 2] = ((frame_color >> 16) & 0xFF) as u8;
+            }
+            if bpp > 3 && offset + 3 < border_buf.len() {
+                border_buf[offset + 3] = ((frame_color >> 24) & 0xFF) as u8;
+            }
+        }
+
+        let base_line_bytes = core::cmp::min(width * bpp, stride);
+
+        // Top border
+        for y in 0..core::cmp::min(border, usable_height) {
             let file_offset = (y * stride) as i64;
-            lseek(fd, file_offset, SEEK_SET);
-            write(fd, &line_buf[..width * bpp]);
+            let remaining = fb_size.saturating_sub(y * stride);
+            let line_bytes = core::cmp::min(base_line_bytes, remaining);
+            if line_bytes == 0 {
+                break;
+            }
+            write_solid_line(fd, file_offset, frame_color, line_bytes);
         }
-    }
 
-    // Draw a white border/frame
-    let border = 10;
-    let frame_color = make_pixel(255, 255, 255);
-
-    // Fill line with white
-    for x in 0..width {
-        let offset = x * bpp;
-        if offset + 4 <= line_buf.len() {
-            line_buf[offset] = (frame_color & 0xFF) as u8;
-            line_buf[offset + 1] = ((frame_color >> 8) & 0xFF) as u8;
-            line_buf[offset + 2] = ((frame_color >> 16) & 0xFF) as u8;
-            line_buf[offset + 3] = ((frame_color >> 24) & 0xFF) as u8;
+        // Bottom border
+        if usable_height > border {
+            for y in (usable_height - border)..usable_height {
+                let file_offset = (y * stride) as i64;
+                let remaining = fb_size.saturating_sub(y * stride);
+                let line_bytes = core::cmp::min(base_line_bytes, remaining);
+                if line_bytes == 0 {
+                    break;
+                }
+                write_solid_line(fd, file_offset, frame_color, line_bytes);
+            }
         }
+
+        // Left and right borders (only if the line is wider than the border)
+        if width > border {
+            for y in border..usable_height.saturating_sub(border) {
+                // Left border
+                let file_offset = (y * stride) as i64;
+                lseek(fd, file_offset, SEEK_SET);
+                let to_write = core::cmp::min(border_pixels * bpp, border_buf.len());
+                write(fd, &border_buf[..to_write]);
+
+                // Right border
+                let right_offset = (y * stride + (width - border_pixels) * bpp) as i64;
+                if (y * stride) < fb_size && right_offset >= 0 {
+                    let remaining =
+                        fb_size.saturating_sub((y * stride) + (width - border_pixels) * bpp);
+                    let to_write = core::cmp::min(border_pixels * bpp, remaining);
+                    let to_write = core::cmp::min(to_write, border_buf.len());
+                    if to_write > 0 {
+                        lseek(fd, right_offset, SEEK_SET);
+                        write(fd, &border_buf[..to_write]);
+                    }
+                }
+            }
+        }
+
+        print_str("Mode ");
+        print_num(i);
+        print_str(" done.\n");
     }
 
-    // Top border
-    for y in 0..border {
-        let file_offset = (y * stride) as i64;
-        lseek(fd, file_offset, SEEK_SET);
-        write(fd, &line_buf[..width * bpp]);
-    }
-
-    // Bottom border
-    for y in (height - border)..height {
-        let file_offset = (y * stride) as i64;
-        lseek(fd, file_offset, SEEK_SET);
-        write(fd, &line_buf[..width * bpp]);
-    }
-
-    // Left and right borders (draw a small segment for each row)
-    let mut border_buf = [0u8; 40]; // 10 pixels * 4 bytes
-    for i in 0..border {
-        let offset = i * bpp;
-        border_buf[offset] = (frame_color & 0xFF) as u8;
-        border_buf[offset + 1] = ((frame_color >> 8) & 0xFF) as u8;
-        border_buf[offset + 2] = ((frame_color >> 16) & 0xFF) as u8;
-        border_buf[offset + 3] = ((frame_color >> 24) & 0xFF) as u8;
-    }
-
-    for y in border..(height - border) {
-        // Left border
-        let file_offset = (y * stride) as i64;
-        lseek(fd, file_offset, SEEK_SET);
-        write(fd, &border_buf[..border * bpp]);
-
-        // Right border
-        let right_offset = (y * stride + (width - border) * bpp) as i64;
-        lseek(fd, right_offset, SEEK_SET);
-        write(fd, &border_buf[..border * bpp]);
-    }
-
-    print_str("fbtest: Test pattern drawn!\n");
     print_str("fbtest: Done.\n");
 
     close(fd);

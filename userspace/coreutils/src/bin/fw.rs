@@ -14,8 +14,8 @@
 #![no_main]
 
 use libc::syscall::{
-    fw_action, fw_chain, fw_proto, fw_state, sys_fw_add_rule, sys_fw_del_rule, sys_fw_flush,
-    sys_fw_get_conntrack, sys_fw_list_rules, sys_fw_set_policy, ConntrackStats, FwRule,
+    ConntrackStats, FwRule, fw_action, fw_chain, fw_proto, fw_state, sys_fw_add_rule,
+    sys_fw_del_rule, sys_fw_flush, sys_fw_get_conntrack, sys_fw_list_rules, sys_fw_set_policy,
 };
 use libc::*;
 
@@ -282,7 +282,9 @@ fn print_ip(ip: u32, prefix: u8) {
 
 fn cmd_add(args: &[&str]) {
     if args.len() < 2 {
-        print("Usage: fw add <chain> [-p proto] [--sport port] [--dport port] [-s ip[/prefix]] [-d ip[/prefix]] [-m state --state <state>] -j <action>\n");
+        print(
+            "Usage: fw add <chain> [-p proto] [--sport port] [--dport port] [-s ip[/prefix]] [-d ip[/prefix]] [-m state --state <state>] -j <action>\n",
+        );
         return;
     }
 
@@ -512,8 +514,12 @@ fn cmd_list() {
         return;
     }
 
-    print("Chain      Proto  Source                 Dest                   Ports              State        Action\n");
-    print("---------- ------ ---------------------- ---------------------- ------------------ ------------ ------\n");
+    print(
+        "Chain      Proto  Source                 Dest                   Ports              State        Action\n",
+    );
+    print(
+        "---------- ------ ---------------------- ---------------------- ------------------ ------------ ------\n",
+    );
 
     for i in 0..result as usize {
         let rule = &rules[i];

@@ -327,3 +327,166 @@ Future architectures (not yet implemented):
 ---
 
 *OXIDE OS - A from-scratch operating system in Rust*
+root@oxide:/root$ servicemgr start sshd
+[SYSCALL] number=3 arg1=0x7ffffffe5c68
+[FORK] Fork called from PID 4
+[FORK] user_ctx.rip=0x400908 rsp=0x7ffffffe5c40
+[PF] fault_addr=0x7ffffffe5c48 error=0x7 rip=0x40091c
+[PF] present=true write=true user=true actual_cr3=0x25f000
+[PF] COW check: fault_addr=0x7ffffffe5c48 pml4=0x25f000
+[PF] COW handled OK
+[PF] fault_addr=0x7ffffffea128 error=0x7 rip=0x4009c5
+[PF] present=true write=true user=true actual_cr3=0x25f000
+[PF] COW check: fault_addr=0x7ffffffea128 pml4=0x25f000
+[PF] COW handled OK
+[SYSCALL] number=6 arg1=0x5
+[RUN_CHILD] set_current_pid(5) done, verify=5
+[CHILD] PID 5 entering usermode
+[CHILD] rip=0x400908 rsp=0x7ffffffe5c40 rbp=0x1
+[CHILD] rax=0x0 rbx=0x0 r12=0x10
+[CHILD] r13=0x0 r14=0x0 r15=0x3
+[CHILD] UserContext ptr: 0xffff80000025b600
+[CHILD] UserContext.rip=0x400908 rsp=0x7ffffffe5c40
+[CHILD] UserContext.rcx=0x400908 rax=0x0
+[CHILD] kernel_stack=0xffff8000003a5000 pml4=0x37e000
+[CHILD] Raw ctx[0]=0x0 (rax)
+[CHILD] Raw ctx[2]=0x400908 (rcx)
+[CHILD] Raw ctx[16]=0x400908 (rip)
+[CHILD] Test dest_ptr=0xffff8000003a4f48
+[CHILD] rcx will be at 0xffff8000003a4f58
+[CHILD] Current CR3: 0x25f000
+[CHILD] Child PML4: 0x37e000
+[CHILD] After CR3 switch and back:
+[CHILD]   read_rax=0x0
+[CHILD]   read_rcx=0x400908
+[CHILD]   read_rip=0x400908
+[PF] fault_addr=0x7ffffffe5c38 error=0x7 rip=0x400c84
+[PF] present=true write=true user=true actual_cr3=0x37e000
+[PF] COW check: fault_addr=0x7ffffffe5c38 pml4=0x37e000
+[PF] COW handled OK
+[EXEC] PID 5 exec("/bin/servicemgr")
+[EXEC] File size: 18992 bytes
+[EXEC] Read 18992 bytes, calling do_exec
+[EXEC] Switching to PML4=0x3a7000
+[EXEC] rip=0x400000 rsp=0x7ffffffeffb0
+[EXEC] argc=3 argv=0x7ffffffeffb8 envp=0x7ffffffeffd8
+[servicemgr] Loading service definitions
+[servicemgr] No /etc/services.d directory, using defaults
+[servicemgr] Loaded 
+1 services
+[servicemgr] sshd: Starting
+[SYSCALL] number=3 arg1=0x1
+[FORK] Fork called from PID 5
+[FORK] user_ctx.rip=0x400a97 rsp=0x7ffffffeff40
+[PF] fault_addr=0x4020f0 error=0x7 rip=0x400aa5
+[PF] present=true write=true user=true actual_cr3=0x3a7000
+[PF] COW check: fault_addr=0x4020f0 pml4=0x3a7000
+[PF] COW handled OK
+[PF] fault_addr=0x7ffffffeff38 error=0x7 rip=0x400ab6
+[PF] present=true write=true user=true actual_cr3=0x3a7000
+[PF] COW check: fault_addr=0x7ffffffeff38 pml4=0x3a7000
+[PF] COW handled OK
+[servicemgr] sshd: Started with PID 
+6
+[FB_DEBUG] Process 5 exiting - FB writes=0 bytes=0 base=0x0
+[PF] fault_addr=0x7ffffffee5d8 error=0x7 rip=0x404262
+[PF] present=true write=true user=true actual_cr3=0x25f000
+[PF] COW check: fault_addr=0x7ffffffee5d8 pml4=0x25f000
+[PF] COW handled OK
+[PF] fault_addr=0x7ffffffef798 error=0x7 rip=0x404c33
+[PF] present=true write=true user=true actual_cr3=0x25f000
+[PF] COW check: fault_addr=0x7ffffffef798 pml4=0x25f000
+[PF] COW handled OK
+[PF] fault_addr=0x40f000 error=0x3 rip=0xffffffff80030bbb
+[PF] present=true write=true user=false actual_cr3=0x25f000
+[PF] COW check: fault_addr=0x40f000 pml4=0x25f000
+[PF] COW handled OK
+root@oxide:/root$ ps
+[PF] fault_addr=0x409178 error=0x7 rip=0x40551c
+[PF] present=true write=true user=true actual_cr3=0x25f000
+[PF] COW check: fault_addr=0x409178 pml4=0x25f000
+[PF] COW handled OK
+[PF] fault_addr=0x7ffffffed5a8 error=0x7 rip=0x4006d8
+[PF] present=true write=true user=true actual_cr3=0x25f000
+[PF] COW check: fault_addr=0x7ffffffed5a8 pml4=0x25f000
+[PF] COW handled OK
+[PF] fault_addr=0x7ffffffec5a8 error=0x7 rip=0x4006d8
+[PF] present=true write=true user=true actual_cr3=0x25f000
+[PF] COW check: fault_addr=0x7ffffffec5a8 pml4=0x25f000
+[PF] COW handled OK
+[PF] fault_addr=0x7ffffffeb5a8 error=0x7 rip=0x4006d8
+[PF] present=true write=true user=true actual_cr3=0x25f000
+[PF] COW check: fault_addr=0x7ffffffeb5a8 pml4=0x25f000
+[PF] COW handled OK
+[PF] fault_addr=0x7ffffffe95a8 error=0x7 rip=0x4006d8
+[PF] present=true write=true user=true actual_cr3=0x25f000
+[PF] COW check: fault_addr=0x7ffffffe95a8 pml4=0x25f000
+[PF] COW handled OK
+[PF] fault_addr=0x7ffffffe85a8 error=0x7 rip=0x4006d8
+[PF] present=true write=true user=true actual_cr3=0x25f000
+[PF] COW check: fault_addr=0x7ffffffe85a8 pml4=0x25f000
+[PF] COW handled OK
+[PF] fault_addr=0x7ffffffe75a8 error=0x7 rip=0x4006d8
+[PF] present=true write=true user=true actual_cr3=0x25f000
+[PF] COW check: fault_addr=0x7ffffffe75a8 pml4=0x25f000
+[PF] COW handled OK
+[PF] fault_addr=0x7ffffffe65a8 error=0x7 rip=0x4006d8
+[PF] present=true write=true user=true actual_cr3=0x25f000
+[PF] COW check: fault_addr=0x7ffffffe65a8 pml4=0x25f000
+[PF] COW handled OK
+[SYSCALL] number=3 arg1=0x7ffffffe5c68
+[FORK] Fork called from PID 4
+[FORK] user_ctx.rip=0x400908 rsp=0x7ffffffe5c40
+[PF] fault_addr=0x7ffffffe5c48 error=0x7 rip=0x40091c
+[PF] present=true write=true user=true actual_cr3=0x25f000
+[PF] COW check: fault_addr=0x7ffffffe5c48 pml4=0x25f000
+[PF] COW handled OK
+[PF] fault_addr=0x7ffffffea128 error=0x7 rip=0x4009c5
+[PF] present=true write=true user=true actual_cr3=0x25f000
+[PF] COW check: fault_addr=0x7ffffffea128 pml4=0x25f000
+[PF] COW handled OK
+[SYSCALL] number=6 arg1=0x7
+[RUN_CHILD] set_current_pid(7) done, verify=7
+[CHILD] PID 7 entering usermode
+[CHILD] rip=0x400908 rsp=0x7ffffffe5c40 rbp=0x1
+[CHILD] rax=0x0 rbx=0x0 r12=0x10
+[CHILD] r13=0x0 r14=0x0 r15=0x3
+[CHILD] UserContext ptr: 0xffff80000025b600
+[CHILD] UserContext.rip=0x400908 rsp=0x7ffffffe5c40
+[CHILD] UserContext.rcx=0x400908 rax=0x0
+[CHILD] kernel_stack=0xffff800000515000 pml4=0x4ee000
+[CHILD] Raw ctx[0]=0x0 (rax)
+[CHILD] Raw ctx[2]=0x400908 (rcx)
+[CHILD] Raw ctx[16]=0x400908 (rip)
+[CHILD] Test dest_ptr=0xffff800000514f48
+[CHILD] rcx will be at 0xffff800000514f58
+[CHILD] Current CR3: 0x25f000
+[CHILD] Child PML4: 0x4ee000
+[CHILD] After CR3 switch and back:
+[CHILD]   read_rax=0x0
+[CHILD]   read_rcx=0x400908
+[CHILD]   read_rip=0x400908
+[PF] fault_addr=0x7ffffffe5c38 error=0x7 rip=0x400c84
+[PF] present=true write=true user=true actual_cr3=0x4ee000
+[PF] COW check: fault_addr=0x7ffffffe5c38 pml4=0x4ee000
+[PF] COW handled OK
+[EXEC] PID 7 exec("/bin/ps")
+[EXEC] File size: 5464 bytes
+[EXEC] Read 5464 bytes, calling do_exec
+[EXEC] Switching to PML4=0x517000
+[EXEC] rip=0x400000 rsp=0x7ffffffeffd0
+[EXEC] argc=1 argv=0x7ffffffeffd8 envp=0x7ffffffeffe8
+  PID TTY          TIME CMD
+    7 ?        00:00:00 ps
+[FB_DEBUG] Process 7 exiting - FB writes=0 bytes=0 base=0x0
+[PF] fault_addr=0x7ffffffee5d8 error=0x7 rip=0x404262
+[PF] present=true write=true user=true actual_cr3=0x25f000
+[PF] COW check: fault_addr=0x7ffffffee5d8 pml4=0x25f000
+[PF] COW handled OK
+[PF] fault_addr=0x7ffffffef798 error=0x7 rip=0x404c33
+[PF] present=true write=true user=true actual_cr3=0x25f000
+[PF] COW check: fault_addr=0x7ffffffef798 pml4=0x25f000
+[PF] COW handled OK
+[PF] fault_addr=0x40f000 error=0x3 rip=0xffffffff80030bbb
+[PF] present=true write=true user=false actual_cr3=0x25f000
+[PF] COW check: fault

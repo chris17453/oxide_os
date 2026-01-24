@@ -8,9 +8,9 @@ use alloc::string::String;
 use proc::process_table;
 use vfs::{Mode, mount::GLOBAL_VFS};
 
+use crate::copy_to_user;
 use crate::errno;
 use crate::vfs::{copy_path_from_user, resolve_path, validate_user_buffer, vfs_error_to_errno};
-use crate::copy_to_user;
 
 /// Copy a path from user space (internal helper)
 fn get_path(path_ptr: u64, path_len: usize) -> Option<&'static str> {

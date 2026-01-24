@@ -10,12 +10,14 @@ pub mod color;
 pub mod console;
 pub mod font;
 pub mod framebuffer;
+pub mod mode;
 pub mod perf;
 
 pub use color::{Color, PixelFormat};
 pub use console::{Cell, FbConsole};
 pub use font::{Font, Glyph, PSF2_FONT};
 pub use framebuffer::{Framebuffer, FramebufferInfo, LinearFramebuffer};
+pub use mode::{set_mode, set_mode_setter};
 pub use perf::{get_fps, get_stats, record_flush, record_frame, record_pixels, reset_stats};
 
 use alloc::sync::Arc;

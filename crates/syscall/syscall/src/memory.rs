@@ -2,8 +2,8 @@
 //!
 //! Implements mmap, munmap, mprotect, mremap, and brk syscalls.
 
-use crate::errno;
 use crate::copy_to_user;
+use crate::errno;
 use mm_frame::frame_allocator;
 use os_core::VirtAddr;
 use proc::process_table;

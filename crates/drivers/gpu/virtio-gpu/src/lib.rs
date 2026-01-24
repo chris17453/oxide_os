@@ -9,8 +9,10 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use boot_proto::VideoMode;
 use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{AtomicU16, Ordering};
+use fb::mode::ModeSetter;
 use fb::{Color, Framebuffer, FramebufferInfo, PixelFormat};
 use spin::Mutex;
 
@@ -238,10 +240,20 @@ pub struct VirtioGpu {
     width: u32,
     /// Display height
     height: u32,
+    /// Current pixel format
+    pixel_format: PixelFormat,
+    /// Bytes per pixel
+    bytes_per_pixel: u32,
+    /// Virtio resource format
+    virtio_format: u32,
     /// Framebuffer resource ID
     resource_id: u32,
     /// Framebuffer memory
     framebuffer: Option<Box<[u8]>>,
+    /// Display info cache
+    displays: [DisplayOne; 16],
+    /// Number of displays reported
+    display_count: u32,
 }
 
 impl VirtioGpu {
@@ -273,8 +285,13 @@ impl VirtioGpu {
             last_used: AtomicU16::new(0),
             width: 0,
             height: 0,
+            pixel_format: PixelFormat::BGRA8888,
+            bytes_per_pixel: 4,
+            virtio_format: format::B8G8R8A8_UNORM,
             resource_id: 1,
             framebuffer: None,
+            displays: [DisplayOne::default(); 16],
+            display_count: 0,
         })
     }
 
@@ -332,6 +349,58 @@ impl VirtioGpu {
         self.setup_framebuffer()?;
 
         Ok(())
+    }
+
+    fn destroy_resource(&mut self) {
+        // Drop framebuffer backing
+        self.framebuffer = None;
+    }
+
+    /// Recreate framebuffer/resource for a specific display index and mode
+    fn set_mode(
+        &mut self,
+        display_index: usize,
+        width: u32,
+        height: u32,
+    ) -> Result<FramebufferInfo, &'static str> {
+        if display_index >= self.display_count as usize || display_index >= self.displays.len() {
+            return Err("invalid display index");
+        }
+
+        // Clean existing resource/backing
+        self.destroy_resource();
+        self.resource_id = self.resource_id.wrapping_add(1).max(1);
+        self.width = width;
+        self.height = height;
+        self.pixel_format = PixelFormat::BGRA8888;
+        self.bytes_per_pixel = 4;
+        self.virtio_format = format::B8G8R8A8_UNORM;
+
+        self.setup_framebuffer()?;
+
+        // Bind scanout
+        let scanout_cmd = SetScanout {
+            hdr: CtrlHeader {
+                type_: cmd::SET_SCANOUT,
+                ..Default::default()
+            },
+            r: Rect {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            },
+            scanout_id: display_index as u32,
+            resource_id: self.resource_id,
+        };
+
+        let mut resp = CtrlHeader::default();
+        self.send_command(&scanout_cmd, &mut resp)?;
+        if resp.type_ != resp::OK_NODATA {
+            return Err("Failed to set scanout");
+        }
+
+        self.framebuffer_info().ok_or("no framebuffer")
     }
 
     /// Initialize control queue
@@ -401,13 +470,21 @@ impl VirtioGpu {
             return Err("Failed to get display info");
         }
 
-        // Find first enabled display
-        for display in &resp.displays {
+        self.displays = resp.displays;
+
+        // Count enabled displays and pick first enabled for dimensions
+        self.display_count = 0;
+        for display in &self.displays {
             if display.enabled != 0 {
-                self.width = display.r.width;
-                self.height = display.r.height;
-                return Ok(());
+                self.display_count += 1;
+                if self.display_count == 1 {
+                    self.width = display.r.width;
+                    self.height = display.r.height;
+                }
             }
+        }
+        if self.display_count > 0 {
+            return Ok(());
         }
 
         // Default resolution
@@ -416,7 +493,7 @@ impl VirtioGpu {
         Ok(())
     }
 
-    /// Setup framebuffer
+    /// Setup framebuffer for current width/height
     fn setup_framebuffer(&mut self) -> Result<(), &'static str> {
         // Create resource
         let create_cmd = ResourceCreate2d {
@@ -425,7 +502,7 @@ impl VirtioGpu {
                 ..Default::default()
             },
             resource_id: self.resource_id,
-            format: format::B8G8R8A8_UNORM,
+            format: self.virtio_format,
             width: self.width,
             height: self.height,
         };
@@ -438,7 +515,7 @@ impl VirtioGpu {
         }
 
         // Allocate framebuffer
-        let fb_size = (self.width * self.height * 4) as usize;
+        let fb_size = (self.width * self.height * self.bytes_per_pixel) as usize;
         let fb = alloc::vec![0u8; fb_size].into_boxed_slice();
         let fb_addr = fb.as_ptr() as u64;
 
@@ -503,20 +580,20 @@ impl VirtioGpu {
         let resp_size = core::mem::size_of::<R>();
 
         // Setup descriptors (use atomic operations for thread-safety)
-        let desc_idx = self.next_desc.fetch_add(2, Ordering::SeqCst) % self.queue_size;
+        let desc_idx = (self.next_desc.fetch_add(2, Ordering::SeqCst) % self.queue_size).into();
 
         unsafe {
             // Command descriptor
-            let desc0 = &mut *self.descriptors.add(desc_idx as usize);
+            let desc0 = &mut *self.descriptors.add(desc_idx);
             desc0.addr = cmd as *const C as u64;
             desc0.len = cmd_size as u32;
             desc0.flags = VIRTQ_DESC_F_NEXT;
-            desc0.next = (desc_idx + 1) % self.queue_size;
+            desc0.next = ((desc_idx as u16 + 1) % self.queue_size) as u16;
 
             // Response descriptor
             let desc1 = &mut *self
                 .descriptors
-                .add(((desc_idx + 1) % self.queue_size) as usize);
+                .add(((desc_idx as u16 + 1) % self.queue_size) as usize);
             desc1.addr = resp as *mut R as u64;
             desc1.len = resp_size as u32;
             desc1.flags = VIRTQ_DESC_F_WRITE;
@@ -525,7 +602,7 @@ impl VirtioGpu {
             // Add to available ring
             let avail = &mut *self.available;
             let avail_idx = avail.idx;
-            avail.ring[(avail_idx % self.queue_size) as usize] = desc_idx;
+            avail.ring[(avail_idx % self.queue_size) as usize] = desc_idx as u16;
             core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
             write_volatile(&mut avail.idx, avail_idx.wrapping_add(1));
         }
@@ -604,8 +681,8 @@ impl VirtioGpu {
             size: fb.len(),
             width: self.width,
             height: self.height,
-            stride: self.width * 4,
-            format: PixelFormat::BGRA8888,
+            stride: self.width * self.bytes_per_pixel,
+            format: self.pixel_format,
         })
     }
 
@@ -628,11 +705,11 @@ impl Framebuffer for VirtioGpu {
     }
 
     fn format(&self) -> PixelFormat {
-        PixelFormat::BGRA8888
+        self.pixel_format
     }
 
     fn stride(&self) -> u32 {
-        self.width * 4
+        self.width * self.bytes_per_pixel
     }
 
     fn buffer(&self) -> *mut u8 {
@@ -668,8 +745,23 @@ pub fn init(mmio_base: usize) -> Result<(), &'static str> {
         fb::init(info);
     }
 
+    // Register mode setter so fb userspace can switch
+    fb::mode::set_mode_setter(set_mode_from_fb);
+
     *VIRTIO_GPU.lock() = Some(gpu);
     Ok(())
+}
+
+fn set_mode_from_fb(mode: &VideoMode) -> Option<FramebufferInfo> {
+    let mut guard = VIRTIO_GPU.lock();
+    let gpu = guard.as_mut()?;
+    if gpu.display_count == 0 {
+        let _ = gpu.get_display_info();
+    }
+    if gpu.display_count == 0 {
+        return None;
+    }
+    gpu.set_mode(0, mode.width, mode.height).ok()
 }
 
 /// Flush the display

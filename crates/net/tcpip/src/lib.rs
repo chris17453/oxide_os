@@ -28,15 +28,15 @@ use net::{
 };
 
 pub use arp::ArpCache;
-pub use ethernet::EtherType;
 pub use conntrack::{
-    connection_count, gc as conntrack_gc, lookup_state, remove_connection, tick as conntrack_tick,
-    track_icmp, track_packet, ConnEntry, ConnTrackTable, ConnTuple, TcpFlags, TcpState,
+    ConnEntry, ConnTrackTable, ConnTuple, TcpFlags, TcpState, connection_count, gc as conntrack_gc,
+    lookup_state, remove_connection, tick as conntrack_tick, track_icmp, track_packet,
 };
+pub use ethernet::EtherType;
 pub use filter::{
-    add_rule, delete_rule, filter_input, filter_output, flush_all, flush_chain, get_policy,
-    rule_count, set_policy, with_rules, ConnState, FilterChain, FilterRule, FilterVerdict,
-    IpMatch, PacketInfo, PortMatch,
+    ConnState, FilterChain, FilterRule, FilterVerdict, IpMatch, PacketInfo, PortMatch, add_rule,
+    delete_rule, filter_input, filter_output, flush_all, flush_chain, get_policy, rule_count,
+    set_policy, with_rules,
 };
 pub use ip::IpProtocol;
 pub use tcp::TcpConnection;
@@ -202,11 +202,8 @@ impl TcpIpStack {
         }
 
         // Build packet info for filtering
-        let mut pkt_info = filter::PacketInfo::new(
-            ip_header.src,
-            ip_header.dst,
-            ip_header.protocol,
-        );
+        let mut pkt_info =
+            filter::PacketInfo::new(ip_header.src, ip_header.dst, ip_header.protocol);
 
         // Extract port information and track connection state
         let conn_state = match ip_header.protocol {

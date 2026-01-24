@@ -8,8 +8,8 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use libc::*;
 use libc::socket::{recv, send};
+use libc::*;
 
 use crate::crypto::{SshCipher, host_public_key};
 use crate::kex::{KexState, perform_key_exchange};
@@ -148,7 +148,10 @@ impl SshTransport {
             version.push(buf[0]);
 
             // Look for \r\n or \n
-            if version.len() >= 2 && version[version.len() - 2] == b'\r' && version[version.len() - 1] == b'\n' {
+            if version.len() >= 2
+                && version[version.len() - 2] == b'\r'
+                && version[version.len() - 1] == b'\n'
+            {
                 version.truncate(version.len() - 2);
                 break;
             }
@@ -302,7 +305,11 @@ impl SshTransport {
 fn build_unencrypted_packet(payload: &[u8]) -> Vec<u8> {
     let payload_len = payload.len();
     let padding_len = 8 - ((payload_len + 5) % 8);
-    let padding_len = if padding_len < 4 { padding_len + 8 } else { padding_len };
+    let padding_len = if padding_len < 4 {
+        padding_len + 8
+    } else {
+        padding_len
+    };
     let packet_len = 1 + payload_len + padding_len;
 
     let mut packet = Vec::with_capacity(4 + packet_len);
@@ -372,7 +379,8 @@ pub fn encode_string(s: &[u8]) -> Vec<u8> {
 }
 
 pub fn encode_name_list(names: &[&str]) -> Vec<u8> {
-    let joined: Vec<u8> = names.iter()
+    let joined: Vec<u8> = names
+        .iter()
         .map(|s| s.as_bytes())
         .collect::<Vec<_>>()
         .join(&b","[..]);

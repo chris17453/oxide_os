@@ -487,11 +487,11 @@ pub mod fb_ioctl {
 
     // OXIDE-specific extensions
     /// Get mode count
-    pub const OXIDE_FB_GET_MODE_COUNT: u64 = 0x4700;
+    pub const FB_GET_MODE_COUNT: u64 = 0x4700;
     /// Get mode info by index
-    pub const OXIDE_FB_GET_MODE: u64 = 0x4701;
-    /// Set display mode
-    pub const OXIDE_FB_SET_MODE: u64 = 0x4702;
+    pub const FB_GET_MODE: u64 = 0x4701;
+    /// Set display mode (index in boot_proto VideoModeList)
+    pub const FB_SET_MODE: u64 = 0x4702;
 }
 
 /// Framebuffer info callback type
@@ -502,6 +502,8 @@ pub type FbModeCountFn = fn() -> u32;
 
 /// Mode info callback type (index -> info)
 pub type FbModeInfoFn = fn(u32) -> Option<VideoModeDeviceInfo>;
+/// Mode set callback type (index -> new info)
+pub type FbModeSetFn = fn(u32) -> Option<VideoModeDeviceInfo>;
 
 /// Framebuffer device info
 #[derive(Debug, Clone, Copy)]
@@ -546,6 +548,8 @@ static mut FB_MODE_COUNT_CALLBACK: Option<FbModeCountFn> = None;
 
 /// Global mode info callback
 static mut FB_MODE_INFO_CALLBACK: Option<FbModeInfoFn> = None;
+/// Global mode set callback
+static mut FB_MODE_SET_CALLBACK: Option<FbModeSetFn> = None;
 
 /// Debug: Framebuffer write count
 static mut FB_WRITE_COUNT: usize = 0;
@@ -583,6 +587,16 @@ pub unsafe fn set_fb_mode_count_callback(f: FbModeCountFn) {
 pub unsafe fn set_fb_mode_info_callback(f: FbModeInfoFn) {
     unsafe {
         FB_MODE_INFO_CALLBACK = Some(f);
+    }
+}
+
+/// Set the mode set callback
+///
+/// # Safety
+/// Must be called during single-threaded initialization
+pub unsafe fn set_fb_mode_set_callback(f: FbModeSetFn) {
+    unsafe {
+        FB_MODE_SET_CALLBACK = Some(f);
     }
 }
 
@@ -771,7 +785,7 @@ impl VnodeOps for FramebufferDevice {
                 Ok(0)
             }
 
-            fb_ioctl::OXIDE_FB_GET_MODE_COUNT => {
+            fb_ioctl::FB_GET_MODE_COUNT => {
                 // Get mode count from callback
                 let count = unsafe {
                     if let Some(callback) = FB_MODE_COUNT_CALLBACK {
@@ -783,7 +797,7 @@ impl VnodeOps for FramebufferDevice {
                 Ok(count as i64)
             }
 
-            fb_ioctl::OXIDE_FB_GET_MODE => {
+            fb_ioctl::FB_GET_MODE => {
                 // arg is pointer to struct: { u32 index, [pad], VideoModeDeviceInfo info }
                 // Note: VideoModeDeviceInfo has 8-byte alignment due to u64 field,
                 // so there's padding between index and info
@@ -812,6 +826,29 @@ impl VnodeOps for FramebufferDevice {
                         unsafe {
                             *out_ptr = info;
                         }
+                        Ok(0)
+                    }
+                    None => Err(VfsError::InvalidArgument),
+                }
+            }
+
+            fb_ioctl::FB_SET_MODE => {
+                if arg == 0 {
+                    return Err(VfsError::InvalidArgument);
+                }
+                let index = unsafe { *(arg as *const u32) };
+                let mode_info = unsafe {
+                    if let Some(callback) = FB_MODE_SET_CALLBACK {
+                        callback(index)
+                    } else {
+                        None
+                    }
+                };
+                match mode_info {
+                    Some(info) => {
+                        let out_ptr =
+                            unsafe { (arg as *mut u8).add(8) as *mut VideoModeDeviceInfo };
+                        unsafe { *out_ptr = info };
                         Ok(0)
                     }
                     None => Err(VfsError::InvalidArgument),

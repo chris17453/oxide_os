@@ -5,7 +5,9 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
-use crate::transport::{decode_string, decode_u32, msg, SshTransport, TransportError, TransportResult};
+use crate::transport::{
+    SshTransport, TransportError, TransportResult, decode_string, decode_u32, msg,
+};
 
 /// Maximum window size
 const MAX_WINDOW_SIZE: u32 = 2 * 1024 * 1024;
@@ -157,7 +159,10 @@ impl ChannelManager {
         local_id: u32,
         data: &[u8],
     ) -> TransportResult<()> {
-        let channel = self.channels.get(&local_id).ok_or(TransportError::Protocol)?;
+        let channel = self
+            .channels
+            .get(&local_id)
+            .ok_or(TransportError::Protocol)?;
 
         // Check window
         if channel.remote_window < data.len() as u32 {
@@ -226,8 +231,15 @@ impl ChannelManager {
     }
 
     /// Send channel EOF
-    pub fn send_channel_eof(&mut self, transport: &mut SshTransport, local_id: u32) -> TransportResult<()> {
-        let channel = self.channels.get(&local_id).ok_or(TransportError::Protocol)?;
+    pub fn send_channel_eof(
+        &mut self,
+        transport: &mut SshTransport,
+        local_id: u32,
+    ) -> TransportResult<()> {
+        let channel = self
+            .channels
+            .get(&local_id)
+            .ok_or(TransportError::Protocol)?;
 
         let mut msg = Vec::with_capacity(8);
         msg.push(msg::CHANNEL_EOF);
@@ -236,7 +248,11 @@ impl ChannelManager {
     }
 
     /// Send channel close
-    pub fn send_channel_close(&mut self, transport: &mut SshTransport, local_id: u32) -> TransportResult<()> {
+    pub fn send_channel_close(
+        &mut self,
+        transport: &mut SshTransport,
+        local_id: u32,
+    ) -> TransportResult<()> {
         if let Some(channel) = self.channels.get_mut(&local_id) {
             channel.state = ChannelState::Closing;
 
@@ -265,7 +281,9 @@ impl ChannelManager {
 
     /// Check if any channels are open
     pub fn has_open_channels(&self) -> bool {
-        self.channels.values().any(|c| c.state == ChannelState::Open)
+        self.channels
+            .values()
+            .any(|c| c.state == ChannelState::Open)
     }
 }
 

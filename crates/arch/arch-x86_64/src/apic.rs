@@ -66,9 +66,9 @@ pub enum DeliveryMode {
 #[repr(u32)]
 #[derive(Debug, Clone, Copy)]
 pub enum DestShorthand {
-    None = 0b00 << 18,        // Use destination field
-    Self_ = 0b01 << 18,       // Send to self
-    All = 0b10 << 18,         // Send to all CPUs
+    None = 0b00 << 18,          // Use destination field
+    Self_ = 0b01 << 18,         // Send to self
+    All = 0b10 << 18,           // Send to all CPUs
     AllExceptSelf = 0b11 << 18, // Send to all except self
 }
 
@@ -188,7 +188,7 @@ pub fn send_ipi(dest_apic: u8, vector: u8, mode: DeliveryMode, shorthand: DestSh
         | (0 << 11)                           // Destination mode: physical (bit 11)
         | (1 << 14)                           // Level: assert (bit 14)
         | (0 << 15)                           // Trigger mode: edge (bit 15)
-        | (shorthand as u32);                 // Destination shorthand (bits 18-19)
+        | (shorthand as u32); // Destination shorthand (bits 18-19)
 
     // Write ICR low to send the IPI
     write(reg::ICR_LOW, icr_low);

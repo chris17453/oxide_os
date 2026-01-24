@@ -5,12 +5,12 @@
 use alloc::vec::Vec;
 
 use crate::crypto::{
-    derive_keys, ed25519_verify, generate_random_16, generate_random_32,
-    sha256, x25519, x25519_keypair, SshCipher,
+    SshCipher, derive_keys, ed25519_verify, generate_random_16, generate_random_32, sha256, x25519,
+    x25519_keypair,
 };
 use crate::transport::{
-    decode_string, encode_name_list, encode_string, msg, SshTransport,
-    TransportError, TransportResult,
+    SshTransport, TransportError, TransportResult, decode_string, encode_name_list, encode_string,
+    msg,
 };
 
 /// Key exchange state
@@ -246,7 +246,10 @@ fn parse_signature(blob: &[u8]) -> TransportResult<[u8; 64]> {
 }
 
 /// Compute exchange hash H (client side)
-fn compute_exchange_hash(transport: &SshTransport, host_key_blob: &[u8]) -> TransportResult<[u8; 32]> {
+fn compute_exchange_hash(
+    transport: &SshTransport,
+    host_key_blob: &[u8],
+) -> TransportResult<[u8; 32]> {
     // H = SHA256(V_C || V_S || I_C || I_S || K_S || Q_C || Q_S || K)
     // Where:
     // V_C = client version string (our version)

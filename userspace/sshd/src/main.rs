@@ -11,20 +11,19 @@
 
 extern crate alloc;
 
-mod transport;
-mod kex;
 mod auth;
 mod channel;
-mod session;
 mod crypto;
+mod kex;
+mod session;
+mod transport;
 
-use libc::*;
-use libc::socket::{
-    tcp_socket, sockaddr_in, bind, listen, accept, setsockopt,
-    SockAddrIn, SOCKADDR_IN_SIZE, INADDR_ANY, ntohl, ntohs,
-    sol, so,
-};
 use alloc::vec::Vec;
+use libc::socket::{
+    INADDR_ANY, SOCKADDR_IN_SIZE, SockAddrIn, accept, bind, listen, ntohl, ntohs, setsockopt, so,
+    sockaddr_in, sol, tcp_socket,
+};
+use libc::*;
 
 use transport::SshTransport;
 

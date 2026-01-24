@@ -7,12 +7,11 @@
 //! - Interactive shell sessions
 
 use alloc::vec::Vec;
+use libc::poll::{PollFd, events, poll};
 use libc::*;
-use libc::poll::{poll, PollFd, events};
 
 use crate::transport::{
-    decode_string, decode_u32, encode_string, msg,
-    SshTransport, TransportError, TransportResult,
+    SshTransport, TransportError, TransportResult, decode_string, decode_u32, encode_string, msg,
 };
 
 /// Request ssh-userauth service
@@ -274,7 +273,11 @@ impl SshChannel {
     }
 
     /// Send window adjust
-    pub fn send_window_adjust(&self, transport: &mut SshTransport, bytes: u32) -> TransportResult<()> {
+    pub fn send_window_adjust(
+        &self,
+        transport: &mut SshTransport,
+        bytes: u32,
+    ) -> TransportResult<()> {
         let mut packet = Vec::with_capacity(9);
         packet.push(msg::CHANNEL_WINDOW_ADJUST);
         packet.extend_from_slice(&self.remote_channel.to_be_bytes());
@@ -311,8 +314,16 @@ pub fn run_session(transport: &mut SshTransport, channel: &mut SshChannel) -> Tr
     loop {
         // Use poll to wait for either stdin or socket data
         let mut pollfds = [
-            PollFd { fd: stdin_fd, events: events::POLLIN, revents: 0 },
-            PollFd { fd: socket_fd, events: events::POLLIN, revents: 0 },
+            PollFd {
+                fd: stdin_fd,
+                events: events::POLLIN,
+                revents: 0,
+            },
+            PollFd {
+                fd: socket_fd,
+                events: events::POLLIN,
+                revents: 0,
+            },
         ];
 
         let ready = poll(&mut pollfds, 100); // 100ms timeout

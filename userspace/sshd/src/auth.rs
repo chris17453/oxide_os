@@ -8,7 +8,7 @@ use core::cell::UnsafeCell;
 use libc::*;
 
 use crate::transport::{
-    decode_string, decode_u8, encode_string, msg, SshTransport, TransportError, TransportResult,
+    SshTransport, TransportError, TransportResult, decode_string, decode_u8, encode_string, msg,
 };
 
 /// Maximum authentication attempts
