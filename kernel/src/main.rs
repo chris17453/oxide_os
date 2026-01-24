@@ -298,7 +298,10 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
         // Note: NOT calling set_cpu_online(1) - CPU is registered but offline
         // Need to implement INIT-SIPI-SIPI sequence to actually boot it
     }
-    let _ = writeln!(writer, "[SMP] CPU 1 detected (APIC ID 1) - offline, needs AP boot");
+    let _ = writeln!(
+        writer,
+        "[SMP] CPU 1 detected (APIC ID 1) - offline, needs AP boot"
+    );
 
     let _ = writeln!(
         writer,
@@ -310,7 +313,10 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
     if smp::cpu::cpus_online() > 1 {
         let _ = writeln!(writer, "[SMP] Multi-CPU mode: TLB shootdown will use IPIs");
     } else {
-        let _ = writeln!(writer, "[SMP] Single-CPU mode: TLB shootdown uses local flush only");
+        let _ = writeln!(
+            writer,
+            "[SMP] Single-CPU mode: TLB shootdown uses local flush only"
+        );
     }
 
     // Register TLB shootdown IPI callback
@@ -339,7 +345,11 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
                 arch::ap_boot::ap_entry_rust as u64,
             );
         }
-        let _ = writeln!(writer, "[SMP] AP trampoline set up at 0x{:x}", arch::ap_boot::TRAMPOLINE_PHYS);
+        let _ = writeln!(
+            writer,
+            "[SMP] AP trampoline set up at 0x{:x}",
+            arch::ap_boot::TRAMPOLINE_PHYS
+        );
 
         // Register AP initialization callback
         unsafe {
@@ -476,6 +486,7 @@ pub extern "C" fn kernel_main(boot_info: &'static BootInfo) -> ! {
         devfs::devices::set_fb_info_callback(get_fb_device_info);
         devfs::devices::set_fb_mode_count_callback(get_fb_mode_count);
         devfs::devices::set_fb_mode_info_callback(get_fb_mode_info);
+        devfs::devices::set_fb_mode_set_callback(set_fb_mode);
     }
 
     // Create /proc directory
@@ -1082,7 +1093,8 @@ fn page_fault_handler(fault_addr: u64, error_code: u64, rip: u64) -> bool {
             let _ = writeln!(
                 writer,
                 "[PF] COW check: fault_addr={:#x} pml4={:#x}",
-                fault_addr, pml4.as_u64()
+                fault_addr,
+                pml4.as_u64()
             );
         }
 
@@ -1366,6 +1378,22 @@ fn get_fb_mode_info(index: u32) -> Option<devfs::devices::VideoModeDeviceInfo> {
     })
 }
 
+/// Set video mode via fb module and return updated info
+fn set_fb_mode(index: u32) -> Option<devfs::devices::VideoModeDeviceInfo> {
+    let mode = fb::mode::set_mode(index)?;
+
+    Some(devfs::devices::VideoModeDeviceInfo {
+        mode_number: mode.mode_number,
+        width: mode.width,
+        height: mode.height,
+        bpp: mode.bpp,
+        stride: mode.stride,
+        framebuffer_size: mode.framebuffer_size,
+        is_bgr: mode.is_bgr,
+        _pad: [0; 7],
+    })
+}
+
 /// Get memory statistics for /proc/meminfo
 fn get_memory_stats() -> procfs::MemoryStats {
     // Get frame allocator stats
@@ -1626,7 +1654,29 @@ fn user_exit(status: i32) -> ! {
     if let Some(proc) = table.get(current_pid) {
         let ppid = proc.lock().ppid();
         if ppid > 0 {
+            // Parent exists but no saved context - check for pending children to run
+            loop {
+                let child_pid = PENDING_CHILDREN.lock().pop();
+                if let Some(pid) = child_pid {
+                    run_child_process(pid);
+                    // After child exits, loop to run more pending children
+                } else {
+                    break;
+                }
+            }
             arch::X86_64::halt();
+        }
+    }
+
+    // Before halting, run any remaining pending children
+    // This handles orphan children that would otherwise never run
+    loop {
+        let child_pid = PENDING_CHILDREN.lock().pop();
+        if let Some(pid) = child_pid {
+            run_child_process(pid);
+            // After child exits, loop to run more pending children
+        } else {
+            break;
         }
     }
 
