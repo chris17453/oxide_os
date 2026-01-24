@@ -197,18 +197,89 @@ pub fn user_exit(status: i32) -> ! {
         }
     }
 
-    // Check if there are other processes to run
-    // With preemptive scheduling, the scheduler will pick the next process
-    if !READY_QUEUE.lock().is_empty() {
-        // There are other processes - scheduler will handle them
-        // Just halt this CPU; timer interrupt will trigger scheduler
-        loop {
-            unsafe { core::arch::asm!("hlt") }
+    // Process exited - switch to next ready process
+    // We can't rely on timer preemption here since we're in kernel mode
+    // Must actively switch to another process
+    loop {
+        let next_pid = {
+            let mut queue = READY_QUEUE.lock();
+            if queue.is_empty() {
+                // No other processes - halt the system
+                drop(queue);
+                arch::X86_64::halt();
+            }
+            queue.remove(0)
+        };
+
+        // Get next process info
+        let (next_ctx, next_pml4, kernel_stack_top) = {
+            let next = match table.get(next_pid) {
+                Some(p) => p,
+                None => continue, // Process gone, try next
+            };
+            let proc = next.lock();
+            (
+                proc.context().clone(),
+                proc.address_space().pml4_phys(),
+                {
+                    let ks_virt = phys_to_virt(proc.kernel_stack());
+                    ks_virt.as_u64() + proc.kernel_stack_size() as u64
+                },
+            )
+        };
+
+        // Switch to next process
+        table.set_current_pid(next_pid);
+
+        // Update kernel stack pointers
+        unsafe {
+            arch::syscall::set_kernel_stack(kernel_stack_top);
+        }
+        arch::gdt::set_kernel_stack(kernel_stack_top);
+
+        // Use same context switch mechanism as kernel_yield
+        static mut EXIT_CTX: ProcessContext = ProcessContext {
+            rip: 0, rsp: 0, rflags: 0, rax: 0, rbx: 0, rcx: 0, rdx: 0,
+            rsi: 0, rdi: 0, rbp: 0, r8: 0, r9: 0, r10: 0, r11: 0,
+            r12: 0, r13: 0, r14: 0, r15: 0,
+        };
+
+        unsafe {
+            *addr_of_mut!(EXIT_CTX) = next_ctx;
+
+            // Switch page tables
+            core::arch::asm!("mov cr3, {}", in(reg) next_pml4.as_u64());
+
+            let ctx_ptr = addr_of_mut!(EXIT_CTX) as u64;
+
+            // Restore registers and sysretq to next process
+            core::arch::asm!(
+                "mov rax, {ctx}",
+                "mov rcx, [rax]",       // rip -> rcx for sysret
+                "mov r11, [rax + 16]",  // rflags -> r11 for sysret
+                "or r11, 0x200",        // Ensure IF set
+                "mov rbx, [rax + 32]",
+                "mov rbp, [rax + 72]",
+                "mov r12, [rax + 112]",
+                "mov r13, [rax + 120]",
+                "mov r14, [rax + 128]",
+                "mov r15, [rax + 136]",
+                "mov rdi, [rax + 64]",
+                "mov rsi, [rax + 56]",
+                "mov rdx, [rax + 48]",
+                "mov r8, [rax + 80]",
+                "mov r9, [rax + 88]",
+                "mov r10, [rax + 96]",
+                "push qword ptr [rax + 8]",  // Push user rsp
+                "mov rax, [rax + 24]",       // Load return value
+                "pop rsp",
+                "swapgs",
+                "sysretq",
+                ctx = in(reg) ctx_ptr,
+                options(noreturn)
+            );
         }
     }
-
-    // No other processes and init exited - halt the system
-    arch::X86_64::halt();
 }
 
 /// Fork callback for syscalls
