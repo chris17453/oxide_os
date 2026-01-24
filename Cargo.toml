@@ -101,6 +101,7 @@ members = [
     "userspace/compression",
     "userspace/sshd",
     "userspace/ssh",
+    "userspace/ssh_old",
     "userspace/servicemgr",
     "bootloader/boot-uefi",
     "apps/gwbasic",

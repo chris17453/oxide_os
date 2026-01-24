@@ -1217,6 +1217,14 @@ dependencies = [
 
 [[package]]
 name = "ssh"
+version = "0.2.0"
+dependencies = [
+ "libc 0.1.0",
+ "oxide-std",
+]
+
+[[package]]
+name = "ssh_old"
 version = "0.1.0"
 dependencies = [
  "libc 0.1.0",

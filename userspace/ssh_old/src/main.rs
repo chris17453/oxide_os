@@ -1,7 +1,5 @@
 //! OXIDE SSH Client
 //!
-//! A clean SSH client implementation using oxide-std.
-//!
 //! Usage: ssh [options] [user@]hostname [command]
 //!
 //! Options:
@@ -17,9 +15,9 @@ extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use oxide_std::io::{Read, Write};
-use oxide_std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
-use oxide_std::{eprintln, print, println};
+use libc::dns;
+use libc::socket::{InAddr, SOCKADDR_IN_SIZE, SockAddrIn, af, connect, sock, socket};
+use libc::*;
 
 mod crypto;
 mod kex;
@@ -31,17 +29,22 @@ use session::{SshChannel, authenticate_password, request_userauth_service, run_s
 use transport::{SshTransport, TransportError};
 
 /// SSH client configuration
-struct Config {
+struct SshConfig {
+    /// Remote hostname
     hostname: String,
+    /// Remote port
     port: u16,
+    /// Username
     username: String,
+    /// Verbose mode
     verbose: bool,
+    /// Skip host key verification
     skip_host_key_check: bool,
 }
 
-impl Config {
+impl SshConfig {
     fn new() -> Self {
-        Config {
+        SshConfig {
             hostname: String::new(),
             port: 22,
             username: String::new(),
@@ -51,24 +54,38 @@ impl Config {
     }
 }
 
+/// Convert C string to str
+fn cstr_to_str(ptr: *const u8) -> &'static str {
+    if ptr.is_null() {
+        return "";
+    }
+    let mut len = 0;
+    unsafe {
+        while *ptr.add(len) != 0 {
+            len += 1;
+        }
+        core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr, len))
+    }
+}
+
 /// Main entry point
 #[unsafe(no_mangle)]
 fn main(argc: i32, argv: *const *const u8) -> i32 {
     if argc < 2 {
-        print_usage();
+        usage();
         return 1;
     }
 
     let config = match parse_args(argc, argv) {
         Some(c) => c,
         None => {
-            print_usage();
+            usage();
             return 1;
         }
     };
 
     if config.hostname.is_empty() {
-        eprintln!("ssh: missing hostname");
+        eprintlns("ssh: missing hostname");
         return 1;
     }
 
@@ -80,50 +97,87 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     };
 
     if config.verbose {
-        println!("ssh: connecting to {}:{}", config.hostname, config.port);
+        prints("ssh: connecting to ");
+        prints_str(&config.hostname);
+        prints(":");
+        print_i64(config.port as i64);
+        printlns("");
     }
 
-    // Connect to server
-    let stream = match TcpStream::connect_host(&config.hostname, config.port) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("ssh: connection failed: {:?}", e);
+    // Resolve hostname
+    let ip = match resolve_hostname(&config.hostname) {
+        Some(ip) => ip,
+        None => {
+            prints("ssh: could not resolve hostname: ");
+            printlns_str(&config.hostname);
             return 1;
         }
     };
 
     if config.verbose {
-        println!("ssh: connected, starting SSH handshake");
+        prints("ssh: resolved to ");
+        print_i64(((ip >> 24) & 0xff) as i64);
+        prints(".");
+        print_i64(((ip >> 16) & 0xff) as i64);
+        prints(".");
+        print_i64(((ip >> 8) & 0xff) as i64);
+        prints(".");
+        print_i64((ip & 0xff) as i64);
+        printlns("");
+    }
+
+    // Connect to server
+    let fd = match connect_to_server(ip, config.port) {
+        Ok(fd) => fd,
+        Err(e) => {
+            prints("ssh: connection failed: ");
+            printlns(e);
+            return 1;
+        }
+    };
+
+    if config.verbose {
+        printlns("ssh: connected, starting SSH handshake");
     }
 
     // Create transport
-    let mut transport = SshTransport::new(stream);
+    let mut transport = match SshTransport::new(fd) {
+        Ok(t) => t,
+        Err(_) => {
+            eprintlns("ssh: failed to create transport");
+            close(fd);
+            return 1;
+        }
+    };
 
     // Version exchange
     if config.verbose {
-        println!("ssh: version exchange");
+        printlns("ssh: version exchange");
     }
     if let Err(e) = transport.version_exchange() {
         print_error("version exchange", e);
+        close(fd);
         return 1;
     }
 
     // Key exchange
     if config.verbose {
-        println!("ssh: key exchange");
+        printlns("ssh: key exchange");
     }
     if let Err(e) = perform_key_exchange(&mut transport) {
         print_error("key exchange", e);
+        close(fd);
         return 1;
     }
 
     if config.verbose {
-        println!("ssh: key exchange complete, requesting authentication");
+        printlns("ssh: key exchange complete, requesting authentication");
     }
 
     // Request userauth service
     if let Err(e) = request_userauth_service(&mut transport) {
         print_error("service request", e);
+        close(fd);
         return 1;
     }
 
@@ -132,19 +186,24 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
 
     // Authenticate
     if config.verbose {
-        println!("ssh: authenticating");
+        printlns("ssh: authenticating");
     }
     if let Err(e) = authenticate_password(&mut transport, username.as_bytes(), password.as_bytes())
     {
         match e {
-            TransportError::AuthFailed => eprintln!("ssh: authentication failed"),
-            _ => print_error("authentication", e),
+            TransportError::AuthFailed => {
+                eprintlns("ssh: authentication failed");
+            }
+            _ => {
+                print_error("authentication", e);
+            }
         }
+        close(fd);
         return 1;
     }
 
     if config.verbose {
-        println!("ssh: authentication successful, opening channel");
+        printlns("ssh: authentication successful, opening channel");
     }
 
     // Open session channel
@@ -152,6 +211,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         Ok(c) => c,
         Err(e) => {
             print_error("channel open", e);
+            close(fd);
             return 1;
         }
     };
@@ -159,17 +219,19 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     // Request PTY
     if let Err(e) = channel.request_pty(&mut transport) {
         print_error("pty request", e);
+        close(fd);
         return 1;
     }
 
     // Request shell
     if let Err(e) = channel.request_shell(&mut transport) {
         print_error("shell request", e);
+        close(fd);
         return 1;
     }
 
     if config.verbose {
-        println!("ssh: session established");
+        printlns("ssh: session established");
     }
 
     // Run interactive session
@@ -181,18 +243,19 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
 
     // Close connection
     let _ = channel.close(&mut transport);
+    close(fd);
 
     0
 }
 
 /// Parse command line arguments
-fn parse_args(argc: i32, argv: *const *const u8) -> Option<Config> {
-    let mut config = Config::new();
+fn parse_args(argc: i32, argv: *const *const u8) -> Option<SshConfig> {
+    let mut config = SshConfig::new();
     let mut i = 1;
 
     while i < argc {
         let arg = cstr_to_str(unsafe { *argv.add(i as usize) });
-        if arg.starts_with('-') {
+        if arg.starts_with("-") {
             match arg {
                 "-p" => {
                     i += 1;
@@ -218,6 +281,7 @@ fn parse_args(argc: i32, argv: *const *const u8) -> Option<Config> {
                     if i >= argc {
                         return None;
                     }
+                    // Parse option
                     let opt = cstr_to_str(unsafe { *argv.add(i as usize) });
                     if opt.starts_with("StrictHostKeyChecking=no") {
                         config.skip_host_key_check = true;
@@ -225,11 +289,13 @@ fn parse_args(argc: i32, argv: *const *const u8) -> Option<Config> {
                 }
                 _ => {
                     if arg.starts_with("-o") {
+                        // -oOption=value format
                         let opt = &arg[2..];
                         if opt.starts_with("StrictHostKeyChecking=no") {
                             config.skip_host_key_check = true;
                         }
                     } else {
+                        // Unknown option
                         return None;
                     }
                 }
@@ -249,20 +315,6 @@ fn parse_args(argc: i32, argv: *const *const u8) -> Option<Config> {
     Some(config)
 }
 
-/// Convert C string to str
-fn cstr_to_str(ptr: *const u8) -> &'static str {
-    if ptr.is_null() {
-        return "";
-    }
-    let mut len = 0;
-    unsafe {
-        while *ptr.add(len) != 0 {
-            len += 1;
-        }
-        core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr, len))
-    }
-}
-
 /// Parse port number
 fn parse_port(s: &str) -> Option<u16> {
     let mut port = 0u16;
@@ -273,21 +325,92 @@ fn parse_port(s: &str) -> Option<u16> {
         port = port.checked_mul(10)?;
         port = port.checked_add((c as u16) - ('0' as u16))?;
     }
-    if port == 0 {
-        None
-    } else {
-        Some(port)
+    if port == 0 { None } else { Some(port) }
+}
+
+/// Resolve hostname to IP address
+fn resolve_hostname(hostname: &str) -> Option<u32> {
+    // Check if it's already an IP address
+    if let Some(ip) = parse_ipv4(hostname) {
+        return Some(ip);
     }
+
+    // Try DNS resolution
+    if let Some((a, b, c, d)) = dns::resolve(hostname, None) {
+        let ip = ((a as u32) << 24) | ((b as u32) << 16) | ((c as u32) << 8) | (d as u32);
+        return Some(ip);
+    }
+
+    None
+}
+
+/// Parse IPv4 address string
+fn parse_ipv4(s: &str) -> Option<u32> {
+    let parts: Vec<&str> = s.split('.').collect();
+    if parts.len() != 4 {
+        return None;
+    }
+
+    let mut ip = 0u32;
+    for (i, part) in parts.iter().enumerate() {
+        let octet = parse_u8(part)?;
+        ip |= (octet as u32) << ((3 - i) * 8);
+    }
+    Some(ip)
+}
+
+/// Parse u8 from string
+fn parse_u8(s: &str) -> Option<u8> {
+    let mut val = 0u16;
+    for c in s.chars() {
+        if !c.is_ascii_digit() {
+            return None;
+        }
+        val = val.checked_mul(10)?;
+        val = val.checked_add((c as u16) - ('0' as u16))?;
+    }
+    if val > 255 { None } else { Some(val as u8) }
+}
+
+/// Connect to SSH server
+fn connect_to_server(ip: u32, port: u16) -> Result<i32, &'static str> {
+    // Create TCP socket
+    let fd = socket(af::INET, sock::STREAM, 0);
+    if fd < 0 {
+        return Err("failed to create socket");
+    }
+
+    // Build sockaddr_in
+    let addr = SockAddrIn {
+        sin_family: af::INET as u16,
+        sin_port: port.to_be(),
+        sin_addr: InAddr { s_addr: ip.to_be() },
+        sin_zero: [0; 8],
+    };
+
+    // Connect
+    let result = connect(fd, &addr, SOCKADDR_IN_SIZE);
+    if result < 0 {
+        close(fd);
+        return Err("connection refused");
+    }
+
+    Ok(fd)
 }
 
 /// Read password from user
 fn read_password(username: &str, hostname: &str) -> String {
-    print!("{}@{}'s password: ", username, hostname);
+    // Print prompt
+    prints_str(username);
+    prints("@");
+    prints_str(hostname);
+    prints("'s password: ");
 
+    // Read password
     let mut password = String::new();
     let mut buf = [0u8; 1];
     loop {
-        let n = libc::read(0, &mut buf);
+        let n = read(0, &mut buf);
         if n <= 0 {
             break;
         }
@@ -295,31 +418,36 @@ fn read_password(username: &str, hostname: &str) -> String {
             break;
         }
         if buf[0] == 0x7f || buf[0] == 0x08 {
+            // Backspace
             password.pop();
         } else {
             password.push(buf[0] as char);
         }
     }
 
-    println!("");
+    printlns(""); // Newline after password
+
     password
 }
 
 /// Get current username
 fn get_current_username() -> String {
-    let uid = libc::getuid();
+    // Try to get from environment or /etc/passwd
+    let uid = getuid();
     if uid == 0 {
         return String::from("root");
     }
 
     // Try to read from /etc/passwd
-    let fd = libc::open2("/etc/passwd", libc::O_RDONLY);
+    let fd = open2("/etc/passwd", O_RDONLY);
     if fd >= 0 {
         let mut buf = [0u8; 1024];
-        let n = libc::read(fd, &mut buf);
-        libc::close(fd);
+        let n = read(fd, &mut buf);
+        close(fd);
 
         if n > 0 {
+            // Parse passwd file to find username for uid
+            // Format: username:x:uid:gid:...
             let content = core::str::from_utf8(&buf[..n as usize]).unwrap_or("");
             for line in content.lines() {
                 let parts: Vec<&str> = line.split(':').collect();
@@ -334,6 +462,7 @@ fn get_current_username() -> String {
         }
     }
 
+    // Default to current user
     String::from("user")
 }
 
@@ -352,26 +481,43 @@ fn parse_u32(s: &str) -> Option<u32> {
 
 /// Print error message
 fn print_error(context: &str, error: TransportError) {
-    let msg = match error {
-        TransportError::Io(_) => "I/O error",
-        TransportError::Protocol => "protocol error",
-        TransportError::InvalidPacket => "invalid packet",
-        TransportError::Decryption => "decryption error",
-        TransportError::KeyExchange => "key exchange error",
-        TransportError::Closed => "connection closed",
-        TransportError::HostKeyVerification => "host key verification failed",
-        TransportError::AuthFailed => "authentication failed",
-    };
-    eprintln!("ssh: {} failed: {}", context, msg);
+    prints("ssh: ");
+    prints(context);
+    prints(" failed: ");
+    match error {
+        TransportError::SendFailed => printlns("send failed"),
+        TransportError::RecvFailed => printlns("recv failed"),
+        TransportError::Io => printlns("I/O error"),
+        TransportError::Protocol => printlns("protocol error"),
+        TransportError::InvalidPacket => printlns("invalid packet"),
+        TransportError::Decryption => printlns("decryption error"),
+        TransportError::KeyExchange => printlns("key exchange error"),
+        TransportError::Closed => printlns("connection closed by server"),
+        TransportError::HostKeyVerification => printlns("host key verification failed"),
+        TransportError::AuthFailed => printlns("authentication failed"),
+    }
 }
 
 /// Print usage information
-fn print_usage() {
-    println!("Usage: ssh [options] [user@]hostname");
-    println!("");
-    println!("Options:");
-    println!("  -p port    Connect to this port (default: 22)");
-    println!("  -l user    Login as this user");
-    println!("  -v         Verbose mode");
-    println!("  -o option  Set option");
+fn usage() {
+    printlns("Usage: ssh [options] [user@]hostname");
+    printlns("");
+    printlns("Options:");
+    printlns("  -p port    Connect to this port (default: 22)");
+    printlns("  -l user    Login as this user");
+    printlns("  -v         Verbose mode");
+    printlns("  -o option  Set option");
+}
+
+/// Helper to print a String
+fn prints_str(s: &str) {
+    for c in s.chars() {
+        let buf = [c as u8];
+        let _ = write(1, &buf);
+    }
+}
+
+fn printlns_str(s: &str) {
+    prints_str(s);
+    printlns("");
 }

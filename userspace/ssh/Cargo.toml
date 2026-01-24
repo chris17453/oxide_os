@@ -1,12 +1,13 @@
 [package]
 name = "ssh"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
-description = "SSH client for OXIDE OS"
+description = "SSH client for OXIDE OS using oxide-std"
 
 [[bin]]
 name = "ssh"
 path = "src/main.rs"
 
 [dependencies]
+oxide-std = { path = "../oxide-std" }
 libc = { path = "../libc" }

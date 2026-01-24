@@ -1,21 +1,18 @@
-//! SSH Transport Layer (RFC 4253) - Client Side
+//! SSH Transport Layer (RFC 4253)
 //!
-//! Handles:
-//! - Protocol version exchange (client initiates)
-//! - Binary packet protocol
-//! - Key exchange initiation
-//! - Encryption/decryption after key exchange
+//! Handles protocol version exchange, binary packet protocol,
+//! and encryption after key exchange using oxide-std abstractions.
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use libc::socket::{recv, send};
-use libc::*;
+use oxide_std::io::{self, Read, Write};
+use oxide_std::net::TcpStream;
 
 use crate::crypto::SshCipher;
 use crate::kex::KexState;
 
 /// SSH client version string
-pub const SSH_CLIENT_VERSION: &[u8] = b"SSH-2.0-OXIDE_SSH_1.0\r\n";
+pub const SSH_CLIENT_VERSION: &[u8] = b"SSH-2.0-OXIDE_SSH_2.0\r\n";
 
 /// Maximum packet size (256KB)
 const MAX_PACKET_SIZE: usize = 262144;
@@ -30,15 +27,12 @@ pub mod msg {
     pub const SERVICE_ACCEPT: u8 = 6;
     pub const KEXINIT: u8 = 20;
     pub const NEWKEYS: u8 = 21;
-    // ECDH
     pub const KEX_ECDH_INIT: u8 = 30;
     pub const KEX_ECDH_REPLY: u8 = 31;
-    // User authentication
     pub const USERAUTH_REQUEST: u8 = 50;
     pub const USERAUTH_FAILURE: u8 = 51;
     pub const USERAUTH_SUCCESS: u8 = 52;
     pub const USERAUTH_BANNER: u8 = 53;
-    // Channel
     pub const CHANNEL_OPEN: u8 = 90;
     pub const CHANNEL_OPEN_CONFIRMATION: u8 = 91;
     pub const CHANNEL_OPEN_FAILURE: u8 = 92;
@@ -52,51 +46,36 @@ pub mod msg {
     pub const CHANNEL_FAILURE: u8 = 100;
 }
 
-/// Disconnect reason codes
-pub mod disconnect {
-    pub const HOST_NOT_ALLOWED_TO_CONNECT: u32 = 1;
-    pub const PROTOCOL_ERROR: u32 = 2;
-    pub const KEY_EXCHANGE_FAILED: u32 = 3;
-    pub const MAC_ERROR: u32 = 5;
-    pub const HOST_KEY_NOT_VERIFIABLE: u32 = 9;
-    pub const CONNECTION_LOST: u32 = 10;
-    pub const BY_APPLICATION: u32 = 11;
-    pub const AUTH_CANCELLED_BY_USER: u32 = 13;
-    pub const NO_MORE_AUTH_METHODS_AVAILABLE: u32 = 14;
-}
-
 /// SSH transport error
 #[derive(Debug)]
 pub enum TransportError {
-    /// I/O error on send
-    SendFailed,
-    /// I/O error on receive
-    RecvFailed,
-    /// I/O error
-    Io,
-    /// Protocol error
+    Io(io::Error),
     Protocol,
-    /// Invalid packet
     InvalidPacket,
-    /// Decryption error
     Decryption,
-    /// Key exchange failed
     KeyExchange,
-    /// Connection closed
     Closed,
-    /// Host key verification failed
     HostKeyVerification,
-    /// Authentication failed
     AuthFailed,
 }
 
-pub type TransportResult<T> = Result<T, TransportError>;
+impl From<io::Error> for TransportError {
+    fn from(e: io::Error) -> Self {
+        if e.kind() == io::ErrorKind::UnexpectedEof {
+            TransportError::Closed
+        } else {
+            TransportError::Io(e)
+        }
+    }
+}
 
-/// SSH Transport state (client side)
+pub type Result<T> = core::result::Result<T, TransportError>;
+
+/// SSH Transport state
 pub struct SshTransport {
-    /// Socket file descriptor
-    fd: i32,
-    /// Client version string (our version)
+    /// TCP stream
+    stream: TcpStream,
+    /// Client version string
     client_version: Vec<u8>,
     /// Server version string
     server_version: Vec<u8>,
@@ -104,9 +83,9 @@ pub struct SshTransport {
     send_seq: u32,
     /// Sequence number for incoming packets
     recv_seq: u32,
-    /// Encryption cipher (after key exchange)
+    /// Encryption cipher
     send_cipher: Option<SshCipher>,
-    /// Decryption cipher (after key exchange)
+    /// Decryption cipher
     recv_cipher: Option<SshCipher>,
     /// Session ID (hash of first key exchange)
     session_id: Option<[u8; 32]>,
@@ -115,11 +94,11 @@ pub struct SshTransport {
 }
 
 impl SshTransport {
-    /// Create new transport for a connected socket
-    pub fn new(fd: i32) -> TransportResult<Self> {
-        Ok(SshTransport {
-            fd,
-            client_version: SSH_CLIENT_VERSION[..SSH_CLIENT_VERSION.len() - 2].to_vec(), // Strip \r\n
+    /// Create new transport from a connected TCP stream
+    pub fn new(stream: TcpStream) -> Self {
+        SshTransport {
+            stream,
+            client_version: SSH_CLIENT_VERSION[..SSH_CLIENT_VERSION.len() - 2].to_vec(),
             server_version: Vec::new(),
             send_seq: 0,
             recv_seq: 0,
@@ -127,63 +106,53 @@ impl SshTransport {
             recv_cipher: None,
             session_id: None,
             kex: KexState::new(),
-        })
+        }
     }
 
-    /// Perform SSH version exchange (client initiates)
-    pub fn version_exchange(&mut self) -> TransportResult<()> {
-        // Client sends version string first
-        self.send_raw(SSH_CLIENT_VERSION)
-            .map_err(|_| TransportError::SendFailed)?;
+    /// Perform SSH version exchange
+    pub fn version_exchange(&mut self) -> Result<()> {
+        // Send our version string
+        self.stream.write_all(SSH_CLIENT_VERSION)?;
 
         // Read server version string
-        // Retry on EAGAIN since server may not have responded yet
         let mut version = Vec::with_capacity(256);
         let mut retry_count = 0;
         const MAX_RETRIES: i32 = 1000;
-        const EAGAIN: isize = -11;
 
         loop {
             let mut buf = [0u8; 1];
-            let n = recv(self.fd, &mut buf, 0);
-            if n == EAGAIN {
-                retry_count += 1;
-                if retry_count > MAX_RETRIES {
-                    return Err(TransportError::RecvFailed);
+            match self.stream.read(&mut buf) {
+                Ok(0) => return Err(TransportError::Closed),
+                Ok(_) => {
+                    retry_count = 0;
+                    version.push(buf[0]);
+
+                    // Look for line ending
+                    if version.ends_with(b"\r\n") {
+                        version.truncate(version.len() - 2);
+                        break;
+                    }
+                    if version.ends_with(b"\n") {
+                        version.truncate(version.len() - 1);
+                        break;
+                    }
+                    if version.len() > 255 {
+                        return Err(TransportError::Protocol);
+                    }
                 }
-                // Yield to let server process run
-                libc::sched_yield();
-                continue;
-            }
-            if n < 0 {
-                return Err(TransportError::RecvFailed);
-            }
-            if n == 0 {
-                return Err(TransportError::Closed);
-            }
-
-            retry_count = 0; // Reset on successful read
-            version.push(buf[0]);
-
-            // Look for \r\n or \n
-            if version.len() >= 2
-                && version[version.len() - 2] == b'\r'
-                && version[version.len() - 1] == b'\n'
-            {
-                version.truncate(version.len() - 2);
-                break;
-            }
-            if version.len() >= 1 && version[version.len() - 1] == b'\n' {
-                version.truncate(version.len() - 1);
-                break;
-            }
-
-            if version.len() > 255 {
-                return Err(TransportError::Protocol);
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    retry_count += 1;
+                    if retry_count > MAX_RETRIES {
+                        return Err(TransportError::Io(e));
+                    }
+                    libc::sched_yield();
+                    continue;
+                }
+                Err(e) => return Err(TransportError::Io(e)),
             }
         }
 
-        // Verify it starts with SSH-2.0-
+        // Verify SSH-2.0 prefix
         if version.len() < 8 || &version[..8] != b"SSH-2.0-" {
             return Err(TransportError::Protocol);
         }
@@ -192,74 +161,25 @@ impl SshTransport {
         Ok(())
     }
 
-    /// Send raw bytes (before encryption)
-    pub fn send_raw(&mut self, data: &[u8]) -> TransportResult<()> {
-        let mut sent = 0;
-        while sent < data.len() {
-            let n = send(self.fd, &data[sent..], 0);
-            if n <= 0 {
-                return Err(TransportError::Io);
-            }
-            sent += n as usize;
-        }
-        Ok(())
-    }
-
-    /// Receive raw bytes
-    pub fn recv_raw(&mut self, buf: &mut [u8]) -> TransportResult<usize> {
-        let mut received = 0;
-        while received < buf.len() {
-            let n = recv(self.fd, &mut buf[received..], 0);
-            if n < 0 {
-                return Err(TransportError::Io);
-            }
-            if n == 0 {
-                if received == 0 {
-                    return Err(TransportError::Closed);
-                }
-                break;
-            }
-            received += n as usize;
-        }
-        Ok(received)
-    }
-
-    /// Receive exactly n bytes
-    pub fn recv_exact(&mut self, buf: &mut [u8]) -> TransportResult<()> {
-        let mut received = 0;
-        while received < buf.len() {
-            let n = recv(self.fd, &mut buf[received..], 0);
-            if n <= 0 {
-                return Err(TransportError::Io);
-            }
-            received += n as usize;
-        }
-        Ok(())
-    }
-
     /// Send an SSH packet
-    pub fn send_packet(&mut self, payload: &[u8]) -> TransportResult<()> {
+    pub fn send_packet(&mut self, payload: &[u8]) -> Result<()> {
         if let Some(ref mut cipher) = self.send_cipher {
-            // Encrypted packet
             let packet = cipher.encrypt_packet(payload, self.send_seq)?;
-            self.send_raw(&packet)?;
+            self.stream.write_all(&packet)?;
         } else {
-            // Unencrypted packet
             let packet = build_unencrypted_packet(payload);
-            self.send_raw(&packet)?;
+            self.stream.write_all(&packet)?;
         }
         self.send_seq = self.send_seq.wrapping_add(1);
         Ok(())
     }
 
     /// Receive an SSH packet
-    pub fn recv_packet(&mut self) -> TransportResult<Vec<u8>> {
+    pub fn recv_packet(&mut self) -> Result<Vec<u8>> {
         let payload = if let Some(ref mut cipher) = self.recv_cipher {
-            // Encrypted packet
-            cipher.decrypt_packet(self.fd, self.recv_seq)?
+            cipher.decrypt_packet(&mut self.stream, self.recv_seq)?
         } else {
-            // Unencrypted packet
-            recv_unencrypted_packet(self.fd)?
+            recv_unencrypted_packet(&mut self.stream)?
         };
         self.recv_seq = self.recv_seq.wrapping_add(1);
         Ok(payload)
@@ -275,7 +195,7 @@ impl SshTransport {
         &self.server_version
     }
 
-    /// Set session ID (first exchange hash)
+    /// Set session ID
     pub fn set_session_id(&mut self, id: [u8; 32]) {
         if self.session_id.is_none() {
             self.session_id = Some(id);
@@ -287,30 +207,25 @@ impl SshTransport {
         self.session_id.as_ref()
     }
 
-    /// Enable encryption with derived keys
+    /// Enable encryption
     pub fn enable_encryption(&mut self, send_cipher: SshCipher, recv_cipher: SshCipher) {
         self.send_cipher = Some(send_cipher);
         self.recv_cipher = Some(recv_cipher);
     }
 
-    /// Get socket FD
-    pub fn fd(&self) -> i32 {
-        self.fd
+    /// Get raw file descriptor for polling
+    pub fn as_raw_fd(&self) -> i32 {
+        self.stream.as_raw_fd()
     }
 
-    /// Access kex state
+    /// Access kex state mutably
     pub fn kex(&mut self) -> &mut KexState {
         &mut self.kex
     }
 
-    /// Get kex state immutably
+    /// Access kex state immutably
     pub fn kex_ref(&self) -> &KexState {
         &self.kex
-    }
-
-    /// Get current receive sequence number
-    pub fn recv_sequence(&self) -> u32 {
-        self.recv_seq
     }
 }
 
@@ -326,36 +241,18 @@ fn build_unencrypted_packet(payload: &[u8]) -> Vec<u8> {
     let packet_len = 1 + payload_len + padding_len;
 
     let mut packet = Vec::with_capacity(4 + packet_len);
-
-    // Packet length (4 bytes, big-endian)
     packet.extend_from_slice(&(packet_len as u32).to_be_bytes());
-
-    // Padding length (1 byte)
     packet.push(padding_len as u8);
-
-    // Payload
     packet.extend_from_slice(payload);
-
-    // Padding (random bytes, but we use zeros for simplicity)
-    for _ in 0..padding_len {
-        packet.push(0);
-    }
-
+    packet.extend(core::iter::repeat(0).take(padding_len));
     packet
 }
 
 /// Receive an unencrypted SSH packet
-fn recv_unencrypted_packet(fd: i32) -> TransportResult<Vec<u8>> {
-    // Read packet length (4 bytes)
+fn recv_unencrypted_packet(stream: &mut TcpStream) -> Result<Vec<u8>> {
+    // Read packet length
     let mut len_buf = [0u8; 4];
-    let mut received = 0;
-    while received < 4 {
-        let n = recv(fd, &mut len_buf[received..], 0);
-        if n <= 0 {
-            return Err(TransportError::Io);
-        }
-        received += n as usize;
-    }
+    stream.read_exact(&mut len_buf)?;
 
     let packet_len = u32::from_be_bytes(len_buf) as usize;
     if packet_len > MAX_PACKET_SIZE || packet_len < 2 {
@@ -364,14 +261,7 @@ fn recv_unencrypted_packet(fd: i32) -> TransportResult<Vec<u8>> {
 
     // Read rest of packet
     let mut packet = alloc::vec![0u8; packet_len];
-    received = 0;
-    while received < packet_len {
-        let n = recv(fd, &mut packet[received..], 0);
-        if n <= 0 {
-            return Err(TransportError::Io);
-        }
-        received += n as usize;
-    }
+    stream.read_exact(&mut packet)?;
 
     // Extract payload
     let padding_len = packet[0] as usize;
@@ -383,7 +273,11 @@ fn recv_unencrypted_packet(fd: i32) -> TransportResult<Vec<u8>> {
     Ok(packet[1..1 + payload_len].to_vec())
 }
 
-/// SSH string encoding helpers
+// ============================================================================
+// SSH String Encoding Helpers
+// ============================================================================
+
+/// Encode a string with length prefix
 pub fn encode_string(s: &[u8]) -> Vec<u8> {
     let mut result = Vec::with_capacity(4 + s.len());
     result.extend_from_slice(&(s.len() as u32).to_be_bytes());
@@ -391,6 +285,7 @@ pub fn encode_string(s: &[u8]) -> Vec<u8> {
     result
 }
 
+/// Encode a name list (comma-separated strings)
 pub fn encode_name_list(names: &[&str]) -> Vec<u8> {
     let joined: Vec<u8> = names
         .iter()
@@ -400,7 +295,8 @@ pub fn encode_name_list(names: &[&str]) -> Vec<u8> {
     encode_string(&joined)
 }
 
-pub fn decode_string(data: &[u8], offset: &mut usize) -> TransportResult<Vec<u8>> {
+/// Decode a length-prefixed string
+pub fn decode_string(data: &[u8], offset: &mut usize) -> Result<Vec<u8>> {
     if *offset + 4 > data.len() {
         return Err(TransportError::InvalidPacket);
     }
@@ -420,7 +316,8 @@ pub fn decode_string(data: &[u8], offset: &mut usize) -> TransportResult<Vec<u8>
     Ok(s)
 }
 
-pub fn decode_u32(data: &[u8], offset: &mut usize) -> TransportResult<u32> {
+/// Decode a u32 from big-endian bytes
+pub fn decode_u32(data: &[u8], offset: &mut usize) -> Result<u32> {
     if *offset + 4 > data.len() {
         return Err(TransportError::InvalidPacket);
     }
@@ -431,14 +328,5 @@ pub fn decode_u32(data: &[u8], offset: &mut usize) -> TransportResult<u32> {
         data[*offset + 3],
     ]);
     *offset += 4;
-    Ok(val)
-}
-
-pub fn decode_u8(data: &[u8], offset: &mut usize) -> TransportResult<u8> {
-    if *offset >= data.len() {
-        return Err(TransportError::InvalidPacket);
-    }
-    let val = data[*offset];
-    *offset += 1;
     Ok(val)
 }

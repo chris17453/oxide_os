@@ -25,6 +25,7 @@ pub mod collections;
 pub mod env;
 pub mod fs;
 pub mod io;
+pub mod net;
 pub mod process;
 pub mod sync;
 pub mod thread;
