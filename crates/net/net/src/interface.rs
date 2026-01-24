@@ -1,5 +1,6 @@
 //! Network Interface Management
 
+use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -7,11 +8,32 @@ use spin::Mutex;
 
 use crate::{IpAddr, Ipv4Addr, Ipv6Addr, MacAddress, NetError, NetResult, NetworkDevice};
 
+/// Interface configuration mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigMode {
+    /// Static IP configuration
+    Static,
+    /// DHCP client
+    Dhcp,
+    /// Manual (no automatic configuration)
+    Manual,
+    /// Loopback interface
+    Loopback,
+}
+
+impl Default for ConfigMode {
+    fn default() -> Self {
+        ConfigMode::Manual
+    }
+}
+
 /// Interface configuration
 #[derive(Debug, Clone)]
 pub struct InterfaceConfig {
     /// Interface name
     pub name: String,
+    /// Configuration mode
+    pub mode: ConfigMode,
     /// IPv4 address
     pub ipv4_addr: Option<Ipv4Addr>,
     /// IPv4 netmask
@@ -24,18 +46,22 @@ pub struct InterfaceConfig {
     pub ipv6_addrs: Vec<Ipv6Addr>,
     /// MTU
     pub mtu: usize,
+    /// DNS servers (up to 3)
+    pub dns_servers: Vec<Ipv4Addr>,
 }
 
 impl Default for InterfaceConfig {
     fn default() -> Self {
         InterfaceConfig {
             name: String::new(),
+            mode: ConfigMode::Manual,
             ipv4_addr: None,
             ipv4_netmask: None,
             ipv4_broadcast: None,
             ipv4_gateway: None,
             ipv6_addrs: Vec::new(),
             mtu: 1500,
+            dns_servers: Vec::new(),
         }
     }
 }
@@ -208,4 +234,193 @@ pub fn find_route(dest: Ipv4Addr) -> Option<Arc<NetworkInterface>> {
     }
 
     None
+}
+
+// ============================================================================
+// Network Configuration File Parsing
+// ============================================================================
+
+/// Config file path pattern
+pub const NET_CONFIG_DIR: &str = "/etc/network";
+
+/// Parse an interface configuration file
+///
+/// Configuration file format (e.g., /etc/network/eth0.conf):
+/// ```text
+/// # Interface configuration
+/// mode=static|dhcp|manual
+/// address=192.168.1.100
+/// netmask=255.255.255.0
+/// gateway=192.168.1.1
+/// dns=8.8.8.8
+/// dns=8.8.4.4
+/// mtu=1500
+/// ```
+pub fn parse_config_file(content: &str) -> InterfaceConfig {
+    let mut config = InterfaceConfig::default();
+
+    for line in content.lines() {
+        let line = line.trim();
+
+        // Skip comments and empty lines
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        // Parse key=value pairs
+        if let Some((key, value)) = line.split_once('=') {
+            let key = key.trim();
+            let value = value.trim();
+
+            // Case-insensitive key matching
+            let key_lower: String = key.chars().map(|c| c.to_ascii_lowercase()).collect();
+
+            match key_lower.as_str() {
+                "mode" => {
+                    let value_lower: String = value.chars().map(|c| c.to_ascii_lowercase()).collect();
+                    config.mode = match value_lower.as_str() {
+                        "static" => ConfigMode::Static,
+                        "dhcp" => ConfigMode::Dhcp,
+                        "loopback" => ConfigMode::Loopback,
+                        _ => ConfigMode::Manual,
+                    };
+                }
+                "address" | "ip" | "ipaddr" => {
+                    if let Some(addr) = parse_ipv4(value) {
+                        config.ipv4_addr = Some(addr);
+                    }
+                }
+                "netmask" | "mask" => {
+                    if let Some(addr) = parse_ipv4(value) {
+                        config.ipv4_netmask = Some(addr);
+                    }
+                }
+                "gateway" | "gw" => {
+                    if let Some(addr) = parse_ipv4(value) {
+                        config.ipv4_gateway = Some(addr);
+                    }
+                }
+                "dns" | "nameserver" => {
+                    if let Some(addr) = parse_ipv4(value) {
+                        if config.dns_servers.len() < 3 {
+                            config.dns_servers.push(addr);
+                        }
+                    }
+                }
+                "mtu" => {
+                    if let Some(mtu) = parse_usize(value) {
+                        if mtu >= 68 && mtu <= 65535 {
+                            config.mtu = mtu;
+                        }
+                    }
+                }
+                "broadcast" => {
+                    if let Some(addr) = parse_ipv4(value) {
+                        config.ipv4_broadcast = Some(addr);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Calculate broadcast if not specified
+    if config.ipv4_broadcast.is_none() {
+        if let (Some(addr), Some(mask)) = (config.ipv4_addr, config.ipv4_netmask) {
+            let broadcast = Ipv4Addr::from_u32(addr.to_u32() | !mask.to_u32());
+            config.ipv4_broadcast = Some(broadcast);
+        }
+    }
+
+    config
+}
+
+/// Parse IPv4 address from string
+fn parse_ipv4(s: &str) -> Option<Ipv4Addr> {
+    let mut octets = [0u8; 4];
+    let mut idx = 0;
+    let mut current: u16 = 0;
+    let mut has_digit = false;
+
+    for c in s.bytes() {
+        if c == b'.' {
+            if !has_digit || idx >= 3 || current > 255 {
+                return None;
+            }
+            octets[idx] = current as u8;
+            idx += 1;
+            current = 0;
+            has_digit = false;
+        } else if c.is_ascii_digit() {
+            current = current * 10 + (c - b'0') as u16;
+            has_digit = true;
+            if current > 255 {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    }
+
+    if !has_digit || idx != 3 || current > 255 {
+        return None;
+    }
+    octets[idx] = current as u8;
+
+    Some(Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]))
+}
+
+/// Parse usize from string
+fn parse_usize(s: &str) -> Option<usize> {
+    let mut val: usize = 0;
+    for c in s.bytes() {
+        if c.is_ascii_digit() {
+            val = val.checked_mul(10)?;
+            val = val.checked_add((c - b'0') as usize)?;
+        } else {
+            return None;
+        }
+    }
+    Some(val)
+}
+
+/// Format configuration to write to file
+pub fn format_config_file(config: &InterfaceConfig) -> String {
+    let mut output = String::new();
+
+    output.push_str("# Network interface configuration\n");
+    output.push_str("# Auto-generated by OXIDE networkd\n\n");
+
+    // Mode
+    let mode_str = match config.mode {
+        ConfigMode::Static => "static",
+        ConfigMode::Dhcp => "dhcp",
+        ConfigMode::Manual => "manual",
+        ConfigMode::Loopback => "loopback",
+    };
+    output.push_str(&alloc::format!("mode={}\n", mode_str));
+
+    // IP configuration
+    if let Some(addr) = config.ipv4_addr {
+        output.push_str(&alloc::format!("address={}\n", addr));
+    }
+    if let Some(mask) = config.ipv4_netmask {
+        output.push_str(&alloc::format!("netmask={}\n", mask));
+    }
+    if let Some(gw) = config.ipv4_gateway {
+        output.push_str(&alloc::format!("gateway={}\n", gw));
+    }
+    if let Some(bcast) = config.ipv4_broadcast {
+        output.push_str(&alloc::format!("broadcast={}\n", bcast));
+    }
+
+    // DNS servers
+    for dns in &config.dns_servers {
+        output.push_str(&alloc::format!("dns={}\n", dns));
+    }
+
+    // MTU
+    output.push_str(&alloc::format!("mtu={}\n", config.mtu));
+
+    output
 }
