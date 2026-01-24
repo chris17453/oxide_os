@@ -10,6 +10,7 @@ SHELL := /usr/bin/bash
 ARCH ?= x86_64
 PROFILE ?= debug
 QEMU_TIMEOUT ?= 15
+LINKER ?= ld.lld
 
 # QEMU command auto-detection (can be overridden with QEMU=command)
 # Prefer qemu-system-x86_64 as it supports all features (including fat: protocol)
@@ -37,7 +38,7 @@ USERSPACE_OUT_RELEASE := $(TARGET_DIR)/$(USERSPACE_TARGET)/release
 CARGO_USER_FLAGS :=
 
 # Userspace packages to build
-USERSPACE_PACKAGES := init esh login coreutils
+USERSPACE_PACKAGES := init esh login coreutils ssh sshd servicemgr
 
 # Coreutils binaries (auto-detected from Cargo.toml [[bin]] entries)
 # Extract binary names from [[bin]] sections in coreutils/Cargo.toml
@@ -72,7 +73,7 @@ userspace:
 	@echo "Building userspace programs..."
 	@for pkg in $(USERSPACE_PACKAGES); do \
 		echo "  Building $$pkg..."; \
-		RUSTFLAGS="-C linker=rust-lld -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package $$pkg --target $(USERSPACE_TARGET) $(CARGO_USER_FLAGS) || exit 1; \
+		RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package $$pkg --target $(USERSPACE_TARGET) $(CARGO_USER_FLAGS) || exit 1; \
 	done
 	@echo "Userspace programs built."
 
@@ -81,12 +82,12 @@ userspace-release:
 	@echo "Building userspace programs (release)..."
 	@for pkg in $(USERSPACE_PACKAGES); do \
 		echo "  Building $$pkg (release)..."; \
-		RUSTFLAGS="-C linker=rust-lld -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package $$pkg --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1; \
+		RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package $$pkg --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1; \
 	done
 	@echo "  Building gwbasic (release)..."
-	@RUSTFLAGS="-C linker=rust-lld -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package oxide-gwbasic --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) --features oxide || exit 1
+	@RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package oxide-gwbasic --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) --features oxide || exit 1
 	@echo "Stripping binaries..."
-	@for prog in init esh login gwbasic $(COREUTILS_BINS); do \
+	@for prog in init esh login gwbasic ssh sshd servicemgr $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
 			strip "$(USERSPACE_OUT_RELEASE)/$$prog" 2>/dev/null || true; \
 		fi; \
@@ -122,6 +123,12 @@ initramfs: userspace-release
 	@cp "$(USERSPACE_OUT_RELEASE)/login" "$(TARGET_DIR)/initramfs/bin/login"
 	@# Copy gwbasic
 	@cp "$(USERSPACE_OUT_RELEASE)/gwbasic" "$(TARGET_DIR)/initramfs/bin/gwbasic"
+	@# Copy ssh client
+	@cp "$(USERSPACE_OUT_RELEASE)/ssh" "$(TARGET_DIR)/initramfs/bin/ssh"
+	@# Copy sshd
+	@cp "$(USERSPACE_OUT_RELEASE)/sshd" "$(TARGET_DIR)/initramfs/bin/sshd"
+	@# Copy servicemgr
+	@cp "$(USERSPACE_OUT_RELEASE)/servicemgr" "$(TARGET_DIR)/initramfs/bin/servicemgr"
 	@# Copy coreutils
 	@for prog in $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
@@ -247,6 +254,7 @@ run: boot-quick
 	@mkdir -p /tmp/qemu-oxide
 	TMPDIR=/tmp/qemu-oxide $(QEMU) \
 		-machine q35 \
+		-cpu qemu64,+smap,+smep \
 		-m 256M \
 		-bios "$(OVMF)" \
 		-drive format=raw,file=fat:rw:$(BOOT_DIR),if=none,id=disk \
@@ -267,6 +275,7 @@ run-no-net: boot-quick
 	@mkdir -p /tmp/qemu-oxide
 	TMPDIR=/tmp/qemu-oxide $(QEMU) \
 		-machine q35 \
+		-cpu qemu64,+smap,+smep \
 		-m 256M \
 		-bios "$(OVMF)" \
 		-drive format=raw,file=fat:rw:$(BOOT_DIR),if=none,id=disk \
@@ -283,6 +292,7 @@ run-headless: boot-quick
 	@mkdir -p /tmp/qemu-oxide
 	TMPDIR=/tmp/qemu-oxide $(QEMU) \
 		-machine q35 \
+		-cpu qemu64,+smap,+smep \
 		-m 256M \
 		-bios "$(OVMF)" \
 		-drive format=raw,file=fat:rw:$(BOOT_DIR),if=none,id=disk \
@@ -302,6 +312,7 @@ run-headless-no-net: boot-quick
 	@mkdir -p /tmp/qemu-oxide
 	TMPDIR=/tmp/qemu-oxide $(QEMU) \
 		-machine q35 \
+		-cpu qemu64,+smap,+smep \
 		-m 256M \
 		-bios "$(OVMF)" \
 		-drive format=raw,file=fat:rw:$(BOOT_DIR),if=none,id=disk \
@@ -433,6 +444,7 @@ test: boot-quick
 	@mkdir -p /tmp/qemu-oxide
 	@TMPDIR=/tmp/qemu-oxide timeout $(QEMU_TIMEOUT) $(QEMU) \
 		-machine q35 \
+		-cpu qemu64,+smap,+smep \
 		-m 256M \
 		-bios "$(OVMF)" \
 		-drive format=raw,file=fat:rw:$(BOOT_DIR),if=none,id=disk \
