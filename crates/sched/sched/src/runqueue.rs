@@ -104,24 +104,9 @@ impl RunQueue {
     /// Add a task to this run queue
     pub fn add_task(&mut self, task: Task) {
         let pid = task.pid;
-        let policy = task.policy;
-        let rt_prio = task.rt_priority;
-        let vruntime = task.vruntime;
-        let weight = task.weight;
-
         self.tasks.insert(pid, task);
-
-        // Enqueue based on policy
-        if policy.is_realtime() {
-            self.rt_rq.enqueue(pid, rt_prio);
-        } else if policy.is_fair() {
-            let adjusted_vr = self.cfs_rq.enqueue(pid, vruntime, weight);
-            if let Some(t) = self.tasks.get_mut(&pid) {
-                t.vruntime = adjusted_vr;
-                t.on_rq = true;
-            }
-        }
-        // Idle tasks are handled specially
+        // Use enqueue_task for consistent accounting
+        self.enqueue_task(pid);
     }
 
     /// Remove a task from this run queue
@@ -220,6 +205,7 @@ impl RunQueue {
             if let Some(t) = self.tasks.get_mut(&pid) {
                 t.on_rq = false;
             }
+            self.nr_running = self.nr_running.saturating_sub(1);
             return pid;
         }
 
@@ -230,6 +216,7 @@ impl RunQueue {
                 if let Some(t) = self.tasks.get_mut(&pid) {
                     t.on_rq = false;
                 }
+                self.nr_running = self.nr_running.saturating_sub(1);
                 return pid;
             }
         }
@@ -240,33 +227,22 @@ impl RunQueue {
 
     /// Put the previously running task back
     pub fn put_prev_task(&mut self, pid: Pid) {
-        let (policy, rt_prio, vruntime, weight) = {
+        // Check if task exists and should be re-enqueued
+        let dominated = {
             let task = match self.tasks.get(&pid) {
                 Some(t) => t,
                 None => return,
             };
             // Don't re-enqueue idle task or dead tasks
-            if task.policy == SchedPolicy::Idle || task.state.is_dead() {
-                return;
-            }
-            (task.policy, task.rt_priority, task.vruntime, task.weight)
+            task.policy == SchedPolicy::Idle || task.state.is_dead()
         };
 
-        // Re-enqueue based on policy
-        if policy.is_realtime() {
-            // For RR, check if time slice expired and requeue to tail
-            if policy == SchedPolicy::RoundRobin {
-                self.rt_rq.requeue_tail(pid, rt_prio);
-            } else {
-                self.rt_rq.enqueue(pid, rt_prio);
-            }
-        } else if policy.is_fair() {
-            self.cfs_rq.enqueue(pid, vruntime, weight);
+        if dominated {
+            return;
         }
 
-        if let Some(t) = self.tasks.get_mut(&pid) {
-            t.on_rq = true;
-        }
+        // Use enqueue_task for consistent accounting
+        self.enqueue_task(pid);
     }
 
     /// Update the run queue clock

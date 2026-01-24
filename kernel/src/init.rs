@@ -312,7 +312,9 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Keyboard is handled by WATOS-style interrupt handler - no initialization needed
     let _ = writeln!(writer, "[INFO] Keyboard ready (WATOS-style)");
 
-    // Register preemptive scheduler
+    // Initialize and register preemptive scheduler
+    scheduler::init();
+    let _ = writeln!(writer, "[INFO] Scheduler initialized");
     unsafe {
         arch::set_scheduler_callback(scheduler::scheduler_tick);
     }
@@ -900,6 +902,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Register in process table
     let init_arc = process_table().add(init_process);
     process_table().set_current_pid(init_pid);
+
+    // Add init to the scheduler and set it as current
+    scheduler::add_process(init_pid);
+    sched::switch_to(init_pid);  // Mark init as the currently running task
+
     let _ = writeln!(writer, "[USER] Init process registered");
 
     // Set up standard file descriptors (stdin, stdout, stderr) for init

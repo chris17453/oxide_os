@@ -305,8 +305,8 @@ pub fn pick_next_task() -> Option<Pid> {
             }
         }
 
-        // Pick the next task
-        let next = rq.pick_next_task();
+        // Pop the next task (removes from run queue, sets on_rq = false)
+        let next = rq.pop_next_task();
         let now = rq.clock();
 
         // Mark it as running
@@ -340,6 +340,40 @@ pub fn need_resched() -> bool {
 pub fn set_need_resched() {
     let cpu = this_cpu();
     with_rq(cpu, |rq| rq.set_need_resched(true));
+}
+
+/// Switch current task to a new task (for fork/exec manual switches)
+///
+/// This properly re-enqueues the previous task and sets the new current.
+/// Must be called when doing manual context switches outside of pick_next_task.
+pub fn switch_to(new_pid: Pid) {
+    let cpu = this_cpu();
+
+    with_rq(cpu, |rq| {
+        // Re-enqueue the previous task if it exists and is runnable
+        if let Some(prev_pid) = rq.curr() {
+            let should_requeue = rq.get_task(prev_pid)
+                .map(|task| task.state.is_runnable() && !task.is_idle())
+                .unwrap_or(false);
+            if should_requeue {
+                rq.put_prev_task(prev_pid);
+            }
+        }
+
+        // Dequeue the new task from the run queue (it's becoming current)
+        rq.dequeue_task(new_pid);
+
+        // Set the new task as current
+        let now = rq.clock();
+        if let Some(task) = rq.get_task_mut(new_pid) {
+            task.state = TaskState::TASK_RUNNING;
+            task.last_cpu = cpu;
+            task.exec_start = now;
+            task.on_rq = false; // Current task is not on the run queue
+        }
+        rq.set_curr(Some(new_pid));
+        rq.set_need_resched(false);
+    });
 }
 
 /// Get task state
@@ -589,4 +623,18 @@ pub fn preempt_disabled() -> bool {
         }
     })
     .unwrap_or(false)
+}
+
+/// Debug: Get current scheduler state
+///
+/// Returns (current_pid, nr_running, cfs_queue_size)
+pub fn debug_state() -> (Option<Pid>, u32, u32) {
+    let cpu = this_cpu();
+    with_rq(cpu, |rq| {
+        let curr = rq.curr();
+        let nr_running = rq.nr_running();
+        let cfs_count = rq.cfs_rq().nr_running();
+        (curr, nr_running, cfs_count)
+    })
+    .unwrap_or((None, 0, 0))
 }

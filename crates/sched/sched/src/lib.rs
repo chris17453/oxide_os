@@ -108,6 +108,10 @@ pub use crate::core::{
     // Context switching support
     get_task_context, set_task_context, get_task_pml4,
     get_task_kernel_stack, get_task_switch_info,
+    // Manual context switch support (for fork/exec)
+    switch_to,
+    // Debug
+    debug_state,
 };
 
 // Re-export task types
