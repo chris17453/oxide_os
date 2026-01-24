@@ -2,7 +2,6 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::AtomicBool;
 
@@ -10,7 +9,6 @@ use arch_traits::Arch;
 use arch_x86_64::X86_64;
 use mm_frame::BitmapFrameAllocator;
 use mm_heap::LockedHeap;
-use proc_traits::Pid;
 use spin::{Mutex, MutexGuard};
 
 /// Global kernel heap allocator
@@ -92,11 +90,6 @@ impl<T> Drop for InterruptMutexGuard<'_, T> {
         }
     }
 }
-
-/// Ready queue - processes that are ready to run
-/// The scheduler picks from this queue on each timer tick
-/// Uses InterruptMutex to prevent deadlock when scheduler_tick accesses it
-pub static READY_QUEUE: InterruptMutex<Vec<Pid>> = InterruptMutex::new(Vec::new());
 
 /// Full parent context for returning from child process
 /// Stores all registers so parent can resume with correct state
