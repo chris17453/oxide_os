@@ -11,6 +11,7 @@ pub const O_EXCL: u32 = 0o200;
 pub const O_TRUNC: u32 = 0o1000;
 pub const O_APPEND: u32 = 0o2000;
 pub const O_NONBLOCK: u32 = 0o4000;
+pub const O_NOCTTY: u32 = 0o400;
 pub const O_DIRECTORY: u32 = 0o200000;
 
 /// Seek whence values

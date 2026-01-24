@@ -99,6 +99,8 @@ members = [
     "userspace/ar",
     "userspace/make",
     "userspace/compression",
+    "userspace/sshd",
+    "userspace/servicemgr",
     "bootloader/boot-uefi",
     "apps/gwbasic",
 ]
