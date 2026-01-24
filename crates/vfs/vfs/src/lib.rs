@@ -17,6 +17,6 @@ pub mod vnode;
 pub use error::{VfsError, VfsResult};
 pub use fd::{FdTable, FileDescriptor};
 pub use file::{File, FileFlags, SeekFrom};
-pub use mount::{Mount, MountFlags, VFS};
+pub use mount::{FsInfo, Mount, MountFlags, VFS, vfs_statfs};
 pub use path::Path;
 pub use vnode::{DirEntry, Mode, Stat, Vnode, VnodeOps, VnodeType};

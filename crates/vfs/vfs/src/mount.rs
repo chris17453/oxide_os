@@ -221,6 +221,60 @@ impl VFS {
     pub fn mounts(&self) -> Vec<String> {
         self.mounts.read().keys().cloned().collect()
     }
+
+    /// Get filesystem statistics for a path
+    pub fn statfs(&self, path: &str) -> VfsResult<FsInfo> {
+        // Find the mount for this path
+        let (mount, _relative_path) = self.find_mount(path).ok_or(VfsError::NotFound)?;
+
+        // Get basic stats from the mount
+        let info = FsInfo {
+            fs_type: self.fs_type_magic(mount.fs_type()),
+            block_size: 4096,
+            total_blocks: 0,
+            free_blocks: 0,
+            available_blocks: 0,
+            total_inodes: 0,
+            free_inodes: 0,
+            max_name_len: 255,
+        };
+
+        Ok(info)
+    }
+
+    /// Convert filesystem type name to magic number
+    fn fs_type_magic(&self, fs_type: &str) -> u32 {
+        match fs_type {
+            "initramfs" => 0x01021994,  // INITRAMFS_MAGIC
+            "oxidefs" => 0x4F584944,    // "OXID"
+            "tmpfs" => 0x01021994,      // TMPFS_MAGIC
+            "devfs" => 0x1373,          // DEVFS_MAGIC
+            "procfs" => 0x9FA0,         // PROC_SUPER_MAGIC
+            "sysfs" => 0x62656572,      // SYSFS_MAGIC
+            _ => 0x4F584944,            // Default: OXID
+        }
+    }
+}
+
+/// Filesystem information (for statfs)
+#[derive(Debug, Clone, Copy)]
+pub struct FsInfo {
+    /// Filesystem type (magic number)
+    pub fs_type: u32,
+    /// Block size
+    pub block_size: u32,
+    /// Total data blocks
+    pub total_blocks: u64,
+    /// Free blocks
+    pub free_blocks: u64,
+    /// Available blocks (to unprivileged user)
+    pub available_blocks: u64,
+    /// Total inodes
+    pub total_inodes: u64,
+    /// Free inodes
+    pub free_inodes: u64,
+    /// Maximum filename length
+    pub max_name_len: u32,
 }
 
 impl Default for VFS {
@@ -231,3 +285,8 @@ impl Default for VFS {
 
 /// Global VFS instance
 pub static GLOBAL_VFS: VFS = VFS::new();
+
+/// Get filesystem statistics for a path (global helper)
+pub fn vfs_statfs(path: &str) -> VfsResult<FsInfo> {
+    GLOBAL_VFS.statfs(path)
+}

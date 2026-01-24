@@ -713,3 +713,172 @@ pub fn sys_fchown(fd: i32, uid: i32, gid: i32) -> i64 {
         Err(e) => vfs_error_to_errno(e),
     }
 }
+
+/// Statfs structure for statfs/fstatfs syscalls
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct Statfs {
+    /// Filesystem type
+    pub f_type: i64,
+    /// Optimal transfer block size
+    pub f_bsize: i64,
+    /// Total data blocks in filesystem
+    pub f_blocks: u64,
+    /// Free blocks in filesystem
+    pub f_bfree: u64,
+    /// Free blocks available to unprivileged user
+    pub f_bavail: u64,
+    /// Total file nodes in filesystem
+    pub f_files: u64,
+    /// Free file nodes in filesystem
+    pub f_ffree: u64,
+    /// Filesystem ID
+    pub f_fsid: [i32; 2],
+    /// Maximum length of filenames
+    pub f_namelen: i64,
+    /// Fragment size
+    pub f_frsize: i64,
+    /// Mount flags
+    pub f_flags: i64,
+    /// Spare bytes
+    pub f_spare: [i64; 4],
+}
+
+impl Statfs {
+    /// Create a default Statfs structure
+    pub const fn new() -> Self {
+        Statfs {
+            f_type: 0x4F584944, // "OXID" magic
+            f_bsize: 4096,
+            f_blocks: 0,
+            f_bfree: 0,
+            f_bavail: 0,
+            f_files: 0,
+            f_ffree: 0,
+            f_fsid: [0, 0],
+            f_namelen: 255,
+            f_frsize: 4096,
+            f_flags: 0,
+            f_spare: [0; 4],
+        }
+    }
+}
+
+/// sys_statfs - Get filesystem statistics
+///
+/// # Arguments
+/// * `path_ptr` - Path to any file within the mounted filesystem
+/// * `path_len` - Length of path string
+/// * `buf_ptr` - Pointer to Statfs structure in user space
+///
+/// # Returns
+/// 0 on success, negative errno on error
+pub fn sys_statfs(path_ptr: u64, path_len: usize, buf_ptr: usize) -> i64 {
+    use crate::errno;
+
+    if buf_ptr == 0 || buf_ptr >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    // Copy path from user space
+    let raw_path = match copy_path_from_user(path_ptr, path_len) {
+        Some(p) => p,
+        None => return errno::EFAULT,
+    };
+
+    // Resolve relative paths against cwd
+    let path = resolve_path(raw_path);
+
+    // Get VFS stats for the path
+    let statfs = if let Ok(info) = GLOBAL_VFS.statfs(&path) {
+        Statfs {
+            f_type: info.fs_type as i64,
+            f_bsize: info.block_size as i64,
+            f_blocks: info.total_blocks,
+            f_bfree: info.free_blocks,
+            f_bavail: info.available_blocks,
+            f_files: info.total_inodes,
+            f_ffree: info.free_inodes,
+            f_fsid: [0, 0],
+            f_namelen: info.max_name_len as i64,
+            f_frsize: info.block_size as i64,
+            f_flags: 0,
+            f_spare: [0; 4],
+        }
+    } else {
+        // Return defaults if path doesn't exist or no info available
+        Statfs::new()
+    };
+
+    // Copy to userspace
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+        let dest = buf_ptr as *mut Statfs;
+        core::ptr::write_volatile(dest, statfs);
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
+
+    0
+}
+
+/// sys_fstatfs - Get filesystem statistics by file descriptor
+///
+/// # Arguments
+/// * `fd` - File descriptor
+/// * `buf_ptr` - Pointer to Statfs structure in user space
+///
+/// # Returns
+/// 0 on success, negative errno on error
+pub fn sys_fstatfs(fd: i32, buf_ptr: usize) -> i64 {
+    use crate::errno;
+
+    if buf_ptr == 0 || buf_ptr >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    // Verify the file descriptor is valid
+    let table = process_table();
+    let proc = match table.current() {
+        Some(p) => p,
+        None => return errno::ESRCH,
+    };
+
+    {
+        let proc_guard = proc.lock();
+        if proc_guard.fd_table().get(fd).is_err() {
+            return errno::EBADF;
+        }
+    }
+
+    // For fstatfs, we return default filesystem stats
+    // A proper implementation would track the file's path and look up its mount
+    // For now, use root filesystem stats
+    let statfs = if let Ok(info) = GLOBAL_VFS.statfs("/") {
+        Statfs {
+            f_type: info.fs_type as i64,
+            f_bsize: info.block_size as i64,
+            f_blocks: info.total_blocks,
+            f_bfree: info.free_blocks,
+            f_bavail: info.available_blocks,
+            f_files: info.total_inodes,
+            f_ffree: info.free_inodes,
+            f_fsid: [0, 0],
+            f_namelen: info.max_name_len as i64,
+            f_frsize: info.block_size as i64,
+            f_flags: 0,
+            f_spare: [0; 4],
+        }
+    } else {
+        Statfs::new()
+    };
+
+    // Copy to userspace
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+        let dest = buf_ptr as *mut Statfs;
+        core::ptr::write_volatile(dest, statfs);
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
+
+    0
+}

@@ -101,6 +101,11 @@ pub mod nr {
     pub const CLOCK_GETRES: u64 = 62;
     pub const NANOSLEEP: u64 = 63;
 
+    // System info syscalls
+    pub const UNAME: u64 = 64;
+    pub const STATFS: u64 = 65;
+    pub const FSTATFS: u64 = 66;
+
     // Poll/Select syscalls
     pub const POLL: u64 = 95;
     pub const PPOLL: u64 = 96;
@@ -375,6 +380,11 @@ pub fn dispatch(
         nr::CLOCK_GETTIME => time::sys_clock_gettime(arg1 as i32, arg2 as usize),
         nr::CLOCK_GETRES => time::sys_clock_getres(arg1 as i32, arg2 as usize),
         nr::NANOSLEEP => time::sys_nanosleep(arg1 as usize, arg2 as usize),
+
+        // System info syscalls
+        nr::UNAME => sys_uname(arg1 as usize),
+        nr::STATFS => vfs::sys_statfs(arg1, arg2 as usize, arg3 as usize),
+        nr::FSTATFS => vfs::sys_fstatfs(arg1 as i32, arg2 as usize),
 
         // Poll/Select syscalls
         nr::POLL => poll::sys_poll(arg1 as usize, arg2 as usize, arg3 as i32),
@@ -761,11 +771,9 @@ fn sys_wait(status_ptr: u64) -> i64 {
                 let pid = (result >> 32) as i32;
                 let status = result as i32;
 
-                // TEMPORARY: Skip writing status due to page fault issues
-                // TODO: Fix userspace memory access properly
-                // if status_ptr != 0 {
-                //     write_user_i32(status_ptr, status);
-                // }
+                if status_ptr != 0 {
+                    let _ = write_user_i32(status_ptr, status);
+                }
 
                 return pid as i64;
             }
@@ -1578,6 +1586,80 @@ fn sys_sched_yield() -> i64 {
     // Just return success - the timer interrupt will handle scheduling
     // The key is that returning from this syscall puts us back in user mode,
     // where the scheduler can preempt us.
+    0
+}
+
+// ============================================================================
+// System information syscalls
+// ============================================================================
+
+/// UtsName structure for uname syscall
+#[repr(C)]
+pub struct UtsName {
+    /// Operating system name
+    pub sysname: [u8; 65],
+    /// Network node hostname
+    pub nodename: [u8; 65],
+    /// Operating system release
+    pub release: [u8; 65],
+    /// Operating system version
+    pub version: [u8; 65],
+    /// Hardware identifier (machine)
+    pub machine: [u8; 65],
+    /// Domain name (Linux extension)
+    pub domainname: [u8; 65],
+}
+
+impl UtsName {
+    /// Create a zeroed UtsName
+    pub const fn new() -> Self {
+        UtsName {
+            sysname: [0; 65],
+            nodename: [0; 65],
+            release: [0; 65],
+            version: [0; 65],
+            machine: [0; 65],
+            domainname: [0; 65],
+        }
+    }
+
+    /// Copy a string into a field
+    fn set_field(field: &mut [u8; 65], s: &str) {
+        let bytes = s.as_bytes();
+        let len = bytes.len().min(64);
+        field[..len].copy_from_slice(&bytes[..len]);
+        field[len] = 0; // Null terminator
+    }
+}
+
+/// sys_uname - Get system identification
+///
+/// # Arguments
+/// * `buf_ptr` - Pointer to UtsName structure in user space
+///
+/// # Returns
+/// 0 on success, negative errno on error
+fn sys_uname(buf_ptr: usize) -> i64 {
+    if buf_ptr == 0 || buf_ptr >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    let mut utsname = UtsName::new();
+    UtsName::set_field(&mut utsname.sysname, "OXIDE");
+    UtsName::set_field(&mut utsname.nodename, "localhost");
+    UtsName::set_field(&mut utsname.release, "0.1.0");
+    UtsName::set_field(&mut utsname.version, "#1 2026-01-24");
+    UtsName::set_field(&mut utsname.machine, "x86_64");
+    UtsName::set_field(&mut utsname.domainname, "(none)");
+
+    // Copy to userspace
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+        let dest = buf_ptr as *mut UtsName;
+        core::ptr::write_volatile(dest, utsname);
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
+
     0
 }
 
