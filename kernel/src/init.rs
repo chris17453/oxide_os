@@ -928,6 +928,9 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                 let _ = writeln!(writer, "[USER] Failed to open /dev/console: {:?}", e);
             }
         }
+
+        // Set cmdline for init so ps shows it correctly
+        proc.set_cmdline(alloc::vec![alloc::string::String::from("/init")]);
     }
 
     // Get the PML4 from the registered process
