@@ -525,6 +525,88 @@ fn loopback_connect(client_fd: i32, client_socket: Arc<Socket>, addr: SocketAddr
     0
 }
 
+/// ICMP echo request type
+const ICMP_ECHO_REQUEST: u8 = 8;
+/// ICMP echo reply type
+const ICMP_ECHO_REPLY: u8 = 0;
+
+/// Check if an address is loopback (127.0.0.0/8 or ::1)
+fn is_loopback_addr(addr: &SocketAddr) -> bool {
+    addr.ip.is_loopback()
+}
+
+/// Handle raw ICMP loopback - generate echo reply for echo request
+fn handle_icmp_loopback(socket: &Arc<Socket>, icmp_data: &[u8]) -> Option<i64> {
+    // ICMP header: type(1) + code(1) + checksum(2) + identifier(2) + sequence(2) + data
+    if icmp_data.len() < 8 {
+        return None;
+    }
+
+    let icmp_type = icmp_data[0];
+    if icmp_type != ICMP_ECHO_REQUEST {
+        return None; // Only handle echo requests
+    }
+
+    // Build echo reply
+    let mut reply = Vec::new();
+
+    // Build minimal IP header (20 bytes)
+    reply.push(0x45); // version=4, IHL=5 (20 bytes)
+    reply.push(0x00); // TOS
+    let total_len = (20 + icmp_data.len()) as u16;
+    reply.extend_from_slice(&total_len.to_be_bytes()); // Total length
+    reply.extend_from_slice(&[0x00, 0x00]); // ID
+    reply.extend_from_slice(&[0x00, 0x00]); // Flags + Fragment offset
+    reply.push(64); // TTL
+    reply.push(1);  // Protocol = ICMP
+    reply.extend_from_slice(&[0x00, 0x00]); // Checksum (placeholder)
+    reply.extend_from_slice(&[127, 0, 0, 1]); // Source IP
+    reply.extend_from_slice(&[127, 0, 0, 1]); // Dest IP
+
+    // Calculate IP header checksum
+    let ip_checksum = internet_checksum(&reply[..20]);
+    reply[10] = (ip_checksum >> 8) as u8;
+    reply[11] = ip_checksum as u8;
+
+    // Build ICMP echo reply
+    reply.push(ICMP_ECHO_REPLY); // Type = echo reply
+    reply.push(0); // Code = 0
+    reply.extend_from_slice(&[0x00, 0x00]); // Checksum placeholder
+    reply.extend_from_slice(&icmp_data[4..]); // Copy identifier, sequence, and data
+
+    // Calculate ICMP checksum
+    let icmp_start = 20;
+    let icmp_checksum = internet_checksum(&reply[icmp_start..]);
+    reply[icmp_start + 2] = (icmp_checksum >> 8) as u8;
+    reply[icmp_start + 3] = icmp_checksum as u8;
+
+    // Put reply in socket's recv buffer
+    socket.recv_buf.lock().extend_from_slice(&reply);
+
+    Some(icmp_data.len() as i64)
+}
+
+/// Calculate internet checksum
+fn internet_checksum(data: &[u8]) -> u16 {
+    let mut sum: u32 = 0;
+    let mut i = 0;
+
+    while i + 1 < data.len() {
+        sum += u16::from_be_bytes([data[i], data[i + 1]]) as u32;
+        i += 2;
+    }
+
+    if i < data.len() {
+        sum += (data[i] as u32) << 8;
+    }
+
+    while sum >> 16 != 0 {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+
+    !sum as u16
+}
+
 /// sys_send - Send data on a connected socket
 pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
     if buf >= 0x0000_8000_0000_0000 {
@@ -546,6 +628,21 @@ pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
     }
 
     let data = unsafe { core::slice::from_raw_parts(buf as *const u8, len) };
+
+    // Handle raw ICMP socket loopback
+    if socket.sock_type == SocketType::Raw && socket.protocol == SocketProtocol::Icmp {
+        let remote = socket.remote_addr.lock();
+        if let Some(ref addr) = *remote {
+            if is_loopback_addr(addr) {
+                // Handle ICMP loopback - generate echo reply
+                if let Some(result) = handle_icmp_loopback(&socket, data) {
+                    return result;
+                }
+                // If not an echo request, just pretend we sent it
+                return len as i64;
+            }
+        }
+    }
 
     // Check if this is a loopback socket pair
     let peer_fd = SOCKET_PAIRS.lock().get(&fd).copied();
