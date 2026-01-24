@@ -1,0 +1,12 @@
+[package]
+name = "ssh"
+version = "0.1.0"
+edition = "2024"
+description = "SSH client for OXIDE OS"
+
+[[bin]]
+name = "ssh"
+path = "src/main.rs"
+
+[dependencies]
+libc = { path = "../libc" }

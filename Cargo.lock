@@ -1213,6 +1213,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ssh"
+version = "0.1.0"
+dependencies = [
+ "libc 0.1.0",
+]
+
+[[package]]
 name = "sshd"
 version = "0.1.0"
 dependencies = [
