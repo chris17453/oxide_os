@@ -113,6 +113,7 @@ initramfs: userspace-release
 	@mkdir -p $(TARGET_DIR)/initramfs/var/log
 	@mkdir -p $(TARGET_DIR)/initramfs/home
 	@mkdir -p $(TARGET_DIR)/initramfs/root
+	@mkdir -p $(TARGET_DIR)/initramfs/run
 	@# Copy init to /sbin
 	@cp "$(USERSPACE_OUT_RELEASE)/init" "$(TARGET_DIR)/initramfs/sbin/init"
 	@ln -sf /sbin/init "$(TARGET_DIR)/initramfs/init"
@@ -127,8 +128,9 @@ initramfs: userspace-release
 	@cp "$(USERSPACE_OUT_RELEASE)/ssh" "$(TARGET_DIR)/initramfs/bin/ssh"
 	@# Copy sshd
 	@cp "$(USERSPACE_OUT_RELEASE)/sshd" "$(TARGET_DIR)/initramfs/bin/sshd"
-	@# Copy service
+	@# Copy service manager
 	@cp "$(USERSPACE_OUT_RELEASE)/service" "$(TARGET_DIR)/initramfs/bin/service"
+	@ln -sf /bin/service "$(TARGET_DIR)/initramfs/bin/servicemgr"
 	@# Copy coreutils
 	@for prog in $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
@@ -144,6 +146,11 @@ initramfs: userspace-release
 	@echo "PATH=/initramfs/bin:/initramfs/sbin:/bin:/sbin" > $(TARGET_DIR)/initramfs/etc/profile
 	@echo "export PATH" >> $(TARGET_DIR)/initramfs/etc/profile
 	@echo "OXIDE" > $(TARGET_DIR)/initramfs/etc/hostname
+	@# Create services.d directory with service definitions
+	@mkdir -p $(TARGET_DIR)/initramfs/etc/services.d
+	@echo "PATH=/bin/sshd" > $(TARGET_DIR)/initramfs/etc/services.d/sshd
+	@echo "ENABLED=yes" >> $(TARGET_DIR)/initramfs/etc/services.d/sshd
+	@echo "RESTART=yes" >> $(TARGET_DIR)/initramfs/etc/services.d/sshd
 	@# Create CPIO archive
 	@cd $(TARGET_DIR)/initramfs && find . | cpio -o -H newc > ../initramfs.cpio 2>/dev/null
 	@echo "Initramfs created: $(INITRAMFS)"

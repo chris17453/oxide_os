@@ -50,6 +50,8 @@ struct Service {
     state: ServiceState,
     /// Process ID (if running)
     pid: i32,
+    /// Whether service is enabled (auto-starts on boot)
+    enabled: bool,
     /// Auto-restart on failure
     restart: bool,
     /// Restart count
@@ -67,6 +69,7 @@ impl Service {
             path_len: 0,
             state: ServiceState::Stopped,
             pid: 0,
+            enabled: true,
             restart: true,
             restart_count: 0,
             max_restarts: 5,
@@ -246,6 +249,15 @@ fn parse_service_file(name: &str, service: &mut Service) -> bool {
         service.restart = value == b"yes" || value == b"true" || value == b"1";
     }
 
+    // Parse ENABLED= (defaults to true if not specified)
+    if let Some(enabled_start) = find_bytes(content, b"ENABLED=") {
+        let start = enabled_start + 8;
+        let end = find_newline(&content[start..]).unwrap_or(content.len() - start);
+        let value = &content[start..start + end];
+        // Only disable if explicitly set to no/false/0
+        service.enabled = !(value == b"no" || value == b"false" || value == b"0");
+    }
+
     true
 }
 
@@ -414,6 +426,13 @@ fn print_service_status(service: &Service) {
         ServiceState::Failed => prints("failed"),
     }
 
+    // Show enabled/disabled status
+    if service.enabled {
+        prints(" [enabled]");
+    } else {
+        prints(" [disabled]");
+    }
+
     prints("\n");
 }
 
@@ -487,11 +506,16 @@ fn run_daemon() {
         close(fd);
     }
 
-    // Start all services
+    // Start all enabled services
     unsafe {
+        let services = &*SERVICES.get();
         let count = *SERVICE_COUNT.get();
         for i in 0..count {
-            start_service_by_index(i);
+            if services[i].enabled {
+                start_service_by_index(i);
+            } else {
+                log_service(services[i].name_str(), "Disabled, skipping");
+            }
         }
     }
 
@@ -536,6 +560,192 @@ fn itoa(mut n: i64, buf: &mut [u8]) -> usize {
     i
 }
 
+/// Enable a service for auto-start
+fn enable_service(name: &str) -> bool {
+    // Build service file path
+    let mut path_buf = [0u8; 256];
+    let prefix = b"/etc/services.d/";
+    path_buf[..prefix.len()].copy_from_slice(prefix);
+
+    let name_bytes = name.as_bytes();
+    let total_len = prefix.len() + name_bytes.len();
+    if total_len >= 256 {
+        log_service(name, "Service name too long");
+        return false;
+    }
+    path_buf[prefix.len()..total_len].copy_from_slice(name_bytes);
+    let path_str = core::str::from_utf8(&path_buf[..total_len]).unwrap_or("");
+
+    // Read existing file
+    let fd = open2(path_str, O_RDONLY);
+    if fd < 0 {
+        log_service(name, "Service not found");
+        return false;
+    }
+
+    let mut buf = [0u8; 512];
+    let n = read(fd, &mut buf);
+    close(fd);
+
+    if n <= 0 {
+        log_service(name, "Failed to read service file");
+        return false;
+    }
+
+    // Update ENABLED= line or add it
+    let content = &buf[..n as usize];
+    let mut new_content = [0u8; 512];
+    let mut new_len = 0;
+
+    if let Some(enabled_start) = find_bytes(content, b"ENABLED=") {
+        // Find end of ENABLED= line
+        let line_end = find_newline(&content[enabled_start..])
+            .map(|e| enabled_start + e + 1)
+            .unwrap_or(content.len());
+
+        // Copy before ENABLED=
+        new_content[..enabled_start].copy_from_slice(&content[..enabled_start]);
+        new_len = enabled_start;
+
+        // Write new ENABLED=yes
+        let enabled_line = b"ENABLED=yes\n";
+        new_content[new_len..new_len + enabled_line.len()].copy_from_slice(enabled_line);
+        new_len += enabled_line.len();
+
+        // Copy after the old ENABLED= line
+        if line_end < content.len() {
+            let remaining = content.len() - line_end;
+            new_content[new_len..new_len + remaining].copy_from_slice(&content[line_end..]);
+            new_len += remaining;
+        }
+    } else {
+        // Append ENABLED=yes
+        new_content[..content.len()].copy_from_slice(content);
+        new_len = content.len();
+
+        // Add newline if needed
+        if new_len > 0 && new_content[new_len - 1] != b'\n' {
+            new_content[new_len] = b'\n';
+            new_len += 1;
+        }
+
+        let enabled_line = b"ENABLED=yes\n";
+        new_content[new_len..new_len + enabled_line.len()].copy_from_slice(enabled_line);
+        new_len += enabled_line.len();
+    }
+
+    // Write back
+    let fd = open(path_str, (O_WRONLY | O_TRUNC) as u32, 0o644);
+    if fd < 0 {
+        log_service(name, "Failed to open service file for writing");
+        return false;
+    }
+
+    let written = write(fd, &new_content[..new_len]);
+    close(fd);
+
+    if written as usize != new_len {
+        log_service(name, "Failed to write service file");
+        return false;
+    }
+
+    log_service(name, "Enabled");
+    true
+}
+
+/// Disable a service from auto-start
+fn disable_service(name: &str) -> bool {
+    // Build service file path
+    let mut path_buf = [0u8; 256];
+    let prefix = b"/etc/services.d/";
+    path_buf[..prefix.len()].copy_from_slice(prefix);
+
+    let name_bytes = name.as_bytes();
+    let total_len = prefix.len() + name_bytes.len();
+    if total_len >= 256 {
+        log_service(name, "Service name too long");
+        return false;
+    }
+    path_buf[prefix.len()..total_len].copy_from_slice(name_bytes);
+    let path_str = core::str::from_utf8(&path_buf[..total_len]).unwrap_or("");
+
+    // Read existing file
+    let fd = open2(path_str, O_RDONLY);
+    if fd < 0 {
+        log_service(name, "Service not found");
+        return false;
+    }
+
+    let mut buf = [0u8; 512];
+    let n = read(fd, &mut buf);
+    close(fd);
+
+    if n <= 0 {
+        log_service(name, "Failed to read service file");
+        return false;
+    }
+
+    // Update ENABLED= line or add it
+    let content = &buf[..n as usize];
+    let mut new_content = [0u8; 512];
+    let mut new_len = 0;
+
+    if let Some(enabled_start) = find_bytes(content, b"ENABLED=") {
+        // Find end of ENABLED= line
+        let line_end = find_newline(&content[enabled_start..])
+            .map(|e| enabled_start + e + 1)
+            .unwrap_or(content.len());
+
+        // Copy before ENABLED=
+        new_content[..enabled_start].copy_from_slice(&content[..enabled_start]);
+        new_len = enabled_start;
+
+        // Write new ENABLED=no
+        let enabled_line = b"ENABLED=no\n";
+        new_content[new_len..new_len + enabled_line.len()].copy_from_slice(enabled_line);
+        new_len += enabled_line.len();
+
+        // Copy after the old ENABLED= line
+        if line_end < content.len() {
+            let remaining = content.len() - line_end;
+            new_content[new_len..new_len + remaining].copy_from_slice(&content[line_end..]);
+            new_len += remaining;
+        }
+    } else {
+        // Append ENABLED=no
+        new_content[..content.len()].copy_from_slice(content);
+        new_len = content.len();
+
+        // Add newline if needed
+        if new_len > 0 && new_content[new_len - 1] != b'\n' {
+            new_content[new_len] = b'\n';
+            new_len += 1;
+        }
+
+        let enabled_line = b"ENABLED=no\n";
+        new_content[new_len..new_len + enabled_line.len()].copy_from_slice(enabled_line);
+        new_len += enabled_line.len();
+    }
+
+    // Write back
+    let fd = open(path_str, (O_WRONLY | O_TRUNC) as u32, 0o644);
+    if fd < 0 {
+        log_service(name, "Failed to open service file for writing");
+        return false;
+    }
+
+    let written = write(fd, &new_content[..new_len]);
+    close(fd);
+
+    if written as usize != new_len {
+        log_service(name, "Failed to write service file");
+        return false;
+    }
+
+    log_service(name, "Disabled");
+    true
+}
+
 /// Show usage
 fn show_usage() {
     prints("Usage: servicemgr <command> [service]\n");
@@ -545,6 +755,8 @@ fn show_usage() {
     prints("  start <service>  Start a service\n");
     prints("  stop <service>   Stop a service\n");
     prints("  restart <service> Restart a service\n");
+    prints("  enable <service> Enable service auto-start on boot\n");
+    prints("  disable <service> Disable service auto-start on boot\n");
     prints("  status [service] Show service status\n");
     prints("  list             List all services\n");
     prints("  help             Show this help\n");
@@ -596,6 +808,22 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
                 if start_service(service) { 0 } else { 1 }
             } else {
                 prints("Usage: servicemgr restart <service>\n");
+                1
+            }
+        }
+        "enable" => {
+            if let Some(service) = arg {
+                if enable_service(service) { 0 } else { 1 }
+            } else {
+                prints("Usage: servicemgr enable <service>\n");
+                1
+            }
+        }
+        "disable" => {
+            if let Some(service) = arg {
+                if disable_service(service) { 0 } else { 1 }
+            } else {
+                prints("Usage: servicemgr disable <service>\n");
                 1
             }
         }
