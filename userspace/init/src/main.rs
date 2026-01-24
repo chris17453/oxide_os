@@ -1,7 +1,8 @@
 //! OXIDE Init Process (PID 1)
 //!
 //! First userspace process that:
-//! - Mounts essential filesystems
+//! - Loads firewall rules
+//! - Starts service manager
 //! - Starts getty/login
 //! - Reaps orphaned zombie processes
 //! - Handles shutdown
@@ -22,11 +23,16 @@ fn main() -> i32 {
         eprintlns("Warning: init is not PID 1!");
     }
 
-    // Print startup message (no framebuffer self-test)
+    // Print startup message
     printlns("");
     printlns("OXIDE OS v0.1.0");
-    printlns("[init] Framebuffer test disabled; booting directly");
     printlns("");
+
+    // Load firewall rules early in boot
+    load_firewall_rules();
+
+    // Start service manager in daemon mode
+    start_servicemgr();
 
     // Spawn getty/login on the primary TTY
     printlns("[init] Spawning getty/login...");
@@ -50,6 +56,66 @@ fn main() -> i32 {
 
     // Should never reach here
     0
+}
+
+/// Load firewall rules from /etc/fw.rules if it exists
+fn load_firewall_rules() {
+    // Check if rules file exists by trying to open it
+    let fd = open("/etc/fw.rules", 0, 0);
+    if fd >= 0 {
+        close(fd);
+        printlns("[init] Loading firewall rules...");
+
+        let child = fork();
+        if child == 0 {
+            // Child - exec fw restore
+            let argv: [*const u8; 4] = [
+                b"/bin/fw\0".as_ptr(),
+                b"restore\0".as_ptr(),
+                b"/etc/fw.rules\0".as_ptr(),
+                core::ptr::null(),
+            ];
+            execv("/bin/fw", argv.as_ptr());
+            _exit(1);
+        } else if child > 0 {
+            // Wait for fw to complete
+            let mut status: i32 = 0;
+            waitpid(child, &mut status, 0);
+            if wifexited(status) && wexitstatus(status) == 0 {
+                printlns("[init] Firewall rules loaded");
+            } else {
+                eprintlns("[init] Failed to load firewall rules");
+            }
+        }
+    } else {
+        printlns("[init] No firewall rules file found");
+    }
+}
+
+/// Start service manager in daemon mode
+fn start_servicemgr() {
+    // Check if servicemgr exists
+    let fd = open("/bin/servicemgr", 0, 0);
+    if fd >= 0 {
+        close(fd);
+        printlns("[init] Starting service manager...");
+
+        let child = fork();
+        if child == 0 {
+            // Child - exec servicemgr daemon
+            // Create new session so servicemgr runs independently
+            setsid();
+            let argv: [*const u8; 3] = [
+                b"/bin/servicemgr\0".as_ptr(),
+                b"daemon\0".as_ptr(),
+                core::ptr::null(),
+            ];
+            execv("/bin/servicemgr", argv.as_ptr());
+            _exit(1);
+        } else if child > 0 {
+            printlns("[init] Service manager started");
+        }
+    }
 }
 
 /// Reap zombie processes forever

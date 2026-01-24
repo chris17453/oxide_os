@@ -736,6 +736,299 @@ fn cmd_save() {
     }
 }
 
+fn cmd_restore(args: &[&str]) {
+    if args.is_empty() {
+        print("Usage: fw restore <filename>\n");
+        return;
+    }
+
+    let filename = args[0];
+
+    // Open the file
+    let fd = syscall::sys_open(filename, 0, 0); // O_RDONLY
+    if fd < 0 {
+        print("Failed to open ");
+        print(filename);
+        print(": ");
+        print_i32(fd);
+        print("\n");
+        return;
+    }
+
+    // Read file contents
+    let mut buf = [0u8; 4096];
+    let bytes_read = syscall::sys_read(fd, &mut buf);
+    syscall::sys_close(fd);
+
+    if bytes_read < 0 {
+        print("Failed to read file: ");
+        print_i32(bytes_read as i32);
+        print("\n");
+        return;
+    }
+
+    // Parse lines
+    let content = match core::str::from_utf8(&buf[..bytes_read as usize]) {
+        Ok(s) => s,
+        Err(_) => {
+            print("Invalid UTF-8 in rules file\n");
+            return;
+        }
+    };
+
+    let mut rules_added = 0;
+    let mut errors = 0;
+
+    for line in content.lines() {
+        let line = line.trim();
+
+        // Skip empty lines and comments
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        // Parse the line as command arguments
+        // Format: add <chain> [options] -j <action>
+        let mut words: [&str; 32] = [""; 32];
+        let mut word_count = 0;
+
+        for word in line.split_whitespace() {
+            if word_count < 32 {
+                words[word_count] = word;
+                word_count += 1;
+            }
+        }
+
+        if word_count == 0 {
+            continue;
+        }
+
+        // Check command
+        match words[0] {
+            "add" => {
+                if word_count > 1 {
+                    cmd_add_silent(&words[1..word_count], &mut rules_added, &mut errors);
+                }
+            }
+            "policy" => {
+                if word_count >= 3 {
+                    cmd_policy_silent(&words[1..word_count]);
+                }
+            }
+            "flush" => {
+                cmd_flush(&words[1..word_count]);
+            }
+            _ => {
+                // Ignore unknown commands in restore
+            }
+        }
+    }
+
+    print("Restored ");
+    print_num(rules_added as u64);
+    print(" rules");
+    if errors > 0 {
+        print(" (");
+        print_num(errors as u64);
+        print(" errors)");
+    }
+    print("\n");
+}
+
+// Silent version of cmd_add for restore (doesn't print success messages)
+fn cmd_add_silent(args: &[&str], rules_added: &mut usize, errors: &mut usize) {
+    if args.is_empty() {
+        *errors += 1;
+        return;
+    }
+
+    let chain = match args[0] {
+        s if str_eq_ignore_case(s, "input") => fw_chain::INPUT,
+        s if str_eq_ignore_case(s, "output") => fw_chain::OUTPUT,
+        s if str_eq_ignore_case(s, "forward") => fw_chain::FORWARD,
+        _ => {
+            *errors += 1;
+            return;
+        }
+    };
+
+    let mut rule = FwRule::default();
+    rule.chain = chain;
+
+    let mut i = 1;
+    let mut action_set = false;
+
+    while i < args.len() {
+        let arg = args[i];
+        match arg {
+            "-p" | "--protocol" => {
+                i += 1;
+                if i >= args.len() {
+                    *errors += 1;
+                    return;
+                }
+                match args[i] {
+                    s if str_eq_ignore_case(s, "tcp") => rule.protocol = fw_proto::TCP,
+                    s if str_eq_ignore_case(s, "udp") => rule.protocol = fw_proto::UDP,
+                    s if str_eq_ignore_case(s, "icmp") => rule.protocol = fw_proto::ICMP,
+                    s if str_eq_ignore_case(s, "all") || str_eq_ignore_case(s, "any") => {
+                        rule.protocol = fw_proto::ANY
+                    }
+                    s => {
+                        if let Some(p) = parse_u8(s) {
+                            rule.protocol = p;
+                        } else {
+                            *errors += 1;
+                            return;
+                        }
+                    }
+                }
+            }
+            "--sport" => {
+                i += 1;
+                if i >= args.len() {
+                    *errors += 1;
+                    return;
+                }
+                if let Some(port) = parse_u16(args[i]) {
+                    rule.src_port_start = port;
+                    rule.src_port_end = port;
+                } else {
+                    *errors += 1;
+                    return;
+                }
+            }
+            "--dport" => {
+                i += 1;
+                if i >= args.len() {
+                    *errors += 1;
+                    return;
+                }
+                if let Some(port) = parse_u16(args[i]) {
+                    rule.dst_port_start = port;
+                    rule.dst_port_end = port;
+                } else {
+                    *errors += 1;
+                    return;
+                }
+            }
+            "-s" | "--src" | "--source" => {
+                i += 1;
+                if i >= args.len() {
+                    *errors += 1;
+                    return;
+                }
+                if let Some((ip, prefix)) = parse_ip(args[i]) {
+                    rule.src_ip = ip;
+                    rule.src_prefix = prefix;
+                } else {
+                    *errors += 1;
+                    return;
+                }
+            }
+            "-d" | "--dst" | "--destination" => {
+                i += 1;
+                if i >= args.len() {
+                    *errors += 1;
+                    return;
+                }
+                if let Some((ip, prefix)) = parse_ip(args[i]) {
+                    rule.dst_ip = ip;
+                    rule.dst_prefix = prefix;
+                } else {
+                    *errors += 1;
+                    return;
+                }
+            }
+            "-m" => {
+                i += 1;
+                if i >= args.len() {
+                    *errors += 1;
+                    return;
+                }
+                if str_eq_ignore_case(args[i], "state") {
+                    i += 1;
+                    if i >= args.len() || !str_eq_ignore_case(args[i], "--state") {
+                        *errors += 1;
+                        return;
+                    }
+                    i += 1;
+                    if i >= args.len() {
+                        *errors += 1;
+                        return;
+                    }
+                    match args[i] {
+                        s if str_eq_ignore_case(s, "new") => rule.state = fw_state::NEW,
+                        s if str_eq_ignore_case(s, "established") => {
+                            rule.state = fw_state::ESTABLISHED
+                        }
+                        s if str_eq_ignore_case(s, "related") => rule.state = fw_state::RELATED,
+                        s if str_eq_ignore_case(s, "invalid") => rule.state = fw_state::INVALID,
+                        _ => {
+                            *errors += 1;
+                            return;
+                        }
+                    }
+                }
+            }
+            "-j" | "--jump" => {
+                i += 1;
+                if i >= args.len() {
+                    *errors += 1;
+                    return;
+                }
+                match args[i] {
+                    s if str_eq_ignore_case(s, "accept") => rule.action = fw_action::ACCEPT,
+                    s if str_eq_ignore_case(s, "drop") => rule.action = fw_action::DROP,
+                    s if str_eq_ignore_case(s, "reject") => rule.action = fw_action::REJECT,
+                    _ => {
+                        *errors += 1;
+                        return;
+                    }
+                }
+                action_set = true;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    if !action_set {
+        *errors += 1;
+        return;
+    }
+
+    let result = sys_fw_add_rule(&rule);
+    if result < 0 {
+        *errors += 1;
+    } else {
+        *rules_added += 1;
+    }
+}
+
+// Silent version of cmd_policy for restore
+fn cmd_policy_silent(args: &[&str]) {
+    if args.len() < 2 {
+        return;
+    }
+
+    let chain = match args[0] {
+        s if str_eq_ignore_case(s, "input") => fw_chain::INPUT,
+        s if str_eq_ignore_case(s, "output") => fw_chain::OUTPUT,
+        s if str_eq_ignore_case(s, "forward") => fw_chain::FORWARD,
+        _ => return,
+    };
+
+    let policy = match args[1] {
+        s if str_eq_ignore_case(s, "accept") => fw_action::ACCEPT,
+        s if str_eq_ignore_case(s, "drop") => fw_action::DROP,
+        s if str_eq_ignore_case(s, "reject") => fw_action::REJECT,
+        _ => return,
+    };
+
+    sys_fw_set_policy(chain, policy);
+}
+
 fn cmd_conntrack() {
     let mut stats = ConntrackStats { count: 0, max: 0 };
     let result = sys_fw_get_conntrack(&mut stats);
@@ -765,6 +1058,7 @@ fn print_usage() {
     print("  policy <chain> <action>            Set chain default policy\n");
     print("  flush [chain]                      Flush rules (all if no chain)\n");
     print("  save                               Output rules for restore\n");
+    print("  restore <file>                     Load rules from file\n");
     print("  conntrack                          Show connection tracking info\n");
     print("\n");
     print("Chains: input, output, forward\n");
@@ -816,6 +1110,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8) -> i32 {
         "policy" => cmd_policy(&cmd_args[..cmd_argc]),
         "flush" | "-F" => cmd_flush(&cmd_args[..cmd_argc]),
         "save" => cmd_save(),
+        "restore" => cmd_restore(&cmd_args[..cmd_argc]),
         "conntrack" | "ct" => cmd_conntrack(),
         "-h" | "--help" | "help" => {
             print_usage();
