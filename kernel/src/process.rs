@@ -846,8 +846,8 @@ pub fn kernel_exec(
         }
     }
 
-    // Look up the file in VFS
-    let vnode = match GLOBAL_VFS.lookup(path) {
+    // Look up the file in VFS, following symlinks
+    let mut vnode = match GLOBAL_VFS.lookup(path) {
         Ok(v) => v,
         Err(e) => {
             let mut writer = serial::SerialWriter;
@@ -855,6 +855,46 @@ pub fn kernel_exec(
             return -2; // ENOENT
         }
     };
+
+    // Follow symlinks (up to 40 levels to prevent infinite loops)
+    let mut symlink_count = 0;
+    while vnode.vtype() == VnodeType::Symlink {
+        symlink_count += 1;
+        if symlink_count > 40 {
+            let mut writer = serial::SerialWriter;
+            let _ = writeln!(writer, "[EXEC] Too many symlinks (>40)");
+            return -40; // ELOOP
+        }
+
+        // Read the symlink target
+        let target = match vnode.readlink() {
+            Ok(t) => t,
+            Err(e) => {
+                let mut writer = serial::SerialWriter;
+                let _ = writeln!(writer, "[EXEC] Failed to read symlink: {:?}", e);
+                return -2; // ENOENT
+            }
+        };
+
+        // Resolve the target (could be absolute or relative)
+        let resolved_path = if target.starts_with('/') {
+            target
+        } else {
+            // Relative symlink - get parent directory of current path
+            let parent = path.rfind('/').map(|i| &path[..i]).unwrap_or("/");
+            alloc::format!("{}/{}", parent, target)
+        };
+
+        // Look up the target
+        vnode = match GLOBAL_VFS.lookup(&resolved_path) {
+            Ok(v) => v,
+            Err(e) => {
+                let mut writer = serial::SerialWriter;
+                let _ = writeln!(writer, "[EXEC] Symlink target lookup failed for '{}': {:?}", resolved_path, e);
+                return -2; // ENOENT
+            }
+        };
+    }
 
     // Check it's a regular file
     if vnode.vtype() != VnodeType::File {
