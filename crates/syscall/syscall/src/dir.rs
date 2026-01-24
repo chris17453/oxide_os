@@ -4,6 +4,11 @@
 
 extern crate alloc;
 
+/// Align value up to the given alignment
+const fn align_up(value: usize, align: usize) -> usize {
+    (value + align - 1) & !(align - 1)
+}
+
 use alloc::string::String;
 use proc::process_table;
 use vfs::{Mode, mount::GLOBAL_VFS};
@@ -216,7 +221,7 @@ pub fn sys_getdents(fd: i32, buf: u64, count: usize) -> i64 {
 
         // Calculate entry size (header + name + null terminator, aligned to 8)
         let name_len = entry.name.len();
-        let reclen = ((core::mem::size_of::<UserDirEntry>() + name_len + 1 + 7) / 8) * 8;
+        let reclen = align_up(core::mem::size_of::<UserDirEntry>() + name_len + 1, 8);
 
         // Check if entry fits in remaining buffer
         if bytes_written + reclen > count {
