@@ -34,6 +34,7 @@ use crate::console;
 use crate::fault;
 use crate::globals::{FRAME_ALLOCATOR, HEAP_ALLOCATOR, HEAP_SIZE, HEAP_STORAGE, KERNEL_PML4};
 use crate::memory::{self, FrameAllocatorWrapper};
+use crate::mount::{kernel_mount, kernel_umount};
 use crate::process::{kernel_exec, kernel_fork, kernel_wait, user_exit};
 use crate::scheduler;
 use crate::smp_init;
@@ -365,6 +366,8 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         fork: Some(kernel_fork),
         exec: Some(kernel_exec),
         wait: Some(kernel_wait),
+        mount: Some(kernel_mount),
+        umount: Some(kernel_umount),
     };
     unsafe {
         syscall::init(syscall_ctx);
@@ -1261,7 +1264,7 @@ fn syscall_dispatch(
 ///
 /// This allows registering Arc-wrapped devices with the block device registry
 /// which expects Box<dyn BlockDevice>.
-struct BlockDeviceWrapper(Arc<dyn BlockDevice>);
+pub struct BlockDeviceWrapper(pub Arc<dyn BlockDevice>);
 
 impl BlockDevice for BlockDeviceWrapper {
     fn read(&self, start_block: u64, buf: &mut [u8]) -> BlockResult<usize> {

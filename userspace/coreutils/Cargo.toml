@@ -345,6 +345,14 @@ path = "src/bin/fw.rs"
 name = "mkfs_ext4"
 path = "src/bin/mkfs_ext4.rs"
 
+[[bin]]
+name = "mount"
+path = "src/bin/mount.rs"
+
+[[bin]]
+name = "umount"
+path = "src/bin/umount.rs"
+
 [dependencies]
 libc = { path = "../libc" }
 heapless = "0.8"

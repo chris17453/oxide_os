@@ -882,3 +882,141 @@ pub fn sys_fstatfs(fd: i32, buf_ptr: usize) -> i64 {
 
     0
 }
+
+// ============================================================================
+// Mount syscalls
+// ============================================================================
+
+/// Mount flags (Linux-compatible values)
+pub mod mount_flags {
+    /// Read-only mount
+    pub const MS_RDONLY: u32 = 1;
+    /// Don't allow setuid/setgid
+    pub const MS_NOSUID: u32 = 2;
+    /// Don't interpret special files
+    pub const MS_NODEV: u32 = 4;
+    /// Don't allow program execution
+    pub const MS_NOEXEC: u32 = 8;
+    /// Writes are synced immediately
+    pub const MS_SYNCHRONOUS: u32 = 16;
+    /// Remount an existing mount
+    pub const MS_REMOUNT: u32 = 32;
+    /// Allow mandatory locks
+    pub const MS_MANDLOCK: u32 = 64;
+    /// Directory modifications are synchronous
+    pub const MS_DIRSYNC: u32 = 128;
+    /// Don't follow symlinks
+    pub const MS_NOSYMFOLLOW: u32 = 256;
+    /// Don't update access times
+    pub const MS_NOATIME: u32 = 1024;
+    /// Don't update directory access times
+    pub const MS_NODIRATIME: u32 = 2048;
+    /// Bind mount
+    pub const MS_BIND: u32 = 4096;
+    /// Move mount
+    pub const MS_MOVE: u32 = 8192;
+    /// Recursive mount
+    pub const MS_REC: u32 = 16384;
+    /// Silent flag
+    pub const MS_SILENT: u32 = 32768;
+    /// Relative atime updates
+    pub const MS_RELATIME: u32 = 1 << 21;
+    /// Strict atime updates
+    pub const MS_STRICTATIME: u32 = 1 << 24;
+    /// Make writes sync lazily
+    pub const MS_LAZYTIME: u32 = 1 << 25;
+}
+
+/// sys_mount - Mount a filesystem
+///
+/// # Arguments
+/// * `source_ptr` - Pointer to source device path (may be NULL for some fs types)
+/// * `source_len` - Length of source path
+/// * `target_ptr` - Pointer to mount point path
+/// * `target_len` - Length of target path
+/// * `fstype_ptr` - Pointer to filesystem type string
+/// * `fstype_len` - Length of filesystem type
+///
+/// # Returns
+/// 0 on success, negative errno on error
+pub fn sys_mount(
+    source_ptr: u64,
+    source_len: usize,
+    target_ptr: u64,
+    target_len: usize,
+    fstype_ptr: u64,
+    fstype_len: usize,
+) -> i64 {
+    use crate::errno;
+    use crate::SYSCALL_CONTEXT;
+    use core::ptr::addr_of;
+
+    // Copy source path (may be null/empty for some filesystems like tmpfs)
+    let source = if source_ptr != 0 && source_len > 0 {
+        match copy_path_from_user(source_ptr, source_len) {
+            Some(s) => s,
+            None => return errno::EFAULT,
+        }
+    } else {
+        ""
+    };
+
+    // Copy target (mount point) path
+    let target = match copy_path_from_user(target_ptr, target_len) {
+        Some(t) => t,
+        None => return errno::EFAULT,
+    };
+
+    // Copy filesystem type
+    let fstype = match copy_path_from_user(fstype_ptr, fstype_len) {
+        Some(f) => f,
+        None => return errno::EFAULT,
+    };
+
+    // Resolve target path
+    let mount_point = resolve_path(target);
+
+    // Call the kernel mount callback
+    unsafe {
+        let ctx = addr_of!(SYSCALL_CONTEXT);
+        if let Some(mount_fn) = (*ctx).mount {
+            return mount_fn(source, &mount_point, fstype, 0);
+        }
+    }
+
+    errno::ENOSYS
+}
+
+/// sys_umount - Unmount a filesystem
+///
+/// # Arguments
+/// * `target_ptr` - Pointer to mount point path
+/// * `target_len` - Length of target path
+/// * `flags` - Unmount flags
+///
+/// # Returns
+/// 0 on success, negative errno on error
+pub fn sys_umount(target_ptr: u64, target_len: usize, flags: u32) -> i64 {
+    use crate::errno;
+    use crate::SYSCALL_CONTEXT;
+    use core::ptr::addr_of;
+
+    // Copy target path
+    let target = match copy_path_from_user(target_ptr, target_len) {
+        Some(t) => t,
+        None => return errno::EFAULT,
+    };
+
+    // Resolve path
+    let mount_point = resolve_path(target);
+
+    // Call the kernel umount callback
+    unsafe {
+        let ctx = addr_of!(SYSCALL_CONTEXT);
+        if let Some(umount_fn) = (*ctx).umount {
+            return umount_fn(&mount_point, flags);
+        }
+    }
+
+    errno::ENOSYS
+}

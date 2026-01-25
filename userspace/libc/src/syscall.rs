@@ -140,6 +140,10 @@ pub mod nr {
 
     // Random number generation
     pub const GETRANDOM: u64 = 318;
+
+    // Filesystem mount syscalls
+    pub const MOUNT: u64 = 165;
+    pub const UMOUNT: u64 = 166;
 }
 
 // Re-export syscall numbers at module level for convenience
@@ -1142,4 +1146,116 @@ pub fn statfs(path: &str, buf: &mut Statfs) -> i32 {
 /// 0 on success, negative errno on error
 pub fn fstatfs(fd: i32, buf: &mut Statfs) -> i32 {
     syscall2(nr::FSTATFS, fd as usize, buf as *mut Statfs as usize) as i32
+}
+
+// ============================================================================
+// Mount/Umount syscalls
+// ============================================================================
+
+/// Mount flags (Linux-compatible values)
+pub mod mount_flags {
+    /// Read-only mount
+    pub const MS_RDONLY: u32 = 1;
+    /// Don't allow setuid/setgid
+    pub const MS_NOSUID: u32 = 2;
+    /// Don't interpret special files
+    pub const MS_NODEV: u32 = 4;
+    /// Don't allow program execution
+    pub const MS_NOEXEC: u32 = 8;
+    /// Writes are synced immediately
+    pub const MS_SYNCHRONOUS: u32 = 16;
+    /// Remount an existing mount
+    pub const MS_REMOUNT: u32 = 32;
+    /// Allow mandatory locks
+    pub const MS_MANDLOCK: u32 = 64;
+    /// Directory modifications are synchronous
+    pub const MS_DIRSYNC: u32 = 128;
+    /// Don't follow symlinks
+    pub const MS_NOSYMFOLLOW: u32 = 256;
+    /// Don't update access times
+    pub const MS_NOATIME: u32 = 1024;
+    /// Don't update directory access times
+    pub const MS_NODIRATIME: u32 = 2048;
+    /// Bind mount
+    pub const MS_BIND: u32 = 4096;
+    /// Move mount
+    pub const MS_MOVE: u32 = 8192;
+    /// Recursive mount
+    pub const MS_REC: u32 = 16384;
+    /// Silent flag
+    pub const MS_SILENT: u32 = 32768;
+    /// Relative atime updates
+    pub const MS_RELATIME: u32 = 1 << 21;
+    /// Strict atime updates
+    pub const MS_STRICTATIME: u32 = 1 << 24;
+    /// Make writes sync lazily
+    pub const MS_LAZYTIME: u32 = 1 << 25;
+}
+
+/// Umount flags
+pub mod umount_flags {
+    /// Force unmount even if busy
+    pub const MNT_FORCE: u32 = 1;
+    /// Detach from filesystem tree (lazy unmount)
+    pub const MNT_DETACH: u32 = 2;
+    /// Mark for expiry
+    pub const MNT_EXPIRE: u32 = 4;
+    /// Don't follow symlinks
+    pub const UMOUNT_NOFOLLOW: u32 = 8;
+}
+
+/// mount - Mount a filesystem
+///
+/// # Arguments
+/// * `source` - Device or directory to mount (e.g., "/dev/sda1")
+/// * `target` - Mount point path
+/// * `fstype` - Filesystem type (e.g., "ext4", "tmpfs")
+/// * `flags` - Mount flags (MS_RDONLY, etc.)
+/// * `data` - Filesystem-specific mount options (unused for now)
+///
+/// # Returns
+/// 0 on success, negative errno on error
+pub fn mount(source: &str, target: &str, fstype: &str, flags: u32, _data: *const u8) -> i32 {
+    syscall6(
+        nr::MOUNT,
+        source.as_ptr() as usize,
+        source.len(),
+        target.as_ptr() as usize,
+        target.len(),
+        fstype.as_ptr() as usize,
+        fstype.len(),
+    ) as i32
+}
+
+/// umount - Unmount a filesystem
+///
+/// # Arguments
+/// * `target` - Mount point to unmount
+///
+/// # Returns
+/// 0 on success, negative errno on error
+pub fn umount(target: &str) -> i32 {
+    syscall3(
+        nr::UMOUNT,
+        target.as_ptr() as usize,
+        target.len(),
+        0, // flags
+    ) as i32
+}
+
+/// umount2 - Unmount a filesystem with flags
+///
+/// # Arguments
+/// * `target` - Mount point to unmount
+/// * `flags` - Unmount flags (MNT_FORCE, MNT_DETACH, etc.)
+///
+/// # Returns
+/// 0 on success, negative errno on error
+pub fn umount2(target: &str, flags: u32) -> i32 {
+    syscall3(
+        nr::UMOUNT,
+        target.as_ptr() as usize,
+        target.len(),
+        flags as usize,
+    ) as i32
 }

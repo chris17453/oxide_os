@@ -175,6 +175,10 @@ pub mod nr {
 
     // Random number generation
     pub const GETRANDOM: u64 = 318;
+
+    // Filesystem mount syscalls
+    pub const MOUNT: u64 = 165;
+    pub const UMOUNT: u64 = 166;
 }
 
 /// Error codes (negative return values)
@@ -242,6 +246,14 @@ pub type ExecFn = fn(*const u8, usize, *const *const u8, *const *const u8) -> i6
 /// Wait callback type - returns (child_pid, status) packed as (pid << 32) | (status & 0xFFFFFFFF)
 pub type WaitFn = fn(i32, i32) -> i64;
 
+/// Mount callback type - device, mount_point, fstype, flags, data -> result
+/// Arguments: device, mount_point, fstype, flags
+/// Returns: 0 on success, negative errno on error
+pub type MountFn = fn(&str, &str, &str, u32) -> i64;
+
+/// Umount callback type - mount_point, flags -> result
+pub type UmountFn = fn(&str, u32) -> i64;
+
 /// Syscall context containing callbacks for I/O operations
 pub struct SyscallContext {
     /// Function to write to console (fd 1 and 2)
@@ -256,6 +268,10 @@ pub struct SyscallContext {
     pub exec: Option<ExecFn>,
     /// Function to wait for child processes
     pub wait: Option<WaitFn>,
+    /// Function to mount a filesystem
+    pub mount: Option<MountFn>,
+    /// Function to unmount a filesystem
+    pub umount: Option<UmountFn>,
 }
 
 impl SyscallContext {
@@ -268,6 +284,8 @@ impl SyscallContext {
             fork: None,
             exec: None,
             wait: None,
+            mount: None,
+            umount: None,
         }
     }
 }
@@ -492,6 +510,10 @@ pub fn dispatch(
 
         // Random number generation
         nr::GETRANDOM => sys_getrandom(arg1, arg2 as usize, arg3 as u32),
+
+        // Filesystem mount syscalls
+        nr::MOUNT => vfs::sys_mount(arg1, arg2 as usize, arg3, arg4 as usize, arg5, arg6 as usize),
+        nr::UMOUNT => vfs::sys_umount(arg1, arg2 as usize, arg3 as u32),
 
         _ => errno::ENOSYS,
     }

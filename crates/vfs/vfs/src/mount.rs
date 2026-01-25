@@ -15,19 +15,45 @@ use crate::vnode::VnodeOps;
 use bitflags::bitflags;
 
 bitflags! {
-    /// Mount flags
+    /// Mount flags (Linux-compatible values)
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct MountFlags: u32 {
         /// Read-only mount
         const MS_RDONLY = 1;
-        /// Don't update access times
-        const MS_NOATIME = 2;
         /// Don't allow setuid/setgid
-        const MS_NOSUID = 4;
+        const MS_NOSUID = 2;
         /// Don't interpret special files
-        const MS_NODEV = 8;
+        const MS_NODEV = 4;
         /// Don't allow program execution
-        const MS_NOEXEC = 16;
+        const MS_NOEXEC = 8;
+        /// Writes are synced immediately
+        const MS_SYNCHRONOUS = 16;
+        /// Remount an existing mount
+        const MS_REMOUNT = 32;
+        /// Allow mandatory locks on this filesystem
+        const MS_MANDLOCK = 64;
+        /// Directory modifications are synchronous
+        const MS_DIRSYNC = 128;
+        /// Don't follow symlinks
+        const MS_NOSYMFOLLOW = 256;
+        /// Don't update access times
+        const MS_NOATIME = 1024;
+        /// Don't update directory access times
+        const MS_NODIRATIME = 2048;
+        /// Bind mount
+        const MS_BIND = 4096;
+        /// Move mount
+        const MS_MOVE = 8192;
+        /// Recursive mount
+        const MS_REC = 16384;
+        /// Silent flag
+        const MS_SILENT = 32768;
+        /// Relative atime (update atime relative to mtime/ctime)
+        const MS_RELATIME = 1 << 21;
+        /// Strict atime updates
+        const MS_STRICTATIME = 1 << 24;
+        /// Make writes sync lazily
+        const MS_LAZYTIME = 1 << 25;
     }
 }
 

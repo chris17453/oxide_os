@@ -20,6 +20,7 @@ mod fault;
 mod globals;
 mod init;
 mod memory;
+mod mount;
 mod process;
 mod scheduler;
 mod smp_init;
