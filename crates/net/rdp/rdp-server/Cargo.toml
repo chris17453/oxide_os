@@ -1,0 +1,21 @@
+[package]
+name = "rdp-server"
+version = "0.1.0"
+edition = "2024"
+authors = ["OXIDE Contributors"]
+description = "RDP server implementation for OXIDE OS"
+license = "MIT"
+
+[dependencies]
+rdp-traits = { path = "../rdp-traits" }
+rdp-proto = { path = "../rdp-proto" }
+rdp-graphics = { path = "../rdp-graphics" }
+rdp-input = { path = "../rdp-input" }
+rdp-security = { path = "../rdp-security" }
+fb = { workspace = true }
+input = { workspace = true }
+spin = { workspace = true }
+
+[features]
+default = []
+std = []

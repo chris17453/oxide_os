@@ -109,6 +109,13 @@ impl TpktPacket {
     }
 }
 
+/// Encode data into a TPKT packet
+///
+/// This is a convenience function that wraps data in TPKT framing.
+pub fn encode(data: &[u8]) -> Vec<u8> {
+    TpktPacket::new(data.to_vec()).encode()
+}
+
 /// Check if data starts with a valid TPKT header
 pub fn is_tpkt(data: &[u8]) -> bool {
     data.len() >= 4 && data[0] == protocol::TPKT_VERSION

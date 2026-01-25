@@ -1024,6 +1024,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rdp-channels"
+version = "0.1.0"
+dependencies = [
+ "rdp-proto",
+ "rdp-traits",
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "rdp-graphics"
 version = "0.1.0"
 dependencies = [
@@ -1055,6 +1064,20 @@ name = "rdp-security"
 version = "0.1.0"
 dependencies = [
  "crypto",
+ "rdp-traits",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "rdp-server"
+version = "0.1.0"
+dependencies = [
+ "fb",
+ "input",
+ "rdp-graphics",
+ "rdp-input",
+ "rdp-proto",
+ "rdp-security",
  "rdp-traits",
  "spin 0.9.8",
 ]

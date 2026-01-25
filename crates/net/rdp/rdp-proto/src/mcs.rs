@@ -593,6 +593,63 @@ pub mod channels {
     pub const STATIC_CHANNEL_BASE: u16 = 1004;
 }
 
+// ============================================================================
+// Helper Functions for Building MCS PDUs
+// ============================================================================
+
+/// Build an MCS Connect Response from GCC Conference Create Response
+pub fn build_connect_response(gcc_response: &crate::gcc::ConferenceCreateResponse) -> Vec<u8> {
+    let gcc_data = gcc_response.encode();
+
+    let response = ConnectResponse {
+        result: ConnectResult::Success,
+        called_connect_id: 0,
+        domain_params: DomainParameters::default(),
+        user_data: gcc_data,
+    };
+
+    response.encode()
+}
+
+/// Build an Attach User Confirm PDU
+pub fn build_attach_user_confirm(user_id: u16) -> Vec<u8> {
+    let confirm = AttachUserConfirm {
+        result: 0, // Success
+        initiator: user_id,
+    };
+    confirm.encode()
+}
+
+/// Build a Channel Join Confirm PDU
+pub fn build_channel_join_confirm(user_id: u16, channel_id: u16) -> Vec<u8> {
+    let confirm = ChannelJoinConfirm {
+        result: 0, // Success
+        initiator: user_id,
+        requested: channel_id,
+        channel_id,
+    };
+    confirm.encode()
+}
+
+/// Build a Send Data Indication PDU (server to client)
+pub fn build_send_data_indication(initiator: u16, channel_id: u16, data: &[u8]) -> Vec<u8> {
+    let indication = SendDataIndication {
+        initiator,
+        channel_id,
+        priority: DataPriority::High,
+        data: data.to_vec(),
+    };
+    indication.encode()
+}
+
+/// Build a Disconnect Provider Ultimatum PDU
+pub fn build_disconnect_provider_ultimatum() -> Vec<u8> {
+    let disconnect = DisconnectProviderUltimatum {
+        reason: DisconnectReason::UserRequested,
+    };
+    disconnect.encode()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

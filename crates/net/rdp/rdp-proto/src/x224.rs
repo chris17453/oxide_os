@@ -459,6 +459,27 @@ fn find_crlf(data: &[u8]) -> Option<usize> {
     None
 }
 
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Encode data as an X.224 Data TPDU
+pub fn encode_data(data: &[u8]) -> Vec<u8> {
+    let tpdu = DataTpdu {
+        eot: true,
+        data: data.to_vec(),
+    };
+    tpdu.encode()
+}
+
+/// Alias types for connection.rs compatibility
+pub type X224ConnectionRequest = ConnectionRequest;
+pub type X224ConnectionResponse = ConnectionConfirm;
+pub type X224Data = DataTpdu;
+
+/// RDP Negotiation Response (re-export for convenience)
+pub type RdpNegotiationResponse = NegotiationResponse;
+
 #[cfg(test)]
 mod tests {
     use super::*;
