@@ -333,6 +333,65 @@ pub fn init_extent_header(inode: &mut Ext4Inode) {
     i_block_bytes[..12].copy_from_slice(header_bytes);
 }
 
+/// Get the block number and offset for an inode
+pub fn inode_location(
+    sb: &Ext4Superblock,
+    group_table: &BlockGroupTable,
+    ino: u32,
+) -> Ext4Result<(u64, u64)> {
+    if ino == 0 {
+        return Err(Ext4Error::InvalidInode);
+    }
+
+    let ino_index = ino - 1;
+    let group = ino_index / sb.s_inodes_per_group;
+    let index_in_group = ino_index % sb.s_inodes_per_group;
+
+    let desc = group_table.get(group).ok_or(Ext4Error::InvalidInode)?;
+
+    let inode_size = sb.inode_size();
+    let block_size = sb.block_size();
+    let inodes_per_block = block_size / inode_size as u64;
+
+    let block_in_table = index_in_group as u64 / inodes_per_block;
+    let offset_in_block = (index_in_group as u64 % inodes_per_block) * inode_size as u64;
+
+    let block_num = desc.inode_table + block_in_table;
+    Ok((block_num, offset_in_block))
+}
+
+/// Write an inode and return the modified block data for journaling
+pub fn write_inode_data(
+    device: &dyn BlockDevice,
+    sb: &Ext4Superblock,
+    group_table: &BlockGroupTable,
+    ino: u32,
+    inode: &Ext4Inode,
+) -> Ext4Result<(u64, alloc::vec::Vec<u8>)> {
+    let (block_num, offset_in_block) = inode_location(sb, group_table, ino)?;
+    let block_size = sb.block_size();
+    let inode_size = sb.inode_size();
+
+    // Read the block containing the inode
+    let mut buf = alloc::vec![0u8; block_size as usize];
+    read_block(device, sb, block_num, &mut buf)?;
+
+    // Write the inode to the buffer
+    let inode_bytes = unsafe {
+        core::slice::from_raw_parts(
+            inode as *const Ext4Inode as *const u8,
+            core::mem::size_of::<Ext4Inode>().min(inode_size as usize),
+        )
+    };
+    buf[offset_in_block as usize..offset_in_block as usize + inode_bytes.len()]
+        .copy_from_slice(inode_bytes);
+
+    // Write the block back
+    crate::group_desc::write_block(device, sb, block_num, &buf)?;
+
+    Ok((block_num, buf))
+}
+
 impl Ext4Inode {
     /// Set file size (64-bit)
     pub fn set_size(&mut self, size: u64) {

@@ -40,6 +40,14 @@ pub enum Ext4Error {
     Corrupt,
     /// Journal error
     JournalError,
+    /// No journal present
+    NoJournal,
+    /// Invalid journal format
+    InvalidJournal,
+    /// Journal is busy
+    JournalBusy,
+    /// No active transaction
+    NoTransaction,
 }
 
 impl From<BlockError> for Ext4Error {
@@ -68,6 +76,10 @@ impl From<Ext4Error> for VfsError {
             Ext4Error::NameTooLong => VfsError::NameTooLong,
             Ext4Error::Corrupt => VfsError::IoError,
             Ext4Error::JournalError => VfsError::IoError,
+            Ext4Error::NoJournal => VfsError::NotSupported,
+            Ext4Error::InvalidJournal => VfsError::IoError,
+            Ext4Error::JournalBusy => VfsError::Busy,
+            Ext4Error::NoTransaction => VfsError::InvalidArgument,
         }
     }
 }

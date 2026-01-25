@@ -21,6 +21,7 @@ pub mod extent;
 pub mod file;
 pub mod group_desc;
 pub mod inode;
+pub mod journal;
 pub mod superblock;
 #[cfg(test)]
 pub mod tests;
@@ -35,6 +36,7 @@ use vfs::{VfsError, VfsResult, VnodeOps};
 use error::{Ext4Error, Ext4Result};
 use group_desc::BlockGroupTable;
 use inode::{ino, read_inode};
+use journal::{Journal, SharedJournal};
 use superblock::Ext4Superblock;
 use vnode::{Ext4Fs, Ext4Vnode};
 
@@ -51,12 +53,32 @@ pub fn mount(device: Arc<dyn BlockDevice>, read_only: bool) -> VfsResult<Arc<dyn
     // Read block group descriptor table
     let group_table = BlockGroupTable::read(&*device, &sb).map_err(|e| VfsError::from(e))?;
 
+    // Initialize journal if present and not read-only
+    let journal = if sb.has_journal() && !read_only {
+        match Journal::open(device.clone(), &sb, &group_table) {
+            Ok(mut j) => {
+                // Run journal recovery if needed
+                if j.needs_recovery() {
+                    j.recover().map_err(|e| VfsError::from(e))?;
+                }
+                Some(Arc::new(SharedJournal::new(j)))
+            }
+            Err(_) => {
+                // Journal open failed - mount read-only or without journal
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // Create filesystem state
     let fs = Arc::new(RwLock::new(Ext4Fs {
         device,
         sb,
         group_table,
         read_only,
+        journal,
     }));
 
     // Read root inode (always inode 2)

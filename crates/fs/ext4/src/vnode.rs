@@ -2,6 +2,8 @@
 
 use alloc::string::String;
 use alloc::sync::Arc;
+use alloc::vec;
+use alloc::vec::Vec;
 use spin::RwLock;
 
 use block::BlockDevice;
@@ -13,6 +15,7 @@ use crate::error::Ext4Error;
 use crate::file;
 use crate::group_desc::BlockGroupTable;
 use crate::inode::{self, file_type, read_inode, write_inode, Ext4Inode};
+use crate::journal::{Journal, SharedJournal};
 use crate::superblock::Ext4Superblock;
 
 /// Shared ext4 filesystem state
@@ -25,12 +28,61 @@ pub struct Ext4Fs {
     pub group_table: BlockGroupTable,
     /// Read-only mode
     pub read_only: bool,
+    /// Journal (if available and not read-only)
+    pub journal: Option<Arc<SharedJournal>>,
 }
 
 impl Ext4Fs {
     /// Get the block device
     pub fn device(&self) -> &dyn BlockDevice {
         &*self.device
+    }
+
+    /// Check if journaling is enabled
+    pub fn has_journal(&self) -> bool {
+        self.journal.is_some()
+    }
+
+    /// Get journal reference
+    pub fn journal(&self) -> Option<&Arc<SharedJournal>> {
+        self.journal.as_ref()
+    }
+
+    /// Journal a metadata block write
+    pub fn journal_block(&self, blocknr: u64, data: Vec<u8>) {
+        if let Some(ref journal) = self.journal {
+            let mut j = journal.0.lock();
+            // Add to current transaction if one is active
+            let _ = j.journal_block(blocknr, data, true);
+        }
+    }
+
+    /// Start a journal transaction
+    pub fn begin_transaction(&self) -> bool {
+        if let Some(ref journal) = self.journal {
+            let mut j = journal.0.lock();
+            j.start_transaction().is_ok()
+        } else {
+            false
+        }
+    }
+
+    /// Commit current journal transaction
+    pub fn commit_transaction(&self) -> bool {
+        if let Some(ref journal) = self.journal {
+            let mut j = journal.0.lock();
+            j.commit_transaction().is_ok()
+        } else {
+            true // No journal means nothing to commit
+        }
+    }
+
+    /// Abort current journal transaction
+    pub fn abort_transaction(&self) {
+        if let Some(ref journal) = self.journal {
+            let mut j = journal.0.lock();
+            j.abort_transaction();
+        }
     }
 }
 
@@ -136,19 +188,30 @@ impl VnodeOps for Ext4Vnode {
             return Err(VfsError::AlreadyExists);
         }
 
+        // Start journal transaction
+        let has_journal = fs.begin_transaction();
+
         // Determine group for allocation (same as parent directory)
         let parent_group = (self.ino - 1) / fs.sb.s_inodes_per_group;
 
         // Allocate inode
-        let new_ino = bitmap::alloc_inode(
+        let new_ino = match bitmap::alloc_inode(
             fs.device(),
             &fs.sb,
             &fs.group_table,
             Some(parent_group),
             false, // not a directory
-        )
-        .map_err(|e| VfsError::from(e))?
-        .ok_or(VfsError::NoSpace)?;
+        ) {
+            Ok(Some(ino)) => ino,
+            Ok(None) => {
+                if has_journal { fs.abort_transaction(); }
+                return Err(VfsError::NoSpace);
+            }
+            Err(e) => {
+                if has_journal { fs.abort_transaction(); }
+                return Err(VfsError::from(e));
+            }
+        };
 
         // Create new inode structure
         let inode_mode = file_type::S_IFREG | (mode.bits() as u16 & 0o7777);
@@ -157,26 +220,50 @@ impl VnodeOps for Ext4Vnode {
         // Initialize extent header for new file
         inode::init_extent_header(&mut new_inode);
 
-        // Write the new inode to disk
-        write_inode(fs.device(), &fs.sb, &fs.group_table, new_ino, &new_inode)
-            .map_err(|e| VfsError::from(e))?;
+        // Write the new inode to disk (and journal if available)
+        match inode::write_inode_data(fs.device(), &fs.sb, &fs.group_table, new_ino, &new_inode) {
+            Ok((blocknr, data)) => {
+                fs.journal_block(blocknr, data);
+            }
+            Err(e) => {
+                if has_journal { fs.abort_transaction(); }
+                return Err(VfsError::from(e));
+            }
+        }
 
         // Add directory entry
-        let file_type = dir::mode_to_file_type(inode_mode);
-        dir::add_entry(
+        let entry_file_type = dir::mode_to_file_type(inode_mode);
+        if let Err(e) = dir::add_entry(
             fs.device(),
             &fs.sb,
             &fs.group_table,
             &mut inode,
             name,
             new_ino,
-            file_type,
-        )
-        .map_err(|e| VfsError::from(e))?;
+            entry_file_type,
+        ) {
+            if has_journal { fs.abort_transaction(); }
+            return Err(VfsError::from(e));
+        }
 
-        // Write updated parent directory inode
-        write_inode(fs.device(), &fs.sb, &fs.group_table, self.ino, &inode)
-            .map_err(|e| VfsError::from(e))?;
+        // Write updated parent directory inode (and journal if available)
+        match inode::write_inode_data(fs.device(), &fs.sb, &fs.group_table, self.ino, &inode) {
+            Ok((blocknr, data)) => {
+                fs.journal_block(blocknr, data);
+            }
+            Err(e) => {
+                if has_journal { fs.abort_transaction(); }
+                return Err(VfsError::from(e));
+            }
+        }
+
+        // Commit journal transaction
+        if has_journal {
+            if !fs.commit_transaction() {
+                // Journal commit failed - filesystem may be inconsistent
+                return Err(VfsError::IoError);
+            }
+        }
 
         drop(fs);
 
@@ -205,20 +292,38 @@ impl VnodeOps for Ext4Vnode {
             return Err(VfsError::ReadOnly);
         }
 
+        // Start journal transaction (for metadata - data writes use ordered mode)
+        let has_journal = fs.begin_transaction();
+
         // Write the data
-        let bytes_written = file::write_file(
+        let bytes_written = match file::write_file(
             fs.device(),
             &fs.sb,
             &fs.group_table,
             &mut inode,
             offset,
             buf,
-        )
-        .map_err(|e| VfsError::from(e))?;
+        ) {
+            Ok(n) => n,
+            Err(e) => {
+                if has_journal { fs.abort_transaction(); }
+                return Err(VfsError::from(e));
+            }
+        };
 
-        // Update inode on disk
-        write_inode(fs.device(), &fs.sb, &fs.group_table, self.ino, &inode)
-            .map_err(|e| VfsError::from(e))?;
+        // Update inode on disk (and journal the metadata)
+        match inode::write_inode_data(fs.device(), &fs.sb, &fs.group_table, self.ino, &inode) {
+            Ok((blocknr, data)) => fs.journal_block(blocknr, data),
+            Err(e) => {
+                if has_journal { fs.abort_transaction(); }
+                return Err(VfsError::from(e));
+            }
+        }
+
+        // Commit journal transaction
+        if has_journal && !fs.commit_transaction() {
+            return Err(VfsError::IoError);
+        }
 
         Ok(bytes_written)
     }
@@ -262,22 +367,41 @@ impl VnodeOps for Ext4Vnode {
             return Err(VfsError::AlreadyExists);
         }
 
+        // Start journal transaction
+        let has_journal = fs.begin_transaction();
+
         // Allocate inode for new directory
         let parent_group = (self.ino - 1) / fs.sb.s_inodes_per_group;
-        let new_ino = bitmap::alloc_inode(
+        let new_ino = match bitmap::alloc_inode(
             fs.device(),
             &fs.sb,
             &fs.group_table,
             Some(parent_group),
             true, // is a directory
-        )
-        .map_err(|e| VfsError::from(e))?
-        .ok_or(VfsError::NoSpace)?;
+        ) {
+            Ok(Some(ino)) => ino,
+            Ok(None) => {
+                if has_journal { fs.abort_transaction(); }
+                return Err(VfsError::NoSpace);
+            }
+            Err(e) => {
+                if has_journal { fs.abort_transaction(); }
+                return Err(VfsError::from(e));
+            }
+        };
 
         // Allocate a block for the new directory
-        let new_block = bitmap::alloc_block(fs.device(), &fs.sb, &fs.group_table, Some(parent_group))
-            .map_err(|e| VfsError::from(e))?
-            .ok_or(VfsError::NoSpace)?;
+        let new_block = match bitmap::alloc_block(fs.device(), &fs.sb, &fs.group_table, Some(parent_group)) {
+            Ok(Some(blk)) => blk,
+            Ok(None) => {
+                if has_journal { fs.abort_transaction(); }
+                return Err(VfsError::NoSpace);
+            }
+            Err(e) => {
+                if has_journal { fs.abort_transaction(); }
+                return Err(VfsError::from(e));
+            }
+        };
 
         // Create new directory inode
         let inode_mode = file_type::S_IFDIR | (mode.bits() as u16 & 0o7777);
@@ -285,8 +409,10 @@ impl VnodeOps for Ext4Vnode {
 
         // Initialize extent header and add extent for the directory block
         inode::init_extent_header(&mut new_inode);
-        crate::extent::insert_extent(&mut new_inode, 0, new_block, 1)
-            .map_err(|e| VfsError::from(e))?;
+        if let Err(e) = crate::extent::insert_extent(&mut new_inode, 0, new_block, 1) {
+            if has_journal { fs.abort_transaction(); }
+            return Err(VfsError::from(e));
+        }
 
         // Set directory size and block count
         new_inode.set_size(fs.sb.block_size());
@@ -294,15 +420,22 @@ impl VnodeOps for Ext4Vnode {
         new_inode.i_links_count = 2; // . and parent's link
 
         // Initialize the directory block with . and ..
-        dir::init_directory(fs.device(), &fs.sb, new_block, new_ino, self.ino)
-            .map_err(|e| VfsError::from(e))?;
+        if let Err(e) = dir::init_directory(fs.device(), &fs.sb, new_block, new_ino, self.ino) {
+            if has_journal { fs.abort_transaction(); }
+            return Err(VfsError::from(e));
+        }
 
-        // Write the new directory inode
-        write_inode(fs.device(), &fs.sb, &fs.group_table, new_ino, &new_inode)
-            .map_err(|e| VfsError::from(e))?;
+        // Write the new directory inode (and journal)
+        match inode::write_inode_data(fs.device(), &fs.sb, &fs.group_table, new_ino, &new_inode) {
+            Ok((blocknr, data)) => fs.journal_block(blocknr, data),
+            Err(e) => {
+                if has_journal { fs.abort_transaction(); }
+                return Err(VfsError::from(e));
+            }
+        }
 
         // Add entry to parent directory
-        dir::add_entry(
+        if let Err(e) = dir::add_entry(
             fs.device(),
             &fs.sb,
             &fs.group_table,
@@ -310,15 +443,27 @@ impl VnodeOps for Ext4Vnode {
             name,
             new_ino,
             dir::file_type::DIR,
-        )
-        .map_err(|e| VfsError::from(e))?;
+        ) {
+            if has_journal { fs.abort_transaction(); }
+            return Err(VfsError::from(e));
+        }
 
         // Update parent directory link count (for ..)
         inode.inc_links();
 
-        // Write updated parent inode
-        write_inode(fs.device(), &fs.sb, &fs.group_table, self.ino, &inode)
-            .map_err(|e| VfsError::from(e))?;
+        // Write updated parent inode (and journal)
+        match inode::write_inode_data(fs.device(), &fs.sb, &fs.group_table, self.ino, &inode) {
+            Ok((blocknr, data)) => fs.journal_block(blocknr, data),
+            Err(e) => {
+                if has_journal { fs.abort_transaction(); }
+                return Err(VfsError::from(e));
+            }
+        }
+
+        // Commit journal transaction
+        if has_journal && !fs.commit_transaction() {
+            return Err(VfsError::IoError);
+        }
 
         drop(fs);
 
@@ -362,9 +507,14 @@ impl VnodeOps for Ext4Vnode {
             return Err(VfsError::NotEmpty);
         }
 
+        // Start journal transaction
+        let has_journal = fs.begin_transaction();
+
         // Remove the directory entry from parent
-        dir::remove_entry(fs.device(), &fs.sb, &parent_inode, name)
-            .map_err(|e| VfsError::from(e))?;
+        if let Err(e) = dir::remove_entry(fs.device(), &fs.sb, &parent_inode, name) {
+            if has_journal { fs.abort_transaction(); }
+            return Err(VfsError::from(e));
+        }
 
         // Free the directory's blocks
         let block_size = fs.sb.block_size();
@@ -373,21 +523,35 @@ impl VnodeOps for Ext4Vnode {
             if let Some(phys) = crate::extent::map_block(fs.device(), &fs.sb, &target_inode, logical)
                 .map_err(|e| VfsError::from(e))?
             {
-                bitmap::free_block(fs.device(), &fs.sb, &fs.group_table, phys)
-                    .map_err(|e| VfsError::from(e))?;
+                if let Err(e) = bitmap::free_block(fs.device(), &fs.sb, &fs.group_table, phys) {
+                    if has_journal { fs.abort_transaction(); }
+                    return Err(VfsError::from(e));
+                }
             }
         }
 
         // Free the inode
-        bitmap::free_inode(fs.device(), &fs.sb, &fs.group_table, target_ino)
-            .map_err(|e| VfsError::from(e))?;
+        if let Err(e) = bitmap::free_inode(fs.device(), &fs.sb, &fs.group_table, target_ino) {
+            if has_journal { fs.abort_transaction(); }
+            return Err(VfsError::from(e));
+        }
 
         // Decrement parent link count (for the removed ..)
         parent_inode.dec_links();
 
-        // Write updated parent inode
-        write_inode(fs.device(), &fs.sb, &fs.group_table, self.ino, &parent_inode)
-            .map_err(|e| VfsError::from(e))?;
+        // Write updated parent inode (and journal)
+        match inode::write_inode_data(fs.device(), &fs.sb, &fs.group_table, self.ino, &parent_inode) {
+            Ok((blocknr, data)) => fs.journal_block(blocknr, data),
+            Err(e) => {
+                if has_journal { fs.abort_transaction(); }
+                return Err(VfsError::from(e));
+            }
+        }
+
+        // Commit journal transaction
+        if has_journal && !fs.commit_transaction() {
+            return Err(VfsError::IoError);
+        }
 
         Ok(())
     }
@@ -422,9 +586,14 @@ impl VnodeOps for Ext4Vnode {
             return Err(VfsError::IsDirectory);
         }
 
+        // Start journal transaction
+        let has_journal = fs.begin_transaction();
+
         // Remove the directory entry
-        dir::remove_entry(fs.device(), &fs.sb, &parent_inode, name)
-            .map_err(|e| VfsError::from(e))?;
+        if let Err(e) = dir::remove_entry(fs.device(), &fs.sb, &parent_inode, name) {
+            if has_journal { fs.abort_transaction(); }
+            return Err(VfsError::from(e));
+        }
 
         // Decrement link count
         target_inode.dec_links();
@@ -438,8 +607,10 @@ impl VnodeOps for Ext4Vnode {
                 if let Some(phys) = crate::extent::map_block(fs.device(), &fs.sb, &target_inode, logical)
                     .map_err(|e| VfsError::from(e))?
                 {
-                    bitmap::free_block(fs.device(), &fs.sb, &fs.group_table, phys)
-                        .map_err(|e| VfsError::from(e))?;
+                    if let Err(e) = bitmap::free_block(fs.device(), &fs.sb, &fs.group_table, phys) {
+                        if has_journal { fs.abort_transaction(); }
+                        return Err(VfsError::from(e));
+                    }
                 }
             }
 
@@ -447,13 +618,25 @@ impl VnodeOps for Ext4Vnode {
             target_inode.set_dtime(0); // TODO: use real time
 
             // Free the inode
-            bitmap::free_inode(fs.device(), &fs.sb, &fs.group_table, target_ino)
-                .map_err(|e| VfsError::from(e))?;
+            if let Err(e) = bitmap::free_inode(fs.device(), &fs.sb, &fs.group_table, target_ino) {
+                if has_journal { fs.abort_transaction(); }
+                return Err(VfsError::from(e));
+            }
         }
 
-        // Write the updated target inode
-        write_inode(fs.device(), &fs.sb, &fs.group_table, target_ino, &target_inode)
-            .map_err(|e| VfsError::from(e))?;
+        // Write the updated target inode (and journal)
+        match inode::write_inode_data(fs.device(), &fs.sb, &fs.group_table, target_ino, &target_inode) {
+            Ok((blocknr, data)) => fs.journal_block(blocknr, data),
+            Err(e) => {
+                if has_journal { fs.abort_transaction(); }
+                return Err(VfsError::from(e));
+            }
+        }
+
+        // Commit journal transaction
+        if has_journal && !fs.commit_transaction() {
+            return Err(VfsError::IoError);
+        }
 
         Ok(())
     }
@@ -479,6 +662,9 @@ impl VnodeOps for Ext4Vnode {
         let source_inode = read_inode(fs.device(), &fs.sb, &fs.group_table, source_ino)
             .map_err(|e| VfsError::from(e))?;
 
+        // Start journal transaction
+        let has_journal = fs.begin_transaction();
+
         // Check if destination exists
         if let Some(dest_ino) = dir::lookup(fs.device(), &fs.sb, &fs.group_table, &inode, new_name)
             .map_err(|e| VfsError::from(e))?
@@ -489,6 +675,7 @@ impl VnodeOps for Ext4Vnode {
 
             // Can't overwrite directory with file or vice versa
             if source_inode.is_dir() != dest_inode.is_dir() {
+                if has_journal { fs.abort_transaction(); }
                 if dest_inode.is_dir() {
                     return Err(VfsError::IsDirectory);
                 } else {
@@ -497,35 +684,52 @@ impl VnodeOps for Ext4Vnode {
             }
 
             // Remove the destination entry
-            dir::remove_entry(fs.device(), &fs.sb, &inode, new_name)
-                .map_err(|e| VfsError::from(e))?;
+            if let Err(e) = dir::remove_entry(fs.device(), &fs.sb, &inode, new_name) {
+                if has_journal { fs.abort_transaction(); }
+                return Err(VfsError::from(e));
+            }
 
             // Free destination inode if no more links
-            // (simplified - doesn't handle hard links properly)
-            bitmap::free_inode(fs.device(), &fs.sb, &fs.group_table, dest_ino)
-                .map_err(|e| VfsError::from(e))?;
+            if let Err(e) = bitmap::free_inode(fs.device(), &fs.sb, &fs.group_table, dest_ino) {
+                if has_journal { fs.abort_transaction(); }
+                return Err(VfsError::from(e));
+            }
         }
 
         // Remove old entry
-        dir::remove_entry(fs.device(), &fs.sb, &inode, old_name)
-            .map_err(|e| VfsError::from(e))?;
+        if let Err(e) = dir::remove_entry(fs.device(), &fs.sb, &inode, old_name) {
+            if has_journal { fs.abort_transaction(); }
+            return Err(VfsError::from(e));
+        }
 
         // Add new entry
-        let file_type = dir::mode_to_file_type(source_inode.i_mode);
-        dir::add_entry(
+        let entry_file_type = dir::mode_to_file_type(source_inode.i_mode);
+        if let Err(e) = dir::add_entry(
             fs.device(),
             &fs.sb,
             &fs.group_table,
             &mut inode,
             new_name,
             source_ino,
-            file_type,
-        )
-        .map_err(|e| VfsError::from(e))?;
+            entry_file_type,
+        ) {
+            if has_journal { fs.abort_transaction(); }
+            return Err(VfsError::from(e));
+        }
 
-        // Write updated directory inode
-        write_inode(fs.device(), &fs.sb, &fs.group_table, self.ino, &inode)
-            .map_err(|e| VfsError::from(e))?;
+        // Write updated directory inode (and journal)
+        match inode::write_inode_data(fs.device(), &fs.sb, &fs.group_table, self.ino, &inode) {
+            Ok((blocknr, data)) => fs.journal_block(blocknr, data),
+            Err(e) => {
+                if has_journal { fs.abort_transaction(); }
+                return Err(VfsError::from(e));
+            }
+        }
+
+        // Commit journal transaction
+        if has_journal && !fs.commit_transaction() {
+            return Err(VfsError::IoError);
+        }
 
         Ok(())
     }
@@ -564,13 +768,28 @@ impl VnodeOps for Ext4Vnode {
             return Err(VfsError::ReadOnly);
         }
 
-        // Truncate the file
-        file::truncate_file(fs.device(), &fs.sb, &fs.group_table, &mut inode, size)
-            .map_err(|e| VfsError::from(e))?;
+        // Start journal transaction
+        let has_journal = fs.begin_transaction();
 
-        // Write updated inode
-        write_inode(fs.device(), &fs.sb, &fs.group_table, self.ino, &inode)
-            .map_err(|e| VfsError::from(e))?;
+        // Truncate the file
+        if let Err(e) = file::truncate_file(fs.device(), &fs.sb, &fs.group_table, &mut inode, size) {
+            if has_journal { fs.abort_transaction(); }
+            return Err(VfsError::from(e));
+        }
+
+        // Write updated inode (and journal)
+        match inode::write_inode_data(fs.device(), &fs.sb, &fs.group_table, self.ino, &inode) {
+            Ok((blocknr, data)) => fs.journal_block(blocknr, data),
+            Err(e) => {
+                if has_journal { fs.abort_transaction(); }
+                return Err(VfsError::from(e));
+            }
+        }
+
+        // Commit journal transaction
+        if has_journal && !fs.commit_transaction() {
+            return Err(VfsError::IoError);
+        }
 
         Ok(())
     }
