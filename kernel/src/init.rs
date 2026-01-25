@@ -386,6 +386,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         wait: Some(kernel_wait),
         mount: Some(kernel_mount),
         umount: Some(kernel_umount),
+        serial_write: Some(console::serial_write_bytes),
     };
     unsafe {
         syscall::init(syscall_ctx);
@@ -762,100 +763,46 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     let _ = writeln!(writer, "[BLK] Block device initialization complete");
 
-    // Load and mount the initramfs (loaded from disk by bootloader)
-    let initramfs_data = match boot_info.initramfs() {
-        Some(data) => {
-            let _ = writeln!(
-                writer,
-                "[INITRAMFS] Initramfs at phys {:#x}, {} bytes",
-                boot_info.initramfs_phys, boot_info.initramfs_size
-            );
-            data
-        }
-        None => {
-            let _ = writeln!(
-                writer,
-                "[INITRAMFS] ERROR: No initramfs loaded by bootloader!"
-            );
-            arch::X86_64::halt();
-        }
-    };
+    // Try to use ext4 as root filesystem if it has /sbin/init
+    let mut ext4_as_root = false;
+    if let Some(ref ext4_device) = ext4_root_partition {
+        let _ = writeln!(writer, "[EXT4] Checking ext4 partition for root filesystem...");
 
-    let _ = writeln!(
-        writer,
-        "[INITRAMFS] Loading initramfs ({} bytes)...",
-        initramfs_data.len()
-    );
-    let initramfs_root = match initramfs::load(initramfs_data) {
-        Ok(root) => root,
-        Err(e) => {
-            let _ = writeln!(writer, "[INITRAMFS] Failed to load initramfs: {:?}", e);
-            arch::X86_64::halt();
-        }
-    };
-
-    // Mount initramfs as root filesystem
-    if let Err(e) = GLOBAL_VFS.mount(initramfs_root.clone(), "/", MountFlags::empty(), "initramfs") {
-        let _ = writeln!(writer, "[INITRAMFS] Failed to mount initramfs: {:?}", e);
-        arch::X86_64::halt();
-    }
-    let _ = writeln!(writer, "[INITRAMFS] Mounted as root filesystem at /");
-
-    // Mount tmpfs on writable directories (initramfs is read-only)
-    // These directories need to be writable for daemons, logs, etc.
-    let writable_dirs = ["/run", "/tmp", "/var/log", "/var/lib", "/var/run"];
-    for dir in &writable_dirs {
-        // Ensure parent directories exist in initramfs (they should from Makefile)
-        // Create tmpfs mount point
-        let tmpfs = TmpDir::new_root();
-        if let Err(e) = GLOBAL_VFS.mount(tmpfs, dir, MountFlags::empty(), "tmpfs") {
-            let _ = writeln!(writer, "[VFS] Note: Could not mount tmpfs at {}: {:?}", dir, e);
-            // Non-fatal - directory may not exist in initramfs
-        } else {
-            let _ = writeln!(writer, "[VFS] Mounted tmpfs at {}", dir);
-        }
-    }
-
-    // Mount ext4 filesystem if found during block device initialization
-    if let Some(ext4_device) = ext4_root_partition {
-        let _ = writeln!(writer, "[EXT4] Mounting ext4 filesystem...");
-
-        // Create /mnt directory if it doesn't exist
-        if GLOBAL_VFS.lookup("/mnt").is_err() {
-            if let Ok(root) = GLOBAL_VFS.lookup("/") {
-                let _ = root.mkdir("mnt", vfs::Mode::DEFAULT_DIR);
-            }
-        }
-
-        // Create /mnt/root directory for ext4 mount
-        if let Ok(mnt) = GLOBAL_VFS.lookup("/mnt") {
-            let _ = mnt.mkdir("root", vfs::Mode::DEFAULT_DIR);
-        }
-
-        // Mount the ext4 filesystem
-        match ext4::mount(ext4_device, false) {
+        match ext4::mount(ext4_device.clone(), false) {
             Ok(ext4_root) => {
-                if let Err(e) = GLOBAL_VFS.mount(ext4_root, "/mnt/root", MountFlags::empty(), "ext4") {
-                    let _ = writeln!(writer, "[EXT4] Failed to mount ext4: {:?}", e);
-                } else {
-                    let _ = writeln!(writer, "[EXT4] Mounted ext4 filesystem at /mnt/root");
+                // Check if ext4 has /sbin/init
+                let has_init = ext4_root.lookup("sbin/init").is_ok();
 
-                    // List root directory contents
-                    if let Ok(root_vnode) = GLOBAL_VFS.lookup("/mnt/root") {
-                        let _ = writeln!(writer, "[EXT4] Root directory contents:");
-                        let mut offset = 0u64;
-                        let mut count = 0;
-                        while let Ok(Some(entry)) = root_vnode.readdir(offset) {
-                            if count < 10 {
-                                let _ = writeln!(writer, "[EXT4]   {}", entry.name);
+                if has_init {
+                    let _ = writeln!(writer, "[EXT4] Found /sbin/init on ext4 partition");
+                    let _ = writeln!(writer, "[EXT4] Using ext4 as root filesystem");
+
+                    // Mount ext4 as root
+                    if let Err(e) = GLOBAL_VFS.mount(ext4_root.clone(), "/", MountFlags::empty(), "ext4") {
+                        let _ = writeln!(writer, "[EXT4] Failed to mount ext4 as root: {:?}", e);
+                    } else {
+                        ext4_as_root = true;
+                        let _ = writeln!(writer, "[EXT4] Mounted ext4 as root filesystem at /");
+
+                        // List root directory contents
+                        if let Ok(root_vnode) = GLOBAL_VFS.lookup("/") {
+                            let _ = writeln!(writer, "[EXT4] Root directory contents:");
+                            let mut offset = 0u64;
+                            let mut count = 0;
+                            while let Ok(Some(entry)) = root_vnode.readdir(offset) {
+                                if count < 10 {
+                                    let _ = writeln!(writer, "[EXT4]   {}", entry.name);
+                                }
+                                count += 1;
+                                offset += 1;
                             }
-                            count += 1;
-                            offset += 1;
-                        }
-                        if count > 10 {
-                            let _ = writeln!(writer, "[EXT4]   ... and {} more entries", count - 10);
+                            if count > 10 {
+                                let _ = writeln!(writer, "[EXT4]   ... and {} more entries", count - 10);
+                            }
                         }
                     }
+                } else {
+                    let _ = writeln!(writer, "[EXT4] No /sbin/init found on ext4 partition");
                 }
             }
             Err(e) => {
@@ -863,6 +810,83 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             }
         }
     }
+
+    // If ext4 wasn't used as root, fall back to initramfs
+    if !ext4_as_root {
+        // Load and mount the initramfs (loaded from disk by bootloader)
+        let initramfs_data = match boot_info.initramfs() {
+            Some(data) => {
+                let _ = writeln!(
+                    writer,
+                    "[INITRAMFS] Initramfs at phys {:#x}, {} bytes",
+                    boot_info.initramfs_phys, boot_info.initramfs_size
+                );
+                data
+            }
+            None => {
+                let _ = writeln!(
+                    writer,
+                    "[INITRAMFS] ERROR: No initramfs loaded by bootloader!"
+                );
+                arch::X86_64::halt();
+            }
+        };
+
+        let _ = writeln!(
+            writer,
+            "[INITRAMFS] Loading initramfs ({} bytes)...",
+            initramfs_data.len()
+        );
+        let initramfs_root = match initramfs::load(initramfs_data) {
+            Ok(root) => root,
+            Err(e) => {
+                let _ = writeln!(writer, "[INITRAMFS] Failed to load initramfs: {:?}", e);
+                arch::X86_64::halt();
+            }
+        };
+
+        // Mount initramfs as root filesystem
+        if let Err(e) = GLOBAL_VFS.mount(initramfs_root.clone(), "/", MountFlags::empty(), "initramfs") {
+            let _ = writeln!(writer, "[INITRAMFS] Failed to mount initramfs: {:?}", e);
+            arch::X86_64::halt();
+        }
+        let _ = writeln!(writer, "[INITRAMFS] Mounted as root filesystem at /");
+
+        // Mount tmpfs on writable directories (initramfs is read-only)
+        let writable_dirs = ["/run", "/tmp", "/var/log", "/var/lib", "/var/run"];
+        for dir in &writable_dirs {
+            let tmpfs = TmpDir::new_root();
+            if let Err(e) = GLOBAL_VFS.mount(tmpfs, dir, MountFlags::empty(), "tmpfs") {
+                let _ = writeln!(writer, "[VFS] Note: Could not mount tmpfs at {}: {:?}", dir, e);
+            } else {
+                let _ = writeln!(writer, "[VFS] Mounted tmpfs at {}", dir);
+            }
+        }
+
+        // If ext4 was found but didn't have init, mount it at /mnt/root
+        if let Some(ext4_device) = ext4_root_partition.clone() {
+            if let Ok(ext4_root) = ext4::mount(ext4_device, false) {
+                // Create /mnt directory if it doesn't exist
+                if GLOBAL_VFS.lookup("/mnt").is_err() {
+                    if let Ok(root) = GLOBAL_VFS.lookup("/") {
+                        let _ = root.mkdir("mnt", vfs::Mode::DEFAULT_DIR);
+                    }
+                }
+
+                // Create /mnt/root directory for ext4 mount
+                if let Ok(mnt) = GLOBAL_VFS.lookup("/mnt") {
+                    let _ = mnt.mkdir("root", vfs::Mode::DEFAULT_DIR);
+                }
+
+                if let Err(e) = GLOBAL_VFS.mount(ext4_root, "/mnt/root", MountFlags::empty(), "ext4") {
+                    let _ = writeln!(writer, "[EXT4] Failed to mount ext4 at /mnt/root: {:?}", e);
+                } else {
+                    let _ = writeln!(writer, "[EXT4] Mounted ext4 filesystem at /mnt/root");
+                }
+            }
+        }
+    }
+
 
     // Load /sbin/init
     let init_path = "/sbin/init";

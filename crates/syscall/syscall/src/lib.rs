@@ -254,6 +254,9 @@ pub type MountFn = fn(&str, &str, &str, u32) -> i64;
 /// Umount callback type - mount_point, flags -> result
 pub type UmountFn = fn(&str, u32) -> i64;
 
+/// Serial debug write function type
+pub type SerialWriteFn = fn(&[u8]);
+
 /// Syscall context containing callbacks for I/O operations
 pub struct SyscallContext {
     /// Function to write to console (fd 1 and 2)
@@ -272,6 +275,8 @@ pub struct SyscallContext {
     pub mount: Option<MountFn>,
     /// Function to unmount a filesystem
     pub umount: Option<UmountFn>,
+    /// Function to write to serial for debug output
+    pub serial_write: Option<SerialWriteFn>,
 }
 
 impl SyscallContext {
@@ -286,6 +291,7 @@ impl SyscallContext {
             wait: None,
             mount: None,
             umount: None,
+            serial_write: None,
         }
     }
 }

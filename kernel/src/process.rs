@@ -287,17 +287,49 @@ pub fn user_exit(status: i32) -> ! {
             }
         };
 
-        // Get next process info
+        // Get next process info from scheduler's Task (not Process.context!)
+        // This is critical: the scheduler updates Task.context on preemption,
+        // but Process.context may be stale (e.g., from fork() time).
         let (next_ctx, next_pml4, kernel_stack_top) = {
-            let next = match table.get(next_pid) {
-                Some(p) => p,
-                None => continue, // Process gone, try next
-            };
-            let proc = next.lock();
-            (proc.context().clone(), proc.address_space().pml4_phys(), {
-                let ks_virt = phys_to_virt(proc.kernel_stack());
-                ks_virt.as_u64() + proc.kernel_stack_size() as u64
-            })
+            // First try to get context from scheduler's Task
+            if let Some((task_ctx, pml4, ks_phys, ks_size)) = sched::get_task_switch_info(next_pid) {
+                let ks_top = phys_to_virt(ks_phys).as_u64() + ks_size as u64;
+                // Convert TaskContext to ProcessContext
+                let ctx = ProcessContext {
+                    rip: task_ctx.rip,
+                    rsp: task_ctx.rsp,
+                    rflags: task_ctx.rflags,
+                    rax: task_ctx.rax,
+                    rbx: task_ctx.rbx,
+                    rcx: task_ctx.rcx,
+                    rdx: task_ctx.rdx,
+                    rsi: task_ctx.rsi,
+                    rdi: task_ctx.rdi,
+                    rbp: task_ctx.rbp,
+                    r8: task_ctx.r8,
+                    r9: task_ctx.r9,
+                    r10: task_ctx.r10,
+                    r11: task_ctx.r11,
+                    r12: task_ctx.r12,
+                    r13: task_ctx.r13,
+                    r14: task_ctx.r14,
+                    r15: task_ctx.r15,
+                    cs: task_ctx.cs,
+                    ss: task_ctx.ss,
+                };
+                (ctx, pml4, ks_top)
+            } else {
+                // Fallback to Process.context if task not in scheduler
+                let next = match table.get(next_pid) {
+                    Some(p) => p,
+                    None => continue, // Process gone, try next
+                };
+                let proc = next.lock();
+                (proc.context().clone(), proc.address_space().pml4_phys(), {
+                    let ks_virt = phys_to_virt(proc.kernel_stack());
+                    ks_virt.as_u64() + proc.kernel_stack_size() as u64
+                })
+            }
         };
 
         // Debug: print the context we're about to restore

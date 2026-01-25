@@ -42,6 +42,67 @@ static SOCKET_PAIRS: Mutex<BTreeMap<i32, i32>> = Mutex::new(BTreeMap::new());
 /// Next ephemeral port for client sockets
 static NEXT_EPHEMERAL_PORT: Mutex<u16> = Mutex::new(49152);
 
+/// UDP/RAW sockets bound to ports (for loopback routing)
+/// Maps (port, protocol) -> socket fd
+static BOUND_SOCKETS: Mutex<BTreeMap<(u16, u8), i32>> = Mutex::new(BTreeMap::new());
+
+/// Unified loopback socket registry
+/// Maps (port, protocol_num) -> socket fd for ALL socket types
+/// Protocol: 0=any, 1=ICMP, 6=TCP, 17=UDP, 58=ICMPv6
+static LOOPBACK_REGISTRY: Mutex<BTreeMap<(u16, u8), i32>> = Mutex::new(BTreeMap::new());
+
+/// Serial debug print helper (goes to serial port)
+#[allow(dead_code)]
+fn serial_print(msg: &str) {
+    use core::ptr::addr_of;
+    unsafe {
+        let ctx = addr_of!(crate::SYSCALL_CONTEXT);
+        if let Some(write_fn) = (*ctx).serial_write {
+            write_fn(b"[SOCK] ");
+            write_fn(msg.as_bytes());
+            write_fn(b"\n");
+        }
+    }
+}
+
+/// Serial debug print with number
+#[allow(dead_code)]
+fn serial_print_num(msg: &str, num: i64) {
+    use core::ptr::addr_of;
+    unsafe {
+        let ctx = addr_of!(crate::SYSCALL_CONTEXT);
+        if let Some(write_fn) = (*ctx).serial_write {
+            write_fn(b"[SOCK] ");
+            write_fn(msg.as_bytes());
+            // Simple number to string
+            let mut buf = [0u8; 20];
+            let mut n = if num < 0 {
+                write_fn(b"-");
+                (-num) as u64
+            } else {
+                num as u64
+            };
+            let mut i = 0;
+            if n == 0 {
+                buf[0] = b'0';
+                i = 1;
+            } else {
+                while n > 0 {
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    i += 1;
+                }
+            }
+            // Reverse
+            for j in 0..i / 2 {
+                buf.swap(j, i - 1 - j);
+            }
+            write_fn(&buf[..i]);
+            write_fn(b"\n");
+        }
+    }
+}
+
 /// Debug print helper (kernel debug output)
 #[allow(dead_code)]
 fn debug_print(msg: &str) {
@@ -150,6 +211,220 @@ fn net_error_to_errno(e: NetError) -> i64 {
 /// I/O error errno
 const EIO: i64 = -5;
 
+// ============================================================================
+// UNIFIED LOOPBACK SYSTEM
+// ============================================================================
+
+/// Convert SocketProtocol to protocol number
+fn protocol_to_num(protocol: SocketProtocol) -> u8 {
+    match protocol {
+        SocketProtocol::Default => 0,
+        SocketProtocol::Icmp => 1,
+        SocketProtocol::Tcp => 6,
+        SocketProtocol::Udp => 17,
+        SocketProtocol::Icmpv6 => 58,
+    }
+}
+
+/// Check if an address is loopback (127.0.0.0/8 or ::1)
+fn is_loopback_addr(addr: &SocketAddr) -> bool {
+    addr.ip.is_loopback()
+}
+
+/// Register a socket in the unified loopback registry
+fn register_loopback_socket(port: u16, protocol: u8, fd: i32) {
+    LOOPBACK_REGISTRY.lock().insert((port, protocol), fd);
+}
+
+/// Unregister a socket from the loopback registry
+fn unregister_loopback_socket(port: u16, protocol: u8) {
+    LOOPBACK_REGISTRY.lock().remove(&(port, protocol));
+}
+
+/// Unregister all entries for a given fd from loopback registry
+fn unregister_loopback_socket_by_fd(fd: i32) {
+    let mut registry = LOOPBACK_REGISTRY.lock();
+    let keys_to_remove: Vec<_> = registry
+        .iter()
+        .filter(|&(_, &f)| f == fd)
+        .map(|(k, _)| *k)
+        .collect();
+    for key in keys_to_remove {
+        registry.remove(&key);
+    }
+}
+
+/// Find a socket in the loopback registry by destination
+fn find_loopback_socket(port: u16, protocol: u8) -> Option<Arc<Socket>> {
+    let registry = LOOPBACK_REGISTRY.lock();
+
+    // Try exact match first
+    if let Some(&fd) = registry.get(&(port, protocol)) {
+        return get_socket(fd);
+    }
+
+    // For RAW sockets, also try protocol-only match (port 0)
+    if protocol != 0 {
+        if let Some(&fd) = registry.get(&(0, protocol)) {
+            return get_socket(fd);
+        }
+    }
+
+    None
+}
+
+/// Deliver a packet to a socket's receive buffer
+/// Returns the number of bytes delivered, or negative errno on error
+fn deliver_loopback_packet(dest_socket: &Arc<Socket>, data: &[u8], _src_addr: SocketAddr) -> i64 {
+    // Use the socket's existing recv_buf for loopback delivery
+    let mut recv_buf = dest_socket.recv_buf.lock();
+    recv_buf.extend_from_slice(data);
+    data.len() as i64
+}
+
+/// Receive a packet from recv_buf (used for loopback)
+/// Returns (data_len, source_addr) or None if buffer is empty
+fn receive_loopback_packet(socket: &Arc<Socket>, buf: &mut [u8]) -> Option<(usize, SocketAddr)> {
+    let mut recv_buf = socket.recv_buf.lock();
+
+    if recv_buf.is_empty() {
+        return None;
+    }
+
+    let copy_len = buf.len().min(recv_buf.len());
+    buf[..copy_len].copy_from_slice(&recv_buf[..copy_len]);
+    recv_buf.drain(..copy_len);
+
+    // Return localhost as source address for loopback
+    Some((copy_len, SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)))
+}
+
+/// ICMP echo request type
+const ICMP_ECHO_REQUEST: u8 = 8;
+/// ICMP echo reply type
+const ICMP_ECHO_REPLY: u8 = 0;
+
+/// Handle ICMP echo request -> generate echo reply
+/// This is the ONLY place ICMP loopback is handled
+fn handle_icmp_echo(socket: &Arc<Socket>, icmp_data: &[u8], _src_addr: SocketAddr) -> Option<i64> {
+    debug_print_num("handle_icmp_echo: icmp_data.len=", icmp_data.len() as i64);
+
+    // ICMP header: type(1) + code(1) + checksum(2) + identifier(2) + sequence(2) + data
+    if icmp_data.len() < 8 {
+        debug_print("handle_icmp_echo: data too short");
+        return None;
+    }
+
+    let icmp_type = icmp_data[0];
+    debug_print_num("handle_icmp_echo: icmp_type=", icmp_type as i64);
+    if icmp_type != ICMP_ECHO_REQUEST {
+        debug_print("handle_icmp_echo: not echo request");
+        return None; // Only handle echo requests
+    }
+
+    // Build echo reply with IP header
+    let mut reply = Vec::new();
+
+    // Build minimal IP header (20 bytes)
+    reply.push(0x45); // version=4, IHL=5 (20 bytes)
+    reply.push(0x00); // TOS
+    let total_len = (20 + icmp_data.len()) as u16;
+    reply.extend_from_slice(&total_len.to_be_bytes());
+    reply.extend_from_slice(&[0x00, 0x00]); // ID
+    reply.extend_from_slice(&[0x00, 0x00]); // Flags + Fragment offset
+    reply.push(64); // TTL
+    reply.push(1);  // Protocol = ICMP
+    reply.extend_from_slice(&[0x00, 0x00]); // Checksum placeholder
+    reply.extend_from_slice(&[127, 0, 0, 1]); // Source IP
+    reply.extend_from_slice(&[127, 0, 0, 1]); // Dest IP
+
+    // Calculate IP header checksum
+    let ip_checksum = internet_checksum(&reply[..20]);
+    reply[10] = (ip_checksum >> 8) as u8;
+    reply[11] = ip_checksum as u8;
+
+    // Build ICMP echo reply
+    reply.push(ICMP_ECHO_REPLY); // Type = echo reply
+    reply.push(0); // Code = 0
+    reply.extend_from_slice(&[0x00, 0x00]); // Checksum placeholder
+    reply.extend_from_slice(&icmp_data[4..]); // Copy identifier, sequence, and data
+
+    // Calculate ICMP checksum
+    let icmp_start = 20;
+    let icmp_checksum = internet_checksum(&reply[icmp_start..]);
+    reply[icmp_start + 2] = (icmp_checksum >> 8) as u8;
+    reply[icmp_start + 3] = icmp_checksum as u8;
+
+    // Deliver reply via loopback queue (with proper source address)
+    let reply_src = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
+    debug_print_num("handle_icmp_echo: reply.len=", reply.len() as i64);
+    deliver_loopback_packet(socket, &reply, reply_src);
+    debug_print("handle_icmp_echo: delivered to queue");
+
+    Some(icmp_data.len() as i64)
+}
+
+/// Calculate internet checksum (RFC 1071)
+fn internet_checksum(data: &[u8]) -> u16 {
+    let mut sum: u32 = 0;
+    let mut i = 0;
+
+    while i + 1 < data.len() {
+        sum += u16::from_be_bytes([data[i], data[i + 1]]) as u32;
+        i += 2;
+    }
+
+    if i < data.len() {
+        sum += (data[i] as u32) << 8;
+    }
+
+    while sum >> 16 != 0 {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+
+    !sum as u16
+}
+
+/// Unified loopback send handler
+/// Handles ALL loopback sends (TCP, UDP, RAW, ICMP) in one place
+fn loopback_send(socket: &Arc<Socket>, data: &[u8], dest: &SocketAddr) -> i64 {
+    let protocol = protocol_to_num(socket.protocol);
+
+    // Get source address for the packet
+    let src_addr = socket.local_addr.lock().clone()
+        .unwrap_or_else(|| SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0));
+
+    // Special case: RAW ICMP socket sending echo request
+    if socket.sock_type == SocketType::Raw && socket.protocol == SocketProtocol::Icmp {
+        if let Some(result) = handle_icmp_echo(socket, data, src_addr) {
+            return result;
+        }
+        // Not an echo request, just pretend we sent it
+        return data.len() as i64;
+    }
+
+    // For connected stream sockets (TCP), use SOCKET_PAIRS mechanism
+    if socket.sock_type == SocketType::Stream {
+        // This is handled separately in sys_send via SOCKET_PAIRS
+        // This function is for sendto() which shouldn't be used on connected TCP
+        return errno::EISCONN;
+    }
+
+    // For UDP/RAW, find destination socket and deliver
+    let dest_socket = find_loopback_socket(dest.port, protocol);
+
+    if let Some(dest_sock) = dest_socket {
+        deliver_loopback_packet(&dest_sock, data, src_addr)
+    } else {
+        // No receiver - for UDP this is OK, just drop the packet
+        data.len() as i64
+    }
+}
+
+// ============================================================================
+// SYSCALL IMPLEMENTATIONS
+// ============================================================================
+
 /// sys_socket - Create a socket
 ///
 /// # Arguments
@@ -218,7 +493,11 @@ fn parse_sockaddr_in(addr: u64, addrlen: u32) -> Option<SocketAddr> {
         }
 
         let port = u16::from_be_bytes([*ptr.add(2), *ptr.add(3)]);
-        let ip_bytes = [*ptr.add(4), *ptr.add(5), *ptr.add(6), *ptr.add(7)];
+
+        // The IP address is stored as a u32 created by from_be_bytes([a,b,c,d]).
+        // On little-endian x86, this u32 is stored in memory as [d,c,b,a].
+        // So to get the original bytes [a,b,c,d], we read in reverse order.
+        let ip_bytes = [*ptr.add(7), *ptr.add(6), *ptr.add(5), *ptr.add(4)];
         let ip = Ipv4Addr::new(ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]);
 
         Some(SocketAddr::new(IpAddr::V4(ip), port))
@@ -326,6 +605,17 @@ pub fn sys_bind(fd: i32, addr: u64, addrlen: u32) -> i64 {
     match socket.bind(socket_addr) {
         Ok(()) => {
             debug_print("bind: success");
+
+            let protocol = protocol_to_num(socket.protocol);
+
+            // Register in unified loopback registry (for all socket types)
+            register_loopback_socket(socket_addr.port, protocol, fd);
+
+            // Also register in old BOUND_SOCKETS for compatibility (TODO: remove later)
+            if socket.sock_type == SocketType::Dgram || socket.sock_type == SocketType::Raw {
+                BOUND_SOCKETS.lock().insert((socket_addr.port, protocol), fd);
+            }
+
             0
         }
         Err(e) => net_error_to_errno(e),
@@ -526,88 +816,6 @@ fn loopback_connect(client_fd: i32, client_socket: Arc<Socket>, addr: SocketAddr
     0
 }
 
-/// ICMP echo request type
-const ICMP_ECHO_REQUEST: u8 = 8;
-/// ICMP echo reply type
-const ICMP_ECHO_REPLY: u8 = 0;
-
-/// Check if an address is loopback (127.0.0.0/8 or ::1)
-fn is_loopback_addr(addr: &SocketAddr) -> bool {
-    addr.ip.is_loopback()
-}
-
-/// Handle raw ICMP loopback - generate echo reply for echo request
-fn handle_icmp_loopback(socket: &Arc<Socket>, icmp_data: &[u8]) -> Option<i64> {
-    // ICMP header: type(1) + code(1) + checksum(2) + identifier(2) + sequence(2) + data
-    if icmp_data.len() < 8 {
-        return None;
-    }
-
-    let icmp_type = icmp_data[0];
-    if icmp_type != ICMP_ECHO_REQUEST {
-        return None; // Only handle echo requests
-    }
-
-    // Build echo reply
-    let mut reply = Vec::new();
-
-    // Build minimal IP header (20 bytes)
-    reply.push(0x45); // version=4, IHL=5 (20 bytes)
-    reply.push(0x00); // TOS
-    let total_len = (20 + icmp_data.len()) as u16;
-    reply.extend_from_slice(&total_len.to_be_bytes()); // Total length
-    reply.extend_from_slice(&[0x00, 0x00]); // ID
-    reply.extend_from_slice(&[0x00, 0x00]); // Flags + Fragment offset
-    reply.push(64); // TTL
-    reply.push(1);  // Protocol = ICMP
-    reply.extend_from_slice(&[0x00, 0x00]); // Checksum (placeholder)
-    reply.extend_from_slice(&[127, 0, 0, 1]); // Source IP
-    reply.extend_from_slice(&[127, 0, 0, 1]); // Dest IP
-
-    // Calculate IP header checksum
-    let ip_checksum = internet_checksum(&reply[..20]);
-    reply[10] = (ip_checksum >> 8) as u8;
-    reply[11] = ip_checksum as u8;
-
-    // Build ICMP echo reply
-    reply.push(ICMP_ECHO_REPLY); // Type = echo reply
-    reply.push(0); // Code = 0
-    reply.extend_from_slice(&[0x00, 0x00]); // Checksum placeholder
-    reply.extend_from_slice(&icmp_data[4..]); // Copy identifier, sequence, and data
-
-    // Calculate ICMP checksum
-    let icmp_start = 20;
-    let icmp_checksum = internet_checksum(&reply[icmp_start..]);
-    reply[icmp_start + 2] = (icmp_checksum >> 8) as u8;
-    reply[icmp_start + 3] = icmp_checksum as u8;
-
-    // Put reply in socket's recv buffer
-    socket.recv_buf.lock().extend_from_slice(&reply);
-
-    Some(icmp_data.len() as i64)
-}
-
-/// Calculate internet checksum
-fn internet_checksum(data: &[u8]) -> u16 {
-    let mut sum: u32 = 0;
-    let mut i = 0;
-
-    while i + 1 < data.len() {
-        sum += u16::from_be_bytes([data[i], data[i + 1]]) as u32;
-        i += 2;
-    }
-
-    if i < data.len() {
-        sum += (data[i] as u32) << 8;
-    }
-
-    while sum >> 16 != 0 {
-        sum = (sum & 0xFFFF) + (sum >> 16);
-    }
-
-    !sum as u16
-}
-
 /// sys_send - Send data on a connected socket
 pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
     if buf >= 0x0000_8000_0000_0000 {
@@ -630,18 +838,27 @@ pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
 
     let data = unsafe { core::slice::from_raw_parts(buf as *const u8, len) };
 
-    // Handle raw ICMP socket loopback
+    // Handle raw ICMP socket loopback using unified system
     if socket.sock_type == SocketType::Raw && socket.protocol == SocketProtocol::Icmp {
+        serial_print("send: RAW ICMP socket detected");
         let remote = socket.remote_addr.lock();
         if let Some(ref addr) = *remote {
+            serial_print_num("send: remote addr is_loopback=", is_loopback_addr(addr) as i64);
             if is_loopback_addr(addr) {
-                // Handle ICMP loopback - generate echo reply
-                if let Some(result) = handle_icmp_loopback(&socket, data) {
+                serial_print_num("send: calling handle_icmp_echo, len=", len as i64);
+                // Use unified ICMP echo handler
+                let src_addr = socket.local_addr.lock().clone()
+                    .unwrap_or_else(|| SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0));
+                if let Some(result) = handle_icmp_echo(&socket, data, src_addr) {
+                    serial_print_num("send: handle_icmp_echo returned", result);
                     return result;
                 }
+                serial_print("send: handle_icmp_echo returned None");
                 // If not an echo request, just pretend we sent it
                 return len as i64;
             }
+        } else {
+            serial_print("send: no remote addr set");
         }
     }
 
@@ -718,8 +935,12 @@ pub fn sys_recv(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
 
     let data = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len) };
 
-    // For loopback sockets, data arrives directly in recv_buf
-    // Check if there's data available
+    // First check the unified loopback queue (for all loopback-delivered data)
+    if let Some((read_len, _src_addr)) = receive_loopback_packet(&socket, data) {
+        return read_len as i64;
+    }
+
+    // Then check legacy recv_buf (for TCP stream data via SOCKET_PAIRS)
     {
         let mut recv_buf = socket.recv_buf.lock();
         if !recv_buf.is_empty() {
@@ -748,7 +969,7 @@ pub fn sys_recv(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
     errno::EAGAIN
 }
 
-/// sys_sendto - Send data to a specific address (UDP)
+/// sys_sendto - Send data to a specific address (UDP/RAW)
 pub fn sys_sendto(fd: i32, buf: u64, len: usize, flags: i32, dest_addr: u64, addrlen: u32) -> i64 {
     if buf >= 0x0000_8000_0000_0000 {
         return errno::EFAULT;
@@ -782,6 +1003,12 @@ pub fn sys_sendto(fd: i32, buf: u64, len: usize, flags: i32, dest_addr: u64, add
 
     let _ = flags; // Flags not fully supported yet
 
+    // Check if destination is loopback - use unified loopback system
+    if is_loopback_addr(&dest) {
+        return loopback_send(&socket, data, &dest);
+    }
+
+    // Non-loopback: use real network stack
     match socket.sendto(data, dest) {
         Ok(n) => n as i64,
         Err(e) => net_error_to_errno(e),
@@ -812,15 +1039,32 @@ pub fn sys_recvfrom(fd: i32, buf: u64, len: usize, flags: i32, src_addr: u64, ad
 
     let _ = flags; // Flags not fully supported yet
 
-    match socket.recvfrom(data) {
-        Ok((n, addr)) => {
-            if src_addr != 0 {
-                write_sockaddr_in(src_addr, addrlen, &addr);
-            }
-            n as i64
+    // First check the unified loopback queue (returns proper source address!)
+    if let Some((read_len, sender_addr)) = receive_loopback_packet(&socket, data) {
+        if src_addr != 0 {
+            write_sockaddr_in(src_addr, addrlen, &sender_addr);
         }
-        Err(e) => net_error_to_errno(e),
+        return read_len as i64;
     }
+
+    // Fall back to legacy recv_buf (no source address available)
+    {
+        let mut recv_buf = socket.recv_buf.lock();
+        if !recv_buf.is_empty() {
+            let to_read = len.min(recv_buf.len());
+            data[..to_read].copy_from_slice(&recv_buf[..to_read]);
+            recv_buf.drain(..to_read);
+            // No source address for legacy path - use placeholder
+            if src_addr != 0 {
+                let placeholder = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0);
+                write_sockaddr_in(src_addr, addrlen, &placeholder);
+            }
+            return to_read as i64;
+        }
+    }
+
+    // No data available
+    errno::EAGAIN
 }
 
 /// sys_shutdown - Shut down part of a full-duplex connection
@@ -1046,6 +1290,22 @@ pub fn close_socket(fd: i32) -> i64 {
             listeners.remove(&port);
         }
     }
+
+    // Remove from bound sockets (for UDP/RAW) - legacy, TODO: remove
+    {
+        let mut bound = BOUND_SOCKETS.lock();
+        let keys_to_remove: Vec<_> = bound
+            .iter()
+            .filter(|&(_, &f)| f == fd)
+            .map(|(k, _)| *k)
+            .collect();
+        for key in keys_to_remove {
+            bound.remove(&key);
+        }
+    }
+
+    // Remove from unified loopback registry
+    unregister_loopback_socket_by_fd(fd);
 
     match remove_socket(fd) {
         Some(socket) => {
