@@ -1,0 +1,17 @@
+[package]
+name = "rdp-graphics"
+version = "0.1.0"
+edition = "2024"
+authors = ["OXIDE Contributors"]
+description = "RDP graphics pipeline for OXIDE OS"
+license = "MIT"
+
+[dependencies]
+rdp-traits = { path = "../rdp-traits" }
+rdp-proto = { path = "../rdp-proto" }
+fb = { workspace = true }
+spin = { workspace = true }
+
+[features]
+default = []
+std = []

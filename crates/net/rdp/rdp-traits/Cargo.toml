@@ -1,0 +1,13 @@
+[package]
+name = "rdp-traits"
+version = "0.1.0"
+edition = "2024"
+authors = ["OXIDE Contributors"]
+description = "Core traits and types for OXIDE OS RDP implementation"
+license = "MIT"
+
+[dependencies]
+
+[features]
+default = []
+std = []

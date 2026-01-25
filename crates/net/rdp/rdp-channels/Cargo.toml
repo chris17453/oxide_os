@@ -1,0 +1,16 @@
+[package]
+name = "rdp-channels"
+version = "0.1.0"
+edition = "2024"
+authors = ["OXIDE Contributors"]
+description = "RDP virtual channel implementations for OXIDE OS"
+license = "MIT"
+
+[dependencies]
+rdp-traits = { path = "../rdp-traits" }
+rdp-proto = { path = "../rdp-proto" }
+spin = { workspace = true }
+
+[features]
+default = []
+std = []

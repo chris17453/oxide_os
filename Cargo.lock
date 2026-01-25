@@ -1032,6 +1032,69 @@ dependencies = [
 ]
 
 [[package]]
+name = "rdp-channels"
+version = "0.1.0"
+dependencies = [
+ "rdp-proto",
+ "rdp-traits",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "rdp-graphics"
+version = "0.1.0"
+dependencies = [
+ "fb",
+ "rdp-proto",
+ "rdp-traits",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "rdp-input"
+version = "0.1.0"
+dependencies = [
+ "input",
+ "rdp-proto",
+ "rdp-traits",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "rdp-proto"
+version = "0.1.0"
+dependencies = [
+ "rdp-traits",
+]
+
+[[package]]
+name = "rdp-security"
+version = "0.1.0"
+dependencies = [
+ "crypto",
+ "rdp-traits",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "rdp-server"
+version = "0.1.0"
+dependencies = [
+ "fb",
+ "input",
+ "rdp-graphics",
+ "rdp-input",
+ "rdp-proto",
+ "rdp-security",
+ "rdp-traits",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "rdp-traits"
+version = "0.1.0"
+
+[[package]]
 name = "redox_syscall"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
