@@ -162,9 +162,11 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
         child_pdpt.clear();
 
         // Set child PML4 entry
+        // IMPORTANT: Do NOT propagate NO_EXECUTE from parent - intermediate entries
+        // should never have NO_EXECUTE set (only leaf PTEs should control it)
         child_pml4[pml4_idx].set(
             child_pdpt_phys,
-            pml4_entry.flags()
+            (pml4_entry.flags() & !PageTableFlags::NO_EXECUTE)
                 | PageTableFlags::PRESENT
                 | PageTableFlags::WRITABLE
                 | PageTableFlags::USER,
@@ -204,9 +206,11 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
             child_pd.clear();
 
             // Set child PDPT entry
+            // IMPORTANT: Do NOT propagate NO_EXECUTE from parent - intermediate entries
+            // should never have NO_EXECUTE set (only leaf PTEs should control it)
             child_pdpt[pdpt_idx].set(
                 child_pd_phys,
-                pdpt_entry.flags()
+                (pdpt_entry.flags() & !PageTableFlags::NO_EXECUTE)
                     | PageTableFlags::PRESENT
                     | PageTableFlags::WRITABLE
                     | PageTableFlags::USER,
@@ -246,9 +250,11 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
                 child_pt.clear();
 
                 // Set child PD entry
+                // IMPORTANT: Do NOT propagate NO_EXECUTE from parent - intermediate entries
+                // should never have NO_EXECUTE set (only leaf PTEs should control it)
                 child_pd[pd_idx].set(
                     child_pt_phys,
-                    pd_entry.flags()
+                    (pd_entry.flags() & !PageTableFlags::NO_EXECUTE)
                         | PageTableFlags::PRESENT
                         | PageTableFlags::WRITABLE
                         | PageTableFlags::USER,

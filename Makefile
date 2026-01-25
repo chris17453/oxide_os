@@ -318,7 +318,7 @@ run-debug: userspace-release initramfs
 		-drive format=raw,file=fat:rw:$(BOOT_DIR),if=none,id=disk \
 		-device ide-hd,drive=disk \
 		-device virtio-net-pci,netdev=net0 \
-		-netdev user,id=net0,hostfwd=tcp::2222-:22 \
+		-netdev user,id=net0,hostfwd=tcp::2223-:22 \
 		-serial stdio \
 		-no-reboot
 

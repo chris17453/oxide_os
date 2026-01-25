@@ -17,6 +17,7 @@ mod msr {
 /// EFER bits
 mod efer {
     pub const SCE: u64 = 1 << 0; // System Call Extensions
+    pub const NXE: u64 = 1 << 11; // No-Execute Enable
 }
 
 /// RFLAGS bits to mask on syscall entry
@@ -83,9 +84,9 @@ pub unsafe fn set_syscall_handler(handler: SyscallHandler) {
 /// # Safety
 /// Must only be called once during kernel initialization, after GDT is set up.
 pub unsafe fn init() {
-    // Enable System Call Extensions in EFER
+    // Enable System Call Extensions and NX (No-Execute) in EFER
     let efer = unsafe { rdmsr(msr::EFER) };
-    unsafe { wrmsr(msr::EFER, efer | efer::SCE) };
+    unsafe { wrmsr(msr::EFER, efer | efer::SCE | efer::NXE) };
 
     // Set up STAR: segment selectors for syscall/sysret
     // Bits 47:32 = kernel CS (for SYSCALL: CS=this, SS=this+8)

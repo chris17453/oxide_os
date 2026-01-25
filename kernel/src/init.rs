@@ -909,7 +909,9 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     process_table().set_current_pid(init_pid);
 
     // Add init to the scheduler and set it as current
+    let _ = writeln!(writer, "[USER] Adding init to scheduler...");
     scheduler::add_process(init_pid);
+    let _ = writeln!(writer, "[USER] Calling sched::switch_to...");
     sched::switch_to(init_pid);  // Mark init as the currently running task
 
     let _ = writeln!(writer, "[USER] Init process registered");

@@ -20,3 +20,6 @@ Thumbs.db
 *.qcow2
 *.img
 *.iso
+
+# Node
+node_modules/

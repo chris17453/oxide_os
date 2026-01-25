@@ -4,6 +4,18 @@ This file contains mandatory instructions for Claude when working on the OXIDE o
 
 ---
 
+## Forbidden Behaviors
+- NEVER stub out, comment out, or remove working code to "fix" a problem
+- NEVER replace implementation with TODO/placeholder/simplified version
+- If a tool/approach fails, try a DIFFERENT tool—do not change the goal
+- If you cannot complete a task properly, STOP and ask for guidance
+
+## When Tools Fail
+If sed, patch, or any text manipulation fails:
+1. Try a different tool (ed, awk, perl, python, str_replace)
+2. If all fail, show me the exact changes needed and ask how to proceed
+3. NEVER "work around" by modifying what the patch should do
+
 ## Core Development Principles
 
 ### 1. NEVER Remove Features Due to Difficulty
