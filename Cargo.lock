@@ -1051,6 +1051,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rdp-security"
+version = "0.1.0"
+dependencies = [
+ "crypto",
+ "rdp-traits",
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "rdp-traits"
 version = "0.1.0"
 

@@ -1,0 +1,16 @@
+[package]
+name = "rdp-security"
+version = "0.1.0"
+edition = "2024"
+authors = ["OXIDE Contributors"]
+description = "RDP security and TLS for OXIDE OS"
+license = "MIT"
+
+[dependencies]
+rdp-traits = { path = "../rdp-traits" }
+crypto = { workspace = true }
+spin = { workspace = true }
+
+[features]
+default = []
+std = []

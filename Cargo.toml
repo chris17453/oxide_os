@@ -77,6 +77,7 @@ members = [
     "crates/net/rdp/rdp-proto",
     "crates/net/rdp/rdp-graphics",
     "crates/net/rdp/rdp-input",
+    "crates/net/rdp/rdp-security",
     "crates/compat/v86",
     "crates/compat/python-sandbox",
     "crates/compat/binfmt",
@@ -200,6 +201,7 @@ rdp-traits = { path = "crates/net/rdp/rdp-traits" }
 rdp-proto = { path = "crates/net/rdp/rdp-proto" }
 rdp-graphics = { path = "crates/net/rdp/rdp-graphics" }
 rdp-input = { path = "crates/net/rdp/rdp-input" }
+rdp-security = { path = "crates/net/rdp/rdp-security" }
 v86 = { path = "crates/compat/v86" }
 python-sandbox = { path = "crates/compat/python-sandbox" }
 binfmt = { path = "crates/compat/binfmt" }
