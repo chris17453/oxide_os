@@ -340,6 +340,52 @@ Fixed critical issues with PCI transport for VirtIO block devices:
    [EXT4] Mounted ext4 filesystem at /mnt/root
    ```
 
+### 2026-01-25: ext4 Write Support Implementation
+
+Implemented full read/write support for ext4 filesystems:
+
+1. **bitmap.rs** - Block and inode bitmap allocation/deallocation:
+   - BlockBitmap and InodeBitmap types for reading/modifying bitmaps
+   - alloc_block(), free_block(), alloc_inode(), free_inode()
+   - Multi-block consecutive allocation support
+
+2. **inode.rs additions** - Inode write support:
+   - write_inode() to persist inode changes to disk
+   - new_inode() to create inodes with defaults
+   - init_extent_header() for new files
+   - set_size(), set_blocks(), touch_*() timestamp methods
+
+3. **extent.rs additions** - Extent tree write operations:
+   - insert_extent() to add new extents
+   - try_extend_extent() to extend contiguous extents
+   - Support for depth-0 trees (extents in inode)
+
+4. **dir.rs additions** - Directory modification:
+   - add_entry() to add new directory entries
+   - remove_entry() to delete entries
+   - init_directory() for new directories with . and ..
+   - is_empty() check for rmdir
+
+5. **file.rs additions** - File write operations:
+   - write_file() with automatic block allocation
+   - truncate_file() to resize files
+   - write_symlink() for fast/slow symlinks
+
+6. **vnode.rs** - Full VnodeOps implementation:
+   - create(), write(), mkdir(), unlink(), rmdir(), truncate(), rename()
+   - All operations update inodes on disk
+
+**Test Results:**
+```
+[BLK] Found 1 VirtIO block devices (0 MMIO, 1 PCI)
+[BLK] virtio0: GPT partition table detected
+[BLK]   virtio0p1: ext4 filesystem detected
+[BLK]   virtio0p1: 64492 total blocks, 55007 free blocks
+[EXT4] Mounted ext4 filesystem at /mnt/root
+[EXT4] Root directory contents:
+[EXT4]   hello.txt, test.txt, subdir, lost+found
+```
+
 ### Current Status Summary
 
 | Phase | Status | Notes |
