@@ -484,8 +484,8 @@ impl DhcpClient {
         };
         *self.offered_server.lock() = Some(server);
 
-        // Send REQUEST
-        let xid = self.xid.load(Ordering::SeqCst);
+        // Send REQUEST - use the same XID from the OFFER (and original DISCOVER)
+        let xid = packet.xid;
         let mac = self.interface.mac_address();
         let request = DhcpPacket::new_request(mac, xid, packet.yiaddr, server);
 

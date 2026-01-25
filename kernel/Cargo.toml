@@ -14,6 +14,7 @@ debug-all = ["debug-syscall", "debug-fork", "debug-cow", "debug-proc"]
 
 [dependencies]
 os_core = { workspace = true }
+os_log = { workspace = true }
 arch-traits = { workspace = true }
 arch-x86_64 = { path = "../crates/arch/arch-x86_64" }
 mm-traits = { workspace = true }

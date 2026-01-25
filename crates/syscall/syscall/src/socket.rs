@@ -143,6 +143,7 @@ fn net_error_to_errno(e: NetError) -> i64 {
         NetError::SocketTypeNotSupported => errno::EINVAL,
         NetError::IoError => EIO,
         NetError::PermissionDenied => errno::EPERM,
+        NetError::NoBuffers => errno::ENOBUFS,
     }
 }
 

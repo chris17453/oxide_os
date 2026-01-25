@@ -39,12 +39,30 @@ use crate::process::{kernel_exec, kernel_fork, kernel_wait, user_exit};
 use crate::scheduler;
 use crate::smp_init;
 
+/// Adapter to make arch serial work with os_log
+struct OsLogSerialWriter;
+
+impl os_log::SerialWriter for OsLogSerialWriter {
+    fn write_byte(&mut self, byte: u8) {
+        serial::write_byte(byte);
+    }
+}
+
+/// Static writer for os_log (needs to live for 'static lifetime)
+static mut OS_LOG_WRITER: OsLogSerialWriter = OsLogSerialWriter;
+
 /// Kernel entry point
 ///
 /// Called by the bootloader after setting up page tables and jumping to higher half.
 pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Initialize serial port first for early debugging
     serial::init();
+
+    // Register os_log writer
+    // SAFETY: OS_LOG_WRITER is static and serial::init() has been called
+    unsafe {
+        os_log::register_writer(&mut *addr_of_mut!(OS_LOG_WRITER));
+    }
 
     let mut writer = serial::SerialWriter;
 
@@ -556,16 +574,8 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                             lease.lease_time
                         );
                     }
-                    Err(_) => {
-                        let _ = writeln!(writer, "[NET] DHCP timed out, networkd will retry");
-                        // Configure a fallback static IP for QEMU's SLIRP network
-                        // SLIRP uses 10.0.2.0/24 with gateway 10.0.2.2
-                        let _ = writeln!(writer, "[NET] Configuring fallback static IP (10.0.2.15)");
-                        let _ = interface.set_ipv4_addr(
-                            net::Ipv4Addr::new(10, 0, 2, 15),
-                            net::Ipv4Addr::new(255, 255, 255, 0),
-                        );
-                        let _ = interface.set_ipv4_gateway(net::Ipv4Addr::new(10, 0, 2, 2));
+                    Err(e) => {
+                        let _ = writeln!(writer, "[NET] DHCP failed: {:?}, networkd will retry", e);
                     }
                 }
 

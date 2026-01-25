@@ -65,6 +65,8 @@ pub enum NetError {
     IoError,
     /// Permission denied
     PermissionDenied,
+    /// No buffers available
+    NoBuffers,
 }
 
 /// Result type for network operations

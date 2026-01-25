@@ -527,6 +527,7 @@ dependencies = [
  "mm-traits",
  "net",
  "os_core",
+ "os_log",
  "pci",
  "proc",
  "proc-traits",
@@ -1589,6 +1590,8 @@ dependencies = [
 name = "virtio-net"
 version = "0.1.0"
 dependencies = [
+ "mm-frame",
+ "mm-traits",
  "net",
  "pci",
  "spin 0.9.8",
