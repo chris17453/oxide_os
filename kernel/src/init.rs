@@ -19,6 +19,7 @@ use elf::ElfExecutable;
 use mm_frame::MemoryRegion;
 use mm_paging::{phys_to_virt, read_cr3};
 use mm_traits::FrameAllocator as _;
+use block::BlockDevice;
 use net::NetworkDevice;
 use os_core::VirtAddr;
 use proc::{Process, alloc_pid, process_table};
@@ -552,6 +553,52 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     let _ = writeln!(writer, "[NET] Network initialization complete");
 
+    // ========================================
+    // Block Device Initialization
+    // ========================================
+    let _ = writeln!(writer, "[BLK] Initializing block devices...");
+
+    // Probe for VirtIO block devices at standard MMIO addresses
+    let virtio_blk_devices = unsafe { virtio_blk::probe_all() };
+    let _ = writeln!(
+        writer,
+        "[BLK] Found {} VirtIO block devices",
+        virtio_blk_devices.len()
+    );
+
+    // Register each device and check for ext4 filesystem
+    for (idx, device) in virtio_blk_devices.into_iter().enumerate() {
+        let info = device.info();
+        let _ = writeln!(
+            writer,
+            "[BLK] virtio{}: {} blocks of {} bytes ({})",
+            idx,
+            info.block_count,
+            info.block_size,
+            if info.read_only { "RO" } else { "RW" }
+        );
+
+        // Check if this looks like an ext4 filesystem
+        if ext4::is_ext4(&device) {
+            let _ = writeln!(writer, "[BLK] virtio{}: ext4 filesystem detected", idx);
+
+            // Get ext4 filesystem info
+            if let Ok(ext4_info) = ext4::get_info(&device) {
+                let _ = writeln!(
+                    writer,
+                    "[BLK] virtio{}: {} total blocks, {} free blocks",
+                    idx, ext4_info.blocks_total, ext4_info.blocks_free
+                );
+            }
+        }
+
+        // Register the device (Box for registration)
+        let name = alloc::format!("virtio{}", idx);
+        block::register_device(name, Box::new(device));
+    }
+
+    let _ = writeln!(writer, "[BLK] Block device initialization complete");
+
     // Load and mount the initramfs (loaded from disk by bootloader)
     let initramfs_data = match boot_info.initramfs() {
         Some(data) => {
@@ -585,11 +632,26 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     };
 
     // Mount initramfs as root filesystem
-    if let Err(e) = GLOBAL_VFS.mount(initramfs_root, "/", MountFlags::empty(), "initramfs") {
+    if let Err(e) = GLOBAL_VFS.mount(initramfs_root.clone(), "/", MountFlags::empty(), "initramfs") {
         let _ = writeln!(writer, "[INITRAMFS] Failed to mount initramfs: {:?}", e);
         arch::X86_64::halt();
     }
     let _ = writeln!(writer, "[INITRAMFS] Mounted as root filesystem at /");
+
+    // Mount tmpfs on writable directories (initramfs is read-only)
+    // These directories need to be writable for daemons, logs, etc.
+    let writable_dirs = ["/run", "/tmp", "/var/log", "/var/lib", "/var/run"];
+    for dir in &writable_dirs {
+        // Ensure parent directories exist in initramfs (they should from Makefile)
+        // Create tmpfs mount point
+        let tmpfs = TmpDir::new_root();
+        if let Err(e) = GLOBAL_VFS.mount(tmpfs, dir, MountFlags::empty(), "tmpfs") {
+            let _ = writeln!(writer, "[VFS] Note: Could not mount tmpfs at {}: {:?}", dir, e);
+            // Non-fatal - directory may not exist in initramfs
+        } else {
+            let _ = writeln!(writer, "[VFS] Mounted tmpfs at {}", dir);
+        }
+    }
 
     // Load /sbin/init
     let init_path = "/sbin/init";

@@ -135,13 +135,14 @@ Implement complete ext4 filesystem support for OXIDE OS including:
 
 ### Phase 6: Boot Integration (~150 LOC)
 
-- [ ] Initialize VirtIO-blk devices
-- [ ] Register block devices
+- [x] Initialize VirtIO-blk devices
+- [x] Register block devices
+- [x] Detect ext4 filesystems on block devices
 - [ ] Parse GPT partitions
 - [ ] Find ext4 root partition
 - [ ] Mount ext4 at `/`
 
-**Status:** Not Started
+**Status:** Block device probing implemented, partition/mount pending
 **File:** `kernel/src/init.rs`
 
 ---
