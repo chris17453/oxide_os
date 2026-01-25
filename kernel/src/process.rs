@@ -287,49 +287,47 @@ pub fn user_exit(status: i32) -> ! {
             }
         };
 
-        // Get next process info from scheduler's Task (not Process.context!)
-        // This is critical: the scheduler updates Task.context on preemption,
-        // but Process.context may be stale (e.g., from fork() time).
-        let (next_ctx, next_pml4, kernel_stack_top) = {
-            // First try to get context from scheduler's Task
-            if let Some((task_ctx, pml4, ks_phys, ks_size)) = sched::get_task_switch_info(next_pid) {
-                let ks_top = phys_to_virt(ks_phys).as_u64() + ks_size as u64;
-                // Convert TaskContext to ProcessContext
-                let ctx = ProcessContext {
-                    rip: task_ctx.rip,
-                    rsp: task_ctx.rsp,
-                    rflags: task_ctx.rflags,
-                    rax: task_ctx.rax,
-                    rbx: task_ctx.rbx,
-                    rcx: task_ctx.rcx,
-                    rdx: task_ctx.rdx,
-                    rsi: task_ctx.rsi,
-                    rdi: task_ctx.rdi,
-                    rbp: task_ctx.rbp,
-                    r8: task_ctx.r8,
-                    r9: task_ctx.r9,
-                    r10: task_ctx.r10,
-                    r11: task_ctx.r11,
-                    r12: task_ctx.r12,
-                    r13: task_ctx.r13,
-                    r14: task_ctx.r14,
-                    r15: task_ctx.r15,
-                    cs: task_ctx.cs,
-                    ss: task_ctx.ss,
-                };
-                (ctx, pml4, ks_top)
-            } else {
-                // Fallback to Process.context if task not in scheduler
-                let next = match table.get(next_pid) {
-                    Some(p) => p,
-                    None => continue, // Process gone, try next
-                };
-                let proc = next.lock();
-                (proc.context().clone(), proc.address_space().pml4_phys(), {
-                    let ks_virt = phys_to_virt(proc.kernel_stack());
-                    ks_virt.as_u64() + proc.kernel_stack_size() as u64
-                })
+        // Get next process info from the SCHEDULER (authoritative source of context)
+        // The scheduler's Task.context is kept up-to-date by:
+        // - scheduler_tick() on timer preemption
+        // - kernel_yield() on voluntary yield
+        // - kernel_fork() when saving parent context
+        // Process.context is only set at fork() time and becomes stale!
+        let (task_ctx, next_pml4, kernel_stack_top) = match sched::get_task_switch_info(next_pid) {
+            Some((ctx, pml4, kstack, kstack_size)) => {
+                let ks_virt = phys_to_virt(kstack);
+                (ctx, pml4, ks_virt.as_u64() + kstack_size as u64)
             }
+            None => {
+                // Task not in scheduler - skip to next
+                let mut writer = serial::SerialWriter;
+                let _ = writeln!(writer, "[EXIT] PID {} not in scheduler, skipping", next_pid);
+                continue;
+            }
+        };
+
+        // Convert TaskContext to ProcessContext (identical layout)
+        let next_ctx = ProcessContext {
+            rip: task_ctx.rip,
+            rsp: task_ctx.rsp,
+            rflags: task_ctx.rflags,
+            rax: task_ctx.rax,
+            rbx: task_ctx.rbx,
+            rcx: task_ctx.rcx,
+            rdx: task_ctx.rdx,
+            rsi: task_ctx.rsi,
+            rdi: task_ctx.rdi,
+            rbp: task_ctx.rbp,
+            r8: task_ctx.r8,
+            r9: task_ctx.r9,
+            r10: task_ctx.r10,
+            r11: task_ctx.r11,
+            r12: task_ctx.r12,
+            r13: task_ctx.r13,
+            r14: task_ctx.r14,
+            r15: task_ctx.r15,
+            cs: task_ctx.cs,
+            ss: task_ctx.ss,
         };
 
         // Debug: print the context we're about to restore
