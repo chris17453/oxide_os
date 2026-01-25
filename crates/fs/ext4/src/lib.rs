@@ -22,6 +22,8 @@ pub mod file;
 pub mod group_desc;
 pub mod inode;
 pub mod superblock;
+#[cfg(test)]
+pub mod tests;
 pub mod vnode;
 
 use alloc::sync::Arc;
