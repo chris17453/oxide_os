@@ -1024,6 +1024,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rdp-proto"
+version = "0.1.0"
+dependencies = [
+ "rdp-traits",
+]
+
+[[package]]
+name = "rdp-traits"
+version = "0.1.0"
+
+[[package]]
 name = "redox_syscall"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

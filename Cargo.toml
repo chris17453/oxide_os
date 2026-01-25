@@ -73,6 +73,8 @@ members = [
     "crates/media/automount",
     "crates/net/smb",
     "crates/net/nfs",
+    "crates/net/rdp/rdp-traits",
+    "crates/net/rdp/rdp-proto",
     "crates/compat/v86",
     "crates/compat/python-sandbox",
     "crates/compat/binfmt",
@@ -192,6 +194,8 @@ media = { path = "crates/media/media" }
 automount = { path = "crates/media/automount" }
 smb = { path = "crates/net/smb" }
 nfs = { path = "crates/net/nfs" }
+rdp-traits = { path = "crates/net/rdp/rdp-traits" }
+rdp-proto = { path = "crates/net/rdp/rdp-proto" }
 v86 = { path = "crates/compat/v86" }
 python-sandbox = { path = "crates/compat/python-sandbox" }
 binfmt = { path = "crates/compat/binfmt" }
