@@ -54,14 +54,12 @@ pub mod events {
 
 /// Poll multiple file descriptors
 pub fn poll(fds: &mut [PollFd], timeout: i32) -> i32 {
-    unsafe {
-        syscall::syscall3(
-            syscall::SYS_POLL,
-            fds.as_mut_ptr() as usize,
-            fds.len(),
-            timeout as usize,
-        ) as i32
-    }
+    syscall::syscall3(
+        syscall::SYS_POLL,
+        fds.as_mut_ptr() as usize,
+        fds.len(),
+        timeout as usize,
+    ) as i32
 }
 
 /// Poll with signal mask
@@ -71,16 +69,14 @@ pub fn ppoll(fds: &mut [PollFd], timeout: Option<&Timespec>, sigmask: Option<&[u
         .unwrap_or(core::ptr::null());
     let sigmask_ptr = sigmask.map(|s| s.as_ptr()).unwrap_or(core::ptr::null());
 
-    unsafe {
-        syscall::syscall5(
-            syscall::SYS_PPOLL,
-            fds.as_mut_ptr() as usize,
-            fds.len(),
-            timeout_ptr as usize,
-            sigmask_ptr as usize,
-            8, // sigsetsize
-        ) as i32
-    }
+    syscall::syscall5(
+        syscall::SYS_PPOLL,
+        fds.as_mut_ptr() as usize,
+        fds.len(),
+        timeout_ptr as usize,
+        sigmask_ptr as usize,
+        8, // sigsetsize
+    ) as i32
 }
 
 /// File descriptor set for select
@@ -170,16 +166,14 @@ pub fn select(
         .map(|t| t as *mut Timeval)
         .unwrap_or(core::ptr::null_mut());
 
-    unsafe {
-        syscall::syscall5(
-            syscall::SYS_SELECT,
-            nfds as usize,
-            readfds_ptr as usize,
-            writefds_ptr as usize,
-            exceptfds_ptr as usize,
-            timeout_ptr as usize,
-        ) as i32
-    }
+    syscall::syscall5(
+        syscall::SYS_SELECT,
+        nfds as usize,
+        readfds_ptr as usize,
+        writefds_ptr as usize,
+        exceptfds_ptr as usize,
+        timeout_ptr as usize,
+    ) as i32
 }
 
 /// Select with signal mask
@@ -205,15 +199,13 @@ pub fn pselect(
         .unwrap_or(core::ptr::null());
     let sigmask_ptr = sigmask.map(|s| s.as_ptr()).unwrap_or(core::ptr::null());
 
-    unsafe {
-        syscall::syscall6(
-            syscall::SYS_PSELECT6,
-            nfds as usize,
-            readfds_ptr as usize,
-            writefds_ptr as usize,
-            exceptfds_ptr as usize,
-            timeout_ptr as usize,
-            sigmask_ptr as usize,
-        ) as i32
-    }
+    syscall::syscall6(
+        syscall::SYS_PSELECT6,
+        nfds as usize,
+        readfds_ptr as usize,
+        writefds_ptr as usize,
+        exceptfds_ptr as usize,
+        timeout_ptr as usize,
+        sigmask_ptr as usize,
+    ) as i32
 }

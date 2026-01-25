@@ -3,7 +3,6 @@
 //! Handles protocol version exchange, binary packet protocol,
 //! and encryption after key exchange using oxide-std abstractions.
 
-use alloc::string::String;
 use alloc::vec::Vec;
 use oxide_std::io::{self, Read, Write};
 use oxide_std::net::TcpStream;

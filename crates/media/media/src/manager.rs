@@ -7,8 +7,8 @@ use alloc::vec::Vec;
 use spin::RwLock;
 
 use crate::{
-    DeviceId, DeviceTrustDb, MediaError, MediaPolicy, MountMode, MountOptions, TrustLevel,
-    UsbDevice, UsbEvent, UsbEventType, UsbId, UsbMonitor,
+    DeviceId, DeviceTrustDb, MediaError, MediaPolicy, MountMode, TrustLevel,
+    UsbDevice, UsbEvent, UsbEventType, UsbMonitor,
 };
 
 /// Active mount information
@@ -340,7 +340,7 @@ impl MediaManager {
                 let name = url.to_url();
                 self.trust_db.trust_share(url, name, timestamp)
             }
-            DeviceId::Block(path) => {
+            DeviceId::Block(_path) => {
                 // Block devices can't be trusted by ID easily
                 Err(MediaError::InvalidOperation)
             }

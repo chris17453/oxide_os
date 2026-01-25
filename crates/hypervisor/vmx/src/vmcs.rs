@@ -2,7 +2,7 @@
 
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use crate::vmx::{vmclear, vmptrld, vmread, vmwrite};
+use crate::vmx::{vmclear, vmptrld, vmwrite};
 use vmm::{VmmError, VmmResult};
 
 /// Read MSR
@@ -270,7 +270,7 @@ impl Vmcs {
 
         // Host RSP/RIP will be set at VM entry
         vmwrite(VmcsField::HostRsp as u32, 0).map_err(|_| VmmError::VmcsError)?;
-        vmwrite(VmcsField::HostRip as u32, vmexit_handler as u64)
+        vmwrite(VmcsField::HostRip as u32, vmexit_handler as *const () as u64)
             .map_err(|_| VmmError::VmcsError)?;
 
         // Host FS/GS base

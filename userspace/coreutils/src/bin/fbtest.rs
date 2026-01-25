@@ -268,7 +268,7 @@ fn main() -> i32 {
 
     // Determine if BGR or RGB
     let is_bgr = var_info.blue_offset == 0;
-    let make_pixel: fn(u8, u8, u8) -> u32 = if is_bgr {
+    let _make_pixel: fn(u8, u8, u8) -> u32 = if is_bgr {
         print_str("Format: BGRA8888\n");
         make_pixel_bgra
     } else {

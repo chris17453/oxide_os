@@ -4,17 +4,17 @@
 //! Supports both MMIO and PCI-based VirtIO devices.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 
-use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::AtomicU32;
 use spin::Mutex;
 
 use net::{DeviceFlags, MacAddress, NetError, NetResult, NetStats, NetworkDevice};
-use pci::{PciAddress, PciBar, PciDevice};
+use pci::{PciBar, PciDevice};
 
 /// VirtIO network header (prepended to packets)
 #[repr(C)]

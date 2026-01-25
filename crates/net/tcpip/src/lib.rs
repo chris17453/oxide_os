@@ -23,8 +23,8 @@ use core::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use spin::Mutex;
 
 use net::{
-    IpAddr, Ipv4Addr, MacAddress, NetError, NetResult, NetworkDevice, NetworkInterface, Socket,
-    SocketAddr, SocketDomain, SocketProtocol, SocketState, SocketType,
+    IpAddr, Ipv4Addr, MacAddress, NetError, NetResult, NetworkDevice, NetworkInterface,
+    SocketAddr,
 };
 
 pub use arp::ArpCache;

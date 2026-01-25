@@ -4,10 +4,10 @@
 //! in virtualized environments.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 
-use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -661,7 +661,7 @@ pub fn init(mmio_base: usize) -> Result<(), &'static str> {
     snd.init()?;
 
     // Register with audio subsystem
-    let arc_snd = Arc::new(snd);
+    let _arc_snd = Arc::new(snd);
 
     *VIRTIO_SND.lock() = None; // Can't easily share with Arc, simplified
 

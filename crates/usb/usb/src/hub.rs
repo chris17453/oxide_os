@@ -1,6 +1,6 @@
 //! USB Hub Driver
 
-use crate::{SetupPacket, UsbDevice, UsbError, UsbResult};
+use crate::{UsbDevice, UsbError, UsbResult};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 

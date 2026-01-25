@@ -3,12 +3,12 @@
 //! Implements the virtio-blk specification for virtual block devices.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 
-use alloc::boxed::Box;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::AtomicU64;
 use spin::Mutex;
 
 use block::{BlockDevice, BlockDeviceInfo, BlockError, BlockResult};
@@ -349,7 +349,7 @@ impl BlockDevice for VirtioBlk {
 ///
 /// # Safety
 /// The addresses must be valid MMIO regions.
-pub unsafe fn probe_all() -> Vec<VirtioBlk> {
+pub unsafe fn probe_all() -> Vec<VirtioBlk> { unsafe {
     let mut devices = Vec::new();
 
     // Standard virtio-blk MMIO addresses in QEMU
@@ -365,4 +365,4 @@ pub unsafe fn probe_all() -> Vec<VirtioBlk> {
     }
 
     devices
-}
+}}

@@ -9,7 +9,6 @@ extern crate alloc;
 use alloc::collections::BTreeSet;
 use alloc::string::String;
 use alloc::vec::Vec;
-use spin::RwLock;
 
 /// Filesystem policy
 #[derive(Debug, Clone)]

@@ -339,7 +339,7 @@ impl SmbSession {
     }
 
     /// Connect to share
-    pub fn connect(&self, options: &SmbMountOptions) -> Result<(), SmbError> {
+    pub fn connect(&self, _options: &SmbMountOptions) -> Result<(), SmbError> {
         let mut connected = self.connected.lock();
         if *connected {
             return Err(SmbError::AlreadyConnected);
@@ -380,7 +380,7 @@ impl SmbSession {
     }
 
     /// List directory
-    pub fn list_dir(&self, path: &str) -> Result<Vec<SmbDirEntry>, SmbError> {
+    pub fn list_dir(&self, _path: &str) -> Result<Vec<SmbDirEntry>, SmbError> {
         if !*self.connected.lock() {
             return Err(SmbError::NotConnected);
         }
@@ -390,7 +390,7 @@ impl SmbSession {
     }
 
     /// Read file
-    pub fn read_file(&self, path: &str, offset: u64, len: usize) -> Result<Vec<u8>, SmbError> {
+    pub fn read_file(&self, _path: &str, _offset: u64, _len: usize) -> Result<Vec<u8>, SmbError> {
         if !*self.connected.lock() {
             return Err(SmbError::NotConnected);
         }
@@ -400,7 +400,7 @@ impl SmbSession {
     }
 
     /// Write file
-    pub fn write_file(&self, path: &str, offset: u64, data: &[u8]) -> Result<usize, SmbError> {
+    pub fn write_file(&self, _path: &str, _offset: u64, data: &[u8]) -> Result<usize, SmbError> {
         if !*self.connected.lock() {
             return Err(SmbError::NotConnected);
         }
@@ -465,7 +465,7 @@ pub struct SmbFileInfo {
 /// Mount SMB share
 pub fn mount_smb(
     share: &SmbShare,
-    mount_point: &str,
+    _mount_point: &str,
     options: &SmbMountOptions,
 ) -> Result<(), SmbError> {
     let session = SmbSession::new(share.clone());

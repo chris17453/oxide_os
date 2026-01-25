@@ -1,8 +1,8 @@
 //! PID Namespace
 
-use crate::{NsError, NsResult, alloc_ns_id};
+use crate::alloc_ns_id;
 use alloc::collections::BTreeMap;
-use alloc::sync::{Arc, Weak};
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
 use spin::{Mutex, RwLock};

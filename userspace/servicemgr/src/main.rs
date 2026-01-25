@@ -18,7 +18,6 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
 use core::cell::UnsafeCell;
 use libc::dirent::{closedir, opendir, readdir};
 use libc::time::usleep;

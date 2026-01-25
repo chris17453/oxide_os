@@ -185,8 +185,8 @@ impl ContentExtractor {
         // Very basic HTML stripping
         let mut result = String::new();
         let mut in_tag = false;
-        let mut in_script = false;
-        let mut in_style = false;
+        let in_script = false;
+        let in_style = false;
 
         for ch in text.chars() {
             if ch == '<' {

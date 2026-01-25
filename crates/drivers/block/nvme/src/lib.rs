@@ -3,16 +3,15 @@
 //! Implements the NVMe 1.4 specification for NVM Express storage devices.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 
 mod commands;
 mod queue;
 
-use alloc::boxed::Box;
-use alloc::string::String;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 use spin::Mutex;
 
 use block::{BlockDevice, BlockDeviceInfo, BlockError, BlockResult};

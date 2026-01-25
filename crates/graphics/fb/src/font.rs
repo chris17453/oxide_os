@@ -16,7 +16,7 @@ pub struct Font {
 
 impl Font {
     /// Get glyph for a character
-    pub fn glyph(&self, ch: char) -> Option<Glyph> {
+    pub fn glyph(&self, ch: char) -> Option<Glyph<'_>> {
         let index = ch as u32;
         if index >= self.num_glyphs {
             return None;
@@ -37,7 +37,7 @@ impl Font {
     }
 
     /// Get glyph or replacement character
-    pub fn glyph_or_replacement(&self, ch: char) -> Glyph {
+    pub fn glyph_or_replacement(&self, ch: char) -> Glyph<'_> {
         self.glyph(ch)
             .or_else(|| self.glyph('?'))
             .or_else(|| self.glyph(' '))

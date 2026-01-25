@@ -27,7 +27,7 @@ impl Default for TermColor {
 
 impl TermColor {
     /// Convert to framebuffer Color
-    pub fn to_fb_color(&self, is_fg: bool) -> Color {
+    pub fn to_fb_color(&self, _is_fg: bool) -> Color {
         match self {
             TermColor::Ansi16(n) => ansi16_to_color(*n),
             TermColor::Ansi256(n) => ansi256_to_color(*n),

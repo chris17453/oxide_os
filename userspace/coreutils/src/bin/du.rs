@@ -358,7 +358,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
             arg_idx += 1;
         } else if str_starts_with(arg, "-") && arg.len() > 1 {
             let mut skip_next = false;
-            for (i, &c) in arg.as_bytes()[1..].iter().enumerate() {
+            for (_i, &c) in arg.as_bytes()[1..].iter().enumerate() {
                 match c {
                     b'a' => config.all_files = true,
                     b'c' => config.show_total = true,

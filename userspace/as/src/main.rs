@@ -820,7 +820,7 @@ impl Assembler {
     }
 
     /// Assemble jmp
-    fn assemble_jmp(&mut self, target: &[u8], short_op: u8, near_op: u8) {
+    fn assemble_jmp(&mut self, target: &[u8], _short_op: u8, near_op: u8) {
         let target = trim_bytes(target);
 
         if target[0] == b'*' {
@@ -876,7 +876,7 @@ impl Assembler {
     }
 
     /// Assemble conditional jump
-    fn assemble_jcc(&mut self, target: &[u8], short_op: u8, near_op: u8) {
+    fn assemble_jcc(&mut self, target: &[u8], _short_op: u8, near_op: u8) {
         let target = trim_bytes(target);
         let sym_idx = self.add_symbol(target, 0, 0, 0, false);
 
@@ -1973,7 +1973,7 @@ impl Assembler {
         syscall::sys_write(fd, &null_sym);
 
         // Section symbols
-        for (idx, shndx) in [(1u16, 1u16), (2, 2), (3, 3)] {
+        for (_idx, shndx) in [(1u16, 1u16), (2, 2), (3, 3)] {
             let mut sym = [0u8; 24];
             sym[4] = STT_SECTION;
             write_u16(&mut sym[6..], shndx);

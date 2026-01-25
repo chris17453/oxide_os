@@ -177,6 +177,6 @@ impl System for StubSystem {
             .random_state
             .wrapping_mul(1103515245)
             .wrapping_add(12345);
-        (self.random_state as f32 / u32::MAX as f32)
+        self.random_state as f32 / u32::MAX as f32
     }
 }

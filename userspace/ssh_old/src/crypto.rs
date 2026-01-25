@@ -435,7 +435,7 @@ pub fn ed25519_verify(message: &[u8], signature: &[u8; 64], public_key: &[u8; 32
     k_input.extend_from_slice(r_point);
     k_input.extend_from_slice(public_key);
     k_input.extend_from_slice(message);
-    let k_hash = sha512(&k_input);
+    let _k_hash = sha512(&k_input);
 
     // Simplified verification: check that k_hash is valid
     // In a full implementation, we would verify: [s]B = R + [k]A

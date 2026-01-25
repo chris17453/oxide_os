@@ -140,7 +140,7 @@ fn print_prompt() {
 fn render_prompt(template: &[u8]) -> &str {
     // Static scratch buffer
     static mut PROMPT_OUT: [u8; 256] = [0; 256];
-    let out_ptr = unsafe { &raw mut PROMPT_OUT };
+    let out_ptr = &raw mut PROMPT_OUT;
     let out: &mut [u8] = unsafe { &mut *out_ptr };
     let mut len = 0usize;
 
@@ -148,12 +148,12 @@ fn render_prompt(template: &[u8]) -> &str {
     let host = getenv("HOSTNAME").unwrap_or("oxide");
     let cwd = {
         static mut CWD_BUF: [u8; 128] = [0; 128];
-        let buf_ptr = unsafe { &raw mut CWD_BUF };
+        let buf_ptr = &raw mut CWD_BUF;
         let buf: &mut [u8; 128] = unsafe { &mut *buf_ptr };
         let res = getcwd(buf);
         if res < 0 { "/" } else { bytes_to_str(buf) }
     };
-    let is_root = unsafe { geteuid() == 0 };
+    let is_root = geteuid() == 0;
 
     let mut i = 0;
     while i < template.len() && len + 1 < out.len() {
@@ -210,22 +210,22 @@ fn push_str(out: &mut [u8], offset: usize, s: &str) -> usize {
 }
 
 /// Print a C-style string without allocation
-unsafe fn prints_raw(ptr: *const i8) {
+unsafe fn prints_raw(ptr: *const i8) { unsafe {
     let mut p = ptr;
     while *p != 0 {
         putchar(*p as u8);
         p = p.add(1);
     }
-}
+}}
 
 /// Convert C string pointer to &str
-unsafe fn cstr_to_str<'a>(ptr: *const i8) -> &'a str {
+unsafe fn cstr_to_str<'a>(ptr: *const i8) -> &'a str { unsafe {
     let mut len = 0;
     while *ptr.add(len) != 0 {
         len += 1;
     }
     core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr as *const u8, len))
-}
+}}
 
 /// Expand leading ~ or ~/ using $HOME into the provided buffer and return &str
 fn expand_tilde_to_buf<'a>(input: &[u8], out: &'a mut [u8]) -> &'a str {
@@ -679,7 +679,7 @@ fn move_cursor_to(target: usize, current: usize) {
     }
 }
 
-fn move_prev_word(cursor: &mut usize, buf: [u8; MAX_LINE], len: usize) {
+fn move_prev_word(cursor: &mut usize, buf: [u8; MAX_LINE], _len: usize) {
     if *cursor == 0 {
         return;
     }

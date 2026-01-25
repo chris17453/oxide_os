@@ -4,6 +4,7 @@
 //! and other input devices in virtualized environments.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 
@@ -11,7 +12,7 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::ptr::{read_volatile, write_volatile};
-use input::{EventType, InputDeviceInfo, InputDeviceType, InputEvent, KeyValue};
+use input::{InputDeviceInfo, InputDeviceType, KeyValue};
 use spin::Mutex;
 
 /// VirtIO input device configuration select values

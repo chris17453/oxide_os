@@ -2,8 +2,8 @@
 //!
 //! Provides basic file operations using OXIDE syscalls.
 
-use crate::io::{self, Error, ErrorKind, Read, Result, Seek, SeekFrom, Write};
-use alloc::string::{String, ToString};
+use crate::io::{Error, Read, Result, Seek, SeekFrom, Write};
+use alloc::string::String;
 use alloc::vec::Vec;
 
 // ============================================================================

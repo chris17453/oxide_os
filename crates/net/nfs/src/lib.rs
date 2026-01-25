@@ -383,7 +383,7 @@ impl NfsSession {
     }
 
     /// Connect to share
-    pub fn connect(&self, options: &NfsMountOptions) -> Result<(), NfsError> {
+    pub fn connect(&self, _options: &NfsMountOptions) -> Result<(), NfsError> {
         let mut connected = self.connected.lock();
         if *connected {
             return Err(NfsError::AlreadyConnected);
@@ -424,7 +424,7 @@ impl NfsSession {
     }
 
     /// Lookup file by path
-    pub fn lookup(&self, path: &str) -> Result<(NfsHandle, NfsAttr), NfsError> {
+    pub fn lookup(&self, _path: &str) -> Result<(NfsHandle, NfsAttr), NfsError> {
         if !*self.connected.lock() {
             return Err(NfsError::NotConnected);
         }
@@ -451,7 +451,7 @@ impl NfsSession {
     }
 
     /// Get file attributes
-    pub fn getattr(&self, handle: &NfsHandle) -> Result<NfsAttr, NfsError> {
+    pub fn getattr(&self, _handle: &NfsHandle) -> Result<NfsAttr, NfsError> {
         if !*self.connected.lock() {
             return Err(NfsError::NotConnected);
         }
@@ -475,7 +475,7 @@ impl NfsSession {
     }
 
     /// Read directory
-    pub fn readdir(&self, handle: &NfsHandle) -> Result<Vec<NfsDirEntry>, NfsError> {
+    pub fn readdir(&self, _handle: &NfsHandle) -> Result<Vec<NfsDirEntry>, NfsError> {
         if !*self.connected.lock() {
             return Err(NfsError::NotConnected);
         }
@@ -485,7 +485,7 @@ impl NfsSession {
     }
 
     /// Read file
-    pub fn read(&self, handle: &NfsHandle, offset: u64, count: u32) -> Result<Vec<u8>, NfsError> {
+    pub fn read(&self, _handle: &NfsHandle, _offset: u64, _count: u32) -> Result<Vec<u8>, NfsError> {
         if !*self.connected.lock() {
             return Err(NfsError::NotConnected);
         }
@@ -495,7 +495,7 @@ impl NfsSession {
     }
 
     /// Write file
-    pub fn write(&self, handle: &NfsHandle, offset: u64, data: &[u8]) -> Result<u32, NfsError> {
+    pub fn write(&self, _handle: &NfsHandle, _offset: u64, data: &[u8]) -> Result<u32, NfsError> {
         if !*self.connected.lock() {
             return Err(NfsError::NotConnected);
         }
@@ -507,8 +507,8 @@ impl NfsSession {
     /// Create file
     pub fn create(
         &self,
-        dir_handle: &NfsHandle,
-        name: &str,
+        _dir_handle: &NfsHandle,
+        _name: &str,
         mode: u32,
     ) -> Result<(NfsHandle, NfsAttr), NfsError> {
         if !*self.connected.lock() {
@@ -537,7 +537,7 @@ impl NfsSession {
     }
 
     /// Remove file
-    pub fn remove(&self, dir_handle: &NfsHandle, name: &str) -> Result<(), NfsError> {
+    pub fn remove(&self, _dir_handle: &NfsHandle, _name: &str) -> Result<(), NfsError> {
         if !*self.connected.lock() {
             return Err(NfsError::NotConnected);
         }
@@ -549,8 +549,8 @@ impl NfsSession {
     /// Create directory
     pub fn mkdir(
         &self,
-        dir_handle: &NfsHandle,
-        name: &str,
+        _dir_handle: &NfsHandle,
+        _name: &str,
         mode: u32,
     ) -> Result<(NfsHandle, NfsAttr), NfsError> {
         if !*self.connected.lock() {
@@ -579,7 +579,7 @@ impl NfsSession {
     }
 
     /// Remove directory
-    pub fn rmdir(&self, dir_handle: &NfsHandle, name: &str) -> Result<(), NfsError> {
+    pub fn rmdir(&self, _dir_handle: &NfsHandle, _name: &str) -> Result<(), NfsError> {
         if !*self.connected.lock() {
             return Err(NfsError::NotConnected);
         }
@@ -591,10 +591,10 @@ impl NfsSession {
     /// Rename file
     pub fn rename(
         &self,
-        from_dir: &NfsHandle,
-        from_name: &str,
-        to_dir: &NfsHandle,
-        to_name: &str,
+        _from_dir: &NfsHandle,
+        _from_name: &str,
+        _to_dir: &NfsHandle,
+        _to_name: &str,
     ) -> Result<(), NfsError> {
         if !*self.connected.lock() {
             return Err(NfsError::NotConnected);
@@ -621,7 +621,7 @@ pub struct NfsDirEntry {
 /// Mount NFS share
 pub fn mount_nfs(
     share: &NfsShare,
-    mount_point: &str,
+    _mount_point: &str,
     options: &NfsMountOptions,
 ) -> Result<(), NfsError> {
     let session = NfsSession::new(share.clone());

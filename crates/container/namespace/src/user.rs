@@ -37,7 +37,7 @@ pub struct UserNamespace {
 impl UserNamespace {
     /// Create root user namespace
     pub fn root() -> Self {
-        let mut ns = UserNamespace {
+        let ns = UserNamespace {
             id: alloc_ns_id(),
             parent: None,
             uid_map: RwLock::new(Vec::new()),

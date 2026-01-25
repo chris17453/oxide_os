@@ -116,7 +116,7 @@ pub fn raise(sig: i32) -> i32 {
 /// Set signal handler (simple interface)
 /// Returns previous handler on success, SIG_ERR on error
 pub fn signal(sig: i32, handler: u64) -> u64 {
-    let mut new_action = SigAction {
+    let new_action = SigAction {
         sa_handler: handler,
         sa_flags: SA_RESTART,
         sa_restorer: 0,

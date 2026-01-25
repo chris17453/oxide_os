@@ -80,10 +80,8 @@ impl<T> JoinHandle<T> {
         // Wait for thread to complete using futex
         while self.inner.completed.load(Ordering::Acquire) == 0 {
             // Futex wait - if still 0, sleep
-            unsafe {
-                let ptr = &self.inner.completed as *const AtomicU32 as *mut u32;
-                libc::sys_futex_wait(ptr, 0, 0); // 0 timeout = infinite
-            }
+            let ptr = &self.inner.completed as *const AtomicU32 as *mut u32;
+            libc::sys_futex_wait(ptr, 0, 0); // 0 timeout = infinite
         }
 
         // Thread completed - get result
@@ -152,10 +150,8 @@ where
 
         // Mark as completed and wake waiter
         inner_clone.completed.store(1, Ordering::Release);
-        unsafe {
-            let ptr = &inner_clone.completed as *const AtomicU32 as *mut u32;
-            libc::sys_futex_wake(ptr, 1);
-        }
+        let ptr = &inner_clone.completed as *const AtomicU32 as *mut u32;
+        libc::sys_futex_wake(ptr, 1);
     });
 
     // Leak the box to get a raw pointer (thread will clean up)
@@ -284,18 +280,14 @@ impl Default for Builder {
 pub fn park() {
     // Simple implementation using futex
     let parker = AtomicU32::new(0);
-    unsafe {
-        let ptr = &parker as *const AtomicU32 as *mut u32;
-        libc::sys_futex_wait(ptr, 0, 0);
-    }
+    let ptr = &parker as *const AtomicU32 as *mut u32;
+    libc::sys_futex_wait(ptr, 0, 0);
 }
 
 /// Blocks unless or until the current thread's token is made available
 pub fn park_timeout(dur: Duration) {
     let nanos = dur.as_secs() * 1_000_000_000 + dur.subsec_nanos() as u64;
     let parker = AtomicU32::new(0);
-    unsafe {
-        let ptr = &parker as *const AtomicU32 as *mut u32;
-        libc::sys_futex_wait(ptr, 0, nanos);
-    }
+    let ptr = &parker as *const AtomicU32 as *mut u32;
+    libc::sys_futex_wait(ptr, 0, nanos);
 }

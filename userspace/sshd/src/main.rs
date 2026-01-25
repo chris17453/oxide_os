@@ -8,6 +8,7 @@
 
 #![no_std]
 #![no_main]
+#![allow(unused)]
 
 extern crate alloc;
 
@@ -18,7 +19,6 @@ mod kex;
 mod session;
 mod transport;
 
-use alloc::vec::Vec;
 use libc::socket::{
     INADDR_ANY, SOCKADDR_IN_SIZE, SockAddrIn, accept, bind, listen, setsockopt, so, sockaddr_in,
     sol, tcp_socket,
@@ -68,35 +68,35 @@ fn handle_connection(client_fd: i32) {
     // Create transport layer
     let mut transport = match SshTransport::new(client_fd) {
         Ok(t) => t,
-        Err(e) => {
+        Err(_e) => {
             log("Failed to create transport");
             return;
         }
     };
 
     // Protocol version exchange
-    if let Err(e) = transport.version_exchange() {
+    if let Err(_e) = transport.version_exchange() {
         log("Version exchange failed");
         return;
     }
     log("Version exchange complete");
 
     // Key exchange
-    if let Err(e) = transport.key_exchange() {
+    if let Err(_e) = transport.key_exchange() {
         log("Key exchange failed");
         return;
     }
     log("Key exchange complete, encryption enabled");
 
     // Authentication
-    if let Err(e) = auth::authenticate(&mut transport) {
+    if let Err(_e) = auth::authenticate(&mut transport) {
         log("Authentication failed");
         return;
     }
     log("Authentication successful");
 
     // Handle channels and sessions
-    if let Err(e) = session::run_session(&mut transport) {
+    if let Err(_e) = session::run_session(&mut transport) {
         log("Session error");
     }
 
@@ -113,7 +113,7 @@ pub fn main() -> i32 {
     log("Starting OXIDE SSH server");
 
     // Generate or load host key
-    if let Err(e) = crypto::init_host_key() {
+    if let Err(_e) = crypto::init_host_key() {
         log("Failed to initialize host key");
         return 1;
     }

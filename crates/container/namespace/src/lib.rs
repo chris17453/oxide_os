@@ -14,7 +14,6 @@ pub mod user;
 pub mod uts;
 
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 use spin::RwLock;
 

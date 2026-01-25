@@ -207,9 +207,9 @@ fn compute_diff(
             j += 1;
         } else {
             // Difference found
-            let mut del_start = i;
+            let del_start = i;
             let mut del_end = i;
-            let mut add_start = j;
+            let add_start = j;
             let mut add_end = j;
 
             // Collect consecutive different lines

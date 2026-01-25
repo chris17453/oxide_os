@@ -16,7 +16,6 @@ use boot_proto::{
     BOOT_INFO_MAGIC, BootInfo, FramebufferInfo, KERNEL_VIRT_BASE, MAX_MEMORY_REGIONS, MemoryRegion,
     MemoryType, PHYS_MAP_BASE, PixelFormat,
 };
-use uefi::Char16;
 use uefi::mem::memory_map::MemoryMap;
 use uefi::prelude::*;
 use uefi::proto::console::gop::{BltOp, BltPixel, GraphicsOutput};

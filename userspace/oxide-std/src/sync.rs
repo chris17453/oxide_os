@@ -82,10 +82,8 @@ impl<T: ?Sized> Mutex<T> {
 
             // Wait using futex
             if state == 2 {
-                unsafe {
-                    let ptr = &self.state as *const AtomicU32 as *mut u32;
-                    libc::sys_futex_wait(ptr, 2, 0);
-                }
+                let ptr = &self.state as *const AtomicU32 as *mut u32;
+                libc::sys_futex_wait(ptr, 2, 0);
             }
 
             // Try to acquire again
@@ -144,10 +142,8 @@ impl<T: ?Sized> Drop for MutexGuard<'_, T> {
 
         // If there were waiters, wake one
         if state == 2 {
-            unsafe {
-                let ptr = &self.mutex.state as *const AtomicU32 as *mut u32;
-                libc::sys_futex_wake(ptr, 1);
-            }
+            let ptr = &self.mutex.state as *const AtomicU32 as *mut u32;
+            libc::sys_futex_wake(ptr, 1);
         }
     }
 }
@@ -207,10 +203,8 @@ impl<T: ?Sized> RwLock<T> {
                 }
             } else {
                 // Writer holds lock, wait
-                unsafe {
-                    let ptr = &self.state as *const AtomicU32 as *mut u32;
-                    libc::sys_futex_wait(ptr, state, 0);
-                }
+                let ptr = &self.state as *const AtomicU32 as *mut u32;
+                libc::sys_futex_wait(ptr, state, 0);
             }
         }
     }
@@ -231,10 +225,8 @@ impl<T: ?Sized> RwLock<T> {
                 }
             } else {
                 // Readers or writer hold lock, wait
-                unsafe {
-                    let ptr = &self.state as *const AtomicU32 as *mut u32;
-                    libc::sys_futex_wait(ptr, state, 0);
-                }
+                let ptr = &self.state as *const AtomicU32 as *mut u32;
+                libc::sys_futex_wait(ptr, state, 0);
             }
         }
     }
@@ -293,10 +285,8 @@ impl<T: ?Sized> Drop for RwLockReadGuard<'_, T> {
 
         // If we were the last reader, wake a waiting writer
         if prev == 1 {
-            unsafe {
-                let ptr = &self.lock.state as *const AtomicU32 as *mut u32;
-                libc::sys_futex_wake(ptr, 1);
-            }
+            let ptr = &self.lock.state as *const AtomicU32 as *mut u32;
+            libc::sys_futex_wake(ptr, 1);
         }
     }
 }
@@ -325,10 +315,8 @@ impl<T: ?Sized> Drop for RwLockWriteGuard<'_, T> {
         self.lock.state.store(0, Ordering::Release);
 
         // Wake all waiters (could be readers or a writer)
-        unsafe {
-            let ptr = &self.lock.state as *const AtomicU32 as *mut u32;
-            libc::sys_futex_wake(ptr, i32::MAX as u32);
-        }
+        let ptr = &self.lock.state as *const AtomicU32 as *mut u32;
+        libc::sys_futex_wake(ptr, i32::MAX as u32);
     }
 }
 
@@ -361,10 +349,8 @@ impl Condvar {
         drop(guard);
 
         // Wait for notification
-        unsafe {
-            let ptr = &self.seq as *const AtomicU32 as *mut u32;
-            libc::sys_futex_wait(ptr, seq, 0);
-        }
+        let ptr = &self.seq as *const AtomicU32 as *mut u32;
+        libc::sys_futex_wait(ptr, seq, 0);
 
         // Re-acquire the mutex
         mutex.lock()
@@ -373,19 +359,15 @@ impl Condvar {
     /// Wakes up one blocked thread on this condvar
     pub fn notify_one(&self) {
         self.seq.fetch_add(1, Ordering::Release);
-        unsafe {
-            let ptr = &self.seq as *const AtomicU32 as *mut u32;
-            libc::sys_futex_wake(ptr, 1);
-        }
+        let ptr = &self.seq as *const AtomicU32 as *mut u32;
+        libc::sys_futex_wake(ptr, 1);
     }
 
     /// Wakes up all blocked threads on this condvar
     pub fn notify_all(&self) {
         self.seq.fetch_add(1, Ordering::Release);
-        unsafe {
-            let ptr = &self.seq as *const AtomicU32 as *mut u32;
-            libc::sys_futex_wake(ptr, i32::MAX as u32);
-        }
+        let ptr = &self.seq as *const AtomicU32 as *mut u32;
+        libc::sys_futex_wake(ptr, i32::MAX as u32);
     }
 }
 
@@ -449,19 +431,15 @@ impl Once {
                         self.state.store(ONCE_COMPLETE, Ordering::Release);
 
                         // Wake any waiters
-                        unsafe {
-                            let ptr = &self.state as *const AtomicU32 as *mut u32;
-                            libc::sys_futex_wake(ptr, i32::MAX as u32);
-                        }
+                        let ptr = &self.state as *const AtomicU32 as *mut u32;
+                        libc::sys_futex_wake(ptr, i32::MAX as u32);
                         return;
                     }
                 }
                 ONCE_RUNNING => {
                     // Someone else is running, wait
-                    unsafe {
-                        let ptr = &self.state as *const AtomicU32 as *mut u32;
-                        libc::sys_futex_wait(ptr, ONCE_RUNNING, 0);
-                    }
+                    let ptr = &self.state as *const AtomicU32 as *mut u32;
+                    libc::sys_futex_wait(ptr, ONCE_RUNNING, 0);
                 }
                 ONCE_COMPLETE => {
                     // Done
@@ -519,19 +497,15 @@ impl Barrier {
             self.generation.fetch_add(1, Ordering::Release);
 
             // Wake all waiters
-            unsafe {
-                let ptr = &self.generation as *const AtomicU32 as *mut u32;
-                libc::sys_futex_wake(ptr, i32::MAX as u32);
-            }
+            let ptr = &self.generation as *const AtomicU32 as *mut u32;
+            libc::sys_futex_wake(ptr, i32::MAX as u32);
 
             BarrierWaitResult { is_leader: true }
         } else {
             // Wait for the generation to change
             loop {
-                unsafe {
-                    let ptr = &self.generation as *const AtomicU32 as *mut u32;
-                    libc::sys_futex_wait(ptr, current_gen, 0);
-                }
+                let ptr = &self.generation as *const AtomicU32 as *mut u32;
+                libc::sys_futex_wait(ptr, current_gen, 0);
 
                 if self.generation.load(Ordering::Acquire) != current_gen {
                     break;

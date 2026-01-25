@@ -87,10 +87,8 @@ fn printlns(s: &str) {
 }
 
 fn prints(s: &str) {
-    unsafe {
-        for b in s.as_bytes() {
-            putchar(*b);
-        }
+    for b in s.as_bytes() {
+        putchar(*b);
     }
 }
 
@@ -107,9 +105,7 @@ fn printd(mut n: u8) {
             n /= 10;
         }
     }
-    unsafe {
-        for &b in &buf[i..] {
-            putchar(b);
-        }
+    for &b in &buf[i..] {
+        putchar(b);
     }
 }

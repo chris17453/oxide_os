@@ -12,8 +12,7 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
 use spin::Mutex;
 
-use net::{Ipv4Addr, MacAddress, NetError, NetResult, NetworkInterface};
-use tcpip::TcpIpStack;
+use net::{Ipv4Addr, MacAddress, NetResult, NetworkInterface};
 
 /// DHCP server port
 pub const DHCP_SERVER_PORT: u16 = 67;

@@ -7,8 +7,7 @@ use alloc::vec::Vec;
 use spin::RwLock;
 
 use media::{
-    ActiveMount, DeviceTrustDb, MediaError, MediaManager, MediaPolicy, MountMode, MountOptions,
-    TrustLevel, UsbDevice, UsbEvent, UsbEventType,
+    ActiveMount, DeviceTrustDb, MediaError, MediaManager, MediaPolicy, MountOptions, UsbDevice, UsbEvent, UsbEventType,
 };
 
 use crate::config::AutomountConfig;
@@ -190,7 +189,7 @@ impl AutomountDaemon {
     }
 
     /// Handle device disconnected event
-    pub fn on_device_disconnected(&self, device_path: &str) -> Result<(), MediaError> {
+    pub fn on_device_disconnected(&self, _device_path: &str) -> Result<(), MediaError> {
         // Find mount for this device
         let mounts = self.media.list_mounts();
         for mount in mounts {

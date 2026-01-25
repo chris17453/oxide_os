@@ -121,7 +121,7 @@ impl LinkedListAllocator {
 
             if can_merge {
                 // Merge: absorb next block into current block
-                if let Some(mut next_block) = block.next.take() {
+                if let Some(next_block) = block.next.take() {
                     block.size += next_block.size;
                     block.next = next_block.next.take();
                 }

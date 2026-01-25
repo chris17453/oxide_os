@@ -48,7 +48,7 @@ impl pthread_barrierattr_t {
 #[no_mangle]
 pub unsafe extern "C" fn pthread_barrier_init(
     barrier: *mut pthread_barrier_t,
-    attr: *const pthread_barrierattr_t,
+    _attr: *const pthread_barrierattr_t,
     count: u32,
 ) -> c_int {
     if barrier.is_null() || count == 0 {

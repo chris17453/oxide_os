@@ -232,7 +232,7 @@ fn x25519_scalarmult(scalar: &[u8; 32], point: &[u8; 32]) -> [u8; 32] {
     }
 
     // Montgomery ladder
-    let mut x1 = fe_frombytes(point);
+    let x1 = fe_frombytes(point);
     let mut x2 = fe_1();
     let mut z2 = fe_0();
     let mut x3 = x1;

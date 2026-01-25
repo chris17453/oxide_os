@@ -135,7 +135,7 @@ pub unsafe fn setlocale(_category: i32, locale: *const u8) -> *const u8 {
 
 /// Get locale conversion info
 pub fn localeconv() -> *mut Lconv {
-    unsafe { &raw mut C_LCONV }
+    &raw mut C_LCONV
 }
 
 /// Locale-aware character classification

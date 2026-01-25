@@ -7,7 +7,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use spin::{Mutex, RwLock};
 
 use crate::{
-    GpaRange, GuestMemory, GuestMemoryRegion, Vcpu, VcpuId, VcpuRegs, VcpuState, VirtioDevice,
+    GuestMemory, GuestMemoryRegion, Vcpu, VcpuId, VirtioDevice,
     VmmBackend, VmmError, VmmResult,
 };
 

@@ -12,13 +12,14 @@
 
 #![no_std]
 #![no_main]
+#![allow(unused)]
 
 extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use oxide_std::io::{Read, Write};
-use oxide_std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
+use oxide_std::io::Write;
+use oxide_std::net::TcpStream;
 use oxide_std::{eprintln, print, println};
 
 mod crypto;

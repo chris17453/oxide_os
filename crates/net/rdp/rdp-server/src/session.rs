@@ -160,7 +160,7 @@ impl RdpSession {
 
         if let Some(network) = gcc.client_network() {
             // Store requested channel names
-            for (i, channel) in network.channels.iter().enumerate() {
+            for (i, _channel) in network.channels.iter().enumerate() {
                 let channel_id = mcs::channels::STATIC_CHANNEL_BASE + i as u16;
                 self.channel_ids.push(channel_id);
             }

@@ -53,7 +53,7 @@ impl pthread_rwlockattr_t {
 #[no_mangle]
 pub unsafe extern "C" fn pthread_rwlock_init(
     rwlock: *mut pthread_rwlock_t,
-    attr: *const pthread_rwlockattr_t,
+    _attr: *const pthread_rwlockattr_t,
 ) -> c_int {
     if rwlock.is_null() {
         return EINVAL;

@@ -1,7 +1,6 @@
 //! Guest Memory Management
 
 use alloc::vec::Vec;
-use core::ops::Range;
 
 use crate::{VmmError, VmmResult};
 

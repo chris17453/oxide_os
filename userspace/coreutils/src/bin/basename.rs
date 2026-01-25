@@ -135,7 +135,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         } else if str_starts_with(arg, "-") && arg.len() > 1 && arg != "--" {
             // Handle combined short options
             let mut chars = arg.bytes().skip(1);
-            let mut valid = true;
+            let _valid = true;
 
             while let Some(c) = chars.next() {
                 match c {

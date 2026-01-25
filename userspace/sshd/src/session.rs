@@ -196,7 +196,7 @@ fn start_shell(channel: &mut crate::channel::Channel) -> bool {
         None => return false,
     };
 
-    let pty_master = match channel.pty_master {
+    let _pty_master = match channel.pty_master {
         Some(fd) => fd,
         None => return false,
     };
@@ -263,7 +263,7 @@ fn start_command(channel: &mut crate::channel::Channel, command: &str) -> bool {
         None => return false,
     };
 
-    let pty_master = match channel.pty_master {
+    let _pty_master = match channel.pty_master {
         Some(fd) => fd,
         None => return false,
     };

@@ -211,14 +211,12 @@ const TIOCSWINSZ: u64 = 0x5414;
 
 /// Get terminal attributes
 pub fn tcgetattr(fd: i32, termios: &mut Termios) -> i32 {
-    unsafe {
-        syscall::syscall3(
-            syscall::SYS_IOCTL,
-            fd as usize,
-            TCGETS as usize,
-            termios as *mut Termios as usize,
-        ) as i32
-    }
+    syscall::syscall3(
+        syscall::SYS_IOCTL,
+        fd as usize,
+        TCGETS as usize,
+        termios as *mut Termios as usize,
+    ) as i32
 }
 
 /// Set terminal attributes
@@ -230,55 +228,47 @@ pub fn tcsetattr(fd: i32, optional_actions: i32, termios: &Termios) -> i32 {
         _ => return -1,
     };
 
-    unsafe {
-        syscall::syscall3(
-            syscall::SYS_IOCTL,
-            fd as usize,
-            cmd as usize,
-            termios as *const Termios as usize,
-        ) as i32
-    }
+    syscall::syscall3(
+        syscall::SYS_IOCTL,
+        fd as usize,
+        cmd as usize,
+        termios as *const Termios as usize,
+    ) as i32
 }
 
 /// Flush terminal queues
 pub fn tcflush(fd: i32, queue_selector: i32) -> i32 {
-    unsafe {
-        syscall::syscall3(
-            syscall::SYS_IOCTL,
-            fd as usize,
-            TCFLSH as usize,
-            queue_selector as usize,
-        ) as i32
-    }
+    syscall::syscall3(
+        syscall::SYS_IOCTL,
+        fd as usize,
+        TCFLSH as usize,
+        queue_selector as usize,
+    ) as i32
 }
 
 /// Flow control
 pub fn tcflow(fd: i32, action: i32) -> i32 {
-    unsafe {
-        syscall::syscall3(
-            syscall::SYS_IOCTL,
-            fd as usize,
-            TCXONC as usize,
-            action as usize,
-        ) as i32
-    }
+    syscall::syscall3(
+        syscall::SYS_IOCTL,
+        fd as usize,
+        TCXONC as usize,
+        action as usize,
+    ) as i32
 }
 
 /// Send break
 pub fn tcsendbreak(fd: i32, duration: i32) -> i32 {
-    unsafe {
-        syscall::syscall3(
-            syscall::SYS_IOCTL,
-            fd as usize,
-            if duration == 0 { TCSBRK } else { TCSBRKP } as usize,
-            duration as usize,
-        ) as i32
-    }
+    syscall::syscall3(
+        syscall::SYS_IOCTL,
+        fd as usize,
+        if duration == 0 { TCSBRK } else { TCSBRKP } as usize,
+        duration as usize,
+    ) as i32
 }
 
 /// Drain output
 pub fn tcdrain(fd: i32) -> i32 {
-    unsafe { syscall::syscall3(syscall::SYS_IOCTL, fd as usize, TCSBRK as usize, 1) as i32 }
+    syscall::syscall3(syscall::SYS_IOCTL, fd as usize, TCSBRK as usize, 1) as i32
 }
 
 /// Get input speed
@@ -340,26 +330,22 @@ pub struct Winsize {
 
 /// Get window size
 pub fn tcgetwinsize(fd: i32, ws: &mut Winsize) -> i32 {
-    unsafe {
-        syscall::syscall3(
-            syscall::SYS_IOCTL,
-            fd as usize,
-            TIOCGWINSZ as usize,
-            ws as *mut Winsize as usize,
-        ) as i32
-    }
+    syscall::syscall3(
+        syscall::SYS_IOCTL,
+        fd as usize,
+        TIOCGWINSZ as usize,
+        ws as *mut Winsize as usize,
+    ) as i32
 }
 
 /// Set window size
 pub fn tcsetwinsize(fd: i32, ws: &Winsize) -> i32 {
-    unsafe {
-        syscall::syscall3(
-            syscall::SYS_IOCTL,
-            fd as usize,
-            TIOCSWINSZ as usize,
-            ws as *const Winsize as usize,
-        ) as i32
-    }
+    syscall::syscall3(
+        syscall::SYS_IOCTL,
+        fd as usize,
+        TIOCSWINSZ as usize,
+        ws as *const Winsize as usize,
+    ) as i32
 }
 
 /// Check if fd is a terminal

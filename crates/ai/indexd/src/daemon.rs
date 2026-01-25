@@ -81,7 +81,7 @@ impl IndexDaemon {
 
         // Process indexing queue
         while let Some(item) = self.queue.pop() {
-            if let Err(e) = self.index_file(&item.path) {
+            if let Err(_e) = self.index_file(&item.path) {
                 if item.retries < 3 {
                     let mut retry = item.clone();
                     retry.retries += 1;

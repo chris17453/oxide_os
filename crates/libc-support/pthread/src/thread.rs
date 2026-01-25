@@ -75,8 +75,8 @@ unsafe impl Send for ThreadTrampoline {}
 pub unsafe extern "C" fn pthread_create(
     thread: *mut pthread_t,
     attr: *const pthread_attr_t,
-    start_routine: StartRoutine,
-    arg: *mut c_void,
+    _start_routine: StartRoutine,
+    _arg: *mut c_void,
 ) -> c_int {
     if thread.is_null() {
         return EINVAL;

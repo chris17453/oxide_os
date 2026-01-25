@@ -3,6 +3,7 @@
 //! Implements the eXtensible Host Controller Interface for USB 3.x.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 
@@ -10,7 +11,7 @@ use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::ptr::{read_volatile, write_volatile};
-use core::sync::atomic::{AtomicU8, AtomicU16, Ordering};
+use core::sync::atomic::AtomicU8;
 use spin::Mutex;
 use usb::{
     DeviceSpeed, EndpointDescriptor, PortStatus, SetupPacket, TransferDirection, UsbError,
@@ -544,7 +545,7 @@ impl UsbHostController for XhciController {
 
     fn address_device(&self, slot: u8, port: u8, speed: DeviceSpeed) -> UsbResult<u8> {
         // Create device context
-        let mut context = Box::new(DeviceContext {
+        let context = Box::new(DeviceContext {
             slot: SlotContext::default(),
             endpoints: [EndpointContext::default(); 31],
         });

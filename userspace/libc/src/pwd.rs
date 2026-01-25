@@ -536,17 +536,15 @@ pub fn getpwnam(name: *const u8) -> *mut Passwd {
     }
 
     // Fall back to hardcoded entries
-    unsafe {
-        // Check for "root"
-        if str_eq_cstr(name, b"root") {
-            storage.setup_root();
-            return &mut storage.passwd;
-        }
-
-        // Default user
-        storage.setup_default(1000);
-        &mut storage.passwd
+    // Check for "root"
+    if str_eq_cstr(name, b"root") {
+        storage.setup_root();
+        return &mut storage.passwd;
     }
+
+    // Default user
+    storage.setup_default(1000);
+    &mut storage.passwd
 }
 
 /// Get group entry by GID
@@ -609,15 +607,13 @@ pub fn getgrnam(name: *const u8) -> *mut Group {
     }
 
     // Fall back to hardcoded entries
-    unsafe {
-        if str_eq_cstr(name, b"root") {
-            storage.setup_root();
-            return &mut storage.group;
-        }
-
-        storage.setup_default(1000);
-        &mut storage.group
+    if str_eq_cstr(name, b"root") {
+        storage.setup_root();
+        return &mut storage.group;
     }
+
+    storage.setup_default(1000);
+    &mut storage.group
 }
 
 // =============================================================================
@@ -711,42 +707,42 @@ pub fn endpwent() {
 
 /// Get current user's UID
 pub fn getuid() -> u32 {
-    unsafe { crate::syscall::syscall0(crate::syscall::SYS_GETUID) as u32 }
+    crate::syscall::syscall0(crate::syscall::SYS_GETUID) as u32
 }
 
 /// Get current user's effective UID
 pub fn geteuid() -> u32 {
-    unsafe { crate::syscall::syscall0(crate::syscall::SYS_GETEUID) as u32 }
+    crate::syscall::syscall0(crate::syscall::SYS_GETEUID) as u32
 }
 
 /// Get current user's GID
 pub fn getgid() -> u32 {
-    unsafe { crate::syscall::syscall0(crate::syscall::SYS_GETGID) as u32 }
+    crate::syscall::syscall0(crate::syscall::SYS_GETGID) as u32
 }
 
 /// Get current user's effective GID
 pub fn getegid() -> u32 {
-    unsafe { crate::syscall::syscall0(crate::syscall::SYS_GETEGID) as u32 }
+    crate::syscall::syscall0(crate::syscall::SYS_GETEGID) as u32
 }
 
 /// Set UID
 pub fn setuid(uid: u32) -> i32 {
-    unsafe { crate::syscall::syscall1(crate::syscall::SYS_SETUID, uid as usize) as i32 }
+    crate::syscall::syscall1(crate::syscall::SYS_SETUID, uid as usize) as i32
 }
 
 /// Set GID
 pub fn setgid(gid: u32) -> i32 {
-    unsafe { crate::syscall::syscall1(crate::syscall::SYS_SETGID, gid as usize) as i32 }
+    crate::syscall::syscall1(crate::syscall::SYS_SETGID, gid as usize) as i32
 }
 
 /// Set effective UID
 pub fn seteuid(uid: u32) -> i32 {
-    unsafe { crate::syscall::syscall1(crate::syscall::SYS_SETEUID, uid as usize) as i32 }
+    crate::syscall::syscall1(crate::syscall::SYS_SETEUID, uid as usize) as i32
 }
 
 /// Set effective GID
 pub fn setegid(gid: u32) -> i32 {
-    unsafe { crate::syscall::syscall1(crate::syscall::SYS_SETEGID, gid as usize) as i32 }
+    crate::syscall::syscall1(crate::syscall::SYS_SETEGID, gid as usize) as i32
 }
 
 /// Get login name

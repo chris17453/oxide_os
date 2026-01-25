@@ -63,7 +63,7 @@ fn clear_error() {
 ///
 /// # Safety
 /// filename must be a valid null-terminated string or null
-pub unsafe fn dlopen(filename: *const u8, flags: i32) -> *mut c_void {
+pub unsafe fn dlopen(filename: *const u8, _flags: i32) -> *mut c_void {
     clear_error();
 
     if filename.is_null() {
@@ -88,7 +88,7 @@ pub unsafe fn dlopen(filename: *const u8, flags: i32) -> *mut c_void {
 /// # Safety
 /// handle must be a valid handle from dlopen or a special handle
 /// symbol must be a valid null-terminated string
-pub unsafe fn dlsym(handle: *mut c_void, symbol: *const u8) -> *mut c_void {
+pub unsafe fn dlsym(_handle: *mut c_void, symbol: *const u8) -> *mut c_void {
     clear_error();
 
     if symbol.is_null() {
@@ -167,7 +167,7 @@ pub unsafe fn dladdr(addr: *const c_void, info: *mut DlInfo) -> i32 {
 /// Callback must be safe to call
 pub unsafe fn dl_iterate_phdr(
     callback: Option<unsafe extern "C" fn(*mut DlPhdrInfo, usize, *mut c_void) -> i32>,
-    data: *mut c_void,
+    _data: *mut c_void,
 ) -> i32 {
     if callback.is_none() {
         return 0;

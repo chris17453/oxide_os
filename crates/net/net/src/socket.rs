@@ -351,7 +351,7 @@ impl Socket {
     }
 
     /// Send to a specific address (UDP)
-    pub fn sendto(&self, data: &[u8], addr: SocketAddr) -> NetResult<usize> {
+    pub fn sendto(&self, data: &[u8], _addr: SocketAddr) -> NetResult<usize> {
         if self.sock_type != SocketType::Dgram && self.sock_type != SocketType::Raw {
             return Err(NetError::SocketTypeNotSupported);
         }

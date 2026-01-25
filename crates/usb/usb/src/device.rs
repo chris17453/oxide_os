@@ -7,7 +7,7 @@ use core::sync::atomic::{AtomicU8, Ordering};
 use spin::Mutex;
 
 use crate::{
-    ConfigDescriptor, DeviceDescriptor, EndpointDescriptor, InterfaceDescriptor, SetupPacket,
+    ConfigDescriptor, DeviceDescriptor, SetupPacket,
     TransferDirection, UsbError, UsbHostController, UsbResult,
 };
 

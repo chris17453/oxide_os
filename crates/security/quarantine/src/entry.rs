@@ -1,7 +1,6 @@
 //! Quarantine entries
 
 use alloc::string::String;
-use alloc::vec::Vec;
 use core::net::IpAddr;
 
 /// Timestamp (Unix seconds)

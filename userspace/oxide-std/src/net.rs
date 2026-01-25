@@ -2,13 +2,12 @@
 //!
 //! Provides TCP/UDP socket abstractions using OXIDE's libc layer.
 
-use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 
 use crate::io::{Error, ErrorKind, Read, Result, Write};
 use libc::socket::{
-    self, InAddr, SockAddrIn, SOCKADDR_IN_SIZE, af, connect, htons, ntohs, recv, send, shutdown,
+    self, InAddr, SockAddrIn, SOCKADDR_IN_SIZE, af, connect, htons, recv, send, shutdown,
     shut, sock, tcp,
 };
 

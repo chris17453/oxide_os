@@ -2,7 +2,7 @@
 //!
 //! CSPRNG for key generation and nonces.
 
-use crate::{CryptoError, CryptoResult};
+use crate::CryptoResult;
 use spin::Mutex;
 
 /// Global CSPRNG state

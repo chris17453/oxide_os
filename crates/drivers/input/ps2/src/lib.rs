@@ -24,6 +24,7 @@ const STATUS_PORT: u16 = 0x64;
 const COMMAND_PORT: u16 = 0x64;
 
 /// Status register bits
+#[allow(unused)]
 mod status {
     pub const OUTPUT_FULL: u8 = 0x01;
     pub const INPUT_FULL: u8 = 0x02;
@@ -36,6 +37,7 @@ mod status {
 }
 
 /// Controller commands
+#[allow(unused)]
 mod cmd {
     pub const READ_CONFIG: u8 = 0x20;
     pub const WRITE_CONFIG: u8 = 0x60;
@@ -50,6 +52,7 @@ mod cmd {
 }
 
 /// Keyboard commands
+#[allow(unused)]
 mod kbd_cmd {
     pub const SET_LEDS: u8 = 0xED;
     pub const ECHO: u8 = 0xEE;
@@ -64,6 +67,7 @@ mod kbd_cmd {
 }
 
 /// Mouse commands
+#[allow(unused)]
 mod mouse_cmd {
     pub const SET_SCALING_1_1: u8 = 0xE6;
     pub const SET_SCALING_2_1: u8 = 0xE7;

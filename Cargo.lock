@@ -1556,6 +1556,7 @@ dependencies = [
 name = "virtio-gpu"
 version = "0.1.0"
 dependencies = [
+ "boot-proto",
  "fb",
  "spin 0.9.8",
 ]

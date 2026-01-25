@@ -202,7 +202,7 @@ impl MountNamespace {
     }
 
     /// Pivot root
-    pub fn pivot_root(&self, new_root: &str, put_old: &str) -> NsResult<()> {
+    pub fn pivot_root(&self, new_root: &str, _put_old: &str) -> NsResult<()> {
         // Verify new_root is a mount point
         let new_mount = self.find_mount_at(new_root).ok_or(NsError::NotFound)?;
 

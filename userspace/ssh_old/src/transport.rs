@@ -6,10 +6,8 @@
 //! - Key exchange initiation
 //! - Encryption/decryption after key exchange
 
-use alloc::string::String;
 use alloc::vec::Vec;
 use libc::socket::{recv, send};
-use libc::*;
 
 use crate::crypto::SshCipher;
 use crate::kex::KexState;

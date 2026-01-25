@@ -257,7 +257,7 @@ impl TerminalEmulator {
 
                 let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
 
-                let scrolled = if is_alt {
+                let _scrolled = if is_alt {
                     self.handler.linefeed(&mut self.alternate, None)
                 } else {
                     self.handler

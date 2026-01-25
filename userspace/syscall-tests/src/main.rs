@@ -950,36 +950,4 @@ pub extern "Rust" fn main() -> i32 {
     if stats.failed > 0 { 1 } else { 0 }
 }
 
-// Global allocator
-#[global_allocator]
-static ALLOCATOR: Allocator = Allocator;
-
-struct Allocator;
-
-static mut HEAP: [u8; 64 * 1024] = [0; 64 * 1024];
-static mut HEAP_POS: usize = 0;
-
-unsafe impl alloc::alloc::GlobalAlloc for Allocator {
-    unsafe fn alloc(&self, layout: alloc::alloc::Layout) -> *mut u8 {
-        use core::ptr::addr_of_mut;
-
-        let align = layout.align();
-        let size = layout.size();
-
-        // Use addr_of_mut! to get raw pointers without creating references
-        let heap_pos_ptr = unsafe { addr_of_mut!(HEAP_POS) };
-        let heap_ptr = unsafe { addr_of_mut!(HEAP) };
-
-        let current_pos = unsafe { *heap_pos_ptr };
-        let aligned_pos = (current_pos + align - 1) & !(align - 1);
-
-        if aligned_pos + size > 64 * 1024 {
-            return core::ptr::null_mut();
-        }
-
-        unsafe { *heap_pos_ptr = aligned_pos + size };
-        unsafe { (*heap_ptr).as_mut_ptr().add(aligned_pos) }
-    }
-
-    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: alloc::alloc::Layout) {}
-}
+// Global allocator is provided by libc

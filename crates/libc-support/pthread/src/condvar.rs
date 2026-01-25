@@ -52,7 +52,7 @@ pub struct timespec {
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cond_init(
     cond: *mut pthread_cond_t,
-    attr: *const pthread_condattr_t,
+    _attr: *const pthread_condattr_t,
 ) -> c_int {
     if cond.is_null() {
         return EINVAL;

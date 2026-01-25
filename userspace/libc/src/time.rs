@@ -142,24 +142,20 @@ pub fn gettimeofday(tv: &mut Timeval, tz: Option<&mut Timezone>) -> i32 {
 
 /// Get clock time
 pub fn clock_gettime(clk_id: i32, tp: &mut Timespec) -> i32 {
-    unsafe {
-        syscall::syscall2(
-            syscall::SYS_CLOCK_GETTIME,
-            clk_id as usize,
-            tp as *mut Timespec as usize,
-        ) as i32
-    }
+    syscall::syscall2(
+        syscall::SYS_CLOCK_GETTIME,
+        clk_id as usize,
+        tp as *mut Timespec as usize,
+    ) as i32
 }
 
 /// Get clock resolution
 pub fn clock_getres(clk_id: i32, res: &mut Timespec) -> i32 {
-    unsafe {
-        syscall::syscall2(
-            syscall::SYS_CLOCK_GETRES,
-            clk_id as usize,
-            res as *mut Timespec as usize,
-        ) as i32
-    }
+    syscall::syscall2(
+        syscall::SYS_CLOCK_GETRES,
+        clk_id as usize,
+        res as *mut Timespec as usize,
+    ) as i32
 }
 
 /// Sleep for specified time
@@ -167,13 +163,11 @@ pub fn nanosleep(req: &Timespec, rem: Option<&mut Timespec>) -> i32 {
     let rem_ptr = rem
         .map(|r| r as *mut Timespec)
         .unwrap_or(core::ptr::null_mut());
-    unsafe {
-        syscall::syscall2(
-            syscall::SYS_NANOSLEEP,
-            req as *const Timespec as usize,
-            rem_ptr as usize,
-        ) as i32
-    }
+    syscall::syscall2(
+        syscall::SYS_NANOSLEEP,
+        req as *const Timespec as usize,
+        rem_ptr as usize,
+    ) as i32
 }
 
 /// Sleep for specified seconds
@@ -199,7 +193,7 @@ pub fn usleep(usec: u32) -> i32 {
 
 /// Convert time_t to broken-down time (UTC)
 pub fn gmtime_r<'a>(timer: &i64, result: &'a mut Tm) -> Option<&'a mut Tm> {
-    let mut t = *timer;
+    let t = *timer;
 
     // Days since epoch
     let days = t / 86400;

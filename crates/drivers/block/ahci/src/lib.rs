@@ -3,16 +3,15 @@
 //! Implements the AHCI 1.3 specification for SATA storage devices.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 
 mod hba;
 mod port;
 
-use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU32, Ordering};
 use spin::Mutex;
 
 use block::{BlockDevice, BlockDeviceInfo, BlockError, BlockResult};
@@ -354,7 +353,7 @@ impl AhciController {
     }
 
     /// Get a port by index
-    pub fn port(&self, index: usize) -> Option<&AhciPort> {
+    pub fn port(&self, _index: usize) -> Option<&AhciPort> {
         // This is not quite right but shows the structure
         None
     }

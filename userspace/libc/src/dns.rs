@@ -538,7 +538,7 @@ fn build_ptr_query(addr: u32, buf: &mut [u8]) -> usize {
     let mut name_pos = 0;
 
     // Helper to write a number as decimal
-    let mut write_num = |n: u8, buf: &mut [u8], pos: &mut usize| {
+    let write_num = |n: u8, buf: &mut [u8], pos: &mut usize| {
         if n >= 100 {
             buf[*pos] = b'0' + n / 100;
             *pos += 1;
