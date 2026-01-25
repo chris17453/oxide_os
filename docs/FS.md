@@ -158,17 +158,17 @@ Implement complete ext4 filesystem support for OXIDE OS including:
 
 ### Phase 7: mkfs.ext4 Utility (~600 LOC)
 
-- [ ] Parse command line (device, block size, label)
-- [ ] Initialize superblock with defaults
-- [ ] Calculate block groups
-- [ ] Write block group descriptors
-- [ ] Initialize bitmaps (all free except metadata)
-- [ ] Create root inode (inode 2)
-- [ ] Create lost+found directory
-- [ ] Write superblock
+- [x] Parse command line (device, block size, label)
+- [x] Initialize superblock with defaults
+- [x] Calculate block groups
+- [x] Write block group descriptors
+- [x] Initialize bitmaps (all free except metadata)
+- [x] Create root inode (inode 2)
+- [x] Create lost+found directory
+- [x] Write superblock
 
-**Status:** Not Started
-**Files:** `userspace/mkfs-ext4/src/main.rs`
+**Status:** Complete
+**File:** `userspace/coreutils/src/bin/mkfs_ext4.rs`
 
 ---
 
@@ -396,4 +396,4 @@ Implemented full read/write support for ext4 filesystems:
 | 4. VnodeOps Integration | ✅ Complete | All read/write ops implemented |
 | 5. Journal Support | ⏳ Pending | Recovery and transactions |
 | 6. Boot Integration | ✅ Complete | GPT parsing, auto-mount at /mnt/root |
-| 7. mkfs.ext4 | ⏳ Pending | Userspace utility |
+| 7. mkfs.ext4 | ✅ Complete | Userspace utility in coreutils |

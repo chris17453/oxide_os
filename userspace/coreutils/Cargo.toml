@@ -340,6 +340,11 @@ path = "src/bin/chown.rs"
 name = "fw"
 path = "src/bin/fw.rs"
 
+# Filesystem utilities
+[[bin]]
+name = "mkfs_ext4"
+path = "src/bin/mkfs_ext4.rs"
+
 [dependencies]
 libc = { path = "../libc" }
 heapless = "0.8"
