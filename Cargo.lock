@@ -510,12 +510,15 @@ version = "0.1.0"
 dependencies = [
  "arch-traits",
  "arch-x86_64",
+ "block",
  "boot-proto",
  "crypto",
  "devfs",
  "dhcp",
  "elf",
+ "ext4",
  "fb",
+ "gpt",
  "initramfs",
  "input",
  "mm-cow",
@@ -542,6 +545,7 @@ dependencies = [
  "tmpfs",
  "tty",
  "vfs",
+ "virtio-blk",
  "virtio-net",
 ]
 
@@ -1550,6 +1554,9 @@ name = "virtio-blk"
 version = "0.1.0"
 dependencies = [
  "block",
+ "mm-frame",
+ "mm-traits",
+ "pci",
  "spin 0.10.0",
 ]
 

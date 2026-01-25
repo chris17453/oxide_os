@@ -108,6 +108,12 @@ impl PciDevice {
             && (self.device_id == virtio_device::NET || self.device_id == virtio_modern::NET)
     }
 
+    /// Check if this is a VirtIO block device
+    pub fn is_virtio_blk(&self) -> bool {
+        self.vendor_id == vendor::VIRTIO
+            && (self.device_id == virtio_device::BLOCK || self.device_id == virtio_modern::BLOCK)
+    }
+
     /// Check if this is a network device
     pub fn is_network(&self) -> bool {
         self.class_code == class::NETWORK_CONTROLLER
@@ -333,6 +339,16 @@ pub fn find_virtio_net() -> Vec<PciDevice> {
         .lock()
         .iter()
         .filter(|d| d.is_virtio_net())
+        .cloned()
+        .collect()
+}
+
+/// Find all VirtIO block devices
+pub fn find_virtio_blk() -> Vec<PciDevice> {
+    DEVICES
+        .lock()
+        .iter()
+        .filter(|d| d.is_virtio_blk())
         .cloned()
         .collect()
 }

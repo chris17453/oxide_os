@@ -13,6 +13,8 @@ use core::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use spin::Mutex;
 
 use block::{BlockDevice, BlockDeviceInfo, BlockError, BlockResult};
+use mm_frame::frame_allocator;
+use mm_traits::FrameAllocator;
 
 /// VirtIO device status
 mod status {
@@ -183,7 +185,7 @@ struct Virtqueue {
 }
 
 impl Virtqueue {
-    /// Allocate and initialize a new virtqueue
+    /// Allocate and initialize a new virtqueue for modern VirtIO (MMIO)
     ///
     /// # Safety
     /// Requires a working heap allocator.
@@ -227,6 +229,76 @@ impl Virtqueue {
         // Initialize free list - chain all descriptors together
         for i in 0..num {
             // SAFETY: desc is valid and i is within bounds
+            unsafe { (*desc.add(i as usize)).next = i + 1 };
+        }
+
+        Some(Virtqueue {
+            desc_phys,
+            desc,
+            avail_phys,
+            avail,
+            used_phys,
+            used,
+            num,
+            free_head: 0,
+            num_free: num,
+            last_used_idx: 0,
+        })
+    }
+
+    /// Allocate and initialize a new virtqueue for legacy VirtIO PCI
+    ///
+    /// Legacy VirtIO requires all three rings in a single contiguous region with
+    /// the used ring starting at a page boundary.
+    ///
+    /// Layout:
+    /// - Descriptor table: at offset 0, size = 16 * num
+    /// - Available ring: immediately after descriptors, size = 6 + 2 * num
+    /// - Padding to next page boundary
+    /// - Used ring: at page-aligned offset, size = 6 + 8 * num
+    ///
+    /// # Safety
+    /// Requires a working frame allocator (call mm_frame::init_global_allocator first).
+    unsafe fn new_legacy(num: u16) -> Option<Self> {
+        // Calculate sizes
+        let desc_size = (num as usize) * core::mem::size_of::<VirtqDesc>();
+        let avail_size = 6 + 2 * (num as usize);
+        let used_size = 6 + 8 * (num as usize);
+
+        // For legacy, used ring must be at page boundary
+        // Calculate offset: round up (desc_size + avail_size) to page boundary
+        let avail_end = desc_size + avail_size;
+        let used_offset = (avail_end + 4095) & !4095; // Round up to 4096
+
+        let total_size = used_offset + used_size;
+        let num_pages = (total_size + 4095) / 4096;
+
+        // Allocate physical frames using the frame allocator
+        // This gives us a known physical address that we can use for DMA
+        let phys_addr = frame_allocator().alloc_frames(num_pages)?;
+        let phys_base = phys_addr.as_u64();
+
+        // Access the physical memory through the physical map
+        let virt_base = phys_to_virt(phys_base);
+        let ptr = virt_base as *mut u8;
+
+        // Zero the memory
+        unsafe {
+            core::ptr::write_bytes(ptr, 0, num_pages * 4096);
+        }
+
+        // Calculate addresses within the allocation
+        let desc = ptr as *mut VirtqDesc;
+        let avail = unsafe { ptr.add(desc_size) } as *mut VirtqAvail;
+        let used = unsafe { ptr.add(used_offset) } as *mut VirtqUsed;
+
+        // Physical addresses are straightforward since we allocated physical frames
+        let desc_phys = phys_base;
+        let avail_phys = phys_base + desc_size as u64;
+        let used_phys = phys_base + used_offset as u64;
+
+        // Initialize free list - chain all descriptors together
+        for i in 0..num {
             unsafe { (*desc.add(i as usize)).next = i + 1 };
         }
 
@@ -336,24 +408,85 @@ pub struct VirtioBlk {
     req_buffers: Mutex<RequestBuffers>,
 }
 
+/// Size of the data bounce buffer per slot (one sector)
+const SECTOR_SIZE: usize = 512;
+
 /// Request buffer management
+///
+/// These buffers are allocated from physical frames for DMA access.
 struct RequestBuffers {
-    /// Headers (one per possible descriptor)
-    headers: Box<[VirtioBlkReqHeader; QUEUE_SIZE]>,
-    /// Status bytes (one per possible descriptor)
-    status: Box<[u8; QUEUE_SIZE]>,
+    /// Physical address of headers array
+    headers_phys: u64,
+    /// Virtual address of headers array
+    headers: *mut VirtioBlkReqHeader,
+    /// Physical address of status array
+    status_phys: u64,
+    /// Virtual address of status array
+    status: *mut u8,
+    /// Physical address of data bounce buffer
+    data_phys: u64,
+    /// Virtual address of data bounce buffer (QUEUE_SIZE * SECTOR_SIZE bytes)
+    data: *mut u8,
 }
 
 impl RequestBuffers {
-    fn new() -> Self {
-        RequestBuffers {
-            headers: Box::new([VirtioBlkReqHeader {
-                req_type: 0,
-                reserved: 0,
-                sector: 0,
-            }; QUEUE_SIZE]),
-            status: Box::new([0u8; QUEUE_SIZE]),
+    /// Allocate request buffers from physical frames
+    fn new_dma() -> Option<Self> {
+        // Calculate sizes
+        let headers_size = QUEUE_SIZE * core::mem::size_of::<VirtioBlkReqHeader>();
+        let status_size = QUEUE_SIZE;
+        let data_size = QUEUE_SIZE * SECTOR_SIZE; // Bounce buffer for data
+        let total_size = headers_size + status_size + data_size;
+        let num_pages = (total_size + 4095) / 4096;
+
+        // Allocate physical frames
+        let phys_addr = frame_allocator().alloc_frames(num_pages)?;
+        let phys_base = phys_addr.as_u64();
+
+        // Access through physical map
+        let virt_base = phys_to_virt(phys_base);
+        let ptr = virt_base as *mut u8;
+
+        // Zero the memory
+        unsafe {
+            core::ptr::write_bytes(ptr, 0, num_pages * 4096);
         }
+
+        let headers = ptr as *mut VirtioBlkReqHeader;
+        let status = unsafe { ptr.add(headers_size) };
+        let data = unsafe { ptr.add(headers_size + status_size) };
+
+        Some(RequestBuffers {
+            headers_phys: phys_base,
+            headers,
+            status_phys: phys_base + headers_size as u64,
+            status,
+            data_phys: phys_base + (headers_size + status_size) as u64,
+            data,
+        })
+    }
+
+    /// Get header at slot index (returns virtual and physical addresses)
+    fn header(&self, slot: usize) -> (*mut VirtioBlkReqHeader, u64) {
+        let offset = slot * core::mem::size_of::<VirtioBlkReqHeader>();
+        let virt = unsafe { self.headers.add(slot) };
+        let phys = self.headers_phys + offset as u64;
+        (virt, phys)
+    }
+
+    /// Get status byte at slot index (returns virtual and physical addresses)
+    fn status(&self, slot: usize) -> (*mut u8, u64) {
+        let virt = unsafe { self.status.add(slot) };
+        let phys = self.status_phys + slot as u64;
+        (virt, phys)
+    }
+
+    /// Get data bounce buffer at slot index (returns virtual and physical addresses)
+    fn data_buffer(&self, slot: usize) -> (*mut u8, u64) {
+        let offset = slot * SECTOR_SIZE;
+        let virt = unsafe { self.data.add(offset) };
+        let phys = self.data_phys + offset as u64;
+        (virt, phys)
     }
 }
 
@@ -456,6 +589,9 @@ impl VirtioBlk {
             dev_status |= status::DRIVER_OK;
             core::ptr::write_volatile((mmio_base + mmio::STATUS) as *mut u32, dev_status as u32);
 
+            // Allocate DMA-safe request buffers
+            let req_buffers = RequestBuffers::new_dma()?;
+
             Some(VirtioBlk {
                 mmio_base,
                 capacity,
@@ -463,7 +599,7 @@ impl VirtioBlk {
                 read_only,
                 supports_flush,
                 queue: Mutex::new(queue),
-                req_buffers: Mutex::new(RequestBuffers::new()),
+                req_buffers: Mutex::new(req_buffers),
             })
         }
     }
@@ -480,15 +616,21 @@ impl VirtioBlk {
 
     /// Notify the device that there are buffers available
     fn notify(&self) {
-        unsafe {
-            core::ptr::write_volatile((self.mmio_base + mmio::QUEUE_NOTIFY) as *mut u32, 0);
+        if self.is_pci_io() {
+            // PCI I/O port mode
+            outw(self.io_base() + pci_io::QUEUE_NOTIFY, 0);
+        } else {
+            // MMIO mode
+            unsafe {
+                core::ptr::write_volatile((self.mmio_base + mmio::QUEUE_NOTIFY) as *mut u32, 0);
+            }
         }
     }
 
     /// Perform a block I/O request (internal)
     fn do_request(&self, req_type: u32, sector: u64, data: Option<&mut [u8]>) -> BlockResult<()> {
         let mut queue = self.queue.lock();
-        let mut buffers = self.req_buffers.lock();
+        let buffers = self.req_buffers.lock();
 
         // Allocate descriptors (we need 2 or 3)
         // Descriptor 0: Request header (device-readable)
@@ -505,17 +647,22 @@ impl VirtioBlk {
         // Use descriptor index for buffer slot
         let slot = desc_header as usize;
 
-        // Set up request header
-        buffers.headers[slot] = VirtioBlkReqHeader {
-            req_type,
-            reserved: 0,
-            sector,
-        };
-        buffers.status[slot] = 0xFF; // Invalid status to detect completion
+        // Get DMA-safe header and status buffers with their physical addresses
+        let (header_ptr, header_phys) = buffers.header(slot);
+        let (status_ptr, status_phys) = buffers.status(slot);
 
-        // Get physical addresses
-        let header_phys = virt_to_phys(&buffers.headers[slot] as *const _ as u64);
-        let status_phys = virt_to_phys(&buffers.status[slot] as *const _ as u64);
+        // Set up request header
+        unsafe {
+            *header_ptr = VirtioBlkReqHeader {
+                req_type,
+                reserved: 0,
+                sector,
+            };
+            *status_ptr = 0xFF; // Invalid status to detect completion
+        }
+
+        // Get DMA-safe data bounce buffer
+        let (bounce_ptr, bounce_phys) = buffers.data_buffer(slot);
 
         // Build descriptor chain
         unsafe {
@@ -525,15 +672,20 @@ impl VirtioBlk {
             hdr.len = core::mem::size_of::<VirtioBlkReqHeader>() as u32;
 
             if let (Some(desc_data), Some(data)) = (desc_data, data.as_ref()) {
-                // Has data buffer
+                // Has data buffer - use bounce buffer for DMA safety
                 hdr.flags = desc_flags::NEXT;
                 hdr.next = desc_data;
 
-                // Data descriptor
+                // For writes (OUT), copy data from caller buffer to bounce buffer
+                if req_type == req_type::OUT {
+                    let copy_len = data.len().min(SECTOR_SIZE);
+                    core::ptr::copy_nonoverlapping(data.as_ptr(), bounce_ptr, copy_len);
+                }
+
+                // Data descriptor - use bounce buffer physical address
                 let dat = &mut *queue.desc.add(desc_data as usize);
-                let data_phys = virt_to_phys(data.as_ptr() as u64);
-                dat.addr = data_phys;
-                dat.len = data.len() as u32;
+                dat.addr = bounce_phys;
+                dat.len = data.len().min(SECTOR_SIZE as usize) as u32;
                 dat.flags = desc_flags::NEXT;
                 if req_type == req_type::IN {
                     dat.flags |= desc_flags::WRITE; // Device writes to this buffer
@@ -577,9 +729,21 @@ impl VirtioBlk {
             if queue.has_completed() {
                 let (_id, _len) = queue.pop_used().unwrap();
 
-                // Check status
+                // Check status and copy data back for reads
                 let buffers = self.req_buffers.lock();
-                let status = buffers.status[slot];
+                let (status_ptr, _) = buffers.status(slot);
+                let status = unsafe { *status_ptr };
+
+                // For reads (IN), copy data from bounce buffer back to caller's buffer
+                if req_type == req_type::IN && status == blk_status::OK {
+                    if let Some(data) = data {
+                        let (bounce_ptr, _) = buffers.data_buffer(slot);
+                        let copy_len = data.len().min(SECTOR_SIZE);
+                        unsafe {
+                            core::ptr::copy_nonoverlapping(bounce_ptr, data.as_mut_ptr(), copy_len);
+                        }
+                    }
+                }
                 drop(buffers);
 
                 // Free descriptor chain
@@ -722,4 +886,237 @@ pub unsafe fn probe_all() -> Vec<VirtioBlk> {
     }
 
     devices
+}
+
+/// PCI legacy I/O port register offsets
+mod pci_io {
+    pub const DEVICE_FEATURES: u16 = 0x00;
+    pub const DRIVER_FEATURES: u16 = 0x04;
+    pub const QUEUE_ADDRESS: u16 = 0x08; // Legacy: queue PFN
+    pub const QUEUE_SIZE: u16 = 0x0C;
+    pub const QUEUE_SELECT: u16 = 0x0E;
+    pub const QUEUE_NOTIFY: u16 = 0x10;
+    pub const DEVICE_STATUS: u16 = 0x12;
+    pub const ISR_STATUS: u16 = 0x13;
+    pub const CONFIG: u16 = 0x14; // Device-specific config starts here
+}
+
+/// Probe all virtio-blk devices on the PCI bus
+///
+/// This function must be called after PCI enumeration.
+pub fn probe_all_pci() -> Vec<VirtioBlk> {
+    let mut devices = Vec::new();
+
+    // Find all VirtIO block devices on PCI bus
+    let pci_devices = pci::find_virtio_blk();
+
+    for pci_dev in pci_devices {
+        // SAFETY: The PCI device is a valid VirtIO block device
+        if let Some(dev) = unsafe { VirtioBlk::from_pci(&pci_dev) } {
+            devices.push(dev);
+        }
+    }
+
+    devices
+}
+
+impl VirtioBlk {
+    /// Create a VirtIO block device from a PCI device
+    ///
+    /// # Safety
+    /// The PCI device must be a valid VirtIO block device.
+    pub unsafe fn from_pci(pci_dev: &pci::PciDevice) -> Option<Self> {
+        // Verify this is a VirtIO block device
+        if !pci_dev.is_virtio_blk() {
+            return None;
+        }
+
+        // Enable the device
+        pci::enable_bus_master(pci_dev.address);
+        pci::enable_io_space(pci_dev.address);
+        pci::enable_memory_space(pci_dev.address);
+
+        // Get BAR0
+        let (is_io, base) = match pci_dev.bars[0] {
+            pci::PciBar::Io { port, .. } => (true, port as u64),
+            pci::PciBar::Memory { address, .. } => (false, address),
+            pci::PciBar::None => return None,
+        };
+
+        if is_io {
+            // Legacy I/O port based initialization
+            let io_base = base as u16;
+
+            // Reset device
+            outb(io_base + pci_io::DEVICE_STATUS, 0);
+
+            // Set ACKNOWLEDGE
+            outb(io_base + pci_io::DEVICE_STATUS, status::ACKNOWLEDGE);
+
+            // Set DRIVER
+            outb(io_base + pci_io::DEVICE_STATUS, status::ACKNOWLEDGE | status::DRIVER);
+
+            // Read device features
+            let device_features = inl(io_base + pci_io::DEVICE_FEATURES) as u64;
+
+            // Negotiate features (accept RO, BLK_SIZE, FLUSH)
+            let accepted = device_features & (features::RO | features::BLK_SIZE | features::FLUSH);
+            outl(io_base + pci_io::DRIVER_FEATURES, accepted as u32);
+
+            // Set FEATURES_OK
+            outb(io_base + pci_io::DEVICE_STATUS,
+                 status::ACKNOWLEDGE | status::DRIVER | status::FEATURES_OK);
+
+            // Verify FEATURES_OK was accepted
+            let status_read = inb(io_base + pci_io::DEVICE_STATUS);
+            if status_read & status::FEATURES_OK == 0 {
+                return None;
+            }
+
+            // Read device configuration (capacity is 8 bytes at CONFIG offset)
+            let capacity_lo = inl(io_base + pci_io::CONFIG) as u64;
+            let capacity_hi = inl(io_base + pci_io::CONFIG + 4) as u64;
+            let capacity = (capacity_hi << 32) | capacity_lo;
+
+            let block_size = if device_features & features::BLK_SIZE != 0 {
+                // Block size is at offset 0x14 from config start
+                inl(io_base + pci_io::CONFIG + 0x14)
+            } else {
+                512
+            };
+
+            let read_only = device_features & features::RO != 0;
+            let supports_flush = device_features & features::FLUSH != 0;
+
+            // Set up virtqueue 0
+            outw(io_base + pci_io::QUEUE_SELECT, 0);
+            let queue_max = inw(io_base + pci_io::QUEUE_SIZE);
+            if queue_max == 0 {
+                return None;
+            }
+            let queue_size = queue_max.min(QUEUE_SIZE as u16);
+
+            // Allocate virtqueue with legacy layout (used ring page-aligned)
+            // SAFETY: Requires working heap allocator
+            let queue = unsafe { Virtqueue::new_legacy(queue_size)? };
+
+            // Legacy virtio uses page-aligned queue at single physical address
+            // The queue PFN (Page Frame Number) is written to the device
+            // For legacy: all three rings must be contiguous with used at page boundary
+            let queue_pfn = (queue.desc_phys / 4096) as u32;
+            outl(io_base + pci_io::QUEUE_ADDRESS, queue_pfn);
+
+            // Set DRIVER_OK
+            outb(io_base + pci_io::DEVICE_STATUS,
+                 status::ACKNOWLEDGE | status::DRIVER | status::FEATURES_OK | status::DRIVER_OK);
+
+            // Allocate DMA-safe request buffers
+            let req_buffers = RequestBuffers::new_dma()?;
+
+            Some(VirtioBlk {
+                mmio_base: io_base as u64 | 0x8000_0000_0000_0000, // Mark as PCI I/O mode
+                capacity,
+                block_size,
+                read_only,
+                supports_flush,
+                queue: Mutex::new(queue),
+                req_buffers: Mutex::new(req_buffers),
+            })
+        } else {
+            // Memory-mapped BAR - try MMIO-style probing
+            // Map the physical address to virtual
+            let virt_base = phys_to_virt(base);
+            // SAFETY: base is a valid PCI BAR address
+            unsafe { Self::probe(virt_base) }
+        }
+    }
+
+    /// Check if device uses PCI I/O port mode (vs MMIO)
+    fn is_pci_io(&self) -> bool {
+        self.mmio_base & 0x8000_0000_0000_0000 != 0
+    }
+
+    /// Get I/O base port (only valid if is_pci_io() returns true)
+    fn io_base(&self) -> u16 {
+        (self.mmio_base & 0xFFFF) as u16
+    }
+}
+
+// x86_64 I/O port access functions
+#[inline]
+fn inb(port: u16) -> u8 {
+    let value: u8;
+    unsafe {
+        core::arch::asm!(
+            "in al, dx",
+            out("al") value,
+            in("dx") port,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+    value
+}
+
+#[inline]
+fn outb(port: u16, value: u8) {
+    unsafe {
+        core::arch::asm!(
+            "out dx, al",
+            in("dx") port,
+            in("al") value,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+}
+
+#[inline]
+fn inw(port: u16) -> u16 {
+    let value: u16;
+    unsafe {
+        core::arch::asm!(
+            "in ax, dx",
+            out("ax") value,
+            in("dx") port,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+    value
+}
+
+#[inline]
+fn outw(port: u16, value: u16) {
+    unsafe {
+        core::arch::asm!(
+            "out dx, ax",
+            in("dx") port,
+            in("ax") value,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+}
+
+#[inline]
+fn inl(port: u16) -> u32 {
+    let value: u32;
+    unsafe {
+        core::arch::asm!(
+            "in eax, dx",
+            out("eax") value,
+            in("dx") port,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+    value
+}
+
+#[inline]
+fn outl(port: u16, value: u32) {
+    unsafe {
+        core::arch::asm!(
+            "out dx, eax",
+            in("dx") port,
+            in("eax") value,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
 }
