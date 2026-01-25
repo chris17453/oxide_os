@@ -363,3 +363,220 @@ fn traverse_extent_tree_from_block(
     let index = target_index.ok_or(Ext4Error::InvalidExtent)?;
     traverse_extent_tree_from_block(device, sb, index.leaf_block(), depth - 1, logical_block)
 }
+
+// ============================================================================
+// WRITE SUPPORT
+// ============================================================================
+
+impl Extent {
+    /// Create a new extent
+    pub fn new(logical_block: u32, physical_block: u64, len: u16) -> Self {
+        Extent {
+            ee_block: logical_block,
+            ee_len: len,
+            ee_start_hi: (physical_block >> 32) as u16,
+            ee_start_lo: physical_block as u32,
+        }
+    }
+}
+
+/// Insert an extent into an inode's extent tree (depth 0 only for now)
+///
+/// This handles the simple case where extents fit directly in the inode.
+/// Returns the number of blocks that were successfully mapped.
+pub fn insert_extent(
+    inode: &mut crate::inode::Ext4Inode,
+    logical_block: u32,
+    physical_block: u64,
+    len: u16,
+) -> Ext4Result<u16> {
+    if !inode.uses_extents() {
+        return Err(Ext4Error::UnsupportedFeature);
+    }
+
+    let header = parse_header(&inode.i_block)?;
+
+    // Currently only support depth 0 (extents in inode)
+    if header.eh_depth != 0 {
+        return Err(Ext4Error::UnsupportedFeature);
+    }
+
+    let max_extents = header.eh_max as usize;
+    let current_entries = header.eh_entries as usize;
+
+    // Check if we have room for another extent
+    if current_entries >= max_extents {
+        // Would need to grow the tree - not implemented yet
+        return Err(Ext4Error::NoSpace);
+    }
+
+    // Create the new extent
+    let new_extent = Extent::new(logical_block, physical_block, len);
+
+    // Find insertion point (keep extents sorted by logical block)
+    let mut insert_pos = current_entries;
+    let i_block_bytes = unsafe {
+        core::slice::from_raw_parts_mut(inode.i_block.as_mut_ptr() as *mut u8, 60)
+    };
+
+    // Read existing extents
+    let extents_start = 12; // After header
+    for i in 0..current_entries {
+        let offset = extents_start + i * 12;
+        let extent: Extent = unsafe {
+            core::ptr::read_unaligned(i_block_bytes[offset..].as_ptr() as *const Extent)
+        };
+
+        if logical_block < extent.ee_block {
+            insert_pos = i;
+            break;
+        }
+    }
+
+    // Shift extents after insertion point
+    for i in (insert_pos..current_entries).rev() {
+        let src_offset = extents_start + i * 12;
+        let dst_offset = extents_start + (i + 1) * 12;
+
+        let extent: Extent = unsafe {
+            core::ptr::read_unaligned(i_block_bytes[src_offset..].as_ptr() as *const Extent)
+        };
+
+        let extent_bytes = unsafe {
+            core::slice::from_raw_parts(&extent as *const Extent as *const u8, 12)
+        };
+        i_block_bytes[dst_offset..dst_offset + 12].copy_from_slice(extent_bytes);
+    }
+
+    // Write the new extent
+    let offset = extents_start + insert_pos * 12;
+    let extent_bytes = unsafe {
+        core::slice::from_raw_parts(&new_extent as *const Extent as *const u8, 12)
+    };
+    i_block_bytes[offset..offset + 12].copy_from_slice(extent_bytes);
+
+    // Update header entry count
+    let new_header = ExtentHeader {
+        eh_magic: EXT4_EXT_MAGIC,
+        eh_entries: (current_entries + 1) as u16,
+        eh_max: header.eh_max,
+        eh_depth: 0,
+        eh_generation: header.eh_generation,
+    };
+
+    let header_bytes = unsafe {
+        core::slice::from_raw_parts(&new_header as *const ExtentHeader as *const u8, 12)
+    };
+    i_block_bytes[..12].copy_from_slice(header_bytes);
+
+    Ok(len)
+}
+
+/// Try to extend an existing extent to cover additional blocks
+///
+/// Returns true if the extent was extended, false if a new extent is needed.
+pub fn try_extend_extent(
+    inode: &mut crate::inode::Ext4Inode,
+    logical_block: u32,
+    physical_block: u64,
+) -> Ext4Result<bool> {
+    if !inode.uses_extents() {
+        return Err(Ext4Error::UnsupportedFeature);
+    }
+
+    let header = parse_header(&inode.i_block)?;
+
+    if header.eh_depth != 0 {
+        return Ok(false); // Can't extend in deeper trees without full implementation
+    }
+
+    let current_entries = header.eh_entries as usize;
+    let i_block_bytes = unsafe {
+        core::slice::from_raw_parts_mut(inode.i_block.as_mut_ptr() as *mut u8, 60)
+    };
+
+    // Check each extent to see if we can extend it
+    let extents_start = 12;
+    for i in 0..current_entries {
+        let offset = extents_start + i * 12;
+        let mut extent: Extent = unsafe {
+            core::ptr::read_unaligned(i_block_bytes[offset..].as_ptr() as *const Extent)
+        };
+
+        // Check if this extent ends right before our logical block
+        let extent_end_logical = extent.ee_block + extent.len();
+        let extent_end_physical = extent.start() + extent.len() as u64;
+
+        if extent_end_logical == logical_block && extent_end_physical == physical_block {
+            // Can extend! Check length limit (max 32768 blocks, or 15 bits)
+            if extent.ee_len < 0x7FFF {
+                extent.ee_len += 1;
+
+                // Write back
+                let extent_bytes = unsafe {
+                    core::slice::from_raw_parts(&extent as *const Extent as *const u8, 12)
+                };
+                i_block_bytes[offset..offset + 12].copy_from_slice(extent_bytes);
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
+/// Get the last logical block covered by extents in an inode
+pub fn last_logical_block(inode: &crate::inode::Ext4Inode) -> Ext4Result<Option<u32>> {
+    if !inode.uses_extents() {
+        return Err(Ext4Error::UnsupportedFeature);
+    }
+
+    let header = parse_header(&inode.i_block)?;
+
+    if header.eh_depth != 0 {
+        // For deeper trees, we'd need to traverse to the rightmost leaf
+        return Err(Ext4Error::UnsupportedFeature);
+    }
+
+    if header.eh_entries == 0 {
+        return Ok(None);
+    }
+
+    let (_, extents) = get_extents_from_inode(&inode.i_block)?;
+
+    let mut max_end = 0u32;
+    for extent in extents {
+        let end = extent.ee_block + extent.len();
+        if end > max_end {
+            max_end = end;
+        }
+    }
+
+    if max_end == 0 {
+        Ok(None)
+    } else {
+        Ok(Some(max_end - 1))
+    }
+}
+
+/// Count total blocks covered by extents
+pub fn count_extent_blocks(inode: &crate::inode::Ext4Inode) -> Ext4Result<u64> {
+    if !inode.uses_extents() {
+        return Err(Ext4Error::UnsupportedFeature);
+    }
+
+    let header = parse_header(&inode.i_block)?;
+
+    if header.eh_depth != 0 {
+        return Err(Ext4Error::UnsupportedFeature);
+    }
+
+    let (_, extents) = get_extents_from_inode(&inode.i_block)?;
+
+    let mut total = 0u64;
+    for extent in extents {
+        total += extent.len() as u64;
+    }
+
+    Ok(total)
+}

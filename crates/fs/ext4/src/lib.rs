@@ -1,11 +1,12 @@
 //! ext4 Filesystem Implementation for OXIDE OS
 //!
-//! Provides read support for ext4 filesystems with:
+//! Provides read/write support for ext4 filesystems with:
 //! - Superblock parsing and validation
 //! - Block group descriptor handling
-//! - Inode reading with extent tree support
-//! - Directory traversal
-//! - File reading
+//! - Block and inode bitmap allocation
+//! - Inode reading/writing with extent tree support
+//! - Directory traversal and modification
+//! - File reading and writing
 //! - VFS integration via VnodeOps
 
 #![no_std]
@@ -13,6 +14,7 @@
 
 extern crate alloc;
 
+pub mod bitmap;
 pub mod dir;
 pub mod error;
 pub mod extent;
