@@ -33,6 +33,7 @@ members = [
     "crates/vfs/procfs",
     "crates/fs/oxidefs",
     "crates/fs/fat32",
+    "crates/fs/ext4",
     "crates/net/net",
     "crates/net/tcpip",
     "crates/net/dhcp",
@@ -161,6 +162,7 @@ nvme = { path = "crates/drivers/block/nvme" }
 ahci = { path = "crates/drivers/block/ahci" }
 oxidefs = { path = "crates/fs/oxidefs" }
 fat32 = { path = "crates/fs/fat32" }
+ext4 = { path = "crates/fs/ext4" }
 net = { path = "crates/net/net" }
 tcpip = { path = "crates/net/tcpip" }
 dhcp = { path = "crates/net/dhcp" }

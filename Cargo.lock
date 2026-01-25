@@ -265,6 +265,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ext4"
+version = "0.1.0"
+dependencies = [
+ "block",
+ "spin 0.10.0",
+ "vfs",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
