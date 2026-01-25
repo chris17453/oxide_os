@@ -3,6 +3,7 @@
 //! Provides the syscall dispatch table and handlers.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 

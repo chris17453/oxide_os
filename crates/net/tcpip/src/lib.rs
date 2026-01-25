@@ -3,6 +3,7 @@
 //! A lightweight TCP/IP network stack for Oxide OS.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 

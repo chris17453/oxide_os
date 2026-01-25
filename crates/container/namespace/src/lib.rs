@@ -3,6 +3,7 @@
 //! Implements PID, Mount, Network, User, UTS, IPC, and Cgroup namespaces.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 
