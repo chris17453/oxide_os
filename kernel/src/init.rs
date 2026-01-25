@@ -19,7 +19,7 @@ use elf::ElfExecutable;
 use mm_frame::MemoryRegion;
 use mm_paging::{phys_to_virt, read_cr3};
 use mm_traits::FrameAllocator as _;
-use block::BlockDevice;
+use block::{BlockDevice, BlockDeviceInfo, BlockError, BlockResult};
 use net::NetworkDevice;
 use os_core::VirtAddr;
 use proc::{Process, alloc_pid, process_table};
@@ -559,14 +559,26 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(writer, "[BLK] Initializing block devices...");
 
     // Probe for VirtIO block devices at standard MMIO addresses
-    let virtio_blk_devices = unsafe { virtio_blk::probe_all() };
+    let mut virtio_blk_devices = unsafe { virtio_blk::probe_all() };
+    let mmio_count = virtio_blk_devices.len();
+
+    // Probe for VirtIO block devices on PCI bus
+    let pci_blk_devices = virtio_blk::probe_all_pci();
+    let pci_count = pci_blk_devices.len();
+    virtio_blk_devices.extend(pci_blk_devices);
+
     let _ = writeln!(
         writer,
-        "[BLK] Found {} VirtIO block devices",
-        virtio_blk_devices.len()
+        "[BLK] Found {} VirtIO block devices ({} MMIO, {} PCI)",
+        virtio_blk_devices.len(),
+        mmio_count,
+        pci_count
     );
 
-    // Register each device and check for ext4 filesystem
+    // Track if we found a root ext4 partition to mount
+    let mut ext4_root_partition: Option<Arc<dyn BlockDevice>> = None;
+
+    // Register each device and check for partitions/filesystems
     for (idx, device) in virtio_blk_devices.into_iter().enumerate() {
         let info = device.info();
         let _ = writeln!(
@@ -578,23 +590,118 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             if info.read_only { "RO" } else { "RW" }
         );
 
-        // Check if this looks like an ext4 filesystem
-        if ext4::is_ext4(&device) {
-            let _ = writeln!(writer, "[BLK] virtio{}: ext4 filesystem detected", idx);
+        // Wrap device in Arc for partition sharing
+        let device_arc: Arc<dyn BlockDevice> = Arc::new(device);
 
-            // Get ext4 filesystem info
-            if let Ok(ext4_info) = ext4::get_info(&device) {
-                let _ = writeln!(
-                    writer,
-                    "[BLK] virtio{}: {} total blocks, {} free blocks",
-                    idx, ext4_info.blocks_total, ext4_info.blocks_free
-                );
+        // Check for GPT partition table
+        if gpt::has_gpt(&*device_arc) {
+            let _ = writeln!(writer, "[BLK] virtio{}: GPT partition table detected", idx);
+
+            match gpt::Gpt::parse(&*device_arc) {
+                Ok(gpt_table) => {
+                    let _ = writeln!(
+                        writer,
+                        "[BLK] virtio{}: {} partitions found",
+                        idx,
+                        gpt_table.entries.len()
+                    );
+
+                    // Get partitions as Partition objects
+                    let partitions = gpt_table.partitions(device_arc.clone());
+
+                    for (part_idx, partition) in partitions.into_iter().enumerate() {
+                        let part_num = part_idx + 1;
+                        let part_name = alloc::format!("virtio{}p{}", idx, part_num);
+                        let entry = &gpt_table.entries[part_idx];
+
+                        // Get partition type
+                        let type_str = if entry.is_linux_fs() {
+                            "Linux filesystem"
+                        } else if entry.is_efi_system() {
+                            "EFI System"
+                        } else if entry.is_fs() {
+                            "OXIDE filesystem"
+                        } else {
+                            "Unknown"
+                        };
+
+                        let _ = writeln!(
+                            writer,
+                            "[BLK]   {}: LBA {}-{} ({} blocks) - {}",
+                            part_name,
+                            entry.first_lba,
+                            entry.last_lba,
+                            entry.size_blocks(),
+                            type_str
+                        );
+
+                        // Wrap partition in Arc for filesystem detection
+                        let partition_arc: Arc<dyn BlockDevice> = Arc::new(partition);
+
+                        // Check if partition contains ext4 filesystem
+                        if ext4::is_ext4(&*partition_arc) {
+                            let _ = writeln!(writer, "[BLK]   {}: ext4 filesystem detected", part_name);
+
+                            if let Ok(ext4_info) = ext4::get_info(&*partition_arc) {
+                                let _ = writeln!(
+                                    writer,
+                                    "[BLK]   {}: {} total blocks, {} free blocks",
+                                    part_name, ext4_info.blocks_total, ext4_info.blocks_free
+                                );
+                            }
+
+                            // If this is a Linux filesystem partition with ext4, consider it for root mount
+                            if entry.is_linux_fs() && ext4_root_partition.is_none() {
+                                ext4_root_partition = Some(partition_arc.clone());
+                                let _ = writeln!(
+                                    writer,
+                                    "[BLK]   {}: Selected as root filesystem candidate",
+                                    part_name
+                                );
+                            }
+                        }
+
+                        // Register partition as a block device
+                        // Need to create a new Partition since we moved the original
+                        let part_for_reg = block::Partition::new(
+                            device_arc.clone(),
+                            entry.first_lba,
+                            entry.size_blocks(),
+                            part_num as u8,
+                            Box::leak(part_name.clone().into_boxed_str()),
+                        );
+                        block::register_device(part_name, Box::new(part_for_reg));
+                    }
+                }
+                Err(e) => {
+                    let _ = writeln!(writer, "[BLK] virtio{}: GPT parse error: {:?}", idx, e);
+                }
+            }
+        } else {
+            // No GPT - check if whole disk is ext4 (raw filesystem)
+            if ext4::is_ext4(&*device_arc) {
+                let _ = writeln!(writer, "[BLK] virtio{}: ext4 filesystem detected (no partition table)", idx);
+
+                if let Ok(ext4_info) = ext4::get_info(&*device_arc) {
+                    let _ = writeln!(
+                        writer,
+                        "[BLK] virtio{}: {} total blocks, {} free blocks",
+                        idx, ext4_info.blocks_total, ext4_info.blocks_free
+                    );
+                }
+
+                // Use as root if no other candidate
+                if ext4_root_partition.is_none() {
+                    ext4_root_partition = Some(device_arc.clone());
+                    let _ = writeln!(writer, "[BLK] virtio{}: Selected as root filesystem candidate", idx);
+                }
             }
         }
 
-        // Register the device (Box for registration)
-        let name = alloc::format!("virtio{}", idx);
-        block::register_device(name, Box::new(device));
+        // Register the whole device
+        let dev_name = alloc::format!("virtio{}", idx);
+        // We need to clone the Arc and create a wrapper since we need a Box
+        block::register_device(dev_name, Box::new(BlockDeviceWrapper(device_arc)));
     }
 
     let _ = writeln!(writer, "[BLK] Block device initialization complete");
@@ -650,6 +757,54 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             // Non-fatal - directory may not exist in initramfs
         } else {
             let _ = writeln!(writer, "[VFS] Mounted tmpfs at {}", dir);
+        }
+    }
+
+    // Mount ext4 filesystem if found during block device initialization
+    if let Some(ext4_device) = ext4_root_partition {
+        let _ = writeln!(writer, "[EXT4] Mounting ext4 filesystem...");
+
+        // Create /mnt directory if it doesn't exist
+        if GLOBAL_VFS.lookup("/mnt").is_err() {
+            if let Ok(root) = GLOBAL_VFS.lookup("/") {
+                let _ = root.mkdir("mnt", vfs::Mode::DEFAULT_DIR);
+            }
+        }
+
+        // Create /mnt/root directory for ext4 mount
+        if let Ok(mnt) = GLOBAL_VFS.lookup("/mnt") {
+            let _ = mnt.mkdir("root", vfs::Mode::DEFAULT_DIR);
+        }
+
+        // Mount the ext4 filesystem
+        match ext4::mount(ext4_device, false) {
+            Ok(ext4_root) => {
+                if let Err(e) = GLOBAL_VFS.mount(ext4_root, "/mnt/root", MountFlags::empty(), "ext4") {
+                    let _ = writeln!(writer, "[EXT4] Failed to mount ext4: {:?}", e);
+                } else {
+                    let _ = writeln!(writer, "[EXT4] Mounted ext4 filesystem at /mnt/root");
+
+                    // List root directory contents
+                    if let Ok(root_vnode) = GLOBAL_VFS.lookup("/mnt/root") {
+                        let _ = writeln!(writer, "[EXT4] Root directory contents:");
+                        let mut offset = 0u64;
+                        let mut count = 0;
+                        while let Ok(Some(entry)) = root_vnode.readdir(offset) {
+                            if count < 10 {
+                                let _ = writeln!(writer, "[EXT4]   {}", entry.name);
+                            }
+                            count += 1;
+                            offset += 1;
+                        }
+                        if count > 10 {
+                            let _ = writeln!(writer, "[EXT4]   ... and {} more entries", count - 10);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = writeln!(writer, "[EXT4] Failed to mount ext4 filesystem: {:?}", e);
+            }
         }
     }
 
@@ -1100,4 +1255,40 @@ fn syscall_dispatch(
     }
 
     syscall::dispatch(number, arg1, arg2, arg3, arg4, arg5, arg6)
+}
+
+/// Wrapper for Arc<dyn BlockDevice> to implement BlockDevice
+///
+/// This allows registering Arc-wrapped devices with the block device registry
+/// which expects Box<dyn BlockDevice>.
+struct BlockDeviceWrapper(Arc<dyn BlockDevice>);
+
+impl BlockDevice for BlockDeviceWrapper {
+    fn read(&self, start_block: u64, buf: &mut [u8]) -> BlockResult<usize> {
+        self.0.read(start_block, buf)
+    }
+
+    fn write(&self, start_block: u64, buf: &[u8]) -> BlockResult<usize> {
+        self.0.write(start_block, buf)
+    }
+
+    fn flush(&self) -> BlockResult<()> {
+        self.0.flush()
+    }
+
+    fn block_size(&self) -> u32 {
+        self.0.block_size()
+    }
+
+    fn block_count(&self) -> u64 {
+        self.0.block_count()
+    }
+
+    fn info(&self) -> BlockDeviceInfo {
+        self.0.info()
+    }
+
+    fn is_read_only(&self) -> bool {
+        self.0.is_read_only()
+    }
 }

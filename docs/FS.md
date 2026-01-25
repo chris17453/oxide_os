@@ -138,11 +138,11 @@ Implement complete ext4 filesystem support for OXIDE OS including:
 - [x] Initialize VirtIO-blk devices
 - [x] Register block devices
 - [x] Detect ext4 filesystems on block devices
-- [ ] Parse GPT partitions
-- [ ] Find ext4 root partition
-- [ ] Mount ext4 at `/`
+- [x] Parse GPT partitions
+- [x] Find ext4 root partition
+- [x] Mount ext4 at `/mnt/root` (initramfs remains at `/`)
 
-**Status:** Block device probing implemented, partition/mount pending
+**Status:** Complete
 **File:** `kernel/src/init.rs`
 
 ---
