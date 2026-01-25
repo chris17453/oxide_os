@@ -58,6 +58,14 @@ struct Service {
     restart_count: u32,
     /// Maximum restarts before giving up
     max_restarts: u32,
+    /// User to run as (from USER= in service file)
+    user: [u8; 32],
+    /// User name length
+    user_len: usize,
+    /// Resolved UID (0 = root, -1 = not resolved)
+    uid: i32,
+    /// Resolved GID
+    gid: i32,
 }
 
 impl Service {
@@ -73,7 +81,15 @@ impl Service {
             restart: true,
             restart_count: 0,
             max_restarts: 5,
+            user: [0; 32],
+            user_len: 0,
+            uid: -1,  // -1 = not specified, run as current user
+            gid: -1,
         }
+    }
+
+    fn user_str(&self) -> &str {
+        core::str::from_utf8(&self.user[..self.user_len]).unwrap_or("")
     }
 
     fn name_str(&self) -> &str {
@@ -271,6 +287,21 @@ fn parse_service_file(name: &str, service: &mut Service) -> bool {
         service.enabled = !(value == b"no" || value == b"false" || value == b"0");
     }
 
+    // Parse USER= (user to run service as)
+    if let Some(user_start) = find_bytes(content, b"USER=") {
+        let start = user_start + 5;
+        let end = find_newline(&content[start..]).unwrap_or(content.len() - start);
+        let user_slice = &content[start..start + end];
+        service.user_len = user_slice.len().min(31);
+        service.user[..service.user_len].copy_from_slice(&user_slice[..service.user_len]);
+
+        // Resolve username to uid/gid
+        if let Some((uid, gid)) = resolve_user(service.user_str()) {
+            service.uid = uid;
+            service.gid = gid;
+        }
+    }
+
     true
 }
 
@@ -284,6 +315,74 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 /// Find newline in slice
 fn find_newline(data: &[u8]) -> Option<usize> {
     data.iter().position(|&b| b == b'\n')
+}
+
+/// Resolve username to uid and gid by reading /etc/passwd
+/// Returns (uid, gid) or None if user not found
+fn resolve_user(username: &str) -> Option<(i32, i32)> {
+    let fd = open2("/etc/passwd", O_RDONLY);
+    if fd < 0 {
+        return None;
+    }
+
+    let mut buf = [0u8; 2048];
+    let n = read(fd, &mut buf);
+    close(fd);
+
+    if n <= 0 {
+        return None;
+    }
+
+    // Parse passwd file format: username:password:uid:gid:gecos:home:shell
+    let content = core::str::from_utf8(&buf[..n as usize]).ok()?;
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let mut fields = line.split(':');
+        let name = fields.next()?;
+
+        if name == username {
+            let _password = fields.next()?;
+            let uid_str = fields.next()?;
+            let gid_str = fields.next()?;
+
+            let uid = parse_i32(uid_str)?;
+            let gid = parse_i32(gid_str)?;
+            return Some((uid, gid));
+        }
+    }
+
+    None
+}
+
+/// Parse i32 from string
+fn parse_i32(s: &str) -> Option<i32> {
+    let mut val: i32 = 0;
+    let mut negative = false;
+    let mut started = false;
+
+    for c in s.bytes() {
+        if c == b'-' && !started {
+            negative = true;
+            started = true;
+        } else if c.is_ascii_digit() {
+            val = val.checked_mul(10)?;
+            val = val.checked_add((c - b'0') as i32)?;
+            started = true;
+        } else if started {
+            break;
+        }
+    }
+
+    if !started {
+        return None;
+    }
+
+    Some(if negative { -val } else { val })
 }
 
 /// Start a service
@@ -440,6 +539,21 @@ fn start_service_by_index(index: usize) -> bool {
                 dup2(null_fd, 2);
                 if null_fd > 2 {
                     close(null_fd);
+                }
+            }
+
+            // Switch to specified user if configured
+            // Must set GID first, then UID (can't change GID after dropping root)
+            if service.gid >= 0 {
+                if setgid(service.gid as u32) != 0 {
+                    // Failed to set GID - exit
+                    _exit(1);
+                }
+            }
+            if service.uid >= 0 {
+                if setuid(service.uid as u32) != 0 {
+                    // Failed to set UID - exit
+                    _exit(1);
                 }
             }
 

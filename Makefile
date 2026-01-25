@@ -113,9 +113,12 @@ initramfs: userspace-release
 	@mkdir -p $(TARGET_DIR)/initramfs/sys
 	@mkdir -p $(TARGET_DIR)/initramfs/tmp
 	@mkdir -p $(TARGET_DIR)/initramfs/var/log
+	@mkdir -p $(TARGET_DIR)/initramfs/var/lib/dhcp
+	@mkdir -p $(TARGET_DIR)/initramfs/var/run
 	@mkdir -p $(TARGET_DIR)/initramfs/home
 	@mkdir -p $(TARGET_DIR)/initramfs/root
 	@mkdir -p $(TARGET_DIR)/initramfs/run
+	@mkdir -p $(TARGET_DIR)/initramfs/run/network
 	@# Copy init to /sbin
 	@cp "$(USERSPACE_OUT_RELEASE)/init" "$(TARGET_DIR)/initramfs/sbin/init"
 	@ln -sf /sbin/init "$(TARGET_DIR)/initramfs/init"
@@ -146,9 +149,18 @@ initramfs: userspace-release
 	@# Create symlinks for common aliases
 	@ln -sf /bin/true "$(TARGET_DIR)/initramfs/bin/:" 2>/dev/null || true
 	@ln -sf /bin/ls "$(TARGET_DIR)/initramfs/bin/dir" 2>/dev/null || true
-	@# Create etc files
+	@# Create etc files - passwd format: user:pass:uid:gid:gecos:home:shell
 	@echo "root:root:0:0:root:/root:/bin/esh" > $(TARGET_DIR)/initramfs/etc/passwd
+	@echo "nobody:x:65534:65534:Nobody:/:/bin/false" >> $(TARGET_DIR)/initramfs/etc/passwd
+	@echo "sshd:x:74:74:SSH Daemon:/var/empty/sshd:/bin/false" >> $(TARGET_DIR)/initramfs/etc/passwd
+	@echo "network:x:101:101:Network Daemon:/var/lib/dhcp:/bin/false" >> $(TARGET_DIR)/initramfs/etc/passwd
+	@# Create group file - format: group:pass:gid:members
 	@echo "root:x:0:" > $(TARGET_DIR)/initramfs/etc/group
+	@echo "nobody:x:65534:" >> $(TARGET_DIR)/initramfs/etc/group
+	@echo "sshd:x:74:" >> $(TARGET_DIR)/initramfs/etc/group
+	@echo "network:x:101:" >> $(TARGET_DIR)/initramfs/etc/group
+	@# Create sshd privilege separation directory
+	@mkdir -p $(TARGET_DIR)/initramfs/var/empty/sshd
 	@echo "PATH=/initramfs/bin:/initramfs/sbin:/bin:/sbin" > $(TARGET_DIR)/initramfs/etc/profile
 	@echo "export PATH" >> $(TARGET_DIR)/initramfs/etc/profile
 	@echo "OXIDE" > $(TARGET_DIR)/initramfs/etc/hostname
@@ -173,6 +185,14 @@ initramfs: userspace-release
 	@# Create default hosts file
 	@echo "127.0.0.1 localhost" > $(TARGET_DIR)/initramfs/etc/hosts
 	@echo "::1 localhost" >> $(TARGET_DIR)/initramfs/etc/hosts
+	@# Create fstab - format: device mountpoint fstype options dump pass
+	@echo "# /etc/fstab - filesystem mount table" > $(TARGET_DIR)/initramfs/etc/fstab
+	@echo "# device    mountpoint    fstype    options    dump pass" >> $(TARGET_DIR)/initramfs/etc/fstab
+	@echo "proc        /proc         proc      defaults   0    0" >> $(TARGET_DIR)/initramfs/etc/fstab
+	@echo "sysfs       /sys          sysfs     defaults   0    0" >> $(TARGET_DIR)/initramfs/etc/fstab
+	@echo "devpts      /dev/pts      devpts    defaults   0    0" >> $(TARGET_DIR)/initramfs/etc/fstab
+	@echo "tmpfs       /tmp          tmpfs     defaults   0    0" >> $(TARGET_DIR)/initramfs/etc/fstab
+	@echo "tmpfs       /run          tmpfs     defaults   0    0" >> $(TARGET_DIR)/initramfs/etc/fstab
 	@# Create CPIO archive
 	@cd $(TARGET_DIR)/initramfs && find . | cpio -o -H newc > ../initramfs.cpio 2>/dev/null
 	@echo "Initramfs created: $(INITRAMFS)"
