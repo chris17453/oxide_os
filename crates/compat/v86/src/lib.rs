@@ -3,6 +3,7 @@
 //! Provides DOS program execution on x86 platforms using V86 mode.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 

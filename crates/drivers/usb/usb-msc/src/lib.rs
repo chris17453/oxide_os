@@ -3,6 +3,7 @@
 //! Implements the USB Mass Storage Bulk-Only Transport (BOT) protocol.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 

@@ -350,10 +350,10 @@ impl TcpIpStack {
     ) -> NetResult<()> {
         // Compute acknowledgment for received data + SYN/FIN
         let mut ack = header.seq_num.wrapping_add(payload_len as u32);
-        if header.flags & tcp::TcpFlags::SYN != 0 {
+        if header.flags & tcp::tcp_flags::SYN != 0 {
             ack = ack.wrapping_add(1);
         }
-        if header.flags & tcp::TcpFlags::FIN != 0 {
+        if header.flags & tcp::tcp_flags::FIN != 0 {
             ack = ack.wrapping_add(1);
         }
 
@@ -363,7 +363,7 @@ impl TcpIpStack {
             header.src_port,
             0,
             ack,
-            tcp::TcpFlags::RST | tcp::TcpFlags::ACK,
+            tcp::tcp_flags::RST | tcp::tcp_flags::ACK,
             0,
             &[],
         );
@@ -386,7 +386,7 @@ impl TcpIpStack {
         }
 
         // Check listening sockets for SYN
-        if tcp_header.flags & tcp::TcpFlags::SYN != 0 {
+        if tcp_header.flags & tcp::tcp_flags::SYN != 0 {
             // Handle new connection (would add to pending queue)
         }
 

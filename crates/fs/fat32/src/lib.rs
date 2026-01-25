@@ -3,6 +3,7 @@
 //! Implements FAT32 filesystem with long filename support.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 

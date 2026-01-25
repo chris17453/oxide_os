@@ -6,6 +6,8 @@
 //! Supports both `std` (host systems) and `no_std` (WATOS bare metal) builds.
 
 #![cfg_attr(not(feature = "std"), no_std)]
+#![allow(unused)]
+#![allow(improper_ctypes)]
 
 #[cfg(not(feature = "std"))]
 extern crate alloc;

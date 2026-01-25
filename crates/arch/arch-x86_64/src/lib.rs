@@ -3,6 +3,7 @@
 //! Provides x86_64-specific implementations of architecture traits.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate ps2;
 

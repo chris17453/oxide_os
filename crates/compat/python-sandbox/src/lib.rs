@@ -3,6 +3,7 @@
 //! Provides secure Python script execution with resource limits.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 

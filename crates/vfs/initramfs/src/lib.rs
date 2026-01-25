@@ -3,6 +3,7 @@
 //! Provides a read-only filesystem loaded from a CPIO archive at boot time.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 

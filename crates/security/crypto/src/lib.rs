@@ -4,6 +4,7 @@
 //! X25519 key exchange, and Argon2id password hashing.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 

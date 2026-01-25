@@ -8,6 +8,7 @@
 //! - Module lifecycle (init/exit hooks)
 
 #![no_std]
+#![allow(unused)]
 #![allow(unsafe_op_in_unsafe_fn)]
 
 extern crate alloc;

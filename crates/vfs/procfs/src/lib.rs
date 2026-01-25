@@ -10,6 +10,7 @@
 //! - /proc/[pid]/exe - executable path (symlink)
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 

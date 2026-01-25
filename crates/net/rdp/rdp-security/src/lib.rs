@@ -4,6 +4,7 @@
 //! Uses AES-256-GCM for record encryption and X25519 for key exchange.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 

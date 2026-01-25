@@ -3,6 +3,7 @@
 //! Provides process, thread, and address space management.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 

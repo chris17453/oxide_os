@@ -3,8 +3,8 @@
 //! Provides dlopen/dlsym API for self-hosting support.
 
 #![no_std]
+#![allow(unused)]
 #![allow(unsafe_op_in_unsafe_fn)]
-#![allow(unused_imports)]
 #![allow(non_camel_case_types)]
 #![allow(unsafe_attr_outside_unsafe)]
 

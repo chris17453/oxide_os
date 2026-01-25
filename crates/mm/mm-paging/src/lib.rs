@@ -3,6 +3,7 @@
 //! Page table structures and mapping operations for x86_64.
 
 #![no_std]
+#![allow(unused)]
 
 mod entry;
 mod mapper;

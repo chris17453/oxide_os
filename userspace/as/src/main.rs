@@ -5,6 +5,7 @@
 
 #![no_std]
 #![no_main]
+#![allow(unused)]
 
 use libc::*;
 

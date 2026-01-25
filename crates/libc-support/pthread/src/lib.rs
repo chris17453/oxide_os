@@ -3,9 +3,9 @@
 //! Provides pthread API for self-hosting support.
 
 #![no_std]
+#![allow(unused)]
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(non_camel_case_types)]
-#![allow(unused_imports)]
 #![allow(unsafe_attr_outside_unsafe)]
 
 extern crate alloc;

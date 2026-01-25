@@ -25,6 +25,7 @@ required-features = ["oxide"]
 default = []
 host = ["std", "dep:minifb"]
 oxide = ["dep:libc"]
+watos = []  # Legacy platform (kept for compatibility)
 std = []
 
 [dependencies]

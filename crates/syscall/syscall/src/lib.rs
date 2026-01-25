@@ -687,21 +687,25 @@ unsafe fn prefault_pages(user_ptr: u64, len: usize) {
         {
             // Read-modify-write to trigger COW without changing data
             // Use volatile to prevent optimization
-            core::arch::asm!(
-                "stac",                    // Enable user page access
-                "mov al, byte ptr [rdi]",  // Read current value
-                "mov byte ptr [rdi], al",  // Write it back (triggers COW)
-                "clac",                    // Disable user page access
-                in("rdi") ptr,
-                out("al") _,
-                options(nostack)
-            );
+            unsafe {
+                core::arch::asm!(
+                    "stac",                    // Enable user page access
+                    "mov al, byte ptr [rdi]",  // Read current value
+                    "mov byte ptr [rdi], al",  // Write it back (triggers COW)
+                    "clac",                    // Disable user page access
+                    in("rdi") ptr,
+                    out("al") _,
+                    options(nostack)
+                );
+            }
         }
 
         #[cfg(not(target_arch = "x86_64"))]
         {
-            let val = ptr.read_volatile();
-            ptr.write_volatile(val);
+            unsafe {
+                let val = ptr.read_volatile();
+                ptr.write_volatile(val);
+            }
         }
     }
 }
@@ -728,7 +732,7 @@ pub(crate) unsafe fn copy_to_user(user_ptr: u64, kernel_data: &[u8]) -> bool {
 
     // Pre-fault all pages to trigger COW BEFORE we start the actual copy
     // This prevents deadlocks in the page fault handler
-    prefault_pages(user_ptr, len);
+    unsafe { prefault_pages(user_ptr, len) };
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -736,26 +740,28 @@ pub(crate) unsafe fn copy_to_user(user_ptr: u64, kernel_data: &[u8]) -> bool {
         // STAC = Set AC flag in EFLAGS (bit 18) to allow access
         // CLAC = Clear AC flag to restore protection
         // These are only available if SMAP is supported, but are safe NOPs otherwise
-        core::arch::asm!(
-            "stac",                                      // Enable user page access
-            "mov rcx, {len}",                           // Length in RCX
-            "mov rsi, {src}",                           // Source (kernel) in RSI
-            "mov rdi, {dst}",                           // Destination (user) in RDI
-            "rep movsb",                                 // Copy bytes
-            "clac",                                      // Disable user page access
-            src = in(reg) kernel_data.as_ptr(),
-            dst = in(reg) user_ptr,
-            len = in(reg) len,
-            out("rcx") _,
-            out("rsi") _,
-            out("rdi") _,
-            options(nostack)
-        );
+        unsafe {
+            core::arch::asm!(
+                "stac",                                      // Enable user page access
+                "mov rcx, {len}",                           // Length in RCX
+                "mov rsi, {src}",                           // Source (kernel) in RSI
+                "mov rdi, {dst}",                           // Destination (user) in RDI
+                "rep movsb",                                 // Copy bytes
+                "clac",                                      // Disable user page access
+                src = in(reg) kernel_data.as_ptr(),
+                dst = in(reg) user_ptr,
+                len = in(reg) len,
+                out("rcx") _,
+                out("rsi") _,
+                out("rdi") _,
+                options(nostack)
+            );
+        }
     }
 
     #[cfg(not(target_arch = "x86_64"))]
     {
-        core::ptr::copy_nonoverlapping(kernel_data.as_ptr(), user_ptr as *mut u8, len);
+        unsafe { core::ptr::copy_nonoverlapping(kernel_data.as_ptr(), user_ptr as *mut u8, len) };
     }
 
     true
@@ -766,7 +772,7 @@ pub(crate) unsafe fn copy_to_user(user_ptr: u64, kernel_data: &[u8]) -> bool {
 /// Validates and writes to a userspace pointer from kernel context.
 unsafe fn write_user_i32(user_ptr: u64, value: i32) -> bool {
     let bytes = value.to_ne_bytes();
-    copy_to_user(user_ptr, &bytes)
+    unsafe { copy_to_user(user_ptr, &bytes) }
 }
 
 /// sys_wait - Wait for any child process

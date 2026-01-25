@@ -4,6 +4,7 @@
 //! for the RDP server.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 

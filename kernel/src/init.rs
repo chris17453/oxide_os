@@ -264,7 +264,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             arch::ap_boot::setup_trampoline(
                 cr3,
                 ap_stack_virt,
-                arch::ap_boot::ap_entry_rust as u64,
+                arch::ap_boot::ap_entry_rust as *const () as u64,
             );
         }
         let _ = writeln!(

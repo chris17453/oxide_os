@@ -3,6 +3,7 @@
 //! High-performance async I/O using submission/completion queues.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 

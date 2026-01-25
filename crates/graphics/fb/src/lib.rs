@@ -3,6 +3,7 @@
 //! Provides framebuffer abstraction, text console, and font rendering.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 

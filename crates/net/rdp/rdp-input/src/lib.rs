@@ -4,6 +4,7 @@
 //! into OXIDE input subsystem events.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 

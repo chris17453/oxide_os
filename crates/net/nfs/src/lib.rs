@@ -3,6 +3,7 @@
 //! Provides NFS share mounting and file access.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 

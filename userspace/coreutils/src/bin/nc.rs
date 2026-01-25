@@ -11,6 +11,7 @@
 
 #![no_std]
 #![no_main]
+#![allow(unused)]
 
 use libc::socket::{
     SOCKADDR_IN_SIZE, SockAddrIn, accept, af, bind, connect, ipproto, listen, recv, send, shut,

@@ -4,6 +4,8 @@
 
 #![no_std]
 #![no_main]
+#![allow(unused)]
+#![allow(deprecated)] // uefi-rs API migration pending
 
 extern crate alloc;
 

@@ -20,7 +20,7 @@ pub const TCP_MSS_DEFAULT: u16 = 536;
 pub const TCP_WINDOW_SIZE: u16 = 65535;
 
 /// TCP flags
-pub mod TcpFlags {
+pub mod tcp_flags {
     pub const FIN: u8 = 0x01;
     pub const SYN: u8 = 0x02;
     pub const RST: u8 = 0x04;
@@ -274,7 +274,7 @@ impl TcpConnection {
             self.remote_port,
             seq,
             0,
-            TcpFlags::SYN,
+            tcp_flags::SYN,
             TCP_WINDOW_SIZE,
             &[],
         );
@@ -307,7 +307,7 @@ impl TcpConnection {
                 // Send RST
             }
             TcpState::Listen => {
-                if header.flags & TcpFlags::SYN != 0 {
+                if header.flags & tcp_flags::SYN != 0 {
                     // Handle incoming SYN
                     self.rcv_nxt
                         .store(header.seq_num.wrapping_add(1), Ordering::SeqCst);
@@ -316,14 +316,14 @@ impl TcpConnection {
                 }
             }
             TcpState::SynSent => {
-                if header.flags & TcpFlags::SYN != 0 && header.flags & TcpFlags::ACK != 0 {
+                if header.flags & tcp_flags::SYN != 0 && header.flags & tcp_flags::ACK != 0 {
                     // SYN-ACK received
                     self.snd_una.store(header.ack_num, Ordering::SeqCst);
                     self.rcv_nxt
                         .store(header.seq_num.wrapping_add(1), Ordering::SeqCst);
                     *state = TcpState::Established;
                     // Send ACK
-                } else if header.flags & TcpFlags::SYN != 0 {
+                } else if header.flags & tcp_flags::SYN != 0 {
                     // Simultaneous open
                     self.rcv_nxt
                         .store(header.seq_num.wrapping_add(1), Ordering::SeqCst);
@@ -332,14 +332,14 @@ impl TcpConnection {
                 }
             }
             TcpState::SynReceived => {
-                if header.flags & TcpFlags::ACK != 0 {
+                if header.flags & tcp_flags::ACK != 0 {
                     self.snd_una.store(header.ack_num, Ordering::SeqCst);
                     *state = TcpState::Established;
                 }
             }
             TcpState::Established => {
                 // Process ACKs
-                if header.flags & TcpFlags::ACK != 0 {
+                if header.flags & tcp_flags::ACK != 0 {
                     let ack = header.ack_num;
                     let una = self.snd_una.load(Ordering::SeqCst);
                     if Self::seq_gt(ack, una) {
@@ -361,17 +361,17 @@ impl TcpConnection {
                 }
 
                 // Handle FIN
-                if header.flags & TcpFlags::FIN != 0 {
+                if header.flags & tcp_flags::FIN != 0 {
                     self.rcv_nxt.fetch_add(1, Ordering::SeqCst);
                     *state = TcpState::CloseWait;
                     // Send ACK
                 }
             }
             TcpState::FinWait1 => {
-                if header.flags & TcpFlags::ACK != 0 {
+                if header.flags & tcp_flags::ACK != 0 {
                     *state = TcpState::FinWait2;
                 }
-                if header.flags & TcpFlags::FIN != 0 {
+                if header.flags & tcp_flags::FIN != 0 {
                     self.rcv_nxt.fetch_add(1, Ordering::SeqCst);
                     if *state == TcpState::FinWait2 {
                         *state = TcpState::TimeWait;
@@ -382,7 +382,7 @@ impl TcpConnection {
                 }
             }
             TcpState::FinWait2 => {
-                if header.flags & TcpFlags::FIN != 0 {
+                if header.flags & tcp_flags::FIN != 0 {
                     self.rcv_nxt.fetch_add(1, Ordering::SeqCst);
                     *state = TcpState::TimeWait;
                     // Send ACK
@@ -392,12 +392,12 @@ impl TcpConnection {
                 // Waiting for application to close
             }
             TcpState::Closing => {
-                if header.flags & TcpFlags::ACK != 0 {
+                if header.flags & tcp_flags::ACK != 0 {
                     *state = TcpState::TimeWait;
                 }
             }
             TcpState::LastAck => {
-                if header.flags & TcpFlags::ACK != 0 {
+                if header.flags & tcp_flags::ACK != 0 {
                     *state = TcpState::Closed;
                 }
             }

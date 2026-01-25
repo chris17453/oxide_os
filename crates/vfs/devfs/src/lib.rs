@@ -3,6 +3,7 @@
 //! Provides virtual device files like /dev/null, /dev/zero, /dev/console.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 

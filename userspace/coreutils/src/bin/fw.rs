@@ -12,6 +12,7 @@
 
 #![no_std]
 #![no_main]
+#![allow(unused)]
 
 use libc::syscall::{
     ConntrackStats, FwRule, fw_action, fw_chain, fw_proto, fw_state, sys_fw_add_rule,

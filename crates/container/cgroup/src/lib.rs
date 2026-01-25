@@ -3,6 +3,7 @@
 //! Provides resource limits for CPU, memory, and other resources.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 

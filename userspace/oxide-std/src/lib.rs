@@ -18,6 +18,7 @@
 //! - `vec` - Vec type (re-exported from alloc)
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 

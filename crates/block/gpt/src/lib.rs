@@ -3,6 +3,7 @@
 //! Provides GPT (GUID Partition Table) parsing and partition enumeration.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 

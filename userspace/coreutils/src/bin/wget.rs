@@ -13,6 +13,7 @@
 
 #![no_std]
 #![no_main]
+#![allow(unused)]
 
 use libc::socket::{
     SOCKADDR_IN_SIZE, connect, recv, send, shut, shutdown, sockaddr_in_octets, tcp_socket,

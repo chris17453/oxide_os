@@ -3,6 +3,7 @@
 //! Emulated virtio devices for the hypervisor.
 
 #![no_std]
+#![allow(unused)]
 
 extern crate alloc;
 
