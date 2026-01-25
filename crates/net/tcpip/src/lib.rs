@@ -10,6 +10,7 @@ extern crate alloc;
 pub mod arp;
 pub mod checksum;
 pub mod conntrack;
+pub mod dhcp_client;
 pub mod ethernet;
 pub mod filter;
 pub mod icmp;
@@ -40,6 +41,7 @@ pub use filter::{
     set_policy, with_rules,
 };
 pub use ip::IpProtocol;
+pub use dhcp_client::{acquire_lease, format_lease_file, send_dhcp_packet};
 pub use tcp::TcpConnection;
 pub use udp::UdpSocket;
 

@@ -523,8 +523,51 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                 net::interface::add_interface(interface.clone());
 
                 // Initialize TCP/IP stack
-                tcpip::init(interface);
+                tcpip::init(interface.clone());
                 let _ = writeln!(writer, "[NET] TCP/IP stack initialized");
+
+                // Try to acquire IP address via DHCP (with short timeout)
+                // If it fails, the network daemon will try again from userspace
+                let _ = writeln!(writer, "[NET] Attempting DHCP (timeout: 2s)...");
+
+                // Use a short timeout for kernel DHCP - userspace networkd will retry
+                let dhcp_result = tcpip::acquire_lease(interface.clone());
+                match dhcp_result {
+                    Ok(lease) => {
+                        let _ = writeln!(
+                            writer,
+                            "[NET] DHCP lease acquired: {}",
+                            lease.ip_addr
+                        );
+                        let _ = writeln!(
+                            writer,
+                            "[NET]   Netmask: {}",
+                            lease.subnet_mask
+                        );
+                        if let Some(gw) = lease.gateway {
+                            let _ = writeln!(writer, "[NET]   Gateway: {}", gw);
+                        }
+                        for dns in &lease.dns_servers {
+                            let _ = writeln!(writer, "[NET]   DNS: {}", dns);
+                        }
+                        let _ = writeln!(
+                            writer,
+                            "[NET]   Lease time: {} seconds",
+                            lease.lease_time
+                        );
+                    }
+                    Err(_) => {
+                        let _ = writeln!(writer, "[NET] DHCP timed out, networkd will retry");
+                        // Configure a fallback static IP for QEMU's SLIRP network
+                        // SLIRP uses 10.0.2.0/24 with gateway 10.0.2.2
+                        let _ = writeln!(writer, "[NET] Configuring fallback static IP (10.0.2.15)");
+                        let _ = interface.set_ipv4_addr(
+                            net::Ipv4Addr::new(10, 0, 2, 15),
+                            net::Ipv4Addr::new(255, 255, 255, 0),
+                        );
+                        let _ = interface.set_ipv4_gateway(net::Ipv4Addr::new(10, 0, 2, 2));
+                    }
+                }
 
                 true
             }

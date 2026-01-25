@@ -175,7 +175,6 @@ version = "0.1.0"
 dependencies = [
  "net",
  "spin 0.9.8",
- "tcpip",
 ]
 
 [[package]]
@@ -1389,6 +1388,7 @@ dependencies = [
 name = "tcpip"
 version = "0.1.0"
 dependencies = [
+ "dhcp",
  "net",
  "spin 0.9.8",
 ]
