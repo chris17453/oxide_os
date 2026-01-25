@@ -310,4 +310,35 @@ pub struct Ext4Extent {
 
 ## Implementation Notes
 
-*(Add notes here as implementation progresses)*
+### 2026-01-25: VirtIO-blk PCI Driver Fixes
+
+Fixed critical issues with PCI transport for VirtIO block devices:
+
+1. **PCI I/O Port Notify** - The `notify()` function was using MMIO writes even for PCI I/O port devices, causing a GPF. Fixed by checking `is_pci_io()` and using `outw()` for PCI devices.
+
+2. **Legacy Queue Layout** - Legacy VirtIO PCI requires the used ring to be page-aligned (4096 bytes), not just 4-byte aligned. Added `Virtqueue::new_legacy()` that allocates physical frames with proper layout.
+
+3. **DMA-Safe Buffers** - The heap allocator returns kernel virtual addresses that can't be directly converted to physical. Fixed by:
+   - Allocating all queue memory from the frame allocator
+   - Allocating request buffers (headers, status, data bounce buffers) from physical frames
+   - Using bounce buffers for data transfers so callers can pass any buffer
+
+4. **Test Results** - Successfully detected and mounted ext4 filesystem:
+   ```
+   [BLK] Found 1 VirtIO block devices (0 MMIO, 1 PCI)
+   [BLK] virtio0: GPT partition table detected
+   [BLK]   virtio0p1: ext4 filesystem detected
+   [EXT4] Mounted ext4 filesystem at /mnt/root
+   ```
+
+### Current Status Summary
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| 1. VirtIO-blk I/O | ✅ Complete | MMIO and PCI transport working |
+| 2. ext4 Read Support | ✅ Complete | Superblock, inodes, extents, dirs |
+| 3. ext4 Write Support | ⏳ Pending | Bitmaps, allocation, dir ops |
+| 4. VnodeOps Integration | ✅ Read-only | lookup, read, readdir, stat, readlink |
+| 5. Journal Support | ⏳ Pending | Recovery and transactions |
+| 6. Boot Integration | ✅ Complete | GPT parsing, auto-mount at /mnt/root |
+| 7. mkfs.ext4 | ⏳ Pending | Userspace utility |
