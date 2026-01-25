@@ -1,0 +1,17 @@
+[package]
+name = "rdp-input"
+version = "0.1.0"
+edition = "2024"
+authors = ["OXIDE Contributors"]
+description = "RDP input handling for OXIDE OS"
+license = "MIT"
+
+[dependencies]
+rdp-traits = { path = "../rdp-traits" }
+rdp-proto = { path = "../rdp-proto" }
+input = { workspace = true }
+spin = { workspace = true }
+
+[features]
+default = []
+std = []
