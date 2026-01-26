@@ -118,6 +118,13 @@ macro_rules! exception_handler {
         #[unsafe(naked)]
         pub extern "C" fn $name() {
             naked_asm!(
+                // Check if from user mode (CS & 3 != 0), swap GS if so
+                // Stack at entry: RIP, CS, RFLAGS, RSP, SS
+                "test qword ptr [rsp + 8], 3",
+                "jz 2f",
+                "swapgs",
+                "2:",
+
                 // Save all registers
                 "push rax",
                 "push rbx",
@@ -159,6 +166,11 @@ macro_rules! exception_handler {
                 "pop rbx",
                 "pop rax",
 
+                // Check if returning to user mode, swap GS if so
+                "test qword ptr [rsp + 8], 3",
+                "jz 3f",
+                "swapgs",
+                "3:",
                 "iretq",
                 sym $handler,
             );
@@ -172,6 +184,14 @@ macro_rules! exception_handler_error {
         #[unsafe(naked)]
         pub extern "C" fn $name() {
             naked_asm!(
+                // Check if from user mode (CS & 3 != 0), swap GS if so
+                // Stack at entry: error_code, RIP, CS, RFLAGS, RSP, SS
+                // CS is at [rsp + 16]
+                "test qword ptr [rsp + 16], 3",
+                "jz 2f",
+                "swapgs",
+                "2:",
+
                 // Save all registers
                 "push rax",
                 "push rbx",
@@ -215,6 +235,12 @@ macro_rules! exception_handler_error {
 
                 // Pop error code
                 "add rsp, 8",
+                // Check if returning to user mode, swap GS if so
+                // Stack now: RIP, CS, RFLAGS, RSP, SS
+                "test qword ptr [rsp + 8], 3",
+                "jz 3f",
+                "swapgs",
+                "3:",
                 "iretq",
                 sym $handler,
             );
@@ -246,6 +272,14 @@ exception_handler!(simd, handle_simd);
 #[unsafe(naked)]
 pub extern "C" fn timer_interrupt() {
     naked_asm!(
+        // Check if we came from user mode (CS & 3 != 0)
+        // Stack at entry: RIP, CS, RFLAGS, RSP, SS
+        // CS is at [rsp + 8]
+        "test qword ptr [rsp + 8], 3",
+        "jz 2f",
+        "swapgs",
+        "2:",
+
         // Save all registers
         "push rax",
         "push rbx",
@@ -287,6 +321,12 @@ pub extern "C" fn timer_interrupt() {
         "pop rbx",
         "pop rax",
 
+        // Check if returning to user mode (CS & 3 != 0)
+        // After pops, stack is: RIP, CS, RFLAGS, RSP, SS
+        "test qword ptr [rsp + 8], 3",
+        "jz 3f",
+        "swapgs",
+        "3:",
         "iretq",
         sym handle_timer,
     );
@@ -322,6 +362,12 @@ pub unsafe fn set_keyboard_callback(callback: KeyboardCallback) {
 #[unsafe(naked)]
 pub extern "C" fn keyboard_interrupt() {
     naked_asm!(
+        // Check if from user mode (CS & 3 != 0), swap GS if so
+        "test qword ptr [rsp + 8], 3",
+        "jz 2f",
+        "swapgs",
+        "2:",
+
         // Save all registers
         "push rax",
         "push rbx",
@@ -359,6 +405,11 @@ pub extern "C" fn keyboard_interrupt() {
         "pop rbx",
         "pop rax",
 
+        // Check if returning to user mode, swap GS if so
+        "test qword ptr [rsp + 8], 3",
+        "jz 3f",
+        "swapgs",
+        "3:",
         "iretq",
         sym handle_keyboard,
     );
@@ -701,7 +752,12 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
     let saved_rcx = unsafe { *(saved_regs_ptr.wrapping_add(96) as *const u64) };
     let saved_rax = unsafe { *(saved_regs_ptr.wrapping_add(112) as *const u64) };
 
+    // Get CR3 for debugging (identifies the process)
+    let cr3: u64;
+    unsafe { core::arch::asm!("mov {}, cr3", out(reg) cr3); }
+
     crate::serial_println!("PAGE FAULT!");
+    crate::serial_println!("  CR3 (PML4): {:#x}", cr3);
     crate::serial_println!("  Address: {:#x}", cr2);
     crate::serial_println!("  RIP: {:#x}", frame.rip);
     crate::serial_println!("  RSP: {:#x}", frame.rsp);

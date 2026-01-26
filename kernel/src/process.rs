@@ -34,27 +34,6 @@ pub fn user_exit(status: i32) -> ! {
     // Get current process and mark as zombie
     let current_pid = sched::current_pid().unwrap_or(0);
 
-    // Debug: Print exit info
-    {
-        let mut writer = serial::SerialWriter;
-        let _ = writeln!(
-            writer,
-            "[EXIT] Process {} exiting with status {}",
-            current_pid, status
-        );
-    }
-
-    // Debug: Print framebuffer write stats on process exit
-    {
-        let (writes, bytes, base) = devfs::devices::get_fb_write_stats();
-        let mut writer = serial::SerialWriter;
-        let _ = writeln!(
-            writer,
-            "[FB_DEBUG] Process {} exiting - FB writes={} bytes={} base={:#x}",
-            current_pid, writes, bytes, base
-        );
-    }
-
     // Get parent PID via scheduler
     let parent_pid = sched::get_task_ppid(current_pid).unwrap_or(0);
 
@@ -70,86 +49,14 @@ pub fn user_exit(status: i32) -> ! {
     // This puts the parent back in the ready queue
     if parent_pid > 0 {
         wake_parent(parent_pid);
-        let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[EXIT] Woke parent {}", parent_pid);
     }
 
-    // Check if there's a saved parent context to return to (legacy path)
-    let parent_ctx = PARENT_CONTEXT.lock().take();
+    // Clear any stale PARENT_CONTEXT (we now use the scheduler for all task switches)
+    let _ = PARENT_CONTEXT.lock().take();
 
-    if let Some(ctx) = parent_ctx {
-        // Restore parent as current process
-        sched::switch_to(ctx.pid as u32);
-
-        // Get parent's kernel stack from scheduler
-        if let Some((_, _, parent_stack_phys, parent_stack_size)) = sched::get_task_switch_info(ctx.pid as u32) {
-
-            let parent_stack_virt = phys_to_virt(parent_stack_phys);
-            let parent_stack_top = parent_stack_virt.as_u64() + parent_stack_size as u64;
-
-            // Restore parent's kernel stack for syscalls
-            unsafe {
-                arch::syscall::set_kernel_stack(parent_stack_top);
-            }
-            arch::gdt::set_kernel_stack(parent_stack_top);
-
-            // Switch to parent's page tables
-            unsafe {
-                core::arch::asm!(
-                    "mov cr3, {}",
-                    in(reg) ctx.pml4,
-                    options(nostack)
-                );
-            }
-
-            // Return to parent via iretq
-            // Note: We only restore the essential state (RIP, RSP, RFLAGS, RAX)
-            // Other registers will have kernel values, which is fine since
-            // the syscall ABI only guarantees preservation of callee-saved registers
-            // and we're returning from a syscall (fork/waitpid)
-            unsafe {
-                let user_ss: u64 = 0x1B;
-                let user_cs: u64 = 0x23;
-                let user_rflags = ctx.rflags | 0x200;
-
-                core::arch::asm!(
-                    // Build iretq frame
-                    "push {ss}",
-                    "push {rsp}",
-                    "push {rflags}",
-                    "push {cs}",
-                    "push {rip}",
-                    // Set rax to return value (child_pid for fork, or wait result)
-                    "mov rax, {rax}",
-                    // swapgs and iretq
-                    "swapgs",
-                    "iretq",
-                    ss = in(reg) user_ss,
-                    rsp = in(reg) ctx.rsp,
-                    rflags = in(reg) user_rflags,
-                    cs = in(reg) user_cs,
-                    rip = in(reg) ctx.rip,
-                    rax = in(reg) ctx.rax,
-                    options(noreturn)
-                );
-            }
-        }
-    }
-
-    // Process exited - switch to next ready process
-    // We can't rely on timer preemption here since we're in kernel mode
-    // Must actively switch to another process
-    {
-        let mut writer = serial::SerialWriter;
-        let _ = writeln!(
-            writer,
-            "[EXIT] Looking for next process (parent={})...",
-            parent_pid
-        );
-    }
-
-    // Remove exiting process from scheduler
-    crate::scheduler::remove_process(current_pid);
+    // NOTE: Do NOT remove the process from scheduler here!
+    // The process must stay as a zombie until the parent reaps it via wait().
+    // The parent's wait() call will remove it after getting the exit status.
 
     let prefer_parent = if parent_pid > 0 {
         matches!(
@@ -170,8 +77,6 @@ pub fn user_exit(status: i32) -> ! {
         match sched::pick_next_task() {
             Some(pid) => pid,
             None => {
-                let mut writer = serial::SerialWriter;
-                let _ = writeln!(writer, "[EXIT] Scheduler has no runnable tasks! Halting.");
                 arch::X86_64::halt();
             }
         }
@@ -183,12 +88,6 @@ pub fn user_exit(status: i32) -> ! {
             (ctx, pml4, ks_virt.as_u64() + kstack_size as u64)
         }
         None => {
-            let mut writer = serial::SerialWriter;
-            let _ = writeln!(
-                writer,
-                "[EXIT] PID {} missing from scheduler after pick_next_task(); halting",
-                next_pid
-            );
             arch::X86_64::halt();
         }
     };
@@ -216,110 +115,78 @@ pub fn user_exit(status: i32) -> ! {
         ss: task_ctx.ss,
     };
 
-    {
-        let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[EXIT] Switching to PID {}", next_pid);
-        let _ = writeln!(
-            writer,
-            "[EXIT] Context: rip={:#x} rsp={:#x} cs={:#x} ss={:#x}",
-            next_ctx.rip, next_ctx.rsp, next_ctx.cs, next_ctx.ss
-        );
-    }
-
     // Update scheduler's current task - switch_to handles state changes
     sched::switch_to(next_pid);
 
+    // Set kernel stack for the next process
     unsafe {
         arch::syscall::set_kernel_stack(kernel_stack_top);
     }
     arch::gdt::set_kernel_stack(kernel_stack_top);
 
+    // Store context in a static (in kernel memory, accessible from all address spaces)
     static mut EXIT_CTX: ProcessContext = ProcessContext {
-        rip: 0,
-        rsp: 0,
-        rflags: 0,
-        rax: 0,
-        rbx: 0,
-        rcx: 0,
-        rdx: 0,
-        rsi: 0,
-        rdi: 0,
-        rbp: 0,
-        r8: 0,
-        r9: 0,
-        r10: 0,
-        r11: 0,
-        r12: 0,
-        r13: 0,
-        r14: 0,
-        r15: 0,
-        cs: 0,
-        ss: 0,
+        rip: 0, rsp: 0, rflags: 0, rax: 0, rbx: 0, rcx: 0, rdx: 0,
+        rsi: 0, rdi: 0, rbp: 0, r8: 0, r9: 0, r10: 0, r11: 0,
+        r12: 0, r13: 0, r14: 0, r15: 0, cs: 0, ss: 0,
     };
 
+    // Copy context to static BEFORE CR3 switch
     unsafe {
-        *addr_of_mut!(EXIT_CTX) = next_ctx.clone();
-
-        core::arch::asm!("mov cr3, {}", in(reg) next_pml4.as_u64());
-
-        let ctx_ptr = addr_of_mut!(EXIT_CTX) as u64;
-
-        if next_ctx.cs == 0x23 {
-            core::arch::asm!(
-                "mov rax, {ctx}",
-                "mov rcx, [rax]",
-                "mov r11, [rax + 16]",
-                "or r11, 0x200",
-                "mov rbx, [rax + 32]",
-                "mov rbp, [rax + 72]",
-                "mov r12, [rax + 112]",
-                "mov r13, [rax + 120]",
-                "mov r14, [rax + 128]",
-                "mov r15, [rax + 136]",
-                "mov rdi, [rax + 64]",
-                "mov rsi, [rax + 56]",
-                "mov rdx, [rax + 48]",
-                "mov r8, [rax + 80]",
-                "mov r9, [rax + 88]",
-                "mov r10, [rax + 96]",
-                "push qword ptr [rax + 8]",
-                "mov rax, [rax + 24]",
-                "pop rsp",
-                "swapgs",
-                "sysretq",
-                ctx = in(reg) ctx_ptr,
-                options(noreturn)
-            );
-        } else {
-            core::arch::asm!(
-                "mov rax, {ctx}",
-                "mov rbx, [rax + 32]",
-                "mov rcx, [rax + 24]",
-                "mov rdx, [rax + 48]",
-                "mov rsi, [rax + 56]",
-                "mov rdi, [rax + 64]",
-                "mov rbp, [rax + 72]",
-                "mov r8, [rax + 80]",
-                "mov r9, [rax + 88]",
-                "mov r10, [rax + 96]",
-                "mov r11, [rax + 104]",
-                "mov r12, [rax + 112]",
-                "mov r13, [rax + 120]",
-                "mov r14, [rax + 128]",
-                "mov r15, [rax + 136]",
-                "push qword ptr [rax + 8]",
-                "push qword ptr [rax + 40]",
-                "push qword ptr [rax + 16]",
-                "push qword ptr [rax + 0]",
-                "mov rsp, [rax + 8]",
-                "iretq",
-                ctx = in(reg) ctx_ptr,
-                options(noreturn)
-            );
-        }
+        *addr_of_mut!(EXIT_CTX) = next_ctx;
+        // Ensure IF is set in rflags
+        (*addr_of_mut!(EXIT_CTX)).rflags |= 0x200;
     }
 
-    // user_exit never returns
+    let ctx_ptr = unsafe { addr_of_mut!(EXIT_CTX) as u64 };
+    let new_cr3 = next_pml4.as_u64();
+
+    unsafe {
+        // Switch page tables first
+        core::arch::asm!("mov cr3, {}", in(reg) new_cr3);
+
+        // Use the EXACT same sysretq approach as kernel_fork
+        // ProcessContext layout:
+        // rip(0), rsp(8), rflags(16), rax(24), rbx(32), rcx(40), rdx(48),
+        // rsi(56), rdi(64), rbp(72), r8(80), r9(88), r10(96), r11(104),
+        // r12(112), r13(120), r14(128), r15(136), cs(144), ss(152)
+        core::arch::asm!(
+            "mov rax, {ctx}",
+            "mov rcx, [rax]",       // rip -> rcx for sysret
+            "mov r11, [rax + 16]",  // rflags -> r11 for sysret
+            "or r11, 0x200",        // Ensure IF set
+            "mov rbx, [rax + 32]",
+            "mov rbp, [rax + 72]",
+            "mov r12, [rax + 112]",
+            "mov r13, [rax + 120]",
+            "mov r14, [rax + 128]",
+            "mov r15, [rax + 136]",
+            "mov rdi, [rax + 64]",
+            "mov rsi, [rax + 56]",
+            "mov rdx, [rax + 48]",
+            "mov r8, [rax + 80]",
+            "mov r9, [rax + 88]",
+            "mov r10, [rax + 96]",
+            // Load user segment selectors for DS/ES/FS (0x1B = USER_DS | 3)
+            // Save context pointer to r15 temporarily (like kernel_fork)
+            "mov r15, rax",
+            "mov ax, 0x1b",
+            "mov ds, ax",
+            "mov es, ax",
+            "mov fs, ax",
+            // Restore rax as context pointer
+            "mov rax, r15",
+            // Now load r15 from context and prepare for return
+            "mov r15, [rax + 136]",
+            "push qword ptr [rax + 8]",  // Push RSP from context
+            "mov rax, [rax + 24]",       // Load rax value from context
+            "pop rsp",                    // Pop into RSP
+            "swapgs",
+            "sysretq",
+            ctx = in(reg) ctx_ptr,
+            options(noreturn)
+        );
+    }
 }
 
 /// Fork callback for syscalls
@@ -568,6 +435,17 @@ pub fn kernel_fork() -> i64 {
                     "mov r8, [rax + 80]",
                     "mov r9, [rax + 88]",
                     "mov r10, [rax + 96]",
+                    // Load user segment selectors for DS/ES/FS (0x1B = USER_DS | 3)
+                    // Save context pointer to r15 temporarily
+                    "mov r15, rax",
+                    "mov ax, 0x1b",
+                    "mov ds, ax",
+                    "mov es, ax",
+                    "mov fs, ax",
+                    // Restore rax as context pointer
+                    "mov rax, r15",
+                    // Now load r15 from context and prepare for return
+                    "mov r15, [rax + 136]",
                     "push qword ptr [rax + 8]",
                     "mov rax, [rax + 24]",  // rax = 0 (child return)
                     "pop rsp",
