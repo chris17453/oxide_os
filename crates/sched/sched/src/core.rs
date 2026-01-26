@@ -39,6 +39,32 @@ static SCHED_GROUPS: Mutex<Option<SchedGroups>> = Mutex::new(None);
 /// Global clock (nanoseconds since boot)
 static GLOBAL_CLOCK: AtomicU64 = AtomicU64::new(0);
 
+/// Per-CPU current PID (lock-free, for interrupt handlers)
+/// This shadows rq.curr but can be read without acquiring the run queue lock.
+static CURRENT_PIDS: [AtomicU32; MAX_CPUS] = {
+    const INIT: AtomicU32 = AtomicU32::new(u32::MAX); // MAX = no task (None)
+    [INIT; MAX_CPUS]
+};
+
+/// Get current PID without lock (for interrupt handlers)
+///
+/// This is safe to call from any context, including interrupt handlers.
+pub fn current_pid_lockfree() -> Option<Pid> {
+    let cpu = this_cpu();
+    let pid = CURRENT_PIDS[cpu as usize].load(Ordering::Relaxed);
+    if pid == u32::MAX {
+        None
+    } else {
+        Some(pid)
+    }
+}
+
+/// Set current PID (lock-free update)
+fn set_current_pid_lockfree(cpu: u32, pid: Option<Pid>) {
+    let val = pid.unwrap_or(u32::MAX);
+    CURRENT_PIDS[cpu as usize].store(val, Ordering::Relaxed);
+}
+
 /// Initialize the scheduler for a CPU
 ///
 /// Must be called once for each CPU before scheduling can begin.
@@ -52,6 +78,9 @@ pub fn init_cpu(cpu: u32, idle_pid: Pid) {
         let mut groups = SCHED_GROUPS.lock();
         *groups = Some(SchedGroups::new());
     }
+
+    // Initialize lock-free current PID to idle task
+    set_current_pid_lockfree(cpu, Some(idle_pid));
 }
 
 /// Get the current CPU ID
@@ -392,6 +421,9 @@ pub fn switch_to(new_pid: Pid) {
         rq.set_curr(Some(new_pid));
         rq.set_need_resched(false);
     });
+
+    // Update lock-free current PID for interrupt handlers
+    set_current_pid_lockfree(cpu, Some(new_pid));
 }
 
 /// Get task state

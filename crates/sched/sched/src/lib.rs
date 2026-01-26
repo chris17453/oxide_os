@@ -92,6 +92,7 @@ pub use crate::core::{
     create_task_with_meta,
     // Task state
     current_pid,
+    current_pid_lockfree,
     // Debug
     debug_state,
     get_affinity,

@@ -227,6 +227,9 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
         }
 
         // Allow scheduler to preempt us while we wait
+        // Note: We don't save user context here. When scheduler_tick preempts
+        // us at hlt, it saves kernel context. When we resume, we continue
+        // this loop and return normally via the syscall return path.
         arch_x86_64::allow_kernel_preempt();
 
         // HLT yields CPU until next interrupt

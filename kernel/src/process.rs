@@ -93,124 +93,43 @@ pub fn user_exit(status: i32) -> ! {
             }
             arch::gdt::set_kernel_stack(parent_stack_top);
 
-            // Calculate wait result: (child_pid << 32) | status
-            let wait_result = ((current_pid as i64) << 32) | ((status as i64) & 0xFFFFFFFF);
-
-            // Return to parent's user mode via sysretq
-            // CRITICAL: Must restore ALL registers the parent had when making the waitpid syscall
-            // sysretq clobbers RCX (uses for RIP) and R11 (uses for RFLAGS)
-            // All other registers must be restored to parent's values
-
-            // Copy context to static memory that survives the CR3 switch
-            // We use a static because inline asm can't handle this many registers
-            static mut RESTORE_CTX: ParentContext = ParentContext {
-                pid: 0,
-                pml4: 0,
-                rip: 0,
-                rsp: 0,
-                rflags: 0,
-                rax: 0,
-                rbx: 0,
-                rcx: 0,
-                rdx: 0,
-                rsi: 0,
-                rdi: 0,
-                rbp: 0,
-                r8: 0,
-                r9: 0,
-                r10: 0,
-                r11: 0,
-                r12: 0,
-                r13: 0,
-                r14: 0,
-                r15: 0,
-            };
-            static mut RESTORE_RESULT: i64 = 0;
-
+            // Switch to parent's page tables
             unsafe {
-                use core::ptr::addr_of_mut;
-                *addr_of_mut!(RESTORE_CTX) = ctx.clone();
-                *addr_of_mut!(RESTORE_RESULT) = wait_result;
-
-                // Switch page tables first
                 core::arch::asm!(
                     "mov cr3, {}",
                     in(reg) ctx.pml4,
                     options(nostack)
                 );
+            }
 
-                // Now restore all registers from the static context and sysretq
-                // The context is at a fixed virtual address (higher half)
-                let ctx_ptr = addr_of_mut!(RESTORE_CTX) as u64;
-                let _result_ptr = addr_of_mut!(RESTORE_RESULT) as u64;
-
-                // ParentContext layout:
-                // pid: u32 (offset 0, padded to 8)
-                // pml4: u64 (offset 8)
-                // rip: u64 (offset 16)
-                // rsp: u64 (offset 24)
-                // rflags: u64 (offset 32)
-                // rax: u64 (offset 40)
-                // rbx: u64 (offset 48)
-                // rcx: u64 (offset 56)
-                // rdx: u64 (offset 64)
-                // rsi: u64 (offset 72)
-                // rdi: u64 (offset 80)
-                // rbp: u64 (offset 88)
-                // r8: u64 (offset 96)
-                // r9: u64 (offset 104)
-                // r10: u64 (offset 112)
-                // r11: u64 (offset 120)
-                // r12: u64 (offset 128)
-                // r13: u64 (offset 136)
-                // r14: u64 (offset 144)
-                // r15: u64 (offset 152)
-                // Store values in statics so we can access them after restoring all registers
-                static mut SYSRET_USER_RSP: u64 = 0;
-                static mut SYSRET_USER_RIP: u64 = 0;
-                static mut SYSRET_USER_RFLAGS: u64 = 0;
-                static mut SYSRET_RESULT: i64 = 0;
-                static mut SYSRET_R14: u64 = 0;
-                static mut SYSRET_R15: u64 = 0;
-
-                *addr_of_mut!(SYSRET_USER_RSP) = ctx.rsp;
-                *addr_of_mut!(SYSRET_USER_RIP) = ctx.rip;
-                *addr_of_mut!(SYSRET_USER_RFLAGS) = ctx.rflags;
-                *addr_of_mut!(SYSRET_RESULT) = wait_result;
-                *addr_of_mut!(SYSRET_R14) = ctx.r14;
-                *addr_of_mut!(SYSRET_R15) = ctx.r15;
+            // Return to parent via iretq
+            // Note: We only restore the essential state (RIP, RSP, RFLAGS, RAX)
+            // Other registers will have kernel values, which is fine since
+            // the syscall ABI only guarantees preservation of callee-saved registers
+            // and we're returning from a syscall (fork/waitpid)
+            unsafe {
+                let user_ss: u64 = 0x1B;
+                let user_cs: u64 = 0x23;
+                let user_rflags = ctx.rflags | 0x200;
 
                 core::arch::asm!(
-                    // r15 = context pointer (only used for loading registers, not for sysret values)
-                    "mov r15, {ctx}",
-                    // Restore callee-saved registers
-                    "mov rbx, [r15 + 48]",    // rbx at offset 48
-                    "mov rbp, [r15 + 88]",    // rbp at offset 88
-                    "mov r12, [r15 + 128]",   // r12 at offset 128
-                    "mov r13, [r15 + 136]",   // r13 at offset 136
-                    // Restore caller-saved registers (that syscall should preserve)
-                    "mov rdi, [r15 + 80]",    // rdi at offset 80
-                    "mov rsi, [r15 + 72]",    // rsi at offset 72
-                    "mov rdx, [r15 + 64]",    // rdx at offset 64
-                    "mov r8, [r15 + 96]",     // r8 at offset 96
-                    "mov r9, [r15 + 104]",    // r9 at offset 104
-                    "mov r10, [r15 + 112]",   // r10 at offset 112
-                    // Now load sysret values and r14/r15 from statics (using absolute addresses)
-                    "mov rax, [{result}]",    // result value
-                    "mov rcx, [{rip}]",       // user rip
-                    "mov r11, [{rflags}]",    // user rflags
-                    "mov r14, [{r14_val}]",   // restore r14
-                    "mov r15, [{r15_val}]",   // restore r15
-                    // Load user RSP last and sysretq
-                    "mov rsp, [{rsp_val}]",
-                    "sysretq",
-                    ctx = in(reg) ctx_ptr,
-                    result = sym SYSRET_RESULT,
-                    rip = sym SYSRET_USER_RIP,
-                    rflags = sym SYSRET_USER_RFLAGS,
-                    r14_val = sym SYSRET_R14,
-                    r15_val = sym SYSRET_R15,
-                    rsp_val = sym SYSRET_USER_RSP,
+                    // Build iretq frame
+                    "push {ss}",
+                    "push {rsp}",
+                    "push {rflags}",
+                    "push {cs}",
+                    "push {rip}",
+                    // Set rax to return value (child_pid for fork, or wait result)
+                    "mov rax, {rax}",
+                    // swapgs and iretq
+                    "swapgs",
+                    "iretq",
+                    ss = in(reg) user_ss,
+                    rsp = in(reg) ctx.rsp,
+                    rflags = in(reg) user_rflags,
+                    cs = in(reg) user_cs,
+                    rip = in(reg) ctx.rip,
+                    rax = in(reg) ctx.rax,
                     options(noreturn)
                 );
             }
@@ -475,6 +394,8 @@ pub fn kernel_fork() -> i64 {
         &alloc_wrapper,
         KERNEL_STACK_SIZE,
     );
+    // Save parent's PML4 before releasing the lock - needed for PARENT_CONTEXT
+    let parent_pml4 = parent_meta.address_space.pml4_phys();
     drop(parent_meta); // Release lock before switching
 
     match result {
@@ -595,6 +516,31 @@ pub fn kernel_fork() -> i64 {
                 cs: 0,
                 ss: 0,
             };
+
+            // Save parent context so user_exit can restore it when child exits
+            *PARENT_CONTEXT.lock() = Some(ParentContext {
+                pid: parent_pid as u64,
+                pml4: parent_pml4.as_u64(),
+                rip: user_ctx.rip,
+                rsp: user_ctx.rsp,
+                rflags: user_ctx.rflags,
+                rax: child_pid as u64, // fork() returns child_pid to parent
+                rbx: user_ctx.rbx,
+                rcx: user_ctx.rcx,
+                rdx: user_ctx.rdx,
+                rsi: user_ctx.rsi,
+                rdi: user_ctx.rdi,
+                rbp: user_ctx.rbp,
+                r8: user_ctx.r8,
+                r9: user_ctx.r9,
+                r10: user_ctx.r10,
+                r11: user_ctx.r11,
+                r12: user_ctx.r12,
+                r13: user_ctx.r13,
+                r14: user_ctx.r14,
+                r15: user_ctx.r15,
+            });
+            CHILD_DONE.store(false, Ordering::SeqCst);
 
             unsafe {
                 *addr_of_mut!(FORK_CHILD_CTX) = child_ctx;

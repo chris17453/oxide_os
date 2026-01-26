@@ -266,6 +266,9 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
         }
 
         // Allow scheduler to preempt us while we wait
+        // Note: We don't save user context here. When scheduler_tick preempts
+        // us at hlt, it saves kernel context. When we resume, we continue
+        // this loop and return normally via the syscall return path.
         arch::allow_kernel_preempt();
 
         // HLT yields CPU until next interrupt

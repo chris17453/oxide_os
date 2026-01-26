@@ -95,7 +95,8 @@ pub fn remove_process(pid: u32) {
 pub fn scheduler_tick(current_rsp: u64) -> u64 {
     let frame = unsafe { &*(current_rsp as *const InterruptFrame) };
 
-    let current_pid = sched::current_pid().unwrap_or(0);
+    // Use lock-free current PID to avoid deadlock in interrupt context
+    let current_pid = sched::current_pid_lockfree().unwrap_or(0);
 
     // Check if kernel code has explicitly allowed preemption (e.g., poll, nanosleep)
     let kernel_preempt_ok = arch::is_kernel_preempt_allowed();

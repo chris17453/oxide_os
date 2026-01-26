@@ -111,6 +111,36 @@ pub fn write_byte(byte: u8) {
     COM1.lock().write_byte(byte);
 }
 
+/// Write a byte to COM1 without taking a lock (for interrupt handlers)
+///
+/// # Safety
+/// This function is not thread-safe. Only use from interrupt context
+/// where you know no other code can be writing to serial at the same time,
+/// or when you accept potential garbled output.
+#[inline]
+pub unsafe fn write_byte_unsafe(byte: u8) {
+    use crate::{inb, outb};
+    // Wait for transmit buffer empty
+    while (inb(COM1_PORT + regs::LSR) & lsr::THRE) == 0 {
+        core::hint::spin_loop();
+    }
+    outb(COM1_PORT + regs::DATA, byte);
+}
+
+/// Write a string to COM1 without taking a lock (for interrupt handlers)
+///
+/// # Safety
+/// See write_byte_unsafe
+#[inline]
+pub unsafe fn write_str_unsafe(s: &str) {
+    for byte in s.bytes() {
+        if byte == b'\n' {
+            write_byte_unsafe(b'\r');
+        }
+        write_byte_unsafe(byte);
+    }
+}
+
 /// Read a byte from COM1 (non-blocking)
 pub fn read_byte() -> Option<u8> {
     COM1.lock().read_byte()
