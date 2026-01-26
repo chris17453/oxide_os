@@ -89,6 +89,7 @@ pub use crate::core::{
     add_task,
     block_current,
     create_task,
+    create_task_with_meta,
     // Task state
     current_pid,
     // Debug
@@ -134,10 +135,28 @@ pub use crate::core::{
     update_task_exec_info,
     wake_up,
     yield_current,
+    // ProcessMeta accessors
+    get_task_meta,
+    get_current_meta,
+    with_current_meta,
+    with_current_meta_mut,
+    get_task_children,
+    add_task_child,
+    remove_task_child,
+    set_task_exit_status,
+    get_task_ppid,
+    get_task_exit_status,
+    is_task_waiting_for,
+    set_task_waiting,
+    clear_task_waiting,
+    set_task_meta,
 };
 
 // Re-export task types
 pub use crate::task::{Task, TaskContext};
+
+// Re-export ProcessMeta from proc crate
+pub use proc::ProcessMeta;
 
 // Re-export run queue type
 pub use crate::runqueue::RunQueue;

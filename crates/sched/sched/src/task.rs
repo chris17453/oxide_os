@@ -4,14 +4,17 @@
 //! entity in OXIDE. Like Linux's task_struct, it contains both scheduling
 //! state and execution context.
 //!
-//! Process metadata (fd_table, signals, credentials) is stored separately
-//! in ProcessMeta and looked up by PID when syscalls need it.
+//! Process metadata (fd_table, signals, credentials) is stored in ProcessMeta
+//! and shared between threads via Arc<Mutex<ProcessMeta>>.
 
 extern crate alloc;
 
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use os_core::PhysAddr;
+use proc::ProcessMeta;
 use sched_traits::{CpuSet, NICE_0_WEIGHT, Pid, SchedPolicy, TaskState, nice_to_weight};
+use spin::Mutex;
 
 /// Saved CPU context for context switching
 ///
@@ -159,6 +162,14 @@ pub struct Task {
 
     /// PID of child being waited for (0 = not waiting, -1 = any child)
     pub waiting_for_child: i32,
+
+    // ========================================
+    // Process metadata
+    // ========================================
+    /// Reference to process metadata (shared between threads)
+    /// This is the single source of truth for process-level state
+    /// (fd_table, signals, credentials, address_space, etc.)
+    pub meta: Option<Arc<Mutex<ProcessMeta>>>,
 }
 
 impl Task {
@@ -198,6 +209,48 @@ impl Task {
             children: Vec::new(),
             exit_status: 0,
             waiting_for_child: 0,
+            meta: None,
+        }
+    }
+
+    /// Create a new task with ProcessMeta
+    pub fn new_with_meta(
+        pid: Pid,
+        ppid: Pid,
+        kernel_stack: PhysAddr,
+        kernel_stack_size: usize,
+        pml4_phys: PhysAddr,
+        entry_point: u64,
+        user_stack_top: u64,
+        meta: Arc<Mutex<ProcessMeta>>,
+    ) -> Self {
+        Self {
+            pid,
+            ppid,
+            state: TaskState::TASK_RUNNING,
+            policy: SchedPolicy::Normal,
+            context: TaskContext::default(),
+            pml4_phys,
+            user_stack_top,
+            entry_point,
+            rt_priority: 0,
+            time_slice: 0,
+            nice: 0,
+            weight: NICE_0_WEIGHT,
+            vruntime: 0,
+            cpu_affinity: CpuSet::all(),
+            last_cpu: 0,
+            exec_start: 0,
+            sum_exec_runtime: 0,
+            preempt_count: 0,
+            need_resched: false,
+            kernel_stack,
+            kernel_stack_size,
+            on_rq: false,
+            children: Vec::new(),
+            exit_status: 0,
+            waiting_for_child: 0,
+            meta: Some(meta),
         }
     }
 
@@ -229,6 +282,45 @@ impl Task {
             children: Vec::new(),
             exit_status: 0,
             waiting_for_child: 0,
+            meta: None,
+        }
+    }
+
+    /// Create a new idle task with ProcessMeta
+    pub fn new_idle_with_meta(
+        pid: Pid,
+        cpu: u32,
+        kernel_stack: PhysAddr,
+        kernel_stack_size: usize,
+        meta: Arc<Mutex<ProcessMeta>>,
+    ) -> Self {
+        Self {
+            pid,
+            ppid: 0,
+            state: TaskState::TASK_RUNNING,
+            policy: SchedPolicy::Idle,
+            context: TaskContext::default(),
+            pml4_phys: PhysAddr::new(0), // Idle task uses kernel page tables
+            user_stack_top: 0,
+            entry_point: 0,
+            rt_priority: 0,
+            time_slice: 0,
+            nice: 19, // Lowest priority
+            weight: nice_to_weight(19),
+            vruntime: 0,
+            cpu_affinity: CpuSet::single(cpu), // Pinned to specific CPU
+            last_cpu: cpu,
+            exec_start: 0,
+            sum_exec_runtime: 0,
+            preempt_count: 0,
+            need_resched: false,
+            kernel_stack,
+            kernel_stack_size,
+            on_rq: false,
+            children: Vec::new(),
+            exit_status: 0,
+            waiting_for_child: 0,
+            meta: Some(meta),
         }
     }
 
@@ -400,6 +492,46 @@ impl Task {
     pub fn exit(&mut self, status: i32) {
         self.exit_status = status;
         self.state = TaskState::TASK_ZOMBIE;
+    }
+
+    // ========================================
+    // Process metadata access
+    // ========================================
+
+    /// Get a reference to the process metadata Arc
+    pub fn meta(&self) -> Option<&Arc<Mutex<ProcessMeta>>> {
+        self.meta.as_ref()
+    }
+
+    /// Set the process metadata
+    pub fn set_meta(&mut self, meta: Arc<Mutex<ProcessMeta>>) {
+        self.meta = Some(meta);
+    }
+
+    /// Execute a closure with read access to ProcessMeta
+    pub fn with_meta<F, R>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&ProcessMeta) -> R,
+    {
+        self.meta.as_ref().map(|m| f(&m.lock()))
+    }
+
+    /// Execute a closure with write access to ProcessMeta
+    pub fn with_meta_mut<F, R>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut ProcessMeta) -> R,
+    {
+        self.meta.as_ref().map(|m| f(&mut m.lock()))
+    }
+
+    /// Check if this task has ProcessMeta
+    pub fn has_meta(&self) -> bool {
+        self.meta.is_some()
+    }
+
+    /// Clone the meta Arc (for sharing between threads)
+    pub fn clone_meta(&self) -> Option<Arc<Mutex<ProcessMeta>>> {
+        self.meta.clone()
     }
 }
 

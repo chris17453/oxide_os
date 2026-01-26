@@ -17,6 +17,7 @@ use mm_paging::{flush_tlb_all, phys_to_virt, write_cr3};
 use os_core::PhysAddr;
 use proc::{ProcessContext, WaitOptions, do_exec, do_fork, do_waitpid, process_table};
 use proc_traits::Pid;
+use sched::TaskState;
 use vfs::{VnodeType, mount::GLOBAL_VFS};
 
 #[allow(unused_imports)]
@@ -661,15 +662,26 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
 
                         // Mark this process as waiting for the child
                         // This allows user_exit to find us and wake us up
+                        // Update both Process and Task state for consistency
                         if let Some(proc) = table.get(parent_pid) {
                             proc.lock().wait_for_child(pid);
                         }
+
+                        // Update scheduler's Task state
+                        sched::set_task_waiting(parent_pid, pid);
+
+                        // Block the current task in the scheduler
+                        // This removes it from the run queue so other tasks can run
+                        sched::block_current(TaskState::TASK_INTERRUPTIBLE);
+
+                        // Mark that we need a reschedule
+                        sched::set_need_resched();
 
                         // Allow scheduler to preempt us while we wait
                         arch::allow_kernel_preempt();
 
                         // Wait for timer interrupt - scheduler will run other processes
-                        // When child exits, wake_parent() will set us to Ready
+                        // When child exits, wake_parent() will wake us up
                         unsafe {
                             core::arch::asm!("sti"); // Ensure interrupts enabled
                             core::arch::asm!("hlt", options(nomem, nostack));

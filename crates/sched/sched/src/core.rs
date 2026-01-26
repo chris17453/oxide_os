@@ -8,6 +8,7 @@
 
 extern crate alloc;
 
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use os_core::PhysAddr;
 use sched_traits::{CpuSet, Pid, SchedPolicy, TICK_NS, TaskState};
@@ -718,4 +719,226 @@ pub fn debug_state() -> (Option<Pid>, u32, u32) {
         (curr, nr_running, cfs_count)
     })
     .unwrap_or((None, 0, 0))
+}
+
+// ============================================================================
+// ProcessMeta accessor functions
+// These functions provide access to process metadata through the scheduler
+// ============================================================================
+
+use alloc::sync::Arc;
+use proc::ProcessMeta;
+
+/// Get process metadata for a task by PID
+///
+/// Searches all CPU run queues to find the task and returns
+/// a clone of its ProcessMeta Arc (if present).
+pub fn get_task_meta(pid: Pid) -> Option<Arc<Mutex<ProcessMeta>>> {
+    for cpu in 0..num_cpus() {
+        if let Some(meta) = with_rq(cpu, |rq| {
+            rq.get_task(pid).and_then(|t| t.meta.clone())
+        }).flatten() {
+            return Some(meta);
+        }
+    }
+    None
+}
+
+/// Get process metadata for the current task
+pub fn get_current_meta() -> Option<Arc<Mutex<ProcessMeta>>> {
+    current_pid().and_then(get_task_meta)
+}
+
+/// Execute a closure with read access to current task's ProcessMeta
+pub fn with_current_meta<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&ProcessMeta) -> R,
+{
+    let meta = get_current_meta()?;
+    Some(f(&meta.lock()))
+}
+
+/// Execute a closure with write access to current task's ProcessMeta
+pub fn with_current_meta_mut<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&mut ProcessMeta) -> R,
+{
+    let meta = get_current_meta()?;
+    Some(f(&mut meta.lock()))
+}
+
+/// Get the children of a task
+pub fn get_task_children(pid: Pid) -> Vec<Pid> {
+    for cpu in 0..num_cpus() {
+        if let Some(children) = with_rq(cpu, |rq| {
+            rq.get_task(pid).map(|t| t.children.clone())
+        }).flatten() {
+            return children;
+        }
+    }
+    Vec::new()
+}
+
+/// Add a child to a task
+pub fn add_task_child(pid: Pid, child_pid: Pid) {
+    for cpu in 0..num_cpus() {
+        let found = with_rq(cpu, |rq| {
+            if let Some(task) = rq.get_task_mut(pid) {
+                task.add_child(child_pid);
+                true
+            } else {
+                false
+            }
+        });
+        if found == Some(true) {
+            break;
+        }
+    }
+}
+
+/// Remove a child from a task
+pub fn remove_task_child(pid: Pid, child_pid: Pid) {
+    for cpu in 0..num_cpus() {
+        let found = with_rq(cpu, |rq| {
+            if let Some(task) = rq.get_task_mut(pid) {
+                task.remove_child(child_pid);
+                true
+            } else {
+                false
+            }
+        });
+        if found == Some(true) {
+            break;
+        }
+    }
+}
+
+/// Set exit status for a task
+pub fn set_task_exit_status(pid: Pid, status: i32) {
+    for cpu in 0..num_cpus() {
+        let found = with_rq(cpu, |rq| {
+            if let Some(task) = rq.get_task_mut(pid) {
+                task.exit(status);
+                true
+            } else {
+                false
+            }
+        });
+        if found == Some(true) {
+            break;
+        }
+    }
+}
+
+/// Get a task's ppid
+pub fn get_task_ppid(pid: Pid) -> Option<Pid> {
+    for cpu in 0..num_cpus() {
+        if let Some(ppid) = with_rq(cpu, |rq| {
+            rq.get_task(pid).map(|t| t.ppid)
+        }).flatten() {
+            return Some(ppid);
+        }
+    }
+    None
+}
+
+/// Get exit status of a task (if zombie)
+pub fn get_task_exit_status(pid: Pid) -> Option<i32> {
+    for cpu in 0..num_cpus() {
+        if let Some((state, status)) = with_rq(cpu, |rq| {
+            rq.get_task(pid).map(|t| (t.state, t.exit_status))
+        }).flatten() {
+            if state == TaskState::TASK_ZOMBIE {
+                return Some(status);
+            }
+            return None;
+        }
+    }
+    None
+}
+
+/// Check if a task is waiting for a specific child
+pub fn is_task_waiting_for(pid: Pid, child_pid: Pid) -> bool {
+    for cpu in 0..num_cpus() {
+        if let Some(waiting) = with_rq(cpu, |rq| {
+            rq.get_task(pid).map(|t| t.is_waiting_for(child_pid))
+        }).flatten() {
+            return waiting;
+        }
+    }
+    false
+}
+
+/// Set a task to wait for a child
+pub fn set_task_waiting(pid: Pid, child_pid: i32) {
+    for cpu in 0..num_cpus() {
+        let found = with_rq(cpu, |rq| {
+            if let Some(task) = rq.get_task_mut(pid) {
+                task.wait_for_child(child_pid);
+                true
+            } else {
+                false
+            }
+        });
+        if found == Some(true) {
+            break;
+        }
+    }
+}
+
+/// Clear a task's waiting state
+pub fn clear_task_waiting(pid: Pid) {
+    for cpu in 0..num_cpus() {
+        let found = with_rq(cpu, |rq| {
+            if let Some(task) = rq.get_task_mut(pid) {
+                task.clear_waiting();
+                true
+            } else {
+                false
+            }
+        });
+        if found == Some(true) {
+            break;
+        }
+    }
+}
+
+/// Create a task with ProcessMeta
+pub fn create_task_with_meta(
+    pid: Pid,
+    ppid: Pid,
+    kernel_stack: PhysAddr,
+    kernel_stack_size: usize,
+    pml4_phys: PhysAddr,
+    entry_point: u64,
+    user_stack_top: u64,
+    meta: Arc<Mutex<ProcessMeta>>,
+) -> Task {
+    Task::new_with_meta(
+        pid,
+        ppid,
+        kernel_stack,
+        kernel_stack_size,
+        pml4_phys,
+        entry_point,
+        user_stack_top,
+        meta,
+    )
+}
+
+/// Set ProcessMeta on an existing task
+pub fn set_task_meta(pid: Pid, meta: Arc<Mutex<ProcessMeta>>) {
+    for cpu in 0..num_cpus() {
+        let found = with_rq(cpu, |rq| {
+            if let Some(task) = rq.get_task_mut(pid) {
+                task.set_meta(meta.clone());
+                true
+            } else {
+                false
+            }
+        });
+        if found == Some(true) {
+            break;
+        }
+    }
 }

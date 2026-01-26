@@ -16,9 +16,58 @@ pub mod socket;
 pub mod time;
 pub mod vfs;
 
+use alloc::sync::Arc;
 use os_core::VirtAddr;
 use proc::process_table;
 use proc_traits::Pid;
+use spin::Mutex;
+
+// ============================================================================
+// Unified process access helpers
+// ============================================================================
+// These functions provide access to process state through the unified model
+// where Task holds ProcessMeta. For backward compatibility during migration,
+// we still fall back to ProcessTable for things like fd_table.
+
+/// Get the current process PID (from scheduler)
+#[inline]
+pub fn current_pid() -> Pid {
+    sched::current_pid().unwrap_or(0)
+}
+
+/// Get process metadata from the scheduler
+///
+/// Returns the ProcessMeta Arc for the given PID if available.
+#[inline]
+pub fn get_meta(pid: Pid) -> Option<Arc<Mutex<sched::ProcessMeta>>> {
+    sched::get_task_meta(pid)
+}
+
+/// Get current process metadata from the scheduler
+#[inline]
+pub fn get_current_meta() -> Option<Arc<Mutex<sched::ProcessMeta>>> {
+    sched::get_current_meta()
+}
+
+/// Execute a closure with read access to current task's ProcessMeta
+///
+/// This is the preferred way to access process metadata in syscalls.
+#[inline]
+pub fn with_current_meta<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&sched::ProcessMeta) -> R,
+{
+    sched::with_current_meta(f)
+}
+
+/// Execute a closure with write access to current task's ProcessMeta
+#[inline]
+pub fn with_current_meta_mut<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&mut sched::ProcessMeta) -> R,
+{
+    sched::with_current_meta_mut(f)
+}
 
 /// Syscall numbers
 pub mod nr {
@@ -877,18 +926,14 @@ fn sys_waitpid(pid: i32, status_ptr: u64, options: i32) -> i64 {
 
 /// sys_getpid - Get current process ID
 fn sys_getpid() -> i64 {
-    let table = process_table();
-    table.current_pid() as i64
+    // Use the unified model - get PID from scheduler
+    current_pid() as i64
 }
 
 /// sys_getppid - Get parent process ID
 fn sys_getppid() -> i64 {
-    let table = process_table();
-    if let Some(proc) = table.current() {
-        proc.lock().ppid() as i64
-    } else {
-        0 // No current process, return 0 (kernel)
-    }
+    // Use the unified model - get PPID from scheduler Task
+    sched::get_task_ppid(current_pid()).map(|p| p as i64).unwrap_or(0)
 }
 
 /// sys_setpgid - Set process group ID
@@ -976,42 +1021,26 @@ fn sys_getsid(pid: Pid) -> i64 {
 
 /// sys_getuid - Get real user ID
 fn sys_getuid() -> i64 {
-    let table = process_table();
-    if let Some(proc) = table.current() {
-        proc.lock().credentials().uid as i64
-    } else {
-        0 // Kernel context
-    }
+    // Use the unified model - get credentials from ProcessMeta
+    with_current_meta(|meta| meta.credentials.uid as i64).unwrap_or(0)
 }
 
 /// sys_getgid - Get real group ID
 fn sys_getgid() -> i64 {
-    let table = process_table();
-    if let Some(proc) = table.current() {
-        proc.lock().credentials().gid as i64
-    } else {
-        0 // Kernel context
-    }
+    // Use the unified model - get credentials from ProcessMeta
+    with_current_meta(|meta| meta.credentials.gid as i64).unwrap_or(0)
 }
 
 /// sys_geteuid - Get effective user ID
 fn sys_geteuid() -> i64 {
-    let table = process_table();
-    if let Some(proc) = table.current() {
-        proc.lock().credentials().euid as i64
-    } else {
-        0 // Kernel context
-    }
+    // Use the unified model - get credentials from ProcessMeta
+    with_current_meta(|meta| meta.credentials.euid as i64).unwrap_or(0)
 }
 
 /// sys_getegid - Get effective group ID
 fn sys_getegid() -> i64 {
-    let table = process_table();
-    if let Some(proc) = table.current() {
-        proc.lock().credentials().egid as i64
-    } else {
-        0 // Kernel context
-    }
+    // Use the unified model - get credentials from ProcessMeta
+    with_current_meta(|meta| meta.credentials.egid as i64).unwrap_or(0)
 }
 
 /// sys_setuid - Set user ID

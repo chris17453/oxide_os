@@ -7,11 +7,18 @@
 //! while this module handles the actual context switching using the
 //! process table from the proc crate.
 
+extern crate alloc;
+
+use alloc::string::ToString;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
 use arch_x86_64 as arch;
 use mm_paging::phys_to_virt;
-use proc::process_table;
+use os_core::PhysAddr;
+use proc::{ProcessMeta, process_table};
 use proc_traits::ProcessState;
-use sched::{self, SchedPolicy, TaskState};
+use sched::{self, SchedPolicy, Task, TaskState};
+use spin::Mutex;
 
 fn update_process_state(pid: u32, state: ProcessState) {
     if pid == 0 {
@@ -62,11 +69,29 @@ pub struct InterruptFrame {
 pub fn init() {
     // Initialize the scheduler for CPU 0 with idle task PID 0
     sched::init_cpu(0, 0);
+
+    // Create a real idle task with PID 0
+    // The idle task doesn't need a real kernel stack since it runs on the BSP stack
+    // We use a placeholder address that won't be used for context switches to idle
+    let idle_meta = Arc::new(Mutex::new(ProcessMeta::new_kernel()));
+
+    // Create idle task with ProcessMeta
+    let idle_task = Task::new_idle_with_meta(
+        0,                         // PID 0 is the idle task
+        0,                         // CPU 0
+        PhysAddr::new(0),          // No separate kernel stack needed
+        0,                         // Stack size (idle uses BSP stack)
+        idle_meta,
+    );
+
+    // Add the idle task to the scheduler
+    sched::add_task(idle_task);
 }
 
 /// Add a process to the scheduler
 ///
 /// Called when a new process is created (fork/exec).
+/// Creates a Task with attached ProcessMeta for the unified model.
 pub fn add_process(pid: u32) {
     let table = process_table();
 
@@ -76,8 +101,39 @@ pub fn add_process(pid: u32) {
         // Newly created processes are ready to be scheduled
         proc.set_state(ProcessState::Ready);
 
-        // Create a scheduler task for this process
-        let mut task = sched::create_task(
+        // Create ProcessMeta from the Process data
+        // This is the new unified model where Task holds ProcessMeta
+        let mut meta = ProcessMeta::new(pid, unsafe {
+            // Create a minimal address space wrapper that shares the same PML4
+            proc::UserAddressSpace::from_raw(proc.address_space().pml4_phys(), alloc::vec::Vec::new())
+        });
+
+        // Copy over all the process metadata
+        meta.tgid = proc.tgid();
+        meta.pgid = proc.pgid();
+        meta.sid = proc.sid();
+        meta.credentials = *proc.credentials();
+        meta.signal_mask = proc.signal_mask().clone();
+        meta.sigactions = proc.sigactions().clone();
+        meta.cwd = proc.cwd().to_string();
+        meta.cmdline = proc.cmdline().to_vec();
+        meta.environ = proc.environ().to_vec();
+        meta.tls = proc.tls();
+        meta.clear_child_tid = proc.clear_child_tid();
+        meta.alarm_remaining = proc.get_alarm_remaining();
+        meta.itimer_interval_sec = proc.get_itimer_interval_sec();
+        meta.itimer_interval_usec = proc.get_itimer_interval_usec();
+        meta.itimer_value_sec = proc.get_itimer_value_sec();
+        meta.itimer_value_usec = proc.get_itimer_value_usec();
+        meta.is_thread_leader = proc.is_thread_leader();
+
+        // Note: fd_table is not cloned here - it's still owned by Process
+        // We'll migrate fd_table access to use ProcessMeta in a later phase
+
+        let meta_arc = Arc::new(Mutex::new(meta));
+
+        // Create a scheduler task for this process with ProcessMeta
+        let mut task = Task::new_with_meta(
             pid,
             proc.ppid(),
             proc.kernel_stack(),
@@ -85,6 +141,7 @@ pub fn add_process(pid: u32) {
             proc.address_space().pml4_phys(),
             proc.entry_point().as_u64(),
             proc.user_stack_top().as_u64(),
+            meta_arc,
         );
 
         // Map process nice value to scheduler nice
@@ -294,8 +351,9 @@ pub fn wake_up(pid: u32) {
         if proc.state() == ProcessState::Blocked {
             proc.clear_waiting();
 
-            // Also notify the sched crate
+            // Also update the sched crate's Task state
             drop(proc);
+            sched::clear_task_waiting(pid);
             sched::wake_up(pid);
         }
     }

@@ -9,3 +9,4 @@ description = "Scheduler implementation for OXIDE OS"
 os_core = { workspace = true }
 sched-traits = { workspace = true }
 spin = { workspace = true }
+proc = { path = "../../proc/proc" }

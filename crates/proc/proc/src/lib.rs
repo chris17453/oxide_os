@@ -12,6 +12,7 @@ mod clone;
 mod exec;
 mod fork;
 mod futex;
+mod meta;
 mod process;
 mod wait;
 
@@ -20,6 +21,7 @@ pub use clone::{CloneArgs, CloneError, do_clone};
 pub use exec::{ExecError, do_exec};
 pub use fork::{ForkError, do_fork, handle_cow_fault};
 pub use futex::{FutexError, futex_wait, futex_wake};
+pub use meta::ProcessMeta;
 pub use proc_traits::{AddressSpace, MapError, MemoryFlags, Pid, ProcessState, UnmapError};
 pub use process::{
     Credentials, Process, ProcessContext, ProcessTable, Tid, alloc_pid, clone_flags, process_table,
