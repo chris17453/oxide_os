@@ -18,7 +18,6 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 
-use proc::process_table;
 use proc_traits::Pid;
 use proc_traits::ProcessState;
 use sched::{self, TaskState as SchedTaskState};
@@ -108,8 +107,7 @@ impl VnodeOps for ProcFs {
 
         // Try to parse as PID
         if let Ok(pid) = name.parse::<u32>() {
-            let table = process_table();
-            if table.get(pid).is_some() {
+            if sched::get_task_meta(pid).is_some() {
                 return Ok(Arc::new(ProcPid::new(pid)));
             }
         }
@@ -169,8 +167,7 @@ impl VnodeOps for ProcFs {
         }
 
         // Process directories
-        let table = process_table();
-        let pids = table.all_pids();
+        let pids = sched::all_pids();
 
         let pid_idx = offset - 4;
         if pid_idx < pids.len() {
@@ -235,7 +232,7 @@ impl VnodeOps for ProcSelf {
 
     fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
         // Read the symlink target (current PID) without allocating
-        let pid = process_table().current_pid();
+        let pid = sched::current_pid().unwrap_or(0);
 
         // Convert PID to string without allocation (max u32 = 10 digits)
         let mut pid_buf = [0u8; 12];
@@ -296,7 +293,7 @@ impl VnodeOps for ProcSelf {
     }
 
     fn stat(&self) -> VfsResult<Stat> {
-        let pid = process_table().current_pid();
+        let pid = sched::current_pid().unwrap_or(0);
         let target = format!("{}", pid);
         Ok(Stat::new(
             VnodeType::Symlink,
@@ -394,8 +391,7 @@ impl VnodeOps for ProcPid {
 
     fn stat(&self) -> VfsResult<Stat> {
         // Verify process exists
-        let table = process_table();
-        if table.get(self.pid).is_none() {
+        if sched::get_task_meta(self.pid).is_none() {
             return Err(VfsError::NotFound);
         }
         Ok(Stat::new(
@@ -447,19 +443,17 @@ impl ProcPidStatus {
     }
 
     fn generate_content(&self) -> String {
-        let table = process_table();
-
-        if let Some(proc) = table.get(self.pid) {
-            let p = proc.lock();
-            let state = Self::format_state(self.pid, p.state());
+        if let Some(meta) = sched::get_task_meta(self.pid) {
+            let m = meta.lock();
+            let state = Self::format_state(self.pid, ProcessState::Running);
+            let ppid = sched::get_task_ppid(self.pid).unwrap_or(0);
 
             // Get process name from cmdline (first arg, basename only)
-            let cmdline = p.cmdline();
-            let name = if cmdline.is_empty() {
+            let name = if m.cmdline.is_empty() {
                 "unknown".to_string()
             } else {
                 // Get basename of first argument
-                let arg0 = &cmdline[0];
+                let arg0 = &m.cmdline[0];
                 if let Some(pos) = arg0.rfind('/') {
                     arg0[pos + 1..].to_string()
                 } else {
@@ -477,15 +471,15 @@ impl ProcPidStatus {
                 name,
                 state,
                 self.pid,
-                p.ppid(),
-                p.credentials().uid,
-                p.credentials().euid,
-                p.credentials().uid,
-                p.credentials().uid,
-                p.credentials().gid,
-                p.credentials().egid,
-                p.credentials().gid,
-                p.credentials().gid,
+                ppid,
+                m.credentials.uid,
+                m.credentials.euid,
+                m.credentials.uid,
+                m.credentials.uid,
+                m.credentials.gid,
+                m.credentials.egid,
+                m.credentials.gid,
+                m.credentials.gid,
             )
         } else {
             String::new()
@@ -577,19 +571,16 @@ impl ProcPidCmdline {
 
 impl ProcPidCmdline {
     fn generate_content(&self) -> alloc::vec::Vec<u8> {
-        let table = process_table();
+        if let Some(meta) = sched::get_task_meta(self.pid) {
+            let m = meta.lock();
 
-        if let Some(proc) = table.get(self.pid) {
-            let p = proc.lock();
-            let cmdline = p.cmdline();
-
-            if cmdline.is_empty() {
+            if m.cmdline.is_empty() {
                 return alloc::vec![0u8];
             }
 
             // Join args with NUL bytes, end with NUL
             let mut result = alloc::vec::Vec::new();
-            for (i, arg) in cmdline.iter().enumerate() {
+            for (i, arg) in m.cmdline.iter().enumerate() {
                 if i > 0 {
                     result.push(0);
                 }

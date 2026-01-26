@@ -729,6 +729,17 @@ pub fn debug_state() -> (Option<Pid>, u32, u32) {
 use alloc::sync::Arc;
 use proc::ProcessMeta;
 
+/// Get all PIDs across all CPUs
+pub fn all_pids() -> Vec<Pid> {
+    let mut pids = Vec::new();
+    for cpu in 0..num_cpus() {
+        if let Some(mut cpu_pids) = with_rq(cpu, |rq| rq.all_pids()) {
+            pids.append(&mut cpu_pids);
+        }
+    }
+    pids
+}
+
 /// Get process metadata for a task by PID
 ///
 /// Searches all CPU run queues to find the task and returns
@@ -941,4 +952,124 @@ pub fn set_task_meta(pid: Pid, meta: Arc<Mutex<ProcessMeta>>) {
             break;
         }
     }
+}
+
+/// Get nice value for a task
+pub fn get_task_nice(pid: Pid) -> Option<i8> {
+    for cpu in 0..num_cpus() {
+        if let Some(nice) = with_rq(cpu, |rq| {
+            rq.get_task(pid).map(|t| t.nice)
+        }).flatten() {
+            return Some(nice);
+        }
+    }
+    None
+}
+
+/// Set nice value for a task
+pub fn set_task_nice(pid: Pid, nice: i8) -> bool {
+    for cpu in 0..num_cpus() {
+        let found = with_rq(cpu, |rq| {
+            if let Some(task) = rq.get_task_mut(pid) {
+                task.set_nice(nice);
+                true
+            } else {
+                false
+            }
+        });
+        if found == Some(true) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Get scheduler policy for a task
+pub fn get_task_policy(pid: Pid) -> Option<SchedPolicy> {
+    for cpu in 0..num_cpus() {
+        if let Some(policy) = with_rq(cpu, |rq| {
+            rq.get_task(pid).map(|t| t.policy)
+        }).flatten() {
+            return Some(policy);
+        }
+    }
+    None
+}
+
+/// Set scheduler policy for a task
+pub fn set_task_policy(pid: Pid, policy: SchedPolicy) -> bool {
+    for cpu in 0..num_cpus() {
+        let found = with_rq(cpu, |rq| {
+            if let Some(task) = rq.get_task_mut(pid) {
+                task.policy = policy;
+                true
+            } else {
+                false
+            }
+        });
+        if found == Some(true) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Get RT priority for a task
+pub fn get_task_rt_priority(pid: Pid) -> Option<u8> {
+    for cpu in 0..num_cpus() {
+        if let Some(prio) = with_rq(cpu, |rq| {
+            rq.get_task(pid).map(|t| t.rt_priority)
+        }).flatten() {
+            return Some(prio);
+        }
+    }
+    None
+}
+
+/// Set RT priority for a task
+pub fn set_task_rt_priority(pid: Pid, priority: u8) -> bool {
+    for cpu in 0..num_cpus() {
+        let found = with_rq(cpu, |rq| {
+            if let Some(task) = rq.get_task_mut(pid) {
+                task.rt_priority = priority;
+                true
+            } else {
+                false
+            }
+        });
+        if found == Some(true) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Get CPU affinity for a task
+pub fn get_task_affinity(pid: Pid) -> Option<CpuSet> {
+    for cpu in 0..num_cpus() {
+        if let Some(affinity) = with_rq(cpu, |rq| {
+            rq.get_task(pid).map(|t| t.cpu_affinity.clone())
+        }).flatten() {
+            return Some(affinity);
+        }
+    }
+    None
+}
+
+/// Set CPU affinity for a task
+pub fn set_task_affinity(pid: Pid, affinity: CpuSet) -> bool {
+    for cpu in 0..num_cpus() {
+        let found = with_rq(cpu, |rq| {
+            if let Some(task) = rq.get_task_mut(pid) {
+                task.cpu_affinity = affinity.clone();
+                true
+            } else {
+                false
+            }
+        });
+        if found == Some(true) {
+            return true;
+        }
+    }
+    false
 }

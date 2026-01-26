@@ -865,6 +865,7 @@ dependencies = [
  "arch-x86_64",
  "block",
  "proc",
+ "sched",
  "spin 0.10.0",
  "vfs",
 ]

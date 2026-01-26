@@ -150,6 +150,16 @@ pub use crate::core::{
     set_task_waiting,
     clear_task_waiting,
     set_task_meta,
+    // Task scheduling properties
+    get_task_nice,
+    set_task_nice,
+    get_task_policy,
+    set_task_policy,
+    get_task_rt_priority,
+    set_task_rt_priority,
+    get_task_affinity,
+    set_task_affinity,
+    all_pids,
 };
 
 // Re-export task types

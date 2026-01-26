@@ -3,27 +3,24 @@
 use arch_x86_64 as arch;
 use arch_x86_64::serial;
 use core::fmt::Write;
-use proc::process_table;
 use signal::SigInfo;
 
 /// Send signal to the current foreground process only
 ///
 /// Skips system processes (init, login, shell) that shouldn't be killed by Ctrl+C
 fn signal_foreground(sig: i32) {
-    let table = process_table();
-    let current_pid = table.current_pid();
+    let current_pid = sched::current_pid().unwrap_or(0);
 
     // Don't signal init or PID 0
     if current_pid <= 1 {
         return;
     }
 
-    if let Some(proc) = table.get(current_pid) {
+    if let Some(meta) = sched::get_task_meta(current_pid) {
         // Check process name from cmdline - don't signal login or shell
         let should_skip = {
-            let p = proc.lock();
-            let cmdline = p.cmdline();
-            if let Some(first) = cmdline.first() {
+            let m = meta.lock();
+            if let Some(first) = m.cmdline.first() {
                 // Extract just the binary name from path
                 let name = first.rsplit('/').next().unwrap_or(first);
                 name == "login" || name == "esh" || name == "init"
@@ -37,7 +34,7 @@ fn signal_foreground(sig: i32) {
         }
 
         let info = SigInfo::kill(sig, 0, 0);
-        proc.lock().send_signal(sig, Some(info));
+        meta.lock().send_signal(sig, Some(info));
     }
 }
 
@@ -108,15 +105,9 @@ pub fn console_read(buf: &mut [u8]) -> usize {
         // Poll for input from either keyboard buffer or serial
         loop {
             // Check for pending signals that should interrupt the read
-            {
-                let table = process_table();
-                let current_pid = table.current_pid();
-                if let Some(proc) = table.get(current_pid) {
-                    if proc.lock().has_pending_signals() {
-                        // Return what we have so far - signal will be delivered on return to usermode
-                        return count;
-                    }
-                }
+            if sched::with_current_meta(|meta| meta.has_pending_signals()).unwrap_or(false) {
+                // Return what we have so far - signal will be delivered on return to usermode
+                return count;
             }
 
             // First check keyboard buffer (PS/2 console input)

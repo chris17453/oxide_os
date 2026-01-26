@@ -1264,6 +1264,13 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
         // Set cmdline for init so ps shows it correctly
         proc.set_cmdline(alloc::vec![alloc::string::String::from("/init")]);
+
+        // Also update ProcessMeta's fd_table and cmdline (since add_process already cloned them before setup)
+        if let Some(meta) = sched::get_task_meta(init_pid) {
+            let mut m = meta.lock();
+            m.fd_table = proc.fd_table().clone_for_fork();
+            m.cmdline = proc.cmdline().to_vec();
+        }
     }
 
     // Get the PML4 from the registered process
@@ -1296,20 +1303,18 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 fn signal_foreground_pgrp(sig: i32) {
     use signal::SigInfo;
 
-    let table = process_table();
-    let current_pid = table.current_pid();
+    let current_pid = sched::current_pid().unwrap_or(0);
 
     // Don't signal init or PID 0
     if current_pid <= 1 {
         return;
     }
 
-    if let Some(proc) = table.get(current_pid) {
+    if let Some(meta) = sched::get_task_meta(current_pid) {
         // Check process name from cmdline - don't signal login or shell
         let should_skip = {
-            let p = proc.lock();
-            let cmdline = p.cmdline();
-            if let Some(first) = cmdline.first() {
+            let m = meta.lock();
+            if let Some(first) = m.cmdline.first() {
                 // Extract just the binary name from path
                 let name = first.rsplit('/').next().unwrap_or(first);
                 name == "login" || name == "esh" || name == "init"
@@ -1323,7 +1328,7 @@ fn signal_foreground_pgrp(sig: i32) {
         }
 
         let info = SigInfo::kill(sig, 0, 0); // Kernel-generated signal
-        proc.lock().send_signal(sig, Some(info));
+        meta.lock().send_signal(sig, Some(info));
     }
 }
 

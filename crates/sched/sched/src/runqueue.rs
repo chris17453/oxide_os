@@ -91,6 +91,11 @@ impl RunQueue {
         self.need_resched = need;
     }
 
+    /// Get all PIDs on this run queue
+    pub fn all_pids(&self) -> alloc::vec::Vec<Pid> {
+        self.tasks.keys().copied().collect()
+    }
+
     /// Get a reference to a task
     pub fn get_task(&self, pid: Pid) -> Option<&Task> {
         self.tasks.get(&pid)

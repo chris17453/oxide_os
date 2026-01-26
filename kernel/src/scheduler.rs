@@ -127,8 +127,9 @@ pub fn add_process(pid: u32) {
         meta.itimer_value_usec = proc.get_itimer_value_usec();
         meta.is_thread_leader = proc.is_thread_leader();
 
-        // Note: fd_table is not cloned here - it's still owned by Process
-        // We'll migrate fd_table access to use ProcessMeta in a later phase
+        // Clone fd_table from Process to ProcessMeta
+        // This is the authoritative copy - syscalls should use ProcessMeta
+        meta.fd_table = proc.fd_table().clone_for_fork();
 
         let meta_arc = Arc::new(Mutex::new(meta));
 
@@ -193,8 +194,7 @@ pub fn remove_process(pid: u32) {
 pub fn scheduler_tick(current_rsp: u64) -> u64 {
     let frame = unsafe { &*(current_rsp as *const InterruptFrame) };
 
-    let table = process_table();
-    let current_pid = table.current_pid();
+    let current_pid = sched::current_pid().unwrap_or(0);
 
     // Check if kernel code has explicitly allowed preemption (e.g., poll, nanosleep)
     let kernel_preempt_ok = arch::is_kernel_preempt_allowed();
@@ -271,7 +271,7 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         update_process_state(current_pid, ProcessState::Ready);
     }
 
-    table.set_current_pid(next_pid);
+    process_table().set_current_pid(next_pid);
     update_process_state(next_pid, ProcessState::Running);
 
     // Update kernel stack pointers (only needed if switching to user mode)
@@ -329,9 +329,8 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
 fn pick_next_process(current_pid: u32) -> u32 {
     // Use the actual scheduler we built!
     if let Some(next_pid) = sched::pick_next_task() {
-        // Validate that this PID exists in the process table
-        let table = process_table();
-        if table.get(next_pid).is_some() {
+        // Validate that this PID exists (has ProcessMeta) in the unified model
+        if sched::get_task_meta(next_pid).is_some() {
             return next_pid;
         }
     }
@@ -386,8 +385,7 @@ pub fn block_current(state: TaskState) {
 /// Switches to another ready task if one exists.
 /// Returns 0 on success.
 pub fn kernel_yield() -> i64 {
-    let table = process_table();
-    let current_pid = table.current_pid();
+    let current_pid = sched::current_pid().unwrap_or(0);
 
     // Tell sched crate we're yielding
     sched::yield_current();
@@ -441,7 +439,7 @@ pub fn kernel_yield() -> i64 {
 
     // Switch to next process
     update_process_state(current_pid, ProcessState::Ready);
-    table.set_current_pid(next_pid);
+    process_table().set_current_pid(next_pid);
     update_process_state(next_pid, ProcessState::Running);
 
     // Update kernel stack pointers

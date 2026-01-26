@@ -10,8 +10,8 @@ const fn align_up(value: usize, align: usize) -> usize {
 }
 
 use alloc::string::String;
-use proc::process_table;
 use vfs::{Mode, mount::GLOBAL_VFS};
+use crate::with_current_meta;
 
 use crate::copy_to_user;
 use crate::errno;
@@ -190,18 +190,13 @@ pub fn sys_getdents(fd: i32, buf: u64, count: usize) -> i64 {
         return errno::EFAULT;
     }
 
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
+    let file = match with_current_meta(|meta| {
+        meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
+    }) {
+        Some(Ok(f)) => f,
+        Some(Err(e)) => return vfs_error_to_errno(e),
         None => return errno::ESRCH,
     };
-
-    let proc_guard = proc.lock();
-    let file = match proc_guard.fd_table().get(fd) {
-        Ok(fd_entry) => fd_entry.file.clone(),
-        Err(e) => return vfs_error_to_errno(e),
-    };
-    drop(proc_guard);
 
     // Check it's a directory
     if file.vnode().vtype() != VnodeType::Directory {
@@ -294,18 +289,13 @@ pub fn sys_chdir(path_ptr: u64, path_len: usize) -> i64 {
         return errno::ENOTDIR;
     }
 
-    // Get current process
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
-        None => return errno::ESRCH,
-    };
-
     // Update the process's current working directory
-    let mut proc_guard = proc.lock();
-    proc_guard.set_cwd(path);
-
-    0
+    match crate::with_current_meta_mut(|meta| {
+        meta.cwd = path;
+    }) {
+        Some(()) => 0,
+        None => errno::ESRCH,
+    }
 }
 
 /// sys_getcwd - Get current working directory
@@ -318,15 +308,11 @@ pub fn sys_getcwd(buf: u64, size: usize) -> i64 {
         return errno::EFAULT;
     }
 
-    // Get current process
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
+    // Get current working directory
+    let cwd = match with_current_meta(|meta| meta.cwd.clone()) {
+        Some(c) => c,
         None => return errno::ESRCH,
     };
-
-    let proc_guard = proc.lock();
-    let cwd = proc_guard.cwd();
 
     // Check buffer size
     if cwd.len() + 1 > size {

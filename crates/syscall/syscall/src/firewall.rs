@@ -9,9 +9,9 @@
 //! - FW_GET_CONNTRACK: Get connection tracking info
 
 use crate::errno;
+use crate::with_current_meta;
 use net::Ipv4Addr;
 use os_core::VirtAddr;
-use proc::process_table;
 use tcpip::{
     ConnState, FilterChain, FilterRule, FilterVerdict, IpMatch, IpProtocol, PortMatch, add_rule,
     connection_count, delete_rule, flush_chain, get_policy, rule_count, set_policy, with_rules,
@@ -191,12 +191,7 @@ impl FwRule {
 
 /// Check if current process is root (UID 0)
 fn is_root() -> bool {
-    let table = process_table();
-    if let Some(current) = table.current() {
-        current.lock().credentials().uid == 0
-    } else {
-        false
-    }
+    with_current_meta(|meta| meta.credentials.uid == 0).unwrap_or(false)
 }
 
 /// Add a firewall rule

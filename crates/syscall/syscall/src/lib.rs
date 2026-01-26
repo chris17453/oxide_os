@@ -942,17 +942,15 @@ fn sys_getppid() -> i64 {
 /// * `pid` - Process to modify (0 = current)
 /// * `pgid` - New process group (0 = use pid)
 fn sys_setpgid(pid: Pid, pgid: Pid) -> i64 {
-    let table = process_table();
-
     // Get target PID
-    let target_pid = if pid == 0 { table.current_pid() } else { pid };
+    let target_pid = if pid == 0 { current_pid() } else { pid };
 
     // Get target PGID
     let target_pgid = if pgid == 0 { target_pid } else { pgid };
 
     // Get the process
-    if let Some(proc) = table.get(target_pid) {
-        proc.lock().set_pgid(target_pgid);
+    if let Some(meta) = get_meta(target_pid) {
+        meta.lock().pgid = target_pgid;
         0
     } else {
         errno::ESRCH
@@ -964,12 +962,10 @@ fn sys_setpgid(pid: Pid, pgid: Pid) -> i64 {
 /// # Arguments
 /// * `pid` - Process to query (0 = current)
 fn sys_getpgid(pid: Pid) -> i64 {
-    let table = process_table();
+    let target_pid = if pid == 0 { current_pid() } else { pid };
 
-    let target_pid = if pid == 0 { table.current_pid() } else { pid };
-
-    if let Some(proc) = table.get(target_pid) {
-        proc.lock().pgid() as i64
+    if let Some(meta) = get_meta(target_pid) {
+        meta.lock().pgid as i64
     } else {
         errno::ESRCH
     }
@@ -977,25 +973,24 @@ fn sys_getpgid(pid: Pid) -> i64 {
 
 /// sys_setsid - Create new session
 fn sys_setsid() -> i64 {
-    let table = process_table();
-    let pid = table.current_pid();
+    let pid = current_pid();
 
-    if let Some(proc) = table.get(pid) {
-        let mut p = proc.lock();
+    if let Some(meta) = get_meta(pid) {
+        let mut m = meta.lock();
 
         // Check if already a session leader
-        if p.sid() == pid {
+        if m.sid == pid {
             return errno::EPERM;
         }
 
         // Check if already a process group leader
-        if p.pgid() == pid {
+        if m.pgid == pid {
             return errno::EPERM;
         }
 
         // Create new session
-        p.set_sid(pid);
-        p.set_pgid(pid);
+        m.sid = pid;
+        m.pgid = pid;
 
         pid as i64
     } else {
@@ -1008,12 +1003,10 @@ fn sys_setsid() -> i64 {
 /// # Arguments
 /// * `pid` - Process to query (0 = current)
 fn sys_getsid(pid: Pid) -> i64 {
-    let table = process_table();
+    let target_pid = if pid == 0 { current_pid() } else { pid };
 
-    let target_pid = if pid == 0 { table.current_pid() } else { pid };
-
-    if let Some(proc) = table.get(target_pid) {
-        proc.lock().sid() as i64
+    if let Some(meta) = get_meta(target_pid) {
+        meta.lock().sid as i64
     } else {
         errno::ESRCH
     }
@@ -1048,30 +1041,27 @@ fn sys_getegid() -> i64 {
 /// # Arguments
 /// * `uid` - New user ID
 fn sys_setuid(uid: u32) -> i64 {
-    let table = process_table();
-    if let Some(proc) = table.current() {
-        let mut p = proc.lock();
-        let creds = p.credentials();
+    if let Some(meta) = get_current_meta() {
+        let mut m = meta.lock();
+        let creds = m.credentials;
 
         // If effective UID is 0 (root), set all UIDs
         if creds.euid == 0 {
-            let new_creds = proc::Credentials {
+            m.credentials = proc::Credentials {
                 uid,
                 gid: creds.gid,
                 euid: uid,
                 egid: creds.egid,
             };
-            p.set_credentials(new_creds);
             0
         } else if uid == creds.uid || uid == creds.euid {
             // Non-root can only set euid to real or saved uid
-            let new_creds = proc::Credentials {
+            m.credentials = proc::Credentials {
                 uid: creds.uid,
                 gid: creds.gid,
                 euid: uid,
                 egid: creds.egid,
             };
-            p.set_credentials(new_creds);
             0
         } else {
             errno::EPERM
@@ -1086,30 +1076,27 @@ fn sys_setuid(uid: u32) -> i64 {
 /// # Arguments
 /// * `gid` - New group ID
 fn sys_setgid(gid: u32) -> i64 {
-    let table = process_table();
-    if let Some(proc) = table.current() {
-        let mut p = proc.lock();
-        let creds = p.credentials();
+    if let Some(meta) = get_current_meta() {
+        let mut m = meta.lock();
+        let creds = m.credentials;
 
         // If effective UID is 0 (root), set all GIDs
         if creds.euid == 0 {
-            let new_creds = proc::Credentials {
+            m.credentials = proc::Credentials {
                 uid: creds.uid,
                 gid,
                 euid: creds.euid,
                 egid: gid,
             };
-            p.set_credentials(new_creds);
             0
         } else if gid == creds.gid || gid == creds.egid {
             // Non-root can only set egid to real or saved gid
-            let new_creds = proc::Credentials {
+            m.credentials = proc::Credentials {
                 uid: creds.uid,
                 gid: creds.gid,
                 euid: creds.euid,
                 egid: gid,
             };
-            p.set_credentials(new_creds);
             0
         } else {
             errno::EPERM
@@ -1131,27 +1118,25 @@ mod priority {
 /// # Arguments
 /// * `inc` - Priority increment (positive = lower priority, negative = higher)
 fn sys_nice(inc: i32) -> i64 {
-    let table = process_table();
-    if let Some(proc) = table.current() {
-        let mut p = proc.lock();
-        let current_nice = p.nice();
+    let pid = current_pid();
+    let current_nice = match sched::get_task_nice(pid) {
+        Some(n) => n as i32,
+        None => return errno::ESRCH,
+    };
 
-        // Calculate new nice value (-20 to +19)
-        let new_nice = (current_nice + inc).max(-20).min(19);
+    // Calculate new nice value (-20 to +19)
+    let new_nice = (current_nice + inc).max(-20).min(19);
 
-        // Check permissions for increasing priority (lowering nice value)
-        if new_nice < current_nice {
-            let creds = p.credentials();
-            if creds.euid != 0 {
-                return errno::EPERM;
-            }
+    // Check permissions for increasing priority (lowering nice value)
+    if new_nice < current_nice {
+        let euid = with_current_meta(|m| m.credentials.euid).unwrap_or(u32::MAX);
+        if euid != 0 {
+            return errno::EPERM;
         }
-
-        p.set_nice(new_nice);
-        new_nice as i64
-    } else {
-        errno::ESRCH
     }
+
+    sched::set_task_nice(pid, new_nice as i8);
+    new_nice as i64
 }
 
 /// sys_getpriority - Get scheduling priority
@@ -1160,20 +1145,13 @@ fn sys_nice(inc: i32) -> i64 {
 /// * `which` - PRIO_PROCESS, PRIO_PGRP, or PRIO_USER
 /// * `who` - Process ID, process group ID, or user ID (0 = current)
 fn sys_getpriority(which: i32, who: i32) -> i64 {
-    let table = process_table();
-
     match which {
         priority::PRIO_PROCESS => {
-            let target_pid = if who == 0 {
-                table.current_pid()
-            } else {
-                who as u32
-            };
+            let target_pid = if who == 0 { current_pid() } else { who as u32 };
 
-            if let Some(proc) = table.get(target_pid) {
-                let nice = proc.lock().nice();
+            if let Some(nice) = sched::get_task_nice(target_pid) {
                 // Return 20 - nice to match POSIX (0 to 40 range)
-                (20 - nice) as i64
+                (20 - nice as i32) as i64
             } else {
                 errno::ESRCH
             }
@@ -1181,9 +1159,8 @@ fn sys_getpriority(which: i32, who: i32) -> i64 {
         priority::PRIO_PGRP => {
             // For now, just return current process priority if who == 0
             if who == 0 {
-                if let Some(proc) = table.current() {
-                    let nice = proc.lock().nice();
-                    (20 - nice) as i64
+                if let Some(nice) = sched::get_task_nice(current_pid()) {
+                    (20 - nice as i32) as i64
                 } else {
                     errno::ESRCH
                 }
@@ -1205,36 +1182,28 @@ fn sys_getpriority(which: i32, who: i32) -> i64 {
 /// * `who` - Process ID, process group ID, or user ID (0 = current)
 /// * `prio` - New priority (0-40, where 0 is highest priority)
 fn sys_setpriority(which: i32, who: i32, prio: i32) -> i64 {
-    let table = process_table();
-
     // Convert POSIX priority (0-40) to nice value (-20 to +19)
     let nice_value = 20 - prio.max(0).min(40);
 
     match which {
         priority::PRIO_PROCESS => {
-            let target_pid = if who == 0 {
-                table.current_pid()
-            } else {
-                who as u32
+            let target_pid = if who == 0 { current_pid() } else { who as u32 };
+
+            let current_nice = match sched::get_task_nice(target_pid) {
+                Some(n) => n as i32,
+                None => return errno::ESRCH,
             };
 
-            if let Some(proc) = table.get(target_pid) {
-                let mut p = proc.lock();
-                let current_nice = p.nice();
-
-                // Check permissions for increasing priority
-                if nice_value < current_nice {
-                    let creds = p.credentials();
-                    if creds.euid != 0 {
-                        return errno::EPERM;
-                    }
+            // Check permissions for increasing priority
+            if nice_value < current_nice {
+                let euid = with_current_meta(|m| m.credentials.euid).unwrap_or(u32::MAX);
+                if euid != 0 {
+                    return errno::EPERM;
                 }
-
-                p.set_nice(nice_value);
-                0
-            } else {
-                errno::ESRCH
             }
+
+            sched::set_task_nice(target_pid, nice_value as i8);
+            0
         }
         priority::PRIO_PGRP => {
             errno::ENOSYS // Process group priority not fully implemented
@@ -1261,19 +1230,18 @@ mod timer {
 /// # Returns
 /// Seconds remaining from previous alarm, or 0
 fn sys_alarm(seconds: u32) -> i64 {
-    let table = process_table();
-    if let Some(proc) = table.current() {
-        let mut p = proc.lock();
+    if let Some(meta) = get_current_meta() {
+        let mut m = meta.lock();
 
         // Get remaining time from previous alarm
-        let remaining = p.get_alarm_remaining();
+        let remaining = m.alarm_remaining;
 
         if seconds == 0 {
             // Cancel alarm
-            p.clear_alarm();
+            m.alarm_remaining = 0;
         } else {
             // Set new alarm
-            p.set_alarm(seconds);
+            m.alarm_remaining = seconds;
         }
 
         remaining as i64
@@ -1308,23 +1276,23 @@ fn sys_setitimer(which: i32, new_value: u64, old_value: u64) -> i64 {
         return errno::EFAULT;
     }
 
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
+    let meta = match get_current_meta() {
+        Some(m) => m,
         None => return errno::ESRCH,
     };
 
     match which {
         timer::ITIMER_REAL => {
-            let mut p = proc.lock();
+            let mut m = meta.lock();
 
             // Read old value if requested
             if old_value != 0 {
+                let (int_sec, int_usec, val_sec, val_usec) = m.get_itimer();
                 let old_timer = ITimerVal {
-                    it_interval_sec: p.get_itimer_interval_sec(),
-                    it_interval_usec: p.get_itimer_interval_usec(),
-                    it_value_sec: p.get_itimer_value_sec(),
-                    it_value_usec: p.get_itimer_value_usec(),
+                    it_interval_sec: int_sec,
+                    it_interval_usec: int_usec,
+                    it_value_sec: val_sec,
+                    it_value_usec: val_usec,
                 };
 
                 unsafe {
@@ -1337,7 +1305,7 @@ fn sys_setitimer(which: i32, new_value: u64, old_value: u64) -> i64 {
             let new_timer = unsafe { *(new_value as *const ITimerVal) };
 
             // Set new timer
-            p.set_itimer(
+            m.set_itimer(
                 new_timer.it_interval_sec,
                 new_timer.it_interval_usec,
                 new_timer.it_value_sec,
@@ -1364,21 +1332,21 @@ fn sys_getitimer(which: i32, curr_value: u64) -> i64 {
         return errno::EFAULT;
     }
 
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
+    let meta = match get_current_meta() {
+        Some(m) => m,
         None => return errno::ESRCH,
     };
 
     match which {
         timer::ITIMER_REAL => {
-            let p = proc.lock();
+            let m = meta.lock();
+            let (int_sec, int_usec, val_sec, val_usec) = m.get_itimer();
 
             let timer = ITimerVal {
-                it_interval_sec: p.get_itimer_interval_sec(),
-                it_interval_usec: p.get_itimer_interval_usec(),
-                it_value_sec: p.get_itimer_value_sec(),
-                it_value_usec: p.get_itimer_value_usec(),
+                it_interval_sec: int_sec,
+                it_interval_usec: int_usec,
+                it_value_sec: val_sec,
+                it_value_usec: val_usec,
             };
 
             unsafe {
@@ -1581,12 +1549,8 @@ fn sys_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls: u64) 
 
 /// sys_gettid - Get thread ID
 fn sys_gettid() -> i64 {
-    let table = process_table();
-    if let Some(proc) = table.current() {
-        proc.lock().tid() as i64
-    } else {
-        0
-    }
+    // For now, tid == pid (no thread support yet)
+    current_pid() as i64
 }
 
 /// Futex operations
@@ -1643,11 +1607,9 @@ fn sys_set_tid_address(tidptr: u64) -> i64 {
         return errno::EFAULT;
     }
 
-    let table = process_table();
-    if let Some(proc) = table.current() {
-        let mut p = proc.lock();
-        p.set_clear_child_tid(tidptr);
-        p.tid() as i64
+    if let Some(meta) = get_current_meta() {
+        meta.lock().clear_child_tid = tidptr;
+        current_pid() as i64
     } else {
         errno::ESRCH
     }
@@ -1727,15 +1689,10 @@ fn sys_sched_setscheduler(pid: i32, policy: i32, param_ptr: u64) -> i64 {
     }
 
     // Get target PID
-    let table = process_table();
-    let target_pid = if pid == 0 {
-        table.current_pid()
-    } else {
-        pid as u32
-    };
+    let target_pid = if pid == 0 { current_pid() } else { pid as u32 };
 
-    // Validate process exists
-    if table.get(target_pid).is_none() {
+    // Validate process exists via scheduler (check if task has metadata)
+    if sched::get_task_meta(target_pid).is_none() {
         return errno::ESRCH;
     }
 
@@ -1761,9 +1718,9 @@ fn sys_sched_setscheduler(pid: i32, policy: i32, param_ptr: u64) -> i64 {
     }
 
     // Check permissions - only root can set RT policies
-    let current = table.current();
-    if let Some(proc) = current {
-        if sched_policy.is_realtime() && proc.lock().credentials().euid != 0 {
+    if sched_policy.is_realtime() {
+        let euid = with_current_meta(|m| m.credentials.euid).unwrap_or(u32::MAX);
+        if euid != 0 {
             return errno::EPERM;
         }
     }
@@ -1779,15 +1736,10 @@ fn sys_sched_setscheduler(pid: i32, policy: i32, param_ptr: u64) -> i64 {
 /// # Arguments
 /// * `pid` - Process ID (0 = current)
 fn sys_sched_getscheduler(pid: i32) -> i64 {
-    let table = process_table();
-    let target_pid = if pid == 0 {
-        table.current_pid()
-    } else {
-        pid as u32
-    };
+    let target_pid = if pid == 0 { current_pid() } else { pid as u32 };
 
     // Validate process exists
-    if table.get(target_pid).is_none() {
+    if sched::get_task_meta(target_pid).is_none() {
         return errno::ESRCH;
     }
 
@@ -1808,15 +1760,10 @@ fn sys_sched_setparam(pid: i32, param_ptr: u64) -> i64 {
         return errno::EFAULT;
     }
 
-    let table = process_table();
-    let target_pid = if pid == 0 {
-        table.current_pid()
-    } else {
-        pid as u32
-    };
+    let target_pid = if pid == 0 { current_pid() } else { pid as u32 };
 
     // Validate process exists
-    if table.get(target_pid).is_none() {
+    if sched::get_task_meta(target_pid).is_none() {
         return errno::ESRCH;
     }
 
@@ -1858,15 +1805,10 @@ fn sys_sched_getparam(pid: i32, param_ptr: u64) -> i64 {
         return errno::EFAULT;
     }
 
-    let table = process_table();
-    let target_pid = if pid == 0 {
-        table.current_pid()
-    } else {
-        pid as u32
-    };
+    let target_pid = if pid == 0 { current_pid() } else { pid as u32 };
 
     // Validate process exists
-    if table.get(target_pid).is_none() {
+    if sched::get_task_meta(target_pid).is_none() {
         return errno::ESRCH;
     }
 
@@ -1904,15 +1846,10 @@ fn sys_sched_setaffinity(pid: i32, cpusetsize: usize, mask_ptr: u64) -> i64 {
         return errno::EINVAL;
     }
 
-    let table = process_table();
-    let target_pid = if pid == 0 {
-        table.current_pid()
-    } else {
-        pid as u32
-    };
+    let target_pid = if pid == 0 { current_pid() } else { pid as u32 };
 
     // Validate process exists
-    if table.get(target_pid).is_none() {
+    if sched::get_task_meta(target_pid).is_none() {
         return errno::ESRCH;
     }
 
@@ -1965,15 +1902,10 @@ fn sys_sched_getaffinity(pid: i32, cpusetsize: usize, mask_ptr: u64) -> i64 {
         return errno::EINVAL;
     }
 
-    let table = process_table();
-    let target_pid = if pid == 0 {
-        table.current_pid()
-    } else {
-        pid as u32
-    };
+    let target_pid = if pid == 0 { current_pid() } else { pid as u32 };
 
     // Validate process exists
-    if table.get(target_pid).is_none() {
+    if sched::get_task_meta(target_pid).is_none() {
         return errno::ESRCH;
     }
 
@@ -2019,15 +1951,10 @@ fn sys_sched_rr_get_interval(pid: i32, tp_ptr: u64) -> i64 {
         return errno::EFAULT;
     }
 
-    let table = process_table();
-    let target_pid = if pid == 0 {
-        table.current_pid()
-    } else {
-        pid as u32
-    };
+    let target_pid = if pid == 0 { current_pid() } else { pid as u32 };
 
     // Validate process exists
-    if table.get(target_pid).is_none() {
+    if sched::get_task_meta(target_pid).is_none() {
         return errno::ESRCH;
     }
 

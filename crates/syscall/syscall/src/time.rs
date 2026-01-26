@@ -3,9 +3,9 @@
 //! Provides CLOCK_GETTIME, GETTIMEOFDAY, NANOSLEEP, etc.
 
 use crate::errno;
+use crate::with_current_meta;
 use arch_x86_64 as arch;
 use core::sync::atomic::{AtomicU64, Ordering};
-use proc::process_table;
 
 /// Timer frequency in Hz (ticks per second)
 const TIMER_HZ: u64 = 100;
@@ -242,10 +242,8 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
     // We use HLT to wait for timer interrupts, allowing other processes to run
     while get_ticks() < wake_ticks {
         // Check for pending signals
-        let current_pid = process_table().current_pid();
-        if let Some(proc) = process_table().get(current_pid) {
-            let has_signals = proc.lock().has_pending_signals();
-            if has_signals {
+        let has_signals = with_current_meta(|meta| meta.has_pending_signals()).unwrap_or(false);
+        if has_signals {
                 let elapsed_ticks = get_ticks() - start_ticks;
                 let remaining_ticks = sleep_ticks.saturating_sub(elapsed_ticks);
 
@@ -264,8 +262,7 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
                     }
                 }
 
-                return errno::EINTR;
-            }
+            return errno::EINTR;
         }
 
         // Allow scheduler to preempt us while we wait

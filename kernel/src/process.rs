@@ -32,8 +32,8 @@ use sched::TaskContext;
 /// User exit function
 pub fn user_exit(status: i32) -> ! {
     // Get current process and mark as zombie
-    let table = process_table();
-    let current_pid = table.current_pid();
+    let current_pid = sched::current_pid().unwrap_or(0);
+    let table = process_table(); // Still needed for Process struct access during transition
 
     // Debug: Print exit info
     {
@@ -420,8 +420,8 @@ pub fn user_exit(status: i32) -> ! {
 ///
 /// Creates a child process and returns child PID to parent, 0 to child.
 pub fn kernel_fork() -> i64 {
-    let table = process_table();
-    let parent_pid = table.current_pid();
+    let parent_pid = sched::current_pid().unwrap_or(0);
+    let table = process_table(); // Still needed for Process struct access during transition
 
     debug_fork!("[FORK] Fork called from PID {}", parent_pid);
 
@@ -628,8 +628,8 @@ pub fn kernel_fork() -> i64 {
 /// Waits for child process and returns (pid << 32) | status.
 /// Properly blocks until a child exits (unless WNOHANG is set).
 pub fn kernel_wait(pid: i32, options: i32) -> i64 {
-    let table = process_table();
-    let parent_pid = table.current_pid();
+    let parent_pid = sched::current_pid().unwrap_or(0);
+    let table = process_table(); // Still needed for Process struct access during transition
     let wait_opts = WaitOptions::from(options);
 
     loop {
@@ -703,8 +703,8 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
 /// When the child exits, control returns to parent via sysretq.
 #[allow(dead_code)]
 pub fn run_child_process(child_pid: Pid) {
-    let table = process_table();
-    let parent_pid = table.current_pid();
+    let parent_pid = sched::current_pid().unwrap_or(0);
+    let table = process_table(); // Still needed for Process struct access during transition
 
     // Get parent's PML4 for restoring later
     let _parent_pml4 = if let Some(p) = table.get(parent_pid) {
@@ -920,8 +920,8 @@ pub fn kernel_exec(
     argv_ptr: *const *const u8,
     envp_ptr: *const *const u8,
 ) -> i64 {
-    let table = process_table();
-    let current_pid = table.current_pid();
+    let current_pid = sched::current_pid().unwrap_or(0);
+    let table = process_table(); // Still needed for Process struct access during transition
 
     // Read path from user space
     let path = unsafe {

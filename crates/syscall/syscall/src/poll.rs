@@ -5,8 +5,8 @@
 use crate::errno;
 use crate::socket;
 use crate::time::{self, Timespec};
+use crate::with_current_meta;
 use alloc::vec::Vec;
-use proc::process_table;
 
 /// Poll event flags (POSIX)
 pub mod events {
@@ -60,18 +60,13 @@ fn check_fd_ready(fd: i32, events: i16) -> i16 {
     }
 
     // Regular file descriptor through VFS
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
+    let file = match with_current_meta(|meta| {
+        meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
+    }) {
+        Some(Ok(f)) => f,
+        Some(Err(_)) => return events::POLLNVAL,
         None => return events::POLLNVAL,
     };
-
-    let proc_guard = proc.lock();
-    let file = match proc_guard.fd_table().get(fd) {
-        Ok(fd_entry) => fd_entry.file.clone(),
-        Err(_) => return events::POLLNVAL,
-    };
-    drop(proc_guard);
 
     let mut revents: i16 = 0;
 
@@ -227,11 +222,8 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
         }
 
         // Check for signals
-        let current_pid = process_table().current_pid();
-        if let Some(proc) = process_table().get(current_pid) {
-            if proc.lock().has_pending_signals() {
-                return errno::EINTR;
-            }
+        if with_current_meta(|meta| meta.has_pending_signals()).unwrap_or(false) {
+            return errno::EINTR;
         }
 
         // Allow scheduler to preempt us while we wait
@@ -520,11 +512,8 @@ pub fn sys_select(
         }
 
         // Check for signals
-        let current_pid = process_table().current_pid();
-        if let Some(proc) = process_table().get(current_pid) {
-            if proc.lock().has_pending_signals() {
-                return errno::EINTR;
-            }
+        if with_current_meta(|meta| meta.has_pending_signals()).unwrap_or(false) {
+            return errno::EINTR;
         }
 
         core::hint::spin_loop();
@@ -687,14 +676,11 @@ pub fn sys_pselect6(
             return res;
         }
 
-        let current_pid = process_table().current_pid();
-        if let Some(proc) = process_table().get(current_pid) {
-            if proc.lock().has_pending_signals() {
-                if let Some(mask) = old_mask {
-                    crate::signal::set_signal_mask(mask);
-                }
-                return errno::EINTR;
+        if with_current_meta(|meta| meta.has_pending_signals()).unwrap_or(false) {
+            if let Some(mask) = old_mask {
+                crate::signal::set_signal_mask(mask);
             }
+            return errno::EINTR;
         }
 
         core::hint::spin_loop();

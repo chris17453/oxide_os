@@ -53,11 +53,7 @@ pub const MAX_FILE_SIZE: u64 = u64::MAX;
 /// Get current user ID
 #[cfg(feature = "kernel")]
 fn get_current_uid() -> u32 {
-    if let Some(proc) = proc::process_table().current() {
-        proc.lock().credentials().uid
-    } else {
-        0 // Default to root if no process context
-    }
+    sched::with_current_meta(|meta| meta.credentials.uid).unwrap_or(0)
 }
 
 #[cfg(not(feature = "kernel"))]
@@ -68,11 +64,7 @@ fn get_current_uid() -> u32 {
 /// Get current group ID
 #[cfg(feature = "kernel")]
 fn get_current_gid() -> u32 {
-    if let Some(proc) = proc::process_table().current() {
-        proc.lock().credentials().gid
-    } else {
-        0 // Default to root if no process context
-    }
+    sched::with_current_meta(|meta| meta.credentials.gid).unwrap_or(0)
 }
 
 #[cfg(not(feature = "kernel"))]

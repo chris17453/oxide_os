@@ -2,10 +2,10 @@
 //!
 //! Implements kill, sigaction, sigprocmask, sigpending, etc.
 
-use proc::process_table;
 use signal::{SIGKILL, SIGSTOP, SigAction, SigHow, SigInfo, SigSet, can_catch, is_valid};
 
 use crate::errno;
+use crate::{current_pid, get_meta, get_current_meta, with_current_meta, with_current_meta_mut};
 
 /// sys_kill - Send signal to process
 ///
@@ -18,33 +18,27 @@ pub fn sys_kill(pid: i32, sig: i32) -> i64 {
         return errno::EINVAL;
     }
 
-    let table = process_table();
-    let current_pid = table.current_pid();
+    let cur_pid = current_pid();
 
     // Get sender info for siginfo
-    let (sender_pid, sender_uid) = if let Some(proc) = table.get(current_pid) {
-        let p = proc.lock();
-        (p.pid(), p.credentials().uid)
-    } else {
-        (0, 0)
-    };
+    let (sender_pid, sender_uid) = with_current_meta(|m| (m.tgid, m.credentials.uid))
+        .unwrap_or((0, 0));
 
     if pid > 0 {
         // Send to specific process
         send_signal_to_pid(pid as u32, sig, sender_pid, sender_uid)
     } else if pid == 0 {
         // Send to current process group
-        let pgid = if let Some(proc) = table.get(current_pid) {
-            proc.lock().pgid()
-        } else {
-            return errno::ESRCH;
+        let pgid = match with_current_meta(|m| m.pgid) {
+            Some(p) => p,
+            None => return errno::ESRCH,
         };
         send_signal_to_pgrp(pgid, sig, sender_pid, sender_uid)
     } else if pid == -1 {
         // Send to all processes (except init and self)
         let mut sent = false;
-        for p in table.all_pids() {
-            if p != 1 && p != current_pid {
+        for p in sched::all_pids() {
+            if p != 1 && p != cur_pid {
                 if send_signal_to_pid(p, sig, sender_pid, sender_uid) == 0 {
                     sent = true;
                 }
@@ -60,16 +54,14 @@ pub fn sys_kill(pid: i32, sig: i32) -> i64 {
 
 /// Send signal to a specific PID
 fn send_signal_to_pid(pid: u32, sig: i32, sender_pid: u32, sender_uid: u32) -> i64 {
-    let table = process_table();
-
-    if let Some(proc) = table.get(pid) {
+    if let Some(meta) = get_meta(pid) {
         // Signal 0 just checks if process exists
         if sig == 0 {
             return 0;
         }
 
         let info = SigInfo::kill(sig, sender_pid, sender_uid);
-        proc.lock().send_signal(sig, Some(info));
+        meta.lock().send_signal(sig, Some(info));
         0
     } else {
         errno::ESRCH
@@ -78,15 +70,16 @@ fn send_signal_to_pid(pid: u32, sig: i32, sender_pid: u32, sender_uid: u32) -> i
 
 /// Send signal to all processes in a process group
 fn send_signal_to_pgrp(pgid: u32, sig: i32, sender_pid: u32, sender_uid: u32) -> i64 {
-    let table = process_table();
     let mut sent = false;
 
-    for pid in table.all_pids() {
-        if let Some(proc) = table.get(pid) {
-            if proc.lock().pgid() == pgid {
+    for pid in sched::all_pids() {
+        if let Some(meta) = get_meta(pid) {
+            let meta_guard = meta.lock();
+            if meta_guard.pgid == pgid {
+                drop(meta_guard);
                 if sig != 0 {
                     let info = SigInfo::kill(sig, sender_pid, sender_uid);
-                    proc.lock().send_signal(sig, Some(info));
+                    meta.lock().send_signal(sig, Some(info));
                 }
                 sent = true;
             }
@@ -112,15 +105,12 @@ pub fn sys_sigaction(sig: i32, act_ptr: u64, oldact_ptr: u64) -> i64 {
         return errno::EINVAL;
     }
 
-    let table = process_table();
-    let current_pid = table.current_pid();
-
-    if let Some(proc) = table.get(current_pid) {
-        let mut p = proc.lock();
+    if let Some(meta) = get_current_meta() {
+        let mut m = meta.lock();
 
         // Store old action if requested
         if oldact_ptr != 0 && oldact_ptr < 0x0000_8000_0000_0000 {
-            if let Some(old_action) = p.sigaction(sig) {
+            if let Some(old_action) = m.sigaction(sig) {
                 unsafe {
                     let out = oldact_ptr as *mut SigAction;
                     *out = *old_action;
@@ -131,7 +121,7 @@ pub fn sys_sigaction(sig: i32, act_ptr: u64, oldact_ptr: u64) -> i64 {
         // Set new action if provided
         if act_ptr != 0 && act_ptr < 0x0000_8000_0000_0000 {
             let action = unsafe { *(act_ptr as *const SigAction) };
-            p.set_sigaction(sig, action);
+            m.set_sigaction(sig, action);
         }
 
         0
@@ -147,17 +137,14 @@ pub fn sys_sigaction(sig: i32, act_ptr: u64, oldact_ptr: u64) -> i64 {
 /// * `set_ptr` - Pointer to new mask (or 0)
 /// * `oldset_ptr` - Pointer to store old mask (or 0)
 pub fn sys_sigprocmask(how: i32, set_ptr: u64, oldset_ptr: u64) -> i64 {
-    let table = process_table();
-    let current_pid = table.current_pid();
-
-    if let Some(proc) = table.get(current_pid) {
-        let mut p = proc.lock();
+    if let Some(meta) = get_current_meta() {
+        let mut m = meta.lock();
 
         // Store old mask if requested
         if oldset_ptr != 0 && oldset_ptr < 0x0000_8000_0000_0000 {
             unsafe {
                 let out = oldset_ptr as *mut SigSet;
-                *out = *p.signal_mask();
+                *out = m.signal_mask.clone();
             }
         }
 
@@ -170,7 +157,7 @@ pub fn sys_sigprocmask(how: i32, set_ptr: u64, oldset_ptr: u64) -> i64 {
                 None => return errno::EINVAL,
             };
 
-            let current = *p.signal_mask();
+            let current = m.signal_mask.clone();
             let mut new_mask = match how_enum {
                 SigHow::Block => current.union(&new_set),
                 SigHow::Unblock => current.difference(&new_set),
@@ -181,7 +168,7 @@ pub fn sys_sigprocmask(how: i32, set_ptr: u64, oldset_ptr: u64) -> i64 {
             new_mask.remove(SIGKILL);
             new_mask.remove(SIGSTOP);
 
-            p.set_signal_mask(new_mask);
+            m.signal_mask = new_mask;
         }
 
         0
@@ -199,12 +186,9 @@ pub fn sys_sigpending(set_ptr: u64) -> i64 {
         return errno::EFAULT;
     }
 
-    let table = process_table();
-    let current_pid = table.current_pid();
-
-    if let Some(proc) = table.get(current_pid) {
-        let p = proc.lock();
-        let pending = p.pending_signals().set();
+    if let Some(meta) = get_current_meta() {
+        let m = meta.lock();
+        let pending = m.pending_signals.set();
 
         unsafe {
             let out = set_ptr as *mut SigSet;
@@ -228,31 +212,28 @@ pub fn sys_sigsuspend(mask_ptr: u64) -> i64 {
         return errno::EFAULT;
     }
 
-    let table = process_table();
-    let current_pid = table.current_pid();
-
-    if let Some(proc) = table.get(current_pid) {
-        let mut p = proc.lock();
+    if let Some(meta) = get_current_meta() {
+        let mut m = meta.lock();
 
         // Save old mask
-        let old_mask = *p.signal_mask();
+        let old_mask = m.signal_mask.clone();
 
         // Set temporary mask
         let mut temp_mask = unsafe { *(mask_ptr as *const SigSet) };
         temp_mask.remove(SIGKILL);
         temp_mask.remove(SIGSTOP);
-        p.set_signal_mask(temp_mask);
+        m.signal_mask = temp_mask;
 
         // Drop lock before waiting
-        drop(p);
+        drop(m);
 
         // Wait for a signal (in a real implementation, we'd block here)
         // For now, we just check if there's a pending signal
         // The actual waiting would be done by the scheduler
 
         // Restore old mask
-        if let Some(proc) = table.get(current_pid) {
-            proc.lock().set_signal_mask(old_mask);
+        if let Some(meta) = get_current_meta() {
+            meta.lock().signal_mask = old_mask;
         }
 
         // sigsuspend always returns -EINTR
@@ -301,18 +282,15 @@ pub fn read_sigset(ptr: usize) -> Option<SigSet> {
 ///
 /// Sets the new mask and returns the old mask
 pub fn swap_signal_mask(new_mask: SigSet) -> SigSet {
-    let table = process_table();
-    let current_pid = table.current_pid();
-
-    if let Some(proc) = table.get(current_pid) {
-        let mut p = proc.lock();
-        let old_mask = *p.signal_mask();
+    if let Some(meta) = get_current_meta() {
+        let mut m = meta.lock();
+        let old_mask = m.signal_mask.clone();
 
         // Apply new mask (but never block SIGKILL or SIGSTOP)
         let mut sanitized = new_mask;
         sanitized.remove(SIGKILL);
         sanitized.remove(SIGSTOP);
-        p.set_signal_mask(sanitized);
+        m.signal_mask = sanitized;
 
         old_mask
     } else {
@@ -322,16 +300,13 @@ pub fn swap_signal_mask(new_mask: SigSet) -> SigSet {
 
 /// Set the current process's signal mask
 pub fn set_signal_mask(mask: SigSet) {
-    let table = process_table();
-    let current_pid = table.current_pid();
-
-    if let Some(proc) = table.get(current_pid) {
-        let mut p = proc.lock();
+    if let Some(meta) = get_current_meta() {
+        let mut m = meta.lock();
 
         // Apply mask (but never block SIGKILL or SIGSTOP)
         let mut sanitized = mask;
         sanitized.remove(SIGKILL);
         sanitized.remove(SIGSTOP);
-        p.set_signal_mask(sanitized);
+        m.signal_mask = sanitized;
     }
 }

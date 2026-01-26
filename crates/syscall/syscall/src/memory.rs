@@ -4,9 +4,9 @@
 
 use crate::copy_to_user;
 use crate::errno;
+use crate::{get_current_meta, with_current_meta_mut};
 use mm_frame::frame_allocator;
 use os_core::VirtAddr;
-use proc::process_table;
 use proc_traits::MemoryFlags;
 
 /// Protection flags (matching Linux/POSIX)
@@ -68,18 +68,13 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
         }
 
         // Get the file from the file descriptor
-        let table = process_table();
-        let proc = match table.current() {
-            Some(p) => p,
+        let file = match crate::with_current_meta(|meta| {
+            meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
+        }) {
+            Some(Ok(f)) => f,
+            Some(Err(_)) => return errno::EBADF,
             None => return errno::ESRCH,
         };
-
-        let proc_guard = proc.lock();
-        let file = match proc_guard.fd_table().get(fd) {
-            Ok(fd_entry) => fd_entry.file.clone(),
-            Err(_) => return errno::EBADF,
-        };
-        drop(proc_guard);
 
         Some(file)
     } else {
@@ -116,9 +111,8 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
     };
 
     // Get the current process
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
+    let meta = match get_current_meta() {
+        Some(m) => m,
         None => return errno::ESRCH,
     };
 
@@ -129,13 +123,12 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
     let num_pages = (length / 0x1000) as usize;
 
     {
-        let mut p = proc.lock();
-        let address_space = p.address_space_mut();
+        let mut m = meta.lock();
 
         // Use the frame allocator to allocate and map pages
         let allocator = frame_allocator();
 
-        match address_space.allocate_pages(VirtAddr::new(map_addr), num_pages, mem_flags, allocator)
+        match m.address_space.allocate_pages(VirtAddr::new(map_addr), num_pages, mem_flags, allocator)
         {
             Ok(()) => {}
             Err(_) => return errno::ENOMEM,
@@ -203,23 +196,21 @@ pub fn sys_munmap(addr: u64, length: u64) -> i64 {
     let length = (length + 0xFFF) & !0xFFF;
 
     // Get the current process
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
+    let meta = match get_current_meta() {
+        Some(m) => m,
         None => return errno::ESRCH,
     };
 
     let num_pages = (length / 0x1000) as usize;
 
     {
-        let mut p = proc.lock();
-        let address_space = p.address_space_mut();
+        let mut m = meta.lock();
 
         // Unmap each page
         for i in 0..num_pages {
             let page_addr = VirtAddr::new(addr + (i as u64 * 0x1000));
             // Ignore errors for pages that aren't mapped
-            let _ = address_space.unmap_user_page(page_addr);
+            let _ = m.address_space.unmap_user_page(page_addr);
         }
     }
 
@@ -248,9 +239,8 @@ pub fn sys_mprotect(addr: u64, length: u64, prot: i32) -> i64 {
     let length = (length + 0xFFF) & !0xFFF;
 
     // Get the current process
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
+    let meta = match get_current_meta() {
+        Some(m) => m,
         None => return errno::ESRCH,
     };
 
@@ -258,8 +248,7 @@ pub fn sys_mprotect(addr: u64, length: u64, prot: i32) -> i64 {
     let num_pages = (length / 0x1000) as usize;
 
     {
-        let mut p = proc.lock();
-        let address_space = p.address_space_mut();
+        let mut m = meta.lock();
 
         // Update protection for each page
         for i in 0..num_pages {
@@ -267,7 +256,7 @@ pub fn sys_mprotect(addr: u64, length: u64, prot: i32) -> i64 {
             // Update flags - for now we can only add WRITABLE permission
             // A full implementation would need to handle all flag changes
             if mem_flags.writable() {
-                address_space.update_user_page_flags(page_addr, mem_flags);
+                m.address_space.update_user_page_flags(page_addr, mem_flags);
             }
         }
     }

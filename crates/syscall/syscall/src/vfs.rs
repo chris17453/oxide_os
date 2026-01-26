@@ -5,11 +5,11 @@
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
-use proc::process_table;
 use vfs::{File, FileFlags, Mode, SeekFrom, VfsError, VnodeType, mount::GLOBAL_VFS};
 
 use crate::errno;
 use crate::socket;
+use crate::{current_pid, with_current_meta, with_current_meta_mut};
 
 /// Maximum path length for syscalls
 const MAX_PATH: usize = 4096;
@@ -20,14 +20,8 @@ const MAX_PATH: usize = 4096;
 /// If relative, prepends the process's cwd and normalizes.
 /// Handles . and .. path components.
 pub fn resolve_path(path: &str) -> String {
-    let table = process_table();
-    let cwd = match table.current() {
-        Some(p) => {
-            let proc = p.lock();
-            proc.cwd().to_string()
-        }
-        None => String::from("/"),
-    };
+    // Use unified model - get cwd from ProcessMeta
+    let cwd = with_current_meta(|meta| meta.cwd.clone()).unwrap_or_else(|| String::from("/"));
 
     // Build full path
     let full_path = if path.starts_with('/') {
@@ -184,17 +178,11 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
     // Create file handle
     let file = Arc::new(File::new(vnode, flags));
 
-    // Get current process and allocate fd
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
-        None => return errno::ESRCH,
-    };
-
-    let mut proc_guard = proc.lock();
-    match proc_guard.fd_table_mut().alloc(file) {
-        Ok(fd) => fd as i64,
-        Err(e) => vfs_error_to_errno(e),
+    // Allocate fd using unified model
+    match with_current_meta_mut(|meta| meta.fd_table.alloc(file)) {
+        Some(Ok(fd)) => fd as i64,
+        Some(Err(e)) => vfs_error_to_errno(e),
+        None => errno::ESRCH,
     }
 }
 
@@ -208,16 +196,11 @@ pub fn sys_close(fd: i32) -> i64 {
         return socket::close_socket(fd);
     }
 
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
-        None => return errno::ESRCH,
-    };
-
-    let mut proc_guard = proc.lock();
-    match proc_guard.fd_table_mut().close(fd) {
-        Ok(()) => 0,
-        Err(e) => vfs_error_to_errno(e),
+    // Close fd using unified model
+    match with_current_meta_mut(|meta| meta.fd_table.close(fd)) {
+        Some(Ok(())) => 0,
+        Some(Err(e)) => vfs_error_to_errno(e),
+        None => errno::ESRCH,
     }
 }
 
@@ -236,18 +219,14 @@ pub fn sys_read_vfs(fd: i32, buf: u64, count: usize) -> i64 {
         return errno::EFAULT;
     }
 
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
+    // Get file using unified model
+    let file = match with_current_meta(|meta| {
+        meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
+    }) {
+        Some(Ok(f)) => f,
+        Some(Err(e)) => return vfs_error_to_errno(e),
         None => return errno::ESRCH,
     };
-
-    let proc_guard = proc.lock();
-    let file = match proc_guard.fd_table().get(fd) {
-        Ok(fd_entry) => fd_entry.file.clone(),
-        Err(e) => return vfs_error_to_errno(e),
-    };
-    drop(proc_guard);
 
     // Read into user buffer
     let buffer = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, count) };
@@ -273,18 +252,14 @@ pub fn sys_write_vfs(fd: i32, buf: u64, count: usize) -> i64 {
         return errno::EFAULT;
     }
 
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
-        None => return errno::ESRCH,
+    // Get file using unified model
+    let file = match with_current_meta(|meta| {
+        meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
+    }) {
+        Some(Ok(f)) => f,
+        Some(Err(e)) => return vfs_error_to_errno(e),
+        None => return errno::ESRCH, // No current process
     };
-
-    let proc_guard = proc.lock();
-    let file = match proc_guard.fd_table().get(fd) {
-        Ok(fd_entry) => fd_entry.file.clone(),
-        Err(e) => return vfs_error_to_errno(e),
-    };
-    drop(proc_guard);
 
     // Get user buffer
     let buffer = unsafe { core::slice::from_raw_parts(buf as *const u8, count) };
@@ -302,18 +277,14 @@ pub fn sys_write_vfs(fd: i32, buf: u64, count: usize) -> i64 {
 /// * `offset` - Offset value
 /// * `whence` - Reference point (0=SEEK_SET, 1=SEEK_CUR, 2=SEEK_END)
 pub fn sys_lseek(fd: i32, offset: i64, whence: i32) -> i64 {
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
+    // Get file using unified model
+    let file = match with_current_meta(|meta| {
+        meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
+    }) {
+        Some(Ok(f)) => f,
+        Some(Err(e)) => return vfs_error_to_errno(e),
         None => return errno::ESRCH,
     };
-
-    let proc_guard = proc.lock();
-    let file = match proc_guard.fd_table().get(fd) {
-        Ok(fd_entry) => fd_entry.file.clone(),
-        Err(e) => return vfs_error_to_errno(e),
-    };
-    drop(proc_guard);
 
     let from = match whence {
         0 => SeekFrom::Start(offset as u64), // SEEK_SET
@@ -338,18 +309,14 @@ pub fn sys_fstat(fd: i32, stat_buf: u64) -> i64 {
         return errno::EFAULT;
     }
 
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
+    // Get file using unified model
+    let file = match with_current_meta(|meta| {
+        meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
+    }) {
+        Some(Ok(f)) => f,
+        Some(Err(e)) => return vfs_error_to_errno(e),
         None => return errno::ESRCH,
     };
-
-    let proc_guard = proc.lock();
-    let file = match proc_guard.fd_table().get(fd) {
-        Ok(fd_entry) => fd_entry.file.clone(),
-        Err(e) => return vfs_error_to_errno(e),
-    };
-    drop(proc_guard);
 
     match file.stat() {
         Ok(stat) => {
@@ -443,16 +410,10 @@ pub fn sys_lstat(path_ptr: u64, path_len: usize, stat_buf: u64) -> i64 {
 /// # Arguments
 /// * `old_fd` - File descriptor to duplicate
 pub fn sys_dup(old_fd: i32) -> i64 {
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
-        None => return errno::ESRCH,
-    };
-
-    let mut proc_guard = proc.lock();
-    match proc_guard.fd_table_mut().dup(old_fd) {
-        Ok(fd) => fd as i64,
-        Err(e) => vfs_error_to_errno(e),
+    match with_current_meta_mut(|meta| meta.fd_table.dup(old_fd)) {
+        Some(Ok(fd)) => fd as i64,
+        Some(Err(e)) => vfs_error_to_errno(e),
+        None => errno::ESRCH,
     }
 }
 
@@ -462,16 +423,10 @@ pub fn sys_dup(old_fd: i32) -> i64 {
 /// * `old_fd` - File descriptor to duplicate
 /// * `new_fd` - Target file descriptor number
 pub fn sys_dup2(old_fd: i32, new_fd: i32) -> i64 {
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
-        None => return errno::ESRCH,
-    };
-
-    let mut proc_guard = proc.lock();
-    match proc_guard.fd_table_mut().dup2(old_fd, new_fd) {
-        Ok(fd) => fd as i64,
-        Err(e) => vfs_error_to_errno(e),
+    match with_current_meta_mut(|meta| meta.fd_table.dup2(old_fd, new_fd)) {
+        Some(Ok(fd)) => fd as i64,
+        Some(Err(e)) => vfs_error_to_errno(e),
+        None => errno::ESRCH,
     }
 }
 
@@ -481,18 +436,14 @@ pub fn sys_dup2(old_fd: i32, new_fd: i32) -> i64 {
 /// * `fd` - File descriptor
 /// * `length` - New file length
 pub fn sys_ftruncate(fd: i32, length: u64) -> i64 {
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
+    // Get file using unified model
+    let file = match with_current_meta(|meta| {
+        meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
+    }) {
+        Some(Ok(f)) => f,
+        Some(Err(e)) => return vfs_error_to_errno(e),
         None => return errno::ESRCH,
     };
-
-    let proc_guard = proc.lock();
-    let file = match proc_guard.fd_table().get(fd) {
-        Ok(fd_entry) => fd_entry.file.clone(),
-        Err(e) => return vfs_error_to_errno(e),
-    };
-    drop(proc_guard);
 
     match file.truncate(length) {
         Ok(()) => 0,
@@ -519,40 +470,40 @@ pub fn sys_pipe(pipefd_ptr: u64) -> i64 {
     let read_file = Arc::new(File::new(read_vnode, FileFlags::O_RDONLY));
     let write_file = Arc::new(File::new(write_vnode, FileFlags::O_WRONLY));
 
-    // Get current process
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
-        None => return errno::ESRCH,
-    };
+    // Allocate fds using unified model
+    let result = with_current_meta_mut(|meta| {
+        // Allocate read fd
+        let read_fd = match meta.fd_table.alloc(read_file) {
+            Ok(fd) => fd,
+            Err(e) => return Err(vfs_error_to_errno(e)),
+        };
 
-    let mut proc_guard = proc.lock();
-    let fd_table = proc_guard.fd_table_mut();
+        // Allocate write fd
+        let write_fd = match meta.fd_table.alloc(write_file) {
+            Ok(fd) => fd,
+            Err(_) => {
+                // Failed to allocate write fd, close read fd
+                let _ = meta.fd_table.close(read_fd);
+                return Err(errno::EMFILE);
+            }
+        };
 
-    // Allocate read fd
-    let read_fd = match fd_table.alloc(read_file) {
-        Ok(fd) => fd,
-        Err(e) => return vfs_error_to_errno(e),
-    };
+        Ok((read_fd, write_fd))
+    });
 
-    // Allocate write fd
-    let write_fd = match fd_table.alloc(write_file) {
-        Ok(fd) => fd,
-        Err(_) => {
-            // Failed to allocate write fd, close read fd
-            let _ = fd_table.close(read_fd);
-            return errno::EMFILE;
+    match result {
+        Some(Ok((read_fd, write_fd))) => {
+            // Write fds to user buffer
+            unsafe {
+                let pipefd = pipefd_ptr as *mut i32;
+                *pipefd = read_fd;
+                *pipefd.add(1) = write_fd;
+            }
+            0
         }
-    };
-
-    // Write fds to user buffer
-    unsafe {
-        let pipefd = pipefd_ptr as *mut i32;
-        *pipefd = read_fd;
-        *pipefd.add(1) = write_fd;
+        Some(Err(e)) => e,
+        None => errno::ESRCH,
     }
-
-    0
 }
 
 /// sys_ioctl - Device I/O control
@@ -562,18 +513,14 @@ pub fn sys_pipe(pipefd_ptr: u64) -> i64 {
 /// * `request` - ioctl request code
 /// * `arg` - ioctl argument (request-specific)
 pub fn sys_ioctl(fd: i32, request: u64, arg: u64) -> i64 {
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
+    // Get file using unified model
+    let file = match with_current_meta(|meta| {
+        meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
+    }) {
+        Some(Ok(f)) => f,
+        Some(Err(e)) => return vfs_error_to_errno(e),
         None => return errno::ESRCH,
     };
-
-    let proc_guard = proc.lock();
-    let file = match proc_guard.fd_table().get(fd) {
-        Ok(fd_entry) => fd_entry.file.clone(),
-        Err(e) => return vfs_error_to_errno(e),
-    };
-    drop(proc_guard);
 
     // Call ioctl on the file
     match file.ioctl(request, arg) {
@@ -625,18 +572,14 @@ pub fn sys_chmod(path_ptr: u64, path_len: usize, mode: u32) -> i64 {
 /// * `fd` - File descriptor
 /// * `mode` - New mode bits
 pub fn sys_fchmod(fd: i32, mode: u32) -> i64 {
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
+    // Get file using unified model
+    let file = match with_current_meta(|meta| {
+        meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
+    }) {
+        Some(Ok(f)) => f,
+        Some(Err(e)) => return vfs_error_to_errno(e),
         None => return errno::ESRCH,
     };
-
-    let proc_guard = proc.lock();
-    let file = match proc_guard.fd_table().get(fd) {
-        Ok(fd_entry) => fd_entry.file.clone(),
-        Err(e) => return vfs_error_to_errno(e),
-    };
-    drop(proc_guard);
 
     // Get the vnode and set mode
     match file.vnode().chmod(mode) {
@@ -692,18 +635,14 @@ pub fn sys_chown(path_ptr: u64, path_len: usize, uid: i32, gid: i32) -> i64 {
 /// * `uid` - New user ID (-1 to leave unchanged)
 /// * `gid` - New group ID (-1 to leave unchanged)
 pub fn sys_fchown(fd: i32, uid: i32, gid: i32) -> i64 {
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
+    // Get file using unified model
+    let file = match with_current_meta(|meta| {
+        meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
+    }) {
+        Some(Ok(f)) => f,
+        Some(Err(e)) => return vfs_error_to_errno(e),
         None => return errno::ESRCH,
     };
-
-    let proc_guard = proc.lock();
-    let file = match proc_guard.fd_table().get(fd) {
-        Ok(fd_entry) => fd_entry.file.clone(),
-        Err(e) => return vfs_error_to_errno(e),
-    };
-    drop(proc_guard);
 
     match file.vnode().chown(
         if uid >= 0 { Some(uid as u32) } else { None },
@@ -837,17 +776,12 @@ pub fn sys_fstatfs(fd: i32, buf_ptr: usize) -> i64 {
     }
 
     // Verify the file descriptor is valid
-    let table = process_table();
-    let proc = match table.current() {
-        Some(p) => p,
+    let fd_valid = match with_current_meta(|meta| meta.fd_table.get(fd).is_ok()) {
+        Some(valid) => valid,
         None => return errno::ESRCH,
     };
-
-    {
-        let proc_guard = proc.lock();
-        if proc_guard.fd_table().get(fd).is_err() {
-            return errno::EBADF;
-        }
+    if !fd_valid {
+        return errno::EBADF;
     }
 
     // For fstatfs, we return default filesystem stats
