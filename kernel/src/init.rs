@@ -22,7 +22,7 @@ use mm_paging::{phys_to_virt, read_cr3};
 use mm_traits::FrameAllocator as _;
 use net::NetworkDevice;
 use os_core::VirtAddr;
-use proc::{Process, alloc_pid, process_table};
+use proc::{ProcessMeta, alloc_pid};
 use proc_traits::MemoryFlags;
 use procfs::ProcFs;
 use pty::{PtsDir, PtyManager};
@@ -1207,74 +1207,69 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let init_pid = alloc_pid(); // Should be 1
     let _ = writeln!(writer, "[USER] Init PID: {}", init_pid);
 
-    // Create the init Process struct
-    let init_process = Process::new(
-        init_pid,
-        0, // ppid = 0 (kernel)
+    // Create ProcessMeta for init
+    let mut init_meta = ProcessMeta::new(
+        init_pid, // tgid
         user_space,
-        kernel_stack_phys,
-        KERNEL_STACK_SIZE,
-        elf.entry_point(),
-        user_stack_top,
     );
 
-    // Register in process table
-    let init_arc = process_table().add(init_process);
-    process_table().set_current_pid(init_pid);
+    // Set up standard file descriptors (stdin, stdout, stderr) for init
+    let _ = writeln!(writer, "[USER] Setting up stdin/stdout/stderr...");
+    match GLOBAL_VFS.lookup("/dev/console") {
+        Ok(console_vnode) => {
+            // stdin (read-only)
+            let stdin = Arc::new(File::new(console_vnode.clone(), FileFlags::O_RDONLY));
+            if let Err(e) = init_meta.fd_table.insert(0, stdin) {
+                let _ = writeln!(writer, "[USER] Failed to set up stdin: {:?}", e);
+            }
 
-    // Add init to the scheduler and set it as current
+            // stdout (write-only)
+            let stdout = Arc::new(File::new(console_vnode.clone(), FileFlags::O_WRONLY));
+            if let Err(e) = init_meta.fd_table.insert(1, stdout) {
+                let _ = writeln!(writer, "[USER] Failed to set up stdout: {:?}", e);
+            }
+
+            // stderr (write-only)
+            let stderr = Arc::new(File::new(console_vnode, FileFlags::O_WRONLY));
+            if let Err(e) = init_meta.fd_table.insert(2, stderr) {
+                let _ = writeln!(writer, "[USER] Failed to set up stderr: {:?}", e);
+            }
+
+            let _ = writeln!(writer, "[USER] Standard fds set up (0,1,2 -> /dev/console)");
+        }
+        Err(e) => {
+            let _ = writeln!(writer, "[USER] Failed to open /dev/console: {:?}", e);
+        }
+    }
+
+    // Set cmdline for init so ps shows it correctly
+    init_meta.cmdline = alloc::vec![alloc::string::String::from("/init")];
+
+    // Wrap in Arc<Mutex<>> for Task
+    let init_meta_arc = Arc::new(spin::Mutex::new(init_meta));
+
+    // Create a Task for init with the ProcessMeta
     let _ = writeln!(writer, "[USER] Adding init to scheduler...");
-    scheduler::add_process(init_pid);
+    let init_task = sched::Task::new_with_meta(
+        init_pid,
+        0, // ppid
+        kernel_stack_phys,
+        KERNEL_STACK_SIZE,
+        init_meta_arc.lock().address_space.pml4_phys(),
+        elf.entry_point().as_u64(),
+        user_stack_top.as_u64(),
+        init_meta_arc.clone(),
+    );
+
+    // Add to scheduler
+    sched::add_task(init_task);
     let _ = writeln!(writer, "[USER] Calling sched::switch_to...");
     sched::switch_to(init_pid); // Mark init as the currently running task
 
     let _ = writeln!(writer, "[USER] Init process registered");
 
-    // Set up standard file descriptors (stdin, stdout, stderr) for init
-    let _ = writeln!(writer, "[USER] Setting up stdin/stdout/stderr...");
-    {
-        let mut proc = init_arc.lock();
-        // Open /dev/console for stdin (fd 0), stdout (fd 1), stderr (fd 2)
-        match GLOBAL_VFS.lookup("/dev/console") {
-            Ok(console_vnode) => {
-                // stdin (read-only)
-                let stdin = Arc::new(File::new(console_vnode.clone(), FileFlags::O_RDONLY));
-                if let Err(e) = proc.fd_table_mut().insert(0, stdin) {
-                    let _ = writeln!(writer, "[USER] Failed to set up stdin: {:?}", e);
-                }
-
-                // stdout (write-only)
-                let stdout = Arc::new(File::new(console_vnode.clone(), FileFlags::O_WRONLY));
-                if let Err(e) = proc.fd_table_mut().insert(1, stdout) {
-                    let _ = writeln!(writer, "[USER] Failed to set up stdout: {:?}", e);
-                }
-
-                // stderr (write-only)
-                let stderr = Arc::new(File::new(console_vnode, FileFlags::O_WRONLY));
-                if let Err(e) = proc.fd_table_mut().insert(2, stderr) {
-                    let _ = writeln!(writer, "[USER] Failed to set up stderr: {:?}", e);
-                }
-
-                let _ = writeln!(writer, "[USER] Standard fds set up (0,1,2 -> /dev/console)");
-            }
-            Err(e) => {
-                let _ = writeln!(writer, "[USER] Failed to open /dev/console: {:?}", e);
-            }
-        }
-
-        // Set cmdline for init so ps shows it correctly
-        proc.set_cmdline(alloc::vec![alloc::string::String::from("/init")]);
-
-        // Also update ProcessMeta's fd_table and cmdline (since add_process already cloned them before setup)
-        if let Some(meta) = sched::get_task_meta(init_pid) {
-            let mut m = meta.lock();
-            m.fd_table = proc.fd_table().clone_for_fork();
-            m.cmdline = proc.cmdline().to_vec();
-        }
-    }
-
-    // Get the PML4 from the registered process
-    let user_pml4_phys = init_arc.lock().address_space().pml4_phys();
+    // Get the PML4 from the init meta
+    let user_pml4_phys = init_meta_arc.lock().address_space.pml4_phys();
 
     let _ = writeln!(writer);
     let _ = writeln!(writer, "[USER] Entering user mode at {:#x}...", entry_point);

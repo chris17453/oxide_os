@@ -3,6 +3,7 @@
 //! Implements the fork() system call, creating a child process
 //! with a copy of the parent's address space using COW semantics.
 
+use alloc::sync::Arc;
 use mm_cow::cow_tracker;
 use mm_paging::{PageTable, PageTableFlags, flush_tlb, phys_to_virt};
 use mm_traits::FrameAllocator;
@@ -10,7 +11,7 @@ use os_core::{PhysAddr, VirtAddr};
 use proc_traits::Pid;
 use spin::Mutex;
 
-use crate::{Process, ProcessContext, UserAddressSpace, alloc_pid, process_table};
+use crate::{ProcessContext, ProcessMeta, UserAddressSpace, alloc_pid};
 
 /// Global lock for COW fault handling
 ///
@@ -35,80 +36,66 @@ pub enum ForkError {
     Internal,
 }
 
+/// Result of a successful fork operation
+///
+/// Contains all the data needed to create a Task for the child process.
+pub struct ForkResult {
+    /// Child process ID
+    pub child_pid: Pid,
+    /// Child's ProcessMeta (to be wrapped in Arc<Mutex<>>)
+    pub child_meta: ProcessMeta,
+    /// Child's initial context (rax=0 for fork return value)
+    pub child_context: ProcessContext,
+    /// Physical address of child's kernel stack
+    pub kernel_stack_phys: PhysAddr,
+    /// Size of kernel stack in bytes
+    pub kernel_stack_size: usize,
+}
+
 /// Fork the current process
 ///
 /// Creates a child process with a copy of the parent's address space.
 /// Uses Copy-on-Write to share physical frames until written.
 ///
-/// Returns the child PID to the parent, or 0 to the child.
+/// Returns ForkResult with all data needed to create the child Task.
+/// The caller is responsible for creating the Task and adding it to the scheduler.
 pub fn do_fork<A: FrameAllocator>(
     parent_pid: Pid,
+    parent_meta: &ProcessMeta,
     parent_context: &ProcessContext,
     allocator: &A,
-) -> Result<Pid, ForkError> {
-    let table = process_table();
-
-    // Get parent process
-    let parent_arc = table.get(parent_pid).ok_or(ForkError::ParentNotFound)?;
-    let mut parent = parent_arc.lock();
-
+    kernel_stack_size: usize,
+) -> Result<ForkResult, ForkError> {
     // Allocate child PID
     let child_pid = alloc_pid();
 
     // Clone address space with COW
     let child_address_space =
-        unsafe { clone_address_space_cow(parent.address_space(), allocator)? };
+        unsafe { clone_address_space_cow(&parent_meta.address_space, allocator)? };
 
-    // Allocate kernel stack for child - inherit size from parent
-    let kernel_stack_size = parent.kernel_stack_size();
+    // Allocate kernel stack for child
     let kernel_stack_pages = kernel_stack_size / 4096;
     let kernel_stack_phys = allocator
         .alloc_frames(kernel_stack_pages)
         .ok_or(ForkError::OutOfMemory)?;
 
-    // Create child process
-    let mut child = Process::new(
-        child_pid,
-        parent_pid,
-        child_address_space,
-        kernel_stack_phys,
-        kernel_stack_size,
-        parent.entry_point(),
-        parent.user_stack_top(),
-    );
+    // Create child's ProcessMeta (cloned from parent)
+    let mut child_meta = parent_meta.clone_for_fork(child_pid, child_address_space);
+
+    // Track kernel stack frame in child's owned frames
+    child_meta.add_owned_frame(kernel_stack_phys);
 
     // Copy parent's context to child (will return 0 to child)
     let mut child_context = parent_context.clone();
     child_context.rax = 0; // fork returns 0 to child
-    *child.context_mut() = child_context;
 
-    // Copy credentials and process group info
-    child.set_credentials(*parent.credentials());
-    child.set_pgid(parent.pgid());
-    child.set_sid(parent.sid());
-
-    // Clone file descriptor table
-    let fd_table = parent.clone_fd_table();
-    child.set_fd_table(fd_table);
-
-    // Clone cmdline and environ
-    child.set_cmdline(parent.clone_cmdline());
-    child.set_environ(parent.clone_environ());
-
-    // Clone cwd
-    child.set_cwd(parent.clone_cwd());
-
-    // Add child to parent's children list
-    parent.add_child(child_pid);
-
-    // Track kernel stack frame
-    child.add_owned_frame(kernel_stack_phys);
-
-    // Add child to process table
-    drop(parent); // Release parent lock before adding child
-    table.add(child);
-
-    Ok(child_pid)
+    Ok(ForkResult {
+        child_pid,
+        child_meta,
+        child_context,
+        kernel_stack_phys,
+        kernel_stack_size,
+    })
 }
 
 /// Clone an address space with Copy-on-Write semantics

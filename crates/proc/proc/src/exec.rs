@@ -13,7 +13,7 @@ use mm_traits::FrameAllocator;
 use os_core::{PhysAddr, VirtAddr};
 use proc_traits::MemoryFlags;
 
-use crate::{UserAddressSpace, process_table};
+use crate::{ProcessContext, UserAddressSpace};
 
 /// Error during exec
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,42 +30,51 @@ pub enum ExecError {
     InvalidArgument,
 }
 
+/// Result of a successful exec operation
+///
+/// Contains all the data needed to update the Task and ProcessMeta.
+pub struct ExecResult {
+    /// New address space for the process
+    pub address_space: UserAddressSpace,
+    /// Entry point of the new program
+    pub entry_point: VirtAddr,
+    /// Initial stack pointer
+    pub stack_pointer: VirtAddr,
+    /// New context for the process
+    pub context: ProcessContext,
+    /// Command line arguments (for /proc/[pid]/cmdline)
+    pub cmdline: Vec<String>,
+    /// Environment variables (for /proc/[pid]/environ)
+    pub environ: Vec<String>,
+}
+
 /// User stack size (1MB)
 const USER_STACK_SIZE: usize = 1024 * 1024;
 
 /// User stack top address (just below kernel space)
 const USER_STACK_TOP: u64 = 0x0000_7FFF_FFFF_0000;
 
-/// Execute a new program in the current process
+/// Execute a new program
 ///
-/// Replaces the current process's address space and context with the new
-/// program loaded from the ELF binary.
+/// Creates a new address space and loads the ELF binary into it.
+/// Returns ExecResult with all data needed to update the process.
+/// The caller is responsible for updating Task and ProcessMeta.
 ///
 /// # Arguments
-/// * `pid` - Process ID to exec
 /// * `elf_data` - ELF binary data
 /// * `argv` - Command-line arguments
 /// * `envp` - Environment variables
 /// * `allocator` - Frame allocator for memory allocation
 /// * `kernel_pml4` - Kernel PML4 for copying kernel mappings
-///
-/// # Returns
-/// Entry point and stack pointer on success.
 pub fn do_exec<A: FrameAllocator>(
-    pid: proc_traits::Pid,
     elf_data: &[u8],
     argv: &[String],
     envp: &[String],
     allocator: &A,
     kernel_pml4: PhysAddr,
-) -> Result<(VirtAddr, VirtAddr), ExecError> {
+) -> Result<ExecResult, ExecError> {
     // Parse ELF
     let elf = ElfExecutable::parse(elf_data).map_err(|_e| ExecError::InvalidElf)?;
-
-    // Get process
-    let table = process_table();
-    let proc_arc = table.get(pid).ok_or(ExecError::ProcessNotFound)?;
-    let mut proc = proc_arc.lock();
 
     // Create new address space
     let mut new_address_space = unsafe {
@@ -219,82 +228,70 @@ pub fn do_exec<A: FrameAllocator>(
 
     let final_rsp = VirtAddr::new(stack_ptr);
 
-    // Replace the process's address space first so we can write to it
-    let old_as = core::mem::replace(proc.address_space_mut(), new_address_space);
-    drop(old_as);
-
-    // Get mutable reference to new address space
-    let new_as = proc.address_space_mut();
-
     // Write strings to stack
     let mut string_ptr = strings_base;
     for arg in argv {
-        write_to_user_stack(new_as, string_ptr, arg.as_bytes())?;
+        write_to_user_stack(&new_address_space, string_ptr, arg.as_bytes())?;
         // Write null terminator
-        write_to_user_stack(new_as, string_ptr + arg.len() as u64, &[0u8])?;
+        write_to_user_stack(&new_address_space, string_ptr + arg.len() as u64, &[0u8])?;
         string_ptr += (arg.len() + 1) as u64;
     }
     for env in envp {
-        write_to_user_stack(new_as, string_ptr, env.as_bytes())?;
-        write_to_user_stack(new_as, string_ptr + env.len() as u64, &[0u8])?;
+        write_to_user_stack(&new_address_space, string_ptr, env.as_bytes())?;
+        write_to_user_stack(&new_address_space, string_ptr + env.len() as u64, &[0u8])?;
         string_ptr += (env.len() + 1) as u64;
     }
 
     // Write argc
     let mut ptr = stack_ptr;
     let argc_bytes = (argv.len() as u64).to_le_bytes();
-    write_to_user_stack(new_as, ptr, &argc_bytes)?;
+    write_to_user_stack(&new_address_space, ptr, &argc_bytes)?;
     ptr += 8;
 
     // Write argv pointers
     for &offset in &string_offsets_argv {
-        write_to_user_stack(new_as, ptr, &offset.to_le_bytes())?;
+        write_to_user_stack(&new_address_space, ptr, &offset.to_le_bytes())?;
         ptr += 8;
     }
     // NULL terminator for argv
-    write_to_user_stack(new_as, ptr, &0u64.to_le_bytes())?;
+    write_to_user_stack(&new_address_space, ptr, &0u64.to_le_bytes())?;
     ptr += 8;
 
     // Write envp pointers
     for &offset in &string_offsets_envp {
-        write_to_user_stack(new_as, ptr, &offset.to_le_bytes())?;
+        write_to_user_stack(&new_address_space, ptr, &offset.to_le_bytes())?;
         ptr += 8;
     }
     // NULL terminator for envp
-    write_to_user_stack(new_as, ptr, &0u64.to_le_bytes())?;
+    write_to_user_stack(&new_address_space, ptr, &0u64.to_le_bytes())?;
 
-    // Update process entry point and stack
-    proc.set_entry_point(entry_point);
-    proc.set_user_stack_top(final_rsp);
-
-    // Store argv and envp for /proc
-    proc.set_cmdline(argv.iter().map(|s| s.clone()).collect());
-    proc.set_environ(envp.iter().map(|s| s.clone()).collect());
-
-    // Clear context for fresh start
-    let ctx = proc.context_mut();
-    *ctx = crate::ProcessContext::default();
-    ctx.rip = entry_point.as_u64();
-    ctx.rsp = final_rsp.as_u64();
-    ctx.rflags = 0x202; // IF set
-    ctx.cs = 0x23; // User code segment
-    ctx.ss = 0x1B; // User data segment
+    // Create context for fresh start
+    let mut context = ProcessContext::default();
+    context.rip = entry_point.as_u64();
+    context.rsp = final_rsp.as_u64();
+    context.rflags = 0x202; // IF set
+    context.cs = 0x23; // User code segment
+    context.ss = 0x1B; // User data segment
 
     // Set up arguments in registers per System V ABI:
     // rdi = argc
     // rsi = argv (pointer to argv array)
     // rdx = envp (pointer to envp array)
-    ctx.rdi = argv.len() as u64;
-    ctx.rsi = stack_ptr + 8; // argv starts after argc
-    ctx.rdx = stack_ptr + 8 + ((argv.len() + 1) * 8) as u64; // envp starts after argv + NULL
-
-    // Close cloexec file descriptors
-    proc.fd_table_mut().close_cloexec();
+    context.rdi = argv.len() as u64;
+    context.rsi = stack_ptr + 8; // argv starts after argc
+    context.rdx = stack_ptr + 8 + ((argv.len() + 1) * 8) as u64; // envp starts after argv + NULL
 
     // Flush TLB
     flush_tlb_all();
 
-    Ok((entry_point, final_rsp))
+    Ok(ExecResult {
+        address_space: new_address_space,
+        entry_point,
+        stack_pointer: final_rsp,
+        context,
+        cmdline: argv.iter().cloned().collect(),
+        environ: envp.iter().cloned().collect(),
+    })
 }
 
 /// Write data to user stack at given virtual address

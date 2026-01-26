@@ -15,7 +15,7 @@ use arch_x86_64 as arch;
 use arch_x86_64::serial;
 use mm_paging::{flush_tlb_all, phys_to_virt, write_cr3};
 use os_core::PhysAddr;
-use proc::{ProcessContext, WaitOptions, do_exec, do_fork, do_waitpid, process_table};
+use proc::{ProcessContext, ProcessMeta, WaitOptions, WaitResult, do_exec, do_fork};
 use proc_traits::Pid;
 use sched::TaskState;
 use vfs::{VnodeType, mount::GLOBAL_VFS};
@@ -33,7 +33,6 @@ use sched::TaskContext;
 pub fn user_exit(status: i32) -> ! {
     // Get current process and mark as zombie
     let current_pid = sched::current_pid().unwrap_or(0);
-    let table = process_table(); // Still needed for Process struct access during transition
 
     // Debug: Print exit info
     {
@@ -56,15 +55,11 @@ pub fn user_exit(status: i32) -> ! {
         );
     }
 
-    // Get parent PID before marking as zombie
-    let parent_pid = if let Some(proc) = table.get(current_pid) {
-        let mut p = proc.lock();
-        let ppid = p.ppid();
-        p.exit(status);
-        ppid
-    } else {
-        0
-    };
+    // Get parent PID via scheduler
+    let parent_pid = sched::get_task_ppid(current_pid).unwrap_or(0);
+
+    // Mark task as zombie and set exit status via scheduler
+    sched::set_task_exit_status(current_pid, status);
 
     unsafe {
         USER_EXIT_STATUS = status;
@@ -84,14 +79,10 @@ pub fn user_exit(status: i32) -> ! {
 
     if let Some(ctx) = parent_ctx {
         // Restore parent as current process
-        table.set_current_pid(ctx.pid as u32);
+        sched::switch_to(ctx.pid as u32);
 
-        // Get parent's kernel stack
-        if let Some(parent) = table.get(ctx.pid as u32) {
-            let p = parent.lock();
-            let parent_stack_phys = p.kernel_stack();
-            let parent_stack_size = p.kernel_stack_size();
-            drop(p);
+        // Get parent's kernel stack from scheduler
+        if let Some((_, _, parent_stack_phys, parent_stack_size)) = sched::get_task_switch_info(ctx.pid as u32) {
 
             let parent_stack_virt = phys_to_virt(parent_stack_phys);
             let parent_stack_top = parent_stack_virt.as_u64() + parent_stack_size as u64;
@@ -316,12 +307,8 @@ pub fn user_exit(status: i32) -> ! {
         );
     }
 
-    table.set_current_pid(next_pid);
-    if let Some(proc_arc) = table.get(next_pid) {
-        proc_arc
-            .lock()
-            .set_state(proc_traits::ProcessState::Running);
-    }
+    // Update scheduler's current task - switch_to handles state changes
+    sched::switch_to(next_pid);
 
     unsafe {
         arch::syscall::set_kernel_stack(kernel_stack_top);
@@ -420,10 +407,21 @@ pub fn user_exit(status: i32) -> ! {
 ///
 /// Creates a child process and returns child PID to parent, 0 to child.
 pub fn kernel_fork() -> i64 {
+    use alloc::sync::Arc;
+    use spin::Mutex;
+
     let parent_pid = sched::current_pid().unwrap_or(0);
-    let table = process_table(); // Still needed for Process struct access during transition
 
     debug_fork!("[FORK] Fork called from PID {}", parent_pid);
+
+    // Get parent's ProcessMeta from scheduler
+    let parent_meta_arc = match sched::get_task_meta(parent_pid) {
+        Some(m) => m,
+        None => {
+            debug_fork!("[FORK] Parent meta not found");
+            return -3; // ESRCH
+        }
+    };
 
     // Get current process context from syscall user context
     let user_ctx = arch::get_user_context();
@@ -465,15 +463,26 @@ pub fn kernel_fork() -> i64 {
     // Create wrapper for frame allocator
     let alloc_wrapper = FrameAllocatorWrapper;
 
-    // Call do_fork
-    let result = do_fork(parent_pid, &parent_context, &alloc_wrapper);
+    // Kernel stack size (128KB)
+    const KERNEL_STACK_SIZE: usize = 128 * 1024;
+
+    // Call do_fork with parent's ProcessMeta
+    let parent_meta = parent_meta_arc.lock();
+    let result = do_fork(
+        parent_pid,
+        &parent_meta,
+        &parent_context,
+        &alloc_wrapper,
+        KERNEL_STACK_SIZE,
+    );
+    drop(parent_meta); // Release lock before switching
 
     match result {
-        Ok(child_pid) => {
+        Ok(fork_result) => {
+            let child_pid = fork_result.child_pid;
             debug_fork!("[FORK] Created child process {}", child_pid);
 
             // Save parent context with fork return value (child_pid)
-            // Then switch to child immediately - child runs first
             let parent_task_ctx = TaskContext {
                 rip: parent_context.rip,
                 rsp: parent_context.rsp,
@@ -498,57 +507,64 @@ pub fn kernel_fork() -> i64 {
             };
 
             // Update parent's context in the scheduler's Task
-            // This is critical - the scheduler uses Task.context for context switching
             sched::set_task_context(parent_pid, parent_task_ctx);
 
-            // Also update Process.context for backward compatibility
-            if let Some(parent) = table.get(parent_pid) {
-                let mut proc = parent.lock();
-                let ctx = proc.context_mut();
-                ctx.rip = parent_task_ctx.rip;
-                ctx.rsp = parent_task_ctx.rsp;
-                ctx.rflags = parent_task_ctx.rflags;
-                ctx.rax = parent_task_ctx.rax;
-                ctx.rbx = parent_task_ctx.rbx;
-                ctx.rcx = parent_task_ctx.rcx;
-                ctx.rdx = parent_task_ctx.rdx;
-                ctx.rsi = parent_task_ctx.rsi;
-                ctx.rdi = parent_task_ctx.rdi;
-                ctx.rbp = parent_task_ctx.rbp;
-                ctx.r8 = parent_task_ctx.r8;
-                ctx.r9 = parent_task_ctx.r9;
-                ctx.r10 = parent_task_ctx.r10;
-                ctx.r11 = parent_task_ctx.r11;
-                ctx.r12 = parent_task_ctx.r12;
-                ctx.r13 = parent_task_ctx.r13;
-                ctx.r14 = parent_task_ctx.r14;
-                ctx.r15 = parent_task_ctx.r15;
-                ctx.cs = parent_task_ctx.cs;
-                ctx.ss = parent_task_ctx.ss;
-            }
+            // Wrap child's ProcessMeta in Arc<Mutex<>>
+            let child_meta_arc = Arc::new(Mutex::new(fork_result.child_meta));
 
-            // Add child process to scheduler
-            add_process(child_pid);
+            // Get child's PML4 and context
+            let child_pml4 = child_meta_arc.lock().address_space.pml4_phys();
+            let child_ctx = fork_result.child_context.clone();
 
-            // Tell scheduler we're switching from parent to child
-            // This re-enqueues the parent so it can run later
-            sched::switch_to(child_pid);
-
-            // Get child's context and switch to it
-            let (child_ctx, child_pml4, child_kstack_top) = {
-                let child = match table.get(child_pid) {
-                    Some(c) => c,
-                    None => return -1,
-                };
-                let proc = child.lock();
-                (proc.context().clone(), proc.address_space().pml4_phys(), {
-                    let ks_virt = phys_to_virt(proc.kernel_stack());
-                    ks_virt.as_u64() + proc.kernel_stack_size() as u64
-                })
+            // Create child's TaskContext (rax=0 for child return)
+            let child_task_ctx = TaskContext {
+                rip: child_ctx.rip,
+                rsp: child_ctx.rsp,
+                rflags: child_ctx.rflags,
+                rax: 0, // Child's fork() returns 0
+                rbx: child_ctx.rbx,
+                rcx: child_ctx.rcx,
+                rdx: child_ctx.rdx,
+                rsi: child_ctx.rsi,
+                rdi: child_ctx.rdi,
+                rbp: child_ctx.rbp,
+                r8: child_ctx.r8,
+                r9: child_ctx.r9,
+                r10: child_ctx.r10,
+                r11: child_ctx.r11,
+                r12: child_ctx.r12,
+                r13: child_ctx.r13,
+                r14: child_ctx.r14,
+                r15: child_ctx.r15,
+                cs: 0x23,
+                ss: 0x1B,
             };
 
-            // Switch to child process
-            table.set_current_pid(child_pid);
+            // Create Task for child
+            let child_task = sched::Task::new_with_meta(
+                child_pid,
+                parent_pid,
+                fork_result.kernel_stack_phys,
+                fork_result.kernel_stack_size,
+                child_pml4,
+                child_ctx.rip,
+                child_ctx.rsp,
+                child_meta_arc,
+            );
+
+            // Add child to scheduler
+            sched::add_task(child_task);
+            sched::set_task_context(child_pid, child_task_ctx);
+
+            // Add child to parent's children list
+            sched::add_task_child(parent_pid, child_pid);
+
+            // Tell scheduler we're switching to child
+            sched::switch_to(child_pid);
+
+            // Get child's kernel stack top
+            let child_kstack_virt = phys_to_virt(fork_result.kernel_stack_phys);
+            let child_kstack_top = child_kstack_virt.as_u64() + fork_result.kernel_stack_size as u64;
 
             // Update kernel stack
             unsafe {
@@ -588,7 +604,7 @@ pub fn kernel_fork() -> i64 {
 
                 let ctx_ptr = addr_of_mut!(FORK_CHILD_CTX) as u64;
 
-                // Child's fork() returns 0 (already set in do_fork)
+                // Child's fork() returns 0
                 core::arch::asm!(
                     "mov rax, {ctx}",
                     "mov rcx, [rax]",       // rip
@@ -629,12 +645,11 @@ pub fn kernel_fork() -> i64 {
 /// Properly blocks until a child exits (unless WNOHANG is set).
 pub fn kernel_wait(pid: i32, options: i32) -> i64 {
     let parent_pid = sched::current_pid().unwrap_or(0);
-    let table = process_table(); // Still needed for Process struct access during transition
     let wait_opts = WaitOptions::from(options);
 
     loop {
-        // Check for zombie children
-        match do_waitpid(parent_pid, pid, wait_opts) {
+        // Check for zombie children via scheduler
+        match find_zombie_child(parent_pid, pid) {
             Ok(result) => {
                 // Debug: print framebuffer write stats after each child exits
                 {
@@ -646,6 +661,10 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
                         result.pid, writes, bytes, base
                     );
                 }
+
+                // Reap the zombie - remove from scheduler
+                crate::scheduler::remove_process(result.pid);
+
                 // Pack pid and status into result
                 return ((result.pid as i64) << 32) | ((result.status as i64) & 0xFFFFFFFF);
             }
@@ -660,18 +679,10 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
                             return 0; // No child exited yet
                         }
 
-                        // Mark this process as waiting for the child
-                        // This allows user_exit to find us and wake us up
-                        // Update both Process and Task state for consistency
-                        if let Some(proc) = table.get(parent_pid) {
-                            proc.lock().wait_for_child(pid);
-                        }
-
-                        // Update scheduler's Task state
+                        // Update scheduler's Task state - mark as waiting
                         sched::set_task_waiting(parent_pid, pid);
 
                         // Block the current task in the scheduler
-                        // This removes it from the run queue so other tasks can run
                         sched::block_current(TaskState::TASK_INTERRUPTIBLE);
 
                         // Mark that we need a reschedule
@@ -697,6 +708,42 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
     }
 }
 
+/// Find a zombie child process
+///
+/// Returns WaitResult if a matching zombie is found, WaitError otherwise.
+fn find_zombie_child(parent_pid: Pid, target_pid: i32) -> Result<WaitResult, proc::WaitError> {
+    // Get list of children from scheduler
+    let children = sched::get_task_children(parent_pid);
+
+    if children.is_empty() {
+        return Err(proc::WaitError::NoChildren);
+    }
+
+    // Look for zombie children
+    for child_pid in &children {
+        // If target_pid > 0, only check that specific child
+        if target_pid > 0 && *child_pid != target_pid as u32 {
+            continue;
+        }
+
+        // Check if child is zombie
+        if let Some(state) = sched::get_task_state(*child_pid) {
+            if state == TaskState::TASK_ZOMBIE {
+                // Found a zombie - get its exit status
+                if let Some(status) = sched::get_task_exit_status(*child_pid) {
+                    return Ok(WaitResult {
+                        pid: *child_pid,
+                        status,
+                    });
+                }
+            }
+        }
+    }
+
+    // No zombie found yet
+    Err(proc::WaitError::WouldBlock)
+}
+
 /// Run a child process to completion
 ///
 /// This function saves the parent's context and enters the child.
@@ -704,40 +751,25 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
 #[allow(dead_code)]
 pub fn run_child_process(child_pid: Pid) {
     let parent_pid = sched::current_pid().unwrap_or(0);
-    let table = process_table(); // Still needed for Process struct access during transition
 
     // Get parent's PML4 for restoring later
-    let _parent_pml4 = if let Some(p) = table.get(parent_pid) {
-        p.lock().address_space().pml4_phys().as_u64()
-    } else {
-        // Fallback to kernel PML4
-        unsafe { KERNEL_PML4 }
-    };
+    let _parent_pml4 = sched::get_task_meta(parent_pid)
+        .map(|m| m.lock().address_space.pml4_phys().as_u64())
+        .unwrap_or(unsafe { KERNEL_PML4 });
 
-    // Get child process info
-    let (child_pml4, _child_entry, _child_stack, kernel_stack_phys, kernel_stack_size) = {
-        let child = match table.get(child_pid) {
-            Some(c) => c,
-            None => return,
-        };
-
-        let c = child.lock();
-        (
-            c.address_space().pml4_phys(),
-            c.entry_point(),
-            c.user_stack_top(),
-            c.kernel_stack(),
-            c.kernel_stack_size(),
-        )
+    // Get child process info from scheduler
+    let (child_pml4, kernel_stack_phys, kernel_stack_size) = match sched::get_task_switch_info(child_pid) {
+        Some((_, pml4, kstack, kstack_size)) => (pml4, kstack, kstack_size),
+        None => return,
     };
 
     // Set current process to child
-    table.set_current_pid(child_pid);
+    sched::switch_to(child_pid);
     #[cfg(feature = "debug-fork")]
     {
-        let verify_pid = table.current_pid();
+        let verify_pid = sched::current_pid().unwrap_or(0);
         debug_fork!(
-            "[RUN_CHILD] set_current_pid({}) done, verify={}",
+            "[RUN_CHILD] switch_to({}) done, verify={}",
             child_pid,
             verify_pid
         );
@@ -753,10 +785,31 @@ pub fn run_child_process(child_pid: Pid) {
     }
     arch::gdt::set_kernel_stack(child_kernel_stack_top);
 
-    // Get child's saved context
-    let child_ctx = {
-        let child = table.get(child_pid).unwrap();
-        child.lock().context().clone()
+    // Get child's saved context from scheduler
+    let child_ctx = match sched::get_task_context(child_pid) {
+        Some(ctx) => ProcessContext {
+            rip: ctx.rip,
+            rsp: ctx.rsp,
+            rflags: ctx.rflags,
+            rax: ctx.rax,
+            rbx: ctx.rbx,
+            rcx: ctx.rcx,
+            rdx: ctx.rdx,
+            rsi: ctx.rsi,
+            rdi: ctx.rdi,
+            rbp: ctx.rbp,
+            r8: ctx.r8,
+            r9: ctx.r9,
+            r10: ctx.r10,
+            r11: ctx.r11,
+            r12: ctx.r12,
+            r13: ctx.r13,
+            r14: ctx.r14,
+            r15: ctx.r15,
+            cs: ctx.cs,
+            ss: ctx.ss,
+        },
+        None => return,
     };
 
     // Debug: print child's context (all callee-saved registers)
@@ -921,7 +974,6 @@ pub fn kernel_exec(
     envp_ptr: *const *const u8,
 ) -> i64 {
     let current_pid = sched::current_pid().unwrap_or(0);
-    let table = process_table(); // Still needed for Process struct access during transition
 
     // Read path from user space
     let path = unsafe {
@@ -1122,102 +1174,107 @@ pub fn kernel_exec(
     let kernel_pml4 = PhysAddr::new(unsafe { KERNEL_PML4 });
     let alloc_wrapper = FrameAllocatorWrapper;
 
-    // Call do_exec
+    // Call do_exec - returns ExecResult with new address space and context
     match do_exec(
-        current_pid,
         &elf_data,
         &argv,
         &envp,
         &alloc_wrapper,
         kernel_pml4,
     ) {
-        Ok((_entry_point, _stack_ptr)) => {
-            // Get the new PML4 and switch to it
-            if let Some(proc) = table.get(current_pid) {
-                let p = proc.lock();
-                let new_pml4 = p.address_space().pml4_phys();
-                let ctx = p.context().clone();
-                drop(p);
+        Ok(exec_result) => {
+            // Get new address space PML4
+            let new_pml4 = exec_result.address_space.pml4_phys();
+            let ctx = &exec_result.context;
 
-                // Keep scheduler task in sync with the freshly exec'd context
-                let task_ctx = TaskContext {
-                    rip: ctx.rip,
-                    rsp: ctx.rsp,
-                    rflags: ctx.rflags,
-                    rax: ctx.rax,
-                    rbx: ctx.rbx,
-                    rcx: ctx.rcx,
-                    rdx: ctx.rdx,
-                    rsi: ctx.rsi,
-                    rdi: ctx.rdi,
-                    rbp: ctx.rbp,
-                    r8: ctx.r8,
-                    r9: ctx.r9,
-                    r10: ctx.r10,
-                    r11: ctx.r11,
-                    r12: ctx.r12,
-                    r13: ctx.r13,
-                    r14: ctx.r14,
-                    r15: ctx.r15,
-                    cs: ctx.cs,
-                    ss: ctx.ss,
-                };
-                sched::update_task_exec_info(current_pid, new_pml4, ctx.rip, ctx.rsp, task_ctx);
+            // Build task context from exec result
+            let task_ctx = TaskContext {
+                rip: ctx.rip,
+                rsp: ctx.rsp,
+                rflags: ctx.rflags,
+                rax: ctx.rax,
+                rbx: ctx.rbx,
+                rcx: ctx.rcx,
+                rdx: ctx.rdx,
+                rsi: ctx.rsi,
+                rdi: ctx.rdi,
+                rbp: ctx.rbp,
+                r8: ctx.r8,
+                r9: ctx.r9,
+                r10: ctx.r10,
+                r11: ctx.r11,
+                r12: ctx.r12,
+                r13: ctx.r13,
+                r14: ctx.r14,
+                r15: ctx.r15,
+                cs: ctx.cs,
+                ss: ctx.ss,
+            };
 
-                // Debug: print exec return values
-                debug_fork!("[EXEC] Switching to PML4={:#x}", new_pml4.as_u64());
-                debug_fork!("[EXEC] rip={:#x} rsp={:#x}", ctx.rip, ctx.rsp);
-                debug_fork!(
-                    "[EXEC] argc={} argv={:#x} envp={:#x}",
-                    ctx.rdi,
-                    ctx.rsi,
-                    ctx.rdx
-                );
+            // Update ProcessMeta with new address space and cmdline
+            if let Some(meta) = sched::get_task_meta(current_pid) {
+                let mut m = meta.lock();
+                m.address_space = exec_result.address_space;
+                m.cmdline = exec_result.cmdline;
+                m.environ = exec_result.environ;
+            }
 
-                // Switch to new address space and jump to entry point
-                unsafe {
-                    write_cr3(new_pml4);
-                    flush_tlb_all();
+            // Update scheduler task with new exec info
+            sched::update_task_exec_info(current_pid, new_pml4, ctx.rip, ctx.rsp, task_ctx);
 
-                    // Return to user mode at new entry point
-                    // We use sysretq which expects: rcx = rip, r11 = rflags
-                    // Use explicit registers to prevent compiler from reusing registers
-                    // that we overwrite before their values are consumed
-                    core::arch::asm!(
-                        // Set up rip for sysretq
-                        "mov rcx, r8",
-                        // Set up rflags for sysretq
-                        "mov r11, r9",
-                        // Set up user stack - do this AFTER loading values into rcx/r11
-                        // to avoid any chance of compiler putting inputs in rsp
-                        "mov rsp, r10",
-                        // Set up argc, argv, envp in registers per System V ABI
-                        // These are already loaded into r12, r13, r14 respectively
-                        "mov rdi, r12",
-                        "mov rsi, r13",
-                        "mov rdx, r14",
-                        // Load user data segment selectors for DS/ES/FS (0x1B = USER_DS | 3)
-                        // NOTE: Do NOT load GS - swapgs will handle it
-                        "mov ax, 0x1b",
-                        "mov ds, ax",
-                        "mov es, ax",
-                        "mov fs, ax",
-                        // Clear rax for return value
-                        "xor rax, rax",
-                        // Swap GS back to user mode (required before sysretq)
-                        "swapgs",
-                        // Return to user mode
-                        "sysretq",
-                        in("r8") ctx.rip,
-                        in("r9") 0x202u64, // IF set
-                        in("r10") ctx.rsp,
-                        in("r12") ctx.rdi,
-                        in("r13") ctx.rsi,
-                        in("r14") ctx.rdx,
+            // Debug: print exec return values
+            debug_fork!("[EXEC] Switching to PML4={:#x}", new_pml4.as_u64());
+            debug_fork!("[EXEC] rip={:#x} rsp={:#x}", ctx.rip, ctx.rsp);
+            debug_fork!(
+                "[EXEC] argc={} argv={:#x} envp={:#x}",
+                ctx.rdi,
+                ctx.rsi,
+                ctx.rdx
+            );
+
+            // Switch to new address space and jump to entry point
+            unsafe {
+                write_cr3(new_pml4);
+                flush_tlb_all();
+
+                // Return to user mode at new entry point
+                // We use sysretq which expects: rcx = rip, r11 = rflags
+                // Use explicit registers to prevent compiler from reusing registers
+                // that we overwrite before their values are consumed
+                core::arch::asm!(
+                    // Set up rip for sysretq
+                    "mov rcx, r8",
+                    // Set up rflags for sysretq
+                    "mov r11, r9",
+                    // Set up user stack - do this AFTER loading values into rcx/r11
+                    // to avoid any chance of compiler putting inputs in rsp
+                    "mov rsp, r10",
+                    // Set up argc, argv, envp in registers per System V ABI
+                    // These are already loaded into r12, r13, r14 respectively
+                    "mov rdi, r12",
+                    "mov rsi, r13",
+                    "mov rdx, r14",
+                    // Load user data segment selectors for DS/ES/FS (0x1B = USER_DS | 3)
+                    // NOTE: Do NOT load GS - swapgs will handle it
+                    "mov ax, 0x1b",
+                    "mov ds, ax",
+                    "mov es, ax",
+                    "mov fs, ax",
+                    // Clear rax for return value
+                    "xor rax, rax",
+                    // Swap GS back to user mode (required before sysretq)
+                    "swapgs",
+                    // Return to user mode
+                    "sysretq",
+                    in("r8") ctx.rip,
+                    in("r9") 0x202u64, // IF set
+                    in("r10") ctx.rsp,
+                    in("r12") ctx.rdi,
+                    in("r13") ctx.rsi,
+                    in("r14") ctx.rdx,
                         options(noreturn)
                     );
                 }
-            }
             0 // Never reached
         }
         Err(e) => {

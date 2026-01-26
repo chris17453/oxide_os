@@ -4,13 +4,17 @@
 //! The basic operations are:
 //! - FUTEX_WAIT: If *addr == val, sleep until woken
 //! - FUTEX_WAKE: Wake up to n waiters on addr
+//!
+//! This module manages the wait queues and returns actions for the
+//! kernel/scheduler to execute. The actual blocking/waking of processes
+//! is done by the kernel which has scheduler access.
+
+extern crate alloc;
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use proc_traits::{Pid, ProcessState};
+use proc_traits::Pid;
 use spin::Mutex;
-
-use crate::process_table;
 
 /// Futex error types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,19 +50,32 @@ struct FutexWaiter {
 /// Key is the physical address of the futex (to handle shared memory)
 static FUTEX_QUEUES: Mutex<BTreeMap<u64, Vec<FutexWaiter>>> = Mutex::new(BTreeMap::new());
 
-/// Wait on a futex
+/// Result of futex_wait_prepare - tells kernel what to do
+#[derive(Debug)]
+pub enum FutexWaitResult {
+    /// Value didn't match - don't block, return EAGAIN
+    ValueMismatch,
+    /// Should block - PID has been added to wait queue
+    ShouldBlock,
+}
+
+/// Prepare for futex wait
 ///
-/// If the value at `addr` equals `expected`, put the calling thread to sleep.
-/// The thread will be woken by futex_wake or a signal.
+/// Checks if the value at `addr` equals `expected`, and if so,
+/// adds the calling thread to the wait queue.
 ///
 /// # Arguments
+/// * `current_pid` - PID of the calling process (from scheduler)
 /// * `addr` - User address of the futex word
 /// * `expected` - Expected value at addr
-/// * `_timeout_ns` - Timeout in nanoseconds (0 = infinite) - not yet implemented
 ///
 /// # Returns
-/// 0 on success (woken by futex_wake), or FutexError
-pub fn futex_wait(addr: u64, expected: u32, _timeout_ns: u64) -> Result<(), FutexError> {
+/// FutexWaitResult indicating whether caller should block
+pub fn futex_wait_prepare(
+    current_pid: Pid,
+    addr: u64,
+    expected: u32,
+) -> Result<FutexWaitResult, FutexError> {
     // Validate address is in user space
     if addr >= 0x0000_8000_0000_0000 || addr == 0 {
         return Err(FutexError::InvalidAddress);
@@ -69,9 +86,6 @@ pub fn futex_wait(addr: u64, expected: u32, _timeout_ns: u64) -> Result<(), Fute
         return Err(FutexError::InvalidAddress);
     }
 
-    let table = process_table();
-    let current_pid = table.current_pid();
-
     // Read the current value atomically
     let current_val = unsafe {
         let ptr = addr as *const u32;
@@ -80,7 +94,7 @@ pub fn futex_wait(addr: u64, expected: u32, _timeout_ns: u64) -> Result<(), Fute
 
     // If value doesn't match, return immediately
     if current_val != expected {
-        return Err(FutexError::WouldBlock);
+        return Ok(FutexWaitResult::ValueMismatch);
     }
 
     // Add ourselves to the wait queue
@@ -90,43 +104,47 @@ pub fn futex_wait(addr: u64, expected: u32, _timeout_ns: u64) -> Result<(), Fute
         waiters.push(FutexWaiter { pid: current_pid });
     }
 
-    // Put ourselves to sleep
-    if let Some(proc) = table.get(current_pid) {
-        proc.lock().set_state(ProcessState::Blocked);
+    // Caller should block via scheduler
+    Ok(FutexWaitResult::ShouldBlock)
+}
+
+/// Remove a waiter from the futex queue (e.g., on timeout or signal)
+///
+/// Called when a blocked process is woken by something other than futex_wake
+/// (like a signal or timeout).
+pub fn futex_wait_cancel(pid: Pid, addr: u64) {
+    let mut queues = FUTEX_QUEUES.lock();
+    if let Some(waiters) = queues.get_mut(&addr) {
+        waiters.retain(|w| w.pid != pid);
+        if waiters.is_empty() {
+            queues.remove(&addr);
+        }
     }
-
-    // The scheduler will now run a different task
-    // When we're woken, we'll continue here
-    // For now, we return success - the actual blocking happens via the scheduler
-
-    Ok(())
 }
 
 /// Wake waiters on a futex
 ///
 /// Wake up to `count` threads waiting on the futex at `addr`.
+/// Returns the list of PIDs to wake.
 ///
 /// # Arguments
 /// * `addr` - User address of the futex word
 /// * `count` - Maximum number of waiters to wake (i32::MAX for all)
 ///
 /// # Returns
-/// Number of waiters woken
-pub fn futex_wake(addr: u64, count: i32) -> Result<i32, FutexError> {
+/// Vector of PIDs to wake via scheduler
+pub fn futex_wake(addr: u64, count: i32) -> Result<Vec<Pid>, FutexError> {
     // Validate address is in user space
     if addr >= 0x0000_8000_0000_0000 || addr == 0 {
         return Err(FutexError::InvalidAddress);
     }
 
-    let table = process_table();
-    let mut woken = 0i32;
-
     // Get and remove waiters from the queue
-    let waiters_to_wake: Vec<FutexWaiter> = {
+    let waiters_to_wake: Vec<Pid> = {
         let mut queues = FUTEX_QUEUES.lock();
         if let Some(waiters) = queues.get_mut(&addr) {
             let to_wake = count.min(waiters.len() as i32) as usize;
-            let waking: Vec<_> = waiters.drain(..to_wake).collect();
+            let waking: Vec<Pid> = waiters.drain(..to_wake).map(|w| w.pid).collect();
 
             // Remove empty queue entry
             if waiters.is_empty() {
@@ -139,30 +157,22 @@ pub fn futex_wake(addr: u64, count: i32) -> Result<i32, FutexError> {
         }
     };
 
-    // Wake the waiters
-    for waiter in waiters_to_wake {
-        if let Some(proc) = table.get(waiter.pid) {
-            let mut p = proc.lock();
-            if p.state() == ProcessState::Blocked {
-                p.set_state(ProcessState::Ready);
-                woken += 1;
-            }
-        }
-    }
-
-    Ok(woken)
+    Ok(waiters_to_wake)
 }
 
 /// Clear futex and wake (for thread exit with CLONE_CHILD_CLEARTID)
 ///
-/// Writes 0 to the address and wakes one waiter.
+/// Writes 0 to the address and returns the PID to wake (if any).
 /// Used when a thread exits with clear_child_tid set.
 ///
 /// # Arguments
 /// * `addr` - Address to clear and wake
-pub fn futex_clear_and_wake(addr: u64) {
+///
+/// # Returns
+/// Optional PID to wake
+pub fn futex_clear_and_wake(addr: u64) -> Option<Pid> {
     if addr == 0 || addr >= 0x0000_8000_0000_0000 {
-        return;
+        return None;
     }
 
     // Write 0 to the address
@@ -172,5 +182,8 @@ pub fn futex_clear_and_wake(addr: u64) {
     }
 
     // Wake one waiter
-    let _ = futex_wake(addr, 1);
+    match futex_wake(addr, 1) {
+        Ok(pids) => pids.into_iter().next(),
+        Err(_) => None,
+    }
 }

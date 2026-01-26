@@ -18,7 +18,6 @@ pub mod vfs;
 
 use alloc::sync::Arc;
 use os_core::VirtAddr;
-use proc::process_table;
 use proc_traits::Pid;
 use spin::Mutex;
 
@@ -1579,19 +1578,39 @@ fn sys_futex(addr: u64, op: i32, val: u32, timeout: u64, _addr2: u64, _val3: u32
     let op_masked = op & !futex_op::FUTEX_PRIVATE_FLAG;
 
     match op_masked {
-        futex_op::FUTEX_WAIT => match proc::futex_wait(addr, val, timeout) {
-            Ok(()) => 0,
-            Err(proc::FutexError::WouldBlock) => errno::EAGAIN,
-            Err(proc::FutexError::InvalidAddress) => errno::EFAULT,
-            Err(proc::FutexError::TimedOut) => errno::ETIMEDOUT,
-            Err(proc::FutexError::Interrupted) => errno::EINTR,
-            Err(_) => errno::EINVAL,
-        },
-        futex_op::FUTEX_WAKE => match proc::futex_wake(addr, val as i32) {
-            Ok(n) => n as i64,
-            Err(proc::FutexError::InvalidAddress) => errno::EFAULT,
-            Err(_) => errno::EINVAL,
-        },
+        futex_op::FUTEX_WAIT => {
+            // Prepare for futex wait - adds us to wait queue if value matches
+            let current = current_pid();
+            match proc::futex_wait_prepare(current, addr, val) {
+                Ok(proc::FutexWaitResult::ValueMismatch) => errno::EAGAIN,
+                Ok(proc::FutexWaitResult::ShouldBlock) => {
+                    // Block the current task via scheduler
+                    // The scheduler will handle putting us to sleep
+                    sched::block_current(sched::TaskState::TASK_INTERRUPTIBLE);
+                    0
+                }
+                Err(proc::FutexError::WouldBlock) => errno::EAGAIN,
+                Err(proc::FutexError::InvalidAddress) => errno::EFAULT,
+                Err(proc::FutexError::TimedOut) => errno::ETIMEDOUT,
+                Err(proc::FutexError::Interrupted) => errno::EINTR,
+                Err(_) => errno::EINVAL,
+            }
+        }
+        futex_op::FUTEX_WAKE => {
+            // Get list of PIDs to wake
+            match proc::futex_wake(addr, val as i32) {
+                Ok(pids) => {
+                    let count = pids.len();
+                    // Wake each process via scheduler
+                    for pid in pids {
+                        sched::wake_up(pid);
+                    }
+                    count as i64
+                }
+                Err(proc::FutexError::InvalidAddress) => errno::EFAULT,
+                Err(_) => errno::EINVAL,
+            }
+        }
         _ => errno::ENOSYS,
     }
 }

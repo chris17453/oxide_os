@@ -15,25 +15,9 @@ use alloc::vec::Vec;
 use arch_x86_64 as arch;
 use mm_paging::phys_to_virt;
 use os_core::PhysAddr;
-use proc::{ProcessMeta, process_table};
-use proc_traits::ProcessState;
+use proc::ProcessMeta;
 use sched::{self, SchedPolicy, Task, TaskState};
 use spin::Mutex;
-
-fn update_process_state(pid: u32, state: ProcessState) {
-    if pid == 0 {
-        return;
-    }
-    let table = process_table();
-    if let Some(proc_arc) = table.get(pid) {
-        let mut proc = proc_arc.lock();
-        // Don't resurrect zombies or exited tasks
-        if proc.state() == ProcessState::Zombie && state == ProcessState::Ready {
-            return;
-        }
-        proc.set_state(state);
-    }
-}
 
 /// Interrupt stack frame layout
 /// Matches what timer_interrupt pushes in exceptions.rs
@@ -90,94 +74,11 @@ pub fn init() {
 
 /// Add a process to the scheduler
 ///
-/// Called when a new process is created (fork/exec).
-/// Creates a Task with attached ProcessMeta for the unified model.
-pub fn add_process(pid: u32) {
-    let table = process_table();
-
-    if let Some(proc_arc) = table.get(pid) {
-        let mut proc = proc_arc.lock();
-
-        // Newly created processes are ready to be scheduled
-        proc.set_state(ProcessState::Ready);
-
-        // Create ProcessMeta from the Process data
-        // This is the new unified model where Task holds ProcessMeta
-        let mut meta = ProcessMeta::new(pid, unsafe {
-            // Create a minimal address space wrapper that shares the same PML4
-            proc::UserAddressSpace::from_raw(proc.address_space().pml4_phys(), alloc::vec::Vec::new())
-        });
-
-        // Copy over all the process metadata
-        meta.tgid = proc.tgid();
-        meta.pgid = proc.pgid();
-        meta.sid = proc.sid();
-        meta.credentials = *proc.credentials();
-        meta.signal_mask = proc.signal_mask().clone();
-        meta.sigactions = proc.sigactions().clone();
-        meta.cwd = proc.cwd().to_string();
-        meta.cmdline = proc.cmdline().to_vec();
-        meta.environ = proc.environ().to_vec();
-        meta.tls = proc.tls();
-        meta.clear_child_tid = proc.clear_child_tid();
-        meta.alarm_remaining = proc.get_alarm_remaining();
-        meta.itimer_interval_sec = proc.get_itimer_interval_sec();
-        meta.itimer_interval_usec = proc.get_itimer_interval_usec();
-        meta.itimer_value_sec = proc.get_itimer_value_sec();
-        meta.itimer_value_usec = proc.get_itimer_value_usec();
-        meta.is_thread_leader = proc.is_thread_leader();
-
-        // Clone fd_table from Process to ProcessMeta
-        // This is the authoritative copy - syscalls should use ProcessMeta
-        meta.fd_table = proc.fd_table().clone_for_fork();
-
-        let meta_arc = Arc::new(Mutex::new(meta));
-
-        // Create a scheduler task for this process with ProcessMeta
-        let mut task = Task::new_with_meta(
-            pid,
-            proc.ppid(),
-            proc.kernel_stack(),
-            proc.kernel_stack_size(),
-            proc.address_space().pml4_phys(),
-            proc.entry_point().as_u64(),
-            proc.user_stack_top().as_u64(),
-            meta_arc,
-        );
-
-        // Map process nice value to scheduler nice
-        task.set_nice(proc.nice() as i8);
-
-        // Copy context from process to task
-        let ctx = proc.context();
-        task.context_mut().rip = ctx.rip;
-        task.context_mut().rsp = ctx.rsp;
-        task.context_mut().rflags = ctx.rflags;
-        task.context_mut().rax = ctx.rax;
-        task.context_mut().rbx = ctx.rbx;
-        task.context_mut().rcx = ctx.rcx;
-        task.context_mut().rdx = ctx.rdx;
-        task.context_mut().rsi = ctx.rsi;
-        task.context_mut().rdi = ctx.rdi;
-        task.context_mut().rbp = ctx.rbp;
-        task.context_mut().r8 = ctx.r8;
-        task.context_mut().r9 = ctx.r9;
-        task.context_mut().r10 = ctx.r10;
-        task.context_mut().r11 = ctx.r11;
-        task.context_mut().r12 = ctx.r12;
-        task.context_mut().r13 = ctx.r13;
-        task.context_mut().r14 = ctx.r14;
-        task.context_mut().r15 = ctx.r15;
-        task.context_mut().cs = ctx.cs;
-        task.context_mut().ss = ctx.ss;
-
-        // All new processes start as Normal/CFS
-        task.policy = SchedPolicy::Normal;
-
-        // Add to scheduler
-        drop(proc);
-        sched::add_task(task);
-    }
+/// DEPRECATED: kernel_fork now creates Tasks directly.
+/// This function is kept for legacy compatibility but does nothing.
+pub fn add_process(_pid: u32) {
+    // In the unified model, Tasks are created directly with ProcessMeta
+    // by kernel_fork. This function is no longer needed.
 }
 
 /// Remove a process from the scheduler
@@ -266,13 +167,9 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         ks_virt.as_u64() + kernel_stack_size as u64
     };
 
-    // Switch to next process
-    if current_pid != next_pid {
-        update_process_state(current_pid, ProcessState::Ready);
-    }
-
-    process_table().set_current_pid(next_pid);
-    update_process_state(next_pid, ProcessState::Running);
+    // Switch to next process via scheduler
+    // The scheduler handles state updates internally
+    sched::switch_to(next_pid);
 
     // Update kernel stack pointers (only needed if switching to user mode)
     if next_ctx.cs == 0x23 {
@@ -343,19 +240,9 @@ fn pick_next_process(current_pid: u32) -> u32 {
 ///
 /// Called when a blocked process should become runnable.
 pub fn wake_up(pid: u32) {
-    let table = process_table();
-
-    if let Some(proc_arc) = table.get(pid) {
-        let mut proc = proc_arc.lock();
-        if proc.state() == ProcessState::Blocked {
-            proc.clear_waiting();
-
-            // Also update the sched crate's Task state
-            drop(proc);
-            sched::clear_task_waiting(pid);
-            sched::wake_up(pid);
-        }
-    }
+    // Clear waiting state and wake via scheduler
+    sched::clear_task_waiting(pid);
+    sched::wake_up(pid);
 }
 
 /// Wake up a process that was blocked waiting for a child
@@ -367,16 +254,8 @@ pub fn wake_parent(parent_pid: u32) {
 
 /// Block the current process
 ///
-/// Sets the process to blocked state in both ProcessTable and sched crate.
+/// Sets the task to blocked state via scheduler.
 pub fn block_current(state: TaskState) {
-    let table = process_table();
-    let current_pid = table.current_pid();
-
-    if let Some(proc_arc) = table.get(current_pid) {
-        let mut proc = proc_arc.lock();
-        proc.set_state(ProcessState::Blocked);
-    }
-
     sched::block_current(state);
 }
 
@@ -437,10 +316,8 @@ pub fn kernel_yield() -> i64 {
         ks_virt.as_u64() + kernel_stack_size as u64
     };
 
-    // Switch to next process
-    update_process_state(current_pid, ProcessState::Ready);
-    process_table().set_current_pid(next_pid);
-    update_process_state(next_pid, ProcessState::Running);
+    // Switch to next process via scheduler
+    sched::switch_to(next_pid);
 
     // Update kernel stack pointers
     unsafe {
