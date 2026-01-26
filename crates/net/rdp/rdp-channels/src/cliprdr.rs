@@ -202,9 +202,7 @@ impl ClipboardChannel {
 
     /// Get clipboard text (if available)
     pub fn get_clipboard_text(&self) -> Option<String> {
-        self.pending_data
-            .as_ref()
-            .map(|data| decode_utf16le(data))
+        self.pending_data.as_ref().map(|data| decode_utf16le(data))
     }
 
     /// Request clipboard data from client
@@ -457,15 +455,9 @@ impl VirtualChannel for ClipboardChannel {
         let payload = &data[ClipPduHeader::SIZE..];
 
         match header.msg_type {
-            x if x == ClipMsgType::MonitorReady as u16 => {
-                self.process_monitor_ready(payload)
-            }
-            x if x == ClipMsgType::Capabilities as u16 => {
-                self.process_capabilities(payload)
-            }
-            x if x == ClipMsgType::FormatList as u16 => {
-                self.process_format_list(payload)
-            }
+            x if x == ClipMsgType::MonitorReady as u16 => self.process_monitor_ready(payload),
+            x if x == ClipMsgType::Capabilities as u16 => self.process_capabilities(payload),
+            x if x == ClipMsgType::FormatList as u16 => self.process_format_list(payload),
             x if x == ClipMsgType::FormatListResponse as u16 => {
                 // Acknowledged
                 Ok(())

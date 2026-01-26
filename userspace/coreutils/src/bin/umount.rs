@@ -13,8 +13,8 @@
 #![no_std]
 #![no_main]
 
-use libc::syscall::umount_flags::*;
 use libc::println;
+use libc::syscall::umount_flags::*;
 
 /// Parse command line arguments
 struct Args {

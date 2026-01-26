@@ -153,7 +153,12 @@ pub struct DirtyRegion {
 impl DirtyRegion {
     /// Create a new dirty region
     pub const fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// Check if this region is empty
@@ -217,7 +222,14 @@ pub trait ScreenCaptureProvider: Send + Sync {
     ///
     /// Buffer must be at least `height * width * bytes_per_pixel` bytes
     /// for packed output (no row padding).
-    fn capture_region(&self, x: u32, y: u32, width: u32, height: u32, buffer: &mut [u8]) -> RdpResult<()>;
+    fn capture_region(
+        &self,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+        buffer: &mut [u8],
+    ) -> RdpResult<()>;
 
     /// Get list of dirty regions since last call
     ///
@@ -373,7 +385,13 @@ pub trait InputInjector: Send + Sync {
     /// Inject an extended mouse event (wheel, extra buttons)
     ///
     /// `delta` is the wheel rotation amount (positive = up/right).
-    fn inject_mouse_extended(&self, x: u16, y: u16, flags: ExtendedMouseFlags, delta: i16) -> RdpResult<()>;
+    fn inject_mouse_extended(
+        &self,
+        x: u16,
+        y: u16,
+        flags: ExtendedMouseFlags,
+        delta: i16,
+    ) -> RdpResult<()>;
 
     /// Inject a Unicode keyboard event
     ///

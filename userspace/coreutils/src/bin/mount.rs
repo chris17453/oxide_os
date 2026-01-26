@@ -184,14 +184,20 @@ fn mount_fstab(verbose: bool) -> i32 {
         let flags = parse_options(options);
 
         if verbose {
-            println!("mount: mounting {} on {} type {} ({})", device, mountpoint, fstype, options);
+            println!(
+                "mount: mounting {} on {} type {} ({})",
+                device, mountpoint, fstype, options
+            );
         }
 
         // Perform the mount
         let result = libc::syscall::mount(device, mountpoint, fstype, flags, ptr::null());
 
         if result < 0 {
-            println!("mount: mounting {} on {} failed: error {}", device, mountpoint, result);
+            println!(
+                "mount: mounting {} on {} failed: error {}",
+                device, mountpoint, result
+            );
             errors += 1;
         }
     }
@@ -314,7 +320,10 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     });
 
     if args.verbose {
-        println!("mount: {} -> {} type {} flags={:#x}", source, target, fstype, args.flags);
+        println!(
+            "mount: {} -> {} type {} flags={:#x}",
+            source, target, fstype, args.flags
+        );
     }
 
     // Perform the mount
@@ -333,7 +342,10 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
             38 => "function not implemented",
             _ => "unknown error",
         };
-        println!("mount: mounting {} on {} failed: {} ({})", source, target, msg, err);
+        println!(
+            "mount: mounting {} on {} failed: {} ({})",
+            source, target, msg, err
+        );
         return 1;
     }
 

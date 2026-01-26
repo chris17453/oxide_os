@@ -11,3 +11,4 @@ proc = { workspace = true }
 proc-traits = { workspace = true }
 os_core = { workspace = true }
 spin = { workspace = true }
+sched = { workspace = true }

@@ -6,7 +6,7 @@
 extern crate alloc;
 
 use alloc::collections::BTreeMap;
-use sched_traits::{Pid, RunQueueOps, SchedPolicy, TaskState, NICE_0_WEIGHT};
+use sched_traits::{NICE_0_WEIGHT, Pid, RunQueueOps, SchedPolicy, TaskState};
 
 use crate::fair::CfsRunQueue;
 use crate::rt::RtRunQueue;
@@ -211,7 +211,11 @@ impl RunQueue {
 
         // Then check CFS queue
         if let Some(pid) = self.cfs_rq.pick_next() {
-            let weight = self.tasks.get(&pid).map(|t| t.weight).unwrap_or(NICE_0_WEIGHT);
+            let weight = self
+                .tasks
+                .get(&pid)
+                .map(|t| t.weight)
+                .unwrap_or(NICE_0_WEIGHT);
             if let Some(pid) = self.cfs_rq.pop_next(weight) {
                 if let Some(t) = self.tasks.get_mut(&pid) {
                     t.on_rq = false;

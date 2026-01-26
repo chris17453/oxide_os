@@ -22,7 +22,7 @@ use devices::{ConsoleDevice, FramebufferDevice, NullDevice, RandomDevice, ZeroDe
 pub use devices::{console_has_input, console_push_char, console_push_str};
 
 // Re-export signal callback setter for Ctrl+C handling
-pub use devices::{set_signal_fg_callback, SIGINT, SIGQUIT};
+pub use devices::{SIGINT, SIGQUIT, set_signal_fg_callback};
 
 // Re-export random device callback setter
 pub use devices::set_random_fill_callback;

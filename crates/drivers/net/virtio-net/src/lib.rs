@@ -480,7 +480,10 @@ impl VirtioNet {
             outb(io_base + Self::PCI_IO_DEVICE_STATUS, 0);
 
             // Set ACKNOWLEDGE
-            outb(io_base + Self::PCI_IO_DEVICE_STATUS, dev_status::ACKNOWLEDGE);
+            outb(
+                io_base + Self::PCI_IO_DEVICE_STATUS,
+                dev_status::ACKNOWLEDGE,
+            );
 
             // Set DRIVER
             outb(

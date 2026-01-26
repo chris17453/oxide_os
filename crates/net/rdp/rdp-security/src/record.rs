@@ -1,9 +1,9 @@
 //! TLS Record Layer
 
+use super::TLS_VERSION_1_2;
 use alloc::vec;
 use alloc::vec::Vec;
 use rdp_traits::{RdpError, RdpResult};
-use super::TLS_VERSION_1_2;
 
 /// TLS record types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,8 +55,7 @@ impl TlsRecord {
             return Ok(None);
         }
 
-        let record_type = RecordType::from_byte(data[0])
-            .ok_or(RdpError::InvalidProtocol)?;
+        let record_type = RecordType::from_byte(data[0]).ok_or(RdpError::InvalidProtocol)?;
         let version = u16::from_be_bytes([data[1], data[2]]);
         let length = u16::from_be_bytes([data[3], data[4]]) as usize;
 

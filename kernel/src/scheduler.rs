@@ -13,6 +13,21 @@ use proc::process_table;
 use proc_traits::ProcessState;
 use sched::{self, SchedPolicy, TaskState};
 
+fn update_process_state(pid: u32, state: ProcessState) {
+    if pid == 0 {
+        return;
+    }
+    let table = process_table();
+    if let Some(proc_arc) = table.get(pid) {
+        let mut proc = proc_arc.lock();
+        // Don't resurrect zombies or exited tasks
+        if proc.state() == ProcessState::Zombie && state == ProcessState::Ready {
+            return;
+        }
+        proc.set_state(state);
+    }
+}
+
 /// Interrupt stack frame layout
 /// Matches what timer_interrupt pushes in exceptions.rs
 #[repr(C)]
@@ -56,7 +71,10 @@ pub fn add_process(pid: u32) {
     let table = process_table();
 
     if let Some(proc_arc) = table.get(pid) {
-        let proc = proc_arc.lock();
+        let mut proc = proc_arc.lock();
+
+        // Newly created processes are ready to be scheduled
+        proc.set_state(ProcessState::Ready);
 
         // Create a scheduler task for this process
         let mut task = sched::create_task(
@@ -180,10 +198,11 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     sched::set_task_context(current_pid, current_ctx);
 
     // Get next task's context switch info from the scheduler
-    let (next_ctx, next_pml4, kernel_stack, kernel_stack_size) = match sched::get_task_switch_info(next_pid) {
-        Some(info) => info,
-        None => return current_rsp,
-    };
+    let (next_ctx, next_pml4, kernel_stack, kernel_stack_size) =
+        match sched::get_task_switch_info(next_pid) {
+            Some(info) => info,
+            None => return current_rsp,
+        };
 
     let kernel_stack_top = {
         let ks_virt = phys_to_virt(kernel_stack);
@@ -191,7 +210,12 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     };
 
     // Switch to next process
+    if current_pid != next_pid {
+        update_process_state(current_pid, ProcessState::Ready);
+    }
+
     table.set_current_pid(next_pid);
+    update_process_state(next_pid, ProcessState::Running);
 
     // Update kernel stack pointers (only needed if switching to user mode)
     if next_ctx.cs == 0x23 {
@@ -346,10 +370,11 @@ pub fn kernel_yield() -> i64 {
     sched::set_task_context(current_pid, current_ctx);
 
     // Get next task's context switch info from the scheduler
-    let (next_ctx, next_pml4, kernel_stack, kernel_stack_size) = match sched::get_task_switch_info(next_pid) {
-        Some(info) => info,
-        None => return 0,
-    };
+    let (next_ctx, next_pml4, kernel_stack, kernel_stack_size) =
+        match sched::get_task_switch_info(next_pid) {
+            Some(info) => info,
+            None => return 0,
+        };
 
     let kernel_stack_top = {
         let ks_virt = phys_to_virt(kernel_stack);
@@ -357,7 +382,9 @@ pub fn kernel_yield() -> i64 {
     };
 
     // Switch to next process
+    update_process_state(current_pid, ProcessState::Ready);
     table.set_current_pid(next_pid);
+    update_process_state(next_pid, ProcessState::Running);
 
     // Update kernel stack pointers
     unsafe {

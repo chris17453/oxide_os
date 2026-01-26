@@ -520,7 +520,10 @@ impl VirtioBlk {
             core::ptr::write_volatile((mmio_base + mmio::STATUS) as *mut u32, 0);
 
             // 2. Set ACKNOWLEDGE
-            core::ptr::write_volatile((mmio_base + mmio::STATUS) as *mut u32, status::ACKNOWLEDGE as u32);
+            core::ptr::write_volatile(
+                (mmio_base + mmio::STATUS) as *mut u32,
+                status::ACKNOWLEDGE as u32,
+            );
 
             // 3. Set DRIVER
             let mut dev_status = status::ACKNOWLEDGE | status::DRIVER;
@@ -528,17 +531,25 @@ impl VirtioBlk {
 
             // 4. Read device features
             core::ptr::write_volatile((mmio_base + mmio::DEVICE_FEATURES_SEL) as *mut u32, 0);
-            let features_lo = core::ptr::read_volatile((mmio_base + mmio::DEVICE_FEATURES) as *const u32);
+            let features_lo =
+                core::ptr::read_volatile((mmio_base + mmio::DEVICE_FEATURES) as *const u32);
             core::ptr::write_volatile((mmio_base + mmio::DEVICE_FEATURES_SEL) as *mut u32, 1);
-            let features_hi = core::ptr::read_volatile((mmio_base + mmio::DEVICE_FEATURES) as *const u32);
+            let features_hi =
+                core::ptr::read_volatile((mmio_base + mmio::DEVICE_FEATURES) as *const u32);
             let device_features = (features_hi as u64) << 32 | (features_lo as u64);
 
             // 5. Negotiate features (accept RO, BLK_SIZE, FLUSH)
             let accepted = device_features & (features::RO | features::BLK_SIZE | features::FLUSH);
             core::ptr::write_volatile((mmio_base + mmio::DRIVER_FEATURES_SEL) as *mut u32, 0);
-            core::ptr::write_volatile((mmio_base + mmio::DRIVER_FEATURES) as *mut u32, accepted as u32);
+            core::ptr::write_volatile(
+                (mmio_base + mmio::DRIVER_FEATURES) as *mut u32,
+                accepted as u32,
+            );
             core::ptr::write_volatile((mmio_base + mmio::DRIVER_FEATURES_SEL) as *mut u32, 1);
-            core::ptr::write_volatile((mmio_base + mmio::DRIVER_FEATURES) as *mut u32, (accepted >> 32) as u32);
+            core::ptr::write_volatile(
+                (mmio_base + mmio::DRIVER_FEATURES) as *mut u32,
+                (accepted >> 32) as u32,
+            );
 
             // 6. Set FEATURES_OK
             dev_status |= status::FEATURES_OK;
@@ -562,7 +573,8 @@ impl VirtioBlk {
 
             // 9. Set up virtqueue 0
             core::ptr::write_volatile((mmio_base + mmio::QUEUE_SEL) as *mut u32, 0);
-            let queue_max = core::ptr::read_volatile((mmio_base + mmio::QUEUE_NUM_MAX) as *const u32);
+            let queue_max =
+                core::ptr::read_volatile((mmio_base + mmio::QUEUE_NUM_MAX) as *const u32);
             if queue_max == 0 {
                 return None;
             }
@@ -575,12 +587,30 @@ impl VirtioBlk {
             core::ptr::write_volatile((mmio_base + mmio::QUEUE_NUM) as *mut u32, queue_size as u32);
 
             // Set queue addresses
-            core::ptr::write_volatile((mmio_base + mmio::QUEUE_DESC_LOW) as *mut u32, queue.desc_phys as u32);
-            core::ptr::write_volatile((mmio_base + mmio::QUEUE_DESC_HIGH) as *mut u32, (queue.desc_phys >> 32) as u32);
-            core::ptr::write_volatile((mmio_base + mmio::QUEUE_AVAIL_LOW) as *mut u32, queue.avail_phys as u32);
-            core::ptr::write_volatile((mmio_base + mmio::QUEUE_AVAIL_HIGH) as *mut u32, (queue.avail_phys >> 32) as u32);
-            core::ptr::write_volatile((mmio_base + mmio::QUEUE_USED_LOW) as *mut u32, queue.used_phys as u32);
-            core::ptr::write_volatile((mmio_base + mmio::QUEUE_USED_HIGH) as *mut u32, (queue.used_phys >> 32) as u32);
+            core::ptr::write_volatile(
+                (mmio_base + mmio::QUEUE_DESC_LOW) as *mut u32,
+                queue.desc_phys as u32,
+            );
+            core::ptr::write_volatile(
+                (mmio_base + mmio::QUEUE_DESC_HIGH) as *mut u32,
+                (queue.desc_phys >> 32) as u32,
+            );
+            core::ptr::write_volatile(
+                (mmio_base + mmio::QUEUE_AVAIL_LOW) as *mut u32,
+                queue.avail_phys as u32,
+            );
+            core::ptr::write_volatile(
+                (mmio_base + mmio::QUEUE_AVAIL_HIGH) as *mut u32,
+                (queue.avail_phys >> 32) as u32,
+            );
+            core::ptr::write_volatile(
+                (mmio_base + mmio::QUEUE_USED_LOW) as *mut u32,
+                queue.used_phys as u32,
+            );
+            core::ptr::write_volatile(
+                (mmio_base + mmio::QUEUE_USED_HIGH) as *mut u32,
+                (queue.used_phys >> 32) as u32,
+            );
 
             // Enable queue
             core::ptr::write_volatile((mmio_base + mmio::QUEUE_READY) as *mut u32, 1);
@@ -874,8 +904,8 @@ pub unsafe fn probe_all() -> Vec<VirtioBlk> {
 
     // Standard virtio-blk MMIO addresses in QEMU
     let addresses: [u64; 8] = [
-        0x10001000, 0x10002000, 0x10003000, 0x10004000,
-        0x10005000, 0x10006000, 0x10007000, 0x10008000,
+        0x10001000, 0x10002000, 0x10003000, 0x10004000, 0x10005000, 0x10006000, 0x10007000,
+        0x10008000,
     ];
 
     for addr in addresses {
@@ -954,7 +984,10 @@ impl VirtioBlk {
             outb(io_base + pci_io::DEVICE_STATUS, status::ACKNOWLEDGE);
 
             // Set DRIVER
-            outb(io_base + pci_io::DEVICE_STATUS, status::ACKNOWLEDGE | status::DRIVER);
+            outb(
+                io_base + pci_io::DEVICE_STATUS,
+                status::ACKNOWLEDGE | status::DRIVER,
+            );
 
             // Read device features
             let device_features = inl(io_base + pci_io::DEVICE_FEATURES) as u64;
@@ -964,8 +997,10 @@ impl VirtioBlk {
             outl(io_base + pci_io::DRIVER_FEATURES, accepted as u32);
 
             // Set FEATURES_OK
-            outb(io_base + pci_io::DEVICE_STATUS,
-                 status::ACKNOWLEDGE | status::DRIVER | status::FEATURES_OK);
+            outb(
+                io_base + pci_io::DEVICE_STATUS,
+                status::ACKNOWLEDGE | status::DRIVER | status::FEATURES_OK,
+            );
 
             // Verify FEATURES_OK was accepted
             let status_read = inb(io_base + pci_io::DEVICE_STATUS);
@@ -1007,8 +1042,10 @@ impl VirtioBlk {
             outl(io_base + pci_io::QUEUE_ADDRESS, queue_pfn);
 
             // Set DRIVER_OK
-            outb(io_base + pci_io::DEVICE_STATUS,
-                 status::ACKNOWLEDGE | status::DRIVER | status::FEATURES_OK | status::DRIVER_OK);
+            outb(
+                io_base + pci_io::DEVICE_STATUS,
+                status::ACKNOWLEDGE | status::DRIVER | status::FEATURES_OK | status::DRIVER_OK,
+            );
 
             // Allocate DMA-safe request buffers
             let req_buffers = RequestBuffers::new_dma()?;

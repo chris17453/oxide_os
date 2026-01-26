@@ -6,7 +6,7 @@
 extern crate alloc;
 
 use alloc::collections::VecDeque;
-use sched_traits::{Pid, RunQueueOps, SchedClass, SchedPolicy, RT_PRIO_MAX};
+use sched_traits::{Pid, RT_PRIO_MAX, RunQueueOps, SchedClass, SchedPolicy};
 
 /// Number of RT priority levels (1-99)
 const RT_PRIO_LEVELS: usize = 99;

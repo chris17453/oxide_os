@@ -10,13 +10,13 @@
 
 extern crate alloc;
 
+pub mod ber;
+pub mod fast_path;
+pub mod gcc;
+pub mod mcs;
+pub mod pdu;
 pub mod tpkt;
 pub mod x224;
-pub mod mcs;
-pub mod ber;
-pub mod gcc;
-pub mod pdu;
-pub mod fast_path;
 
 use alloc::vec::Vec;
 use rdp_traits::{RdpError, RdpResult};

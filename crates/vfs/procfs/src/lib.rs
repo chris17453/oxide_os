@@ -21,6 +21,7 @@ use alloc::sync::Arc;
 use proc::process_table;
 use proc_traits::Pid;
 use proc_traits::ProcessState;
+use sched::{self, TaskState as SchedTaskState};
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
 // ============================================================================
@@ -424,17 +425,33 @@ impl ProcPidStatus {
         }
     }
 
+    fn format_state(pid: Pid, fallback: ProcessState) -> &'static str {
+        if let Some(ts) = sched::get_task_state(pid) {
+            return match ts {
+                s if s == SchedTaskState::TASK_RUNNING => "R (running)",
+                s if s == SchedTaskState::TASK_INTERRUPTIBLE => "S (sleeping)",
+                s if s == SchedTaskState::TASK_UNINTERRUPTIBLE => "D (disk sleep)",
+                s if s == SchedTaskState::TASK_STOPPED => "T (stopped)",
+                s if s == SchedTaskState::TASK_TRACED => "t (tracing stop)",
+                s if s == SchedTaskState::TASK_ZOMBIE => "Z (zombie)",
+                s if s == SchedTaskState::TASK_DEAD => "X (dead)",
+                _ => "R (running)",
+            };
+        }
+
+        match fallback {
+            ProcessState::Ready | ProcessState::Running => "R (running)",
+            ProcessState::Blocked => "S (sleeping)",
+            ProcessState::Zombie => "Z (zombie)",
+        }
+    }
+
     fn generate_content(&self) -> String {
         let table = process_table();
 
         if let Some(proc) = table.get(self.pid) {
             let p = proc.lock();
-            let state = match p.state() {
-                ProcessState::Ready => "R (running)",
-                ProcessState::Running => "R (running)",
-                ProcessState::Blocked => "S (sleeping)",
-                ProcessState::Zombie => "Z (zombie)",
-            };
+            let state = Self::format_state(self.pid, p.state());
 
             // Get process name from cmdline (first arg, basename only)
             let cmdline = p.cmdline();

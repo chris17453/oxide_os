@@ -7,8 +7,8 @@ use core::fmt;
 
 use crate::io::{Error, ErrorKind, Read, Result, Write};
 use libc::socket::{
-    self, InAddr, SockAddrIn, SOCKADDR_IN_SIZE, af, connect, htons, recv, send, shutdown,
-    shut, sock, tcp,
+    self, InAddr, SOCKADDR_IN_SIZE, SockAddrIn, af, connect, htons, recv, send, shut, shutdown,
+    sock, tcp,
 };
 
 // ============================================================================
@@ -169,7 +169,10 @@ impl TcpStream {
         let result = connect(fd, &sockaddr, SOCKADDR_IN_SIZE);
         if result < 0 {
             libc::close(fd);
-            return Err(Error::new(ErrorKind::ConnectionRefused, "connection refused"));
+            return Err(Error::new(
+                ErrorKind::ConnectionRefused,
+                "connection refused",
+            ));
         }
 
         Ok(TcpStream { fd })
@@ -187,7 +190,10 @@ impl TcpStream {
             return Self::connect(SocketAddrV4::new(Ipv4Addr::new(a, b, c, d), port));
         }
 
-        Err(Error::new(ErrorKind::NotFound, "could not resolve hostname"))
+        Err(Error::new(
+            ErrorKind::NotFound,
+            "could not resolve hostname",
+        ))
     }
 
     /// Get the underlying file descriptor
@@ -302,11 +308,7 @@ fn parse_u8(s: &str) -> Option<u8> {
         val = val.checked_mul(10)?;
         val = val.checked_add((c as u16) - ('0' as u16))?;
     }
-    if val > 255 {
-        None
-    } else {
-        Some(val as u8)
-    }
+    if val > 255 { None } else { Some(val as u8) }
 }
 
 /// Resolve a hostname to an IP address

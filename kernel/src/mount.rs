@@ -140,12 +140,10 @@ fn mount_ext4(source: &str, target: &str, flags: MountFlags, read_only: bool) ->
 
     // Mount the ext4 filesystem
     match ext4::mount(device_arc, read_only) {
-        Ok(root_vnode) => {
-            match GLOBAL_VFS.mount(root_vnode, target, flags, "ext4") {
-                Ok(()) => 0,
-                Err(_) => errno::EBUSY,
-            }
-        }
+        Ok(root_vnode) => match GLOBAL_VFS.mount(root_vnode, target, flags, "ext4") {
+            Ok(()) => 0,
+            Err(_) => errno::EBUSY,
+        },
         Err(_) => errno::EIO,
     }
 }

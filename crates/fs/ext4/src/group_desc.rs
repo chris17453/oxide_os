@@ -84,12 +84,9 @@ impl BlockGroupDesc {
     /// Create from 64-byte descriptor
     pub fn from_64(desc: &Ext4GroupDesc64) -> Self {
         BlockGroupDesc {
-            block_bitmap: desc.bg_block_bitmap_lo as u64
-                | ((desc.bg_block_bitmap_hi as u64) << 32),
-            inode_bitmap: desc.bg_inode_bitmap_lo as u64
-                | ((desc.bg_inode_bitmap_hi as u64) << 32),
-            inode_table: desc.bg_inode_table_lo as u64
-                | ((desc.bg_inode_table_hi as u64) << 32),
+            block_bitmap: desc.bg_block_bitmap_lo as u64 | ((desc.bg_block_bitmap_hi as u64) << 32),
+            inode_bitmap: desc.bg_inode_bitmap_lo as u64 | ((desc.bg_inode_bitmap_hi as u64) << 32),
+            inode_table: desc.bg_inode_table_lo as u64 | ((desc.bg_inode_table_hi as u64) << 32),
             free_blocks_count: desc.bg_free_blocks_count_lo as u32
                 | ((desc.bg_free_blocks_count_hi as u32) << 16),
             free_inodes_count: desc.bg_free_inodes_count_lo as u32
@@ -128,7 +125,12 @@ impl BlockGroupTable {
         for i in 0..blocks_needed {
             let block_num = desc_block + i;
             let offset = (i * block_size) as usize;
-            read_block(device, sb, block_num, &mut buf[offset..offset + block_size as usize])?;
+            read_block(
+                device,
+                sb,
+                block_num,
+                &mut buf[offset..offset + block_size as usize],
+            )?;
         }
 
         // Parse descriptors

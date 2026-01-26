@@ -101,10 +101,7 @@ fn build_tbs_certificate(common_name: &str, keypair: &ed25519::Keypair) -> Vec<u
     tbs.extend_from_slice(&serial);
 
     // signature AlgorithmIdentifier (Ed25519)
-    tbs.extend_from_slice(&[
-        0x30, 0x05,
-        0x06, 0x03, 0x2B, 0x65, 0x70,
-    ]);
+    tbs.extend_from_slice(&[0x30, 0x05, 0x06, 0x03, 0x2B, 0x65, 0x70]);
 
     // issuer Name (RDN: CN=common_name)
     let issuer = build_name(common_name);
@@ -157,10 +154,7 @@ fn build_validity() -> Vec<u8> {
 
     // notAfter (UTCTime)
     validity.extend_from_slice(&[
-        0x17, 0x0D,
-        0x33, 0x30, 0x30, 0x31, 0x30, 0x31,
-        0x30, 0x30, 0x30, 0x30, 0x30, 0x30,
-        0x5A,
+        0x17, 0x0D, 0x33, 0x30, 0x30, 0x31, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x5A,
     ]);
 
     wrap_sequence(&validity)
@@ -171,10 +165,7 @@ fn build_public_key_info(keypair: &ed25519::Keypair) -> Vec<u8> {
     let mut spki = Vec::new();
 
     // algorithm AlgorithmIdentifier (Ed25519)
-    spki.extend_from_slice(&[
-        0x30, 0x05,
-        0x06, 0x03, 0x2B, 0x65, 0x70,
-    ]);
+    spki.extend_from_slice(&[0x30, 0x05, 0x06, 0x03, 0x2B, 0x65, 0x70]);
 
     // subjectPublicKey BIT STRING
     let pubkey = keypair.public.as_bytes();

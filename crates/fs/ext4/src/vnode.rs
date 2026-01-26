@@ -14,7 +14,7 @@ use crate::dir;
 use crate::error::Ext4Error;
 use crate::file;
 use crate::group_desc::BlockGroupTable;
-use crate::inode::{self, file_type, read_inode, write_inode, Ext4Inode};
+use crate::inode::{self, Ext4Inode, file_type, read_inode, write_inode};
 use crate::journal::{Journal, SharedJournal};
 use crate::superblock::Ext4Superblock;
 
@@ -147,7 +147,20 @@ impl VnodeOps for Ext4Vnode {
         self.get_vtype()
     }
 
-    fn lookup(&self, name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+    fn lookup(&self, path: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        // Handle paths with multiple components (e.g., "sbin/init" or "/sbin/init")
+        let path = path.trim_start_matches('/');
+
+        // Split path into components
+        let mut components = path.split('/').filter(|s| !s.is_empty()).peekable();
+
+        // Get the first component
+        let first = match components.next() {
+            Some(name) => name,
+            None => return Err(VfsError::NotFound), // Empty path
+        };
+
+        // Look up the first component in this directory
         let inode = self.inode.read();
         if !inode.is_dir() {
             return Err(VfsError::NotDirectory);
@@ -155,18 +168,25 @@ impl VnodeOps for Ext4Vnode {
 
         let fs = self.fs.read();
 
-        // Look up the name in the directory
-        let child_ino = dir::lookup(fs.device(), &fs.sb, &fs.group_table, &inode, name)
+        let child_ino = dir::lookup(fs.device(), &fs.sb, &fs.group_table, &inode, first)
             .map_err(|e| VfsError::from(e))?
             .ok_or(VfsError::NotFound)?;
 
-        // Read the child inode
         let child_inode = read_inode(fs.device(), &fs.sb, &fs.group_table, child_ino)
             .map_err(|e| VfsError::from(e))?;
 
         drop(fs);
+        drop(inode);
 
-        Ok(Arc::new(Ext4Vnode::new(self.fs.clone(), child_ino, child_inode)))
+        let mut current: Arc<dyn VnodeOps> =
+            Arc::new(Ext4Vnode::new(self.fs.clone(), child_ino, child_inode));
+
+        // Recursively look up remaining path components
+        for component in components {
+            current = current.lookup(component)?;
+        }
+
+        Ok(current)
     }
 
     fn create(&self, name: &str, mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
@@ -204,11 +224,15 @@ impl VnodeOps for Ext4Vnode {
         ) {
             Ok(Some(ino)) => ino,
             Ok(None) => {
-                if has_journal { fs.abort_transaction(); }
+                if has_journal {
+                    fs.abort_transaction();
+                }
                 return Err(VfsError::NoSpace);
             }
             Err(e) => {
-                if has_journal { fs.abort_transaction(); }
+                if has_journal {
+                    fs.abort_transaction();
+                }
                 return Err(VfsError::from(e));
             }
         };
@@ -226,7 +250,9 @@ impl VnodeOps for Ext4Vnode {
                 fs.journal_block(blocknr, data);
             }
             Err(e) => {
-                if has_journal { fs.abort_transaction(); }
+                if has_journal {
+                    fs.abort_transaction();
+                }
                 return Err(VfsError::from(e));
             }
         }
@@ -242,7 +268,9 @@ impl VnodeOps for Ext4Vnode {
             new_ino,
             entry_file_type,
         ) {
-            if has_journal { fs.abort_transaction(); }
+            if has_journal {
+                fs.abort_transaction();
+            }
             return Err(VfsError::from(e));
         }
 
@@ -252,7 +280,9 @@ impl VnodeOps for Ext4Vnode {
                 fs.journal_block(blocknr, data);
             }
             Err(e) => {
-                if has_journal { fs.abort_transaction(); }
+                if has_journal {
+                    fs.abort_transaction();
+                }
                 return Err(VfsError::from(e));
             }
         }
@@ -267,7 +297,11 @@ impl VnodeOps for Ext4Vnode {
 
         drop(fs);
 
-        Ok(Arc::new(Ext4Vnode::new(self.fs.clone(), new_ino, new_inode)))
+        Ok(Arc::new(Ext4Vnode::new(
+            self.fs.clone(),
+            new_ino,
+            new_inode,
+        )))
     }
 
     fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
@@ -277,8 +311,7 @@ impl VnodeOps for Ext4Vnode {
         }
 
         let fs = self.fs.read();
-        file::read_file(fs.device(), &fs.sb, &inode, offset, buf)
-            .map_err(|e| VfsError::from(e))
+        file::read_file(fs.device(), &fs.sb, &inode, offset, buf).map_err(|e| VfsError::from(e))
     }
 
     fn write(&self, offset: u64, buf: &[u8]) -> VfsResult<usize> {
@@ -306,7 +339,9 @@ impl VnodeOps for Ext4Vnode {
         ) {
             Ok(n) => n,
             Err(e) => {
-                if has_journal { fs.abort_transaction(); }
+                if has_journal {
+                    fs.abort_transaction();
+                }
                 return Err(VfsError::from(e));
             }
         };
@@ -315,7 +350,9 @@ impl VnodeOps for Ext4Vnode {
         match inode::write_inode_data(fs.device(), &fs.sb, &fs.group_table, self.ino, &inode) {
             Ok((blocknr, data)) => fs.journal_block(blocknr, data),
             Err(e) => {
-                if has_journal { fs.abort_transaction(); }
+                if has_journal {
+                    fs.abort_transaction();
+                }
                 return Err(VfsError::from(e));
             }
         }
@@ -381,27 +418,36 @@ impl VnodeOps for Ext4Vnode {
         ) {
             Ok(Some(ino)) => ino,
             Ok(None) => {
-                if has_journal { fs.abort_transaction(); }
+                if has_journal {
+                    fs.abort_transaction();
+                }
                 return Err(VfsError::NoSpace);
             }
             Err(e) => {
-                if has_journal { fs.abort_transaction(); }
+                if has_journal {
+                    fs.abort_transaction();
+                }
                 return Err(VfsError::from(e));
             }
         };
 
         // Allocate a block for the new directory
-        let new_block = match bitmap::alloc_block(fs.device(), &fs.sb, &fs.group_table, Some(parent_group)) {
-            Ok(Some(blk)) => blk,
-            Ok(None) => {
-                if has_journal { fs.abort_transaction(); }
-                return Err(VfsError::NoSpace);
-            }
-            Err(e) => {
-                if has_journal { fs.abort_transaction(); }
-                return Err(VfsError::from(e));
-            }
-        };
+        let new_block =
+            match bitmap::alloc_block(fs.device(), &fs.sb, &fs.group_table, Some(parent_group)) {
+                Ok(Some(blk)) => blk,
+                Ok(None) => {
+                    if has_journal {
+                        fs.abort_transaction();
+                    }
+                    return Err(VfsError::NoSpace);
+                }
+                Err(e) => {
+                    if has_journal {
+                        fs.abort_transaction();
+                    }
+                    return Err(VfsError::from(e));
+                }
+            };
 
         // Create new directory inode
         let inode_mode = file_type::S_IFDIR | (mode.bits() as u16 & 0o7777);
@@ -410,7 +456,9 @@ impl VnodeOps for Ext4Vnode {
         // Initialize extent header and add extent for the directory block
         inode::init_extent_header(&mut new_inode);
         if let Err(e) = crate::extent::insert_extent(&mut new_inode, 0, new_block, 1) {
-            if has_journal { fs.abort_transaction(); }
+            if has_journal {
+                fs.abort_transaction();
+            }
             return Err(VfsError::from(e));
         }
 
@@ -421,7 +469,9 @@ impl VnodeOps for Ext4Vnode {
 
         // Initialize the directory block with . and ..
         if let Err(e) = dir::init_directory(fs.device(), &fs.sb, new_block, new_ino, self.ino) {
-            if has_journal { fs.abort_transaction(); }
+            if has_journal {
+                fs.abort_transaction();
+            }
             return Err(VfsError::from(e));
         }
 
@@ -429,7 +479,9 @@ impl VnodeOps for Ext4Vnode {
         match inode::write_inode_data(fs.device(), &fs.sb, &fs.group_table, new_ino, &new_inode) {
             Ok((blocknr, data)) => fs.journal_block(blocknr, data),
             Err(e) => {
-                if has_journal { fs.abort_transaction(); }
+                if has_journal {
+                    fs.abort_transaction();
+                }
                 return Err(VfsError::from(e));
             }
         }
@@ -444,7 +496,9 @@ impl VnodeOps for Ext4Vnode {
             new_ino,
             dir::file_type::DIR,
         ) {
-            if has_journal { fs.abort_transaction(); }
+            if has_journal {
+                fs.abort_transaction();
+            }
             return Err(VfsError::from(e));
         }
 
@@ -455,7 +509,9 @@ impl VnodeOps for Ext4Vnode {
         match inode::write_inode_data(fs.device(), &fs.sb, &fs.group_table, self.ino, &inode) {
             Ok((blocknr, data)) => fs.journal_block(blocknr, data),
             Err(e) => {
-                if has_journal { fs.abort_transaction(); }
+                if has_journal {
+                    fs.abort_transaction();
+                }
                 return Err(VfsError::from(e));
             }
         }
@@ -467,7 +523,11 @@ impl VnodeOps for Ext4Vnode {
 
         drop(fs);
 
-        Ok(Arc::new(Ext4Vnode::new(self.fs.clone(), new_ino, new_inode)))
+        Ok(Arc::new(Ext4Vnode::new(
+            self.fs.clone(),
+            new_ino,
+            new_inode,
+        )))
     }
 
     fn rmdir(&self, name: &str) -> VfsResult<()> {
@@ -512,7 +572,9 @@ impl VnodeOps for Ext4Vnode {
 
         // Remove the directory entry from parent
         if let Err(e) = dir::remove_entry(fs.device(), &fs.sb, &parent_inode, name) {
-            if has_journal { fs.abort_transaction(); }
+            if has_journal {
+                fs.abort_transaction();
+            }
             return Err(VfsError::from(e));
         }
 
@@ -520,11 +582,14 @@ impl VnodeOps for Ext4Vnode {
         let block_size = fs.sb.block_size();
         let num_blocks = (target_inode.size() + block_size - 1) / block_size;
         for logical in 0..num_blocks {
-            if let Some(phys) = crate::extent::map_block(fs.device(), &fs.sb, &target_inode, logical)
-                .map_err(|e| VfsError::from(e))?
+            if let Some(phys) =
+                crate::extent::map_block(fs.device(), &fs.sb, &target_inode, logical)
+                    .map_err(|e| VfsError::from(e))?
             {
                 if let Err(e) = bitmap::free_block(fs.device(), &fs.sb, &fs.group_table, phys) {
-                    if has_journal { fs.abort_transaction(); }
+                    if has_journal {
+                        fs.abort_transaction();
+                    }
                     return Err(VfsError::from(e));
                 }
             }
@@ -532,7 +597,9 @@ impl VnodeOps for Ext4Vnode {
 
         // Free the inode
         if let Err(e) = bitmap::free_inode(fs.device(), &fs.sb, &fs.group_table, target_ino) {
-            if has_journal { fs.abort_transaction(); }
+            if has_journal {
+                fs.abort_transaction();
+            }
             return Err(VfsError::from(e));
         }
 
@@ -540,10 +607,18 @@ impl VnodeOps for Ext4Vnode {
         parent_inode.dec_links();
 
         // Write updated parent inode (and journal)
-        match inode::write_inode_data(fs.device(), &fs.sb, &fs.group_table, self.ino, &parent_inode) {
+        match inode::write_inode_data(
+            fs.device(),
+            &fs.sb,
+            &fs.group_table,
+            self.ino,
+            &parent_inode,
+        ) {
             Ok((blocknr, data)) => fs.journal_block(blocknr, data),
             Err(e) => {
-                if has_journal { fs.abort_transaction(); }
+                if has_journal {
+                    fs.abort_transaction();
+                }
                 return Err(VfsError::from(e));
             }
         }
@@ -591,7 +666,9 @@ impl VnodeOps for Ext4Vnode {
 
         // Remove the directory entry
         if let Err(e) = dir::remove_entry(fs.device(), &fs.sb, &parent_inode, name) {
-            if has_journal { fs.abort_transaction(); }
+            if has_journal {
+                fs.abort_transaction();
+            }
             return Err(VfsError::from(e));
         }
 
@@ -604,11 +681,14 @@ impl VnodeOps for Ext4Vnode {
             let num_blocks = (target_inode.size() + block_size - 1) / block_size;
 
             for logical in 0..num_blocks {
-                if let Some(phys) = crate::extent::map_block(fs.device(), &fs.sb, &target_inode, logical)
-                    .map_err(|e| VfsError::from(e))?
+                if let Some(phys) =
+                    crate::extent::map_block(fs.device(), &fs.sb, &target_inode, logical)
+                        .map_err(|e| VfsError::from(e))?
                 {
                     if let Err(e) = bitmap::free_block(fs.device(), &fs.sb, &fs.group_table, phys) {
-                        if has_journal { fs.abort_transaction(); }
+                        if has_journal {
+                            fs.abort_transaction();
+                        }
                         return Err(VfsError::from(e));
                     }
                 }
@@ -619,16 +699,26 @@ impl VnodeOps for Ext4Vnode {
 
             // Free the inode
             if let Err(e) = bitmap::free_inode(fs.device(), &fs.sb, &fs.group_table, target_ino) {
-                if has_journal { fs.abort_transaction(); }
+                if has_journal {
+                    fs.abort_transaction();
+                }
                 return Err(VfsError::from(e));
             }
         }
 
         // Write the updated target inode (and journal)
-        match inode::write_inode_data(fs.device(), &fs.sb, &fs.group_table, target_ino, &target_inode) {
+        match inode::write_inode_data(
+            fs.device(),
+            &fs.sb,
+            &fs.group_table,
+            target_ino,
+            &target_inode,
+        ) {
             Ok((blocknr, data)) => fs.journal_block(blocknr, data),
             Err(e) => {
-                if has_journal { fs.abort_transaction(); }
+                if has_journal {
+                    fs.abort_transaction();
+                }
                 return Err(VfsError::from(e));
             }
         }
@@ -675,7 +765,9 @@ impl VnodeOps for Ext4Vnode {
 
             // Can't overwrite directory with file or vice versa
             if source_inode.is_dir() != dest_inode.is_dir() {
-                if has_journal { fs.abort_transaction(); }
+                if has_journal {
+                    fs.abort_transaction();
+                }
                 if dest_inode.is_dir() {
                     return Err(VfsError::IsDirectory);
                 } else {
@@ -685,20 +777,26 @@ impl VnodeOps for Ext4Vnode {
 
             // Remove the destination entry
             if let Err(e) = dir::remove_entry(fs.device(), &fs.sb, &inode, new_name) {
-                if has_journal { fs.abort_transaction(); }
+                if has_journal {
+                    fs.abort_transaction();
+                }
                 return Err(VfsError::from(e));
             }
 
             // Free destination inode if no more links
             if let Err(e) = bitmap::free_inode(fs.device(), &fs.sb, &fs.group_table, dest_ino) {
-                if has_journal { fs.abort_transaction(); }
+                if has_journal {
+                    fs.abort_transaction();
+                }
                 return Err(VfsError::from(e));
             }
         }
 
         // Remove old entry
         if let Err(e) = dir::remove_entry(fs.device(), &fs.sb, &inode, old_name) {
-            if has_journal { fs.abort_transaction(); }
+            if has_journal {
+                fs.abort_transaction();
+            }
             return Err(VfsError::from(e));
         }
 
@@ -713,7 +811,9 @@ impl VnodeOps for Ext4Vnode {
             source_ino,
             entry_file_type,
         ) {
-            if has_journal { fs.abort_transaction(); }
+            if has_journal {
+                fs.abort_transaction();
+            }
             return Err(VfsError::from(e));
         }
 
@@ -721,7 +821,9 @@ impl VnodeOps for Ext4Vnode {
         match inode::write_inode_data(fs.device(), &fs.sb, &fs.group_table, self.ino, &inode) {
             Ok((blocknr, data)) => fs.journal_block(blocknr, data),
             Err(e) => {
-                if has_journal { fs.abort_transaction(); }
+                if has_journal {
+                    fs.abort_transaction();
+                }
                 return Err(VfsError::from(e));
             }
         }
@@ -772,8 +874,11 @@ impl VnodeOps for Ext4Vnode {
         let has_journal = fs.begin_transaction();
 
         // Truncate the file
-        if let Err(e) = file::truncate_file(fs.device(), &fs.sb, &fs.group_table, &mut inode, size) {
-            if has_journal { fs.abort_transaction(); }
+        if let Err(e) = file::truncate_file(fs.device(), &fs.sb, &fs.group_table, &mut inode, size)
+        {
+            if has_journal {
+                fs.abort_transaction();
+            }
             return Err(VfsError::from(e));
         }
 
@@ -781,7 +886,9 @@ impl VnodeOps for Ext4Vnode {
         match inode::write_inode_data(fs.device(), &fs.sb, &fs.group_table, self.ino, &inode) {
             Ok((blocknr, data)) => fs.journal_block(blocknr, data),
             Err(e) => {
-                if has_journal { fs.abort_transaction(); }
+                if has_journal {
+                    fs.abort_transaction();
+                }
                 return Err(VfsError::from(e));
             }
         }
@@ -801,7 +908,6 @@ impl VnodeOps for Ext4Vnode {
         }
 
         let fs = self.fs.read();
-        file::read_symlink(fs.device(), &fs.sb, &inode)
-            .map_err(|e| VfsError::from(e))
+        file::read_symlink(fs.device(), &fs.sb, &inode).map_err(|e| VfsError::from(e))
     }
 }

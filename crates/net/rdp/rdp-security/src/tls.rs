@@ -1,14 +1,13 @@
 //! TLS Session Management
 
+use super::record::{RecordType, TlsRecord};
+use super::{
+    KeyMaterial, TLS_VERSION_1_2, compute_verify_data, decrypt_record, derive_key_material,
+    derive_master_secret, encrypt_record,
+};
 use alloc::vec::Vec;
 use crypto::sha256;
 use rdp_traits::{RdpError, RdpResult};
-use super::{
-    KeyMaterial, TLS_VERSION_1_2,
-    derive_master_secret, derive_key_material,
-    encrypt_record, decrypt_record, compute_verify_data,
-};
-use super::record::{TlsRecord, RecordType};
 
 /// TLS handshake state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,11 +115,8 @@ impl TlsSession {
 
     /// Initialize key material from premaster secret
     pub fn initialize_keys(&mut self, premaster_secret: &[u8]) {
-        self.master_secret = derive_master_secret(
-            premaster_secret,
-            &self.client_random,
-            &self.server_random,
-        );
+        self.master_secret =
+            derive_master_secret(premaster_secret, &self.client_random, &self.server_random);
 
         self.keys = Some(derive_key_material(
             &self.master_secret,

@@ -113,11 +113,7 @@ pub enum FastPathInputEvent {
         scancode: u8,
     },
     /// Mouse event
-    Mouse {
-        flags: MouseFlags,
-        x: u16,
-        y: u16,
-    },
+    Mouse { flags: MouseFlags, x: u16, y: u16 },
     /// Extended mouse event
     ExtendedMouse {
         flags: ExtendedMouseFlags,
@@ -170,9 +166,7 @@ impl FastPathInputEvent {
             }
             0x03 => {
                 // Synchronize
-                Ok(FastPathInputEvent::Synchronize {
-                    flags: event_flags,
-                })
+                Ok(FastPathInputEvent::Synchronize { flags: event_flags })
             }
             0x04 => {
                 // Unicode

@@ -4,7 +4,7 @@
 
 SHELL := /usr/bin/bash
 
-.PHONY: all build build-full kernel bootloader userspace userspace-release userspace-pkg initramfs initramfs-debug boot-dir boot-quick boot-image release clean run run-debug run-no-net run-headless run-headless-no-net run-kvm run-kvm-clean run-kvm-vnc run-kvm-serial test check fmt fmt-check clippy list-bins show-config help toolchain install-toolchain test-toolchain clean-toolchain claude
+.PHONY: all build build-full kernel bootloader userspace userspace-release userspace-pkg initramfs initramfs-debug initramfs-minimal boot-dir boot-quick boot-image create-rootfs release clean run run-kvm test check fmt fmt-check clippy list-bins show-config help toolchain install-toolchain test-toolchain clean-toolchain claude
 
 # Configuration
 ARCH ?= x86_64
@@ -161,8 +161,7 @@ initramfs: userspace-release
 	@echo "network:x:101:" >> $(TARGET_DIR)/initramfs/etc/group
 	@# Create sshd privilege separation directory
 	@mkdir -p $(TARGET_DIR)/initramfs/var/empty/sshd
-	@echo "PATH=/initramfs/bin:/initramfs/sbin:/bin:/sbin" > $(TARGET_DIR)/initramfs/etc/profile
-	@echo "export PATH" >> $(TARGET_DIR)/initramfs/etc/profile
+	@echo "export PATH=/initramfs/bin:/initramfs/sbin:/bin:/sbin" > $(TARGET_DIR)/initramfs/etc/profile
 	@echo "OXIDE" > $(TARGET_DIR)/initramfs/etc/hostname
 	@# Copy networkd
 	@cp "$(USERSPACE_OUT_RELEASE)/networkd" "$(TARGET_DIR)/initramfs/bin/networkd"
@@ -225,8 +224,7 @@ initramfs-debug: userspace
 	@ln -sf /bin/true "$(TARGET_DIR)/initramfs/bin/:" 2>/dev/null || true
 	@echo "root:x:0:0:root:/root:/bin/esh" > $(TARGET_DIR)/initramfs/etc/passwd
 	@echo "root:x:0:" > $(TARGET_DIR)/initramfs/etc/group
-	@echo "PATH=/initramfs/bin:/initramfs/sbin:/bin:/sbin" > $(TARGET_DIR)/initramfs/etc/profile
-	@echo "export PATH" >> $(TARGET_DIR)/initramfs/etc/profile
+	@echo "export PATH=/initramfs/bin:/initramfs/sbin:/bin:/sbin" > $(TARGET_DIR)/initramfs/etc/profile
 	@cd $(TARGET_DIR)/initramfs && find . | cpio -o -H newc > ../initramfs.cpio 2>/dev/null
 	@echo "Initramfs created (debug): $(INITRAMFS)"
 	@ls -la $(INITRAMFS)
@@ -286,123 +284,212 @@ boot-image: boot-dir
 	@mcopy -i $(TARGET_DIR)/boot.img@@1M $(BOOT_DIR)/EFI/OXIDE/initramfs.cpio ::/EFI/OXIDE/
 	@echo "Boot disk image created: $(TARGET_DIR)/boot.img (no sudo needed!)"
 
-# Run in QEMU (interactive, with networking)
-run: boot-quick
+# Disk image configuration for root filesystem
+ROOTFS_IMAGE := $(TARGET_DIR)/oxide-disk.img
+ROOTFS_SIZE := 512
+BOOT_SIZE := 64
+ROOT_SIZE := 384
+HOME_SIZE := 64
+BOOT_START := 1
+ROOT_START := 65
+HOME_START := 449
+
+# Create root filesystem disk image with 3 partitions:
+# - Partition 1 (ESP/boot): FAT32, mounted at /boot - bootloader, kernel, initramfs
+# - Partition 2 (root): ext4, mounted at / - OS files
+# - Partition 3 (home): ext4, mounted at /home - user data
+# - /tmp is tmpfs (in-memory)
+create-rootfs: kernel bootloader initramfs-minimal
+	@echo "Creating OXIDE root filesystem disk image..."
+	@echo ""
+	@# Create empty disk image
+	dd if=/dev/zero of=$(ROOTFS_IMAGE) bs=1M count=$(ROOTFS_SIZE) status=none
+	@# Create GPT partition table
+	parted -s $(ROOTFS_IMAGE) mklabel gpt
+	@# Create boot/ESP partition (1MiB - 65MiB)
+	parted -s $(ROOTFS_IMAGE) mkpart boot fat32 $(BOOT_START)MiB $(ROOT_START)MiB
+	parted -s $(ROOTFS_IMAGE) set 1 esp on
+	@# Create root partition (65MiB - 449MiB)
+	parted -s $(ROOTFS_IMAGE) mkpart root ext4 $(ROOT_START)MiB $(HOME_START)MiB
+	@# Create home partition (449MiB - 100%)
+	parted -s $(ROOTFS_IMAGE) mkpart home ext4 $(HOME_START)MiB 100%
+	@# Set up loop device, format, and populate all partitions
+	@echo "Formatting partitions..."
+	@mkdir -p $(TARGET_DIR)/mnt/boot $(TARGET_DIR)/mnt/root $(TARGET_DIR)/mnt/home
+	@LOOP_DEV=$$(sudo losetup -fP --show $(ROOTFS_IMAGE)) && \
+	echo "Loop device: $$LOOP_DEV" && \
+	sudo mkfs.vfat -F 32 -n BOOT $${LOOP_DEV}p1 && \
+	sudo mkfs.ext4 -F -q -L ROOT $${LOOP_DEV}p2 && \
+	sudo mkfs.ext4 -F -q -L HOME $${LOOP_DEV}p3 && \
+	\
+	echo "" && \
+	echo "Populating /boot (ESP)..." && \
+	sudo mount $${LOOP_DEV}p1 $(TARGET_DIR)/mnt/boot && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/boot/EFI/BOOT && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/boot/EFI/OXIDE && \
+	sudo cp $(BOOTLOADER_TARGET) $(TARGET_DIR)/mnt/boot/EFI/BOOT/BOOTX64.EFI && \
+	sudo cp $(KERNEL_TARGET) $(TARGET_DIR)/mnt/boot/EFI/OXIDE/kernel.elf && \
+	sudo cp $(TARGET_DIR)/initramfs-minimal.cpio $(TARGET_DIR)/mnt/boot/EFI/OXIDE/initramfs.cpio && \
+	sudo umount $(TARGET_DIR)/mnt/boot && \
+	\
+	echo "Populating / (root filesystem)..." && \
+	sudo mount $${LOOP_DEV}p2 $(TARGET_DIR)/mnt/root && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/bin && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/sbin && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/usr/bin && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/usr/sbin && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/etc/services.d && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/etc/network && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/var/log && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/var/lib/dhcp && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/var/run && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/var/empty/sshd && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/tmp && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/proc && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/sys && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/dev/pts && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/boot && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/home && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/root && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/run/network && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/mnt && \
+	\
+	echo "  Copying binaries..." && \
+	sudo cp "$(USERSPACE_OUT_RELEASE)/init" $(TARGET_DIR)/mnt/root/sbin/init && \
+	sudo ln -sf /sbin/init $(TARGET_DIR)/mnt/root/init && \
+	sudo cp "$(USERSPACE_OUT_RELEASE)/esh" $(TARGET_DIR)/mnt/root/bin/esh && \
+	sudo ln -sf /bin/esh $(TARGET_DIR)/mnt/root/bin/sh && \
+	sudo cp "$(USERSPACE_OUT_RELEASE)/login" $(TARGET_DIR)/mnt/root/bin/login && \
+	for prog in gwbasic ssh sshd service networkd $(COREUTILS_BINS) testcolors; do \
+		[ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/$$prog" $(TARGET_DIR)/mnt/root/usr/bin/ || true; \
+	done && \
+	sudo ln -sf /usr/bin/service $(TARGET_DIR)/mnt/root/usr/bin/servicemgr && \
+	sudo ln -sf /usr/bin/service $(TARGET_DIR)/mnt/root/bin/servicemgr && \
+	\
+	echo "  Creating /etc/passwd..." && \
+	printf "root:root:0:0:root:/root:/bin/esh\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/passwd > /dev/null && \
+	printf "nobody:x:65534:65534:Nobody:/:/bin/false\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/passwd > /dev/null && \
+	printf "sshd:x:74:74:SSH Daemon:/var/empty/sshd:/bin/false\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/passwd > /dev/null && \
+	printf "network:x:101:101:Network Daemon:/var/lib/dhcp:/bin/false\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/passwd > /dev/null && \
+	\
+	echo "  Creating /etc/group..." && \
+	printf "root:x:0:\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/group > /dev/null && \
+	printf "nobody:x:65534:\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/group > /dev/null && \
+	printf "sshd:x:74:\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/group > /dev/null && \
+	printf "network:x:101:\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/group > /dev/null && \
+	\
+	echo "  Creating /etc/fstab..." && \
+	printf "# OXIDE filesystem table\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/fstab > /dev/null && \
+	printf "# <device>       <mountpoint>  <type>   <options>  <dump> <pass>\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/fstab > /dev/null && \
+	printf "LABEL=BOOT       /boot         vfat     defaults   0      2\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/fstab > /dev/null && \
+	printf "LABEL=HOME       /home         ext4     defaults   0      2\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/fstab > /dev/null && \
+	printf "tmpfs            /tmp          tmpfs    defaults   0      0\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/fstab > /dev/null && \
+	printf "tmpfs            /run          tmpfs    defaults   0      0\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/fstab > /dev/null && \
+	printf "proc             /proc         proc     defaults   0      0\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/fstab > /dev/null && \
+	printf "sysfs            /sys          sysfs    defaults   0      0\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/fstab > /dev/null && \
+	printf "devpts           /dev/pts      devpts   defaults   0      0\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/fstab > /dev/null && \
+	\
+	echo "  Creating other config files..." && \
+	printf "export PATH=/bin:/sbin:/usr/bin:/usr/sbin\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/profile > /dev/null && \
+	printf "OXIDE\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/hostname > /dev/null && \
+	printf "PATH=/usr/bin/networkd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/networkd > /dev/null && \
+	printf "PATH=/usr/bin/sshd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/sshd > /dev/null && \
+	printf "mode=dhcp\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/network/eth0.conf > /dev/null && \
+	printf "nameserver 8.8.8.8\nnameserver 8.8.4.4\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/resolv.conf > /dev/null && \
+	printf "127.0.0.1 localhost\n::1 localhost\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/hosts > /dev/null && \
+	sudo umount $(TARGET_DIR)/mnt/root && \
+	\
+	echo "Populating /home..." && \
+	sudo mount $${LOOP_DEV}p3 $(TARGET_DIR)/mnt/home && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/home/root && \
+	sudo umount $(TARGET_DIR)/mnt/home && \
+	\
+	sudo losetup -d $$LOOP_DEV && \
+	rm -rf $(TARGET_DIR)/mnt
+	@echo ""
+	@echo "==============================================="
+	@echo "OXIDE disk image created: $(ROOTFS_IMAGE)"
+	@echo "==============================================="
+	@echo ""
+	@echo "Partition layout:"
+	@echo "  1. /boot  (ESP)   $(BOOT_SIZE)MB  FAT32  - bootloader, kernel, initramfs"
+	@echo "  2. /      (root)  $(ROOT_SIZE)MB  ext4   - OS files"
+	@echo "  3. /home          $(HOME_SIZE)MB  ext4   - user data"
+	@echo "  4. /tmp           (tmpfs)         - in-memory"
+	@echo ""
+	@parted -s $(ROOTFS_IMAGE) print
+
+# Create minimal initramfs for ext4 root boot
+# Only contains: init, login, esh, and essential /etc files
+# Full utilities live on the ext4 root partition
+initramfs-minimal: userspace-release
+	@echo "Creating minimal initramfs..."
+	@rm -rf $(TARGET_DIR)/initramfs-minimal
+	@mkdir -p $(TARGET_DIR)/initramfs-minimal/bin
+	@mkdir -p $(TARGET_DIR)/initramfs-minimal/sbin
+	@mkdir -p $(TARGET_DIR)/initramfs-minimal/etc
+	@mkdir -p $(TARGET_DIR)/initramfs-minimal/dev
+	@mkdir -p $(TARGET_DIR)/initramfs-minimal/proc
+	@mkdir -p $(TARGET_DIR)/initramfs-minimal/sys
+	@mkdir -p $(TARGET_DIR)/initramfs-minimal/tmp
+	@mkdir -p $(TARGET_DIR)/initramfs-minimal/var/log
+	@mkdir -p $(TARGET_DIR)/initramfs-minimal/var/run
+	@mkdir -p $(TARGET_DIR)/initramfs-minimal/home
+	@mkdir -p $(TARGET_DIR)/initramfs-minimal/root
+	@mkdir -p $(TARGET_DIR)/initramfs-minimal/run
+	@mkdir -p $(TARGET_DIR)/initramfs-minimal/mnt
+	@# Copy only essential binaries
+	@cp "$(USERSPACE_OUT_RELEASE)/init" "$(TARGET_DIR)/initramfs-minimal/sbin/init"
+	@ln -sf /sbin/init "$(TARGET_DIR)/initramfs-minimal/init"
+	@cp "$(USERSPACE_OUT_RELEASE)/esh" "$(TARGET_DIR)/initramfs-minimal/bin/esh"
+	@ln -sf /bin/esh "$(TARGET_DIR)/initramfs-minimal/bin/sh"
+	@cp "$(USERSPACE_OUT_RELEASE)/login" "$(TARGET_DIR)/initramfs-minimal/bin/login"
+	@# Create minimal passwd/group
+	@echo "root:root:0:0:root:/root:/bin/esh" > $(TARGET_DIR)/initramfs-minimal/etc/passwd
+	@echo "root:x:0:" > $(TARGET_DIR)/initramfs-minimal/etc/group
+	@# Create profile with PATH
+	@echo "export PATH=/bin:/sbin:/usr/bin:/usr/sbin" > $(TARGET_DIR)/initramfs-minimal/etc/profile
+	@echo "OXIDE" > $(TARGET_DIR)/initramfs-minimal/etc/hostname
+	@# Create fstab that mounts ext4 partitions
+	@# Note: Kernel will mount root partition before running init
+	@echo "# /etc/fstab - filesystem mount table" > $(TARGET_DIR)/initramfs-minimal/etc/fstab
+	@echo "# device    mountpoint    fstype    options    dump pass" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
+	@echo "proc        /proc         proc      defaults   0    0" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
+	@echo "sysfs       /sys          sysfs     defaults   0    0" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
+	@echo "devpts      /dev/pts      devpts    defaults   0    0" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
+	@echo "tmpfs       /tmp          tmpfs     defaults   0    0" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
+	@echo "tmpfs       /run          tmpfs     defaults   0    0" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
+	@# Create CPIO archive
+	@cd $(TARGET_DIR)/initramfs-minimal && find . | cpio -o -H newc > ../initramfs-minimal.cpio 2>/dev/null
+	@echo "Minimal initramfs created: $(TARGET_DIR)/initramfs-minimal.cpio"
+	@ls -la $(TARGET_DIR)/initramfs-minimal.cpio
+
+# Run in QEMU with qemu-system-x86_64 (Fedora)
+# Builds everything and creates ext4 root filesystem, then runs with debug and networking
+run: create-rootfs
+	@echo "Running OXIDE OS with qemu-system-x86_64 (Fedora)..."
 	@if [ -z "$(OVMF)" ]; then \
 		echo "Error: OVMF firmware not found"; \
-		echo "Install: sudo apt install ovmf (Debian/Ubuntu)"; \
-		echo "         sudo dnf install edk2-ovmf (Fedora/RHEL)"; \
-		exit 1; \
-	fi
-	@if ! command -v $(QEMU) >/dev/null 2>&1; then \
-		echo "Error: QEMU command '$(QEMU)' not found"; \
-		echo "Install: sudo apt install qemu-system-x86 (Debian/Ubuntu)"; \
-		echo "         sudo dnf install qemu-system-x86 (Fedora/RHEL)"; \
+		echo "Install: sudo dnf install edk2-ovmf"; \
 		exit 1; \
 	fi
 	@mkdir -p /tmp/qemu-oxide
-	TMPDIR=/tmp/qemu-oxide $(QEMU) \
+	TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
 		-machine q35 \
 		-cpu qemu64,+smap,+smep \
 		-m 256M \
 		-bios "$(OVMF)" \
-		-drive format=raw,file=fat:rw:$(BOOT_DIR),if=none,id=disk \
-		-device ide-hd,drive=disk \
+		-drive file=$(ROOTFS_IMAGE),format=raw,if=none,id=disk \
+		-device virtio-blk-pci,drive=disk \
 		-device virtio-net-pci,netdev=net0 \
 		-netdev user,id=net0,hostfwd=tcp::2222-:22 \
 		-serial stdio \
 		-no-reboot
 
-# Run with all kernel debug output enabled
-run-debug: userspace-release initramfs
-	@echo "Building bootloader (release)..."
-	@cargo build --package boot-uefi --target $(ARCH)-unknown-uefi --release
-	@echo "Building kernel with debug features..."
-	@cargo build --package kernel --release --features debug-all
-	@rm -rf $(BOOT_DIR)
-	@mkdir -p $(BOOT_DIR)/EFI/BOOT
-	@mkdir -p $(BOOT_DIR)/EFI/OXIDE
-	@cp $(TARGET_DIR)/$(ARCH)-unknown-uefi/release/boot-uefi.efi $(BOOT_DIR)/EFI/BOOT/BOOTX64.EFI
-	@cp $(TARGET_DIR)/$(ARCH)-unknown-none/release/kernel $(BOOT_DIR)/EFI/OXIDE/kernel.elf
-	@cp $(TARGET_DIR)/initramfs.cpio $(BOOT_DIR)/EFI/OXIDE/initramfs.cpio
-	@if [ -z "$(OVMF)" ]; then \
-		echo "Error: OVMF firmware not found"; \
-		exit 1; \
-	fi
-	@mkdir -p /tmp/qemu-oxide
-	TMPDIR=/tmp/qemu-oxide $(QEMU) \
-		-machine q35 \
-		-cpu qemu64,+smap,+smep \
-		-m 256M \
-		-bios "$(OVMF)" \
-		-drive format=raw,file=fat:rw:$(BOOT_DIR),if=none,id=disk \
-		-device ide-hd,drive=disk \
-		-device virtio-net-pci,netdev=net0 \
-		-netdev user,id=net0,hostfwd=tcp::2223-:22 \
-		-serial stdio \
-		-no-reboot
-
-# Run in QEMU without networking (for minimal testing)
-run-no-net: boot-quick
-	@if [ -z "$(OVMF)" ]; then \
-		echo "Error: OVMF firmware not found"; \
-		echo "Install: sudo apt install ovmf (Debian/Ubuntu)"; \
-		echo "         sudo dnf install edk2-ovmf (Fedora/RHEL)"; \
-		exit 1; \
-	fi
-	@mkdir -p /tmp/qemu-oxide
-	TMPDIR=/tmp/qemu-oxide $(QEMU) \
-		-machine q35 \
-		-cpu qemu64,+smap,+smep \
-		-m 256M \
-		-bios "$(OVMF)" \
-		-drive format=raw,file=fat:rw:$(BOOT_DIR),if=none,id=disk \
-		-device ide-hd,drive=disk \
-		-serial stdio \
-		-no-reboot
-
-# Run headless (for testing, with networking)
-run-headless: boot-quick
-	@if [ -z "$(OVMF)" ]; then \
-		echo "Error: OVMF firmware not found"; \
-		exit 1; \
-	fi
-	@mkdir -p /tmp/qemu-oxide
-	TMPDIR=/tmp/qemu-oxide $(QEMU) \
-		-machine q35 \
-		-cpu qemu64,+smap,+smep \
-		-m 256M \
-		-bios "$(OVMF)" \
-		-drive format=raw,file=fat:rw:$(BOOT_DIR),if=none,id=disk \
-		-device ide-hd,drive=disk \
-		-device virtio-net-pci,netdev=net0 \
-		-netdev user,id=net0,hostfwd=tcp::2222-:22 \
-		-serial stdio \
-		-display none \
-		-no-reboot
-
-# Run headless without networking
-run-headless-no-net: boot-quick
-	@if [ -z "$(OVMF)" ]; then \
-		echo "Error: OVMF firmware not found"; \
-		exit 1; \
-	fi
-	@mkdir -p /tmp/qemu-oxide
-	TMPDIR=/tmp/qemu-oxide $(QEMU) \
-		-machine q35 \
-		-cpu qemu64,+smap,+smep \
-		-m 256M \
-		-bios "$(OVMF)" \
-		-drive format=raw,file=fat:rw:$(BOOT_DIR),if=none,id=disk \
-		-device ide-hd,drive=disk \
-		-serial stdio \
-		-display none \
-		-no-reboot
-
-# Run with qemu-kvm using disk image (RHEL 10 compatible)
-# NOTE: This target rebuilds kernel, bootloader, and userspace before running
-run-kvm: boot-image
-	@echo "Preparing to launch OXIDE OS with qemu-kvm..."
+# Run in QEMU with qemu-kvm (RHEL 10)
+# Builds everything and creates ext4 root filesystem, then runs with debug, networking, and VNC
+run-kvm: create-rootfs
+	@echo "Running OXIDE OS with qemu-kvm (RHEL 10)..."
 	@if [ ! -f /usr/share/edk2/ovmf/OVMF_CODE.fd ]; then \
 		echo "Error: OVMF firmware not found"; \
 		echo "Install: sudo dnf install edk2-ovmf"; \
@@ -413,11 +500,10 @@ run-kvm: boot-image
 		echo "Install: sudo dnf install qemu-kvm"; \
 		exit 1; \
 	fi
-	@# Create a writable copy of OVMF_VARS.fd for this session
 	@mkdir -p $(TARGET_DIR)
 	@cp /usr/share/edk2/ovmf/OVMF_VARS.fd $(TARGET_DIR)/OVMF_VARS.fd 2>/dev/null || true
 	@mkdir -p /tmp/qemu-oxide
-	@echo "Starting QEMU..."
+	@echo "Starting QEMU (VNC on :5900, serial on stdio)..."
 	@TMPDIR=/tmp/qemu-oxide /usr/libexec/qemu-kvm \
 		-machine q35,accel=kvm:tcg \
 		-cpu max,+invtsc \
@@ -425,8 +511,10 @@ run-kvm: boot-image
 		-m 256M \
 		-drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE.fd \
 		-drive if=pflash,format=raw,file=$(TARGET_DIR)/OVMF_VARS.fd \
-		-drive file=$(TARGET_DIR)/boot.img,format=raw,if=none,id=bootdisk \
-		-device ide-hd,drive=bootdisk,bus=ide.0 \
+		-drive file=$(ROOTFS_IMAGE),format=raw,if=none,id=bootdisk \
+		-device virtio-blk-pci,drive=bootdisk \
+		-device virtio-net-pci,netdev=net0 \
+		-netdev user,id=net0,hostfwd=tcp::2222-:22 \
 		-vga std \
 		-vnc :0 \
 		-chardev stdio,id=char0,mux=on \
@@ -437,83 +525,22 @@ run-kvm: boot-image
 	echo "QEMU started (PID: $$QEMU_PID)"; \
 	sleep 2; \
 	if command -v vncviewer >/dev/null 2>&1; then \
-		echo "Launching VNC viewer window..."; \
+		echo "Launching VNC viewer..."; \
 		vncviewer localhost:5900 2>/dev/null; \
 	elif flatpak list --app 2>/dev/null | grep -q tigervnc; then \
-		echo "Launching VNC viewer window (Flatpak)..."; \
+		echo "Launching VNC viewer (Flatpak)..."; \
 		flatpak run org.tigervnc.vncviewer localhost:5900 2>/dev/null; \
 	else \
 		echo "VNC viewer not found - connect manually to localhost:5900"; \
 		echo "Install: sudo dnf install tigervnc"; \
 		wait $$QEMU_PID; \
 	fi; \
-	echo "VNC viewer closed, stopping QEMU..."; \
+	echo "Stopping QEMU..."; \
 	kill $$QEMU_PID 2>/dev/null || true; \
 	wait $$QEMU_PID 2>/dev/null || true
-
-# Run with qemu-kvm after full clean rebuild (paranoid mode - no incremental builds)
-run-kvm-clean: clean run-kvm
-
-# Run with qemu-kvm and auto-launch VNC viewer
-run-kvm-vnc: boot-image
-	@if ! command -v vncviewer >/dev/null 2>&1 && ! (flatpak list --app 2>/dev/null | grep -q tigervnc); then \
-		echo "Error: vncviewer not found"; \
-		echo "Install: sudo dnf install tigervnc"; \
-		echo "Or Flatpak: flatpak install flathub org.tigervnc.vncviewer"; \
-		exit 1; \
-	fi
-	@# Create a writable copy of OVMF_VARS.fd for this session
-	@mkdir -p $(TARGET_DIR)
-	@cp /usr/share/edk2/ovmf/OVMF_VARS.fd $(TARGET_DIR)/OVMF_VARS.fd 2>/dev/null || true
-	@mkdir -p /tmp/qemu-oxide
-	@echo "Starting QEMU in background..."
-	@TMPDIR=/tmp/qemu-oxide /usr/libexec/qemu-kvm \
-		-machine q35,accel=kvm:tcg \
-		-cpu max,+invtsc \
-		-smp 2 \
-		-m 256M \
-		-drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE.fd \
-		-drive if=pflash,format=raw,file=$(TARGET_DIR)/OVMF_VARS.fd \
-		-drive file=$(TARGET_DIR)/boot.img,format=raw,if=none,id=bootdisk \
-		-device ide-hd,drive=bootdisk,bus=ide.0 \
-		-vga std \
-		-usb \
-		-device usb-kbd \
-		-device usb-mouse \
-		-vnc :0 \
-		-no-reboot & \
-	QEMU_PID=$$!; \
-	trap 'kill $$QEMU_PID 2>/dev/null; exit' INT TERM; \
-	echo "QEMU started with PID $$QEMU_PID"; \
-	sleep 1; \
-	if command -v vncviewer >/dev/null 2>&1; then \
-		echo "Launching VNC viewer (native)..."; \
-		vncviewer localhost:5900; \
-	elif flatpak list --app 2>/dev/null | grep -q tigervnc; then \
-		echo "Launching VNC viewer (Flatpak)..."; \
-		flatpak run org.tigervnc.vncviewer localhost:5900; \
-	fi; \
-	kill $$QEMU_PID 2>/dev/null || true; \
-	wait $$QEMU_PID 2>/dev/null || true
-
-# Run with qemu-kvm using serial console only (no graphics/VNC)
-run-kvm-serial: boot-image
-	@# Create a writable copy of OVMF_VARS.fd for this session
-	@mkdir -p $(TARGET_DIR)
-	@cp /usr/share/edk2/ovmf/OVMF_VARS.fd $(TARGET_DIR)/OVMF_VARS.fd 2>/dev/null || true
-	@mkdir -p /tmp/qemu-oxide
-	TMPDIR=/tmp/qemu-oxide /usr/libexec/qemu-kvm \
-		-machine pc \
-		-cpu max \
-		-m 256M \
-		-drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE.fd \
-		-drive if=pflash,format=raw,file=$(TARGET_DIR)/OVMF_VARS.fd \
-		-drive format=raw,file=$(TARGET_DIR)/boot.img,if=ide \
-		-nographic \
-		-no-reboot
 
 # Automated test: boot and check for expected output
-test: boot-quick
+test: create-rootfs
 	@echo "Running automated boot test..."
 	@if [ -z "$(OVMF)" ]; then \
 		echo "Error: OVMF firmware not found"; \
@@ -525,7 +552,7 @@ test: boot-quick
 		-cpu qemu64,+smap,+smep \
 		-m 256M \
 		-bios "$(OVMF)" \
-		-drive format=raw,file=fat:rw:$(BOOT_DIR),if=none,id=disk \
+		-drive file=$(ROOTFS_IMAGE),format=raw,if=none,id=disk \
 		-device ide-hd,drive=disk \
 		-serial file:$(TARGET_DIR)/serial.log \
 		-display none \
@@ -578,7 +605,11 @@ show-config:
 help:
 	@echo "OXIDE OS Build System"
 	@echo ""
-	@echo "Targets:"
+	@echo "Run Targets:"
+	@echo "  run            - Build and run with qemu-system-x86_64 (Fedora)"
+	@echo "  run-kvm        - Build and run with qemu-kvm (RHEL 10)"
+	@echo ""
+	@echo "Build Targets:"
 	@echo "  all            - Build kernel and bootloader (default)"
 	@echo "  build-full     - Build kernel, bootloader, userspace, and initramfs"
 	@echo "  kernel         - Build kernel only"
@@ -586,55 +617,37 @@ help:
 	@echo "  userspace      - Build all userspace programs (debug)"
 	@echo "  userspace-release - Build all userspace programs (release)"
 	@echo "  userspace-pkg  - Build single package (PKG=name)"
-	@echo "  initramfs      - Create initramfs (release)"
-	@echo "  initramfs-debug - Create initramfs (debug)"
-	@echo "  boot-image     - Create bootable disk image (for qemu-kvm)"
-	@echo "  list-bins      - List all userspace binaries"
+	@echo "  initramfs      - Create initramfs (release, all utilities)"
+	@echo "  boot-image     - Create bootable disk image"
+	@echo "  create-rootfs  - Create 512MB disk with ESP + ext4 root + ext4 home"
 	@echo "  release        - Build kernel/bootloader in release mode"
-	@echo "  run            - Run in QEMU (interactive, with networking)"
-	@echo "  run-no-net     - Run in QEMU without networking"
-	@echo "  run-headless   - Run in QEMU without display (with networking)"
-	@echo "  run-headless-no-net - Run headless without networking"
-	@echo "  run-kvm        - Run with qemu-kvm (VNC on :5900, serial on stdio)"
-	@echo "  run-kvm-clean  - Run with qemu-kvm after full clean rebuild"
-	@echo "  run-kvm-vnc    - Run with qemu-kvm and auto-launch VNC viewer"
-	@echo "  run-kvm-serial - Run with qemu-kvm serial console only (no graphics)"
+	@echo ""
+	@echo "Other Targets:"
 	@echo "  test           - Automated boot test"
 	@echo "  check          - Quick syntax/type check"
 	@echo "  fmt            - Format code"
-	@echo "  fmt-check      - Check formatting"
 	@echo "  clippy         - Run clippy linter"
 	@echo "  clean          - Remove build artifacts"
-	@echo "  show-config    - Show detected configuration (QEMU, OVMF, etc.)"
+	@echo "  show-config    - Show detected configuration"
 	@echo ""
-	@echo "Cross-Compiler Toolchain:"
+	@echo "Toolchain:"
 	@echo "  toolchain      - Build OXIDE cross-compiler toolchain"
 	@echo "  test-toolchain - Test toolchain with examples"
 	@echo "  install-toolchain - Install toolchain (PREFIX=/usr/local/oxide)"
-	@echo "  clean-toolchain - Clean toolchain artifacts"
-	@echo ""
-	@echo "Variables:"
-	@echo "  ARCH           - Target architecture (default: x86_64)"
-	@echo "  PROFILE        - Build profile (default: debug)"
-	@echo "  QEMU_TIMEOUT   - Test timeout in seconds (default: 15)"
-	@echo "  QEMU           - QEMU command (auto-detected, override if needed)"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make build-full          - Build everything"
-	@echo "  make userspace-pkg PKG=coreutils - Build only coreutils"
-	@echo "  make run                 - Build and run (includes initramfs + net)"
-	@echo "  make show-config         - Show detected QEMU and OVMF paths"
+	@echo "  make run       - Build and run on Fedora (qemu-system-x86_64)"
+	@echo "  make run-kvm   - Build and run on RHEL 10 (qemu-kvm + VNC)"
 	@echo ""
-	@echo "RHEL 10 Note:"
-	@echo "  RHEL only ships qemu-kvm (no qemu-system-x86_64 with SDL/GTK)"
-	@echo "  Install: sudo dnf install qemu-kvm edk2-ovmf parted mtools"
-	@echo "  "
-	@echo "  Three ways to run on RHEL 10:"
-	@echo "    make run-kvm        - VNC on :5900 + serial (auto-launches VNC viewer)"
-	@echo "    make run-kvm-vnc    - Same as run-kvm (explicitly launch VNC viewer)"
-	@echo "    make run-kvm-serial - Serial console only, no graphics"
-	@echo "  "
-	@echo "  Note: No sudo required! mtools manipulates FAT without mounting."
+	@echo "Both run targets create a 512MB disk image with:"
+	@echo "  - /boot  (FAT32/ESP): bootloader, kernel, initramfs"
+	@echo "  - /      (ext4):      OS binaries and config"
+	@echo "  - /home  (ext4):      user data"
+	@echo "  - /tmp   (tmpfs):     in-memory temp files"
+	@echo ""
+	@echo "Requirements:"
+	@echo "  Fedora: sudo dnf install qemu-system-x86 edk2-ovmf parted"
+	@echo "  RHEL:   sudo dnf install qemu-kvm edk2-ovmf parted tigervnc"
 
 
 

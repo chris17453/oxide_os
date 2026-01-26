@@ -296,7 +296,10 @@ fn receive_loopback_packet(socket: &Arc<Socket>, buf: &mut [u8]) -> Option<(usiz
     recv_buf.drain(..copy_len);
 
     // Return localhost as source address for loopback
-    Some((copy_len, SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)))
+    Some((
+        copy_len,
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+    ))
 }
 
 /// ICMP echo request type
@@ -333,7 +336,7 @@ fn handle_icmp_echo(socket: &Arc<Socket>, icmp_data: &[u8], _src_addr: SocketAdd
     reply.extend_from_slice(&[0x00, 0x00]); // ID
     reply.extend_from_slice(&[0x00, 0x00]); // Flags + Fragment offset
     reply.push(64); // TTL
-    reply.push(1);  // Protocol = ICMP
+    reply.push(1); // Protocol = ICMP
     reply.extend_from_slice(&[0x00, 0x00]); // Checksum placeholder
     reply.extend_from_slice(&[127, 0, 0, 1]); // Source IP
     reply.extend_from_slice(&[127, 0, 0, 1]); // Dest IP
@@ -391,7 +394,10 @@ fn loopback_send(socket: &Arc<Socket>, data: &[u8], dest: &SocketAddr) -> i64 {
     let protocol = protocol_to_num(socket.protocol);
 
     // Get source address for the packet
-    let src_addr = socket.local_addr.lock().clone()
+    let src_addr = socket
+        .local_addr
+        .lock()
+        .clone()
         .unwrap_or_else(|| SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0));
 
     // Special case: RAW ICMP socket sending echo request
@@ -613,7 +619,9 @@ pub fn sys_bind(fd: i32, addr: u64, addrlen: u32) -> i64 {
 
             // Also register in old BOUND_SOCKETS for compatibility (TODO: remove later)
             if socket.sock_type == SocketType::Dgram || socket.sock_type == SocketType::Raw {
-                BOUND_SOCKETS.lock().insert((socket_addr.port, protocol), fd);
+                BOUND_SOCKETS
+                    .lock()
+                    .insert((socket_addr.port, protocol), fd);
             }
 
             0
@@ -843,11 +851,17 @@ pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
         serial_print("send: RAW ICMP socket detected");
         let remote = socket.remote_addr.lock();
         if let Some(ref addr) = *remote {
-            serial_print_num("send: remote addr is_loopback=", is_loopback_addr(addr) as i64);
+            serial_print_num(
+                "send: remote addr is_loopback=",
+                is_loopback_addr(addr) as i64,
+            );
             if is_loopback_addr(addr) {
                 serial_print_num("send: calling handle_icmp_echo, len=", len as i64);
                 // Use unified ICMP echo handler
-                let src_addr = socket.local_addr.lock().clone()
+                let src_addr = socket
+                    .local_addr
+                    .lock()
+                    .clone()
                     .unwrap_or_else(|| SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0));
                 if let Some(result) = handle_icmp_echo(&socket, data, src_addr) {
                     serial_print_num("send: handle_icmp_echo returned", result);

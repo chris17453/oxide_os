@@ -518,7 +518,14 @@ pub fn dispatch(
         nr::GETRANDOM => sys_getrandom(arg1, arg2 as usize, arg3 as u32),
 
         // Filesystem mount syscalls
-        nr::MOUNT => vfs::sys_mount(arg1, arg2 as usize, arg3, arg4 as usize, arg5, arg6 as usize),
+        nr::MOUNT => vfs::sys_mount(
+            arg1,
+            arg2 as usize,
+            arg3,
+            arg4 as usize,
+            arg5,
+            arg6 as usize,
+        ),
         nr::UMOUNT => vfs::sys_umount(arg1, arg2 as usize, arg3 as u32),
 
         _ => errno::ENOSYS,
@@ -1692,7 +1699,11 @@ fn sys_sched_setscheduler(pid: i32, policy: i32, param_ptr: u64) -> i64 {
 
     // Get target PID
     let table = process_table();
-    let target_pid = if pid == 0 { table.current_pid() } else { pid as u32 };
+    let target_pid = if pid == 0 {
+        table.current_pid()
+    } else {
+        pid as u32
+    };
 
     // Validate process exists
     if table.get(target_pid).is_none() {
@@ -1740,7 +1751,11 @@ fn sys_sched_setscheduler(pid: i32, policy: i32, param_ptr: u64) -> i64 {
 /// * `pid` - Process ID (0 = current)
 fn sys_sched_getscheduler(pid: i32) -> i64 {
     let table = process_table();
-    let target_pid = if pid == 0 { table.current_pid() } else { pid as u32 };
+    let target_pid = if pid == 0 {
+        table.current_pid()
+    } else {
+        pid as u32
+    };
 
     // Validate process exists
     if table.get(target_pid).is_none() {
@@ -1765,7 +1780,11 @@ fn sys_sched_setparam(pid: i32, param_ptr: u64) -> i64 {
     }
 
     let table = process_table();
-    let target_pid = if pid == 0 { table.current_pid() } else { pid as u32 };
+    let target_pid = if pid == 0 {
+        table.current_pid()
+    } else {
+        pid as u32
+    };
 
     // Validate process exists
     if table.get(target_pid).is_none() {
@@ -1811,7 +1830,11 @@ fn sys_sched_getparam(pid: i32, param_ptr: u64) -> i64 {
     }
 
     let table = process_table();
-    let target_pid = if pid == 0 { table.current_pid() } else { pid as u32 };
+    let target_pid = if pid == 0 {
+        table.current_pid()
+    } else {
+        pid as u32
+    };
 
     // Validate process exists
     if table.get(target_pid).is_none() {
@@ -1853,7 +1876,11 @@ fn sys_sched_setaffinity(pid: i32, cpusetsize: usize, mask_ptr: u64) -> i64 {
     }
 
     let table = process_table();
-    let target_pid = if pid == 0 { table.current_pid() } else { pid as u32 };
+    let target_pid = if pid == 0 {
+        table.current_pid()
+    } else {
+        pid as u32
+    };
 
     // Validate process exists
     if table.get(target_pid).is_none() {
@@ -1910,7 +1937,11 @@ fn sys_sched_getaffinity(pid: i32, cpusetsize: usize, mask_ptr: u64) -> i64 {
     }
 
     let table = process_table();
-    let target_pid = if pid == 0 { table.current_pid() } else { pid as u32 };
+    let target_pid = if pid == 0 {
+        table.current_pid()
+    } else {
+        pid as u32
+    };
 
     // Validate process exists
     if table.get(target_pid).is_none() {
@@ -1960,7 +1991,11 @@ fn sys_sched_rr_get_interval(pid: i32, tp_ptr: u64) -> i64 {
     }
 
     let table = process_table();
-    let target_pid = if pid == 0 { table.current_pid() } else { pid as u32 };
+    let target_pid = if pid == 0 {
+        table.current_pid()
+    } else {
+        pid as u32
+    };
 
     // Validate process exists
     if table.get(target_pid).is_none() {

@@ -276,7 +276,8 @@ pub fn parse_config_file(content: &str) -> InterfaceConfig {
 
             match key_lower.as_str() {
                 "mode" => {
-                    let value_lower: String = value.chars().map(|c| c.to_ascii_lowercase()).collect();
+                    let value_lower: String =
+                        value.chars().map(|c| c.to_ascii_lowercase()).collect();
                     config.mode = match value_lower.as_str() {
                         "static" => ConfigMode::Static,
                         "dhcp" => ConfigMode::Dhcp,

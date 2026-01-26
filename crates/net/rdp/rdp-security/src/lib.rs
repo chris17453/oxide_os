@@ -8,22 +8,19 @@
 
 extern crate alloc;
 
-mod tls;
-mod record;
-mod keys;
 mod cert;
+mod keys;
+mod record;
+mod tls;
 
-pub use tls::{TlsSession, TlsState, TlsConfig};
-pub use record::{TlsRecord, RecordType};
+pub use cert::{Certificate, SelfSignedCert};
 pub use keys::KeyMaterial;
-pub use cert::{SelfSignedCert, Certificate};
+pub use record::{RecordType, TlsRecord};
+pub use tls::{TlsConfig, TlsSession, TlsState};
 
 use alloc::vec::Vec;
 use crypto::{
-    Aes256Gcm, AesKey,
-    X25519PublicKey, X25519SecretKey, SharedSecret,
-    sha256, hmac_sha256,
-    random,
+    Aes256Gcm, AesKey, SharedSecret, X25519PublicKey, X25519SecretKey, hmac_sha256, random, sha256,
 };
 use rdp_traits::{RdpError, RdpResult};
 
@@ -56,8 +53,8 @@ pub struct KeyExchangeResult {
 /// Perform X25519 key exchange
 pub fn key_exchange(client_public: &[u8]) -> RdpResult<KeyExchangeResult> {
     // Parse client's public key
-    let client_key = X25519PublicKey::from_bytes(client_public)
-        .map_err(|_| RdpError::CryptoError)?;
+    let client_key =
+        X25519PublicKey::from_bytes(client_public).map_err(|_| RdpError::CryptoError)?;
 
     // Generate ephemeral server key pair
     let server_secret = X25519SecretKey::generate(&random::random_bytes());
@@ -164,11 +161,7 @@ pub fn generate_random<const N: usize>() -> [u8; N] {
 }
 
 /// Compute finished verify data
-pub fn compute_verify_data(
-    master_secret: &[u8],
-    label: &[u8],
-    handshake_hash: &[u8],
-) -> [u8; 12] {
+pub fn compute_verify_data(master_secret: &[u8], label: &[u8], handshake_hash: &[u8]) -> [u8; 12] {
     let verify = tls_prf(master_secret, label, handshake_hash, 12);
     let mut result = [0u8; 12];
     result.copy_from_slice(&verify);

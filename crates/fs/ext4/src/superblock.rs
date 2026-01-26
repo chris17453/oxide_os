@@ -149,15 +149,18 @@ impl Ext4Superblock {
         let mut buf = [0u8; 1024];
 
         // Read blocks containing superblock (offset 1024, sector 2-3)
-        device.read(2, &mut buf[..512]).map_err(|_| Ext4Error::IoError)?;
-        device.read(3, &mut buf[512..]).map_err(|_| Ext4Error::IoError)?;
+        device
+            .read(2, &mut buf[..512])
+            .map_err(|_| Ext4Error::IoError)?;
+        device
+            .read(3, &mut buf[512..])
+            .map_err(|_| Ext4Error::IoError)?;
 
         // Superblock starts at offset 0 within our buffer (since we read from sector 2)
         // Actually wait - we need to read from offset 1024 which is sector 2 for 512-byte sectors
         // But our buffer starts at sector 2, so superblock is at the start
-        let sb: Ext4Superblock = unsafe {
-            core::ptr::read_unaligned(buf.as_ptr() as *const Ext4Superblock)
-        };
+        let sb: Ext4Superblock =
+            unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const Ext4Superblock) };
 
         // Validate magic
         if sb.s_magic != EXT4_MAGIC {
@@ -227,11 +230,7 @@ impl Ext4Superblock {
         // Block group descriptors start in the block after the superblock
         // For block size 1024, superblock is in block 1, so descriptors start at block 2
         // For larger blocks, superblock is in block 0, descriptors start at block 1
-        if self.block_size() == 1024 {
-            2
-        } else {
-            1
-        }
+        if self.block_size() == 1024 { 2 } else { 1 }
     }
 
     /// Validate superblock for required features

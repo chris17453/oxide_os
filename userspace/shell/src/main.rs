@@ -211,22 +211,26 @@ fn push_str(out: &mut [u8], offset: usize, s: &str) -> usize {
 }
 
 /// Print a C-style string without allocation
-unsafe fn prints_raw(ptr: *const i8) { unsafe {
-    let mut p = ptr;
-    while *p != 0 {
-        putchar(*p as u8);
-        p = p.add(1);
+unsafe fn prints_raw(ptr: *const i8) {
+    unsafe {
+        let mut p = ptr;
+        while *p != 0 {
+            putchar(*p as u8);
+            p = p.add(1);
+        }
     }
-}}
+}
 
 /// Convert C string pointer to &str
-unsafe fn cstr_to_str<'a>(ptr: *const i8) -> &'a str { unsafe {
-    let mut len = 0;
-    while *ptr.add(len) != 0 {
-        len += 1;
+unsafe fn cstr_to_str<'a>(ptr: *const i8) -> &'a str {
+    unsafe {
+        let mut len = 0;
+        while *ptr.add(len) != 0 {
+            len += 1;
+        }
+        core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr as *const u8, len))
     }
-    core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr as *const u8, len))
-}}
+}
 
 /// Expand leading ~ or ~/ using $HOME into the provided buffer and return &str
 fn expand_tilde_to_buf<'a>(input: &[u8], out: &'a mut [u8]) -> &'a str {
@@ -401,6 +405,9 @@ fn main() -> i32 {
 
     // Enable visible blinking cursor if terminal supports it
     prints("\x1b[?25h\x1b[?12h");
+
+    // Source system profile to set PATH and other environment variables
+    source_profile(b"/etc/profile\0");
 
     // Print welcome message
     printlns("OXIDE Shell (esh)");
@@ -1879,6 +1886,55 @@ fn builtin_test(cmd: &Command) -> i32 {
     2
 }
 
+/// Source a profile file silently (no error if file doesn't exist)
+fn source_profile(filename: &[u8]) {
+    let path = bytes_to_str(filename);
+    let fd = open2(path, O_RDONLY);
+    if fd < 0 {
+        return; // Silently ignore missing profile
+    }
+
+    // Read and execute file line by line
+    let mut buf = [0u8; 4096];
+    let mut line = [0u8; MAX_LINE];
+    let mut line_pos = 0;
+
+    loop {
+        let n = read(fd, &mut buf);
+        if n <= 0 {
+            break;
+        }
+
+        for i in 0..n as usize {
+            let c = buf[i];
+            if c == b'\n' {
+                line[line_pos] = 0;
+                if line_pos > 0 {
+                    let trimmed = trim(&line);
+                    if !trimmed.is_empty() && trimmed[0] != b'#' {
+                        execute_line(trimmed);
+                    }
+                }
+                line_pos = 0;
+            } else if line_pos < MAX_LINE - 1 {
+                line[line_pos] = c;
+                line_pos += 1;
+            }
+        }
+    }
+
+    // Handle last line without newline
+    if line_pos > 0 {
+        line[line_pos] = 0;
+        let trimmed = trim(&line);
+        if !trimmed.is_empty() && trimmed[0] != b'#' {
+            execute_line(trimmed);
+        }
+    }
+
+    close(fd);
+}
+
 /// source / . builtin - execute commands from file
 fn builtin_source(filename: &[u8]) -> i32 {
     let path = bytes_to_str(filename);
@@ -2703,23 +2759,67 @@ fn execute_external(cmd: &Command) {
         return;
     }
 
-    // Search in /bin
-    let mut path = [0u8; 128];
-    path[..5].copy_from_slice(b"/bin/");
-    let mut i = 0;
-    while i < 63 && arg[i] != 0 {
-        path[5 + i] = arg[i];
-        i += 1;
+    // Get command name length
+    let mut cmd_len = 0;
+    while cmd_len < arg.len() && arg[cmd_len] != 0 {
+        cmd_len += 1;
     }
-    path[5 + i] = 0;
 
-    let path_str = bytes_to_str(&path);
-    let ret = execv(path_str, argv_ptrs.as_ptr());
-    if ret < 0 {
-        eprints("esh: ");
-        print_bytes(arg);
-        eprintlns(": command not found");
+    // Get PATH environment variable
+    let path_env = getenv("PATH").unwrap_or("/bin:/usr/bin");
+    let path_bytes = path_env.as_bytes();
+
+    // Search each directory in PATH (colon-separated)
+    let mut start = 0;
+    let path_len = path_bytes.len();
+
+    while start < path_len {
+        // Find end of this path component (next colon or end)
+        let mut end = start;
+        while end < path_len && path_bytes[end] != b':' {
+            end += 1;
+        }
+
+        // Build full path: directory + "/" + command
+        let dir_len = end - start;
+        if dir_len > 0 && dir_len + cmd_len + 2 < 256 {
+            let mut full_path = [0u8; 256];
+
+            // Copy directory
+            full_path[..dir_len].copy_from_slice(&path_bytes[start..end]);
+
+            // Add trailing slash if needed
+            let mut pos = dir_len;
+            if dir_len > 0 && full_path[dir_len - 1] != b'/' {
+                full_path[pos] = b'/';
+                pos += 1;
+            }
+
+            // Copy command name
+            let mut i = 0;
+            while i < cmd_len {
+                full_path[pos + i] = arg[i];
+                i += 1;
+            }
+            full_path[pos + i] = 0;
+
+            let path_str = bytes_to_str(&full_path);
+
+            // Try to execute - if it succeeds, execv doesn't return
+            let ret = execv(path_str, argv_ptrs.as_ptr());
+            if ret >= 0 {
+                return;
+            }
+        }
+
+        // Move to next path component
+        start = end + 1;
     }
+
+    // None of the paths worked
+    eprints("esh: ");
+    print_bytes(arg);
+    eprintlns(": command not found");
 }
 
 /// Compare byte slices for equality

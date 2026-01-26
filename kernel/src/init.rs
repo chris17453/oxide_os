@@ -13,13 +13,13 @@ use core::ptr::addr_of_mut;
 use arch_traits::Arch;
 use arch_x86_64 as arch;
 use arch_x86_64::serial;
+use block::{BlockDevice, BlockDeviceInfo, BlockError, BlockResult};
 use boot_proto::{BootInfo, MemoryType as BootMemoryType};
 use devfs::DevFs;
 use elf::ElfExecutable;
 use mm_frame::MemoryRegion;
 use mm_paging::{phys_to_virt, read_cr3};
 use mm_traits::FrameAllocator as _;
-use block::{BlockDevice, BlockDeviceInfo, BlockError, BlockResult};
 use net::NetworkDevice;
 use os_core::VirtAddr;
 use proc::{Process, alloc_pid, process_table};
@@ -553,27 +553,16 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                 let dhcp_result = tcpip::acquire_lease(interface.clone());
                 match dhcp_result {
                     Ok(lease) => {
-                        let _ = writeln!(
-                            writer,
-                            "[NET] DHCP lease acquired: {}",
-                            lease.ip_addr
-                        );
-                        let _ = writeln!(
-                            writer,
-                            "[NET]   Netmask: {}",
-                            lease.subnet_mask
-                        );
+                        let _ = writeln!(writer, "[NET] DHCP lease acquired: {}", lease.ip_addr);
+                        let _ = writeln!(writer, "[NET]   Netmask: {}", lease.subnet_mask);
                         if let Some(gw) = lease.gateway {
                             let _ = writeln!(writer, "[NET]   Gateway: {}", gw);
                         }
                         for dns in &lease.dns_servers {
                             let _ = writeln!(writer, "[NET]   DNS: {}", dns);
                         }
-                        let _ = writeln!(
-                            writer,
-                            "[NET]   Lease time: {} seconds",
-                            lease.lease_time
-                        );
+                        let _ =
+                            writeln!(writer, "[NET]   Lease time: {} seconds", lease.lease_time);
                     }
                     Err(e) => {
                         let _ = writeln!(writer, "[NET] DHCP failed: {:?}, networkd will retry", e);
@@ -697,7 +686,8 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
                         // Check if partition contains ext4 filesystem
                         if ext4::is_ext4(&*partition_arc) {
-                            let _ = writeln!(writer, "[BLK]   {}: ext4 filesystem detected", part_name);
+                            let _ =
+                                writeln!(writer, "[BLK]   {}: ext4 filesystem detected", part_name);
 
                             if let Ok(ext4_info) = ext4::get_info(&*partition_arc) {
                                 let _ = writeln!(
@@ -737,7 +727,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         } else {
             // No GPT - check if whole disk is ext4 (raw filesystem)
             if ext4::is_ext4(&*device_arc) {
-                let _ = writeln!(writer, "[BLK] virtio{}: ext4 filesystem detected (no partition table)", idx);
+                let _ = writeln!(
+                    writer,
+                    "[BLK] virtio{}: ext4 filesystem detected (no partition table)",
+                    idx
+                );
 
                 if let Ok(ext4_info) = ext4::get_info(&*device_arc) {
                     let _ = writeln!(
@@ -750,7 +744,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                 // Use as root if no other candidate
                 if ext4_root_partition.is_none() {
                     ext4_root_partition = Some(device_arc.clone());
-                    let _ = writeln!(writer, "[BLK] virtio{}: Selected as root filesystem candidate", idx);
+                    let _ = writeln!(
+                        writer,
+                        "[BLK] virtio{}: Selected as root filesystem candidate",
+                        idx
+                    );
                 }
             }
         }
@@ -766,7 +764,10 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Try to use ext4 as root filesystem if it has /sbin/init
     let mut ext4_as_root = false;
     if let Some(ref ext4_device) = ext4_root_partition {
-        let _ = writeln!(writer, "[EXT4] Checking ext4 partition for root filesystem...");
+        let _ = writeln!(
+            writer,
+            "[EXT4] Checking ext4 partition for root filesystem..."
+        );
 
         match ext4::mount(ext4_device.clone(), false) {
             Ok(ext4_root) => {
@@ -778,7 +779,9 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                     let _ = writeln!(writer, "[EXT4] Using ext4 as root filesystem");
 
                     // Mount ext4 as root
-                    if let Err(e) = GLOBAL_VFS.mount(ext4_root.clone(), "/", MountFlags::empty(), "ext4") {
+                    if let Err(e) =
+                        GLOBAL_VFS.mount(ext4_root.clone(), "/", MountFlags::empty(), "ext4")
+                    {
                         let _ = writeln!(writer, "[EXT4] Failed to mount ext4 as root: {:?}", e);
                     } else {
                         ext4_as_root = true;
@@ -797,7 +800,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                                 offset += 1;
                             }
                             if count > 10 {
-                                let _ = writeln!(writer, "[EXT4]   ... and {} more entries", count - 10);
+                                let _ = writeln!(
+                                    writer,
+                                    "[EXT4]   ... and {} more entries",
+                                    count - 10
+                                );
                             }
                         }
                     }
@@ -846,7 +853,12 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         };
 
         // Mount initramfs as root filesystem
-        if let Err(e) = GLOBAL_VFS.mount(initramfs_root.clone(), "/", MountFlags::empty(), "initramfs") {
+        if let Err(e) = GLOBAL_VFS.mount(
+            initramfs_root.clone(),
+            "/",
+            MountFlags::empty(),
+            "initramfs",
+        ) {
             let _ = writeln!(writer, "[INITRAMFS] Failed to mount initramfs: {:?}", e);
             arch::X86_64::halt();
         }
@@ -857,7 +869,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         for dir in &writable_dirs {
             let tmpfs = TmpDir::new_root();
             if let Err(e) = GLOBAL_VFS.mount(tmpfs, dir, MountFlags::empty(), "tmpfs") {
-                let _ = writeln!(writer, "[VFS] Note: Could not mount tmpfs at {}: {:?}", dir, e);
+                let _ = writeln!(
+                    writer,
+                    "[VFS] Note: Could not mount tmpfs at {}: {:?}",
+                    dir, e
+                );
             } else {
                 let _ = writeln!(writer, "[VFS] Mounted tmpfs at {}", dir);
             }
@@ -878,7 +894,9 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                     let _ = mnt.mkdir("root", vfs::Mode::DEFAULT_DIR);
                 }
 
-                if let Err(e) = GLOBAL_VFS.mount(ext4_root, "/mnt/root", MountFlags::empty(), "ext4") {
+                if let Err(e) =
+                    GLOBAL_VFS.mount(ext4_root, "/mnt/root", MountFlags::empty(), "ext4")
+                {
                     let _ = writeln!(writer, "[EXT4] Failed to mount ext4 at /mnt/root: {:?}", e);
                 } else {
                     let _ = writeln!(writer, "[EXT4] Mounted ext4 filesystem at /mnt/root");
@@ -886,7 +904,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             }
         }
     }
-
 
     // Load /sbin/init
     let init_path = "/sbin/init";
@@ -1209,7 +1226,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(writer, "[USER] Adding init to scheduler...");
     scheduler::add_process(init_pid);
     let _ = writeln!(writer, "[USER] Calling sched::switch_to...");
-    sched::switch_to(init_pid);  // Mark init as the currently running task
+    sched::switch_to(init_pid); // Mark init as the currently running task
 
     let _ = writeln!(writer, "[USER] Init process registered");
 

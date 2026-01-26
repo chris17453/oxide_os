@@ -10,8 +10,8 @@
 //! - Disconnect Request (DR) - Connection termination
 
 use crate::{Cursor, Writer};
-use rdp_traits::{protocol, RdpError, RdpResult};
 use alloc::vec::Vec;
+use rdp_traits::{RdpError, RdpResult, protocol};
 
 /// X.224 PDU type codes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -98,13 +98,10 @@ impl Extent {
 
 /// Parse extent header from inode i_block field
 pub fn parse_header(i_block: &[u32; 15]) -> Ext4Result<ExtentHeader> {
-    let bytes = unsafe {
-        core::slice::from_raw_parts(i_block.as_ptr() as *const u8, 60)
-    };
+    let bytes = unsafe { core::slice::from_raw_parts(i_block.as_ptr() as *const u8, 60) };
 
-    let header: ExtentHeader = unsafe {
-        core::ptr::read_unaligned(bytes.as_ptr() as *const ExtentHeader)
-    };
+    let header: ExtentHeader =
+        unsafe { core::ptr::read_unaligned(bytes.as_ptr() as *const ExtentHeader) };
 
     if header.eh_magic != EXT4_EXT_MAGIC {
         return Err(Ext4Error::InvalidExtent);
@@ -119,9 +116,7 @@ pub fn parse_header(i_block: &[u32; 15]) -> Ext4Result<ExtentHeader> {
 
 /// Get extents from inode i_block (depth 0 - leaf node in inode)
 pub fn get_extents_from_inode(i_block: &[u32; 15]) -> Ext4Result<(&ExtentHeader, &[Extent])> {
-    let bytes = unsafe {
-        core::slice::from_raw_parts(i_block.as_ptr() as *const u8, 60)
-    };
+    let bytes = unsafe { core::slice::from_raw_parts(i_block.as_ptr() as *const u8, 60) };
 
     let header: &ExtentHeader = unsafe { &*(bytes.as_ptr() as *const ExtentHeader) };
 
@@ -139,10 +134,7 @@ pub fn get_extents_from_inode(i_block: &[u32; 15]) -> Ext4Result<(&ExtentHeader,
     }
 
     let extents = unsafe {
-        core::slice::from_raw_parts(
-            bytes[extent_start..].as_ptr() as *const Extent,
-            num_extents,
-        )
+        core::slice::from_raw_parts(bytes[extent_start..].as_ptr() as *const Extent, num_extents)
     };
 
     Ok((header, extents))
@@ -150,9 +142,7 @@ pub fn get_extents_from_inode(i_block: &[u32; 15]) -> Ext4Result<(&ExtentHeader,
 
 /// Get extent indexes from inode i_block (depth > 0)
 pub fn get_indexes_from_inode(i_block: &[u32; 15]) -> Ext4Result<(&ExtentHeader, &[ExtentIndex])> {
-    let bytes = unsafe {
-        core::slice::from_raw_parts(i_block.as_ptr() as *const u8, 60)
-    };
+    let bytes = unsafe { core::slice::from_raw_parts(i_block.as_ptr() as *const u8, 60) };
 
     let header: &ExtentHeader = unsafe { &*(bytes.as_ptr() as *const ExtentHeader) };
 
@@ -246,9 +236,8 @@ fn traverse_extent_tree(
     read_block(device, sb, next_block, &mut buf)?;
 
     // Parse header
-    let header: ExtentHeader = unsafe {
-        core::ptr::read_unaligned(buf.as_ptr() as *const ExtentHeader)
-    };
+    let header: ExtentHeader =
+        unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const ExtentHeader) };
 
     if header.eh_magic != EXT4_EXT_MAGIC {
         return Err(Ext4Error::InvalidExtent);
@@ -258,10 +247,7 @@ fn traverse_extent_tree(
         // Leaf node - contains extents
         let num_extents = header.eh_entries as usize;
         let extents = unsafe {
-            core::slice::from_raw_parts(
-                buf[12..].as_ptr() as *const Extent,
-                num_extents,
-            )
+            core::slice::from_raw_parts(buf[12..].as_ptr() as *const Extent, num_extents)
         };
 
         for extent in extents {
@@ -280,10 +266,7 @@ fn traverse_extent_tree(
     // Another index level - recurse
     let num_indexes = header.eh_entries as usize;
     let indexes = unsafe {
-        core::slice::from_raw_parts(
-            buf[12..].as_ptr() as *const ExtentIndex,
-            num_indexes,
-        )
+        core::slice::from_raw_parts(buf[12..].as_ptr() as *const ExtentIndex, num_indexes)
     };
 
     // Find the index entry
@@ -297,7 +280,13 @@ fn traverse_extent_tree(
     }
 
     let index = target_index.ok_or(Ext4Error::InvalidExtent)?;
-    traverse_extent_tree_from_block(device, sb, index.leaf_block(), header.eh_depth - 1, logical_block)
+    traverse_extent_tree_from_block(
+        device,
+        sb,
+        index.leaf_block(),
+        header.eh_depth - 1,
+        logical_block,
+    )
 }
 
 /// Continue traversing extent tree from a block
@@ -312,9 +301,8 @@ fn traverse_extent_tree_from_block(
     let mut buf = alloc::vec![0u8; block_size as usize];
     read_block(device, sb, block, &mut buf)?;
 
-    let header: ExtentHeader = unsafe {
-        core::ptr::read_unaligned(buf.as_ptr() as *const ExtentHeader)
-    };
+    let header: ExtentHeader =
+        unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const ExtentHeader) };
 
     if header.eh_magic != EXT4_EXT_MAGIC {
         return Err(Ext4Error::InvalidExtent);
@@ -324,10 +312,7 @@ fn traverse_extent_tree_from_block(
         // Leaf node
         let num_extents = header.eh_entries as usize;
         let extents = unsafe {
-            core::slice::from_raw_parts(
-                buf[12..].as_ptr() as *const Extent,
-                num_extents,
-            )
+            core::slice::from_raw_parts(buf[12..].as_ptr() as *const Extent, num_extents)
         };
 
         for extent in extents {
@@ -345,10 +330,7 @@ fn traverse_extent_tree_from_block(
     // Index node
     let num_indexes = header.eh_entries as usize;
     let indexes = unsafe {
-        core::slice::from_raw_parts(
-            buf[12..].as_ptr() as *const ExtentIndex,
-            num_indexes,
-        )
+        core::slice::from_raw_parts(buf[12..].as_ptr() as *const ExtentIndex, num_indexes)
     };
 
     let mut target_index: Option<&ExtentIndex> = None;
@@ -415,17 +397,15 @@ pub fn insert_extent(
 
     // Find insertion point (keep extents sorted by logical block)
     let mut insert_pos = current_entries;
-    let i_block_bytes = unsafe {
-        core::slice::from_raw_parts_mut(inode.i_block.as_mut_ptr() as *mut u8, 60)
-    };
+    let i_block_bytes =
+        unsafe { core::slice::from_raw_parts_mut(inode.i_block.as_mut_ptr() as *mut u8, 60) };
 
     // Read existing extents
     let extents_start = 12; // After header
     for i in 0..current_entries {
         let offset = extents_start + i * 12;
-        let extent: Extent = unsafe {
-            core::ptr::read_unaligned(i_block_bytes[offset..].as_ptr() as *const Extent)
-        };
+        let extent: Extent =
+            unsafe { core::ptr::read_unaligned(i_block_bytes[offset..].as_ptr() as *const Extent) };
 
         if logical_block < extent.ee_block {
             insert_pos = i;
@@ -442,17 +422,15 @@ pub fn insert_extent(
             core::ptr::read_unaligned(i_block_bytes[src_offset..].as_ptr() as *const Extent)
         };
 
-        let extent_bytes = unsafe {
-            core::slice::from_raw_parts(&extent as *const Extent as *const u8, 12)
-        };
+        let extent_bytes =
+            unsafe { core::slice::from_raw_parts(&extent as *const Extent as *const u8, 12) };
         i_block_bytes[dst_offset..dst_offset + 12].copy_from_slice(extent_bytes);
     }
 
     // Write the new extent
     let offset = extents_start + insert_pos * 12;
-    let extent_bytes = unsafe {
-        core::slice::from_raw_parts(&new_extent as *const Extent as *const u8, 12)
-    };
+    let extent_bytes =
+        unsafe { core::slice::from_raw_parts(&new_extent as *const Extent as *const u8, 12) };
     i_block_bytes[offset..offset + 12].copy_from_slice(extent_bytes);
 
     // Update header entry count
@@ -464,9 +442,8 @@ pub fn insert_extent(
         eh_generation: header.eh_generation,
     };
 
-    let header_bytes = unsafe {
-        core::slice::from_raw_parts(&new_header as *const ExtentHeader as *const u8, 12)
-    };
+    let header_bytes =
+        unsafe { core::slice::from_raw_parts(&new_header as *const ExtentHeader as *const u8, 12) };
     i_block_bytes[..12].copy_from_slice(header_bytes);
 
     Ok(len)
@@ -491,17 +468,15 @@ pub fn try_extend_extent(
     }
 
     let current_entries = header.eh_entries as usize;
-    let i_block_bytes = unsafe {
-        core::slice::from_raw_parts_mut(inode.i_block.as_mut_ptr() as *mut u8, 60)
-    };
+    let i_block_bytes =
+        unsafe { core::slice::from_raw_parts_mut(inode.i_block.as_mut_ptr() as *mut u8, 60) };
 
     // Check each extent to see if we can extend it
     let extents_start = 12;
     for i in 0..current_entries {
         let offset = extents_start + i * 12;
-        let mut extent: Extent = unsafe {
-            core::ptr::read_unaligned(i_block_bytes[offset..].as_ptr() as *const Extent)
-        };
+        let mut extent: Extent =
+            unsafe { core::ptr::read_unaligned(i_block_bytes[offset..].as_ptr() as *const Extent) };
 
         // Check if this extent ends right before our logical block
         let extent_end_logical = extent.ee_block + extent.len();

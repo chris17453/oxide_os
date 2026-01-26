@@ -173,8 +173,7 @@ fn read_interface_config(iface_name: &str) -> Option<InterfaceConfig> {
     path_buf[..prefix.len()].copy_from_slice(prefix);
     path_buf[prefix.len()] = b'/';
     path_buf[prefix.len() + 1..prefix.len() + 1 + len].copy_from_slice(&name_bytes[..len]);
-    path_buf[prefix.len() + 1 + len..prefix.len() + 1 + len + suffix.len()]
-        .copy_from_slice(suffix);
+    path_buf[prefix.len() + 1 + len..prefix.len() + 1 + len + suffix.len()].copy_from_slice(suffix);
     let path_len = prefix.len() + 1 + len + suffix.len();
 
     let path_str = core::str::from_utf8(&path_buf[..path_len]).ok()?;

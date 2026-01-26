@@ -274,11 +274,7 @@ fn parse_port(s: &str) -> Option<u16> {
         port = port.checked_mul(10)?;
         port = port.checked_add((c as u16) - ('0' as u16))?;
     }
-    if port == 0 {
-        None
-    } else {
-        Some(port)
-    }
+    if port == 0 { None } else { Some(port) }
 }
 
 /// Read password from user

@@ -28,6 +28,7 @@ const SCREENSHOT_PATH = join(PROJECT_ROOT, "target/screenshot.ppm");
 const MONITOR_SOCKET = join(PROJECT_ROOT, "target/qemu-monitor.sock");
 const PID_FILE = join(PROJECT_ROOT, "target/qemu.pid");
 const BOOT_IMAGE = join(PROJECT_ROOT, "target/boot.img");
+const ROOTFS_IMAGE = join(PROJECT_ROOT, "target/oxide-disk.img");
 const OVMF_VARS = join(PROJECT_ROOT, "target/OVMF_VARS.fd");
 
 // Detect environment (Fedora vs RHEL)
@@ -159,9 +160,17 @@ async function startQemu(options = {}) {
   const mode = options.mode || detectEnvironment();
   currentMode = mode;
 
+  // Determine if we should use rootfs (3-partition ext4) or legacy (single ESP)
+  const useRootfs = options.rootfs !== false;
+
   // Build first unless explicitly disabled (ensures fresh code)
   if (options.build !== false) {
-    const buildTarget = mode === "rhel" ? "boot-image" : "boot-quick";
+    let buildTarget;
+    if (useRootfs) {
+      buildTarget = "create-rootfs";
+    } else {
+      buildTarget = mode === "rhel" ? "boot-image" : "boot-quick";
+    }
     try {
       await build(buildTarget);
     } catch (err) {
@@ -185,17 +194,21 @@ async function startQemu(options = {}) {
 
   let args;
 
-  if (mode === "rhel") {
-    // RHEL mode: Use disk image (qemu-kvm doesn't support fat: protocol)
-    // First ensure boot.img exists
-    if (!existsSync(BOOT_IMAGE)) {
+  // Determine which disk image to use
+  const diskImage = useRootfs ? ROOTFS_IMAGE : BOOT_IMAGE;
+
+  if (useRootfs || mode === "rhel") {
+    // Use disk image (rootfs or RHEL mode)
+    const imageToCheck = useRootfs ? ROOTFS_IMAGE : BOOT_IMAGE;
+    if (!existsSync(imageToCheck)) {
+      const target = useRootfs ? "create-rootfs" : "boot-image";
       return {
         success: false,
-        error: "Boot image not found. Run 'make boot-image' first for RHEL mode.",
+        error: `Disk image not found. Run 'make ${target}' first.`,
       };
     }
 
-    // Copy OVMF_VARS for this session
+    // Copy OVMF_VARS for this session (needed for RHEL split OVMF)
     if (ovmf.vars && existsSync(ovmf.vars)) {
       try {
         execSync(`cp "${ovmf.vars}" "${OVMF_VARS}"`, { stdio: "pipe" });
@@ -204,22 +217,38 @@ async function startQemu(options = {}) {
       }
     }
 
-    args = [
-      "-machine", "q35,accel=kvm:tcg",
-      "-cpu", "max",
-      "-smp", "2",
-      "-m", options.memory || "256M",
-      "-drive", `if=pflash,format=raw,readonly=on,file=${ovmf.code}`,
-      "-drive", `if=pflash,format=raw,file=${OVMF_VARS}`,
-      "-drive", `file=${BOOT_IMAGE},format=raw,if=none,id=bootdisk`,
-      "-device", "ide-hd,drive=bootdisk,bus=ide.0",
-      "-serial", `file:${SERIAL_LOG}`,
-      "-monitor", `unix:${MONITOR_SOCKET},server,nowait`,
-      "-display", "none",
-      "-no-reboot",
-    ];
+    if (mode === "rhel") {
+      args = [
+        "-machine", "q35,accel=kvm:tcg",
+        "-cpu", "max",
+        "-smp", "2",
+        "-m", options.memory || "256M",
+        "-drive", `if=pflash,format=raw,readonly=on,file=${ovmf.code}`,
+        "-drive", `if=pflash,format=raw,file=${OVMF_VARS}`,
+        "-drive", `file=${diskImage},format=raw,if=none,id=bootdisk`,
+        "-device", "ide-hd,drive=bootdisk,bus=ide.0",
+        "-serial", `file:${SERIAL_LOG}`,
+        "-monitor", `unix:${MONITOR_SOCKET},server,nowait`,
+        "-display", "none",
+        "-no-reboot",
+      ];
+    } else {
+      // Fedora with disk image
+      args = [
+        "-machine", "q35",
+        "-cpu", "qemu64,+smap,+smep",
+        "-m", options.memory || "256M",
+        "-bios", ovmf.code,
+        "-drive", `file=${diskImage},format=raw,if=none,id=bootdisk`,
+        "-device", "ide-hd,drive=bootdisk",
+        "-serial", `file:${SERIAL_LOG}`,
+        "-monitor", `unix:${MONITOR_SOCKET},server,nowait`,
+        "-display", "none",
+        "-no-reboot",
+      ];
+    }
   } else {
-    // Fedora mode: Use fat: protocol
+    // Legacy Fedora mode: Use fat: protocol (for backward compatibility)
     args = [
       "-machine", "q35",
       "-cpu", "qemu64,+smap,+smep",
@@ -262,7 +291,8 @@ async function startQemu(options = {}) {
     success: true,
     pid: qemuProcess.pid,
     mode: mode,
-    message: `QEMU started in ${mode} mode`,
+    rootfs: useRootfs,
+    message: `QEMU started in ${mode} mode${useRootfs ? " with ext4 root filesystem" : ""}`,
   };
 }
 
@@ -329,6 +359,7 @@ function getStatus() {
     detectedEnvironment: detectedMode,
     serialLogExists: existsSync(SERIAL_LOG),
     bootImageExists: existsSync(BOOT_IMAGE),
+    rootfsImageExists: existsSync(ROOTFS_IMAGE),
   };
 }
 
@@ -472,8 +503,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           mode: {
             type: "string",
-            description: "QEMU mode: 'fedora' (qemu-system-x86_64 with fat:) or 'rhel' (qemu-kvm with disk image). Auto-detected if not specified.",
+            description: "QEMU mode: 'fedora' (qemu-system-x86_64) or 'rhel' (qemu-kvm). Auto-detected if not specified.",
             enum: ["fedora", "rhel"],
+          },
+          rootfs: {
+            type: "boolean",
+            description: "Use ext4 root filesystem (default: true). Set false to use legacy initramfs-only boot.",
+            default: true,
           },
           build: {
             type: "boolean",

@@ -6,7 +6,7 @@ use alloc::vec;
 use block::BlockDevice;
 
 use crate::error::{Ext4Error, Ext4Result};
-use crate::group_desc::{read_block, write_block, BlockGroupDesc, BlockGroupTable};
+use crate::group_desc::{BlockGroupDesc, BlockGroupTable, read_block, write_block};
 use crate::superblock::Ext4Superblock;
 
 /// Block bitmap operations
@@ -51,7 +51,9 @@ impl BlockBitmap {
             return Ok(());
         }
 
-        let desc = group_table.get(self.group).ok_or(Ext4Error::InvalidGroupDesc)?;
+        let desc = group_table
+            .get(self.group)
+            .ok_or(Ext4Error::InvalidGroupDesc)?;
         write_block(device, sb, desc.block_bitmap, &self.data)?;
         Ok(())
     }
@@ -179,7 +181,9 @@ impl InodeBitmap {
             return Ok(());
         }
 
-        let desc = group_table.get(self.group).ok_or(Ext4Error::InvalidGroupDesc)?;
+        let desc = group_table
+            .get(self.group)
+            .ok_or(Ext4Error::InvalidGroupDesc)?;
         write_block(device, sb, desc.inode_bitmap, &self.data)?;
         Ok(())
     }

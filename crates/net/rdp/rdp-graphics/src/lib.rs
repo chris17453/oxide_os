@@ -15,7 +15,7 @@ mod compress;
 mod convert;
 
 pub use capture::FramebufferCaptureProvider;
-pub use compress::{rle_compress, RleCompressor};
+pub use compress::{RleCompressor, rle_compress};
 pub use convert::PixelConverter;
 
 use alloc::sync::Arc;
@@ -78,10 +78,7 @@ pub struct GraphicsEncoder {
 
 impl GraphicsEncoder {
     /// Create a new graphics encoder
-    pub fn new(
-        capture: Arc<Mutex<dyn ScreenCaptureProvider>>,
-        config: GraphicsConfig,
-    ) -> Self {
+    pub fn new(capture: Arc<Mutex<dyn ScreenCaptureProvider>>, config: GraphicsConfig) -> Self {
         let (width, height) = capture.lock().dimensions();
         let format = capture.lock().pixel_format();
         let stride = capture.lock().stride();
@@ -202,10 +199,7 @@ impl GraphicsEncoder {
     }
 
     /// Encode dirty regions as bitmap update
-    pub fn encode_bitmap_update(
-        &mut self,
-        regions: &[DirtyRegion],
-    ) -> RdpResult<BitmapUpdate> {
+    pub fn encode_bitmap_update(&mut self, regions: &[DirtyRegion]) -> RdpResult<BitmapUpdate> {
         let mut rectangles = Vec::with_capacity(regions.len());
         let stride = self.capture.lock().stride();
         let bpp = self.source_format.bytes_per_pixel();
@@ -229,7 +223,8 @@ impl GraphicsEncoder {
         let target_bytes = target_bpp / 8;
 
         // Extract and convert region data
-        let mut converted = Vec::with_capacity((region.width * region.height * target_bytes) as usize);
+        let mut converted =
+            Vec::with_capacity((region.width * region.height * target_bytes) as usize);
 
         for row in 0..region.height {
             let src_offset = ((region.y + row) * stride + region.x * source_bpp) as usize;
@@ -246,9 +241,18 @@ impl GraphicsEncoder {
 
         // Optionally compress
         let (data, flags) = if self.config.compression_enabled {
-            let compressed = self.compressor.compress(&converted, region.width, region.height, target_bpp as u16);
+            let compressed = self.compressor.compress(
+                &converted,
+                region.width,
+                region.height,
+                target_bpp as u16,
+            );
             if compressed.len() < converted.len() {
-                (compressed, BitmapRectangle::BITMAP_COMPRESSION | BitmapRectangle::NO_BITMAP_COMPRESSION_HDR)
+                (
+                    compressed,
+                    BitmapRectangle::BITMAP_COMPRESSION
+                        | BitmapRectangle::NO_BITMAP_COMPRESSION_HDR,
+                )
             } else {
                 (converted, BitmapRectangle::NO_BITMAP_COMPRESSION_HDR)
             }

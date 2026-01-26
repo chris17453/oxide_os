@@ -2,7 +2,7 @@
 
 use alloc::string::String;
 use alloc::sync::Arc;
-use rdp_graphics::{create_capture_provider, GraphicsConfig, GraphicsEncoder};
+use rdp_graphics::{GraphicsConfig, GraphicsEncoder, create_capture_provider};
 use rdp_input::RdpInputHandler;
 use rdp_security::{SelfSignedCert, TlsConfig};
 use rdp_traits::{RdpError, RdpResult, ScreenCaptureProvider, SessionId};

@@ -73,8 +73,8 @@ struct ProcInfo {
     state: u8,
     name: [u8; 64],
     name_len: usize,
-    is_daemon: bool,    // Kernel thread or daemon service
-    is_service: bool,   // Registered service from /etc/services.d
+    is_daemon: bool,  // Kernel thread or daemon service
+    is_service: bool, // Registered service from /etc/services.d
 }
 
 impl ProcInfo {

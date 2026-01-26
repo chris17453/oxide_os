@@ -270,8 +270,11 @@ impl Vmcs {
 
         // Host RSP/RIP will be set at VM entry
         vmwrite(VmcsField::HostRsp as u32, 0).map_err(|_| VmmError::VmcsError)?;
-        vmwrite(VmcsField::HostRip as u32, vmexit_handler as *const () as u64)
-            .map_err(|_| VmmError::VmcsError)?;
+        vmwrite(
+            VmcsField::HostRip as u32,
+            vmexit_handler as *const () as u64,
+        )
+        .map_err(|_| VmmError::VmcsError)?;
 
         // Host FS/GS base
         let fs_base = rdmsr(0xC0000100);

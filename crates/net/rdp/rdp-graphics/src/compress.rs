@@ -221,7 +221,8 @@ impl RleCompressor {
         // Raw pixel data
         let start_offset = start * bpp;
         let end_offset = start_offset + len * bpp;
-        self.output.extend_from_slice(&row[start_offset..end_offset]);
+        self.output
+            .extend_from_slice(&row[start_offset..end_offset]);
     }
 }
 

@@ -947,8 +947,8 @@ pub fn sys_mount(
     fstype_ptr: u64,
     fstype_len: usize,
 ) -> i64 {
-    use crate::errno;
     use crate::SYSCALL_CONTEXT;
+    use crate::errno;
     use core::ptr::addr_of;
 
     // Copy source path (may be null/empty for some filesystems like tmpfs)
@@ -997,8 +997,8 @@ pub fn sys_mount(
 /// # Returns
 /// 0 on success, negative errno on error
 pub fn sys_umount(target_ptr: u64, target_len: usize, flags: u32) -> i64 {
-    use crate::errno;
     use crate::SYSCALL_CONTEXT;
+    use crate::errno;
     use core::ptr::addr_of;
 
     // Copy target path

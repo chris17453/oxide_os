@@ -22,11 +22,10 @@ use vfs::{VnodeType, mount::GLOBAL_VFS};
 #[allow(unused_imports)]
 use crate::debug_fork;
 use crate::globals::{
-    CHILD_DONE, KERNEL_PML4, PARENT_CONTEXT, ParentContext, USER_EXIT_STATUS,
-    USER_EXITED,
+    CHILD_DONE, KERNEL_PML4, PARENT_CONTEXT, ParentContext, USER_EXIT_STATUS, USER_EXITED,
 };
 use crate::memory::FrameAllocatorWrapper;
-use crate::scheduler::{wake_parent, add_process};
+use crate::scheduler::{add_process, wake_parent};
 use sched::TaskContext;
 
 /// User exit function
@@ -231,220 +230,189 @@ pub fn user_exit(status: i32) -> ! {
     // Must actively switch to another process
     {
         let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[EXIT] Looking for next process (parent={})...", parent_pid);
+        let _ = writeln!(
+            writer,
+            "[EXIT] Looking for next process (parent={})...",
+            parent_pid
+        );
     }
 
     // Remove exiting process from scheduler
     crate::scheduler::remove_process(current_pid);
 
-    loop {
-        // Prioritize switching to the parent if it's ready (it was just woken)
-        let next_pid = if parent_pid > 0 {
-            if let Some(parent) = table.get(parent_pid) {
-                let state = parent.lock().state();
-                if state == proc_traits::ProcessState::Ready
-                    || state == proc_traits::ProcessState::Running {
-                    Some(parent_pid)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+    let prefer_parent = if parent_pid > 0 {
+        matches!(
+            sched::get_task_state(parent_pid),
+            Some(state)
+                if state == TaskState::TASK_RUNNING
+                    || state == TaskState::TASK_INTERRUPTIBLE
+                    || state == TaskState::TASK_UNINTERRUPTIBLE
+        )
+    } else {
+        false
+    };
 
-        // Fall back to finding any ready process if parent isn't ready
-        let next_pid = next_pid.or_else(|| {
-            let all_pids = table.all_pids();
-            all_pids.iter().find_map(|&pid| {
-                if pid == current_pid {
-                    return None;
-                }
-                table.get(pid).and_then(|proc_arc| {
-                    let proc = proc_arc.lock();
-                    if proc.state() == proc_traits::ProcessState::Ready
-                        || proc.state() == proc_traits::ProcessState::Running
-                    {
-                        Some(pid)
-                    } else {
-                        None
-                    }
-                })
-            })
-        });
-
-        let next_pid = match next_pid {
+    let next_pid = if prefer_parent {
+        sched::switch_to(parent_pid);
+        parent_pid
+    } else {
+        match sched::pick_next_task() {
             Some(pid) => pid,
             None => {
-                // No other processes - halt the system
-                {
-                    let mut writer = serial::SerialWriter;
-                    let _ = writeln!(writer, "[EXIT] No ready processes! System halting.");
-                }
+                let mut writer = serial::SerialWriter;
+                let _ = writeln!(writer, "[EXIT] Scheduler has no runnable tasks! Halting.");
                 arch::X86_64::halt();
             }
-        };
+        }
+    };
 
-        // Get next process info from the SCHEDULER (authoritative source of context)
-        // The scheduler's Task.context is kept up-to-date by:
-        // - scheduler_tick() on timer preemption
-        // - kernel_yield() on voluntary yield
-        // - kernel_fork() when saving parent context
-        // Process.context is only set at fork() time and becomes stale!
-        let (task_ctx, next_pml4, kernel_stack_top) = match sched::get_task_switch_info(next_pid) {
-            Some((ctx, pml4, kstack, kstack_size)) => {
-                let ks_virt = phys_to_virt(kstack);
-                (ctx, pml4, ks_virt.as_u64() + kstack_size as u64)
-            }
-            None => {
-                // Task not in scheduler - skip to next
-                let mut writer = serial::SerialWriter;
-                let _ = writeln!(writer, "[EXIT] PID {} not in scheduler, skipping", next_pid);
-                continue;
-            }
-        };
-
-        // Convert TaskContext to ProcessContext (identical layout)
-        let next_ctx = ProcessContext {
-            rip: task_ctx.rip,
-            rsp: task_ctx.rsp,
-            rflags: task_ctx.rflags,
-            rax: task_ctx.rax,
-            rbx: task_ctx.rbx,
-            rcx: task_ctx.rcx,
-            rdx: task_ctx.rdx,
-            rsi: task_ctx.rsi,
-            rdi: task_ctx.rdi,
-            rbp: task_ctx.rbp,
-            r8: task_ctx.r8,
-            r9: task_ctx.r9,
-            r10: task_ctx.r10,
-            r11: task_ctx.r11,
-            r12: task_ctx.r12,
-            r13: task_ctx.r13,
-            r14: task_ctx.r14,
-            r15: task_ctx.r15,
-            cs: task_ctx.cs,
-            ss: task_ctx.ss,
-        };
-
-        // Debug: print the context we're about to restore
-        {
+    let (task_ctx, next_pml4, kernel_stack_top) = match sched::get_task_switch_info(next_pid) {
+        Some((ctx, pml4, kstack, kstack_size)) => {
+            let ks_virt = phys_to_virt(kstack);
+            (ctx, pml4, ks_virt.as_u64() + kstack_size as u64)
+        }
+        None => {
             let mut writer = serial::SerialWriter;
-            let _ = writeln!(writer, "[EXIT] Switching to PID {}", next_pid);
-            let _ = writeln!(writer, "[EXIT] Context: rip={:#x} rsp={:#x} cs={:#x} ss={:#x}",
-                next_ctx.rip, next_ctx.rsp, next_ctx.cs, next_ctx.ss);
+            let _ = writeln!(
+                writer,
+                "[EXIT] PID {} missing from scheduler after pick_next_task(); halting",
+                next_pid
+            );
+            arch::X86_64::halt();
         }
+    };
 
-        // Switch to next process
-        table.set_current_pid(next_pid);
+    let next_ctx = ProcessContext {
+        rip: task_ctx.rip,
+        rsp: task_ctx.rsp,
+        rflags: task_ctx.rflags,
+        rax: task_ctx.rax,
+        rbx: task_ctx.rbx,
+        rcx: task_ctx.rcx,
+        rdx: task_ctx.rdx,
+        rsi: task_ctx.rsi,
+        rdi: task_ctx.rdi,
+        rbp: task_ctx.rbp,
+        r8: task_ctx.r8,
+        r9: task_ctx.r9,
+        r10: task_ctx.r10,
+        r11: task_ctx.r11,
+        r12: task_ctx.r12,
+        r13: task_ctx.r13,
+        r14: task_ctx.r14,
+        r15: task_ctx.r15,
+        cs: task_ctx.cs,
+        ss: task_ctx.ss,
+    };
 
-        // Update kernel stack pointers
-        unsafe {
-            arch::syscall::set_kernel_stack(kernel_stack_top);
-        }
-        arch::gdt::set_kernel_stack(kernel_stack_top);
+    {
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[EXIT] Switching to PID {}", next_pid);
+        let _ = writeln!(
+            writer,
+            "[EXIT] Context: rip={:#x} rsp={:#x} cs={:#x} ss={:#x}",
+            next_ctx.rip, next_ctx.rsp, next_ctx.cs, next_ctx.ss
+        );
+    }
 
-        // Use same context switch mechanism as kernel_yield
-        static mut EXIT_CTX: ProcessContext = ProcessContext {
-            rip: 0,
-            rsp: 0,
-            rflags: 0,
-            rax: 0,
-            rbx: 0,
-            rcx: 0,
-            rdx: 0,
-            rsi: 0,
-            rdi: 0,
-            rbp: 0,
-            r8: 0,
-            r9: 0,
-            r10: 0,
-            r11: 0,
-            r12: 0,
-            r13: 0,
-            r14: 0,
-            r15: 0,
-            cs: 0,
-            ss: 0,
-        };
+    table.set_current_pid(next_pid);
+    if let Some(proc_arc) = table.get(next_pid) {
+        proc_arc
+            .lock()
+            .set_state(proc_traits::ProcessState::Running);
+    }
 
-        unsafe {
-            *addr_of_mut!(EXIT_CTX) = next_ctx.clone();
+    unsafe {
+        arch::syscall::set_kernel_stack(kernel_stack_top);
+    }
+    arch::gdt::set_kernel_stack(kernel_stack_top);
 
-            // Switch page tables
-            core::arch::asm!("mov cr3, {}", in(reg) next_pml4.as_u64());
+    static mut EXIT_CTX: ProcessContext = ProcessContext {
+        rip: 0,
+        rsp: 0,
+        rflags: 0,
+        rax: 0,
+        rbx: 0,
+        rcx: 0,
+        rdx: 0,
+        rsi: 0,
+        rdi: 0,
+        rbp: 0,
+        r8: 0,
+        r9: 0,
+        r10: 0,
+        r11: 0,
+        r12: 0,
+        r13: 0,
+        r14: 0,
+        r15: 0,
+        cs: 0,
+        ss: 0,
+    };
 
-            let ctx_ptr = addr_of_mut!(EXIT_CTX) as u64;
+    unsafe {
+        *addr_of_mut!(EXIT_CTX) = next_ctx.clone();
 
-            // Check if returning to user mode or kernel mode
-            if next_ctx.cs == 0x23 {
-                // User mode - use sysretq
-                core::arch::asm!(
-                    "mov rax, {ctx}",
-                    "mov rcx, [rax]",       // rip -> rcx for sysret
-                    "mov r11, [rax + 16]",  // rflags -> r11 for sysret
-                    "or r11, 0x200",        // Ensure IF set
-                    "mov rbx, [rax + 32]",
-                    "mov rbp, [rax + 72]",
-                    "mov r12, [rax + 112]",
-                    "mov r13, [rax + 120]",
-                    "mov r14, [rax + 128]",
-                    "mov r15, [rax + 136]",
-                    "mov rdi, [rax + 64]",
-                    "mov rsi, [rax + 56]",
-                    "mov rdx, [rax + 48]",
-                    "mov r8, [rax + 80]",
-                    "mov r9, [rax + 88]",
-                    "mov r10, [rax + 96]",
-                    "push qword ptr [rax + 8]",  // Push user rsp
-                    "mov rax, [rax + 24]",       // Load return value
-                    "pop rsp",
-                    "swapgs",
-                    "sysretq",
-                    ctx = in(reg) ctx_ptr,
-                    options(noreturn)
-                );
-            } else {
-                // Kernel mode - use iretq
-                // Build iretq frame on stack: SS, RSP, RFLAGS, CS, RIP
-                core::arch::asm!(
-                    "mov rax, {ctx}",
-                    // Load all GP registers first
-                    "mov rbx, [rax + 32]",
-                    "mov rcx, [rax + 40]",
-                    "mov rdx, [rax + 48]",
-                    "mov rsi, [rax + 56]",
-                    "mov rdi, [rax + 64]",
-                    "mov rbp, [rax + 72]",
-                    "mov r8, [rax + 80]",
-                    "mov r9, [rax + 88]",
-                    "mov r10, [rax + 96]",
-                    "mov r11, [rax + 104]",
-                    "mov r12, [rax + 112]",
-                    "mov r13, [rax + 120]",
-                    "mov r14, [rax + 128]",
-                    "mov r15, [rax + 136]",
-                    // Build iretq frame (push in reverse order)
-                    "push qword ptr [rax + 152]", // SS (offset of ss in ProcessContext)
-                    "push qword ptr [rax + 8]",   // RSP
-                    "mov r11, [rax + 16]",        // RFLAGS
-                    "or r11, 0x200",              // Ensure IF set
-                    "push r11",
-                    "push qword ptr [rax + 144]", // CS (offset of cs in ProcessContext)
-                    "push qword ptr [rax]",       // RIP
-                    // Load rax last
-                    "mov rax, [rax + 24]",
-                    // No swapgs for kernel mode
-                    "iretq",
-                    ctx = in(reg) ctx_ptr,
-                    options(noreturn)
-                );
-            }
+        core::arch::asm!("mov cr3, {}", in(reg) next_pml4.as_u64());
+
+        let ctx_ptr = addr_of_mut!(EXIT_CTX) as u64;
+
+        if next_ctx.cs == 0x23 {
+            core::arch::asm!(
+                "mov rax, {ctx}",
+                "mov rcx, [rax]",
+                "mov r11, [rax + 16]",
+                "or r11, 0x200",
+                "mov rbx, [rax + 32]",
+                "mov rbp, [rax + 72]",
+                "mov r12, [rax + 112]",
+                "mov r13, [rax + 120]",
+                "mov r14, [rax + 128]",
+                "mov r15, [rax + 136]",
+                "mov rdi, [rax + 64]",
+                "mov rsi, [rax + 56]",
+                "mov rdx, [rax + 48]",
+                "mov r8, [rax + 80]",
+                "mov r9, [rax + 88]",
+                "mov r10, [rax + 96]",
+                "push qword ptr [rax + 8]",
+                "mov rax, [rax + 24]",
+                "pop rsp",
+                "swapgs",
+                "sysretq",
+                ctx = in(reg) ctx_ptr,
+                options(noreturn)
+            );
+        } else {
+            core::arch::asm!(
+                "mov rax, {ctx}",
+                "mov rbx, [rax + 32]",
+                "mov rcx, [rax + 24]",
+                "mov rdx, [rax + 48]",
+                "mov rsi, [rax + 56]",
+                "mov rdi, [rax + 64]",
+                "mov rbp, [rax + 72]",
+                "mov r8, [rax + 80]",
+                "mov r9, [rax + 88]",
+                "mov r10, [rax + 96]",
+                "mov r11, [rax + 104]",
+                "mov r12, [rax + 112]",
+                "mov r13, [rax + 120]",
+                "mov r14, [rax + 128]",
+                "mov r15, [rax + 136]",
+                "push qword ptr [rax + 8]",
+                "push qword ptr [rax + 40]",
+                "push qword ptr [rax + 16]",
+                "push qword ptr [rax + 0]",
+                "mov rsp, [rax + 8]",
+                "iretq",
+                ctx = in(reg) ctx_ptr,
+                options(noreturn)
+            );
         }
     }
+
+    // user_exit never returns
 }
 
 /// Fork callback for syscalls
@@ -1158,6 +1126,31 @@ pub fn kernel_exec(
                 let new_pml4 = p.address_space().pml4_phys();
                 let ctx = p.context().clone();
                 drop(p);
+
+                // Keep scheduler task in sync with the freshly exec'd context
+                let task_ctx = TaskContext {
+                    rip: ctx.rip,
+                    rsp: ctx.rsp,
+                    rflags: ctx.rflags,
+                    rax: ctx.rax,
+                    rbx: ctx.rbx,
+                    rcx: ctx.rcx,
+                    rdx: ctx.rdx,
+                    rsi: ctx.rsi,
+                    rdi: ctx.rdi,
+                    rbp: ctx.rbp,
+                    r8: ctx.r8,
+                    r9: ctx.r9,
+                    r10: ctx.r10,
+                    r11: ctx.r11,
+                    r12: ctx.r12,
+                    r13: ctx.r13,
+                    r14: ctx.r14,
+                    r15: ctx.r15,
+                    cs: ctx.cs,
+                    ss: ctx.ss,
+                };
+                sched::update_task_exec_info(current_pid, new_pml4, ctx.rip, ctx.rsp, task_ctx);
 
                 // Debug: print exec return values
                 debug_fork!("[EXEC] Switching to PML4={:#x}", new_pml4.as_u64());

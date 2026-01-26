@@ -78,40 +78,62 @@ pub mod task;
 
 // Re-export commonly used types from sched-traits
 pub use sched_traits::{
-    CpuSet, Pid, SchedPolicy, TaskState,
-    Context, ContextSwitch, SchedClass, RunQueueOps,
-    nice_to_weight, NICE_0_WEIGHT, NICE_TO_WEIGHT,
-    RT_PRIO_MIN, RT_PRIO_MAX, RR_TIME_SLICE_NS, TICK_NS,
+    Context, ContextSwitch, CpuSet, NICE_0_WEIGHT, NICE_TO_WEIGHT, Pid, RR_TIME_SLICE_NS,
+    RT_PRIO_MAX, RT_PRIO_MIN, RunQueueOps, SchedClass, SchedPolicy, TICK_NS, TaskState,
+    nice_to_weight,
 };
 
 // Re-export core functions for convenience
 pub use crate::core::{
-    // Initialization
-    init_cpu, this_cpu, set_this_cpu, num_cpus,
     // Task management
-    add_task, remove_task, create_task,
-    // Scheduling
-    scheduler_tick, pick_next_task, need_resched, set_need_resched,
+    add_task,
+    block_current,
+    create_task,
     // Task state
-    current_pid, get_task_state,
-    wake_up, block_current, yield_current,
-    // Policy and priority
-    set_scheduler, get_scheduler, set_nice, get_nice,
-    // Affinity
-    set_affinity, get_affinity,
-    // Groups
-    set_task_group, get_task_group,
-    // Preemption control
-    preempt_disable, preempt_enable, preempt_disabled,
-    // Clock
-    global_clock, update_clock,
-    // Context switching support
-    get_task_context, set_task_context, get_task_pml4,
-    get_task_kernel_stack, get_task_switch_info,
-    // Manual context switch support (for fork/exec)
-    switch_to,
+    current_pid,
     // Debug
     debug_state,
+    get_affinity,
+    get_nice,
+    get_scheduler,
+    // Context switching support
+    get_task_context,
+    get_task_group,
+    get_task_kernel_stack,
+    get_task_pml4,
+    get_task_state,
+    get_task_switch_info,
+    // Clock
+    global_clock,
+    // Initialization
+    init_cpu,
+    need_resched,
+    num_cpus,
+    pick_next_task,
+    // Preemption control
+    preempt_disable,
+    preempt_disabled,
+    preempt_enable,
+    remove_task,
+    // Scheduling
+    scheduler_tick,
+    // Affinity
+    set_affinity,
+    set_need_resched,
+    set_nice,
+    // Policy and priority
+    set_scheduler,
+    set_task_context,
+    // Groups
+    set_task_group,
+    set_this_cpu,
+    // Manual context switch support (for fork/exec)
+    switch_to,
+    this_cpu,
+    update_clock,
+    update_task_exec_info,
+    wake_up,
+    yield_current,
 };
 
 // Re-export task types
@@ -121,9 +143,9 @@ pub use crate::task::{Task, TaskContext};
 pub use crate::runqueue::RunQueue;
 
 // Re-export scheduling classes
-pub use crate::rt::{RtRunQueue, RtSchedClass};
 pub use crate::fair::{CfsRunQueue, FairSchedClass};
 pub use crate::idle::{IdleSchedClass, IdleTask};
+pub use crate::rt::{RtRunQueue, RtSchedClass};
 
 // Re-export group types
 pub use crate::group::{GroupId, SchedGroup, SchedGroups, group_id};

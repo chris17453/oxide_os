@@ -6,13 +6,13 @@
 #[cfg(test)]
 mod tests {
     use alloc::sync::Arc;
-    use block::device::RamDisk;
     use block::BlockDevice;
+    use block::device::RamDisk;
 
     use crate::bitmap::{BlockBitmap, InodeBitmap};
-    use crate::extent::{Extent, ExtentHeader, EXT4_EXT_MAGIC};
-    use crate::inode::{Ext4Inode, flags as inode_flags, file_type};
-    use crate::superblock::{Ext4Superblock, EXT4_MAGIC};
+    use crate::extent::{EXT4_EXT_MAGIC, Extent, ExtentHeader};
+    use crate::inode::{Ext4Inode, file_type, flags as inode_flags};
+    use crate::superblock::{EXT4_MAGIC, Ext4Superblock};
 
     /// Create a minimal ext4 superblock for testing
     fn create_test_superblock() -> Ext4Superblock {
@@ -221,23 +221,44 @@ mod tests {
             (size + 3) & !3
         }
 
-        assert_eq!(entry_size(1), 12);  // "."
-        assert_eq!(entry_size(2), 12);  // ".."
-        assert_eq!(entry_size(4), 12);  // "test"
-        assert_eq!(entry_size(5), 16);  // "hello"
+        assert_eq!(entry_size(1), 12); // "."
+        assert_eq!(entry_size(2), 12); // ".."
+        assert_eq!(entry_size(4), 12); // "test"
+        assert_eq!(entry_size(5), 16); // "hello"
         assert_eq!(entry_size(255), 264); // max name
     }
 
     /// Test file type conversions
     #[test]
     fn test_file_type_conversions() {
-        assert_eq!(crate::dir::mode_to_file_type(file_type::S_IFREG), crate::dir::file_type::REG_FILE);
-        assert_eq!(crate::dir::mode_to_file_type(file_type::S_IFDIR), crate::dir::file_type::DIR);
-        assert_eq!(crate::dir::mode_to_file_type(file_type::S_IFLNK), crate::dir::file_type::SYMLINK);
-        assert_eq!(crate::dir::mode_to_file_type(file_type::S_IFCHR), crate::dir::file_type::CHRDEV);
-        assert_eq!(crate::dir::mode_to_file_type(file_type::S_IFBLK), crate::dir::file_type::BLKDEV);
-        assert_eq!(crate::dir::mode_to_file_type(file_type::S_IFIFO), crate::dir::file_type::FIFO);
-        assert_eq!(crate::dir::mode_to_file_type(file_type::S_IFSOCK), crate::dir::file_type::SOCK);
+        assert_eq!(
+            crate::dir::mode_to_file_type(file_type::S_IFREG),
+            crate::dir::file_type::REG_FILE
+        );
+        assert_eq!(
+            crate::dir::mode_to_file_type(file_type::S_IFDIR),
+            crate::dir::file_type::DIR
+        );
+        assert_eq!(
+            crate::dir::mode_to_file_type(file_type::S_IFLNK),
+            crate::dir::file_type::SYMLINK
+        );
+        assert_eq!(
+            crate::dir::mode_to_file_type(file_type::S_IFCHR),
+            crate::dir::file_type::CHRDEV
+        );
+        assert_eq!(
+            crate::dir::mode_to_file_type(file_type::S_IFBLK),
+            crate::dir::file_type::BLKDEV
+        );
+        assert_eq!(
+            crate::dir::mode_to_file_type(file_type::S_IFIFO),
+            crate::dir::file_type::FIFO
+        );
+        assert_eq!(
+            crate::dir::mode_to_file_type(file_type::S_IFSOCK),
+            crate::dir::file_type::SOCK
+        );
     }
 
     /// Test symlink types
@@ -281,7 +302,7 @@ pub fn run_tests() {
 /// Basic extent test for kernel environment
 fn test_extent_basic() {
     use crate::extent::Extent;
-    use crate::inode::{new_inode, init_extent_header, file_type};
+    use crate::inode::{file_type, init_extent_header, new_inode};
 
     let mut inode = new_inode(file_type::S_IFREG | 0o644, 0, 0);
     init_extent_header(&mut inode);
@@ -290,15 +311,15 @@ fn test_extent_basic() {
     let result = crate::extent::insert_extent(&mut inode, 0, 1000, 10);
     assert!(result.is_ok(), "Failed to insert extent");
 
-    let (header, extents) = crate::extent::get_extents_from_inode(&inode.i_block)
-        .expect("Failed to get extents");
+    let (header, extents) =
+        crate::extent::get_extents_from_inode(&inode.i_block).expect("Failed to get extents");
     assert_eq!(header.eh_entries, 1, "Wrong extent count");
     assert_eq!(extents[0].start(), 1000, "Wrong physical block");
 }
 
 /// Basic inode test for kernel environment
 fn test_inode_basic() {
-    use crate::inode::{new_inode, file_type};
+    use crate::inode::{file_type, new_inode};
 
     let inode = new_inode(file_type::S_IFREG | 0o644, 1000, 1000);
     assert!(inode.is_file(), "Should be a file");

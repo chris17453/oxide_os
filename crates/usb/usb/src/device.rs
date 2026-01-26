@@ -7,8 +7,8 @@ use core::sync::atomic::{AtomicU8, Ordering};
 use spin::Mutex;
 
 use crate::{
-    ConfigDescriptor, DeviceDescriptor, SetupPacket,
-    TransferDirection, UsbError, UsbHostController, UsbResult,
+    ConfigDescriptor, DeviceDescriptor, SetupPacket, TransferDirection, UsbError,
+    UsbHostController, UsbResult,
 };
 
 /// USB device speed

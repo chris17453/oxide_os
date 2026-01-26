@@ -72,16 +72,12 @@ impl PixelConverter {
             PixelFormat::Bgr888 => [b, g, r, 0],
             PixelFormat::Rgb888 => [r, g, b, 0],
             PixelFormat::Rgb565 => {
-                let val = ((r as u16 >> 3) << 11)
-                    | ((g as u16 >> 2) << 5)
-                    | (b as u16 >> 3);
+                let val = ((r as u16 >> 3) << 11) | ((g as u16 >> 2) << 5) | (b as u16 >> 3);
                 let bytes = val.to_le_bytes();
                 [bytes[0], bytes[1], 0, 0]
             }
             PixelFormat::Rgb555 => {
-                let val = ((r as u16 >> 3) << 10)
-                    | ((g as u16 >> 3) << 5)
-                    | (b as u16 >> 3);
+                let val = ((r as u16 >> 3) << 10) | ((g as u16 >> 3) << 5) | (b as u16 >> 3);
                 let bytes = val.to_le_bytes();
                 [bytes[0], bytes[1], 0, 0]
             }
@@ -165,7 +161,7 @@ mod tests {
         let result = converter.convert_pixel(&pixel);
         // Should be close to red
         assert!(result[2] > 240); // R channel
-        assert!(result[1] < 16);  // G channel
-        assert!(result[0] < 16);  // B channel
+        assert!(result[1] < 16); // G channel
+        assert!(result[0] < 16); // B channel
     }
 }

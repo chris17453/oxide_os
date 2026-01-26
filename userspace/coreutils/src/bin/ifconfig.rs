@@ -232,7 +232,10 @@ fn calculate_broadcast(addr: &str, mask: &str) -> String {
         broadcast[i] = a | !m;
     }
 
-    format!("{}.{}.{}.{}", broadcast[0], broadcast[1], broadcast[2], broadcast[3])
+    format!(
+        "{}.{}.{}.{}",
+        broadcast[0], broadcast[1], broadcast[2], broadcast[3]
+    )
 }
 
 /// Format bytes as human readable

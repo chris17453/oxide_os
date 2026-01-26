@@ -389,27 +389,36 @@ pub fn delay_us(us: u64) {
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
-/// Flag indicating current kernel code is safe to preempt
-/// Used by nanosleep and other yielding syscalls to allow scheduler to switch processes
-static KERNEL_PREEMPT_OK: AtomicBool = AtomicBool::new(false);
+const MAX_CPUS: usize = 256;
+
+fn preempt_flag() -> &'static AtomicBool {
+    let cpu = crate::apic::id() as usize;
+    let idx = core::cmp::min(cpu, MAX_CPUS - 1);
+    &KERNEL_PREEMPT_OK[idx]
+}
+
+/// Per-CPU flag indicating whether kernel code is currently safe to preempt.
+/// A blocking syscall sets its CPU's flag before halting so the scheduler can
+/// safely context switch without impacting other CPUs.
+static KERNEL_PREEMPT_OK: [AtomicBool; MAX_CPUS] = [const { AtomicBool::new(false) }; MAX_CPUS];
 
 /// Allow kernel preemption at current point
 /// Call this before HLT in yielding syscalls like nanosleep
 pub fn allow_kernel_preempt() {
-    KERNEL_PREEMPT_OK.store(true, Ordering::Release);
+    preempt_flag().store(true, Ordering::Release);
 }
 
 /// Disallow kernel preemption
 pub fn disallow_kernel_preempt() {
-    KERNEL_PREEMPT_OK.store(false, Ordering::Release);
+    preempt_flag().store(false, Ordering::Release);
 }
 
 /// Check if kernel preemption is currently allowed
 pub fn is_kernel_preempt_allowed() -> bool {
-    KERNEL_PREEMPT_OK.load(Ordering::Acquire)
+    preempt_flag().load(Ordering::Acquire)
 }
 
 /// Clear kernel preemption flag (called by scheduler after preempting)
 pub fn clear_kernel_preempt() {
-    KERNEL_PREEMPT_OK.store(false, Ordering::Release);
+    preempt_flag().store(false, Ordering::Release);
 }

@@ -6,12 +6,12 @@ use alloc::vec::Vec;
 use libc::*;
 
 use crate::crypto::{
-    SshCipher, derive_keys, encode_host_public_key, encode_signature,
-    sign_with_host_key, x25519, x25519_keypair,
+    SshCipher, derive_keys, encode_host_public_key, encode_signature, sign_with_host_key, x25519,
+    x25519_keypair,
 };
 use crate::transport::{
-    SshTransport, TransportError, TransportResult, decode_string, encode_name_list,
-    encode_string, msg,
+    SshTransport, TransportError, TransportResult, decode_string, encode_name_list, encode_string,
+    msg,
 };
 
 /// Key exchange state

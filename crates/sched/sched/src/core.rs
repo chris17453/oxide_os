@@ -10,7 +10,7 @@ extern crate alloc;
 
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use os_core::PhysAddr;
-use sched_traits::{CpuSet, Pid, SchedPolicy, TaskState, TICK_NS};
+use sched_traits::{CpuSet, Pid, SchedPolicy, TICK_NS, TaskState};
 use spin::Mutex;
 
 use crate::group::SchedGroups;
@@ -75,6 +75,19 @@ where
 {
     let mut rq_slot = RUN_QUEUES[cpu as usize].lock();
     rq_slot.as_mut().map(f)
+}
+
+/// Try to get access to a run queue (non-blocking)
+///
+/// Returns None if the lock is already held (avoids deadlock in interrupt context)
+fn try_with_rq<F, R>(cpu: u32, f: F) -> Option<R>
+where
+    F: FnOnce(&mut RunQueue) -> R,
+{
+    match RUN_QUEUES[cpu as usize].try_lock() {
+        Some(mut rq_slot) => rq_slot.as_mut().map(f),
+        None => None, // Lock held, skip this operation
+    }
 }
 
 /// Get the global clock
@@ -272,7 +285,9 @@ pub fn scheduler_tick() -> bool {
     let cpu = this_cpu();
     let now = GLOBAL_CLOCK.fetch_add(TICK_NS, Ordering::Relaxed) + TICK_NS;
 
-    with_rq(cpu, |rq| {
+    // Use try_with_rq to avoid deadlock if lock is held by main code
+    // If lock is held, we just skip this tick - it's not critical
+    try_with_rq(cpu, |rq| {
         rq.update_clock(now);
         rq.scheduler_tick()
     })
@@ -297,7 +312,8 @@ pub fn pick_next_task() -> Option<Pid> {
             }
 
             // Re-enqueue if still runnable
-            let should_requeue = rq.get_task(prev_pid)
+            let should_requeue = rq
+                .get_task(prev_pid)
                 .map(|task| task.state.is_runnable() && !task.is_idle())
                 .unwrap_or(false);
             if should_requeue {
@@ -352,7 +368,8 @@ pub fn switch_to(new_pid: Pid) {
     with_rq(cpu, |rq| {
         // Re-enqueue the previous task if it exists and is runnable
         if let Some(prev_pid) = rq.curr() {
-            let should_requeue = rq.get_task(prev_pid)
+            let should_requeue = rq
+                .get_task(prev_pid)
                 .map(|task| task.state.is_runnable() && !task.is_idle())
                 .unwrap_or(false);
             if should_requeue {
@@ -389,7 +406,8 @@ pub fn get_task_state(pid: Pid) -> Option<TaskState> {
 /// Get task context (for context switching)
 pub fn get_task_context(pid: Pid) -> Option<crate::task::TaskContext> {
     for cpu in 0..num_cpus() {
-        if let Some(ctx) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.context.clone())).flatten() {
+        if let Some(ctx) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.context.clone())).flatten()
+        {
             return Some(ctx);
         }
     }
@@ -428,25 +446,75 @@ pub fn get_task_pml4(pid: Pid) -> Option<PhysAddr> {
 pub fn get_task_kernel_stack(pid: Pid) -> Option<(PhysAddr, usize)> {
     for cpu in 0..num_cpus() {
         if let Some(info) = with_rq(cpu, |rq| {
-            rq.get_task(pid).map(|t| (t.kernel_stack, t.kernel_stack_size))
-        }).flatten() {
+            rq.get_task(pid)
+                .map(|t| (t.kernel_stack, t.kernel_stack_size))
+        })
+        .flatten()
+        {
             return Some(info);
         }
     }
     None
 }
 
+/// Update task execution context after exec()
+///
+/// Ensures the scheduler's view of the task matches the fresh address space
+/// created by exec (new CR3, entry point, stack, and user-mode register state).
+pub fn update_task_exec_info(
+    pid: Pid,
+    pml4_phys: PhysAddr,
+    entry_point: u64,
+    user_stack_top: u64,
+    mut context: crate::task::TaskContext,
+) {
+    // exec() always returns to user mode, so make sure CS/SS/IF are valid
+    if context.cs == 0 {
+        context.cs = 0x23; // user code selector
+    }
+    if context.ss == 0 {
+        context.ss = 0x1B; // user data selector
+    }
+    context.rip = entry_point;
+    context.rsp = user_stack_top;
+    context.rflags |= 0x200; // ensure IF is set
+
+    for cpu in 0..num_cpus() {
+        let updated = with_rq(cpu, |rq| {
+            if let Some(task) = rq.get_task_mut(pid) {
+                task.pml4_phys = pml4_phys;
+                task.entry_point = entry_point;
+                task.user_stack_top = user_stack_top;
+                task.context = context;
+                true
+            } else {
+                false
+            }
+        });
+
+        if updated == Some(true) {
+            break;
+        }
+    }
+}
+
 /// Get all context switch info for a task in one call (more efficient)
-pub fn get_task_switch_info(pid: Pid) -> Option<(crate::task::TaskContext, PhysAddr, PhysAddr, usize)> {
+pub fn get_task_switch_info(
+    pid: Pid,
+) -> Option<(crate::task::TaskContext, PhysAddr, PhysAddr, usize)> {
     for cpu in 0..num_cpus() {
         if let Some(info) = with_rq(cpu, |rq| {
-            rq.get_task(pid).map(|t| (
-                t.context.clone(),
-                t.pml4_phys,
-                t.kernel_stack,
-                t.kernel_stack_size,
-            ))
-        }).flatten() {
+            rq.get_task(pid).map(|t| {
+                (
+                    t.context.clone(),
+                    t.pml4_phys,
+                    t.kernel_stack,
+                    t.kernel_stack_size,
+                )
+            })
+        })
+        .flatten()
+        {
             return Some(info);
         }
     }
@@ -475,7 +543,8 @@ pub fn set_affinity(pid: Pid, cpuset: CpuSet) {
 /// Get task CPU affinity
 pub fn get_affinity(pid: Pid) -> Option<CpuSet> {
     for cpu in 0..num_cpus() {
-        if let Some(affinity) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.cpu_affinity)).flatten()
+        if let Some(affinity) =
+            with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.cpu_affinity)).flatten()
         {
             return Some(affinity);
         }
@@ -524,8 +593,10 @@ pub fn set_scheduler(pid: Pid, policy: SchedPolicy, priority: u8) {
 /// Get task scheduling policy
 pub fn get_scheduler(pid: Pid) -> Option<(SchedPolicy, u8)> {
     for cpu in 0..num_cpus() {
-        if let Some(result) =
-            with_rq(cpu, |rq| rq.get_task(pid).map(|t| (t.policy, t.rt_priority))).flatten()
+        if let Some(result) = with_rq(cpu, |rq| {
+            rq.get_task(pid).map(|t| (t.policy, t.rt_priority))
+        })
+        .flatten()
         {
             return Some(result);
         }
@@ -585,7 +656,15 @@ pub fn create_task(
     entry_point: u64,
     user_stack_top: u64,
 ) -> Task {
-    Task::new(pid, ppid, kernel_stack, kernel_stack_size, pml4_phys, entry_point, user_stack_top)
+    Task::new(
+        pid,
+        ppid,
+        kernel_stack,
+        kernel_stack_size,
+        pml4_phys,
+        entry_point,
+        user_stack_top,
+    )
 }
 
 /// Disable preemption for current task
@@ -617,7 +696,9 @@ pub fn preempt_disabled() -> bool {
     let cpu = this_cpu();
     with_rq(cpu, |rq| {
         if let Some(curr_pid) = rq.curr() {
-            rq.get_task(curr_pid).map(|t| t.preempt_disabled()).unwrap_or(false)
+            rq.get_task(curr_pid)
+                .map(|t| t.preempt_disabled())
+                .unwrap_or(false)
         } else {
             false
         }

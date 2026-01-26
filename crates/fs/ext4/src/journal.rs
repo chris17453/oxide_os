@@ -13,17 +13,17 @@
 //! - Revoke: Blocks to ignore during recovery
 //! - Superblock: Journal metadata (v1 or v2)
 
+use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
-use alloc::sync::Arc;
 use spin::Mutex;
 
-use block::BlockDevice;
 use crate::error::{Ext4Error, Ext4Result};
-use crate::superblock::Ext4Superblock;
-use crate::inode::{read_inode, Ext4Inode};
 use crate::extent;
 use crate::group_desc::BlockGroupTable;
+use crate::inode::{Ext4Inode, read_inode};
+use crate::superblock::Ext4Superblock;
+use block::BlockDevice;
 
 /// JBD2 magic number
 pub const JBD2_MAGIC: u32 = 0xC03B3998;
@@ -53,19 +53,19 @@ pub mod incompat {
 
 /// Journal flags
 pub mod flags {
-    pub const ESCAPE: u32 = 1;      // Block escaped (magic number replaced)
-    pub const SAME_UUID: u32 = 2;   // UUID same as previous
-    pub const DELETED: u32 = 4;     // Block deleted (for revoke)
-    pub const LAST_TAG: u32 = 8;    // Last tag in descriptor
+    pub const ESCAPE: u32 = 1; // Block escaped (magic number replaced)
+    pub const SAME_UUID: u32 = 2; // UUID same as previous
+    pub const DELETED: u32 = 4; // Block deleted (for revoke)
+    pub const LAST_TAG: u32 = 8; // Last tag in descriptor
 }
 
 /// Common header for all journal blocks
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct JournalHeader {
-    pub h_magic: u32,       // JBD2_MAGIC
-    pub h_blocktype: u32,   // Block type (descriptor, commit, etc.)
-    pub h_sequence: u32,    // Transaction sequence number
+    pub h_magic: u32,     // JBD2_MAGIC
+    pub h_blocktype: u32, // Block type (descriptor, commit, etc.)
+    pub h_sequence: u32,  // Transaction sequence number
 }
 
 impl JournalHeader {
@@ -98,14 +98,14 @@ pub struct JournalSuperblock {
     pub s_header: JournalHeader,
 
     // Static information (offset 12)
-    pub s_blocksize: u32,       // Journal block size
-    pub s_maxlen: u32,          // Total blocks in journal
-    pub s_first: u32,           // First block of log information
+    pub s_blocksize: u32, // Journal block size
+    pub s_maxlen: u32,    // Total blocks in journal
+    pub s_first: u32,     // First block of log information
 
     // Dynamic information (offset 24)
-    pub s_sequence: u32,        // First commit ID in log
-    pub s_start: u32,           // Block number of start of log
-    pub s_errno: u32,           // Error value (if any)
+    pub s_sequence: u32, // First commit ID in log
+    pub s_start: u32,    // Block number of start of log
+    pub s_errno: u32,    // Error value (if any)
 
     // V2 only fields (offset 36)
     pub s_feature_compat: u32,
@@ -121,7 +121,7 @@ pub struct JournalSuperblock {
     pub s_checksum_type: u8,
     pub s_padding2: [u8; 3],
     pub s_padding: [u32; 42],
-    pub s_checksum: u32,        // Superblock checksum
+    pub s_checksum: u32, // Superblock checksum
 
     // User list
     pub s_users: [[u8; 16]; 48],
@@ -136,13 +136,16 @@ impl JournalSuperblock {
 
         // Read enough sectors
         for i in 0..2 {
-            device.read(start_sector + i, &mut buf[i as usize * 512..(i as usize + 1) * 512])
+            device
+                .read(
+                    start_sector + i,
+                    &mut buf[i as usize * 512..(i as usize + 1) * 512],
+                )
                 .map_err(|_| Ext4Error::IoError)?;
         }
 
-        let sb: JournalSuperblock = unsafe {
-            core::ptr::read_unaligned(buf.as_ptr() as *const JournalSuperblock)
-        };
+        let sb: JournalSuperblock =
+            unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const JournalSuperblock) };
 
         // Validate magic
         if sb.s_header.magic() != JBD2_MAGIC {
@@ -185,10 +188,10 @@ impl JournalSuperblock {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct JournalBlockTag3 {
-    pub t_blocknr: u32,         // Filesystem block number (low 32 bits)
-    pub t_flags: u32,           // Flags
-    pub t_blocknr_high: u32,    // High 32 bits of block number (64-bit mode)
-    pub t_checksum: u32,        // Block checksum
+    pub t_blocknr: u32,      // Filesystem block number (low 32 bits)
+    pub t_flags: u32,        // Flags
+    pub t_blocknr_high: u32, // High 32 bits of block number (64-bit mode)
+    pub t_checksum: u32,     // Block checksum
 }
 
 impl JournalBlockTag3 {
@@ -225,7 +228,7 @@ pub struct JournalBlockTag {
 #[derive(Debug, Clone, Copy)]
 pub struct JournalRevokeHeader {
     pub r_header: JournalHeader,
-    pub r_count: u32,           // Number of bytes used in revoke block
+    pub r_count: u32, // Number of bytes used in revoke block
 }
 
 /// Commit block (marks end of transaction)
@@ -236,9 +239,9 @@ pub struct JournalCommitBlock {
     pub h_chksum_type: u8,
     pub h_chksum_size: u8,
     pub h_padding: [u8; 2],
-    pub h_chksum: [u32; 8],     // Checksum(s)
-    pub h_commit_sec: u64,      // Commit timestamp (seconds)
-    pub h_commit_nsec: u32,     // Commit timestamp (nanoseconds)
+    pub h_chksum: [u32; 8], // Checksum(s)
+    pub h_commit_sec: u64,  // Commit timestamp (seconds)
+    pub h_commit_nsec: u32, // Commit timestamp (nanoseconds)
 }
 
 /// A block to be written in a transaction
@@ -316,9 +319,7 @@ pub struct JournalHandle {
 
 impl JournalHandle {
     pub fn new() -> Self {
-        JournalHandle {
-            blocks: Vec::new(),
-        }
+        JournalHandle { blocks: Vec::new() }
     }
 
     /// Mark a block for journaling
@@ -374,8 +375,8 @@ impl Journal {
         let journal_inode = read_inode(&*device, sb, group_table, journal_ino)?;
 
         // Get first block of journal file
-        let first_block = extent::map_block(&*device, sb, &journal_inode, 0)?
-            .ok_or(Ext4Error::InvalidJournal)?;
+        let first_block =
+            extent::map_block(&*device, sb, &journal_inode, 0)?.ok_or(Ext4Error::InvalidJournal)?;
 
         let block_size = sb.block_size();
 
@@ -432,9 +433,8 @@ impl Journal {
             self.read_journal_block(absolute_block, &mut buf)?;
 
             // Check header
-            let header: JournalHeader = unsafe {
-                core::ptr::read_unaligned(buf.as_ptr() as *const JournalHeader)
-            };
+            let header: JournalHeader =
+                unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const JournalHeader) };
 
             if header.magic() != JBD2_MAGIC {
                 // End of valid journal
@@ -548,9 +548,8 @@ impl Journal {
 
     /// Parse revoke block and add to revoked list
     fn parse_revoke_block(&mut self, buf: &[u8]) -> Ext4Result<()> {
-        let header: JournalRevokeHeader = unsafe {
-            core::ptr::read_unaligned(buf.as_ptr() as *const JournalRevokeHeader)
-        };
+        let header: JournalRevokeHeader =
+            unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const JournalRevokeHeader) };
 
         let count = u32::from_be(header.r_count) as usize;
         let entry_size = if self.jsb.is_64bit() { 8 } else { 4 };
@@ -558,14 +557,12 @@ impl Journal {
 
         while offset + entry_size <= count && offset + entry_size <= buf.len() {
             let block = if self.jsb.is_64bit() {
-                let val: u64 = unsafe {
-                    core::ptr::read_unaligned(buf[offset..].as_ptr() as *const u64)
-                };
+                let val: u64 =
+                    unsafe { core::ptr::read_unaligned(buf[offset..].as_ptr() as *const u64) };
                 u64::from_be(val)
             } else {
-                let val: u32 = unsafe {
-                    core::ptr::read_unaligned(buf[offset..].as_ptr() as *const u32)
-                };
+                let val: u32 =
+                    unsafe { core::ptr::read_unaligned(buf[offset..].as_ptr() as *const u32) };
                 u32::from_be(val) as u64
             };
 
@@ -590,8 +587,15 @@ impl Journal {
     }
 
     /// Add a block to current transaction
-    pub fn journal_block(&mut self, blocknr: u64, data: Vec<u8>, is_metadata: bool) -> Ext4Result<()> {
-        let txn = self.current_transaction.as_mut()
+    pub fn journal_block(
+        &mut self,
+        blocknr: u64,
+        data: Vec<u8>,
+        is_metadata: bool,
+    ) -> Ext4Result<()> {
+        let txn = self
+            .current_transaction
+            .as_mut()
             .ok_or(Ext4Error::NoTransaction)?;
         txn.add_block(blocknr, data, is_metadata);
         Ok(())
@@ -599,7 +603,9 @@ impl Journal {
 
     /// Commit the current transaction
     pub fn commit_transaction(&mut self) -> Ext4Result<()> {
-        let txn = self.current_transaction.take()
+        let txn = self
+            .current_transaction
+            .take()
             .ok_or(Ext4Error::NoTransaction)?;
 
         if txn.blocks.is_empty() && txn.revoked.is_empty() {
@@ -755,11 +761,7 @@ impl Journal {
     /// Wrap journal position
     fn wrap_position(&self, pos: u32) -> u32 {
         let log_size = self.journal_len - self.jsb.first();
-        if pos >= log_size {
-            pos - log_size
-        } else {
-            pos
-        }
+        if pos >= log_size { pos - log_size } else { pos }
     }
 
     /// Read a journal block
@@ -769,7 +771,8 @@ impl Journal {
 
         for i in 0..sectors_per_block {
             let offset = i as usize * 512;
-            self.device.read(start_sector + i, &mut buf[offset..offset + 512])
+            self.device
+                .read(start_sector + i, &mut buf[offset..offset + 512])
                 .map_err(|_| Ext4Error::IoError)?;
         }
         Ok(())
@@ -782,7 +785,8 @@ impl Journal {
 
         for i in 0..sectors_per_block {
             let offset = i as usize * 512;
-            self.device.write(start_sector + i, &buf[offset..offset + 512])
+            self.device
+                .write(start_sector + i, &buf[offset..offset + 512])
                 .map_err(|_| Ext4Error::IoError)?;
         }
         self.device.flush().map_err(|_| Ext4Error::IoError)?;
@@ -796,7 +800,8 @@ impl Journal {
 
         for i in 0..sectors_per_block {
             let offset = i as usize * 512;
-            self.device.write(start_sector + i, &buf[offset..offset + 512])
+            self.device
+                .write(start_sector + i, &buf[offset..offset + 512])
                 .map_err(|_| Ext4Error::IoError)?;
         }
         Ok(())

@@ -7,7 +7,8 @@ use alloc::vec::Vec;
 use spin::RwLock;
 
 use media::{
-    ActiveMount, DeviceTrustDb, MediaError, MediaManager, MediaPolicy, MountOptions, UsbDevice, UsbEvent, UsbEventType,
+    ActiveMount, DeviceTrustDb, MediaError, MediaManager, MediaPolicy, MountOptions, UsbDevice,
+    UsbEvent, UsbEventType,
 };
 
 use crate::config::AutomountConfig;

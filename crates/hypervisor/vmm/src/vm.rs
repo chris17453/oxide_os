@@ -7,8 +7,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use spin::{Mutex, RwLock};
 
 use crate::{
-    GuestMemory, GuestMemoryRegion, Vcpu, VcpuId, VirtioDevice,
-    VmmBackend, VmmError, VmmResult,
+    GuestMemory, GuestMemoryRegion, Vcpu, VcpuId, VirtioDevice, VmmBackend, VmmError, VmmResult,
 };
 
 /// VM identifier

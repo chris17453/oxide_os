@@ -8,7 +8,7 @@ extern crate alloc;
 
 use alloc::collections::BinaryHeap;
 use core::cmp::Reverse;
-use sched_traits::{Pid, RunQueueOps, SchedClass, NICE_0_WEIGHT, TICK_NS};
+use sched_traits::{NICE_0_WEIGHT, Pid, RunQueueOps, SchedClass, TICK_NS};
 
 /// Minimum scheduling granularity in nanoseconds
 /// Tasks run for at least this long before being preempted

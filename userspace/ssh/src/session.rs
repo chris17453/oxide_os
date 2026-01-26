@@ -5,7 +5,9 @@
 use alloc::vec::Vec;
 use libc::poll::{PollFd, events, poll};
 
-use crate::transport::{Result, SshTransport, TransportError, decode_string, decode_u32, encode_string, msg};
+use crate::transport::{
+    Result, SshTransport, TransportError, decode_string, decode_u32, encode_string, msg,
+};
 
 /// Request ssh-userauth service
 pub fn request_userauth_service(transport: &mut SshTransport) -> Result<()> {
@@ -304,23 +306,21 @@ pub fn run_session(transport: &mut SshTransport, channel: &mut SshChannel) -> Re
         // Check socket
         if pollfds[1].revents & events::POLLIN != 0 {
             match transport.recv_packet() {
-                Ok(packet) => {
-                    match channel.process_packet(&packet) {
-                        Ok(Some(data)) => {
-                            let _ = libc::write(1, &data);
-                            local_window = local_window.saturating_sub(data.len() as u32);
+                Ok(packet) => match channel.process_packet(&packet) {
+                    Ok(Some(data)) => {
+                        let _ = libc::write(1, &data);
+                        local_window = local_window.saturating_sub(data.len() as u32);
 
-                            if local_window < 512 * 1024 {
-                                let adjust = 1024 * 1024 - local_window;
-                                channel.send_window_adjust(transport, adjust)?;
-                                local_window += adjust;
-                            }
+                        if local_window < 512 * 1024 {
+                            let adjust = 1024 * 1024 - local_window;
+                            channel.send_window_adjust(transport, adjust)?;
+                            local_window += adjust;
                         }
-                        Ok(None) => {}
-                        Err(TransportError::Closed) => break,
-                        Err(_) => {}
                     }
-                }
+                    Ok(None) => {}
+                    Err(TransportError::Closed) => break,
+                    Err(_) => {}
+                },
                 Err(TransportError::Closed) => break,
                 Err(_) => {}
             }

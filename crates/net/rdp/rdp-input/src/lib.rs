@@ -10,18 +10,18 @@ extern crate alloc;
 
 mod scancode;
 
-pub use scancode::{rdp_scancode_to_evdev, ScancodeTranslator};
+pub use scancode::{ScancodeTranslator, rdp_scancode_to_evdev};
 
 use alloc::string::String;
 use input::{
-    keycodes::{BTN_EXTRA, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BTN_SIDE, REL_HWHEEL, REL_WHEEL, ABS_X, ABS_Y},
-    report_abs, report_key, report_rel, report_sync, register_device_info,
     InputDeviceInfo, InputDeviceType, KeyValue,
+    keycodes::{
+        ABS_X, ABS_Y, BTN_EXTRA, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BTN_SIDE, REL_HWHEEL, REL_WHEEL,
+    },
+    register_device_info, report_abs, report_key, report_rel, report_sync,
 };
 use rdp_proto::fast_path::FastPathInputEvent;
-use rdp_traits::{
-    ExtendedMouseFlags, InputInjector, KeyboardFlags, MouseFlags, RdpResult,
-};
+use rdp_traits::{ExtendedMouseFlags, InputInjector, KeyboardFlags, MouseFlags, RdpResult};
 use spin::Mutex;
 
 /// RDP Input Handler
@@ -98,9 +98,7 @@ impl RdpInputHandler {
                 };
                 self.inject_keyboard(*scancode as u16, KeyboardFlags::new(rdp_flags))
             }
-            FastPathInputEvent::Mouse { flags, x, y } => {
-                self.inject_mouse(*x, *y, *flags)
-            }
+            FastPathInputEvent::Mouse { flags, x, y } => self.inject_mouse(*x, *y, *flags),
             FastPathInputEvent::ExtendedMouse { flags, x, y } => {
                 // Extract wheel delta from lower 9 bits
                 let delta = (flags.0 & 0x00FF) as i16;
@@ -115,9 +113,10 @@ impl RdpInputHandler {
                 // Sync event - update keyboard LEDs if needed
                 Ok(())
             }
-            FastPathInputEvent::Unicode { code_point, is_release } => {
-                self.inject_unicode(*code_point, *is_release)
-            }
+            FastPathInputEvent::Unicode {
+                code_point,
+                is_release,
+            } => self.inject_unicode(*code_point, *is_release),
         }
     }
 }
@@ -125,7 +124,9 @@ impl RdpInputHandler {
 impl InputInjector for RdpInputHandler {
     fn inject_keyboard(&self, scancode: u16, flags: KeyboardFlags) -> RdpResult<()> {
         // Translate RDP scancode to evdev keycode
-        let evdev_code = self.translator.translate(scancode, flags.is_extended(), flags.is_extended1());
+        let evdev_code =
+            self.translator
+                .translate(scancode, flags.is_extended(), flags.is_extended1());
 
         if evdev_code == 0 {
             // Unknown scancode - ignore
@@ -178,7 +179,13 @@ impl InputInjector for RdpInputHandler {
         Ok(())
     }
 
-    fn inject_mouse_extended(&self, x: u16, y: u16, flags: ExtendedMouseFlags, delta: i16) -> RdpResult<()> {
+    fn inject_mouse_extended(
+        &self,
+        x: u16,
+        y: u16,
+        flags: ExtendedMouseFlags,
+        delta: i16,
+    ) -> RdpResult<()> {
         // Position update (same as regular mouse)
         report_abs(self.mouse_device, ABS_X, x as i32);
         report_abs(self.mouse_device, ABS_Y, y as i32);

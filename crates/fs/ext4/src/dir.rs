@@ -6,9 +6,9 @@ use block::BlockDevice;
 
 use crate::error::{Ext4Error, Ext4Result};
 use crate::extent::map_block;
-use crate::group_desc::read_block;
-use crate::inode::{read_inode, Ext4Inode};
 use crate::group_desc::BlockGroupTable;
+use crate::group_desc::read_block;
+use crate::inode::{Ext4Inode, read_inode};
 use crate::superblock::Ext4Superblock;
 
 /// Directory entry file types (stored in name_len high byte or file_type field)
@@ -392,7 +392,15 @@ pub fn add_entry(
     }
 
     // No space in existing blocks - need to allocate a new block
-    allocate_new_dir_block(device, sb, group_table, dir_inode, name, child_ino, child_file_type)
+    allocate_new_dir_block(
+        device,
+        sb,
+        group_table,
+        dir_inode,
+        name,
+        child_ino,
+        child_file_type,
+    )
 }
 
 /// Write a directory entry to a buffer
@@ -429,8 +437,8 @@ fn allocate_new_dir_block(
     let dir_group = (dir_inode.i_block[0] as u64 / sb.s_blocks_per_group as u64) as u32;
 
     // Allocate a new block
-    let new_block = alloc_block(device, sb, group_table, Some(dir_group))?
-        .ok_or(Ext4Error::NoSpace)?;
+    let new_block =
+        alloc_block(device, sb, group_table, Some(dir_group))?.ok_or(Ext4Error::NoSpace)?;
 
     // Calculate logical block number for the new block
     let current_size = dir_inode.size();
@@ -582,7 +590,13 @@ pub fn init_directory(
 
     // . entry (self reference)
     let dot_rec_len = 12u16; // Minimum size for "."
-    write_dir_entry(&mut block_buf[0..], self_ino, dot_rec_len, ".", file_type::DIR);
+    write_dir_entry(
+        &mut block_buf[0..],
+        self_ino,
+        dot_rec_len,
+        ".",
+        file_type::DIR,
+    );
 
     // .. entry (parent reference) - takes rest of block
     let dotdot_rec_len = (block_size as u16) - dot_rec_len;

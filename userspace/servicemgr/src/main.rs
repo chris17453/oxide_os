@@ -83,7 +83,7 @@ impl Service {
             max_restarts: 5,
             user: [0; 32],
             user_len: 0,
-            uid: -1,  // -1 = not specified, run as current user
+            uid: -1, // -1 = not specified, run as current user
             gid: -1,
         }
     }

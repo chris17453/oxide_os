@@ -3,7 +3,7 @@
 use block::BlockDevice;
 
 use crate::error::{Ext4Error, Ext4Result};
-use crate::group_desc::{read_block, BlockGroupTable};
+use crate::group_desc::{BlockGroupTable, read_block};
 use crate::superblock::Ext4Superblock;
 
 /// ext4 inode flags
@@ -156,9 +156,7 @@ impl Ext4Inode {
     /// Get block count in 512-byte units (with huge_file extension)
     pub fn blocks(&self) -> u64 {
         let lo = self.i_blocks_lo as u64;
-        let hi = ((self.i_osd2[0] as u64)
-            | ((self.i_osd2[1] as u64) << 8))
-            << 32;
+        let hi = ((self.i_osd2[0] as u64) | ((self.i_osd2[1] as u64) << 8)) << 32;
         lo | hi
     }
 }
@@ -326,9 +324,8 @@ pub fn init_extent_header(inode: &mut Ext4Inode) {
         )
     };
 
-    let i_block_bytes = unsafe {
-        core::slice::from_raw_parts_mut(inode.i_block.as_mut_ptr() as *mut u8, 60)
-    };
+    let i_block_bytes =
+        unsafe { core::slice::from_raw_parts_mut(inode.i_block.as_mut_ptr() as *mut u8, 60) };
 
     i_block_bytes[..12].copy_from_slice(header_bytes);
 }

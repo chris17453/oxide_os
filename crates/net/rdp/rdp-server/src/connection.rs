@@ -130,10 +130,7 @@ impl ConnectionHandler {
     ///
     /// The actual TLS handshake is handled at a lower level by rdp-security.
     /// This method updates connection state based on the TLS session state.
-    pub fn process_tls_state(
-        &mut self,
-        session: &RdpSession,
-    ) -> RdpResult<()> {
+    pub fn process_tls_state(&mut self, session: &RdpSession) -> RdpResult<()> {
         let tls = session.tls().ok_or(RdpError::TlsError)?;
 
         match tls.state() {

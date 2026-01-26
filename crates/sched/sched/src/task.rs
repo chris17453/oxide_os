@@ -11,7 +11,7 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 use os_core::PhysAddr;
-use sched_traits::{CpuSet, Pid, SchedPolicy, TaskState, nice_to_weight, NICE_0_WEIGHT};
+use sched_traits::{CpuSet, NICE_0_WEIGHT, Pid, SchedPolicy, TaskState, nice_to_weight};
 
 /// Saved CPU context for context switching
 ///
@@ -428,8 +428,8 @@ mod tests {
             PhysAddr::new(0x1000),
             4096,
             PhysAddr::new(0x2000), // pml4
-            0x400000, // entry
-            0x7fff0000, // stack
+            0x400000,              // entry
+            0x7fff0000,            // stack
         )
     }
 

@@ -242,7 +242,11 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
             }
             let label_str = unsafe { cstr_to_str(*argv.add(i as usize)) };
             let label_bytes = label_str.as_bytes();
-            let copy_len = if label_bytes.len() > 16 { 16 } else { label_bytes.len() };
+            let copy_len = if label_bytes.len() > 16 {
+                16
+            } else {
+                label_bytes.len()
+            };
             label[..copy_len].copy_from_slice(&label_bytes[..copy_len]);
         } else if arg == "-h" || arg == "--help" {
             printlns("Usage: mkfs.ext4 [-b block_size] [-L label] device");
@@ -387,7 +391,13 @@ fn create_filesystem(fd: i32, config: &MkfsConfig) -> Result<(), &'static str> {
     printlns("");
 
     // Create and write superblock
-    let mut sb = create_superblock(config, actual_blocks as u32, total_inodes, free_blocks as u32, free_inodes);
+    let mut sb = create_superblock(
+        config,
+        actual_blocks as u32,
+        total_inodes,
+        free_blocks as u32,
+        free_inodes,
+    );
     sb.s_first_data_block = if block_size == 1024 { 1 } else { 0 };
     sb.s_blocks_per_group = blocks_per_group;
     sb.s_inodes_per_group = inodes_per_group;
@@ -413,24 +423,51 @@ fn create_filesystem(fd: i32, config: &MkfsConfig) -> Result<(), &'static str> {
     write_group_desc(fd, &gd, gdt_block as u64, block_size)?;
 
     // Initialize block bitmap
-    write_block_bitmap(fd, block_bitmap_block as u64, block_size, first_data_block as usize)?;
+    write_block_bitmap(
+        fd,
+        block_bitmap_block as u64,
+        block_size,
+        first_data_block as usize,
+    )?;
 
     // Initialize inode bitmap
-    write_inode_bitmap(fd, inode_bitmap_block as u64, block_size, reserved_inodes as usize + 2)?;
+    write_inode_bitmap(
+        fd,
+        inode_bitmap_block as u64,
+        block_size,
+        reserved_inodes as usize + 2,
+    )?;
 
     // Initialize inode table (zero it out)
-    zero_blocks(fd, inode_table_block as u64, inode_table_blocks as u64, block_size)?;
+    zero_blocks(
+        fd,
+        inode_table_block as u64,
+        inode_table_blocks as u64,
+        block_size,
+    )?;
 
     // Create root directory inode (inode 2)
     let root_data_block = first_data_block;
-    create_root_inode(fd, inode_table_block as u64, block_size, inode_size as u64, root_data_block as u64)?;
+    create_root_inode(
+        fd,
+        inode_table_block as u64,
+        block_size,
+        inode_size as u64,
+        root_data_block as u64,
+    )?;
 
     // Create root directory data block
     write_root_directory(fd, root_data_block as u64, block_size, EXT4_LOST_FOUND_INO)?;
 
     // Create lost+found directory inode (inode 11)
     let lf_data_block = first_data_block + 1;
-    create_lost_found_inode(fd, inode_table_block as u64, block_size, inode_size as u64, lf_data_block as u64)?;
+    create_lost_found_inode(
+        fd,
+        inode_table_block as u64,
+        block_size,
+        inode_size as u64,
+        lf_data_block as u64,
+    )?;
 
     // Create lost+found directory data block
     write_lost_found_directory(fd, lf_data_block as u64, block_size)?;
@@ -438,7 +475,13 @@ fn create_filesystem(fd: i32, config: &MkfsConfig) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn create_superblock(config: &MkfsConfig, total_blocks: u32, total_inodes: u32, free_blocks: u32, free_inodes: u32) -> Ext4Superblock {
+fn create_superblock(
+    config: &MkfsConfig,
+    total_blocks: u32,
+    total_inodes: u32,
+    free_blocks: u32,
+    free_inodes: u32,
+) -> Ext4Superblock {
     let log_block_size = match config.block_size {
         1024 => 0,
         2048 => 1,
@@ -463,13 +506,13 @@ fn create_superblock(config: &MkfsConfig, total_blocks: u32, total_inodes: u32, 
         s_mnt_count: 0,
         s_max_mnt_count: 0xFFFF,
         s_magic: EXT4_MAGIC,
-        s_state: 1, // Clean
+        s_state: 1,  // Clean
         s_errors: 1, // Continue on error
         s_minor_rev_level: 0,
         s_lastcheck: 0,
         s_checkinterval: 0,
         s_creator_os: 0, // Linux
-        s_rev_level: 1, // Dynamic
+        s_rev_level: 1,  // Dynamic
         s_def_resuid: 0,
         s_def_resgid: 0,
         s_first_ino: EXT4_FIRST_INO,
@@ -477,7 +520,10 @@ fn create_superblock(config: &MkfsConfig, total_blocks: u32, total_inodes: u32, 
         s_block_group_nr: 0,
         s_feature_compat: COMPAT_EXT_ATTR | COMPAT_DIR_INDEX,
         s_feature_incompat: INCOMPAT_FILETYPE | INCOMPAT_EXTENTS,
-        s_feature_ro_compat: RO_COMPAT_SPARSE_SUPER | RO_COMPAT_LARGE_FILE | RO_COMPAT_HUGE_FILE | RO_COMPAT_EXTRA_ISIZE,
+        s_feature_ro_compat: RO_COMPAT_SPARSE_SUPER
+            | RO_COMPAT_LARGE_FILE
+            | RO_COMPAT_HUGE_FILE
+            | RO_COMPAT_EXTRA_ISIZE,
         s_uuid: generate_uuid(),
         s_volume_name: config.label,
         s_last_mounted: [0; 64],
@@ -533,9 +579,8 @@ fn write_superblock(fd: i32, sb: &Ext4Superblock, block_size: u64) -> Result<(),
     // Superblock is always at byte offset 1024
     lseek(fd, 1024, SEEK_SET);
 
-    let sb_bytes = unsafe {
-        core::slice::from_raw_parts(sb as *const Ext4Superblock as *const u8, 1024)
-    };
+    let sb_bytes =
+        unsafe { core::slice::from_raw_parts(sb as *const Ext4Superblock as *const u8, 1024) };
 
     if write(fd, sb_bytes) != 1024 {
         return Err("failed to write superblock");
@@ -544,12 +589,16 @@ fn write_superblock(fd: i32, sb: &Ext4Superblock, block_size: u64) -> Result<(),
     Ok(())
 }
 
-fn write_group_desc(fd: i32, gd: &Ext4GroupDesc, block: u64, block_size: u64) -> Result<(), &'static str> {
+fn write_group_desc(
+    fd: i32,
+    gd: &Ext4GroupDesc,
+    block: u64,
+    block_size: u64,
+) -> Result<(), &'static str> {
     lseek(fd, (block * block_size) as i64, SEEK_SET);
 
-    let gd_bytes = unsafe {
-        core::slice::from_raw_parts(gd as *const Ext4GroupDesc as *const u8, 32)
-    };
+    let gd_bytes =
+        unsafe { core::slice::from_raw_parts(gd as *const Ext4GroupDesc as *const u8, 32) };
 
     // Write group descriptor, pad rest of block with zeros
     let mut buf = [0u8; 4096];
@@ -562,7 +611,12 @@ fn write_group_desc(fd: i32, gd: &Ext4GroupDesc, block: u64, block_size: u64) ->
     Ok(())
 }
 
-fn write_block_bitmap(fd: i32, block: u64, block_size: u64, used_blocks: usize) -> Result<(), &'static str> {
+fn write_block_bitmap(
+    fd: i32,
+    block: u64,
+    block_size: u64,
+    used_blocks: usize,
+) -> Result<(), &'static str> {
     lseek(fd, (block * block_size) as i64, SEEK_SET);
 
     let mut buf = [0u8; 4096];
@@ -581,7 +635,12 @@ fn write_block_bitmap(fd: i32, block: u64, block_size: u64, used_blocks: usize) 
     Ok(())
 }
 
-fn write_inode_bitmap(fd: i32, block: u64, block_size: u64, used_inodes: usize) -> Result<(), &'static str> {
+fn write_inode_bitmap(
+    fd: i32,
+    block: u64,
+    block_size: u64,
+    used_inodes: usize,
+) -> Result<(), &'static str> {
     lseek(fd, (block * block_size) as i64, SEEK_SET);
 
     let mut buf = [0u8; 4096];
@@ -613,7 +672,13 @@ fn zero_blocks(fd: i32, start_block: u64, count: u64, block_size: u64) -> Result
     Ok(())
 }
 
-fn create_root_inode(fd: i32, inode_table_block: u64, block_size: u64, inode_size: u64, data_block: u64) -> Result<(), &'static str> {
+fn create_root_inode(
+    fd: i32,
+    inode_table_block: u64,
+    block_size: u64,
+    inode_size: u64,
+    data_block: u64,
+) -> Result<(), &'static str> {
     // Root inode is inode 2 (index 1 in table)
     let inode_offset = (inode_table_block * block_size) + (1 * inode_size);
 
@@ -663,7 +728,13 @@ fn create_root_inode(fd: i32, inode_table_block: u64, block_size: u64, inode_siz
     Ok(())
 }
 
-fn create_lost_found_inode(fd: i32, inode_table_block: u64, block_size: u64, inode_size: u64, data_block: u64) -> Result<(), &'static str> {
+fn create_lost_found_inode(
+    fd: i32,
+    inode_table_block: u64,
+    block_size: u64,
+    inode_size: u64,
+    data_block: u64,
+) -> Result<(), &'static str> {
     // lost+found is inode 11 (index 10 in table)
     let inode_offset = (inode_table_block * block_size) + (10 * inode_size);
 
@@ -722,13 +793,11 @@ fn init_extent(inode: &mut Ext4Inode, data_block: u64) {
         eh_generation: 0,
     };
 
-    let header_bytes = unsafe {
-        core::slice::from_raw_parts(&header as *const ExtentHeader as *const u8, 12)
-    };
+    let header_bytes =
+        unsafe { core::slice::from_raw_parts(&header as *const ExtentHeader as *const u8, 12) };
 
-    let i_block_bytes = unsafe {
-        core::slice::from_raw_parts_mut(inode.i_block.as_mut_ptr() as *mut u8, 60)
-    };
+    let i_block_bytes =
+        unsafe { core::slice::from_raw_parts_mut(inode.i_block.as_mut_ptr() as *mut u8, 60) };
 
     i_block_bytes[..12].copy_from_slice(header_bytes);
 
@@ -740,14 +809,18 @@ fn init_extent(inode: &mut Ext4Inode, data_block: u64) {
         ee_start_lo: data_block as u32,
     };
 
-    let extent_bytes = unsafe {
-        core::slice::from_raw_parts(&extent as *const Extent as *const u8, 12)
-    };
+    let extent_bytes =
+        unsafe { core::slice::from_raw_parts(&extent as *const Extent as *const u8, 12) };
 
     i_block_bytes[12..24].copy_from_slice(extent_bytes);
 }
 
-fn write_root_directory(fd: i32, block: u64, block_size: u64, lost_found_ino: u32) -> Result<(), &'static str> {
+fn write_root_directory(
+    fd: i32,
+    block: u64,
+    block_size: u64,
+    lost_found_ino: u32,
+) -> Result<(), &'static str> {
     lseek(fd, (block * block_size) as i64, SEEK_SET);
 
     let mut buf = [0u8; 4096];
@@ -760,9 +833,8 @@ fn write_root_directory(fd: i32, block: u64, block_size: u64, lost_found_ino: u3
         name_len: 1,
         file_type: FT_DIR,
     };
-    let dot_bytes = unsafe {
-        core::slice::from_raw_parts(&dot as *const Ext4DirEntry as *const u8, 8)
-    };
+    let dot_bytes =
+        unsafe { core::slice::from_raw_parts(&dot as *const Ext4DirEntry as *const u8, 8) };
     buf[offset..offset + 8].copy_from_slice(dot_bytes);
     buf[offset + 8] = b'.';
     offset += 12;
@@ -774,9 +846,8 @@ fn write_root_directory(fd: i32, block: u64, block_size: u64, lost_found_ino: u3
         name_len: 2,
         file_type: FT_DIR,
     };
-    let dotdot_bytes = unsafe {
-        core::slice::from_raw_parts(&dotdot as *const Ext4DirEntry as *const u8, 8)
-    };
+    let dotdot_bytes =
+        unsafe { core::slice::from_raw_parts(&dotdot as *const Ext4DirEntry as *const u8, 8) };
     buf[offset..offset + 8].copy_from_slice(dotdot_bytes);
     buf[offset + 8] = b'.';
     buf[offset + 9] = b'.';
@@ -790,9 +861,8 @@ fn write_root_directory(fd: i32, block: u64, block_size: u64, lost_found_ino: u3
         name_len: 10,
         file_type: FT_DIR,
     };
-    let lf_bytes = unsafe {
-        core::slice::from_raw_parts(&lf as *const Ext4DirEntry as *const u8, 8)
-    };
+    let lf_bytes =
+        unsafe { core::slice::from_raw_parts(&lf as *const Ext4DirEntry as *const u8, 8) };
     buf[offset..offset + 8].copy_from_slice(lf_bytes);
     buf[offset + 8..offset + 18].copy_from_slice(b"lost+found");
 
@@ -816,9 +886,8 @@ fn write_lost_found_directory(fd: i32, block: u64, block_size: u64) -> Result<()
         name_len: 1,
         file_type: FT_DIR,
     };
-    let dot_bytes = unsafe {
-        core::slice::from_raw_parts(&dot as *const Ext4DirEntry as *const u8, 8)
-    };
+    let dot_bytes =
+        unsafe { core::slice::from_raw_parts(&dot as *const Ext4DirEntry as *const u8, 8) };
     buf[offset..offset + 8].copy_from_slice(dot_bytes);
     buf[offset + 8] = b'.';
     offset += 12;
@@ -831,9 +900,8 @@ fn write_lost_found_directory(fd: i32, block: u64, block_size: u64) -> Result<()
         name_len: 2,
         file_type: FT_DIR,
     };
-    let dotdot_bytes = unsafe {
-        core::slice::from_raw_parts(&dotdot as *const Ext4DirEntry as *const u8, 8)
-    };
+    let dotdot_bytes =
+        unsafe { core::slice::from_raw_parts(&dotdot as *const Ext4DirEntry as *const u8, 8) };
     buf[offset..offset + 8].copy_from_slice(dotdot_bytes);
     buf[offset + 8] = b'.';
     buf[offset + 9] = b'.';

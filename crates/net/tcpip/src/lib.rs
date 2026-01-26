@@ -25,8 +25,7 @@ use core::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use spin::Mutex;
 
 use net::{
-    IpAddr, Ipv4Addr, MacAddress, NetError, NetResult, NetworkDevice, NetworkInterface,
-    SocketAddr,
+    IpAddr, Ipv4Addr, MacAddress, NetError, NetResult, NetworkDevice, NetworkInterface, SocketAddr,
 };
 
 pub use arp::ArpCache;
@@ -34,6 +33,7 @@ pub use conntrack::{
     ConnEntry, ConnTrackTable, ConnTuple, TcpFlags, TcpState, connection_count, gc as conntrack_gc,
     lookup_state, remove_connection, tick as conntrack_tick, track_icmp, track_packet,
 };
+pub use dhcp_client::{acquire_lease, format_lease_file, send_dhcp_packet};
 pub use ethernet::EtherType;
 pub use filter::{
     ConnState, FilterChain, FilterRule, FilterVerdict, IpMatch, PacketInfo, PortMatch, add_rule,
@@ -41,7 +41,6 @@ pub use filter::{
     set_policy, with_rules,
 };
 pub use ip::IpProtocol;
-pub use dhcp_client::{acquire_lease, format_lease_file, send_dhcp_packet};
 pub use tcp::TcpConnection;
 pub use udp::UdpSocket;
 

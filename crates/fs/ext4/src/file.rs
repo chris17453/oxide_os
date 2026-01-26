@@ -85,9 +85,8 @@ pub fn read_symlink(
     // (up to 60 bytes, which is the size of i_block array)
     if size <= 60 && inode.i_blocks_lo == 0 {
         // Target is stored in i_block
-        let bytes = unsafe {
-            core::slice::from_raw_parts(inode.i_block.as_ptr() as *const u8, size)
-        };
+        let bytes =
+            unsafe { core::slice::from_raw_parts(inode.i_block.as_ptr() as *const u8, size) };
         return Ok(alloc::string::String::from_utf8_lossy(bytes).into_owned());
     }
 
@@ -104,7 +103,7 @@ pub fn read_symlink(
 
 use crate::bitmap::{alloc_block, free_block};
 use crate::extent::{insert_extent, try_extend_extent};
-use crate::group_desc::{write_block, BlockGroupTable};
+use crate::group_desc::{BlockGroupTable, write_block};
 
 /// Write data to a file
 ///
@@ -265,9 +264,8 @@ pub fn write_symlink(
 
     if target_bytes.len() <= 60 {
         // Fast symlink - store directly in i_block
-        let i_block_bytes = unsafe {
-            core::slice::from_raw_parts_mut(inode.i_block.as_mut_ptr() as *mut u8, 60)
-        };
+        let i_block_bytes =
+            unsafe { core::slice::from_raw_parts_mut(inode.i_block.as_mut_ptr() as *mut u8, 60) };
         i_block_bytes[..target_bytes.len()].copy_from_slice(target_bytes);
 
         // Clear i_flags (no extents for fast symlinks)

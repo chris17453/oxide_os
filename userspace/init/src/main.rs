@@ -11,8 +11,8 @@
 #![no_std]
 #![no_main]
 
-use libc::*;
 use libc::syscall::mount_flags::*;
+use libc::*;
 
 /// Main init entry point
 #[unsafe(no_mangle)]

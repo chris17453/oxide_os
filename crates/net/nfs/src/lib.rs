@@ -486,7 +486,12 @@ impl NfsSession {
     }
 
     /// Read file
-    pub fn read(&self, _handle: &NfsHandle, _offset: u64, _count: u32) -> Result<Vec<u8>, NfsError> {
+    pub fn read(
+        &self,
+        _handle: &NfsHandle,
+        _offset: u64,
+        _count: u32,
+    ) -> Result<Vec<u8>, NfsError> {
         if !*self.connected.lock() {
             return Err(NfsError::NotConnected);
         }

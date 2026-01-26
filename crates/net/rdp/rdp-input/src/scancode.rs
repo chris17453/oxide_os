@@ -154,30 +154,30 @@ pub fn rdp_scancode_to_evdev(scancode: u16) -> u16 {
 /// Convert RDP scancode (extended / E0 prefix) to evdev keycode
 fn rdp_scancode_to_evdev_extended(scancode: u16) -> u16 {
     match scancode {
-        0x1C => KEY_KPENTER,     // Numpad Enter
-        0x1D => KEY_RIGHTCTRL,   // Right Control
-        0x35 => KEY_KPSLASH,     // Numpad /
-        0x37 => KEY_SYSRQ,       // Print Screen
-        0x38 => KEY_RIGHTALT,    // Right Alt
-        0x47 => KEY_HOME,        // Home
-        0x48 => KEY_UP,          // Up Arrow
-        0x49 => KEY_PAGEUP,      // Page Up
-        0x4B => KEY_LEFT,        // Left Arrow
-        0x4D => KEY_RIGHT,       // Right Arrow
-        0x4F => KEY_END,         // End
-        0x50 => KEY_DOWN,        // Down Arrow
-        0x51 => KEY_PAGEDOWN,    // Page Down
-        0x52 => KEY_INSERT,      // Insert
-        0x53 => KEY_DELETE,      // Delete
-        0x5B => KEY_LEFTMETA,    // Left Windows
-        0x5C => KEY_RIGHTMETA,   // Right Windows
-        0x5D => KEY_COMPOSE,     // Menu/Compose
+        0x1C => KEY_KPENTER,   // Numpad Enter
+        0x1D => KEY_RIGHTCTRL, // Right Control
+        0x35 => KEY_KPSLASH,   // Numpad /
+        0x37 => KEY_SYSRQ,     // Print Screen
+        0x38 => KEY_RIGHTALT,  // Right Alt
+        0x47 => KEY_HOME,      // Home
+        0x48 => KEY_UP,        // Up Arrow
+        0x49 => KEY_PAGEUP,    // Page Up
+        0x4B => KEY_LEFT,      // Left Arrow
+        0x4D => KEY_RIGHT,     // Right Arrow
+        0x4F => KEY_END,       // End
+        0x50 => KEY_DOWN,      // Down Arrow
+        0x51 => KEY_PAGEDOWN,  // Page Down
+        0x52 => KEY_INSERT,    // Insert
+        0x53 => KEY_DELETE,    // Delete
+        0x5B => KEY_LEFTMETA,  // Left Windows
+        0x5C => KEY_RIGHTMETA, // Right Windows
+        0x5D => KEY_COMPOSE,   // Menu/Compose
         // Media keys
-        0x20 => KEY_MUTE,        // Mute
-        0x2E => KEY_VOLUMEDOWN,  // Volume Down
-        0x30 => KEY_VOLUMEUP,    // Volume Up
-        0x5E => KEY_POWER,       // Power
-        _ => 0, // Unknown extended scancode
+        0x20 => KEY_MUTE,       // Mute
+        0x2E => KEY_VOLUMEDOWN, // Volume Down
+        0x30 => KEY_VOLUMEUP,   // Volume Up
+        0x5E => KEY_POWER,      // Power
+        _ => 0,                 // Unknown extended scancode
     }
 }
 

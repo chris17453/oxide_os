@@ -683,6 +683,9 @@ mod tests {
         assert!(encoded.len() >= 12);
 
         // Check header
-        assert_eq!(u16::from_le_bytes([encoded[0], encoded[1]]), block_types::SC_NET);
+        assert_eq!(
+            u16::from_le_bytes([encoded[0], encoded[1]]),
+            block_types::SC_NET
+        );
     }
 }

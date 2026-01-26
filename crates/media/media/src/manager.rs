@@ -7,8 +7,8 @@ use alloc::vec::Vec;
 use spin::RwLock;
 
 use crate::{
-    DeviceId, DeviceTrustDb, MediaError, MediaPolicy, MountMode, TrustLevel,
-    UsbDevice, UsbEvent, UsbEventType, UsbMonitor,
+    DeviceId, DeviceTrustDb, MediaError, MediaPolicy, MountMode, TrustLevel, UsbDevice, UsbEvent,
+    UsbEventType, UsbMonitor,
 };
 
 /// Active mount information

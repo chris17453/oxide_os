@@ -5,7 +5,9 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use dhcp::{self, DhcpClient, DhcpLease, DhcpPacket, DhcpState, DHCP_CLIENT_PORT, DHCP_SERVER_PORT};
+use dhcp::{
+    self, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DhcpClient, DhcpLease, DhcpPacket, DhcpState,
+};
 use net::{Ipv4Addr, MacAddress, NetError, NetResult, NetworkInterface};
 
 use crate::checksum;
@@ -27,10 +29,7 @@ const SPIN_DELAY: u32 = 20000;
 ///
 /// DHCP requires sending packets from 0.0.0.0:68 to 255.255.255.255:67
 /// before the interface has an IP address configured.
-pub fn send_dhcp_packet(
-    interface: &NetworkInterface,
-    dhcp_data: &[u8],
-) -> NetResult<()> {
+pub fn send_dhcp_packet(interface: &NetworkInterface, dhcp_data: &[u8]) -> NetResult<()> {
     // Build UDP header
     let src_port = DHCP_CLIENT_PORT;
     let dst_port = DHCP_SERVER_PORT;

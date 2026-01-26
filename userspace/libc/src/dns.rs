@@ -7,11 +7,11 @@
 //! 2. Check /etc/hosts for static mappings
 //! 3. Use DNS servers from /etc/resolv.conf (or fallback to default)
 
-use crate::{O_RDONLY, close, open2, read};
 use crate::socket::{
     SOCKADDR_IN_SIZE, SockAddrIn, af, htons, ipproto, recvfrom, sendto, sock, sockaddr_in_octets,
     socket,
 };
+use crate::{O_RDONLY, close, open2, read};
 
 /// Default DNS server (Google Public DNS)
 pub const DEFAULT_DNS_SERVER: (u8, u8, u8, u8) = (8, 8, 8, 8);
