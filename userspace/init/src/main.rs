@@ -72,8 +72,10 @@ fn main() -> i32 {
     if child == 0 {
         // Child process - exec getty which launches login
         printlns("[init/child] Attempting exec getty...");
-        exec("/bin/getty");
-        printlns("[init/child] Getty failed, trying login...");
+        let ret = exec("/bin/getty");
+        prints("[init/child] Getty exec returned: ");
+        print_i64(ret as i64);
+        printlns("");
         exec("/bin/login");
         printlns("[init/child] Login failed, trying shell...");
         exec("/bin/esh");

@@ -44,23 +44,28 @@ fn print_banner() {
 
 /// Open and configure terminal device
 fn setup_terminal(config: &TermConfig) -> i32 {
+    // Open terminal device FIRST before closing stdio
+    prints("[getty] Opening ");
+    prints(config.device);
+    prints("...\n");
+
+    let fd = open2(config.device, O_RDWR);
+
+    prints("[getty] open returned fd=");
+    print_i64(fd as i64);
+    prints("\n");
+
+    if fd < 0 {
+        prints("[getty] FAILED - cannot open terminal\n");
+        return -1;
+    }
+
+    prints("[getty] SUCCESS - setting up stdio\n");
+
     // Close any existing stdio
     close(0);
     close(1);
     close(2);
-
-    // Open terminal device as stdin
-    let fd = open2(config.device, O_RDWR);
-    if fd < 0 {
-        // Try to report error before stdio is set up
-        let msg = "getty: failed to open ";
-        unsafe {
-            write(2, msg.as_bytes());
-            write(2, config.device.as_bytes());
-            write(2, b"\n");
-        }
-        return -1;
-    }
 
     // Duplicate for stdout and stderr
     dup2(fd, 0);
@@ -71,6 +76,8 @@ fn setup_terminal(config: &TermConfig) -> i32 {
     if fd > 2 {
         close(fd);
     }
+
+    prints("[getty] stdio setup complete\n");
 
     // Make this the controlling terminal (setsid + ioctl TIOCSCTTY)
     // For now, we skip this as it requires more kernel support
@@ -92,7 +99,9 @@ fn parse_args() -> TermConfig {
 /// Main entry point
 #[unsafe(no_mangle)]
 pub fn main() -> i32 {
+    prints("[getty] main() started\n");
     let config = parse_args();
+    prints("[getty] parse_args() returned\n");
 
     loop {
         // Setup terminal

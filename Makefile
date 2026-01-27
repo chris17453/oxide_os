@@ -359,6 +359,7 @@ create-rootfs: kernel bootloader initramfs-minimal
 	sudo ln -sf /sbin/init $(TARGET_DIR)/mnt/root/init && \
 	sudo cp "$(USERSPACE_OUT_RELEASE)/esh" $(TARGET_DIR)/mnt/root/bin/esh && \
 	sudo ln -sf /bin/esh $(TARGET_DIR)/mnt/root/bin/sh && \
+	sudo cp "$(USERSPACE_OUT_RELEASE)/getty" $(TARGET_DIR)/mnt/root/bin/getty && \
 	sudo cp "$(USERSPACE_OUT_RELEASE)/login" $(TARGET_DIR)/mnt/root/bin/login && \
 	for prog in gwbasic ssh sshd service networkd $(COREUTILS_BINS) testcolors; do \
 		[ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/$$prog" $(TARGET_DIR)/mnt/root/usr/bin/ || true; \
