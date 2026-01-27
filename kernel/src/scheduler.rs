@@ -9,9 +9,7 @@
 
 extern crate alloc;
 
-use alloc::string::ToString;
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 use arch_x86_64 as arch;
 use mm_paging::phys_to_virt;
 use os_core::PhysAddr;
@@ -47,71 +45,18 @@ pub struct InterruptFrame {
     pub ss: u64,
 }
 
-/// Debug: Check physical memory at 0xfec5000
-fn debug_check_0xfec5(label: &str) {
-    let check_addr = 0xfec5000u64;
-    let check_virt = phys_to_virt(PhysAddr::new(check_addr));
-    let check_next = unsafe { *(check_virt.as_ptr::<u64>()) };
-    arch::serial::write_str("[SCHED] ");
-    arch::serial::write_str(label);
-    arch::serial::write_str(": 0xfec5.next=0x");
-    // Print hex manually
-    for i in (0..16).rev() {
-        let nibble = ((check_next >> (i * 4)) & 0xF) as u8;
-        let c = if nibble < 10 { b'0' + nibble } else { b'a' + (nibble - 10) };
-        arch::serial::write_byte(c);
-    }
-    arch::serial::write_str("\n");
-}
-
 /// Initialize the scheduler for the current CPU
 ///
 /// Should be called early during kernel initialization.
 pub fn init() {
-    debug_check_0xfec5("pre-init_cpu");
-
     // Initialize the scheduler for CPU 0 with idle task PID 0
     sched::init_cpu(0, 0);
-
-    debug_check_0xfec5("post-init_cpu");
 
     // Create a real idle task with PID 0
     // The idle task doesn't need a real kernel stack since it runs on the BSP stack
     // We use a placeholder address that won't be used for context switches to idle
-
-    // Debug: Check both 0xfec4 and 0xfec5 before and after each step
-    fn debug_check_both(label: &str) {
-        let check5_virt = phys_to_virt(PhysAddr::new(0xfec5000));
-        let check5_next = unsafe { *(check5_virt.as_ptr::<u64>()) };
-        let check4_virt = phys_to_virt(PhysAddr::new(0xfec4000));
-        let check4_next = unsafe { *(check4_virt.as_ptr::<u64>()) };
-        arch::serial::write_str("[SCHED2] ");
-        arch::serial::write_str(label);
-        arch::serial::write_str(": 0xfec5=0x");
-        for i in (0..16).rev() {
-            let nibble = ((check5_next >> (i * 4)) & 0xF) as u8;
-            arch::serial::write_byte(if nibble < 10 { b'0' + nibble } else { b'a' + (nibble - 10) });
-        }
-        arch::serial::write_str(" 0xfec4=0x");
-        for i in (0..16).rev() {
-            let nibble = ((check4_next >> (i * 4)) & 0xF) as u8;
-            arch::serial::write_byte(if nibble < 10 { b'0' + nibble } else { b'a' + (nibble - 10) });
-        }
-        arch::serial::write_str("\n");
-    }
-
-    debug_check_both("pre-new_kernel");
     let meta = ProcessMeta::new_kernel();
-    debug_check_both("post-new_kernel");
-
-    debug_check_both("pre-Mutex::new");
-    let mutex = Mutex::new(meta);
-    debug_check_both("post-Mutex::new");
-
-    let idle_meta = Arc::new(mutex);
-    debug_check_both("post-Arc::new");
-
-    debug_check_0xfec5("post-ProcessMeta::new_kernel");
+    let idle_meta = Arc::new(Mutex::new(meta));
 
     // Create idle task with ProcessMeta
     let idle_task = Task::new_idle_with_meta(
@@ -122,12 +67,8 @@ pub fn init() {
         idle_meta,
     );
 
-    debug_check_0xfec5("post-new_idle_with_meta");
-
     // Add the idle task to the scheduler
     sched::add_task(idle_task);
-
-    debug_check_0xfec5("post-add_task");
 }
 
 /// Add a process to the scheduler

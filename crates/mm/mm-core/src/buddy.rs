@@ -24,71 +24,6 @@ use spin::Mutex;
 /// Physical memory map base for direct access (same as mm-paging)
 const PHYS_MAP_BASE: u64 = 0xFFFF_8000_0000_0000;
 
-/// Serial port base address for debug output
-const SERIAL_PORT: u16 = 0x3F8;
-
-/// Write a byte to the serial port
-#[inline]
-unsafe fn outb(port: u16, value: u8) {
-    unsafe {
-        core::arch::asm!(
-            "out dx, al",
-            in("dx") port,
-            in("al") value,
-            options(nomem, nostack, preserves_flags)
-        );
-    }
-}
-
-/// Write a single character to serial (raw)
-#[allow(dead_code)]
-unsafe fn debug_serial_char(c: u8) {
-    // Wait for transmit buffer empty
-    loop {
-        let status: u8;
-        unsafe {
-            core::arch::asm!(
-                "in al, dx",
-                in("dx") SERIAL_PORT + 5,
-                out("al") status,
-                options(nomem, nostack, preserves_flags)
-            );
-        }
-        if status & 0x20 != 0 {
-            break;
-        }
-    }
-    unsafe { outb(SERIAL_PORT, c) };
-}
-
-/// Write a prefix string and hex value to serial
-#[allow(dead_code)]
-unsafe fn debug_serial_hex(prefix: &[u8], value: u64) {
-    unsafe {
-        // Write prefix
-        for &c in prefix {
-            debug_serial_char(c);
-        }
-        // Write "0x"
-        debug_serial_char(b'0');
-        debug_serial_char(b'x');
-        // Write hex digits (skip leading zeros but always print at least one digit)
-        let mut started = false;
-        for i in (0..16).rev() {
-            let nibble = ((value >> (i * 4)) & 0xF) as u8;
-            if nibble != 0 || started || i == 0 {
-                started = true;
-                let c = if nibble < 10 {
-                    b'0' + nibble
-                } else {
-                    b'a' + (nibble - 10)
-                };
-                debug_serial_char(c);
-            }
-        }
-    }
-}
-
 /// Convert physical address to virtual address in direct map
 #[inline]
 fn phys_to_virt(phys: PhysAddr) -> *mut u64 {
@@ -243,41 +178,12 @@ impl BuddyAllocator {
         let block = unsafe { &mut *(virt as *mut FreeBlock) };
 
         let old_head = zone.free_lists[order].head;
-        let old_count = zone.free_lists[order].count;
-
-        // Debug: Track ALL writes to 0xfec5000
         let frame_num = addr >> FRAME_SHIFT;
-        if frame_num == 0xfec5 {
-            unsafe {
-                debug_serial_hex(b"[ADD-0xfec5] o=", order as u64);
-                debug_serial_hex(b" writing next=", old_head);
-                debug_serial_char(b'\n');
-            }
-        }
 
         // Insert at head of free list
         block.next = old_head;
         zone.free_lists[order].head = frame_num; // Store frame number
         zone.free_lists[order].count += 1;
-
-        // Debug: Track adds to order 0
-        if order == 0 {
-            static ADD_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
-            let cnt = ADD_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-            if cnt < 50 {
-                unsafe {
-                    debug_serial_hex(b"[ADD] o0 f=", frame_num);
-                    debug_serial_hex(b" old_head=", old_head);
-                    debug_serial_hex(b" old_cnt=", old_count);
-                    // Verify the write actually worked
-                    let verify = block.next;
-                    if verify != old_head {
-                        debug_serial_hex(b" VERIFY_FAIL! got=", verify);
-                    }
-                    debug_serial_char(b'\n');
-                }
-            }
-        }
     }
 
     /// Remove and return a free block from a zone's free list
@@ -289,23 +195,6 @@ impl BuddyAllocator {
             return None;
         }
 
-        // Check 0xfec5's integrity before each order-0 pop
-        if order == 0 {
-            static CHECK_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
-            let cnt = CHECK_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-            if cnt < 20 {
-                unsafe {
-                    let check_virt = phys_to_virt(PhysAddr::new(0xfec5000));
-                    let check_block = &*(check_virt as *const FreeBlock);
-                    if check_block.next != 0xfec4 {
-                        debug_serial_hex(b"[CORRUPT] 0xfec5.next=", check_block.next);
-                        debug_serial_hex(b" expected=0xfec4 pop#", cnt);
-                        debug_serial_char(b'\n');
-                    }
-                }
-            }
-        }
-
         let frame_num = zone.free_lists[order].head;
         let addr = frame_num << FRAME_SHIFT;
 
@@ -314,28 +203,6 @@ impl BuddyAllocator {
         let block = unsafe { &*(virt as *const FreeBlock) };
         let next_frame = block.next;
 
-        // Debug: Track when 0xfec5 is POPPED from a free list
-        if frame_num == 0xfec5 {
-            unsafe {
-                debug_serial_hex(b"[POP-0xfec5] o=", order as u64);
-                debug_serial_hex(b" next_frame=", next_frame);
-                debug_serial_char(b'\n');
-            }
-        }
-
-        // Debug: Track allocations using raw serial I/O
-        static DEBUG_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
-        let count = DEBUG_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-        if count < 50 {
-            unsafe {
-                debug_serial_hex(b"[BUDDY] pop o=", order as u64);
-                debug_serial_hex(b" f=", frame_num);
-                debug_serial_hex(b" next=", next_frame);
-                debug_serial_hex(b" cnt=", zone.free_lists[order].count);
-                debug_serial_char(b'\n');
-            }
-        }
-
         // Read next pointer and update head
         zone.free_lists[order].head = next_frame;
         zone.free_lists[order].count -= 1;
@@ -343,34 +210,8 @@ impl BuddyAllocator {
         Some(addr)
     }
 
-    /// Debug: allocation counter for tracking
-    fn debug_alloc_count() -> u64 {
-        use core::sync::atomic::{AtomicU64, Ordering};
-        static COUNT: AtomicU64 = AtomicU64::new(0);
-        COUNT.fetch_add(1, Ordering::Relaxed)
-    }
-
     /// Allocate memory with the given request
     pub fn alloc(&self, request: &AllocRequest) -> MmResult<PhysAddr> {
-        let alloc_num = Self::debug_alloc_count();
-
-        // Check BOTH 0xfec4 and 0xfec5 integrity BEFORE every allocation
-        static PRE_CHECK: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
-        let pre_cnt = PRE_CHECK.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-        if pre_cnt < 10 {
-            unsafe {
-                let check_virt5 = phys_to_virt(PhysAddr::new(0xfec5000));
-                let check_block5 = &*(check_virt5 as *const FreeBlock);
-                let check_virt4 = phys_to_virt(PhysAddr::new(0xfec4000));
-                let check_block4 = &*(check_virt4 as *const FreeBlock);
-                debug_serial_hex(b"[PRE] alloc#", pre_cnt);
-                debug_serial_hex(b" o=", request.order as u64);
-                debug_serial_hex(b" 0xfec5.next=", check_block5.next);
-                debug_serial_hex(b" 0xfec4.next=", check_block4.next);
-                debug_serial_char(b'\n');
-            }
-        }
-
         if request.order > MAX_ORDER {
             return Err(MmError::InvalidOrder);
         }
@@ -391,44 +232,8 @@ impl BuddyAllocator {
 
             // SAFETY: Zone is initialized and locked
             if let Some(addr) = unsafe { self.alloc_from_zone(&mut zone, request.order) } {
-                // Debug: Check 0xfec4 IMMEDIATELY after alloc_from_zone returns
-                if pre_cnt < 10 {
-                    unsafe {
-                        let check_virt4 = phys_to_virt(PhysAddr::new(0xfec4000));
-                        let check_val4 = *(check_virt4 as *const u64);
-                        if check_val4 > 0x100000 {
-                            debug_serial_hex(b"[POST-ZONE] alloc#", pre_cnt);
-                            debug_serial_hex(b" 0xfec4 CORRUPTED=", check_val4);
-                            debug_serial_char(b'\n');
-                        }
-                    }
-                }
-
                 let pages = 1u64 << request.order;
                 self.stats.record_alloc(pages * FRAME_SIZE as u64);
-
-                // Debug: Show what we're returning
-                static ALLOC_DEBUG_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
-                let dbg_cnt = ALLOC_DEBUG_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-                if dbg_cnt < 50 {
-                    unsafe {
-                        debug_serial_hex(b"[BUDDY] alloc#", dbg_cnt);
-                        debug_serial_hex(b" order=", request.order as u64);
-                        debug_serial_hex(b" -> addr=", addr);
-                        debug_serial_char(b'\n');
-                    }
-                }
-
-                // Debug: Check if 0xfec5000's FreeBlock header is still intact after order-6 alloc
-                if addr == 0xfe80000 {
-                    unsafe {
-                        let check_virt = phys_to_virt(PhysAddr::new(0xfec5000));
-                        let check_block = &*(check_virt as *const FreeBlock);
-                        debug_serial_hex(b"[CHECK] After o6@0xfe80, 0xfec5.next=", check_block.next);
-                        debug_serial_char(b'\n');
-                    }
-                }
-
                 return Ok(PhysAddr::new(addr));
             }
         }
@@ -507,33 +312,11 @@ impl BuddyAllocator {
         let mut current_addr = addr;
         let mut current_order = order;
 
-        // Debug: Check 0xfec4 at start of free
-        static FREE_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
-        let free_cnt = FREE_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-        if free_cnt < 5 {
-            unsafe {
-                let check_virt = phys_to_virt(PhysAddr::new(0xfec4000));
-                let check_val = *(check_virt as *const u64);
-                debug_serial_hex(b"[FREE] start addr=", addr);
-                debug_serial_hex(b" 0xfec4.next=", check_val);
-                debug_serial_char(b'\n');
-            }
-        }
-
         // Try to coalesce with buddy blocks up the orders
         while current_order < MAX_ORDER {
             let frame_num = current_addr >> FRAME_SHIFT;
             let buddy_frame = frame_num ^ (1 << current_order);
             let buddy_addr = buddy_frame << FRAME_SHIFT;
-
-            // Debug: show coalescing attempt
-            if free_cnt < 5 {
-                unsafe {
-                    debug_serial_hex(b"[FREE] coalesce o=", current_order as u64);
-                    debug_serial_hex(b" buddy_f=", buddy_frame);
-                    debug_serial_char(b'\n');
-                }
-            }
 
             // Check if buddy is in the same zone
             if buddy_addr < zone.base.as_u64()
@@ -546,16 +329,6 @@ impl BuddyAllocator {
             // SAFETY: Zone is initialized
             if !unsafe { self.remove_from_free_list(zone, current_order, buddy_addr) } {
                 break;
-            }
-
-            // Debug: Check 0xfec4 after successful removal
-            if free_cnt < 5 {
-                unsafe {
-                    let check_virt = phys_to_virt(PhysAddr::new(0xfec4000));
-                    let check_val = *(check_virt as *const u64);
-                    debug_serial_hex(b"[FREE] post-rmfl 0xfec4.next=", check_val);
-                    debug_serial_char(b'\n');
-                }
             }
 
             zone.stats.free_pages[current_order]
@@ -571,16 +344,6 @@ impl BuddyAllocator {
         unsafe { self.add_free_block(zone, current_order, current_addr) };
         zone.stats.free_pages[current_order]
             .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-
-        // Debug: Check 0xfec4 at end of free
-        if free_cnt < 5 {
-            unsafe {
-                let check_virt = phys_to_virt(PhysAddr::new(0xfec4000));
-                let check_val = *(check_virt as *const u64);
-                debug_serial_hex(b"[FREE] end 0xfec4.next=", check_val);
-                debug_serial_char(b'\n');
-            }
-        }
     }
 
     /// Try to remove a specific block from a free list
@@ -595,17 +358,6 @@ impl BuddyAllocator {
     ) -> bool {
         let target_frame = addr >> FRAME_SHIFT;
 
-        // Debug: Track all remove_from_free_list calls
-        static REMOVE_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
-        let rm_cnt = REMOVE_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-        if rm_cnt < 30 {
-            unsafe {
-                debug_serial_hex(b"[RMFL] o=", order as u64);
-                debug_serial_hex(b" target_f=", target_frame);
-                debug_serial_char(b'\n');
-            }
-        }
-
         if zone.free_lists[order].count == 0 {
             return false;
         }
@@ -619,60 +371,23 @@ impl BuddyAllocator {
 
         // Search through the list
         let mut current_frame = zone.free_lists[order].head;
-        let mut walk_count = 0u64;
         while current_frame != 0 {
             let current_addr = current_frame << FRAME_SHIFT;
-
-            // Debug: Check 0xfec4 corruption during walk
-            if rm_cnt < 10 {
-                unsafe {
-                    let check_virt = phys_to_virt(PhysAddr::new(0xfec4000));
-                    let check_val = *(check_virt as *const u64);
-                    if check_val > 0x100000 {
-                        debug_serial_hex(b"[RMFL-WALK] CORRUPT! step=", walk_count);
-                        debug_serial_hex(b" cur_f=", current_frame);
-                        debug_serial_hex(b" 0xfec4.next=", check_val);
-                        debug_serial_char(b'\n');
-                    }
-                }
-            }
-
             let virt = phys_to_virt(PhysAddr::new(current_addr));
             // SAFETY: Frame is in free list so memory is valid
             let block = unsafe { &mut *(virt as *mut FreeBlock) };
-
-            // Debug: show what we're reading
-            if rm_cnt < 10 {
-                unsafe {
-                    debug_serial_hex(b"[RMFL-WALK] f=", current_frame);
-                    debug_serial_hex(b" next=", block.next);
-                    debug_serial_char(b'\n');
-                }
-            }
 
             if block.next == target_frame {
                 // Found it - remove from list
                 let target_virt = phys_to_virt(PhysAddr::new(addr));
                 // SAFETY: Target frame is in free list so memory is valid
                 let target_block = unsafe { &*(target_virt as *const FreeBlock) };
-
-                // Debug: Track writes to any block, especially 0xfec5
-                if rm_cnt < 30 || current_frame == 0xfec5 {
-                    unsafe {
-                        debug_serial_hex(b"[RMFL] WRITE f=", current_frame);
-                        debug_serial_hex(b" old_next=", block.next);
-                        debug_serial_hex(b" new_next=", target_block.next);
-                        debug_serial_char(b'\n');
-                    }
-                }
-
                 block.next = target_block.next;
                 zone.free_lists[order].count -= 1;
                 return true;
             }
 
             current_frame = block.next;
-            walk_count += 1;
         }
 
         false
