@@ -2,14 +2,12 @@
 //!
 //! Standard UNIX functions like read, write, fork, exec, etc.
 
+use crate::fcntl::*;
+use crate::syscall;
+
 // TTY ioctls
 const TIOCGPGRP: u64 = 0x540F;
 const TIOCSPGRP: u64 = 0x5410;
-//!
-//! Standard UNIX functions like read, write, fork, exec, etc.
-
-use crate::fcntl::*;
-use crate::syscall;
 
 /// Write bytes to file descriptor
 pub fn write(fd: i32, buf: &[u8]) -> isize {
