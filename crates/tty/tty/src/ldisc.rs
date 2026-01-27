@@ -504,6 +504,10 @@ impl LineDiscipline {
         self.input_queue.len()
     }
 
+    pub fn edit_buf_len(&self) -> usize {
+        self.edit_buf.len()
+    }
+
     /// Flush input queue
     pub fn flush_input(&mut self) {
         self.input_queue.clear();

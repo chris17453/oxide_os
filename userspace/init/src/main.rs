@@ -71,11 +71,8 @@ fn main() -> i32 {
     let child = fork();
     if child == 0 {
         // Child process - exec getty which launches login
-        printlns("[init/child] Attempting exec getty...");
-        let ret = exec("/bin/getty");
-        prints("[init/child] Getty exec returned: ");
-        print_i64(ret as i64);
-        printlns("");
+        exec("/bin/getty");
+        // Fallback to login directly
         exec("/bin/login");
         printlns("[init/child] Login failed, trying shell...");
         exec("/bin/esh");
@@ -284,11 +281,8 @@ fn reap_zombies() -> ! {
             printlns("[init] Respawning getty...");
             let child = fork();
             if child == 0 {
-                printlns("[init/respawn] Attempting getty...");
                 let _ = exec("/bin/getty");
-                printlns("[init/respawn] Getty failed, trying login...");
                 let _ = exec("/bin/login");
-                printlns("[init/respawn] Login failed, trying shell...");
                 let _ = exec("/bin/esh");
                 eprintlns("[init] Failed to exec getty/login/shell");
                 _exit(1);
