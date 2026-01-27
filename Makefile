@@ -482,7 +482,7 @@ run: create-rootfs
 		-drive file=$(ROOTFS_IMAGE),format=raw,if=none,id=disk \
 		-device virtio-blk-pci,drive=disk \
 		-device virtio-net-pci,netdev=net0 \
-		-netdev user,id=net0,hostfwd=tcp::2222-:22 \
+		-netdev user,id=net0,hostfwd=tcp::2223-:22 \
 		-serial stdio \
 		-no-reboot
 
@@ -514,7 +514,7 @@ run-kvm: create-rootfs
 		-drive file=$(ROOTFS_IMAGE),format=raw,if=none,id=bootdisk \
 		-device virtio-blk-pci,drive=bootdisk \
 		-device virtio-net-pci,netdev=net0 \
-		-netdev user,id=net0,hostfwd=tcp::2222-:22 \
+		-netdev user,id=net0,hostfwd=tcp::2223-:22 \
 		-vga std \
 		-vnc :0 \
 		-chardev stdio,id=char0,mux=on \
