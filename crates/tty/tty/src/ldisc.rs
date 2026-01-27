@@ -226,7 +226,15 @@ impl LineDiscipline {
                 echo_buf.push(b'\n');
             }
             self.edit_buf.push(b'\n');
+
+            // Debug: show state before commit
+            let edit_len_before = self.edit_buf.len();
+            let queue_len_before = self.input_queue.len();
+
             self.commit_line();
+
+            let queue_len_after = self.input_queue.len();
+
             self.column = 0;
             return echo_buf.clone();
         }
@@ -391,11 +399,17 @@ impl LineDiscipline {
 
     /// Commit the edit buffer to the input queue
     fn commit_line(&mut self) {
+        // Debug: show what we're committing
+        let edit_len = self.edit_buf.len();
+
         for c in self.edit_buf.drain(..) {
             if self.input_queue.len() < INPUT_BUF_SIZE {
                 self.input_queue.push_back(c);
             }
         }
+
+        // Debug output (unfortunately can't write to driver from here)
+        // Will rely on TTY read debug to show input_queue size
     }
 
     /// Get character display width

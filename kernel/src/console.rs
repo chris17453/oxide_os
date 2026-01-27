@@ -72,9 +72,14 @@ pub fn terminal_tick() {
 
             // Route input to active VT if VT subsystem is initialized
             if let Some(manager) = vt::get_manager() {
+                // Debug: confirm VT manager exists
+                let mut writer = serial::SerialWriter;
+                let _ = write!(writer, "[console: routing to VT]\n");
                 manager.push_input(byte);
             } else {
                 // Fallback: push to console device (legacy behavior)
+                let mut writer = serial::SerialWriter;
+                let _ = write!(writer, "[console: NO VT manager, using fallback]\n");
                 devfs::console_push_char(byte);
             }
         }

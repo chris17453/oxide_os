@@ -250,13 +250,32 @@ impl VnodeOps for Tty {
 
     fn read(&self, _offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
         // Spinloop waiting for input - yield CPU while waiting
+        let mut loop_count = 0;
         loop {
             {
                 let mut ldisc = self.ldisc.lock();
 
+                // Debug: print state every 10000 iterations
+                loop_count += 1;
+                if loop_count % 10000 == 0 {
+                    self.driver.write(b"[TTY:read loop_count=");
+                    let count_str = alloc::format!("{}", loop_count);
+                    self.driver.write(count_str.as_bytes());
+                    self.driver.write(b" can_read=");
+                    self.driver.write(if ldisc.can_read() { b"true" } else { b"false" });
+                    self.driver.write(b" input_avail=");
+                    let avail_str = alloc::format!("{}", ldisc.input_available());
+                    self.driver.write(avail_str.as_bytes());
+                    self.driver.write(b"]\n");
+                }
+
                 // Check if data is available
                 if ldisc.can_read() {
                     let count = ldisc.read(buf);
+                    self.driver.write(b"[TTY:read returning ");
+                    let count_str = alloc::format!("{}", count);
+                    self.driver.write(count_str.as_bytes());
+                    self.driver.write(b" bytes]\n");
                     return Ok(count);
                 }
             }

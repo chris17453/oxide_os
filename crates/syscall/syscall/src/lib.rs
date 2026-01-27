@@ -677,23 +677,7 @@ fn sys_read(fd: i32, buf: u64, count: usize) -> i64 {
         return errno::EFAULT;
     }
 
-    // Handle stdin (0) via console callback
-    if fd == 0 {
-        let buffer = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, count) };
-
-        unsafe {
-            let ctx = addr_of!(SYSCALL_CONTEXT);
-            if let Some(read_fn) = (*ctx).console_read {
-                let bytes_read = read_fn(buffer);
-                return bytes_read as i64;
-            }
-        }
-
-        // No console configured, return 0 (EOF)
-        return 0;
-    }
-
-    // All other file descriptors go through VFS
+    // All file descriptors (including stdin) go through VFS
     vfs::sys_read_vfs(fd, buf, count)
 }
 

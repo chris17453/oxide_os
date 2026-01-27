@@ -56,8 +56,26 @@ impl VtManager {
         }
         impl TtyDriver for VtTtyDriver {
             fn write(&self, data: &[u8]) {
+                let active = *ACTIVE_VT.read();
+
+                // Debug output
+                unsafe {
+                    if let Some(write_fn) = CONSOLE_WRITE_CALLBACK {
+                        write_fn(b"[VTDriver:write vt=");
+                        let vt_str = alloc::format!("{}", self.vt_num);
+                        write_fn(vt_str.as_bytes());
+                        write_fn(b" active=");
+                        let active_str = alloc::format!("{}", active);
+                        write_fn(active_str.as_bytes());
+                        write_fn(b" len=");
+                        let len_str = alloc::format!("{}", data.len());
+                        write_fn(len_str.as_bytes());
+                        write_fn(b"]\n");
+                    }
+                }
+
                 // Only write if this is the active VT (check global directly)
-                if *ACTIVE_VT.read() == self.vt_num {
+                if active == self.vt_num {
                     // Write to console output (terminal emulator + serial)
                     unsafe {
                         if let Some(write_fn) = CONSOLE_WRITE_CALLBACK {
@@ -105,6 +123,20 @@ impl VtManager {
     /// Push input character to active VT
     pub fn push_input(&self, ch: u8) {
         let active = *self.active_vt.lock();
+
+        // Debug: print character received
+        unsafe {
+            if let Some(write_fn) = CONSOLE_WRITE_CALLBACK {
+                write_fn(b"[VT:push_input ch=0x");
+                let hex = alloc::format!("{:02x}", ch);
+                write_fn(hex.as_bytes());
+                write_fn(b" active=");
+                let active_str = alloc::format!("{}", active);
+                write_fn(active_str.as_bytes());
+                write_fn(b"]\n");
+            }
+        }
+
         let mut vt = self.vts[active].lock();
 
         // Process through TTY line discipline
