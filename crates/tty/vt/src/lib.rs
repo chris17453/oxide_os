@@ -9,6 +9,7 @@ extern crate alloc;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use spin::Mutex;
+use alloc::collections::VecDeque;
 
 use tty::{Tty, TtyDriver};
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
@@ -103,28 +104,22 @@ impl VtManager {
     }
 
     /// Push input character to active VT
+    ///
+    /// Called from interrupt context - must be fast and lock-free.
+    /// Just buffers the input, processing happens later in read().
     pub fn push_input(&self, ch: u8) {
         let active = *self.active_vt.lock();
 
-        // Use try_lock since we're called from interrupt context
-        // If the VT is locked, we drop this input (alternative: queue it)
-        let mut vt = match self.vts[active].try_lock() {
-            Some(guard) => guard,
-            None => return,
-        };
-
-        // Process through TTY line discipline
-        if let Some(signal) = vt.tty.input(&[ch]) {
-            // Signal was generated - deliver to foreground process group
-            unsafe {
-                if let Some(callback) = SIGNAL_PGRP_CALLBACK {
-                    let pgid = vt.tty.get_foreground_pgid();
-                    if pgid > 0 {
-                        callback(pgid, signal.to_signo());
-                    }
-                }
+        // Try to buffer the input without blocking
+        // If we can't get the lock immediately, drop this one keystroke
+        // (Better than deadlocking the entire system)
+        if let Some(mut vt) = self.vts[active].try_lock() {
+            if vt.input_buffer.len() < VT_BUF_SIZE {
+                vt.input_buffer.push(ch);
             }
         }
+        // If try_lock fails or buffer full, silently drop input
+        // This is acceptable for interrupt context
     }
 
     /// Read from VT
@@ -133,12 +128,30 @@ impl VtManager {
             return Err(VfsError::InvalidArgument);
         }
 
-        // Clone the TTY Arc and release lock before blocking read
-        // This prevents deadlock with keyboard interrupt trying to deliver input
-        let tty = {
-            let vt = self.vts[vt_num].lock();
-            vt.tty.clone()
+        // Drain buffered input quickly (minimize lock time)
+        let (buffered_input, tty) = {
+            let mut vt = self.vts[vt_num].lock();
+            let input = core::mem::take(&mut vt.input_buffer);
+            (input, vt.tty.clone())
         };
+        // Lock released - interrupts can now buffer new input
+
+        // Process buffered input outside the lock
+        for ch in buffered_input {
+            if let Some(signal) = tty.input(&[ch]) {
+                // Signal was generated - deliver to foreground process group
+                unsafe {
+                    if let Some(callback) = SIGNAL_PGRP_CALLBACK {
+                        let pgid = tty.get_foreground_pgid();
+                        if pgid > 0 {
+                            callback(pgid, signal.to_signo());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Now do the blocking read
         Ok(tty.read(0, buf)?)
     }
 
