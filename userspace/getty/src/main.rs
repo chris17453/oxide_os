@@ -49,17 +49,8 @@ fn setup_terminal(config: &TermConfig) -> i32 {
     close(1);
     close(2);
 
-    prints("[getty] Opening ");
-    prints(config.device);
-    prints("\n");
-
     // Open terminal device as stdin
     let fd = open2(config.device, O_RDWR);
-
-    prints("[getty] open returned fd=");
-    print_i64(fd as i64);
-    prints("\n");
-
     if fd < 0 {
         // Try to report error before stdio is set up
         let msg = "getty: failed to open ";
@@ -72,7 +63,6 @@ fn setup_terminal(config: &TermConfig) -> i32 {
     }
 
     // Duplicate for stdout and stderr
-    prints("[getty] Duplicating fd to 0,1,2\n");
     dup2(fd, 0);
     dup2(fd, 1);
     dup2(fd, 2);
@@ -81,8 +71,6 @@ fn setup_terminal(config: &TermConfig) -> i32 {
     if fd > 2 {
         close(fd);
     }
-
-    prints("[getty] Terminal setup complete\n");
 
     // Make this the controlling terminal (setsid + ioctl TIOCSCTTY)
     // For now, we skip this as it requires more kernel support

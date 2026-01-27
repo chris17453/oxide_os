@@ -47,22 +47,10 @@ const MAX_INPUT: usize = 256;
 
 /// Read a line from stdin (without echo for password)
 fn read_line(buf: &mut [u8], echo: bool) -> usize {
-    prints("[login:read_line] Starting read, echo=");
-    prints(if echo { "true" } else { "false" });
-    prints("\n");
-
     let mut i = 0;
     loop {
         let mut c = [0u8; 1];
-
-        prints("[login:read_line] Calling read(0, buf)...\n");
-        let n = read(0, &mut c);
-        prints("[login:read_line] read returned ");
-        print_i64(n as i64);
-        prints("\n");
-
-        if n <= 0 {
-            prints("[login:read_line] Read returned <=0, breaking\n");
+        if read(0, &mut c) <= 0 {
             break;
         }
 
@@ -270,8 +258,6 @@ fn lookup_user(username: &[u8]) -> Option<&'static PasswdEntry> {
 /// Main entry point
 #[unsafe(no_mangle)]
 pub fn main() -> i32 {
-    prints("[login] Starting\n");
-
     let mut attempts = 0;
     const MAX_ATTEMPTS: i32 = 3;
 

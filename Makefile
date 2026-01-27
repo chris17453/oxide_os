@@ -444,6 +444,7 @@ initramfs-minimal: userspace-release
 	@cp "$(USERSPACE_OUT_RELEASE)/esh" "$(TARGET_DIR)/initramfs-minimal/bin/esh"
 	@ln -sf /bin/esh "$(TARGET_DIR)/initramfs-minimal/bin/sh"
 	@cp "$(USERSPACE_OUT_RELEASE)/login" "$(TARGET_DIR)/initramfs-minimal/bin/login"
+	@cp "$(USERSPACE_OUT_RELEASE)/getty" "$(TARGET_DIR)/initramfs-minimal/bin/getty"
 	@# Create minimal passwd/group
 	@echo "root:root:0:0:root:/root:/bin/esh" > $(TARGET_DIR)/initramfs-minimal/etc/passwd
 	@echo "root:x:0:" > $(TARGET_DIR)/initramfs-minimal/etc/group

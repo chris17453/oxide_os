@@ -225,7 +225,7 @@ pub fn sys_read_vfs(fd: i32, buf: u64, count: usize) -> i64 {
     }) {
         Some(Ok(f)) => f,
         Some(Err(e)) => return vfs_error_to_errno(e),
-        None => return errno::ESRCH,
+        None => return errno::EBADF,
     };
 
     // Read into user buffer
