@@ -476,8 +476,8 @@ impl LineDiscipline {
     /// Check if there's data available to read
     pub fn can_read(&self) -> bool {
         if self.termios.c_lflag.contains(LocalFlags::ICANON) {
-            // Canonical: need complete line or EOF
-            self.input_queue.iter().any(|&c| c == b'\n') || !self.input_queue.is_empty()
+            // Canonical: need complete line (newline in queue)
+            self.input_queue.iter().any(|&c| c == b'\n')
         } else {
             // Raw: check VMIN
             let vmin = self.termios.c_cc[VMIN] as usize;

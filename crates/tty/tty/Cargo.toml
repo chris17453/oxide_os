@@ -11,3 +11,4 @@ os_core = { workspace = true }
 signal = { workspace = true }
 spin = { workspace = true }
 bitflags = { workspace = true }
+sched = { workspace = true }

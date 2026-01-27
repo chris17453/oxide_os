@@ -249,16 +249,21 @@ impl VnodeOps for Tty {
     }
 
     fn read(&self, _offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
-        let mut ldisc = self.ldisc.lock();
+        // Spinloop waiting for input - yield CPU while waiting
+        loop {
+            {
+                let mut ldisc = self.ldisc.lock();
 
-        // Check if data is available
-        if !ldisc.can_read() {
-            // In a real implementation, this would block
-            return Ok(0);
+                // Check if data is available
+                if ldisc.can_read() {
+                    let count = ldisc.read(buf);
+                    return Ok(count);
+                }
+            }
+
+            // No data available - yield to other processes and try again
+            sched::yield_current();
         }
-
-        let count = ldisc.read(buf);
-        Ok(count)
     }
 
     fn write(&self, _offset: u64, buf: &[u8]) -> VfsResult<usize> {
