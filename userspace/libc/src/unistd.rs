@@ -2,6 +2,12 @@
 //!
 //! Standard UNIX functions like read, write, fork, exec, etc.
 
+// TTY ioctls
+const TIOCGPGRP: u64 = 0x540F;
+const TIOCSPGRP: u64 = 0x5410;
+//!
+//! Standard UNIX functions like read, write, fork, exec, etc.
+
 use crate::fcntl::*;
 use crate::syscall;
 
@@ -210,3 +216,17 @@ pub fn getpgid(pid: i32) -> i32 {
 pub const SEEK_SET: i32 = 0;
 pub const SEEK_CUR: i32 = 1;
 pub const SEEK_END: i32 = 2;
+
+/// Get foreground process group of TTY
+pub fn tcgetpgrp(fd: i32) -> i32 {
+    let mut pgid: i32 = 0;
+    if syscall::sys_ioctl(fd, TIOCGPGRP, &mut pgid as *mut i32 as u64) < 0 {
+        return -1;
+    }
+    pgid
+}
+
+/// Set foreground process group of TTY
+pub fn tcsetpgrp(fd: i32, pgid: i32) -> i32 {
+    syscall::sys_ioctl(fd, TIOCSPGRP, &pgid as *const i32 as u64)
+}

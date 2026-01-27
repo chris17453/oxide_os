@@ -399,6 +399,12 @@ const DT_DIR: u8 = 4;
 /// Main shell entry point
 #[unsafe(no_mangle)]
 fn main() -> i32 {
+    // Put shell in its own process group
+    setpgid(0, 0);
+
+    // Make this shell the foreground process group of the controlling terminal
+    tcsetpgrp(0, getpid());
+
     // Ignore SIGINT (Ctrl+C) in the shell itself
     // Child processes will inherit default SIGINT behavior
     signal(SIGINT, SIG_IGN);
@@ -1324,11 +1330,24 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
     }
 
     let mut pids = [0i32; MAX_PIPES];
+    let mut pgid: i32 = 0;  // Process group for the pipeline
 
     for i in 0..num_commands {
         let pid = fork();
         if pid == 0 {
             // Child process
+
+            // Put child in its own process group (first child becomes leader)
+            if i == 0 {
+                setpgid(0, 0);  // Make this child the process group leader
+            } else {
+                setpgid(0, pids[0]);  // Join the first child's process group
+            }
+
+            // Make this process group the foreground group (for signals like Ctrl+C)
+            if !background {
+                tcsetpgrp(0, getpid());  // stdin is fd 0
+            }
 
             // Setup input
             if i > 0 {
@@ -1396,6 +1415,19 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
             _exit(127);
         } else if pid > 0 {
             pids[i] = pid;
+
+            // Parent: set up process group
+            if i == 0 {
+                pgid = pid;  // First child is the process group leader
+                setpgid(pid, pid);  // Ensure it's in its own group
+
+                // Make this the foreground process group if not background
+                if !background {
+                    tcsetpgrp(0, pgid);
+                }
+            } else {
+                setpgid(pid, pgid);  // Join the process group
+            }
         } else {
             eprintlns("esh: fork failed");
         }
@@ -1413,6 +1445,9 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
             let mut status = 0;
             waitpid(pids[i], &mut status, 0);
         }
+
+        // Restore shell as foreground process group
+        tcsetpgrp(0, getpid());
     } else {
         prints("[");
         print_i64(pids[num_commands - 1] as i64);

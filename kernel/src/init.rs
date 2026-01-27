@@ -1405,40 +1405,40 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
 }
 
-/// Send signal to the current foreground process
-///
-/// This is called by the console device when Ctrl+C or Ctrl+\ is pressed.
-/// Only signals the current process (the one doing I/O), not the whole process group.
-/// Skips system processes (init, login, shell) that shouldn't be killed by Ctrl+C.
-fn signal_foreground_pgrp(sig: i32) {
+/// Send signal to all processes in a process group
+fn kill_pgrp(pgid: u32, sig: i32) {
     use signal::SigInfo;
 
-    let current_pid = sched::current_pid().unwrap_or(0);
+    let info = SigInfo::kill(sig, 0, 0);
+    let all_pids = sched::all_pids();
 
-    // Don't signal init or PID 0
-    if current_pid <= 1 {
-        return;
-    }
-
-    if let Some(meta) = sched::get_task_meta(current_pid) {
-        // Check process name from cmdline - don't signal login or shell
-        let should_skip = {
-            let m = meta.lock();
-            if let Some(first) = m.cmdline.first() {
-                // Extract just the binary name from path
-                let name = first.rsplit('/').next().unwrap_or(first);
-                name == "login" || name == "esh" || name == "init"
-            } else {
-                false
+    for pid in all_pids {
+        if let Some(meta) = sched::get_task_meta(pid) {
+            let process_pgid = meta.lock().pgid;
+            if process_pgid == pgid {
+                meta.lock().send_signal(sig, Some(info.clone()));
             }
-        };
-
-        if should_skip {
-            return;
         }
+    }
+}
 
-        let info = SigInfo::kill(sig, 0, 0); // Kernel-generated signal
-        meta.lock().send_signal(sig, Some(info));
+/// Send signal to the TTY foreground process group
+///
+/// This is called when Ctrl+C or Ctrl+\ is pressed.
+/// Sends the signal to all processes in the TTY's foreground process group.
+fn signal_foreground_pgrp(sig: i32) {
+    // Get the foreground process group from /dev/console TTY
+    // For now, use a simple approach: get the TTY from VFS
+    if let Ok(console) = vfs::mount::GLOBAL_VFS.lookup("/dev/console") {
+        // Try to get the TTY and its foreground pgid via ioctl
+        use tty::TIOCGPGRP;
+        let mut pgid: i32 = 0;
+        let pgid_ptr = &mut pgid as *mut i32 as u64;
+
+        if console.ioctl(TIOCGPGRP, pgid_ptr).is_ok() && pgid > 0 {
+            // Send signal to all processes in this process group
+            kill_pgrp(pgid as u32, sig);
+        }
     }
 }
 
