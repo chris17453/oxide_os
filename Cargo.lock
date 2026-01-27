@@ -130,6 +130,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 name = "cgroup"
 version = "0.1.0"
 dependencies = [
+ "mm-manager",
  "spin 0.9.8",
 ]
 
@@ -521,8 +522,8 @@ dependencies = [
  "initramfs",
  "input",
  "mm-cow",
- "mm-frame",
  "mm-heap",
+ "mm-manager",
  "mm-paging",
  "mm-traits",
  "net",
@@ -669,16 +670,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "mm-cow"
+name = "mm-core"
 version = "0.1.0"
 dependencies = [
+ "bitflags 2.10.0",
+ "log",
  "mm-traits",
  "os_core",
  "spin 0.9.8",
 ]
 
 [[package]]
-name = "mm-frame"
+name = "mm-cow"
 version = "0.1.0"
 dependencies = [
  "mm-traits",
@@ -690,6 +693,18 @@ dependencies = [
 name = "mm-heap"
 version = "0.1.0"
 dependencies = [
+ "arch-x86_64",
+ "os_core",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "mm-manager"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "mm-core",
+ "mm-traits",
  "os_core",
  "spin 0.9.8",
 ]
@@ -703,6 +718,17 @@ dependencies = [
  "bitflags 2.10.0",
  "mm-traits",
  "os_core",
+]
+
+[[package]]
+name = "mm-slab"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "mm-core",
+ "mm-traits",
+ "os_core",
+ "spin 0.9.8",
 ]
 
 [[package]]
@@ -1359,7 +1385,7 @@ dependencies = [
  "arch-x86_64",
  "crypto",
  "input",
- "mm-frame",
+ "mm-manager",
  "mm-traits",
  "mmap",
  "net",
@@ -1558,7 +1584,7 @@ name = "virtio-blk"
 version = "0.1.0"
 dependencies = [
  "block",
- "mm-frame",
+ "mm-manager",
  "mm-traits",
  "pci",
  "spin 0.10.0",
@@ -1593,7 +1619,7 @@ dependencies = [
 name = "virtio-net"
 version = "0.1.0"
 dependencies = [
- "mm-frame",
+ "mm-manager",
  "mm-traits",
  "net",
  "pci",

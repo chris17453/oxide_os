@@ -1,43 +1,21 @@
 //! Memory utilities for the OXIDE kernel.
 
-use crate::globals::{FRAME_ALLOCATOR, HEAP_ALLOCATOR};
-use os_core::PhysAddr;
-
-/// Wrapper to use the global frame allocator with trait bounds
-pub struct FrameAllocatorWrapper;
-
-impl mm_traits::FrameAllocator for FrameAllocatorWrapper {
-    fn alloc_frame(&self) -> Option<PhysAddr> {
-        FRAME_ALLOCATOR.alloc_frame()
-    }
-
-    fn free_frame(&self, addr: PhysAddr) {
-        FRAME_ALLOCATOR.free_frame(addr);
-    }
-
-    fn alloc_frames(&self, count: usize) -> Option<PhysAddr> {
-        FRAME_ALLOCATOR.alloc_frames(count)
-    }
-
-    fn free_frames(&self, addr: PhysAddr, count: usize) {
-        FRAME_ALLOCATOR.free_frames(addr, count);
-    }
-}
+use crate::globals::HEAP_ALLOCATOR;
+use mm_manager::mm;
 
 /// Get memory statistics for /proc/meminfo
 pub fn get_memory_stats() -> procfs::MemoryStats {
-    // Get frame allocator stats
-    let total_frames = FRAME_ALLOCATOR.total_frames();
-    let free_frames = FRAME_ALLOCATOR.free_frame_count();
-    let page_size = 4096u64;
+    // Get memory manager stats (buddy allocator)
+    let total_bytes = mm().total_bytes();
+    let free_bytes = mm().free_bytes();
 
     // Get heap stats
     let heap_used = HEAP_ALLOCATOR.used() as u64;
     let heap_free = HEAP_ALLOCATOR.free() as u64;
 
     procfs::MemoryStats {
-        total_mem: (total_frames as u64) * page_size,
-        free_mem: (free_frames as u64) * page_size,
+        total_mem: total_bytes,
+        free_mem: free_bytes,
         total_swap: 0, // No swap
         free_swap: 0,
         heap_used,

@@ -148,8 +148,56 @@ impl ProcessMeta {
 
     /// Create ProcessMeta for a kernel task (like idle)
     pub fn new_kernel() -> Self {
+        // Debug helper - check 0xfec5000
+        fn debug_check(label: &[u8]) {
+            const PHYS_MAP_BASE: u64 = 0xFFFF_8000_0000_0000;
+            const SERIAL_PORT: u16 = 0x3F8;
+
+            unsafe fn outb(port: u16, value: u8) {
+                core::arch::asm!("out dx, al", in("dx") port, in("al") value, options(nomem, nostack, preserves_flags));
+            }
+            unsafe fn serial_char(c: u8) {
+                loop {
+                    let status: u8;
+                    core::arch::asm!("in al, dx", in("dx") SERIAL_PORT + 5, out("al") status, options(nomem, nostack, preserves_flags));
+                    if status & 0x20 != 0 { break; }
+                }
+                outb(SERIAL_PORT, c);
+            }
+
+            let check_virt = (PHYS_MAP_BASE + 0xfec5000) as *const u64;
+            let value = unsafe { *check_virt };
+
+            unsafe {
+                for &c in b"[META] " { serial_char(c); }
+                for &c in label { serial_char(c); }
+                for &c in b": 0x" { serial_char(c); }
+                for i in (0..16).rev() {
+                    let nibble = ((value >> (i * 4)) & 0xF) as u8;
+                    serial_char(if nibble < 10 { b'0' + nibble } else { b'a' + (nibble - 10) });
+                }
+                serial_char(b'\n');
+            }
+        }
+
+        debug_check(b"pre-address_space");
+
         // Create a minimal address space for kernel tasks
         let address_space = unsafe { UserAddressSpace::from_raw(PhysAddr::new(0), Vec::new()) };
+
+        debug_check(b"post-address_space");
+
+        let fd_table = FdTable::new();
+        debug_check(b"post-fd_table");
+
+        let pending_signals = PendingSignals::new();
+        debug_check(b"post-pending_signals");
+
+        let sigactions = [SigAction::new(); NSIG];
+        debug_check(b"post-sigactions");
+
+        let cwd = String::from("/");
+        debug_check(b"post-cwd");
 
         Self {
             tgid: 0,
@@ -158,12 +206,12 @@ impl ProcessMeta {
             credentials: Credentials::ROOT,
             address_space,
             shared_address_space: None,
-            fd_table: FdTable::new(),
+            fd_table,
             shared_fd_table: None,
             signal_mask: SigSet::empty(),
-            pending_signals: PendingSignals::new(),
-            sigactions: [SigAction::new(); NSIG],
-            cwd: String::from("/"),
+            pending_signals,
+            sigactions,
+            cwd,
             cmdline: Vec::new(),
             environ: Vec::new(),
             tls: 0,

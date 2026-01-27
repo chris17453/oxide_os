@@ -18,7 +18,7 @@ os_log = { workspace = true }
 arch-traits = { workspace = true }
 arch-x86_64 = { path = "../crates/arch/arch-x86_64" }
 mm-traits = { workspace = true }
-mm-frame = { workspace = true }
+mm-manager = { workspace = true }
 mm-paging = { workspace = true }
 mm-heap = { workspace = true }
 mm-cow = { workspace = true }

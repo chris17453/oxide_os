@@ -17,7 +17,7 @@ use block::{BlockDevice, BlockDeviceInfo, BlockError, BlockResult};
 use boot_proto::{BootInfo, MemoryType as BootMemoryType};
 use devfs::DevFs;
 use elf::ElfExecutable;
-use mm_frame::MemoryRegion;
+use mm_manager::{self, MemoryManager};
 use mm_paging::{phys_to_virt, read_cr3};
 use mm_traits::FrameAllocator as _;
 use net::NetworkDevice;
@@ -32,8 +32,8 @@ use vfs::{File, FileFlags, MountFlags, VnodeOps, mount::GLOBAL_VFS};
 
 use crate::console;
 use crate::fault;
-use crate::globals::{FRAME_ALLOCATOR, HEAP_ALLOCATOR, HEAP_SIZE, HEAP_STORAGE, KERNEL_PML4};
-use crate::memory::{self, FrameAllocatorWrapper};
+use crate::globals::{HEAP_ALLOCATOR, HEAP_SIZE, HEAP_STORAGE, KERNEL_PML4, MEMORY_MANAGER};
+use crate::memory;
 use crate::mount::{kernel_mount, kernel_umount};
 use crate::process::{kernel_exec, kernel_fork, kernel_wait, user_exit};
 use crate::scheduler;
@@ -136,41 +136,162 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
     let _ = writeln!(writer, "[INFO] Heap initialized: {} KB", HEAP_SIZE / 1024);
 
-    // Initialize frame allocator
-    let _ = writeln!(writer, "[INFO] Initializing frame allocator...");
-    let mut regions: Vec<MemoryRegion> = Vec::new();
+    // Initialize memory manager (buddy allocator - no 4GB cap!)
+    let _ = writeln!(writer, "[INFO] Initializing memory manager (buddy allocator)...");
+
+    // The buddy allocator writes FreeBlock headers into free pages during init.
+    // We must exclude ALL bootloader-allocated structures from usable memory:
+    // 1. Low memory (first 1MB) - BIOS/UEFI data
+    // 2. Kernel (kernel_phys_base to kernel_phys_base + kernel_size)
+    // 3. Initramfs (if loaded)
+    // 4. Page tables (PML4 and all levels - bootloader allocates ~64KB typically)
+
+    const LOW_MEM_LIMIT: u64 = 0x10_0000; // First 1MB reserved
+
+    // UEFI allocates page tables using AnyPages, which scatters them throughout
+    // memory. We protect a 32MB region centered on the PML4 to cover most
+    // bootloader allocations (page tables, initramfs, runtime services).
+    const UEFI_REGION_SIZE: u64 = 0x2000000; // 32MB protection zone
+    let pml4_phys = boot_info.pml4_phys;
+    let uefi_region_start = pml4_phys.saturating_sub(UEFI_REGION_SIZE / 2);
+    let uefi_region_end = pml4_phys.saturating_add(UEFI_REGION_SIZE / 2);
+
+    let kernel_start = boot_info.kernel_phys_base;
+    let kernel_end = kernel_start + boot_info.kernel_size;
+
+    // CRITICAL: Protect the UEFI stack region!
+    // The UEFI stack is identity-mapped and located in high physical memory.
+    // We're still using it during kernel init, so we must NOT add this memory
+    // to the buddy allocator's free list.
+    //
+    // The stack grows DOWN, so current RSP is near the bottom of stack usage.
+    // We protect from (RSP - 1MB safety margin) up to 16MB above RSP to cover
+    // the entire stack region that UEFI may have allocated.
+    let current_rsp: u64;
+    unsafe { core::arch::asm!("mov {}, rsp", out(reg) current_rsp); }
+
+    // Round down RSP to page boundary and add generous margins
+    // Stack typically starts high (like 0xfec8000) and grows down
+    let stack_bottom = (current_rsp & !0xFFF).saturating_sub(0x100000); // 1MB below current RSP
+    let stack_top = (current_rsp & !0xFFF).saturating_add(0x1000000);   // 16MB above current RSP
+
+    // Also protect up to 256MB mark if stack is in high memory, as UEFI often
+    // allocates stack near the top of low memory
+    let stack_protection_end = if current_rsp > 0xf000000 { 0x10000000 } else { stack_top };
+
+    let _ = writeln!(writer, "[INFO] Protected regions:");
+    let _ = writeln!(writer, "[INFO]   Low memory: 0x0 - {:#x}", LOW_MEM_LIMIT);
+    let _ = writeln!(writer, "[INFO]   Kernel: {:#x} - {:#x}", kernel_start, kernel_end);
+    let _ = writeln!(writer, "[INFO]   UEFI/PageTables: {:#x} - {:#x} (around PML4 {:#x})",
+        uefi_region_start, uefi_region_end, pml4_phys);
+    let _ = writeln!(writer, "[INFO]   UEFI Stack: {:#x} - {:#x} (RSP={:#x})",
+        stack_bottom, stack_protection_end, current_rsp);
+
+    // Helper to check if an address range overlaps with protected regions
+    let is_protected = |addr: u64| -> bool {
+        // Low memory
+        if addr < LOW_MEM_LIMIT {
+            return true;
+        }
+        // Kernel
+        if addr >= kernel_start && addr < kernel_end {
+            return true;
+        }
+        // UEFI allocation region (page tables, runtime services, initramfs, etc.)
+        if addr >= uefi_region_start && addr < uefi_region_end {
+            return true;
+        }
+        // UEFI stack region - CRITICAL to protect!
+        if addr >= stack_bottom && addr < stack_protection_end {
+            return true;
+        }
+        false
+    };
+
+    // Build memory regions, splitting around protected areas
+    let mut regions: Vec<(os_core::PhysAddr, u64, bool)> = Vec::new();
+
     for boot_region in boot_info.memory_regions() {
-        let usable = matches!(
+        let base_usable = matches!(
             boot_region.ty,
             BootMemoryType::Usable | BootMemoryType::BootServices
         );
-        regions.push(MemoryRegion::new(
-            os_core::PhysAddr::new(boot_region.start),
-            boot_region.len,
-            usable,
-        ));
+
+        if !base_usable {
+            // Non-usable regions pass through as-is
+            regions.push((
+                os_core::PhysAddr::new(boot_region.start),
+                boot_region.len,
+                false,
+            ));
+            continue;
+        }
+
+        // For usable regions, split around protected areas
+        let mut current = boot_region.start;
+        let region_end = boot_region.start + boot_region.len;
+
+        while current < region_end {
+            // Find start of next usable segment (skip protected)
+            while current < region_end && is_protected(current) {
+                current += 0x1000; // Skip page by page
+            }
+
+            if current >= region_end {
+                break;
+            }
+
+            // Find end of this usable segment
+            let segment_start = current;
+            while current < region_end && !is_protected(current) {
+                current += 0x1000;
+            }
+
+            let segment_len = current - segment_start;
+            if segment_len > 0 {
+                regions.push((
+                    os_core::PhysAddr::new(segment_start),
+                    segment_len,
+                    true,
+                ));
+            }
+        }
     }
-    FRAME_ALLOCATOR.init(&regions);
 
-    // Initialize global frame allocator reference for syscalls
-    unsafe { mm_frame::init_global_allocator(&FRAME_ALLOCATOR) };
+    let _ = writeln!(writer, "[INFO] Processed {} memory regions for buddy allocator", regions.len());
 
-    // Mark kernel memory as used
-    FRAME_ALLOCATOR.mark_used(
-        os_core::PhysAddr::new(boot_info.kernel_phys_base),
-        boot_info.kernel_size as usize,
-    );
+    // Initialize the global memory manager
+    // SAFETY: This is called once during boot with valid memory regions
+    unsafe {
+        // Need to get a mutable reference to initialize
+        let mm_ptr = &MEMORY_MANAGER as *const MemoryManager as *mut MemoryManager;
+        (*mm_ptr).init(&regions);
+        mm_manager::init_global(&MEMORY_MANAGER);
+    }
 
-    let _ = writeln!(writer, "[INFO] Frame allocator initialized");
+    let _ = writeln!(writer, "[INFO] Memory manager initialized (buddy allocator)");
+
+    // Debug: Check 0xfec5000 integrity right after init
+    {
+        let check_addr = 0xfec5000u64;
+        let check_virt = mm_paging::phys_to_virt(os_core::PhysAddr::new(check_addr));
+        let check_next = unsafe { *(check_virt.as_ptr::<u64>()) };
+        let _ = writeln!(writer, "[DEBUG] Post-init 0xfec5000.next = {:#x}", check_next);
+    }
+
+    let total_bytes = MEMORY_MANAGER.total_bytes();
+    let free_bytes = MEMORY_MANAGER.free_bytes();
     let _ = writeln!(
         writer,
-        "[INFO] Total frames: {}",
-        FRAME_ALLOCATOR.total_frames()
+        "[INFO] Total memory: {} MB ({} bytes)",
+        total_bytes / (1024 * 1024),
+        total_bytes
     );
     let _ = writeln!(
         writer,
-        "[INFO] Free frames: {}",
-        FRAME_ALLOCATOR.free_frame_count()
+        "[INFO] Free memory: {} MB ({} bytes)",
+        free_bytes / (1024 * 1024),
+        free_bytes
     );
 
     // Initialize framebuffer if available
@@ -271,10 +392,19 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         let _ = writeln!(writer, "[SMP] Booting Application Processors...");
 
         // Allocate AP kernel stack (16KB)
-        let ap_stack_phys = mm_frame::frame_allocator()
-            .alloc_frames(4)
+        let ap_stack_phys = mm_manager::mm()
+            .alloc_contiguous(4)
             .expect("Failed to allocate AP stack");
         let ap_stack_virt = mm_paging::phys_to_virt(ap_stack_phys).as_u64() + (4 * 4096);
+
+        // Debug: Check 0xfec5000 and 0xfec4000 integrity after AP stack alloc
+        {
+            let check5_virt = mm_paging::phys_to_virt(os_core::PhysAddr::new(0xfec5000));
+            let check5_next = unsafe { *(check5_virt.as_ptr::<u64>()) };
+            let check4_virt = mm_paging::phys_to_virt(os_core::PhysAddr::new(0xfec4000));
+            let check4_next = unsafe { *(check4_virt.as_ptr::<u64>()) };
+            let _ = writeln!(writer, "[DEBUG] Post-AP-stack-alloc 0xfec5.next={:#x} 0xfec4.next={:#x}", check5_next, check4_next);
+        }
 
         // Get CR3 for APs to use (current page table)
         let cr3 = <arch::X86_64 as arch_traits::TlbControl>::read_root();
@@ -292,6 +422,15 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             "[SMP] AP trampoline set up at 0x{:x}",
             arch::ap_boot::TRAMPOLINE_PHYS
         );
+
+        // Debug: Check 0xfec5000 and 0xfec4000 integrity after trampoline setup
+        {
+            let check5_virt = mm_paging::phys_to_virt(os_core::PhysAddr::new(0xfec5000));
+            let check5_next = unsafe { *(check5_virt.as_ptr::<u64>()) };
+            let check4_virt = mm_paging::phys_to_virt(os_core::PhysAddr::new(0xfec4000));
+            let check4_next = unsafe { *(check4_virt.as_ptr::<u64>()) };
+            let _ = writeln!(writer, "[DEBUG] Post-trampoline 0xfec5.next={:#x} 0xfec4.next={:#x}", check5_next, check4_next);
+        }
 
         // Register AP initialization callback
         unsafe {
@@ -314,6 +453,15 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                 let _ = writeln!(writer, "[SMP] Failed to boot CPU 1: {}", e);
             }
         }
+
+        // Debug: Check after boot_ap
+        {
+            let check5_virt = mm_paging::phys_to_virt(os_core::PhysAddr::new(0xfec5000));
+            let check5_next = unsafe { *(check5_virt.as_ptr::<u64>()) };
+            let check4_virt = mm_paging::phys_to_virt(os_core::PhysAddr::new(0xfec4000));
+            let check4_next = unsafe { *(check4_virt.as_ptr::<u64>()) };
+            let _ = writeln!(writer, "[DEBUG] Post-boot_ap 0xfec5.next={:#x} 0xfec4.next={:#x}", check5_next, check4_next);
+        }
     }
 
     // Register page fault callback for COW handling
@@ -335,6 +483,16 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Initialize and register preemptive scheduler
     scheduler::init();
     let _ = writeln!(writer, "[INFO] Scheduler initialized");
+
+    // Debug: Check after scheduler init
+    {
+        let check5_virt = mm_paging::phys_to_virt(os_core::PhysAddr::new(0xfec5000));
+        let check5_next = unsafe { *(check5_virt.as_ptr::<u64>()) };
+        let check4_virt = mm_paging::phys_to_virt(os_core::PhysAddr::new(0xfec4000));
+        let check4_next = unsafe { *(check4_virt.as_ptr::<u64>()) };
+        let _ = writeln!(writer, "[DEBUG] Post-scheduler-init 0xfec5.next={:#x} 0xfec4.next={:#x}", check5_next, check4_next);
+    }
+
     unsafe {
         arch::set_scheduler_callback(scheduler::scheduler_tick);
     }
@@ -344,10 +502,28 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(writer, "[INFO] Starting APIC timer at 100Hz...");
     arch::start_timer(100);
 
+    // Debug: Check after timer start
+    {
+        let check5_virt = mm_paging::phys_to_virt(os_core::PhysAddr::new(0xfec5000));
+        let check5_next = unsafe { *(check5_virt.as_ptr::<u64>()) };
+        let check4_virt = mm_paging::phys_to_virt(os_core::PhysAddr::new(0xfec4000));
+        let check4_next = unsafe { *(check4_virt.as_ptr::<u64>()) };
+        let _ = writeln!(writer, "[DEBUG] Post-timer-start 0xfec5.next={:#x} 0xfec4.next={:#x}", check5_next, check4_next);
+    }
+
     // Enable interrupts
     let _ = writeln!(writer, "[INFO] Enabling interrupts...");
     arch::X86_64::enable_interrupts();
     let _ = writeln!(writer, "[INFO] Interrupts enabled");
+
+    // Debug: Check after interrupts enabled
+    {
+        let check5_virt = mm_paging::phys_to_virt(os_core::PhysAddr::new(0xfec5000));
+        let check5_next = unsafe { *(check5_virt.as_ptr::<u64>()) };
+        let check4_virt = mm_paging::phys_to_virt(os_core::PhysAddr::new(0xfec4000));
+        let check4_next = unsafe { *(check4_virt.as_ptr::<u64>()) };
+        let _ = writeln!(writer, "[DEBUG] Post-interrupts 0xfec5.next={:#x} 0xfec4.next={:#x}", check5_next, check4_next);
+    }
 
     let _ = writeln!(writer);
 
@@ -497,6 +673,15 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
 
     let _ = writeln!(writer, "[VFS] VFS initialized");
+
+    // Debug: Check after VFS init
+    {
+        let check5_virt = mm_paging::phys_to_virt(os_core::PhysAddr::new(0xfec5000));
+        let check5_next = unsafe { *(check5_virt.as_ptr::<u64>()) };
+        let check4_virt = mm_paging::phys_to_virt(os_core::PhysAddr::new(0xfec4000));
+        let check4_next = unsafe { *(check4_virt.as_ptr::<u64>()) };
+        let _ = writeln!(writer, "[DEBUG] Post-VFS 0xfec5.next={:#x} 0xfec4.next={:#x}", check5_next, check4_next);
+    }
 
     // ========================================
     // Network Initialization
@@ -952,26 +1137,32 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let kernel_pml4 = read_cr3();
     let _ = writeln!(writer, "[USER] Kernel PML4: {:#x}", kernel_pml4.as_u64());
 
+    // Debug: Test a direct frame allocation to see what address comes back
+    let _ = writeln!(writer, "[DEBUG] Testing direct frame allocation...");
+    let test_frame = mm_manager::mm().alloc_frame().expect("test alloc failed");
+    let _ = writeln!(writer, "[DEBUG] Test frame returned: {:#x}", test_frame.as_u64());
+    // Free it back
+    let _ = mm_manager::mm().free_frame(test_frame);
+
     // Store kernel PML4 for fork/exec
     unsafe {
         KERNEL_PML4 = kernel_pml4.as_u64();
     }
 
-    // Create a wrapper that implements FrameAllocator
-    let alloc_wrapper = FrameAllocatorWrapper;
-
     let mut user_space =
-        match unsafe { proc::UserAddressSpace::new_with_kernel(&alloc_wrapper, kernel_pml4) } {
+        match unsafe { proc::UserAddressSpace::new_with_kernel(mm_manager::mm(), kernel_pml4) } {
             Some(s) => s,
             None => {
                 let _ = writeln!(writer, "[USER] Failed to create user address space!");
                 arch::X86_64::halt();
             }
         };
+    let user_pml4 = user_space.pml4_phys();
     let _ = writeln!(
         writer,
-        "[USER] User PML4: {:#x}",
-        user_space.pml4_phys().as_u64()
+        "[USER] User PML4: {:#x} (raw u64: {})",
+        user_pml4.as_u64(),
+        user_pml4.as_u64()
     );
 
     // Load ELF segments into user address space
@@ -988,7 +1179,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             let existing = user_space.translate(page_addr);
             if existing.is_none() {
                 // Allocate single page
-                if let Err(e) = user_space.allocate_pages(page_addr, 1, seg.flags, &alloc_wrapper) {
+                if let Err(e) = user_space.allocate_pages(page_addr, 1, seg.flags, mm_manager::mm()) {
                     let _ = writeln!(
                         writer,
                         "[USER] Failed to allocate page at {:#x}: {:?}",
@@ -1090,7 +1281,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         user_stack_base,
         user_stack_pages,
         stack_flags,
-        &alloc_wrapper,
+        mm_manager::mm(),
     ) {
         let _ = writeln!(writer, "[USER] Failed to allocate user stack: {:?}", e);
         arch::X86_64::halt();
@@ -1177,8 +1368,8 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Allocate 128KB kernel stack - fork+COW uses ~67KB during deep recursion
     const KERNEL_STACK_SIZE: usize = 128 * 1024;
     let kernel_stack_pages = KERNEL_STACK_SIZE / 4096;
-    let kernel_stack_phys = FRAME_ALLOCATOR
-        .alloc_frames(kernel_stack_pages)
+    let kernel_stack_phys = mm_manager::mm()
+        .alloc_contiguous(kernel_stack_pages)
         .expect("Failed to allocate kernel stack");
     // Convert physical to virtual for the kernel to use
     let kernel_stack_virt = phys_to_virt(kernel_stack_phys);
@@ -1273,13 +1464,15 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     let _ = writeln!(writer);
     let _ = writeln!(writer, "[USER] Entering user mode at {:#x}...", entry_point);
+    let _ = writeln!(writer, "[USER] PML4 phys: {:#x}", user_pml4_phys.as_u64());
+    let _ = writeln!(writer, "[USER] User RSP: {:#x}", user_stack_top.as_u64());
+    let _ = writeln!(writer, "[USER] Kernel stack: {:#x}", kernel_stack_top);
     let _ = writeln!(writer);
 
     // Use the combined enter_usermode function that:
     // 1. Switches to kernel stack (in higher half)
     // 2. Switches page tables
     // 3. Jumps to user mode
-    let _ = writeln!(writer, "[USER] Entering user mode...");
     unsafe {
         arch::usermode::enter_usermode(
             kernel_stack_top,

@@ -8,7 +8,9 @@ members = [
     "crates/arch/arch-traits",
     "crates/arch/arch-x86_64",
     "crates/mm/mm-traits",
-    "crates/mm/mm-frame",
+    "crates/mm/mm-core",
+    "crates/mm/mm-manager",
+    "crates/mm/mm-slab",
     "crates/mm/mm-paging",
     "crates/mm/mm-heap",
     "crates/mm/mm-cow",
@@ -133,7 +135,9 @@ os_log = { path = "crates/core/os_log" }
 arch-traits = { path = "crates/arch/arch-traits" }
 arch-x86_64 = { path = "crates/arch/arch-x86_64" }
 mm-traits = { path = "crates/mm/mm-traits" }
-mm-frame = { path = "crates/mm/mm-frame" }
+mm-core = { path = "crates/mm/mm-core" }
+mm-manager = { path = "crates/mm/mm-manager" }
+mm-slab = { path = "crates/mm/mm-slab" }
 mm-paging = { path = "crates/mm/mm-paging" }
 mm-heap = { path = "crates/mm/mm-heap" }
 mm-cow = { path = "crates/mm/mm-cow" }

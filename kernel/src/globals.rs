@@ -7,8 +7,8 @@ use core::sync::atomic::AtomicBool;
 
 use arch_traits::Arch;
 use arch_x86_64::X86_64;
-use mm_frame::BitmapFrameAllocator;
 use mm_heap::LockedHeap;
+use mm_manager::MemoryManager;
 use spin::{Mutex, MutexGuard};
 
 /// Global kernel heap allocator
@@ -21,8 +21,8 @@ pub const HEAP_SIZE: usize = 16 * 1024 * 1024;
 /// Static heap storage (temporary until we have proper MM)
 pub static mut HEAP_STORAGE: [u8; HEAP_SIZE] = [0; HEAP_SIZE];
 
-/// Global frame allocator
-pub static FRAME_ALLOCATOR: BitmapFrameAllocator = BitmapFrameAllocator::new();
+/// Global memory manager (buddy allocator - no 4GB cap)
+pub static MEMORY_MANAGER: MemoryManager = MemoryManager::new();
 
 /// Flag to track if user process has exited
 pub static USER_EXITED: AtomicBool = AtomicBool::new(false);

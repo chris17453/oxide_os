@@ -5,10 +5,69 @@
 use alloc::vec::Vec;
 use core::cell::RefCell;
 use mm_paging::{MapError as PagingMapError, PageMapper, PageTable, PageTableFlags};
-use mm_paging::{phys_to_virt, write_cr3};
+use mm_paging::{phys_to_virt, write_cr3, PHYS_MAP_BASE};
 use mm_traits::FrameAllocator;
 use os_core::{PhysAddr, VirtAddr};
 use proc_traits::{AddressSpace, MapError, MemoryFlags, UnmapError};
+
+/// Serial port for debug output
+const SERIAL_PORT: u16 = 0x3F8;
+
+/// Write a byte to serial
+#[inline]
+unsafe fn outb(port: u16, value: u8) {
+    core::arch::asm!(
+        "out dx, al",
+        in("dx") port,
+        in("al") value,
+        options(nomem, nostack, preserves_flags)
+    );
+}
+
+/// Write a character to serial
+#[allow(dead_code)]
+unsafe fn debug_char(c: u8) {
+    loop {
+        let status: u8;
+        core::arch::asm!(
+            "in al, dx",
+            in("dx") SERIAL_PORT + 5,
+            out("al") status,
+            options(nomem, nostack, preserves_flags)
+        );
+        if status & 0x20 != 0 { break; }
+    }
+    outb(SERIAL_PORT, c);
+}
+
+/// Write hex value with prefix
+#[allow(dead_code)]
+unsafe fn debug_hex(prefix: &[u8], value: u64) {
+    for &c in prefix { debug_char(c); }
+    debug_char(b'0'); debug_char(b'x');
+    let mut started = false;
+    for i in (0..16).rev() {
+        let nibble = ((value >> (i * 4)) & 0xF) as u8;
+        if nibble != 0 || started || i == 0 {
+            started = true;
+            debug_char(if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 });
+        }
+    }
+}
+
+/// Check if 0xfec4000's FreeBlock header is corrupted
+#[allow(dead_code)]
+unsafe fn check_0xfec4(label: &[u8]) {
+    let virt = PHYS_MAP_BASE + 0xfec4000;
+    let val = *(virt as *const u64);
+    // If value is not a reasonable frame number (should be small, like 0xf7ff)
+    if val > 0x100000 {
+        debug_hex(b"[ASPACE ", 0);
+        for &c in label { debug_char(c); }
+        debug_hex(b"] 0xfec4.next CORRUPTED=", val);
+        debug_char(b'\n');
+    }
+}
 
 /// User virtual address space
 ///
@@ -35,24 +94,52 @@ impl UserAddressSpace {
         allocator: &A,
         kernel_pml4: PhysAddr,
     ) -> Option<Self> {
+        // Check 0xfec4 before allocating PML4
+        unsafe { check_0xfec4(b"pre-pml4-alloc"); }
+
         // Allocate a new PML4
         let pml4_frame = allocator.alloc_frame()?;
+
+        // Check 0xfec4 after allocating PML4
+        unsafe { check_0xfec4(b"post-pml4-alloc"); }
+
+        // Debug: show PML4 frame
+        unsafe {
+            debug_hex(b"[NEW_WITH_KERNEL] pml4_frame=", pml4_frame.as_u64());
+            debug_char(b'\n');
+        }
 
         // Zero the new PML4
         let pml4_virt = phys_to_virt(pml4_frame);
         let new_pml4 = unsafe { &mut *pml4_virt.as_mut_ptr::<PageTable>() };
+
+        // Check 0xfec4 before clear
+        unsafe { check_0xfec4(b"pre-pml4-clear"); }
+
         new_pml4.clear();
+
+        // Check 0xfec4 after clear
+        unsafe { check_0xfec4(b"post-pml4-clear"); }
 
         // Copy kernel mappings (entries 256-511) from the kernel's PML4
         // These entries cover the higher half of virtual address space
         let kernel_pml4_virt = phys_to_virt(kernel_pml4);
         let kernel_pml4_table = unsafe { &*kernel_pml4_virt.as_ptr::<PageTable>() };
 
+        // Check 0xfec4 before copy loop
+        unsafe { check_0xfec4(b"pre-copy-loop"); }
+
         for i in 256..512 {
             new_pml4[i] = kernel_pml4_table[i];
         }
 
+        // Check 0xfec4 after copy loop
+        unsafe { check_0xfec4(b"post-copy-loop"); }
+
         let mapper = unsafe { PageMapper::new(pml4_frame) };
+
+        // Check 0xfec4 before vec alloc
+        unsafe { check_0xfec4(b"pre-vec-alloc"); }
 
         Some(Self {
             pml4_phys: pml4_frame,
@@ -208,18 +295,48 @@ impl UserAddressSpace {
             let offset = (i * 4096) as u64;
             let virt = VirtAddr::new(virt_start.as_u64() + offset);
 
+            // Check 0xfec4 before alloc
+            unsafe { check_0xfec4(b"pre-user-alloc"); }
+
             // Allocate a frame
             let frame = allocator.alloc_frame().ok_or(MapError::OutOfMemory)?;
+
+            // Check 0xfec4 after alloc
+            unsafe { check_0xfec4(b"post-user-alloc"); }
+
+            // Debug: show allocated frame
+            unsafe {
+                static mut PAGE_ALLOC_COUNT: u64 = 0;
+                PAGE_ALLOC_COUNT += 1;
+                if PAGE_ALLOC_COUNT <= 20 {
+                    debug_hex(b"[ASPACE] user frame=", frame.as_u64());
+                    debug_char(b'\n');
+                }
+            }
+
             self.allocated_frames.push(frame);
+
+            // Check 0xfec4 after push
+            unsafe { check_0xfec4(b"post-push"); }
 
             // Zero the frame
             let frame_virt = phys_to_virt(frame);
+
+            // Check 0xfec4 before zeroing
+            unsafe { check_0xfec4(b"pre-zero"); }
+
             unsafe {
                 core::ptr::write_bytes(frame_virt.as_mut_ptr::<u8>(), 0, 4096);
             }
 
+            // Check 0xfec4 after zeroing
+            unsafe { check_0xfec4(b"post-zero"); }
+
             // Map it
             unsafe { self.map_user_page(virt, frame, flags, allocator)? };
+
+            // Check 0xfec4 after mapping
+            unsafe { check_0xfec4(b"post-map"); }
         }
 
         Ok(())

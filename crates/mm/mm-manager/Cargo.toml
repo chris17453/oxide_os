@@ -1,0 +1,12 @@
+[package]
+name = "mm-manager"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+os_core = { workspace = true }
+mm-traits = { workspace = true }
+mm-core = { workspace = true }
+spin = { workspace = true }
+log = { workspace = true }
