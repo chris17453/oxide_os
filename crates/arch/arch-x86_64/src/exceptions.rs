@@ -415,8 +415,18 @@ pub extern "C" fn keyboard_interrupt() {
     );
 }
 
+/// Atomic counter of keyboard interrupts (for debugging)
+static KEYBOARD_IRQ_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+/// Get the keyboard interrupt count (for debugging)
+pub fn keyboard_irq_count() -> u64 {
+    KEYBOARD_IRQ_COUNT.load(core::sync::atomic::Ordering::Relaxed)
+}
+
 /// Keyboard handler - simplified non-naked version
 extern "C" fn handle_keyboard() {
+    KEYBOARD_IRQ_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+
     // Read scancode
     let scancode = unsafe {
         let mut value: u8;

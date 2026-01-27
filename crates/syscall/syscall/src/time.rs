@@ -5,7 +5,8 @@
 use crate::errno;
 use crate::with_current_meta;
 use arch_x86_64 as arch;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU64, AtomicU32, Ordering};
+use sched::TaskState;
 
 /// Timer frequency in Hz (ticks per second)
 const TIMER_HZ: u64 = 100;
@@ -16,6 +17,71 @@ const NS_PER_TICK: u64 = 1_000_000_000 / TIMER_HZ;
 /// Boot time in seconds since Unix epoch (can be set during init)
 /// Default to Jan 1, 2024 00:00:00 UTC if not set
 static BOOT_TIME_SECS: AtomicU64 = AtomicU64::new(1704067200);
+
+// ============================================================================
+// Sleep Queue - Timer-based wakeup for nanosleep
+// ============================================================================
+
+/// Maximum number of concurrent sleepers
+const MAX_SLEEPERS: usize = 64;
+
+/// A sleeping task entry
+struct Sleeper {
+    pid: AtomicU32,      // PID of sleeping task (0 = empty slot)
+    wake_tick: AtomicU64, // Tick count at which to wake
+}
+
+impl Sleeper {
+    const fn empty() -> Self {
+        Self {
+            pid: AtomicU32::new(0),
+            wake_tick: AtomicU64::new(0),
+        }
+    }
+}
+
+/// Global sleep queue - checked by timer interrupt each tick
+static SLEEP_QUEUE: [Sleeper; MAX_SLEEPERS] = [const { Sleeper::empty() }; MAX_SLEEPERS];
+
+/// Register a task in the sleep queue
+fn sleep_queue_add(pid: u32, wake_tick: u64) -> bool {
+    for slot in &SLEEP_QUEUE {
+        // Try to claim an empty slot (pid == 0)
+        if slot.pid.compare_exchange(0, pid, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
+            slot.wake_tick.store(wake_tick, Ordering::Release);
+            return true;
+        }
+    }
+    false // Queue full
+}
+
+/// Remove a task from the sleep queue (e.g., on signal interrupt)
+fn sleep_queue_remove(pid: u32) {
+    for slot in &SLEEP_QUEUE {
+        if slot.pid.load(Ordering::Acquire) == pid {
+            slot.pid.store(0, Ordering::Release);
+            return;
+        }
+    }
+}
+
+/// Check sleep queue and wake expired sleepers.
+/// Called from timer interrupt at 100Hz.
+pub fn check_sleepers() {
+    let now = get_ticks();
+    for slot in &SLEEP_QUEUE {
+        let pid = slot.pid.load(Ordering::Acquire);
+        if pid != 0 {
+            let wake_tick = slot.wake_tick.load(Ordering::Acquire);
+            if now >= wake_tick {
+                // Clear the slot first, then wake
+                if slot.pid.compare_exchange(pid, 0, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
+                    sched::wake_up(pid);
+                }
+            }
+        }
+    }
+}
 
 /// Clock IDs (POSIX)
 pub mod clock {
@@ -238,47 +304,63 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
     let start_ticks = get_ticks();
     let wake_ticks = start_ticks + sleep_ticks;
 
-    // Sleep by yielding to other processes until wake time
-    // We use HLT to wait for timer interrupts, allowing other processes to run
+    // Get current PID for sleep queue management
+    let current_pid = sched::current_pid().unwrap_or(0);
+
+    // Register in sleep queue so timer interrupt will wake us
+    let queued = sleep_queue_add(current_pid, wake_ticks);
+
+    // Sleep loop: block ourselves, let timer interrupt wake us when time expires
     while get_ticks() < wake_ticks {
         // Check for pending signals
         let has_signals = with_current_meta(|meta| meta.has_pending_signals()).unwrap_or(false);
         if has_signals {
-                let elapsed_ticks = get_ticks() - start_ticks;
-                let remaining_ticks = sleep_ticks.saturating_sub(elapsed_ticks);
+            // Remove from sleep queue on signal
+            if queued {
+                sleep_queue_remove(current_pid);
+            }
 
-                if rem_ptr != 0 && remaining_ticks > 0 {
-                    let remaining_ns = remaining_ticks * NS_PER_TICK;
-                    let rem = Timespec {
-                        tv_sec: (remaining_ns / 1_000_000_000) as i64,
-                        tv_nsec: (remaining_ns % 1_000_000_000) as i64,
-                    };
+            let elapsed_ticks = get_ticks() - start_ticks;
+            let remaining_ticks = sleep_ticks.saturating_sub(elapsed_ticks);
 
-                    unsafe {
-                        core::arch::asm!("stac", options(nomem, nostack));
-                        let rp = rem_ptr as *mut Timespec;
-                        core::ptr::write_volatile(rp, rem);
-                        core::arch::asm!("clac", options(nomem, nostack));
-                    }
+            if rem_ptr != 0 && remaining_ticks > 0 {
+                let remaining_ns = remaining_ticks * NS_PER_TICK;
+                let rem = Timespec {
+                    tv_sec: (remaining_ns / 1_000_000_000) as i64,
+                    tv_nsec: (remaining_ns % 1_000_000_000) as i64,
+                };
+
+                unsafe {
+                    core::arch::asm!("stac", options(nomem, nostack));
+                    let rp = rem_ptr as *mut Timespec;
+                    core::ptr::write_volatile(rp, rem);
+                    core::arch::asm!("clac", options(nomem, nostack));
                 }
+            }
 
             return errno::EINTR;
         }
 
+        if queued {
+            // Block ourselves - removes from run queue so scheduler skips us.
+            // The timer interrupt calls check_sleepers() which will wake_up()
+            // us when wake_ticks is reached, re-enqueueing us.
+            sched::block_current(TaskState::TASK_INTERRUPTIBLE);
+            sched::set_need_resched();
+        }
+
         // Allow scheduler to preempt us while we wait
-        // Note: We don't save user context here. When scheduler_tick preempts
-        // us at hlt, it saves kernel context. When we resume, we continue
-        // this loop and return normally via the syscall return path.
         arch::allow_kernel_preempt();
 
-        // HLT yields CPU until next interrupt
-        // With KERNEL_PREEMPT_OK set, scheduler will switch to other processes
+        // HLT yields CPU until next interrupt.
+        // If queued: scheduler will switch away (we're blocked), timer will wake us.
+        // If not queued (queue full): fallback to polling with preempt.
         unsafe {
             core::arch::asm!("sti"); // Ensure interrupts enabled
             core::arch::asm!("hlt", options(nomem, nostack));
         }
 
-        // Clear preempt flag if we're still running (no switch occurred)
+        // Clear preempt flag
         arch::disallow_kernel_preempt();
     }
 

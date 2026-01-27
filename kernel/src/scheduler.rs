@@ -92,6 +92,9 @@ pub fn remove_process(pid: u32) {
 /// Implements preemptive scheduling using the sched crate.
 /// Returns the RSP to restore (may be different if we switched processes).
 pub fn scheduler_tick(current_rsp: u64) -> u64 {
+    // Check sleep queue and wake any tasks whose sleep time has expired
+    syscall::time::check_sleepers();
+
     let frame = unsafe { &*(current_rsp as *const InterruptFrame) };
 
     // Use lock-free current PID to avoid deadlock in interrupt context
@@ -187,9 +190,29 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         core::arch::asm!("mov cr3, {}", in(reg) next_pml4.as_u64());
     }
 
-    // Build interrupt frame for next process
-    let new_frame_ptr =
-        (kernel_stack_top - core::mem::size_of::<InterruptFrame>() as u64) as *mut InterruptFrame;
+    // Build interrupt frame for next process.
+    //
+    // CRITICAL: For kernel-mode tasks (CS=0x08), we must NOT place the frame
+    // at kernel_stack_top because that would overwrite the syscall entry's saved
+    // user context. The task was preempted while in kernel code (e.g., kernel_wait
+    // or kernel_yield), and the syscall handler's saved user registers live at the
+    // top of the kernel stack. Overwriting them causes corruption when the task
+    // eventually returns to user mode via sysretq.
+    //
+    // For kernel-mode tasks: place the frame below the task's saved RSP. The space
+    // there was the original interrupt frame (already consumed) and is safe to reuse.
+    //
+    // For user-mode tasks (CS=0x23): kernel_stack_top is correct because the user
+    // task doesn't have live data on the kernel stack.
+    let is_kernel_mode = next_ctx.cs == 0x08 || (next_ctx.cs == 0 && frame.cs == 0x08);
+    let frame_size = core::mem::size_of::<InterruptFrame>() as u64;
+    let new_frame_ptr = if is_kernel_mode {
+        // Place below the task's saved kernel RSP (where original interrupt frame was)
+        (next_ctx.rsp - frame_size) as *mut InterruptFrame
+    } else {
+        // User-mode: top of kernel stack is safe
+        (kernel_stack_top - frame_size) as *mut InterruptFrame
+    };
 
     unsafe {
         let ss = if next_ctx.ss != 0 { next_ctx.ss } else { 0x1B };
@@ -264,130 +287,32 @@ pub fn block_current(state: TaskState) {
 
 /// Voluntary yield - called from sched_yield syscall
 ///
-/// Switches to another ready task if one exists.
+/// Signals the scheduler that this task wants to yield, then lets the
+/// timer interrupt handle the actual context switch via iretq.
+/// This is safe because iretq correctly restores both user-mode and
+/// kernel-mode contexts (unlike sysretq which always returns to Ring 3).
 /// Returns 0 on success.
 pub fn kernel_yield() -> i64 {
-    let current_pid = sched::current_pid().unwrap_or(0);
-
-    // Tell sched crate we're yielding
+    // Tell sched crate we're yielding (updates vruntime accounting)
     sched::yield_current();
 
-    // Find next task to run
-    let next_pid = pick_next_process(current_pid);
+    // Request a reschedule - the next timer interrupt will perform the
+    // actual context switch via scheduler_tick + iretq
+    sched::set_need_resched();
 
-    if next_pid == current_pid {
-        return 0; // No other tasks
-    }
+    // Allow kernel preemption so the timer interrupt can switch us out
+    arch::allow_kernel_preempt();
 
-    // Get current process's user context from syscall entry
-    let user_ctx = arch::get_user_context();
-
-    // Save current task context to scheduler
-    let current_ctx = sched::TaskContext {
-        rip: user_ctx.rip,
-        rsp: user_ctx.rsp,
-        rflags: user_ctx.rflags,
-        rax: 0, // sched_yield returns 0
-        rbx: user_ctx.rbx,
-        rcx: user_ctx.rcx,
-        rdx: user_ctx.rdx,
-        rsi: user_ctx.rsi,
-        rdi: user_ctx.rdi,
-        rbp: user_ctx.rbp,
-        r8: user_ctx.r8,
-        r9: user_ctx.r9,
-        r10: user_ctx.r10,
-        r11: user_ctx.r11,
-        r12: user_ctx.r12,
-        r13: user_ctx.r13,
-        r14: user_ctx.r14,
-        r15: user_ctx.r15,
-        cs: 0x23, // User mode
-        ss: 0x1B,
-    };
-    sched::set_task_context(current_pid, current_ctx);
-
-    // Get next task's context switch info from the scheduler
-    let (next_ctx, next_pml4, kernel_stack, kernel_stack_size) =
-        match sched::get_task_switch_info(next_pid) {
-            Some(info) => info,
-            None => return 0,
-        };
-
-    let kernel_stack_top = {
-        let ks_virt = phys_to_virt(kernel_stack);
-        ks_virt.as_u64() + kernel_stack_size as u64
-    };
-
-    // Switch to next process via scheduler
-    sched::switch_to(next_pid);
-
-    // Update kernel stack pointers
+    // Brief halt to give the timer a chance to fire and switch us
     unsafe {
-        arch::syscall::set_kernel_stack(kernel_stack_top);
+        core::arch::asm!("sti", options(nomem, nostack, preserves_flags));
+        core::arch::asm!("hlt", options(nomem, nostack));
     }
-    arch::gdt::set_kernel_stack(kernel_stack_top);
 
-    // Switch page tables and return to next process via sysretq
-    // Use TaskContext directly - same layout as ProcessContext
-    static mut YIELD_CTX: sched::TaskContext = sched::TaskContext {
-        rip: 0,
-        rsp: 0,
-        rflags: 0,
-        rax: 0,
-        rbx: 0,
-        rcx: 0,
-        rdx: 0,
-        rsi: 0,
-        rdi: 0,
-        rbp: 0,
-        r8: 0,
-        r9: 0,
-        r10: 0,
-        r11: 0,
-        r12: 0,
-        r13: 0,
-        r14: 0,
-        r15: 0,
-        cs: 0,
-        ss: 0,
-    };
+    // If we get here, the timer fired and the scheduler chose to keep us running
+    arch::disallow_kernel_preempt();
 
-    unsafe {
-        use core::ptr::addr_of_mut;
-        *addr_of_mut!(YIELD_CTX) = next_ctx;
-
-        // Switch page tables
-        core::arch::asm!("mov cr3, {}", in(reg) next_pml4.as_u64());
-
-        let ctx_ptr = addr_of_mut!(YIELD_CTX) as u64;
-
-        core::arch::asm!(
-            "mov rax, {ctx}",
-            "mov rcx, [rax]",       // rip -> rcx for sysret
-            "mov r11, [rax + 16]",  // rflags -> r11 for sysret
-            "or r11, 0x200",        // Ensure IF set
-            "mov rbx, [rax + 32]",
-            "mov rbp, [rax + 72]",
-            "mov r12, [rax + 112]",
-            "mov r13, [rax + 120]",
-            "mov r14, [rax + 128]",
-            "mov r15, [rax + 136]",
-            "mov rdi, [rax + 64]",
-            "mov rsi, [rax + 56]",
-            "mov rdx, [rax + 48]",
-            "mov r8, [rax + 80]",
-            "mov r9, [rax + 88]",
-            "mov r10, [rax + 96]",
-            "push qword ptr [rax + 8]",
-            "mov rax, [rax + 24]",
-            "pop rsp",
-            "swapgs",
-            "sysretq",
-            ctx = in(reg) ctx_ptr,
-            options(noreturn)
-        );
-    }
+    0
 }
 
 /// Set a process's scheduling policy

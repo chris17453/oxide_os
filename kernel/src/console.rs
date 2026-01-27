@@ -176,9 +176,11 @@ pub fn console_read(buf: &mut [u8]) -> usize {
             // when we're blocked waiting for keyboard input
             arch::allow_kernel_preempt();
 
-            // Use HLT instruction to wait for interrupt
+            // Use STI+HLT to wait for interrupt
+            // STI ensures interrupts are enabled (they may be disabled by syscall entry)
             // The timer interrupt will now be able to preempt us and run other tasks
             unsafe {
+                core::arch::asm!("sti", options(nomem, nostack, preserves_flags));
                 core::arch::asm!("hlt", options(nomem, nostack));
             }
 
