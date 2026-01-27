@@ -5,7 +5,7 @@
 use crate::copy_to_user;
 use crate::errno;
 use crate::{get_current_meta, with_current_meta_mut};
-use mm_frame::frame_allocator;
+use mm_manager::mm;
 use os_core::VirtAddr;
 use proc_traits::MemoryFlags;
 
@@ -125,8 +125,8 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
     {
         let mut m = meta.lock();
 
-        // Use the frame allocator to allocate and map pages
-        let allocator = frame_allocator();
+        // Use the memory manager to allocate and map pages
+        let allocator = mm();
 
         match m.address_space.allocate_pages(VirtAddr::new(map_addr), num_pages, mem_flags, allocator)
         {

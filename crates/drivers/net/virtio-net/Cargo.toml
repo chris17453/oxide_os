@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-mm-frame = { path = "../../../mm/mm-frame" }
+mm-manager = { path = "../../../mm/mm-manager" }
 mm-traits = { path = "../../../mm/mm-traits" }
 net = { path = "../../../net/net" }
 pci = { path = "../../pci" }

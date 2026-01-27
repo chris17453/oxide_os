@@ -1,6 +1,10 @@
 //! OXIDE Paging
 //!
 //! Page table structures and mapping operations for x86_64.
+//!
+//! # Features
+//!
+//! - `debug-demand` - Enable serial debug output for page fault handling
 
 #![no_std]
 #![allow(unused)]
@@ -8,6 +12,7 @@
 mod entry;
 mod mapper;
 mod table;
+pub mod demand;
 
 pub use entry::{PageTableEntry, PageTableFlags};
 #[cfg(not(target_arch = "x86_64"))]

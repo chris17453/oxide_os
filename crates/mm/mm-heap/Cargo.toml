@@ -4,6 +4,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+heap-hardening = []  # Enable heap hardening (guard pages, redzones, canaries)
+debug-heap = []      # Enable debug output for heap operations
+
 [dependencies]
 os_core = { workspace = true }
 spin = { workspace = true }
+
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+arch-x86_64 = { workspace = true }

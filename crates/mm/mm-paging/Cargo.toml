@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+debug-demand = []  # Enable debug output for demand paging/page faults
+
 [dependencies]
 os_core = { workspace = true }
 mm-traits = { workspace = true }

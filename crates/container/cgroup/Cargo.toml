@@ -3,5 +3,10 @@ name = "cgroup"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+mm-accounting = ["mm-manager"]  # Enable memory manager accounting integration
+
 [dependencies]
 spin = "0.9"
+mm-manager = { workspace = true, optional = true }

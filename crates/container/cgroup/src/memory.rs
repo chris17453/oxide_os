@@ -1,4 +1,8 @@
 //! Memory Cgroup Controller
+//!
+//! Provides memory resource limits and accounting for cgroups.
+//! When the `mm-accounting` feature is enabled, implements the
+//! `AccountingContext` trait for integration with the memory manager.
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -194,4 +198,66 @@ pub struct MemoryStats {
     pub swap_max: u64,
     /// OOM kill count
     pub oom_kill: u64,
+}
+
+// Implement AccountingContext when mm-accounting feature is enabled
+#[cfg(feature = "mm-accounting")]
+mod accounting_impl {
+    use super::*;
+    use mm_manager::account::AccountingContext;
+    use mm_manager::{MmError, MmResult};
+
+    impl AccountingContext for MemoryController {
+        fn can_charge(&self, bytes: u64) -> bool {
+            MemoryController::can_charge(self, bytes)
+        }
+
+        fn charge(&self, bytes: u64) -> MmResult<()> {
+            let max = self.max_bytes.load(Ordering::SeqCst);
+            if max > 0 {
+                // Atomic check-and-add to prevent races
+                loop {
+                    let current = self.current_bytes.load(Ordering::SeqCst);
+                    if current + bytes > max {
+                        return Err(MmError::OutOfMemory);
+                    }
+                    // Try to atomically update
+                    if self
+                        .current_bytes
+                        .compare_exchange(
+                            current,
+                            current + bytes,
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                        )
+                        .is_ok()
+                    {
+                        return Ok(());
+                    }
+                    // Retry if CAS failed
+                }
+            } else {
+                // Unlimited
+                self.current_bytes.fetch_add(bytes, Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        fn uncharge(&self, bytes: u64) {
+            MemoryController::uncharge(self, bytes);
+        }
+
+        fn usage(&self) -> u64 {
+            self.current_bytes.load(Ordering::SeqCst)
+        }
+
+        fn limit(&self) -> u64 {
+            let max = self.max_bytes.load(Ordering::SeqCst);
+            if max == 0 {
+                u64::MAX // Unlimited
+            } else {
+                max
+            }
+        }
+    }
 }

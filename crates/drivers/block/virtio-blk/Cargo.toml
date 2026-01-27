@@ -6,6 +6,6 @@ edition = "2024"
 [dependencies]
 block = { path = "../../../block/block" }
 pci = { path = "../../pci" }
-mm-frame = { path = "../../../mm/mm-frame" }
+mm-manager = { path = "../../../mm/mm-manager" }
 mm-traits = { path = "../../../mm/mm-traits" }
 spin = "0.10"

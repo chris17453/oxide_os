@@ -13,7 +13,7 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use spin::Mutex;
 
-use mm_frame::frame_allocator;
+use mm_manager::mm;
 use mm_traits::FrameAllocator;
 use net::{DeviceFlags, MacAddress, NetError, NetResult, NetStats, NetworkDevice};
 use pci::{PciBar, PciDevice};
@@ -228,7 +228,7 @@ impl Virtqueue {
         let num_pages = (total_size + 4095) / 4096;
 
         // Allocate physical frames
-        let phys_addr = frame_allocator().alloc_frames(num_pages)?;
+        let phys_addr = mm().alloc_contiguous(num_pages).ok()?;
         let phys_base = phys_addr.as_u64();
 
         let virt_base = phys_to_virt(phys_base);
@@ -345,7 +345,7 @@ impl RxBuffers {
         let total_size = RX_BUFFER_COUNT * RX_BUFFER_SIZE;
         let num_pages = (total_size + 4095) / 4096;
 
-        let phys_addr = frame_allocator().alloc_frames(num_pages)?;
+        let phys_addr = mm().alloc_contiguous(num_pages).ok()?;
         let phys_base = phys_addr.as_u64();
         let virt_base = phys_to_virt(phys_base) as *mut u8;
 
@@ -384,7 +384,7 @@ impl TxBuffers {
         let total_size = QUEUE_SIZE * RX_BUFFER_SIZE;
         let num_pages = (total_size + 4095) / 4096;
 
-        let phys_addr = frame_allocator().alloc_frames(num_pages)?;
+        let phys_addr = mm().alloc_contiguous(num_pages).ok()?;
         let phys_base = phys_addr.as_u64();
         let virt_base = phys_to_virt(phys_base) as *mut u8;
 

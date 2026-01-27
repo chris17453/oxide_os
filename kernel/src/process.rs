@@ -25,7 +25,7 @@ use crate::debug_fork;
 use crate::globals::{
     CHILD_DONE, KERNEL_PML4, PARENT_CONTEXT, ParentContext, USER_EXIT_STATUS, USER_EXITED,
 };
-use crate::memory::FrameAllocatorWrapper;
+use mm_manager::mm;
 use crate::scheduler::{add_process, wake_parent};
 use sched::TaskContext;
 
@@ -246,9 +246,6 @@ pub fn kernel_fork() -> i64 {
         parent_context.rsp
     );
 
-    // Create wrapper for frame allocator
-    let alloc_wrapper = FrameAllocatorWrapper;
-
     // Kernel stack size (128KB)
     const KERNEL_STACK_SIZE: usize = 128 * 1024;
 
@@ -258,7 +255,7 @@ pub fn kernel_fork() -> i64 {
         parent_pid,
         &parent_meta,
         &parent_context,
-        &alloc_wrapper,
+        mm(),
         KERNEL_STACK_SIZE,
     );
     // Save parent's PML4 before releasing the lock - needed for PARENT_CONTEXT
@@ -996,14 +993,13 @@ pub fn kernel_exec(
 
     // Get kernel PML4 for creating new address space
     let kernel_pml4 = PhysAddr::new(unsafe { KERNEL_PML4 });
-    let alloc_wrapper = FrameAllocatorWrapper;
 
     // Call do_exec - returns ExecResult with new address space and context
     match do_exec(
         &elf_data,
         &argv,
         &envp,
-        &alloc_wrapper,
+        mm(),
         kernel_pml4,
     ) {
         Ok(exec_result) => {

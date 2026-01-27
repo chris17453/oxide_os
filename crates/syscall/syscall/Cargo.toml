@@ -8,7 +8,7 @@ os_core = { path = "../../core/os_core" }
 proc = { path = "../../proc/proc" }
 proc-traits = { path = "../../proc/proc-traits" }
 mm-traits = { path = "../../mm/mm-traits" }
-mm-frame = { path = "../../mm/mm-frame" }
+mm-manager = { path = "../../mm/mm-manager" }
 vfs = { path = "../../vfs/vfs" }
 signal = { path = "../../signal/signal" }
 net = { path = "../../net/net" }

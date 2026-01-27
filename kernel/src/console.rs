@@ -171,12 +171,19 @@ pub fn console_read(buf: &mut [u8]) -> usize {
                 }
             }
 
-            // Use HLT instruction to wait for interrupt instead of busy-spin
-            // Note: This doesn't yield to other processes (scheduler only preempts user mode)
-            // TODO: Implement proper blocking I/O with wait queues
+            // Allow kernel preemption while waiting for input
+            // This lets the scheduler run other processes (e.g., background services)
+            // when we're blocked waiting for keyboard input
+            arch::allow_kernel_preempt();
+
+            // Use HLT instruction to wait for interrupt
+            // The timer interrupt will now be able to preempt us and run other tasks
             unsafe {
                 core::arch::asm!("hlt", options(nomem, nostack));
             }
+
+            // Disallow kernel preemption while processing input
+            arch::disallow_kernel_preempt();
         }
     }
     count

@@ -13,7 +13,7 @@ use core::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use spin::Mutex;
 
 use block::{BlockDevice, BlockDeviceInfo, BlockError, BlockResult};
-use mm_frame::frame_allocator;
+use mm_manager::mm;
 use mm_traits::FrameAllocator;
 
 /// VirtIO device status
@@ -258,7 +258,7 @@ impl Virtqueue {
     /// - Used ring: at page-aligned offset, size = 6 + 8 * num
     ///
     /// # Safety
-    /// Requires a working frame allocator (call mm_frame::init_global_allocator first).
+    /// Requires a working memory manager (call mm_manager::init_global first).
     unsafe fn new_legacy(num: u16) -> Option<Self> {
         // Calculate sizes
         let desc_size = (num as usize) * core::mem::size_of::<VirtqDesc>();
@@ -275,7 +275,7 @@ impl Virtqueue {
 
         // Allocate physical frames using the frame allocator
         // This gives us a known physical address that we can use for DMA
-        let phys_addr = frame_allocator().alloc_frames(num_pages)?;
+        let phys_addr = mm().alloc_contiguous(num_pages).ok()?;
         let phys_base = phys_addr.as_u64();
 
         // Access the physical memory through the physical map
@@ -440,7 +440,7 @@ impl RequestBuffers {
         let num_pages = (total_size + 4095) / 4096;
 
         // Allocate physical frames
-        let phys_addr = frame_allocator().alloc_frames(num_pages)?;
+        let phys_addr = mm().alloc_contiguous(num_pages).ok()?;
         let phys_base = phys_addr.as_u64();
 
         // Access through physical map
