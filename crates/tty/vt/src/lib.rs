@@ -51,20 +51,17 @@ impl VtManager {
     /// Create a new VT manager
     pub fn new() -> Self {
         // Create TTY drivers for each VT
-        // Each driver needs to know its VT number to check if it's active
         struct VtTtyDriver {
             vt_num: usize,
         }
         impl TtyDriver for VtTtyDriver {
             fn write(&self, data: &[u8]) {
-                // Only write if this is the active VT
-                if let Some(manager) = get_manager() {
-                    if manager.active_vt() == self.vt_num {
-                        // Write to console output (terminal emulator + serial)
-                        unsafe {
-                            if let Some(write_fn) = CONSOLE_WRITE_CALLBACK {
-                                write_fn(data);
-                            }
+                // Only write if this is the active VT (check global directly)
+                if *ACTIVE_VT.read() == self.vt_num {
+                    // Write to console output (terminal emulator + serial)
+                    unsafe {
+                        if let Some(write_fn) = CONSOLE_WRITE_CALLBACK {
+                            write_fn(data);
                         }
                     }
                 }
@@ -86,7 +83,7 @@ impl VtManager {
 
     /// Get the active VT index
     pub fn active_vt(&self) -> usize {
-        *self.active_vt.lock()
+        *ACTIVE_VT.read()
     }
 
     /// Switch to a different VT
@@ -95,7 +92,7 @@ impl VtManager {
             return false;
         }
 
-        let mut active = self.active_vt.lock();
+        let mut active = ACTIVE_VT.write();
         if *active != vt_num {
             *active = vt_num;
             // TODO: Notify terminal emulator to switch screen buffer
@@ -155,6 +152,9 @@ impl VtManager {
 
 /// Global VT manager
 static VT_MANAGER: Mutex<Option<Arc<VtManager>>> = Mutex::new(None);
+
+/// Active VT index (separate from manager to avoid circular dependency)
+static ACTIVE_VT: spin::RwLock<usize> = spin::RwLock::new(0);
 
 /// Callback type for signaling a process group
 pub type SignalPgrpFn = fn(pgid: i32, sig: i32);
