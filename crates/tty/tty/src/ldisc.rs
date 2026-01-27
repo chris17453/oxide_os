@@ -59,10 +59,6 @@ pub struct LineDiscipline {
     pending_signal: Option<Signal>,
     /// Next character should be literal (^V prefix)
     literal_next: bool,
-    /// Echo buffer (fixed-size, no allocation)
-    echo_buf: [u8; 16],
-    /// Echo buffer length
-    echo_len: usize,
 }
 
 impl LineDiscipline {
@@ -76,8 +72,6 @@ impl LineDiscipline {
             column: 0,
             pending_signal: None,
             literal_next: false,
-            echo_buf: [0; 16],
-            echo_len: 0,
         }
     }
 
@@ -99,15 +93,24 @@ impl LineDiscipline {
     /// Process an input character from the hardware
     ///
     /// Returns data to echo back to the terminal (if echo enabled).
-    pub fn input_char(&mut self, c: u8) -> ([u8; 16], usize) {
-        let echo_len = 0;
-
-        // TEMPORARY: Process input but don't echo to avoid allocations in interrupt context
-        // TODO: Properly handle echo with fixed-size buffer
-
+    /// Process input character and write echo directly to avoid allocations
+    ///
+    /// This is called from interrupt context, so we:
+    /// 1. Echo directly to the writer (no allocation)
+    /// 2. Queue the character for reading
+    /// 3. Return any signal that should be delivered
+    pub fn input_char<W: FnMut(&[u8])>(&mut self, c: u8, mut write_echo: W) -> Option<Signal> {
         // Handle literal next (^V)
         if self.literal_next {
             self.literal_next = false;
+            // In literal mode, add character directly
+            if self.termios.c_lflag.contains(LocalFlags::ICANON) && self.edit_buf.len() < MAX_CANON {
+                self.edit_buf.push(c);
+                if self.termios.c_lflag.contains(LocalFlags::ECHO) {
+                    write_echo(&[c]);
+                }
+            }
+            return None;
         }
 
         // Input processing (c_iflag)
@@ -120,45 +123,95 @@ impl LineDiscipline {
                 if !self.termios.c_lflag.contains(LocalFlags::NOFLSH) {
                     self.flush_input();
                 }
-                return ([0u8; 16], 0);
+                if self.termios.c_lflag.contains(LocalFlags::ECHO) {
+                    write_echo(b"^C");
+                }
+                return Some(Signal::Int);
             }
             if c == self.termios.c_cc[VQUIT] {
                 self.pending_signal = Some(Signal::Quit);
                 if !self.termios.c_lflag.contains(LocalFlags::NOFLSH) {
                     self.flush_input();
                 }
-                return ([0u8; 16], 0);
+                if self.termios.c_lflag.contains(LocalFlags::ECHO) {
+                    write_echo(b"^\\");
+                }
+                return Some(Signal::Quit);
             }
             if c == self.termios.c_cc[VSUSP] {
                 self.pending_signal = Some(Signal::Tstp);
                 if !self.termios.c_lflag.contains(LocalFlags::NOFLSH) {
                     self.flush_input();
                 }
-                return ([0u8; 16], 0);
+                if self.termios.c_lflag.contains(LocalFlags::ECHO) {
+                    write_echo(b"^Z");
+                }
+                return Some(Signal::Tstp);
             }
         }
 
-        // Canonical mode processing - queue the character
+        // Canonical mode processing
         if self.termios.c_lflag.contains(LocalFlags::ICANON) {
+            // Handle newline
             if c == b'\n' {
+                if self.termios.c_lflag.contains(LocalFlags::ECHO)
+                    || self.termios.c_lflag.contains(LocalFlags::ECHONL) {
+                    write_echo(b"\r\n");
+                }
                 self.edit_buf.push(b'\n');
                 self.commit_line();
                 self.column = 0;
-            } else if c == self.termios.c_cc[VERASE] && self.termios.c_cc[VERASE] != 0 {
+                return None;
+            }
+
+            // Handle erase
+            if c == self.termios.c_cc[VERASE] && self.termios.c_cc[VERASE] != 0 {
                 if !self.edit_buf.is_empty() {
                     self.edit_buf.pop();
+                    if self.termios.c_lflag.contains(LocalFlags::ECHO) {
+                        write_echo(b"\x08 \x08"); // Backspace, space, backspace
+                    }
                 }
-            } else if self.edit_buf.len() < MAX_CANON {
+                return None;
+            }
+
+            // Handle kill (erase line)
+            if c == self.termios.c_cc[VKILL] && self.termios.c_cc[VKILL] != 0 {
+                if self.termios.c_lflag.contains(LocalFlags::ECHO) {
+                    // Erase the whole line
+                    for _ in 0..self.edit_buf.len() {
+                        write_echo(b"\x08 \x08");
+                    }
+                }
+                self.edit_buf.clear();
+                self.column = 0;
+                return None;
+            }
+
+            // Handle EOF
+            if c == self.termios.c_cc[VEOF] && self.termios.c_cc[VEOF] != 0 {
+                self.commit_line();
+                return None;
+            }
+
+            // Regular character - add to edit buffer
+            if self.edit_buf.len() < MAX_CANON {
                 self.edit_buf.push(c);
+                if self.termios.c_lflag.contains(LocalFlags::ECHO) {
+                    write_echo(&[c]);
+                }
             }
         } else {
-            // Raw mode - directly to queue
+            // Raw mode - directly to input queue
             if self.input_queue.len() < INPUT_BUF_SIZE {
                 self.input_queue.push_back(c);
+                if self.termios.c_lflag.contains(LocalFlags::ECHO) {
+                    write_echo(&[c]);
+                }
             }
         }
 
-        ([0u8; 16], 0)
+        None
     }
 
     /// Process input character (c_iflag transformations)

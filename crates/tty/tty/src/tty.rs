@@ -72,16 +72,13 @@ impl Tty {
         let mut signal = None;
 
         for &c in data {
-            let (echo_buf, echo_len) = ldisc.input_char(c);
+            // Process character with echo callback
+            let sig = ldisc.input_char(c, |echo_data| {
+                self.driver.write(echo_data);
+            });
 
-            // Echo back to terminal
-            if echo_len > 0 {
-                self.driver.write(&echo_buf[..echo_len]);
-            }
-
-            // Check for signals
-            if let Some(sig) = ldisc.take_signal() {
-                signal = Some(sig);
+            if sig.is_some() {
+                signal = sig;
             }
         }
 

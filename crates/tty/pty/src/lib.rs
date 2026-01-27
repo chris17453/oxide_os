@@ -152,15 +152,20 @@ impl PtyMaster {
 
         // Process input through line discipline
         for &c in buf {
-            let (echo_buf, echo_len) = pair.ldisc.input_char(c);
+            // Use a temporary buffer to collect echo output
+            let mut echo_buffer = alloc::vec::Vec::new();
 
-            // Echo goes back to master (terminal emulator)
-            if echo_len > 0 && pair.slave_to_master.len() + echo_len <= PTY_BUF_SIZE {
-                pair.slave_to_master.extend(&echo_buf[..echo_len]);
+            let sig = pair.ldisc.input_char(c, |echo_data| {
+                echo_buffer.extend_from_slice(echo_data);
+            });
+
+            // Now write collected echo to slave_to_master
+            if !echo_buffer.is_empty() && pair.slave_to_master.len() + echo_buffer.len() <= PTY_BUF_SIZE {
+                pair.slave_to_master.extend(echo_buffer);
             }
 
             // Check for signals
-            if let Some(sig) = pair.ldisc.take_signal() {
+            if let Some(sig) = sig {
                 signal_info = Some((sig.to_signo(), pair.foreground_pgid));
             }
         }
@@ -214,15 +219,20 @@ impl VnodeOps for PtyMaster {
 
         // Master writes input to slave - process through line discipline
         for &c in buf {
-            let (echo_buf, echo_len) = pair.ldisc.input_char(c);
+            // Use a temporary buffer to collect echo output
+            let mut echo_buffer = alloc::vec::Vec::new();
 
-            // Echo goes back to master (terminal emulator)
-            if echo_len > 0 && pair.slave_to_master.len() + echo_len <= PTY_BUF_SIZE {
-                pair.slave_to_master.extend(&echo_buf[..echo_len]);
+            let sig = pair.ldisc.input_char(c, |echo_data| {
+                echo_buffer.extend_from_slice(echo_data);
+            });
+
+            // Now write collected echo to slave_to_master
+            if !echo_buffer.is_empty() && pair.slave_to_master.len() + echo_buffer.len() <= PTY_BUF_SIZE {
+                pair.slave_to_master.extend(echo_buffer);
             }
 
             // Check if a signal was generated (Ctrl+C, Ctrl+\, Ctrl+Z)
-            if let Some(sig) = pair.ldisc.take_signal() {
+            if let Some(sig) = sig {
                 let pgid = pair.foreground_pgid;
                 if pgid > 0 {
                     // Call signal delivery callback if registered
