@@ -69,8 +69,14 @@ pub fn terminal_tick() {
                 let mut writer = serial::SerialWriter;
                 let _ = write!(writer, "[KB:0x{:02x}]", byte);
             }
-            // Push character to console input buffer (handles both stdin and display)
-            devfs::console_push_char(byte);
+
+            // Route input to active VT if VT subsystem is initialized
+            if let Some(manager) = vt::get_manager() {
+                manager.push_input(byte);
+            } else {
+                // Fallback: push to console device (legacy behavior)
+                devfs::console_push_char(byte);
+            }
         }
     }
 
@@ -227,6 +233,7 @@ pub fn console_write_bytes(data: &[u8]) {
 /// Track modifier state for basic scancode decoding
 static mut SHIFT_PRESSED: bool = false;
 static mut CTRL_PRESSED: bool = false;
+static mut ALT_PRESSED: bool = false;
 static mut EXTENDED_SCANCODE: bool = false;
 
 /// Process a single PS/2 scancode and return an ASCII byte (if any)
@@ -244,16 +251,42 @@ fn process_scancode(scancode: u8) -> Option<u8> {
         // Update modifier state
         match code {
             0x2A | 0x36 => {
+                // Shift
                 SHIFT_PRESSED = !is_release;
                 EXTENDED_SCANCODE = false;
                 return None;
             }
             0x1D => {
+                // Ctrl
                 CTRL_PRESSED = !is_release;
                 EXTENDED_SCANCODE = false;
                 return None;
             }
+            0x38 => {
+                // Alt
+                ALT_PRESSED = !is_release;
+                EXTENDED_SCANCODE = false;
+                return None;
+            }
             _ => {}
+        }
+
+        // Check for Ctrl+Alt+Fn (VT switching)
+        if !is_release && CTRL_PRESSED && ALT_PRESSED {
+            match code {
+                0x3B..=0x40 => {
+                    // F1-F6 keys (scancodes 0x3B-0x40)
+                    let vt_num = (code - 0x3B) as usize;
+                    if let Some(manager) = vt::get_manager() {
+                        manager.switch_to(vt_num);
+                        let mut writer = serial::SerialWriter;
+                        let _ = write!(writer, "[VT] Switched to tty{}\n", vt_num + 1);
+                    }
+                    EXTENDED_SCANCODE = false;
+                    return None;
+                }
+                _ => {}
+            }
         }
 
         // Ignore key releases for non-modifiers

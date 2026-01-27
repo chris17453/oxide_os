@@ -548,6 +548,7 @@ dependencies = [
  "vfs",
  "virtio-blk",
  "virtio-net",
+ "vt",
 ]
 
 [[package]]
@@ -1647,6 +1648,16 @@ version = "0.1.0"
 dependencies = [
  "spin 0.9.8",
  "vmm",
+]
+
+[[package]]
+name = "vt"
+version = "0.1.0"
+dependencies = [
+ "os_core",
+ "spin 0.9.8",
+ "tty",
+ "vfs",
 ]
 
 [[package]]

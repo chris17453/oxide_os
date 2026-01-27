@@ -37,6 +37,7 @@ initramfs = { workspace = true }
 procfs = { workspace = true }
 tty = { workspace = true }
 pty = { workspace = true }
+vt = { workspace = true }
 net = { workspace = true }
 tcpip = { workspace = true }
 dhcp = { workspace = true }

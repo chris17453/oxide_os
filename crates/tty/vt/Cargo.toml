@@ -1,0 +1,12 @@
+[package]
+name = "vt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Virtual terminal (VT) support for OXIDE OS"
+
+[dependencies]
+vfs = { workspace = true }
+tty = { workspace = true }
+os_core = { workspace = true }
+spin = { workspace = true }

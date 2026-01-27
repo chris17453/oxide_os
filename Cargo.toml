@@ -89,6 +89,7 @@ members = [
     "crates/compat/syscall-compat",
     "crates/tty/tty",
     "crates/tty/pty",
+    "crates/tty/vt",
     "crates/signal/signal",
     "crates/smp/smp",
     "crates/module/module",
@@ -156,6 +157,7 @@ initramfs = { path = "crates/vfs/initramfs" }
 procfs = { path = "crates/vfs/procfs" }
 tty = { path = "crates/tty/tty" }
 pty = { path = "crates/tty/pty" }
+vt = { path = "crates/tty/vt" }
 signal = { path = "crates/signal/signal" }
 smp = { path = "crates/smp/smp" }
 module = { path = "crates/module/module" }

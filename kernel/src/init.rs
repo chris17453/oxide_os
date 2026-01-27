@@ -532,11 +532,23 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     // Mount devfs at /dev
     let dev_fs = DevFs::new();
+
+    // Initialize VT (virtual terminal) subsystem before mounting devfs
+    let vt_manager = vt::init();
+    let _ = writeln!(writer, "[VFS] VT manager initialized ({} virtual terminals)", vt::NUM_VTS);
+
+    // Register /dev/tty1 through /dev/tty6 in devfs
+    for i in 0..vt::NUM_VTS {
+        let vt_device = vt::VtDevice::new(i, vt_manager.clone(), 1000 + i as u64);
+        let device_name = alloc::format!("tty{}", i + 1);
+        dev_fs.register(&device_name, vt_device);
+    }
+
     if let Err(e) = GLOBAL_VFS.mount(dev_fs, "/dev", MountFlags::empty(), "devfs") {
         let _ = writeln!(writer, "[VFS] Failed to mount devfs: {:?}", e);
         arch::X86_64::halt();
     }
-    let _ = writeln!(writer, "[VFS] Mounted devfs at /dev");
+    let _ = writeln!(writer, "[VFS] Mounted devfs at /dev with {} VT devices", vt::NUM_VTS);
 
     // Set up serial write function for devfs (raw debug output)
     unsafe {
@@ -563,8 +575,9 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     // Set up signal callbacks for Ctrl+C handling
     unsafe {
-        devfs::set_signal_fg_callback(signal_foreground_pgrp);  // Console TTY
+        devfs::set_signal_fg_callback(signal_foreground_pgrp);  // Console TTY (legacy)
         pty::set_signal_pgrp_callback(signal_pgrp_callback);    // PTY devices
+        vt::set_signal_pgrp_callback(signal_pgrp_callback);     // VT devices
     }
 
     // Create /proc directory
