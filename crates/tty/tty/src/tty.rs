@@ -72,11 +72,11 @@ impl Tty {
         let mut signal = None;
 
         for &c in data {
-            let echo = ldisc.input_char(c);
+            let (echo_buf, echo_len) = ldisc.input_char(c);
 
             // Echo back to terminal
-            if !echo.is_empty() {
-                self.driver.write(&echo);
+            if echo_len > 0 {
+                self.driver.write(&echo_buf[..echo_len]);
             }
 
             // Check for signals

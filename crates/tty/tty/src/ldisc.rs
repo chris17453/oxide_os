@@ -59,6 +59,10 @@ pub struct LineDiscipline {
     pending_signal: Option<Signal>,
     /// Next character should be literal (^V prefix)
     literal_next: bool,
+    /// Echo buffer (fixed-size, no allocation)
+    echo_buf: [u8; 16],
+    /// Echo buffer length
+    echo_len: usize,
 }
 
 impl LineDiscipline {
@@ -72,6 +76,8 @@ impl LineDiscipline {
             column: 0,
             pending_signal: None,
             literal_next: false,
+            echo_buf: [0; 16],
+            echo_len: 0,
         }
     }
 
@@ -93,13 +99,15 @@ impl LineDiscipline {
     /// Process an input character from the hardware
     ///
     /// Returns data to echo back to the terminal (if echo enabled).
-    pub fn input_char(&mut self, c: u8) -> Vec<u8> {
-        let mut echo_buf = Vec::new();
+    pub fn input_char(&mut self, c: u8) -> ([u8; 16], usize) {
+        let echo_len = 0;
+
+        // TEMPORARY: Process input but don't echo to avoid allocations in interrupt context
+        // TODO: Properly handle echo with fixed-size buffer
 
         // Handle literal next (^V)
         if self.literal_next {
             self.literal_next = false;
-            return self.add_input_char(c, &mut echo_buf);
         }
 
         // Input processing (c_iflag)
@@ -112,33 +120,45 @@ impl LineDiscipline {
                 if !self.termios.c_lflag.contains(LocalFlags::NOFLSH) {
                     self.flush_input();
                 }
-                self.echo_control_char(c, &mut echo_buf);
-                return echo_buf;
+                return ([0u8; 16], 0);
             }
             if c == self.termios.c_cc[VQUIT] {
                 self.pending_signal = Some(Signal::Quit);
                 if !self.termios.c_lflag.contains(LocalFlags::NOFLSH) {
                     self.flush_input();
                 }
-                self.echo_control_char(c, &mut echo_buf);
-                return echo_buf;
+                return ([0u8; 16], 0);
             }
             if c == self.termios.c_cc[VSUSP] {
                 self.pending_signal = Some(Signal::Tstp);
                 if !self.termios.c_lflag.contains(LocalFlags::NOFLSH) {
                     self.flush_input();
                 }
-                self.echo_control_char(c, &mut echo_buf);
-                return echo_buf;
+                return ([0u8; 16], 0);
             }
         }
 
-        // Canonical mode processing
+        // Canonical mode processing - queue the character
         if self.termios.c_lflag.contains(LocalFlags::ICANON) {
-            self.process_canonical(c, &mut echo_buf)
+            if c == b'\n' {
+                self.edit_buf.push(b'\n');
+                self.commit_line();
+                self.column = 0;
+            } else if c == self.termios.c_cc[VERASE] && self.termios.c_cc[VERASE] != 0 {
+                if !self.edit_buf.is_empty() {
+                    self.edit_buf.pop();
+                }
+            } else if self.edit_buf.len() < MAX_CANON {
+                self.edit_buf.push(c);
+            }
         } else {
-            self.process_raw(c, &mut echo_buf)
+            // Raw mode - directly to queue
+            if self.input_queue.len() < INPUT_BUF_SIZE {
+                self.input_queue.push_back(c);
+            }
         }
+
+        ([0u8; 16], 0)
     }
 
     /// Process input character (c_iflag transformations)

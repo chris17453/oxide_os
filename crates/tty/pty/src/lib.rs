@@ -152,11 +152,11 @@ impl PtyMaster {
 
         // Process input through line discipline
         for &c in buf {
-            let echo = pair.ldisc.input_char(c);
+            let (echo_buf, echo_len) = pair.ldisc.input_char(c);
 
             // Echo goes back to master (terminal emulator)
-            if !echo.is_empty() && pair.slave_to_master.len() + echo.len() <= PTY_BUF_SIZE {
-                pair.slave_to_master.extend(echo);
+            if echo_len > 0 && pair.slave_to_master.len() + echo_len <= PTY_BUF_SIZE {
+                pair.slave_to_master.extend(&echo_buf[..echo_len]);
             }
 
             // Check for signals
@@ -214,11 +214,11 @@ impl VnodeOps for PtyMaster {
 
         // Master writes input to slave - process through line discipline
         for &c in buf {
-            let echo = pair.ldisc.input_char(c);
+            let (echo_buf, echo_len) = pair.ldisc.input_char(c);
 
             // Echo goes back to master (terminal emulator)
-            if !echo.is_empty() && pair.slave_to_master.len() + echo.len() <= PTY_BUF_SIZE {
-                pair.slave_to_master.extend(echo);
+            if echo_len > 0 && pair.slave_to_master.len() + echo_len <= PTY_BUF_SIZE {
+                pair.slave_to_master.extend(&echo_buf[..echo_len]);
             }
 
             // Check if a signal was generated (Ctrl+C, Ctrl+\, Ctrl+Z)
