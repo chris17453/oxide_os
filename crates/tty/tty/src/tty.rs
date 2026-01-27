@@ -68,6 +68,16 @@ impl Tty {
     /// Called by the driver when input is received.
     /// Returns a signal if one should be delivered.
     pub fn input(&self, data: &[u8]) -> Option<Signal> {
+        self.driver.write(b"[TTY:input len=");
+        let len_str = alloc::format!("{}", data.len());
+        self.driver.write(len_str.as_bytes());
+        if !data.is_empty() {
+            self.driver.write(b" ch=0x");
+            let hex = alloc::format!("{:02x}", data[0]);
+            self.driver.write(hex.as_bytes());
+        }
+        self.driver.write(b"]\n");
+
         let mut ldisc = self.ldisc.lock();
         let mut signal = None;
 

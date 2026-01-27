@@ -105,7 +105,28 @@ impl VtManager {
     /// Push input character to active VT
     pub fn push_input(&self, ch: u8) {
         let active = *self.active_vt.lock();
-        let mut vt = self.vts[active].lock();
+        unsafe {
+            if let Some(write_fn) = CONSOLE_WRITE_CALLBACK {
+                write_fn(b"[VT:input 0x");
+                let hex = alloc::format!("{:02x}", ch);
+                write_fn(hex.as_bytes());
+                write_fn(b"]\n");
+            }
+        }
+
+        // Use try_lock since we're called from interrupt context
+        // If the VT is locked, we drop this input (alternative: queue it)
+        let mut vt = match self.vts[active].try_lock() {
+            Some(guard) => guard,
+            None => {
+                unsafe {
+                    if let Some(write_fn) = CONSOLE_WRITE_CALLBACK {
+                        write_fn(b"[VT:input DROPPED - VT locked]\n");
+                    }
+                }
+                return;
+            }
+        };
 
         // Process through TTY line discipline
         if let Some(signal) = vt.tty.input(&[ch]) {
@@ -127,8 +148,13 @@ impl VtManager {
             return Err(VfsError::InvalidArgument);
         }
 
-        let vt = self.vts[vt_num].lock();
-        Ok(vt.tty.read(0, buf)?)
+        // Clone the TTY Arc and release lock before blocking read
+        // This prevents deadlock with keyboard interrupt trying to deliver input
+        let tty = {
+            let vt = self.vts[vt_num].lock();
+            vt.tty.clone()
+        };
+        Ok(tty.read(0, buf)?)
     }
 
     /// Write to VT
@@ -137,8 +163,12 @@ impl VtManager {
             return Err(VfsError::InvalidArgument);
         }
 
-        let vt = self.vts[vt_num].lock();
-        Ok(vt.tty.write(0, buf)?)
+        // Clone the TTY Arc and release lock before I/O
+        let tty = {
+            let vt = self.vts[vt_num].lock();
+            vt.tty.clone()
+        };
+        Ok(tty.write(0, buf)?)
     }
 
     /// Get TTY for ioctl operations
