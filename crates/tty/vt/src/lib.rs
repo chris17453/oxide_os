@@ -110,14 +110,7 @@ impl VtManager {
         // If the VT is locked, we drop this input (alternative: queue it)
         let mut vt = match self.vts[active].try_lock() {
             Some(guard) => guard,
-            None => {
-                unsafe {
-                    if let Some(write_fn) = CONSOLE_WRITE_CALLBACK {
-                        write_fn(b"[VT:input DROPPED - VT locked]\n");
-                    }
-                }
-                return;
-            }
+            None => return,
         };
 
         // Process through TTY line discipline

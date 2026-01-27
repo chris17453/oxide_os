@@ -72,10 +72,6 @@ impl Tty {
         let mut signal = None;
 
         for &c in data {
-            if c == b'\n' || c == b'\r' {
-                self.driver.write(b"[NEWLINE]\n");
-            }
-
             let echo = ldisc.input_char(c);
 
             // Echo back to terminal
@@ -253,8 +249,6 @@ impl VnodeOps for Tty {
     }
 
     fn read(&self, _offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
-        self.driver.write(b"[TTY:read called]\n");
-
         // Spinloop waiting for input - yield CPU while waiting
         loop {
             {
