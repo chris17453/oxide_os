@@ -58,6 +58,20 @@ const PTY_BUF_SIZE: usize = 4096;
 /// Global PTY number allocator
 static NEXT_PTY_NUM: AtomicU32 = AtomicU32::new(0);
 
+/// Callback type for signaling a process group
+pub type SignalPgrpFn = fn(pgid: i32, sig: i32);
+
+/// Global signal callback (set by kernel)
+static mut SIGNAL_PGRP_CALLBACK: Option<SignalPgrpFn> = None;
+
+/// Set the signal callback for sending signals to process groups
+///
+/// # Safety
+/// Must be called during single-threaded initialization
+pub unsafe fn set_signal_pgrp_callback(f: SignalPgrpFn) {
+    SIGNAL_PGRP_CALLBACK = Some(f);
+}
+
 /// Allocate a new PTY number
 fn alloc_pty_num() -> Option<u32> {
     let num = NEXT_PTY_NUM.fetch_add(1, Ordering::Relaxed);
@@ -205,6 +219,19 @@ impl VnodeOps for PtyMaster {
             // Echo goes back to master (terminal emulator)
             if !echo.is_empty() && pair.slave_to_master.len() + echo.len() <= PTY_BUF_SIZE {
                 pair.slave_to_master.extend(echo);
+            }
+
+            // Check if a signal was generated (Ctrl+C, Ctrl+\, Ctrl+Z)
+            if let Some(sig) = pair.ldisc.take_signal() {
+                let pgid = pair.foreground_pgid;
+                if pgid > 0 {
+                    // Call signal delivery callback if registered
+                    unsafe {
+                        if let Some(callback) = SIGNAL_PGRP_CALLBACK {
+                            callback(pgid, sig.to_signo());
+                        }
+                    }
+                }
             }
         }
 

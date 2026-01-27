@@ -561,9 +561,10 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         devfs::set_random_fill_callback(crypto::random::fill_bytes);
     }
 
-    // Set up signal callback for Ctrl+C handling on console
+    // Set up signal callbacks for Ctrl+C handling
     unsafe {
-        devfs::set_signal_fg_callback(signal_foreground_pgrp);
+        devfs::set_signal_fg_callback(signal_foreground_pgrp);  // Console TTY
+        pty::set_signal_pgrp_callback(signal_pgrp_callback);    // PTY devices
     }
 
     // Create /proc directory
@@ -1419,6 +1420,13 @@ fn kill_pgrp(pgid: u32, sig: i32) {
                 meta.lock().send_signal(sig, Some(info.clone()));
             }
         }
+    }
+}
+
+/// Signal process group callback for PTYs
+fn signal_pgrp_callback(pgid: i32, sig: i32) {
+    if pgid > 0 {
+        kill_pgrp(pgid as u32, sig);
     }
 }
 
