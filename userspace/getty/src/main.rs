@@ -52,6 +52,13 @@ fn setup_terminal(config: &TermConfig) -> i32 {
     // Open terminal device as stdin
     let fd = open2(config.device, O_RDWR);
     if fd < 0 {
+        // Try to report error before stdio is set up
+        let msg = "getty: failed to open ";
+        unsafe {
+            write(2, msg.as_bytes());
+            write(2, config.device.as_bytes());
+            write(2, b"\n");
+        }
         return -1;
     }
 

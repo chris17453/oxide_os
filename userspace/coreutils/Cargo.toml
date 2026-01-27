@@ -113,6 +113,10 @@ path = "src/bin/ps.rs"
 name = "kill"
 path = "src/bin/kill.rs"
 
+[[bin]]
+name = "vttest"
+path = "src/bin/vttest.rs"
+
 # Memory utilities
 [[bin]]
 name = "free"
