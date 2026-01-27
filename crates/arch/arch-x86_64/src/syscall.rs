@@ -488,27 +488,25 @@ unsafe extern "C" fn save_syscall_context(
     }
 }
 
-/// Initialize per-CPU syscall data
+/// Per-CPU syscall data (static for single-CPU; would be per-CPU TLS on SMP)
+static mut CPU_DATA: SyscallCpuData = SyscallCpuData {
+    kernel_rsp: 0,
+    scratch_rsp: 0,
+    scratch_rax: 0,
+    scratch_r12: 0,
+    scratch_rcx: 0,
+};
+
+/// Initialize per-CPU syscall data and set up KERNEL_GS_BASE MSR.
+///
+/// This must be called ONCE during kernel initialization (before any syscalls).
+/// It sets the KERNEL_GS_BASE MSR to point to CPU_DATA so that swapgs at
+/// syscall entry loads the correct GS base.
 ///
 /// # Safety
-/// Must be called with a valid kernel stack pointer.
-pub unsafe fn set_kernel_stack(kernel_rsp: u64) {
-    // For now, we store the kernel RSP in the GS base
-    // In a proper implementation, this would be per-CPU data
-    // accessed via GS segment.
-
-    // Write kernel RSP to a known location accessible via GS
-    // We'll use KERNEL_GS_BASE MSR to set up a pointer to our data
-    const KERNEL_GS_BASE: u32 = 0xC000_0102;
-
-    // Allocate a static for the CPU data
-    static mut CPU_DATA: SyscallCpuData = SyscallCpuData {
-        kernel_rsp: 0,
-        scratch_rsp: 0,
-        scratch_rax: 0,
-        scratch_r12: 0,
-        scratch_rcx: 0,
-    };
+/// Must be called with a valid kernel stack pointer, before syscalls are enabled.
+pub unsafe fn init_kernel_stack(kernel_rsp: u64) {
+    const KERNEL_GS_BASE_MSR: u32 = 0xC000_0102;
 
     use core::ptr::addr_of_mut;
     unsafe {
@@ -517,6 +515,24 @@ pub unsafe fn set_kernel_stack(kernel_rsp: u64) {
 
         // Set KERNEL_GS_BASE to point to our CPU data
         // This will be swapped in on syscall entry via swapgs
-        wrmsr(KERNEL_GS_BASE, cpu_data as u64);
+        wrmsr(KERNEL_GS_BASE_MSR, cpu_data as u64);
+    }
+}
+
+/// Update the kernel stack pointer for the current task.
+///
+/// Called during context switches to ensure syscall_entry uses the correct
+/// kernel stack for the newly-scheduled task. Only updates CPU_DATA.kernel_rsp;
+/// does NOT rewrite the KERNEL_GS_BASE MSR (which would destroy the saved
+/// user GS base if called while in a syscall context where swapgs has already
+/// been performed).
+///
+/// # Safety
+/// Must be called with a valid kernel stack pointer.
+pub unsafe fn set_kernel_stack(kernel_rsp: u64) {
+    use core::ptr::addr_of_mut;
+    unsafe {
+        let cpu_data = addr_of_mut!(CPU_DATA);
+        (*cpu_data).kernel_rsp = kernel_rsp;
     }
 }

@@ -949,6 +949,131 @@ pub fn ticks() -> u64 {
 }
 
 // ============================================================================
+// PS/2 Keyboard Controller (i8042) Initialization
+// ============================================================================
+
+/// Wait for i8042 input buffer to be empty (ready to accept commands)
+fn i8042_wait_input() {
+    for _ in 0..10000 {
+        let status: u8;
+        unsafe {
+            core::arch::asm!("in al, 0x64", out("al") status, options(nomem, nostack, preserves_flags));
+        }
+        if status & 0x02 == 0 {
+            return;
+        }
+    }
+}
+
+/// Wait for i8042 output buffer to have data
+fn i8042_wait_output() -> bool {
+    for _ in 0..10000 {
+        let status: u8;
+        unsafe {
+            core::arch::asm!("in al, 0x64", out("al") status, options(nomem, nostack, preserves_flags));
+        }
+        if status & 0x01 != 0 {
+            return true;
+        }
+    }
+    false
+}
+
+/// Flush i8042 output buffer
+fn i8042_flush() {
+    for _ in 0..64 {
+        let status: u8;
+        unsafe {
+            core::arch::asm!("in al, 0x64", out("al") status, options(nomem, nostack, preserves_flags));
+        }
+        if status & 0x01 == 0 {
+            break;
+        }
+        // Read and discard
+        unsafe {
+            core::arch::asm!("in al, 0x60", out("al") _, options(nomem, nostack, preserves_flags));
+        }
+    }
+}
+
+/// Initialize the PS/2 keyboard controller (i8042)
+///
+/// After UEFI ExitBootServices, the PS/2 controller may be in an unknown state.
+/// This initializes it to generate IRQ 1 on keyboard input.
+pub fn init_ps2_keyboard() {
+    // Disable both PS/2 ports during init
+    i8042_wait_input();
+    unsafe {
+        core::arch::asm!("out 0x64, al", in("al") 0xADu8, options(nomem, nostack, preserves_flags));
+    }
+    i8042_wait_input();
+    unsafe {
+        core::arch::asm!("out 0x64, al", in("al") 0xA7u8, options(nomem, nostack, preserves_flags));
+    }
+
+    // Flush output buffer
+    i8042_flush();
+
+    // Read current configuration byte
+    i8042_wait_input();
+    unsafe {
+        core::arch::asm!("out 0x64, al", in("al") 0x20u8, options(nomem, nostack, preserves_flags));
+    }
+    let mut config: u8 = 0;
+    if i8042_wait_output() {
+        unsafe {
+            core::arch::asm!("in al, 0x60", out("al") config, options(nomem, nostack, preserves_flags));
+        }
+    }
+
+    // Enable first port IRQ (bit 0), disable translation (bit 6 clear for scan code set 2)
+    // Keep other bits as-is
+    config |= 0x01; // Enable first port interrupt (IRQ 1)
+    config &= !0x10; // Enable first port clock (clear disable bit)
+
+    // Write configuration byte back
+    i8042_wait_input();
+    unsafe {
+        core::arch::asm!("out 0x64, al", in("al") 0x60u8, options(nomem, nostack, preserves_flags));
+    }
+    i8042_wait_input();
+    unsafe {
+        core::arch::asm!("out 0x60, al", in("al") config, options(nomem, nostack, preserves_flags));
+    }
+
+    // Enable first PS/2 port (keyboard)
+    i8042_wait_input();
+    unsafe {
+        core::arch::asm!("out 0x64, al", in("al") 0xAEu8, options(nomem, nostack, preserves_flags));
+    }
+
+    // Reset keyboard device (send 0xFF)
+    i8042_wait_input();
+    unsafe {
+        core::arch::asm!("out 0x60, al", in("al") 0xFFu8, options(nomem, nostack, preserves_flags));
+    }
+
+    // Wait for ACK (0xFA) and self-test pass (0xAA)
+    if i8042_wait_output() {
+        let _ack: u8;
+        unsafe {
+            core::arch::asm!("in al, 0x60", out("al") _ack, options(nomem, nostack, preserves_flags));
+        }
+    }
+    if i8042_wait_output() {
+        let _result: u8;
+        unsafe {
+            core::arch::asm!("in al, 0x60", out("al") _result, options(nomem, nostack, preserves_flags));
+        }
+    }
+
+    // Flush any remaining data
+    i8042_flush();
+
+    crate::serial_println!("[PS/2] Keyboard controller initialized");
+}
+
+// ============================================================================
 // WATOS-Style Keyboard Buffer
 // ============================================================================
 

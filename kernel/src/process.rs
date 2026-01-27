@@ -58,134 +58,19 @@ pub fn user_exit(status: i32) -> ! {
     // The process must stay as a zombie until the parent reaps it via wait().
     // The parent's wait() call will remove it after getting the exit status.
 
-    let prefer_parent = if parent_pid > 0 {
-        matches!(
-            sched::get_task_state(parent_pid),
-            Some(state)
-                if state == TaskState::TASK_RUNNING
-                    || state == TaskState::TASK_INTERRUPTIBLE
-                    || state == TaskState::TASK_UNINTERRUPTIBLE
-        )
-    } else {
-        false
-    };
-
-    let next_pid = if prefer_parent {
-        sched::switch_to(parent_pid);
-        parent_pid
-    } else {
-        match sched::pick_next_task() {
-            Some(pid) => pid,
-            None => {
-                arch::X86_64::halt();
-            }
+    // Let the scheduler handle the context switch via the timer interrupt.
+    // We are now a zombie - the scheduler won't pick us to run again.
+    // The timer interrupt uses iretq which correctly handles returning to
+    // either kernel mode (parent blocked in waitpid/HLT) or user mode.
+    // Using sysretq here would be WRONG because sysretq always returns to
+    // user mode, but the parent may have been preempted in kernel mode.
+    sched::set_need_resched();
+    arch::allow_kernel_preempt();
+    loop {
+        unsafe {
+            core::arch::asm!("sti", options(nomem, nostack, preserves_flags));
+            core::arch::asm!("hlt", options(nomem, nostack));
         }
-    };
-
-    let (task_ctx, next_pml4, kernel_stack_top) = match sched::get_task_switch_info(next_pid) {
-        Some((ctx, pml4, kstack, kstack_size)) => {
-            let ks_virt = phys_to_virt(kstack);
-            (ctx, pml4, ks_virt.as_u64() + kstack_size as u64)
-        }
-        None => {
-            arch::X86_64::halt();
-        }
-    };
-
-    let next_ctx = ProcessContext {
-        rip: task_ctx.rip,
-        rsp: task_ctx.rsp,
-        rflags: task_ctx.rflags,
-        rax: task_ctx.rax,
-        rbx: task_ctx.rbx,
-        rcx: task_ctx.rcx,
-        rdx: task_ctx.rdx,
-        rsi: task_ctx.rsi,
-        rdi: task_ctx.rdi,
-        rbp: task_ctx.rbp,
-        r8: task_ctx.r8,
-        r9: task_ctx.r9,
-        r10: task_ctx.r10,
-        r11: task_ctx.r11,
-        r12: task_ctx.r12,
-        r13: task_ctx.r13,
-        r14: task_ctx.r14,
-        r15: task_ctx.r15,
-        cs: task_ctx.cs,
-        ss: task_ctx.ss,
-    };
-
-    // Update scheduler's current task - switch_to handles state changes
-    sched::switch_to(next_pid);
-
-    // Set kernel stack for the next process
-    unsafe {
-        arch::syscall::set_kernel_stack(kernel_stack_top);
-    }
-    arch::gdt::set_kernel_stack(kernel_stack_top);
-
-    // Store context in a static (in kernel memory, accessible from all address spaces)
-    static mut EXIT_CTX: ProcessContext = ProcessContext {
-        rip: 0, rsp: 0, rflags: 0, rax: 0, rbx: 0, rcx: 0, rdx: 0,
-        rsi: 0, rdi: 0, rbp: 0, r8: 0, r9: 0, r10: 0, r11: 0,
-        r12: 0, r13: 0, r14: 0, r15: 0, cs: 0, ss: 0,
-    };
-
-    // Copy context to static BEFORE CR3 switch
-    unsafe {
-        *addr_of_mut!(EXIT_CTX) = next_ctx;
-        // Ensure IF is set in rflags
-        (*addr_of_mut!(EXIT_CTX)).rflags |= 0x200;
-    }
-
-    let ctx_ptr = unsafe { addr_of_mut!(EXIT_CTX) as u64 };
-    let new_cr3 = next_pml4.as_u64();
-
-    unsafe {
-        // Switch page tables first
-        core::arch::asm!("mov cr3, {}", in(reg) new_cr3);
-
-        // Use the EXACT same sysretq approach as kernel_fork
-        // ProcessContext layout:
-        // rip(0), rsp(8), rflags(16), rax(24), rbx(32), rcx(40), rdx(48),
-        // rsi(56), rdi(64), rbp(72), r8(80), r9(88), r10(96), r11(104),
-        // r12(112), r13(120), r14(128), r15(136), cs(144), ss(152)
-        core::arch::asm!(
-            "mov rax, {ctx}",
-            "mov rcx, [rax]",       // rip -> rcx for sysret
-            "mov r11, [rax + 16]",  // rflags -> r11 for sysret
-            "or r11, 0x200",        // Ensure IF set
-            "mov rbx, [rax + 32]",
-            "mov rbp, [rax + 72]",
-            "mov r12, [rax + 112]",
-            "mov r13, [rax + 120]",
-            "mov r14, [rax + 128]",
-            "mov r15, [rax + 136]",
-            "mov rdi, [rax + 64]",
-            "mov rsi, [rax + 56]",
-            "mov rdx, [rax + 48]",
-            "mov r8, [rax + 80]",
-            "mov r9, [rax + 88]",
-            "mov r10, [rax + 96]",
-            // Load user segment selectors for DS/ES/FS (0x1B = USER_DS | 3)
-            // Save context pointer to r15 temporarily (like kernel_fork)
-            "mov r15, rax",
-            "mov ax, 0x1b",
-            "mov ds, ax",
-            "mov es, ax",
-            "mov fs, ax",
-            // Restore rax as context pointer
-            "mov rax, r15",
-            // Now load r15 from context and prepare for return
-            "mov r15, [rax + 136]",
-            "push qword ptr [rax + 8]",  // Push RSP from context
-            "mov rax, [rax + 24]",       // Load rax value from context
-            "pop rsp",                    // Pop into RSP
-            "swapgs",
-            "sysretq",
-            ctx = in(reg) ctx_ptr,
-            options(noreturn)
-        );
     }
 }
 
@@ -209,6 +94,7 @@ pub fn kernel_fork() -> i64 {
         }
     };
 
+    
     // Get current process context from syscall user context
     let user_ctx = arch::get_user_context();
 
@@ -246,6 +132,7 @@ pub fn kernel_fork() -> i64 {
         parent_context.rsp
     );
 
+    
     // Kernel stack size (128KB)
     const KERNEL_STACK_SIZE: usize = 128 * 1024;
 
@@ -258,7 +145,8 @@ pub fn kernel_fork() -> i64 {
         mm(),
         KERNEL_STACK_SIZE,
     );
-    // Save parent's PML4 before releasing the lock - needed for PARENT_CONTEXT
+
+        // Save parent's PML4 before releasing the lock - needed for PARENT_CONTEXT
     let parent_pml4 = parent_meta.address_space.pml4_phys();
     drop(parent_meta); // Release lock before switching
 
@@ -337,16 +225,20 @@ pub fn kernel_fork() -> i64 {
                 child_meta_arc,
             );
 
+            
             // Add child to scheduler
             sched::add_task(child_task);
             sched::set_task_context(child_pid, child_task_ctx);
 
+            
             // Add child to parent's children list
             sched::add_task_child(parent_pid, child_pid);
 
+            
             // Tell scheduler we're switching to child
             sched::switch_to(child_pid);
 
+            
             // Get child's kernel stack top
             let child_kstack_virt = phys_to_virt(fork_result.kernel_stack_phys);
             let child_kstack_top = child_kstack_virt.as_u64() + fork_result.kernel_stack_size as u64;
@@ -406,6 +298,7 @@ pub fn kernel_fork() -> i64 {
             });
             CHILD_DONE.store(false, Ordering::SeqCst);
 
+            
             unsafe {
                 *addr_of_mut!(FORK_CHILD_CTX) = child_ctx;
 

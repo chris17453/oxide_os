@@ -306,6 +306,14 @@ pub unsafe fn set_terminal_tick_callback(callback: fn()) {
     }
 }
 
+/// Initialize the PS/2 keyboard controller (i8042)
+///
+/// Must be called before keyboard input will work. UEFI firmware may
+/// leave the PS/2 controller disabled after ExitBootServices.
+pub fn init_ps2_keyboard() {
+    exceptions::init_ps2_keyboard();
+}
+
 /// Get a scancode from the keyboard buffer
 pub fn get_scancode() -> Option<u8> {
     exceptions::get_scancode()

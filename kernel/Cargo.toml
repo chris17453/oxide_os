@@ -20,7 +20,7 @@ arch-x86_64 = { path = "../crates/arch/arch-x86_64" }
 mm-traits = { workspace = true }
 mm-manager = { workspace = true }
 mm-paging = { workspace = true }
-mm-heap = { workspace = true, features = ["debug-heap"] }
+mm-heap = { workspace = true }
 mm-cow = { workspace = true }
 sched = { workspace = true }
 sched-traits = { workspace = true }

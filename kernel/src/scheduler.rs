@@ -171,13 +171,16 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     // The scheduler handles state updates internally
     sched::switch_to(next_pid);
 
-    // Update kernel stack pointers (only needed if switching to user mode)
-    if next_ctx.cs == 0x23 {
-        unsafe {
-            arch::syscall::set_kernel_stack(kernel_stack_top);
-        }
-        arch::gdt::set_kernel_stack(kernel_stack_top);
+    // ALWAYS update kernel stack pointers when switching tasks.
+    // Even if the next task is currently in kernel mode (CS=0x08, preempted during
+    // a syscall), it will eventually return to user mode and may make new syscalls.
+    // The syscall entry point reads kernel RSP from GS:[0] (CPU_DATA), so it must
+    // always reflect the CURRENT task's kernel stack. Similarly, TSS.RSP0 must be
+    // correct for interrupts that trigger privilege-level changes.
+    unsafe {
+        arch::syscall::set_kernel_stack(kernel_stack_top);
     }
+    arch::gdt::set_kernel_stack(kernel_stack_top);
 
     // Switch page tables
     unsafe {

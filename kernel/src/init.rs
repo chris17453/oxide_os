@@ -440,8 +440,10 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         let _ = writeln!(writer, "[INFO] Terminal tick callback registered (30 FPS)");
     }
 
-    // Keyboard is handled by WATOS-style interrupt handler - no initialization needed
-    let _ = writeln!(writer, "[INFO] Keyboard ready (WATOS-style)");
+    // Initialize PS/2 keyboard controller (i8042)
+    // UEFI firmware may leave PS/2 disabled after ExitBootServices
+    arch::init_ps2_keyboard();
+    let _ = writeln!(writer, "[INFO] PS/2 keyboard initialized");
 
     // Initialize and register preemptive scheduler
     scheduler::init();
@@ -1299,7 +1301,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // 1. Syscalls (stored in GS base for syscall handler)
     // 2. Interrupts (TSS.RSP0 for privilege level changes)
     unsafe {
-        arch::syscall::set_kernel_stack(kernel_stack_top);
+        arch::syscall::init_kernel_stack(kernel_stack_top);
     }
     arch::gdt::set_kernel_stack(kernel_stack_top); // TSS.RSP0 for interrupts
 

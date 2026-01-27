@@ -47,6 +47,7 @@ pub mod parser;
 pub mod renderer;
 
 use alloc::sync::Arc;
+use core::sync::atomic::{AtomicBool, Ordering};
 use fb::Framebuffer;
 use spin::Mutex;
 
@@ -417,15 +418,19 @@ impl TerminalEmulator {
 /// Global terminal instance
 static TERMINAL: Mutex<Option<TerminalEmulator>> = Mutex::new(None);
 
+/// Atomic flag for lock-free initialization check (safe from interrupt context)
+static TERMINAL_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
 /// Initialize global terminal with framebuffer
 pub fn init(fb: Arc<dyn Framebuffer>) {
     let terminal = TerminalEmulator::new(fb);
     *TERMINAL.lock() = Some(terminal);
+    TERMINAL_INITIALIZED.store(true, Ordering::Release);
 }
 
-/// Check if terminal is initialized
+/// Check if terminal is initialized (lock-free, safe from interrupt context)
 pub fn is_initialized() -> bool {
-    TERMINAL.lock().is_some()
+    TERMINAL_INITIALIZED.load(Ordering::Acquire)
 }
 
 /// Write bytes to global terminal
@@ -461,8 +466,10 @@ pub fn dimensions() -> Option<(u32, u32)> {
 
 /// Toggle cursor blink (call from timer)
 pub fn toggle_cursor_blink() {
-    if let Some(ref mut terminal) = *TERMINAL.lock() {
-        terminal.toggle_cursor_blink();
+    if let Some(mut guard) = TERMINAL.try_lock() {
+        if let Some(ref mut terminal) = *guard {
+            terminal.toggle_cursor_blink();
+        }
     }
 }
 

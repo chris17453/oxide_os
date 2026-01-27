@@ -112,16 +112,25 @@ fn main() -> Status {
     update_progress(&mut current_step, total_steps, "Enumerating video modes...");
     let video_modes = enumerate_video_modes();
 
-    // Step 8: Get memory map BEFORE page table setup
-    // (to avoid buffer allocation corrupting page tables)
-    update_progress(&mut current_step, total_steps, "Getting memory map...");
-    let memory_regions = get_memory_map();
-
-    // Step 9: Set up page tables (after memory map to avoid corruption)
+    // Step 8: Set up page tables
     update_progress(&mut current_step, total_steps, "Setting up page tables...");
     let pml4_phys = paging::setup_page_tables(kernel_phys, elf_info.load_size);
 
-    // Step 10: Create boot info
+    // Step 9: Allocate boot info pages
+    // BootInfo is larger than one page (~5KB due to memory_regions and video_modes arrays),
+    // so we must allocate 2 pages to avoid overwriting adjacent page table memory
+    update_progress(&mut current_step, total_steps, "Finalizing boot setup...");
+    let boot_info_phys = allocate_pages(2).expect("Failed to allocate boot info pages");
+
+    // Step 10: Get memory map AFTER all UEFI allocations
+    // CRITICAL: This must be the last step that performs UEFI allocations.
+    // The memory map must accurately reflect page table pages, boot info pages,
+    // and all other LOADER_DATA allocations so the kernel doesn't reclaim them
+    // into the buddy allocator's free list (which would corrupt page tables).
+    update_progress(&mut current_step, total_steps, "Getting memory map...");
+    let memory_regions = get_memory_map();
+
+    // Step 11: Create boot info (no UEFI allocations - struct is on stack)
     update_progress(
         &mut current_step,
         total_steps,
@@ -138,11 +147,7 @@ fn main() -> Status {
         initramfs_size,
     );
 
-    // Step 11: Allocate boot info page
-    // BootInfo is larger than one page (~5KB due to memory_regions and video_modes arrays),
-    // so we must allocate 2 pages to avoid overwriting adjacent page table memory
-    update_progress(&mut current_step, total_steps, "Finalizing boot setup...");
-    let boot_info_phys = allocate_pages(2).expect("Failed to allocate boot info pages");
+    // Write boot info to the pre-allocated pages
     unsafe {
         ptr::write(boot_info_phys as *mut BootInfo, boot_info);
     }
