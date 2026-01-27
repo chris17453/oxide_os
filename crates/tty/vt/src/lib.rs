@@ -25,13 +25,16 @@ struct VtState {
     input_buffer: Vec<u8>,
     /// TTY device
     tty: Arc<Tty>,
+    /// VT number (0-5 for tty1-tty6)
+    vt_num: usize,
 }
 
 impl VtState {
-    fn new(tty: Arc<Tty>) -> Self {
+    fn new(tty: Arc<Tty>, vt_num: usize) -> Self {
         VtState {
             input_buffer: Vec::with_capacity(VT_BUF_SIZE),
             tty,
+            vt_num,
         }
     }
 }
@@ -47,25 +50,35 @@ pub struct VtManager {
 impl VtManager {
     /// Create a new VT manager
     pub fn new() -> Self {
-        // Create dummy TTY driver for VTs
-        struct VtTtyDriver;
+        // Create TTY drivers for each VT
+        // Each driver needs to know its VT number to check if it's active
+        struct VtTtyDriver {
+            vt_num: usize,
+        }
         impl TtyDriver for VtTtyDriver {
-            fn write(&self, _data: &[u8]) {
-                // VT output goes to framebuffer/terminal emulator
-                // This will be handled by terminal crate
+            fn write(&self, data: &[u8]) {
+                // Only write if this is the active VT
+                if let Some(manager) = get_manager() {
+                    if manager.active_vt() == self.vt_num {
+                        // Write to console output (terminal emulator + serial)
+                        unsafe {
+                            if let Some(write_fn) = CONSOLE_WRITE_CALLBACK {
+                                write_fn(data);
+                            }
+                        }
+                    }
+                }
             }
         }
 
-        let driver = Arc::new(VtTtyDriver);
-
         VtManager {
             vts: [
-                Mutex::new(VtState::new(Tty::new(driver.clone(), 1, 0))),
-                Mutex::new(VtState::new(Tty::new(driver.clone(), 2, 0))),
-                Mutex::new(VtState::new(Tty::new(driver.clone(), 3, 0))),
-                Mutex::new(VtState::new(Tty::new(driver.clone(), 4, 0))),
-                Mutex::new(VtState::new(Tty::new(driver.clone(), 5, 0))),
-                Mutex::new(VtState::new(Tty::new(driver.clone(), 6, 0))),
+                Mutex::new(VtState::new(Tty::new(Arc::new(VtTtyDriver { vt_num: 0 }), 1, 0), 0)),
+                Mutex::new(VtState::new(Tty::new(Arc::new(VtTtyDriver { vt_num: 1 }), 2, 0), 1)),
+                Mutex::new(VtState::new(Tty::new(Arc::new(VtTtyDriver { vt_num: 2 }), 3, 0), 2)),
+                Mutex::new(VtState::new(Tty::new(Arc::new(VtTtyDriver { vt_num: 3 }), 4, 0), 3)),
+                Mutex::new(VtState::new(Tty::new(Arc::new(VtTtyDriver { vt_num: 4 }), 5, 0), 4)),
+                Mutex::new(VtState::new(Tty::new(Arc::new(VtTtyDriver { vt_num: 5 }), 6, 0), 5)),
             ],
             active_vt: Mutex::new(0),
         }
@@ -149,6 +162,12 @@ pub type SignalPgrpFn = fn(pgid: i32, sig: i32);
 /// Global signal callback (set by kernel)
 static mut SIGNAL_PGRP_CALLBACK: Option<SignalPgrpFn> = None;
 
+/// Callback type for console output
+pub type ConsoleWriteFn = fn(&[u8]);
+
+/// Global console write callback (set by kernel)
+static mut CONSOLE_WRITE_CALLBACK: Option<ConsoleWriteFn> = None;
+
 /// Initialize VT subsystem
 pub fn init() -> Arc<VtManager> {
     let manager = Arc::new(VtManager::new());
@@ -167,6 +186,14 @@ pub fn get_manager() -> Option<Arc<VtManager>> {
 /// Must be called during single-threaded initialization
 pub unsafe fn set_signal_pgrp_callback(f: SignalPgrpFn) {
     SIGNAL_PGRP_CALLBACK = Some(f);
+}
+
+/// Set the console write callback for VT output
+///
+/// # Safety
+/// Must be called during single-threaded initialization
+pub unsafe fn set_console_write_callback(f: ConsoleWriteFn) {
+    CONSOLE_WRITE_CALLBACK = Some(f);
 }
 
 /// VT device node

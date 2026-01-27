@@ -578,6 +578,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         devfs::set_signal_fg_callback(signal_foreground_pgrp);  // Console TTY (legacy)
         pty::set_signal_pgrp_callback(signal_pgrp_callback);    // PTY devices
         vt::set_signal_pgrp_callback(signal_pgrp_callback);     // VT devices
+        vt::set_console_write_callback(console::console_write);  // VT output
     }
 
     // Create /proc directory
