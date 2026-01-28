@@ -832,6 +832,108 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
         crate::serial_println!("    RAX (return value): {:#x}", *addr_of!(SYSRET_DEBUG_RAX));
     }
 
+    // Print STAC debug
+    unsafe {
+        use crate::syscall::{STAC_DEBUG_RFLAGS, AC_BEFORE_CALL, AC_AFTER_CALL, AC_AT_ENTRY};
+        use core::ptr::addr_of;
+        crate::serial_println!("  DEBUG from syscall AC tracking:");
+
+        let at_entry = *addr_of!(AC_AT_ENTRY);
+        crate::serial_println!("    RFLAGS at entry: {:#x}", at_entry);
+        crate::serial_println!("    AC flag at entry: {}", if (at_entry >> 18) & 1 != 0 { "SET" } else { "CLEAR" });
+
+        let rflags = *addr_of!(STAC_DEBUG_RFLAGS);
+        crate::serial_println!("    RFLAGS after STAC: {:#x}", rflags);
+        crate::serial_println!("    AC flag after STAC: {}", if (rflags >> 18) & 1 != 0 { "SET" } else { "CLEAR" });
+
+        let before_call = *addr_of!(AC_BEFORE_CALL);
+        crate::serial_println!("    RFLAGS before handler call: {:#x}", before_call);
+        crate::serial_println!("    AC flag before call: {}", if (before_call >> 18) & 1 != 0 { "SET" } else { "CLEAR" });
+
+        let after_call = *addr_of!(AC_AFTER_CALL);
+        crate::serial_println!("    RFLAGS after handler call: {:#x}", after_call);
+        crate::serial_println!("    AC flag after call: {}", if (after_call >> 18) & 1 != 0 { "SET" } else { "CLEAR" });
+    }
+
+    // Walk the page tables to see what's mapped
+    crate::serial_println!("  === PAGE TABLE WALK ===");
+    unsafe {
+        let vaddr = cr2;
+
+        // Extract page table indices
+        let pml4_idx = (vaddr >> 39) & 0x1FF;
+        let pdpt_idx = (vaddr >> 30) & 0x1FF;
+        let pd_idx = (vaddr >> 21) & 0x1FF;
+        let pt_idx = (vaddr >> 12) & 0x1FF;
+
+        crate::serial_println!("  Virtual address: {:#x}", vaddr);
+        crate::serial_println!("  PML4 index: {}, PDPT index: {}, PD index: {}, PT index: {}",
+            pml4_idx, pdpt_idx, pd_idx, pt_idx);
+
+        // Walk PML4
+        let pml4_phys = cr3 & 0xFFFF_FFFF_F000;
+        let pml4_virt = 0xFFFF_8000_0000_0000 | pml4_phys;
+        let pml4_entry = *((pml4_virt + pml4_idx * 8) as *const u64);
+        crate::serial_println!("  PML4[{}] = {:#x} (P={} W={} U={} A={} PWT={} PCD={} PS={})",
+            pml4_idx, pml4_entry,
+            pml4_entry & 1, (pml4_entry >> 1) & 1, (pml4_entry >> 2) & 1,
+            (pml4_entry >> 5) & 1, (pml4_entry >> 3) & 1, (pml4_entry >> 4) & 1,
+            (pml4_entry >> 7) & 1);
+
+        if pml4_entry & 1 == 0 {
+            crate::serial_println!("  PML4 entry not present!");
+        } else {
+            // Walk PDPT
+            let pdpt_phys = pml4_entry & 0xFFFF_FFFF_F000;
+            let pdpt_virt = 0xFFFF_8000_0000_0000 | pdpt_phys;
+            let pdpt_entry = *((pdpt_virt + pdpt_idx * 8) as *const u64);
+            crate::serial_println!("  PDPT[{}] = {:#x} (P={} W={} U={} A={} PWT={} PCD={} PS={})",
+                pdpt_idx, pdpt_entry,
+                pdpt_entry & 1, (pdpt_entry >> 1) & 1, (pdpt_entry >> 2) & 1,
+                (pdpt_entry >> 5) & 1, (pdpt_entry >> 3) & 1, (pdpt_entry >> 4) & 1,
+                (pdpt_entry >> 7) & 1);
+
+            if pdpt_entry & 1 == 0 {
+                crate::serial_println!("  PDPT entry not present!");
+            } else if (pdpt_entry >> 7) & 1 != 0 {
+                crate::serial_println!("  PDPT entry is 1GB page!");
+            } else {
+                // Walk PD
+                let pd_phys = pdpt_entry & 0xFFFF_FFFF_F000;
+                let pd_virt = 0xFFFF_8000_0000_0000 | pd_phys;
+                let pd_entry = *((pd_virt + pd_idx * 8) as *const u64);
+                crate::serial_println!("  PD[{}] = {:#x} (P={} W={} U={} A={} PWT={} PCD={} PS={})",
+                    pd_idx, pd_entry,
+                    pd_entry & 1, (pd_entry >> 1) & 1, (pd_entry >> 2) & 1,
+                    (pd_entry >> 5) & 1, (pd_entry >> 3) & 1, (pd_entry >> 4) & 1,
+                    (pd_entry >> 7) & 1);
+
+                if pd_entry & 1 == 0 {
+                    crate::serial_println!("  PD entry not present!");
+                } else if (pd_entry >> 7) & 1 != 0 {
+                    crate::serial_println!("  PD entry is 2MB page!");
+                } else {
+                    // Walk PT
+                    let pt_phys = pd_entry & 0xFFFF_FFFF_F000;
+                    let pt_virt = 0xFFFF_8000_0000_0000 | pt_phys;
+                    let pt_entry = *((pt_virt + pt_idx * 8) as *const u64);
+                    crate::serial_println!("  PT[{}] = {:#x} (P={} W={} U={} A={} D={} PAT={} G={})",
+                        pt_idx, pt_entry,
+                        pt_entry & 1, (pt_entry >> 1) & 1, (pt_entry >> 2) & 1,
+                        (pt_entry >> 5) & 1, (pt_entry >> 6) & 1, (pt_entry >> 7) & 1,
+                        (pt_entry >> 8) & 1);
+
+                    if pt_entry & 1 == 0 {
+                        crate::serial_println!("  PT entry not present!");
+                    } else {
+                        let final_phys = (pt_entry & 0xFFFF_FFFF_F000) | (vaddr & 0xFFF);
+                        crate::serial_println!("  Final physical address: {:#x}", final_phys);
+                    }
+                }
+            }
+        }
+    }
+
     panic!("Page fault");
 }
 

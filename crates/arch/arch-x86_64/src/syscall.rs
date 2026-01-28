@@ -150,6 +150,11 @@ extern "C" fn syscall_entry() {
         // Now switch to kernel stack
         "mov rsp, gs:[0]",
 
+        // DEBUG: Save RFLAGS at syscall entry (before STAC)
+        "pushfq",
+        "pop r12",
+        "mov [{ac_at_entry}], r12",
+
         // === Push user state for sysret ===
         // Stack layout (growing down):
         // [rsp+72] = user RFLAGS
@@ -237,6 +242,11 @@ extern "C" fn syscall_entry() {
         // Enable user memory access for SMAP
         "stac",
 
+        // DEBUG: Check if AC flag is actually set after STAC
+        "pushfq",
+        "pop r12",
+        "mov [{stac_debug_rflags}], r12",
+
         // Save caller-saved registers that must be preserved for the user
         // (syscall only clobbers RCX and R11 according to ABI)
         "push r8",
@@ -258,7 +268,17 @@ extern "C" fn syscall_entry() {
         "mov rsi, rdi",                    // arg1 (was in rdi)
         "mov rdi, gs:[16]",                // syscall number from scratch
 
+        // DEBUG: Save AC flag before call
+        "pushfq",
+        "pop r12",
+        "mov [{ac_before_call}], r12",
+
         "call {handler}",
+
+        // DEBUG: Save AC flag after call
+        "pushfq",
+        "pop r12",
+        "mov [{ac_after_call}], r12",
 
         // Clean up stack arg (the pushed arg6)
         "add rsp, 8",
@@ -328,6 +348,10 @@ extern "C" fn syscall_entry() {
         sysret_rcx = sym SYSRET_DEBUG_RCX,
         sysret_r11 = sym SYSRET_DEBUG_R11,
         sysret_rax = sym SYSRET_DEBUG_RAX,
+        stac_debug_rflags = sym STAC_DEBUG_RFLAGS,
+        ac_before_call = sym AC_BEFORE_CALL,
+        ac_after_call = sym AC_AFTER_CALL,
+        ac_at_entry = sym AC_AT_ENTRY,
     );
 }
 
@@ -436,6 +460,18 @@ pub static mut SYSRET_DEBUG_R11: u64 = 0xDEAD;
 pub static mut SYSRET_DEBUG_RAX: u64 = 0xDEAD;
 #[unsafe(no_mangle)]
 pub static mut SYSRET_DEBUG_STACK_PTR: u64 = 0xDEAD;
+
+#[unsafe(no_mangle)]
+pub static mut STAC_DEBUG_RFLAGS: u64 = 0xDEAD;
+
+#[unsafe(no_mangle)]
+pub static mut AC_BEFORE_CALL: u64 = 0xDEAD;
+
+#[unsafe(no_mangle)]
+pub static mut AC_AFTER_CALL: u64 = 0xDEAD;
+
+#[unsafe(no_mangle)]
+pub static mut AC_AT_ENTRY: u64 = 0xDEAD;
 
 /// Get the current syscall user context
 ///
