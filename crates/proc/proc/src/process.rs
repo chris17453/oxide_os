@@ -107,6 +107,8 @@ pub struct ProcessContext {
     pub cs: u64,
     /// Stack segment selector
     pub ss: u64,
+    /// FS base register (for Thread-Local Storage)
+    pub fs_base: u64,
 }
 
 /// PID allocator

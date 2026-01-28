@@ -242,6 +242,7 @@ pub static mut DEBUG_IRETQ_CS: u64 = 0xDEADDEADDEADDEAD;
 /// * `kernel_stack` - Kernel stack top
 /// * `pml4_phys` - Physical address of the user's PML4 table
 /// * `ctx` - Pointer to UserContext with full register state
+/// * `fs_base` - Value for FS base register (for TLS)
 ///
 /// # Safety
 /// The context pointer must be valid and all values must be safe for user mode.
@@ -250,6 +251,7 @@ pub unsafe extern "C" fn enter_usermode_with_context(
     kernel_stack: u64,       // rdi
     pml4_phys: u64,          // rsi
     ctx: *const UserContext, // rdx
+    fs_base: u64,            // rcx
 ) -> ! {
     naked_asm!(
         // Disable interrupts during the transition
@@ -271,6 +273,7 @@ pub unsafe extern "C" fn enter_usermode_with_context(
         "mov r15, rdx",           // r15 = context pointer (in current address space)
         "mov r14, rsi",           // r14 = pml4_phys (save for later)
         "mov r13, rdi",           // r13 = kernel_stack_top
+        "mov r12, rcx",           // r12 = fs_base (save for later)
 
         // Switch to the new kernel stack, leaving room for iretq frame (40 bytes)
         // and context copy (144 bytes)
@@ -399,13 +402,23 @@ pub unsafe extern "C" fn enter_usermode_with_context(
         "mov [{debug_iretq_rsp}], rax",    // Save iretq RSP
         "mov rax, [rsp - 8]",              // Restore user's RAX
 
+        // Set FS base MSR if fs_base is non-zero (IA32_FS_BASE = 0xC0000100)
+        "test r12, r12",
+        "jz 2f",                       // Skip if fs_base is 0
+        "mov rcx, 0xC0000100",         // MSR number for FS_BASE
+        "mov rax, r12",                // Low 32 bits of fs_base
+        "mov rdx, r12",
+        "shr rdx, 32",                 // High 32 bits of fs_base
+        "wrmsr",                       // Write MSR
+        "2:",
+
         // Load user data segments right before iretq
         // We need to preserve RAX. Store it at [rsp-16] (different spot to not conflict with debug)
         "mov [rsp - 16], rax",
         "mov ax, {user_ds}",
         "mov ds, ax",
         "mov es, ax",
-        "mov fs, ax",
+        "mov fs, ax",                  // FS selector (segment base is set by MSR above)
         "mov gs, ax",
         "mov rax, [rsp - 16]",
 

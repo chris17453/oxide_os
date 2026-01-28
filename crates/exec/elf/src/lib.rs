@@ -25,6 +25,9 @@ const EM_X86_64: u16 = 0x3E;
 /// Program header type: loadable segment
 const PT_LOAD: u32 = 1;
 
+/// Program header type: Thread-Local Storage template
+const PT_TLS: u32 = 7;
+
 /// Program header flags
 const PF_X: u32 = 1; // Execute
 const PF_W: u32 = 2; // Write
@@ -79,6 +82,19 @@ pub struct LoadSegment {
     pub flags: MemoryFlags,
 }
 
+/// Thread-Local Storage (TLS) template information
+#[derive(Debug, Clone, Copy)]
+pub struct TlsTemplate {
+    /// Offset in file where TLS initialization image is located
+    pub file_offset: usize,
+    /// Size of the TLS initialization image in file
+    pub file_size: usize,
+    /// Total size of TLS block in memory (includes BSS)
+    pub mem_size: usize,
+    /// Required alignment for TLS block
+    pub align: usize,
+}
+
 /// Parsed ELF executable information
 #[derive(Debug)]
 pub struct ElfExecutable<'a> {
@@ -90,6 +106,8 @@ pub struct ElfExecutable<'a> {
     segments: [Option<LoadSegment>; 16],
     /// Number of segments
     segment_count: usize,
+    /// Thread-Local Storage template (if present)
+    tls_template: Option<TlsTemplate>,
 }
 
 /// ELF parsing error
@@ -167,6 +185,7 @@ impl<'a> ElfExecutable<'a> {
 
         let mut segments: [Option<LoadSegment>; 16] = [None; 16];
         let mut segment_count = 0;
+        let mut tls_template: Option<TlsTemplate> = None;
 
         for i in 0..ph_count {
             let ph_start = ph_offset + i * ph_size;
@@ -206,6 +225,14 @@ impl<'a> ElfExecutable<'a> {
                     flags,
                 });
                 segment_count += 1;
+            } else if ph.p_type == PT_TLS {
+                // Parse TLS template
+                tls_template = Some(TlsTemplate {
+                    file_offset: ph.p_offset as usize,
+                    file_size: ph.p_filesz as usize,
+                    mem_size: ph.p_memsz as usize,
+                    align: ph.p_align as usize,
+                });
             }
         }
 
@@ -218,6 +245,7 @@ impl<'a> ElfExecutable<'a> {
             entry,
             segments,
             segment_count,
+            tls_template,
         })
     }
 
@@ -239,6 +267,21 @@ impl<'a> ElfExecutable<'a> {
             return &[];
         }
         &self.data[segment.file_offset..][..segment.file_size]
+    }
+
+    /// Get the TLS template if present
+    pub fn tls_template(&self) -> Option<&TlsTemplate> {
+        self.tls_template.as_ref()
+    }
+
+    /// Get the TLS initialization data
+    pub fn tls_data(&self) -> &[u8] {
+        if let Some(tls) = &self.tls_template {
+            if tls.file_size > 0 {
+                return &self.data[tls.file_offset..][..tls.file_size];
+            }
+        }
+        &[]
     }
 
     /// Calculate total memory needed (aligned to page size)

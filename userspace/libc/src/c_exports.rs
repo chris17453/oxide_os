@@ -1767,13 +1767,14 @@ pub unsafe extern "C" fn duplocale(_locobj: *mut u8) -> *mut u8 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn nl_langinfo(_item: i32) -> *const u8 {
-    b"UTF-8\0".as_ptr()
+pub unsafe extern "C" fn nl_langinfo(item: i32) -> *const u8 {
+    crate::locale::nl_langinfo(item)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn nl_langinfo_l(_item: i32, _locale: *mut u8) -> *const u8 {
-    b"UTF-8\0".as_ptr()
+pub unsafe extern "C" fn nl_langinfo_l(item: i32, _locale: *mut u8) -> *const u8 {
+    // Ignore locale parameter, use default implementation
+    crate::locale::nl_langinfo(item)
 }
 
 // ============ uname ============
@@ -3082,4 +3083,135 @@ pub unsafe extern "C" fn wcsnrtombs(
     ps: *mut u8,
 ) -> usize {
     wcsrtombs(dest, src, len, ps)
+}
+
+// puts - print string with newline
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn puts(s: *const u8) -> i32 {
+    crate::stdio::puts(s)
+}
+
+// strstr - find substring
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn strstr(haystack: *const u8, needle: *const u8) -> *mut u8 {
+    crate::string::strstr_c(haystack, needle) as *mut u8
+}
+
+// wcstok - tokenize wide string
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wcstok(s: *mut i32, delim: *const i32, ptr: *mut *mut i32) -> *mut i32 {
+    crate::wchar::wcstok(s, delim, ptr)
+}
+
+// System logging functions - minimal stubs (require kernel support)
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn openlog(_ident: *const u8, _option: i32, _facility: i32) {
+    // Stub: syslog functionality not implemented yet
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn syslog(_priority: i32, _format: *const u8, _args: ...) {
+    // Stub: syslog functionality not implemented yet
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn closelog() {
+    // Stub: syslog functionality not implemented yet
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn setlogmask(_mask: i32) -> i32 {
+    0 // Stub: return dummy value
+}
+
+// chroot - change root directory (requires kernel support)
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chroot(_path: *const u8) -> i32 {
+    -1 // Not implemented
+}
+
+// Terminal I/O control functions (require kernel support)
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tcsendbreak(_fd: i32, _duration: i32) -> i32 {
+    -1 // Not implemented
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tcdrain(_fd: i32) -> i32 {
+    -1 // Not implemented
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tcflush(_fd: i32, _queue_selector: i32) -> i32 {
+    -1 // Not implemented
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tcflow(_fd: i32, _action: i32) -> i32 {
+    -1 // Not implemented
+}
+
+// utime - set file access and modification times
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn utime(_filename: *const u8, _times: *const u8) -> i32 {
+    -1 // Not implemented
+}
+
+// Group database functions (require /etc/group file)
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn setgrent() {
+    // Stub: group database not implemented
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn getgrent() -> *mut u8 {
+    core::ptr::null_mut() // Stub: return null
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn endgrent() {
+    // Stub: group database not implemented
+}
+
+// Additional string functions
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn memchr(s: *const u8, c: i32, n: usize) -> *mut u8 {
+    crate::string::memchr(s, c, n) as *mut u8
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn strcspn(s: *const u8, reject: *const u8) -> usize {
+    crate::string::strcspn(s, reject)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn strpbrk(s: *const u8, accept: *const u8) -> *mut u8 {
+    crate::string::strpbrk(s, accept) as *mut u8
+}
+
+// putchar - already exists in stdio but needs C export
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn putchar(c: i32) -> i32 {
+    crate::stdio::putchar(c as u8);
+    c // Return the character written
+}
+
+// times - get process times (stub, requires kernel support)
+#[repr(C)]
+pub struct tms {
+    tms_utime: i64,  // User CPU time
+    tms_stime: i64,  // System CPU time
+    tms_cutime: i64, // User CPU time of children
+    tms_cstime: i64, // System CPU time of children
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn times(buf: *mut tms) -> i64 {
+    if !buf.is_null() {
+        (*buf).tms_utime = 0;
+        (*buf).tms_stime = 0;
+        (*buf).tms_cutime = 0;
+        (*buf).tms_cstime = 0;
+    }
+    0 // Stub: return 0 (elapsed time)
 }

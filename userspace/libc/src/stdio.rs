@@ -126,6 +126,28 @@ pub fn getchar() -> i32 {
     if ret <= 0 { -1 } else { buf[0] as i32 }
 }
 
+/// Print a null-terminated string with newline (C puts function)
+pub unsafe fn puts(s: *const u8) -> i32 {
+    if s.is_null() {
+        return -1;
+    }
+
+    // Find string length
+    let mut len = 0;
+    while *s.add(len) != 0 {
+        len += 1;
+    }
+
+    // Write string
+    let slice = core::slice::from_raw_parts(s, len);
+    syscall::sys_write(STDOUT_FILENO, slice);
+
+    // Write newline
+    syscall::sys_write(STDOUT_FILENO, b"\n");
+
+    0 // Success
+}
+
 /// Print an unsigned integer
 pub fn print_u64(n: u64) {
     let mut buf = [0u8; 20];

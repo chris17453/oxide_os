@@ -48,6 +48,8 @@ pub struct TaskContext {
     pub cs: u64,
     /// Stack segment (0x1B for user, 0x10 for kernel)
     pub ss: u64,
+    /// FS base register (for Thread-Local Storage)
+    pub fs_base: u64,
 }
 
 /// The primary schedulable entity in OXIDE

@@ -52,11 +52,11 @@ ac_cv_func_execv=no
 ac_cv_func_posix_spawn=no
 ac_cv_func_posix_spawnp=no
 
-# No shared libraries / dlopen
+# No shared libraries / dlopen - but provide header with RTLD constants
 ac_cv_func_dlopen=no
 ac_cv_func_dlsym=no
 ac_cv_func_dlclose=no
-ac_cv_header_dlfcn_h=no
+ac_cv_header_dlfcn_h=yes
 
 # Threads - we have pthread support
 ac_cv_pthread=yes
@@ -64,12 +64,17 @@ ac_cv_func_pthread_init=yes
 ac_cv_header_pthread_h=yes
 ac_cv_defined__POSIX_THREADS_unistd_h=yes
 
-# Locale support - enable langinfo header (stub)
+# Enable langinfo - now properly implemented in libc
 ac_cv_func_nl_langinfo=yes
 ac_cv_header_langinfo_h=yes
 
 # No terminal stuff
 ac_cv_func_openpty=no
+
+# Enable zlib - stub implementation in libc with CRC32 support
+ac_cv_header_zlib_h=yes
+ac_cv_lib_z_gzread=no
+ac_cv_have_z=yes
 ac_cv_func_forkpty=no
 ac_cv_header_pty_h=no
 ac_cv_header_utmp_h=no
@@ -81,8 +86,8 @@ ac_cv_header_arpa_inet_h=no
 ac_cv_header_netinet_in_h=no
 ac_cv_header_netinet_tcp_h=no
 
-# No sys/select - we have poll
-ac_cv_header_sys_select_h=no
+# sys/select - stub implementation with fd_set macros
+ac_cv_header_sys_select_h=yes
 ac_cv_func_select=no
 
 # No advanced process features
@@ -194,6 +199,7 @@ ac_cv_func_shm_unlink=no
 ac_cv_func_madvise=no
 ac_cv_func_getentropy=no
 ac_cv_func_getrandom=yes
+ac_cv_func_times=no
 ac_cv_func_explicit_bzero=no
 ac_cv_func_explicit_memset=no
 ac_cv_func_posix_fallocate=no
@@ -324,6 +330,7 @@ ac_cv_header_sys_msg_h=no
 ac_cv_header_sys_ipc_h=no
 ac_cv_header_sys_uio_h=no
 ac_cv_header_sys_termios_h=no
+ac_cv_header_sys_times_h=yes
 ac_cv_header_termios_h=yes
 ac_cv_header_poll_h=no
 ac_cv_header_linux_can_h=no

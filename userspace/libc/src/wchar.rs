@@ -356,3 +356,83 @@ pub fn towlower(wc: WintT) -> WintT {
 pub fn towupper(wc: WintT) -> WintT {
     if iswlower(wc) { wc - 32 } else { wc }
 }
+
+/// Thread-local storage for wcstok state
+static mut WCSTOK_STATE: *mut WcharT = core::ptr::null_mut();
+
+/// Split wide string into tokens (C wcstok function)
+pub unsafe fn wcstok(s: *mut WcharT, delim: *const WcharT, ptr: *mut *mut WcharT) -> *mut WcharT {
+    // Use provided pointer for state if available, otherwise use static
+    let state = if !ptr.is_null() {
+        ptr
+    } else {
+        &raw mut WCSTOK_STATE
+    };
+
+    // Determine starting position
+    let mut str_ptr = if !s.is_null() {
+        s
+    } else {
+        *state
+    };
+
+    // If null or end of string, return null
+    if str_ptr.is_null() || *str_ptr == 0 {
+        *state = core::ptr::null_mut();
+        return core::ptr::null_mut();
+    }
+
+    // Skip leading delimiters
+    loop {
+        let ch = *str_ptr;
+        if ch == 0 {
+            *state = core::ptr::null_mut();
+            return core::ptr::null_mut();
+        }
+
+        let mut is_delim = false;
+        let mut d = delim;
+        while *d != 0 {
+            if ch == *d {
+                is_delim = true;
+                break;
+            }
+            d = d.add(1);
+        }
+
+        if !is_delim {
+            break;
+        }
+        str_ptr = str_ptr.add(1);
+    }
+
+    // Mark token start
+    let token = str_ptr;
+
+    // Find end of token
+    loop {
+        let ch = *str_ptr;
+        if ch == 0 {
+            *state = core::ptr::null_mut();
+            return token;
+        }
+
+        let mut is_delim = false;
+        let mut d = delim;
+        while *d != 0 {
+            if ch == *d {
+                is_delim = true;
+                break;
+            }
+            d = d.add(1);
+        }
+
+        if is_delim {
+            *str_ptr = 0;
+            *state = str_ptr.add(1);
+            return token;
+        }
+
+        str_ptr = str_ptr.add(1);
+    }
+}

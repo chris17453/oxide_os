@@ -203,6 +203,7 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         r15: frame.r15,
         cs: frame.cs,
         ss: frame.ss,
+        fs_base: 0, // TODO: Read from MSR if needed for context preservation
     };
     sched::set_task_context(current_pid, current_ctx);
 

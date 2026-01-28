@@ -138,6 +138,52 @@ pub fn localeconv() -> *mut Lconv {
     &raw mut C_LCONV
 }
 
+/// nl_item type for nl_langinfo
+pub type nl_item = i32;
+
+/// CODESET constant - query for character encoding
+pub const CODESET: nl_item = 0;
+
+/// Static locale strings (English/US defaults)
+static UTF8_STR: &[u8] = b"UTF-8\0";
+static DAY_NAMES: [&[u8]; 7] = [
+    b"Sunday\0", b"Monday\0", b"Tuesday\0", b"Wednesday\0",
+    b"Thursday\0", b"Friday\0", b"Saturday\0"
+];
+static ABDAY_NAMES: [&[u8]; 7] = [
+    b"Sun\0", b"Mon\0", b"Tue\0", b"Wed\0", b"Thu\0", b"Fri\0", b"Sat\0"
+];
+static MONTH_NAMES: [&[u8]; 12] = [
+    b"January\0", b"February\0", b"March\0", b"April\0", b"May\0", b"June\0",
+    b"July\0", b"August\0", b"September\0", b"October\0", b"November\0", b"December\0"
+];
+static ABMON_NAMES: [&[u8]; 12] = [
+    b"Jan\0", b"Feb\0", b"Mar\0", b"Apr\0", b"May\0", b"Jun\0",
+    b"Jul\0", b"Aug\0", b"Sep\0", b"Oct\0", b"Nov\0", b"Dec\0"
+];
+
+/// nl_langinfo - get locale information
+///
+/// Returns locale strings for English/US locale.
+pub unsafe fn nl_langinfo(item: nl_item) -> *const u8 {
+    match item {
+        0 => UTF8_STR.as_ptr(),  // CODESET
+        1..=7 => DAY_NAMES[(item - 1) as usize].as_ptr(),  // DAY_1..DAY_7
+        8..=14 => ABDAY_NAMES[(item - 8) as usize].as_ptr(),  // ABDAY_1..ABDAY_7
+        15..=26 => MONTH_NAMES[(item - 15) as usize].as_ptr(),  // MON_1..MON_12
+        27..=38 => ABMON_NAMES[(item - 27) as usize].as_ptr(),  // ABMON_1..ABMON_12
+        39 => b".\0".as_ptr(),  // RADIXCHAR
+        40 => b",\0".as_ptr(),  // THOUSEP
+        44 => b"%a %b %e %H:%M:%S %Y\0".as_ptr(),  // D_T_FMT
+        45 => b"%m/%d/%y\0".as_ptr(),  // D_FMT
+        46 => b"%H:%M:%S\0".as_ptr(),  // T_FMT
+        47 => b"%I:%M:%S %p\0".as_ptr(),  // T_FMT_AMPM
+        48 => b"AM\0".as_ptr(),  // AM_STR
+        49 => b"PM\0".as_ptr(),  // PM_STR
+        _ => EMPTY.as_ptr(),
+    }
+}
+
 /// Locale-aware character classification
 pub mod ctype {
     /// Check if character is alphanumeric

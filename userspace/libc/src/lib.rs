@@ -89,6 +89,7 @@ pub mod math;
 pub mod poll;
 pub mod pwd;
 pub mod socket;
+pub mod zlib_stub;
 pub mod termios;
 pub mod time;
 pub mod wchar;

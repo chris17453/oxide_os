@@ -124,6 +124,7 @@ pub fn kernel_fork() -> i64 {
         r15: user_ctx.r15,
         cs: 0x23, // User mode
         ss: 0x1B,
+        fs_base: 0, // Will be set by exec if TLS is needed
     };
 
     debug_fork!(
@@ -177,6 +178,7 @@ pub fn kernel_fork() -> i64 {
                 r15: parent_context.r15,
                 cs: 0x23, // User mode
                 ss: 0x1B,
+                fs_base: parent_context.fs_base,
             };
 
             // Update parent's context in the scheduler's Task
@@ -211,6 +213,7 @@ pub fn kernel_fork() -> i64 {
                 r15: child_ctx.r15,
                 cs: 0x23,
                 ss: 0x1B,
+                fs_base: child_ctx.fs_base,
             };
 
             // Create Task for child
@@ -271,6 +274,7 @@ pub fn kernel_fork() -> i64 {
                 r15: 0,
                 cs: 0,
                 ss: 0,
+                fs_base: 0,
             };
 
             // Save parent context so user_exit can restore it when child exits
@@ -522,6 +526,7 @@ pub fn run_child_process(child_pid: Pid) {
             r15: ctx.r15,
             cs: ctx.cs,
             ss: ctx.ss,
+            fs_base: ctx.fs_base,
         },
         None => return,
     };
@@ -671,7 +676,12 @@ pub fn run_child_process(child_pid: Pid) {
     // Enter user mode for child with full context restoration
     // When child calls exit(), user_exit will set CHILD_DONE and we'll detect it
     unsafe {
-        arch::enter_usermode_with_context(child_kernel_stack_top, child_pml4.as_u64(), &user_ctx);
+        arch::enter_usermode_with_context(
+            child_kernel_stack_top,
+            child_pml4.as_u64(),
+            &user_ctx,
+            child_ctx.fs_base, // Pass FS base for TLS
+        );
     }
 
     // Note: We never reach here via normal flow.
@@ -922,6 +932,7 @@ pub fn kernel_exec(
                 r15: ctx.r15,
                 cs: ctx.cs,
                 ss: ctx.ss,
+                fs_base: ctx.fs_base,
             };
 
             // Update ProcessMeta with new address space and cmdline

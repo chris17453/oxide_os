@@ -71,7 +71,7 @@ export CXX="oxide-c++"
 export AR="oxide-ar"
 export RANLIB="llvm-ranlib"
 export LD="oxide-ld"
-export CFLAGS="-O2 -fPIC -I$SYSROOT/include"
+export CFLAGS="-O2 -fno-pic -march=x86-64 -mtune=generic -mno-avx -mno-avx2 -I$SYSROOT/include -DHAVE_LANGINFO_H=1 -DHAVE_ZLIB_H=1"
 export LDFLAGS="-L$SYSROOT/lib"
 export CONFIG_SITE="$CPYTHON_BUILD/config.site"
 

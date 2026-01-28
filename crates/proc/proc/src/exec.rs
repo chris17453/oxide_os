@@ -155,6 +155,49 @@ pub fn do_exec<A: FrameAllocator>(
         }
     }
 
+    // Set up TLS (Thread-Local Storage) if needed
+    let tls_base = if let Some(tls_template) = elf.tls_template() {
+        // Allocate TLS block
+        // TLS block layout: [TLS data] [Thread Control Block (TCB)]
+        // FS register points to TCB (end of TLS block)
+        let tls_size = tls_template.mem_size;
+        let tcb_size = 64; // Thread Control Block size (self-pointer + space)
+        let total_size = tls_size + tcb_size;
+
+        // Align to page boundary
+        let pages_needed = (total_size + 4095) / 4096;
+        let tls_vaddr = VirtAddr::new(0x0000_7000_0000_0000); // TLS region
+
+        // Allocate TLS pages
+        new_address_space
+            .allocate_pages(
+                tls_vaddr,
+                pages_needed,
+                MemoryFlags::READ
+                    .union(MemoryFlags::WRITE)
+                    .union(MemoryFlags::USER),
+                allocator,
+            )
+            .map_err(|_| ExecError::OutOfMemory)?;
+
+        // Copy TLS initialization data
+        let tls_data = elf.tls_data();
+        if !tls_data.is_empty() {
+            write_to_user_stack(&new_address_space, tls_vaddr.as_u64(), tls_data)?;
+        }
+
+        // TCB is at the end of the TLS block
+        // FS register will point here
+        let tcb_addr = tls_vaddr.as_u64() + tls_size as u64;
+
+        // Write self-pointer to TCB (required by x86-64 TLS ABI)
+        write_to_user_stack(&new_address_space, tcb_addr, &tcb_addr.to_le_bytes())?;
+
+        Some(tcb_addr)
+    } else {
+        None
+    };
+
     // Set up user stack
     let stack_pages = USER_STACK_SIZE / 4096;
     let stack_bottom = VirtAddr::new(USER_STACK_TOP - USER_STACK_SIZE as u64);
@@ -272,6 +315,7 @@ pub fn do_exec<A: FrameAllocator>(
     context.rflags = 0x202; // IF set
     context.cs = 0x23; // User code segment
     context.ss = 0x1B; // User data segment
+    context.fs_base = tls_base.unwrap_or(0); // Set FS base for TLS
 
     // Set up arguments in registers per System V ABI:
     // rdi = argc

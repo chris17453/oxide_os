@@ -119,6 +119,67 @@ pub fn strrchr(s: *const u8, c: i32) -> *const u8 {
     }
 }
 
+/// Find byte in memory
+pub unsafe fn memchr(s: *const u8, c: i32, n: usize) -> *const u8 {
+    let c = c as u8;
+    for i in 0..n {
+        if *s.add(i) == c {
+            return s.add(i);
+        }
+    }
+    core::ptr::null()
+}
+
+/// Get length of prefix substring not containing any character from reject
+pub unsafe fn strcspn(s: *const u8, reject: *const u8) -> usize {
+    let mut i = 0;
+    loop {
+        let ch = *s.add(i);
+        if ch == 0 {
+            return i;
+        }
+
+        // Check if ch is in reject set
+        let mut j = 0;
+        loop {
+            let r = *reject.add(j);
+            if r == 0 {
+                break;
+            }
+            if ch == r {
+                return i;
+            }
+            j += 1;
+        }
+        i += 1;
+    }
+}
+
+/// Find first occurrence in string of any character from accept
+pub unsafe fn strpbrk(s: *const u8, accept: *const u8) -> *const u8 {
+    let mut i = 0;
+    loop {
+        let ch = *s.add(i);
+        if ch == 0 {
+            return core::ptr::null();
+        }
+
+        // Check if ch is in accept set
+        let mut j = 0;
+        loop {
+            let a = *accept.add(j);
+            if a == 0 {
+                break;
+            }
+            if ch == a {
+                return s.add(i);
+            }
+            j += 1;
+        }
+        i += 1;
+    }
+}
+
 /// Copy memory
 pub unsafe fn memcpy(dst: *mut u8, src: *const u8, n: usize) -> *mut u8 {
     for i in 0..n {
@@ -220,7 +281,7 @@ pub fn strerror_rust(errnum: i32) -> &'static str {
     }
 }
 
-/// Find substring
+/// Find substring (Rust version)
 pub fn strstr(haystack: &str, needle: &str) -> Option<usize> {
     if needle.is_empty() {
         return Some(0);
@@ -243,4 +304,48 @@ pub fn strstr(haystack: &str, needle: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// Find substring in null-terminated string (C strstr)
+pub unsafe fn strstr_c(haystack: *const u8, needle: *const u8) -> *const u8 {
+    if haystack.is_null() || needle.is_null() {
+        return core::ptr::null();
+    }
+
+    // Get needle length
+    let mut needle_len = 0;
+    while *needle.add(needle_len) != 0 {
+        needle_len += 1;
+    }
+
+    // Empty needle matches at beginning
+    if needle_len == 0 {
+        return haystack;
+    }
+
+    // Search for needle in haystack
+    let mut i = 0;
+    loop {
+        let h_char = *haystack.add(i);
+        if h_char == 0 {
+            break; // End of haystack
+        }
+
+        // Check if needle matches at this position
+        let mut matches = true;
+        for j in 0..needle_len {
+            if *haystack.add(i + j) != *needle.add(j) {
+                matches = false;
+                break;
+            }
+        }
+
+        if matches {
+            return haystack.add(i);
+        }
+
+        i += 1;
+    }
+
+    core::ptr::null()
 }
