@@ -168,11 +168,15 @@ pub unsafe extern "C" fn enter_usermode(
         "2:",
 
         // Load user data segments
+        // NOTE: In x86-64 long mode, FS and GS bases come from MSRs (IA32_FS_BASE, IA32_GS_BASE),
+        // NOT from segment descriptors. Loading a segment selector into FS/GS would overwrite
+        // the base we just set via WRMSR. So we load them with 0 to use the MSR-provided base.
         "mov ax, {user_ds}",
         "mov ds, ax",
         "mov es, ax",
-        "mov fs, ax",
-        "mov gs, ax",
+        "xor ax, ax",          // Clear AX to 0
+        "mov fs, ax",          // Load FS with 0 (base comes from FS_BASE MSR)
+        "mov gs, ax",          // Load GS with 0 (base comes from GS_BASE MSR)
 
         // Clear all general purpose registers for security
         "xor rax, rax",
@@ -492,11 +496,15 @@ pub unsafe extern "C" fn return_to_usermode(entry: u64, user_stack: u64, rflags:
         "xor r15, r15",
 
         // Load user data segments
+        // NOTE: In x86-64 long mode, FS and GS bases come from MSRs (IA32_FS_BASE, IA32_GS_BASE),
+        // NOT from segment descriptors. Loading a segment selector into FS/GS would overwrite
+        // the base we just set via WRMSR. So we load them with 0 to use the MSR-provided base.
         "mov ax, {user_ds}",
         "mov ds, ax",
         "mov es, ax",
-        "mov fs, ax",
-        "mov gs, ax",
+        "xor ax, ax",          // Clear AX to 0
+        "mov fs, ax",          // Load FS with 0 (base comes from FS_BASE MSR)
+        "mov gs, ax",          // Load GS with 0 (base comes from GS_BASE MSR)
         "xor rax, rax",
 
         // Swap to user GS

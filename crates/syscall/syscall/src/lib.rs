@@ -305,6 +305,9 @@ pub type UmountFn = fn(&str, u32) -> i64;
 /// Serial debug write function type
 pub type SerialWriteFn = fn(&[u8]);
 
+/// Get current task's FS base callback type
+pub type GetFsBaseFn = fn() -> u64;
+
 /// Syscall context containing callbacks for I/O operations
 pub struct SyscallContext {
     /// Function to write to console (fd 1 and 2)
@@ -325,6 +328,8 @@ pub struct SyscallContext {
     pub umount: Option<UmountFn>,
     /// Function to write to serial for debug output
     pub serial_write: Option<SerialWriteFn>,
+    /// Function to get current task's FS base register (for TLS)
+    pub get_current_fs_base: Option<GetFsBaseFn>,
 }
 
 impl SyscallContext {
@@ -340,6 +345,7 @@ impl SyscallContext {
             mount: None,
             umount: None,
             serial_write: None,
+            get_current_fs_base: None,
         }
     }
 }
@@ -782,6 +788,33 @@ fn sys_exec(path: u64, path_len: usize, argv: *const *const u8, envp: *const *co
             errno::ENOSYS
         }
     };
+
+    // After exec, restore FS_BASE for TLS
+    // The exec callback updated the task's context with new fs_base, but sysretq
+    // doesn't restore FS_BASE MSR, so we must do it explicitly here.
+    if result >= 0 {
+        // Exec succeeded, get the updated fs_base from task context and write to MSR
+        unsafe {
+            let ctx = addr_of!(SYSCALL_CONTEXT);
+            if let Some(get_fs_fn) = (*ctx).get_current_fs_base {
+                let fs_base = get_fs_fn();
+                if fs_base != 0 {
+                    core::arch::asm!(
+                        "mov rcx, 0xC0000100",  // IA32_FS_BASE MSR
+                        "mov rax, {0}",          // Low 32 bits
+                        "mov rdx, {0}",          // Copy for shift
+                        "shr rdx, 32",           // High 32 bits
+                        "wrmsr",
+                        in(reg) fs_base,
+                        out("rax") _,
+                        out("rcx") _,
+                        out("rdx") _,
+                        options(nostack, preserves_flags)
+                    );
+                }
+            }
+        }
+    }
 
     unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
     result

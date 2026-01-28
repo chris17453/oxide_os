@@ -74,6 +74,18 @@ pub fn user_exit(status: i32) -> ! {
     }
 }
 
+/// Get current task's FS base register value
+///
+/// Returns the fs_base from the current task's context (for TLS)
+pub fn get_current_task_fs_base() -> u64 {
+    let current_pid = sched::current_pid().unwrap_or(0);
+    if let Some(ctx) = sched::get_task_context(current_pid) {
+        ctx.fs_base
+    } else {
+        0
+    }
+}
+
 /// Fork callback for syscalls
 ///
 /// Creates a child process and returns child PID to parent, 0 to child.

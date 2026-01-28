@@ -33,6 +33,7 @@ use vfs::{File, FileFlags, MountFlags, VnodeOps, mount::GLOBAL_VFS};
 use crate::console;
 use crate::fault;
 use crate::globals::{HEAP_ALLOCATOR, HEAP_SIZE, HEAP_STORAGE, KERNEL_PML4, MEMORY_MANAGER};
+use crate::process::get_current_task_fs_base;
 use crate::memory;
 use crate::mount::{kernel_mount, kernel_umount};
 use crate::process::{kernel_exec, kernel_fork, kernel_wait, user_exit};
@@ -536,6 +537,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         mount: Some(kernel_mount),
         umount: Some(kernel_umount),
         serial_write: Some(console::serial_write_bytes),
+        get_current_fs_base: Some(get_current_task_fs_base),
     };
     unsafe {
         syscall::init(syscall_ctx);

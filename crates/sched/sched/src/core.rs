@@ -424,6 +424,28 @@ pub fn switch_to(new_pid: Pid) {
 
     // Update lock-free current PID for interrupt handlers
     set_current_pid_lockfree(cpu, Some(new_pid));
+
+    // Restore FS base register for Thread-Local Storage (TLS)
+    // This must be done on every context switch because FS_BASE is not saved/restored
+    // by the CPU during interrupts (unlike general-purpose registers)
+    if let Some(ctx) = get_task_context(new_pid) {
+        if ctx.fs_base != 0 {
+            unsafe {
+                core::arch::asm!(
+                    "mov rcx, 0xC0000100",  // IA32_FS_BASE MSR
+                    "mov rax, {0}",          // Low 32 bits
+                    "mov rdx, {0}",          // Copy for shift
+                    "shr rdx, 32",           // High 32 bits
+                    "wrmsr",
+                    in(reg) ctx.fs_base,
+                    out("rax") _,
+                    out("rcx") _,
+                    out("rdx") _,
+                    options(nostack, preserves_flags)
+                );
+            }
+        }
+    }
 }
 
 /// Get task state
