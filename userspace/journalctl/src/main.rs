@@ -18,8 +18,11 @@ extern crate alloc;
 use libc::poll::{PollFd, events, poll};
 use libc::*;
 
-/// Path to the journal file
+/// Primary journal path (ext4 rootfs)
 const JOURNAL_PATH: &str = "/var/log/journal";
+
+/// Fallback journal path (tmpfs, for initramfs-only boots)
+const JOURNAL_PATH_FALLBACK: &str = "/run/log/journal";
 
 /// Read buffer size
 const BUF_SIZE: usize = 8192;
@@ -199,9 +202,18 @@ fn parse_usize(s: &str) -> Option<usize> {
     if any { Some(val) } else { None }
 }
 
+/// Open the journal file, trying primary then fallback path
+fn open_journal_read() -> i32 {
+    let fd = open2(JOURNAL_PATH, O_RDONLY);
+    if fd >= 0 {
+        return fd;
+    }
+    open2(JOURNAL_PATH_FALLBACK, O_RDONLY)
+}
+
 /// Read the journal file and process entries
 fn read_journal(filter: &Filter) {
-    let fd = open2(JOURNAL_PATH, O_RDONLY);
+    let fd = open_journal_read();
     if fd < 0 {
         prints("journalctl: no journal entries found\n");
         return;
@@ -330,7 +342,7 @@ fn follow_journal(filter: &Filter) {
     read_journal(filter);
 
     // Then open for polling
-    let fd = open2(JOURNAL_PATH, O_RDONLY);
+    let fd = open_journal_read();
     if fd < 0 {
         return;
     }

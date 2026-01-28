@@ -16,8 +16,11 @@ extern crate alloc;
 use libc::poll::{PollFd, events, poll};
 use libc::*;
 
-/// Path to the journal file
+/// Primary journal path (ext4 rootfs, persistent across reboots)
 const JOURNAL_PATH: &str = "/var/log/journal";
+
+/// Fallback journal path (tmpfs, for initramfs-only boots)
+const JOURNAL_PATH_FALLBACK: &str = "/run/log/journal";
 
 /// Read buffer size
 const BUF_SIZE: usize = 4096;
@@ -35,10 +38,22 @@ fn log(msg: &str) {
     prints("\n");
 }
 
-/// Ensure /var/log directory exists
-fn ensure_log_dir() {
+/// Try to open the journal file, creating directories as needed.
+/// Tries /var/log/journal first (persistent), falls back to /run/log/journal (tmpfs).
+fn open_journal() -> (i32, &'static str) {
+    // Try primary path: /var/log/journal
     let _ = mkdir("/var", 0o755);
     let _ = mkdir("/var/log", 0o755);
+    let fd = open(JOURNAL_PATH, (O_WRONLY | O_CREAT | O_APPEND) as u32, 0o644);
+    if fd >= 0 {
+        return (fd, JOURNAL_PATH);
+    }
+
+    // Fallback: /run/log/journal (tmpfs, always writable)
+    let _ = mkdir("/run", 0o755);
+    let _ = mkdir("/run/log", 0o755);
+    let fd = open(JOURNAL_PATH_FALLBACK, (O_WRONLY | O_CREAT | O_APPEND) as u32, 0o644);
+    (fd, JOURNAL_PATH_FALLBACK)
 }
 
 /// Main entry point
@@ -49,9 +64,6 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
 
     log("Starting");
 
-    // Ensure log directory exists
-    ensure_log_dir();
-
     // Open /dev/kmsg for reading
     let kmsg_fd = open2("/dev/kmsg", O_RDONLY);
     if kmsg_fd < 0 {
@@ -60,14 +72,16 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     }
 
     // Open journal file for appending
-    let journal_fd = open(JOURNAL_PATH, (O_WRONLY | O_CREAT | O_APPEND) as u32, 0o644);
+    let (journal_fd, journal_path) = open_journal();
     if journal_fd < 0 {
-        log("Failed to open /var/log/journal");
+        log("Failed to open journal file");
         close(kmsg_fd);
         return 1;
     }
 
-    log("Logging to /var/log/journal");
+    log("Logging to ");
+    prints(journal_path);
+    prints("\n");
 
     // Main poll loop
     let mut buf = [0u8; BUF_SIZE];
