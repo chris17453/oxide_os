@@ -87,7 +87,7 @@ pub fn copy_path_from_user(path_ptr: u64, path_len: usize) -> Option<&'static st
         return None;
     }
 
-    // Get the path slice
+    // Get the path slice (caller must have done STAC)
     let path_bytes = unsafe { core::slice::from_raw_parts(path_ptr as *const u8, path_len) };
 
     core::str::from_utf8(path_bytes).ok()
@@ -117,9 +117,19 @@ pub fn vfs_error_to_errno(e: VfsError) -> i64 {
 /// * `flags` - Open flags
 /// * `mode` - File creation mode (for O_CREAT)
 pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
+    // Enable access to user pages for SMAP (path string is in user space)
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
+
     let raw_path = match copy_path_from_user(path_ptr, path_len) {
         Some(p) => p,
-        None => return errno::EFAULT,
+        None => {
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
+            return errno::EFAULT;
+        }
     };
 
     // Resolve relative paths against cwd
@@ -135,6 +145,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
             Ok(vnode) => {
                 if flags.contains(FileFlags::O_EXCL) {
                     // O_EXCL with O_CREAT: fail if exists
+                    unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
                     return errno::EEXIST;
                 }
                 vnode
@@ -144,33 +155,48 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
                 match GLOBAL_VFS.lookup_parent(&path) {
                     Ok((parent, name)) => match parent.create(&name, mode) {
                         Ok(vnode) => vnode,
-                        Err(e) => return vfs_error_to_errno(e),
+                        Err(e) => {
+                            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+                            return vfs_error_to_errno(e);
+                        }
                     },
-                    Err(e) => return vfs_error_to_errno(e),
+                    Err(e) => {
+                        unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+                        return vfs_error_to_errno(e);
+                    }
                 }
             }
-            Err(e) => return vfs_error_to_errno(e),
+            Err(e) => {
+                unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+                return vfs_error_to_errno(e);
+            }
         }
     } else {
         match GLOBAL_VFS.lookup(&path) {
             Ok(vnode) => vnode,
-            Err(e) => return vfs_error_to_errno(e),
+            Err(e) => {
+                unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+                return vfs_error_to_errno(e);
+            }
         }
     };
 
     // Check O_DIRECTORY
     if flags.contains(FileFlags::O_DIRECTORY) && vnode.vtype() != VnodeType::Directory {
+        unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
         return errno::ENOTDIR;
     }
 
     // Check if trying to write to directory
     if flags.writable() && vnode.vtype() == VnodeType::Directory {
+        unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
         return errno::EISDIR;
     }
 
     // Truncate if O_TRUNC
     if flags.contains(FileFlags::O_TRUNC) && flags.writable() {
         if let Err(e) = vnode.truncate(0) {
+            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
             return vfs_error_to_errno(e);
         }
     }
@@ -179,11 +205,18 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
     let file = Arc::new(File::new(vnode, flags));
 
     // Allocate fd using unified model
-    match with_current_meta_mut(|meta| meta.fd_table.alloc(file)) {
+    let result = match with_current_meta_mut(|meta| meta.fd_table.alloc(file)) {
         Some(Ok(fd)) => fd as i64,
         Some(Err(e)) => vfs_error_to_errno(e),
         None => errno::ESRCH,
+    };
+
+    // Disable access to user pages
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
     }
+
+    result
 }
 
 /// sys_close - Close a file descriptor
@@ -909,11 +942,19 @@ pub fn sys_mount(
     use crate::errno;
     use core::ptr::addr_of;
 
+    // Enable access to user pages for SMAP
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
+
     // Copy source path (may be null/empty for some filesystems like tmpfs)
     let source = if source_ptr != 0 && source_len > 0 {
         match copy_path_from_user(source_ptr, source_len) {
             Some(s) => s,
-            None => return errno::EFAULT,
+            None => {
+                unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+                return errno::EFAULT;
+            }
         }
     } else {
         ""
@@ -922,27 +963,40 @@ pub fn sys_mount(
     // Copy target (mount point) path
     let target = match copy_path_from_user(target_ptr, target_len) {
         Some(t) => t,
-        None => return errno::EFAULT,
+        None => {
+            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            return errno::EFAULT;
+        }
     };
 
     // Copy filesystem type
     let fstype = match copy_path_from_user(fstype_ptr, fstype_len) {
         Some(f) => f,
-        None => return errno::EFAULT,
+        None => {
+            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            return errno::EFAULT;
+        }
     };
 
     // Resolve target path
     let mount_point = resolve_path(target);
 
     // Call the kernel mount callback
-    unsafe {
+    let result = unsafe {
         let ctx = addr_of!(SYSCALL_CONTEXT);
         if let Some(mount_fn) = (*ctx).mount {
-            return mount_fn(source, &mount_point, fstype, 0);
+            mount_fn(source, &mount_point, fstype, 0)
+        } else {
+            errno::ENOSYS
         }
+    };
+
+    // Disable access to user pages
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
     }
 
-    errno::ENOSYS
+    result
 }
 
 /// sys_umount - Unmount a filesystem
