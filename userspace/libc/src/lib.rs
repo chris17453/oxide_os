@@ -77,6 +77,8 @@ pub mod string;
 pub mod syscall;
 pub mod unistd;
 
+pub mod syslog;
+
 // Extended POSIX modules
 pub mod dirent;
 pub mod dlfcn;
@@ -116,6 +118,9 @@ pub use unistd::{
     wtermsig,
 };
 pub use unistd::{chdir, getcwd, getpgid, lseek, pipe, sched_yield, setpgid, setsid, tcgetpgrp, tcsetpgrp};
+
+pub use syslog::{openlog, syslog, closelog};
+pub use syslog::{LOG_EMERG, LOG_ALERT, LOG_CRIT, LOG_ERR, LOG_WARNING, LOG_NOTICE, LOG_INFO, LOG_DEBUG};
 
 // Stat functions
 pub use stat::{
