@@ -6,6 +6,7 @@
 #![no_std]
 #![allow(unused)]
 #![allow(unsafe_op_in_unsafe_fn)]
+#![feature(c_variadic)]
 
 extern crate alloc;
 
@@ -15,7 +16,7 @@ mod allocator {
     use core::cell::UnsafeCell;
     use core::sync::atomic::{AtomicUsize, Ordering};
 
-    const HEAP_SIZE: usize = 1024 * 1024; // 1MB heap
+    const HEAP_SIZE: usize = 16 * 1024 * 1024; // 16MB heap for CPython
 
     #[repr(C, align(16))]
     struct HeapStorage {
@@ -91,6 +92,14 @@ pub mod socket;
 pub mod termios;
 pub mod time;
 pub mod wchar;
+
+// CPython support modules
+pub mod ctype;
+pub mod setjmp;
+pub mod filestream;
+pub mod c_exports;
+pub mod printf;
+pub mod math_exports;
 
 pub use errno::*;
 pub use fcntl::*;
@@ -183,6 +192,10 @@ pub unsafe extern "C" fn _start() -> ! {
         "lea r13, [rsp + 8]",    // argv -> r13 (callee-saved)
         // Call init_env to set up environment
         "call {init_env}",
+        // Initialize FILE streams (stdin/stdout/stderr)
+        "call {init_stdio}",
+        // Initialize environ pointer for C code
+        "call {init_environ}",
         // Set up arguments for main(argc, argv)
         "mov edi, r12d",         // argc (32-bit)
         "mov rsi, r13",          // argv
@@ -194,6 +207,8 @@ pub unsafe extern "C" fn _start() -> ! {
         // Should never reach here, but just in case
         "ud2",
         init_env = sym env::init_env,
+        init_stdio = sym filestream::init_stdio,
+        init_environ = sym c_exports::init_environ,
         main = sym _main_wrapper,
         exit = sym syscall::sys_exit,
     )
