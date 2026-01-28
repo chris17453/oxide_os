@@ -4,7 +4,7 @@
 
 SHELL := /usr/bin/bash
 
-.PHONY: all build build-full kernel bootloader userspace userspace-release userspace-pkg initramfs initramfs-debug initramfs-minimal boot-dir boot-quick boot-image create-rootfs release clean run run-kvm test check fmt fmt-check clippy list-bins show-config help toolchain install-toolchain test-toolchain clean-toolchain claude
+.PHONY: all build build-full kernel bootloader userspace userspace-release userspace-pkg initramfs initramfs-debug initramfs-minimal boot-dir boot-quick boot-image create-rootfs release clean run run-kvm test check fmt fmt-check clippy list-bins show-config help toolchain install-toolchain test-toolchain clean-toolchain external-libs zlib openssl xz zstd cpython tls-test claude
 
 # Configuration
 ARCH ?= x86_64
@@ -88,8 +88,12 @@ userspace-release:
 	@RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package oxide-gwbasic --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) --features oxide || exit 1
 	@echo "  Building testcolors (release)..."
 	@RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package coreutils --bin testcolors --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1
+	@echo "  Building TLS test..."
+	@$(MAKE) tls-test
+	@echo "  Building CPython..."
+	@if [ ! -f "$(USERSPACE_OUT_RELEASE)/python" ]; then $(MAKE) cpython; else echo "    Python already built, skipping..."; fi
 	@echo "Stripping binaries..."
-	@for prog in init esh login gwbasic python ssh sshd service networkd journald journalctl $(COREUTILS_BINS); do \
+	@for prog in init esh login gwbasic python tls-test ssh sshd service networkd journald journalctl $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
 			strip "$(USERSPACE_OUT_RELEASE)/$$prog" 2>/dev/null || true; \
 		fi; \
@@ -361,10 +365,11 @@ create-rootfs: kernel bootloader initramfs-minimal
 	sudo ln -sf /bin/esh $(TARGET_DIR)/mnt/root/bin/sh && \
 	sudo cp "$(USERSPACE_OUT_RELEASE)/getty" $(TARGET_DIR)/mnt/root/bin/getty && \
 	sudo cp "$(USERSPACE_OUT_RELEASE)/login" $(TARGET_DIR)/mnt/root/bin/login && \
-	for prog in gwbasic python ssh sshd service networkd journald journalctl $(COREUTILS_BINS) testcolors; do \
+	for prog in gwbasic python tls-test ssh sshd service networkd journald journalctl $(COREUTILS_BINS) testcolors; do \
 		[ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/$$prog" $(TARGET_DIR)/mnt/root/usr/bin/ || true; \
 	done && \
 	[ -f "$(USERSPACE_OUT_RELEASE)/python" ] && sudo ln -sf /usr/bin/python $(TARGET_DIR)/mnt/root/usr/bin/python3 || true; \
+	[ -f "$(USERSPACE_OUT_RELEASE)/tls-test" ] && echo "TLS test installed" || true; \
 	sudo ln -sf /usr/bin/service $(TARGET_DIR)/mnt/root/usr/bin/servicemgr && \
 	sudo ln -sf /usr/bin/service $(TARGET_DIR)/mnt/root/bin/servicemgr && \
 	\
@@ -655,6 +660,44 @@ help:
 
 
 # Build toolchain components
+# External libraries (zlib, openssl, xz, zstd)
+external-libs: toolchain zlib openssl xz zstd
+
+zlib: toolchain
+	@echo "Building zlib..."
+	@./scripts/build-zlib.sh || (echo "Note: zlib test tools failed, but library may be OK" && \
+		cd external/zlib-1.3.1 && \
+		llvm-ar rcs libz.a adler32.o crc32.o deflate.o infback.o inffast.o inflate.o inftrees.o trees.o zutil.o compress.o uncompr.o gzclose.o gzlib.o gzread.o gzwrite.o 2>/dev/null && \
+		mkdir -p $(CURDIR)/toolchain/sysroot/lib && \
+		cp libz.a $(CURDIR)/toolchain/sysroot/lib/ && \
+		echo "zlib library installed to sysroot")
+
+openssl: toolchain zlib
+	@echo "Building OpenSSL..."
+	@./scripts/build-openssl.sh
+
+xz: toolchain
+	@echo "Building XZ Utils..."
+	@./scripts/build-xz.sh
+
+zstd: toolchain
+	@echo "Building Zstandard..."
+	@./scripts/build-zstd.sh
+
+# CPython cross-compilation
+cpython: toolchain zlib
+	@echo "Building CPython for OXIDE..."
+	@./scripts/build-cpython.sh
+	@mkdir -p $(USERSPACE_OUT_RELEASE)
+	@cp external/cpython-build/python $(USERSPACE_OUT_RELEASE)/python
+	@echo "Python installed to $(USERSPACE_OUT_RELEASE)/python"
+
+# TLS test program
+tls-test: toolchain
+	@echo "Building TLS test program..."
+	@toolchain/bin/oxide-cc -o $(USERSPACE_OUT_RELEASE)/tls-test apps/tls-test.c
+	@echo "TLS test built: $(USERSPACE_OUT_RELEASE)/tls-test"
+
 toolchain:
 	@echo "Building OXIDE cross-compiler toolchain..."
 	@echo "  Building assembler (as)..."
