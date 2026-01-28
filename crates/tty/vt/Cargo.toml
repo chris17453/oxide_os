@@ -9,4 +9,5 @@ description = "Virtual terminal (VT) support for OXIDE OS"
 vfs = { workspace = true }
 tty = { workspace = true }
 os_core = { workspace = true }
+sched = { workspace = true }
 spin = { workspace = true }

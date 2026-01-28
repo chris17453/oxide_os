@@ -14,6 +14,23 @@ use alloc::collections::VecDeque;
 use tty::{Tty, TtyDriver};
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
+/// Yield callback type — called to yield CPU while waiting for input.
+/// Must enable kernel preemption and halt until next interrupt.
+pub type YieldFn = fn();
+
+/// Global yield callback (set by kernel during init)
+static mut YIELD_CALLBACK: Option<YieldFn> = None;
+
+/// Set the yield callback for VT blocking reads
+///
+/// # Safety
+/// Must be called during single-threaded initialization
+pub unsafe fn set_yield_callback(f: YieldFn) {
+    unsafe {
+        YIELD_CALLBACK = Some(f);
+    }
+}
+
 /// Number of virtual terminals
 pub const NUM_VTS: usize = 6;
 
@@ -44,8 +61,6 @@ impl VtState {
 pub struct VtManager {
     /// All VTs
     vts: [Mutex<VtState>; NUM_VTS],
-    /// Active VT index (0-5)
-    active_vt: Mutex<usize>,
 }
 
 impl VtManager {
@@ -78,7 +93,6 @@ impl VtManager {
                 Mutex::new(VtState::new(Tty::new(Arc::new(VtTtyDriver { vt_num: 4 }), 5, 0), 4)),
                 Mutex::new(VtState::new(Tty::new(Arc::new(VtTtyDriver { vt_num: 5 }), 6, 0), 5)),
             ],
-            active_vt: Mutex::new(0),
         }
     }
 
@@ -105,54 +119,85 @@ impl VtManager {
 
     /// Push input character to active VT
     ///
-    /// Called from interrupt context - must be fast and lock-free.
+    /// Called from interrupt context (via timer tick) - must be fast and non-blocking.
+    /// Uses try_read on the global ACTIVE_VT to avoid blocking in interrupt context.
     /// Just buffers the input, processing happens later in read().
     pub fn push_input(&self, ch: u8) {
-        let active = *self.active_vt.lock();
+        // Use try_read on the global RwLock - never block in interrupt context
+        let active = match ACTIVE_VT.try_read() {
+            Some(guard) => *guard,
+            None => return, // RwLock contended, drop this keystroke rather than deadlock
+        };
+
+        if active >= NUM_VTS {
+            return;
+        }
 
         // Try to buffer the input without blocking
-        // If we can't get the lock immediately, drop this one keystroke
-        // (Better than deadlocking the entire system)
         if let Some(mut vt) = self.vts[active].try_lock() {
             if vt.input_buffer.len() < VT_BUF_SIZE {
                 vt.input_buffer.push(ch);
             }
         }
-        // If try_lock fails or buffer full, silently drop input
-        // This is acceptable for interrupt context
     }
 
     /// Read from VT
+    ///
+    /// Blocking read that drains the input_buffer on every iteration of the
+    /// wait loop. This is critical: push_input() (called from interrupt context)
+    /// places bytes into input_buffer, and we must feed them into the TTY line
+    /// discipline before checking if data is ready to read. Without this loop,
+    /// input arriving after we enter the wait would be stranded in input_buffer
+    /// and never reach the line discipline.
     pub fn read(&self, vt_num: usize, buf: &mut [u8]) -> VfsResult<usize> {
         if vt_num >= NUM_VTS {
             return Err(VfsError::InvalidArgument);
         }
 
-        // Drain buffered input quickly (minimize lock time)
-        let (buffered_input, tty) = {
-            let mut vt = self.vts[vt_num].lock();
-            let input = core::mem::take(&mut vt.input_buffer);
-            (input, vt.tty.clone())
-        };
-        // Lock released - interrupts can now buffer new input
+        // Clone the TTY Arc once (avoids holding VT lock across the loop)
+        let tty = self.vts[vt_num].lock().tty.clone();
 
-        // Process buffered input outside the lock
-        for ch in buffered_input {
-            if let Some(signal) = tty.input(&[ch]) {
-                // Signal was generated - deliver to foreground process group
-                unsafe {
-                    if let Some(callback) = SIGNAL_PGRP_CALLBACK {
-                        let pgid = tty.get_foreground_pgid();
-                        if pgid > 0 {
-                            callback(pgid, signal.to_signo());
+        loop {
+            // Drain any buffered input from interrupt context into line discipline.
+            // Lock is held only for the drain, then released immediately.
+            let buffered_input = {
+                let mut vt = self.vts[vt_num].lock();
+                core::mem::take(&mut vt.input_buffer)
+            };
+
+            // Process buffered characters through the TTY (echo, signals, line editing)
+            for ch in buffered_input {
+                if let Some(signal) = tty.input(&[ch]) {
+                    unsafe {
+                        if let Some(callback) = SIGNAL_PGRP_CALLBACK {
+                            let pgid = tty.get_foreground_pgid();
+                            if pgid > 0 {
+                                callback(pgid, signal.to_signo());
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Now do the blocking read
-        Ok(tty.read(0, buf)?)
+            // Check if line discipline now has a complete result to return
+            let n = tty.try_read(buf);
+            if n > 0 {
+                return Ok(n);
+            }
+
+            // No data ready yet - yield CPU with preemption enabled so the
+            // scheduler can actually switch to other processes. Without this,
+            // we're in kernel mode (syscall) and the timer interrupt refuses
+            // to context switch, starving all other processes.
+            unsafe {
+                if let Some(yield_fn) = YIELD_CALLBACK {
+                    yield_fn();
+                } else {
+                    // Fallback: bare yield (won't actually preempt in kernel mode)
+                    sched::yield_current();
+                }
+            }
+        }
     }
 
     /// Write to VT

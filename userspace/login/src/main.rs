@@ -265,9 +265,10 @@ pub fn main() -> i32 {
         // Print login prompt
         prints("\nOXIDE OS login: ");
 
-        // Read username
+        // Read username — don't echo here; the TTY line discipline
+        // echoes each keystroke in canonical mode already.
         let mut username = [0u8; MAX_INPUT];
-        let ulen = read_line(&mut username, true);
+        let ulen = read_line(&mut username, false);
         if ulen == 0 {
             continue;
         }

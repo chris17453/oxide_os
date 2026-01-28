@@ -164,8 +164,11 @@ impl LineDiscipline {
                 return None;
             }
 
-            // Handle erase
-            if c == self.termios.c_cc[VERASE] && self.termios.c_cc[VERASE] != 0 {
+            // Handle erase — match both the configured VERASE character (default 0x7F/DEL)
+            // and ASCII backspace (0x08/^H) since keyboards commonly send either.
+            if (c == self.termios.c_cc[VERASE] && self.termios.c_cc[VERASE] != 0)
+                || c == 0x08 || c == 0x7F
+            {
                 if !self.edit_buf.is_empty() {
                     self.edit_buf.pop();
                     if self.termios.c_lflag.contains(LocalFlags::ECHO) {

@@ -579,6 +579,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         pty::set_signal_pgrp_callback(signal_pgrp_callback);    // PTY devices
         vt::set_signal_pgrp_callback(signal_pgrp_callback);     // VT devices
         vt::set_console_write_callback(console::console_write);  // VT output
+        vt::set_yield_callback(vt_yield);                        // VT blocking yield
     }
 
     // Create /proc directory
@@ -1435,6 +1436,24 @@ fn kill_pgrp(pgid: u32, sig: i32) {
             }
         }
     }
+}
+
+/// Yield callback for VT blocking reads.
+///
+/// Enables kernel preemption and halts until the next interrupt, allowing
+/// the scheduler to context-switch to other processes. Without this, a
+/// process blocked in a VtManager::read() spinloop would monopolize the
+/// CPU because the timer interrupt refuses to preempt non-preemptible
+/// kernel code.
+fn vt_yield() {
+    sched::yield_current();
+    sched::set_need_resched();
+    arch::allow_kernel_preempt();
+    unsafe {
+        core::arch::asm!("sti", options(nomem, nostack, preserves_flags));
+        core::arch::asm!("hlt", options(nomem, nostack));
+    }
+    arch::disallow_kernel_preempt();
 }
 
 /// Signal process group callback for PTYs

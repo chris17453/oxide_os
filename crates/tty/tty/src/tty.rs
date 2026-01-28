@@ -130,6 +130,20 @@ impl Tty {
         self.ldisc.lock().flush_input();
     }
 
+    /// Non-blocking read: returns data if available, 0 bytes if not.
+    ///
+    /// Unlike the VnodeOps::read() which spinloops, this returns immediately.
+    /// Used by VtManager to own the blocking loop so it can drain input_buffer
+    /// on every iteration.
+    pub fn try_read(&self, buf: &mut [u8]) -> usize {
+        let mut ldisc = self.ldisc.lock();
+        if ldisc.can_read() {
+            ldisc.read(buf)
+        } else {
+            0
+        }
+    }
+
     /// Flush output
     pub fn flush_output(&self) {
         self.driver.flush();
