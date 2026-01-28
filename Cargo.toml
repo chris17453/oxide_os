@@ -115,6 +115,7 @@ members = [
     "userspace/ssh_old",
     "userspace/servicemgr",
     "userspace/networkd",
+    "userspace/journald",
     "bootloader/boot-uefi",
     "apps/gwbasic",
 ]

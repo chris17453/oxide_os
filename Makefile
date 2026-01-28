@@ -38,7 +38,7 @@ USERSPACE_OUT_RELEASE := $(TARGET_DIR)/$(USERSPACE_TARGET)/release
 CARGO_USER_FLAGS :=
 
 # Userspace packages to build
-USERSPACE_PACKAGES := init esh getty login coreutils ssh sshd service networkd
+USERSPACE_PACKAGES := init esh getty login coreutils ssh sshd service networkd journald
 
 # Coreutils binaries (auto-detected from Cargo.toml [[bin]] entries)
 # Extract binary names from [[bin]] sections in coreutils/Cargo.toml
@@ -89,7 +89,7 @@ userspace-release:
 	@echo "  Building testcolors (release)..."
 	@RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package coreutils --bin testcolors --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1
 	@echo "Stripping binaries..."
-	@for prog in init esh login gwbasic ssh sshd service networkd $(COREUTILS_BINS); do \
+	@for prog in init esh login gwbasic ssh sshd service networkd journald $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
 			strip "$(USERSPACE_OUT_RELEASE)/$$prog" 2>/dev/null || true; \
 		fi; \
@@ -165,8 +165,13 @@ initramfs: userspace-release
 	@echo "OXIDE" > $(TARGET_DIR)/initramfs/etc/hostname
 	@# Copy networkd
 	@cp "$(USERSPACE_OUT_RELEASE)/networkd" "$(TARGET_DIR)/initramfs/bin/networkd"
+	@# Copy journald
+	@cp "$(USERSPACE_OUT_RELEASE)/journald" "$(TARGET_DIR)/initramfs/bin/journald"
 	@# Create services.d directory with service definitions
 	@mkdir -p $(TARGET_DIR)/initramfs/etc/services.d
+	@echo "PATH=/bin/journald" > $(TARGET_DIR)/initramfs/etc/services.d/journald
+	@echo "ENABLED=yes" >> $(TARGET_DIR)/initramfs/etc/services.d/journald
+	@echo "RESTART=yes" >> $(TARGET_DIR)/initramfs/etc/services.d/journald
 	@echo "PATH=/bin/networkd" > $(TARGET_DIR)/initramfs/etc/services.d/networkd
 	@echo "ENABLED=yes" >> $(TARGET_DIR)/initramfs/etc/services.d/networkd
 	@echo "RESTART=yes" >> $(TARGET_DIR)/initramfs/etc/services.d/networkd
@@ -393,6 +398,7 @@ create-rootfs: kernel bootloader initramfs-minimal
 	echo "  Creating other config files..." && \
 	printf "export PATH=/bin:/sbin:/usr/bin:/usr/sbin\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/profile > /dev/null && \
 	printf "OXIDE\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/hostname > /dev/null && \
+	printf "PATH=/usr/bin/journald\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/journald > /dev/null && \
 	printf "PATH=/usr/bin/networkd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/networkd > /dev/null && \
 	printf "PATH=/usr/bin/sshd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/sshd > /dev/null && \
 	printf "mode=dhcp\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/network/eth0.conf > /dev/null && \
