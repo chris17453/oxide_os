@@ -28,7 +28,7 @@ typedef int ptrdiff_t;
 
 /* wchar_t - wide character type */
 #ifndef __cplusplus
-typedef unsigned int wchar_t;
+typedef int wchar_t;
 #endif
 
 /* offsetof - offset of member in structure */

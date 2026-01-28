@@ -58,10 +58,15 @@ ac_cv_func_dlsym=no
 ac_cv_func_dlclose=no
 ac_cv_header_dlfcn_h=no
 
-# Threads - we have pthread.h (stubs) but no actual threading
-ac_cv_pthread=no
-ac_cv_func_pthread_init=no
+# Threads - we have pthread support
+ac_cv_pthread=yes
+ac_cv_func_pthread_init=yes
 ac_cv_header_pthread_h=yes
+ac_cv_defined__POSIX_THREADS_unistd_h=yes
+
+# Locale support - enable langinfo header (stub)
+ac_cv_func_nl_langinfo=yes
+ac_cv_header_langinfo_h=yes
 
 # No terminal stuff
 ac_cv_func_openpty=no
@@ -295,6 +300,13 @@ ac_cv_header_sys_utsname_h=yes
 ac_cv_header_pwd_h=yes
 ac_cv_header_grp_h=yes
 
+# Headers we have for random
+ac_cv_header_sys_random_h=yes
+
+# Locale support - disable nl_langinfo
+ac_cv_func_nl_langinfo=no
+ac_cv_header_langinfo_h=no
+
 # Headers we DON'T have
 ac_cv_header_spawn_h=no
 ac_cv_header_sys_socket_h=no
@@ -302,7 +314,7 @@ ac_cv_header_sys_statvfs_h=no
 ac_cv_header_sys_param_h=no
 ac_cv_header_sys_file_h=no
 ac_cv_header_sys_lock_h=no
-ac_cv_header_sys_random_h=no
+# ac_cv_header_sys_random_h set above to yes
 ac_cv_header_sys_sendfile_h=no
 ac_cv_header_sys_epoll_h=no
 ac_cv_header_sys_event_h=no

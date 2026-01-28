@@ -25,6 +25,63 @@ pub extern "C" fn __errno_location() -> *mut i32 {
     unsafe { &raw mut ERRNO_VAR }
 }
 
+// ============ string basics ============
+
+#[unsafe(no_mangle)]
+pub extern "C" fn strlen(s: *const u8) -> usize {
+    crate::string::strlen(s)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn strcpy(dst: *mut u8, src: *const u8) -> *mut u8 {
+    crate::string::strcpy(dst, src)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn strncpy(dst: *mut u8, src: *const u8, n: usize) -> *mut u8 {
+    crate::string::strncpy(dst, src, n)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn strcmp(s1: *const u8, s2: *const u8) -> i32 {
+    crate::string::strcmp(s1, s2)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn strncmp(s1: *const u8, s2: *const u8, n: usize) -> i32 {
+    crate::string::strncmp(s1, s2, n)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn strchr(s: *const u8, c: i32) -> *const u8 {
+    crate::string::strchr(s, c)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn strrchr(s: *const u8, c: i32) -> *const u8 {
+    crate::string::strrchr(s, c)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn memcpy(dst: *mut u8, src: *const u8, n: usize) -> *mut u8 {
+    crate::string::memcpy(dst, src, n)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn memmove(dst: *mut u8, src: *const u8, n: usize) -> *mut u8 {
+    crate::string::memmove(dst, src, n)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn memset(dst: *mut u8, c: i32, n: usize) -> *mut u8 {
+    crate::string::memset(dst, c, n)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn memcmp(s1: *const u8, s2: *const u8, n: usize) -> i32 {
+    crate::string::memcmp(s1, s2, n)
+}
+
 // ============ string extras ============
 
 #[unsafe(no_mangle)]

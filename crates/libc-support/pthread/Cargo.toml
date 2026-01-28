@@ -9,5 +9,8 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 spin = "0.9"
 
+[lib]
+crate-type = ["staticlib", "rlib"]
+
 [features]
 default = []

@@ -10,6 +10,33 @@
 
 extern crate alloc;
 
+// When building as staticlib, we need panic handler and allocator stubs
+// These will be overridden by the actual program's implementations
+#[cfg(not(test))]
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    loop {}
+}
+
+// Stub allocator - will be overridden by program's allocator
+#[cfg(not(test))]
+use core::alloc::{GlobalAlloc, Layout};
+
+#[cfg(not(test))]
+struct StubAllocator;
+
+#[cfg(not(test))]
+unsafe impl GlobalAlloc for StubAllocator {
+    unsafe fn alloc(&self, _layout: Layout) -> *mut u8 {
+        core::ptr::null_mut()
+    }
+    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {}
+}
+
+#[cfg(not(test))]
+#[global_allocator]
+static ALLOCATOR: StubAllocator = StubAllocator;
+
 pub mod attr;
 pub mod barrier;
 pub mod condvar;

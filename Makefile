@@ -520,8 +520,7 @@ run-kvm: create-rootfs
 		-netdev user,id=net0,hostfwd=tcp::2223-:22 \
 		-vga std \
 		-vnc :0 \
-		-chardev stdio,id=char0,mux=on \
-		-serial chardev:char0 \
+		-serial stdio \
 		-no-reboot & \
 	QEMU_PID=$$!; \
 	trap 'kill $$QEMU_PID 2>/dev/null; exit' INT TERM; \
@@ -665,6 +664,8 @@ toolchain:
 	@cargo build --package oxide-ar --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS)
 	@echo "  Building libc..."
 	@cargo build --package libc --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS)
+	@echo "  Building pthread..."
+	@cargo build --package pthread --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS)
 	@echo ""
 	@echo "Installing toolchain components to sysroot..."
 	@mkdir -p toolchain/sysroot/lib
@@ -673,6 +674,10 @@ toolchain:
 		cp "$(USERSPACE_OUT_RELEASE)/liblibc.a" "toolchain/sysroot/lib/liboxide_libc.a"; \
 	elif [ -f "$(USERSPACE_OUT_RELEASE)/liblibc.rlib" ]; then \
 		cp "$(USERSPACE_OUT_RELEASE)/liblibc.rlib" "toolchain/sysroot/lib/liboxide_libc.a"; \
+	fi
+	@# Copy pthread.a to sysroot
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/libpthread.a" ]; then \
+		cp "$(USERSPACE_OUT_RELEASE)/libpthread.a" "toolchain/sysroot/lib/libpthread.a"; \
 	fi
 	@echo ""
 	@echo "OXIDE toolchain built successfully!"

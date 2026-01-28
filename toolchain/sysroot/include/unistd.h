@@ -3,6 +3,9 @@
 #ifndef _UNISTD_H
 #define _UNISTD_H
 
+/* POSIX threads support */
+#define _POSIX_THREADS 200809L
+
 #include <stddef.h>
 #include <sys/types.h>
 
