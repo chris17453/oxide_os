@@ -531,14 +531,31 @@ fn start_service_by_index(index: usize) -> bool {
 
         if pid == 0 {
             // Child process
-            // Redirect stdin/stdout/stderr to /dev/null for daemons
-            let null_fd = open2("/dev/null", O_RDWR);
+            // Redirect stdin to /dev/null, stdout/stderr to /dev/kmsg
+            let null_fd = open2("/dev/null", O_RDONLY);
             if null_fd >= 0 {
-                dup2(null_fd, 0);
-                dup2(null_fd, 1);
-                dup2(null_fd, 2);
-                if null_fd > 2 {
+                dup2(null_fd, 0); // stdin -> /dev/null
+                if null_fd > 0 {
                     close(null_fd);
+                }
+            }
+
+            let kmsg_fd = open2("/dev/kmsg", O_WRONLY);
+            if kmsg_fd >= 0 {
+                dup2(kmsg_fd, 1); // stdout -> /dev/kmsg
+                dup2(kmsg_fd, 2); // stderr -> /dev/kmsg
+                if kmsg_fd > 2 {
+                    close(kmsg_fd);
+                }
+            } else {
+                // Fallback: redirect stdout/stderr to /dev/null if /dev/kmsg unavailable
+                let null_wr = open2("/dev/null", O_WRONLY);
+                if null_wr >= 0 {
+                    dup2(null_wr, 1);
+                    dup2(null_wr, 2);
+                    if null_wr > 2 {
+                        close(null_wr);
+                    }
                 }
             }
 
@@ -759,14 +776,23 @@ fn run_daemon() {
         close(fd);
     }
 
-    // Start all enabled services
+    // Start all enabled services (journald first so logs are captured)
     unsafe {
         let services = &*SERVICES.get();
         let count = *SERVICE_COUNT.get();
+
+        // Start journald first if present
         for i in 0..count {
-            if services[i].enabled {
+            if services[i].enabled && services[i].name_str() == "journald" {
                 start_service_by_index(i);
-            } else {
+            }
+        }
+
+        // Start remaining services
+        for i in 0..count {
+            if services[i].enabled && services[i].name_str() != "journald" {
+                start_service_by_index(i);
+            } else if !services[i].enabled {
                 log_service(services[i].name_str(), "Disabled, skipping");
             }
         }
