@@ -234,6 +234,9 @@ extern "C" fn syscall_entry() {
         // Enable interrupts
         "sti",
 
+        // Enable user memory access for SMAP
+        "stac",
+
         // Save caller-saved registers that must be preserved for the user
         // (syscall only clobbers RCX and R11 according to ABI)
         "push r8",
@@ -270,6 +273,9 @@ extern "C" fn syscall_entry() {
 
         // === EPILOGUE: Restore and sysret ===
         // RAX = return value (preserve it!)
+
+        // Disable user memory access (restore SMAP protection)
+        "clac",
 
         // Disable interrupts
         "cli",

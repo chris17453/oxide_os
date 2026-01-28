@@ -742,7 +742,37 @@ fn sys_exec(path: u64, path_len: usize, argv: *const *const u8, envp: *const *co
         return errno::EFAULT;
     }
 
+    // Check AC flag before STAC
+    let rflags_before: u64;
+    unsafe {
+        core::arch::asm!("pushfq; pop {}", out(reg) rflags_before, options(nomem));
+    }
+
     unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+
+    // Check AC flag after STAC
+    let rflags_after: u64;
+    unsafe {
+        core::arch::asm!("pushfq; pop {}", out(reg) rflags_after, options(nomem));
+    }
+
+    unsafe {
+        use core::ptr::addr_of;
+        if let Some(write_fn) = (*addr_of!(SYSCALL_CONTEXT)).serial_write {
+            write_fn(b"[EXEC] AC flag before STAC: ");
+            if rflags_before & (1 << 18) != 0 {
+                write_fn(b"SET\n");
+            } else {
+                write_fn(b"CLEAR\n");
+            }
+            write_fn(b"[EXEC] AC flag after STAC: ");
+            if rflags_after & (1 << 18) != 0 {
+                write_fn(b"SET\n");
+            } else {
+                write_fn(b"CLEAR\n");
+            }
+        }
+    }
 
     let result = unsafe {
         let ctx = addr_of!(SYSCALL_CONTEXT);

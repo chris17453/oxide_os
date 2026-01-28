@@ -781,6 +781,16 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
     crate::serial_println!("    Instruction: {}", error & 16 != 0);
     crate::serial_println!("    SMAP violation: {}", error & 32 != 0);
 
+    crate::serial_println!("  === RFLAGS CHECK ===");
+
+    // Check RFLAGS AC bit to verify STAC/CLAC state
+    let rflags: u64;
+    unsafe {
+        core::arch::asm!("pushfq; pop {}", out(reg) rflags, options(nomem, nostack));
+    }
+    crate::serial_println!("  RFLAGS: {:#x}", rflags);
+    crate::serial_println!("    AC flag: {}", if rflags & (1 << 18) != 0 { "SET" } else { "CLEAR" });
+
     // Print debug values from enter_usermode_with_context
     unsafe {
         use crate::usermode::{
