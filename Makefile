@@ -38,7 +38,7 @@ USERSPACE_OUT_RELEASE := $(TARGET_DIR)/$(USERSPACE_TARGET)/release
 CARGO_USER_FLAGS :=
 
 # Userspace packages to build
-USERSPACE_PACKAGES := init esh getty login coreutils ssh sshd service networkd journald
+USERSPACE_PACKAGES := init esh getty login coreutils ssh sshd service networkd journald journalctl
 
 # Coreutils binaries (auto-detected from Cargo.toml [[bin]] entries)
 # Extract binary names from [[bin]] sections in coreutils/Cargo.toml
@@ -89,7 +89,7 @@ userspace-release:
 	@echo "  Building testcolors (release)..."
 	@RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package coreutils --bin testcolors --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1
 	@echo "Stripping binaries..."
-	@for prog in init esh login gwbasic ssh sshd service networkd journald $(COREUTILS_BINS); do \
+	@for prog in init esh login gwbasic ssh sshd service networkd journald journalctl $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
 			strip "$(USERSPACE_OUT_RELEASE)/$$prog" 2>/dev/null || true; \
 		fi; \
@@ -165,8 +165,9 @@ initramfs: userspace-release
 	@echo "OXIDE" > $(TARGET_DIR)/initramfs/etc/hostname
 	@# Copy networkd
 	@cp "$(USERSPACE_OUT_RELEASE)/networkd" "$(TARGET_DIR)/initramfs/bin/networkd"
-	@# Copy journald
+	@# Copy journald and journalctl
 	@cp "$(USERSPACE_OUT_RELEASE)/journald" "$(TARGET_DIR)/initramfs/bin/journald"
+	@cp "$(USERSPACE_OUT_RELEASE)/journalctl" "$(TARGET_DIR)/initramfs/bin/journalctl"
 	@# Create services.d directory with service definitions
 	@mkdir -p $(TARGET_DIR)/initramfs/etc/services.d
 	@echo "PATH=/bin/journald" > $(TARGET_DIR)/initramfs/etc/services.d/journald
