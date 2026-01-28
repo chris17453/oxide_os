@@ -79,9 +79,11 @@ fn main() -> i32 {
         eprintlns("[init] Failed to exec getty/login/shell");
         _exit(1);
     } else if child > 0 {
-        // Parent - reap zombies forever
-        printlns("[init] Getty started");
-        reap_zombies();
+        // Parent - reap zombies forever, respawning getty when it exits
+        printlns("[init] Getty started (PID ");
+        print_i64(child as i64);
+        printlns(")");
+        reap_zombies(child as i64);
     } else {
         eprintlns("[init] Fork failed");
     }
@@ -254,8 +256,8 @@ fn start_servicemgr() {
     }
 }
 
-/// Reap zombie processes forever
-fn reap_zombies() -> ! {
+/// Reap zombie processes forever, respawning getty when it exits
+fn reap_zombies(mut getty_pid: i64) -> ! {
     loop {
         let mut status: i32 = 0;
         let pid = wait(&mut status);
@@ -277,15 +279,28 @@ fn reap_zombies() -> ! {
                 printlns("");
             }
 
-            // If session died, respawn getty/login
-            printlns("[init] Respawning getty...");
-            let child = fork();
-            if child == 0 {
-                let _ = exec("/bin/getty");
-                let _ = exec("/bin/login");
-                let _ = exec("/bin/esh");
-                eprintlns("[init] Failed to exec getty/login/shell");
-                _exit(1);
+            // Only respawn getty if getty itself (our direct child) exited
+            if pid as i64 == getty_pid {
+                printlns("[init] Getty exited, respawning...");
+                let child = fork();
+                if child == 0 {
+                    let _ = exec("/bin/getty");
+                    let _ = exec("/bin/login");
+                    let _ = exec("/bin/esh");
+                    eprintlns("[init] Failed to exec getty/login/shell");
+                    _exit(1);
+                } else if child > 0 {
+                    getty_pid = child as i64; // Update tracked getty PID
+                    prints("[init] New getty started (PID ");
+                    print_i64(getty_pid);
+                    printlns(")");
+                }
+            } else {
+                // Some other descendant process exited (login, shell, etc)
+                // Don't respawn - getty will handle it
+                prints("[init] Descendant process exited, getty still running (PID ");
+                print_i64(getty_pid);
+                printlns(")");
             }
         }
     }
