@@ -573,6 +573,13 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         devfs::set_random_fill_callback(crypto::random::fill_bytes);
     }
 
+    // Set up /dev/kmsg callbacks for PID, uptime, and process name
+    unsafe {
+        devfs::set_pid_callback(kmsg_get_pid);
+        devfs::set_uptime_callback(kmsg_get_uptime_ms);
+        devfs::set_proc_name_callback(kmsg_get_proc_name);
+    }
+
     // Set up signal callbacks for Ctrl+C handling
     unsafe {
         devfs::set_signal_fg_callback(signal_foreground_pgrp);  // Console TTY (legacy)
@@ -1454,6 +1461,35 @@ fn vt_yield() {
         core::arch::asm!("hlt", options(nomem, nostack));
     }
     arch::disallow_kernel_preempt();
+}
+
+/// Kmsg callback: get current PID
+fn kmsg_get_pid() -> u32 {
+    sched::current_pid_lockfree().unwrap_or(0)
+}
+
+/// Kmsg callback: get uptime in milliseconds
+fn kmsg_get_uptime_ms() -> u64 {
+    arch::timer_ticks() * 10 // 100 Hz timer, each tick = 10ms
+}
+
+/// Kmsg callback: get process name for a PID
+fn kmsg_get_proc_name(pid: u32, buf: &mut [u8]) -> usize {
+    if let Some(meta) = sched::get_task_meta(pid) {
+        let meta = meta.lock();
+        if let Some(cmd) = meta.cmdline.first() {
+            // Extract just the filename from the path
+            let name = if let Some(slash_pos) = cmd.rfind('/') {
+                &cmd[slash_pos + 1..]
+            } else {
+                cmd.as_str()
+            };
+            let len = name.len().min(buf.len());
+            buf[..len].copy_from_slice(&name.as_bytes()[..len]);
+            return len;
+        }
+    }
+    0
 }
 
 /// Signal process group callback for PTYs

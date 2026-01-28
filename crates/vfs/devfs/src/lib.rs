@@ -8,6 +8,7 @@
 extern crate alloc;
 
 pub mod devices;
+pub mod kmsg;
 
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
@@ -17,6 +18,7 @@ use spin::RwLock;
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
 use devices::{ConsoleDevice, FramebufferDevice, NullDevice, RandomDevice, ZeroDevice};
+use kmsg::KmsgDevice;
 
 // Re-export console input functions
 pub use devices::{console_has_input, console_push_char, console_push_str};
@@ -26,6 +28,9 @@ pub use devices::{SIGINT, SIGQUIT, set_signal_fg_callback};
 
 // Re-export random device callback setter
 pub use devices::set_random_fill_callback;
+
+// Re-export kmsg functions and callback setters
+pub use kmsg::{kmsg_write, kmsg_write_str, set_pid_callback, set_uptime_callback, set_proc_name_callback};
 
 /// The devfs root directory
 pub struct DevFs {
@@ -55,6 +60,7 @@ impl DevFs {
                 Arc::new(RandomDevice::new_urandom(6)),
             );
             devices.insert("random".to_string(), Arc::new(RandomDevice::new_random(7)));
+            devices.insert("kmsg".to_string(), Arc::new(KmsgDevice::new(8)));
         }
 
         devfs
