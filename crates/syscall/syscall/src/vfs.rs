@@ -601,17 +601,25 @@ pub fn sys_chmod(path_ptr: u64, path_len: usize, mode: u32) -> i64 {
         return errno::EINVAL;
     }
 
+    // Enable access to user pages for SMAP
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
+
     let path_slice = unsafe { core::slice::from_raw_parts(path_ptr as *const u8, path_len) };
 
     let path_str = match core::str::from_utf8(path_slice) {
         Ok(s) => s,
-        Err(_) => return errno::EINVAL,
+        Err(_) => {
+            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            return errno::EINVAL;
+        }
     };
 
     let full_path = resolve_path(path_str);
 
     // Look up the vnode
-    match GLOBAL_VFS.lookup(&full_path) {
+    let result = match GLOBAL_VFS.lookup(&full_path) {
         Ok(vnode) => {
             // Try to set mode
             match vnode.chmod(mode) {
@@ -620,7 +628,14 @@ pub fn sys_chmod(path_ptr: u64, path_len: usize, mode: u32) -> i64 {
             }
         }
         Err(e) => vfs_error_to_errno(e),
+    };
+
+    // Disable access to user pages
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
     }
+
+    result
 }
 
 /// sys_fchmod - Change file mode bits by file descriptor
@@ -661,17 +676,25 @@ pub fn sys_chown(path_ptr: u64, path_len: usize, uid: i32, gid: i32) -> i64 {
         return errno::EINVAL;
     }
 
+    // Enable access to user pages for SMAP
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
+
     let path_slice = unsafe { core::slice::from_raw_parts(path_ptr as *const u8, path_len) };
 
     let path_str = match core::str::from_utf8(path_slice) {
         Ok(s) => s,
-        Err(_) => return errno::EINVAL,
+        Err(_) => {
+            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            return errno::EINVAL;
+        }
     };
 
     let full_path = resolve_path(path_str);
 
     // Look up the vnode
-    match GLOBAL_VFS.lookup(&full_path) {
+    let result = match GLOBAL_VFS.lookup(&full_path) {
         Ok(vnode) => {
             match vnode.chown(
                 if uid >= 0 { Some(uid as u32) } else { None },
@@ -682,7 +705,14 @@ pub fn sys_chown(path_ptr: u64, path_len: usize, uid: i32, gid: i32) -> i64 {
             }
         }
         Err(e) => vfs_error_to_errno(e),
+    };
+
+    // Disable access to user pages
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
     }
+
+    result
 }
 
 /// sys_fchown - Change file owner and group by file descriptor

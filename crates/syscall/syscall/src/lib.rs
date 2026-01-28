@@ -1455,17 +1455,29 @@ fn sys_setkeymap(name_ptr: u64, name_len: usize) -> i64 {
         return errno::EINVAL;
     }
 
+    // Enable access to user pages for SMAP
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
+
     // Read layout name
     let name = unsafe {
         core::str::from_utf8_unchecked(core::slice::from_raw_parts(name_ptr as *const u8, name_len))
     };
 
     // Try to set the layout
-    if input::keymap::set_layout(name) {
+    let result = if input::keymap::set_layout(name) {
         0
     } else {
         errno::EINVAL // Layout not found
+    };
+
+    // Disable access to user pages
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
     }
+
+    result
 }
 
 /// sys_getkeymap - Get current keyboard layout name
@@ -1493,10 +1505,20 @@ fn sys_getkeymap(buf_ptr: u64, buf_len: usize) -> i64 {
         return errno::ENOSPC; // Buffer too small
     }
 
+    // Enable access to user pages for SMAP
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
+
     // Copy layout name to user buffer
     let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len) };
     buf[..name_bytes.len()].copy_from_slice(name_bytes);
     buf[name_bytes.len()] = 0; // Null terminate
+
+    // Disable access to user pages
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
 
     name_bytes.len() as i64
 }
