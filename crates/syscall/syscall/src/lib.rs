@@ -629,7 +629,17 @@ fn sys_write(fd: i32, buf: u64, count: usize) -> i64 {
         return errno::EFAULT;
     }
 
-    // Handle stdout (1) and stderr (2) via console callback
+    // Try VFS fd table first for ALL fds (including stdout/stderr which may
+    // have been redirected via dup2)
+    let vfs_result = vfs::sys_write_vfs(fd, buf, count);
+
+    // If VFS write succeeded or returned a real error (not "no fd"), use it
+    if vfs_result != errno::ESRCH && vfs_result != errno::EBADF {
+        return vfs_result;
+    }
+
+    // Fallback for stdout/stderr: use console callback when no fd table entry
+    // exists (early boot, kernel threads, or before fd table is initialized)
     if fd == 1 || fd == 2 {
         let buffer = unsafe { core::slice::from_raw_parts(buf as *const u8, count) };
 
@@ -640,13 +650,9 @@ fn sys_write(fd: i32, buf: u64, count: usize) -> i64 {
                 return count as i64;
             }
         }
-
-        // No console configured
-        return errno::ENOSYS;
     }
 
-    // All other file descriptors go through VFS
-    vfs::sys_write_vfs(fd, buf, count)
+    vfs_result
 }
 
 /// sys_read - Read from a file descriptor
