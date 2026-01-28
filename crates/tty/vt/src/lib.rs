@@ -121,7 +121,9 @@ impl VtManager {
     ///
     /// Called from interrupt context (via timer tick) - must be fast and non-blocking.
     /// Uses try_read on the global ACTIVE_VT to avoid blocking in interrupt context.
-    /// Just buffers the input, processing happens later in read().
+    /// Buffers the input for later processing in read(), but also checks for signal
+    /// characters (Ctrl+C, Ctrl+\, Ctrl+Z) and dispatches signals immediately so
+    /// that programs not reading the TTY still receive them.
     pub fn push_input(&self, ch: u8) {
         // Use try_read on the global RwLock - never block in interrupt context
         let active = match ACTIVE_VT.try_read() {
@@ -134,9 +136,32 @@ impl VtManager {
         }
 
         // Try to buffer the input without blocking
-        if let Some(mut vt) = self.vts[active].try_lock() {
+        let tty = if let Some(mut vt) = self.vts[active].try_lock() {
             if vt.input_buffer.len() < VT_BUF_SIZE {
                 vt.input_buffer.push(ch);
+            }
+            // Clone TTY Arc for signal check (only for potential signal chars)
+            if ch == 0x03 || ch == 0x1C || ch == 0x1A {
+                Some(vt.tty.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Check for signal characters and dispatch immediately.
+        // This ensures signals reach processes even when nobody is calling read().
+        // The VT lock is already released, so we only hold the TTY ldisc lock briefly.
+        if let Some(tty) = tty {
+            if let Some((signal, pgid)) = tty.try_check_signal(ch) {
+                if pgid > 0 {
+                    unsafe {
+                        if let Some(callback) = SIGNAL_PGRP_CALLBACK {
+                            callback(pgid, signal.to_signo());
+                        }
+                    }
+                }
             }
         }
     }

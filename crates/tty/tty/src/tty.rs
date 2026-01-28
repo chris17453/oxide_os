@@ -144,6 +144,41 @@ impl Tty {
         }
     }
 
+    /// Non-blocking check if a byte is a signal character
+    ///
+    /// Called from interrupt context (push_input) to detect signal characters
+    /// like Ctrl+C (0x03) without going through the full line discipline.
+    /// Uses try_lock to avoid blocking. Returns the signal and foreground pgid
+    /// if this byte should generate a signal, None otherwise.
+    pub fn try_check_signal(&self, ch: u8) -> Option<(Signal, i32)> {
+        // Try to lock ldisc without blocking (interrupt context)
+        let ldisc = self.ldisc.try_lock()?;
+        let termios = ldisc.termios();
+
+        // Check if ISIG is enabled
+        if !termios.c_lflag.contains(crate::termios::LocalFlags::ISIG) {
+            return None;
+        }
+
+        // Check against configured signal characters
+        let signal = if ch == termios.c_cc[crate::termios::VINTR] {
+            Signal::Int
+        } else if ch == termios.c_cc[crate::termios::VQUIT] {
+            Signal::Quit
+        } else if ch == termios.c_cc[crate::termios::VSUSP] {
+            Signal::Tstp
+        } else {
+            return None;
+        };
+
+        drop(ldisc);
+
+        // Get foreground pgid (also non-blocking)
+        let pgid = self.foreground_pgid.try_lock().map(|g| *g).unwrap_or(0);
+
+        Some((signal, pgid))
+    }
+
     /// Flush output
     pub fn flush_output(&self) {
         self.driver.flush();

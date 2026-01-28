@@ -15,6 +15,7 @@ use mm_paging::phys_to_virt;
 use os_core::PhysAddr;
 use proc::ProcessMeta;
 use sched::{self, SchedPolicy, Task, TaskState};
+use signal::delivery::{SignalResult, determine_action};
 use spin::Mutex;
 
 /// Interrupt stack frame layout
@@ -99,6 +100,53 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
 
     // Use lock-free current PID to avoid deadlock in interrupt context
     let current_pid = sched::current_pid_lockfree().unwrap_or(0);
+
+    // Signal delivery: when returning to user mode, check for pending signals
+    // with default Terminate/CoreDump action and kill the process.
+    // This is how Ctrl+C (SIGINT) actually terminates running programs.
+    let in_user_mode = frame.cs == 0x23;
+    if in_user_mode && current_pid > 1 {
+        if let Some(meta_arc) = sched::get_task_meta(current_pid) {
+            if let Some(mut meta) = meta_arc.try_lock() {
+                if meta.has_pending_signals() {
+                    let signal_mask = meta.signal_mask;
+                    if let Some(pending) = meta.pending_signals.dequeue(&signal_mask) {
+                        let signo = pending.signo;
+                        let action = if signo >= 1 && signo <= signal::NSIG as i32 {
+                            meta.sigactions[(signo - 1) as usize]
+                        } else {
+                            signal::SigAction::new()
+                        };
+                        let result = determine_action(&pending, &action, &signal_mask);
+
+                        match result {
+                            SignalResult::Terminate | SignalResult::CoreDump => {
+                                // Release ProcessMeta lock before calling scheduler functions
+                                drop(meta);
+
+                                // Exit status: 128 + signal number (Unix convention)
+                                let exit_status = 128 + signo;
+                                sched::set_task_exit_status(current_pid, exit_status);
+
+                                // Wake parent so it can reap via wait()
+                                if let Some(ppid) = sched::get_task_ppid(current_pid) {
+                                    if ppid > 0 {
+                                        wake_up(ppid);
+                                    }
+                                }
+
+                                // Force context switch away from this zombie
+                                sched::set_need_resched();
+                            }
+                            _ => {
+                                // Ignore, Stop, Continue, UserHandler - not yet implemented
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Check if kernel code has explicitly allowed preemption (e.g., poll, nanosleep)
     let kernel_preempt_ok = arch::is_kernel_preempt_allowed();
