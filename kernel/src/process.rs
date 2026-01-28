@@ -322,13 +322,24 @@ pub fn kernel_fork() -> i64 {
                     "mov r12, [rax + 112]",
                     "mov r13, [rax + 120]",
                     "mov r14, [rax + 128]",
-                    "mov r15, [rax + 136]",
                     "mov rdi, [rax + 64]",
                     "mov rsi, [rax + 56]",
                     "mov rdx, [rax + 48]",
                     "mov r8, [rax + 80]",
                     "mov r9, [rax + 88]",
                     "mov r10, [rax + 96]",
+                    // Set FS base MSR if fs_base is non-zero (TLS support)
+                    "push rax",              // Save context pointer
+                    "mov r15, [rax + 160]",  // fs_base (offset 160 in ProcessContext)
+                    "test r15, r15",
+                    "jz 3f",
+                    "mov ecx, 0xC0000100",  // MSR IA32_FS_BASE
+                    "mov rax, r15",
+                    "mov rdx, r15",
+                    "shr rdx, 32",
+                    "wrmsr",
+                    "3:",
+                    "pop rax",               // Restore context pointer
                     // Load user segment selectors for DS/ES/FS (0x1B = USER_DS | 3)
                     // Save context pointer to r15 temporarily
                     "mov r15, rax",
@@ -966,6 +977,15 @@ pub fn kernel_exec(
                 // Use explicit registers to prevent compiler from reusing registers
                 // that we overwrite before their values are consumed
                 core::arch::asm!(
+                    // Set FS base MSR if fs_base is non-zero (TLS support)
+                    "test r15, r15",
+                    "jz 2f",
+                    "mov ecx, 0xC0000100",  // MSR IA32_FS_BASE
+                    "mov rax, r15",
+                    "mov rdx, r15",
+                    "shr rdx, 32",
+                    "wrmsr",
+                    "2:",
                     // Set up rip for sysretq
                     "mov rcx, r8",
                     // Set up rflags for sysretq
@@ -996,6 +1016,7 @@ pub fn kernel_exec(
                     in("r12") ctx.rdi,
                     in("r13") ctx.rsi,
                     in("r14") ctx.rdx,
+                    in("r15") ctx.fs_base,
                         options(noreturn)
                     );
                 }

@@ -1083,6 +1083,12 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         elf.entry_point().as_u64()
     );
 
+    // Check for TLS segment
+    let has_tls = elf.tls_template().is_some();
+    if has_tls {
+        let _ = writeln!(writer, "[USER] Init has TLS segment, will set up thread-local storage");
+    }
+
     // Create user address space
     let _ = writeln!(writer, "[USER] Creating user address space...");
     let kernel_pml4 = read_cr3();
@@ -1211,6 +1217,76 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             mem_offset += bytes_remaining_in_page;
         }
     }
+
+    // Set up TLS (Thread-Local Storage) if needed
+    let tls_base = if let Some(tls_template) = elf.tls_template() {
+        let _ = writeln!(writer, "[USER] Setting up TLS...");
+        let tls_size = tls_template.mem_size;
+        let tcb_size = 64; // Thread Control Block size
+        let total_size = tls_size + tcb_size;
+        let pages_needed = (total_size + 4095) / 4096;
+        let tls_vaddr = VirtAddr::new(0x0000_7000_0000_0000); // TLS region
+
+        // Allocate TLS pages
+        if let Err(e) = user_space.allocate_pages(
+            tls_vaddr,
+            pages_needed,
+            MemoryFlags::READ.union(MemoryFlags::WRITE).union(MemoryFlags::USER),
+            mm_manager::mm(),
+        ) {
+            let _ = writeln!(writer, "[USER] Failed to allocate TLS: {:?}", e);
+            arch::X86_64::halt();
+        }
+
+        // Copy TLS initialization data
+        let tls_data = elf.tls_data();
+        if !tls_data.is_empty() {
+            let _ = writeln!(writer, "[USER] Copying TLS initialization data ({} bytes)...", tls_data.len());
+            // Write TLS data page by page
+            let mut offset = 0usize;
+            while offset < tls_data.len() {
+                let current_vaddr = tls_vaddr.as_u64() + offset as u64;
+                let page_vaddr = VirtAddr::new(current_vaddr & !0xFFF);
+                let in_page_offset = (current_vaddr & 0xFFF) as usize;
+                let bytes_remaining = tls_data.len() - offset;
+                let bytes_in_page = core::cmp::min(4096 - in_page_offset, bytes_remaining);
+
+                // Get physical address for this page
+                let phys = user_space.translate(page_vaddr).expect("TLS page not mapped");
+                let dest_virt = phys_to_virt(phys);
+                unsafe {
+                    let dest = dest_virt.as_mut_ptr::<u8>().add(in_page_offset);
+                    core::ptr::copy_nonoverlapping(
+                        tls_data.as_ptr().add(offset),
+                        dest,
+                        bytes_in_page,
+                    );
+                }
+                offset += bytes_in_page;
+            }
+        }
+
+        // TCB is at the end of the TLS block
+        // FS register will point here
+        let tcb_addr = tls_vaddr.as_u64() + tls_size as u64;
+
+        // Write self-pointer to TCB (required by x86-64 TLS ABI)
+        let tcb_page_vaddr = VirtAddr::new(tcb_addr & !0xFFF);
+        let tcb_page_offset = (tcb_addr & 0xFFF) as usize;
+        let tcb_phys = user_space.translate(tcb_page_vaddr).expect("TCB page not mapped");
+        let tcb_dest_virt = phys_to_virt(tcb_phys);
+        unsafe {
+            let tcb_dest = tcb_dest_virt.as_mut_ptr::<u8>().add(tcb_page_offset) as *mut u64;
+            *tcb_dest = tcb_addr; // Self-pointer
+        }
+
+        let _ = writeln!(writer, "[USER] TLS initialized: base={:#x}, size={}, TCB={:#x}",
+            tls_vaddr.as_u64(), tls_size, tcb_addr);
+
+        Some(tcb_addr)
+    } else {
+        None
+    };
 
     // Allocate user stack (larger to accommodate typical program needs)
     let _ = writeln!(writer, "[USER] Allocating user stack...");
@@ -1411,18 +1487,23 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(writer, "[USER] PML4 phys: {:#x}", user_pml4_phys.as_u64());
     let _ = writeln!(writer, "[USER] User RSP: {:#x}", user_stack_top.as_u64());
     let _ = writeln!(writer, "[USER] Kernel stack: {:#x}", kernel_stack_top);
+    if let Some(fs_base) = tls_base {
+        let _ = writeln!(writer, "[USER] TLS FS base: {:#x}", fs_base);
+    }
     let _ = writeln!(writer);
 
     // Use the combined enter_usermode function that:
     // 1. Switches to kernel stack (in higher half)
     // 2. Switches page tables
-    // 3. Jumps to user mode
+    // 3. Sets FS base for TLS
+    // 4. Jumps to user mode
     unsafe {
         arch::usermode::enter_usermode(
             kernel_stack_top,
             user_pml4_phys.as_u64(),
             entry_point,
             user_stack_top.as_u64(),
+            tls_base.unwrap_or(0), // TLS FS base
         );
     }
 }

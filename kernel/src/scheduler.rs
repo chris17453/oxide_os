@@ -181,6 +181,21 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         return current_rsp;
     }
 
+    // Read FS base from MSR for TLS context preservation
+    let current_fs_base: u64;
+    unsafe {
+        core::arch::asm!(
+            "mov ecx, 0xC0000100",  // MSR IA32_FS_BASE
+            "rdmsr",
+            "shl rdx, 32",
+            "or rax, rdx",
+            out("rax") current_fs_base,
+            out("rcx") _,
+            out("rdx") _,
+            options(nostack, preserves_flags)
+        );
+    }
+
     // Save current task context from interrupt frame to scheduler's Task
     let current_ctx = sched::TaskContext {
         rip: frame.rip,
@@ -203,7 +218,7 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         r15: frame.r15,
         cs: frame.cs,
         ss: frame.ss,
-        fs_base: 0, // TODO: Read from MSR if needed for context preservation
+        fs_base: current_fs_base,
     };
     sched::set_task_context(current_pid, current_ctx);
 
@@ -237,6 +252,24 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     // Switch page tables
     unsafe {
         core::arch::asm!("mov cr3, {}", in(reg) next_pml4.as_u64());
+    }
+
+    // Restore FS base MSR for next process (TLS support)
+    if next_ctx.fs_base != 0 {
+        unsafe {
+            core::arch::asm!(
+                "mov ecx, 0xC0000100",  // MSR IA32_FS_BASE
+                "mov rax, {fs_base}",
+                "mov rdx, {fs_base}",
+                "shr rdx, 32",
+                "wrmsr",
+                fs_base = in(reg) next_ctx.fs_base,
+                out("rax") _,
+                out("rcx") _,
+                out("rdx") _,
+                options(nostack, preserves_flags)
+            );
+        }
     }
 
     // Build interrupt frame for next process.

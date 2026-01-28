@@ -98,6 +98,7 @@ pub unsafe extern "C" fn jump_to_usermode(entry: u64, user_stack: u64) -> ! {
 /// * `pml4_phys` - Physical address of the user's PML4 table
 /// * `entry` - User-mode entry point
 /// * `user_stack` - User-mode stack pointer
+/// * `fs_base` - Value for FS base register (for TLS), 0 if not needed
 ///
 /// # Safety
 /// All pointers must be valid. The kernel stack must be in the higher half.
@@ -111,14 +112,17 @@ pub unsafe extern "C" fn enter_usermode(
     pml4_phys: u64,    // rsi
     entry: u64,        // rdx
     user_stack: u64,   // rcx
+    fs_base: u64,      // r8
 ) -> ! {
     naked_asm!(
         // Disable interrupts during the transition
         "cli",
 
-        // Save rdx and rcx before we use rsp
-        "mov r8, rdx",  // entry -> r8
-        "mov r9, rcx",  // user_stack -> r9
+        // Save arguments before we modify registers
+        // r8 already contains fs_base
+        "mov r10, rdx",  // entry -> r10
+        "mov r11, rcx",  // user_stack -> r11
+        "mov r12, r8",   // fs_base -> r12
 
         // First, switch to the new kernel stack (which is in higher half)
         "mov rsp, rdi",
@@ -138,8 +142,8 @@ pub unsafe extern "C" fn enter_usermode(
         "mov rax, {user_ds}",
         "push rax",
 
-        // Push RSP (user stack pointer from r9)
-        "push r9",
+        // Push RSP (user stack pointer from r11)
+        "push r11",
 
         // Push RFLAGS with IF set (interrupts enabled)
         // Use known safe value: IF=1, IOPL=0, NT=0, TF=0
@@ -150,8 +154,18 @@ pub unsafe extern "C" fn enter_usermode(
         "mov rax, {user_cs}",
         "push rax",
 
-        // Push RIP (entry point from r8)
-        "push r8",
+        // Push RIP (entry point from r10)
+        "push r10",
+
+        // Set FS base MSR if fs_base is non-zero (IA32_FS_BASE = 0xC0000100)
+        "test r12, r12",
+        "jz 2f",                       // Skip if fs_base is 0
+        "mov rcx, 0xC0000100",         // MSR number for FS_BASE
+        "mov rax, r12",                // Low 32 bits of fs_base
+        "mov rdx, r12",
+        "shr rdx, 32",                 // High 32 bits of fs_base
+        "wrmsr",                       // Write MSR
+        "2:",
 
         // Load user data segments
         "mov ax, {user_ds}",
