@@ -49,6 +49,8 @@ select selectmodule.c
 
 *disabled*
 # Things we definitely can't support
+_lsprof
+_testclinic
 _asyncio
 audioop
 _bz2

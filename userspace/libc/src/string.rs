@@ -4,6 +4,9 @@
 
 /// Calculate length of null-terminated string
 pub fn strlen(s: *const u8) -> usize {
+    if s.is_null() {
+        return 0;
+    }
     let mut len = 0;
     unsafe {
         while *s.add(len) != 0 {
