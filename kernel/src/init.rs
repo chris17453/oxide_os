@@ -58,6 +58,34 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Initialize serial port first for early debugging
     serial::init();
 
+    // Enable SMAP (Supervisor Mode Access Prevention) if supported
+    // SMAP allows STAC/CLAC instructions to work properly
+    // Note: qemu64 CPU doesn't support SMAP, so STAC/CLAC will cause INVALID OPCODE
+    unsafe {
+        // Check if SMAP is supported via CPUID (EAX=7, ECX=0): SMAP = EBX bit 20
+        let ebx_out: u32;
+        core::arch::asm!(
+            "push rbx",           // Save RBX (callee-saved)
+            "mov eax, 7",
+            "xor ecx, ecx",
+            "cpuid",
+            "mov {0:e}, ebx",      // Move EBX to output without using EBX as constraint
+            "pop rbx",            // Restore RBX
+            out(reg) ebx_out,
+            out("eax") _,
+            out("ecx") _,
+            out("edx") _,
+        );
+
+        let smap_supported = (ebx_out & (1 << 20)) != 0;
+        if smap_supported {
+            let mut cr4: u64;
+            core::arch::asm!("mov {}, cr4", out(reg) cr4, options(nomem, nostack));
+            cr4 |= 1 << 21; // Set SMAP bit (bit 21)
+            core::arch::asm!("mov cr4, {}", in(reg) cr4, options(nostack));
+        }
+    }
+
     // Register os_log writer
     // SAFETY: OS_LOG_WRITER is static and serial::init() has been called
     unsafe {
