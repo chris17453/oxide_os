@@ -66,6 +66,31 @@ fn main() -> i32 {
         }
     }
 
+    // Test Python execution
+    printlns("[init] Testing Python...");
+    let python_child = fork();
+    if python_child == 0 {
+        // Child - run Python with simple test
+        let arg0 = b"/usr/bin/python3\0".as_ptr();
+        let arg1 = b"-c\0".as_ptr();
+        let arg2 = b"print('Python works!')\0".as_ptr();
+        let argv: [*const u8; 4] = [arg0, arg1, arg2, core::ptr::null()];
+        execv("/usr/bin/python3", argv.as_ptr());
+        eprintlns("[init] Failed to exec python");
+        _exit(1);
+    } else if python_child > 0 {
+        // Wait for Python test to complete
+        let mut status: i32 = 0;
+        waitpid(python_child, &mut status, 0);
+        if status == 0 {
+            printlns("[init] Python test PASSED");
+        } else {
+            prints("[init] Python test FAILED (status=");
+            print_i64(status as i64);
+            printlns(")");
+        }
+    }
+
     // Spawn getty/login on the primary TTY
     printlns("[init] Spawning getty/login...");
     let child = fork();
