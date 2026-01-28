@@ -28,7 +28,7 @@ fi
 
 # Default flags for OXIDE target
 OXIDE_CFLAGS=(
-    "--target=x86_64-unknown-none-elf"
+    "--target=x86_64-unknown-linux-elf"
     "-ffreestanding"
     "-fno-stack-protector"
     "-fno-pic"

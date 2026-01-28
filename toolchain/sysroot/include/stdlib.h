@@ -52,6 +52,23 @@ div_t div(int numer, int denom);
 ldiv_t ldiv(long numer, long denom);
 lldiv_t lldiv(long long numer, long long denom);
 
+/* Sorting and searching */
+void qsort(void *base, size_t nmemb, size_t size,
+           int (*compar)(const void *, const void *));
+void *bsearch(const void *key, const void *base, size_t nmemb, size_t size,
+              int (*compar)(const void *, const void *));
+
+/* System */
+int system(const char *command);
+
+/* Temporary files */
+char *mktemp(char *template);
+int mkstemp(char *template);
+char *mkdtemp(char *template);
+
+/* Realpath */
+char *realpath(const char *path, char *resolved_path);
+
 /* Exit codes */
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1

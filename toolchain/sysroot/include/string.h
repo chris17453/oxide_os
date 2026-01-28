@@ -11,6 +11,7 @@ void *memmove(void *dest, const void *src, size_t n);
 void *memset(void *s, int c, size_t n);
 int memcmp(const void *s1, const void *s2, size_t n);
 void *memchr(const void *s, int c, size_t n);
+void *memrchr(const void *s, int c, size_t n);
 
 /* String functions */
 size_t strlen(const char *s);
@@ -36,5 +37,10 @@ char *strsep(char **stringp, const char *delim);
 
 /* Error strings */
 char *strerror(int errnum);
+char *strsignal(int sig);
+int strerror_r(int errnum, char *buf, size_t buflen);
+
+/* String duplication */
+char *strndup(const char *s, size_t n);
 
 #endif /* _STRING_H */

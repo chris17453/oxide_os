@@ -668,8 +668,10 @@ toolchain:
 	@echo ""
 	@echo "Installing toolchain components to sysroot..."
 	@mkdir -p toolchain/sysroot/lib
-	@# Copy libc.a to sysroot
-	@if [ -f "$(USERSPACE_OUT_RELEASE)/liblibc.rlib" ]; then \
+	@# Copy libc.a to sysroot (staticlib produces native ELF objects, rlib has LLVM bitcode)
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/liblibc.a" ]; then \
+		cp "$(USERSPACE_OUT_RELEASE)/liblibc.a" "toolchain/sysroot/lib/liboxide_libc.a"; \
+	elif [ -f "$(USERSPACE_OUT_RELEASE)/liblibc.rlib" ]; then \
 		cp "$(USERSPACE_OUT_RELEASE)/liblibc.rlib" "toolchain/sysroot/lib/liboxide_libc.a"; \
 	fi
 	@echo ""

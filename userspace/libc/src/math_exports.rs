@@ -323,6 +323,24 @@ pub extern "C" fn tgamma(x: f64) -> f64 {
     math::exp(lgamma(x))
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn lgammaf(x: f32) -> f32 { lgamma(x as f64) as f32 }
+#[unsafe(no_mangle)]
+pub extern "C" fn tgammaf(x: f32) -> f32 { tgamma(x as f64) as f32 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn finite(x: f64) -> i32 { if x.is_finite() { 1 } else { 0 } }
+#[unsafe(no_mangle)]
+pub extern "C" fn finitef(x: f32) -> i32 { if x.is_finite() { 1 } else { 0 } }
+#[unsafe(no_mangle)]
+pub extern "C" fn isinf(x: f64) -> i32 { if x.is_infinite() { 1 } else { 0 } }
+#[unsafe(no_mangle)]
+pub extern "C" fn isnan(x: f64) -> i32 { if x.is_nan() { 1 } else { 0 } }
+#[unsafe(no_mangle)]
+pub extern "C" fn isnanf(x: f32) -> i32 { if x.is_nan() { 1 } else { 0 } }
+#[unsafe(no_mangle)]
+pub extern "C" fn isinff(x: f32) -> i32 { if x.is_infinite() { 1 } else { 0 } }
+
 // Long double versions (identical to double on x86_64 for our purposes)
 #[unsafe(no_mangle)] pub extern "C" fn fabsl(x: f64) -> f64 { math::fabs(x) }
 #[unsafe(no_mangle)] pub extern "C" fn ceill(x: f64) -> f64 { math::ceil(x) }

@@ -137,4 +137,8 @@ extern int optind, opterr, optopt;
 /* Confstr */
 size_t confstr(int name, char *buf, size_t len);
 
+/* File operations (additional) */
+int rename(const char *oldpath, const char *newpath);
+int chroot(const char *path);
+
 #endif /* _UNISTD_H */

@@ -5,6 +5,8 @@
 
 #include <sys/types.h>
 
+typedef volatile int sig_atomic_t;
+
 /* Signal numbers */
 #define SIGHUP      1
 #define SIGINT      2

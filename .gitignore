@@ -23,3 +23,8 @@ Thumbs.db
 
 # Node
 node_modules/
+
+# External build artifacts (CPython, etc.)
+/external/cpython/
+/external/cpython-build/
+/external/cpython-build-native/

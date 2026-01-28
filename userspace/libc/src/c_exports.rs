@@ -2949,6 +2949,27 @@ pub unsafe extern "C" fn wcsxfrm(dest: *mut i32, src: *const i32, n: usize) -> u
     len
 }
 
+// syscall() - generic syscall wrapper
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn syscall(number: i64, args: ...) -> i64 {
+    use crate::arch::x86_64::syscall as raw;
+    let mut ap = args;
+    match number {
+        186 => { // SYS_gettid
+            raw::syscall0(number as u64)
+        }
+        318 => { // SYS_getrandom
+            let buf: usize = ap.arg();
+            let buflen: usize = ap.arg();
+            let flags: usize = ap.arg();
+            raw::syscall3(number as u64, buf, buflen, flags)
+        }
+        _ => {
+            -38 // -ENOSYS
+        }
+    }
+}
+
 // mbsrtowcs/wcsrtombs
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mbsrtowcs(
