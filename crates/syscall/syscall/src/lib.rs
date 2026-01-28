@@ -742,14 +742,19 @@ fn sys_exec(path: u64, path_len: usize, argv: *const *const u8, envp: *const *co
         return errno::EFAULT;
     }
 
-    unsafe {
+    unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+
+    let result = unsafe {
         let ctx = addr_of!(SYSCALL_CONTEXT);
         if let Some(exec_fn) = (*ctx).exec {
-            return exec_fn(path as *const u8, path_len, argv, envp);
+            exec_fn(path as *const u8, path_len, argv, envp)
+        } else {
+            errno::ENOSYS
         }
-    }
+    };
 
-    errno::ENOSYS
+    unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+    result
 }
 
 /// Pre-fault userspace pages by writing a byte to trigger COW
@@ -763,6 +768,11 @@ unsafe fn prefault_pages(user_ptr: u64, len: usize) {
     let start_page = user_ptr / page_size;
     let end_page = (user_ptr + len as u64 - 1) / page_size;
 
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
+
     // Touch each page to trigger COW faults NOW (while we don't hold locks)
     // These faults will be from kernel mode but the COW handler can't deadlock
     // because we're not in a page fault context yet
@@ -774,7 +784,6 @@ unsafe fn prefault_pages(user_ptr: u64, len: usize) {
         {
             // Read-modify-write to trigger COW without changing data
             // Use volatile to prevent optimization
-            // NOTE: STAC/CLAC removed - SMAP not always available in QEMU
             unsafe {
                 let val = ptr.read_volatile();
                 ptr.write_volatile(val);
@@ -788,6 +797,11 @@ unsafe fn prefault_pages(user_ptr: u64, len: usize) {
                 ptr.write_volatile(val);
             }
         }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
     }
 }
 
