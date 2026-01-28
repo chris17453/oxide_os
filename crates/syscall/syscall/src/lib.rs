@@ -1375,6 +1375,8 @@ fn sys_init_module(image: u64, len: usize, params: u64) -> i64 {
         return errno::EFAULT;
     }
 
+    unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+
     // Get the module data
     let data = unsafe { core::slice::from_raw_parts(image as *const u8, len) };
 
@@ -1392,6 +1394,8 @@ fn sys_init_module(image: u64, len: usize, params: u64) -> i64 {
     } else {
         ""
     };
+
+    unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
 
     // NOTE: In full implementation, this would:
     // 1. Parse the ELF module
