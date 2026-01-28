@@ -308,6 +308,7 @@ ac_cv_header_grp_h=yes
 
 # Headers we have for random
 ac_cv_header_sys_random_h=yes
+ac_cv_header_linux_random_h=yes
 
 # Locale support - disable nl_langinfo
 ac_cv_func_nl_langinfo=no
@@ -334,7 +335,7 @@ ac_cv_header_sys_times_h=yes
 ac_cv_header_termios_h=yes
 ac_cv_header_poll_h=no
 ac_cv_header_linux_can_h=no
-ac_cv_header_linux_random_h=no
+# ac_cv_header_linux_random_h moved above with random headers (set to yes)
 ac_cv_header_linux_tipc_h=no
 ac_cv_header_linux_vm_sockets_h=no
 ac_cv_header_sysexits_h=no
