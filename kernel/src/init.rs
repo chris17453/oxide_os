@@ -643,7 +643,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Enumerate PCI devices to find network cards
     pci::enumerate();
     let pci_devices = pci::devices();
-    let _ = writeln!(writer, "[NET] Found {} PCI devices", pci_devices.len());
 
     // Look for VirtIO network devices
     let virtio_net_devices = pci::find_virtio_net();

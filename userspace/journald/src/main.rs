@@ -9,7 +9,6 @@
 
 #![no_std]
 #![no_main]
-#![allow(unused)]
 
 extern crate alloc;
 
@@ -62,8 +61,6 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     // Detach from controlling terminal
     setsid();
 
-    log("Starting");
-
     // Open /dev/kmsg for reading
     let kmsg_fd = open2("/dev/kmsg", O_RDONLY);
     if kmsg_fd < 0 {
@@ -72,16 +69,12 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     }
 
     // Open journal file for appending
-    let (journal_fd, journal_path) = open_journal();
+    let (journal_fd, _journal_path) = open_journal();
     if journal_fd < 0 {
         log("Failed to open journal file");
         close(kmsg_fd);
         return 1;
     }
-
-    log("Logging to ");
-    prints(journal_path);
-    prints("\n");
 
     // Main poll loop
     let mut buf = [0u8; BUF_SIZE];

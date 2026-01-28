@@ -127,7 +127,7 @@ async function monitorCommand(cmd) {
 }
 
 // Build the kernel
-async function build(target = "boot-quick") {
+async function build(target = "create-rootfs") {
   return new Promise((resolve, reject) => {
     const make = spawn("make", [target], {
       cwd: PROJECT_ROOT,
@@ -160,19 +160,13 @@ async function startQemu(options = {}) {
   const mode = options.mode || detectEnvironment();
   currentMode = mode;
 
-  // Determine if we should use rootfs (3-partition ext4) or legacy (single ESP)
-  const useRootfs = options.rootfs !== false;
+  // Always use ext4 rootfs (matches `make run`)
+  const useRootfs = true;
 
   // Build first unless explicitly disabled (ensures fresh code)
   if (options.build !== false) {
-    let buildTarget;
-    if (useRootfs) {
-      buildTarget = "create-rootfs";
-    } else {
-      buildTarget = mode === "rhel" ? "boot-image" : "boot-quick";
-    }
     try {
-      await build(buildTarget);
+      await build("create-rootfs");
     } catch (err) {
       return { success: false, error: `Build failed: ${err.message}` };
     }
@@ -194,68 +188,47 @@ async function startQemu(options = {}) {
 
   let args;
 
-  // Determine which disk image to use
-  const diskImage = useRootfs ? ROOTFS_IMAGE : BOOT_IMAGE;
+  // Always use ext4 rootfs disk image (matches `make run`)
+  if (!existsSync(ROOTFS_IMAGE)) {
+    return {
+      success: false,
+      error: `Disk image not found. Run 'make create-rootfs' first.`,
+    };
+  }
 
-  if (useRootfs || mode === "rhel") {
-    // Use disk image (rootfs or RHEL mode)
-    const imageToCheck = useRootfs ? ROOTFS_IMAGE : BOOT_IMAGE;
-    if (!existsSync(imageToCheck)) {
-      const target = useRootfs ? "create-rootfs" : "boot-image";
-      return {
-        success: false,
-        error: `Disk image not found. Run 'make ${target}' first.`,
-      };
+  // Copy OVMF_VARS for this session (needed for RHEL split OVMF)
+  if (ovmf.vars && existsSync(ovmf.vars)) {
+    try {
+      execSync(`cp "${ovmf.vars}" "${OVMF_VARS}"`, { stdio: "pipe" });
+    } catch (e) {
+      // Ignore if already exists
     }
+  }
 
-    // Copy OVMF_VARS for this session (needed for RHEL split OVMF)
-    if (ovmf.vars && existsSync(ovmf.vars)) {
-      try {
-        execSync(`cp "${ovmf.vars}" "${OVMF_VARS}"`, { stdio: "pipe" });
-      } catch (e) {
-        // Ignore if already exists
-      }
-    }
-
-    if (mode === "rhel") {
-      args = [
-        "-machine", "q35,accel=kvm:tcg",
-        "-cpu", "max",
-        "-smp", "2",
-        "-m", options.memory || "256M",
-        "-drive", `if=pflash,format=raw,readonly=on,file=${ovmf.code}`,
-        "-drive", `if=pflash,format=raw,file=${OVMF_VARS}`,
-        "-drive", `file=${diskImage},format=raw,if=none,id=bootdisk`,
-        "-device", "ide-hd,drive=bootdisk,bus=ide.0",
-        "-serial", `file:${SERIAL_LOG}`,
-        "-monitor", `unix:${MONITOR_SOCKET},server,nowait`,
-        "-display", "none",
-        "-no-reboot",
-      ];
-    } else {
-      // Fedora with disk image
-      args = [
-        "-machine", "q35",
-        "-cpu", "qemu64,+smap,+smep",
-        "-m", options.memory || "256M",
-        "-bios", ovmf.code,
-        "-drive", `file=${diskImage},format=raw,if=none,id=bootdisk`,
-        "-device", "ide-hd,drive=bootdisk",
-        "-serial", `file:${SERIAL_LOG}`,
-        "-monitor", `unix:${MONITOR_SOCKET},server,nowait`,
-        "-display", "none",
-        "-no-reboot",
-      ];
-    }
+  if (mode === "rhel") {
+    args = [
+      "-machine", "q35,accel=kvm:tcg",
+      "-cpu", "max",
+      "-smp", "2",
+      "-m", options.memory || "256M",
+      "-drive", `if=pflash,format=raw,readonly=on,file=${ovmf.code}`,
+      "-drive", `if=pflash,format=raw,file=${OVMF_VARS}`,
+      "-drive", `file=${ROOTFS_IMAGE},format=raw,if=none,id=bootdisk`,
+      "-device", "virtio-blk-pci,drive=bootdisk",
+      "-serial", `file:${SERIAL_LOG}`,
+      "-monitor", `unix:${MONITOR_SOCKET},server,nowait`,
+      "-display", "none",
+      "-no-reboot",
+    ];
   } else {
-    // Legacy Fedora mode: Use fat: protocol (for backward compatibility)
+    // Fedora with disk image
     args = [
       "-machine", "q35",
       "-cpu", "qemu64,+smap,+smep",
       "-m", options.memory || "256M",
       "-bios", ovmf.code,
-      "-drive", `format=raw,file=fat:rw:${bootDir},if=none,id=disk`,
-      "-device", "ide-hd,drive=disk",
+      "-drive", `file=${ROOTFS_IMAGE},format=raw,if=none,id=bootdisk`,
+      "-device", "virtio-blk-pci,drive=bootdisk",
       "-serial", `file:${SERIAL_LOG}`,
       "-monitor", `unix:${MONITOR_SOCKET},server,nowait`,
       "-display", "none",
@@ -489,8 +462,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           target: {
             type: "string",
-            description: "Make target (default: boot-quick). Options: build, boot-quick, boot-dir, initramfs",
-            default: "boot-quick",
+            description: "Make target (default: create-rootfs). Options: build, create-rootfs, initramfs",
+            default: "create-rootfs",
           },
         },
       },
@@ -617,7 +590,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     switch (name) {
       case "qemu_build":
-        result = await build(args?.target || "boot-quick");
+        result = await build(args?.target || "create-rootfs");
         break;
 
       case "qemu_start":

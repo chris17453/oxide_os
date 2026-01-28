@@ -257,15 +257,9 @@ boot-dir: kernel bootloader initramfs
 	@echo "  - Kernel: EFI/OXIDE/kernel.elf"
 	@echo "  - Initramfs: EFI/OXIDE/initramfs.cpio"
 
-# Quick boot directory update - kernel/bootloader only, use existing initramfs
-boot-quick: kernel bootloader initramfs
-	@rm -rf $(BOOT_DIR)
-	@mkdir -p $(BOOT_DIR)/EFI/BOOT
-	@mkdir -p $(BOOT_DIR)/EFI/OXIDE
-	@cp $(BOOTLOADER_TARGET) $(BOOT_DIR)/EFI/BOOT/BOOTX64.EFI
-	@cp $(KERNEL_TARGET) $(BOOT_DIR)/EFI/OXIDE/kernel.elf
-	@cp $(TARGET_DIR)/initramfs.cpio $(BOOT_DIR)/EFI/OXIDE/initramfs.cpio
-	@echo "Boot directory updated (kernel/bootloader/initramfs)"
+# Quick boot - same as create-rootfs (builds ext4 disk image with initramfs-minimal)
+boot-quick: create-rootfs
+	@echo "Boot ready (ext4 root filesystem disk image)"
 
 # Create a real disk image (for qemu-kvm compatibility on RHEL)
 boot-image: boot-dir
@@ -367,7 +361,7 @@ create-rootfs: kernel bootloader initramfs-minimal
 	sudo ln -sf /bin/esh $(TARGET_DIR)/mnt/root/bin/sh && \
 	sudo cp "$(USERSPACE_OUT_RELEASE)/getty" $(TARGET_DIR)/mnt/root/bin/getty && \
 	sudo cp "$(USERSPACE_OUT_RELEASE)/login" $(TARGET_DIR)/mnt/root/bin/login && \
-	for prog in gwbasic ssh sshd service networkd $(COREUTILS_BINS) testcolors; do \
+	for prog in gwbasic ssh sshd service networkd journald journalctl $(COREUTILS_BINS) testcolors; do \
 		[ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/$$prog" $(TARGET_DIR)/mnt/root/usr/bin/ || true; \
 	done && \
 	sudo ln -sf /usr/bin/service $(TARGET_DIR)/mnt/root/usr/bin/servicemgr && \

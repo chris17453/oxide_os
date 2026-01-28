@@ -758,6 +758,17 @@ fn check_services() {
 
 /// Run as daemon
 fn run_daemon() {
+    // Redirect our own stdout/stderr to /dev/kmsg so log messages
+    // go to the kernel ring buffer instead of cluttering the user's console
+    let kmsg_fd = open2("/dev/kmsg", O_WRONLY);
+    if kmsg_fd >= 0 {
+        dup2(kmsg_fd, 1); // stdout -> /dev/kmsg
+        dup2(kmsg_fd, 2); // stderr -> /dev/kmsg
+        if kmsg_fd > 2 {
+            close(kmsg_fd);
+        }
+    }
+
     log("Starting daemon mode");
 
     // Load service definitions

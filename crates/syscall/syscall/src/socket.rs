@@ -103,56 +103,14 @@ fn serial_print_num(msg: &str, num: i64) {
     }
 }
 
-/// Debug print helper (kernel debug output)
+/// Debug print helper (no-op in production)
 #[allow(dead_code)]
-fn debug_print(msg: &str) {
-    use core::ptr::addr_of;
-    unsafe {
-        let ctx = addr_of!(crate::SYSCALL_CONTEXT);
-        if let Some(write_fn) = (*ctx).console_write {
-            write_fn(b"[SOCK] ");
-            write_fn(msg.as_bytes());
-            write_fn(b"\n");
-        }
-    }
+fn debug_print(_msg: &str) {
 }
 
-/// Debug print with number
+/// Debug print with number (no-op in production)
 #[allow(dead_code)]
-fn debug_print_num(msg: &str, num: i64) {
-    use core::ptr::addr_of;
-    unsafe {
-        let ctx = addr_of!(crate::SYSCALL_CONTEXT);
-        if let Some(write_fn) = (*ctx).console_write {
-            write_fn(b"[SOCK] ");
-            write_fn(msg.as_bytes());
-            // Simple number to string
-            let mut buf = [0u8; 20];
-            let mut n = if num < 0 {
-                write_fn(b"-");
-                (-num) as u64
-            } else {
-                num as u64
-            };
-            let mut i = 0;
-            if n == 0 {
-                buf[0] = b'0';
-                i = 1;
-            } else {
-                while n > 0 {
-                    buf[i] = b'0' + (n % 10) as u8;
-                    n /= 10;
-                    i += 1;
-                }
-            }
-            // Reverse
-            for j in 0..i / 2 {
-                buf.swap(j, i - 1 - j);
-            }
-            write_fn(&buf[..i]);
-            write_fn(b"\n");
-        }
-    }
+fn debug_print_num(_msg: &str, _num: i64) {
 }
 
 /// Allocate a new socket file descriptor

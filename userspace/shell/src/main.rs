@@ -396,6 +396,63 @@ struct DirEntry {
 
 const DT_DIR: u8 = 4;
 
+/// Save and restore terminal settings for raw mode
+static mut ORIG_TERMIOS: libc::termios::Termios = libc::termios::Termios {
+    c_iflag: 0,
+    c_oflag: 0,
+    c_cflag: 0,
+    c_lflag: 0,
+    c_line: 0,
+    c_cc: [0; libc::termios::NCCS],
+    c_ispeed: 0,
+    c_ospeed: 0,
+};
+static mut TERMIOS_SAVED: bool = false;
+
+/// Put TTY in raw mode for the shell's line editor
+fn enable_raw_mode() {
+    use libc::termios::*;
+
+    let mut raw = Termios::default();
+    if tcgetattr(0, &mut raw) < 0 {
+        return; // Not a terminal, skip
+    }
+
+    // Save original settings
+    unsafe {
+        let ptr = &raw mut ORIG_TERMIOS;
+        (*ptr) = raw.clone();
+        TERMIOS_SAVED = true;
+    }
+
+    // Disable canonical mode, echo, and signal generation — the shell
+    // handles its own line editing, history, tab completion, character
+    // echo, and Ctrl+C.
+    // Keep OPOST+ONLCR so \n is translated to \r\n on output.
+    raw.c_lflag &= !(lflag::ICANON | lflag::ECHO | lflag::ECHOE | lflag::ECHOK | lflag::ECHOKE | lflag::ECHOCTL | lflag::ISIG | lflag::IEXTEN);
+
+    // Disable ICRNL so carriage return comes through as \r
+    // (the shell handles CR itself in the input loop)
+    raw.c_iflag &= !iflag::ICRNL;
+
+    // Return after 1 byte, no timeout
+    raw.c_cc[cc::VMIN] = 1;
+    raw.c_cc[cc::VTIME] = 0;
+
+    tcsetattr(0, action::TCSANOW, &raw);
+}
+
+/// Restore original terminal settings
+fn disable_raw_mode() {
+    use libc::termios::*;
+    unsafe {
+        if TERMIOS_SAVED {
+            let ptr = &raw const ORIG_TERMIOS;
+            tcsetattr(0, action::TCSANOW, &*ptr);
+        }
+    }
+}
+
 /// Main shell entry point
 #[unsafe(no_mangle)]
 fn main() -> i32 {
@@ -408,6 +465,9 @@ fn main() -> i32 {
     // Ignore SIGINT (Ctrl+C) in the shell itself
     // Child processes will inherit default SIGINT behavior
     signal(SIGINT, SIG_IGN);
+
+    // Put terminal in raw mode for interactive line editing
+    enable_raw_mode();
 
     // Enable visible blinking cursor if terminal supports it
     prints("\x1b[?25h\x1b[?12h");
@@ -449,10 +509,17 @@ fn main() -> i32 {
         // Add to history
         add_to_history(&line);
 
+        // Restore terminal before executing child (so child gets cooked mode)
+        disable_raw_mode();
+
         // Execute command
         execute_line(cmd);
+
+        // Re-enable raw mode after child completes
+        enable_raw_mode();
     }
 
+    disable_raw_mode();
     0
 }
 
@@ -829,7 +896,7 @@ fn handle_tab_completion(buf: &mut [u8], len: &mut usize) {
         }
 
         // Reprint prompt and current line
-        prints("esh> ");
+        print_prompt();
         for i in 0..*len {
             putchar(buf[i]);
         }
