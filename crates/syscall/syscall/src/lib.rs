@@ -760,16 +760,10 @@ unsafe fn prefault_pages(user_ptr: u64, len: usize) {
         {
             // Read-modify-write to trigger COW without changing data
             // Use volatile to prevent optimization
+            // NOTE: STAC/CLAC removed - SMAP not always available in QEMU
             unsafe {
-                core::arch::asm!(
-                    "stac",                    // Enable user page access
-                    "mov al, byte ptr [rdi]",  // Read current value
-                    "mov byte ptr [rdi], al",  // Write it back (triggers COW)
-                    "clac",                    // Disable user page access
-                    in("rdi") ptr,
-                    out("al") _,
-                    options(nostack)
-                );
+                let val = ptr.read_volatile();
+                ptr.write_volatile(val);
             }
         }
 
