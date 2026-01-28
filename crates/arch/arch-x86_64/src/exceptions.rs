@@ -779,6 +779,7 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
     crate::serial_println!("    User: {}", error & 4 != 0);
     crate::serial_println!("    Reserved: {}", error & 8 != 0);
     crate::serial_println!("    Instruction: {}", error & 16 != 0);
+    crate::serial_println!("    SMAP violation: {}", error & 32 != 0);
 
     // Print debug values from enter_usermode_with_context
     unsafe {

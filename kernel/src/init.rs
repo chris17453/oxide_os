@@ -83,6 +83,9 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             core::arch::asm!("mov {}, cr4", out(reg) cr4, options(nomem, nostack));
             cr4 |= 1 << 21; // Set SMAP bit (bit 21)
             core::arch::asm!("mov cr4, {}", in(reg) cr4, options(nostack));
+            serial::SerialWriter.write_str("[INIT] SMAP enabled\n");
+        } else {
+            serial::SerialWriter.write_str("[INIT] SMAP not supported by CPU\n");
         }
     }
 

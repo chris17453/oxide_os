@@ -200,10 +200,22 @@ pub fn console_read(buf: &mut [u8]) -> usize {
 /// Serial-only write function for devfs
 ///
 /// Writes only to serial port for raw debug output.
+/// NOTE: data may point to user memory, so we need STAC/CLAC for SMAP
 pub fn serial_write_bytes(data: &[u8]) {
     let mut writer = serial::SerialWriter;
+
+    // Enable access to user pages (STAC - Supervisor-Mode Access Prevention Clear)
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
+
     for &byte in data {
         let _ = writer.write_char(byte as char);
+    }
+
+    // Disable access to user pages (CLAC - Supervisor-Mode Access Prevention Clear)
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
     }
 }
 
@@ -211,7 +223,13 @@ pub fn serial_write_bytes(data: &[u8]) {
 ///
 /// Writes to both serial and framebuffer (if initialized).
 /// Used before terminal emulator is initialized.
+/// NOTE: data may point to user memory, so we need STAC/CLAC for SMAP
 pub fn console_write_bytes(data: &[u8]) {
+    // Enable access to user pages (STAC)
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
+
     // Write to serial
     let mut writer = serial::SerialWriter;
     for &byte in data {
@@ -223,6 +241,11 @@ pub fn console_write_bytes(data: &[u8]) {
         for &byte in data {
             fb::putchar(byte as char);
         }
+    }
+
+    // Disable access to user pages (CLAC)
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
     }
 }
 
