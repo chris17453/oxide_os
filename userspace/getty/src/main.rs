@@ -124,7 +124,22 @@ pub fn main() -> i32 {
         let mut status = 0;
         waitpid(pid, &mut status, 0);
 
-        // Login exited - respawn after brief delay
-        // In real system, might check for rapid respawn and slow down
+        // Login exited - respawn after brief delay to avoid rapid flicker
+        // Sleep for 1 second before respawning
+        let mut ts = TimeSpec { tv_sec: 1, tv_nsec: 0 };
+        let mut rem = TimeSpec { tv_sec: 0, tv_nsec: 0 };
+        unsafe {
+            nanosleep(&ts as *const TimeSpec, &mut rem as *mut TimeSpec);
+        }
     }
+}
+
+#[repr(C)]
+struct TimeSpec {
+    tv_sec: i64,
+    tv_nsec: i64,
+}
+
+unsafe extern "C" {
+    fn nanosleep(req: *const TimeSpec, rem: *mut TimeSpec) -> i32;
 }

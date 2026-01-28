@@ -340,10 +340,9 @@ pub fn main() -> i32 {
             let mut status = 0;
             waitpid(pid, &mut status, 0);
 
-            // Shell exited - loop back to login prompt
-            prints("\n");
+            // Shell exited - exit login so getty can respawn us
+            prints("\n[login] Session ended\n");
+            return 0;
         }
-
-        attempts = 0; // Reset after successful login
     }
 }
