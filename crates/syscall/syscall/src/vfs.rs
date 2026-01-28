@@ -228,13 +228,25 @@ pub fn sys_read_vfs(fd: i32, buf: u64, count: usize) -> i64 {
         None => return errno::EBADF,
     };
 
-    // Read into user buffer
+    // Read into user buffer (requires STAC/CLAC for SMAP)
+    // Enable access to user pages
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
+
     let buffer = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, count) };
 
-    match file.read(buffer) {
+    let result = match file.read(buffer) {
         Ok(n) => n as i64,
         Err(e) => vfs_error_to_errno(e),
+    };
+
+    // Disable access to user pages
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
     }
+
+    result
 }
 
 /// sys_write_vfs - Write to a file descriptor using VFS
@@ -261,13 +273,25 @@ pub fn sys_write_vfs(fd: i32, buf: u64, count: usize) -> i64 {
         None => return errno::ESRCH, // No current process
     };
 
-    // Get user buffer
+    // Get user buffer (requires STAC/CLAC for SMAP)
+    // Enable access to user pages
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
+
     let buffer = unsafe { core::slice::from_raw_parts(buf as *const u8, count) };
 
-    match file.write(buffer) {
+    let result = match file.write(buffer) {
         Ok(n) => n as i64,
         Err(e) => vfs_error_to_errno(e),
+    };
+
+    // Disable access to user pages
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
     }
+
+    result
 }
 
 /// sys_lseek - Reposition file offset

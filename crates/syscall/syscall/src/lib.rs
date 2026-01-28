@@ -641,15 +641,29 @@ fn sys_write(fd: i32, buf: u64, count: usize) -> i64 {
     // Fallback for stdout/stderr: use console callback when no fd table entry
     // exists (early boot, kernel threads, or before fd table is initialized)
     if fd == 1 || fd == 2 {
+        // Enable access to user pages for SMAP
+        unsafe {
+            core::arch::asm!("stac", options(nomem, nostack));
+        }
+
         let buffer = unsafe { core::slice::from_raw_parts(buf as *const u8, count) };
 
-        unsafe {
+        let result = unsafe {
             let ctx = addr_of!(SYSCALL_CONTEXT);
             if let Some(write_fn) = (*ctx).console_write {
                 write_fn(buffer);
-                return count as i64;
+                count as i64
+            } else {
+                errno::ENOSYS
             }
+        };
+
+        // Disable access to user pages
+        unsafe {
+            core::arch::asm!("clac", options(nomem, nostack));
         }
+
+        return result;
     }
 
     vfs_result

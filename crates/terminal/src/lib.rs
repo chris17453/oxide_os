@@ -434,9 +434,20 @@ pub fn is_initialized() -> bool {
 }
 
 /// Write bytes to global terminal
+/// NOTE: data may point to user memory, so we need STAC/CLAC for SMAP
 pub fn write(data: &[u8]) {
+    // Enable access to user pages (STAC - Supervisor-Mode Access Prevention Clear)
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
+
     if let Some(ref mut terminal) = *TERMINAL.lock() {
         terminal.write(data);
+    }
+
+    // Disable access to user pages (CLAC - Supervisor-Mode Access Prevention Clear)
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
     }
 }
 
@@ -492,9 +503,20 @@ pub fn tick() {
 }
 
 /// Write and immediately render (for urgent/interactive output)
+/// NOTE: data may point to user memory, so we need STAC/CLAC for SMAP
 pub fn write_immediate(data: &[u8]) {
+    // Enable access to user pages (STAC)
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
+
     if let Some(ref mut terminal) = *TERMINAL.lock() {
         terminal.write_immediate(data);
+    }
+
+    // Disable access to user pages (CLAC)
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
     }
 }
 
