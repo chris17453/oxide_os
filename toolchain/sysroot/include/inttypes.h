@@ -4,6 +4,7 @@
 #define _INTTYPES_H
 
 #include <stdint.h>
+#include <wchar.h>
 
 /* fprintf macros for signed integers */
 #define PRId8       "d"

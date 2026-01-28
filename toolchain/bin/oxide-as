@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # OXIDE Assembler Wrapper (oxide-as)
 #

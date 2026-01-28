@@ -58,10 +58,10 @@ ac_cv_func_dlsym=no
 ac_cv_func_dlclose=no
 ac_cv_header_dlfcn_h=no
 
-# No threads (for now)
+# Threads - we have pthread.h (stubs) but no actual threading
 ac_cv_pthread=no
 ac_cv_func_pthread_init=no
-ac_cv_header_pthread_h=no
+ac_cv_header_pthread_h=yes
 
 # No terminal stuff
 ac_cv_func_openpty=no
