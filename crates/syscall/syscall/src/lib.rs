@@ -91,6 +91,8 @@ pub mod nr {
     pub const GETEGID: u64 = 17;
     pub const SETUID: u64 = 18;
     pub const SETGID: u64 = 19;
+    pub const SETEUID: u64 = 20;
+    pub const SETEGID: u64 = 21;
 
     // Thread syscalls
     pub const CLONE: u64 = 56; // Create thread/process
@@ -410,6 +412,8 @@ pub fn dispatch(
         nr::GETEGID => sys_getegid(),
         nr::SETUID => sys_setuid(arg1 as u32),
         nr::SETGID => sys_setgid(arg1 as u32),
+        nr::SETEUID => sys_seteuid(arg1 as u32),
+        nr::SETEGID => sys_setegid(arg1 as u32),
 
         // Thread syscalls
         nr::CLONE => sys_clone(arg1 as u32, arg2, arg3, arg4, arg5),
@@ -618,6 +622,31 @@ fn sys_exit(status: i32) -> i64 {
 /// Number of bytes written, or negative errno
 fn sys_write(fd: i32, buf: u64, count: usize) -> i64 {
     use core::ptr::addr_of;
+
+    // DEBUG: Trace writes to stderr (fd 2) to see what Python is trying to print
+    if fd == 2 && count > 0 && count < 1024 {
+        unsafe {
+            if let Some(write_fn) = (*addr_of!(SYSCALL_CONTEXT)).serial_write {
+                write_fn(b"[WRITE fd=2 count=");
+                // Print count
+                let mut tmp = [0u8; 20];
+                let mut n = count;
+                let mut i = 19;
+                loop {
+                    tmp[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 || i == 0 { break; }
+                    i -= 1;
+                }
+                write_fn(&tmp[i..]);
+                write_fn(b" data=");
+                // Write first 100 bytes of data
+                let slice = core::slice::from_raw_parts(buf as *const u8, core::cmp::min(count, 100));
+                write_fn(slice);
+                write_fn(b"]\n");
+            }
+        }
+    }
 
     // Validate count
     if count == 0 {
@@ -1184,6 +1213,60 @@ fn sys_setgid(gid: u32) -> i64 {
                 gid: creds.gid,
                 euid: creds.euid,
                 egid: gid,
+            };
+            0
+        } else {
+            errno::EPERM
+        }
+    } else {
+        errno::ESRCH
+    }
+}
+
+/// sys_seteuid - Set effective user ID only
+///
+/// # Arguments
+/// * `euid` - New effective user ID
+fn sys_seteuid(euid: u32) -> i64 {
+    if let Some(meta) = get_current_meta() {
+        let mut m = meta.lock();
+        let creds = m.credentials;
+
+        // Root can set euid to any value
+        // Non-root can set euid to real uid or current euid
+        if creds.euid == 0 || euid == creds.uid || euid == creds.euid {
+            m.credentials = proc::Credentials {
+                uid: creds.uid,
+                gid: creds.gid,
+                euid,
+                egid: creds.egid,
+            };
+            0
+        } else {
+            errno::EPERM
+        }
+    } else {
+        errno::ESRCH
+    }
+}
+
+/// sys_setegid - Set effective group ID only
+///
+/// # Arguments
+/// * `egid` - New effective group ID
+fn sys_setegid(egid: u32) -> i64 {
+    if let Some(meta) = get_current_meta() {
+        let mut m = meta.lock();
+        let creds = m.credentials;
+
+        // Root can set egid to any value
+        // Non-root can set egid to real gid or current egid
+        if creds.euid == 0 || egid == creds.gid || egid == creds.egid {
+            m.credentials = proc::Credentials {
+                uid: creds.uid,
+                gid: creds.gid,
+                euid: creds.euid,
+                egid,
             };
             0
         } else {

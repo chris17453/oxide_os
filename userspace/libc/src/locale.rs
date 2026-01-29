@@ -122,15 +122,11 @@ pub unsafe fn setlocale(_category: i32, locale: *const u8) -> *const u8 {
         len += 1;
     }
 
-    // Only "C" and "POSIX" are supported
-    let locale_str = core::slice::from_raw_parts(locale, len);
-    if locale_str == b"C" || locale_str == b"POSIX" || locale_str == b"" {
-        *current_ptr = b"C\0";
-        return (*current_ptr).as_ptr();
-    }
-
-    // Unsupported locale
-    core::ptr::null()
+    // Accept any locale but always use "C"
+    // This prevents errors in programs that expect setlocale to succeed
+    // even though we don't actually implement locale-specific behavior
+    *current_ptr = b"C\0";
+    (*current_ptr).as_ptr()
 }
 
 /// Get locale conversion info

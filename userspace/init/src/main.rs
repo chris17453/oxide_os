@@ -66,16 +66,16 @@ fn main() -> i32 {
         }
     }
 
-    // Test Python execution - use -E to ignore environment
+    // Test Python execution - minimal mode
     printlns("[init] Testing Python...");
     let python_child = fork();
     if python_child == 0 {
-        // Child - run Python with minimal test, ignoring environment variables
+        // Child - run Python in completely isolated mode
         let arg0 = b"/usr/bin/python3\0".as_ptr();
-        let arg1 = b"-E\0".as_ptr();  // Ignore environment
-        let arg2 = b"-S\0".as_ptr();  // Don't import site module
+        let arg1 = b"-I\0".as_ptr();  // Isolated mode (implies -E -s)
+        let arg2 = b"-S\0".as_ptr();  // Don't add site to sys.path
         let arg3 = b"-c\0".as_ptr();
-        let arg4 = b"print(42)\0".as_ptr();  // Simplest possible test
+        let arg4 = b"import sys; print('Python', sys.version_info[:2])\0".as_ptr();
         let argv: [*const u8; 6] = [arg0, arg1, arg2, arg3, arg4, core::ptr::null()];
         execv("/usr/bin/python3", argv.as_ptr());
         eprintlns("[init] Failed to exec python");
@@ -85,7 +85,7 @@ fn main() -> i32 {
         let mut status: i32 = 0;
         waitpid(python_child, &mut status, 0);
         if status == 0 {
-            printlns("[init] Python test PASSED");
+            printlns("[init] Python test PASSED!");
         } else {
             prints("[init] Python test FAILED (status=");
             print_i64(status as i64);

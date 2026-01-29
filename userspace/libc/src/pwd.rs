@@ -737,12 +737,12 @@ pub fn setgid(gid: u32) -> i32 {
 
 /// Set effective UID
 pub fn seteuid(uid: u32) -> i32 {
-    crate::syscall::syscall1(crate::syscall::SYS_SETEUID, uid as usize) as i32
+    crate::syscall::syscall1(crate::syscall::nr::SETEUID, uid as usize) as i32
 }
 
 /// Set effective GID
 pub fn setegid(gid: u32) -> i32 {
-    crate::syscall::syscall1(crate::syscall::SYS_SETEGID, gid as usize) as i32
+    crate::syscall::syscall1(crate::syscall::nr::SETEGID, gid as usize) as i32
 }
 
 /// Get login name

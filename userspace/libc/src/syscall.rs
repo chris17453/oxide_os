@@ -83,15 +83,15 @@ pub mod nr {
     pub const PPOLL: u64 = 96;
     pub const SELECT: u64 = 97;
     pub const PSELECT6: u64 = 98;
-    // User/group syscalls
-    pub const GETUID: u64 = 100;
-    pub const GETEUID: u64 = 101;
-    pub const GETGID: u64 = 102;
-    pub const GETEGID: u64 = 103;
-    pub const SETUID: u64 = 104;
-    pub const SETGID: u64 = 105;
-    pub const SETEUID: u64 = 106;
-    pub const SETEGID: u64 = 107;
+    // User/group syscalls (MUST match kernel syscall numbers!)
+    pub const GETUID: u64 = 14;
+    pub const GETGID: u64 = 15;
+    pub const GETEUID: u64 = 16;
+    pub const GETEGID: u64 = 17;
+    pub const SETUID: u64 = 18;
+    pub const SETGID: u64 = 19;
+    pub const SETEUID: u64 = 20;
+    pub const SETEGID: u64 = 21;
     // Memory syscalls (must match kernel)
     pub const MMAP: u64 = 90;
     pub const MUNMAP: u64 = 91;

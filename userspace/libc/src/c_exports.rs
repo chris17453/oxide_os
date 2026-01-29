@@ -2534,6 +2534,19 @@ pub unsafe extern "C" fn vfprintf(
     fmt: *const u8,
     ap: core::ffi::VaList,
 ) -> i32 {
+    // DEBUG: Log format strings to trace what Python is trying to print
+    if !fmt.is_null() {
+        let mut fmt_len = 0;
+        while fmt_len < 200 && *fmt.add(fmt_len) != 0 {
+            fmt_len += 1;
+        }
+        if fmt_len > 0 && fmt_len < 200 {
+            crate::syscall::sys_write(1, b"[FPRINTF fmt=");
+            crate::syscall::sys_write(1, core::slice::from_raw_parts(fmt, fmt_len));
+            crate::syscall::sys_write(1, b"]\n");
+        }
+    }
+
     let mut buf = [0u8; 4096];
     let n = vsnprintf(buf.as_mut_ptr(), buf.len(), fmt, ap);
     if n > 0 {
