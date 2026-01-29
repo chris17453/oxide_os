@@ -66,29 +66,6 @@ fn main() -> i32 {
         }
     }
 
-    // Test exec with TLS program
-    printlns("[init] Testing TLS exec...");
-    let test_child = fork();
-    if test_child == 0 {
-        // Child - run TLS test
-        let arg0 = b"/bin/tls-test\0".as_ptr();
-        let argv: [*const u8; 2] = [arg0, core::ptr::null()];
-        execv("/bin/tls-test", argv.as_ptr());
-        eprintlns("[init] Failed to exec tls-test");
-        _exit(1);
-    } else if test_child > 0 {
-        // Wait for test to complete
-        let mut status: i32 = 0;
-        waitpid(test_child, &mut status, 0);
-        if status == 0 {
-            printlns("[init] TLS test PASSED!");
-        } else {
-            prints("[init] TLS test FAILED (status=");
-            print_i64(status as i64);
-            printlns(")");
-        }
-    }
-
     // Spawn getty/login on the primary TTY
     printlns("[init] Spawning getty/login...");
     let child = fork();
