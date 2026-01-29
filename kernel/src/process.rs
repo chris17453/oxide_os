@@ -935,6 +935,13 @@ pub fn kernel_exec(
             let new_pml4 = exec_result.address_space.pml4_phys();
             let ctx = &exec_result.context;
 
+            // TEMP DEBUG: Print fs_base from exec_result
+            {
+                use core::fmt::Write;
+                let mut writer = serial::SerialWriter;
+                let _ = writeln!(writer, "[EXEC] do_exec returned fs_base={:#x}", ctx.fs_base);
+            }
+
             // Build task context from exec result
             let task_ctx = TaskContext {
                 rip: ctx.rip,
@@ -981,6 +988,17 @@ pub fn kernel_exec(
                 ctx.rsi,
                 ctx.rdx
             );
+
+            // TEMP DEBUG: Print exec state before jumping
+            {
+                use core::fmt::Write;
+                let mut writer = serial::SerialWriter;
+                let _ = writeln!(writer, "[EXEC_DEBUG] About to jump to Python");
+                let _ = writeln!(writer, "[EXEC_DEBUG] RIP={:#x} RSP={:#x}", ctx.rip, ctx.rsp);
+                let _ = writeln!(writer, "[EXEC_DEBUG] FS_BASE={:#x}", ctx.fs_base);
+                let _ = writeln!(writer, "[EXEC_DEBUG] argc={} argv={:#x} envp={:#x}",
+                    ctx.rdi, ctx.rsi, ctx.rdx);
+            }
 
             // Switch to new address space and jump to entry point
             unsafe {

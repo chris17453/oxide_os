@@ -76,6 +76,49 @@ pub fn do_exec<A: FrameAllocator>(
     // Parse ELF
     let elf = ElfExecutable::parse(elf_data).map_err(|_e| ExecError::InvalidElf)?;
 
+    // TEMP DEBUG: Manually check for PT_TLS in raw ELF data
+    #[cfg(debug_assertions)]
+    {
+        // Read ELF header to get phoff, phnum
+        if elf_data.len() >= 64 {
+            #[repr(C)]
+            struct ElfHeader {
+                e_ident: [u8; 16],
+                e_type: u16,
+                e_machine: u16,
+                e_version: u32,
+                e_entry: u64,
+                e_phoff: u64,
+                e_shoff: u64,
+                e_flags: u32,
+                e_ehsize: u16,
+                e_phentsize: u16,
+                e_phnum: u16,
+                e_shentsize: u16,
+                e_shnum: u16,
+                e_shstrndx: u16,
+            }
+            let header = unsafe { &*(elf_data.as_ptr() as *const ElfHeader) };
+            let ph_offset = header.e_phoff as usize;
+            let ph_size = header.e_phentsize as usize;
+            let ph_count = header.e_phnum as usize;
+
+            // Check each program header for PT_TLS
+            for i in 0..ph_count {
+                let ph_start = ph_offset + i * ph_size;
+                if ph_start + 4 <= elf_data.len() {
+                    let p_type = unsafe { *(elf_data.as_ptr().add(ph_start) as *const u32) };
+                    // PT_TLS = 7
+                    if p_type == 7 {
+                        // Found PT_TLS!
+                        // Set a flag or break - we know TLS is in the file
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     // Create new address space
     let mut new_address_space = unsafe {
         UserAddressSpace::new_with_kernel(allocator, kernel_pml4).ok_or(ExecError::OutOfMemory)?
@@ -156,7 +199,70 @@ pub fn do_exec<A: FrameAllocator>(
     }
 
     // Set up TLS (Thread-Local Storage) if needed
-    let tls_base = if let Some(tls_template) = elf.tls_template() {
+    // TEMP HACK: Force TLS setup for testing
+    // ALWAYS search manually since ELF parser seems broken
+    let forced_tls = {
+        // Manually search for PT_TLS in the ELF
+        #[repr(C)]
+        struct ElfHeader {
+            e_ident: [u8; 16],
+            e_type: u16,
+            e_machine: u16,
+            e_version: u32,
+            e_entry: u64,
+            e_phoff: u64,
+            e_shoff: u64,
+            e_flags: u32,
+            e_ehsize: u16,
+            e_phentsize: u16,
+            e_phnum: u16,
+            e_shentsize: u16,
+            e_shnum: u16,
+            e_shstrndx: u16,
+        }
+        #[repr(C)]
+        struct ProgHeader {
+            p_type: u32,
+            p_flags: u32,
+            p_offset: u64,
+            p_vaddr: u64,
+            p_paddr: u64,
+            p_filesz: u64,
+            p_memsz: u64,
+            p_align: u64,
+        }
+
+        if elf_data.len() >= 64 {
+            let header = unsafe { &*(elf_data.as_ptr() as *const ElfHeader) };
+            let ph_offset = header.e_phoff as usize;
+            let ph_size = header.e_phentsize as usize;
+            let ph_count = header.e_phnum as usize;
+
+            let mut found_tls = None;
+            for i in 0..ph_count {
+                let ph_start = ph_offset + i * ph_size;
+                if ph_start + core::mem::size_of::<ProgHeader>() <= elf_data.len() {
+                    let ph = unsafe { &*(elf_data.as_ptr().add(ph_start) as *const ProgHeader) };
+                    if ph.p_type == 7 { // PT_TLS
+                        // Found it! Create TlsTemplate manually
+                        found_tls = Some(elf::TlsTemplate {
+                            file_offset: ph.p_offset as usize,
+                            file_size: ph.p_filesz as usize,
+                            mem_size: ph.p_memsz as usize,
+                            align: ph.p_align as usize,
+                        });
+                        break;
+                    }
+                }
+            }
+            found_tls
+        } else {
+            None
+        }
+    };
+
+    let tls_template_to_use = forced_tls.as_ref().or(elf.tls_template());
+    let tls_base = if let Some(tls_template) = tls_template_to_use {
         // Allocate TLS block
         // TLS block layout: [TLS data] [Thread Control Block (TCB)]
         // FS register points to TCB (end of TLS block)

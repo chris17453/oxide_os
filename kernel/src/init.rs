@@ -1646,12 +1646,12 @@ fn syscall_dispatch(
     arg5: u64,
     arg6: u64,
 ) -> i64 {
-    // Debug: log syscalls (enabled via debug-syscall feature)
-    #[cfg(feature = "debug-syscall")]
+    // TEMP DEBUG: Log all syscalls to trace Python crash
     {
         use core::fmt::Write;
         let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[SYSCALL] number={} arg1={:#x}", number, arg1);
+        let _ = writeln!(writer, "[SYSCALL] {}({:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x})",
+            number, arg1, arg2, arg3, arg4, arg5, arg6);
     }
 
     // Handle sched_yield specially - it needs to context switch
@@ -1660,7 +1660,16 @@ fn syscall_dispatch(
         return scheduler::kernel_yield();
     }
 
-    syscall::dispatch(number, arg1, arg2, arg3, arg4, arg5, arg6)
+    let result = syscall::dispatch(number, arg1, arg2, arg3, arg4, arg5, arg6);
+
+    // TEMP DEBUG: Log syscall results
+    {
+        use core::fmt::Write;
+        let mut writer = serial::SerialWriter;
+        let _ = writeln!(writer, "[SYSCALL] {} -> {}", number, result);
+    }
+
+    result
 }
 
 /// Wrapper for Arc<dyn BlockDevice> to implement BlockDevice

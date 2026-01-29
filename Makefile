@@ -736,9 +736,9 @@ toolchain:
 	@echo "  Building archiver (ar)..."
 	@cargo build --package oxide-ar --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS)
 	@echo "  Building libc..."
-	@cargo build --package libc --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS)
+	@RUSTFLAGS="-C relocation-model=pic" cargo build --package libc --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS)
 	@echo "  Building pthread..."
-	@cargo build --package pthread --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS)
+	@RUSTFLAGS="-C relocation-model=pic" cargo build --package pthread --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS)
 	@echo ""
 	@echo "Installing toolchain components to sysroot..."
 	@mkdir -p toolchain/sysroot/lib

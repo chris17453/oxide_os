@@ -227,12 +227,15 @@ impl<'a> ElfExecutable<'a> {
                 segment_count += 1;
             } else if ph.p_type == PT_TLS {
                 // Parse TLS template
+                // TEMP DEBUG: TLS segment found at offset, size
                 tls_template = Some(TlsTemplate {
                     file_offset: ph.p_offset as usize,
                     file_size: ph.p_filesz as usize,
                     mem_size: ph.p_memsz as usize,
                     align: ph.p_align as usize,
                 });
+                // Set a marker so we can detect TLS was parsed
+                // (can't print here, but we'll check later)
             }
         }
 
