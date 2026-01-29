@@ -352,13 +352,15 @@ pub fn kernel_fork() -> i64 {
                     "wrmsr",
                     "3:",
                     "pop rax",               // Restore context pointer
-                    // Load user segment selectors for DS/ES/FS (0x1B = USER_DS | 3)
+                    // Load user segment selectors for DS/ES (0x1B = USER_DS | 3)
+                    // NOTE: In x86-64 long mode, FS base comes from FS_BASE MSR, not segment descriptor.
+                    // We do NOT load FS at all - just leave it as-is after WRMSR set the base.
                     // Save context pointer to r15 temporarily
                     "mov r15, rax",
                     "mov ax, 0x1b",
                     "mov ds, ax",
                     "mov es, ax",
-                    "mov fs, ax",
+                    // Do NOT touch FS - leave it alone after WRMSR
                     // Restore rax as context pointer
                     "mov rax, r15",
                     // Now load r15 from context and prepare for return
@@ -972,6 +974,7 @@ pub fn kernel_exec(
             // Debug: print exec return values
             debug_fork!("[EXEC] Switching to PML4={:#x}", new_pml4.as_u64());
             debug_fork!("[EXEC] rip={:#x} rsp={:#x}", ctx.rip, ctx.rsp);
+            debug_fork!("[EXEC] fs_base={:#x} (TLS)", ctx.fs_base);
             debug_fork!(
                 "[EXEC] argc={} argv={:#x} envp={:#x}",
                 ctx.rdi,
@@ -1010,12 +1013,14 @@ pub fn kernel_exec(
                     "mov rdi, r12",
                     "mov rsi, r13",
                     "mov rdx, r14",
-                    // Load user data segment selectors for DS/ES/FS (0x1B = USER_DS | 3)
+                    // Load user data segment selectors for DS/ES (0x1B = USER_DS | 3)
+                    // NOTE: In x86-64 long mode, FS base comes from FS_BASE MSR, not segment descriptor.
+                    // We do NOT load FS at all - just leave it as-is after WRMSR set the base.
                     // NOTE: Do NOT load GS - swapgs will handle it
                     "mov ax, 0x1b",
                     "mov ds, ax",
                     "mov es, ax",
-                    "mov fs, ax",
+                    // Do NOT touch FS - leave it alone after WRMSR
                     // Clear rax for return value
                     "xor rax, rax",
                     // Swap GS back to user mode (required before sysretq)

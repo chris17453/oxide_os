@@ -169,14 +169,12 @@ pub unsafe extern "C" fn enter_usermode(
 
         // Load user data segments
         // NOTE: In x86-64 long mode, FS and GS bases come from MSRs (IA32_FS_BASE, IA32_GS_BASE),
-        // NOT from segment descriptors. Loading a segment selector into FS/GS would overwrite
-        // the base we just set via WRMSR. So we load them with 0 to use the MSR-provided base.
+        // NOT from segment descriptors. We do NOT load FS/GS at all - just leave them as-is
+        // after WRMSR set the base.
         "mov ax, {user_ds}",
         "mov ds, ax",
         "mov es, ax",
-        "xor ax, ax",          // Clear AX to 0
-        "mov fs, ax",          // Load FS with 0 (base comes from FS_BASE MSR)
-        "mov gs, ax",          // Load GS with 0 (base comes from GS_BASE MSR)
+        // Do NOT touch FS/GS - leave them alone after WRMSR
 
         // Clear all general purpose registers for security
         "xor rax, rax",
@@ -431,12 +429,14 @@ pub unsafe extern "C" fn enter_usermode_with_context(
         "2:",
 
         // Load user data segments right before iretq
+        // NOTE: In x86-64 long mode, FS base comes from FS_BASE MSR, not segment descriptor.
+        // We do NOT load FS at all - just leave it as-is after WRMSR set the base.
         // We need to preserve RAX. Store it at [rsp-16] (different spot to not conflict with debug)
         "mov [rsp - 16], rax",
         "mov ax, {user_ds}",
         "mov ds, ax",
         "mov es, ax",
-        "mov fs, ax",                  // FS selector (segment base is set by MSR above)
+        // Do NOT touch FS - leave it alone after WRMSR
         "mov gs, ax",
         "mov rax, [rsp - 16]",
 
@@ -497,14 +497,12 @@ pub unsafe extern "C" fn return_to_usermode(entry: u64, user_stack: u64, rflags:
 
         // Load user data segments
         // NOTE: In x86-64 long mode, FS and GS bases come from MSRs (IA32_FS_BASE, IA32_GS_BASE),
-        // NOT from segment descriptors. Loading a segment selector into FS/GS would overwrite
-        // the base we just set via WRMSR. So we load them with 0 to use the MSR-provided base.
+        // NOT from segment descriptors. We do NOT load FS/GS at all - just leave them as-is
+        // after WRMSR set the base.
         "mov ax, {user_ds}",
         "mov ds, ax",
         "mov es, ax",
-        "xor ax, ax",          // Clear AX to 0
-        "mov fs, ax",          // Load FS with 0 (base comes from FS_BASE MSR)
-        "mov gs, ax",          // Load GS with 0 (base comes from GS_BASE MSR)
+        // Do NOT touch FS/GS - leave them alone after WRMSR
         "xor rax, rax",
 
         // Swap to user GS

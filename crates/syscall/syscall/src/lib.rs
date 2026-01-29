@@ -798,6 +798,17 @@ fn sys_exec(path: u64, path_len: usize, argv: *const *const u8, envp: *const *co
             let ctx = addr_of!(SYSCALL_CONTEXT);
             if let Some(get_fs_fn) = (*ctx).get_current_fs_base {
                 let fs_base = get_fs_fn();
+                // DEBUG
+                if let Some(write_fn) = (*ctx).serial_write {
+                    write_fn(b"[EXEC] FS_BASE value: 0x");
+                    let mut buf = [0u8; 16];
+                    for i in 0..16 {
+                        let nibble = ((fs_base >> (60 - i * 4)) & 0xF) as u8;
+                        buf[i] = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    }
+                    write_fn(&buf);
+                    write_fn(b"\n");
+                }
                 if fs_base != 0 {
                     core::arch::asm!(
                         "mov rcx, 0xC0000100",  // IA32_FS_BASE MSR
@@ -811,6 +822,9 @@ fn sys_exec(path: u64, path_len: usize, argv: *const *const u8, envp: *const *co
                         out("rdx") _,
                         options(nostack, preserves_flags)
                     );
+                    if let Some(write_fn) = (*ctx).serial_write {
+                        write_fn(b"[EXEC] FS_BASE MSR written\n");
+                    }
                 }
             }
         }
