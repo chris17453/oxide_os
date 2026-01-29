@@ -623,31 +623,6 @@ fn sys_exit(status: i32) -> i64 {
 fn sys_write(fd: i32, buf: u64, count: usize) -> i64 {
     use core::ptr::addr_of;
 
-    // DEBUG: Trace writes to stderr (fd 2) to see what Python is trying to print
-    if fd == 2 && count > 0 && count < 1024 {
-        unsafe {
-            if let Some(write_fn) = (*addr_of!(SYSCALL_CONTEXT)).serial_write {
-                write_fn(b"[WRITE fd=2 count=");
-                // Print count
-                let mut tmp = [0u8; 20];
-                let mut n = count;
-                let mut i = 19;
-                loop {
-                    tmp[i] = b'0' + (n % 10) as u8;
-                    n /= 10;
-                    if n == 0 || i == 0 { break; }
-                    i -= 1;
-                }
-                write_fn(&tmp[i..]);
-                write_fn(b" data=");
-                // Write first 100 bytes of data
-                let slice = core::slice::from_raw_parts(buf as *const u8, core::cmp::min(count, 100));
-                write_fn(slice);
-                write_fn(b"]\n");
-            }
-        }
-    }
-
     // Validate count
     if count == 0 {
         return 0;
