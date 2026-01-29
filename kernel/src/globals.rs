@@ -16,7 +16,7 @@ use spin::{Mutex, MutexGuard};
 pub static HEAP_ALLOCATOR: LockedHeap = LockedHeap::empty();
 
 /// Heap size: 16 MB
-pub const HEAP_SIZE: usize = 16 * 1024 * 1024;
+pub const HEAP_SIZE: usize = 32 * 1024 * 1024; // 32MB for large executables like Python
 
 /// Static heap storage (temporary until we have proper MM)
 pub static mut HEAP_STORAGE: [u8; HEAP_SIZE] = [0; HEAP_SIZE];

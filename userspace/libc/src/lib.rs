@@ -16,7 +16,7 @@ mod allocator {
     use core::cell::UnsafeCell;
     use core::sync::atomic::{AtomicUsize, Ordering};
 
-    const HEAP_SIZE: usize = 16 * 1024 * 1024; // 16MB heap for CPython
+    const HEAP_SIZE: usize = 64 * 1024 * 1024; // 64MB heap for CPython
 
     #[repr(C, align(16))]
     struct HeapStorage {
