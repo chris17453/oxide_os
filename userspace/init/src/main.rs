@@ -66,15 +66,17 @@ fn main() -> i32 {
         }
     }
 
-    // Test Python execution
+    // Test Python execution - use -E to ignore environment
     printlns("[init] Testing Python...");
     let python_child = fork();
     if python_child == 0 {
-        // Child - run Python with simple test
+        // Child - run Python with minimal test, ignoring environment variables
         let arg0 = b"/usr/bin/python3\0".as_ptr();
-        let arg1 = b"-c\0".as_ptr();
-        let arg2 = b"print('Python works!')\0".as_ptr();
-        let argv: [*const u8; 4] = [arg0, arg1, arg2, core::ptr::null()];
+        let arg1 = b"-E\0".as_ptr();  // Ignore environment
+        let arg2 = b"-S\0".as_ptr();  // Don't import site module
+        let arg3 = b"-c\0".as_ptr();
+        let arg4 = b"print(42)\0".as_ptr();  // Simplest possible test
+        let argv: [*const u8; 6] = [arg0, arg1, arg2, arg3, arg4, core::ptr::null()];
         execv("/usr/bin/python3", argv.as_ptr());
         eprintlns("[init] Failed to exec python");
         _exit(1);
