@@ -22,7 +22,7 @@ struct TermConfig {
 impl Default for TermConfig {
     fn default() -> Self {
         TermConfig {
-            device: "/dev/tty1",
+            device: "/dev/console",
             baud: 115200,
             term_type: "vt100",
         }
