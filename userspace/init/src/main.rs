@@ -39,33 +39,6 @@ fn main() -> i32 {
     // Start service manager in daemon mode
     start_servicemgr();
 
-    // Run loopback ping test
-    printlns("[init] Testing loopback ping...");
-    let test_child = fork();
-    if test_child == 0 {
-        // Child - run ping test
-        // Build argv array with null terminator
-        let arg0 = b"/bin/ping\0".as_ptr();
-        let arg1 = b"-c\0".as_ptr();
-        let arg2 = b"1\0".as_ptr();
-        let arg3 = b"127.0.0.1\0".as_ptr();
-        let argv: [*const u8; 5] = [arg0, arg1, arg2, arg3, core::ptr::null()];
-        execv("/bin/ping", argv.as_ptr());
-        eprintlns("[init] Failed to exec ping");
-        _exit(1);
-    } else if test_child > 0 {
-        // Wait for ping test to complete
-        let mut status: i32 = 0;
-        waitpid(test_child, &mut status, 0);
-        if status == 0 {
-            printlns("[init] Loopback ping test PASSED");
-        } else {
-            prints("[init] Loopback ping test FAILED (status=");
-            print_i64(status as i64);
-            printlns(")");
-        }
-    }
-
     // Spawn getty/login on the primary TTY
     printlns("[init] Spawning getty/login...");
     let child = fork();
