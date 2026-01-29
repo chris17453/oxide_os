@@ -4,7 +4,7 @@
 
 SHELL := /usr/bin/bash
 
-.PHONY: all build build-full kernel bootloader userspace userspace-release userspace-pkg initramfs initramfs-debug initramfs-minimal boot-dir boot-quick boot-image create-rootfs release clean run run-kvm test check fmt fmt-check clippy list-bins show-config help toolchain install-toolchain test-toolchain clean-toolchain external-libs zlib openssl xz zstd cpython tls-test claude
+.PHONY: all build build-full kernel bootloader userspace userspace-release userspace-pkg initramfs initramfs-debug initramfs-minimal boot-dir boot-quick boot-image create-rootfs release clean run run-fedora run-rhel run-kvm detect-qemu-mode test check fmt fmt-check clippy list-bins show-config help toolchain install-toolchain test-toolchain clean-toolchain external-libs zlib openssl xz zstd cpython tls-test claude
 
 # Configuration
 ARCH ?= x86_64
@@ -473,10 +473,35 @@ initramfs-minimal: userspace-release
 	@echo "Minimal initramfs created: $(TARGET_DIR)/initramfs-minimal.cpio"
 	@ls -la $(TARGET_DIR)/initramfs-minimal.cpio
 
-# Run in QEMU with qemu-system-x86_64 (Fedora)
-# Builds everything and creates ext4 root filesystem, then runs with debug and networking
+# Auto-detect QEMU mode (Fedora vs RHEL)
+detect-qemu-mode:
+	@if command -v qemu-system-x86_64 >/dev/null 2>&1; then \
+		echo "fedora"; \
+	elif [ -f /usr/libexec/qemu-kvm ]; then \
+		echo "rhel"; \
+	else \
+		echo "unknown"; \
+	fi
+
+# Run OXIDE OS - auto-detects Fedora vs RHEL and uses appropriate QEMU
+# Builds everything and creates ext4 root filesystem, then runs with networking
 run: create-rootfs
-	@echo "Running OXIDE OS with qemu-system-x86_64 (Fedora)..."
+	@MODE=$$($(MAKE) -s detect-qemu-mode); \
+	if [ "$$MODE" = "fedora" ]; then \
+		echo "Detected Fedora mode (qemu-system-x86_64)"; \
+		$(MAKE) run-fedora; \
+	elif [ "$$MODE" = "rhel" ]; then \
+		echo "Detected RHEL mode (qemu-kvm)"; \
+		$(MAKE) run-rhel; \
+	else \
+		echo "Error: No compatible QEMU found"; \
+		echo "Install: sudo dnf install qemu-system-x86 (Fedora) or qemu-kvm (RHEL)"; \
+		exit 1; \
+	fi
+
+# Internal target: Run with qemu-system-x86_64 (Fedora)
+run-fedora:
+	@echo "Running OXIDE OS with qemu-system-x86_64..."
 	@if [ -z "$(OVMF)" ]; then \
 		echo "Error: OVMF firmware not found"; \
 		echo "Install: sudo dnf install edk2-ovmf"; \
@@ -495,10 +520,9 @@ run: create-rootfs
 		-serial stdio \
 		-no-reboot
 
-# Run in QEMU with qemu-kvm (RHEL 10)
-# Builds everything and creates ext4 root filesystem, then runs with debug, networking, and VNC
-run-kvm: create-rootfs
-	@echo "Running OXIDE OS with qemu-kvm (RHEL 10)..."
+# Internal target: Run with qemu-kvm (RHEL)
+run-rhel:
+	@echo "Running OXIDE OS with qemu-kvm..."
 	@if [ ! -f /usr/share/edk2/ovmf/OVMF_CODE.fd ]; then \
 		echo "Error: OVMF firmware not found"; \
 		echo "Install: sudo dnf install edk2-ovmf"; \
@@ -546,6 +570,9 @@ run-kvm: create-rootfs
 	echo "Stopping QEMU..."; \
 	kill $$QEMU_PID 2>/dev/null || true; \
 	wait $$QEMU_PID 2>/dev/null || true
+
+# Alias for backward compatibility
+run-kvm: run-rhel
 
 # Automated test: boot and check for expected output
 test: create-rootfs
@@ -614,8 +641,10 @@ help:
 	@echo "OXIDE OS Build System"
 	@echo ""
 	@echo "Run Targets:"
-	@echo "  run            - Build and run with qemu-system-x86_64 (Fedora)"
-	@echo "  run-kvm        - Build and run with qemu-kvm (RHEL 10)"
+	@echo "  run            - Build and run (auto-detects Fedora/RHEL)"
+	@echo "  run-fedora     - Build and run with qemu-system-x86_64"
+	@echo "  run-rhel       - Build and run with qemu-kvm (RHEL 10)"
+	@echo "  run-kvm        - Alias for run-rhel"
 	@echo ""
 	@echo "Build Targets:"
 	@echo "  all            - Build kernel and bootloader (default)"
@@ -644,10 +673,10 @@ help:
 	@echo "  install-toolchain - Install toolchain (PREFIX=/usr/local/oxide)"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make run       - Build and run on Fedora (qemu-system-x86_64)"
-	@echo "  make run-kvm   - Build and run on RHEL 10 (qemu-kvm + VNC)"
+	@echo "  make run       - Build and run (auto-detects Fedora/RHEL)"
+	@echo "  make test      - Run automated boot test"
 	@echo ""
-	@echo "Both run targets create a 512MB disk image with:"
+	@echo "All run targets create a 512MB disk image with:"
 	@echo "  - /boot  (FAT32/ESP): bootloader, kernel, initramfs"
 	@echo "  - /      (ext4):      OS binaries and config"
 	@echo "  - /home  (ext4):      user data"

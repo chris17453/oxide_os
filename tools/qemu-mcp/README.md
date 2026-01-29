@@ -8,18 +8,29 @@ MCP server for controlling QEMU to test and debug the OXIDE operating system.
 - **Build before run**: Automatically builds the kernel before starting QEMU (ensures no stale code)
 - **Serial output capture**: Captures all serial output for inspection
 - **QEMU monitor access**: Send commands to QEMU monitor (screenshots, keystrokes, etc.)
+- **Synchronized with Makefile**: Uses the same QEMU arguments as `make run`
+
+## Architecture
+
+The MCP server launches QEMU directly (not via Makefile) because it needs to:
+- Track the QEMU process (PID, status)
+- Add a monitor socket for interactive commands
+- Capture serial output to a file
+
+However, it uses **the same QEMU arguments** as the Makefile to ensure consistency.
+The build step calls `make create-rootfs` to use the Makefile's build logic.
 
 ## Modes
 
 ### Fedora Mode
 - Uses `qemu-system-x86_64`
-- Uses `fat:` protocol for boot directory (no disk image needed)
-- Faster iteration cycle
+- Single OVMF firmware file
+- TCG acceleration
 
 ### RHEL Mode
 - Uses `/usr/libexec/qemu-kvm`
-- Uses disk image (`target/boot.img`) since qemu-kvm doesn't support `fat:` protocol
-- Runs `make boot-image` before starting
+- Split OVMF firmware files (CODE + VARS)
+- KVM acceleration
 
 ## Available Tools
 

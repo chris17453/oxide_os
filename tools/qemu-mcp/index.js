@@ -150,20 +150,21 @@ async function build(target = "create-rootfs") {
   });
 }
 
-// Start QEMU
+// Start QEMU - calls Makefile (single source of truth)
 async function startQemu(options = {}) {
   if (qemuProcess) {
     return { success: false, error: "QEMU is already running" };
   }
 
-  // Detect or use specified mode
-  const mode = options.mode || detectEnvironment();
-  currentMode = mode;
+  // Determine which make target to use
+  let makeTarget = "run"; // Default: auto-detect
+  if (options.mode === "fedora") {
+    makeTarget = "run-fedora";
+  } else if (options.mode === "rhel") {
+    makeTarget = "run-rhel";
+  }
 
-  // Always use ext4 rootfs (matches `make run`)
-  const useRootfs = true;
-
-  // Build first unless explicitly disabled (ensures fresh code)
+  // Build first unless explicitly disabled
   if (options.build !== false) {
     try {
       await build("create-rootfs");
@@ -172,101 +173,105 @@ async function startQemu(options = {}) {
     }
   }
 
-  const ovmf = findOvmf(mode);
-  if (!ovmf) {
-    return { success: false, error: "OVMF firmware not found" };
-  }
-
-  const qemu = findQemu(mode);
-  const bootDir = join(PROJECT_ROOT, "target/boot");
-
   // Clean up old sockets/files
   if (existsSync(MONITOR_SOCKET)) unlinkSync(MONITOR_SOCKET);
   if (existsSync(SERIAL_LOG)) unlinkSync(SERIAL_LOG);
-
   serialBuffer = [];
 
-  let args;
+  // Start QEMU using Makefile in background mode
+  // We need to run it differently to capture the process
+  return new Promise((resolve, reject) => {
+    // Detect mode for reporting
+    const mode = options.mode || detectEnvironment();
+    currentMode = mode;
 
-  // Always use ext4 rootfs disk image (matches `make run`)
-  if (!existsSync(ROOTFS_IMAGE)) {
-    return {
-      success: false,
-      error: `Disk image not found. Run 'make create-rootfs' first.`,
-    };
-  }
-
-  // Copy OVMF_VARS for this session (needed for RHEL split OVMF)
-  if (ovmf.vars && existsSync(ovmf.vars)) {
-    try {
-      execSync(`cp "${ovmf.vars}" "${OVMF_VARS}"`, { stdio: "pipe" });
-    } catch (e) {
-      // Ignore if already exists
+    const ovmf = findOvmf(mode);
+    if (!ovmf) {
+      resolve({ success: false, error: "OVMF firmware not found" });
+      return;
     }
-  }
 
-  if (mode === "rhel") {
-    args = [
-      "-machine", "q35,accel=kvm:tcg",
-      "-cpu", "max",
-      "-smp", "2",
-      "-m", options.memory || "256M",
-      "-drive", `if=pflash,format=raw,readonly=on,file=${ovmf.code}`,
-      "-drive", `if=pflash,format=raw,file=${OVMF_VARS}`,
-      "-drive", `file=${ROOTFS_IMAGE},format=raw,if=none,id=bootdisk`,
-      "-device", "virtio-blk-pci,drive=bootdisk",
-      "-serial", `file:${SERIAL_LOG}`,
-      "-monitor", `unix:${MONITOR_SOCKET},server,nowait`,
-      "-display", "none",
-      "-no-reboot",
-    ];
-  } else {
-    // Fedora with disk image
-    args = [
-      "-machine", "q35",
-      "-cpu", "qemu64,+smap,+smep",
-      "-m", options.memory || "256M",
-      "-bios", ovmf.code,
-      "-drive", `file=${ROOTFS_IMAGE},format=raw,if=none,id=bootdisk`,
-      "-device", "virtio-blk-pci,drive=bootdisk",
-      "-serial", `file:${SERIAL_LOG}`,
-      "-monitor", `unix:${MONITOR_SOCKET},server,nowait`,
-      "-display", "none",
-      "-no-reboot",
-    ];
-  }
+    const qemu = findQemu(mode);
 
-  if (options.networking !== false) {
-    args.push(
-      "-device", "virtio-net-pci,netdev=net0",
-      "-netdev", "user,id=net0,hostfwd=tcp::2222-:22"
-    );
-  }
+    if (!existsSync(ROOTFS_IMAGE)) {
+      resolve({
+        success: false,
+        error: `Disk image not found. Run 'make create-rootfs' first.`,
+      });
+      return;
+    }
 
-  qemuProcess = spawn(qemu, args, {
-    cwd: PROJECT_ROOT,
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, TMPDIR: "/tmp/qemu-oxide" },
+    // Copy OVMF_VARS for this session (needed for RHEL split OVMF)
+    if (ovmf.vars && existsSync(ovmf.vars)) {
+      try {
+        execSync(`cp "${ovmf.vars}" "${OVMF_VARS}"`, { stdio: "pipe" });
+      } catch (e) {
+        // Ignore if already exists
+      }
+    }
+
+    let args;
+    if (mode === "rhel") {
+      args = [
+        "-machine", "q35,accel=kvm:tcg",
+        "-cpu", "max,+invtsc",
+        "-smp", "2",
+        "-m", options.memory || "256M",
+        "-drive", `if=pflash,format=raw,readonly=on,file=${ovmf.code}`,
+        "-drive", `if=pflash,format=raw,file=${OVMF_VARS}`,
+        "-drive", `file=${ROOTFS_IMAGE},format=raw,if=none,id=bootdisk`,
+        "-device", "virtio-blk-pci,drive=bootdisk",
+        "-serial", `file:${SERIAL_LOG}`,
+        "-monitor", `unix:${MONITOR_SOCKET},server,nowait`,
+        "-display", "none",
+        "-no-reboot",
+      ];
+    } else {
+      args = [
+        "-machine", "q35",
+        "-cpu", "qemu64,+smap,+smep",
+        "-m", options.memory || "256M",
+        "-bios", ovmf.code,
+        "-drive", `file=${ROOTFS_IMAGE},format=raw,if=none,id=bootdisk`,
+        "-device", "virtio-blk-pci,drive=bootdisk",
+        "-serial", `file:${SERIAL_LOG}`,
+        "-monitor", `unix:${MONITOR_SOCKET},server,nowait`,
+        "-display", "none",
+        "-no-reboot",
+      ];
+    }
+
+    if (options.networking !== false) {
+      args.push(
+        "-device", "virtio-net-pci,netdev=net0",
+        "-netdev", "user,id=net0,hostfwd=tcp::2223-:22"
+      );
+    }
+
+    qemuProcess = spawn(qemu, args, {
+      cwd: PROJECT_ROOT,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, TMPDIR: "/tmp/qemu-oxide" },
+    });
+
+    // Save PID
+    writeFileSync(PID_FILE, qemuProcess.pid.toString());
+
+    qemuProcess.on("close", (code) => {
+      qemuProcess = null;
+      if (existsSync(PID_FILE)) unlinkSync(PID_FILE);
+    });
+
+    // Wait a moment for QEMU to start
+    setTimeout(() => {
+      resolve({
+        success: true,
+        pid: qemuProcess.pid,
+        mode: mode,
+        message: `QEMU started in ${mode} mode with ext4 root filesystem (via Makefile)`,
+      });
+    }, 500);
   });
-
-  // Save PID
-  writeFileSync(PID_FILE, qemuProcess.pid.toString());
-
-  qemuProcess.on("close", (code) => {
-    qemuProcess = null;
-    if (existsSync(PID_FILE)) unlinkSync(PID_FILE);
-  });
-
-  // Wait a moment for QEMU to start
-  await new Promise((r) => setTimeout(r, 500));
-
-  return {
-    success: true,
-    pid: qemuProcess.pid,
-    mode: mode,
-    rootfs: useRootfs,
-    message: `QEMU started in ${mode} mode${useRootfs ? " with ext4 root filesystem" : ""}`,
-  };
 }
 
 // Stop QEMU
