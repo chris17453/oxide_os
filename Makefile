@@ -56,12 +56,20 @@ build-full: kernel bootloader userspace initramfs
 # Build kernel
 kernel:
 	@echo "Building kernel..."
+ifeq ($(PROFILE),release)
+	@cargo build --package kernel --release
+else
 	@cargo build --package kernel
+endif
 
 # Build bootloader
 bootloader:
 	@echo "Building bootloader..."
+ifeq ($(PROFILE),release)
+	@cargo build --package boot-uefi --target $(ARCH)-unknown-uefi --release
+else
 	@cargo build --package boot-uefi --target $(ARCH)-unknown-uefi
+endif
 
 # Build release
 release:
