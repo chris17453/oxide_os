@@ -286,18 +286,20 @@ pub fn do_exec<A: FrameAllocator>(
             )
             .map_err(|_| ExecError::OutOfMemory)?;
 
-        // Copy TLS initialization data
-        let tls_data = elf.tls_data();
-        if !tls_data.is_empty() {
-            write_to_user_stack(&new_address_space, tls_vaddr.as_u64(), tls_data)?;
-        }
+        // x86-64 TLS ABI Variant II layout: [TCB] [TLS data]
+        // FS register points to TCB, TLS data is at positive offsets from there
 
-        // TCB is at the end of the TLS block
-        // FS register will point here
-        let tcb_addr = tls_vaddr.as_u64() + tls_size as u64;
+        let tcb_addr = tls_vaddr.as_u64();
 
         // Write self-pointer to TCB (required by x86-64 TLS ABI)
         write_to_user_stack(&new_address_space, tcb_addr, &tcb_addr.to_le_bytes())?;
+
+        // Copy TLS initialization data AFTER the TCB
+        let tls_data = elf.tls_data();
+        if !tls_data.is_empty() {
+            let tls_data_addr = tcb_addr + tcb_size as u64;
+            write_to_user_stack(&new_address_space, tls_data_addr, tls_data)?;
+        }
 
         Some(tcb_addr)
     } else {
