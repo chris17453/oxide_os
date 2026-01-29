@@ -250,7 +250,10 @@ fn reap_zombies(mut getty_pid: i64) -> ! {
 
             // Only respawn shell if shell itself (our direct child) exited
             if pid as i64 == getty_pid {
-                printlns("[init] Shell exited, respawning...");
+                printlns("[init] Shell exited, waiting before respawn...");
+                // Sleep for 2 seconds to avoid rapid respawn loop
+                sleep(2);
+                printlns("[init] Respawning shell...");
                 let child = fork();
                 if child == 0 {
                     let _ = exec("/bin/esh");
@@ -270,4 +273,29 @@ fn reap_zombies(mut getty_pid: i64) -> ! {
             }
         }
     }
+}
+
+/// Sleep for specified seconds
+fn sleep(seconds: u64) {
+    let mut ts = TimeSpec {
+        tv_sec: seconds as i64,
+        tv_nsec: 0,
+    };
+    let mut rem = TimeSpec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    unsafe {
+        nanosleep(&ts as *const TimeSpec, &mut rem as *mut TimeSpec);
+    }
+}
+
+#[repr(C)]
+struct TimeSpec {
+    tv_sec: i64,
+    tv_nsec: i64,
+}
+
+unsafe extern "C" {
+    fn nanosleep(req: *const TimeSpec, rem: *mut TimeSpec) -> i32;
 }
