@@ -327,6 +327,15 @@ pub fn sys_read_vfs(fd: i32, buf: u64, count: usize) -> i64 {
         None => return errno::EBADF,
     };
 
+    // Enable kernel preemption for blocking reads (e.g., console input)
+    // This allows timer interrupt to context switch us when blocked
+    use core::ptr::addr_of;
+    unsafe {
+        if let Some(f) = (*addr_of!(super::SYSCALL_CONTEXT)).allow_kernel_preempt {
+            f();
+        }
+    }
+
     // Read into user buffer (requires STAC/CLAC for SMAP)
     // Enable access to user pages
     unsafe {
@@ -343,6 +352,13 @@ pub fn sys_read_vfs(fd: i32, buf: u64, count: usize) -> i64 {
     // Disable access to user pages
     unsafe {
         core::arch::asm!("clac", options(nomem, nostack));
+    }
+
+    // Disable kernel preemption after read completes
+    unsafe {
+        if let Some(f) = (*addr_of!(super::SYSCALL_CONTEXT)).disallow_kernel_preempt {
+            f();
+        }
     }
 
     result

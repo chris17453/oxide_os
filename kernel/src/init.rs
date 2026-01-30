@@ -545,6 +545,8 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         umount: Some(kernel_umount),
         serial_write: Some(console::serial_write_bytes),
         get_current_fs_base: Some(get_current_task_fs_base),
+        allow_kernel_preempt: Some(arch::allow_kernel_preempt),
+        disallow_kernel_preempt: Some(arch::disallow_kernel_preempt),
     };
     unsafe {
         syscall::init(syscall_ctx);

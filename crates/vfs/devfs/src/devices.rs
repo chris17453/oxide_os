@@ -370,17 +370,24 @@ impl VnodeOps for ConsoleDevice {
                 return Ok(count);
             }
 
-            // No input available - block this task until input arrives
+            // No input available - block this task (like nanosleep does)
             // Register our PID so console_push_char() can wake us up
             if let Some(pid) = sched::current_pid() {
                 *CONSOLE_BLOCKED_READER.lock() = pid;
             }
 
-            // Block this task (marks it as INTERRUPTIBLE = not runnable)
-            // The scheduler will then run other tasks, or the idle task which uses HLT
+            // Block ourselves - marks task as TASK_INTERRUPTIBLE (not runnable)
+            // This removes us from the run queue
             sched::block_current(sched::TaskState::TASK_INTERRUPTIBLE);
 
-            // When we wake up, check if input arrived while we were asleep
+            // Request reschedule - timer interrupt will context switch to:
+            // - Another runnable task, OR
+            // - Idle task (PID 0) which uses HLT
+            sched::set_need_resched();
+
+            // Loop back - we'll be context switched away by timer interrupt
+            // When input arrives, console_push_char() wakes us (makes us RUNNABLE)
+            // Timer eventually schedules us again, we resume here and try to read
         }
     }
 

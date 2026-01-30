@@ -332,6 +332,10 @@ pub struct SyscallContext {
     pub serial_write: Option<SerialWriteFn>,
     /// Function to get current task's FS base register (for TLS)
     pub get_current_fs_base: Option<GetFsBaseFn>,
+    /// Function to allow kernel preemption (for blocking syscalls)
+    pub allow_kernel_preempt: Option<fn()>,
+    /// Function to disallow kernel preemption
+    pub disallow_kernel_preempt: Option<fn()>,
 }
 
 impl SyscallContext {
@@ -348,6 +352,8 @@ impl SyscallContext {
             umount: None,
             serial_write: None,
             get_current_fs_base: None,
+            allow_kernel_preempt: None,
+            disallow_kernel_preempt: None,
         }
     }
 }
