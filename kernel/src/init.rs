@@ -1659,15 +1659,19 @@ fn syscall_dispatch(
     if number == 20 && FIRST_OPEN.swap(false, core::sync::atomic::Ordering::SeqCst) {
         use core::fmt::Write;
         let mut writer = serial::SerialWriter;
+        let cur_pid = sched::current_pid().unwrap_or(0xdeadbeef);
         if let Some(meta) = sched::get_current_meta() {
             let locked_meta = meta.lock();
             let entries_len = locked_meta.fd_table.entries_len();
             let mask = locked_meta.fd_table.entries_filled_mask();
-            let meta_arc_ptr = &meta as *const _ as u64;
-            let meta_ptr = &locked_meta as *const _ as u64;
+            // Get the actual ProcessMeta pointer (what Arc points to), not the Arc variable address
+            let meta_inner_ptr = Arc::as_ptr(&meta) as u64;
+            let meta_ref_ptr = &locked_meta as *const _ as u64;
             let fd_table_ptr = &locked_meta.fd_table as *const _ as u64;
-            let _ = writeln!(writer, "[OPEN_DBG] FIRST OPEN: entries_len={} mask={:08b} arc_ptr=0x{:x} meta_ptr=0x{:x} fd_ptr=0x{:x}",
-                entries_len, mask, meta_arc_ptr, meta_ptr, fd_table_ptr);
+            let _ = writeln!(writer, "[OPEN_DBG] PID={} entries_len={} mask={:08b} arc_inner=0x{:x} ref=0x{:x} fd=0x{:x}",
+                cur_pid, entries_len, mask, meta_inner_ptr, meta_ref_ptr, fd_table_ptr);
+        } else {
+            let _ = writeln!(writer, "[OPEN_DBG] PID={} meta=NONE", cur_pid);
         }
     }
 
@@ -1699,11 +1703,12 @@ fn syscall_dispatch(
             let alloc_addr = vfs::FdTable::alloc_fdtable_addr();
             let debug_pre_meta_addr = syscall::vfs::debug_pre_meta_addr();
             let debug_alloc_meta_addr = syscall::vfs::debug_alloc_meta_addr();
-            // Note: sched debug values are stored but not accessible here, use 0x0 placeholder
-            let sched_meta_ptr = 0u64;
-            let sched_arc_ptr = 0u64;
-            let _ = writeln!(writer, "[OPEN] pre_meta=0x{:x} sched_meta=0x{:x} sched_arc=0x{:x} alloc_meta=0x{:x} pre_len={} pre_mask={:08b} current_len={} current_mask={:08b} current_addr=0x{:x} alloc_len={} result={}",
-                debug_pre_meta_addr, sched_meta_ptr, sched_arc_ptr, debug_alloc_meta_addr, pre_alloc_len, pre_alloc_mask, current_len, current_mask, current_addr, alloc_entries_len, alloc_result);
+            let debug_sys_open_arc = syscall::vfs::debug_sys_open_arc();
+            let debug_sys_open_ref = syscall::vfs::debug_sys_open_pid();  // Now contains reference address
+            // Get the Arc inner pointer from this side for comparison
+            let this_arc_inner = Arc::as_ptr(&meta) as u64;
+            let _ = writeln!(writer, "[OPEN] pre_meta=0x{:x} sys_arc=0x{:x} sys_ref=0x{:x} this_arc=0x{:x} alloc_meta=0x{:x} pre_len={} pre_mask={:08b} current_len={} current_mask={:08b} current_addr=0x{:x} alloc_len={} result={}",
+                debug_pre_meta_addr, debug_sys_open_arc, debug_sys_open_ref, this_arc_inner, debug_alloc_meta_addr, pre_alloc_len, pre_alloc_mask, current_len, current_mask, current_addr, alloc_entries_len, alloc_result);
         }
     }
 

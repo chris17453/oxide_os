@@ -22,6 +22,8 @@ static DEBUG_PRE_LEN: core::sync::atomic::AtomicU32 = core::sync::atomic::Atomic
 static DEBUG_ALLOC_EXECUTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 static DEBUG_PRE_META_ADDR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 static DEBUG_ALLOC_META_ADDR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static DEBUG_SYS_OPEN_ARC: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static DEBUG_SYS_OPEN_PID: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 /// Resolve a path against the current process's working directory
 ///
@@ -217,6 +219,28 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
     // the fd_table being modified between pre-alloc check and actual alloc!
     // (Previously we called with_current_meta twice, releasing the lock between calls)
     static FIRST_OPEN_PRE_ALLOC: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+
+    static FIRST_CAPTURE_SYSCALL_ARC: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+    // Mark that we reached this code
+    DEBUG_SYS_OPEN_ARC.store(0xcccccccc, core::sync::atomic::Ordering::SeqCst);
+    if FIRST_CAPTURE_SYSCALL_ARC.swap(false, core::sync::atomic::Ordering::SeqCst) {
+        // Mark that swap() returned true
+        DEBUG_SYS_OPEN_ARC.store(0xbbbbbbbb, core::sync::atomic::Ordering::SeqCst);
+        // Capture the ProcessMeta Arc pointer we receive
+        if let Some(meta_arc) = crate::get_current_meta() {
+            use alloc::sync::Arc;
+            // Get the actual ProcessMeta pointer (what Arc points to), not the Arc variable address
+            let arc_inner_ptr = Arc::as_ptr(&meta_arc) as u64;
+            let locked_meta = meta_arc.lock();
+            let ref_ptr = &*locked_meta as *const _ as u64;
+            DEBUG_SYS_OPEN_ARC.store(arc_inner_ptr, core::sync::atomic::Ordering::SeqCst);
+            DEBUG_SYS_OPEN_PID.store(ref_ptr, core::sync::atomic::Ordering::SeqCst);  // Reuse PID field for reference address
+        } else {
+            // Failed to get meta
+            DEBUG_SYS_OPEN_ARC.store(0xdeadbeef, core::sync::atomic::Ordering::SeqCst);
+            DEBUG_SYS_OPEN_PID.store(0xdeadbeef, core::sync::atomic::Ordering::SeqCst);
+        }
+    }
 
     let result = match with_current_meta_mut(|meta| {
         // DEBUG: Capture pre-alloc state while holding the lock
@@ -1138,4 +1162,14 @@ pub fn debug_pre_meta_addr() -> u64 {
 /// Get ProcessMeta address from alloc
 pub fn debug_alloc_meta_addr() -> u64 {
     DEBUG_ALLOC_META_ADDR.load(core::sync::atomic::Ordering::SeqCst)
+}
+
+/// Get sys_open Arc pointer
+pub fn debug_sys_open_arc() -> u64 {
+    DEBUG_SYS_OPEN_ARC.load(core::sync::atomic::Ordering::SeqCst)
+}
+
+/// Get sys_open PID
+pub fn debug_sys_open_pid() -> u64 {
+    DEBUG_SYS_OPEN_PID.load(core::sync::atomic::Ordering::SeqCst)
 }

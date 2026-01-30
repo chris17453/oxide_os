@@ -332,35 +332,34 @@ impl VnodeOps for ConsoleDevice {
             return Ok(0);
         }
 
-        // Block until at least one byte is available (or EOF)
-        loop {
-            // Check for EOF (Ctrl+D on empty buffer)
-            {
-                let mut eof_pending = CONSOLE_EOF_PENDING.lock();
-                if *eof_pending {
-                    *eof_pending = false;
-                    return Ok(0);
-                }
+        // Non-blocking read: return whatever is available (including empty if nothing)
+        // Check for EOF (Ctrl+D on empty buffer)
+        {
+            let mut eof_pending = CONSOLE_EOF_PENDING.lock();
+            if *eof_pending {
+                *eof_pending = false;
+                return Ok(0);
             }
-
-            if let Some(ch) = console_pop_char() {
-                buf[0] = ch;
-                // Got first byte; now drain whatever else is available
-                let mut count = 1;
-                while count < buf.len() {
-                    if let Some(ch) = console_pop_char() {
-                        buf[count] = ch;
-                        count += 1;
-                    } else {
-                        break;
-                    }
-                }
-                return Ok(count);
-            }
-
-            // Nothing available yet — halt until next interrupt (e.g. keyboard)
-            unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
         }
+
+        if let Some(ch) = console_pop_char() {
+            buf[0] = ch;
+            // Got first byte; now drain whatever else is available
+            let mut count = 1;
+            while count < buf.len() {
+                if let Some(ch) = console_pop_char() {
+                    buf[count] = ch;
+                    count += 1;
+                } else {
+                    break;
+                }
+            }
+            return Ok(count);
+        }
+
+        // Nothing available — return 0 (EOF) instead of blocking
+        // This allows init to continue in non-interactive boot scenarios
+        Ok(0)
     }
 
     fn write(&self, _offset: u64, buf: &[u8]) -> VfsResult<usize> {
