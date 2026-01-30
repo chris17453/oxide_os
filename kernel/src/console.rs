@@ -61,7 +61,7 @@ pub fn console_write(data: &[u8]) {
 
 /// Terminal tick callback - called at 30 FPS from timer interrupt
 pub fn terminal_tick() {
-    // Process keyboard scancodes
+    // Process keyboard scancodes from PS/2 keyboard
     while let Some(scancode) = arch::get_scancode() {
         if let Some(byte) = process_scancode(scancode) {
             // Debug: show control characters (Ctrl+C = 0x03, Ctrl+D = 0x04)
@@ -78,6 +78,22 @@ pub fn terminal_tick() {
                 devfs::console_push_char(byte);
             }
         }
+    }
+
+    // Also process serial port input (for -serial stdio in QEMU)
+    while let Some(byte) = arch::serial_read() {
+        // Debug: show serial input
+        if byte < 0x20 && byte != b'\n' && byte != b'\r' && byte != b'\t' {
+            let mut writer = serial::SerialWriter;
+            let _ = write!(writer, "[SERIAL:0x{:02x}]", byte);
+        }
+
+        // Route serial input to BOTH VT subsystem AND console device
+        // This ensures input works for both /dev/ttyN and /dev/console
+        if let Some(manager) = vt::get_manager() {
+            manager.push_input(byte);
+        }
+        devfs::console_push_char(byte);
     }
 
     // Drive the active display: prefer terminal emulator; disable legacy fb cursor to avoid double cursor

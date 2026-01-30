@@ -319,6 +319,11 @@ pub fn get_scancode() -> Option<u8> {
     exceptions::get_scancode()
 }
 
+/// Read a byte from the serial port (COM1) if available
+pub fn serial_read() -> Option<u8> {
+    serial::read_byte()
+}
+
 /// Register a keyboard interrupt callback (called on keyboard IRQ)
 ///
 /// # Safety
