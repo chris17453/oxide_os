@@ -332,45 +332,33 @@ impl VnodeOps for ConsoleDevice {
             return Ok(0);
         }
 
-        // Block with timeout: wait for input, but give up after a certain number of
-        // hlt cycles to allow non-interactive boot to proceed
-        let mut hlt_count = 0;
-        const MAX_HLT_CYCLES: u32 = 100000;  // Reasonable timeout for user input
-
-        loop {
-            // Check for EOF (Ctrl+D on empty buffer)
-            {
-                let mut eof_pending = CONSOLE_EOF_PENDING.lock();
-                if *eof_pending {
-                    *eof_pending = false;
-                    return Ok(0);
-                }
-            }
-
-            if let Some(ch) = console_pop_char() {
-                buf[0] = ch;
-                // Got first byte; now drain whatever else is available
-                let mut count = 1;
-                while count < buf.len() {
-                    if let Some(ch) = console_pop_char() {
-                        buf[count] = ch;
-                        count += 1;
-                    } else {
-                        break;
-                    }
-                }
-                return Ok(count);
-            }
-
-            // Nothing available yet — halt until next interrupt (keyboard)
-            unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
-
-            hlt_count += 1;
-            if hlt_count >= MAX_HLT_CYCLES {
-                // Timeout reached - return EOF to allow non-interactive boot to proceed
+        // Check for EOF (Ctrl+D on empty buffer)
+        {
+            let mut eof_pending = CONSOLE_EOF_PENDING.lock();
+            if *eof_pending {
+                *eof_pending = false;
                 return Ok(0);
             }
         }
+
+        // Non-blocking: return whatever is available, or EOF if nothing
+        if let Some(ch) = console_pop_char() {
+            buf[0] = ch;
+            // Got first byte; now drain whatever else is available
+            let mut count = 1;
+            while count < buf.len() {
+                if let Some(ch) = console_pop_char() {
+                    buf[count] = ch;
+                    count += 1;
+                } else {
+                    break;
+                }
+            }
+            return Ok(count);
+        }
+
+        // Nothing available - return EOF
+        Ok(0)
     }
 
     fn write(&self, _offset: u64, buf: &[u8]) -> VfsResult<usize> {
