@@ -193,6 +193,13 @@ impl FdTable {
     }
 }
 
+impl FdTable {
+    /// Get the number of entries in the table (for debugging)
+    pub fn entries_len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
 impl Default for FdTable {
     fn default() -> Self {
         Self::new()

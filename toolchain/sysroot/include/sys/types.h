@@ -34,4 +34,7 @@ typedef long ssize_t;
 /* File descriptor */
 typedef int fd_t;
 
+/* Pull in select types (fd_set, FD_SETSIZE, etc.) as glibc does */
+#include <sys/select.h>
+
 #endif /* _SYS_TYPES_H */

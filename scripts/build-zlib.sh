@@ -12,8 +12,8 @@ cd "$ZLIB_SRC"
 
 # Set up cross-compilation environment
 export CC="$PROJECT_ROOT/toolchain/bin/oxide-cc"
-export AR="llvm-ar"
-export RANLIB="llvm-ranlib"
+export AR="ar"
+export RANLIB="ranlib"
 export CFLAGS="-O2 -fPIC -I$SYSROOT/include"
 
 # Configure zlib for static library build

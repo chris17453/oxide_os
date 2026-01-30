@@ -1654,6 +1654,26 @@ fn syscall_dispatch(
             number, arg1, arg2, arg3, arg4, arg5, arg6);
     }
 
+    // DEBUG: on first open syscall, log fd_table state
+    static FIRST_OPEN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+    if number == 20 && FIRST_OPEN.swap(false, core::sync::atomic::Ordering::SeqCst) {
+        use core::fmt::Write;
+        let mut writer = serial::SerialWriter;
+        let pid = sched::current_pid();
+        if let Some(meta) = sched::get_current_meta() {
+            let locked_meta = meta.lock();
+            let entries_len = locked_meta.fd_table.entries_len();
+            let fd0_ok = locked_meta.fd_table.get(0).is_ok();
+            let fd1_ok = locked_meta.fd_table.get(1).is_ok();
+            let fd2_ok = locked_meta.fd_table.get(2).is_ok();
+            let cwd = locked_meta.cwd.as_str();
+            let _ = writeln!(writer, "[OPEN_DBG] FIRST OPEN: pid={:?} cwd={} fds=[0:{}, 1:{}, 2:{}] entries_len={}",
+                pid, cwd, fd0_ok, fd1_ok, fd2_ok, entries_len);
+        } else {
+            let _ = writeln!(writer, "[OPEN_DBG] pid={:?} no meta!", pid);
+        }
+    }
+
     // Handle sched_yield specially - it needs to context switch
     const SCHED_YIELD: u64 = 130;
     if number == SCHED_YIELD {

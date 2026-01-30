@@ -704,7 +704,7 @@ zlib: toolchain
 	@echo "Building zlib..."
 	@./scripts/build-zlib.sh || (echo "Note: zlib test tools failed, but library may be OK" && \
 		cd external/zlib-1.3.1 && \
-		llvm-ar rcs libz.a adler32.o crc32.o deflate.o infback.o inffast.o inflate.o inftrees.o trees.o zutil.o compress.o uncompr.o gzclose.o gzlib.o gzread.o gzwrite.o 2>/dev/null && \
+		ar rcs libz.a adler32.o crc32.o deflate.o infback.o inffast.o inflate.o inftrees.o trees.o zutil.o compress.o uncompr.o gzclose.o gzlib.o gzread.o gzwrite.o 2>/dev/null && \
 		mkdir -p $(CURDIR)/toolchain/sysroot/lib && \
 		cp libz.a $(CURDIR)/toolchain/sysroot/lib/ && \
 		echo "zlib library installed to sysroot")

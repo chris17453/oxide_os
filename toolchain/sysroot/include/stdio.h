@@ -82,6 +82,9 @@ int fileno(FILE *stream);
 int setvbuf(FILE *stream, char *buf, int mode, size_t size);
 void setbuf(FILE *stream, char *buf);
 
+/* Error reporting */
+void perror(const char *s);
+
 /* File removal/rename */
 int remove(const char *pathname);
 int rename(const char *oldpath, const char *newpath);
