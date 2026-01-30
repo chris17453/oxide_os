@@ -213,10 +213,14 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
     // Create file handle
     let file = Arc::new(File::new(vnode, flags));
 
-    // DEBUG: Check fd_table state right before alloc
+    // CRITICAL FIX: Do everything in a single with_current_meta_mut call to avoid
+    // the fd_table being modified between pre-alloc check and actual alloc!
+    // (Previously we called with_current_meta twice, releasing the lock between calls)
     static FIRST_OPEN_PRE_ALLOC: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
-    if FIRST_OPEN_PRE_ALLOC.swap(false, core::sync::atomic::Ordering::SeqCst) {
-        let _result = with_current_meta(|meta| {
+
+    let result = match with_current_meta_mut(|meta| {
+        // DEBUG: Capture pre-alloc state while holding the lock
+        if FIRST_OPEN_PRE_ALLOC.swap(false, core::sync::atomic::Ordering::SeqCst) {
             let len = meta.fd_table.entries_len();
             let mask = meta.fd_table.entries_filled_mask();
             let fd_table_addr = &meta.fd_table as *const _ as u64;
@@ -227,12 +231,9 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
             DEBUG_PRE_ADDR.store(fd_table_addr, core::sync::atomic::Ordering::SeqCst);
             DEBUG_PRE_META_ADDR.store(meta_addr, core::sync::atomic::Ordering::SeqCst);
             vfs::FdTable::set_pre_alloc_state(len as u32, mask, fd_table_addr);
-        });
-    }
+        }
 
-    // Allocate fd using unified model
-    let result = match with_current_meta_mut(|meta| {
-        // DEBUG: Store fd_table addr during alloc
+        // DEBUG: Store alloc fd_table addr
         static FIRST_ALLOC_SET_ADDR: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
         if FIRST_ALLOC_SET_ADDR.swap(false, core::sync::atomic::Ordering::SeqCst) {
             let fd_table_addr = &meta.fd_table as *const _ as u64;
@@ -243,6 +244,8 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
             DEBUG_ALLOC_META_ADDR.store(meta_addr, core::sync::atomic::Ordering::SeqCst);
             vfs::FdTable::set_alloc_fdtable_addr(fd_table_addr);
         }
+
+        // NOW allocate the fd, while still holding the lock
         meta.fd_table.alloc(file)
     }) {
         Some(Ok(fd)) => fd as i64,

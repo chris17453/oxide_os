@@ -1663,8 +1663,11 @@ fn syscall_dispatch(
             let locked_meta = meta.lock();
             let entries_len = locked_meta.fd_table.entries_len();
             let mask = locked_meta.fd_table.entries_filled_mask();
-            let _ = writeln!(writer, "[OPEN_DBG] FIRST OPEN: entries_len={} mask={:08b}",
-                entries_len, mask);
+            let meta_arc_ptr = &meta as *const _ as u64;
+            let meta_ptr = &locked_meta as *const _ as u64;
+            let fd_table_ptr = &locked_meta.fd_table as *const _ as u64;
+            let _ = writeln!(writer, "[OPEN_DBG] FIRST OPEN: entries_len={} mask={:08b} arc_ptr=0x{:x} meta_ptr=0x{:x} fd_ptr=0x{:x}",
+                entries_len, mask, meta_arc_ptr, meta_ptr, fd_table_ptr);
         }
     }
 
@@ -1749,3 +1752,4 @@ impl BlockDevice for BlockDeviceWrapper {
         self.0.is_read_only()
     }
 }
+// Force rebuild 1769738726
