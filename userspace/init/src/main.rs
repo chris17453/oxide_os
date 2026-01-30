@@ -14,10 +14,20 @@
 use libc::syscall::mount_flags::*;
 use libc::*;
 
+/// Known label-to-device mappings for the default disk layout
+fn map_label(label: &str) -> Option<&'static str> {
+    match label {
+        "BOOT" => Some("/dev/virtio0p1"),
+        "HOME" => Some("/dev/virtio0p3"),
+        "ROOT" => Some("/dev/virtio0p2"),
+        _ => None,
+    }
+}
+
 /// Main init entry point
 #[unsafe(no_mangle)]
 fn main() -> i32 {
-    printlns("OXIDE init starting...");
+    printlns("[init] OXIDE init starting...");
 
     // We're PID 1
     let pid = getpid();
@@ -116,20 +126,52 @@ fn mount_fstab() {
             continue;
         }
 
+        // Resolve LABEL=foo entries to concrete device nodes
+        let mut device_path_buf: [u8; 64] = [0; 64];
+        let device_resolved = if let Some(stripped) = device.strip_prefix("LABEL=") {
+            if let Some(mapped) = map_label(stripped) {
+                mapped
+            } else {
+                // Try /dev/disk/by-label/<label> fallback
+                let suffix = stripped.as_bytes();
+                let prefix = b"/dev/disk/by-label/";
+                if prefix.len() + suffix.len() < device_path_buf.len() {
+                    device_path_buf[..prefix.len()].copy_from_slice(prefix);
+                    device_path_buf[prefix.len()..prefix.len() + suffix.len()].copy_from_slice(suffix);
+                    unsafe { core::str::from_utf8_unchecked(&device_path_buf[..prefix.len() + suffix.len()]) }
+                } else {
+                    device
+                }
+            }
+        } else {
+            device
+        };
+
         // Parse options into flags
         let flags = parse_mount_options(options);
+        let is_ro = flags & MS_RDONLY != 0;
 
         // Perform the mount
         prints("[init]   Mounting ");
-        prints(device);
+        prints(device_resolved);
         prints(" on ");
         prints(mountpoint);
-        prints("...");
+        prints(" (fs=");
+        prints(fstype);
+        prints(", flags=");
+        if is_ro {
+            prints("ro");
+        } else {
+            prints("rw");
+        }
+        prints(")...");
 
-        let result = syscall::mount(device, mountpoint, fstype, flags, core::ptr::null());
+        let result = syscall::mount(device_resolved, mountpoint, fstype, flags, core::ptr::null());
 
         if result == 0 {
             printlns(" OK");
+        } else if result == -16 {
+            printlns(" already mounted");
         } else {
             prints(" FAILED (");
             print_i64(result as i64);
