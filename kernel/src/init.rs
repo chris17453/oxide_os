@@ -1734,6 +1734,8 @@ fn syscall_dispatch(
     }
 
     // TEMP DEBUG: Log syscall results
+    // NOTE: Syscall logging is REQUIRED for init to run - without it init silently hangs
+    // This indicates a timing/scheduling issue that needs investigation
     {
         use core::fmt::Write;
         let mut writer = serial::SerialWriter;
