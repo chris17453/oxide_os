@@ -207,7 +207,7 @@ initramfs: userspace-release
 	@echo "# device    mountpoint    fstype    options    dump pass" >> $(TARGET_DIR)/initramfs/etc/fstab
 	@echo "proc        /proc         proc      defaults   0    0" >> $(TARGET_DIR)/initramfs/etc/fstab
 	@echo "sysfs       /sys          sysfs     defaults   0    0" >> $(TARGET_DIR)/initramfs/etc/fstab
-	@echo "devpts      /dev/pts      devpts    defaults   0    0" >> $(TARGET_DIR)/initramfs/etc/fstab
+	@echo "# devpts is mounted automatically by kernel during boot" >> $(TARGET_DIR)/initramfs/etc/fstab
 	@echo "tmpfs       /tmp          tmpfs     defaults   0    0" >> $(TARGET_DIR)/initramfs/etc/fstab
 	@echo "tmpfs       /run          tmpfs     defaults   0    0" >> $(TARGET_DIR)/initramfs/etc/fstab
 	@# Create CPIO archive
@@ -298,7 +298,7 @@ boot-image: boot-dir
 
 # Disk image configuration for root filesystem
 ROOTFS_IMAGE := $(TARGET_DIR)/oxide-disk.img
-ROOTFS_SIZE := 512
+ROOTFS_SIZE := 800
 BOOT_SIZE := 64
 ROOT_SIZE := 384
 HOME_SIZE := 64
@@ -402,7 +402,7 @@ create-rootfs: kernel bootloader initramfs-minimal
 	printf "tmpfs            /run          tmpfs    defaults   0      0\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/fstab > /dev/null && \
 	printf "proc             /proc         proc     defaults   0      0\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/fstab > /dev/null && \
 	printf "sysfs            /sys          sysfs    defaults   0      0\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/fstab > /dev/null && \
-	printf "devpts           /dev/pts      devpts   defaults   0      0\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/fstab > /dev/null && \
+	printf "# devpts is mounted automatically by kernel during boot\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/fstab > /dev/null && \
 	\
 	echo "  Creating other config files..." && \
 	printf "export PATH=/bin:/sbin:/usr/bin:/usr/sbin\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/profile > /dev/null && \
@@ -473,7 +473,9 @@ initramfs-minimal: userspace-release
 	@echo "# device    mountpoint    fstype    options    dump pass" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
 	@echo "proc        /proc         proc      defaults   0    0" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
 	@echo "sysfs       /sys          sysfs     defaults   0    0" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
-	@echo "devpts      /dev/pts      devpts    defaults   0    0" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
+	@echo "# devpts is mounted automatically by kernel during boot" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
+	@echo "LABEL=BOOT  /boot         vfat      defaults   0    0" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
+	@echo "LABEL=HOME  /home         ext4      defaults   0    0" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
 	@echo "tmpfs       /tmp          tmpfs     defaults   0    0" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
 	@echo "tmpfs       /run          tmpfs     defaults   0    0" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
 	@# Create CPIO archive
@@ -493,7 +495,7 @@ detect-qemu-mode:
 
 # Run OXIDE OS - auto-detects Fedora vs RHEL and uses appropriate QEMU
 # Builds everything and creates ext4 root filesystem, then runs with networking
-run: create-rootfs
+run: clean-rootfs create-rootfs
 	@MODE=$$($(MAKE) -s detect-qemu-mode); \
 	if [ "$$MODE" = "fedora" ]; then \
 		echo "Detected Fedora mode (qemu-system-x86_64)"; \
@@ -653,6 +655,7 @@ help:
 	@echo "  run-fedora     - Build and run with qemu-system-x86_64"
 	@echo "  run-rhel       - Build and run with qemu-kvm (RHEL 10)"
 	@echo "  run-kvm        - Alias for run-rhel"
+	@echo "  clean-rootfs   - Remove generated disk images/initramfs so run rebuilds fresh"
 	@echo ""
 	@echo "Build Targets:"
 	@echo "  all            - Build kernel and bootloader (default)"
@@ -673,6 +676,17 @@ help:
 	@echo "  fmt            - Format code"
 	@echo "  clippy         - Run clippy linter"
 	@echo "  clean          - Remove build artifacts"
+	@echo "  clean-rootfs   - Remove generated rootfs artifacts"
+
+# Remove generated disk images/initramfs so run rebuilds fresh
+clean-rootfs:
+	@echo "Cleaning generated rootfs artifacts..."
+	@sudo umount $(TARGET_DIR)/mnt/boot 2>/dev/null || true
+	@sudo umount $(TARGET_DIR)/mnt/root 2>/dev/null || true
+	@sudo umount $(TARGET_DIR)/mnt/home 2>/dev/null || true
+	@sudo umount $(TARGET_DIR)/mnt 2>/dev/null || true
+	@sudo losetup -D 2>/dev/null || true
+	@rm -rf $(TARGET_DIR)/boot $(TARGET_DIR)/initramfs $(INITRAMFS) $(TARGET_DIR)/initramfs-minimal $(TARGET_DIR)/initramfs-minimal.cpio $(ROOTFS_IMAGE) $(TARGET_DIR)/mnt
 	@echo "  show-config    - Show detected configuration"
 	@echo ""
 	@echo "Toolchain:"
