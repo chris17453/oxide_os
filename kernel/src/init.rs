@@ -1694,13 +1694,13 @@ fn syscall_dispatch(
             let alloc_first_is_some = vfs::FdTable::last_alloc_first_entry_is_some();
             let alloc_loop_iter = vfs::FdTable::last_alloc_loop_iterations();
             let alloc_addr = vfs::FdTable::alloc_fdtable_addr();
-            let debug_pre_addr = syscall::vfs::get_debug_pre_addr();
-            let debug_alloc_addr = syscall::vfs::get_debug_alloc_addr();
-            let debug_pre_exec = syscall::vfs::debug_pre_executed();
-            let debug_pre_len_val = syscall::vfs::debug_pre_len();
-            let debug_alloc_exec = syscall::vfs::debug_alloc_executed();
-            let _ = writeln!(writer, "[OPEN] pre_len={} pre_mask={:08b} pre_addr=0x{:x} debug_pre_exec={} debug_pre_len={} debug_pre=0x{:x} current_len={} current_mask={:08b} current_addr=0x{:x} alloc_len={} alloc_first={} alloc_loops={} alloc_addr=0x{:x} debug_alloc_exec={} debug_alloc=0x{:x} result={}",
-                pre_alloc_len, pre_alloc_mask, pre_alloc_addr, debug_pre_exec, debug_pre_len_val, debug_pre_addr, current_len, current_mask, current_addr, alloc_entries_len, alloc_first_is_some, alloc_loop_iter, alloc_addr, debug_alloc_exec, debug_alloc_addr, alloc_result);
+            let debug_pre_meta_addr = syscall::vfs::debug_pre_meta_addr();
+            let debug_alloc_meta_addr = syscall::vfs::debug_alloc_meta_addr();
+            // Note: sched debug values are stored but not accessible here, use 0x0 placeholder
+            let sched_meta_ptr = 0u64;
+            let sched_arc_ptr = 0u64;
+            let _ = writeln!(writer, "[OPEN] pre_meta=0x{:x} sched_meta=0x{:x} sched_arc=0x{:x} alloc_meta=0x{:x} pre_len={} pre_mask={:08b} current_len={} current_mask={:08b} current_addr=0x{:x} alloc_len={} result={}",
+                debug_pre_meta_addr, sched_meta_ptr, sched_arc_ptr, debug_alloc_meta_addr, pre_alloc_len, pre_alloc_mask, current_len, current_mask, current_addr, alloc_entries_len, alloc_result);
         }
     }
 

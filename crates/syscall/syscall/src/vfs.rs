@@ -20,6 +20,8 @@ static DEBUG_ALLOC_ADDR: core::sync::atomic::AtomicU64 = core::sync::atomic::Ato
 static DEBUG_PRE_EXECUTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 static DEBUG_PRE_LEN: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0xdeadbeef);
 static DEBUG_ALLOC_EXECUTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static DEBUG_PRE_META_ADDR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static DEBUG_ALLOC_META_ADDR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 /// Resolve a path against the current process's working directory
 ///
@@ -217,11 +219,14 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
         let _result = with_current_meta(|meta| {
             let len = meta.fd_table.entries_len();
             let mask = meta.fd_table.entries_filled_mask();
-            let addr = &meta.fd_table as *const _ as u64;
+            let fd_table_addr = &meta.fd_table as *const _ as u64;
+            let meta_addr = meta as *const _ as u64;
+
             DEBUG_PRE_EXECUTED.store(true, core::sync::atomic::Ordering::SeqCst);
             DEBUG_PRE_LEN.store(len as u32, core::sync::atomic::Ordering::SeqCst);
-            DEBUG_PRE_ADDR.store(addr, core::sync::atomic::Ordering::SeqCst);
-            vfs::FdTable::set_pre_alloc_state(len as u32, mask, addr);
+            DEBUG_PRE_ADDR.store(fd_table_addr, core::sync::atomic::Ordering::SeqCst);
+            DEBUG_PRE_META_ADDR.store(meta_addr, core::sync::atomic::Ordering::SeqCst);
+            vfs::FdTable::set_pre_alloc_state(len as u32, mask, fd_table_addr);
         });
     }
 
@@ -230,10 +235,13 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
         // DEBUG: Store fd_table addr during alloc
         static FIRST_ALLOC_SET_ADDR: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
         if FIRST_ALLOC_SET_ADDR.swap(false, core::sync::atomic::Ordering::SeqCst) {
-            let addr = &meta.fd_table as *const _ as u64;
+            let fd_table_addr = &meta.fd_table as *const _ as u64;
+            let meta_addr = meta as *const _ as u64;
+
             DEBUG_ALLOC_EXECUTED.store(true, core::sync::atomic::Ordering::SeqCst);
-            DEBUG_ALLOC_ADDR.store(addr, core::sync::atomic::Ordering::SeqCst);
-            vfs::FdTable::set_alloc_fdtable_addr(addr);
+            DEBUG_ALLOC_ADDR.store(fd_table_addr, core::sync::atomic::Ordering::SeqCst);
+            DEBUG_ALLOC_META_ADDR.store(meta_addr, core::sync::atomic::Ordering::SeqCst);
+            vfs::FdTable::set_alloc_fdtable_addr(fd_table_addr);
         }
         meta.fd_table.alloc(file)
     }) {
@@ -1117,4 +1125,14 @@ pub fn debug_pre_len() -> u32 {
 /// Get whether alloc closure executed
 pub fn debug_alloc_executed() -> bool {
     DEBUG_ALLOC_EXECUTED.load(core::sync::atomic::Ordering::SeqCst)
+}
+
+/// Get ProcessMeta address from pre_alloc
+pub fn debug_pre_meta_addr() -> u64 {
+    DEBUG_PRE_META_ADDR.load(core::sync::atomic::Ordering::SeqCst)
+}
+
+/// Get ProcessMeta address from alloc
+pub fn debug_alloc_meta_addr() -> u64 {
+    DEBUG_ALLOC_META_ADDR.load(core::sync::atomic::Ordering::SeqCst)
 }

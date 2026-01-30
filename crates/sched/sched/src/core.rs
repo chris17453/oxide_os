@@ -814,13 +814,31 @@ pub fn get_current_meta() -> Option<Arc<Mutex<ProcessMeta>>> {
     current_pid().and_then(get_task_meta)
 }
 
+/// DEBUG: Module-level statics for with_current_meta diagnostics
+pub static DEBUG_SCHED_META_PTR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+pub static DEBUG_SCHED_ARC_PTR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
 /// Execute a closure with read access to current task's ProcessMeta
 pub fn with_current_meta<F, R>(f: F) -> Option<R>
 where
     F: FnOnce(&ProcessMeta) -> R,
 {
-    let meta = get_current_meta()?;
-    Some(f(&meta.lock()))
+    let meta_arc = get_current_meta()?;
+    // Keep the guard alive for the entire closure execution
+    let guard = meta_arc.lock();
+    // Dereference the guard to get &ProcessMeta
+    let meta_ref: &ProcessMeta = &*guard;
+
+    // DEBUG: Log the addresses for investigation
+    static DEBUG_CALLED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+    if DEBUG_CALLED.swap(true, core::sync::atomic::Ordering::SeqCst) == false {
+        let meta_ptr = meta_ref as *const ProcessMeta as u64;
+        let meta_arc_ptr = &meta_arc as *const _ as u64;
+        DEBUG_SCHED_META_PTR.store(meta_ptr, core::sync::atomic::Ordering::SeqCst);
+        DEBUG_SCHED_ARC_PTR.store(meta_arc_ptr, core::sync::atomic::Ordering::SeqCst);
+    }
+
+    Some(f(meta_ref))
 }
 
 /// Execute a closure with write access to current task's ProcessMeta
@@ -828,8 +846,12 @@ pub fn with_current_meta_mut<F, R>(f: F) -> Option<R>
 where
     F: FnOnce(&mut ProcessMeta) -> R,
 {
-    let meta = get_current_meta()?;
-    Some(f(&mut meta.lock()))
+    let meta_arc = get_current_meta()?;
+    // Keep the guard alive for the entire closure execution
+    let mut guard = meta_arc.lock();
+    // Dereference the guard to get &mut ProcessMeta
+    let meta_ref: &mut ProcessMeta = &mut *guard;
+    Some(f(meta_ref))
 }
 
 /// Get the children of a task
