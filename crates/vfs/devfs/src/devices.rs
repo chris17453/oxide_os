@@ -332,36 +332,33 @@ impl VnodeOps for ConsoleDevice {
             return Ok(0);
         }
 
-        // Block until input available or EOF
-        loop {
-            // Check for EOF (Ctrl+D on empty buffer)
-            {
-                let mut eof_pending = CONSOLE_EOF_PENDING.lock();
-                if *eof_pending {
-                    *eof_pending = false;
-                    return Ok(0);
-                }
+        // Check for EOF (Ctrl+D on empty buffer)
+        {
+            let mut eof_pending = CONSOLE_EOF_PENDING.lock();
+            if *eof_pending {
+                *eof_pending = false;
+                return Ok(0);
             }
-
-            // Check if input is available
-            if let Some(ch) = console_pop_char() {
-                buf[0] = ch;
-                // Got first byte; now drain whatever else is available
-                let mut count = 1;
-                while count < buf.len() {
-                    if let Some(ch) = console_pop_char() {
-                        buf[count] = ch;
-                        count += 1;
-                    } else {
-                        break;
-                    }
-                }
-                return Ok(count);
-            }
-
-            // Nothing available yet - block until keyboard interrupt
-            unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
         }
+
+        // Non-blocking read - return available input or empty
+        if let Some(ch) = console_pop_char() {
+            buf[0] = ch;
+            // Got first byte; now drain whatever else is available
+            let mut count = 1;
+            while count < buf.len() {
+                if let Some(ch) = console_pop_char() {
+                    buf[count] = ch;
+                    count += 1;
+                } else {
+                    break;
+                }
+            }
+            return Ok(count);
+        }
+
+        // Nothing available - return 0 (don't block, don't halt)
+        Ok(0)
     }
 
     fn write(&self, _offset: u64, buf: &[u8]) -> VfsResult<usize> {
