@@ -956,12 +956,15 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(writer, "[BLK] Block device initialization complete");
 
     // Try to use ext4 as root filesystem if it has /sbin/init
+    // TEMPORARY: Force initramfs-only boot to debug ext4 mount hang
     let mut ext4_as_root = false;
-    if let Some(ref ext4_device) = ext4_root_partition {
+    if false && ext4_root_partition.is_some() {
+        let ext4_device = ext4_root_partition.as_ref().unwrap();
         let _ = writeln!(
             writer,
             "[EXT4] Checking ext4 partition for root filesystem..."
         );
+        let _ = writeln!(writer, "[EXT4] About to call ext4::mount()...");
 
         match ext4::mount(ext4_device.clone(), false) {
             Ok(ext4_root) => {
