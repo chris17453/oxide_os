@@ -21,7 +21,7 @@ use devices::{ConsoleDevice, FramebufferDevice, NullDevice, RandomDevice, ZeroDe
 use kmsg::KmsgDevice;
 
 // Re-export console input functions
-pub use devices::{console_has_input, console_push_char, console_push_str};
+pub use devices::{console_has_input, console_push_char, console_push_str, set_console_blocked_reader};
 
 // Re-export signal callback setter for Ctrl+C handling
 pub use devices::{SIGINT, SIGQUIT, set_signal_fg_callback};

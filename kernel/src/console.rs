@@ -4,6 +4,7 @@ use arch_x86_64 as arch;
 use arch_x86_64::serial;
 use core::fmt::Write;
 use signal::SigInfo;
+use crate::scheduler;
 
 /// Send signal to the current foreground process only
 ///
@@ -193,21 +194,32 @@ pub fn console_read(buf: &mut [u8]) -> usize {
                 }
             }
 
-            // Allow kernel preemption while waiting for input
-            // This lets the scheduler run other processes (e.g., background services)
-            // when we're blocked waiting for keyboard input
-            arch::allow_kernel_preempt();
+            // No input available - block this task and yield to scheduler
+            // Only block on first iteration (when count == 0)
+            if count == 0 {
+                // Register as blocked reader so input arrival wakes us
+                if let Some(pid) = sched::current_pid() {
+                    devfs::set_console_blocked_reader(pid);
+                }
 
-            // Use STI+HLT to wait for interrupt
-            // STI ensures interrupts are enabled (they may be disabled by syscall entry)
-            // The timer interrupt will now be able to preempt us and run other tasks
-            unsafe {
-                core::arch::asm!("sti", options(nomem, nostack, preserves_flags));
-                core::arch::asm!("hlt", options(nomem, nostack));
+                // Block ourselves - marks task as INTERRUPTIBLE, removes from run queue
+                use sched::TaskState;
+                scheduler::block_current(TaskState::TASK_INTERRUPTIBLE);
+                sched::set_need_resched();
+
+                // Enable preemption so timer can context switch us
+                arch::allow_kernel_preempt();
+
+                // HLT once to trigger timer interrupt which will context switch us to idle
+                // The idle task will then HLT properly
+                // When input arrives, we'll be woken and eventually rescheduled
+                unsafe {
+                    core::arch::asm!("sti", options(nomem, nostack, preserves_flags));
+                    core::arch::asm!("hlt", options(nomem, nostack));
+                }
+
+                arch::disallow_kernel_preempt();
             }
-
-            // Disallow kernel preemption while processing input
-            arch::disallow_kernel_preempt();
         }
     }
     count

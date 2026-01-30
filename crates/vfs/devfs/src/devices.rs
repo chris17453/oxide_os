@@ -124,6 +124,11 @@ pub fn console_has_input() -> bool {
     !KEYBOARD_BUFFER.lock().is_empty()
 }
 
+/// Set the PID of task blocked waiting for console input
+pub fn set_console_blocked_reader(pid: u32) {
+    *CONSOLE_BLOCKED_READER.lock() = pid;
+}
+
 /// Simple buffer writer for debug output
 struct BufWriter<'a> {
     buf: &'a mut [u8],
