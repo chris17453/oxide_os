@@ -468,14 +468,13 @@ initramfs-minimal: userspace-release
 	@echo "export PATH=/bin:/sbin:/usr/bin:/usr/sbin" > $(TARGET_DIR)/initramfs-minimal/etc/profile
 	@echo "OXIDE" > $(TARGET_DIR)/initramfs-minimal/etc/hostname
 	@# Create fstab that mounts ext4 partitions
-	@# Note: Minimal initramfs only mounts in-memory filesystems (no block devices)
-	@# Kernel already mounts: /run, /tmp, /var/log, /var/lib, /var/run, /dev/pts
+	@# Note: Minimal initramfs has empty fstab - kernel mounts everything
+	@# Kernel already mounts: /, /proc, /sys, /dev, /dev/pts, /run, /tmp, /var/*
 	@echo "# /etc/fstab - filesystem mount table (minimal initramfs)" > $(TARGET_DIR)/initramfs-minimal/etc/fstab
-	@echo "# device    mountpoint    fstype    options    dump pass" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
-	@echo "proc        /proc         proc      defaults   0    0" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
-	@echo "sysfs       /sys          sysfs     defaults   0    0" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
-	@echo "# Following are already mounted by kernel during boot:" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
-	@echo "# /dev/pts (devpts), /run (tmpfs), /tmp (tmpfs), /var/* (tmpfs)" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
+	@echo "# All filesystems are already mounted by kernel during boot:" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
+	@echo "#   / (initramfs), /proc (procfs), /sys (sysfs), /dev (devfs)" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
+	@echo "#   /dev/pts (devpts), /run (tmpfs), /tmp (tmpfs), /var/* (tmpfs)" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
+	@echo "# No additional mounts needed for minimal initramfs boot" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
 	@# Create CPIO archive
 	@cd $(TARGET_DIR)/initramfs-minimal && find . | cpio -o -H newc > ../initramfs-minimal.cpio 2>/dev/null
 	@echo "Minimal initramfs created: $(TARGET_DIR)/initramfs-minimal.cpio"
