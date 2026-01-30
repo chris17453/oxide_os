@@ -342,17 +342,31 @@ impl VnodeOps for ConsoleDevice {
         }
 
         // Blocking read - yield until input is available
-        // CRITICAL: Only block on actual console reads (when stdin is a tty).
-        // For non-tty reads (e.g., reading from a file opened as fd 0),
-        // return immediately with no data to avoid deadlock.
+        // Check both PS/2 keyboard (console_pop_char) and serial port
         loop {
-            // Try to get input
+            // Try to get input from PS/2 keyboard
             if let Some(ch) = console_pop_char() {
                 buf[0] = ch;
                 // Got first byte; now drain whatever else is available
                 let mut count = 1;
                 while count < buf.len() {
                     if let Some(ch) = console_pop_char() {
+                        buf[count] = ch;
+                        count += 1;
+                    } else {
+                        break;
+                    }
+                }
+                return Ok(count);
+            }
+
+            // Try to get input from serial port (for -serial stdio)
+            if let Some(ch) = arch_x86_64::serial::read_byte() {
+                buf[0] = ch;
+                // Got first byte; now drain whatever else is available from serial
+                let mut count = 1;
+                while count < buf.len() {
+                    if let Some(ch) = arch_x86_64::serial::read_byte() {
                         buf[count] = ch;
                         count += 1;
                     } else {

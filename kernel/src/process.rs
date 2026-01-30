@@ -776,7 +776,10 @@ pub fn kernel_exec(
                 }
                 let arg_slice = core::slice::from_raw_parts(arg_ptr, len);
                 match core::str::from_utf8(arg_slice) {
-                    Ok(s) => argv.push(String::from(s)),
+                    Ok(s) => {
+                        debug_fork!("[EXEC] argv[{}] = \"{}\" (len={})", i, s, len);
+                        argv.push(String::from(s));
+                    }
                     Err(_) => {
                         debug_fork!("[EXEC] argv[{i}] invalid UTF-8");
                         return -22; // EINVAL
