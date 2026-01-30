@@ -165,6 +165,7 @@ name = "devfs"
 version = "0.1.0"
 dependencies = [
  "os_core",
+ "sched",
  "spin 0.9.8",
  "terminal",
  "vfs",

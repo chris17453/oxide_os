@@ -341,24 +341,30 @@ impl VnodeOps for ConsoleDevice {
             }
         }
 
-        // Non-blocking read - return available input or empty
-        if let Some(ch) = console_pop_char() {
-            buf[0] = ch;
-            // Got first byte; now drain whatever else is available
-            let mut count = 1;
-            while count < buf.len() {
-                if let Some(ch) = console_pop_char() {
-                    buf[count] = ch;
-                    count += 1;
-                } else {
-                    break;
+        // Blocking read - yield until input is available
+        // CRITICAL: Only block on actual console reads (when stdin is a tty).
+        // For non-tty reads (e.g., reading from a file opened as fd 0),
+        // return immediately with no data to avoid deadlock.
+        loop {
+            // Try to get input
+            if let Some(ch) = console_pop_char() {
+                buf[0] = ch;
+                // Got first byte; now drain whatever else is available
+                let mut count = 1;
+                while count < buf.len() {
+                    if let Some(ch) = console_pop_char() {
+                        buf[count] = ch;
+                        count += 1;
+                    } else {
+                        break;
+                    }
                 }
+                return Ok(count);
             }
-            return Ok(count);
-        }
 
-        // Nothing available - return 0 (don't block, don't halt)
-        Ok(0)
+            // No input available - yield to other processes and try again
+            sched::yield_current();
+        }
     }
 
     fn write(&self, _offset: u64, buf: &[u8]) -> VfsResult<usize> {

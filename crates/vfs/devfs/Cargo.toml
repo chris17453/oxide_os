@@ -10,3 +10,4 @@ vfs = { workspace = true }
 os_core = { workspace = true }
 spin = { workspace = true }
 terminal = { workspace = true }
+sched = { workspace = true }

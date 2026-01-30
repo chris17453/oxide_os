@@ -91,8 +91,8 @@ pub mod nr {
     pub const GETEGID: u64 = 17;
     pub const SETUID: u64 = 18;
     pub const SETGID: u64 = 19;
-    pub const SETEUID: u64 = 20;
-    pub const SETEGID: u64 = 21;
+    pub const SETEUID: u64 = 140;
+    pub const SETEGID: u64 = 141;
 
     // Thread syscalls
     pub const CLONE: u64 = 56; // Create thread/process
