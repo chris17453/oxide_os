@@ -20,6 +20,11 @@ pub mod serial;
 pub mod syscall;
 pub mod usermode;
 
+/// Return the current hardware CPU identifier (APIC ID on x86_64)
+pub fn cpu_id() -> Option<u32> {
+    Some(apic::id() as u32)
+}
+
 /// x86_64 architecture implementation
 pub struct X86_64;
 

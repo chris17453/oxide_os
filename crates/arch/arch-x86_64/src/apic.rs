@@ -402,7 +402,12 @@ fn init_ioapic() {
 ///
 /// - `frequency_hz`: Desired interrupt frequency in Hz
 pub fn start_timer(frequency_hz: u32) {
-    let ticks_per_ms = calibrate_timer();
+    let mut ticks_per_ms = calibrate_timer();
+    if ticks_per_ms == 0 {
+        // Fallback to a conservative default to avoid disabling the timer
+        ticks_per_ms = 1_000; // assume 1 MHz equivalent -> 1000 ticks/ms
+        crate::serial_println!("[APIC] Timer calibration returned 0; using fallback {} ticks/ms", ticks_per_ms);
+    }
     crate::serial_println!("[APIC] Timer calibrated: {} ticks/ms", ticks_per_ms);
 
     // Calculate initial count for desired frequency

@@ -532,6 +532,7 @@ dependencies = [
  "dhcp",
  "elf",
  "ext4",
+ "fat32",
  "fb",
  "gpt",
  "initramfs",

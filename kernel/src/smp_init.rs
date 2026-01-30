@@ -7,24 +7,34 @@ use arch_x86_64 as arch;
 ///
 /// This is called from the AP boot trampoline with the AP's APIC ID.
 pub fn ap_init_callback(apic_id: u8) -> ! {
-    // Find which CPU ID corresponds to this APIC ID and mark it online
-    for cpu_id in 0..smp::MAX_CPUS as u32 {
-        if let Some(id) = smp::cpu::get_apic_id(cpu_id) {
-            if id == apic_id as u32 {
-                smp::cpu::set_cpu_online(cpu_id);
+    // Find CPU ID for this APIC ID and bring it fully online
+    let mut cpu_id = None;
+    for id in 0..smp::MAX_CPUS as u32 {
+        if let Some(apic) = smp::cpu::get_apic_id(id) {
+            if apic == apic_id as u32 {
+                cpu_id = Some(id);
+                smp::cpu::set_cpu_online(id);
                 break;
             }
         }
     }
 
+    // If we couldn't resolve the CPU ID, halt safely
+    let cpu_id = cpu_id.unwrap_or(0);
+
+    // Initialize scheduler structures for this CPU and set per-CPU ID
+    sched::set_this_cpu(cpu_id);
+    sched::init_cpu(cpu_id, 0);
+
+    // Start local APIC timer for this CPU (matches BSP frequency)
+    arch::start_timer(100);
+
     // Enable interrupts so we can receive IPIs for TLB shootdown
     arch::X86_64::enable_interrupts();
 
-    // AP is now online - enter idle loop
-    // In a full system, this would call the scheduler
+    // AP is now online - enter scheduler idle loop
     loop {
-        unsafe {
-            core::arch::asm!("hlt");
-        }
+        sched::yield_current();
+        unsafe { core::arch::asm!("hlt"); }
     }
 }

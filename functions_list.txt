@@ -1,0 +1,226 @@
+/dev/ptc
+/dev/ptmx
+CAN_RAW_FD_FRAMES
+CAN_RAW_JOIN_FILTERS
+__fpu_control
+__fpu_control in -lieee
+_dyld_shared_cache_contains_path
+_getpty
+accept
+accept4
+alarm
+bind_textdomain_codeset
+broken mbstowcs
+broken nice()
+broken poll()
+broken unsetenv
+case-insensitive build directory
+chflags
+chmod
+chown
+clock_nanosleep
+clock_nanosleep in -lrt
+clock_settime
+clock_settime in -lrt
+close_range
+confstr
+copy_file_range
+crypt or crypt_r
+ctermid
+ctermid_r
+curses function filter
+curses function has_key
+curses function immedok
+curses function is_pad
+curses function is_term_resized
+curses function resize_term
+curses function resizeterm
+curses function syncok
+curses function typeahead
+curses function use_env
+curses function wchgat
+curses module flags
+digit size for Python's longs
+dlopen
+dlopen in -ldl
+dup3
+dyld
+ensurepip
+epoll_create
+epoll_create1
+eventfd
+execv
+explicit_bzero
+explicit_memset
+faccessat
+fchmod
+fchmodat
+fchown
+fchownat
+fdatasync
+fdopendir
+fdwalk
+fexecve
+ffi_closure_alloc
+ffi_prep_cif_var
+ffi_prep_closure_loc
+fork
+fork1
+forkpty
+forkpty in -lbsd
+forkpty in -lutil
+fpathconf
+fseek64
+fstatvfs
+fsync
+ftell64
+ftime
+futimens
+futimes
+futimesat
+getaddrinfo
+getc_unlocked() and friends
+getentropy
+getgroups
+gethostbyname_r
+gethostname
+getitimer
+getloadavg
+getlogin
+getnameinfo
+getpeername
+getpriority
+getpwent
+getresgid
+getresuid
+getrusage
+getsockname
+getspent
+getspnam
+getwd
+how to link readline
+if_nameindex
+inet_aton
+inet_aton in -lc
+inet_aton in -lresolv
+inet_pton
+initgroups
+kill
+killpg
+kqueue
+lchflags
+lchown
+libb2
+libnsl
+link
+linkat
+lockf
+lutimes
+madvise
+major, minor, and makedev
+makedev
+memfd_create
+mkdirat
+mkfifo
+mkfifoat
+mknod
+mknodat
+mremap
+openat
+openpty
+openpty in -lbsd
+openpty in -lutil
+oxide-cc -pthread options needed to detect all undeclared functions
+panel flags
+pathconf
+pause
+pipe2
+plock
+poll
+posix_fadvise
+posix_fallocate
+posix_spawn
+posix_spawnp
+pread
+preadv
+preadv2
+prlimit
+pthread_getcpuclockid
+pthread_kill
+pwrite
+pwritev
+pwritev2
+readline
+readlink
+readlinkat
+readv
+realpath
+renameat
+rtpSpawn
+sched_get_priority_max
+sched_rr_get_interval
+sched_setaffinity
+sched_setparam
+sched_setscheduler
+sem_clockwait
+sem_getvalue
+sem_open
+sem_timedwait
+sem_unlink
+sendfile
+sendfile in -lsendfile
+setgroups
+sethostname
+setitimer
+setns
+setpgrp
+setpriority
+setregid
+setresgid
+setresuid
+setreuid
+shl_load in -ldld
+shm_open
+shm_unlink
+sigaction
+sigaltstack
+siginterrupt
+sigpending
+sigrelse
+sigtimedwait
+sigwait
+sigwaitinfo
+sockaddr_alg
+socket in -lsocket
+socketpair
+socklen_t
+splice
+statvfs
+symlink
+symlinkat
+sync
+sysconf
+system
+t_open in -lnsl
+tempnam
+textdomain in -lintl
+timegm
+times
+tmpnam_r
+truncate
+ttyname
+umask
+unlinkat
+unshare
+utimensat
+utimes
+uuid >= 2.20
+vfork
+wait3
+wait4
+waitid
+wcsftime
+working tzset()
+writev
+x86_64-unknown-linux-gnu-llvm-profdata
+x87-style double rounding

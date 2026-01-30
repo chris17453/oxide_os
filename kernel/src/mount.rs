@@ -5,6 +5,7 @@
 use alloc::sync::Arc;
 use block::{BlockDevice, BlockDeviceInfo, BlockError, BlockResult};
 use devfs::DevFs;
+use fat32::Fat32;
 use procfs::ProcFs;
 use tmpfs::TmpDir;
 use vfs::{MountFlags, mount::GLOBAL_VFS};
@@ -90,6 +91,7 @@ pub fn kernel_mount(source: &str, target: &str, fstype: &str, flags: u32) -> i64
     // Handle different filesystem types
     match fstype {
         "ext4" => mount_ext4(source, target, mount_flags, read_only),
+        "vfat" | "fat32" => mount_vfat(source, target, mount_flags, read_only),
         "tmpfs" => mount_tmpfs(target, mount_flags),
         "devfs" => mount_devfs(target, mount_flags),
         "procfs" | "proc" => mount_procfs(target, mount_flags),
@@ -141,6 +143,34 @@ fn mount_ext4(source: &str, target: &str, flags: MountFlags, read_only: bool) ->
     // Mount the ext4 filesystem
     match ext4::mount(device_arc, read_only) {
         Ok(root_vnode) => match GLOBAL_VFS.mount(root_vnode, target, flags, "ext4") {
+            Ok(()) => 0,
+            Err(_) => errno::EBUSY,
+        },
+        Err(_) => errno::EIO,
+    }
+}
+
+/// Mount a FAT32/VFAT filesystem
+fn mount_vfat(source: &str, target: &str, flags: MountFlags, read_only: bool) -> i64 {
+    // Source must be a block device path
+    if !source.starts_with("/dev/") {
+        return errno::ENOENT;
+    }
+
+    let dev_name = &source[5..]; // Strip "/dev/" prefix
+
+    // Look up the block device
+    let device = match block::get_device(dev_name) {
+        Some(dev) => dev,
+        None => return errno::ENODEV,
+    };
+
+    // Wrap device for Fat32 driver
+    let device_arc: Arc<dyn BlockDevice> = Arc::new(StaticDeviceRef(device));
+
+    // Mount FAT32
+    match Fat32::mount(device_arc).map(|fs| fs.root()) {
+        Ok(root_vnode) => match GLOBAL_VFS.mount(root_vnode, target, flags, "vfat") {
             Ok(()) => 0,
             Err(_) => errno::EBUSY,
         },

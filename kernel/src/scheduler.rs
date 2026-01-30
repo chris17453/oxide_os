@@ -51,6 +51,7 @@ pub struct InterruptFrame {
 /// Should be called early during kernel initialization.
 pub fn init() {
     // Initialize the scheduler for CPU 0 with idle task PID 0
+    sched::set_this_cpu(0);
     sched::init_cpu(0, 0);
 
     // Create a real idle task with PID 0

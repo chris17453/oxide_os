@@ -488,7 +488,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
     let _ = writeln!(writer, "[INFO] PS/2 console callback registered");
 
-    // Initialize and register preemptive scheduler
+    // Initialize and register preemptive scheduler (BSP)
     scheduler::init();
     let _ = writeln!(writer, "[INFO] Scheduler initialized");
 
@@ -838,6 +838,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                     for (part_idx, partition) in partitions.into_iter().enumerate() {
                         let part_num = part_idx + 1;
                         let part_name = alloc::format!("virtio{}p{}", idx, part_num);
+                        let label = gpt_table.entries[part_idx].name_string();
                         let entry = &gpt_table.entries[part_idx];
 
                         // Get partition type
@@ -851,15 +852,28 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                             "Unknown"
                         };
 
-                        let _ = writeln!(
-                            writer,
-                            "[BLK]   {}: LBA {}-{} ({} blocks) - {}",
-                            part_name,
-                            entry.first_lba,
-                            entry.last_lba,
-                            entry.size_blocks(),
-                            type_str
-                        );
+                        if label.is_empty() {
+                            let _ = writeln!(
+                                writer,
+                                "[BLK]   {}: LBA {}-{} ({} blocks) - {}",
+                                part_name,
+                                entry.first_lba,
+                                entry.last_lba,
+                                entry.size_blocks(),
+                                type_str
+                            );
+                        } else {
+                            let _ = writeln!(
+                                writer,
+                                "[BLK]   {}: LBA {}-{} ({} blocks) - {}, label=\"{}\"",
+                                part_name,
+                                entry.first_lba,
+                                entry.last_lba,
+                                entry.size_blocks(),
+                                type_str,
+                                label
+                            );
+                        }
 
                         // Wrap partition in Arc for filesystem detection
                         let partition_arc: Arc<dyn BlockDevice> = Arc::new(partition);

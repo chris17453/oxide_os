@@ -1032,7 +1032,7 @@ pub fn sys_mount(
     target_ptr: u64,
     target_len: usize,
     fstype_ptr: u64,
-    fstype_len: usize,
+    fstype_len_and_flags: u64,
 ) -> i64 {
     use crate::SYSCALL_CONTEXT;
     use crate::errno;
@@ -1066,6 +1066,9 @@ pub fn sys_mount(
     };
 
     // Copy filesystem type
+    let fstype_len = (fstype_len_and_flags & 0xFFFF_FFFF) as usize;
+    let flags = (fstype_len_and_flags >> 32) as u32;
+
     let fstype = match copy_path_from_user(fstype_ptr, fstype_len) {
         Some(f) => f,
         None => {
@@ -1081,7 +1084,7 @@ pub fn sys_mount(
     let result = unsafe {
         let ctx = addr_of!(SYSCALL_CONTEXT);
         if let Some(mount_fn) = (*ctx).mount {
-            mount_fn(source, &mount_point, fstype, 0)
+            mount_fn(source, &mount_point, fstype, flags)
         } else {
             errno::ENOSYS
         }

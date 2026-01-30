@@ -5,6 +5,8 @@
 use crate::MAX_CPUS;
 use crate::percpu;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use arch_traits::Arch;
+use arch_x86_64 as arch;
 
 /// CPU identifier type
 pub type CpuId = u32;
@@ -92,8 +94,7 @@ pub fn cpus_online() -> u32 {
 /// On x86_64, this reads from the GS segment or APIC ID.
 /// For now, returns 0 (single CPU assumption until AP boot).
 pub fn current_cpu() -> CpuId {
-    // TODO: Read from per-CPU data via GS segment
-    0
+    arch::cpu_id().unwrap_or(0)
 }
 
 /// Mark a CPU as online

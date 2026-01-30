@@ -1055,9 +1055,10 @@ fn show_usage() {
 /// Main entry point
 #[unsafe(no_mangle)]
 fn main(argc: i32, argv: *const *const u8) -> i32 {
+    // If invoked without arguments (e.g., PID 1 spawning daemon), default to daemon mode
     if argc < 2 {
-        show_usage();
-        return 1;
+        run_daemon();
+        return 0;
     }
 
     let cmd = cstr_to_str(unsafe { *argv.add(1) });

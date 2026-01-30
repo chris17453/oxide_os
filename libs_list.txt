@@ -1,0 +1,5 @@
+library containing login_tty
+library containing opendir
+library containing sem_init
+library containing shm_open
+library containing yp_match

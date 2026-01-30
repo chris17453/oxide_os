@@ -582,7 +582,7 @@ pub fn dispatch(
             arg3,
             arg4 as usize,
             arg5,
-            arg6 as usize,
+            arg6,
         ),
         nr::UMOUNT => vfs::sys_umount(arg1, arg2 as usize, arg3 as u32),
 

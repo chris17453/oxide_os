@@ -1216,6 +1216,8 @@ pub mod umount_flags {
 /// # Returns
 /// 0 on success, negative errno on error
 pub fn mount(source: &str, target: &str, fstype: &str, flags: u32, _data: *const u8) -> i32 {
+    // Pack flags into upper 32 bits of the final argument (fstype_len | flags<<32)
+    let fstype_len_and_flags = (fstype.len() as u64) | ((flags as u64) << 32);
     syscall6(
         nr::MOUNT,
         source.as_ptr() as usize,
@@ -1223,7 +1225,7 @@ pub fn mount(source: &str, target: &str, fstype: &str, flags: u32, _data: *const
         target.as_ptr() as usize,
         target.len(),
         fstype.as_ptr() as usize,
-        fstype.len(),
+        fstype_len_and_flags as usize,
     ) as i32
 }
 

@@ -992,17 +992,6 @@ pub fn kernel_exec(
                 ctx.rdx
             );
 
-            // TEMP DEBUG: Print exec state before jumping
-            {
-                use core::fmt::Write;
-                let mut writer = serial::SerialWriter;
-                let _ = writeln!(writer, "[EXEC_DEBUG] About to jump to Python");
-                let _ = writeln!(writer, "[EXEC_DEBUG] RIP={:#x} RSP={:#x}", ctx.rip, ctx.rsp);
-                let _ = writeln!(writer, "[EXEC_DEBUG] FS_BASE={:#x}", ctx.fs_base);
-                let _ = writeln!(writer, "[EXEC_DEBUG] argc={} argv={:#x} envp={:#x}",
-                    ctx.rdi, ctx.rsi, ctx.rdx);
-            }
-
             // Switch to new address space and jump to entry point
             unsafe {
                 write_cr3(new_pml4);
