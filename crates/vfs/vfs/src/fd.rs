@@ -34,6 +34,10 @@ impl FileDescriptor {
     }
 }
 
+// DEBUG: Global variables to track alloc behavior
+static LAST_ALLOC_ENTRIES_LEN: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+static LAST_ALLOC_RESULT: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(-1);
+
 /// File descriptor table
 pub struct FdTable {
     /// The file descriptors (index = fd number)
@@ -71,10 +75,15 @@ impl FdTable {
     pub fn alloc_at_least(&mut self, min_fd: Fd, file: Arc<File>) -> VfsResult<Fd> {
         let min_fd = min_fd.max(0) as usize;
 
+        // DEBUG: Store diagnostic info in global variables
+        LAST_ALLOC_ENTRIES_LEN.store(self.entries.len() as u32, core::sync::atomic::Ordering::SeqCst);
+
         // Find first free slot >= min_fd
-        for (i, entry) in self.entries.iter().enumerate().skip(min_fd) {
-            if entry.is_none() {
+        // Original iterator-based approach
+        for (i, entry) in self.entries.iter().enumerate() {
+            if i >= min_fd && entry.is_none() {
                 self.entries[i] = Some(FileDescriptor::new(file));
+                LAST_ALLOC_RESULT.store(i as i32, core::sync::atomic::Ordering::SeqCst);
                 return Ok(i as Fd);
             }
         }
@@ -88,6 +97,7 @@ impl FdTable {
         // Extend to new_fd + 1
         self.entries.resize(new_fd + 1, None);
         self.entries[new_fd] = Some(FileDescriptor::new(file));
+        LAST_ALLOC_RESULT.store(new_fd as i32, core::sync::atomic::Ordering::SeqCst);
         Ok(new_fd as Fd)
     }
 
@@ -197,6 +207,30 @@ impl FdTable {
     /// Get the number of entries in the table (for debugging)
     pub fn entries_len(&self) -> usize {
         self.entries.len()
+    }
+
+    /// Check entries as a bitmask (for debugging - up to 8 entries)
+    pub fn entries_filled_mask(&self) -> u8 {
+        let mut mask = 0u8;
+        for (i, entry) in self.entries.iter().enumerate() {
+            if i >= 8 {
+                break;
+            }
+            if entry.is_some() {
+                mask |= 1 << i;
+            }
+        }
+        mask
+    }
+
+    /// Get last alloc_at_least entries length (for debugging)
+    pub fn last_alloc_entries_len() -> u32 {
+        LAST_ALLOC_ENTRIES_LEN.load(core::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Get last alloc_at_least result (for debugging)
+    pub fn last_alloc_result() -> i32 {
+        LAST_ALLOC_RESULT.load(core::sync::atomic::Ordering::SeqCst)
     }
 }
 

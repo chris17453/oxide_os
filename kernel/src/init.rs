@@ -1659,18 +1659,12 @@ fn syscall_dispatch(
     if number == 20 && FIRST_OPEN.swap(false, core::sync::atomic::Ordering::SeqCst) {
         use core::fmt::Write;
         let mut writer = serial::SerialWriter;
-        let pid = sched::current_pid();
         if let Some(meta) = sched::get_current_meta() {
             let locked_meta = meta.lock();
             let entries_len = locked_meta.fd_table.entries_len();
-            let fd0_ok = locked_meta.fd_table.get(0).is_ok();
-            let fd1_ok = locked_meta.fd_table.get(1).is_ok();
-            let fd2_ok = locked_meta.fd_table.get(2).is_ok();
-            let cwd = locked_meta.cwd.as_str();
-            let _ = writeln!(writer, "[OPEN_DBG] FIRST OPEN: pid={:?} cwd={} fds=[0:{}, 1:{}, 2:{}] entries_len={}",
-                pid, cwd, fd0_ok, fd1_ok, fd2_ok, entries_len);
-        } else {
-            let _ = writeln!(writer, "[OPEN_DBG] pid={:?} no meta!", pid);
+            let mask = locked_meta.fd_table.entries_filled_mask();
+            let _ = writeln!(writer, "[OPEN_DBG] FIRST OPEN: entries_len={} mask={:08b}",
+                entries_len, mask);
         }
     }
 
@@ -1681,6 +1675,24 @@ fn syscall_dispatch(
     }
 
     let result = syscall::dispatch(number, arg1, arg2, arg3, arg4, arg5, arg6);
+
+    // DEBUG: After open, check if fd_table changed
+    static FIRST_OPEN_AFTER: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+    if number == 20 && FIRST_OPEN_AFTER.swap(false, core::sync::atomic::Ordering::SeqCst) {
+        use core::fmt::Write;
+        let mut writer = serial::SerialWriter;
+        if let Some(meta) = sched::get_current_meta() {
+            let locked_meta = meta.lock();
+            let entries_len = locked_meta.fd_table.entries_len();
+            let mask = locked_meta.fd_table.entries_filled_mask();
+            let fd_table_addr = &locked_meta.fd_table as *const _ as u64;
+            let meta_ptr = &*meta as *const _ as u64;
+            let alloc_entries_len = vfs::FdTable::last_alloc_entries_len();
+            let alloc_result = vfs::FdTable::last_alloc_result();
+            let _ = writeln!(writer, "[OPEN_AFTER] returned fd={} meta_ptr={:#x} current_entries_len={} alloc_entries_len={} alloc_result={}",
+                result, meta_ptr, entries_len, alloc_entries_len, alloc_result);
+        }
+    }
 
     // TEMP DEBUG: Log syscall results
     {
