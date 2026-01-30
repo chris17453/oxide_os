@@ -332,10 +332,10 @@ impl VnodeOps for ConsoleDevice {
             return Ok(0);
         }
 
-        // Block with timeout: wait for input indefinitely for now
-        // TODO: Implement proper TTY with canonical mode, line buffering, etc.
+        // Block with timeout: wait for input, but give up after a certain number of
+        // hlt cycles to allow non-interactive boot to proceed
         let mut hlt_count = 0;
-        const MAX_HLT_CYCLES: u32 = u32::MAX;  // Effectively no timeout - wait indefinitely for input
+        const MAX_HLT_CYCLES: u32 = 100000;  // Reasonable timeout for user input
 
         loop {
             // Check for EOF (Ctrl+D on empty buffer)
