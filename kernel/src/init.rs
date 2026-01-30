@@ -481,6 +481,13 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     arch::init_ps2_keyboard();
     let _ = writeln!(writer, "[INFO] PS/2 keyboard initialized");
 
+    // Connect PS/2 keyboard input to console
+    // Safety: Called during single-threaded initialization
+    unsafe {
+        ps2::set_console_callback(devfs::console_input_callback);
+    }
+    let _ = writeln!(writer, "[INFO] PS/2 console callback registered");
+
     // Initialize and register preemptive scheduler
     scheduler::init();
     let _ = writeln!(writer, "[INFO] Scheduler initialized");
