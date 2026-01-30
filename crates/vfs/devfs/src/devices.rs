@@ -353,42 +353,24 @@ impl VnodeOps for ConsoleDevice {
             }
         }
 
-        // Blocking read - wait for input from keyboard buffer
-        loop {
-            if let Some(ch) = console_pop_char() {
-                buf[0] = ch;
-                // Got first byte; now drain whatever else is available
-                let mut count = 1;
-                while count < buf.len() {
-                    if let Some(ch) = console_pop_char() {
-                        buf[count] = ch;
-                        count += 1;
-                    } else {
-                        break;
-                    }
+        // Simple non-blocking read for now
+        // TODO: Implement proper blocking without HLT
+        if let Some(ch) = console_pop_char() {
+            buf[0] = ch;
+            let mut count = 1;
+            while count < buf.len() {
+                if let Some(ch) = console_pop_char() {
+                    buf[count] = ch;
+                    count += 1;
+                } else {
+                    break;
                 }
-                return Ok(count);
             }
-
-            // No input available - block this task (like nanosleep does)
-            // Register our PID so console_push_char() can wake us up
-            if let Some(pid) = sched::current_pid() {
-                *CONSOLE_BLOCKED_READER.lock() = pid;
-            }
-
-            // Block ourselves - marks task as TASK_INTERRUPTIBLE (not runnable)
-            // This removes us from the run queue
-            sched::block_current(sched::TaskState::TASK_INTERRUPTIBLE);
-
-            // Request reschedule - timer interrupt will context switch to:
-            // - Another runnable task, OR
-            // - Idle task (PID 0) which uses HLT
-            sched::set_need_resched();
-
-            // Loop back - we'll be context switched away by timer interrupt
-            // When input arrives, console_push_char() wakes us (makes us RUNNABLE)
-            // Timer eventually schedules us again, we resume here and try to read
+            return Ok(count);
         }
+
+        // No data - return error indicating would block
+        Err(VfsError::WouldBlock)
     }
 
     fn write(&self, _offset: u64, buf: &[u8]) -> VfsResult<usize> {

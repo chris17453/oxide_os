@@ -713,7 +713,32 @@ fn sys_read(fd: i32, buf: u64, count: usize) -> i64 {
         return errno::EFAULT;
     }
 
-    // All file descriptors (including stdin) go through VFS
+    // Special case: stdin (fd 0) uses kernel's console_read which handles blocking
+    // The VFS layer can't properly implement blocking I/O without HLT
+    if fd == 0 {
+        unsafe {
+            // Enable access to user memory
+            core::arch::asm!("stac", options(nomem, nostack));
+        }
+
+        let user_buf = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, count) };
+        let n = unsafe {
+            addr_of!(SYSCALL_CONTEXT)
+                .as_ref()
+                .and_then(|ctx| ctx.console_read)
+                .map(|f| f(user_buf))
+                .unwrap_or(0)
+        };
+
+        unsafe {
+            // Disable access to user memory
+            core::arch::asm!("clac", options(nomem, nostack));
+        }
+
+        return n as i64;
+    }
+
+    // All other file descriptors go through VFS
     vfs::sys_read_vfs(fd, buf, count)
 }
 
