@@ -14,6 +14,13 @@ use crate::{current_pid, with_current_meta, with_current_meta_mut};
 /// Maximum path length for syscalls
 const MAX_PATH: usize = 4096;
 
+// DEBUG: Module-level statics for tracking fd allocation
+static DEBUG_PRE_ADDR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static DEBUG_ALLOC_ADDR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static DEBUG_PRE_EXECUTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static DEBUG_PRE_LEN: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0xdeadbeef);
+static DEBUG_ALLOC_EXECUTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// Resolve a path against the current process's working directory
 ///
 /// If path is absolute (starts with /), normalizes and returns it.
@@ -204,8 +211,32 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
     // Create file handle
     let file = Arc::new(File::new(vnode, flags));
 
+    // DEBUG: Check fd_table state right before alloc
+    static FIRST_OPEN_PRE_ALLOC: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+    if FIRST_OPEN_PRE_ALLOC.swap(false, core::sync::atomic::Ordering::SeqCst) {
+        let _result = with_current_meta(|meta| {
+            let len = meta.fd_table.entries_len();
+            let mask = meta.fd_table.entries_filled_mask();
+            let addr = &meta.fd_table as *const _ as u64;
+            DEBUG_PRE_EXECUTED.store(true, core::sync::atomic::Ordering::SeqCst);
+            DEBUG_PRE_LEN.store(len as u32, core::sync::atomic::Ordering::SeqCst);
+            DEBUG_PRE_ADDR.store(addr, core::sync::atomic::Ordering::SeqCst);
+            vfs::FdTable::set_pre_alloc_state(len as u32, mask, addr);
+        });
+    }
+
     // Allocate fd using unified model
-    let result = match with_current_meta_mut(|meta| meta.fd_table.alloc(file)) {
+    let result = match with_current_meta_mut(|meta| {
+        // DEBUG: Store fd_table addr during alloc
+        static FIRST_ALLOC_SET_ADDR: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+        if FIRST_ALLOC_SET_ADDR.swap(false, core::sync::atomic::Ordering::SeqCst) {
+            let addr = &meta.fd_table as *const _ as u64;
+            DEBUG_ALLOC_EXECUTED.store(true, core::sync::atomic::Ordering::SeqCst);
+            DEBUG_ALLOC_ADDR.store(addr, core::sync::atomic::Ordering::SeqCst);
+            vfs::FdTable::set_alloc_fdtable_addr(addr);
+        }
+        meta.fd_table.alloc(file)
+    }) {
         Some(Ok(fd)) => fd as i64,
         Some(Err(e)) => vfs_error_to_errno(e),
         None => errno::ESRCH,
@@ -1061,4 +1092,29 @@ pub fn sys_umount(target_ptr: u64, target_len: usize, flags: u32) -> i64 {
     }
 
     errno::ENOSYS
+}
+
+/// Get the DEBUG_PRE_ADDR value (for debugging fd allocation)
+pub fn get_debug_pre_addr() -> u64 {
+    DEBUG_PRE_ADDR.load(core::sync::atomic::Ordering::SeqCst)
+}
+
+/// Get the DEBUG_ALLOC_ADDR value (for debugging fd allocation)
+pub fn get_debug_alloc_addr() -> u64 {
+    DEBUG_ALLOC_ADDR.load(core::sync::atomic::Ordering::SeqCst)
+}
+
+/// Get whether pre_alloc closure executed
+pub fn debug_pre_executed() -> bool {
+    DEBUG_PRE_EXECUTED.load(core::sync::atomic::Ordering::SeqCst)
+}
+
+/// Get the len value from pre_alloc closure
+pub fn debug_pre_len() -> u32 {
+    DEBUG_PRE_LEN.load(core::sync::atomic::Ordering::SeqCst)
+}
+
+/// Get whether alloc closure executed
+pub fn debug_alloc_executed() -> bool {
+    DEBUG_ALLOC_EXECUTED.load(core::sync::atomic::Ordering::SeqCst)
 }
