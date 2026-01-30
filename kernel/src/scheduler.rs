@@ -46,6 +46,24 @@ pub struct InterruptFrame {
     pub ss: u64,
 }
 
+/// Idle loop - runs when no other tasks are runnable
+///
+/// This function uses HLT to sleep the CPU until an interrupt arrives,
+/// preventing 100% CPU usage when the system is idle.
+extern "C" fn idle_loop() -> ! {
+    loop {
+        // Enable interrupts and halt atomically
+        // The CPU will wake up on the next interrupt (timer, keyboard, etc.)
+        unsafe {
+            core::arch::asm!(
+                "sti",  // Enable interrupts
+                "hlt",  // Halt until interrupt
+                options(nomem, nostack)
+            );
+        }
+    }
+}
+
 /// Initialize the scheduler for the current CPU
 ///
 /// Should be called early during kernel initialization.
@@ -61,13 +79,21 @@ pub fn init() {
     let idle_meta = Arc::new(Mutex::new(meta));
 
     // Create idle task with ProcessMeta
-    let idle_task = Task::new_idle_with_meta(
+    let mut idle_task = Task::new_idle_with_meta(
         0,                         // PID 0 is the idle task
         0,                         // CPU 0
         PhysAddr::new(0),          // No separate kernel stack needed
         0,                         // Stack size (idle uses BSP stack)
         idle_meta,
     );
+
+    // Set the idle task's RIP to the idle_loop function
+    let mut ctx = idle_task.context;
+    ctx.rip = idle_loop as *const () as u64;
+    ctx.rflags = 0x202;  // IF (interrupts enabled) + reserved bit 1
+    ctx.cs = 0x08;       // Kernel code segment
+    ctx.ss = 0x10;       // Kernel data segment
+    idle_task.context = ctx;
 
     // Add the idle task to the scheduler
     sched::add_task(idle_task);

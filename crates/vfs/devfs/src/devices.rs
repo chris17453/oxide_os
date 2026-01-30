@@ -341,7 +341,7 @@ impl VnodeOps for ConsoleDevice {
             }
         }
 
-        // Blocking read - yield until input is available from keyboard buffer
+        // Blocking read - wait for input from keyboard buffer
         loop {
             if let Some(ch) = console_pop_char() {
                 buf[0] = ch;
@@ -358,7 +358,7 @@ impl VnodeOps for ConsoleDevice {
                 return Ok(count);
             }
 
-            // No input available - yield to other processes and try again
+            // No input available - yield to other processes
             sched::yield_current();
         }
     }

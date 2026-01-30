@@ -43,14 +43,6 @@ Purpose: turn every failed probe from `plan.md` into actionable work items with 
 - Bring in crypto/UUID bits (`crypt or crypt_r`, `libb2`, `uuid >= 2.20`) plus ensure OpenSSL (`whether compiling and linking against OpenSSL works`, `whether OpenSSL provides required hashlib module APIs`, `whether OpenSSL provides required ssl module APIs`) passes by integrating `external/openssl` with libc and userspace trust stores.
 - Dynamic loader/libdl work: teach `userspace/ld` + `userspace/libdl` about `_dyld_shared_cache_contains_path`, `dlopen`, `dlopen in -ldl`, `dyld`, `shl_load in -ldld` and refresh TLS/PLT handling in conjunction with `ffi_closure_alloc`, `ffi_prep_cif_var`, `ffi_prep_closure_loc` from `external/libffi`.
 
-### Python-specific runtime needs (`external/cpython`, `external/cpython-Setup.local`, `userspace/ncurses`, `userspace/libedit`)
-- Cover the CPython configure blockers `curses module flags`, `ensurepip`, `how to link readline`, `panel flags`, `readline` along with the runtime Curses APIs `curses function filter`, `curses function has_key`, `curses function immedok`, `curses function is_pad`, `curses function is_term_resized`, `curses function resize_term`, `curses function resizeterm`, `curses function syncok`, `curses function typeahead`, `curses function use_env`, `curses function wchgat`.
-- Unblock stdlib extensions by ensuring `external/cpython/Modules/Setup.local` can build `_crypt`, `_ctypes_test`, `_curses`, `_curses_panel`, `_dbm`, `_gdbm`, `_hashlib`, `_multiprocessing`, `_posixshmem`, `_scproxy`, `_socket`, `_sqlite3`, `_ssl`, `_testimportmultiple`, `_testmultiphase`, `_tkinter`, `_uuid`, `nis`, `ossaudiodev`, `readline`, `resource`, `spwd`, `xxlimited`, `xxlimited_35` (which requires the header/lib work tracked elsewhere).
-
-### External networking/storage libraries (`external/libnsl`, `external/libintl`, `external/libgdbm`, `external/sqlite`, `external/openssl`)
-- Package or stub the libraries configure looked for: `libnsl`, `t_open in -lnsl`, `socket in -lsocket`, `sockaddr_alg`, `CAN_RAW_FD_FRAMES`, `CAN_RAW_JOIN_FILTERS`, `sqlite3.h`, `gdbm.h`, `ndbm.h`, `gdbm-ndbm.h`, `gdbm/ndbm.h`, `sqlite3.h` plus the `library containing sem_init`, `library containing shm_open`, `library containing yp_match`.
-- Hook OpenSSL/crypto pieces into the OS trust store so `_ssl` and `_hashlib` modules can link against the OS-provided backend rather than stubs.
-
 ### Testing and diagnostics (`userspace/syscall-tests`, `tools/ci`, `external/cpython/Lib/test`)
 - Add regression tests for the previously failing probes `broken mbstowcs`, `broken nice()`, `broken poll()`, `broken unsetenv` and expand timer/clock/fenv tests to cover the new libc/kernel features.
 - Extend syscall/integration suites so each kernel function listed earlier has a libc test (userspace/syscall-tests + Python test suite) before shipping.
