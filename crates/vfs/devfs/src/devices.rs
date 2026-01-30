@@ -21,6 +21,9 @@ static KEYBOARD_BUFFER: Mutex<VecDeque<u8>> = Mutex::new(VecDeque::new());
 /// EOF pending flag (set by Ctrl+D)
 static CONSOLE_EOF_PENDING: Mutex<bool> = Mutex::new(false);
 
+/// PID of task blocked waiting for console input (0 = none)
+static CONSOLE_BLOCKED_READER: Mutex<u32> = Mutex::new(0);
+
 /// Callback type for sending signals to the foreground process group
 pub type SignalFgFn = fn(i32);
 
@@ -47,6 +50,8 @@ pub const SIGQUIT: i32 = 3;
 /// - Ctrl+C (0x03): sends SIGINT to foreground process group
 /// - Ctrl+D (0x04): sets EOF flag for next read
 /// - Ctrl+\ (0x1C): sends SIGQUIT to foreground process group
+///
+/// If a task is blocked waiting for input, it will be woken up.
 pub fn console_push_char(ch: u8) {
     match ch {
         0x03 => {
@@ -88,6 +93,13 @@ pub fn console_push_char(ch: u8) {
             }
             buffer.push_back(ch);
         }
+    }
+
+    // Wake up any task blocked waiting for console input
+    let blocked_pid = *CONSOLE_BLOCKED_READER.lock();
+    if blocked_pid != 0 {
+        sched::wake_up(blocked_pid);
+        *CONSOLE_BLOCKED_READER.lock() = 0;
     }
 }
 
@@ -358,8 +370,17 @@ impl VnodeOps for ConsoleDevice {
                 return Ok(count);
             }
 
-            // No input available - yield to other processes
-            sched::yield_current();
+            // No input available - block this task until input arrives
+            // Register our PID so console_push_char() can wake us up
+            if let Some(pid) = sched::current_pid() {
+                *CONSOLE_BLOCKED_READER.lock() = pid;
+            }
+
+            // Block this task (marks it as INTERRUPTIBLE = not runnable)
+            // The scheduler will then run other tasks, or the idle task which uses HLT
+            sched::block_current(sched::TaskState::TASK_INTERRUPTIBLE);
+
+            // When we wake up, check if input arrived while we were asleep
         }
     }
 
