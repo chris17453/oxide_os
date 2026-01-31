@@ -285,6 +285,13 @@ pub mod nr {
     pub const UMASK: u64 = 295;
     pub const SOCKETPAIR: u64 = 296;
     pub const MEMFD_CREATE: u64 = 297;
+    pub const CLOCK_NANOSLEEP: u64 = 298;
+    pub const SIGALTSTACK: u64 = 299;
+    pub const PREADV: u64 = 300;
+    pub const PWRITEV: u64 = 301;
+    pub const FCHDIR: u64 = 302;
+    pub const SPLICE: u64 = 304;
+    pub const SETHOSTNAME: u64 = 305;
 
     /// AT_FDCWD: use current working directory for *at syscalls
     pub const AT_FDCWD: i32 = -100;
@@ -711,6 +718,14 @@ pub fn dispatch(
         nr::UMASK => sys_umask(arg1 as u32),
         nr::SOCKETPAIR => socket::sys_socketpair(arg1 as i32, arg2 as i32, arg3 as i32, arg4),
         nr::MEMFD_CREATE => errno::ENOSYS, // Not yet implemented
+        nr::CLOCK_NANOSLEEP => time::sys_clock_nanosleep(arg1 as i32, arg2 as i32, arg3 as usize, arg4 as usize),
+        nr::SIGALTSTACK => signal::sys_sigaltstack(arg1, arg2),
+        nr::PREADV => vfs_ext::sys_preadv(arg1 as i32, arg2, arg3 as i32, arg4 as i64),
+        nr::PWRITEV => vfs_ext::sys_pwritev(arg1 as i32, arg2, arg3 as i32, arg4 as i64),
+        nr::FCHDIR => sys_fchdir(arg1 as i32),
+        nr::WAITID => sys_waitid(arg1 as i32, arg2 as i32, arg3, arg4 as i32),
+        nr::SPLICE => errno::ENOSYS, // TODO: implement splice
+        nr::SETHOSTNAME => sys_sethostname(arg1, arg2 as usize),
 
         _ => errno::ENOSYS,
     }
@@ -2698,3 +2713,136 @@ fn sys_getrandom(buf: u64, buflen: usize, flags: u32) -> i64 {
 
     len as i64
 }
+
+// ============================================================================
+// fchdir - Change directory by file descriptor
+// ============================================================================
+
+fn sys_fchdir(fd: i32) -> i64 {
+    // Verify the fd exists and refers to a valid file
+    let exists = with_current_meta(|meta| {
+        meta.fd_table.get(fd).is_ok()
+    }).unwrap_or(false);
+
+    if !exists {
+        return errno::EBADF;
+    }
+
+    // Our VFS File struct doesn't track the path it was opened with.
+    // As a workaround, try to read directory entries from the fd to verify
+    // it's a directory, then return ENOSYS since we can't determine the path.
+    // Full implementation would require tracking open paths in FileDescriptor.
+    errno::ENOSYS
+}
+
+// ============================================================================
+// waitid - Wait for child process state change
+// ============================================================================
+
+/// siginfo_t-like structure for waitid
+#[repr(C)]
+struct SigInfo {
+    si_signo: i32,
+    si_errno: i32,
+    si_code: i32,
+    si_pid: i32,
+    si_uid: u32,
+    si_status: i32,
+    _pad: [u8; 104], // Padding to match Linux siginfo_t size
+}
+
+fn sys_waitid(idtype: i32, id: i32, infop: u64, options: i32) -> i64 {
+    // Map waitid parameters to waitpid parameters
+    // idtype: 0=P_ALL, 1=P_PID, 2=P_PGID
+    let wait_pid = match idtype {
+        0 => -1i32,       // P_ALL: wait for any child
+        1 => id,          // P_PID: wait for specific pid
+        2 => -(id),       // P_PGID: wait for any in process group
+        _ => return errno::EINVAL,
+    };
+
+    // Convert options
+    let mut wait_options = 0i32;
+    if options & 1 != 0 { wait_options |= 1; } // WEXITED -> (default)
+    if options & 2 != 0 { wait_options |= 2; } // WSTOPPED -> WUNTRACED
+    if options & 4 != 0 { wait_options |= 1; } // WNOHANG
+
+    // Use the existing wait callback
+    use core::ptr::addr_of;
+    let result = unsafe {
+        let ctx = addr_of!(SYSCALL_CONTEXT);
+        if let Some(wait_fn) = (*ctx).wait {
+            wait_fn(wait_pid, wait_options)
+        } else {
+            return errno::ENOSYS;
+        }
+    };
+
+    if result < 0 {
+        return result;
+    }
+
+    // Fill in siginfo structure if pointer is valid
+    if infop != 0 && infop < 0x0000_8000_0000_0000 {
+        let child_pid = (result >> 32) as i32;
+        let status = result as i32;
+
+        let info = SigInfo {
+            si_signo: 17, // SIGCHLD
+            si_errno: 0,
+            si_code: if status & 0x7f == 0 { 1 } else { 2 }, // CLD_EXITED or CLD_KILLED
+            si_pid: child_pid,
+            si_uid: 0,
+            si_status: if status & 0x7f == 0 { (status >> 8) & 0xff } else { status & 0x7f },
+            _pad: [0; 104],
+        };
+
+        let info_bytes = unsafe {
+            core::slice::from_raw_parts(&info as *const SigInfo as *const u8, core::mem::size_of::<SigInfo>())
+        };
+        unsafe { copy_to_user(infop, info_bytes); }
+    }
+
+    0
+}
+
+// ============================================================================
+// sethostname - Set system hostname
+// ============================================================================
+
+fn sys_sethostname(name_ptr: u64, name_len: usize) -> i64 {
+    // Only root can set hostname
+    let is_root = with_current_meta(|meta| meta.credentials.euid == 0).unwrap_or(false);
+    if !is_root {
+        return errno::EPERM;
+    }
+
+    if name_len > 64 || name_ptr == 0 || name_ptr >= 0x0000_8000_0000_0000 {
+        return errno::EINVAL;
+    }
+
+    // Read hostname from userspace
+    let mut buf = [0u8; 64];
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+        let src = name_ptr as *const u8;
+        core::ptr::copy_nonoverlapping(src, buf.as_mut_ptr(), name_len);
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
+
+    // Store it (in the global hostname - for uname to pick up)
+    // The hostname is stored in the static HOSTNAME buffer
+    unsafe {
+        let hostname = &raw mut HOSTNAME;
+        let h = &mut *hostname;
+        h[..name_len].copy_from_slice(&buf[..name_len]);
+        h[name_len] = 0;
+        *(&raw mut HOSTNAME_LEN) = name_len;
+    }
+
+    0
+}
+
+/// Global hostname storage
+static mut HOSTNAME: [u8; 65] = [0; 65];
+static mut HOSTNAME_LEN: usize = 0;

@@ -114,6 +114,13 @@ pub mod nr {
 
     // Scheduler syscalls
     pub const SCHED_YIELD: u64 = 130;
+    pub const SCHED_SETSCHEDULER: u64 = 131;
+    pub const SCHED_GETSCHEDULER: u64 = 132;
+    pub const SCHED_SETPARAM: u64 = 133;
+    pub const SCHED_GETPARAM: u64 = 134;
+    pub const SCHED_SETAFFINITY: u64 = 135;
+    pub const SCHED_GETAFFINITY: u64 = 136;
+    pub const SCHED_RR_GET_INTERVAL: u64 = 137;
 
     // File permission syscalls
     pub const CHMOD: u64 = 150;
@@ -174,6 +181,7 @@ pub mod nr {
 
     // Process extensions
     pub const WAIT4: u64 = 274;
+    pub const WAITID: u64 = 275;
     pub const GETRUSAGE: u64 = 276;
     pub const GETGROUPS: u64 = 278;
     pub const SETGROUPS: u64 = 279;
@@ -197,6 +205,13 @@ pub mod nr {
     pub const UMASK: u64 = 295;
     pub const SOCKETPAIR: u64 = 296;
     pub const MEMFD_CREATE: u64 = 297;
+    pub const CLOCK_NANOSLEEP: u64 = 298;
+    pub const SIGALTSTACK: u64 = 299;
+    pub const PREADV: u64 = 300;
+    pub const PWRITEV: u64 = 301;
+    pub const FCHDIR: u64 = 302;
+    pub const SPLICE: u64 = 304;
+    pub const SETHOSTNAME: u64 = 305;
 
     /// AT_FDCWD: use current working directory for *at syscalls
     pub const AT_FDCWD: i32 = -100;
@@ -1566,4 +1581,143 @@ pub fn sys_prlimit(pid: i32, resource: i32, new_limit: *const Rlimit, old_limit:
 /// madvise - Advise kernel about memory usage patterns
 pub fn sys_madvise(addr: *mut u8, length: usize, advice: i32) -> i32 {
     syscall3(nr::MADVISE, addr as usize, length, advice as usize) as i32
+}
+
+/// clock_nanosleep - sleep with specified clock
+pub fn sys_clock_nanosleep(clock_id: i32, flags: i32, req: *const Timespec, rem: *mut Timespec) -> i32 {
+    syscall4(nr::CLOCK_NANOSLEEP, clock_id as usize, flags as usize, req as usize, rem as usize) as i32
+}
+
+/// sigaltstack - Set/get alternate signal stack
+pub fn sys_sigaltstack(ss: *const u8, old_ss: *mut u8) -> i32 {
+    syscall2(nr::SIGALTSTACK, ss as usize, old_ss as usize) as i32
+}
+
+/// preadv - Read from fd at offset into multiple buffers
+pub fn sys_preadv(fd: i32, iov: *const IoVec, iovcnt: i32, offset: i64) -> isize {
+    syscall4(nr::PREADV, fd as usize, iov as usize, iovcnt as usize, offset as usize) as isize
+}
+
+/// pwritev - Write to fd at offset from multiple buffers
+pub fn sys_pwritev(fd: i32, iov: *const IoVec, iovcnt: i32, offset: i64) -> isize {
+    syscall4(nr::PWRITEV, fd as usize, iov as usize, iovcnt as usize, offset as usize) as isize
+}
+
+/// fchdir - Change directory by file descriptor
+pub fn sys_fchdir(fd: i32) -> i32 {
+    syscall1(nr::FCHDIR, fd as usize) as i32
+}
+
+/// waitid - Wait for child process state change
+pub fn sys_waitid(idtype: i32, id: i32, infop: *mut u8, options: i32) -> i32 {
+    syscall4(nr::WAITID, idtype as usize, id as usize, infop as usize, options as usize) as i32
+}
+
+/// sethostname - Set system hostname
+pub fn sys_sethostname(name: *const u8, len: usize) -> i32 {
+    syscall2(nr::SETHOSTNAME, name as usize, len) as i32
+}
+
+/// setresuid - Set real, effective, and saved user IDs
+pub fn sys_setresuid(ruid: u32, euid: u32, suid: u32) -> i32 {
+    syscall3(nr::SETRESUID, ruid as usize, euid as usize, suid as usize) as i32
+}
+
+/// setresgid - Set real, effective, and saved group IDs
+pub fn sys_setresgid(rgid: u32, egid: u32, sgid: u32) -> i32 {
+    syscall3(nr::SETRESGID, rgid as usize, egid as usize, sgid as usize) as i32
+}
+
+/// setgroups - Set supplementary group IDs
+pub fn sys_setgroups(size: i32, list: *const u32) -> i32 {
+    syscall2(nr::SETGROUPS, size as usize, list as usize) as i32
+}
+
+/// truncate - Truncate file by path
+pub fn sys_truncate(path: *const u8, path_len: usize, length: i64) -> i32 {
+    syscall3(nr::TRUNCATE, path as usize, path_len, length as usize) as i32
+}
+
+/// sigprocmask - Examine and change blocked signals
+pub fn sys_sigprocmask(how: i32, set: *const u64, oldset: *mut u64) -> i32 {
+    syscall3(nr::SIGPROCMASK, how as usize, set as usize, oldset as usize) as i32
+}
+
+/// sigaction - Examine and change signal action
+pub fn sys_sigaction(sig: i32, act: *const u8, oldact: *mut u8) -> i32 {
+    syscall3(nr::SIGACTION, sig as usize, act as usize, oldact as usize) as i32
+}
+
+/// pause - Wait for a signal
+pub fn sys_pause() -> i32 {
+    syscall0(nr::PAUSE) as i32
+}
+
+/// Signal constants
+pub mod sig {
+    pub const SIGHUP: i32 = 1;
+    pub const SIGINT: i32 = 2;
+    pub const SIGQUIT: i32 = 3;
+    pub const SIGILL: i32 = 4;
+    pub const SIGTRAP: i32 = 5;
+    pub const SIGABRT: i32 = 6;
+    pub const SIGBUS: i32 = 7;
+    pub const SIGFPE: i32 = 8;
+    pub const SIGKILL: i32 = 9;
+    pub const SIGUSR1: i32 = 10;
+    pub const SIGSEGV: i32 = 11;
+    pub const SIGUSR2: i32 = 12;
+    pub const SIGPIPE: i32 = 13;
+    pub const SIGALRM: i32 = 14;
+    pub const SIGTERM: i32 = 15;
+    pub const SIGCHLD: i32 = 17;
+    pub const SIGCONT: i32 = 18;
+    pub const SIGSTOP: i32 = 19;
+    pub const SIGTSTP: i32 = 20;
+    pub const SIGTTIN: i32 = 21;
+    pub const SIGTTOU: i32 = 22;
+    pub const SIGURG: i32 = 23;
+    pub const SIGXCPU: i32 = 24;
+    pub const SIGXFSZ: i32 = 25;
+    pub const SIGVTALRM: i32 = 26;
+    pub const SIGPROF: i32 = 27;
+    pub const SIGWINCH: i32 = 28;
+    pub const SIGIO: i32 = 29;
+    pub const SIGPWR: i32 = 30;
+    pub const SIGSYS: i32 = 31;
+
+    /// SIG_DFL / SIG_IGN
+    pub const SIG_DFL: usize = 0;
+    pub const SIG_IGN: usize = 1;
+    pub const SIG_ERR: usize = usize::MAX;
+
+    /// sigprocmask how values
+    pub const SIG_BLOCK: i32 = 0;
+    pub const SIG_UNBLOCK: i32 = 1;
+    pub const SIG_SETMASK: i32 = 2;
+
+    /// sigaction flags
+    pub const SA_NOCLDSTOP: i32 = 1;
+    pub const SA_NOCLDWAIT: i32 = 2;
+    pub const SA_SIGINFO: i32 = 4;
+    pub const SA_ONSTACK: i32 = 0x08000000;
+    pub const SA_RESTART: i32 = 0x10000000;
+    pub const SA_NODEFER: i32 = 0x40000000;
+    pub const SA_RESETHAND: i32 = 0x80000000u32 as i32;
+}
+
+/// waitid idtype constants
+pub mod idtype {
+    pub const P_ALL: i32 = 0;
+    pub const P_PID: i32 = 1;
+    pub const P_PGID: i32 = 2;
+}
+
+/// waitid option flags
+pub mod wopt {
+    pub const WEXITED: i32 = 4;
+    pub const WSTOPPED: i32 = 2;
+    pub const WCONTINUED: i32 = 8;
+    pub const WNOHANG: i32 = 1;
+    pub const WNOWAIT: i32 = 0x01000000;
 }

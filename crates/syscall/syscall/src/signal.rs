@@ -262,6 +262,69 @@ pub fn sys_sigreturn() -> i64 {
     0
 }
 
+/// stack_t structure for sigaltstack
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct StackT {
+    ss_sp: u64,     // Base address of stack
+    ss_flags: i32,  // Flags (SS_DISABLE, SS_ONSTACK)
+    _pad: i32,
+    ss_size: usize, // Number of bytes in stack
+}
+
+/// sigaltstack flags
+const SS_ONSTACK: i32 = 1;
+const SS_DISABLE: i32 = 2;
+const MINSIGSTKSZ: usize = 2048;
+
+/// sys_sigaltstack - Set/get alternate signal stack
+///
+/// # Arguments
+/// * `ss_ptr` - New alternate stack (NULL to query only)
+/// * `old_ss_ptr` - Where to store current alternate stack (NULL to skip)
+pub fn sys_sigaltstack(ss_ptr: u64, old_ss_ptr: u64) -> i64 {
+    use crate::{errno, with_current_meta, with_current_meta_mut};
+
+    // Return the old stack if requested
+    if old_ss_ptr != 0 && old_ss_ptr < 0x0000_8000_0000_0000 {
+        // We don't track alt stack in ProcessMeta yet, return disabled
+        let old = StackT {
+            ss_sp: 0,
+            ss_flags: SS_DISABLE,
+            _pad: 0,
+            ss_size: 0,
+        };
+        unsafe {
+            core::arch::asm!("stac", options(nomem, nostack));
+            core::ptr::write_volatile(old_ss_ptr as *mut StackT, old);
+            core::arch::asm!("clac", options(nomem, nostack));
+        }
+    }
+
+    // Set the new stack if provided
+    if ss_ptr != 0 && ss_ptr < 0x0000_8000_0000_0000 {
+        let ss: StackT = unsafe {
+            core::arch::asm!("stac", options(nomem, nostack));
+            let val = core::ptr::read_volatile(ss_ptr as *const StackT);
+            core::arch::asm!("clac", options(nomem, nostack));
+            val
+        };
+
+        // Validate
+        if ss.ss_flags & !SS_DISABLE != 0 {
+            return errno::EINVAL;
+        }
+        if ss.ss_flags & SS_DISABLE == 0 && ss.ss_size < MINSIGSTKSZ {
+            return errno::ENOMEM;
+        }
+
+        // Accept the values (stored for future signal delivery support)
+        // Full implementation would save ss_sp/ss_size in ProcessMeta
+    }
+
+    0
+}
+
 /// Read a SigSet from user memory
 ///
 /// Returns None if the pointer is invalid or in kernel space

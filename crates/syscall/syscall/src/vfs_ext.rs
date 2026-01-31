@@ -585,3 +585,89 @@ pub fn sys_copy_file_range(
 
     total as i64
 }
+
+/// sys_preadv - Read from fd at offset into multiple buffers
+pub fn sys_preadv(fd: i32, iov_ptr: u64, iovcnt: i32, offset: i64) -> i64 {
+    if iovcnt <= 0 || iovcnt > 1024 {
+        return errno::EINVAL;
+    }
+    if iov_ptr == 0 || iov_ptr >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+    if offset < 0 {
+        return errno::EINVAL;
+    }
+
+    let mut total: i64 = 0;
+    let mut cur_offset = offset;
+
+    for i in 0..iovcnt as usize {
+        let iov: IoVec = unsafe {
+            core::arch::asm!("stac", options(nomem, nostack));
+            let ptr = (iov_ptr as *const IoVec).add(i);
+            let val = core::ptr::read_volatile(ptr);
+            core::arch::asm!("clac", options(nomem, nostack));
+            val
+        };
+
+        if iov.iov_len == 0 {
+            continue;
+        }
+
+        let result = sys_pread64(fd, iov.iov_base, iov.iov_len, cur_offset);
+        if result < 0 {
+            if total > 0 { return total; }
+            return result;
+        }
+        total += result;
+        cur_offset += result;
+        if (result as usize) < iov.iov_len {
+            break;
+        }
+    }
+
+    total
+}
+
+/// sys_pwritev - Write to fd at offset from multiple buffers
+pub fn sys_pwritev(fd: i32, iov_ptr: u64, iovcnt: i32, offset: i64) -> i64 {
+    if iovcnt <= 0 || iovcnt > 1024 {
+        return errno::EINVAL;
+    }
+    if iov_ptr == 0 || iov_ptr >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+    if offset < 0 {
+        return errno::EINVAL;
+    }
+
+    let mut total: i64 = 0;
+    let mut cur_offset = offset;
+
+    for i in 0..iovcnt as usize {
+        let iov: IoVec = unsafe {
+            core::arch::asm!("stac", options(nomem, nostack));
+            let ptr = (iov_ptr as *const IoVec).add(i);
+            let val = core::ptr::read_volatile(ptr);
+            core::arch::asm!("clac", options(nomem, nostack));
+            val
+        };
+
+        if iov.iov_len == 0 {
+            continue;
+        }
+
+        let result = sys_pwrite64(fd, iov.iov_base, iov.iov_len, cur_offset);
+        if result < 0 {
+            if total > 0 { return total; }
+            return result;
+        }
+        total += result;
+        cur_offset += result;
+        if (result as usize) < iov.iov_len {
+            break;
+        }
+    }
+
+    total
+}

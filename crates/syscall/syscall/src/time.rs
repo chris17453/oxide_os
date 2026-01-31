@@ -381,3 +381,88 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
 
     0
 }
+
+/// sys_clock_nanosleep - sleep with specified clock
+///
+/// # Arguments
+/// * `clock_id` - Clock to use (CLOCK_REALTIME, CLOCK_MONOTONIC, etc.)
+/// * `flags` - 0 = relative, 1 = TIMER_ABSTIME (absolute time)
+/// * `req_ptr` - Pointer to requested sleep time
+/// * `rem_ptr` - Pointer to store remaining time if interrupted
+pub fn sys_clock_nanosleep(clock_id: i32, flags: i32, req_ptr: usize, rem_ptr: usize) -> i64 {
+    // Validate clock ID
+    match clock_id {
+        clock::REALTIME | clock::MONOTONIC | clock::MONOTONIC_RAW
+        | clock::REALTIME_COARSE | clock::MONOTONIC_COARSE | clock::BOOTTIME => {}
+        _ => return errno::EINVAL,
+    }
+
+    const TIMER_ABSTIME: i32 = 1;
+
+    if flags & TIMER_ABSTIME != 0 {
+        // Absolute time: compute relative sleep from current time
+        if req_ptr == 0 {
+            return errno::EFAULT;
+        }
+
+        let req: Timespec = unsafe {
+            core::arch::asm!("stac", options(nomem, nostack));
+            let rp = req_ptr as *const Timespec;
+            let val = core::ptr::read_volatile(rp);
+            core::arch::asm!("clac", options(nomem, nostack));
+            val
+        };
+
+        // Get current time for this clock
+        let now = match clock_id {
+            clock::REALTIME | clock::REALTIME_COARSE => get_realtime(),
+            _ => get_monotonic_time(),
+        };
+
+        // If target time is already in the past, return immediately
+        if req.tv_sec < now.tv_sec || (req.tv_sec == now.tv_sec && req.tv_nsec <= now.tv_nsec) {
+            return 0;
+        }
+
+        // Compute relative duration
+        let mut rel_sec = req.tv_sec - now.tv_sec;
+        let mut rel_nsec = req.tv_nsec - now.tv_nsec;
+        if rel_nsec < 0 {
+            rel_sec -= 1;
+            rel_nsec += 1_000_000_000;
+        }
+
+        // Create a temporary relative timespec on the stack and call nanosleep
+        let rel_ts = Timespec {
+            tv_sec: rel_sec,
+            tv_nsec: rel_nsec,
+        };
+
+        // Write to a stack-local and pass its address
+        // (we can't easily pass a kernel pointer to the nanosleep path,
+        // so we'll duplicate the sleep logic inline)
+        let sleep_ns = (rel_ts.tv_sec as u64 * 1_000_000_000) + (rel_ts.tv_nsec as u64);
+        let sleep_ticks = (sleep_ns + NS_PER_TICK - 1) / NS_PER_TICK;
+        let wake_ticks = get_ticks() + sleep_ticks;
+        let current_pid = sched::current_pid().unwrap_or(0);
+        let queued = sleep_queue_add(current_pid, wake_ticks);
+
+        while get_ticks() < wake_ticks {
+            if queued {
+                sched::block_current(TaskState::TASK_INTERRUPTIBLE);
+                sched::set_need_resched();
+            }
+            arch::allow_kernel_preempt();
+            unsafe {
+                core::arch::asm!("sti");
+                core::arch::asm!("hlt", options(nomem, nostack));
+            }
+            arch::disallow_kernel_preempt();
+        }
+
+        0
+    } else {
+        // Relative time: just delegate to nanosleep
+        sys_nanosleep(req_ptr, rem_ptr)
+    }
+}
