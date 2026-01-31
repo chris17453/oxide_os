@@ -8,6 +8,11 @@ use spin::Mutex;
 
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
+use tty::termios::{
+    self as tty_termios, Termios, TCGETS, TCSETS, TCSETSF, TCSETSW, TIOCGPGRP, TIOCGWINSZ,
+    TIOCSPGRP, TIOCSWINSZ,
+};
+
 // ============================================================================
 // Console Keyboard Input Buffer
 // ============================================================================
@@ -23,6 +28,38 @@ static CONSOLE_EOF_PENDING: Mutex<bool> = Mutex::new(false);
 
 /// PID of task blocked waiting for console input (0 = none)
 static CONSOLE_BLOCKED_READER: Mutex<u32> = Mutex::new(0);
+
+/// Console termios settings (shared across all console file descriptors)
+///
+/// Initialized with standard Unix defaults (ICANON, ECHO, etc.).
+/// Programs can modify via tcsetattr()/TCSETS ioctl.
+static CONSOLE_TERMIOS: Mutex<Termios> = {
+    use tty_termios::*;
+    // Build default c_cc array at compile time
+    const fn default_cc() -> [u8; NCCS] {
+        let mut cc = [0u8; NCCS];
+        cc[VINTR] = 0x03;  // ^C
+        cc[VERASE] = 0x7F; // DEL
+        cc[VKILL] = 0x15;  // ^U
+        cc[VEOF] = 0x04;   // ^D
+        cc[VTIME] = 0;
+        cc[VMIN] = 1;
+        cc
+    }
+    Mutex::new(Termios {
+        c_iflag: InputFlags::from_bits_retain(0o0000400 | 0o0002000), // ICRNL | IXON
+        c_oflag: OutputFlags::from_bits_retain(0o0000001 | 0o0000004), // OPOST | ONLCR
+        c_cflag: ControlFlags::from_bits_retain(0o0000060 | 0o0000200 | 0o0002000), // CS8|CREAD|HUPCL
+        c_lflag: LocalFlags::from_bits_retain(
+            0o0000001 | 0o0000002 | 0o0000010 | 0o0000020 | 0o0000040
+            | 0o0001000 | 0o0004000 | 0o0100000
+        ), // ISIG|ICANON|ECHO|ECHOE|ECHOK|ECHOCTL|ECHOKE|IEXTEN
+        c_line: 0,
+        c_cc: default_cc(),
+        c_ispeed: B38400,
+        c_ospeed: B38400,
+    })
+};
 
 /// Callback type for sending signals to the foreground process group
 pub type SignalFgFn = fn(i32);
@@ -357,33 +394,39 @@ impl VnodeOps for ConsoleDevice {
             return Ok(0);
         }
 
-        // Check for EOF (Ctrl+D on empty buffer)
-        {
-            let mut eof_pending = CONSOLE_EOF_PENDING.lock();
-            if *eof_pending {
-                *eof_pending = false;
-                return Ok(0);
-            }
-        }
-
-        // Simple non-blocking read for now
-        // TODO: Implement proper blocking without HLT
-        if let Some(ch) = console_pop_char() {
-            buf[0] = ch;
-            let mut count = 1;
-            while count < buf.len() {
-                if let Some(ch) = console_pop_char() {
-                    buf[count] = ch;
-                    count += 1;
-                } else {
-                    break;
+        // Block until at least one character is available
+        loop {
+            // Check for EOF (Ctrl+D on empty buffer)
+            {
+                let mut eof_pending = CONSOLE_EOF_PENDING.lock();
+                if *eof_pending {
+                    *eof_pending = false;
+                    return Ok(0);
                 }
             }
-            return Ok(count);
-        }
 
-        // No data - return error indicating would block
-        Err(VfsError::WouldBlock)
+            // Try to read available data
+            if let Some(ch) = console_pop_char() {
+                buf[0] = ch;
+                let mut count = 1;
+                // Drain any additional buffered characters (non-blocking)
+                while count < buf.len() {
+                    if let Some(ch) = console_pop_char() {
+                        buf[count] = ch;
+                        count += 1;
+                    } else {
+                        break;
+                    }
+                }
+                return Ok(count);
+            }
+
+            // No data available — register as blocked reader and yield
+            if let Some(pid) = sched::current_pid() {
+                *CONSOLE_BLOCKED_READER.lock() = pid;
+            }
+            sched::yield_current();
+        }
     }
 
     fn write(&self, _offset: u64, buf: &[u8]) -> VfsResult<usize> {
@@ -438,6 +481,64 @@ impl VnodeOps for ConsoleDevice {
 
     fn truncate(&self, _size: u64) -> VfsResult<()> {
         Ok(())
+    }
+
+    fn ioctl(&self, request: u64, arg: u64) -> VfsResult<i64> {
+        match request {
+            TCGETS => {
+                // Get termios — copy current console termios to user pointer
+                let ptr = arg as *mut Termios;
+                if ptr.is_null() {
+                    return Err(VfsError::InvalidArgument);
+                }
+                let termios = *CONSOLE_TERMIOS.lock();
+                unsafe { *ptr = termios; }
+                Ok(0)
+            }
+            TCSETS | TCSETSW | TCSETSF => {
+                // Set termios — copy from user pointer to console termios
+                let ptr = arg as *const Termios;
+                if ptr.is_null() {
+                    return Err(VfsError::InvalidArgument);
+                }
+                let new_termios = unsafe { *ptr };
+                *CONSOLE_TERMIOS.lock() = new_termios;
+                Ok(0)
+            }
+            TIOCGWINSZ => {
+                // Get window size — return default 80x24
+                let ptr = arg as *mut tty::Winsize;
+                if ptr.is_null() {
+                    return Err(VfsError::InvalidArgument);
+                }
+                unsafe {
+                    (*ptr).ws_row = 24;
+                    (*ptr).ws_col = 80;
+                    (*ptr).ws_xpixel = 0;
+                    (*ptr).ws_ypixel = 0;
+                }
+                Ok(0)
+            }
+            TIOCSWINSZ => {
+                // Set window size — accept but ignore
+                Ok(0)
+            }
+            TIOCGPGRP => {
+                // Get foreground process group — return current PID as a stub
+                let ptr = arg as *mut i32;
+                if ptr.is_null() {
+                    return Err(VfsError::InvalidArgument);
+                }
+                let pid = sched::current_pid().unwrap_or(1);
+                unsafe { *ptr = pid as i32; }
+                Ok(0)
+            }
+            TIOCSPGRP => {
+                // Set foreground process group — accept but ignore
+                Ok(0)
+            }
+            _ => Err(VfsError::NotSupported),
+        }
     }
 }
 

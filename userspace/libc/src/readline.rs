@@ -228,7 +228,8 @@ fn enter_raw_mode() {
     use termios::*;
 
     let mut raw = Termios::default();
-    if tcgetattr(0, &mut raw) < 0 {
+    let ret = tcgetattr(0, &mut raw);
+    if ret < 0 {
         return;
     }
 

@@ -168,6 +168,7 @@ dependencies = [
  "sched",
  "spin 0.9.8",
  "terminal",
+ "tty",
  "vfs",
 ]
 

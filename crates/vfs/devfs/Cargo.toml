@@ -11,3 +11,4 @@ os_core = { workspace = true }
 spin = { workspace = true }
 terminal = { workspace = true }
 sched = { workspace = true }
+tty = { workspace = true }
