@@ -12,6 +12,7 @@ pub mod console;
 pub mod font;
 pub mod framebuffer;
 pub mod mode;
+pub mod mouse;
 pub mod perf;
 
 pub use color::{Color, PixelFormat};
@@ -258,4 +259,79 @@ pub fn get_mode_info(index: u32) -> Option<VideoModeInfo> {
         is_bgr,
         _pad: [0; 7],
     })
+}
+
+// ============================================================================
+// Mouse Cursor
+// ============================================================================
+
+use mouse::MouseCursor;
+
+/// Global mouse cursor instance
+static MOUSE_CURSOR: Mutex<Option<MouseCursor>> = Mutex::new(None);
+
+/// Initialize the mouse cursor (call after framebuffer is ready)
+pub fn mouse_init() {
+    let fb_guard = FRAMEBUFFER.lock();
+    if let Some(ref fb) = *fb_guard {
+        let cursor = MouseCursor::new(fb.width(), fb.height());
+        *MOUSE_CURSOR.lock() = Some(cursor);
+    }
+}
+
+/// Move the mouse cursor by a relative delta
+pub fn mouse_move(dx: i32, dy: i32) {
+    let fb_guard = FRAMEBUFFER.lock();
+    if let Some(ref fb) = *fb_guard {
+        if let Some(ref mut cursor) = *MOUSE_CURSOR.lock() {
+            cursor.move_by(dx, dy, &**fb);
+        }
+    }
+}
+
+/// Draw the mouse cursor (call after screen content changes)
+pub fn mouse_draw() {
+    let fb_guard = FRAMEBUFFER.lock();
+    if let Some(ref fb) = *fb_guard {
+        if let Some(ref mut cursor) = *MOUSE_CURSOR.lock() {
+            cursor.redraw(&**fb);
+        }
+    }
+}
+
+/// Erase the mouse cursor (call before screen content changes)
+pub fn mouse_erase() {
+    let fb_guard = FRAMEBUFFER.lock();
+    if let Some(ref fb) = *fb_guard {
+        if let Some(ref mut cursor) = *MOUSE_CURSOR.lock() {
+            cursor.erase(&**fb);
+        }
+    }
+}
+
+/// Hide the mouse cursor
+pub fn mouse_hide() {
+    let fb_guard = FRAMEBUFFER.lock();
+    if let Some(ref fb) = *fb_guard {
+        if let Some(ref mut cursor) = *MOUSE_CURSOR.lock() {
+            cursor.hide(&**fb);
+        }
+    }
+}
+
+/// Show the mouse cursor
+pub fn mouse_show() {
+    if let Some(ref mut cursor) = *MOUSE_CURSOR.lock() {
+        cursor.show();
+    }
+}
+
+/// Get the current mouse cursor position in pixels
+pub fn mouse_position() -> Option<(i32, i32)> {
+    MOUSE_CURSOR.lock().as_ref().map(|c| c.position())
+}
+
+/// Check if mouse cursor is initialized
+pub fn mouse_initialized() -> bool {
+    MOUSE_CURSOR.lock().is_some()
 }

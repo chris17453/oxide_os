@@ -498,6 +498,12 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
     let _ = writeln!(writer, "[INFO] PS/2 mouse IRQ callback registered");
 
+    // Initialize graphical mouse cursor on framebuffer
+    if fb::is_initialized() {
+        fb::mouse_init();
+        let _ = writeln!(writer, "[INFO] Mouse cursor initialized");
+    }
+
     // Initialize and register preemptive scheduler (BSP)
     scheduler::init();
     let _ = writeln!(writer, "[INFO] Scheduler initialized");

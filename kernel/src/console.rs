@@ -96,6 +96,33 @@ pub fn terminal_tick() {
         devfs::console_push_char(byte);
     }
 
+    // Process mouse events from input subsystem
+    // Mouse device is typically device 1 (keyboard is device 0)
+    if fb::mouse_initialized() {
+        let mut total_dx: i32 = 0;
+        let mut total_dy: i32 = 0;
+
+        // Drain all mouse events from input device 1
+        if let Some(mouse_handle) = input::get_device(1) {
+            while let Some(event) = mouse_handle.pop_event() {
+                match event.event_type() {
+                    input::EventType::Rel => {
+                        if event.code == input::REL_X {
+                            total_dx += event.value;
+                        } else if event.code == input::REL_Y {
+                            total_dy += event.value;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if total_dx != 0 || total_dy != 0 {
+            fb::mouse_move(total_dx, total_dy);
+        }
+    }
+
     // Drive the active display: prefer terminal emulator; disable legacy fb cursor to avoid double cursor
     if terminal::is_initialized() {
         // Blink at ~2.5Hz (every 12 frames at 30 FPS)
@@ -174,10 +201,47 @@ pub fn console_read(buf: &mut [u8]) -> isize {
                 return count;
             }
 
-            // Sleep until next interrupt (timer at 100Hz will wake us)
-            unsafe {
-                core::arch::asm!("sti; hlt", options(nomem, nostack));
+            // Register as blocked reader so console_push_char can wake us
+            if let Some(pid) = sched::current_pid_lockfree() {
+                devfs::set_console_blocked_reader(pid);
             }
+
+            // Disable interrupts to safely block + re-check atomically.
+            // This prevents the timer/keyboard ISR from accessing the run
+            // queue lock while we hold it in block_current.
+            unsafe {
+                core::arch::asm!("cli", options(nomem, nostack, preserves_flags));
+            }
+
+            // Block: dequeue from run queue so other tasks run freely.
+            // With interrupts disabled, no ISR can contend for the rq lock.
+            sched::block_current(sched::TaskState::TASK_INTERRUPTIBLE);
+
+            // Race check: input may have arrived between our pop check
+            // (above, with interrupts enabled) and the cli above.
+            if devfs::console_has_input() {
+                // Data arrived! Re-enable interrupts, wake ourselves, retry.
+                unsafe {
+                    core::arch::asm!("sti", options(nomem, nostack, preserves_flags));
+                }
+                if let Some(pid) = sched::current_pid_lockfree() {
+                    sched::wake_up(pid);
+                }
+                continue;
+            }
+
+            // Allow timer interrupt to context-switch us out
+            arch::allow_kernel_preempt();
+
+            // Enable interrupts and halt atomically.
+            // Timer will fire, see we're SLEEPING, switch to another task.
+            // When a key is pressed, terminal_tick calls console_push_char
+            // which calls wake_up() to re-enqueue us.
+            unsafe {
+                core::arch::asm!("sti", "hlt", options(nomem, nostack));
+            }
+
+            arch::disallow_kernel_preempt();
         }
     }
     count
