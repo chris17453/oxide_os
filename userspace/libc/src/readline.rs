@@ -12,6 +12,18 @@ use crate::stdio::{getchar, putchar};
 use crate::termios::{self, Termios};
 use crate::unistd;
 
+use core::ptr::{addr_of, addr_of_mut};
+
+/// Raw-pointer helpers that avoid creating references to mutable statics.
+/// These satisfy Rust 2024 edition rules for `static mut` access.
+unsafe fn line_buf_ptr() -> *mut u8 {
+    addr_of_mut!(LINE_BUF) as *mut u8
+}
+
+unsafe fn line_buf_clear() {
+    core::ptr::write_bytes(line_buf_ptr(), 0, MAX_LINE);
+}
+
 /// Maximum line buffer size
 const MAX_LINE: usize = 4096;
 
@@ -169,7 +181,7 @@ pub static mut rl_attempted_completion_function: CompletionFunc = None;
 pub static mut rl_attempted_completion_over: i32 = 0;
 
 /// Characters that delimit words for completion
-static DEFAULT_WORD_BREAK: [u8; 19] = *b" \t\n\"\\'`@$><=;|&{(\0";
+static DEFAULT_WORD_BREAK: [u8; 18] = *b" \t\n\"\\'`@$><=;|&{(\0";
 
 #[unsafe(no_mangle)]
 pub static mut rl_completer_word_break_characters: *const u8 = DEFAULT_WORD_BREAK.as_ptr();
@@ -250,7 +262,7 @@ fn leave_raw_mode() {
     use termios::*;
     unsafe {
         if TERMIOS_SAVED {
-            tcsetattr(0, action::TCSANOW, &ORIG_TERMIOS);
+            tcsetattr(0, action::TCSANOW, &*core::ptr::addr_of!(ORIG_TERMIOS));
         }
     }
 }
@@ -664,11 +676,11 @@ pub unsafe fn readline(prompt: *const u8) -> *mut u8 {
     // Reset line state
     LINE_LEN = 0;
     CURSOR = 0;
-    LINE_BUF.fill(0);
+    line_buf_clear();
     HISTORY_POS = HISTORY_COUNT;
 
     // Update global pointers
-    rl_line_buffer = LINE_BUF.as_mut_ptr();
+    rl_line_buffer = line_buf_ptr();
     rl_point = 0;
     rl_end = 0;
 
@@ -816,7 +828,7 @@ unsafe fn read_line_loop(prompt: &[u8]) -> *mut u8 {
                 if result.is_null() {
                     return core::ptr::null_mut();
                 }
-                core::ptr::copy_nonoverlapping(LINE_BUF.as_ptr(), result, LINE_LEN);
+                core::ptr::copy_nonoverlapping(line_buf_ptr() as *const u8, result, LINE_LEN);
                 *result.add(LINE_LEN) = 0;
                 return result;
             }
@@ -993,12 +1005,13 @@ pub unsafe fn history_get(offset: i32) -> *mut HistEntry {
     }
     let i = idx as usize;
 
-    // Point the HistEntry's line to the history buffer
-    HIST_ENTRIES[i].line = HISTORY[i].as_mut_ptr();
-    HIST_ENTRIES[i].timestamp = core::ptr::null_mut();
-    HIST_ENTRIES[i].data = core::ptr::null_mut();
+    let entry = (addr_of_mut!(HIST_ENTRIES) as *mut HistEntry).add(i);
+    let hist_row = (addr_of_mut!(HISTORY) as *mut [u8; MAX_LINE]).add(i) as *mut u8;
+    (*entry).line = hist_row;
+    (*entry).timestamp = core::ptr::null_mut();
+    (*entry).data = core::ptr::null_mut();
 
-    &mut HIST_ENTRIES[i] as *mut HistEntry
+    entry
 }
 
 /// Remove a history entry by 0-based index
@@ -1007,12 +1020,13 @@ pub unsafe fn remove_history(which: i32) -> *mut HistEntry {
         return core::ptr::null_mut();
     }
     let idx = which as usize;
+    let base = addr_of_mut!(HISTORY) as *mut [u8; MAX_LINE];
 
     // Shift down
     for i in idx..(HISTORY_COUNT - 1) {
-        HISTORY[i] = HISTORY[i + 1];
+        core::ptr::copy_nonoverlapping(base.add(i + 1) as *const u8, base.add(i) as *mut u8, MAX_LINE);
     }
-    HISTORY[HISTORY_COUNT - 1].fill(0);
+    core::ptr::write_bytes(base.add(HISTORY_COUNT - 1) as *mut u8, 0, MAX_LINE);
     HISTORY_COUNT -= 1;
     history_length = HISTORY_COUNT as i32;
 
@@ -1030,19 +1044,22 @@ pub unsafe fn replace_history_entry(
     }
     let idx = which as usize;
     let len = crate::string::strlen(line).min(MAX_LINE - 1);
-    HISTORY[idx][..len].copy_from_slice(core::slice::from_raw_parts(line, len));
-    HISTORY[idx][len] = 0;
+    let hist_row = (addr_of_mut!(HISTORY) as *mut [u8; MAX_LINE]).add(idx) as *mut u8;
+    core::ptr::copy_nonoverlapping(line, hist_row, len);
+    *hist_row.add(len) = 0;
 
-    HIST_ENTRIES[idx].line = HISTORY[idx].as_mut_ptr();
-    &mut HIST_ENTRIES[idx] as *mut HistEntry
+    let entry = (addr_of_mut!(HIST_ENTRIES) as *mut HistEntry).add(idx);
+    (*entry).line = hist_row;
+    entry
 }
 
 /// Get the current history state
 pub unsafe fn history_get_history_state() -> *mut HistoryState {
-    HIST_STATE.length = HISTORY_COUNT as i32;
-    HIST_STATE.size = MAX_HISTORY as i32;
-    HIST_STATE.offset = 0;
-    &mut HIST_STATE as *mut HistoryState
+    let state = addr_of_mut!(HIST_STATE);
+    (*state).length = HISTORY_COUNT as i32;
+    (*state).size = MAX_HISTORY as i32;
+    (*state).offset = 0;
+    state
 }
 
 /// Free a history entry (no-op with bump allocator)
@@ -1245,7 +1262,7 @@ pub unsafe fn completion_matches(text: *const u8, func: CompEntryFunc) -> *mut *
 /// Initialize the readline library
 pub unsafe fn rl_initialize_internal() {
     INITIALIZED = true;
-    rl_line_buffer = LINE_BUF.as_mut_ptr();
+    rl_line_buffer = line_buf_ptr();
 }
 
 /// Insert text at the current cursor position
@@ -1333,7 +1350,7 @@ pub unsafe fn rl_resize_terminal() {
 pub unsafe fn rl_free_line_state() {
     LINE_LEN = 0;
     CURSOR = 0;
-    LINE_BUF.fill(0);
+    line_buf_clear();
 }
 
 /// Cleanup after signal
@@ -1348,8 +1365,9 @@ pub unsafe fn rl_callback_handler_install(prompt: *const u8, handler: CallbackHa
     CALLBACK_HANDLER = handler;
     if !prompt.is_null() {
         let len = crate::string::strlen(prompt).min(255);
-        CALLBACK_PROMPT[..len].copy_from_slice(core::slice::from_raw_parts(prompt, len));
-        CALLBACK_PROMPT[len] = 0;
+        let dst = addr_of_mut!(CALLBACK_PROMPT) as *mut u8;
+        core::ptr::copy_nonoverlapping(prompt, dst, len);
+        *dst.add(len) = 0;
     }
     // Print prompt
     if !prompt.is_null() {
@@ -1358,7 +1376,7 @@ pub unsafe fn rl_callback_handler_install(prompt: *const u8, handler: CallbackHa
     enter_raw_mode();
     LINE_LEN = 0;
     CURSOR = 0;
-    LINE_BUF.fill(0);
+    line_buf_clear();
 }
 
 /// Read a character in callback mode
@@ -1376,14 +1394,14 @@ pub unsafe fn rl_callback_read_char() {
             if let Some(handler) = CALLBACK_HANDLER {
                 let result = crate::c_exports::malloc(LINE_LEN + 1);
                 if !result.is_null() {
-                    core::ptr::copy_nonoverlapping(LINE_BUF.as_ptr(), result, LINE_LEN);
+                    core::ptr::copy_nonoverlapping(line_buf_ptr() as *const u8, result, LINE_LEN);
                     *result.add(LINE_LEN) = 0;
                 }
                 handler(result);
             }
             LINE_LEN = 0;
             CURSOR = 0;
-            LINE_BUF.fill(0);
+            line_buf_clear();
         }
         BACKSPACE | CTRL_H => {
             if LINE_LEN > 0 {

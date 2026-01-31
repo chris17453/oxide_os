@@ -3681,14 +3681,9 @@ pub unsafe extern "C" fn openlog(ident: *const u8, _option: i32, _facility: i32)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn syslog(priority: i32, format: *const u8, mut args: ...) {
+pub unsafe extern "C" fn syslog(priority: i32, format: *const u8, args: ...) {
     let mut buf = [0u8; 512];
-    let len = crate::printf::vsnprintf_impl(
-        buf.as_mut_ptr(),
-        512,
-        format,
-        &mut args.as_va_list(),
-    );
+    let len = vsnprintf(buf.as_mut_ptr(), 512, format, args);
     let msg_len = if len > 0 { (len as usize).min(511) } else { 0 };
     let msg = core::str::from_utf8_unchecked(&buf[..msg_len]);
     crate::syslog::syslog(priority as u8, msg);
