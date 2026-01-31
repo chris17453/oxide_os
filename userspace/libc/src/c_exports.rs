@@ -882,21 +882,23 @@ pub unsafe extern "C" fn rename(oldpath: *const u8, newpath: *const u8) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn link(_oldpath: *const u8, _newpath: *const u8) -> i32 {
-    ERRNO_VAR = errno::ENOSYS;
-    -1
+pub unsafe extern "C" fn link(oldpath: *const u8, newpath: *const u8) -> i32 {
+    syscall::syscall2(syscall::nr::LINK, oldpath as usize, newpath as usize) as i32
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn symlink(_target: *const u8, _linkpath: *const u8) -> i32 {
-    ERRNO_VAR = errno::ENOSYS;
-    -1
+pub unsafe extern "C" fn symlink(target: *const u8, linkpath: *const u8) -> i32 {
+    syscall::syscall2(syscall::nr::SYMLINK, target as usize, linkpath as usize) as i32
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn readlink(_path: *const u8, _buf: *mut u8, _bufsiz: usize) -> isize {
-    ERRNO_VAR = errno::ENOSYS;
-    -1
+pub unsafe extern "C" fn readlink(path: *const u8, buf: *mut u8, bufsiz: usize) -> isize {
+    syscall::syscall3(syscall::nr::READLINK, path as usize, buf as usize, bufsiz) as isize
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn readlinkat(dirfd: i32, path: *const u8, buf: *mut u8, bufsiz: usize) -> isize {
+    syscall::syscall4(syscall::nr::READLINKAT, dirfd as usize, path as usize, buf as usize, bufsiz) as isize
 }
 
 #[unsafe(no_mangle)]
@@ -1829,107 +1831,98 @@ pub unsafe extern "C" fn setpriority(_which: i32, _who: i32, _prio: i32) -> i32 
     0
 }
 
-// ============ socket stubs ============
+// ============ socket operations ============
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn socket(_domain: i32, _type: i32, _protocol: i32) -> i32 {
-    ERRNO_VAR = errno::ENOSYS;
-    -1
+pub unsafe extern "C" fn socket(domain: i32, typ: i32, protocol: i32) -> i32 {
+    syscall::syscall3(syscall::nr::SOCKET, domain as usize, typ as usize, protocol as usize) as i32
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn socketpair(_d: i32, _t: i32, _p: i32, sv: *mut i32) -> i32 {
-    // Simplified: use a pipe pair for bidirectional-ish communication
-    syscall::sys_pipe2(sv, 0)
+pub unsafe extern "C" fn socketpair(domain: i32, typ: i32, protocol: i32, sv: *mut i32) -> i32 {
+    syscall::syscall4(syscall::nr::SOCKETPAIR, domain as usize, typ as usize, protocol as usize, sv as usize) as i32
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn bind(_fd: i32, _addr: *const u8, _len: u32) -> i32 {
-    ERRNO_VAR = errno::ENOSYS;
-    -1
+pub unsafe extern "C" fn bind(fd: i32, addr: *const u8, len: u32) -> i32 {
+    syscall::syscall3(syscall::nr::BIND, fd as usize, addr as usize, len as usize) as i32
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn listen(_fd: i32, _backlog: i32) -> i32 {
-    ERRNO_VAR = errno::ENOSYS;
-    -1
+pub unsafe extern "C" fn listen(fd: i32, backlog: i32) -> i32 {
+    syscall::syscall2(syscall::nr::LISTEN, fd as usize, backlog as usize) as i32
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn accept(_fd: i32, _addr: *mut u8, _len: *mut u32) -> i32 {
-    ERRNO_VAR = errno::ENOSYS;
-    -1
+pub unsafe extern "C" fn accept(fd: i32, addr: *mut u8, len: *mut u32) -> i32 {
+    syscall::syscall3(syscall::nr::ACCEPT, fd as usize, addr as usize, len as usize) as i32
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn connect(_fd: i32, _addr: *const u8, _len: u32) -> i32 {
-    ERRNO_VAR = errno::ENOSYS;
-    -1
+pub unsafe extern "C" fn accept4(fd: i32, addr: *mut u8, len: *mut u32, flags: i32) -> i32 {
+    syscall::syscall4(syscall::nr::ACCEPT4, fd as usize, addr as usize, len as usize, flags as usize) as i32
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn send(_fd: i32, _buf: *const u8, _len: usize, _flags: i32) -> isize {
-    ERRNO_VAR = errno::ENOSYS;
-    -1
+pub unsafe extern "C" fn connect(fd: i32, addr: *const u8, len: u32) -> i32 {
+    syscall::syscall3(syscall::nr::CONNECT, fd as usize, addr as usize, len as usize) as i32
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn recv(_fd: i32, _buf: *mut u8, _len: usize, _flags: i32) -> isize {
-    ERRNO_VAR = errno::ENOSYS;
-    -1
+pub unsafe extern "C" fn send(fd: i32, buf: *const u8, len: usize, flags: i32) -> isize {
+    syscall::syscall4(syscall::nr::SEND, fd as usize, buf as usize, len, flags as usize) as isize
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn recv(fd: i32, buf: *mut u8, len: usize, flags: i32) -> isize {
+    syscall::syscall4(syscall::nr::RECV, fd as usize, buf as usize, len, flags as usize) as isize
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sendto(
-    _fd: i32, _buf: *const u8, _len: usize, _flags: i32,
-    _addr: *const u8, _addrlen: u32,
+    fd: i32, buf: *const u8, len: usize, flags: i32,
+    addr: *const u8, addrlen: u32,
 ) -> isize {
-    ERRNO_VAR = errno::ENOSYS;
-    -1
+    syscall::syscall6(syscall::nr::SENDTO, fd as usize, buf as usize, len, flags as usize, addr as usize, addrlen as usize) as isize
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn recvfrom(
-    _fd: i32, _buf: *mut u8, _len: usize, _flags: i32,
-    _addr: *mut u8, _addrlen: *mut u32,
+    fd: i32, buf: *mut u8, len: usize, flags: i32,
+    addr: *mut u8, addrlen: *mut u32,
 ) -> isize {
-    ERRNO_VAR = errno::ENOSYS;
-    -1
+    syscall::syscall6(syscall::nr::RECVFROM, fd as usize, buf as usize, len, flags as usize, addr as usize, addrlen as usize) as isize
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn shutdown(_fd: i32, _how: i32) -> i32 {
-    -1
+pub unsafe extern "C" fn shutdown(fd: i32, how: i32) -> i32 {
+    syscall::syscall2(syscall::nr::SHUTDOWN, fd as usize, how as usize) as i32
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn getsockname(
-    _fd: i32, _addr: *mut u8, _len: *mut u32,
-) -> i32 {
-    -1
+pub unsafe extern "C" fn getsockname(fd: i32, addr: *mut u8, len: *mut u32) -> i32 {
+    syscall::syscall3(syscall::nr::GETSOCKNAME, fd as usize, addr as usize, len as usize) as i32
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn getpeername(
-    _fd: i32, _addr: *mut u8, _len: *mut u32,
-) -> i32 {
-    -1
+pub unsafe extern "C" fn getpeername(fd: i32, addr: *mut u8, len: *mut u32) -> i32 {
+    syscall::syscall3(syscall::nr::GETPEERNAME, fd as usize, addr as usize, len as usize) as i32
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn setsockopt(
-    _fd: i32, _level: i32, _optname: i32,
-    _optval: *const u8, _optlen: u32,
+    fd: i32, level: i32, optname: i32,
+    optval: *const u8, optlen: u32,
 ) -> i32 {
-    0
+    syscall::syscall5(syscall::nr::SETSOCKOPT, fd as usize, level as usize, optname as usize, optval as usize, optlen as usize) as i32
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getsockopt(
-    _fd: i32, _level: i32, _optname: i32,
-    _optval: *mut u8, _optlen: *mut u32,
+    fd: i32, level: i32, optname: i32,
+    optval: *mut u8, optlen: *mut u32,
 ) -> i32 {
-    -1
+    syscall::syscall5(syscall::nr::GETSOCKOPT, fd as usize, level as usize, optname as usize, optval as usize, optlen as usize) as i32
 }
 
 // ============ netdb ============
