@@ -274,6 +274,18 @@ pub mod nr {
     pub const CLOSE_RANGE: u64 = 286;
     pub const ACCEPT4: u64 = 287;
 
+    // Additional syscalls
+    pub const SYNC: u64 = 288;
+    pub const POSIX_FADVISE: u64 = 289;
+    pub const SETREUID: u64 = 290;
+    pub const SETREGID: u64 = 291;
+    pub const SCHED_GET_PRIORITY_MAX: u64 = 292;
+    pub const SCHED_GET_PRIORITY_MIN: u64 = 293;
+    pub const COPY_FILE_RANGE: u64 = 294;
+    pub const UMASK: u64 = 295;
+    pub const SOCKETPAIR: u64 = 296;
+    pub const MEMFD_CREATE: u64 = 297;
+
     /// AT_FDCWD: use current working directory for *at syscalls
     pub const AT_FDCWD: i32 = -100;
 }
@@ -685,6 +697,20 @@ pub fn dispatch(
         nr::MADVISE => memory::sys_madvise(arg1, arg2, arg3 as i32),
         nr::CLOSE_RANGE => vfs_ext::sys_close_range(arg1 as u32, arg2 as u32, arg3 as u32),
         nr::ACCEPT4 => socket::sys_accept4(arg1 as i32, arg2, arg3, arg4 as i32),
+
+        // Additional syscalls
+        nr::SYNC => { 0 } // No-op: VFS does not cache writes
+        nr::POSIX_FADVISE => { 0 } // Advisory only
+        nr::SETREUID => sys_setreuid(arg1 as u32, arg2 as u32),
+        nr::SETREGID => sys_setregid(arg1 as u32, arg2 as u32),
+        nr::SCHED_GET_PRIORITY_MAX => { 99 } // Linux-compatible max RT priority
+        nr::SCHED_GET_PRIORITY_MIN => { 1 }  // Linux-compatible min RT priority
+        nr::COPY_FILE_RANGE => vfs_ext::sys_copy_file_range(
+            arg1 as i32, arg2, arg3 as i32, arg4, arg5 as usize, arg6 as u32,
+        ),
+        nr::UMASK => sys_umask(arg1 as u32),
+        nr::SOCKETPAIR => socket::sys_socketpair(arg1 as i32, arg2 as i32, arg3 as i32, arg4),
+        nr::MEMFD_CREATE => errno::ENOSYS, // Not yet implemented
 
         _ => errno::ENOSYS,
     }
@@ -1552,6 +1578,52 @@ fn sys_prlimit(_pid: i32, resource: i32, new_limit_ptr: u64, old_limit_ptr: u64)
     let _ = new_limit_ptr;
 
     0
+}
+
+/// sys_setreuid - Set real and effective user IDs
+fn sys_setreuid(ruid: u32, euid: u32) -> i64 {
+    if ruid != 0xFFFFFFFF {
+        let result = sys_setuid(ruid);
+        if result < 0 {
+            return result;
+        }
+    }
+    if euid != 0xFFFFFFFF {
+        let result = sys_seteuid(euid);
+        if result < 0 {
+            return result;
+        }
+    }
+    0
+}
+
+/// sys_setregid - Set real and effective group IDs
+fn sys_setregid(rgid: u32, egid: u32) -> i64 {
+    if rgid != 0xFFFFFFFF {
+        let result = sys_setgid(rgid);
+        if result < 0 {
+            return result;
+        }
+    }
+    if egid != 0xFFFFFFFF {
+        let result = sys_setegid(egid);
+        if result < 0 {
+            return result;
+        }
+    }
+    0
+}
+
+/// sys_umask - Set file creation mask
+///
+/// Returns the previous umask value.
+fn sys_umask(mask: u32) -> i64 {
+    let mask = mask & 0o777;
+    with_current_meta_mut(|meta| {
+        let old = meta.umask;
+        meta.umask = mask as u16;
+        old as i64
+    }).unwrap_or(0o022)
 }
 
 /// Priority constants

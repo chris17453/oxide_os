@@ -110,6 +110,9 @@ pub struct ProcessMeta {
     /// Thread group members (TIDs of threads in this group)
     /// Only maintained in the leader's ProcessMeta
     pub thread_group: Vec<Tid>,
+
+    /// File creation mask (umask)
+    pub umask: u16,
 }
 
 impl ProcessMeta {
@@ -143,6 +146,7 @@ impl ProcessMeta {
             itimer_value_usec: 0,
             is_thread_leader: true,
             thread_group: Vec::new(),
+            umask: 0o022,
         }
     }
 
@@ -176,6 +180,7 @@ impl ProcessMeta {
             itimer_value_usec: 0,
             is_thread_leader: true,
             thread_group: Vec::new(),
+            umask: 0o022,
         }
     }
 
@@ -206,6 +211,7 @@ impl ProcessMeta {
             itimer_value_usec: 0,
             is_thread_leader: true,
             thread_group: Vec::new(),
+            umask: self.umask,
         }
     }
 

@@ -90,8 +90,8 @@ pub mod nr {
     pub const GETEGID: u64 = 17;
     pub const SETUID: u64 = 18;
     pub const SETGID: u64 = 19;
-    pub const SETEUID: u64 = 20;
-    pub const SETEGID: u64 = 21;
+    pub const SETEUID: u64 = 140;
+    pub const SETEGID: u64 = 141;
     // Memory syscalls (must match kernel)
     pub const MMAP: u64 = 90;
     pub const MUNMAP: u64 = 91;
@@ -185,6 +185,18 @@ pub mod nr {
     pub const MADVISE: u64 = 285;
     pub const CLOSE_RANGE: u64 = 286;
     pub const ACCEPT4: u64 = 287;
+
+    // Additional syscalls
+    pub const SYNC: u64 = 288;
+    pub const POSIX_FADVISE: u64 = 289;
+    pub const SETREUID: u64 = 290;
+    pub const SETREGID: u64 = 291;
+    pub const SCHED_GET_PRIORITY_MAX: u64 = 292;
+    pub const SCHED_GET_PRIORITY_MIN: u64 = 293;
+    pub const COPY_FILE_RANGE: u64 = 294;
+    pub const UMASK: u64 = 295;
+    pub const SOCKETPAIR: u64 = 296;
+    pub const MEMFD_CREATE: u64 = 297;
 
     /// AT_FDCWD: use current working directory for *at syscalls
     pub const AT_FDCWD: i32 = -100;

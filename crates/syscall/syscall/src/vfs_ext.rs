@@ -483,3 +483,105 @@ pub fn sys_close_range(first: u32, last: u32, _flags: u32) -> i64 {
         None => errno::ESRCH,
     }
 }
+
+/// sys_copy_file_range - Copy data between file descriptors in kernel
+pub fn sys_copy_file_range(
+    fd_in: i32,
+    off_in_ptr: u64,
+    fd_out: i32,
+    off_out_ptr: u64,
+    len: usize,
+    _flags: u32,
+) -> i64 {
+    if len == 0 {
+        return 0;
+    }
+
+    // Get input and output files
+    let in_file = match crate::with_current_meta(|meta| {
+        meta.fd_table.get(fd_in).map(|fd_entry| fd_entry.file.clone())
+    }) {
+        Some(Ok(f)) => f,
+        _ => return errno::EBADF,
+    };
+    let out_file = match crate::with_current_meta(|meta| {
+        meta.fd_table.get(fd_out).map(|fd_entry| fd_entry.file.clone())
+    }) {
+        Some(Ok(f)) => f,
+        _ => return errno::EBADF,
+    };
+
+    // Handle input offset
+    if off_in_ptr != 0 {
+        if off_in_ptr >= 0x0000_8000_0000_0000 {
+            return errno::EFAULT;
+        }
+        unsafe {
+            core::arch::asm!("stac", options(nomem, nostack));
+            let off = *(off_in_ptr as *const i64);
+            core::arch::asm!("clac", options(nomem, nostack));
+            let _ = in_file.seek(SeekFrom::Start(off as u64));
+        }
+    }
+
+    // Handle output offset
+    if off_out_ptr != 0 {
+        if off_out_ptr >= 0x0000_8000_0000_0000 {
+            return errno::EFAULT;
+        }
+        unsafe {
+            core::arch::asm!("stac", options(nomem, nostack));
+            let off = *(off_out_ptr as *const i64);
+            core::arch::asm!("clac", options(nomem, nostack));
+            let _ = out_file.seek(SeekFrom::Start(off as u64));
+        }
+    }
+
+    // Copy in chunks
+    let mut buf = [0u8; 4096];
+    let mut total: usize = 0;
+    let mut remaining = len;
+
+    while remaining > 0 {
+        let chunk = core::cmp::min(remaining, buf.len());
+        let nread = match in_file.read(&mut buf[..chunk]) {
+            Ok(n) => n,
+            Err(_) => {
+                if total > 0 { break; }
+                return errno::EIO;
+            }
+        };
+        if nread == 0 { break; }
+
+        let mut written = 0;
+        while written < nread {
+            match out_file.write(&buf[written..nread]) {
+                Ok(n) => written += n,
+                Err(_) => {
+                    if total > 0 { break; }
+                    return errno::EIO;
+                }
+            }
+        }
+        total += nread;
+        remaining -= nread;
+    }
+
+    // Update offsets
+    if off_in_ptr != 0 {
+        unsafe {
+            core::arch::asm!("stac", options(nomem, nostack));
+            *(off_in_ptr as *mut i64) += total as i64;
+            core::arch::asm!("clac", options(nomem, nostack));
+        }
+    }
+    if off_out_ptr != 0 {
+        unsafe {
+            core::arch::asm!("stac", options(nomem, nostack));
+            *(off_out_ptr as *mut i64) += total as i64;
+            core::arch::asm!("clac", options(nomem, nostack));
+        }
+    }
+
+    total as i64
+}

@@ -900,13 +900,13 @@ pub unsafe extern "C" fn truncate(_path: *const u8, _length: i64) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn fsync(_fd: i32) -> i32 {
-    0
+pub unsafe extern "C" fn fsync(fd: i32) -> i32 {
+    syscall::sys_fsync(fd)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn fdatasync(_fd: i32) -> i32 {
-    0
+pub unsafe extern "C" fn fdatasync(fd: i32) -> i32 {
+    syscall::sys_fdatasync(fd)
 }
 
 #[unsafe(no_mangle)]
@@ -958,8 +958,23 @@ pub unsafe extern "C" fn fpathconf(_fd: i32, name: i32) -> i64 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn confstr(_name: i32, _buf: *mut u8, _len: usize) -> usize {
-    0
+pub unsafe extern "C" fn confstr(name: i32, buf: *mut u8, len: usize) -> usize {
+    // _CS_PATH = 0, _CS_GNU_LIBC_VERSION = 2, _CS_GNU_LIBPTHREAD_VERSION = 3
+    let value: &[u8] = match name {
+        0 => b"/usr/bin:/bin\0",        // _CS_PATH
+        2 => b"oxide-libc 1.0\0",       // _CS_GNU_LIBC_VERSION
+        3 => b"oxide-pthread 1.0\0",    // _CS_GNU_LIBPTHREAD_VERSION
+        _ => return 0,
+    };
+    let needed = value.len(); // includes null
+    if !buf.is_null() && len > 0 {
+        let copy = core::cmp::min(len, needed);
+        core::ptr::copy_nonoverlapping(value.as_ptr(), buf, copy);
+        if copy < needed {
+            *buf.add(copy - 1) = 0; // ensure null termination
+        }
+    }
+    needed
 }
 
 #[unsafe(no_mangle)]
@@ -1492,8 +1507,11 @@ pub unsafe extern "C" fn fchmod(_fd: i32, _mode: u32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn umask(_mask: u32) -> u32 {
-    0o022
+pub unsafe extern "C" fn umask(mask: u32) -> u32 {
+    static mut UMASK: u32 = 0o022;
+    let old = UMASK;
+    UMASK = mask & 0o777;
+    old
 }
 
 #[unsafe(no_mangle)]
@@ -1839,9 +1857,9 @@ pub unsafe extern "C" fn socket(_domain: i32, _type: i32, _protocol: i32) -> i32
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn socketpair(_d: i32, _t: i32, _p: i32, _sv: *mut i32) -> i32 {
-    ERRNO_VAR = errno::ENOSYS;
-    -1
+pub unsafe extern "C" fn socketpair(_d: i32, _t: i32, _p: i32, sv: *mut i32) -> i32 {
+    // Simplified: use a pipe pair for bidirectional-ish communication
+    syscall::sys_pipe2(sv, 0)
 }
 
 #[unsafe(no_mangle)]
@@ -2251,22 +2269,72 @@ pub unsafe extern "C" fn dladdr(_addr: *const u8, _info: *mut u8) -> i32 {
 
 // ============ statvfs ============
 
+/// Statvfs layout (matches Linux struct statvfs)
+#[repr(C)]
+struct Statvfs {
+    f_bsize: u64,
+    f_frsize: u64,
+    f_blocks: u64,
+    f_bfree: u64,
+    f_bavail: u64,
+    f_files: u64,
+    f_ffree: u64,
+    f_favail: u64,
+    f_fsid: u64,
+    f_flag: u64,
+    f_namemax: u64,
+}
+
+fn fill_statvfs_from_statfs(stfs: &syscall::Statfs, buf: *mut Statvfs) {
+    unsafe {
+        (*buf).f_bsize = stfs.f_bsize as u64;
+        (*buf).f_frsize = if stfs.f_frsize > 0 { stfs.f_frsize as u64 } else { stfs.f_bsize as u64 };
+        (*buf).f_blocks = stfs.f_blocks;
+        (*buf).f_bfree = stfs.f_bfree;
+        (*buf).f_bavail = stfs.f_bavail;
+        (*buf).f_files = stfs.f_files;
+        (*buf).f_ffree = stfs.f_ffree;
+        (*buf).f_favail = stfs.f_ffree;
+        (*buf).f_fsid = (stfs.f_fsid[0] as u64) | ((stfs.f_fsid[1] as u64) << 32);
+        (*buf).f_flag = stfs.f_flags as u64;
+        (*buf).f_namemax = stfs.f_namelen as u64;
+    }
+}
+
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn statvfs(_path: *const u8, buf: *mut u8) -> i32 {
-    core::ptr::write_bytes(buf, 0, 88);
-    // Set reasonable defaults
-    let p = buf as *mut u64;
-    *p = 4096;       // f_bsize
-    *p.add(1) = 4096; // f_frsize
-    *p.add(2) = 1024 * 1024; // f_blocks
-    *p.add(3) = 512 * 1024;  // f_bfree
-    *p.add(4) = 512 * 1024;  // f_bavail
+pub unsafe extern "C" fn statvfs(path: *const u8, buf: *mut u8) -> i32 {
+    if path.is_null() || buf.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    let path_len = cstr_len(path);
+    let path_str = core::str::from_utf8_unchecked(core::slice::from_raw_parts(path, path_len));
+    let mut stfs = syscall::Statfs::new();
+    let ret = syscall::statfs(path_str, &mut stfs);
+    if ret < 0 {
+        ERRNO_VAR = -ret;
+        return -1;
+    }
+    core::ptr::write_bytes(buf, 0, core::mem::size_of::<Statvfs>());
+    fill_statvfs_from_statfs(&stfs, buf as *mut Statvfs);
     0
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn fstatvfs(_fd: i32, buf: *mut u8) -> i32 {
-    statvfs(core::ptr::null(), buf)
+pub unsafe extern "C" fn fstatvfs(fd: i32, buf: *mut u8) -> i32 {
+    if buf.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    let mut stfs = syscall::Statfs::new();
+    let ret = syscall::fstatfs(fd, &mut stfs);
+    if ret < 0 {
+        ERRNO_VAR = -ret;
+        return -1;
+    }
+    core::ptr::write_bytes(buf, 0, core::mem::size_of::<Statvfs>());
+    fill_statvfs_from_statfs(&stfs, buf as *mut Statvfs);
+    0
 }
 
 // ============ termios ============
@@ -3214,4 +3282,472 @@ pub unsafe extern "C" fn times(buf: *mut tms) -> i64 {
         (*buf).tms_cstime = 0;
     }
     0 // Stub: return 0 (elapsed time)
+}
+
+// ============ sync / fadvise ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sync() {
+    // No-op: our VFS does not cache writes
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn posix_fadvise(_fd: i32, _offset: i64, _len: i64, _advice: i32) -> i32 {
+    0 // Advisory only
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn posix_fallocate(_fd: i32, _offset: i64, _len: i64) -> i32 {
+    0 // Stub: pretend success
+}
+
+// ============ wait3 ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wait3(status: *mut i32, options: i32, rusage: *mut u8) -> i32 {
+    syscall::sys_wait4(-1, status, options, rusage as *mut syscall::Rusage)
+}
+
+// ============ setreuid / setregid ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn setreuid(ruid: u32, euid: u32) -> i32 {
+    if ruid != 0xFFFF_FFFF {
+        let r = syscall::syscall1(syscall::nr::SETUID, ruid as usize) as i32;
+        if r < 0 {
+            ERRNO_VAR = -r;
+            return -1;
+        }
+    }
+    if euid != 0xFFFF_FFFF {
+        let r = syscall::syscall1(syscall::nr::SETEUID, euid as usize) as i32;
+        if r < 0 {
+            ERRNO_VAR = -r;
+            return -1;
+        }
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn setregid(rgid: u32, egid: u32) -> i32 {
+    if rgid != 0xFFFF_FFFF {
+        let r = syscall::syscall1(syscall::nr::SETGID, rgid as usize) as i32;
+        if r < 0 {
+            ERRNO_VAR = -r;
+            return -1;
+        }
+    }
+    if egid != 0xFFFF_FFFF {
+        let r = syscall::syscall1(syscall::nr::SETEGID, egid as usize) as i32;
+        if r < 0 {
+            ERRNO_VAR = -r;
+            return -1;
+        }
+    }
+    0
+}
+
+// ============ scheduler priority ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sched_get_priority_max(_policy: i32) -> i32 {
+    99 // Linux-compatible max RT priority
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sched_get_priority_min(_policy: i32) -> i32 {
+    1 // Linux-compatible min RT priority
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sched_getscheduler(_pid: i32) -> i32 {
+    0 // SCHED_OTHER
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sched_setscheduler(_pid: i32, _policy: i32, _param: *const u8) -> i32 {
+    0 // Pretend success
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sched_getparam(_pid: i32, param: *mut i32) -> i32 {
+    if !param.is_null() {
+        *param = 0; // sched_priority = 0
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sched_setparam(_pid: i32, _param: *const i32) -> i32 {
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sched_setaffinity(_pid: i32, _cpusetsize: usize, _mask: *const u8) -> i32 {
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sched_getaffinity(_pid: i32, cpusetsize: usize, mask: *mut u8) -> i32 {
+    if !mask.is_null() && cpusetsize > 0 {
+        core::ptr::write_bytes(mask, 0, cpusetsize);
+        *mask = 1; // CPU 0 available
+    }
+    0
+}
+
+// ============ unlocked stdio ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn getc_unlocked(stream: *mut u8) -> i32 {
+    crate::filestream::fgetc(stream as *mut crate::filestream::FILE)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn putc_unlocked(c: i32, stream: *mut u8) -> i32 {
+    crate::filestream::fputc(c, stream as *mut crate::filestream::FILE)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn getchar_unlocked() -> i32 {
+    crate::filestream::fgetc(crate::filestream::stdin)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn putchar_unlocked(c: i32) -> i32 {
+    crate::filestream::fputc(c, crate::filestream::stdout)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn flockfile(_file: *mut u8) {
+    // No-op: single-threaded for now
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn funlockfile(_file: *mut u8) {
+    // No-op: single-threaded for now
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ftrylockfile(_file: *mut u8) -> i32 {
+    0 // Always succeeds
+}
+
+// ============ ctermid ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ctermid(s: *mut u8) -> *mut u8 {
+    static TERM: [u8; 10] = *b"/dev/tty\0\0";
+    if s.is_null() {
+        return TERM.as_ptr() as *mut u8;
+    }
+    core::ptr::copy_nonoverlapping(TERM.as_ptr(), s, 9);
+    s
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ctermid_r(s: *mut u8) -> *mut u8 {
+    if s.is_null() {
+        return core::ptr::null_mut();
+    }
+    ctermid(s)
+}
+
+// ============ killpg ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn killpg(pgrp: i32, sig: i32) -> i32 {
+    if pgrp <= 0 {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    syscall::sys_kill(-pgrp, sig)
+}
+
+// ============ getwd (deprecated getcwd wrapper) ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn getwd(buf: *mut u8) -> *mut u8 {
+    if buf.is_null() {
+        return core::ptr::null_mut();
+    }
+    let mut tmp = [0u8; 4096];
+    let ret = syscall::sys_getcwd(&mut tmp);
+    if ret < 0 {
+        return core::ptr::null_mut();
+    }
+    let len = tmp.iter().position(|&c| c == 0).unwrap_or(4096);
+    core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf, len + 1);
+    buf
+}
+
+// ============ tmpnam_r / tempnam ============
+
+static mut TMPNAM_COUNTER: u32 = 0;
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tmpnam_r(s: *mut u8) -> *mut u8 {
+    if s.is_null() {
+        return core::ptr::null_mut();
+    }
+    TMPNAM_COUNTER += 1;
+    let cnt = TMPNAM_COUNTER;
+    let pid = syscall::sys_getpid() as u32;
+    // Format: /tmp/tmp_PPPP_CCCC\0
+    let prefix = b"/tmp/tmp_";
+    core::ptr::copy_nonoverlapping(prefix.as_ptr(), s, prefix.len());
+    let mut pos = prefix.len();
+    // Write pid as hex
+    for shift in (0..4).rev() {
+        let nibble = ((pid >> (shift * 4)) & 0xF) as u8;
+        *s.add(pos) = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+        pos += 1;
+    }
+    *s.add(pos) = b'_';
+    pos += 1;
+    // Write counter as hex
+    for shift in (0..4).rev() {
+        let nibble = ((cnt >> (shift * 4)) & 0xF) as u8;
+        *s.add(pos) = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+        pos += 1;
+    }
+    *s.add(pos) = 0;
+    s
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tempnam(dir: *const u8, prefix: *const u8) -> *mut u8 {
+    let buf = malloc(4096);
+    if buf.is_null() {
+        return core::ptr::null_mut();
+    }
+    let mut pos = 0;
+    // Use dir or /tmp
+    if !dir.is_null() && *dir != 0 {
+        while *dir.add(pos) != 0 && pos < 4000 {
+            *buf.add(pos) = *dir.add(pos);
+            pos += 1;
+        }
+    } else {
+        let tmp = b"/tmp";
+        core::ptr::copy_nonoverlapping(tmp.as_ptr(), buf, tmp.len());
+        pos = tmp.len();
+    }
+    if pos > 0 && *buf.add(pos - 1) != b'/' {
+        *buf.add(pos) = b'/';
+        pos += 1;
+    }
+    // Add prefix or default
+    if !prefix.is_null() && *prefix != 0 {
+        let mut j = 0;
+        while *prefix.add(j) != 0 && j < 5 && pos < 4090 {
+            *buf.add(pos) = *prefix.add(j);
+            pos += 1;
+            j += 1;
+        }
+    } else {
+        let p = b"tmp";
+        core::ptr::copy_nonoverlapping(p.as_ptr(), buf.add(pos), p.len());
+        pos += p.len();
+    }
+    // Add unique suffix
+    TMPNAM_COUNTER += 1;
+    let cnt = TMPNAM_COUNTER;
+    let pid = syscall::sys_getpid() as u32;
+    let suffix = [
+        b'_',
+        hex_nibble((pid >> 12) as u8),
+        hex_nibble((pid >> 8) as u8),
+        hex_nibble((pid >> 4) as u8),
+        hex_nibble(pid as u8),
+        hex_nibble((cnt >> 12) as u8),
+        hex_nibble((cnt >> 8) as u8),
+        hex_nibble((cnt >> 4) as u8),
+        hex_nibble(cnt as u8),
+        0,
+    ];
+    core::ptr::copy_nonoverlapping(suffix.as_ptr(), buf.add(pos), suffix.len());
+    buf
+}
+
+fn hex_nibble(v: u8) -> u8 {
+    let n = v & 0xF;
+    if n < 10 { b'0' + n } else { b'a' + n - 10 }
+}
+
+// ============ device number macros ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gnu_dev_major(dev: u64) -> u32 {
+    ((dev >> 8) & 0xFFF) as u32
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gnu_dev_minor(dev: u64) -> u32 {
+    ((dev & 0xFF) | ((dev >> 12) & 0xFFF00)) as u32
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gnu_dev_makedev(major: u32, minor: u32) -> u64 {
+    let maj = major as u64;
+    let min = minor as u64;
+    ((maj & 0xFFF) << 8) | (min & 0xFF) | ((min & 0xFFF00) << 12)
+}
+
+// Also provide the non-prefixed versions
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn major(dev: u64) -> u32 {
+    gnu_dev_major(dev)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn minor(dev: u64) -> u32 {
+    gnu_dev_minor(dev)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn makedev(maj: u32, min: u32) -> u64 {
+    gnu_dev_makedev(maj, min)
+}
+
+// ============ copy_file_range ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn copy_file_range(
+    fd_in: i32,
+    off_in: *mut i64,
+    fd_out: i32,
+    off_out: *mut i64,
+    len: usize,
+    _flags: u32,
+) -> isize {
+    // Userspace implementation: read from fd_in, write to fd_out
+    let mut buf = [0u8; 4096];
+    let mut total: usize = 0;
+    let mut remaining = len;
+
+    // If off_in is provided, seek to it
+    if !off_in.is_null() {
+        syscall::sys_lseek(fd_in, *off_in, 0); // SEEK_SET
+    }
+    if !off_out.is_null() {
+        syscall::sys_lseek(fd_out, *off_out, 0); // SEEK_SET
+    }
+
+    while remaining > 0 {
+        let chunk = core::cmp::min(remaining, buf.len());
+        let nread = syscall::sys_read(fd_in, &mut buf[..chunk]);
+        if nread < 0 {
+            if total > 0 { break; }
+            ERRNO_VAR = -(nread as i32);
+            return -1;
+        }
+        if nread == 0 { break; }
+        let mut written = 0usize;
+        while written < nread as usize {
+            let nw = syscall::sys_write(fd_out, &buf[written..nread as usize]);
+            if nw < 0 {
+                if total > 0 { break; }
+                ERRNO_VAR = -(nw as i32);
+                return -1;
+            }
+            written += nw as usize;
+        }
+        total += nread as usize;
+        remaining -= nread as usize;
+    }
+
+    // Update offsets
+    if !off_in.is_null() {
+        *off_in += total as i64;
+    }
+    if !off_out.is_null() {
+        *off_out += total as i64;
+    }
+    total as isize
+}
+
+// ============ fdopendir ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fdopendir(fd: i32) -> *mut u8 {
+    if fd < 0 {
+        ERRNO_VAR = errno::EBADF;
+        return core::ptr::null_mut();
+    }
+    // Allocate DIR struct matching opendir layout: fd(4) + buf_pos(4) + buf_len(4) + pad(4) + buf(4096)
+    let dir = malloc(4096 + 16);
+    if dir.is_null() {
+        return core::ptr::null_mut();
+    }
+    *(dir as *mut i32) = fd;
+    *(dir.add(4) as *mut i32) = 0; // buf_pos
+    *(dir.add(8) as *mut i32) = 0; // buf_len
+    dir
+}
+
+// ============ lockf ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lockf(_fd: i32, _cmd: i32, _len: i64) -> i32 {
+    0 // Stub: pretend success (no file locking)
+}
+
+// ============ getloadavg ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn getloadavg(loadavg: *mut f64, nelem: i32) -> i32 {
+    let n = core::cmp::min(nelem, 3);
+    for i in 0..n {
+        *loadavg.add(i as usize) = 0.0;
+    }
+    n
+}
+
+// ============ memfd_create (stub) ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn memfd_create(_name: *const u8, _flags: u32) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+// ============ eventfd (stub) ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn eventfd(_initval: u32, _flags: i32) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+// ============ epoll stubs ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn epoll_create(_size: i32) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn epoll_create1(_flags: i32) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn epoll_ctl(_epfd: i32, _op: i32, _fd: i32, _event: *mut u8) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn epoll_wait(
+    _epfd: i32,
+    _events: *mut u8,
+    _maxevents: i32,
+    _timeout: i32,
+) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
 }
