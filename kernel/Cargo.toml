@@ -10,7 +10,10 @@ debug-syscall = []    # Enable syscall debug output
 debug-fork = []       # Enable fork/exec debug output
 debug-cow = []        # Enable COW page fault debug output
 debug-proc = []       # Enable process management debug output
-debug-all = ["debug-syscall", "debug-fork", "debug-cow", "debug-proc"]
+debug-sched = ["syscall/debug-sched"]  # Enable scheduler context switch debug output
+debug-mouse = []      # Enable mouse/input debug output (ISR-safe)
+debug-lock = ["terminal/debug-lock", "fb/debug-lock"]  # Enable lock contention warnings in ISR context
+debug-all = ["debug-syscall", "debug-fork", "debug-cow", "debug-proc", "debug-sched", "debug-mouse", "debug-lock"]
 
 [dependencies]
 os_core = { workspace = true }

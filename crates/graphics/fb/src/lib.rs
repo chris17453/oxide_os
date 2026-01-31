@@ -26,6 +26,27 @@ use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use spin::Mutex;
 
+/// Emit a lock contention warning to serial port (ISR-safe, no dependencies).
+///
+/// Uses direct x86 port I/O to COM1 (0x3F8) to avoid any lock dependencies.
+/// Only compiled when `debug-lock` feature is enabled.
+#[cfg(feature = "debug-lock")]
+#[inline(never)]
+fn lock_contention_warning(lock_name: &str) {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        for &b in b"[LOCK] fb::" {
+            core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nomem, nostack));
+        }
+        for &b in lock_name.as_bytes() {
+            core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nomem, nostack));
+        }
+        for &b in b" contention\n" {
+            core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nomem, nostack));
+        }
+    }
+}
+
 /// Global framebuffer instance
 static FRAMEBUFFER: Mutex<Option<Arc<dyn Framebuffer>>> = Mutex::new(None);
 
@@ -289,6 +310,9 @@ pub fn mouse_move(dx: i32, dy: i32) {
                 cursor.move_by(dx, dy, &**fb);
             }
         }
+    } else {
+        #[cfg(feature = "debug-lock")]
+        lock_contention_warning("FRAMEBUFFER (mouse_move)");
     }
 }
 
@@ -302,6 +326,9 @@ pub fn mouse_draw() {
                 cursor.redraw(&**fb);
             }
         }
+    } else {
+        #[cfg(feature = "debug-lock")]
+        lock_contention_warning("FRAMEBUFFER (mouse_draw)");
     }
 }
 
@@ -315,6 +342,9 @@ pub fn mouse_erase() {
                 cursor.erase(&**fb);
             }
         }
+    } else {
+        #[cfg(feature = "debug-lock")]
+        lock_contention_warning("FRAMEBUFFER (mouse_erase)");
     }
 }
 
@@ -326,6 +356,9 @@ pub fn mouse_hide() {
                 cursor.hide(&**fb);
             }
         }
+    } else {
+        #[cfg(feature = "debug-lock")]
+        lock_contention_warning("FRAMEBUFFER (mouse_hide)");
     }
 }
 

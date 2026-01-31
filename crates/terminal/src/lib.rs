@@ -59,6 +59,27 @@ use crate::handler::Handler;
 use crate::parser::{Action, Parser};
 use crate::renderer::Renderer;
 
+/// Emit a lock contention warning to serial port (ISR-safe, no dependencies).
+///
+/// Uses direct x86 port I/O to COM1 (0x3F8) to avoid any lock dependencies.
+/// Only compiled when `debug-lock` feature is enabled.
+#[cfg(feature = "debug-lock")]
+#[inline(never)]
+fn lock_contention_warning(lock_name: &str) {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        for &b in b"[LOCK] terminal::" {
+            core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nomem, nostack));
+        }
+        for &b in lock_name.as_bytes() {
+            core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nomem, nostack));
+        }
+        for &b in b" contention\n" {
+            core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nomem, nostack));
+        }
+    }
+}
+
 pub use crate::cell::{Cell, CellFlags, CursorShape};
 pub use crate::color::TermColor;
 pub use crate::handler::{MouseEncoding, MouseMode, TerminalModes};
@@ -634,6 +655,9 @@ pub fn toggle_cursor_blink() {
         if let Some(ref mut terminal) = *guard {
             terminal.toggle_cursor_blink();
         }
+    } else {
+        #[cfg(feature = "debug-lock")]
+        lock_contention_warning("TERMINAL (toggle_cursor_blink)");
     }
 }
 
@@ -651,8 +675,10 @@ pub fn tick() {
         if let Some(ref mut terminal) = *guard {
             terminal.tick();
         }
+    } else {
+        #[cfg(feature = "debug-lock")]
+        lock_contention_warning("TERMINAL (tick)");
     }
-    // If lock is held, skip this tick - next one will catch up
 }
 
 /// Write and immediately render (for urgent/interactive output)
@@ -720,6 +746,9 @@ pub fn has_mouse_mode() -> bool {
         if let Some(ref terminal) = *guard {
             return terminal.has_mouse_mode();
         }
+    } else {
+        #[cfg(feature = "debug-lock")]
+        lock_contention_warning("TERMINAL (has_mouse_mode)");
     }
     false
 }
@@ -741,6 +770,9 @@ pub fn mouse_event(
         if let Some(ref terminal) = *guard {
             return terminal.mouse_event(button, x_px, y_px, pressed, motion);
         }
+    } else {
+        #[cfg(feature = "debug-lock")]
+        lock_contention_warning("TERMINAL (mouse_event)");
     }
     None
 }

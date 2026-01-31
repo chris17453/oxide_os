@@ -16,6 +16,49 @@ If sed, patch, or any text manipulation fails:
 2. If all fail, show me the exact changes needed and ask how to proceed
 3. NEVER "work around" by modifying what the patch should do
 
+## Debug Output Policy
+
+**Debug output MUST always be gated behind compile-time feature flags — NEVER remove it.**
+
+Debug prints are valuable diagnostic tools. They must remain in the codebase permanently, controlled by Cargo features so they compile out in release builds but can be re-enabled instantly for debugging.
+
+### Rules
+
+1. **NEVER delete debug output** — always put it behind a `#[cfg(feature = "debug-*")]` gate
+2. **NEVER use raw serial writes for debug** — use the `debug_*!` macros from `kernel/src/debug.rs`
+3. **For interrupt-context debug** (where the serial lock may be held), use `#[cfg(feature = "debug-sched")]` with `write_str_unsafe`/`write_byte_unsafe` directly, or the `debug_sched_unsafe!` macro
+4. **When adding new debug categories**, add both:
+   - A new `debug_*!` macro in `kernel/src/debug.rs`
+   - A corresponding `debug-*` feature in `kernel/Cargo.toml` (and add it to `debug-all`)
+
+### Available Features
+
+| Feature | Macro | Purpose |
+|---------|-------|---------|
+| `debug-syscall` | `debug_syscall!` | Syscall entry/exit tracing |
+| `debug-fork` | `debug_fork!` | Fork/exec operations |
+| `debug-cow` | `debug_cow!` | COW page fault handling |
+| `debug-proc` | `debug_proc!` | Process management (exit, wait) |
+| `debug-sched` | `debug_sched!` | Scheduler context switches |
+| `debug-mouse` | `debug_mouse!` | Mouse/input IRQ and event tracing |
+| `debug-lock` | `debug_lock_contention!` | Lock contention warnings in ISR context |
+| `debug-all` | — | Enables all of the above |
+
+### Usage
+
+```bash
+# Enable specific debug output
+cargo build --features debug-sched
+
+# Enable all debug output
+cargo build --features debug-all
+
+# Normal build (all debug compiled out)
+cargo build
+```
+
+---
+
 ## Core Development Principles
 
 ### 1. NEVER Remove Features Due to Difficulty
@@ -257,6 +300,7 @@ Each arch-specific doc should be ~50-100 lines, not 500+.
 
 OXIDE is a from-scratch operating system written in Rust, currently targeting x86_64.
 
+
 ### Key Locations
 
 | Path | Description |
@@ -271,7 +315,7 @@ OXIDE is a from-scratch operating system written in Rust, currently targeting x8
 | `bootloader/` | Architecture-specific bootloaders |
 
 ### Design Principles
-
+- DEBUG INFO NEVER IS DELETED, its owned by a compiler flag
 - **Modular crates** - Everything is a separate `#![no_std]` crate
 - **Trait-based** - Interfaces defined in `-traits` crates
 - **Swappable** - Implementations can be replaced
@@ -314,6 +358,7 @@ Guidelines:
 - Commit working code only (tests must pass)
 - **NEVER add Claude attribution or Co-Authored-By to commits**
 - If you implement something, commit it immediately before moving on
+- code files should be smaller than 1000 lines.
 
 Example workflow:
 1. Update todos with current task
@@ -326,20 +371,6 @@ Example workflow:
 
 Bad: Implement syscall handler + ELF loader + Ring 3 transition → one big commit
 Good: Implement syscall handler → commit → ELF loader → commit → Ring 3 → commit
-
----
-
-## Current Status Quick Reference
-
-**Completed Phases:**
-- Phase 0: Boot + Serial ✓
-- Phase 1: Memory Management ✓
-- Phase 2: Interrupts + Timer + Scheduler ✓
-
-**Current Phase:**
-- Phase 3: User Mode + Syscalls
-
-**Check `docs/plan/PHASE_03.md` for Phase 3 requirements.**
 
 ---
 

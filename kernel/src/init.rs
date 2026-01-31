@@ -482,6 +482,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(writer, "[INFO] PS/2 keyboard initialized");
 
     // Initialize PS/2 mouse and keyboard drivers (registers with input subsystem)
+    debug_mouse!("[mouse] Initializing PS/2 drivers...");
     ps2::init();
     let _ = writeln!(writer, "[INFO] PS/2 drivers initialized (keyboard + mouse)");
 
@@ -493,6 +494,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(writer, "[INFO] PS/2 console callback registered");
 
     // Connect mouse IRQ 12 to PS/2 mouse driver
+    debug_mouse!("[mouse] Registering IRQ 12 callback for PS/2 mouse");
     unsafe {
         arch::set_mouse_callback(ps2::handle_mouse_irq);
     }
@@ -500,8 +502,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     // Initialize graphical mouse cursor on framebuffer
     if fb::is_initialized() {
+        debug_mouse!("[mouse] Initializing graphical cursor on framebuffer");
         fb::mouse_init();
         let _ = writeln!(writer, "[INFO] Mouse cursor initialized");
+    } else {
+        debug_mouse!("[mouse] No framebuffer — skipping graphical cursor init");
     }
 
     // Set up input subsystem wake callback for blocking reads on /dev/input/eventN

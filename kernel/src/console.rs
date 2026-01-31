@@ -125,6 +125,7 @@ pub fn terminal_tick() {
         // Drain all mouse events from input device 1
         if let Some(mouse_handle) = input::get_device(1) {
             while let Some(event) = mouse_handle.pop_event() {
+                debug_mouse_unsafe!("M");
                 match event.event_type() {
                     input::EventType::Rel => {
                         if event.code == input::REL_X {
