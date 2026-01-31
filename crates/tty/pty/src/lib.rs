@@ -278,6 +278,45 @@ impl VnodeOps for PtyMaster {
         Ok(())
     }
 
+    fn ioctl(&self, request: u64, arg: u64) -> VfsResult<i64> {
+        use tty::termios::*;
+
+        match request {
+            TIOCGPTN => {
+                // Return PTY number
+                let ptr = arg as *mut u32;
+                if ptr.is_null() {
+                    return Err(VfsError::InvalidArgument);
+                }
+                unsafe { *ptr = self.num; }
+                Ok(0)
+            }
+            TIOCSPTLCK => {
+                // Lock/unlock slave — no-op (always unlocked)
+                Ok(0)
+            }
+            TIOCGWINSZ => {
+                let ptr = arg as *mut tty::Winsize;
+                if ptr.is_null() {
+                    return Err(VfsError::InvalidArgument);
+                }
+                let pair = self.pair.lock();
+                unsafe { *ptr = pair.winsize; }
+                Ok(0)
+            }
+            TIOCSWINSZ => {
+                let ptr = arg as *const tty::Winsize;
+                if ptr.is_null() {
+                    return Err(VfsError::InvalidArgument);
+                }
+                let mut pair = self.pair.lock();
+                pair.winsize = unsafe { *ptr };
+                Ok(0)
+            }
+            _ => Err(VfsError::NotSupported),
+        }
+    }
+
     fn poll_read_ready(&self) -> bool {
         let pair = self.pair.lock();
         // Master can read if there's output from slave or slave is closed

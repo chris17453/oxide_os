@@ -311,3 +311,5 @@ pub const TCSBRKP: u64 = 0x5425; // Send break (timed)
 pub const TIOCSBRK: u64 = 0x5427; // Set break
 pub const TIOCCBRK: u64 = 0x5428; // Clear break
 pub const TIOCGSID: u64 = 0x5429; // Get session ID
+pub const TIOCGPTN: u64 = 0x80045430; // Get PTY number (ioctl arg is *mut u32)
+pub const TIOCSPTLCK: u64 = 0x40045431; // Lock/unlock PTY slave

@@ -4574,10 +4574,18 @@ pub unsafe extern "C" fn openpty(
     let master = open(b"/dev/ptmx\0".as_ptr(), O_RDWR as i32, 0);
     if master < 0 { return -1; }
 
-    // Get slave pty name (we use /dev/pts/0, /dev/pts/1, etc.)
-    // For simplicity, derive from master fd
-    let slave_name = b"/dev/pts/0\0";
-    let slave = open(slave_name.as_ptr(), O_RDWR as i32, 0);
+    // grantpt/unlockpt (no-ops on OXIDE)
+    grantpt(master);
+    unlockpt(master);
+
+    // Get slave PTY path via ptsname
+    let mut slave_buf = [0u8; 32];
+    if ptsname_r(master, slave_buf.as_mut_ptr(), 32) != 0 {
+        close(master);
+        return -1;
+    }
+
+    let slave = open(slave_buf.as_ptr(), O_RDWR as i32, 0);
     if slave < 0 {
         close(master);
         return -1;
@@ -4586,7 +4594,8 @@ pub unsafe extern "C" fn openpty(
     if !amaster.is_null() { *amaster = master; }
     if !aslave.is_null() { *aslave = slave; }
     if !name.is_null() {
-        core::ptr::copy_nonoverlapping(slave_name.as_ptr(), name, slave_name.len());
+        let len = cstr_len(slave_buf.as_ptr());
+        core::ptr::copy_nonoverlapping(slave_buf.as_ptr(), name, len + 1);
     }
     0
 }
@@ -5708,4 +5717,67 @@ pub unsafe extern "C" fn vdprintf(fd: i32, fmt: *const u8, mut ap: core::ffi::Va
     } else {
         len
     }
+}
+
+// ============ PTY helper functions ============
+
+/// TIOCGPTN ioctl number (returns PTY slave number)
+const TIOCGPTN: u64 = 0x80045430;
+
+/// Static buffer for ptsname (not thread-safe, per POSIX spec)
+static mut PTSNAME_BUF: [u8; 32] = [0u8; 32];
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ptsname(fd: i32) -> *mut u8 {
+    let ptr = core::ptr::addr_of_mut!(PTSNAME_BUF);
+    if ptsname_r(fd, (*ptr).as_mut_ptr(), 32) != 0 {
+        return core::ptr::null_mut();
+    }
+    (*ptr).as_mut_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ptsname_r(fd: i32, buf: *mut u8, buflen: usize) -> i32 {
+    if buf.is_null() || buflen < 12 {
+        ERRNO_VAR = errno::ERANGE;
+        return -1;
+    }
+    let mut ptn: u32 = 0;
+    let ret = ioctl(fd, TIOCGPTN, &mut ptn as *mut u32 as u64);
+    if ret < 0 {
+        return -1;
+    }
+    // Format "/dev/pts/N\0"
+    let prefix = b"/dev/pts/";
+    if buflen < prefix.len() + 4 {
+        ERRNO_VAR = errno::ERANGE;
+        return -1;
+    }
+    core::ptr::copy_nonoverlapping(prefix.as_ptr(), buf, prefix.len());
+    let mut pos = prefix.len();
+    // Write PTY number as decimal
+    if ptn >= 100 {
+        *buf.add(pos) = b'0' + (ptn / 100) as u8;
+        pos += 1;
+    }
+    if ptn >= 10 {
+        *buf.add(pos) = b'0' + ((ptn / 10) % 10) as u8;
+        pos += 1;
+    }
+    *buf.add(pos) = b'0' + (ptn % 10) as u8;
+    pos += 1;
+    *buf.add(pos) = 0;
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn grantpt(_fd: i32) -> i32 {
+    // No-op: OXIDE doesn't require separate permission granting for PTY slaves
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn unlockpt(_fd: i32) -> i32 {
+    // No-op: OXIDE PTY slaves are always unlocked
+    0
 }

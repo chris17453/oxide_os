@@ -480,10 +480,10 @@ ac_cv_func_mkstemp=yes
 ac_cv_func_dprintf=no
 ac_cv_func_vdprintf=yes
 
-# Not yet implemented (need kernel PTY support)
-ac_cv_func_grantpt=no
-ac_cv_func_unlockpt=no
-ac_cv_func_ptsname=no
+# PTY helpers (grantpt/unlockpt are no-ops, ptsname uses TIOCGPTN)
+ac_cv_func_grantpt=yes
+ac_cv_func_unlockpt=yes
+ac_cv_func_ptsname=yes
 
 # Syslog - stubs only
 ac_cv_func_syslog=no

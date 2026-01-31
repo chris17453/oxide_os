@@ -57,6 +57,6 @@ pub mod winsize;
 
 pub use ldisc::{LineDiscipline, Signal};
 pub use termios::{ControlFlags, InputFlags, LocalFlags, OutputFlags, Termios};
-pub use termios::{TCGETS, TCSETS, TCSETSF, TCSETSW, TIOCGPGRP, TIOCGWINSZ, TIOCSPGRP, TIOCSWINSZ};
+pub use termios::{TCGETS, TCSETS, TCSETSF, TCSETSW, TIOCGPGRP, TIOCGPTN, TIOCGWINSZ, TIOCSPGRP, TIOCSPTLCK, TIOCSWINSZ};
 pub use tty::{CallbackDriver, Tty, TtyDriver};
 pub use winsize::Winsize;
