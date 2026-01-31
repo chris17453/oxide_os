@@ -454,6 +454,42 @@ ac_cv_header_uuid_uuid_h=no
 # Computed gotos
 ac_cv_computed_gotos=yes
 
+# Standard C library functions
+ac_cv_func_strerror=yes
+ac_cv_func_strftime=yes
+ac_cv_func_strptime=no
+ac_cv_func_clock=yes
+ac_cv_func_clock_getres=yes
+ac_cv_func_opendir=yes
+ac_cv_func_readdir=yes
+ac_cv_func_closedir=yes
+ac_cv_func_getenv=yes
+ac_cv_func_setenv=yes
+ac_cv_func_unsetenv=yes
+ac_cv_func_tcgetattr=yes
+ac_cv_func_tcsetattr=yes
+ac_cv_func_fileno=yes
+ac_cv_func_fseeko=yes
+ac_cv_func_ftello=yes
+ac_cv_func_dup3=yes
+ac_cv_func_pipe2=yes
+ac_cv_func_login_tty=yes
+
+# Implemented
+ac_cv_func_mkstemp=yes
+ac_cv_func_dprintf=no
+ac_cv_func_vdprintf=yes
+
+# Not yet implemented (need kernel PTY support)
+ac_cv_func_grantpt=no
+ac_cv_func_unlockpt=no
+ac_cv_func_ptsname=no
+
+# Syslog - stubs only
+ac_cv_func_syslog=no
+ac_cv_func_openlog=no
+ac_cv_func_closelog=no
+
 # Printf
 ac_cv_opt_olimit_ok=no
 
@@ -486,6 +522,19 @@ ac_cv_disable_int_conversion=yes
 # strlcpy/strlcat
 ac_cv_func_strlcpy=yes
 ac_cv_func_strlcat=yes
+
+# String/locale functions
+ac_cv_func_strdup=yes
+ac_cv_func_strndup=yes
+ac_cv_func_strsignal=yes
+ac_cv_func_setlocale=yes
+ac_cv_func_mbstowcs=yes
+ac_cv_func_wcstombs=yes
+ac_cv_func_mbtowc=yes
+ac_cv_func_wctomb=yes
+ac_cv_func_popen=yes
+ac_cv_func_wcscoll=yes
+ac_cv_func_wcsxfrm=yes
 
 # Pthread extras
 ac_cv_func_pthread_kill=yes

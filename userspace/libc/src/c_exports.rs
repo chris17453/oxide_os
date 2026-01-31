@@ -5378,3 +5378,70 @@ pub unsafe extern "C" fn pclose(stream: *mut crate::filestream::FILE) -> i32 {
     waitpid(pid, &mut status, 0);
     status
 }
+
+// ============ mkstemp / mkostemp ============
+
+static mut MKSTEMP_COUNTER: u32 = 0;
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mkstemp(template: *mut u8) -> i32 {
+    mkostemp(template, 0)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mkostemp(template: *mut u8, flags: i32) -> i32 {
+    if template.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    let len = cstr_len(template);
+    if len < 6 {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    // Verify last 6 chars are XXXXXX
+    let suffix = template.add(len - 6);
+    for i in 0..6 {
+        if *suffix.add(i) != b'X' {
+            ERRNO_VAR = errno::EINVAL;
+            return -1;
+        }
+    }
+    // Generate unique suffix using counter + pid
+    let counter = {
+        let ptr = core::ptr::addr_of_mut!(MKSTEMP_COUNTER);
+        let val = *ptr;
+        *ptr = val.wrapping_add(1);
+        val
+    };
+    let pid = syscall::sys_getpid() as u32;
+    let seed = counter.wrapping_mul(1103515245).wrapping_add(pid.wrapping_mul(12345));
+    let chars = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    let mut val = seed;
+    for i in 0..6 {
+        *suffix.add(i) = chars[(val as usize) % 36];
+        val = val.wrapping_mul(1103515245).wrapping_add(12345);
+    }
+    let o_flags = 0x42 | flags as u32; // O_RDWR | O_CREAT | O_EXCL
+    syscall::syscall4(
+        syscall::nr::OPEN,
+        template as usize,
+        cstr_len(template),
+        o_flags as usize,
+        0o600usize,
+    ) as i32
+}
+
+// ============ dprintf / vdprintf ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vdprintf(fd: i32, fmt: *const u8, mut ap: core::ffi::VaList) -> i32 {
+    let mut buf = [0u8; 4096];
+    let len = crate::printf::vsnprintf_impl(buf.as_mut_ptr(), 4096, fmt, &mut ap);
+    if len > 0 {
+        let write_len = if (len as usize) < 4096 { len as usize } else { 4095 };
+        syscall::syscall3(syscall::nr::WRITE, fd as usize, buf.as_ptr() as usize, write_len) as i32
+    } else {
+        len
+    }
+}
