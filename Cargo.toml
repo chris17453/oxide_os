@@ -117,6 +117,7 @@ members = [
     "userspace/networkd",
     "userspace/journald",
     "userspace/journalctl",
+    "userspace/evtest",
     "bootloader/boot-uefi",
     "apps/gwbasic",
 ]

@@ -11,6 +11,7 @@ ARCH ?= x86_64
 PROFILE ?= debug
 QEMU_TIMEOUT ?= 15
 LINKER ?= ld.lld
+KERNEL_FEATURES ?=
 
 # QEMU command auto-detection (can be overridden with QEMU=command)
 # Prefer qemu-system-x86_64 as it supports all features (including fat: protocol)
@@ -41,7 +42,7 @@ USERSPACE_OUT_RELEASE := $(TARGET_DIR)/$(USERSPACE_TARGET)/release
 CARGO_USER_FLAGS :=
 
 # Userspace packages to build
-USERSPACE_PACKAGES := init esh getty login coreutils ssh sshd service networkd journald journalctl
+USERSPACE_PACKAGES := init esh getty login coreutils ssh sshd service networkd journald journalctl evtest
 
 # Coreutils binaries (auto-detected from Cargo.toml [[bin]] entries)
 # Extract binary names from [[bin]] sections in coreutils/Cargo.toml
@@ -57,12 +58,21 @@ build: kernel bootloader
 build-full: kernel bootloader userspace initramfs
 
 # Build kernel
+# Pass KERNEL_FEATURES to enable debug output, e.g.: make run KERNEL_FEATURES=debug-all
 kernel:
 	@echo "Building kernel..."
 ifeq ($(PROFILE),release)
+ifneq ($(KERNEL_FEATURES),)
+	@cargo build --package kernel --release --features $(KERNEL_FEATURES)
+else
 	@cargo build --package kernel --release
+endif
+else
+ifneq ($(KERNEL_FEATURES),)
+	@cargo build --package kernel --features $(KERNEL_FEATURES)
 else
 	@cargo build --package kernel
+endif
 endif
 
 # Build bootloader
@@ -101,10 +111,8 @@ userspace-release:
 	@RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package coreutils --bin testcolors --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1
 	@echo "  Building TLS test..."
 	@$(MAKE) tls-test
-	@echo "  Building CPython..."
-	@if [ ! -f "$(USERSPACE_OUT_RELEASE)/python" ]; then $(MAKE) cpython; else echo "    Python already built, skipping..."; fi
 	@echo "Stripping binaries..."
-	@for prog in init esh login gwbasic python tls-test ssh sshd service networkd journald journalctl $(COREUTILS_BINS); do \
+	@for prog in init esh login gwbasic tls-test ssh sshd service networkd journald journalctl evtest $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
 			strip "$(USERSPACE_OUT_RELEASE)/$$prog" 2>/dev/null || true; \
 		fi; \
@@ -377,10 +385,9 @@ create-rootfs: kernel bootloader initramfs-minimal
 	sudo ln -sf /bin/esh $(TARGET_DIR)/mnt/root/bin/sh && \
 	sudo cp "$(USERSPACE_OUT_RELEASE)/getty" $(TARGET_DIR)/mnt/root/bin/getty && \
 	sudo cp "$(USERSPACE_OUT_RELEASE)/login" $(TARGET_DIR)/mnt/root/bin/login && \
-	for prog in gwbasic python tls-test ssh sshd service networkd journald journalctl $(COREUTILS_BINS) testcolors; do \
+	for prog in gwbasic tls-test ssh sshd service networkd journald journalctl evtest $(COREUTILS_BINS) testcolors; do \
 		[ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/$$prog" $(TARGET_DIR)/mnt/root/usr/bin/ || true; \
 	done && \
-	[ -f "$(USERSPACE_OUT_RELEASE)/python" ] && sudo ln -sf /usr/bin/python $(TARGET_DIR)/mnt/root/usr/bin/python3 || true; \
 	[ -f "$(USERSPACE_OUT_RELEASE)/tls-test" ] && echo "TLS test installed" || true; \
 	sudo ln -sf /usr/bin/service $(TARGET_DIR)/mnt/root/usr/bin/servicemgr && \
 	sudo ln -sf /usr/bin/service $(TARGET_DIR)/mnt/root/bin/servicemgr && \

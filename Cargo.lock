@@ -164,6 +164,7 @@ checksum = "b365fabc795046672053e29c954733ec3b05e4be654ab130fe8f1f94d7051f35"
 name = "devfs"
 version = "0.1.0"
 dependencies = [
+ "input",
  "os_core",
  "sched",
  "spin 0.9.8",
@@ -261,6 +262,13 @@ dependencies = [
 
 [[package]]
 name = "esh"
+version = "0.1.0"
+dependencies = [
+ "libc 0.1.0",
+]
+
+[[package]]
+name = "evtest"
 version = "0.1.0"
 dependencies = [
  "libc 0.1.0",

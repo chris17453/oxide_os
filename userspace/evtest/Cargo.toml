@@ -1,0 +1,13 @@
+[package]
+name = "evtest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Input event testing tool for OXIDE OS"
+
+[[bin]]
+name = "evtest"
+path = "src/main.rs"
+
+[dependencies]
+libc = { path = "../libc" }
