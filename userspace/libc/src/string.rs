@@ -352,3 +352,17 @@ pub unsafe fn strstr_c(haystack: *const u8, needle: *const u8) -> *const u8 {
 
     core::ptr::null()
 }
+
+/// Fill memory with a byte value that won't be optimized away
+///
+/// Uses volatile writes to ensure the compiler doesn't elide the fill.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn explicit_memset(s: *mut u8, c: i32, n: usize) -> *mut u8 {
+    let byte = c as u8;
+    for i in 0..n {
+        unsafe {
+            core::ptr::write_volatile(s.add(i), byte);
+        }
+    }
+    s
+}

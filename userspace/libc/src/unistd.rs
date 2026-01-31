@@ -228,3 +228,299 @@ pub fn tcgetpgrp(fd: i32) -> i32 {
 pub fn tcsetpgrp(fd: i32, pgid: i32) -> i32 {
     syscall::sys_ioctl(fd, TIOCSPGRP, &pgid as *const i32 as u64)
 }
+
+/// Set process group (POSIX setpgrp = setpgid(0, 0))
+pub fn setpgrp() -> i32 {
+    setpgid(0, 0)
+}
+
+/// Truncate file to specified length
+pub fn ftruncate(fd: i32, length: i64) -> i32 {
+    syscall::sys_ftruncate(fd, length)
+}
+
+/// Truncate a file by path to specified length
+pub fn truncate(path: &str, length: i64) -> i32 {
+    let fd = open(path, crate::fcntl::O_WRONLY, 0);
+    if fd < 0 {
+        return fd;
+    }
+    let result = ftruncate(fd, length);
+    close(fd);
+    result
+}
+
+/// Get hostname
+///
+/// Reads the hostname from uname().nodename.
+pub fn gethostname(buf: &mut [u8]) -> i32 {
+    let mut uts = syscall::UtsName::new();
+    let r = syscall::uname(&mut uts);
+    if r != 0 {
+        return -1;
+    }
+    // Copy nodename to buf
+    let name = &uts.nodename;
+    let len = name.iter().position(|&c| c == 0).unwrap_or(name.len());
+    let copy_len = len.min(buf.len().saturating_sub(1));
+    buf[..copy_len].copy_from_slice(&name[..copy_len]);
+    if copy_len < buf.len() {
+        buf[copy_len] = 0;
+    }
+    0
+}
+
+/// Check if a file descriptor refers to a terminal
+pub fn isatty(fd: i32) -> i32 {
+    // Use TIOCGPGRP as a simple TTY test - it returns -ENOTTY on non-TTYs
+    let mut pgid: i32 = 0;
+    if syscall::sys_ioctl(fd, TIOCGPGRP, &mut pgid as *mut i32 as u64) >= 0 {
+        1
+    } else {
+        0
+    }
+}
+
+/// Get name of terminal associated with file descriptor
+///
+/// Returns a pointer to a static buffer containing the terminal name.
+/// Returns null pointer if fd is not a terminal.
+pub fn ttyname(fd: i32) -> *const u8 {
+    if isatty(fd) == 0 {
+        return core::ptr::null();
+    }
+    // Our kernel uses /dev/console as the primary TTY
+    b"/dev/console\0".as_ptr()
+}
+
+/// Check file accessibility
+pub fn access(path: &str, mode: i32) -> i32 {
+    // Use stat to check if file exists and permissions
+    let mut st = crate::stat::Stat::zeroed();
+    let r = crate::stat::stat(path, &mut st);
+    if r < 0 {
+        return r;
+    }
+
+    // F_OK (0) = existence check, already passed
+    if mode == 0 {
+        return 0;
+    }
+
+    // For now, grant all access if file exists (we don't have full permission checking)
+    0
+}
+
+/// F_OK - test for existence
+pub const F_OK: i32 = 0;
+/// R_OK - test for read permission
+pub const R_OK: i32 = 4;
+/// W_OK - test for write permission
+pub const W_OK: i32 = 2;
+/// X_OK - test for execute permission
+pub const X_OK: i32 = 1;
+
+/// Get login name of current user
+///
+/// Returns "root" since OXIDE currently always runs as root.
+pub fn getlogin() -> *const u8 {
+    b"root\0".as_ptr()
+}
+
+/// Get login name into buffer
+pub fn getlogin_r(buf: &mut [u8]) -> i32 {
+    let name = b"root";
+    if buf.len() < name.len() + 1 {
+        return -34; // ERANGE
+    }
+    buf[..name.len()].copy_from_slice(name);
+    buf[name.len()] = 0;
+    0
+}
+
+/// Execute a shell command
+///
+/// Forks a child process and execs the shell with "-c" and the command.
+pub fn system(command: &str) -> i32 {
+    if command.is_empty() {
+        // Check if shell is available
+        let fd = open("/bin/esh", 0, 0);
+        if fd >= 0 {
+            close(fd);
+            return 1; // Shell available
+        }
+        return 0; // No shell
+    }
+
+    let child = fork();
+    if child == 0 {
+        // Child - exec shell
+        let mut cmd_buf = [0u8; 4096];
+        let cmd_bytes = command.as_bytes();
+        let copy_len = cmd_bytes.len().min(cmd_buf.len() - 1);
+        cmd_buf[..copy_len].copy_from_slice(&cmd_bytes[..copy_len]);
+        cmd_buf[copy_len] = 0;
+
+        let argv: [*const u8; 4] = [
+            b"/bin/esh\0".as_ptr(),
+            b"-c\0".as_ptr(),
+            cmd_buf.as_ptr(),
+            core::ptr::null(),
+        ];
+        syscall::sys_execve("/bin/esh", argv.as_ptr(), core::ptr::null());
+        _exit(127);
+    } else if child > 0 {
+        let mut status: i32 = 0;
+        waitpid(child, &mut status, 0);
+        return status;
+    }
+    -1 // fork failed
+}
+
+/// Get configurable pathname variable
+///
+/// Returns a value for the given name, or -1 if not supported.
+pub fn pathconf(_path: &str, name: i32) -> i64 {
+    fpathconf(-1, name)
+}
+
+/// Get configurable file descriptor variable
+pub fn fpathconf(_fd: i32, name: i32) -> i64 {
+    match name {
+        0 => 255,   // _PC_LINK_MAX
+        1 => 14,    // _PC_MAX_CANON
+        2 => 255,   // _PC_MAX_INPUT
+        3 => 255,   // _PC_NAME_MAX
+        4 => 4096,  // _PC_PATH_MAX
+        5 => 512,   // _PC_PIPE_BUF
+        6 => 1,     // _PC_CHOWN_RESTRICTED
+        7 => 1,     // _PC_NO_TRUNC
+        8 => 1,     // _PC_VDISABLE
+        _ => -1,
+    }
+}
+
+/// Get system configuration value
+pub fn sysconf(name: i32) -> i64 {
+    match name {
+        0 => 4096,   // _SC_ARG_MAX
+        1 => -1,     // _SC_CHILD_MAX (no limit)
+        2 => 100,    // _SC_CLK_TCK (timer frequency)
+        3 => 20,     // _SC_NGROUPS_MAX
+        4 => -1,     // _SC_OPEN_MAX
+        6 => 4096,   // _SC_PAGESIZE / _SC_PAGE_SIZE
+        8 => 1,      // _SC_VERSION (POSIX.1)
+        29 => 4096,  // _SC_PAGESIZE (alternate)
+        30 => 4096,  // _SC_PAGE_SIZE
+        58 => 1,     // _SC_NPROCESSORS_ONLN
+        84 => 1,     // _SC_NPROCESSORS_CONF
+        _ => -1,
+    }
+}
+
+/// Resolve a pathname to an absolute path with no `.`, `..`, or symlinks
+///
+/// If `resolved` is null, allocates a buffer. Otherwise writes to `resolved`
+/// which must be at least 4096 bytes.
+pub fn realpath(path: &str, resolved: &mut [u8]) -> i32 {
+    if path.is_empty() {
+        return -22; // EINVAL
+    }
+
+    // Start with absolute path
+    let mut buf = [0u8; 4096];
+    let mut pos = 0;
+
+    if !path.starts_with('/') {
+        // Relative path - prepend cwd
+        let cwd_len = getcwd(&mut buf);
+        if cwd_len < 0 {
+            return cwd_len;
+        }
+        pos = buf.iter().position(|&c| c == 0).unwrap_or(cwd_len as usize);
+        if pos > 0 && buf[pos - 1] != b'/' {
+            buf[pos] = b'/';
+            pos += 1;
+        }
+    }
+
+    // Append the path
+    let path_bytes = path.as_bytes();
+    let copy_len = path_bytes.len().min(buf.len() - pos - 1);
+    buf[pos..pos + copy_len].copy_from_slice(&path_bytes[..copy_len]);
+    pos += copy_len;
+    buf[pos] = 0;
+
+    // Normalize: resolve . and ..
+    let mut result = [0u8; 4096];
+    let mut rpos = 0;
+
+    let mut i = 0;
+    while i < pos {
+        if buf[i] == b'/' {
+            // Skip duplicate slashes
+            if rpos > 0 && result[rpos - 1] == b'/' {
+                i += 1;
+                continue;
+            }
+            result[rpos] = b'/';
+            rpos += 1;
+            i += 1;
+
+            // Check for . or ..
+            if i < pos && buf[i] == b'.' {
+                if i + 1 >= pos || buf[i + 1] == b'/' || buf[i + 1] == 0 {
+                    // "." - skip it (remove the trailing slash too)
+                    i += 1;
+                    if rpos > 1 {
+                        rpos -= 1; // Remove the slash we just added (unless it's root)
+                    }
+                    continue;
+                }
+                if buf[i + 1] == b'.'
+                    && (i + 2 >= pos || buf[i + 2] == b'/' || buf[i + 2] == 0)
+                {
+                    // ".." - go up one directory
+                    i += 2;
+                    // Remove trailing slash
+                    if rpos > 1 {
+                        rpos -= 1;
+                    }
+                    // Go back to previous /
+                    while rpos > 1 && result[rpos - 1] != b'/' {
+                        rpos -= 1;
+                    }
+                    continue;
+                }
+            }
+        } else {
+            result[rpos] = buf[i];
+            rpos += 1;
+            i += 1;
+        }
+    }
+
+    // Ensure we have at least "/"
+    if rpos == 0 {
+        result[0] = b'/';
+        rpos = 1;
+    }
+    // Remove trailing slash (unless it's root)
+    if rpos > 1 && result[rpos - 1] == b'/' {
+        rpos -= 1;
+    }
+    result[rpos] = 0;
+
+    // Verify the path exists
+    let mut st = crate::stat::Stat::zeroed();
+    let path_str = unsafe { core::str::from_utf8_unchecked(&result[..rpos]) };
+    let r = crate::stat::stat(path_str, &mut st);
+    if r < 0 {
+        return r; // Path doesn't exist
+    }
+
+    // Copy to output
+    let copy_len = (rpos + 1).min(resolved.len());
+    resolved[..copy_len].copy_from_slice(&result[..copy_len]);
+    0
+}

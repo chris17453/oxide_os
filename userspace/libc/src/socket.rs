@@ -573,3 +573,184 @@ pub const SOCKADDR_IN6_SIZE: u32 = core::mem::size_of::<SockAddrIn6>() as u32;
 
 /// Size of Unix socket address structure
 pub const SOCKADDR_UN_SIZE: u32 = core::mem::size_of::<SockAddrUn>() as u32;
+
+/// Convert IPv4/IPv6 address from text to binary form
+///
+/// `af` - address family (AF_INET or AF_INET6)
+/// `src` - null-terminated string with IP address
+/// `dst` - pointer to output (u32 for AF_INET, [u8; 16] for AF_INET6)
+///
+/// Returns 1 on success, 0 if src is invalid, -1 if af is unsupported.
+pub fn inet_pton(af: i32, src: &[u8], dst: *mut u8) -> i32 {
+    // Find the end of the string (null terminator or slice end)
+    let len = src.iter().position(|&c| c == 0).unwrap_or(src.len());
+    let s = &src[..len];
+
+    match af {
+        af::INET => {
+            // Parse dotted decimal: "a.b.c.d"
+            let mut octets = [0u8; 4];
+            let mut octet_idx = 0;
+            let mut val: u32 = 0;
+            let mut digits = 0;
+
+            for &ch in s {
+                if ch == b'.' {
+                    if digits == 0 || octet_idx >= 3 || val > 255 {
+                        return 0;
+                    }
+                    octets[octet_idx] = val as u8;
+                    octet_idx += 1;
+                    val = 0;
+                    digits = 0;
+                } else if ch.is_ascii_digit() {
+                    val = val * 10 + (ch - b'0') as u32;
+                    digits += 1;
+                    if val > 255 {
+                        return 0;
+                    }
+                } else {
+                    return 0;
+                }
+            }
+
+            if digits == 0 || octet_idx != 3 || val > 255 {
+                return 0;
+            }
+            octets[3] = val as u8;
+
+            unsafe {
+                core::ptr::copy_nonoverlapping(octets.as_ptr(), dst, 4);
+            }
+            1
+        }
+        af::INET6 => {
+            // Minimal IPv6 parsing: handle :: and hex groups
+            let mut groups = [0u16; 8];
+            let mut group_idx = 0;
+            let mut expand_pos: Option<usize> = None;
+            let mut val: u32 = 0;
+            let mut digits = 0;
+            let mut i = 0;
+
+            // Check for leading ::
+            if s.len() >= 2 && s[0] == b':' && s[1] == b':' {
+                expand_pos = Some(0);
+                i = 2;
+            }
+
+            while i < s.len() {
+                if s[i] == b':' {
+                    if digits > 0 {
+                        if group_idx >= 8 {
+                            return 0;
+                        }
+                        groups[group_idx] = val as u16;
+                        group_idx += 1;
+                        val = 0;
+                        digits = 0;
+                    }
+                    if i + 1 < s.len() && s[i + 1] == b':' {
+                        if expand_pos.is_some() {
+                            return 0; // Double ::
+                        }
+                        expand_pos = Some(group_idx);
+                        i += 2;
+                        continue;
+                    }
+                    i += 1;
+                } else if s[i].is_ascii_hexdigit() {
+                    let d = if s[i].is_ascii_digit() {
+                        (s[i] - b'0') as u32
+                    } else if s[i] >= b'a' && s[i] <= b'f' {
+                        (s[i] - b'a') as u32 + 10
+                    } else {
+                        (s[i] - b'A') as u32 + 10
+                    };
+                    val = (val << 4) | d;
+                    digits += 1;
+                    if digits > 4 {
+                        return 0;
+                    }
+                    i += 1;
+                } else {
+                    return 0;
+                }
+            }
+
+            // Last group
+            if digits > 0 {
+                if group_idx >= 8 {
+                    return 0;
+                }
+                groups[group_idx] = val as u16;
+                group_idx += 1;
+            }
+
+            // Expand ::
+            if let Some(pos) = expand_pos {
+                let tail_groups = group_idx - pos;
+                let expand_count = 8 - group_idx;
+                // Move tail groups to the end
+                for j in (0..tail_groups).rev() {
+                    groups[pos + expand_count + j] = groups[pos + j];
+                }
+                // Zero the expanded positions
+                for j in 0..expand_count {
+                    groups[pos + j] = 0;
+                }
+            } else if group_idx != 8 {
+                return 0;
+            }
+
+            // Write big-endian
+            unsafe {
+                for (j, &g) in groups.iter().enumerate() {
+                    let be = g.to_be_bytes();
+                    *dst.add(j * 2) = be[0];
+                    *dst.add(j * 2 + 1) = be[1];
+                }
+            }
+            1
+        }
+        _ => -1, // Unsupported address family
+    }
+}
+
+/// Convert IPv4 address from text to binary form (BSD style)
+///
+/// Returns 1 on success, 0 on failure.
+pub fn inet_aton(src: &[u8], dst: *mut u32) -> i32 {
+    let result = inet_pton(af::INET, src, dst as *mut u8);
+    if result == 1 { 1 } else { 0 }
+}
+
+/// Convert IPv4 address from binary to text form
+///
+/// Returns a pointer to a static buffer with the dotted decimal string.
+pub fn inet_ntoa(addr: u32) -> &'static [u8] {
+    // Use a static buffer (not thread-safe, matches traditional inet_ntoa)
+    static mut BUF: [u8; 16] = [0; 16];
+    let bytes = addr.to_be_bytes();
+    let mut pos = 0;
+    unsafe {
+        for (i, &b) in bytes.iter().enumerate() {
+            if i > 0 {
+                BUF[pos] = b'.';
+                pos += 1;
+            }
+            if b >= 100 {
+                BUF[pos] = b'0' + b / 100;
+                pos += 1;
+            }
+            if b >= 10 {
+                BUF[pos] = b'0' + (b / 10) % 10;
+                pos += 1;
+            }
+            BUF[pos] = b'0' + b % 10;
+            pos += 1;
+        }
+        BUF[pos] = 0;
+        &BUF[..pos + 1]
+    }
+}

@@ -122,6 +122,11 @@ pub use unistd::{
     _exit, close, dup, dup2, eputs, exec, execv, execve, exit, fork, getpid, getppid, open, open2,
     puts, read, wait, waitpid, write,
 };
+pub use unistd::{
+    access, ftruncate, gethostname, getlogin, getlogin_r, isatty, realpath, setpgrp, system,
+    truncate, ttyname, pathconf, fpathconf, sysconf,
+};
+pub use unistd::{F_OK, R_OK, W_OK, X_OK};
 pub use unistd::{SEEK_CUR, SEEK_END, SEEK_SET};
 pub use unistd::{
     WCONTINUED, WNOHANG, WUNTRACED, wexitstatus, wifexited, wifsignaled, wifstopped, wstopsig,

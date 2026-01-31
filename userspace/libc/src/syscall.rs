@@ -449,6 +449,11 @@ pub fn sys_lseek(fd: i32, offset: i64, whence: i32) -> i64 {
     syscall3(nr::LSEEK, fd as usize, offset as usize, whence as usize)
 }
 
+/// sys_ftruncate - Truncate file to specified length
+pub fn sys_ftruncate(fd: i32, length: i64) -> i32 {
+    syscall2(nr::FTRUNCATE, fd as usize, length as usize) as i32
+}
+
 /// sys_setsid - Create new session
 pub fn sys_setsid() -> i32 {
     syscall0(nr::SETSID) as i32
