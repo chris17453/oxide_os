@@ -769,8 +769,61 @@ pub unsafe extern "C" fn execv(path: *const u8, argv: *const *const u8) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn execvp(_file: *const u8, _argv: *const *const u8) -> i32 {
-    ERRNO_VAR = errno::ENOSYS;
+pub unsafe extern "C" fn execvp(file: *const u8, argv: *const *const u8) -> i32 {
+    execvpe(file, argv, core::ptr::null())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn execvpe(file: *const u8, argv: *const *const u8, envp: *const *const u8) -> i32 {
+    if file.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    let file_len = cstr_len(file);
+    // If file contains '/', use it directly
+    let has_slash = {
+        let mut found = false;
+        for i in 0..file_len {
+            if *file.add(i) == b'/' {
+                found = true;
+                break;
+            }
+        }
+        found
+    };
+    if has_slash {
+        return execve(file, argv, envp);
+    }
+    // Search PATH
+    let path_env = getenv(b"PATH\0".as_ptr());
+    let path_str = if path_env.is_null() {
+        b"/bin:/usr/bin\0".as_ptr()
+    } else {
+        path_env as *const u8
+    };
+    let path_len = cstr_len(path_str);
+    let mut buf: [u8; 512] = [0; 512];
+    let mut start = 0;
+    while start <= path_len {
+        // Find end of this PATH component
+        let mut end = start;
+        while end < path_len && *path_str.add(end) != b':' {
+            end += 1;
+        }
+        let dir_len = end - start;
+        if dir_len > 0 && dir_len + 1 + file_len + 1 < 512 {
+            core::ptr::copy_nonoverlapping(path_str.add(start), buf.as_mut_ptr(), dir_len);
+            buf[dir_len] = b'/';
+            core::ptr::copy_nonoverlapping(file, buf.as_mut_ptr().add(dir_len + 1), file_len);
+            buf[dir_len + 1 + file_len] = 0;
+            // Check if file exists
+            if access(buf.as_ptr(), 0) == 0 {
+                return execve(buf.as_ptr(), argv, envp);
+            }
+        }
+        start = end + 1;
+    }
+    ERRNO_VAR = errno::ENOENT;
     -1
 }
 
