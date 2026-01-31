@@ -658,6 +658,12 @@ impl VirtioBlk {
     }
 
     /// Perform a block I/O request (internal)
+    ///
+    /// Holds both queue and buffer locks for the entire duration of the request
+    /// to prevent concurrent requests from stealing each other's completions.
+    /// The used ring returns completions in arbitrary order, so without holding
+    /// the lock, Thread A could pop Thread B's completion and read stale data
+    /// from its own (not-yet-completed) bounce buffer slot.
     fn do_request(&self, req_type: u32, sector: u64, data: Option<&mut [u8]>) -> BlockResult<()> {
         let mut queue = self.queue.lock();
         let buffers = self.req_buffers.lock();
@@ -745,19 +751,24 @@ impl VirtioBlk {
         // Add to available ring and notify
         queue.add_available(desc_header);
 
-        // Release locks before waiting
+        // Drop buffers lock before polling - the queue lock serializes access
+        // to the used ring so completions can't be stolen by another thread.
         drop(buffers);
-        drop(queue);
 
         // Notify device
         self.notify();
 
-        // Poll for completion
+        // Poll for completion while holding the queue lock.
+        // This ensures only one thread polls the used ring at a time,
+        // preventing completion stealing between concurrent requests.
         let mut timeout = 10_000_000u32;
         loop {
-            let mut queue = self.queue.lock();
             if queue.has_completed() {
-                let (_id, _len) = queue.pop_used().unwrap();
+                let (id, _len) = queue.pop_used().unwrap();
+
+                // Verify we got our own completion (should always match since
+                // we hold the lock, but check for safety)
+                debug_assert_eq!(id, desc_header, "virtio-blk: wrong completion");
 
                 // Check status and copy data back for reads
                 let buffers = self.req_buffers.lock();
@@ -786,12 +797,10 @@ impl VirtioBlk {
                     _ => Err(BlockError::IoError),
                 };
             }
-            drop(queue);
 
             timeout -= 1;
             if timeout == 0 {
-                // Timeout - try to free descriptors anyway
-                let mut queue = self.queue.lock();
+                // Timeout - free descriptors
                 queue.free_chain(desc_header);
                 return Err(BlockError::Timeout);
             }

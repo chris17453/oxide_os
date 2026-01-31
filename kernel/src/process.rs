@@ -938,13 +938,6 @@ pub fn kernel_exec(
             let new_pml4 = exec_result.address_space.pml4_phys();
             let ctx = &exec_result.context;
 
-            // TEMP DEBUG: Print fs_base from exec_result
-            {
-                use core::fmt::Write;
-                let mut writer = serial::SerialWriter;
-                let _ = writeln!(writer, "[EXEC] do_exec returned fs_base={:#x}", ctx.fs_base);
-            }
-
             // Build task context from exec result
             let task_ctx = TaskContext {
                 rip: ctx.rip,

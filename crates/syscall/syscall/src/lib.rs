@@ -774,13 +774,6 @@ fn sys_fork() -> i64 {
 fn sys_exec(path: u64, path_len: usize, argv: *const *const u8, envp: *const *const u8) -> i64 {
     use core::ptr::addr_of;
 
-    // TEMP DEBUG
-    unsafe {
-        if let Some(write_fn) = (*addr_of!(SYSCALL_CONTEXT)).serial_write {
-            write_fn(b"[EXEC] sys_exec entry\n");
-        }
-    }
-
     // Validate path is in user space
     if path >= 0x0000_8000_0000_0000 {
         return errno::EFAULT;
@@ -798,81 +791,26 @@ fn sys_exec(path: u64, path_len: usize, argv: *const *const u8, envp: *const *co
         return errno::EFAULT;
     }
 
-    // Check AC flag before STAC
-    let rflags_before: u64;
-    unsafe {
-        core::arch::asm!("pushfq; pop {}", out(reg) rflags_before, options(nomem));
-    }
-
+    // Enable user memory access (SMAP)
     unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
-
-    // Check AC flag after STAC
-    let rflags_after: u64;
-    unsafe {
-        core::arch::asm!("pushfq; pop {}", out(reg) rflags_after, options(nomem));
-    }
-
-    unsafe {
-        use core::ptr::addr_of;
-        if let Some(write_fn) = (*addr_of!(SYSCALL_CONTEXT)).serial_write {
-            write_fn(b"[EXEC_TRACE] In sys_exec, about to print AC flags\n");
-            write_fn(b"[EXEC] AC flag before STAC: ");
-            if rflags_before & (1 << 18) != 0 {
-                write_fn(b"SET\n");
-            } else {
-                write_fn(b"CLEAR\n");
-            }
-            write_fn(b"[EXEC] AC flag after STAC: ");
-            if rflags_after & (1 << 18) != 0 {
-                write_fn(b"SET\n");
-            } else {
-                write_fn(b"CLEAR\n");
-            }
-            write_fn(b"[EXEC_TRACE] About to call exec_fn now...\n");
-        }
-    }
-
-    // TEMP DEBUG
-    unsafe {
-        if let Some(write_fn) = (*addr_of!(SYSCALL_CONTEXT)).serial_write {
-            write_fn(b"[EXEC] About to call exec_fn\n");
-        }
-    }
 
     let result = unsafe {
         let ctx = addr_of!(SYSCALL_CONTEXT);
         if let Some(exec_fn) = (*ctx).exec {
-            let res = exec_fn(path as *const u8, path_len, argv, envp);
-            // TEMP DEBUG
-            if let Some(write_fn) = (*ctx).serial_write {
-                write_fn(b"[EXEC] exec_fn returned\n");
-            }
-            res
+            exec_fn(path as *const u8, path_len, argv, envp)
         } else {
             errno::ENOSYS
         }
     };
 
-    // After exec, restore FS_BASE for TLS
-    // The exec callback updated the task's context with new fs_base, but sysretq
-    // doesn't restore FS_BASE MSR, so we must do it explicitly here.
+    // On success, kernel_exec does sysretq directly and never returns here.
+    // If we reach this point, exec failed. Restore FS_BASE as a safety measure
+    // in case the exec path partially modified it before failing.
     if result >= 0 {
-        // Exec succeeded, get the updated fs_base from task context and write to MSR
         unsafe {
             let ctx = addr_of!(SYSCALL_CONTEXT);
             if let Some(get_fs_fn) = (*ctx).get_current_fs_base {
                 let fs_base = get_fs_fn();
-                // DEBUG
-                if let Some(write_fn) = (*ctx).serial_write {
-                    write_fn(b"[EXEC] FS_BASE value: 0x");
-                    let mut buf = [0u8; 16];
-                    for i in 0..16 {
-                        let nibble = ((fs_base >> (60 - i * 4)) & 0xF) as u8;
-                        buf[i] = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
-                    }
-                    write_fn(&buf);
-                    write_fn(b"\n");
-                }
                 if fs_base != 0 {
                     core::arch::asm!(
                         "mov rcx, 0xC0000100",  // IA32_FS_BASE MSR
@@ -886,14 +824,12 @@ fn sys_exec(path: u64, path_len: usize, argv: *const *const u8, envp: *const *co
                         out("rdx") _,
                         options(nostack, preserves_flags)
                     );
-                    if let Some(write_fn) = (*ctx).serial_write {
-                        write_fn(b"[EXEC] FS_BASE MSR written\n");
-                    }
                 }
             }
         }
     }
 
+    // Disable user memory access (SMAP)
     unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
     result
 }
