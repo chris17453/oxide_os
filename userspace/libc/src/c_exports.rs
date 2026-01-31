@@ -5796,3 +5796,189 @@ pub unsafe extern "C" fn unlockpt(_fd: i32) -> i32 {
     // No-op: OXIDE PTY slaves are always unlocked
     0
 }
+
+// ============ readline / history ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn readline(prompt: *const u8) -> *mut u8 {
+    crate::readline::readline(prompt)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rl_initialize() -> i32 {
+    crate::readline::rl_initialize_internal();
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rl_callback_handler_install(
+    prompt: *const u8,
+    handler: crate::readline::CallbackHandler,
+) {
+    crate::readline::rl_callback_handler_install(prompt, handler);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rl_callback_read_char() {
+    crate::readline::rl_callback_read_char();
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rl_callback_handler_remove() {
+    crate::readline::rl_callback_handler_remove();
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rl_insert_text(text: *const u8) -> i32 {
+    crate::readline::rl_insert_text(text)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rl_redisplay() {
+    crate::readline::rl_redisplay();
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rl_insert(count: i32, key: i32) -> i32 {
+    crate::readline::rl_insert(count, key)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rl_complete(count: i32, key: i32) -> i32 {
+    crate::readline::rl_complete(count, key)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rl_prep_terminal(meta_flag: i32) {
+    crate::readline::rl_prep_terminal(meta_flag);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rl_resize_terminal() {
+    crate::readline::rl_resize_terminal();
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rl_free_line_state() {
+    crate::readline::rl_free_line_state();
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rl_cleanup_after_signal() {
+    crate::readline::rl_cleanup_after_signal();
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rl_bind_key(key: i32, func: crate::readline::CommandFunc) -> i32 {
+    crate::readline::rl_bind_key(key, func)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rl_bind_key_in_map(
+    key: i32,
+    func: crate::readline::CommandFunc,
+    map: *mut u8,
+) -> i32 {
+    crate::readline::rl_bind_key_in_map(key, func, map)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rl_parse_and_bind(line: *mut u8) -> i32 {
+    crate::readline::rl_parse_and_bind(line)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rl_read_init_file(filename: *const u8) -> i32 {
+    crate::readline::rl_read_init_file(filename)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rl_variable_bind(variable: *const u8, value: *const u8) -> i32 {
+    crate::readline::rl_variable_bind(variable, value)
+}
+
+// ---- History C exports ----
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn add_history(line: *const u8) {
+    crate::readline::add_history(line);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn using_history() {
+    crate::readline::using_history();
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn clear_history() {
+    crate::readline::clear_history();
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn history_get(offset: i32) -> *mut crate::readline::HistEntry {
+    crate::readline::history_get(offset)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn remove_history(which: i32) -> *mut crate::readline::HistEntry {
+    crate::readline::remove_history(which)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn replace_history_entry(
+    which: i32,
+    line: *const u8,
+    data: *mut u8,
+) -> *mut crate::readline::HistEntry {
+    crate::readline::replace_history_entry(which, line, data)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn read_history(filename: *const u8) -> i32 {
+    crate::readline::read_history(filename)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn write_history(filename: *const u8) -> i32 {
+    crate::readline::write_history(filename)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn append_history(nelements: i32, filename: *const u8) -> i32 {
+    crate::readline::append_history(nelements, filename)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn history_truncate_file(filename: *const u8, nlines: i32) -> i32 {
+    crate::readline::history_truncate_file(filename, nlines)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn history_get_history_state() -> *mut crate::readline::HistoryState {
+    crate::readline::history_get_history_state()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn free_history_entry(
+    entry: *mut crate::readline::HistEntry,
+) -> *mut u8 {
+    crate::readline::free_history_entry(entry)
+}
+
+// ---- Completion C exports ----
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn completion_matches(
+    text: *const u8,
+    func: crate::readline::CompEntryFunc,
+) -> *mut *mut u8 {
+    crate::readline::completion_matches(text, func)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rl_completion_matches(
+    text: *const u8,
+    func: crate::readline::CompEntryFunc,
+) -> *mut *mut u8 {
+    crate::readline::completion_matches(text, func)
+}
