@@ -355,6 +355,16 @@ pub unsafe fn set_keyboard_callback(callback: fn()) {
     }
 }
 
+/// Register a mouse interrupt callback (called on mouse IRQ 12)
+///
+/// # Safety
+/// The callback must be valid and thread-safe.
+pub unsafe fn set_mouse_callback(callback: fn()) {
+    unsafe {
+        exceptions::set_mouse_callback(callback);
+    }
+}
+
 /// Register a TLB shootdown IPI callback (called on IPI from other CPUs)
 ///
 /// # Safety

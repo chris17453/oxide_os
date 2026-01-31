@@ -40,6 +40,9 @@ pub mod vector {
     /// Keyboard interrupt (IRQ 1)
     pub const KEYBOARD: u8 = IRQ_BASE + 1;
 
+    /// Mouse interrupt (IRQ 12)
+    pub const MOUSE: u8 = IRQ_BASE + 12;
+
     /// Spurious interrupt vector for APIC
     pub const SPURIOUS: u8 = 0xFF;
 
@@ -270,6 +273,13 @@ pub unsafe fn init() {
         (*idt_ptr).set_handler(
             vector::KEYBOARD,
             exceptions::keyboard_interrupt as *const () as u64,
+            GateType::Interrupt,
+        );
+
+        // Mouse interrupt (IRQ 12)
+        (*idt_ptr).set_handler(
+            vector::MOUSE,
+            exceptions::mouse_interrupt as *const () as u64,
             GateType::Interrupt,
         );
 

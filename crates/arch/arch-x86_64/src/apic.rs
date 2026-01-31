@@ -396,6 +396,14 @@ fn init_ioapic() {
         crate::idt::vector::KEYBOARD,
         apic_id
     );
+
+    // Route mouse IRQ 12 to vector 44
+    ioapic_set_irq(12, crate::idt::vector::MOUSE, apic_id, false);
+    crate::serial_println!(
+        "[IOAPIC] Mouse IRQ 12 -> vector {} (APIC {})",
+        crate::idt::vector::MOUSE,
+        apic_id
+    );
 }
 
 /// Start the APIC timer for scheduling

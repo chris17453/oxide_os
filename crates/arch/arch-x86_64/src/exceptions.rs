@@ -415,6 +415,95 @@ pub extern "C" fn keyboard_interrupt() {
     );
 }
 
+/// Mouse IRQ callback type
+pub type MouseCallback = fn();
+
+/// Mouse callback
+static mut MOUSE_CALLBACK: Option<MouseCallback> = None;
+
+/// Set mouse callback
+///
+/// # Safety
+/// Must be called during initialization.
+pub unsafe fn set_mouse_callback(callback: MouseCallback) {
+    unsafe {
+        use core::ptr::addr_of_mut;
+        *addr_of_mut!(MOUSE_CALLBACK) = Some(callback);
+    }
+}
+
+// Mouse interrupt handler (IRQ 12, vector 44)
+#[unsafe(naked)]
+pub extern "C" fn mouse_interrupt() {
+    naked_asm!(
+        // Check if from user mode (CS & 3 != 0), swap GS if so
+        "test qword ptr [rsp + 8], 3",
+        "jz 2f",
+        "swapgs",
+        "2:",
+
+        // Save all registers
+        "push rax",
+        "push rbx",
+        "push rcx",
+        "push rdx",
+        "push rsi",
+        "push rdi",
+        "push rbp",
+        "push r8",
+        "push r9",
+        "push r10",
+        "push r11",
+        "push r12",
+        "push r13",
+        "push r14",
+        "push r15",
+
+        // Call mouse handler
+        "call {}",
+
+        // Restore all registers
+        "pop r15",
+        "pop r14",
+        "pop r13",
+        "pop r12",
+        "pop r11",
+        "pop r10",
+        "pop r9",
+        "pop r8",
+        "pop rbp",
+        "pop rdi",
+        "pop rsi",
+        "pop rdx",
+        "pop rcx",
+        "pop rbx",
+        "pop rax",
+
+        // Check if returning to user mode, swap GS if so
+        "test qword ptr [rsp + 8], 3",
+        "jz 3f",
+        "swapgs",
+        "3:",
+        "iretq",
+        sym handle_mouse,
+    );
+}
+
+/// Mouse handler
+extern "C" fn handle_mouse() {
+    // Forward to the registered mouse callback (ps2::handle_mouse_irq).
+    // The callback itself reads port 0x60 — we must NOT read it here
+    // or the byte will be consumed before the driver sees it.
+    unsafe {
+        if let Some(callback) = MOUSE_CALLBACK {
+            callback();
+        }
+    }
+
+    // Send EOI to APIC
+    crate::apic::end_of_interrupt();
+}
+
 /// Atomic counter of keyboard interrupts (for debugging)
 static KEYBOARD_IRQ_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
@@ -1149,10 +1238,12 @@ pub fn init_ps2_keyboard() {
         }
     }
 
-    // Enable first port IRQ (bit 0), disable translation (bit 6 clear for scan code set 2)
-    // Keep other bits as-is
+    // Enable port 1 IRQ (bit 0) and port 2 IRQ (bit 1)
+    // Clear port 1 clock disable (bit 4) and port 2 clock disable (bit 5)
     config |= 0x01; // Enable first port interrupt (IRQ 1)
+    config |= 0x02; // Enable second port interrupt (IRQ 12)
     config &= !0x10; // Enable first port clock (clear disable bit)
+    config &= !0x20; // Enable second port clock (clear disable bit)
 
     // Write configuration byte back
     i8042_wait_input();
@@ -1168,6 +1259,12 @@ pub fn init_ps2_keyboard() {
     i8042_wait_input();
     unsafe {
         core::arch::asm!("out 0x64, al", in("al") 0xAEu8, options(nomem, nostack, preserves_flags));
+    }
+
+    // Enable second PS/2 port (mouse)
+    i8042_wait_input();
+    unsafe {
+        core::arch::asm!("out 0x64, al", in("al") 0xA8u8, options(nomem, nostack, preserves_flags));
     }
 
     // Reset keyboard device (send 0xFF)
@@ -1230,6 +1327,10 @@ pub unsafe fn poll_keyboard() -> Option<u8> {
     let status: u8;
     core::arch::asm!("in al, 0x64", out("al") status, options(nomem, nostack, preserves_flags));
     if status & 0x01 != 0 {
+        // Check bit 5 — if set, this is mouse data, not keyboard
+        if status & 0x20 != 0 {
+            return None; // Mouse data — leave it for the mouse IRQ handler
+        }
         // Data available - read scancode from port 0x60
         let scancode: u8;
         core::arch::asm!("in al, 0x60", out("al") scancode, options(nomem, nostack, preserves_flags));

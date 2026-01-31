@@ -481,12 +481,22 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     arch::init_ps2_keyboard();
     let _ = writeln!(writer, "[INFO] PS/2 keyboard initialized");
 
+    // Initialize PS/2 mouse and keyboard drivers (registers with input subsystem)
+    ps2::init();
+    let _ = writeln!(writer, "[INFO] PS/2 drivers initialized (keyboard + mouse)");
+
     // Connect PS/2 keyboard input to console
     // Safety: Called during single-threaded initialization
     unsafe {
         ps2::set_console_callback(devfs::console_input_callback);
     }
     let _ = writeln!(writer, "[INFO] PS/2 console callback registered");
+
+    // Connect mouse IRQ 12 to PS/2 mouse driver
+    unsafe {
+        arch::set_mouse_callback(ps2::handle_mouse_irq);
+    }
+    let _ = writeln!(writer, "[INFO] PS/2 mouse IRQ callback registered");
 
     // Initialize and register preemptive scheduler (BSP)
     scheduler::init();
@@ -1601,8 +1611,7 @@ fn vt_yield() {
     sched::set_need_resched();
     arch::allow_kernel_preempt();
     unsafe {
-        core::arch::asm!("sti", options(nomem, nostack, preserves_flags));
-        core::arch::asm!("hlt", options(nomem, nostack));
+        core::arch::asm!("sti", "hlt", options(nomem, nostack));
     }
     arch::disallow_kernel_preempt();
 }
