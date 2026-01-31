@@ -523,8 +523,17 @@ fn main() -> i32 {
             break;
         }
 
-        // Convert to slice
-        let line_len = unsafe { libc::string::strlen(line_ptr) };
+        // Compute length using volatile reads. With opt-level=z + LTO, the
+        // compiler can inline through readline/malloc/strlen and determine that
+        // the buffer came from zeroed memory, optimizing strlen to return 0.
+        // Volatile reads prevent this by forcing actual memory loads.
+        let line_len = unsafe {
+            let mut n = 0usize;
+            while core::ptr::read_volatile(line_ptr.add(n)) != 0 {
+                n += 1;
+            }
+            n
+        };
         let line_slice = unsafe { core::slice::from_raw_parts(line_ptr, line_len) };
 
         // Skip empty lines

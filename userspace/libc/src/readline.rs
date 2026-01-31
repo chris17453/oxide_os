@@ -229,6 +229,7 @@ fn enter_raw_mode() {
 
     let mut raw = Termios::default();
     let ret = tcgetattr(0, &mut raw);
+    // tcgetattr result checked below
     if ret < 0 {
         return;
     }
@@ -822,15 +823,30 @@ unsafe fn read_line_loop(prompt: &[u8]) -> *mut u8 {
             b'\n' | b'\r' => {
                 // Accept line
                 putchar(b'\n');
-                LINE_BUF[LINE_LEN] = 0;
 
-                // Allocate and copy result
-                let result = crate::c_exports::malloc(LINE_LEN + 1);
+                // Use volatile reads to prevent the optimizer (opt-level=z + LTO)
+                // from eliding the copy. The compiler can inline through malloc,
+                // copy_nonoverlapping, and strlen, potentially determining the
+                // buffer is "still zeroed" and optimizing away the entire copy.
+                let buf = line_buf_ptr();
+                let len = core::ptr::read_volatile(core::ptr::addr_of!(LINE_LEN));
+
+                // NUL-terminate
+                core::ptr::write_volatile(buf.add(len), 0);
+
+                // Allocate result buffer
+                let result = crate::c_exports::malloc(len + 1);
                 if result.is_null() {
                     return core::ptr::null_mut();
                 }
-                core::ptr::copy_nonoverlapping(line_buf_ptr() as *const u8, result, LINE_LEN);
-                *result.add(LINE_LEN) = 0;
+
+                // Byte-by-byte volatile copy — cannot be optimized away
+                for i in 0..len {
+                    let byte = core::ptr::read_volatile(buf.add(i));
+                    core::ptr::write_volatile(result.add(i), byte);
+                }
+                core::ptr::write_volatile(result.add(len), 0);
+
                 return result;
             }
             TAB => {
@@ -1391,12 +1407,17 @@ pub unsafe fn rl_callback_read_char() {
     match c {
         b'\n' | b'\r' => {
             putchar(b'\n');
-            LINE_BUF[LINE_LEN] = 0;
+            let buf = line_buf_ptr();
+            let len = core::ptr::read_volatile(core::ptr::addr_of!(LINE_LEN));
+            core::ptr::write_volatile(buf.add(len), 0);
             if let Some(handler) = CALLBACK_HANDLER {
-                let result = crate::c_exports::malloc(LINE_LEN + 1);
+                let result = crate::c_exports::malloc(len + 1);
                 if !result.is_null() {
-                    core::ptr::copy_nonoverlapping(line_buf_ptr() as *const u8, result, LINE_LEN);
-                    *result.add(LINE_LEN) = 0;
+                    for i in 0..len {
+                        let byte = core::ptr::read_volatile(buf.add(i));
+                        core::ptr::write_volatile(result.add(i), byte);
+                    }
+                    core::ptr::write_volatile(result.add(len), 0);
                 }
                 handler(result);
             }

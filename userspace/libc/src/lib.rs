@@ -10,25 +10,44 @@
 
 extern crate alloc;
 
-// Simple bump allocator for userspace
+// Bump allocator with small BSS bootstrap + mmap-backed growth.
+//
+// The bootstrap heap (256KB in BSS) handles allocations during _start before
+// syscalls are available. Once it fills up, additional memory is obtained via
+// mmap in 2MB arenas, up to 64MB total. This avoids putting a giant 64MB
+// static array in BSS which would exhaust physical memory during exec.
 mod allocator {
     use core::alloc::{GlobalAlloc, Layout};
     use core::cell::UnsafeCell;
     use core::sync::atomic::{AtomicUsize, Ordering};
 
-    const HEAP_SIZE: usize = 64 * 1024 * 1024; // 64MB heap for CPython
+    /// Small bootstrap heap in BSS — enough for _start / init_env / init_stdio.
+    const BOOTSTRAP_SIZE: usize = 256 * 1024; // 256KB
+
+    /// Size of each mmap arena.
+    const ARENA_SIZE: usize = 2 * 1024 * 1024; // 2MB
+
+    /// Maximum number of mmap arenas (2MB × 32 = 64MB ceiling).
+    const MAX_ARENAS: usize = 32;
 
     #[repr(C, align(16))]
-    struct HeapStorage {
-        data: UnsafeCell<[u8; HEAP_SIZE]>,
+    struct BootstrapHeap {
+        data: UnsafeCell<[u8; BOOTSTRAP_SIZE]>,
     }
 
-    unsafe impl Sync for HeapStorage {}
+    unsafe impl Sync for BootstrapHeap {}
 
-    static HEAP: HeapStorage = HeapStorage {
-        data: UnsafeCell::new([0; HEAP_SIZE]),
+    static BOOTSTRAP: BootstrapHeap = BootstrapHeap {
+        data: UnsafeCell::new([0; BOOTSTRAP_SIZE]),
     };
-    static HEAP_POS: AtomicUsize = AtomicUsize::new(0);
+    static BOOTSTRAP_POS: AtomicUsize = AtomicUsize::new(0);
+
+    /// Current mmap arena base address (0 = no arena allocated yet).
+    static ARENA_BASE: AtomicUsize = AtomicUsize::new(0);
+    /// Current bump position within the arena.
+    static ARENA_POS: AtomicUsize = AtomicUsize::new(0);
+    /// Number of arenas allocated so far.
+    static ARENA_COUNT: AtomicUsize = AtomicUsize::new(0);
 
     pub struct BumpAllocator;
 
@@ -37,26 +56,92 @@ mod allocator {
             let size = layout.size();
             let align = layout.align();
 
+            // ── Try bootstrap heap first ────────────────────────────
+            let pos = BOOTSTRAP_POS.load(Ordering::Relaxed);
+            let aligned = (pos + align - 1) & !(align - 1);
+            let new_pos = aligned + size;
+
+            if new_pos <= BOOTSTRAP_SIZE {
+                // CAS for safety (single-threaded in practice, but correct)
+                if BOOTSTRAP_POS
+                    .compare_exchange(pos, new_pos, Ordering::SeqCst, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    return (BOOTSTRAP.data.get() as *mut u8).add(aligned);
+                }
+                // Lost race — fall through to retry via arena path
+            }
+
+            // ── Bootstrap full — allocate from mmap arena ──────────
+            self.arena_alloc(size, align)
+        }
+
+        unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
+            // Bump allocator doesn't free — memory is reclaimed on process exit
+        }
+    }
+
+    impl BumpAllocator {
+        /// Allocate from the current mmap arena, creating a new one if needed.
+        unsafe fn arena_alloc(&self, size: usize, align: usize) -> *mut u8 {
             loop {
-                let pos = HEAP_POS.load(Ordering::Relaxed);
+                let base = ARENA_BASE.load(Ordering::Acquire);
+                if base == 0 {
+                    if !Self::new_arena() {
+                        return core::ptr::null_mut();
+                    }
+                    continue;
+                }
+
+                let pos = ARENA_POS.load(Ordering::Relaxed);
                 let aligned = (pos + align - 1) & !(align - 1);
                 let new_pos = aligned + size;
 
-                if new_pos > HEAP_SIZE {
-                    return core::ptr::null_mut();
+                if new_pos > ARENA_SIZE {
+                    // Current arena exhausted — allocate a fresh one
+                    if !Self::new_arena() {
+                        return core::ptr::null_mut();
+                    }
+                    continue;
                 }
 
-                if HEAP_POS
+                if ARENA_POS
                     .compare_exchange_weak(pos, new_pos, Ordering::SeqCst, Ordering::Relaxed)
                     .is_ok()
                 {
-                    return (HEAP.data.get() as *mut u8).add(aligned);
+                    return (base as *mut u8).add(aligned);
                 }
             }
         }
 
-        unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
-            // Bump allocator doesn't free - memory is reclaimed when process exits
+        /// Allocate a new mmap arena.
+        fn new_arena() -> bool {
+            let count = ARENA_COUNT.load(Ordering::Relaxed);
+            if count >= MAX_ARENAS {
+                return false;
+            }
+
+            let ptr = unsafe {
+                crate::syscall::sys_mmap(
+                    core::ptr::null_mut(),
+                    ARENA_SIZE,
+                    0x3,  // PROT_READ | PROT_WRITE
+                    0x22, // MAP_PRIVATE | MAP_ANONYMOUS
+                    -1,
+                    0,
+                )
+            };
+
+            if ptr.is_null() || ptr as usize == usize::MAX {
+                return false;
+            }
+
+            // Publish the new arena — ordering matters: set pos before base
+            // so readers see pos=0 when they observe the new base.
+            ARENA_POS.store(0, Ordering::Release);
+            ARENA_BASE.store(ptr as usize, Ordering::Release);
+            ARENA_COUNT.fetch_add(1, Ordering::SeqCst);
+            true
         }
     }
 }
