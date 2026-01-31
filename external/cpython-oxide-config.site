@@ -366,7 +366,7 @@ ac_cv_header_alloca_h=yes
 ac_cv_header_spawn_h=yes
 ac_cv_header_sched_h=yes
 ac_cv_header_shadow_h=yes
-ac_cv_header_crypt_h=no
+ac_cv_header_crypt_h=yes
 ac_cv_header_poll_h=yes
 ac_cv_header_sys_stat_h=yes
 ac_cv_header_sys_types_h=yes
@@ -417,7 +417,7 @@ ac_cv_header_sys_sem_h=no
 ac_cv_header_sys_shm_h=no
 ac_cv_header_sys_msg_h=no
 ac_cv_header_sys_ipc_h=no
-ac_cv_header_sys_termio_h=no
+ac_cv_header_sys_termio_h=yes
 ac_cv_header_sys_kern_control_h=no
 ac_cv_header_sys_loadavg_h=no
 ac_cv_header_sys_mkdev_h=no
@@ -504,3 +504,109 @@ ac_cv_header_linux_soundcard_h=no
 ac_cv_header_asm_types_h=yes
 ac_cv_header_sys_poll_h=yes
 ac_cv_header_netcan_can_h=no
+
+# ABI/platform probes for cross compilation
+ac_cv_have_long_long_format=yes
+ac_cv_have_size_t_format=yes
+ac_cv_buggy_getaddrinfo=no
+ac_cv_pthread_is_default=yes
+ac_cv_pthread_system_supported=yes
+ac_cv_kthread=no
+ac_cv_kpthread=no
+ac_cv_have_chflags=no
+ac_cv_have_lchflags=no
+ac_cv_py_force_utf8_locale=no
+ac_cv_posix_semaphores_enabled=yes
+ac_cv_broken_sem_getvalue=no
+ac_cv_wchar_t_signed=yes
+ac_cv_working_tzset=yes
+ac_cv_header_time_altzone=yes
+ac_cv_disp_option=no
+ac_cv_cc_fno_strict_aliasing=yes
+ac_cv_x87_double_rounding=no
+ac_cv_tanh_preserves_zero_sign=yes
+ac_cv_log1p_drops_zero_sign=no
+ac_cv_always_use_builtin_ffs=no
+ac_cv_gcc_asm_for_mc68881=no
+ac_cv_mvwdelch=no
+ac_cv_buggy_mbstowcs=no
+ac_cv_broken_nice=no
+ac_cv_broken_poll=no
+ac_cv_broken_pipe_ioctl=no
+ac_cv_enable_ipv6=yes
+ac_cv_sockaddr_sa_len=no
+ac_cv_enable_lfs=yes
+ac_cv_float_words_bigendian=no
+ac_cv_xopen_source=yes
+ac_cv_wchar_t_usable=yes
+ac_cv_rshift_extends_sign=yes
+ac_cv_broken_unsetenv=no
+ac_cv_prog_HAS_HG=no
+ac_cv_func___fpu_control=no
+
+# Library search results
+ac_cv_lib_dl_dlopen=yes
+ac_cv_lib_sendfile_sendfile=no
+ac_cv_lib_nsl_t_open=no
+ac_cv_lib_socket_socket=no
+ac_cv_lib_resolv_inet_aton=no
+ac_cv_lib_intl_textdomain=no
+ac_cv_lib_ieee___fpu_control=no
+ac_cv_lib_bsd_openpty=no
+ac_cv_lib_util_openpty=no
+ac_cv_lib_bsd_forkpty=no
+ac_cv_lib_util_forkpty=no
+ac_cv_lib_c_inet_aton=yes
+ac_cv_lib_rt_clock_nanosleep=no
+ac_cv_lib_rt_clock_settime=no
+ac_cv_lib_dld_shl_load=no
+
+# CPython-specific build options
+ac_cv_with_computed_gotos=yes
+ac_cv_with_pymalloc=yes
+ac_cv_digit_size=30
+ac_cv_with_lto=no
+ac_cv_with_pydebug=no
+ac_cv_with_assertions=no
+ac_cv_enable_shared=no
+ac_cv_enable_profiling=no
+ac_cv_enable_bolt=no
+ac_cv_enable_optimizations=no
+ac_cv_enable_pystats=no
+ac_cv_with_valgrind=no
+ac_cv_with_dtrace=no
+ac_cv_with_dsymutil=no
+ac_cv_with_address_sanitizer=no
+ac_cv_with_memory_sanitizer=no
+ac_cv_with_thread_sanitizer=no
+ac_cv_with_undefined_behavior_sanitizer=no
+ac_cv_with_trace_refs=no
+ac_cv_with_strict_overflow=no
+ac_cv_with_platlibdir=lib
+ac_cv_with_system_expat=no
+ac_cv_with_system_libmpdec=no
+ac_cv_enable_loadable_sqlite_extensions=no
+ac_cv_enable_framework=no
+ac_cv_enable_wasm_dynamic_linking=no
+ac_cv_enable_wasm_pthreads=no
+
+# Not Android/Minix/iOS
+ac_cv_android_api_level=no
+
+# RTLD_MEMBER (AIX-only)
+ac_cv_have_rtld_member=no
+
+# sem_init is in libc (not -lpthread or -lrt)
+ac_cv_lib_pthread_sem_init=no
+
+# yp_match (NIS) - not available
+ac_cv_lib_nsl_yp_match=no
+
+# opendir is in libc
+ac_cv_search_opendir=none
+
+# login_tty is in libc
+ac_cv_search_login_tty=none
+
+# GNU ld
+ac_cv_prog_gnu_ld=yes
