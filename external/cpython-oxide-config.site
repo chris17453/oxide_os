@@ -457,7 +457,7 @@ ac_cv_computed_gotos=yes
 # Standard C library functions
 ac_cv_func_strerror=yes
 ac_cv_func_strftime=yes
-ac_cv_func_strptime=no
+ac_cv_func_strptime=yes
 ac_cv_func_clock=yes
 ac_cv_func_clock_getres=yes
 ac_cv_func_opendir=yes

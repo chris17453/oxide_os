@@ -1470,11 +1470,256 @@ unsafe fn write_num4(buf: *mut u8, max: usize, val: i32) -> usize {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn strptime(
-    _s: *const u8,
-    _format: *const u8,
-    _tm: *mut crate::time::Tm,
+    s: *const u8,
+    format: *const u8,
+    tm: *mut crate::time::Tm,
 ) -> *mut u8 {
-    core::ptr::null_mut() // stub
+    if s.is_null() || format.is_null() || tm.is_null() {
+        return core::ptr::null_mut();
+    }
+    let mut si = 0usize; // index into s
+    let mut fi = 0usize; // index into format
+
+    loop {
+        let fc = *format.add(fi);
+        if fc == 0 {
+            // End of format string — success, return pointer to remaining input
+            return s.add(si) as *mut u8;
+        }
+        if fc == b'%' {
+            fi += 1;
+            let spec = *format.add(fi);
+            if spec == 0 {
+                return core::ptr::null_mut();
+            }
+            fi += 1;
+            match spec {
+                b'Y' => {
+                    // 4-digit year
+                    let (val, adv) = strptime_parse_int(s.add(si), 4);
+                    if adv == 0 { return core::ptr::null_mut(); }
+                    (*tm).tm_year = val - 1900;
+                    si += adv;
+                }
+                b'y' => {
+                    // 2-digit year (00-99, 69-99 = 1969-1999, 00-68 = 2000-2068)
+                    let (val, adv) = strptime_parse_int(s.add(si), 2);
+                    if adv == 0 { return core::ptr::null_mut(); }
+                    (*tm).tm_year = if val >= 69 { val } else { val + 100 };
+                    si += adv;
+                }
+                b'm' => {
+                    let (val, adv) = strptime_parse_int(s.add(si), 2);
+                    if adv == 0 { return core::ptr::null_mut(); }
+                    (*tm).tm_mon = val - 1; // 0-indexed
+                    si += adv;
+                }
+                b'd' | b'e' => {
+                    // Skip leading whitespace for %e
+                    if spec == b'e' {
+                        while *s.add(si) == b' ' { si += 1; }
+                    }
+                    let (val, adv) = strptime_parse_int(s.add(si), 2);
+                    if adv == 0 { return core::ptr::null_mut(); }
+                    (*tm).tm_mday = val;
+                    si += adv;
+                }
+                b'H' | b'k' => {
+                    if spec == b'k' {
+                        while *s.add(si) == b' ' { si += 1; }
+                    }
+                    let (val, adv) = strptime_parse_int(s.add(si), 2);
+                    if adv == 0 { return core::ptr::null_mut(); }
+                    (*tm).tm_hour = val;
+                    si += adv;
+                }
+                b'I' | b'l' => {
+                    // 12-hour clock
+                    if spec == b'l' {
+                        while *s.add(si) == b' ' { si += 1; }
+                    }
+                    let (val, adv) = strptime_parse_int(s.add(si), 2);
+                    if adv == 0 { return core::ptr::null_mut(); }
+                    (*tm).tm_hour = val; // Adjusted later by %p
+                    si += adv;
+                }
+                b'M' => {
+                    let (val, adv) = strptime_parse_int(s.add(si), 2);
+                    if adv == 0 { return core::ptr::null_mut(); }
+                    (*tm).tm_min = val;
+                    si += adv;
+                }
+                b'S' => {
+                    let (val, adv) = strptime_parse_int(s.add(si), 2);
+                    if adv == 0 { return core::ptr::null_mut(); }
+                    (*tm).tm_sec = val;
+                    si += adv;
+                }
+                b'j' => {
+                    let (val, adv) = strptime_parse_int(s.add(si), 3);
+                    if adv == 0 { return core::ptr::null_mut(); }
+                    (*tm).tm_yday = val - 1; // 0-indexed
+                    si += adv;
+                }
+                b'w' => {
+                    let (val, adv) = strptime_parse_int(s.add(si), 1);
+                    if adv == 0 { return core::ptr::null_mut(); }
+                    (*tm).tm_wday = val;
+                    si += adv;
+                }
+                b'u' => {
+                    // ISO weekday (1=Mon..7=Sun)
+                    let (val, adv) = strptime_parse_int(s.add(si), 1);
+                    if adv == 0 { return core::ptr::null_mut(); }
+                    (*tm).tm_wday = if val == 7 { 0 } else { val };
+                    si += adv;
+                }
+                b'p' | b'P' => {
+                    // AM/PM
+                    let c1 = *s.add(si);
+                    let c2 = *s.add(si + 1);
+                    let upper1 = if c1 >= b'a' { c1 - 32 } else { c1 };
+                    let upper2 = if c2 >= b'a' { c2 - 32 } else { c2 };
+                    if upper1 == b'A' && upper2 == b'M' {
+                        if (*tm).tm_hour == 12 { (*tm).tm_hour = 0; }
+                    } else if upper1 == b'P' && upper2 == b'M' {
+                        if (*tm).tm_hour != 12 { (*tm).tm_hour += 12; }
+                    } else {
+                        return core::ptr::null_mut();
+                    }
+                    si += 2;
+                }
+                b'a' | b'A' => {
+                    // Abbreviated or full weekday name
+                    let adv = strptime_match_weekday(s.add(si), &mut (*tm).tm_wday);
+                    if adv == 0 { return core::ptr::null_mut(); }
+                    si += adv;
+                }
+                b'b' | b'B' | b'h' => {
+                    // Abbreviated or full month name
+                    let adv = strptime_match_month(s.add(si), &mut (*tm).tm_mon);
+                    if adv == 0 { return core::ptr::null_mut(); }
+                    si += adv;
+                }
+                b'n' | b't' => {
+                    // Any whitespace
+                    while *s.add(si) == b' ' || *s.add(si) == b'\t' || *s.add(si) == b'\n' {
+                        si += 1;
+                    }
+                }
+                b'%' => {
+                    if *s.add(si) != b'%' { return core::ptr::null_mut(); }
+                    si += 1;
+                }
+                b'Z' | b'z' => {
+                    // Timezone — skip alphabetic/numeric chars
+                    if spec == b'z' {
+                        // +HHMM or -HHMM
+                        let c = *s.add(si);
+                        if c == b'+' || c == b'-' {
+                            si += 1;
+                            let (hh, a1) = strptime_parse_int(s.add(si), 2);
+                            si += a1;
+                            let (mm, a2) = strptime_parse_int(s.add(si), 2);
+                            si += a2;
+                            let offset = (hh * 3600 + mm * 60) as i64;
+                            (*tm).tm_gmtoff = if c == b'-' { -offset } else { offset };
+                        }
+                    } else {
+                        while (*s.add(si)).is_ascii_alphabetic() { si += 1; }
+                    }
+                }
+                _ => {
+                    // Unknown specifier, fail
+                    return core::ptr::null_mut();
+                }
+            }
+        } else if fc == b' ' || fc == b'\t' {
+            // Format whitespace matches any amount of input whitespace
+            fi += 1;
+            while *s.add(si) == b' ' || *s.add(si) == b'\t' { si += 1; }
+        } else {
+            // Literal match
+            if *s.add(si) != fc { return core::ptr::null_mut(); }
+            si += 1;
+            fi += 1;
+        }
+    }
+}
+
+/// Parse up to `max_digits` decimal digits from `p`, return (value, chars_consumed)
+unsafe fn strptime_parse_int(p: *const u8, max_digits: usize) -> (i32, usize) {
+    let mut val = 0i32;
+    let mut i = 0usize;
+    while i < max_digits {
+        let c = *p.add(i);
+        if c >= b'0' && c <= b'9' {
+            val = val * 10 + (c - b'0') as i32;
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    (val, i)
+}
+
+/// Match abbreviated or full weekday name, set wday, return chars consumed
+unsafe fn strptime_match_weekday(p: *const u8, wday: &mut i32) -> usize {
+    static DAYS: [&[u8]; 7] = [b"sun", b"mon", b"tue", b"wed", b"thu", b"fri", b"sat"];
+    static DAYS_FULL: [&[u8]; 7] = [
+        b"sunday", b"monday", b"tuesday", b"wednesday",
+        b"thursday", b"friday", b"saturday",
+    ];
+    for (i, full) in DAYS_FULL.iter().enumerate() {
+        if strptime_casematch(p, full) {
+            *wday = i as i32;
+            return full.len();
+        }
+    }
+    for (i, abbr) in DAYS.iter().enumerate() {
+        if strptime_casematch(p, abbr) {
+            *wday = i as i32;
+            return abbr.len();
+        }
+    }
+    0
+}
+
+/// Match abbreviated or full month name, set mon (0-indexed), return chars consumed
+unsafe fn strptime_match_month(p: *const u8, mon: &mut i32) -> usize {
+    static MONTHS: [&[u8]; 12] = [
+        b"jan", b"feb", b"mar", b"apr", b"may", b"jun",
+        b"jul", b"aug", b"sep", b"oct", b"nov", b"dec",
+    ];
+    static MONTHS_FULL: [&[u8]; 12] = [
+        b"january", b"february", b"march", b"april", b"may", b"june",
+        b"july", b"august", b"september", b"october", b"november", b"december",
+    ];
+    for (i, full) in MONTHS_FULL.iter().enumerate() {
+        if strptime_casematch(p, full) {
+            *mon = i as i32;
+            return full.len();
+        }
+    }
+    for (i, abbr) in MONTHS.iter().enumerate() {
+        if strptime_casematch(p, abbr) {
+            *mon = i as i32;
+            return abbr.len();
+        }
+    }
+    0
+}
+
+/// Case-insensitive prefix match
+unsafe fn strptime_casematch(p: *const u8, pattern: &[u8]) -> bool {
+    for (i, &ch) in pattern.iter().enumerate() {
+        let c = *p.add(i);
+        if c == 0 { return false; }
+        let lc = if c >= b'A' && c <= b'Z' { c + 32 } else { c };
+        let lp = if ch >= b'A' && ch <= b'Z' { ch + 32 } else { ch };
+        if lc != lp { return false; }
+    }
+    true
 }
 
 #[unsafe(no_mangle)]
