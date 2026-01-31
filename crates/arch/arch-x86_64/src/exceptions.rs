@@ -1217,3 +1217,24 @@ pub fn get_scancode() -> Option<u8> {
         }
     }
 }
+
+/// Poll i8042 directly for a scancode (fallback when IRQ1 doesn't fire)
+///
+/// Reads the i8042 status register (port 0x64) and if data is available,
+/// reads the scancode from port 0x60. This bypasses the IRQ1 path entirely.
+///
+/// # Safety
+/// Must only be called from interrupt context (e.g., terminal_tick in timer ISR)
+/// where we know no other code is accessing the i8042 ports concurrently.
+pub unsafe fn poll_keyboard() -> Option<u8> {
+    let status: u8;
+    core::arch::asm!("in al, 0x64", out("al") status, options(nomem, nostack, preserves_flags));
+    if status & 0x01 != 0 {
+        // Data available - read scancode from port 0x60
+        let scancode: u8;
+        core::arch::asm!("in al, 0x60", out("al") scancode, options(nomem, nostack, preserves_flags));
+        Some(scancode)
+    } else {
+        None
+    }
+}

@@ -324,9 +324,25 @@ pub fn get_scancode() -> Option<u8> {
     exceptions::get_scancode()
 }
 
+/// Poll i8042 directly for a scancode (fallback when IRQ1 doesn't fire)
+///
+/// # Safety
+/// Must only be called from interrupt context (e.g., timer ISR).
+pub unsafe fn poll_keyboard() -> Option<u8> {
+    unsafe { exceptions::poll_keyboard() }
+}
+
 /// Read a byte from the serial port (COM1) if available
 pub fn serial_read() -> Option<u8> {
     serial::read_byte()
+}
+
+/// Read a byte from the serial port without locking (for interrupt handlers)
+///
+/// # Safety
+/// Must only be called from interrupt context.
+pub unsafe fn serial_read_unsafe() -> Option<u8> {
+    unsafe { serial::read_byte_unsafe() }
 }
 
 /// Register a keyboard interrupt callback (called on keyboard IRQ)

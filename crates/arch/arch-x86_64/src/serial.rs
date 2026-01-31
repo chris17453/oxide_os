@@ -146,6 +146,21 @@ pub fn read_byte() -> Option<u8> {
     COM1.lock().read_byte()
 }
 
+/// Read a byte from COM1 without taking a lock (for interrupt handlers)
+///
+/// # Safety
+/// This function is not thread-safe. Use from interrupt context only,
+/// where you know no other interrupt-level code reads serial simultaneously.
+#[inline]
+pub unsafe fn read_byte_unsafe() -> Option<u8> {
+    use crate::inb;
+    if (inb(COM1_PORT + regs::LSR) & lsr::DR) != 0 {
+        Some(inb(COM1_PORT + regs::DATA))
+    } else {
+        None
+    }
+}
+
 /// Write a string to COM1
 pub fn write_str(s: &str) {
     let port = COM1.lock();

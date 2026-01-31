@@ -4,7 +4,6 @@ use arch_x86_64 as arch;
 use arch_x86_64::serial;
 use core::fmt::Write;
 use signal::SigInfo;
-use crate::scheduler;
 
 /// Send signal to the current foreground process only
 ///
@@ -62,33 +61,33 @@ pub fn console_write(data: &[u8]) {
 
 /// Terminal tick callback - called at 30 FPS from timer interrupt
 pub fn terminal_tick() {
-    // Process keyboard scancodes from PS/2 keyboard
+    // Process keyboard scancodes from PS/2 keyboard (IRQ-driven buffer)
     while let Some(scancode) = arch::get_scancode() {
         if let Some(byte) = process_scancode(scancode) {
-            // Debug: show control characters (Ctrl+C = 0x03, Ctrl+D = 0x04)
-            if byte < 0x20 && byte != b'\n' && byte != b'\r' && byte != b'\t' {
-                let mut writer = serial::SerialWriter;
-                let _ = write!(writer, "[KB:0x{:02x}]", byte);
-            }
-
-            // Route input to active VT if VT subsystem is initialized
             if let Some(manager) = vt::get_manager() {
                 manager.push_input(byte);
-            } else {
-                // Fallback: push to console device (legacy behavior)
-                devfs::console_push_char(byte);
             }
+            devfs::console_push_char(byte);
+        }
+    }
+
+    // Also poll i8042 directly as fallback (handles cases where IRQ1
+    // doesn't fire, e.g., QEMU sendkey with -display none)
+    // SAFETY: We're in timer interrupt context; no concurrent i8042 access.
+    while let Some(scancode) = unsafe { arch::poll_keyboard() } {
+        if let Some(byte) = process_scancode(scancode) {
+            if let Some(manager) = vt::get_manager() {
+                manager.push_input(byte);
+            }
+            devfs::console_push_char(byte);
         }
     }
 
     // Also process serial port input (for -serial stdio in QEMU)
-    while let Some(byte) = arch::serial_read() {
-        // Debug: show serial input
-        if byte < 0x20 && byte != b'\n' && byte != b'\r' && byte != b'\t' {
-            let mut writer = serial::SerialWriter;
-            let _ = write!(writer, "[SERIAL:0x{:02x}]", byte);
-        }
-
+    // SAFETY: We use the lock-free serial read here because terminal_tick
+    // runs in interrupt context (timer interrupt). Using the locking version
+    // would deadlock if process-context code holds the COM1 lock.
+    while let Some(byte) = unsafe { arch::serial_read_unsafe() } {
         // Route serial input to BOTH VT subsystem AND console device
         // This ensures input works for both /dev/ttyN and /dev/console
         if let Some(manager) = vt::get_manager() {
@@ -120,71 +119,47 @@ pub fn terminal_tick() {
 }
 
 /// Console read function for syscalls
-pub fn console_read(buf: &mut [u8]) -> usize {
-    // Read from keyboard buffer (PS/2) or serial port
-    // NOTE: No echo here - the application (shell) handles echoing
-    let mut count = 0;
+/// Returns number of bytes read, or negative errno
+///
+/// Simple blocking read. Polls KEYBOARD_BUFFER (filled by terminal_tick
+/// in the timer ISR). Uses cli/sti+hlt to sleep between polls.
+pub fn console_read(buf: &mut [u8]) -> isize {
+    let mut count: isize = 0;
     for byte in buf.iter_mut() {
-        // Poll for input from either keyboard buffer or serial
         loop {
-            // Check for pending signals that should interrupt the read
-            if sched::with_current_meta(|meta| meta.has_pending_signals()).unwrap_or(false) {
-                // Return what we have so far - signal will be delivered on return to usermode
-                return count;
-            }
+            // Check keyboard buffer with interrupts disabled to prevent
+            // deadlock with terminal_tick (interrupt context).
+            let kb_byte: Option<u8> = unsafe {
+                core::arch::asm!("cli", options(nomem, nostack, preserves_flags));
+                let result = if devfs::console_has_input() {
+                    devfs::console_pop_byte()
+                } else {
+                    None
+                };
+                core::arch::asm!("sti", options(nomem, nostack, preserves_flags));
+                result
+            };
 
-            // First check keyboard buffer (PS/2 console input)
-            if devfs::console_has_input() {
-                // Read from console (keyboard) buffer via VFS-like mechanism
-                // The console_push_str pushed bytes, we need to pop them
-                // But we can't directly pop - we use a temp buffer approach
-                let mut temp = [0u8; 1];
-                // Read one byte from console device
-                if let Ok(vnode) = vfs::mount::GLOBAL_VFS.lookup("/dev/console") {
-                    if let Ok(n) = vnode.read(0, &mut temp) {
-                        if n > 0 {
-                            let b = temp[0];
-                            *byte = b;
-                            count += 1;
-                            // Return on newline for line-buffered input
-                            if b == b'\n' || b == b'\r' {
-                                if b == b'\r' {
-                                    *byte = b'\n';
-                                }
-                                return count;
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // Fallback to serial port (for serial console / QEMU)
-            if let Some(b) = serial::read_byte() {
-                // Handle control characters for serial input
+            if let Some(b) = kb_byte {
                 match b {
                     0x03 => {
-                        // Ctrl+C: send SIGINT to foreground processes
                         signal_foreground(signal::SIGINT);
-                        // Return 0 to indicate interrupted (caller should check for signals)
-                        return 0;
+                        if count > 0 { return count; }
+                        return -4; // EINTR
                     }
                     0x04 => {
-                        // Ctrl+D: EOF - return what we have (or 0 if nothing)
-                        return count;
+                        return count; // EOF (Ctrl+D)
                     }
                     0x1C => {
-                        // Ctrl+\: send SIGQUIT
                         signal_foreground(signal::SIGQUIT);
-                        return 0;
+                        if count > 0 { return count; }
+                        return -4; // EINTR
                     }
                     _ => {
                         *byte = b;
                         count += 1;
-                        // Return on newline for line-buffered input
                         if b == b'\n' || b == b'\r' {
                             if b == b'\r' {
-                                // Convert CR to LF
                                 *byte = b'\n';
                             }
                             return count;
@@ -194,31 +169,14 @@ pub fn console_read(buf: &mut [u8]) -> usize {
                 }
             }
 
-            // No input available - block this task and yield to scheduler
-            // Only block on first iteration (when count == 0)
-            if count == 0 {
-                // Register as blocked reader so input arrival wakes us
-                if let Some(pid) = sched::current_pid() {
-                    devfs::set_console_blocked_reader(pid);
-                }
+            // No input yet - return partial data if we have any
+            if count > 0 {
+                return count;
+            }
 
-                // Block ourselves - marks task as INTERRUPTIBLE, removes from run queue
-                use sched::TaskState;
-                scheduler::block_current(TaskState::TASK_INTERRUPTIBLE);
-                sched::set_need_resched();
-
-                // Enable preemption so timer can context switch us
-                arch::allow_kernel_preempt();
-
-                // HLT once to trigger timer interrupt which will context switch us to idle
-                // The idle task will then HLT properly
-                // When input arrives, we'll be woken and eventually rescheduled
-                unsafe {
-                    core::arch::asm!("sti", options(nomem, nostack, preserves_flags));
-                    core::arch::asm!("hlt", options(nomem, nostack));
-                }
-
-                arch::disallow_kernel_preempt();
+            // Sleep until next interrupt (timer at 100Hz will wake us)
+            unsafe {
+                core::arch::asm!("sti; hlt", options(nomem, nostack));
             }
         }
     }

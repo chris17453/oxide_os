@@ -1672,82 +1672,13 @@ fn syscall_dispatch(
     arg5: u64,
     arg6: u64,
 ) -> i64 {
-    // TEMP DEBUG: Log all syscalls to trace Python crash
-    {
-        use core::fmt::Write;
-        let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[SYSCALL] {}({:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x})",
-            number, arg1, arg2, arg3, arg4, arg5, arg6);
-    }
-
-    // DEBUG: on first open syscall, log fd_table state
-    static FIRST_OPEN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
-    if number == 20 && FIRST_OPEN.swap(false, core::sync::atomic::Ordering::SeqCst) {
-        use core::fmt::Write;
-        let mut writer = serial::SerialWriter;
-        let cur_pid = sched::current_pid().unwrap_or(0xdeadbeef);
-        if let Some(meta) = sched::get_current_meta() {
-            let locked_meta = meta.lock();
-            let entries_len = locked_meta.fd_table.entries_len();
-            let mask = locked_meta.fd_table.entries_filled_mask();
-            // Get the actual ProcessMeta pointer (what Arc points to), not the Arc variable address
-            let meta_inner_ptr = Arc::as_ptr(&meta) as u64;
-            let meta_ref_ptr = &locked_meta as *const _ as u64;
-            let fd_table_ptr = &locked_meta.fd_table as *const _ as u64;
-            let _ = writeln!(writer, "[OPEN_DBG] PID={} entries_len={} mask={:08b} arc_inner=0x{:x} ref=0x{:x} fd=0x{:x}",
-                cur_pid, entries_len, mask, meta_inner_ptr, meta_ref_ptr, fd_table_ptr);
-        } else {
-            let _ = writeln!(writer, "[OPEN_DBG] PID={} meta=NONE", cur_pid);
-        }
-    }
-
     // Handle sched_yield specially - it needs to context switch
     const SCHED_YIELD: u64 = 130;
     if number == SCHED_YIELD {
         return scheduler::kernel_yield();
     }
 
-    let result = syscall::dispatch(number, arg1, arg2, arg3, arg4, arg5, arg6);
-
-    // DEBUG: After open, check if fd_table changed
-    static FIRST_OPEN_AFTER: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
-    if number == 20 && FIRST_OPEN_AFTER.swap(false, core::sync::atomic::Ordering::SeqCst) {
-        use core::fmt::Write;
-        let mut writer = serial::SerialWriter;
-        if let Some(meta) = sched::get_current_meta() {
-            let locked_meta = meta.lock();
-            let current_len = locked_meta.fd_table.entries_len();
-            let current_mask = locked_meta.fd_table.entries_filled_mask();
-            let current_addr = &locked_meta.fd_table as *const _ as u64;
-            let pre_alloc_len = vfs::FdTable::pre_alloc_entries_len();
-            let pre_alloc_mask = vfs::FdTable::pre_alloc_entries_mask();
-            let pre_alloc_addr = vfs::FdTable::pre_alloc_fdtable_addr();
-            let alloc_entries_len = vfs::FdTable::last_alloc_entries_len();
-            let alloc_result = vfs::FdTable::last_alloc_result();
-            let alloc_first_is_some = vfs::FdTable::last_alloc_first_entry_is_some();
-            let alloc_loop_iter = vfs::FdTable::last_alloc_loop_iterations();
-            let alloc_addr = vfs::FdTable::alloc_fdtable_addr();
-            let debug_pre_meta_addr = syscall::vfs::debug_pre_meta_addr();
-            let debug_alloc_meta_addr = syscall::vfs::debug_alloc_meta_addr();
-            let debug_sys_open_arc = syscall::vfs::debug_sys_open_arc();
-            let debug_sys_open_ref = syscall::vfs::debug_sys_open_pid();  // Now contains reference address
-            // Get the Arc inner pointer from this side for comparison
-            let this_arc_inner = Arc::as_ptr(&meta) as u64;
-            let _ = writeln!(writer, "[OPEN] pre_meta=0x{:x} sys_arc=0x{:x} sys_ref=0x{:x} this_arc=0x{:x} alloc_meta=0x{:x} pre_len={} pre_mask={:08b} current_len={} current_mask={:08b} current_addr=0x{:x} alloc_len={} result={}",
-                debug_pre_meta_addr, debug_sys_open_arc, debug_sys_open_ref, this_arc_inner, debug_alloc_meta_addr, pre_alloc_len, pre_alloc_mask, current_len, current_mask, current_addr, alloc_entries_len, alloc_result);
-        }
-    }
-
-    // TEMP DEBUG: Log syscall results
-    // NOTE: Syscall logging is REQUIRED for init to run - without it init silently hangs
-    // This indicates a timing/scheduling issue that needs investigation
-    {
-        use core::fmt::Write;
-        let mut writer = serial::SerialWriter;
-        let _ = writeln!(writer, "[SYSCALL] {} -> {}", number, result);
-    }
-
-    result
+    syscall::dispatch(number, arg1, arg2, arg3, arg4, arg5, arg6)
 }
 
 /// Wrapper for Arc<dyn BlockDevice> to implement BlockDevice

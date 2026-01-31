@@ -223,7 +223,7 @@ async function startQemu(options = {}) {
         "-device", "virtio-blk-pci,drive=bootdisk",
         "-serial", `file:${SERIAL_LOG}`,
         "-monitor", `unix:${MONITOR_SOCKET},server,nowait`,
-        "-display", "none",
+        "-display", "vnc=:99",
         "-no-reboot",
       ];
     } else {
@@ -236,7 +236,7 @@ async function startQemu(options = {}) {
         "-device", "virtio-blk-pci,drive=bootdisk",
         "-serial", `file:${SERIAL_LOG}`,
         "-monitor", `unix:${MONITOR_SOCKET},server,nowait`,
-        "-display", "none",
+        "-display", "vnc=:99",
         "-no-reboot",
       ];
     }

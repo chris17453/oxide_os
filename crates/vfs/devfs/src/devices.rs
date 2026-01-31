@@ -114,8 +114,16 @@ pub fn console_push_str(s: &[u8]) {
     }
 }
 
-/// Pop a character from the console keyboard input buffer
+/// Pop a character from the console keyboard input buffer (internal)
 fn console_pop_char() -> Option<u8> {
+    KEYBOARD_BUFFER.lock().pop_front()
+}
+
+/// Pop a byte from the console keyboard input buffer (public)
+///
+/// Caller MUST disable interrupts before calling to prevent deadlock
+/// with interrupt-context code that also accesses the keyboard buffer.
+pub fn console_pop_byte() -> Option<u8> {
     KEYBOARD_BUFFER.lock().pop_front()
 }
 

@@ -276,8 +276,8 @@ pub mod errno {
 /// Console output callback type
 pub type ConsoleWriteFn = fn(&[u8]);
 
-/// Console input callback type (returns bytes read, or 0 if no data)
-pub type ConsoleReadFn = fn(&mut [u8]) -> usize;
+/// Console input callback type (returns bytes read, or negative errno)
+pub type ConsoleReadFn = fn(&mut [u8]) -> isize;
 
 /// Exit callback type
 pub type ExitFn = fn(i32) -> !;

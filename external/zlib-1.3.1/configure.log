@@ -8552,3 +8552,1277 @@ uname = Linux
 --------------------
 
 
+--------------------
+./configure --prefix=/home/nd/repos/Projects/oxide_os/toolchain/sysroot --static
+Fri Jan 30 05:48:52 PM EST 2026
+=== ztest597272.c ===
+extern int getchar();
+int hello() {return getchar();}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c ztest597272.c
+... using gcc
+
+Checking for obsessive-compulsive compiler options...
+=== ztest597272.c ===
+int foo() { return 0; }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include ztest597272.c
+
+Building static library libz.a version 1.3.1 with /home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc.
+
+=== ztest597272.c ===
+#include <stdio.h>
+#include <stdlib.h>
+size_t dummy = 0;
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include ztest597272.c
+Checking for size_t... Yes.
+
+=== ztest597272.c ===
+#include <sys/types.h>
+off64_t dummy = 0;
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -D_LARGEFILE64_SOURCE=1 ztest597272.c
+ztest597272.c:2:1: error: unknown type name 'off64_t'; did you mean 'off_t'?
+    2 | off64_t dummy = 0;
+      | ^~~~~~~
+      | off_t
+/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include/sys/types.h:22:14: note: 'off_t' declared here
+   22 | typedef long off_t;
+      |              ^
+1 error generated.
+(exit code 1)
+Checking for off64_t... No.
+
+=== ztest597272.c ===
+#include <stdio.h>
+int main(void) {
+  fseeko(NULL, 0, 0);
+  return 0;
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -o ztest597272 ztest597272.c
+ztest597272.c:3:3: error: call to undeclared function 'fseeko'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+    3 |   fseeko(NULL, 0, 0);
+      |   ^
+ztest597272.c:3:3: note: did you mean 'fseek'?
+/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include/stdio.h:59:5: note: 'fseek' declared here
+   59 | int fseek(FILE *stream, long offset, int whence);
+      |     ^
+1 error generated.
+(exit code 1)
+Checking for fseeko... No.
+
+=== ztest597272.c ===
+#include <string.h>
+#include <errno.h>
+int main() { return strlen(strerror(errno)); }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -o ztest597272 ztest597272.c
+Checking for strerror... Yes.
+
+=== ztest597272.c ===
+#include <unistd.h>
+int main() { return 0; }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest597272.c
+Checking for unistd.h... Yes.
+
+=== ztest597272.c ===
+#include <stdarg.h>
+int main() { return 0; }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest597272.c
+Checking for stdarg.h... Yes.
+
+=== ztest597272.c ===
+#include <stdio.h>
+#include <stdarg.h>
+#include "zconf.h"
+int main()
+{
+#ifndef STDC
+  choke me
+#endif
+  return 0;
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest597272.c
+Checking whether to use vs[n]printf() or s[n]printf()... using vs[n]printf().
+
+=== ztest597272.c ===
+#include <stdio.h>
+#include <stdarg.h>
+int mytest(const char *fmt, ...)
+{
+  char buf[20];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  return 0;
+}
+int main()
+{
+  return (mytest("Hello%d\n", 1));
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -o ztest597272 ztest597272.c
+Checking for vsnprintf() in stdio.h... Yes.
+
+=== ztest597272.c ===
+#include <stdio.h>
+#include <stdarg.h>
+int mytest(const char *fmt, ...)
+{
+  int n;
+  char buf[20];
+  va_list ap;
+  va_start(ap, fmt);
+  n = vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  return n;
+}
+int main()
+{
+  return (mytest("Hello%d\n", 1));
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest597272.c
+Checking for return value of vsnprintf()... Yes.
+
+=== ztest597272.c ===
+#define ZLIB_INTERNAL __attribute__((visibility ("hidden")))
+int ZLIB_INTERNAL foo;
+int main()
+{
+  return 0;
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest597272.c
+Checking for attribute(visibility) support... Yes.
+
+ALL = static
+AR = ar
+ARFLAGS = rc
+CC = /home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc
+CFLAGS = -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -DHAVE_HIDDEN
+CPP =
+EXE =
+LDCONFIG = ldconfig
+LDFLAGS =
+LDSHARED = /home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc
+LDSHAREDLIBC = -lc
+OBJC = $(OBJZ) $(OBJG)
+PIC_OBJC = $(PIC_OBJZ) $(PIC_OBJG)
+RANLIB = ranlib
+SFLAGS = -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -fPIC -DNO_FSEEKO -DHAVE_HIDDEN
+SHAREDLIB =
+SHAREDLIBM =
+SHAREDLIBV =
+STATICLIB = libz.a
+TEST = all teststatic
+VER = 1.3.1
+SRCDIR =
+exec_prefix = ${prefix}
+includedir = ${prefix}/include
+libdir = ${exec_prefix}/lib
+mandir = ${prefix}/share/man
+prefix = /home/nd/repos/Projects/oxide_os/toolchain/sysroot
+sharedlibdir = ${libdir}
+uname = Linux
+--------------------
+
+
+--------------------
+./configure --prefix=/home/nd/repos/Projects/oxide_os/toolchain/sysroot --static
+Fri Jan 30 05:50:10 PM EST 2026
+=== ztest614985.c ===
+extern int getchar();
+int hello() {return getchar();}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c ztest614985.c
+... using gcc
+
+Checking for obsessive-compulsive compiler options...
+=== ztest614985.c ===
+int foo() { return 0; }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include ztest614985.c
+
+Building static library libz.a version 1.3.1 with /home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc.
+
+=== ztest614985.c ===
+#include <stdio.h>
+#include <stdlib.h>
+size_t dummy = 0;
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include ztest614985.c
+Checking for size_t... Yes.
+
+=== ztest614985.c ===
+#include <sys/types.h>
+off64_t dummy = 0;
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -D_LARGEFILE64_SOURCE=1 ztest614985.c
+ztest614985.c:2:1: error: unknown type name 'off64_t'; did you mean 'off_t'?
+    2 | off64_t dummy = 0;
+      | ^~~~~~~
+      | off_t
+/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include/sys/types.h:22:14: note: 'off_t' declared here
+   22 | typedef long off_t;
+      |              ^
+1 error generated.
+(exit code 1)
+Checking for off64_t... No.
+
+=== ztest614985.c ===
+#include <stdio.h>
+int main(void) {
+  fseeko(NULL, 0, 0);
+  return 0;
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -o ztest614985 ztest614985.c
+ztest614985.c:3:3: error: call to undeclared function 'fseeko'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+    3 |   fseeko(NULL, 0, 0);
+      |   ^
+ztest614985.c:3:3: note: did you mean 'fseek'?
+/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include/stdio.h:59:5: note: 'fseek' declared here
+   59 | int fseek(FILE *stream, long offset, int whence);
+      |     ^
+1 error generated.
+(exit code 1)
+Checking for fseeko... No.
+
+=== ztest614985.c ===
+#include <string.h>
+#include <errno.h>
+int main() { return strlen(strerror(errno)); }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -o ztest614985 ztest614985.c
+Checking for strerror... Yes.
+
+=== ztest614985.c ===
+#include <unistd.h>
+int main() { return 0; }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest614985.c
+Checking for unistd.h... Yes.
+
+=== ztest614985.c ===
+#include <stdarg.h>
+int main() { return 0; }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest614985.c
+Checking for stdarg.h... Yes.
+
+=== ztest614985.c ===
+#include <stdio.h>
+#include <stdarg.h>
+#include "zconf.h"
+int main()
+{
+#ifndef STDC
+  choke me
+#endif
+  return 0;
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest614985.c
+Checking whether to use vs[n]printf() or s[n]printf()... using vs[n]printf().
+
+=== ztest614985.c ===
+#include <stdio.h>
+#include <stdarg.h>
+int mytest(const char *fmt, ...)
+{
+  char buf[20];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  return 0;
+}
+int main()
+{
+  return (mytest("Hello%d\n", 1));
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -o ztest614985 ztest614985.c
+Checking for vsnprintf() in stdio.h... Yes.
+
+=== ztest614985.c ===
+#include <stdio.h>
+#include <stdarg.h>
+int mytest(const char *fmt, ...)
+{
+  int n;
+  char buf[20];
+  va_list ap;
+  va_start(ap, fmt);
+  n = vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  return n;
+}
+int main()
+{
+  return (mytest("Hello%d\n", 1));
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest614985.c
+Checking for return value of vsnprintf()... Yes.
+
+=== ztest614985.c ===
+#define ZLIB_INTERNAL __attribute__((visibility ("hidden")))
+int ZLIB_INTERNAL foo;
+int main()
+{
+  return 0;
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest614985.c
+Checking for attribute(visibility) support... Yes.
+
+ALL = static
+AR = ar
+ARFLAGS = rc
+CC = /home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc
+CFLAGS = -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -DHAVE_HIDDEN
+CPP =
+EXE =
+LDCONFIG = ldconfig
+LDFLAGS =
+LDSHARED = /home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc
+LDSHAREDLIBC = -lc
+OBJC = $(OBJZ) $(OBJG)
+PIC_OBJC = $(PIC_OBJZ) $(PIC_OBJG)
+RANLIB = ranlib
+SFLAGS = -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -fPIC -DNO_FSEEKO -DHAVE_HIDDEN
+SHAREDLIB =
+SHAREDLIBM =
+SHAREDLIBV =
+STATICLIB = libz.a
+TEST = all teststatic
+VER = 1.3.1
+SRCDIR =
+exec_prefix = ${prefix}
+includedir = ${prefix}/include
+libdir = ${exec_prefix}/lib
+mandir = ${prefix}/share/man
+prefix = /home/nd/repos/Projects/oxide_os/toolchain/sysroot
+sharedlibdir = ${libdir}
+uname = Linux
+--------------------
+
+
+--------------------
+./configure --prefix=/home/nd/repos/Projects/oxide_os/toolchain/sysroot --static
+Fri Jan 30 05:55:23 PM EST 2026
+=== ztest643309.c ===
+extern int getchar();
+int hello() {return getchar();}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c ztest643309.c
+... using gcc
+
+Checking for obsessive-compulsive compiler options...
+=== ztest643309.c ===
+int foo() { return 0; }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include ztest643309.c
+
+Building static library libz.a version 1.3.1 with /home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc.
+
+=== ztest643309.c ===
+#include <stdio.h>
+#include <stdlib.h>
+size_t dummy = 0;
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include ztest643309.c
+Checking for size_t... Yes.
+
+=== ztest643309.c ===
+#include <sys/types.h>
+off64_t dummy = 0;
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -D_LARGEFILE64_SOURCE=1 ztest643309.c
+ztest643309.c:2:1: error: unknown type name 'off64_t'; did you mean 'off_t'?
+    2 | off64_t dummy = 0;
+      | ^~~~~~~
+      | off_t
+/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include/sys/types.h:22:14: note: 'off_t' declared here
+   22 | typedef long off_t;
+      |              ^
+1 error generated.
+(exit code 1)
+Checking for off64_t... No.
+
+=== ztest643309.c ===
+#include <stdio.h>
+int main(void) {
+  fseeko(NULL, 0, 0);
+  return 0;
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -o ztest643309 ztest643309.c
+ztest643309.c:3:3: error: call to undeclared function 'fseeko'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+    3 |   fseeko(NULL, 0, 0);
+      |   ^
+ztest643309.c:3:3: note: did you mean 'fseek'?
+/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include/stdio.h:59:5: note: 'fseek' declared here
+   59 | int fseek(FILE *stream, long offset, int whence);
+      |     ^
+1 error generated.
+(exit code 1)
+Checking for fseeko... No.
+
+=== ztest643309.c ===
+#include <string.h>
+#include <errno.h>
+int main() { return strlen(strerror(errno)); }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -o ztest643309 ztest643309.c
+Checking for strerror... Yes.
+
+=== ztest643309.c ===
+#include <unistd.h>
+int main() { return 0; }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest643309.c
+Checking for unistd.h... Yes.
+
+=== ztest643309.c ===
+#include <stdarg.h>
+int main() { return 0; }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest643309.c
+Checking for stdarg.h... Yes.
+
+=== ztest643309.c ===
+#include <stdio.h>
+#include <stdarg.h>
+#include "zconf.h"
+int main()
+{
+#ifndef STDC
+  choke me
+#endif
+  return 0;
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest643309.c
+Checking whether to use vs[n]printf() or s[n]printf()... using vs[n]printf().
+
+=== ztest643309.c ===
+#include <stdio.h>
+#include <stdarg.h>
+int mytest(const char *fmt, ...)
+{
+  char buf[20];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  return 0;
+}
+int main()
+{
+  return (mytest("Hello%d\n", 1));
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -o ztest643309 ztest643309.c
+Checking for vsnprintf() in stdio.h... Yes.
+
+=== ztest643309.c ===
+#include <stdio.h>
+#include <stdarg.h>
+int mytest(const char *fmt, ...)
+{
+  int n;
+  char buf[20];
+  va_list ap;
+  va_start(ap, fmt);
+  n = vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  return n;
+}
+int main()
+{
+  return (mytest("Hello%d\n", 1));
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest643309.c
+Checking for return value of vsnprintf()... Yes.
+
+=== ztest643309.c ===
+#define ZLIB_INTERNAL __attribute__((visibility ("hidden")))
+int ZLIB_INTERNAL foo;
+int main()
+{
+  return 0;
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest643309.c
+Checking for attribute(visibility) support... Yes.
+
+ALL = static
+AR = ar
+ARFLAGS = rc
+CC = /home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc
+CFLAGS = -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -DHAVE_HIDDEN
+CPP =
+EXE =
+LDCONFIG = ldconfig
+LDFLAGS =
+LDSHARED = /home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc
+LDSHAREDLIBC = -lc
+OBJC = $(OBJZ) $(OBJG)
+PIC_OBJC = $(PIC_OBJZ) $(PIC_OBJG)
+RANLIB = ranlib
+SFLAGS = -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -fPIC -DNO_FSEEKO -DHAVE_HIDDEN
+SHAREDLIB =
+SHAREDLIBM =
+SHAREDLIBV =
+STATICLIB = libz.a
+TEST = all teststatic
+VER = 1.3.1
+SRCDIR =
+exec_prefix = ${prefix}
+includedir = ${prefix}/include
+libdir = ${exec_prefix}/lib
+mandir = ${prefix}/share/man
+prefix = /home/nd/repos/Projects/oxide_os/toolchain/sysroot
+sharedlibdir = ${libdir}
+uname = Linux
+--------------------
+
+
+--------------------
+./configure --prefix=/home/nd/repos/Projects/oxide_os/toolchain/sysroot --static
+Fri Jan 30 05:55:49 PM EST 2026
+=== ztest647751.c ===
+extern int getchar();
+int hello() {return getchar();}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c ztest647751.c
+... using gcc
+
+Checking for obsessive-compulsive compiler options...
+=== ztest647751.c ===
+int foo() { return 0; }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include ztest647751.c
+
+Building static library libz.a version 1.3.1 with /home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc.
+
+=== ztest647751.c ===
+#include <stdio.h>
+#include <stdlib.h>
+size_t dummy = 0;
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include ztest647751.c
+Checking for size_t... Yes.
+
+=== ztest647751.c ===
+#include <sys/types.h>
+off64_t dummy = 0;
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -D_LARGEFILE64_SOURCE=1 ztest647751.c
+ztest647751.c:2:1: error: unknown type name 'off64_t'; did you mean 'off_t'?
+    2 | off64_t dummy = 0;
+      | ^~~~~~~
+      | off_t
+/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include/sys/types.h:22:14: note: 'off_t' declared here
+   22 | typedef long off_t;
+      |              ^
+1 error generated.
+(exit code 1)
+Checking for off64_t... No.
+
+=== ztest647751.c ===
+#include <stdio.h>
+int main(void) {
+  fseeko(NULL, 0, 0);
+  return 0;
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -o ztest647751 ztest647751.c
+ztest647751.c:3:3: error: call to undeclared function 'fseeko'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+    3 |   fseeko(NULL, 0, 0);
+      |   ^
+ztest647751.c:3:3: note: did you mean 'fseek'?
+/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include/stdio.h:59:5: note: 'fseek' declared here
+   59 | int fseek(FILE *stream, long offset, int whence);
+      |     ^
+1 error generated.
+(exit code 1)
+Checking for fseeko... No.
+
+=== ztest647751.c ===
+#include <string.h>
+#include <errno.h>
+int main() { return strlen(strerror(errno)); }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -o ztest647751 ztest647751.c
+Checking for strerror... Yes.
+
+=== ztest647751.c ===
+#include <unistd.h>
+int main() { return 0; }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest647751.c
+Checking for unistd.h... Yes.
+
+=== ztest647751.c ===
+#include <stdarg.h>
+int main() { return 0; }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest647751.c
+Checking for stdarg.h... Yes.
+
+=== ztest647751.c ===
+#include <stdio.h>
+#include <stdarg.h>
+#include "zconf.h"
+int main()
+{
+#ifndef STDC
+  choke me
+#endif
+  return 0;
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest647751.c
+Checking whether to use vs[n]printf() or s[n]printf()... using vs[n]printf().
+
+=== ztest647751.c ===
+#include <stdio.h>
+#include <stdarg.h>
+int mytest(const char *fmt, ...)
+{
+  char buf[20];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  return 0;
+}
+int main()
+{
+  return (mytest("Hello%d\n", 1));
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -o ztest647751 ztest647751.c
+Checking for vsnprintf() in stdio.h... Yes.
+
+=== ztest647751.c ===
+#include <stdio.h>
+#include <stdarg.h>
+int mytest(const char *fmt, ...)
+{
+  int n;
+  char buf[20];
+  va_list ap;
+  va_start(ap, fmt);
+  n = vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  return n;
+}
+int main()
+{
+  return (mytest("Hello%d\n", 1));
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest647751.c
+Checking for return value of vsnprintf()... Yes.
+
+=== ztest647751.c ===
+#define ZLIB_INTERNAL __attribute__((visibility ("hidden")))
+int ZLIB_INTERNAL foo;
+int main()
+{
+  return 0;
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest647751.c
+Checking for attribute(visibility) support... Yes.
+
+ALL = static
+AR = ar
+ARFLAGS = rc
+CC = /home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc
+CFLAGS = -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -DHAVE_HIDDEN
+CPP =
+EXE =
+LDCONFIG = ldconfig
+LDFLAGS =
+LDSHARED = /home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc
+LDSHAREDLIBC = -lc
+OBJC = $(OBJZ) $(OBJG)
+PIC_OBJC = $(PIC_OBJZ) $(PIC_OBJG)
+RANLIB = ranlib
+SFLAGS = -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -fPIC -DNO_FSEEKO -DHAVE_HIDDEN
+SHAREDLIB =
+SHAREDLIBM =
+SHAREDLIBV =
+STATICLIB = libz.a
+TEST = all teststatic
+VER = 1.3.1
+SRCDIR =
+exec_prefix = ${prefix}
+includedir = ${prefix}/include
+libdir = ${exec_prefix}/lib
+mandir = ${prefix}/share/man
+prefix = /home/nd/repos/Projects/oxide_os/toolchain/sysroot
+sharedlibdir = ${libdir}
+uname = Linux
+--------------------
+
+
+--------------------
+./configure --prefix=/home/nd/repos/Projects/oxide_os/toolchain/sysroot --static
+Fri Jan 30 06:05:31 PM EST 2026
+=== ztest676505.c ===
+extern int getchar();
+int hello() {return getchar();}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c ztest676505.c
+... using gcc
+
+Checking for obsessive-compulsive compiler options...
+=== ztest676505.c ===
+int foo() { return 0; }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include ztest676505.c
+
+Building static library libz.a version 1.3.1 with /home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc.
+
+=== ztest676505.c ===
+#include <stdio.h>
+#include <stdlib.h>
+size_t dummy = 0;
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include ztest676505.c
+Checking for size_t... Yes.
+
+=== ztest676505.c ===
+#include <sys/types.h>
+off64_t dummy = 0;
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -D_LARGEFILE64_SOURCE=1 ztest676505.c
+ztest676505.c:2:1: error: unknown type name 'off64_t'; did you mean 'off_t'?
+    2 | off64_t dummy = 0;
+      | ^~~~~~~
+      | off_t
+/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include/sys/types.h:22:14: note: 'off_t' declared here
+   22 | typedef long off_t;
+      |              ^
+1 error generated.
+(exit code 1)
+Checking for off64_t... No.
+
+=== ztest676505.c ===
+#include <stdio.h>
+int main(void) {
+  fseeko(NULL, 0, 0);
+  return 0;
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -o ztest676505 ztest676505.c
+ztest676505.c:3:3: error: call to undeclared function 'fseeko'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+    3 |   fseeko(NULL, 0, 0);
+      |   ^
+ztest676505.c:3:3: note: did you mean 'fseek'?
+/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include/stdio.h:59:5: note: 'fseek' declared here
+   59 | int fseek(FILE *stream, long offset, int whence);
+      |     ^
+1 error generated.
+(exit code 1)
+Checking for fseeko... No.
+
+=== ztest676505.c ===
+#include <string.h>
+#include <errno.h>
+int main() { return strlen(strerror(errno)); }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -o ztest676505 ztest676505.c
+Checking for strerror... Yes.
+
+=== ztest676505.c ===
+#include <unistd.h>
+int main() { return 0; }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest676505.c
+Checking for unistd.h... Yes.
+
+=== ztest676505.c ===
+#include <stdarg.h>
+int main() { return 0; }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest676505.c
+Checking for stdarg.h... Yes.
+
+=== ztest676505.c ===
+#include <stdio.h>
+#include <stdarg.h>
+#include "zconf.h"
+int main()
+{
+#ifndef STDC
+  choke me
+#endif
+  return 0;
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest676505.c
+Checking whether to use vs[n]printf() or s[n]printf()... using vs[n]printf().
+
+=== ztest676505.c ===
+#include <stdio.h>
+#include <stdarg.h>
+int mytest(const char *fmt, ...)
+{
+  char buf[20];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  return 0;
+}
+int main()
+{
+  return (mytest("Hello%d\n", 1));
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -o ztest676505 ztest676505.c
+Checking for vsnprintf() in stdio.h... Yes.
+
+=== ztest676505.c ===
+#include <stdio.h>
+#include <stdarg.h>
+int mytest(const char *fmt, ...)
+{
+  int n;
+  char buf[20];
+  va_list ap;
+  va_start(ap, fmt);
+  n = vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  return n;
+}
+int main()
+{
+  return (mytest("Hello%d\n", 1));
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest676505.c
+Checking for return value of vsnprintf()... Yes.
+
+=== ztest676505.c ===
+#define ZLIB_INTERNAL __attribute__((visibility ("hidden")))
+int ZLIB_INTERNAL foo;
+int main()
+{
+  return 0;
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest676505.c
+Checking for attribute(visibility) support... Yes.
+
+ALL = static
+AR = ar
+ARFLAGS = rc
+CC = /home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc
+CFLAGS = -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -DHAVE_HIDDEN
+CPP =
+EXE =
+LDCONFIG = ldconfig
+LDFLAGS =
+LDSHARED = /home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc
+LDSHAREDLIBC = -lc
+OBJC = $(OBJZ) $(OBJG)
+PIC_OBJC = $(PIC_OBJZ) $(PIC_OBJG)
+RANLIB = ranlib
+SFLAGS = -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -fPIC -DNO_FSEEKO -DHAVE_HIDDEN
+SHAREDLIB =
+SHAREDLIBM =
+SHAREDLIBV =
+STATICLIB = libz.a
+TEST = all teststatic
+VER = 1.3.1
+SRCDIR =
+exec_prefix = ${prefix}
+includedir = ${prefix}/include
+libdir = ${exec_prefix}/lib
+mandir = ${prefix}/share/man
+prefix = /home/nd/repos/Projects/oxide_os/toolchain/sysroot
+sharedlibdir = ${libdir}
+uname = Linux
+--------------------
+
+
+--------------------
+./configure --prefix=/home/nd/repos/Projects/oxide_os/toolchain/sysroot --static
+Fri Jan 30 06:18:48 PM EST 2026
+=== ztest706505.c ===
+extern int getchar();
+int hello() {return getchar();}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c ztest706505.c
+... using gcc
+
+Checking for obsessive-compulsive compiler options...
+=== ztest706505.c ===
+int foo() { return 0; }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include ztest706505.c
+
+Building static library libz.a version 1.3.1 with /home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc.
+
+=== ztest706505.c ===
+#include <stdio.h>
+#include <stdlib.h>
+size_t dummy = 0;
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include ztest706505.c
+Checking for size_t... Yes.
+
+=== ztest706505.c ===
+#include <sys/types.h>
+off64_t dummy = 0;
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -D_LARGEFILE64_SOURCE=1 ztest706505.c
+ztest706505.c:2:1: error: unknown type name 'off64_t'; did you mean 'off_t'?
+    2 | off64_t dummy = 0;
+      | ^~~~~~~
+      | off_t
+/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include/sys/types.h:22:14: note: 'off_t' declared here
+   22 | typedef long off_t;
+      |              ^
+1 error generated.
+(exit code 1)
+Checking for off64_t... No.
+
+=== ztest706505.c ===
+#include <stdio.h>
+int main(void) {
+  fseeko(NULL, 0, 0);
+  return 0;
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -o ztest706505 ztest706505.c
+ztest706505.c:3:3: error: call to undeclared function 'fseeko'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+    3 |   fseeko(NULL, 0, 0);
+      |   ^
+ztest706505.c:3:3: note: did you mean 'fseek'?
+/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include/stdio.h:59:5: note: 'fseek' declared here
+   59 | int fseek(FILE *stream, long offset, int whence);
+      |     ^
+1 error generated.
+(exit code 1)
+Checking for fseeko... No.
+
+=== ztest706505.c ===
+#include <string.h>
+#include <errno.h>
+int main() { return strlen(strerror(errno)); }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -o ztest706505 ztest706505.c
+Checking for strerror... Yes.
+
+=== ztest706505.c ===
+#include <unistd.h>
+int main() { return 0; }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest706505.c
+Checking for unistd.h... Yes.
+
+=== ztest706505.c ===
+#include <stdarg.h>
+int main() { return 0; }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest706505.c
+Checking for stdarg.h... Yes.
+
+=== ztest706505.c ===
+#include <stdio.h>
+#include <stdarg.h>
+#include "zconf.h"
+int main()
+{
+#ifndef STDC
+  choke me
+#endif
+  return 0;
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest706505.c
+Checking whether to use vs[n]printf() or s[n]printf()... using vs[n]printf().
+
+=== ztest706505.c ===
+#include <stdio.h>
+#include <stdarg.h>
+int mytest(const char *fmt, ...)
+{
+  char buf[20];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  return 0;
+}
+int main()
+{
+  return (mytest("Hello%d\n", 1));
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -o ztest706505 ztest706505.c
+Checking for vsnprintf() in stdio.h... Yes.
+
+=== ztest706505.c ===
+#include <stdio.h>
+#include <stdarg.h>
+int mytest(const char *fmt, ...)
+{
+  int n;
+  char buf[20];
+  va_list ap;
+  va_start(ap, fmt);
+  n = vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  return n;
+}
+int main()
+{
+  return (mytest("Hello%d\n", 1));
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest706505.c
+Checking for return value of vsnprintf()... Yes.
+
+=== ztest706505.c ===
+#define ZLIB_INTERNAL __attribute__((visibility ("hidden")))
+int ZLIB_INTERNAL foo;
+int main()
+{
+  return 0;
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest706505.c
+Checking for attribute(visibility) support... Yes.
+
+ALL = static
+AR = ar
+ARFLAGS = rc
+CC = /home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc
+CFLAGS = -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -DHAVE_HIDDEN
+CPP =
+EXE =
+LDCONFIG = ldconfig
+LDFLAGS =
+LDSHARED = /home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc
+LDSHAREDLIBC = -lc
+OBJC = $(OBJZ) $(OBJG)
+PIC_OBJC = $(PIC_OBJZ) $(PIC_OBJG)
+RANLIB = ranlib
+SFLAGS = -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -fPIC -DNO_FSEEKO -DHAVE_HIDDEN
+SHAREDLIB =
+SHAREDLIBM =
+SHAREDLIBV =
+STATICLIB = libz.a
+TEST = all teststatic
+VER = 1.3.1
+SRCDIR =
+exec_prefix = ${prefix}
+includedir = ${prefix}/include
+libdir = ${exec_prefix}/lib
+mandir = ${prefix}/share/man
+prefix = /home/nd/repos/Projects/oxide_os/toolchain/sysroot
+sharedlibdir = ${libdir}
+uname = Linux
+--------------------
+
+
+--------------------
+./configure --prefix=/home/nd/repos/Projects/oxide_os/toolchain/sysroot --static
+Fri Jan 30 07:06:56 PM EST 2026
+=== ztest779881.c ===
+extern int getchar();
+int hello() {return getchar();}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c ztest779881.c
+... using gcc
+
+Checking for obsessive-compulsive compiler options...
+=== ztest779881.c ===
+int foo() { return 0; }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include ztest779881.c
+
+Building static library libz.a version 1.3.1 with /home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc.
+
+=== ztest779881.c ===
+#include <stdio.h>
+#include <stdlib.h>
+size_t dummy = 0;
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include ztest779881.c
+Checking for size_t... Yes.
+
+=== ztest779881.c ===
+#include <sys/types.h>
+off64_t dummy = 0;
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -D_LARGEFILE64_SOURCE=1 ztest779881.c
+ztest779881.c:2:1: error: unknown type name 'off64_t'; did you mean 'off_t'?
+    2 | off64_t dummy = 0;
+      | ^~~~~~~
+      | off_t
+/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include/sys/types.h:22:14: note: 'off_t' declared here
+   22 | typedef long off_t;
+      |              ^
+1 error generated.
+(exit code 1)
+Checking for off64_t... No.
+
+=== ztest779881.c ===
+#include <stdio.h>
+int main(void) {
+  fseeko(NULL, 0, 0);
+  return 0;
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -o ztest779881 ztest779881.c
+ztest779881.c:3:3: error: call to undeclared function 'fseeko'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+    3 |   fseeko(NULL, 0, 0);
+      |   ^
+ztest779881.c:3:3: note: did you mean 'fseek'?
+/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include/stdio.h:59:5: note: 'fseek' declared here
+   59 | int fseek(FILE *stream, long offset, int whence);
+      |     ^
+1 error generated.
+(exit code 1)
+Checking for fseeko... No.
+
+=== ztest779881.c ===
+#include <string.h>
+#include <errno.h>
+int main() { return strlen(strerror(errno)); }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -o ztest779881 ztest779881.c
+Checking for strerror... Yes.
+
+=== ztest779881.c ===
+#include <unistd.h>
+int main() { return 0; }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest779881.c
+Checking for unistd.h... Yes.
+
+=== ztest779881.c ===
+#include <stdarg.h>
+int main() { return 0; }
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest779881.c
+Checking for stdarg.h... Yes.
+
+=== ztest779881.c ===
+#include <stdio.h>
+#include <stdarg.h>
+#include "zconf.h"
+int main()
+{
+#ifndef STDC
+  choke me
+#endif
+  return 0;
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest779881.c
+Checking whether to use vs[n]printf() or s[n]printf()... using vs[n]printf().
+
+=== ztest779881.c ===
+#include <stdio.h>
+#include <stdarg.h>
+int mytest(const char *fmt, ...)
+{
+  char buf[20];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  return 0;
+}
+int main()
+{
+  return (mytest("Hello%d\n", 1));
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -o ztest779881 ztest779881.c
+Checking for vsnprintf() in stdio.h... Yes.
+
+=== ztest779881.c ===
+#include <stdio.h>
+#include <stdarg.h>
+int mytest(const char *fmt, ...)
+{
+  int n;
+  char buf[20];
+  va_list ap;
+  va_start(ap, fmt);
+  n = vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  return n;
+}
+int main()
+{
+  return (mytest("Hello%d\n", 1));
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest779881.c
+Checking for return value of vsnprintf()... Yes.
+
+=== ztest779881.c ===
+#define ZLIB_INTERNAL __attribute__((visibility ("hidden")))
+int ZLIB_INTERNAL foo;
+int main()
+{
+  return 0;
+}
+===
+/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc -c -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO ztest779881.c
+Checking for attribute(visibility) support... Yes.
+
+ALL = static
+AR = ar
+ARFLAGS = rc
+CC = /home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc
+CFLAGS = -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -DHAVE_HIDDEN
+CPP =
+EXE =
+LDCONFIG = ldconfig
+LDFLAGS =
+LDSHARED = /home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc
+LDSHAREDLIBC = -lc
+OBJC = $(OBJZ) $(OBJG)
+PIC_OBJC = $(PIC_OBJZ) $(PIC_OBJG)
+RANLIB = ranlib
+SFLAGS = -O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -fPIC -DNO_FSEEKO -DHAVE_HIDDEN
+SHAREDLIB =
+SHAREDLIBM =
+SHAREDLIBV =
+STATICLIB = libz.a
+TEST = all teststatic
+VER = 1.3.1
+SRCDIR =
+exec_prefix = ${prefix}
+includedir = ${prefix}/include
+libdir = ${exec_prefix}/lib
+mandir = ${prefix}/share/man
+prefix = /home/nd/repos/Projects/oxide_os/toolchain/sysroot
+sharedlibdir = ${libdir}
+uname = Linux
+--------------------
+
+
