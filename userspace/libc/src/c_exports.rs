@@ -5342,10 +5342,11 @@ pub unsafe extern "C" fn popen(command: *const u8, mode: *const u8) -> *mut crat
     }
     let stream = crate::filestream::fdopen(fd, mode);
     if !stream.is_null() {
-        for slot in POPEN_PIDS.iter_mut() {
-            if slot.0 == 0 {
-                slot.0 = pid;
-                slot.1 = stream;
+        let ptr = core::ptr::addr_of_mut!(POPEN_PIDS);
+        for i in 0..16 {
+            if (*ptr)[i].0 == 0 {
+                (*ptr)[i].0 = pid;
+                (*ptr)[i].1 = stream;
                 break;
             }
         }
@@ -5359,11 +5360,12 @@ pub unsafe extern "C" fn pclose(stream: *mut crate::filestream::FILE) -> i32 {
         return -1;
     }
     let mut pid = 0i32;
-    for slot in POPEN_PIDS.iter_mut() {
-        if slot.1 == stream {
-            pid = slot.0;
-            slot.0 = 0;
-            slot.1 = core::ptr::null_mut();
+    let ptr = core::ptr::addr_of_mut!(POPEN_PIDS);
+    for i in 0..16 {
+        if (*ptr)[i].1 == stream {
+            pid = (*ptr)[i].0;
+            (*ptr)[i].0 = 0;
+            (*ptr)[i].1 = core::ptr::null_mut();
             break;
         }
     }
