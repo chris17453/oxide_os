@@ -1801,17 +1801,13 @@ pub unsafe extern "C" fn uname(buf: *mut u8) -> i32 {
 // ============ resource ============
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn getrlimit(_resource: i32, rlim: *mut u8) -> i32 {
-    // Set both cur and max to RLIM_INFINITY
-    let ptr = rlim as *mut u64;
-    *ptr = !0u64;
-    *ptr.add(1) = !0u64;
-    0
+pub unsafe extern "C" fn getrlimit(resource: i32, rlim: *mut u8) -> i32 {
+    prlimit(0, resource, core::ptr::null(), rlim)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn setrlimit(_resource: i32, _rlim: *const u8) -> i32 {
-    0
+pub unsafe extern "C" fn setrlimit(resource: i32, rlim: *const u8) -> i32 {
+    prlimit(0, resource, rlim, core::ptr::null_mut())
 }
 
 #[unsafe(no_mangle)]
@@ -5157,3 +5153,76 @@ pub unsafe extern "C" fn sockatmark(_sockfd: i32) -> i32 {
 }
 
 // ============ lockf and flock are already defined earlier
+
+// ============ fgets_unlocked / fread_unlocked ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fgets_unlocked(s: *mut u8, size: i32, stream: *mut u8) -> *mut u8 {
+    // Unlocked version is same as locked (we don't have per-stream locks)
+    crate::filestream::fgets(s, size, stream as *mut crate::filestream::FILE)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fread_unlocked(ptr: *mut u8, size: usize, nmemb: usize, stream: *mut u8) -> usize {
+    crate::filestream::fread(ptr, size, nmemb, stream as *mut crate::filestream::FILE)
+}
+
+// ============ getitimer / setitimer C wrappers ============
+
+/// itimerval structure
+#[repr(C)]
+struct ITimerVal {
+    it_interval_sec: i64,
+    it_interval_usec: i64,
+    it_value_sec: i64,
+    it_value_usec: i64,
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn getitimer(which: i32, curr_value: *mut u8) -> i32 {
+    syscall::syscall2(syscall::nr::GETITIMER, which as usize, curr_value as usize) as i32
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn setitimer(which: i32, new_value: *const u8, old_value: *mut u8) -> i32 {
+    syscall::syscall3(syscall::nr::SETITIMER, which as usize, new_value as usize, old_value as usize) as i32
+}
+
+// ============ prlimit / prlimit64 ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn prlimit(
+    pid: i32, resource: i32, new_limit: *const u8, old_limit: *mut u8,
+) -> i32 {
+    syscall::syscall4(
+        syscall::nr::PRLIMIT,
+        pid as usize, resource as usize,
+        new_limit as usize, old_limit as usize,
+    ) as i32
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn prlimit64(
+    pid: i32, resource: i32, new_limit: *const u8, old_limit: *mut u8,
+) -> i32 {
+    prlimit(pid, resource, new_limit, old_limit)
+}
+
+// ============ fork1 (Solaris alias for fork) ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fork1() -> i32 {
+    fork()
+}
+
+// ============ rtpSpawn (VxWorks - stub) ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rtpSpawn(
+    _pubname: *const u8, _argv: *const *const u8,
+    _envp: *const *const u8, _priority: i32,
+    _stacksize: usize, _options: i32, _taskOptions: i32,
+) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
