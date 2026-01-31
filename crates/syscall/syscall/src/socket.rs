@@ -1452,3 +1452,10 @@ pub mod msg {
     pub const DONTWAIT: i32 = 0x40;
     pub const NOSIGNAL: i32 = 0x4000;
 }
+
+/// sys_accept4 - Accept connection with flags
+///
+/// Delegates to sys_accept, ignoring flags (SOCK_NONBLOCK, SOCK_CLOEXEC).
+pub fn sys_accept4(fd: i32, addr: u64, addrlen: u64, _flags: i32) -> i64 {
+    sys_accept(fd, addr, addrlen)
+}

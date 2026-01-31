@@ -443,3 +443,10 @@ fn prot_to_memory_flags(prot: i32) -> MemoryFlags {
 
     flags
 }
+
+/// sys_madvise - Advise kernel about memory usage patterns
+///
+/// This is advisory only; we accept and ignore all advice values.
+pub fn sys_madvise(_addr: u64, _length: u64, _advice: i32) -> i64 {
+    0
+}

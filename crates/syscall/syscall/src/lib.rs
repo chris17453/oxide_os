@@ -15,6 +15,7 @@ pub mod signal;
 pub mod socket;
 pub mod time;
 pub mod vfs;
+pub mod vfs_ext;
 
 use alloc::sync::Arc;
 use os_core::VirtAddr;
@@ -230,6 +231,51 @@ pub mod nr {
     pub const MOUNT: u64 = 165;
     pub const UMOUNT: u64 = 166;
     pub const PIVOT_ROOT: u64 = 167;
+
+    // *at variants (operate relative to directory fd)
+    pub const OPENAT: u64 = 250;
+    pub const MKDIRAT: u64 = 251;
+    pub const UNLINKAT: u64 = 252;
+    pub const RENAMEAT: u64 = 253;
+    pub const FACCESSAT: u64 = 254;
+    pub const FCHMODAT: u64 = 255;
+    pub const FCHOWNAT: u64 = 256;
+    pub const READLINKAT: u64 = 257;
+    pub const SYMLINKAT: u64 = 258;
+    pub const LINKAT: u64 = 259;
+    pub const UTIMENSAT: u64 = 260;
+    pub const FUTIMENS: u64 = 261;
+
+    // I/O extensions
+    pub const READV: u64 = 262;
+    pub const WRITEV: u64 = 263;
+    pub const PREAD64: u64 = 264;
+    pub const PWRITE64: u64 = 265;
+    pub const DUP3: u64 = 266;
+    pub const PIPE2: u64 = 267;
+    pub const TRUNCATE: u64 = 268;
+    pub const FSYNC: u64 = 269;
+    pub const FDATASYNC: u64 = 270;
+    pub const SENDFILE: u64 = 271;
+
+    // Process extensions
+    pub const WAIT4: u64 = 274;
+    pub const WAITID: u64 = 275;
+    pub const GETRUSAGE: u64 = 276;
+    pub const TIMES: u64 = 277;
+    pub const GETGROUPS: u64 = 278;
+    pub const SETGROUPS: u64 = 279;
+    pub const GETRESUID: u64 = 280;
+    pub const GETRESGID: u64 = 281;
+    pub const SETRESUID: u64 = 282;
+    pub const SETRESGID: u64 = 283;
+    pub const PRLIMIT: u64 = 284;
+    pub const MADVISE: u64 = 285;
+    pub const CLOSE_RANGE: u64 = 286;
+    pub const ACCEPT4: u64 = 287;
+
+    /// AT_FDCWD: use current working directory for *at syscalls
+    pub const AT_FDCWD: i32 = -100;
 }
 
 /// Error codes (negative return values)
@@ -599,6 +645,46 @@ pub fn dispatch(
         ),
         nr::UMOUNT => vfs::sys_umount(arg1, arg2 as usize, arg3 as u32),
         nr::PIVOT_ROOT => vfs::sys_pivot_root(arg1, arg2 as usize, arg3, arg4 as usize),
+
+        // *at variants - delegate to existing handlers when dirfd is AT_FDCWD
+        nr::OPENAT => vfs_ext::sys_openat(arg1 as i32, arg2, arg3 as usize, arg4 as u32, arg5 as u32),
+        nr::MKDIRAT => dir::sys_mkdirat(arg1 as i32, arg2, arg3 as usize, arg4 as u32),
+        nr::UNLINKAT => dir::sys_unlinkat(arg1 as i32, arg2, arg3 as usize, arg4 as i32),
+        nr::RENAMEAT => dir::sys_renameat(arg1 as i32, arg2, arg3 as usize, arg4 as i32, arg5, arg6 as usize),
+        nr::FACCESSAT => vfs_ext::sys_faccessat(arg1 as i32, arg2, arg3 as usize, arg4 as i32),
+        nr::FCHMODAT => vfs_ext::sys_fchmodat(arg1 as i32, arg2, arg3 as usize, arg4 as u32),
+        nr::FCHOWNAT => vfs_ext::sys_fchownat(arg1 as i32, arg2, arg3 as usize, arg4 as i32, arg5 as i32),
+        nr::READLINKAT => dir::sys_readlinkat(arg1 as i32, arg2, arg3 as usize, arg4, arg5 as usize),
+        nr::SYMLINKAT => dir::sys_symlinkat(arg1, arg2 as usize, arg3 as i32, arg4, arg5 as usize),
+        nr::LINKAT => dir::sys_linkat(arg1 as i32, arg2, arg3 as usize, arg4 as i32, arg5, arg6 as usize),
+        nr::UTIMENSAT => vfs_ext::sys_utimensat(arg1 as i32, arg2, arg3 as usize, arg4),
+        nr::FUTIMENS => vfs_ext::sys_futimens(arg1 as i32, arg2),
+
+        // I/O extensions
+        nr::READV => vfs_ext::sys_readv(arg1 as i32, arg2, arg3 as i32),
+        nr::WRITEV => vfs_ext::sys_writev(arg1 as i32, arg2, arg3 as i32),
+        nr::PREAD64 => vfs_ext::sys_pread64(arg1 as i32, arg2, arg3 as usize, arg4 as i64),
+        nr::PWRITE64 => vfs_ext::sys_pwrite64(arg1 as i32, arg2, arg3 as usize, arg4 as i64),
+        nr::DUP3 => vfs_ext::sys_dup3(arg1 as i32, arg2 as i32, arg3 as i32),
+        nr::PIPE2 => vfs_ext::sys_pipe2(arg1, arg2 as i32),
+        nr::TRUNCATE => vfs_ext::sys_truncate(arg1, arg2 as usize, arg3 as i64),
+        nr::FSYNC => vfs_ext::sys_fsync(arg1 as i32),
+        nr::FDATASYNC => vfs_ext::sys_fdatasync(arg1 as i32),
+        nr::SENDFILE => vfs_ext::sys_sendfile(arg1 as i32, arg2 as i32, arg3, arg4 as usize),
+
+        // Process extensions
+        nr::WAIT4 => sys_wait4(arg1 as i32, arg2, arg3 as i32, arg4),
+        nr::GETRUSAGE => sys_getrusage(arg1 as i32, arg2),
+        nr::GETGROUPS => sys_getgroups(arg1 as i32, arg2),
+        nr::SETGROUPS => sys_setgroups(arg1 as i32, arg2),
+        nr::GETRESUID => sys_getresuid(arg1, arg2, arg3),
+        nr::GETRESGID => sys_getresgid(arg1, arg2, arg3),
+        nr::SETRESUID => sys_setresuid(arg1 as u32, arg2 as u32, arg3 as u32),
+        nr::SETRESGID => sys_setresgid(arg1 as u32, arg2 as u32, arg3 as u32),
+        nr::PRLIMIT => sys_prlimit(arg1 as i32, arg2 as i32, arg3, arg4),
+        nr::MADVISE => memory::sys_madvise(arg1, arg2, arg3 as i32),
+        nr::CLOSE_RANGE => vfs_ext::sys_close_range(arg1 as u32, arg2 as u32, arg3 as u32),
+        nr::ACCEPT4 => socket::sys_accept4(arg1 as i32, arg2, arg3, arg4 as i32),
 
         _ => errno::ENOSYS,
     }
@@ -1246,6 +1332,226 @@ fn sys_setegid(egid: u32) -> i64 {
     } else {
         errno::ESRCH
     }
+}
+
+// ============================================================================
+// Process extensions
+// ============================================================================
+
+/// Rusage structure for wait4/getrusage
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Rusage {
+    ru_utime_sec: i64,
+    ru_utime_usec: i64,
+    ru_stime_sec: i64,
+    ru_stime_usec: i64,
+    ru_maxrss: i64,
+    ru_ixrss: i64,
+    ru_idrss: i64,
+    ru_isrss: i64,
+    ru_minflt: i64,
+    ru_majflt: i64,
+    ru_nswap: i64,
+    ru_inblock: i64,
+    ru_oublock: i64,
+    ru_msgsnd: i64,
+    ru_msgrcv: i64,
+    ru_nsignals: i64,
+    ru_nvcsw: i64,
+    ru_nivcsw: i64,
+}
+
+impl Rusage {
+    const fn zeroed() -> Self {
+        Rusage {
+            ru_utime_sec: 0, ru_utime_usec: 0,
+            ru_stime_sec: 0, ru_stime_usec: 0,
+            ru_maxrss: 0, ru_ixrss: 0, ru_idrss: 0, ru_isrss: 0,
+            ru_minflt: 0, ru_majflt: 0, ru_nswap: 0,
+            ru_inblock: 0, ru_oublock: 0,
+            ru_msgsnd: 0, ru_msgrcv: 0, ru_nsignals: 0,
+            ru_nvcsw: 0, ru_nivcsw: 0,
+        }
+    }
+}
+
+/// Rlimit structure for prlimit
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Rlimit {
+    rlim_cur: u64,
+    rlim_max: u64,
+}
+
+/// RLIM_INFINITY
+const RLIM_INFINITY: u64 = !0u64;
+
+/// Resource limit constants
+mod rlimit_resource {
+    pub const RLIMIT_NOFILE: i32 = 7;
+    pub const RLIMIT_STACK: i32 = 3;
+    pub const RLIMIT_AS: i32 = 9;
+}
+
+/// sys_wait4 - Wait for child process with resource usage
+fn sys_wait4(pid: i32, status_ptr: u64, options: i32, rusage_ptr: u64) -> i64 {
+    // Zero out rusage if pointer provided
+    if rusage_ptr != 0 {
+        if rusage_ptr >= 0x0000_8000_0000_0000 {
+            return errno::EFAULT;
+        }
+        let zeroed = Rusage::zeroed();
+        unsafe {
+            core::arch::asm!("stac", options(nomem, nostack));
+            core::ptr::write(rusage_ptr as *mut Rusage, zeroed);
+            core::arch::asm!("clac", options(nomem, nostack));
+        }
+    }
+    // Delegate to waitpid
+    sys_waitpid(pid, status_ptr, options)
+}
+
+/// sys_getrusage - Get resource usage
+fn sys_getrusage(_who: i32, rusage_ptr: u64) -> i64 {
+    if rusage_ptr == 0 || rusage_ptr >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+    let zeroed = Rusage::zeroed();
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+        core::ptr::write(rusage_ptr as *mut Rusage, zeroed);
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
+    0
+}
+
+/// sys_getgroups - Get supplementary group IDs
+fn sys_getgroups(size: i32, _list_ptr: u64) -> i64 {
+    if size < 0 {
+        return errno::EINVAL;
+    }
+    // No supplementary groups
+    0
+}
+
+/// sys_setgroups - Set supplementary group IDs
+fn sys_setgroups(_size: i32, _list_ptr: u64) -> i64 {
+    // Accept silently (root privilege)
+    0
+}
+
+/// sys_getresuid - Get real, effective, and saved user IDs
+fn sys_getresuid(ruid_ptr: u64, euid_ptr: u64, suid_ptr: u64) -> i64 {
+    let (uid, euid) = match with_current_meta(|meta| {
+        (meta.credentials.uid, meta.credentials.euid)
+    }) {
+        Some(v) => v,
+        None => return errno::ESRCH,
+    };
+
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+        if ruid_ptr != 0 && ruid_ptr < 0x0000_8000_0000_0000 {
+            *(ruid_ptr as *mut u32) = uid;
+        }
+        if euid_ptr != 0 && euid_ptr < 0x0000_8000_0000_0000 {
+            *(euid_ptr as *mut u32) = euid;
+        }
+        if suid_ptr != 0 && suid_ptr < 0x0000_8000_0000_0000 {
+            *(suid_ptr as *mut u32) = euid; // saved uid = effective uid
+        }
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
+    0
+}
+
+/// sys_getresgid - Get real, effective, and saved group IDs
+fn sys_getresgid(rgid_ptr: u64, egid_ptr: u64, sgid_ptr: u64) -> i64 {
+    let (gid, egid) = match with_current_meta(|meta| {
+        (meta.credentials.gid, meta.credentials.egid)
+    }) {
+        Some(v) => v,
+        None => return errno::ESRCH,
+    };
+
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+        if rgid_ptr != 0 && rgid_ptr < 0x0000_8000_0000_0000 {
+            *(rgid_ptr as *mut u32) = gid;
+        }
+        if egid_ptr != 0 && egid_ptr < 0x0000_8000_0000_0000 {
+            *(egid_ptr as *mut u32) = egid;
+        }
+        if sgid_ptr != 0 && sgid_ptr < 0x0000_8000_0000_0000 {
+            *(sgid_ptr as *mut u32) = egid; // saved gid = effective gid
+        }
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
+    0
+}
+
+/// sys_setresuid - Set real, effective, and saved user IDs
+fn sys_setresuid(ruid: u32, euid: u32, _suid: u32) -> i64 {
+    // 0xFFFFFFFF means "don't change"
+    if ruid != 0xFFFFFFFF {
+        let result = sys_setuid(ruid);
+        if result < 0 {
+            return result;
+        }
+    }
+    if euid != 0xFFFFFFFF {
+        let result = sys_seteuid(euid);
+        if result < 0 {
+            return result;
+        }
+    }
+    0
+}
+
+/// sys_setresgid - Set real, effective, and saved group IDs
+fn sys_setresgid(rgid: u32, egid: u32, _sgid: u32) -> i64 {
+    if rgid != 0xFFFFFFFF {
+        let result = sys_setgid(rgid);
+        if result < 0 {
+            return result;
+        }
+    }
+    if egid != 0xFFFFFFFF {
+        let result = sys_setegid(egid);
+        if result < 0 {
+            return result;
+        }
+    }
+    0
+}
+
+/// sys_prlimit - Get and set resource limits
+fn sys_prlimit(_pid: i32, resource: i32, new_limit_ptr: u64, old_limit_ptr: u64) -> i64 {
+    // Return default limits for known resources
+    let default_limit = match resource {
+        rlimit_resource::RLIMIT_NOFILE => Rlimit { rlim_cur: 1024, rlim_max: 4096 },
+        rlimit_resource::RLIMIT_STACK => Rlimit { rlim_cur: 8 * 1024 * 1024, rlim_max: RLIM_INFINITY },
+        rlimit_resource::RLIMIT_AS => Rlimit { rlim_cur: RLIM_INFINITY, rlim_max: RLIM_INFINITY },
+        _ => Rlimit { rlim_cur: RLIM_INFINITY, rlim_max: RLIM_INFINITY },
+    };
+
+    // Write old limit if requested
+    if old_limit_ptr != 0 {
+        if old_limit_ptr >= 0x0000_8000_0000_0000 {
+            return errno::EFAULT;
+        }
+        unsafe {
+            core::arch::asm!("stac", options(nomem, nostack));
+            core::ptr::write(old_limit_ptr as *mut Rlimit, default_limit);
+            core::arch::asm!("clac", options(nomem, nostack));
+        }
+    }
+
+    // Accept new limit silently (we don't enforce limits yet)
+    let _ = new_limit_ptr;
+
+    0
 }
 
 /// Priority constants

@@ -5,7 +5,10 @@
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
-use vfs::{File, FileFlags, Mode, SeekFrom, VfsError, VnodeType, mount::GLOBAL_VFS};
+// Re-export external vfs crate types for sibling modules (vfs_ext.rs)
+// that can't directly `use vfs::` due to name collision with this module.
+pub use vfs::{File, FileFlags, Mode, SeekFrom, VfsError, VnodeType};
+pub use vfs::mount::GLOBAL_VFS;
 
 use crate::errno;
 use crate::socket;

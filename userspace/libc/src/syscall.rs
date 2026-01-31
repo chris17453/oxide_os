@@ -145,6 +145,49 @@ pub mod nr {
     pub const MOUNT: u64 = 165;
     pub const UMOUNT: u64 = 166;
     pub const PIVOT_ROOT: u64 = 167;
+
+    // *at variants (operate relative to directory fd)
+    pub const OPENAT: u64 = 250;
+    pub const MKDIRAT: u64 = 251;
+    pub const UNLINKAT: u64 = 252;
+    pub const RENAMEAT: u64 = 253;
+    pub const FACCESSAT: u64 = 254;
+    pub const FCHMODAT: u64 = 255;
+    pub const FCHOWNAT: u64 = 256;
+    pub const READLINKAT: u64 = 257;
+    pub const SYMLINKAT: u64 = 258;
+    pub const LINKAT: u64 = 259;
+    pub const UTIMENSAT: u64 = 260;
+    pub const FUTIMENS: u64 = 261;
+
+    // I/O extensions
+    pub const READV: u64 = 262;
+    pub const WRITEV: u64 = 263;
+    pub const PREAD64: u64 = 264;
+    pub const PWRITE64: u64 = 265;
+    pub const DUP3: u64 = 266;
+    pub const PIPE2: u64 = 267;
+    pub const TRUNCATE: u64 = 268;
+    pub const FSYNC: u64 = 269;
+    pub const FDATASYNC: u64 = 270;
+    pub const SENDFILE: u64 = 271;
+
+    // Process extensions
+    pub const WAIT4: u64 = 274;
+    pub const GETRUSAGE: u64 = 276;
+    pub const GETGROUPS: u64 = 278;
+    pub const SETGROUPS: u64 = 279;
+    pub const GETRESUID: u64 = 280;
+    pub const GETRESGID: u64 = 281;
+    pub const SETRESUID: u64 = 282;
+    pub const SETRESGID: u64 = 283;
+    pub const PRLIMIT: u64 = 284;
+    pub const MADVISE: u64 = 285;
+    pub const CLOSE_RANGE: u64 = 286;
+    pub const ACCEPT4: u64 = 287;
+
+    /// AT_FDCWD: use current working directory for *at syscalls
+    pub const AT_FDCWD: i32 = -100;
 }
 
 // Re-export syscall numbers at module level for convenience
@@ -1301,4 +1344,214 @@ pub fn pivot_root(new_root: &str, put_old: &str) -> i32 {
 /// 0 on success, negative errno on error
 pub fn mount_move(source: &str, target: &str) -> i32 {
     mount(source, target, "", mount_flags::MS_MOVE, core::ptr::null())
+}
+
+// ============================================================================
+// *at variant wrappers
+// ============================================================================
+
+/// IoVec structure for readv/writev
+#[repr(C)]
+pub struct IoVec {
+    pub iov_base: *mut u8,
+    pub iov_len: usize,
+}
+
+/// Timespec for utimensat/futimens
+#[repr(C)]
+pub struct Timespec {
+    pub tv_sec: i64,
+    pub tv_nsec: i64,
+}
+
+/// AT_REMOVEDIR flag for unlinkat
+pub const AT_REMOVEDIR: i32 = 0x200;
+
+/// openat - Open file relative to directory fd
+pub fn sys_openat(dirfd: i32, path: &str, flags: u32, mode: u32) -> i32 {
+    syscall5(
+        nr::OPENAT,
+        dirfd as usize,
+        path.as_ptr() as usize,
+        path.len(),
+        flags as usize,
+        mode as usize,
+    ) as i32
+}
+
+/// mkdirat - Create directory relative to directory fd
+pub fn sys_mkdirat(dirfd: i32, path: &str, mode: u32) -> i32 {
+    syscall4(
+        nr::MKDIRAT,
+        dirfd as usize,
+        path.as_ptr() as usize,
+        path.len(),
+        mode as usize,
+    ) as i32
+}
+
+/// unlinkat - Remove file/directory relative to directory fd
+pub fn sys_unlinkat(dirfd: i32, path: &str, flags: i32) -> i32 {
+    syscall4(
+        nr::UNLINKAT,
+        dirfd as usize,
+        path.as_ptr() as usize,
+        path.len(),
+        flags as usize,
+    ) as i32
+}
+
+/// faccessat - Check file accessibility relative to directory fd
+pub fn sys_faccessat(dirfd: i32, path: &str, mode: i32) -> i32 {
+    syscall4(
+        nr::FACCESSAT,
+        dirfd as usize,
+        path.as_ptr() as usize,
+        path.len(),
+        mode as usize,
+    ) as i32
+}
+
+// ============================================================================
+// I/O extension wrappers
+// ============================================================================
+
+/// readv - Read into multiple buffers
+pub fn sys_readv(fd: i32, iov: *const IoVec, iovcnt: i32) -> isize {
+    syscall3(nr::READV, fd as usize, iov as usize, iovcnt as usize) as isize
+}
+
+/// writev - Write from multiple buffers
+pub fn sys_writev(fd: i32, iov: *const IoVec, iovcnt: i32) -> isize {
+    syscall3(nr::WRITEV, fd as usize, iov as usize, iovcnt as usize) as isize
+}
+
+/// pread - Read from fd at offset without changing position
+pub fn sys_pread(fd: i32, buf: *mut u8, count: usize, offset: i64) -> isize {
+    syscall4(nr::PREAD64, fd as usize, buf as usize, count, offset as usize) as isize
+}
+
+/// pwrite - Write to fd at offset without changing position
+pub fn sys_pwrite(fd: i32, buf: *const u8, count: usize, offset: i64) -> isize {
+    syscall4(nr::PWRITE64, fd as usize, buf as usize, count, offset as usize) as isize
+}
+
+/// dup3 - Duplicate fd with flags
+pub fn sys_dup3(oldfd: i32, newfd: i32, flags: i32) -> i32 {
+    syscall3(nr::DUP3, oldfd as usize, newfd as usize, flags as usize) as i32
+}
+
+/// pipe2 - Create pipe with flags
+pub fn sys_pipe2(pipefd: *mut i32, flags: i32) -> i32 {
+    syscall2(nr::PIPE2, pipefd as usize, flags as usize) as i32
+}
+
+/// fsync - Synchronize file to disk
+pub fn sys_fsync(fd: i32) -> i32 {
+    syscall1(nr::FSYNC, fd as usize) as i32
+}
+
+/// fdatasync - Synchronize file data to disk
+pub fn sys_fdatasync(fd: i32) -> i32 {
+    syscall1(nr::FDATASYNC, fd as usize) as i32
+}
+
+/// sendfile - Copy data between file descriptors
+pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset: *mut i64, count: usize) -> isize {
+    syscall4(
+        nr::SENDFILE,
+        out_fd as usize,
+        in_fd as usize,
+        offset as usize,
+        count,
+    ) as isize
+}
+
+/// close_range - Close a range of file descriptors
+pub fn sys_close_range(first: u32, last: u32, flags: u32) -> i32 {
+    syscall3(nr::CLOSE_RANGE, first as usize, last as usize, flags as usize) as i32
+}
+
+// ============================================================================
+// Process extension wrappers
+// ============================================================================
+
+/// Rusage structure
+#[repr(C)]
+pub struct Rusage {
+    pub ru_utime_sec: i64,
+    pub ru_utime_usec: i64,
+    pub ru_stime_sec: i64,
+    pub ru_stime_usec: i64,
+    pub ru_maxrss: i64,
+    pub ru_ixrss: i64,
+    pub ru_idrss: i64,
+    pub ru_isrss: i64,
+    pub ru_minflt: i64,
+    pub ru_majflt: i64,
+    pub ru_nswap: i64,
+    pub ru_inblock: i64,
+    pub ru_oublock: i64,
+    pub ru_msgsnd: i64,
+    pub ru_msgrcv: i64,
+    pub ru_nsignals: i64,
+    pub ru_nvcsw: i64,
+    pub ru_nivcsw: i64,
+}
+
+/// Rlimit structure
+#[repr(C)]
+pub struct Rlimit {
+    pub rlim_cur: u64,
+    pub rlim_max: u64,
+}
+
+/// RLIM_INFINITY
+pub const RLIM_INFINITY: u64 = !0u64;
+
+/// wait4 - Wait for child process with resource usage
+pub fn sys_wait4(pid: i32, status: *mut i32, options: i32, rusage: *mut Rusage) -> i32 {
+    syscall4(
+        nr::WAIT4,
+        pid as usize,
+        status as usize,
+        options as usize,
+        rusage as usize,
+    ) as i32
+}
+
+/// getrusage - Get resource usage
+pub fn sys_getrusage(who: i32, rusage: *mut Rusage) -> i32 {
+    syscall2(nr::GETRUSAGE, who as usize, rusage as usize) as i32
+}
+
+/// getgroups - Get supplementary group IDs
+pub fn sys_getgroups(size: i32, list: *mut u32) -> i32 {
+    syscall2(nr::GETGROUPS, size as usize, list as usize) as i32
+}
+
+/// getresuid - Get real, effective, and saved user IDs
+pub fn sys_getresuid(ruid: *mut u32, euid: *mut u32, suid: *mut u32) -> i32 {
+    syscall3(nr::GETRESUID, ruid as usize, euid as usize, suid as usize) as i32
+}
+
+/// getresgid - Get real, effective, and saved group IDs
+pub fn sys_getresgid(rgid: *mut u32, egid: *mut u32, sgid: *mut u32) -> i32 {
+    syscall3(nr::GETRESGID, rgid as usize, egid as usize, sgid as usize) as i32
+}
+
+/// prlimit - Get/set resource limits
+pub fn sys_prlimit(pid: i32, resource: i32, new_limit: *const Rlimit, old_limit: *mut Rlimit) -> i32 {
+    syscall4(
+        nr::PRLIMIT,
+        pid as usize,
+        resource as usize,
+        new_limit as usize,
+        old_limit as usize,
+    ) as i32
+}
+
+/// madvise - Advise kernel about memory usage patterns
+pub fn sys_madvise(addr: *mut u8, length: usize, advice: i32) -> i32 {
+    syscall3(nr::MADVISE, addr as usize, length, advice as usize) as i32
 }

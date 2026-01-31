@@ -488,3 +488,88 @@ pub fn sys_utimes(path_ptr: u64, path_len: usize, atime_sec: u64, mtime_sec: u64
         Err(e) => vfs_error_to_errno(e),
     }
 }
+
+// ============================================================================
+// *at variants (operate relative to directory fd, or CWD when AT_FDCWD)
+// ============================================================================
+
+/// AT_REMOVEDIR flag for unlinkat
+const AT_REMOVEDIR: i32 = 0x200;
+
+/// sys_mkdirat - Create directory relative to directory fd
+pub fn sys_mkdirat(dirfd: i32, path_ptr: u64, path_len: usize, mode: u32) -> i64 {
+    if dirfd != crate::nr::AT_FDCWD {
+        return crate::errno::ENOSYS;
+    }
+    sys_mkdir(path_ptr, path_len, mode)
+}
+
+/// sys_unlinkat - Remove file or directory relative to directory fd
+pub fn sys_unlinkat(dirfd: i32, path_ptr: u64, path_len: usize, flags: i32) -> i64 {
+    if dirfd != crate::nr::AT_FDCWD {
+        return crate::errno::ENOSYS;
+    }
+    if flags & AT_REMOVEDIR != 0 {
+        sys_rmdir(path_ptr, path_len)
+    } else {
+        sys_unlink(path_ptr, path_len)
+    }
+}
+
+/// sys_renameat - Rename file relative to directory fds
+pub fn sys_renameat(
+    olddirfd: i32,
+    old_path_ptr: u64,
+    old_path_len: usize,
+    newdirfd: i32,
+    new_path_ptr: u64,
+    new_path_len: usize,
+) -> i64 {
+    if olddirfd != crate::nr::AT_FDCWD || newdirfd != crate::nr::AT_FDCWD {
+        return crate::errno::ENOSYS;
+    }
+    sys_rename(old_path_ptr, old_path_len, new_path_ptr, new_path_len)
+}
+
+/// sys_readlinkat - Read symlink relative to directory fd
+pub fn sys_readlinkat(
+    dirfd: i32,
+    path_ptr: u64,
+    path_len: usize,
+    buf: u64,
+    bufsize: usize,
+) -> i64 {
+    if dirfd != crate::nr::AT_FDCWD {
+        return crate::errno::ENOSYS;
+    }
+    sys_readlink(path_ptr, path_len, buf, bufsize)
+}
+
+/// sys_symlinkat - Create symlink relative to directory fd
+pub fn sys_symlinkat(
+    target_ptr: u64,
+    target_len: usize,
+    newdirfd: i32,
+    link_ptr: u64,
+    link_len: usize,
+) -> i64 {
+    if newdirfd != crate::nr::AT_FDCWD {
+        return crate::errno::ENOSYS;
+    }
+    sys_symlink(target_ptr, target_len, link_ptr, link_len)
+}
+
+/// sys_linkat - Create hard link relative to directory fds
+pub fn sys_linkat(
+    olddirfd: i32,
+    target_ptr: u64,
+    target_len: usize,
+    newdirfd: i32,
+    link_ptr: u64,
+    link_len: usize,
+) -> i64 {
+    if olddirfd != crate::nr::AT_FDCWD || newdirfd != crate::nr::AT_FDCWD {
+        return crate::errno::ENOSYS;
+    }
+    sys_link(target_ptr, target_len, link_ptr, link_len)
+}
