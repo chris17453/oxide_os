@@ -63,6 +63,11 @@ pub fn openlog(tag: &str) {
 /// with an empty tag.
 pub fn syslog(priority: u8, msg: &str) {
     unsafe {
+        // Check if this priority is enabled in the mask
+        if LOG_MASK & (1 << (priority & 7)) == 0 {
+            return;
+        }
+
         // Auto-open if needed
         if KMSG_FD < 0 {
             KMSG_FD = open2("/dev/kmsg", O_WRONLY);
@@ -117,4 +122,28 @@ pub fn closelog() {
         }
         TAG_LEN = 0;
     }
+}
+
+/// Log mask — each bit corresponds to a priority level.
+/// Default 0xFF means all priorities enabled.
+static mut LOG_MASK: i32 = 0xFF;
+
+/// Set the log priority mask.
+///
+/// If `mask` is non-zero, sets the new mask and returns the previous one.
+/// If `mask` is zero, returns the current mask without changing it.
+/// Bit N corresponds to priority level N (e.g., bit 6 = LOG_INFO).
+pub fn setlogmask(mask: i32) -> i32 {
+    unsafe {
+        let old = LOG_MASK;
+        if mask != 0 {
+            LOG_MASK = mask;
+        }
+        old
+    }
+}
+
+/// Check if a priority level is enabled in the current mask
+pub fn priority_enabled(priority: u8) -> bool {
+    unsafe { LOG_MASK & (1 << (priority & 7)) != 0 }
 }

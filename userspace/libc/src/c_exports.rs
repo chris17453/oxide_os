@@ -3668,25 +3668,40 @@ pub unsafe extern "C" fn wcstok(s: *mut i32, delim: *const i32, ptr: *mut *mut i
     crate::wchar::wcstok(s, delim, ptr)
 }
 
-// System logging functions - minimal stubs (require kernel support)
+// System logging functions - wired to Rust syslog implementation
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn openlog(_ident: *const u8, _option: i32, _facility: i32) {
-    // Stub: syslog functionality not implemented yet
+pub unsafe extern "C" fn openlog(ident: *const u8, _option: i32, _facility: i32) {
+    if ident.is_null() {
+        crate::syslog::openlog("");
+    } else {
+        let len = crate::string::strlen(ident);
+        let tag = core::str::from_utf8_unchecked(core::slice::from_raw_parts(ident, len));
+        crate::syslog::openlog(tag);
+    }
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn syslog(_priority: i32, _format: *const u8, _args: ...) {
-    // Stub: syslog functionality not implemented yet
+pub unsafe extern "C" fn syslog(priority: i32, format: *const u8, mut args: ...) {
+    let mut buf = [0u8; 512];
+    let len = crate::printf::vsnprintf_impl(
+        buf.as_mut_ptr(),
+        512,
+        format,
+        &mut args.as_va_list(),
+    );
+    let msg_len = if len > 0 { (len as usize).min(511) } else { 0 };
+    let msg = core::str::from_utf8_unchecked(&buf[..msg_len]);
+    crate::syslog::syslog(priority as u8, msg);
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn closelog() {
-    // Stub: syslog functionality not implemented yet
+    crate::syslog::closelog();
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn setlogmask(_mask: i32) -> i32 {
-    0 // Stub: return dummy value
+pub unsafe extern "C" fn setlogmask(mask: i32) -> i32 {
+    crate::syslog::setlogmask(mask)
 }
 
 // chroot - change root directory (requires kernel support)

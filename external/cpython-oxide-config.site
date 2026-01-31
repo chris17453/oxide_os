@@ -485,10 +485,10 @@ ac_cv_func_grantpt=yes
 ac_cv_func_unlockpt=yes
 ac_cv_func_ptsname=yes
 
-# Syslog - stubs only
-ac_cv_func_syslog=no
-ac_cv_func_openlog=no
-ac_cv_func_closelog=no
+# Syslog - wired to Rust implementation writing to /dev/kmsg
+ac_cv_func_syslog=yes
+ac_cv_func_openlog=yes
+ac_cv_func_closelog=yes
 
 # Printf
 ac_cv_opt_olimit_ok=no
