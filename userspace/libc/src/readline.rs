@@ -652,22 +652,35 @@ unsafe fn handle_completion(prompt: &[u8]) {
 ///
 /// Returns a malloc'd string (caller must free), or NULL on EOF.
 /// The returned string does NOT include a trailing newline.
+///
+/// `#[inline(never)]` prevents LTO from inlining this function into callers.
+/// The prompt is copied into a local stack buffer using volatile reads to
+/// prevent the optimizer from tracing the pointer back to a static buffer
+/// in the caller and eliding the copy (which would make the prompt empty).
+#[inline(never)]
 pub unsafe fn readline(prompt: *const u8) -> *mut u8 {
     if !INITIALIZED {
         rl_initialize_internal();
     }
 
+    // Copy prompt into a local buffer using volatile reads.
+    // This prevents LTO from tracing the pointer back to the caller's
+    // static buffer and optimizing strlen/reads to 0.
+    let mut prompt_local = [0u8; 256];
+    let mut prompt_len = 0usize;
+    if !prompt.is_null() {
+        loop {
+            let b = core::ptr::read_volatile(prompt.add(prompt_len));
+            if b == 0 || prompt_len >= 255 {
+                break;
+            }
+            prompt_local[prompt_len] = b;
+            prompt_len += 1;
+        }
+    }
+    let prompt_slice = &prompt_local[..prompt_len];
+
     // Print prompt
-    let prompt_len = if prompt.is_null() {
-        0
-    } else {
-        crate::string::strlen(prompt)
-    };
-    let prompt_slice = if prompt.is_null() {
-        &[]
-    } else {
-        core::slice::from_raw_parts(prompt, prompt_len)
-    };
     print_prompt(prompt_slice);
 
     // Call startup hook if set

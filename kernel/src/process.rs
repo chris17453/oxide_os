@@ -394,17 +394,6 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
         // Check for zombie children via scheduler
         match find_zombie_child(parent_pid, pid) {
             Ok(result) => {
-                // Debug: print framebuffer write stats after each child exits
-                {
-                    let (writes, bytes, base) = devfs::devices::get_fb_write_stats();
-                    let mut writer = serial::SerialWriter;
-                    let _ = writeln!(
-                        writer,
-                        "[FB_DEBUG] Child {} exited - FB writes={} bytes={} base={:#x}",
-                        result.pid, writes, bytes, base
-                    );
-                }
-
                 // Reap the zombie - remove from scheduler
                 crate::scheduler::remove_process(result.pid);
 
