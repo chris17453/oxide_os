@@ -497,6 +497,7 @@ ac_cv_func_ftell64=yes
 
 # Process extras
 ac_cv_func_prlimit=yes
+ac_cv_func_popen=yes
 
 # Headers - platform-specific (not available)
 ac_cv_header_linux_qrtr_h=no

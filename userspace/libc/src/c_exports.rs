@@ -5285,3 +5285,88 @@ pub unsafe extern "C" fn rtpSpawn(
     ERRNO_VAR = errno::ENOSYS;
     -1
 }
+
+// ============ popen / pclose ============
+
+/// Track up to 16 concurrent popen streams
+static mut POPEN_PIDS: [(i32, *mut crate::filestream::FILE); 16] =
+    [(0, core::ptr::null_mut()); 16];
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn popen(command: *const u8, mode: *const u8) -> *mut crate::filestream::FILE {
+    if command.is_null() || mode.is_null() {
+        return core::ptr::null_mut();
+    }
+    let reading = *mode == b'r';
+    let mut pipefd = [0i32; 2];
+    if pipe(pipefd.as_mut_ptr()) != 0 {
+        return core::ptr::null_mut();
+    }
+    let pid = fork();
+    if pid < 0 {
+        syscall::sys_close(pipefd[0]);
+        syscall::sys_close(pipefd[1]);
+        return core::ptr::null_mut();
+    }
+    if pid == 0 {
+        // Child
+        if reading {
+            syscall::sys_close(pipefd[0]);
+            syscall::sys_dup2(pipefd[1], 1); // stdout -> pipe write end
+            syscall::sys_close(pipefd[1]);
+        } else {
+            syscall::sys_close(pipefd[1]);
+            syscall::sys_dup2(pipefd[0], 0); // stdin -> pipe read end
+            syscall::sys_close(pipefd[0]);
+        }
+        let sh = b"/bin/sh\0".as_ptr();
+        let dash_c = b"-c\0".as_ptr();
+        let argv: [*const u8; 4] = [sh, dash_c, command, core::ptr::null()];
+        execve(sh, argv.as_ptr(), core::ptr::null());
+        syscall::sys_exit(127);
+    }
+    // Parent
+    let fd;
+    if reading {
+        syscall::sys_close(pipefd[1]);
+        fd = pipefd[0];
+    } else {
+        syscall::sys_close(pipefd[0]);
+        fd = pipefd[1];
+    }
+    let stream = crate::filestream::fdopen(fd, mode);
+    if !stream.is_null() {
+        for slot in POPEN_PIDS.iter_mut() {
+            if slot.0 == 0 {
+                slot.0 = pid;
+                slot.1 = stream;
+                break;
+            }
+        }
+    }
+    stream
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pclose(stream: *mut crate::filestream::FILE) -> i32 {
+    if stream.is_null() {
+        return -1;
+    }
+    let mut pid = 0i32;
+    for slot in POPEN_PIDS.iter_mut() {
+        if slot.1 == stream {
+            pid = slot.0;
+            slot.0 = 0;
+            slot.1 = core::ptr::null_mut();
+            break;
+        }
+    }
+    crate::filestream::fclose(stream);
+    if pid == 0 {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    let mut status = 0i32;
+    waitpid(pid, &mut status, 0);
+    status
+}
