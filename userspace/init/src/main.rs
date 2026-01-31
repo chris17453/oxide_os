@@ -49,17 +49,17 @@ fn main() -> i32 {
     // Start service manager in daemon mode
     start_servicemgr();
 
-    // Spawn shell on the primary TTY
-    printlns("[init] Spawning shell...");
+    // Spawn getty on the primary TTY
+    printlns("[init] Spawning getty...");
     let child = fork();
     if child == 0 {
-        // Child process - exec shell
-        exec("/bin/esh");
-        eprintlns("[init] Failed to exec shell");
+        // Child process - exec getty
+        exec("/bin/getty");
+        eprintlns("[init] Failed to exec getty");
         _exit(1);
     } else if child > 0 {
-        // Parent - reap zombies forever, respawning shell when it exits
-        printlns("[init] Shell started (PID ");
+        // Parent - reap zombies forever, respawning getty when it exits
+        printlns("[init] Getty started (PID ");
         print_i64(child as i64);
         printlns(")");
         reap_zombies(child as i64);
@@ -251,19 +251,15 @@ fn start_servicemgr() {
 
         let child = fork();
         if child == 0 {
-            // Child - exec servicemgr daemon
-            // Create new session so servicemgr runs independently
+            // Child - exec servicemgr (defaults to daemon mode when argc < 2)
             setsid();
-            let argv: [*const u8; 3] = [
-                b"/bin/servicemgr\0".as_ptr(),
-                b"daemon\0".as_ptr(),
-                core::ptr::null(),
-            ];
-            execv("/bin/servicemgr", argv.as_ptr());
+            exec("/bin/servicemgr");
             _exit(1);
         } else if child > 0 {
             printlns("[init] Service manager started");
         }
+    } else {
+        eprintlns("[init] /bin/servicemgr not found, skipping");
     }
 }
 
@@ -290,26 +286,26 @@ fn reap_zombies(mut getty_pid: i64) -> ! {
                 printlns("");
             }
 
-            // Only respawn shell if shell itself (our direct child) exited
+            // Only respawn getty if getty itself (our direct child) exited
             if pid as i64 == getty_pid {
-                printlns("[init] Shell exited, waiting before respawn...");
+                printlns("[init] Getty exited, waiting before respawn...");
                 // Sleep for 2 seconds to avoid rapid respawn loop
                 sleep(2);
-                printlns("[init] Respawning shell...");
+                printlns("[init] Respawning getty...");
                 let child = fork();
                 if child == 0 {
-                    let _ = exec("/bin/esh");
-                    eprintlns("[init] Failed to exec shell");
+                    let _ = exec("/bin/getty");
+                    eprintlns("[init] Failed to exec getty");
                     _exit(1);
                 } else if child > 0 {
-                    getty_pid = child as i64; // Update tracked shell PID
-                    prints("[init] New shell started (PID ");
+                    getty_pid = child as i64; // Update tracked getty PID
+                    prints("[init] New getty started (PID ");
                     print_i64(getty_pid);
                     printlns(")");
                 }
             } else {
                 // Some other descendant process exited
-                prints("[init] Descendant process exited, shell still running (PID ");
+                prints("[init] Descendant process exited, getty still running (PID ");
                 print_i64(getty_pid);
                 printlns(")");
             }

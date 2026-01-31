@@ -23,7 +23,7 @@ fn signal_foreground(sig: i32) {
             if let Some(first) = m.cmdline.first() {
                 // Extract just the binary name from path
                 let name = first.rsplit('/').next().unwrap_or(first);
-                name == "login" || name == "esh" || name == "init"
+                name == "getty" || name == "login" || name == "esh" || name == "init"
             } else {
                 false
             }

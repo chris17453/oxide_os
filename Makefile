@@ -23,6 +23,9 @@ QEMU ?= $(shell \
 		echo "qemu-system-x86_64"; \
 	fi)
 
+# Randomized host port for SSH forwarding (override via SSH_HOST_PORT=2223, etc.)
+SSH_HOST_PORT ?= $(shell python3 -c 'import socket; s = socket.socket(); s.bind(("", 0)); print(s.getsockname()[1])')
+
 # Paths
 TARGET_DIR := target
 KERNEL_TARGET := $(TARGET_DIR)/$(ARCH)-unknown-none/$(PROFILE)/kernel
@@ -450,6 +453,7 @@ initramfs-minimal: userspace-release
 	@mkdir -p $(TARGET_DIR)/initramfs-minimal/tmp
 	@mkdir -p $(TARGET_DIR)/initramfs-minimal/var/log
 	@mkdir -p $(TARGET_DIR)/initramfs-minimal/var/run
+	@mkdir -p $(TARGET_DIR)/initramfs-minimal/boot
 	@mkdir -p $(TARGET_DIR)/initramfs-minimal/home
 	@mkdir -p $(TARGET_DIR)/initramfs-minimal/root
 	@mkdir -p $(TARGET_DIR)/initramfs-minimal/run
@@ -461,19 +465,58 @@ initramfs-minimal: userspace-release
 	@ln -sf /bin/esh "$(TARGET_DIR)/initramfs-minimal/bin/sh"
 	@cp "$(USERSPACE_OUT_RELEASE)/login" "$(TARGET_DIR)/initramfs-minimal/bin/login"
 	@cp "$(USERSPACE_OUT_RELEASE)/getty" "$(TARGET_DIR)/initramfs-minimal/bin/getty"
+	@# Copy coreutils
+	@for prog in $(COREUTILS_BINS); do \
+		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
+			cp "$(USERSPACE_OUT_RELEASE)/$$prog" "$(TARGET_DIR)/initramfs-minimal/bin/"; \
+		fi; \
+	done
+	@ln -sf /bin/true "$(TARGET_DIR)/initramfs-minimal/bin/:" 2>/dev/null || true
+	@ln -sf /bin/ls "$(TARGET_DIR)/initramfs-minimal/bin/dir" 2>/dev/null || true
+	@# Copy service manager
+	@cp "$(USERSPACE_OUT_RELEASE)/service" "$(TARGET_DIR)/initramfs-minimal/bin/service"
+	@ln -sf /bin/service "$(TARGET_DIR)/initramfs-minimal/bin/servicemgr"
+	@# Copy daemons
+	@cp "$(USERSPACE_OUT_RELEASE)/networkd" "$(TARGET_DIR)/initramfs-minimal/bin/networkd"
+	@cp "$(USERSPACE_OUT_RELEASE)/journald" "$(TARGET_DIR)/initramfs-minimal/bin/journald"
+	@cp "$(USERSPACE_OUT_RELEASE)/journalctl" "$(TARGET_DIR)/initramfs-minimal/bin/journalctl"
+	@cp "$(USERSPACE_OUT_RELEASE)/sshd" "$(TARGET_DIR)/initramfs-minimal/bin/sshd"
+	@cp "$(USERSPACE_OUT_RELEASE)/ssh" "$(TARGET_DIR)/initramfs-minimal/bin/ssh"
+	@cp "$(USERSPACE_OUT_RELEASE)/gwbasic" "$(TARGET_DIR)/initramfs-minimal/bin/gwbasic"
+	@# Create service definitions
+	@mkdir -p $(TARGET_DIR)/initramfs-minimal/etc/services.d
+	@echo "PATH=/bin/journald" > $(TARGET_DIR)/initramfs-minimal/etc/services.d/journald
+	@echo "ENABLED=yes" >> $(TARGET_DIR)/initramfs-minimal/etc/services.d/journald
+	@echo "RESTART=yes" >> $(TARGET_DIR)/initramfs-minimal/etc/services.d/journald
+	@echo "PATH=/bin/networkd" > $(TARGET_DIR)/initramfs-minimal/etc/services.d/networkd
+	@echo "ENABLED=yes" >> $(TARGET_DIR)/initramfs-minimal/etc/services.d/networkd
+	@echo "RESTART=yes" >> $(TARGET_DIR)/initramfs-minimal/etc/services.d/networkd
+	@echo "PATH=/bin/sshd" > $(TARGET_DIR)/initramfs-minimal/etc/services.d/sshd
+	@echo "ENABLED=yes" >> $(TARGET_DIR)/initramfs-minimal/etc/services.d/sshd
+	@echo "RESTART=yes" >> $(TARGET_DIR)/initramfs-minimal/etc/services.d/sshd
 	@# Create minimal passwd/group
 	@echo "root:root:0:0:root:/root:/bin/esh" > $(TARGET_DIR)/initramfs-minimal/etc/passwd
+	@echo "nobody:x:65534:65534:Nobody:/:/bin/false" >> $(TARGET_DIR)/initramfs-minimal/etc/passwd
+	@echo "sshd:x:74:74:sshd:/var/empty/sshd:/bin/false" >> $(TARGET_DIR)/initramfs-minimal/etc/passwd
 	@echo "root:x:0:" > $(TARGET_DIR)/initramfs-minimal/etc/group
+	@echo "nobody:x:65534:" >> $(TARGET_DIR)/initramfs-minimal/etc/group
+	@echo "sshd:x:74:" >> $(TARGET_DIR)/initramfs-minimal/etc/group
+	@echo "network:x:101:" >> $(TARGET_DIR)/initramfs-minimal/etc/group
+	@# Create sshd privilege separation directory
+	@mkdir -p $(TARGET_DIR)/initramfs-minimal/var/empty/sshd
 	@# Create profile with PATH
 	@echo "export PATH=/bin:/sbin:/usr/bin:/usr/sbin" > $(TARGET_DIR)/initramfs-minimal/etc/profile
 	@echo "OXIDE" > $(TARGET_DIR)/initramfs-minimal/etc/hostname
-	@# Create fstab that mounts ext4 partitions
-	@# Note: Minimal initramfs only needs sysfs - kernel mounts everything else
-	@# Kernel already mounts: /, /proc, /dev, /dev/pts, /run, /tmp, /var/*
-	@echo "# /etc/fstab - filesystem mount table (minimal initramfs)" > $(TARGET_DIR)/initramfs-minimal/etc/fstab
-	@echo "# device    mountpoint    fstype    options    dump pass" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
-	@echo "# Most filesystems already mounted by kernel, only sysfs needs mounting:" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
-	@echo "sysfs       /sys          sysfs     defaults   0    0" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
+	@# Create hosts file
+	@echo "127.0.0.1 localhost" > $(TARGET_DIR)/initramfs-minimal/etc/hosts
+	@echo "::1 localhost" >> $(TARGET_DIR)/initramfs-minimal/etc/hosts
+	@# Create fstab
+	@# Note: Kernel already mounts /, /proc, /dev, /dev/pts, /run, /tmp, /var/*
+	@echo "# /etc/fstab - filesystem mount table" > $(TARGET_DIR)/initramfs-minimal/etc/fstab
+	@echo "# device       mountpoint    fstype    options    dump pass" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
+	@echo "sysfs          /sys          sysfs     defaults   0    0" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
+	@echo "LABEL=BOOT     /boot         vfat      defaults   0    2" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
+	@echo "LABEL=HOME     /home         ext4      defaults   0    2" >> $(TARGET_DIR)/initramfs-minimal/etc/fstab
 	@# Create CPIO archive
 	@cd $(TARGET_DIR)/initramfs-minimal && find . | cpio -o -H newc > ../initramfs-minimal.cpio 2>/dev/null
 	@echo "Minimal initramfs created: $(TARGET_DIR)/initramfs-minimal.cpio"
@@ -513,6 +556,7 @@ run-fedora:
 		echo "Install: sudo dnf install edk2-ovmf"; \
 		exit 1; \
 	fi
+	@echo "Forwarding SSH to localhost:$(SSH_HOST_PORT)"
 	@mkdir -p /tmp/qemu-oxide
 	TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
 		-machine q35 \
@@ -522,7 +566,7 @@ run-fedora:
 		-drive file=$(ROOTFS_IMAGE),format=raw,if=none,id=disk \
 		-device virtio-blk-pci,drive=disk \
 		-device virtio-net-pci,netdev=net0 \
-		-netdev user,id=net0,hostfwd=tcp::2223-:22 \
+		-netdev user,id=net0,hostfwd=tcp::$(SSH_HOST_PORT)-:22 \
 		-serial stdio \
 		-no-reboot
 
@@ -543,6 +587,7 @@ run-rhel:
 	@cp /usr/share/edk2/ovmf/OVMF_VARS.fd $(TARGET_DIR)/OVMF_VARS.fd 2>/dev/null || true
 	@mkdir -p /tmp/qemu-oxide
 	@echo "Starting QEMU (VNC on :5900, serial on stdio)..."
+	@echo "Forwarding SSH to localhost:$(SSH_HOST_PORT)"
 	@TMPDIR=/tmp/qemu-oxide /usr/libexec/qemu-kvm \
 		-machine q35,accel=kvm:tcg \
 		-cpu max,+invtsc \
@@ -553,7 +598,7 @@ run-rhel:
 		-drive file=$(ROOTFS_IMAGE),format=raw,if=none,id=bootdisk \
 		-device virtio-blk-pci,drive=bootdisk \
 		-device virtio-net-pci,netdev=net0 \
-		-netdev user,id=net0,hostfwd=tcp::2223-:22 \
+		-netdev user,id=net0,hostfwd=tcp::$(SSH_HOST_PORT)-:22 \
 		-vga std \
 		-vnc :0 \
 		-serial stdio \

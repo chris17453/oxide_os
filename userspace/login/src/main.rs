@@ -108,24 +108,6 @@ fn str_eq(a: &[u8], b: &str) -> bool {
 fn verify_password(entry: &PasswdEntry, password: &[u8]) -> bool {
     let expected = load_password(entry.username, entry.default_password);
     let pw_len = password_len(password);
-    prints("[DEBUG] expected_len=");
-    print_i64(expected.len as i64);
-    if let Ok(s) = core::str::from_utf8(&expected.data[..expected.len]) {
-        prints(" expected=\"");
-        prints(s);
-        prints("\"\n");
-    } else {
-        prints(" expected=<non-utf8>\n");
-    }
-    prints("[DEBUG] input_len=");
-    print_i64(pw_len as i64);
-    if let Ok(s) = core::str::from_utf8(&password[..pw_len]) {
-        prints(" input=\"");
-        prints(s);
-        prints("\"\n");
-    } else {
-        prints(" input=<non-utf8>\n");
-    }
     if pw_len != expected.len {
         return false;
     }
@@ -155,7 +137,6 @@ fn load_password(username: &str, default: &str) -> PasswordBuf {
                 len = ROOT_PASSWORD_LEN;
                 buf[..len].copy_from_slice(&ROOT_PASSWORD[..len]);
                 buf[len] = 0;
-                prints("[DEBUG] using in-memory root password override\n");
                 return PasswordBuf { data: buf, len };
             }
         }
@@ -195,7 +176,6 @@ fn load_password(username: &str, default: &str) -> PasswordBuf {
                 }
                 let name_len = colon - start;
                 if name_len == uname_bytes.len() && file[start..colon] == *uname_bytes {
-                    prints("[DEBUG] /etc/passwd entry found for user\n");
                     // Copy password portion up to next colon (passwd fields: user:password:uid:gid:...)
                     let pw_start = colon + 1;
                     let mut pw_end = line_end;
@@ -221,7 +201,6 @@ fn load_password(username: &str, default: &str) -> PasswordBuf {
     }
 
     // Fallback to default
-    prints("[DEBUG] using default password\n");
     let def_bytes = default.as_bytes();
     len = def_bytes.len().min(buf.len() - 1);
     buf[..len].copy_from_slice(&def_bytes[..len]);
@@ -268,7 +247,7 @@ pub fn main() -> i32 {
         // Read username — don't echo here; the TTY line discipline
         // echoes each keystroke in canonical mode already.
         let mut username = [0u8; MAX_INPUT];
-        let ulen = read_line(&mut username, false);
+        let ulen = read_line(&mut username, true);
         if ulen == 0 {
             continue;
         }
@@ -294,7 +273,7 @@ pub fn main() -> i32 {
         prints("\n");
 
         if pw_len == 0 && load_password(entry.username, entry.default_password).len == 0 {
-            prints("[DEBUG] accepting empty password\n");
+            // Empty password accepted
         } else if !verify_password(entry, &password) {
             prints("Login incorrect\n");
             attempts += 1;
