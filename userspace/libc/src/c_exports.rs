@@ -4828,3 +4828,195 @@ pub unsafe extern "C" fn sem_init(_sem: *mut u8, _pshared: i32, _value: u32) -> 
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sem_destroy(_sem: *mut u8) -> i32 { 0 }
+
+// ============ mkfifo / mknod ============
+
+// ============ mkfifo / mknod ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mkfifo(_path: *const u8, _mode: u32) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mkfifoat(_dirfd: i32, _path: *const u8, _mode: u32) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mknod(_path: *const u8, _mode: u32, _dev: u64) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mknodat(_dirfd: i32, _path: *const u8, _mode: u32, _dev: u64) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+// ============ lchown ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lchown(path: *const u8, owner: u32, group: u32) -> i32 {
+    chown(path, owner, group)
+}
+
+// ============ lutimes / futimesat ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lutimes(_path: *const u8, _times: *const u8) -> i32 {
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn futimesat(_dirfd: i32, _path: *const u8, _times: *const u8) -> i32 {
+    0
+}
+
+// ============ chflags / lchflags stubs ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn chflags(_path: *const u8, _flags: u64) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lchflags(_path: *const u8, _flags: u64) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+// ============ plock stub ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn plock(_op: i32) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+// ============ setlogin ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn setlogin(_name: *const u8) -> i32 {
+    0
+}
+
+// ============ utmp stubs ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn setutent() {}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn endutent() {}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn getutent() -> *mut u8 {
+    core::ptr::null_mut()
+}
+
+// ============ crypt / crypt_r stubs ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn crypt(_key: *const u8, _salt: *const u8) -> *mut u8 {
+    core::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn crypt_r(_key: *const u8, _salt: *const u8, _data: *mut u8) -> *mut u8 {
+    core::ptr::null_mut()
+}
+
+// ============ getauxval stub ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn getauxval(type_: u64) -> u64 {
+    match type_ {
+        6 => 4096, // AT_PAGESZ
+        _ => 0,
+    }
+}
+
+// ============ xattr stubs ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn getxattr(_path: *const u8, _name: *const u8, _value: *mut u8, _size: usize) -> isize {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn setxattr(_path: *const u8, _name: *const u8, _value: *const u8, _size: usize, _flags: i32) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fsetxattr(_fd: i32, _name: *const u8, _value: *const u8, _size: usize, _flags: i32) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn listxattr(_path: *const u8, _list: *mut u8, _size: usize) -> isize {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn flistxattr(_fd: i32, _list: *mut u8, _size: usize) -> isize {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn removexattr(_path: *const u8, _name: *const u8) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fremovexattr(_fd: i32, _name: *const u8) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+// ============ bind_textdomain_codeset / textdomain stubs ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bind_textdomain_codeset(_domainname: *const u8, _codeset: *const u8) -> *mut u8 {
+    core::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn textdomain(_domainname: *const u8) -> *mut u8 {
+    core::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bindtextdomain(_domainname: *const u8, _dirname: *const u8) -> *mut u8 {
+    core::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gettext(msgid: *const u8) -> *mut u8 {
+    msgid as *mut u8
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dgettext(_domainname: *const u8, msgid: *const u8) -> *mut u8 {
+    msgid as *mut u8
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dcgettext(_domainname: *const u8, msgid: *const u8, _category: i32) -> *mut u8 {
+    msgid as *mut u8
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ngettext(msgid: *const u8, msgid_plural: *const u8, n: u64) -> *mut u8 {
+    if n == 1 { msgid as *mut u8 } else { msgid_plural as *mut u8 }
+}
