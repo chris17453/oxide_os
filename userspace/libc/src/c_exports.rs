@@ -873,13 +873,13 @@ pub unsafe extern "C" fn getegid() -> u32 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn setuid(_uid: u32) -> i32 { 0 }
+pub unsafe extern "C" fn setuid(uid: u32) -> i32 { syscall::syscall1(syscall::nr::SETUID, uid as usize) as i32 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn setgid(_gid: u32) -> i32 { 0 }
+pub unsafe extern "C" fn setgid(gid: u32) -> i32 { syscall::syscall1(syscall::nr::SETGID, gid as usize) as i32 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn seteuid(_uid: u32) -> i32 { 0 }
+pub unsafe extern "C" fn seteuid(uid: u32) -> i32 { syscall::syscall1(syscall::nr::SETEUID, uid as usize) as i32 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn setegid(_gid: u32) -> i32 { 0 }
+pub unsafe extern "C" fn setegid(gid: u32) -> i32 { syscall::syscall1(syscall::nr::SETEGID, gid as usize) as i32 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chdir(path: *const u8) -> i32 {
@@ -1079,8 +1079,8 @@ pub unsafe extern "C" fn usleep(usec: u32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn alarm(_seconds: u32) -> u32 {
-    0
+pub unsafe extern "C" fn alarm(seconds: u32) -> u32 {
+    syscall::syscall1(syscall::nr::ALARM, seconds as usize) as u32
 }
 
 #[unsafe(no_mangle)]
@@ -1112,13 +1112,13 @@ pub unsafe extern "C" fn getlogin_r(buf: *mut u8, bufsize: usize) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn getgroups(_size: i32, _list: *mut u32) -> i32 {
-    0
+pub unsafe extern "C" fn getgroups(size: i32, list: *mut u32) -> i32 {
+    syscall::syscall2(syscall::nr::GETGROUPS, size as usize, list as usize) as i32
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn nice(_inc: i32) -> i32 {
-    0
+pub unsafe extern "C" fn nice(inc: i32) -> i32 {
+    syscall::syscall1(syscall::nr::NICE, inc as usize) as i32
 }
 
 #[unsafe(no_mangle)]
@@ -1257,8 +1257,8 @@ pub unsafe extern "C" fn mprotect(addr: *mut u8, len: usize, prot: i32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn madvise(_addr: *mut u8, _length: usize, _advice: i32) -> i32 {
-    0
+pub unsafe extern "C" fn madvise(addr: *mut u8, length: usize, advice: i32) -> i32 {
+    syscall::syscall3(syscall::nr::MADVISE, addr as usize, length, advice as usize) as i32
 }
 
 #[unsafe(no_mangle)]
@@ -1579,13 +1579,13 @@ pub unsafe extern "C" fn fstatat(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn chmod(_path: *const u8, _mode: u32) -> i32 {
-    0
+pub unsafe extern "C" fn chmod(path: *const u8, mode: u32) -> i32 {
+    syscall::syscall3(syscall::nr::CHMOD, path as usize, cstr_len(path), mode as usize) as i32
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn fchmod(_fd: i32, _mode: u32) -> i32 {
-    0
+pub unsafe extern "C" fn fchmod(fd: i32, mode: u32) -> i32 {
+    syscall::syscall2(syscall::nr::FCHMOD, fd as usize, mode as usize) as i32
 }
 
 #[unsafe(no_mangle)]
@@ -1597,13 +1597,13 @@ pub unsafe extern "C" fn umask(mask: u32) -> u32 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn chown(_path: *const u8, _owner: u32, _group: u32) -> i32 {
-    0
+pub unsafe extern "C" fn chown(path: *const u8, owner: u32, group: u32) -> i32 {
+    syscall::syscall4(syscall::nr::CHOWN, path as usize, cstr_len(path), owner as usize, group as usize) as i32
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn fchown(_fd: i32, _owner: u32, _group: u32) -> i32 {
-    0
+pub unsafe extern "C" fn fchown(fd: i32, owner: u32, group: u32) -> i32 {
+    syscall::syscall3(syscall::nr::FCHOWN, fd as usize, owner as usize, group as usize) as i32
 }
 
 #[unsafe(no_mangle)]
@@ -1617,8 +1617,8 @@ pub unsafe extern "C" fn utimensat(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn futimens(_fd: i32, _times: *const u8) -> i32 {
-    0
+pub unsafe extern "C" fn futimens(fd: i32, times: *const u8) -> i32 {
+    syscall::syscall2(syscall::nr::FUTIMENS, fd as usize, times as usize) as i32
 }
 
 // ============ fcntl ============
@@ -1651,19 +1651,25 @@ pub unsafe extern "C" fn ioctl(fd: i32, request: u64, arg: u64) -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn poll(fds: *mut u8, nfds: u64, timeout: i32) -> i32 {
-    // Stub: indicate all ready
-    0
+    syscall::syscall3(syscall::nr::POLL, fds as usize, nfds as usize, timeout as usize) as i32
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn select(
-    _nfds: i32,
-    _readfds: *mut u8,
-    _writefds: *mut u8,
-    _exceptfds: *mut u8,
-    _timeout: *mut u8,
+    nfds: i32,
+    readfds: *mut u8,
+    writefds: *mut u8,
+    exceptfds: *mut u8,
+    timeout: *mut u8,
 ) -> i32 {
-    0
+    syscall::syscall5(
+        syscall::nr::SELECT,
+        nfds as usize,
+        readfds as usize,
+        writefds as usize,
+        exceptfds as usize,
+        timeout as usize,
+    ) as i32
 }
 
 // ============ dirent ============
@@ -1875,13 +1881,13 @@ pub unsafe extern "C" fn getrusage(_who: i32, usage: *mut u8) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn getpriority(_which: i32, _who: i32) -> i32 {
-    0
+pub unsafe extern "C" fn getpriority(which: i32, who: i32) -> i32 {
+    syscall::syscall2(syscall::nr::GETPRIORITY, which as usize, who as usize) as i32
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn setpriority(_which: i32, _who: i32, _prio: i32) -> i32 {
-    0
+pub unsafe extern "C" fn setpriority(which: i32, who: i32, prio: i32) -> i32 {
+    syscall::syscall3(syscall::nr::SETPRIORITY, which as usize, who as usize, prio as usize) as i32
 }
 
 // ============ socket operations ============
