@@ -12,3 +12,4 @@ spin = { workspace = true }
 terminal = { workspace = true }
 sched = { workspace = true }
 tty = { workspace = true }
+input = { workspace = true }

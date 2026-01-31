@@ -504,6 +504,12 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         let _ = writeln!(writer, "[INFO] Mouse cursor initialized");
     }
 
+    // Set up input subsystem wake callback for blocking reads on /dev/input/eventN
+    unsafe {
+        input::set_wake_callback(sched::wake_up);
+    }
+    let _ = writeln!(writer, "[INFO] Input wake callback registered");
+
     // Initialize and register preemptive scheduler (BSP)
     scheduler::init();
     let _ = writeln!(writer, "[INFO] Scheduler initialized");

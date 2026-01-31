@@ -26,6 +26,53 @@ use spin::Mutex;
 /// Maximum events in queue per device
 const MAX_EVENT_QUEUE: usize = 256;
 
+/// Maximum number of input devices we track blocked readers for
+const MAX_DEVICES: usize = 16;
+
+/// PIDs of tasks blocked waiting for input on each device (0 = none)
+static BLOCKED_READERS: Mutex<[u32; MAX_DEVICES]> = Mutex::new([0; MAX_DEVICES]);
+
+/// Callback type for waking a blocked task by PID
+pub type WakeUpFn = fn(u32);
+
+/// Global wake callback (set by kernel during init)
+static mut WAKE_CALLBACK: Option<WakeUpFn> = None;
+
+/// Set the wake-up callback for blocked readers
+///
+/// # Safety
+/// Must be called during single-threaded initialization
+pub unsafe fn set_wake_callback(f: WakeUpFn) {
+    unsafe {
+        WAKE_CALLBACK = Some(f);
+    }
+}
+
+/// Set the PID of a task blocked waiting for input on a device
+pub fn set_blocked_reader(device_id: usize, pid: u32) {
+    let mut readers = BLOCKED_READERS.lock();
+    if device_id < MAX_DEVICES {
+        readers[device_id] = pid;
+    }
+}
+
+/// Wake up any task blocked waiting for input on a device
+fn wake_blocked_reader(device_id: usize) {
+    let mut readers = BLOCKED_READERS.lock();
+    if device_id < MAX_DEVICES {
+        let pid = readers[device_id];
+        if pid != 0 {
+            readers[device_id] = 0;
+            drop(readers); // Release lock before callback
+            unsafe {
+                if let Some(wake_fn) = WAKE_CALLBACK {
+                    wake_fn(pid);
+                }
+            }
+        }
+    }
+}
+
 /// Input device handle
 pub struct InputDeviceHandle {
     /// Device information
@@ -115,6 +162,8 @@ pub fn devices() -> Vec<Arc<InputDeviceHandle>> {
 pub fn report_event(device_id: usize, event: InputEvent) {
     if let Some(handle) = get_device(device_id) {
         handle.push_event(event);
+        // Wake up any task blocked reading from this device
+        wake_blocked_reader(device_id);
     }
 }
 

@@ -8,6 +8,7 @@
 extern crate alloc;
 
 pub mod devices;
+pub mod input;
 pub mod kmsg;
 
 use alloc::collections::BTreeMap;
@@ -69,6 +70,10 @@ impl DevFs {
             );
             devices.insert("random".to_string(), Arc::new(RandomDevice::new_random(7)));
             devices.insert("kmsg".to_string(), Arc::new(KmsgDevice::new(8)));
+            devices.insert(
+                "input".to_string(),
+                Arc::new(input::InputDirNode::new(100)) as Arc<dyn VnodeOps>,
+            );
         }
 
         devfs
