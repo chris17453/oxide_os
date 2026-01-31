@@ -5020,3 +5020,140 @@ pub unsafe extern "C" fn dcgettext(_domainname: *const u8, msgid: *const u8, _ca
 pub unsafe extern "C" fn ngettext(msgid: *const u8, msgid_plural: *const u8, n: u64) -> *mut u8 {
     if n == 1 { msgid as *mut u8 } else { msgid_plural as *mut u8 }
 }
+
+// ============ wcsftime (wide-character strftime) ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wcsftime(
+    wcs: *mut i32, maxsize: usize, format: *const i32, tm: *const u8,
+) -> usize {
+    // Convert wide format to narrow, call strftime, convert back
+    if maxsize == 0 { return 0; }
+
+    // Narrow the format string
+    let mut narrow_fmt = [0u8; 256];
+    let mut i = 0;
+    while i < 255 {
+        let wc = *format.add(i);
+        if wc == 0 { break; }
+        narrow_fmt[i] = if wc < 128 { wc as u8 } else { b'?' };
+        i += 1;
+    }
+    narrow_fmt[i] = 0;
+
+    // Call strftime
+    let mut narrow_buf = [0u8; 512];
+    let len = strftime(
+        narrow_buf.as_mut_ptr(), 512, narrow_fmt.as_ptr(), tm as *const crate::time::Tm,
+    );
+
+    if len == 0 { return 0; }
+
+    // Widen the result
+    let copy_len = if len < maxsize { len } else { maxsize - 1 };
+    for j in 0..copy_len {
+        *wcs.add(j) = narrow_buf[j] as i32;
+    }
+    *wcs.add(copy_len) = 0;
+    copy_len
+}
+
+// ============ clock_settime stub ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn clock_settime(_clockid: i32, _tp: *const u8) -> i32 {
+    // Setting the clock is not supported
+    ERRNO_VAR = errno::EPERM;
+    -1
+}
+
+// ============ fdwalk ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fdwalk(
+    func: Option<unsafe extern "C" fn(*mut u8, i32) -> i32>,
+    cd: *mut u8,
+) -> i32 {
+    // Walk all open file descriptors from 0 to some max
+    if let Some(f) = func {
+        for fd in 0..1024 {
+            // Check if fd is valid by trying fstat
+            let mut statbuf = [0u8; 144];
+            let ret = syscall::syscall2(syscall::nr::FSTAT, fd as usize, statbuf.as_mut_ptr() as usize);
+            if ret as i64 >= 0 {
+                let r = f(cd, fd as i32);
+                if r != 0 { return r; }
+            }
+        }
+    }
+    0
+}
+
+// ============ setns / unshare stubs (namespace support) ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn setns(_fd: i32, _nstype: i32) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn unshare(_flags: i32) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+// ============ getpass (read password from terminal) ============
+
+static mut GETPASS_BUF: [u8; 128] = [0; 128];
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn getpass(prompt: *const u8) -> *mut u8 {
+    // Write prompt to stderr
+    if !prompt.is_null() {
+        let mut len = 0;
+        while *prompt.add(len) != 0 { len += 1; }
+        syscall::syscall3(syscall::nr::WRITE, 2, prompt as usize, len);
+    }
+
+    // Read from stdin with echo disabled (simplified: just read)
+    let n = syscall::syscall3(
+        syscall::nr::READ, 0,
+        (&raw mut GETPASS_BUF) as usize, 127,
+    ) as isize;
+    if n <= 0 {
+        GETPASS_BUF[0] = 0;
+    } else {
+        let n = n as usize;
+        // Strip trailing newline
+        if n > 0 && GETPASS_BUF[n - 1] == b'\n' {
+            GETPASS_BUF[n - 1] = 0;
+        } else {
+            GETPASS_BUF[n] = 0;
+        }
+    }
+    (&raw mut GETPASS_BUF) as *mut u8
+}
+
+// ============ hstrerror (gethostbyname error strings) ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hstrerror(err: i32) -> *const u8 {
+    match err {
+        0 => b"Resolver Error 0 (no error)\0".as_ptr(),
+        1 => b"Unknown host\0".as_ptr(),
+        2 => b"Host name lookup failure\0".as_ptr(),
+        3 => b"Unknown server error\0".as_ptr(),
+        4 => b"No address associated with name\0".as_ptr(),
+        _ => b"Unknown resolver error\0".as_ptr(),
+    }
+}
+
+// ============ sockatmark ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sockatmark(_sockfd: i32) -> i32 {
+    0
+}
+
+// ============ lockf and flock are already defined earlier
