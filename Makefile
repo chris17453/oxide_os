@@ -42,7 +42,7 @@ USERSPACE_OUT_RELEASE := $(TARGET_DIR)/$(USERSPACE_TARGET)/release
 CARGO_USER_FLAGS :=
 
 # Userspace packages to build
-USERSPACE_PACKAGES := init esh getty login coreutils ssh sshd service networkd journald journalctl evtest
+USERSPACE_PACKAGES := init esh getty login coreutils ssh sshd service networkd journald journalctl evtest argtest
 
 # Coreutils binaries (auto-detected from Cargo.toml [[bin]] entries)
 # Extract binary names from [[bin]] sections in coreutils/Cargo.toml
@@ -112,7 +112,7 @@ userspace-release:
 	@echo "  Building TLS test..."
 	@$(MAKE) tls-test
 	@echo "Stripping binaries..."
-	@for prog in init esh login gwbasic tls-test ssh sshd service networkd journald journalctl evtest $(COREUTILS_BINS); do \
+	@for prog in init esh login gwbasic tls-test ssh sshd service networkd journald journalctl evtest argtest $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
 			strip "$(USERSPACE_OUT_RELEASE)/$$prog" 2>/dev/null || true; \
 		fi; \
@@ -191,6 +191,9 @@ initramfs: userspace-release
 	@# Copy journald and journalctl
 	@cp "$(USERSPACE_OUT_RELEASE)/journald" "$(TARGET_DIR)/initramfs/bin/journald"
 	@cp "$(USERSPACE_OUT_RELEASE)/journalctl" "$(TARGET_DIR)/initramfs/bin/journalctl"
+	@# Copy evtest and argtest
+	@cp "$(USERSPACE_OUT_RELEASE)/evtest" "$(TARGET_DIR)/initramfs/bin/evtest"
+	@cp "$(USERSPACE_OUT_RELEASE)/argtest" "$(TARGET_DIR)/initramfs/bin/argtest"
 	@# Create services.d directory with service definitions
 	@mkdir -p $(TARGET_DIR)/initramfs/etc/services.d
 	@echo "PATH=/bin/journald" > $(TARGET_DIR)/initramfs/etc/services.d/journald
@@ -385,7 +388,7 @@ create-rootfs: kernel bootloader initramfs-minimal
 	sudo ln -sf /bin/esh $(TARGET_DIR)/mnt/root/bin/sh && \
 	sudo cp "$(USERSPACE_OUT_RELEASE)/getty" $(TARGET_DIR)/mnt/root/bin/getty && \
 	sudo cp "$(USERSPACE_OUT_RELEASE)/login" $(TARGET_DIR)/mnt/root/bin/login && \
-	for prog in gwbasic tls-test ssh sshd service networkd journald journalctl evtest $(COREUTILS_BINS) testcolors; do \
+	for prog in gwbasic tls-test ssh sshd service networkd journald journalctl evtest argtest $(COREUTILS_BINS) testcolors; do \
 		[ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/$$prog" $(TARGET_DIR)/mnt/root/usr/bin/ || true; \
 	done && \
 	[ -f "$(USERSPACE_OUT_RELEASE)/tls-test" ] && echo "TLS test installed" || true; \
@@ -491,6 +494,9 @@ initramfs-minimal: userspace-release
 	@cp "$(USERSPACE_OUT_RELEASE)/sshd" "$(TARGET_DIR)/initramfs-minimal/bin/sshd"
 	@cp "$(USERSPACE_OUT_RELEASE)/ssh" "$(TARGET_DIR)/initramfs-minimal/bin/ssh"
 	@cp "$(USERSPACE_OUT_RELEASE)/gwbasic" "$(TARGET_DIR)/initramfs-minimal/bin/gwbasic"
+	@# Copy test utilities
+	@cp "$(USERSPACE_OUT_RELEASE)/evtest" "$(TARGET_DIR)/initramfs-minimal/bin/evtest"
+	@cp "$(USERSPACE_OUT_RELEASE)/argtest" "$(TARGET_DIR)/initramfs-minimal/bin/argtest"
 	@# Create service definitions
 	@mkdir -p $(TARGET_DIR)/initramfs-minimal/etc/services.d
 	@echo "PATH=/bin/journald" > $(TARGET_DIR)/initramfs-minimal/etc/services.d/journald
@@ -696,36 +702,60 @@ show-config:
 	@echo "  QEMU_TIMEOUT: $(QEMU_TIMEOUT)"
 
 # Show help
+# Debug convenience targets — shorthand for KERNEL_FEATURES=...
+run-debug-mouse: KERNEL_FEATURES = debug-mouse
+run-debug-mouse: run
+
+run-debug-lock: KERNEL_FEATURES = debug-lock
+run-debug-lock: run
+
+run-debug-fork: KERNEL_FEATURES = debug-fork
+run-debug-fork: run
+
+run-debug-sched: KERNEL_FEATURES = debug-sched
+run-debug-sched: run
+
+run-debug-all: KERNEL_FEATURES = debug-all
+run-debug-all: run
+
 help:
 	@echo "OXIDE OS Build System"
 	@echo ""
 	@echo "Run Targets:"
-	@echo "  run            - Build and run (auto-detects Fedora/RHEL)"
-	@echo "  run-fedora     - Build and run with qemu-system-x86_64"
-	@echo "  run-rhel       - Build and run with qemu-kvm (RHEL 10)"
-	@echo "  run-kvm        - Alias for run-rhel"
-	@echo "  clean-rootfs   - Remove generated disk images/initramfs so run rebuilds fresh"
+	@echo "  run               - Build and run (auto-detects Fedora/RHEL)"
+	@echo "  run-fedora        - Build and run with qemu-system-x86_64"
+	@echo "  run-rhel          - Build and run with qemu-kvm (RHEL 10)"
+	@echo "  run-kvm           - Alias for run-rhel"
+	@echo "  clean-rootfs      - Remove generated disk images/initramfs so run rebuilds fresh"
+	@echo ""
+	@echo "Debug Targets:"
+	@echo "  run-debug-mouse   - Run with mouse/input debug output"
+	@echo "  run-debug-lock    - Run with lock contention warnings"
+	@echo "  run-debug-fork    - Run with fork/exec debug output"
+	@echo "  run-debug-sched   - Run with scheduler debug output"
+	@echo "  run-debug-all     - Run with ALL debug output"
+	@echo "  Or: make run KERNEL_FEATURES=debug-fork,debug-mouse"
 	@echo ""
 	@echo "Build Targets:"
-	@echo "  all            - Build kernel and bootloader (default)"
-	@echo "  build-full     - Build kernel, bootloader, userspace, and initramfs"
-	@echo "  kernel         - Build kernel only"
-	@echo "  bootloader     - Build UEFI bootloader only"
-	@echo "  userspace      - Build all userspace programs (debug)"
+	@echo "  all               - Build kernel and bootloader (default)"
+	@echo "  build-full        - Build kernel, bootloader, userspace, and initramfs"
+	@echo "  kernel            - Build kernel only"
+	@echo "  bootloader        - Build UEFI bootloader only"
+	@echo "  userspace         - Build all userspace programs (debug)"
 	@echo "  userspace-release - Build all userspace programs (release)"
-	@echo "  userspace-pkg  - Build single package (PKG=name)"
-	@echo "  initramfs      - Create initramfs (release, all utilities)"
-	@echo "  boot-image     - Create bootable disk image"
-	@echo "  create-rootfs  - Create 512MB disk with ESP + ext4 root + ext4 home"
-	@echo "  release        - Build kernel/bootloader in release mode"
+	@echo "  userspace-pkg     - Build single package (PKG=name)"
+	@echo "  initramfs         - Create initramfs (release, all utilities)"
+	@echo "  boot-image        - Create bootable disk image"
+	@echo "  create-rootfs     - Create 512MB disk with ESP + ext4 root + ext4 home"
+	@echo "  release           - Build kernel/bootloader in release mode"
 	@echo ""
 	@echo "Other Targets:"
-	@echo "  test           - Automated boot test"
-	@echo "  check          - Quick syntax/type check"
-	@echo "  fmt            - Format code"
-	@echo "  clippy         - Run clippy linter"
-	@echo "  clean          - Remove build artifacts"
-	@echo "  clean-rootfs   - Remove generated rootfs artifacts"
+	@echo "  test              - Automated boot test"
+	@echo "  check             - Quick syntax/type check"
+	@echo "  fmt               - Format code"
+	@echo "  clippy            - Run clippy linter"
+	@echo "  clean             - Remove build artifacts"
+	@echo "  clean-rootfs      - Remove generated rootfs artifacts"
 
 # Remove generated disk images/initramfs so run rebuilds fresh
 clean-rootfs:

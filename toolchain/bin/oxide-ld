@@ -68,32 +68,14 @@ while [[ $# -gt 0 ]]; do
             LDFLAGS+=("$1")
             shift
             ;;
-        -v|--version)
-            "$OXIDE_LD" --version 2>/dev/null || echo "OXIDE linker driver v1.0"
-            exit 0
+        -v|--version|-V)
+            # Defer to the underlying linker so feature-detection tools
+            # (like CPython's configure) see the expected banner text.
+            exec "$OXIDE_LD" --version
             ;;
         -h|--help)
-            cat <<EOF
-OXIDE Linker Driver (oxide-ld)
-
-Usage: oxide-ld [options] file...
-
-Options:
-  -o <file>         Set output file name
-  -L <dir>          Add library search directory
-  -l <library>      Link with library
-  -T <script>       Use custom linker script
-  -e <symbol>       Set entry point
-  --gc-sections     Enable dead code elimination
-  -v, --version     Show version
-  -h, --help        Show this help
-
-Examples:
-  oxide-ld -o hello hello.o
-  oxide-ld -o app main.o utils.o -lm
-
-EOF
-            exit 0
+            # Mirror system ld behaviour to keep autoconf probes happy.
+            exec "$OXIDE_LD" --help
             ;;
         *)
             # Object file

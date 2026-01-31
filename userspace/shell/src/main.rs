@@ -52,17 +52,22 @@ impl Alias {
     }
 }
 
-/// Build a NUL-terminated prompt string using the prompt hierarchy:
+/// Cached prompt template — determined once at startup via file I/O,
+/// then reused on every prompt to avoid repeated ext4 directory lookups
+/// (which are expensive: synchronous VirtIO polling with no block cache).
+static mut PROMPT_TEMPLATE: [u8; 256] = [0; 256];
+static mut PROMPT_TEMPLATE_LEN: usize = 0;
+static mut PROMPT_TEMPLATE_LOADED: bool = false;
+
+/// Determine the prompt template string (file I/O, runs once).
+///
+/// Hierarchy:
 /// 1. $ESH_PROMPT environment variable
 /// 2. ~/.esh_prompt if readable
 /// 3. /etc/prompt if readable
 /// 4. DEFAULT_PROMPT
-///
-/// Returns a reference to a static buffer containing the rendered prompt.
-fn get_prompt_string() -> &'static [u8] {
-    static mut PROMPT_RESULT: [u8; 256] = [0; 256];
-
-    fn load_prompt(path: &str, buf: &mut [u8]) -> Option<usize> {
+fn load_prompt_template() {
+    fn load_file(path: &str, buf: &mut [u8]) -> Option<usize> {
         let fd = open2(path, O_RDONLY);
         if fd < 0 {
             return None;
@@ -72,19 +77,18 @@ fn get_prompt_string() -> &'static [u8] {
         if n > 0 { Some(n as usize) } else { None }
     }
 
+    let tpl = unsafe { &raw mut PROMPT_TEMPLATE };
+    let tpl_buf: &mut [u8; 256] = unsafe { &mut *tpl };
+
     // 1) ESH_PROMPT env
     if let Some(prompt) = getenv("ESH_PROMPT") {
-        let s = render_prompt(prompt.as_bytes());
-        unsafe {
-            let len = s.len().min(255);
-            PROMPT_RESULT[..len].copy_from_slice(&s.as_bytes()[..len]);
-            PROMPT_RESULT[len] = 0;
-            return &PROMPT_RESULT[..len + 1];
-        }
+        let len = prompt.len().min(255);
+        tpl_buf[..len].copy_from_slice(&prompt.as_bytes()[..len]);
+        unsafe { PROMPT_TEMPLATE_LEN = len; }
+        return;
     }
 
     // 2) User prompt file (~/.esh_prompt)
-    let mut prompt_buf = [0u8; 256];
     let home = getenv("HOME");
     if let Some(home_str) = home {
         if !home_str.is_empty() {
@@ -109,31 +113,48 @@ fn get_prompt_string() -> &'static [u8] {
             path_buf[idx] = 0;
 
             let path = bytes_to_str(&path_buf);
-            if let Some(n) = load_prompt(path, &mut prompt_buf) {
-                let s = render_prompt(&prompt_buf[..n]);
-                unsafe {
-                    let len = s.len().min(255);
-                    PROMPT_RESULT[..len].copy_from_slice(&s.as_bytes()[..len]);
-                    PROMPT_RESULT[len] = 0;
-                    return &PROMPT_RESULT[..len + 1];
-                }
+            let mut file_buf = [0u8; 256];
+            if let Some(n) = load_file(path, &mut file_buf) {
+                let len = n.min(255);
+                tpl_buf[..len].copy_from_slice(&file_buf[..len]);
+                unsafe { PROMPT_TEMPLATE_LEN = len; }
+                return;
             }
         }
     }
 
     // 3) Global prompt file (/etc/prompt)
-    if let Some(n) = load_prompt(GLOBAL_PROMPT_PATH, &mut prompt_buf) {
-        let s = render_prompt(&prompt_buf[..n]);
-        unsafe {
-            let len = s.len().min(255);
-            PROMPT_RESULT[..len].copy_from_slice(&s.as_bytes()[..len]);
-            PROMPT_RESULT[len] = 0;
-            return &PROMPT_RESULT[..len + 1];
-        }
+    let mut file_buf = [0u8; 256];
+    if let Some(n) = load_file(GLOBAL_PROMPT_PATH, &mut file_buf) {
+        let len = n.min(255);
+        tpl_buf[..len].copy_from_slice(&file_buf[..len]);
+        unsafe { PROMPT_TEMPLATE_LEN = len; }
+        return;
     }
 
     // 4) Fallback
-    let s = render_prompt(DEFAULT_PROMPT.as_bytes());
+    let len = DEFAULT_PROMPT.len().min(255);
+    tpl_buf[..len].copy_from_slice(&DEFAULT_PROMPT.as_bytes()[..len]);
+    unsafe { PROMPT_TEMPLATE_LEN = len; }
+}
+
+/// Build a NUL-terminated prompt string.
+///
+/// The template is cached after the first call (file I/O happens once).
+/// Only render_prompt() runs each iteration (in-memory substitution + getcwd).
+fn get_prompt_string() -> &'static [u8] {
+    static mut PROMPT_RESULT: [u8; 256] = [0; 256];
+
+    // Load template once (all file I/O happens here)
+    unsafe {
+        if !PROMPT_TEMPLATE_LOADED {
+            load_prompt_template();
+            PROMPT_TEMPLATE_LOADED = true;
+        }
+    }
+
+    let template = unsafe { &PROMPT_TEMPLATE[..PROMPT_TEMPLATE_LEN] };
+    let s = render_prompt(template);
     unsafe {
         let len = s.len().min(255);
         PROMPT_RESULT[..len].copy_from_slice(&s.as_bytes()[..len]);
@@ -980,24 +1001,44 @@ fn parse_command(line: &[u8], cmd: &mut Command) {
             }
             cmd.output_file[j] = 0;
         } else {
-            // Regular argument
+            // Regular argument (handle quotes)
             if cmd.argc >= MAX_ARGS {
                 break;
             }
             let mut j = 0;
-            while i < line.len()
-                && line[i] != 0
-                && line[i] != b' '
-                && line[i] != b'\t'
-                && line[i] != b'<'
-                && line[i] != b'>'
-                && line[i] != b'|'
-                && j < 63
-            {
-                cmd.args[cmd.argc][j] = line[i];
+            let mut in_quote = false;
+            let mut quote_char = 0u8;
+
+            while i < line.len() && line[i] != 0 && j < 63 {
+                let ch = line[i];
+
+                // Check for quote start/end
+                if !in_quote && (ch == b'"' || ch == b'\'') {
+                    // Start quoted section
+                    in_quote = true;
+                    quote_char = ch;
+                    i += 1;
+                    continue;
+                } else if in_quote && ch == quote_char {
+                    // End quoted section
+                    in_quote = false;
+                    i += 1;
+                    continue;
+                }
+
+                // If not in quote, check for terminators
+                if !in_quote {
+                    if ch == b' ' || ch == b'\t' || ch == b'<' || ch == b'>' || ch == b'|' {
+                        break;
+                    }
+                }
+
+                // Copy character
+                cmd.args[cmd.argc][j] = ch;
                 j += 1;
                 i += 1;
             }
+
             if j > 0 {
                 cmd.args[cmd.argc][j] = 0;
                 cmd.argc += 1;

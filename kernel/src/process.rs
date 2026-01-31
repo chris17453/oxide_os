@@ -6,13 +6,11 @@ extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::fmt::Write;
 use core::ptr::addr_of_mut;
 use core::sync::atomic::Ordering;
 
 use arch_traits::Arch;
 use arch_x86_64 as arch;
-use arch_x86_64::serial;
 use mm_paging::{flush_tlb_all, phys_to_virt, write_cr3};
 use os_core::PhysAddr;
 use proc::{ProcessContext, ProcessMeta, WaitOptions, WaitResult, do_exec, do_fork};
@@ -64,12 +62,12 @@ pub fn user_exit(status: i32) -> ! {
     // either kernel mode (parent blocked in waitpid/HLT) or user mode.
     // Using sysretq here would be WRONG because sysretq always returns to
     // user mode, but the parent may have been preempted in kernel mode.
+    debug_proc!("[EXIT] pid={} woke parent={}", current_pid, parent_pid);
     sched::set_need_resched();
     arch::allow_kernel_preempt();
     loop {
         unsafe {
-            core::arch::asm!("sti", options(nomem, nostack, preserves_flags));
-            core::arch::asm!("hlt", options(nomem, nostack));
+            core::arch::asm!("sti", "hlt", options(nomem, nostack));
         }
     }
 }
@@ -390,10 +388,12 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
     let parent_pid = sched::current_pid().unwrap_or(0);
     let wait_opts = WaitOptions::from(options);
 
+    debug_proc!("[WAIT] pid={} waiting for child={}", parent_pid, pid);
     loop {
         // Check for zombie children via scheduler
         match find_zombie_child(parent_pid, pid) {
             Ok(result) => {
+                debug_proc!("[WAIT] pid={} found zombie={}", parent_pid, result.pid);
                 // Reap the zombie - remove from scheduler
                 crate::scheduler::remove_process(result.pid);
 
@@ -425,9 +425,10 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
 
                         // Wait for timer interrupt - scheduler will run other processes
                         // When child exits, wake_parent() will wake us up
+                        // NOTE: sti + hlt must be in the same asm block to avoid
+                        // an extra tick delay if a timer fires between them.
                         unsafe {
-                            core::arch::asm!("sti"); // Ensure interrupts enabled
-                            core::arch::asm!("hlt", options(nomem, nostack));
+                            core::arch::asm!("sti", "hlt", options(nomem, nostack));
                         }
 
                         // Clear preempt flag if we're still running

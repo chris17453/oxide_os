@@ -3,8 +3,12 @@ name = "proc"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+debug-fork = []
+
 [dependencies]
 os_core = { path = "../../core/os_core" }
+os_log = { path = "../../core/os_log" }
 proc-traits = { path = "../proc-traits" }
 mm-paging = { path = "../../mm/mm-paging" }
 mm-traits = { path = "../../mm/mm-traits" }

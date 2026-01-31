@@ -234,9 +234,11 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
 
         // HLT yields CPU until next interrupt
         // With KERNEL_PREEMPT_OK set, scheduler will switch to other processes
+        // NOTE: sti + hlt MUST be in the same asm block. If separated, an
+        // interrupt can fire between them, handle it, return, and then the
+        // CPU hits HLT and waits an extra tick unnecessarily.
         unsafe {
-            core::arch::asm!("sti"); // Ensure interrupts enabled
-            core::arch::asm!("hlt", options(nomem, nostack));
+            core::arch::asm!("sti", "hlt", options(nomem, nostack));
         }
 
         // Clear preempt flag if we're still running (no switch occurred)

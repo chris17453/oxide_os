@@ -377,9 +377,13 @@ pub fn current_pid() -> Option<Pid> {
 }
 
 /// Check if reschedule is needed
+///
+/// Uses try_with_rq (non-blocking) because this is called from the timer
+/// ISR in scheduler_tick. Using the blocking with_rq would deadlock if
+/// the interrupted code was holding the run queue lock.
 pub fn need_resched() -> bool {
     let cpu = this_cpu();
-    with_rq(cpu, |rq| rq.need_resched()).unwrap_or(false)
+    try_with_rq(cpu, |rq| rq.need_resched()).unwrap_or(false)
 }
 
 /// Set the reschedule flag
@@ -773,6 +777,75 @@ pub fn debug_state() -> (Option<Pid>, u32, u32) {
         (curr, nr_running, cfs_count)
     })
     .unwrap_or((None, 0, 0))
+}
+
+/// Debug info for a single task
+#[derive(Clone)]
+pub struct TaskDebugInfo {
+    pub pid: Pid,
+    pub ppid: Pid,
+    pub state: TaskState,
+    pub policy: SchedPolicy,
+    pub on_rq: bool,
+    pub nice: i8,
+    pub weight: u64,
+    pub vruntime: u64,
+    pub sum_exec_runtime: u64,
+    pub waiting_for_child: i32,
+    /// First 16 bytes of cmdline (truncated for interrupt-safe printing)
+    pub name: [u8; 16],
+    pub name_len: usize,
+}
+
+/// Debug: full scheduler dump (interrupt-safe via try_lock)
+///
+/// Returns (current_pid, min_vruntime, tasks_info) or None if lock is held.
+pub fn debug_dump_all() -> Option<(Option<Pid>, u64, Vec<TaskDebugInfo>)> {
+    let cpu = this_cpu();
+    try_with_rq(cpu, |rq| {
+        let curr = rq.curr();
+        let min_vr = rq.min_vruntime();
+        let pids = rq.all_pids();
+        let mut tasks = Vec::with_capacity(pids.len());
+        for pid in pids {
+            if let Some(t) = rq.get_task(pid) {
+                let mut name = [0u8; 16];
+                let mut name_len = 0;
+                // Extract command name from ProcessMeta if available
+                if let Some(ref meta_arc) = t.meta {
+                    if let Some(meta) = meta_arc.try_lock() {
+                        if let Some(cmd) = meta.cmdline.first() {
+                            // Get the basename (after last '/')
+                            let bytes = cmd.as_bytes();
+                            let start = bytes.iter().rposition(|&b| b == b'/').map(|i| i + 1).unwrap_or(0);
+                            let len = (bytes.len() - start).min(16);
+                            name[..len].copy_from_slice(&bytes[start..start + len]);
+                            name_len = len;
+                        }
+                    }
+                }
+                if name_len == 0 && pid == 0 {
+                    name[..4].copy_from_slice(b"idle");
+                    name_len = 4;
+                }
+                tasks.push(TaskDebugInfo {
+                    pid: t.pid,
+                    ppid: t.ppid,
+                    state: t.state,
+                    policy: t.policy,
+                    on_rq: t.on_rq,
+                    nice: t.nice,
+                    weight: t.weight,
+                    vruntime: t.vruntime,
+                    sum_exec_runtime: t.sum_exec_runtime,
+                    waiting_for_child: t.waiting_for_child,
+                    name,
+                    name_len,
+                });
+            }
+        }
+        (curr, min_vr, tasks)
+    })
 }
 
 // ============================================================================

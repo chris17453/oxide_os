@@ -643,6 +643,13 @@ ac_cv_enable_wasm_pthreads=no
 # Not Android/Minix/iOS
 ac_cv_android_api_level=no
 
+# Functions we do NOT want (non-standard or not implemented)
+ac_cv_func_spawnv=no
+ac_cv_func_plock=no
+ac_cv_func_setns=no
+ac_cv_func_unshare=no
+ac_cv_func_rtpSpawn=no
+
 # RTLD_MEMBER (AIX-only)
 ac_cv_have_rtld_member=no
 
@@ -653,10 +660,10 @@ ac_cv_lib_pthread_sem_init=no
 ac_cv_lib_nsl_yp_match=no
 
 # opendir is in libc
-ac_cv_search_opendir=none
+ac_cv_search_opendir="none required"
 
 # login_tty is in libc
-ac_cv_search_login_tty=none
+ac_cv_search_login_tty="none required"
 
 # GNU ld
 ac_cv_prog_gnu_ld=yes

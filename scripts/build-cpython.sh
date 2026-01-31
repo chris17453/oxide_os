@@ -37,6 +37,47 @@ if ! oxide-cc --version >/dev/null 2>&1; then
     exit 1
 fi
 
+# Ensure the sysroot exposes the headers CPython expects so that
+# configure doesn't cache "missing" results and silently disable
+# modules we rely on.
+REQUIRED_HEADERS=(
+    "$SYSROOT/include/langinfo.h"
+    "$SYSROOT/include/netdb.h"
+    "$SYSROOT/include/netinet/in.h"
+    "$SYSROOT/include/sys/socket.h"
+    "$SYSROOT/include/sys/resource.h"
+    "$SYSROOT/include/sys/eventfd.h"
+    "$SYSROOT/include/sys/epoll.h"
+    "$SYSROOT/include/sys/poll.h"
+    "$SYSROOT/include/sys/select.h"
+    "$SYSROOT/include/pty.h"
+    "$SYSROOT/include/spawn.h"
+    "$SYSROOT/include/utmp.h"
+    "$SYSROOT/include/readline/readline.h"
+)
+
+MISSING_HEADERS=()
+for header in "${REQUIRED_HEADERS[@]}"; do
+    if [ ! -f "$header" ]; then
+        MISSING_HEADERS+=("${header#$SYSROOT/}")
+    fi
+done
+
+if [ ${#MISSING_HEADERS[@]} -ne 0 ]; then
+    echo "ERROR: Required sysroot headers are missing:"
+    for rel in "${MISSING_HEADERS[@]}"; do
+        echo "  - $rel"
+    done
+    echo "Rebuild the toolchain (make toolchain) or add the headers above before continuing."
+    exit 1
+fi
+
+if [ ! -f "$SYSROOT/lib/liboxide_libc.a" ]; then
+    echo "ERROR: libc archive not found in $SYSROOT/lib"
+    echo "Run: make toolchain"
+    exit 1
+fi
+
 echo "=== Step 1: Build native Python (for host tools) ==="
 if [ ! -f "$CPYTHON_BUILD_NATIVE/python" ]; then
     mkdir -p "$CPYTHON_BUILD_NATIVE"
@@ -61,6 +102,13 @@ echo ""
 echo "=== Step 2: Configure CPython for OXIDE cross-compilation ==="
 mkdir -p "$CPYTHON_BUILD"
 cd "$CPYTHON_BUILD"
+
+# Remove stale cache files so configure re-probes the toolchain after
+# we add new headers or update wrapper behaviour.
+if [ -f "config.cache" ]; then
+    echo "Removing stale config.cache"
+    rm -f config.cache
+fi
 
 # Copy config site file
 cp "$OXIDE_ROOT/external/cpython-oxide-config.site" "$CPYTHON_BUILD/config.site"

@@ -19,6 +19,7 @@ mod kex;
 mod session;
 mod transport;
 
+use libc::poll::{PollFd, events::POLLIN, poll};
 use libc::socket::{
     INADDR_ANY, SOCKADDR_IN_SIZE, SockAddrIn, accept, bind, listen, setsockopt, so, sockaddr_in,
     sol, tcp_socket,
@@ -156,18 +157,26 @@ pub fn main() -> i32 {
     log("Listening on port 22");
     log_to_file("Now accepting connections on port 22");
 
-    // Accept loop
+    // Accept loop — use poll() to block until a connection arrives.
+    // This removes sshd from the run queue when idle, preventing it from
+    // consuming CPU time and competing with interactive tasks like the shell.
     log_to_file("Entering accept loop");
+    let mut pollfds = [PollFd::new(server_fd, POLLIN)];
     loop {
         let mut client_addr = SockAddrIn::default();
         let mut addr_len = SOCKADDR_IN_SIZE;
 
-        log_to_file("Waiting for connection...");
+        // Block until the server socket is readable (incoming connection)
+        // timeout=-1 means block indefinitely
+        let poll_ret = poll(&mut pollfds, -1);
+        if poll_ret <= 0 {
+            // Interrupted or error — retry
+            continue;
+        }
+
         let client_fd = accept(server_fd, Some(&mut client_addr), Some(&mut addr_len));
         if client_fd < 0 {
-            // No connection pending - yield to let other processes run
-            // This prevents sshd from spinning and hogging the CPU
-            sched_yield();
+            // Spurious wakeup or accept error — retry poll
             continue;
         }
 

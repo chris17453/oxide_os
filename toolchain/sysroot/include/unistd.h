@@ -8,6 +8,7 @@
 
 #include <stddef.h>
 #include <sys/types.h>
+#include <sys/time.h>
 
 /* Standard file descriptors */
 #define STDIN_FILENO    0
@@ -35,6 +36,7 @@
 #define _SC_HOST_NAME_MAX       180
 #define _SC_GETPW_R_SIZE_MAX    70
 #define _SC_GETGR_R_SIZE_MAX    69
+#define _SC_TTY_NAME_MAX        71
 #define _SC_ARG_MAX             0
 #define _SC_CHILD_MAX           1
 #define _SC_IOV_MAX             60
@@ -57,7 +59,18 @@ ssize_t pwrite(int fd, const void *buf, size_t count, off_t offset);
 int dup(int oldfd);
 int dup2(int oldfd, int newfd);
 int pipe(int pipefd[2]);
+int pipe2(int pipefd[2], int flags);
+int dup3(int oldfd, int newfd, int flags);
 int access(int fd, int mode);
+int faccessat(int dirfd, const char *path, int mode, int flags);
+int fchmodat(int dirfd, const char *path, mode_t mode, int flags);
+int fchownat(int dirfd, const char *path, uid_t owner, gid_t group, int flags);
+int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, int flags);
+int symlinkat(const char *target, int newdirfd, const char *linkpath);
+ssize_t readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz);
+int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath);
+int unlinkat(int dirfd, const char *pathname, int flags);
+int mkdirat(int dirfd, const char *pathname, mode_t mode);
 int unlink(const char *pathname);
 int rmdir(const char *pathname);
 int link(const char *oldpath, const char *newpath);
@@ -65,8 +78,11 @@ int symlink(const char *target, const char *linkpath);
 ssize_t readlink(const char *pathname, char *buf, size_t bufsiz);
 int truncate(const char *path, off_t length);
 int ftruncate(int fd, off_t length);
+ssize_t copy_file_range(int fd_in, off_t *off_in, int fd_out, off_t *off_out,
+                        size_t len, unsigned int flags);
 int fsync(int fd);
 int fdatasync(int fd);
+int lockf(int fd, int cmd, off_t len);
 int isatty(int fd);
 char *ttyname(int fd);
 int ttyname_r(int fd, char *buf, size_t buflen);
@@ -78,6 +94,9 @@ int execve(const char *pathname, char *const argv[], char *const envp[]);
 int execv(const char *pathname, char *const argv[]);
 int execvp(const char *file, char *const argv[]);
 int execvpe(const char *file, char *const argv[], char *const envp[]);
+int fexecve(int fd, char *const argv[], char *const envp[]);
+int close_range(unsigned int first, unsigned int last, unsigned int flags);
+int fdwalk(int (*func)(void *, int), void *arg);
 int execl(const char *pathname, const char *arg, ...);
 int execlp(const char *file, const char *arg, ...);
 void _exit(int status) __attribute__((noreturn));
@@ -103,6 +122,12 @@ int setuid(uid_t uid);
 int setgid(gid_t gid);
 int seteuid(uid_t euid);
 int setegid(gid_t egid);
+int setreuid(uid_t ruid, uid_t euid);
+int setregid(gid_t rgid, gid_t egid);
+int setresuid(uid_t ruid, uid_t euid, uid_t suid);
+int setresgid(gid_t rgid, gid_t egid, gid_t sgid);
+int getresuid(uid_t *ruid, uid_t *euid, uid_t *suid);
+int getresgid(gid_t *rgid, gid_t *egid, gid_t *sgid);
 int getgroups(int size, gid_t list[]);
 int setgroups(size_t size, const gid_t *list);
 
@@ -111,6 +136,7 @@ int chdir(const char *path);
 int fchdir(int fd);
 char *getcwd(char *buf, size_t size);
 int chown(const char *pathname, uid_t owner, gid_t group);
+int lchown(const char *pathname, uid_t owner, gid_t group);
 int fchown(int fd, uid_t owner, gid_t group);
 
 /* System */
@@ -125,6 +151,9 @@ unsigned int alarm(unsigned int seconds);
 int pause(void);
 int nice(int inc);
 void swab(const void *from, void *to, ssize_t n);
+void sync(void);
+int futimes(int fd, const struct timeval times[2]);
+int lutimes(const char *path, const struct timeval times[2]);
 
 /* Misc */
 int brk(void *addr);
@@ -133,6 +162,10 @@ int getpagesize(void);
 char *getlogin(void);
 int getlogin_r(char *buf, size_t bufsize);
 int getopt(int argc, char * const argv[], const char *optstring);
+char *ctermid(char *s);
+int ctermid_r(char *s);
+
+#define L_ctermid 32
 
 extern char *optarg;
 extern int optind, opterr, optopt;

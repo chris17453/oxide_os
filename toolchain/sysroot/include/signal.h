@@ -4,8 +4,14 @@
 #define _SIGNAL_H
 
 #include <sys/types.h>
+#include <time.h>
 
 typedef volatile int sig_atomic_t;
+
+#ifndef __OXIDE_PTHREAD_T_DEFINED
+typedef unsigned long pthread_t;
+#define __OXIDE_PTHREAD_T_DEFINED 1
+#endif
 
 /* Signal numbers */
 #define SIGHUP      1
@@ -101,17 +107,23 @@ typedef struct {
     size_t ss_size;
 } stack_t;
 
+#define SIGSTKSZ  8192
+
 /* Functions */
 int sigaction(int signum, const struct sigaction *act, struct sigaction *oldact);
 int sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
 int sigpending(sigset_t *set);
 int sigsuspend(const sigset_t *mask);
 int kill(pid_t pid, int sig);
+int killpg(pid_t pgrp, int sig);
 int raise(int sig);
 void (*signal(int signum, void (*handler)(int)))(int);
 int sigaltstack(const stack_t *ss, stack_t *old_ss);
 int pthread_sigmask(int how, const sigset_t *set, sigset_t *oldset);
 int sigwait(const sigset_t *set, int *sig);
+int sigwaitinfo(const sigset_t *set, siginfo_t *info);
+int sigtimedwait(const sigset_t *set, siginfo_t *info, const struct timespec *timeout);
+int pthread_kill(pthread_t thread, int sig);
 
 int sigemptyset(sigset_t *set);
 int sigfillset(sigset_t *set);

@@ -31,6 +31,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "argtest"
+version = "0.1.0"
+dependencies = [
+ "libc 0.1.0",
+]
+
+[[package]]
 name = "audio"
 version = "0.1.0"
 dependencies = [
@@ -964,6 +971,7 @@ dependencies = [
  "mm-paging",
  "mm-traits",
  "os_core",
+ "os_log",
  "proc-traits",
  "sched-traits",
  "signal",

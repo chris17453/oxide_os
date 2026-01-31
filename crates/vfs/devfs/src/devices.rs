@@ -421,11 +421,30 @@ impl VnodeOps for ConsoleDevice {
                 return Ok(count);
             }
 
-            // No data available — register as blocked reader and yield
+            // No data available — block until woken by console_push_char
             if let Some(pid) = sched::current_pid() {
                 *CONSOLE_BLOCKED_READER.lock() = pid;
             }
-            sched::yield_current();
+
+            // Remove from run queue; console_push_char's wake_up() will re-enqueue
+            sched::block_current(sched::TaskState::TASK_INTERRUPTIBLE);
+
+            // Race check: data may have arrived between our pop check and
+            // block_current, meaning console_push_char's wake_up() fired before
+            // we blocked. Re-check the buffer to avoid sleeping forever.
+            if !KEYBOARD_BUFFER.lock().is_empty() {
+                if let Some(pid) = sched::current_pid_lockfree() {
+                    sched::wake_up(pid);
+                }
+                continue;
+            }
+
+            // Halt CPU until next interrupt (timer or keyboard).
+            // sys_read_vfs already called allow_kernel_preempt(), so the timer
+            // interrupt can context-switch us out while halted.
+            unsafe {
+                core::arch::asm!("sti", "hlt", options(nomem, nostack));
+            }
         }
     }
 

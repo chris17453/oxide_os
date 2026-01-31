@@ -379,9 +379,34 @@ pub fn do_exec<A: FrameAllocator>(
 
     let final_rsp = VirtAddr::new(stack_ptr);
 
+    // DEBUG: print stack layout
+    #[cfg(feature = "debug-fork")]
+    {
+        extern crate os_log;
+        os_log::debug!("[EXEC] Stack layout:");
+        os_log::debug!("[EXEC]   USER_STACK_TOP = {:#x}", USER_STACK_TOP);
+        os_log::debug!("[EXEC]   strings_base = {:#x}", strings_base);
+        os_log::debug!("[EXEC]   string_data_size = {}", string_data_size);
+        os_log::debug!("[EXEC]   pointers_size = {}", pointers_size);
+        os_log::debug!("[EXEC]   final_rsp = {:#x}", stack_ptr);
+        os_log::debug!("[EXEC]   argc will be at {:#x}", stack_ptr);
+        os_log::debug!("[EXEC]   argv[0] ptr will be at {:#x}", stack_ptr + 8);
+        if !string_offsets_argv.is_empty() {
+            os_log::debug!("[EXEC]   argv[0] will point to {:#x}", string_offsets_argv[0]);
+            if string_offsets_argv.len() > 1 {
+                os_log::debug!("[EXEC]   argv[1] will point to {:#x}", string_offsets_argv[1]);
+            }
+        }
+    }
+
     // Write strings to stack
     let mut string_ptr = strings_base;
-    for arg in argv {
+    for (i, arg) in argv.iter().enumerate() {
+        #[cfg(feature = "debug-fork")]
+        {
+            extern crate os_log;
+            os_log::debug!("[EXEC] Writing argv[{}] = \"{}\" to vaddr {:#x}", i, arg, string_ptr);
+        }
         write_to_user_stack(&new_address_space, string_ptr, arg.as_bytes())?;
         // Write null terminator
         write_to_user_stack(&new_address_space, string_ptr + arg.len() as u64, &[0u8])?;
@@ -400,7 +425,12 @@ pub fn do_exec<A: FrameAllocator>(
     ptr += 8;
 
     // Write argv pointers
-    for &offset in &string_offsets_argv {
+    for (i, &offset) in string_offsets_argv.iter().enumerate() {
+        #[cfg(feature = "debug-fork")]
+        {
+            extern crate os_log;
+            os_log::debug!("[EXEC] Writing argv[{}] pointer = {:#x} at stack offset {:#x}", i, offset, ptr);
+        }
         write_to_user_stack(&new_address_space, ptr, &offset.to_le_bytes())?;
         ptr += 8;
     }

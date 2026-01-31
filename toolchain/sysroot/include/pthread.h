@@ -89,6 +89,10 @@ typedef struct {
 #define PTHREAD_CREATE_JOINABLE 0
 #define PTHREAD_CREATE_DETACHED 1
 
+/* Scheduling scope */
+#define PTHREAD_SCOPE_SYSTEM  1
+#define PTHREAD_SCOPE_PROCESS 2
+
 /* Mutex types */
 #define PTHREAD_MUTEX_NORMAL     0
 #define PTHREAD_MUTEX_RECURSIVE  1
@@ -139,6 +143,8 @@ int pthread_attr_getguardsize(const pthread_attr_t *attr, size_t *guardsize);
 int pthread_attr_setguardsize(pthread_attr_t *attr, size_t guardsize);
 int pthread_attr_getschedpolicy(const pthread_attr_t *attr, int *policy);
 int pthread_attr_setschedpolicy(pthread_attr_t *attr, int policy);
+int pthread_attr_setscope(pthread_attr_t *attr, int scope);
+int pthread_attr_getscope(const pthread_attr_t *attr, int *scope);
 
 /* ===== Mutex Operations ===== */
 
@@ -205,6 +211,10 @@ int pthread_key_create(pthread_key_t *key, void (*destructor)(void*));
 int pthread_key_delete(pthread_key_t key);
 void *pthread_getspecific(pthread_key_t key);
 int pthread_setspecific(pthread_key_t key, const void *value);
+
+/* ===== CPU Clock ===== */
+
+int pthread_getcpuclockid(pthread_t thread, clockid_t *clock_id);
 
 /* ===== One-Time Initialization ===== */
 

@@ -90,6 +90,18 @@ fn print_num_unsigned(n: u32) {
 }
 
 /// Print a hex number (0xNNNN)
+fn print_hex(mut val: u64) {
+    let hex_chars = b"0123456789abcdef";
+    let mut buf = [0u8; 16];
+    for i in 0..16 {
+        buf[15 - i] = hex_chars[(val & 0xF) as usize];
+        val >>= 4;
+    }
+    for &ch in &buf {
+        putchar(ch);
+    }
+}
+
 fn print_hex16(n: u16) {
     let hex = b"0123456789abcdef";
     let mut buf = [b'0', b'x', 0, 0, 0, 0];
@@ -506,6 +518,17 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8) -> i32 {
         }
     }
     let path = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(arg, len)) };
+
+    // DEBUG: print what we received
+    print("[DEBUG] argc=");
+    print_num(argc);
+    print(" argv[1] ptr=0x");
+    print_hex(arg as u64);
+    print(" len=");
+    print_num(len as i32);
+    print(" path=\"");
+    print(path);
+    print("\"\n");
 
     // Check for help flag
     if path == "-h" || path == "--help" {

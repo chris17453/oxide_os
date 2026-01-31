@@ -302,9 +302,10 @@ impl RunQueue {
     /// Handle a scheduler tick
     ///
     /// Returns true if preemption should occur.
+    ///
+    /// NOTE: The caller (core.rs::scheduler_tick) already called update_clock()
+    /// before this method. Do NOT advance self.clock here — that would double-count.
     pub fn scheduler_tick(&mut self) -> bool {
-        self.clock += sched_traits::TICK_NS;
-
         let curr_pid = match self.curr {
             Some(pid) => pid,
             None => return false,
@@ -344,6 +345,9 @@ impl RunQueue {
                     let delta = sched_traits::TICK_NS;
                     t.update_vruntime(delta);
                     t.sum_exec_runtime += delta;
+                    // Reset exec_start so pick_next_task's account_stop()
+                    // doesn't re-count this same period.
+                    t.exec_start = self.clock;
 
                     // Update min_vruntime
                     self.cfs_rq.update_min_vruntime(t.vruntime);

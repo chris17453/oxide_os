@@ -5,6 +5,8 @@
 extern "C" {
 #endif
 
+typedef void *histdata_t;
+
 typedef struct _hist_entry {
     char *line;
     char *timestamp;
@@ -25,8 +27,8 @@ void using_history(void);
 void clear_history(void);
 HIST_ENTRY *history_get(int offset);
 HIST_ENTRY *remove_history(int which);
-HIST_ENTRY *replace_history_entry(int which, const char *line, void *data);
-void *free_history_entry(HIST_ENTRY *entry);
+HIST_ENTRY *replace_history_entry(int which, const char *line, histdata_t data);
+histdata_t free_history_entry(HIST_ENTRY *entry);
 HISTORY_STATE *history_get_history_state(void);
 
 /* History file I/O */

@@ -6,8 +6,21 @@
 #include <sys/types.h>
 #include <signal.h>
 
-typedef struct { int __dummy; } posix_spawnattr_t;
-typedef struct { int __dummy; } posix_spawn_file_actions_t;
+typedef struct {
+    short flags;
+    pid_t pgroup;
+    sigset_t sigdefault;
+    sigset_t sigmask;
+} posix_spawnattr_t;
+
+typedef struct {
+    int action_count;
+} posix_spawn_file_actions_t;
+
+#define POSIX_SPAWN_RESETIDS    0x0001
+#define POSIX_SPAWN_SETPGROUP   0x0002
+#define POSIX_SPAWN_SETSIGDEF   0x0004
+#define POSIX_SPAWN_SETSIGMASK  0x0008
 
 int posix_spawn(pid_t *pid, const char *path,
                 const posix_spawn_file_actions_t *file_actions,
@@ -26,6 +39,8 @@ int posix_spawnattr_setsigdefault(posix_spawnattr_t *attr, const sigset_t *sigde
 int posix_spawnattr_getsigdefault(const posix_spawnattr_t *attr, sigset_t *sigdefault);
 int posix_spawnattr_setsigmask(posix_spawnattr_t *attr, const sigset_t *sigmask);
 int posix_spawnattr_getsigmask(const posix_spawnattr_t *attr, sigset_t *sigmask);
+int posix_spawnattr_setpgroup(posix_spawnattr_t *attr, pid_t pgroup);
+int posix_spawnattr_getpgroup(const posix_spawnattr_t *attr, pid_t *pgroup);
 
 int posix_spawn_file_actions_init(posix_spawn_file_actions_t *file_actions);
 int posix_spawn_file_actions_destroy(posix_spawn_file_actions_t *file_actions);

@@ -69,6 +69,9 @@ char *mkdtemp(char *template);
 /* Realpath */
 char *realpath(const char *path, char *resolved_path);
 
+/* System load */
+int getloadavg(double loadavg[], int nelem);
+
 /* Exit codes */
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1

@@ -16,6 +16,58 @@ unsafe fn cstr_len(s: *const u8) -> usize {
     len
 }
 
+const DEFAULT_STACK_SIZE: usize = 8 * 1024 * 1024;
+const PTHREAD_SCOPE_SYSTEM_VAL: i32 = 1;
+const PTHREAD_SCOPE_PROCESS_VAL: i32 = 2;
+const PTHREAD_CREATE_JOINABLE: i32 = 0;
+const PTHREAD_CREATE_DETACHED: i32 = 1;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PthreadAttr {
+    detachstate: i32,
+    stacksize: usize,
+    stackaddr: *mut u8,
+    guardsize: usize,
+    schedpolicy: i32,
+    schedpriority: i32,
+    scope: i32,
+}
+
+impl Default for PthreadAttr {
+    fn default() -> Self {
+        PthreadAttr {
+            detachstate: PTHREAD_CREATE_JOINABLE,
+            stacksize: DEFAULT_STACK_SIZE,
+            stackaddr: core::ptr::null_mut(),
+            guardsize: 0,
+            schedpolicy: 0,
+            schedpriority: 0,
+            scope: PTHREAD_SCOPE_SYSTEM_VAL,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PosixSpawnAttr {
+    flags: i16,
+    pgroup: i32,
+    sigdefault: u64,
+    sigmask: u64,
+}
+
+impl Default for PosixSpawnAttr {
+    fn default() -> Self {
+        PosixSpawnAttr { flags: 0, pgroup: 0, sigdefault: 0, sigmask: 0 }
+    }
+}
+
+#[repr(C)]
+struct posix_spawn_file_actions_t {
+    action_count: i32,
+}
+
 // ============ errno ============
 
 static mut ERRNO_VAR: i32 = 0;
@@ -713,6 +765,40 @@ pub unsafe extern "C" fn open(path: *const u8, flags: i32, mode: i32) -> i32 {
         cstr_len(path),
         flags as usize,
         mode as usize,
+    ) as i32
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn openat(dirfd: i32, path: *const u8, flags: i32, mode: u32) -> i32 {
+    syscall::syscall5(
+        syscall::nr::OPENAT,
+        dirfd as usize,
+        path as usize,
+        cstr_len(path),
+        flags as usize,
+        mode as usize,
+    ) as i32
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mkdirat(dirfd: i32, path: *const u8, mode: u32) -> i32 {
+    syscall::syscall4(
+        syscall::nr::MKDIRAT,
+        dirfd as usize,
+        path as usize,
+        cstr_len(path),
+        mode as usize,
+    ) as i32
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn unlinkat(dirfd: i32, path: *const u8, flags: i32) -> i32 {
+    syscall::syscall4(
+        syscall::nr::UNLINKAT,
+        dirfd as usize,
+        path as usize,
+        cstr_len(path),
+        flags as usize,
     ) as i32
 }
 
@@ -2622,25 +2708,150 @@ pub unsafe extern "C" fn pthread_once(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_attr_init(_attr: *mut u8) -> i32 { 0 }
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_attr_destroy(_attr: *mut u8) -> i32 { 0 }
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_attr_setdetachstate(_a: *mut u8, _s: i32) -> i32 { 0 }
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_attr_getdetachstate(_a: *const u8, s: *mut i32) -> i32 {
-    *s = 0;
+pub unsafe extern "C" fn pthread_attr_init(attr: *mut PthreadAttr) -> i32 {
+    if attr.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    *attr = PthreadAttr::default();
     0
 }
+
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_attr_setstacksize(_a: *mut u8, _s: usize) -> i32 { 0 }
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_attr_getstacksize(_a: *const u8, s: *mut usize) -> i32 {
-    *s = 8 * 1024 * 1024;
+pub unsafe extern "C" fn pthread_attr_destroy(attr: *mut PthreadAttr) -> i32 {
+    if attr.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    (*attr) = PthreadAttr::default();
     0
 }
+
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_attr_setscope(_a: *mut u8, _s: i32) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_attr_setdetachstate(attr: *mut PthreadAttr, state: i32) -> i32 {
+    if attr.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    if state != PTHREAD_CREATE_JOINABLE && state != PTHREAD_CREATE_DETACHED {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    (*attr).detachstate = state;
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_attr_getdetachstate(attr: *const PthreadAttr, state: *mut i32) -> i32 {
+    if attr.is_null() || state.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    *state = (*attr).detachstate;
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_attr_setstacksize(attr: *mut PthreadAttr, size: usize) -> i32 {
+    if attr.is_null() || size < 16384 {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    (*attr).stacksize = size;
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_attr_getstacksize(attr: *const PthreadAttr, size: *mut usize) -> i32 {
+    if attr.is_null() || size.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    *size = (*attr).stacksize;
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_attr_setstack(
+    attr: *mut PthreadAttr,
+    stackaddr: *mut u8,
+    stacksize: usize,
+) -> i32 {
+    if attr.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    (*attr).stackaddr = stackaddr;
+    (*attr).stacksize = stacksize;
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_attr_getstack(
+    attr: *const PthreadAttr,
+    stackaddr: *mut *mut u8,
+    stacksize: *mut usize,
+) -> i32 {
+    if attr.is_null() || stackaddr.is_null() || stacksize.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    *stackaddr = (*attr).stackaddr;
+    *stacksize = (*attr).stacksize;
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_attr_getguardsize(attr: *const PthreadAttr, size: *mut usize) -> i32 {
+    if attr.is_null() || size.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    *size = (*attr).guardsize;
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_attr_setguardsize(attr: *mut PthreadAttr, size: usize) -> i32 {
+    if attr.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    (*attr).guardsize = size;
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_attr_setscope(attr: *mut PthreadAttr, scope: i32) -> i32 {
+    if attr.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    match scope {
+        PTHREAD_SCOPE_SYSTEM_VAL => {
+            (*attr).scope = scope;
+            0
+        }
+        PTHREAD_SCOPE_PROCESS_VAL => {
+            ERRNO_VAR = errno::ENOTSUP;
+            -1
+        }
+        _ => {
+            ERRNO_VAR = errno::EINVAL;
+            -1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pthread_attr_getscope(attr: *const PthreadAttr, scope: *mut i32) -> i32 {
+    if attr.is_null() || scope.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    *scope = (*attr).scope;
+    0
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pthread_atfork(
@@ -3172,27 +3383,164 @@ pub unsafe extern "C" fn posix_spawnp(
 
 // posix_spawn attr/file_actions stubs (needed for linkage)
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn posix_spawn_file_actions_init(_fa: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn posix_spawn_file_actions_init(fa: *mut posix_spawn_file_actions_t) -> i32 {
+    if fa.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    (*fa).action_count = 0;
+    0
+}
+
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn posix_spawn_file_actions_destroy(_fa: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn posix_spawn_file_actions_destroy(fa: *mut posix_spawn_file_actions_t) -> i32 {
+    if fa.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    (*fa).action_count = 0;
+    0
+}
+
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn posix_spawn_file_actions_addclose(_fa: *mut u8, _fd: i32) -> i32 { 0 }
+pub unsafe extern "C" fn posix_spawn_file_actions_addclose(fa: *mut posix_spawn_file_actions_t, _fd: i32) -> i32 {
+    if fa.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    (*fa).action_count += 1;
+    0
+}
+
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn posix_spawn_file_actions_adddup2(_fa: *mut u8, _fd: i32, _nfd: i32) -> i32 { 0 }
+pub unsafe extern "C" fn posix_spawn_file_actions_adddup2(
+    fa: *mut posix_spawn_file_actions_t,
+    _fd: i32,
+    _nfd: i32,
+) -> i32 {
+    if fa.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    (*fa).action_count += 1;
+    0
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn posix_spawn_file_actions_addopen(
-    _fa: *mut u8, _fd: i32, _path: *const u8, _oflag: i32, _mode: u32
-) -> i32 { 0 }
+    fa: *mut posix_spawn_file_actions_t,
+    _fd: i32,
+    _path: *const u8,
+    _oflag: i32,
+    _mode: u32,
+) -> i32 {
+    if fa.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    (*fa).action_count += 1;
+    0
+}
+
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn posix_spawnattr_init(_attr: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn posix_spawnattr_init(attr: *mut PosixSpawnAttr) -> i32 {
+    if attr.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    *attr = PosixSpawnAttr::default();
+    0
+}
+
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn posix_spawnattr_destroy(_attr: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn posix_spawnattr_destroy(attr: *mut PosixSpawnAttr) -> i32 {
+    if attr.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    *attr = PosixSpawnAttr::default();
+    0
+}
+
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn posix_spawnattr_setflags(_attr: *mut u8, _flags: i16) -> i32 { 0 }
+pub unsafe extern "C" fn posix_spawnattr_setflags(attr: *mut PosixSpawnAttr, flags: i16) -> i32 {
+    if attr.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    (*attr).flags = flags;
+    0
+}
+
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn posix_spawnattr_setsigdefault(_attr: *mut u8, _sigdefault: *const u64) -> i32 { 0 }
+pub unsafe extern "C" fn posix_spawnattr_getflags(attr: *const PosixSpawnAttr, flags: *mut i16) -> i32 {
+    if attr.is_null() || flags.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    *flags = (*attr).flags;
+    0
+}
+
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn posix_spawnattr_setsigmask(_attr: *mut u8, _sigmask: *const u64) -> i32 { 0 }
+pub unsafe extern "C" fn posix_spawnattr_setsigdefault(attr: *mut PosixSpawnAttr, sigdefault: *const u64) -> i32 {
+    if attr.is_null() || sigdefault.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    (*attr).sigdefault = *sigdefault;
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn posix_spawnattr_getsigdefault(attr: *const PosixSpawnAttr, sigdefault: *mut u64) -> i32 {
+    if attr.is_null() || sigdefault.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    *sigdefault = (*attr).sigdefault;
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn posix_spawnattr_setsigmask(attr: *mut PosixSpawnAttr, sigmask: *const u64) -> i32 {
+    if attr.is_null() || sigmask.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    (*attr).sigmask = *sigmask;
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn posix_spawnattr_getsigmask(attr: *const PosixSpawnAttr, sigmask: *mut u64) -> i32 {
+    if attr.is_null() || sigmask.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    *sigmask = (*attr).sigmask;
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn posix_spawnattr_setpgroup(attr: *mut PosixSpawnAttr, pgroup: i32) -> i32 {
+    if attr.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    (*attr).pgroup = pgroup;
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn posix_spawnattr_getpgroup(attr: *const PosixSpawnAttr, pgroup: *mut i32) -> i32 {
+    if attr.is_null() || pgroup.is_null() {
+        ERRNO_VAR = errno::EINVAL;
+        return -1;
+    }
+    *pgroup = (*attr).pgroup;
+    0
+}
 
 // Misc stubs CPython needs
 #[unsafe(no_mangle)]
@@ -5864,6 +6212,11 @@ pub unsafe extern "C" fn rl_cleanup_after_signal() {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn rl_callback_sigcleanup() {
+    crate::readline::rl_callback_sigcleanup();
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn rl_bind_key(key: i32, func: crate::readline::CommandFunc) -> i32 {
     crate::readline::rl_bind_key(key, func)
 }
@@ -5976,4 +6329,226 @@ pub unsafe extern "C" fn rl_completion_matches(
     func: crate::readline::CompEntryFunc,
 ) -> *mut *mut u8 {
     crate::readline::completion_matches(text, func)
+}
+
+// ============ *at-style file operations ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn faccessat(dirfd: i32, path: *const u8, mode: i32, _flags: i32) -> i32 {
+    syscall::syscall4(
+        syscall::nr::FACCESSAT,
+        dirfd as usize,
+        path as usize,
+        cstr_len(path),
+        mode as usize,
+    ) as i32
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fchmodat(dirfd: i32, path: *const u8, mode: u32, _flags: i32) -> i32 {
+    syscall::syscall4(
+        syscall::nr::FCHMODAT,
+        dirfd as usize,
+        path as usize,
+        cstr_len(path),
+        mode as usize,
+    ) as i32
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fchownat(dirfd: i32, path: *const u8, owner: u32, group: u32, _flags: i32) -> i32 {
+    syscall::syscall5(
+        syscall::nr::FCHOWNAT,
+        dirfd as usize,
+        path as usize,
+        cstr_len(path),
+        owner as usize,
+        group as usize,
+    ) as i32
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn linkat(olddirfd: i32, oldpath: *const u8, newdirfd: i32, newpath: *const u8, _flags: i32) -> i32 {
+    syscall::syscall6(
+        syscall::nr::LINKAT,
+        olddirfd as usize,
+        oldpath as usize,
+        cstr_len(oldpath),
+        newdirfd as usize,
+        newpath as usize,
+        cstr_len(newpath),
+    ) as i32
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn symlinkat(target: *const u8, newdirfd: i32, linkpath: *const u8) -> i32 {
+    syscall::syscall5(
+        syscall::nr::SYMLINKAT,
+        target as usize,
+        cstr_len(target),
+        newdirfd as usize,
+        linkpath as usize,
+        cstr_len(linkpath),
+    ) as i32
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn renameat(olddirfd: i32, oldpath: *const u8, newdirfd: i32, newpath: *const u8) -> i32 {
+    syscall::syscall6(
+        syscall::nr::RENAMEAT,
+        olddirfd as usize,
+        oldpath as usize,
+        cstr_len(oldpath),
+        newdirfd as usize,
+        newpath as usize,
+        cstr_len(newpath),
+    ) as i32
+}
+
+// ============ kill ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kill(pid: i32, sig: i32) -> i32 {
+    syscall::sys_kill(pid, sig)
+}
+
+// ============ wait4 ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wait4(pid: i32, status: *mut i32, options: i32, rusage: *mut u8) -> i32 {
+    syscall::sys_wait4(pid, status, options, rusage as *mut syscall::Rusage)
+}
+
+// ============ sched_yield ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sched_yield() -> i32 {
+    syscall::sys_sched_yield()
+}
+
+// ============ rewinddir ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rewinddir(dirp: *mut u8) {
+    if dirp.is_null() {
+        return;
+    }
+    let fd = *(dirp as *const i32);
+    *(dirp.add(4) as *mut i32) = 0; // buf_pos = 0
+    *(dirp.add(8) as *mut i32) = 0; // buf_len = 0
+    syscall::sys_lseek(fd, 0, 0); // SEEK_SET = 0
+}
+
+// ============ dup3 / pipe2 ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dup3(oldfd: i32, newfd: i32, flags: i32) -> i32 {
+    syscall::sys_dup3(oldfd, newfd, flags)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pipe2(pipefd: *mut i32, flags: i32) -> i32 {
+    syscall::sys_pipe2(pipefd, flags)
+}
+
+// ============ strtok_r ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn strtok_r(
+    s: *mut u8,
+    delim: *const u8,
+    saveptr: *mut *mut u8,
+) -> *mut u8 {
+    let mut current = if s.is_null() { *saveptr } else { s };
+
+    if current.is_null() {
+        return core::ptr::null_mut();
+    }
+
+    // Skip leading delimiters
+    while *current != 0 {
+        let mut is_delim = false;
+        let mut d = delim;
+        while *d != 0 {
+            if *current == *d {
+                is_delim = true;
+                break;
+            }
+            d = d.add(1);
+        }
+        if !is_delim {
+            break;
+        }
+        current = current.add(1);
+    }
+
+    if *current == 0 {
+        *saveptr = core::ptr::null_mut();
+        return core::ptr::null_mut();
+    }
+
+    let token_start = current;
+
+    // Find end of token
+    while *current != 0 {
+        let mut d = delim;
+        while *d != 0 {
+            if *current == *d {
+                *current = 0;
+                *saveptr = current.add(1);
+                return token_start;
+            }
+            d = d.add(1);
+        }
+        current = current.add(1);
+    }
+
+    *saveptr = core::ptr::null_mut();
+    token_start
+}
+
+// ============ l*xattr stubs ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fgetxattr(_fd: i32, _name: *const u8, _value: *mut u8, _size: usize) -> isize {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lgetxattr(_path: *const u8, _name: *const u8, _value: *mut u8, _size: usize) -> isize {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lsetxattr(_path: *const u8, _name: *const u8, _value: *const u8, _size: usize, _flags: i32) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lremovexattr(_path: *const u8, _name: *const u8) -> i32 {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn llistxattr(_path: *const u8, _list: *mut u8, _size: usize) -> isize {
+    ERRNO_VAR = errno::ENOSYS;
+    -1
+}
+
+// ============ eventfd_read / eventfd_write ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn eventfd_read(fd: i32, value: *mut u64) -> i32 {
+    let r = syscall::syscall3(syscall::nr::READ, fd as usize, value as usize, 8) as isize;
+    if r == 8 { 0 } else { -1 }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn eventfd_write(fd: i32, value: u64) -> i32 {
+    let r = syscall::syscall3(syscall::nr::WRITE, fd as usize, &value as *const u64 as usize, 8) as isize;
+    if r == 8 { 0 } else { -1 }
 }

@@ -44,13 +44,24 @@ impl Sleeper {
 static SLEEP_QUEUE: [Sleeper; MAX_SLEEPERS] = [const { Sleeper::empty() }; MAX_SLEEPERS];
 
 /// Register a task in the sleep queue
+///
+/// Store order matters: write wake_tick BEFORE pid. The timer interrupt's
+/// check_sleepers() uses pid != 0 as the "slot occupied" signal and then
+/// reads wake_tick. If we stored pid first, check_sleepers() could see a
+/// valid pid with stale wake_tick=0, causing a spurious immediate wakeup.
 fn sleep_queue_add(pid: u32, wake_tick: u64) -> bool {
     for slot in &SLEEP_QUEUE {
-        // Try to claim an empty slot (pid == 0)
+        // Check if slot is free without modifying it
+        if slot.pid.load(Ordering::Relaxed) != 0 {
+            continue;
+        }
+        // Write wake_tick first so it's valid when check_sleepers reads it
+        slot.wake_tick.store(wake_tick, Ordering::Release);
+        // Now atomically claim the slot — only succeeds if still empty
         if slot.pid.compare_exchange(0, pid, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
-            slot.wake_tick.store(wake_tick, Ordering::Release);
             return true;
         }
+        // Another task claimed this slot between our load and CAS — keep looking
     }
     false // Queue full
 }
@@ -76,6 +87,25 @@ pub fn check_sleepers() {
             if now >= wake_tick {
                 // Clear the slot first, then wake
                 if slot.pid.compare_exchange(pid, 0, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
+                    #[cfg(feature = "debug-sched")]
+                    unsafe {
+                        arch_x86_64::serial::write_str_unsafe("[SLEEP-WAKE] pid=");
+                        let mut buf = [0u8; 10];
+                        let mut n = pid as u64;
+                        let mut pos = 0;
+                        if n == 0 { arch_x86_64::serial::write_byte_unsafe(b'0'); } else {
+                            while n > 0 { buf[pos] = b'0' + (n % 10) as u8; n /= 10; pos += 1; }
+                            for i in (0..pos).rev() { arch_x86_64::serial::write_byte_unsafe(buf[i]); }
+                        }
+                        arch_x86_64::serial::write_str_unsafe(" tick=");
+                        n = now;
+                        pos = 0;
+                        if n == 0 { arch_x86_64::serial::write_byte_unsafe(b'0'); } else {
+                            while n > 0 { buf[pos] = b'0' + (n % 10) as u8; n /= 10; pos += 1; }
+                            for i in (0..pos).rev() { arch_x86_64::serial::write_byte_unsafe(buf[i]); }
+                        }
+                        arch_x86_64::serial::write_str_unsafe("\n");
+                    }
                     sched::wake_up(pid);
                 }
             }
@@ -355,9 +385,11 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
         // HLT yields CPU until next interrupt.
         // If queued: scheduler will switch away (we're blocked), timer will wake us.
         // If not queued (queue full): fallback to polling with preempt.
+        // NOTE: sti + hlt MUST be in the same asm block.  If separated, a timer
+        // interrupt can fire between them; the ISR handles it, returns, and then
+        // the CPU hits HLT and waits another full tick unnecessarily.
         unsafe {
-            core::arch::asm!("sti"); // Ensure interrupts enabled
-            core::arch::asm!("hlt", options(nomem, nostack));
+            core::arch::asm!("sti", "hlt", options(nomem, nostack));
         }
 
         // Clear preempt flag
@@ -454,8 +486,7 @@ pub fn sys_clock_nanosleep(clock_id: i32, flags: i32, req_ptr: usize, rem_ptr: u
             }
             arch::allow_kernel_preempt();
             unsafe {
-                core::arch::asm!("sti");
-                core::arch::asm!("hlt", options(nomem, nostack));
+                core::arch::asm!("sti", "hlt", options(nomem, nostack));
             }
             arch::disallow_kernel_preempt();
         }

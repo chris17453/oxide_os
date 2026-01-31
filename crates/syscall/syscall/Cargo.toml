@@ -3,6 +3,10 @@ name = "syscall"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+debug-sched = []  # Enable scheduler debug output in sleep/wake paths
+
 [dependencies]
 os_core = { path = "../../core/os_core" }
 proc = { path = "../../proc/proc" }

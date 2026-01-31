@@ -118,6 +118,7 @@ members = [
     "userspace/journald",
     "userspace/journalctl",
     "userspace/evtest",
+    "userspace/argtest",
     "bootloader/boot-uefi",
     "apps/gwbasic",
 ]

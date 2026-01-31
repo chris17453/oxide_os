@@ -89,11 +89,29 @@ struct flock {
 #define AT_EACCESS          0x200
 #define AT_EMPTY_PATH       0x1000
 
+/* Splice flags */
+#define SPLICE_F_MOVE       1
+#define SPLICE_F_NONBLOCK   2
+#define SPLICE_F_MORE       4
+#define SPLICE_F_GIFT       8
+
+/* posix_fadvise advice values */
+#define POSIX_FADV_NORMAL     0
+#define POSIX_FADV_RANDOM     1
+#define POSIX_FADV_SEQUENTIAL 2
+#define POSIX_FADV_WILLNEED   3
+#define POSIX_FADV_DONTNEED   4
+#define POSIX_FADV_NOREUSE    5
+
 /* Functions */
 int open(const char *pathname, int flags, ...);
 int openat(int dirfd, const char *pathname, int flags, ...);
 int creat(const char *pathname, mode_t mode);
 int fcntl(int fd, int cmd, ...);
 int flock(int fd, int operation);
+ssize_t splice(int fd_in, off_t *off_in, int fd_out, off_t *off_out,
+               size_t len, unsigned int flags);
+int posix_fallocate(int fd, off_t offset, off_t len);
+int posix_fadvise(int fd, off_t offset, off_t len, int advice);
 
 #endif /* _FCNTL_H */

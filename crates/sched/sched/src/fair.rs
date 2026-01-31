@@ -84,11 +84,17 @@ impl CfsRunQueue {
 
     /// Enqueue a task
     ///
-    /// The task's vruntime is adjusted to be at least min_vruntime to prevent
-    /// newly awakened tasks from monopolizing the CPU.
+    /// The task's vruntime is adjusted relative to min_vruntime. Woken tasks
+    /// receive a vruntime credit of SCHED_LATENCY_NS (one scheduling period),
+    /// matching Linux CFS behavior. This ensures recently-woken tasks are
+    /// scheduled within one latency period rather than being starved by tasks
+    /// that accumulated no vruntime while sleeping.
     pub fn enqueue(&mut self, pid: Pid, vruntime: u64, weight: u64) -> u64 {
-        // Adjust vruntime: new tasks start at min_vruntime
-        let adjusted_vruntime = vruntime.max(self.min_vruntime);
+        // Give woken tasks a vruntime credit of one scheduling period.
+        // This prevents starvation: without this, a woken task's vruntime
+        // gets clamped to min_vruntime which may equal long-sleeping tasks,
+        // causing the woken task to wait behind all of them.
+        let adjusted_vruntime = vruntime.max(self.min_vruntime.saturating_sub(SCHED_LATENCY_NS));
 
         self.tasks.push(Reverse(CfsEntry {
             vruntime: adjusted_vruntime,
@@ -353,11 +359,28 @@ mod tests {
     fn test_cfs_min_vruntime() {
         let mut cfs = CfsRunQueue::new();
 
-        cfs.min_vruntime = 1000;
+        cfs.min_vruntime = 10_000_000; // 10ms
 
-        // New task should get min_vruntime if its vruntime is lower
+        // Task with low vruntime gets credit: min_vruntime - SCHED_LATENCY_NS
+        // min_vruntime=10ms, SCHED_LATENCY_NS=6ms, so floor = 4ms
         let adjusted = cfs.enqueue(1, 500, 1024);
-        assert_eq!(adjusted, 1000);
+        assert_eq!(adjusted, 10_000_000 - SCHED_LATENCY_NS); // 4ms
+
+        // Task with vruntime above the floor keeps its vruntime
+        let adjusted2 = cfs.enqueue(2, 10_000_000 + 1000, 1024);
+        assert_eq!(adjusted2, 10_000_000 + 1000);
+    }
+
+    #[test]
+    fn test_cfs_wakeup_credit_saturating() {
+        let mut cfs = CfsRunQueue::new();
+
+        // When min_vruntime is small, saturating_sub prevents underflow
+        cfs.min_vruntime = 1000;
+        let adjusted = cfs.enqueue(1, 500, 1024);
+        // min_vruntime(1000) - SCHED_LATENCY_NS(6_000_000) saturates to 0
+        // max(500, 0) = 500
+        assert_eq!(adjusted, 500);
     }
 
     #[test]

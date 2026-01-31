@@ -60,6 +60,28 @@ LIBS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        -print-prog-name=*)
+            prog="${1#-print-prog-name=}"
+            case "$prog" in
+                ld)
+                    echo "$SCRIPT_DIR/oxide-ld"
+                    ;;
+                ar)
+                    echo "$SCRIPT_DIR/oxide-ar"
+                    ;;
+                ranlib)
+                    echo "llvm-ranlib"
+                    ;;
+                *)
+                    if command -v "$prog" >/dev/null 2>&1; then
+                        command -v "$prog"
+                    else
+                        echo "$prog"
+                    fi
+                    ;;
+            esac
+            exit 0
+            ;;
         -c)
             COMPILE_ONLY=true
             LINK=false

@@ -1388,6 +1388,12 @@ pub unsafe fn rl_cleanup_after_signal() {
     leave_raw_mode();
 }
 
+/// Cleanup helper used by callback mode signal handlers
+pub unsafe fn rl_callback_sigcleanup() {
+    rl_cleanup_after_signal();
+    rl_free_line_state();
+}
+
 // ── Callback mode (for event-loop integration) ─────────────────────
 
 /// Install a callback handler for event-loop integration

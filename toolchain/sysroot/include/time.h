@@ -68,6 +68,8 @@ int clock_settime(clockid_t clk_id, const struct timespec *tp);
 
 /* Sleep */
 int nanosleep(const struct timespec *req, struct timespec *rem);
+int clock_nanosleep(clockid_t clk_id, int flags,
+                    const struct timespec *req, struct timespec *rem);
 
 /* Timezone */
 extern long timezone;

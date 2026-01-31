@@ -95,6 +95,8 @@ pub use crate::core::{
     current_pid_lockfree,
     // Debug
     debug_state,
+    debug_dump_all,
+    TaskDebugInfo,
     get_affinity,
     get_nice,
     get_scheduler,
