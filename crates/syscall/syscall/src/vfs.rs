@@ -9,6 +9,7 @@ use alloc::sync::Arc;
 // that can't directly `use vfs::` due to name collision with this module.
 pub use vfs::{File, FileFlags, Mode, SeekFrom, VfsError, VnodeType};
 pub use vfs::mount::GLOBAL_VFS;
+pub use vfs::{epoll, eventfd, memfd};
 
 use crate::errno;
 use crate::socket;

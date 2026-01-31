@@ -292,6 +292,10 @@ pub mod nr {
     pub const FCHDIR: u64 = 302;
     pub const SPLICE: u64 = 304;
     pub const SETHOSTNAME: u64 = 305;
+    pub const EVENTFD2: u64 = 306;
+    pub const EPOLL_CREATE1: u64 = 307;
+    pub const EPOLL_CTL: u64 = 308;
+    pub const EPOLL_WAIT: u64 = 309;
 
     /// AT_FDCWD: use current working directory for *at syscalls
     pub const AT_FDCWD: i32 = -100;
@@ -717,15 +721,21 @@ pub fn dispatch(
         ),
         nr::UMASK => sys_umask(arg1 as u32),
         nr::SOCKETPAIR => socket::sys_socketpair(arg1 as i32, arg2 as i32, arg3 as i32, arg4),
-        nr::MEMFD_CREATE => errno::ENOSYS, // Not yet implemented
+        nr::MEMFD_CREATE => vfs_ext::sys_memfd_create(arg1, arg2 as usize, arg3 as u32),
         nr::CLOCK_NANOSLEEP => time::sys_clock_nanosleep(arg1 as i32, arg2 as i32, arg3 as usize, arg4 as usize),
         nr::SIGALTSTACK => signal::sys_sigaltstack(arg1, arg2),
         nr::PREADV => vfs_ext::sys_preadv(arg1 as i32, arg2, arg3 as i32, arg4 as i64),
         nr::PWRITEV => vfs_ext::sys_pwritev(arg1 as i32, arg2, arg3 as i32, arg4 as i64),
         nr::FCHDIR => sys_fchdir(arg1 as i32),
         nr::WAITID => sys_waitid(arg1 as i32, arg2 as i32, arg3, arg4 as i32),
-        nr::SPLICE => errno::ENOSYS, // TODO: implement splice
+        nr::SPLICE => vfs_ext::sys_splice(
+            arg1 as i32, arg2, arg3 as i32, arg4, arg5 as usize, arg6 as u32,
+        ),
         nr::SETHOSTNAME => sys_sethostname(arg1, arg2 as usize),
+        nr::EVENTFD2 => vfs_ext::sys_eventfd2(arg1 as u32, arg2 as u32),
+        nr::EPOLL_CREATE1 => vfs_ext::sys_epoll_create1(arg1 as i32),
+        nr::EPOLL_CTL => vfs_ext::sys_epoll_ctl(arg1 as i32, arg2 as i32, arg3 as i32, arg4),
+        nr::EPOLL_WAIT => vfs_ext::sys_epoll_wait(arg1 as i32, arg2, arg3 as i32, arg4 as i32),
 
         _ => errno::ENOSYS,
     }

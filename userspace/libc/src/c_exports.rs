@@ -4202,51 +4202,63 @@ pub unsafe extern "C" fn getloadavg(loadavg: *mut f64, nelem: i32) -> i32 {
     n
 }
 
-// ============ memfd_create (stub) ============
+// ============ memfd_create ============
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn memfd_create(_name: *const u8, _flags: u32) -> i32 {
-    ERRNO_VAR = errno::ENOSYS;
-    -1
+pub unsafe extern "C" fn memfd_create(name: *const u8, flags: u32) -> i32 {
+    let name_len = if name.is_null() { 0 } else { cstr_len(name) };
+    syscall::syscall3(
+        syscall::nr::MEMFD_CREATE,
+        name as usize,
+        name_len,
+        flags as usize,
+    ) as i32
 }
 
-// ============ eventfd (stub) ============
+// ============ eventfd ============
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn eventfd(_initval: u32, _flags: i32) -> i32 {
-    ERRNO_VAR = errno::ENOSYS;
-    -1
+pub unsafe extern "C" fn eventfd(initval: u32, flags: i32) -> i32 {
+    syscall::syscall2(syscall::nr::EVENTFD2, initval as usize, flags as usize) as i32
 }
 
-// ============ epoll stubs ============
+// ============ epoll ============
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn epoll_create(_size: i32) -> i32 {
-    ERRNO_VAR = errno::ENOSYS;
-    -1
+    syscall::syscall1(syscall::nr::EPOLL_CREATE1, 0) as i32
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn epoll_create1(_flags: i32) -> i32 {
-    ERRNO_VAR = errno::ENOSYS;
-    -1
+pub unsafe extern "C" fn epoll_create1(flags: i32) -> i32 {
+    syscall::syscall1(syscall::nr::EPOLL_CREATE1, flags as usize) as i32
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn epoll_ctl(_epfd: i32, _op: i32, _fd: i32, _event: *mut u8) -> i32 {
-    ERRNO_VAR = errno::ENOSYS;
-    -1
+pub unsafe extern "C" fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: *mut u8) -> i32 {
+    syscall::syscall4(
+        syscall::nr::EPOLL_CTL,
+        epfd as usize,
+        op as usize,
+        fd as usize,
+        event as usize,
+    ) as i32
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn epoll_wait(
-    _epfd: i32,
-    _events: *mut u8,
-    _maxevents: i32,
-    _timeout: i32,
+    epfd: i32,
+    events: *mut u8,
+    maxevents: i32,
+    timeout: i32,
 ) -> i32 {
-    ERRNO_VAR = errno::ENOSYS;
-    -1
+    syscall::syscall4(
+        syscall::nr::EPOLL_WAIT,
+        epfd as usize,
+        events as usize,
+        maxevents as usize,
+        timeout as usize,
+    ) as i32
 }
 
 // ============ vfork (alias to fork) ============
@@ -5062,16 +5074,23 @@ pub unsafe extern "C" fn pause() -> i32 {
     -1
 }
 
-// ============ splice (stub) ============
+// ============ splice ============
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn splice(
-    _fd_in: i32, _off_in: *mut i64,
-    _fd_out: i32, _off_out: *mut i64,
-    _len: usize, _flags: u32,
+    fd_in: i32, off_in: *mut i64,
+    fd_out: i32, off_out: *mut i64,
+    len: usize, flags: u32,
 ) -> isize {
-    ERRNO_VAR = errno::ENOSYS;
-    -1
+    syscall::syscall6(
+        syscall::nr::SPLICE,
+        fd_in as usize,
+        off_in as usize,
+        fd_out as usize,
+        off_out as usize,
+        len,
+        flags as usize,
+    ) as isize
 }
 
 // ============ shm_open / shm_unlink (stubs) ============

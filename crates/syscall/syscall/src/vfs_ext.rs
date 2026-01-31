@@ -4,13 +4,14 @@
 
 extern crate alloc;
 
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use crate::errno;
 use crate::nr;
 // Import from crate::vfs (which re-exports external vfs crate types)
 use crate::vfs::{self, copy_path_from_user, resolve_path, validate_user_buffer, vfs_error_to_errno};
-use crate::vfs::{SeekFrom, GLOBAL_VFS};
+use crate::vfs::{File, FileFlags, SeekFrom, GLOBAL_VFS};
 use crate::{with_current_meta, with_current_meta_mut};
 
 /// IoVec structure for readv/writev (matches struct iovec)
@@ -665,6 +666,298 @@ pub fn sys_pwritev(fd: i32, iov_ptr: u64, iovcnt: i32, offset: i64) -> i64 {
         total += result;
         cur_offset += result;
         if (result as usize) < iov.iov_len {
+            break;
+        }
+    }
+
+    total
+}
+
+// ============ memfd_create ============
+
+/// sys_memfd_create - Create anonymous memory-backed file descriptor
+///
+/// # Arguments
+/// * `name_ptr` - Name for debugging (in /proc/pid/fd/)
+/// * `name_len` - Length of name
+/// * `flags` - MFD_CLOEXEC, MFD_ALLOW_SEALING
+pub fn sys_memfd_create(_name_ptr: u64, _name_len: usize, flags: u32) -> i64 {
+    let cloexec = flags & vfs::memfd::MFD_CLOEXEC != 0;
+
+    let vnode = vfs::memfd::create_memfd();
+    let file = Arc::new(File::new(vnode, FileFlags::O_RDWR));
+
+    let result = with_current_meta_mut(|meta| {
+        let fd = match meta.fd_table.alloc(file) {
+            Ok(fd) => fd,
+            Err(e) => return Err(vfs_error_to_errno(e)),
+        };
+        if cloexec {
+            if let Ok(desc) = meta.fd_table.get_mut(fd) {
+                desc.cloexec = true;
+            }
+        }
+        Ok(fd)
+    });
+
+    match result {
+        Some(Ok(fd)) => fd as i64,
+        Some(Err(e)) => e,
+        None => errno::ESRCH,
+    }
+}
+
+// ============ eventfd ============
+
+/// sys_eventfd2 - Create event notification file descriptor
+///
+/// # Arguments
+/// * `initval` - Initial counter value
+/// * `flags` - EFD_CLOEXEC, EFD_NONBLOCK, EFD_SEMAPHORE
+pub fn sys_eventfd2(initval: u32, flags: u32) -> i64 {
+    let cloexec = flags & vfs::eventfd::EFD_CLOEXEC != 0;
+    let nonblock = flags & vfs::eventfd::EFD_NONBLOCK != 0;
+
+    let vnode = vfs::eventfd::create_eventfd(initval, flags);
+
+    let mut file_flags = FileFlags::O_RDWR;
+    if nonblock {
+        file_flags |= FileFlags::O_NONBLOCK;
+    }
+    let file = Arc::new(File::new(vnode, file_flags));
+
+    let result = with_current_meta_mut(|meta| {
+        let fd = match meta.fd_table.alloc(file) {
+            Ok(fd) => fd,
+            Err(e) => return Err(vfs_error_to_errno(e)),
+        };
+        if cloexec {
+            if let Ok(desc) = meta.fd_table.get_mut(fd) {
+                desc.cloexec = true;
+            }
+        }
+        Ok(fd)
+    });
+
+    match result {
+        Some(Ok(fd)) => fd as i64,
+        Some(Err(e)) => e,
+        None => errno::ESRCH,
+    }
+}
+
+// ============ epoll ============
+
+/// sys_epoll_create1 - Create epoll instance
+///
+/// # Arguments
+/// * `flags` - EPOLL_CLOEXEC (0x80000)
+pub fn sys_epoll_create1(flags: i32) -> i64 {
+    let cloexec = flags & 0x80000 != 0;
+
+    let vnode = vfs::epoll::create_epoll();
+    let file = Arc::new(File::new(vnode, FileFlags::O_RDWR));
+
+    let result = with_current_meta_mut(|meta| {
+        let fd = match meta.fd_table.alloc(file) {
+            Ok(fd) => fd,
+            Err(e) => return Err(vfs_error_to_errno(e)),
+        };
+        if cloexec {
+            if let Ok(desc) = meta.fd_table.get_mut(fd) {
+                desc.cloexec = true;
+            }
+        }
+        Ok(fd)
+    });
+
+    match result {
+        Some(Ok(fd)) => fd as i64,
+        Some(Err(e)) => e,
+        None => errno::ESRCH,
+    }
+}
+
+/// sys_epoll_ctl - Control epoll instance
+///
+/// # Arguments
+/// * `epfd` - epoll file descriptor
+/// * `op` - EPOLL_CTL_ADD, EPOLL_CTL_DEL, EPOLL_CTL_MOD
+/// * `fd` - Target file descriptor
+/// * `event_ptr` - Pointer to struct epoll_event
+pub fn sys_epoll_ctl(epfd: i32, op: i32, fd: i32, event_ptr: u64) -> i64 {
+    let event = if op != vfs::epoll::EPOLL_CTL_DEL {
+        if !validate_user_buffer(event_ptr, 12) {
+            return errno::EFAULT;
+        }
+        unsafe {
+            core::arch::asm!("stac", options(nomem, nostack));
+            let ev = core::ptr::read_volatile(event_ptr as *const vfs::epoll::EpollEvent);
+            core::arch::asm!("clac", options(nomem, nostack));
+            Some(ev)
+        }
+    } else {
+        None
+    };
+
+    let result = with_current_meta_mut(|meta| {
+        let epoll_file = match meta.fd_table.get(epfd) {
+            Ok(desc) => desc.file.clone(),
+            Err(_) => return errno::EBADF,
+        };
+
+        let epoll_vnode = epoll_file.vnode();
+        let epoll_node = match epoll_vnode.as_any().downcast_ref::<vfs::epoll::EpollNode>() {
+            Some(node) => node,
+            None => return errno::EINVAL,
+        };
+
+        let mut instance = epoll_node.instance.lock();
+
+        match op {
+            vfs::epoll::EPOLL_CTL_ADD => {
+                let target_file = match meta.fd_table.get(fd) {
+                    Ok(desc) => desc.file.clone(),
+                    Err(_) => return errno::EBADF,
+                };
+                let ev = event.unwrap();
+                match instance.add(fd, target_file, ev.events, ev.data) {
+                    Ok(()) => 0,
+                    Err(e) => vfs_error_to_errno(e),
+                }
+            }
+            vfs::epoll::EPOLL_CTL_DEL => {
+                match instance.del(fd) {
+                    Ok(()) => 0,
+                    Err(e) => vfs_error_to_errno(e),
+                }
+            }
+            vfs::epoll::EPOLL_CTL_MOD => {
+                let ev = event.unwrap();
+                match instance.modify(fd, ev.events, ev.data) {
+                    Ok(()) => 0,
+                    Err(e) => vfs_error_to_errno(e),
+                }
+            }
+            _ => errno::EINVAL,
+        }
+    });
+
+    result.unwrap_or(errno::ESRCH)
+}
+
+/// sys_epoll_wait - Wait for events on an epoll instance
+///
+/// # Arguments
+/// * `epfd` - epoll file descriptor
+/// * `events_ptr` - Output buffer for epoll_event array
+/// * `maxevents` - Maximum events to return
+/// * `timeout` - Timeout in milliseconds (-1 = infinite, 0 = non-blocking)
+pub fn sys_epoll_wait(epfd: i32, events_ptr: u64, maxevents: i32, _timeout: i32) -> i64 {
+    if maxevents <= 0 {
+        return errno::EINVAL;
+    }
+
+    let max = maxevents as usize;
+    if !validate_user_buffer(events_ptr, max * 12) {
+        return errno::EFAULT;
+    }
+
+    let result = with_current_meta(|meta| {
+        let epoll_file = match meta.fd_table.get(epfd) {
+            Ok(desc) => desc.file.clone(),
+            Err(_) => return Err(errno::EBADF),
+        };
+
+        let epoll_vnode = epoll_file.vnode();
+        let epoll_node = match epoll_vnode.as_any().downcast_ref::<vfs::epoll::EpollNode>() {
+            Some(node) => node,
+            None => return Err(errno::EINVAL),
+        };
+
+        let instance = epoll_node.instance.lock();
+        Ok(instance.wait(max))
+    });
+
+    match result {
+        Some(Ok(events)) => {
+            let count = events.len();
+            unsafe {
+                core::arch::asm!("stac", options(nomem, nostack));
+                let out = events_ptr as *mut vfs::epoll::EpollEvent;
+                for (i, ev) in events.iter().enumerate() {
+                    core::ptr::write_volatile(out.add(i), *ev);
+                }
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
+            count as i64
+        }
+        Some(Err(e)) => e,
+        None => errno::ESRCH,
+    }
+}
+
+// ============ splice ============
+
+/// sys_splice - Move data between two file descriptors
+///
+/// # Arguments
+/// * `fd_in` - Input file descriptor
+/// * `off_in_ptr` - Input offset pointer (unused, for pipe compat)
+/// * `fd_out` - Output file descriptor
+/// * `off_out_ptr` - Output offset pointer (unused, for pipe compat)
+/// * `len` - Maximum bytes to transfer
+/// * `flags` - SPLICE_F_MOVE, SPLICE_F_NONBLOCK, etc.
+pub fn sys_splice(
+    fd_in: i32,
+    _off_in_ptr: u64,
+    fd_out: i32,
+    _off_out_ptr: u64,
+    len: usize,
+    _flags: u32,
+) -> i64 {
+    let files = with_current_meta(|meta| {
+        let fin = meta.fd_table.get(fd_in).ok().map(|d| d.file.clone());
+        let fout = meta.fd_table.get(fd_out).ok().map(|d| d.file.clone());
+        (fin, fout)
+    });
+
+    let (fin, fout) = match files {
+        Some((Some(f_in), Some(f_out))) => (f_in, f_out),
+        _ => return errno::EBADF,
+    };
+
+    let buf_size = len.min(65536);
+    let mut buf = alloc::vec![0u8; buf_size];
+    let mut total: i64 = 0;
+    let mut remaining = len;
+
+    while remaining > 0 {
+        let chunk = remaining.min(buf_size);
+        let n_read = match fin.read(&mut buf[..chunk]) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(vfs::VfsError::WouldBlock) => {
+                if total > 0 { break; }
+                return errno::EAGAIN;
+            }
+            Err(e) => {
+                if total > 0 { break; }
+                return vfs_error_to_errno(e);
+            }
+        };
+
+        let n_written = match fout.write(&buf[..n_read]) {
+            Ok(n) => n,
+            Err(e) => {
+                if total > 0 { break; }
+                return vfs_error_to_errno(e);
+            }
+        };
+
+        total += n_written as i64;
+        remaining -= n_written;
+        if n_written < n_read {
             break;
         }
     }

@@ -12,8 +12,8 @@ ac_cv_file__dev_ptc=no
 # Resource limits
 ac_cv_header_sys_resource_h=yes
 
-# We have eventfd stub
-ac_cv_func_eventfd=no
+# eventfd implemented with kernel handler
+ac_cv_func_eventfd=yes
 
 # We have pipe
 ac_cv_func_pipe=yes
@@ -190,7 +190,7 @@ ac_cv_func_fsync=yes
 ac_cv_func_sync=yes
 ac_cv_func_copy_file_range=yes
 ac_cv_func_close_range=yes
-ac_cv_func_splice=no
+ac_cv_func_splice=yes
 ac_cv_func_tee=no
 
 # File metadata
@@ -263,8 +263,8 @@ ac_cv_func_if_nameindex=yes
 
 # Poll/epoll
 ac_cv_func_poll=yes
-ac_cv_func_epoll_create=no
-ac_cv_func_epoll_create1=no
+ac_cv_func_epoll_create=yes
+ac_cv_func_epoll_create1=yes
 ac_cv_func_kqueue=no
 
 # Semaphores/shared memory - stubs
@@ -280,7 +280,7 @@ ac_cv_func_madvise=yes
 ac_cv_func_mremap=no
 ac_cv_func_posix_fallocate=yes
 ac_cv_func_posix_fadvise=yes
-ac_cv_func_memfd_create=no
+ac_cv_func_memfd_create=yes
 
 # Security/random
 ac_cv_func_getentropy=yes

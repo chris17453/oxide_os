@@ -212,6 +212,10 @@ pub mod nr {
     pub const FCHDIR: u64 = 302;
     pub const SPLICE: u64 = 304;
     pub const SETHOSTNAME: u64 = 305;
+    pub const EVENTFD2: u64 = 306;
+    pub const EPOLL_CREATE1: u64 = 307;
+    pub const EPOLL_CTL: u64 = 308;
+    pub const EPOLL_WAIT: u64 = 309;
 
     /// AT_FDCWD: use current working directory for *at syscalls
     pub const AT_FDCWD: i32 = -100;

@@ -4,6 +4,7 @@
 
 use alloc::string::String;
 use alloc::sync::Arc;
+use core::any::Any;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::VfsResult;
@@ -252,6 +253,13 @@ pub trait VnodeOps: Send + Sync {
     fn poll_write_ready(&self) -> bool {
         // Default: regular files are always writable
         true
+    }
+
+    /// Downcast to concrete type (for epoll_ctl, ioctl, etc.)
+    fn as_any(&self) -> &dyn Any {
+        // Default: no downcasting support. Concrete types that need
+        // downcasting (EpollNode) must override this.
+        &()
     }
 }
 

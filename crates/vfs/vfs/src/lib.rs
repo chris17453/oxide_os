@@ -6,9 +6,12 @@
 
 extern crate alloc;
 
+pub mod epoll;
 pub mod error;
+pub mod eventfd;
 pub mod fd;
 pub mod file;
+pub mod memfd;
 pub mod mount;
 pub mod path;
 pub mod pipe;
