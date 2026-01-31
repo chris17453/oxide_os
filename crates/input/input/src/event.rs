@@ -167,6 +167,10 @@ pub enum RelCode {
     Wheel = 0x08,
     /// Miscellaneous
     Misc = 0x09,
+    /// High-resolution vertical wheel (120 units per notch)
+    WheelHiRes = 0x0B,
+    /// High-resolution horizontal wheel (120 units per notch)
+    HWheelHiRes = 0x0C,
 }
 
 /// Absolute axis codes

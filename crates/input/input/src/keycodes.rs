@@ -145,6 +145,8 @@ pub const REL_HWHEEL: u16 = 0x06;
 pub const REL_DIAL: u16 = 0x07;
 pub const REL_WHEEL: u16 = 0x08;
 pub const REL_MISC: u16 = 0x09;
+pub const REL_WHEEL_HI_RES: u16 = 0x0B;
+pub const REL_HWHEEL_HI_RES: u16 = 0x0C;
 
 // Absolute axes
 pub const ABS_X: u16 = 0x00;

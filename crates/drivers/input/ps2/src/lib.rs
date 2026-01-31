@@ -13,7 +13,7 @@ use spin::Mutex;
 
 use input::{
     BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, InputDevice, InputDeviceInfo, InputDeviceType, KeyValue,
-    Keymap, REL_WHEEL, REL_X, REL_Y,
+    Keymap, REL_WHEEL, REL_WHEEL_HI_RES, REL_X, REL_Y,
 };
 
 /// 8042 controller data port
@@ -628,7 +628,10 @@ impl Ps2Mouse {
         if self.has_wheel.load(Ordering::SeqCst) {
             let dz = packet[3] as i8;
             if dz != 0 {
-                input::report_rel(device_id, REL_WHEEL, -(dz as i32));
+                let wheel_val = -(dz as i32);
+                input::report_rel(device_id, REL_WHEEL, wheel_val);
+                // Hi-res scroll: 120 units per PS/2 notch (Linux 5.0+ convention)
+                input::report_rel(device_id, REL_WHEEL_HI_RES, wheel_val * 120);
             }
         }
 
