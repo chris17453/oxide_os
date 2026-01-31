@@ -79,6 +79,7 @@ pub mod syscall;
 pub mod unistd;
 
 pub mod syslog;
+pub mod readline;
 
 // Extended POSIX modules
 pub mod dirent;
