@@ -47,6 +47,9 @@ syslog syslogmodule.c
 # select with poll only
 select selectmodule.c
 
+# Readline (provided by libc)
+readline readline.c
+
 *disabled*
 # Things we definitely can't support
 _lsprof
@@ -85,7 +88,6 @@ nis
 ossaudiodev
 pyexpat
 _elementtree
-readline
 resource
 spwd
 xx
