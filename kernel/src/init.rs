@@ -35,7 +35,7 @@ use crate::fault;
 use crate::globals::{HEAP_ALLOCATOR, HEAP_SIZE, HEAP_STORAGE, KERNEL_PML4, MEMORY_MANAGER};
 use crate::process::get_current_task_fs_base;
 use crate::memory;
-use crate::mount::{kernel_mount, kernel_umount};
+use crate::mount::{kernel_mount, kernel_pivot_root, kernel_umount};
 use crate::process::{kernel_exec, kernel_fork, kernel_wait, user_exit};
 use crate::scheduler;
 use crate::smp_init;
@@ -543,6 +543,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         wait: Some(kernel_wait),
         mount: Some(kernel_mount),
         umount: Some(kernel_umount),
+        pivot_root: Some(kernel_pivot_root),
         serial_write: Some(console::serial_write_bytes),
         get_current_fs_base: Some(get_current_task_fs_base),
         allow_kernel_preempt: Some(arch::allow_kernel_preempt),

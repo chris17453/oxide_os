@@ -76,10 +76,16 @@ pub fn kernel_mount(source: &str, target: &str, fstype: &str, flags: u32) -> i64
     let mount_flags = MountFlags::from_bits_truncate(flags);
     let read_only = mount_flags.contains(MountFlags::MS_RDONLY);
     let is_remount = mount_flags.contains(MountFlags::MS_REMOUNT);
+    let is_move = mount_flags.contains(MountFlags::MS_MOVE);
 
     // Handle remount
     if is_remount {
         return handle_remount(target, mount_flags);
+    }
+
+    // Handle move mount
+    if is_move {
+        return kernel_move_mount(source, target);
     }
 
     // Check if target is already mounted
@@ -228,6 +234,56 @@ fn mount_devpts(_target: &str, _flags: MountFlags) -> i64 {
     // devpts requires access to PtyManager which is set up during boot
     // For now, return error - user should use the existing /dev/pts
     errno::ENOSYS
+}
+
+/// Kernel move_mount callback
+///
+/// Moves a mount from one path to another (MS_MOVE semantics).
+///
+/// # Arguments
+/// * `source` - Current mount point path
+/// * `target` - New mount point path
+///
+/// # Returns
+/// 0 on success, negative errno on error
+pub fn kernel_move_mount(source: &str, target: &str) -> i64 {
+    match GLOBAL_VFS.move_mount(source, target) {
+        Ok(()) => 0,
+        Err(vfs::VfsError::NotFound) => errno::EINVAL,
+        Err(_) => errno::EINVAL,
+    }
+}
+
+/// Kernel pivot_root callback
+///
+/// Changes the root filesystem. The filesystem at `new_root` becomes
+/// the new `/`, and the old root is moved to `put_old`.
+///
+/// # Arguments
+/// * `new_root` - Path to the new root filesystem (must be a mount point)
+/// * `put_old` - Path where old root will be placed (must be under new_root)
+///
+/// # Returns
+/// 0 on success, negative errno on error
+pub fn kernel_pivot_root(new_root: &str, put_old: &str) -> i64 {
+    // Validate new_root is a mount point
+    let mounts = GLOBAL_VFS.mounts();
+    if !mounts.contains(&alloc::string::String::from(new_root)) {
+        return errno::EINVAL;
+    }
+
+    // Validate put_old is under new_root
+    if !put_old.starts_with(new_root) {
+        return errno::EINVAL;
+    }
+
+    // Perform the pivot
+    match GLOBAL_VFS.pivot_root(new_root, put_old) {
+        Ok(()) => 0,
+        Err(vfs::VfsError::NotFound) => errno::EINVAL,
+        Err(vfs::VfsError::InvalidArgument) => errno::EINVAL,
+        Err(_) => errno::EINVAL,
+    }
 }
 
 /// Kernel umount callback

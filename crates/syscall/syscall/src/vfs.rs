@@ -1148,6 +1148,71 @@ pub fn sys_umount(target_ptr: u64, target_len: usize, flags: u32) -> i64 {
     errno::ENOSYS
 }
 
+/// sys_pivot_root - Change the root filesystem
+///
+/// # Arguments
+/// * `new_root_ptr` - Pointer to new root path string
+/// * `new_root_len` - Length of new root path
+/// * `put_old_ptr` - Pointer to put_old path string
+/// * `put_old_len` - Length of put_old path
+///
+/// # Returns
+/// 0 on success, negative errno on error
+pub fn sys_pivot_root(
+    new_root_ptr: u64,
+    new_root_len: usize,
+    put_old_ptr: u64,
+    put_old_len: usize,
+) -> i64 {
+    use crate::SYSCALL_CONTEXT;
+    use crate::errno;
+    use core::ptr::addr_of;
+
+    // Enable access to user pages for SMAP
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
+
+    // Copy new_root path
+    let new_root = match copy_path_from_user(new_root_ptr, new_root_len) {
+        Some(s) => s,
+        None => {
+            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            return errno::EFAULT;
+        }
+    };
+
+    // Copy put_old path
+    let put_old = match copy_path_from_user(put_old_ptr, put_old_len) {
+        Some(s) => s,
+        None => {
+            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            return errno::EFAULT;
+        }
+    };
+
+    // Resolve paths
+    let resolved_new_root = resolve_path(new_root);
+    let resolved_put_old = resolve_path(put_old);
+
+    // Call the kernel pivot_root callback
+    let result = unsafe {
+        let ctx = addr_of!(SYSCALL_CONTEXT);
+        if let Some(pivot_fn) = (*ctx).pivot_root {
+            pivot_fn(&resolved_new_root, &resolved_put_old)
+        } else {
+            errno::ENOSYS
+        }
+    };
+
+    // Disable access to user pages
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
+
+    result
+}
+
 /// Get the DEBUG_PRE_ADDR value (for debugging fd allocation)
 pub fn get_debug_pre_addr() -> u64 {
     DEBUG_PRE_ADDR.load(core::sync::atomic::Ordering::SeqCst)

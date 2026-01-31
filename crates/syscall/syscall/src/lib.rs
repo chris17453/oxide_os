@@ -182,7 +182,7 @@ pub mod nr {
     pub const SIGPENDING: u64 = 53;
     pub const SIGSUSPEND: u64 = 54;
     pub const PAUSE: u64 = 55;
-    pub const SIGRETURN: u64 = 56;
+    pub const SIGRETURN: u64 = 57;
 
     // Memory mapping syscalls
     pub const MMAP: u64 = 90;
@@ -229,6 +229,7 @@ pub mod nr {
     // Filesystem mount syscalls
     pub const MOUNT: u64 = 165;
     pub const UMOUNT: u64 = 166;
+    pub const PIVOT_ROOT: u64 = 167;
 }
 
 /// Error codes (negative return values)
@@ -304,6 +305,9 @@ pub type MountFn = fn(&str, &str, &str, u32) -> i64;
 /// Umount callback type - mount_point, flags -> result
 pub type UmountFn = fn(&str, u32) -> i64;
 
+/// Pivot root callback type - new_root, put_old -> result
+pub type PivotRootFn = fn(&str, &str) -> i64;
+
 /// Serial debug write function type
 pub type SerialWriteFn = fn(&[u8]);
 
@@ -328,6 +332,8 @@ pub struct SyscallContext {
     pub mount: Option<MountFn>,
     /// Function to unmount a filesystem
     pub umount: Option<UmountFn>,
+    /// Function to pivot the root filesystem
+    pub pivot_root: Option<PivotRootFn>,
     /// Function to write to serial for debug output
     pub serial_write: Option<SerialWriteFn>,
     /// Function to get current task's FS base register (for TLS)
@@ -350,6 +356,7 @@ impl SyscallContext {
             wait: None,
             mount: None,
             umount: None,
+            pivot_root: None,
             serial_write: None,
             get_current_fs_base: None,
             allow_kernel_preempt: None,
@@ -591,6 +598,7 @@ pub fn dispatch(
             arg6,
         ),
         nr::UMOUNT => vfs::sys_umount(arg1, arg2 as usize, arg3 as u32),
+        nr::PIVOT_ROOT => vfs::sys_pivot_root(arg1, arg2 as usize, arg3, arg4 as usize),
 
         _ => errno::ENOSYS,
     }

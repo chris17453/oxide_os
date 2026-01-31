@@ -368,6 +368,7 @@ create-rootfs: kernel bootloader initramfs-minimal
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/root && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/run/network && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/mnt && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/initramfs && \
 	\
 	echo "  Copying binaries..." && \
 	sudo cp "$(USERSPACE_OUT_RELEASE)/init" $(TARGET_DIR)/mnt/root/sbin/init && \

@@ -24,6 +24,73 @@ fn map_label(label: &str) -> Option<&'static str> {
     }
 }
 
+/// Attempt to switch from initramfs to ext4 root filesystem.
+///
+/// If an ext4 root is mounted at /mnt/root (by the kernel), this function:
+/// 1. Moves /dev/pts and /dev to the new root
+/// 2. Calls pivot_root to swap root filesystems
+/// 3. Cleans up stale initramfs mounts
+///
+/// Returns true if the switch succeeded, false if staying on initramfs.
+fn switch_root() -> bool {
+    // Check if ext4 root is available by probing for /sbin/init on it
+    let fd = open("/mnt/root/sbin/init", O_RDONLY, 0);
+    if fd < 0 {
+        printlns("[init] No ext4 root filesystem at /mnt/root, staying on initramfs");
+        return false;
+    }
+    close(fd);
+
+    printlns("[init] Switching to ext4 root filesystem...");
+
+    // Move devfs mounts to new root (children first)
+    let r = syscall::mount_move("/dev/pts", "/mnt/root/dev/pts");
+    if r != 0 {
+        prints("[init] Warning: move /dev/pts failed (");
+        print_i64(r as i64);
+        printlns(")");
+    }
+
+    let r = syscall::mount_move("/dev", "/mnt/root/dev");
+    if r != 0 {
+        prints("[init] Warning: move /dev failed (");
+        print_i64(r as i64);
+        printlns("), aborting switch_root");
+        // Try to move /dev/pts back if we moved it
+        let _ = syscall::mount_move("/mnt/root/dev/pts", "/dev/pts");
+        return false;
+    }
+
+    // pivot_root: make ext4 the new /, old initramfs at /initramfs
+    let r = syscall::pivot_root("/mnt/root", "/mnt/root/initramfs");
+    if r != 0 {
+        prints("[init] pivot_root failed (");
+        print_i64(r as i64);
+        printlns("), staying on initramfs");
+        // Move devfs back
+        let _ = syscall::mount_move("/mnt/root/dev", "/dev");
+        let _ = syscall::mount_move("/mnt/root/dev/pts", "/dev/pts");
+        return false;
+    }
+
+    // Update working directory to new root
+    chdir("/");
+
+    printlns("[init] Root switched to ext4");
+
+    // Clean up old initramfs mounts (these are now under /initramfs)
+    let _ = syscall::umount("/initramfs/var/run");
+    let _ = syscall::umount("/initramfs/var/lib");
+    let _ = syscall::umount("/initramfs/var/log");
+    let _ = syscall::umount("/initramfs/tmp");
+    let _ = syscall::umount("/initramfs/run");
+    let _ = syscall::umount("/initramfs/proc");
+    let _ = syscall::umount("/initramfs/sys");
+    let _ = syscall::umount("/initramfs");
+
+    true
+}
+
 /// Main init entry point
 #[unsafe(no_mangle)]
 fn main() -> i32 {
@@ -40,7 +107,13 @@ fn main() -> i32 {
     printlns("OXIDE OS v0.1.0");
     printlns("");
 
+    // Try to switch from initramfs to ext4 root filesystem.
+    // If successful, / is now ext4 and /etc/fstab comes from there.
+    // If it fails, we stay on initramfs (current behavior).
+    let _switched = switch_root();
+
     // Mount filesystems from /etc/fstab
+    // (reads ext4 fstab after switch, or initramfs fstab if no switch)
     mount_fstab();
 
     // Load firewall rules early in boot

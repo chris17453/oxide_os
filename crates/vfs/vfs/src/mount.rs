@@ -243,6 +243,102 @@ impl VFS {
             .ok_or(VfsError::NotFound)
     }
 
+    /// Move a mount from one path to another
+    ///
+    /// Removes the mount at `from` and re-inserts it at `to`.
+    pub fn move_mount(&self, from: &str, to: &str) -> VfsResult<()> {
+        let mut mounts = self.mounts.write();
+        let old_mount = mounts.remove(from).ok_or(VfsError::NotFound)?;
+        let new_mount = Arc::new(Mount::new(
+            old_mount.root().clone(),
+            String::from(to),
+            old_mount.flags(),
+            old_mount.fs_type().to_string(),
+        ));
+        mounts.insert(String::from(to), new_mount);
+        Ok(())
+    }
+
+    /// Pivot the root filesystem
+    ///
+    /// Makes the filesystem mounted at `new_root` become the new `/`,
+    /// and moves the old root to `put_old`. All existing mount paths
+    /// are rewritten accordingly.
+    ///
+    /// `put_old` must be under `new_root` (e.g., `/mnt/root/initramfs`).
+    pub fn pivot_root(&self, new_root: &str, put_old: &str) -> VfsResult<()> {
+        // Validate that put_old is under new_root
+        if !put_old.starts_with(new_root) {
+            return Err(VfsError::InvalidArgument);
+        }
+
+        // The suffix that put_old has after new_root (e.g., "/initramfs")
+        let put_old_suffix = &put_old[new_root.len()..];
+
+        let mut mounts = self.mounts.write();
+
+        // Remove the new_root mount — it becomes "/"
+        let new_root_mount = mounts.remove(new_root).ok_or(VfsError::NotFound)?;
+
+        // Collect all current mount paths and their Arc<Mount>
+        let entries: Vec<(String, Arc<Mount>)> = mounts
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        // Clear and rebuild with rewritten paths
+        mounts.clear();
+
+        let new_root_prefix = if new_root.ends_with('/') {
+            new_root.to_string()
+        } else {
+            alloc::format!("{}/", new_root)
+        };
+
+        for (path, mount) in entries {
+            let new_path = if path.starts_with(&new_root_prefix) {
+                // Under new_root: strip prefix → becomes top-level
+                // e.g., "/mnt/root/dev" → "/dev"
+                let suffix = &path[new_root.len()..];
+                String::from(suffix)
+            } else {
+                // Under old root: prepend put_old_suffix
+                // e.g., "/" → "/initramfs", "/dev" → "/initramfs/dev"
+                if path == "/" {
+                    String::from(put_old_suffix)
+                } else {
+                    alloc::format!("{}{}", put_old_suffix, path)
+                }
+            };
+
+            let remounted = Arc::new(Mount::new(
+                mount.root().clone(),
+                new_path.clone(),
+                mount.flags(),
+                mount.fs_type().to_string(),
+            ));
+            mounts.insert(new_path, remounted);
+        }
+
+        // Insert the new root at "/"
+        let root_mount = Arc::new(Mount::new(
+            new_root_mount.root().clone(),
+            String::from("/"),
+            new_root_mount.flags(),
+            new_root_mount.fs_type().to_string(),
+        ));
+        mounts.insert(String::from("/"), root_mount.clone());
+
+        // Drop mounts lock before acquiring root lock to avoid nested locking
+        drop(mounts);
+
+        // Update self.root
+        let mut root_lock = self.root.write();
+        *root_lock = Some(root_mount);
+
+        Ok(())
+    }
+
     /// List all mount points
     pub fn mounts(&self) -> Vec<String> {
         self.mounts.read().keys().cloned().collect()

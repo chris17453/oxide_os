@@ -51,7 +51,7 @@ pub mod nr {
     pub const SIGPENDING: u64 = 53;
     pub const SIGSUSPEND: u64 = 54;
     pub const PAUSE: u64 = 55;
-    pub const SIGRETURN: u64 = 56;
+    pub const SIGRETURN: u64 = 57;
     // Time syscalls
     pub const GETTIMEOFDAY: u64 = 60;
     pub const CLOCK_GETTIME: u64 = 61;
@@ -144,6 +144,7 @@ pub mod nr {
     // Filesystem mount syscalls
     pub const MOUNT: u64 = 165;
     pub const UMOUNT: u64 = 166;
+    pub const PIVOT_ROOT: u64 = 167;
 }
 
 // Re-export syscall numbers at module level for convenience
@@ -1260,4 +1261,39 @@ pub fn umount2(target: &str, flags: u32) -> i32 {
         target.len(),
         flags as usize,
     ) as i32
+}
+
+/// pivot_root - Change the root filesystem
+///
+/// Makes the filesystem at `new_root` the new `/` and moves the
+/// old root to `put_old`.
+///
+/// # Arguments
+/// * `new_root` - Path to new root (must be a mount point)
+/// * `put_old` - Where to place old root (must be under new_root)
+///
+/// # Returns
+/// 0 on success, negative errno on error
+pub fn pivot_root(new_root: &str, put_old: &str) -> i32 {
+    syscall4(
+        nr::PIVOT_ROOT,
+        new_root.as_ptr() as usize,
+        new_root.len(),
+        put_old.as_ptr() as usize,
+        put_old.len(),
+    ) as i32
+}
+
+/// mount_move - Move a mount point to a new location
+///
+/// Equivalent to `mount(source, target, "", MS_MOVE, null)`.
+///
+/// # Arguments
+/// * `source` - Current mount point path
+/// * `target` - New mount point path
+///
+/// # Returns
+/// 0 on success, negative errno on error
+pub fn mount_move(source: &str, target: &str) -> i32 {
+    mount(source, target, "", mount_flags::MS_MOVE, core::ptr::null())
 }
