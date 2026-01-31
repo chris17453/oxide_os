@@ -26,24 +26,8 @@ const MAX_PIPES: usize = 8;
 /// Maximum completions to show
 const MAX_COMPLETIONS: usize = 64;
 
-/// Tab character
-const TAB: u8 = 0x09;
-
-/// Backspace
-const BACKSPACE: u8 = 0x7F;
-
-/// Ctrl-H (alternate backspace)
-const CTRL_H: u8 = 0x08;
-
-/// ANSI escape introducer
-const ESC: u8 = 0x1B;
-const CSI: u8 = b'[';
-
 /// Maximum number of aliases
 const MAX_ALIASES: usize = 64;
-
-/// Maximum history entries
-const MAX_HISTORY: usize = 100;
 
 /// Default prompt config paths
 const GLOBAL_PROMPT_PATH: &str = "/etc/prompt";
@@ -68,19 +52,16 @@ impl Alias {
     }
 }
 
-/// Print shell prompt with fallback hierarchy:
+/// Build a NUL-terminated prompt string using the prompt hierarchy:
 /// 1. $ESH_PROMPT environment variable
 /// 2. ~/.esh_prompt if readable
 /// 3. /etc/prompt if readable
 /// 4. DEFAULT_PROMPT
-fn print_prompt() {
-    // 1) ESH_PROMPT env
-    if let Some(prompt) = getenv("ESH_PROMPT") {
-        prints(prompt);
-        return;
-    }
+///
+/// Returns a reference to a static buffer containing the rendered prompt.
+fn get_prompt_string() -> &'static [u8] {
+    static mut PROMPT_RESULT: [u8; 256] = [0; 256];
 
-    // Helper to try loading prompt from a file path
     fn load_prompt(path: &str, buf: &mut [u8]) -> Option<usize> {
         let fd = open2(path, O_RDONLY);
         if fd < 0 {
@@ -89,6 +70,17 @@ fn print_prompt() {
         let n = read(fd, buf);
         close(fd);
         if n > 0 { Some(n as usize) } else { None }
+    }
+
+    // 1) ESH_PROMPT env
+    if let Some(prompt) = getenv("ESH_PROMPT") {
+        let s = render_prompt(prompt.as_bytes());
+        unsafe {
+            let len = s.len().min(255);
+            PROMPT_RESULT[..len].copy_from_slice(&s.as_bytes()[..len]);
+            PROMPT_RESULT[len] = 0;
+            return &PROMPT_RESULT[..len + 1];
+        }
     }
 
     // 2) User prompt file (~/.esh_prompt)
@@ -118,22 +110,36 @@ fn print_prompt() {
 
             let path = bytes_to_str(&path_buf);
             if let Some(n) = load_prompt(path, &mut prompt_buf) {
-                let parsed = render_prompt(&prompt_buf[..n]);
-                prints(parsed);
-                return;
+                let s = render_prompt(&prompt_buf[..n]);
+                unsafe {
+                    let len = s.len().min(255);
+                    PROMPT_RESULT[..len].copy_from_slice(&s.as_bytes()[..len]);
+                    PROMPT_RESULT[len] = 0;
+                    return &PROMPT_RESULT[..len + 1];
+                }
             }
         }
     }
 
     // 3) Global prompt file (/etc/prompt)
     if let Some(n) = load_prompt(GLOBAL_PROMPT_PATH, &mut prompt_buf) {
-        let parsed = render_prompt(&prompt_buf[..n]);
-        prints(parsed);
-        return;
+        let s = render_prompt(&prompt_buf[..n]);
+        unsafe {
+            let len = s.len().min(255);
+            PROMPT_RESULT[..len].copy_from_slice(&s.as_bytes()[..len]);
+            PROMPT_RESULT[len] = 0;
+            return &PROMPT_RESULT[..len + 1];
+        }
     }
 
     // 4) Fallback
-    prints(render_prompt(DEFAULT_PROMPT.as_bytes()));
+    let s = render_prompt(DEFAULT_PROMPT.as_bytes());
+    unsafe {
+        let len = s.len().min(255);
+        PROMPT_RESULT[..len].copy_from_slice(&s.as_bytes()[..len]);
+        PROMPT_RESULT[len] = 0;
+        &PROMPT_RESULT[..len + 1]
+    }
 }
 
 /// Render a prompt template supporting minimal escapes:
@@ -300,24 +306,11 @@ struct ShellState {
     positional: [[u8; 64]; MAX_ARGS],
     /// Number of positional parameters
     positional_count: usize,
-    /// History buffer
-    history: [[u8; MAX_LINE]; MAX_HISTORY],
-    /// Number of history entries
-    history_count: usize,
-    /// Current history position (for navigation)
-    history_pos: usize,
-    /// In-progress line buffer for editing
-    edit_buf: [u8; MAX_LINE],
-    /// Current edit length
-    edit_len: usize,
-    /// Current cursor position in edit buffer
-    cursor: usize,
 }
 
 impl ShellState {
     const fn new() -> Self {
         const EMPTY_ALIAS: Alias = Alias::new();
-        const EMPTY_LINE: [u8; MAX_LINE] = [0u8; MAX_LINE];
         const EMPTY_ARG: [u8; 64] = [0u8; 64];
         ShellState {
             aliases: [EMPTY_ALIAS; MAX_ALIASES],
@@ -325,12 +318,6 @@ impl ShellState {
             umask: 0o022,
             positional: [EMPTY_ARG; MAX_ARGS],
             positional_count: 0,
-            history: [EMPTY_LINE; MAX_HISTORY],
-            history_count: 0,
-            history_pos: 0,
-            edit_buf: [0; MAX_LINE],
-            edit_len: 0,
-            cursor: 0,
         }
     }
 }
@@ -396,61 +383,101 @@ struct DirEntry {
 
 const DT_DIR: u8 = 4;
 
-/// Save and restore terminal settings for raw mode
-static mut ORIG_TERMIOS: libc::termios::Termios = libc::termios::Termios {
-    c_iflag: 0,
-    c_oflag: 0,
-    c_cflag: 0,
-    c_lflag: 0,
-    c_line: 0,
-    c_cc: [0; libc::termios::NCCS],
-    c_ispeed: 0,
-    c_ospeed: 0,
-};
-static mut TERMIOS_SAVED: bool = false;
+/// Shell completion callback for readline.
+///
+/// Called by readline when the user presses TAB. Returns a NULL-terminated
+/// array of matches (first element = longest common prefix), or NULL.
+unsafe extern "C" fn shell_completion(
+    text: *const u8,
+    start: i32,
+    _end: i32,
+) -> *mut *mut u8 {
+    // Suppress default filename completion — we handle it ourselves
+    libc::readline::rl_attempted_completion_over = 1;
 
-/// Put TTY in raw mode for the shell's line editor
-fn enable_raw_mode() {
-    use libc::termios::*;
+    let text_len = libc::string::strlen(text);
+    let prefix = core::slice::from_raw_parts(text, text_len);
 
-    let mut raw = Termios::default();
-    if tcgetattr(0, &mut raw) < 0 {
-        return; // Not a terminal, skip
+    // Determine if we're completing a command (first word) or a path
+    let is_first_word = start == 0;
+
+    // Check if prefix contains a / (path completion even for first word)
+    let has_slash = prefix.iter().any(|&c| c == b'/');
+
+    let mut completions: [[u8; 64]; MAX_COMPLETIONS] = [[0u8; 64]; MAX_COMPLETIONS];
+    let num_completions;
+
+    if is_first_word && !has_slash {
+        num_completions = complete_commands(prefix, text_len, &mut completions);
+    } else {
+        num_completions = complete_paths(prefix, text_len, &mut completions);
     }
 
-    // Save original settings
-    unsafe {
-        let ptr = &raw mut ORIG_TERMIOS;
-        (*ptr) = raw.clone();
-        TERMIOS_SAVED = true;
+    if num_completions == 0 {
+        return core::ptr::null_mut();
     }
 
-    // Disable canonical mode, echo, and signal generation — the shell
-    // handles its own line editing, history, tab completion, character
-    // echo, and Ctrl+C.
-    // Keep OPOST+ONLCR so \n is translated to \r\n on output.
-    raw.c_lflag &= !(lflag::ICANON | lflag::ECHO | lflag::ECHOE | lflag::ECHOK | lflag::ECHOKE | lflag::ECHOCTL | lflag::ISIG | lflag::IEXTEN);
+    // Build the matches array in readline's format:
+    // matches[0] = longest common prefix (LCD)
+    // matches[1..N] = individual matches
+    // matches[N+1] = NULL
 
-    // Disable ICRNL so carriage return comes through as \r
-    // (the shell handles CR itself in the input loop)
-    raw.c_iflag &= !iflag::ICRNL;
+    let array_size = (num_completions + 2) * core::mem::size_of::<*mut u8>();
+    let array = libc::c_exports::malloc(array_size) as *mut *mut u8;
+    if array.is_null() {
+        return core::ptr::null_mut();
+    }
 
-    // Return after 1 byte, no timeout
-    raw.c_cc[cc::VMIN] = 1;
-    raw.c_cc[cc::VTIME] = 0;
-
-    tcsetattr(0, action::TCSANOW, &raw);
-}
-
-/// Restore original terminal settings
-fn disable_raw_mode() {
-    use libc::termios::*;
-    unsafe {
-        if TERMIOS_SAVED {
-            let ptr = &raw const ORIG_TERMIOS;
-            tcsetattr(0, action::TCSANOW, &*ptr);
+    // Find LCD (longest common prefix)
+    let first_len = bytes_len(&completions[0]);
+    let mut lcd_len = first_len;
+    for i in 1..num_completions {
+        let other_len = bytes_len(&completions[i]);
+        let mut j = 0;
+        while j < lcd_len && j < other_len && completions[0][j] == completions[i][j] {
+            j += 1;
         }
+        lcd_len = j;
     }
+
+    // Allocate LCD string
+    let lcd = libc::c_exports::malloc(lcd_len + 1);
+    if !lcd.is_null() {
+        core::ptr::copy_nonoverlapping(completions[0].as_ptr(), lcd, lcd_len);
+        *lcd.add(lcd_len) = 0;
+    }
+    *array.add(0) = lcd;
+
+    // Copy individual matches
+    for i in 0..num_completions {
+        let mlen = bytes_len(&completions[i]);
+        // Check if this is a directory — byte 63 stores d_type
+        let is_dir = completions[i][63] == DT_DIR;
+
+        let alloc_len = if is_dir { mlen + 2 } else { mlen + 1 };
+        let m = libc::c_exports::malloc(alloc_len);
+        if !m.is_null() {
+            core::ptr::copy_nonoverlapping(completions[i].as_ptr(), m, mlen);
+            if is_dir {
+                *m.add(mlen) = b'/';
+                *m.add(mlen + 1) = 0;
+            } else {
+                *m.add(mlen) = 0;
+            }
+        }
+        *array.add(i + 1) = m;
+    }
+    *array.add(num_completions + 1) = core::ptr::null_mut();
+
+    // For single completions, readline appends a space by default which is fine
+    // For directory completions we already added '/', suppress the extra space
+    if num_completions == 1 && completions[0][63] == DT_DIR {
+        libc::readline::rl_completion_suppress_append = 1;
+    } else {
+        libc::readline::rl_completion_suppress_append = 0;
+    }
+
+    array
 }
 
 /// Main shell entry point
@@ -466,11 +493,13 @@ fn main() -> i32 {
     // Child processes will inherit default SIGINT behavior
     signal(SIGINT, SIG_IGN);
 
-    // Put terminal in raw mode for interactive line editing
-    enable_raw_mode();
-
     // Enable visible blinking cursor if terminal supports it
     prints("\x1b[?25h\x1b[?12h");
+
+    // Register tab completion callback with readline
+    unsafe {
+        libc::readline::rl_attempted_completion_function = Some(shell_completion);
+    }
 
     // Source system profile to set PATH and other environment variables
     source_profile(b"/etc/profile\0");
@@ -481,427 +510,43 @@ fn main() -> i32 {
     printlns("");
 
     // Main shell loop
-    let mut line = [0u8; MAX_LINE];
-
     loop {
-        // Print prompt
-        print_prompt();
+        // Build prompt string (NUL-terminated)
+        let prompt = get_prompt_string();
 
-        // Read command line with tab completion
-        let len = read_line_with_completion(&mut line);
-        if len == 0 {
-            // EOF
+        // Read a line using readline (handles raw mode, editing, history nav)
+        let line_ptr = unsafe { libc::readline::readline(prompt.as_ptr()) };
+
+        if line_ptr.is_null() {
+            // EOF (Ctrl-D on empty line)
             printlns("");
             break;
         }
 
-        // Remove trailing newline
-        if len > 0 && line[len - 1] == b'\n' {
-            line[len - 1] = 0;
-        }
+        // Convert to slice
+        let line_len = unsafe { libc::string::strlen(line_ptr) };
+        let line_slice = unsafe { core::slice::from_raw_parts(line_ptr, line_len) };
 
         // Skip empty lines
-        let cmd = trim(&line);
+        let cmd = trim(line_slice);
         if cmd.is_empty() {
+            unsafe { libc::c_exports::free(line_ptr) };
             continue;
         }
 
-        // Add to history
-        add_to_history(&line);
-
-        // Restore terminal before executing child (so child gets cooked mode)
-        disable_raw_mode();
+        // Add to readline's history (deduplication handled internally)
+        unsafe { libc::readline::add_history(line_ptr) };
 
         // Execute command
         execute_line(cmd);
 
-        // Re-enable raw mode after child completes
-        enable_raw_mode();
+        // Free the malloc'd line
+        unsafe { libc::c_exports::free(line_ptr) };
     }
 
-    disable_raw_mode();
     0
 }
 
-/// Add a command to history
-fn add_to_history(line: &[u8]) {
-    let state = shell();
-
-    // Don't add empty lines or duplicates of last command
-    let len = bytes_len(line);
-    if len == 0 {
-        return;
-    }
-
-    // Check if same as last entry
-    if state.history_count > 0 {
-        let last = &state.history[state.history_count - 1];
-        if bytes_eq(last, line) {
-            return;
-        }
-    }
-
-    // Add to history (circular if full)
-    if state.history_count < MAX_HISTORY {
-        state.history[state.history_count][..len.min(MAX_LINE - 1)]
-            .copy_from_slice(&line[..len.min(MAX_LINE - 1)]);
-        state.history[state.history_count][len.min(MAX_LINE - 1)] = 0;
-        state.history_count += 1;
-    } else {
-        // Shift history up
-        for i in 0..(MAX_HISTORY - 1) {
-            state.history[i] = state.history[i + 1];
-        }
-        state.history[MAX_HISTORY - 1][..len.min(MAX_LINE - 1)]
-            .copy_from_slice(&line[..len.min(MAX_LINE - 1)]);
-        state.history[MAX_HISTORY - 1][len.min(MAX_LINE - 1)] = 0;
-    }
-    state.history_pos = state.history_count;
-}
-
-/// Read a line with tab completion support
-fn read_line_with_completion(buf: &mut [u8]) -> usize {
-    let state = shell();
-    state.edit_len = 0;
-    state.edit_buf.fill(0);
-    state.cursor = 0;
-
-    loop {
-        let c = getchar();
-        if c < 0 {
-            // EOF
-            return 0;
-        }
-
-        let c = c as u8;
-
-        // Handle escape sequences for arrows and navigation
-        if c == ESC {
-            let next = getchar();
-            if next == b'[' as i32 {
-                let code = getchar() as u8;
-                match code {
-                    b'A' => {
-                        // Up arrow: previous history
-                        if state.history_count > 0 && state.history_pos > 0 {
-                            state.history_pos -= 1;
-                            let line = &state.history[state.history_pos];
-                            replace_line(line, &mut state.edit_len);
-                        }
-                        continue;
-                    }
-                    b'B' => {
-                        // Down arrow: next history
-                        if state.history_pos + 1 < state.history_count {
-                            state.history_pos += 1;
-                            let line = &state.history[state.history_pos];
-                            replace_line(line, &mut state.edit_len);
-                        } else {
-                            // Beyond last: clear line
-                            state.history_pos = state.history_count;
-                            replace_line(&[0], &mut state.edit_len);
-                        }
-                        continue;
-                    }
-                    b'C' => {
-                        // Right arrow
-                        if state.cursor < state.edit_len {
-                            state.cursor += 1;
-                            prints("\x1b[C");
-                        }
-                        continue;
-                    }
-                    b'D' => {
-                        // Left arrow
-                        if state.cursor > 0 {
-                            state.cursor -= 1;
-                            prints("\x1b[D");
-                        }
-                        continue;
-                    }
-                    b'H' => {
-                        // Home
-                        move_cursor_to(0, state.cursor);
-                        state.cursor = 0;
-                        continue;
-                    }
-                    b'F' => {
-                        // End
-                        move_cursor_to(state.edit_len, state.cursor);
-                        state.cursor = state.edit_len;
-                        continue;
-                    }
-                    // CSI 1;5D / 1;5C for Ctrl+Left/Right (terminals often emit)
-                    b'1' => {
-                        // Read optional ; modifier
-                        let semi = getchar();
-                        if semi == b';' as i32 {
-                            let modch = getchar() as u8;
-                            let last = getchar() as u8;
-                            if modch == b'5' {
-                                if last == b'D' {
-                                    // Ctrl+Left: move to prev word
-                                    move_prev_word(
-                                        &mut state.cursor,
-                                        state.edit_buf,
-                                        state.edit_len,
-                                    );
-                                    continue;
-                                } else if last == b'C' {
-                                    // Ctrl+Right: move to next word
-                                    move_next_word(
-                                        &mut state.cursor,
-                                        state.edit_buf,
-                                        state.edit_len,
-                                    );
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        match c {
-            b'\n' | b'\r' => {
-                buf[..state.edit_len].copy_from_slice(&state.edit_buf[..state.edit_len]);
-                buf[state.edit_len] = b'\n';
-                let len = state.edit_len + 1;
-                if len < buf.len() {
-                    buf[len] = 0;
-                }
-                putchar(b'\n');
-                return len;
-            }
-            TAB => {
-                // Tab completion
-                buf[..state.edit_len].copy_from_slice(&state.edit_buf[..state.edit_len]);
-                handle_tab_completion(buf, &mut state.edit_len);
-                state.edit_buf[..state.edit_len].copy_from_slice(&buf[..state.edit_len]);
-            }
-            BACKSPACE | CTRL_H => {
-                // Backspace
-                if state.edit_len > 0 {
-                    state.edit_len -= 1;
-                    state.edit_buf[state.edit_len] = 0;
-                    // Erase character on terminal (only supports end-of-line editing)
-                    prints("\x08 \x08");
-                }
-            }
-            0x03 => {
-                // Ctrl-C - cancel line
-                printlns("^C");
-                buf[0] = 0;
-                return 0;
-            }
-            0x04 => {
-                // Ctrl-D - EOF if line is empty
-                if state.edit_len == 0 {
-                    return 0;
-                }
-            }
-            _ => {
-                // Regular character
-                if state.edit_len < buf.len() - 2 && c >= 0x20 {
-                    // Insert at cursor (simple: only support end or middle by shifting right)
-                    if state.cursor == state.edit_len {
-                        state.edit_buf[state.edit_len] = c;
-                        state.edit_len += 1;
-                        state.cursor += 1;
-                        putchar(c);
-                    } else {
-                        // shift
-                        for i in (state.cursor..=state.edit_len).rev() {
-                            state.edit_buf[i + 1] = state.edit_buf[i];
-                        }
-                        state.edit_buf[state.cursor] = c;
-                        state.edit_len += 1;
-                        state.cursor += 1;
-                        redraw_line(state.edit_buf, state.edit_len, state.cursor);
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Replace current input line with provided content and redraw
-fn replace_line(line: &[u8], len_out: &mut usize) {
-    // Clear current line (rudimentary: carriage return + clear to end)
-    prints("\r\x1b[2K");
-    print_prompt();
-
-    let mut len = 0;
-    while len < line.len() && line[len] != 0 && len < MAX_LINE - 1 {
-        putchar(line[len]);
-        len += 1;
-    }
-
-    let state = shell();
-    state.edit_buf[..len].copy_from_slice(&line[..len]);
-    state.edit_len = len;
-    state.cursor = len;
-    *len_out = len;
-}
-
-fn move_cursor_to(target: usize, current: usize) {
-    if target > current {
-        let diff = target - current;
-        prints("\x1b[");
-        print_i64(diff as i64);
-        prints("C");
-    } else if current > target {
-        let diff = current - target;
-        prints("\x1b[");
-        print_i64(diff as i64);
-        prints("D");
-    }
-}
-
-fn move_prev_word(cursor: &mut usize, buf: [u8; MAX_LINE], _len: usize) {
-    if *cursor == 0 {
-        return;
-    }
-    let mut pos = *cursor;
-    // Skip spaces left
-    while pos > 0 && buf[pos - 1] == b' ' {
-        pos -= 1;
-    }
-    // Skip word
-    while pos > 0 && buf[pos - 1] != b' ' {
-        pos -= 1;
-    }
-    move_cursor_to(pos, *cursor);
-    *cursor = pos;
-}
-
-fn move_next_word(cursor: &mut usize, buf: [u8; MAX_LINE], len: usize) {
-    if *cursor >= len {
-        return;
-    }
-    let mut pos = *cursor;
-    // Skip current word
-    while pos < len && buf[pos] != b' ' {
-        pos += 1;
-    }
-    // Skip spaces
-    while pos < len && buf[pos] == b' ' {
-        pos += 1;
-    }
-    move_cursor_to(pos, *cursor);
-    *cursor = pos;
-}
-
-fn redraw_line(buf: [u8; MAX_LINE], len: usize, cursor: usize) {
-    // Move to line start and clear
-    prints("\r\x1b[2K");
-    print_prompt();
-    for i in 0..len {
-        putchar(buf[i]);
-    }
-    move_cursor_to(cursor, len);
-}
-
-/// Handle tab completion
-fn handle_tab_completion(buf: &mut [u8], len: &mut usize) {
-    // Find the word to complete (last word in the buffer)
-    let mut word_start = *len;
-    while word_start > 0 && buf[word_start - 1] != b' ' && buf[word_start - 1] != b'\t' {
-        word_start -= 1;
-    }
-
-    let prefix = &buf[word_start..*len];
-    let prefix_len = *len - word_start;
-
-    // Determine if we're completing a command (first word) or a path
-    let is_first_word = word_start == 0 || {
-        let mut all_space = true;
-        for i in 0..word_start {
-            if buf[i] != b' ' && buf[i] != b'\t' {
-                all_space = false;
-                break;
-            }
-        }
-        all_space
-    };
-
-    // Check if prefix contains a / (path completion)
-    let has_slash = prefix.iter().any(|&c| c == b'/');
-
-    let mut completions: [[u8; 64]; MAX_COMPLETIONS] = [[0u8; 64]; MAX_COMPLETIONS];
-    let mut num_completions = 0;
-
-    if is_first_word && !has_slash {
-        // Complete commands from /bin
-        num_completions = complete_commands(prefix, prefix_len, &mut completions);
-    } else {
-        // Complete file paths
-        num_completions = complete_paths(prefix, prefix_len, &mut completions);
-    }
-
-    if num_completions == 0 {
-        // No completions - beep or do nothing
-        return;
-    } else if num_completions == 1 {
-        // Single completion - apply it
-        let completion = &completions[0];
-        let comp_len = bytes_len(completion);
-
-        // Add the remaining characters
-        for i in prefix_len..comp_len {
-            if *len < buf.len() - 2 {
-                buf[*len] = completion[i];
-                *len += 1;
-                putchar(completion[i]);
-            }
-        }
-
-        // Add trailing space or / for directories
-        // Check if it's a directory by checking the last char or trying to open
-        let is_dir = is_completion_dir(&completions[0], word_start > 0);
-        if *len < buf.len() - 2 {
-            if is_dir {
-                buf[*len] = b'/';
-                *len += 1;
-                putchar(b'/');
-            } else {
-                buf[*len] = b' ';
-                *len += 1;
-                putchar(b' ');
-            }
-        }
-    } else {
-        // Multiple completions - show them and find common prefix
-        printlns("");
-
-        for i in 0..num_completions {
-            print_bytes(&completions[i]);
-            prints("  ");
-        }
-        printlns("");
-
-        // Find common prefix among completions
-        let common = find_common_prefix(&completions, num_completions, prefix_len);
-
-        // Add common prefix
-        if common > prefix_len {
-            for i in prefix_len..common {
-                if *len < buf.len() - 2 {
-                    buf[*len] = completions[0][i];
-                    *len += 1;
-                }
-            }
-        }
-
-        // Reprint prompt and current line
-        print_prompt();
-        for i in 0..*len {
-            putchar(buf[i]);
-        }
-    }
-}
 
 /// Get length of null-terminated byte string
 fn bytes_len(s: &[u8]) -> usize {
@@ -1170,39 +815,6 @@ fn complete_paths(
 
     close(fd);
     count
-}
-
-/// Check if a completion represents a directory
-fn is_completion_dir(completion: &[u8; 64], _is_path: bool) -> bool {
-    // We stored d_type at byte 63
-    completion[63] == DT_DIR
-}
-
-/// Find common prefix length among completions
-fn find_common_prefix(
-    completions: &[[u8; 64]; MAX_COMPLETIONS],
-    count: usize,
-    start: usize,
-) -> usize {
-    if count == 0 {
-        return start;
-    }
-
-    let first = &completions[0];
-    let first_len = bytes_len(first);
-
-    let mut common = first_len;
-
-    for i in 1..count {
-        let other = &completions[i];
-        let mut j = start;
-        while j < common && j < 63 && other[j] != 0 && first[j] == other[j] {
-            j += 1;
-        }
-        common = j;
-    }
-
-    common
 }
 
 /// Trim whitespace from string
@@ -2809,26 +2421,31 @@ fn builtin_kill(cmd: &Command) -> i32 {
 }
 
 /// history builtin - display command history
-fn builtin_history(cmd: &Command) -> i32 {
-    let state = shell();
-    let count = if cmd.argc > 1 {
-        parse_int_bytes(&cmd.args[1]).unwrap_or(state.history_count as i64) as usize
+fn builtin_history(_cmd: &Command) -> i32 {
+    let total = unsafe { libc::readline::history_length } as usize;
+    let count = if _cmd.argc > 1 {
+        parse_int_bytes(&_cmd.args[1]).unwrap_or(total as i64) as usize
     } else {
-        state.history_count
+        total
     };
 
-    let start = if count > state.history_count {
-        0
-    } else {
-        state.history_count - count
-    };
+    let start = if count > total { 0 } else { total - count };
 
-    for i in start..state.history_count {
-        prints("  ");
-        print_i64((i + 1) as i64);
-        prints("  ");
-        print_bytes(&state.history[i]);
-        printlns("");
+    for i in start..total {
+        // history_get uses 1-based offset
+        let entry = unsafe { libc::readline::history_get((i + 1) as i32) };
+        if !entry.is_null() {
+            prints("  ");
+            print_i64((i + 1) as i64);
+            prints("  ");
+            let line = unsafe { (*entry).line };
+            if !line.is_null() {
+                let len = unsafe { libc::string::strlen(line) };
+                let s = unsafe { core::slice::from_raw_parts(line, len) };
+                print_bytes(s);
+            }
+            printlns("");
+        }
     }
     0
 }
