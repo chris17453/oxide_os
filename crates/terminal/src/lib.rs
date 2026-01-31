@@ -711,18 +711,25 @@ pub fn restore_state() {
 }
 
 /// Check if mouse tracking mode is active
+///
+/// Uses try_lock because this is called from timer ISR context (terminal_tick).
+/// If the lock is held by process-context code (e.g., terminal::write), we
+/// skip rather than deadlock.
 pub fn has_mouse_mode() -> bool {
-    if let Some(ref terminal) = *TERMINAL.lock() {
-        terminal.has_mouse_mode()
-    } else {
-        false
+    if let Some(guard) = TERMINAL.try_lock() {
+        if let Some(ref terminal) = *guard {
+            return terminal.has_mouse_mode();
+        }
     }
+    false
 }
 
 /// Generate mouse escape sequence for a mouse event
 ///
 /// Returns the escape sequence bytes, or None if mouse mode is not active
 /// or doesn't want this event type.
+///
+/// Uses try_lock because this is called from timer ISR context (terminal_tick).
 pub fn mouse_event(
     button: u8,
     x_px: i32,
@@ -730,11 +737,12 @@ pub fn mouse_event(
     pressed: bool,
     motion: bool,
 ) -> Option<Vec<u8>> {
-    if let Some(ref terminal) = *TERMINAL.lock() {
-        terminal.mouse_event(button, x_px, y_px, pressed, motion)
-    } else {
-        None
+    if let Some(guard) = TERMINAL.try_lock() {
+        if let Some(ref terminal) = *guard {
+            return terminal.mouse_event(button, x_px, y_px, pressed, motion);
+        }
     }
+    None
 }
 
 /// Force render/flush to framebuffer

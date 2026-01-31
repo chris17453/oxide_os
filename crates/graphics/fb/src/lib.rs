@@ -280,41 +280,51 @@ pub fn mouse_init() {
 }
 
 /// Move the mouse cursor by a relative delta
+///
+/// Uses try_lock — called from timer ISR (terminal_tick).
 pub fn mouse_move(dx: i32, dy: i32) {
-    let fb_guard = FRAMEBUFFER.lock();
-    if let Some(ref fb) = *fb_guard {
-        if let Some(ref mut cursor) = *MOUSE_CURSOR.lock() {
-            cursor.move_by(dx, dy, &**fb);
+    if let Some(fb_guard) = FRAMEBUFFER.try_lock() {
+        if let Some(ref fb) = *fb_guard {
+            if let Some(ref mut cursor) = *MOUSE_CURSOR.lock() {
+                cursor.move_by(dx, dy, &**fb);
+            }
         }
     }
 }
 
 /// Draw the mouse cursor (call after screen content changes)
+///
+/// Uses try_lock — may be called from ISR context.
 pub fn mouse_draw() {
-    let fb_guard = FRAMEBUFFER.lock();
-    if let Some(ref fb) = *fb_guard {
-        if let Some(ref mut cursor) = *MOUSE_CURSOR.lock() {
-            cursor.redraw(&**fb);
+    if let Some(fb_guard) = FRAMEBUFFER.try_lock() {
+        if let Some(ref fb) = *fb_guard {
+            if let Some(ref mut cursor) = *MOUSE_CURSOR.lock() {
+                cursor.redraw(&**fb);
+            }
         }
     }
 }
 
 /// Erase the mouse cursor (call before screen content changes)
+///
+/// Uses try_lock — may be called from ISR context.
 pub fn mouse_erase() {
-    let fb_guard = FRAMEBUFFER.lock();
-    if let Some(ref fb) = *fb_guard {
-        if let Some(ref mut cursor) = *MOUSE_CURSOR.lock() {
-            cursor.erase(&**fb);
+    if let Some(fb_guard) = FRAMEBUFFER.try_lock() {
+        if let Some(ref fb) = *fb_guard {
+            if let Some(ref mut cursor) = *MOUSE_CURSOR.lock() {
+                cursor.erase(&**fb);
+            }
         }
     }
 }
 
 /// Hide the mouse cursor
 pub fn mouse_hide() {
-    let fb_guard = FRAMEBUFFER.lock();
-    if let Some(ref fb) = *fb_guard {
-        if let Some(ref mut cursor) = *MOUSE_CURSOR.lock() {
-            cursor.hide(&**fb);
+    if let Some(fb_guard) = FRAMEBUFFER.try_lock() {
+        if let Some(ref fb) = *fb_guard {
+            if let Some(ref mut cursor) = *MOUSE_CURSOR.lock() {
+                cursor.hide(&**fb);
+            }
         }
     }
 }
@@ -327,11 +337,16 @@ pub fn mouse_show() {
 }
 
 /// Get the current mouse cursor position in pixels
+///
+/// Uses try_lock — called from ISR context.
 pub fn mouse_position() -> Option<(i32, i32)> {
-    MOUSE_CURSOR.lock().as_ref().map(|c| c.position())
+    MOUSE_CURSOR.try_lock()
+        .and_then(|guard| guard.as_ref().map(|c| c.position()))
 }
 
 /// Check if mouse cursor is initialized
+///
+/// Uses try_lock — called from ISR context.
 pub fn mouse_initialized() -> bool {
-    MOUSE_CURSOR.lock().is_some()
+    MOUSE_CURSOR.try_lock().map_or(false, |guard| guard.is_some())
 }
