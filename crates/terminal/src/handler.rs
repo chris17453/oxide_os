@@ -30,10 +30,52 @@ bitflags::bitflags! {
         const ALT_SCREEN = 0x0040;
         /// Bracketed paste mode
         const BRACKETED_PASTE = 0x0080;
-        /// Mouse tracking
+        /// Mouse tracking (set when any mouse mode is active)
         const MOUSE_TRACKING = 0x0100;
         /// Focus events
         const FOCUS_EVENTS = 0x0200;
+    }
+}
+
+/// Mouse tracking mode
+///
+/// Applications request specific modes via CSI ?N h/l sequences.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseMode {
+    /// No mouse tracking
+    None,
+    /// X10 compatibility mode (CSI ?9 h) — report button press only
+    X10,
+    /// Normal tracking mode (CSI ?1000 h) — report press and release
+    Normal,
+    /// Button-event tracking (CSI ?1002 h) — report motion while button held
+    ButtonMotion,
+    /// Any-event tracking (CSI ?1003 h) — report all motion
+    AnyMotion,
+}
+
+impl Default for MouseMode {
+    fn default() -> Self {
+        MouseMode::None
+    }
+}
+
+/// Mouse coordinate encoding format
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseEncoding {
+    /// X10 encoding (default) — single byte, 223 column limit
+    X10,
+    /// UTF-8 encoding (CSI ?1005 h) — extended range via UTF-8
+    Utf8,
+    /// SGR encoding (CSI ?1006 h) — decimal params, no limit
+    Sgr,
+    /// Urxvt encoding (CSI ?1015 h) — decimal params
+    Urxvt,
+}
+
+impl Default for MouseEncoding {
+    fn default() -> Self {
+        MouseEncoding::X10
     }
 }
 
@@ -63,6 +105,10 @@ pub struct Handler {
     pub cursor: Cursor,
     /// Terminal modes
     pub modes: TerminalModes,
+    /// Mouse tracking mode
+    pub mouse_mode: MouseMode,
+    /// Mouse coordinate encoding
+    pub mouse_encoding: MouseEncoding,
     /// Scroll region top
     pub scroll_top: u32,
     /// Scroll region bottom
@@ -92,6 +138,8 @@ impl Handler {
             attrs: CellAttrs::default(),
             cursor: Cursor::default(),
             modes: TerminalModes::AUTOWRAP | TerminalModes::CURSOR_VISIBLE,
+            mouse_mode: MouseMode::None,
+            mouse_encoding: MouseEncoding::X10,
             scroll_top: 0,
             scroll_bottom: rows - 1,
             saved_cursor: SavedCursor::default(),
@@ -624,12 +672,68 @@ impl Handler {
                         self.modes &= !TerminalModes::CURSOR_VISIBLE;
                     }
                 }
-                1000 | 1002 | 1003 | 1006 | 1015 => {
-                    // Mouse tracking modes
+                9 => {
+                    // X10 mouse tracking
                     if enable {
+                        self.mouse_mode = MouseMode::X10;
                         self.modes |= TerminalModes::MOUSE_TRACKING;
                     } else {
+                        self.mouse_mode = MouseMode::None;
                         self.modes &= !TerminalModes::MOUSE_TRACKING;
+                    }
+                }
+                1000 => {
+                    // Normal mouse tracking (press + release)
+                    if enable {
+                        self.mouse_mode = MouseMode::Normal;
+                        self.modes |= TerminalModes::MOUSE_TRACKING;
+                    } else {
+                        self.mouse_mode = MouseMode::None;
+                        self.modes &= !TerminalModes::MOUSE_TRACKING;
+                    }
+                }
+                1002 => {
+                    // Button-event tracking (motion while button held)
+                    if enable {
+                        self.mouse_mode = MouseMode::ButtonMotion;
+                        self.modes |= TerminalModes::MOUSE_TRACKING;
+                    } else {
+                        self.mouse_mode = MouseMode::None;
+                        self.modes &= !TerminalModes::MOUSE_TRACKING;
+                    }
+                }
+                1003 => {
+                    // Any-event tracking (all motion)
+                    if enable {
+                        self.mouse_mode = MouseMode::AnyMotion;
+                        self.modes |= TerminalModes::MOUSE_TRACKING;
+                    } else {
+                        self.mouse_mode = MouseMode::None;
+                        self.modes &= !TerminalModes::MOUSE_TRACKING;
+                    }
+                }
+                1005 => {
+                    // UTF-8 mouse encoding
+                    if enable {
+                        self.mouse_encoding = MouseEncoding::Utf8;
+                    } else {
+                        self.mouse_encoding = MouseEncoding::X10;
+                    }
+                }
+                1006 => {
+                    // SGR mouse encoding
+                    if enable {
+                        self.mouse_encoding = MouseEncoding::Sgr;
+                    } else {
+                        self.mouse_encoding = MouseEncoding::X10;
+                    }
+                }
+                1015 => {
+                    // Urxvt mouse encoding
+                    if enable {
+                        self.mouse_encoding = MouseEncoding::Urxvt;
+                    } else {
+                        self.mouse_encoding = MouseEncoding::X10;
                     }
                 }
                 1004 => {
@@ -698,6 +802,8 @@ impl Handler {
         self.attrs = CellAttrs::default();
         self.cursor = Cursor::default();
         self.modes = TerminalModes::AUTOWRAP | TerminalModes::CURSOR_VISIBLE;
+        self.mouse_mode = MouseMode::None;
+        self.mouse_encoding = MouseEncoding::X10;
         self.scroll_top = 0;
         self.scroll_bottom = self.rows - 1;
         self.saved_cursor = SavedCursor::default();

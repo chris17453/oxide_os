@@ -111,9 +111,14 @@ impl Renderer {
         }
     }
 
-    /// Get terminal dimensions
+    /// Get terminal dimensions (cols, rows)
     pub fn dimensions(&self) -> (u32, u32) {
         (self.cols, self.rows)
+    }
+
+    /// Get cell dimensions in pixels (width, height)
+    pub fn cell_dimensions(&self) -> (u32, u32) {
+        (self.font.width, self.font.height)
     }
 
     /// Mark row dirty

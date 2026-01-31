@@ -47,6 +47,8 @@ pub mod parser;
 pub mod renderer;
 
 use alloc::sync::Arc;
+use alloc::vec;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
 use fb::Framebuffer;
 use spin::Mutex;
@@ -59,7 +61,7 @@ use crate::renderer::Renderer;
 
 pub use crate::cell::{Cell, CellFlags, CursorShape};
 pub use crate::color::TermColor;
-pub use crate::handler::TerminalModes;
+pub use crate::handler::{MouseEncoding, MouseMode, TerminalModes};
 
 /// Default scrollback buffer size (lines)
 const DEFAULT_SCROLLBACK: usize = 10000;
@@ -84,6 +86,10 @@ pub struct TerminalEmulator {
     cols: u32,
     /// Terminal height in rows
     rows: u32,
+    /// Cell width in pixels (for mouse coordinate conversion)
+    cell_width: u32,
+    /// Cell height in pixels (for mouse coordinate conversion)
+    cell_height: u32,
     /// Whether a render is needed (dirty flag)
     needs_render: bool,
 }
@@ -93,6 +99,7 @@ impl TerminalEmulator {
     pub fn new(fb: Arc<dyn Framebuffer>) -> Self {
         let renderer = Renderer::new(fb);
         let (cols, rows) = renderer.dimensions();
+        let (cell_width, cell_height) = renderer.cell_dimensions();
 
         TerminalEmulator {
             parser: Parser::new(),
@@ -104,6 +111,8 @@ impl TerminalEmulator {
             scroll_offset: 0,
             cols,
             rows,
+            cell_width,
+            cell_height,
             needs_render: true,
         }
     }
@@ -288,6 +297,130 @@ impl TerminalEmulator {
         }
     }
 
+    /// Check if any mouse tracking mode is active
+    pub fn has_mouse_mode(&self) -> bool {
+        self.handler.mouse_mode != MouseMode::None
+    }
+
+    /// Get the current mouse mode
+    pub fn mouse_mode(&self) -> MouseMode {
+        self.handler.mouse_mode
+    }
+
+    /// Get the current mouse encoding
+    pub fn mouse_encoding(&self) -> MouseEncoding {
+        self.handler.mouse_encoding
+    }
+
+    /// Generate a mouse escape sequence for a mouse event
+    ///
+    /// Converts pixel coordinates to cell coordinates and generates the
+    /// appropriate escape sequence based on the current mouse mode and encoding.
+    ///
+    /// # Arguments
+    /// * `button` - Button code (0=left, 1=middle, 2=right, 3=release, 64=wheel up, 65=wheel down)
+    /// * `x_px` - X position in pixels
+    /// * `y_px` - Y position in pixels
+    /// * `pressed` - Whether the button was pressed (true) or released (false)
+    /// * `motion` - Whether this is a motion event
+    ///
+    /// Returns the escape sequence bytes, or None if mouse mode doesn't want this event.
+    pub fn mouse_event(
+        &self,
+        button: u8,
+        x_px: i32,
+        y_px: i32,
+        pressed: bool,
+        motion: bool,
+    ) -> Option<Vec<u8>> {
+        if self.handler.mouse_mode == MouseMode::None {
+            return None;
+        }
+
+        // Convert pixel coordinates to 1-based cell coordinates
+        let col = if self.cell_width > 0 {
+            (x_px as u32 / self.cell_width) + 1
+        } else {
+            1
+        };
+        let row = if self.cell_height > 0 {
+            (y_px as u32 / self.cell_height) + 1
+        } else {
+            1
+        };
+
+        // Clamp to terminal dimensions
+        let col = col.min(self.cols).max(1);
+        let row = row.min(self.rows).max(1);
+
+        // Check if this event should be reported based on mode
+        match self.handler.mouse_mode {
+            MouseMode::None => return None,
+            MouseMode::X10 => {
+                // X10: only button press events
+                if !pressed || motion {
+                    return None;
+                }
+            }
+            MouseMode::Normal => {
+                // Normal: press and release, no motion
+                if motion {
+                    return None;
+                }
+            }
+            MouseMode::ButtonMotion => {
+                // Button-event: press, release, and motion while button held
+                // (motion events have button + 32)
+            }
+            MouseMode::AnyMotion => {
+                // Any-event: all events including motion without buttons
+            }
+        }
+
+        // Build the button byte
+        let mut btn = button;
+        if motion {
+            btn += 32; // Motion flag
+        }
+
+        // Generate escape sequence based on encoding
+        match self.handler.mouse_encoding {
+            MouseEncoding::Sgr => {
+                // SGR format: ESC [ < btn ; col ; row M (press) or m (release)
+                let suffix = if pressed { b'M' } else { b'm' };
+                let mut seq = Vec::new();
+                seq.extend_from_slice(b"\x1b[<");
+                write_decimal(&mut seq, btn as u32);
+                seq.push(b';');
+                write_decimal(&mut seq, col);
+                seq.push(b';');
+                write_decimal(&mut seq, row);
+                seq.push(suffix);
+                Some(seq)
+            }
+            MouseEncoding::Urxvt => {
+                // Urxvt format: ESC [ btn+32 ; col ; row M
+                let mut seq = Vec::new();
+                seq.extend_from_slice(b"\x1b[");
+                write_decimal(&mut seq, (btn as u32) + 32);
+                seq.push(b';');
+                write_decimal(&mut seq, col);
+                seq.push(b';');
+                write_decimal(&mut seq, row);
+                seq.push(b'M');
+                Some(seq)
+            }
+            MouseEncoding::X10 | MouseEncoding::Utf8 => {
+                // X10 format: ESC [ M btn+32 col+32 row+32
+                // UTF-8 extends the range but uses same basic format
+                let cb = btn + 32;
+                let cx = if col > 223 { 0u8 } else { (col as u8) + 32 };
+                let cy = if row > 223 { 0u8 } else { (row as u8) + 32 };
+                Some(vec![0x1b, b'[', b'M', cb, cx, cy])
+            }
+        }
+    }
+
     /// Render terminal to framebuffer
     pub fn render(&mut self) {
         // Reset scroll offset when content changes
@@ -412,6 +545,26 @@ impl TerminalEmulator {
         self.handler.restore_cursor();
         self.renderer.invalidate();
         self.render();
+    }
+}
+
+/// Write a u32 as decimal digits to a byte vector
+fn write_decimal(buf: &mut Vec<u8>, value: u32) {
+    if value == 0 {
+        buf.push(b'0');
+        return;
+    }
+    let mut digits = [0u8; 10];
+    let mut i = 0;
+    let mut v = value;
+    while v > 0 {
+        digits[i] = b'0' + (v % 10) as u8;
+        v /= 10;
+        i += 1;
+    }
+    // Reverse: digits are stored least-significant first
+    for d in digits[..i].iter().rev() {
+        buf.push(*d);
     }
 }
 
@@ -554,6 +707,33 @@ pub fn save_state() {
 pub fn restore_state() {
     if let Some(ref mut terminal) = *TERMINAL.lock() {
         terminal.restore_state();
+    }
+}
+
+/// Check if mouse tracking mode is active
+pub fn has_mouse_mode() -> bool {
+    if let Some(ref terminal) = *TERMINAL.lock() {
+        terminal.has_mouse_mode()
+    } else {
+        false
+    }
+}
+
+/// Generate mouse escape sequence for a mouse event
+///
+/// Returns the escape sequence bytes, or None if mouse mode is not active
+/// or doesn't want this event type.
+pub fn mouse_event(
+    button: u8,
+    x_px: i32,
+    y_px: i32,
+    pressed: bool,
+    motion: bool,
+) -> Option<Vec<u8>> {
+    if let Some(ref terminal) = *TERMINAL.lock() {
+        terminal.mouse_event(button, x_px, y_px, pressed, motion)
+    } else {
+        None
     }
 }
 

@@ -38,6 +38,21 @@ fn signal_foreground(sig: i32) {
     }
 }
 
+/// Push mouse escape sequence bytes to the input subsystem
+///
+/// Routes the escape sequence to both VT input and console device so
+/// applications reading from either path receive mouse events.
+fn push_mouse_escape(seq: &[u8]) {
+    if let Some(manager) = vt::get_manager() {
+        for &byte in seq {
+            manager.push_input(byte);
+        }
+    }
+    for &byte in seq {
+        devfs::console_push_char(byte);
+    }
+}
+
 /// Console write function for syscalls
 ///
 /// Writes to serial and terminal emulator (if initialized).
@@ -101,6 +116,11 @@ pub fn terminal_tick() {
     if fb::mouse_initialized() {
         let mut total_dx: i32 = 0;
         let mut total_dy: i32 = 0;
+        let mut wheel_delta: i32 = 0;
+        let has_mouse_mode = terminal::is_initialized() && terminal::has_mouse_mode();
+
+        // Track button state for escape sequence generation
+        static mut MOUSE_BUTTONS: u8 = 0;
 
         // Drain all mouse events from input device 1
         if let Some(mouse_handle) = input::get_device(1) {
@@ -111,6 +131,35 @@ pub fn terminal_tick() {
                             total_dx += event.value;
                         } else if event.code == input::REL_Y {
                             total_dy += event.value;
+                        } else if event.code == input::REL_WHEEL {
+                            wheel_delta += event.value;
+                        }
+                    }
+                    input::EventType::Key => {
+                        if has_mouse_mode {
+                            // Map button codes to terminal button numbers
+                            let (btn, bit) = match event.code {
+                                0x110 => (0u8, 0x01u8), // BTN_LEFT
+                                0x112 => (1, 0x04),      // BTN_MIDDLE
+                                0x111 => (2, 0x02),      // BTN_RIGHT
+                                _ => continue,
+                            };
+                            let pressed = event.value != 0;
+                            unsafe {
+                                if pressed {
+                                    MOUSE_BUTTONS |= bit;
+                                } else {
+                                    MOUSE_BUTTONS &= !bit;
+                                }
+                            }
+
+                            // Generate escape sequence for button press/release
+                            if let Some((mx, my)) = fb::mouse_position() {
+                                let esc_btn = if pressed { btn } else { 3 }; // 3 = release
+                                if let Some(seq) = terminal::mouse_event(esc_btn, mx, my, pressed, false) {
+                                    push_mouse_escape(&seq);
+                                }
+                            }
                         }
                     }
                     _ => {}
@@ -118,8 +167,37 @@ pub fn terminal_tick() {
             }
         }
 
+        // Move graphical cursor
         if total_dx != 0 || total_dy != 0 {
             fb::mouse_move(total_dx, total_dy);
+
+            // Generate motion escape sequences if terminal wants them
+            if has_mouse_mode {
+                if let Some((mx, my)) = fb::mouse_position() {
+                    let held_btn = unsafe {
+                        if MOUSE_BUTTONS & 0x01 != 0 { 0u8 }      // Left
+                        else if MOUSE_BUTTONS & 0x04 != 0 { 1 }    // Middle
+                        else if MOUSE_BUTTONS & 0x02 != 0 { 2 }    // Right
+                        else { 3 } // No button
+                    };
+                    if let Some(seq) = terminal::mouse_event(held_btn, mx, my, true, true) {
+                        push_mouse_escape(&seq);
+                    }
+                }
+            }
+        }
+
+        // Generate wheel escape sequences
+        if wheel_delta != 0 && has_mouse_mode {
+            if let Some((mx, my)) = fb::mouse_position() {
+                let btn = if wheel_delta > 0 { 64u8 } else { 65u8 };
+                let clicks = wheel_delta.unsigned_abs();
+                for _ in 0..clicks {
+                    if let Some(seq) = terminal::mouse_event(btn, mx, my, true, false) {
+                        push_mouse_escape(&seq);
+                    }
+                }
+            }
         }
     }
 
