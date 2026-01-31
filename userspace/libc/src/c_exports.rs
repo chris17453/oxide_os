@@ -1457,6 +1457,9 @@ pub unsafe extern "C" fn ctime_r(timep: *const i64, buf: *mut u8) -> *mut u8 {
 pub static mut timezone: i64 = 0;
 
 #[unsafe(no_mangle)]
+pub static mut altzone: i64 = 0;
+
+#[unsafe(no_mangle)]
 pub static mut daylight: i32 = 0;
 
 static mut TZNAME_UTC: [u8; 4] = *b"UTC\0";
@@ -4011,7 +4014,17 @@ pub unsafe extern "C" fn timegm(tm: *mut u8) -> i64 {
     days * 86400 + hour as i64 * 3600 + min as i64 * 60 + sec as i64
 }
 
-// ============ fseeko64 / ftello64 (64-bit offset aliases) ============
+// ============ fseek64 / ftell64 / fseeko64 / ftello64 (64-bit offset aliases) ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fseek64(stream: *mut u8, offset: i64, whence: i32) -> i32 {
+    crate::filestream::fseek(stream as *mut crate::filestream::FILE, offset, whence)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ftell64(stream: *mut u8) -> i64 {
+    crate::filestream::ftell(stream as *mut crate::filestream::FILE)
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fseeko64(stream: *mut u8, offset: i64, whence: i32) -> i32 {

@@ -96,12 +96,29 @@ ac_cv_func_select=yes
 # Process features - all implemented
 ac_cv_func_setsid=yes
 ac_cv_func_setpgid=yes
+ac_cv_func_setpgrp=yes
 ac_cv_func_getpgid=yes
 ac_cv_func_setgroups=yes
 ac_cv_func_initgroups=yes
 ac_cv_func_getgroups=yes
 ac_cv_func_sched_setaffinity=no
-ac_cv_func_sched_setscheduler=no
+ac_cv_func_sched_setscheduler=yes
+ac_cv_func_sched_setparam=yes
+ac_cv_func_sched_get_priority_max=yes
+ac_cv_func_sched_rr_get_interval=yes
+
+# Credentials
+ac_cv_func_getresuid=yes
+ac_cv_func_getresgid=yes
+ac_cv_func_setreuid=yes
+ac_cv_func_setregid=yes
+ac_cv_func_setresuid=yes
+ac_cv_func_setresgid=yes
+
+# Passwd/shadow
+ac_cv_func_getpwent=yes
+ac_cv_func_getspent=yes
+ac_cv_func_getspnam=yes
 
 # Functions we have
 ac_cv_func_read=yes
@@ -172,6 +189,7 @@ ac_cv_func_fdatasync=yes
 ac_cv_func_fsync=yes
 ac_cv_func_sync=yes
 ac_cv_func_copy_file_range=yes
+ac_cv_func_close_range=yes
 ac_cv_func_splice=no
 ac_cv_func_tee=no
 
@@ -221,7 +239,14 @@ ac_cv_func_sysconf=yes
 ac_cv_func_fpathconf=yes
 ac_cv_func_pathconf=yes
 ac_cv_func_ctermid=yes
+ac_cv_func_ctermid_r=yes
 ac_cv_func_ttyname=yes
+ac_cv_func_getwd=yes
+ac_cv_func_tempnam=yes
+ac_cv_func_tmpnam_r=yes
+ac_cv_func_getc_unlocked=yes
+ac_cv_func_timegm=yes
+ac_cv_func_fexecve=yes
 
 # Networking
 ac_cv_func_socketpair=yes
@@ -231,8 +256,10 @@ ac_cv_func_gethostname=yes
 ac_cv_func_sethostname=yes
 ac_cv_func_getaddrinfo=yes
 ac_cv_func_getnameinfo=yes
+ac_cv_func_gethostbyname_r=yes
 ac_cv_func_inet_aton=yes
 ac_cv_func_inet_pton=yes
+ac_cv_func_if_nameindex=yes
 
 # Poll/epoll
 ac_cv_func_poll=yes
@@ -250,6 +277,7 @@ ac_cv_func_shm_unlink=no
 
 # Memory management
 ac_cv_func_madvise=yes
+ac_cv_func_mremap=no
 ac_cv_func_posix_fallocate=yes
 ac_cv_func_posix_fadvise=yes
 ac_cv_func_memfd_create=no
@@ -458,3 +486,21 @@ ac_cv_disable_int_conversion=yes
 # strlcpy/strlcat
 ac_cv_func_strlcpy=yes
 ac_cv_func_strlcat=yes
+
+# Pthread extras
+ac_cv_func_pthread_kill=yes
+ac_cv_func_pthread_getcpuclockid=yes
+
+# Large file / 64-bit I/O
+ac_cv_func_fseek64=yes
+ac_cv_func_ftell64=yes
+
+# Process extras
+ac_cv_func_prlimit=yes
+
+# Headers - platform-specific (not available)
+ac_cv_header_linux_qrtr_h=no
+ac_cv_header_linux_soundcard_h=no
+ac_cv_header_asm_types_h=yes
+ac_cv_header_sys_poll_h=yes
+ac_cv_header_netcan_can_h=no

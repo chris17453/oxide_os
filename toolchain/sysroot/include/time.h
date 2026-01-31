@@ -71,8 +71,12 @@ int nanosleep(const struct timespec *req, struct timespec *rem);
 
 /* Timezone */
 extern long timezone;
+extern long altzone;
 extern int daylight;
 extern char *tzname[2];
 void tzset(void);
+
+/* timegm - inverse of gmtime */
+time_t timegm(struct tm *tm);
 
 #endif /* _TIME_H */
