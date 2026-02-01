@@ -72,6 +72,12 @@ pub struct Parser {
     intermediates: Vec<u8>,
     /// OSC string being collected
     osc_string: Vec<u8>,
+    /// UTF-8 decoding buffer (up to 4 bytes)
+    utf8_buffer: [u8; 4],
+    /// Number of UTF-8 bytes collected
+    utf8_count: u8,
+    /// Expected number of UTF-8 bytes
+    utf8_expected: u8,
 }
 
 impl Parser {
@@ -84,6 +90,9 @@ impl Parser {
             param_started: false,
             intermediates: Vec::with_capacity(4),
             osc_string: Vec::with_capacity(256),
+            utf8_buffer: [0; 4],
+            utf8_count: 0,
+            utf8_expected: 0,
         }
     }
 
@@ -145,20 +154,85 @@ impl Parser {
     /// Handle ground state
     fn handle_ground(&mut self, byte: u8) -> Action {
         if byte >= 0x20 && byte < 0x7F {
-            // Printable ASCII
+            // Printable ASCII (fast path)
             Action::Print(byte as char)
         } else if byte >= 0x80 {
-            // Could be UTF-8 or C1 control
-            // For now, try to print extended ASCII
-            if byte >= 0xC0 {
-                // Start of UTF-8 sequence - simplified handling
-                Action::Print(byte as char)
-            } else {
-                Action::None
-            }
+            // UTF-8 multi-byte sequence or C1 control
+            self.handle_utf8(byte)
         } else {
             Action::None
         }
+    }
+
+    /// Handle UTF-8 multi-byte sequences
+    ///
+    /// 🔥 UTF-8 PROPER DECODING (term_analysis Phase 1 #1) 🔥
+    /// Before: Start byte printed as-is, continuation bytes ignored
+    /// After: Full UTF-8 validation and decoding
+    ///
+    /// UTF-8 encoding:
+    /// - 1 byte:  0xxxxxxx  (0x00-0x7F)  ASCII (handled in fast path)
+    /// - 2 bytes: 110xxxxx 10xxxxxx  (0xC0-0xDF + 0x80-0xBF)
+    /// - 3 bytes: 1110xxxx 10xxxxxx 10xxxxxx  (0xE0-0xEF + 2x continuation)
+    /// - 4 bytes: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx  (0xF0-0xF7 + 3x continuation)
+    fn handle_utf8(&mut self, byte: u8) -> Action {
+        // Check if this is a UTF-8 start byte
+        if byte >= 0xC0 && byte <= 0xF7 {
+            // Start of new UTF-8 sequence
+            self.utf8_buffer[0] = byte;
+            self.utf8_count = 1;
+
+            // Determine expected length
+            self.utf8_expected = if byte < 0xE0 {
+                2  // 110xxxxx
+            } else if byte < 0xF0 {
+                3  // 1110xxxx
+            } else {
+                4  // 11110xxx
+            };
+
+            Action::None  // Wait for continuation bytes
+        } else if byte >= 0x80 && byte < 0xC0 {
+            // UTF-8 continuation byte (10xxxxxx)
+            if self.utf8_expected > 0 && self.utf8_count < self.utf8_expected {
+                self.utf8_buffer[self.utf8_count as usize] = byte;
+                self.utf8_count += 1;
+
+                // Check if sequence is complete
+                if self.utf8_count == self.utf8_expected {
+                    let result = self.decode_utf8();
+                    // Reset for next sequence
+                    self.utf8_count = 0;
+                    self.utf8_expected = 0;
+                    result
+                } else {
+                    Action::None  // Wait for more bytes
+                }
+            } else {
+                // Unexpected continuation byte - reset and ignore
+                self.utf8_count = 0;
+                self.utf8_expected = 0;
+                Action::None
+            }
+        } else {
+            // 0x80-0xBF range but no sequence in progress - ignore
+            // or invalid UTF-8 start byte (0xF8-0xFF) - ignore
+            self.utf8_count = 0;
+            self.utf8_expected = 0;
+            Action::None
+        }
+    }
+
+    /// Decode accumulated UTF-8 bytes to char
+    fn decode_utf8(&self) -> Action {
+        // Try to decode the UTF-8 sequence
+        if let Ok(s) = core::str::from_utf8(&self.utf8_buffer[..self.utf8_count as usize]) {
+            if let Some(ch) = s.chars().next() {
+                return Action::Print(ch);
+            }
+        }
+        // Invalid UTF-8 sequence - ignore
+        Action::None
     }
 
     /// Handle escape state (after ESC)
