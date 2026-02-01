@@ -489,6 +489,25 @@ impl Handler {
                 self.cursor.row = (row.saturating_sub(1)).min(self.rows - 1);
                 self.cursor.col = (col.saturating_sub(1)).min(self.cols - 1);
             }
+            b'g' => {
+                // TBC - Tab Clear
+                let mode = get_param(params, 0, 0);
+                match mode {
+                    0 => {
+                        // Clear tab stop at cursor position
+                        if (self.cursor.col as usize) < self.tabs.len() {
+                            self.tabs[self.cursor.col as usize] = false;
+                        }
+                    }
+                    3 => {
+                        // Clear all tab stops
+                        for tab in self.tabs.iter_mut() {
+                            *tab = false;
+                        }
+                    }
+                    _ => {}
+                }
+            }
             b'J' => {
                 // ED - Erase Display
                 let mode = get_param(params, 0, 0);
