@@ -1,0 +1,63 @@
+<!-- OXIDE Claude instructions: concise, retrieval-first -->
+# Claude Agent Playbook
+
+**Mission:** Ship correct, production-quality OXIDE OS changes. Follow every guardrail; user requests apply unless they conflict with these rules.
+
+## Core Workflow (in order)
+1. **Orient:** Read `AGENTS.md` and this file. List repo root to map key dirs.
+2. **Active phase:** If present, open latest `docs/plan/PHASE_*.md` or `THIS.md`/roadmaps to know goals and exit criteria.
+3. **Explore then retrieve:** Skim relevant code and local docs before editing. Prefer retrieval over model memory.
+4. **Plan:** Update the Todo tool; keep tasks small; one commit per feature.
+5. **Implement surgically:** Minimal diffs; preserve behavior unless intentionally changing it.
+6. **Validate:** Run existing tests/linters that cover the change; capture failing logs if any.
+7. **Document:** Update related docs when behavior or process changes.
+8. **Build:** Always update the make run for the curent build if something canges, we will never use any other command than make build.
+9. **Code**: Always use cuyyberpunk comments, have different persona's for different comments. 
+Nyx Vector
+Kade Null
+Zara Byte
+Jax Circuit
+Mira Flux
+Riven Glitch
+Lexi Overclock
+Dax Cipher
+Vera Hex
+Orion Stack
+
+## Retrieval Index (check these first)
+- Repo guides: `AGENTS.md` (repo rules), `THIS.md` (current plan/phase), `FIXME.md` (gaps), `manifesto.md`.
+- Docs: `docs/DRIVES.md` (boot/filesystem flow).
+- Toolchain: `toolchain/README.md`, `toolchain/QUICKSTART.md`, `toolchain/SUMMARY.md`, `toolchain/INTEGRATION.md`.
+- Components: `userspace/coreutils/TEST_PLAN.md`, `userspace/coreutils/UTILITIES.md`, `userspace/shell/BUILTINS.md`, `apps/gwbasic/README.md`.
+- Code roots: `kernel/`, `crates/`, `bootloader/`, `userspace/`, `apps/`, `tools/`, `scripts/`, `external/`.
+
+## Guardrails (must follow)
+- **No stubs or TODO fallbacks.** Implement fully or state concrete blockers/needs.
+- **Debug policy:** Never delete debug output; gate via `debug-*` features (`kernel/src/debug.rs`, `kernel/Cargo.toml`). No raw serial writes—use `debug_*!` macros; `debug_sched_unsafe!` only in ISR contexts.
+- **Feature completeness:** Don’t drop or simplify requested features because they’re hard. If blocked, be explicit.
+- **Structured code:** Prefer structs/enums/bitflags; document magic constants with source.
+- **Architecture scope:** Target x86_64; design portable, implement x86_64 now.
+- **Quality bar:** Production-ready code; consider edge cases, security, performance.
+- **Workflow hygiene:** Small commits per feature (imperative subject); keep worktree clean; never add AI attribution; don’t revert user changes.
+
+## Default Behaviors
+- **Retrieval-led reasoning:** Read local docs/specs and code before coding.
+- **Minimal change set:** Touch the fewest lines needed; keep working behavior unless deliberately changing it.
+- **Testing:** Run `make build`/`make build-full`/`make test` or targeted `cargo test -p <crate>` when relevant. Share outputs for failures; don’t add new tools.
+- **Unsafe code:** Document why it is safe; keep `unsafe` blocks narrow.
+- **Comments:** Add only when code is not self-explanatory.
+
+## If Blocked
+- Stop and ask with specific blockers and required info. Don’t proceed with guesses or scope cuts.
+
+## Quick Commands
+- Build: `make build`, `make build-full`, `make userspace[-pkg PKG=...]`.
+- Run: `make run`, `make run-fedora`.
+- Tests: `make test`; targeted `cargo test -p <crate>`.
+
+## Change Checklist (before finishing)
+- [ ] Read relevant phase/spec/plan docs
+- [ ] Minimal diff; no removed debug hooks or stubbed logic
+- [ ] Tests/linters run as appropriate; failures noted with logs
+- [ ] Docs updated if behavior/process changed
+- [ ] Commit message ready (imperative, one feature)

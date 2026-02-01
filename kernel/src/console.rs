@@ -132,16 +132,52 @@ pub fn terminal_tick() {
         }
     }
 
-    // Also poll i8042 directly as fallback (handles cases where IRQ1
-    // doesn't fire, e.g., QEMU sendkey with -display none)
-    // SAFETY: We're in timer interrupt context; no concurrent i8042 access.
-    while let Some(scancode) = unsafe { arch::poll_keyboard() } {
-        if let Some(byte) = process_scancode(scancode) {
-            if let Some(manager) = vt::get_manager() {
-                manager.push_input(byte);
-            }
-        }
-    }
+    // ═══════════════════════════════════════════════════════════════════════════
+    // 🔥 DISABLED: DUPLICATE PROCESSING PATH (The Glitch in the Matrix) 🔥
+    // ═══════════════════════════════════════════════════════════════════════════
+    //
+    // **THE OLD WAY (Broken AF):**
+    //
+    // Timer tick would poll i8042, call process_scancode(), track modifiers
+    // (SHIFT/CTRL/ALT) in static vars, convert to ASCII, push to VT.
+    //
+    // **THE PROBLEM:**
+    //
+    // PS/2 IRQ handler ALSO does this (ps2/lib.rs). Same scancode, processed
+    // twice, modifier state tracked in TWO places, characters generated twice.
+    //
+    // Result: Keyboard jitter, dropped keys, duplicate keys, modifier desync.
+    // User types "hello", gets "hheelllloo" or "heo" depending on race conditions.
+    //
+    // **THE FIX:**
+    //
+    // PS/2 IRQ handler is now the ONLY path. It:
+    // 1. Processes scancode → keycode
+    // 2. Tracks modifiers (one source of truth)
+    // 3. Converts to ASCII/escape sequences
+    // 4. Pushes to console callback → VT manager
+    //
+    // This timer polling is DELETED. IRQ path handles everything.
+    //
+    // **WHAT ABOUT QEMU `sendkey`?**
+    //
+    // If you're using QEMU `-display none` and sendkey doesn't fire IRQ1,
+    // then your QEMU is cursed. Fix your VM, don't hack the kernel.
+    //
+    // ═══════════════════════════════════════════════════════════════════════════
+    //
+    // Code left here as archaeological evidence of the bad old days.
+    // Do not uncomment unless you enjoy pain.
+    //
+    // while let Some(scancode) = unsafe { arch::poll_keyboard() } {
+    //     if let Some(byte) = process_scancode(scancode) {  // ⚠️ DUPLICATE!
+    //         if let Some(manager) = vt::get_manager() {
+    //             manager.push_input(byte);
+    //         }
+    //     }
+    // }
+    //
+    // ═══════════════════════════════════════════════════════════════════════════
 
     // Also process serial port input (for -serial stdio in QEMU)
     // SAFETY: We use the lock-free serial read here because terminal_tick
@@ -362,8 +398,32 @@ static mut ALT_PRESSED: bool = false;
 static mut EXTENDED_SCANCODE: bool = false;
 
 /// Process a single PS/2 scancode and return an ASCII byte (if any)
+/// Process scancode (DEPRECATED - LEGACY GHOST CODE)
+///
+/// ## ⚠️ DEPRECATED ⚠️
+///
+/// This function was part of the duplicate processing path that caused
+/// keyboard jitter in vim and other applications.
+///
+/// **DO NOT USE THIS FOR MAIN INPUT PATH.**
+///
+/// The PS/2 IRQ handler (crates/drivers/input/ps2/) is now the authoritative
+/// source for keyboard input. It tracks modifiers correctly and pushes to
+/// the console callback, which feeds the VT manager's lock-free ring buffer.
+///
+/// This function remains only as:
+/// 1. Archaeological evidence of bad design
+/// 2. Emergency fallback if your VM is completely fucked
+///
+/// If you find yourself needing this, fix the real problem instead.
+#[allow(dead_code)]
 fn process_scancode(scancode: u8) -> Option<u8> {
     unsafe {
+        // 🚨 THIS CODE PATH IS DISABLED 🚨
+        // See the big comment block in terminal_tick() for why.
+        //
+        // TL;DR: Duplicate processing = keyboard goes brrrr (in a bad way)
+
         // Handle extended prefix
         if scancode == 0xE0 {
             EXTENDED_SCANCODE = true;
@@ -373,7 +433,7 @@ fn process_scancode(scancode: u8) -> Option<u8> {
         let is_release = scancode & 0x80 != 0;
         let code = scancode & 0x7F;
 
-        // Update modifier state
+        // Update modifier state (⚠️ DUPLICATE STATE - PS/2 driver also tracks this!)
         match code {
             0x2A | 0x36 => {
                 // Shift
@@ -397,6 +457,7 @@ fn process_scancode(scancode: u8) -> Option<u8> {
         }
 
         // Check for Ctrl+Alt+Fn (VT switching)
+        // NOTE: This logic should probably move to the PS/2 driver or VT manager
         if !is_release && CTRL_PRESSED && ALT_PRESSED {
             match code {
                 0x3B..=0x40 => {
