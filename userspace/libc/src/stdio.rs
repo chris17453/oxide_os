@@ -139,7 +139,11 @@ pub fn getchar() -> i32 {
                 // Simple hex output
                 let nibbles = [(byte >> 4) & 0xF, byte & 0xF];
                 for &nib in &nibbles {
-                    let hex_char = if nib < 10 { b'0' + nib } else { b'a' + (nib - 10) };
+                    let hex_char = if nib < 10 {
+                        b'0' + nib
+                    } else {
+                        b'a' + (nib - 10)
+                    };
                     let _ = syscall::sys_write(2, &[hex_char]);
                 }
                 let _ = syscall::sys_write(2, b"\n");

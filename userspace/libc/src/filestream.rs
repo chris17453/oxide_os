@@ -204,11 +204,7 @@ pub unsafe extern "C" fn fdopen(fd: i32, mode: *const u8) -> *mut FILE {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn freopen(
-    path: *const u8,
-    mode: *const u8,
-    stream: *mut FILE,
-) -> *mut FILE {
+pub unsafe extern "C" fn freopen(path: *const u8, mode: *const u8, stream: *mut FILE) -> *mut FILE {
     if !stream.is_null() {
         flush_write_buf(stream);
         if (*stream).fd >= 3 {
@@ -236,7 +232,11 @@ pub unsafe extern "C" fn freopen(
         return core::ptr::null_mut();
     }
 
-    let f = if stream.is_null() { alloc_file() } else { stream };
+    let f = if stream.is_null() {
+        alloc_file()
+    } else {
+        stream
+    };
     if f.is_null() {
         syscall::syscall1(syscall::nr::CLOSE, fd as usize);
         return core::ptr::null_mut();
@@ -656,11 +656,7 @@ pub unsafe extern "C" fn fsetpos(stream: *mut FILE, pos: *const FposT) -> i32 {
 
 // getline for C (POSIX)
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn getline(
-    lineptr: *mut *mut u8,
-    n: *mut usize,
-    stream: *mut FILE,
-) -> isize {
+pub unsafe extern "C" fn getline(lineptr: *mut *mut u8, n: *mut usize, stream: *mut FILE) -> isize {
     getdelim(lineptr, n, b'\n' as i32, stream)
 }
 

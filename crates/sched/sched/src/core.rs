@@ -52,11 +52,7 @@ static CURRENT_PIDS: [AtomicU32; MAX_CPUS] = {
 pub fn current_pid_lockfree() -> Option<Pid> {
     let cpu = this_cpu();
     let pid = CURRENT_PIDS[cpu as usize].load(Ordering::Relaxed);
-    if pid == u32::MAX {
-        None
-    } else {
-        Some(pid)
-    }
+    if pid == u32::MAX { None } else { Some(pid) }
 }
 
 /// Set current PID (lock-free update)
@@ -817,7 +813,11 @@ pub fn debug_dump_all() -> Option<(Option<Pid>, u64, Vec<TaskDebugInfo>)> {
                         if let Some(cmd) = meta.cmdline.first() {
                             // Get the basename (after last '/')
                             let bytes = cmd.as_bytes();
-                            let start = bytes.iter().rposition(|&b| b == b'/').map(|i| i + 1).unwrap_or(0);
+                            let start = bytes
+                                .iter()
+                                .rposition(|&b| b == b'/')
+                                .map(|i| i + 1)
+                                .unwrap_or(0);
                             let len = (bytes.len() - start).min(16);
                             name[..len].copy_from_slice(&bytes[start..start + len]);
                             name_len = len;
@@ -873,9 +873,9 @@ pub fn all_pids() -> Vec<Pid> {
 /// a clone of its ProcessMeta Arc (if present).
 pub fn get_task_meta(pid: Pid) -> Option<Arc<Mutex<ProcessMeta>>> {
     for cpu in 0..num_cpus() {
-        if let Some(meta) = with_rq(cpu, |rq| {
-            rq.get_task(pid).and_then(|t| t.meta.clone())
-        }).flatten() {
+        if let Some(meta) =
+            with_rq(cpu, |rq| rq.get_task(pid).and_then(|t| t.meta.clone())).flatten()
+        {
             return Some(meta);
         }
     }
@@ -888,8 +888,10 @@ pub fn get_current_meta() -> Option<Arc<Mutex<ProcessMeta>>> {
 }
 
 /// DEBUG: Module-level statics for with_current_meta diagnostics
-pub static DEBUG_SCHED_META_PTR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
-pub static DEBUG_SCHED_ARC_PTR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+pub static DEBUG_SCHED_META_PTR: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(0);
+pub static DEBUG_SCHED_ARC_PTR: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(0);
 
 /// Execute a closure with read access to current task's ProcessMeta
 pub fn with_current_meta<F, R>(f: F) -> Option<R>
@@ -903,7 +905,8 @@ where
     let meta_ref: &ProcessMeta = &*guard;
 
     // DEBUG: Log the addresses for investigation
-    static DEBUG_CALLED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+    static DEBUG_CALLED: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
     if DEBUG_CALLED.swap(true, core::sync::atomic::Ordering::SeqCst) == false {
         let meta_ptr = meta_ref as *const ProcessMeta as u64;
         let meta_arc_ptr = &meta_arc as *const _ as u64;
@@ -930,9 +933,9 @@ where
 /// Get the children of a task
 pub fn get_task_children(pid: Pid) -> Vec<Pid> {
     for cpu in 0..num_cpus() {
-        if let Some(children) = with_rq(cpu, |rq| {
-            rq.get_task(pid).map(|t| t.children.clone())
-        }).flatten() {
+        if let Some(children) =
+            with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.children.clone())).flatten()
+        {
             return children;
         }
     }
@@ -993,9 +996,7 @@ pub fn set_task_exit_status(pid: Pid, status: i32) {
 /// Get a task's ppid
 pub fn get_task_ppid(pid: Pid) -> Option<Pid> {
     for cpu in 0..num_cpus() {
-        if let Some(ppid) = with_rq(cpu, |rq| {
-            rq.get_task(pid).map(|t| t.ppid)
-        }).flatten() {
+        if let Some(ppid) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.ppid)).flatten() {
             return Some(ppid);
         }
     }
@@ -1005,9 +1006,9 @@ pub fn get_task_ppid(pid: Pid) -> Option<Pid> {
 /// Get exit status of a task (if zombie)
 pub fn get_task_exit_status(pid: Pid) -> Option<i32> {
     for cpu in 0..num_cpus() {
-        if let Some((state, status)) = with_rq(cpu, |rq| {
-            rq.get_task(pid).map(|t| (t.state, t.exit_status))
-        }).flatten() {
+        if let Some((state, status)) =
+            with_rq(cpu, |rq| rq.get_task(pid).map(|t| (t.state, t.exit_status))).flatten()
+        {
             if state == TaskState::TASK_ZOMBIE {
                 return Some(status);
             }
@@ -1022,7 +1023,9 @@ pub fn is_task_waiting_for(pid: Pid, child_pid: Pid) -> bool {
     for cpu in 0..num_cpus() {
         if let Some(waiting) = with_rq(cpu, |rq| {
             rq.get_task(pid).map(|t| t.is_waiting_for(child_pid))
-        }).flatten() {
+        })
+        .flatten()
+        {
             return waiting;
         }
     }
@@ -1106,9 +1109,7 @@ pub fn set_task_meta(pid: Pid, meta: Arc<Mutex<ProcessMeta>>) {
 /// Get nice value for a task
 pub fn get_task_nice(pid: Pid) -> Option<i8> {
     for cpu in 0..num_cpus() {
-        if let Some(nice) = with_rq(cpu, |rq| {
-            rq.get_task(pid).map(|t| t.nice)
-        }).flatten() {
+        if let Some(nice) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.nice)).flatten() {
             return Some(nice);
         }
     }
@@ -1136,9 +1137,7 @@ pub fn set_task_nice(pid: Pid, nice: i8) -> bool {
 /// Get scheduler policy for a task
 pub fn get_task_policy(pid: Pid) -> Option<SchedPolicy> {
     for cpu in 0..num_cpus() {
-        if let Some(policy) = with_rq(cpu, |rq| {
-            rq.get_task(pid).map(|t| t.policy)
-        }).flatten() {
+        if let Some(policy) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.policy)).flatten() {
             return Some(policy);
         }
     }
@@ -1166,9 +1165,7 @@ pub fn set_task_policy(pid: Pid, policy: SchedPolicy) -> bool {
 /// Get RT priority for a task
 pub fn get_task_rt_priority(pid: Pid) -> Option<u8> {
     for cpu in 0..num_cpus() {
-        if let Some(prio) = with_rq(cpu, |rq| {
-            rq.get_task(pid).map(|t| t.rt_priority)
-        }).flatten() {
+        if let Some(prio) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.rt_priority)).flatten() {
             return Some(prio);
         }
     }
@@ -1196,9 +1193,9 @@ pub fn set_task_rt_priority(pid: Pid, priority: u8) -> bool {
 /// Get CPU affinity for a task
 pub fn get_task_affinity(pid: Pid) -> Option<CpuSet> {
     for cpu in 0..num_cpus() {
-        if let Some(affinity) = with_rq(cpu, |rq| {
-            rq.get_task(pid).map(|t| t.cpu_affinity.clone())
-        }).flatten() {
+        if let Some(affinity) =
+            with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.cpu_affinity.clone())).flatten()
+        {
             return Some(affinity);
         }
     }

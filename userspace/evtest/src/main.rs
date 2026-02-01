@@ -47,6 +47,7 @@ const EV_FF: u16 = 0x15;
 // IOCTL numbers
 const EVIOCGNAME: u64 = 0x06;
 const EVIOCGID: u64 = 0x02;
+const EVIOCFLUSH: u64 = 0x100;
 
 /// Print a string to stdout
 fn print(s: &str) {
@@ -389,26 +390,17 @@ fn list_devices() {
             let total_len = prefix.len() + name_bytes.len();
             if total_len < path_buf.len() {
                 path_buf[..prefix.len()].copy_from_slice(prefix);
-                path_buf[prefix.len()..prefix.len() + name_bytes.len()]
-                    .copy_from_slice(name_bytes);
+                path_buf[prefix.len()..prefix.len() + name_bytes.len()].copy_from_slice(name_bytes);
 
                 // Null-terminate for safety
-                if let Ok(path_str) =
-                    core::str::from_utf8(&path_buf[..total_len])
-                {
+                if let Ok(path_str) = core::str::from_utf8(&path_buf[..total_len]) {
                     let fd = open(path_str, fcntl::O_RDONLY, 0);
                     if fd >= 0 {
                         let mut name_buf = [0u8; 128];
-                        let ret = sys_ioctl(
-                            fd,
-                            EVIOCGNAME,
-                            name_buf.as_mut_ptr() as u64,
-                        );
+                        let ret = sys_ioctl(fd, EVIOCGNAME, name_buf.as_mut_ptr() as u64);
                         if ret > 0 {
                             let len = (ret as usize).min(name_buf.len());
-                            if let Ok(dev_name) =
-                                core::str::from_utf8(&name_buf[..len])
-                            {
+                            if let Ok(dev_name) = core::str::from_utf8(&name_buf[..len]) {
                                 let trimmed = dev_name.trim_end_matches('\0');
                                 if !trimmed.is_empty() {
                                     print("  ");
@@ -455,6 +447,9 @@ fn monitor_device(path: &str) {
     }
     print("\n");
 
+    // Flush any old queued events before we start monitoring
+    sys_ioctl(fd, EVIOCFLUSH, 0);
+
     print("Reading events from ");
     print(path);
     print("\nPress Ctrl+C to stop.\n\n");
@@ -476,9 +471,7 @@ fn monitor_device(path: &str) {
         let bytes_read = n as usize;
         let mut offset = 0;
         while offset + INPUT_EVENT_SIZE <= bytes_read {
-            let ev = unsafe {
-                &*(buf.as_ptr().add(offset) as *const InputEvent)
-            };
+            let ev = unsafe { &*(buf.as_ptr().add(offset) as *const InputEvent) };
             print_event(ev);
             offset += INPUT_EVENT_SIZE;
         }

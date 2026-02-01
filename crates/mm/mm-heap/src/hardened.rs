@@ -336,7 +336,11 @@ impl LockedHardenedHeap {
     /// Get statistics
     pub fn stats(&self) -> (usize, usize, usize) {
         let inner = self.inner.lock();
-        (inner.alloc_count(), inner.free_count(), inner.corruption_count())
+        (
+            inner.alloc_count(),
+            inner.free_count(),
+            inner.corruption_count(),
+        )
     }
 }
 

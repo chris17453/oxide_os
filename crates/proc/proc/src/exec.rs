@@ -243,7 +243,8 @@ pub fn do_exec<A: FrameAllocator>(
                 let ph_start = ph_offset + i * ph_size;
                 if ph_start + core::mem::size_of::<ProgHeader>() <= elf_data.len() {
                     let ph = unsafe { &*(elf_data.as_ptr().add(ph_start) as *const ProgHeader) };
-                    if ph.p_type == 7 { // PT_TLS
+                    if ph.p_type == 7 {
+                        // PT_TLS
                         // Found it! Create TlsTemplate manually
                         found_tls = Some(elf::TlsTemplate {
                             file_offset: ph.p_offset as usize,
@@ -392,9 +393,15 @@ pub fn do_exec<A: FrameAllocator>(
         os_log::debug!("[EXEC]   argc will be at {:#x}", stack_ptr);
         os_log::debug!("[EXEC]   argv[0] ptr will be at {:#x}", stack_ptr + 8);
         if !string_offsets_argv.is_empty() {
-            os_log::debug!("[EXEC]   argv[0] will point to {:#x}", string_offsets_argv[0]);
+            os_log::debug!(
+                "[EXEC]   argv[0] will point to {:#x}",
+                string_offsets_argv[0]
+            );
             if string_offsets_argv.len() > 1 {
-                os_log::debug!("[EXEC]   argv[1] will point to {:#x}", string_offsets_argv[1]);
+                os_log::debug!(
+                    "[EXEC]   argv[1] will point to {:#x}",
+                    string_offsets_argv[1]
+                );
             }
         }
     }
@@ -405,7 +412,12 @@ pub fn do_exec<A: FrameAllocator>(
         #[cfg(feature = "debug-fork")]
         {
             extern crate os_log;
-            os_log::debug!("[EXEC] Writing argv[{}] = \"{}\" to vaddr {:#x}", i, arg, string_ptr);
+            os_log::debug!(
+                "[EXEC] Writing argv[{}] = \"{}\" to vaddr {:#x}",
+                i,
+                arg,
+                string_ptr
+            );
         }
         write_to_user_stack(&new_address_space, string_ptr, arg.as_bytes())?;
         // Write null terminator
@@ -429,7 +441,12 @@ pub fn do_exec<A: FrameAllocator>(
         #[cfg(feature = "debug-fork")]
         {
             extern crate os_log;
-            os_log::debug!("[EXEC] Writing argv[{}] pointer = {:#x} at stack offset {:#x}", i, offset, ptr);
+            os_log::debug!(
+                "[EXEC] Writing argv[{}] pointer = {:#x} at stack offset {:#x}",
+                i,
+                offset,
+                ptr
+            );
         }
         write_to_user_stack(&new_address_space, ptr, &offset.to_le_bytes())?;
         ptr += 8;

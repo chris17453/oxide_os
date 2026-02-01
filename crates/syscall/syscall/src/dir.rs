@@ -9,9 +9,9 @@ const fn align_up(value: usize, align: usize) -> usize {
     (value + align - 1) & !(align - 1)
 }
 
+use crate::with_current_meta;
 use alloc::string::String;
 use vfs::{Mode, mount::GLOBAL_VFS};
-use crate::with_current_meta;
 
 use crate::copy_to_user;
 use crate::errno;
@@ -190,13 +190,13 @@ pub fn sys_getdents(fd: i32, buf: u64, count: usize) -> i64 {
         return errno::EFAULT;
     }
 
-    let file = match with_current_meta(|meta| {
-        meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
-    }) {
-        Some(Ok(f)) => f,
-        Some(Err(e)) => return vfs_error_to_errno(e),
-        None => return errno::ESRCH,
-    };
+    let file =
+        match with_current_meta(|meta| meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone()))
+        {
+            Some(Ok(f)) => f,
+            Some(Err(e)) => return vfs_error_to_errno(e),
+            None => return errno::ESRCH,
+        };
 
     // Check it's a directory
     if file.vnode().vtype() != VnodeType::Directory {
@@ -532,13 +532,7 @@ pub fn sys_renameat(
 }
 
 /// sys_readlinkat - Read symlink relative to directory fd
-pub fn sys_readlinkat(
-    dirfd: i32,
-    path_ptr: u64,
-    path_len: usize,
-    buf: u64,
-    bufsize: usize,
-) -> i64 {
+pub fn sys_readlinkat(dirfd: i32, path_ptr: u64, path_len: usize, buf: u64, bufsize: usize) -> i64 {
     if dirfd != crate::nr::AT_FDCWD {
         return crate::errno::ENOSYS;
     }

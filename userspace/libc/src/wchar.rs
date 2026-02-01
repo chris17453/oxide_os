@@ -370,11 +370,7 @@ pub unsafe fn wcstok(s: *mut WcharT, delim: *const WcharT, ptr: *mut *mut WcharT
     };
 
     // Determine starting position
-    let mut str_ptr = if !s.is_null() {
-        s
-    } else {
-        *state
-    };
+    let mut str_ptr = if !s.is_null() { s } else { *state };
 
     // If null or end of string, return null
     if str_ptr.is_null() || *str_ptr == 0 {

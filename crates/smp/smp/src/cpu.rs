@@ -4,9 +4,9 @@
 
 use crate::MAX_CPUS;
 use crate::percpu;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use arch_traits::Arch;
 use arch_x86_64 as arch;
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// CPU identifier type
 pub type CpuId = u32;

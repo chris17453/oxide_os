@@ -16,7 +16,7 @@
 
 use crate::stats::MemoryStats;
 use crate::zone::{AllocRequest, MemoryZone, ZoneType};
-use crate::{MmError, MmResult, FRAME_SHIFT, FRAME_SIZE, MAX_ORDER};
+use crate::{FRAME_SHIFT, FRAME_SIZE, MAX_ORDER, MmError, MmResult};
 use mm_traits::FrameAllocator;
 use os_core::PhysAddr;
 use spin::Mutex;
@@ -153,15 +153,15 @@ impl BuddyAllocator {
 
             // Update statistics
             let pages = 1u64 << order;
-            zone.stats
-                .free_pages[order]
-                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-            self.stats
-                .free_bytes
-                .fetch_add(pages * FRAME_SIZE as u64, core::sync::atomic::Ordering::Relaxed);
-            self.stats
-                .total_bytes
-                .fetch_add(pages * FRAME_SIZE as u64, core::sync::atomic::Ordering::Relaxed);
+            zone.stats.free_pages[order].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            self.stats.free_bytes.fetch_add(
+                pages * FRAME_SIZE as u64,
+                core::sync::atomic::Ordering::Relaxed,
+            );
+            self.stats.total_bytes.fetch_add(
+                pages * FRAME_SIZE as u64,
+                core::sync::atomic::Ordering::Relaxed,
+            );
 
             addr += block_size;
             remaining -= block_size;
@@ -221,7 +221,7 @@ impl BuddyAllocator {
             Some(ZoneType::Dma) => [0, 1, 2], // DMA only, then Normal, then High
             Some(ZoneType::Normal) => [1, 2, 0], // Normal preferred
             Some(ZoneType::High) => [2, 1, 0], // High preferred
-            None => [1, 2, 0],                 // Default: Normal, High, DMA
+            None => [1, 2, 0],                // Default: Normal, High, DMA
         };
 
         for zone_idx in zone_order {
@@ -319,9 +319,7 @@ impl BuddyAllocator {
             let buddy_addr = buddy_frame << FRAME_SHIFT;
 
             // Check if buddy is in the same zone
-            if buddy_addr < zone.base.as_u64()
-                || buddy_addr >= zone.base.as_u64() + zone.size
-            {
+            if buddy_addr < zone.base.as_u64() || buddy_addr >= zone.base.as_u64() + zone.size {
                 break;
             }
 
@@ -342,20 +340,14 @@ impl BuddyAllocator {
         // Add the (possibly merged) block to the free list
         // SAFETY: Address is valid as it was just freed
         unsafe { self.add_free_block(zone, current_order, current_addr) };
-        zone.stats.free_pages[current_order]
-            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        zone.stats.free_pages[current_order].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     }
 
     /// Try to remove a specific block from a free list
     ///
     /// # Safety
     /// Zone must be initialized and the address must be valid.
-    unsafe fn remove_from_free_list(
-        &self,
-        zone: &mut MemoryZone,
-        order: usize,
-        addr: u64,
-    ) -> bool {
+    unsafe fn remove_from_free_list(&self, zone: &mut MemoryZone, order: usize, addr: u64) -> bool {
         let target_frame = addr >> FRAME_SHIFT;
 
         if zone.free_lists[order].count == 0 {
@@ -446,9 +438,10 @@ impl BuddyAllocator {
                     zone.stats.free_pages[order]
                         .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
                     let pages = 1u64 << order;
-                    self.stats
-                        .free_bytes
-                        .fetch_sub(pages * FRAME_SIZE as u64, core::sync::atomic::Ordering::Relaxed);
+                    self.stats.free_bytes.fetch_sub(
+                        pages * FRAME_SIZE as u64,
+                        core::sync::atomic::Ordering::Relaxed,
+                    );
                     break;
                 }
             }
@@ -496,10 +489,7 @@ mod tests {
 
     #[test]
     fn test_zone_type_for_address() {
-        assert_eq!(
-            ZoneType::for_address(PhysAddr::new(0x1000)),
-            ZoneType::Dma
-        );
+        assert_eq!(ZoneType::for_address(PhysAddr::new(0x1000)), ZoneType::Dma);
         assert_eq!(
             ZoneType::for_address(PhysAddr::new(0x100_0000)), // 16MB
             ZoneType::Normal

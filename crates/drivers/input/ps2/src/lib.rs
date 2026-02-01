@@ -6,6 +6,14 @@
 
 extern crate alloc;
 
+/// Debug macro for keyboard input events
+macro_rules! debug_input {
+    ($($arg:tt)*) => {
+        // No-op: keyboard events visible via evtest /dev/input/event0
+        // Avoid inline asm in non-arch crates
+    };
+}
+
 use alloc::string::String;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
@@ -206,6 +214,7 @@ impl Ps2Keyboard {
 
     /// Handle a scancode
     pub fn handle_scancode(&self, scancode: u8) {
+        debug_input!("[PS2] Scancode: 0x{:02x}", scancode);
         let mut keymap = self.keymap.lock();
 
         if let Some((keycode, pressed)) = keymap.process_scancode(scancode) {
@@ -249,6 +258,7 @@ impl Ps2Keyboard {
             } else {
                 KeyValue::Released
             };
+            debug_input!("[INPUT] PS/2 KB dev{} keycode={} state={:?}", self.device_id(), keycode, value);
             input::report_key(self.device_id() as usize, keycode, value);
             input::report_sync(self.device_id() as usize);
 
@@ -273,7 +283,15 @@ impl Ps2Keyboard {
                         input::KEY_H => Some(0x08),
                         input::KEY_I => Some(0x09),
                         input::KEY_J => Some(0x0A),
-                        input::KEY_K => Some(0x0B),
+                        input::KEY_K => {
+                            // Visual indicator for Ctrl+K
+                            #[cfg(feature = "debug-input")]
+                            {
+                                // Send visual feedback to console via callback
+                                push_to_console(b"\n\r*** CTRL+K PRESSED ***\n\r");
+                            }
+                            Some(0x0B)
+                        },
                         input::KEY_L => Some(0x0C),
                         input::KEY_M => Some(0x0D),
                         input::KEY_N => Some(0x0E),
@@ -354,7 +372,15 @@ impl Ps2Keyboard {
                     input::KEY_LEFT => Some(b"\x1b[D"),
                     input::KEY_HOME => Some(b"\x1b[H"),
                     input::KEY_END => Some(b"\x1b[F"),
-                    input::KEY_INSERT => Some(b"\x1b[2~"),
+                    input::KEY_INSERT => {
+                        // Visual indicator for INSERT key
+                        #[cfg(feature = "debug-input")]
+                        {
+                            // Send visual feedback to console via callback
+                            push_to_console(b"\n\r*** INSERT KEY PRESSED ***\n\r");
+                        }
+                        Some(b"\x1b[2~")
+                    },
                     input::KEY_DELETE => Some(b"\x1b[3~"),
                     input::KEY_PAGEUP => Some(b"\x1b[5~"),
                     input::KEY_PAGEDOWN => Some(b"\x1b[6~"),

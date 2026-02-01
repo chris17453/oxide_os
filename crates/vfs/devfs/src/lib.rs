@@ -32,15 +32,20 @@ pub use devices::{SIGINT, SIGQUIT, set_signal_fg_callback};
 
 /// Console input callback for PS/2 driver
 /// Now a no-op — input flows through VT push_input() only.
-pub fn console_input_callback(_data: &[u8]) {
-    // Input is handled by the VT subsystem
+pub fn console_input_callback(data: &[u8]) {
+    // Forward keyboard input to the active VT
+    for &ch in data {
+        vt::push_input_global(ch);
+    }
 }
 
 // Re-export random device callback setter
 pub use devices::set_random_fill_callback;
 
 // Re-export kmsg functions and callback setters
-pub use kmsg::{kmsg_write, kmsg_write_str, set_pid_callback, set_uptime_callback, set_proc_name_callback};
+pub use kmsg::{
+    kmsg_write, kmsg_write_str, set_pid_callback, set_proc_name_callback, set_uptime_callback,
+};
 
 /// The devfs root directory
 pub struct DevFs {

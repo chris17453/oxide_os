@@ -22,6 +22,15 @@ use os_core::VirtAddr;
 use proc_traits::Pid;
 use spin::Mutex;
 
+#[cfg(feature = "debug-syscall-perf")]
+use core::sync::atomic::{AtomicU64, Ordering};
+
+#[cfg(feature = "debug-syscall-perf")]
+static SYSCALL_COUNT: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(feature = "debug-syscall-perf")]
+static LAST_STATS_PRINT: AtomicU64 = AtomicU64::new(0);
+
 // ============================================================================
 // Unified process access helpers
 // ============================================================================
@@ -461,7 +470,14 @@ pub fn dispatch(
     arg5: u64,
     arg6: u64,
 ) -> i64 {
-    match number {
+    #[cfg(feature = "debug-syscall-perf")]
+    let start_tsc = unsafe {
+        let tsc: u64;
+        core::arch::asm!("rdtsc", out("rax") tsc, out("rdx") _, options(nomem, nostack));
+        tsc
+    };
+
+    let result = match number {
         // Process syscalls
         nr::EXIT => sys_exit(arg1 as i32),
         nr::WRITE => sys_write(arg1 as i32, arg2, arg3 as usize),
@@ -652,28 +668,41 @@ pub fn dispatch(
         nr::GETRANDOM => sys_getrandom(arg1, arg2 as usize, arg3 as u32),
 
         // Filesystem mount syscalls
-        nr::MOUNT => vfs::sys_mount(
-            arg1,
-            arg2 as usize,
-            arg3,
-            arg4 as usize,
-            arg5,
-            arg6,
-        ),
+        nr::MOUNT => vfs::sys_mount(arg1, arg2 as usize, arg3, arg4 as usize, arg5, arg6),
         nr::UMOUNT => vfs::sys_umount(arg1, arg2 as usize, arg3 as u32),
         nr::PIVOT_ROOT => vfs::sys_pivot_root(arg1, arg2 as usize, arg3, arg4 as usize),
 
         // *at variants - delegate to existing handlers when dirfd is AT_FDCWD
-        nr::OPENAT => vfs_ext::sys_openat(arg1 as i32, arg2, arg3 as usize, arg4 as u32, arg5 as u32),
+        nr::OPENAT => {
+            vfs_ext::sys_openat(arg1 as i32, arg2, arg3 as usize, arg4 as u32, arg5 as u32)
+        }
         nr::MKDIRAT => dir::sys_mkdirat(arg1 as i32, arg2, arg3 as usize, arg4 as u32),
         nr::UNLINKAT => dir::sys_unlinkat(arg1 as i32, arg2, arg3 as usize, arg4 as i32),
-        nr::RENAMEAT => dir::sys_renameat(arg1 as i32, arg2, arg3 as usize, arg4 as i32, arg5, arg6 as usize),
+        nr::RENAMEAT => dir::sys_renameat(
+            arg1 as i32,
+            arg2,
+            arg3 as usize,
+            arg4 as i32,
+            arg5,
+            arg6 as usize,
+        ),
         nr::FACCESSAT => vfs_ext::sys_faccessat(arg1 as i32, arg2, arg3 as usize, arg4 as i32),
         nr::FCHMODAT => vfs_ext::sys_fchmodat(arg1 as i32, arg2, arg3 as usize, arg4 as u32),
-        nr::FCHOWNAT => vfs_ext::sys_fchownat(arg1 as i32, arg2, arg3 as usize, arg4 as i32, arg5 as i32),
-        nr::READLINKAT => dir::sys_readlinkat(arg1 as i32, arg2, arg3 as usize, arg4, arg5 as usize),
+        nr::FCHOWNAT => {
+            vfs_ext::sys_fchownat(arg1 as i32, arg2, arg3 as usize, arg4 as i32, arg5 as i32)
+        }
+        nr::READLINKAT => {
+            dir::sys_readlinkat(arg1 as i32, arg2, arg3 as usize, arg4, arg5 as usize)
+        }
         nr::SYMLINKAT => dir::sys_symlinkat(arg1, arg2 as usize, arg3 as i32, arg4, arg5 as usize),
-        nr::LINKAT => dir::sys_linkat(arg1 as i32, arg2, arg3 as usize, arg4 as i32, arg5, arg6 as usize),
+        nr::LINKAT => dir::sys_linkat(
+            arg1 as i32,
+            arg2,
+            arg3 as usize,
+            arg4 as i32,
+            arg5,
+            arg6 as usize,
+        ),
         nr::UTIMENSAT => vfs_ext::sys_utimensat(arg1 as i32, arg2, arg3 as usize, arg4),
         nr::FUTIMENS => vfs_ext::sys_futimens(arg1 as i32, arg2),
 
@@ -704,26 +733,38 @@ pub fn dispatch(
         nr::ACCEPT4 => socket::sys_accept4(arg1 as i32, arg2, arg3, arg4 as i32),
 
         // Additional syscalls
-        nr::SYNC => { 0 } // No-op: VFS does not cache writes
-        nr::POSIX_FADVISE => { 0 } // Advisory only
+        nr::SYNC => 0,          // No-op: VFS does not cache writes
+        nr::POSIX_FADVISE => 0, // Advisory only
         nr::SETREUID => sys_setreuid(arg1 as u32, arg2 as u32),
         nr::SETREGID => sys_setregid(arg1 as u32, arg2 as u32),
-        nr::SCHED_GET_PRIORITY_MAX => { 99 } // Linux-compatible max RT priority
-        nr::SCHED_GET_PRIORITY_MIN => { 1 }  // Linux-compatible min RT priority
+        nr::SCHED_GET_PRIORITY_MAX => 99, // Linux-compatible max RT priority
+        nr::SCHED_GET_PRIORITY_MIN => 1,  // Linux-compatible min RT priority
         nr::COPY_FILE_RANGE => vfs_ext::sys_copy_file_range(
-            arg1 as i32, arg2, arg3 as i32, arg4, arg5 as usize, arg6 as u32,
+            arg1 as i32,
+            arg2,
+            arg3 as i32,
+            arg4,
+            arg5 as usize,
+            arg6 as u32,
         ),
         nr::UMASK => sys_umask(arg1 as u32),
         nr::SOCKETPAIR => socket::sys_socketpair(arg1 as i32, arg2 as i32, arg3 as i32, arg4),
         nr::MEMFD_CREATE => vfs_ext::sys_memfd_create(arg1, arg2 as usize, arg3 as u32),
-        nr::CLOCK_NANOSLEEP => time::sys_clock_nanosleep(arg1 as i32, arg2 as i32, arg3 as usize, arg4 as usize),
+        nr::CLOCK_NANOSLEEP => {
+            time::sys_clock_nanosleep(arg1 as i32, arg2 as i32, arg3 as usize, arg4 as usize)
+        }
         nr::SIGALTSTACK => signal::sys_sigaltstack(arg1, arg2),
         nr::PREADV => vfs_ext::sys_preadv(arg1 as i32, arg2, arg3 as i32, arg4 as i64),
         nr::PWRITEV => vfs_ext::sys_pwritev(arg1 as i32, arg2, arg3 as i32, arg4 as i64),
         nr::FCHDIR => sys_fchdir(arg1 as i32),
         nr::WAITID => sys_waitid(arg1 as i32, arg2 as i32, arg3, arg4 as i32),
         nr::SPLICE => vfs_ext::sys_splice(
-            arg1 as i32, arg2, arg3 as i32, arg4, arg5 as usize, arg6 as u32,
+            arg1 as i32,
+            arg2,
+            arg3 as i32,
+            arg4,
+            arg5 as usize,
+            arg6 as u32,
         ),
         nr::SETHOSTNAME => sys_sethostname(arg1, arg2 as usize),
         nr::EVENTFD2 => vfs_ext::sys_eventfd2(arg1 as u32, arg2 as u32),
@@ -732,6 +773,180 @@ pub fn dispatch(
         nr::EPOLL_WAIT => vfs_ext::sys_epoll_wait(arg1 as i32, arg2, arg3 as i32, arg4 as i32),
 
         _ => errno::ENOSYS,
+    };
+
+    #[cfg(feature = "debug-syscall-perf")]
+    {
+        let end_tsc = unsafe {
+            let tsc: u64;
+            core::arch::asm!("rdtsc", out("rax") tsc, out("rdx") _, options(nomem, nostack));
+            tsc
+        };
+        let cycles = end_tsc.wrapping_sub(start_tsc);
+
+        // Count syscalls
+        let count = SYSCALL_COUNT.fetch_add(1, Ordering::Relaxed);
+
+        // Print stats every 1000 syscalls
+        if count % 1000 == 0 {
+            use arch_x86_64::serial;
+            let _ = core::fmt::Write::write_fmt(
+                &mut serial::SerialWriter,
+                format_args!("[SYSCALL] {} total syscalls\n", count),
+            );
+        }
+
+        // Log ALL syscalls (check for TSC wrap)
+        if cycles < (1u64 << 40) {
+            use arch_x86_64::serial;
+
+            // Show bytes for read/write
+            if number == nr::WRITE || number == nr::READ {
+                // For read/write, show actual bytes transferred (result) not buffer size (arg3)
+                let bytes = if result >= 0 { result as u64 } else { 0 };
+                let _ = core::fmt::Write::write_fmt(
+                    &mut serial::SerialWriter,
+                    format_args!(
+                        "[SYSCALL] {} ({}) took {} cycles, {} bytes, {:.1} cycles/byte\n",
+                        syscall_name(number),
+                        number,
+                        cycles,
+                        bytes,
+                        cycles as f64 / bytes.max(1) as f64
+                    ),
+                );
+            } else {
+                let _ = core::fmt::Write::write_fmt(
+                    &mut serial::SerialWriter,
+                    format_args!("[SYSCALL] {} ({}) took {} cycles\n", syscall_name(number), number, cycles),
+                );
+            }
+        }
+    }
+
+    result
+}
+
+#[cfg(feature = "debug-syscall-perf")]
+fn syscall_name(num: u64) -> &'static str {
+    match num {
+        // Process
+        nr::EXIT => "exit",
+        nr::WRITE => "write",
+        nr::READ => "read",
+        nr::FORK => "fork",
+        nr::EXEC => "exec",
+        nr::WAIT => "wait",
+        nr::WAITPID => "waitpid",
+        nr::GETPID => "getpid",
+        nr::GETPPID => "getppid",
+        nr::SETPGID => "setpgid",
+        nr::GETPGID => "getpgid",
+        nr::SETSID => "setsid",
+        nr::GETSID => "getsid",
+        nr::EXECVE => "execve",
+
+        // VFS
+        nr::OPEN => "open",
+        nr::CLOSE => "close",
+        nr::LSEEK => "lseek",
+        nr::FSTAT => "fstat",
+        nr::STAT => "stat",
+        nr::LSTAT => "lstat",
+        nr::DUP => "dup",
+        nr::DUP2 => "dup2",
+        nr::DUP3 => "dup3",
+        nr::PIPE => "pipe",
+        nr::PIPE2 => "pipe2",
+        nr::FTRUNCATE => "ftruncate",
+        nr::TRUNCATE => "truncate",
+
+        // Directory
+        nr::MKDIR => "mkdir",
+        nr::RMDIR => "rmdir",
+        nr::UNLINK => "unlink",
+        nr::RENAME => "rename",
+        nr::GETDENTS => "getdents",
+        nr::GETDENTS64 => "getdents64",
+        nr::CHDIR => "chdir",
+        nr::GETCWD => "getcwd",
+        nr::LINK => "link",
+        nr::SYMLINK => "symlink",
+        nr::READLINK => "readlink",
+
+        // TTY/Device
+        nr::IOCTL => "ioctl",
+
+        // Poll/Select
+        nr::POLL => "poll",
+        nr::PPOLL => "ppoll",
+        nr::SELECT => "select",
+        nr::PSELECT6 => "pselect6",
+
+        // I/O
+        nr::READV => "readv",
+        nr::WRITEV => "writev",
+        nr::PREAD64 => "pread64",
+        nr::PWRITE64 => "pwrite64",
+        nr::PREADV => "preadv",
+        nr::PWRITEV => "pwritev",
+        nr::FSYNC => "fsync",
+        nr::FDATASYNC => "fdatasync",
+
+        // Memory
+        nr::MMAP => "mmap",
+        nr::MUNMAP => "munmap",
+        nr::MPROTECT => "mprotect",
+        nr::BRK => "brk",
+        nr::MADVISE => "madvise",
+
+        // Signal
+        nr::KILL => "kill",
+        nr::SIGACTION => "sigaction",
+        nr::SIGPROCMASK => "sigprocmask",
+        nr::SIGPENDING => "sigpending",
+        nr::SIGSUSPEND => "sigsuspend",
+        nr::PAUSE => "pause",
+        nr::SIGRETURN => "sigreturn",
+        nr::SIGALTSTACK => "sigaltstack",
+
+        // Time
+        nr::GETTIMEOFDAY => "gettimeofday",
+        nr::CLOCK_GETTIME => "clock_gettime",
+        nr::CLOCK_GETRES => "clock_getres",
+        nr::NANOSLEEP => "nanosleep",
+        nr::CLOCK_NANOSLEEP => "clock_nanosleep",
+
+        // *at variants
+        nr::OPENAT => "openat",
+        nr::MKDIRAT => "mkdirat",
+        nr::UNLINKAT => "unlinkat",
+        nr::RENAMEAT => "renameat",
+        nr::FACCESSAT => "faccessat",
+        nr::FCHMODAT => "fchmodat",
+        nr::FCHOWNAT => "fchownat",
+        nr::READLINKAT => "readlinkat",
+        nr::SYMLINKAT => "symlinkat",
+        nr::LINKAT => "linkat",
+        nr::UTIMENSAT => "utimensat",
+        nr::FUTIMENS => "futimens",
+
+        // Thread
+        nr::CLONE => "clone",
+        nr::GETTID => "gettid",
+        nr::FUTEX => "futex",
+        nr::SET_TID_ADDRESS => "set_tid_address",
+        nr::EXIT_GROUP => "exit_group",
+
+        // Misc
+        nr::UNAME => "uname",
+        nr::GETRANDOM => "getrandom",
+        nr::EPOLL_CREATE1 => "epoll_create1",
+        nr::EPOLL_CTL => "epoll_ctl",
+        nr::EPOLL_WAIT => "epoll_wait",
+        nr::EVENTFD2 => "eventfd2",
+
+        _ => "unknown",
     }
 }
 
@@ -900,7 +1115,9 @@ fn sys_exec(path: u64, path_len: usize, argv: *const *const u8, envp: *const *co
     }
 
     // Enable user memory access (SMAP)
-    unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
 
     let result = unsafe {
         let ctx = addr_of!(SYSCALL_CONTEXT);
@@ -938,7 +1155,9 @@ fn sys_exec(path: u64, path_len: usize, argv: *const *const u8, envp: *const *co
     }
 
     // Disable user memory access (SMAP)
-    unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
     result
 }
 
@@ -1129,7 +1348,9 @@ fn sys_getpid() -> i64 {
 /// sys_getppid - Get parent process ID
 fn sys_getppid() -> i64 {
     // Use the unified model - get PPID from scheduler Task
-    sched::get_task_ppid(current_pid()).map(|p| p as i64).unwrap_or(0)
+    sched::get_task_ppid(current_pid())
+        .map(|p| p as i64)
+        .unwrap_or(0)
 }
 
 /// sys_setpgid - Set process group ID
@@ -1387,13 +1608,24 @@ struct Rusage {
 impl Rusage {
     const fn zeroed() -> Self {
         Rusage {
-            ru_utime_sec: 0, ru_utime_usec: 0,
-            ru_stime_sec: 0, ru_stime_usec: 0,
-            ru_maxrss: 0, ru_ixrss: 0, ru_idrss: 0, ru_isrss: 0,
-            ru_minflt: 0, ru_majflt: 0, ru_nswap: 0,
-            ru_inblock: 0, ru_oublock: 0,
-            ru_msgsnd: 0, ru_msgrcv: 0, ru_nsignals: 0,
-            ru_nvcsw: 0, ru_nivcsw: 0,
+            ru_utime_sec: 0,
+            ru_utime_usec: 0,
+            ru_stime_sec: 0,
+            ru_stime_usec: 0,
+            ru_maxrss: 0,
+            ru_ixrss: 0,
+            ru_idrss: 0,
+            ru_isrss: 0,
+            ru_minflt: 0,
+            ru_majflt: 0,
+            ru_nswap: 0,
+            ru_inblock: 0,
+            ru_oublock: 0,
+            ru_msgsnd: 0,
+            ru_msgrcv: 0,
+            ru_nsignals: 0,
+            ru_nvcsw: 0,
+            ru_nivcsw: 0,
         }
     }
 }
@@ -1465,9 +1697,8 @@ fn sys_setgroups(_size: i32, _list_ptr: u64) -> i64 {
 
 /// sys_getresuid - Get real, effective, and saved user IDs
 fn sys_getresuid(ruid_ptr: u64, euid_ptr: u64, suid_ptr: u64) -> i64 {
-    let (uid, euid) = match with_current_meta(|meta| {
-        (meta.credentials.uid, meta.credentials.euid)
-    }) {
+    let (uid, euid) = match with_current_meta(|meta| (meta.credentials.uid, meta.credentials.euid))
+    {
         Some(v) => v,
         None => return errno::ESRCH,
     };
@@ -1490,9 +1721,8 @@ fn sys_getresuid(ruid_ptr: u64, euid_ptr: u64, suid_ptr: u64) -> i64 {
 
 /// sys_getresgid - Get real, effective, and saved group IDs
 fn sys_getresgid(rgid_ptr: u64, egid_ptr: u64, sgid_ptr: u64) -> i64 {
-    let (gid, egid) = match with_current_meta(|meta| {
-        (meta.credentials.gid, meta.credentials.egid)
-    }) {
+    let (gid, egid) = match with_current_meta(|meta| (meta.credentials.gid, meta.credentials.egid))
+    {
         Some(v) => v,
         None => return errno::ESRCH,
     };
@@ -1552,10 +1782,22 @@ fn sys_setresgid(rgid: u32, egid: u32, _sgid: u32) -> i64 {
 fn sys_prlimit(_pid: i32, resource: i32, new_limit_ptr: u64, old_limit_ptr: u64) -> i64 {
     // Return default limits for known resources
     let default_limit = match resource {
-        rlimit_resource::RLIMIT_NOFILE => Rlimit { rlim_cur: 1024, rlim_max: 4096 },
-        rlimit_resource::RLIMIT_STACK => Rlimit { rlim_cur: 8 * 1024 * 1024, rlim_max: RLIM_INFINITY },
-        rlimit_resource::RLIMIT_AS => Rlimit { rlim_cur: RLIM_INFINITY, rlim_max: RLIM_INFINITY },
-        _ => Rlimit { rlim_cur: RLIM_INFINITY, rlim_max: RLIM_INFINITY },
+        rlimit_resource::RLIMIT_NOFILE => Rlimit {
+            rlim_cur: 1024,
+            rlim_max: 4096,
+        },
+        rlimit_resource::RLIMIT_STACK => Rlimit {
+            rlim_cur: 8 * 1024 * 1024,
+            rlim_max: RLIM_INFINITY,
+        },
+        rlimit_resource::RLIMIT_AS => Rlimit {
+            rlim_cur: RLIM_INFINITY,
+            rlim_max: RLIM_INFINITY,
+        },
+        _ => Rlimit {
+            rlim_cur: RLIM_INFINITY,
+            rlim_max: RLIM_INFINITY,
+        },
     };
 
     // Write old limit if requested
@@ -1619,7 +1861,8 @@ fn sys_umask(mask: u32) -> i64 {
         let old = meta.umask;
         meta.umask = mask as u16;
         old as i64
-    }).unwrap_or(0o022)
+    })
+    .unwrap_or(0o022)
 }
 
 /// Priority constants
@@ -1894,7 +2137,9 @@ fn sys_init_module(image: u64, len: usize, params: u64) -> i64 {
         return errno::EFAULT;
     }
 
-    unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
 
     // Get the module data
     let data = unsafe { core::slice::from_raw_parts(image as *const u8, len) };
@@ -1914,7 +2159,9 @@ fn sys_init_module(image: u64, len: usize, params: u64) -> i64 {
         ""
     };
 
-    unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
 
     // NOTE: In full implementation, this would:
     // 1. Parse the ELF module
@@ -2701,9 +2948,7 @@ fn sys_getrandom(buf: u64, buflen: usize, flags: u32) -> i64 {
 
 fn sys_fchdir(fd: i32) -> i64 {
     // Verify the fd exists and refers to a valid file
-    let exists = with_current_meta(|meta| {
-        meta.fd_table.get(fd).is_ok()
-    }).unwrap_or(false);
+    let exists = with_current_meta(|meta| meta.fd_table.get(fd).is_ok()).unwrap_or(false);
 
     if !exists {
         return errno::EBADF;
@@ -2736,17 +2981,23 @@ fn sys_waitid(idtype: i32, id: i32, infop: u64, options: i32) -> i64 {
     // Map waitid parameters to waitpid parameters
     // idtype: 0=P_ALL, 1=P_PID, 2=P_PGID
     let wait_pid = match idtype {
-        0 => -1i32,       // P_ALL: wait for any child
-        1 => id,          // P_PID: wait for specific pid
-        2 => -(id),       // P_PGID: wait for any in process group
+        0 => -1i32, // P_ALL: wait for any child
+        1 => id,    // P_PID: wait for specific pid
+        2 => -(id), // P_PGID: wait for any in process group
         _ => return errno::EINVAL,
     };
 
     // Convert options
     let mut wait_options = 0i32;
-    if options & 1 != 0 { wait_options |= 1; } // WEXITED -> (default)
-    if options & 2 != 0 { wait_options |= 2; } // WSTOPPED -> WUNTRACED
-    if options & 4 != 0 { wait_options |= 1; } // WNOHANG
+    if options & 1 != 0 {
+        wait_options |= 1;
+    } // WEXITED -> (default)
+    if options & 2 != 0 {
+        wait_options |= 2;
+    } // WSTOPPED -> WUNTRACED
+    if options & 4 != 0 {
+        wait_options |= 1;
+    } // WNOHANG
 
     // Use the existing wait callback
     use core::ptr::addr_of;
@@ -2774,14 +3025,23 @@ fn sys_waitid(idtype: i32, id: i32, infop: u64, options: i32) -> i64 {
             si_code: if status & 0x7f == 0 { 1 } else { 2 }, // CLD_EXITED or CLD_KILLED
             si_pid: child_pid,
             si_uid: 0,
-            si_status: if status & 0x7f == 0 { (status >> 8) & 0xff } else { status & 0x7f },
+            si_status: if status & 0x7f == 0 {
+                (status >> 8) & 0xff
+            } else {
+                status & 0x7f
+            },
             _pad: [0; 104],
         };
 
         let info_bytes = unsafe {
-            core::slice::from_raw_parts(&info as *const SigInfo as *const u8, core::mem::size_of::<SigInfo>())
+            core::slice::from_raw_parts(
+                &info as *const SigInfo as *const u8,
+                core::mem::size_of::<SigInfo>(),
+            )
         };
-        unsafe { copy_to_user(infop, info_bytes); }
+        unsafe {
+            copy_to_user(infop, info_bytes);
+        }
     }
 
     0

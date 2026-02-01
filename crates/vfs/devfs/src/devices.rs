@@ -15,11 +15,57 @@ fn dbg_serial(s: &str) {
             let mut status: u8;
             loop {
                 core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
-                if status & 0x20 != 0 { break; }
+                if status & 0x20 != 0 {
+                    break;
+                }
             }
             core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
         }
     }
+}
+
+/// Strip ANSI/CSI escape sequences from output for cleaner serial debug logs
+#[cfg(feature = "debug-tty-read")]
+fn strip_ansi_escapes(data: &[u8]) -> alloc::vec::Vec<u8> {
+    use alloc::vec::Vec;
+    let mut result = Vec::with_capacity(data.len());
+    let mut i = 0;
+
+    while i < data.len() {
+        if i + 1 < data.len() && data[i] == 0x1B {  // ESC
+            // Check for CSI sequence: ESC [
+            if data[i + 1] == b'[' {
+                // Skip until we find the end of CSI sequence (letter A-Z, a-z)
+                i += 2;
+                while i < data.len() {
+                    let c = data[i];
+                    i += 1;
+                    if (c >= b'A' && c <= b'Z') || (c >= b'a' && c <= b'z') {
+                        break;
+                    }
+                }
+                continue;
+            }
+            // Check for other escape sequences: ESC ?
+            else if data[i + 1] == b'?' {
+                // Skip ESC ? sequences
+                i += 2;
+                while i < data.len() {
+                    let c = data[i];
+                    i += 1;
+                    if c == b'h' || c == b'l' {
+                        break;
+                    }
+                }
+                continue;
+            }
+        }
+
+        result.push(data[i]);
+        i += 1;
+    }
+
+    result
 }
 
 // ============================================================================
@@ -77,7 +123,6 @@ pub fn console_push_char(_ch: u8) {
     // Input is handled by the VT subsystem's push_input().
     // /dev/console delegates to the active VT device.
 }
-
 
 /// /dev/null - discards all writes, reads return EOF
 pub struct NullDevice {
@@ -303,10 +348,20 @@ impl VnodeOps for ConsoleDevice {
                 // write directly to serial + terminal
                 unsafe {
                     if let Some(serial_fn) = SERIAL_WRITE {
-                        serial_fn(buf);
+                        // Filter ANSI escape sequences for serial debug output
+                        #[cfg(feature = "debug-tty-read")]
+                        {
+                            let filtered = strip_ansi_escapes(buf);
+                            serial_fn(&filtered);
+                        }
+                        #[cfg(not(feature = "debug-tty-read"))]
+                        {
+                            serial_fn(buf);
+                        }
                     }
                 }
                 if terminal::is_initialized() {
+                    // Terminal needs escape sequences for rendering
                     terminal::write(buf);
                 } else {
                     unsafe {

@@ -274,11 +274,7 @@ impl MouseCursor {
                 };
                 let fb_offset = py as usize * stride + px as usize * bpp;
                 unsafe {
-                    ptr::copy_nonoverlapping(
-                        color_bytes.as_ptr(),
-                        buffer.add(fb_offset),
-                        bpp,
-                    );
+                    ptr::copy_nonoverlapping(color_bytes.as_ptr(), buffer.add(fb_offset), bpp);
                 }
             }
         }

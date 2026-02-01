@@ -10,13 +10,21 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8) -> i32 {
     prints("=== ARGTEST ===\n");
 
     prints("argc = ");
-    if argc == 0 { prints("0"); }
-    else if argc == 1 { prints("1"); }
-    else if argc == 2 { prints("2"); }
-    else if argc == 3 { prints("3"); }
-    else if argc == 4 { prints("4"); }
-    else if argc == 5 { prints("5"); }
-    else { prints("?"); }
+    if argc == 0 {
+        prints("0");
+    } else if argc == 1 {
+        prints("1");
+    } else if argc == 2 {
+        prints("2");
+    } else if argc == 3 {
+        prints("3");
+    } else if argc == 4 {
+        prints("4");
+    } else if argc == 5 {
+        prints("5");
+    } else {
+        prints("?");
+    }
     prints("\n");
 
     prints("argv ptr = 0x");
@@ -26,12 +34,19 @@ pub extern "C" fn main(argc: i32, argv: *const *const u8) -> i32 {
     // Print each argument
     for i in 0..argc {
         prints("argv[");
-        if i == 0 { prints("0"); }
-        else if i == 1 { prints("1"); }
-        else if i == 2 { prints("2"); }
-        else if i == 3 { prints("3"); }
-        else if i == 4 { prints("4"); }
-        else { prints("?"); }
+        if i == 0 {
+            prints("0");
+        } else if i == 1 {
+            prints("1");
+        } else if i == 2 {
+            prints("2");
+        } else if i == 3 {
+            prints("3");
+        } else if i == 4 {
+            prints("4");
+        } else {
+            prints("?");
+        }
         prints("] = ");
 
         let arg_ptr = unsafe { *argv.add(i as usize) };

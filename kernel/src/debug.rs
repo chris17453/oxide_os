@@ -80,13 +80,17 @@ macro_rules! debug_sched_unsafe {
     ($s:expr) => {
         #[cfg(feature = "debug-sched")]
         {
-            unsafe { arch_x86_64::serial::write_str_unsafe($s); }
+            unsafe {
+                arch_x86_64::serial::write_str_unsafe($s);
+            }
         }
     };
     ($s:expr, byte $b:expr) => {
         #[cfg(feature = "debug-sched")]
         {
-            unsafe { arch_x86_64::serial::write_byte_unsafe($b); }
+            unsafe {
+                arch_x86_64::serial::write_byte_unsafe($b);
+            }
         }
     };
 }
@@ -113,7 +117,22 @@ macro_rules! debug_mouse_unsafe {
     ($s:expr) => {
         #[cfg(feature = "debug-mouse")]
         {
-            unsafe { arch_x86_64::serial::write_str_unsafe($s); }
+            unsafe {
+                arch_x86_64::serial::write_str_unsafe($s);
+            }
+        }
+    };
+}
+
+/// Debug print for input event path (userspace /dev/input)
+#[macro_export]
+macro_rules! debug_input {
+    ($($arg:tt)*) => {
+        #[cfg(feature = "debug-input")]
+        {
+            use core::fmt::Write;
+            let mut writer = $crate::serial_writer();
+            let _ = writeln!(writer, $($arg)*);
         }
     };
 }

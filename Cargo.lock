@@ -178,6 +178,7 @@ dependencies = [
  "terminal",
  "tty",
  "vfs",
+ "vt",
 ]
 
 [[package]]
@@ -1474,6 +1475,7 @@ dependencies = [
 name = "terminal"
 version = "0.1.0"
 dependencies = [
+ "arch-x86_64",
  "bitflags 2.10.0",
  "fb",
  "spin 0.9.8",
@@ -1500,6 +1502,7 @@ dependencies = [
 name = "tty"
 version = "0.1.0"
 dependencies = [
+ "arch-x86_64",
  "bitflags 2.10.0",
  "os_core",
  "sched",

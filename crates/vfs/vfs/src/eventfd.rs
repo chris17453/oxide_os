@@ -86,8 +86,7 @@ impl VnodeOps for EventFdNode {
         }
 
         let val = u64::from_ne_bytes([
-            buf[0], buf[1], buf[2], buf[3],
-            buf[4], buf[5], buf[6], buf[7],
+            buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
         ]);
 
         // u64::MAX (0xFFFFFFFFFFFFFFFF) is not a valid write value

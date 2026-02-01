@@ -17,7 +17,7 @@ pub use cache::{SlabCache, SlabCacheManager};
 
 use core::alloc::Layout;
 use core::ptr::NonNull;
-use mm_core::{MmError, MmResult, FRAME_SIZE};
+use mm_core::{FRAME_SIZE, MmError, MmResult};
 
 /// Minimum slab object size (must fit a free list pointer)
 pub const MIN_SLAB_SIZE: usize = 8;

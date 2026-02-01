@@ -747,19 +747,28 @@ unsafe fn read_line_loop(prompt: &[u8]) -> *mut u8 {
                             // If at fresh line (HISTORY_POS == HISTORY_COUNT), go to last entry
                             if HISTORY_POS >= HISTORY_COUNT {
                                 HISTORY_POS = HISTORY_COUNT - 1;
-                                let _ = crate::syscall::sys_write(2, b"[READLINE] Loading from history\n");
+                                let _ = crate::syscall::sys_write(
+                                    2,
+                                    b"[READLINE] Loading from history\n",
+                                );
                             } else if HISTORY_POS > 0 {
                                 HISTORY_POS -= 1;
-                                let _ = crate::syscall::sys_write(2, b"[READLINE] Moving back in history\n");
+                                let _ = crate::syscall::sys_write(
+                                    2,
+                                    b"[READLINE] Moving back in history\n",
+                                );
                             } else {
                                 // At first history entry, don't go further
-                                let _ = crate::syscall::sys_write(2, b"[READLINE] At first entry\n");
+                                let _ =
+                                    crate::syscall::sys_write(2, b"[READLINE] At first entry\n");
                                 continue;
                             }
-                            let _ = crate::syscall::sys_write(2, b"[READLINE] Calling replace_line\n");
+                            let _ =
+                                crate::syscall::sys_write(2, b"[READLINE] Calling replace_line\n");
                             replace_line(&HISTORY[HISTORY_POS], prompt);
                         } else {
-                            let _ = crate::syscall::sys_write(2, b"[READLINE] No history available\n");
+                            let _ =
+                                crate::syscall::sys_write(2, b"[READLINE] No history available\n");
                         }
                         continue;
                     }
@@ -1086,7 +1095,11 @@ pub unsafe fn remove_history(which: i32) -> *mut HistEntry {
 
     // Shift down
     for i in idx..(HISTORY_COUNT - 1) {
-        core::ptr::copy_nonoverlapping(base.add(i + 1) as *const u8, base.add(i) as *mut u8, MAX_LINE);
+        core::ptr::copy_nonoverlapping(
+            base.add(i + 1) as *const u8,
+            base.add(i) as *mut u8,
+            MAX_LINE,
+        );
     }
     core::ptr::write_bytes(base.add(HISTORY_COUNT - 1) as *mut u8, 0, MAX_LINE);
     HISTORY_COUNT -= 1;
@@ -1096,11 +1109,7 @@ pub unsafe fn remove_history(which: i32) -> *mut HistEntry {
 }
 
 /// Replace a history entry
-pub unsafe fn replace_history_entry(
-    which: i32,
-    line: *const u8,
-    _data: *mut u8,
-) -> *mut HistEntry {
+pub unsafe fn replace_history_entry(which: i32, line: *const u8, _data: *mut u8) -> *mut HistEntry {
     if which < 0 || which as usize >= HISTORY_COUNT || line.is_null() {
         return core::ptr::null_mut();
     }
@@ -1282,8 +1291,8 @@ pub unsafe fn completion_matches(text: *const u8, func: CompEntryFunc) -> *mut *
     }
 
     // Allocate output array: [LCD, match1, match2, ..., NULL]
-    let array = crate::c_exports::malloc((count + 2) * core::mem::size_of::<*mut u8>())
-        as *mut *mut u8;
+    let array =
+        crate::c_exports::malloc((count + 2) * core::mem::size_of::<*mut u8>()) as *mut *mut u8;
     if array.is_null() {
         return core::ptr::null_mut();
     }
@@ -1439,7 +1448,10 @@ pub unsafe fn rl_callback_handler_install(prompt: *const u8, handler: CallbackHa
     }
     // Print prompt
     if !prompt.is_null() {
-        write_bytes(core::slice::from_raw_parts(prompt, crate::string::strlen(prompt)));
+        write_bytes(core::slice::from_raw_parts(
+            prompt,
+            crate::string::strlen(prompt),
+        ));
     }
     enter_raw_mode();
     LINE_LEN = 0;

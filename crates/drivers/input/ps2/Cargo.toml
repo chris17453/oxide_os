@@ -3,6 +3,9 @@ name = "ps2"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+debug-input = []
+
 [dependencies]
 input = { path = "../../../input/input" }
 spin = "0.9"

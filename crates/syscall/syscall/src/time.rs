@@ -5,7 +5,7 @@
 use crate::errno;
 use crate::with_current_meta;
 use arch_x86_64 as arch;
-use core::sync::atomic::{AtomicU64, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use sched::TaskState;
 
 /// Timer frequency in Hz (ticks per second)
@@ -27,7 +27,7 @@ const MAX_SLEEPERS: usize = 64;
 
 /// A sleeping task entry
 struct Sleeper {
-    pid: AtomicU32,      // PID of sleeping task (0 = empty slot)
+    pid: AtomicU32,       // PID of sleeping task (0 = empty slot)
     wake_tick: AtomicU64, // Tick count at which to wake
 }
 
@@ -58,7 +58,11 @@ fn sleep_queue_add(pid: u32, wake_tick: u64) -> bool {
         // Write wake_tick first so it's valid when check_sleepers reads it
         slot.wake_tick.store(wake_tick, Ordering::Release);
         // Now atomically claim the slot — only succeeds if still empty
-        if slot.pid.compare_exchange(0, pid, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
+        if slot
+            .pid
+            .compare_exchange(0, pid, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+        {
             return true;
         }
         // Another task claimed this slot between our load and CAS — keep looking
@@ -86,23 +90,43 @@ pub fn check_sleepers() {
             let wake_tick = slot.wake_tick.load(Ordering::Acquire);
             if now >= wake_tick {
                 // Clear the slot first, then wake
-                if slot.pid.compare_exchange(pid, 0, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
+                if slot
+                    .pid
+                    .compare_exchange(pid, 0, Ordering::AcqRel, Ordering::Relaxed)
+                    .is_ok()
+                {
                     #[cfg(feature = "debug-sched")]
                     unsafe {
                         arch_x86_64::serial::write_str_unsafe("[SLEEP-WAKE] pid=");
                         let mut buf = [0u8; 10];
                         let mut n = pid as u64;
                         let mut pos = 0;
-                        if n == 0 { arch_x86_64::serial::write_byte_unsafe(b'0'); } else {
-                            while n > 0 { buf[pos] = b'0' + (n % 10) as u8; n /= 10; pos += 1; }
-                            for i in (0..pos).rev() { arch_x86_64::serial::write_byte_unsafe(buf[i]); }
+                        if n == 0 {
+                            arch_x86_64::serial::write_byte_unsafe(b'0');
+                        } else {
+                            while n > 0 {
+                                buf[pos] = b'0' + (n % 10) as u8;
+                                n /= 10;
+                                pos += 1;
+                            }
+                            for i in (0..pos).rev() {
+                                arch_x86_64::serial::write_byte_unsafe(buf[i]);
+                            }
                         }
                         arch_x86_64::serial::write_str_unsafe(" tick=");
                         n = now;
                         pos = 0;
-                        if n == 0 { arch_x86_64::serial::write_byte_unsafe(b'0'); } else {
-                            while n > 0 { buf[pos] = b'0' + (n % 10) as u8; n /= 10; pos += 1; }
-                            for i in (0..pos).rev() { arch_x86_64::serial::write_byte_unsafe(buf[i]); }
+                        if n == 0 {
+                            arch_x86_64::serial::write_byte_unsafe(b'0');
+                        } else {
+                            while n > 0 {
+                                buf[pos] = b'0' + (n % 10) as u8;
+                                n /= 10;
+                                pos += 1;
+                            }
+                            for i in (0..pos).rev() {
+                                arch_x86_64::serial::write_byte_unsafe(buf[i]);
+                            }
                         }
                         arch_x86_64::serial::write_str_unsafe("\n");
                     }
@@ -424,8 +448,12 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
 pub fn sys_clock_nanosleep(clock_id: i32, flags: i32, req_ptr: usize, rem_ptr: usize) -> i64 {
     // Validate clock ID
     match clock_id {
-        clock::REALTIME | clock::MONOTONIC | clock::MONOTONIC_RAW
-        | clock::REALTIME_COARSE | clock::MONOTONIC_COARSE | clock::BOOTTIME => {}
+        clock::REALTIME
+        | clock::MONOTONIC
+        | clock::MONOTONIC_RAW
+        | clock::REALTIME_COARSE
+        | clock::MONOTONIC_COARSE
+        | clock::BOOTTIME => {}
         _ => return errno::EINVAL,
     }
 

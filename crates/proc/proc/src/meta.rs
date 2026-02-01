@@ -18,8 +18,8 @@ use signal::{NSIG, PendingSignals, SigAction, SigSet};
 use spin::Mutex;
 use vfs::FdTable;
 
-use crate::process::Credentials;
 use crate::UserAddressSpace;
+use crate::process::Credentials;
 
 /// Thread ID type (same as Pid internally but semantically different)
 pub type Tid = u32;
@@ -117,10 +117,7 @@ pub struct ProcessMeta {
 
 impl ProcessMeta {
     /// Create new ProcessMeta for a process (thread group leader)
-    pub fn new(
-        tgid: Pid,
-        address_space: UserAddressSpace,
-    ) -> Self {
+    pub fn new(tgid: Pid, address_space: UserAddressSpace) -> Self {
         Self {
             tgid,
             pgid: tgid, // New process is its own process group leader
@@ -204,7 +201,7 @@ impl ProcessMeta {
             tls: 0, // Reset TLS for child
             clear_child_tid: 0,
             owned_frames: Vec::new(), // Child doesn't own parent's frames
-            alarm_remaining: 0, // Alarms not inherited
+            alarm_remaining: 0,       // Alarms not inherited
             itimer_interval_sec: 0,
             itimer_interval_usec: 0,
             itimer_value_sec: 0,

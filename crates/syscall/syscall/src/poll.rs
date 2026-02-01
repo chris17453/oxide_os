@@ -60,13 +60,13 @@ fn check_fd_ready(fd: i32, events: i16) -> i16 {
     }
 
     // Regular file descriptor through VFS
-    let file = match with_current_meta(|meta| {
-        meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
-    }) {
-        Some(Ok(f)) => f,
-        Some(Err(_)) => return events::POLLNVAL,
-        None => return events::POLLNVAL,
-    };
+    let file =
+        match with_current_meta(|meta| meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone()))
+        {
+            Some(Ok(f)) => f,
+            Some(Err(_)) => return events::POLLNVAL,
+            None => return events::POLLNVAL,
+        };
 
     let mut revents: i16 = 0;
 

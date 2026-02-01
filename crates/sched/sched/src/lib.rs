@@ -85,32 +85,47 @@ pub use sched_traits::{
 
 // Re-export core functions for convenience
 pub use crate::core::{
+    TaskDebugInfo,
     // Task management
     add_task,
+    add_task_child,
+    all_pids,
     block_current,
+    clear_task_waiting,
     create_task,
     create_task_with_meta,
     // Task state
     current_pid,
     current_pid_lockfree,
+    debug_dump_all,
     // Debug
     debug_state,
-    debug_dump_all,
-    TaskDebugInfo,
     get_affinity,
+    get_current_meta,
     get_nice,
     get_scheduler,
+    get_task_affinity,
+    get_task_children,
     // Context switching support
     get_task_context,
+    get_task_exit_status,
     get_task_group,
     get_task_kernel_stack,
+    // ProcessMeta accessors
+    get_task_meta,
+    // Task scheduling properties
+    get_task_nice,
     get_task_pml4,
+    get_task_policy,
+    get_task_ppid,
+    get_task_rt_priority,
     get_task_state,
     get_task_switch_info,
     // Clock
     global_clock,
     // Initialization
     init_cpu,
+    is_task_waiting_for,
     need_resched,
     num_cpus,
     pick_next_task,
@@ -119,6 +134,7 @@ pub use crate::core::{
     preempt_disabled,
     preempt_enable,
     remove_task,
+    remove_task_child,
     // Scheduling
     scheduler_tick,
     // Affinity
@@ -127,9 +143,16 @@ pub use crate::core::{
     set_nice,
     // Policy and priority
     set_scheduler,
+    set_task_affinity,
     set_task_context,
+    set_task_exit_status,
     // Groups
     set_task_group,
+    set_task_meta,
+    set_task_nice,
+    set_task_policy,
+    set_task_rt_priority,
+    set_task_waiting,
     set_this_cpu,
     // Manual context switch support (for fork/exec)
     switch_to,
@@ -137,32 +160,9 @@ pub use crate::core::{
     update_clock,
     update_task_exec_info,
     wake_up,
-    yield_current,
-    // ProcessMeta accessors
-    get_task_meta,
-    get_current_meta,
     with_current_meta,
     with_current_meta_mut,
-    get_task_children,
-    add_task_child,
-    remove_task_child,
-    set_task_exit_status,
-    get_task_ppid,
-    get_task_exit_status,
-    is_task_waiting_for,
-    set_task_waiting,
-    clear_task_waiting,
-    set_task_meta,
-    // Task scheduling properties
-    get_task_nice,
-    set_task_nice,
-    get_task_policy,
-    set_task_policy,
-    get_task_rt_priority,
-    set_task_rt_priority,
-    get_task_affinity,
-    set_task_affinity,
-    all_pids,
+    yield_current,
 };
 
 // Re-export task types

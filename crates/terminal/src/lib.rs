@@ -309,10 +309,12 @@ impl TerminalEmulator {
                 self.handler.carriage_return();
             }
             0x0E => {
-                // SO - Shift Out (ignored)
+                // SO - Shift Out (activate G1 charset)
+                self.handler.active_g1 = true;
             }
             0x0F => {
-                // SI - Shift In (ignored)
+                // SI - Shift In (activate G0 charset)
+                self.handler.active_g1 = false;
             }
             _ => {}
         }
@@ -595,6 +597,53 @@ static TERMINAL: Mutex<Option<TerminalEmulator>> = Mutex::new(None);
 /// Atomic flag for lock-free initialization check (safe from interrupt context)
 static TERMINAL_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
+/// Callback type for terminal query responses (DSR, DA, etc.)
+///
+/// When terminal receives query sequences like CSI 6 n (cursor position request),
+/// it needs to send the response back to the application's stdin.
+pub type ResponseCallback = fn(&[u8]);
+
+/// Global response callback for injecting terminal responses into TTY input
+static mut RESPONSE_CALLBACK: Option<ResponseCallback> = None;
+
+/// Set the response callback for terminal queries
+///
+/// # Safety
+/// Must be called during single-threaded initialization before any terminal queries
+pub unsafe fn set_response_callback(callback: ResponseCallback) {
+    unsafe {
+        RESPONSE_CALLBACK = Some(callback);
+    }
+}
+
+/// Send a response to a terminal query (internal helper)
+fn send_response(data: &[u8]) {
+    #[cfg(feature = "debug-tty-read")]
+    {
+        extern crate alloc;
+        use core::fmt::Write;
+        let mut w = arch_x86_64::serial::SerialWriter;
+        let _ = write!(w, "[TERM-RESP] Sending {} bytes: ", data.len());
+        for &b in data {
+            let _ = write!(w, "{:02x} ", b);
+        }
+        let _ = write!(w, "\n");
+    }
+
+    unsafe {
+        if let Some(callback) = RESPONSE_CALLBACK {
+            callback(data);
+        } else {
+            #[cfg(feature = "debug-tty-read")]
+            {
+                use core::fmt::Write;
+                let mut w = arch_x86_64::serial::SerialWriter;
+                let _ = write!(w, "[TERM-RESP] ERROR: No callback registered!\n");
+            }
+        }
+    }
+}
+
 /// Initialize global terminal with framebuffer
 pub fn init(fb: Arc<dyn Framebuffer>) {
     let terminal = TerminalEmulator::new(fb);
@@ -610,6 +659,72 @@ pub fn is_initialized() -> bool {
 /// Write bytes to global terminal
 /// NOTE: data may point to user memory, so we need STAC/CLAC for SMAP
 pub fn write(data: &[u8]) {
+    // Debug: Log ALL data being sent to terminal, highlighting escape sequences
+    #[cfg(feature = "debug-tty-read")]
+    {
+        use core::fmt::Write;
+        let mut w = arch_x86_64::serial::SerialWriter;
+        let _ = write!(w, "[TERM-WRITE] {} bytes: ", data.len());
+
+        let mut i = 0;
+        while i < data.len() {
+            let b = data[i];
+            if b == 0x1b && i + 1 < data.len() {
+                // Escape sequence start
+                let _ = write!(w, "<ESC");
+                i += 1;
+
+                // Collect the full escape sequence
+                let mut seq = alloc::vec::Vec::new();
+                seq.push(data[i]);
+
+                if data[i] == b'[' {
+                    // CSI sequence
+                    let _ = write!(w, "[");
+                    i += 1;
+                    while i < data.len() && data[i] >= 0x20 && data[i] < 0x7F {
+                        seq.push(data[i]);
+                        let _ = write!(w, "{}", data[i] as char);
+                        if (data[i] >= 0x40 && data[i] <= 0x7E) {
+                            // Final byte
+                            break;
+                        }
+                        i += 1;
+                    }
+                } else if data[i] == b'?' || data[i] == b'>' {
+                    // Private sequence
+                    let _ = write!(w, "{}", data[i] as char);
+                    i += 1;
+                    if i < data.len() && data[i] == b'[' {
+                        let _ = write!(w, "[");
+                        i += 1;
+                        while i < data.len() && data[i] >= 0x20 && data[i] < 0x7F {
+                            let _ = write!(w, "{}", data[i] as char);
+                            if (data[i] >= 0x40 && data[i] <= 0x7E) {
+                                break;
+                            }
+                            i += 1;
+                        }
+                    }
+                } else {
+                    // Simple ESC sequence
+                    let _ = write!(w, "{}", data[i] as char);
+                }
+                let _ = write!(w, "> ");
+                i += 1;
+            } else if b >= 0x20 && b < 0x7F {
+                // Printable character
+                let _ = write!(w, "{}", b as char);
+                i += 1;
+            } else {
+                // Control character
+                let _ = write!(w, "<{:02x}>", b);
+                i += 1;
+            }
+        }
+        let _ = write!(w, "\n");
+    }
+
     // Enable access to user pages (STAC - Supervisor-Mode Access Prevention Clear)
     unsafe {
         core::arch::asm!("stac", options(nomem, nostack));

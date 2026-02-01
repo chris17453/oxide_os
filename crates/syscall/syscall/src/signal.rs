@@ -5,7 +5,7 @@
 use signal::{SIGKILL, SIGSTOP, SigAction, SigHow, SigInfo, SigSet, can_catch, is_valid};
 
 use crate::errno;
-use crate::{current_pid, get_meta, get_current_meta, with_current_meta, with_current_meta_mut};
+use crate::{current_pid, get_current_meta, get_meta, with_current_meta, with_current_meta_mut};
 
 /// sys_kill - Send signal to process
 ///
@@ -21,8 +21,8 @@ pub fn sys_kill(pid: i32, sig: i32) -> i64 {
     let cur_pid = current_pid();
 
     // Get sender info for siginfo
-    let (sender_pid, sender_uid) = with_current_meta(|m| (m.tgid, m.credentials.uid))
-        .unwrap_or((0, 0));
+    let (sender_pid, sender_uid) =
+        with_current_meta(|m| (m.tgid, m.credentials.uid)).unwrap_or((0, 0));
 
     if pid > 0 {
         // Send to specific process
@@ -266,8 +266,8 @@ pub fn sys_sigreturn() -> i64 {
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct StackT {
-    ss_sp: u64,     // Base address of stack
-    ss_flags: i32,  // Flags (SS_DISABLE, SS_ONSTACK)
+    ss_sp: u64,    // Base address of stack
+    ss_flags: i32, // Flags (SS_DISABLE, SS_ONSTACK)
     _pad: i32,
     ss_size: usize, // Number of bytes in stack
 }

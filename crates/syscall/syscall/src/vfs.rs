@@ -7,8 +7,8 @@ use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 // Re-export external vfs crate types for sibling modules (vfs_ext.rs)
 // that can't directly `use vfs::` due to name collision with this module.
-pub use vfs::{File, FileFlags, Mode, SeekFrom, VfsError, VnodeType};
 pub use vfs::mount::GLOBAL_VFS;
+pub use vfs::{File, FileFlags, Mode, SeekFrom, VfsError, VnodeType};
 pub use vfs::{epoll, eventfd, memfd};
 
 use crate::errno;
@@ -21,9 +21,12 @@ const MAX_PATH: usize = 4096;
 // DEBUG: Module-level statics for tracking fd allocation
 static DEBUG_PRE_ADDR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 static DEBUG_ALLOC_ADDR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
-static DEBUG_PRE_EXECUTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-static DEBUG_PRE_LEN: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0xdeadbeef);
-static DEBUG_ALLOC_EXECUTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static DEBUG_PRE_EXECUTED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+static DEBUG_PRE_LEN: core::sync::atomic::AtomicU32 =
+    core::sync::atomic::AtomicU32::new(0xdeadbeef);
+static DEBUG_ALLOC_EXECUTED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 static DEBUG_PRE_META_ADDR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 static DEBUG_ALLOC_META_ADDR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 static DEBUG_SYS_OPEN_ARC: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
@@ -160,7 +163,9 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
             Ok(vnode) => {
                 if flags.contains(FileFlags::O_EXCL) {
                     // O_EXCL with O_CREAT: fail if exists
-                    unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+                    unsafe {
+                        core::arch::asm!("clac", options(nomem, nostack));
+                    }
                     return errno::EEXIST;
                 }
                 vnode
@@ -171,18 +176,24 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
                     Ok((parent, name)) => match parent.create(&name, mode) {
                         Ok(vnode) => vnode,
                         Err(e) => {
-                            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+                            unsafe {
+                                core::arch::asm!("clac", options(nomem, nostack));
+                            }
                             return vfs_error_to_errno(e);
                         }
                     },
                     Err(e) => {
-                        unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+                        unsafe {
+                            core::arch::asm!("clac", options(nomem, nostack));
+                        }
                         return vfs_error_to_errno(e);
                     }
                 }
             }
             Err(e) => {
-                unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+                unsafe {
+                    core::arch::asm!("clac", options(nomem, nostack));
+                }
                 return vfs_error_to_errno(e);
             }
         }
@@ -190,7 +201,9 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
         match GLOBAL_VFS.lookup(&path) {
             Ok(vnode) => vnode,
             Err(e) => {
-                unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+                unsafe {
+                    core::arch::asm!("clac", options(nomem, nostack));
+                }
                 return vfs_error_to_errno(e);
             }
         }
@@ -198,20 +211,26 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
 
     // Check O_DIRECTORY
     if flags.contains(FileFlags::O_DIRECTORY) && vnode.vtype() != VnodeType::Directory {
-        unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+        unsafe {
+            core::arch::asm!("clac", options(nomem, nostack));
+        }
         return errno::ENOTDIR;
     }
 
     // Check if trying to write to directory
     if flags.writable() && vnode.vtype() == VnodeType::Directory {
-        unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+        unsafe {
+            core::arch::asm!("clac", options(nomem, nostack));
+        }
         return errno::EISDIR;
     }
 
     // Truncate if O_TRUNC
     if flags.contains(FileFlags::O_TRUNC) && flags.writable() {
         if let Err(e) = vnode.truncate(0) {
-            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
             return vfs_error_to_errno(e);
         }
     }
@@ -222,9 +241,11 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
     // CRITICAL FIX: Do everything in a single with_current_meta_mut call to avoid
     // the fd_table being modified between pre-alloc check and actual alloc!
     // (Previously we called with_current_meta twice, releasing the lock between calls)
-    static FIRST_OPEN_PRE_ALLOC: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+    static FIRST_OPEN_PRE_ALLOC: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(true);
 
-    static FIRST_CAPTURE_SYSCALL_ARC: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+    static FIRST_CAPTURE_SYSCALL_ARC: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(true);
     // Mark that we reached this code
     DEBUG_SYS_OPEN_ARC.store(0xcccccccc, core::sync::atomic::Ordering::SeqCst);
     if FIRST_CAPTURE_SYSCALL_ARC.swap(false, core::sync::atomic::Ordering::SeqCst) {
@@ -238,7 +259,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
             let locked_meta = meta_arc.lock();
             let ref_ptr = &*locked_meta as *const _ as u64;
             DEBUG_SYS_OPEN_ARC.store(arc_inner_ptr, core::sync::atomic::Ordering::SeqCst);
-            DEBUG_SYS_OPEN_PID.store(ref_ptr, core::sync::atomic::Ordering::SeqCst);  // Reuse PID field for reference address
+            DEBUG_SYS_OPEN_PID.store(ref_ptr, core::sync::atomic::Ordering::SeqCst); // Reuse PID field for reference address
         } else {
             // Failed to get meta
             DEBUG_SYS_OPEN_ARC.store(0xdeadbeef, core::sync::atomic::Ordering::SeqCst);
@@ -262,7 +283,8 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
         }
 
         // DEBUG: Store alloc fd_table addr
-        static FIRST_ALLOC_SET_ADDR: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+        static FIRST_ALLOC_SET_ADDR: core::sync::atomic::AtomicBool =
+            core::sync::atomic::AtomicBool::new(true);
         if FIRST_ALLOC_SET_ADDR.swap(false, core::sync::atomic::Ordering::SeqCst) {
             let fd_table_addr = &meta.fd_table as *const _ as u64;
             let meta_addr = meta as *const _ as u64;
@@ -323,13 +345,13 @@ pub fn sys_read_vfs(fd: i32, buf: u64, count: usize) -> i64 {
     }
 
     // Get file using unified model
-    let file = match with_current_meta(|meta| {
-        meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
-    }) {
-        Some(Ok(f)) => f,
-        Some(Err(e)) => return vfs_error_to_errno(e),
-        None => return errno::EBADF,
-    };
+    let file =
+        match with_current_meta(|meta| meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone()))
+        {
+            Some(Ok(f)) => f,
+            Some(Err(e)) => return vfs_error_to_errno(e),
+            None => return errno::EBADF,
+        };
 
     // Enable kernel preemption for blocking reads (e.g., console input)
     // This allows timer interrupt to context switch us when blocked
@@ -384,13 +406,13 @@ pub fn sys_write_vfs(fd: i32, buf: u64, count: usize) -> i64 {
     }
 
     // Get file using unified model
-    let file = match with_current_meta(|meta| {
-        meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
-    }) {
-        Some(Ok(f)) => f,
-        Some(Err(e)) => return vfs_error_to_errno(e),
-        None => return errno::ESRCH, // No current process
-    };
+    let file =
+        match with_current_meta(|meta| meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone()))
+        {
+            Some(Ok(f)) => f,
+            Some(Err(e)) => return vfs_error_to_errno(e),
+            None => return errno::ESRCH, // No current process
+        };
 
     // Get user buffer (requires STAC/CLAC for SMAP)
     // Enable access to user pages
@@ -421,13 +443,13 @@ pub fn sys_write_vfs(fd: i32, buf: u64, count: usize) -> i64 {
 /// * `whence` - Reference point (0=SEEK_SET, 1=SEEK_CUR, 2=SEEK_END)
 pub fn sys_lseek(fd: i32, offset: i64, whence: i32) -> i64 {
     // Get file using unified model
-    let file = match with_current_meta(|meta| {
-        meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
-    }) {
-        Some(Ok(f)) => f,
-        Some(Err(e)) => return vfs_error_to_errno(e),
-        None => return errno::ESRCH,
-    };
+    let file =
+        match with_current_meta(|meta| meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone()))
+        {
+            Some(Ok(f)) => f,
+            Some(Err(e)) => return vfs_error_to_errno(e),
+            None => return errno::ESRCH,
+        };
 
     let from = match whence {
         0 => SeekFrom::Start(offset as u64), // SEEK_SET
@@ -453,13 +475,13 @@ pub fn sys_fstat(fd: i32, stat_buf: u64) -> i64 {
     }
 
     // Get file using unified model
-    let file = match with_current_meta(|meta| {
-        meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
-    }) {
-        Some(Ok(f)) => f,
-        Some(Err(e)) => return vfs_error_to_errno(e),
-        None => return errno::ESRCH,
-    };
+    let file =
+        match with_current_meta(|meta| meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone()))
+        {
+            Some(Ok(f)) => f,
+            Some(Err(e)) => return vfs_error_to_errno(e),
+            None => return errno::ESRCH,
+        };
 
     match file.stat() {
         Ok(stat) => {
@@ -580,13 +602,13 @@ pub fn sys_dup2(old_fd: i32, new_fd: i32) -> i64 {
 /// * `length` - New file length
 pub fn sys_ftruncate(fd: i32, length: u64) -> i64 {
     // Get file using unified model
-    let file = match with_current_meta(|meta| {
-        meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
-    }) {
-        Some(Ok(f)) => f,
-        Some(Err(e)) => return vfs_error_to_errno(e),
-        None => return errno::ESRCH,
-    };
+    let file =
+        match with_current_meta(|meta| meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone()))
+        {
+            Some(Ok(f)) => f,
+            Some(Err(e)) => return vfs_error_to_errno(e),
+            None => return errno::ESRCH,
+        };
 
     match file.truncate(length) {
         Ok(()) => 0,
@@ -657,13 +679,13 @@ pub fn sys_pipe(pipefd_ptr: u64) -> i64 {
 /// * `arg` - ioctl argument (request-specific)
 pub fn sys_ioctl(fd: i32, request: u64, arg: u64) -> i64 {
     // Get file using unified model
-    let file = match with_current_meta(|meta| {
-        meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
-    }) {
-        Some(Ok(f)) => f,
-        Some(Err(e)) => return vfs_error_to_errno(e),
-        None => return errno::ESRCH,
-    };
+    let file =
+        match with_current_meta(|meta| meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone()))
+        {
+            Some(Ok(f)) => f,
+            Some(Err(e)) => return vfs_error_to_errno(e),
+            None => return errno::ESRCH,
+        };
 
     // Call ioctl on the file
     match file.ioctl(request, arg) {
@@ -697,7 +719,9 @@ pub fn sys_chmod(path_ptr: u64, path_len: usize, mode: u32) -> i64 {
     let path_str = match core::str::from_utf8(path_slice) {
         Ok(s) => s,
         Err(_) => {
-            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
             return errno::EINVAL;
         }
     };
@@ -731,13 +755,13 @@ pub fn sys_chmod(path_ptr: u64, path_len: usize, mode: u32) -> i64 {
 /// * `mode` - New mode bits
 pub fn sys_fchmod(fd: i32, mode: u32) -> i64 {
     // Get file using unified model
-    let file = match with_current_meta(|meta| {
-        meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
-    }) {
-        Some(Ok(f)) => f,
-        Some(Err(e)) => return vfs_error_to_errno(e),
-        None => return errno::ESRCH,
-    };
+    let file =
+        match with_current_meta(|meta| meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone()))
+        {
+            Some(Ok(f)) => f,
+            Some(Err(e)) => return vfs_error_to_errno(e),
+            None => return errno::ESRCH,
+        };
 
     // Get the vnode and set mode
     match file.vnode().chmod(mode) {
@@ -772,7 +796,9 @@ pub fn sys_chown(path_ptr: u64, path_len: usize, uid: i32, gid: i32) -> i64 {
     let path_str = match core::str::from_utf8(path_slice) {
         Ok(s) => s,
         Err(_) => {
-            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
             return errno::EINVAL;
         }
     };
@@ -809,13 +835,13 @@ pub fn sys_chown(path_ptr: u64, path_len: usize, uid: i32, gid: i32) -> i64 {
 /// * `gid` - New group ID (-1 to leave unchanged)
 pub fn sys_fchown(fd: i32, uid: i32, gid: i32) -> i64 {
     // Get file using unified model
-    let file = match with_current_meta(|meta| {
-        meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
-    }) {
-        Some(Ok(f)) => f,
-        Some(Err(e)) => return vfs_error_to_errno(e),
-        None => return errno::ESRCH,
-    };
+    let file =
+        match with_current_meta(|meta| meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone()))
+        {
+            Some(Ok(f)) => f,
+            Some(Err(e)) => return vfs_error_to_errno(e),
+            None => return errno::ESRCH,
+        };
 
     match file.vnode().chown(
         if uid >= 0 { Some(uid as u32) } else { None },
@@ -1068,7 +1094,9 @@ pub fn sys_mount(
         match copy_path_from_user(source_ptr, source_len) {
             Some(s) => s,
             None => {
-                unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+                unsafe {
+                    core::arch::asm!("clac", options(nomem, nostack));
+                }
                 return errno::EFAULT;
             }
         }
@@ -1080,7 +1108,9 @@ pub fn sys_mount(
     let target = match copy_path_from_user(target_ptr, target_len) {
         Some(t) => t,
         None => {
-            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
             return errno::EFAULT;
         }
     };
@@ -1092,7 +1122,9 @@ pub fn sys_mount(
     let fstype = match copy_path_from_user(fstype_ptr, fstype_len) {
         Some(f) => f,
         None => {
-            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
             return errno::EFAULT;
         }
     };
@@ -1181,7 +1213,9 @@ pub fn sys_pivot_root(
     let new_root = match copy_path_from_user(new_root_ptr, new_root_len) {
         Some(s) => s,
         None => {
-            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
             return errno::EFAULT;
         }
     };
@@ -1190,7 +1224,9 @@ pub fn sys_pivot_root(
     let put_old = match copy_path_from_user(put_old_ptr, put_old_len) {
         Some(s) => s,
         None => {
-            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
             return errno::EFAULT;
         }
     };

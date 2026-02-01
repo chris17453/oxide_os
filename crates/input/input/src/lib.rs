@@ -6,6 +6,20 @@
 
 extern crate alloc;
 
+/// Debug print for input events
+/// Enable with: cargo build --features debug-input
+/// Note: Currently a no-op in input crate - kernel handles debug output
+#[macro_export]
+macro_rules! debug_input {
+    ($($arg:tt)*) => {
+        #[cfg(feature = "debug-input")]
+        {
+            // Input crate doesn't output directly - kernel logs these events
+            // This macro exists so code compiles with debug-input feature
+        }
+    };
+}
+
 pub mod device;
 pub mod event;
 pub mod keycodes;
@@ -112,6 +126,11 @@ impl InputDeviceHandle {
         !self.events.lock().is_empty()
     }
 
+    /// Clear all queued events
+    pub fn clear_events(&self) {
+        self.events.lock().clear();
+    }
+
     /// Get device reference
     pub fn device(&self) -> &Arc<dyn InputDevice> {
         &self.device
@@ -162,6 +181,7 @@ pub fn devices() -> Vec<Arc<InputDeviceHandle>> {
 pub fn report_event(device_id: usize, event: InputEvent) {
     if let Some(handle) = get_device(device_id) {
         handle.push_event(event);
+        debug_input!("[INPUT] dev{} type={} code={} val={}", device_id, event.type_, event.code, event.value);
         // Wake up any task blocked reading from this device
         wake_blocked_reader(device_id);
     }

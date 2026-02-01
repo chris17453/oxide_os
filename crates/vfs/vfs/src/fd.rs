@@ -35,13 +35,17 @@ impl FileDescriptor {
 }
 
 // DEBUG: Global variables to track alloc behavior
-static LAST_ALLOC_ENTRIES_LEN: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+static LAST_ALLOC_ENTRIES_LEN: core::sync::atomic::AtomicU32 =
+    core::sync::atomic::AtomicU32::new(0);
 static LAST_ALLOC_RESULT: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(-1);
-static LAST_ALLOC_FIRST_ENTRY_IS_SOME: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-static LAST_ALLOC_LOOP_ITERATIONS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+static LAST_ALLOC_FIRST_ENTRY_IS_SOME: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+static LAST_ALLOC_LOOP_ITERATIONS: core::sync::atomic::AtomicU32 =
+    core::sync::atomic::AtomicU32::new(0);
 static PRE_ALLOC_ENTRIES_LEN: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 static PRE_ALLOC_ENTRIES_MASK: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
-static PRE_ALLOC_FDTABLE_ADDR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static PRE_ALLOC_FDTABLE_ADDR: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(0);
 static ALLOC_FDTABLE_ADDR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 /// File descriptor table

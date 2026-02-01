@@ -79,6 +79,164 @@ impl Default for MouseEncoding {
     }
 }
 
+/// Character set for G0/G1 designators
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Charset {
+    /// ASCII (ESC ( B or ESC ) B)
+    Ascii,
+    /// DEC Special Graphics - single-line box drawing (ESC ( 0 or ESC ) 0)
+    DecSpecialGraphics,
+    /// DEC Supplemental Graphics (ESC ( < or ESC ) <)
+    DecSupplemental,
+    /// DEC Technical (ESC ( > or ESC ) >)
+    DecTechnical,
+    /// UK/National (ESC ( A or ESC ) A)
+    Uk,
+}
+
+impl Default for Charset {
+    fn default() -> Self {
+        Charset::Ascii
+    }
+}
+
+impl Charset {
+    /// Translate a character through this charset
+    /// Returns the original character for ASCII, or the line drawing equivalent for DEC graphics
+    pub fn translate(&self, ch: char) -> char {
+        match self {
+            Charset::Ascii => ch,
+
+            Charset::DecSpecialGraphics => {
+                // DEC Special Graphics character set (complete VT100 mapping)
+                // Reference: VT100 User Guide, Table 3-9
+                match ch {
+                    '_' => '\u{0020}', // blank (space)
+                    '`' => '\u{25C6}', // ◆ diamond
+                    'a' => '\u{2592}', // ▒ checkerboard/stipple
+                    'b' => '\u{2409}', // ␉ HT symbol
+                    'c' => '\u{240C}', // ␌ FF symbol
+                    'd' => '\u{240D}', // ␍ CR symbol
+                    'e' => '\u{240A}', // ␊ LF symbol
+                    'f' => '\u{00B0}', // ° degree symbol
+                    'g' => '\u{00B1}', // ± plus/minus
+                    'h' => '\u{2424}', // ␤ NL symbol
+                    'i' => '\u{240B}', // ␋ VT symbol
+                    'j' => '\u{2518}', // ┘ bottom-right corner (single)
+                    'k' => '\u{2510}', // ┐ top-right corner (single)
+                    'l' => '\u{250C}', // ┌ top-left corner (single)
+                    'm' => '\u{2514}', // └ bottom-left corner (single)
+                    'n' => '\u{253C}', // ┼ crossing lines (single)
+                    'o' => '\u{23BA}', // ⎺ scan line 1 (top horizontal)
+                    'p' => '\u{23BB}', // ⎻ scan line 3
+                    'q' => '\u{2500}', // ─ horizontal line (single)
+                    'r' => '\u{23BC}', // ⎼ scan line 7
+                    's' => '\u{23BD}', // ⎽ scan line 9 (bottom horizontal)
+                    't' => '\u{251C}', // ├ left tee (single)
+                    'u' => '\u{2524}', // ┤ right tee (single)
+                    'v' => '\u{2534}', // ┴ bottom tee (single)
+                    'w' => '\u{252C}', // ┬ top tee (single)
+                    'x' => '\u{2502}', // │ vertical line (single)
+                    'y' => '\u{2264}', // ≤ less than or equal
+                    'z' => '\u{2265}', // ≥ greater than or equal
+                    '{' => '\u{03C0}', // π pi
+                    '|' => '\u{2260}', // ≠ not equal
+                    '}' => '\u{00A3}', // £ pound sterling
+                    '~' => '\u{00B7}', // · middle dot/bullet
+                    _ => ch,
+                }
+            }
+
+            Charset::DecSupplemental => {
+                // DEC Supplemental Graphics - includes double-line box drawing
+                match ch {
+                    // Double-line box drawing
+                    'j' => '\u{255D}', // ╝ double bottom-right corner
+                    'k' => '\u{2557}', // ╗ double top-right corner
+                    'l' => '\u{2554}', // ╔ double top-left corner
+                    'm' => '\u{255A}', // ╚ double bottom-left corner
+                    'n' => '\u{256C}', // ╬ double cross
+                    'q' => '\u{2550}', // ═ double horizontal line
+                    't' => '\u{2560}', // ╠ double left tee
+                    'u' => '\u{2563}', // ╣ double right tee
+                    'v' => '\u{2569}', // ╩ double bottom tee
+                    'w' => '\u{2566}', // ╦ double top tee
+                    'x' => '\u{2551}', // ║ double vertical line
+                    // Additional symbols
+                    '`' => '\u{25C6}', // ◆ diamond
+                    'a' => '\u{2592}', // ▒ checkerboard
+                    'f' => '\u{00B0}', // ° degree
+                    'g' => '\u{00B1}', // ± plus/minus
+                    'y' => '\u{2264}', // ≤ less than or equal
+                    'z' => '\u{2265}', // ≥ greater than or equal
+                    '{' => '\u{03C0}', // π pi
+                    '|' => '\u{2260}', // ≠ not equal
+                    '}' => '\u{00A3}', // £ pound sterling
+                    '~' => '\u{00B7}', // · middle dot
+                    _ => ch,
+                }
+            }
+
+            Charset::DecTechnical => {
+                // DEC Technical character set - math and technical symbols
+                match ch {
+                    '!' => '\u{2191}', // ↑ up arrow
+                    '"' => '\u{2193}', // ↓ down arrow
+                    '#' => '\u{2192}', // → right arrow
+                    '$' => '\u{2190}', // ← left arrow
+                    '%' => '\u{2195}', // ↕ up-down arrow
+                    '&' => '\u{2194}', // ↔ left-right arrow
+                    '\'' => '\u{25B2}', // ▲ up triangle
+                    '(' => '\u{25BC}', // ▼ down triangle
+                    ')' => '\u{25B6}', // ▶ right triangle
+                    '*' => '\u{25C0}', // ◀ left triangle
+                    '+' => '\u{2211}', // ∑ summation
+                    ',' => '\u{222B}', // ∫ integral
+                    '-' => '\u{221A}', // √ square root
+                    '.' => '\u{2248}', // ≈ approximately equal
+                    '/' => '\u{2260}', // ≠ not equal
+                    '0' => '\u{2261}', // ≡ identical to
+                    '1' => '\u{2264}', // ≤ less than or equal
+                    '2' => '\u{2265}', // ≥ greater than or equal
+                    '3' => '\u{03C0}', // π pi
+                    '4' => '\u{2202}', // ∂ partial differential
+                    '5' => '\u{221E}', // ∞ infinity
+                    '6' => '\u{2282}', // ⊂ subset of
+                    '7' => '\u{2283}', // ⊃ superset of
+                    '8' => '\u{2229}', // ∩ intersection
+                    '9' => '\u{222A}', // ∪ union
+                    ':' => '\u{2227}', // ∧ logical and
+                    ';' => '\u{2228}', // ∨ logical or
+                    '<' => '\u{00AC}', // ¬ not sign
+                    '=' => '\u{21D4}', // ⇔ if and only if
+                    '>' => '\u{21D2}', // ⇒ implies
+                    '?' => '\u{2200}', // ∀ for all
+                    '@' => '\u{2203}', // ∃ there exists
+                    '[' => '\u{2208}', // ∈ element of
+                    '\\' => '\u{2209}', // ∉ not an element of
+                    ']' => '\u{2205}', // ∅ empty set
+                    '^' => '\u{2207}', // ∇ nabla
+                    '_' => '\u{00B0}', // ° degree
+                    '`' => '\u{00B1}', // ± plus/minus
+                    '{' => '\u{2220}', // ∠ angle
+                    '|' => '\u{22A5}', // ⊥ perpendicular
+                    '}' => '\u{2234}', // ∴ therefore
+                    '~' => '\u{2235}', // ∵ because
+                    _ => ch,
+                }
+            }
+
+            Charset::Uk => {
+                // UK character set - pound sign at # position
+                match ch {
+                    '#' => '\u{00A3}', // £ pound sterling
+                    _ => ch,
+                }
+            }
+        }
+    }
+}
+
 /// Saved cursor state for DECSC/DECRC
 #[derive(Debug, Clone)]
 pub struct SavedCursor {
@@ -119,6 +277,12 @@ pub struct Handler {
     pub saved_cursor_alt: SavedCursor,
     /// Tab stops
     pub tabs: Vec<bool>,
+    /// G0 character set
+    pub g0_charset: Charset,
+    /// G1 character set
+    pub g1_charset: Charset,
+    /// Active charset (false = G0, true = G1)
+    pub active_g1: bool,
     /// Terminal width
     cols: u32,
     /// Terminal height
@@ -145,6 +309,9 @@ impl Handler {
             saved_cursor: SavedCursor::default(),
             saved_cursor_alt: SavedCursor::default(),
             tabs,
+            g0_charset: Charset::Ascii,
+            g1_charset: Charset::Ascii,
+            active_g1: false,
             cols,
             rows,
         }
@@ -172,8 +339,20 @@ impl Handler {
             buffer.insert_chars(self.cursor.row, self.cursor.col, 1);
         }
 
+        // Translate character through active charset (fast path for ASCII)
+        let translated_ch = if !self.active_g1 && self.g0_charset == Charset::Ascii {
+            ch // Fast path: G0 ASCII, no translation needed
+        } else {
+            let active_charset = if self.active_g1 {
+                &self.g1_charset
+            } else {
+                &self.g0_charset
+            };
+            active_charset.translate(ch)
+        };
+
         // Set the character
-        buffer.set_char(self.cursor.row, self.cursor.col, ch, self.attrs);
+        buffer.set_char(self.cursor.row, self.cursor.col, translated_ch, self.attrs);
 
         // Advance cursor
         self.cursor.col += 1;
@@ -246,6 +425,14 @@ impl Handler {
         buffer: &mut ScreenBuffer,
         mut scrollback: Option<&mut ScrollbackBuffer>,
     ) {
+        #[cfg(feature = "debug-tty-read")]
+        {
+            use core::fmt::Write;
+            let mut w = arch_x86_64::serial::SerialWriter;
+            let _ = write!(w, "[CSI] final={:?} intermediates={:?} params={:?}\n",
+                final_char as char, intermediates, params);
+        }
+
         // Check for private mode prefix
         let is_private = intermediates.first() == Some(&b'?');
 
@@ -396,7 +583,31 @@ impl Handler {
             }
             b'n' => {
                 // DSR - Device Status Report
-                // We just ignore these for now
+                let mode = get_param(params, 0, 0);
+                #[cfg(feature = "debug-tty-read")]
+                {
+                    use core::fmt::Write;
+                    let mut w = arch_x86_64::serial::SerialWriter;
+                    let _ = write!(w, "[DSR] Device Status Report mode={}\n", mode);
+                }
+
+                match mode {
+                    5 => {
+                        // Status Report - always report OK
+                        crate::send_response(b"\x1b[0n");
+                    }
+                    6 => {
+                        // CPR - Cursor Position Report
+                        // Report cursor position (1-indexed)
+                        let row = self.cursor.row + 1;
+                        let col = self.cursor.col + 1;
+                        let response = alloc::format!("\x1b[{};{}R", row, col);
+                        crate::send_response(response.as_bytes());
+                    }
+                    _ => {
+                        // Unknown DSR - ignore
+                    }
+                }
             }
             b'r' => {
                 // DECSTBM - Set Scroll Region
@@ -438,6 +649,31 @@ impl Handler {
                     5 | 6 => CursorShape::Bar,
                     _ => CursorShape::Block,
                 };
+            }
+            b'c' => {
+                // DA - Device Attributes
+                #[cfg(feature = "debug-tty-read")]
+                {
+                    use core::fmt::Write;
+                    let mut w = arch_x86_64::serial::SerialWriter;
+                    let _ = write!(w, "[DA] Device Attributes query (secondary={})\n",
+                        intermediates.first() == Some(&b'>'));
+                }
+
+                if intermediates.first() == Some(&b'>') {
+                    // Secondary DA - report terminal version
+                    // Format: CSI > Pp ; Pv ; Pc c
+                    // Pp = terminal type (1 = VT220)
+                    // Pv = firmware version (0)
+                    // Pc = keyboard type (0)
+                    crate::send_response(b"\x1b[>1;0;0c");
+                } else {
+                    // Primary DA - report terminal capabilities
+                    // CSI ? 6 c = VT102
+                    // CSI ? 6 2 ; c = VT220 (more features)
+                    // We report VT220 for better compatibility
+                    crate::send_response(b"\x1b[?62c");
+                }
             }
             _ => {
                 // Unhandled CSI sequence
@@ -487,6 +723,47 @@ impl Handler {
                         buffer.set_char(row, col, 'E', attrs);
                     }
                 }
+            }
+            // G0 Character Set Selection (ESC ( X)
+            (Some(b'('), b'B') => {
+                self.g0_charset = Charset::Ascii;
+            }
+            (Some(b'('), b'0') => {
+                self.g0_charset = Charset::DecSpecialGraphics;
+            }
+            (Some(b'('), b'<') => {
+                self.g0_charset = Charset::DecSupplemental;
+            }
+            (Some(b'('), b'>') => {
+                self.g0_charset = Charset::DecTechnical;
+            }
+            (Some(b'('), b'A') => {
+                self.g0_charset = Charset::Uk;
+            }
+            (Some(b'('), b'U') | (Some(b'('), b'K') => {
+                // User/null mapping - treat as ASCII
+                self.g0_charset = Charset::Ascii;
+            }
+
+            // G1 Character Set Selection (ESC ) X)
+            (Some(b')'), b'B') => {
+                self.g1_charset = Charset::Ascii;
+            }
+            (Some(b')'), b'0') => {
+                self.g1_charset = Charset::DecSpecialGraphics;
+            }
+            (Some(b')'), b'<') => {
+                self.g1_charset = Charset::DecSupplemental;
+            }
+            (Some(b')'), b'>') => {
+                self.g1_charset = Charset::DecTechnical;
+            }
+            (Some(b')'), b'A') => {
+                self.g1_charset = Charset::Uk;
+            }
+            (Some(b')'), b'U') | (Some(b')'), b'K') => {
+                // User/null mapping - treat as ASCII
+                self.g1_charset = Charset::Ascii;
             }
             _ => {
                 // Unhandled ESC sequence

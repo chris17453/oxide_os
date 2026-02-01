@@ -26,6 +26,8 @@ mod ioctl {
     pub const EVIOCGPHYS: u64 = 0x07;
     /// Get unique identifier
     pub const EVIOCGUNIQ: u64 = 0x08;
+    /// Flush event queue (custom, not in Linux evdev)
+    pub const EVIOCFLUSH: u64 = 0x100;
 }
 
 /// Input device ID struct (Linux compatible)
@@ -195,7 +197,9 @@ impl VnodeOps for InputEventDevice {
                     version: handle.info.version,
                 };
                 let ptr = arg as *mut InputId;
-                unsafe { *ptr = id; }
+                unsafe {
+                    *ptr = id;
+                }
                 Ok(0)
             }
             ioctl::EVIOCGNAME => {
@@ -244,6 +248,11 @@ impl VnodeOps for InputEventDevice {
                     *ptr.add(len) = 0;
                 }
                 Ok(len as i64)
+            }
+            ioctl::EVIOCFLUSH => {
+                // Flush event queue (clear all pending events)
+                handle.clear_events();
+                Ok(0)
             }
             _ => Err(VfsError::NotSupported),
         }
@@ -316,9 +325,21 @@ impl VnodeOps for MiceDevice {
                         got_event = true;
                         let pressed = event.value != 0;
                         match event.code {
-                            0x110 => { if pressed { buttons |= 0x01; } } // BTN_LEFT
-                            0x111 => { if pressed { buttons |= 0x02; } } // BTN_RIGHT
-                            0x112 => { if pressed { buttons |= 0x04; } } // BTN_MIDDLE
+                            0x110 => {
+                                if pressed {
+                                    buttons |= 0x01;
+                                }
+                            } // BTN_LEFT
+                            0x111 => {
+                                if pressed {
+                                    buttons |= 0x02;
+                                }
+                            } // BTN_RIGHT
+                            0x112 => {
+                                if pressed {
+                                    buttons |= 0x04;
+                                }
+                            } // BTN_MIDDLE
                             _ => {}
                         }
                     }
@@ -340,8 +361,12 @@ impl VnodeOps for MiceDevice {
                 // Build PS/2 3-byte packet
                 // Byte 0: buttons + sign/overflow bits
                 let mut byte0: u8 = buttons & 0x07;
-                if dx_clamped < 0 { byte0 |= 0x10; } // X sign bit
-                if dy_clamped < 0 { byte0 |= 0x20; } // Y sign bit
+                if dx_clamped < 0 {
+                    byte0 |= 0x10;
+                } // X sign bit
+                if dy_clamped < 0 {
+                    byte0 |= 0x20;
+                } // Y sign bit
                 byte0 |= 0x08; // Always-set bit
 
                 buf[0] = byte0;
@@ -406,7 +431,9 @@ impl VnodeOps for MiceDevice {
     }
 
     fn poll_read_ready(&self) -> bool {
-        input::get_device(1).map(|h| h.has_events()).unwrap_or(false)
+        input::get_device(1)
+            .map(|h| h.has_events())
+            .unwrap_or(false)
     }
 }
 

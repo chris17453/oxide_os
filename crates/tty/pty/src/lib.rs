@@ -160,7 +160,9 @@ impl PtyMaster {
             });
 
             // Now write collected echo to slave_to_master
-            if !echo_buffer.is_empty() && pair.slave_to_master.len() + echo_buffer.len() <= PTY_BUF_SIZE {
+            if !echo_buffer.is_empty()
+                && pair.slave_to_master.len() + echo_buffer.len() <= PTY_BUF_SIZE
+            {
                 pair.slave_to_master.extend(echo_buffer);
             }
 
@@ -227,7 +229,9 @@ impl VnodeOps for PtyMaster {
             });
 
             // Now write collected echo to slave_to_master
-            if !echo_buffer.is_empty() && pair.slave_to_master.len() + echo_buffer.len() <= PTY_BUF_SIZE {
+            if !echo_buffer.is_empty()
+                && pair.slave_to_master.len() + echo_buffer.len() <= PTY_BUF_SIZE
+            {
                 pair.slave_to_master.extend(echo_buffer);
             }
 
@@ -288,7 +292,9 @@ impl VnodeOps for PtyMaster {
                 if ptr.is_null() {
                     return Err(VfsError::InvalidArgument);
                 }
-                unsafe { *ptr = self.num; }
+                unsafe {
+                    *ptr = self.num;
+                }
                 Ok(0)
             }
             TIOCSPTLCK => {
@@ -301,7 +307,9 @@ impl VnodeOps for PtyMaster {
                     return Err(VfsError::InvalidArgument);
                 }
                 let pair = self.pair.lock();
-                unsafe { *ptr = pair.winsize; }
+                unsafe {
+                    *ptr = pair.winsize;
+                }
                 Ok(0)
             }
             TIOCSWINSZ => {

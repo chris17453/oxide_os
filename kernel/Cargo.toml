@@ -12,9 +12,12 @@ debug-cow = []        # Enable COW page fault debug output
 debug-proc = []       # Enable process management debug output
 debug-sched = ["syscall/debug-sched"]  # Enable scheduler context switch debug output
 debug-mouse = []      # Enable mouse/input debug output (ISR-safe)
+debug-input = ["input/debug-input", "ps2/debug-input", "arch-x86_64/debug-input"]      # Enable input event path debug output
 debug-lock = ["terminal/debug-lock", "fb/debug-lock"]  # Enable lock contention warnings in ISR context
 debug-console = ["devfs/debug-console", "vt/debug-console"]  # Enable console→VT I/O path tracing
-debug-all = ["debug-syscall", "debug-fork", "debug-cow", "debug-proc", "debug-sched", "debug-mouse", "debug-lock", "debug-console"]
+debug-syscall-perf = ["syscall/debug-syscall-perf"]  # Log slow syscalls (>50K cycles)
+debug-tty-read = ["tty/debug-tty-read", "devfs/debug-tty-read", "terminal/debug-tty-read", "terminal/arch-x86_64"]  # Log TTY read operations + filter serial escapes
+debug-all = ["debug-syscall", "debug-fork", "debug-cow", "debug-proc", "debug-sched", "debug-mouse", "debug-input", "debug-lock", "debug-console", "debug-syscall-perf", "debug-tty-read"]
 
 [dependencies]
 os_core = { workspace = true }

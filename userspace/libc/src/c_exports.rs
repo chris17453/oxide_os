@@ -4,8 +4,8 @@
 //! the Rust implementations so C code (like CPython) can link against them.
 
 use crate::errno;
-use crate::syscall;
 use crate::fcntl::*;
+use crate::syscall;
 
 /// Compute length of a C string (not including the null terminator)
 unsafe fn cstr_len(s: *const u8) -> usize {
@@ -59,7 +59,12 @@ struct PosixSpawnAttr {
 
 impl Default for PosixSpawnAttr {
     fn default() -> Self {
-        PosixSpawnAttr { flags: 0, pgroup: 0, sigdefault: 0, sigmask: 0 }
+        PosixSpawnAttr {
+            flags: 0,
+            pgroup: 0,
+            sigdefault: 0,
+            sigmask: 0,
+        }
     }
 }
 
@@ -561,12 +566,7 @@ pub unsafe extern "C" fn strtod(nptr: *const u8, endptr: *mut *mut u8) -> f64 {
     if negative { -result } else { result }
 }
 
-unsafe fn strtod_hex(
-    nptr: *const u8,
-    i: &mut usize,
-    negative: bool,
-    endptr: *mut *mut u8,
-) -> f64 {
+unsafe fn strtod_hex(nptr: *const u8, i: &mut usize, negative: bool, endptr: *mut *mut u8) -> f64 {
     let mut result: f64 = 0.0;
 
     while hex_val(*nptr.add(*i)) >= 0 {
@@ -670,10 +670,7 @@ pub unsafe extern "C" fn raise(sig: i32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn signal(
-    _signum: i32,
-    handler: usize,
-) -> usize {
+pub unsafe extern "C" fn signal(_signum: i32, handler: usize) -> usize {
     0 // SIG_DFL - stub
 }
 
@@ -718,20 +715,12 @@ pub unsafe extern "C" fn sigismember(set: *const u64, signum: i32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sigaction(
-    _signum: i32,
-    _act: *const u8,
-    _oldact: *mut u8,
-) -> i32 {
+pub unsafe extern "C" fn sigaction(_signum: i32, _act: *const u8, _oldact: *mut u8) -> i32 {
     0 // stub
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sigprocmask(
-    _how: i32,
-    _set: *const u64,
-    _oldset: *mut u64,
-) -> i32 {
+pub unsafe extern "C" fn sigprocmask(_how: i32, _set: *const u64, _oldset: *mut u64) -> i32 {
     0 // stub
 }
 
@@ -744,6 +733,8 @@ pub unsafe extern "C" fn read(fd: i32, buf: *mut u8, count: usize) -> isize {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn write(fd: i32, buf: *const u8, count: usize) -> isize {
+    // TODO: Re-enable buffering after fixing keyboard input issue
+    // Buffering was causing issues - need to investigate
     syscall::syscall3(syscall::nr::WRITE, fd as usize, buf as usize, count) as isize
 }
 
@@ -860,7 +851,11 @@ pub unsafe extern "C" fn execvp(file: *const u8, argv: *const *const u8) -> i32 
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn execvpe(file: *const u8, argv: *const *const u8, envp: *const *const u8) -> i32 {
+pub unsafe extern "C" fn execvpe(
+    file: *const u8,
+    argv: *const *const u8,
+    envp: *const *const u8,
+) -> i32 {
     if file.is_null() {
         ERRNO_VAR = errno::EINVAL;
         return -1;
@@ -959,13 +954,21 @@ pub unsafe extern "C" fn getegid() -> u32 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn setuid(uid: u32) -> i32 { syscall::syscall1(syscall::nr::SETUID, uid as usize) as i32 }
+pub unsafe extern "C" fn setuid(uid: u32) -> i32 {
+    syscall::syscall1(syscall::nr::SETUID, uid as usize) as i32
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn setgid(gid: u32) -> i32 { syscall::syscall1(syscall::nr::SETGID, gid as usize) as i32 }
+pub unsafe extern "C" fn setgid(gid: u32) -> i32 {
+    syscall::syscall1(syscall::nr::SETGID, gid as usize) as i32
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn seteuid(uid: u32) -> i32 { syscall::syscall1(syscall::nr::SETEUID, uid as usize) as i32 }
+pub unsafe extern "C" fn seteuid(uid: u32) -> i32 {
+    syscall::syscall1(syscall::nr::SETEUID, uid as usize) as i32
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn setegid(gid: u32) -> i32 { syscall::syscall1(syscall::nr::SETEGID, gid as usize) as i32 }
+pub unsafe extern "C" fn setegid(gid: u32) -> i32 {
+    syscall::syscall1(syscall::nr::SETEGID, gid as usize) as i32
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chdir(path: *const u8) -> i32 {
@@ -1006,7 +1009,12 @@ pub unsafe extern "C" fn rmdir(path: *const u8) -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mkdir(path: *const u8, mode: u32) -> i32 {
-    syscall::syscall3(syscall::nr::MKDIR, path as usize, cstr_len(path), mode as usize) as i32
+    syscall::syscall3(
+        syscall::nr::MKDIR,
+        path as usize,
+        cstr_len(path),
+        mode as usize,
+    ) as i32
 }
 
 #[unsafe(no_mangle)]
@@ -1036,8 +1044,19 @@ pub unsafe extern "C" fn readlink(path: *const u8, buf: *mut u8, bufsiz: usize) 
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn readlinkat(dirfd: i32, path: *const u8, buf: *mut u8, bufsiz: usize) -> isize {
-    syscall::syscall4(syscall::nr::READLINKAT, dirfd as usize, path as usize, buf as usize, bufsiz) as isize
+pub unsafe extern "C" fn readlinkat(
+    dirfd: i32,
+    path: *const u8,
+    buf: *mut u8,
+    bufsiz: usize,
+) -> isize {
+    syscall::syscall4(
+        syscall::nr::READLINKAT,
+        dirfd as usize,
+        path as usize,
+        buf as usize,
+        bufsiz,
+    ) as isize
 }
 
 #[unsafe(no_mangle)]
@@ -1053,7 +1072,12 @@ pub unsafe extern "C" fn truncate(path: *const u8, length: i64) -> i32 {
     }
     let len = cstr_len(path);
     let ret = syscall::sys_truncate(path, len, length);
-    if ret < 0 { ERRNO_VAR = -ret; -1 } else { 0 }
+    if ret < 0 {
+        ERRNO_VAR = -ret;
+        -1
+    } else {
+        0
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -1083,7 +1107,11 @@ pub unsafe extern "C" fn ttyname(fd: i32) -> *mut u8 {
         return core::ptr::null_mut();
     }
     // Return a reasonable name based on fd
-    let name: &[u8] = if fd <= 2 { b"/dev/console\0" } else { b"/dev/tty\0" };
+    let name: &[u8] = if fd <= 2 {
+        b"/dev/console\0"
+    } else {
+        b"/dev/tty\0"
+    };
     let buf = &raw mut TTYNAME_BUF;
     core::ptr::copy_nonoverlapping(name.as_ptr(), (*buf).as_mut_ptr(), name.len());
     (*buf).as_mut_ptr()
@@ -1094,7 +1122,11 @@ pub unsafe extern "C" fn ttyname_r(fd: i32, buf: *mut u8, buflen: usize) -> i32 
     if isatty(fd) == 0 {
         return errno::ENOTTY;
     }
-    let name: &[u8] = if fd <= 2 { b"/dev/console\0" } else { b"/dev/tty\0" };
+    let name: &[u8] = if fd <= 2 {
+        b"/dev/console\0"
+    } else {
+        b"/dev/tty\0"
+    };
     if buflen < name.len() {
         return errno::ERANGE;
     }
@@ -1105,14 +1137,14 @@ pub unsafe extern "C" fn ttyname_r(fd: i32, buf: *mut u8, buflen: usize) -> i32 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sysconf(name: i32) -> i64 {
     match name {
-        2 => 100,     // _SC_CLK_TCK
-        30 => 4096,   // _SC_PAGESIZE
-        84 => 1,      // _SC_NPROCESSORS_ONLN
-        4 => 256,     // _SC_OPEN_MAX
-        0 => 131072,  // _SC_ARG_MAX
-        180 => 64,    // _SC_HOST_NAME_MAX
-        70 => 1024,   // _SC_GETPW_R_SIZE_MAX
-        69 => 1024,   // _SC_GETGR_R_SIZE_MAX
+        2 => 100,    // _SC_CLK_TCK
+        30 => 4096,  // _SC_PAGESIZE
+        84 => 1,     // _SC_NPROCESSORS_ONLN
+        4 => 256,    // _SC_OPEN_MAX
+        0 => 131072, // _SC_ARG_MAX
+        180 => 64,   // _SC_HOST_NAME_MAX
+        70 => 1024,  // _SC_GETPW_R_SIZE_MAX
+        69 => 1024,  // _SC_GETGR_R_SIZE_MAX
         _ => -1,
     }
 }
@@ -1120,9 +1152,9 @@ pub unsafe extern "C" fn sysconf(name: i32) -> i64 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pathconf(_path: *const u8, name: i32) -> i64 {
     match name {
-        4 => 4096,  // _PC_PATH_MAX
-        3 => 255,   // _PC_NAME_MAX
-        5 => 4096,  // _PC_PIPE_BUF
+        4 => 4096, // _PC_PATH_MAX
+        3 => 255,  // _PC_NAME_MAX
+        5 => 4096, // _PC_PIPE_BUF
         _ => -1,
     }
 }
@@ -1136,9 +1168,9 @@ pub unsafe extern "C" fn fpathconf(_fd: i32, name: i32) -> i64 {
 pub unsafe extern "C" fn confstr(name: i32, buf: *mut u8, len: usize) -> usize {
     // _CS_PATH = 0, _CS_GNU_LIBC_VERSION = 2, _CS_GNU_LIBPTHREAD_VERSION = 3
     let value: &[u8] = match name {
-        0 => b"/usr/bin:/bin\0",        // _CS_PATH
-        2 => b"oxide-libc 1.0\0",       // _CS_GNU_LIBC_VERSION
-        3 => b"oxide-pthread 1.0\0",    // _CS_GNU_LIBPTHREAD_VERSION
+        0 => b"/usr/bin:/bin\0",     // _CS_PATH
+        2 => b"oxide-libc 1.0\0",    // _CS_GNU_LIBC_VERSION
+        3 => b"oxide-pthread 1.0\0", // _CS_GNU_LIBPTHREAD_VERSION
         _ => return 0,
     };
     let needed = value.len(); // includes null
@@ -1419,9 +1451,17 @@ pub unsafe extern "C" fn mktime(tm: *mut crate::time::Tm) -> i64 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gmtime(timep: *const i64) -> *mut crate::time::Tm {
     static mut TM_BUF: crate::time::Tm = crate::time::Tm {
-        tm_sec: 0, tm_min: 0, tm_hour: 0, tm_mday: 0, tm_mon: 0,
-        tm_year: 0, tm_wday: 0, tm_yday: 0, tm_isdst: 0,
-        tm_gmtoff: 0, tm_zone: core::ptr::null(),
+        tm_sec: 0,
+        tm_min: 0,
+        tm_hour: 0,
+        tm_mday: 0,
+        tm_mon: 0,
+        tm_year: 0,
+        tm_wday: 0,
+        tm_yday: 0,
+        tm_isdst: 0,
+        tm_gmtoff: 0,
+        tm_zone: core::ptr::null(),
     };
     gmtime_r(timep, &raw mut TM_BUF);
     &raw mut TM_BUF
@@ -1583,80 +1623,108 @@ pub unsafe extern "C" fn strptime(
                 b'Y' => {
                     // 4-digit year
                     let (val, adv) = strptime_parse_int(s.add(si), 4);
-                    if adv == 0 { return core::ptr::null_mut(); }
+                    if adv == 0 {
+                        return core::ptr::null_mut();
+                    }
                     (*tm).tm_year = val - 1900;
                     si += adv;
                 }
                 b'y' => {
                     // 2-digit year (00-99, 69-99 = 1969-1999, 00-68 = 2000-2068)
                     let (val, adv) = strptime_parse_int(s.add(si), 2);
-                    if adv == 0 { return core::ptr::null_mut(); }
+                    if adv == 0 {
+                        return core::ptr::null_mut();
+                    }
                     (*tm).tm_year = if val >= 69 { val } else { val + 100 };
                     si += adv;
                 }
                 b'm' => {
                     let (val, adv) = strptime_parse_int(s.add(si), 2);
-                    if adv == 0 { return core::ptr::null_mut(); }
+                    if adv == 0 {
+                        return core::ptr::null_mut();
+                    }
                     (*tm).tm_mon = val - 1; // 0-indexed
                     si += adv;
                 }
                 b'd' | b'e' => {
                     // Skip leading whitespace for %e
                     if spec == b'e' {
-                        while *s.add(si) == b' ' { si += 1; }
+                        while *s.add(si) == b' ' {
+                            si += 1;
+                        }
                     }
                     let (val, adv) = strptime_parse_int(s.add(si), 2);
-                    if adv == 0 { return core::ptr::null_mut(); }
+                    if adv == 0 {
+                        return core::ptr::null_mut();
+                    }
                     (*tm).tm_mday = val;
                     si += adv;
                 }
                 b'H' | b'k' => {
                     if spec == b'k' {
-                        while *s.add(si) == b' ' { si += 1; }
+                        while *s.add(si) == b' ' {
+                            si += 1;
+                        }
                     }
                     let (val, adv) = strptime_parse_int(s.add(si), 2);
-                    if adv == 0 { return core::ptr::null_mut(); }
+                    if adv == 0 {
+                        return core::ptr::null_mut();
+                    }
                     (*tm).tm_hour = val;
                     si += adv;
                 }
                 b'I' | b'l' => {
                     // 12-hour clock
                     if spec == b'l' {
-                        while *s.add(si) == b' ' { si += 1; }
+                        while *s.add(si) == b' ' {
+                            si += 1;
+                        }
                     }
                     let (val, adv) = strptime_parse_int(s.add(si), 2);
-                    if adv == 0 { return core::ptr::null_mut(); }
+                    if adv == 0 {
+                        return core::ptr::null_mut();
+                    }
                     (*tm).tm_hour = val; // Adjusted later by %p
                     si += adv;
                 }
                 b'M' => {
                     let (val, adv) = strptime_parse_int(s.add(si), 2);
-                    if adv == 0 { return core::ptr::null_mut(); }
+                    if adv == 0 {
+                        return core::ptr::null_mut();
+                    }
                     (*tm).tm_min = val;
                     si += adv;
                 }
                 b'S' => {
                     let (val, adv) = strptime_parse_int(s.add(si), 2);
-                    if adv == 0 { return core::ptr::null_mut(); }
+                    if adv == 0 {
+                        return core::ptr::null_mut();
+                    }
                     (*tm).tm_sec = val;
                     si += adv;
                 }
                 b'j' => {
                     let (val, adv) = strptime_parse_int(s.add(si), 3);
-                    if adv == 0 { return core::ptr::null_mut(); }
+                    if adv == 0 {
+                        return core::ptr::null_mut();
+                    }
                     (*tm).tm_yday = val - 1; // 0-indexed
                     si += adv;
                 }
                 b'w' => {
                     let (val, adv) = strptime_parse_int(s.add(si), 1);
-                    if adv == 0 { return core::ptr::null_mut(); }
+                    if adv == 0 {
+                        return core::ptr::null_mut();
+                    }
                     (*tm).tm_wday = val;
                     si += adv;
                 }
                 b'u' => {
                     // ISO weekday (1=Mon..7=Sun)
                     let (val, adv) = strptime_parse_int(s.add(si), 1);
-                    if adv == 0 { return core::ptr::null_mut(); }
+                    if adv == 0 {
+                        return core::ptr::null_mut();
+                    }
                     (*tm).tm_wday = if val == 7 { 0 } else { val };
                     si += adv;
                 }
@@ -1667,9 +1735,13 @@ pub unsafe extern "C" fn strptime(
                     let upper1 = if c1 >= b'a' { c1 - 32 } else { c1 };
                     let upper2 = if c2 >= b'a' { c2 - 32 } else { c2 };
                     if upper1 == b'A' && upper2 == b'M' {
-                        if (*tm).tm_hour == 12 { (*tm).tm_hour = 0; }
+                        if (*tm).tm_hour == 12 {
+                            (*tm).tm_hour = 0;
+                        }
                     } else if upper1 == b'P' && upper2 == b'M' {
-                        if (*tm).tm_hour != 12 { (*tm).tm_hour += 12; }
+                        if (*tm).tm_hour != 12 {
+                            (*tm).tm_hour += 12;
+                        }
                     } else {
                         return core::ptr::null_mut();
                     }
@@ -1678,13 +1750,17 @@ pub unsafe extern "C" fn strptime(
                 b'a' | b'A' => {
                     // Abbreviated or full weekday name
                     let adv = strptime_match_weekday(s.add(si), &mut (*tm).tm_wday);
-                    if adv == 0 { return core::ptr::null_mut(); }
+                    if adv == 0 {
+                        return core::ptr::null_mut();
+                    }
                     si += adv;
                 }
                 b'b' | b'B' | b'h' => {
                     // Abbreviated or full month name
                     let adv = strptime_match_month(s.add(si), &mut (*tm).tm_mon);
-                    if adv == 0 { return core::ptr::null_mut(); }
+                    if adv == 0 {
+                        return core::ptr::null_mut();
+                    }
                     si += adv;
                 }
                 b'n' | b't' => {
@@ -1694,7 +1770,9 @@ pub unsafe extern "C" fn strptime(
                     }
                 }
                 b'%' => {
-                    if *s.add(si) != b'%' { return core::ptr::null_mut(); }
+                    if *s.add(si) != b'%' {
+                        return core::ptr::null_mut();
+                    }
                     si += 1;
                 }
                 b'Z' | b'z' => {
@@ -1712,7 +1790,9 @@ pub unsafe extern "C" fn strptime(
                             (*tm).tm_gmtoff = if c == b'-' { -offset } else { offset };
                         }
                     } else {
-                        while (*s.add(si)).is_ascii_alphabetic() { si += 1; }
+                        while (*s.add(si)).is_ascii_alphabetic() {
+                            si += 1;
+                        }
                     }
                 }
                 _ => {
@@ -1723,10 +1803,14 @@ pub unsafe extern "C" fn strptime(
         } else if fc == b' ' || fc == b'\t' {
             // Format whitespace matches any amount of input whitespace
             fi += 1;
-            while *s.add(si) == b' ' || *s.add(si) == b'\t' { si += 1; }
+            while *s.add(si) == b' ' || *s.add(si) == b'\t' {
+                si += 1;
+            }
         } else {
             // Literal match
-            if *s.add(si) != fc { return core::ptr::null_mut(); }
+            if *s.add(si) != fc {
+                return core::ptr::null_mut();
+            }
             si += 1;
             fi += 1;
         }
@@ -1753,8 +1837,13 @@ unsafe fn strptime_parse_int(p: *const u8, max_digits: usize) -> (i32, usize) {
 unsafe fn strptime_match_weekday(p: *const u8, wday: &mut i32) -> usize {
     static DAYS: [&[u8]; 7] = [b"sun", b"mon", b"tue", b"wed", b"thu", b"fri", b"sat"];
     static DAYS_FULL: [&[u8]; 7] = [
-        b"sunday", b"monday", b"tuesday", b"wednesday",
-        b"thursday", b"friday", b"saturday",
+        b"sunday",
+        b"monday",
+        b"tuesday",
+        b"wednesday",
+        b"thursday",
+        b"friday",
+        b"saturday",
     ];
     for (i, full) in DAYS_FULL.iter().enumerate() {
         if strptime_casematch(p, full) {
@@ -1774,12 +1863,22 @@ unsafe fn strptime_match_weekday(p: *const u8, wday: &mut i32) -> usize {
 /// Match abbreviated or full month name, set mon (0-indexed), return chars consumed
 unsafe fn strptime_match_month(p: *const u8, mon: &mut i32) -> usize {
     static MONTHS: [&[u8]; 12] = [
-        b"jan", b"feb", b"mar", b"apr", b"may", b"jun",
-        b"jul", b"aug", b"sep", b"oct", b"nov", b"dec",
+        b"jan", b"feb", b"mar", b"apr", b"may", b"jun", b"jul", b"aug", b"sep", b"oct", b"nov",
+        b"dec",
     ];
     static MONTHS_FULL: [&[u8]; 12] = [
-        b"january", b"february", b"march", b"april", b"may", b"june",
-        b"july", b"august", b"september", b"october", b"november", b"december",
+        b"january",
+        b"february",
+        b"march",
+        b"april",
+        b"may",
+        b"june",
+        b"july",
+        b"august",
+        b"september",
+        b"october",
+        b"november",
+        b"december",
     ];
     for (i, full) in MONTHS_FULL.iter().enumerate() {
         if strptime_casematch(p, full) {
@@ -1800,10 +1899,18 @@ unsafe fn strptime_match_month(p: *const u8, mon: &mut i32) -> usize {
 unsafe fn strptime_casematch(p: *const u8, pattern: &[u8]) -> bool {
     for (i, &ch) in pattern.iter().enumerate() {
         let c = *p.add(i);
-        if c == 0 { return false; }
+        if c == 0 {
+            return false;
+        }
         let lc = if c >= b'A' && c <= b'Z' { c + 32 } else { c };
-        let lp = if ch >= b'A' && ch <= b'Z' { ch + 32 } else { ch };
-        if lc != lp { return false; }
+        let lp = if ch >= b'A' && ch <= b'Z' {
+            ch + 32
+        } else {
+            ch
+        };
+        if lc != lp {
+            return false;
+        }
     }
     true
 }
@@ -1814,10 +1921,7 @@ pub unsafe extern "C" fn asctime(_tm: *const crate::time::Tm) -> *mut u8 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn asctime_r(
-    _tm: *const crate::time::Tm,
-    buf: *mut u8,
-) -> *mut u8 {
+pub unsafe extern "C" fn asctime_r(_tm: *const crate::time::Tm, buf: *mut u8) -> *mut u8 {
     let s = b"Thu Jan  1 00:00:00 1970\n\0";
     core::ptr::copy_nonoverlapping(s.as_ptr(), buf, s.len());
     buf
@@ -1831,9 +1935,17 @@ pub unsafe extern "C" fn ctime(timep: *const i64) -> *mut u8 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ctime_r(timep: *const i64, buf: *mut u8) -> *mut u8 {
     static mut TM: crate::time::Tm = crate::time::Tm {
-        tm_sec: 0, tm_min: 0, tm_hour: 0, tm_mday: 0, tm_mon: 0,
-        tm_year: 0, tm_wday: 0, tm_yday: 0, tm_isdst: 0,
-        tm_gmtoff: 0, tm_zone: core::ptr::null(),
+        tm_sec: 0,
+        tm_min: 0,
+        tm_hour: 0,
+        tm_mday: 0,
+        tm_mon: 0,
+        tm_year: 0,
+        tm_wday: 0,
+        tm_yday: 0,
+        tm_isdst: 0,
+        tm_gmtoff: 0,
+        tm_zone: core::ptr::null(),
     };
     gmtime_r(timep, &raw mut TM);
     asctime_r(&raw const TM, buf)
@@ -1853,7 +1965,10 @@ static mut TZNAME_UTC2: [u8; 4] = *b"UTC\0";
 
 #[unsafe(no_mangle)]
 pub static mut tzname: [*mut u8; 2] = unsafe {
-    [(&raw const TZNAME_UTC) as *mut u8, (&raw const TZNAME_UTC2) as *mut u8]
+    [
+        (&raw const TZNAME_UTC) as *mut u8,
+        (&raw const TZNAME_UTC2) as *mut u8,
+    ]
 };
 
 #[unsafe(no_mangle)]
@@ -1881,11 +1996,7 @@ pub unsafe extern "C" fn stat(path: *const u8, buf: *mut crate::stat::Stat) -> i
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fstat(fd: i32, buf: *mut crate::stat::Stat) -> i32 {
-    let ret = syscall::syscall2(
-        syscall::nr::FSTAT,
-        fd as usize,
-        buf as usize,
-    ) as i32;
+    let ret = syscall::syscall2(syscall::nr::FSTAT, fd as usize, buf as usize) as i32;
     if ret < 0 {
         ERRNO_VAR = -ret;
         -1
@@ -1911,7 +2022,12 @@ pub unsafe extern "C" fn fstatat(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chmod(path: *const u8, mode: u32) -> i32 {
-    syscall::syscall3(syscall::nr::CHMOD, path as usize, cstr_len(path), mode as usize) as i32
+    syscall::syscall3(
+        syscall::nr::CHMOD,
+        path as usize,
+        cstr_len(path),
+        mode as usize,
+    ) as i32
 }
 
 #[unsafe(no_mangle)]
@@ -1929,12 +2045,23 @@ pub unsafe extern "C" fn umask(mask: u32) -> u32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chown(path: *const u8, owner: u32, group: u32) -> i32 {
-    syscall::syscall4(syscall::nr::CHOWN, path as usize, cstr_len(path), owner as usize, group as usize) as i32
+    syscall::syscall4(
+        syscall::nr::CHOWN,
+        path as usize,
+        cstr_len(path),
+        owner as usize,
+        group as usize,
+    ) as i32
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fchown(fd: i32, owner: u32, group: u32) -> i32 {
-    syscall::syscall3(syscall::nr::FCHOWN, fd as usize, owner as usize, group as usize) as i32
+    syscall::syscall3(
+        syscall::nr::FCHOWN,
+        fd as usize,
+        owner as usize,
+        group as usize,
+    ) as i32
 }
 
 #[unsafe(no_mangle)]
@@ -1957,10 +2084,10 @@ pub unsafe extern "C" fn futimens(fd: i32, times: *const u8) -> i32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fcntl(fd: i32, cmd: i32, arg: i64) -> i32 {
     match cmd {
-        1 => 0,    // F_GETFD -> no flags
-        2 => 0,    // F_SETFD -> ok
-        3 => 0,    // F_GETFL -> no flags
-        4 => 0,    // F_SETFL -> ok
+        1 => 0,       // F_GETFD -> no flags
+        2 => 0,       // F_SETFD -> ok
+        3 => 0,       // F_GETFL -> no flags
+        4 => 0,       // F_SETFL -> ok
         0 => dup(fd), // F_DUPFD
         _ => -1,
     }
@@ -1982,7 +2109,12 @@ pub unsafe extern "C" fn ioctl(fd: i32, request: u64, arg: u64) -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn poll(fds: *mut u8, nfds: u64, timeout: i32) -> i32 {
-    syscall::syscall3(syscall::nr::POLL, fds as usize, nfds as usize, timeout as usize) as i32
+    syscall::syscall3(
+        syscall::nr::POLL,
+        fds as usize,
+        nfds as usize,
+        timeout as usize,
+    ) as i32
 }
 
 #[unsafe(no_mangle)]
@@ -2218,19 +2350,35 @@ pub unsafe extern "C" fn getpriority(which: i32, who: i32) -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn setpriority(which: i32, who: i32, prio: i32) -> i32 {
-    syscall::syscall3(syscall::nr::SETPRIORITY, which as usize, who as usize, prio as usize) as i32
+    syscall::syscall3(
+        syscall::nr::SETPRIORITY,
+        which as usize,
+        who as usize,
+        prio as usize,
+    ) as i32
 }
 
 // ============ socket operations ============
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn socket(domain: i32, typ: i32, protocol: i32) -> i32 {
-    syscall::syscall3(syscall::nr::SOCKET, domain as usize, typ as usize, protocol as usize) as i32
+    syscall::syscall3(
+        syscall::nr::SOCKET,
+        domain as usize,
+        typ as usize,
+        protocol as usize,
+    ) as i32
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn socketpair(domain: i32, typ: i32, protocol: i32, sv: *mut i32) -> i32 {
-    syscall::syscall4(syscall::nr::SOCKETPAIR, domain as usize, typ as usize, protocol as usize, sv as usize) as i32
+    syscall::syscall4(
+        syscall::nr::SOCKETPAIR,
+        domain as usize,
+        typ as usize,
+        protocol as usize,
+        sv as usize,
+    ) as i32
 }
 
 #[unsafe(no_mangle)]
@@ -2245,43 +2393,95 @@ pub unsafe extern "C" fn listen(fd: i32, backlog: i32) -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn accept(fd: i32, addr: *mut u8, len: *mut u32) -> i32 {
-    syscall::syscall3(syscall::nr::ACCEPT, fd as usize, addr as usize, len as usize) as i32
+    syscall::syscall3(
+        syscall::nr::ACCEPT,
+        fd as usize,
+        addr as usize,
+        len as usize,
+    ) as i32
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn accept4(fd: i32, addr: *mut u8, len: *mut u32, flags: i32) -> i32 {
-    syscall::syscall4(syscall::nr::ACCEPT4, fd as usize, addr as usize, len as usize, flags as usize) as i32
+    syscall::syscall4(
+        syscall::nr::ACCEPT4,
+        fd as usize,
+        addr as usize,
+        len as usize,
+        flags as usize,
+    ) as i32
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn connect(fd: i32, addr: *const u8, len: u32) -> i32 {
-    syscall::syscall3(syscall::nr::CONNECT, fd as usize, addr as usize, len as usize) as i32
+    syscall::syscall3(
+        syscall::nr::CONNECT,
+        fd as usize,
+        addr as usize,
+        len as usize,
+    ) as i32
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn send(fd: i32, buf: *const u8, len: usize, flags: i32) -> isize {
-    syscall::syscall4(syscall::nr::SEND, fd as usize, buf as usize, len, flags as usize) as isize
+    syscall::syscall4(
+        syscall::nr::SEND,
+        fd as usize,
+        buf as usize,
+        len,
+        flags as usize,
+    ) as isize
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn recv(fd: i32, buf: *mut u8, len: usize, flags: i32) -> isize {
-    syscall::syscall4(syscall::nr::RECV, fd as usize, buf as usize, len, flags as usize) as isize
+    syscall::syscall4(
+        syscall::nr::RECV,
+        fd as usize,
+        buf as usize,
+        len,
+        flags as usize,
+    ) as isize
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sendto(
-    fd: i32, buf: *const u8, len: usize, flags: i32,
-    addr: *const u8, addrlen: u32,
+    fd: i32,
+    buf: *const u8,
+    len: usize,
+    flags: i32,
+    addr: *const u8,
+    addrlen: u32,
 ) -> isize {
-    syscall::syscall6(syscall::nr::SENDTO, fd as usize, buf as usize, len, flags as usize, addr as usize, addrlen as usize) as isize
+    syscall::syscall6(
+        syscall::nr::SENDTO,
+        fd as usize,
+        buf as usize,
+        len,
+        flags as usize,
+        addr as usize,
+        addrlen as usize,
+    ) as isize
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn recvfrom(
-    fd: i32, buf: *mut u8, len: usize, flags: i32,
-    addr: *mut u8, addrlen: *mut u32,
+    fd: i32,
+    buf: *mut u8,
+    len: usize,
+    flags: i32,
+    addr: *mut u8,
+    addrlen: *mut u32,
 ) -> isize {
-    syscall::syscall6(syscall::nr::RECVFROM, fd as usize, buf as usize, len, flags as usize, addr as usize, addrlen as usize) as isize
+    syscall::syscall6(
+        syscall::nr::RECVFROM,
+        fd as usize,
+        buf as usize,
+        len,
+        flags as usize,
+        addr as usize,
+        addrlen as usize,
+    ) as isize
 }
 
 #[unsafe(no_mangle)]
@@ -2291,28 +2491,58 @@ pub unsafe extern "C" fn shutdown(fd: i32, how: i32) -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getsockname(fd: i32, addr: *mut u8, len: *mut u32) -> i32 {
-    syscall::syscall3(syscall::nr::GETSOCKNAME, fd as usize, addr as usize, len as usize) as i32
+    syscall::syscall3(
+        syscall::nr::GETSOCKNAME,
+        fd as usize,
+        addr as usize,
+        len as usize,
+    ) as i32
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getpeername(fd: i32, addr: *mut u8, len: *mut u32) -> i32 {
-    syscall::syscall3(syscall::nr::GETPEERNAME, fd as usize, addr as usize, len as usize) as i32
+    syscall::syscall3(
+        syscall::nr::GETPEERNAME,
+        fd as usize,
+        addr as usize,
+        len as usize,
+    ) as i32
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn setsockopt(
-    fd: i32, level: i32, optname: i32,
-    optval: *const u8, optlen: u32,
+    fd: i32,
+    level: i32,
+    optname: i32,
+    optval: *const u8,
+    optlen: u32,
 ) -> i32 {
-    syscall::syscall5(syscall::nr::SETSOCKOPT, fd as usize, level as usize, optname as usize, optval as usize, optlen as usize) as i32
+    syscall::syscall5(
+        syscall::nr::SETSOCKOPT,
+        fd as usize,
+        level as usize,
+        optname as usize,
+        optval as usize,
+        optlen as usize,
+    ) as i32
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getsockopt(
-    fd: i32, level: i32, optname: i32,
-    optval: *mut u8, optlen: *mut u32,
+    fd: i32,
+    level: i32,
+    optname: i32,
+    optval: *mut u8,
+    optlen: *mut u32,
 ) -> i32 {
-    syscall::syscall5(syscall::nr::GETSOCKOPT, fd as usize, level as usize, optname as usize, optval as usize, optlen as usize) as i32
+    syscall::syscall5(
+        syscall::nr::GETSOCKOPT,
+        fd as usize,
+        level as usize,
+        optname as usize,
+        optval as usize,
+        optlen as usize,
+    ) as i32
 }
 
 // ============ netdb ============
@@ -2337,9 +2567,12 @@ pub unsafe extern "C" fn gai_strerror(_errcode: i32) -> *const u8 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getnameinfo(
-    _sa: *const u8, _salen: u32,
-    _host: *mut u8, _hostlen: u32,
-    _serv: *mut u8, _servlen: u32,
+    _sa: *const u8,
+    _salen: u32,
+    _host: *mut u8,
+    _hostlen: u32,
+    _serv: *mut u8,
+    _servlen: u32,
     _flags: i32,
 ) -> i32 {
     -2
@@ -2351,9 +2584,7 @@ pub unsafe extern "C" fn gethostbyname(_name: *const u8) -> *mut u8 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gethostbyaddr(
-    _addr: *const u8, _len: u32, _type_: i32,
-) -> *mut u8 {
+pub unsafe extern "C" fn gethostbyaddr(_addr: *const u8, _len: u32, _type_: i32) -> *mut u8 {
     core::ptr::null_mut()
 }
 
@@ -2388,10 +2619,14 @@ unsafe fn parse_ipv4(src: *const u8) -> Option<u32> {
         let c = *src.add(i);
         if c >= b'0' && c <= b'9' {
             val = val * 10 + (c - b'0') as u32;
-            if val > 255 { return None; }
+            if val > 255 {
+                return None;
+            }
             digits += 1;
         } else if c == b'.' {
-            if digits == 0 || octet_idx >= 3 { return None; }
+            if digits == 0 || octet_idx >= 3 {
+                return None;
+            }
             octets[octet_idx] = val as u8;
             octet_idx += 1;
             val = 0;
@@ -2401,7 +2636,9 @@ unsafe fn parse_ipv4(src: *const u8) -> Option<u32> {
         }
         i += 1;
     }
-    if digits == 0 || octet_idx != 3 { return None; }
+    if digits == 0 || octet_idx != 3 {
+        return None;
+    }
     octets[3] = val as u8;
     Some(u32::from_be_bytes(octets))
 }
@@ -2412,33 +2649,45 @@ unsafe fn format_ipv4(addr: u32, buf: *mut u8, size: usize) -> usize {
     let mut pos = 0;
     for (i, &b) in bytes.iter().enumerate() {
         if i > 0 {
-            if pos >= size { return 0; }
+            if pos >= size {
+                return 0;
+            }
             *buf.add(pos) = b'.';
             pos += 1;
         }
         // Write decimal digits
         if b >= 100 {
-            if pos >= size { return 0; }
+            if pos >= size {
+                return 0;
+            }
             *buf.add(pos) = b'0' + b / 100;
             pos += 1;
         }
         if b >= 10 {
-            if pos >= size { return 0; }
+            if pos >= size {
+                return 0;
+            }
             *buf.add(pos) = b'0' + (b / 10) % 10;
             pos += 1;
         }
-        if pos >= size { return 0; }
+        if pos >= size {
+            return 0;
+        }
         *buf.add(pos) = b'0' + b % 10;
         pos += 1;
     }
-    if pos >= size { return 0; }
+    if pos >= size {
+        return 0;
+    }
     *buf.add(pos) = 0;
     pos
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn inet_addr(cp: *const u8) -> u32 {
-    if cp.is_null() { return 0xFFFFFFFF; }
+    if cp.is_null() {
+        return 0xFFFFFFFF;
+    }
     match parse_ipv4(cp) {
         Some(addr) => addr,
         None => 0xFFFFFFFF, // INADDR_NONE
@@ -2456,10 +2705,14 @@ pub unsafe extern "C" fn inet_ntoa(in_addr: u32) -> *const u8 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn inet_aton(cp: *const u8, inp: *mut u32) -> i32 {
-    if cp.is_null() { return 0; }
+    if cp.is_null() {
+        return 0;
+    }
     match parse_ipv4(cp) {
         Some(addr) => {
-            if !inp.is_null() { *inp = addr; }
+            if !inp.is_null() {
+                *inp = addr;
+            }
             1
         }
         None => 0,
@@ -2471,17 +2724,17 @@ const AF_INET6: i32 = 10;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn inet_pton(af: i32, src: *const u8, dst: *mut u8) -> i32 {
-    if src.is_null() || dst.is_null() { return -1; }
+    if src.is_null() || dst.is_null() {
+        return -1;
+    }
     match af {
-        AF_INET => {
-            match parse_ipv4(src) {
-                Some(addr) => {
-                    core::ptr::copy_nonoverlapping(&addr as *const u32 as *const u8, dst, 4);
-                    1
-                }
-                None => 0,
+        AF_INET => match parse_ipv4(src) {
+            Some(addr) => {
+                core::ptr::copy_nonoverlapping(&addr as *const u32 as *const u8, dst, 4);
+                1
             }
-        }
+            None => 0,
+        },
         AF_INET6 => {
             // Minimal: support "::1" and "::" only
             if *src == b':' && *src.add(1) == b':' {
@@ -2494,14 +2747,15 @@ pub unsafe extern "C" fn inet_pton(af: i32, src: *const u8, dst: *mut u8) -> i32
                 0
             }
         }
-        _ => { ERRNO_VAR = errno::EAFNOSUPPORT; -1 }
+        _ => {
+            ERRNO_VAR = errno::EAFNOSUPPORT;
+            -1
+        }
     }
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn inet_ntop(
-    af: i32, src: *const u8, dst: *mut u8, size: u32,
-) -> *const u8 {
+pub unsafe extern "C" fn inet_ntop(af: i32, src: *const u8, dst: *mut u8, size: u32) -> *const u8 {
     if src.is_null() || dst.is_null() {
         ERRNO_VAR = errno::EFAULT;
         return core::ptr::null();
@@ -2525,14 +2779,20 @@ pub unsafe extern "C" fn inet_ntop(
             // Check if it's all zeros
             let mut all_zero = true;
             for i in 0..16 {
-                if *src.add(i) != 0 { all_zero = false; break; }
+                if *src.add(i) != 0 {
+                    all_zero = false;
+                    break;
+                }
             }
             if all_zero {
                 core::ptr::copy_nonoverlapping(b"::\0".as_ptr(), dst, 3);
             } else if *src.add(15) == 1 {
                 let mut is_loopback = true;
                 for i in 0..15 {
-                    if *src.add(i) != 0 { is_loopback = false; break; }
+                    if *src.add(i) != 0 {
+                        is_loopback = false;
+                        break;
+                    }
                 }
                 if is_loopback {
                     core::ptr::copy_nonoverlapping(b"::1\0".as_ptr(), dst, 4);
@@ -2591,24 +2851,42 @@ pub unsafe extern "C" fn pthread_exit(_retval: *mut u8) -> ! {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_mutex_init(_mutex: *mut u8, _attr: *const u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_mutex_init(_mutex: *mut u8, _attr: *const u8) -> i32 {
+    0
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_mutex_destroy(_mutex: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_mutex_destroy(_mutex: *mut u8) -> i32 {
+    0
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_mutex_lock(_mutex: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_mutex_lock(_mutex: *mut u8) -> i32 {
+    0
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_mutex_trylock(_mutex: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_mutex_trylock(_mutex: *mut u8) -> i32 {
+    0
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_mutex_unlock(_mutex: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_mutex_unlock(_mutex: *mut u8) -> i32 {
+    0
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_mutex_timedlock(_m: *mut u8, _t: *const u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_mutex_timedlock(_m: *mut u8, _t: *const u8) -> i32 {
+    0
+}
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_mutexattr_init(_attr: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_mutexattr_init(_attr: *mut u8) -> i32 {
+    0
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_mutexattr_destroy(_attr: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_mutexattr_destroy(_attr: *mut u8) -> i32 {
+    0
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_mutexattr_settype(_attr: *mut u8, _type: i32) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_mutexattr_settype(_attr: *mut u8, _type: i32) -> i32 {
+    0
+}
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pthread_mutexattr_gettype(_a: *const u8, t: *mut i32) -> i32 {
     *t = 0;
@@ -2616,41 +2894,71 @@ pub unsafe extern "C" fn pthread_mutexattr_gettype(_a: *const u8, t: *mut i32) -
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_cond_init(_cond: *mut u8, _attr: *const u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_cond_init(_cond: *mut u8, _attr: *const u8) -> i32 {
+    0
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_cond_destroy(_cond: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_cond_destroy(_cond: *mut u8) -> i32 {
+    0
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_cond_signal(_cond: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_cond_signal(_cond: *mut u8) -> i32 {
+    0
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_cond_broadcast(_cond: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_cond_broadcast(_cond: *mut u8) -> i32 {
+    0
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_cond_wait(_c: *mut u8, _m: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_cond_wait(_c: *mut u8, _m: *mut u8) -> i32 {
+    0
+}
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pthread_cond_timedwait(_c: *mut u8, _m: *mut u8, _t: *const u8) -> i32 {
     errno::ETIMEDOUT
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_condattr_init(_attr: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_condattr_init(_attr: *mut u8) -> i32 {
+    0
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_condattr_destroy(_attr: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_condattr_destroy(_attr: *mut u8) -> i32 {
+    0
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_condattr_setclock(_a: *mut u8, _c: i32) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_condattr_setclock(_a: *mut u8, _c: i32) -> i32 {
+    0
+}
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_rwlock_init(_rw: *mut u8, _attr: *const u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_rwlock_init(_rw: *mut u8, _attr: *const u8) -> i32 {
+    0
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_rwlock_destroy(_rw: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_rwlock_destroy(_rw: *mut u8) -> i32 {
+    0
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_rwlock_rdlock(_rw: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_rwlock_rdlock(_rw: *mut u8) -> i32 {
+    0
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_rwlock_wrlock(_rw: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_rwlock_wrlock(_rw: *mut u8) -> i32 {
+    0
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_rwlock_tryrdlock(_rw: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_rwlock_tryrdlock(_rw: *mut u8) -> i32 {
+    0
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_rwlock_trywrlock(_rw: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_rwlock_trywrlock(_rw: *mut u8) -> i32 {
+    0
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_rwlock_unlock(_rw: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn pthread_rwlock_unlock(_rw: *mut u8) -> i32 {
+    0
+}
 
 // Thread-local storage
 const MAX_KEYS: usize = 128;
@@ -2742,7 +3050,10 @@ pub unsafe extern "C" fn pthread_attr_setdetachstate(attr: *mut PthreadAttr, sta
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_attr_getdetachstate(attr: *const PthreadAttr, state: *mut i32) -> i32 {
+pub unsafe extern "C" fn pthread_attr_getdetachstate(
+    attr: *const PthreadAttr,
+    state: *mut i32,
+) -> i32 {
     if attr.is_null() || state.is_null() {
         ERRNO_VAR = errno::EINVAL;
         return -1;
@@ -2762,7 +3073,10 @@ pub unsafe extern "C" fn pthread_attr_setstacksize(attr: *mut PthreadAttr, size:
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_attr_getstacksize(attr: *const PthreadAttr, size: *mut usize) -> i32 {
+pub unsafe extern "C" fn pthread_attr_getstacksize(
+    attr: *const PthreadAttr,
+    size: *mut usize,
+) -> i32 {
     if attr.is_null() || size.is_null() {
         ERRNO_VAR = errno::EINVAL;
         return -1;
@@ -2802,7 +3116,10 @@ pub unsafe extern "C" fn pthread_attr_getstack(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pthread_attr_getguardsize(attr: *const PthreadAttr, size: *mut usize) -> i32 {
+pub unsafe extern "C" fn pthread_attr_getguardsize(
+    attr: *const PthreadAttr,
+    size: *mut usize,
+) -> i32 {
     if attr.is_null() || size.is_null() {
         ERRNO_VAR = errno::EINVAL;
         return -1;
@@ -2925,7 +3242,11 @@ struct Statvfs {
 fn fill_statvfs_from_statfs(stfs: &syscall::Statfs, buf: *mut Statvfs) {
     unsafe {
         (*buf).f_bsize = stfs.f_bsize as u64;
-        (*buf).f_frsize = if stfs.f_frsize > 0 { stfs.f_frsize as u64 } else { stfs.f_bsize as u64 };
+        (*buf).f_frsize = if stfs.f_frsize > 0 {
+            stfs.f_frsize as u64
+        } else {
+            stfs.f_bsize as u64
+        };
         (*buf).f_blocks = stfs.f_blocks;
         (*buf).f_bfree = stfs.f_bfree;
         (*buf).f_bavail = stfs.f_bavail;
@@ -3116,7 +3437,8 @@ pub unsafe extern "C" fn strtol(nptr: *const u8, endptr: *mut *mut u8, base: i32
         } else {
             base = 10;
         }
-    } else if base == 16 && *nptr.add(i) == b'0'
+    } else if base == 16
+        && *nptr.add(i) == b'0'
         && (*nptr.add(i + 1) == b'x' || *nptr.add(i + 1) == b'X')
     {
         i += 2;
@@ -3312,19 +3634,31 @@ pub unsafe extern "C" fn strdup(s: *const u8) -> *mut u8 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fchdir(fd: i32) -> i32 {
     let ret = syscall::sys_fchdir(fd);
-    if ret < 0 { ERRNO_VAR = -ret; -1 } else { 0 }
+    if ret < 0 {
+        ERRNO_VAR = -ret;
+        -1
+    } else {
+        0
+    }
 }
 
 // posix_spawn - fork+exec implementation
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn posix_spawn(
-    pid: *mut i32, path: *const u8,
-    _file_actions: *const u8, _attrp: *const u8,
-    argv: *const *mut u8, envp: *const *mut u8,
+    pid: *mut i32,
+    path: *const u8,
+    _file_actions: *const u8,
+    _attrp: *const u8,
+    argv: *const *mut u8,
+    envp: *const *mut u8,
 ) -> i32 {
-    if path.is_null() { return errno::EINVAL; }
+    if path.is_null() {
+        return errno::EINVAL;
+    }
     let child = syscall::sys_fork();
-    if child < 0 { return -child; }
+    if child < 0 {
+        return -child;
+    }
     if child == 0 {
         // Child process
         let path_len = cstr_len(path);
@@ -3339,22 +3673,32 @@ pub unsafe extern "C" fn posix_spawn(
         syscall::sys_exit(127);
     }
     // Parent
-    if !pid.is_null() { *pid = child; }
+    if !pid.is_null() {
+        *pid = child;
+    }
     0
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn posix_spawnp(
-    pid: *mut i32, file: *const u8,
-    file_actions: *const u8, attrp: *const u8,
-    argv: *const *mut u8, envp: *const *mut u8,
+    pid: *mut i32,
+    file: *const u8,
+    file_actions: *const u8,
+    attrp: *const u8,
+    argv: *const *mut u8,
+    envp: *const *mut u8,
 ) -> i32 {
-    if file.is_null() { return errno::EINVAL; }
+    if file.is_null() {
+        return errno::EINVAL;
+    }
     // If file contains '/', treat as absolute path
     let len = cstr_len(file);
     let mut has_slash = false;
     for i in 0..len {
-        if *file.add(i) == b'/' { has_slash = true; break; }
+        if *file.add(i) == b'/' {
+            has_slash = true;
+            break;
+        }
     }
     if has_slash {
         return posix_spawn(pid, file, file_actions, attrp, argv, envp);
@@ -3368,7 +3712,9 @@ pub unsafe extern "C" fn posix_spawnp(
         core::ptr::copy_nonoverlapping(file, buf.as_mut_ptr().add(prefix1.len()), len);
         buf[prefix1.len() + len] = 0;
         let ret = posix_spawn(pid, buf.as_ptr(), file_actions, attrp, argv, envp);
-        if ret == 0 { return 0; }
+        if ret == 0 {
+            return 0;
+        }
     }
     // Try /bin/
     let prefix2 = b"/bin/";
@@ -3393,7 +3739,9 @@ pub unsafe extern "C" fn posix_spawn_file_actions_init(fa: *mut posix_spawn_file
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn posix_spawn_file_actions_destroy(fa: *mut posix_spawn_file_actions_t) -> i32 {
+pub unsafe extern "C" fn posix_spawn_file_actions_destroy(
+    fa: *mut posix_spawn_file_actions_t,
+) -> i32 {
     if fa.is_null() {
         ERRNO_VAR = errno::EINVAL;
         return -1;
@@ -3403,7 +3751,10 @@ pub unsafe extern "C" fn posix_spawn_file_actions_destroy(fa: *mut posix_spawn_f
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn posix_spawn_file_actions_addclose(fa: *mut posix_spawn_file_actions_t, _fd: i32) -> i32 {
+pub unsafe extern "C" fn posix_spawn_file_actions_addclose(
+    fa: *mut posix_spawn_file_actions_t,
+    _fd: i32,
+) -> i32 {
     if fa.is_null() {
         ERRNO_VAR = errno::EINVAL;
         return -1;
@@ -3473,7 +3824,10 @@ pub unsafe extern "C" fn posix_spawnattr_setflags(attr: *mut PosixSpawnAttr, fla
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn posix_spawnattr_getflags(attr: *const PosixSpawnAttr, flags: *mut i16) -> i32 {
+pub unsafe extern "C" fn posix_spawnattr_getflags(
+    attr: *const PosixSpawnAttr,
+    flags: *mut i16,
+) -> i32 {
     if attr.is_null() || flags.is_null() {
         ERRNO_VAR = errno::EINVAL;
         return -1;
@@ -3483,7 +3837,10 @@ pub unsafe extern "C" fn posix_spawnattr_getflags(attr: *const PosixSpawnAttr, f
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn posix_spawnattr_setsigdefault(attr: *mut PosixSpawnAttr, sigdefault: *const u64) -> i32 {
+pub unsafe extern "C" fn posix_spawnattr_setsigdefault(
+    attr: *mut PosixSpawnAttr,
+    sigdefault: *const u64,
+) -> i32 {
     if attr.is_null() || sigdefault.is_null() {
         ERRNO_VAR = errno::EINVAL;
         return -1;
@@ -3493,7 +3850,10 @@ pub unsafe extern "C" fn posix_spawnattr_setsigdefault(attr: *mut PosixSpawnAttr
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn posix_spawnattr_getsigdefault(attr: *const PosixSpawnAttr, sigdefault: *mut u64) -> i32 {
+pub unsafe extern "C" fn posix_spawnattr_getsigdefault(
+    attr: *const PosixSpawnAttr,
+    sigdefault: *mut u64,
+) -> i32 {
     if attr.is_null() || sigdefault.is_null() {
         ERRNO_VAR = errno::EINVAL;
         return -1;
@@ -3503,7 +3863,10 @@ pub unsafe extern "C" fn posix_spawnattr_getsigdefault(attr: *const PosixSpawnAt
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn posix_spawnattr_setsigmask(attr: *mut PosixSpawnAttr, sigmask: *const u64) -> i32 {
+pub unsafe extern "C" fn posix_spawnattr_setsigmask(
+    attr: *mut PosixSpawnAttr,
+    sigmask: *const u64,
+) -> i32 {
     if attr.is_null() || sigmask.is_null() {
         ERRNO_VAR = errno::EINVAL;
         return -1;
@@ -3513,7 +3876,10 @@ pub unsafe extern "C" fn posix_spawnattr_setsigmask(attr: *mut PosixSpawnAttr, s
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn posix_spawnattr_getsigmask(attr: *const PosixSpawnAttr, sigmask: *mut u64) -> i32 {
+pub unsafe extern "C" fn posix_spawnattr_getsigmask(
+    attr: *const PosixSpawnAttr,
+    sigmask: *mut u64,
+) -> i32 {
     if attr.is_null() || sigmask.is_null() {
         ERRNO_VAR = errno::EINVAL;
         return -1;
@@ -3533,7 +3899,10 @@ pub unsafe extern "C" fn posix_spawnattr_setpgroup(attr: *mut PosixSpawnAttr, pg
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn posix_spawnattr_getpgroup(attr: *const PosixSpawnAttr, pgroup: *mut i32) -> i32 {
+pub unsafe extern "C" fn posix_spawnattr_getpgroup(
+    attr: *const PosixSpawnAttr,
+    pgroup: *mut i32,
+) -> i32 {
     if attr.is_null() || pgroup.is_null() {
         ERRNO_VAR = errno::EINVAL;
         return -1;
@@ -3670,18 +4039,18 @@ pub unsafe extern "C" fn wctype(name: *const u8) -> u64 {
 pub unsafe extern "C" fn iswctype(wc: u32, desc: u64) -> i32 {
     // Map descriptor back to the appropriate isw* function
     match desc {
-        1 => iswalnum(wc),    // alnum
-        2 => iswalpha(wc),    // alpha
-        3 => iswblank(wc),    // blank
-        4 => iswcntrl(wc),    // cntrl
-        5 => iswdigit(wc),    // digit
-        6 => iswgraph(wc),    // graph
-        7 => iswlower(wc),    // lower
-        8 => iswprint(wc),    // print
-        9 => iswpunct(wc),    // punct
-        10 => iswspace(wc),   // space
-        11 => iswupper(wc),   // upper
-        12 => iswxdigit(wc),  // xdigit
+        1 => iswalnum(wc),   // alnum
+        2 => iswalpha(wc),   // alpha
+        3 => iswblank(wc),   // blank
+        4 => iswcntrl(wc),   // cntrl
+        5 => iswdigit(wc),   // digit
+        6 => iswgraph(wc),   // graph
+        7 => iswlower(wc),   // lower
+        8 => iswprint(wc),   // print
+        9 => iswpunct(wc),   // punct
+        10 => iswspace(wc),  // space
+        11 => iswupper(wc),  // upper
+        12 => iswxdigit(wc), // xdigit
         _ => 0,
     }
 }
@@ -3716,41 +4085,69 @@ pub unsafe extern "C" fn wctrans(name: *const u8) -> *const i32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn towctrans(wc: u32, desc: *const i32) -> u32 {
     match desc as usize {
-        1 => towlower(wc),  // tolower
-        2 => towupper(wc),  // toupper
+        1 => towlower(wc), // tolower
+        2 => towupper(wc), // toupper
         _ => wc,
     }
 }
 
 // _l locale variants
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iswalpha_l(wc: u32, _l: *mut u8) -> i32 { iswalpha(wc) }
+pub unsafe extern "C" fn iswalpha_l(wc: u32, _l: *mut u8) -> i32 {
+    iswalpha(wc)
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iswdigit_l(wc: u32, _l: *mut u8) -> i32 { iswdigit(wc) }
+pub unsafe extern "C" fn iswdigit_l(wc: u32, _l: *mut u8) -> i32 {
+    iswdigit(wc)
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iswalnum_l(wc: u32, _l: *mut u8) -> i32 { iswalnum(wc) }
+pub unsafe extern "C" fn iswalnum_l(wc: u32, _l: *mut u8) -> i32 {
+    iswalnum(wc)
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iswspace_l(wc: u32, _l: *mut u8) -> i32 { iswspace(wc) }
+pub unsafe extern "C" fn iswspace_l(wc: u32, _l: *mut u8) -> i32 {
+    iswspace(wc)
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iswupper_l(wc: u32, _l: *mut u8) -> i32 { iswupper(wc) }
+pub unsafe extern "C" fn iswupper_l(wc: u32, _l: *mut u8) -> i32 {
+    iswupper(wc)
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iswlower_l(wc: u32, _l: *mut u8) -> i32 { iswlower(wc) }
+pub unsafe extern "C" fn iswlower_l(wc: u32, _l: *mut u8) -> i32 {
+    iswlower(wc)
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iswprint_l(wc: u32, _l: *mut u8) -> i32 { iswprint(wc) }
+pub unsafe extern "C" fn iswprint_l(wc: u32, _l: *mut u8) -> i32 {
+    iswprint(wc)
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iswpunct_l(wc: u32, _l: *mut u8) -> i32 { iswpunct(wc) }
+pub unsafe extern "C" fn iswpunct_l(wc: u32, _l: *mut u8) -> i32 {
+    iswpunct(wc)
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iswcntrl_l(wc: u32, _l: *mut u8) -> i32 { iswcntrl(wc) }
+pub unsafe extern "C" fn iswcntrl_l(wc: u32, _l: *mut u8) -> i32 {
+    iswcntrl(wc)
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iswxdigit_l(wc: u32, _l: *mut u8) -> i32 { iswxdigit(wc) }
+pub unsafe extern "C" fn iswxdigit_l(wc: u32, _l: *mut u8) -> i32 {
+    iswxdigit(wc)
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iswgraph_l(wc: u32, _l: *mut u8) -> i32 { iswgraph(wc) }
+pub unsafe extern "C" fn iswgraph_l(wc: u32, _l: *mut u8) -> i32 {
+    iswgraph(wc)
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iswblank_l(wc: u32, _l: *mut u8) -> i32 { iswblank(wc) }
+pub unsafe extern "C" fn iswblank_l(wc: u32, _l: *mut u8) -> i32 {
+    iswblank(wc)
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn towupper_l(wc: u32, _l: *mut u8) -> u32 { towupper(wc) }
+pub unsafe extern "C" fn towupper_l(wc: u32, _l: *mut u8) -> u32 {
+    towupper(wc)
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn towlower_l(wc: u32, _l: *mut u8) -> u32 { towlower(wc) }
+pub unsafe extern "C" fn towlower_l(wc: u32, _l: *mut u8) -> u32 {
+    towlower(wc)
+}
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wctype_l(n: *const u8, _l: *mut u8) -> u64 {
     wctype(n)
@@ -3876,21 +4273,12 @@ pub unsafe extern "C" fn wcstombs(dest: *mut u8, src: *const i32, n: usize) -> u
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn mbrtowc(
-    pwc: *mut i32,
-    s: *const u8,
-    n: usize,
-    _ps: *mut u8,
-) -> usize {
+pub unsafe extern "C" fn mbrtowc(pwc: *mut i32, s: *const u8, n: usize, _ps: *mut u8) -> usize {
     if s.is_null() {
         return 0;
     }
     let ret = mbtowc(pwc, s, n);
-    if ret < 0 {
-        usize::MAX
-    } else {
-        ret as usize
-    }
+    if ret < 0 { usize::MAX } else { ret as usize }
 }
 
 #[unsafe(no_mangle)]
@@ -3899,11 +4287,7 @@ pub unsafe extern "C" fn wcrtomb(s: *mut u8, wc: i32, _ps: *mut u8) -> usize {
         return 1;
     }
     let ret = wctomb(s, wc);
-    if ret < 0 {
-        usize::MAX
-    } else {
-        ret as usize
-    }
+    if ret < 0 { usize::MAX } else { ret as usize }
 }
 
 #[unsafe(no_mangle)]
@@ -3984,9 +4368,7 @@ pub unsafe extern "C" fn wcstod(_nptr: *const i32, _endptr: *mut *mut i32) -> f6
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn swprintf(
-    _s: *mut i32, _n: usize, _fmt: *const i32, _args: ...
-) -> i32 {
+pub unsafe extern "C" fn swprintf(_s: *mut i32, _n: usize, _fmt: *const i32, _args: ...) -> i32 {
     -1
 }
 
@@ -4017,10 +4399,12 @@ pub unsafe extern "C" fn syscall(number: i64, args: ...) -> i64 {
     use crate::arch::x86_64::syscall as raw;
     let mut ap = args;
     match number {
-        186 => { // SYS_gettid
+        186 => {
+            // SYS_gettid
             raw::syscall0(number as u64)
         }
-        318 => { // SYS_getrandom
+        318 => {
+            // SYS_getrandom
             let buf: usize = ap.arg();
             let buflen: usize = ap.arg();
             let flags: usize = ap.arg();
@@ -4447,7 +4831,11 @@ pub unsafe extern "C" fn tmpnam_r(s: *mut u8) -> *mut u8 {
     // Write pid as hex
     for shift in (0..4).rev() {
         let nibble = ((pid >> (shift * 4)) & 0xF) as u8;
-        *s.add(pos) = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+        *s.add(pos) = if nibble < 10 {
+            b'0' + nibble
+        } else {
+            b'a' + nibble - 10
+        };
         pos += 1;
     }
     *s.add(pos) = b'_';
@@ -4455,7 +4843,11 @@ pub unsafe extern "C" fn tmpnam_r(s: *mut u8) -> *mut u8 {
     // Write counter as hex
     for shift in (0..4).rev() {
         let nibble = ((cnt >> (shift * 4)) & 0xF) as u8;
-        *s.add(pos) = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+        *s.add(pos) = if nibble < 10 {
+            b'0' + nibble
+        } else {
+            b'a' + nibble - 10
+        };
         pos += 1;
     }
     *s.add(pos) = 0;
@@ -4585,16 +4977,22 @@ pub unsafe extern "C" fn copy_file_range(
         let chunk = core::cmp::min(remaining, buf.len());
         let nread = syscall::sys_read(fd_in, &mut buf[..chunk]);
         if nread < 0 {
-            if total > 0 { break; }
+            if total > 0 {
+                break;
+            }
             ERRNO_VAR = -(nread as i32);
             return -1;
         }
-        if nread == 0 { break; }
+        if nread == 0 {
+            break;
+        }
         let mut written = 0usize;
         while written < nread as usize {
             let nw = syscall::sys_write(fd_out, &buf[written..nread as usize]);
             if nw < 0 {
-                if total > 0 { break; }
+                if total > 0 {
+                    break;
+                }
                 ERRNO_VAR = -(nw as i32);
                 return -1;
             }
@@ -4736,7 +5134,9 @@ fn is_leap_year(y: i64) -> bool {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn timegm(tm: *mut u8) -> i64 {
     // struct tm layout: sec(i32), min(i32), hour(i32), mday(i32), mon(i32), year(i32), ...
-    if tm.is_null() { return -1; }
+    if tm.is_null() {
+        return -1;
+    }
     let sec = *(tm as *const i32);
     let min = *((tm as *const i32).add(1));
     let hour = *((tm as *const i32).add(2));
@@ -4807,7 +5207,9 @@ struct Timeb {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ftime(tp: *mut Timeb) -> i32 {
-    if tp.is_null() { return -1; }
+    if tp.is_null() {
+        return -1;
+    }
     let mut sec: i64 = 0;
     let mut usec: i64 = 0;
     syscall::sys_gettimeofday(&mut sec, &mut usec);
@@ -4833,18 +5235,28 @@ struct KSigaction {
 pub unsafe extern "C" fn siginterrupt(sig: i32, flag: i32) -> i32 {
     // Get current action
     let mut old = core::mem::zeroed::<KSigaction>();
-    let ret = syscall::sys_sigaction(sig, core::ptr::null(), &mut old as *mut KSigaction as *mut u8);
-    if ret < 0 { return -1; }
+    let ret = syscall::sys_sigaction(
+        sig,
+        core::ptr::null(),
+        &mut old as *mut KSigaction as *mut u8,
+    );
+    if ret < 0 {
+        return -1;
+    }
 
     // Modify SA_RESTART flag
     if flag != 0 {
         old.sa_flags &= !0x10000000i32; // Clear SA_RESTART
     } else {
-        old.sa_flags |= 0x10000000i32;  // Set SA_RESTART
+        old.sa_flags |= 0x10000000i32; // Set SA_RESTART
     }
 
     // Set modified action
-    let ret = syscall::sys_sigaction(sig, &old as *const KSigaction as *const u8, core::ptr::null_mut());
+    let ret = syscall::sys_sigaction(
+        sig,
+        &old as *const KSigaction as *const u8,
+        core::ptr::null_mut(),
+    );
     if ret < 0 { -1 } else { 0 }
 }
 
@@ -4867,7 +5279,12 @@ pub unsafe extern "C" fn sighold(sig: i32) -> i32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sigpending(set: *mut u64) -> i32 {
     let ret = syscall::syscall1(syscall::nr::SIGPENDING, set as usize) as i32;
-    if ret < 0 { ERRNO_VAR = -ret; -1 } else { 0 }
+    if ret < 0 {
+        ERRNO_VAR = -ret;
+        -1
+    } else {
+        0
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -4880,7 +5297,12 @@ pub unsafe extern "C" fn sigsuspend(mask: *const u64) -> i32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sigaltstack(ss: *const u8, old_ss: *mut u8) -> i32 {
     let ret = syscall::sys_sigaltstack(ss, old_ss);
-    if ret < 0 { ERRNO_VAR = -ret; -1 } else { 0 }
+    if ret < 0 {
+        ERRNO_VAR = -ret;
+        -1
+    } else {
+        0
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -4888,7 +5310,9 @@ pub unsafe extern "C" fn sigwait(set: *const u64, sig: *mut i32) -> i32 {
     // Block until a signal in set is pending, then dequeue it
     // Simplified: use sigsuspend-style approach
     let ret = syscall::sys_pause();
-    if !sig.is_null() { *sig = 0; }
+    if !sig.is_null() {
+        *sig = 0;
+    }
     0
 }
 
@@ -4899,7 +5323,11 @@ pub unsafe extern "C" fn sigwaitinfo(_set: *const u64, _info: *mut u8) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sigtimedwait(_set: *const u64, _info: *mut u8, _timeout: *const u8) -> i32 {
+pub unsafe extern "C" fn sigtimedwait(
+    _set: *const u64,
+    _info: *mut u8,
+    _timeout: *const u8,
+) -> i32 {
     // Simplified: just return EAGAIN (no signals pending)
     ERRNO_VAR = errno::EAGAIN;
     -1
@@ -4909,10 +5337,14 @@ pub unsafe extern "C" fn sigtimedwait(_set: *const u64, _info: *mut u8, _timeout
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn clock_nanosleep(
-    clock_id: i32, flags: i32, req: *const u8, rem: *mut u8,
+    clock_id: i32,
+    flags: i32,
+    req: *const u8,
+    rem: *mut u8,
 ) -> i32 {
     let ret = syscall::sys_clock_nanosleep(
-        clock_id, flags,
+        clock_id,
+        flags,
         req as *const syscall::Timespec,
         rem as *mut syscall::Timespec,
     );
@@ -4922,29 +5354,56 @@ pub unsafe extern "C" fn clock_nanosleep(
 // ============ preadv/pwritev ============
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn preadv(fd: i32, iov: *const syscall::IoVec, iovcnt: i32, offset: i64) -> isize {
+pub unsafe extern "C" fn preadv(
+    fd: i32,
+    iov: *const syscall::IoVec,
+    iovcnt: i32,
+    offset: i64,
+) -> isize {
     syscall::sys_preadv(fd, iov, iovcnt, offset)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pwritev(fd: i32, iov: *const syscall::IoVec, iovcnt: i32, offset: i64) -> isize {
+pub unsafe extern "C" fn pwritev(
+    fd: i32,
+    iov: *const syscall::IoVec,
+    iovcnt: i32,
+    offset: i64,
+) -> isize {
     syscall::sys_pwritev(fd, iov, iovcnt, offset)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn preadv2(fd: i32, iov: *const syscall::IoVec, iovcnt: i32, offset: i64, _flags: i32) -> isize {
+pub unsafe extern "C" fn preadv2(
+    fd: i32,
+    iov: *const syscall::IoVec,
+    iovcnt: i32,
+    offset: i64,
+    _flags: i32,
+) -> isize {
     syscall::sys_preadv(fd, iov, iovcnt, offset) // ignore flags
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pwritev2(fd: i32, iov: *const syscall::IoVec, iovcnt: i32, offset: i64, _flags: i32) -> isize {
+pub unsafe extern "C" fn pwritev2(
+    fd: i32,
+    iov: *const syscall::IoVec,
+    iovcnt: i32,
+    offset: i64,
+    _flags: i32,
+) -> isize {
     syscall::sys_pwritev(fd, iov, iovcnt, offset) // ignore flags
 }
 
 // ============ sendfile C wrapper ============
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sendfile(out_fd: i32, in_fd: i32, offset: *mut i64, count: usize) -> isize {
+pub unsafe extern "C" fn sendfile(
+    out_fd: i32,
+    in_fd: i32,
+    offset: *mut i64,
+    count: usize,
+) -> isize {
     syscall::sys_sendfile(out_fd, in_fd, offset, count)
 }
 
@@ -4953,7 +5412,12 @@ pub unsafe extern "C" fn sendfile(out_fd: i32, in_fd: i32, offset: *mut i64, cou
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn close_range(first: u32, last: u32, flags: u32) -> i32 {
     let ret = syscall::sys_close_range(first, last, flags);
-    if ret < 0 { ERRNO_VAR = -ret; -1 } else { 0 }
+    if ret < 0 {
+        ERRNO_VAR = -ret;
+        -1
+    } else {
+        0
+    }
 }
 
 // ============ credential wrappers ============
@@ -4961,25 +5425,45 @@ pub unsafe extern "C" fn close_range(first: u32, last: u32, flags: u32) -> i32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getresuid(ruid: *mut u32, euid: *mut u32, suid: *mut u32) -> i32 {
     let ret = syscall::sys_getresuid(ruid, euid, suid);
-    if ret < 0 { ERRNO_VAR = -ret; -1 } else { 0 }
+    if ret < 0 {
+        ERRNO_VAR = -ret;
+        -1
+    } else {
+        0
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getresgid(rgid: *mut u32, egid: *mut u32, sgid: *mut u32) -> i32 {
     let ret = syscall::sys_getresgid(rgid, egid, sgid);
-    if ret < 0 { ERRNO_VAR = -ret; -1 } else { 0 }
+    if ret < 0 {
+        ERRNO_VAR = -ret;
+        -1
+    } else {
+        0
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn setresuid(ruid: u32, euid: u32, suid: u32) -> i32 {
     let ret = syscall::sys_setresuid(ruid, euid, suid);
-    if ret < 0 { ERRNO_VAR = -ret; -1 } else { 0 }
+    if ret < 0 {
+        ERRNO_VAR = -ret;
+        -1
+    } else {
+        0
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn setresgid(rgid: u32, egid: u32, sgid: u32) -> i32 {
     let ret = syscall::sys_setresgid(rgid, egid, sgid);
-    if ret < 0 { ERRNO_VAR = -ret; -1 } else { 0 }
+    if ret < 0 {
+        ERRNO_VAR = -ret;
+        -1
+    } else {
+        0
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -4987,13 +5471,23 @@ pub unsafe extern "C" fn initgroups(_user: *const u8, _group: u32) -> i32 {
     // Set groups list to just the specified group
     let gid = _group;
     let ret = syscall::sys_setgroups(1, &gid);
-    if ret < 0 { ERRNO_VAR = -ret; -1 } else { 0 }
+    if ret < 0 {
+        ERRNO_VAR = -ret;
+        -1
+    } else {
+        0
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn setgroups(size: usize, list: *const u32) -> i32 {
     let ret = syscall::sys_setgroups(size as i32, list);
-    if ret < 0 { ERRNO_VAR = -ret; -1 } else { 0 }
+    if ret < 0 {
+        ERRNO_VAR = -ret;
+        -1
+    } else {
+        0
+    }
 }
 
 // ============ waitid ============
@@ -5001,7 +5495,12 @@ pub unsafe extern "C" fn setgroups(size: usize, list: *const u32) -> i32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn waitid(idtype: i32, id: i32, infop: *mut u8, options: i32) -> i32 {
     let ret = syscall::sys_waitid(idtype, id, infop, options);
-    if ret < 0 { ERRNO_VAR = -ret; -1 } else { 0 }
+    if ret < 0 {
+        ERRNO_VAR = -ret;
+        -1
+    } else {
+        0
+    }
 }
 
 // ============ sethostname ============
@@ -5009,19 +5508,29 @@ pub unsafe extern "C" fn waitid(idtype: i32, id: i32, infop: *mut u8, options: i
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sethostname(name: *const u8, len: usize) -> i32 {
     let ret = syscall::sys_sethostname(name, len);
-    if ret < 0 { ERRNO_VAR = -ret; -1 } else { 0 }
+    if ret < 0 {
+        ERRNO_VAR = -ret;
+        -1
+    } else {
+        0
+    }
 }
 
 // ============ openpty / forkpty / login_tty ============
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn openpty(
-    amaster: *mut i32, aslave: *mut i32,
-    name: *mut u8, _termp: *const u8, _winp: *const u8,
+    amaster: *mut i32,
+    aslave: *mut i32,
+    name: *mut u8,
+    _termp: *const u8,
+    _winp: *const u8,
 ) -> i32 {
     // Open /dev/ptmx to get master fd
     let master = open(b"/dev/ptmx\0".as_ptr(), O_RDWR as i32, 0);
-    if master < 0 { return -1; }
+    if master < 0 {
+        return -1;
+    }
 
     // grantpt/unlockpt (no-ops on OXIDE)
     grantpt(master);
@@ -5040,8 +5549,12 @@ pub unsafe extern "C" fn openpty(
         return -1;
     }
 
-    if !amaster.is_null() { *amaster = master; }
-    if !aslave.is_null() { *aslave = slave; }
+    if !amaster.is_null() {
+        *amaster = master;
+    }
+    if !aslave.is_null() {
+        *aslave = slave;
+    }
     if !name.is_null() {
         let len = cstr_len(slave_buf.as_ptr());
         core::ptr::copy_nonoverlapping(slave_buf.as_ptr(), name, len + 1);
@@ -5051,8 +5564,10 @@ pub unsafe extern "C" fn openpty(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn forkpty(
-    amaster: *mut i32, name: *mut u8,
-    _termp: *const u8, _winp: *const u8,
+    amaster: *mut i32,
+    name: *mut u8,
+    _termp: *const u8,
+    _winp: *const u8,
 ) -> i32 {
     let mut master: i32 = -1;
     let mut slave: i32 = -1;
@@ -5074,12 +5589,16 @@ pub unsafe extern "C" fn forkpty(
         syscall::sys_dup2(slave, 0);
         syscall::sys_dup2(slave, 1);
         syscall::sys_dup2(slave, 2);
-        if slave > 2 { close(slave); }
+        if slave > 2 {
+            close(slave);
+        }
         return 0;
     }
     // Parent
     close(slave);
-    if !amaster.is_null() { *amaster = master; }
+    if !amaster.is_null() {
+        *amaster = master;
+    }
     pid
 }
 
@@ -5093,7 +5612,9 @@ pub unsafe extern "C" fn login_tty(fd: i32) -> i32 {
     syscall::sys_dup2(fd, 0);
     syscall::sys_dup2(fd, 1);
     syscall::sys_dup2(fd, 2);
-    if fd > 2 { close(fd); }
+    if fd > 2 {
+        close(fd);
+    }
     0
 }
 
@@ -5138,7 +5659,9 @@ unsafe fn parse_passwd_line(line: &[u8]) -> bool {
             (*buf)[pos] = 0;
             pos += 1;
             field_count += 1;
-            if field_count >= 7 { break; }
+            if field_count >= 7 {
+                break;
+            }
             fields[field_count] = pos;
         } else if c == b'\n' || c == b'\r' {
             break;
@@ -5150,7 +5673,9 @@ unsafe fn parse_passwd_line(line: &[u8]) -> bool {
     (*buf)[pos] = 0;
     field_count += 1;
 
-    if field_count < 7 { return false; }
+    if field_count < 7 {
+        return false;
+    }
 
     (*pw).pw_name = (*buf).as_mut_ptr().add(fields[0]);
     (*pw).pw_passwd = (*buf).as_mut_ptr().add(fields[1]);
@@ -5159,9 +5684,14 @@ unsafe fn parse_passwd_line(line: &[u8]) -> bool {
     let uid_str = &(&(*buf))[fields[2]..];
     let mut uid: u32 = 0;
     for &c in uid_str {
-        if c == 0 { break; }
-        if c >= b'0' && c <= b'9' { uid = uid * 10 + (c - b'0') as u32; }
-        else { break; }
+        if c == 0 {
+            break;
+        }
+        if c >= b'0' && c <= b'9' {
+            uid = uid * 10 + (c - b'0') as u32;
+        } else {
+            break;
+        }
     }
     (*pw).pw_uid = uid;
 
@@ -5169,9 +5699,14 @@ unsafe fn parse_passwd_line(line: &[u8]) -> bool {
     let gid_str = &(&(*buf))[fields[3]..];
     let mut gid: u32 = 0;
     for &c in gid_str {
-        if c == 0 { break; }
-        if c >= b'0' && c <= b'9' { gid = gid * 10 + (c - b'0') as u32; }
-        else { break; }
+        if c == 0 {
+            break;
+        }
+        if c >= b'0' && c <= b'9' {
+            gid = gid * 10 + (c - b'0') as u32;
+        } else {
+            break;
+        }
     }
     (*pw).pw_gid = gid;
 
@@ -5186,7 +5721,9 @@ static mut PASSWD_FD: i32 = -1;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn setpwent() {
-    if PASSWD_FD >= 0 { close(PASSWD_FD); }
+    if PASSWD_FD >= 0 {
+        close(PASSWD_FD);
+    }
     PASSWD_FD = open(b"/etc/passwd\0".as_ptr(), O_RDONLY as i32, 0);
 }
 
@@ -5200,8 +5737,12 @@ pub unsafe extern "C" fn endpwent() {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getpwent() -> *mut Passwd {
-    if PASSWD_FD < 0 { setpwent(); }
-    if PASSWD_FD < 0 { return core::ptr::null_mut(); }
+    if PASSWD_FD < 0 {
+        setpwent();
+    }
+    if PASSWD_FD < 0 {
+        return core::ptr::null_mut();
+    }
 
     // Read a line
     let mut line = [0u8; 256];
@@ -5209,14 +5750,20 @@ pub unsafe extern "C" fn getpwent() -> *mut Passwd {
     loop {
         let mut c = [0u8; 1];
         let n = syscall::sys_read(PASSWD_FD, &mut c);
-        if n <= 0 { break; }
-        if c[0] == b'\n' { break; }
+        if n <= 0 {
+            break;
+        }
+        if c[0] == b'\n' {
+            break;
+        }
         if pos < line.len() - 1 {
             line[pos] = c[0];
             pos += 1;
         }
     }
-    if pos == 0 { return core::ptr::null_mut(); }
+    if pos == 0 {
+        return core::ptr::null_mut();
+    }
 
     if parse_passwd_line(&line[..pos]) {
         &raw mut PW_ENTRY
@@ -5227,20 +5774,27 @@ pub unsafe extern "C" fn getpwent() -> *mut Passwd {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getpwnam(name: *const u8) -> *mut Passwd {
-    if name.is_null() { return core::ptr::null_mut(); }
+    if name.is_null() {
+        return core::ptr::null_mut();
+    }
     let name_len = cstr_len(name);
 
     setpwent();
     loop {
         let pw = getpwent();
-        if pw.is_null() { break; }
+        if pw.is_null() {
+            break;
+        }
         let pn = (*pw).pw_name;
         if !pn.is_null() {
             let pn_len = cstr_len(pn);
             if pn_len == name_len {
                 let mut eq = true;
                 for i in 0..name_len {
-                    if *pn.add(i) != *name.add(i) { eq = false; break; }
+                    if *pn.add(i) != *name.add(i) {
+                        eq = false;
+                        break;
+                    }
                 }
                 if eq {
                     endpwent();
@@ -5258,7 +5812,9 @@ pub unsafe extern "C" fn getpwuid(uid: u32) -> *mut Passwd {
     setpwent();
     loop {
         let pw = getpwent();
-        if pw.is_null() { break; }
+        if pw.is_null() {
+            break;
+        }
         if (*pw).pw_uid == uid {
             endpwent();
             return pw;
@@ -5270,34 +5826,54 @@ pub unsafe extern "C" fn getpwuid(uid: u32) -> *mut Passwd {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getpwnam_r(
-    name: *const u8, pwd: *mut Passwd,
-    buf: *mut u8, buflen: usize,
+    name: *const u8,
+    pwd: *mut Passwd,
+    buf: *mut u8,
+    buflen: usize,
     result: *mut *mut Passwd,
 ) -> i32 {
     let pw = getpwnam(name);
     if pw.is_null() {
-        if !result.is_null() { *result = core::ptr::null_mut(); }
+        if !result.is_null() {
+            *result = core::ptr::null_mut();
+        }
         return 0;
     }
     // Copy the entry
-    core::ptr::copy_nonoverlapping(pw as *const u8, pwd as *mut u8, core::mem::size_of::<Passwd>());
-    if !result.is_null() { *result = pwd; }
+    core::ptr::copy_nonoverlapping(
+        pw as *const u8,
+        pwd as *mut u8,
+        core::mem::size_of::<Passwd>(),
+    );
+    if !result.is_null() {
+        *result = pwd;
+    }
     0
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getpwuid_r(
-    uid: u32, pwd: *mut Passwd,
-    buf: *mut u8, buflen: usize,
+    uid: u32,
+    pwd: *mut Passwd,
+    buf: *mut u8,
+    buflen: usize,
     result: *mut *mut Passwd,
 ) -> i32 {
     let pw = getpwuid(uid);
     if pw.is_null() {
-        if !result.is_null() { *result = core::ptr::null_mut(); }
+        if !result.is_null() {
+            *result = core::ptr::null_mut();
+        }
         return 0;
     }
-    core::ptr::copy_nonoverlapping(pw as *const u8, pwd as *mut u8, core::mem::size_of::<Passwd>());
-    if !result.is_null() { *result = pwd; }
+    core::ptr::copy_nonoverlapping(
+        pw as *const u8,
+        pwd as *mut u8,
+        core::mem::size_of::<Passwd>(),
+    );
+    if !result.is_null() {
+        *result = pwd;
+    }
     0
 }
 
@@ -5332,11 +5908,15 @@ static mut SP_ENTRY: Spwd = Spwd {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getspnam(name: *const u8) -> *mut Spwd {
-    if name.is_null() { return core::ptr::null_mut(); }
+    if name.is_null() {
+        return core::ptr::null_mut();
+    }
     let name_len = cstr_len(name);
 
     let fd = open(b"/etc/shadow\0".as_ptr(), O_RDONLY as i32, 0);
-    if fd < 0 { return core::ptr::null_mut(); }
+    if fd < 0 {
+        return core::ptr::null_mut();
+    }
 
     let mut line = [0u8; 256];
     let mut found = false;
@@ -5346,20 +5926,29 @@ pub unsafe extern "C" fn getspnam(name: *const u8) -> *mut Spwd {
         loop {
             let mut c = [0u8; 1];
             let n = syscall::sys_read(fd, &mut c);
-            if n <= 0 { break; }
-            if c[0] == b'\n' { break; }
+            if n <= 0 {
+                break;
+            }
+            if c[0] == b'\n' {
+                break;
+            }
             if pos < line.len() - 1 {
                 line[pos] = c[0];
                 pos += 1;
             }
         }
-        if pos == 0 { break; }
+        if pos == 0 {
+            break;
+        }
 
         // Check if line starts with name:
         if pos > name_len && line[name_len] == b':' {
             let mut match_ = true;
             for i in 0..name_len {
-                if line[i] != *name.add(i) { match_ = false; break; }
+                if line[i] != *name.add(i) {
+                    match_ = false;
+                    break;
+                }
             }
             if match_ {
                 // Parse: name:password:lstchg:min:max:warn:inact:expire:flag
@@ -5370,10 +5959,20 @@ pub unsafe extern "C" fn getspnam(name: *const u8) -> *mut Spwd {
 
                 // Find first two fields (name and password)
                 let mut colon1 = 0;
-                for i in 0..pos { if (*buf)[i] == b':' { colon1 = i; break; } }
+                for i in 0..pos {
+                    if (*buf)[i] == b':' {
+                        colon1 = i;
+                        break;
+                    }
+                }
                 (*buf)[colon1] = 0;
                 let mut colon2 = colon1 + 1;
-                for i in (colon1+1)..pos { if (*buf)[i] == b':' { colon2 = i; break; } }
+                for i in (colon1 + 1)..pos {
+                    if (*buf)[i] == b':' {
+                        colon2 = i;
+                        break;
+                    }
+                }
                 (*buf)[colon2] = 0;
 
                 (*sp).sp_namp = (*buf).as_mut_ptr();
@@ -5393,14 +5992,20 @@ pub unsafe extern "C" fn getspnam(name: *const u8) -> *mut Spwd {
     }
 
     close(fd);
-    if found { &raw mut SP_ENTRY } else { core::ptr::null_mut() }
+    if found {
+        &raw mut SP_ENTRY
+    } else {
+        core::ptr::null_mut()
+    }
 }
 
 static mut SHADOW_FD: i32 = -1;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn setspent() {
-    if SHADOW_FD >= 0 { close(SHADOW_FD); }
+    if SHADOW_FD >= 0 {
+        close(SHADOW_FD);
+    }
     SHADOW_FD = open(b"/etc/shadow\0".as_ptr(), O_RDONLY as i32, 0);
 }
 
@@ -5414,8 +6019,12 @@ pub unsafe extern "C" fn endspent() {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getspent() -> *mut Spwd {
-    if SHADOW_FD < 0 { setspent(); }
-    if SHADOW_FD < 0 { return core::ptr::null_mut(); }
+    if SHADOW_FD < 0 {
+        setspent();
+    }
+    if SHADOW_FD < 0 {
+        return core::ptr::null_mut();
+    }
     // Read a line and parse similarly to getspnam
     core::ptr::null_mut() // simplified
 }
@@ -5431,9 +6040,18 @@ pub struct IfNameindex {
 static mut IF_NAME_LO: [u8; 4] = *b"lo\0\0";
 static mut IF_NAME_ETH: [u8; 8] = *b"eth0\0\0\0\0";
 static mut IF_ENTRIES: [IfNameindex; 3] = [
-    IfNameindex { if_index: 0, if_name: core::ptr::null_mut() },
-    IfNameindex { if_index: 0, if_name: core::ptr::null_mut() },
-    IfNameindex { if_index: 0, if_name: core::ptr::null_mut() },
+    IfNameindex {
+        if_index: 0,
+        if_name: core::ptr::null_mut(),
+    },
+    IfNameindex {
+        if_index: 0,
+        if_name: core::ptr::null_mut(),
+    },
+    IfNameindex {
+        if_index: 0,
+        if_name: core::ptr::null_mut(),
+    },
 ];
 
 #[unsafe(no_mangle)]
@@ -5455,19 +6073,38 @@ pub unsafe extern "C" fn if_freenameindex(_ptr: *mut IfNameindex) {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn if_nametoindex(ifname: *const u8) -> u32 {
-    if ifname.is_null() { return 0; }
+    if ifname.is_null() {
+        return 0;
+    }
     let len = cstr_len(ifname);
-    if len == 2 && *ifname == b'l' && *ifname.add(1) == b'o' { return 1; }
-    if len >= 4 && *ifname == b'e' && *ifname.add(1) == b't' && *ifname.add(2) == b'h' && *ifname.add(3) == b'0' { return 2; }
+    if len == 2 && *ifname == b'l' && *ifname.add(1) == b'o' {
+        return 1;
+    }
+    if len >= 4
+        && *ifname == b'e'
+        && *ifname.add(1) == b't'
+        && *ifname.add(2) == b'h'
+        && *ifname.add(3) == b'0'
+    {
+        return 2;
+    }
     0
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn if_indextoname(ifindex: u32, ifname: *mut u8) -> *mut u8 {
-    if ifname.is_null() { return core::ptr::null_mut(); }
+    if ifname.is_null() {
+        return core::ptr::null_mut();
+    }
     match ifindex {
-        1 => { core::ptr::copy_nonoverlapping(b"lo\0".as_ptr(), ifname, 3); ifname }
-        2 => { core::ptr::copy_nonoverlapping(b"eth0\0".as_ptr(), ifname, 5); ifname }
+        1 => {
+            core::ptr::copy_nonoverlapping(b"lo\0".as_ptr(), ifname, 3);
+            ifname
+        }
+        2 => {
+            core::ptr::copy_nonoverlapping(b"eth0\0".as_ptr(), ifname, 5);
+            ifname
+        }
         _ => core::ptr::null_mut(),
     }
 }
@@ -5475,7 +6112,11 @@ pub unsafe extern "C" fn if_indextoname(ifindex: u32, ifname: *mut u8) -> *mut u
 // ============ fexecve ============
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn fexecve(_fd: i32, _argv: *const *const u8, _envp: *const *const u8) -> i32 {
+pub unsafe extern "C" fn fexecve(
+    _fd: i32,
+    _argv: *const *const u8,
+    _envp: *const *const u8,
+) -> i32 {
     // Not easily implementable without /proc/self/fd/N
     ERRNO_VAR = errno::ENOSYS;
     -1
@@ -5485,8 +6126,17 @@ pub unsafe extern "C" fn fexecve(_fd: i32, _argv: *const *const u8, _envp: *cons
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sched_rr_get_interval(pid: i32, tp: *mut u8) -> i32 {
-    let ret = syscall::syscall2(syscall::nr::SCHED_RR_GET_INTERVAL, pid as usize, tp as usize) as i32;
-    if ret < 0 { ERRNO_VAR = -ret; -1 } else { 0 }
+    let ret = syscall::syscall2(
+        syscall::nr::SCHED_RR_GET_INTERVAL,
+        pid as usize,
+        tp as usize,
+    ) as i32;
+    if ret < 0 {
+        ERRNO_VAR = -ret;
+        -1
+    } else {
+        0
+    }
 }
 
 // ============ pthread signal helpers ============
@@ -5501,7 +6151,9 @@ pub unsafe extern "C" fn pthread_kill(thread: u64, sig: i32) -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pthread_getcpuclockid(_thread: u64, clock_id: *mut i32) -> i32 {
-    if !clock_id.is_null() { *clock_id = 2; } // CLOCK_PROCESS_CPUTIME_ID
+    if !clock_id.is_null() {
+        *clock_id = 2;
+    } // CLOCK_PROCESS_CPUTIME_ID
     0
 }
 
@@ -5514,12 +6166,20 @@ pub unsafe extern "C" fn pthread_sigmask(how: i32, set: *const u64, oset: *mut u
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gethostbyname_r(
-    _name: *const u8, _ret: *mut u8, _buf: *mut u8, _buflen: usize,
-    _result: *mut *mut u8, _h_errnop: *mut i32,
+    _name: *const u8,
+    _ret: *mut u8,
+    _buf: *mut u8,
+    _buflen: usize,
+    _result: *mut *mut u8,
+    _h_errnop: *mut i32,
 ) -> i32 {
     // Not implemented - return HOST_NOT_FOUND
-    if !_h_errnop.is_null() { *_h_errnop = 1; }
-    if !_result.is_null() { *_result = core::ptr::null_mut(); }
+    if !_h_errnop.is_null() {
+        *_h_errnop = 1;
+    }
+    if !_result.is_null() {
+        *_result = core::ptr::null_mut();
+    }
     -1
 }
 
@@ -5536,9 +6196,12 @@ pub unsafe extern "C" fn pause() -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn splice(
-    fd_in: i32, off_in: *mut i64,
-    fd_out: i32, off_out: *mut i64,
-    len: usize, flags: u32,
+    fd_in: i32,
+    off_in: *mut i64,
+    fd_out: i32,
+    off_out: *mut i64,
+    len: usize,
+    flags: u32,
 ) -> isize {
     syscall::syscall6(
         syscall::nr::SPLICE,
@@ -5574,7 +6237,9 @@ pub unsafe extern "C" fn sem_open(_name: *const u8, _oflag: i32) -> *mut u8 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sem_close(_sem: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn sem_close(_sem: *mut u8) -> i32 {
+    0
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sem_unlink(_name: *const u8) -> i32 {
@@ -5583,7 +6248,9 @@ pub unsafe extern "C" fn sem_unlink(_name: *const u8) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sem_wait(_sem: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn sem_wait(_sem: *mut u8) -> i32 {
+    0
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sem_trywait(_sem: *mut u8) -> i32 {
@@ -5598,19 +6265,27 @@ pub unsafe extern "C" fn sem_timedwait(_sem: *mut u8, _ts: *const u8) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sem_post(_sem: *mut u8) -> i32 { 0 }
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn sem_getvalue(_sem: *mut u8, sval: *mut i32) -> i32 {
-    if !sval.is_null() { *sval = 1; }
+pub unsafe extern "C" fn sem_post(_sem: *mut u8) -> i32 {
     0
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sem_init(_sem: *mut u8, _pshared: i32, _value: u32) -> i32 { 0 }
+pub unsafe extern "C" fn sem_getvalue(_sem: *mut u8, sval: *mut i32) -> i32 {
+    if !sval.is_null() {
+        *sval = 1;
+    }
+    0
+}
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sem_destroy(_sem: *mut u8) -> i32 { 0 }
+pub unsafe extern "C" fn sem_init(_sem: *mut u8, _pshared: i32, _value: u32) -> i32 {
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sem_destroy(_sem: *mut u8) -> i32 {
+    0
+}
 
 // ============ mkfifo / mknod ============
 
@@ -5726,19 +6401,36 @@ pub unsafe extern "C" fn getauxval(type_: u64) -> u64 {
 // ============ xattr stubs ============
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn getxattr(_path: *const u8, _name: *const u8, _value: *mut u8, _size: usize) -> isize {
+pub unsafe extern "C" fn getxattr(
+    _path: *const u8,
+    _name: *const u8,
+    _value: *mut u8,
+    _size: usize,
+) -> isize {
     ERRNO_VAR = errno::ENOSYS;
     -1
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn setxattr(_path: *const u8, _name: *const u8, _value: *const u8, _size: usize, _flags: i32) -> i32 {
+pub unsafe extern "C" fn setxattr(
+    _path: *const u8,
+    _name: *const u8,
+    _value: *const u8,
+    _size: usize,
+    _flags: i32,
+) -> i32 {
     ERRNO_VAR = errno::ENOSYS;
     -1
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn fsetxattr(_fd: i32, _name: *const u8, _value: *const u8, _size: usize, _flags: i32) -> i32 {
+pub unsafe extern "C" fn fsetxattr(
+    _fd: i32,
+    _name: *const u8,
+    _value: *const u8,
+    _size: usize,
+    _flags: i32,
+) -> i32 {
     ERRNO_VAR = errno::ENOSYS;
     -1
 }
@@ -5770,7 +6462,10 @@ pub unsafe extern "C" fn fremovexattr(_fd: i32, _name: *const u8) -> i32 {
 // ============ bind_textdomain_codeset / textdomain stubs ============
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn bind_textdomain_codeset(_domainname: *const u8, _codeset: *const u8) -> *mut u8 {
+pub unsafe extern "C" fn bind_textdomain_codeset(
+    _domainname: *const u8,
+    _codeset: *const u8,
+) -> *mut u8 {
     core::ptr::null_mut()
 }
 
@@ -5795,30 +6490,45 @@ pub unsafe extern "C" fn dgettext(_domainname: *const u8, msgid: *const u8) -> *
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn dcgettext(_domainname: *const u8, msgid: *const u8, _category: i32) -> *mut u8 {
+pub unsafe extern "C" fn dcgettext(
+    _domainname: *const u8,
+    msgid: *const u8,
+    _category: i32,
+) -> *mut u8 {
     msgid as *mut u8
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ngettext(msgid: *const u8, msgid_plural: *const u8, n: u64) -> *mut u8 {
-    if n == 1 { msgid as *mut u8 } else { msgid_plural as *mut u8 }
+    if n == 1 {
+        msgid as *mut u8
+    } else {
+        msgid_plural as *mut u8
+    }
 }
 
 // ============ wcsftime (wide-character strftime) ============
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wcsftime(
-    wcs: *mut i32, maxsize: usize, format: *const i32, tm: *const u8,
+    wcs: *mut i32,
+    maxsize: usize,
+    format: *const i32,
+    tm: *const u8,
 ) -> usize {
     // Convert wide format to narrow, call strftime, convert back
-    if maxsize == 0 { return 0; }
+    if maxsize == 0 {
+        return 0;
+    }
 
     // Narrow the format string
     let mut narrow_fmt = [0u8; 256];
     let mut i = 0;
     while i < 255 {
         let wc = *format.add(i);
-        if wc == 0 { break; }
+        if wc == 0 {
+            break;
+        }
         narrow_fmt[i] = if wc < 128 { wc as u8 } else { b'?' };
         i += 1;
     }
@@ -5827,10 +6537,15 @@ pub unsafe extern "C" fn wcsftime(
     // Call strftime
     let mut narrow_buf = [0u8; 512];
     let len = strftime(
-        narrow_buf.as_mut_ptr(), 512, narrow_fmt.as_ptr(), tm as *const crate::time::Tm,
+        narrow_buf.as_mut_ptr(),
+        512,
+        narrow_fmt.as_ptr(),
+        tm as *const crate::time::Tm,
     );
 
-    if len == 0 { return 0; }
+    if len == 0 {
+        return 0;
+    }
 
     // Widen the result
     let copy_len = if len < maxsize { len } else { maxsize - 1 };
@@ -5862,10 +6577,16 @@ pub unsafe extern "C" fn fdwalk(
         for fd in 0..1024 {
             // Check if fd is valid by trying fstat
             let mut statbuf = [0u8; 144];
-            let ret = syscall::syscall2(syscall::nr::FSTAT, fd as usize, statbuf.as_mut_ptr() as usize);
+            let ret = syscall::syscall2(
+                syscall::nr::FSTAT,
+                fd as usize,
+                statbuf.as_mut_ptr() as usize,
+            );
             if ret as i64 >= 0 {
                 let r = f(cd, fd as i32);
-                if r != 0 { return r; }
+                if r != 0 {
+                    return r;
+                }
             }
         }
     }
@@ -5895,15 +6616,14 @@ pub unsafe extern "C" fn getpass(prompt: *const u8) -> *mut u8 {
     // Write prompt to stderr
     if !prompt.is_null() {
         let mut len = 0;
-        while *prompt.add(len) != 0 { len += 1; }
+        while *prompt.add(len) != 0 {
+            len += 1;
+        }
         syscall::syscall3(syscall::nr::WRITE, 2, prompt as usize, len);
     }
 
     // Read from stdin with echo disabled (simplified: just read)
-    let n = syscall::syscall3(
-        syscall::nr::READ, 0,
-        (&raw mut GETPASS_BUF) as usize, 127,
-    ) as isize;
+    let n = syscall::syscall3(syscall::nr::READ, 0, (&raw mut GETPASS_BUF) as usize, 127) as isize;
     if n <= 0 {
         GETPASS_BUF[0] = 0;
     } else {
@@ -5950,7 +6670,12 @@ pub unsafe extern "C" fn fgets_unlocked(s: *mut u8, size: i32, stream: *mut u8) 
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn fread_unlocked(ptr: *mut u8, size: usize, nmemb: usize, stream: *mut u8) -> usize {
+pub unsafe extern "C" fn fread_unlocked(
+    ptr: *mut u8,
+    size: usize,
+    nmemb: usize,
+    stream: *mut u8,
+) -> usize {
     crate::filestream::fread(ptr, size, nmemb, stream as *mut crate::filestream::FILE)
 }
 
@@ -5972,25 +6697,38 @@ pub unsafe extern "C" fn getitimer(which: i32, curr_value: *mut u8) -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn setitimer(which: i32, new_value: *const u8, old_value: *mut u8) -> i32 {
-    syscall::syscall3(syscall::nr::SETITIMER, which as usize, new_value as usize, old_value as usize) as i32
+    syscall::syscall3(
+        syscall::nr::SETITIMER,
+        which as usize,
+        new_value as usize,
+        old_value as usize,
+    ) as i32
 }
 
 // ============ prlimit / prlimit64 ============
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn prlimit(
-    pid: i32, resource: i32, new_limit: *const u8, old_limit: *mut u8,
+    pid: i32,
+    resource: i32,
+    new_limit: *const u8,
+    old_limit: *mut u8,
 ) -> i32 {
     syscall::syscall4(
         syscall::nr::PRLIMIT,
-        pid as usize, resource as usize,
-        new_limit as usize, old_limit as usize,
+        pid as usize,
+        resource as usize,
+        new_limit as usize,
+        old_limit as usize,
     ) as i32
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn prlimit64(
-    pid: i32, resource: i32, new_limit: *const u8, old_limit: *mut u8,
+    pid: i32,
+    resource: i32,
+    new_limit: *const u8,
+    old_limit: *mut u8,
 ) -> i32 {
     prlimit(pid, resource, new_limit, old_limit)
 }
@@ -6006,9 +6744,13 @@ pub unsafe extern "C" fn fork1() -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtpSpawn(
-    _pubname: *const u8, _argv: *const *const u8,
-    _envp: *const *const u8, _priority: i32,
-    _stacksize: usize, _options: i32, _taskOptions: i32,
+    _pubname: *const u8,
+    _argv: *const *const u8,
+    _envp: *const *const u8,
+    _priority: i32,
+    _stacksize: usize,
+    _options: i32,
+    _taskOptions: i32,
 ) -> i32 {
     ERRNO_VAR = errno::ENOSYS;
     -1
@@ -6017,11 +6759,13 @@ pub unsafe extern "C" fn rtpSpawn(
 // ============ popen / pclose ============
 
 /// Track up to 16 concurrent popen streams
-static mut POPEN_PIDS: [(i32, *mut crate::filestream::FILE); 16] =
-    [(0, core::ptr::null_mut()); 16];
+static mut POPEN_PIDS: [(i32, *mut crate::filestream::FILE); 16] = [(0, core::ptr::null_mut()); 16];
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn popen(command: *const u8, mode: *const u8) -> *mut crate::filestream::FILE {
+pub unsafe extern "C" fn popen(
+    command: *const u8,
+    mode: *const u8,
+) -> *mut crate::filestream::FILE {
     if command.is_null() || mode.is_null() {
         return core::ptr::null_mut();
     }
@@ -6137,7 +6881,9 @@ pub unsafe extern "C" fn mkostemp(template: *mut u8, flags: i32) -> i32 {
         val
     };
     let pid = syscall::sys_getpid() as u32;
-    let seed = counter.wrapping_mul(1103515245).wrapping_add(pid.wrapping_mul(12345));
+    let seed = counter
+        .wrapping_mul(1103515245)
+        .wrapping_add(pid.wrapping_mul(12345));
     let chars = b"abcdefghijklmnopqrstuvwxyz0123456789";
     let mut val = seed;
     for i in 0..6 {
@@ -6161,8 +6907,17 @@ pub unsafe extern "C" fn vdprintf(fd: i32, fmt: *const u8, mut ap: core::ffi::Va
     let mut buf = [0u8; 4096];
     let len = crate::printf::vsnprintf_impl(buf.as_mut_ptr(), 4096, fmt, &mut ap);
     if len > 0 {
-        let write_len = if (len as usize) < 4096 { len as usize } else { 4095 };
-        syscall::syscall3(syscall::nr::WRITE, fd as usize, buf.as_ptr() as usize, write_len) as i32
+        let write_len = if (len as usize) < 4096 {
+            len as usize
+        } else {
+            4095
+        };
+        syscall::syscall3(
+            syscall::nr::WRITE,
+            fd as usize,
+            buf.as_ptr() as usize,
+            write_len,
+        ) as i32
     } else {
         len
     }
@@ -6398,9 +7153,7 @@ pub unsafe extern "C" fn history_get_history_state() -> *mut crate::readline::Hi
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn free_history_entry(
-    entry: *mut crate::readline::HistEntry,
-) -> *mut u8 {
+pub unsafe extern "C" fn free_history_entry(entry: *mut crate::readline::HistEntry) -> *mut u8 {
     crate::readline::free_history_entry(entry)
 }
 
@@ -6447,7 +7200,13 @@ pub unsafe extern "C" fn fchmodat(dirfd: i32, path: *const u8, mode: u32, _flags
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn fchownat(dirfd: i32, path: *const u8, owner: u32, group: u32, _flags: i32) -> i32 {
+pub unsafe extern "C" fn fchownat(
+    dirfd: i32,
+    path: *const u8,
+    owner: u32,
+    group: u32,
+    _flags: i32,
+) -> i32 {
     syscall::syscall5(
         syscall::nr::FCHOWNAT,
         dirfd as usize,
@@ -6459,7 +7218,13 @@ pub unsafe extern "C" fn fchownat(dirfd: i32, path: *const u8, owner: u32, group
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn linkat(olddirfd: i32, oldpath: *const u8, newdirfd: i32, newpath: *const u8, _flags: i32) -> i32 {
+pub unsafe extern "C" fn linkat(
+    olddirfd: i32,
+    oldpath: *const u8,
+    newdirfd: i32,
+    newpath: *const u8,
+    _flags: i32,
+) -> i32 {
     syscall::syscall6(
         syscall::nr::LINKAT,
         olddirfd as usize,
@@ -6484,7 +7249,12 @@ pub unsafe extern "C" fn symlinkat(target: *const u8, newdirfd: i32, linkpath: *
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn renameat(olddirfd: i32, oldpath: *const u8, newdirfd: i32, newpath: *const u8) -> i32 {
+pub unsafe extern "C" fn renameat(
+    olddirfd: i32,
+    oldpath: *const u8,
+    newdirfd: i32,
+    newpath: *const u8,
+) -> i32 {
     syscall::syscall6(
         syscall::nr::RENAMEAT,
         olddirfd as usize,
@@ -6545,11 +7315,7 @@ pub unsafe extern "C" fn pipe2(pipefd: *mut i32, flags: i32) -> i32 {
 // ============ strtok_r ============
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn strtok_r(
-    s: *mut u8,
-    delim: *const u8,
-    saveptr: *mut *mut u8,
-) -> *mut u8 {
+pub unsafe extern "C" fn strtok_r(s: *mut u8, delim: *const u8, saveptr: *mut *mut u8) -> *mut u8 {
     let mut current = if s.is_null() { *saveptr } else { s };
 
     if current.is_null() {
@@ -6601,19 +7367,35 @@ pub unsafe extern "C" fn strtok_r(
 // ============ l*xattr stubs ============
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn fgetxattr(_fd: i32, _name: *const u8, _value: *mut u8, _size: usize) -> isize {
+pub unsafe extern "C" fn fgetxattr(
+    _fd: i32,
+    _name: *const u8,
+    _value: *mut u8,
+    _size: usize,
+) -> isize {
     ERRNO_VAR = errno::ENOSYS;
     -1
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lgetxattr(_path: *const u8, _name: *const u8, _value: *mut u8, _size: usize) -> isize {
+pub unsafe extern "C" fn lgetxattr(
+    _path: *const u8,
+    _name: *const u8,
+    _value: *mut u8,
+    _size: usize,
+) -> isize {
     ERRNO_VAR = errno::ENOSYS;
     -1
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lsetxattr(_path: *const u8, _name: *const u8, _value: *const u8, _size: usize, _flags: i32) -> i32 {
+pub unsafe extern "C" fn lsetxattr(
+    _path: *const u8,
+    _name: *const u8,
+    _value: *const u8,
+    _size: usize,
+    _flags: i32,
+) -> i32 {
     ERRNO_VAR = errno::ENOSYS;
     -1
 }
@@ -6640,7 +7422,12 @@ pub unsafe extern "C" fn eventfd_read(fd: i32, value: *mut u64) -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn eventfd_write(fd: i32, value: u64) -> i32 {
-    let r = syscall::syscall3(syscall::nr::WRITE, fd as usize, &value as *const u64 as usize, 8) as isize;
+    let r = syscall::syscall3(
+        syscall::nr::WRITE,
+        fd as usize,
+        &value as *const u64 as usize,
+        8,
+    ) as isize;
     if r == 8 { 0 } else { -1 }
 }
 
@@ -6698,7 +7485,11 @@ unsafe fn store_capability(s: &str) -> *mut u8 {
     if start + bytes.len() + 1 > (*storage_ptr).len() {
         return core::ptr::null_mut();
     }
-    core::ptr::copy_nonoverlapping(bytes.as_ptr(), (*storage_ptr).as_mut_ptr().add(start), bytes.len());
+    core::ptr::copy_nonoverlapping(
+        bytes.as_ptr(),
+        (*storage_ptr).as_mut_ptr().add(start),
+        bytes.len(),
+    );
     (*storage_ptr)[start + bytes.len()] = 0; // null terminate
     TERMCAP_OFFSET += bytes.len() + 1;
     (*storage_ptr).as_mut_ptr().add(start)
@@ -6708,114 +7499,157 @@ unsafe fn store_capability(s: &str) -> *mut u8 {
 pub unsafe extern "C" fn tgetent(_bp: *mut u8, _name: *const u8) -> i32 {
     // Reset storage for new terminal
     TERMCAP_OFFSET = 0;
-    1  // Success - we have an ANSI/VT100 terminal
+    1 // Success - we have an ANSI/VT100 terminal
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tgetnum(id: *const u8) -> i32 {
     if c_str_eq(id, "co") {
-        return 80;  // columns
+        return 80; // columns
     }
     if c_str_eq(id, "li") {
-        return 25;  // lines
+        return 25; // lines
     }
-    -1  // Feature not available
+    -1 // Feature not available
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tgetflag(id: *const u8) -> i32 {
     // Common boolean capabilities
     if c_str_eq(id, "am") {
-        return 1;  // automatic margins
+        return 1; // automatic margins
     }
     if c_str_eq(id, "km") {
-        return 1;  // has meta key
+        return 1; // has meta key
     }
     if c_str_eq(id, "xn") {
-        return 0;  // no newline glitch
+        return 0; // no newline glitch
     }
-    0  // Feature not present
+    0 // Feature not present
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tgetstr(id: *const u8, area: *mut *mut u8) -> *mut u8 {
     // ANSI/VT100 terminal capabilities
     let cap = if c_str_eq(id, "cm") {
-        "\x1b[%i%d;%dH"  // cursor movement (1-indexed)
+        "\x1b[%i%d;%dH" // cursor movement (1-indexed)
+    } else if c_str_eq(id, "ku") {
+        "\x1b[A" // cursor up
+    } else if c_str_eq(id, "kd") {
+        "\x1b[B" // cursor down
+    } else if c_str_eq(id, "kl") {
+        "\x1b[D" // cursor left
+    } else if c_str_eq(id, "kr") {
+        "\x1b[C" // cursor right
+    } else if c_str_eq(id, "kh") {
+        "\x1b[H" // home
+    } else if c_str_eq(id, "@7") || c_str_eq(id, "kH") {
+        "\x1b[F" // end
+    } else if c_str_eq(id, "kP") {
+        "\x1b[5~" // page up
+    } else if c_str_eq(id, "kN") {
+        "\x1b[6~" // page down
+    } else if c_str_eq(id, "kD") {
+        "\x1b[3~" // delete
+    } else if c_str_eq(id, "kI") {
+        "\x1b[2~" // insert
+    } else if c_str_eq(id, "k1") {
+        return core::ptr::null_mut();
+    } else if c_str_eq(id, "k2") {
+        return core::ptr::null_mut();
+    } else if c_str_eq(id, "k3") {
+        return core::ptr::null_mut();
+    } else if c_str_eq(id, "k4") {
+        return core::ptr::null_mut();
+    } else if c_str_eq(id, "k5") {
+        return core::ptr::null_mut();
+    } else if c_str_eq(id, "k6") {
+        return core::ptr::null_mut();
+    } else if c_str_eq(id, "k7") {
+        return core::ptr::null_mut();
+    } else if c_str_eq(id, "k8") {
+        return core::ptr::null_mut();
+    } else if c_str_eq(id, "k9") {
+        return core::ptr::null_mut();
+    } else if c_str_eq(id, "k0") {
+        return core::ptr::null_mut();
+    } else if c_str_eq(id, "F1") {
+        return core::ptr::null_mut();
+    } else if c_str_eq(id, "F2") {
+        return core::ptr::null_mut();
     } else if c_str_eq(id, "cl") {
-        "\x1b[H\x1b[2J"  // clear screen
+        "\x1b[H\x1b[2J" // clear screen
     } else if c_str_eq(id, "ce") {
-        "\x1b[K"  // clear to end of line
+        "\x1b[K" // clear to end of line
     } else if c_str_eq(id, "cd") {
-        "\x1b[J"  // clear to end of display
+        "\x1b[J" // clear to end of display
     } else if c_str_eq(id, "so") {
-        "\x1b[7m"  // standout mode (reverse video)
+        "\x1b[7m" // standout mode (reverse video)
     } else if c_str_eq(id, "se") {
-        "\x1b[27m"  // exit standout mode
+        "\x1b[27m" // exit standout mode
     } else if c_str_eq(id, "us") {
-        "\x1b[4m"  // underline
+        "\x1b[4m" // underline
     } else if c_str_eq(id, "ue") {
-        "\x1b[24m"  // exit underline
+        "\x1b[24m" // exit underline
     } else if c_str_eq(id, "md") {
-        "\x1b[1m"  // bold
+        "\x1b[1m" // bold
     } else if c_str_eq(id, "me") {
-        "\x1b[0m"  // exit attributes
+        "\x1b[0m" // exit attributes
     } else if c_str_eq(id, "mr") {
-        "\x1b[7m"  // reverse video
+        "\x1b[7m" // reverse video
     } else if c_str_eq(id, "mb") {
-        "\x1b[5m"  // blink
+        "\x1b[5m" // blink
     } else if c_str_eq(id, "mh") {
-        "\x1b[2m"  // dim
+        "\x1b[2m" // dim
     } else if c_str_eq(id, "ZH") {
-        "\x1b[3m"  // italic
+        "\x1b[3m" // italic
     } else if c_str_eq(id, "ZR") {
-        "\x1b[23m"  // exit italic
+        "\x1b[23m" // exit italic
     } else if c_str_eq(id, "up") {
-        "\x1b[A"  // cursor up
+        "\x1b[A" // cursor up
     } else if c_str_eq(id, "do") {
-        "\x1b[B"  // cursor down
+        "\x1b[B" // cursor down
     } else if c_str_eq(id, "le") {
-        "\x1b[D"  // cursor left
+        "\x1b[D" // cursor left
     } else if c_str_eq(id, "nd") {
-        "\x1b[C"  // cursor right
+        "\x1b[C" // cursor right
     } else if c_str_eq(id, "ho") {
-        "\x1b[H"  // cursor home
+        "\x1b[H" // cursor home
     } else if c_str_eq(id, "cr") {
-        "\r"  // carriage return
+        "\r" // carriage return
     } else if c_str_eq(id, "nw") {
-        "\r\n"  // newline
+        "\r\n" // newline
     } else if c_str_eq(id, "ta") {
-        "\t"  // tab
+        "\t" // tab
     } else if c_str_eq(id, "bl") {
-        "\x07"  // bell
+        "\x07" // bell
     } else if c_str_eq(id, "vi") {
-        "\x1b[?25l"  // cursor invisible
+        "\x1b[?25l" // cursor invisible
     } else if c_str_eq(id, "ve") {
-        "\x1b[?25h"  // cursor visible
+        "\x1b[?25h" // cursor visible
     } else if c_str_eq(id, "vs") {
-        "\x1b[?25h"  // cursor very visible
+        "\x1b[?25h" // cursor very visible
     } else if c_str_eq(id, "ti") {
-        "\x1b[?1049h"  // terminal init (alternate screen)
+        "\x1b[?1049h" // terminal init (alternate screen)
     } else if c_str_eq(id, "te") {
-        "\x1b[?1049l"  // terminal end (normal screen)
-    } else if c_str_eq(id, "ks") {
-        "\x1b[?1h\x1b="  // keypad start
-    } else if c_str_eq(id, "ke") {
-        "\x1b[?1l\x1b>"  // keypad end
+        "\x1b[?1049l" // terminal end (normal screen)
+    } else if c_str_eq(id, "ks") || c_str_eq(id, "ke") {
+        // Do not switch cursor-key application mode; keep arrows in normal CSI form
+        return core::ptr::null_mut();
     } else if c_str_eq(id, "AL") {
-        "\x1b[%dL"  // insert lines
+        "\x1b[%dL" // insert lines
     } else if c_str_eq(id, "DL") {
-        "\x1b[%dM"  // delete lines
+        "\x1b[%dM" // delete lines
     } else if c_str_eq(id, "al") {
-        "\x1b[L"  // insert line
+        "\x1b[L" // insert line
     } else if c_str_eq(id, "dl") {
-        "\x1b[M"  // delete line
+        "\x1b[M" // delete line
     } else if c_str_eq(id, "cs") {
-        "\x1b[%i%d;%dr"  // set scroll region
+        "\x1b[%i%d;%dr" // set scroll region
     } else if c_str_eq(id, "sr") {
-        "\x1bM"  // scroll reverse
+        "\x1bM" // scroll reverse
     } else if c_str_eq(id, "sf") {
-        "\n"  // scroll forward
+        "\n" // scroll forward
     } else {
         return core::ptr::null_mut();
     };
@@ -6919,12 +7753,16 @@ pub unsafe extern "C" fn tgoto(cap: *const u8, col: i32, row: i32) -> *mut u8 {
         }
     }
 
-    (*buffer_ptr)[out_idx] = 0;  // null terminate
+    (*buffer_ptr)[out_idx] = 0; // null terminate
     (*buffer_ptr).as_mut_ptr()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tputs(str: *const u8, _affcnt: i32, putc_fn: extern "C" fn(i32) -> i32) -> i32 {
+pub unsafe extern "C" fn tputs(
+    str: *const u8,
+    _affcnt: i32,
+    putc_fn: extern "C" fn(i32) -> i32,
+) -> i32 {
     if str.is_null() {
         return 0;
     }
@@ -6976,36 +7814,36 @@ pub unsafe extern "C" fn strncat(dest: *mut u8, src: *const u8, n: usize) -> *mu
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn strtok(str: *mut u8, delim: *const u8) -> *mut u8 {
     static mut LAST: *mut u8 = core::ptr::null_mut();
-    
+
     let mut s = if str.is_null() { LAST } else { str };
-    
+
     if s.is_null() {
         return core::ptr::null_mut();
     }
-    
+
     // Skip leading delimiters
     while *s != 0 && strchr(delim, *s as i32) != core::ptr::null() {
         s = s.add(1);
     }
-    
+
     if *s == 0 {
         LAST = core::ptr::null_mut();
         return core::ptr::null_mut();
     }
-    
+
     let token = s;
-    
+
     // Find end of token
     while *s != 0 && strchr(delim, *s as i32) == core::ptr::null() {
         s = s.add(1);
     }
-    
+
     if *s != 0 {
         *s = 0;
         LAST = s.add(1);
     } else {
         LAST = core::ptr::null_mut();
     }
-    
+
     token
 }

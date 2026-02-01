@@ -51,7 +51,11 @@ fn open_journal() -> (i32, &'static str) {
     // Fallback: /run/log/journal (tmpfs, always writable)
     let _ = mkdir("/run", 0o755);
     let _ = mkdir("/run/log", 0o755);
-    let fd = open(JOURNAL_PATH_FALLBACK, (O_WRONLY | O_CREAT | O_APPEND) as u32, 0o644);
+    let fd = open(
+        JOURNAL_PATH_FALLBACK,
+        (O_WRONLY | O_CREAT | O_APPEND) as u32,
+        0o644,
+    );
     (fd, JOURNAL_PATH_FALLBACK)
 }
 

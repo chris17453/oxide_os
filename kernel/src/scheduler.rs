@@ -65,8 +65,8 @@ extern "C" fn idle_loop() -> ! {
         // The CPU will wake up on the next interrupt (timer, keyboard, etc.)
         unsafe {
             core::arch::asm!(
-                "sti",  // Enable interrupts
-                "hlt",  // Halt until interrupt
+                "sti", // Enable interrupts
+                "hlt", // Halt until interrupt
                 options(nomem, nostack)
             );
         }
@@ -93,19 +93,19 @@ pub fn init() {
 
     // Create idle task with ProcessMeta
     let mut idle_task = Task::new_idle_with_meta(
-        0,                         // PID 0 is the idle task
-        0,                         // CPU 0
-        PhysAddr::new(0),          // No separate kernel stack needed
-        0,                         // Stack size (idle uses BSP stack)
+        0,                // PID 0 is the idle task
+        0,                // CPU 0
+        PhysAddr::new(0), // No separate kernel stack needed
+        0,                // Stack size (idle uses BSP stack)
         idle_meta,
     );
 
     // Set the idle task's RIP to the idle_loop function
     let mut ctx = idle_task.context;
     ctx.rip = idle_loop as *const () as u64;
-    ctx.rflags = 0x202;  // IF (interrupts enabled) + reserved bit 1
-    ctx.cs = 0x08;       // Kernel code segment
-    ctx.ss = 0x10;       // Kernel data segment
+    ctx.rflags = 0x202; // IF (interrupts enabled) + reserved bit 1
+    ctx.cs = 0x08; // Kernel code segment
+    ctx.ss = 0x10; // Kernel data segment
     idle_task.context = ctx;
 
     // Add the idle task to the scheduler
@@ -143,23 +143,36 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         if ticks % 300 == 0 {
             if let Some((curr_pid, min_vr, tasks)) = sched::debug_dump_all() {
                 unsafe {
-                    use arch_x86_64::serial::{write_str_unsafe, write_byte_unsafe};
+                    use arch_x86_64::serial::{write_byte_unsafe, write_str_unsafe};
 
                     // Helper: print u64 decimal (interrupt-safe, no alloc)
                     fn print_u64(n: u64) {
                         unsafe {
-                            if n == 0 { write_byte_unsafe(b'0'); return; }
+                            if n == 0 {
+                                write_byte_unsafe(b'0');
+                                return;
+                            }
                             let mut buf = [0u8; 20];
                             let mut v = n;
                             let mut pos = 0;
-                            while v > 0 { buf[pos] = b'0' + (v % 10) as u8; v /= 10; pos += 1; }
-                            for i in (0..pos).rev() { write_byte_unsafe(buf[i]); }
+                            while v > 0 {
+                                buf[pos] = b'0' + (v % 10) as u8;
+                                v /= 10;
+                                pos += 1;
+                            }
+                            for i in (0..pos).rev() {
+                                write_byte_unsafe(buf[i]);
+                            }
                         }
                     }
                     fn print_i8(n: i8) {
                         unsafe {
-                            if n < 0 { write_byte_unsafe(b'-'); print_u64((-n) as u64); }
-                            else { print_u64(n as u64); }
+                            if n < 0 {
+                                write_byte_unsafe(b'-');
+                                print_u64((-n) as u64);
+                            } else {
+                                print_u64(n as u64);
+                            }
                         }
                     }
 
@@ -170,20 +183,31 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
                     write_str_unsafe(" min_vr=");
                     print_u64(min_vr / 1_000_000); // ms
                     write_str_unsafe("ms =====\n");
-                    write_str_unsafe("PID PPID NAME         STATE       ON_RQ NICE VRUNTIME(ms)  RUNTIME(ms)  WAIT\n");
-                    write_str_unsafe("--- ---- ------------ ----------- ----- ---- ------------- ------------ ----\n");
+                    write_str_unsafe(
+                        "PID PPID NAME         STATE       ON_RQ NICE VRUNTIME(ms)  RUNTIME(ms)  WAIT\n",
+                    );
+                    write_str_unsafe(
+                        "--- ---- ------------ ----------- ----- ---- ------------- ------------ ----\n",
+                    );
 
                     for t in &tasks {
                         // PID (3 chars)
-                        if t.pid < 10 { write_str_unsafe("  "); }
-                        else if t.pid < 100 { write_byte_unsafe(b' '); }
+                        if t.pid < 10 {
+                            write_str_unsafe("  ");
+                        } else if t.pid < 100 {
+                            write_byte_unsafe(b' ');
+                        }
                         print_u64(t.pid as u64);
                         write_byte_unsafe(b' ');
 
                         // PPID (4 chars)
-                        if t.ppid < 10 { write_str_unsafe("   "); }
-                        else if t.ppid < 100 { write_str_unsafe("  "); }
-                        else if t.ppid < 1000 { write_byte_unsafe(b' '); }
+                        if t.ppid < 10 {
+                            write_str_unsafe("   ");
+                        } else if t.ppid < 100 {
+                            write_str_unsafe("  ");
+                        } else if t.ppid < 1000 {
+                            write_byte_unsafe(b' ');
+                        }
                         print_u64(t.ppid as u64);
                         write_byte_unsafe(b' ');
 
@@ -213,13 +237,21 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
                         write_byte_unsafe(b' ');
 
                         // ON_RQ
-                        if t.on_rq { write_str_unsafe("yes  "); } else { write_str_unsafe("no   "); }
+                        if t.on_rq {
+                            write_str_unsafe("yes  ");
+                        } else {
+                            write_str_unsafe("no   ");
+                        }
                         write_byte_unsafe(b' ');
 
                         // NICE (4 chars)
-                        if t.nice >= 0 { write_byte_unsafe(b' '); }
+                        if t.nice >= 0 {
+                            write_byte_unsafe(b' ');
+                        }
                         print_i8(t.nice);
-                        if t.nice > -10 && t.nice < 10 { write_byte_unsafe(b' '); }
+                        if t.nice > -10 && t.nice < 10 {
+                            write_byte_unsafe(b' ');
+                        }
                         write_byte_unsafe(b' ');
 
                         // VRUNTIME in ms (13 chars)
@@ -228,8 +260,16 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
                         write_str_unsafe("ms");
                         // Padding
                         let mut vr_digits = if vr_ms == 0 { 1 } else { 0 };
-                        { let mut v = vr_ms; while v > 0 { vr_digits += 1; v /= 10; } }
-                        for _ in 0..10usize.saturating_sub(vr_digits + 2) { write_byte_unsafe(b' '); }
+                        {
+                            let mut v = vr_ms;
+                            while v > 0 {
+                                vr_digits += 1;
+                                v /= 10;
+                            }
+                        }
+                        for _ in 0..10usize.saturating_sub(vr_digits + 2) {
+                            write_byte_unsafe(b' ');
+                        }
                         write_byte_unsafe(b' ');
 
                         // RUNTIME in ms (12 chars)
@@ -237,8 +277,16 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
                         print_u64(rt_ms);
                         write_str_unsafe("ms");
                         let mut rt_digits = if rt_ms == 0 { 1 } else { 0 };
-                        { let mut v = rt_ms; while v > 0 { rt_digits += 1; v /= 10; } }
-                        for _ in 0..9usize.saturating_sub(rt_digits + 2) { write_byte_unsafe(b' '); }
+                        {
+                            let mut v = rt_ms;
+                            while v > 0 {
+                                rt_digits += 1;
+                                v /= 10;
+                            }
+                        }
+                        for _ in 0..9usize.saturating_sub(rt_digits + 2) {
+                            write_byte_unsafe(b' ');
+                        }
                         write_byte_unsafe(b' ');
 
                         // WAIT
@@ -409,33 +457,55 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     // Debug: log context switches with process names (interrupt-safe)
     #[cfg(feature = "debug-sched")]
     unsafe {
-        use arch_x86_64::serial::{write_str_unsafe, write_byte_unsafe};
+        use arch_x86_64::serial::{write_byte_unsafe, write_str_unsafe};
         fn print_pid(pid: u32) {
             unsafe {
-                if pid == 0 { write_byte_unsafe(b'0'); return; }
+                if pid == 0 {
+                    write_byte_unsafe(b'0');
+                    return;
+                }
                 let mut buf = [0u8; 10];
                 let mut n = pid;
                 let mut pos = 0;
-                while n > 0 { buf[pos] = b'0' + (n % 10) as u8; n /= 10; pos += 1; }
-                for i in (0..pos).rev() { write_byte_unsafe(buf[i]); }
+                while n > 0 {
+                    buf[pos] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    pos += 1;
+                }
+                for i in (0..pos).rev() {
+                    write_byte_unsafe(buf[i]);
+                }
             }
         }
         fn print_task_name(pid: u32) {
-            if pid == 0 { unsafe { write_str_unsafe("idle"); } return; }
+            if pid == 0 {
+                unsafe {
+                    write_str_unsafe("idle");
+                }
+                return;
+            }
             if let Some(meta_arc) = sched::get_task_meta(pid) {
                 if let Some(meta) = meta_arc.try_lock() {
                     if let Some(cmd) = meta.cmdline.first() {
                         let bytes = cmd.as_bytes();
-                        let start = bytes.iter().rposition(|&b| b == b'/').map(|i| i + 1).unwrap_or(0);
+                        let start = bytes
+                            .iter()
+                            .rposition(|&b| b == b'/')
+                            .map(|i| i + 1)
+                            .unwrap_or(0);
                         let len = (bytes.len() - start).min(16);
                         for i in 0..len {
-                            unsafe { write_byte_unsafe(bytes[start + i]); }
+                            unsafe {
+                                write_byte_unsafe(bytes[start + i]);
+                            }
                         }
                         return;
                     }
                 }
             }
-            unsafe { write_str_unsafe("???"); }
+            unsafe {
+                write_str_unsafe("???");
+            }
         }
         write_str_unsafe("[SWITCH] ");
         print_pid(current_pid);
@@ -446,7 +516,11 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         write_str_unsafe("(");
         print_task_name(next_pid);
         write_str_unsafe(") cs=");
-        if frame.cs == 0x23 { write_str_unsafe("user"); } else { write_str_unsafe("kern"); }
+        if frame.cs == 0x23 {
+            write_str_unsafe("user");
+        } else {
+            write_str_unsafe("kern");
+        }
         write_str_unsafe("\n");
     }
 

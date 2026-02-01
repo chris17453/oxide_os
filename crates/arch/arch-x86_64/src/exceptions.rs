@@ -516,7 +516,27 @@ pub fn keyboard_irq_count() -> u64 {
 extern "C" fn handle_keyboard() {
     KEYBOARD_IRQ_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
-    // Read scancode
+    #[cfg(feature = "debug-input")]
+    unsafe {
+        crate::serial::write_str_unsafe("[KB_IRQ] ");
+    }
+
+    // If a platform keyboard handler is registered, delegate to it (it reads the scancode)
+    unsafe {
+        if let Some(callback) = KEYBOARD_CALLBACK {
+            #[cfg(feature = "debug-input")]
+            crate::serial::write_str_unsafe("CB ");
+            callback();
+            // Send EOI to APIC
+            crate::apic::end_of_interrupt();
+            return;
+        } else {
+            #[cfg(feature = "debug-input")]
+            crate::serial::write_str_unsafe("NO_CB ");
+        }
+    }
+
+    // Read scancode ourselves (fallback path)
     let scancode = unsafe {
         let mut value: u8;
         core::arch::asm!("in al, 0x60", out("al") value, options(nomem, nostack, preserves_flags));
@@ -853,7 +873,9 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
 
     // Get CR3 for debugging (identifies the process)
     let cr3: u64;
-    unsafe { core::arch::asm!("mov {}, cr3", out(reg) cr3); }
+    unsafe {
+        core::arch::asm!("mov {}, cr3", out(reg) cr3);
+    }
 
     crate::serial_println!("PAGE FAULT!");
     crate::serial_println!("  CR3 (PML4): {:#x}", cr3);
@@ -878,7 +900,14 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
         core::arch::asm!("pushfq; pop {}", out(reg) rflags, options(nomem, nostack));
     }
     crate::serial_println!("  RFLAGS: {:#x}", rflags);
-    crate::serial_println!("    AC flag: {}", if rflags & (1 << 18) != 0 { "SET" } else { "CLEAR" });
+    crate::serial_println!(
+        "    AC flag: {}",
+        if rflags & (1 << 18) != 0 {
+            "SET"
+        } else {
+            "CLEAR"
+        }
+    );
 
     // Print debug values from enter_usermode_with_context
     unsafe {
@@ -923,25 +952,53 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
 
     // Print STAC debug
     unsafe {
-        use crate::syscall::{STAC_DEBUG_RFLAGS, AC_BEFORE_CALL, AC_AFTER_CALL, AC_AT_ENTRY};
+        use crate::syscall::{AC_AFTER_CALL, AC_AT_ENTRY, AC_BEFORE_CALL, STAC_DEBUG_RFLAGS};
         use core::ptr::addr_of;
         crate::serial_println!("  DEBUG from syscall AC tracking:");
 
         let at_entry = *addr_of!(AC_AT_ENTRY);
         crate::serial_println!("    RFLAGS at entry: {:#x}", at_entry);
-        crate::serial_println!("    AC flag at entry: {}", if (at_entry >> 18) & 1 != 0 { "SET" } else { "CLEAR" });
+        crate::serial_println!(
+            "    AC flag at entry: {}",
+            if (at_entry >> 18) & 1 != 0 {
+                "SET"
+            } else {
+                "CLEAR"
+            }
+        );
 
         let rflags = *addr_of!(STAC_DEBUG_RFLAGS);
         crate::serial_println!("    RFLAGS after STAC: {:#x}", rflags);
-        crate::serial_println!("    AC flag after STAC: {}", if (rflags >> 18) & 1 != 0 { "SET" } else { "CLEAR" });
+        crate::serial_println!(
+            "    AC flag after STAC: {}",
+            if (rflags >> 18) & 1 != 0 {
+                "SET"
+            } else {
+                "CLEAR"
+            }
+        );
 
         let before_call = *addr_of!(AC_BEFORE_CALL);
         crate::serial_println!("    RFLAGS before handler call: {:#x}", before_call);
-        crate::serial_println!("    AC flag before call: {}", if (before_call >> 18) & 1 != 0 { "SET" } else { "CLEAR" });
+        crate::serial_println!(
+            "    AC flag before call: {}",
+            if (before_call >> 18) & 1 != 0 {
+                "SET"
+            } else {
+                "CLEAR"
+            }
+        );
 
         let after_call = *addr_of!(AC_AFTER_CALL);
         crate::serial_println!("    RFLAGS after handler call: {:#x}", after_call);
-        crate::serial_println!("    AC flag after call: {}", if (after_call >> 18) & 1 != 0 { "SET" } else { "CLEAR" });
+        crate::serial_println!(
+            "    AC flag after call: {}",
+            if (after_call >> 18) & 1 != 0 {
+                "SET"
+            } else {
+                "CLEAR"
+            }
+        );
     }
 
     // Walk the page tables to see what's mapped
@@ -956,18 +1013,30 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
         let pt_idx = (vaddr >> 12) & 0x1FF;
 
         crate::serial_println!("  Virtual address: {:#x}", vaddr);
-        crate::serial_println!("  PML4 index: {}, PDPT index: {}, PD index: {}, PT index: {}",
-            pml4_idx, pdpt_idx, pd_idx, pt_idx);
+        crate::serial_println!(
+            "  PML4 index: {}, PDPT index: {}, PD index: {}, PT index: {}",
+            pml4_idx,
+            pdpt_idx,
+            pd_idx,
+            pt_idx
+        );
 
         // Walk PML4
         let pml4_phys = cr3 & 0xFFFF_FFFF_F000;
         let pml4_virt = 0xFFFF_8000_0000_0000 | pml4_phys;
         let pml4_entry = *((pml4_virt + pml4_idx * 8) as *const u64);
-        crate::serial_println!("  PML4[{}] = {:#x} (P={} W={} U={} A={} PWT={} PCD={} PS={})",
-            pml4_idx, pml4_entry,
-            pml4_entry & 1, (pml4_entry >> 1) & 1, (pml4_entry >> 2) & 1,
-            (pml4_entry >> 5) & 1, (pml4_entry >> 3) & 1, (pml4_entry >> 4) & 1,
-            (pml4_entry >> 7) & 1);
+        crate::serial_println!(
+            "  PML4[{}] = {:#x} (P={} W={} U={} A={} PWT={} PCD={} PS={})",
+            pml4_idx,
+            pml4_entry,
+            pml4_entry & 1,
+            (pml4_entry >> 1) & 1,
+            (pml4_entry >> 2) & 1,
+            (pml4_entry >> 5) & 1,
+            (pml4_entry >> 3) & 1,
+            (pml4_entry >> 4) & 1,
+            (pml4_entry >> 7) & 1
+        );
 
         if pml4_entry & 1 == 0 {
             crate::serial_println!("  PML4 entry not present!");
@@ -976,11 +1045,18 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
             let pdpt_phys = pml4_entry & 0xFFFF_FFFF_F000;
             let pdpt_virt = 0xFFFF_8000_0000_0000 | pdpt_phys;
             let pdpt_entry = *((pdpt_virt + pdpt_idx * 8) as *const u64);
-            crate::serial_println!("  PDPT[{}] = {:#x} (P={} W={} U={} A={} PWT={} PCD={} PS={})",
-                pdpt_idx, pdpt_entry,
-                pdpt_entry & 1, (pdpt_entry >> 1) & 1, (pdpt_entry >> 2) & 1,
-                (pdpt_entry >> 5) & 1, (pdpt_entry >> 3) & 1, (pdpt_entry >> 4) & 1,
-                (pdpt_entry >> 7) & 1);
+            crate::serial_println!(
+                "  PDPT[{}] = {:#x} (P={} W={} U={} A={} PWT={} PCD={} PS={})",
+                pdpt_idx,
+                pdpt_entry,
+                pdpt_entry & 1,
+                (pdpt_entry >> 1) & 1,
+                (pdpt_entry >> 2) & 1,
+                (pdpt_entry >> 5) & 1,
+                (pdpt_entry >> 3) & 1,
+                (pdpt_entry >> 4) & 1,
+                (pdpt_entry >> 7) & 1
+            );
 
             if pdpt_entry & 1 == 0 {
                 crate::serial_println!("  PDPT entry not present!");
@@ -991,11 +1067,18 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
                 let pd_phys = pdpt_entry & 0xFFFF_FFFF_F000;
                 let pd_virt = 0xFFFF_8000_0000_0000 | pd_phys;
                 let pd_entry = *((pd_virt + pd_idx * 8) as *const u64);
-                crate::serial_println!("  PD[{}] = {:#x} (P={} W={} U={} A={} PWT={} PCD={} PS={})",
-                    pd_idx, pd_entry,
-                    pd_entry & 1, (pd_entry >> 1) & 1, (pd_entry >> 2) & 1,
-                    (pd_entry >> 5) & 1, (pd_entry >> 3) & 1, (pd_entry >> 4) & 1,
-                    (pd_entry >> 7) & 1);
+                crate::serial_println!(
+                    "  PD[{}] = {:#x} (P={} W={} U={} A={} PWT={} PCD={} PS={})",
+                    pd_idx,
+                    pd_entry,
+                    pd_entry & 1,
+                    (pd_entry >> 1) & 1,
+                    (pd_entry >> 2) & 1,
+                    (pd_entry >> 5) & 1,
+                    (pd_entry >> 3) & 1,
+                    (pd_entry >> 4) & 1,
+                    (pd_entry >> 7) & 1
+                );
 
                 if pd_entry & 1 == 0 {
                     crate::serial_println!("  PD entry not present!");
@@ -1006,11 +1089,18 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
                     let pt_phys = pd_entry & 0xFFFF_FFFF_F000;
                     let pt_virt = 0xFFFF_8000_0000_0000 | pt_phys;
                     let pt_entry = *((pt_virt + pt_idx * 8) as *const u64);
-                    crate::serial_println!("  PT[{}] = {:#x} (P={} W={} U={} A={} D={} PAT={} G={})",
-                        pt_idx, pt_entry,
-                        pt_entry & 1, (pt_entry >> 1) & 1, (pt_entry >> 2) & 1,
-                        (pt_entry >> 5) & 1, (pt_entry >> 6) & 1, (pt_entry >> 7) & 1,
-                        (pt_entry >> 8) & 1);
+                    crate::serial_println!(
+                        "  PT[{}] = {:#x} (P={} W={} U={} A={} D={} PAT={} G={})",
+                        pt_idx,
+                        pt_entry,
+                        pt_entry & 1,
+                        (pt_entry >> 1) & 1,
+                        (pt_entry >> 2) & 1,
+                        (pt_entry >> 5) & 1,
+                        (pt_entry >> 6) & 1,
+                        (pt_entry >> 7) & 1,
+                        (pt_entry >> 8) & 1
+                    );
 
                     if pt_entry & 1 == 0 {
                         crate::serial_println!("  PT entry not present!");

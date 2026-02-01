@@ -11,6 +11,21 @@ ARCH ?= x86_64
 PROFILE ?= debug
 QEMU_TIMEOUT ?= 15
 LINKER ?= ld.lld
+
+# ========================================
+# DEBUG FEATURES (toggle here)
+# ========================================
+# Enable debug output for 'make run'
+# Options: debug-input, debug-mouse, debug-sched, debug-fork, debug-lock, debug-syscall-perf, debug-tty-read, debug-all
+# Combine multiple: debug-input,debug-mouse
+# Disable all: leave empty or comment out
+# debug-syscall-perf: Logs syscalls taking >100K CPU cycles (~33us @ 3GHz)
+# debug-tty-read: Logs TTY read queue status
+# ========================================
+RUN_KERNEL_FEATURES ?= debug-syscall-perf,debug-tty-read
+# ========================================
+
+# Internal: Don't modify these unless using specific debug targets
 KERNEL_FEATURES ?=
 
 # QEMU command auto-detection (can be overridden with QEMU=command)
@@ -557,14 +572,16 @@ detect-qemu-mode:
 
 # Run OXIDE OS - auto-detects Fedora vs RHEL and uses appropriate QEMU
 # Builds everything and creates ext4 root filesystem, then runs with networking
-run: clean-rootfs create-rootfs
+run: clean-rootfs
 	@MODE=$$($(MAKE) -s detect-qemu-mode); \
 	if [ "$$MODE" = "fedora" ]; then \
 		echo "Detected Fedora mode (qemu-system-x86_64)"; \
-		$(MAKE) run-fedora; \
+		KERNEL_FEATURES="$(RUN_KERNEL_FEATURES)" $(MAKE) create-rootfs; \
+		KERNEL_FEATURES="$(RUN_KERNEL_FEATURES)" $(MAKE) run-fedora; \
 	elif [ "$$MODE" = "rhel" ]; then \
 		echo "Detected RHEL mode (qemu-kvm)"; \
-		$(MAKE) run-rhel; \
+		KERNEL_FEATURES="$(RUN_KERNEL_FEATURES)" $(MAKE) create-rootfs; \
+		KERNEL_FEATURES="$(RUN_KERNEL_FEATURES)" $(MAKE) run-rhel; \
 	else \
 		echo "Error: No compatible QEMU found"; \
 		echo "Install: sudo dnf install qemu-system-x86 (Fedora) or qemu-kvm (RHEL)"; \
@@ -711,6 +728,31 @@ show-config:
 	@echo "  QEMU_TIMEOUT: $(QEMU_TIMEOUT)"
 
 # Show help
+# Debug run with graphical display for PS/2 keyboard testing
+run-debug-input-gui:
+	@echo "Running OXIDE OS with graphical display for PS/2 keyboard testing..."
+	@if [ -z "$(OVMF)" ]; then \
+		echo "Error: OVMF firmware not found"; \
+		exit 1; \
+	fi
+	@KERNEL_FEATURES="debug-input" $(MAKE) create-rootfs
+	@mkdir -p /tmp/qemu-oxide
+	@echo "Serial output: /tmp/oxide-serial.log"
+	@echo "Use the QEMU graphical window to type and test keyboard events"
+	TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
+		-machine q35 \
+		-cpu qemu64,+smap,+smep \
+		-m 256M \
+		-bios "$(OVMF)" \
+		-drive file=$(ROOTFS_IMAGE),format=raw,if=none,id=disk \
+		-device virtio-blk-pci,drive=disk \
+		-device virtio-net-pci,netdev=net0 \
+		-netdev user,id=net0,hostfwd=tcp::$(SSH_HOST_PORT)-:22 \
+		-serial file:/tmp/oxide-serial.log \
+		-display gtk \
+		-no-reboot & \
+	echo "QEMU started. Use: tail -f /tmp/oxide-serial.log to see debug output"
+
 # Debug convenience targets — shorthand for KERNEL_FEATURES=...
 run-debug-mouse: KERNEL_FEATURES = debug-mouse
 run-debug-mouse: run

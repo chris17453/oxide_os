@@ -75,7 +75,12 @@ impl EpollInstance {
         if self.entries.len() >= MAX_EPOLL_ENTRIES {
             return Err(VfsError::NoSpace);
         }
-        self.entries.push(EpollEntry { fd, file, events, data });
+        self.entries.push(EpollEntry {
+            fd,
+            file,
+            events,
+            data,
+        });
         Ok(())
     }
 

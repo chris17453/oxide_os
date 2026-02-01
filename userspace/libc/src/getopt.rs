@@ -6,11 +6,11 @@
 use core::ptr;
 
 // Global state for getopt (required by POSIX specification)
-static mut OPTIND: i32 = 1;      // Index of next argv element to process
-static mut OPTARG: *mut u8 = ptr::null_mut();  // Pointer to option argument
-static mut OPTOPT: i32 = 0;      // Last option character
-static mut OPTERR: i32 = 1;      // Print error messages if nonzero
-static mut OPTP: *const u8 = ptr::null();  // Internal: current position in option
+static mut OPTIND: i32 = 1; // Index of next argv element to process
+static mut OPTARG: *mut u8 = ptr::null_mut(); // Pointer to option argument
+static mut OPTOPT: i32 = 0; // Last option character
+static mut OPTERR: i32 = 1; // Print error messages if nonzero
+static mut OPTP: *const u8 = ptr::null(); // Internal: current position in option
 
 /// POSIX getopt() implementation
 ///
@@ -154,7 +154,11 @@ pub unsafe fn getopt_impl(argc: i32, argv: *const *const u8, optstring: *const u
                     write_error(b"option requires an argument -- ", opt as u8);
                 }
                 OPTP = ptr::null();
-                return if *optstring == b':' { b':' as i32 } else { b'?' as i32 };
+                return if *optstring == b':' {
+                    b':' as i32
+                } else {
+                    b'?' as i32
+                };
             }
         }
     } else if optional_arg {

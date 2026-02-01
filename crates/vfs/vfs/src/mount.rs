@@ -281,10 +281,8 @@ impl VFS {
         let new_root_mount = mounts.remove(new_root).ok_or(VfsError::NotFound)?;
 
         // Collect all current mount paths and their Arc<Mount>
-        let entries: Vec<(String, Arc<Mount>)> = mounts
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+        let entries: Vec<(String, Arc<Mount>)> =
+            mounts.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
 
         // Clear and rebuild with rewritten paths
         mounts.clear();

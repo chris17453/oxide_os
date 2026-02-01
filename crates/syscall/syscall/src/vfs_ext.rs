@@ -10,8 +10,10 @@ use alloc::vec::Vec;
 use crate::errno;
 use crate::nr;
 // Import from crate::vfs (which re-exports external vfs crate types)
-use crate::vfs::{self, copy_path_from_user, resolve_path, validate_user_buffer, vfs_error_to_errno};
-use crate::vfs::{File, FileFlags, SeekFrom, GLOBAL_VFS};
+use crate::vfs::{
+    self, copy_path_from_user, resolve_path, validate_user_buffer, vfs_error_to_errno,
+};
+use crate::vfs::{File, FileFlags, GLOBAL_VFS, SeekFrom};
 use crate::{with_current_meta, with_current_meta_mut};
 
 /// IoVec structure for readv/writev (matches struct iovec)
@@ -51,18 +53,24 @@ pub fn sys_faccessat(dirfd: i32, path_ptr: u64, path_len: usize, _mode: i32) -> 
         return errno::ENOSYS;
     }
 
-    unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
 
     let raw_path = match copy_path_from_user(path_ptr, path_len) {
         Some(p) => p,
         None => {
-            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
             return errno::EFAULT;
         }
     };
     let path = resolve_path(raw_path);
 
-    unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
 
     match GLOBAL_VFS.lookup(&path) {
         Ok(_) => 0,
@@ -92,12 +100,16 @@ pub fn sys_utimensat(dirfd: i32, path_ptr: u64, path_len: usize, times_ptr: u64)
         return errno::ENOSYS;
     }
 
-    unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
 
     let raw_path = match copy_path_from_user(path_ptr, path_len) {
         Some(p) => p,
         None => {
-            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
             return errno::EFAULT;
         }
     };
@@ -107,12 +119,22 @@ pub fn sys_utimensat(dirfd: i32, path_ptr: u64, path_len: usize, times_ptr: u64)
         (None, None)
     } else {
         if !validate_user_buffer(times_ptr, core::mem::size_of::<[Timespec; 2]>()) {
-            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
             return errno::EFAULT;
         }
         let times = unsafe { &*(times_ptr as *const [Timespec; 2]) };
-        let a = if times[0].tv_nsec == UTIME_OMIT { None } else { Some(times[0].tv_sec as u64) };
-        let m = if times[1].tv_nsec == UTIME_OMIT { None } else { Some(times[1].tv_sec as u64) };
+        let a = if times[0].tv_nsec == UTIME_OMIT {
+            None
+        } else {
+            Some(times[0].tv_sec as u64)
+        };
+        let m = if times[1].tv_nsec == UTIME_OMIT {
+            None
+        } else {
+            Some(times[1].tv_sec as u64)
+        };
         (a, m)
     };
 
@@ -124,15 +146,15 @@ pub fn sys_utimensat(dirfd: i32, path_ptr: u64, path_len: usize, times_ptr: u64)
         Err(e) => vfs_error_to_errno(e),
     };
 
-    unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
     result
 }
 
 /// sys_futimens - Set file timestamps by fd
 pub fn sys_futimens(fd: i32, times_ptr: u64) -> i64 {
-    let file = match with_current_meta(|meta| {
-        meta.fd_table.get(fd).map(|e| e.file.clone())
-    }) {
+    let file = match with_current_meta(|meta| meta.fd_table.get(fd).map(|e| e.file.clone())) {
         Some(Ok(f)) => f,
         Some(Err(e)) => return vfs_error_to_errno(e),
         None => return errno::ESRCH,
@@ -141,15 +163,29 @@ pub fn sys_futimens(fd: i32, times_ptr: u64) -> i64 {
     let (atime, mtime) = if times_ptr == 0 {
         (None, None)
     } else {
-        unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+        unsafe {
+            core::arch::asm!("stac", options(nomem, nostack));
+        }
         if !validate_user_buffer(times_ptr, core::mem::size_of::<[Timespec; 2]>()) {
-            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
             return errno::EFAULT;
         }
         let times = unsafe { &*(times_ptr as *const [Timespec; 2]) };
-        let a = if times[0].tv_nsec == UTIME_OMIT { None } else { Some(times[0].tv_sec as u64) };
-        let m = if times[1].tv_nsec == UTIME_OMIT { None } else { Some(times[1].tv_sec as u64) };
-        unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+        let a = if times[0].tv_nsec == UTIME_OMIT {
+            None
+        } else {
+            Some(times[0].tv_sec as u64)
+        };
+        let m = if times[1].tv_nsec == UTIME_OMIT {
+            None
+        } else {
+            Some(times[1].tv_sec as u64)
+        };
+        unsafe {
+            core::arch::asm!("clac", options(nomem, nostack));
+        }
         (a, m)
     };
 
@@ -175,12 +211,16 @@ pub fn sys_readv(fd: i32, iov_ptr: u64, iovcnt: i32) -> i64 {
     }
 
     // Copy IoVec array from user space to kernel to avoid STAC/CLAC nesting
-    unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
     let iovs: Vec<IoVec> = unsafe {
         let src = core::slice::from_raw_parts(iov_ptr as *const IoVec, iovcnt);
         src.to_vec()
     };
-    unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
 
     let mut total: i64 = 0;
     for iov in &iovs {
@@ -190,7 +230,9 @@ pub fn sys_readv(fd: i32, iov_ptr: u64, iovcnt: i32) -> i64 {
         // sys_read_vfs handles its own STAC/CLAC
         let n = vfs::sys_read_vfs(fd, iov.iov_base, iov.iov_len);
         if n < 0 {
-            if total > 0 { break; }
+            if total > 0 {
+                break;
+            }
             return n;
         }
         total += n;
@@ -213,12 +255,16 @@ pub fn sys_writev(fd: i32, iov_ptr: u64, iovcnt: i32) -> i64 {
     }
 
     // Copy IoVec array from user space to kernel
-    unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
     let iovs: Vec<IoVec> = unsafe {
         let src = core::slice::from_raw_parts(iov_ptr as *const IoVec, iovcnt);
         src.to_vec()
     };
-    unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
 
     let mut total: i64 = 0;
     for iov in &iovs {
@@ -228,7 +274,9 @@ pub fn sys_writev(fd: i32, iov_ptr: u64, iovcnt: i32) -> i64 {
         // sys_write_vfs handles its own STAC/CLAC
         let n = vfs::sys_write_vfs(fd, iov.iov_base, iov.iov_len);
         if n < 0 {
-            if total > 0 { break; }
+            if total > 0 {
+                break;
+            }
             return n;
         }
         total += n;
@@ -255,9 +303,7 @@ pub fn sys_pread64(fd: i32, buf: u64, count: usize, offset: i64) -> i64 {
         return errno::EFAULT;
     }
 
-    let file = match with_current_meta(|meta| {
-        meta.fd_table.get(fd).map(|e| e.file.clone())
-    }) {
+    let file = match with_current_meta(|meta| meta.fd_table.get(fd).map(|e| e.file.clone())) {
         Some(Ok(f)) => f,
         Some(Err(e)) => return vfs_error_to_errno(e),
         None => return errno::ESRCH,
@@ -269,13 +315,17 @@ pub fn sys_pread64(fd: i32, buf: u64, count: usize, offset: i64) -> i64 {
         return vfs_error_to_errno(e);
     }
 
-    unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
     let buffer = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, count) };
     let result = match file.read(buffer) {
         Ok(n) => n as i64,
         Err(e) => vfs_error_to_errno(e),
     };
-    unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
 
     // Restore original position
     file.set_position(saved_pos);
@@ -294,9 +344,7 @@ pub fn sys_pwrite64(fd: i32, buf: u64, count: usize, offset: i64) -> i64 {
         return errno::EFAULT;
     }
 
-    let file = match with_current_meta(|meta| {
-        meta.fd_table.get(fd).map(|e| e.file.clone())
-    }) {
+    let file = match with_current_meta(|meta| meta.fd_table.get(fd).map(|e| e.file.clone())) {
         Some(Ok(f)) => f,
         Some(Err(e)) => return vfs_error_to_errno(e),
         None => return errno::ESRCH,
@@ -307,13 +355,17 @@ pub fn sys_pwrite64(fd: i32, buf: u64, count: usize, offset: i64) -> i64 {
         return vfs_error_to_errno(e);
     }
 
-    unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
     let buffer = unsafe { core::slice::from_raw_parts(buf as *const u8, count) };
     let result = match file.write(buffer) {
         Ok(n) => n as i64,
         Err(e) => vfs_error_to_errno(e),
     };
-    unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
 
     file.set_position(saved_pos);
     result
@@ -344,18 +396,24 @@ pub fn sys_truncate(path_ptr: u64, path_len: usize, length: i64) -> i64 {
         return errno::EINVAL;
     }
 
-    unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
 
     let raw_path = match copy_path_from_user(path_ptr, path_len) {
         Some(p) => p,
         None => {
-            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
             return errno::EFAULT;
         }
     };
     let path = resolve_path(raw_path);
 
-    unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
 
     let vnode = match GLOBAL_VFS.lookup(&path) {
         Ok(v) => v,
@@ -385,17 +443,14 @@ pub fn sys_fdatasync(fd: i32) -> i64 {
 
 /// sys_sendfile - Copy data between file descriptors in kernel space
 pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i64 {
-    let in_file = match with_current_meta(|meta| {
-        meta.fd_table.get(in_fd).map(|e| e.file.clone())
-    }) {
+    let in_file = match with_current_meta(|meta| meta.fd_table.get(in_fd).map(|e| e.file.clone())) {
         Some(Ok(f)) => f,
         Some(Err(e)) => return vfs_error_to_errno(e),
         None => return errno::ESRCH,
     };
 
-    let out_file = match with_current_meta(|meta| {
-        meta.fd_table.get(out_fd).map(|e| e.file.clone())
-    }) {
+    let out_file = match with_current_meta(|meta| meta.fd_table.get(out_fd).map(|e| e.file.clone()))
+    {
         Some(Ok(f)) => f,
         Some(Err(e)) => return vfs_error_to_errno(e),
         None => return errno::ESRCH,
@@ -403,13 +458,19 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
 
     // Handle offset pointer: if non-null, seek in_fd to that offset
     if offset_ptr != 0 {
-        unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+        unsafe {
+            core::arch::asm!("stac", options(nomem, nostack));
+        }
         if !validate_user_buffer(offset_ptr, 8) {
-            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
             return errno::EFAULT;
         }
         let off = unsafe { *(offset_ptr as *const i64) };
-        unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+        unsafe {
+            core::arch::asm!("clac", options(nomem, nostack));
+        }
         if off < 0 {
             return errno::EINVAL;
         }
@@ -428,7 +489,9 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
             Ok(0) => break,
             Ok(n) => n,
             Err(e) => {
-                if total > 0 { break; }
+                if total > 0 {
+                    break;
+                }
                 return vfs_error_to_errno(e);
             }
         };
@@ -500,13 +563,17 @@ pub fn sys_copy_file_range(
 
     // Get input and output files
     let in_file = match crate::with_current_meta(|meta| {
-        meta.fd_table.get(fd_in).map(|fd_entry| fd_entry.file.clone())
+        meta.fd_table
+            .get(fd_in)
+            .map(|fd_entry| fd_entry.file.clone())
     }) {
         Some(Ok(f)) => f,
         _ => return errno::EBADF,
     };
     let out_file = match crate::with_current_meta(|meta| {
-        meta.fd_table.get(fd_out).map(|fd_entry| fd_entry.file.clone())
+        meta.fd_table
+            .get(fd_out)
+            .map(|fd_entry| fd_entry.file.clone())
     }) {
         Some(Ok(f)) => f,
         _ => return errno::EBADF,
@@ -548,18 +615,24 @@ pub fn sys_copy_file_range(
         let nread = match in_file.read(&mut buf[..chunk]) {
             Ok(n) => n,
             Err(_) => {
-                if total > 0 { break; }
+                if total > 0 {
+                    break;
+                }
                 return errno::EIO;
             }
         };
-        if nread == 0 { break; }
+        if nread == 0 {
+            break;
+        }
 
         let mut written = 0;
         while written < nread {
             match out_file.write(&buf[written..nread]) {
                 Ok(n) => written += n,
                 Err(_) => {
-                    if total > 0 { break; }
+                    if total > 0 {
+                        break;
+                    }
                     return errno::EIO;
                 }
             }
@@ -617,7 +690,9 @@ pub fn sys_preadv(fd: i32, iov_ptr: u64, iovcnt: i32, offset: i64) -> i64 {
 
         let result = sys_pread64(fd, iov.iov_base, iov.iov_len, cur_offset);
         if result < 0 {
-            if total > 0 { return total; }
+            if total > 0 {
+                return total;
+            }
             return result;
         }
         total += result;
@@ -660,7 +735,9 @@ pub fn sys_pwritev(fd: i32, iov_ptr: u64, iovcnt: i32, offset: i64) -> i64 {
 
         let result = sys_pwrite64(fd, iov.iov_base, iov.iov_len, cur_offset);
         if result < 0 {
-            if total > 0 { return total; }
+            if total > 0 {
+                return total;
+            }
             return result;
         }
         total += result;
@@ -826,12 +903,10 @@ pub fn sys_epoll_ctl(epfd: i32, op: i32, fd: i32, event_ptr: u64) -> i64 {
                     Err(e) => vfs_error_to_errno(e),
                 }
             }
-            vfs::epoll::EPOLL_CTL_DEL => {
-                match instance.del(fd) {
-                    Ok(()) => 0,
-                    Err(e) => vfs_error_to_errno(e),
-                }
-            }
+            vfs::epoll::EPOLL_CTL_DEL => match instance.del(fd) {
+                Ok(()) => 0,
+                Err(e) => vfs_error_to_errno(e),
+            },
             vfs::epoll::EPOLL_CTL_MOD => {
                 let ev = event.unwrap();
                 match instance.modify(fd, ev.events, ev.data) {
@@ -938,11 +1013,15 @@ pub fn sys_splice(
             Ok(0) => break,
             Ok(n) => n,
             Err(vfs::VfsError::WouldBlock) => {
-                if total > 0 { break; }
+                if total > 0 {
+                    break;
+                }
                 return errno::EAGAIN;
             }
             Err(e) => {
-                if total > 0 { break; }
+                if total > 0 {
+                    break;
+                }
                 return vfs_error_to_errno(e);
             }
         };
@@ -950,7 +1029,9 @@ pub fn sys_splice(
         let n_written = match fout.write(&buf[..n_read]) {
             Ok(n) => n,
             Err(e) => {
-                if total > 0 { break; }
+                if total > 0 {
+                    break;
+                }
                 return vfs_error_to_errno(e);
             }
         };

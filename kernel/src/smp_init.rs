@@ -35,6 +35,8 @@ pub fn ap_init_callback(apic_id: u8) -> ! {
     // AP is now online - enter scheduler idle loop
     loop {
         sched::yield_current();
-        unsafe { core::arch::asm!("hlt"); }
+        unsafe {
+            core::arch::asm!("hlt");
+        }
     }
 }

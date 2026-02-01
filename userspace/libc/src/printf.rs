@@ -135,7 +135,11 @@ pub unsafe fn vsnprintf_impl(
                 };
                 let mut tmp = [0u8; 24];
                 let neg = val < 0;
-                let uval = if neg { (-(val as i128)) as u64 } else { val as u64 };
+                let uval = if neg {
+                    (-(val as i128)) as u64
+                } else {
+                    val as u64
+                };
                 let len = format_uint(uval, 10, false, &mut tmp);
                 let numstr = &tmp[24 - len..24];
 
@@ -347,15 +351,30 @@ pub unsafe fn vsnprintf_impl(
 
                 if val != val {
                     // NaN
-                    write_str(buf, &mut out, size, if conv == b'F' { b"NAN" } else { b"nan" });
+                    write_str(
+                        buf,
+                        &mut out,
+                        size,
+                        if conv == b'F' { b"NAN" } else { b"nan" },
+                    );
                 } else if val == f64::INFINITY {
                     if flag_plus {
                         write_char(buf, &mut out, size, b'+');
                     }
-                    write_str(buf, &mut out, size, if conv == b'F' { b"INF" } else { b"inf" });
+                    write_str(
+                        buf,
+                        &mut out,
+                        size,
+                        if conv == b'F' { b"INF" } else { b"inf" },
+                    );
                 } else if val == f64::NEG_INFINITY {
                     write_char(buf, &mut out, size, b'-');
-                    write_str(buf, &mut out, size, if conv == b'F' { b"INF" } else { b"inf" });
+                    write_str(
+                        buf,
+                        &mut out,
+                        size,
+                        if conv == b'F' { b"INF" } else { b"inf" },
+                    );
                 } else {
                     let neg = val < 0.0;
                     let val = if neg { -val } else { val };
@@ -398,15 +417,32 @@ pub unsafe fn vsnprintf_impl(
 
             b'e' | b'E' => {
                 let val: f64 = ap.arg::<f64>();
-                format_scientific(buf, &mut out, size, val, precision, conv, flag_plus, flag_space);
+                format_scientific(
+                    buf, &mut out, size, val, precision, conv, flag_plus, flag_space,
+                );
             }
 
             b'g' | b'G' => {
                 let val: f64 = ap.arg::<f64>();
-                let prec = if precision < 0 { 6 } else if precision == 0 { 1 } else { precision };
+                let prec = if precision < 0 {
+                    6
+                } else if precision == 0 {
+                    1
+                } else {
+                    precision
+                };
                 // Use %e if exponent < -4 or >= precision, else %f
                 if val == 0.0 || val != val || val == f64::INFINITY || val == f64::NEG_INFINITY {
-                    format_scientific(buf, &mut out, size, val, prec - 1, if conv == b'G' { b'E' } else { b'e' }, flag_plus, flag_space);
+                    format_scientific(
+                        buf,
+                        &mut out,
+                        size,
+                        val,
+                        prec - 1,
+                        if conv == b'G' { b'E' } else { b'e' },
+                        flag_plus,
+                        flag_space,
+                    );
                 } else {
                     let abs_val = if val < 0.0 { -val } else { val };
                     let exp = if abs_val > 0.0 {
@@ -416,7 +452,16 @@ pub unsafe fn vsnprintf_impl(
                     };
                     let exp = crate::math::floor(exp) as i32;
                     if exp < -4 || exp >= prec {
-                        format_scientific(buf, &mut out, size, val, prec - 1, if conv == b'G' { b'E' } else { b'e' }, flag_plus, flag_space);
+                        format_scientific(
+                            buf,
+                            &mut out,
+                            size,
+                            val,
+                            prec - 1,
+                            if conv == b'G' { b'E' } else { b'e' },
+                            flag_plus,
+                            flag_space,
+                        );
                     } else {
                         // Use %f with adjusted precision
                         let neg = val < 0.0;
@@ -531,7 +576,9 @@ unsafe fn format_scientific(
         return;
     }
     if val == f64::INFINITY {
-        if flag_plus { write_char(buf, out, size, b'+'); }
+        if flag_plus {
+            write_char(buf, out, size, b'+');
+        }
         write_str(buf, out, size, if conv == b'E' { b"INF" } else { b"inf" });
         return;
     }

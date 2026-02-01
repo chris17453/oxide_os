@@ -6,6 +6,7 @@ edition = "2024"
 [features]
 default = []
 debug-sched = []  # Enable scheduler debug output in sleep/wake paths
+debug-syscall-perf = []  # Log syscalls taking >50K cycles (~16us @ 3GHz)
 
 [dependencies]
 os_core = { path = "../../core/os_core" }

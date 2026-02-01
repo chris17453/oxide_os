@@ -51,7 +51,9 @@ static mut GET_PROC_NAME: Option<GetProcNameFn> = None;
 /// # Safety
 /// Must be called during single-threaded initialization
 pub unsafe fn set_pid_callback(f: GetPidFn) {
-    unsafe { GET_PID = Some(f); }
+    unsafe {
+        GET_PID = Some(f);
+    }
 }
 
 /// Set the uptime callback
@@ -59,7 +61,9 @@ pub unsafe fn set_pid_callback(f: GetPidFn) {
 /// # Safety
 /// Must be called during single-threaded initialization
 pub unsafe fn set_uptime_callback(f: GetUptimeMsFn) {
-    unsafe { GET_UPTIME_MS = Some(f); }
+    unsafe {
+        GET_UPTIME_MS = Some(f);
+    }
 }
 
 /// Set the process name callback
@@ -67,7 +71,9 @@ pub unsafe fn set_uptime_callback(f: GetUptimeMsFn) {
 /// # Safety
 /// Must be called during single-threaded initialization
 pub unsafe fn set_proc_name_callback(f: GetProcNameFn) {
-    unsafe { GET_PROC_NAME = Some(f); }
+    unsafe {
+        GET_PROC_NAME = Some(f);
+    }
 }
 
 fn current_pid() -> u32 {
@@ -251,7 +257,8 @@ impl KmsgDevice {
         // Detect structured vs raw format
         // Structured: <priority>,<tag>;<message>
         // Raw: anything else (auto-tagged with INFO and process name)
-        let (priority, tag, message) = if let Some(semi_pos) = input.iter().position(|&b| b == b';') {
+        let (priority, tag, message) = if let Some(semi_pos) = input.iter().position(|&b| b == b';')
+        {
             // Has semicolon — check if prefix is structured: N,tag
             let prefix = &input[..semi_pos];
             let msg = &input[semi_pos + 1..];
@@ -266,7 +273,11 @@ impl KmsgDevice {
                     // Not valid structured format, treat as raw
                     let mut name_buf = [0u8; 32];
                     let name_len = proc_name(pid, &mut name_buf);
-                    let tag = if name_len > 0 { &name_buf[..name_len] } else { b"unknown" as &[u8] };
+                    let tag = if name_len > 0 {
+                        &name_buf[..name_len]
+                    } else {
+                        b"unknown" as &[u8]
+                    };
                     // We need to store tag on stack — copy it
                     return self.write_raw_entry(pid, sec, frac, DEFAULT_PRIORITY, tag, input);
                 }
@@ -274,14 +285,22 @@ impl KmsgDevice {
                 // No comma before semicolon — raw
                 let mut name_buf = [0u8; 32];
                 let name_len = proc_name(pid, &mut name_buf);
-                let tag = if name_len > 0 { &name_buf[..name_len] } else { b"unknown" as &[u8] };
+                let tag = if name_len > 0 {
+                    &name_buf[..name_len]
+                } else {
+                    b"unknown" as &[u8]
+                };
                 return self.write_raw_entry(pid, sec, frac, DEFAULT_PRIORITY, tag, input);
             }
         } else {
             // No semicolon at all — raw write (e.g. stdout from a service)
             let mut name_buf = [0u8; 32];
             let name_len = proc_name(pid, &mut name_buf);
-            let tag = if name_len > 0 { &name_buf[..name_len] } else { b"unknown" as &[u8] };
+            let tag = if name_len > 0 {
+                &name_buf[..name_len]
+            } else {
+                b"unknown" as &[u8]
+            };
             return self.write_raw_entry(pid, sec, frac, DEFAULT_PRIORITY, tag, input);
         };
 
@@ -318,7 +337,15 @@ impl KmsgDevice {
         Ok(input.len() + if input.last() != Some(&b'\n') { 0 } else { 1 })
     }
 
-    fn write_raw_entry(&self, pid: u32, sec: u64, frac: u64, priority: u8, tag: &[u8], message: &[u8]) -> VfsResult<usize> {
+    fn write_raw_entry(
+        &self,
+        pid: u32,
+        sec: u64,
+        frac: u64,
+        priority: u8,
+        tag: &[u8],
+        message: &[u8],
+    ) -> VfsResult<usize> {
         let mut buf = [0u8; ENTRY_SIZE];
         let mut pos = 0;
 

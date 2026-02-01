@@ -137,11 +137,7 @@ impl Tty {
     /// on every iteration.
     pub fn try_read(&self, buf: &mut [u8]) -> usize {
         let mut ldisc = self.ldisc.lock();
-        if ldisc.can_read() {
-            ldisc.read(buf)
-        } else {
-            0
-        }
+        if ldisc.can_read() { ldisc.read(buf) } else { 0 }
     }
 
     /// Non-blocking check if a byte is a signal character
@@ -303,6 +299,15 @@ impl VnodeOps for Tty {
                 // Check if data is available
                 if ldisc.can_read() {
                     let count = ldisc.read(buf);
+
+                    #[cfg(feature = "debug-tty-read")]
+                    {
+                        use arch_x86_64::serial;
+                        use core::fmt::Write;
+                        let _ = write!(serial::SerialWriter, "[TTY-READ] Tty::read returning {} bytes (buf.len()={})\n",
+                            count, buf.len());
+                    }
+
                     return Ok(count);
                 }
             }
@@ -314,12 +319,12 @@ impl VnodeOps for Tty {
 
     fn write(&self, _offset: u64, buf: &[u8]) -> VfsResult<usize> {
         let ldisc = self.ldisc.lock();
-        let mut output = Vec::new();
 
-        // Process output through line discipline
-        for &c in buf {
-            output.extend(ldisc.process_output(c));
-        }
+        // Pre-allocate output buffer (worst case: 2x size for \n -> \r\n expansion)
+        let mut output = Vec::with_capacity(buf.len() * 2);
+
+        // Process output through line discipline (OPTIMIZED: single pass, single allocation)
+        ldisc.process_output_bulk(buf, &mut output);
 
         // Write to hardware
         self.driver.write(&output);

@@ -105,13 +105,11 @@ fn serial_print_num(msg: &str, num: i64) {
 
 /// Debug print helper (no-op in production)
 #[allow(dead_code)]
-fn debug_print(_msg: &str) {
-}
+fn debug_print(_msg: &str) {}
 
 /// Debug print with number (no-op in production)
 #[allow(dead_code)]
-fn debug_print_num(_msg: &str, _num: i64) {
-}
+fn debug_print_num(_msg: &str, _num: i64) {}
 
 /// Allocate a new socket file descriptor
 fn alloc_socket_fd(socket: Arc<Socket>) -> i64 {
@@ -828,12 +826,16 @@ pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
                     .unwrap_or_else(|| SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0));
                 if let Some(result) = handle_icmp_echo(&socket, data, src_addr) {
                     serial_print_num("send: handle_icmp_echo returned", result);
-                    unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+                    unsafe {
+                        core::arch::asm!("clac", options(nomem, nostack));
+                    }
                     return result;
                 }
                 serial_print("send: handle_icmp_echo returned None");
                 // If not an echo request, just pretend we sent it
-                unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+                unsafe {
+                    core::arch::asm!("clac", options(nomem, nostack));
+                }
                 return len as i64;
             }
         } else {
@@ -851,7 +853,9 @@ pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
             None => {
                 // Peer closed - remove from pairs and signal error
                 SOCKET_PAIRS.lock().remove(&fd);
-                unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+                unsafe {
+                    core::arch::asm!("clac", options(nomem, nostack));
+                }
                 return errno::EPIPE;
             }
         };
@@ -863,13 +867,17 @@ pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
             .load(core::sync::atomic::Ordering::SeqCst)
             || peer_state == SocketState::Closed
         {
-            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
             return errno::EPIPE;
         }
 
         // Add data to peer's receive buffer
         peer_socket.recv_buf.lock().extend_from_slice(data);
-        unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+        unsafe {
+            core::arch::asm!("clac", options(nomem, nostack));
+        }
         return len as i64;
     }
 
@@ -929,7 +937,9 @@ pub fn sys_recv(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
 
     // First check the unified loopback queue (for all loopback-delivered data)
     if let Some((read_len, _src_addr)) = receive_loopback_packet(&socket, data) {
-        unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+        unsafe {
+            core::arch::asm!("clac", options(nomem, nostack));
+        }
         return read_len as i64;
     }
 
@@ -940,7 +950,9 @@ pub fn sys_recv(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
             let to_read = len.min(recv_buf.len());
             data[..to_read].copy_from_slice(&recv_buf[..to_read]);
             recv_buf.drain(..to_read);
-            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
             return to_read as i64;
         }
     }
@@ -950,12 +962,16 @@ pub fn sys_recv(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
     if let Some(peer_fd) = peer_fd {
         let peer_socket = get_socket(peer_fd);
         if peer_socket.is_none() {
-            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
             return 0; // EOF - peer closed
         }
         let peer = peer_socket.unwrap();
         if peer.closed.load(core::sync::atomic::Ordering::SeqCst) {
-            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
             return 0; // EOF
         }
     }
@@ -985,7 +1001,9 @@ pub fn sys_sendto(fd: i32, buf: u64, len: usize, flags: i32, dest_addr: u64, add
         None => return errno::EBADF,
     };
 
-    unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
 
     let data = unsafe { core::slice::from_raw_parts(buf as *const u8, len) };
 
@@ -993,7 +1011,9 @@ pub fn sys_sendto(fd: i32, buf: u64, len: usize, flags: i32, dest_addr: u64, add
         match parse_sockaddr_in(dest_addr, addrlen) {
             Some(a) => a,
             None => {
-                unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+                unsafe {
+                    core::arch::asm!("clac", options(nomem, nostack));
+                }
                 return errno::EINVAL;
             }
         }
@@ -1002,7 +1022,9 @@ pub fn sys_sendto(fd: i32, buf: u64, len: usize, flags: i32, dest_addr: u64, add
         match socket.peer_addr() {
             Some(a) => a,
             None => {
-                unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+                unsafe {
+                    core::arch::asm!("clac", options(nomem, nostack));
+                }
                 return errno::ENOTCONN;
             }
         }
@@ -1013,7 +1035,9 @@ pub fn sys_sendto(fd: i32, buf: u64, len: usize, flags: i32, dest_addr: u64, add
     // Check if destination is loopback - use unified loopback system
     if is_loopback_addr(&dest) {
         let result = loopback_send(&socket, data, &dest);
-        unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+        unsafe {
+            core::arch::asm!("clac", options(nomem, nostack));
+        }
         return result;
     }
 
@@ -1022,7 +1046,9 @@ pub fn sys_sendto(fd: i32, buf: u64, len: usize, flags: i32, dest_addr: u64, add
         Ok(n) => n as i64,
         Err(e) => net_error_to_errno(e),
     };
-    unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
     result
 }
 
@@ -1046,7 +1072,9 @@ pub fn sys_recvfrom(fd: i32, buf: u64, len: usize, flags: i32, src_addr: u64, ad
         None => return errno::EBADF,
     };
 
-    unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
 
     let data = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len) };
 
@@ -1057,7 +1085,9 @@ pub fn sys_recvfrom(fd: i32, buf: u64, len: usize, flags: i32, src_addr: u64, ad
         if src_addr != 0 {
             write_sockaddr_in(src_addr, addrlen, &sender_addr);
         }
-        unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+        unsafe {
+            core::arch::asm!("clac", options(nomem, nostack));
+        }
         return read_len as i64;
     }
 
@@ -1073,13 +1103,17 @@ pub fn sys_recvfrom(fd: i32, buf: u64, len: usize, flags: i32, src_addr: u64, ad
                 let placeholder = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0);
                 write_sockaddr_in(src_addr, addrlen, &placeholder);
             }
-            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
             return to_read as i64;
         }
     }
 
     // No data available
-    unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
     errno::EAGAIN
 }
 

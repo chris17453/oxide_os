@@ -148,7 +148,9 @@ impl MemoryZone {
         self.base = base;
         self.size = size;
         let pages = size / FRAME_SIZE as u64;
-        self.stats.total_pages.store(pages, core::sync::atomic::Ordering::Relaxed);
+        self.stats
+            .total_pages
+            .store(pages, core::sync::atomic::Ordering::Relaxed);
     }
 
     /// Get the number of pages at a given order
@@ -262,4 +264,3 @@ bitflags::bitflags! {
         const DMA = 1 << 3;
     }
 }
-

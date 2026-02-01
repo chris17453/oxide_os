@@ -373,7 +373,8 @@ pub fn mouse_show() {
 ///
 /// Uses try_lock — called from ISR context.
 pub fn mouse_position() -> Option<(i32, i32)> {
-    MOUSE_CURSOR.try_lock()
+    MOUSE_CURSOR
+        .try_lock()
         .and_then(|guard| guard.as_ref().map(|c| c.position()))
 }
 
@@ -381,5 +382,7 @@ pub fn mouse_position() -> Option<(i32, i32)> {
 ///
 /// Uses try_lock — called from ISR context.
 pub fn mouse_initialized() -> bool {
-    MOUSE_CURSOR.try_lock().map_or(false, |guard| guard.is_some())
+    MOUSE_CURSOR
+        .try_lock()
+        .map_or(false, |guard| guard.is_some())
 }

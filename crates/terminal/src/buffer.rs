@@ -90,9 +90,7 @@ impl ScreenBuffer {
     /// Clear the entire buffer
     pub fn clear(&mut self) {
         let empty = Cell::new(' ', self.default_attrs);
-        for cell in self.cells.iter_mut() {
-            *cell = empty;
-        }
+        self.cells.fill(empty);
     }
 
     /// Clear a single row
@@ -101,9 +99,7 @@ impl ScreenBuffer {
             let empty = Cell::new(' ', self.default_attrs);
             let start = (row * self.cols) as usize;
             let end = start + self.cols as usize;
-            for cell in &mut self.cells[start..end] {
-                *cell = empty;
-            }
+            self.cells[start..end].fill(empty);
         }
     }
 
@@ -114,9 +110,7 @@ impl ScreenBuffer {
             let start = (row * self.cols + col) as usize;
             let end = ((row + 1) * self.cols) as usize;
             let len = self.cells.len();
-            for cell in &mut self.cells[start..end.min(len)] {
-                *cell = empty;
-            }
+            self.cells[start..end.min(len)].fill(empty);
         }
     }
 
@@ -127,9 +121,7 @@ impl ScreenBuffer {
             let start = (row * self.cols) as usize;
             let end = (row * self.cols + col + 1) as usize;
             let len = self.cells.len();
-            for cell in &mut self.cells[start..end.min(len)] {
-                *cell = empty;
-            }
+            self.cells[start..end.min(len)].fill(empty);
         }
     }
 
@@ -162,25 +154,23 @@ impl ScreenBuffer {
         }
 
         let n = n.min(bottom - top + 1);
+        let cols = self.cols as usize;
 
-        // Move lines up
-        for dst_row in top..(bottom - n + 1) {
-            let src_row = dst_row + n;
-            let dst_start = (dst_row * self.cols) as usize;
-            let src_start = (src_row * self.cols) as usize;
-            for col in 0..self.cols as usize {
-                self.cells[dst_start + col] = self.cells[src_start + col];
-            }
+        // Move lines up using copy_within (faster than cell-by-cell)
+        let src_start = ((top + n) * self.cols) as usize;
+        let dst_start = (top * self.cols) as usize;
+        let lines_to_move = (bottom - top - n + 1) as usize;
+        let cells_to_move = lines_to_move * cols;
+
+        if cells_to_move > 0 {
+            self.cells.copy_within(src_start..(src_start + cells_to_move), dst_start);
         }
 
-        // Clear bottom lines
+        // Clear bottom lines (batch fill)
         let empty = Cell::new(' ', self.default_attrs);
-        for row in (bottom - n + 1)..=bottom {
-            let start = (row * self.cols) as usize;
-            for col in 0..self.cols as usize {
-                self.cells[start + col] = empty;
-            }
-        }
+        let clear_start = ((bottom - n + 1) * self.cols) as usize;
+        let clear_end = ((bottom + 1) * self.cols) as usize;
+        self.cells[clear_start..clear_end].fill(empty);
     }
 
     /// Scroll down by n lines within a region
@@ -192,25 +182,23 @@ impl ScreenBuffer {
         }
 
         let n = n.min(bottom - top + 1);
+        let cols = self.cols as usize;
 
-        // Move lines down (from bottom to top)
-        for dst_row in ((top + n)..=bottom).rev() {
-            let src_row = dst_row - n;
-            let dst_start = (dst_row * self.cols) as usize;
-            let src_start = (src_row * self.cols) as usize;
-            for col in 0..self.cols as usize {
-                self.cells[dst_start + col] = self.cells[src_start + col];
-            }
+        // Move lines down using copy_within (faster than cell-by-cell)
+        let src_start = (top * self.cols) as usize;
+        let dst_start = ((top + n) * self.cols) as usize;
+        let lines_to_move = (bottom - top - n + 1) as usize;
+        let cells_to_move = lines_to_move * cols;
+
+        if cells_to_move > 0 {
+            self.cells.copy_within(src_start..(src_start + cells_to_move), dst_start);
         }
 
-        // Clear top lines
+        // Clear top lines (batch fill)
         let empty = Cell::new(' ', self.default_attrs);
-        for row in top..(top + n) {
-            let start = (row * self.cols) as usize;
-            for col in 0..self.cols as usize {
-                self.cells[start + col] = empty;
-            }
-        }
+        let clear_start = (top * self.cols) as usize;
+        let clear_end = ((top + n) * self.cols) as usize;
+        self.cells[clear_start..clear_end].fill(empty);
     }
 
     /// Get an entire row for scrollback
@@ -232,17 +220,19 @@ impl ScreenBuffer {
 
         let empty = Cell::new(' ', self.default_attrs);
         let start = (row * self.cols) as usize;
-        let n = n.min(self.cols - col);
+        let n = n.min(self.cols - col) as usize;
+        let col = col as usize;
 
-        // Shift right
-        for c in (col + n..self.cols).rev() {
-            self.cells[start + c as usize] = self.cells[start + (c - n) as usize];
+        // Shift right using copy_within
+        let src_start = start + col;
+        let src_end = start + (self.cols as usize) - n;
+        let dst_start = start + col + n;
+        if src_end > src_start {
+            self.cells.copy_within(src_start..src_end, dst_start);
         }
 
         // Clear inserted positions
-        for c in col..(col + n) {
-            self.cells[start + c as usize] = empty;
-        }
+        self.cells[start + col..start + col + n].fill(empty);
     }
 
     /// Delete characters at position, shifting left
@@ -253,17 +243,20 @@ impl ScreenBuffer {
 
         let empty = Cell::new(' ', self.default_attrs);
         let start = (row * self.cols) as usize;
-        let n = n.min(self.cols - col);
+        let n = n.min(self.cols - col) as usize;
+        let col = col as usize;
+        let cols = self.cols as usize;
 
-        // Shift left
-        for c in col..(self.cols - n) {
-            self.cells[start + c as usize] = self.cells[start + (c + n) as usize];
+        // Shift left using copy_within
+        let src_start = start + col + n;
+        let src_end = start + cols;
+        let dst_start = start + col;
+        if src_end > src_start {
+            self.cells.copy_within(src_start..src_end, dst_start);
         }
 
         // Clear end of line
-        for c in (self.cols - n)..self.cols {
-            self.cells[start + c as usize] = empty;
-        }
+        self.cells[start + cols - n..start + cols].fill(empty);
     }
 
     /// Erase characters at position (replace with spaces)
@@ -274,11 +267,10 @@ impl ScreenBuffer {
 
         let empty = Cell::new(' ', self.default_attrs);
         let start = (row * self.cols + col) as usize;
-        let n = n.min(self.cols - col);
+        let n = n.min(self.cols - col) as usize;
 
-        for i in 0..n as usize {
-            self.cells[start + i] = empty;
-        }
+        // Batch fill instead of loop
+        self.cells[start..start + n].fill(empty);
     }
 
     /// Insert lines at row, shifting down

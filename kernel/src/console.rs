@@ -8,12 +8,15 @@ use core::fmt::Write;
 ///
 /// Routes the escape sequence to both VT input and console device
 fn push_escape_sequence(seq: &[u8]) {
-    let mut w = serial::SerialWriter;
-    let _ = write!(w, "[ESCAPE] Pushing {} bytes to VT+console: ", seq.len());
-    for &byte in seq {
-        let _ = write!(w, "{:02x} ", byte);
+    #[cfg(feature = "debug-console")]
+    {
+        let mut w = serial::SerialWriter;
+        let _ = write!(w, "[ESCAPE] Pushing {} bytes to VT+console: ", seq.len());
+        for &byte in seq {
+            let _ = write!(w, "{:02x} ", byte);
+        }
+        let _ = write!(w, "\n");
     }
-    let _ = write!(w, "\n");
 
     if let Some(manager) = vt::get_manager() {
         for &byte in seq {
@@ -30,17 +33,76 @@ fn push_mouse_escape(seq: &[u8]) {
     push_escape_sequence(seq);
 }
 
+/// Strip ANSI/CSI escape sequences from output for cleaner serial debug logs
+#[cfg(feature = "debug-tty-read")]
+fn strip_ansi_escapes(data: &[u8]) -> alloc::vec::Vec<u8> {
+    extern crate alloc;
+    use alloc::vec::Vec;
+
+    let mut result = Vec::with_capacity(data.len());
+    let mut i = 0;
+
+    while i < data.len() {
+        if i + 1 < data.len() && data[i] == 0x1B {  // ESC
+            // Check for CSI sequence: ESC [
+            if data[i + 1] == b'[' {
+                // Skip until we find the end of CSI sequence (letter A-Z, a-z)
+                i += 2;
+                while i < data.len() {
+                    let c = data[i];
+                    i += 1;
+                    if (c >= b'A' && c <= b'Z') || (c >= b'a' && c <= b'z') {
+                        break;
+                    }
+                }
+                continue;
+            }
+            // Check for other escape sequences: ESC ?
+            else if data[i + 1] == b'?' {
+                // Skip ESC ? sequences
+                i += 2;
+                while i < data.len() {
+                    let c = data[i];
+                    i += 1;
+                    if c == b'h' || c == b'l' {
+                        break;
+                    }
+                }
+                continue;
+            }
+        }
+
+        result.push(data[i]);
+        i += 1;
+    }
+
+    result
+}
+
 /// Console write function for syscalls
 ///
 /// Writes to serial and terminal emulator (if initialized).
 pub fn console_write(data: &[u8]) {
-    // Write to serial for debugging
-    let mut writer = serial::SerialWriter;
-    for &byte in data {
-        let _ = writer.write_char(byte as char);
+    // Write to serial for debugging (filter escape sequences for clean debug output)
+    #[cfg(feature = "debug-tty-read")]
+    {
+        extern crate alloc;
+        use alloc::vec::Vec;
+        let filtered = strip_ansi_escapes(data);
+        let mut writer = serial::SerialWriter;
+        for &byte in &filtered {
+            let _ = writer.write_char(byte as char);
+        }
+    }
+    #[cfg(not(feature = "debug-tty-read"))]
+    {
+        let mut writer = serial::SerialWriter;
+        for &byte in data {
+            let _ = writer.write_char(byte as char);
+        }
     }
 
-    // Write to terminal emulator for ANSI-processed framebuffer output
+    // Write to terminal emulator for ANSI-processed framebuffer output (unfiltered - needs escapes!)
     if terminal::is_initialized() {
         terminal::write(data);
     } else if fb::is_initialized() {
@@ -58,6 +120,12 @@ pub fn terminal_tick() {
     // to the active VT device, so there's no need to push to both.
     while let Some(scancode) = arch::get_scancode() {
         if let Some(byte) = process_scancode(scancode) {
+            #[cfg(feature = "debug-input")]
+            {
+                let mut w = serial::SerialWriter;
+                let _ = write!(w, "[KBD-IRQ] scancode=0x{:02x} -> byte=0x{:02x} '{}'\n",
+                    scancode, byte, if byte.is_ascii_graphic() { byte as char } else { '.' });
+            }
             if let Some(manager) = vt::get_manager() {
                 manager.push_input(byte);
             }
@@ -123,8 +191,8 @@ pub fn terminal_tick() {
                             // Map button codes to terminal button numbers
                             let (btn, bit) = match event.code {
                                 0x110 => (0u8, 0x01u8), // BTN_LEFT
-                                0x112 => (1, 0x04),      // BTN_MIDDLE
-                                0x111 => (2, 0x02),      // BTN_RIGHT
+                                0x112 => (1, 0x04),     // BTN_MIDDLE
+                                0x111 => (2, 0x02),     // BTN_RIGHT
                                 _ => continue,
                             };
                             let pressed = event.value != 0;
@@ -139,7 +207,9 @@ pub fn terminal_tick() {
                             // Generate escape sequence for button press/release
                             if let Some((mx, my)) = fb::mouse_position() {
                                 let esc_btn = if pressed { btn } else { 3 }; // 3 = release
-                                if let Some(seq) = terminal::mouse_event(esc_btn, mx, my, pressed, false) {
+                                if let Some(seq) =
+                                    terminal::mouse_event(esc_btn, mx, my, pressed, false)
+                                {
                                     push_mouse_escape(&seq);
                                 }
                             }
@@ -158,10 +228,21 @@ pub fn terminal_tick() {
             if has_mouse_mode {
                 if let Some((mx, my)) = fb::mouse_position() {
                     let held_btn = unsafe {
-                        if MOUSE_BUTTONS & 0x01 != 0 { 0u8 }      // Left
-                        else if MOUSE_BUTTONS & 0x04 != 0 { 1 }    // Middle
-                        else if MOUSE_BUTTONS & 0x02 != 0 { 2 }    // Right
-                        else { 3 } // No button
+                        if MOUSE_BUTTONS & 0x01 != 0 {
+                            0u8
+                        }
+                        // Left
+                        else if MOUSE_BUTTONS & 0x04 != 0 {
+                            1
+                        }
+                        // Middle
+                        else if MOUSE_BUTTONS & 0x02 != 0 {
+                            2
+                        }
+                        // Right
+                        else {
+                            3
+                        } // No button
                     };
                     if let Some(seq) = terminal::mouse_event(held_btn, mx, my, true, true) {
                         push_mouse_escape(&seq);
@@ -239,13 +320,25 @@ pub fn console_write_bytes(data: &[u8]) {
         core::arch::asm!("stac", options(nomem, nostack));
     }
 
-    // Write to serial
-    let mut writer = serial::SerialWriter;
-    for &byte in data {
-        let _ = writer.write_char(byte as char);
+    // Write to serial (filter escape sequences for clean debug output)
+    #[cfg(feature = "debug-tty-read")]
+    {
+        extern crate alloc;
+        let filtered = strip_ansi_escapes(data);
+        let mut writer = serial::SerialWriter;
+        for &byte in &filtered {
+            let _ = writer.write_char(byte as char);
+        }
+    }
+    #[cfg(not(feature = "debug-tty-read"))]
+    {
+        let mut writer = serial::SerialWriter;
+        for &byte in data {
+            let _ = writer.write_char(byte as char);
+        }
     }
 
-    // Write to framebuffer console if available (legacy path)
+    // Write to framebuffer console if available (legacy path - unfiltered, needs escapes!)
     if fb::is_initialized() && !terminal::is_initialized() {
         for &byte in data {
             fb::putchar(byte as char);

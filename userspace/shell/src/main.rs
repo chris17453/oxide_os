@@ -84,7 +84,9 @@ fn load_prompt_template() {
     if let Some(prompt) = getenv("ESH_PROMPT") {
         let len = prompt.len().min(255);
         tpl_buf[..len].copy_from_slice(&prompt.as_bytes()[..len]);
-        unsafe { PROMPT_TEMPLATE_LEN = len; }
+        unsafe {
+            PROMPT_TEMPLATE_LEN = len;
+        }
         return;
     }
 
@@ -117,7 +119,9 @@ fn load_prompt_template() {
             if let Some(n) = load_file(path, &mut file_buf) {
                 let len = n.min(255);
                 tpl_buf[..len].copy_from_slice(&file_buf[..len]);
-                unsafe { PROMPT_TEMPLATE_LEN = len; }
+                unsafe {
+                    PROMPT_TEMPLATE_LEN = len;
+                }
                 return;
             }
         }
@@ -128,14 +132,18 @@ fn load_prompt_template() {
     if let Some(n) = load_file(GLOBAL_PROMPT_PATH, &mut file_buf) {
         let len = n.min(255);
         tpl_buf[..len].copy_from_slice(&file_buf[..len]);
-        unsafe { PROMPT_TEMPLATE_LEN = len; }
+        unsafe {
+            PROMPT_TEMPLATE_LEN = len;
+        }
         return;
     }
 
     // 4) Fallback
     let len = DEFAULT_PROMPT.len().min(255);
     tpl_buf[..len].copy_from_slice(&DEFAULT_PROMPT.as_bytes()[..len]);
-    unsafe { PROMPT_TEMPLATE_LEN = len; }
+    unsafe {
+        PROMPT_TEMPLATE_LEN = len;
+    }
 }
 
 /// Build a NUL-terminated prompt string.
@@ -408,11 +416,7 @@ const DT_DIR: u8 = 4;
 ///
 /// Called by readline when the user presses TAB. Returns a NULL-terminated
 /// array of matches (first element = longest common prefix), or NULL.
-unsafe extern "C" fn shell_completion(
-    text: *const u8,
-    start: i32,
-    _end: i32,
-) -> *mut *mut u8 {
+unsafe extern "C" fn shell_completion(text: *const u8, start: i32, _end: i32) -> *mut *mut u8 {
     // Suppress default filename completion — we handle it ourselves
     libc::readline::rl_attempted_completion_over = 1;
 
@@ -576,7 +580,6 @@ fn main() -> i32 {
 
     0
 }
-
 
 /// Get length of null-terminated byte string
 fn bytes_len(s: &[u8]) -> usize {
@@ -1059,7 +1062,7 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
     }
 
     let mut pids = [0i32; MAX_PIPES];
-    let mut pgid: i32 = 0;  // Process group for the pipeline
+    let mut pgid: i32 = 0; // Process group for the pipeline
 
     for i in 0..num_commands {
         let pid = fork();
@@ -1068,14 +1071,14 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
 
             // Put child in its own process group (first child becomes leader)
             if i == 0 {
-                setpgid(0, 0);  // Make this child the process group leader
+                setpgid(0, 0); // Make this child the process group leader
             } else {
-                setpgid(0, pids[0]);  // Join the first child's process group
+                setpgid(0, pids[0]); // Join the first child's process group
             }
 
             // Make this process group the foreground group (for signals like Ctrl+C)
             if !background {
-                tcsetpgrp(0, getpid());  // stdin is fd 0
+                tcsetpgrp(0, getpid()); // stdin is fd 0
             }
 
             // Setup input
@@ -1147,15 +1150,15 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
 
             // Parent: set up process group
             if i == 0 {
-                pgid = pid;  // First child is the process group leader
-                setpgid(pid, pid);  // Ensure it's in its own group
+                pgid = pid; // First child is the process group leader
+                setpgid(pid, pid); // Ensure it's in its own group
 
                 // Make this the foreground process group if not background
                 if !background {
                     tcsetpgrp(0, pgid);
                 }
             } else {
-                setpgid(pid, pgid);  // Join the process group
+                setpgid(pid, pgid); // Join the process group
             }
         } else {
             eprintlns("esh: fork failed");

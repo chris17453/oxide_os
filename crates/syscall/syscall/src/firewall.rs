@@ -252,12 +252,16 @@ pub fn sys_fw_list_rules(buf_ptr: VirtAddr, buf_len: usize) -> i64 {
         return rule_count() as i64;
     }
 
-    unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
 
     let buf = unsafe {
         let ptr = buf_ptr.as_mut_ptr::<FwRule>();
         if ptr.is_null() {
-            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
             return errno::EFAULT;
         }
         core::slice::from_raw_parts_mut(ptr, buf_len)
@@ -271,7 +275,9 @@ pub fn sys_fw_list_rules(buf_ptr: VirtAddr, buf_len: usize) -> i64 {
         count as i64
     });
 
-    unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
     result
 }
 

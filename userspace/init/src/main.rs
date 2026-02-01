@@ -210,8 +210,13 @@ fn mount_fstab() {
                 let prefix = b"/dev/disk/by-label/";
                 if prefix.len() + suffix.len() < device_path_buf.len() {
                     device_path_buf[..prefix.len()].copy_from_slice(prefix);
-                    device_path_buf[prefix.len()..prefix.len() + suffix.len()].copy_from_slice(suffix);
-                    unsafe { core::str::from_utf8_unchecked(&device_path_buf[..prefix.len() + suffix.len()]) }
+                    device_path_buf[prefix.len()..prefix.len() + suffix.len()]
+                        .copy_from_slice(suffix);
+                    unsafe {
+                        core::str::from_utf8_unchecked(
+                            &device_path_buf[..prefix.len() + suffix.len()],
+                        )
+                    }
                 } else {
                     device
                 }
@@ -239,7 +244,13 @@ fn mount_fstab() {
         }
         prints(")...");
 
-        let result = syscall::mount(device_resolved, mountpoint, fstype, flags, core::ptr::null());
+        let result = syscall::mount(
+            device_resolved,
+            mountpoint,
+            fstype,
+            flags,
+            core::ptr::null(),
+        );
 
         if result == 0 {
             printlns(" OK");

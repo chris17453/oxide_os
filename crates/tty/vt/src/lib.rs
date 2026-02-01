@@ -6,10 +6,10 @@
 
 extern crate alloc;
 
+use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use spin::Mutex;
-use alloc::collections::VecDeque;
 
 use tty::{Tty, TtyDriver};
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
@@ -22,7 +22,9 @@ fn dbg_serial(s: &str) {
             let mut status: u8;
             loop {
                 core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
-                if status & 0x20 != 0 { break; }
+                if status & 0x20 != 0 {
+                    break;
+                }
             }
             core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
         }
@@ -108,12 +110,30 @@ impl VtManager {
 
         VtManager {
             vts: [
-                Mutex::new(VtState::new(Tty::new(Arc::new(VtTtyDriver { vt_num: 0 }), 1, 0), 0)),
-                Mutex::new(VtState::new(Tty::new(Arc::new(VtTtyDriver { vt_num: 1 }), 2, 0), 1)),
-                Mutex::new(VtState::new(Tty::new(Arc::new(VtTtyDriver { vt_num: 2 }), 3, 0), 2)),
-                Mutex::new(VtState::new(Tty::new(Arc::new(VtTtyDriver { vt_num: 3 }), 4, 0), 3)),
-                Mutex::new(VtState::new(Tty::new(Arc::new(VtTtyDriver { vt_num: 4 }), 5, 0), 4)),
-                Mutex::new(VtState::new(Tty::new(Arc::new(VtTtyDriver { vt_num: 5 }), 6, 0), 5)),
+                Mutex::new(VtState::new(
+                    Tty::new(Arc::new(VtTtyDriver { vt_num: 0 }), 1, 0),
+                    0,
+                )),
+                Mutex::new(VtState::new(
+                    Tty::new(Arc::new(VtTtyDriver { vt_num: 1 }), 2, 0),
+                    1,
+                )),
+                Mutex::new(VtState::new(
+                    Tty::new(Arc::new(VtTtyDriver { vt_num: 2 }), 3, 0),
+                    2,
+                )),
+                Mutex::new(VtState::new(
+                    Tty::new(Arc::new(VtTtyDriver { vt_num: 3 }), 4, 0),
+                    3,
+                )),
+                Mutex::new(VtState::new(
+                    Tty::new(Arc::new(VtTtyDriver { vt_num: 4 }), 5, 0),
+                    4,
+                )),
+                Mutex::new(VtState::new(
+                    Tty::new(Arc::new(VtTtyDriver { vt_num: 5 }), 6, 0),
+                    5,
+                )),
             ],
         }
     }
@@ -327,6 +347,13 @@ pub fn get_manager() -> Option<Arc<VtManager>> {
     VT_MANAGER.lock().clone()
 }
 
+/// Push input to the active VT (called from keyboard interrupt handler)
+pub fn push_input_global(ch: u8) {
+    if let Some(manager) = VT_MANAGER.lock().as_ref() {
+        manager.push_input(ch);
+    }
+}
+
 /// Set the signal callback for VT signals
 ///
 /// # Safety
@@ -352,7 +379,11 @@ pub struct VtDevice {
 
 impl VtDevice {
     pub fn new(vt_num: usize, manager: Arc<VtManager>, ino: u64) -> Arc<Self> {
-        Arc::new(VtDevice { vt_num, manager, ino })
+        Arc::new(VtDevice {
+            vt_num,
+            manager,
+            ino,
+        })
     }
 }
 

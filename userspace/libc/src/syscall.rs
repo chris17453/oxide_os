@@ -1459,12 +1459,24 @@ pub fn sys_writev(fd: i32, iov: *const IoVec, iovcnt: i32) -> isize {
 
 /// pread - Read from fd at offset without changing position
 pub fn sys_pread(fd: i32, buf: *mut u8, count: usize, offset: i64) -> isize {
-    syscall4(nr::PREAD64, fd as usize, buf as usize, count, offset as usize) as isize
+    syscall4(
+        nr::PREAD64,
+        fd as usize,
+        buf as usize,
+        count,
+        offset as usize,
+    ) as isize
 }
 
 /// pwrite - Write to fd at offset without changing position
 pub fn sys_pwrite(fd: i32, buf: *const u8, count: usize, offset: i64) -> isize {
-    syscall4(nr::PWRITE64, fd as usize, buf as usize, count, offset as usize) as isize
+    syscall4(
+        nr::PWRITE64,
+        fd as usize,
+        buf as usize,
+        count,
+        offset as usize,
+    ) as isize
 }
 
 /// dup3 - Duplicate fd with flags
@@ -1500,7 +1512,12 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset: *mut i64, count: usize) -> 
 
 /// close_range - Close a range of file descriptors
 pub fn sys_close_range(first: u32, last: u32, flags: u32) -> i32 {
-    syscall3(nr::CLOSE_RANGE, first as usize, last as usize, flags as usize) as i32
+    syscall3(
+        nr::CLOSE_RANGE,
+        first as usize,
+        last as usize,
+        flags as usize,
+    ) as i32
 }
 
 // ============================================================================
@@ -1572,7 +1589,12 @@ pub fn sys_getresgid(rgid: *mut u32, egid: *mut u32, sgid: *mut u32) -> i32 {
 }
 
 /// prlimit - Get/set resource limits
-pub fn sys_prlimit(pid: i32, resource: i32, new_limit: *const Rlimit, old_limit: *mut Rlimit) -> i32 {
+pub fn sys_prlimit(
+    pid: i32,
+    resource: i32,
+    new_limit: *const Rlimit,
+    old_limit: *mut Rlimit,
+) -> i32 {
     syscall4(
         nr::PRLIMIT,
         pid as usize,
@@ -1588,8 +1610,19 @@ pub fn sys_madvise(addr: *mut u8, length: usize, advice: i32) -> i32 {
 }
 
 /// clock_nanosleep - sleep with specified clock
-pub fn sys_clock_nanosleep(clock_id: i32, flags: i32, req: *const Timespec, rem: *mut Timespec) -> i32 {
-    syscall4(nr::CLOCK_NANOSLEEP, clock_id as usize, flags as usize, req as usize, rem as usize) as i32
+pub fn sys_clock_nanosleep(
+    clock_id: i32,
+    flags: i32,
+    req: *const Timespec,
+    rem: *mut Timespec,
+) -> i32 {
+    syscall4(
+        nr::CLOCK_NANOSLEEP,
+        clock_id as usize,
+        flags as usize,
+        req as usize,
+        rem as usize,
+    ) as i32
 }
 
 /// sigaltstack - Set/get alternate signal stack
@@ -1599,12 +1632,24 @@ pub fn sys_sigaltstack(ss: *const u8, old_ss: *mut u8) -> i32 {
 
 /// preadv - Read from fd at offset into multiple buffers
 pub fn sys_preadv(fd: i32, iov: *const IoVec, iovcnt: i32, offset: i64) -> isize {
-    syscall4(nr::PREADV, fd as usize, iov as usize, iovcnt as usize, offset as usize) as isize
+    syscall4(
+        nr::PREADV,
+        fd as usize,
+        iov as usize,
+        iovcnt as usize,
+        offset as usize,
+    ) as isize
 }
 
 /// pwritev - Write to fd at offset from multiple buffers
 pub fn sys_pwritev(fd: i32, iov: *const IoVec, iovcnt: i32, offset: i64) -> isize {
-    syscall4(nr::PWRITEV, fd as usize, iov as usize, iovcnt as usize, offset as usize) as isize
+    syscall4(
+        nr::PWRITEV,
+        fd as usize,
+        iov as usize,
+        iovcnt as usize,
+        offset as usize,
+    ) as isize
 }
 
 /// fchdir - Change directory by file descriptor
@@ -1614,7 +1659,13 @@ pub fn sys_fchdir(fd: i32) -> i32 {
 
 /// waitid - Wait for child process state change
 pub fn sys_waitid(idtype: i32, id: i32, infop: *mut u8, options: i32) -> i32 {
-    syscall4(nr::WAITID, idtype as usize, id as usize, infop as usize, options as usize) as i32
+    syscall4(
+        nr::WAITID,
+        idtype as usize,
+        id as usize,
+        infop as usize,
+        options as usize,
+    ) as i32
 }
 
 /// sethostname - Set system hostname

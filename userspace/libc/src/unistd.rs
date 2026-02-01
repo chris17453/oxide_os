@@ -387,15 +387,15 @@ pub fn pathconf(_path: &str, name: i32) -> i64 {
 /// Get configurable file descriptor variable
 pub fn fpathconf(_fd: i32, name: i32) -> i64 {
     match name {
-        0 => 255,   // _PC_LINK_MAX
-        1 => 14,    // _PC_MAX_CANON
-        2 => 255,   // _PC_MAX_INPUT
-        3 => 255,   // _PC_NAME_MAX
-        4 => 4096,  // _PC_PATH_MAX
-        5 => 512,   // _PC_PIPE_BUF
-        6 => 1,     // _PC_CHOWN_RESTRICTED
-        7 => 1,     // _PC_NO_TRUNC
-        8 => 1,     // _PC_VDISABLE
+        0 => 255,  // _PC_LINK_MAX
+        1 => 14,   // _PC_MAX_CANON
+        2 => 255,  // _PC_MAX_INPUT
+        3 => 255,  // _PC_NAME_MAX
+        4 => 4096, // _PC_PATH_MAX
+        5 => 512,  // _PC_PIPE_BUF
+        6 => 1,    // _PC_CHOWN_RESTRICTED
+        7 => 1,    // _PC_NO_TRUNC
+        8 => 1,    // _PC_VDISABLE
         _ => -1,
     }
 }
@@ -403,17 +403,17 @@ pub fn fpathconf(_fd: i32, name: i32) -> i64 {
 /// Get system configuration value
 pub fn sysconf(name: i32) -> i64 {
     match name {
-        0 => 4096,   // _SC_ARG_MAX
-        1 => -1,     // _SC_CHILD_MAX (no limit)
-        2 => 100,    // _SC_CLK_TCK (timer frequency)
-        3 => 20,     // _SC_NGROUPS_MAX
-        4 => -1,     // _SC_OPEN_MAX
-        6 => 4096,   // _SC_PAGESIZE / _SC_PAGE_SIZE
-        8 => 1,      // _SC_VERSION (POSIX.1)
-        29 => 4096,  // _SC_PAGESIZE (alternate)
-        30 => 4096,  // _SC_PAGE_SIZE
-        58 => 1,     // _SC_NPROCESSORS_ONLN
-        84 => 1,     // _SC_NPROCESSORS_CONF
+        0 => 4096,  // _SC_ARG_MAX
+        1 => -1,    // _SC_CHILD_MAX (no limit)
+        2 => 100,   // _SC_CLK_TCK (timer frequency)
+        3 => 20,    // _SC_NGROUPS_MAX
+        4 => -1,    // _SC_OPEN_MAX
+        6 => 4096,  // _SC_PAGESIZE / _SC_PAGE_SIZE
+        8 => 1,     // _SC_VERSION (POSIX.1)
+        29 => 4096, // _SC_PAGESIZE (alternate)
+        30 => 4096, // _SC_PAGE_SIZE
+        58 => 1,    // _SC_NPROCESSORS_ONLN
+        84 => 1,    // _SC_NPROCESSORS_CONF
         _ => -1,
     }
 }
@@ -477,9 +477,7 @@ pub fn realpath(path: &str, resolved: &mut [u8]) -> i32 {
                     }
                     continue;
                 }
-                if buf[i + 1] == b'.'
-                    && (i + 2 >= pos || buf[i + 2] == b'/' || buf[i + 2] == 0)
-                {
+                if buf[i + 1] == b'.' && (i + 2 >= pos || buf[i + 2] == b'/' || buf[i + 2] == 0) {
                     // ".." - go up one directory
                     i += 2;
                     // Remove trailing slash

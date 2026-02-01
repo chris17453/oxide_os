@@ -23,8 +23,8 @@ use crate::debug_fork;
 use crate::globals::{
     CHILD_DONE, KERNEL_PML4, PARENT_CONTEXT, ParentContext, USER_EXIT_STATUS, USER_EXITED,
 };
-use mm_manager::mm;
 use crate::scheduler::{add_process, wake_parent};
+use mm_manager::mm;
 use sched::TaskContext;
 
 /// User exit function
@@ -104,7 +104,6 @@ pub fn kernel_fork() -> i64 {
         }
     };
 
-    
     // Get current process context from syscall user context
     let user_ctx = arch::get_user_context();
 
@@ -143,7 +142,6 @@ pub fn kernel_fork() -> i64 {
         parent_context.rsp
     );
 
-    
     // Kernel stack size (128KB)
     const KERNEL_STACK_SIZE: usize = 128 * 1024;
 
@@ -157,7 +155,7 @@ pub fn kernel_fork() -> i64 {
         KERNEL_STACK_SIZE,
     );
 
-        // Save parent's PML4 before releasing the lock - needed for PARENT_CONTEXT
+    // Save parent's PML4 before releasing the lock - needed for PARENT_CONTEXT
     let parent_pml4 = parent_meta.address_space.pml4_phys();
     drop(parent_meta); // Release lock before switching
 
@@ -238,23 +236,20 @@ pub fn kernel_fork() -> i64 {
                 child_meta_arc,
             );
 
-            
             // Add child to scheduler
             sched::add_task(child_task);
             sched::set_task_context(child_pid, child_task_ctx);
 
-            
             // Add child to parent's children list
             sched::add_task_child(parent_pid, child_pid);
 
-            
             // Tell scheduler we're switching to child
             sched::switch_to(child_pid);
 
-            
             // Get child's kernel stack top
             let child_kstack_virt = phys_to_virt(fork_result.kernel_stack_phys);
-            let child_kstack_top = child_kstack_virt.as_u64() + fork_result.kernel_stack_size as u64;
+            let child_kstack_top =
+                child_kstack_virt.as_u64() + fork_result.kernel_stack_size as u64;
 
             // Update kernel stack
             unsafe {
@@ -312,7 +307,6 @@ pub fn kernel_fork() -> i64 {
             });
             CHILD_DONE.store(false, Ordering::SeqCst);
 
-            
             unsafe {
                 *addr_of_mut!(FORK_CHILD_CTX) = child_ctx;
 
@@ -491,10 +485,11 @@ pub fn run_child_process(child_pid: Pid) {
         .unwrap_or(unsafe { KERNEL_PML4 });
 
     // Get child process info from scheduler
-    let (child_pml4, kernel_stack_phys, kernel_stack_size) = match sched::get_task_switch_info(child_pid) {
-        Some((_, pml4, kstack, kstack_size)) => (pml4, kstack, kstack_size),
-        None => return,
-    };
+    let (child_pml4, kernel_stack_phys, kernel_stack_size) =
+        match sched::get_task_switch_info(child_pid) {
+            Some((_, pml4, kstack, kstack_size)) => (pml4, kstack, kstack_size),
+            None => return,
+        };
 
     // Set current process to child
     sched::switch_to(child_pid);
@@ -916,13 +911,7 @@ pub fn kernel_exec(
     let kernel_pml4 = PhysAddr::new(unsafe { KERNEL_PML4 });
 
     // Call do_exec - returns ExecResult with new address space and context
-    match do_exec(
-        &elf_data,
-        &argv,
-        &envp,
-        mm(),
-        kernel_pml4,
-    ) {
+    match do_exec(&elf_data, &argv, &envp, mm(), kernel_pml4) {
         Ok(exec_result) => {
             // Get new address space PML4
             let new_pml4 = exec_result.address_space.pml4_phys();
@@ -985,51 +974,51 @@ pub fn kernel_exec(
                 // Use explicit registers to prevent compiler from reusing registers
                 // that we overwrite before their values are consumed
                 core::arch::asm!(
-                    // Set FS base MSR if fs_base is non-zero (TLS support)
-                    "test r15, r15",
-                    "jz 2f",
-                    "mov ecx, 0xC0000100",  // MSR IA32_FS_BASE
-                    "mov rax, r15",
-                    "mov rdx, r15",
-                    "shr rdx, 32",
-                    "wrmsr",
-                    "2:",
-                    // Set up rip for sysretq
-                    "mov rcx, r8",
-                    // Set up rflags for sysretq
-                    "mov r11, r9",
-                    // Set up user stack - do this AFTER loading values into rcx/r11
-                    // to avoid any chance of compiler putting inputs in rsp
-                    "mov rsp, r10",
-                    // Set up argc, argv, envp in registers per System V ABI
-                    // These are already loaded into r12, r13, r14 respectively
-                    "mov rdi, r12",
-                    "mov rsi, r13",
-                    "mov rdx, r14",
-                    // Load user data segment selectors for DS/ES (0x1B = USER_DS | 3)
-                    // NOTE: In x86-64 long mode, FS base comes from FS_BASE MSR, not segment descriptor.
-                    // We do NOT load FS at all - just leave it as-is after WRMSR set the base.
-                    // NOTE: Do NOT load GS - swapgs will handle it
-                    "mov ax, 0x1b",
-                    "mov ds, ax",
-                    "mov es, ax",
-                    // Do NOT touch FS - leave it alone after WRMSR
-                    // Clear rax for return value
-                    "xor rax, rax",
-                    // Swap GS back to user mode (required before sysretq)
-                    "swapgs",
-                    // Return to user mode
-                    "sysretq",
-                    in("r8") ctx.rip,
-                    in("r9") 0x202u64, // IF set
-                    in("r10") ctx.rsp,
-                    in("r12") ctx.rdi,
-                    in("r13") ctx.rsi,
-                    in("r14") ctx.rdx,
-                    in("r15") ctx.fs_base,
-                        options(noreturn)
-                    );
-                }
+                // Set FS base MSR if fs_base is non-zero (TLS support)
+                "test r15, r15",
+                "jz 2f",
+                "mov ecx, 0xC0000100",  // MSR IA32_FS_BASE
+                "mov rax, r15",
+                "mov rdx, r15",
+                "shr rdx, 32",
+                "wrmsr",
+                "2:",
+                // Set up rip for sysretq
+                "mov rcx, r8",
+                // Set up rflags for sysretq
+                "mov r11, r9",
+                // Set up user stack - do this AFTER loading values into rcx/r11
+                // to avoid any chance of compiler putting inputs in rsp
+                "mov rsp, r10",
+                // Set up argc, argv, envp in registers per System V ABI
+                // These are already loaded into r12, r13, r14 respectively
+                "mov rdi, r12",
+                "mov rsi, r13",
+                "mov rdx, r14",
+                // Load user data segment selectors for DS/ES (0x1B = USER_DS | 3)
+                // NOTE: In x86-64 long mode, FS base comes from FS_BASE MSR, not segment descriptor.
+                // We do NOT load FS at all - just leave it as-is after WRMSR set the base.
+                // NOTE: Do NOT load GS - swapgs will handle it
+                "mov ax, 0x1b",
+                "mov ds, ax",
+                "mov es, ax",
+                // Do NOT touch FS - leave it alone after WRMSR
+                // Clear rax for return value
+                "xor rax, rax",
+                // Swap GS back to user mode (required before sysretq)
+                "swapgs",
+                // Return to user mode
+                "sysretq",
+                in("r8") ctx.rip,
+                in("r9") 0x202u64, // IF set
+                in("r10") ctx.rsp,
+                in("r12") ctx.rdi,
+                in("r13") ctx.rsi,
+                in("r14") ctx.rdx,
+                in("r15") ctx.fs_base,
+                    options(noreturn)
+                );
+            }
             0 // Never reached
         }
         Err(e) => {

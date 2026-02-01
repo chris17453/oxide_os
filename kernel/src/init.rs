@@ -33,9 +33,9 @@ use vfs::{File, FileFlags, MountFlags, VnodeOps, mount::GLOBAL_VFS};
 use crate::console;
 use crate::fault;
 use crate::globals::{HEAP_ALLOCATOR, HEAP_SIZE, HEAP_STORAGE, KERNEL_PML4, MEMORY_MANAGER};
-use crate::process::get_current_task_fs_base;
 use crate::memory;
 use crate::mount::{kernel_mount, kernel_pivot_root, kernel_umount};
+use crate::process::get_current_task_fs_base;
 use crate::process::{kernel_exec, kernel_fork, kernel_wait, user_exit};
 use crate::scheduler;
 use crate::smp_init;
@@ -51,6 +51,14 @@ impl os_log::SerialWriter for OsLogSerialWriter {
 
 /// Static writer for os_log (needs to live for 'static lifetime)
 static mut OS_LOG_WRITER: OsLogSerialWriter = OsLogSerialWriter;
+
+/// Callback for terminal query responses (DSR, DA, etc.)
+/// Injects response bytes into VT TTY input so apps receive them
+fn terminal_response_callback(data: &[u8]) {
+    for &byte in data {
+        vt::push_input_global(byte);
+    }
+}
 
 /// Kernel entry point
 ///
@@ -80,7 +88,9 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
         let smap_supported = (ebx_out & (1 << 20)) != 0;
         if smap_supported {
-            serial::SerialWriter.write_str("[INIT] SMAP supported but DISABLED (needs fix - complex timing issue)\n");
+            serial::SerialWriter.write_str(
+                "[INIT] SMAP supported but DISABLED (needs fix - complex timing issue)\n",
+            );
             // TODO: Fix SMAP - there's a complex timing issue where AC gets cleared between
             // syscalls. The STAC/CLAC coverage is correct, but something else is clearing AC.
             // For now, disable SMAP to get the system working.
@@ -112,6 +122,47 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     let _ = writeln!(writer, "[INFO] Kernel started on x86_64");
     let _ = writeln!(writer, "[INFO] Serial output initialized");
+    let _ = writeln!(writer);
+    let _ = writeln!(writer, "[CONFIG] System Configuration:");
+    let _ = writeln!(writer, "[CONFIG]   OS Type:      OXIDE Operating System");
+    let _ = writeln!(writer, "[CONFIG]   Version:      0.1.0");
+    let _ = writeln!(writer, "[CONFIG]   Architecture: x86_64");
+    let _ = writeln!(writer, "[CONFIG]   Target:       x86_64-unknown-none");
+
+    #[cfg(debug_assertions)]
+    let _ = writeln!(writer, "[CONFIG]   Build:        debug (unoptimized)");
+    #[cfg(not(debug_assertions))]
+    let _ = writeln!(writer, "[CONFIG]   Build:        release (optimized)");
+
+    let _ = write!(writer, "[CONFIG]   Features:     ");
+    let mut first = true;
+
+    #[cfg(feature = "debug-syscall")]
+    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-syscall"); first = false; }
+    #[cfg(feature = "debug-fork")]
+    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-fork"); first = false; }
+    #[cfg(feature = "debug-cow")]
+    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-cow"); first = false; }
+    #[cfg(feature = "debug-proc")]
+    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-proc"); first = false; }
+    #[cfg(feature = "debug-sched")]
+    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-sched"); first = false; }
+    #[cfg(feature = "debug-mouse")]
+    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-mouse"); first = false; }
+    #[cfg(feature = "debug-input")]
+    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-input"); first = false; }
+    #[cfg(feature = "debug-lock")]
+    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-lock"); first = false; }
+    #[cfg(feature = "debug-console")]
+    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-console"); first = false; }
+
+    if first {
+        let _ = write!(writer, "none");
+    }
+    let _ = writeln!(writer);
+
+    let _ = writeln!(writer, "[CONFIG]   Compiler:     rustc (edition 2024)");
+    let _ = writeln!(writer);
 
     // Validate boot info
     if !boot_info.is_valid() {
@@ -173,7 +224,10 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(writer, "[INFO] Heap initialized: {} KB", HEAP_SIZE / 1024);
 
     // Initialize memory manager (buddy allocator - no 4GB cap!)
-    let _ = writeln!(writer, "[INFO] Initializing memory manager (buddy allocator)...");
+    let _ = writeln!(
+        writer,
+        "[INFO] Initializing memory manager (buddy allocator)..."
+    );
 
     // The buddy allocator writes FreeBlock headers into free pages during init.
     // We must exclude ALL bootloader-allocated structures from usable memory:
@@ -196,7 +250,9 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // This is conservative but safe - we'd rather lose some usable memory than
     // corrupt page tables or stack.
     let current_rsp: u64;
-    unsafe { core::arch::asm!("mov {}, rsp", out(reg) current_rsp); }
+    unsafe {
+        core::arch::asm!("mov {}, rsp", out(reg) current_rsp);
+    }
 
     let pml4_phys = boot_info.pml4_phys;
 
@@ -220,9 +276,16 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     let _ = writeln!(writer, "[INFO] Protected regions:");
     let _ = writeln!(writer, "[INFO]   Low memory: 0x0 - {:#x}", LOW_MEM_LIMIT);
-    let _ = writeln!(writer, "[INFO]   Kernel: {:#x} - {:#x}", kernel_start, kernel_end);
-    let _ = writeln!(writer, "[INFO]   UEFI (PML4+Stack): {:#x} - {:#x} (PML4={:#x}, RSP={:#x})",
-        uefi_region_start, uefi_region_end, pml4_phys, current_rsp);
+    let _ = writeln!(
+        writer,
+        "[INFO]   Kernel: {:#x} - {:#x}",
+        kernel_start, kernel_end
+    );
+    let _ = writeln!(
+        writer,
+        "[INFO]   UEFI (PML4+Stack): {:#x} - {:#x} (PML4={:#x}, RSP={:#x})",
+        uefi_region_start, uefi_region_end, pml4_phys, current_rsp
+    );
 
     // Helper to check if an address range overlaps with protected regions
     let is_protected = |addr: u64| -> bool {
@@ -283,16 +346,16 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
             let segment_len = current - segment_start;
             if segment_len > 0 {
-                regions.push((
-                    os_core::PhysAddr::new(segment_start),
-                    segment_len,
-                    true,
-                ));
+                regions.push((os_core::PhysAddr::new(segment_start), segment_len, true));
             }
         }
     }
 
-    let _ = writeln!(writer, "[INFO] Processed {} memory regions for buddy allocator", regions.len());
+    let _ = writeln!(
+        writer,
+        "[INFO] Processed {} memory regions for buddy allocator",
+        regions.len()
+    );
 
     // Initialize the global memory manager
     // SAFETY: This is called once during boot with valid memory regions
@@ -303,7 +366,10 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         mm_manager::init_global(&MEMORY_MANAGER);
     }
 
-    let _ = writeln!(writer, "[INFO] Memory manager initialized (buddy allocator)");
+    let _ = writeln!(
+        writer,
+        "[INFO] Memory manager initialized (buddy allocator)"
+    );
 
     let total_bytes = MEMORY_MANAGER.total_bytes();
     let free_bytes = MEMORY_MANAGER.free_bytes();
@@ -349,6 +415,12 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         // Initialize terminal emulator with framebuffer
         if let Some(framebuffer) = fb::framebuffer() {
             terminal::init(framebuffer);
+
+            // Register callback for terminal query responses (DSR, DA, etc.)
+            unsafe {
+                terminal::set_response_callback(terminal_response_callback);
+            }
+
             let _ = writeln!(writer, "[INFO] Terminal emulator initialized");
         }
 
@@ -486,6 +558,13 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     ps2::init();
     let _ = writeln!(writer, "[INFO] PS/2 drivers initialized (keyboard + mouse)");
 
+    // Connect keyboard IRQ 1 to PS/2 keyboard driver
+    debug_input!("[INPUT] Registering IRQ 1 callback for PS/2 keyboard");
+    unsafe {
+        arch::set_keyboard_callback(ps2::handle_keyboard_irq);
+    }
+    let _ = writeln!(writer, "[INFO] PS/2 keyboard IRQ callback registered");
+
     // Connect PS/2 keyboard input to console
     // Safety: Called during single-threaded initialization
     unsafe {
@@ -608,7 +687,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     // Initialize VT (virtual terminal) subsystem before mounting devfs
     let vt_manager = vt::init();
-    let _ = writeln!(writer, "[VFS] VT manager initialized ({} virtual terminals)", vt::NUM_VTS);
+    let _ = writeln!(
+        writer,
+        "[VFS] VT manager initialized ({} virtual terminals)",
+        vt::NUM_VTS
+    );
 
     // Register /dev/tty1 through /dev/tty6 in devfs
     // Wire /dev/console to tty1 (the primary VT)
@@ -626,7 +709,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         let _ = writeln!(writer, "[VFS] Failed to mount devfs: {:?}", e);
         arch::X86_64::halt();
     }
-    let _ = writeln!(writer, "[VFS] Mounted devfs at /dev with {} VT devices", vt::NUM_VTS);
+    let _ = writeln!(
+        writer,
+        "[VFS] Mounted devfs at /dev with {} VT devices",
+        vt::NUM_VTS
+    );
 
     // Set up serial write function for devfs (raw debug output)
     unsafe {
@@ -660,11 +747,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     // Set up signal callbacks for Ctrl+C handling
     unsafe {
-        devfs::set_signal_fg_callback(signal_foreground_pgrp);  // Console TTY (legacy)
-        pty::set_signal_pgrp_callback(signal_pgrp_callback);    // PTY devices
-        vt::set_signal_pgrp_callback(signal_pgrp_callback);     // VT devices
-        vt::set_console_write_callback(console::console_write);  // VT output
-        vt::set_yield_callback(vt_yield);                        // VT blocking yield
+        devfs::set_signal_fg_callback(signal_foreground_pgrp); // Console TTY (legacy)
+        pty::set_signal_pgrp_callback(signal_pgrp_callback); // PTY devices
+        vt::set_signal_pgrp_callback(signal_pgrp_callback); // VT devices
+        vt::set_console_write_callback(console::console_write); // VT output
+        vt::set_yield_callback(vt_yield); // VT blocking yield
     }
 
     // Create /proc directory
@@ -1181,7 +1268,10 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Check for TLS segment
     let has_tls = elf.tls_template().is_some();
     if has_tls {
-        let _ = writeln!(writer, "[USER] Init has TLS segment, will set up thread-local storage");
+        let _ = writeln!(
+            writer,
+            "[USER] Init has TLS segment, will set up thread-local storage"
+        );
     }
 
     // Create user address space
@@ -1224,7 +1314,8 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             let existing = user_space.translate(page_addr);
             if existing.is_none() {
                 // Allocate single page
-                if let Err(e) = user_space.allocate_pages(page_addr, 1, seg.flags, mm_manager::mm()) {
+                if let Err(e) = user_space.allocate_pages(page_addr, 1, seg.flags, mm_manager::mm())
+                {
                     let _ = writeln!(
                         writer,
                         "[USER] Failed to allocate page at {:#x}: {:?}",
@@ -1326,7 +1417,9 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         if let Err(e) = user_space.allocate_pages(
             tls_vaddr,
             pages_needed,
-            MemoryFlags::READ.union(MemoryFlags::WRITE).union(MemoryFlags::USER),
+            MemoryFlags::READ
+                .union(MemoryFlags::WRITE)
+                .union(MemoryFlags::USER),
             mm_manager::mm(),
         ) {
             let _ = writeln!(writer, "[USER] Failed to allocate TLS: {:?}", e);
@@ -1336,7 +1429,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         // Copy TLS initialization data
         let tls_data = elf.tls_data();
         if !tls_data.is_empty() {
-            let _ = writeln!(writer, "[USER] Copying TLS initialization data ({} bytes)...", tls_data.len());
+            let _ = writeln!(
+                writer,
+                "[USER] Copying TLS initialization data ({} bytes)...",
+                tls_data.len()
+            );
             // Write TLS data page by page
             let mut offset = 0usize;
             while offset < tls_data.len() {
@@ -1347,7 +1444,9 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                 let bytes_in_page = core::cmp::min(4096 - in_page_offset, bytes_remaining);
 
                 // Get physical address for this page
-                let phys = user_space.translate(page_vaddr).expect("TLS page not mapped");
+                let phys = user_space
+                    .translate(page_vaddr)
+                    .expect("TLS page not mapped");
                 let dest_virt = phys_to_virt(phys);
                 unsafe {
                     let dest = dest_virt.as_mut_ptr::<u8>().add(in_page_offset);
@@ -1368,15 +1467,22 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         // Write self-pointer to TCB (required by x86-64 TLS ABI)
         let tcb_page_vaddr = VirtAddr::new(tcb_addr & !0xFFF);
         let tcb_page_offset = (tcb_addr & 0xFFF) as usize;
-        let tcb_phys = user_space.translate(tcb_page_vaddr).expect("TCB page not mapped");
+        let tcb_phys = user_space
+            .translate(tcb_page_vaddr)
+            .expect("TCB page not mapped");
         let tcb_dest_virt = phys_to_virt(tcb_phys);
         unsafe {
             let tcb_dest = tcb_dest_virt.as_mut_ptr::<u8>().add(tcb_page_offset) as *mut u64;
             *tcb_dest = tcb_addr; // Self-pointer
         }
 
-        let _ = writeln!(writer, "[USER] TLS initialized: base={:#x}, size={}, TCB={:#x}",
-            tls_vaddr.as_u64(), tls_size, tcb_addr);
+        let _ = writeln!(
+            writer,
+            "[USER] TLS initialized: base={:#x}, size={}, TCB={:#x}",
+            tls_vaddr.as_u64(),
+            tls_size,
+            tcb_addr
+        );
 
         Some(tcb_addr)
     } else {

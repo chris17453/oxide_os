@@ -29,11 +29,11 @@ global_asm!(
     "    mov [rdi+24], r13",
     "    mov [rdi+32], r14",
     "    mov [rdi+40], r15",
-    "    lea rax, [rsp+8]",       // rsp after return
+    "    lea rax, [rsp+8]", // rsp after return
     "    mov [rdi+48], rax",
-    "    mov rax, [rsp]",         // return address
+    "    mov rax, [rsp]", // return address
     "    mov [rdi+56], rax",
-    "    xor eax, eax",           // return 0
+    "    xor eax, eax", // return 0
     "    ret",
     "",
     "longjmp:",
@@ -46,10 +46,10 @@ global_asm!(
     "    mov r14, [rdi+32]",
     "    mov r15, [rdi+40]",
     "    mov rsp, [rdi+48]",
-    "    mov eax, esi",           // return value (zero-extends to rax)
+    "    mov eax, esi", // return value (zero-extends to rax)
     "    test eax, eax",
     "    jnz 1f",
-    "    inc eax",                // if val==0, return 1
+    "    inc eax", // if val==0, return 1
     "1:",
-    "    jmp [rdi+56]",           // jump to saved rip
+    "    jmp [rdi+56]", // jump to saved rip
 );

@@ -164,8 +164,8 @@ pub mod string;
 pub mod syscall;
 pub mod unistd;
 
-pub mod syslog;
 pub mod readline;
+pub mod syslog;
 
 // Extended POSIX modules
 pub mod dirent;
@@ -181,12 +181,12 @@ pub mod time;
 pub mod wchar;
 
 // CPython support modules
-pub mod ctype;
-pub mod setjmp;
-pub mod filestream;
 pub mod c_exports;
-pub mod printf;
+pub mod ctype;
+pub mod filestream;
 pub mod math_exports;
+pub mod printf;
+pub mod setjmp;
 
 pub use errno::*;
 pub use fcntl::*;
@@ -208,20 +208,24 @@ pub use unistd::{
     _exit, close, dup, dup2, eputs, exec, execv, execve, exit, fork, getpid, getppid, open, open2,
     puts, read, wait, waitpid, write,
 };
-pub use unistd::{
-    access, ftruncate, gethostname, getlogin, getlogin_r, isatty, realpath, setpgrp, system,
-    truncate, ttyname, pathconf, fpathconf, sysconf,
-};
 pub use unistd::{F_OK, R_OK, W_OK, X_OK};
 pub use unistd::{SEEK_CUR, SEEK_END, SEEK_SET};
 pub use unistd::{
     WCONTINUED, WNOHANG, WUNTRACED, wexitstatus, wifexited, wifsignaled, wifstopped, wstopsig,
     wtermsig,
 };
-pub use unistd::{chdir, getcwd, getpgid, lseek, pipe, sched_yield, setpgid, setsid, tcgetpgrp, tcsetpgrp};
+pub use unistd::{
+    access, fpathconf, ftruncate, gethostname, getlogin, getlogin_r, isatty, pathconf, realpath,
+    setpgrp, sysconf, system, truncate, ttyname,
+};
+pub use unistd::{
+    chdir, getcwd, getpgid, lseek, pipe, sched_yield, setpgid, setsid, tcgetpgrp, tcsetpgrp,
+};
 
-pub use syslog::{openlog, syslog, closelog, setlogmask};
-pub use syslog::{LOG_EMERG, LOG_ALERT, LOG_CRIT, LOG_ERR, LOG_WARNING, LOG_NOTICE, LOG_INFO, LOG_DEBUG};
+pub use syslog::{
+    LOG_ALERT, LOG_CRIT, LOG_DEBUG, LOG_EMERG, LOG_ERR, LOG_INFO, LOG_NOTICE, LOG_WARNING,
+};
+pub use syslog::{closelog, openlog, setlogmask, syslog};
 
 // Stat functions
 pub use stat::{

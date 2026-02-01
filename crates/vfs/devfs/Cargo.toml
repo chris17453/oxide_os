@@ -8,6 +8,7 @@ description = "Device filesystem for OXIDE OS"
 [features]
 default = []
 debug-console = []  # Enable console I/O path tracing
+debug-tty-read = []  # Filter ANSI escapes from serial output
 
 [dependencies]
 vfs = { workspace = true }
@@ -16,4 +17,5 @@ spin = { workspace = true }
 terminal = { workspace = true }
 sched = { workspace = true }
 tty = { workspace = true }
+vt = { workspace = true }
 input = { workspace = true }

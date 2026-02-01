@@ -104,7 +104,8 @@ impl LineDiscipline {
         if self.literal_next {
             self.literal_next = false;
             // In literal mode, add character directly
-            if self.termios.c_lflag.contains(LocalFlags::ICANON) && self.edit_buf.len() < MAX_CANON {
+            if self.termios.c_lflag.contains(LocalFlags::ICANON) && self.edit_buf.len() < MAX_CANON
+            {
                 self.edit_buf.push(c);
                 if self.termios.c_lflag.contains(LocalFlags::ECHO) {
                     write_echo(&[c]);
@@ -155,7 +156,8 @@ impl LineDiscipline {
             // Handle newline
             if c == b'\n' {
                 if self.termios.c_lflag.contains(LocalFlags::ECHO)
-                    || self.termios.c_lflag.contains(LocalFlags::ECHONL) {
+                    || self.termios.c_lflag.contains(LocalFlags::ECHONL)
+                {
                     write_echo(b"\r\n");
                 }
                 self.edit_buf.push(b'\n');
@@ -167,7 +169,8 @@ impl LineDiscipline {
             // Handle erase — match both the configured VERASE character (default 0x7F/DEL)
             // and ASCII backspace (0x08/^H) since keyboards commonly send either.
             if (c == self.termios.c_cc[VERASE] && self.termios.c_cc[VERASE] != 0)
-                || c == 0x08 || c == 0x7F
+                || c == 0x08
+                || c == 0x7F
             {
                 if !self.edit_buf.is_empty() {
                     self.edit_buf.pop();
@@ -548,6 +551,14 @@ impl LineDiscipline {
         let vmin = self.termios.c_cc[VMIN] as usize;
         let _vtime = self.termios.c_cc[VTIME];
 
+        #[cfg(feature = "debug-tty-read")]
+        {
+            use arch_x86_64::serial;
+            use core::fmt::Write;
+            let _ = write!(serial::SerialWriter, "[TTY-READ] queue_len={}, vmin={}, can_read={}\n",
+                self.input_queue.len(), vmin, self.input_queue.len() >= vmin);
+        }
+
         // Simple implementation: return available data up to VMIN or buf.len()
         if self.input_queue.len() < vmin && vmin > 0 {
             return 0; // Not enough data yet
@@ -558,6 +569,14 @@ impl LineDiscipline {
             if let Some(c) = self.input_queue.pop_front() {
                 *byte = c;
             }
+        }
+
+        #[cfg(feature = "debug-tty-read")]
+        {
+            use arch_x86_64::serial;
+            use core::fmt::Write;
+            let _ = write!(serial::SerialWriter, "[TTY-READ] read_raw returning {} bytes (buf.len()={}, queue had {})\n",
+                count, buf.len(), count);
         }
 
         count
@@ -600,7 +619,7 @@ impl LineDiscipline {
         self.pending_signal.take()
     }
 
-    /// Process output (c_oflag transformations)
+    /// Process output (c_oflag transformations) - DEPRECATED, use process_output_bulk
     pub fn process_output(&self, c: u8) -> Vec<u8> {
         let mut output = Vec::new();
 
@@ -629,6 +648,43 @@ impl LineDiscipline {
         }
 
         output
+    }
+
+    /// Process output buffer in bulk (OPTIMIZED - single allocation)
+    pub fn process_output_bulk(&self, buf: &[u8], output: &mut Vec<u8>) {
+        // Fast path: no output processing
+        if !self.termios.c_oflag.contains(OutputFlags::OPOST) {
+            output.extend_from_slice(buf);
+            return;
+        }
+
+        let onlcr = self.termios.c_oflag.contains(OutputFlags::ONLCR);
+        let ocrnl = self.termios.c_oflag.contains(OutputFlags::OCRNL);
+        let onlret = self.termios.c_oflag.contains(OutputFlags::ONLRET);
+
+        // Reserve space (worst case: every char becomes 2 chars for \n -> \r\n)
+        output.reserve(buf.len() * 2);
+
+        for &c in buf {
+            match c {
+                b'\n' => {
+                    if onlcr {
+                        output.push(b'\r');
+                    }
+                    output.push(b'\n');
+                }
+                b'\r' => {
+                    if ocrnl {
+                        output.push(b'\n');
+                    } else if !onlret {
+                        output.push(b'\r');
+                    }
+                }
+                _ => {
+                    output.push(c);
+                }
+            }
+        }
     }
 }
 

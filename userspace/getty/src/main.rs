@@ -126,8 +126,14 @@ pub fn main() -> i32 {
 
         // Login exited - respawn after brief delay to avoid rapid flicker
         // Sleep for 1 second before respawning
-        let mut ts = TimeSpec { tv_sec: 1, tv_nsec: 0 };
-        let mut rem = TimeSpec { tv_sec: 0, tv_nsec: 0 };
+        let mut ts = TimeSpec {
+            tv_sec: 1,
+            tv_nsec: 0,
+        };
+        let mut rem = TimeSpec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
         unsafe {
             nanosleep(&ts as *const TimeSpec, &mut rem as *mut TimeSpec);
         }

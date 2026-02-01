@@ -9,10 +9,10 @@
 #![no_std]
 #![allow(unused)]
 
+pub mod demand;
 mod entry;
 mod mapper;
 mod table;
-pub mod demand;
 
 pub use entry::{PageTableEntry, PageTableFlags};
 #[cfg(not(target_arch = "x86_64"))]

@@ -128,8 +128,12 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
         // Use the memory manager to allocate and map pages
         let allocator = mm();
 
-        match m.address_space.allocate_pages(VirtAddr::new(map_addr), num_pages, mem_flags, allocator)
-        {
+        match m.address_space.allocate_pages(
+            VirtAddr::new(map_addr),
+            num_pages,
+            mem_flags,
+            allocator,
+        ) {
             Ok(()) => {}
             Err(_) => return errno::ENOMEM,
         }
@@ -148,7 +152,9 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
             }
         }
 
-        unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+        unsafe {
+            core::arch::asm!("stac", options(nomem, nostack));
+        }
 
         // Read file data into the mapped region
         let buffer =
@@ -163,13 +169,17 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
             }
             Err(_) => {
                 // Failed to read - unmap and return error
-                unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+                unsafe {
+                    core::arch::asm!("clac", options(nomem, nostack));
+                }
                 let _ = sys_munmap(map_addr, length);
                 return errno::EIO;
             }
         }
 
-        unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+        unsafe {
+            core::arch::asm!("clac", options(nomem, nostack));
+        }
 
         // Note: MAP_SHARED vs MAP_PRIVATE handling
         // For MAP_PRIVATE, we've already made a copy (COW not yet implemented)

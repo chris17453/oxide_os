@@ -12,7 +12,7 @@ pub mod account;
 
 // Re-export commonly used types from mm-core
 pub use mm_core::{
-    AllocFlags, AllocRequest, MemoryStats, MmError, MmResult, ZoneType, FRAME_SIZE, MAX_ORDER,
+    AllocFlags, AllocRequest, FRAME_SIZE, MAX_ORDER, MemoryStats, MmError, MmResult, ZoneType,
 };
 
 use account::AccountingContext;

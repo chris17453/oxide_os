@@ -146,13 +146,22 @@ impl LinkedListAllocator {
             // Check for corruption
             if self.total_size == 0 || self.total_size > 0x10000000 {
                 let _ = writeln!(writer, "[HEAP] CORRUPTION DETECTED!");
-                let _ = writeln!(writer, "[HEAP] self={:#x} size={} align={}",
-                    self as *mut _ as usize, size, align);
-                let _ = writeln!(writer, "[HEAP] total_size={} used_size={} head.size={}",
-                    self.total_size, self.used_size, self.head.size);
+                let _ = writeln!(
+                    writer,
+                    "[HEAP] self={:#x} size={} align={}",
+                    self as *mut _ as usize, size, align
+                );
+                let _ = writeln!(
+                    writer,
+                    "[HEAP] total_size={} used_size={} head.size={}",
+                    self.total_size, self.used_size, self.head.size
+                );
             } else {
-                let _ = writeln!(writer, "[HEAP] alloc size={} align={} used={} total={}",
-                    size, align, self.used_size, self.total_size);
+                let _ = writeln!(
+                    writer,
+                    "[HEAP] alloc size={} align={} used={} total={}",
+                    size, align, self.used_size, self.total_size
+                );
             }
         }
 
@@ -212,15 +221,25 @@ impl LinkedListAllocator {
             use core::fmt::Write;
             let mut writer = serial::SerialWriter;
             let _ = writeln!(writer, "[HEAP] ALLOC FAILED! size={} align={}", size, align);
-            let _ = writeln!(writer, "[HEAP] used={} total={} free={}",
-                self.used_size, self.total_size, self.total_size.saturating_sub(self.used_size));
+            let _ = writeln!(
+                writer,
+                "[HEAP] used={} total={} free={}",
+                self.used_size,
+                self.total_size,
+                self.total_size.saturating_sub(self.used_size)
+            );
             // Dump free list
             let mut count = 0;
             let mut curr = &self.head;
             while let Some(ref block) = curr.next {
                 if count < 10 {
-                    let _ = writeln!(writer, "[HEAP]   block {}: addr={:#x} size={}",
-                        count, block.start_addr(), block.size);
+                    let _ = writeln!(
+                        writer,
+                        "[HEAP]   block {}: addr={:#x} size={}",
+                        count,
+                        block.start_addr(),
+                        block.size
+                    );
                 }
                 count += 1;
                 curr = block;
