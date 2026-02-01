@@ -7,23 +7,27 @@ use crate::color::TermColor;
 bitflags::bitflags! {
     /// Cell attribute flags
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-    pub struct CellFlags: u8 {
+    pub struct CellFlags: u16 {
         /// Bold/bright text
-        const BOLD = 0x01;
+        const BOLD = 0x0001;
         /// Dim/faint text
-        const DIM = 0x02;
+        const DIM = 0x0002;
         /// Italic text
-        const ITALIC = 0x04;
+        const ITALIC = 0x0004;
         /// Underlined text
-        const UNDERLINE = 0x08;
+        const UNDERLINE = 0x0008;
         /// Blinking text
-        const BLINK = 0x10;
+        const BLINK = 0x0010;
         /// Reversed foreground/background
-        const REVERSE = 0x20;
+        const REVERSE = 0x0020;
         /// Hidden/invisible text
-        const HIDDEN = 0x40;
+        const HIDDEN = 0x0040;
         /// Strikethrough text
-        const STRIKETHROUGH = 0x80;
+        const STRIKETHROUGH = 0x0080;
+        /// Wide character (occupies 2 cells)
+        const WIDE = 0x0100;
+        /// Wide character continuation (second cell of wide char)
+        const WIDE_CONTINUATION = 0x0200;
     }
 }
 

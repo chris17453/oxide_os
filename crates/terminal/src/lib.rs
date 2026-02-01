@@ -45,6 +45,7 @@ pub mod color;
 pub mod handler;
 pub mod parser;
 pub mod renderer;
+pub mod wcwidth;
 
 use alloc::string::String;
 use alloc::sync::Arc;

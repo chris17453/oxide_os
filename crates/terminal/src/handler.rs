@@ -326,6 +326,14 @@ impl Handler {
 
     /// Put a character at cursor position
     pub fn put_char(&mut self, ch: char, buffer: &mut ScreenBuffer) {
+        // Check character width
+        let width = crate::wcwidth::wcwidth(ch);
+
+        // Skip control characters and combining marks
+        if width < 0 || width == 0 {
+            return;
+        }
+
         // Handle autowrap
         if self.cursor.col >= self.cols {
             if self.modes.contains(TerminalModes::AUTOWRAP) {
@@ -336,9 +344,20 @@ impl Handler {
             }
         }
 
+        // For wide characters, check if there's room for both cells
+        if width == 2 && self.cursor.col >= self.cols - 1 {
+            if self.modes.contains(TerminalModes::AUTOWRAP) {
+                self.cursor.col = 0;
+                self.linefeed(buffer, None);
+            } else {
+                // Can't fit wide char, skip it
+                return;
+            }
+        }
+
         // Insert mode: shift characters right
         if self.modes.contains(TerminalModes::INSERT_MODE) {
-            buffer.insert_chars(self.cursor.row, self.cursor.col, 1);
+            buffer.insert_chars(self.cursor.row, self.cursor.col, width as u32);
         }
 
         // Translate character through active charset (fast path for ASCII)
@@ -353,11 +372,26 @@ impl Handler {
             active_charset.translate(ch)
         };
 
-        // Set the character
-        buffer.set_char(self.cursor.row, self.cursor.col, translated_ch, self.attrs);
+        if width == 2 {
+            // Wide character: set attributes with WIDE flag
+            let mut wide_attrs = self.attrs;
+            wide_attrs.flags |= CellFlags::WIDE;
+            buffer.set_char(self.cursor.row, self.cursor.col, translated_ch, wide_attrs);
 
-        // Advance cursor
-        self.cursor.col += 1;
+            // Set continuation cell
+            let mut cont_attrs = self.attrs;
+            cont_attrs.flags |= CellFlags::WIDE_CONTINUATION;
+            buffer.set_char(self.cursor.row, self.cursor.col + 1, ' ', cont_attrs);
+
+            // Advance cursor by 2
+            self.cursor.col += 2;
+        } else {
+            // Normal width character
+            buffer.set_char(self.cursor.row, self.cursor.col, translated_ch, self.attrs);
+
+            // Advance cursor by 1
+            self.cursor.col += 1;
+        }
     }
 
     /// Carriage return
