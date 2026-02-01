@@ -211,38 +211,31 @@ impl VtManager {
         // No more try_lock() bullshit. Just atomic CAS magic.
         // If this returns false, buffer is genuinely full (256 chars ahead).
         // That's a you-typed-too-fast problem, not a kernel-dropped-your-input problem.
-        let tty = if let Some(vt) = self.vts[active].try_lock() {
+        if let Some(vt) = self.vts[active].try_lock() {
             // Still need lock to get TTY reference (cheap, just cloning an Arc)
             if !vt.input_buffer.push(ch) {
                 // Buffer full (256 chars). This is fine. User is mashing keyboard.
                 #[cfg(feature = "debug-console")]
                 dbg_serial("[VT] Ring buffer full (user typing faster than light)\n");
             }
-
-            // Clone TTY Arc for signal check (only for potential signal chars)
-            if ch == 0x03 || ch == 0x1C || ch == 0x1A {
-                Some(vt.tty.clone())
-            } else {
-                None
-            }
-        } else {
-            // Lock contended - ring buffer already has the byte, we're good
-            None
-        };
-
-        // Check for signal characters and dispatch immediately.
-        // This ensures signals reach processes even when nobody is calling read().
-        if let Some(tty) = tty {
-            if let Some((signal, pgid)) = tty.try_check_signal(ch) {
-                if pgid > 0 {
-                    unsafe {
-                        if let Some(callback) = SIGNAL_PGRP_CALLBACK {
-                            callback(pgid, signal.to_signo());
-                        }
-                    }
-                }
-            }
         }
+
+        // 🔥 NO IMMEDIATE SIGNAL DELIVERY (Priority #8 Fix) 🔥
+        //
+        // Before: Signal delivered TWICE:
+        // 1. Here in push_input() (IRQ context)
+        // 2. Later in read() when byte is processed (process context)
+        //
+        // After: Signal delivered ONCE in read() via tty.input()
+        //
+        // Why this is correct:
+        // - Signals should go through line discipline (ISIG flag check)
+        // - Delivery in process context, not IRQ
+        // - Byte gets consumed properly by line discipline
+        // - No double SIGINT on Ctrl+C
+        //
+        // The byte is safely in the ring buffer. When read() drains it,
+        // tty.input() will check for signals and deliver them properly.
     }
 
     /// Read from VT
