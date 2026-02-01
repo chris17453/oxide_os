@@ -7,6 +7,21 @@ use spin::Mutex;
 
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
+/// Write a string to COM1 serial port (debug-console only)
+#[cfg(feature = "debug-console")]
+fn dbg_serial(s: &str) {
+    for &b in s.as_bytes() {
+        unsafe {
+            let mut status: u8;
+            loop {
+                core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
+                if status & 0x20 != 0 { break; }
+            }
+            core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
+        }
+    }
+}
+
 // ============================================================================
 // Console → Active VT Delegation
 // ============================================================================
@@ -24,6 +39,8 @@ static CONSOLE_BACKEND: Mutex<Option<Arc<dyn VnodeOps>>> = Mutex::new(None);
 ///
 /// Called by the kernel during init to wire /dev/console to the active VT.
 pub fn set_console_backend(vnode: Arc<dyn VnodeOps>) {
+    #[cfg(feature = "debug-console")]
+    dbg_serial("[CON] set_console_backend() called\n");
     *CONSOLE_BACKEND.lock() = Some(vnode);
 }
 
@@ -251,17 +268,36 @@ impl VnodeOps for ConsoleDevice {
     }
 
     fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        #[cfg(feature = "debug-console")]
+        dbg_serial("[CON] read() enter\n");
         // Delegate to the active VT device
         match get_console_backend() {
-            Some(backend) => backend.read(offset, buf),
-            None => Err(VfsError::IoError),
+            Some(backend) => {
+                #[cfg(feature = "debug-console")]
+                dbg_serial("[CON] read() -> backend\n");
+                backend.read(offset, buf)
+            }
+            None => {
+                #[cfg(feature = "debug-console")]
+                dbg_serial("[CON] read() -> NO BACKEND\n");
+                Err(VfsError::IoError)
+            }
         }
     }
 
     fn write(&self, offset: u64, buf: &[u8]) -> VfsResult<usize> {
+        #[cfg(feature = "debug-console")]
+        dbg_serial("[CON] write() enter\n");
         // Delegate to the active VT device
         match get_console_backend() {
-            Some(backend) => backend.write(offset, buf),
+            Some(backend) => {
+                #[cfg(feature = "debug-console")]
+                dbg_serial("[CON] write() -> backend\n");
+                let r = backend.write(offset, buf);
+                #[cfg(feature = "debug-console")]
+                dbg_serial("[CON] write() <- backend done\n");
+                r
+            }
             None => {
                 // Fallback for early boot before VT is ready:
                 // write directly to serial + terminal

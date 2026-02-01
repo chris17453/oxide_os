@@ -118,6 +118,19 @@ macro_rules! debug_mouse_unsafe {
     };
 }
 
+/// Debug print for console I/O path tracing
+#[macro_export]
+macro_rules! debug_console {
+    ($($arg:tt)*) => {
+        #[cfg(feature = "debug-console")]
+        {
+            use core::fmt::Write;
+            let mut writer = $crate::serial_writer();
+            let _ = writeln!(writer, $($arg)*);
+        }
+    };
+}
+
 /// Warn about lock contention in ISR context
 ///
 /// Emits a serial warning when try_lock fails in an interrupt handler.

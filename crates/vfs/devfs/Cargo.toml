@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "Device filesystem for OXIDE OS"
 
+[features]
+default = []
+debug-console = []  # Enable console I/O path tracing
+
 [dependencies]
 vfs = { workspace = true }
 os_core = { workspace = true }

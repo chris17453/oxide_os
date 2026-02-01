@@ -13,7 +13,8 @@ debug-proc = []       # Enable process management debug output
 debug-sched = ["syscall/debug-sched"]  # Enable scheduler context switch debug output
 debug-mouse = []      # Enable mouse/input debug output (ISR-safe)
 debug-lock = ["terminal/debug-lock", "fb/debug-lock"]  # Enable lock contention warnings in ISR context
-debug-all = ["debug-syscall", "debug-fork", "debug-cow", "debug-proc", "debug-sched", "debug-mouse", "debug-lock"]
+debug-console = ["devfs/debug-console", "vt/debug-console"]  # Enable console→VT I/O path tracing
+debug-all = ["debug-syscall", "debug-fork", "debug-cow", "debug-proc", "debug-sched", "debug-mouse", "debug-lock", "debug-console"]
 
 [dependencies]
 os_core = { workspace = true }

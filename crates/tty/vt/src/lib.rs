@@ -14,6 +14,21 @@ use alloc::collections::VecDeque;
 use tty::{Tty, TtyDriver};
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
+/// Write a string to COM1 serial port (debug-console only)
+#[cfg(feature = "debug-console")]
+fn dbg_serial(s: &str) {
+    for &b in s.as_bytes() {
+        unsafe {
+            let mut status: u8;
+            loop {
+                core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
+                if status & 0x20 != 0 { break; }
+            }
+            core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
+        }
+    }
+}
+
 /// Yield callback type — called to yield CPU while waiting for input.
 /// Must enable kernel preemption and halt until next interrupt.
 pub type YieldFn = fn();
@@ -73,13 +88,20 @@ impl VtManager {
         impl TtyDriver for VtTtyDriver {
             fn write(&self, data: &[u8]) {
                 // Only write if this is the active VT (check global directly)
-                if *ACTIVE_VT.read() == self.vt_num {
+                let active = *ACTIVE_VT.read();
+                if active == self.vt_num {
                     // Write to console output (terminal emulator + serial)
                     unsafe {
                         if let Some(write_fn) = CONSOLE_WRITE_CALLBACK {
                             write_fn(data);
+                        } else {
+                            #[cfg(feature = "debug-console")]
+                            dbg_serial("[VT] driver.write(): NO CALLBACK!\n");
                         }
                     }
+                } else {
+                    #[cfg(feature = "debug-console")]
+                    dbg_serial("[VT] driver.write(): not active VT, dropped\n");
                 }
             }
         }
@@ -175,12 +197,17 @@ impl VtManager {
     /// input arriving after we enter the wait would be stranded in input_buffer
     /// and never reach the line discipline.
     pub fn read(&self, vt_num: usize, buf: &mut [u8]) -> VfsResult<usize> {
+        #[cfg(feature = "debug-console")]
+        dbg_serial("[VT] read() enter\n");
         if vt_num >= NUM_VTS {
             return Err(VfsError::InvalidArgument);
         }
 
         // Clone the TTY Arc once (avoids holding VT lock across the loop)
         let tty = self.vts[vt_num].lock().tty.clone();
+
+        #[cfg(feature = "debug-console")]
+        let mut vt_read_loops: u32 = 0;
 
         loop {
             // Drain any buffered input from interrupt context into line discipline.
@@ -189,6 +216,11 @@ impl VtManager {
                 let mut vt = self.vts[vt_num].lock();
                 core::mem::take(&mut vt.input_buffer)
             };
+
+            #[cfg(feature = "debug-console")]
+            if !buffered_input.is_empty() {
+                dbg_serial("[VT] read() got input bytes\n");
+            }
 
             // Process buffered characters through the TTY (echo, signals, line editing)
             for ch in buffered_input {
@@ -207,7 +239,17 @@ impl VtManager {
             // Check if line discipline now has a complete result to return
             let n = tty.try_read(buf);
             if n > 0 {
+                #[cfg(feature = "debug-console")]
+                dbg_serial("[VT] read() returning data\n");
                 return Ok(n);
+            }
+
+            #[cfg(feature = "debug-console")]
+            {
+                vt_read_loops += 1;
+                if vt_read_loops == 1 {
+                    dbg_serial("[VT] read() yielding (waiting for input)\n");
+                }
             }
 
             // No data ready yet - yield CPU with preemption enabled so the
@@ -227,6 +269,8 @@ impl VtManager {
 
     /// Write to VT
     pub fn write(&self, vt_num: usize, buf: &[u8]) -> VfsResult<usize> {
+        #[cfg(feature = "debug-console")]
+        dbg_serial("[VT] write() enter\n");
         if vt_num >= NUM_VTS {
             return Err(VfsError::InvalidArgument);
         }
@@ -236,7 +280,12 @@ impl VtManager {
             let vt = self.vts[vt_num].lock();
             vt.tty.clone()
         };
-        Ok(tty.write(0, buf)?)
+        #[cfg(feature = "debug-console")]
+        dbg_serial("[VT] write() -> tty.write()\n");
+        let r = tty.write(0, buf)?;
+        #[cfg(feature = "debug-console")]
+        dbg_serial("[VT] write() done\n");
+        Ok(r)
     }
 
     /// Get TTY for ioctl operations

@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "Virtual terminal (VT) support for OXIDE OS"
 
+[features]
+default = []
+debug-console = []  # Enable VT read/write path tracing
+
 [dependencies]
 vfs = { workspace = true }
 tty = { workspace = true }
