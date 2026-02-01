@@ -61,7 +61,7 @@ int dup2(int oldfd, int newfd);
 int pipe(int pipefd[2]);
 int pipe2(int pipefd[2], int flags);
 int dup3(int oldfd, int newfd, int flags);
-int access(int fd, int mode);
+int access(const char *path, int mode);
 int faccessat(int dirfd, const char *path, int mode, int flags);
 int fchmodat(int dirfd, const char *path, mode_t mode, int flags);
 int fchownat(int dirfd, const char *path, uid_t owner, gid_t group, int flags);

@@ -6689,12 +6689,75 @@ pub unsafe extern "C" fn tgoto(_cap: *const u8, _col: i32, _row: i32) -> *mut u8
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tputs(_str: *const u8, _affcnt: i32, _putc: *const u8) -> i32 {
+pub unsafe extern "C" fn tputs(_str: *const u8, _affcnt: i32, _putc_fn: *const u8) -> i32 {
     0
 }
 
-// putc/fputc wrappers
+// putc wrapper - temporarily disabled due to symbol conflict
+// Users should use putc_unlocked or fputc instead
+// #[unsafe(no_mangle)]
+// pub unsafe extern "C" fn putc(c: i32, stream: *mut u8) -> i32 {
+//     putc_unlocked(c, stream)
+// }
+
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn putc(c: i32, stream: *mut u8) -> i32 {
-    putc_unlocked(c, stream)
+pub unsafe extern "C" fn strcoll(s1: *const u8, s2: *const u8) -> i32 {
+    // Simple implementation - just use strcmp for now (no locale support)
+    strcmp(s1, s2)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn strcat(dest: *mut u8, src: *const u8) -> *mut u8 {
+    let dest_len = strlen(dest as *const u8);
+    strcpy(dest.add(dest_len), src);
+    dest
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn strncat(dest: *mut u8, src: *const u8, n: usize) -> *mut u8 {
+    let dest_len = strlen(dest as *const u8);
+    let mut i = 0;
+    while i < n && *src.add(i) != 0 {
+        *dest.add(dest_len + i) = *src.add(i);
+        i += 1;
+    }
+    *dest.add(dest_len + i) = 0;
+    dest
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn strtok(str: *mut u8, delim: *const u8) -> *mut u8 {
+    static mut LAST: *mut u8 = core::ptr::null_mut();
+    
+    let mut s = if str.is_null() { LAST } else { str };
+    
+    if s.is_null() {
+        return core::ptr::null_mut();
+    }
+    
+    // Skip leading delimiters
+    while *s != 0 && strchr(delim, *s as i32) != core::ptr::null() {
+        s = s.add(1);
+    }
+    
+    if *s == 0 {
+        LAST = core::ptr::null_mut();
+        return core::ptr::null_mut();
+    }
+    
+    let token = s;
+    
+    // Find end of token
+    while *s != 0 && strchr(delim, *s as i32) == core::ptr::null() {
+        s = s.add(1);
+    }
+    
+    if *s != 0 {
+        *s = 0;
+        LAST = s.add(1);
+    } else {
+        LAST = core::ptr::null_mut();
+    }
+    
+    token
 }

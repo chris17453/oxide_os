@@ -46,3 +46,5 @@ int strerror_r(int errnum, char *buf, size_t buflen);
 char *strndup(const char *s, size_t n);
 
 #endif /* _STRING_H */
+
+int strcoll(const char *s1, const char *s2);

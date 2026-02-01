@@ -111,3 +111,4 @@ ssize_t getdelim(char **lineptr, size_t *n, int delim, FILE *stream);
 #define FOPEN_MAX    16
 
 #endif /* _STDIO_H */
+int putc(int c, FILE *stream);
