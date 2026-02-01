@@ -126,6 +126,8 @@ pub struct TerminalEmulator {
     custom_bg: Option<Color>,
     /// Custom cursor color (None = use standard)
     custom_cursor: Option<Color>,
+    /// Clipboard storage (OSC 52)
+    clipboard: String,
 }
 
 impl TerminalEmulator {
@@ -160,6 +162,7 @@ impl TerminalEmulator {
             custom_fg: None,
             custom_bg: None,
             custom_cursor: None,
+            clipboard: String::new(),
         }
     }
 
@@ -368,6 +371,85 @@ impl TerminalEmulator {
         }
     }
 
+    /// Base64 decode (simple implementation for clipboard)
+    fn base64_decode(input: &str) -> Option<Vec<u8>> {
+        const TABLE: &[u8; 128] = &[
+            255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,  62, 255, 255, 255,  63,
+             52,  53,  54,  55,  56,  57,  58,  59,  60,  61, 255, 255, 255, 254, 255, 255,
+            255,   0,   1,   2,   3,   4,   5,   6,   7,   8,   9,  10,  11,  12,  13,  14,
+             15,  16,  17,  18,  19,  20,  21,  22,  23,  24,  25, 255, 255, 255, 255, 255,
+            255,  26,  27,  28,  29,  30,  31,  32,  33,  34,  35,  36,  37,  38,  39,  40,
+             41,  42,  43,  44,  45,  46,  47,  48,  49,  50,  51, 255, 255, 255, 255, 255,
+        ];
+
+        let mut result = Vec::new();
+        let bytes = input.as_bytes();
+        let mut i = 0;
+
+        while i < bytes.len() {
+            let mut buf = [0u8; 4];
+            let mut j = 0;
+
+            while j < 4 && i < bytes.len() {
+                let b = bytes[i];
+                if b == b'=' || b > 127 {
+                    break;
+                }
+                let val = TABLE[b as usize];
+                if val == 255 {
+                    i += 1;
+                    continue;
+                }
+                buf[j] = val;
+                j += 1;
+                i += 1;
+            }
+
+            if j >= 2 {
+                result.push((buf[0] << 2) | (buf[1] >> 4));
+            }
+            if j >= 3 {
+                result.push((buf[1] << 4) | (buf[2] >> 2));
+            }
+            if j >= 4 {
+                result.push((buf[2] << 6) | buf[3]);
+            }
+        }
+
+        Some(result)
+    }
+
+    /// Base64 encode (simple implementation for clipboard)
+    fn base64_encode(input: &[u8]) -> String {
+        const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut result = String::new();
+
+        for chunk in input.chunks(3) {
+            let b0 = chunk[0];
+            let b1 = chunk.get(1).copied().unwrap_or(0);
+            let b2 = chunk.get(2).copied().unwrap_or(0);
+
+            result.push(TABLE[(b0 >> 2) as usize] as char);
+            result.push(TABLE[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize] as char);
+
+            if chunk.len() > 1 {
+                result.push(TABLE[(((b1 & 0x0F) << 2) | (b2 >> 6)) as usize] as char);
+            } else {
+                result.push('=');
+            }
+
+            if chunk.len() > 2 {
+                result.push(TABLE[(b2 & 0x3F) as usize] as char);
+            } else {
+                result.push('=');
+            }
+        }
+
+        result
+    }
+
     /// Parse color specification from OSC sequence
     /// Supports formats: rgb:RRRR/GGGG/BBBB, #RRGGBB, #RGB
     fn parse_osc_color(color_str: &str) -> Option<Color> {
@@ -476,14 +558,26 @@ impl TerminalEmulator {
                     }
                 }
 
-                // OSC 52 ; clipboard - Clipboard operations (security sensitive)
-                // TODO: Implement with proper security model
+                // OSC 52 ; selection ; data - Clipboard operations
+                // Format: OSC 52 ; c ; base64data (c=clipboard, p=primary, s=select)
+                // Query: OSC 52 ; c ; ? (responds with current clipboard)
                 52 => {
-                    #[cfg(feature = "debug-terminal")]
-                    {
-                        use arch_x86_64::serial;
-                        use core::fmt::Write;
-                        let _ = write!(serial::SerialWriter, "[TERM-OSC] Clipboard request (not implemented): {}\n", params);
+                    let mut parts = params.splitn(2, ';');
+                    let _selection = parts.next().unwrap_or("c"); // c=clipboard, p=primary, s=select
+                    if let Some(data) = parts.next() {
+                        if data.trim() == "?" {
+                            // Query clipboard - send response
+                            let encoded = Self::base64_encode(self.clipboard.as_bytes());
+                            let response = alloc::format!("\x1b]52;c;{}\x07", encoded);
+                            crate::send_response(response.as_bytes());
+                        } else {
+                            // Set clipboard
+                            if let Some(decoded) = Self::base64_decode(data.trim()) {
+                                if let Ok(text) = core::str::from_utf8(&decoded) {
+                                    self.clipboard = String::from(text);
+                                }
+                            }
+                        }
                     }
                 }
 
