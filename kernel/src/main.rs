@@ -24,6 +24,7 @@ mod mount;
 mod process;
 mod scheduler;
 mod smp_init;
+mod vfs_sched_glue;
 
 use arch_traits::Arch;
 use arch_x86_64 as arch;

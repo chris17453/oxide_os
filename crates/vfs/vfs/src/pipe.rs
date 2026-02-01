@@ -1,6 +1,19 @@
 //! Pipe implementation
 //!
 //! Provides anonymous pipe support for inter-process communication.
+//!
+//! ## 🔥 NOW WITH ACTUAL BLOCKING (Not Just EAGAIN) 🔥
+//!
+//! Previous version returned `VfsError::WouldBlock` (EAGAIN) and hoped the syscall
+//! layer would deal with it. Narrator: *it didn't*.
+//!
+//! Result: `cat file | grep pattern` got EAGAIN spam instead of blocking.
+//!
+//! Now uses **proper wait queues** like a real OS:
+//! - Read on empty pipe → add to read_queue → `TASK_INTERRUPTIBLE` sleep
+//! - Write arrives → wake all readers → they drain the data
+//! - Write on full pipe → add to write_queue → sleep
+//! - Read happens → wake all writers → they write more data
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -9,6 +22,20 @@ use spin::Mutex;
 
 use crate::error::{VfsError, VfsResult};
 use crate::vnode::{DirEntry, Mode, Stat, VnodeOps, VnodeType};
+
+// External scheduler functions (linked from kernel)
+// These are provided by the sched crate but we can't depend on it directly
+// due to circular dependencies (vfs → sched → proc → vfs)
+unsafe extern "Rust" {
+    /// Block the current task in TASK_INTERRUPTIBLE state
+    fn sched_block_interruptible();
+
+    /// Wake up a task by PID
+    fn sched_wake_up(pid: u32);
+
+    /// Get the current task's PID
+    fn sched_current_pid() -> Option<u32>;
+}
 
 /// Pipe buffer size (64KB)
 const PIPE_BUF_SIZE: usize = 65536;
@@ -27,6 +54,10 @@ struct PipeBuffer {
     readers: AtomicUsize,
     /// Number of writers
     writers: AtomicUsize,
+    /// PIDs of processes waiting to read (buffer empty)
+    read_waiters: Vec<u32>,
+    /// PIDs of processes waiting to write (buffer full)
+    write_waiters: Vec<u32>,
 }
 
 impl PipeBuffer {
@@ -40,6 +71,8 @@ impl PipeBuffer {
             count: 0,
             readers: AtomicUsize::new(1),
             writers: AtomicUsize::new(1),
+            read_waiters: Vec::new(),
+            write_waiters: Vec::new(),
         }
     }
 
@@ -102,8 +135,20 @@ impl PipeRead {
 
 impl Drop for PipeRead {
     fn drop(&mut self) {
-        let buf = self.buffer.lock();
-        buf.readers.fetch_sub(1, Ordering::Release);
+        let write_waiters = {
+            let mut buf = self.buffer.lock();
+            buf.readers.fetch_sub(1, Ordering::Release);
+
+            // Wake waiting writers - pipe is now broken (no readers)
+            // They'll get EPIPE when they retry
+            let waiters = buf.write_waiters.clone();
+            buf.write_waiters.clear();
+            waiters
+        };
+
+        for pid in write_waiters {
+            unsafe { sched_wake_up(pid); }
+        }
     }
 }
 
@@ -121,21 +166,68 @@ impl VnodeOps for PipeRead {
     }
 
     fn read(&self, _offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
-        let mut buffer = self.buffer.lock();
+        // 🔥 NOW WITH ACTUAL BLOCKING (Not Just EAGAIN) 🔥
+        // Loop until we get data or reach EOF
+        loop {
+            // Try to read with lock held (keep critical section small)
+            let (n, has_writers, write_waiters) = {
+                let mut buffer = self.buffer.lock();
 
-        // If buffer is empty and no writers, return EOF
-        if buffer.count == 0 && !buffer.has_writers() {
-            return Ok(0);
-        }
+                // EOF condition: buffer empty AND no writers exist
+                if buffer.count == 0 && !buffer.has_writers() {
+                    return Ok(0);  // EOF
+                }
 
-        // Read available data
-        let n = buffer.read(buf);
-        if n > 0 {
-            Ok(n)
-        } else {
-            // Would block - return EAGAIN
-            // In a real implementation, we'd block the process
-            Err(VfsError::WouldBlock)
+                // Try to read available data
+                let n = buffer.read(buf);
+                let has_writers = buffer.has_writers();
+
+                // If we read data and buffer was full, collect waiting writers to wake
+                let write_waiters = if n > 0 && buffer.count + n == PIPE_BUF_SIZE {
+                    let waiters = buffer.write_waiters.clone();
+                    buffer.write_waiters.clear();
+                    waiters
+                } else {
+                    Vec::new()
+                };
+
+                (n, has_writers, write_waiters)
+            }; // Release lock!
+
+            // Wake writers if we freed up space
+            for pid in write_waiters {
+                unsafe { sched_wake_up(pid); }
+            }
+
+            // If we got data, return it
+            if n > 0 {
+                return Ok(n);
+            }
+
+            // Buffer empty but writers exist → block and wait for data
+            if has_writers {
+                // Get current PID and add to wait queue
+                let pid = unsafe { sched_current_pid() };
+                if let Some(pid) = pid {
+                    {
+                        let mut buffer = self.buffer.lock();
+                        if !buffer.read_waiters.contains(&pid) {
+                            buffer.read_waiters.push(pid);
+                        }
+                    }
+
+                    // Block in interruptible sleep
+                    unsafe { sched_block_interruptible(); }
+
+                    // When we wake up (by signal or writer), remove ourselves and retry
+                    let mut buffer = self.buffer.lock();
+                    buffer.read_waiters.retain(|&p| p != pid);
+                }
+                // Loop back and retry the read
+            } else {
+                // No writers and no data → EOF
+                return Ok(0);
+            }
         }
     }
 
@@ -196,8 +288,19 @@ impl PipeWrite {
 
 impl Drop for PipeWrite {
     fn drop(&mut self) {
-        let buf = self.buffer.lock();
-        buf.writers.fetch_sub(1, Ordering::Release);
+        let read_waiters = {
+            let mut buf = self.buffer.lock();
+            buf.writers.fetch_sub(1, Ordering::Release);
+
+            // Wake waiting readers - they'll get EOF (no writers, buffer empty)
+            let waiters = buf.read_waiters.clone();
+            buf.read_waiters.clear();
+            waiters
+        };
+
+        for pid in read_waiters {
+            unsafe { sched_wake_up(pid); }
+        }
     }
 }
 
@@ -219,20 +322,68 @@ impl VnodeOps for PipeWrite {
     }
 
     fn write(&self, _offset: u64, buf: &[u8]) -> VfsResult<usize> {
-        let mut buffer = self.buffer.lock();
+        // 🔥 NOW WITH ACTUAL BLOCKING (Not Just EAGAIN) 🔥
+        // Loop until we write some data or pipe breaks
+        loop {
+            // Try to write with lock held
+            let (n, has_readers, read_waiters) = {
+                let mut buffer = self.buffer.lock();
 
-        // If no readers, return broken pipe
-        if !buffer.has_readers() {
-            return Err(VfsError::BrokenPipe);
-        }
+                // If no readers, return EPIPE (broken pipe)
+                if !buffer.has_readers() {
+                    return Err(VfsError::BrokenPipe);
+                }
 
-        // Write available data
-        let n = buffer.write(buf);
-        if n > 0 {
-            Ok(n)
-        } else {
-            // Would block - return EAGAIN
-            Err(VfsError::WouldBlock)
+                // Try to write available data
+                let n = buffer.write(buf);
+                let has_readers = buffer.has_readers();
+
+                // If we wrote data, collect waiting readers to wake
+                let read_waiters = if n > 0 {
+                    let waiters = buffer.read_waiters.clone();
+                    buffer.read_waiters.clear();
+                    waiters
+                } else {
+                    Vec::new()
+                };
+
+                (n, has_readers, read_waiters)
+            }; // Release lock!
+
+            // Wake readers if we added data
+            for pid in read_waiters {
+                unsafe { sched_wake_up(pid); }
+            }
+
+            // If we wrote data, return it
+            if n > 0 {
+                return Ok(n);
+            }
+
+            // Buffer full but readers exist → block and wait for space
+            if has_readers {
+                // Get current PID and add to wait queue
+                let pid = unsafe { sched_current_pid() };
+                if let Some(pid) = pid {
+                    {
+                        let mut buffer = self.buffer.lock();
+                        if !buffer.write_waiters.contains(&pid) {
+                            buffer.write_waiters.push(pid);
+                        }
+                    }
+
+                    // Block in interruptible sleep
+                    unsafe { sched_block_interruptible(); }
+
+                    // When we wake up (by signal or reader), remove ourselves and retry
+                    let mut buffer = self.buffer.lock();
+                    buffer.write_waiters.retain(|&p| p != pid);
+                }
+                // Loop back and retry the write
+            } else {
+                // No readers → broken pipe
+                return Err(VfsError::BrokenPipe);
+            }
         }
     }
 
