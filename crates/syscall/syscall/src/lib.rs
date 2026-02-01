@@ -138,6 +138,7 @@ pub mod nr {
 
     // TTY/device syscalls
     pub const IOCTL: u64 = 40;
+    pub const FCNTL: u64 = 42;
 
     // Keyboard layout syscalls
     pub const SETKEYMAP: u64 = 120; // Set keyboard layout
@@ -541,6 +542,7 @@ pub fn dispatch(
 
         // TTY/device syscalls
         nr::IOCTL => vfs::sys_ioctl(arg1 as i32, arg2, arg3),
+        nr::FCNTL => vfs::sys_fcntl(arg1 as i32, arg2 as i32, arg3),
         nr::SETKEYMAP => sys_setkeymap(arg1, arg2 as usize),
         nr::GETKEYMAP => sys_getkeymap(arg1, arg2 as usize),
 
@@ -845,6 +847,14 @@ fn syscall_name(num: u64) -> &'static str {
         nr::SETSID => "setsid",
         nr::GETSID => "getsid",
         nr::EXECVE => "execve",
+        nr::GETUID => "getuid",
+        nr::GETGID => "getgid",
+        nr::GETEUID => "geteuid",
+        nr::GETEGID => "getegid",
+        nr::SETUID => "setuid",
+        nr::SETGID => "setgid",
+        nr::SETEUID => "seteuid",
+        nr::SETEGID => "setegid",
 
         // VFS
         nr::OPEN => "open",
@@ -876,6 +886,7 @@ fn syscall_name(num: u64) -> &'static str {
 
         // TTY/Device
         nr::IOCTL => "ioctl",
+        nr::FCNTL => "fcntl",
 
         // Poll/Select
         nr::POLL => "poll",
@@ -937,6 +948,54 @@ fn syscall_name(num: u64) -> &'static str {
         nr::FUTEX => "futex",
         nr::SET_TID_ADDRESS => "set_tid_address",
         nr::EXIT_GROUP => "exit_group",
+
+        // Scheduler
+        nr::SCHED_YIELD => "sched_yield",
+        nr::SCHED_SETSCHEDULER => "sched_setscheduler",
+        nr::SCHED_GETSCHEDULER => "sched_getscheduler",
+        nr::SCHED_SETPARAM => "sched_setparam",
+        nr::SCHED_GETPARAM => "sched_getparam",
+        nr::SCHED_SETAFFINITY => "sched_setaffinity",
+        nr::SCHED_GETAFFINITY => "sched_getaffinity",
+        nr::SCHED_RR_GET_INTERVAL => "sched_rr_get_interval",
+        nr::NICE => "nice",
+        nr::GETPRIORITY => "getpriority",
+        nr::SETPRIORITY => "setpriority",
+
+        // Timers
+        nr::ALARM => "alarm",
+        nr::SETITIMER => "setitimer",
+        nr::GETITIMER => "getitimer",
+
+        // Filesystem
+        nr::STATFS => "statfs",
+        nr::FSTATFS => "fstatfs",
+        nr::CHMOD => "chmod",
+        nr::FCHMOD => "fchmod",
+        nr::CHOWN => "chown",
+        nr::FCHOWN => "fchown",
+        nr::UTIMES => "utimes",
+        nr::FUTIMES => "futimes",
+
+        // Keyboard
+        nr::SETKEYMAP => "setkeymap",
+        nr::GETKEYMAP => "getkeymap",
+
+        // Sockets
+        nr::SOCKET => "socket",
+        nr::BIND => "bind",
+        nr::LISTEN => "listen",
+        nr::ACCEPT => "accept",
+        nr::CONNECT => "connect",
+        nr::SEND => "send",
+        nr::RECV => "recv",
+        nr::SENDTO => "sendto",
+        nr::RECVFROM => "recvfrom",
+        nr::SHUTDOWN => "shutdown",
+        nr::GETSOCKNAME => "getsockname",
+        nr::GETPEERNAME => "getpeername",
+        nr::SETSOCKOPT => "setsockopt",
+        nr::GETSOCKOPT => "getsockopt",
 
         // Misc
         nr::UNAME => "uname",

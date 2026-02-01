@@ -208,6 +208,12 @@ impl FdTable {
         Ok(new_fd)
     }
 
+    /// Get file from file descriptor (convenience method for syscalls)
+    /// 🔥 GraveShift: fcntl needs access to File for flag updates 🔥
+    pub fn get_file(&self, fd: Fd) -> Option<Arc<File>> {
+        self.get(fd).ok().map(|desc| desc.file.clone())
+    }
+
     /// Clone the fd table (for fork)
     pub fn clone_for_fork(&self) -> Self {
         FdTable {

@@ -8,7 +8,7 @@
 //!
 //! Used by the shell (via Rust API) and CPython (via C exports).
 
-use crate::stdio::{getchar, putchar};
+use crate::stdio::{fflush_stdout, getchar, putchar};
 use crate::termios::{self, Termios};
 use crate::unistd;
 
@@ -277,13 +277,16 @@ fn leave_raw_mode() {
 // ── Output helpers ──────────────────────────────────────────────────
 
 /// Print a string slice to stdout
+/// 🔥 GraveShift: Flush after write - readline output needs immediate visibility 🔥
 fn write_str(s: &str) {
     for &b in s.as_bytes() {
         putchar(b);
     }
+    fflush_stdout(); // Readline output must be visible immediately
 }
 
 /// Print bytes until NUL
+/// 🔥 GraveShift: Flush after write - readline output needs immediate visibility 🔥
 fn write_bytes(s: &[u8]) {
     for &b in s {
         if b == 0 {
@@ -291,6 +294,7 @@ fn write_bytes(s: &[u8]) {
         }
         putchar(b);
     }
+    fflush_stdout(); // Readline output must be visible immediately
 }
 
 /// Print a usize as decimal
@@ -338,13 +342,16 @@ fn cstrlen(s: &[u8]) -> usize {
 // ── Prompt rendering ────────────────────────────────────────────────
 
 /// Print the prompt and update cursor tracking
+/// 🔥 GraveShift: Flush after prompt - no newline means it stays buffered otherwise 🔥
 fn print_prompt(prompt: &[u8]) {
     write_bytes(prompt);
+    fflush_stdout(); // Prompt has no newline, must flush explicitly
 }
 
 // ── Core line editing ───────────────────────────────────────────────
 
 /// Redraw the current line (clear line, print prompt, print buffer, position cursor)
+/// 🔥 GraveShift: Flush at end - ensure line is fully visible 🔥
 unsafe fn redraw_line(prompt: &[u8]) {
     write_str("\r\x1b[2K");
     print_prompt(prompt);
@@ -355,6 +362,7 @@ unsafe fn redraw_line(prompt: &[u8]) {
     if CURSOR < LINE_LEN {
         move_cursor(-((LINE_LEN - CURSOR) as isize));
     }
+    fflush_stdout(); // Ensure redraw is visible
 }
 
 /// Insert a character at the current cursor position

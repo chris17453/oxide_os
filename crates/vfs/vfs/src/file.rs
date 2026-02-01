@@ -3,7 +3,7 @@
 //! Represents an open file with position and flags.
 
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use bitflags::bitflags;
 
@@ -73,8 +73,9 @@ pub struct File {
     vnode: Arc<dyn VnodeOps>,
     /// Current file position
     position: AtomicU64,
-    /// Open flags
-    flags: FileFlags,
+    /// Open flags (mutable via fcntl F_SETFL)
+    /// 🔥 GraveShift: Use AtomicU32 for thread-safe flag updates (fcntl support) 🔥
+    flags: AtomicU32,
 }
 
 impl File {
@@ -83,7 +84,7 @@ impl File {
         File {
             vnode,
             position: AtomicU64::new(0),
-            flags,
+            flags: AtomicU32::new(flags.bits()),
         }
     }
 
@@ -94,7 +95,13 @@ impl File {
 
     /// Get the flags
     pub fn flags(&self) -> FileFlags {
-        self.flags
+        FileFlags::from_bits_truncate(self.flags.load(Ordering::Relaxed))
+    }
+
+    /// Set the flags (used by fcntl F_SETFL)
+    /// 🔥 GraveShift: fcntl F_SETFL needs atomic flag updates 🔥
+    pub fn set_flags(&self, flags: FileFlags) {
+        self.flags.store(flags.bits(), Ordering::Relaxed);
     }
 
     /// Get current position
@@ -109,7 +116,8 @@ impl File {
 
     /// Read from file
     pub fn read(&self, buf: &mut [u8]) -> VfsResult<usize> {
-        if !self.flags.readable() {
+        let flags = self.flags();
+        if !flags.readable() {
             return Err(VfsError::PermissionDenied);
         }
 
@@ -121,11 +129,12 @@ impl File {
 
     /// Write to file
     pub fn write(&self, buf: &[u8]) -> VfsResult<usize> {
-        if !self.flags.writable() {
+        let flags = self.flags();
+        if !flags.writable() {
             return Err(VfsError::PermissionDenied);
         }
 
-        let pos = if self.flags.contains(FileFlags::O_APPEND) {
+        let pos = if flags.contains(FileFlags::O_APPEND) {
             self.vnode.size()
         } else {
             self.position.load(Ordering::Relaxed)
@@ -176,7 +185,7 @@ impl File {
 
     /// Truncate file
     pub fn truncate(&self, size: u64) -> VfsResult<()> {
-        if !self.flags.writable() {
+        if !self.flags().writable() {
             return Err(VfsError::PermissionDenied);
         }
         self.vnode.truncate(size)
@@ -193,7 +202,7 @@ impl File {
     /// - File is opened for reading AND
     /// - Data is available (vnode reports poll_read_ready)
     pub fn can_read(&self) -> bool {
-        self.flags.readable() && self.vnode.poll_read_ready()
+        self.flags().readable() && self.vnode.poll_read_ready()
     }
 
     /// Check if file can be written to (for poll/select)
@@ -202,6 +211,6 @@ impl File {
     /// - File is opened for writing AND
     /// - Write would not block (vnode reports poll_write_ready)
     pub fn can_write(&self) -> bool {
-        self.flags.writable() && self.vnode.poll_write_ready()
+        self.flags().writable() && self.vnode.poll_write_ready()
     }
 }

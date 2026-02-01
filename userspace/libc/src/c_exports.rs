@@ -282,8 +282,8 @@ pub unsafe extern "C" fn abort() -> ! {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn exit(status: i32) -> ! {
-    // Flush stdio
-    crate::filestream::fflush(core::ptr::null_mut());
+    // Flush stdio - use our buffered stdout implementation
+    crate::stdio::fflush_all();
     syscall::sys_exit(status);
 }
 
@@ -2080,18 +2080,7 @@ pub unsafe extern "C" fn futimens(fd: i32, times: *const u8) -> i32 {
 }
 
 // ============ fcntl ============
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn fcntl(fd: i32, cmd: i32, arg: i64) -> i32 {
-    match cmd {
-        1 => 0,       // F_GETFD -> no flags
-        2 => 0,       // F_SETFD -> ok
-        3 => 0,       // F_GETFL -> no flags
-        4 => 0,       // F_SETFL -> ok
-        0 => dup(fd), // F_DUPFD
-        _ => -1,
-    }
-}
+// fcntl is now in fcntl.rs module - proper syscall implementation
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn flock(_fd: i32, _operation: i32) -> i32 {

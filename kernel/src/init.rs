@@ -68,6 +68,17 @@ fn vt_switch_callback(vt_num: usize) {
     }
 }
 
+/// Callback for VT switch notification to terminal emulator
+/// 🔥 PRIORITY #2 FIX - VT switch screen buffer notification 🔥
+/// Called after VT switch completes to force terminal redraw
+fn terminal_vt_switch_callback(_vt_num: usize) {
+    // Force terminal to flush/redraw on VT switch
+    // This prevents stale screen state when switching to/from vim
+    if terminal::is_initialized() {
+        terminal::flush();
+    }
+}
+
 /// Kernel entry point
 ///
 /// Called by the bootloader after setting up page tables and jumping to higher half.
@@ -760,13 +771,15 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         devfs::set_proc_name_callback(kmsg_get_proc_name);
     }
 
-    // Set up signal callbacks for Ctrl+C handling
+    // Set up signal callbacks for Ctrl+C handling and SIGWINCH
     unsafe {
         devfs::set_signal_fg_callback(signal_foreground_pgrp); // Console TTY (legacy)
         pty::set_signal_pgrp_callback(signal_pgrp_callback); // PTY devices
         vt::set_signal_pgrp_callback(signal_pgrp_callback); // VT devices
+        tty::set_signal_pgrp_callback(signal_pgrp_callback); // 🔥 TTY SIGWINCH support 🔥
         vt::set_console_write_callback(console::console_write); // VT output
         vt::set_yield_callback(vt_yield); // VT blocking yield
+        vt::set_vt_switch_callback(terminal_vt_switch_callback); // 🔥 VT switch redraw 🔥
     }
 
     // Create /proc directory

@@ -308,7 +308,7 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         }
     }
 
-    let frame = unsafe { &*(current_rsp as *const InterruptFrame) };
+    let frame = unsafe { &mut *(current_rsp as *mut InterruptFrame) };
 
     // Use lock-free current PID to avoid deadlock in interrupt context
     let current_pid = sched::current_pid_lockfree().unwrap_or(0);
@@ -350,8 +350,75 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
                                 // Force context switch away from this zombie
                                 sched::set_need_resched();
                             }
-                            _ => {
-                                // Ignore, Stop, Continue, UserHandler - not yet implemented
+                            SignalResult::UserHandler {
+                                handler,
+                                signo,
+                                info,
+                                flags: _,
+                                handler_mask,
+                            } => {
+                                // 🔥 GraveShift: User signal handlers - the UNIX way 🔥
+                                // Setup signal frame on user stack and redirect execution
+
+                                // Extract saved registers from interrupt frame
+                                let regs = signal::delivery::SavedRegisters {
+                                    rax: frame.rax,
+                                    rbx: frame.rbx,
+                                    rcx: frame.rcx,
+                                    rdx: frame.rdx,
+                                    rsi: frame.rsi,
+                                    rdi: frame.rdi,
+                                    rbp: frame.rbp,
+                                    r8: frame.r8,
+                                    r9: frame.r9,
+                                    r10: frame.r10,
+                                    r11: frame.r11,
+                                    r12: frame.r12,
+                                    r13: frame.r13,
+                                    r14: frame.r14,
+                                    r15: frame.r15,
+                                };
+
+                                // Get signal restorer (sigreturn trampoline) from action
+                                let restorer = action.sa_restorer;
+
+                                // Setup signal frame
+                                let (new_rip, new_rsp, sig_frame) = signal::delivery::setup_signal_handler(
+                                    handler,
+                                    signo,
+                                    info,
+                                    action.flags(),
+                                    restorer,
+                                    meta.signal_mask,
+                                    frame.rip,
+                                    frame.rsp,
+                                    frame.rflags,
+                                    &regs,
+                                );
+
+                                // Write signal frame to user stack
+                                // 🔥 GraveShift: Direct write - page fault will catch invalid stack 🔥
+                                let frame_ptr = new_rsp as *mut signal::delivery::SignalFrame;
+                                unsafe {
+                                    core::ptr::write(frame_ptr, sig_frame);
+                                }
+
+                                // Update process signal mask for handler execution
+                                meta.signal_mask = handler_mask;
+
+                                // Redirect execution to signal handler
+                                frame.rip = new_rip;
+                                frame.rsp = new_rsp;
+                                frame.rdi = signo as u64; // First arg: signal number
+                            }
+                            SignalResult::Ignore => {
+                                // Signal ignored - do nothing
+                            }
+                            SignalResult::Stop | SignalResult::Continue => {
+                                // TODO: Stop/Continue not yet implemented
+                            }
+                            SignalResult::None => {
+                                // No signal - shouldn't happen here
                             }
                         }
                     }

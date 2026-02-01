@@ -61,5 +61,5 @@ pub use termios::{
     TCGETS, TCSETS, TCSETSF, TCSETSW, TIOCGPGRP, TIOCGPTN, TIOCGWINSZ, TIOCSPGRP, TIOCSPTLCK,
     TIOCSWINSZ,
 };
-pub use tty::{CallbackDriver, Tty, TtyDriver};
+pub use tty::{set_signal_pgrp_callback, CallbackDriver, Tty, TtyDriver};
 pub use winsize::Winsize;

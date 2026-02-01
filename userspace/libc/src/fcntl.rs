@@ -37,3 +37,20 @@ pub const S_IXOTH: u32 = 0o001;
 pub const STDIN_FILENO: i32 = 0;
 pub const STDOUT_FILENO: i32 = 1;
 pub const STDERR_FILENO: i32 = 2;
+
+/// fcntl commands
+pub const F_DUPFD: i32 = 0;
+pub const F_GETFD: i32 = 1;
+pub const F_SETFD: i32 = 2;
+pub const F_GETFL: i32 = 3;
+pub const F_SETFL: i32 = 4;
+
+/// File descriptor flags (for F_GETFD/F_SETFD)
+pub const FD_CLOEXEC: i32 = 1;
+
+/// fcntl - File control operations
+/// 🔥 GraveShift: Now properly calls kernel syscall instead of stub 🔥
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fcntl(fd: i32, cmd: i32, arg: u64) -> i32 {
+    crate::syscall::syscall3(42, fd as usize, cmd as usize, arg as usize) as i32
+}

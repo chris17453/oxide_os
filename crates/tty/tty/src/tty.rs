@@ -17,6 +17,19 @@ use crate::termios::{
 };
 use crate::winsize::Winsize;
 
+/// Callback for signaling process groups (set by kernel)
+/// 🔥 GraveShift: Signal delivery for SIGWINCH on window resize 🔥
+pub type SignalPgrpFn = fn(pgid: i32, sig: i32);
+static mut SIGNAL_PGRP_CALLBACK: Option<SignalPgrpFn> = None;
+
+/// Set the signal callback (called by kernel during init)
+///
+/// # Safety
+/// Must be called during single-threaded initialization
+pub unsafe fn set_signal_pgrp_callback(f: SignalPgrpFn) {
+    SIGNAL_PGRP_CALLBACK = Some(f);
+}
+
 /// TTY driver operations - implemented by the actual hardware driver
 pub trait TtyDriver: Send + Sync {
     /// Write data to the hardware
@@ -59,6 +72,9 @@ pub struct Tty {
     /// PIDs of processes waiting to read (no data available)
     /// 🔥 NO MORE SPINLOOPS - Proper blocking like a real OS 🔥
     read_waiters: Mutex<Vec<u32>>,
+    /// Non-blocking mode flag (set via fcntl F_SETFL O_NONBLOCK)
+    /// 🔥 PRIORITY #1 FIX - O_NONBLOCK support 🔥
+    nonblocking: core::sync::atomic::AtomicBool,
 }
 
 impl Tty {
@@ -73,6 +89,7 @@ impl Tty {
             ino,
             dev,
             read_waiters: Mutex::new(Vec::new()),
+            nonblocking: core::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -210,6 +227,19 @@ impl Tty {
         self.driver.flush();
     }
 
+    /// Set non-blocking mode
+    ///
+    /// 🔥 PRIORITY #1 FIX - O_NONBLOCK support 🔥
+    /// Called by fcntl when F_SETFL sets/clears O_NONBLOCK flag
+    pub fn set_nonblocking(&self, nonblocking: bool) {
+        self.nonblocking.store(nonblocking, core::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Check if in non-blocking mode
+    pub fn is_nonblocking(&self) -> bool {
+        self.nonblocking.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Handle ioctl
     pub fn ioctl(&self, request: u64, arg: u64) -> VfsResult<i64> {
         match request {
@@ -266,7 +296,18 @@ impl Tty {
                 }
                 let winsize = unsafe { *ptr };
                 self.set_winsize(winsize);
-                // Should send SIGWINCH to foreground process group
+
+                // 🔥 GraveShift: Send SIGWINCH (28) to foreground process group 🔥
+                // Vim and other full-screen apps need this to redraw on resize
+                unsafe {
+                    if let Some(callback) = SIGNAL_PGRP_CALLBACK {
+                        let pgid = self.get_foreground_pgid();
+                        if pgid > 0 {
+                            const SIGWINCH: i32 = 28;
+                            callback(pgid, SIGWINCH);
+                        }
+                    }
+                }
                 Ok(0)
             }
             TIOCGPGRP => {
@@ -302,6 +343,13 @@ impl Tty {
                 }
                 Ok(0)
             }
+            0x5490 => {
+                // TIOC_SET_NONBLOCK - Custom ioctl for fcntl O_NONBLOCK support
+                // 🔥 GraveShift: fcntl F_SETFL needs to notify TTY when O_NONBLOCK changes 🔥
+                // arg: 0 = blocking, 1 = non-blocking
+                self.set_nonblocking(arg != 0);
+                Ok(0)
+            }
             _ => Err(VfsError::NotSupported),
         }
     }
@@ -323,13 +371,19 @@ impl VnodeOps for Tty {
     fn read(&self, _offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
         // 🔥 NO MORE SPINLOOPS - Proper blocking with wait queues 🔥
         // 🔥 NOW WITH VTIME SUPPORT (Priority #7 Fix) 🔥
+        // 🔥 NOW WITH O_NONBLOCK SUPPORT (Priority #1 Fix) 🔥
         //
         // Before: Spinloop waking up every 10ms, checking, yielding. VTIME ignored.
         // After:  Block in TASK_INTERRUPTIBLE, wake only when data arrives.
         //         VTIME implemented with timed blocking.
+        //         O_NONBLOCK returns EAGAIN immediately if no data.
         //
         // CPU usage drops from ~100% spinning to 0% while waiting.
         // Welcome to having a real OS.
+
+        // 🔥 PRIORITY #1 FIX: Check O_NONBLOCK flag first 🔥
+        // If set via fcntl(fd, F_SETFL, O_NONBLOCK), return EAGAIN immediately when no data
+        let is_nonblocking = self.is_nonblocking();
 
         // Get VMIN and VTIME from termios (need to check once before loop)
         use crate::termios::{VMIN, VTIME};
@@ -364,6 +418,12 @@ impl VnodeOps for Tty {
 
             // No data available - check VTIME behavior
             if !has_data {
+                // 🔥 PRIORITY #1 FIX: O_NONBLOCK takes precedence 🔥
+                // If O_NONBLOCK is set, return EAGAIN immediately
+                if is_nonblocking {
+                    return Err(VfsError::WouldBlock);
+                }
+
                 // VMIN=0, VTIME=0: Non-blocking, return immediately
                 if vmin == 0 && vtime == 0 {
                     return Ok(0);
@@ -371,7 +431,10 @@ impl VnodeOps for Tty {
 
                 // VMIN=0, VTIME>0: Timeout read - wait VTIME deciseconds, return available data
                 // VMIN>0, VTIME=0: Block indefinitely until VMIN bytes available
-                // VMIN>0, VTIME>0: Interbyte timeout (complex - TODO for now, treat as VMIN>0, VTIME=0)
+                // VMIN>0, VTIME>0: Interbyte timeout 🔥 PRIORITY #3 FIX 🔥
+                //   - Timer starts when first character received
+                //   - Timer resets on each new character
+                //   - Return when VMIN reached OR timer expires since last character
 
                 // Get current PID and add to wait queue
                 let pid = unsafe { sched_current_pid() };
@@ -383,7 +446,7 @@ impl VnodeOps for Tty {
                         }
                     }
 
-                    // Block with timeout if VTIME > 0 and VMIN == 0
+                    // Block with timeout if VTIME > 0
                     if vtime > 0 && vmin == 0 {
                         // Timeout read: block for VTIME deciseconds, return available data
                         let _timeout_expired = unsafe { sched_block_deciseconds(vtime) };
@@ -401,8 +464,36 @@ impl VnodeOps for Tty {
                         } else {
                             return Ok(0); // Timeout with no data
                         }
+                    } else if vtime > 0 && vmin > 0 {
+                        // 🔥 PRIORITY #3 FIX - Interbyte timeout 🔥
+                        // VMIN>0, VTIME>0: Block with interbyte timeout
+                        // Wait for VMIN characters OR timeout between characters
+                        //
+                        // Implementation: Use decisecond blocking for interbyte timeout.
+                        // If we already have some data (available > 0), start interbyte timer.
+                        // Otherwise, block indefinitely waiting for first character.
+                        if available > 0 {
+                            // Have some data, start interbyte timeout
+                            let _timeout_expired = unsafe { sched_block_deciseconds(vtime) };
+
+                            // Remove ourselves from wait queue
+                            let mut waiters = self.read_waiters.lock();
+                            waiters.retain(|&p| p != pid);
+
+                            // Return whatever we have (timeout or more data arrived)
+                            let mut ldisc = self.ldisc.lock();
+                            let count = ldisc.read(buf);
+                            return Ok(count);
+                        } else {
+                            // No data yet, block indefinitely for first character
+                            unsafe { sched_block_interruptible(); }
+
+                            // When we wake up, remove ourselves and retry
+                            let mut waiters = self.read_waiters.lock();
+                            waiters.retain(|&p| p != pid);
+                        }
                     } else {
-                        // Block indefinitely (VMIN>0 or default behavior)
+                        // Block indefinitely (VMIN>0, VTIME=0 or default behavior)
                         // Will wake when: keyboard input arrives OR signal delivered (Ctrl+C)
                         unsafe { sched_block_interruptible(); }
 

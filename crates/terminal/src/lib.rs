@@ -645,20 +645,21 @@ impl TerminalEmulator {
         data: &[u8],
     ) {
         // Check for Sixel graphics: DCS P1 ; P2 ; P3 q data ST
-        if final_char == b'q' {
-            // Sixel graphics sequence
+        if final_char == b'q' && intermediates.is_empty() {
+            // 🔥 PRIORITY #5 FIX - Sixel graphics rendering 🔥
             #[cfg(feature = "debug-terminal")]
             {
                 use arch_x86_64::serial;
                 use core::fmt::Write;
                 let _ = write!(
                     serial::SerialWriter,
-                    "[TERM-DCS] Sixel graphics ({} bytes) - not yet rendered\n",
+                    "[TERM-DCS] Sixel graphics ({} bytes) - rendering\n",
                     data.len()
                 );
             }
-            // TODO: Implement Sixel decoding and rendering
-            // For now, just acknowledge receipt
+
+            // Parse and render Sixel data
+            self.render_sixel(params, data);
             return;
         }
 
@@ -686,6 +687,159 @@ impl TerminalEmulator {
                 final_char as char,
                 intermediates
             );
+        }
+    }
+
+    /// Render Sixel graphics
+    ///
+    /// 🔥 PRIORITY #5 FIX - Sixel graphics rendering 🔥
+    ///
+    /// Sixel Format:
+    /// DCS P1 ; P2 ; P3 q data ST
+    /// P1 = pixel aspect ratio (optional, 0-9)
+    /// P2 = background fill mode (1=transparent, 2=opaque)
+    /// P3 = horizontal grid size (optional)
+    ///
+    /// Sixel Data Commands:
+    /// #N         - Select color register N
+    /// #N;R;G;B   - Define color N with RGB (0-100 scale)
+    /// ! N ch     - Repeat character ch N times
+    /// $ - Carriage return (move to start of current sixel line)
+    /// - - Line feed (move down 6 pixels)
+    /// ? through ~ - Sixel data bytes (6 vertical pixels, offset by 0x3F)
+    fn render_sixel(&mut self, params: &[i32], data: &[u8]) {
+        // Parse parameters
+        let _aspect_ratio = params.get(0).copied().unwrap_or(0);
+        let background_mode = params.get(1).copied().unwrap_or(1);
+        let _grid_size = params.get(2).copied().unwrap_or(0);
+
+        // Initialize Sixel renderer state
+        let mut palette = [Color::VGA_BLACK; 256];
+        // Initialize default VT340 palette (first 16 colors)
+        palette[0] = Color::new(0, 0, 0);       // Black
+        palette[1] = Color::new(51, 102, 179);  // Blue
+        palette[2] = Color::new(179, 0, 0);     // Red
+        palette[3] = Color::new(51, 179, 51);   // Green
+        palette[4] = Color::new(179, 0, 179);   // Magenta
+        palette[5] = Color::new(51, 179, 179);  // Cyan
+        palette[6] = Color::new(179, 179, 0);   // Yellow
+        palette[7] = Color::new(204, 204, 204); // Gray
+        palette[8] = Color::new(102, 102, 102); // Dark gray
+        palette[9] = Color::new(102, 153, 230); // Light blue
+        palette[10] = Color::new(230, 102, 102);// Light red
+        palette[11] = Color::new(102, 230, 102);// Light green
+        palette[12] = Color::new(230, 102, 230);// Light magenta
+        palette[13] = Color::new(102, 230, 230);// Light cyan
+        palette[14] = Color::new(230, 230, 102);// Light yellow
+        palette[15] = Color::new(255, 255, 255);// White
+
+        let mut current_color = 0usize;
+        let mut x = 0u32;
+        let mut y = 0u32;
+        let start_x = self.handler.cursor.col * self.cell_width;
+        let start_y = self.handler.cursor.row * self.cell_height;
+
+        let mut i = 0;
+        while i < data.len() {
+            let byte = data[i];
+            i += 1;
+
+            match byte {
+                b'#' => {
+                    // Color select or define
+                    let mut num = 0u32;
+                    while i < data.len() && data[i].is_ascii_digit() {
+                        num = num * 10 + (data[i] - b'0') as u32;
+                        i += 1;
+                    }
+
+                    if i < data.len() && data[i] == b';' {
+                        // Color definition: #N;mode;R;G;B or #N;R;G;B
+                        i += 1;
+                        let mut components = Vec::new();
+                        loop {
+                            let mut comp = 0u32;
+                            while i < data.len() && data[i].is_ascii_digit() {
+                                comp = comp * 10 + (data[i] - b'0') as u32;
+                                i += 1;
+                            }
+                            components.push(comp);
+                            if i >= data.len() || data[i] != b';' {
+                                break;
+                            }
+                            i += 1;
+                        }
+
+                        // Parse color definition
+                        if components.len() >= 3 {
+                            // Could be HLS or RGB mode, assume RGB for simplicity
+                            let r = (components[components.len() - 3].min(100) * 255 / 100) as u8;
+                            let g = (components[components.len() - 2].min(100) * 255 / 100) as u8;
+                            let b = (components[components.len() - 1].min(100) * 255 / 100) as u8;
+                            if (num as usize) < palette.len() {
+                                palette[num as usize] = Color::new(r, g, b);
+                            }
+                        }
+                    } else {
+                        // Color select
+                        current_color = (num as usize).min(255);
+                    }
+                }
+                b'!' => {
+                    // Repeat next character
+                    let mut count = 0u32;
+                    while i < data.len() && data[i].is_ascii_digit() {
+                        count = count * 10 + (data[i] - b'0') as u32;
+                        i += 1;
+                    }
+                    if i < data.len() {
+                        let ch = data[i];
+                        i += 1;
+                        if ch >= b'?' && ch <= b'~' {
+                            let sixel = ch - b'?';
+                            for _ in 0..count {
+                                self.render_sixel_byte(sixel, palette[current_color], x + start_x, y + start_y);
+                                x += 1;
+                            }
+                        }
+                    }
+                }
+                b'$' => {
+                    // Carriage return
+                    x = 0;
+                }
+                b'-' => {
+                    // Line feed (6 pixels down)
+                    x = 0;
+                    y += 6;
+                }
+                b'?' ..= b'~' => {
+                    // Sixel data byte
+                    let sixel = byte - b'?';
+                    self.render_sixel_byte(sixel, palette[current_color], x + start_x, y + start_y);
+                    x += 1;
+                }
+                _ => {
+                    // Ignore other bytes
+                }
+            }
+        }
+
+        // Mark as dirty for rendering
+        self.needs_render = true;
+    }
+
+    /// Render a single Sixel byte (6 vertical pixels)
+    fn render_sixel_byte(&mut self, sixel: u8, color: Color, x: u32, y: u32) {
+        // Each sixel byte encodes 6 vertical pixels
+        // Bit 0 (LSB) = top pixel, bit 5 = bottom pixel
+        for bit in 0..6 {
+            if sixel & (1 << bit) != 0 {
+                let px_x = x;
+                let px_y = y + bit;
+                // Draw pixel via renderer
+                self.renderer.draw_pixel(px_x, px_y, color);
+            }
         }
     }
 

@@ -121,8 +121,11 @@ pub fn _exit(status: i32) -> ! {
     syscall::sys_exit(status)
 }
 
-/// Exit process (alias for _exit)
+/// Exit process (flushes stdio then exits)
+/// 🔥 GraveShift: Proper exit - flush buffers before terminating 🔥
 pub fn exit(status: i32) -> ! {
+    // Flush all stdio buffers before exiting
+    crate::stdio::fflush_all();
     syscall::sys_exit(status)
 }
 

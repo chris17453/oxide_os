@@ -730,6 +730,14 @@ impl Handler {
                     crate::send_response(b"\x1b[?62c");
                 }
             }
+            b'p' => {
+                // Check for soft reset: CSI ! p (DECSTR)
+                // 🔥 PRIORITY #4 FIX - Soft reset support 🔥
+                if intermediates.first() == Some(&b'!') {
+                    self.soft_reset();
+                }
+                // Otherwise, unhandled CSI p variant
+            }
             _ => {
                 // Unhandled CSI sequence
             }
@@ -769,6 +777,48 @@ impl Handler {
             (None, b'c') => {
                 // RIS - Reset to Initial State
                 self.reset(buffer);
+            }
+            (Some(b'#'), b'3') => {
+                // DECDHL - Double Height Line (top half)
+                // 🔥 PRIORITY #6 FIX - Line attribute support 🔥
+                // Legacy VT100 feature - store line attribute for rendering
+                // For now, just acknowledge (rendering not yet implemented)
+                #[cfg(feature = "debug-terminal")]
+                {
+                    use arch_x86_64::serial;
+                    use core::fmt::Write;
+                    let _ = write!(serial::SerialWriter, "[TERM-ESC] DECDHL top half (not rendered)\n");
+                }
+            }
+            (Some(b'#'), b'4') => {
+                // DECDHL - Double Height Line (bottom half)
+                // 🔥 PRIORITY #6 FIX - Line attribute support 🔥
+                #[cfg(feature = "debug-terminal")]
+                {
+                    use arch_x86_64::serial;
+                    use core::fmt::Write;
+                    let _ = write!(serial::SerialWriter, "[TERM-ESC] DECDHL bottom half (not rendered)\n");
+                }
+            }
+            (Some(b'#'), b'5') => {
+                // DECSWL - Single Width Line
+                // 🔥 PRIORITY #6 FIX - Line attribute support 🔥
+                #[cfg(feature = "debug-terminal")]
+                {
+                    use arch_x86_64::serial;
+                    use core::fmt::Write;
+                    let _ = write!(serial::SerialWriter, "[TERM-ESC] DECSWL single width\n");
+                }
+            }
+            (Some(b'#'), b'6') => {
+                // DECDWL - Double Width Line
+                // 🔥 PRIORITY #6 FIX - Line attribute support 🔥
+                #[cfg(feature = "debug-terminal")]
+                {
+                    use arch_x86_64::serial;
+                    use core::fmt::Write;
+                    let _ = write!(serial::SerialWriter, "[TERM-ESC] DECDWL double width (not rendered)\n");
+                }
             }
             (Some(b'#'), b'8') => {
                 // DECALN - Screen Alignment Pattern (fill with E)
@@ -1158,6 +1208,46 @@ impl Handler {
         }
 
         buffer.clear();
+    }
+
+    /// Soft reset (DECSTR - CSI ! p)
+    ///
+    /// 🔥 PRIORITY #4 FIX - Soft reset support 🔥
+    /// Resets terminal state without clearing the screen or moving cursor.
+    /// Vim may use this to reset terminal attributes without disrupting display.
+    ///
+    /// Resets:
+    /// - SGR attributes (bold, italic, colors, etc.)
+    /// - Character sets (G0/G1) to ASCII
+    /// - Cursor visibility to visible
+    /// - Insert mode to off
+    /// - Origin mode to off
+    /// - Auto-wrap to on
+    ///
+    /// Does NOT reset:
+    /// - Screen buffer contents
+    /// - Cursor position
+    /// - Scroll region
+    /// - Tab stops
+    /// - Alternate screen buffer state
+    pub fn soft_reset(&mut self) {
+        // Reset SGR attributes
+        self.attrs = CellAttrs::default();
+
+        // Reset character sets to ASCII
+        self.g0_charset = Charset::Ascii;
+        self.g1_charset = Charset::Ascii;
+        self.active_g1 = false;
+
+        // Reset modes to defaults
+        self.cursor.visible = true;
+        self.modes = TerminalModes::AUTOWRAP | TerminalModes::CURSOR_VISIBLE;
+
+        // Mouse tracking stays as-is (not reset by soft reset)
+        // Scroll region stays as-is
+        // Tab stops stay as-is
+        // Cursor position stays as-is
+        // Screen buffer NOT cleared
     }
 }
 

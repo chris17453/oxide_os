@@ -113,6 +113,10 @@ pub struct ProcessMeta {
 
     /// File creation mask (umask)
     pub umask: u16,
+
+    /// Program break (heap end address for brk/sbrk)
+    /// 🔥 GraveShift: Classic UNIX heap management 🔥
+    pub program_break: u64,
 }
 
 impl ProcessMeta {
@@ -144,6 +148,7 @@ impl ProcessMeta {
             is_thread_leader: true,
             thread_group: Vec::new(),
             umask: 0o022,
+            program_break: 0x600000, // Initial heap start (after typical program load area)
         }
     }
 
@@ -178,6 +183,7 @@ impl ProcessMeta {
             is_thread_leader: true,
             thread_group: Vec::new(),
             umask: 0o022,
+            program_break: 0x600000, // Initial heap start (after typical program load area)
         }
     }
 
@@ -209,6 +215,7 @@ impl ProcessMeta {
             is_thread_leader: true,
             thread_group: Vec::new(),
             umask: self.umask,
+            program_break: self.program_break, // Inherit parent's program break
         }
     }
 

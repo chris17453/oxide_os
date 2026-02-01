@@ -1317,3 +1317,78 @@ pub fn debug_sys_open_arc() -> u64 {
 pub fn debug_sys_open_pid() -> u64 {
     DEBUG_SYS_OPEN_PID.load(core::sync::atomic::Ordering::SeqCst)
 }
+
+/// fcntl - manipulate file descriptor
+///
+/// 🔥 PRIORITY #8 FIX - fcntl O_NONBLOCK handler for TTY 🔥
+///
+/// Implements F_GETFL and F_SETFL commands for managing file flags,
+/// particularly O_NONBLOCK which vim uses for async operations.
+pub fn sys_fcntl(fd: i32, cmd: i32, arg: u64) -> i64 {
+    // fcntl command codes
+    const F_GETFL: i32 = 3;  // Get file status flags
+    const F_SETFL: i32 = 4;  // Set file status flags
+
+    match cmd {
+        F_GETFL => {
+            // Get file flags
+            with_current_meta(|meta| {
+                if let Some(file) = meta.fd_table.get_file(fd) {
+                    file.flags().bits() as i64
+                } else {
+                    errno::EBADF as i64
+                }
+            })
+            .unwrap_or(errno::EBADF as i64)
+        }
+
+        F_SETFL => {
+            // Set file flags
+            // Only certain flags can be set: O_APPEND, O_NONBLOCK, O_ASYNC
+            // 🔥 GraveShift: fcntl F_SETFL lets userspace change blocking mode 🔥
+            let new_flags = arg as u32;
+            let allowed_flags = FileFlags::O_APPEND.bits()
+                              | FileFlags::O_NONBLOCK.bits();
+            let flags_to_set = new_flags & allowed_flags;
+
+            with_current_meta_mut(|meta| {
+                if let Some(file) = meta.fd_table.get_file(fd) {
+                    // Get current flags and preserve access mode
+                    let current_flags = file.flags();
+                    let access_mode = current_flags.bits() & FileFlags::O_ACCMODE.bits();
+
+                    // Create new flags: preserve access mode, update allowed flags
+                    let new_combined = access_mode | flags_to_set;
+                    let new_flags = FileFlags::from_bits_truncate(new_combined);
+
+                    // Check if O_NONBLOCK changed - notify TTY if applicable
+                    let old_nonblock = current_flags.contains(FileFlags::O_NONBLOCK);
+                    let new_nonblock = (flags_to_set & FileFlags::O_NONBLOCK.bits()) != 0;
+
+                    if old_nonblock != new_nonblock {
+                        // Check if this is a TTY and notify it
+                        let vnode = file.vnode();
+                        if vnode.vtype() == VnodeType::CharDevice {
+                            // Notify TTY via custom ioctl (TIOC_SET_NONBLOCK)
+                            // TTY will check ioctl code and update internal nonblocking flag
+                            const TIOC_SET_NONBLOCK: u64 = 0x5490;
+                            let _ = vnode.ioctl(TIOC_SET_NONBLOCK, new_nonblock as u64);
+                        }
+                    }
+
+                    // Update the file flags atomically
+                    file.set_flags(new_flags);
+                    0
+                } else {
+                    errno::EBADF as i64
+                }
+            })
+            .unwrap_or(errno::EBADF as i64)
+        }
+
+        _ => {
+            // Unsupported fcntl command
+            errno::EINVAL as i64
+        }
+    }
+}

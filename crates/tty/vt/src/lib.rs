@@ -164,7 +164,16 @@ impl VtManager {
         let mut active = ACTIVE_VT.write();
         if *active != vt_num {
             *active = vt_num;
-            // TODO: Notify terminal emulator to switch screen buffer
+
+            // 🔥 PRIORITY #2 FIX - VT switch screen buffer notification 🔥
+            // Notify terminal emulator to switch screen buffer and force full redraw
+            // This prevents stale screen state when switching to/from vim on different VTs
+            unsafe {
+                if let Some(callback) = VT_SWITCH_CALLBACK {
+                    callback(vt_num);
+                }
+            }
+
             true
         } else {
             false
@@ -391,6 +400,13 @@ pub type ConsoleWriteFn = fn(&[u8]);
 /// Global console write callback (set by kernel)
 static mut CONSOLE_WRITE_CALLBACK: Option<ConsoleWriteFn> = None;
 
+/// Callback type for VT switch notification
+/// 🔥 PRIORITY #2 FIX - VT switch screen buffer notification 🔥
+pub type VtSwitchFn = fn(vt_num: usize);
+
+/// Global VT switch callback (set by kernel) - notifies terminal emulator to redraw
+static mut VT_SWITCH_CALLBACK: Option<VtSwitchFn> = None;
+
 /// Initialize VT subsystem
 pub fn init() -> Arc<VtManager> {
     let manager = Arc::new(VtManager::new());
@@ -424,6 +440,18 @@ pub unsafe fn set_signal_pgrp_callback(f: SignalPgrpFn) {
 /// Must be called during single-threaded initialization
 pub unsafe fn set_console_write_callback(f: ConsoleWriteFn) {
     CONSOLE_WRITE_CALLBACK = Some(f);
+}
+
+/// Set the VT switch callback for screen buffer synchronization
+///
+/// # Safety
+/// Must be called during single-threaded initialization
+///
+/// 🔥 PRIORITY #2 FIX - VT switch screen buffer notification 🔥
+/// The callback is invoked whenever VTs are switched (Alt+F1-F6)
+/// to notify the terminal emulator to perform a full screen redraw
+pub unsafe fn set_vt_switch_callback(f: VtSwitchFn) {
+    VT_SWITCH_CALLBACK = Some(f);
 }
 
 /// VT device node

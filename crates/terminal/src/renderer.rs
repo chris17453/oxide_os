@@ -425,6 +425,16 @@ impl Renderer {
     pub fn invalidate(&mut self) {
         self.dirty.mark_all();
     }
+
+    /// Draw a single pixel at the given coordinates
+    ///
+    /// 🔥 PRIORITY #5 FIX - Sixel graphics rendering support 🔥
+    /// Used by Sixel renderer to draw individual pixels directly to framebuffer
+    pub fn draw_pixel(&mut self, x: u32, y: u32, color: Color) {
+        if x < self.fb.width() && y < self.fb.height() {
+            self.fb.set_pixel(x, y, color);
+        }
+    }
 }
 
 /// Brighten a color (for bold text)

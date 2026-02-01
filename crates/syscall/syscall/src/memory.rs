@@ -403,16 +403,64 @@ pub fn sys_mremap(
 /// # Returns
 /// Current/new end of data segment, or negative errno on error
 pub fn sys_brk(addr: u64) -> i64 {
-    // For now, brk is not implemented - programs should use mmap
-    // In a full implementation, we'd track the program break and
-    // allocate/deallocate pages as needed
+    // 🔥 GraveShift: The classic UNIX heap - brk/sbrk lives on 🔥
 
-    // Return current break (stub - returns 0 to indicate "use mmap instead")
+    let meta = match get_current_meta() {
+        Some(m) => m,
+        None => return errno::ESRCH,
+    };
+
+    let mut m = meta.lock();
+
+    // Query current break
     if addr == 0 {
-        return 0;
+        return m.program_break as i64;
     }
 
-    errno::ENOMEM
+    // Align requested address to page boundary
+    let page_size = 4096u64;
+    let new_break = (addr + page_size - 1) & !(page_size - 1);
+    let old_break = m.program_break;
+
+    // Can't shrink below initial heap start
+    const HEAP_START: u64 = 0x600000;
+    if new_break < HEAP_START {
+        return old_break as i64;
+    }
+
+    if new_break > old_break {
+        // Expanding heap - allocate and map new pages
+        let num_pages = ((new_break - old_break) / page_size) as usize;
+
+        let flags = MemoryFlags::READ
+            .union(MemoryFlags::WRITE)
+            .union(MemoryFlags::USER);
+
+        let allocator = mm();
+
+        match m.address_space.allocate_pages(
+            VirtAddr::new(old_break),
+            num_pages,
+            flags,
+            allocator,
+        ) {
+            Ok(()) => {}
+            Err(_) => return errno::ENOMEM,
+        }
+    } else if new_break < old_break {
+        // Shrinking heap - unmap and free pages
+        let num_pages = ((old_break - new_break) / page_size) as usize;
+
+        for i in 0..num_pages {
+            let virt = VirtAddr::new(new_break + (i as u64 * page_size));
+            // Ignore errors - page might not have been mapped
+            let _ = m.address_space.unmap_user_page(virt);
+        }
+    }
+
+    // Update program break
+    m.program_break = new_break;
+    new_break as i64
 }
 
 /// Helper: Allocate an mmap address from the pool
