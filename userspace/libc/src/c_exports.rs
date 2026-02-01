@@ -2091,7 +2091,8 @@ pub unsafe extern "C" fn flock(_fd: i32, _operation: i32) -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ioctl(fd: i32, request: u64, arg: u64) -> i32 {
-    syscall::sys_ioctl(fd, request, arg)
+    // 🔥 GraveShift: Properly cast i64 to i32 - was truncating before 🔥
+    syscall::sys_ioctl(fd, request, arg) as i32
 }
 
 // ============ poll/select ============
@@ -3292,8 +3293,18 @@ pub unsafe extern "C" fn tcgetattr(fd: i32, termios_p: *mut u8) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tcsetattr(fd: i32, _action: i32, termios_p: *const u8) -> i32 {
-    ioctl(fd, 0x5402, termios_p as u64)
+pub unsafe extern "C" fn tcsetattr(fd: i32, action: i32, termios_p: *const u8) -> i32 {
+    // 🔥 GraveShift: Respect the action parameter - POSIX compliance 🔥
+    // TCSANOW (0)    -> TCSETS (0x5402)  - change immediately
+    // TCSADRAIN (1)  -> TCSETSW (0x5403) - change after output drains
+    // TCSAFLUSH (2)  -> TCSETSF (0x5404) - drain output + flush input
+    let ioctl_cmd = match action {
+        0 => 0x5402, // TCSANOW / TCSETS
+        1 => 0x5403, // TCSADRAIN / TCSETSW
+        2 => 0x5404, // TCSAFLUSH / TCSETSF
+        _ => return -1, // Invalid action
+    };
+    ioctl(fd, ioctl_cmd, termios_p as u64)
 }
 
 #[unsafe(no_mangle)]

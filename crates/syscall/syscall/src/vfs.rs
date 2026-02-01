@@ -421,7 +421,7 @@ pub fn sys_write_vfs(fd: i32, buf: u64, count: usize) -> i64 {
         {
             Some(Ok(f)) => f,
             Some(Err(e)) => return vfs_error_to_errno(e),
-            None => return errno::ESRCH, // No current process
+            None => return errno::EBADF, // Invalid FD (match sys_read_vfs)
         };
 
     // 🔥 O_NONBLOCK SUPPORT (Priority #6) 🔥
@@ -1371,8 +1371,11 @@ pub fn sys_fcntl(fd: i32, cmd: i32, arg: u64) -> i64 {
                         if vnode.vtype() == VnodeType::CharDevice {
                             // Notify TTY via custom ioctl (TIOC_SET_NONBLOCK)
                             // TTY will check ioctl code and update internal nonblocking flag
+                            // 🔥 GraveShift: Propagate errors instead of silent failure 🔥
                             const TIOC_SET_NONBLOCK: u64 = 0x5490;
-                            let _ = vnode.ioctl(TIOC_SET_NONBLOCK, new_nonblock as u64);
+                            if let Err(e) = vnode.ioctl(TIOC_SET_NONBLOCK, new_nonblock as u64) {
+                                return vfs_error_to_errno(e);
+                            }
                         }
                     }
 

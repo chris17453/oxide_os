@@ -72,15 +72,35 @@ fn check_fd_ready(fd: i32, events: i16) -> i16 {
 
     // Check for readability
     if events & (events::POLLIN | events::POLLRDNORM) != 0 {
-        // Regular files are always readable if opened for reading
+        // 🔥 GraveShift: For TTYs/char devices, actually check if data is available 🔥
+        // For regular files, they're always readable if opened for reading
         if file.can_read() {
-            revents |= events::POLLIN | events::POLLRDNORM;
+            // For char devices (TTYs), check if data is actually available
+            use vfs::VnodeType;
+            let vnode = file.vnode();
+            if vnode.vtype() == VnodeType::CharDevice {
+                // Use FIONREAD ioctl to check bytes available
+                const FIONREAD: u64 = 0x541B;
+                let mut bytes_available: i32 = 0;
+                if vnode.ioctl(FIONREAD, &mut bytes_available as *mut i32 as u64).is_ok() {
+                    if bytes_available > 0 {
+                        revents |= events::POLLIN | events::POLLRDNORM;
+                    }
+                    // else: no data available, don't set POLLIN
+                } else {
+                    // ioctl failed, assume readable for compatibility
+                    revents |= events::POLLIN | events::POLLRDNORM;
+                }
+            } else {
+                // Regular files are always readable
+                revents |= events::POLLIN | events::POLLRDNORM;
+            }
         }
     }
 
     // Check for writability
     if events & (events::POLLOUT | events::POLLWRNORM) != 0 {
-        // Regular files are always writable if opened for writing
+        // Regular files and TTYs are always writable if opened for writing
         if file.can_write() {
             revents |= events::POLLOUT | events::POLLWRNORM;
         }
