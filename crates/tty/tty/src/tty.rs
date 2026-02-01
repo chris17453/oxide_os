@@ -31,6 +31,14 @@ pub trait TtyDriver: Send + Sync {
     fn flush(&self) {}
 }
 
+// External scheduler functions (same as in pipe.rs)
+// Can't depend on sched crate directly due to circular dependencies
+unsafe extern "Rust" {
+    fn sched_block_interruptible();
+    fn sched_wake_up(pid: u32);
+    fn sched_current_pid() -> Option<u32>;
+}
+
 /// TTY device
 pub struct Tty {
     /// Line discipline
@@ -47,6 +55,9 @@ pub struct Tty {
     ino: u64,
     /// Device number
     dev: u64,
+    /// PIDs of processes waiting to read (no data available)
+    /// 🔥 NO MORE SPINLOOPS - Proper blocking like a real OS 🔥
+    read_waiters: Mutex<Vec<u32>>,
 }
 
 impl Tty {
@@ -60,6 +71,7 @@ impl Tty {
             driver,
             ino,
             dev,
+            read_waiters: Mutex::new(Vec::new()),
         })
     }
 
@@ -68,18 +80,35 @@ impl Tty {
     /// Called by the driver when input is received.
     /// Returns a signal if one should be delivered.
     pub fn input(&self, data: &[u8]) -> Option<Signal> {
-        let mut ldisc = self.ldisc.lock();
         let mut signal = None;
 
-        for &c in data {
-            // Process character with echo callback
-            let sig = ldisc.input_char(c, |echo_data| {
-                self.driver.write(echo_data);
-            });
+        // Process input with lock held
+        {
+            let mut ldisc = self.ldisc.lock();
 
-            if sig.is_some() {
-                signal = sig;
+            for &c in data {
+                // Process character with echo callback
+                let sig = ldisc.input_char(c, |echo_data| {
+                    self.driver.write(echo_data);
+                });
+
+                if sig.is_some() {
+                    signal = sig;
+                }
             }
+        } // Release ldisc lock
+
+        // Wake all processes waiting to read
+        // 🔥 NO MORE SPINLOOPS - Wake sleeping readers when data arrives 🔥
+        let waiters = {
+            let mut w = self.read_waiters.lock();
+            let pids = w.clone();
+            w.clear();
+            pids
+        };
+
+        for pid in waiters {
+            unsafe { sched_wake_up(pid); }
         }
 
         signal
@@ -291,9 +320,17 @@ impl VnodeOps for Tty {
     }
 
     fn read(&self, _offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
-        // Spinloop waiting for input - yield CPU while waiting
+        // 🔥 NO MORE SPINLOOPS - Proper blocking with wait queues 🔥
+        //
+        // Before: Spinloop waking up every 10ms, checking, yielding
+        // After:  Block in TASK_INTERRUPTIBLE, wake only when data arrives
+        //
+        // CPU usage drops from ~100% spinning to 0% while waiting.
+        // Welcome to having a real OS.
+
         loop {
-            {
+            // Try to read with lock held (keep critical section small)
+            let has_data = {
                 let mut ldisc = self.ldisc.lock();
 
                 // Check if data is available
@@ -310,10 +347,32 @@ impl VnodeOps for Tty {
 
                     return Ok(count);
                 }
-            }
 
-            // No data available - yield to other processes and try again
-            sched::yield_current();
+                false
+            }; // Release lock!
+
+            // No data available - block until input arrives
+            if !has_data {
+                // Get current PID and add to wait queue
+                let pid = unsafe { sched_current_pid() };
+                if let Some(pid) = pid {
+                    {
+                        let mut waiters = self.read_waiters.lock();
+                        if !waiters.contains(&pid) {
+                            waiters.push(pid);
+                        }
+                    }
+
+                    // Block in interruptible sleep
+                    // Will wake when: keyboard input arrives OR signal delivered (Ctrl+C)
+                    unsafe { sched_block_interruptible(); }
+
+                    // When we wake up, remove ourselves and retry
+                    let mut waiters = self.read_waiters.lock();
+                    waiters.retain(|&p| p != pid);
+                }
+                // Loop back and retry the read
+            }
         }
     }
 
