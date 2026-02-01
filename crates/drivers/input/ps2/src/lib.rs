@@ -178,6 +178,8 @@ pub struct Ps2Keyboard {
     numlock: AtomicBool,
     /// Caps Lock state (🔥 NOW ACTUALLY IMPLEMENTED 🔥)
     capslock: AtomicBool,
+    /// Scroll Lock state (🔥 ALSO IMPLEMENTED 🔥)
+    scrolllock: AtomicBool,
 }
 
 impl Ps2Keyboard {
@@ -193,6 +195,7 @@ impl Ps2Keyboard {
             altgr: AtomicBool::new(false),
             numlock: AtomicBool::new(true),
             capslock: AtomicBool::new(false), // Caps Lock off by default (normal behavior)
+            scrolllock: AtomicBool::new(false), // Scroll Lock off by default
         }
     }
 
@@ -270,6 +273,29 @@ impl Ps2Keyboard {
                         self.update_leds();
                     }
                     // Don't forward Caps Lock key itself to console
+                    return;
+                }
+                input::KEY_SCROLLLOCK => {
+                    // 🔥 SCROLL LOCK: WELCOME TO THE LOCK PARTY (Priority #11) 🔥
+                    //
+                    // Before: Key pressed, nothing happens, LED stays dark
+                    // After: Toggles Scroll Lock state and LED
+                    //
+                    // Note: Traditional Scroll Lock behavior (pause terminal output)
+                    // is not implemented yet - this just tracks the LED state.
+                    if pressed {
+                        let new_state = !self.scrolllock.load(Ordering::SeqCst);
+                        self.scrolllock.store(new_state, Ordering::SeqCst);
+                        let mut leds = self.leds.load(Ordering::SeqCst);
+                        if new_state {
+                            leds |= 0x01;  // Scroll Lock LED bit (bit 0)
+                        } else {
+                            leds &= !0x01;
+                        }
+                        self.leds.store(leds, Ordering::SeqCst);
+                        self.update_leds();
+                    }
+                    // Don't forward Scroll Lock key itself to console
                     return;
                 }
                 _ => {}
