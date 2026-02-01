@@ -9,7 +9,10 @@ pub fn strlen(s: *const u8) -> usize {
     }
     let mut len = 0;
     unsafe {
-        while *s.add(len) != 0 {
+        // Use volatile reads to prevent compiler from optimizing this away.
+        // With opt-level=z + LTO, the compiler can trace pointers and "prove"
+        // the buffer is zeroed, optimizing strlen to always return 0.
+        while core::ptr::read_volatile(s.add(len)) != 0 {
             len += 1;
         }
     }
