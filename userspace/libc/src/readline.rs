@@ -737,8 +737,16 @@ unsafe fn read_line_loop(prompt: &[u8]) -> *mut u8 {
                 match code {
                     b'A' => {
                         // Up: previous history
-                        if HISTORY_COUNT > 0 && HISTORY_POS > 0 {
-                            HISTORY_POS -= 1;
+                        if HISTORY_COUNT > 0 {
+                            // If at fresh line (HISTORY_POS == HISTORY_COUNT), go to last entry
+                            if HISTORY_POS >= HISTORY_COUNT {
+                                HISTORY_POS = HISTORY_COUNT - 1;
+                            } else if HISTORY_POS > 0 {
+                                HISTORY_POS -= 1;
+                            } else {
+                                // At first history entry, don't go further
+                                continue;
+                            }
                             replace_line(&HISTORY[HISTORY_POS], prompt);
                         }
                         continue;
