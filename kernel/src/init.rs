@@ -60,6 +60,14 @@ fn terminal_response_callback(data: &[u8]) {
     }
 }
 
+/// Callback for VT switching (Alt+F1 through Alt+F6)
+/// Switches to the requested virtual terminal
+fn vt_switch_callback(vt_num: usize) {
+    if let Some(vt_mgr) = vt::get_manager() {
+        vt_mgr.switch_to(vt_num);
+    }
+}
+
 /// Kernel entry point
 ///
 /// Called by the bootloader after setting up page tables and jumping to higher half.
@@ -571,6 +579,13 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         ps2::set_console_callback(devfs::console_input_callback);
     }
     let _ = writeln!(writer, "[INFO] PS/2 console callback registered");
+
+    // Connect PS/2 Alt+Fn keys to VT switching
+    // Safety: Called during single-threaded initialization
+    unsafe {
+        ps2::set_vt_switch_callback(vt_switch_callback);
+    }
+    let _ = writeln!(writer, "[INFO] PS/2 VT switch callback registered");
 
     // Connect mouse IRQ 12 to PS/2 mouse driver
     debug_mouse!("[mouse] Registering IRQ 12 callback for PS/2 mouse");

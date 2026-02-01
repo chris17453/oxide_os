@@ -413,6 +413,33 @@ impl Ps2Keyboard {
                     }
                 }
 
+                // 🔥 VT SWITCHING: Alt+F1 through Alt+F6 (v3 analysis fix) 🔥
+                // Before: Alt+F1 just sent escape sequence
+                // After: Switches to VT 0-5 respectively
+                let alt = self.alt.load(Ordering::SeqCst);
+                let altgr = self.altgr.load(Ordering::SeqCst);
+                if alt || altgr {
+                    let vt_num = match keycode {
+                        input::KEY_F1 => Some(0),
+                        input::KEY_F2 => Some(1),
+                        input::KEY_F3 => Some(2),
+                        input::KEY_F4 => Some(3),
+                        input::KEY_F5 => Some(4),
+                        input::KEY_F6 => Some(5),
+                        _ => None,
+                    };
+
+                    if let Some(vt) = vt_num {
+                        // Call VT switch callback
+                        unsafe {
+                            if let Some(callback) = VT_SWITCH_CALLBACK {
+                                callback(vt);
+                            }
+                        }
+                        return; // Don't generate escape sequence
+                    }
+                }
+
                 // Handle special keys (arrow keys, etc.) - send ANSI escape sequences
                 let ansi_seq: Option<&[u8]> = match keycode {
                     input::KEY_UP => Some(b"\x1b[A"),
@@ -782,8 +809,15 @@ static MOUSE: Mutex<Option<Arc<Ps2Mouse>>> = Mutex::new(None);
 /// Called with bytes to push to console input buffer (may be single char or ANSI sequence)
 pub type ConsoleCharCallback = fn(&[u8]);
 
+/// VT switch callback type
+/// Called with VT number (0-5) when Alt+F1 through Alt+F6 is pressed
+pub type VtSwitchCallback = fn(usize);
+
 /// Global console callback
 static mut CONSOLE_CALLBACK: Option<ConsoleCharCallback> = None;
+
+/// Global VT switch callback
+static mut VT_SWITCH_CALLBACK: Option<VtSwitchCallback> = None;
 
 /// Set the console character callback
 ///
@@ -792,6 +826,16 @@ static mut CONSOLE_CALLBACK: Option<ConsoleCharCallback> = None;
 pub unsafe fn set_console_callback(callback: ConsoleCharCallback) {
     unsafe {
         CONSOLE_CALLBACK = Some(callback);
+    }
+}
+
+/// Set the VT switch callback
+///
+/// # Safety
+/// Must be called during single-threaded initialization
+pub unsafe fn set_vt_switch_callback(callback: VtSwitchCallback) {
+    unsafe {
+        VT_SWITCH_CALLBACK = Some(callback);
     }
 }
 
