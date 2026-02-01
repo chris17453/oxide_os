@@ -737,6 +737,10 @@ unsafe fn read_line_loop(prompt: &[u8]) -> *mut u8 {
                 match code {
                     b'A' => {
                         // Up: previous history
+                        // Debug: print to stderr to see what's happening
+                        let debug_msg = b"[READLINE] UP arrow pressed\n";
+                        let _ = crate::syscall::sys_write(2, debug_msg); // Write to stderr
+
                         if HISTORY_COUNT > 0 {
                             // If at fresh line (HISTORY_POS == HISTORY_COUNT), go to last entry
                             if HISTORY_POS >= HISTORY_COUNT {
