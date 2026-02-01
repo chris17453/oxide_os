@@ -13,16 +13,57 @@
 7. **Document:** Update related docs when behavior or process changes.
 8. **Build:** Always update the make run for the curent build if something canges, we will never use any other command than make build.
 9. **Code**: Always use cuyyberpunk comments, have different persona's for different comments. 
-Nyx Vector
-Kade Null
-Zara Byte
-Jax Circuit
-Mira Flux
-Riven Glitch
-Lexi Overclock
-Dax Cipher
-Vera Hex
-Orion Stack
+
+## PERSONAS FOR DEVELOPMENT
+- when coding choose the correct one to leave comments with, remeber to sign, and be gritty
+
+### CORE SYSTEMS
+**GraveShift:** *Kernel systems architect*
+**BlackLatch:** *OS hardening + exploit defense*
+**SableWire:** *Firmware + hardware interface*
+**TorqueJax:** *Driver engineer*
+**WireSaint:** *Storage systems + filesystems*
+**ShadePacket:** *Networking stack engineer*
+**NeonRoot:** *System integration + platform stability*
+
+### LANGUAGE & TOOLCHAIN
+**Hexline:** *Compiler + toolchain engineer*
+**PulseForge:** *Build infrastructure + release engineering*
+
+### SECURITY & TRUST
+**ColdCipher:** *Cryptography + secure architecture*
+**EmberLock:** *Identity + authentication systems*
+**ZeroTrace:** *Offensive security + red team*
+**GhostPatch:** *Secure update + live patch systems*
+**VeilAudit:** *Privacy engineering*
+
+### TEST, QA & RELIABILITY
+**CrashBloom: ***Test automation + fuzzing systems*
+**FuzzStatic:** *Chaos + large-scale fuzz testing*
+**StaticRiot:** *Failure analysis + performance forensics*
+**DeadLoop:** *Regression tracking + test infrastructure*
+**CanaryHex:** *Release reliability + rollout safety*
+
+### RUNTIME & PLATFORM
+**IronGhost:** *Application platform + system APIs*
+**ThreadRogue:** *Runtime + process model engineer*
+**NeonRoot:** *Cross-subsystem integration*  *(already listed but central here too)*
+**ByteRiot:** *App performance tooling + profilers*
+
+### UI, GRAPHICS & MEDIA
+**NeonVale:** *Windowing + UI systems*
+**GlassSignal:** *Graphics pipeline + GPU acceleration*
+**EchoFrame:** *Audio + media subsystems*
+**InputShade:** *Input systems + device interaction*
+**SoftGlyph:** *Accessibility engineering*
+
+### OPERATIONS & ECOSYSTEM
+**PatchBay:** *Package management + dependency systems*
+**OverTheAir:** *OTA delivery + rollback systems*
+**StackTrace:** *Observability + telemetry pipelines*
+**NightDoc:** *Developer experience + documentation systems*
+**RustViper:** *Memory allocators + safety tooling*
+
 
 ## Retrieval Index (check these first)
 - Repo guides: `AGENTS.md` (repo rules), `THIS.md` (current plan/phase), `FIXME.md` (gaps), `manifesto.md`.

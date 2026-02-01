@@ -176,6 +176,8 @@ pub struct Ps2Keyboard {
     altgr: AtomicBool,
     /// Num Lock state
     numlock: AtomicBool,
+    /// Caps Lock state (🔥 NOW ACTUALLY IMPLEMENTED 🔥)
+    capslock: AtomicBool,
 }
 
 impl Ps2Keyboard {
@@ -190,6 +192,7 @@ impl Ps2Keyboard {
             alt: AtomicBool::new(false),
             altgr: AtomicBool::new(false),
             numlock: AtomicBool::new(true),
+            capslock: AtomicBool::new(false), // Caps Lock off by default (normal behavior)
         }
     }
 
@@ -239,7 +242,7 @@ impl Ps2Keyboard {
                         self.numlock.store(new_state, Ordering::SeqCst);
                         let mut leds = self.leds.load(Ordering::SeqCst);
                         if new_state {
-                            leds |= 0x02;
+                            leds |= 0x02;  // Num Lock LED bit
                         } else {
                             leds &= !0x02;
                         }
@@ -247,6 +250,26 @@ impl Ps2Keyboard {
                         self.update_leds();
                     }
                     // Don't forward NumLock itself to console
+                    return;
+                }
+                input::KEY_CAPSLOCK => {
+                    // 🔥 CAPS LOCK: THE FIX THE WORLD NEEDED 🔥
+                    //
+                    // OLD CODE: Key pressed, nothing happens, users cry
+                    // NEW CODE: Actually toggles Caps Lock state and LED like it's 2077
+                    if pressed {
+                        let new_state = !self.capslock.load(Ordering::SeqCst);
+                        self.capslock.store(new_state, Ordering::SeqCst);
+                        let mut leds = self.leds.load(Ordering::SeqCst);
+                        if new_state {
+                            leds |= 0x04;  // Caps Lock LED bit (bit 2)
+                        } else {
+                            leds &= !0x04;
+                        }
+                        self.leds.store(leds, Ordering::SeqCst);
+                        self.update_leds();
+                    }
+                    // Don't forward Caps Lock key itself to console
                     return;
                 }
                 _ => {}
@@ -405,8 +428,13 @@ impl Ps2Keyboard {
                     return;
                 }
 
-                // Convert to character using current keyboard layout (with AltGr support)
-                if let Some(ch) = input::keymap::keycode_to_char_current(keycode, shift, altgr) {
+                // 🔥 CAPS LOCK NOW ACTUALLY WORKS 🔥
+                // Caps Lock XORs with Shift for LETTERS ONLY (not symbols)
+                // - Caps + 'a' = 'A'
+                // - Caps + Shift + 'a' = 'a' (they cancel)
+                // - Caps + '1' = '1' (NOT '!', Caps Lock ignores non-letters)
+                let capslock = self.capslock.load(Ordering::SeqCst);
+                if let Some(ch) = input::keymap::keycode_to_char_current(keycode, shift, altgr, capslock) {
                     let mut buf = [0u8; 4];
                     let s = ch.encode_utf8(&mut buf);
                     push_to_console(s.as_bytes());

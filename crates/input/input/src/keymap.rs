@@ -327,8 +327,8 @@ impl Default for Keymap {
 /// Convert keycode to ASCII character (US layout, lowercase)
 /// This is the legacy function - prefer keycode_to_char with a layout
 pub fn keycode_to_ascii(keycode: u16, shift: bool) -> Option<char> {
-    // Use the default (US) layout
-    crate::layouts::default_layout().get_char(keycode, shift, false)
+    // Use the default (US) layout, no capslock (legacy compat)
+    crate::layouts::default_layout().get_char(keycode, shift, false, false)
 }
 
 /// Convert keycode to character using the specified layout
@@ -337,8 +337,9 @@ pub fn keycode_to_char(
     layout: &crate::layouts::KeyboardLayout,
     shift: bool,
     altgr: bool,
+    capslock: bool,
 ) -> Option<char> {
-    layout.get_char(keycode, shift, altgr)
+    layout.get_char(keycode, shift, altgr, capslock)
 }
 
 /// Global current keyboard layout
@@ -361,6 +362,10 @@ pub fn current_layout() -> &'static crate::layouts::KeyboardLayout {
 }
 
 /// Convert keycode to character using the current layout
-pub fn keycode_to_char_current(keycode: u16, shift: bool, altgr: bool) -> Option<char> {
-    current_layout().get_char(keycode, shift, altgr)
+///
+/// **CAPS LOCK SUPPORT (Finally!):**
+/// Pass the capslock state from the keyboard driver.
+/// Caps Lock will uppercase letters but NOT affect numbers/symbols.
+pub fn keycode_to_char_current(keycode: u16, shift: bool, altgr: bool, capslock: bool) -> Option<char> {
+    current_layout().get_char(keycode, shift, altgr, capslock)
 }

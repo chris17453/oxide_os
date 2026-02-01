@@ -25,13 +25,40 @@ pub struct KeyboardLayout {
 }
 
 impl KeyboardLayout {
+    /// Check if a keycode is a letter (A-Z)
+    ///
+    /// **WHY THIS EXISTS:**
+    /// Caps Lock should uppercase LETTERS but NOT symbols/numbers.
+    /// Shift+1 = '!' (with or without Caps Lock)
+    /// Caps Lock+a = 'A' (but Caps Lock+1 = '1', NOT '!')
+    #[inline]
+    fn is_letter(&self, keycode: u16) -> bool {
+        matches!(keycode,
+            16..=25 |  // Q W E R T Y U I O P
+            30..=38 |  // A S D F G H J K L
+            44..=50    // Z X C V B N M
+        )
+    }
+
     /// Get character for keycode with given modifiers
-    pub fn get_char(&self, keycode: u16, shift: bool, altgr: bool) -> Option<char> {
+    ///
+    /// **CAPS LOCK LOGIC (The Chrome Upgrade):**
+    /// Caps Lock XORs with Shift, but ONLY for letters (A-Z).
+    /// - Caps Lock + 'a' = 'A' (effective_shift = true)
+    /// - Caps Lock + Shift + 'a' = 'a' (effective_shift = false, they cancel)
+    /// - Caps Lock + '1' = '1' (NOT '!', Caps Lock ignores non-letters)
+    /// - Shift + '1' = '!' (regardless of Caps Lock state)
+    pub fn get_char(&self, keycode: u16, shift: bool, altgr: bool, capslock: bool) -> Option<char> {
         if keycode >= 128 {
             return None;
         }
         let idx = keycode as usize;
-        let ch = match (shift, altgr) {
+
+        // Caps Lock XORs with Shift, but ONLY for letters
+        // For symbols/numbers, Caps Lock is ignored
+        let effective_shift = shift ^ (capslock && self.is_letter(keycode));
+
+        let ch = match (effective_shift, altgr) {
             (false, false) => self.normal[idx],
             (true, false) => self.shift[idx],
             (false, true) => self.altgr[idx],
