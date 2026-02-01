@@ -42,6 +42,13 @@ fn signal_foreground(sig: i32) {
 ///
 /// Routes the escape sequence to both VT input and console device
 fn push_escape_sequence(seq: &[u8]) {
+    let mut w = serial::SerialWriter;
+    let _ = write!(w, "[ESCAPE] Pushing {} bytes to VT+console: ", seq.len());
+    for &byte in seq {
+        let _ = write!(w, "{:02x} ", byte);
+    }
+    let _ = write!(w, "\n");
+
     if let Some(manager) = vt::get_manager() {
         for &byte in seq {
             manager.push_input(byte);
@@ -463,28 +470,38 @@ fn process_scancode(scancode: u8) -> Option<u8> {
             match code {
                 0x48 => {
                     // UP arrow: ESC [ A
+                    let mut w = serial::SerialWriter;
+                    let _ = write!(w, "[KB] UP arrow detected, sending ESC[A\n");
                     push_escape_sequence(b"\x1b[A");
                     return None;
                 }
                 0x50 => {
                     // DOWN arrow: ESC [ B
+                    let mut w = serial::SerialWriter;
+                    let _ = write!(w, "[KB] DOWN arrow detected, sending ESC[B\n");
                     push_escape_sequence(b"\x1b[B");
                     return None;
                 }
                 0x4B => {
                     // LEFT arrow: ESC [ D (or Ctrl+LEFT: ESC [ 1 ; 5 D)
+                    let mut w = serial::SerialWriter;
                     if CTRL_PRESSED {
+                        let _ = write!(w, "[KB] Ctrl+LEFT detected\n");
                         push_escape_sequence(b"\x1b[1;5D");
                     } else {
+                        let _ = write!(w, "[KB] LEFT arrow detected\n");
                         push_escape_sequence(b"\x1b[D");
                     }
                     return None;
                 }
                 0x4D => {
                     // RIGHT arrow: ESC [ C (or Ctrl+RIGHT: ESC [ 1 ; 5 C)
+                    let mut w = serial::SerialWriter;
                     if CTRL_PRESSED {
+                        let _ = write!(w, "[KB] Ctrl+RIGHT detected\n");
                         push_escape_sequence(b"\x1b[1;5C");
                     } else {
+                        let _ = write!(w, "[KB] RIGHT arrow detected\n");
                         push_escape_sequence(b"\x1b[C");
                     }
                     return None;
