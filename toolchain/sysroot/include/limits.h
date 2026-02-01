@@ -68,6 +68,8 @@
 /* POSIX2 limits */
 #define _POSIX2_RE_DUP_MAX 255
 #define RE_DUP_MAX         _POSIX2_RE_DUP_MAX
+#define _POSIX2_CHARCLASS_NAME_MAX 14
+#define CHARCLASS_NAME_MAX         _POSIX2_CHARCLASS_NAME_MAX
 
 /* IOV max */
 #define IOV_MAX         1024

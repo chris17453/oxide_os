@@ -156,6 +156,7 @@ pub mod arch;
 pub mod env;
 pub mod errno;
 pub mod fcntl;
+pub mod getopt;
 pub mod signal;
 pub mod stat;
 pub mod stdio;

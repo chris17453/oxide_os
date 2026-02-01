@@ -4,6 +4,7 @@
 #define _WCTYPE_H
 
 #include <wchar.h>
+#include <locale.h>  /* For locale_t */
 
 typedef unsigned long wctype_t;
 typedef const int *wctrans_t;

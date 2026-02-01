@@ -3630,23 +3630,96 @@ pub unsafe extern "C" fn towlower(wc: u32) -> u32 {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn wctype(_name: *const u8) -> u64 {
-    0
+pub unsafe extern "C" fn wctype(name: *const u8) -> u64 {
+    if name.is_null() {
+        return 0;
+    }
+
+    // Read the C string safely
+    let mut len = 0;
+    while len < 32 && *name.add(len) != 0 {
+        len += 1;
+    }
+
+    if len == 0 || len >= 32 {
+        return 0;
+    }
+
+    // Compare against known character class names
+    // We use simple values 1-12 as descriptors
+    let name_slice = core::slice::from_raw_parts(name, len);
+
+    match name_slice {
+        b"alnum" => 1,
+        b"alpha" => 2,
+        b"blank" => 3,
+        b"cntrl" => 4,
+        b"digit" => 5,
+        b"graph" => 6,
+        b"lower" => 7,
+        b"print" => 8,
+        b"punct" => 9,
+        b"space" => 10,
+        b"upper" => 11,
+        b"xdigit" => 12,
+        _ => 0,
+    }
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iswctype(_wc: u32, _desc: u64) -> i32 {
-    0
+pub unsafe extern "C" fn iswctype(wc: u32, desc: u64) -> i32 {
+    // Map descriptor back to the appropriate isw* function
+    match desc {
+        1 => iswalnum(wc),    // alnum
+        2 => iswalpha(wc),    // alpha
+        3 => iswblank(wc),    // blank
+        4 => iswcntrl(wc),    // cntrl
+        5 => iswdigit(wc),    // digit
+        6 => iswgraph(wc),    // graph
+        7 => iswlower(wc),    // lower
+        8 => iswprint(wc),    // print
+        9 => iswpunct(wc),    // punct
+        10 => iswspace(wc),   // space
+        11 => iswupper(wc),   // upper
+        12 => iswxdigit(wc),  // xdigit
+        _ => 0,
+    }
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn wctrans(_name: *const u8) -> *const i32 {
-    core::ptr::null()
+pub unsafe extern "C" fn wctrans(name: *const u8) -> *const i32 {
+    if name.is_null() {
+        return core::ptr::null();
+    }
+
+    // Read the C string safely
+    let mut len = 0;
+    while len < 32 && *name.add(len) != 0 {
+        len += 1;
+    }
+
+    if len == 0 || len >= 32 {
+        return core::ptr::null();
+    }
+
+    // Compare against known transformation names
+    // Return non-null distinct pointers for "tolower" and "toupper"
+    let name_slice = core::slice::from_raw_parts(name, len);
+
+    match name_slice {
+        b"tolower" => 1 as *const i32,
+        b"toupper" => 2 as *const i32,
+        _ => core::ptr::null(),
+    }
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn towctrans(wc: u32, _desc: *const i32) -> u32 {
-    wc
+pub unsafe extern "C" fn towctrans(wc: u32, desc: *const i32) -> u32 {
+    match desc as usize {
+        1 => towlower(wc),  // tolower
+        2 => towupper(wc),  // toupper
+        _ => wc,
+    }
 }
 
 // _l locale variants
@@ -3665,17 +3738,35 @@ pub unsafe extern "C" fn iswlower_l(wc: u32, _l: *mut u8) -> i32 { iswlower(wc) 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn iswprint_l(wc: u32, _l: *mut u8) -> i32 { iswprint(wc) }
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn iswpunct_l(wc: u32, _l: *mut u8) -> i32 { iswpunct(wc) }
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn iswcntrl_l(wc: u32, _l: *mut u8) -> i32 { iswcntrl(wc) }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn iswxdigit_l(wc: u32, _l: *mut u8) -> i32 { iswxdigit(wc) }
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iswgraph_l(wc: u32, _l: *mut u8) -> i32 { iswgraph(wc) }
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iswblank_l(wc: u32, _l: *mut u8) -> i32 { iswblank(wc) }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn towupper_l(wc: u32, _l: *mut u8) -> u32 { towupper(wc) }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn towlower_l(wc: u32, _l: *mut u8) -> u32 { towlower(wc) }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn wctype_l(_n: *const u8, _l: *mut u8) -> u64 { 0 }
+pub unsafe extern "C" fn wctype_l(n: *const u8, _l: *mut u8) -> u64 {
+    wctype(n)
+}
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iswctype_l(wc: u32, desc: u64, _l: *mut u8) -> i32 { iswctype(wc, desc) }
+pub unsafe extern "C" fn iswctype_l(wc: u32, desc: u64, _l: *mut u8) -> i32 {
+    iswctype(wc, desc)
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wctrans_l(n: *const u8, _l: *mut u8) -> *const i32 {
+    wctrans(n)
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn towctrans_l(wc: u32, desc: *const i32, _l: *mut u8) -> u32 {
+    towctrans(wc, desc)
+}
 
 // wchar string C exports
 #[unsafe(no_mangle)]
@@ -6551,4 +6642,59 @@ pub unsafe extern "C" fn eventfd_read(fd: i32, value: *mut u64) -> i32 {
 pub unsafe extern "C" fn eventfd_write(fd: i32, value: u64) -> i32 {
     let r = syscall::syscall3(syscall::nr::WRITE, fd as usize, &value as *const u64 as usize, 8) as isize;
     if r == 8 { 0 } else { -1 }
+}
+
+// getopt C exports
+#[unsafe(no_mangle)]
+pub static mut optind: i32 = 1;
+
+#[unsafe(no_mangle)]
+pub static mut optarg: *mut u8 = core::ptr::null_mut();
+
+#[unsafe(no_mangle)]
+pub static mut opterr: i32 = 1;
+
+#[unsafe(no_mangle)]
+pub static mut optopt: i32 = 0;
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn getopt(argc: i32, argv: *const *const u8, optstring: *const u8) -> i32 {
+    crate::getopt::getopt_impl(argc, argv, optstring)
+}
+
+// Minimal termcap stubs for vim
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tgetent(_bp: *mut u8, _name: *const u8) -> i32 {
+    1  // Success - we have a terminal
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tgetnum(_id: *const u8) -> i32 {
+    -1  // Feature not available
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tgetflag(_id: *const u8) -> i32 {
+    0  // Feature not present
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tgetstr(_id: *const u8, _area: *mut *mut u8) -> *mut u8 {
+    core::ptr::null_mut()  // No capability string
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tgoto(_cap: *const u8, _col: i32, _row: i32) -> *mut u8 {
+    core::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tputs(_str: *const u8, _affcnt: i32, _putc: *const u8) -> i32 {
+    0
+}
+
+// putc/fputc wrappers
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn putc(c: i32, stream: *mut u8) -> i32 {
+    putc_unlocked(c, stream)
 }
