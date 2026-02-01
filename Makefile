@@ -101,6 +101,14 @@ userspace:
 # Build optimized userspace (smaller binaries)
 userspace-release:
 	@echo "Building userspace programs (release)..."
+	@# Check if libc has changed - if so, force rebuild of all userspace
+	@if [ -d "$(USERSPACE_OUT_RELEASE)" ]; then \
+		LIBC_CHANGED=$$(find userspace/libc/src -name "*.rs" -newer "$(USERSPACE_OUT_RELEASE)/init" 2>/dev/null | head -1); \
+		if [ -n "$$LIBC_CHANGED" ]; then \
+			echo "  libc changed - cleaning userspace binaries to force relink..."; \
+			rm -rf $(USERSPACE_OUT_RELEASE)/*; \
+		fi; \
+	fi
 	@for pkg in $(USERSPACE_PACKAGES); do \
 		echo "  Building $$pkg (release)..."; \
 		RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package $$pkg --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1; \
