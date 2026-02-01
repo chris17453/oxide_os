@@ -353,6 +353,16 @@ pub fn sys_read_vfs(fd: i32, buf: u64, count: usize) -> i64 {
             None => return errno::EBADF,
         };
 
+    // 🔥 O_NONBLOCK SUPPORT (Priority #6) 🔥
+    // Check if this is a non-blocking read and data is NOT available
+    if file.flags().contains(FileFlags::O_NONBLOCK) {
+        // For non-blocking reads, check if data is available BEFORE blocking
+        if !file.vnode().poll_read_ready() {
+            // No data available and O_NONBLOCK set → return EAGAIN
+            return errno::EAGAIN;
+        }
+    }
+
     // Enable kernel preemption for blocking reads (e.g., console input)
     // This allows timer interrupt to context switch us when blocked
     use core::ptr::addr_of;
@@ -413,6 +423,16 @@ pub fn sys_write_vfs(fd: i32, buf: u64, count: usize) -> i64 {
             Some(Err(e)) => return vfs_error_to_errno(e),
             None => return errno::ESRCH, // No current process
         };
+
+    // 🔥 O_NONBLOCK SUPPORT (Priority #6) 🔥
+    // Check if this is a non-blocking write and buffer is full
+    if file.flags().contains(FileFlags::O_NONBLOCK) {
+        // For non-blocking writes, check if we can write BEFORE blocking
+        if !file.vnode().poll_write_ready() {
+            // Buffer full and O_NONBLOCK set → return EAGAIN
+            return errno::EAGAIN;
+        }
+    }
 
     // Get user buffer (requires STAC/CLAC for SMAP)
     // Enable access to user pages
