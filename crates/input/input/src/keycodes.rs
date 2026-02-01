@@ -109,6 +109,12 @@ pub const KEY_POWER: u16 = 116;
 pub const KEY_KPEQUAL: u16 = 117;
 pub const KEY_PAUSE: u16 = 119;
 pub const KEY_KPCOMMA: u16 = 121;
+
+// Media keys (🔥 Priority #13 - Now supported! 🔥)
+pub const KEY_NEXTSONG: u16 = 163;
+pub const KEY_PLAYPAUSE: u16 = 164;
+pub const KEY_PREVIOUSSONG: u16 = 165;
+pub const KEY_STOPCD: u16 = 166;
 pub const KEY_LEFTMETA: u16 = 125;
 pub const KEY_RIGHTMETA: u16 = 126;
 pub const KEY_COMPOSE: u16 = 127;

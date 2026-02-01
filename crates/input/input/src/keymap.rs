@@ -154,7 +154,7 @@ pub static SCANCODE_SET1_EXT: [u16; 128] = [
     KEY_RESERVED,  // 0x0D
     KEY_RESERVED,  // 0x0E
     KEY_RESERVED,  // 0x0F
-    KEY_RESERVED,  // 0x10
+    KEY_PREVIOUSSONG, // 0x10 🔥 Media: Previous Track
     KEY_RESERVED,  // 0x11
     KEY_RESERVED,  // 0x12
     KEY_RESERVED,  // 0x13
@@ -163,18 +163,18 @@ pub static SCANCODE_SET1_EXT: [u16; 128] = [
     KEY_RESERVED,  // 0x16
     KEY_RESERVED,  // 0x17
     KEY_RESERVED,  // 0x18
-    KEY_RESERVED,  // 0x19
+    KEY_NEXTSONG,  // 0x19 🔥 Media: Next Track
     KEY_RESERVED,  // 0x1A
     KEY_RESERVED,  // 0x1B
     KEY_KPENTER,   // 0x1C
     KEY_RIGHTCTRL, // 0x1D
     KEY_RESERVED,  // 0x1E
     KEY_RESERVED,  // 0x1F
-    KEY_RESERVED,  // 0x20
+    KEY_MUTE,      // 0x20 🔥 Media: Mute
     KEY_RESERVED,  // 0x21
-    KEY_RESERVED,  // 0x22
+    KEY_PLAYPAUSE, // 0x22 🔥 Media: Play/Pause
     KEY_RESERVED,  // 0x23
-    KEY_RESERVED,  // 0x24
+    KEY_STOPCD,    // 0x24 🔥 Media: Stop
     KEY_RESERVED,  // 0x25
     KEY_RESERVED,  // 0x26
     KEY_RESERVED,  // 0x27
@@ -184,9 +184,9 @@ pub static SCANCODE_SET1_EXT: [u16; 128] = [
     KEY_RESERVED,  // 0x2B
     KEY_RESERVED,  // 0x2C
     KEY_RESERVED,  // 0x2D
-    KEY_RESERVED,  // 0x2E
+    KEY_VOLUMEDOWN,// 0x2E 🔥 Media: Volume Down
     KEY_RESERVED,  // 0x2F
-    KEY_RESERVED,  // 0x30
+    KEY_VOLUMEUP,  // 0x30 🔥 Media: Volume Up
     KEY_RESERVED,  // 0x31
     KEY_RESERVED,  // 0x32
     KEY_RESERVED,  // 0x33
