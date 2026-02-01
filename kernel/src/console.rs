@@ -117,6 +117,12 @@ pub fn terminal_tick() {
     // runs in interrupt context (timer interrupt). Using the locking version
     // would deadlock if process-context code holds the COM1 lock.
     while let Some(byte) = unsafe { arch::serial_read_unsafe() } {
+        // Debug: log serial input
+        if byte < 32 || byte > 126 {
+            let mut w = serial::SerialWriter;
+            let _ = write!(w, "[SERIAL] Got 0x{:02x}\n", byte);
+        }
+
         // Route serial input to BOTH VT subsystem AND console device
         // This ensures input works for both /dev/ttyN and /dev/console
         if let Some(manager) = vt::get_manager() {
