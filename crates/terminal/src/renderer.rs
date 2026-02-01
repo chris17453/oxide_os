@@ -203,7 +203,24 @@ impl Renderer {
 
         // Draw character (if not space and not hidden)
         if cell.ch != ' ' && !cell.attrs.flags.contains(CellFlags::HIDDEN) {
-            self.draw_glyph(px, py, cell.ch, fg_color);
+            let is_bold = cell.attrs.flags.contains(CellFlags::BOLD);
+            let is_italic = cell.attrs.flags.contains(CellFlags::ITALIC);
+
+            if is_italic {
+                // Synthetic italic: draw with slant
+                self.draw_glyph_italic(px, py, cell.ch, fg_color);
+                // For bold italic, add synthetic bold
+                if is_bold {
+                    self.draw_glyph_italic(px + 1, py, cell.ch, fg_color);
+                }
+            } else if is_bold {
+                // Synthetic bold: draw glyph twice, offset by 1 pixel
+                self.draw_glyph(px, py, cell.ch, fg_color);
+                self.draw_glyph(px + 1, py, cell.ch, fg_color);
+            } else {
+                // Normal rendering
+                self.draw_glyph(px, py, cell.ch, fg_color);
+            }
         }
 
         // Draw underline
@@ -216,6 +233,29 @@ impl Renderer {
         if cell.attrs.flags.contains(CellFlags::STRIKETHROUGH) {
             let strike_y = py + self.font.height / 2;
             self.fb.hline(px, strike_y, self.font.width, fg_color);
+        }
+    }
+
+    /// Draw a glyph with italic slant
+    fn draw_glyph_italic(&self, px: u32, py: u32, ch: char, color: Color) {
+        let glyph = self.font.glyph_or_replacement(ch);
+
+        // Simple slant: shift pixels based on row
+        // Top rows shift right, bottom rows shift left (or no shift)
+        for y in 0..glyph.height {
+            // Calculate slant offset: more slant at top, less at bottom
+            let slant_offset = if glyph.height > 0 {
+                ((glyph.height - y - 1) * 2) / glyph.height  // 0-2 pixel shift
+            } else {
+                0
+            };
+
+            for x in 0..glyph.width {
+                if glyph.pixel(x, y) {
+                    let offset_x = px + x + slant_offset;
+                    self.fb.set_pixel(offset_x, py + y, color);
+                }
+            }
         }
     }
 
