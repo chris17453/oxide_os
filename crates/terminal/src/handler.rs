@@ -34,6 +34,8 @@ bitflags::bitflags! {
         const MOUSE_TRACKING = 0x0100;
         /// Focus events
         const FOCUS_EVENTS = 0x0200;
+        /// Synchronized output mode (CSI ? 2026 h/l)
+        const SYNCHRONIZED_OUTPUT = 0x0400;
     }
 }
 
@@ -1056,6 +1058,14 @@ impl Handler {
                         self.modes |= TerminalModes::BRACKETED_PASTE;
                     } else {
                         self.modes &= !TerminalModes::BRACKETED_PASTE;
+                    }
+                }
+                2026 => {
+                    // Synchronized output mode
+                    if enable {
+                        self.modes |= TerminalModes::SYNCHRONIZED_OUTPUT;
+                    } else {
+                        self.modes &= !TerminalModes::SYNCHRONIZED_OUTPUT;
                     }
                 }
                 _ => {}

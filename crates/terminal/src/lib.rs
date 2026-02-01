@@ -51,7 +51,7 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
-use fb::Framebuffer;
+use fb::{Color, Framebuffer};
 use spin::Mutex;
 
 use crate::buffer::{ScreenBuffer, ScrollbackBuffer};
@@ -116,6 +116,16 @@ pub struct TerminalEmulator {
     needs_render: bool,
     /// Window title (set via OSC sequences)
     title: String,
+    /// Buffered output for synchronized mode
+    sync_buffer: Vec<u8>,
+    /// Custom color palette (256 colors for ANSI256 mode)
+    palette: [Color; 256],
+    /// Custom default foreground color (None = use standard)
+    custom_fg: Option<Color>,
+    /// Custom default background color (None = use standard)
+    custom_bg: Option<Color>,
+    /// Custom cursor color (None = use standard)
+    custom_cursor: Option<Color>,
 }
 
 impl TerminalEmulator {
@@ -124,6 +134,12 @@ impl TerminalEmulator {
         let renderer = Renderer::new(fb);
         let (cols, rows) = renderer.dimensions();
         let (cell_width, cell_height) = renderer.cell_dimensions();
+
+        // Initialize default 256-color palette
+        let mut palette = [Color::VGA_BLACK; 256];
+        for i in 0..256 {
+            palette[i] = crate::color::ansi256_to_color(i as u8);
+        }
 
         TerminalEmulator {
             parser: Parser::new(),
@@ -139,6 +155,11 @@ impl TerminalEmulator {
             cell_height,
             needs_render: true,
             title: String::from("OXIDE Terminal"),
+            sync_buffer: Vec::new(),
+            palette,
+            custom_fg: None,
+            custom_bg: None,
+            custom_cursor: None,
         }
     }
 
@@ -164,10 +185,15 @@ impl TerminalEmulator {
 
     /// Write bytes to the terminal (rendering deferred to tick())
     pub fn write(&mut self, data: &[u8]) {
-        for &byte in data {
-            self.process_byte(byte);
+        // If synchronized output mode is active, buffer the data
+        if self.handler.modes.contains(TerminalModes::SYNCHRONIZED_OUTPUT) {
+            self.sync_buffer.extend_from_slice(data);
+        } else {
+            for &byte in data {
+                self.process_byte(byte);
+            }
+            self.needs_render = true;
         }
-        self.needs_render = true;
     }
 
     /// Tick function - call from timer at desired FPS to render
@@ -230,6 +256,9 @@ impl TerminalEmulator {
                 intermediates,
                 final_char,
             } => {
+                // Track if synchronized mode was on before
+                let was_sync = self.handler.modes.contains(TerminalModes::SYNCHRONIZED_OUTPUT);
+
                 // Need scrollback only if not on alternate screen
                 let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
 
@@ -249,6 +278,15 @@ impl TerminalEmulator {
                         &mut self.primary,
                         Some(&mut self.scrollback),
                     );
+                }
+
+                // If synchronized mode was just turned off, flush buffered output
+                let is_sync = self.handler.modes.contains(TerminalModes::SYNCHRONIZED_OUTPUT);
+                if was_sync && !is_sync && !self.sync_buffer.is_empty() {
+                    let buffer = core::mem::take(&mut self.sync_buffer);
+                    for &byte in buffer.iter() {
+                        self.process_byte(byte);
+                    }
                 }
 
                 // Mark affected rows dirty
@@ -330,13 +368,46 @@ impl TerminalEmulator {
         }
     }
 
+    /// Parse color specification from OSC sequence
+    /// Supports formats: rgb:RRRR/GGGG/BBBB, #RRGGBB, #RGB
+    fn parse_osc_color(color_str: &str) -> Option<Color> {
+        let color_str = color_str.trim();
+
+        if color_str.starts_with("rgb:") {
+            // rgb:RRRR/GGGG/BBBB format
+            let parts: Vec<&str> = color_str[4..].split('/').collect();
+            if parts.len() == 3 {
+                // Parse hex components (take first 2 digits of each for 8-bit color)
+                let r = u8::from_str_radix(&parts[0][..parts[0].len().min(2)], 16).ok()?;
+                let g = u8::from_str_radix(&parts[1][..parts[1].len().min(2)], 16).ok()?;
+                let b = u8::from_str_radix(&parts[2][..parts[2].len().min(2)], 16).ok()?;
+                return Some(Color::new(r, g, b));
+            }
+        } else if color_str.starts_with('#') {
+            // #RRGGBB or #RGB format
+            let hex = &color_str[1..];
+            if hex.len() == 6 {
+                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+                return Some(Color::new(r, g, b));
+            } else if hex.len() == 3 {
+                let r = u8::from_str_radix(&hex[0..1], 16).ok()? * 17;
+                let g = u8::from_str_radix(&hex[1..2], 16).ok()? * 17;
+                let b = u8::from_str_radix(&hex[2..3], 16).ok()? * 17;
+                return Some(Color::new(r, g, b));
+            }
+        }
+        None
+    }
+
     /// Handle OSC (Operating System Command) sequences
     ///
     /// 🔥 OSC SUPPORT: FROM IGNORED TO IMPLEMENTED 🔥
     /// Before: All OSC sequences ignored
-    /// After: Title setting works (most common use case)
+    /// After: Title setting and color customization work
     ///
-    /// Implements Phase 1 from term_analysis.md - window title support
+    /// Implements Phase 1 & 2 from term_analysis.md
     fn handle_osc(&mut self, data: &[u8]) {
         // Parse OSC: number ; parameters
         let s = core::str::from_utf8(data).unwrap_or("");
@@ -369,14 +440,39 @@ impl TerminalEmulator {
                     self.title = String::from(params);
                 }
 
-                // OSC 4, 10, 11, 12 - Color customization
-                // TODO: Requires palette storage system (Phase 2)
-                4 | 10 | 11 | 12 => {
-                    #[cfg(feature = "debug-terminal")]
-                    {
-                        use arch_x86_64::serial;
-                        use core::fmt::Write;
-                        let _ = write!(serial::SerialWriter, "[TERM-OSC] Color OSC {} (not yet implemented)\n", num);
+                // OSC 4 ; index ; colorspec - Set ANSI color
+                4 => {
+                    // Format: OSC 4 ; index ; colorspec ST
+                    let mut parts = params.splitn(2, ';');
+                    if let Some(index_str) = parts.next() {
+                        if let Some(color_str) = parts.next() {
+                            if let Ok(index) = index_str.parse::<u8>() {
+                                if let Some(color) = Self::parse_osc_color(color_str) {
+                                    self.palette[index as usize] = color;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // OSC 10 ; colorspec - Set default foreground color
+                10 => {
+                    if let Some(color) = Self::parse_osc_color(params) {
+                        self.custom_fg = Some(color);
+                    }
+                }
+
+                // OSC 11 ; colorspec - Set default background color
+                11 => {
+                    if let Some(color) = Self::parse_osc_color(params) {
+                        self.custom_bg = Some(color);
+                    }
+                }
+
+                // OSC 12 ; colorspec - Set cursor color
+                12 => {
+                    if let Some(color) = Self::parse_osc_color(params) {
+                        self.custom_cursor = Some(color);
                     }
                 }
 
@@ -391,15 +487,34 @@ impl TerminalEmulator {
                     }
                 }
 
-                // OSC 104, 110, 111, 112 - Reset colors
-                // TODO: Requires palette storage system (Phase 2)
-                104 | 110 | 111 | 112 => {
-                    #[cfg(feature = "debug-terminal")]
-                    {
-                        use arch_x86_64::serial;
-                        use core::fmt::Write;
-                        let _ = write!(serial::SerialWriter, "[TERM-OSC] Color reset OSC {} (not yet implemented)\n", num);
+                // OSC 104 ; index - Reset ANSI color (or all if no index)
+                104 => {
+                    if params.is_empty() {
+                        // Reset entire palette to defaults
+                        for i in 0..256 {
+                            self.palette[i] = crate::color::ansi256_to_color(i as u8);
+                        }
+                    } else {
+                        // Reset specific color
+                        if let Ok(index) = params.parse::<u8>() {
+                            self.palette[index as usize] = crate::color::ansi256_to_color(index);
+                        }
                     }
+                }
+
+                // OSC 110 - Reset default foreground color
+                110 => {
+                    self.custom_fg = None;
+                }
+
+                // OSC 111 - Reset default background color
+                111 => {
+                    self.custom_bg = None;
+                }
+
+                // OSC 112 - Reset cursor color
+                112 => {
+                    self.custom_cursor = None;
                 }
 
                 _ => {

@@ -26,7 +26,24 @@ impl Default for TermColor {
 }
 
 impl TermColor {
-    /// Convert to framebuffer Color
+    /// Convert to framebuffer Color using optional custom palette
+    pub fn to_fb_color_with_palette(
+        &self,
+        is_fg: bool,
+        palette: &[Color; 256],
+        custom_fg: Option<Color>,
+        custom_bg: Option<Color>,
+    ) -> Color {
+        match self {
+            TermColor::Ansi16(n) => palette[*n as usize],
+            TermColor::Ansi256(n) => palette[*n as usize],
+            TermColor::Rgb(r, g, b) => Color::new(*r, *g, *b),
+            TermColor::DefaultFg => custom_fg.unwrap_or(Color::VGA_LIGHT_GRAY),
+            TermColor::DefaultBg => custom_bg.unwrap_or(Color::VGA_BLACK),
+        }
+    }
+
+    /// Convert to framebuffer Color (uses default palette)
     pub fn to_fb_color(&self, _is_fg: bool) -> Color {
         match self {
             TermColor::Ansi16(n) => ansi16_to_color(*n),
