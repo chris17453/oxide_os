@@ -990,12 +990,20 @@ unsafe fn read_line_loop(prompt: &[u8]) -> *mut u8 {
 
 /// Add a line to the history buffer
 pub unsafe fn add_history(line: *const u8) {
+    let _ = crate::syscall::sys_write(2, b"[ADD_HISTORY] Called\n");
+
     if line.is_null() {
+        let _ = crate::syscall::sys_write(2, b"[ADD_HISTORY] line is null\n");
         return;
     }
 
     let len = crate::string::strlen(line);
+    let _ = crate::syscall::sys_write(2, b"[ADD_HISTORY] len=");
+    crate::stdio::print_u64(len as u64);
+    let _ = crate::syscall::sys_write(2, b"\n");
+
     if len == 0 {
+        let _ = crate::syscall::sys_write(2, b"[ADD_HISTORY] empty line\n");
         return;
     }
 
@@ -1018,6 +1026,9 @@ pub unsafe fn add_history(line: *const u8) {
             .copy_from_slice(core::slice::from_raw_parts(line, copy_len));
         HISTORY[HISTORY_COUNT][copy_len] = 0;
         HISTORY_COUNT += 1;
+        let _ = crate::syscall::sys_write(2, b"[ADD_HISTORY] Added entry, count now=");
+        crate::stdio::print_u64(HISTORY_COUNT as u64);
+        let _ = crate::syscall::sys_write(2, b"\n");
     } else {
         // Shift up
         for i in 0..(MAX_HISTORY - 1) {
@@ -1026,6 +1037,7 @@ pub unsafe fn add_history(line: *const u8) {
         HISTORY[MAX_HISTORY - 1][..copy_len]
             .copy_from_slice(core::slice::from_raw_parts(line, copy_len));
         HISTORY[MAX_HISTORY - 1][copy_len] = 0;
+        let _ = crate::syscall::sys_write(2, b"[ADD_HISTORY] Shifted entries\n");
     }
 
     history_length = HISTORY_COUNT as i32;
