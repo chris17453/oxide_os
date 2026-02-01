@@ -123,7 +123,24 @@ pub fn putchar(c: u8) {
 pub fn getchar() -> i32 {
     let mut buf = [0u8; 1];
     let ret = syscall::sys_read(STDIN_FILENO, &mut buf);
-    if ret <= 0 { -1 } else { buf[0] as i32 }
+    if ret <= 0 {
+        let _ = syscall::sys_write(2, b"[GETCHAR] EOF or error\n");
+        -1
+    } else {
+        let byte = buf[0];
+        // Debug output for non-printable characters
+        if byte < 32 || byte > 126 {
+            let _ = syscall::sys_write(2, b"[GETCHAR] 0x");
+            // Simple hex output
+            let nibbles = [(byte >> 4) & 0xF, byte & 0xF];
+            for &nib in &nibbles {
+                let hex_char = if nib < 10 { b'0' + nib } else { b'a' + (nib - 10) };
+                let _ = syscall::sys_write(2, &[hex_char]);
+            }
+            let _ = syscall::sys_write(2, b"\n");
+        }
+        byte as i32
+    }
 }
 
 /// Print a null-terminated string with newline (C puts function)
