@@ -137,6 +137,73 @@ pub fn check_sleepers() {
     }
 }
 
+/// Block the current task for a specified number of deciseconds (1/10 second).
+///
+/// 🔥 VTIME SUPPORT (Priority #7 Fix) 🔥
+/// Before: VTIME ignored → raw mode timeout reads didn't work
+/// After: Proper timed blocking with sleep queue
+///
+/// Used by TTY read() for VTIME timeouts. Returns true if timeout expired,
+/// false if woken early (by signal or data arrival).
+///
+/// At 100 Hz timer, 1 decisecond = 10 ticks.
+pub fn block_deciseconds(deciseconds: u8) -> bool {
+    if deciseconds == 0 {
+        return true; // No timeout - caller should use regular blocking
+    }
+
+    let timeout_ticks = (deciseconds as u64) * 10; // 1 decisecond = 10 ticks at 100Hz
+    let start_ticks = get_ticks();
+    let wake_ticks = start_ticks + timeout_ticks;
+
+    let current_pid = sched::current_pid().unwrap_or(0);
+    if current_pid == 0 {
+        return true; // No current task?
+    }
+
+    // Register in sleep queue
+    let queued = sleep_queue_add(current_pid, wake_ticks);
+
+    // Block until timeout or wakeup
+    while get_ticks() < wake_ticks {
+        // Check for early wakeup (signal or data arrival)
+        // The TTY will wake us via sched_wake_up() when data arrives
+        let has_signals = with_current_meta(|meta| meta.has_pending_signals()).unwrap_or(false);
+        if has_signals {
+            if queued {
+                sleep_queue_remove(current_pid);
+            }
+            return false; // Woken early by signal
+        }
+
+        if queued {
+            sched::block_current(TaskState::TASK_INTERRUPTIBLE);
+            sched::set_need_resched();
+        }
+
+        arch::allow_kernel_preempt();
+
+        unsafe {
+            core::arch::asm!(
+                "sti",
+                "hlt",
+                "cli",
+                options(nomem, nostack)
+            );
+        }
+
+        // If we get here and time hasn't expired, we were woken early (by data or signal)
+        if get_ticks() < wake_ticks {
+            if queued {
+                sleep_queue_remove(current_pid);
+            }
+            return false; // Woken early
+        }
+    }
+
+    true // Timeout expired
+}
+
 /// Clock IDs (POSIX)
 pub mod clock {
     pub const REALTIME: i32 = 0;

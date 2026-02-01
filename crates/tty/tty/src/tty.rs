@@ -35,6 +35,7 @@ pub trait TtyDriver: Send + Sync {
 // Can't depend on sched crate directly due to circular dependencies
 unsafe extern "Rust" {
     fn sched_block_interruptible();
+    fn sched_block_deciseconds(deciseconds: u8) -> bool;
     fn sched_wake_up(pid: u32);
     fn sched_current_pid() -> Option<u32>;
 }
@@ -321,16 +322,26 @@ impl VnodeOps for Tty {
 
     fn read(&self, _offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
         // 🔥 NO MORE SPINLOOPS - Proper blocking with wait queues 🔥
+        // 🔥 NOW WITH VTIME SUPPORT (Priority #7 Fix) 🔥
         //
-        // Before: Spinloop waking up every 10ms, checking, yielding
-        // After:  Block in TASK_INTERRUPTIBLE, wake only when data arrives
+        // Before: Spinloop waking up every 10ms, checking, yielding. VTIME ignored.
+        // After:  Block in TASK_INTERRUPTIBLE, wake only when data arrives.
+        //         VTIME implemented with timed blocking.
         //
         // CPU usage drops from ~100% spinning to 0% while waiting.
         // Welcome to having a real OS.
 
+        // Get VMIN and VTIME from termios (need to check once before loop)
+        use crate::termios::{VMIN, VTIME};
+        let (vmin, vtime) = {
+            let ldisc = self.ldisc.lock();
+            let termios = ldisc.termios();
+            (termios.c_cc[VMIN], termios.c_cc[VTIME])
+        };
+
         loop {
             // Try to read with lock held (keep critical section small)
-            let has_data = {
+            let (has_data, available) = {
                 let mut ldisc = self.ldisc.lock();
 
                 // Check if data is available
@@ -348,11 +359,20 @@ impl VnodeOps for Tty {
                     return Ok(count);
                 }
 
-                false
+                (false, ldisc.input_available())
             }; // Release lock!
 
-            // No data available - block until input arrives
+            // No data available - check VTIME behavior
             if !has_data {
+                // VMIN=0, VTIME=0: Non-blocking, return immediately
+                if vmin == 0 && vtime == 0 {
+                    return Ok(0);
+                }
+
+                // VMIN=0, VTIME>0: Timeout read - wait VTIME deciseconds, return available data
+                // VMIN>0, VTIME=0: Block indefinitely until VMIN bytes available
+                // VMIN>0, VTIME>0: Interbyte timeout (complex - TODO for now, treat as VMIN>0, VTIME=0)
+
                 // Get current PID and add to wait queue
                 let pid = unsafe { sched_current_pid() };
                 if let Some(pid) = pid {
@@ -363,13 +383,33 @@ impl VnodeOps for Tty {
                         }
                     }
 
-                    // Block in interruptible sleep
-                    // Will wake when: keyboard input arrives OR signal delivered (Ctrl+C)
-                    unsafe { sched_block_interruptible(); }
+                    // Block with timeout if VTIME > 0 and VMIN == 0
+                    if vtime > 0 && vmin == 0 {
+                        // Timeout read: block for VTIME deciseconds, return available data
+                        let _timeout_expired = unsafe { sched_block_deciseconds(vtime) };
 
-                    // When we wake up, remove ourselves and retry
-                    let mut waiters = self.read_waiters.lock();
-                    waiters.retain(|&p| p != pid);
+                        // Remove ourselves from wait queue
+                        let mut waiters = self.read_waiters.lock();
+                        waiters.retain(|&p| p != pid);
+
+                        // Return whatever data is available (may be 0 if timeout expired)
+                        let mut ldisc = self.ldisc.lock();
+                        let available = ldisc.input_available();
+                        if available > 0 {
+                            let count = ldisc.read(buf);
+                            return Ok(count);
+                        } else {
+                            return Ok(0); // Timeout with no data
+                        }
+                    } else {
+                        // Block indefinitely (VMIN>0 or default behavior)
+                        // Will wake when: keyboard input arrives OR signal delivered (Ctrl+C)
+                        unsafe { sched_block_interruptible(); }
+
+                        // When we wake up, remove ourselves and retry
+                        let mut waiters = self.read_waiters.lock();
+                        waiters.retain(|&p| p != pid);
+                    }
                 }
                 // Loop back and retry the read
             }

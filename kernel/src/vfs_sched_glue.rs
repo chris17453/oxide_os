@@ -5,6 +5,7 @@
 //! here in the kernel which has access to both crates.
 
 use sched::{self, TaskState};
+use syscall::time;
 
 /// Block the current task in TASK_INTERRUPTIBLE state
 ///
@@ -28,4 +29,13 @@ pub extern "Rust" fn sched_wake_up(pid: u32) {
 #[unsafe(no_mangle)]
 pub extern "Rust" fn sched_current_pid() -> Option<u32> {
     sched::current_pid()
+}
+
+/// Block the current task for a specified number of deciseconds (1/10 second).
+///
+/// Returns true if timeout expired, false if woken early (by signal or data).
+/// Used by TTY for VTIME support.
+#[unsafe(no_mangle)]
+pub extern "Rust" fn sched_block_deciseconds(deciseconds: u8) -> bool {
+    time::block_deciseconds(deciseconds)
 }
