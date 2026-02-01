@@ -313,6 +313,15 @@ impl TerminalEmulator {
                 // OSC commands (title, colors, etc.)
                 self.handle_osc(&data);
             }
+            Action::DcsDispatch {
+                params,
+                intermediates,
+                final_char,
+                data,
+            } => {
+                // DCS commands (Sixel, etc.)
+                self.handle_dcs(&params, &intermediates, final_char, &data);
+            }
             Action::None => {}
         }
     }
@@ -622,6 +631,61 @@ impl TerminalEmulator {
                     }
                 }
             }
+        }
+    }
+
+    /// Handle DCS (Device Control String) sequences
+    ///
+    /// Implements Phase 3 from term_analysis.md - DCS framework and Sixel graphics
+    fn handle_dcs(
+        &mut self,
+        params: &[i32],
+        intermediates: &[u8],
+        final_char: u8,
+        data: &[u8],
+    ) {
+        // Check for Sixel graphics: DCS P1 ; P2 ; P3 q data ST
+        if final_char == b'q' {
+            // Sixel graphics sequence
+            #[cfg(feature = "debug-terminal")]
+            {
+                use arch_x86_64::serial;
+                use core::fmt::Write;
+                let _ = write!(
+                    serial::SerialWriter,
+                    "[TERM-DCS] Sixel graphics ({} bytes) - not yet rendered\n",
+                    data.len()
+                );
+            }
+            // TODO: Implement Sixel decoding and rendering
+            // For now, just acknowledge receipt
+            return;
+        }
+
+        // Check for DECRQSS (Request Status String): DCS $ q Pt ST
+        if final_char == b'q' && intermediates.first() == Some(&b'$') {
+            // Terminal state query
+            #[cfg(feature = "debug-terminal")]
+            {
+                use arch_x86_64::serial;
+                use core::fmt::Write;
+                let _ = write!(serial::SerialWriter, "[TERM-DCS] DECRQSS query\n");
+            }
+            // TODO: Respond with requested terminal state
+            return;
+        }
+
+        // Unknown DCS sequence
+        #[cfg(feature = "debug-terminal")]
+        {
+            use arch_x86_64::serial;
+            use core::fmt::Write;
+            let _ = write!(
+                serial::SerialWriter,
+                "[TERM-DCS] Unknown DCS final={} intermediates={:?}\n",
+                final_char as char,
+                intermediates
+            );
         }
     }
 

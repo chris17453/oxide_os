@@ -28,6 +28,14 @@ pub enum State {
     OscString,
     /// DCS entry (device control string)
     DcsEntry,
+    /// DCS parameter collection
+    DcsParam,
+    /// DCS intermediate bytes
+    DcsIntermediate,
+    /// DCS passthrough (collecting data)
+    DcsPassthrough,
+    /// DCS ignore
+    DcsIgnore,
     /// After ESC (
     DesignateG0,
     /// After ESC )
@@ -54,6 +62,13 @@ pub enum Action {
     },
     /// OSC (Operating System Command) string
     OscDispatch(Vec<u8>),
+    /// DCS (Device Control String) sequence
+    DcsDispatch {
+        params: Vec<i32>,
+        intermediates: Vec<u8>,
+        final_char: u8,
+        data: Vec<u8>,
+    },
     /// No action
     None,
 }
@@ -72,6 +87,10 @@ pub struct Parser {
     intermediates: Vec<u8>,
     /// OSC string being collected
     osc_string: Vec<u8>,
+    /// DCS data being collected
+    dcs_data: Vec<u8>,
+    /// DCS final character
+    dcs_final: u8,
     /// UTF-8 decoding buffer (up to 4 bytes)
     utf8_buffer: [u8; 4],
     /// Number of UTF-8 bytes collected
@@ -90,6 +109,8 @@ impl Parser {
             param_started: false,
             intermediates: Vec::with_capacity(4),
             osc_string: Vec::with_capacity(256),
+            dcs_data: Vec::with_capacity(256),
+            dcs_final: 0,
             utf8_buffer: [0; 4],
             utf8_count: 0,
             utf8_expected: 0,
@@ -104,6 +125,8 @@ impl Parser {
         self.param_started = false;
         self.intermediates.clear();
         self.osc_string.clear();
+        self.dcs_data.clear();
+        self.dcs_final = 0;
     }
 
     /// Process a single byte and return any action
@@ -138,6 +161,10 @@ impl Parser {
             State::CsiIgnore => self.handle_csi_ignore(byte),
             State::OscString => self.handle_osc_string(byte),
             State::DcsEntry => self.handle_dcs_entry(byte),
+            State::DcsParam => self.handle_dcs_param(byte),
+            State::DcsIntermediate => self.handle_dcs_intermediate(byte),
+            State::DcsPassthrough => self.handle_dcs_passthrough(byte),
+            State::DcsIgnore => self.handle_dcs_ignore(byte),
             State::DesignateG0 | State::DesignateG1 => self.handle_designate(byte),
         }
     }
@@ -448,11 +475,148 @@ impl Parser {
         }
     }
 
-    /// Handle DCS entry state (not fully implemented)
+    /// Handle DCS entry state
     fn handle_dcs_entry(&mut self, byte: u8) -> Action {
-        // For now, just wait for ST
-        if byte == 0x1B || byte == 0x9C {
+        match byte {
+            b'0'..=b'9' => {
+                self.current_param = (byte - b'0') as i32;
+                self.param_started = true;
+                self.state = State::DcsParam;
+                Action::None
+            }
+            b';' => {
+                self.params.push(-1);
+                self.state = State::DcsParam;
+                Action::None
+            }
+            0x20..=0x2F => {
+                self.intermediates.push(byte);
+                self.state = State::DcsIntermediate;
+                Action::None
+            }
+            0x40..=0x7E => {
+                // Final character - start collecting data
+                self.dcs_final = byte;
+                self.state = State::DcsPassthrough;
+                Action::None
+            }
+            _ => {
+                self.state = State::DcsIgnore;
+                Action::None
+            }
+        }
+    }
+
+    /// Handle DCS parameter state
+    fn handle_dcs_param(&mut self, byte: u8) -> Action {
+        match byte {
+            b'0'..=b'9' => {
+                self.current_param = self.current_param * 10 + (byte - b'0') as i32;
+                self.param_started = true;
+                Action::None
+            }
+            b';' => {
+                if self.param_started {
+                    self.params.push(self.current_param);
+                } else {
+                    self.params.push(-1);
+                }
+                self.current_param = 0;
+                self.param_started = false;
+                Action::None
+            }
+            0x20..=0x2F => {
+                if self.param_started {
+                    self.params.push(self.current_param);
+                }
+                self.intermediates.push(byte);
+                self.state = State::DcsIntermediate;
+                Action::None
+            }
+            0x40..=0x7E => {
+                if self.param_started {
+                    self.params.push(self.current_param);
+                }
+                self.dcs_final = byte;
+                self.state = State::DcsPassthrough;
+                Action::None
+            }
+            _ => {
+                self.state = State::DcsIgnore;
+                Action::None
+            }
+        }
+    }
+
+    /// Handle DCS intermediate state
+    fn handle_dcs_intermediate(&mut self, byte: u8) -> Action {
+        match byte {
+            0x20..=0x2F => {
+                self.intermediates.push(byte);
+                Action::None
+            }
+            0x40..=0x7E => {
+                self.dcs_final = byte;
+                self.state = State::DcsPassthrough;
+                Action::None
+            }
+            _ => {
+                self.state = State::DcsIgnore;
+                Action::None
+            }
+        }
+    }
+
+    /// Handle DCS passthrough state (collect data until ST)
+    fn handle_dcs_passthrough(&mut self, byte: u8) -> Action {
+        match byte {
+            0x1B => {
+                // Might be start of ST (ESC \)
+                // For simplicity, check next byte in caller
+                self.dcs_data.push(byte);
+                Action::None
+            }
+            0x9C => {
+                // ST (C1 form) - dispatch DCS
+                let action = Action::DcsDispatch {
+                    params: self.params.clone(),
+                    intermediates: self.intermediates.clone(),
+                    final_char: self.dcs_final,
+                    data: self.dcs_data.clone(),
+                };
+                self.reset();
+                action
+            }
+            _ => {
+                // Check if previous byte was ESC and this is backslash (ST)
+                if self.dcs_data.last() == Some(&0x1B) && byte == b'\\' {
+                    self.dcs_data.pop(); // Remove the ESC
+                    let action = Action::DcsDispatch {
+                        params: self.params.clone(),
+                        intermediates: self.intermediates.clone(),
+                        final_char: self.dcs_final,
+                        data: self.dcs_data.clone(),
+                    };
+                    self.reset();
+                    action
+                } else {
+                    // Regular data byte - add to buffer (with limit)
+                    if self.dcs_data.len() < 8192 {
+                        self.dcs_data.push(byte);
+                    }
+                    Action::None
+                }
+            }
+        }
+    }
+
+    /// Handle DCS ignore state
+    fn handle_dcs_ignore(&mut self, byte: u8) -> Action {
+        // Wait for ST or ESC
+        if byte == 0x9C {
             self.reset();
+        } else if byte == 0x1B {
+            // Might be ST, wait for next byte
         }
         Action::None
     }
