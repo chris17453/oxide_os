@@ -38,11 +38,10 @@ fn signal_foreground(sig: i32) {
     }
 }
 
-/// Push mouse escape sequence bytes to the input subsystem
+/// Push any escape sequence bytes to the input subsystem
 ///
-/// Routes the escape sequence to both VT input and console device so
-/// applications reading from either path receive mouse events.
-fn push_mouse_escape(seq: &[u8]) {
+/// Routes the escape sequence to both VT input and console device
+fn push_escape_sequence(seq: &[u8]) {
     if let Some(manager) = vt::get_manager() {
         for &byte in seq {
             manager.push_input(byte);
@@ -51,6 +50,14 @@ fn push_mouse_escape(seq: &[u8]) {
     for &byte in seq {
         devfs::console_push_char(byte);
     }
+}
+
+/// Push mouse escape sequence bytes to the input subsystem
+///
+/// Routes the escape sequence to both VT input and console device so
+/// applications reading from either path receive mouse events.
+fn push_mouse_escape(seq: &[u8]) {
+    push_escape_sequence(seq);
 }
 
 /// Console write function for syscalls
@@ -450,6 +457,59 @@ fn process_scancode(scancode: u8) -> Option<u8> {
         // Clear extended flag after handling the follow-up byte
         let _extended = EXTENDED_SCANCODE;
         EXTENDED_SCANCODE = false;
+
+        // Handle extended keys (arrow keys, etc.)
+        if _extended {
+            match code {
+                0x48 => {
+                    // UP arrow: ESC [ A
+                    push_escape_sequence(b"\x1b[A");
+                    return None;
+                }
+                0x50 => {
+                    // DOWN arrow: ESC [ B
+                    push_escape_sequence(b"\x1b[B");
+                    return None;
+                }
+                0x4B => {
+                    // LEFT arrow: ESC [ D (or Ctrl+LEFT: ESC [ 1 ; 5 D)
+                    if CTRL_PRESSED {
+                        push_escape_sequence(b"\x1b[1;5D");
+                    } else {
+                        push_escape_sequence(b"\x1b[D");
+                    }
+                    return None;
+                }
+                0x4D => {
+                    // RIGHT arrow: ESC [ C (or Ctrl+RIGHT: ESC [ 1 ; 5 C)
+                    if CTRL_PRESSED {
+                        push_escape_sequence(b"\x1b[1;5C");
+                    } else {
+                        push_escape_sequence(b"\x1b[C");
+                    }
+                    return None;
+                }
+                0x47 => {
+                    // Home key: ESC [ H
+                    push_escape_sequence(b"\x1b[H");
+                    return None;
+                }
+                0x4F => {
+                    // End key: ESC [ F
+                    push_escape_sequence(b"\x1b[F");
+                    return None;
+                }
+                0x53 => {
+                    // Delete key: ESC [ 3 ~
+                    push_escape_sequence(b"\x1b[3~");
+                    return None;
+                }
+                _ => {
+                    // Other extended keys: ignore for now
+                    return None;
+                }
+            }
+        }
 
         // Map scancode to ASCII
         if let Some(ch) = scancode_to_ascii(code, SHIFT_PRESSED) {
