@@ -46,6 +46,7 @@ pub mod handler;
 pub mod parser;
 pub mod renderer;
 
+use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -113,6 +114,8 @@ pub struct TerminalEmulator {
     cell_height: u32,
     /// Whether a render is needed (dirty flag)
     needs_render: bool,
+    /// Window title (set via OSC sequences)
+    title: String,
 }
 
 impl TerminalEmulator {
@@ -135,6 +138,7 @@ impl TerminalEmulator {
             cell_width,
             cell_height,
             needs_render: true,
+            title: String::from("OXIDE Terminal"),
         }
     }
 
@@ -146,6 +150,11 @@ impl TerminalEmulator {
     /// Get current cursor position
     pub fn cursor(&self) -> &Cursor {
         &self.handler.cursor
+    }
+
+    /// Get the window title (set via OSC sequences)
+    pub fn title(&self) -> &str {
+        &self.title
     }
 
     /// Get current cell attributes
@@ -258,8 +267,9 @@ impl TerminalEmulator {
                 self.handler.handle_esc(&intermediates, final_char, buffer);
                 self.renderer.mark_all_dirty();
             }
-            Action::OscDispatch(_data) => {
-                // OSC commands (title, colors, etc.) - mostly ignored for now
+            Action::OscDispatch(data) => {
+                // OSC commands (title, colors, etc.)
+                self.handle_osc(&data);
             }
             Action::None => {}
         }
@@ -317,6 +327,91 @@ impl TerminalEmulator {
                 self.handler.active_g1 = false;
             }
             _ => {}
+        }
+    }
+
+    /// Handle OSC (Operating System Command) sequences
+    ///
+    /// 🔥 OSC SUPPORT: FROM IGNORED TO IMPLEMENTED 🔥
+    /// Before: All OSC sequences ignored
+    /// After: Title setting works (most common use case)
+    ///
+    /// Implements Phase 1 from term_analysis.md - window title support
+    fn handle_osc(&mut self, data: &[u8]) {
+        // Parse OSC: number ; parameters
+        let s = core::str::from_utf8(data).unwrap_or("");
+        let mut parts = s.splitn(2, ';');
+
+        let num_str = parts.next().unwrap_or("");
+        let params = parts.next().unwrap_or("");
+
+        // Parse the OSC number
+        if let Ok(num) = num_str.parse::<u32>() {
+            match num {
+                // OSC 0 ; title - Set icon name and window title
+                0 => {
+                    self.title = String::from(params);
+                    #[cfg(feature = "debug-terminal")]
+                    {
+                        use arch_x86_64::serial;
+                        use core::fmt::Write;
+                        let _ = write!(serial::SerialWriter, "[TERM-OSC] Set title: {}\n", params);
+                    }
+                }
+
+                // OSC 1 ; title - Set icon name (we just use it as title)
+                1 => {
+                    self.title = String::from(params);
+                }
+
+                // OSC 2 ; title - Set window title
+                2 => {
+                    self.title = String::from(params);
+                }
+
+                // OSC 4, 10, 11, 12 - Color customization
+                // TODO: Requires palette storage system (Phase 2)
+                4 | 10 | 11 | 12 => {
+                    #[cfg(feature = "debug-terminal")]
+                    {
+                        use arch_x86_64::serial;
+                        use core::fmt::Write;
+                        let _ = write!(serial::SerialWriter, "[TERM-OSC] Color OSC {} (not yet implemented)\n", num);
+                    }
+                }
+
+                // OSC 52 ; clipboard - Clipboard operations (security sensitive)
+                // TODO: Implement with proper security model
+                52 => {
+                    #[cfg(feature = "debug-terminal")]
+                    {
+                        use arch_x86_64::serial;
+                        use core::fmt::Write;
+                        let _ = write!(serial::SerialWriter, "[TERM-OSC] Clipboard request (not implemented): {}\n", params);
+                    }
+                }
+
+                // OSC 104, 110, 111, 112 - Reset colors
+                // TODO: Requires palette storage system (Phase 2)
+                104 | 110 | 111 | 112 => {
+                    #[cfg(feature = "debug-terminal")]
+                    {
+                        use arch_x86_64::serial;
+                        use core::fmt::Write;
+                        let _ = write!(serial::SerialWriter, "[TERM-OSC] Color reset OSC {} (not yet implemented)\n", num);
+                    }
+                }
+
+                _ => {
+                    // Unknown OSC command - ignore
+                    #[cfg(feature = "debug-terminal")]
+                    {
+                        use arch_x86_64::serial;
+                        use core::fmt::Write;
+                        let _ = write!(serial::SerialWriter, "[TERM-OSC] Unknown OSC {}: {}\n", num, params);
+                    }
+                }
+            }
         }
     }
 
