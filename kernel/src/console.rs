@@ -38,9 +38,22 @@ fn signal_foreground(sig: i32) {
     }
 }
 
+/// Push keyboard input escape sequence to VT input (NOT to console output)
+///
+/// Arrow keys and navigation sequences should only go to the TTY's input buffer,
+/// not to the console device. They are control sequences, not text to display.
+fn push_keyboard_escape(seq: &[u8]) {
+    if let Some(manager) = vt::get_manager() {
+        for &byte in seq {
+            manager.push_input(byte);
+        }
+    }
+}
+
 /// Push any escape sequence bytes to the input subsystem
 ///
 /// Routes the escape sequence to both VT input and console device
+/// Used for things like mouse events that should appear everywhere
 fn push_escape_sequence(seq: &[u8]) {
     if let Some(manager) = vt::get_manager() {
         for &byte in seq {
@@ -463,45 +476,45 @@ fn process_scancode(scancode: u8) -> Option<u8> {
             match code {
                 0x48 => {
                     // UP arrow: ESC [ A
-                    push_escape_sequence(b"\x1b[A");
+                    push_keyboard_escape(b"\x1b[A");
                     return None;
                 }
                 0x50 => {
                     // DOWN arrow: ESC [ B
-                    push_escape_sequence(b"\x1b[B");
+                    push_keyboard_escape(b"\x1b[B");
                     return None;
                 }
                 0x4B => {
                     // LEFT arrow: ESC [ D (or Ctrl+LEFT: ESC [ 1 ; 5 D)
                     if CTRL_PRESSED {
-                        push_escape_sequence(b"\x1b[1;5D");
+                        push_keyboard_escape(b"\x1b[1;5D");
                     } else {
-                        push_escape_sequence(b"\x1b[D");
+                        push_keyboard_escape(b"\x1b[D");
                     }
                     return None;
                 }
                 0x4D => {
                     // RIGHT arrow: ESC [ C (or Ctrl+RIGHT: ESC [ 1 ; 5 C)
                     if CTRL_PRESSED {
-                        push_escape_sequence(b"\x1b[1;5C");
+                        push_keyboard_escape(b"\x1b[1;5C");
                     } else {
-                        push_escape_sequence(b"\x1b[C");
+                        push_keyboard_escape(b"\x1b[C");
                     }
                     return None;
                 }
                 0x47 => {
                     // Home key: ESC [ H
-                    push_escape_sequence(b"\x1b[H");
+                    push_keyboard_escape(b"\x1b[H");
                     return None;
                 }
                 0x4F => {
                     // End key: ESC [ F
-                    push_escape_sequence(b"\x1b[F");
+                    push_keyboard_escape(b"\x1b[F");
                     return None;
                 }
                 0x53 => {
                     // Delete key: ESC [ 3 ~
-                    push_escape_sequence(b"\x1b[3~");
+                    push_keyboard_escape(b"\x1b[3~");
                     return None;
                 }
                 _ => {
