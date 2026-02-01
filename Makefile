@@ -4,7 +4,7 @@
 
 SHELL := /usr/bin/bash
 
-.PHONY: all build build-full kernel bootloader userspace userspace-release userspace-pkg initramfs initramfs-debug initramfs-minimal boot-dir boot-quick boot-image create-rootfs release clean run run-fedora run-rhel run-kvm detect-qemu-mode test check fmt fmt-check clippy list-bins show-config help toolchain install-toolchain test-toolchain clean-toolchain external-libs zlib openssl xz zstd cpython tls-test claude
+.PHONY: all build build-full kernel bootloader userspace userspace-release userspace-pkg initramfs initramfs-debug initramfs-minimal boot-dir boot-quick boot-image create-rootfs release clean run run-fedora run-rhel run-kvm detect-qemu-mode test check fmt fmt-check clippy list-bins show-config help toolchain install-toolchain test-toolchain clean-toolchain external-libs zlib openssl xz zstd cpython tls-test vim claude
 
 # Configuration
 ARCH ?= x86_64
@@ -333,7 +333,7 @@ HOME_START := 449
 # - Partition 2 (root): ext4, mounted at / - OS files
 # - Partition 3 (home): ext4, mounted at /home - user data
 # - /tmp is tmpfs (in-memory)
-create-rootfs: kernel bootloader initramfs-minimal
+create-rootfs: kernel bootloader initramfs-minimal vim
 	@echo "Creating OXIDE root filesystem disk image..."
 	@echo ""
 	@# Create empty disk image
@@ -396,10 +396,11 @@ create-rootfs: kernel bootloader initramfs-minimal
 	sudo ln -sf /bin/esh $(TARGET_DIR)/mnt/root/bin/sh && \
 	sudo cp "$(USERSPACE_OUT_RELEASE)/getty" $(TARGET_DIR)/mnt/root/bin/getty && \
 	sudo cp "$(USERSPACE_OUT_RELEASE)/login" $(TARGET_DIR)/mnt/root/bin/login && \
-	for prog in gwbasic tls-test ssh sshd service networkd journald journalctl evtest argtest $(COREUTILS_BINS) testcolors; do \
+	for prog in gwbasic tls-test ssh sshd service networkd journald journalctl evtest argtest vim $(COREUTILS_BINS) testcolors; do \
 		[ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/$$prog" $(TARGET_DIR)/mnt/root/usr/bin/ || true; \
 	done && \
 	[ -f "$(USERSPACE_OUT_RELEASE)/tls-test" ] && echo "TLS test installed" || true; \
+	[ -f "$(USERSPACE_OUT_RELEASE)/vim" ] && echo "vim installed" || true; \
 	sudo ln -sf /usr/bin/service $(TARGET_DIR)/mnt/root/usr/bin/servicemgr && \
 	sudo ln -sf /usr/bin/service $(TARGET_DIR)/mnt/root/bin/servicemgr && \
 	\
@@ -835,6 +836,14 @@ tls-test: toolchain
 	@echo "Building TLS test program..."
 	@toolchain/bin/oxide-cc -o $(USERSPACE_OUT_RELEASE)/tls-test apps/tls-test.c
 	@echo "TLS test built: $(USERSPACE_OUT_RELEASE)/tls-test"
+
+vim: toolchain
+	@echo "Building vim for OXIDE..."
+	@./scripts/build-vim.sh
+	@mkdir -p $(USERSPACE_OUT_RELEASE)
+	@cp external/vim/src/vim $(USERSPACE_OUT_RELEASE)/vim
+	@llvm-strip $(USERSPACE_OUT_RELEASE)/vim
+	@echo "Vim installed to $(USERSPACE_OUT_RELEASE)/vim"
 
 toolchain:
 	@echo "Building OXIDE cross-compiler toolchain..."

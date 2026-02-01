@@ -6662,34 +6662,282 @@ pub unsafe extern "C" fn getopt(argc: i32, argv: *const *const u8, optstring: *c
     crate::getopt::getopt_impl(argc, argv, optstring)
 }
 
-// Minimal termcap stubs for vim
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn tgetent(_bp: *mut u8, _name: *const u8) -> i32 {
-    1  // Success - we have a terminal
+// Termcap implementation for vim
+// Static storage for termcap strings and tgoto buffer
+static mut TERMCAP_STORAGE: [u8; 4096] = [0; 4096];
+static mut TERMCAP_OFFSET: usize = 0;
+static mut TGOTO_BUFFER: [u8; 64] = [0; 64];
+
+// Helper to compare C string with Rust str
+unsafe fn c_str_eq(c_str: *const u8, rust_str: &str) -> bool {
+    if c_str.is_null() {
+        return false;
+    }
+    let mut i = 0;
+    let bytes = rust_str.as_bytes();
+    loop {
+        let c = *c_str.add(i);
+        if i >= bytes.len() {
+            return c == 0;
+        }
+        if c != bytes[i] {
+            return false;
+        }
+        if c == 0 {
+            return true;
+        }
+        i += 1;
+    }
+}
+
+// Store a string in termcap storage and return pointer
+unsafe fn store_capability(s: &str) -> *mut u8 {
+    let bytes = s.as_bytes();
+    let start = TERMCAP_OFFSET;
+    let storage_ptr = core::ptr::addr_of_mut!(TERMCAP_STORAGE);
+    if start + bytes.len() + 1 > (*storage_ptr).len() {
+        return core::ptr::null_mut();
+    }
+    core::ptr::copy_nonoverlapping(bytes.as_ptr(), (*storage_ptr).as_mut_ptr().add(start), bytes.len());
+    (*storage_ptr)[start + bytes.len()] = 0; // null terminate
+    TERMCAP_OFFSET += bytes.len() + 1;
+    (*storage_ptr).as_mut_ptr().add(start)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tgetnum(_id: *const u8) -> i32 {
+pub unsafe extern "C" fn tgetent(_bp: *mut u8, _name: *const u8) -> i32 {
+    // Reset storage for new terminal
+    TERMCAP_OFFSET = 0;
+    1  // Success - we have an ANSI/VT100 terminal
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tgetnum(id: *const u8) -> i32 {
+    if c_str_eq(id, "co") {
+        return 80;  // columns
+    }
+    if c_str_eq(id, "li") {
+        return 25;  // lines
+    }
     -1  // Feature not available
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tgetflag(_id: *const u8) -> i32 {
+pub unsafe extern "C" fn tgetflag(id: *const u8) -> i32 {
+    // Common boolean capabilities
+    if c_str_eq(id, "am") {
+        return 1;  // automatic margins
+    }
+    if c_str_eq(id, "km") {
+        return 1;  // has meta key
+    }
+    if c_str_eq(id, "xn") {
+        return 0;  // no newline glitch
+    }
     0  // Feature not present
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tgetstr(_id: *const u8, _area: *mut *mut u8) -> *mut u8 {
-    core::ptr::null_mut()  // No capability string
+pub unsafe extern "C" fn tgetstr(id: *const u8, area: *mut *mut u8) -> *mut u8 {
+    // ANSI/VT100 terminal capabilities
+    let cap = if c_str_eq(id, "cm") {
+        "\x1b[%i%d;%dH"  // cursor movement (1-indexed)
+    } else if c_str_eq(id, "cl") {
+        "\x1b[H\x1b[2J"  // clear screen
+    } else if c_str_eq(id, "ce") {
+        "\x1b[K"  // clear to end of line
+    } else if c_str_eq(id, "cd") {
+        "\x1b[J"  // clear to end of display
+    } else if c_str_eq(id, "so") {
+        "\x1b[7m"  // standout mode (reverse video)
+    } else if c_str_eq(id, "se") {
+        "\x1b[27m"  // exit standout mode
+    } else if c_str_eq(id, "us") {
+        "\x1b[4m"  // underline
+    } else if c_str_eq(id, "ue") {
+        "\x1b[24m"  // exit underline
+    } else if c_str_eq(id, "md") {
+        "\x1b[1m"  // bold
+    } else if c_str_eq(id, "me") {
+        "\x1b[0m"  // exit attributes
+    } else if c_str_eq(id, "mr") {
+        "\x1b[7m"  // reverse video
+    } else if c_str_eq(id, "mb") {
+        "\x1b[5m"  // blink
+    } else if c_str_eq(id, "mh") {
+        "\x1b[2m"  // dim
+    } else if c_str_eq(id, "ZH") {
+        "\x1b[3m"  // italic
+    } else if c_str_eq(id, "ZR") {
+        "\x1b[23m"  // exit italic
+    } else if c_str_eq(id, "up") {
+        "\x1b[A"  // cursor up
+    } else if c_str_eq(id, "do") {
+        "\x1b[B"  // cursor down
+    } else if c_str_eq(id, "le") {
+        "\x1b[D"  // cursor left
+    } else if c_str_eq(id, "nd") {
+        "\x1b[C"  // cursor right
+    } else if c_str_eq(id, "ho") {
+        "\x1b[H"  // cursor home
+    } else if c_str_eq(id, "cr") {
+        "\r"  // carriage return
+    } else if c_str_eq(id, "nw") {
+        "\r\n"  // newline
+    } else if c_str_eq(id, "ta") {
+        "\t"  // tab
+    } else if c_str_eq(id, "bl") {
+        "\x07"  // bell
+    } else if c_str_eq(id, "vi") {
+        "\x1b[?25l"  // cursor invisible
+    } else if c_str_eq(id, "ve") {
+        "\x1b[?25h"  // cursor visible
+    } else if c_str_eq(id, "vs") {
+        "\x1b[?25h"  // cursor very visible
+    } else if c_str_eq(id, "ti") {
+        "\x1b[?1049h"  // terminal init (alternate screen)
+    } else if c_str_eq(id, "te") {
+        "\x1b[?1049l"  // terminal end (normal screen)
+    } else if c_str_eq(id, "ks") {
+        "\x1b[?1h\x1b="  // keypad start
+    } else if c_str_eq(id, "ke") {
+        "\x1b[?1l\x1b>"  // keypad end
+    } else if c_str_eq(id, "AL") {
+        "\x1b[%dL"  // insert lines
+    } else if c_str_eq(id, "DL") {
+        "\x1b[%dM"  // delete lines
+    } else if c_str_eq(id, "al") {
+        "\x1b[L"  // insert line
+    } else if c_str_eq(id, "dl") {
+        "\x1b[M"  // delete line
+    } else if c_str_eq(id, "cs") {
+        "\x1b[%i%d;%dr"  // set scroll region
+    } else if c_str_eq(id, "sr") {
+        "\x1bM"  // scroll reverse
+    } else if c_str_eq(id, "sf") {
+        "\n"  // scroll forward
+    } else {
+        return core::ptr::null_mut();
+    };
+
+    let ptr = store_capability(cap);
+
+    // If area is provided, update it to point past the stored string
+    if !area.is_null() && !(*area).is_null() {
+        let len = cap.len() + 1;
+        *area = (*area).add(len);
+    }
+
+    ptr
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tgoto(_cap: *const u8, _col: i32, _row: i32) -> *mut u8 {
-    core::ptr::null_mut()
+pub unsafe extern "C" fn tgoto(cap: *const u8, col: i32, row: i32) -> *mut u8 {
+    if cap.is_null() {
+        return core::ptr::null_mut();
+    }
+
+    let buffer_ptr = core::ptr::addr_of_mut!(TGOTO_BUFFER);
+
+    // Parse the capability string and format parameters
+    let mut out_idx = 0;
+    let mut in_idx = 0;
+    let mut param_idx = 0;
+    let mut increment = false;
+
+    loop {
+        let c = *cap.add(in_idx);
+        if c == 0 {
+            break;
+        }
+
+        if c == b'%' {
+            in_idx += 1;
+            let code = *cap.add(in_idx);
+            match code {
+                b'i' => {
+                    // Increment parameters (1-indexed)
+                    increment = true;
+                }
+                b'd' => {
+                    // Insert parameter as decimal
+                    let val = if param_idx == 0 {
+                        if increment { row + 1 } else { row }
+                    } else {
+                        if increment { col + 1 } else { col }
+                    };
+                    param_idx += 1;
+
+                    // Convert to decimal string
+                    let mut temp = [0u8; 16];
+                    let mut temp_idx = 0;
+                    let mut num = val;
+
+                    if num == 0 {
+                        temp[0] = b'0';
+                        temp_idx = 1;
+                    } else {
+                        if num < 0 {
+                            (*buffer_ptr)[out_idx] = b'-';
+                            out_idx += 1;
+                            num = -num;
+                        }
+                        while num > 0 {
+                            temp[temp_idx] = b'0' + (num % 10) as u8;
+                            temp_idx += 1;
+                            num /= 10;
+                        }
+                    }
+
+                    // Reverse the digits
+                    for i in (0..temp_idx).rev() {
+                        (*buffer_ptr)[out_idx] = temp[i];
+                        out_idx += 1;
+                    }
+                }
+                b'%' => {
+                    (*buffer_ptr)[out_idx] = b'%';
+                    out_idx += 1;
+                }
+                _ => {
+                    // Unknown code, just output it
+                    (*buffer_ptr)[out_idx] = b'%';
+                    out_idx += 1;
+                    (*buffer_ptr)[out_idx] = code;
+                    out_idx += 1;
+                }
+            }
+        } else {
+            (*buffer_ptr)[out_idx] = c;
+            out_idx += 1;
+        }
+
+        in_idx += 1;
+
+        if out_idx >= (*buffer_ptr).len() - 1 {
+            break;
+        }
+    }
+
+    (*buffer_ptr)[out_idx] = 0;  // null terminate
+    (*buffer_ptr).as_mut_ptr()
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tputs(_str: *const u8, _affcnt: i32, _putc_fn: *const u8) -> i32 {
+pub unsafe extern "C" fn tputs(str: *const u8, _affcnt: i32, putc_fn: extern "C" fn(i32) -> i32) -> i32 {
+    if str.is_null() {
+        return 0;
+    }
+
+    let mut idx = 0;
+    loop {
+        let c = *str.add(idx);
+        if c == 0 {
+            break;
+        }
+        putc_fn(c as i32);
+        idx += 1;
+    }
     0
 }
 
