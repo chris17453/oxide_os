@@ -43,8 +43,13 @@ const MAX_EVENT_QUEUE: usize = 256;
 /// Maximum number of input devices we track blocked readers for
 const MAX_DEVICES: usize = 16;
 
-/// PIDs of tasks blocked waiting for input on each device (0 = none)
-static BLOCKED_READERS: Mutex<[u32; MAX_DEVICES]> = Mutex::new([0; MAX_DEVICES]);
+/// PIDs of tasks blocked waiting for input on each device
+/// 🔥 NOW SUPPORTS MULTIPLE READERS (Priority #14 Fix) 🔥
+/// Before: Only one PID per device → second reader never wakes up
+/// After: Vec<u32> per device → all readers wake on input
+static BLOCKED_READERS: Mutex<[Vec<u32>; MAX_DEVICES]> = Mutex::new([
+    const { Vec::new() }; MAX_DEVICES
+]);
 
 /// Callback type for waking a blocked task by PID
 pub type WakeUpFn = fn(u32);
@@ -62,26 +67,32 @@ pub unsafe fn set_wake_callback(f: WakeUpFn) {
     }
 }
 
-/// Set the PID of a task blocked waiting for input on a device
+/// Add a PID to the list of tasks blocked waiting for input on a device
 pub fn set_blocked_reader(device_id: usize, pid: u32) {
     let mut readers = BLOCKED_READERS.lock();
-    if device_id < MAX_DEVICES {
-        readers[device_id] = pid;
+    if device_id < MAX_DEVICES && !readers[device_id].contains(&pid) {
+        readers[device_id].push(pid);
     }
 }
 
-/// Wake up any task blocked waiting for input on a device
+/// Wake up all tasks blocked waiting for input on a device
 fn wake_blocked_reader(device_id: usize) {
-    let mut readers = BLOCKED_READERS.lock();
-    if device_id < MAX_DEVICES {
-        let pid = readers[device_id];
-        if pid != 0 {
-            readers[device_id] = 0;
-            drop(readers); // Release lock before callback
-            unsafe {
-                if let Some(wake_fn) = WAKE_CALLBACK {
-                    wake_fn(pid);
-                }
+    let pids = {
+        let mut readers = BLOCKED_READERS.lock();
+        if device_id < MAX_DEVICES {
+            let pids = readers[device_id].clone();
+            readers[device_id].clear();
+            pids
+        } else {
+            Vec::new()
+        }
+    }; // Release lock!
+
+    // Wake all waiting readers
+    unsafe {
+        if let Some(wake_fn) = WAKE_CALLBACK {
+            for pid in pids {
+                wake_fn(pid);
             }
         }
     }
