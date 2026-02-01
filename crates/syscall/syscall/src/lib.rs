@@ -346,9 +346,6 @@ pub mod errno {
 /// Console output callback type
 pub type ConsoleWriteFn = fn(&[u8]);
 
-/// Console input callback type (returns bytes read, or negative errno)
-pub type ConsoleReadFn = fn(&mut [u8]) -> isize;
-
 /// Exit callback type
 pub type ExitFn = fn(i32) -> !;
 
@@ -387,8 +384,6 @@ pub type GetFsBaseFn = fn() -> u64;
 pub struct SyscallContext {
     /// Function to write to console (fd 1 and 2)
     pub console_write: Option<ConsoleWriteFn>,
-    /// Function to read from console (fd 0)
-    pub console_read: Option<ConsoleReadFn>,
     /// Function to exit the current process
     pub exit: Option<ExitFn>,
     /// Function to fork the current process
@@ -418,7 +413,6 @@ impl SyscallContext {
     pub const fn new() -> Self {
         Self {
             console_write: None,
-            console_read: None,
             exit: None,
             fork: None,
             exec: None,
@@ -858,32 +852,9 @@ fn sys_read(fd: i32, buf: u64, count: usize) -> i64 {
         return errno::EFAULT;
     }
 
-    // Special case: stdin (fd 0) uses kernel's console_read which handles blocking
-    // The VFS layer can't properly implement blocking I/O without HLT
-    if fd == 0 {
-        unsafe {
-            // Enable access to user memory
-            core::arch::asm!("stac", options(nomem, nostack));
-        }
-
-        let user_buf = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, count) };
-        let n = unsafe {
-            addr_of!(SYSCALL_CONTEXT)
-                .as_ref()
-                .and_then(|ctx| ctx.console_read)
-                .map(|f| f(user_buf))
-                .unwrap_or(0)
-        };
-
-        unsafe {
-            // Disable access to user memory
-            core::arch::asm!("clac", options(nomem, nostack));
-        }
-
-        return n as i64;
-    }
-
-    // All other file descriptors go through VFS
+    // All file descriptors go through VFS (including stdin).
+    // /dev/console delegates to the active VT device, which handles
+    // blocking I/O, line discipline, and echo through the TTY subsystem.
     vfs::sys_read_vfs(fd, buf, count)
 }
 

@@ -3,40 +3,6 @@
 use arch_x86_64 as arch;
 use arch_x86_64::serial;
 use core::fmt::Write;
-use signal::SigInfo;
-
-/// Send signal to the current foreground process only
-///
-/// Skips system processes (init, login, shell) that shouldn't be killed by Ctrl+C
-fn signal_foreground(sig: i32) {
-    let current_pid = sched::current_pid().unwrap_or(0);
-
-    // Don't signal init or PID 0
-    if current_pid <= 1 {
-        return;
-    }
-
-    if let Some(meta) = sched::get_task_meta(current_pid) {
-        // Check process name from cmdline - don't signal login or shell
-        let should_skip = {
-            let m = meta.lock();
-            if let Some(first) = m.cmdline.first() {
-                // Extract just the binary name from path
-                let name = first.rsplit('/').next().unwrap_or(first);
-                name == "getty" || name == "login" || name == "esh" || name == "init"
-            } else {
-                false
-            }
-        };
-
-        if should_skip {
-            return;
-        }
-
-        let info = SigInfo::kill(sig, 0, 0);
-        meta.lock().send_signal(sig, Some(info));
-    }
-}
 
 /// Push any escape sequence bytes to the input subsystem
 ///
@@ -53,9 +19,6 @@ fn push_escape_sequence(seq: &[u8]) {
         for &byte in seq {
             manager.push_input(byte);
         }
-    }
-    for &byte in seq {
-        devfs::console_push_char(byte);
     }
 }
 
@@ -91,12 +54,13 @@ pub fn console_write(data: &[u8]) {
 /// Terminal tick callback - called at 30 FPS from timer interrupt
 pub fn terminal_tick() {
     // Process keyboard scancodes from PS/2 keyboard (IRQ-driven buffer)
+    // Input flows through VT push_input() only — /dev/console delegates
+    // to the active VT device, so there's no need to push to both.
     while let Some(scancode) = arch::get_scancode() {
         if let Some(byte) = process_scancode(scancode) {
             if let Some(manager) = vt::get_manager() {
                 manager.push_input(byte);
             }
-            devfs::console_push_char(byte);
         }
     }
 
@@ -108,7 +72,6 @@ pub fn terminal_tick() {
             if let Some(manager) = vt::get_manager() {
                 manager.push_input(byte);
             }
-            devfs::console_push_char(byte);
         }
     }
 
@@ -123,12 +86,11 @@ pub fn terminal_tick() {
             let _ = write!(w, "[SERIAL] Got 0x{:02x}\n", byte);
         }
 
-        // Route serial input to BOTH VT subsystem AND console device
-        // This ensures input works for both /dev/ttyN and /dev/console
+        // Route serial input to VT subsystem — /dev/console delegates to
+        // the active VT device, so only one push path is needed.
         if let Some(manager) = vt::get_manager() {
             manager.push_input(byte);
         }
-        devfs::console_push_char(byte);
     }
 
     // Process mouse events from input subsystem
@@ -242,108 +204,6 @@ pub fn terminal_tick() {
         // Fallback pre-terminal: allow fb console cursor only when terminal is not active
         fb::blink_cursor();
     }
-}
-
-/// Console read function for syscalls
-/// Returns number of bytes read, or negative errno
-///
-/// Simple blocking read. Polls KEYBOARD_BUFFER (filled by terminal_tick
-/// in the timer ISR). Uses cli/sti+hlt to sleep between polls.
-pub fn console_read(buf: &mut [u8]) -> isize {
-    let mut count: isize = 0;
-    for byte in buf.iter_mut() {
-        loop {
-            // Check keyboard buffer with interrupts disabled to prevent
-            // deadlock with terminal_tick (interrupt context).
-            let kb_byte: Option<u8> = unsafe {
-                core::arch::asm!("cli", options(nomem, nostack, preserves_flags));
-                let result = if devfs::console_has_input() {
-                    devfs::console_pop_byte()
-                } else {
-                    None
-                };
-                core::arch::asm!("sti", options(nomem, nostack, preserves_flags));
-                result
-            };
-
-            if let Some(b) = kb_byte {
-                match b {
-                    0x03 => {
-                        signal_foreground(signal::SIGINT);
-                        if count > 0 { return count; }
-                        return -4; // EINTR
-                    }
-                    0x04 => {
-                        return count; // EOF (Ctrl+D)
-                    }
-                    0x1C => {
-                        signal_foreground(signal::SIGQUIT);
-                        if count > 0 { return count; }
-                        return -4; // EINTR
-                    }
-                    _ => {
-                        *byte = b;
-                        count += 1;
-                        if b == b'\n' || b == b'\r' {
-                            if b == b'\r' {
-                                *byte = b'\n';
-                            }
-                            return count;
-                        }
-                        break;
-                    }
-                }
-            }
-
-            // No input yet - return partial data if we have any
-            if count > 0 {
-                return count;
-            }
-
-            // Register as blocked reader so console_push_char can wake us
-            if let Some(pid) = sched::current_pid_lockfree() {
-                devfs::set_console_blocked_reader(pid);
-            }
-
-            // Disable interrupts to safely block + re-check atomically.
-            // This prevents the timer/keyboard ISR from accessing the run
-            // queue lock while we hold it in block_current.
-            unsafe {
-                core::arch::asm!("cli", options(nomem, nostack, preserves_flags));
-            }
-
-            // Block: dequeue from run queue so other tasks run freely.
-            // With interrupts disabled, no ISR can contend for the rq lock.
-            sched::block_current(sched::TaskState::TASK_INTERRUPTIBLE);
-
-            // Race check: input may have arrived between our pop check
-            // (above, with interrupts enabled) and the cli above.
-            if devfs::console_has_input() {
-                // Data arrived! Re-enable interrupts, wake ourselves, retry.
-                unsafe {
-                    core::arch::asm!("sti", options(nomem, nostack, preserves_flags));
-                }
-                if let Some(pid) = sched::current_pid_lockfree() {
-                    sched::wake_up(pid);
-                }
-                continue;
-            }
-
-            // Allow timer interrupt to context-switch us out
-            arch::allow_kernel_preempt();
-
-            // Enable interrupts and halt atomically.
-            // Timer will fire, see we're SLEEPING, switch to another task.
-            // When a key is pressed, terminal_tick calls console_push_char
-            // which calls wake_up() to re-enqueue us.
-            unsafe {
-                core::arch::asm!("sti", "hlt", options(nomem, nostack));
-            }
-
-            arch::disallow_kernel_preempt();
-        }
-    }
-    count
 }
 
 /// Serial-only write function for devfs

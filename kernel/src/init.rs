@@ -563,7 +563,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(writer, "[USER] Setting up syscall handlers...");
     let syscall_ctx = SyscallContext {
         console_write: Some(console::console_write),
-        console_read: Some(console::console_read),
         exit: Some(user_exit),
         fork: Some(kernel_fork),
         exec: Some(kernel_exec),
@@ -612,8 +611,13 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(writer, "[VFS] VT manager initialized ({} virtual terminals)", vt::NUM_VTS);
 
     // Register /dev/tty1 through /dev/tty6 in devfs
+    // Wire /dev/console to tty1 (the primary VT)
     for i in 0..vt::NUM_VTS {
         let vt_device = vt::VtDevice::new(i, vt_manager.clone(), 1000 + i as u64);
+        if i == 0 {
+            // /dev/console delegates to /dev/tty1 (the active VT)
+            devfs::set_console_backend(vt_device.clone());
+        }
         let device_name = alloc::format!("tty{}", i + 1);
         dev_fs.register(&device_name, vt_device);
     }

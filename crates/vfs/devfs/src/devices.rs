@@ -2,80 +2,34 @@
 //!
 //! Provides /dev/null, /dev/zero, /dev/console, /dev/fb0, etc.
 
-use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use spin::Mutex;
 
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
-use tty::termios::{
-    self as tty_termios, Termios, TCGETS, TCSETS, TCSETSF, TCSETSW, TIOCGPGRP, TIOCGWINSZ,
-    TIOCSPGRP, TIOCSWINSZ,
-};
-use tty::ldisc::{LineDiscipline, Signal};
-
 // ============================================================================
-// Console Keyboard Input Buffer
+// Console → Active VT Delegation
 // ============================================================================
+//
+// /dev/console is a thin indirection to the active VT device, just like
+// Linux where /dev/console resolves to the kernel's configured console
+// (typically tty0 which is the active VT). All reads/writes/ioctls are
+// forwarded to the underlying VT device's TTY+line discipline.
 
-/// Maximum keyboard input buffer size
-const KEYBOARD_BUFFER_SIZE: usize = 1024;
+/// The underlying VT device vnode that /dev/console delegates to.
+/// Set during kernel init after VT devices are registered.
+static CONSOLE_BACKEND: Mutex<Option<Arc<dyn VnodeOps>>> = Mutex::new(None);
 
-/// Keyboard input buffer for console
-static KEYBOARD_BUFFER: Mutex<VecDeque<u8>> = Mutex::new(VecDeque::new());
-
-/// EOF pending flag (set by Ctrl+D)
-static CONSOLE_EOF_PENDING: Mutex<bool> = Mutex::new(false);
-
-/// PID of task blocked waiting for console input (0 = none)
-static CONSOLE_BLOCKED_READER: Mutex<u32> = Mutex::new(0);
-
-/// Console termios settings (shared across all console file descriptors)
+/// Set the backend VT vnode for /dev/console
 ///
-/// Initialized with standard Unix defaults (ICANON, ECHO, etc.).
-/// Programs can modify via tcsetattr()/TCSETS ioctl.
-static CONSOLE_TERMIOS: Mutex<Termios> = {
-    use tty_termios::*;
-    // Build default c_cc array at compile time
-    const fn default_cc() -> [u8; NCCS] {
-        let mut cc = [0u8; NCCS];
-        cc[VINTR] = 0x03;  // ^C
-        cc[VERASE] = 0x7F; // DEL
-        cc[VKILL] = 0x15;  // ^U
-        cc[VEOF] = 0x04;   // ^D
-        cc[VTIME] = 0;
-        cc[VMIN] = 1;
-        cc
-    }
-    Mutex::new(Termios {
-        c_iflag: InputFlags::from_bits_retain(0o0000400 | 0o0002000), // ICRNL | IXON
-        c_oflag: OutputFlags::from_bits_retain(0o0000001 | 0o0000004), // OPOST | ONLCR
-        c_cflag: ControlFlags::from_bits_retain(0o0000060 | 0o0000200 | 0o0002000), // CS8|CREAD|HUPCL
-        c_lflag: LocalFlags::from_bits_retain(
-            0o0000001 | 0o0000002 | 0o0000010 | 0o0000020 | 0o0000040
-            | 0o0001000 | 0o0004000 | 0o0100000
-        ), // ISIG|ICANON|ECHO|ECHOE|ECHOK|ECHOCTL|ECHOKE|IEXTEN
-        c_line: 0,
-        c_cc: default_cc(),
-        c_ispeed: B38400,
-        c_ospeed: B38400,
-    })
-};
+/// Called by the kernel during init to wire /dev/console to the active VT.
+pub fn set_console_backend(vnode: Arc<dyn VnodeOps>) {
+    *CONSOLE_BACKEND.lock() = Some(vnode);
+}
 
-/// Line discipline for /dev/console (proper cooked input processing)
-/// Initialized lazily on first use or during kernel init
-static CONSOLE_LDISC: Mutex<Option<LineDiscipline>> = Mutex::new(None);
-
-/// Get or lazily initialize the console line discipline
-fn get_console_ldisc() -> spin::MutexGuard<'static, Option<LineDiscipline>> {
-    let mut ldisc = CONSOLE_LDISC.lock();
-    if ldisc.is_none() {
-        let mut new_ldisc = LineDiscipline::new();
-        // Set termios to console settings
-        new_ldisc.set_termios(CONSOLE_TERMIOS.lock().clone());
-        *ldisc = Some(new_ldisc);
-    }
-    ldisc
+/// Get the backend vnode (clone the Arc)
+fn get_console_backend() -> Option<Arc<dyn VnodeOps>> {
+    CONSOLE_BACKEND.lock().clone()
 }
 
 /// Callback type for sending signals to the foreground process group
@@ -98,115 +52,15 @@ pub unsafe fn set_signal_fg_callback(f: SignalFgFn) {
 pub const SIGINT: i32 = 2;
 pub const SIGQUIT: i32 = 3;
 
-/// Push a character to the console raw input buffer
+/// Legacy: push a character to the console
 ///
-/// Called from INTERRUPT CONTEXT (timer tick). Must be fast and non-blocking.
-/// Buffers raw input for later processing by the line discipline in the
-/// read() loop (process context). This avoids deadlock: the ldisc lock is
-/// only acquired in process context, never in interrupt context.
-///
-/// Signal characters (Ctrl+C, Ctrl+\) are checked immediately so signals
-/// reach processes even when nobody is reading.
-pub fn console_push_char(ch: u8) {
-    // Buffer the raw character — never touch CONSOLE_LDISC here
-    {
-        let mut buffer = KEYBOARD_BUFFER.lock();
-        if buffer.len() >= KEYBOARD_BUFFER_SIZE {
-            buffer.pop_front(); // Drop oldest if full
-        }
-        buffer.push_back(ch);
-    }
-
-    // Check for signal characters and dispatch immediately so signals
-    // reach processes even when nobody is calling read()
-    match ch {
-        0x03 => {
-            // Ctrl+C: SIGINT
-            unsafe {
-                if let Some(signal_fn) = SIGNAL_FG_CALLBACK {
-                    signal_fn(SIGINT);
-                }
-            }
-        }
-        0x1C => {
-            // Ctrl+\: SIGQUIT
-            unsafe {
-                if let Some(signal_fn) = SIGNAL_FG_CALLBACK {
-                    signal_fn(SIGQUIT);
-                }
-            }
-        }
-        _ => {}
-    }
-
-    // Wake up any task blocked waiting for console input
-    let blocked_pid = *CONSOLE_BLOCKED_READER.lock();
-    if blocked_pid != 0 {
-        sched::wake_up(blocked_pid);
-        *CONSOLE_BLOCKED_READER.lock() = 0;
-    }
+/// Now a no-op — input flows through VT push_input() only.
+/// Kept for API compatibility during transition.
+pub fn console_push_char(_ch: u8) {
+    // Input is handled by the VT subsystem's push_input().
+    // /dev/console delegates to the active VT device.
 }
 
-/// Push a string to the console keyboard input buffer
-pub fn console_push_str(s: &[u8]) {
-    let mut buffer = KEYBOARD_BUFFER.lock();
-    for &ch in s {
-        if buffer.len() >= KEYBOARD_BUFFER_SIZE {
-            buffer.pop_front();
-        }
-        buffer.push_back(ch);
-    }
-}
-
-/// Pop a character from the console keyboard input buffer (internal)
-fn console_pop_char() -> Option<u8> {
-    KEYBOARD_BUFFER.lock().pop_front()
-}
-
-/// Pop a byte from the console keyboard input buffer (public)
-///
-/// Caller MUST disable interrupts before calling to prevent deadlock
-/// with interrupt-context code that also accesses the keyboard buffer.
-pub fn console_pop_byte() -> Option<u8> {
-    KEYBOARD_BUFFER.lock().pop_front()
-}
-
-/// Check if keyboard input is available
-pub fn console_has_input() -> bool {
-    !KEYBOARD_BUFFER.lock().is_empty()
-}
-
-/// Set the PID of task blocked waiting for console input
-pub fn set_console_blocked_reader(pid: u32) {
-    *CONSOLE_BLOCKED_READER.lock() = pid;
-}
-
-/// Simple buffer writer for debug output
-struct BufWriter<'a> {
-    buf: &'a mut [u8],
-    pos: usize,
-}
-
-impl<'a> BufWriter<'a> {
-    fn new(buf: &'a mut [u8]) -> Self {
-        BufWriter { buf, pos: 0 }
-    }
-
-    fn as_slice(&self) -> &[u8] {
-        &self.buf[..self.pos]
-    }
-}
-
-impl<'a> core::fmt::Write for BufWriter<'a> {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        let bytes = s.as_bytes();
-        let remaining = self.buf.len() - self.pos;
-        let to_write = bytes.len().min(remaining);
-        self.buf[self.pos..self.pos + to_write].copy_from_slice(&bytes[..to_write]);
-        self.pos += to_write;
-        Ok(())
-    }
-}
 
 /// /dev/null - discards all writes, reads return EOF
 pub struct NullDevice {
@@ -396,129 +250,38 @@ impl VnodeOps for ConsoleDevice {
         Err(VfsError::NotDirectory)
     }
 
-    fn read(&self, _offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
-        if buf.is_empty() {
-            return Ok(0);
-        }
-
-        // Blocking read loop: drain raw input buffer into line discipline
-        // on each iteration, then check if the line discipline has a complete
-        // result to return. This is the same pattern as VtManager::read().
-        loop {
-            // Check for EOF (Ctrl+D on empty buffer)
-            {
-                let mut eof_pending = CONSOLE_EOF_PENDING.lock();
-                if *eof_pending {
-                    *eof_pending = false;
-                    return Ok(0);
-                }
-            }
-
-            // Step 1: Drain raw KEYBOARD_BUFFER into a local vec.
-            // Lock is held only for the drain, then released immediately.
-            let buffered_input = {
-                let mut kb = KEYBOARD_BUFFER.lock();
-                let drained: alloc::vec::Vec<u8> = kb.drain(..).collect();
-                drained
-            };
-
-            // Step 2: Feed drained characters through line discipline
-            // (process context — safe to hold ldisc lock here).
-            if !buffered_input.is_empty() {
-                let mut ldisc = get_console_ldisc();
-                if let Some(ldisc_inner) = ldisc.as_mut() {
-                    for ch in buffered_input {
-                        let signal = ldisc_inner.input_char(ch, |echo_data| {
-                            // Echo back to terminal/serial
-                            unsafe {
-                                if let Some(serial_fn) = SERIAL_WRITE {
-                                    serial_fn(echo_data);
-                                }
-                            }
-                            if terminal::is_initialized() {
-                                terminal::write(echo_data);
-                            } else {
-                                unsafe {
-                                    if let Some(write_fn) = CONSOLE_WRITE {
-                                        write_fn(echo_data);
-                                    }
-                                }
-                            }
-                        });
-
-                        // Dispatch signals from line discipline
-                        if let Some(sig) = signal {
-                            unsafe {
-                                if let Some(signal_fn) = SIGNAL_FG_CALLBACK {
-                                    signal_fn(sig.to_signo());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Step 3: Check if line discipline has a complete result
-            {
-                let mut ldisc = get_console_ldisc();
-                if let Some(ldisc_inner) = ldisc.as_mut() {
-                    if ldisc_inner.can_read() {
-                        let count = ldisc_inner.read(buf);
-                        if count > 0 {
-                            return Ok(count);
-                        }
-                    }
-                }
-            }
-
-            // No complete line available — block until woken by console_push_char
-            if let Some(pid) = sched::current_pid() {
-                *CONSOLE_BLOCKED_READER.lock() = pid;
-            }
-
-            // Remove from run queue; console_push_char's wake_up() will re-enqueue
-            sched::block_current(sched::TaskState::TASK_INTERRUPTIBLE);
-
-            // Race check: data may have arrived between our read check and
-            // block_current. Re-check raw buffer to avoid sleeping forever.
-            if !KEYBOARD_BUFFER.lock().is_empty() {
-                if let Some(pid) = sched::current_pid_lockfree() {
-                    sched::wake_up(pid);
-                }
-                continue;
-            }
-
-            // Halt CPU until next interrupt (timer or keyboard).
-            // sys_read_vfs already called allow_kernel_preempt(), so the timer
-            // interrupt can context-switch us out while halted.
-            unsafe {
-                core::arch::asm!("sti", "hlt", options(nomem, nostack));
-            }
+    fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        // Delegate to the active VT device
+        match get_console_backend() {
+            Some(backend) => backend.read(offset, buf),
+            None => Err(VfsError::IoError),
         }
     }
 
-    fn write(&self, _offset: u64, buf: &[u8]) -> VfsResult<usize> {
-        // Write to serial for debugging (raw bytes)
-        // Safety: We only read SERIAL_WRITE
-        unsafe {
-            if let Some(serial_fn) = SERIAL_WRITE {
-                serial_fn(buf);
-            }
-        }
-
-        // Write to terminal emulator for framebuffer with ANSI processing
-        if terminal::is_initialized() {
-            terminal::write(buf);
-        } else {
-            // Fallback to legacy console write (for early boot)
-            unsafe {
-                if let Some(write_fn) = CONSOLE_WRITE {
-                    write_fn(buf);
+    fn write(&self, offset: u64, buf: &[u8]) -> VfsResult<usize> {
+        // Delegate to the active VT device
+        match get_console_backend() {
+            Some(backend) => backend.write(offset, buf),
+            None => {
+                // Fallback for early boot before VT is ready:
+                // write directly to serial + terminal
+                unsafe {
+                    if let Some(serial_fn) = SERIAL_WRITE {
+                        serial_fn(buf);
+                    }
                 }
+                if terminal::is_initialized() {
+                    terminal::write(buf);
+                } else {
+                    unsafe {
+                        if let Some(write_fn) = CONSOLE_WRITE {
+                            write_fn(buf);
+                        }
+                    }
+                }
+                Ok(buf.len())
             }
         }
-
-        Ok(buf.len())
     }
 
     fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> {
@@ -552,60 +315,10 @@ impl VnodeOps for ConsoleDevice {
     }
 
     fn ioctl(&self, request: u64, arg: u64) -> VfsResult<i64> {
-        match request {
-            TCGETS => {
-                // Get termios — copy current console termios to user pointer
-                let ptr = arg as *mut Termios;
-                if ptr.is_null() {
-                    return Err(VfsError::InvalidArgument);
-                }
-                let termios = *CONSOLE_TERMIOS.lock();
-                unsafe { *ptr = termios; }
-                Ok(0)
-            }
-            TCSETS | TCSETSW | TCSETSF => {
-                // Set termios — copy from user pointer to console termios
-                let ptr = arg as *const Termios;
-                if ptr.is_null() {
-                    return Err(VfsError::InvalidArgument);
-                }
-                let new_termios = unsafe { *ptr };
-                *CONSOLE_TERMIOS.lock() = new_termios;
-                Ok(0)
-            }
-            TIOCGWINSZ => {
-                // Get window size — return default 80x24
-                let ptr = arg as *mut tty::Winsize;
-                if ptr.is_null() {
-                    return Err(VfsError::InvalidArgument);
-                }
-                unsafe {
-                    (*ptr).ws_row = 24;
-                    (*ptr).ws_col = 80;
-                    (*ptr).ws_xpixel = 0;
-                    (*ptr).ws_ypixel = 0;
-                }
-                Ok(0)
-            }
-            TIOCSWINSZ => {
-                // Set window size — accept but ignore
-                Ok(0)
-            }
-            TIOCGPGRP => {
-                // Get foreground process group — return current PID as a stub
-                let ptr = arg as *mut i32;
-                if ptr.is_null() {
-                    return Err(VfsError::InvalidArgument);
-                }
-                let pid = sched::current_pid().unwrap_or(1);
-                unsafe { *ptr = pid as i32; }
-                Ok(0)
-            }
-            TIOCSPGRP => {
-                // Set foreground process group — accept but ignore
-                Ok(0)
-            }
-            _ => Err(VfsError::NotSupported),
+        // Delegate to the active VT device
+        match get_console_backend() {
+            Some(backend) => backend.ioctl(request, arg),
+            None => Err(VfsError::IoError),
         }
     }
 }

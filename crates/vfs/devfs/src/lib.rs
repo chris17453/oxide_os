@@ -21,18 +21,19 @@ use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 use devices::{ConsoleDevice, FramebufferDevice, NullDevice, RandomDevice, ZeroDevice};
 use kmsg::KmsgDevice;
 
-// Re-export console input functions
-pub use devices::{console_has_input, console_pop_byte, console_push_char, console_push_str, set_console_blocked_reader};
+// Re-export console_push_char (no-op — input flows through VT push_input)
+pub use devices::console_push_char;
+
+// Re-export console backend setter (wires /dev/console to active VT)
+pub use devices::set_console_backend;
 
 // Re-export signal callback setter for Ctrl+C handling
 pub use devices::{SIGINT, SIGQUIT, set_signal_fg_callback};
 
 /// Console input callback for PS/2 driver
-/// Takes a slice of bytes from the keyboard and pushes them to console input
-pub fn console_input_callback(data: &[u8]) {
-    for &byte in data {
-        console_push_char(byte);
-    }
+/// Now a no-op — input flows through VT push_input() only.
+pub fn console_input_callback(_data: &[u8]) {
+    // Input is handled by the VT subsystem
 }
 
 // Re-export random device callback setter
