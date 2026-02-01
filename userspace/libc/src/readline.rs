@@ -239,14 +239,19 @@ fn enter_raw_mode() {
         TERMIOS_SAVED = true;
     }
 
-    // Disable canonical mode, echo, signal generation
+    // Disable canonical mode, echo
+    // 🔥 KEEP ISIG ENABLED (Priority #10 Fix) 🔥
+    // Before: ISIG disabled → Ctrl+C ignored while typing in shell
+    // After: ISIG enabled → Ctrl+C delivers SIGINT properly
+    //
+    // Readline will handle the signal via signal handlers, not by polling
     raw.c_lflag &= !(lflag::ICANON
         | lflag::ECHO
         | lflag::ECHOE
         | lflag::ECHOK
         | lflag::ECHOKE
         | lflag::ECHOCTL
-        | lflag::ISIG
+        // REMOVED: | lflag::ISIG  -- Keep signal generation enabled!
         | lflag::IEXTEN);
 
     // Disable ICRNL so CR comes through as-is
