@@ -270,28 +270,65 @@ pub static SCANCODE_SET1_EXT: [u16; 128] = [
 
 /// Keymap for translating scan codes to keycodes
 pub struct Keymap {
-    /// Extended key flag
+    /// Extended key flag (E0 prefix)
     extended: bool,
+    /// Pause key sequence buffer (E1 prefix - 6 bytes total)
+    pause_buffer: [u8; 6],
+    /// Number of bytes collected in pause sequence
+    pause_index: u8,
 }
 
 impl Keymap {
     /// Create a new keymap
     pub const fn new() -> Self {
-        Keymap { extended: false }
+        Keymap {
+            extended: false,
+            pause_buffer: [0; 6],
+            pause_index: 0,
+        }
     }
 
     /// Process a scan code byte
     /// Returns Some(keycode, pressed) or None if more bytes needed
     pub fn process_scancode(&mut self, scancode: u8) -> Option<(u16, bool)> {
-        // Extended prefix
+        // Extended prefix (E0)
         if scancode == 0xE0 {
             self.extended = true;
             return None;
         }
 
-        // Ignore 0xE1 (pause key prefix)
-        if scancode == 0xE1 {
-            return None;
+        // 🔥 PAUSE KEY SUPPORT (Priority #12 Fix) 🔥
+        // Pause/Break key uses E1 prefix followed by: 1D 45 E1 9D C5
+        // This is a make-only key (no separate break code)
+        if scancode == 0xE1 || self.pause_index > 0 {
+            if scancode == 0xE1 {
+                // Start of pause sequence
+                self.pause_buffer[0] = 0xE1;
+                self.pause_index = 1;
+                return None;
+            } else {
+                // Collecting pause sequence
+                self.pause_buffer[self.pause_index as usize] = scancode;
+                self.pause_index += 1;
+
+                // Check if we have the full sequence: E1 1D 45 E1 9D C5
+                if self.pause_index == 6 {
+                    let valid = self.pause_buffer[0] == 0xE1
+                        && self.pause_buffer[1] == 0x1D
+                        && self.pause_buffer[2] == 0x45
+                        && self.pause_buffer[3] == 0xE1
+                        && self.pause_buffer[4] == 0x9D
+                        && self.pause_buffer[5] == 0xC5;
+
+                    self.pause_index = 0; // Reset for next time
+
+                    if valid {
+                        return Some((KEY_PAUSE, true)); // Pause is make-only
+                    }
+                }
+
+                return None; // Still collecting
+            }
         }
 
         let pressed = scancode & 0x80 == 0;
