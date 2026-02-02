@@ -17,7 +17,12 @@ use audio::{
 };
 use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use pci::{PciDevice, VirtioPciTransport};
 use spin::Mutex;
+
+/// Physical memory map base — DMA descriptors need real silicon addresses
+/// — EchoFrame: sound travels through physics, not virtual memory
+const PHYS_MAP_BASE: u64 = 0xFFFF_8000_0000_0000;
 
 /// VirtIO sound control commands
 mod cmd {
@@ -244,8 +249,10 @@ struct StreamInfo {
 
 /// VirtIO sound device
 pub struct VirtioSnd {
-    /// MMIO base address
+    /// MMIO base address (0 when using PCI transport)
     mmio_base: usize,
+    /// PCI transport (None for MMIO mode)
+    transport: Option<VirtioPciTransport>,
     /// Control queue descriptors
     ctrl_desc: *mut VirtqDesc,
     /// Control queue available
@@ -285,26 +292,22 @@ pub struct VirtioSnd {
 }
 
 impl VirtioSnd {
-    /// Probe for VirtIO sound device
-    pub fn probe(mmio_base: usize) -> Option<Self> {
-        let magic = unsafe { read_volatile((mmio_base + VIRTIO_MMIO_MAGIC) as *const u32) };
-        if magic != 0x74726976 {
+    /// Construct from a PCI device — walks capabilities, builds transport
+    /// — EchoFrame: sound needs silicon, PCI delivers
+    pub fn from_pci(pci_dev: &PciDevice) -> Option<Self> {
+        if !pci_dev.is_virtio_snd() {
             return None;
         }
 
-        let version = unsafe { read_volatile((mmio_base + VIRTIO_MMIO_VERSION) as *const u32) };
-        if version != 2 {
-            return None;
-        }
+        pci::enable_bus_master(pci_dev.address);
+        pci::enable_memory_space(pci_dev.address);
 
-        let device_id = unsafe { read_volatile((mmio_base + VIRTIO_MMIO_DEVICE_ID) as *const u32) };
-        if device_id != 25 {
-            // Not a sound device
-            return None;
-        }
+        let caps = pci::find_virtio_caps(pci_dev);
+        let transport = VirtioPciTransport::from_caps(pci_dev, &caps)?;
 
         Some(VirtioSnd {
-            mmio_base,
+            mmio_base: 0,
+            transport: Some(transport),
             ctrl_desc: core::ptr::null_mut(),
             ctrl_avail: core::ptr::null_mut(),
             ctrl_used: core::ptr::null_mut(),
@@ -326,28 +329,128 @@ impl VirtioSnd {
         })
     }
 
-    /// Initialize the sound device
+    /// Probe for VirtIO sound device (MMIO path)
+    pub fn probe(mmio_base: usize) -> Option<Self> {
+        let magic = unsafe { read_volatile((mmio_base + VIRTIO_MMIO_MAGIC) as *const u32) };
+        if magic != 0x74726976 {
+            return None;
+        }
+
+        let version = unsafe { read_volatile((mmio_base + VIRTIO_MMIO_VERSION) as *const u32) };
+        if version != 2 {
+            return None;
+        }
+
+        let device_id = unsafe { read_volatile((mmio_base + VIRTIO_MMIO_DEVICE_ID) as *const u32) };
+        if device_id != 25 {
+            // Not a sound device
+            return None;
+        }
+
+        Some(VirtioSnd {
+            mmio_base,
+            transport: None,
+            ctrl_desc: core::ptr::null_mut(),
+            ctrl_avail: core::ptr::null_mut(),
+            ctrl_used: core::ptr::null_mut(),
+            tx_desc: core::ptr::null_mut(),
+            tx_avail: core::ptr::null_mut(),
+            tx_used: core::ptr::null_mut(),
+            queue_size: 0,
+            ctrl_next: 0,
+            ctrl_last_used: 0,
+            tx_next: 0,
+            tx_last_used: 0,
+            num_streams: 0,
+            streams: Vec::new(),
+            config: None,
+            state: StreamState::Setup,
+            volume: AtomicU8::new(100),
+            position: AtomicU64::new(0),
+            buffer: None,
+        })
+    }
+
+    /// Initialize the sound device (dual PCI/MMIO transport)
+    /// — EchoFrame: boot the sound hardware, whatever wire it rides
     pub fn init(&mut self) -> Result<(), &'static str> {
+        let has_pci = self.transport.is_some();
+
+        if has_pci {
+            self.init_pci_handshake()?;
+        } else {
+            self.init_mmio_handshake()?;
+        }
+
+        // Query stream info
+        self.query_streams()?;
+
+        // Create audio buffer (64KB ring)
+        self.buffer = Some(RingBuffer::new(65536));
+
+        Ok(())
+    }
+
+    /// PCI transport VirtIO handshake
+    fn init_pci_handshake(&mut self) -> Result<(), &'static str> {
+        let t = self.transport.as_ref().ok_or("No PCI transport")?;
+
         // Reset
+        t.write_status(0);
+        t.write_status(VIRTIO_STATUS_ACKNOWLEDGE as u8);
+        t.write_status((VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER) as u8);
+
+        // Features
+        let _features = t.read_device_features(0);
+        t.write_driver_features(0, 0);
+
+        t.write_status(
+            (VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK) as u8,
+        );
+
+        let status = t.read_status();
+        if status & VIRTIO_STATUS_FEATURES_OK as u8 == 0 {
+            t.write_status(VIRTIO_STATUS_FAILED as u8);
+            return Err("Features not accepted");
+        }
+
+        // Read sound-specific config (streams count) from device config region
+        self.num_streams = t.read_device_config_u32(4); // offset 4 = streams field
+
+        // Release borrow for queue init
+        let _ = t;
+
+        // Initialize queues via PCI transport
+        self.init_queue_pci(CONTROLQ)?;
+        self.init_queue_pci(TXQ)?;
+
+        // Driver ready
+        let t = self.transport.as_ref().ok_or("No PCI transport")?;
+        t.write_status(
+            (VIRTIO_STATUS_ACKNOWLEDGE
+                | VIRTIO_STATUS_DRIVER
+                | VIRTIO_STATUS_FEATURES_OK
+                | VIRTIO_STATUS_DRIVER_OK) as u8,
+        );
+
+        Ok(())
+    }
+
+    /// MMIO transport VirtIO handshake
+    fn init_mmio_handshake(&mut self) -> Result<(), &'static str> {
         self.write_reg(VIRTIO_MMIO_STATUS, 0);
-
-        // Acknowledge
         self.write_reg(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACKNOWLEDGE);
-
-        // Driver
         self.write_reg(
             VIRTIO_MMIO_STATUS,
             VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
         );
 
-        // Features
         self.write_reg(VIRTIO_MMIO_DEVICE_FEATURES_SEL, 0);
         let _features = self.read_reg(VIRTIO_MMIO_DEVICE_FEATURES);
 
         self.write_reg(VIRTIO_MMIO_DRIVER_FEATURES_SEL, 0);
         self.write_reg(VIRTIO_MMIO_DRIVER_FEATURES, 0);
 
-        // Features OK
         self.write_reg(
             VIRTIO_MMIO_STATUS,
             VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
@@ -363,11 +466,9 @@ impl VirtioSnd {
         let config = (self.mmio_base + VIRTIO_MMIO_CONFIG) as *const VirtioSndConfig;
         self.num_streams = unsafe { read_volatile(&(*config).streams) };
 
-        // Initialize queues
         self.init_queue(CONTROLQ)?;
         self.init_queue(TXQ)?;
 
-        // Driver OK
         self.write_reg(
             VIRTIO_MMIO_STATUS,
             VIRTIO_STATUS_ACKNOWLEDGE
@@ -376,16 +477,65 @@ impl VirtioSnd {
                 | VIRTIO_STATUS_DRIVER_OK,
         );
 
-        // Query stream info
-        self.query_streams()?;
+        Ok(())
+    }
 
-        // Create audio buffer
-        self.buffer = Some(RingBuffer::new(65536)); // 64KB buffer
+    /// Initialize a virtqueue via PCI transport (physical DMA addresses)
+    /// — EchoFrame: the queue needs real addresses for DMA, not kernel fantasies
+    fn init_queue_pci(&mut self, queue_idx: u32) -> Result<(), &'static str> {
+        let t = self.transport.as_ref().ok_or("No PCI transport")?;
+
+        t.select_queue(queue_idx as u16);
+
+        let max_size = t.queue_max_size();
+        if max_size == 0 {
+            return Err("Queue not available");
+        }
+
+        let size = max_size.min(64);
+        self.queue_size = size;
+        t.set_queue_size(size);
+
+        use alloc::alloc::{Layout, alloc_zeroed};
+
+        let desc_size = size as usize * core::mem::size_of::<VirtqDesc>();
+        let desc_layout = Layout::from_size_align(desc_size, 16).unwrap();
+        let desc = unsafe { alloc_zeroed(desc_layout) } as *mut VirtqDesc;
+
+        let avail_layout = Layout::from_size_align(core::mem::size_of::<VirtqAvail>(), 2).unwrap();
+        let avail = unsafe { alloc_zeroed(avail_layout) } as *mut VirtqAvail;
+
+        let used_layout = Layout::from_size_align(core::mem::size_of::<VirtqUsed>(), 4).unwrap();
+        let used = unsafe { alloc_zeroed(used_layout) } as *mut VirtqUsed;
+
+        match queue_idx {
+            CONTROLQ => {
+                self.ctrl_desc = desc;
+                self.ctrl_avail = avail;
+                self.ctrl_used = used;
+            }
+            TXQ => {
+                self.tx_desc = desc;
+                self.tx_avail = avail;
+                self.tx_used = used;
+            }
+            _ => {}
+        }
+
+        // PCI transport needs physical addresses
+        let desc_phys = desc as u64 - PHYS_MAP_BASE;
+        let avail_phys = avail as u64 - PHYS_MAP_BASE;
+        let used_phys = used as u64 - PHYS_MAP_BASE;
+
+        t.set_queue_desc(desc_phys);
+        t.set_queue_avail(avail_phys);
+        t.set_queue_used(used_phys);
+        t.enable_queue();
 
         Ok(())
     }
 
-    /// Initialize a virtqueue
+    /// Initialize a virtqueue (MMIO path)
     fn init_queue(&mut self, queue_idx: u32) -> Result<(), &'static str> {
         self.write_reg(VIRTIO_MMIO_QUEUE_SEL, queue_idx);
 
@@ -494,17 +644,30 @@ impl VirtioSnd {
         }
     }
 
-    /// Send control command
+    /// Send control command (dual PCI/MMIO path)
+    /// — EchoFrame: push commands through the control queue
     fn send_ctrl<C, R>(&mut self, cmd: &C, resp: &mut R) -> Result<(), &'static str> {
         let cmd_size = core::mem::size_of::<C>();
         let resp_size = core::mem::size_of::<R>();
+        let is_pci = self.transport.is_some();
 
         let desc_idx = self.ctrl_next;
         self.ctrl_next = (self.ctrl_next + 2) % self.queue_size;
 
         unsafe {
+            let cmd_addr = if is_pci {
+                cmd as *const C as u64 - PHYS_MAP_BASE
+            } else {
+                cmd as *const C as u64
+            };
+            let resp_addr = if is_pci {
+                resp as *mut R as u64 - PHYS_MAP_BASE
+            } else {
+                resp as *mut R as u64
+            };
+
             let desc0 = &mut *self.ctrl_desc.add(desc_idx as usize);
-            desc0.addr = cmd as *const C as u64;
+            desc0.addr = cmd_addr;
             desc0.len = cmd_size as u32;
             desc0.flags = VIRTQ_DESC_F_NEXT;
             desc0.next = (desc_idx + 1) % self.queue_size;
@@ -512,7 +675,7 @@ impl VirtioSnd {
             let desc1 = &mut *self
                 .ctrl_desc
                 .add(((desc_idx + 1) % self.queue_size) as usize);
-            desc1.addr = resp as *mut R as u64;
+            desc1.addr = resp_addr;
             desc1.len = resp_size as u32;
             desc1.flags = VIRTQ_DESC_F_WRITE;
             desc1.next = 0;
@@ -524,7 +687,12 @@ impl VirtioSnd {
             write_volatile(&mut avail.idx, avail_idx.wrapping_add(1));
         }
 
-        self.write_reg(VIRTIO_MMIO_QUEUE_NOTIFY, CONTROLQ);
+        // Notify — PCI transport or MMIO register
+        if let Some(ref t) = self.transport {
+            t.notify_queue(CONTROLQ as u16);
+        } else {
+            self.write_reg(VIRTIO_MMIO_QUEUE_NOTIFY, CONTROLQ);
+        }
 
         // Wait for completion
         loop {
@@ -652,21 +820,37 @@ impl AudioDevice for VirtioSnd {
 unsafe impl Send for VirtioSnd {}
 unsafe impl Sync for VirtioSnd {}
 
-/// Global VirtIO sound device
-static VIRTIO_SND: Mutex<Option<VirtioSnd>> = Mutex::new(None);
+/// Global VirtIO sound device (shared with audio subsystem via Arc)
+/// — EchoFrame: one device, many listeners
+static VIRTIO_SND: Mutex<Option<Arc<VirtioSnd>>> = Mutex::new(None);
+
+/// Initialize VirtIO sound from PCI device
+/// — EchoFrame: from PCI probe to registered audio device in one shot
+pub fn init_from_pci(pci_dev: &PciDevice) -> Result<(), &'static str> {
+    let mut snd = VirtioSnd::from_pci(pci_dev).ok_or("VirtIO sound PCI probe failed")?;
+    snd.init()?;
+
+    let arc_snd = Arc::new(snd);
+
+    // Register with audio subsystem
+    audio::init();
+    audio::register_device(arc_snd.clone());
+
+    *VIRTIO_SND.lock() = Some(arc_snd);
+    Ok(())
+}
 
 /// Initialize VirtIO sound from MMIO address
 pub fn init(mmio_base: usize) -> Result<(), &'static str> {
     let mut snd = VirtioSnd::probe(mmio_base).ok_or("VirtIO sound not found")?;
     snd.init()?;
 
-    // Register with audio subsystem
-    let _arc_snd = Arc::new(snd);
-
-    *VIRTIO_SND.lock() = None; // Can't easily share with Arc, simplified
+    let arc_snd = Arc::new(snd);
 
     audio::init();
+    audio::register_device(arc_snd.clone());
 
+    *VIRTIO_SND.lock() = Some(arc_snd);
     Ok(())
 }
 

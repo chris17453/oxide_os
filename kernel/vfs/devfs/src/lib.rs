@@ -18,7 +18,9 @@ use spin::RwLock;
 
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
-use devices::{ConsoleDevice, FramebufferDevice, NullDevice, RandomDevice, ZeroDevice};
+use devices::{
+    ConsoleDevice, DspDevice, FramebufferDevice, MixerDevice, NullDevice, RandomDevice, ZeroDevice,
+};
 use kmsg::KmsgDevice;
 
 // Re-export console_push_char (no-op — input flows through VT push_input)
@@ -76,6 +78,8 @@ impl DevFs {
             );
             devices.insert("random".to_string(), Arc::new(RandomDevice::new_random(7)));
             devices.insert("kmsg".to_string(), Arc::new(KmsgDevice::new(8)));
+            devices.insert("dsp".to_string(), Arc::new(DspDevice::new(9)));
+            devices.insert("mixer".to_string(), Arc::new(MixerDevice::new(10)));
             devices.insert(
                 "input".to_string(),
                 Arc::new(input::InputDirNode::new(100)) as Arc<dyn VnodeOps>,

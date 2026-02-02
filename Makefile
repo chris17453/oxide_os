@@ -175,6 +175,9 @@ initramfs: userspace-release
 	@cp "$(USERSPACE_OUT_RELEASE)/login" "$(TARGET_DIR)/initramfs/bin/login"
 	@# Copy gwbasic
 	@cp "$(USERSPACE_OUT_RELEASE)/gwbasic" "$(TARGET_DIR)/initramfs/bin/gwbasic"
+	@# Copy BASIC example programs
+	@mkdir -p "$(TARGET_DIR)/initramfs/usr/share/gwbasic"
+	@cp userspace/apps/gwbasic/examples/*.bas "$(TARGET_DIR)/initramfs/usr/share/gwbasic/" 2>/dev/null || true
 	@# Copy ssh client
 	@cp "$(USERSPACE_OUT_RELEASE)/ssh" "$(TARGET_DIR)/initramfs/bin/ssh"
 	@# Copy sshd
@@ -518,6 +521,9 @@ initramfs-minimal: userspace-release
 	@cp "$(USERSPACE_OUT_RELEASE)/sshd" "$(TARGET_DIR)/initramfs-minimal/bin/sshd"
 	@cp "$(USERSPACE_OUT_RELEASE)/ssh" "$(TARGET_DIR)/initramfs-minimal/bin/ssh"
 	@cp "$(USERSPACE_OUT_RELEASE)/gwbasic" "$(TARGET_DIR)/initramfs-minimal/bin/gwbasic"
+	@# Copy BASIC example programs
+	@mkdir -p "$(TARGET_DIR)/initramfs-minimal/usr/share/gwbasic"
+	@cp userspace/apps/gwbasic/examples/*.bas "$(TARGET_DIR)/initramfs-minimal/usr/share/gwbasic/" 2>/dev/null || true
 	@# Copy test utilities
 	@cp "$(USERSPACE_OUT_RELEASE)/evtest" "$(TARGET_DIR)/initramfs-minimal/bin/evtest"
 	@cp "$(USERSPACE_OUT_RELEASE)/argtest" "$(TARGET_DIR)/initramfs-minimal/bin/argtest"
@@ -608,6 +614,7 @@ run-fedora:
 		-device virtio-blk-pci,drive=disk \
 		-device virtio-net-pci,netdev=net0 \
 		-netdev user,id=net0,hostfwd=tcp::$(SSH_HOST_PORT)-:22 \
+		-device virtio-gpu-pci \
 		-serial stdio \
 		-no-reboot
 
@@ -640,6 +647,7 @@ run-rhel:
 		-device virtio-blk-pci,drive=bootdisk \
 		-device virtio-net-pci,netdev=net0 \
 		-netdev user,id=net0,hostfwd=tcp::$(SSH_HOST_PORT)-:22 \
+		-device virtio-gpu-pci \
 		-vga std \
 		-vnc :0 \
 		-serial stdio \

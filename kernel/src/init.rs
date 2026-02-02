@@ -1009,6 +1009,57 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(writer, "[NET] Network initialization complete");
 
     // ========================================
+    // VirtIO GPU Probe
+    // ========================================
+    // — GlassSignal: scan the bus for pixels
+    let virtio_gpu_devices = pci::find_virtio_gpu();
+    if let Some(pci_dev) = virtio_gpu_devices.first() {
+        let _ = writeln!(
+            writer,
+            "[GPU] VirtIO GPU found at {:02x}:{:02x}.{}",
+            pci_dev.address.bus, pci_dev.address.device, pci_dev.address.function
+        );
+        // Only initialize VirtIO GPU if no UEFI GOP framebuffer is active —
+        // disrupting a working display mid-boot is a recipe for a black screen
+        if !fb::is_initialized() {
+            match virtio_gpu::init_from_pci(pci_dev) {
+                Ok(()) => {
+                    let _ = writeln!(writer, "[GPU] VirtIO GPU initialized as primary display");
+                }
+                Err(e) => {
+                    let _ = writeln!(writer, "[GPU] VirtIO GPU init failed: {}", e);
+                }
+            }
+        } else {
+            let _ = writeln!(
+                writer,
+                "[GPU] VirtIO GPU available (UEFI GOP active, skipping)"
+            );
+        }
+    }
+
+    // ========================================
+    // VirtIO Sound Probe
+    // ========================================
+    // — EchoFrame: listening for sound on the bus
+    let virtio_snd_devices = pci::find_virtio_snd();
+    if let Some(pci_dev) = virtio_snd_devices.first() {
+        let _ = writeln!(
+            writer,
+            "[SND] VirtIO sound found at {:02x}:{:02x}.{}",
+            pci_dev.address.bus, pci_dev.address.device, pci_dev.address.function
+        );
+        match virtio_snd::init_from_pci(pci_dev) {
+            Ok(()) => {
+                let _ = writeln!(writer, "[SND] VirtIO sound device initialized");
+            }
+            Err(e) => {
+                let _ = writeln!(writer, "[SND] VirtIO sound init failed: {}", e);
+            }
+        }
+    }
+
+    // ========================================
     // Block Device Initialization
     // ========================================
     let _ = writeln!(writer, "[BLK] Initializing block devices...");

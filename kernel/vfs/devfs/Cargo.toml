@@ -19,3 +19,4 @@ sched = { workspace = true }
 tty = { workspace = true }
 vt = { workspace = true }
 input = { workspace = true }
+audio = { workspace = true }

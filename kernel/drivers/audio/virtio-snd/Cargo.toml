@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 audio = { path = "../../../audio/audio" }
+pci = { path = "../../pci" }
 spin = "0.9"

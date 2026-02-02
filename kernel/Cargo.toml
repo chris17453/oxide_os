@@ -61,6 +61,9 @@ dhcp = { workspace = true }
 virtio-net = { workspace = true }
 pci = { workspace = true }
 fb = { workspace = true }
+virtio-gpu = { workspace = true }
+audio = { workspace = true }
+virtio-snd = { workspace = true }
 terminal = { workspace = true }
 input = { workspace = true }
 ps2 = { workspace = true }

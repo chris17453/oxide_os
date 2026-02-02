@@ -343,78 +343,12 @@ impl VirtioGpu {
     /// Initialize the GPU device (works for both MMIO and PCI transport)
     /// — GlassSignal: same handshake, different wires
     pub fn init(&mut self) -> Result<(), &'static str> {
-        if let Some(ref t) = self.transport {
-            // ---- PCI transport path ----
-            // Reset
-            t.write_status(0);
+        let has_pci = self.transport.is_some();
 
-            // Acknowledge
-            t.write_status(VIRTIO_STATUS_ACKNOWLEDGE as u8);
-
-            // Driver
-            t.write_status((VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER) as u8);
-
-            // Read features, accept none for basic 2D
-            let _features = t.read_device_features(0);
-            t.write_driver_features(0, 0);
-
-            // Features OK
-            t.write_status(
-                (VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK)
-                    as u8,
-            );
-
-            let status = t.read_status();
-            if status & VIRTIO_STATUS_FEATURES_OK as u8 == 0 {
-                t.write_status(VIRTIO_STATUS_FAILED as u8);
-                return Err("Features not accepted");
-            }
-
-            // Initialize control queue via PCI transport
-            self.init_controlq_pci()?;
-
-            // Driver ready
-            t.write_status(
-                (VIRTIO_STATUS_ACKNOWLEDGE
-                    | VIRTIO_STATUS_DRIVER
-                    | VIRTIO_STATUS_FEATURES_OK
-                    | VIRTIO_STATUS_DRIVER_OK) as u8,
-            );
+        if has_pci {
+            self.init_pci_handshake()?;
         } else {
-            // ---- MMIO transport path (legacy) ----
-            self.write_reg(VIRTIO_MMIO_STATUS, 0);
-            self.write_reg(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACKNOWLEDGE);
-            self.write_reg(
-                VIRTIO_MMIO_STATUS,
-                VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
-            );
-
-            self.write_reg(VIRTIO_MMIO_DEVICE_FEATURES_SEL, 0);
-            let _features = self.read_reg(VIRTIO_MMIO_DEVICE_FEATURES);
-
-            self.write_reg(VIRTIO_MMIO_DRIVER_FEATURES_SEL, 0);
-            self.write_reg(VIRTIO_MMIO_DRIVER_FEATURES, 0);
-
-            self.write_reg(
-                VIRTIO_MMIO_STATUS,
-                VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
-            );
-
-            let status = self.read_reg(VIRTIO_MMIO_STATUS);
-            if status & VIRTIO_STATUS_FEATURES_OK == 0 {
-                self.write_reg(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_FAILED);
-                return Err("Features not accepted");
-            }
-
-            self.init_controlq()?;
-
-            self.write_reg(
-                VIRTIO_MMIO_STATUS,
-                VIRTIO_STATUS_ACKNOWLEDGE
-                    | VIRTIO_STATUS_DRIVER
-                    | VIRTIO_STATUS_FEATURES_OK
-                    | VIRTIO_STATUS_DRIVER_OK,
-            );
+            self.init_mmio_handshake()?;
         }
 
         // Get display info
@@ -422,6 +356,87 @@ impl VirtioGpu {
 
         // Create resources
         self.setup_framebuffer()?;
+
+        Ok(())
+    }
+
+    /// PCI transport VirtIO handshake
+    fn init_pci_handshake(&mut self) -> Result<(), &'static str> {
+        let t = self.transport.as_ref().ok_or("No PCI transport")?;
+
+        // Reset
+        t.write_status(0);
+        t.write_status(VIRTIO_STATUS_ACKNOWLEDGE as u8);
+        t.write_status((VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER) as u8);
+
+        // Read features, accept none for basic 2D
+        let _features = t.read_device_features(0);
+        t.write_driver_features(0, 0);
+
+        // Features OK
+        t.write_status(
+            (VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK) as u8,
+        );
+
+        let status = t.read_status();
+        if status & VIRTIO_STATUS_FEATURES_OK as u8 == 0 {
+            t.write_status(VIRTIO_STATUS_FAILED as u8);
+            return Err("Features not accepted");
+        }
+
+        // Release the immutable borrow before calling &mut self method
+        let _ = t;
+
+        // Initialize control queue via PCI transport
+        self.init_controlq_pci()?;
+
+        // Driver ready
+        let t = self.transport.as_ref().ok_or("No PCI transport")?;
+        t.write_status(
+            (VIRTIO_STATUS_ACKNOWLEDGE
+                | VIRTIO_STATUS_DRIVER
+                | VIRTIO_STATUS_FEATURES_OK
+                | VIRTIO_STATUS_DRIVER_OK) as u8,
+        );
+
+        Ok(())
+    }
+
+    /// MMIO transport VirtIO handshake (legacy path)
+    fn init_mmio_handshake(&mut self) -> Result<(), &'static str> {
+        self.write_reg(VIRTIO_MMIO_STATUS, 0);
+        self.write_reg(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACKNOWLEDGE);
+        self.write_reg(
+            VIRTIO_MMIO_STATUS,
+            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+        );
+
+        self.write_reg(VIRTIO_MMIO_DEVICE_FEATURES_SEL, 0);
+        let _features = self.read_reg(VIRTIO_MMIO_DEVICE_FEATURES);
+
+        self.write_reg(VIRTIO_MMIO_DRIVER_FEATURES_SEL, 0);
+        self.write_reg(VIRTIO_MMIO_DRIVER_FEATURES, 0);
+
+        self.write_reg(
+            VIRTIO_MMIO_STATUS,
+            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+        );
+
+        let status = self.read_reg(VIRTIO_MMIO_STATUS);
+        if status & VIRTIO_STATUS_FEATURES_OK == 0 {
+            self.write_reg(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_FAILED);
+            return Err("Features not accepted");
+        }
+
+        self.init_controlq()?;
+
+        self.write_reg(
+            VIRTIO_MMIO_STATUS,
+            VIRTIO_STATUS_ACKNOWLEDGE
+                | VIRTIO_STATUS_DRIVER
+                | VIRTIO_STATUS_FEATURES_OK
+                | VIRTIO_STATUS_DRIVER_OK,
+        );
 
         Ok(())
     }
@@ -876,6 +891,24 @@ unsafe impl Sync for VirtioGpu {}
 
 /// Global VirtIO GPU instance
 static VIRTIO_GPU: Mutex<Option<VirtioGpu>> = Mutex::new(None);
+
+/// Initialize VirtIO GPU from PCI device
+/// — GlassSignal: from PCI bus to framebuffer in one function call
+pub fn init_from_pci(pci_dev: &PciDevice) -> Result<(), &'static str> {
+    let mut gpu = VirtioGpu::from_pci(pci_dev).ok_or("VirtIO GPU PCI probe failed")?;
+    gpu.init()?;
+
+    // Initialize framebuffer subsystem
+    if let Some(info) = gpu.framebuffer_info() {
+        fb::init(info);
+    }
+
+    // Register mode setter so fb userspace can switch
+    fb::mode::set_mode_setter(set_mode_from_fb);
+
+    *VIRTIO_GPU.lock() = Some(gpu);
+    Ok(())
+}
 
 /// Initialize VirtIO GPU from MMIO address
 pub fn init(mmio_base: usize) -> Result<(), &'static str> {

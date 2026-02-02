@@ -191,6 +191,7 @@ checksum = "b365fabc795046672053e29c954733ec3b05e4be654ab130fe8f1f94d7051f35"
 name = "devfs"
 version = "0.1.0"
 dependencies = [
+ "audio",
  "input",
  "os_core",
  "sched",
@@ -566,6 +567,7 @@ dependencies = [
  "arch-mips64",
  "arch-traits",
  "arch-x86_64",
+ "audio",
  "block",
  "boot-proto",
  "crypto",
@@ -604,7 +606,9 @@ dependencies = [
  "tty",
  "vfs",
  "virtio-blk",
+ "virtio-gpu",
  "virtio-net",
+ "virtio-snd",
  "vt",
 ]
 
@@ -1663,6 +1667,7 @@ version = "0.1.0"
 dependencies = [
  "boot-proto",
  "fb",
+ "pci",
  "spin 0.9.8",
 ]
 
@@ -1690,6 +1695,7 @@ name = "virtio-snd"
 version = "0.1.0"
 dependencies = [
  "audio",
+ "pci",
  "spin 0.9.8",
 ]
 

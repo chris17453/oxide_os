@@ -1056,3 +1056,343 @@ impl VnodeOps for RandomDevice {
         Ok(())
     }
 }
+
+// ============================================================================
+// Audio DSP Device (/dev/dsp)
+// ============================================================================
+//
+// OSS-compatible digital audio interface. Programs write raw PCM data here
+// and it flows through the audio subsystem to the VirtIO sound device.
+// Supports standard OSS ioctls for format/rate/channel configuration.
+//
+// — EchoFrame: /dev/dsp is the doorway from userspace into the audio stream
+
+/// OSS ioctl command numbers
+/// — EchoFrame: ancient protocol, still works
+mod oss_ioctl {
+    pub const SNDCTL_DSP_RESET: u64 = 0x5000;
+    pub const SNDCTL_DSP_SPEED: u64 = 0xC004_5002;
+    pub const SNDCTL_DSP_STEREO: u64 = 0xC004_5003;
+    pub const SNDCTL_DSP_SETFMT: u64 = 0xC004_5005;
+    pub const SNDCTL_DSP_CHANNELS: u64 = 0xC004_5006;
+    pub const SNDCTL_DSP_GETFMTS: u64 = 0x8004_500B;
+    pub const SNDCTL_DSP_GETOSPACE: u64 = 0x800C_500C;
+}
+
+/// OSS audio format constants
+mod oss_fmt {
+    pub const AFMT_MU_LAW: u32 = 0x0000_0001;
+    pub const AFMT_A_LAW: u32 = 0x0000_0002;
+    pub const AFMT_U8: u32 = 0x0000_0008;
+    pub const AFMT_S16_LE: u32 = 0x0000_0010;
+    pub const AFMT_S16_BE: u32 = 0x0000_0020;
+    pub const AFMT_S32_LE: u32 = 0x0000_1000;
+}
+
+/// Audio buffer info (returned by GETOSPACE ioctl)
+/// — EchoFrame: how much room is left in the audio pipeline
+#[repr(C)]
+struct AudioBufInfo {
+    fragments: i32,
+    fragstotal: i32,
+    fragsize: i32,
+    bytes: i32,
+}
+
+/// /dev/dsp — OSS-compatible PCM audio device
+/// — EchoFrame: character device major 14 minor 3, the classic Unix audio interface
+pub struct DspDevice {
+    ino: u64,
+}
+
+impl DspDevice {
+    pub fn new(ino: u64) -> Self {
+        DspDevice { ino }
+    }
+}
+
+impl VnodeOps for DspDevice {
+    fn vtype(&self) -> VnodeType {
+        VnodeType::CharDevice
+    }
+
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn read(&self, _offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        // Read PCM capture data from audio device 0
+        match audio::get_device(0) {
+            Some(dev) => match dev.read(buf) {
+                Ok(n) => Ok(n),
+                Err(_) => {
+                    // No capture data — return silence
+                    buf.fill(0);
+                    Ok(buf.len())
+                }
+            },
+            None => {
+                // No audio device — return silence
+                buf.fill(0);
+                Ok(buf.len())
+            }
+        }
+    }
+
+    fn write(&self, _offset: u64, buf: &[u8]) -> VfsResult<usize> {
+        // Write PCM playback data to audio device 0
+        match audio::get_device(0) {
+            Some(dev) => match dev.write(buf) {
+                Ok(n) => Ok(n),
+                Err(_) => Ok(buf.len()), // Swallow data if device error
+            },
+            None => Ok(buf.len()), // Discard if no device
+        }
+    }
+
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rmdir(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn unlink(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn stat(&self) -> VfsResult<Stat> {
+        let mut stat = Stat::new(VnodeType::CharDevice, Mode::new(0o666), 0, self.ino);
+        stat.rdev = make_dev(14, 3); // Major 14, Minor 3 (standard /dev/dsp)
+        Ok(stat)
+    }
+
+    fn truncate(&self, _size: u64) -> VfsResult<()> {
+        Ok(())
+    }
+
+    fn ioctl(&self, request: u64, arg: u64) -> VfsResult<i64> {
+        match request {
+            oss_ioctl::SNDCTL_DSP_RESET => {
+                // Stop and release — best-effort
+                if let Some(dev) = audio::get_device(0) {
+                    let _ = dev.stop();
+                    let _ = dev.release();
+                }
+                Ok(0)
+            }
+            oss_ioctl::SNDCTL_DSP_SPEED => {
+                // Set sample rate — write back actual rate
+                if arg != 0 {
+                    let rate = unsafe { *(arg as *const u32) };
+                    // Clamp to supported rates
+                    let actual = match rate {
+                        0..=22050 => 22050u32,
+                        22051..=44100 => 44100,
+                        _ => 48000,
+                    };
+                    unsafe { *(arg as *mut u32) = actual };
+                }
+                Ok(0)
+            }
+            oss_ioctl::SNDCTL_DSP_STEREO => {
+                // Set stereo/mono: 0=mono, 1=stereo
+                if arg != 0 {
+                    let stereo = unsafe { *(arg as *const u32) };
+                    let actual = if stereo != 0 { 1u32 } else { 0 };
+                    unsafe { *(arg as *mut u32) = actual };
+                }
+                Ok(0)
+            }
+            oss_ioctl::SNDCTL_DSP_SETFMT => {
+                // Set sample format
+                if arg != 0 {
+                    let fmt = unsafe { *(arg as *const u32) };
+                    // Accept S16LE as default, pass back what we actually support
+                    let actual = if fmt == oss_fmt::AFMT_S32_LE {
+                        oss_fmt::AFMT_S32_LE
+                    } else {
+                        oss_fmt::AFMT_S16_LE
+                    };
+                    unsafe { *(arg as *mut u32) = actual };
+                }
+                Ok(0)
+            }
+            oss_ioctl::SNDCTL_DSP_CHANNELS => {
+                // Set channel count
+                if arg != 0 {
+                    let ch = unsafe { *(arg as *const u32) };
+                    let actual = ch.clamp(1, 2);
+                    unsafe { *(arg as *mut u32) = actual };
+                }
+                Ok(0)
+            }
+            oss_ioctl::SNDCTL_DSP_GETFMTS => {
+                // Report supported formats as bitmask
+                if arg != 0 {
+                    let supported = oss_fmt::AFMT_S16_LE
+                        | oss_fmt::AFMT_S32_LE
+                        | oss_fmt::AFMT_U8
+                        | oss_fmt::AFMT_MU_LAW
+                        | oss_fmt::AFMT_A_LAW;
+                    unsafe { *(arg as *mut u32) = supported };
+                }
+                Ok(0)
+            }
+            oss_ioctl::SNDCTL_DSP_GETOSPACE => {
+                // Report available write space
+                if arg != 0 {
+                    let avail = audio::get_device(0)
+                        .map(|d| d.write_available())
+                        .unwrap_or(4096);
+                    let info = AudioBufInfo {
+                        fragments: (avail / 1024) as i32,
+                        fragstotal: 64,
+                        fragsize: 1024,
+                        bytes: avail as i32,
+                    };
+                    unsafe { *(arg as *mut AudioBufInfo) = info };
+                }
+                Ok(0)
+            }
+            _ => Err(VfsError::NotSupported),
+        }
+    }
+}
+
+// ============================================================================
+// Audio Mixer Device (/dev/mixer)
+// ============================================================================
+//
+// OSS-compatible mixer control interface. Programs use ioctls to read/write
+// volume levels. Delegates to the audio subsystem's global mixer.
+//
+// — EchoFrame: the volume knob of the kernel
+
+/// OSS mixer ioctl numbers
+mod mixer_ioctl {
+    pub const SOUND_MIXER_READ_VOLUME: u64 = 0x8004_4D00;
+    pub const SOUND_MIXER_WRITE_VOLUME: u64 = 0xC004_4D00;
+    pub const SOUND_MIXER_READ_DEVMASK: u64 = 0x8004_4DFE;
+    pub const SOUND_MIXER_READ_CAPS: u64 = 0x8004_4DFC;
+}
+
+/// /dev/mixer — OSS-compatible audio mixer
+/// — EchoFrame: character device major 14 minor 0
+pub struct MixerDevice {
+    ino: u64,
+}
+
+impl MixerDevice {
+    pub fn new(ino: u64) -> Self {
+        MixerDevice { ino }
+    }
+}
+
+impl VnodeOps for MixerDevice {
+    fn vtype(&self) -> VnodeType {
+        VnodeType::CharDevice
+    }
+
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn read(&self, _offset: u64, _buf: &mut [u8]) -> VfsResult<usize> {
+        Ok(0) // EOF
+    }
+
+    fn write(&self, _offset: u64, buf: &[u8]) -> VfsResult<usize> {
+        Ok(buf.len())
+    }
+
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rmdir(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn unlink(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn stat(&self) -> VfsResult<Stat> {
+        let mut stat = Stat::new(VnodeType::CharDevice, Mode::new(0o666), 0, self.ino);
+        stat.rdev = make_dev(14, 0); // Major 14, Minor 0 (standard /dev/mixer)
+        Ok(stat)
+    }
+
+    fn truncate(&self, _size: u64) -> VfsResult<()> {
+        Ok(())
+    }
+
+    fn ioctl(&self, request: u64, arg: u64) -> VfsResult<i64> {
+        match request {
+            mixer_ioctl::SOUND_MIXER_READ_VOLUME => {
+                // OSS packs left+right volume as two bytes: (right << 8) | left
+                // Both 0-100 range
+                if arg != 0 {
+                    let vol = audio::get_master_volume() as u32;
+                    let packed = (vol << 8) | vol; // stereo same level
+                    unsafe { *(arg as *mut u32) = packed };
+                }
+                Ok(0)
+            }
+            mixer_ioctl::SOUND_MIXER_WRITE_VOLUME => {
+                if arg != 0 {
+                    let packed = unsafe { *(arg as *const u32) };
+                    let left = (packed & 0xFF).min(100);
+                    let right = ((packed >> 8) & 0xFF).min(100);
+                    // Use average of left/right for master volume
+                    let vol = ((left + right) / 2) as u8;
+                    audio::set_master_volume(vol);
+                    // Write back actual value
+                    let actual = vol as u32;
+                    unsafe { *(arg as *mut u32) = (actual << 8) | actual };
+                }
+                Ok(0)
+            }
+            mixer_ioctl::SOUND_MIXER_READ_DEVMASK => {
+                // Report which mixer channels exist (bit 0 = master volume)
+                if arg != 0 {
+                    unsafe { *(arg as *mut u32) = 0x01 }; // SOUND_MASK_VOLUME
+                }
+                Ok(0)
+            }
+            mixer_ioctl::SOUND_MIXER_READ_CAPS => {
+                if arg != 0 {
+                    unsafe { *(arg as *mut u32) = 0 }; // No special capabilities
+                }
+                Ok(0)
+            }
+            _ => Err(VfsError::NotSupported),
+        }
+    }
+}
