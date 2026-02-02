@@ -102,3 +102,7 @@
 - [ ] Tests/linters run as appropriate; failures noted with logs
 - [ ] Docs updated if behavior/process changed
 - [ ] Commit message ready (imperative, one feature)
+
+## DIRECTION
+- When you discover new rules about theoperating system, please create a docs/agents/instruction.md text file containint the exact rules you've found and how touse them then update the Claude.md file with an intex pointer to that file...
+- this is how we grow our knowledge

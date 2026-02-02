@@ -252,19 +252,50 @@ impl FileSystem for OxideFileSystem {
 
 /// OXIDE Graphics implementation
 ///
-/// Uses ANSI escape sequences for basic graphics in text mode.
-/// Full graphics would require framebuffer access.
+/// Uses the framebuffer backend for real pixel graphics,
+/// or falls back to ANSI escape sequences in text mode.
 pub struct OxideGraphics {
     width: usize,
     height: usize,
+    #[cfg(feature = "oxide")]
+    fb_backend: Option<crate::graphics_backend::OxideFramebufferBackend>,
 }
 
 impl OxideGraphics {
     pub fn new() -> Self {
+        // Try to initialize framebuffer backend
+        #[cfg(feature = "oxide")]
+        {
+            match crate::graphics_backend::oxide_fb::create_oxide_backend() {
+                Ok(fb) => {
+                    let (w, h) = fb.dimensions();
+                    return OxideGraphics {
+                        width: w,
+                        height: h,
+                        fb_backend: Some(fb),
+                    };
+                }
+                Err(_) => {
+                    // Fall through to text mode
+                }
+            }
+        }
+
+        // Fallback to text mode
         OxideGraphics {
             width: 80,
             height: 25,
+            #[cfg(feature = "oxide")]
+            fb_backend: None,
         }
+    }
+
+    /// Check if framebuffer graphics are available
+    pub fn has_framebuffer(&self) -> bool {
+        #[cfg(feature = "oxide")]
+        return self.fb_backend.is_some();
+        #[cfg(not(feature = "oxide"))]
+        return false;
     }
 }
 
@@ -275,20 +306,44 @@ impl Default for OxideGraphics {
 }
 
 impl Graphics for OxideGraphics {
-    fn pset(&mut self, _x: i32, _y: i32, _color: u8) {
+    fn pset(&mut self, x: i32, y: i32, color: u8) {
+        #[cfg(feature = "oxide")]
+        if let Some(ref mut fb) = self.fb_backend {
+            use crate::graphics_backend::GraphicsBackend;
+            let _ = fb.pset(x, y, color);
+            return;
+        }
         // Text mode doesn't support pixel drawing
-        // Would need framebuffer access
     }
 
-    fn line(&mut self, _x1: i32, _y1: i32, _x2: i32, _y2: i32, _color: u8) {
+    fn line(&mut self, x1: i32, y1: i32, x2: i32, y2: i32, color: u8) {
+        #[cfg(feature = "oxide")]
+        if let Some(ref mut fb) = self.fb_backend {
+            use crate::graphics_backend::GraphicsBackend;
+            let _ = fb.line(x1, y1, x2, y2, color);
+            return;
+        }
         // Text mode doesn't support line drawing
     }
 
-    fn circle(&mut self, _x: i32, _y: i32, _radius: i32, _color: u8) {
+    fn circle(&mut self, x: i32, y: i32, radius: i32, color: u8) {
+        #[cfg(feature = "oxide")]
+        if let Some(ref mut fb) = self.fb_backend {
+            use crate::graphics_backend::GraphicsBackend;
+            let _ = fb.circle(x, y, radius, color);
+            return;
+        }
         // Text mode doesn't support circle drawing
     }
 
     fn cls(&mut self) {
+        #[cfg(feature = "oxide")]
+        if let Some(ref mut fb) = self.fb_backend {
+            use crate::graphics_backend::GraphicsBackend;
+            fb.cls();
+            fb.display();
+            return;
+        }
         // Clear screen with ANSI
         libc::write(libc::STDOUT_FILENO, b"\x1b[2J\x1b[H");
     }
@@ -310,7 +365,11 @@ impl Graphics for OxideGraphics {
     }
 
     fn display(&mut self) {
-        // No-op in text mode
+        #[cfg(feature = "oxide")]
+        if let Some(ref mut fb) = self.fb_backend {
+            use crate::graphics_backend::GraphicsBackend;
+            fb.display();
+        }
     }
 }
 

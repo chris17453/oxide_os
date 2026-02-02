@@ -122,8 +122,8 @@ impl Interpreter {
         })
     }
 
-    /// Create interpreter for WATOS with VGA graphics mode
-    #[cfg(not(feature = "std"))]
+    /// Create interpreter with GUI/graphics mode
+    #[cfg(all(not(feature = "std"), feature = "watos"))]
     pub fn new_with_gui() -> Result<Self> {
         use crate::graphics_backend::WatosVgaBackend;
 
@@ -148,8 +148,34 @@ impl Interpreter {
         })
     }
 
+    /// Create interpreter with GUI/graphics mode for OXIDE
+    #[cfg(all(not(feature = "std"), feature = "oxide"))]
+    pub fn new_with_gui() -> Result<Self> {
+        use crate::graphics_backend::oxide_fb;
+
+        // On OXIDE, use framebuffer graphics backend
+        let backend = oxide_fb::create_oxide_backend()?;
+        let screen = Screen::new_with_backend(Box::new(backend));
+
+        Ok(Interpreter {
+            variables: HashMap::new(),
+            arrays: HashMap::new(),
+            array_dims: HashMap::new(),
+            lines: HashMap::new(),
+            current_line: None,
+            call_stack: Vec::new(),
+            for_stack: Vec::new(),
+            while_stack: Vec::new(),
+            screen,
+            graphics_mode: GraphicsMode::Gui,
+            file_manager: FileManager::new(),
+            data_items: Vec::new(),
+            data_pointer: 0,
+        })
+    }
+
     /// Create interpreter with specific video mode for WATOS
-    #[cfg(not(feature = "std"))]
+    #[cfg(all(not(feature = "std"), feature = "watos"))]
     pub fn new_with_vga_mode(mode: u8) -> Result<Self> {
         use crate::graphics_backend::{VideoMode, WatosVgaBackend};
 
@@ -172,6 +198,13 @@ impl Interpreter {
             data_items: Vec::new(),
             data_pointer: 0,
         })
+    }
+
+    /// Create interpreter with specific video mode for OXIDE (mode ignored, uses native resolution)
+    #[cfg(all(not(feature = "std"), feature = "oxide"))]
+    pub fn new_with_vga_mode(_mode: u8) -> Result<Self> {
+        // OXIDE uses native framebuffer resolution
+        Self::new_with_gui()
     }
 
     /// Execute a program AST
@@ -404,42 +437,60 @@ impl Interpreter {
                         GraphicsMode::Ascii => Screen::new(width, height),
                     };
                 }
-                #[cfg(not(feature = "host"))]
+                #[cfg(all(not(feature = "host"), feature = "oxide"))]
+                {
+                    // On OXIDE, use the framebuffer backend for graphics modes
+                    use crate::graphics_backend::oxide_fb;
+
+                    if m > 0 {
+                        // Graphics mode - create framebuffer backend
+                        match oxide_fb::create_oxide_backend() {
+                            Ok(backend) => {
+                                self.screen = Screen::new_with_backend(Box::new(backend));
+                            }
+                            Err(e) => {
+                                // Fall back to ASCII mode if framebuffer initialization fails
+                                console_eprintln!("Warning: Failed to open framebuffer: {:?}", e);
+                                self.screen = Screen::new(80, 25);
+                            }
+                        }
+                    } else {
+                        // Text mode - use ASCII backend
+                        self.screen = Screen::new(80, 25);
+                    }
+                }
+                #[cfg(all(not(feature = "host"), not(feature = "oxide"), feature = "watos"))]
                 {
                     // On WATOS, use the VGA backend through syscalls for graphics modes
-                    #[cfg(not(feature = "std"))]
-                    {
-                        use crate::graphics_backend::watos_vga;
+                    use crate::graphics_backend::watos_vga;
 
-                        if m > 0 {
-                            // Graphics mode - create VGA/SVGA backend
-                            match watos_vga::from_screen_mode(m as u8) {
-                                Ok(backend) => {
-                                    self.screen = Screen::new_with_backend(Box::new(backend));
-                                }
-                                Err(_) => {
-                                    // Fall back to ASCII mode if VGA initialization fails
-                                    // Width/height not used here, just for consistency
-                                    self.screen = Screen::new(80, 25);
-                                }
+                    if m > 0 {
+                        // Graphics mode - create VGA/SVGA backend
+                        match watos_vga::from_screen_mode(m as u8) {
+                            Ok(backend) => {
+                                self.screen = Screen::new_with_backend(Box::new(backend));
                             }
-                        } else {
-                            // Text mode - use ASCII backend
-                            self.screen = Screen::new(80, 25);
+                            Err(_) => {
+                                // Fall back to ASCII mode if VGA initialization fails
+                                self.screen = Screen::new(80, 25);
+                            }
                         }
+                    } else {
+                        // Text mode - use ASCII backend
+                        self.screen = Screen::new(80, 25);
                     }
-                    #[cfg(feature = "std")]
-                    {
-                        let (width, height) = match m {
-                            1 => (320, 200),
-                            2 => (640, 200),
-                            3 => (640, 480),
-                            4 => (800, 600),
-                            5 => (1024, 768),
-                            _ => (80, 25),
-                        };
-                        self.screen = Screen::new(width, height);
-                    }
+                }
+                #[cfg(all(not(feature = "host"), not(feature = "oxide"), not(feature = "watos"), feature = "std"))]
+                {
+                    let (width, height) = match m {
+                        1 => (320, 200),
+                        2 => (640, 200),
+                        3 => (640, 480),
+                        4 => (800, 600),
+                        5 => (1024, 768),
+                        _ => (80, 25),
+                    };
+                    self.screen = Screen::new(width, height);
                 }
                 Ok(())
             }

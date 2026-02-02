@@ -4,22 +4,29 @@
 //! - ASCII: Terminal-based rendering with characters (always available)
 //! - Window: GUI window with pixel-based rendering (std/host only)
 //! - WatosVga: VGA/SVGA graphics for WATOS (watos/no_std only)
+//! - OxideFb: Framebuffer graphics for OXIDE OS (oxide/no_std only)
 
 pub mod ascii;
 
 #[cfg(feature = "host")]
 pub mod window;
 
-#[cfg(not(feature = "std"))]
+#[cfg(all(not(feature = "std"), feature = "watos"))]
 pub mod watos_vga;
+
+#[cfg(all(not(feature = "std"), feature = "oxide"))]
+pub mod oxide_fb;
 
 pub use ascii::AsciiBackend;
 
 #[cfg(feature = "host")]
 pub use window::WindowBackend;
 
-#[cfg(not(feature = "std"))]
+#[cfg(all(not(feature = "std"), feature = "watos"))]
 pub use watos_vga::{VideoMode, WatosVgaBackend};
+
+#[cfg(all(not(feature = "std"), feature = "oxide"))]
+pub use oxide_fb::OxideFramebufferBackend;
 
 use crate::error::Result;
 
