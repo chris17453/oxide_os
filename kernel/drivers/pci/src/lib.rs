@@ -132,6 +132,12 @@ impl PciDevice {
         self.vendor_id == vendor::VIRTIO && self.device_id == virtio_modern::SOUND
     }
 
+    /// Check if this is an Intel HDA controller (ICH6 variant used by QEMU)
+    /// — TorqueJax: the real audio silicon, not some paravirtual pretender
+    pub fn is_intel_hda(&self) -> bool {
+        self.vendor_id == vendor::INTEL && self.device_id == 0x2668
+    }
+
     /// Check if this is a network device
     pub fn is_network(&self) -> bool {
         self.class_code == class::NETWORK_CONTROLLER
@@ -389,6 +395,17 @@ pub fn find_virtio_snd() -> Vec<PciDevice> {
         .lock()
         .iter()
         .filter(|d| d.is_virtio_snd())
+        .cloned()
+        .collect()
+}
+
+/// Find all Intel HDA controllers on the PCI bus
+/// — TorqueJax: hunting for real audio hardware among the silicon
+pub fn find_intel_hda() -> Vec<PciDevice> {
+    DEVICES
+        .lock()
+        .iter()
+        .filter(|d| d.is_intel_hda())
         .cloned()
         .collect()
 }

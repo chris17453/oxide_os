@@ -52,6 +52,7 @@ members = [
     "kernel/drivers/gpu/virtio-gpu",
     "kernel/audio/audio",
     "kernel/drivers/audio/virtio-snd",
+    "kernel/drivers/audio/intel-hda",
     "kernel/usb/usb",
     "kernel/drivers/usb/xhci",
     "kernel/drivers/usb/usb-msc",
@@ -201,6 +202,7 @@ terminal = { path = "kernel/tty/terminal" }
 virtio-gpu = { path = "kernel/drivers/gpu/virtio-gpu" }
 audio = { path = "kernel/audio/audio" }
 virtio-snd = { path = "kernel/drivers/audio/virtio-snd" }
+intel-hda = { path = "kernel/drivers/audio/intel-hda" }
 usb = { path = "kernel/usb/usb" }
 xhci = { path = "kernel/drivers/usb/xhci" }
 usb-msc = { path = "kernel/drivers/usb/usb-msc" }

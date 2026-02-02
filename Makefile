@@ -617,6 +617,9 @@ run-fedora:
 		-device virtio-net-pci,netdev=net0 \
 		-netdev user,id=net0,hostfwd=tcp::$(SSH_HOST_PORT)-:22 \
 		-device virtio-gpu-pci \
+		-audiodev none,id=snd0 \
+		-device intel-hda \
+		-device hda-duplex,audiodev=snd0 \
 		-serial stdio \
 		-no-reboot
 
@@ -650,6 +653,9 @@ run-rhel:
 		-device virtio-net-pci,netdev=net0 \
 		-netdev user,id=net0,hostfwd=tcp::$(SSH_HOST_PORT)-:22 \
 		-device virtio-gpu-pci \
+		-audiodev none,id=snd0 \
+		-device intel-hda \
+		-device hda-duplex,audiodev=snd0 \
 		-vga std \
 		-vnc :0 \
 		-serial stdio \

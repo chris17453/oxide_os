@@ -1060,6 +1060,28 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
 
     // ========================================
+    // Intel HDA Audio Probe
+    // ========================================
+    // — EchoFrame: real hardware audio, the silicon sings through HDA
+    let hda_devices = pci::find_intel_hda();
+    if let Some(pci_dev) = hda_devices.first() {
+        let _ = writeln!(
+            writer,
+            "[SND] Intel HDA found at {:02x}:{:02x}.{} (PCI {:04x}:{:04x})",
+            pci_dev.address.bus, pci_dev.address.device, pci_dev.address.function,
+            pci_dev.vendor_id, pci_dev.device_id
+        );
+        match intel_hda::init_from_pci(pci_dev) {
+            Ok(()) => {
+                let _ = writeln!(writer, "[SND] Intel HDA audio initialized");
+            }
+            Err(e) => {
+                let _ = writeln!(writer, "[SND] Intel HDA init failed: {}", e);
+            }
+        }
+    }
+
+    // ========================================
     // Block Device Initialization
     // ========================================
     let _ = writeln!(writer, "[BLK] Initializing block devices...");

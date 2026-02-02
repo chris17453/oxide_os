@@ -528,6 +528,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "intel-hda"
+version = "0.1.0"
+dependencies = [
+ "audio",
+ "pci",
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "iouring"
 version = "0.1.0"
 dependencies = [
@@ -580,6 +589,7 @@ dependencies = [
  "gpt",
  "initramfs",
  "input",
+ "intel-hda",
  "mm-cow",
  "mm-heap",
  "mm-manager",
