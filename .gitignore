@@ -21,10 +21,16 @@ Thumbs.db
 *.img
 *.iso
 
-# Node
+# Node.js dev tooling
 node_modules/
+package.json
+package-lock.json
 
-# External build artifacts (CPython, etc.)
+# External source tarballs and build artifacts
+/external/*.tar.gz
 /external/cpython/
 /external/cpython-build/
 /external/cpython-build-native/
+
+# Credentials
+.ahoy_creds
