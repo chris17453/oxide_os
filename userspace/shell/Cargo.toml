@@ -9,4 +9,4 @@ name = "esh"
 path = "src/main.rs"
 
 [dependencies]
-libc = { path = "../libc" }
+libc = { path = "../libs/libc" }

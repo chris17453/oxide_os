@@ -1,0 +1,13 @@
+[package]
+name = "journalctl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Journal log viewer for OXIDE OS"
+
+[[bin]]
+name = "journalctl"
+path = "src/main.rs"
+
+[dependencies]
+libc = { path = "../../libs/libc" }

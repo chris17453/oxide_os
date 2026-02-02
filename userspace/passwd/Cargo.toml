@@ -1,9 +1,0 @@
-[package]
-name = "passwd"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-libc = { path = "../libc" }
-login = { path = "../login" }

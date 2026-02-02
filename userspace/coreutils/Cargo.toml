@@ -358,6 +358,6 @@ name = "umount"
 path = "src/bin/umount.rs"
 
 [dependencies]
-libc = { path = "../libc" }
+libc = { path = "../libs/libc" }
 heapless = "0.8"
-compression = { path = "../compression" }
+compression = { path = "../libs/compression" }

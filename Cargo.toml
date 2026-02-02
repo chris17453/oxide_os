@@ -95,32 +95,42 @@ members = [
     "kernel/signal/signal",
     "kernel/smp/smp",
     "kernel/module/module",
-    "userspace/libc",
-    "userspace/init",
+    # userspace/system — core boot/session programs
+    "userspace/system/init",
+    "userspace/system/getty",
+    "userspace/system/login",
+    "userspace/system/passwd",
+    "userspace/system/servicemgr",
+    # userspace/shell
     "userspace/shell",
-    "userspace/login",
-    "userspace/passwd",
-    "userspace/getty",
+    # userspace/coreutils
     "userspace/coreutils",
-    "userspace/modutils",
-    "userspace/search",
-    "userspace/oxide-std",
-    "userspace/syscall-tests",
-    "userspace/as",
-    "userspace/ld",
-    "userspace/ar",
-    "userspace/make",
-    "userspace/compression",
-    "userspace/sshd",
-    "userspace/ssh",
-    "userspace/servicemgr",
-    "userspace/networkd",
-    "userspace/journald",
-    "userspace/journalctl",
-    "userspace/evtest",
-    "userspace/argtest",
+    # userspace/libs — shared libraries
+    "userspace/libs/libc",
+    "userspace/libs/oxide-std",
+    "userspace/libs/compression",
+    # userspace/services — daemons
+    "userspace/services/networkd",
+    "userspace/services/sshd",
+    "userspace/services/journald",
+    "userspace/services/journalctl",
+    # userspace/network — client tools
+    "userspace/network/ssh",
+    # userspace/devtools — on-target development tools
+    "userspace/devtools/as",
+    "userspace/devtools/ld",
+    "userspace/devtools/ar",
+    "userspace/devtools/make",
+    "userspace/devtools/search",
+    "userspace/devtools/modutils",
+    # userspace/apps — end-user applications
+    "userspace/apps/gwbasic",
+    # userspace/tests — test harnesses
+    "userspace/tests/syscall-tests",
+    "userspace/tests/evtest",
+    "userspace/tests/argtest",
+    # bootloader
     "bootloader/boot-uefi",
-    "apps/gwbasic",
 ]
 
 [workspace.package]

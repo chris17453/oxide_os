@@ -1,0 +1,34 @@
+[package]
+name = "oxide-gwbasic"
+version = "0.1.0"
+authors = ["chris17453"]
+edition = "2021"
+description = "GW-BASIC in modern Rust - for OXIDE OS and host systems"
+license = "MIT"
+
+[lib]
+name = "rust_gwbasic"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rust-gwbasic"
+path = "src/main.rs"
+required-features = ["host"]
+
+[[bin]]
+name = "gwbasic"
+path = "src/oxide_main.rs"
+required-features = ["oxide"]
+
+[features]
+# Default is no_std for kernel builds. Use `--features host` on host systems.
+default = []
+host = ["std", "dep:minifb"]
+oxide = ["dep:libc"]
+watos = []  # Legacy platform (kept for compatibility)
+std = []
+
+[dependencies]
+minifb = { version = "0.25", optional = true }
+libm = "0.2"
+libc = { path = "../../libs/libc", optional = true }

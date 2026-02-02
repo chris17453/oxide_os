@@ -1,0 +1,13 @@
+[package]
+name = "syscall-tests"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Syscall test suite for OXIDE OS"
+
+[dependencies]
+libc = { path = "../../libs/libc" }
+
+[[bin]]
+name = "syscall-tests"
+path = "src/main.rs"

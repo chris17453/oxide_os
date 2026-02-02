@@ -1,8 +1,0 @@
-[package]
-name = "search"
-version = "0.1.0"
-edition = "2021"
-description = "Semantic file search tool for Oxide OS"
-
-[dependencies]
-libc = { path = "../libc" }

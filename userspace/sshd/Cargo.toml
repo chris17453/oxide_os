@@ -1,9 +1,0 @@
-[package]
-name = "sshd"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-description = "SSH server daemon for OXIDE OS"
-
-[dependencies]
-libc = { path = "../libc" }

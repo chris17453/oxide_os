@@ -1,0 +1,13 @@
+[package]
+name = "journald"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Journal logging daemon for OXIDE OS"
+
+[[bin]]
+name = "journald"
+path = "src/main.rs"
+
+[dependencies]
+libc = { path = "../../libs/libc" }
