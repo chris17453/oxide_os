@@ -52,6 +52,9 @@ pub struct BootInfo {
     pub initramfs_phys: u64,
     /// Initramfs size in bytes (0 if not loaded)
     pub initramfs_size: u64,
+    /// RSDP physical address from UEFI config tables (0 if not found)
+    /// — SableWire: firmware handshake for ACPI topology discovery
+    pub rsdp_physical_address: u64,
 }
 
 impl BootInfo {
@@ -70,6 +73,7 @@ impl BootInfo {
             video_modes: None,
             initramfs_phys: 0,
             initramfs_size: 0,
+            rsdp_physical_address: 0,
         }
     }
 

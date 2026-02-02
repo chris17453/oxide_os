@@ -601,6 +601,7 @@ run-fedora:
 	TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
 		-machine q35 \
 		-cpu qemu64,+smap,+smep \
+		-smp 4 \
 		-m 256M \
 		-bios "$(OVMF)" \
 		-drive file=$(ROOTFS_IMAGE),format=raw,if=none,id=disk \
@@ -631,7 +632,7 @@ run-rhel:
 	@TMPDIR=/tmp/qemu-oxide /usr/libexec/qemu-kvm \
 		-machine q35,accel=kvm:tcg \
 		-cpu max,+invtsc \
-		-smp 2 \
+		-smp 4 \
 		-m 256M \
 		-drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE.fd \
 		-drive if=pflash,format=raw,file=$(TARGET_DIR)/OVMF_VARS.fd \

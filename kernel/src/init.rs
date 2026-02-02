@@ -473,19 +473,78 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         bsp_apic_id
     );
 
-    // TEMPORARY: Manually register CPU 1 for testing
-    // TODO: Replace with proper ACPI MADT enumeration and AP boot
-    let _ = writeln!(writer, "[SMP] Detecting additional CPUs...");
-    unsafe {
-        // Register CPU 1 as present but not online (needs proper AP boot)
-        smp::cpu::register_cpu(1, 1, false); // CPU 1, APIC ID 1, not BSP
-        // Note: NOT calling set_cpu_online(1) - CPU is registered but offline
-        // Need to implement INIT-SIPI-SIPI sequence to actually boot it
+    // Enumerate CPUs from ACPI MADT — SableWire: silicon census from firmware tables
+    let _ = writeln!(writer, "[SMP] Enumerating CPUs from ACPI MADT...");
+    let mut ap_count = 0u32;
+    if boot_info.rsdp_physical_address != 0 {
+        let rsdp_virt = (boot_info.phys_map_base + boot_info.rsdp_physical_address) as *const u8;
+        // Safety: RSDP address provided by UEFI firmware, mapped via phys_map_base
+        if let Some(rsdp) = unsafe { acpi::Rsdp::parse(rsdp_virt) } {
+            let _ = writeln!(
+                writer,
+                "[ACPI] RSDP v{} — RSDT 0x{:08x}, XSDT 0x{:016x}",
+                rsdp.revision, rsdp.rsdt_address, rsdp.xsdt_address
+            );
+
+            // Find the MADT in RSDT/XSDT
+            // Safety: ACPI tables are mapped through phys_map_base
+            if let Some(madt_phys) = unsafe {
+                acpi::find_table(
+                    boot_info.phys_map_base,
+                    rsdp.xsdt_address,
+                    rsdp.rsdt_address,
+                    &acpi::madt::MADT_SIGNATURE,
+                )
+            } {
+                let _ = writeln!(writer, "[ACPI] MADT found at 0x{:016x}", madt_phys);
+
+                let mut madt_entries = [acpi::MadtEntry::LocalApic(acpi::MadtLocalApic {
+                    entry_type: 0,
+                    length: 0,
+                    acpi_processor_uid: 0,
+                    apic_id: 0,
+                    flags: 0,
+                }); acpi::madt::MAX_MADT_CPUS];
+
+                // Safety: MADT is mapped through phys_map_base
+                let num_cpus =
+                    unsafe { acpi::parse_madt(boot_info.phys_map_base, madt_phys, &mut madt_entries) };
+                let _ = writeln!(writer, "[ACPI] MADT reports {} usable CPU(s)", num_cpus);
+
+                // Register each AP (skip BSP by matching APIC ID)
+                let mut cpu_idx = 1u32;
+                for i in 0..num_cpus {
+                    let apic_id = match madt_entries[i] {
+                        acpi::MadtEntry::LocalApic(ref lapic) => lapic.apic_id as u32,
+                        acpi::MadtEntry::LocalX2Apic(ref x2) => x2.x2apic_id,
+                    };
+
+                    // BSP already registered — skip it
+                    if apic_id == bsp_apic_id as u32 {
+                        continue;
+                    }
+
+                    if (cpu_idx as usize) < smp::MAX_CPUS {
+                        // — GraveShift: wiring each silicon core into the grid
+                        unsafe { smp::cpu::register_cpu(cpu_idx, apic_id, false) };
+                        let _ = writeln!(
+                            writer,
+                            "[SMP] CPU {} registered (APIC ID {}) — offline, pending boot",
+                            cpu_idx, apic_id
+                        );
+                        cpu_idx += 1;
+                        ap_count += 1;
+                    }
+                }
+            } else {
+                let _ = writeln!(writer, "[ACPI] No MADT found — single CPU mode");
+            }
+        } else {
+            let _ = writeln!(writer, "[ACPI] RSDP parse failed — single CPU mode");
+        }
+    } else {
+        let _ = writeln!(writer, "[ACPI] No RSDP from bootloader — single CPU mode");
     }
-    let _ = writeln!(
-        writer,
-        "[SMP] CPU 1 detected (APIC ID 1) - offline, needs AP boot"
-    );
 
     let _ = writeln!(
         writer,
@@ -508,54 +567,61 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         arch::set_tlb_shootdown_callback(smp::tlb::handle_tlb_shootdown);
     }
 
-    // Boot Application Processors if detected
+    // Boot Application Processors via INIT-SIPI-SIPI — GraveShift: igniting each core
     if smp::cpu::cpu_count() > 1 {
-        let _ = writeln!(writer, "[SMP] Booting Application Processors...");
-
-        // Allocate AP kernel stack (16KB)
-        let ap_stack_phys = mm_manager::mm()
-            .alloc_contiguous(4)
-            .expect("Failed to allocate AP stack");
-        let ap_stack_virt = mm_paging::phys_to_virt(ap_stack_phys).as_u64() + (4 * 4096);
+        let total_aps = smp::cpu::cpu_count() - 1;
+        let _ = writeln!(writer, "[SMP] Booting {} Application Processor(s)...", total_aps);
 
         // Get CR3 for APs to use (current page table)
         let cr3 = <arch::X86_64 as arch_traits::TlbControl>::read_root();
-
-        // Set up trampoline code at 0x8000
-        unsafe {
-            arch::ap_boot::setup_trampoline(
-                cr3,
-                ap_stack_virt,
-                arch::ap_boot::ap_entry_rust as *const () as u64,
-            );
-        }
-        let _ = writeln!(
-            writer,
-            "[SMP] AP trampoline set up at 0x{:x}",
-            arch::ap_boot::TRAMPOLINE_PHYS
-        );
 
         // Register AP initialization callback
         unsafe {
             arch::ap_boot::register_ap_init_callback(smp_init::ap_init_callback);
         }
 
-        // Boot CPU 1
-        let _ = writeln!(writer, "[SMP] Sending INIT-SIPI-SIPI to CPU 1...");
-        match smp::cpu::boot_ap(1, arch::ap_boot::TRAMPOLINE_PAGE) {
-            Ok(()) => {
-                let _ = writeln!(writer, "[SMP] CPU 1 is now online!");
-                let _ = writeln!(
-                    writer,
-                    "[SMP] CPUs online: {}/{}",
-                    smp::cpu::cpus_online(),
-                    smp::cpu::cpu_count()
+        for cpu_id in 1..smp::cpu::cpu_count() {
+            // Allocate per-AP kernel stack (16KB)
+            let ap_stack_phys = mm_manager::mm()
+                .alloc_contiguous(4)
+                .expect("Failed to allocate AP stack");
+            let ap_stack_virt = mm_paging::phys_to_virt(ap_stack_phys).as_u64() + (4 * 4096);
+
+            // Set up trampoline code at 0x8000 (rewritten per AP)
+            unsafe {
+                arch::ap_boot::setup_trampoline(
+                    cr3,
+                    ap_stack_virt,
+                    arch::ap_boot::ap_entry_rust as *const () as u64,
                 );
             }
-            Err(e) => {
-                let _ = writeln!(writer, "[SMP] Failed to boot CPU 1: {}", e);
+
+            let _ = writeln!(
+                writer,
+                "[SMP] Sending INIT-SIPI-SIPI to CPU {}...",
+                cpu_id
+            );
+            match smp::cpu::boot_ap(cpu_id, arch::ap_boot::TRAMPOLINE_PAGE) {
+                Ok(()) => {
+                    let _ = writeln!(writer, "[SMP] CPU {} is now online!", cpu_id);
+                }
+                Err(e) => {
+                    let _ = writeln!(writer, "[SMP] Failed to boot CPU {}: {}", cpu_id, e);
+                }
             }
         }
+
+        let _ = writeln!(
+            writer,
+            "[SMP] AP trampoline at 0x{:x}",
+            arch::ap_boot::TRAMPOLINE_PHYS
+        );
+        let _ = writeln!(
+            writer,
+            "[SMP] CPUs online: {}/{}",
+            smp::cpu::cpus_online(),
+            smp::cpu::cpu_count()
+        );
     }
 
     // Register page fault callback for COW handling
@@ -636,6 +702,16 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Start timer at 100Hz
     let _ = writeln!(writer, "[INFO] Starting APIC timer at 100Hz...");
     arch::start_timer(100);
+
+    // Register wall-clock provider for subsystems (ext4 timestamps, etc.)
+    // — WireSaint: bridging the tick counter to filesystem time
+    os_core::register_wall_clock(syscall::time::wall_clock_secs);
+    let _ = writeln!(writer, "[INFO] Wall-clock time bridge registered");
+
+    // Register credentials provider for subsystems (ext4 ownership, etc.)
+    // — EmberLock: bridging process identity to filesystem ownership
+    os_core::register_creds_provider(current_process_uid_gid);
+    let _ = writeln!(writer, "[INFO] Credentials bridge registered");
 
     // Enable interrupts
     let _ = writeln!(writer, "[INFO] Enabling interrupts...");
@@ -1802,6 +1878,15 @@ fn kmsg_get_proc_name(pid: u32, buf: &mut [u8]) -> usize {
         }
     }
     0
+}
+
+/// Get current process UID/GID for the os_core credentials bridge
+/// — EmberLock: identity extraction for subsystem consumption
+fn current_process_uid_gid() -> (u32, u32) {
+    sched::with_current_meta(|meta| {
+        (meta.credentials.uid, meta.credentials.gid)
+    })
+    .unwrap_or((0, 0))
 }
 
 /// Signal process group callback for PTYs

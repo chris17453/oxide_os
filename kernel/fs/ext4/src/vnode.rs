@@ -237,9 +237,10 @@ impl VnodeOps for Ext4Vnode {
             }
         };
 
-        // Create new inode structure
+        // Create new inode structure — EmberLock: stamp file ownership from caller
         let inode_mode = file_type::S_IFREG | (mode.bits() as u16 & 0o7777);
-        let mut new_inode = inode::new_inode(inode_mode, 0, 0); // TODO: use real uid/gid
+        let (uid, gid) = os_core::current_uid_gid();
+        let mut new_inode = inode::new_inode(inode_mode, uid, gid);
 
         // Initialize extent header for new file
         inode::init_extent_header(&mut new_inode);
@@ -346,6 +347,11 @@ impl VnodeOps for Ext4Vnode {
             }
         };
 
+        // — WireSaint: stamp mtime/ctime on data mutation
+        let now = os_core::wall_clock_secs() as u32;
+        inode.touch_mtime(now);
+        inode.touch_ctime(now);
+
         // Update inode on disk (and journal the metadata)
         match inode::write_inode_data(fs.device(), &fs.sb, &fs.group_table, self.ino, &inode) {
             Ok((blocknr, data)) => fs.journal_block(blocknr, data),
@@ -449,9 +455,10 @@ impl VnodeOps for Ext4Vnode {
                 }
             };
 
-        // Create new directory inode
+        // Create new directory inode — EmberLock: stamp directory ownership from caller
         let inode_mode = file_type::S_IFDIR | (mode.bits() as u16 & 0o7777);
-        let mut new_inode = inode::new_inode(inode_mode, 0, 0);
+        let (uid, gid) = os_core::current_uid_gid();
+        let mut new_inode = inode::new_inode(inode_mode, uid, gid);
 
         // Initialize extent header and add extent for the directory block
         inode::init_extent_header(&mut new_inode);
@@ -694,8 +701,8 @@ impl VnodeOps for Ext4Vnode {
                 }
             }
 
-            // Mark inode as deleted (set dtime)
-            target_inode.set_dtime(0); // TODO: use real time
+            // — WireSaint: mark inode's time of death
+            target_inode.set_dtime(os_core::wall_clock_secs() as u32);
 
             // Free the inode
             if let Err(e) = bitmap::free_inode(fs.device(), &fs.sb, &fs.group_table, target_ino) {
@@ -817,6 +824,11 @@ impl VnodeOps for Ext4Vnode {
             return Err(VfsError::from(e));
         }
 
+        // — WireSaint: rename mutates directory metadata
+        let now = os_core::wall_clock_secs() as u32;
+        inode.touch_mtime(now);
+        inode.touch_ctime(now);
+
         // Write updated directory inode (and journal)
         match inode::write_inode_data(fs.device(), &fs.sb, &fs.group_table, self.ino, &inode) {
             Ok((blocknr, data)) => fs.journal_block(blocknr, data),
@@ -882,6 +894,11 @@ impl VnodeOps for Ext4Vnode {
             return Err(VfsError::from(e));
         }
 
+        // — WireSaint: truncation mutates size and metadata
+        let now = os_core::wall_clock_secs() as u32;
+        inode.touch_mtime(now);
+        inode.touch_ctime(now);
+
         // Write updated inode (and journal)
         match inode::write_inode_data(fs.device(), &fs.sb, &fs.group_table, self.ino, &inode) {
             Ok((blocknr, data)) => fs.journal_block(blocknr, data),
@@ -909,5 +926,43 @@ impl VnodeOps for Ext4Vnode {
 
         let fs = self.fs.read();
         file::read_symlink(fs.device(), &fs.sb, &inode).map_err(|e| VfsError::from(e))
+    }
+
+    /// — WireSaint: utimensat — userspace sets the clock hands on this inode
+    fn set_times(&self, atime: Option<u64>, mtime: Option<u64>) -> VfsResult<()> {
+        let mut inode = self.inode.write();
+
+        let fs = self.fs.read();
+        if fs.read_only {
+            return Err(VfsError::ReadOnly);
+        }
+
+        let has_journal = fs.begin_transaction();
+
+        if let Some(a) = atime {
+            inode.touch_atime(a as u32);
+        }
+        if let Some(m) = mtime {
+            inode.touch_mtime(m as u32);
+        }
+        // ctime always updates on metadata change
+        let now = os_core::wall_clock_secs() as u32;
+        inode.touch_ctime(now);
+
+        match inode::write_inode_data(fs.device(), &fs.sb, &fs.group_table, self.ino, &inode) {
+            Ok((blocknr, data)) => fs.journal_block(blocknr, data),
+            Err(e) => {
+                if has_journal {
+                    fs.abort_transaction();
+                }
+                return Err(VfsError::from(e));
+            }
+        }
+
+        if has_journal && !fs.commit_transaction() {
+            return Err(VfsError::IoError);
+        }
+
+        Ok(())
     }
 }

@@ -376,7 +376,10 @@ unsafe fn insert_char(c: u8, prompt: &[u8]) {
         LINE_BUF[LINE_LEN] = c;
         LINE_LEN += 1;
         CURSOR += 1;
+        // 🔥 GraveShift: flush after echo — putchar buffers until \n or 256 bytes,
+        // so typed characters stayed invisible in raw mode. — GraveShift
         putchar(c);
+        fflush_stdout();
     } else {
         // Insert in middle: shift right
         let mut i = LINE_LEN;

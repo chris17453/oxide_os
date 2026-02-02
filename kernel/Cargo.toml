@@ -65,6 +65,7 @@ terminal = { workspace = true }
 input = { workspace = true }
 ps2 = { workspace = true }
 smp = { workspace = true }
+acpi = { workspace = true }
 crypto = { workspace = true }
 spin = { workspace = true }
 block = { workspace = true }

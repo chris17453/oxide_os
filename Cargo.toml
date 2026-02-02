@@ -94,6 +94,7 @@ members = [
     "kernel/tty/vt",
     "kernel/signal/signal",
     "kernel/smp/smp",
+    "kernel/acpi/acpi",
     "kernel/module/module",
     # userspace/system — core boot/session programs
     "userspace/system/init",
@@ -176,6 +177,7 @@ pty = { path = "kernel/tty/pty" }
 vt = { path = "kernel/tty/vt" }
 signal = { path = "kernel/signal/signal" }
 smp = { path = "kernel/smp/smp" }
+acpi = { path = "kernel/acpi/acpi" }
 module = { path = "kernel/module/module" }
 block = { path = "kernel/block/block" }
 gpt = { path = "kernel/block/gpt" }

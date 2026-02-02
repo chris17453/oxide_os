@@ -414,8 +414,44 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
                             SignalResult::Ignore => {
                                 // Signal ignored - do nothing
                             }
-                            SignalResult::Stop | SignalResult::Continue => {
-                                // TODO: Stop/Continue not yet implemented
+                            SignalResult::Stop => {
+                                // — ThreadRogue: freezing the process in its tracks
+                                meta.stop_signal = Some(signo as u8);
+                                meta.continued = false;
+
+                                // Wake parent for WUNTRACED waitpid
+                                let ppid_opt = sched::get_task_ppid(current_pid);
+                                drop(meta);
+
+                                sched::block_current(TaskState::TASK_STOPPED);
+
+                                if let Some(ppid) = ppid_opt {
+                                    if ppid > 0 {
+                                        wake_up(ppid);
+                                    }
+                                }
+                            }
+                            SignalResult::Continue => {
+                                // — ThreadRogue: thawing from the ice
+                                meta.stop_signal = None;
+                                meta.continued = true;
+
+                                let ppid_opt = sched::get_task_ppid(current_pid);
+                                drop(meta);
+
+                                // If task was stopped, wake it back up
+                                if sched::get_task_state(current_pid)
+                                    == Some(TaskState::TASK_STOPPED)
+                                {
+                                    wake_up(current_pid);
+                                }
+
+                                // Wake parent for WCONTINUED waitpid
+                                if let Some(ppid) = ppid_opt {
+                                    if ppid > 0 {
+                                        wake_up(ppid);
+                                    }
+                                }
                             }
                             SignalResult::None => {
                                 // No signal - shouldn't happen here

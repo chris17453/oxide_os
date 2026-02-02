@@ -117,6 +117,16 @@ pub struct ProcessMeta {
     /// Program break (heap end address for brk/sbrk)
     /// 🔥 GraveShift: Classic UNIX heap management 🔥
     pub program_break: u64,
+
+    /// Signal number that stopped this process (for waitpid WIFSTOPPED)
+    /// None = not stopped, Some(sig) = stopped by this signal
+    /// — ThreadRogue: freeze-frame state for job control
+    pub stop_signal: Option<u8>,
+
+    /// Process was continued via SIGCONT (for waitpid WIFCONTINUED)
+    /// Reset to false after waitpid reports it
+    /// — ThreadRogue: thaw notification for the parent
+    pub continued: bool,
 }
 
 impl ProcessMeta {
@@ -149,6 +159,8 @@ impl ProcessMeta {
             thread_group: Vec::new(),
             umask: 0o022,
             program_break: 0x600000, // Initial heap start (after typical program load area)
+            stop_signal: None,
+            continued: false,
         }
     }
 
@@ -184,6 +196,8 @@ impl ProcessMeta {
             thread_group: Vec::new(),
             umask: 0o022,
             program_break: 0x600000, // Initial heap start (after typical program load area)
+            stop_signal: None,
+            continued: false,
         }
     }
 
@@ -216,6 +230,8 @@ impl ProcessMeta {
             thread_group: Vec::new(),
             umask: self.umask,
             program_break: self.program_break, // Inherit parent's program break
+            stop_signal: None,
+            continued: false,
         }
     }
 

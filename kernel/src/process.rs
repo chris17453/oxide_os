@@ -384,12 +384,18 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
 
     debug_proc!("[WAIT] pid={} waiting for child={}", parent_pid, pid);
     loop {
-        // Check for zombie children via scheduler
-        match find_zombie_child(parent_pid, pid) {
+        // Check for state changes: zombie, stopped (WUNTRACED), continued (WCONTINUED)
+        match find_child_state_change(parent_pid, pid, &wait_opts) {
             Ok(result) => {
-                debug_proc!("[WAIT] pid={} found zombie={}", parent_pid, result.pid);
-                // Reap the zombie - remove from scheduler
-                crate::scheduler::remove_process(result.pid);
+                debug_proc!("[WAIT] pid={} found state change: child={} status=0x{:x}",
+                    parent_pid, result.pid, result.status);
+
+                // Only reap zombies (low 7 bits != 0x7F means not stopped)
+                let is_stopped = (result.status & 0xFF) == 0x7F;
+                let is_continued = result.status == 0xFFFF;
+                if !is_stopped && !is_continued {
+                    crate::scheduler::remove_process(result.pid);
+                }
 
                 // Pack pid and status into result
                 return ((result.pid as i64) << 32) | ((result.status as i64) & 0xFFFFFFFF);
@@ -435,39 +441,58 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
     }
 }
 
-/// Find a zombie child process
+/// Find a child with a reportable state change (zombie, stopped, continued)
 ///
-/// Returns WaitResult if a matching zombie is found, WaitError otherwise.
-fn find_zombie_child(parent_pid: Pid, target_pid: i32) -> Result<WaitResult, proc::WaitError> {
-    // Get list of children from scheduler
+/// — ThreadRogue: scanning the child roster for state transitions
+fn find_child_state_change(
+    parent_pid: Pid,
+    target_pid: i32,
+    opts: &WaitOptions,
+) -> Result<WaitResult, proc::WaitError> {
     let children = sched::get_task_children(parent_pid);
 
     if children.is_empty() {
         return Err(proc::WaitError::NoChildren);
     }
 
-    // Look for zombie children
     for child_pid in &children {
-        // If target_pid > 0, only check that specific child
         if target_pid > 0 && *child_pid != target_pid as u32 {
             continue;
         }
 
-        // Check if child is zombie
         if let Some(state) = sched::get_task_state(*child_pid) {
+            // Zombie — always reportable
             if state == TaskState::TASK_ZOMBIE {
-                // Found a zombie - get its exit status
                 if let Some(status) = sched::get_task_exit_status(*child_pid) {
-                    return Ok(WaitResult {
-                        pid: *child_pid,
-                        status,
-                    });
+                    return Ok(WaitResult { pid: *child_pid, status });
+                }
+            }
+
+            // Stopped child — report if WUNTRACED requested
+            if opts.untraced && state == TaskState::TASK_STOPPED {
+                if let Some(meta_arc) = sched::get_task_meta(*child_pid) {
+                    if let Some(mut meta) = meta_arc.try_lock() {
+                        if let Some(sig) = meta.stop_signal.take() {
+                            return Ok(WaitResult::stopped(*child_pid, sig as i32));
+                        }
+                    }
+                }
+            }
+
+            // Continued child — report if WCONTINUED requested
+            if opts.continued {
+                if let Some(meta_arc) = sched::get_task_meta(*child_pid) {
+                    if let Some(mut meta) = meta_arc.try_lock() {
+                        if meta.continued {
+                            meta.continued = false;
+                            return Ok(WaitResult::continued(*child_pid));
+                        }
+                    }
                 }
             }
         }
     }
 
-    // No zombie found yet
     Err(proc::WaitError::WouldBlock)
 }
 

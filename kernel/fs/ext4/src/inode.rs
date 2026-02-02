@@ -271,8 +271,8 @@ pub fn write_inode(
 
 /// Create a new inode with default values
 pub fn new_inode(mode: u16, uid: u32, gid: u32) -> Ext4Inode {
-    // Get current time (placeholder - would use real time in kernel)
-    let now = 0u32; // TODO: get actual time
+    // — WireSaint: stamping creation time from the os_core clock bridge
+    let now = os_core::wall_clock_secs() as u32;
 
     Ext4Inode {
         i_mode: mode,

@@ -136,6 +136,11 @@ fn main() -> Status {
         total_steps,
         "Creating boot information...",
     );
+
+    // Extract RSDP physical address from UEFI configuration tables
+    // — SableWire: tapping the firmware's ACPI root before we burn the bridge
+    let rsdp_phys = find_rsdp_in_config_tables();
+
     let boot_info = create_boot_info(
         kernel_phys,
         elf_info.load_size,
@@ -145,6 +150,7 @@ fn main() -> Status {
         video_modes,
         initramfs_phys,
         initramfs_size,
+        rsdp_phys,
     );
 
     // Write boot info to the pre-allocated pages
@@ -912,6 +918,44 @@ fn enumerate_video_modes() -> Option<boot_proto::VideoModeList> {
     }
 }
 
+/// Find the ACPI RSDP physical address from UEFI configuration tables.
+///
+/// Prefers ACPI 2.0+ (XSDT capable) over legacy ACPI 1.0.
+/// Returns 0 if no RSDP is found.
+///
+/// — SableWire: scanning the firmware config table for the ACPI anchor
+fn find_rsdp_in_config_tables() -> u64 {
+    use uefi::table::cfg::{ACPI2_GUID, ACPI_GUID};
+
+    let st = match uefi::table::system_table_boot() {
+        Some(st) => st,
+        None => return 0,
+    };
+
+    let config_entries = st.config_table();
+
+    // Prefer ACPI 2.0 RSDP (has XSDT with 64-bit pointers)
+    for entry in config_entries {
+        if entry.guid == ACPI2_GUID {
+            let addr = entry.address as u64;
+            log_fmt(format_args!("[ACPI] RSDP v2.0 found at 0x{:016x}", addr));
+            return addr;
+        }
+    }
+
+    // Fall back to ACPI 1.0 RSDP (RSDT with 32-bit pointers)
+    for entry in config_entries {
+        if entry.guid == ACPI_GUID {
+            let addr = entry.address as u64;
+            log_fmt(format_args!("[ACPI] RSDP v1.0 found at 0x{:016x}", addr));
+            return addr;
+        }
+    }
+
+    log("[ACPI] No RSDP found in UEFI config tables");
+    0
+}
+
 /// Create boot info structure
 fn create_boot_info(
     kernel_phys: u64,
@@ -922,6 +966,7 @@ fn create_boot_info(
     video_modes: Option<boot_proto::VideoModeList>,
     initramfs_phys: u64,
     initramfs_size: u64,
+    rsdp_phys: u64,
 ) -> BootInfo {
     let mut info = BootInfo::empty();
     info.magic = BOOT_INFO_MAGIC;
@@ -934,6 +979,7 @@ fn create_boot_info(
     info.video_modes = video_modes;
     info.initramfs_phys = initramfs_phys;
     info.initramfs_size = initramfs_size;
+    info.rsdp_physical_address = rsdp_phys;
 
     let count = memory_regions.len().min(MAX_MEMORY_REGIONS);
     info.memory_region_count = count as u64;

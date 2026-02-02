@@ -246,6 +246,19 @@ pub fn set_boot_time(secs_since_epoch: u64) {
     BOOT_TIME_SECS.store(secs_since_epoch, Ordering::SeqCst);
 }
 
+/// Get current wall-clock time as seconds since Unix epoch.
+///
+/// Suitable for registration with `os_core::register_wall_clock()` so
+/// subsystems like ext4 can stamp inodes without depending on arch crates.
+///
+/// — WireSaint: the clock face for filesystem timestamps
+pub fn wall_clock_secs() -> u64 {
+    let ticks = arch::timer_ticks();
+    let uptime_secs = (ticks * NS_PER_TICK) / 1_000_000_000;
+    let boot_secs = BOOT_TIME_SECS.load(Ordering::Relaxed);
+    boot_secs + uptime_secs
+}
+
 /// Get current timer ticks
 fn get_ticks() -> u64 {
     arch::timer_ticks()
