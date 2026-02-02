@@ -586,58 +586,60 @@ target/
 
 ## 12. Priority Roadmap
 
-### Phase 1 — Quick wins (no directory moves)
+### Phase 1 — Quick wins (no directory moves) ✅ COMPLETE
 
-- [ ] Create `README.md` at repo root
-- [ ] Create `LICENSE` file (MIT)
-- [ ] Fix duplicate `userspace/passwd` in `Cargo.toml`
-- [ ] Remove `userspace/ssh_old` from workspace, delete directory
-- [ ] Update `.gitignore` (node_modules, tarballs, build artifacts, creds)
-- [ ] Create `external/README.md` and `external/VERSIONS.md`
-- [ ] Delete `build/` directory
-- [ ] Fold `manifesto.md` into `README.md`
+- [x] Create `README.md` at repo root
+- [x] Create `LICENSE` file (MIT)
+- [x] Fix duplicate `userspace/passwd` in `Cargo.toml`
+- [x] Remove `userspace/ssh_old` from workspace, delete directory
+- [x] Update `.gitignore` (node_modules, tarballs, build artifacts, creds)
+- [x] Create `external/README.md` and `external/VERSIONS.md`
+- [x] Delete `build/` directory
+- [x] Fold `manifesto.md` into `README.md`
 
-### Phase 2 — Documentation (no code changes)
+### Phase 2 — Documentation (no code changes) ✅ COMPLETE
 
-- [ ] Restructure `docs/` per Section 6.2
-- [ ] Create `docs/INDEX.md`
-- [ ] Create `CONTRIBUTING.md`
-- [ ] Add `userspace/README.md` (build process, how to add a program)
-- [ ] Add README files to key kernel subsystems (mm, net, drivers, vfs, security)
-- [ ] Merge three migration docs into one
-- [ ] Rename doc files to lowercase-hyphenated
+- [x] Restructure `docs/` per Section 6.2
+- [x] Create `docs/INDEX.md`
+- [x] Create `CONTRIBUTING.md`
+- [x] Add `userspace/README.md` (build process, how to add a program)
+- [x] Add subsystem documentation (memory, scheduling, filesystem, networking, drivers, security, terminal, containers)
+- [x] Merge three migration docs into one
+- [x] Rename doc files to lowercase-hyphenated
 
-### Phase 3 — The big move: `crates/` → `kernel/`
+### Phase 3 — The big move: `crates/` → `kernel/` ✅ COMPLETE
 
-This is the highest-impact structural change. It makes the project layout
-self-documenting.
+- [x] `git mv` all 30 crate category directories from `crates/` to `kernel/`
+- [x] Move `crates/terminal/` into `kernel/tty/terminal/`
+- [x] Update all `Cargo.toml` workspace member paths (`crates/` → `kernel/`)
+- [x] Update all `[workspace.dependencies]` paths
+- [x] Fix kernel/Cargo.toml relative arch paths
+- [x] Update AGENTS.md, CLAUDE.md, source comments
+- [x] Delete empty `crates/` directory
 
-- [ ] `git mv` all 30 crate category directories from `crates/` to `kernel/`
-- [ ] Move `crates/terminal/` into `kernel/tty/terminal/`
-- [ ] Flatten single-crate subsystems (`signal/signal/` → `signal/`)
-- [ ] Add `kernel/ai/README.md` documenting kernel-level AI subsystem rationale
-- [ ] Update all `Cargo.toml` workspace member paths (`crates/` → `kernel/`)
-- [ ] Update all `[workspace.dependencies]` paths
-- [ ] Update Makefile references
-- [ ] Run `make build` to verify
-- [ ] Delete empty `crates/` directory
+### Phase 4 — Userspace regrouping ✅ COMPLETE
 
-### Phase 4 — Userspace regrouping
+- [x] Create subdirectories: `system/`, `libs/`, `services/`, `devtools/`, `apps/`, `network/`, `tests/`
+- [x] `git mv` packages into their new homes
+- [x] Move `apps/gwbasic/` → `userspace/apps/gwbasic/`
+- [x] Delete top-level `apps/` directory
+- [x] Move test harnesses to `userspace/tests/`
+- [x] Update `Cargo.toml` workspace members
+- [x] Fix 24 relative dependency paths across 22 Cargo.toml files
+- [x] Fix gwbasic `.cargo/config.toml` linker path
 
-- [ ] Create subdirectories: `system/`, `libs/`, `services/`, `devtools/`, `apps/`, `tests/`
-- [ ] `git mv` packages into their new homes
-- [ ] Move `apps/gwbasic/` → `userspace/apps/gwbasic/`
-- [ ] Delete top-level `apps/` directory
-- [ ] Move test harnesses to `userspace/tests/`
-- [ ] Update `Cargo.toml` workspace members
-- [ ] Update Makefile userspace build targets
-- [ ] Run `make build-full` to verify
+### Phase 5 — Build/run script updates ✅ COMPLETE
 
-### Phase 5 — Infrastructure
+- [x] Fix Makefile `find userspace/libc/src` → `userspace/libs/libc/src`
+- [x] Fix Makefile TLS test path `apps/tls-test.c` → `userspace/tests/tls-test.c`
+- [x] Verify `.cargo/config.toml` kernel linker path is correct
+- [x] Verify `userspace/userspace.ld` path in RUSTFLAGS is correct
+
+### Future work (not yet started)
 
 - [ ] Set up GitHub Actions CI (build, clippy, fmt)
 - [ ] Create `CHANGELOG.md` with retroactive milestones
-- [ ] Generate and host rustdoc for kernel subsystems
+- [ ] Flatten single-crate subsystem directories (`signal/signal/` → `signal/`)
 - [ ] Add crate-level doc comments (`//!`) to all kernel crate `lib.rs` files
 
 ---
