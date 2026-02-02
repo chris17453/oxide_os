@@ -390,6 +390,7 @@ create-rootfs: kernel bootloader initramfs-minimal
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/sbin && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/usr/bin && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/usr/sbin && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/usr/share/gwbasic && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/etc/services.d && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/etc/network && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/var/log && \
@@ -417,6 +418,7 @@ create-rootfs: kernel bootloader initramfs-minimal
 	for prog in gwbasic tls-test ssh sshd service networkd journald journalctl evtest argtest vim $(COREUTILS_BINS) testcolors; do \
 		[ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/$$prog" $(TARGET_DIR)/mnt/root/usr/bin/ || true; \
 	done && \
+	sudo cp userspace/apps/gwbasic/examples/*.bas $(TARGET_DIR)/mnt/root/usr/share/gwbasic/ 2>/dev/null || true; \
 	[ -f "$(USERSPACE_OUT_RELEASE)/tls-test" ] && echo "TLS test installed" || true; \
 	[ -f "$(USERSPACE_OUT_RELEASE)/vim" ] && echo "vim installed" || true; \
 	sudo ln -sf /usr/bin/service $(TARGET_DIR)/mnt/root/usr/bin/servicemgr && \

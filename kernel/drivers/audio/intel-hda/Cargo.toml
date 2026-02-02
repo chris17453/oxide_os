@@ -1,0 +1,10 @@
+[package]
+name = "intel-hda"
+version = "0.1.0"
+edition = "2024"
+description = "Intel High Definition Audio controller driver"
+
+[dependencies]
+audio = { path = "../../../audio/audio" }
+pci = { path = "../../pci" }
+spin = "0.9"

@@ -8,14 +8,54 @@
 
 extern crate alloc;
 
+use alloc::string::String;
+use alloc::vec::Vec;
 use rust_gwbasic::platform::{Console, OxideConsole};
 use rust_gwbasic::{Interpreter, Lexer, Parser};
 
 /// Main function called by libc's _start
 #[no_mangle]
-pub extern "Rust" fn main() -> i32 {
+pub extern "Rust" fn main(argc: i32, argv: *const *const u8) -> i32 {
     let mut console = OxideConsole::new();
 
+    // Parse command line arguments
+    let mut filename: Option<String> = None;
+    let mut use_graphics = false;
+
+    if argc > 1 && !argv.is_null() {
+        for i in 1..argc {
+            let arg_ptr = unsafe { *argv.offset(i as isize) };
+            if arg_ptr.is_null() {
+                continue;
+            }
+            
+            // Convert C string to Rust string
+            let mut len = 0;
+            unsafe {
+                while *arg_ptr.offset(len) != 0 {
+                    len += 1;
+                }
+            }
+            let arg_slice = unsafe { core::slice::from_raw_parts(arg_ptr, len as usize) };
+            if let Ok(arg) = core::str::from_utf8(arg_slice) {
+                if arg == "--gui" || arg == "-g" {
+                    use_graphics = true;
+                } else if arg == "--help" || arg == "-h" {
+                    print_usage(&mut console);
+                    return 0;
+                } else if !arg.starts_with('-') && filename.is_none() {
+                    filename = Some(String::from(arg));
+                }
+            }
+        }
+    }
+
+    // If a filename is provided, run it
+    if let Some(ref file) = filename {
+        return run_file(&mut console, file, use_graphics);
+    }
+
+    // Otherwise, start REPL
     console.print("GW-BASIC (Rust) v");
     console.print(rust_gwbasic::VERSION);
     console.print(" for OXIDE OS\n");
@@ -65,6 +105,111 @@ pub extern "Rust" fn main() -> i32 {
     }
 
     console.print("Goodbye!\n");
+    0
+}
+
+fn print_usage(console: &mut OxideConsole) {
+    console.print("GW-BASIC (Rust) v");
+    console.print(rust_gwbasic::VERSION);
+    console.print(" for OXIDE OS\n\n");
+    console.print("USAGE:\n");
+    console.print("  gwbasic [OPTIONS] [FILE]\n\n");
+    console.print("OPTIONS:\n");
+    console.print("  -g, --gui      Use graphics mode (framebuffer)\n");
+    console.print("  -h, --help     Show this help message\n\n");
+    console.print("EXAMPLES:\n");
+    console.print("  gwbasic                           Start REPL\n");
+    console.print("  gwbasic program.bas               Run program\n");
+    console.print("  gwbasic --gui program.bas         Run with graphics\n");
+}
+
+fn run_file(console: &mut OxideConsole, filename: &str, _use_graphics: bool) -> i32 {
+    // Read the file
+    let fd = libc::open(filename, libc::O_RDONLY, 0);
+    if fd < 0 {
+        console.print("Error: Cannot open file '");
+        console.print(filename);
+        console.print("'\n");
+        return 1;
+    }
+
+    // Get file size via stat
+    let mut stat_buf = libc::Stat::zeroed();
+    if libc::fstat(fd, &mut stat_buf) < 0 {
+        libc::close(fd);
+        console.print("Error: Cannot stat file '");
+        console.print(filename);
+        console.print("'\n");
+        return 1;
+    }
+
+    let file_size = stat_buf.size as usize;
+    if file_size == 0 {
+        libc::close(fd);
+        console.print("Error: File is empty\n");
+        return 1;
+    }
+
+    // Read file contents
+    let mut content: Vec<u8> = alloc::vec![0u8; file_size];
+    let bytes_read = libc::read(fd, &mut content);
+    libc::close(fd);
+
+    if bytes_read < 0 {
+        console.print("Error: Cannot read file '");
+        console.print(filename);
+        console.print("'\n");
+        return 1;
+    }
+
+    // Convert to string
+    let content_str = match core::str::from_utf8(&content[..bytes_read as usize]) {
+        Ok(s) => String::from(s),
+        Err(_) => {
+            console.print("Error: File contains invalid UTF-8\n");
+            return 1;
+        }
+    };
+
+    // Create interpreter
+    let mut interpreter = Interpreter::new();
+
+    // Tokenize
+    let mut lexer = Lexer::new(&content_str);
+    let tokens = match lexer.tokenize() {
+        Ok(t) => t,
+        Err(e) => {
+            console.print("Lexer error: ");
+            console.print(&alloc::format!("{:?}\n", e));
+            return 1;
+        }
+    };
+
+    // Parse
+    let mut parser = Parser::new(tokens);
+    let ast = match parser.parse() {
+        Ok(a) => a,
+        Err(e) => {
+            console.print("Parser error: ");
+            console.print(&alloc::format!("{:?}\n", e));
+            return 1;
+        }
+    };
+
+    // Execute (this loads line-numbered programs)
+    if let Err(e) = interpreter.execute(ast) {
+        console.print("Runtime error: ");
+        console.print(&alloc::format!("{:?}\n", e));
+        return 1;
+    }
+
+    // If the program had line numbers, run it now
+    if let Err(e) = interpreter.run_stored_program() {
+        console.print("Runtime error: ");
+        console.print(&alloc::format!("{:?}\n", e));
+        return 1;
+    }
+
     0
 }
 
