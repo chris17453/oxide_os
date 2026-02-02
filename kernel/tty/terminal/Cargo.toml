@@ -13,5 +13,5 @@ debug-terminal = []  # Enable terminal escape sequence debug output
 [dependencies]
 bitflags.workspace = true
 spin.workspace = true
-fb = { path = "../graphics/fb" }
-arch-x86_64 = { path = "../arch/arch-x86_64", optional = true }
+fb = { path = "../../graphics/fb" }
+os_log = { path = "../../core/os_log" }

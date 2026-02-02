@@ -11,7 +11,5 @@ debug-heap = []      # Enable debug output for heap operations
 
 [dependencies]
 os_core = { workspace = true }
+os_log = { workspace = true }
 spin = { workspace = true }
-
-[target.'cfg(target_arch = "x86_64")'.dependencies]
-arch-x86_64 = { workspace = true }

@@ -515,11 +515,7 @@ impl TerminalEmulator {
                 0 => {
                     self.title = String::from(params);
                     #[cfg(feature = "debug-terminal")]
-                    {
-                        use arch_x86_64::serial;
-                        use core::fmt::Write;
-                        let _ = write!(serial::SerialWriter, "[TERM-OSC] Set title: {}\n", params);
-                    }
+                    os_log::println!("[TERM-OSC] Set title: {}", params);
                 }
 
                 // OSC 1 ; title - Set icon name (we just use it as title)
@@ -624,11 +620,7 @@ impl TerminalEmulator {
                 _ => {
                     // Unknown OSC command - ignore
                     #[cfg(feature = "debug-terminal")]
-                    {
-                        use arch_x86_64::serial;
-                        use core::fmt::Write;
-                        let _ = write!(serial::SerialWriter, "[TERM-OSC] Unknown OSC {}: {}\n", num, params);
-                    }
+                    os_log::println!("[TERM-OSC] Unknown OSC {}: {}", num, params);
                 }
             }
         }
@@ -648,15 +640,7 @@ impl TerminalEmulator {
         if final_char == b'q' && intermediates.is_empty() {
             // 🔥 PRIORITY #5 FIX - Sixel graphics rendering 🔥
             #[cfg(feature = "debug-terminal")]
-            {
-                use arch_x86_64::serial;
-                use core::fmt::Write;
-                let _ = write!(
-                    serial::SerialWriter,
-                    "[TERM-DCS] Sixel graphics ({} bytes) - rendering\n",
-                    data.len()
-                );
-            }
+            os_log::println!("[TERM-DCS] Sixel graphics ({} bytes) - rendering", data.len());
 
             // Parse and render Sixel data
             self.render_sixel(params, data);
@@ -667,27 +651,14 @@ impl TerminalEmulator {
         if final_char == b'q' && intermediates.first() == Some(&b'$') {
             // Terminal state query
             #[cfg(feature = "debug-terminal")]
-            {
-                use arch_x86_64::serial;
-                use core::fmt::Write;
-                let _ = write!(serial::SerialWriter, "[TERM-DCS] DECRQSS query\n");
-            }
+            os_log::println!("[TERM-DCS] DECRQSS query");
             // TODO: Respond with requested terminal state
             return;
         }
 
         // Unknown DCS sequence
         #[cfg(feature = "debug-terminal")]
-        {
-            use arch_x86_64::serial;
-            use core::fmt::Write;
-            let _ = write!(
-                serial::SerialWriter,
-                "[TERM-DCS] Unknown DCS final={} intermediates={:?}\n",
-                final_char as char,
-                intermediates
-            );
-        }
+        os_log::println!("[TERM-DCS] Unknown DCS final={} intermediates={:?}", final_char as char, intermediates);
     }
 
     /// Render Sixel graphics
@@ -1143,14 +1114,11 @@ pub unsafe fn set_response_callback(callback: ResponseCallback) {
 fn send_response(data: &[u8]) {
     #[cfg(feature = "debug-tty-read")]
     {
-        extern crate alloc;
-        use core::fmt::Write;
-        let mut w = arch_x86_64::serial::SerialWriter;
-        let _ = write!(w, "[TERM-RESP] Sending {} bytes: ", data.len());
+        os_log::print!("[TERM-RESP] Sending {} bytes: ", data.len());
         for &b in data {
-            let _ = write!(w, "{:02x} ", b);
+            os_log::print!("{:02x} ", b);
         }
-        let _ = write!(w, "\n");
+        os_log::println!();
     }
 
     unsafe {
@@ -1158,11 +1126,7 @@ fn send_response(data: &[u8]) {
             callback(data);
         } else {
             #[cfg(feature = "debug-tty-read")]
-            {
-                use core::fmt::Write;
-                let mut w = arch_x86_64::serial::SerialWriter;
-                let _ = write!(w, "[TERM-RESP] ERROR: No callback registered!\n");
-            }
+            os_log::println!("[TERM-RESP] ERROR: No callback registered!");
         }
     }
 }
@@ -1185,44 +1149,37 @@ pub fn write(data: &[u8]) {
     // Debug: Log ALL data being sent to terminal, highlighting escape sequences
     #[cfg(feature = "debug-tty-read")]
     {
-        use core::fmt::Write;
-        let mut w = arch_x86_64::serial::SerialWriter;
-        let _ = write!(w, "[TERM-WRITE] {} bytes: ", data.len());
+        os_log::print!("[TERM-WRITE] {} bytes: ", data.len());
 
         let mut i = 0;
         while i < data.len() {
             let b = data[i];
             if b == 0x1b && i + 1 < data.len() {
-                // Escape sequence start
-                let _ = write!(w, "<ESC");
+                os_log::print!("<ESC");
                 i += 1;
 
-                // Collect the full escape sequence
                 let mut seq = alloc::vec::Vec::new();
                 seq.push(data[i]);
 
                 if data[i] == b'[' {
-                    // CSI sequence
-                    let _ = write!(w, "[");
+                    os_log::print!("[");
                     i += 1;
                     while i < data.len() && data[i] >= 0x20 && data[i] < 0x7F {
                         seq.push(data[i]);
-                        let _ = write!(w, "{}", data[i] as char);
+                        os_log::print!("{}", data[i] as char);
                         if (data[i] >= 0x40 && data[i] <= 0x7E) {
-                            // Final byte
                             break;
                         }
                         i += 1;
                     }
                 } else if data[i] == b'?' || data[i] == b'>' {
-                    // Private sequence
-                    let _ = write!(w, "{}", data[i] as char);
+                    os_log::print!("{}", data[i] as char);
                     i += 1;
                     if i < data.len() && data[i] == b'[' {
-                        let _ = write!(w, "[");
+                        os_log::print!("[");
                         i += 1;
                         while i < data.len() && data[i] >= 0x20 && data[i] < 0x7F {
-                            let _ = write!(w, "{}", data[i] as char);
+                            os_log::print!("{}", data[i] as char);
                             if (data[i] >= 0x40 && data[i] <= 0x7E) {
                                 break;
                             }
@@ -1230,22 +1187,19 @@ pub fn write(data: &[u8]) {
                         }
                     }
                 } else {
-                    // Simple ESC sequence
-                    let _ = write!(w, "{}", data[i] as char);
+                    os_log::print!("{}", data[i] as char);
                 }
-                let _ = write!(w, "> ");
+                os_log::print!("> ");
                 i += 1;
             } else if b >= 0x20 && b < 0x7F {
-                // Printable character
-                let _ = write!(w, "{}", b as char);
+                os_log::print!("{}", b as char);
                 i += 1;
             } else {
-                // Control character
-                let _ = write!(w, "<{:02x}>", b);
+                os_log::print!("<{:02x}>", b);
                 i += 1;
             }
         }
-        let _ = write!(w, "\n");
+        os_log::println!();
     }
 
     // Enable access to user pages (STAC - Supervisor-Mode Access Prevention Clear)

@@ -122,10 +122,15 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         }
     }
 
-    // Register os_log writer
-    // SAFETY: OS_LOG_WRITER is static and serial::init() has been called
+    // Register os_log writers — normal (locking) + ISR-safe (lock-free)
+    // SAFETY: OS_LOG_WRITER is static and serial::init() has been called.
+    // The unsafe writer fns do raw port I/O without any locks.
     unsafe {
         os_log::register_writer(&mut *addr_of_mut!(OS_LOG_WRITER));
+        os_log::register_unsafe_writer(
+            arch_x86_64::serial::write_byte_unsafe,
+            arch_x86_64::serial::write_str_unsafe,
+        );
     }
 
     let mut writer = arch::SerialWriter;

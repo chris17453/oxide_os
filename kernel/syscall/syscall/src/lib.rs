@@ -832,37 +832,19 @@ pub fn dispatch(
 
         // Print stats every 1000 syscalls
         if count % 1000 == 0 {
-            use arch_x86_64::serial;
-            let _ = core::fmt::Write::write_fmt(
-                &mut serial::SerialWriter,
-                format_args!("[SYSCALL] {} total syscalls\n", count),
-            );
+            os_log::println!("[SYSCALL] {} total syscalls", count);
         }
 
         // Log ALL syscalls (check for TSC wrap)
         if cycles < (1u64 << 40) {
-            use arch_x86_64::serial;
-
-            // Show bytes for read/write
             if number == nr::WRITE || number == nr::READ {
-                // For read/write, show actual bytes transferred (result) not buffer size (arg3)
                 let bytes = if result >= 0 { result as u64 } else { 0 };
-                let _ = core::fmt::Write::write_fmt(
-                    &mut serial::SerialWriter,
-                    format_args!(
-                        "[SYSCALL] {} ({}) took {} cycles, {} bytes, {:.1} cycles/byte\n",
-                        syscall_name(number),
-                        number,
-                        cycles,
-                        bytes,
-                        cycles as f64 / bytes.max(1) as f64
-                    ),
-                );
+                os_log::println!("[SYSCALL] {} ({}) took {} cycles, {} bytes, {:.1} cycles/byte",
+                    syscall_name(number), number, cycles, bytes,
+                    cycles as f64 / bytes.max(1) as f64);
             } else {
-                let _ = core::fmt::Write::write_fmt(
-                    &mut serial::SerialWriter,
-                    format_args!("[SYSCALL] {} ({}) took {} cycles\n", syscall_name(number), number, cycles),
-                );
+                os_log::println!("[SYSCALL] {} ({}) took {} cycles",
+                    syscall_name(number), number, cycles);
             }
         }
     }

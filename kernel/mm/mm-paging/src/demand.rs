@@ -18,18 +18,14 @@
 use crate::{PageTable, phys_to_virt};
 use os_core::{PhysAddr, VirtAddr};
 
-/// Debug macro for demand paging - outputs to serial when debug-demand feature is enabled
+/// Debug macro for demand paging — ISR-safe (lock-free) because this
+/// runs inside the page fault exception handler where taking a Mutex
+/// risks deadlock. — SableWire
 #[cfg(feature = "debug-demand")]
 macro_rules! debug_demand {
-    ($($arg:tt)*) => {{
-        #[cfg(target_arch = "x86_64")]
-        {
-            use arch_x86_64::serial::SerialWriter;
-            use core::fmt::Write;
-            let mut writer = SerialWriter;
-            let _ = writeln!(writer, $($arg)*);
-        }
-    }};
+    ($($arg:tt)*) => {
+        os_log::println_unsafe!($($arg)*)
+    };
 }
 
 #[cfg(not(feature = "debug-demand"))]

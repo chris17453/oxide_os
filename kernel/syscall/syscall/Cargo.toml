@@ -23,6 +23,7 @@ input = { path = "../../input/input" }
 mmap = { path = "../../libc-support/mmap" }
 crypto = { path = "../../security/crypto" }
 arch-x86_64 = { path = "../../arch/arch-x86_64" }
+os_log = { path = "../../core/os_log" }
 sched = { path = "../../sched/sched" }
 sched-traits = { path = "../../sched/sched-traits" }
 spin = "0.9"

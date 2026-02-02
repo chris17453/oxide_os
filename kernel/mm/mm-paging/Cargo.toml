@@ -10,6 +10,7 @@ debug-demand = []  # Enable debug output for demand paging/page faults
 
 [dependencies]
 os_core = { workspace = true }
+os_log = { workspace = true }
 mm-traits = { workspace = true }
 bitflags = { workspace = true }
 arch-traits = { workspace = true }

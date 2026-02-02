@@ -95,14 +95,15 @@ pub fn check_sleepers() {
                     .compare_exchange(pid, 0, Ordering::AcqRel, Ordering::Relaxed)
                     .is_ok()
                 {
+                    // ISR-safe: timer interrupt context, no locks — SableWire
                     #[cfg(feature = "debug-sched")]
                     unsafe {
-                        arch_x86_64::serial::write_str_unsafe("[SLEEP-WAKE] pid=");
+                        os_log::write_str_raw("[SLEEP-WAKE] pid=");
                         let mut buf = [0u8; 10];
                         let mut n = pid as u64;
                         let mut pos = 0;
                         if n == 0 {
-                            arch_x86_64::serial::write_byte_unsafe(b'0');
+                            os_log::write_byte_raw(b'0');
                         } else {
                             while n > 0 {
                                 buf[pos] = b'0' + (n % 10) as u8;
@@ -110,14 +111,14 @@ pub fn check_sleepers() {
                                 pos += 1;
                             }
                             for i in (0..pos).rev() {
-                                arch_x86_64::serial::write_byte_unsafe(buf[i]);
+                                os_log::write_byte_raw(buf[i]);
                             }
                         }
-                        arch_x86_64::serial::write_str_unsafe(" tick=");
+                        os_log::write_str_raw(" tick=");
                         n = now;
                         pos = 0;
                         if n == 0 {
-                            arch_x86_64::serial::write_byte_unsafe(b'0');
+                            os_log::write_byte_raw(b'0');
                         } else {
                             while n > 0 {
                                 buf[pos] = b'0' + (n % 10) as u8;
@@ -125,10 +126,10 @@ pub fn check_sleepers() {
                                 pos += 1;
                             }
                             for i in (0..pos).rev() {
-                                arch_x86_64::serial::write_byte_unsafe(buf[i]);
+                                os_log::write_byte_raw(buf[i]);
                             }
                         }
-                        arch_x86_64::serial::write_str_unsafe("\n");
+                        os_log::write_str_raw("\n");
                     }
                     sched::wake_up(pid);
                 }

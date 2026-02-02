@@ -14,18 +14,12 @@ use core::mem;
 use core::ptr;
 use spin::Mutex;
 
-/// Debug macro for heap operations
+/// Debug macro for heap operations — routes through os_log
 #[cfg(feature = "debug-heap")]
 macro_rules! debug_heap {
-    ($($arg:tt)*) => {{
-        #[cfg(target_arch = "x86_64")]
-        {
-            use arch_x86_64::serial::SerialWriter;
-            use core::fmt::Write;
-            let mut writer = SerialWriter;
-            let _ = writeln!(writer, $($arg)*);
-        }
-    }};
+    ($($arg:tt)*) => {
+        os_log::println!($($arg)*)
+    };
 }
 
 #[cfg(not(feature = "debug-heap"))]

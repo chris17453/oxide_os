@@ -555,12 +555,8 @@ impl LineDiscipline {
         let _vtime = self.termios.c_cc[VTIME];
 
         #[cfg(feature = "debug-tty-read")]
-        {
-            use arch_x86_64::serial;
-            use core::fmt::Write;
-            let _ = write!(serial::SerialWriter, "[TTY-READ] queue_len={}, vmin={}, can_read={}\n",
-                self.input_queue.len(), vmin, self.input_queue.len() >= vmin);
-        }
+        os_log::println!("[TTY-READ] queue_len={}, vmin={}, can_read={}",
+            self.input_queue.len(), vmin, self.input_queue.len() >= vmin);
 
         // Simple implementation: return available data up to VMIN or buf.len()
         if self.input_queue.len() < vmin && vmin > 0 {
@@ -575,12 +571,8 @@ impl LineDiscipline {
         }
 
         #[cfg(feature = "debug-tty-read")]
-        {
-            use arch_x86_64::serial;
-            use core::fmt::Write;
-            let _ = write!(serial::SerialWriter, "[TTY-READ] read_raw returning {} bytes (buf.len()={}, queue had {})\n",
-                count, buf.len(), count);
-        }
+        os_log::println!("[TTY-READ] read_raw returning {} bytes (buf.len()={}, queue had {})",
+            count, buf.len(), count);
 
         count
     }

@@ -462,12 +462,8 @@ impl Handler {
         mut scrollback: Option<&mut ScrollbackBuffer>,
     ) {
         #[cfg(feature = "debug-tty-read")]
-        {
-            use core::fmt::Write;
-            let mut w = arch_x86_64::serial::SerialWriter;
-            let _ = write!(w, "[CSI] final={:?} intermediates={:?} params={:?}\n",
-                final_char as char, intermediates, params);
-        }
+        os_log::println!("[CSI] final={:?} intermediates={:?} params={:?}",
+            final_char as char, intermediates, params);
 
         // Check for private mode prefix
         let is_private = intermediates.first() == Some(&b'?');
@@ -640,11 +636,7 @@ impl Handler {
                 // DSR - Device Status Report
                 let mode = get_param(params, 0, 0);
                 #[cfg(feature = "debug-tty-read")]
-                {
-                    use core::fmt::Write;
-                    let mut w = arch_x86_64::serial::SerialWriter;
-                    let _ = write!(w, "[DSR] Device Status Report mode={}\n", mode);
-                }
+                os_log::println!("[DSR] Device Status Report mode={}", mode);
 
                 match mode {
                     5 => {
@@ -708,12 +700,8 @@ impl Handler {
             b'c' => {
                 // DA - Device Attributes
                 #[cfg(feature = "debug-tty-read")]
-                {
-                    use core::fmt::Write;
-                    let mut w = arch_x86_64::serial::SerialWriter;
-                    let _ = write!(w, "[DA] Device Attributes query (secondary={})\n",
-                        intermediates.first() == Some(&b'>'));
-                }
+                os_log::println!("[DA] Device Attributes query (secondary={})",
+                    intermediates.first() == Some(&b'>'));
 
                 if intermediates.first() == Some(&b'>') {
                     // Secondary DA - report terminal version
@@ -784,41 +772,25 @@ impl Handler {
                 // Legacy VT100 feature - store line attribute for rendering
                 // For now, just acknowledge (rendering not yet implemented)
                 #[cfg(feature = "debug-terminal")]
-                {
-                    use arch_x86_64::serial;
-                    use core::fmt::Write;
-                    let _ = write!(serial::SerialWriter, "[TERM-ESC] DECDHL top half (not rendered)\n");
-                }
+                os_log::println!("[TERM-ESC] DECDHL top half (not rendered)");
             }
             (Some(b'#'), b'4') => {
                 // DECDHL - Double Height Line (bottom half)
                 // 🔥 PRIORITY #6 FIX - Line attribute support 🔥
                 #[cfg(feature = "debug-terminal")]
-                {
-                    use arch_x86_64::serial;
-                    use core::fmt::Write;
-                    let _ = write!(serial::SerialWriter, "[TERM-ESC] DECDHL bottom half (not rendered)\n");
-                }
+                os_log::println!("[TERM-ESC] DECDHL bottom half (not rendered)");
             }
             (Some(b'#'), b'5') => {
                 // DECSWL - Single Width Line
                 // 🔥 PRIORITY #6 FIX - Line attribute support 🔥
                 #[cfg(feature = "debug-terminal")]
-                {
-                    use arch_x86_64::serial;
-                    use core::fmt::Write;
-                    let _ = write!(serial::SerialWriter, "[TERM-ESC] DECSWL single width\n");
-                }
+                os_log::println!("[TERM-ESC] DECSWL single width");
             }
             (Some(b'#'), b'6') => {
                 // DECDWL - Double Width Line
                 // 🔥 PRIORITY #6 FIX - Line attribute support 🔥
                 #[cfg(feature = "debug-terminal")]
-                {
-                    use arch_x86_64::serial;
-                    use core::fmt::Write;
-                    let _ = write!(serial::SerialWriter, "[TERM-ESC] DECDWL double width (not rendered)\n");
-                }
+                os_log::println!("[TERM-ESC] DECDWL double width (not rendered)");
             }
             (Some(b'#'), b'8') => {
                 // DECALN - Screen Alignment Pattern (fill with E)

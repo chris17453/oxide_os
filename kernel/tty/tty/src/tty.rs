@@ -407,12 +407,8 @@ impl VnodeOps for Tty {
                     let count = ldisc.read(buf);
 
                     #[cfg(feature = "debug-tty-read")]
-                    {
-                        use arch_x86_64::serial;
-                        use core::fmt::Write;
-                        let _ = write!(serial::SerialWriter, "[TTY-READ] Tty::read returning {} bytes (buf.len()={})\n",
-                            count, buf.len());
-                    }
+                    os_log::println!("[TTY-READ] Tty::read returning {} bytes (buf.len()={})",
+                        count, buf.len());
 
                     return Ok(count);
                 }
