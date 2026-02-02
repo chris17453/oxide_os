@@ -15,6 +15,7 @@ use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{AtomicU16, Ordering};
 use fb::mode::ModeSetter;
 use fb::{Color, Framebuffer, FramebufferInfo, PixelFormat};
+use pci::{PciDevice, VirtioPciTransport};
 use spin::Mutex;
 
 /// VirtIO GPU control commands
@@ -221,10 +222,16 @@ struct VirtqUsed {
     ring: [VirtqUsedElem; 256],
 }
 
+/// Physical memory map base for converting kernel virtual <-> physical DMA addresses
+/// — GlassSignal: the membrane between address spaces
+const PHYS_MAP_BASE: u64 = 0xFFFF_8000_0000_0000;
+
 /// VirtIO GPU device
 pub struct VirtioGpu {
-    /// MMIO base address
+    /// MMIO base address (0 when using PCI transport)
     mmio_base: usize,
+    /// PCI transport (None for MMIO mode)
+    transport: Option<VirtioPciTransport>,
     /// Descriptor table
     descriptors: *mut VirtqDesc,
     /// Available ring
@@ -258,6 +265,42 @@ pub struct VirtioGpu {
 }
 
 impl VirtioGpu {
+    /// Construct from a PCI device — walks capabilities, builds transport
+    /// — GlassSignal: PCI is just another wire carrying pixel dreams
+    pub fn from_pci(pci_dev: &PciDevice) -> Option<Self> {
+        if !pci_dev.is_virtio_gpu() {
+            return None;
+        }
+
+        // Enable device for DMA and MMIO access
+        pci::enable_bus_master(pci_dev.address);
+        pci::enable_memory_space(pci_dev.address);
+
+        // Walk PCI capabilities to locate VirtIO config regions
+        let caps = pci::find_virtio_caps(pci_dev);
+        let transport = VirtioPciTransport::from_caps(pci_dev, &caps)?;
+
+        Some(VirtioGpu {
+            mmio_base: 0,
+            transport: Some(transport),
+            descriptors: core::ptr::null_mut(),
+            available: core::ptr::null_mut(),
+            used: core::ptr::null_mut(),
+            queue_size: 0,
+            next_desc: AtomicU16::new(0),
+            last_used: AtomicU16::new(0),
+            width: 0,
+            height: 0,
+            pixel_format: PixelFormat::BGRA8888,
+            bytes_per_pixel: 4,
+            virtio_format: format::B8G8R8A8_UNORM,
+            resource_id: 1,
+            framebuffer: None,
+            displays: [DisplayOne::default(); 16],
+            display_count: 0,
+        })
+    }
+
     /// Probe for VirtIO GPU at MMIO address
     pub fn probe(mmio_base: usize) -> Option<Self> {
         let magic = unsafe { read_volatile((mmio_base + VIRTIO_MMIO_MAGIC) as *const u32) };
@@ -278,6 +321,7 @@ impl VirtioGpu {
 
         Some(VirtioGpu {
             mmio_base,
+            transport: None,
             descriptors: core::ptr::null_mut(),
             available: core::ptr::null_mut(),
             used: core::ptr::null_mut(),
@@ -296,52 +340,82 @@ impl VirtioGpu {
         })
     }
 
-    /// Initialize the GPU device
+    /// Initialize the GPU device (works for both MMIO and PCI transport)
+    /// — GlassSignal: same handshake, different wires
     pub fn init(&mut self) -> Result<(), &'static str> {
-        // Reset device
-        self.write_reg(VIRTIO_MMIO_STATUS, 0);
+        if let Some(ref t) = self.transport {
+            // ---- PCI transport path ----
+            // Reset
+            t.write_status(0);
 
-        // Acknowledge device
-        self.write_reg(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACKNOWLEDGE);
+            // Acknowledge
+            t.write_status(VIRTIO_STATUS_ACKNOWLEDGE as u8);
 
-        // Driver loaded
-        self.write_reg(
-            VIRTIO_MMIO_STATUS,
-            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
-        );
+            // Driver
+            t.write_status((VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER) as u8);
 
-        // Read features
-        self.write_reg(VIRTIO_MMIO_DEVICE_FEATURES_SEL, 0);
-        let _features = self.read_reg(VIRTIO_MMIO_DEVICE_FEATURES);
+            // Read features, accept none for basic 2D
+            let _features = t.read_device_features(0);
+            t.write_driver_features(0, 0);
 
-        // Accept features
-        self.write_reg(VIRTIO_MMIO_DRIVER_FEATURES_SEL, 0);
-        self.write_reg(VIRTIO_MMIO_DRIVER_FEATURES, 0);
+            // Features OK
+            t.write_status(
+                (VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK)
+                    as u8,
+            );
 
-        // Features OK
-        self.write_reg(
-            VIRTIO_MMIO_STATUS,
-            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
-        );
+            let status = t.read_status();
+            if status & VIRTIO_STATUS_FEATURES_OK as u8 == 0 {
+                t.write_status(VIRTIO_STATUS_FAILED as u8);
+                return Err("Features not accepted");
+            }
 
-        // Verify features accepted
-        let status = self.read_reg(VIRTIO_MMIO_STATUS);
-        if status & VIRTIO_STATUS_FEATURES_OK == 0 {
-            self.write_reg(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_FAILED);
-            return Err("Features not accepted");
+            // Initialize control queue via PCI transport
+            self.init_controlq_pci()?;
+
+            // Driver ready
+            t.write_status(
+                (VIRTIO_STATUS_ACKNOWLEDGE
+                    | VIRTIO_STATUS_DRIVER
+                    | VIRTIO_STATUS_FEATURES_OK
+                    | VIRTIO_STATUS_DRIVER_OK) as u8,
+            );
+        } else {
+            // ---- MMIO transport path (legacy) ----
+            self.write_reg(VIRTIO_MMIO_STATUS, 0);
+            self.write_reg(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACKNOWLEDGE);
+            self.write_reg(
+                VIRTIO_MMIO_STATUS,
+                VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+            );
+
+            self.write_reg(VIRTIO_MMIO_DEVICE_FEATURES_SEL, 0);
+            let _features = self.read_reg(VIRTIO_MMIO_DEVICE_FEATURES);
+
+            self.write_reg(VIRTIO_MMIO_DRIVER_FEATURES_SEL, 0);
+            self.write_reg(VIRTIO_MMIO_DRIVER_FEATURES, 0);
+
+            self.write_reg(
+                VIRTIO_MMIO_STATUS,
+                VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+            );
+
+            let status = self.read_reg(VIRTIO_MMIO_STATUS);
+            if status & VIRTIO_STATUS_FEATURES_OK == 0 {
+                self.write_reg(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_FAILED);
+                return Err("Features not accepted");
+            }
+
+            self.init_controlq()?;
+
+            self.write_reg(
+                VIRTIO_MMIO_STATUS,
+                VIRTIO_STATUS_ACKNOWLEDGE
+                    | VIRTIO_STATUS_DRIVER
+                    | VIRTIO_STATUS_FEATURES_OK
+                    | VIRTIO_STATUS_DRIVER_OK,
+            );
         }
-
-        // Initialize control queue
-        self.init_controlq()?;
-
-        // Driver ready
-        self.write_reg(
-            VIRTIO_MMIO_STATUS,
-            VIRTIO_STATUS_ACKNOWLEDGE
-                | VIRTIO_STATUS_DRIVER
-                | VIRTIO_STATUS_FEATURES_OK
-                | VIRTIO_STATUS_DRIVER_OK,
-        );
 
         // Get display info
         self.get_display_info()?;
@@ -404,7 +478,48 @@ impl VirtioGpu {
         self.framebuffer_info().ok_or("no framebuffer")
     }
 
-    /// Initialize control queue
+    /// Initialize control queue via PCI transport (physical DMA addresses)
+    /// — GlassSignal: virtqueues need real silicon addresses, not kernel illusions
+    fn init_controlq_pci(&mut self) -> Result<(), &'static str> {
+        let t = self.transport.as_ref().ok_or("No PCI transport")?;
+
+        t.select_queue(VIRTIO_GPU_CONTROLQ as u16);
+
+        let max_size = t.queue_max_size();
+        if max_size == 0 {
+            return Err("Queue not available");
+        }
+
+        let size = max_size.min(64);
+        self.queue_size = size;
+        t.set_queue_size(size);
+
+        use alloc::alloc::{Layout, alloc_zeroed};
+
+        let desc_size = size as usize * core::mem::size_of::<VirtqDesc>();
+        let desc_layout = Layout::from_size_align(desc_size, 16).unwrap();
+        self.descriptors = unsafe { alloc_zeroed(desc_layout) } as *mut VirtqDesc;
+
+        let avail_layout = Layout::from_size_align(core::mem::size_of::<VirtqAvail>(), 2).unwrap();
+        self.available = unsafe { alloc_zeroed(avail_layout) } as *mut VirtqAvail;
+
+        let used_layout = Layout::from_size_align(core::mem::size_of::<VirtqUsed>(), 4).unwrap();
+        self.used = unsafe { alloc_zeroed(used_layout) } as *mut VirtqUsed;
+
+        // PCI transport needs physical addresses for virtqueue rings
+        let desc_phys = self.descriptors as u64 - PHYS_MAP_BASE;
+        let avail_phys = self.available as u64 - PHYS_MAP_BASE;
+        let used_phys = self.used as u64 - PHYS_MAP_BASE;
+
+        t.set_queue_desc(desc_phys);
+        t.set_queue_avail(avail_phys);
+        t.set_queue_used(used_phys);
+        t.enable_queue();
+
+        Ok(())
+    }
+
+    /// Initialize control queue (MMIO path)
     fn init_controlq(&mut self) -> Result<(), &'static str> {
         self.write_reg(VIRTIO_MMIO_QUEUE_SEL, VIRTIO_GPU_CONTROLQ);
 
@@ -518,7 +633,15 @@ impl VirtioGpu {
         // Allocate framebuffer
         let fb_size = (self.width * self.height * self.bytes_per_pixel) as usize;
         let fb = alloc::vec![0u8; fb_size].into_boxed_slice();
-        let fb_addr = fb.as_ptr() as u64;
+        let fb_virt = fb.as_ptr() as u64;
+
+        // DMA backing address: PCI needs physical, MMIO uses virtual
+        // — GlassSignal: the device sees silicon, not kernel address space
+        let fb_dma = if self.transport.is_some() {
+            fb_virt - PHYS_MAP_BASE
+        } else {
+            fb_virt
+        };
 
         // Attach backing
         #[repr(C)]
@@ -537,7 +660,7 @@ impl VirtioGpu {
                 nr_entries: 1,
             },
             entry: MemEntry {
-                addr: fb_addr,
+                addr: fb_dma,
                 length: fb_size as u32,
                 padding: 0,
             },
@@ -576,17 +699,31 @@ impl VirtioGpu {
     }
 
     /// Send a command and wait for response
+    /// — GlassSignal: push bytes through the virtqueue pipeline, wait for the echo
     fn send_command<C, R>(&self, cmd: &C, resp: &mut R) -> Result<(), &'static str> {
         let cmd_size = core::mem::size_of::<C>();
         let resp_size = core::mem::size_of::<R>();
+        let is_pci = self.transport.is_some();
 
         // Setup descriptors (use atomic operations for thread-safety)
         let desc_idx = (self.next_desc.fetch_add(2, Ordering::SeqCst) % self.queue_size).into();
 
         unsafe {
+            // For PCI transport, descriptor addresses must be physical
+            let cmd_addr = if is_pci {
+                cmd as *const C as u64 - PHYS_MAP_BASE
+            } else {
+                cmd as *const C as u64
+            };
+            let resp_addr = if is_pci {
+                resp as *mut R as u64 - PHYS_MAP_BASE
+            } else {
+                resp as *mut R as u64
+            };
+
             // Command descriptor
             let desc0 = &mut *self.descriptors.add(desc_idx);
-            desc0.addr = cmd as *const C as u64;
+            desc0.addr = cmd_addr;
             desc0.len = cmd_size as u32;
             desc0.flags = VIRTQ_DESC_F_NEXT;
             desc0.next = ((desc_idx as u16 + 1) % self.queue_size) as u16;
@@ -595,7 +732,7 @@ impl VirtioGpu {
             let desc1 = &mut *self
                 .descriptors
                 .add(((desc_idx as u16 + 1) % self.queue_size) as usize);
-            desc1.addr = resp as *mut R as u64;
+            desc1.addr = resp_addr;
             desc1.len = resp_size as u32;
             desc1.flags = VIRTQ_DESC_F_WRITE;
             desc1.next = 0;
@@ -608,8 +745,12 @@ impl VirtioGpu {
             write_volatile(&mut avail.idx, avail_idx.wrapping_add(1));
         }
 
-        // Notify device
-        self.write_reg(VIRTIO_MMIO_QUEUE_NOTIFY, VIRTIO_GPU_CONTROLQ);
+        // Notify device — PCI uses transport, MMIO uses register write
+        if let Some(ref t) = self.transport {
+            t.notify_queue(VIRTIO_GPU_CONTROLQ as u16);
+        } else {
+            self.write_reg(VIRTIO_MMIO_QUEUE_NOTIFY, VIRTIO_GPU_CONTROLQ);
+        }
 
         // Wait for completion
         let last_used = self.last_used.load(Ordering::Acquire);

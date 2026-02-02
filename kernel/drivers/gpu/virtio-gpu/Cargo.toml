@@ -6,4 +6,5 @@ edition = "2024"
 [dependencies]
 fb = { path = "../../../graphics/fb" }
 boot-proto = { path = "../../../boot/boot-proto" }
+pci = { path = "../../pci" }
 spin = "0.9"

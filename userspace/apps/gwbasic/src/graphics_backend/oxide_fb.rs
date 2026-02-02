@@ -1,7 +1,7 @@
 //! OXIDE Framebuffer Graphics Backend
 //!
 //! Implements pixel-buffer graphics for OXIDE OS using /dev/fb0.
-//! Supports the native framebuffer provided by UEFI GOP via mmap.
+//! Uses the standard Linux framebuffer interface via open/ioctl/write syscalls.
 
 #![cfg(not(feature = "std"))]
 
@@ -104,9 +104,11 @@ pub struct FbFixScreenInfo {
 }
 
 /// OXIDE framebuffer graphics backend
+/// 
+/// Uses /dev/fb0 with read/write/ioctl syscalls - no mmap.
+/// Maintains a local buffer and flushes to framebuffer via write().
 pub struct OxideFramebufferBackend {
     fb_fd: i32,                    // File descriptor for /dev/fb0
-    framebuffer: *mut u8,          // Mapped framebuffer memory
     local_buffer: Vec<u8>,         // Local double-buffer for drawing
     width: usize,
     height: usize,
@@ -118,6 +120,8 @@ pub struct OxideFramebufferBackend {
     fg_color: u8,
     bg_color: u8,
     dirty: bool,
+    dirty_min_y: usize,            // Track dirty region for partial updates
+    dirty_max_y: usize,
 }
 
 impl OxideFramebufferBackend {
@@ -162,29 +166,11 @@ impl OxideFramebufferBackend {
         // Determine pixel order (BGR vs RGB)
         let is_bgr = var_info.blue_offset < var_info.red_offset;
 
-        // Map the framebuffer into our address space
-        let framebuffer = libc::sys_mmap(
-            core::ptr::null_mut(),
-            fb_size,
-            libc::prot::PROT_READ | libc::prot::PROT_WRITE,
-            libc::map_flags::MAP_SHARED,
-            fb_fd,
-            0,
-        );
-
-        if framebuffer == libc::MAP_FAILED {
-            libc::close(fb_fd);
-            return Err(Error::RuntimeError(
-                "Failed to mmap framebuffer".to_string(),
-            ));
-        }
-
         // Create local double-buffer
         let local_buffer = vec![0u8; fb_size];
 
         Ok(OxideFramebufferBackend {
             fb_fd,
-            framebuffer,
             local_buffer,
             width,
             height,
@@ -196,6 +182,8 @@ impl OxideFramebufferBackend {
             fg_color: 15, // White
             bg_color: 0,  // Black
             dirty: true,
+            dirty_min_y: 0,
+            dirty_max_y: height,
         })
     }
 
@@ -210,7 +198,7 @@ impl OxideFramebufferBackend {
         };
 
         if self.is_bgr {
-            // BGRA format
+            // BGRA format: B at lowest byte
             let r = (rgb >> 16) & 0xFF;
             let g = (rgb >> 8) & 0xFF;
             let b = rgb & 0xFF;
@@ -255,26 +243,60 @@ impl OxideFramebufferBackend {
                 }
                 _ => {}
             }
+            
+            // Track dirty region
+            if !self.dirty {
+                self.dirty_min_y = y;
+                self.dirty_max_y = y;
+            } else {
+                if y < self.dirty_min_y {
+                    self.dirty_min_y = y;
+                }
+                if y > self.dirty_max_y {
+                    self.dirty_max_y = y;
+                }
+            }
             self.dirty = true;
         }
     }
 
-    /// Copy local buffer to framebuffer
+    /// Flush local buffer to framebuffer via write() syscall
     pub fn commit(&mut self) {
         if !self.dirty {
             return;
         }
 
-        // Copy local buffer to mapped framebuffer
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                self.local_buffer.as_ptr(),
-                self.framebuffer,
-                self.local_buffer.len(),
-            );
+        // Write dirty region to framebuffer
+        // Use lseek + write to update specific area
+        let start_offset = self.dirty_min_y * self.stride;
+        let end_offset = (self.dirty_max_y + 1) * self.stride;
+        let write_size = end_offset.min(self.local_buffer.len()) - start_offset;
+        
+        if write_size > 0 {
+            // Seek to start of dirty region
+            libc::lseek(self.fb_fd, start_offset as i64, libc::SEEK_SET);
+            
+            // Write the dirty portion
+            let data = &self.local_buffer[start_offset..start_offset + write_size];
+            libc::write(self.fb_fd, data);
         }
 
         self.dirty = false;
+        self.dirty_min_y = self.height;
+        self.dirty_max_y = 0;
+    }
+
+    /// Flush entire buffer (for CLS or initial draw)
+    pub fn commit_full(&mut self) {
+        // Seek to beginning
+        libc::lseek(self.fb_fd, 0, libc::SEEK_SET);
+        
+        // Write entire buffer
+        libc::write(self.fb_fd, &self.local_buffer);
+        
+        self.dirty = false;
+        self.dirty_min_y = self.height;
+        self.dirty_max_y = 0;
     }
 
     /// Get screen dimensions
@@ -376,12 +398,13 @@ impl GraphicsBackend for OxideFramebufferBackend {
 
         self.cursor_x = 0;
         self.cursor_y = 0;
-        self.dirty = true;
+        
+        // Full buffer write for CLS
+        self.commit_full();
     }
 
     fn locate(&mut self, row: usize, col: usize) -> Result<()> {
         // For graphics mode, locate uses pixel coordinates
-        // For text mode emulation, would convert row/col to pixels
         self.cursor_y = row;
         self.cursor_x = col;
         Ok(())
@@ -422,10 +445,6 @@ impl GraphicsBackend for OxideFramebufferBackend {
 
 impl Drop for OxideFramebufferBackend {
     fn drop(&mut self) {
-        // Unmap framebuffer
-        if !self.framebuffer.is_null() {
-            libc::sys_munmap(self.framebuffer, self.local_buffer.len());
-        }
         // Close file descriptor
         if self.fb_fd >= 0 {
             libc::close(self.fb_fd);
