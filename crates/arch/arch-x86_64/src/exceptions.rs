@@ -852,10 +852,23 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
         asm!("mov {}, cr2", out(reg) cr2, options(nomem, nostack));
     }
 
+    #[cfg(feature = "debug-pagefault")]
+    {
+        let cr3: u64;
+        unsafe {
+            core::arch::asm!("mov {}, cr3", out(reg) cr3);
+        }
+        crate::serial_println!("[PF] addr={:#x} rip={:#x} err={:#x} cr3={:#x}", cr2, frame.rip, error, cr3);
+    }
+
     // Try page fault callback first (for COW handling, etc.)
     let callback = unsafe { *addr_of!(PAGE_FAULT_CALLBACK) };
     if let Some(handler) = callback {
         if handler(cr2, error, frame.rip) {
+            #[cfg(feature = "debug-pagefault")]
+            {
+                crate::serial_println!("[PF] Handled by callback");
+            }
             // Fault was handled (e.g., COW page copied)
             return;
         }
@@ -1216,16 +1229,28 @@ extern "C" fn handle_timer(current_rsp: u64) -> u64 {
         *ticks_ptr
     };
 
+    #[cfg(feature = "debug-timer")]
+    {
+        // Log every 100 ticks to reduce spam (once per second at 100Hz)
+        if current_tick % 100 == 0 {
+            crate::serial_println!("[TIMER] tick={:#x} rsp={:#x}", current_tick, current_rsp);
+        }
+    }
+
     // Send EOI to APIC first (before potentially long scheduler work)
     crate::apic::end_of_interrupt();
 
     // Call terminal tick callback at ~30 FPS
     unsafe {
         let last_tick_ptr = addr_of_mut!(LAST_TERMINAL_TICK);
-        if current_tick - *last_tick_ptr >= TERMINAL_TICK_INTERVAL {
+        if current_tick.saturating_sub(*last_tick_ptr) >= TERMINAL_TICK_INTERVAL {
             *last_tick_ptr = current_tick;
             let cb_ptr = addr_of!(TERMINAL_TICK_CALLBACK);
             if let Some(callback) = *cb_ptr {
+                #[cfg(feature = "debug-timer")]
+                {
+                    crate::serial_println!("[TIMER] Terminal tick callback");
+                }
                 callback();
             }
         }
@@ -1235,11 +1260,22 @@ extern "C" fn handle_timer(current_rsp: u64) -> u64 {
     let new_rsp = unsafe {
         let cb_ptr = addr_of!(SCHEDULER_CALLBACK);
         if let Some(callback) = *cb_ptr {
+            #[cfg(feature = "debug-timer")]
+            {
+                crate::serial_println!("[TIMER] Calling scheduler");
+            }
             callback(current_rsp)
         } else {
             current_rsp
         }
     };
+
+    #[cfg(feature = "debug-timer")]
+    {
+        if new_rsp != current_rsp {
+            crate::serial_println!("[TIMER] Context switch: {:#x} -> {:#x}", current_rsp, new_rsp);
+        }
+    }
 
     new_rsp
 }
@@ -1415,7 +1451,11 @@ pub fn get_scancode() -> Option<u8> {
 /// where we know no other code is accessing the i8042 ports concurrently.
 pub unsafe fn poll_keyboard() -> Option<u8> {
     let status: u8;
-    core::arch::asm!("in al, 0x64", out("al") status, options(nomem, nostack, preserves_flags));
+    // SAFETY: Reading from i8042 status port in ISR context; caller ensures no concurrent access
+    // — GraveShift
+    unsafe {
+        core::arch::asm!("in al, 0x64", out("al") status, options(nomem, nostack, preserves_flags));
+    }
     if status & 0x01 != 0 {
         // Check bit 5 — if set, this is mouse data, not keyboard
         if status & 0x20 != 0 {
@@ -1423,7 +1463,11 @@ pub unsafe fn poll_keyboard() -> Option<u8> {
         }
         // Data available - read scancode from port 0x60
         let scancode: u8;
-        core::arch::asm!("in al, 0x60", out("al") scancode, options(nomem, nostack, preserves_flags));
+        // SAFETY: Reading from i8042 data port; status bit confirmed data is ready
+        // — GraveShift
+        unsafe {
+            core::arch::asm!("in al, 0x60", out("al") scancode, options(nomem, nostack, preserves_flags));
+        }
         Some(scancode)
     } else {
         None

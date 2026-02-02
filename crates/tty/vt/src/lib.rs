@@ -73,7 +73,7 @@ struct VtState {
     /// TTY device
     tty: Arc<Tty>,
     /// VT number (0-5 for tty1-tty6)
-    vt_num: usize,
+    _vt_num: usize,
 }
 
 impl VtState {
@@ -81,7 +81,7 @@ impl VtState {
         VtState {
             input_buffer: LockFreeRing::new(),
             tty,
-            vt_num,
+            _vt_num: vt_num,
         }
     }
 }
@@ -431,7 +431,11 @@ pub fn push_input_global(ch: u8) {
 /// # Safety
 /// Must be called during single-threaded initialization
 pub unsafe fn set_signal_pgrp_callback(f: SignalPgrpFn) {
-    SIGNAL_PGRP_CALLBACK = Some(f);
+    // SAFETY: Caller ensures single-threaded initialization
+    // — NeonRoot
+    unsafe {
+        SIGNAL_PGRP_CALLBACK = Some(f);
+    }
 }
 
 /// Set the console write callback for VT output
@@ -439,7 +443,11 @@ pub unsafe fn set_signal_pgrp_callback(f: SignalPgrpFn) {
 /// # Safety
 /// Must be called during single-threaded initialization
 pub unsafe fn set_console_write_callback(f: ConsoleWriteFn) {
-    CONSOLE_WRITE_CALLBACK = Some(f);
+    // SAFETY: Caller ensures single-threaded initialization
+    // — NeonRoot
+    unsafe {
+        CONSOLE_WRITE_CALLBACK = Some(f);
+    }
 }
 
 /// Set the VT switch callback for screen buffer synchronization
@@ -451,7 +459,11 @@ pub unsafe fn set_console_write_callback(f: ConsoleWriteFn) {
 /// The callback is invoked whenever VTs are switched (Alt+F1-F6)
 /// to notify the terminal emulator to perform a full screen redraw
 pub unsafe fn set_vt_switch_callback(f: VtSwitchFn) {
-    VT_SWITCH_CALLBACK = Some(f);
+    // SAFETY: Caller ensures single-threaded initialization
+    // — NeonRoot
+    unsafe {
+        VT_SWITCH_CALLBACK = Some(f);
+    }
 }
 
 /// VT device node

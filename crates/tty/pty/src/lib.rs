@@ -69,7 +69,11 @@ static mut SIGNAL_PGRP_CALLBACK: Option<SignalPgrpFn> = None;
 /// # Safety
 /// Must be called during single-threaded initialization
 pub unsafe fn set_signal_pgrp_callback(f: SignalPgrpFn) {
-    SIGNAL_PGRP_CALLBACK = Some(f);
+    // SAFETY: Caller ensures single-threaded initialization
+    // — NeonRoot
+    unsafe {
+        SIGNAL_PGRP_CALLBACK = Some(f);
+    }
 }
 
 /// Allocate a new PTY number

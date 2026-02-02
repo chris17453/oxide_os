@@ -731,20 +731,20 @@ impl Journal {
             }
 
             if self.jsb.is_64bit() {
-                let val = block.to_be();
-                let bytes: [u8; 8] = unsafe { core::mem::transmute(val) };
+                // Big-endian encoding for journal block numbers
+                // — WireSaint
+                let bytes = block.to_be_bytes();
                 data[offset..offset + 8].copy_from_slice(&bytes);
             } else {
-                let val = (block as u32).to_be();
-                let bytes: [u8; 4] = unsafe { core::mem::transmute(val) };
+                let bytes = (block as u32).to_be_bytes();
                 data[offset..offset + 4].copy_from_slice(&bytes);
             }
             offset += entry_size;
         }
 
-        // Set count field
-        let count = (offset as u32).to_be();
-        let count_bytes: [u8; 4] = unsafe { core::mem::transmute(count) };
+        // Set count field — big-endian encoding
+        // — WireSaint
+        let count_bytes = (offset as u32).to_be_bytes();
         data[12..16].copy_from_slice(&count_bytes);
 
         self.write_journal_block(revoke_block, &data)?;

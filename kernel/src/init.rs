@@ -11,8 +11,7 @@ use core::fmt::Write;
 use core::ptr::addr_of_mut;
 
 use arch_traits::Arch;
-use arch_x86_64 as arch;
-use arch_x86_64::serial;
+use crate::arch;
 use block::{BlockDevice, BlockDeviceInfo, BlockError, BlockResult};
 use boot_proto::{BootInfo, MemoryType as BootMemoryType};
 use devfs::DevFs;
@@ -45,7 +44,7 @@ struct OsLogSerialWriter;
 
 impl os_log::SerialWriter for OsLogSerialWriter {
     fn write_byte(&mut self, byte: u8) {
-        serial::write_byte(byte);
+        arch::serial_write_byte(byte);
     }
 }
 
@@ -84,7 +83,7 @@ fn terminal_vt_switch_callback(_vt_num: usize) {
 /// Called by the bootloader after setting up page tables and jumping to higher half.
 pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Initialize serial port first for early debugging
-    serial::init();
+    arch::serial_init();
 
     // Enable SMAP (Supervisor Mode Access Prevention) if supported
     // SMAP allows STAC/CLAC instructions to work properly
@@ -107,7 +106,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
         let smap_supported = (ebx_out & (1 << 20)) != 0;
         if smap_supported {
-            serial::SerialWriter.write_str(
+            arch::SerialWriter.write_str(
                 "[INIT] SMAP supported but DISABLED (needs fix - complex timing issue)\n",
             );
             // TODO: Fix SMAP - there's a complex timing issue where AC gets cleared between
@@ -117,9 +116,9 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             // core::arch::asm!("mov {}, cr4", out(reg) cr4, options(nomem, nostack));
             // cr4 |= 1 << 21; // Set SMAP bit (bit 21)
             // core::arch::asm!("mov cr4, {}", in(reg) cr4, options(nostack));
-            // serial::SerialWriter.write_str("[INIT] SMAP enabled\n");
+            // arch::SerialWriter.write_str("[INIT] SMAP enabled\n");
         } else {
-            serial::SerialWriter.write_str("[INIT] SMAP not supported by CPU\n");
+            arch::SerialWriter.write_str("[INIT] SMAP not supported by CPU\n");
         }
     }
 
@@ -129,7 +128,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         os_log::register_writer(&mut *addr_of_mut!(OS_LOG_WRITER));
     }
 
-    let mut writer = serial::SerialWriter;
+    let mut writer = arch::SerialWriter;
 
     // Print boot banner
     let _ = writeln!(writer);

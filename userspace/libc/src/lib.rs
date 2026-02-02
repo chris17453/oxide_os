@@ -266,58 +266,22 @@ pub fn set_errno(e: i32) {
     unsafe { ERRNO = e }
 }
 
-/// Entry point for userspace programs
-///
-/// Stack layout at entry (set up by exec):
-///   [rsp+0]  = argc
-///   [rsp+8]  = argv[0]
-///   [rsp+16] = argv[1]
-///   ...
-///   [rsp+8*(argc+1)] = NULL
-///   [rsp+8*(argc+2)] = envp[0]
-///   ...
-///
-/// We read argc/argv from the stack, not registers, for robustness.
-#[unsafe(no_mangle)]
-#[unsafe(naked)]
-pub unsafe extern "C" fn _start() -> ! {
-    core::arch::naked_asm!(
-        // Read argc from stack
-        "mov r12, [rsp]",        // argc -> r12 (callee-saved)
-        // Calculate argv pointer (rsp + 8)
-        "lea r13, [rsp + 8]",    // argv -> r13 (callee-saved)
-        // Call init_env to set up environment
-        "call {init_env}",
-        // Initialize FILE streams (stdin/stdout/stderr)
-        "call {init_stdio}",
-        // Initialize environ pointer for C code
-        "call {init_environ}",
-        // Set up arguments for main(argc, argv)
-        "mov edi, r12d",         // argc (32-bit)
-        "mov rsi, r13",          // argv
-        // Call main(argc, argv)
-        "call {main}",
-        // Exit with return code (in eax from main)
-        "mov edi, eax",
-        "call {exit}",
-        // Should never reach here, but just in case
-        "ud2",
-        init_env = sym env::init_env,
-        init_stdio = sym filestream::init_stdio,
-        init_environ = sym c_exports::init_environ,
-        main = sym _main_wrapper,
-        exit = sym syscall::sys_exit,
-    )
-}
+// ============================================================================
+// Architecture-specific entry point (_start)
+// ============================================================================
+//
+// Each architecture provides its own _start implementation in arch/<arch>/start.rs
+// The entry point is re-exported here for convenience.
+// This allows userspace programs to link with the correct _start for their target.
 
-// Wrapper to call the user's main function with argc/argv
-#[inline(never)]
-fn _main_wrapper(argc: i32, argv: *const *const u8) -> i32 {
-    unsafe extern "Rust" {
-        fn main(argc: i32, argv: *const *const u8) -> i32;
-    }
-    unsafe { main(argc, argv) }
-}
+#[cfg(target_arch = "x86_64")]
+pub use arch::x86_64::_start;
+
+#[cfg(target_arch = "aarch64")]
+pub use arch::aarch64::_start;
+
+#[cfg(target_arch = "mips64")]
+pub use arch::mips64::_start;
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {

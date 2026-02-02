@@ -126,7 +126,7 @@ pub unsafe fn init() {
 /// 3. Call the syscall handler
 /// 4. Restore and sysret
 #[unsafe(naked)]
-extern "C" fn syscall_entry() {
+pub extern "C" fn syscall_entry() {
     naked_asm!(
         // === PROLOGUE: Save critical registers to per-CPU scratch space ===
         // At this point: CPL=0, interrupts disabled, RSP = user stack

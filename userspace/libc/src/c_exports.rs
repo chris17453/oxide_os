@@ -24,7 +24,7 @@ const PTHREAD_CREATE_DETACHED: i32 = 1;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct PthreadAttr {
+pub struct PthreadAttr {
     detachstate: i32,
     stacksize: usize,
     stackaddr: *mut u8,
@@ -50,7 +50,7 @@ impl Default for PthreadAttr {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct PosixSpawnAttr {
+pub struct PosixSpawnAttr {
     flags: i16,
     pgroup: i32,
     sigdefault: u64,
@@ -69,7 +69,7 @@ impl Default for PosixSpawnAttr {
 }
 
 #[repr(C)]
-struct posix_spawn_file_actions_t {
+pub struct posix_spawn_file_actions_t {
     action_count: i32,
 }
 
@@ -5198,7 +5198,7 @@ pub unsafe extern "C" fn ftello64(stream: *mut u8) -> i64 {
 
 /// timeb structure
 #[repr(C)]
-struct Timeb {
+pub struct Timeb {
     time: i64,
     millitm: u16,
     timezone: i16,
@@ -6750,7 +6750,7 @@ pub unsafe extern "C" fn rtpSpawn(
     _priority: i32,
     _stacksize: usize,
     _options: i32,
-    _taskOptions: i32,
+    _task_options: i32,
 ) -> i32 {
     ERRNO_VAR = errno::ENOSYS;
     -1

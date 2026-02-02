@@ -12,7 +12,7 @@
 6. **Validate:** Run existing tests/linters that cover the change; capture failing logs if any.
 7. **Document:** Update related docs when behavior or process changes.
 8. **Build:** Always update the make run for the curent build if something canges, we will never use any other command than make build.
-9. **Code**: Always use cuyyberpunk comments, have different persona's for different comments. 
+9. **Code**: Always use cyberpunk comments, have different persona's for different comments. 
 
 ## PERSONAS FOR DEVELOPMENT
 - when coding choose the correct one to leave comments with, remeber to sign, and be gritty

@@ -982,6 +982,8 @@ pub fn set_task_exit_status(pid: Pid, status: i32) {
         let found = with_rq(cpu, |rq| {
             if let Some(task) = rq.get_task_mut(pid) {
                 task.exit(status);
+                // Dequeue the zombie so the scheduler doesn't pick it
+                rq.dequeue_task(pid);
                 true
             } else {
                 false

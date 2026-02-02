@@ -22,7 +22,7 @@ LINKER ?= ld.lld
 # debug-syscall-perf: Logs syscalls taking >100K CPU cycles (~33us @ 3GHz)
 # debug-tty-read: Logs TTY read queue status
 # ========================================
-RUN_KERNEL_FEATURES ?= debug-syscall-perf,debug-tty-read
+RUN_KERNEL_FEATURES ?=
 # ========================================
 
 # Internal: Don't modify these unless using specific debug targets
@@ -348,7 +348,7 @@ HOME_START := 449
 # - Partition 2 (root): ext4, mounted at / - OS files
 # - Partition 3 (home): ext4, mounted at /home - user data
 # - /tmp is tmpfs (in-memory)
-create-rootfs: kernel bootloader initramfs-minimal vim
+create-rootfs: kernel bootloader initramfs-minimal
 	@echo "Creating OXIDE root filesystem disk image..."
 	@echo ""
 	@# Create empty disk image

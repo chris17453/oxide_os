@@ -8,6 +8,7 @@ license.workspace = true
 default = []
 debug-lock = []  # Emit serial warnings on lock contention in ISR context
 debug-tty-read = []  # Enable terminal query/response debug output
+debug-terminal = []  # Enable terminal escape sequence debug output
 
 [dependencies]
 bitflags.workspace = true

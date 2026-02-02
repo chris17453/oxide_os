@@ -1,9 +1,20 @@
 //! OXIDE Architecture Traits
 //!
 //! Defines the interface that all architecture implementations must provide.
+//!
+//! This crate provides trait-based abstractions for:
+//! - x86_64 (little-endian)
+//! - ARM64/aarch64 (little-endian)
+//! - SGI MIPS64 (big-endian)
+//!
+//! All traits use zero-cost abstractions via inline methods and static dispatch.
+//! — NeonRoot
 
 #![no_std]
 
+pub mod context;
+
+pub use context::*;
 use os_core::{PhysAddr, VirtAddr};
 
 // ============================================================================
@@ -275,4 +286,336 @@ pub trait PortIo {
     /// # Safety
     /// Port access may have side effects on hardware.
     unsafe fn outl(port: u16, value: u32);
+}
+
+// ============================================================================
+// Control Register Operations
+// ============================================================================
+
+/// Control register operations for MMU and system state
+///
+/// Abstracts CR0/CR3/CR4 (x86), TTBR (ARM), CP0 Context (MIPS), etc.
+/// — GraveShift
+pub trait ControlRegisters {
+    /// Page table root type (e.g., PhysAddr)
+    type PageTableRoot;
+
+    /// Read the page table root register
+    fn read_page_table_root() -> Self::PageTableRoot;
+
+    /// Write the page table root register
+    ///
+    /// # Safety
+    /// Must point to a valid page table. May flush TLB.
+    unsafe fn write_page_table_root(root: Self::PageTableRoot);
+
+    /// Read the instruction pointer
+    fn read_instruction_pointer() -> u64;
+
+    /// Read the stack pointer
+    fn read_stack_pointer() -> u64;
+}
+
+// ============================================================================
+// System Registers (MSR, Special Registers)
+// ============================================================================
+
+/// System/Model-Specific Register access
+///
+/// Abstracts MSRs (x86), System regs (ARM), CP0 (MIPS)
+/// — GraveShift
+pub trait SystemRegisters {
+    /// Read a system register
+    ///
+    /// # Safety
+    /// Reading system registers may have side effects
+    unsafe fn read_sys_reg(id: u32) -> u64;
+
+    /// Write a system register
+    ///
+    /// # Safety
+    /// Writing system registers can change system behavior
+    unsafe fn write_sys_reg(id: u32, value: u64);
+}
+
+// ============================================================================
+// Syscall Interface
+// ============================================================================
+
+/// System call mechanism abstraction
+///
+/// Handles syscall/sysret (x86), svc/eret (ARM), syscall/eret (MIPS)
+/// — ThreadRogue
+pub trait SyscallInterface {
+    /// Syscall frame type (architecture-specific)
+    type SyscallFrame;
+
+    /// Initialize the syscall mechanism
+    ///
+    /// # Safety
+    /// Sets up MSRs, vectors, or other arch-specific state
+    unsafe fn init_syscall_mechanism();
+
+    /// Get the syscall entry point address
+    fn syscall_entry_point() -> usize;
+
+    /// Extract syscall number from frame
+    fn syscall_number(frame: &Self::SyscallFrame) -> usize;
+
+    /// Extract syscall arguments from frame
+    fn syscall_args(frame: &Self::SyscallFrame) -> [usize; 6];
+
+    /// Set syscall return value in frame
+    fn set_syscall_return(frame: &mut Self::SyscallFrame, value: usize);
+}
+
+// ============================================================================
+// Exception Handling
+// ============================================================================
+
+/// Exception and interrupt handling abstraction
+///
+/// Handles IDT (x86), exception vectors (ARM/MIPS)
+/// — BlackLatch
+pub trait ExceptionHandler {
+    /// Exception frame type
+    type ExceptionFrame;
+
+    /// Exception vector identifier type
+    type ExceptionVector: Copy;
+
+    /// Register an exception handler
+    ///
+    /// # Safety
+    /// Handler must be a valid function pointer with correct calling convention
+    unsafe fn register_exception(vector: Self::ExceptionVector, handler: usize);
+
+    /// Initialize exception handling (IDT, vector table, etc.)
+    ///
+    /// # Safety
+    /// Sets up critical system state
+    unsafe fn init_exceptions();
+
+    /// Convert exception frame to architecture-agnostic context
+    fn exception_context_from_frame(frame: &Self::ExceptionFrame) -> InterruptContext;
+}
+
+/// Architecture-agnostic interrupt context
+/// — BlackLatch
+#[derive(Debug, Clone)]
+pub struct InterruptContext {
+    /// General purpose registers (up to 32)
+    pub general_purpose: [u64; 32],
+    /// Instruction pointer
+    pub instruction_pointer: u64,
+    /// Stack pointer
+    pub stack_pointer: u64,
+    /// Flags/status register
+    pub flags: u64,
+    /// Architecture-specific data (segments, etc.)
+    pub arch_specific: [u64; 8],
+}
+
+// ============================================================================
+// Cache Operations
+// ============================================================================
+
+/// Cache management operations
+///
+/// Critical for SGI MIPS (non-coherent DMA), less so for x86/ARM
+/// — WireSaint
+pub trait CacheOps {
+    /// Flush all caches
+    ///
+    /// # Safety
+    /// May impact performance, required before shutdown
+    unsafe fn flush_cache();
+
+    /// Flush cache for a specific range
+    ///
+    /// # Safety
+    /// Required before DMA on non-coherent systems
+    unsafe fn flush_cache_range(start: VirtAddr, len: usize);
+
+    /// Invalidate cache for a specific range
+    ///
+    /// # Safety
+    /// Required after DMA on non-coherent systems
+    unsafe fn invalidate_cache_range(start: VirtAddr, len: usize);
+
+    /// Invalidate instruction cache
+    ///
+    /// # Safety
+    /// Required after code modification
+    unsafe fn invalidate_icache();
+
+    /// Is cache coherent with DMA?
+    ///
+    /// Returns false for SGI MIPS, true for x86/most ARM
+    fn is_cache_coherent() -> bool;
+}
+
+// ============================================================================
+// Endianness Handling
+// ============================================================================
+
+/// Endianness abstraction for big-endian SGI MIPS support
+///
+/// All conversions are zero-cost on matching endianness
+/// — NeonRoot
+pub trait Endianness {
+    /// Is this architecture big-endian?
+    fn is_big_endian() -> bool;
+
+    /// Is this architecture little-endian?
+    fn is_little_endian() -> bool {
+        !Self::is_big_endian()
+    }
+
+    // Convert TO little-endian (for writing to disk/network in LE format)
+    fn to_le16(val: u16) -> u16;
+    fn to_le32(val: u32) -> u32;
+    fn to_le64(val: u64) -> u64;
+
+    // Convert FROM little-endian (for reading from disk/network in LE format)
+    fn from_le16(val: u16) -> u16;
+    fn from_le32(val: u32) -> u32;
+    fn from_le64(val: u64) -> u64;
+
+    // Convert TO big-endian (for writing in network byte order)
+    fn to_be16(val: u16) -> u16;
+    fn to_be32(val: u32) -> u32;
+    fn to_be64(val: u64) -> u64;
+
+    // Convert FROM big-endian (for reading network byte order)
+    fn from_be16(val: u16) -> u16;
+    fn from_be32(val: u32) -> u32;
+    fn from_be64(val: u64) -> u64;
+}
+
+// ============================================================================
+// DMA Operations
+// ============================================================================
+
+/// DMA synchronization for non-coherent systems
+///
+/// Critical for SGI MIPS, no-op for x86/coherent ARM
+/// — WireSaint
+pub trait DmaOps {
+    /// Is DMA coherent with CPU caches?
+    ///
+    /// Returns false for SGI MIPS, true for x86/most ARM
+    fn is_dma_coherent() -> bool;
+
+    /// Synchronize cache before device reads from memory
+    ///
+    /// Writes back dirty cache lines
+    ///
+    /// # Safety
+    /// Must be called before DMA write operation on non-coherent systems
+    unsafe fn dma_sync_for_device(addr: PhysAddr, len: usize);
+
+    /// Synchronize cache after device writes to memory
+    ///
+    /// Invalidates cache lines so CPU reads fresh data
+    ///
+    /// # Safety
+    /// Must be called after DMA read operation on non-coherent systems
+    unsafe fn dma_sync_for_cpu(addr: PhysAddr, len: usize);
+
+    /// Map virtual address for DMA
+    ///
+    /// # Safety
+    /// Returns physical address suitable for DMA
+    unsafe fn dma_map(addr: VirtAddr, len: usize) -> PhysAddr;
+
+    /// Unmap DMA region
+    ///
+    /// # Safety
+    /// Must be called after DMA complete
+    unsafe fn dma_unmap(addr: PhysAddr, len: usize);
+}
+
+// ============================================================================
+// Boot Protocol
+// ============================================================================
+
+/// Boot protocol abstraction
+///
+/// Handles UEFI (x86/ARM), ARCS (SGI MIPS), Device Tree, etc.
+/// — NeonRoot
+pub trait BootProtocol {
+    /// Boot information type
+    type BootInfo: BootInfo;
+
+    /// Early architecture initialization
+    ///
+    /// # Safety
+    /// Called very early in boot, before memory management
+    unsafe fn early_init(boot_info: &Self::BootInfo);
+
+    /// Parse boot information from bootloader
+    fn parse_boot_info(raw: &[u8]) -> Self::BootInfo;
+}
+
+// ============================================================================
+// Atomic Operations
+// ============================================================================
+
+/// Architecture-optimized atomic operations
+///
+/// Uses lock prefix (x86), ldrex/strex (ARM), ll/sc (MIPS)
+/// — RustViper
+pub trait AtomicOps {
+    /// Atomic compare-and-exchange on 64-bit value
+    ///
+    /// # Safety
+    /// Pointer must be valid and aligned
+    unsafe fn atomic_compare_exchange_64(ptr: *mut u64, old: u64, new: u64) -> u64;
+
+    /// Full memory barrier
+    ///
+    /// # Safety
+    /// Ensures all memory operations complete
+    unsafe fn memory_barrier();
+
+    /// Read memory barrier
+    ///
+    /// # Safety
+    /// Ensures all prior reads complete
+    unsafe fn read_barrier();
+
+    /// Write memory barrier
+    ///
+    /// # Safety
+    /// Ensures all prior writes complete
+    unsafe fn write_barrier();
+}
+
+// ============================================================================
+// Virtualization Support
+// ============================================================================
+
+/// Virtualization extensions support
+///
+/// VMX (Intel), SVM (AMD), VHE (ARM), VZ (MIPS)
+/// — ColdCipher
+pub trait VirtualizationExt {
+    /// VM control structure type
+    type VmcsType;
+
+    /// Check if virtualization is supported
+    fn has_virtualization() -> bool;
+
+    /// Enable virtualization extensions
+    ///
+    /// # Safety
+    /// Modifies CPU state to enable hypervisor mode
+    unsafe fn enable_virtualization();
+
+    /// Create a new VM control structure
+    ///
+    /// # Safety
+    /// Returns VMCS/VMCB or equivalent
+    unsafe fn create_vmcs() -> Option<Self::VmcsType>;
 }

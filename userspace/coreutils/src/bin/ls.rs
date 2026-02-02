@@ -556,7 +556,25 @@ fn list_directory(path: &[u8], args: &Args, depth: usize, show_header: bool) -> 
 
     close(fd);
 
+    eprints("[LS_DEBUG] Closed fd, entry_count=");
+    let mut count_str = [0u8; 20];
+    let mut i = 19;
+    let mut n = entry_count;
+    if n == 0 {
+        count_str[19] = b'0';
+        i = 19;
+    } else {
+        while n > 0 && i > 0 {
+            i -= 1;
+            count_str[i] = b'0' + (n % 10) as u8;
+            n /= 10;
+        }
+    }
+    eprints(unsafe { core::str::from_utf8_unchecked(&count_str[i..]) });
+    eprintlns("");
+
     // Sort entries alphabetically (simple bubble sort)
+    eprints("[LS_DEBUG] Starting sort\n");
     for i in 0..entry_count {
         for j in 0..entry_count - 1 - i {
             let cmp = compare_names(&entries[j].name, &entries[j + 1].name);
@@ -568,8 +586,10 @@ fn list_directory(path: &[u8], args: &Args, depth: usize, show_header: bool) -> 
             }
         }
     }
+    eprints("[LS_DEBUG] Sort complete\n");
 
     // Print entries
+    eprints("[LS_DEBUG] Starting print\n");
     if args.long_format {
         for i in 0..entry_count {
             print_long_entry(&entries[i], args);
@@ -590,11 +610,13 @@ fn list_directory(path: &[u8], args: &Args, depth: usize, show_header: bool) -> 
 
     // Recurse into subdirectories
     if args.recursive {
+        eprints("[LS_DEBUG] Recursing into subdirs\n");
         for i in 0..subdir_count {
             list_directory(&subdirs[i], args, depth + 1, true);
         }
     }
 
+    eprints("[LS_DEBUG] Returning from list_directory\n");
     0
 }
 

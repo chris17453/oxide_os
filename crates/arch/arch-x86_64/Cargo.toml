@@ -6,6 +6,8 @@ license.workspace = true
 
 [features]
 debug-input = []
+debug-pagefault = []
+debug-timer = []
 
 [dependencies]
 os_core = { workspace = true }

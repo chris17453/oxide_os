@@ -134,11 +134,11 @@ pub fn localeconv() -> *mut Lconv {
     &raw mut C_LCONV
 }
 
-/// nl_item type for nl_langinfo
-pub type nl_item = i32;
+/// NlItem type for nl_langinfo
+pub type NlItem = i32;
 
 /// CODESET constant - query for character encoding
-pub const CODESET: nl_item = 0;
+pub const CODESET: NlItem = 0;
 
 /// Static locale strings (English/US defaults)
 static UTF8_STR: &[u8] = b"UTF-8\0";
@@ -176,7 +176,7 @@ static ABMON_NAMES: [&[u8]; 12] = [
 /// nl_langinfo - get locale information
 ///
 /// Returns locale strings for English/US locale.
-pub unsafe fn nl_langinfo(item: nl_item) -> *const u8 {
+pub unsafe fn nl_langinfo(item: NlItem) -> *const u8 {
     match item {
         0 => UTF8_STR.as_ptr(),                                // CODESET
         1..=7 => DAY_NAMES[(item - 1) as usize].as_ptr(),      // DAY_1..DAY_7

@@ -122,6 +122,25 @@ fn main() -> i32 {
     // Start service manager in daemon mode
     start_servicemgr();
 
+    // Test EXIT syscall by running a short-lived process
+    printlns("[init] Testing EXIT syscall with pwd...");
+    let test_child = fork();
+    if test_child == 0 {
+        // Child - exec pwd (should exit after printing)
+        exec("/bin/pwd");
+        eprintlns("[init] Failed to exec pwd");
+        _exit(1);
+    } else if test_child > 0 {
+        // Parent - wait for it to complete
+        let mut status: i32 = 0;
+        let pid = waitpid(test_child, &mut status, 0);
+        if pid > 0 {
+            prints("[init] Test process exited with status ");
+            print_i64(wexitstatus(status) as i64);
+            printlns("");
+        }
+    }
+
     // Spawn getty on the primary TTY
     printlns("[init] Spawning getty...");
     let child = fork();
@@ -399,7 +418,7 @@ fn reap_zombies(mut getty_pid: i64) -> ! {
 
 /// Sleep for specified seconds
 fn sleep(seconds: u64) {
-    let mut ts = TimeSpec {
+    let ts = TimeSpec {
         tv_sec: seconds as i64,
         tv_nsec: 0,
     };

@@ -152,3 +152,21 @@ pub fn syscall6(
     }
     ret
 }
+
+/// Special syscall for EXIT - never returns
+/// — GraveShift: Explicit register setup to debug why syscall isn't executing
+#[inline(never)]
+#[unsafe(no_mangle)]
+pub extern "C" fn syscall_exit(status: usize) -> ! {
+    unsafe {
+        // Most explicit possible version - set registers manually
+        asm!(
+            "mov rax, 0",      // EXIT syscall number
+            "mov rdi, {0}",    // Exit status
+            "syscall",         // Execute syscall
+            "ud2",             // Undefined instruction - should never reach
+            in(reg) status,
+            options(noreturn),
+        );
+    }
+}

@@ -88,7 +88,14 @@ impl MemoryManager {
     /// # Returns
     /// Physical address of allocated memory, or error
     pub fn alloc_frames(&self, request: &AllocRequest) -> MmResult<PhysAddr> {
-        self.buddy.alloc(request)
+        let result = self.buddy.alloc(request);
+        #[cfg(feature = "debug-mmap")]
+        {
+            if let Ok(addr) = result {
+                log::debug!("[MMAP] alloc order={} addr={:#x}", request.order, addr.as_u64());
+            }
+        }
+        result
     }
 
     /// Allocate a single physical frame
@@ -119,6 +126,10 @@ impl MemoryManager {
     /// * `addr` - Physical address of memory to free
     /// * `order` - Order of the allocation (0 = 4KB, 1 = 8KB, etc.)
     pub fn free_frames(&self, addr: PhysAddr, order: usize) -> MmResult<()> {
+        #[cfg(feature = "debug-mmap")]
+        {
+            log::debug!("[MMAP] free order={} addr={:#x}", order, addr.as_u64());
+        }
         self.buddy.free(addr, order)
     }
 

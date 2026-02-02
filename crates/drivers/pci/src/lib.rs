@@ -1,12 +1,16 @@
 //! PCI Bus Support
 //!
-//! Provides PCI device enumeration and configuration space access for x86_64.
+//! Provides PCI device enumeration and configuration space access.
+//!
+//! Currently uses x86_64 port I/O via arch_traits::PortIo trait.
+//! — TorqueJax
 
 #![no_std]
 
 extern crate alloc;
 
 use alloc::vec::Vec;
+use arch_traits::PortIo;
 use core::sync::atomic::{AtomicBool, Ordering};
 use spin::Mutex;
 
@@ -371,25 +375,15 @@ pub fn enable_io_space(addr: PciAddress) {
     config_write32(addr, 0x04, (cmd | 0x01) as u32); // Set bit 0 (I/O space)
 }
 
-// x86_64 I/O port access
+// Architecture-agnostic I/O port access via trait
+// Uses the current architecture's PortIo implementation
+// — TorqueJax
 #[inline]
 unsafe fn outl(port: u16, value: u32) {
-    core::arch::asm!(
-        "out dx, eax",
-        in("dx") port,
-        in("eax") value,
-        options(nomem, nostack, preserves_flags)
-    );
+    unsafe { arch_x86_64::X86_64::outl(port, value) }
 }
 
 #[inline]
 unsafe fn inl(port: u16) -> u32 {
-    let value: u32;
-    core::arch::asm!(
-        "in eax, dx",
-        out("eax") value,
-        in("dx") port,
-        options(nomem, nostack, preserves_flags)
-    );
-    value
+    unsafe { arch_x86_64::X86_64::inl(port) }
 }

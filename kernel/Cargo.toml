@@ -6,9 +6,17 @@ license.workspace = true
 
 [features]
 default = []
+
+# Architecture selection (mutually exclusive)
+arch-aarch64 = ["dep:arch-aarch64"]
+arch-mips64 = ["dep:arch-mips64"]
+
 debug-syscall = []    # Enable syscall debug output
 debug-fork = ["proc/debug-fork"]       # Enable fork/exec debug output
 debug-cow = []        # Enable COW page fault debug output
+debug-pagefault = ["arch-x86_64/debug-pagefault"]  # Enable all page fault debug output
+debug-timer = ["arch-x86_64/debug-timer"]  # Enable timer interrupt debug output
+debug-mmap = ["mm-manager/debug-mmap"]  # Enable memory mapping debug output
 debug-proc = []       # Enable process management debug output
 debug-sched = ["syscall/debug-sched"]  # Enable scheduler context switch debug output
 debug-mouse = []      # Enable mouse/input debug output (ISR-safe)
@@ -17,13 +25,15 @@ debug-lock = ["terminal/debug-lock", "fb/debug-lock"]  # Enable lock contention 
 debug-console = ["devfs/debug-console", "vt/debug-console"]  # Enable console→VT I/O path tracing
 debug-syscall-perf = ["syscall/debug-syscall-perf"]  # Log slow syscalls (>50K cycles)
 debug-tty-read = ["tty/debug-tty-read", "devfs/debug-tty-read", "terminal/debug-tty-read", "terminal/arch-x86_64"]  # Log TTY read operations + filter serial escapes
-debug-all = ["debug-syscall", "debug-fork", "debug-cow", "debug-proc", "debug-sched", "debug-mouse", "debug-input", "debug-lock", "debug-console", "debug-syscall-perf", "debug-tty-read"]
+debug-all = ["debug-syscall", "debug-fork", "debug-cow", "debug-pagefault", "debug-timer", "debug-mmap", "debug-proc", "debug-sched", "debug-mouse", "debug-input", "debug-lock", "debug-console", "debug-syscall-perf", "debug-tty-read"]
 
 [dependencies]
 os_core = { workspace = true }
 os_log = { workspace = true }
 arch-traits = { workspace = true }
 arch-x86_64 = { path = "../crates/arch/arch-x86_64" }
+arch-aarch64 = { path = "../crates/arch/arch-aarch64", optional = true }
+arch-mips64 = { path = "../crates/arch/arch-mips64", optional = true }
 mm-traits = { workspace = true }
 mm-manager = { workspace = true }
 mm-paging = { workspace = true }

@@ -441,6 +441,47 @@ impl SyscallContext {
 /// Global syscall context
 static mut SYSCALL_CONTEXT: SyscallContext = SyscallContext::new();
 
+/// Helper: Write a string to serial output for debugging
+#[cfg(feature = "debug-exit")]
+fn serial_write_str(s: &str) {
+    use core::ptr::addr_of;
+    unsafe {
+        let ctx = addr_of!(SYSCALL_CONTEXT);
+        if let Some(write_fn) = (*ctx).serial_write {
+            write_fn(s.as_bytes());
+        }
+    }
+}
+
+/// Helper: Write an i32 to serial output for debugging
+#[cfg(feature = "debug-exit")]
+fn serial_write_i32(n: i32) {
+    use core::ptr::addr_of;
+    unsafe {
+        let ctx = addr_of!(SYSCALL_CONTEXT);
+        if let Some(write_fn) = (*ctx).serial_write {
+            let mut buf = [0u8; 12]; // enough for "-2147483648\0"
+            let mut i = 11;
+            let mut val = if n < 0 {
+                write_fn(b"-");
+                (n as i64).wrapping_neg() as u32
+            } else {
+                n as u32
+            };
+            if val == 0 {
+                write_fn(b"0");
+                return;
+            }
+            while val > 0 && i > 0 {
+                i -= 1;
+                buf[i] = b'0' + (val % 10) as u8;
+                val /= 10;
+            }
+            write_fn(&buf[i..12]);
+        }
+    }
+}
+
 /// Initialize syscall handlers
 ///
 /// # Safety
@@ -1016,10 +1057,22 @@ fn syscall_name(num: u64) -> &'static str {
 fn sys_exit(status: i32) -> i64 {
     use core::ptr::addr_of;
 
+    #[cfg(feature = "debug-exit")]
+    {
+        serial_write_str("[SYSCALL] exit called with status=");
+        serial_write_i32(status);
+        serial_write_str("\n");
+    }
+
     unsafe {
         let ctx = addr_of!(SYSCALL_CONTEXT);
         if let Some(exit_fn) = (*ctx).exit {
+            #[cfg(feature = "debug-exit")]
+            serial_write_str("[SYSCALL] Calling exit handler...\n");
             exit_fn(status);
+        } else {
+            #[cfg(feature = "debug-exit")]
+            serial_write_str("[SYSCALL] ERROR: No exit handler registered!\n");
         }
     }
 

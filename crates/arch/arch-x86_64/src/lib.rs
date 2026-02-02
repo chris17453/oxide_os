@@ -7,7 +7,11 @@
 
 extern crate ps2;
 
-use arch_traits::{Arch, PortIo, TlbControl};
+use arch_traits::{
+    Arch, AtomicOps, CacheOps, ControlRegisters, DmaOps, Endianness, ExceptionHandler,
+    InterruptContext as ArchInterruptContext, PortIo, SyscallInterface, SystemRegisters,
+    TlbControl,
+};
 use os_core::{PhysAddr, VirtAddr};
 
 pub mod ap_boot;
@@ -139,6 +143,393 @@ impl PortIo for X86_64 {
     #[inline]
     unsafe fn outl(port: u16, value: u32) {
         unsafe { outl(port, value) }
+    }
+}
+
+// ============================================================================
+// Control Registers Implementation
+// — GraveShift
+// ============================================================================
+
+impl ControlRegisters for X86_64 {
+    type PageTableRoot = PhysAddr;
+
+    #[inline]
+    fn read_page_table_root() -> Self::PageTableRoot {
+        let cr3: u64;
+        unsafe {
+            core::arch::asm!("mov {}, cr3", out(reg) cr3, options(nomem, nostack));
+        }
+        PhysAddr::new(cr3 & 0x000F_FFFF_FFFF_F000)
+    }
+
+    #[inline]
+    unsafe fn write_page_table_root(root: Self::PageTableRoot) {
+        unsafe {
+            core::arch::asm!("mov cr3, {}", in(reg) root.as_u64(), options(nostack));
+        }
+    }
+
+    #[inline]
+    fn read_instruction_pointer() -> u64 {
+        // On x86_64, RIP can only be read relative to current position
+        // Use a dummy call to get approximate RIP
+        let rip: u64;
+        unsafe {
+            core::arch::asm!(
+                "lea {}, [rip]",
+                out(reg) rip,
+                options(nomem, nostack, preserves_flags)
+            );
+        }
+        rip
+    }
+
+    #[inline]
+    fn read_stack_pointer() -> u64 {
+        let rsp: u64;
+        unsafe {
+            core::arch::asm!(
+                "mov {}, rsp",
+                out(reg) rsp,
+                options(nomem, nostack, preserves_flags)
+            );
+        }
+        rsp
+    }
+}
+
+// ============================================================================
+// System Registers (MSR) Implementation
+// — GraveShift
+// ============================================================================
+
+impl SystemRegisters for X86_64 {
+    #[inline]
+    unsafe fn read_sys_reg(id: u32) -> u64 {
+        let low: u32;
+        let high: u32;
+        unsafe {
+            core::arch::asm!(
+                "rdmsr",
+                in("ecx") id,
+                out("eax") low,
+                out("edx") high,
+                options(nomem, nostack, preserves_flags)
+            );
+        }
+        ((high as u64) << 32) | (low as u64)
+    }
+
+    #[inline]
+    unsafe fn write_sys_reg(id: u32, value: u64) {
+        let low = value as u32;
+        let high = (value >> 32) as u32;
+        unsafe {
+            core::arch::asm!(
+                "wrmsr",
+                in("ecx") id,
+                in("eax") low,
+                in("edx") high,
+                options(nomem, nostack, preserves_flags)
+            );
+        }
+    }
+}
+
+// ============================================================================
+// Endianness Implementation (x86_64 is little-endian)
+// — NeonRoot
+// ============================================================================
+
+impl Endianness for X86_64 {
+    #[inline]
+    fn is_big_endian() -> bool {
+        false
+    }
+
+    #[inline]
+    fn is_little_endian() -> bool {
+        true
+    }
+
+    // TO little-endian (no-op on x86_64)
+    #[inline]
+    fn to_le16(val: u16) -> u16 {
+        val
+    }
+
+    #[inline]
+    fn to_le32(val: u32) -> u32 {
+        val
+    }
+
+    #[inline]
+    fn to_le64(val: u64) -> u64 {
+        val
+    }
+
+    // FROM little-endian (no-op on x86_64)
+    #[inline]
+    fn from_le16(val: u16) -> u16 {
+        val
+    }
+
+    #[inline]
+    fn from_le32(val: u32) -> u32 {
+        val
+    }
+
+    #[inline]
+    fn from_le64(val: u64) -> u64 {
+        val
+    }
+
+    // TO big-endian (swap on x86_64)
+    #[inline]
+    fn to_be16(val: u16) -> u16 {
+        val.swap_bytes()
+    }
+
+    #[inline]
+    fn to_be32(val: u32) -> u32 {
+        val.swap_bytes()
+    }
+
+    #[inline]
+    fn to_be64(val: u64) -> u64 {
+        val.swap_bytes()
+    }
+
+    // FROM big-endian (swap on x86_64)
+    #[inline]
+    fn from_be16(val: u16) -> u16 {
+        val.swap_bytes()
+    }
+
+    #[inline]
+    fn from_be32(val: u32) -> u32 {
+        val.swap_bytes()
+    }
+
+    #[inline]
+    fn from_be64(val: u64) -> u64 {
+        val.swap_bytes()
+    }
+}
+
+// ============================================================================
+// Cache Operations (x86_64 has hardware cache coherency)
+// — WireSaint
+// ============================================================================
+
+impl CacheOps for X86_64 {
+    #[inline]
+    unsafe fn flush_cache() {
+        // WBINVD - Write back and invalidate all caches
+        unsafe {
+            core::arch::asm!("wbinvd", options(nomem, nostack));
+        }
+    }
+
+    #[inline]
+    unsafe fn flush_cache_range(_start: VirtAddr, _len: usize) {
+        // On x86_64, cache is coherent with memory
+        // CLFLUSH could be used for specific lines, but generally not needed
+        // For compatibility with non-coherent architectures, we provide no-op
+    }
+
+    #[inline]
+    unsafe fn invalidate_cache_range(_start: VirtAddr, _len: usize) {
+        // x86_64 cache is coherent - no manual invalidation needed
+    }
+
+    #[inline]
+    unsafe fn invalidate_icache() {
+        // x86_64 has coherent instruction cache
+        // Self-modifying code requires serializing instruction
+        // Use MFENCE to serialize execution
+        unsafe {
+            core::arch::asm!("mfence", options(nomem, nostack, preserves_flags));
+        }
+    }
+
+    #[inline]
+    fn is_cache_coherent() -> bool {
+        true
+    }
+}
+
+// ============================================================================
+// DMA Operations (x86_64 has coherent DMA)
+// — WireSaint
+// ============================================================================
+
+impl DmaOps for X86_64 {
+    #[inline]
+    fn is_dma_coherent() -> bool {
+        true
+    }
+
+    #[inline]
+    unsafe fn dma_sync_for_device(_addr: PhysAddr, _len: usize) {
+        // x86_64 DMA is coherent - no sync needed
+    }
+
+    #[inline]
+    unsafe fn dma_sync_for_cpu(_addr: PhysAddr, _len: usize) {
+        // x86_64 DMA is coherent - no sync needed
+    }
+
+    #[inline]
+    unsafe fn dma_map(addr: VirtAddr, _len: usize) -> PhysAddr {
+        // Simple identity mapping for now
+        // In reality, we'd need to translate via page tables
+        PhysAddr::new(addr.as_u64())
+    }
+
+    #[inline]
+    unsafe fn dma_unmap(_addr: PhysAddr, _len: usize) {
+        // x86_64 coherent DMA - nothing to unmap
+    }
+}
+
+// ============================================================================
+// Atomic Operations (x86_64 lock prefix)
+// — RustViper
+// ============================================================================
+
+impl AtomicOps for X86_64 {
+    #[inline]
+    unsafe fn atomic_compare_exchange_64(ptr: *mut u64, old: u64, new: u64) -> u64 {
+        let prev: u64;
+        unsafe {
+            core::arch::asm!(
+                "lock cmpxchg qword ptr [{ptr}], {new}",
+                ptr = in(reg) ptr,
+                new = in(reg) new,
+                inout("rax") old => prev,
+                options(nostack)
+            );
+        }
+        prev
+    }
+
+    #[inline]
+    unsafe fn memory_barrier() {
+        // MFENCE - Full memory barrier
+        unsafe {
+            core::arch::asm!("mfence", options(nomem, nostack, preserves_flags));
+        }
+    }
+
+    #[inline]
+    unsafe fn read_barrier() {
+        // LFENCE - Load fence
+        unsafe {
+            core::arch::asm!("lfence", options(nomem, nostack, preserves_flags));
+        }
+    }
+
+    #[inline]
+    unsafe fn write_barrier() {
+        // SFENCE - Store fence
+        unsafe {
+            core::arch::asm!("sfence", options(nomem, nostack, preserves_flags));
+        }
+    }
+}
+
+// ============================================================================
+// Exception Handling Implementation
+// — BlackLatch
+// ============================================================================
+
+impl ExceptionHandler for X86_64 {
+    type ExceptionFrame = exceptions::InterruptFrame;
+    type ExceptionVector = u8;
+
+    #[inline]
+    unsafe fn register_exception(vector: Self::ExceptionVector, handler: usize) {
+        // Register handler in IDT
+        // This delegates to the IDT module to set up the handler
+        unsafe {
+            idt::set_handler(vector, handler as u64);
+        }
+    }
+
+    #[inline]
+    unsafe fn init_exceptions() {
+        // Initialize IDT and exception handlers
+        // This is already done in init(), but we provide the trait method
+        unsafe {
+            idt::init();
+        }
+    }
+
+    fn exception_context_from_frame(frame: &Self::ExceptionFrame) -> ArchInterruptContext {
+        // Convert x86_64 interrupt frame to architecture-agnostic context
+        // Fill in what we can from the frame
+        let mut general_purpose = [0u64; 32];
+        // x86_64 has only 16 GP registers, leave rest as 0
+
+        ArchInterruptContext {
+            general_purpose,
+            instruction_pointer: frame.rip,
+            stack_pointer: frame.rsp,
+            flags: frame.rflags,
+            arch_specific: [
+                frame.cs,    // Code segment
+                frame.ss,    // Stack segment
+                0, 0, 0, 0, 0, 0,
+            ],
+        }
+    }
+}
+
+// ============================================================================
+// Syscall Interface Implementation
+// — ThreadRogue
+// ============================================================================
+
+impl SyscallInterface for X86_64 {
+    type SyscallFrame = syscall::SyscallUserContext;
+
+    #[inline]
+    unsafe fn init_syscall_mechanism() {
+        // Initialize syscall/sysret MSRs
+        unsafe {
+            syscall::init();
+        }
+    }
+
+    #[inline]
+    fn syscall_entry_point() -> usize {
+        // Return address of syscall entry function
+        // This is set up in syscall::init() via LSTAR MSR
+        syscall::syscall_entry as *const () as usize
+    }
+
+    fn syscall_number(frame: &Self::SyscallFrame) -> usize {
+        // Syscall number is in RAX
+        frame.rax as usize
+    }
+
+    fn syscall_args(frame: &Self::SyscallFrame) -> [usize; 6] {
+        // x86_64 syscall ABI: RDI, RSI, RDX, R10, R8, R9
+        [
+            frame.rdi as usize,
+            frame.rsi as usize,
+            frame.rdx as usize,
+            frame.r10 as usize,
+            frame.r8 as usize,
+            frame.r9 as usize,
+        ]
+    }
+
+    fn set_syscall_return(frame: &mut Self::SyscallFrame, value: usize) {
+        // Return value goes in RAX
+        frame.rax = value as u64;
     }
 }
 

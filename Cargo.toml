@@ -7,6 +7,8 @@ members = [
     "crates/core/os_log",
     "crates/arch/arch-traits",
     "crates/arch/arch-x86_64",
+    "crates/arch/arch-aarch64",
+    "crates/arch/arch-mips64",
     "crates/mm/mm-traits",
     "crates/mm/mm-core",
     "crates/mm/mm-manager",
@@ -139,6 +141,8 @@ os_core = { path = "crates/core/os_core" }
 os_log = { path = "crates/core/os_log" }
 arch-traits = { path = "crates/arch/arch-traits" }
 arch-x86_64 = { path = "crates/arch/arch-x86_64" }
+arch-aarch64 = { path = "crates/arch/arch-aarch64" }
+arch-mips64 = { path = "crates/arch/arch-mips64" }
 mm-traits = { path = "crates/mm/mm-traits" }
 mm-core = { path = "crates/mm/mm-core" }
 mm-manager = { path = "crates/mm/mm-manager" }

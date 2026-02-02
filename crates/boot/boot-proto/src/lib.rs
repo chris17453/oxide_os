@@ -1,9 +1,22 @@
 //! OXIDE Boot Protocol
 //!
 //! Defines the interface between bootloader and kernel.
-//! This crate is shared by both the UEFI bootloader and the kernel.
+//! This crate is shared by bootloaders and the kernel.
+//!
+//! ## Supported Boot Protocols
+//!
+//! - **UEFI**: x86_64, aarch64 (primary)
+//! - **ARCS**: SGI MIPS64 (skeleton)
+//! - **Device Tree**: ARM, RISC-V (future)
+//!
+//! — NeonRoot
 
 #![no_std]
+
+pub mod arcs;
+pub mod traits;
+
+pub use traits::*;
 
 /// Magic number to verify boot info validity
 pub const BOOT_INFO_MAGIC: u64 = 0xEFF1_0000_B007_1AF0;

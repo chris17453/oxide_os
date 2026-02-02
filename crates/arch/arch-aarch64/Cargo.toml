@@ -1,0 +1,8 @@
+[package]
+name = "arch-aarch64"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arch-traits = { path = "../arch-traits" }
+os_core = { path = "../../core/os_core" }

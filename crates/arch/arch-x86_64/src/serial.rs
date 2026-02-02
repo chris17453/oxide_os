@@ -121,10 +121,14 @@ pub fn write_byte(byte: u8) {
 pub unsafe fn write_byte_unsafe(byte: u8) {
     use crate::{inb, outb};
     // Wait for transmit buffer empty
-    while (inb(COM1_PORT + regs::LSR) & lsr::THRE) == 0 {
-        core::hint::spin_loop();
+    // SAFETY: Direct port I/O; caller ensures exclusive access in ISR context
+    // — SableWire
+    unsafe {
+        while (inb(COM1_PORT + regs::LSR) & lsr::THRE) == 0 {
+            core::hint::spin_loop();
+        }
+        outb(COM1_PORT + regs::DATA, byte);
     }
-    outb(COM1_PORT + regs::DATA, byte);
 }
 
 /// Write a string to COM1 without taking a lock (for interrupt handlers)
@@ -134,10 +138,14 @@ pub unsafe fn write_byte_unsafe(byte: u8) {
 #[inline]
 pub unsafe fn write_str_unsafe(s: &str) {
     for byte in s.bytes() {
-        if byte == b'\n' {
-            write_byte_unsafe(b'\r');
+        // SAFETY: Caller ensures ISR context with exclusive access; write_byte_unsafe upholds same guarantee
+        // — SableWire
+        unsafe {
+            if byte == b'\n' {
+                write_byte_unsafe(b'\r');
+            }
+            write_byte_unsafe(byte);
         }
-        write_byte_unsafe(byte);
     }
 }
 
@@ -154,10 +162,14 @@ pub fn read_byte() -> Option<u8> {
 #[inline]
 pub unsafe fn read_byte_unsafe() -> Option<u8> {
     use crate::inb;
-    if (inb(COM1_PORT + regs::LSR) & lsr::DR) != 0 {
-        Some(inb(COM1_PORT + regs::DATA))
-    } else {
-        None
+    // SAFETY: Direct port I/O; caller ensures ISR context with no concurrent reads
+    // — SableWire
+    unsafe {
+        if (inb(COM1_PORT + regs::LSR) & lsr::DR) != 0 {
+            Some(inb(COM1_PORT + regs::DATA))
+        } else {
+            None
+        }
     }
 }
 

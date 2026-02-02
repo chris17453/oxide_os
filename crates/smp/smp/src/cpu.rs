@@ -4,7 +4,6 @@
 
 use crate::MAX_CPUS;
 use crate::percpu;
-use arch_traits::Arch;
 use arch_x86_64 as arch;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 

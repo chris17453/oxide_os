@@ -417,92 +417,97 @@ const DT_DIR: u8 = 4;
 /// Called by readline when the user presses TAB. Returns a NULL-terminated
 /// array of matches (first element = longest common prefix), or NULL.
 unsafe extern "C" fn shell_completion(text: *const u8, start: i32, _end: i32) -> *mut *mut u8 {
-    // Suppress default filename completion — we handle it ourselves
-    libc::readline::rl_attempted_completion_over = 1;
+    // SAFETY: This is a readline C callback; all pointer/raw operations here are part of
+    // readline's completion protocol. Caller (readline) ensures text pointer validity.
+    // — ThreadRogue
+    unsafe {
+        // Suppress default filename completion — we handle it ourselves
+        libc::readline::rl_attempted_completion_over = 1;
 
-    let text_len = libc::string::strlen(text);
-    let prefix = core::slice::from_raw_parts(text, text_len);
+        let text_len = libc::string::strlen(text);
+        let prefix = core::slice::from_raw_parts(text, text_len);
 
-    // Determine if we're completing a command (first word) or a path
-    let is_first_word = start == 0;
+        // Determine if we're completing a command (first word) or a path
+        let is_first_word = start == 0;
 
-    // Check if prefix contains a / (path completion even for first word)
-    let has_slash = prefix.iter().any(|&c| c == b'/');
+        // Check if prefix contains a / (path completion even for first word)
+        let has_slash = prefix.iter().any(|&c| c == b'/');
 
-    let mut completions: [[u8; 64]; MAX_COMPLETIONS] = [[0u8; 64]; MAX_COMPLETIONS];
-    let num_completions;
+        let mut completions: [[u8; 64]; MAX_COMPLETIONS] = [[0u8; 64]; MAX_COMPLETIONS];
+        let num_completions;
 
-    if is_first_word && !has_slash {
-        num_completions = complete_commands(prefix, text_len, &mut completions);
-    } else {
-        num_completions = complete_paths(prefix, text_len, &mut completions);
-    }
-
-    if num_completions == 0 {
-        return core::ptr::null_mut();
-    }
-
-    // Build the matches array in readline's format:
-    // matches[0] = longest common prefix (LCD)
-    // matches[1..N] = individual matches
-    // matches[N+1] = NULL
-
-    let array_size = (num_completions + 2) * core::mem::size_of::<*mut u8>();
-    let array = libc::c_exports::malloc(array_size) as *mut *mut u8;
-    if array.is_null() {
-        return core::ptr::null_mut();
-    }
-
-    // Find LCD (longest common prefix)
-    let first_len = bytes_len(&completions[0]);
-    let mut lcd_len = first_len;
-    for i in 1..num_completions {
-        let other_len = bytes_len(&completions[i]);
-        let mut j = 0;
-        while j < lcd_len && j < other_len && completions[0][j] == completions[i][j] {
-            j += 1;
+        if is_first_word && !has_slash {
+            num_completions = complete_commands(prefix, text_len, &mut completions);
+        } else {
+            num_completions = complete_paths(prefix, text_len, &mut completions);
         }
-        lcd_len = j;
-    }
 
-    // Allocate LCD string
-    let lcd = libc::c_exports::malloc(lcd_len + 1);
-    if !lcd.is_null() {
-        core::ptr::copy_nonoverlapping(completions[0].as_ptr(), lcd, lcd_len);
-        *lcd.add(lcd_len) = 0;
-    }
-    *array.add(0) = lcd;
+        if num_completions == 0 {
+            return core::ptr::null_mut();
+        }
 
-    // Copy individual matches
-    for i in 0..num_completions {
-        let mlen = bytes_len(&completions[i]);
-        // Check if this is a directory — byte 63 stores d_type
-        let is_dir = completions[i][63] == DT_DIR;
+        // Build the matches array in readline's format:
+        // matches[0] = longest common prefix (LCD)
+        // matches[1..N] = individual matches
+        // matches[N+1] = NULL
 
-        let alloc_len = if is_dir { mlen + 2 } else { mlen + 1 };
-        let m = libc::c_exports::malloc(alloc_len);
-        if !m.is_null() {
-            core::ptr::copy_nonoverlapping(completions[i].as_ptr(), m, mlen);
-            if is_dir {
-                *m.add(mlen) = b'/';
-                *m.add(mlen + 1) = 0;
-            } else {
-                *m.add(mlen) = 0;
+        let array_size = (num_completions + 2) * core::mem::size_of::<*mut u8>();
+        let array = libc::c_exports::malloc(array_size) as *mut *mut u8;
+        if array.is_null() {
+            return core::ptr::null_mut();
+        }
+
+        // Find LCD (longest common prefix)
+        let first_len = bytes_len(&completions[0]);
+        let mut lcd_len = first_len;
+        for i in 1..num_completions {
+            let other_len = bytes_len(&completions[i]);
+            let mut j = 0;
+            while j < lcd_len && j < other_len && completions[0][j] == completions[i][j] {
+                j += 1;
             }
+            lcd_len = j;
         }
-        *array.add(i + 1) = m;
-    }
-    *array.add(num_completions + 1) = core::ptr::null_mut();
 
-    // For single completions, readline appends a space by default which is fine
-    // For directory completions we already added '/', suppress the extra space
-    if num_completions == 1 && completions[0][63] == DT_DIR {
-        libc::readline::rl_completion_suppress_append = 1;
-    } else {
-        libc::readline::rl_completion_suppress_append = 0;
-    }
+        // Allocate LCD string
+        let lcd = libc::c_exports::malloc(lcd_len + 1);
+        if !lcd.is_null() {
+            core::ptr::copy_nonoverlapping(completions[0].as_ptr(), lcd, lcd_len);
+            *lcd.add(lcd_len) = 0;
+        }
+        *array.add(0) = lcd;
 
-    array
+        // Copy individual matches
+        for i in 0..num_completions {
+            let mlen = bytes_len(&completions[i]);
+            // Check if this is a directory — byte 63 stores d_type
+            let is_dir = completions[i][63] == DT_DIR;
+
+            let alloc_len = if is_dir { mlen + 2 } else { mlen + 1 };
+            let m = libc::c_exports::malloc(alloc_len);
+            if !m.is_null() {
+                core::ptr::copy_nonoverlapping(completions[i].as_ptr(), m, mlen);
+                if is_dir {
+                    *m.add(mlen) = b'/';
+                    *m.add(mlen + 1) = 0;
+                } else {
+                    *m.add(mlen) = 0;
+                }
+            }
+            *array.add(i + 1) = m;
+        }
+        *array.add(num_completions + 1) = core::ptr::null_mut();
+
+        // For single completions, readline appends a space by default which is fine
+        // For directory completions we already added '/', suppress the extra space
+        if num_completions == 1 && completions[0][63] == DT_DIR {
+            libc::readline::rl_completion_suppress_append = 1;
+        } else {
+            libc::readline::rl_completion_suppress_append = 0;
+        }
+
+        array
+    }
 }
 
 /// Main shell entry point

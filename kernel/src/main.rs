@@ -15,6 +15,7 @@ extern crate alloc;
 mod debug;
 
 // Kernel modules
+mod arch;
 mod console;
 mod fault;
 mod globals;
@@ -26,15 +27,13 @@ mod scheduler;
 mod smp_init;
 mod vfs_sched_glue;
 
-use arch_traits::Arch;
-use arch_x86_64 as arch;
-use arch_x86_64::serial;
+use arch_traits::Arch as _;
 use core::fmt::Write;
 use core::panic::PanicInfo;
 
 /// Get a serial writer for debug output
-pub fn serial_writer() -> serial::SerialWriter {
-    serial::SerialWriter
+pub fn serial_writer() -> arch::SerialWriter {
+    arch::serial_writer()
 }
 
 /// Kernel entry point - delegates to init module
@@ -46,7 +45,7 @@ pub extern "C" fn kernel_main(boot_info: &'static boot_proto::BootInfo) -> ! {
 /// Panic handler
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    let mut writer = serial::SerialWriter;
+    let mut writer = arch::SerialWriter;
 
     let _ = writeln!(writer);
     let _ = writeln!(writer, "========================================");
@@ -68,5 +67,5 @@ fn panic(info: &PanicInfo) -> ! {
     let _ = writeln!(writer);
     let _ = writeln!(writer, "System halted.");
 
-    arch::X86_64::halt()
+    arch::Arch::halt()
 }

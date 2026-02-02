@@ -22,27 +22,27 @@ use libc::{print, println};
 
 /// Parse command line arguments
 struct Args {
-    source: Option<&'static str>,
-    target: Option<&'static str>,
+    _source: Option<&'static str>,
+    _target: Option<&'static str>,
     fstype: Option<&'static str>,
     flags: u32,
     mount_all: bool,
     show_help: bool,
     verbose: bool,
-    list_mounts: bool,
+    _list_mounts: bool,
 }
 
 impl Args {
     fn new() -> Self {
         Args {
-            source: None,
-            target: None,
+            _source: None,
+            _target: None,
             fstype: None,
             flags: 0,
             mount_all: false,
             show_help: false,
             verbose: false,
-            list_mounts: false,
+            _list_mounts: false,
         }
     }
 }

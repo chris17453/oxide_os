@@ -8,7 +8,6 @@
 
 extern crate alloc;
 
-use alloc::string::String;
 use rust_gwbasic::platform::{Console, OxideConsole};
 use rust_gwbasic::{Interpreter, Lexer, Parser};
 
@@ -128,6 +127,7 @@ pub extern "C" fn watos_get_key_no_wait() -> u8 {
 
 /// Get current date - used by DATE$ function
 #[no_mangle]
+#[allow(improper_ctypes_definitions)]
 pub extern "C" fn watos_get_date() -> (u16, u8, u8) {
     // Get current time and convert to date
     let t = libc::time::time(None);
@@ -145,6 +145,7 @@ pub extern "C" fn watos_get_date() -> (u16, u8, u8) {
 
 /// Get current time - used by TIME$ function
 #[no_mangle]
+#[allow(improper_ctypes_definitions)]
 pub extern "C" fn watos_get_time() -> (u8, u8, u8) {
     // Get time from libc
     let t = libc::time::time(None);
