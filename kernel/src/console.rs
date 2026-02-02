@@ -407,7 +407,7 @@ static mut EXTENDED_SCANCODE: bool = false;
 ///
 /// **DO NOT USE THIS FOR MAIN INPUT PATH.**
 ///
-/// The PS/2 IRQ handler (crates/drivers/input/ps2/) is now the authoritative
+/// The PS/2 IRQ handler (kernel/drivers/input/ps2/) is now the authoritative
 /// source for keyboard input. It tracks modifiers correctly and pushes to
 /// the console callback, which feeds the VT manager's lock-free ring buffer.
 ///

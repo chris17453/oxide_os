@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-`kernel/` contains the Rust kernel, `bootloader/` builds the handoff UEFI image, and `userspace/` holds init, shells, daemons, and `userspace/userspace.ld`. Shared crates and drivers sit in `crates/`, while host-side helpers and scripts are in `apps/`, `tools/`, and `scripts/`. Keep specs and walkthroughs in `docs/`, leave third-party drops inside `external/`, and treat `target/` as disposable output.
+`kernel/` contains the Rust kernel and all subsystem crates (mm, vfs, drivers, net, sched, security, etc.), `bootloader/` builds the handoff UEFI image, and `userspace/` holds all userspace programs organized by role (system, shell, coreutils, services, apps, libs, devtools, tests). Host-side helpers and scripts are in `tools/` and `scripts/`. Keep specs and walkthroughs in `docs/`, leave third-party source drops inside `external/`, and treat `target/` as disposable output.
 
 ## Build, Test, and Development Commands
 - `make build` – compile kernel and bootloader for the current `ARCH`/`PROFILE`.

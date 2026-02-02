@@ -70,7 +70,7 @@
 - Docs: `docs/DRIVES.md` (boot/filesystem flow).
 - Toolchain: `toolchain/README.md`, `toolchain/QUICKSTART.md`, `toolchain/SUMMARY.md`, `toolchain/INTEGRATION.md`.
 - Components: `userspace/coreutils/TEST_PLAN.md`, `userspace/coreutils/UTILITIES.md`, `userspace/shell/BUILTINS.md`, `apps/gwbasic/README.md`.
-- Code roots: `kernel/`, `crates/`, `bootloader/`, `userspace/`, `apps/`, `tools/`, `scripts/`, `external/`.
+- Code roots: `kernel/` (entry + all subsystems), `bootloader/`, `userspace/`, `tools/`, `scripts/`, `external/`.
 
 ## Guardrails (must follow)
 - **No stubs or TODO fallbacks.** Implement fully or state concrete blockers/needs.

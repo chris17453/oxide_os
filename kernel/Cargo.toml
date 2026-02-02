@@ -31,9 +31,9 @@ debug-all = ["debug-syscall", "debug-fork", "debug-cow", "debug-pagefault", "deb
 os_core = { workspace = true }
 os_log = { workspace = true }
 arch-traits = { workspace = true }
-arch-x86_64 = { path = "../crates/arch/arch-x86_64" }
-arch-aarch64 = { path = "../crates/arch/arch-aarch64", optional = true }
-arch-mips64 = { path = "../crates/arch/arch-mips64", optional = true }
+arch-x86_64 = { path = "arch/arch-x86_64" }
+arch-aarch64 = { path = "arch/arch-aarch64", optional = true }
+arch-mips64 = { path = "arch/arch-mips64", optional = true }
 mm-traits = { workspace = true }
 mm-manager = { workspace = true }
 mm-paging = { workspace = true }

@@ -3,98 +3,98 @@ resolver = "2"
 
 members = [
     "kernel",
-    "crates/core/os_core",
-    "crates/core/os_log",
-    "crates/arch/arch-traits",
-    "crates/arch/arch-x86_64",
-    "crates/arch/arch-aarch64",
-    "crates/arch/arch-mips64",
-    "crates/mm/mm-traits",
-    "crates/mm/mm-core",
-    "crates/mm/mm-manager",
-    "crates/mm/mm-slab",
-    "crates/mm/mm-paging",
-    "crates/mm/mm-heap",
-    "crates/mm/mm-cow",
-    "crates/sched/sched-traits",
-    "crates/sched/sched",
-    "crates/proc/proc-traits",
-    "crates/proc/proc",
-    "crates/exec/elf",
-    "crates/syscall/syscall",
-    "crates/boot/boot-proto",
-    "crates/drivers/driver-traits",
-    "crates/drivers/serial/driver-uart-8250",
-    "crates/drivers/block/virtio-blk",
-    "crates/drivers/block/nvme",
-    "crates/drivers/block/ahci",
-    "crates/block/block",
-    "crates/block/gpt",
-    "crates/vfs/vfs",
-    "crates/vfs/devfs",
-    "crates/vfs/tmpfs",
-    "crates/vfs/initramfs",
-    "crates/vfs/procfs",
-    "crates/fs/oxidefs",
-    "crates/fs/fat32",
-    "crates/fs/ext4",
-    "crates/net/net",
-    "crates/net/tcpip",
-    "crates/net/dhcp",
-    "crates/net/dns",
-    "crates/drivers/net/virtio-net",
-    "crates/drivers/pci",
-    "crates/input/input",
-    "crates/drivers/input/ps2",
-    "crates/drivers/input/virtio-input",
-    "crates/graphics/fb",
-    "crates/terminal",
-    "crates/drivers/gpu/virtio-gpu",
-    "crates/audio/audio",
-    "crates/drivers/audio/virtio-snd",
-    "crates/usb/usb",
-    "crates/drivers/usb/xhci",
-    "crates/drivers/usb/usb-msc",
-    "crates/drivers/usb/usb-hid",
-    "crates/container/namespace",
-    "crates/container/cgroup",
-    "crates/container/seccomp",
-    "crates/hypervisor/vmm",
-    "crates/hypervisor/vmx",
-    "crates/hypervisor/virtio-emu",
-    "crates/libc-support/pthread",
-    "crates/libc-support/mmap",
-    "crates/libc-support/dl",
-    "crates/ai/hnsw",
-    "crates/ai/embed",
-    "crates/ai/indexd",
-    "crates/security/crypto",
-    "crates/security/trust",
-    "crates/security/quarantine",
-    "crates/security/x509",
-    "crates/async/epoll",
-    "crates/async/iouring",
-    "crates/media/media",
-    "crates/media/automount",
-    "crates/net/smb",
-    "crates/net/nfs",
-    "crates/net/rdp/rdp-traits",
-    "crates/net/rdp/rdp-proto",
-    "crates/net/rdp/rdp-graphics",
-    "crates/net/rdp/rdp-input",
-    "crates/net/rdp/rdp-security",
-    "crates/net/rdp/rdp-server",
-    "crates/net/rdp/rdp-channels",
-    "crates/compat/v86",
-    "crates/compat/python-sandbox",
-    "crates/compat/binfmt",
-    "crates/compat/syscall-compat",
-    "crates/tty/tty",
-    "crates/tty/pty",
-    "crates/tty/vt",
-    "crates/signal/signal",
-    "crates/smp/smp",
-    "crates/module/module",
+    "kernel/core/os_core",
+    "kernel/core/os_log",
+    "kernel/arch/arch-traits",
+    "kernel/arch/arch-x86_64",
+    "kernel/arch/arch-aarch64",
+    "kernel/arch/arch-mips64",
+    "kernel/mm/mm-traits",
+    "kernel/mm/mm-core",
+    "kernel/mm/mm-manager",
+    "kernel/mm/mm-slab",
+    "kernel/mm/mm-paging",
+    "kernel/mm/mm-heap",
+    "kernel/mm/mm-cow",
+    "kernel/sched/sched-traits",
+    "kernel/sched/sched",
+    "kernel/proc/proc-traits",
+    "kernel/proc/proc",
+    "kernel/exec/elf",
+    "kernel/syscall/syscall",
+    "kernel/boot/boot-proto",
+    "kernel/drivers/driver-traits",
+    "kernel/drivers/serial/driver-uart-8250",
+    "kernel/drivers/block/virtio-blk",
+    "kernel/drivers/block/nvme",
+    "kernel/drivers/block/ahci",
+    "kernel/block/block",
+    "kernel/block/gpt",
+    "kernel/vfs/vfs",
+    "kernel/vfs/devfs",
+    "kernel/vfs/tmpfs",
+    "kernel/vfs/initramfs",
+    "kernel/vfs/procfs",
+    "kernel/fs/oxidefs",
+    "kernel/fs/fat32",
+    "kernel/fs/ext4",
+    "kernel/net/net",
+    "kernel/net/tcpip",
+    "kernel/net/dhcp",
+    "kernel/net/dns",
+    "kernel/drivers/net/virtio-net",
+    "kernel/drivers/pci",
+    "kernel/input/input",
+    "kernel/drivers/input/ps2",
+    "kernel/drivers/input/virtio-input",
+    "kernel/graphics/fb",
+    "kernel/tty/terminal",
+    "kernel/drivers/gpu/virtio-gpu",
+    "kernel/audio/audio",
+    "kernel/drivers/audio/virtio-snd",
+    "kernel/usb/usb",
+    "kernel/drivers/usb/xhci",
+    "kernel/drivers/usb/usb-msc",
+    "kernel/drivers/usb/usb-hid",
+    "kernel/container/namespace",
+    "kernel/container/cgroup",
+    "kernel/container/seccomp",
+    "kernel/hypervisor/vmm",
+    "kernel/hypervisor/vmx",
+    "kernel/hypervisor/virtio-emu",
+    "kernel/libc-support/pthread",
+    "kernel/libc-support/mmap",
+    "kernel/libc-support/dl",
+    "kernel/ai/hnsw",
+    "kernel/ai/embed",
+    "kernel/ai/indexd",
+    "kernel/security/crypto",
+    "kernel/security/trust",
+    "kernel/security/quarantine",
+    "kernel/security/x509",
+    "kernel/async/epoll",
+    "kernel/async/iouring",
+    "kernel/media/media",
+    "kernel/media/automount",
+    "kernel/net/smb",
+    "kernel/net/nfs",
+    "kernel/net/rdp/rdp-traits",
+    "kernel/net/rdp/rdp-proto",
+    "kernel/net/rdp/rdp-graphics",
+    "kernel/net/rdp/rdp-input",
+    "kernel/net/rdp/rdp-security",
+    "kernel/net/rdp/rdp-server",
+    "kernel/net/rdp/rdp-channels",
+    "kernel/compat/v86",
+    "kernel/compat/python-sandbox",
+    "kernel/compat/binfmt",
+    "kernel/compat/syscall-compat",
+    "kernel/tty/tty",
+    "kernel/tty/pty",
+    "kernel/tty/vt",
+    "kernel/signal/signal",
+    "kernel/smp/smp",
+    "kernel/module/module",
     "userspace/libc",
     "userspace/init",
     "userspace/shell",
@@ -135,97 +135,97 @@ spin = "0.9"
 log = { version = "0.4", default-features = false }
 
 # Internal crates
-os_core = { path = "crates/core/os_core" }
-os_log = { path = "crates/core/os_log" }
-arch-traits = { path = "crates/arch/arch-traits" }
-arch-x86_64 = { path = "crates/arch/arch-x86_64" }
-arch-aarch64 = { path = "crates/arch/arch-aarch64" }
-arch-mips64 = { path = "crates/arch/arch-mips64" }
-mm-traits = { path = "crates/mm/mm-traits" }
-mm-core = { path = "crates/mm/mm-core" }
-mm-manager = { path = "crates/mm/mm-manager" }
-mm-slab = { path = "crates/mm/mm-slab" }
-mm-paging = { path = "crates/mm/mm-paging" }
-mm-heap = { path = "crates/mm/mm-heap" }
-mm-cow = { path = "crates/mm/mm-cow" }
-sched-traits = { path = "crates/sched/sched-traits" }
-sched = { path = "crates/sched/sched" }
-proc-traits = { path = "crates/proc/proc-traits" }
-proc = { path = "crates/proc/proc" }
-elf = { path = "crates/exec/elf" }
-syscall = { path = "crates/syscall/syscall" }
-boot-proto = { path = "crates/boot/boot-proto" }
-driver-traits = { path = "crates/drivers/driver-traits" }
-vfs = { path = "crates/vfs/vfs" }
-devfs = { path = "crates/vfs/devfs" }
-tmpfs = { path = "crates/vfs/tmpfs" }
-initramfs = { path = "crates/vfs/initramfs" }
-procfs = { path = "crates/vfs/procfs" }
-tty = { path = "crates/tty/tty" }
-pty = { path = "crates/tty/pty" }
-vt = { path = "crates/tty/vt" }
-signal = { path = "crates/signal/signal" }
-smp = { path = "crates/smp/smp" }
-module = { path = "crates/module/module" }
-block = { path = "crates/block/block" }
-gpt = { path = "crates/block/gpt" }
-virtio-blk = { path = "crates/drivers/block/virtio-blk" }
-nvme = { path = "crates/drivers/block/nvme" }
-ahci = { path = "crates/drivers/block/ahci" }
-oxidefs = { path = "crates/fs/oxidefs" }
-fat32 = { path = "crates/fs/fat32" }
-ext4 = { path = "crates/fs/ext4" }
-net = { path = "crates/net/net" }
-tcpip = { path = "crates/net/tcpip" }
-dhcp = { path = "crates/net/dhcp" }
-dns = { path = "crates/net/dns" }
-virtio-net = { path = "crates/drivers/net/virtio-net" }
-pci = { path = "crates/drivers/pci" }
-input = { path = "crates/input/input" }
-ps2 = { path = "crates/drivers/input/ps2" }
-virtio-input = { path = "crates/drivers/input/virtio-input" }
-fb = { path = "crates/graphics/fb" }
-terminal = { path = "crates/terminal" }
-virtio-gpu = { path = "crates/drivers/gpu/virtio-gpu" }
-audio = { path = "crates/audio/audio" }
-virtio-snd = { path = "crates/drivers/audio/virtio-snd" }
-usb = { path = "crates/usb/usb" }
-xhci = { path = "crates/drivers/usb/xhci" }
-usb-msc = { path = "crates/drivers/usb/usb-msc" }
-usb-hid = { path = "crates/drivers/usb/usb-hid" }
-namespace = { path = "crates/container/namespace" }
-cgroup = { path = "crates/container/cgroup" }
-seccomp = { path = "crates/container/seccomp" }
-vmm = { path = "crates/hypervisor/vmm" }
-vmx = { path = "crates/hypervisor/vmx" }
-virtio-emu = { path = "crates/hypervisor/virtio-emu" }
-pthread = { path = "crates/libc-support/pthread" }
-mmap = { path = "crates/libc-support/mmap" }
-dl = { path = "crates/libc-support/dl" }
-hnsw = { path = "crates/ai/hnsw" }
-embed = { path = "crates/ai/embed" }
-indexd = { path = "crates/ai/indexd" }
-crypto = { path = "crates/security/crypto" }
-trust = { path = "crates/security/trust" }
-quarantine = { path = "crates/security/quarantine" }
-x509 = { path = "crates/security/x509" }
-epoll = { path = "crates/async/epoll" }
-iouring = { path = "crates/async/iouring" }
-media = { path = "crates/media/media" }
-automount = { path = "crates/media/automount" }
-smb = { path = "crates/net/smb" }
-nfs = { path = "crates/net/nfs" }
-rdp-traits = { path = "crates/net/rdp/rdp-traits" }
-rdp-proto = { path = "crates/net/rdp/rdp-proto" }
-rdp-graphics = { path = "crates/net/rdp/rdp-graphics" }
-rdp-input = { path = "crates/net/rdp/rdp-input" }
-rdp-security = { path = "crates/net/rdp/rdp-security" }
-rdp-server = { path = "crates/net/rdp/rdp-server" }
-rdp-channels = { path = "crates/net/rdp/rdp-channels" }
-v86 = { path = "crates/compat/v86" }
-python-sandbox = { path = "crates/compat/python-sandbox" }
-binfmt = { path = "crates/compat/binfmt" }
-syscall-compat = { path = "crates/compat/syscall-compat" }
+os_core = { path = "kernel/core/os_core" }
+os_log = { path = "kernel/core/os_log" }
+arch-traits = { path = "kernel/arch/arch-traits" }
+arch-x86_64 = { path = "kernel/arch/arch-x86_64" }
+arch-aarch64 = { path = "kernel/arch/arch-aarch64" }
+arch-mips64 = { path = "kernel/arch/arch-mips64" }
+mm-traits = { path = "kernel/mm/mm-traits" }
+mm-core = { path = "kernel/mm/mm-core" }
+mm-manager = { path = "kernel/mm/mm-manager" }
+mm-slab = { path = "kernel/mm/mm-slab" }
+mm-paging = { path = "kernel/mm/mm-paging" }
+mm-heap = { path = "kernel/mm/mm-heap" }
+mm-cow = { path = "kernel/mm/mm-cow" }
+sched-traits = { path = "kernel/sched/sched-traits" }
+sched = { path = "kernel/sched/sched" }
+proc-traits = { path = "kernel/proc/proc-traits" }
+proc = { path = "kernel/proc/proc" }
+elf = { path = "kernel/exec/elf" }
+syscall = { path = "kernel/syscall/syscall" }
+boot-proto = { path = "kernel/boot/boot-proto" }
+driver-traits = { path = "kernel/drivers/driver-traits" }
+vfs = { path = "kernel/vfs/vfs" }
+devfs = { path = "kernel/vfs/devfs" }
+tmpfs = { path = "kernel/vfs/tmpfs" }
+initramfs = { path = "kernel/vfs/initramfs" }
+procfs = { path = "kernel/vfs/procfs" }
+tty = { path = "kernel/tty/tty" }
+pty = { path = "kernel/tty/pty" }
+vt = { path = "kernel/tty/vt" }
+signal = { path = "kernel/signal/signal" }
+smp = { path = "kernel/smp/smp" }
+module = { path = "kernel/module/module" }
+block = { path = "kernel/block/block" }
+gpt = { path = "kernel/block/gpt" }
+virtio-blk = { path = "kernel/drivers/block/virtio-blk" }
+nvme = { path = "kernel/drivers/block/nvme" }
+ahci = { path = "kernel/drivers/block/ahci" }
+oxidefs = { path = "kernel/fs/oxidefs" }
+fat32 = { path = "kernel/fs/fat32" }
+ext4 = { path = "kernel/fs/ext4" }
+net = { path = "kernel/net/net" }
+tcpip = { path = "kernel/net/tcpip" }
+dhcp = { path = "kernel/net/dhcp" }
+dns = { path = "kernel/net/dns" }
+virtio-net = { path = "kernel/drivers/net/virtio-net" }
+pci = { path = "kernel/drivers/pci" }
+input = { path = "kernel/input/input" }
+ps2 = { path = "kernel/drivers/input/ps2" }
+virtio-input = { path = "kernel/drivers/input/virtio-input" }
+fb = { path = "kernel/graphics/fb" }
+terminal = { path = "kernel/tty/terminal" }
+virtio-gpu = { path = "kernel/drivers/gpu/virtio-gpu" }
+audio = { path = "kernel/audio/audio" }
+virtio-snd = { path = "kernel/drivers/audio/virtio-snd" }
+usb = { path = "kernel/usb/usb" }
+xhci = { path = "kernel/drivers/usb/xhci" }
+usb-msc = { path = "kernel/drivers/usb/usb-msc" }
+usb-hid = { path = "kernel/drivers/usb/usb-hid" }
+namespace = { path = "kernel/container/namespace" }
+cgroup = { path = "kernel/container/cgroup" }
+seccomp = { path = "kernel/container/seccomp" }
+vmm = { path = "kernel/hypervisor/vmm" }
+vmx = { path = "kernel/hypervisor/vmx" }
+virtio-emu = { path = "kernel/hypervisor/virtio-emu" }
+pthread = { path = "kernel/libc-support/pthread" }
+mmap = { path = "kernel/libc-support/mmap" }
+dl = { path = "kernel/libc-support/dl" }
+hnsw = { path = "kernel/ai/hnsw" }
+embed = { path = "kernel/ai/embed" }
+indexd = { path = "kernel/ai/indexd" }
+crypto = { path = "kernel/security/crypto" }
+trust = { path = "kernel/security/trust" }
+quarantine = { path = "kernel/security/quarantine" }
+x509 = { path = "kernel/security/x509" }
+epoll = { path = "kernel/async/epoll" }
+iouring = { path = "kernel/async/iouring" }
+media = { path = "kernel/media/media" }
+automount = { path = "kernel/media/automount" }
+smb = { path = "kernel/net/smb" }
+nfs = { path = "kernel/net/nfs" }
+rdp-traits = { path = "kernel/net/rdp/rdp-traits" }
+rdp-proto = { path = "kernel/net/rdp/rdp-proto" }
+rdp-graphics = { path = "kernel/net/rdp/rdp-graphics" }
+rdp-input = { path = "kernel/net/rdp/rdp-input" }
+rdp-security = { path = "kernel/net/rdp/rdp-security" }
+rdp-server = { path = "kernel/net/rdp/rdp-server" }
+rdp-channels = { path = "kernel/net/rdp/rdp-channels" }
+v86 = { path = "kernel/compat/v86" }
+python-sandbox = { path = "kernel/compat/python-sandbox" }
+binfmt = { path = "kernel/compat/binfmt" }
+syscall-compat = { path = "kernel/compat/syscall-compat" }
 
 [profile.dev]
 panic = "abort"
