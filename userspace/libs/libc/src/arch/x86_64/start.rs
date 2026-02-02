@@ -43,9 +43,6 @@ pub extern "C" fn _start() -> ! {
         // Call main
         let ret = _main_wrapper(argc, argv);
 
-        // Debug: About to exit
-        let _ = crate::syscall::sys_write(2, b"[START_DEBUG] _start calling sys_exit\n");
-
         // Exit using the normal syscall wrapper
         crate::syscall::sys_exit(ret);
     }
@@ -57,27 +54,5 @@ fn _main_wrapper(argc: i32, argv: *const *const u8) -> i32 {
     unsafe extern "Rust" {
         fn main(argc: i32, argv: *const *const u8) -> i32;
     }
-    let ret = unsafe { main(argc, argv) };
-    let _ = crate::syscall::sys_write(2, b"[LIBC_DEBUG] main returned with code=");
-    let mut buf = [0u8; 20];
-    let mut i = 19;
-    let mut n = if ret < 0 {
-        let _ = crate::syscall::sys_write(2, b"-");
-        (-ret) as u32
-    } else {
-        ret as u32
-    };
-    if n == 0 {
-        buf[19] = b'0';
-        i = 19;
-    } else {
-        while n > 0 && i > 0 {
-            i -= 1;
-            buf[i] = b'0' + (n % 10) as u8;
-            n /= 10;
-        }
-    }
-    let _ = crate::syscall::sys_write(2, &buf[i..]);
-    let _ = crate::syscall::sys_write(2, b"\n");
-    ret
+    unsafe { main(argc, argv) }
 }

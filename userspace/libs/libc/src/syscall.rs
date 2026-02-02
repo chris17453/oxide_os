@@ -265,28 +265,6 @@ pub use nr::WRITE as SYS_WRITE;
 
 /// sys_exit - Terminate process
 pub fn sys_exit(status: i32) -> ! {
-    let _ = sys_write(2, b"[LIBC_DEBUG] sys_exit called with status=");
-    let mut buf = [0u8; 20];
-    let mut i = 19;
-    let mut n = if status < 0 {
-        let _ = sys_write(2, b"-");
-        (-status) as u32
-    } else {
-        status as u32
-    };
-    if n == 0 {
-        buf[19] = b'0';
-        i = 19;
-    } else {
-        while n > 0 && i > 0 {
-            i -= 1;
-            buf[i] = b'0' + (n % 10) as u8;
-            n /= 10;
-        }
-    }
-    let _ = sys_write(2, &buf[i..]);
-    let _ = sys_write(2, b"\n");
-    let _ = sys_write(2, b"[LIBC_DEBUG] About to call syscall_exit\n");
     syscall_exit(status as usize);
 }
 
