@@ -12,6 +12,9 @@ use libc::*;
 use crate::adapter::{AdapterState, ConfigMode, NetworkAdapter};
 use crate::config::{read_interface_config, InterfaceConfig};
 
+/// Default DNS servers (used when no adapters provide DNS)
+const DEFAULT_DNS_SERVERS: &[[u8; 4]] = &[[8, 8, 8, 8], [8, 8, 4, 4]];
+
 /// Global network adapter manager
 pub struct AdapterManager {
     /// List of all registered adapters
@@ -407,10 +410,7 @@ impl AdapterManager {
 
         // ShadePacket: Add defaults if nothing configured
         if dns_list.is_empty() {
-            if let Some(dns) = parse_ipv4("8.8.8.8") {
-                dns_list.push(dns);
-            }
-            if let Some(dns) = parse_ipv4("8.8.4.4") {
+            for &dns in DEFAULT_DNS_SERVERS {
                 dns_list.push(dns);
             }
         }

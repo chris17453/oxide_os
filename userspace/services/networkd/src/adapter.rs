@@ -224,7 +224,8 @@ impl NetworkAdapter {
     }
 }
 
-/// Parse MAC address from string (format: "aa:bb:cc:dd:ee:ff")
+/// Parse MAC address from string
+/// Supports formats: "aa:bb:cc:dd:ee:ff", "aa-bb-cc-dd-ee-ff", or mixed separators
 fn parse_mac_address(buf: &[u8]) -> Option<[u8; 6]> {
     let mut mac = [0u8; 6];
     let mut idx = 0;
@@ -243,16 +244,19 @@ fn parse_mac_address(buf: &[u8]) -> Option<[u8; 6]> {
                 current = 0;
                 nibble_count = 0;
             }
-        } else if b.is_ascii_hexdigit() {
-            let nibble = if b.is_ascii_digit() {
+        } else {
+            // ShadePacket: Parse hex digit explicitly
+            let nibble = if b >= b'0' && b <= b'9' {
                 b - b'0'
             } else if b >= b'a' && b <= b'f' {
                 10 + (b - b'a')
             } else if b >= b'A' && b <= b'F' {
                 10 + (b - b'A')
             } else {
+                // Invalid character - not a hex digit
                 return None;
             };
+            
             current = (current << 4) | nibble;
             nibble_count += 1;
             if nibble_count > 2 {
