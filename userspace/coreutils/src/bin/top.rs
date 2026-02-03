@@ -18,7 +18,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use alloc::format;
 use libc::*;
-use ncurses::{WINDOW, screen, input, output, color, attributes, attrs, window};
+use ncurses::{WINDOW, screen, input, output, color, attributes, attrs, window, colors};
 
 /// Process information structure
 #[derive(Clone, Debug)]
@@ -166,12 +166,17 @@ enum SortField {
 }
 
 /// Parse command line arguments
-fn parse_args(config: &mut TopConfig) {
-    let mut args = libc::args::args();
-    args.next(); // Skip program name
+fn parse_args(argc: i32, argv: *const *const u8, config: &mut TopConfig) {
+    for i in 1..argc {
+        let arg_ptr = unsafe { *argv.add(i as usize) };
+        let mut arg_len = 0;
+        while unsafe { *arg_ptr.add(arg_len) } != 0 {
+            arg_len += 1;
+        }
+        let arg_bytes = unsafe { core::slice::from_raw_parts(arg_ptr, arg_len) };
+        let arg = core::str::from_utf8(arg_bytes).unwrap_or("");
 
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
+        match arg {
             "-h" | "--help" => {
                 print_help();
                 exit(0);
@@ -187,9 +192,17 @@ fn parse_args(config: &mut TopConfig) {
                 // Show full command line (default in our implementation)
             }
             "-d" | "--delay" => {
-                if let Some(delay_str) = args.next() {
-                    if let Some(delay_val) = parse_float(&delay_str) {
-                        config.delay = (delay_val * 10.0) as u32;
+                if i + 1 < argc {
+                    let next_ptr = unsafe { *argv.add((i + 1) as usize) };
+                    let mut next_len = 0;
+                    while unsafe { *next_ptr.add(next_len) } != 0 {
+                        next_len += 1;
+                    }
+                    let next_bytes = unsafe { core::slice::from_raw_parts(next_ptr, next_len) };
+                    if let Ok(delay_str) = core::str::from_utf8(next_bytes) {
+                        if let Some(delay_val) = parse_float(delay_str) {
+                            config.delay = (delay_val * 10.0) as u32;
+                        }
                     }
                 }
             }
@@ -200,36 +213,62 @@ fn parse_args(config: &mut TopConfig) {
                 config.show_idle = false;
             }
             "-n" | "--iterations" => {
-                if let Some(iter_str) = args.next() {
-                    if let Some(n) = parse_num(iter_str.as_bytes()) {
+                if i + 1 < argc {
+                    let next_ptr = unsafe { *argv.add((i + 1) as usize) };
+                    let mut next_len = 0;
+                    while unsafe { *next_ptr.add(next_len) } != 0 {
+                        next_len += 1;
+                    }
+                    let next_bytes = unsafe { core::slice::from_raw_parts(next_ptr, next_len) };
+                    if let Some(n) = parse_num(next_bytes) {
                         config.iterations = n as i32;
                     }
                 }
             }
             "-o" | "--sort-override" => {
-                if let Some(field) = args.next() {
-                    config.sort_field = match field.as_str() {
-                        "PID" | "pid" => SortField::Pid,
-                        "CPU" | "cpu" | "%CPU" => SortField::CpuPercent,
-                        "MEM" | "mem" | "%MEM" => SortField::MemPercent,
-                        "TIME" | "time" | "TIME+" => SortField::Time,
-                        "COMMAND" | "command" => SortField::Command,
-                        "USER" | "user" => SortField::User,
-                        _ => SortField::CpuPercent,
-                    };
+                if i + 1 < argc {
+                    let next_ptr = unsafe { *argv.add((i + 1) as usize) };
+                    let mut next_len = 0;
+                    while unsafe { *next_ptr.add(next_len) } != 0 {
+                        next_len += 1;
+                    }
+                    let next_bytes = unsafe { core::slice::from_raw_parts(next_ptr, next_len) };
+                    if let Ok(field) = core::str::from_utf8(next_bytes) {
+                        config.sort_field = match field {
+                            "PID" | "pid" => SortField::Pid,
+                            "CPU" | "cpu" | "%CPU" => SortField::CpuPercent,
+                            "MEM" | "mem" | "%MEM" => SortField::MemPercent,
+                            "TIME" | "time" | "TIME+" => SortField::Time,
+                            "COMMAND" | "command" => SortField::Command,
+                            "USER" | "user" => SortField::User,
+                            _ => SortField::CpuPercent,
+                        };
+                    }
                 }
             }
             "-p" | "--pid" => {
-                if let Some(pid_str) = args.next() {
-                    if let Some(pid) = parse_num(pid_str.as_bytes()) {
+                if i + 1 < argc {
+                    let next_ptr = unsafe { *argv.add((i + 1) as usize) };
+                    let mut next_len = 0;
+                    while unsafe { *next_ptr.add(next_len) } != 0 {
+                        next_len += 1;
+                    }
+                    let next_bytes = unsafe { core::slice::from_raw_parts(next_ptr, next_len) };
+                    if let Some(pid) = parse_num(next_bytes) {
                         config.pid_filter = Some(pid);
                     }
                 }
             }
             "-u" | "-U" | "--user" => {
-                if let Some(user_str) = args.next() {
+                if i + 1 < argc {
+                    let next_ptr = unsafe { *argv.add((i + 1) as usize) };
+                    let mut next_len = 0;
+                    while unsafe { *next_ptr.add(next_len) } != 0 {
+                        next_len += 1;
+                    }
+                    let next_bytes = unsafe { core::slice::from_raw_parts(next_ptr, next_len) };
                     // Try to parse as UID number
-                    if let Some(uid) = parse_num(user_str.as_bytes()) {
+                    if let Some(uid) = parse_num(next_bytes) {
                         config.user_filter = Some(uid);
                     }
                 }
@@ -935,7 +974,7 @@ fn run_batch_mode(config: &TopConfig) {
         let mut stats = SystemStats::new();
 
         let now = time::time(None);
-        let elapsed = now.saturating_sub(last_update);
+        let elapsed = ((now - last_update) as u64).max(1);
         
         calculate_cpu_percentages(&mut processes, &prev_processes, elapsed);
         calculate_mem_percentages(&mut processes, stats.total_mem);
@@ -950,7 +989,7 @@ fn run_batch_mode(config: &TopConfig) {
 
         // Sleep for delay
         if config.iterations < 0 || iteration < config.iterations {
-            let sleep_time = (config.delay as u64) * 100_000; // deciseconds to microseconds
+            let sleep_time = (config.delay as u32) * 100_000; // deciseconds to microseconds
             time::usleep(sleep_time);
         }
     }
@@ -978,15 +1017,15 @@ fn run_interactive_mode(config: &mut TopConfig) {
     
     if config.color_mode && color::has_colors() {
         let _ = color::start_color();
-        let _ = color::init_pair(1, color::COLOR_GREEN, color::COLOR_BLACK);
-        let _ = color::init_pair(2, color::COLOR_YELLOW, color::COLOR_BLACK);
-        let _ = color::init_pair(3, color::COLOR_RED, color::COLOR_BLACK);
-        let _ = color::init_pair(4, color::COLOR_CYAN, color::COLOR_BLACK);
-        let _ = color::init_pair(5, color::COLOR_WHITE, color::COLOR_BLUE);
+        let _ = color::init_pair(1, colors::COLOR_GREEN, colors::COLOR_BLACK);
+        let _ = color::init_pair(2, colors::COLOR_YELLOW, colors::COLOR_BLACK);
+        let _ = color::init_pair(3, colors::COLOR_RED, colors::COLOR_BLACK);
+        let _ = color::init_pair(4, colors::COLOR_CYAN, colors::COLOR_BLACK);
+        let _ = color::init_pair(5, colors::COLOR_WHITE, colors::COLOR_BLUE);
     }
 
     let mut prev_processes = Vec::new();
-    let mut last_update = 0u64;
+    let mut last_update = 0i64;
     let mut force_update = true;
 
     loop {
@@ -994,14 +1033,14 @@ fn run_interactive_mode(config: &mut TopConfig) {
         
         // Check if we need to update
         let should_update = force_update || 
-                           (now - last_update) >= (config.delay as u64 / 10);
+                           (now - last_update) as u64 >= (config.delay as u64 / 10);
 
         if should_update {
             // Read data
             let mut processes = read_processes(config);
             let mut stats = SystemStats::new();
             
-            let elapsed = now.saturating_sub(last_update);
+            let elapsed = ((now - last_update) as u64).max(1);
             calculate_cpu_percentages(&mut processes, &prev_processes, elapsed);
             calculate_mem_percentages(&mut processes, stats.total_mem);
             sort_processes(&mut processes, config.sort_field, config.reverse_sort);
@@ -1048,8 +1087,8 @@ fn run_interactive_mode(config: &mut TopConfig) {
 
 /// Display interactive screen
 fn display_interactive(stats: &SystemStats, processes: &[ProcessInfo], config: &TopConfig, win: WINDOW) {
-    output::werase(win);
-    output::wmove(win, 0, 0);
+    let _ = output::werase(win);
+    let _ = output::wmove(win, 0, 0);
 
     // Get window size
     let (max_y, max_x) = unsafe {
@@ -1201,8 +1240,8 @@ fn display_interactive(stats: &SystemStats, processes: &[ProcessInfo], config: &
 
 /// Display help screen
 fn display_help_screen(win: WINDOW) {
-    output::werase(win);
-    output::wmove(win, 0, 0);
+    let _ = output::werase(win);
+    let _ = output::wmove(win, 0, 0);
 
     let help_text = [
         "Help for Interactive Commands - top",
@@ -1296,9 +1335,9 @@ fn print_float(f: f32, decimals: u32) {
 }
 
 #[unsafe(no_mangle)]
-fn main() -> i32 {
+fn main(argc: i32, argv: *const *const u8) -> i32 {
     let mut config = TopConfig::new();
-    parse_args(&mut config);
+    parse_args(argc, argv, &mut config);
 
     if config.batch_mode {
         run_batch_mode(&config);
