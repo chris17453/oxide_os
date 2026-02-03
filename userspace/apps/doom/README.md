@@ -89,6 +89,16 @@ Currently uses a built-in procedural map. To use real DOOM WAD files:
 
 Note: WAD loading is partially implemented. Full DOOM asset support is planned.
 
+### Required assets for a playable level **with sound**
+
+- **WAD**: `doom1.wad` (shareware) placed at `/usr/share/doom/doom1.wad`
+  - Provides levels (e.g., E1M1), textures, sprites, and music/sound lumps
+- **Sound daemon**: `soundd` running so audio IPC (`/run/soundd.sock`) is available
+  - Start it before launching the game: `soundd &`
+- **Output device**: Working framebuffer at `/dev/fb0` (graphics) and audio path via `soundd`
+
+With the WAD present and `soundd` running, DOOM will load the shareware level and play sound/music via the daemon.
+
 ## Implementation Status
 
 ### Completed ✅

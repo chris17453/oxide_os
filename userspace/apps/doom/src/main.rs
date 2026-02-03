@@ -221,7 +221,7 @@ pub extern "C" fn _start() -> ! {
         print("WARNING: Sound system not available\n");
     }
 
-    // Load WAD file
+    // Load WAD file (fallback to built-in minimal data so gameplay still works)
     print("Loading WAD file...\n");
     let wad = match WadFile::load("/usr/share/doom/doom1.wad") {
         Some(w) => {
@@ -229,9 +229,8 @@ pub extern "C" fn _start() -> ! {
             w
         }
         None => {
-            print("ERROR: Failed to load WAD file\n");
-            print("Please ensure doom1.wad is in /usr/share/doom/\n");
-            exit(1);
+            print("WARNING: External WAD not found, using built-in assets\n");
+            WadFile::built_in()
         }
     };
 
@@ -239,7 +238,7 @@ pub extern "C" fn _start() -> ! {
     print("Initializing renderer...\n");
     let mut renderer = Renderer::new(fb.width, fb.height, &wad);
 
-    // Initialize game state
+    // Initialize game state (procedural arena enables play without WAD textures)
     print("Initializing game...\n");
     let mut game = Game::new(&wad);
 
