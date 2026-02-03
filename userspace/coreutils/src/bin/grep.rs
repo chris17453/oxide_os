@@ -11,6 +11,7 @@
 //! - Quiet mode (-q)
 //! - Max count (-m)
 //! - Context lines (-A, -B, -C)
+//! - Color highlighting (--color, --colour)
 
 #![no_std]
 #![no_main]
@@ -19,6 +20,11 @@ use libc::*;
 
 const MAX_LINE: usize = 4096;
 const MAX_CONTEXT: usize = 100;
+
+// ANSI color codes for highlighting matches
+// -- SoftGlyph: Accessibility means *contrast* – red pops even on cheap VGA
+const COLOR_MATCH: &[u8] = b"\x1b[31m";      // Red for matched text
+const COLOR_RESET: &[u8] = b"\x1b[0m";       // Reset to default
 
 struct GrepConfig {
     pattern: [u8; 256],
@@ -35,6 +41,7 @@ struct GrepConfig {
     max_count: u32,
     after_context: usize,
     before_context: usize,
+    color: bool,
 }
 
 impl GrepConfig {
@@ -54,6 +61,7 @@ impl GrepConfig {
             max_count: u32::MAX,
             after_context: 0,
             before_context: 0,
+            color: false,
         }
     }
 
@@ -114,6 +122,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         eprintlns("  -A NUM    Print NUM lines after match");
         eprintlns("  -B NUM    Print NUM lines before match");
         eprintlns("  -C NUM    Print NUM lines before and after match");
+        eprintlns("  --color   Highlight matching text with colors");
         return 2;
     }
 
@@ -148,6 +157,20 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
 
         if arg.len() > 1 {
             let rest = &arg[1..];
+
+            // Check for long options (--color, --colour)
+            if arg.starts_with("--") {
+                if arg == "--color" || arg == "--colour" {
+                    config.color = true;
+                    arg_idx += 1;
+                    continue;
+                } else {
+                    eprints("grep: unknown option: ");
+                    prints(arg);
+                    printlns("");
+                    return 2;
+                }
+            }
 
             // Check for options with arguments
             if rest.starts_with('m') {
@@ -390,8 +413,12 @@ fn grep_fd(fd: i32, filename: &str, config: &GrepConfig, show_filename: bool) ->
                             print_u64(line_num);
                             prints(":");
                         }
-                        for j in 0..line_len {
-                            putchar(line[j]);
+                        if config.color {
+                            print_line_with_color(&line[..line_len], config.pattern_str(), config.ignore_case);
+                        } else {
+                            for j in 0..line_len {
+                                putchar(line[j]);
+                            }
                         }
                         putchar(b'\n');
                     }
@@ -456,8 +483,12 @@ fn grep_fd(fd: i32, filename: &str, config: &GrepConfig, show_filename: bool) ->
                     print_u64(line_num);
                     prints(":");
                 }
-                for j in 0..line_len {
-                    putchar(line[j]);
+                if config.color {
+                    print_line_with_color(&line[..line_len], config.pattern_str(), config.ignore_case);
+                } else {
+                    for j in 0..line_len {
+                        putchar(line[j]);
+                    }
                 }
                 putchar(b'\n');
             }
@@ -521,5 +552,63 @@ fn to_lower(c: u8) -> u8 {
         c + (b'a' - b'A')
     } else {
         c
+    }
+}
+
+/// Print a line with colored highlighting for matches
+/// -- GraveShift: Boyer-Moore would slice this down but we're trading cycles for simplicity
+fn print_line_with_color(line: &[u8], pattern: &str, ignore_case: bool) {
+    let pattern_bytes = pattern.as_bytes();
+    if pattern_bytes.is_empty() || line.is_empty() {
+        for &b in line {
+            putchar(b);
+        }
+        return;
+    }
+
+    let mut i = 0;
+    while i < line.len() {
+        // Try to find a match at current position
+        let mut found = false;
+        if i + pattern_bytes.len() <= line.len() {
+            let mut matches = true;
+            for j in 0..pattern_bytes.len() {
+                let h = if ignore_case {
+                    to_lower(line[i + j])
+                } else {
+                    line[i + j]
+                };
+                let n = if ignore_case {
+                    to_lower(pattern_bytes[j])
+                } else {
+                    pattern_bytes[j]
+                };
+                if h != n {
+                    matches = false;
+                    break;
+                }
+            }
+            if matches {
+                found = true;
+                // Print color code
+                for &b in COLOR_MATCH {
+                    putchar(b);
+                }
+                // Print matched text
+                for j in 0..pattern_bytes.len() {
+                    putchar(line[i + j]);
+                }
+                // Print reset code
+                for &b in COLOR_RESET {
+                    putchar(b);
+                }
+                i += pattern_bytes.len();
+            }
+        }
+
+        if !found {
+            putchar(line[i]);
+            i += 1;
+        }
     }
 }
