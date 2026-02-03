@@ -340,6 +340,8 @@ impl VnodeOps for ProcPid {
         match name {
             "status" => Ok(Arc::new(ProcPidStatus::new(self.pid))),
             "cmdline" => Ok(Arc::new(ProcPidCmdline::new(self.pid))),
+            "stat" => Ok(Arc::new(ProcPidStat::new(self.pid))),
+            "statm" => Ok(Arc::new(ProcPidStatm::new(self.pid))),
             "exe" => Ok(Arc::new(ProcPidExe::new(self.pid))),
             "cwd" => Ok(Arc::new(ProcPidCwd::new(self.pid))),
             _ => Err(VfsError::NotFound),
@@ -359,10 +361,12 @@ impl VnodeOps for ProcPid {
     }
 
     fn readdir(&self, offset: u64) -> VfsResult<Option<DirEntry>> {
-        let entries = [".", "..", "status", "cmdline", "exe", "cwd"];
+        let entries = [".", "..", "status", "cmdline", "stat", "statm", "exe", "cwd"];
         let types = [
             VnodeType::Directory,
             VnodeType::Directory,
+            VnodeType::File,
+            VnodeType::File,
             VnodeType::File,
             VnodeType::File,
             VnodeType::Symlink,
@@ -815,6 +819,289 @@ impl VnodeOps for ProcPidCwd {
 
     fn stat(&self) -> VfsResult<Stat> {
         Ok(Stat::new(VnodeType::Symlink, Mode::new(0o777), 1, self.ino))
+    }
+
+    fn truncate(&self, _size: u64) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+}
+
+/// /proc/[pid]/stat file - process statistics
+/// Format compatible with Linux /proc/[pid]/stat
+/// — GraveShift: The complete process vital signs
+pub struct ProcPidStat {
+    pid: Pid,
+    ino: u64,
+}
+
+impl ProcPidStat {
+    fn new(pid: Pid) -> Self {
+        ProcPidStat {
+            pid,
+            ino: 6000 + pid as u64,
+        }
+    }
+
+    /// Generate /proc/[pid]/stat content
+    /// Format: pid (comm) state ppid pgrp session tty_nr tpgid flags minflt cminflt majflt 
+    /// cmajflt utime stime cutime cstime priority nice num_threads itrealvalue starttime 
+    /// vsize rss rsslim startcode endcode startstack kstkesp kstkeip signal blocked sigignore 
+    /// sigcatch wchan nswap cnswap exit_signal processor rt_priority policy 
+    /// delayacct_blkio_ticks guest_time cguest_time start_data end_data start_brk arg_start 
+    /// arg_end env_start env_end exit_code
+    fn generate_content(&self) -> String {
+        if let Some(meta) = sched::get_task_meta(self.pid) {
+            let m = meta.lock();
+            
+            // Get task info for timing
+            let (state_char, ppid, start_time, sum_runtime) = if let Some((task_state, task_ppid, task_start_time, task_sum_runtime)) = sched::get_task_timing_info(self.pid) {
+                let state = match task_state {
+                    s if s == sched::TaskState::TASK_RUNNING => 'R',
+                    s if s == sched::TaskState::TASK_INTERRUPTIBLE => 'S',
+                    s if s == sched::TaskState::TASK_UNINTERRUPTIBLE => 'D',
+                    s if s == sched::TaskState::TASK_STOPPED => 'T',
+                    s if s == sched::TaskState::TASK_TRACED => 't',
+                    s if s == sched::TaskState::TASK_ZOMBIE => 'Z',
+                    s if s == sched::TaskState::TASK_DEAD => 'X',
+                    _ => 'R',
+                };
+                (state, task_ppid, task_start_time, task_sum_runtime)
+            } else {
+                ('R', 0, 0, 0)
+            };
+
+            // Get process name from cmdline (first arg, basename only)
+            let name = if m.cmdline.is_empty() {
+                "unknown".to_string()
+            } else {
+                let arg0 = &m.cmdline[0];
+                if let Some(pos) = arg0.rfind('/') {
+                    arg0[pos + 1..].to_string()
+                } else {
+                    arg0.clone()
+                }
+            };
+
+            // Convert nanoseconds to jiffies (assuming 100 Hz, i.e., 10ms per jiffy)
+            // 1 jiffy = 10,000,000 nanoseconds
+            const NANOS_PER_JIFFY: u64 = 10_000_000;
+            let utime = sum_runtime / NANOS_PER_JIFFY;
+            let stime = 0u64; // Kernel time - not tracked separately yet
+            let starttime = start_time / NANOS_PER_JIFFY;
+
+            // Linux /proc/[pid]/stat format (52 fields minimum)
+            format!(
+                "{} ({}) {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n",
+                self.pid,           // 1: pid
+                name,               // 2: comm (in parentheses)
+                state_char,         // 3: state
+                ppid,               // 4: ppid
+                m.pgid,             // 5: pgrp
+                m.sid,              // 6: session
+                m.tty_nr,           // 7: tty_nr
+                m.pgid,             // 8: tpgid (foreground process group)
+                0u64,               // 9: flags
+                0u64,               // 10: minflt (minor faults)
+                0u64,               // 11: cminflt (child minor faults)
+                0u64,               // 12: majflt (major faults)
+                0u64,               // 13: cmajflt (child major faults)
+                utime,              // 14: utime (user mode jiffies)
+                stime,              // 15: stime (kernel mode jiffies)
+                0i64,               // 16: cutime (child user time)
+                0i64,               // 17: cstime (child system time)
+                20i64,              // 18: priority (static priority)
+                0i64,               // 19: nice
+                1u64,               // 20: num_threads
+                0u64,               // 21: itrealvalue (obsolete)
+                starttime,          // 22: starttime (jiffies since boot)
+                0u64,               // 23: vsize (virtual memory size)
+                0u64,               // 24: rss (resident set size in pages)
+                !0u64,              // 25: rsslim (rss limit)
+                0u64,               // 26: startcode
+                0u64,               // 27: endcode
+                0u64,               // 28: startstack
+                0u64,               // 29: kstkesp
+                0u64,               // 30: kstkeip
+                0u64,               // 31: signal (pending signals bitmap)
+                0u64,               // 32: blocked (blocked signals bitmap)
+                0u64,               // 33: sigignore (ignored signals bitmap)
+                0u64,               // 34: sigcatch (caught signals bitmap)
+                0u64,               // 35: wchan (wait channel)
+                0u64,               // 36: nswap (swapped pages)
+                0u64,               // 37: cnswap (child swapped pages)
+                0i32,               // 38: exit_signal
+                0i32,               // 39: processor (CPU number)
+                0u32,               // 40: rt_priority
+                0u32,               // 41: policy
+                0u64,               // 42: delayacct_blkio_ticks
+                0u64,               // 43: guest_time
+                0i64,               // 44: cguest_time
+                0u64,               // 45: start_data
+                0u64,               // 46: end_data
+                m.program_break,    // 47: start_brk
+                0u64,               // 48: arg_start
+                0u64,               // 49: arg_end
+                0u64,               // 50: env_start
+                0u64,               // 51: env_end
+                0i32,               // 52: exit_code
+            )
+        } else {
+            String::new()
+        }
+    }
+}
+
+impl VnodeOps for ProcPidStat {
+    fn vtype(&self) -> VnodeType {
+        VnodeType::File
+    }
+
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        let content = self.generate_content();
+        let bytes = content.as_bytes();
+
+        let offset = offset as usize;
+        if offset >= bytes.len() {
+            return Ok(0);
+        }
+
+        let available = bytes.len() - offset;
+        let to_read = buf.len().min(available);
+        buf[..to_read].copy_from_slice(&bytes[offset..offset + to_read]);
+        Ok(to_read)
+    }
+
+    fn write(&self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rmdir(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn unlink(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn stat(&self) -> VfsResult<Stat> {
+        let content = self.generate_content();
+        Ok(Stat::new(
+            VnodeType::File,
+            Mode::new(0o444),
+            content.len() as u64,
+            self.ino,
+        ))
+    }
+
+    fn truncate(&self, _size: u64) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+}
+
+/// /proc/[pid]/statm file - process memory statistics
+/// Format: size resident shared text lib data dt
+/// — GraveShift: Memory footprint snapshot
+pub struct ProcPidStatm {
+    pid: Pid,
+    ino: u64,
+}
+
+impl ProcPidStatm {
+    fn new(pid: Pid) -> Self {
+        ProcPidStatm {
+            pid,
+            ino: 7000 + pid as u64,
+        }
+    }
+
+    fn generate_content(&self) -> String {
+        // For now, return zeros - proper implementation would query mm subsystem
+        // Format: size resident shared text lib data dt
+        // All values in pages
+        format!("0 0 0 0 0 0 0\n")
+    }
+}
+
+impl VnodeOps for ProcPidStatm {
+    fn vtype(&self) -> VnodeType {
+        VnodeType::File
+    }
+
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        let content = self.generate_content();
+        let bytes = content.as_bytes();
+
+        let offset = offset as usize;
+        if offset >= bytes.len() {
+            return Ok(0);
+        }
+
+        let available = bytes.len() - offset;
+        let to_read = buf.len().min(available);
+        buf[..to_read].copy_from_slice(&bytes[offset..offset + to_read]);
+        Ok(to_read)
+    }
+
+    fn write(&self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rmdir(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn unlink(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn stat(&self) -> VfsResult<Stat> {
+        let content = self.generate_content();
+        Ok(Stat::new(
+            VnodeType::File,
+            Mode::new(0o444),
+            content.len() as u64,
+            self.ino,
+        ))
     }
 
     fn truncate(&self, _size: u64) -> VfsResult<()> {

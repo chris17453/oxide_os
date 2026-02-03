@@ -107,7 +107,12 @@ impl RunQueue {
     }
 
     /// Add a task to this run queue
-    pub fn add_task(&mut self, task: Task) {
+    pub fn add_task(&mut self, mut task: Task) {
+        // Set start_time if not already set (0 means not set)
+        if task.start_time == 0 {
+            // Get current time in nanoseconds (100 Hz timer, 10ms per tick)
+            task.start_time = arch_x86_64::timer_ticks() * 10_000_000;
+        }
         let pid = task.pid;
         self.tasks.insert(pid, task);
         // Use enqueue_task for consistent accounting

@@ -1028,6 +1028,22 @@ pub fn get_task_ppid(pid: Pid) -> Option<Pid> {
     None
 }
 
+/// Get task timing info for /proc/[pid]/stat
+/// Returns (state, ppid, start_time, sum_exec_runtime)
+pub fn get_task_timing_info(pid: Pid) -> Option<(TaskState, Pid, u64, u64)> {
+    for cpu in 0..num_cpus() {
+        if let Some(info) = with_rq(cpu, |rq| {
+            rq.get_task(pid)
+                .map(|t| (t.state, t.ppid, t.start_time, t.sum_exec_runtime))
+        })
+        .flatten()
+        {
+            return Some(info);
+        }
+    }
+    None
+}
+
 /// Get exit status of a task (if zombie)
 pub fn get_task_exit_status(pid: Pid) -> Option<i32> {
     for cpu in 0..num_cpus() {
