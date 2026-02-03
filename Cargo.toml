@@ -114,6 +114,7 @@ members = [
     "userspace/libs/oxide-std",
     "userspace/libs/compression",
     "userspace/libs/termcap",
+    "userspace/libs/oxide-ncurses",
     "userspace/libs/oxide-tui",
     # userspace/services — daemons
     "userspace/services/networkd",
@@ -135,6 +136,7 @@ members = [
     "userspace/apps/gwbasic",
     "userspace/apps/curses-demo",
     "userspace/apps/sound-client",
+    "userspace/apps/htop",
     # userspace/tests — test harnesses
     "userspace/tests/syscall-tests",
     "userspace/tests/evtest",

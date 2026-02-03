@@ -494,6 +494,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "htop"
+version = "0.1.0"
+dependencies = [
+ "libc 0.1.0",
+ "oxide-ncurses",
+]
+
+[[package]]
 name = "indexd"
 version = "0.1.0"
 dependencies = [
