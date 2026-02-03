@@ -63,8 +63,16 @@ unsafe fn wrmsr(msr: u32, value: u64) {
 /// Returns: result value (or negative errno)
 pub type SyscallHandler = fn(u64, u64, u64, u64, u64, u64, u64) -> i64;
 
+/// Signal check function type
+///
+/// Called after syscall handler to check for pending signals
+pub type SignalCheckFunction = fn();
+
 /// Global syscall handler
 static mut SYSCALL_HANDLER: Option<SyscallHandler> = None;
+
+/// Global signal check function
+static mut SIGNAL_CHECK_FUNCTION: Option<SignalCheckFunction> = None;
 
 /// Register a syscall handler
 ///
@@ -74,6 +82,17 @@ pub unsafe fn set_syscall_handler(handler: SyscallHandler) {
     use core::ptr::addr_of_mut;
     unsafe {
         *addr_of_mut!(SYSCALL_HANDLER) = Some(handler);
+    }
+}
+
+/// Register a signal check function
+///
+/// # Safety
+/// Must only be called once during initialization.
+pub unsafe fn set_signal_check_function(func: SignalCheckFunction) {
+    use core::ptr::addr_of_mut;
+    unsafe {
+        *addr_of_mut!(SIGNAL_CHECK_FUNCTION) = Some(func);
     }
 }
 
@@ -286,10 +305,26 @@ pub extern "C" fn syscall_entry() {
         // Restore caller-saved registers
         "pop rdx",                         // Restore user RDX
         "pop rsi",                         // Restore user RSI
-        "pop rdi",                         // Restore user RDI
+        "pop rdi",                         // Restore user RDI (may be modified by signal handler setup)
         "pop r10",
         "pop r9",
         "pop r8",
+
+        // 🔥 GraveShift: Reload context - signal handler may have modified RIP/RSP/RDI 🔥
+        // Stack layout: [R12, R15, R14, R13, RBX, RBP, RSP, RIP, RFLAGS]
+        // Offset from RSP: R12=0, R15=8, R14=16, R13=24, RBX=32, RBP=40, RSP=48, RIP=56, RFLAGS=64
+        "lea r12, [{user_ctx}]",
+        
+        // Update RIP on stack if modified
+        "mov r13, [r12 + 0]",              // Load ctx.rip
+        "mov [rsp + 56], r13",             // Store to stack (will be loaded to RCX later)
+        
+        // Update RSP on stack if modified  
+        "mov r13, [r12 + 8]",              // Load ctx.rsp
+        "mov [rsp + 48], r13",             // Store to stack
+        
+        // Update RDI if modified (first arg to signal handler)
+        "mov rdi, [r12 + 64]",             // Load ctx.rdi
 
         // === EPILOGUE: Restore and sysret ===
         // RAX = return value (preserve it!)
@@ -318,7 +353,7 @@ pub extern "C" fn syscall_entry() {
         "mov [{sysret_stack_ptr}], rsp",
 
         // Load sysret values - load RCX and R11 first (they're clobbered by sysret anyway)
-        "mov rcx, [rsp + 8]",              // User RIP -> RCX (for sysret)
+        "mov rcx, [rsp + 8]",              // User RIP -> RCX (for sysret) [potentially modified]
         "mov r11, [rsp + 16]",             // User RFLAGS -> R11 (for sysret)
 
         // DEBUG: Save loaded values (use rcx value we just loaded for rsp debug)
@@ -367,14 +402,26 @@ extern "C" fn syscall_dispatch(
 ) -> i64 {
     use core::ptr::addr_of;
 
-    unsafe {
+    // Call the syscall handler
+    let result = unsafe {
         if let Some(handler) = *addr_of!(SYSCALL_HANDLER) {
             handler(number, arg1, arg2, arg3, arg4, arg5, arg6)
         } else {
             // No handler registered, return -ENOSYS
-            -38
+            return -38;
+        }
+    };
+
+    // 🔥 GraveShift: Check for pending signals before returning to userspace 🔥
+    // This is done by calling into the kernel's signal delivery function
+    // which has access to sched and signal crates
+    unsafe {
+        if let Some(check_fn) = *addr_of!(SIGNAL_CHECK_FUNCTION) {
+            check_fn();
         }
     }
+
+    result
 }
 
 /// Per-CPU syscall data
@@ -480,6 +527,19 @@ pub static mut AC_AT_ENTRY: u64 = 0xDEAD;
 pub fn get_user_context() -> SyscallUserContext {
     use core::ptr::addr_of;
     unsafe { *addr_of!(SYSCALL_USER_CONTEXT) }
+}
+
+/// Get a mutable reference to the syscall user context
+///
+/// This allows modifying the context that will be restored on sysret.
+/// Used by signal delivery to redirect to signal handlers.
+///
+/// # Safety
+/// Only valid when called from within a syscall handler.
+/// Caller must ensure modifications are valid for sysret.
+pub unsafe fn get_user_context_mut() -> &'static mut SyscallUserContext {
+    use core::ptr::addr_of_mut;
+    unsafe { &mut *addr_of_mut!(SYSCALL_USER_CONTEXT) }
 }
 
 /// Save user context (called from syscall entry asm)
