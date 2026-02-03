@@ -5,8 +5,7 @@
 //!
 //! -- GraveShift: Parameter expansion - translate intent to escape sequences
 
-use core::option::Option;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use alloc::format;
 

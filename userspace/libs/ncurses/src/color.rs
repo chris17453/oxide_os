@@ -17,27 +17,30 @@ static mut CAN_CHANGE: bool = false;
 
 pub fn start_color() -> Result<()> {
     unsafe {
-        if COLOR_PAIRS.is_none() {
+        let ptr = core::ptr::addr_of_mut!(COLOR_PAIRS);
+        if (*ptr).is_none() {
             let mut pairs = Vec::new();
             pairs.resize(256, ColorPair { fg: 7, bg: 0 });
-            COLOR_PAIRS = Some(pairs);
+            *ptr = Some(pairs);
         }
-        HAS_COLORS = true;
+        let hc = core::ptr::addr_of_mut!(HAS_COLORS);
+        *hc = true;
     }
     Ok(())
 }
 
 pub fn has_colors() -> bool {
-    unsafe { HAS_COLORS }
+    unsafe { *core::ptr::addr_of!(HAS_COLORS) }
 }
 
 pub fn can_change_color() -> bool {
-    unsafe { CAN_CHANGE }
+    unsafe { *core::ptr::addr_of!(CAN_CHANGE) }
 }
 
 pub fn init_pair(pair: i16, fg: i16, bg: i16) -> Result<()> {
     unsafe {
-        if let Some(ref mut pairs) = COLOR_PAIRS {
+        let ptr = core::ptr::addr_of_mut!(COLOR_PAIRS);
+        if let Some(ref mut pairs) = *ptr {
             if pair > 0 && (pair as usize) < pairs.len() {
                 pairs[pair as usize] = ColorPair { fg, bg };
                 return Ok(());
@@ -57,7 +60,8 @@ pub fn color_pair(n: i32) -> u32 {
 
 pub fn pair_content(pair: i16) -> Result<(i16, i16)> {
     unsafe {
-        if let Some(ref pairs) = COLOR_PAIRS {
+        let ptr = core::ptr::addr_of!(COLOR_PAIRS);
+        if let Some(ref pairs) = *ptr {
             if pair > 0 && (pair as usize) < pairs.len() {
                 let p = pairs[pair as usize];
                 return Ok((p.fg, p.bg));

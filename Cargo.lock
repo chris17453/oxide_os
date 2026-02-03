@@ -172,6 +172,7 @@ dependencies = [
  "compression",
  "heapless",
  "libc 0.1.0",
+ "termcap",
 ]
 
 [[package]]
@@ -845,7 +846,9 @@ dependencies = [
 name = "ncurses"
 version = "0.1.0"
 dependencies = [
+ "libc 0.1.0",
  "termcap",
+ "vte",
 ]
 
 [[package]]
@@ -1533,6 +1536,7 @@ dependencies = [
  "fb",
  "os_log",
  "spin 0.9.8",
+ "vte",
 ]
 
 [[package]]
@@ -1752,6 +1756,13 @@ dependencies = [
  "spin 0.9.8",
  "tty",
  "vfs",
+]
+
+[[package]]
+name = "vte"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.10.0",
 ]
 
 [[package]]

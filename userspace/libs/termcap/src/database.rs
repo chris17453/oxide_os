@@ -94,6 +94,10 @@ fn xterm() -> TerminalEntry {
     entry.set_string(strings::SET_BACKGROUND, "\x1b[48;5;%p1%dm");
     entry.set_string(strings::ORIG_PAIR, "\x1b[39;49m");
     
+    // Alternate screen
+    entry.set_string(strings::ENTER_CA_MODE, "\x1b[?1049h");
+    entry.set_string(strings::EXIT_CA_MODE, "\x1b[?1049l");
+
     // Keypad
     entry.set_string(strings::KEYPAD_XMIT, "\x1b[?1h\x1b=");
     entry.set_string(strings::KEYPAD_LOCAL, "\x1b[?1l\x1b>");

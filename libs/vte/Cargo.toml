@@ -1,0 +1,9 @@
+[package]
+name = "vte"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "VT100/ANSI virtual terminal engine - parser and state management"
+
+[dependencies]
+bitflags.workspace = true

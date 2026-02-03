@@ -385,3 +385,4 @@ path = "src/bin/umount.rs"
 libc = { path = "../libs/libc" }
 heapless = "0.8"
 compression = { path = "../libs/compression" }
+termcap = { path = "../libs/termcap", default-features = false }

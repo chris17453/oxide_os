@@ -1,10 +1,29 @@
 //! Page fault handler for the OXIDE kernel.
+//!
+//! ── GraveShift: The gate between alive and dead processes ──
+//! Handles COW resolution and dynamic stack growth. One wrong
+//! move here and the whole userland flatlines. No pressure.
 
-use mm_paging::{PageTable, phys_to_virt};
+use mm_paging::{PageTable, PageTableFlags, phys_to_virt};
 use os_core::{PhysAddr, VirtAddr};
 use proc::handle_cow_fault;
+use spin::Mutex;
 
 use mm_manager::mm;
+
+/// ── GraveShift: Stack region geometry ──
+/// User stack grows downward from this ceiling.
+const USER_STACK_TOP: u64 = 0x0000_7FFF_FFFF_0000;
+
+/// ── GraveShift: 8MB max stack matches Linux default ulimit ──
+const MAX_STACK_SIZE: u64 = 8 * 1024 * 1024;
+
+/// ── GraveShift: Lowest address we'll ever map for stack ──
+const MAX_STACK_BOTTOM: u64 = USER_STACK_TOP - MAX_STACK_SIZE;
+
+/// ── BlackLatch: Spinlock for stack growth serialization ──
+/// Separate from COW lock to avoid contention between the two paths.
+static STACK_GROWTH_LOCK: Mutex<()> = Mutex::new(());
 
 /// Page fault handler callback (for COW and other page faults)
 pub fn page_fault_handler(fault_addr: u64, error_code: u64, _rip: u64) -> bool {
@@ -64,6 +83,27 @@ pub fn page_fault_handler(fault_addr: u64, error_code: u64, _rip: u64) -> bool {
         }
     }
 
+    // ── GraveShift: Dynamic stack growth ──
+    // Not-present fault in userspace stack region = grow the stack on demand.
+    // Guard page below MAX_STACK_BOTTOM is never mapped (handler rejects it).
+    if !is_present && is_userspace_addr {
+        let page_addr = fault_addr & !0xFFF;
+        if page_addr >= MAX_STACK_BOTTOM && page_addr < USER_STACK_TOP {
+            let pml4_phys = PhysAddr::new(actual_cr3 & !0xFFF);
+            debug_cow!(
+                "[PF] Stack growth: fault_addr={:#x} page={:#x}",
+                fault_addr,
+                page_addr
+            );
+            if handle_stack_growth(page_addr, pml4_phys) {
+                debug_cow!("[PF] Stack growth handled OK");
+                return true;
+            } else {
+                debug_cow!("[PF] Stack growth FAILED for {:#x}", page_addr);
+            }
+        }
+    }
+
     debug_cow!("[PF] Fault NOT handled - will panic");
 
     // For instruction fetch faults (bit 4 set), dump page table flags for debugging
@@ -73,6 +113,132 @@ pub fn page_fault_handler(fault_addr: u64, error_code: u64, _rip: u64) -> bool {
     }
 
     false // Fault not handled - will panic
+}
+
+/// ── GraveShift: Demand-page a single stack frame into the process address space ──
+///
+/// Walks the 4-level page table hierarchy, creating intermediate tables as
+/// needed, then maps a zeroed data frame at `page_addr`.
+///
+/// # Safety
+/// Caller must ensure `page_addr` is page-aligned and within the valid stack region.
+/// The page table pointed to by `pml4_phys` must be the current process's PML4.
+fn handle_stack_growth(page_addr: u64, pml4_phys: PhysAddr) -> bool {
+    let _guard = STACK_GROWTH_LOCK.lock();
+
+    let allocator = mm();
+
+    // ── GraveShift: Extract page table indices from faulting address ──
+    let pml4_idx = ((page_addr >> 39) & 0x1FF) as usize;
+    let pdpt_idx = ((page_addr >> 30) & 0x1FF) as usize;
+    let pd_idx = ((page_addr >> 21) & 0x1FF) as usize;
+    let pt_idx = ((page_addr >> 12) & 0x1FF) as usize;
+
+    let table_flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER;
+
+    // ── GraveShift: Walk PML4 -> PDPT ──
+    let pml4_virt = phys_to_virt(pml4_phys);
+    let pml4 = unsafe { &mut *pml4_virt.as_mut_ptr::<PageTable>() };
+    let pml4_entry = &mut pml4[pml4_idx];
+
+    let pdpt_phys = if pml4_entry.is_present() {
+        pml4_entry.addr()
+    } else {
+        let frame = match allocator.alloc_frame() {
+            Ok(f) => f,
+            Err(_) => return false,
+        };
+        // ── BlackLatch: Zero before linking -- stale data = security hole ──
+        let virt = phys_to_virt(frame);
+        let table = unsafe { &mut *virt.as_mut_ptr::<PageTable>() };
+        table.clear();
+        pml4_entry.set(frame, table_flags);
+        frame
+    };
+
+    // ── GraveShift: Walk PDPT -> PD ──
+    let pdpt_virt = phys_to_virt(pdpt_phys);
+    let pdpt = unsafe { &mut *pdpt_virt.as_mut_ptr::<PageTable>() };
+    let pdpt_entry = &mut pdpt[pdpt_idx];
+
+    if pdpt_entry.is_huge() {
+        debug_cow!("[PF] Stack growth blocked: PDPT is huge page");
+        return false;
+    }
+
+    let pd_phys = if pdpt_entry.is_present() {
+        pdpt_entry.addr()
+    } else {
+        let frame = match allocator.alloc_frame() {
+            Ok(f) => f,
+            Err(_) => return false,
+        };
+        let virt = phys_to_virt(frame);
+        let table = unsafe { &mut *virt.as_mut_ptr::<PageTable>() };
+        table.clear();
+        pdpt_entry.set(frame, table_flags);
+        frame
+    };
+
+    // ── GraveShift: Walk PD -> PT ──
+    let pd_virt = phys_to_virt(pd_phys);
+    let pd = unsafe { &mut *pd_virt.as_mut_ptr::<PageTable>() };
+    let pd_entry = &mut pd[pd_idx];
+
+    if pd_entry.is_huge() {
+        debug_cow!("[PF] Stack growth blocked: PD is huge page");
+        return false;
+    }
+
+    let pt_phys = if pd_entry.is_present() {
+        pd_entry.addr()
+    } else {
+        let frame = match allocator.alloc_frame() {
+            Ok(f) => f,
+            Err(_) => return false,
+        };
+        let virt = phys_to_virt(frame);
+        let table = unsafe { &mut *virt.as_mut_ptr::<PageTable>() };
+        table.clear();
+        pd_entry.set(frame, table_flags);
+        frame
+    };
+
+    // ── GraveShift: Check PT entry -- race protection ──
+    let pt_virt = phys_to_virt(pt_phys);
+    let pt = unsafe { &mut *pt_virt.as_mut_ptr::<PageTable>() };
+    let pt_entry = &mut pt[pt_idx];
+
+    if pt_entry.is_present() {
+        // ── BlackLatch: Another CPU beat us here, page already mapped ──
+        debug_cow!("[PF] Stack page already present (race), no-op");
+        return true;
+    }
+
+    // ── GraveShift: Allocate the actual data frame for the stack page ──
+    let data_frame = match allocator.alloc_frame() {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+
+    // ── BlackLatch: Zero the data frame -- stack pages must start clean ──
+    let data_virt = phys_to_virt(data_frame);
+    unsafe {
+        core::ptr::write_bytes(data_virt.as_mut_ptr::<u8>(), 0, 4096);
+    }
+
+    // ── GraveShift: Map with PRESENT | WRITABLE | USER | NO_EXECUTE ──
+    // Stack data is never executable. NX bit keeps us honest.
+    let data_flags =
+        PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER | PageTableFlags::NO_EXECUTE;
+    pt_entry.set(data_frame, data_flags);
+
+    // ── GraveShift: TLB shootdown so all cores see the new mapping ──
+    let page_start = page_addr;
+    let page_end = page_addr + 4096;
+    smp::tlb_shootdown(page_start, page_end, 0);
+
+    true
 }
 
 /// Dump page table flags for debugging NX issues

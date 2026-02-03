@@ -47,6 +47,8 @@ pub mod capabilities;
 pub mod database;
 pub mod parser;
 pub mod expand;
+/// ── NeonRoot: C API only built for std targets -- libc provides wrappers in no_std ──
+#[cfg(feature = "std")]
 pub mod c_api;
 
 #[cfg(feature = "terminfo")]
@@ -110,24 +112,31 @@ impl TerminalEntry {
     }
 }
 
-/// Global terminal state
-static mut CURRENT_TERMINAL: Option<TerminalEntry> = None;
+/// ── NeonRoot: Global terminal state, guarded by raw pointer for 2024 edition ──
+static CURRENT_TERMINAL: core::sync::atomic::AtomicPtr<TerminalEntry> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
 /// Load a terminal entry by name
-pub fn load_terminal(name: &str) -> Result<TerminalEntry, &'static str> {
+pub fn load_terminal(name: &str) -> core::result::Result<TerminalEntry, &'static str> {
     database::get_terminal(name).ok_or("Terminal not found")
 }
 
 /// Get the current terminal entry
 pub fn current_terminal() -> Option<&'static TerminalEntry> {
-    unsafe { CURRENT_TERMINAL.as_ref() }
+    let ptr = CURRENT_TERMINAL.load(core::sync::atomic::Ordering::Acquire);
+    if ptr.is_null() {
+        None
+    } else {
+        Some(unsafe { &*ptr })
+    }
 }
 
 /// Set the current terminal
 pub fn set_current_terminal(entry: TerminalEntry) {
-    unsafe {
-        CURRENT_TERMINAL = Some(entry);
-    }
+    let boxed = alloc::boxed::Box::new(entry);
+    let ptr = alloc::boxed::Box::into_raw(boxed);
+    // ── NeonRoot: Leak previous entry intentionally -- single-process lifetime ──
+    CURRENT_TERMINAL.store(ptr, core::sync::atomic::Ordering::Release);
 }
 
 /// Error types

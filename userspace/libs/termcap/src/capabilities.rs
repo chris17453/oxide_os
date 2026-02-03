@@ -97,6 +97,10 @@ pub mod strings {
     pub const EXIT_ALT_CHARSET_MODE: &str = "rmacs";   // Exit alternate charset
     pub const ACS_CHARS: &str = "acsc";                // Alternate charset pairs
     
+    /// Alternate screen (cup mode)
+    pub const ENTER_CA_MODE: &str = "smcup";        // Enter alternate screen
+    pub const EXIT_CA_MODE: &str = "rmcup";         // Exit alternate screen
+
     /// Mouse support
     pub const MOUSE_INFO: &str = "minfo";          // Mouse status information
 }
@@ -179,6 +183,10 @@ pub fn termcap_to_terminfo(cap: &str) -> Option<&'static str> {
         "AB" => Some(strings::SET_BACKGROUND),
         "op" => Some(strings::ORIG_PAIR),
         
+        // Alternate screen
+        "ti" => Some(strings::ENTER_CA_MODE),
+        "te" => Some(strings::EXIT_CA_MODE),
+
         // Keypad
         "ks" => Some(strings::KEYPAD_XMIT),
         "ke" => Some(strings::KEYPAD_LOCAL),
