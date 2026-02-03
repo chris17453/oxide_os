@@ -18,7 +18,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use alloc::format;
 use libc::*;
-use oxide_tui::{WINDOW, screen, input, output, color, attributes, attrs, window, colors};
+use oxide_tui::{WINDOW, screen, input, output, color, attributes, attrs, window, colors, keys};
 
 /// Process information structure
 #[derive(Clone, Debug)]
@@ -1017,11 +1017,12 @@ fn run_interactive_mode(config: &mut TopConfig) {
     
     if config.color_mode && color::has_colors() {
         let _ = color::start_color();
-        let _ = color::init_pair(1, colors::COLOR_GREEN, colors::COLOR_BLACK);
-        let _ = color::init_pair(2, colors::COLOR_YELLOW, colors::COLOR_BLACK);
-        let _ = color::init_pair(3, colors::COLOR_RED, colors::COLOR_BLACK);
-        let _ = color::init_pair(4, colors::COLOR_CYAN, colors::COLOR_BLACK);
-        let _ = color::init_pair(5, colors::COLOR_WHITE, colors::COLOR_BLUE);
+        let _ = color::init_pair(1, colors::COLOR_GREEN, colors::COLOR_BLACK);   // Low CPU (< 10%)
+        let _ = color::init_pair(2, colors::COLOR_YELLOW, colors::COLOR_BLACK);  // Medium CPU (10-50%)
+        let _ = color::init_pair(3, colors::COLOR_RED, colors::COLOR_BLACK);     // High CPU (> 50%)
+        let _ = color::init_pair(4, colors::COLOR_CYAN, colors::COLOR_BLACK);    // Sleeping processes
+        let _ = color::init_pair(5, colors::COLOR_WHITE, colors::COLOR_BLUE);    // Headers
+        let _ = color::init_pair(6, colors::COLOR_MAGENTA, colors::COLOR_BLACK); // Zombie processes
     }
 
     let mut prev_processes = Vec::new();
@@ -1057,23 +1058,63 @@ fn run_interactive_mode(config: &mut TopConfig) {
         // Handle input
         let ch = input::getch();
         if ch >= 0 {
-            match ch as u8 as char {
-                'q' | 'Q' => break,
-                ' ' => force_update = true,
-                'M' => config.sort_field = SortField::MemPercent,
-                'P' => config.sort_field = SortField::CpuPercent,
-                'T' => config.sort_field = SortField::Time,
-                'N' => config.sort_field = SortField::Pid,
-                'R' => config.reverse_sort = !config.reverse_sort,
-                'i' => {
-                    config.show_idle = !config.show_idle;
-                    force_update = true;
+            // Handle special keys first (KEY_* constants > 255)
+            if ch == 27 {
+                // ESC key - exit
+                break;
+            } else if ch == keys::KEY_UP {
+                // Scroll up (future enhancement)
+                force_update = true;
+            } else if ch == keys::KEY_DOWN {
+                // Scroll down (future enhancement)
+                force_update = true;
+            } else if ch == keys::KEY_PPAGE {
+                // Page up (future enhancement)
+                force_update = true;
+            } else if ch == keys::KEY_NPAGE {
+                // Page down (future enhancement)
+                force_update = true;
+            } else if ch == keys::KEY_HOME {
+                // Go to top
+                force_update = true;
+            } else if ch == keys::KEY_END {
+                // Go to bottom
+                force_update = true;
+            } else if ch >= 0x20 && ch < 0x7F {
+                // Regular ASCII character - cast to char safely
+                match ch as u8 as char {
+                    'q' | 'Q' => break,
+                    ' ' => force_update = true,
+                    'M' | 'm' => {
+                        config.sort_field = SortField::MemPercent;
+                        force_update = true;
+                    }
+                    'P' | 'p' => {
+                        config.sort_field = SortField::CpuPercent;
+                        force_update = true;
+                    }
+                    'T' | 't' => {
+                        config.sort_field = SortField::Time;
+                        force_update = true;
+                    }
+                    'N' | 'n' => {
+                        config.sort_field = SortField::Pid;
+                        force_update = true;
+                    }
+                    'R' | 'r' => {
+                        config.reverse_sort = !config.reverse_sort;
+                        force_update = true;
+                    }
+                    'i' | 'I' => {
+                        config.show_idle = !config.show_idle;
+                        force_update = true;
+                    }
+                    'h' | 'H' | '?' => {
+                        display_help_screen(stdscr);
+                        force_update = true;
+                    }
+                    _ => {}
                 }
-                'h' | '?' => {
-                    display_help_screen(stdscr);
-                    force_update = true;
-                }
-                _ => {}
             }
         }
 
@@ -1194,7 +1235,8 @@ fn display_interactive(stats: &SystemStats, processes: &[ProcessInfo], config: &
     row += 1;
 
     // Process list
-    let available_rows = max_y - row;
+    // Reserve one line at bottom for status
+    let available_rows = (max_y - row - 1).max(0);
     let display_count = available_rows.min(processes.len() as i32);
 
     for i in 0..display_count as usize {
@@ -1205,7 +1247,25 @@ fn display_interactive(stats: &SystemStats, processes: &[ProcessInfo], config: &
         let proc = &processes[i];
         let _ = output::wmove(win, row, 0);
 
-        // Highlight running processes
+        // Apply colors based on CPU usage and state
+        if config.color_mode && color::has_colors() {
+            let color_pair_num = if proc.state == b'Z' {
+                6  // Magenta for zombie
+            } else if proc.state == b'R' {
+                if proc.cpu_percent > 50.0 {
+                    3  // Red for high CPU
+                } else if proc.cpu_percent > 10.0 {
+                    2  // Yellow for medium CPU
+                } else {
+                    1  // Green for low CPU
+                }
+            } else {
+                4  // Cyan for sleeping/other
+            };
+            let _ = attributes::wattron(win, color::color_pair(color_pair_num));
+        }
+
+        // Highlight running processes with bold
         if config.highlight_running && proc.state == b'R' {
             let _ = attributes::wattron(win, attrs::A_BOLD);
         }
@@ -1232,7 +1292,42 @@ fn display_interactive(stats: &SystemStats, processes: &[ProcessInfo], config: &
             let _ = attributes::wattroff(win, attrs::A_BOLD);
         }
 
+        if config.color_mode && color::has_colors() {
+            let _ = attributes::wattroff(win, attrs::A_COLOR);
+        }
+
         row += 1;
+    }
+
+    // Add status line at bottom
+    if max_y > row + 1 {
+        let _ = output::wmove(win, max_y - 1, 0);
+        let _ = attributes::wattron(win, attrs::A_REVERSE);
+        
+        let sort_name = match config.sort_field {
+            SortField::Pid => "PID",
+            SortField::CpuPercent => "CPU",
+            SortField::MemPercent => "MEM",
+            SortField::Time => "TIME",
+            SortField::Command => "CMD",
+            SortField::User => "USER",
+        };
+        
+        let status = format!(
+            " Sort: {} {} | q/ESC:Quit h:Help M/P/T/N:Sort R:Reverse i:Idle ",
+            sort_name,
+            if config.reverse_sort { "▼" } else { "▲" }
+        );
+        
+        let display_len = max_x.min(status.len() as i32);
+        let _ = output::waddstr(win, &status[..display_len as usize]);
+        
+        // Fill rest of line with spaces for full reverse video
+        for _ in display_len..max_x {
+            let _ = output::waddstr(win, " ");
+        }
+        
+        let _ = attributes::wattroff(win, attrs::A_REVERSE);
     }
 
     let _ = screen::wrefresh(win);
@@ -1246,17 +1341,20 @@ fn display_help_screen(win: WINDOW) {
     let help_text = [
         "Help for Interactive Commands - top",
         "",
-        "  Space  = Update display",
-        "  h or ? = Help (this screen)",
-        "  q      = Quit",
+        "  Space    = Update display",
+        "  h or ?   = Help (this screen)",
+        "  q or ESC = Quit",
         "",
-        "  M      = Sort by memory usage",
-        "  P      = Sort by CPU usage",
-        "  T      = Sort by time",
-        "  N      = Sort by PID",
-        "  R      = Reverse sort order",
+        "  M        = Sort by memory usage",
+        "  P        = Sort by CPU usage",
+        "  T        = Sort by time",
+        "  N        = Sort by PID",
+        "  R        = Reverse sort order",
         "",
-        "  i      = Toggle idle processes",
+        "  i        = Toggle idle processes",
+        "",
+        "  Arrows   = Scroll (future)",
+        "  PgUp/Dn  = Page up/down (future)",
         "",
         "Press any key to continue...",
     ];
