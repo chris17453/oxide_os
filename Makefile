@@ -57,7 +57,7 @@ USERSPACE_OUT_RELEASE := $(TARGET_DIR)/$(USERSPACE_TARGET)/release
 CARGO_USER_FLAGS :=
 
 # Userspace packages to build
-USERSPACE_PACKAGES := init esh getty login coreutils ssh sshd rdpd service networkd journald journalctl evtest argtest
+USERSPACE_PACKAGES := init esh getty login coreutils ssh sshd rdpd service networkd journald journalctl soundd evtest argtest
 
 # Coreutils binaries (auto-detected from Cargo.toml [[bin]] entries)
 # Extract binary names from [[bin]] sections in coreutils/Cargo.toml
