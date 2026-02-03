@@ -238,10 +238,25 @@ pub fn timer_current() -> u32 {
     read(reg::TIMER_CURR)
 }
 
+/// Cached calibration result — BSP calibrates via PIT, APs reuse the value.
+/// The PIT is shared hardware (ports 0x42/0x43/0x61); concurrent access from
+/// multiple APs corrupts the calibration and produces garbage timer counts.
+/// — SableWire
+static CACHED_TICKS_PER_MS: core::sync::atomic::AtomicU32 =
+    core::sync::atomic::AtomicU32::new(0);
+
 /// Calibrate the APIC timer using PIT
 ///
 /// Returns the number of APIC timer ticks per millisecond.
+/// First caller does the real PIT calibration; subsequent callers reuse the
+/// cached result to avoid the PIT data race.
 pub fn calibrate_timer() -> u32 {
+    // SableWire: Fast path — return cached result if BSP already calibrated
+    let cached = CACHED_TICKS_PER_MS.load(core::sync::atomic::Ordering::Acquire);
+    if cached != 0 {
+        return cached;
+    }
+
     const PIT_FREQUENCY: u32 = 1193182;
     const CALIBRATION_MS: u32 = 10;
 
@@ -282,7 +297,12 @@ pub fn calibrate_timer() -> u32 {
     stop_timer();
 
     // Calculate ticks per millisecond
-    elapsed / CALIBRATION_MS
+    let ticks_per_ms = elapsed / CALIBRATION_MS;
+
+    // SableWire: Cache for APs — they must not touch the PIT
+    CACHED_TICKS_PER_MS.store(ticks_per_ms, core::sync::atomic::Ordering::Release);
+
+    ticks_per_ms
 }
 
 /// Initialize the APIC
@@ -475,24 +495,31 @@ pub fn unmask_io_irqs() {
 pub fn start_timer(frequency_hz: u32) {
     let mut ticks_per_ms = calibrate_timer();
     if ticks_per_ms == 0 {
-        // Fallback to a conservative default to avoid disabling the timer
-        ticks_per_ms = 1_000; // assume 1 MHz equivalent -> 1000 ticks/ms
-        crate::serial_println!(
-            "[APIC] Timer calibration returned 0; using fallback {} ticks/ms",
-            ticks_per_ms
-        );
+        // SableWire: Fallback — never leave the timer dead
+        ticks_per_ms = 1_000;
+        unsafe {
+            crate::serial::write_str_unsafe("[APIC] Timer cal=0, fallback\n");
+        }
     }
-    crate::serial_println!("[APIC] Timer calibrated: {} ticks/ms", ticks_per_ms);
 
     // Calculate initial count for desired frequency
     let interval_ms = 1000 / frequency_hz;
     let initial_count = ticks_per_ms * interval_ms;
 
-    crate::serial_println!(
-        "[APIC] Starting timer at {}Hz (count: {})",
-        frequency_hz,
-        initial_count
-    );
+    // SableWire: Lock-free serial — this runs on BSP and all APs concurrently.
+    // Using serial_println! here would take the COM1 mutex; if an AP timer fires
+    // while another AP holds that lock, the timer handler's terminal_tick (even
+    // with unsafe writes) interleaves output. Keep it simple and lock-free.
+    unsafe {
+        crate::serial::write_str_unsafe("[APIC] Timer calibrated: ");
+        crate::serial::write_u32_unsafe(ticks_per_ms);
+        crate::serial::write_str_unsafe(" ticks/ms\n");
+        crate::serial::write_str_unsafe("[APIC] Starting timer at ");
+        crate::serial::write_u32_unsafe(frequency_hz);
+        crate::serial::write_str_unsafe("Hz (count: ");
+        crate::serial::write_u32_unsafe(initial_count);
+        crate::serial::write_str_unsafe(")\n");
+    }
 
     configure_timer(
         crate::idt::vector::TIMER,

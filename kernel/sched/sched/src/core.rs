@@ -9,7 +9,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, AtomicPtr, Ordering};
 use os_core::PhysAddr;
 use sched_traits::{CpuSet, Pid, SchedPolicy, TICK_NS, TaskState};
 use spin::Mutex;
@@ -30,8 +30,19 @@ static RUN_QUEUES: [Mutex<Option<RunQueue>>; MAX_CPUS] = {
 /// Number of active CPUs
 static ACTIVE_CPUS: AtomicU32 = AtomicU32::new(0);
 
-/// Current CPU (per-CPU variable would be better, using 0 for single CPU for now)
-static CURRENT_CPU: AtomicU32 = AtomicU32::new(0);
+/// NeonRoot: Arch-provided callback to get the current CPU's logical ID.
+/// Without this, all CPUs stomp on a single global atomic — instant SMP crash.
+/// The arch layer registers a function that reads the LAPIC ID and maps it to
+/// a CPU index. Falls back to 0 (BSP) if no callback is registered.
+static CPU_ID_FN: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Register the architecture-specific CPU ID callback.
+///
+/// — NeonRoot: This MUST be called before APs start their timers.
+/// The callback must be safe to call from interrupt context (no locks, no alloc).
+pub fn register_cpu_id_fn(f: fn() -> u32) {
+    CPU_ID_FN.store(f as *mut (), Ordering::Release);
+}
 
 /// Global scheduling groups
 static SCHED_GROUPS: Mutex<Option<SchedGroups>> = Mutex::new(None);
@@ -79,14 +90,26 @@ pub fn init_cpu(cpu: u32, idle_pid: Pid) {
     set_current_pid_lockfree(cpu, Some(idle_pid));
 }
 
-/// Get the current CPU ID
+/// Get the current CPU's logical ID.
+///
+/// — NeonRoot: Uses the arch-provided callback to read the LAPIC ID and map
+/// it to a CPU index. This is safe from any context (interrupt, normal, AP).
+/// Falls back to 0 (BSP) if no callback is registered yet.
 pub fn this_cpu() -> u32 {
-    CURRENT_CPU.load(Ordering::Relaxed)
+    let ptr = CPU_ID_FN.load(Ordering::Acquire);
+    if ptr.is_null() {
+        return 0; // BSP default before callback is registered
+    }
+    let f: fn() -> u32 = unsafe { core::mem::transmute(ptr) };
+    f()
 }
 
-/// Set the current CPU ID (called during context switch on SMP)
-pub fn set_this_cpu(cpu: u32) {
-    CURRENT_CPU.store(cpu, Ordering::Relaxed);
+/// Set the current CPU ID (legacy — now a no-op, CPU ID comes from LAPIC).
+///
+/// — NeonRoot: Kept for API compatibility during SMP bringup. The actual
+/// CPU ID is determined by the arch callback registered via register_cpu_id_fn.
+pub fn set_this_cpu(_cpu: u32) {
+    // No-op: CPU ID is now derived from hardware (LAPIC ID)
 }
 
 /// Get the number of active CPUs

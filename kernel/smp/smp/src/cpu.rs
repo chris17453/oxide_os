@@ -138,6 +138,24 @@ pub fn is_bsp(cpu_id: CpuId) -> bool {
     }
 }
 
+/// Reverse-map APIC ID to logical CPU ID.
+///
+/// — NeonRoot: Scans the CPU_INFO table to find which logical CPU owns this
+/// APIC ID. Used by the scheduler's `this_cpu()` to determine which run queue
+/// to operate on. Returns 0 (BSP) if not found.
+pub fn cpu_id_from_apic(apic_id: u32) -> u32 {
+    let count = NUM_CPUS.load(Ordering::Relaxed) as usize;
+    let limit = core::cmp::min(count, MAX_CPUS);
+    unsafe {
+        for i in 0..limit {
+            if CPU_INFO[i].state != CpuState::NotPresent && CPU_INFO[i].apic_id == apic_id {
+                return i as u32;
+            }
+        }
+    }
+    0 // Fallback to BSP
+}
+
 /// Get the APIC ID for a CPU
 pub fn get_apic_id(cpu_id: CpuId) -> Option<u32> {
     unsafe {

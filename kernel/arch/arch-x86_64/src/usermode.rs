@@ -118,11 +118,12 @@ pub unsafe extern "C" fn enter_usermode(
         // Disable interrupts during the transition
         "cli",
 
-        // Save arguments before we modify registers
-        // r8 already contains fs_base
+        // Save arguments FIRST before any clobber
+        // rdi = kernel_stack, rsi = pml4_phys, rdx = entry, rcx = user_stack, r8 = fs_base
         "mov r10, rdx",  // entry -> r10
         "mov r11, rcx",  // user_stack -> r11
         "mov r12, r8",   // fs_base -> r12
+        // rdi (kernel_stack) and rsi (pml4_phys) still live
 
         // First, switch to the new kernel stack (which is in higher half)
         "mov rsp, rdi",

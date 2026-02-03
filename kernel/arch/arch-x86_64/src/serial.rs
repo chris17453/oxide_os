@@ -149,6 +149,33 @@ pub unsafe fn write_str_unsafe(s: &str) {
     }
 }
 
+/// Write a u32 decimal to COM1 without locks (ISR/boot-safe)
+///
+/// — SableWire: Used by start_timer and other lock-free paths
+///
+/// # Safety
+/// See write_byte_unsafe
+#[inline]
+pub unsafe fn write_u32_unsafe(n: u32) {
+    unsafe {
+        if n == 0 {
+            write_byte_unsafe(b'0');
+            return;
+        }
+        let mut buf = [0u8; 10];
+        let mut v = n;
+        let mut pos = 0;
+        while v > 0 {
+            buf[pos] = b'0' + (v % 10) as u8;
+            v /= 10;
+            pos += 1;
+        }
+        for i in (0..pos).rev() {
+            write_byte_unsafe(buf[i]);
+        }
+    }
+}
+
 /// Read a byte from COM1 (non-blocking)
 pub fn read_byte() -> Option<u8> {
     COM1.lock().read_byte()

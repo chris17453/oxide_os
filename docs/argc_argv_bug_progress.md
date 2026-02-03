@@ -2,7 +2,7 @@
 
 **Date:** 2026-02-02
 **Issue:** Programs receive argc=0, cannot see command-line arguments
-**Status:** argc/argv fix APPLIED — boot blocked by interrupt/timer race at enter_usermode
+**Status:** BOOT FIXED — OS reaches login prompt. argc/argv testing can proceed.
 
 ---
 
@@ -275,13 +275,31 @@ Multiple cascading issues were found and fixed:
 - AP timer tick → page fault → no handler → triple fault
 - **Fix:** Added `BSP_READY` atomic gate; APs spin until BSP signals
 
-### Current: Timer/scheduler race at enter_usermode (IN PROGRESS)
-- Timer starts, APs released, then crash before usermode entry
-- 3 APs call `start_timer()` with `serial_println!` simultaneously
-- BSP timer may preempt before `enter_usermode()` executes
-- The `[` character in last output suggests AP serial output interrupted
-- **Next:** Eliminate serial output between timer start and enter_usermode,
-  or start timer inside enter_usermode assembly after cli
+### Fix 6: SMP scheduler CPU ID race (SOLVED — ROOT CAUSE OF CRASH)
+- **File:** `kernel/sched/sched/src/core.rs`, `kernel/smp/smp/src/cpu.rs`
+- `CURRENT_CPU` was a single global `AtomicU32` shared by all 4 CPUs
+- When APs started, all CPUs stomped this variable — `this_cpu()` returned
+  whichever CPU wrote last, causing every scheduler tick to use the WRONG
+  run queue. Instant corruption → crash.
+- **Fix:** Added `register_cpu_id_fn()` callback to sched crate. The kernel
+  registers a function that reads the LAPIC ID register and maps it to a
+  logical CPU index via `smp::cpu::cpu_id_from_apic()`.
+
+### Fix 7: PIT calibration race on APs (SOLVED)
+- **File:** `kernel/arch/arch-x86_64/src/apic.rs`
+- 3 APs calling `calibrate_timer()` simultaneously all wrote to the same
+  PIT channel 2 ports (0x42, 0x43, 0x61) — shared hardware
+- **Fix:** Cache the BSP's calibration result in an atomic. APs reuse it.
+
+### Fix 8: Lock-free serial in timer-to-usermode window (SOLVED)
+- **Files:** `kernel/src/init.rs`, `kernel/arch/arch-x86_64/src/apic.rs`
+- Replaced `writeln!`/`serial_println!` between timer start and enter_usermode
+  with `write_str_unsafe`/`write_u32_unsafe` to prevent COM1 lock contention
+  with timer interrupt callbacks
+
+### Result
+OS boots to login prompt. Init mounts ext4 root, starts getty. Ready for
+argc/argv testing with `argtest bob bob obo`.
 
 ---
 

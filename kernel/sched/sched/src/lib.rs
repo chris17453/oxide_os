@@ -133,6 +133,8 @@ pub use crate::core::{
     preempt_disable,
     preempt_disabled,
     preempt_enable,
+    // SMP CPU ID callback
+    register_cpu_id_fn,
     remove_task,
     remove_task_child,
     // Scheduling

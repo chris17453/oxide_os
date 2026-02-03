@@ -682,6 +682,13 @@ pub fn unmask_io_irqs() {
     apic::unmask_io_irqs();
 }
 
+/// Get the current CPU's APIC ID.
+///
+/// — NeonRoot: Reads the LAPIC ID register directly. Safe from any context.
+pub fn apic_id() -> u8 {
+    apic::id()
+}
+
 /// Get current timer tick count
 pub fn timer_ticks() -> u64 {
     exceptions::ticks()
