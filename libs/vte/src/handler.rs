@@ -109,62 +109,117 @@ impl Charset {
         match self {
             Charset::Ascii => ch,
 
-            Charset::DecSpecialGraphics => {
-                match ch {
-                    '_' => '\u{0020}', '`' => '\u{25C6}', 'a' => '\u{2592}',
-                    'b' => '\u{2409}', 'c' => '\u{240C}', 'd' => '\u{240D}',
-                    'e' => '\u{240A}', 'f' => '\u{00B0}', 'g' => '\u{00B1}',
-                    'h' => '\u{2424}', 'i' => '\u{240B}', 'j' => '\u{2518}',
-                    'k' => '\u{2510}', 'l' => '\u{250C}', 'm' => '\u{2514}',
-                    'n' => '\u{253C}', 'o' => '\u{23BA}', 'p' => '\u{23BB}',
-                    'q' => '\u{2500}', 'r' => '\u{23BC}', 's' => '\u{23BD}',
-                    't' => '\u{251C}', 'u' => '\u{2524}', 'v' => '\u{2534}',
-                    'w' => '\u{252C}', 'x' => '\u{2502}', 'y' => '\u{2264}',
-                    'z' => '\u{2265}', '{' => '\u{03C0}', '|' => '\u{2260}',
-                    '}' => '\u{00A3}', '~' => '\u{00B7}',
-                    _ => ch,
-                }
-            }
+            Charset::DecSpecialGraphics => match ch {
+                '_' => '\u{0020}',
+                '`' => '\u{25C6}',
+                'a' => '\u{2592}',
+                'b' => '\u{2409}',
+                'c' => '\u{240C}',
+                'd' => '\u{240D}',
+                'e' => '\u{240A}',
+                'f' => '\u{00B0}',
+                'g' => '\u{00B1}',
+                'h' => '\u{2424}',
+                'i' => '\u{240B}',
+                'j' => '\u{2518}',
+                'k' => '\u{2510}',
+                'l' => '\u{250C}',
+                'm' => '\u{2514}',
+                'n' => '\u{253C}',
+                'o' => '\u{23BA}',
+                'p' => '\u{23BB}',
+                'q' => '\u{2500}',
+                'r' => '\u{23BC}',
+                's' => '\u{23BD}',
+                't' => '\u{251C}',
+                'u' => '\u{2524}',
+                'v' => '\u{2534}',
+                'w' => '\u{252C}',
+                'x' => '\u{2502}',
+                'y' => '\u{2264}',
+                'z' => '\u{2265}',
+                '{' => '\u{03C0}',
+                '|' => '\u{2260}',
+                '}' => '\u{00A3}',
+                '~' => '\u{00B7}',
+                _ => ch,
+            },
 
-            Charset::DecSupplemental => {
-                match ch {
-                    'j' => '\u{255D}', 'k' => '\u{2557}', 'l' => '\u{2554}',
-                    'm' => '\u{255A}', 'n' => '\u{256C}', 'q' => '\u{2550}',
-                    't' => '\u{2560}', 'u' => '\u{2563}', 'v' => '\u{2569}',
-                    'w' => '\u{2566}', 'x' => '\u{2551}', '`' => '\u{25C6}',
-                    'a' => '\u{2592}', 'f' => '\u{00B0}', 'g' => '\u{00B1}',
-                    'y' => '\u{2264}', 'z' => '\u{2265}', '{' => '\u{03C0}',
-                    '|' => '\u{2260}', '}' => '\u{00A3}', '~' => '\u{00B7}',
-                    _ => ch,
-                }
-            }
+            Charset::DecSupplemental => match ch {
+                'j' => '\u{255D}',
+                'k' => '\u{2557}',
+                'l' => '\u{2554}',
+                'm' => '\u{255A}',
+                'n' => '\u{256C}',
+                'q' => '\u{2550}',
+                't' => '\u{2560}',
+                'u' => '\u{2563}',
+                'v' => '\u{2569}',
+                'w' => '\u{2566}',
+                'x' => '\u{2551}',
+                '`' => '\u{25C6}',
+                'a' => '\u{2592}',
+                'f' => '\u{00B0}',
+                'g' => '\u{00B1}',
+                'y' => '\u{2264}',
+                'z' => '\u{2265}',
+                '{' => '\u{03C0}',
+                '|' => '\u{2260}',
+                '}' => '\u{00A3}',
+                '~' => '\u{00B7}',
+                _ => ch,
+            },
 
-            Charset::DecTechnical => {
-                match ch {
-                    '!' => '\u{2191}', '"' => '\u{2193}', '#' => '\u{2192}',
-                    '$' => '\u{2190}', '%' => '\u{2195}', '&' => '\u{2194}',
-                    '\'' => '\u{25B2}', '(' => '\u{25BC}', ')' => '\u{25B6}',
-                    '*' => '\u{25C0}', '+' => '\u{2211}', ',' => '\u{222B}',
-                    '-' => '\u{221A}', '.' => '\u{2248}', '/' => '\u{2260}',
-                    '0' => '\u{2261}', '1' => '\u{2264}', '2' => '\u{2265}',
-                    '3' => '\u{03C0}', '4' => '\u{2202}', '5' => '\u{221E}',
-                    '6' => '\u{2282}', '7' => '\u{2283}', '8' => '\u{2229}',
-                    '9' => '\u{222A}', ':' => '\u{2227}', ';' => '\u{2228}',
-                    '<' => '\u{00AC}', '=' => '\u{21D4}', '>' => '\u{21D2}',
-                    '?' => '\u{2200}', '@' => '\u{2203}', '[' => '\u{2208}',
-                    '\\' => '\u{2209}', ']' => '\u{2205}', '^' => '\u{2207}',
-                    '_' => '\u{00B0}', '`' => '\u{00B1}', '{' => '\u{2220}',
-                    '|' => '\u{22A5}', '}' => '\u{2234}', '~' => '\u{2235}',
-                    _ => ch,
-                }
-            }
+            Charset::DecTechnical => match ch {
+                '!' => '\u{2191}',
+                '"' => '\u{2193}',
+                '#' => '\u{2192}',
+                '$' => '\u{2190}',
+                '%' => '\u{2195}',
+                '&' => '\u{2194}',
+                '\'' => '\u{25B2}',
+                '(' => '\u{25BC}',
+                ')' => '\u{25B6}',
+                '*' => '\u{25C0}',
+                '+' => '\u{2211}',
+                ',' => '\u{222B}',
+                '-' => '\u{221A}',
+                '.' => '\u{2248}',
+                '/' => '\u{2260}',
+                '0' => '\u{2261}',
+                '1' => '\u{2264}',
+                '2' => '\u{2265}',
+                '3' => '\u{03C0}',
+                '4' => '\u{2202}',
+                '5' => '\u{221E}',
+                '6' => '\u{2282}',
+                '7' => '\u{2283}',
+                '8' => '\u{2229}',
+                '9' => '\u{222A}',
+                ':' => '\u{2227}',
+                ';' => '\u{2228}',
+                '<' => '\u{00AC}',
+                '=' => '\u{21D4}',
+                '>' => '\u{21D2}',
+                '?' => '\u{2200}',
+                '@' => '\u{2203}',
+                '[' => '\u{2208}',
+                '\\' => '\u{2209}',
+                ']' => '\u{2205}',
+                '^' => '\u{2207}',
+                '_' => '\u{00B0}',
+                '`' => '\u{00B1}',
+                '{' => '\u{2220}',
+                '|' => '\u{22A5}',
+                '}' => '\u{2234}',
+                '~' => '\u{2235}',
+                _ => ch,
+            },
 
-            Charset::Uk => {
-                match ch {
-                    '#' => '\u{00A3}',
-                    _ => ch,
-                }
-            }
+            Charset::Uk => match ch {
+                '#' => '\u{00A3}',
+                _ => ch,
+            },
         }
     }
 }
@@ -643,9 +698,15 @@ impl Handler {
     /// Handle ESC sequence
     pub fn handle_esc(&mut self, intermediates: &[u8], final_char: u8, buffer: &mut ScreenBuffer) {
         match (intermediates.first(), final_char) {
-            (None, b'7') => { self.save_cursor(); }
-            (None, b'8') => { self.restore_cursor(); }
-            (None, b'D') => { self.linefeed(buffer, None); }
+            (None, b'7') => {
+                self.save_cursor();
+            }
+            (None, b'8') => {
+                self.restore_cursor();
+            }
+            (None, b'D') => {
+                self.linefeed(buffer, None);
+            }
             (None, b'E') => {
                 self.cursor.col = 0;
                 self.linefeed(buffer, None);
@@ -655,8 +716,12 @@ impl Handler {
                     self.tabs[self.cursor.col as usize] = true;
                 }
             }
-            (None, b'M') => { self.reverse_linefeed(buffer); }
-            (None, b'c') => { self.reset(buffer); }
+            (None, b'M') => {
+                self.reverse_linefeed(buffer);
+            }
+            (None, b'c') => {
+                self.reset(buffer);
+            }
             (Some(b'#'), b'8') => {
                 // DECALN - Screen Alignment Pattern
                 let attrs = CellAttrs::default();
@@ -667,22 +732,45 @@ impl Handler {
                 }
             }
             // G0 Character Set Selection
-            (Some(b'('), b'B') => { self.g0_charset = Charset::Ascii; }
-            (Some(b'('), b'0') => { self.g0_charset = Charset::DecSpecialGraphics; }
-            (Some(b'('), b'<') => { self.g0_charset = Charset::DecSupplemental; }
-            (Some(b'('), b'>') => { self.g0_charset = Charset::DecTechnical; }
-            (Some(b'('), b'A') => { self.g0_charset = Charset::Uk; }
-            (Some(b'('), b'U') | (Some(b'('), b'K') => { self.g0_charset = Charset::Ascii; }
+            (Some(b'('), b'B') => {
+                self.g0_charset = Charset::Ascii;
+            }
+            (Some(b'('), b'0') => {
+                self.g0_charset = Charset::DecSpecialGraphics;
+            }
+            (Some(b'('), b'<') => {
+                self.g0_charset = Charset::DecSupplemental;
+            }
+            (Some(b'('), b'>') => {
+                self.g0_charset = Charset::DecTechnical;
+            }
+            (Some(b'('), b'A') => {
+                self.g0_charset = Charset::Uk;
+            }
+            (Some(b'('), b'U') | (Some(b'('), b'K') => {
+                self.g0_charset = Charset::Ascii;
+            }
             // G1 Character Set Selection
-            (Some(b')'), b'B') => { self.g1_charset = Charset::Ascii; }
-            (Some(b')'), b'0') => { self.g1_charset = Charset::DecSpecialGraphics; }
-            (Some(b')'), b'<') => { self.g1_charset = Charset::DecSupplemental; }
-            (Some(b')'), b'>') => { self.g1_charset = Charset::DecTechnical; }
-            (Some(b')'), b'A') => { self.g1_charset = Charset::Uk; }
-            (Some(b')'), b'U') | (Some(b')'), b'K') => { self.g1_charset = Charset::Ascii; }
+            (Some(b')'), b'B') => {
+                self.g1_charset = Charset::Ascii;
+            }
+            (Some(b')'), b'0') => {
+                self.g1_charset = Charset::DecSpecialGraphics;
+            }
+            (Some(b')'), b'<') => {
+                self.g1_charset = Charset::DecSupplemental;
+            }
+            (Some(b')'), b'>') => {
+                self.g1_charset = Charset::DecTechnical;
+            }
+            (Some(b')'), b'A') => {
+                self.g1_charset = Charset::Uk;
+            }
+            (Some(b')'), b'U') | (Some(b')'), b'K') => {
+                self.g1_charset = Charset::Ascii;
+            }
             // DECDHL/DECSWL/DECDWL - line attribute variants (not rendered, acknowledged)
-            (Some(b'#'), b'3') | (Some(b'#'), b'4') |
-            (Some(b'#'), b'5') | (Some(b'#'), b'6') => {}
+            (Some(b'#'), b'3') | (Some(b'#'), b'4') | (Some(b'#'), b'5') | (Some(b'#'), b'6') => {}
             _ => {}
         }
     }
@@ -698,39 +786,85 @@ impl Handler {
         while i < params.len() {
             let param = params[i];
             match param {
-                0 | -1 => { self.attrs = CellAttrs::default(); }
-                1 => { self.attrs.flags |= CellFlags::BOLD; }
-                2 => { self.attrs.flags |= CellFlags::DIM; }
-                3 => { self.attrs.flags |= CellFlags::ITALIC; }
-                4 => { self.attrs.flags |= CellFlags::UNDERLINE; }
-                5 | 6 => { self.attrs.flags |= CellFlags::BLINK; }
-                7 => { self.attrs.flags |= CellFlags::REVERSE; }
-                8 => { self.attrs.flags |= CellFlags::HIDDEN; }
-                9 => { self.attrs.flags |= CellFlags::STRIKETHROUGH; }
-                21 => { self.attrs.flags |= CellFlags::UNDERLINE; }
-                22 => { self.attrs.flags &= !(CellFlags::BOLD | CellFlags::DIM); }
-                23 => { self.attrs.flags &= !CellFlags::ITALIC; }
-                24 => { self.attrs.flags &= !CellFlags::UNDERLINE; }
-                25 => { self.attrs.flags &= !CellFlags::BLINK; }
-                27 => { self.attrs.flags &= !CellFlags::REVERSE; }
-                28 => { self.attrs.flags &= !CellFlags::HIDDEN; }
-                29 => { self.attrs.flags &= !CellFlags::STRIKETHROUGH; }
-                30..=37 => { self.attrs.fg = TermColor::Ansi16((param - 30) as u8); }
+                0 | -1 => {
+                    self.attrs = CellAttrs::default();
+                }
+                1 => {
+                    self.attrs.flags |= CellFlags::BOLD;
+                }
+                2 => {
+                    self.attrs.flags |= CellFlags::DIM;
+                }
+                3 => {
+                    self.attrs.flags |= CellFlags::ITALIC;
+                }
+                4 => {
+                    self.attrs.flags |= CellFlags::UNDERLINE;
+                }
+                5 | 6 => {
+                    self.attrs.flags |= CellFlags::BLINK;
+                }
+                7 => {
+                    self.attrs.flags |= CellFlags::REVERSE;
+                }
+                8 => {
+                    self.attrs.flags |= CellFlags::HIDDEN;
+                }
+                9 => {
+                    self.attrs.flags |= CellFlags::STRIKETHROUGH;
+                }
+                21 => {
+                    self.attrs.flags |= CellFlags::UNDERLINE;
+                }
+                22 => {
+                    self.attrs.flags &= !(CellFlags::BOLD | CellFlags::DIM);
+                }
+                23 => {
+                    self.attrs.flags &= !CellFlags::ITALIC;
+                }
+                24 => {
+                    self.attrs.flags &= !CellFlags::UNDERLINE;
+                }
+                25 => {
+                    self.attrs.flags &= !CellFlags::BLINK;
+                }
+                27 => {
+                    self.attrs.flags &= !CellFlags::REVERSE;
+                }
+                28 => {
+                    self.attrs.flags &= !CellFlags::HIDDEN;
+                }
+                29 => {
+                    self.attrs.flags &= !CellFlags::STRIKETHROUGH;
+                }
+                30..=37 => {
+                    self.attrs.fg = TermColor::Ansi16((param - 30) as u8);
+                }
                 38 => {
                     if let Some(color) = parse_extended_color(params, &mut i) {
                         self.attrs.fg = color;
                     }
                 }
-                39 => { self.attrs.fg = TermColor::DefaultFg; }
-                40..=47 => { self.attrs.bg = TermColor::Ansi16((param - 40) as u8); }
+                39 => {
+                    self.attrs.fg = TermColor::DefaultFg;
+                }
+                40..=47 => {
+                    self.attrs.bg = TermColor::Ansi16((param - 40) as u8);
+                }
                 48 => {
                     if let Some(color) = parse_extended_color(params, &mut i) {
                         self.attrs.bg = color;
                     }
                 }
-                49 => { self.attrs.bg = TermColor::DefaultBg; }
-                90..=97 => { self.attrs.fg = TermColor::Ansi16((param - 90 + 8) as u8); }
-                100..=107 => { self.attrs.bg = TermColor::Ansi16((param - 100 + 8) as u8); }
+                49 => {
+                    self.attrs.bg = TermColor::DefaultBg;
+                }
+                90..=97 => {
+                    self.attrs.fg = TermColor::Ansi16((param - 90 + 8) as u8);
+                }
+                100..=107 => {
+                    self.attrs.bg = TermColor::Ansi16((param - 100 + 8) as u8);
+                }
                 _ => {}
             }
             i += 1;
@@ -758,55 +892,99 @@ impl Handler {
         for &param in params {
             match param {
                 1 => {
-                    if enable { self.modes |= TerminalModes::APP_CURSOR; }
-                    else { self.modes &= !TerminalModes::APP_CURSOR; }
+                    if enable {
+                        self.modes |= TerminalModes::APP_CURSOR;
+                    } else {
+                        self.modes &= !TerminalModes::APP_CURSOR;
+                    }
                 }
                 6 => {
-                    if enable { self.modes |= TerminalModes::ORIGIN_MODE; }
-                    else { self.modes &= !TerminalModes::ORIGIN_MODE; }
+                    if enable {
+                        self.modes |= TerminalModes::ORIGIN_MODE;
+                    } else {
+                        self.modes &= !TerminalModes::ORIGIN_MODE;
+                    }
                     self.cursor.row = if enable { self.scroll_top } else { 0 };
                     self.cursor.col = 0;
                 }
                 7 => {
-                    if enable { self.modes |= TerminalModes::AUTOWRAP; }
-                    else { self.modes &= !TerminalModes::AUTOWRAP; }
+                    if enable {
+                        self.modes |= TerminalModes::AUTOWRAP;
+                    } else {
+                        self.modes &= !TerminalModes::AUTOWRAP;
+                    }
                 }
                 25 => {
                     self.cursor.visible = enable;
-                    if enable { self.modes |= TerminalModes::CURSOR_VISIBLE; }
-                    else { self.modes &= !TerminalModes::CURSOR_VISIBLE; }
+                    if enable {
+                        self.modes |= TerminalModes::CURSOR_VISIBLE;
+                    } else {
+                        self.modes &= !TerminalModes::CURSOR_VISIBLE;
+                    }
                 }
                 9 => {
-                    if enable { self.mouse_mode = MouseMode::X10; self.modes |= TerminalModes::MOUSE_TRACKING; }
-                    else { self.mouse_mode = MouseMode::None; self.modes &= !TerminalModes::MOUSE_TRACKING; }
+                    if enable {
+                        self.mouse_mode = MouseMode::X10;
+                        self.modes |= TerminalModes::MOUSE_TRACKING;
+                    } else {
+                        self.mouse_mode = MouseMode::None;
+                        self.modes &= !TerminalModes::MOUSE_TRACKING;
+                    }
                 }
                 1000 => {
-                    if enable { self.mouse_mode = MouseMode::Normal; self.modes |= TerminalModes::MOUSE_TRACKING; }
-                    else { self.mouse_mode = MouseMode::None; self.modes &= !TerminalModes::MOUSE_TRACKING; }
+                    if enable {
+                        self.mouse_mode = MouseMode::Normal;
+                        self.modes |= TerminalModes::MOUSE_TRACKING;
+                    } else {
+                        self.mouse_mode = MouseMode::None;
+                        self.modes &= !TerminalModes::MOUSE_TRACKING;
+                    }
                 }
                 1002 => {
-                    if enable { self.mouse_mode = MouseMode::ButtonMotion; self.modes |= TerminalModes::MOUSE_TRACKING; }
-                    else { self.mouse_mode = MouseMode::None; self.modes &= !TerminalModes::MOUSE_TRACKING; }
+                    if enable {
+                        self.mouse_mode = MouseMode::ButtonMotion;
+                        self.modes |= TerminalModes::MOUSE_TRACKING;
+                    } else {
+                        self.mouse_mode = MouseMode::None;
+                        self.modes &= !TerminalModes::MOUSE_TRACKING;
+                    }
                 }
                 1003 => {
-                    if enable { self.mouse_mode = MouseMode::AnyMotion; self.modes |= TerminalModes::MOUSE_TRACKING; }
-                    else { self.mouse_mode = MouseMode::None; self.modes &= !TerminalModes::MOUSE_TRACKING; }
+                    if enable {
+                        self.mouse_mode = MouseMode::AnyMotion;
+                        self.modes |= TerminalModes::MOUSE_TRACKING;
+                    } else {
+                        self.mouse_mode = MouseMode::None;
+                        self.modes &= !TerminalModes::MOUSE_TRACKING;
+                    }
                 }
                 1005 => {
-                    if enable { self.mouse_encoding = MouseEncoding::Utf8; }
-                    else { self.mouse_encoding = MouseEncoding::X10; }
+                    if enable {
+                        self.mouse_encoding = MouseEncoding::Utf8;
+                    } else {
+                        self.mouse_encoding = MouseEncoding::X10;
+                    }
                 }
                 1006 => {
-                    if enable { self.mouse_encoding = MouseEncoding::Sgr; }
-                    else { self.mouse_encoding = MouseEncoding::X10; }
+                    if enable {
+                        self.mouse_encoding = MouseEncoding::Sgr;
+                    } else {
+                        self.mouse_encoding = MouseEncoding::X10;
+                    }
                 }
                 1015 => {
-                    if enable { self.mouse_encoding = MouseEncoding::Urxvt; }
-                    else { self.mouse_encoding = MouseEncoding::X10; }
+                    if enable {
+                        self.mouse_encoding = MouseEncoding::Urxvt;
+                    } else {
+                        self.mouse_encoding = MouseEncoding::X10;
+                    }
                 }
                 1004 => {
-                    if enable { self.modes |= TerminalModes::FOCUS_EVENTS; }
-                    else { self.modes &= !TerminalModes::FOCUS_EVENTS; }
+                    if enable {
+                        self.modes |= TerminalModes::FOCUS_EVENTS;
+                    } else {
+                        self.modes &= !TerminalModes::FOCUS_EVENTS;
+                    }
                 }
                 1049 => {
                     if enable {
@@ -818,12 +996,18 @@ impl Handler {
                     }
                 }
                 2004 => {
-                    if enable { self.modes |= TerminalModes::BRACKETED_PASTE; }
-                    else { self.modes &= !TerminalModes::BRACKETED_PASTE; }
+                    if enable {
+                        self.modes |= TerminalModes::BRACKETED_PASTE;
+                    } else {
+                        self.modes &= !TerminalModes::BRACKETED_PASTE;
+                    }
                 }
                 2026 => {
-                    if enable { self.modes |= TerminalModes::SYNCHRONIZED_OUTPUT; }
-                    else { self.modes &= !TerminalModes::SYNCHRONIZED_OUTPUT; }
+                    if enable {
+                        self.modes |= TerminalModes::SYNCHRONIZED_OUTPUT;
+                    } else {
+                        self.modes &= !TerminalModes::SYNCHRONIZED_OUTPUT;
+                    }
                 }
                 _ => {}
             }

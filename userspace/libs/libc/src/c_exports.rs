@@ -3299,9 +3299,9 @@ pub unsafe extern "C" fn tcsetattr(fd: i32, action: i32, termios_p: *const u8) -
     // TCSADRAIN (1)  -> TCSETSW (0x5403) - change after output drains
     // TCSAFLUSH (2)  -> TCSETSF (0x5404) - drain output + flush input
     let ioctl_cmd = match action {
-        0 => 0x5402, // TCSANOW / TCSETS
-        1 => 0x5403, // TCSADRAIN / TCSETSW
-        2 => 0x5404, // TCSAFLUSH / TCSETSF
+        0 => 0x5402,    // TCSANOW / TCSETS
+        1 => 0x5403,    // TCSADRAIN / TCSETSW
+        2 => 0x5404,    // TCSAFLUSH / TCSETSF
         _ => return -1, // Invalid action
     };
     ioctl(fd, ioctl_cmd, termios_p as u64)

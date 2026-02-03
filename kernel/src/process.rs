@@ -14,9 +14,9 @@ use arch_x86_64 as arch;
 use mm_paging::{flush_tlb_all, phys_to_virt, write_cr3};
 use os_core::PhysAddr;
 use proc::{ProcessContext, ProcessMeta, WaitOptions, WaitResult, do_exec, do_fork};
-use signal::{PendingSignals, SigSet};
 use proc_traits::Pid;
 use sched::TaskState;
+use signal::{PendingSignals, SigSet};
 use vfs::{VnodeType, mount::GLOBAL_VFS};
 
 #[allow(unused_imports)]
@@ -43,7 +43,10 @@ pub fn user_exit(status: i32) -> ! {
 
         debug_proc!(
             "[EXIT] TID={} TGID={} status={} is_thread={}",
-            current_tid, tgid, status, is_thread
+            current_tid,
+            tgid,
+            status,
+            is_thread
         );
 
         // Handle thread exit - clear_child_tid and futex wake
@@ -58,7 +61,9 @@ pub fn user_exit(status: i32) -> ! {
             if let Ok(pids) = proc::futex_wake(clear_child_tid, i32::MAX) {
                 debug_proc!(
                     "[EXIT] Thread {} cleared tid at {:#x}, woke {} waiters",
-                    current_tid, clear_child_tid, pids.len()
+                    current_tid,
+                    clear_child_tid,
+                    pids.len()
                 );
                 for pid in pids {
                     sched::wake_up(pid);
@@ -74,7 +79,10 @@ pub fn user_exit(status: i32) -> ! {
     if is_thread {
         // This is a thread exit (not the main process)
         // ThreadRogue: Thread cleanup - no zombie state, immediate removal
-        debug_proc!("[EXIT] Thread {} exiting (not becoming zombie)", current_tid);
+        debug_proc!(
+            "[EXIT] Thread {} exiting (not becoming zombie)",
+            current_tid
+        );
 
         // Remove thread from scheduler immediately (no zombie for threads)
         crate::scheduler::remove_process(current_tid);
@@ -94,7 +102,8 @@ pub fn user_exit(status: i32) -> ! {
 
         debug_proc!(
             "[EXIT] Main process {} exiting, parent={}",
-            current_tid, parent_pid
+            current_tid,
+            parent_pid
         );
 
         // Mark task as zombie and set exit status
@@ -116,7 +125,11 @@ pub fn user_exit(status: i32) -> ! {
         // NOTE: Do NOT remove the process from scheduler here!
         // The process must stay as a zombie until the parent reaps it via wait().
 
-        debug_proc!("[EXIT] Process {} became zombie, woke parent={}", current_tid, parent_pid);
+        debug_proc!(
+            "[EXIT] Process {} became zombie, woke parent={}",
+            current_tid,
+            parent_pid
+        );
         sched::set_need_resched();
         arch::allow_kernel_preempt();
         loop {
@@ -441,7 +454,11 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
     use spin::Mutex;
 
     let parent_pid = sched::current_pid().unwrap_or(0);
-    debug_proc!("[CLONE] Clone called from PID {} with flags={:#x}", parent_pid, flags);
+    debug_proc!(
+        "[CLONE] Clone called from PID {} with flags={:#x}",
+        parent_pid,
+        flags
+    );
 
     // Get parent's ProcessMeta
     let parent_meta_arc = match sched::get_task_meta(parent_pid) {
@@ -512,7 +529,11 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
     match result {
         Ok(clone_result) => {
             let child_tid = clone_result.child_tid;
-            debug_proc!("[CLONE] Created thread TID {} in TGID {}", child_tid, clone_result.tgid);
+            debug_proc!(
+                "[CLONE] Created thread TID {} in TGID {}",
+                child_tid,
+                clone_result.tgid
+            );
 
             // Write child TID to parent_tid address if requested
             if clone_result.parent_tid_addr != 0 {
@@ -667,8 +688,12 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
         // Check for state changes: zombie, stopped (WUNTRACED), continued (WCONTINUED)
         match find_child_state_change(parent_pid, pid, &wait_opts) {
             Ok(result) => {
-                debug_proc!("[WAIT] pid={} found state change: child={} status=0x{:x}",
-                    parent_pid, result.pid, result.status);
+                debug_proc!(
+                    "[WAIT] pid={} found state change: child={} status=0x{:x}",
+                    parent_pid,
+                    result.pid,
+                    result.status
+                );
 
                 // Only reap zombies (low 7 bits != 0x7F means not stopped)
                 let is_stopped = (result.status & 0xFF) == 0x7F;
@@ -744,7 +769,10 @@ fn find_child_state_change(
             // Zombie — always reportable
             if state == TaskState::TASK_ZOMBIE {
                 if let Some(status) = sched::get_task_exit_status(*child_pid) {
-                    return Ok(WaitResult { pid: *child_pid, status });
+                    return Ok(WaitResult {
+                        pid: *child_pid,
+                        status,
+                    });
                 }
             }
 

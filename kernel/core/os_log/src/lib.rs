@@ -106,10 +106,7 @@ static mut UNSAFE_WRITE_STR: Option<UnsafeWriteStrFn> = None;
 /// - Must be called during single-threaded init before any interrupts.
 /// - The functions must be callable from *any* context (ISR, NMI,
 ///   exception handlers) without acquiring locks or allocating.
-pub unsafe fn register_unsafe_writer(
-    write_byte: UnsafeWriteByteFn,
-    write_str: UnsafeWriteStrFn,
-) {
+pub unsafe fn register_unsafe_writer(write_byte: UnsafeWriteByteFn, write_str: UnsafeWriteStrFn) {
     unsafe {
         UNSAFE_WRITE_BYTE = Some(write_byte);
         UNSAFE_WRITE_STR = Some(write_str);

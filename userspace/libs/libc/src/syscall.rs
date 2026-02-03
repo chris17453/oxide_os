@@ -5,7 +5,7 @@
 
 // Re-export arch-specific raw syscall functions
 pub use crate::arch::syscall::{
-    syscall0, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6, syscall_exit,
+    syscall_exit, syscall0, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6,
 };
 
 /// Syscall numbers (must match kernel)

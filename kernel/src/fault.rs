@@ -229,8 +229,10 @@ fn handle_stack_growth(page_addr: u64, pml4_phys: PhysAddr) -> bool {
 
     // ── GraveShift: Map with PRESENT | WRITABLE | USER | NO_EXECUTE ──
     // Stack data is never executable. NX bit keeps us honest.
-    let data_flags =
-        PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER | PageTableFlags::NO_EXECUTE;
+    let data_flags = PageTableFlags::PRESENT
+        | PageTableFlags::WRITABLE
+        | PageTableFlags::USER
+        | PageTableFlags::NO_EXECUTE;
     pt_entry.set(data_frame, data_flags);
 
     // ── GraveShift: TLB shootdown so all cores see the new mapping ──

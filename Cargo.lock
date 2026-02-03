@@ -190,6 +190,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b365fabc795046672053e29c954733ec3b05e4be654ab130fe8f1f94d7051f35"
 
 [[package]]
+name = "curses-demo"
+version = "0.1.0"
+dependencies = [
+ "libc 0.1.0",
+ "oxide-ncurses",
+]
+
+[[package]]
 name = "devfs"
 version = "0.1.0"
 dependencies = [
@@ -953,6 +961,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxide-ncurses"
+version = "0.1.0"
+dependencies = [
+ "libc 0.1.0",
+ "termcap",
+ "vte",
+]
+
+[[package]]
 name = "oxide-std"
 version = "0.1.0"
 dependencies = [
@@ -1403,6 +1420,20 @@ dependencies = [
  "arch-x86_64",
  "os_core",
  "spin 0.9.8",
+]
+
+[[package]]
+name = "sound-client"
+version = "0.1.0"
+dependencies = [
+ "libc 0.1.0",
+]
+
+[[package]]
+name = "soundd"
+version = "0.1.0"
+dependencies = [
+ "libc 0.1.0",
 ]
 
 [[package]]

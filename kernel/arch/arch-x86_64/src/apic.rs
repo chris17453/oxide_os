@@ -146,9 +146,9 @@ pub fn enable() {
     // by UEFI firmware; a stale PIC IRQ sitting in the PIC's IRR can fire
     // through LINT0 the instant `sti` executes, even after OCW1 masking.
     // Mask bit = bit 16 of LVT entry.
-    write(reg::LVT_LINT0, 1 << 16);  // Mask LINT0
-    write(reg::LVT_LINT1, 1 << 16);  // Mask LINT1
-    write(reg::LVT_ERROR, 1 << 16);  // Mask error interrupt too
+    write(reg::LVT_LINT0, 1 << 16); // Mask LINT0
+    write(reg::LVT_LINT1, 1 << 16); // Mask LINT1
+    write(reg::LVT_ERROR, 1 << 16); // Mask error interrupt too
 
     // Set task priority to 0 (accept all interrupts)
     write(reg::TPR, 0);
@@ -242,8 +242,7 @@ pub fn timer_current() -> u32 {
 /// The PIT is shared hardware (ports 0x42/0x43/0x61); concurrent access from
 /// multiple APs corrupts the calibration and produces garbage timer counts.
 /// — SableWire
-static CACHED_TICKS_PER_MS: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0);
+static CACHED_TICKS_PER_MS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
 /// Calibrate the APIC timer using PIT
 ///

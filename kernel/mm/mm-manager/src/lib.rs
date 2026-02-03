@@ -92,7 +92,11 @@ impl MemoryManager {
         #[cfg(feature = "debug-mmap")]
         {
             if let Ok(addr) = result {
-                log::debug!("[MMAP] alloc order={} addr={:#x}", request.order, addr.as_u64());
+                log::debug!(
+                    "[MMAP] alloc order={} addr={:#x}",
+                    request.order,
+                    addr.as_u64()
+                );
             }
         }
         result
