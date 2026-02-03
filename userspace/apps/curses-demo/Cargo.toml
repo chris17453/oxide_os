@@ -1,0 +1,9 @@
+[package]
+name = "curses-demo"
+version.workspace = true
+edition.workspace = true
+description = "Terminal curses VGA demo for Oxide OS"
+
+[dependencies]
+libc = { path = "../../libs/libc" }
+ncurses = { path = "../../libs/ncurses" }

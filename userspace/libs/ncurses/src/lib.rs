@@ -251,7 +251,7 @@ impl From<BoolOption> for bool {
 
 // Re-export commonly used items
 pub use window::{WindowData, newwin, delwin, mvwin};
-pub use screen::{ScreenData, initscr, endwin, newterm};
+pub use screen::{ScreenData, initscr, endwin, newterm, refresh, wrefresh};
 pub use input::{getch, wgetch, getstr, wgetstr};
 pub use output::{addch, waddch, addstr, waddstr, printw, wprintw, mvprintw};
 pub use color::{start_color, init_pair, init_color, color_pair, has_colors, can_change_color};
