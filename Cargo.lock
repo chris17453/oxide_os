@@ -172,6 +172,7 @@ dependencies = [
  "compression",
  "heapless",
  "libc 0.1.0",
+ "ncurses",
  "termcap",
 ]
 
