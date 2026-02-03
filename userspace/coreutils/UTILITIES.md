@@ -56,6 +56,17 @@
 | `clear` | Clear terminal screen | DONE |
 | `reset` | Reset terminal | DONE |
 
+## Priority 3.5: User and Group Management
+
+| Utility | Description | Status |
+|---------|-------------|--------|
+| `useradd` | Create new user account | DONE |
+| `groupadd` | Create new group | DONE |
+| `usermod` | Modify user account | TODO |
+| `groupmod` | Modify group | TODO |
+| `userdel` | Delete user account | TODO |
+| `groupdel` | Delete group | TODO |
+
 ## Priority 4: Process Utilities
 
 | Utility | Description | Status |
