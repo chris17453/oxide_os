@@ -136,6 +136,7 @@ members = [
     "userspace/apps/gwbasic",
     "userspace/apps/curses-demo",
     "userspace/apps/sound-client",
+    "userspace/apps/doom",
     "userspace/apps/htop",
     # userspace/tests — test harnesses
     "userspace/tests/syscall-tests",
