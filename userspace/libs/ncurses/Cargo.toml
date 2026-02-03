@@ -5,8 +5,8 @@ edition = "2024"
 description = "Full-featured ncurses implementation for OXIDE OS - 100% API compatible"
 
 [features]
-default = ["std", "wide", "color", "mouse", "menu", "form", "panel"]
-std = ["termcap/std"]  # Enable std (for testing)
+default = ["wide", "color", "mouse", "menu", "form", "panel"]
+std = ["termcap/std"]  # Enable std (for host-side testing)
 wide = []       # Wide character support
 color = []      # Color support
 mouse = []      # Mouse event handling
@@ -15,7 +15,9 @@ form = []       # Form library
 panel = []      # Panel library
 
 [dependencies]
-termcap = { path = "../termcap" }
+termcap = { path = "../termcap", default-features = false }
+vte = { path = "../../../libs/vte" }
+libc = { path = "../libc" }
 
 [lib]
-crate-type = ["rlib", "staticlib"]
+crate-type = ["rlib"]

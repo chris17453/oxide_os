@@ -13,4 +13,4 @@ termcap = []   # Text termcap format support
 [dependencies]
 
 [lib]
-crate-type = ["rlib", "staticlib"]
+crate-type = ["rlib"]

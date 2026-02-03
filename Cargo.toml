@@ -97,6 +97,8 @@ members = [
     "kernel/smp/smp",
     "kernel/acpi/acpi",
     "kernel/module/module",
+    # libs — shared crates (kernel + userspace)
+    "libs/vte",
     # userspace/system — core boot/session programs
     "userspace/system/init",
     "userspace/system/getty",
@@ -243,6 +245,7 @@ v86 = { path = "kernel/compat/v86" }
 python-sandbox = { path = "kernel/compat/python-sandbox" }
 binfmt = { path = "kernel/compat/binfmt" }
 syscall-compat = { path = "kernel/compat/syscall-compat" }
+vte = { path = "libs/vte" }
 
 [profile.dev]
 panic = "abort"

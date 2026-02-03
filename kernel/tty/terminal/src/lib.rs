@@ -39,13 +39,15 @@
 
 extern crate alloc;
 
-pub mod buffer;
-pub mod cell;
-pub mod color;
-pub mod handler;
-pub mod parser;
 pub mod renderer;
-pub mod wcwidth;
+
+// Re-export VTE types (parser, handler, buffer, cell, color, wcwidth extracted to libs/vte)
+pub use vte::{Parser, Action, State};
+pub use vte::{Handler, TerminalModes, MouseMode, MouseEncoding};
+pub use vte::{ScreenBuffer, ScrollbackBuffer};
+pub use vte::{Cell, CellAttrs, CellFlags, Cursor, CursorShape};
+pub use vte::TermColor;
+pub use vte::wcwidth;
 
 use alloc::string::String;
 use alloc::sync::Arc;
@@ -55,10 +57,6 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use fb::{Color, Framebuffer};
 use spin::Mutex;
 
-use crate::buffer::{ScreenBuffer, ScrollbackBuffer};
-use crate::cell::{CellAttrs, Cursor};
-use crate::handler::Handler;
-use crate::parser::{Action, Parser};
 use crate::renderer::Renderer;
 
 /// Emit a lock contention warning to serial port (ISR-safe, no dependencies).
@@ -82,9 +80,6 @@ fn lock_contention_warning(lock_name: &str) {
     }
 }
 
-pub use crate::cell::{Cell, CellFlags, CursorShape};
-pub use crate::color::TermColor;
-pub use crate::handler::{MouseEncoding, MouseMode, TerminalModes};
 
 /// Default scrollback buffer size (lines)
 const DEFAULT_SCROLLBACK: usize = 10000;
@@ -138,15 +133,20 @@ impl TerminalEmulator {
         let (cols, rows) = renderer.dimensions();
         let (cell_width, cell_height) = renderer.cell_dimensions();
 
-        // Initialize default 256-color palette
+        // Initialize default 256-color palette from VTE RGB tuples
         let mut palette = [Color::VGA_BLACK; 256];
         for i in 0..256 {
-            palette[i] = crate::color::ansi256_to_color(i as u8);
+            let (r, g, b) = vte::color::ansi256_to_rgb(i as u8);
+            palette[i] = Color::new(r, g, b);
         }
+
+        // Wire VTE handler response callback to kernel's send_response
+        let mut handler = Handler::new(cols, rows);
+        handler.set_response_callback(crate::send_response);
 
         TerminalEmulator {
             parser: Parser::new(),
-            handler: Handler::new(cols, rows),
+            handler,
             primary: ScreenBuffer::new(cols, rows),
             alternate: ScreenBuffer::new(cols, rows),
             scrollback: ScrollbackBuffer::new(DEFAULT_SCROLLBACK),
@@ -592,12 +592,14 @@ impl TerminalEmulator {
                     if params.is_empty() {
                         // Reset entire palette to defaults
                         for i in 0..256 {
-                            self.palette[i] = crate::color::ansi256_to_color(i as u8);
+                            let (r, g, b) = vte::color::ansi256_to_rgb(i as u8);
+                            self.palette[i] = Color::new(r, g, b);
                         }
                     } else {
                         // Reset specific color
                         if let Ok(index) = params.parse::<u8>() {
-                            self.palette[index as usize] = crate::color::ansi256_to_color(index);
+                            let (r, g, b) = vte::color::ansi256_to_rgb(index);
+                            self.palette[index as usize] = Color::new(r, g, b);
                         }
                     }
                 }

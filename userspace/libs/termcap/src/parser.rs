@@ -4,7 +4,6 @@
 //!
 //! -- WireSaint: File format parsing, reading terminal databases from disk
 
-use core::option::Option;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use crate::TerminalEntry;

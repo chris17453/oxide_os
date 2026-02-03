@@ -4,8 +4,8 @@
 
 extern crate alloc;
 
-use crate::buffer::ScreenBuffer;
-use crate::cell::{Cell, CellAttrs, CellFlags, Cursor, CursorShape};
+use vte::ScreenBuffer;
+use vte::{Cell, CellAttrs, CellFlags, Cursor, CursorShape};
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -187,8 +187,11 @@ impl Renderer {
 
     /// Render a single cell
     fn render_cell(&self, px: u32, py: u32, cell: &Cell) {
-        let fg_color = cell.attrs.effective_fg().to_fb_color(true);
-        let bg_color = cell.attrs.effective_bg().to_fb_color(false);
+        // -- GlassSignal: bridge VTE RGB tuples to framebuffer Color
+        let (r, g, b) = cell.attrs.effective_fg().to_rgb(true);
+        let fg_color = Color::new(r, g, b);
+        let (r, g, b) = cell.attrs.effective_bg().to_rgb(false);
+        let bg_color = Color::new(r, g, b);
 
         // Apply bold by brightening foreground
         let fg_color = if cell.attrs.flags.contains(CellFlags::BOLD) {
@@ -334,8 +337,11 @@ impl Renderer {
             .unwrap_or_default();
 
         // Determine cursor colors (inverted from cell)
-        let fg_color = cell.attrs.effective_bg().to_fb_color(false);
-        let bg_color = cell.attrs.effective_fg().to_fb_color(true);
+        // -- GlassSignal: invert fg/bg for cursor visibility
+        let (r, g, b) = cell.attrs.effective_bg().to_rgb(false);
+        let fg_color = Color::new(r, g, b);
+        let (r, g, b) = cell.attrs.effective_fg().to_rgb(true);
+        let bg_color = Color::new(r, g, b);
 
         match cursor.shape {
             CursorShape::Block => {
@@ -361,7 +367,8 @@ impl Renderer {
 
     /// Clear the screen with background color
     pub fn clear(&self, attrs: &CellAttrs) {
-        let bg = attrs.effective_bg().to_fb_color(false);
+        let (r, g, b) = attrs.effective_bg().to_rgb(false);
+        let bg = Color::new(r, g, b);
         self.fb.clear(bg);
     }
 
