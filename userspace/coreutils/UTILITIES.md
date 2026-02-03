@@ -81,6 +81,7 @@
 
 | Utility | Description | Status |
 |---------|-------------|--------|
+| `top` | Interactive process viewer | DONE (ncurses-based, all flags) |
 | `pgrep` | Find processes by name | DONE (needs /proc) |
 | `pkill` | Kill processes by name | DONE (needs /proc) |
 | `nice` | Run with modified priority | DONE (needs kernel support) |
