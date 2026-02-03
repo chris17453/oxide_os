@@ -4,7 +4,7 @@
 
 SHELL := /usr/bin/bash
 
-.PHONY: all build build-full kernel bootloader userspace userspace-release userspace-pkg initramfs initramfs-debug initramfs-minimal boot-dir boot-quick boot-image create-rootfs release clean run run-fedora run-rhel run-kvm detect-qemu-mode test check fmt fmt-check clippy list-bins show-config help toolchain install-toolchain test-toolchain clean-toolchain external-libs zlib openssl xz zstd cpython tls-test vim claude
+.PHONY: all build build-full kernel bootloader userspace userspace-release userspace-pkg initramfs initramfs-debug initramfs-minimal boot-dir boot-quick boot-image create-rootfs release clean run run-fedora run-rhel run-kvm detect-qemu-mode test check fmt fmt-check clippy list-bins show-config help toolchain install-toolchain test-toolchain clean-toolchain external-libs zlib openssl xz zstd cpython tls-test thread-test vim claude
 
 # Configuration
 ARCH ?= x86_64
@@ -134,8 +134,10 @@ userspace-release:
 	@RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package coreutils --bin testcolors --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1
 	@echo "  Building TLS test..."
 	@$(MAKE) tls-test
+	@echo "  Building thread test..."
+	@$(MAKE) thread-test
 	@echo "Stripping binaries..."
-	@for prog in init esh login gwbasic tls-test ssh sshd service networkd journald journalctl evtest argtest $(COREUTILS_BINS); do \
+	@for prog in init esh login gwbasic tls-test thread-test ssh sshd service networkd journald journalctl evtest argtest $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
 			strip "$(USERSPACE_OUT_RELEASE)/$$prog" 2>/dev/null || true; \
 		fi; \
@@ -415,7 +417,7 @@ create-rootfs: kernel bootloader initramfs-minimal
 	sudo ln -sf /bin/esh $(TARGET_DIR)/mnt/root/bin/sh && \
 	sudo cp "$(USERSPACE_OUT_RELEASE)/getty" $(TARGET_DIR)/mnt/root/bin/getty && \
 	sudo cp "$(USERSPACE_OUT_RELEASE)/login" $(TARGET_DIR)/mnt/root/bin/login && \
-	for prog in gwbasic tls-test ssh sshd service networkd journald journalctl evtest argtest vim $(COREUTILS_BINS) testcolors; do \
+	for prog in gwbasic tls-test thread-test ssh sshd service networkd journald journalctl evtest argtest vim $(COREUTILS_BINS) testcolors; do \
 		[ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/$$prog" $(TARGET_DIR)/mnt/root/usr/bin/ || true; \
 	done && \
 	sudo cp userspace/apps/gwbasic/examples/*.bas $(TARGET_DIR)/mnt/root/usr/share/gwbasic/ 2>/dev/null || true; \
@@ -664,12 +666,13 @@ run-rhel:
 	trap 'kill $$QEMU_PID 2>/dev/null; exit' INT TERM; \
 	echo "QEMU started (PID: $$QEMU_PID)"; \
 	sleep 2; \
+	# Launch VNC viewer with 2x scaling (640x480 → 1280x960 for easier viewing)
 	if command -v vncviewer >/dev/null 2>&1; then \
-		echo "Launching VNC viewer..."; \
-		vncviewer localhost:5900 2>/dev/null; \
+		echo "Launching VNC viewer (scaled 2x)..."; \
+		vncviewer -Scaling=2x localhost:5900 2>/dev/null || vncviewer -scale 2 localhost:5900 2>/dev/null || vncviewer localhost:5900 2>/dev/null; \
 	elif flatpak list --app 2>/dev/null | grep -q tigervnc; then \
-		echo "Launching VNC viewer (Flatpak)..."; \
-		flatpak run org.tigervnc.vncviewer localhost:5900 2>/dev/null; \
+		echo "Launching VNC viewer (Flatpak, scaled 2x)..."; \
+		flatpak run org.tigervnc.vncviewer -Scaling=2x localhost:5900 2>/dev/null || flatpak run org.tigervnc.vncviewer localhost:5900 2>/dev/null; \
 	else \
 		echo "VNC viewer not found - connect manually to localhost:5900"; \
 		echo "Install: sudo dnf install tigervnc"; \
@@ -895,6 +898,11 @@ tls-test: toolchain
 	@echo "Building TLS test program..."
 	@toolchain/bin/oxide-cc -o $(USERSPACE_OUT_RELEASE)/tls-test userspace/tests/tls-test.c
 	@echo "TLS test built: $(USERSPACE_OUT_RELEASE)/tls-test"
+
+thread-test: toolchain
+	@echo "Building thread test program..."
+	@toolchain/bin/oxide-cc -o $(USERSPACE_OUT_RELEASE)/thread-test userspace/tests/thread-test.c
+	@echo "Thread test built: $(USERSPACE_OUT_RELEASE)/thread-test"
 
 vim: toolchain
 	@echo "Building vim for OXIDE..."

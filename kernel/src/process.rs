@@ -14,6 +14,7 @@ use arch_x86_64 as arch;
 use mm_paging::{flush_tlb_all, phys_to_virt, write_cr3};
 use os_core::PhysAddr;
 use proc::{ProcessContext, ProcessMeta, WaitOptions, WaitResult, do_exec, do_fork};
+use signal::{PendingSignals, SigSet};
 use proc_traits::Pid;
 use sched::TaskState;
 use vfs::{VnodeType, mount::GLOBAL_VFS};
@@ -28,46 +29,100 @@ use mm_manager::mm;
 use sched::TaskContext;
 
 /// User exit function
+///
+/// ThreadRogue: Handle both thread and process exit - clean termination paths
 pub fn user_exit(status: i32) -> ! {
-    // Get current process and mark as zombie
-    let current_pid = sched::current_pid().unwrap_or(0);
+    let current_tid = sched::current_pid().unwrap_or(0);
 
-    // Get parent PID via scheduler
-    let parent_pid = sched::get_task_ppid(current_pid).unwrap_or(0);
+    // Get ProcessMeta to check if this is a thread or main process
+    let is_thread = if let Some(meta_arc) = sched::get_task_meta(current_tid) {
+        let meta = meta_arc.lock();
+        let tgid = meta.tgid;
+        let clear_child_tid = meta.clear_child_tid;
+        let is_thread = current_tid != tgid;
 
-    // Mark task as zombie and set exit status via scheduler
-    sched::set_task_exit_status(current_pid, status);
+        debug_proc!(
+            "[EXIT] TID={} TGID={} status={} is_thread={}",
+            current_tid, tgid, status, is_thread
+        );
 
-    unsafe {
-        USER_EXIT_STATUS = status;
-    }
-    USER_EXITED.store(true, Ordering::SeqCst);
+        // Handle thread exit - clear_child_tid and futex wake
+        if is_thread && clear_child_tid != 0 {
+            // Write 0 to clear_child_tid address
+            unsafe {
+                let ptr = clear_child_tid as *mut i32;
+                *ptr = 0;
+            }
 
-    // Wake parent if it's blocked waiting for us
-    // This puts the parent back in the ready queue
-    if parent_pid > 0 {
-        wake_parent(parent_pid);
-    }
+            // Wake up any threads waiting on this futex
+            if let Ok(pids) = proc::futex_wake(clear_child_tid, i32::MAX) {
+                debug_proc!(
+                    "[EXIT] Thread {} cleared tid at {:#x}, woke {} waiters",
+                    current_tid, clear_child_tid, pids.len()
+                );
+                for pid in pids {
+                    sched::wake_up(pid);
+                }
+            }
+        }
 
-    // Clear any stale PARENT_CONTEXT (we now use the scheduler for all task switches)
-    let _ = PARENT_CONTEXT.lock().take();
+        is_thread
+    } else {
+        false
+    };
 
-    // NOTE: Do NOT remove the process from scheduler here!
-    // The process must stay as a zombie until the parent reaps it via wait().
-    // The parent's wait() call will remove it after getting the exit status.
+    if is_thread {
+        // This is a thread exit (not the main process)
+        // ThreadRogue: Thread cleanup - no zombie state, immediate removal
+        debug_proc!("[EXIT] Thread {} exiting (not becoming zombie)", current_tid);
 
-    // Let the scheduler handle the context switch via the timer interrupt.
-    // We are now a zombie - the scheduler won't pick us to run again.
-    // The timer interrupt uses iretq which correctly handles returning to
-    // either kernel mode (parent blocked in waitpid/HLT) or user mode.
-    // Using sysretq here would be WRONG because sysretq always returns to
-    // user mode, but the parent may have been preempted in kernel mode.
-    debug_proc!("[EXIT] pid={} woke parent={}", current_pid, parent_pid);
-    sched::set_need_resched();
-    arch::allow_kernel_preempt();
-    loop {
+        // Remove thread from scheduler immediately (no zombie for threads)
+        crate::scheduler::remove_process(current_tid);
+
+        // Reschedule to another task
+        sched::set_need_resched();
+        arch::allow_kernel_preempt();
+        loop {
+            unsafe {
+                core::arch::asm!("sti", "hlt", options(nomem, nostack));
+            }
+        }
+    } else {
+        // This is the main process exit (thread group leader)
+        // BlackLatch: Main process termination - zombie state for parent reaping
+        let parent_pid = sched::get_task_ppid(current_tid).unwrap_or(0);
+
+        debug_proc!(
+            "[EXIT] Main process {} exiting, parent={}",
+            current_tid, parent_pid
+        );
+
+        // Mark task as zombie and set exit status
+        sched::set_task_exit_status(current_tid, status);
+
         unsafe {
-            core::arch::asm!("sti", "hlt", options(nomem, nostack));
+            USER_EXIT_STATUS = status;
+        }
+        USER_EXITED.store(true, Ordering::SeqCst);
+
+        // Wake parent if it's blocked waiting for us
+        if parent_pid > 0 {
+            wake_parent(parent_pid);
+        }
+
+        // Clear any stale PARENT_CONTEXT
+        let _ = PARENT_CONTEXT.lock().take();
+
+        // NOTE: Do NOT remove the process from scheduler here!
+        // The process must stay as a zombie until the parent reaps it via wait().
+
+        debug_proc!("[EXIT] Process {} became zombie, woke parent={}", current_tid, parent_pid);
+        sched::set_need_resched();
+        arch::allow_kernel_preempt();
+        loop {
+            unsafe {
+                core::arch::asm!("sti", "hlt", options(nomem, nostack));
+            }
         }
     }
 }
@@ -370,6 +425,231 @@ pub fn kernel_fork() -> i64 {
         Err(_e) => {
             debug_fork!("[FORK] Fork failed: {:?}", _e);
             -1 // EAGAIN
+        }
+    }
+}
+
+/// Clone callback for syscalls - creates threads with CLONE_VM
+///
+/// Creates a child thread sharing address space with parent.
+/// Returns child TID to parent, 0 to child.
+///
+/// GraveShift: Threading infrastructure - shared address space, separate execution contexts
+pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls: u64) -> i64 {
+    use alloc::sync::Arc;
+    use proc::{CloneArgs, do_clone};
+    use spin::Mutex;
+
+    let parent_pid = sched::current_pid().unwrap_or(0);
+    debug_proc!("[CLONE] Clone called from PID {} with flags={:#x}", parent_pid, flags);
+
+    // Get parent's ProcessMeta
+    let parent_meta_arc = match sched::get_task_meta(parent_pid) {
+        Some(m) => m,
+        None => {
+            debug_proc!("[CLONE] Parent meta not found");
+            return -3; // ESRCH
+        }
+    };
+
+    // Get current process context from syscall
+    let user_ctx = arch::get_user_context();
+
+    // Get parent's fs_base from task context (for TLS)
+    let parent_fs_base = if let Some(ctx) = sched::get_task_context(parent_pid) {
+        ctx.fs_base
+    } else {
+        0
+    };
+
+    let parent_context = ProcessContext {
+        rip: user_ctx.rip,
+        rsp: user_ctx.rsp,
+        rflags: user_ctx.rflags,
+        rax: user_ctx.rax,
+        rbx: user_ctx.rbx,
+        rcx: user_ctx.rcx,
+        rdx: user_ctx.rdx,
+        rsi: user_ctx.rsi,
+        rdi: user_ctx.rdi,
+        rbp: user_ctx.rbp,
+        r8: user_ctx.r8,
+        r9: user_ctx.r9,
+        r10: user_ctx.r10,
+        r11: user_ctx.r11,
+        r12: user_ctx.r12,
+        r13: user_ctx.r13,
+        r14: user_ctx.r14,
+        r15: user_ctx.r15,
+        cs: 0x23, // User mode
+        ss: 0x1B,
+        fs_base: parent_fs_base,
+    };
+
+    const KERNEL_STACK_SIZE: usize = 128 * 1024;
+
+    // Prepare clone arguments
+    let args = CloneArgs {
+        flags,
+        stack,
+        parent_tid,
+        child_tid,
+        tls,
+    };
+
+    // Call do_clone
+    let parent_meta = parent_meta_arc.lock();
+    let result = do_clone(
+        parent_pid,
+        &parent_meta,
+        &parent_context,
+        &args,
+        mm(),
+        KERNEL_STACK_SIZE,
+    );
+    drop(parent_meta); // Release lock
+
+    match result {
+        Ok(clone_result) => {
+            let child_tid = clone_result.child_tid;
+            debug_proc!("[CLONE] Created thread TID {} in TGID {}", child_tid, clone_result.tgid);
+
+            // Write child TID to parent_tid address if requested
+            if clone_result.parent_tid_addr != 0 {
+                unsafe {
+                    let ptr = clone_result.parent_tid_addr as *mut i32;
+                    *ptr = child_tid as i32;
+                }
+            }
+
+            // Create child's ProcessMeta (shared for threads)
+            let child_meta = ProcessMeta {
+                tgid: clone_result.tgid,
+                pgid: clone_result.pgid,
+                sid: clone_result.sid,
+                credentials: clone_result.credentials,
+                address_space: unsafe {
+                    proc::UserAddressSpace::from_raw(
+                        clone_result.shared_address_space.lock().pml4_phys(),
+                        alloc::vec![],
+                    )
+                },
+                shared_address_space: Some(clone_result.shared_address_space.clone()),
+                fd_table: if let Some(ref shared) = clone_result.shared_fd_table {
+                    shared.lock().clone_for_fork()
+                } else {
+                    vfs::FdTable::new()
+                },
+                shared_fd_table: clone_result.shared_fd_table,
+                signal_mask: SigSet::empty(),
+                pending_signals: PendingSignals::new(),
+                sigactions: clone_result.sigactions,
+                cwd: clone_result.cwd.clone(),
+                cmdline: alloc::vec![],
+                environ: alloc::vec![],
+                tls: clone_result.tls,
+                clear_child_tid: clone_result.clear_child_tid,
+                owned_frames: alloc::vec![],
+                alarm_remaining: 0,
+                itimer_interval_sec: 0,
+                itimer_interval_usec: 0,
+                itimer_value_sec: 0,
+                itimer_value_usec: 0,
+                is_thread_leader: false, // This is a thread, not the leader
+                thread_group: alloc::vec![],
+                umask: 0o022,
+                program_break: 0,
+                stop_signal: None,
+                continued: false,
+            };
+
+            let child_meta_arc = Arc::new(Mutex::new(child_meta));
+
+            // Get child's PML4 for page table
+            let child_pml4 = clone_result.shared_address_space.lock().pml4_phys();
+
+            // Create parent's TaskContext (returns child TID)
+            let parent_task_ctx = TaskContext {
+                rip: parent_context.rip,
+                rsp: parent_context.rsp,
+                rflags: parent_context.rflags,
+                rax: child_tid as u64, // Parent returns child TID
+                rbx: parent_context.rbx,
+                rcx: parent_context.rcx,
+                rdx: parent_context.rdx,
+                rsi: parent_context.rsi,
+                rdi: parent_context.rdi,
+                rbp: parent_context.rbp,
+                r8: parent_context.r8,
+                r9: parent_context.r9,
+                r10: parent_context.r10,
+                r11: parent_context.r11,
+                r12: parent_context.r12,
+                r13: parent_context.r13,
+                r14: parent_context.r14,
+                r15: parent_context.r15,
+                cs: 0x23,
+                ss: 0x1B,
+                fs_base: parent_context.fs_base,
+            };
+            sched::set_task_context(parent_pid, parent_task_ctx);
+
+            // Create child's TaskContext (returns 0)
+            let child_task_ctx = TaskContext {
+                rip: clone_result.child_context.rip,
+                rsp: clone_result.child_context.rsp,
+                rflags: clone_result.child_context.rflags,
+                rax: 0, // Child returns 0
+                rbx: clone_result.child_context.rbx,
+                rcx: clone_result.child_context.rcx,
+                rdx: clone_result.child_context.rdx,
+                rsi: clone_result.child_context.rsi,
+                rdi: clone_result.child_context.rdi,
+                rbp: clone_result.child_context.rbp,
+                r8: clone_result.child_context.r8,
+                r9: clone_result.child_context.r9,
+                r10: clone_result.child_context.r10,
+                r11: clone_result.child_context.r11,
+                r12: clone_result.child_context.r12,
+                r13: clone_result.child_context.r13,
+                r14: clone_result.child_context.r14,
+                r15: clone_result.child_context.r15,
+                cs: 0x23,
+                ss: 0x1B,
+                fs_base: clone_result.tls, // Set TLS for child
+            };
+
+            // Write child TID to child_tid address if requested
+            if clone_result.child_tid_addr != 0 {
+                unsafe {
+                    let ptr = clone_result.child_tid_addr as *mut i32;
+                    *ptr = child_tid as i32;
+                }
+            }
+
+            // Create Task for child thread
+            let child_task = sched::Task::new_with_meta(
+                child_tid,
+                parent_pid,
+                clone_result.kernel_stack_phys,
+                clone_result.kernel_stack_size,
+                child_pml4,
+                clone_result.child_context.rip,
+                clone_result.child_context.rsp,
+                child_meta_arc,
+            );
+
+            // Add child to scheduler
+            sched::add_task(child_task);
+            sched::set_task_context(child_tid, child_task_ctx);
+
+            // ThreadRogue: New execution context spawned, ready for the scheduler
+            debug_proc!("[CLONE] Thread {} created successfully", child_tid);
+            child_tid as i64
+        }
+        Err(e) => {
+            debug_proc!("[CLONE] Clone failed: {:?}", e);
+            -22 // EINVAL
         }
     }
 }

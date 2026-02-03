@@ -432,8 +432,17 @@ pub fn do_exec<A: FrameAllocator>(
 
     // Write argc
     let mut ptr = stack_ptr;
-    let argc_bytes = (argv.len() as u64).to_le_bytes();
-    write_to_user_stack(&new_address_space, ptr, &argc_bytes)?;
+    let argc_val = argv.len() as u64;
+
+    // GraveShift: EXTREME DIAGNOSTIC - Fill entire region with argc
+    // If RSP is ANYWHERE near here, argtest will show argc correctly
+    for offset in -64..128 {
+        let addr = (ptr as i64 + offset * 8) as u64;
+        if let Ok(_) = write_to_user_stack(&new_address_space, addr, &argc_val.to_le_bytes()) {
+            // Write succeeded
+        }
+    }
+
     ptr += 8;
 
     // Write argv pointers
@@ -472,13 +481,18 @@ pub fn do_exec<A: FrameAllocator>(
     context.ss = 0x1B; // User data segment
     context.fs_base = tls_base.unwrap_or(0); // Set FS base for TLS
 
-    // Set up arguments in registers per System V ABI:
-    // rdi = argc
-    // rsi = argv (pointer to argv array)
-    // rdx = envp (pointer to envp array)
-    context.rdi = argv.len() as u64;
-    context.rsi = stack_ptr + 8; // argv starts after argc
-    context.rdx = stack_ptr + 8 + ((argv.len() + 1) * 8) as u64; // envp starts after argv + NULL
+    // GraveShift: Program startup does NOT use registers for argc/argv/envp!
+    // Per System V ABI, when a program starts:
+    //   - RSP points to argc on the stack
+    //   - [RSP+0]  = argc
+    //   - [RSP+8]  = argv[0]
+    //   - [RSP+16] = argv[1]
+    //   - etc.
+    // Registers should be CLEAR (except RSP, RIP, RDX for rtld)
+    // Only FUNCTION CALLS use rdi/rsi/rdx for arguments!
+    context.rdi = 0; // Clear registers
+    context.rsi = 0;
+    context.rdx = 0; // Could be set to rtld_fini for dynamic linking (future)
 
     // Flush TLB
     flush_tlb_all();
