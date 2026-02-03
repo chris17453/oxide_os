@@ -193,7 +193,7 @@ name = "curses-demo"
 version = "0.1.0"
 dependencies = [
  "libc 0.1.0",
- "ncurses",
+ "oxide-ncurses",
 ]
 
 [[package]]
@@ -851,15 +851,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ncurses"
-version = "0.1.0"
-dependencies = [
- "libc 0.1.0",
- "termcap",
- "vte",
-]
-
-[[package]]
 name = "net"
 version = "0.1.0"
 dependencies = [
@@ -966,6 +957,15 @@ name = "oxide-make"
 version = "0.1.0"
 dependencies = [
  "libc 0.1.0",
+]
+
+[[package]]
+name = "oxide-ncurses"
+version = "0.1.0"
+dependencies = [
+ "libc 0.1.0",
+ "termcap",
+ "vte",
 ]
 
 [[package]]

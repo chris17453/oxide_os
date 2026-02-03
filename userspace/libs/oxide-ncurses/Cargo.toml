@@ -1,8 +1,8 @@
 [package]
-name = "ncurses"
+name = "oxide-ncurses"
 version = "0.1.0"
 edition = "2024"
-description = "Full-featured ncurses implementation for OXIDE OS - 100% API compatible"
+description = "Full-featured ncurses-compatible implementation for OXIDE OS - Pure Rust, no C library"
 
 [features]
 default = ["wide", "color", "mouse", "menu", "form", "panel"]

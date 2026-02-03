@@ -6,4 +6,4 @@ description = "Terminal curses VGA demo for Oxide OS"
 
 [dependencies]
 libc = { path = "../../libs/libc" }
-ncurses = { path = "../../libs/ncurses" }
+oxide-ncurses = { path = "../../libs/oxide-ncurses" }

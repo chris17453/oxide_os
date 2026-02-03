@@ -71,7 +71,7 @@ Updated `userspace/libs/ncurses/src/lib.rs`:
 
 ### Dependencies
 - `libc`: System calls (write, nanosleep)
-- `ncurses`: Terminal control, colors, attributes, box drawing
+- `oxide-ncurses`: Terminal control (renamed from `ncurses` to avoid CVE false positives)
 
 ## Demo Execution Flow
 

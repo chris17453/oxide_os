@@ -14,7 +14,7 @@
 #![no_main]
 
 extern crate libc;
-extern crate ncurses;
+extern crate oxide_ncurses as ncurses;
 
 use ncurses::{
     attrs::*, color_pair, colors::*, endwin, has_colors, init_pair, initscr, mvprintw, refresh,
