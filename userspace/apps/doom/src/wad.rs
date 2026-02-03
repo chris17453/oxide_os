@@ -86,6 +86,20 @@ impl WadFile {
         })
     }
 
+    /// Create a minimal built-in WAD placeholder when external assets are missing
+    /// -- WireSaint: Emergency cache - keep the run alive even without disk
+    pub fn built_in() -> Self {
+        WadFile {
+            fd: -1,
+            lumps: [WadLump {
+                offset: 0,
+                size: 0,
+                name: [0; 8],
+            }; 4096],
+            num_lumps: 0,
+        }
+    }
+
     /// Find a lump by name
     pub fn find_lump(&self, name: &[u8; 8]) -> Option<&WadLump> {
         for i in 0..self.num_lumps {

@@ -94,6 +94,26 @@ impl Game {
         for x in 25..35 {
             self.map[55][x] = CELL_WALL;
         }
+
+        // Doom-esque starter arena using classic E1M1 style bits
+        for x in 8..28 {
+            self.map[30][x] = CELL_WALL;
+        }
+        for y in 30..45 {
+            self.map[y][28] = CELL_WALL;
+        }
+        for x in 28..45 {
+            self.map[44][x] = CELL_WALL;
+        }
+        for y in 12..30 {
+            self.map[y][44] = CELL_WALL;
+        }
+
+        // Doors separating sections
+        self.map[30][20] = CELL_DOOR;
+        self.map[28][36] = CELL_DOOR;
+        self.map[36][44] = CELL_DOOR;
+        self.map[44][32] = CELL_DOOR;
     }
 
     /// Update game state based on input
