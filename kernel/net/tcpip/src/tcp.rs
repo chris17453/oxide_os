@@ -465,6 +465,8 @@ pub struct TcpConnection {
     nagle_enabled: AtomicU32,
     /// Unacknowledged data pending
     has_unacked: AtomicU32,
+    /// Transmit queue for outgoing segments
+    tx_queue: Mutex<VecDeque<Vec<u8>>>,
 }
 
 impl TcpConnection {
@@ -525,6 +527,7 @@ impl TcpConnection {
             time_wait_timer: AtomicU64::new(0),
             nagle_enabled: AtomicU32::new(1), // Enabled by default
             has_unacked: AtomicU32::new(0),
+            tx_queue: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -625,7 +628,8 @@ impl TcpConnection {
 
         match *state {
             TcpState::Closed => {
-                // GraveShift: Closed state - should send RST (handled at stack level)
+                // GraveShift: Closed state - send RST
+                self.send_rst();
             }
             TcpState::Listen => {
                 if header.flags & tcp_flags::SYN != 0 {
@@ -645,7 +649,7 @@ impl TcpConnection {
                     
                     self.rcv_nxt.store(header.seq_num.wrapping_add(1), Ordering::SeqCst);
                     *state = TcpState::SynReceived;
-                    // Would send SYN-ACK here
+                    self.send_syn_ack();
                 }
             }
             TcpState::SynSent => {
@@ -664,12 +668,12 @@ impl TcpConnection {
                     self.snd_una.store(header.ack_num, Ordering::SeqCst);
                     self.rcv_nxt.store(header.seq_num.wrapping_add(1), Ordering::SeqCst);
                     *state = TcpState::Established;
-                    // Would send ACK here
+                    self.send_ack();
                 } else if header.flags & tcp_flags::SYN != 0 {
                     // Simultaneous open
                     self.rcv_nxt.store(header.seq_num.wrapping_add(1), Ordering::SeqCst);
                     *state = TcpState::SynReceived;
-                    // Would send SYN-ACK here
+                    self.send_syn_ack();
                 }
             }
             TcpState::SynReceived => {
@@ -709,10 +713,10 @@ impl TcpConnection {
                         let available = TCP_WINDOW_SIZE as usize - recv_buf.len();
                         self.rcv_wnd.store(available as u32, Ordering::SeqCst);
                         
-                        // Would send ACK here
+                        self.send_ack();
                     } else {
                         // Out-of-order data - would queue for reassembly
-                        // Send duplicate ACK
+                        self.send_ack(); // Send duplicate ACK
                     }
                 }
                 
@@ -725,7 +729,7 @@ impl TcpConnection {
                 if header.flags & tcp_flags::FIN != 0 {
                     self.rcv_nxt.fetch_add(1, Ordering::SeqCst);
                     *state = TcpState::CloseWait;
-                    // Would send ACK here
+                    self.send_ack();
                 }
             }
             TcpState::FinWait1 => {
@@ -741,7 +745,7 @@ impl TcpConnection {
                     } else {
                         *state = TcpState::Closing;
                     }
-                    // Would send ACK here
+                    self.send_ack();
                 }
             }
             TcpState::FinWait2 => {
@@ -752,7 +756,7 @@ impl TcpConnection {
                     self.rcv_nxt.fetch_add(1, Ordering::SeqCst);
                     *state = TcpState::TimeWait;
                     self.time_wait_timer.store(Self::get_timestamp_us(), Ordering::SeqCst);
-                    // Would send ACK here
+                    self.send_ack();
                 }
             }
             TcpState::CloseWait => {
@@ -778,7 +782,7 @@ impl TcpConnection {
                 // Reset TIME_WAIT timer if we get another FIN
                 if header.flags & tcp_flags::FIN != 0 {
                     self.time_wait_timer.store(Self::get_timestamp_us(), Ordering::SeqCst);
-                    // Would send ACK here
+                    self.send_ack();
                 }
             }
         }
@@ -828,11 +832,11 @@ impl TcpConnection {
 
         match *state {
             TcpState::Established => {
-                // Send FIN
+                self.send_fin();
                 *state = TcpState::FinWait1;
             }
             TcpState::CloseWait => {
-                // Send FIN
+                self.send_fin();
                 *state = TcpState::LastAck;
             }
             TcpState::SynSent | TcpState::Listen => {
@@ -1019,6 +1023,124 @@ impl TcpConnection {
     fn get_timestamp_us() -> u64 {
         // Would use actual clock source
         0
+    }
+    
+    /// GraveShift: Queue a segment for transmission
+    fn queue_segment(&self, segment: TcpSegment) {
+        let bytes = segment.to_bytes(self.local_ip, self.remote_ip);
+        self.tx_queue.lock().push_back(bytes);
+        
+        // Add to retransmit queue if it contains data or SYN/FIN
+        if !segment.data.is_empty() 
+            || segment.header.flags & tcp_flags::SYN != 0 
+            || segment.header.flags & tcp_flags::FIN != 0 
+        {
+            let now = Self::get_timestamp_us();
+            self.retransmit_queue.lock().push((
+                segment.header.seq_num,
+                segment.data.clone(),
+                now,
+            ));
+        }
+    }
+    
+    /// ShadePacket: Dequeue pending segments for transmission (called by stack)
+    pub fn dequeue_segments(&self) -> Vec<Vec<u8>> {
+        let mut queue = self.tx_queue.lock();
+        let segments: Vec<_> = queue.drain(..).collect();
+        segments
+    }
+    
+    /// TorqueJax: Send ACK for received data
+    fn send_ack(&self) {
+        let seq = self.snd_nxt.load(Ordering::SeqCst);
+        let ack = self.rcv_nxt.load(Ordering::SeqCst);
+        let window = self.rcv_wnd.load(Ordering::SeqCst) as u16;
+        
+        let mut options = TcpOptions::default();
+        if self.sack_permitted.load(Ordering::SeqCst) != 0 {
+            options.timestamp = Some(Self::get_timestamp());
+            options.timestamp_echo = Some(self.ts_recent.load(Ordering::SeqCst));
+        }
+        
+        let segment = TcpSegment::new_with_options(
+            self.local_port,
+            self.remote_port,
+            seq,
+            ack,
+            tcp_flags::ACK,
+            window,
+            options,
+            &[],
+        );
+        
+        self.queue_segment(segment);
+    }
+    
+    /// WireSaint: Send SYN-ACK for incoming connection
+    fn send_syn_ack(&self) {
+        let seq = self.snd_nxt.load(Ordering::SeqCst);
+        let ack = self.rcv_nxt.load(Ordering::SeqCst);
+        let mss = self.mss.load(Ordering::SeqCst) as u16;
+        
+        let mut options = TcpOptions::default();
+        options.mss = Some(mss);
+        options.window_scale = Some(self.rcv_wscale.load(Ordering::SeqCst) as u8);
+        options.sack_permitted = true;
+        options.timestamp = Some(Self::get_timestamp());
+        options.timestamp_echo = Some(self.ts_recent.load(Ordering::SeqCst));
+        
+        let segment = TcpSegment::new_with_options(
+            self.local_port,
+            self.remote_port,
+            seq,
+            ack,
+            tcp_flags::SYN | tcp_flags::ACK,
+            TCP_WINDOW_SIZE,
+            options,
+            &[],
+        );
+        
+        self.queue_segment(segment);
+        self.snd_nxt.fetch_add(1, Ordering::SeqCst); // SYN consumes one seq number
+    }
+    
+    /// BlackLatch: Send RST to terminate connection
+    fn send_rst(&self) {
+        let seq = self.snd_nxt.load(Ordering::SeqCst);
+        let ack = self.rcv_nxt.load(Ordering::SeqCst);
+        
+        let segment = TcpSegment::new(
+            self.local_port,
+            self.remote_port,
+            seq,
+            ack,
+            tcp_flags::RST | tcp_flags::ACK,
+            0,
+            &[],
+        );
+        
+        self.queue_segment(segment);
+    }
+    
+    /// NeonRoot: Send FIN to close connection
+    fn send_fin(&self) {
+        let seq = self.snd_nxt.load(Ordering::SeqCst);
+        let ack = self.rcv_nxt.load(Ordering::SeqCst);
+        let window = self.rcv_wnd.load(Ordering::SeqCst) as u16;
+        
+        let segment = TcpSegment::new(
+            self.local_port,
+            self.remote_port,
+            seq,
+            ack,
+            tcp_flags::FIN | tcp_flags::ACK,
+            window,
+            &[],
+        );
+        
+        self.queue_segment(segment);
+        self.snd_nxt.fetch_add(1, Ordering::SeqCst); // FIN consumes one seq number
     }
     
     /// Validate sequence number (RFC 793 segment acceptance test)

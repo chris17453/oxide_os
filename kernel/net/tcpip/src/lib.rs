@@ -512,6 +512,12 @@ impl TcpIpStack {
         let connections = self.tcp_connections.lock();
         for conn in connections.values() {
             conn.process_timers()?;
+            
+            // SableWire: Transmit any queued segments
+            let segments = conn.dequeue_segments();
+            for segment_bytes in segments {
+                self.send_ipv4_packet(conn.remote_ip, IpProtocol::Tcp, &segment_bytes)?;
+            }
         }
         Ok(())
     }
@@ -540,6 +546,12 @@ impl TcpIpStack {
 
         // Initiate connection (send SYN)
         conn.connect()?;
+        
+        // NeonRoot: Immediately transmit the SYN
+        let segments = conn.dequeue_segments();
+        for segment_bytes in segments {
+            self.send_ipv4_packet(dst_ip, IpProtocol::Tcp, &segment_bytes)?;
+        }
 
         Ok(conn)
     }
