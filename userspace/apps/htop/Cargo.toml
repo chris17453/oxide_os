@@ -1,0 +1,9 @@
+[package]
+name = "htop"
+version.workspace = true
+edition.workspace = true
+description = "System monitor (htop clone) for Oxide OS"
+
+[dependencies]
+libc = { path = "../../libs/libc" }
+oxide-ncurses = { path = "../../libs/oxide-ncurses" }

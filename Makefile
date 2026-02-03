@@ -57,7 +57,7 @@ USERSPACE_OUT_RELEASE := $(TARGET_DIR)/$(USERSPACE_TARGET)/release
 CARGO_USER_FLAGS :=
 
 # Userspace packages to build
-USERSPACE_PACKAGES := init esh getty login coreutils ssh sshd rdpd service networkd journald journalctl soundd evtest argtest
+USERSPACE_PACKAGES := init esh getty login coreutils ssh sshd rdpd service networkd journald journalctl soundd evtest argtest htop
 
 # Coreutils binaries (auto-detected from Cargo.toml [[bin]] entries)
 # Extract binary names from [[bin]] sections in coreutils/Cargo.toml
@@ -132,6 +132,8 @@ userspace-release:
 	@RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package oxide-gwbasic --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) --features oxide || exit 1
 	@echo "  Building curses-demo (release)..."
 	@RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package curses-demo --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1
+	@echo "  Building htop (release)..."
+	@RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package htop --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1
 	@echo "  Building testcolors (release)..."
 	@RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package coreutils --bin testcolors --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1
 	@echo "  Building TLS test..."
@@ -139,7 +141,7 @@ userspace-release:
 	@echo "  Building thread test..."
 	@$(MAKE) thread-test
 	@echo "Stripping binaries..."
-	@for prog in init esh login gwbasic curses-demo tls-test thread-test ssh sshd rdpd service networkd journald journalctl evtest argtest $(COREUTILS_BINS); do \
+	@for prog in init esh login gwbasic curses-demo htop tls-test thread-test ssh sshd rdpd service networkd journald journalctl evtest argtest $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
 			strip "$(USERSPACE_OUT_RELEASE)/$$prog" 2>/dev/null || true; \
 		fi; \
@@ -181,6 +183,8 @@ initramfs: userspace-release
 	@cp "$(USERSPACE_OUT_RELEASE)/gwbasic" "$(TARGET_DIR)/initramfs/bin/gwbasic"
 	@# Copy curses-demo
 	@cp "$(USERSPACE_OUT_RELEASE)/curses-demo" "$(TARGET_DIR)/initramfs/bin/curses-demo"
+	@# Copy htop
+	@cp "$(USERSPACE_OUT_RELEASE)/htop" "$(TARGET_DIR)/initramfs/bin/htop"
 	@# Copy BASIC example programs
 	@mkdir -p "$(TARGET_DIR)/initramfs/usr/share/gwbasic"
 	@cp userspace/apps/gwbasic/examples/*.bas "$(TARGET_DIR)/initramfs/usr/share/gwbasic/" 2>/dev/null || true
