@@ -1,7 +1,22 @@
 //! SMP (Symmetric Multi-Processing) initialization callbacks for the OXIDE kernel.
+//!
+//! — NeonRoot: APs must NOT enable interrupts or timers until the BSP has
+//!   registered all fault handlers (page fault, scheduler, etc). Otherwise an
+//!   AP timer tick that faults has no handler → double fault → triple fault →
+//!   silent QEMU exit. The BSP signals readiness via `signal_ap_ready()`.
 
 use arch_traits::Arch;
 use arch_x86_64 as arch;
+use core::sync::atomic::{AtomicBool, Ordering};
+
+/// BSP sets this after all interrupt callbacks are registered and interrupts
+/// are enabled. APs spin on it before starting their timers.
+static BSP_READY: AtomicBool = AtomicBool::new(false);
+
+/// Called by the BSP after page fault handler, scheduler, and timer are live.
+pub fn signal_ap_ready() {
+    BSP_READY.store(true, Ordering::Release);
+}
 
 /// AP initialization callback - called when an Application Processor starts
 ///
@@ -26,10 +41,16 @@ pub fn ap_init_callback(apic_id: u8) -> ! {
     sched::set_this_cpu(cpu_id);
     sched::init_cpu(cpu_id, 0);
 
-    // Start local APIC timer for this CPU (matches BSP frequency)
-    arch::start_timer(100);
+    // NeonRoot: Wait for BSP to finish registering all fault handlers,
+    // scheduler callback, and enabling its own interrupts. Without this
+    // gate, an AP timer tick that page-faults has no handler registered
+    // and escalates to a triple fault.
+    while !BSP_READY.load(Ordering::Acquire) {
+        core::hint::spin_loop();
+    }
 
-    // Enable interrupts so we can receive IPIs for TLB shootdown
+    // Now safe — all handlers are live on the BSP
+    arch::start_timer(100);
     arch::X86_64::enable_interrupts();
 
     // AP is now online - enter scheduler idle loop

@@ -699,10 +699,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
     let _ = writeln!(writer, "[INFO] Preemptive scheduler registered");
 
-    // Start timer at 100Hz
-    let _ = writeln!(writer, "[INFO] Starting APIC timer at 100Hz...");
-    arch::start_timer(100);
-
     // Register wall-clock provider for subsystems (ext4 timestamps, etc.)
     // — WireSaint: bridging the tick counter to filesystem time
     os_core::register_wall_clock(syscall::time::wall_clock_secs);
@@ -713,10 +709,30 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     os_core::register_creds_provider(current_process_uid_gid);
     let _ = writeln!(writer, "[INFO] Credentials bridge registered");
 
-    // Enable interrupts
+    // NeonRoot: Enable interrupts BEFORE starting the timer. If the timer
+    // starts first, a pending tick fires the instant sti executes. The
+    // scheduler_tick handler can crash if it runs before the BSP has a
+    // current task. Starting the timer after sti gives a clean first tick.
     let _ = writeln!(writer, "[INFO] Enabling interrupts...");
+
+    // NeonRoot: Raw serial markers — bypass all locks. If we triple-fault at
+    // sti, these are the last bytes on the wire. 'A' = pre-sti, 'B' = post-sti.
+    unsafe { arch::serial::write_byte_unsafe(b'A'); }
     arch::X86_64::enable_interrupts();
+    unsafe { arch::serial::write_byte_unsafe(b'B'); }
+
     let _ = writeln!(writer, "[INFO] Interrupts enabled");
+
+    // BlackLatch: Unmask IOAPIC keyboard/mouse now that sti is live and
+    // all handlers are registered. Any stale PS2 data will fire here safely.
+    arch::unmask_io_irqs();
+
+    // NeonRoot: Timer and AP release are DEFERRED until right before entering
+    // usermode. The entire boot sequence runs as a single kernel thread with
+    // no scheduling. Starting the timer here would fire scheduler_tick and
+    // terminal_tick every 10ms during VFS/network/block init, causing deadlocks
+    // when those callbacks take locks that boot code already holds (e.g. COM1
+    // serial lock during writeln!). Timer starts at the very end of init.
 
     let _ = writeln!(writer);
 
@@ -775,25 +791,32 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // ========================================
     let _ = writeln!(writer, "[VFS] Initializing virtual filesystem...");
 
+    // NeonRoot: Raw markers to isolate VFS crash location
+    unsafe { arch::serial::write_str_unsafe("[VFS:1]"); }
     // Mount tmpfs as root filesystem
     let root_fs = TmpDir::new_root();
+    unsafe { arch::serial::write_str_unsafe("[VFS:2]"); }
     if let Err(e) = GLOBAL_VFS.mount(root_fs.clone(), "/", MountFlags::empty(), "tmpfs") {
         let _ = writeln!(writer, "[VFS] Failed to mount root: {:?}", e);
         arch::X86_64::halt();
     }
+    unsafe { arch::serial::write_str_unsafe("[VFS:3]"); }
     let _ = writeln!(writer, "[VFS] Mounted tmpfs at /");
 
+    unsafe { arch::serial::write_str_unsafe("[4]"); }
     // Create /dev directory
     if let Err(e) = root_fs.mkdir("dev", vfs::Mode::DEFAULT_DIR) {
         let _ = writeln!(writer, "[VFS] Failed to create /dev: {:?}", e);
         arch::X86_64::halt();
     }
 
+    unsafe { arch::serial::write_str_unsafe("[5]"); }
     // Mount devfs at /dev
     let dev_fs = DevFs::new();
 
     // Initialize VT (virtual terminal) subsystem before mounting devfs
     let vt_manager = vt::init();
+    unsafe { arch::serial::write_str_unsafe("[6]"); }
     let _ = writeln!(
         writer,
         "[VFS] VT manager initialized ({} virtual terminals)",
@@ -811,11 +834,13 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         let device_name = alloc::format!("tty{}", i + 1);
         dev_fs.register(&device_name, vt_device);
     }
+    unsafe { arch::serial::write_str_unsafe("[7]"); }
 
     if let Err(e) = GLOBAL_VFS.mount(dev_fs, "/dev", MountFlags::empty(), "devfs") {
         let _ = writeln!(writer, "[VFS] Failed to mount devfs: {:?}", e);
         arch::X86_64::halt();
     }
+    unsafe { arch::serial::write_str_unsafe("[8]"); }
     let _ = writeln!(
         writer,
         "[VFS] Mounted devfs at /dev with {} VT devices",
@@ -863,6 +888,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         vt::set_vt_switch_callback(terminal_vt_switch_callback); // 🔥 VT switch redraw 🔥
     }
 
+    unsafe { arch::serial::write_str_unsafe("[9]"); }
     // Create /proc directory
     if let Err(e) = root_fs.mkdir("proc", vfs::Mode::DEFAULT_DIR) {
         let _ = writeln!(writer, "[VFS] Failed to create /proc: {:?}", e);
@@ -881,6 +907,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         arch::X86_64::halt();
     }
     let _ = writeln!(writer, "[VFS] Mounted procfs at /proc");
+    unsafe { arch::serial::write_str_unsafe("[10]"); }
 
     // Initialize PTY subsystem
     let pty_manager = Arc::new(PtyManager::new());
@@ -908,6 +935,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
 
     let _ = writeln!(writer, "[VFS] VFS initialized");
+    unsafe { arch::serial::write_str_unsafe("[11]"); }
 
     // ========================================
     // Network Initialization
@@ -1874,6 +1902,15 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         let _ = writeln!(writer, "[USER] TLS FS base: {:#x}", fs_base);
     }
     let _ = writeln!(writer);
+
+    // NeonRoot: NOW start the BSP timer and release APs. All boot init is done,
+    // the init process is in the scheduler, and we're about to enter usermode.
+    // Starting the timer earlier causes deadlocks — timer callbacks take locks
+    // that boot code holds (serial, VFS, etc.).
+    let _ = writeln!(writer, "[INFO] Starting APIC timer at 100Hz...");
+    arch::start_timer(100);
+    smp_init::signal_ap_ready();
+    let _ = writeln!(writer, "[SMP] AP timer gate released — all CPUs active");
 
     // Use the combined enter_usermode function that:
     // 1. Switches to kernel stack (in higher half)

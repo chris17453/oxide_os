@@ -1263,7 +1263,7 @@ pub fn kernel_exec(
             debug_fork!("[EXEC] rip={:#x} rsp={:#x}", ctx.rip, ctx.rsp);
             debug_fork!("[EXEC] fs_base={:#x} (TLS)", ctx.fs_base);
             debug_fork!(
-                "[EXEC] argc={} argv={:#x} envp={:#x}",
+                "[EXEC] rdi={} rsi={:#x} rdx={:#x} (cleared — argc/argv on stack)",
                 ctx.rdi,
                 ctx.rsi,
                 ctx.rdx
@@ -1295,11 +1295,11 @@ pub fn kernel_exec(
                 // Set up user stack - do this AFTER loading values into rcx/r11
                 // to avoid any chance of compiler putting inputs in rsp
                 "mov rsp, r10",
-                // Set up argc, argv, envp in registers per System V ABI
-                // These are already loaded into r12, r13, r14 respectively
-                "mov rdi, r12",
-                "mov rsi, r13",
-                "mov rdx, r14",
+                // GraveShift: Program startup uses STACK for argc/argv, NOT registers.
+                // [rsp+0]=argc, [rsp+8]=argv[0], etc. Clear rdi/rsi/rdx per ABI.
+                "xor edi, edi",
+                "xor esi, esi",
+                "xor edx, edx",
                 // Load user data segment selectors for DS/ES (0x1B = USER_DS | 3)
                 // NOTE: In x86-64 long mode, FS base comes from FS_BASE MSR, not segment descriptor.
                 // We do NOT load FS at all - just leave it as-is after WRMSR set the base.
@@ -1317,9 +1317,6 @@ pub fn kernel_exec(
                 in("r8") ctx.rip,
                 in("r9") 0x202u64, // IF set
                 in("r10") ctx.rsp,
-                in("r12") ctx.rdi,
-                in("r13") ctx.rsi,
-                in("r14") ctx.rdx,
                 in("r15") ctx.fs_base,
                     options(noreturn)
                 );

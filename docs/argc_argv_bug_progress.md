@@ -2,7 +2,7 @@
 
 **Date:** 2026-02-02
 **Issue:** Programs receive argc=0, cannot see command-line arguments
-**Status:** ROOT CAUSE IDENTIFIED - Ready to fix
+**Status:** argc/argv fix APPLIED — boot blocked by interrupt/timer race at enter_usermode
 
 ---
 
@@ -80,7 +80,7 @@ The value loaded into r10 (which becomes RSP) is likely coming from the wrong so
 
 ---
 
-## The Fix (Not Yet Applied)
+## The Fix (APPLIED)
 
 ### Part 1: Fix Register Setup
 
@@ -235,4 +235,71 @@ argv ptr = 0x00007ffffffeffb0
 
 ---
 
-**Status:** Ready to fix - just need to modify kernel/src/process.rs lines 1298-1302 and verify r10 source.
+**Status:** argc/argv fix APPLIED, but boot crashes at enter_usermode transition.
+
+---
+
+## Boot Crash Fixes (Session 2)
+
+While testing the argc/argv fix, a clean rebuild exposed a BSP triple-fault at `sti`.
+Multiple cascading issues were found and fixed:
+
+### Fix 1: Legacy 8259 PIC overlap (SOLVED)
+- **File:** `kernel/arch/arch-x86_64/src/apic.rs`
+- PIC IRQ 0-7 mapped to vectors 0x08-0x0F, overlapping CPU exceptions
+- PIC timer IRQ 0 → vector 8 = Double Fault handler → triple fault
+- **Fix:** Added `disable_legacy_pic()` — remap to 0x20-0x2F, mask all
+
+### Fix 2: LINT0 ExtINT pass-through (SOLVED)
+- **File:** `kernel/arch/arch-x86_64/src/apic.rs`
+- UEFI firmware configured LINT0 as ExtINT (PIC pass-through)
+- Stale PIC IRQ fires through LINT0 at `sti` even after PIC masking
+- **Fix:** Mask LINT0, LINT1, Error LVT in `enable()`
+
+### Fix 3: IOAPIC premature unmasking (SOLVED)
+- **File:** `kernel/arch/arch-x86_64/src/apic.rs`
+- Keyboard/mouse IOAPIC entries unmasked during `init_ioapic()`
+- Stale PS2 data fired into LAPIC at `sti` before handlers ready
+- **Fix:** Keep masked; added `unmask_io_irqs()` called after `sti`
+
+### Fix 4: Timer deadlock during boot (SOLVED)
+- **File:** `kernel/src/console.rs`, `kernel/src/init.rs`
+- Timer callbacks (terminal_tick, scheduler_tick) take COM1 serial lock
+- Boot code holds same lock during `writeln!` → deadlock → triple fault
+- **Fix:** Changed `terminal_tick` to use lock-free `write_byte_unsafe`
+- **Fix:** Deferred timer start + AP release to right before `enter_usermode`
+
+### Fix 5: BSP_READY gate for APs (SOLVED)
+- **File:** `kernel/src/smp_init.rs`
+- APs enable interrupts before BSP has registered fault handlers
+- AP timer tick → page fault → no handler → triple fault
+- **Fix:** Added `BSP_READY` atomic gate; APs spin until BSP signals
+
+### Current: Timer/scheduler race at enter_usermode (IN PROGRESS)
+- Timer starts, APs released, then crash before usermode entry
+- 3 APs call `start_timer()` with `serial_println!` simultaneously
+- BSP timer may preempt before `enter_usermode()` executes
+- The `[` character in last output suggests AP serial output interrupted
+- **Next:** Eliminate serial output between timer start and enter_usermode,
+  or start timer inside enter_usermode assembly after cli
+
+---
+
+### Actual Root Cause of argc/argv (not in original investigation)
+
+The original investigation focused on process.rs register loading, but the **true root cause** was
+in `_start` (userspace/libs/libc/src/arch/x86_64/start.rs). It was a non-naked `extern "C"` function,
+so the compiler generated a prologue (`push rbp; mov rbp, rsp`) BEFORE the inline asm read `[rsp]`.
+Since the kernel cleared all registers (rbp=0), `push rbp` wrote 0 to `[rsp-8]` and decremented RSP.
+The inline asm then read `[rsp]` = 0 (the pushed rbp), not argc.
+
+### Changes Applied
+
+1. **userspace/libs/libc/src/arch/x86_64/start.rs** — Made `_start` naked (`#[unsafe(naked)]` with
+   `naked_asm!`), matching aarch64/mips64 implementations. No prologue, RSP untouched before reading argc.
+
+2. **kernel/src/process.rs** — Replaced `mov rdi, r12` / `mov rsi, r13` / `mov rdx, r14` with
+   `xor edi, edi` / `xor esi, esi` / `xor edx, edx`. Removed unused r12/r13/r14 input bindings.
+
+3. **kernel/proc/proc/src/exec.rs** — Removed the "EXTREME DIAGNOSTIC" loop (192-slot spray) and
+   restored the correct single `write_to_user_stack` for argc.

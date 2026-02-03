@@ -184,10 +184,19 @@ pub fn terminal_tick() {
     // runs in interrupt context (timer interrupt). Using the locking version
     // would deadlock if process-context code holds the COM1 lock.
     while let Some(byte) = unsafe { arch::serial_read_unsafe() } {
-        // Debug: log serial input
+        // NeonRoot: Debug output MUST use lock-free serial writes here.
+        // terminal_tick runs in timer interrupt context — if the main code
+        // holds the COM1 lock during a writeln!, taking it again deadlocks
+        // and escalates to a triple fault. write_str_unsafe bypasses the lock.
         if byte < 32 || byte > 126 {
-            let mut w = serial::SerialWriter;
-            let _ = write!(w, "[SERIAL] Got 0x{:02x}\n", byte);
+            unsafe {
+                arch::serial::write_str_unsafe("[SERIAL] Got 0x");
+                let hi = (byte >> 4) & 0xF;
+                let lo = byte & 0xF;
+                arch::serial::write_byte_unsafe(if hi < 10 { b'0' + hi } else { b'a' + hi - 10 });
+                arch::serial::write_byte_unsafe(if lo < 10 { b'0' + lo } else { b'a' + lo - 10 });
+                arch::serial::write_byte_unsafe(b'\n');
+            }
         }
 
         // Route serial input to VT subsystem — /dev/console delegates to

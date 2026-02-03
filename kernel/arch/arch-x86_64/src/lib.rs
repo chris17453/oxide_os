@@ -674,6 +674,14 @@ pub fn start_timer(frequency_hz: u32) {
     apic::start_timer(frequency_hz);
 }
 
+/// Unmask keyboard and mouse IRQs in the IOAPIC
+///
+/// — BlackLatch: Call after `sti` so pending PS2 IRQs don't fire into
+/// a half-initialized interrupt path.
+pub fn unmask_io_irqs() {
+    apic::unmask_io_irqs();
+}
+
 /// Get current timer tick count
 pub fn timer_ticks() -> u64 {
     exceptions::ticks()

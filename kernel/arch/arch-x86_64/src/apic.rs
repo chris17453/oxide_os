@@ -141,6 +141,15 @@ pub fn enable() {
     // Set spurious interrupt vector and enable APIC (bit 8)
     write(reg::SPURIOUS, 0xFF | (1 << 8));
 
+    // BlackLatch: Mask LINT0 and LINT1 to prevent firmware-configured
+    // pass-through interrupts. LINT0 is typically wired as ExtINT (PIC INTR)
+    // by UEFI firmware; a stale PIC IRQ sitting in the PIC's IRR can fire
+    // through LINT0 the instant `sti` executes, even after OCW1 masking.
+    // Mask bit = bit 16 of LVT entry.
+    write(reg::LVT_LINT0, 1 << 16);  // Mask LINT0
+    write(reg::LVT_LINT1, 1 << 16);  // Mask LINT1
+    write(reg::LVT_ERROR, 1 << 16);  // Mask error interrupt too
+
     // Set task priority to 0 (accept all interrupts)
     write(reg::TPR, 0);
 }
@@ -282,12 +291,51 @@ pub fn init() {
         panic!("APIC not available!");
     }
 
+    // BlackLatch: Kill the 8259 PIC before it kills us. Legacy PIC maps IRQ 0-7
+    // to vectors 0x08-0x0F which OVERLAP with CPU exception vectors (double fault
+    // = 0x08). A stray PIC timer tick at `sti` fires vector 8, the double-fault
+    // handler reads a non-existent error code, stack goes sideways, triple fault.
+    // Remap to 0x20-0x2F first (safety net for spurious IRQs), then mask everything.
+    disable_legacy_pic();
+
     enable();
 
     crate::serial_println!("[APIC] Initialized, ID: {}, Version: {}", id(), version());
 
     // Initialize IOAPIC for legacy IRQs
     init_ioapic();
+}
+
+/// Disable the legacy 8259 PIC
+///
+/// — BlackLatch: The 8259 PIC must die before the APIC takes over. Without this,
+/// PIC IRQs fire into exception vector space (IRQ0 → vector 0x08 = #DF) and
+/// corrupt the handler stack frame. Remap first so even spurious IRQs land on
+/// harmless vectors, then mask everything.
+fn disable_legacy_pic() {
+    unsafe {
+        // ICW1: Begin initialization sequence (ICW4 needed)
+        crate::outb(0x20, 0x11); // PIC1 command
+        crate::outb(0xA0, 0x11); // PIC2 command
+
+        // ICW2: Remap to non-conflicting vectors
+        crate::outb(0x21, 0x20); // PIC1 → vectors 0x20-0x27
+        crate::outb(0xA1, 0x28); // PIC2 → vectors 0x28-0x2F
+
+        // ICW3: Cascade wiring
+        crate::outb(0x21, 0x04); // PIC1: slave on IRQ2
+        crate::outb(0xA1, 0x02); // PIC2: cascade identity = 2
+
+        // ICW4: 8086 mode
+        crate::outb(0x21, 0x01);
+        crate::outb(0xA1, 0x01);
+
+        // OCW1: Mask ALL interrupts on both PICs — flatline
+        crate::outb(0x21, 0xFF);
+        crate::outb(0xA1, 0xFF);
+    }
+
+    crate::serial_println!("[PIC] Legacy 8259 disabled — remapped to 0x20-0x2F and masked");
 }
 
 // ============================================================================
@@ -371,6 +419,10 @@ fn ioapic_set_irq(irq: u8, vector: u8, dest_apic: u8, masked: bool) {
 }
 
 /// Initialize IOAPIC
+///
+/// — BlackLatch: All IOAPIC entries start MASKED. The BSP unmasks keyboard/mouse
+/// only after `sti` via `unmask_io_irqs()`. This prevents stale hardware IRQs
+/// from firing into the LAPIC before the BSP is ready to handle them.
 fn init_ioapic() {
     // Check IOAPIC version
     let version = ioapic_read_reg(ioapic_reg::VERSION);
@@ -381,7 +433,7 @@ fn init_ioapic() {
         max_redir + 1
     );
 
-    // Mask all IRQs first
+    // Mask all IRQs — stay dark until BSP is fully ready
     for irq in 0..=max_redir {
         ioapic_set_irq(irq, 0, 0, true);
     }
@@ -389,21 +441,32 @@ fn init_ioapic() {
     // Get local APIC ID
     let apic_id = id();
 
-    // Route keyboard IRQ 1 to vector 33
-    ioapic_set_irq(1, crate::idt::vector::KEYBOARD, apic_id, false);
+    // Route keyboard IRQ 1 to vector 33 — but keep MASKED
+    ioapic_set_irq(1, crate::idt::vector::KEYBOARD, apic_id, true);
     crate::serial_println!(
-        "[IOAPIC] Keyboard IRQ 1 -> vector {} (APIC {})",
+        "[IOAPIC] Keyboard IRQ 1 -> vector {} (APIC {}) [masked]",
         crate::idt::vector::KEYBOARD,
         apic_id
     );
 
-    // Route mouse IRQ 12 to vector 44
-    ioapic_set_irq(12, crate::idt::vector::MOUSE, apic_id, false);
+    // Route mouse IRQ 12 to vector 44 — but keep MASKED
+    ioapic_set_irq(12, crate::idt::vector::MOUSE, apic_id, true);
     crate::serial_println!(
-        "[IOAPIC] Mouse IRQ 12 -> vector {} (APIC {})",
+        "[IOAPIC] Mouse IRQ 12 -> vector {} (APIC {}) [masked]",
         crate::idt::vector::MOUSE,
         apic_id
     );
+}
+
+/// Unmask keyboard and mouse IRQs in the IOAPIC
+///
+/// — BlackLatch: Call this AFTER `sti` and after all interrupt handlers are live.
+/// The PS2 controller may have pending data from init; this lets those IRQs flow.
+pub fn unmask_io_irqs() {
+    let apic_id = id();
+    ioapic_set_irq(1, crate::idt::vector::KEYBOARD, apic_id, false);
+    ioapic_set_irq(12, crate::idt::vector::MOUSE, apic_id, false);
+    crate::serial_println!("[IOAPIC] Keyboard and mouse IRQs unmasked");
 }
 
 /// Start the APIC timer for scheduling

@@ -491,6 +491,9 @@ pub extern "C" fn mouse_interrupt() {
 
 /// Mouse handler
 extern "C" fn handle_mouse() {
+    // NeonRoot: Raw marker — 'M' = mouse handler entered
+    unsafe { crate::serial::write_byte_unsafe(b'M'); }
+
     // Forward to the registered mouse callback (ps2::handle_mouse_irq).
     // The callback itself reads port 0x60 — we must NOT read it here
     // or the byte will be consumed before the driver sees it.
@@ -514,6 +517,8 @@ pub fn keyboard_irq_count() -> u64 {
 
 /// Keyboard handler - simplified non-naked version
 extern "C" fn handle_keyboard() {
+    // NeonRoot: Raw marker — 'K' = keyboard handler entered
+    unsafe { crate::serial::write_byte_unsafe(b'K'); }
     KEYBOARD_IRQ_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
     #[cfg(feature = "debug-input")]
@@ -671,6 +676,8 @@ extern "C" fn handle_bound_range(frame: *const InterruptFrame, _error: u64) {
 }
 
 extern "C" fn handle_invalid_opcode(frame: *const InterruptFrame, _error: u64) {
+    // NeonRoot: Raw marker — 'U' = #UD handler entered
+    unsafe { crate::serial::write_str_unsafe("\n#UD!"); }
     let frame = unsafe { &*frame };
 
     // Read saved registers from stack (they were pushed before the frame pointer)
@@ -730,6 +737,11 @@ extern "C" fn handle_device_not_available(frame: *const InterruptFrame, _error: 
 }
 
 extern "C" fn handle_double_fault(frame: *const InterruptFrame, error: u64) {
+    // NeonRoot: Raw serial scream — if panic deadlocks on the serial lock,
+    // at least these bytes escape. '#DF\n' = double fault reached handler.
+    unsafe {
+        crate::serial::write_str_unsafe("\n#DF!");
+    }
     let frame = unsafe { &*frame };
     panic!("DOUBLE FAULT at {:#x}, error: {:#x}", frame.rip, error);
 }
@@ -756,6 +768,8 @@ extern "C" fn handle_stack_segment(frame: *const InterruptFrame, error: u64) {
 }
 
 extern "C" fn handle_general_protection(frame: *const InterruptFrame, error: u64) {
+    // NeonRoot: Raw marker — 'G' = #GP handler entered
+    unsafe { crate::serial::write_str_unsafe("\n#GP!"); }
     let frame = unsafe { &*frame };
 
     // Get saved registers from stack (same layout as page fault handler)
@@ -844,6 +858,8 @@ extern "C" fn handle_general_protection(frame: *const InterruptFrame, error: u64
 }
 
 extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
+    // NeonRoot: Raw marker — 'P' = #PF handler entered
+    unsafe { crate::serial::write_str_unsafe("\n#PF!"); }
     use core::ptr::addr_of;
 
     let frame = unsafe { &*frame };
@@ -1220,6 +1236,8 @@ pub unsafe fn set_terminal_tick_callback(callback: fn()) {
 ///
 /// Takes current RSP, returns RSP to restore from (may be different for context switch)
 extern "C" fn handle_timer(current_rsp: u64) -> u64 {
+    // NeonRoot: Raw marker — 'T' = timer handler entered
+    unsafe { crate::serial::write_byte_unsafe(b'T'); }
     use core::ptr::{addr_of, addr_of_mut};
 
     // Increment tick counter

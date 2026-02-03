@@ -10,42 +10,47 @@
 //!   [rsp+8*(argc+2)] = envp[0]
 //!   ...
 //!
-//! — GraveShift: Fixed _start to use proper stack frames instead of naked_asm
+//! — GraveShift: MUST be naked — any prologue (push rbp) corrupts RSP
+//!   before we read argc from [rsp]. The kernel sets RSP to point directly
+//!   at argc on the stack via sysretq. No frame setup allowed.
 
 /// Entry point for x86_64 userspace programs
 ///
 /// Reads argc/argv from stack per x86_64 ELF ABI, initializes environment,
 /// calls main(), and exits with the return code.
 #[unsafe(no_mangle)]
-pub extern "C" fn _start() -> ! {
-    unsafe {
-        let argc: i32;
-        let argv: *const *const u8;
-
-        // Read argc and argv from stack per x86_64 ELF ABI
-        // At entry: [rsp+0] = argc, [rsp+8] = argv[0], ...
-        core::arch::asm!(
-            "mov {argc:e}, [rsp]",      // Read 32-bit argc
-            "lea {argv}, [rsp + 8]",    // Calculate argv pointer
-            argc = out(reg) argc,
-            argv = out(reg) argv,
-        );
-
+#[unsafe(naked)]
+pub unsafe extern "C" fn _start() -> ! {
+    // GraveShift: naked entry — RSP points at argc, no prologue allowed.
+    // Stash argc/argv in callee-saved regs (r12/r13) across init calls.
+    core::arch::naked_asm!(
+        // Save argc and argv in callee-saved registers
+        "mov r12d, [rsp]",          // argc (32-bit)
+        "lea r13, [rsp + 8]",       // argv = &stack[1]
+        // 16-byte align the stack for System V ABI calls
+        "and rsp, -16",
         // Initialize environment
-        crate::env::init_env();
-
+        "call {init_env}",
         // Initialize FILE streams (stdin/stdout/stderr)
-        crate::filestream::init_stdio();
-
+        "call {init_stdio}",
         // Initialize environ pointer for C compatibility
-        crate::c_exports::init_environ();
-
-        // Call main
-        let ret = _main_wrapper(argc, argv);
-
-        // Exit using the normal syscall wrapper
-        crate::syscall::sys_exit(ret);
-    }
+        "call {init_environ}",
+        // Set up arguments for main(argc, argv)
+        "mov edi, r12d",            // argc (32-bit)
+        "mov rsi, r13",             // argv
+        // Call main(argc, argv)
+        "call {main}",
+        // Exit with return code (in eax from main)
+        "mov edi, eax",
+        "call {exit}",
+        // Should never reach here
+        "ud2",
+        init_env = sym crate::env::init_env,
+        init_stdio = sym crate::filestream::init_stdio,
+        init_environ = sym crate::c_exports::init_environ,
+        main = sym _main_wrapper,
+        exit = sym crate::syscall::sys_exit,
+    )
 }
 
 // Wrapper to call the user's main function with argc/argv

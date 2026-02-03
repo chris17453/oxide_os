@@ -434,14 +434,9 @@ pub fn do_exec<A: FrameAllocator>(
     let mut ptr = stack_ptr;
     let argc_val = argv.len() as u64;
 
-    // GraveShift: EXTREME DIAGNOSTIC - Fill entire region with argc
-    // If RSP is ANYWHERE near here, argtest will show argc correctly
-    for offset in -64..128 {
-        let addr = (ptr as i64 + offset * 8) as u64;
-        if let Ok(_) = write_to_user_stack(&new_address_space, addr, &argc_val.to_le_bytes()) {
-            // Write succeeded
-        }
-    }
+    // GraveShift: Write argc at [final_rsp]. _start reads it via mov r12d, [rsp].
+    let argc_bytes = argc_val.to_le_bytes();
+    write_to_user_stack(&new_address_space, ptr, &argc_bytes)?;
 
     ptr += 8;
 
