@@ -67,17 +67,20 @@ The `top` utility provides real-time system monitoring with an interactive inter
 
 ### Navigation & Display
 - `Space` - Force update/refresh display
-- `q` - Quit
+- `q` or `ESC` - Quit
+- Arrow keys - Navigate (future: scroll through process list)
+- `Page Up/Down` - Page navigation (future enhancement)
+- `Home/End` - Jump to top/bottom (future enhancement)
 
 ### Sorting
-- `M` - Sort by memory usage
-- `P` - Sort by CPU usage (default)
-- `T` - Sort by time
-- `N` - Sort by PID
-- `R` - Reverse sort order
+- `M` or `m` - Sort by memory usage
+- `P` or `p` - Sort by CPU usage (default)
+- `T` or `t` - Sort by time
+- `N` or `n` - Sort by PID
+- `R` or `r` - Reverse sort order
 
 ### Filtering
-- `i` - Toggle showing idle processes
+- `i` or `I` - Toggle showing idle processes
 - `u` - Filter by user (prompts for UID)
 
 ### Process Control
@@ -85,9 +88,18 @@ The `top` utility provides real-time system monitoring with an interactive inter
 - `r` - Renice a process (prompts for PID and nice value)
 
 ### Help
-- `h` or `?` - Show help screen
+- `h`, `H`, or `?` - Show help screen
 - `d` or `s` - Set update delay
 - `n` or `#` - Set number of lines to display
+
+### Display Features
+- **Color coding**: Processes are color-coded by state and CPU usage
+  - Green: Low CPU usage (< 10%)
+  - Yellow: Medium CPU usage (10-50%)
+  - Red: High CPU usage (> 50%)
+  - Cyan: Sleeping/idle processes
+  - Magenta: Zombie processes
+- **Status bar**: Bottom line shows current sort mode and quick help
 
 ## Examples
 
@@ -124,14 +136,22 @@ top -b -d 1 >> system_monitor_continuous.log &
 ### Interactive Shortcuts
 ```
 # While running interactively:
-P - Sort by CPU (default)
-M - Sort by memory
-T - Sort by time
-N - Sort by PID
-R - Reverse sort
-i - Toggle idle processes
-Space - Force refresh
-q - Quit
+P or p - Sort by CPU (default)
+M or m - Sort by memory
+T or t - Sort by time
+N or n - Sort by PID
+R or r - Reverse sort
+i or I - Toggle idle processes
+Space  - Force refresh
+q or ESC - Quit
+h or ? - Help
+
+# Color indicators:
+Green   - Low CPU usage
+Yellow  - Medium CPU usage
+Red     - High CPU usage
+Cyan    - Sleeping processes
+Magenta - Zombie processes
 ```
 
 ## Implementation Details
@@ -202,6 +222,7 @@ The interactive mode uses the ncurses library for:
 - Thread display not yet implemented (`-H` flag accepted but ignored)
 - Process control (kill, renice) not yet implemented
 - No support for custom fields or column configuration
+- Arrow key scrolling not yet implemented (keys recognized but no action)
 - No mouse support
 - Terminal must support minimum dimensions
 
@@ -210,6 +231,7 @@ The interactive mode uses the ncurses library for:
 - Add thread display support
 - Implement interactive kill/renice
 - Add custom field selection
+- Implement arrow key scrolling through process list
 - Add mouse support for clicking column headers
 - Add search/filter capabilities
 - Add process tree view
@@ -219,7 +241,11 @@ The interactive mode uses the ncurses library for:
 
 ### Implemented Features
 - ✓ Real-time process monitoring
-- ✓ Interactive ncurses interface
+- ✓ Interactive ncurses interface with colors
+- ✓ Color-coded process display by CPU and state
+- ✓ ESC key to exit
+- ✓ Case-insensitive command keys
+- ✓ Status bar with sort mode indicator
 - ✓ Batch mode output
 - ✓ All major command-line flags
 - ✓ CPU and memory statistics
