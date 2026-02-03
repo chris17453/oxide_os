@@ -128,6 +128,10 @@ pub struct Task {
     /// Total runtime accumulated (nanoseconds)
     pub sum_exec_runtime: u64,
 
+    /// Timestamp when task was created (nanoseconds since boot)
+    /// — GraveShift: Birth certificate for process tracking
+    pub start_time: u64,
+
     // ========================================
     // Preemption control
     // ========================================
@@ -203,6 +207,7 @@ impl Task {
             last_cpu: 0,
             exec_start: 0,
             sum_exec_runtime: 0,
+            start_time: 0, // Will be set by scheduler when task is created
             preempt_count: 0,
             need_resched: false,
             kernel_stack,
@@ -244,6 +249,7 @@ impl Task {
             last_cpu: 0,
             exec_start: 0,
             sum_exec_runtime: 0,
+            start_time: 0, // Will be set by scheduler when task is created
             preempt_count: 0,
             need_resched: false,
             kernel_stack,
@@ -276,6 +282,7 @@ impl Task {
             last_cpu: cpu,
             exec_start: 0,
             sum_exec_runtime: 0,
+            start_time: 0, // Will be set by scheduler when task is created
             preempt_count: 0,
             need_resched: false,
             kernel_stack,
@@ -314,6 +321,7 @@ impl Task {
             last_cpu: cpu,
             exec_start: 0,
             sum_exec_runtime: 0,
+            start_time: 0, // Will be set by scheduler when task is created
             preempt_count: 0,
             need_resched: false,
             kernel_stack,

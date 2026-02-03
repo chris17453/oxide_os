@@ -127,6 +127,11 @@ pub struct ProcessMeta {
     /// Reset to false after waitpid reports it
     /// — ThreadRogue: thaw notification for the parent
     pub continued: bool,
+
+    /// Controlling terminal device number (major << 8 | minor)
+    /// 0 means no controlling terminal
+    /// — GraveShift: TTY hookup for interactive sessions
+    pub tty_nr: u32,
 }
 
 impl ProcessMeta {
@@ -161,6 +166,7 @@ impl ProcessMeta {
             program_break: 0x600000, // Initial heap start (after typical program load area)
             stop_signal: None,
             continued: false,
+            tty_nr: 0, // No controlling terminal by default
         }
     }
 
@@ -198,6 +204,7 @@ impl ProcessMeta {
             program_break: 0x600000, // Initial heap start (after typical program load area)
             stop_signal: None,
             continued: false,
+            tty_nr: 0, // No controlling terminal by default
         }
     }
 
@@ -232,6 +239,7 @@ impl ProcessMeta {
             program_break: self.program_break, // Inherit parent's program break
             stop_signal: None,
             continued: false,
+            tty_nr: self.tty_nr, // Inherit controlling terminal
         }
     }
 

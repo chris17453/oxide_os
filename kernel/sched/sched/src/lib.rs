@@ -121,6 +121,7 @@ pub use crate::core::{
     get_task_rt_priority,
     get_task_state,
     get_task_switch_info,
+    get_task_timing_info,
     // Clock
     global_clock,
     // Initialization

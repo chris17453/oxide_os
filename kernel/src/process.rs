@@ -582,6 +582,7 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
                 program_break: 0,
                 stop_signal: None,
                 continued: false,
+                tty_nr: 0, // Inherit controlling terminal (0 for now)
             };
 
             let child_meta_arc = Arc::new(Mutex::new(child_meta));

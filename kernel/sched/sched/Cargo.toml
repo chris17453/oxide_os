@@ -8,5 +8,6 @@ description = "Scheduler implementation for OXIDE OS"
 [dependencies]
 os_core = { workspace = true }
 sched-traits = { workspace = true }
+arch-x86_64 = { workspace = true }
 spin = { workspace = true }
 proc = { path = "../../proc/proc" }

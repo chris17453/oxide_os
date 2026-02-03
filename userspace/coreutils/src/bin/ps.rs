@@ -240,6 +240,10 @@ struct ProcInfo {
     cmdline: [u8; 512],
     cmdline_len: usize,
     is_kernel_thread: bool,
+    tty_nr: u32,      // TTY device number
+    start_time: u64,  // Start time in jiffies
+    utime: u64,       // User CPU time in jiffies
+    stime: u64,       // System CPU time in jiffies
 }
 
 impl ProcInfo {
@@ -257,6 +261,10 @@ impl ProcInfo {
             cmdline: [0; 512],
             cmdline_len: 0,
             is_kernel_thread: false,
+            tty_nr: 0,
+            start_time: 0,
+            utime: 0,
+            stime: 0,
         }
     }
 
@@ -310,6 +318,176 @@ fn pid_to_path(pid: u32, path: &mut [u8], start: usize) -> usize {
     path[start..start + pid_len].copy_from_slice(&pid_str[..pid_len]);
     pid_len
 }
+
+/// Parse /proc/[pid]/stat file
+/// Returns (state, ppid, tty_nr, start_time, utime, stime) on success
+fn parse_stat_file(stat_data: &[u8]) -> Option<(u8, u32, u32, u64, u64, u64)> {
+    // Format: pid (comm) state ppid pgrp session tty_nr ...
+    // Find the closing paren of the comm field
+    let mut paren_end = 0;
+    for i in (0..stat_data.len()).rev() {
+        if stat_data[i] == b')' {
+            paren_end = i;
+            break;
+        }
+    }
+    if paren_end == 0 {
+        return None;
+    }
+
+    // Parse fields after comm (starting after ") ")
+    let rest = &stat_data[paren_end + 1..];
+    let mut fields = [0u64; 52];
+    let mut field_idx = 0;
+    let mut i = 0;
+
+    // Parse all fields
+    while i < rest.len() && field_idx < fields.len() {
+        // Skip whitespace
+        while i < rest.len() && (rest[i] == b' ' || rest[i] == b'\t') {
+            i += 1;
+        }
+        if i >= rest.len() {
+            break;
+        }
+
+        // Parse number (handle negative)
+        let mut num: i64 = 0;
+        let mut negative = false;
+        if rest[i] == b'-' {
+            negative = true;
+            i += 1;
+        }
+        while i < rest.len() && rest[i] >= b'0' && rest[i] <= b'9' {
+            num = num * 10 + (rest[i] - b'0') as i64;
+            i += 1;
+        }
+        if negative {
+            num = -num;
+        }
+        fields[field_idx] = num as u64;
+        field_idx += 1;
+    }
+
+    if field_idx < 14 {
+        return None; // Need at least fields up to utime
+    }
+
+    // Field indices (0-based after comm):
+    // 0 = state, 1 = ppid, 4 = tty_nr, 11 = utime, 12 = stime, 19 = starttime
+    let state = fields[0] as u8;
+    let ppid = fields[1] as u32;
+    let tty_nr = fields[4] as u32;
+    let utime = fields[11];
+    let stime = fields[12];
+    let start_time = if field_idx > 19 { fields[19] } else { 0 };
+
+    Some((state, ppid, tty_nr, start_time, utime, stime))
+}
+
+/// Format TTY device number to string
+/// Returns formatted TTY like "pts/0", "tty1", or "?" for no tty
+fn format_tty(tty_nr: u32, buf: &mut [u8]) -> usize {
+    if tty_nr == 0 {
+        buf[0] = b'?';
+        return 1;
+    }
+
+    // For now, just show "?" since we don't have proper TTY subsystem yet
+    // TODO: Map major/minor device numbers to TTY names
+    buf[0] = b'?';
+    1
+}
+
+/// Format jiffies to HH:MM:SS
+fn format_time(jiffies: u64, buf: &mut [u8]) -> usize {
+    // Convert jiffies to seconds (100 Hz = 100 jiffies/sec)
+    let total_secs = jiffies / 100;
+    let hours = total_secs / 3600;
+    let minutes = (total_secs % 3600) / 60;
+    let seconds = total_secs % 60;
+
+    let mut pos = 0;
+
+    // Hours
+    if hours >= 10 {
+        buf[pos] = b'0' + (hours / 10) as u8;
+        pos += 1;
+    }
+    buf[pos] = b'0' + (hours % 10) as u8;
+    pos += 1;
+    buf[pos] = b':';
+    pos += 1;
+
+    // Minutes
+    buf[pos] = b'0' + (minutes / 10) as u8;
+    pos += 1;
+    buf[pos] = b'0' + (minutes % 10) as u8;
+    pos += 1;
+    buf[pos] = b':';
+    pos += 1;
+
+    // Seconds
+    buf[pos] = b'0' + (seconds / 10) as u8;
+    pos += 1;
+    buf[pos] = b'0' + (seconds % 10) as u8;
+    pos += 1;
+
+    pos
+}
+
+/// Format start time to a short format (HH:MM or date)
+fn format_start_time(start_jiffies: u64, buf: &mut [u8]) -> usize {
+    // For now, just show elapsed time in minutes
+    // TODO: Show actual time or date based on how long ago process started
+    let elapsed_secs = start_jiffies / 100;
+    let elapsed_mins = elapsed_secs / 60;
+
+    if elapsed_mins < 60 {
+        // Show as MM:SS if less than an hour
+        let mins = elapsed_mins;
+        let secs = elapsed_secs % 60;
+        let mut pos = 0;
+        if mins >= 10 {
+            buf[pos] = b'0' + (mins / 10) as u8;
+            pos += 1;
+        } else {
+            buf[pos] = b' ';
+            pos += 1;
+        }
+        buf[pos] = b'0' + (mins % 10) as u8;
+        pos += 1;
+        buf[pos] = b':';
+        pos += 1;
+        buf[pos] = b'0' + (secs / 10) as u8;
+        pos += 1;
+        buf[pos] = b'0' + (secs % 10) as u8;
+        pos += 1;
+        pos
+    } else {
+        // Show as HH:MM for longer times
+        let hours = elapsed_mins / 60;
+        let mins = elapsed_mins % 60;
+        let mut pos = 0;
+        if hours >= 10 {
+            buf[pos] = b'0' + (hours / 10) as u8;
+            pos += 1;
+        } else {
+            buf[pos] = b' ';
+            pos += 1;
+        }
+        buf[pos] = b'0' + (hours % 10) as u8;
+        pos += 1;
+        buf[pos] = b':';
+        pos += 1;
+        buf[pos] = b'0' + (mins / 10) as u8;
+        pos += 1;
+        buf[pos] = b'0' + (mins % 10) as u8;
+        pos += 1;
+        pos
+    }
+}
+
 
 /// Read process info from /proc/[pid]/status and /proc/[pid]/cmdline
 fn read_proc_info(pid: u32) -> Option<ProcInfo> {
@@ -407,6 +585,31 @@ fn read_proc_info(pid: u32) -> Option<ProcInfo> {
         info.is_kernel_thread = true;
     }
 
+    // Read stat file for timing and TTY information
+    let mut stat_path = [0u8; 32];
+    stat_path[..prefix.len()].copy_from_slice(prefix);
+    let mut stat_pos = prefix.len();
+    stat_pos += pid_to_path(pid, &mut stat_path, stat_pos);
+    let stat_suffix = b"/stat";
+    stat_path[stat_pos..stat_pos + stat_suffix.len()].copy_from_slice(stat_suffix);
+    stat_pos += stat_suffix.len();
+
+    let stat_path_str = core::str::from_utf8(&stat_path[..stat_pos]).ok()?;
+    let mut stat_buf = [0u8; 512];
+    let stat_n = read_file(stat_path_str, &mut stat_buf);
+
+    if stat_n > 0 {
+        if let Some((state, ppid, tty_nr, start_time, utime, stime)) = parse_stat_file(&stat_buf[..stat_n as usize]) {
+            // Update from stat file (more authoritative for these fields)
+            info.state = state;
+            info.ppid = ppid;
+            info.tty_nr = tty_nr;
+            info.start_time = start_time;
+            info.utime = utime;
+            info.stime = stime;
+        }
+    }
+
     Some(info)
 }
 
@@ -470,8 +673,27 @@ fn print_stat(state: u8, is_kernel: bool) {
 fn print_default(info: &ProcInfo) {
     print_padded_num(info.pid, 5);
     prints(" ");
-    prints("?        "); // TTY - TODO: get real TTY
-    prints("00:00:00 "); // TIME - TODO: get real CPU time
+    
+    // TTY
+    let mut tty_buf = [0u8; 16];
+    let tty_len = format_tty(info.tty_nr, &mut tty_buf);
+    if let Ok(tty_str) = core::str::from_utf8(&tty_buf[..tty_len]) {
+        print_padded_str(tty_str, 8);
+    } else {
+        prints("?       ");
+    }
+    prints(" ");
+    
+    // TIME (total CPU time = utime + stime)
+    let total_time = info.utime + info.stime;
+    let mut time_buf = [0u8; 16];
+    let time_len = format_time(total_time, &mut time_buf);
+    if let Ok(time_str) = core::str::from_utf8(&time_buf[..time_len]) {
+        prints(time_str);
+    } else {
+        prints("00:00:00");
+    }
+    prints(" ");
     
     // CMD - show kernel threads in brackets
     if info.is_kernel_thread {
@@ -507,17 +729,39 @@ fn print_user_format(info: &ProcInfo) {
     prints("    0 ");
     
     // TTY (8 chars)
-    prints("?        ");
+    let mut tty_buf = [0u8; 16];
+    let tty_len = format_tty(info.tty_nr, &mut tty_buf);
+    if let Ok(tty_str) = core::str::from_utf8(&tty_buf[..tty_len]) {
+        print_padded_str(tty_str, 8);
+    } else {
+        prints("?       ");
+    }
+    prints(" ");
     
     // STAT (4 chars)
     print_stat(info.state, info.is_kernel_thread);
     prints("   ");
     
-    // START (5 chars) - TODO: get process start time
-    prints("?    ");
+    // START (5 chars)
+    let mut start_buf = [0u8; 16];
+    let start_len = format_start_time(info.start_time, &mut start_buf);
+    if let Ok(start_str) = core::str::from_utf8(&start_buf[..start_len]) {
+        prints(start_str);
+    } else {
+        prints("?    ");
+    }
+    prints(" ");
     
-    // TIME (8 chars) - TODO: get real CPU time
-    prints("00:00:00 ");
+    // TIME (8 chars)
+    let total_time = info.utime + info.stime;
+    let mut time_buf = [0u8; 16];
+    let time_len = format_time(total_time, &mut time_buf);
+    if let Ok(time_str) = core::str::from_utf8(&time_buf[..time_len]) {
+        prints(time_str);
+    } else {
+        prints("00:00:00");
+    }
+    prints(" ");
     
     // COMMAND
     if info.is_kernel_thread {
@@ -547,14 +791,36 @@ fn print_full_format(info: &ProcInfo) {
     // C (CPU utilization) - TODO: calculate
     prints("  0 ");
     
-    // STIME (start time) - TODO: get real start time
-    prints("?     ");
+    // STIME (start time)
+    let mut start_buf = [0u8; 16];
+    let start_len = format_start_time(info.start_time, &mut start_buf);
+    if let Ok(start_str) = core::str::from_utf8(&start_buf[..start_len]) {
+        print_padded_str(start_str, 5);
+    } else {
+        prints("?    ");
+    }
+    prints(" ");
     
     // TTY
-    prints("?        ");
+    let mut tty_buf = [0u8; 16];
+    let tty_len = format_tty(info.tty_nr, &mut tty_buf);
+    if let Ok(tty_str) = core::str::from_utf8(&tty_buf[..tty_len]) {
+        print_padded_str(tty_str, 8);
+    } else {
+        prints("?       ");
+    }
+    prints(" ");
     
     // TIME
-    prints("00:00:00 ");
+    let total_time = info.utime + info.stime;
+    let mut time_buf = [0u8; 16];
+    let time_len = format_time(total_time, &mut time_buf);
+    if let Ok(time_str) = core::str::from_utf8(&time_buf[..time_len]) {
+        prints(time_str);
+    } else {
+        prints("00:00:00");
+    }
+    prints(" ");
     
     // CMD
     if info.is_kernel_thread {
