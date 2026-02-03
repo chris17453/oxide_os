@@ -137,7 +137,7 @@ userspace-release:
 	@echo "  Building thread test..."
 	@$(MAKE) thread-test
 	@echo "Stripping binaries..."
-	@for prog in init esh login gwbasic tls-test thread-test ssh sshd service networkd journald journalctl evtest argtest $(COREUTILS_BINS); do \
+	@for prog in init esh login gwbasic tls-test thread-test ssh sshd rdpd service networkd journald journalctl evtest argtest $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
 			strip "$(USERSPACE_OUT_RELEASE)/$$prog" 2>/dev/null || true; \
 		fi; \

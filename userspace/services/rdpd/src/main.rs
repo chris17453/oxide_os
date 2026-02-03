@@ -211,15 +211,14 @@ pub fn main() -> i32 {
     let optval: i32 = 1;
     let _ = setsockopt(
         server_fd,
-        sol::SOL_SOCKET,
-        so::SO_REUSEADDR,
-        &optval as *const i32 as *const u8,
-        core::mem::size_of::<i32>() as u32,
+        sol::SOCKET,
+        so::REUSEADDR,
+        &optval,
     );
     
     // Bind to port
-    let addr = sockaddr_in(INADDR_ANY, config.port);
-    if bind(server_fd, &addr as *const SockAddrIn as *const u8, SOCKADDR_IN_SIZE) < 0 {
+    let addr = sockaddr_in(config.port, INADDR_ANY);
+    if bind(server_fd, &addr, SOCKADDR_IN_SIZE) < 0 {
         eprintlns("rdpd: Failed to bind to port");
         close(server_fd);
         return 1;
@@ -261,11 +260,7 @@ pub fn main() -> i32 {
         let mut client_addr: SockAddrIn = unsafe { core::mem::zeroed() };
         let mut addr_len = SOCKADDR_IN_SIZE;
         
-        let client_fd = accept(
-            server_fd,
-            &mut client_addr as *mut SockAddrIn as *mut u8,
-            &mut addr_len,
-        );
+        let client_fd = accept(server_fd, Some(&mut client_addr), Some(&mut addr_len));
         
         if client_fd < 0 {
             log("Accept failed");
