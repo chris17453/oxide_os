@@ -116,6 +116,7 @@ members = [
     # userspace/services — daemons
     "userspace/services/networkd",
     "userspace/services/sshd",
+    "userspace/services/rdpd",
     "userspace/services/journald",
     "userspace/services/journalctl",
     # userspace/network — client tools

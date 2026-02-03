@@ -1,0 +1,9 @@
+[package]
+name = "rdpd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "RDP server daemon for OXIDE OS"
+
+[dependencies]
+libc = { path = "../../libs/libc" }
