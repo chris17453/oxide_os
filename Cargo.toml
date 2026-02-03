@@ -121,6 +121,7 @@ members = [
     "userspace/services/rdpd",
     "userspace/services/journald",
     "userspace/services/journalctl",
+    "userspace/services/soundd",
     # userspace/network — client tools
     "userspace/network/ssh",
     # userspace/devtools — on-target development tools
