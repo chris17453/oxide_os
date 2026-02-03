@@ -5,9 +5,19 @@
 //! Structure:
 //! - /proc/self -> symlink to current process
 //! - /proc/meminfo - memory information
+//! - /proc/cpuinfo - CPU information
+//! - /proc/uptime - system uptime
+//! - /proc/loadavg - load average
+//! - /proc/stat - system statistics
+//! - /proc/version - kernel version
+//! - /proc/devices - available devices
+//! - /proc/filesystems - supported filesystems
+//! - /proc/mounts -> symlink to /proc/self/mounts
 //! - /proc/[pid]/status - process status
 //! - /proc/[pid]/cmdline - command line
 //! - /proc/[pid]/exe - executable path (symlink)
+//! - /proc/[pid]/stat - process statistics
+//! - /proc/[pid]/statm - process memory stats
 
 #![no_std]
 #![allow(unused)]
@@ -100,9 +110,18 @@ impl VnodeOps for ProcFs {
             return Ok(Arc::new(ProcSelf { ino: 2 }));
         }
 
-        // Handle "meminfo" file
-        if name == "meminfo" {
-            return Ok(Arc::new(ProcMeminfo { ino: 3 }));
+        // Handle system information files
+        match name {
+            "meminfo" => return Ok(Arc::new(ProcMeminfo { ino: 3 })),
+            "cpuinfo" => return Ok(Arc::new(ProcCpuinfo { ino: 4 })),
+            "uptime" => return Ok(Arc::new(ProcUptime { ino: 5 })),
+            "loadavg" => return Ok(Arc::new(ProcLoadavg { ino: 6 })),
+            "stat" => return Ok(Arc::new(ProcStat { ino: 7 })),
+            "version" => return Ok(Arc::new(ProcVersion { ino: 8 })),
+            "devices" => return Ok(Arc::new(ProcDevices { ino: 9 })),
+            "filesystems" => return Ok(Arc::new(ProcFilesystems { ino: 10 })),
+            "mounts" => return Ok(Arc::new(ProcMounts { ino: 11 })),
+            _ => {}
         }
 
         // Try to parse as PID
@@ -130,46 +149,35 @@ impl VnodeOps for ProcFs {
     fn readdir(&self, offset: u64) -> VfsResult<Option<DirEntry>> {
         let offset = offset as usize;
 
-        // . entry
-        if offset == 0 {
-            return Ok(Some(DirEntry {
-                name: ".".to_string(),
-                ino: self.ino,
-                file_type: VnodeType::Directory,
-            }));
-        }
+        // Directory entries in order
+        let entries: &[(&str, u64, VnodeType)] = &[
+            (".", self.ino, VnodeType::Directory),
+            ("..", self.ino, VnodeType::Directory),
+            ("self", 2, VnodeType::Symlink),
+            ("meminfo", 3, VnodeType::File),
+            ("cpuinfo", 4, VnodeType::File),
+            ("uptime", 5, VnodeType::File),
+            ("loadavg", 6, VnodeType::File),
+            ("stat", 7, VnodeType::File),
+            ("version", 8, VnodeType::File),
+            ("devices", 9, VnodeType::File),
+            ("filesystems", 10, VnodeType::File),
+            ("mounts", 11, VnodeType::Symlink),
+        ];
 
-        // .. entry
-        if offset == 1 {
+        // Static entries
+        if offset < entries.len() {
+            let (name, ino, ftype) = entries[offset];
             return Ok(Some(DirEntry {
-                name: "..".to_string(),
-                ino: self.ino,
-                file_type: VnodeType::Directory,
-            }));
-        }
-
-        // "self" symlink
-        if offset == 2 {
-            return Ok(Some(DirEntry {
-                name: "self".to_string(),
-                ino: 2,
-                file_type: VnodeType::Symlink,
-            }));
-        }
-
-        // "meminfo" file
-        if offset == 3 {
-            return Ok(Some(DirEntry {
-                name: "meminfo".to_string(),
-                ino: 3,
-                file_type: VnodeType::File,
+                name: name.to_string(),
+                ino,
+                file_type: ftype,
             }));
         }
 
         // Process directories
         let pids = sched::all_pids();
-
-        let pid_idx = offset - 4;
+        let pid_idx = offset - entries.len();
         if pid_idx < pids.len() {
             let pid = pids[pid_idx];
             return Ok(Some(DirEntry {
@@ -913,6 +921,962 @@ impl VnodeOps for ProcMeminfo {
             VnodeType::File,
             Mode::new(0o444),
             content.len() as u64,
+            self.ino,
+        ))
+    }
+
+    fn truncate(&self, _size: u64) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+}
+
+// ============================================================================
+// /proc/cpuinfo - CPU Information
+// ============================================================================
+// Provides CPU identification, features, and frequency information
+// — WireSaint
+
+/// /proc/cpuinfo - CPU information
+pub struct ProcCpuinfo {
+    ino: u64,
+}
+
+impl ProcCpuinfo {
+    fn generate_content(&self) -> String {
+        // Get CPU count (number of logical processors)
+        let cpu_count = sched::num_cpus();
+        
+        let mut output = String::new();
+        
+        // Generate info for each CPU
+        for cpu_id in 0..cpu_count {
+            // Basic CPU information - on x86_64 we can get this via CPUID
+            #[cfg(target_arch = "x86_64")]
+            {
+                use alloc::format;
+                
+                // CPUID leaf 0: Vendor ID
+                let vendor = get_cpu_vendor();
+                
+                // CPUID leaf 1: Family, Model, Stepping
+                let (family, model, stepping) = get_cpu_family_model_stepping();
+                
+                // CPUID leaf 0x80000002-0x80000004: Brand string
+                let brand = get_cpu_brand_string();
+                
+                // Build model name from brand if available, otherwise construct it
+                let model_name = if !brand.is_empty() {
+                    brand
+                } else {
+                    format!("{} CPU @ Unknown MHz", vendor)
+                };
+                
+                output.push_str(&format!(
+                    "processor\t: {}\n\
+                     vendor_id\t: {}\n\
+                     cpu family\t: {}\n\
+                     model\t\t: {}\n\
+                     model name\t: {}\n\
+                     stepping\t: {}\n\
+                     microcode\t: 0x0\n\
+                     cpu MHz\t\t: 0.000\n\
+                     cache size\t: 0 KB\n\
+                     physical id\t: 0\n\
+                     siblings\t: {}\n\
+                     core id\t\t: {}\n\
+                     cpu cores\t: {}\n\
+                     apicid\t\t: {}\n\
+                     initial apicid\t: {}\n\
+                     fpu\t\t: yes\n\
+                     fpu_exception\t: yes\n\
+                     cpuid level\t: 13\n\
+                     wp\t\t: yes\n\
+                     flags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2\n\
+                     bugs\t\t:\n\
+                     bogomips\t: 0.00\n\
+                     clflush size\t: 64\n\
+                     cache_alignment\t: 64\n\
+                     address sizes\t: 46 bits physical, 48 bits virtual\n\
+                     power management:\n\n",
+                    cpu_id, vendor, family, model, model_name, stepping,
+                    cpu_count, cpu_id, cpu_count, cpu_id, cpu_id
+                ));
+            }
+            
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                output.push_str(&format!(
+                    "processor\t: {}\n\
+                     vendor_id\t: Unknown\n\
+                     model name\t: Unknown CPU\n\n",
+                    cpu_id
+                ));
+            }
+        }
+        
+        output
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn get_cpu_vendor() -> &'static str {
+    // CPUID leaf 0 - Vendor ID string
+    let mut ebx: u32;
+    let mut ecx: u32;
+    let mut edx: u32;
+    
+    unsafe {
+        core::arch::asm!(
+            "push rbx",
+            "mov eax, 0",
+            "cpuid",
+            "mov {0:e}, ebx",
+            "pop rbx",
+            out(reg) ebx,
+            out("ecx") ecx,
+            out("edx") edx,
+            out("eax") _,
+        );
+    }
+    
+    // Vendor string is EBX+EDX+ECX (12 bytes)
+    let bytes = [
+        (ebx & 0xFF) as u8, ((ebx >> 8) & 0xFF) as u8, ((ebx >> 16) & 0xFF) as u8, ((ebx >> 24) & 0xFF) as u8,
+        (edx & 0xFF) as u8, ((edx >> 8) & 0xFF) as u8, ((edx >> 16) & 0xFF) as u8, ((edx >> 24) & 0xFF) as u8,
+        (ecx & 0xFF) as u8, ((ecx >> 8) & 0xFF) as u8, ((ecx >> 16) & 0xFF) as u8, ((ecx >> 24) & 0xFF) as u8,
+    ];
+    
+    // Check common vendors
+    if &bytes == b"GenuineIntel" {
+        "GenuineIntel"
+    } else if &bytes == b"AuthenticAMD" {
+        "AuthenticAMD"
+    } else {
+        "Unknown"
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn get_cpu_family_model_stepping() -> (u32, u32, u32) {
+    let eax: u32;
+    
+    unsafe {
+        core::arch::asm!(
+            "push rbx",
+            "mov eax, 1",
+            "cpuid",
+            "pop rbx",
+            out("eax") eax,
+            out("ecx") _,
+            out("edx") _,
+        );
+    }
+    
+    let stepping = eax & 0xF;
+    let base_model = (eax >> 4) & 0xF;
+    let base_family = (eax >> 8) & 0xF;
+    let ext_model = (eax >> 16) & 0xF;
+    let ext_family = (eax >> 20) & 0xFF;
+    
+    let family = if base_family == 0xF {
+        base_family + ext_family
+    } else {
+        base_family
+    };
+    
+    let model = if base_family == 0x6 || base_family == 0xF {
+        (ext_model << 4) | base_model
+    } else {
+        base_model
+    };
+    
+    (family, model, stepping)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn get_cpu_brand_string() -> String {
+    // CPUID leaves 0x80000002-0x80000004 contain 48-byte brand string
+    let mut brand_bytes = [0u8; 48];
+    
+    for i in 0..3 {
+        let leaf = 0x80000002u32 + i;
+        let eax: u32;
+        let ebx: u32;
+        let ecx: u32;
+        let edx: u32;
+        
+        unsafe {
+            core::arch::asm!(
+                "push rbx",
+                "mov eax, {1:e}",
+                "cpuid",
+                "mov {0:e}, ebx",
+                "pop rbx",
+                out(reg) ebx,
+                in(reg) leaf,
+                out("eax") eax,
+                out("ecx") ecx,
+                out("edx") edx,
+            );
+        }
+        
+        let offset = (i * 16) as usize;
+        brand_bytes[offset..offset+4].copy_from_slice(&eax.to_le_bytes());
+        brand_bytes[offset+4..offset+8].copy_from_slice(&ebx.to_le_bytes());
+        brand_bytes[offset+8..offset+12].copy_from_slice(&ecx.to_le_bytes());
+        brand_bytes[offset+12..offset+16].copy_from_slice(&edx.to_le_bytes());
+    }
+    
+    // Convert to string, trim nulls and whitespace
+    String::from_utf8_lossy(&brand_bytes)
+        .trim_matches('\0')
+        .trim()
+        .to_string()
+}
+
+impl VnodeOps for ProcCpuinfo {
+    fn vtype(&self) -> VnodeType {
+        VnodeType::File
+    }
+
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        let content = self.generate_content();
+        let bytes = content.as_bytes();
+
+        let offset = offset as usize;
+        if offset >= bytes.len() {
+            return Ok(0);
+        }
+
+        let available = bytes.len() - offset;
+        let to_read = buf.len().min(available);
+        buf[..to_read].copy_from_slice(&bytes[offset..offset + to_read]);
+        Ok(to_read)
+    }
+
+    fn write(&self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rmdir(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn unlink(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn stat(&self) -> VfsResult<Stat> {
+        let content = self.generate_content();
+        Ok(Stat::new(
+            VnodeType::File,
+            Mode::new(0o444),
+            content.len() as u64,
+            self.ino,
+        ))
+    }
+
+    fn truncate(&self, _size: u64) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+}
+
+// ============================================================================
+// /proc/uptime - System Uptime
+// ============================================================================
+// Format: <uptime_seconds> <idle_seconds>
+// — GraveShift
+
+/// /proc/uptime - system uptime
+pub struct ProcUptime {
+    ino: u64,
+}
+
+impl ProcUptime {
+    fn generate_content(&self) -> String {
+        // Get uptime from timer ticks
+        // Timer runs at 100 Hz (each tick = 10ms)
+        let ticks = arch_x86_64::timer_ticks();
+        let uptime_ms = ticks * 10;
+        let uptime_secs = uptime_ms / 1000;
+        let uptime_frac = (uptime_ms % 1000) / 10; // Two decimal places
+        
+        // Idle time - for now just report 0 (we don't track idle time yet)
+        let idle_secs = 0u64;
+        let idle_frac = 0u64;
+        
+        format!("{}.{:02} {}.{:02}\n", uptime_secs, uptime_frac, idle_secs, idle_frac)
+    }
+}
+
+impl VnodeOps for ProcUptime {
+    fn vtype(&self) -> VnodeType {
+        VnodeType::File
+    }
+
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        let content = self.generate_content();
+        let bytes = content.as_bytes();
+
+        let offset = offset as usize;
+        if offset >= bytes.len() {
+            return Ok(0);
+        }
+
+        let available = bytes.len() - offset;
+        let to_read = buf.len().min(available);
+        buf[..to_read].copy_from_slice(&bytes[offset..offset + to_read]);
+        Ok(to_read)
+    }
+
+    fn write(&self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rmdir(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn unlink(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn stat(&self) -> VfsResult<Stat> {
+        let content = self.generate_content();
+        Ok(Stat::new(
+            VnodeType::File,
+            Mode::new(0o444),
+            content.len() as u64,
+            self.ino,
+        ))
+    }
+
+    fn truncate(&self, _size: u64) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+}
+
+// ============================================================================
+// /proc/loadavg - Load Average
+// ============================================================================
+// Format: <1min> <5min> <15min> <running>/<total> <last_pid>
+// — StackTrace
+
+/// /proc/loadavg - system load average
+pub struct ProcLoadavg {
+    ino: u64,
+}
+
+impl ProcLoadavg {
+    fn generate_content(&self) -> String {
+        // For now, report zeros for load averages (not yet tracked)
+        // Get running/total process counts
+        let pids = sched::all_pids();
+        let total_procs = pids.len();
+        
+        // Count running processes
+        let mut running = 0;
+        for &pid in &pids {
+            if let Some(state) = sched::get_task_state(pid) {
+                if state == sched::TaskState::TASK_RUNNING {
+                    running += 1;
+                }
+            }
+        }
+        
+        // Last PID is the highest one
+        let last_pid = pids.iter().max().copied().unwrap_or(0);
+        
+        format!("0.00 0.00 0.00 {}/{} {}\n", running, total_procs, last_pid)
+    }
+}
+
+impl VnodeOps for ProcLoadavg {
+    fn vtype(&self) -> VnodeType {
+        VnodeType::File
+    }
+
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        let content = self.generate_content();
+        let bytes = content.as_bytes();
+
+        let offset = offset as usize;
+        if offset >= bytes.len() {
+            return Ok(0);
+        }
+
+        let available = bytes.len() - offset;
+        let to_read = buf.len().min(available);
+        buf[..to_read].copy_from_slice(&bytes[offset..offset + to_read]);
+        Ok(to_read)
+    }
+
+    fn write(&self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rmdir(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn unlink(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn stat(&self) -> VfsResult<Stat> {
+        let content = self.generate_content();
+        Ok(Stat::new(
+            VnodeType::File,
+            Mode::new(0o444),
+            content.len() as u64,
+            self.ino,
+        ))
+    }
+
+    fn truncate(&self, _size: u64) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+}
+
+// ============================================================================
+// /proc/stat - System Statistics
+// ============================================================================
+// Provides system-wide CPU and process statistics
+// — GraveShift
+
+/// /proc/stat - system statistics
+pub struct ProcStat {
+    ino: u64,
+}
+
+impl ProcStat {
+    fn generate_content(&self) -> String {
+        let mut output = String::new();
+        
+        // CPU time statistics (all zeros for now - not tracked yet)
+        // Format: cpu <user> <nice> <system> <idle> <iowait> <irq> <softirq>
+        output.push_str("cpu  0 0 0 0 0 0 0 0 0 0\n");
+        
+        // Per-CPU statistics
+        let cpu_count = sched::num_cpus();
+        for cpu_id in 0..cpu_count {
+            output.push_str(&format!("cpu{} 0 0 0 0 0 0 0 0 0 0\n", cpu_id));
+        }
+        
+        // Interrupt statistics
+        output.push_str("intr 0\n");
+        output.push_str("ctxt 0\n");
+        
+        // Boot time (Unix timestamp) - use a fixed value for now
+        let boot_time = 1704067200u64; // 2024-01-01 00:00:00 UTC
+        output.push_str(&format!("btime {}\n", boot_time));
+        
+        // Process statistics
+        let pids = sched::all_pids();
+        let total_procs = pids.len();
+        output.push_str(&format!("processes {}\n", total_procs));
+        
+        // Running processes count
+        let mut running = 0;
+        for &pid in &pids {
+            if let Some(state) = sched::get_task_state(pid) {
+                if state == sched::TaskState::TASK_RUNNING {
+                    running += 1;
+                }
+            }
+        }
+        output.push_str(&format!("procs_running {}\n", running));
+        
+        // Blocked processes (in uninterruptible sleep)
+        let mut blocked = 0;
+        for &pid in &pids {
+            if let Some(state) = sched::get_task_state(pid) {
+                if state == sched::TaskState::TASK_UNINTERRUPTIBLE {
+                    blocked += 1;
+                }
+            }
+        }
+        output.push_str(&format!("procs_blocked {}\n", blocked));
+        
+        output
+    }
+}
+
+impl VnodeOps for ProcStat {
+    fn vtype(&self) -> VnodeType {
+        VnodeType::File
+    }
+
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        let content = self.generate_content();
+        let bytes = content.as_bytes();
+
+        let offset = offset as usize;
+        if offset >= bytes.len() {
+            return Ok(0);
+        }
+
+        let available = bytes.len() - offset;
+        let to_read = buf.len().min(available);
+        buf[..to_read].copy_from_slice(&bytes[offset..offset + to_read]);
+        Ok(to_read)
+    }
+
+    fn write(&self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rmdir(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn unlink(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn stat(&self) -> VfsResult<Stat> {
+        let content = self.generate_content();
+        Ok(Stat::new(
+            VnodeType::File,
+            Mode::new(0o444),
+            content.len() as u64,
+            self.ino,
+        ))
+    }
+
+    fn truncate(&self, _size: u64) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+}
+
+// ============================================================================
+// /proc/version - Kernel Version
+// ============================================================================
+// Shows kernel version and build information
+// — NeonRoot
+
+/// /proc/version - kernel version
+pub struct ProcVersion {
+    ino: u64,
+}
+
+impl ProcVersion {
+    fn generate_content(&self) -> String {
+        // Format similar to Linux: "Linux version <ver> (<compiler>) <build_date>"
+        format!(
+            "OXIDE version 0.1.0 (rustc) #1 SMP {}\n",
+            env!("CARGO_PKG_VERSION")
+        )
+    }
+}
+
+impl VnodeOps for ProcVersion {
+    fn vtype(&self) -> VnodeType {
+        VnodeType::File
+    }
+
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        let content = self.generate_content();
+        let bytes = content.as_bytes();
+
+        let offset = offset as usize;
+        if offset >= bytes.len() {
+            return Ok(0);
+        }
+
+        let available = bytes.len() - offset;
+        let to_read = buf.len().min(available);
+        buf[..to_read].copy_from_slice(&bytes[offset..offset + to_read]);
+        Ok(to_read)
+    }
+
+    fn write(&self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rmdir(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn unlink(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn stat(&self) -> VfsResult<Stat> {
+        let content = self.generate_content();
+        Ok(Stat::new(
+            VnodeType::File,
+            Mode::new(0o444),
+            content.len() as u64,
+            self.ino,
+        ))
+    }
+
+    fn truncate(&self, _size: u64) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+}
+
+// ============================================================================
+// /proc/devices - Available Devices
+// ============================================================================
+// Lists character and block devices
+// — TorqueJax
+
+/// /proc/devices - available devices
+pub struct ProcDevices {
+    ino: u64,
+}
+
+impl ProcDevices {
+    fn generate_content(&self) -> String {
+        // Basic device list - expand as more devices are added
+        let mut output = String::new();
+        
+        output.push_str("Character devices:\n");
+        output.push_str("  1 mem\n");
+        output.push_str("  4 tty\n");
+        output.push_str("  5 console\n");
+        output.push_str(" 10 misc\n");
+        
+        output.push_str("\nBlock devices:\n");
+        output.push_str("  1 ramdisk\n");
+        output.push_str("  8 sd\n");
+        
+        output
+    }
+}
+
+impl VnodeOps for ProcDevices {
+    fn vtype(&self) -> VnodeType {
+        VnodeType::File
+    }
+
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        let content = self.generate_content();
+        let bytes = content.as_bytes();
+
+        let offset = offset as usize;
+        if offset >= bytes.len() {
+            return Ok(0);
+        }
+
+        let available = bytes.len() - offset;
+        let to_read = buf.len().min(available);
+        buf[..to_read].copy_from_slice(&bytes[offset..offset + to_read]);
+        Ok(to_read)
+    }
+
+    fn write(&self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rmdir(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn unlink(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn stat(&self) -> VfsResult<Stat> {
+        let content = self.generate_content();
+        Ok(Stat::new(
+            VnodeType::File,
+            Mode::new(0o444),
+            content.len() as u64,
+            self.ino,
+        ))
+    }
+
+    fn truncate(&self, _size: u64) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+}
+
+// ============================================================================
+// /proc/filesystems - Supported Filesystems
+// ============================================================================
+// Lists filesystem types supported by the kernel
+// — WireSaint
+
+/// /proc/filesystems - supported filesystems
+pub struct ProcFilesystems {
+    ino: u64,
+}
+
+impl ProcFilesystems {
+    fn generate_content(&self) -> String {
+        // List filesystem types we support
+        let mut output = String::new();
+        
+        output.push_str("nodev\tsysfs\n");
+        output.push_str("nodev\trootfs\n");
+        output.push_str("nodev\ttmpfs\n");
+        output.push_str("nodev\tdevfs\n");
+        output.push_str("nodev\tprocfs\n");
+        output.push_str("\toxidefs\n");
+        output.push_str("\text2\n");
+        
+        output
+    }
+}
+
+impl VnodeOps for ProcFilesystems {
+    fn vtype(&self) -> VnodeType {
+        VnodeType::File
+    }
+
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        let content = self.generate_content();
+        let bytes = content.as_bytes();
+
+        let offset = offset as usize;
+        if offset >= bytes.len() {
+            return Ok(0);
+        }
+
+        let available = bytes.len() - offset;
+        let to_read = buf.len().min(available);
+        buf[..to_read].copy_from_slice(&bytes[offset..offset + to_read]);
+        Ok(to_read)
+    }
+
+    fn write(&self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rmdir(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn unlink(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn stat(&self) -> VfsResult<Stat> {
+        let content = self.generate_content();
+        Ok(Stat::new(
+            VnodeType::File,
+            Mode::new(0o444),
+            content.len() as u64,
+            self.ino,
+        ))
+    }
+
+    fn truncate(&self, _size: u64) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+}
+
+// ============================================================================
+// /proc/mounts - Currently Mounted Filesystems
+// ============================================================================
+// Symlink to /proc/self/mounts (not yet fully implemented)
+// — WireSaint
+
+/// /proc/mounts - symlink to /proc/self/mounts
+pub struct ProcMounts {
+    ino: u64,
+}
+
+impl VnodeOps for ProcMounts {
+    fn vtype(&self) -> VnodeType {
+        VnodeType::Symlink
+    }
+
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        // Symlink target
+        let target = b"self/mounts";
+
+        let offset = offset as usize;
+        if offset >= target.len() {
+            return Ok(0);
+        }
+
+        let available = target.len() - offset;
+        let to_read = buf.len().min(available);
+        buf[..to_read].copy_from_slice(&target[offset..offset + to_read]);
+        Ok(to_read)
+    }
+
+    fn write(&self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rmdir(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn unlink(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> {
+        Err(VfsError::ReadOnly)
+    }
+
+    fn stat(&self) -> VfsResult<Stat> {
+        Ok(Stat::new(
+            VnodeType::Symlink,
+            Mode::new(0o777),
+            11,
             self.ino,
         ))
     }
