@@ -65,7 +65,7 @@ make run           # Boot in QEMU (auto-detects host)
 ## Key Features
 
 - **Modular kernel** — 30+ subsystem crates with trait-based abstractions
-- **Full userspace** — custom libc, 90 coreutils, shell with job control, SSH client/server
+- **Full userspace** — custom libc, 90+ coreutils (including vim, sed, awk, less), shell with job control, SSH client/server
 - **Filesystem support** — VFS with ext4, FAT32, OxideFS, tmpfs, procfs, devfs
 - **Networking** — TCP/IP stack, DHCP, DNS, SSH
 - **Driver ecosystem** — VirtIO (block, net, GPU, input, sound), NVMe, AHCI, PS/2, USB/XHCI
