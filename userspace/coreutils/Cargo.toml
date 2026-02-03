@@ -47,6 +47,22 @@ name = "echo"
 path = "src/bin/echo.rs"
 
 [[bin]]
+name = "vim"
+path = "src/bin/vim.rs"
+
+[[bin]]
+name = "less"
+path = "src/bin/less.rs"
+
+[[bin]]
+name = "sed"
+path = "src/bin/sed.rs"
+
+[[bin]]
+name = "awk"
+path = "src/bin/awk.rs"
+
+[[bin]]
 name = "head"
 path = "src/bin/head.rs"
 
