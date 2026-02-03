@@ -111,6 +111,8 @@ members = [
     "userspace/libs/libc",
     "userspace/libs/oxide-std",
     "userspace/libs/compression",
+    "userspace/libs/termcap",
+    "userspace/libs/ncurses",
     # userspace/services — daemons
     "userspace/services/networkd",
     "userspace/services/sshd",
