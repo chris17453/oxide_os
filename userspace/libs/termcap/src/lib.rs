@@ -34,10 +34,11 @@
 //!
 //! -- GraveShift: Core terminal abstraction layer, the foundation of all TUI ops
 
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;
 
+use core::prelude::v1::*;
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;

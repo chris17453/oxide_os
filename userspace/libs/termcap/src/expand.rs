@@ -5,8 +5,10 @@
 //!
 //! -- GraveShift: Parameter expansion - translate intent to escape sequences
 
+use core::prelude::v1::*;
 use alloc::string::String;
 use alloc::vec::Vec;
+use alloc::format;
 
 /// Expand a capability string with parameters (terminfo style)
 ///

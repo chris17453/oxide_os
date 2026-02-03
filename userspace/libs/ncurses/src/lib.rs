@@ -31,7 +31,7 @@
 //!
 //! -- GraveShift: Terminal UI framework - the canvas for all text interfaces
 
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;
 

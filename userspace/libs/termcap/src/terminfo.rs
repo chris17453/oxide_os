@@ -5,6 +5,7 @@
 //!
 //! -- WireSaint: Binary format parser, efficient terminal database loading
 
+use core::prelude::v1::*;
 use alloc::string::String;
 use alloc::vec::Vec;
 use crate::TerminalEntry;

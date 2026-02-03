@@ -5,7 +5,8 @@ edition = "2024"
 description = "Full-featured ncurses implementation for OXIDE OS - 100% API compatible"
 
 [features]
-default = ["wide", "color", "mouse", "menu", "form", "panel"]
+default = ["std", "wide", "color", "mouse", "menu", "form", "panel"]
+std = ["termcap/std"]  # Enable std (for testing)
 wide = []       # Wide character support
 color = []      # Color support
 mouse = []      # Mouse event handling

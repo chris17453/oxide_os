@@ -5,6 +5,7 @@
 //!
 //! -- SableWire: Terminal hardware definitions, know every quirk
 
+use core::prelude::v1::*;
 use alloc::string::ToString;
 use crate::TerminalEntry;
 use crate::capabilities::{strings, numbers, bools};

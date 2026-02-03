@@ -5,7 +5,8 @@ edition = "2024"
 description = "Terminal capability library for OXIDE OS - full termcap/terminfo implementation"
 
 [features]
-default = ["terminfo"]
+default = ["std", "terminfo"]
+std = []       # Enable std (for testing)
 terminfo = []  # Binary terminfo format support
 termcap = []   # Text termcap format support
 

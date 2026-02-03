@@ -842,6 +842,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ncurses"
+version = "0.1.0"
+dependencies = [
+ "termcap",
+]
+
+[[package]]
 name = "net"
 version = "0.1.0"
 dependencies = [
@@ -1505,6 +1512,10 @@ dependencies = [
  "rustix",
  "windows-sys",
 ]
+
+[[package]]
+name = "termcap"
+version = "0.1.0"
 
 [[package]]
 name = "terminal"

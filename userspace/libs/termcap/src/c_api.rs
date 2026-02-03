@@ -4,6 +4,7 @@
 //!
 //! -- NeonRoot: C ABI bridge - seamless integration with legacy codebases
 
+use core::prelude::v1::*;
 use alloc::string::ToString;
 use core::ffi::{c_char, c_int};
 use crate::{load_terminal, set_current_terminal, current_terminal, expand};
