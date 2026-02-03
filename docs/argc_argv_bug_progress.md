@@ -2,7 +2,7 @@
 
 **Date:** 2026-02-02
 **Issue:** Programs receive argc=0, cannot see command-line arguments
-**Status:** BOOT FIXED — OS reaches login prompt. argc/argv testing can proceed.
+**Status:** BOOT FIXED — OS reaches login prompt + getty. Keyboard input not working (PS/2 IRQ issue). argc/argv untested pending KB fix.
 
 ---
 
@@ -297,9 +297,21 @@ Multiple cascading issues were found and fixed:
   with `write_str_unsafe`/`write_u32_unsafe` to prevent COM1 lock contention
   with timer interrupt callbacks
 
-### Result
-OS boots to login prompt. Init mounts ext4 root, starts getty. Ready for
-argc/argv testing with `argtest bob bob obo`.
+### Current: Keyboard input not working (IN PROGRESS)
+- OS boots fully: APIC, SMP 4 CPUs, VFS, network (DHCP), ext4, init, getty
+- Login prompt appears on screen
+- Keyboard does not respond — no characters appear on screen
+- IOAPIC keyboard IRQ 1 is unmasked (log shows `[IOAPIC] Keyboard and mouse
+  IRQs unmasked`)
+- Likely cause: keyboard IRQ handler not firing, or PS/2 scancode not reaching
+  the VT/console layer
+- **Next:** Verify keyboard IRQ is actually reaching the handler. Check if the
+  PS/2 keyboard callback chain (IRQ → scancode → console → VT) is intact after
+  the interrupt/timer rework.
+
+### Result so far
+OS boots to login prompt with 4 CPUs, network, ext4 root. Getty spawns.
+Cannot test argc/argv yet because keyboard input is dead.
 
 ---
 
