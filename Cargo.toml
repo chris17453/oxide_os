@@ -141,6 +141,7 @@ members = [
     "userspace/tests/syscall-tests",
     "userspace/tests/evtest",
     "userspace/tests/argtest",
+    "userspace/tests/signal-test",
     # bootloader
     "bootloader/boot-uefi",
 ]
