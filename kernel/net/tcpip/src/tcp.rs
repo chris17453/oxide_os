@@ -80,7 +80,7 @@ impl TcpOptions {
                     i += 1;
                 }
                 tcp_option::MSS => {
-                    if i + 3 < data.len() && data[i + 1] == 4 {
+                    if i + 4 <= data.len() && data[i + 1] == 4 {
                         opts.mss = Some(u16::from_be_bytes([data[i + 2], data[i + 3]]));
                         i += 4;
                     } else {
@@ -88,7 +88,7 @@ impl TcpOptions {
                     }
                 }
                 tcp_option::WINDOW_SCALE => {
-                    if i + 2 < data.len() && data[i + 1] == 3 {
+                    if i + 3 <= data.len() && data[i + 1] == 3 {
                         opts.window_scale = Some(data[i + 2].min(TCP_MAX_WSCALE));
                         i += 3;
                     } else {
@@ -108,7 +108,7 @@ impl TcpOptions {
                         let len = data[i + 1] as usize;
                         if len >= 2 && i + len <= data.len() && (len - 2) % 8 == 0 {
                             let mut j = i + 2;
-                            while j + 7 < i + len {
+                            while j + 8 <= i + len {
                                 let left = u32::from_be_bytes([data[j], data[j+1], data[j+2], data[j+3]]);
                                 let right = u32::from_be_bytes([data[j+4], data[j+5], data[j+6], data[j+7]]);
                                 opts.sack_blocks.push((left, right));
@@ -123,7 +123,7 @@ impl TcpOptions {
                     }
                 }
                 tcp_option::TIMESTAMP => {
-                    if i + 9 < data.len() && data[i + 1] == 10 {
+                    if i + 10 <= data.len() && data[i + 1] == 10 {
                         opts.timestamp = Some(u32::from_be_bytes([data[i+2], data[i+3], data[i+4], data[i+5]]));
                         opts.timestamp_echo = Some(u32::from_be_bytes([data[i+6], data[i+7], data[i+8], data[i+9]]));
                         i += 10;
@@ -694,8 +694,10 @@ impl TcpConnection {
                     if let (Some(ts_val), Some(ts_ecr)) = (options.timestamp, options.timestamp_echo) {
                         if ts_ecr > 0 {
                             let now = Self::get_timestamp();
-                            let rtt = now.saturating_sub(ts_ecr) as u64 * 1000; // Convert to microseconds
-                            self.update_rtt(rtt);
+                            // BlackLatch: RTT in timestamp units (actual unit depends on clock source)
+                            // When integrated with kernel timers, adjust multiplier accordingly
+                            let rtt_us = now.saturating_sub(ts_ecr) as u64 * 1000;
+                            self.update_rtt(rtt_us);
                         }
                     }
                 }
@@ -1014,6 +1016,10 @@ impl TcpConnection {
             // First measurement
             self.srtt.store(measured_rtt, Ordering::SeqCst);
             self.rttvar.store(measured_rtt / 2, Ordering::SeqCst);
+            
+            // RTO = SRTT + max(G, K*RTTVAR) where G=clock granularity, K=4
+            let new_rto = (measured_rtt + measured_rtt * 2).clamp(Self::MIN_RTO, Self::MAX_RTO);
+            self.rto.store(new_rto, Ordering::SeqCst);
         } else {
             // RFC 6298: RTTVAR = (1-beta) * RTTVAR + beta * |SRTT - R'|
             // SRTT = (1-alpha) * SRTT + alpha * R'
@@ -1029,11 +1035,11 @@ impl TcpConnection {
             
             self.rttvar.store(new_rttvar, Ordering::SeqCst);
             self.srtt.store(new_srtt, Ordering::SeqCst);
+            
+            // RTO = SRTT + max(G, K*RTTVAR) - use updated values
+            let new_rto = (new_srtt + new_rttvar * 4).clamp(Self::MIN_RTO, Self::MAX_RTO);
+            self.rto.store(new_rto, Ordering::SeqCst);
         }
-        
-        // RTO = SRTT + max(G, K*RTTVAR) where G=clock granularity, K=4
-        let new_rto = (srtt + rttvar * 4).clamp(Self::MIN_RTO, Self::MAX_RTO);
-        self.rto.store(new_rto, Ordering::SeqCst);
     }
     
     /// GraveShift: Process ACK with congestion control (RFC 5681)
