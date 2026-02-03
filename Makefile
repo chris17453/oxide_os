@@ -57,7 +57,7 @@ USERSPACE_OUT_RELEASE := $(TARGET_DIR)/$(USERSPACE_TARGET)/release
 CARGO_USER_FLAGS :=
 
 # Userspace packages to build
-USERSPACE_PACKAGES := init esh getty login coreutils ssh sshd service networkd journald journalctl evtest argtest
+USERSPACE_PACKAGES := init esh getty login coreutils ssh sshd rdpd service networkd journald journalctl evtest argtest
 
 # Coreutils binaries (auto-detected from Cargo.toml [[bin]] entries)
 # Extract binary names from [[bin]] sections in coreutils/Cargo.toml
@@ -204,18 +204,24 @@ initramfs: userspace-release
 	@echo "root:root:0:0:root:/root:/bin/esh" > $(TARGET_DIR)/initramfs/etc/passwd
 	@echo "nobody:x:65534:65534:Nobody:/:/bin/false" >> $(TARGET_DIR)/initramfs/etc/passwd
 	@echo "sshd:x:74:74:SSH Daemon:/var/empty/sshd:/bin/false" >> $(TARGET_DIR)/initramfs/etc/passwd
+	@echo "rdp:x:75:75:RDP Daemon:/var/empty/rdp:/bin/false" >> $(TARGET_DIR)/initramfs/etc/passwd
 	@echo "network:x:101:101:Network Daemon:/var/lib/dhcp:/bin/false" >> $(TARGET_DIR)/initramfs/etc/passwd
 	@# Create group file - format: group:pass:gid:members
 	@echo "root:x:0:" > $(TARGET_DIR)/initramfs/etc/group
 	@echo "nobody:x:65534:" >> $(TARGET_DIR)/initramfs/etc/group
 	@echo "sshd:x:74:" >> $(TARGET_DIR)/initramfs/etc/group
+	@echo "rdp:x:75:" >> $(TARGET_DIR)/initramfs/etc/group
 	@echo "network:x:101:" >> $(TARGET_DIR)/initramfs/etc/group
 	@# Create sshd privilege separation directory
 	@mkdir -p $(TARGET_DIR)/initramfs/var/empty/sshd
+	@# Create rdp privilege separation directory
+	@mkdir -p $(TARGET_DIR)/initramfs/var/empty/rdp
 	@echo "export PATH=/initramfs/bin:/initramfs/sbin:/bin:/sbin" > $(TARGET_DIR)/initramfs/etc/profile
 	@echo "OXIDE" > $(TARGET_DIR)/initramfs/etc/hostname
 	@# Copy networkd
 	@cp "$(USERSPACE_OUT_RELEASE)/networkd" "$(TARGET_DIR)/initramfs/bin/networkd"
+	@# Copy rdpd
+	@cp "$(USERSPACE_OUT_RELEASE)/rdpd" "$(TARGET_DIR)/initramfs/bin/rdpd"
 	@# Copy journald and journalctl
 	@cp "$(USERSPACE_OUT_RELEASE)/journald" "$(TARGET_DIR)/initramfs/bin/journald"
 	@cp "$(USERSPACE_OUT_RELEASE)/journalctl" "$(TARGET_DIR)/initramfs/bin/journalctl"
@@ -233,6 +239,17 @@ initramfs: userspace-release
 	@echo "PATH=/bin/sshd" > $(TARGET_DIR)/initramfs/etc/services.d/sshd
 	@echo "ENABLED=yes" >> $(TARGET_DIR)/initramfs/etc/services.d/sshd
 	@echo "RESTART=yes" >> $(TARGET_DIR)/initramfs/etc/services.d/sshd
+	@echo "PATH=/bin/rdpd" > $(TARGET_DIR)/initramfs/etc/services.d/rdpd
+	@echo "ENABLED=yes" >> $(TARGET_DIR)/initramfs/etc/services.d/rdpd
+	@echo "RESTART=yes" >> $(TARGET_DIR)/initramfs/etc/services.d/rdpd
+	@# Create RDP configuration file
+	@echo "# OXIDE RDP Server Configuration" > $(TARGET_DIR)/initramfs/etc/rdpd.conf
+	@echo "# Port to listen on (default: 3389)" >> $(TARGET_DIR)/initramfs/etc/rdpd.conf
+	@echo "port=3389" >> $(TARGET_DIR)/initramfs/etc/rdpd.conf
+	@echo "# Maximum concurrent connections" >> $(TARGET_DIR)/initramfs/etc/rdpd.conf
+	@echo "max_connections=10" >> $(TARGET_DIR)/initramfs/etc/rdpd.conf
+	@echo "# Require TLS encryption (yes/no)" >> $(TARGET_DIR)/initramfs/etc/rdpd.conf
+	@echo "tls_required=yes" >> $(TARGET_DIR)/initramfs/etc/rdpd.conf
 	@# Create network configuration directory
 	@mkdir -p $(TARGET_DIR)/initramfs/etc/network
 	@echo "# eth0 network configuration" > $(TARGET_DIR)/initramfs/etc/network/eth0.conf
@@ -399,6 +416,7 @@ create-rootfs: kernel bootloader initramfs-minimal
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/var/lib/dhcp && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/var/run && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/var/empty/sshd && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/var/empty/rdp && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/tmp && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/proc && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/sys && \
@@ -417,7 +435,7 @@ create-rootfs: kernel bootloader initramfs-minimal
 	sudo ln -sf /bin/esh $(TARGET_DIR)/mnt/root/bin/sh && \
 	sudo cp "$(USERSPACE_OUT_RELEASE)/getty" $(TARGET_DIR)/mnt/root/bin/getty && \
 	sudo cp "$(USERSPACE_OUT_RELEASE)/login" $(TARGET_DIR)/mnt/root/bin/login && \
-	for prog in gwbasic tls-test thread-test ssh sshd service networkd journald journalctl evtest argtest vim $(COREUTILS_BINS) testcolors; do \
+	for prog in gwbasic tls-test thread-test ssh sshd rdpd service networkd journald journalctl evtest argtest vim $(COREUTILS_BINS) testcolors; do \
 		[ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/$$prog" $(TARGET_DIR)/mnt/root/usr/bin/ || true; \
 	done && \
 	sudo cp userspace/apps/gwbasic/examples/*.bas $(TARGET_DIR)/mnt/root/usr/share/gwbasic/ 2>/dev/null || true; \
@@ -430,12 +448,14 @@ create-rootfs: kernel bootloader initramfs-minimal
 	printf "root:root:0:0:root:/root:/bin/esh\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/passwd > /dev/null && \
 	printf "nobody:x:65534:65534:Nobody:/:/bin/false\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/passwd > /dev/null && \
 	printf "sshd:x:74:74:SSH Daemon:/var/empty/sshd:/bin/false\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/passwd > /dev/null && \
+	printf "rdp:x:75:75:RDP Daemon:/var/empty/rdp:/bin/false\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/passwd > /dev/null && \
 	printf "network:x:101:101:Network Daemon:/var/lib/dhcp:/bin/false\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/passwd > /dev/null && \
 	\
 	echo "  Creating /etc/group..." && \
 	printf "root:x:0:\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/group > /dev/null && \
 	printf "nobody:x:65534:\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/group > /dev/null && \
 	printf "sshd:x:74:\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/group > /dev/null && \
+	printf "rdp:x:75:\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/group > /dev/null && \
 	printf "network:x:101:\n" | sudo tee -a $(TARGET_DIR)/mnt/root/etc/group > /dev/null && \
 	\
 	echo "  Creating /etc/fstab..." && \
@@ -455,6 +475,8 @@ create-rootfs: kernel bootloader initramfs-minimal
 	printf "PATH=/usr/bin/journald\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/journald > /dev/null && \
 	printf "PATH=/usr/bin/networkd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/networkd > /dev/null && \
 	printf "PATH=/usr/bin/sshd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/sshd > /dev/null && \
+	printf "PATH=/usr/bin/rdpd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/rdpd > /dev/null && \
+	printf "# OXIDE RDP Server Configuration\n# Port to listen on (default: 3389)\nport=3389\n# Maximum concurrent connections\nmax_connections=10\n# Require TLS encryption (yes/no)\ntls_required=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/rdpd.conf > /dev/null && \
 	printf "mode=dhcp\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/network/eth0.conf > /dev/null && \
 	printf "nameserver 8.8.8.8\nnameserver 8.8.4.4\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/resolv.conf > /dev/null && \
 	printf "127.0.0.1 localhost\n::1 localhost\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/hosts > /dev/null && \
@@ -542,16 +564,28 @@ initramfs-minimal: userspace-release
 	@echo "PATH=/bin/sshd" > $(TARGET_DIR)/initramfs-minimal/etc/services.d/sshd
 	@echo "ENABLED=yes" >> $(TARGET_DIR)/initramfs-minimal/etc/services.d/sshd
 	@echo "RESTART=yes" >> $(TARGET_DIR)/initramfs-minimal/etc/services.d/sshd
+	@echo "PATH=/bin/rdpd" > $(TARGET_DIR)/initramfs-minimal/etc/services.d/rdpd
+	@echo "ENABLED=yes" >> $(TARGET_DIR)/initramfs-minimal/etc/services.d/rdpd
+	@echo "RESTART=yes" >> $(TARGET_DIR)/initramfs-minimal/etc/services.d/rdpd
+	@# Create RDP configuration file
+	@echo "# OXIDE RDP Server Configuration" > $(TARGET_DIR)/initramfs-minimal/etc/rdpd.conf
+	@echo "port=3389" >> $(TARGET_DIR)/initramfs-minimal/etc/rdpd.conf
+	@echo "max_connections=10" >> $(TARGET_DIR)/initramfs-minimal/etc/rdpd.conf
+	@echo "tls_required=yes" >> $(TARGET_DIR)/initramfs-minimal/etc/rdpd.conf
 	@# Create minimal passwd/group
 	@echo "root:root:0:0:root:/root:/bin/esh" > $(TARGET_DIR)/initramfs-minimal/etc/passwd
 	@echo "nobody:x:65534:65534:Nobody:/:/bin/false" >> $(TARGET_DIR)/initramfs-minimal/etc/passwd
 	@echo "sshd:x:74:74:sshd:/var/empty/sshd:/bin/false" >> $(TARGET_DIR)/initramfs-minimal/etc/passwd
+	@echo "rdp:x:75:75:rdp:/var/empty/rdp:/bin/false" >> $(TARGET_DIR)/initramfs-minimal/etc/passwd
 	@echo "root:x:0:" > $(TARGET_DIR)/initramfs-minimal/etc/group
 	@echo "nobody:x:65534:" >> $(TARGET_DIR)/initramfs-minimal/etc/group
 	@echo "sshd:x:74:" >> $(TARGET_DIR)/initramfs-minimal/etc/group
+	@echo "rdp:x:75:" >> $(TARGET_DIR)/initramfs-minimal/etc/group
 	@echo "network:x:101:" >> $(TARGET_DIR)/initramfs-minimal/etc/group
 	@# Create sshd privilege separation directory
 	@mkdir -p $(TARGET_DIR)/initramfs-minimal/var/empty/sshd
+	@# Create rdp privilege separation directory
+	@mkdir -p $(TARGET_DIR)/initramfs-minimal/var/empty/rdp
 	@# Create profile with PATH
 	@echo "export PATH=/bin:/sbin:/usr/bin:/usr/sbin" > $(TARGET_DIR)/initramfs-minimal/etc/profile
 	@echo "OXIDE" > $(TARGET_DIR)/initramfs-minimal/etc/hostname
