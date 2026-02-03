@@ -838,3 +838,184 @@ pub fn set_affinity(pid: u32, cpuset: sched::CpuSet) {
 pub fn get_affinity(pid: u32) -> Option<sched::CpuSet> {
     sched::get_affinity(pid)
 }
+
+/// Check for pending signals on syscall return
+///
+/// Called by the syscall dispatch mechanism just before returning to userspace.
+/// Checks for deliverable signals and modifies the syscall return context
+/// to redirect to signal handlers if needed.
+///
+/// — GraveShift: Signal delivery on syscall return, not just timer ticks
+pub fn check_signals_on_syscall_return() {
+    // Get current PID (fast path, no locks)
+    let current_pid = match sched::current_pid() {
+        Some(pid) if pid > 1 => pid,
+        _ => return, // Idle or init don't get signals
+    };
+
+    // Try to get process metadata
+    let meta_arc = match sched::get_task_meta(current_pid) {
+        Some(arc) => arc,
+        None => return,
+    };
+
+    // Try to lock metadata (non-blocking to avoid deadlock)
+    let mut meta = match meta_arc.try_lock() {
+        Some(guard) => guard,
+        None => return, // Can't lock, skip for now (will be delivered on next opportunity)
+    };
+
+    // Check if there are any deliverable signals
+    if !meta.has_pending_signals() {
+        return;
+    }
+
+    let signal_mask = meta.signal_mask;
+    
+    // Dequeue the highest priority pending signal
+    let pending = match meta.pending_signals.dequeue(&signal_mask) {
+        Some(p) => p,
+        None => return,
+    };
+
+    let signo = pending.signo;
+    
+    // Get the signal action
+    let action = if signo >= 1 && signo <= signal::NSIG as i32 {
+        meta.sigactions[(signo - 1) as usize]
+    } else {
+        signal::SigAction::new()
+    };
+
+    // Determine what to do with this signal
+    let result = determine_action(&pending, &action, &signal_mask);
+
+    match result {
+        SignalResult::Terminate | SignalResult::CoreDump => {
+            // 🔥 GraveShift: Process gets the axe 🔥
+            drop(meta); // Release lock before calling scheduler
+
+            // Exit with signal status (128 + signal number)
+            let exit_status = 128 + signo;
+            sched::set_task_exit_status(current_pid, exit_status);
+
+            // Wake parent to reap us
+            if let Some(ppid) = sched::get_task_ppid(current_pid) {
+                if ppid > 0 {
+                    wake_up(ppid);
+                }
+            }
+
+            // Block ourselves (we're now a zombie)
+            sched::block_current(TaskState::TASK_ZOMBIE);
+            
+            // Note: When we return from syscall, scheduler will switch us out
+        }
+        SignalResult::UserHandler {
+            handler,
+            signo,
+            info,
+            flags: _,
+            handler_mask,
+        } => {
+            // 🔥 GraveShift: Redirect to user's signal handler 🔥
+            
+            unsafe {
+                let ctx = arch::syscall::get_user_context_mut();
+                
+                // Build saved registers from current context
+                let regs = signal::delivery::SavedRegisters {
+                    rax: ctx.rax,
+                    rbx: ctx.rbx,
+                    rcx: ctx.rcx,
+                    rdx: ctx.rdx,
+                    rsi: ctx.rsi,
+                    rdi: ctx.rdi,
+                    rbp: ctx.rbp,
+                    r8: ctx.r8,
+                    r9: ctx.r9,
+                    r10: ctx.r10,
+                    r11: ctx.r11,
+                    r12: ctx.r12,
+                    r13: ctx.r13,
+                    r14: ctx.r14,
+                    r15: ctx.r15,
+                };
+
+                // Get signal restorer from action
+                let restorer = action.sa_restorer;
+
+                // Setup signal frame
+                let (new_rip, new_rsp, sig_frame) = signal::delivery::setup_signal_handler(
+                    handler,
+                    signo,
+                    info,
+                    action.flags(),
+                    restorer,
+                    meta.signal_mask,
+                    ctx.rip,
+                    ctx.rsp,
+                    ctx.rflags,
+                    &regs,
+                );
+
+                // Write signal frame to user stack
+                // SMAP user access (STAC) is already enabled in syscall_entry
+                let frame_ptr = new_rsp as *mut signal::delivery::SignalFrame;
+                core::ptr::write(frame_ptr, sig_frame);
+
+                // Update process signal mask for handler execution
+                meta.signal_mask = handler_mask;
+
+                // Modify saved context to redirect to signal handler on sysret
+                ctx.rip = new_rip;
+                ctx.rsp = new_rsp;
+                ctx.rdi = signo as u64; // First argument: signal number
+            }
+        }
+        SignalResult::Ignore => {
+            // Signal ignored - nothing to do
+        }
+        SignalResult::Stop => {
+            // — ThreadRogue: Freeze the process
+            meta.stop_signal = Some(signo as u8);
+            meta.continued = false;
+
+            let ppid = sched::get_task_ppid(current_pid);
+            drop(meta);
+
+            // Block the task
+            sched::block_current(TaskState::TASK_STOPPED);
+
+            // Wake parent for WUNTRACED waitpid
+            if let Some(ppid) = ppid {
+                if ppid > 0 {
+                    wake_up(ppid);
+                }
+            }
+        }
+        SignalResult::Continue => {
+            // — ThreadRogue: Thaw the process
+            meta.stop_signal = None;
+            meta.continued = true;
+
+            let ppid = sched::get_task_ppid(current_pid);
+            drop(meta);
+
+            // If we were stopped, wake up
+            if sched::get_task_state(current_pid) == Some(TaskState::TASK_STOPPED) {
+                wake_up(current_pid);
+            }
+
+            // Wake parent for WCONTINUED waitpid
+            if let Some(ppid) = ppid {
+                if ppid > 0 {
+                    wake_up(ppid);
+                }
+            }
+        }
+        SignalResult::None => {
+            // No signal - shouldn't happen
+        }
+    }
+}

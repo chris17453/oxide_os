@@ -236,6 +236,8 @@ initramfs: userspace-release
 	@# Copy evtest and argtest
 	@cp "$(USERSPACE_OUT_RELEASE)/evtest" "$(TARGET_DIR)/initramfs/bin/evtest"
 	@cp "$(USERSPACE_OUT_RELEASE)/argtest" "$(TARGET_DIR)/initramfs/bin/argtest"
+	@# Copy signal-test
+	@cp "$(USERSPACE_OUT_RELEASE)/signal-test" "$(TARGET_DIR)/initramfs/bin/signal-test"
 	@# Create services.d directory with service definitions
 	@mkdir -p $(TARGET_DIR)/initramfs/etc/services.d
 	@echo "PATH=/bin/journald" > $(TARGET_DIR)/initramfs/etc/services.d/journald

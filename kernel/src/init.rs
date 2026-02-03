@@ -847,6 +847,12 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         arch::syscall::set_syscall_handler(syscall_dispatch);
     }
 
+    // Register the signal check function for syscall return
+    // 🔥 GraveShift: Signals delivered on syscall return, not just timer ticks 🔥
+    unsafe {
+        arch::syscall::set_signal_check_function(crate::scheduler::check_signals_on_syscall_return);
+    }
+
     // ========================================
     // VFS Initialization
     // ========================================
