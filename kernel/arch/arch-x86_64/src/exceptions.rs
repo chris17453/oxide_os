@@ -491,7 +491,6 @@ pub extern "C" fn mouse_interrupt() {
 
 /// Mouse handler
 extern "C" fn handle_mouse() {
-
     // Forward to the registered mouse callback (ps2::handle_mouse_irq).
     // The callback itself reads port 0x60 — we must NOT read it here
     // or the byte will be consumed before the driver sees it.
@@ -864,7 +863,13 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
         unsafe {
             core::arch::asm!("mov {}, cr3", out(reg) cr3);
         }
-        crate::serial_println!("[PF] addr={:#x} rip={:#x} err={:#x} cr3={:#x}", cr2, frame.rip, error, cr3);
+        crate::serial_println!(
+            "[PF] addr={:#x} rip={:#x} err={:#x} cr3={:#x}",
+            cr2,
+            frame.rip,
+            error,
+            cr3
+        );
     }
 
     // Try page fault callback first (for COW handling, etc.)
@@ -1279,7 +1284,11 @@ extern "C" fn handle_timer(current_rsp: u64) -> u64 {
     #[cfg(feature = "debug-timer")]
     {
         if new_rsp != current_rsp {
-            crate::serial_println!("[TIMER] Context switch: {:#x} -> {:#x}", current_rsp, new_rsp);
+            crate::serial_println!(
+                "[TIMER] Context switch: {:#x} -> {:#x}",
+                current_rsp,
+                new_rsp
+            );
         }
     }
 

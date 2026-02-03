@@ -387,18 +387,19 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
                                 let restorer = action.sa_restorer;
 
                                 // Setup signal frame
-                                let (new_rip, new_rsp, sig_frame) = signal::delivery::setup_signal_handler(
-                                    handler,
-                                    signo,
-                                    info,
-                                    action.flags(),
-                                    restorer,
-                                    meta.signal_mask,
-                                    frame.rip,
-                                    frame.rsp,
-                                    frame.rflags,
-                                    &regs,
-                                );
+                                let (new_rip, new_rsp, sig_frame) =
+                                    signal::delivery::setup_signal_handler(
+                                        handler,
+                                        signo,
+                                        info,
+                                        action.flags(),
+                                        restorer,
+                                        meta.signal_mask,
+                                        frame.rip,
+                                        frame.rsp,
+                                        frame.rflags,
+                                        &regs,
+                                    );
 
                                 // Write signal frame to user stack
                                 // 🔥 GraveShift: Direct write - page fault will catch invalid stack 🔥

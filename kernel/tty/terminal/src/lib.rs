@@ -42,12 +42,12 @@ extern crate alloc;
 pub mod renderer;
 
 // Re-export VTE types (parser, handler, buffer, cell, color, wcwidth extracted to libs/vte)
-pub use vte::{Parser, Action, State};
-pub use vte::{Handler, TerminalModes, MouseMode, MouseEncoding};
-pub use vte::{ScreenBuffer, ScrollbackBuffer};
-pub use vte::{Cell, CellAttrs, CellFlags, Cursor, CursorShape};
 pub use vte::TermColor;
 pub use vte::wcwidth;
+pub use vte::{Action, Parser, State};
+pub use vte::{Cell, CellAttrs, CellFlags, Cursor, CursorShape};
+pub use vte::{Handler, MouseEncoding, MouseMode, TerminalModes};
+pub use vte::{ScreenBuffer, ScrollbackBuffer};
 
 use alloc::string::String;
 use alloc::sync::Arc;
@@ -79,7 +79,6 @@ fn lock_contention_warning(lock_name: &str) {
         }
     }
 }
-
 
 /// Default scrollback buffer size (lines)
 const DEFAULT_SCROLLBACK: usize = 10000;
@@ -190,7 +189,11 @@ impl TerminalEmulator {
     /// Write bytes to the terminal (rendering deferred to tick())
     pub fn write(&mut self, data: &[u8]) {
         // If synchronized output mode is active, buffer the data
-        if self.handler.modes.contains(TerminalModes::SYNCHRONIZED_OUTPUT) {
+        if self
+            .handler
+            .modes
+            .contains(TerminalModes::SYNCHRONIZED_OUTPUT)
+        {
             self.sync_buffer.extend_from_slice(data);
         } else {
             for &byte in data {
@@ -261,7 +264,10 @@ impl TerminalEmulator {
                 final_char,
             } => {
                 // Track if synchronized mode was on before
-                let was_sync = self.handler.modes.contains(TerminalModes::SYNCHRONIZED_OUTPUT);
+                let was_sync = self
+                    .handler
+                    .modes
+                    .contains(TerminalModes::SYNCHRONIZED_OUTPUT);
 
                 // Need scrollback only if not on alternate screen
                 let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
@@ -285,7 +291,10 @@ impl TerminalEmulator {
                 }
 
                 // If synchronized mode was just turned off, flush buffered output
-                let is_sync = self.handler.modes.contains(TerminalModes::SYNCHRONIZED_OUTPUT);
+                let is_sync = self
+                    .handler
+                    .modes
+                    .contains(TerminalModes::SYNCHRONIZED_OUTPUT);
                 if was_sync && !is_sync && !self.sync_buffer.is_empty() {
                     let buffer = core::mem::take(&mut self.sync_buffer);
                     for &byte in buffer.iter() {
@@ -384,14 +393,13 @@ impl TerminalEmulator {
     /// Base64 decode (simple implementation for clipboard)
     fn base64_decode(input: &str) -> Option<Vec<u8>> {
         const TABLE: &[u8; 128] = &[
-            255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-            255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-            255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,  62, 255, 255, 255,  63,
-             52,  53,  54,  55,  56,  57,  58,  59,  60,  61, 255, 255, 255, 254, 255, 255,
-            255,   0,   1,   2,   3,   4,   5,   6,   7,   8,   9,  10,  11,  12,  13,  14,
-             15,  16,  17,  18,  19,  20,  21,  22,  23,  24,  25, 255, 255, 255, 255, 255,
-            255,  26,  27,  28,  29,  30,  31,  32,  33,  34,  35,  36,  37,  38,  39,  40,
-             41,  42,  43,  44,  45,  46,  47,  48,  49,  50,  51, 255, 255, 255, 255, 255,
+            255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+            255, 255, 255, 255, 255, 255, 255, 255, 255, 62, 255, 255, 255, 63, 52, 53, 54, 55, 56,
+            57, 58, 59, 60, 61, 255, 255, 255, 254, 255, 255, 255, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+            10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 255, 255, 255, 255,
+            255, 255, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
+            45, 46, 47, 48, 49, 50, 51, 255, 255, 255, 255, 255,
         ];
 
         let mut result = Vec::new();
@@ -631,18 +639,15 @@ impl TerminalEmulator {
     /// Handle DCS (Device Control String) sequences
     ///
     /// Implements Phase 3 from term_analysis.md - DCS framework and Sixel graphics
-    fn handle_dcs(
-        &mut self,
-        params: &[i32],
-        intermediates: &[u8],
-        final_char: u8,
-        data: &[u8],
-    ) {
+    fn handle_dcs(&mut self, params: &[i32], intermediates: &[u8], final_char: u8, data: &[u8]) {
         // Check for Sixel graphics: DCS P1 ; P2 ; P3 q data ST
         if final_char == b'q' && intermediates.is_empty() {
             // 🔥 PRIORITY #5 FIX - Sixel graphics rendering 🔥
             #[cfg(feature = "debug-terminal")]
-            os_log::println!("[TERM-DCS] Sixel graphics ({} bytes) - rendering", data.len());
+            os_log::println!(
+                "[TERM-DCS] Sixel graphics ({} bytes) - rendering",
+                data.len()
+            );
 
             // Parse and render Sixel data
             self.render_sixel(params, data);
@@ -660,7 +665,11 @@ impl TerminalEmulator {
 
         // Unknown DCS sequence
         #[cfg(feature = "debug-terminal")]
-        os_log::println!("[TERM-DCS] Unknown DCS final={} intermediates={:?}", final_char as char, intermediates);
+        os_log::println!(
+            "[TERM-DCS] Unknown DCS final={} intermediates={:?}",
+            final_char as char,
+            intermediates
+        );
     }
 
     /// Render Sixel graphics
@@ -689,22 +698,22 @@ impl TerminalEmulator {
         // Initialize Sixel renderer state
         let mut palette = [Color::VGA_BLACK; 256];
         // Initialize default VT340 palette (first 16 colors)
-        palette[0] = Color::new(0, 0, 0);       // Black
-        palette[1] = Color::new(51, 102, 179);  // Blue
-        palette[2] = Color::new(179, 0, 0);     // Red
-        palette[3] = Color::new(51, 179, 51);   // Green
-        palette[4] = Color::new(179, 0, 179);   // Magenta
-        palette[5] = Color::new(51, 179, 179);  // Cyan
-        palette[6] = Color::new(179, 179, 0);   // Yellow
+        palette[0] = Color::new(0, 0, 0); // Black
+        palette[1] = Color::new(51, 102, 179); // Blue
+        palette[2] = Color::new(179, 0, 0); // Red
+        palette[3] = Color::new(51, 179, 51); // Green
+        palette[4] = Color::new(179, 0, 179); // Magenta
+        palette[5] = Color::new(51, 179, 179); // Cyan
+        palette[6] = Color::new(179, 179, 0); // Yellow
         palette[7] = Color::new(204, 204, 204); // Gray
         palette[8] = Color::new(102, 102, 102); // Dark gray
         palette[9] = Color::new(102, 153, 230); // Light blue
-        palette[10] = Color::new(230, 102, 102);// Light red
-        palette[11] = Color::new(102, 230, 102);// Light green
-        palette[12] = Color::new(230, 102, 230);// Light magenta
-        palette[13] = Color::new(102, 230, 230);// Light cyan
-        palette[14] = Color::new(230, 230, 102);// Light yellow
-        palette[15] = Color::new(255, 255, 255);// White
+        palette[10] = Color::new(230, 102, 102); // Light red
+        palette[11] = Color::new(102, 230, 102); // Light green
+        palette[12] = Color::new(230, 102, 230); // Light magenta
+        palette[13] = Color::new(102, 230, 230); // Light cyan
+        palette[14] = Color::new(230, 230, 102); // Light yellow
+        palette[15] = Color::new(255, 255, 255); // White
 
         let mut current_color = 0usize;
         let mut x = 0u32;
@@ -771,7 +780,12 @@ impl TerminalEmulator {
                         if ch >= b'?' && ch <= b'~' {
                             let sixel = ch - b'?';
                             for _ in 0..count {
-                                self.render_sixel_byte(sixel, palette[current_color], x + start_x, y + start_y);
+                                self.render_sixel_byte(
+                                    sixel,
+                                    palette[current_color],
+                                    x + start_x,
+                                    y + start_y,
+                                );
                                 x += 1;
                             }
                         }
@@ -786,7 +800,7 @@ impl TerminalEmulator {
                     x = 0;
                     y += 6;
                 }
-                b'?' ..= b'~' => {
+                b'?'..=b'~' => {
                     // Sixel data byte
                     let sixel = byte - b'?';
                     self.render_sixel_byte(sixel, palette[current_color], x + start_x, y + start_y);

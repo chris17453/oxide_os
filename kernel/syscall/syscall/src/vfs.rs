@@ -1326,8 +1326,8 @@ pub fn debug_sys_open_pid() -> u64 {
 /// particularly O_NONBLOCK which vim uses for async operations.
 pub fn sys_fcntl(fd: i32, cmd: i32, arg: u64) -> i64 {
     // fcntl command codes
-    const F_GETFL: i32 = 3;  // Get file status flags
-    const F_SETFL: i32 = 4;  // Set file status flags
+    const F_GETFL: i32 = 3; // Get file status flags
+    const F_SETFL: i32 = 4; // Set file status flags
 
     match cmd {
         F_GETFL => {
@@ -1347,8 +1347,7 @@ pub fn sys_fcntl(fd: i32, cmd: i32, arg: u64) -> i64 {
             // Only certain flags can be set: O_APPEND, O_NONBLOCK, O_ASYNC
             // 🔥 GraveShift: fcntl F_SETFL lets userspace change blocking mode 🔥
             let new_flags = arg as u32;
-            let allowed_flags = FileFlags::O_APPEND.bits()
-                              | FileFlags::O_NONBLOCK.bits();
+            let allowed_flags = FileFlags::O_APPEND.bits() | FileFlags::O_NONBLOCK.bits();
             let flags_to_set = new_flags & allowed_flags;
 
             with_current_meta_mut(|meta| {

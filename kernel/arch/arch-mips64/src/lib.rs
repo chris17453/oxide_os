@@ -303,8 +303,8 @@ impl SystemRegisters for Mips64 {
         let value: u64;
         unsafe {
             match id {
-                0 => core::arch::asm!("dmfc0 {}, $0", out(reg) value),  // Index
-                4 => core::arch::asm!("dmfc0 {}, $4", out(reg) value),  // Context
+                0 => core::arch::asm!("dmfc0 {}, $0", out(reg) value), // Index
+                4 => core::arch::asm!("dmfc0 {}, $4", out(reg) value), // Context
                 12 => core::arch::asm!("dmfc0 {}, $12", out(reg) value), // Status
                 13 => core::arch::asm!("dmfc0 {}, $13", out(reg) value), // Cause
                 14 => core::arch::asm!("dmfc0 {}, $14", out(reg) value), // EPC
@@ -318,8 +318,8 @@ impl SystemRegisters for Mips64 {
     unsafe fn write_sys_reg(id: u32, value: u64) {
         unsafe {
             match id {
-                0 => core::arch::asm!("dmtc0 {}, $0", in(reg) value),   // Index
-                4 => core::arch::asm!("dmtc0 {}, $4", in(reg) value),   // Context
+                0 => core::arch::asm!("dmtc0 {}, $0", in(reg) value), // Index
+                4 => core::arch::asm!("dmtc0 {}, $4", in(reg) value), // Context
                 12 => core::arch::asm!("dmtc0 {}, $12", in(reg) value), // Status
                 14 => core::arch::asm!("dmtc0 {}, $14", in(reg) value), // EPC
                 _ => panic!("Unsupported CP0 register: {}", id),
@@ -336,7 +336,7 @@ impl SystemRegisters for Mips64 {
 impl Endianness for Mips64 {
     #[inline]
     fn is_big_endian() -> bool {
-        true  // ⚠️ SGI MIPS64 is big-endian
+        true // ⚠️ SGI MIPS64 is big-endian
     }
 
     #[inline]
@@ -347,65 +347,65 @@ impl Endianness for Mips64 {
     // TO little-endian (SWAP on big-endian MIPS64)
     #[inline]
     fn to_le16(val: u16) -> u16 {
-        val.swap_bytes()  // Must swap on big-endian
+        val.swap_bytes() // Must swap on big-endian
     }
 
     #[inline]
     fn to_le32(val: u32) -> u32 {
-        val.swap_bytes()  // Must swap on big-endian
+        val.swap_bytes() // Must swap on big-endian
     }
 
     #[inline]
     fn to_le64(val: u64) -> u64 {
-        val.swap_bytes()  // Must swap on big-endian
+        val.swap_bytes() // Must swap on big-endian
     }
 
     // FROM little-endian (SWAP on big-endian MIPS64)
     #[inline]
     fn from_le16(val: u16) -> u16 {
-        val.swap_bytes()  // Must swap on big-endian
+        val.swap_bytes() // Must swap on big-endian
     }
 
     #[inline]
     fn from_le32(val: u32) -> u32 {
-        val.swap_bytes()  // Must swap on big-endian
+        val.swap_bytes() // Must swap on big-endian
     }
 
     #[inline]
     fn from_le64(val: u64) -> u64 {
-        val.swap_bytes()  // Must swap on big-endian
+        val.swap_bytes() // Must swap on big-endian
     }
 
     // TO big-endian (NO-OP on big-endian MIPS64)
     #[inline]
     fn to_be16(val: u16) -> u16 {
-        val  // No-op on big-endian
+        val // No-op on big-endian
     }
 
     #[inline]
     fn to_be32(val: u32) -> u32 {
-        val  // No-op on big-endian
+        val // No-op on big-endian
     }
 
     #[inline]
     fn to_be64(val: u64) -> u64 {
-        val  // No-op on big-endian
+        val // No-op on big-endian
     }
 
     // FROM big-endian (NO-OP on big-endian MIPS64)
     #[inline]
     fn from_be16(val: u16) -> u16 {
-        val  // No-op on big-endian
+        val // No-op on big-endian
     }
 
     #[inline]
     fn from_be32(val: u32) -> u32 {
-        val  // No-op on big-endian
+        val // No-op on big-endian
     }
 
     #[inline]
     fn from_be64(val: u64) -> u64 {
-        val  // No-op on big-endian
+        val // No-op on big-endian
     }
 }
 
@@ -421,7 +421,7 @@ impl CacheOps for Mips64 {
         // This is a simplified implementation - real code would walk cache levels
         unsafe {
             core::arch::asm!(
-                "sync",              // Synchronize
+                "sync", // Synchronize
                 ".set push",
                 ".set noreorder",
                 // Would need to iterate over cache lines here
@@ -490,7 +490,7 @@ impl CacheOps for Mips64 {
 
     #[inline]
     fn is_cache_coherent() -> bool {
-        false  // ⚠️ SGI MIPS64 has NON-coherent caches
+        false // ⚠️ SGI MIPS64 has NON-coherent caches
     }
 }
 
@@ -502,7 +502,7 @@ impl CacheOps for Mips64 {
 impl DmaOps for Mips64 {
     #[inline]
     fn is_dma_coherent() -> bool {
-        false  // ⚠️ SGI MIPS64 has non-coherent DMA
+        false // ⚠️ SGI MIPS64 has non-coherent DMA
     }
 
     #[inline]
@@ -626,11 +626,7 @@ impl ExceptionHandler for Mips64 {
             instruction_pointer: frame.epc,
             stack_pointer: frame.sp,
             flags: frame.status,
-            arch_specific: [
-                frame.cause,
-                frame.badvaddr,
-                0, 0, 0, 0, 0, 0,
-            ],
+            arch_specific: [frame.cause, frame.badvaddr, 0, 0, 0, 0, 0, 0],
         }
     }
 }

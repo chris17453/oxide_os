@@ -5,9 +5,9 @@
 //!
 //! -- GraveShift: Window system - every TUI starts here
 
+use crate::{Error, Result, attrs, chtype};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use crate::{chtype, attrs, Error, Result};
 
 /// Window data structure
 #[repr(C)]
@@ -62,7 +62,7 @@ impl WindowData {
         let size = (lines * cols) as usize;
         let mut cells = Vec::with_capacity(size);
         cells.resize(size, chtype::new(' ', attrs::A_NORMAL));
-        
+
         Box::new(Self {
             lines,
             cols,
@@ -87,7 +87,7 @@ impl WindowData {
             parent: None,
         })
     }
-    
+
     /// Get cell at position
     pub fn get_cell(&self, y: i32, x: i32) -> Option<&chtype> {
         if y >= 0 && y < self.lines && x >= 0 && x < self.cols {
@@ -97,7 +97,7 @@ impl WindowData {
             None
         }
     }
-    
+
     /// Set cell at position
     pub fn set_cell(&mut self, y: i32, x: i32, ch: chtype) -> Result<()> {
         if y >= 0 && y < self.lines && x >= 0 && x < self.cols {
@@ -113,7 +113,7 @@ impl WindowData {
             Err(Error::Err)
         }
     }
-    
+
     /// Move cursor
     pub fn move_cursor(&mut self, y: i32, x: i32) -> Result<()> {
         if y >= 0 && y < self.lines && x >= 0 && x < self.cols {
@@ -124,10 +124,13 @@ impl WindowData {
             Err(Error::Err)
         }
     }
-    
+
     /// Clear window
     pub fn clear(&mut self) {
-        let blank = chtype { ch: ' ' as u32, attr: self.attrs };
+        let blank = chtype {
+            ch: ' ' as u32,
+            attr: self.attrs,
+        };
         for cell in self.cells.iter_mut() {
             *cell = blank;
         }
@@ -135,7 +138,7 @@ impl WindowData {
         self.cur_x = 0;
         self.touched = true;
     }
-    
+
     /// Erase window (fill with background)
     pub fn erase(&mut self) {
         for cell in self.cells.iter_mut() {
@@ -145,7 +148,7 @@ impl WindowData {
         self.cur_x = 0;
         self.touched = true;
     }
-    
+
     /// Clear to end of line
     pub fn clrtoeol(&mut self) {
         let blank = self.bkgd;
@@ -156,12 +159,12 @@ impl WindowData {
         }
         self.touched = true;
     }
-    
+
     /// Clear to bottom of window
     pub fn clrtobot(&mut self) {
         // Clear current line from cursor
         self.clrtoeol();
-        
+
         // Clear all lines below
         let blank = self.bkgd;
         for y in (self.cur_y + 1)..self.lines {
@@ -171,16 +174,16 @@ impl WindowData {
         }
         self.touched = true;
     }
-    
+
     /// Scroll window up by n lines
     pub fn scroll_up(&mut self, n: i32) {
         if n <= 0 {
             return;
         }
-        
+
         let n = n.min(self.lines);
         let blank = self.bkgd;
-        
+
         // Shift lines up
         for y in 0..(self.lines - n) {
             for x in 0..self.cols {
@@ -191,26 +194,26 @@ impl WindowData {
                 }
             }
         }
-        
+
         // Clear bottom lines
         for y in (self.lines - n)..self.lines {
             for x in 0..self.cols {
                 let _ = self.set_cell(y, x, blank);
             }
         }
-        
+
         self.touched = true;
     }
-    
+
     /// Scroll window down by n lines
     pub fn scroll_down(&mut self, n: i32) {
         if n <= 0 {
             return;
         }
-        
+
         let n = n.min(self.lines);
         let blank = self.bkgd;
-        
+
         // Shift lines down
         for y in (n..self.lines).rev() {
             for x in 0..self.cols {
@@ -221,14 +224,14 @@ impl WindowData {
                 }
             }
         }
-        
+
         // Clear top lines
         for y in 0..n {
             for x in 0..self.cols {
                 let _ = self.set_cell(y, x, blank);
             }
         }
-        
+
         self.touched = true;
     }
 }
@@ -243,11 +246,11 @@ pub fn delwin(win: *mut WindowData) -> Result<()> {
     if win.is_null() {
         return Err(Error::Err);
     }
-    
+
     unsafe {
         let _ = Box::from_raw(win);
     }
-    
+
     Ok(())
 }
 
@@ -256,29 +259,41 @@ pub fn mvwin(win: *mut WindowData, y: i32, x: i32) -> Result<()> {
     if win.is_null() {
         return Err(Error::Err);
     }
-    
+
     unsafe {
         (*win).beg_y = y;
         (*win).beg_x = x;
         (*win).touched = true;
     }
-    
+
     Ok(())
 }
 
 /// Create a subwindow
-pub fn subwin(parent: *mut WindowData, lines: i32, cols: i32, beg_y: i32, beg_x: i32) -> *mut WindowData {
+pub fn subwin(
+    parent: *mut WindowData,
+    lines: i32,
+    cols: i32,
+    beg_y: i32,
+    beg_x: i32,
+) -> *mut WindowData {
     if parent.is_null() {
         return core::ptr::null_mut();
     }
-    
+
     let mut sub = WindowData::new(lines, cols, beg_y, beg_x);
     sub.parent = Some(parent);
     Box::into_raw(sub)
 }
 
 /// Create a derived window (shares content with parent)
-pub fn derwin(parent: *mut WindowData, lines: i32, cols: i32, beg_y: i32, beg_x: i32) -> *mut WindowData {
+pub fn derwin(
+    parent: *mut WindowData,
+    lines: i32,
+    cols: i32,
+    beg_y: i32,
+    beg_x: i32,
+) -> *mut WindowData {
     // For now, same as subwin. Full implementation would share cell buffer
     subwin(parent, lines, cols, beg_y, beg_x)
 }
@@ -288,7 +303,7 @@ pub fn dupwin(win: *mut WindowData) -> *mut WindowData {
     if win.is_null() {
         return core::ptr::null_mut();
     }
-    
+
     unsafe {
         let orig = &*win;
         let mut dup = WindowData::new(orig.lines, orig.cols, orig.beg_y, orig.beg_x);
@@ -309,43 +324,43 @@ mod tests {
     fn test_window_creation() {
         let win = newwin(24, 80, 0, 0);
         assert!(!win.is_null());
-        
+
         unsafe {
             assert_eq!((*win).lines, 24);
             assert_eq!((*win).cols, 80);
             assert_eq!((*win).cur_y, 0);
             assert_eq!((*win).cur_x, 0);
         }
-        
+
         let _ = delwin(win);
     }
 
     #[test]
     fn test_window_operations() {
         let win = newwin(10, 10, 0, 0);
-        
+
         unsafe {
             // Test cursor movement
             assert!((*win).move_cursor(5, 5).is_ok());
             assert_eq!((*win).cur_y, 5);
             assert_eq!((*win).cur_x, 5);
-            
+
             // Test out of bounds
             assert!((*win).move_cursor(20, 20).is_err());
-            
+
             // Test cell operations
             let ch = chtype::new('X', attrs::A_BOLD);
             assert!((*win).set_cell(2, 3, ch).is_ok());
             assert_eq!((*win).get_cell(2, 3).unwrap().character(), 'X');
         }
-        
+
         let _ = delwin(win);
     }
 
     #[test]
     fn test_window_clear() {
         let win = newwin(5, 5, 0, 0);
-        
+
         unsafe {
             // Fill with X
             let ch = chtype::new('X', attrs::A_NORMAL);
@@ -354,10 +369,10 @@ mod tests {
                     let _ = (*win).set_cell(y, x, ch);
                 }
             }
-            
+
             // Clear
             (*win).clear();
-            
+
             // Verify all cells are space
             for y in 0..5 {
                 for x in 0..5 {
@@ -365,7 +380,7 @@ mod tests {
                 }
             }
         }
-        
+
         let _ = delwin(win);
     }
 }

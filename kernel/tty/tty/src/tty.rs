@@ -130,7 +130,9 @@ impl Tty {
         };
 
         for pid in waiters {
-            unsafe { sched_wake_up(pid); }
+            unsafe {
+                sched_wake_up(pid);
+            }
         }
 
         signal
@@ -236,7 +238,8 @@ impl Tty {
     /// 🔥 PRIORITY #1 FIX - O_NONBLOCK support 🔥
     /// Called by fcntl when F_SETFL sets/clears O_NONBLOCK flag
     pub fn set_nonblocking(&self, nonblocking: bool) {
-        self.nonblocking.store(nonblocking, core::sync::atomic::Ordering::Relaxed);
+        self.nonblocking
+            .store(nonblocking, core::sync::atomic::Ordering::Relaxed);
     }
 
     /// Check if in non-blocking mode
@@ -407,8 +410,11 @@ impl VnodeOps for Tty {
                     let count = ldisc.read(buf);
 
                     #[cfg(feature = "debug-tty-read")]
-                    os_log::println!("[TTY-READ] Tty::read returning {} bytes (buf.len()={})",
-                        count, buf.len());
+                    os_log::println!(
+                        "[TTY-READ] Tty::read returning {} bytes (buf.len()={})",
+                        count,
+                        buf.len()
+                    );
 
                     return Ok(count);
                 }
@@ -486,7 +492,9 @@ impl VnodeOps for Tty {
                             return Ok(count);
                         } else {
                             // No data yet, block indefinitely for first character
-                            unsafe { sched_block_interruptible(); }
+                            unsafe {
+                                sched_block_interruptible();
+                            }
 
                             // When we wake up, remove ourselves and retry
                             let mut waiters = self.read_waiters.lock();
@@ -495,7 +503,9 @@ impl VnodeOps for Tty {
                     } else {
                         // Block indefinitely (VMIN>0, VTIME=0 or default behavior)
                         // Will wake when: keyboard input arrives OR signal delivered (Ctrl+C)
-                        unsafe { sched_block_interruptible(); }
+                        unsafe {
+                            sched_block_interruptible();
+                        }
 
                         // When we wake up, remove ourselves and retry
                         let mut waiters = self.read_waiters.lock();

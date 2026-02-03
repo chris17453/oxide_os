@@ -104,23 +104,23 @@ pub struct FbFixScreenInfo {
 }
 
 /// OXIDE framebuffer graphics backend
-/// 
+///
 /// Uses /dev/fb0 with read/write/ioctl syscalls - no mmap.
 /// Maintains a local buffer and flushes to framebuffer via write().
 pub struct OxideFramebufferBackend {
-    fb_fd: i32,                    // File descriptor for /dev/fb0
-    local_buffer: Vec<u8>,         // Local double-buffer for drawing
+    fb_fd: i32,            // File descriptor for /dev/fb0
+    local_buffer: Vec<u8>, // Local double-buffer for drawing
     width: usize,
     height: usize,
-    stride: usize,                 // Bytes per scanline
-    bpp: u8,                       // Bits per pixel
-    is_bgr: bool,                  // BGR vs RGB pixel order
+    stride: usize, // Bytes per scanline
+    bpp: u8,       // Bits per pixel
+    is_bgr: bool,  // BGR vs RGB pixel order
     cursor_x: usize,
     cursor_y: usize,
     fg_color: u8,
     bg_color: u8,
     dirty: bool,
-    dirty_min_y: usize,            // Track dirty region for partial updates
+    dirty_min_y: usize, // Track dirty region for partial updates
     dirty_max_y: usize,
 }
 
@@ -138,7 +138,11 @@ impl OxideFramebufferBackend {
 
         // Get screen info via ioctl
         let mut var_info = FbVarScreenInfo::default();
-        let ret = libc::sys_ioctl(fb_fd, fb_ioctl::FBIOGET_VSCREENINFO, &mut var_info as *mut _ as u64);
+        let ret = libc::sys_ioctl(
+            fb_fd,
+            fb_ioctl::FBIOGET_VSCREENINFO,
+            &mut var_info as *mut _ as u64,
+        );
         if ret < 0 {
             libc::close(fb_fd);
             return Err(Error::RuntimeError(format!(
@@ -148,7 +152,11 @@ impl OxideFramebufferBackend {
         }
 
         let mut fix_info = FbFixScreenInfo::default();
-        let ret = libc::sys_ioctl(fb_fd, fb_ioctl::FBIOGET_FSCREENINFO, &mut fix_info as *mut _ as u64);
+        let ret = libc::sys_ioctl(
+            fb_fd,
+            fb_ioctl::FBIOGET_FSCREENINFO,
+            &mut fix_info as *mut _ as u64,
+        );
         if ret < 0 {
             libc::close(fb_fd);
             return Err(Error::RuntimeError(format!(
@@ -162,7 +170,7 @@ impl OxideFramebufferBackend {
         let bpp = var_info.bits_per_pixel as u8;
         let stride = fix_info.line_length as usize;
         let fb_size = fix_info.smem_len as usize;
-        
+
         // Determine pixel order (BGR vs RGB)
         let is_bgr = var_info.blue_offset < var_info.red_offset;
 
@@ -243,7 +251,7 @@ impl OxideFramebufferBackend {
                 }
                 _ => {}
             }
-            
+
             // Track dirty region
             if !self.dirty {
                 self.dirty_min_y = y;
@@ -271,11 +279,11 @@ impl OxideFramebufferBackend {
         let start_offset = self.dirty_min_y * self.stride;
         let end_offset = (self.dirty_max_y + 1) * self.stride;
         let write_size = end_offset.min(self.local_buffer.len()) - start_offset;
-        
+
         if write_size > 0 {
             // Seek to start of dirty region
             libc::lseek(self.fb_fd, start_offset as i64, libc::SEEK_SET);
-            
+
             // Write the dirty portion
             let data = &self.local_buffer[start_offset..start_offset + write_size];
             libc::write(self.fb_fd, data);
@@ -290,10 +298,10 @@ impl OxideFramebufferBackend {
     pub fn commit_full(&mut self) {
         // Seek to beginning
         libc::lseek(self.fb_fd, 0, libc::SEEK_SET);
-        
+
         // Write entire buffer
         libc::write(self.fb_fd, &self.local_buffer);
-        
+
         self.dirty = false;
         self.dirty_min_y = self.height;
         self.dirty_max_y = 0;
@@ -398,7 +406,7 @@ impl GraphicsBackend for OxideFramebufferBackend {
 
         self.cursor_x = 0;
         self.cursor_y = 0;
-        
+
         // Full buffer write for CLS
         self.commit_full();
     }

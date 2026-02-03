@@ -32,7 +32,10 @@ pub fn write_debug(data: &[u8]) {
     }
 
     // Try to acquire print lock (non-blocking)
-    if PRINTING.compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed).is_err() {
+    if PRINTING
+        .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
         // Someone else is printing - drop this message
         RECURSION_DEPTH.fetch_sub(1, Ordering::Relaxed);
         return;

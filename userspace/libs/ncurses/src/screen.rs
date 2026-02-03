@@ -6,12 +6,12 @@
 //! -- NeonRoot: Screen manager - coordinates all visual updates
 //! -- GlassSignal: Refresh pipeline - diff cells, emit minimal SGR + CUP
 
+use crate::color;
+use crate::window::{WindowData, delwin, newwin};
+use crate::{Error, Result, WINDOW, attrs, chtype};
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
-use crate::window::{WindowData, newwin, delwin};
-use crate::{WINDOW, Error, Result, attrs, chtype};
-use crate::color;
 use termcap;
 
 /// Output buffer for batching terminal writes
@@ -180,16 +180,20 @@ impl ScreenData {
         // Load terminal definition
         let term = termcap::load_terminal(term_type).ok();
 
-        let lines = term.as_ref()
+        let lines = term
+            .as_ref()
             .and_then(|t| t.get_number("lines"))
             .unwrap_or(24);
-        let cols = term.as_ref()
+        let cols = term
+            .as_ref()
             .and_then(|t| t.get_number("cols"))
             .unwrap_or(80);
-        let colors = term.as_ref()
+        let colors = term
+            .as_ref()
             .and_then(|t| t.get_number("colors"))
             .unwrap_or(8);
-        let color_pairs = term.as_ref()
+        let color_pairs = term
+            .as_ref()
             .and_then(|t| t.get_number("pairs"))
             .unwrap_or(64);
 
@@ -199,9 +203,15 @@ impl ScreenData {
         let newscr = newwin(lines, cols, 0, 0);
 
         if stdscr.is_null() || curscr.is_null() || newscr.is_null() {
-            if !stdscr.is_null() { let _ = delwin(stdscr); }
-            if !curscr.is_null() { let _ = delwin(curscr); }
-            if !newscr.is_null() { let _ = delwin(newscr); }
+            if !stdscr.is_null() {
+                let _ = delwin(stdscr);
+            }
+            if !curscr.is_null() {
+                let _ = delwin(curscr);
+            }
+            if !newscr.is_null() {
+                let _ = delwin(newscr);
+            }
             return Err(Error::Err);
         }
 
@@ -264,9 +274,9 @@ impl ScreenData {
         self.cursor_vis = visibility;
 
         let cap = match visibility {
-            0 => "civis",  // invisible
-            1 => "cnorm",  // normal
-            2 => "cvvis",  // very visible
+            0 => "civis", // invisible
+            1 => "cnorm", // normal
+            2 => "cvvis", // very visible
             _ => return Err(Error::Err),
         };
 
@@ -376,7 +386,10 @@ pub fn current_screen_mut() -> Option<&'static mut ScreenData> {
 pub fn stdscr() -> WINDOW {
     unsafe {
         let ptr = core::ptr::addr_of!(CURRENT_SCREEN);
-        (*ptr).as_ref().map(|s| s.stdscr).unwrap_or(core::ptr::null_mut())
+        (*ptr)
+            .as_ref()
+            .map(|s| s.stdscr)
+            .unwrap_or(core::ptr::null_mut())
     }
 }
 
@@ -556,9 +569,7 @@ pub fn doupdate() -> Result<()> {
         let total = (new_ref.lines * new_ref.cols) as usize;
 
         for i in 0..total {
-            if let (Some(new_cell), Some(cur_cell)) =
-                (new_ref.cells.get(i), cur_ref.cells.get(i))
-            {
+            if let (Some(new_cell), Some(cur_cell)) = (new_ref.cells.get(i), cur_ref.cells.get(i)) {
                 if new_cell.ch != cur_cell.ch || new_cell.attr != cur_cell.attr {
                     let row = i as i32 / new_ref.cols;
                     let col = i as i32 % new_ref.cols;

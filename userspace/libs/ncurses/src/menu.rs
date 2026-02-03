@@ -2,7 +2,7 @@
 //!
 //! -- IronGhost: Menu system - application menus
 
-use crate::{WINDOW, Result};
+use crate::{Result, WINDOW};
 
 pub struct Menu;
 pub struct Item;

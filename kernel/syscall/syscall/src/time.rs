@@ -185,12 +185,7 @@ pub fn block_deciseconds(deciseconds: u8) -> bool {
         arch::allow_kernel_preempt();
 
         unsafe {
-            core::arch::asm!(
-                "sti",
-                "hlt",
-                "cli",
-                options(nomem, nostack)
-            );
+            core::arch::asm!("sti", "hlt", "cli", options(nomem, nostack));
         }
 
         // If we get here and time hasn't expired, we were woken early (by data or signal)

@@ -6,13 +6,13 @@
 //! -- TorqueJax: Input driver - raw bytes in, decoded keycodes out
 //! -- InputShade: Escape sequence decoder - CSI to KEY_* translation
 
-use alloc::vec::Vec;
-use crate::{WINDOW, Result, Error};
+use crate::chtype;
 use crate::keys;
 use crate::output::waddch;
 use crate::screen;
-use crate::chtype;
-use vte::{Parser, Action};
+use crate::{Error, Result, WINDOW};
+use alloc::vec::Vec;
+use vte::{Action, Parser};
 
 /// Input state for escape sequence decoding
 /// -- InputShade: Stateful decoder - VTE parser persists across calls
@@ -91,10 +91,10 @@ pub fn wgetch(win: WINDOW) -> i32 {
 
         Action::Execute(b) => {
             match b {
-                0x0D => '\n' as i32,      // CR -> newline
-                0x0A => '\n' as i32,      // LF -> newline
+                0x0D => '\n' as i32, // CR -> newline
+                0x0A => '\n' as i32, // LF -> newline
                 0x08 => keys::KEY_BACKSPACE,
-                0x09 => '\t' as i32,      // Tab
+                0x09 => '\t' as i32, // Tab
                 0x7F => keys::KEY_BACKSPACE,
                 0x1B => {
                     // ESC received - try to read more for escape sequence
@@ -111,12 +111,15 @@ pub fn wgetch(win: WINDOW) -> i32 {
                                 // Parser needs more input - keep reading
                                 read_escape_sequence(state, keypad)
                             }
-                            Action::CsiDispatch { params, intermediates: _, final_char } => {
-                                map_csi_to_key(&params, final_char, keypad)
-                            }
-                            Action::EscDispatch { intermediates: _, final_char } => {
-                                map_esc_to_key(final_char)
-                            }
+                            Action::CsiDispatch {
+                                params,
+                                intermediates: _,
+                                final_char,
+                            } => map_csi_to_key(&params, final_char, keypad),
+                            Action::EscDispatch {
+                                intermediates: _,
+                                final_char,
+                            } => map_esc_to_key(final_char),
                             Action::Print(ch) => {
                                 // Alt+char
                                 // Push char to pending, return ESC
@@ -131,13 +134,16 @@ pub fn wgetch(win: WINDOW) -> i32 {
             }
         }
 
-        Action::CsiDispatch { params, intermediates: _, final_char } => {
-            map_csi_to_key(&params, final_char, keypad)
-        }
+        Action::CsiDispatch {
+            params,
+            intermediates: _,
+            final_char,
+        } => map_csi_to_key(&params, final_char, keypad),
 
-        Action::EscDispatch { intermediates: _, final_char } => {
-            map_esc_to_key(final_char)
-        }
+        Action::EscDispatch {
+            intermediates: _,
+            final_char,
+        } => map_esc_to_key(final_char),
 
         Action::None => {
             // Parser needs more input (mid-sequence)
@@ -177,10 +183,17 @@ fn read_escape_sequence(state: &mut InputState, keypad: bool) -> i32 {
 
         let action = state.parser.advance(byte[0]);
         match action {
-            Action::CsiDispatch { params, intermediates: _, final_char } => {
+            Action::CsiDispatch {
+                params,
+                intermediates: _,
+                final_char,
+            } => {
                 return map_csi_to_key(&params, final_char, keypad);
             }
-            Action::EscDispatch { intermediates: _, final_char } => {
+            Action::EscDispatch {
+                intermediates: _,
+                final_char,
+            } => {
                 return map_esc_to_key(final_char);
             }
             Action::Print(ch) => return ch as i32,
@@ -210,10 +223,10 @@ fn map_csi_to_key(params: &[i32], final_char: u8, keypad: bool) -> i32 {
             // CSI N ~ sequences
             let n = params.first().copied().unwrap_or(0);
             match n {
-                2 => keys::KEY_IC,     // Insert
-                3 => keys::KEY_DC,     // Delete
-                5 => keys::KEY_PPAGE,  // Page Up
-                6 => keys::KEY_NPAGE,  // Page Down
+                2 => keys::KEY_IC,    // Insert
+                3 => keys::KEY_DC,    // Delete
+                5 => keys::KEY_PPAGE, // Page Up
+                6 => keys::KEY_NPAGE, // Page Down
                 15 => keys::KEY_F5,
                 17 => keys::KEY_F6,
                 18 => keys::KEY_F7,
@@ -233,11 +246,11 @@ fn map_csi_to_key(params: &[i32], final_char: u8, keypad: bool) -> i32 {
 /// -- InputShade: SS3 decoder - xterm function keys and alt-screen arrows
 fn map_esc_to_key(final_char: u8) -> i32 {
     match final_char {
-        b'P' => keys::KEY_F1,      // SS3 P
-        b'Q' => keys::KEY_F2,      // SS3 Q
-        b'R' => keys::KEY_F3,      // SS3 R
-        b'S' => keys::KEY_F4,      // SS3 S
-        b'A' => keys::KEY_UP,      // SS3 A (application mode)
+        b'P' => keys::KEY_F1, // SS3 P
+        b'Q' => keys::KEY_F2, // SS3 Q
+        b'R' => keys::KEY_F3, // SS3 R
+        b'S' => keys::KEY_F4, // SS3 S
+        b'A' => keys::KEY_UP, // SS3 A (application mode)
         b'B' => keys::KEY_DOWN,
         b'C' => keys::KEY_RIGHT,
         b'D' => keys::KEY_LEFT,

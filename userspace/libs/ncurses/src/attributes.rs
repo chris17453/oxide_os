@@ -2,7 +2,7 @@
 //!
 //! -- GraveShift: Attribute system - style your output
 
-use crate::{WINDOW, Result, Error, attrs};
+use crate::{Error, Result, WINDOW, attrs};
 
 pub fn attron(attr: u32) -> Result<()> {
     wattron(crate::screen::stdscr(), attr)

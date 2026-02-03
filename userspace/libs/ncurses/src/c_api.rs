@@ -2,8 +2,8 @@
 //!
 //! -- NeonRoot: C ABI - bridge to legacy applications
 
-use core::ffi::c_int;
 use crate::WINDOW;
+use core::ffi::c_int;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn nc_initscr() -> WINDOW {

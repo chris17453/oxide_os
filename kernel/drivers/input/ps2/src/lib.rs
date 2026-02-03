@@ -245,7 +245,7 @@ impl Ps2Keyboard {
                         self.numlock.store(new_state, Ordering::SeqCst);
                         let mut leds = self.leds.load(Ordering::SeqCst);
                         if new_state {
-                            leds |= 0x02;  // Num Lock LED bit
+                            leds |= 0x02; // Num Lock LED bit
                         } else {
                             leds &= !0x02;
                         }
@@ -265,7 +265,7 @@ impl Ps2Keyboard {
                         self.capslock.store(new_state, Ordering::SeqCst);
                         let mut leds = self.leds.load(Ordering::SeqCst);
                         if new_state {
-                            leds |= 0x04;  // Caps Lock LED bit (bit 2)
+                            leds |= 0x04; // Caps Lock LED bit (bit 2)
                         } else {
                             leds &= !0x04;
                         }
@@ -288,7 +288,7 @@ impl Ps2Keyboard {
                         self.scrolllock.store(new_state, Ordering::SeqCst);
                         let mut leds = self.leds.load(Ordering::SeqCst);
                         if new_state {
-                            leds |= 0x01;  // Scroll Lock LED bit (bit 0)
+                            leds |= 0x01; // Scroll Lock LED bit (bit 0)
                         } else {
                             leds &= !0x01;
                         }
@@ -307,7 +307,12 @@ impl Ps2Keyboard {
             } else {
                 KeyValue::Released
             };
-            debug_input!("[INPUT] PS/2 KB dev{} keycode={} state={:?}", self.device_id(), keycode, value);
+            debug_input!(
+                "[INPUT] PS/2 KB dev{} keycode={} state={:?}",
+                self.device_id(),
+                keycode,
+                value
+            );
             input::report_key(self.device_id() as usize, keycode, value);
             input::report_sync(self.device_id() as usize);
 
@@ -340,7 +345,7 @@ impl Ps2Keyboard {
                                 push_to_console(b"\n\r*** CTRL+K PRESSED ***\n\r");
                             }
                             Some(0x0B)
-                        },
+                        }
                         input::KEY_L => Some(0x0C),
                         input::KEY_M => Some(0x0D),
                         input::KEY_N => Some(0x0E),
@@ -456,7 +461,7 @@ impl Ps2Keyboard {
                             push_to_console(b"\n\r*** INSERT KEY PRESSED ***\n\r");
                         }
                         Some(b"\x1b[2~")
-                    },
+                    }
                     input::KEY_DELETE => Some(b"\x1b[3~"),
                     input::KEY_PAGEUP => Some(b"\x1b[5~"),
                     input::KEY_PAGEDOWN => Some(b"\x1b[6~"),
@@ -487,7 +492,9 @@ impl Ps2Keyboard {
                 // - Caps + Shift + 'a' = 'a' (they cancel)
                 // - Caps + '1' = '1' (NOT '!', Caps Lock ignores non-letters)
                 let capslock = self.capslock.load(Ordering::SeqCst);
-                if let Some(ch) = input::keymap::keycode_to_char_current(keycode, shift, altgr, capslock) {
+                if let Some(ch) =
+                    input::keymap::keycode_to_char_current(keycode, shift, altgr, capslock)
+                {
                     let mut buf = [0u8; 4];
                     let s = ch.encode_utf8(&mut buf);
                     push_to_console(s.as_bytes());

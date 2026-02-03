@@ -36,8 +36,8 @@ impl WaitOptions {
 impl From<i32> for WaitOptions {
     fn from(flags: i32) -> Self {
         Self {
-            nohang: flags & 1 != 0,   // WNOHANG = 1
-            untraced: flags & 2 != 0, // WUNTRACED = 2
+            nohang: flags & 1 != 0,    // WNOHANG = 1
+            untraced: flags & 2 != 0,  // WUNTRACED = 2
             continued: flags & 8 != 0, // WCONTINUED = 8
         }
     }

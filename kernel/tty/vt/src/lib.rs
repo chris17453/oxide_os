@@ -317,7 +317,11 @@ impl VtManager {
             if drained_count > 0 {
                 use core::fmt::Write;
                 let mut msg = alloc::string::String::new();
-                let _ = write!(msg, "[VT] Drained {} bytes from lock-free ring\n", drained_count);
+                let _ = write!(
+                    msg,
+                    "[VT] Drained {} bytes from lock-free ring\n",
+                    drained_count
+                );
                 dbg_serial(&msg);
             }
 

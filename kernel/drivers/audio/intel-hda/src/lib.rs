@@ -19,8 +19,10 @@ pub mod stream;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
-use audio::{AudioDevice, AudioDeviceInfo, AudioError, AudioResult, RingBuffer, SampleFormat,
-            StreamConfig, StreamState};
+use audio::{
+    AudioDevice, AudioDeviceInfo, AudioError, AudioResult, RingBuffer, SampleFormat, StreamConfig,
+    StreamState,
+};
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use pci::PciDevice;
 use spin::Mutex;
@@ -293,7 +295,12 @@ impl HdaController {
     ///
     /// Command format: (codec_addr << 28) | (nid << 20) | verb
     /// — EchoFrame: call-and-response, the oldest protocol in music
-    unsafe fn send_command(&mut self, codec_addr: u8, nid: u8, verb: u32) -> Result<u32, &'static str> {
+    unsafe fn send_command(
+        &mut self,
+        codec_addr: u8,
+        nid: u8,
+        verb: u32,
+    ) -> Result<u32, &'static str> {
         let bar0 = self.bar0;
 
         // Build the full command word
@@ -317,9 +324,8 @@ impl HdaController {
             if rirb_wp_now != rirb_wp_before {
                 // Response available — read from RIRB at the new write pointer
                 // Safety: rirb is valid, rirb_wp_now is within 256-entry buffer
-                let rirb_entry = unsafe {
-                    core::ptr::read_volatile(self.rirb.add(rirb_wp_now as usize))
-                };
+                let rirb_entry =
+                    unsafe { core::ptr::read_volatile(self.rirb.add(rirb_wp_now as usize)) };
                 let response = rirb_entry as u32;
 
                 // Clear RIRB interrupt status
@@ -352,7 +358,8 @@ impl HdaController {
             // Safety: send_command requires valid CORB/RIRB which are initialized
             let sub_nodes = unsafe {
                 self.send_command(
-                    codec_addr, 0,
+                    codec_addr,
+                    0,
                     codec::GET_PARAM | codec::PARAM_SUB_NODE_COUNT,
                 )?
             };
@@ -366,7 +373,8 @@ impl HdaController {
 
                 let fg_type = unsafe {
                     self.send_command(
-                        codec_addr, fg_nid,
+                        codec_addr,
+                        fg_nid,
                         codec::GET_PARAM | codec::PARAM_FN_GROUP_TYPE,
                     )?
                 };
@@ -377,13 +385,18 @@ impl HdaController {
 
                 // Power on the function group
                 unsafe {
-                    self.send_command(codec_addr, fg_nid, codec::SET_POWER_STATE | codec::POWER_D0)?;
+                    self.send_command(
+                        codec_addr,
+                        fg_nid,
+                        codec::SET_POWER_STATE | codec::POWER_D0,
+                    )?;
                 }
 
                 // Get widgets in this function group
                 let widget_nodes = unsafe {
                     self.send_command(
-                        codec_addr, fg_nid,
+                        codec_addr,
+                        fg_nid,
                         codec::GET_PARAM | codec::PARAM_SUB_NODE_COUNT,
                     )?
                 };
@@ -396,7 +409,8 @@ impl HdaController {
                     let nid = w_start + w_offset;
                     let caps = unsafe {
                         self.send_command(
-                            codec_addr, nid,
+                            codec_addr,
+                            nid,
                             codec::GET_PARAM | codec::PARAM_AUDIO_CAPS,
                         )?
                     };
@@ -404,10 +418,7 @@ impl HdaController {
 
                     if wtype == codec::WIDGET_PIN_COMPLEX {
                         let config = unsafe {
-                            self.send_command(
-                                codec_addr, nid,
-                                codec::GET_CONFIG_DEFAULT,
-                            )?
+                            self.send_command(codec_addr, nid, codec::GET_CONFIG_DEFAULT)?
                         };
                         let dev = codec::pin_default_device(config);
                         let conn = codec::pin_connectivity(config);
@@ -461,7 +472,8 @@ impl HdaController {
         // Get pin's connection list
         let conn_len_raw = unsafe {
             self.send_command(
-                codec_addr, pin_nid,
+                codec_addr,
+                pin_nid,
                 codec::GET_PARAM | codec::PARAM_CONN_LIST_LEN,
             )?
         };
@@ -472,12 +484,7 @@ impl HdaController {
         }
 
         // Read connection list entries (up to 4 per verb response, short form)
-        let conn_entries = unsafe {
-            self.send_command(
-                codec_addr, pin_nid,
-                codec::GET_CONN_LIST,
-            )?
-        };
+        let conn_entries = unsafe { self.send_command(codec_addr, pin_nid, codec::GET_CONN_LIST)? };
 
         // Check each connected node
         for i in 0..conn_len.min(4) {
@@ -489,7 +496,8 @@ impl HdaController {
 
             let caps = unsafe {
                 self.send_command(
-                    codec_addr, connected_nid,
+                    codec_addr,
+                    connected_nid,
                     codec::GET_PARAM | codec::PARAM_AUDIO_CAPS,
                 )?
             };
@@ -504,17 +512,15 @@ impl HdaController {
             if wtype == codec::WIDGET_AUDIO_MIXER || wtype == codec::WIDGET_AUDIO_SELECTOR {
                 let sub_conn_len = unsafe {
                     self.send_command(
-                        codec_addr, connected_nid,
+                        codec_addr,
+                        connected_nid,
                         codec::GET_PARAM | codec::PARAM_CONN_LIST_LEN,
                     )?
                 };
                 let sub_len = (sub_conn_len & 0x7F) as u8;
                 if sub_len > 0 {
                     let sub_entries = unsafe {
-                        self.send_command(
-                            codec_addr, connected_nid,
-                            codec::GET_CONN_LIST,
-                        )?
+                        self.send_command(codec_addr, connected_nid, codec::GET_CONN_LIST)?
                     };
                     for j in 0..sub_len.min(4) {
                         let sub_nid = ((sub_entries >> (j * 8)) & 0xFF) as u8;
@@ -523,7 +529,8 @@ impl HdaController {
                         }
                         let sub_caps = unsafe {
                             self.send_command(
-                                codec_addr, sub_nid,
+                                codec_addr,
+                                sub_nid,
                                 codec::GET_PARAM | codec::PARAM_AUDIO_CAPS,
                             )?
                         };
@@ -549,15 +556,28 @@ impl HdaController {
         // Safety: send_command requires valid CORB/RIRB, guaranteed by prior init
 
         // Power on DAC
-        unsafe { self.send_command(codec_addr, dac_nid, codec::SET_POWER_STATE | codec::POWER_D0)? };
+        unsafe {
+            self.send_command(
+                codec_addr,
+                dac_nid,
+                codec::SET_POWER_STATE | codec::POWER_D0,
+            )?
+        };
 
         // Power on Pin
-        unsafe { self.send_command(codec_addr, pin_nid, codec::SET_POWER_STATE | codec::POWER_D0)? };
+        unsafe {
+            self.send_command(
+                codec_addr,
+                pin_nid,
+                codec::SET_POWER_STATE | codec::POWER_D0,
+            )?
+        };
 
         // Enable pin as output
         unsafe {
             self.send_command(
-                codec_addr, pin_nid,
+                codec_addr,
+                pin_nid,
                 codec::SET_PIN_CTL | codec::PIN_CTL_OUT_EN as u32,
             )?;
         }
@@ -569,7 +589,8 @@ impl HdaController {
         // Set DAC converter format: 48kHz, 16-bit, stereo
         unsafe {
             self.send_command(
-                codec_addr, dac_nid,
+                codec_addr,
+                dac_nid,
                 codec::SET_CONV_FMT | regs::FMT_48KHZ_16BIT_STEREO as u32,
             )?;
         }
@@ -594,7 +615,8 @@ impl HdaController {
         let bdl_layout = alloc::alloc::Layout::from_size_align(
             stream::NUM_DMA_BUFS * core::mem::size_of::<BdlEntry>(),
             128,
-        ).map_err(|_| "HDA: BDL layout error")?;
+        )
+        .map_err(|_| "HDA: BDL layout error")?;
         // Safety: layout is valid (non-zero size, power-of-two alignment)
         let bdl_ptr = unsafe { alloc::alloc::alloc_zeroed(bdl_layout) };
         if bdl_ptr.is_null() {
@@ -774,7 +796,8 @@ impl AudioDevice for IntelHda {
         let mut ctrl = self.controller.lock();
         if !ctrl.stream_configured {
             unsafe {
-                ctrl.setup_dma_and_stream().map_err(|_| AudioError::IoError)?;
+                ctrl.setup_dma_and_stream()
+                    .map_err(|_| AudioError::IoError)?;
             }
         }
         *self.state.lock() = StreamState::Prepared;

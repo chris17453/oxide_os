@@ -7,9 +7,9 @@
 //! Buffer is auto-flushed on newline or when full.
 
 extern crate alloc;
-use alloc::vec::Vec;
 use crate::fcntl::*;
 use crate::syscall;
+use alloc::vec::Vec;
 use core::fmt::{self, Write};
 use core::sync::atomic::{AtomicBool, Ordering};
 

@@ -438,12 +438,10 @@ pub fn sys_brk(addr: u64) -> i64 {
 
         let allocator = mm();
 
-        match m.address_space.allocate_pages(
-            VirtAddr::new(old_break),
-            num_pages,
-            flags,
-            allocator,
-        ) {
+        match m
+            .address_space
+            .allocate_pages(VirtAddr::new(old_break), num_pages, flags, allocator)
+        {
             Ok(()) => {}
             Err(_) => return errno::ENOMEM,
         }

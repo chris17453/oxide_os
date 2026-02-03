@@ -43,13 +43,13 @@ use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-pub mod capabilities;
-pub mod database;
-pub mod parser;
-pub mod expand;
 /// ── NeonRoot: C API only built for std targets -- libc provides wrappers in no_std ──
 #[cfg(feature = "std")]
 pub mod c_api;
+pub mod capabilities;
+pub mod database;
+pub mod expand;
+pub mod parser;
 
 #[cfg(feature = "terminfo")]
 pub mod terminfo;
@@ -154,4 +154,3 @@ pub enum Error {
 
 /// Result type for termcap operations
 pub type Result<T> = core::result::Result<T, Error>;
-

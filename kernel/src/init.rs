@@ -10,8 +10,8 @@ use alloc::vec::Vec;
 use core::fmt::Write;
 use core::ptr::addr_of_mut;
 
-use arch_traits::Arch;
 use crate::arch;
+use arch_traits::Arch;
 use block::{BlockDevice, BlockDeviceInfo, BlockError, BlockResult};
 use boot_proto::{BootInfo, MemoryType as BootMemoryType};
 use devfs::DevFs;
@@ -161,23 +161,77 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let mut first = true;
 
     #[cfg(feature = "debug-syscall")]
-    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-syscall"); first = false; }
+    {
+        if !first {
+            let _ = write!(writer, ", ");
+        }
+        let _ = write!(writer, "debug-syscall");
+        first = false;
+    }
     #[cfg(feature = "debug-fork")]
-    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-fork"); first = false; }
+    {
+        if !first {
+            let _ = write!(writer, ", ");
+        }
+        let _ = write!(writer, "debug-fork");
+        first = false;
+    }
     #[cfg(feature = "debug-cow")]
-    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-cow"); first = false; }
+    {
+        if !first {
+            let _ = write!(writer, ", ");
+        }
+        let _ = write!(writer, "debug-cow");
+        first = false;
+    }
     #[cfg(feature = "debug-proc")]
-    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-proc"); first = false; }
+    {
+        if !first {
+            let _ = write!(writer, ", ");
+        }
+        let _ = write!(writer, "debug-proc");
+        first = false;
+    }
     #[cfg(feature = "debug-sched")]
-    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-sched"); first = false; }
+    {
+        if !first {
+            let _ = write!(writer, ", ");
+        }
+        let _ = write!(writer, "debug-sched");
+        first = false;
+    }
     #[cfg(feature = "debug-mouse")]
-    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-mouse"); first = false; }
+    {
+        if !first {
+            let _ = write!(writer, ", ");
+        }
+        let _ = write!(writer, "debug-mouse");
+        first = false;
+    }
     #[cfg(feature = "debug-input")]
-    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-input"); first = false; }
+    {
+        if !first {
+            let _ = write!(writer, ", ");
+        }
+        let _ = write!(writer, "debug-input");
+        first = false;
+    }
     #[cfg(feature = "debug-lock")]
-    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-lock"); first = false; }
+    {
+        if !first {
+            let _ = write!(writer, ", ");
+        }
+        let _ = write!(writer, "debug-lock");
+        first = false;
+    }
     #[cfg(feature = "debug-console")]
-    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-console"); first = false; }
+    {
+        if !first {
+            let _ = write!(writer, ", ");
+        }
+        let _ = write!(writer, "debug-console");
+        first = false;
+    }
 
     if first {
         let _ = write!(writer, "none");
@@ -507,8 +561,9 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                 }); acpi::madt::MAX_MADT_CPUS];
 
                 // Safety: MADT is mapped through phys_map_base
-                let num_cpus =
-                    unsafe { acpi::parse_madt(boot_info.phys_map_base, madt_phys, &mut madt_entries) };
+                let num_cpus = unsafe {
+                    acpi::parse_madt(boot_info.phys_map_base, madt_phys, &mut madt_entries)
+                };
                 let _ = writeln!(writer, "[ACPI] MADT reports {} usable CPU(s)", num_cpus);
 
                 // Register each AP (skip BSP by matching APIC ID)
@@ -570,7 +625,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Boot Application Processors via INIT-SIPI-SIPI — GraveShift: igniting each core
     if smp::cpu::cpu_count() > 1 {
         let total_aps = smp::cpu::cpu_count() - 1;
-        let _ = writeln!(writer, "[SMP] Booting {} Application Processor(s)...", total_aps);
+        let _ = writeln!(
+            writer,
+            "[SMP] Booting {} Application Processor(s)...",
+            total_aps
+        );
 
         // Get CR3 for APs to use (current page table)
         let cr3 = <arch::X86_64 as arch_traits::TlbControl>::read_root();
@@ -596,11 +655,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                 );
             }
 
-            let _ = writeln!(
-                writer,
-                "[SMP] Sending INIT-SIPI-SIPI to CPU {}...",
-                cpu_id
-            );
+            let _ = writeln!(writer, "[SMP] Sending INIT-SIPI-SIPI to CPU {}...", cpu_id);
             match smp::cpu::boot_ap(cpu_id, arch::ap_boot::TRAMPOLINE_PAGE) {
                 Ok(()) => {
                     let _ = writeln!(writer, "[SMP] CPU {} is now online!", cpu_id);
@@ -1091,8 +1146,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         let _ = writeln!(
             writer,
             "[SND] Intel HDA found at {:02x}:{:02x}.{} (PCI {:04x}:{:04x})",
-            pci_dev.address.bus, pci_dev.address.device, pci_dev.address.function,
-            pci_dev.vendor_id, pci_dev.device_id
+            pci_dev.address.bus,
+            pci_dev.address.device,
+            pci_dev.address.function,
+            pci_dev.vendor_id,
+            pci_dev.device_id
         );
         match intel_hda::init_from_pci(pci_dev) {
             Ok(()) => {
@@ -1905,10 +1963,14 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // CRITICAL: No writeln! after start_timer — the timer fires every 10ms and
     // terminal_tick/scheduler_tick can run. Any locked serial output here risks
     // deadlock if a timer tick fires while we hold COM1. Lock-free writes only.
-    unsafe { arch::serial::write_str_unsafe("[INFO] Starting APIC timer at 100Hz...\n"); }
+    unsafe {
+        arch::serial::write_str_unsafe("[INFO] Starting APIC timer at 100Hz...\n");
+    }
     arch::start_timer(100);
     smp_init::signal_ap_ready();
-    unsafe { arch::serial::write_str_unsafe("[SMP] AP timer gate released — all CPUs active\n"); }
+    unsafe {
+        arch::serial::write_str_unsafe("[SMP] AP timer gate released — all CPUs active\n");
+    }
 
     // NeonRoot: Straight into usermode — no more locks, no more delays.
     // enter_usermode does cli immediately, so the timer won't fire during
@@ -1990,10 +2052,7 @@ fn kmsg_get_proc_name(pid: u32, buf: &mut [u8]) -> usize {
 /// Get current process UID/GID for the os_core credentials bridge
 /// — EmberLock: identity extraction for subsystem consumption
 fn current_process_uid_gid() -> (u32, u32) {
-    sched::with_current_meta(|meta| {
-        (meta.credentials.uid, meta.credentials.gid)
-    })
-    .unwrap_or((0, 0))
+    sched::with_current_meta(|meta| (meta.credentials.uid, meta.credentials.gid)).unwrap_or((0, 0))
 }
 
 /// Signal process group callback for PTYs

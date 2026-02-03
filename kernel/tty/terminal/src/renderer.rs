@@ -4,12 +4,12 @@
 
 extern crate alloc;
 
-use vte::ScreenBuffer;
-use vte::{Cell, CellAttrs, CellFlags, Cursor, CursorShape};
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use fb::{Color, Font, Framebuffer, PSF2_FONT};
+use vte::ScreenBuffer;
+use vte::{Cell, CellAttrs, CellFlags, Cursor, CursorShape};
 
 /// Dirty region tracking
 pub struct DirtyRegion {
@@ -248,7 +248,7 @@ impl Renderer {
         for y in 0..glyph.height {
             // Calculate slant offset: more slant at top, less at bottom
             let slant_offset = if glyph.height > 0 {
-                ((glyph.height - y - 1) * 2) / glyph.height  // 0-2 pixel shift
+                ((glyph.height - y - 1) * 2) / glyph.height // 0-2 pixel shift
             } else {
                 0
             };

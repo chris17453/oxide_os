@@ -43,7 +43,8 @@ fn strip_ansi_escapes(data: &[u8]) -> alloc::vec::Vec<u8> {
     let mut i = 0;
 
     while i < data.len() {
-        if i + 1 < data.len() && data[i] == 0x1B {  // ESC
+        if i + 1 < data.len() && data[i] == 0x1B {
+            // ESC
             // Check for CSI sequence: ESC [
             if data[i + 1] == b'[' {
                 // Skip until we find the end of CSI sequence (letter A-Z, a-z)
@@ -123,8 +124,17 @@ pub fn terminal_tick() {
             #[cfg(feature = "debug-input")]
             {
                 let mut w = serial::SerialWriter;
-                let _ = write!(w, "[KBD-IRQ] scancode=0x{:02x} -> byte=0x{:02x} '{}'\n",
-                    scancode, byte, if byte.is_ascii_graphic() { byte as char } else { '.' });
+                let _ = write!(
+                    w,
+                    "[KBD-IRQ] scancode=0x{:02x} -> byte=0x{:02x} '{}'\n",
+                    scancode,
+                    byte,
+                    if byte.is_ascii_graphic() {
+                        byte as char
+                    } else {
+                        '.'
+                    }
+                );
             }
             if let Some(manager) = vt::get_manager() {
                 manager.push_input(byte);

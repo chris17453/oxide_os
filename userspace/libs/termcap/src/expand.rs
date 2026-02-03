@@ -5,9 +5,9 @@
 //!
 //! -- GraveShift: Parameter expansion - translate intent to escape sequences
 
+use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use alloc::format;
 
 /// Expand a capability string with parameters (terminfo style)
 ///
@@ -28,7 +28,7 @@ pub fn tparm(template: &str, params: &[i32]) -> Result<String, &'static str> {
     let mut params = params.to_vec();
     let chars: Vec<char> = template.chars().collect();
     let mut i = 0;
-    
+
     while i < chars.len() {
         if chars[i] == '%' && i + 1 < chars.len() {
             i += 1;
@@ -43,7 +43,7 @@ pub fn tparm(template: &str, params: &[i32]) -> Result<String, &'static str> {
                         stack.push(0);
                     }
                 }
-                
+
                 // Increment first two parameters (1-based indexing)
                 'i' => {
                     if params.len() >= 1 {
@@ -53,14 +53,14 @@ pub fn tparm(template: &str, params: &[i32]) -> Result<String, &'static str> {
                         params[1] += 1;
                     }
                 }
-                
+
                 // Print as decimal
                 'd' => {
                     if let Some(val) = stack.pop() {
                         result.push_str(&val.to_string());
                     }
                 }
-                
+
                 // Print with width
                 '0'..='9' => {
                     let mut width = (chars[i] as u8 - b'0') as usize;
@@ -76,7 +76,7 @@ pub fn tparm(template: &str, params: &[i32]) -> Result<String, &'static str> {
                     }
                     i -= 1;
                 }
-                
+
                 // Character output
                 'c' => {
                     if let Some(val) = stack.pop() {
@@ -85,7 +85,7 @@ pub fn tparm(template: &str, params: &[i32]) -> Result<String, &'static str> {
                         }
                     }
                 }
-                
+
                 // Push constant
                 '{' => {
                     i += 1;
@@ -103,7 +103,7 @@ pub fn tparm(template: &str, params: &[i32]) -> Result<String, &'static str> {
                         stack.push(if neg { -num } else { num });
                     }
                 }
-                
+
                 // Arithmetic operators
                 '+' => {
                     if let (Some(b), Some(a)) = (stack.pop(), stack.pop()) {
@@ -138,7 +138,7 @@ pub fn tparm(template: &str, params: &[i32]) -> Result<String, &'static str> {
                         }
                     }
                 }
-                
+
                 // Bitwise operators
                 '&' => {
                     if let (Some(b), Some(a)) = (stack.pop(), stack.pop()) {
@@ -165,7 +165,7 @@ pub fn tparm(template: &str, params: &[i32]) -> Result<String, &'static str> {
                         stack.push(if a == 0 { 1 } else { 0 });
                     }
                 }
-                
+
                 // Comparison operators
                 '=' => {
                     if let (Some(b), Some(a)) = (stack.pop(), stack.pop()) {
@@ -182,10 +182,10 @@ pub fn tparm(template: &str, params: &[i32]) -> Result<String, &'static str> {
                         stack.push(if a < b { 1 } else { 0 });
                     }
                 }
-                
+
                 // Literal %
                 '%' => result.push('%'),
-                
+
                 // Conditional (simplified - would need full parser for complex cases)
                 '?' => {
                     // Skip conditionals for now - simplified implementation
@@ -193,7 +193,7 @@ pub fn tparm(template: &str, params: &[i32]) -> Result<String, &'static str> {
                 't' | 'e' | ';' => {
                     // Skip conditional markers
                 }
-                
+
                 _ => {
                     // Unknown escape - output literally
                     result.push('%');
@@ -206,7 +206,7 @@ pub fn tparm(template: &str, params: &[i32]) -> Result<String, &'static str> {
             i += 1;
         }
     }
-    
+
     Ok(result)
 }
 
@@ -229,7 +229,7 @@ pub fn parse_padding(cap: &str) -> (String, u32) {
     let mut delay_ms = 0u32;
     let chars: Vec<char> = cap.chars().collect();
     let mut i = 0;
-    
+
     // Check for padding at start: digits followed by optional '*' or '/'
     if i < chars.len() && chars[i].is_ascii_digit() {
         let mut delay = 0;
@@ -238,19 +238,18 @@ pub fn parse_padding(cap: &str) -> (String, u32) {
             i += 1;
         }
         delay_ms = delay;
-        
+
         // Skip optional multiplier or mandatory indicator
         if i < chars.len() && (chars[i] == '*' || chars[i] == '/') {
             i += 1;
         }
     }
-    
+
     // Rest is the actual escape sequence
     while i < chars.len() {
         result.push(chars[i]);
         i += 1;
     }
-    
+
     (result, delay_ms)
 }
-

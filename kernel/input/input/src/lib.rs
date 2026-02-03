@@ -47,9 +47,8 @@ const MAX_DEVICES: usize = 16;
 /// 🔥 NOW SUPPORTS MULTIPLE READERS (Priority #14 Fix) 🔥
 /// Before: Only one PID per device → second reader never wakes up
 /// After: Vec<u32> per device → all readers wake on input
-static BLOCKED_READERS: Mutex<[Vec<u32>; MAX_DEVICES]> = Mutex::new([
-    const { Vec::new() }; MAX_DEVICES
-]);
+static BLOCKED_READERS: Mutex<[Vec<u32>; MAX_DEVICES]> =
+    Mutex::new([const { Vec::new() }; MAX_DEVICES]);
 
 /// Callback type for waking a blocked task by PID
 pub type WakeUpFn = fn(u32);
@@ -192,7 +191,13 @@ pub fn devices() -> Vec<Arc<InputDeviceHandle>> {
 pub fn report_event(device_id: usize, event: InputEvent) {
     if let Some(handle) = get_device(device_id) {
         handle.push_event(event);
-        debug_input!("[INPUT] dev{} type={} code={} val={}", device_id, event.type_, event.code, event.value);
+        debug_input!(
+            "[INPUT] dev{} type={} code={} val={}",
+            device_id,
+            event.type_,
+            event.code,
+            event.value
+        );
         // Wake up any task blocked reading from this device
         wake_blocked_reader(device_id);
     }

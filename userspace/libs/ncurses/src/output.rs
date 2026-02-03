@@ -4,7 +4,7 @@
 //!
 //! -- GraveShift: Output pipeline - render everything to screen
 
-use crate::{WINDOW, chtype, attrs, Result, Error};
+use crate::{Error, Result, WINDOW, attrs, chtype};
 use alloc::format;
 
 /// Add a character to standard screen
@@ -17,12 +17,12 @@ pub fn waddch(win: WINDOW, ch: chtype) -> Result<()> {
     if win.is_null() {
         return Err(Error::Err);
     }
-    
+
     unsafe {
         let y = (*win).cur_y;
         let x = (*win).cur_x;
         (*win).set_cell(y, x, ch)?;
-        
+
         // Advance cursor
         (*win).cur_x += 1;
         if (*win).cur_x >= (*win).cols {
@@ -38,7 +38,7 @@ pub fn waddch(win: WINDOW, ch: chtype) -> Result<()> {
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -76,11 +76,11 @@ pub fn mvwprintw(win: WINDOW, y: i32, x: i32, s: &str) -> Result<()> {
     if win.is_null() {
         return Err(Error::Err);
     }
-    
+
     unsafe {
         (*win).move_cursor(y, x)?;
     }
-    
+
     waddstr(win, s)
 }
 
@@ -94,11 +94,11 @@ pub fn mvwaddch(win: WINDOW, y: i32, x: i32, ch: chtype) -> Result<()> {
     if win.is_null() {
         return Err(Error::Err);
     }
-    
+
     unsafe {
         (*win).move_cursor(y, x)?;
     }
-    
+
     waddch(win, ch)
 }
 
@@ -112,10 +112,8 @@ pub fn wmove(win: WINDOW, y: i32, x: i32) -> Result<()> {
     if win.is_null() {
         return Err(Error::Err);
     }
-    
-    unsafe {
-        (*win).move_cursor(y, x)
-    }
+
+    unsafe { (*win).move_cursor(y, x) }
 }
 
 /// Clear screen
@@ -128,11 +126,11 @@ pub fn wclear(win: WINDOW) -> Result<()> {
     if win.is_null() {
         return Err(Error::Err);
     }
-    
+
     unsafe {
         (*win).clear();
     }
-    
+
     Ok(())
 }
 
@@ -146,11 +144,11 @@ pub fn werase(win: WINDOW) -> Result<()> {
     if win.is_null() {
         return Err(Error::Err);
     }
-    
+
     unsafe {
         (*win).erase();
     }
-    
+
     Ok(())
 }
 
@@ -164,11 +162,11 @@ pub fn wclrtoeol(win: WINDOW) -> Result<()> {
     if win.is_null() {
         return Err(Error::Err);
     }
-    
+
     unsafe {
         (*win).clrtoeol();
     }
-    
+
     Ok(())
 }
 
@@ -182,46 +180,55 @@ pub fn wclrtobot(win: WINDOW) -> Result<()> {
     if win.is_null() {
         return Err(Error::Err);
     }
-    
+
     unsafe {
         (*win).clrtobot();
     }
-    
+
     Ok(())
 }
 
 /// Draw a box around window
-pub fn border(win: WINDOW, ls: chtype, rs: chtype, ts: chtype, bs: chtype,
-              tl: chtype, tr: chtype, bl: chtype, br: chtype) -> Result<()> {
+pub fn border(
+    win: WINDOW,
+    ls: chtype,
+    rs: chtype,
+    ts: chtype,
+    bs: chtype,
+    tl: chtype,
+    tr: chtype,
+    bl: chtype,
+    br: chtype,
+) -> Result<()> {
     if win.is_null() {
         return Err(Error::Err);
     }
-    
+
     unsafe {
         let h = (*win).lines;
         let w = (*win).cols;
-        
+
         // Top border
         (*win).set_cell(0, 0, tl)?;
-        for x in 1..(w-1) {
+        for x in 1..(w - 1) {
             (*win).set_cell(0, x, ts)?;
         }
-        (*win).set_cell(0, w-1, tr)?;
-        
+        (*win).set_cell(0, w - 1, tr)?;
+
         // Sides
-        for y in 1..(h-1) {
+        for y in 1..(h - 1) {
             (*win).set_cell(y, 0, ls)?;
-            (*win).set_cell(y, w-1, rs)?;
+            (*win).set_cell(y, w - 1, rs)?;
         }
-        
+
         // Bottom border
-        (*win).set_cell(h-1, 0, bl)?;
-        for x in 1..(w-1) {
-            (*win).set_cell(h-1, x, bs)?;
+        (*win).set_cell(h - 1, 0, bl)?;
+        for x in 1..(w - 1) {
+            (*win).set_cell(h - 1, x, bs)?;
         }
-        (*win).set_cell(h-1, w-1, br)?;
+        (*win).set_cell(h - 1, w - 1, br)?;
     }
-    
+
     Ok(())
 }
 

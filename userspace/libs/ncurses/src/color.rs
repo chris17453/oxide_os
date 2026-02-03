@@ -2,7 +2,7 @@
 //!
 //! -- BlackLatch: Color system - paint the terminal
 
-use crate::{Result, Error};
+use crate::{Error, Result};
 use alloc::vec::Vec;
 
 #[derive(Debug, Clone, Copy)]

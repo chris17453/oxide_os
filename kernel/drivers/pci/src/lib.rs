@@ -44,9 +44,9 @@ pub mod virtio_device {
 /// Base formula: 0x1040 + device_type
 /// — TorqueJax: the silicon never lies
 pub mod virtio_modern {
-    pub const NET: u16 = 0x1041;   // Network card (type 1)
+    pub const NET: u16 = 0x1041; // Network card (type 1)
     pub const BLOCK: u16 = 0x1042; // Block device (type 2)
-    pub const GPU: u16 = 0x1050;   // GPU device (type 16)
+    pub const GPU: u16 = 0x1050; // GPU device (type 16)
     pub const SOUND: u16 = 0x1059; // Sound device (type 25)
 }
 
@@ -589,25 +589,25 @@ pub fn resolve_cap_addr(dev: &PciDevice, cap: &VirtioPciCap) -> Option<usize> {
 ///
 /// All offsets relative to the common config BAR region.
 pub mod virtio_pci_common {
-    pub const DEVICE_FEATURE_SELECT: usize = 0x00;   // u32
-    pub const DEVICE_FEATURE: usize = 0x04;           // u32
-    pub const DRIVER_FEATURE_SELECT: usize = 0x08;    // u32
-    pub const DRIVER_FEATURE: usize = 0x0C;           // u32
-    pub const MSIX_CONFIG: usize = 0x10;              // u16
-    pub const NUM_QUEUES: usize = 0x12;               // u16
-    pub const DEVICE_STATUS: usize = 0x14;            // u8
-    pub const CONFIG_GENERATION: usize = 0x15;        // u8
-    pub const QUEUE_SELECT: usize = 0x16;             // u16
-    pub const QUEUE_SIZE: usize = 0x18;               // u16
-    pub const QUEUE_MSIX_VECTOR: usize = 0x1A;        // u16
-    pub const QUEUE_ENABLE: usize = 0x1C;             // u16
-    pub const QUEUE_NOTIFY_OFF: usize = 0x1E;         // u16
-    pub const QUEUE_DESC_LO: usize = 0x20;            // u32
-    pub const QUEUE_DESC_HI: usize = 0x24;            // u32
-    pub const QUEUE_AVAIL_LO: usize = 0x28;           // u32
-    pub const QUEUE_AVAIL_HI: usize = 0x2C;           // u32
-    pub const QUEUE_USED_LO: usize = 0x30;            // u32
-    pub const QUEUE_USED_HI: usize = 0x34;            // u32
+    pub const DEVICE_FEATURE_SELECT: usize = 0x00; // u32
+    pub const DEVICE_FEATURE: usize = 0x04; // u32
+    pub const DRIVER_FEATURE_SELECT: usize = 0x08; // u32
+    pub const DRIVER_FEATURE: usize = 0x0C; // u32
+    pub const MSIX_CONFIG: usize = 0x10; // u16
+    pub const NUM_QUEUES: usize = 0x12; // u16
+    pub const DEVICE_STATUS: usize = 0x14; // u8
+    pub const CONFIG_GENERATION: usize = 0x15; // u8
+    pub const QUEUE_SELECT: usize = 0x16; // u16
+    pub const QUEUE_SIZE: usize = 0x18; // u16
+    pub const QUEUE_MSIX_VECTOR: usize = 0x1A; // u16
+    pub const QUEUE_ENABLE: usize = 0x1C; // u16
+    pub const QUEUE_NOTIFY_OFF: usize = 0x1E; // u16
+    pub const QUEUE_DESC_LO: usize = 0x20; // u32
+    pub const QUEUE_DESC_HI: usize = 0x24; // u32
+    pub const QUEUE_AVAIL_LO: usize = 0x28; // u32
+    pub const QUEUE_AVAIL_HI: usize = 0x2C; // u32
+    pub const QUEUE_USED_LO: usize = 0x30; // u32
+    pub const QUEUE_USED_HI: usize = 0x34; // u32
 }
 
 /// VirtIO PCI transport — register-level access via BAR-mapped regions
@@ -660,9 +660,7 @@ impl VirtioPciTransport {
     /// Read device status byte
     pub fn read_status(&self) -> u8 {
         unsafe {
-            core::ptr::read_volatile(
-                (self.common + virtio_pci_common::DEVICE_STATUS) as *const u8,
-            )
+            core::ptr::read_volatile((self.common + virtio_pci_common::DEVICE_STATUS) as *const u8)
         }
     }
 
@@ -720,9 +718,7 @@ impl VirtioPciTransport {
     /// Read maximum queue size for currently selected queue
     pub fn queue_max_size(&self) -> u16 {
         unsafe {
-            core::ptr::read_volatile(
-                (self.common + virtio_pci_common::QUEUE_SIZE) as *const u16,
-            )
+            core::ptr::read_volatile((self.common + virtio_pci_common::QUEUE_SIZE) as *const u16)
         }
     }
 
@@ -816,9 +812,7 @@ impl VirtioPciTransport {
         if self.device_cfg == 0 {
             return 0;
         }
-        unsafe {
-            core::ptr::read_volatile((self.device_cfg + offset) as *const u32)
-        }
+        unsafe { core::ptr::read_volatile((self.device_cfg + offset) as *const u32) }
     }
 
     /// Read a u8 from device-specific config at given byte offset
@@ -826,18 +820,14 @@ impl VirtioPciTransport {
         if self.device_cfg == 0 {
             return 0;
         }
-        unsafe {
-            core::ptr::read_volatile((self.device_cfg + offset) as *const u8)
-        }
+        unsafe { core::ptr::read_volatile((self.device_cfg + offset) as *const u8) }
     }
 
     // ---- ISR ----
 
     /// Read and acknowledge ISR status
     pub fn read_isr(&self) -> u8 {
-        unsafe {
-            core::ptr::read_volatile(self.isr as *const u8)
-        }
+        unsafe { core::ptr::read_volatile(self.isr as *const u8) }
     }
 }
 
