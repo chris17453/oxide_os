@@ -798,8 +798,105 @@ impl TcpConnection {
         }
 
         // Add to send buffer
-        self.send_buf.lock().extend(data);
+        let mut send_buf = self.send_buf.lock();
+        send_buf.extend(data);
+        drop(send_buf);
+        
+        // Trigger immediate transmission if Nagle allows
+        self.transmit_data()?;
+        
         Ok(data.len())
+    }
+    
+    /// ShadePacket: Transmit pending data from send buffer
+    fn transmit_data(&self) -> NetResult<()> {
+        let state = *self.state.lock();
+        if state != TcpState::Established && state != TcpState::CloseWait {
+            return Ok(());
+        }
+        
+        let mut send_buf = self.send_buf.lock();
+        if send_buf.is_empty() {
+            return Ok(());
+        }
+        
+        let mss = self.mss.load(Ordering::SeqCst) as usize;
+        let snd_wnd = self.snd_wnd.load(Ordering::SeqCst);
+        let cwnd = self.cwnd.load(Ordering::SeqCst);
+        let effective_window = snd_wnd.min(cwnd);
+        
+        // Check if we can send (Nagle + window check)
+        let una = self.snd_una.load(Ordering::SeqCst);
+        let nxt = self.snd_nxt.load(Ordering::SeqCst);
+        let in_flight = nxt.wrapping_sub(una);
+        
+        if in_flight >= effective_window {
+            // Window is full - check for zero window probe
+            if snd_wnd == 0 {
+                self.send_zero_window_probe();
+            }
+            return Ok(());
+        }
+        
+        let available_window = effective_window - in_flight;
+        let to_send = send_buf.len().min(available_window as usize).min(mss);
+        
+        if to_send > 0 && self.can_send_segment(to_send) {
+            let data: Vec<u8> = send_buf.drain(..to_send).collect();
+            let seq = self.snd_nxt.load(Ordering::SeqCst);
+            let ack = self.rcv_nxt.load(Ordering::SeqCst);
+            let window = self.rcv_wnd.load(Ordering::SeqCst) as u16;
+            
+            let mut options = TcpOptions::default();
+            if self.sack_permitted.load(Ordering::SeqCst) != 0 {
+                options.timestamp = Some(Self::get_timestamp());
+                options.timestamp_echo = Some(self.ts_recent.load(Ordering::SeqCst));
+            }
+            
+            let flags = tcp_flags::ACK | tcp_flags::PSH;
+            let segment = TcpSegment::new_with_options(
+                self.local_port,
+                self.remote_port,
+                seq,
+                ack,
+                flags,
+                window,
+                options,
+                &data,
+            );
+            
+            self.queue_segment(segment);
+            self.snd_nxt.fetch_add(data.len() as u32, Ordering::SeqCst);
+            self.has_unacked.store(1, Ordering::SeqCst);
+        }
+        
+        Ok(())
+    }
+    
+    /// WireSaint: Send zero window probe (1 byte)
+    fn send_zero_window_probe(&self) {
+        let mut send_buf = self.send_buf.lock();
+        if send_buf.is_empty() {
+            return;
+        }
+        
+        // Send one byte as probe
+        let probe_byte = send_buf[0];
+        let seq = self.snd_nxt.load(Ordering::SeqCst);
+        let ack = self.rcv_nxt.load(Ordering::SeqCst);
+        let window = self.rcv_wnd.load(Ordering::SeqCst) as u16;
+        
+        let segment = TcpSegment::new(
+            self.local_port,
+            self.remote_port,
+            seq,
+            ack,
+            tcp_flags::ACK,
+            window,
+            &[probe_byte],
+        );
+        
+        self.queue_segment(segment);
     }
 
     /// Receive data

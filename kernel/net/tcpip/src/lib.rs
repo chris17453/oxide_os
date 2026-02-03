@@ -89,7 +89,7 @@ impl TcpIpStack {
     /// Allocate an ephemeral port
     pub fn alloc_ephemeral_port(&self) -> u16 {
         let port = self.next_ephemeral_port.fetch_add(1, Ordering::SeqCst);
-        if port >= Self::EPHEMERAL_PORT_END {
+        if port == Self::EPHEMERAL_PORT_END {
             self.next_ephemeral_port
                 .store(Self::EPHEMERAL_PORT_START, Ordering::SeqCst);
         }
