@@ -374,25 +374,27 @@ impl TcpIpStack {
 
     /// Process TCP segment
     fn process_tcp(&self, src_ip: Ipv4Addr, dst_ip: Ipv4Addr, payload: &[u8]) -> NetResult<()> {
-        let tcp_header = tcp::TcpHeader::parse(payload)?;
-        let tcp_data = &payload[tcp_header.data_offset()..];
+        // SableWire: Parse complete segment including options
+        let segment = tcp::TcpSegment::parse(payload)?;
 
         // Find connection
         let connections = self.tcp_connections.lock();
         for conn in connections.values() {
-            if conn.matches(src_ip, tcp_header.src_port, dst_ip, tcp_header.dst_port) {
-                conn.process_segment(&tcp_header, tcp_data)?;
+            if conn.matches(src_ip, segment.header.src_port, dst_ip, segment.header.dst_port) {
+                conn.process_segment(&segment)?;
                 return Ok(());
             }
         }
 
         // Check listening sockets for SYN
-        if tcp_header.flags & tcp::tcp_flags::SYN != 0 {
+        if segment.header.flags & tcp::tcp_flags::SYN != 0 {
             // Handle new connection (would add to pending queue)
         }
 
         // No matching connection; send RST to refuse
-        self.send_tcp_rst(&tcp_header, src_ip, dst_ip, payload.len())?;
+        let header_len = segment.header.data_offset();
+        let payload_len = payload.len().saturating_sub(header_len);
+        self.send_tcp_rst(&segment.header, src_ip, dst_ip, payload_len)?;
         Ok(())
     }
 
