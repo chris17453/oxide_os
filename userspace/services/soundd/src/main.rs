@@ -30,9 +30,9 @@ extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use libc::c_exports::mkfifo;
 use libc::dirent::{closedir, opendir, readdir};
 use libc::time::usleep;
-use libc::c_exports::mkfifo;
 use libc::*;
 
 /// Socket path for sound daemon
@@ -185,37 +185,38 @@ fn enumerate_audio_devices(daemon: &mut SoundDaemon) {
     if let Some(mut dir) = dir {
         while let Some(entry) = readdir(&mut dir) {
             let name = entry.name();
-            
+
             // Look for dsp* and audio* devices
             if name.starts_with("dsp") || name.starts_with("audio") {
                 let mut device = AudioDevice::empty();
-                
+
                 // Build full path
                 let dev_prefix = DEV_DIR.as_bytes();
                 let name_bytes = name.as_bytes();
-                
+
                 if dev_prefix.len() + 1 + name_bytes.len() < 64 {
                     device.path[..dev_prefix.len()].copy_from_slice(dev_prefix);
                     device.path[dev_prefix.len()] = b'/';
                     device.path[dev_prefix.len() + 1..dev_prefix.len() + 1 + name_bytes.len()]
                         .copy_from_slice(name_bytes);
                     device.path_len = dev_prefix.len() + 1 + name_bytes.len();
-                    
+
                     // Try to open device (get path_str before modifying device)
-                    let path_str = core::str::from_utf8(&device.path[..device.path_len]).unwrap_or("");
+                    let path_str =
+                        core::str::from_utf8(&device.path[..device.path_len]).unwrap_or("");
                     let fd = open2(path_str, O_RDWR);
-                    
+
                     if fd >= 0 {
                         device.fd = fd;
                         device.is_open = true;
                         // Assume playback support (would need ioctl to query properly)
                         device.supports_playback = true;
                         device.supports_capture = name.contains("capture");
-                        
+
                         log("Found audio device: ");
                         prints(path_str);
                         prints("\n");
-                        
+
                         daemon.devices.push(device);
                     }
                 }
@@ -226,7 +227,7 @@ fn enumerate_audio_devices(daemon: &mut SoundDaemon) {
 
     if daemon.devices.is_empty() {
         log("No audio devices found, creating default /dev/dsp");
-        
+
         // Create a default device entry even if it doesn't exist yet
         let mut device = AudioDevice::empty();
         let path = b"/dev/dsp";
@@ -254,7 +255,7 @@ fn init_server_socket(daemon: &mut SoundDaemon) -> bool {
     // Create Unix socket
     // For now, we'll use a simpler approach: create a named pipe
     // In a full implementation, this would use socket() with AF_UNIX
-    
+
     // Create FIFO for IPC (simplified)
     let result = unsafe { mkfifo(SOUNDD_SOCKET.as_ptr(), 0o666) };
     if result < 0 {
@@ -265,7 +266,7 @@ fn init_server_socket(daemon: &mut SoundDaemon) -> bool {
     log("Server socket created at ");
     prints(SOUNDD_SOCKET);
     prints("\n");
-    
+
     true
 }
 
@@ -273,7 +274,7 @@ fn init_server_socket(daemon: &mut SoundDaemon) -> bool {
 fn accept_client(daemon: &mut SoundDaemon) {
     // In a full implementation, this would use accept() on the socket
     // For now, we'll open the FIFO for reading
-    
+
     for i in 0..MAX_CLIENTS {
         if !daemon.clients[i].active {
             let fd = open2(SOUNDD_SOCKET, O_RDWR | O_NONBLOCK);
@@ -283,7 +284,7 @@ fn accept_client(daemon: &mut SoundDaemon) {
                 daemon.clients[i].uid = 0; // Would get from socket credentials
                 daemon.clients[i].gid = 0;
                 daemon.clients[i].pid = 0;
-                
+
                 log("Accepted new client connection");
             }
             break;
@@ -301,7 +302,7 @@ fn process_client_command(daemon: &mut SoundDaemon, client_idx: usize) {
     // Read command from client
     let mut cmd_buf = [0u8; 256];
     let n = read(client.fd, &mut cmd_buf);
-    
+
     if n <= 0 {
         // Client disconnected
         close(client.fd);
@@ -312,7 +313,7 @@ fn process_client_command(daemon: &mut SoundDaemon, client_idx: usize) {
 
     // Parse command (simplified protocol)
     let cmd = core::str::from_utf8(&cmd_buf[..n as usize]).unwrap_or("");
-    
+
     if cmd.starts_with("VOLUME:") {
         // Set volume command: VOLUME:75
         if let Some(vol_str) = cmd.strip_prefix("VOLUME:") {
@@ -402,7 +403,7 @@ fn mix_and_output(daemon: &mut SoundDaemon) {
     }
 
     let device = &mut daemon.devices[0];
-    
+
     // If device isn't open yet, try to open it
     if !device.is_open {
         let path_str = device.path_str();
@@ -419,7 +420,7 @@ fn mix_and_output(daemon: &mut SoundDaemon) {
     // 2. Mix them together with volume adjustments
     // 3. Apply master volume
     // 4. Write to hardware device
-    
+
     // For now, we'll just maintain the device connection
 }
 
@@ -451,7 +452,7 @@ fn run_daemon() {
     loop {
         // Check for new client connections
         // In a full implementation, this would use select() or poll()
-        
+
         // Process commands from existing clients
         for i in 0..MAX_CLIENTS {
             if daemon.clients[i].active {
@@ -480,18 +481,18 @@ fn show_status() {
 
     // Send status request
     let _ = write(fd, b"STATUS");
-    
+
     // Read response
     usleep(100_000); // Wait 100ms for response
     let mut buf = [0u8; 512];
     let n = read(fd, &mut buf);
-    
+
     if n > 0 {
         if let Ok(response) = core::str::from_utf8(&buf[..n as usize]) {
             prints(response);
         }
     }
-    
+
     close(fd);
 }
 
@@ -508,7 +509,7 @@ fn set_volume(volume: u8) {
     let prefix = b"VOLUME:";
     cmd_buf[..prefix.len()].copy_from_slice(prefix);
     let len = format_u8(volume, &mut cmd_buf[prefix.len()..]);
-    
+
     let _ = write(fd, &cmd_buf[..prefix.len() + len]);
     close(fd);
 
@@ -532,7 +533,7 @@ fn set_mute(mute: bool) {
         let _ = write(fd, b"UNMUTE");
         prints("Audio unmuted\n");
     }
-    
+
     close(fd);
 }
 
