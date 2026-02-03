@@ -381,8 +381,23 @@ path = "src/bin/mount.rs"
 name = "umount"
 path = "src/bin/umount.rs"
 
+# Process monitoring
+[[bin]]
+name = "top"
+path = "src/bin/top.rs"
+
+[[bin]]
+name = "proctest"
+path = "src/bin/proctest.rs"
+
+# Color test utility
+[[bin]]
+name = "testcolors"
+path = "src/bin/testcolors.rs"
+
 [dependencies]
 libc = { path = "../libs/libc" }
 heapless = "0.8"
 compression = { path = "../libs/compression" }
 termcap = { path = "../libs/termcap", default-features = false }
+oxide-tui = { path = "../libs/oxide-tui", default-features = false }

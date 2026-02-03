@@ -172,6 +172,7 @@ dependencies = [
  "compression",
  "heapless",
  "libc 0.1.0",
+ "oxide-tui",
  "termcap",
 ]
 
@@ -973,6 +974,15 @@ name = "oxide-std"
 version = "0.1.0"
 dependencies = [
  "libc 0.1.0",
+]
+
+[[package]]
+name = "oxide-tui"
+version = "6.0.0"
+dependencies = [
+ "libc 0.1.0",
+ "termcap",
+ "vte",
 ]
 
 [[package]]
