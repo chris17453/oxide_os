@@ -15,4 +15,4 @@ bitflags.workspace = true
 spin.workspace = true
 fb = { path = "../../graphics/fb" }
 os_log = { path = "../../core/os_log" }
-vte = { path = "../../../libs/vte" }
+vte = { path = "../../../userspace/libs/vte" }

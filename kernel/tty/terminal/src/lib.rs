@@ -41,7 +41,7 @@ extern crate alloc;
 
 pub mod renderer;
 
-// Re-export VTE types (parser, handler, buffer, cell, color, wcwidth extracted to libs/vte)
+// Re-export VTE types (parser, handler, buffer, cell, color, wcwidth extracted to userspace/libs/vte)
 pub use vte::TermColor;
 pub use vte::wcwidth;
 pub use vte::{Action, Parser, State};

@@ -98,7 +98,6 @@ members = [
     "kernel/acpi/acpi",
     "kernel/module/module",
     # libs — shared crates (kernel + userspace)
-    "libs/vte",
     # userspace/system — core boot/session programs
     "userspace/system/init",
     "userspace/system/getty",
@@ -116,6 +115,7 @@ members = [
     "userspace/libs/termcap",
     "userspace/libs/oxide-ncurses",
     "userspace/libs/oxide-tui",
+    "userspace/libs/vte",
     # userspace/services — daemons
     "userspace/services/networkd",
     "userspace/services/sshd",
@@ -250,7 +250,7 @@ v86 = { path = "kernel/compat/v86" }
 python-sandbox = { path = "kernel/compat/python-sandbox" }
 binfmt = { path = "kernel/compat/binfmt" }
 syscall-compat = { path = "kernel/compat/syscall-compat" }
-vte = { path = "libs/vte" }
+vte = { path = "userspace/libs/vte" }
 
 [profile.dev]
 panic = "abort"

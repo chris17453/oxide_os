@@ -16,7 +16,7 @@ panel = []      # Panel library
 
 [dependencies]
 termcap = { path = "../termcap", default-features = false }
-vte = { path = "../../../libs/vte" }
+vte = { path = "../vte" }
 libc = { path = "../libc" }
 
 [lib]
