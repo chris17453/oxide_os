@@ -24,7 +24,6 @@
 
 #![no_std]
 #![no_main]
-#![allow(unused)]
 
 extern crate alloc;
 
@@ -257,7 +256,9 @@ fn init_server_socket(daemon: &mut SoundDaemon) -> bool {
     // In a full implementation, this would use socket() with AF_UNIX
 
     // Create FIFO for IPC (simplified)
-    let result = unsafe { mkfifo(SOUNDD_SOCKET.as_ptr(), 0o666) };
+    // TODO: Permissions should be 0o660 with proper group ownership for security
+    // — BlackLatch: OS hardening + exploit defense
+    let result = unsafe { mkfifo(SOUNDD_SOCKET.as_ptr(), 0o660) };
     if result < 0 {
         log("Failed to create server socket");
         return false;
@@ -274,6 +275,8 @@ fn init_server_socket(daemon: &mut SoundDaemon) -> bool {
 fn accept_client(daemon: &mut SoundDaemon) {
     // In a full implementation, this would use accept() on the socket
     // For now, we'll open the FIFO for reading
+    // TODO: Proper socket accept() implementation needed
+    // — SableWire: Firmware + hardware interface
 
     for i in 0..MAX_CLIENTS {
         if !daemon.clients[i].active {
@@ -286,6 +289,7 @@ fn accept_client(daemon: &mut SoundDaemon) {
                 daemon.clients[i].pid = 0;
 
                 log("Accepted new client connection");
+                return; // Only accept one client per call
             }
             break;
         }
@@ -449,6 +453,8 @@ fn run_daemon() {
     log("Ready to accept client connections");
 
     // Main event loop
+    // TODO: Replace with select()/poll() for efficient event-driven I/O
+    // — NeonRoot: System integration + platform stability
     loop {
         // Check for new client connections
         // In a full implementation, this would use select() or poll()
@@ -463,7 +469,7 @@ fn run_daemon() {
         // Mix audio and output to devices
         mix_and_output(&mut daemon);
 
-        // Sleep briefly to avoid spinning
+        // Sleep briefly to avoid spinning (temporary until event-driven I/O)
         usleep(10_000); // 10ms
     }
 }
@@ -482,7 +488,9 @@ fn show_status() {
     // Send status request
     let _ = write(fd, b"STATUS");
 
-    // Read response
+    // Read response with timeout
+    // TODO: Implement proper timeout-based read or event-driven I/O
+    // — ThreadRogue: Runtime + process model engineer
     usleep(100_000); // Wait 100ms for response
     let mut buf = [0u8; 512];
     let n = read(fd, &mut buf);

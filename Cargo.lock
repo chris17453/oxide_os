@@ -1413,6 +1413,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sound-client"
+version = "0.1.0"
+dependencies = [
+ "libc 0.1.0",
+]
+
+[[package]]
 name = "soundd"
 version = "0.1.0"
 dependencies = [

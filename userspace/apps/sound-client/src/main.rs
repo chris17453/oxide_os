@@ -28,6 +28,8 @@ fn send_command(cmd: &str) -> bool {
     let _ = write(fd, cmd.as_bytes());
 
     // Wait for response if it's a query
+    // TODO: Implement proper timeout-based read instead of fixed delay
+    // — ThreadRogue: Runtime + process model engineer
     if cmd.starts_with("STATUS") {
         usleep(100_000); // 100ms
         let mut buf = [0u8; 512];
@@ -232,6 +234,6 @@ fn format_u32(mut val: u32) -> String {
     result
 }
 
-fn usleep(us: u64) {
+fn usleep(us: u32) {
     libc::time::usleep(us);
 }
