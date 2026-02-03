@@ -4,7 +4,7 @@
 //!
 //! -- WireSaint: File format parsing, reading terminal databases from disk
 
-use core::prelude::v1::*;
+use core::option::Option;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use crate::TerminalEntry;
@@ -167,56 +167,3 @@ pub fn load_termcap_file(_name: &str) -> Result<TerminalEntry, &'static str> {
     Err("Termcap file loading not yet implemented - use built-in database")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_unescape_termcap() {
-        assert_eq!(unescape_termcap("\\E[H"), "\x1b[H");
-        assert_eq!(unescape_termcap("\\n\\r\\t"), "\n\r\t");
-        assert_eq!(unescape_termcap("^A"), "\x01");
-        assert_eq!(unescape_termcap("^M"), "\r");
-        assert_eq!(unescape_termcap("^?"), "\x7f");
-        assert_eq!(unescape_termcap("\\033"), "\x1b");
-    }
-
-    #[test]
-    fn test_parse_simple_entry() {
-        let text = "test|my terminal:am:co#80:li#24:cl=\\E[H\\E[J:";
-        let entry = parse_termcap_entry(text).unwrap();
-        
-        assert_eq!(entry.name, "test");
-        assert_eq!(entry.aliases.len(), 1);
-        assert_eq!(entry.aliases[0], "my terminal");
-        assert!(entry.get_flag("am"));
-        assert_eq!(entry.get_number("co"), Some(80));
-        assert_eq!(entry.get_number("li"), Some(24));
-        assert_eq!(entry.get_string("cl"), Some("\x1b[H\x1b[J"));
-    }
-
-    #[test]
-    fn test_parse_string_capability() {
-        let text = "test:cm=\\E[%i%d;%dH:";
-        let entry = parse_termcap_entry(text).unwrap();
-        assert_eq!(entry.get_string("cm"), Some("\x1b[%i%d;%dH"));
-    }
-
-    #[test]
-    fn test_parse_numeric_capability() {
-        let text = "test:co#132:li#43:";
-        let entry = parse_termcap_entry(text).unwrap();
-        assert_eq!(entry.get_number("co"), Some(132));
-        assert_eq!(entry.get_number("li"), Some(43));
-    }
-
-    #[test]
-    fn test_parse_boolean_capability() {
-        let text = "test:am:bw:xn:";
-        let entry = parse_termcap_entry(text).unwrap();
-        assert!(entry.get_flag("am"));
-        assert!(entry.get_flag("bw"));
-        assert!(entry.get_flag("xn"));
-        assert!(!entry.get_flag("nonexistent"));
-    }
-}

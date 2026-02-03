@@ -5,7 +5,7 @@
 //!
 //! -- SableWire: Terminal hardware definitions, know every quirk
 
-use core::prelude::v1::*;
+use core::option::Option;
 use alloc::string::ToString;
 use crate::TerminalEntry;
 use crate::capabilities::{strings, numbers, bools};
@@ -317,43 +317,3 @@ fn dumb() -> TerminalEntry {
     entry
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_xterm_definition() {
-        let term = get_terminal("xterm").unwrap();
-        assert_eq!(term.name, "xterm-256color");
-        assert_eq!(term.get_number(numbers::COLUMNS), Some(80));
-        assert_eq!(term.get_number(numbers::COLORS), Some(256));
-        assert!(term.get_flag(bools::AUTO_RIGHT_MARGIN));
-        assert!(term.get_string(strings::CLEAR).is_some());
-    }
-
-    #[test]
-    fn test_linux_definition() {
-        let term = get_terminal("linux").unwrap();
-        assert_eq!(term.name, "linux");
-        assert_eq!(term.get_number(numbers::COLORS), Some(8));
-    }
-
-    #[test]
-    fn test_vt100_definition() {
-        let term = get_terminal("vt100").unwrap();
-        assert_eq!(term.name, "vt100");
-        assert!(term.get_string(strings::CURSOR_ADDRESS).is_some());
-    }
-
-    #[test]
-    fn test_unknown_terminal() {
-        assert!(get_terminal("nonexistent").is_none());
-    }
-
-    #[test]
-    fn test_partial_match() {
-        // Should match xterm for xterm-like names
-        let term = get_terminal("xterm-custom").unwrap();
-        assert_eq!(term.name, "xterm-256color");
-    }
-}

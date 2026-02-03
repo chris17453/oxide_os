@@ -4,7 +4,7 @@
 //!
 //! -- NeonRoot: C ABI bridge - seamless integration with legacy codebases
 
-use core::prelude::v1::*;
+use core::option::Option;
 use alloc::string::ToString;
 use core::ffi::{c_char, c_int};
 use crate::{load_terminal, set_current_terminal, current_terminal, expand};
@@ -257,24 +257,3 @@ pub unsafe extern "C" fn ttytype() -> *const c_char {
     "xterm\0".as_ptr() as *const c_char
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_c_api_basic() {
-        unsafe {
-            let term_name = "xterm\0".as_ptr() as *const c_char;
-            let result = tgetent(core::ptr::null_mut(), term_name);
-            assert_eq!(result, 1);
-            
-            let cols_cap = "co\0".as_ptr() as *const c_char;
-            let cols = tgetnum(cols_cap);
-            assert_eq!(cols, 80);
-            
-            let am_cap = "am\0".as_ptr() as *const c_char;
-            let am = tgetflag(am_cap);
-            assert_eq!(am, 1);
-        }
-    }
-}

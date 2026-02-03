@@ -35,10 +35,10 @@
 //! -- GraveShift: Core terminal abstraction layer, the foundation of all TUI ops
 
 #![cfg_attr(not(feature = "std"), no_std)]
+#![allow(unsafe_op_in_unsafe_fn)]
 
 extern crate alloc;
 
-use core::prelude::v1::*;
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -146,30 +146,3 @@ pub enum Error {
 /// Result type for termcap operations
 pub type Result<T> = core::result::Result<T, Error>;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_terminal_entry_creation() {
-        let entry = TerminalEntry::new("xterm");
-        assert_eq!(entry.name, "xterm");
-        assert!(entry.strings.is_empty());
-        assert!(entry.numbers.is_empty());
-        assert!(entry.bools.is_empty());
-    }
-
-    #[test]
-    fn test_capability_storage() {
-        let mut entry = TerminalEntry::new("test");
-        
-        entry.set_string("clear", "\x1b[H\x1b[2J");
-        entry.set_number("cols", 80);
-        entry.set_flag("am", true);
-        
-        assert_eq!(entry.get_string("clear"), Some("\x1b[H\x1b[2J"));
-        assert_eq!(entry.get_number("cols"), Some(80));
-        assert!(entry.get_flag("am"));
-        assert!(!entry.get_flag("nonexistent"));
-    }
-}

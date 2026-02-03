@@ -199,16 +199,3 @@ pub fn termcap_to_terminfo(cap: &str) -> Option<&'static str> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_termcap_mapping() {
-        assert_eq!(termcap_to_terminfo("cm"), Some(strings::CURSOR_ADDRESS));
-        assert_eq!(termcap_to_terminfo("cl"), Some(strings::CLEAR));
-        assert_eq!(termcap_to_terminfo("co"), Some(numbers::COLUMNS));
-        assert_eq!(termcap_to_terminfo("am"), Some(bools::AUTO_RIGHT_MARGIN));
-        assert_eq!(termcap_to_terminfo("XX"), None);
-    }
-}

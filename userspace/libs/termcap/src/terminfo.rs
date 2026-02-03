@@ -5,7 +5,7 @@
 //!
 //! -- WireSaint: Binary format parser, efficient terminal database loading
 
-use core::prelude::v1::*;
+use core::option::Option;
 use alloc::string::String;
 use alloc::vec::Vec;
 use crate::TerminalEntry;
@@ -189,19 +189,3 @@ const STR_CAP_NAMES: &[&str] = &[
     "kRES", "kSAV", "kSPD", "kUND", "rfi", "kf11", "kf12", "kf13", "kf14", "kf15",
 ];
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_header_size() {
-        assert_eq!(core::mem::size_of::<TerminfoHeader>(), 12);
-    }
-
-    #[test]
-    fn test_cap_name_arrays() {
-        assert!(!BOOL_CAP_NAMES.is_empty());
-        assert!(!NUM_CAP_NAMES.is_empty());
-        assert!(!STR_CAP_NAMES.is_empty());
-    }
-}

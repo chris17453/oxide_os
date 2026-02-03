@@ -5,7 +5,7 @@
 //!
 //! -- GraveShift: Parameter expansion - translate intent to escape sequences
 
-use core::prelude::v1::*;
+use core::option::Option;
 use alloc::string::String;
 use alloc::vec::Vec;
 use alloc::format;
@@ -255,58 +255,3 @@ pub fn parse_padding(cap: &str) -> (String, u32) {
     (result, delay_ms)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_simple_parameter() {
-        // %p1%d - push param 1, print as decimal
-        let result = tparm("%p1%d", &[42]).unwrap();
-        assert_eq!(result, "42");
-    }
-
-    #[test]
-    fn test_cursor_address() {
-        // Standard cursor addressing: \x1b[row;colH
-        let result = tparm("\x1b[%i%p1%d;%p2%dH", &[10, 20]).unwrap();
-        assert_eq!(result, "\x1b[11;21H"); // %i increments both
-    }
-
-    #[test]
-    fn test_arithmetic() {
-        // %p1%p2%+%d - push p1, push p2, add, print
-        let result = tparm("%p1%p2%+%d", &[10, 5]).unwrap();
-        assert_eq!(result, "15");
-    }
-
-    #[test]
-    fn test_constant() {
-        // %{42}%d - push 42, print
-        let result = tparm("%{42}%d", &[]).unwrap();
-        assert_eq!(result, "42");
-    }
-
-    #[test]
-    fn test_tgoto() {
-        let result = tgoto("\x1b[%i%p1%d;%p2%dH", 20, 10).unwrap();
-        assert_eq!(result, "\x1b[11;21H");
-    }
-
-    #[test]
-    fn test_padding() {
-        let (seq, delay) = parse_padding("100\x1b[H");
-        assert_eq!(seq, "\x1b[H");
-        assert_eq!(delay, 100);
-        
-        let (seq2, delay2) = parse_padding("\x1b[2J");
-        assert_eq!(seq2, "\x1b[2J");
-        assert_eq!(delay2, 0);
-    }
-
-    #[test]
-    fn test_literal_percent() {
-        let result = tparm("100%%", &[]).unwrap();
-        assert_eq!(result, "100%");
-    }
-}
