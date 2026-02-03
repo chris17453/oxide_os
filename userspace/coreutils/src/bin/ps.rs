@@ -568,7 +568,12 @@ fn print_full_format(info: &ProcInfo) {
 }
 
 #[unsafe(no_mangle)]
-fn main() -> i32 {
+fn main(argc: i32, argv: *const *const u8) -> i32 {
+    unsafe {
+        ARGC = argc as usize;
+        ARGV = argv;
+    }
+    
     let opts = Options::parse();
 
     // Print header based on format
@@ -642,15 +647,4 @@ fn main() -> i32 {
     }
 
     0
-}
-
-/// Entry point
-#[unsafe(no_mangle)]
-pub extern "C" fn _start(argc: usize, argv: *const *const u8) -> ! {
-    unsafe {
-        ARGC = argc;
-        ARGV = argv;
-    }
-    let ret = main();
-    exit(ret);
 }
