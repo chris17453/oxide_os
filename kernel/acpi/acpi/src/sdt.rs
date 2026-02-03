@@ -66,11 +66,7 @@ pub unsafe fn find_table(
     None
 }
 
-unsafe fn find_in_xsdt(
-    phys_map_base: u64,
-    xsdt_phys: u64,
-    signature: &[u8; 4],
-) -> Option<u64> {
+unsafe fn find_in_xsdt(phys_map_base: u64, xsdt_phys: u64, signature: &[u8; 4]) -> Option<u64> {
     let xsdt_virt = (phys_map_base + xsdt_phys) as *const u8;
     // Safety: caller guarantees XSDT is mapped
     let header = unsafe { &*(xsdt_virt as *const SdtHeader) };
@@ -106,11 +102,7 @@ unsafe fn find_in_xsdt(
     None
 }
 
-unsafe fn find_in_rsdt(
-    phys_map_base: u64,
-    rsdt_phys: u64,
-    signature: &[u8; 4],
-) -> Option<u64> {
+unsafe fn find_in_rsdt(phys_map_base: u64, rsdt_phys: u64, signature: &[u8; 4]) -> Option<u64> {
     let rsdt_virt = (phys_map_base + rsdt_phys) as *const u8;
     // Safety: caller guarantees RSDT is mapped
     let header = unsafe { &*(rsdt_virt as *const SdtHeader) };

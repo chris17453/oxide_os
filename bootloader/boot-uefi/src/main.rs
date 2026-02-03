@@ -925,7 +925,7 @@ fn enumerate_video_modes() -> Option<boot_proto::VideoModeList> {
 ///
 /// — SableWire: scanning the firmware config table for the ACPI anchor
 fn find_rsdp_in_config_tables() -> u64 {
-    use uefi::table::cfg::{ACPI2_GUID, ACPI_GUID};
+    use uefi::table::cfg::{ACPI_GUID, ACPI2_GUID};
 
     let st = match uefi::table::system_table_boot() {
         Some(st) => st,

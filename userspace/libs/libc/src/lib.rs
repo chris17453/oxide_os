@@ -200,8 +200,8 @@ pub use syscall::*;
 // to avoid macro name conflicts
 pub use env::{env_iter, getenv, init_env, setenv, unsetenv};
 pub use stdio::{
-    StderrWriter, StdoutWriter, atoi, fflush_all, fflush_stdout, getchar, getline, itoa,
-    parse_int, print_hex, print_i64, print_u64, putchar,
+    StderrWriter, StdoutWriter, atoi, fflush_all, fflush_stdout, getchar, getline, itoa, parse_int,
+    print_hex, print_i64, print_u64, putchar,
 };
 pub use stdio::{eprintlns, eprints, printlns, prints};
 pub use unistd::{

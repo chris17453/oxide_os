@@ -4,9 +4,9 @@
 //!
 //! -- NeonRoot: C ABI bridge - seamless integration with legacy codebases
 
+use crate::{current_terminal, expand, load_terminal, set_current_terminal};
 use core::ffi::{c_char, c_int};
 use core::sync::atomic::{AtomicUsize, Ordering};
-use crate::{load_terminal, set_current_terminal, current_terminal, expand};
 
 /// ── NeonRoot: Static buffer for capability strings ──
 /// Accessed via raw pointers to comply with Rust 2024 static mut rules.

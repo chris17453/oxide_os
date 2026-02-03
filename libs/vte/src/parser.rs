@@ -210,14 +210,14 @@ impl Parser {
 
             // Determine expected length
             self.utf8_expected = if byte < 0xE0 {
-                2  // 110xxxxx
+                2 // 110xxxxx
             } else if byte < 0xF0 {
-                3  // 1110xxxx
+                3 // 1110xxxx
             } else {
-                4  // 11110xxx
+                4 // 11110xxx
             };
 
-            Action::None  // Wait for continuation bytes
+            Action::None // Wait for continuation bytes
         } else if byte >= 0x80 && byte < 0xC0 {
             // UTF-8 continuation byte (10xxxxxx)
             if self.utf8_expected > 0 && self.utf8_count < self.utf8_expected {
@@ -232,7 +232,7 @@ impl Parser {
                     self.utf8_expected = 0;
                     result
                 } else {
-                    Action::None  // Wait for more bytes
+                    Action::None // Wait for more bytes
                 }
             } else {
                 // Unexpected continuation byte - reset and ignore

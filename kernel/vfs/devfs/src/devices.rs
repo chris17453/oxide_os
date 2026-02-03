@@ -32,7 +32,8 @@ fn strip_ansi_escapes(data: &[u8]) -> alloc::vec::Vec<u8> {
     let mut i = 0;
 
     while i < data.len() {
-        if i + 1 < data.len() && data[i] == 0x1B {  // ESC
+        if i + 1 < data.len() && data[i] == 0x1B {
+            // ESC
             // Check for CSI sequence: ESC [
             if data[i + 1] == b'[' {
                 // Skip until we find the end of CSI sequence (letter A-Z, a-z)

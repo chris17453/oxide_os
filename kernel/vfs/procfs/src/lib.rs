@@ -945,32 +945,32 @@ impl ProcCpuinfo {
     fn generate_content(&self) -> String {
         // Get CPU count (number of logical processors)
         let cpu_count = sched::num_cpus();
-        
+
         let mut output = String::new();
-        
+
         // Generate info for each CPU
         for cpu_id in 0..cpu_count {
             // Basic CPU information - on x86_64 we can get this via CPUID
             #[cfg(target_arch = "x86_64")]
             {
                 use alloc::format;
-                
+
                 // CPUID leaf 0: Vendor ID
                 let vendor = get_cpu_vendor();
-                
+
                 // CPUID leaf 1: Family, Model, Stepping
                 let (family, model, stepping) = get_cpu_family_model_stepping();
-                
+
                 // CPUID leaf 0x80000002-0x80000004: Brand string
                 let brand = get_cpu_brand_string();
-                
+
                 // Build model name from brand if available, otherwise construct it
                 let model_name = if !brand.is_empty() {
                     brand
                 } else {
                     format!("{} CPU @ Unknown MHz", vendor)
                 };
-                
+
                 output.push_str(&format!(
                     "processor\t: {}\n\
                      vendor_id\t: {}\n\
@@ -1002,7 +1002,7 @@ impl ProcCpuinfo {
                     cpu_count, cpu_id, cpu_count, cpu_id, cpu_id
                 ));
             }
-            
+
             #[cfg(not(target_arch = "x86_64"))]
             {
                 output.push_str(&format!(
@@ -1013,7 +1013,7 @@ impl ProcCpuinfo {
                 ));
             }
         }
-        
+
         output
     }
 }
@@ -1024,7 +1024,7 @@ fn get_cpu_vendor() -> &'static str {
     let mut ebx: u32;
     let mut ecx: u32;
     let mut edx: u32;
-    
+
     unsafe {
         core::arch::asm!(
             "push rbx",
@@ -1038,14 +1038,23 @@ fn get_cpu_vendor() -> &'static str {
             out("eax") _,
         );
     }
-    
+
     // Vendor string is EBX+EDX+ECX (12 bytes)
     let bytes = [
-        (ebx & 0xFF) as u8, ((ebx >> 8) & 0xFF) as u8, ((ebx >> 16) & 0xFF) as u8, ((ebx >> 24) & 0xFF) as u8,
-        (edx & 0xFF) as u8, ((edx >> 8) & 0xFF) as u8, ((edx >> 16) & 0xFF) as u8, ((edx >> 24) & 0xFF) as u8,
-        (ecx & 0xFF) as u8, ((ecx >> 8) & 0xFF) as u8, ((ecx >> 16) & 0xFF) as u8, ((ecx >> 24) & 0xFF) as u8,
+        (ebx & 0xFF) as u8,
+        ((ebx >> 8) & 0xFF) as u8,
+        ((ebx >> 16) & 0xFF) as u8,
+        ((ebx >> 24) & 0xFF) as u8,
+        (edx & 0xFF) as u8,
+        ((edx >> 8) & 0xFF) as u8,
+        ((edx >> 16) & 0xFF) as u8,
+        ((edx >> 24) & 0xFF) as u8,
+        (ecx & 0xFF) as u8,
+        ((ecx >> 8) & 0xFF) as u8,
+        ((ecx >> 16) & 0xFF) as u8,
+        ((ecx >> 24) & 0xFF) as u8,
     ];
-    
+
     // Check common vendors
     if &bytes == b"GenuineIntel" {
         "GenuineIntel"
@@ -1059,7 +1068,7 @@ fn get_cpu_vendor() -> &'static str {
 #[cfg(target_arch = "x86_64")]
 fn get_cpu_family_model_stepping() -> (u32, u32, u32) {
     let eax: u32;
-    
+
     unsafe {
         core::arch::asm!(
             "push rbx",
@@ -1071,25 +1080,25 @@ fn get_cpu_family_model_stepping() -> (u32, u32, u32) {
             out("edx") _,
         );
     }
-    
+
     let stepping = eax & 0xF;
     let base_model = (eax >> 4) & 0xF;
     let base_family = (eax >> 8) & 0xF;
     let ext_model = (eax >> 16) & 0xF;
     let ext_family = (eax >> 20) & 0xFF;
-    
+
     let family = if base_family == 0xF {
         base_family + ext_family
     } else {
         base_family
     };
-    
+
     let model = if base_family == 0x6 || base_family == 0xF {
         (ext_model << 4) | base_model
     } else {
         base_model
     };
-    
+
     (family, model, stepping)
 }
 
@@ -1097,14 +1106,14 @@ fn get_cpu_family_model_stepping() -> (u32, u32, u32) {
 fn get_cpu_brand_string() -> String {
     // CPUID leaves 0x80000002-0x80000004 contain 48-byte brand string
     let mut brand_bytes = [0u8; 48];
-    
+
     for i in 0..3 {
         let leaf = 0x80000002u32 + i;
         let eax: u32;
         let ebx: u32;
         let ecx: u32;
         let edx: u32;
-        
+
         unsafe {
             core::arch::asm!(
                 "push rbx",
@@ -1119,14 +1128,14 @@ fn get_cpu_brand_string() -> String {
                 out("edx") edx,
             );
         }
-        
+
         let offset = (i * 16) as usize;
-        brand_bytes[offset..offset+4].copy_from_slice(&eax.to_le_bytes());
-        brand_bytes[offset+4..offset+8].copy_from_slice(&ebx.to_le_bytes());
-        brand_bytes[offset+8..offset+12].copy_from_slice(&ecx.to_le_bytes());
-        brand_bytes[offset+12..offset+16].copy_from_slice(&edx.to_le_bytes());
+        brand_bytes[offset..offset + 4].copy_from_slice(&eax.to_le_bytes());
+        brand_bytes[offset + 4..offset + 8].copy_from_slice(&ebx.to_le_bytes());
+        brand_bytes[offset + 8..offset + 12].copy_from_slice(&ecx.to_le_bytes());
+        brand_bytes[offset + 12..offset + 16].copy_from_slice(&edx.to_le_bytes());
     }
-    
+
     // Convert to string, trim nulls and whitespace
     String::from_utf8_lossy(&brand_bytes)
         .trim_matches('\0')
@@ -1220,12 +1229,15 @@ impl ProcUptime {
         let uptime_ms = ticks * 10;
         let uptime_secs = uptime_ms / 1000;
         let uptime_frac = (uptime_ms % 1000) / 10; // Two decimal places
-        
+
         // Idle time - for now just report 0 (we don't track idle time yet)
         let idle_secs = 0u64;
         let idle_frac = 0u64;
-        
-        format!("{}.{:02} {}.{:02}\n", uptime_secs, uptime_frac, idle_secs, idle_frac)
+
+        format!(
+            "{}.{:02} {}.{:02}\n",
+            uptime_secs, uptime_frac, idle_secs, idle_frac
+        )
     }
 }
 
@@ -1313,7 +1325,7 @@ impl ProcLoadavg {
         // Get running/total process counts
         let pids = sched::all_pids();
         let total_procs = pids.len();
-        
+
         // Count running processes
         let mut running = 0;
         for &pid in &pids {
@@ -1323,10 +1335,10 @@ impl ProcLoadavg {
                 }
             }
         }
-        
+
         // Last PID is the highest one
         let last_pid = pids.iter().max().copied().unwrap_or(0);
-        
+
         format!("0.00 0.00 0.00 {}/{} {}\n", running, total_procs, last_pid)
     }
 }
@@ -1412,30 +1424,30 @@ pub struct ProcStat {
 impl ProcStat {
     fn generate_content(&self) -> String {
         let mut output = String::new();
-        
+
         // CPU time statistics (all zeros for now - not tracked yet)
         // Format: cpu <user> <nice> <system> <idle> <iowait> <irq> <softirq>
         output.push_str("cpu  0 0 0 0 0 0 0 0 0 0\n");
-        
+
         // Per-CPU statistics
         let cpu_count = sched::num_cpus();
         for cpu_id in 0..cpu_count {
             output.push_str(&format!("cpu{} 0 0 0 0 0 0 0 0 0 0\n", cpu_id));
         }
-        
+
         // Interrupt statistics
         output.push_str("intr 0\n");
         output.push_str("ctxt 0\n");
-        
+
         // Boot time (Unix timestamp) - use a fixed value for now
         let boot_time = 1704067200u64; // 2024-01-01 00:00:00 UTC
         output.push_str(&format!("btime {}\n", boot_time));
-        
+
         // Process statistics
         let pids = sched::all_pids();
         let total_procs = pids.len();
         output.push_str(&format!("processes {}\n", total_procs));
-        
+
         // Running processes count
         let mut running = 0;
         for &pid in &pids {
@@ -1446,7 +1458,7 @@ impl ProcStat {
             }
         }
         output.push_str(&format!("procs_running {}\n", running));
-        
+
         // Blocked processes (in uninterruptible sleep)
         let mut blocked = 0;
         for &pid in &pids {
@@ -1457,7 +1469,7 @@ impl ProcStat {
             }
         }
         output.push_str(&format!("procs_blocked {}\n", blocked));
-        
+
         output
     }
 }
@@ -1632,17 +1644,17 @@ impl ProcDevices {
     fn generate_content(&self) -> String {
         // Basic device list - expand as more devices are added
         let mut output = String::new();
-        
+
         output.push_str("Character devices:\n");
         output.push_str("  1 mem\n");
         output.push_str("  4 tty\n");
         output.push_str("  5 console\n");
         output.push_str(" 10 misc\n");
-        
+
         output.push_str("\nBlock devices:\n");
         output.push_str("  1 ramdisk\n");
         output.push_str("  8 sd\n");
-        
+
         output
     }
 }
@@ -1729,7 +1741,7 @@ impl ProcFilesystems {
     fn generate_content(&self) -> String {
         // List filesystem types we support
         let mut output = String::new();
-        
+
         output.push_str("nodev\tsysfs\n");
         output.push_str("nodev\trootfs\n");
         output.push_str("nodev\ttmpfs\n");
@@ -1737,7 +1749,7 @@ impl ProcFilesystems {
         output.push_str("nodev\tprocfs\n");
         output.push_str("\toxidefs\n");
         output.push_str("\text2\n");
-        
+
         output
     }
 }

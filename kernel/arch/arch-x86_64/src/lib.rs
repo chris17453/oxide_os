@@ -479,8 +479,8 @@ impl ExceptionHandler for X86_64 {
             stack_pointer: frame.rsp,
             flags: frame.rflags,
             arch_specific: [
-                frame.cs,    // Code segment
-                frame.ss,    // Stack segment
+                frame.cs, // Code segment
+                frame.ss, // Stack segment
                 0, 0, 0, 0, 0, 0,
             ],
         }

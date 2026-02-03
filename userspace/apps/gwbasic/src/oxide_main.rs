@@ -28,7 +28,7 @@ pub extern "Rust" fn main(argc: i32, argv: *const *const u8) -> i32 {
             if arg_ptr.is_null() {
                 continue;
             }
-            
+
             // Convert C string to Rust string
             let mut len = 0;
             unsafe {

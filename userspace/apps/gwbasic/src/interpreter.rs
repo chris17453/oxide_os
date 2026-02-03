@@ -481,7 +481,12 @@ impl Interpreter {
                         self.screen = Screen::new(80, 25);
                     }
                 }
-                #[cfg(all(not(feature = "host"), not(feature = "oxide"), not(feature = "watos"), feature = "std"))]
+                #[cfg(all(
+                    not(feature = "host"),
+                    not(feature = "oxide"),
+                    not(feature = "watos"),
+                    feature = "std"
+                ))]
                 {
                     let (width, height) = match m {
                         1 => (320, 200),
@@ -700,9 +705,7 @@ impl Interpreter {
                 }
 
                 // Set starting line (use provided line or first line)
-                self.current_line = start_line.or_else(|| {
-                    line_nums.first().copied()
-                });
+                self.current_line = start_line.or_else(|| line_nums.first().copied());
 
                 // Execute line by line until program ends
                 while let Some(current) = self.current_line {

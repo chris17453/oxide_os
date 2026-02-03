@@ -147,7 +147,9 @@ impl Drop for PipeRead {
         };
 
         for pid in write_waiters {
-            unsafe { sched_wake_up(pid); }
+            unsafe {
+                sched_wake_up(pid);
+            }
         }
     }
 }
@@ -175,7 +177,7 @@ impl VnodeOps for PipeRead {
 
                 // EOF condition: buffer empty AND no writers exist
                 if buffer.count == 0 && !buffer.has_writers() {
-                    return Ok(0);  // EOF
+                    return Ok(0); // EOF
                 }
 
                 // Try to read available data
@@ -196,7 +198,9 @@ impl VnodeOps for PipeRead {
 
             // Wake writers if we freed up space
             for pid in write_waiters {
-                unsafe { sched_wake_up(pid); }
+                unsafe {
+                    sched_wake_up(pid);
+                }
             }
 
             // If we got data, return it
@@ -217,7 +221,9 @@ impl VnodeOps for PipeRead {
                     }
 
                     // Block in interruptible sleep
-                    unsafe { sched_block_interruptible(); }
+                    unsafe {
+                        sched_block_interruptible();
+                    }
 
                     // When we wake up (by signal or writer), remove ourselves and retry
                     let mut buffer = self.buffer.lock();
@@ -299,7 +305,9 @@ impl Drop for PipeWrite {
         };
 
         for pid in read_waiters {
-            unsafe { sched_wake_up(pid); }
+            unsafe {
+                sched_wake_up(pid);
+            }
         }
     }
 }
@@ -352,7 +360,9 @@ impl VnodeOps for PipeWrite {
 
             // Wake readers if we added data
             for pid in read_waiters {
-                unsafe { sched_wake_up(pid); }
+                unsafe {
+                    sched_wake_up(pid);
+                }
             }
 
             // If we wrote data, return it
@@ -373,7 +383,9 @@ impl VnodeOps for PipeWrite {
                     }
 
                     // Block in interruptible sleep
-                    unsafe { sched_block_interruptible(); }
+                    unsafe {
+                        sched_block_interruptible();
+                    }
 
                     // When we wake up (by signal or reader), remove ourselves and retry
                     let mut buffer = self.buffer.lock();

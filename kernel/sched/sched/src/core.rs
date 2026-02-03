@@ -9,7 +9,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU32, AtomicU64, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering};
 use os_core::PhysAddr;
 use sched_traits::{CpuSet, Pid, SchedPolicy, TICK_NS, TaskState};
 use spin::Mutex;

@@ -293,10 +293,6 @@ impl SyscallInfo {
 
     /// Get syscall argument by index (0-5)
     pub fn arg(&self, index: usize) -> usize {
-        if index < 6 {
-            self.args[index]
-        } else {
-            0
-        }
+        if index < 6 { self.args[index] } else { 0 }
     }
 }

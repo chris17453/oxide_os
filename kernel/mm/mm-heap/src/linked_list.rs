@@ -142,13 +142,26 @@ impl LinkedListAllocator {
         {
             if self.total_size == 0 || self.total_size > 0x10000000 {
                 os_log::println!("[HEAP] CORRUPTION DETECTED!");
-                os_log::println!("[HEAP] self={:#x} size={} align={}",
-                    self as *mut _ as usize, size, align);
-                os_log::println!("[HEAP] total_size={} used_size={} head.size={}",
-                    self.total_size, self.used_size, self.head.size);
+                os_log::println!(
+                    "[HEAP] self={:#x} size={} align={}",
+                    self as *mut _ as usize,
+                    size,
+                    align
+                );
+                os_log::println!(
+                    "[HEAP] total_size={} used_size={} head.size={}",
+                    self.total_size,
+                    self.used_size,
+                    self.head.size
+                );
             } else {
-                os_log::println!("[HEAP] alloc size={} align={} used={} total={}",
-                    size, align, self.used_size, self.total_size);
+                os_log::println!(
+                    "[HEAP] alloc size={} align={} used={} total={}",
+                    size,
+                    align,
+                    self.used_size,
+                    self.total_size
+                );
             }
         }
 
@@ -205,15 +218,22 @@ impl LinkedListAllocator {
         #[cfg(feature = "debug-heap")]
         {
             os_log::println!("[HEAP] ALLOC FAILED! size={} align={}", size, align);
-            os_log::println!("[HEAP] used={} total={} free={}",
-                self.used_size, self.total_size,
-                self.total_size.saturating_sub(self.used_size));
+            os_log::println!(
+                "[HEAP] used={} total={} free={}",
+                self.used_size,
+                self.total_size,
+                self.total_size.saturating_sub(self.used_size)
+            );
             let mut count = 0;
             let mut curr = &self.head;
             while let Some(ref block) = curr.next {
                 if count < 10 {
-                    os_log::println!("[HEAP]   block {}: addr={:#x} size={}",
-                        count, block.start_addr(), block.size);
+                    os_log::println!(
+                        "[HEAP]   block {}: addr={:#x} size={}",
+                        count,
+                        block.start_addr(),
+                        block.size
+                    );
                 }
                 count += 1;
                 curr = block;

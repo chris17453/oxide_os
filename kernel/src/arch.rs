@@ -29,7 +29,11 @@
 // Architecture Selection
 // ============================================================================
 
-#[cfg(all(target_arch = "x86_64", not(feature = "arch-aarch64"), not(feature = "arch-mips64")))]
+#[cfg(all(
+    target_arch = "x86_64",
+    not(feature = "arch-aarch64"),
+    not(feature = "arch-mips64")
+))]
 pub use arch_x86_64 as imp;
 
 #[cfg(feature = "arch-aarch64")]
@@ -42,7 +46,11 @@ pub use arch_mips64 as imp;
 pub use imp::*;
 
 // Compile-time architecture validation
-#[cfg(all(target_arch = "x86_64", not(feature = "arch-aarch64"), not(feature = "arch-mips64")))]
+#[cfg(all(
+    target_arch = "x86_64",
+    not(feature = "arch-aarch64"),
+    not(feature = "arch-mips64")
+))]
 pub type Arch = arch_x86_64::X86_64;
 
 #[cfg(feature = "arch-aarch64")]
@@ -79,7 +87,11 @@ pub fn interrupts_enabled() -> bool {
 
 /// Initialize serial console
 pub fn serial_init() {
-    #[cfg(all(target_arch = "x86_64", not(feature = "arch-aarch64"), not(feature = "arch-mips64")))]
+    #[cfg(all(
+        target_arch = "x86_64",
+        not(feature = "arch-aarch64"),
+        not(feature = "arch-mips64")
+    ))]
     {
         arch_x86_64::serial::init();
     }
@@ -97,7 +109,11 @@ pub fn serial_init() {
 
 /// Write a single byte to serial console
 pub fn serial_write_byte(byte: u8) {
-    #[cfg(all(target_arch = "x86_64", not(feature = "arch-aarch64"), not(feature = "arch-mips64")))]
+    #[cfg(all(
+        target_arch = "x86_64",
+        not(feature = "arch-aarch64"),
+        not(feature = "arch-mips64")
+    ))]
     {
         arch_x86_64::serial::write_byte(byte);
     }
@@ -120,7 +136,11 @@ pub struct SerialWriter;
 
 impl core::fmt::Write for SerialWriter {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        #[cfg(all(target_arch = "x86_64", not(feature = "arch-aarch64"), not(feature = "arch-mips64")))]
+        #[cfg(all(
+            target_arch = "x86_64",
+            not(feature = "arch-aarch64"),
+            not(feature = "arch-mips64")
+        ))]
         {
             use core::fmt::Write;
             arch_x86_64::serial::SerialWriter.write_str(s)
@@ -159,7 +179,11 @@ pub type KeyboardCallback = fn();
 /// UEFI firmware may disable PS/2 after ExitBootServices, so this
 /// re-enables it if needed.
 pub fn init_ps2_keyboard() {
-    #[cfg(all(target_arch = "x86_64", not(feature = "arch-aarch64"), not(feature = "arch-mips64")))]
+    #[cfg(all(
+        target_arch = "x86_64",
+        not(feature = "arch-aarch64"),
+        not(feature = "arch-mips64")
+    ))]
     {
         arch_x86_64::exceptions::init_ps2_keyboard();
     }
@@ -185,7 +209,11 @@ pub fn init_ps2_keyboard() {
 /// Must be called during single-threaded initialization before interrupts
 /// are fully enabled. The callback must be async-signal-safe and not block.
 pub unsafe fn set_keyboard_callback(callback: KeyboardCallback) {
-    #[cfg(all(target_arch = "x86_64", not(feature = "arch-aarch64"), not(feature = "arch-mips64")))]
+    #[cfg(all(
+        target_arch = "x86_64",
+        not(feature = "arch-aarch64"),
+        not(feature = "arch-mips64")
+    ))]
     {
         unsafe {
             arch_x86_64::exceptions::set_keyboard_callback(callback);
@@ -208,7 +236,11 @@ pub unsafe fn set_keyboard_callback(callback: KeyboardCallback) {
 /// Returns the number of times the keyboard IRQ has fired since boot.
 /// Useful for verifying that keyboard interrupts are working.
 pub fn keyboard_irq_count() -> u64 {
-    #[cfg(all(target_arch = "x86_64", not(feature = "arch-aarch64"), not(feature = "arch-mips64")))]
+    #[cfg(all(
+        target_arch = "x86_64",
+        not(feature = "arch-aarch64"),
+        not(feature = "arch-mips64")
+    ))]
     {
         arch_x86_64::exceptions::keyboard_irq_count()
     }

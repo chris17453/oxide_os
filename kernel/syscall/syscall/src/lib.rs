@@ -849,12 +849,21 @@ pub fn dispatch(
         if cycles < (1u64 << 40) {
             if number == nr::WRITE || number == nr::READ {
                 let bytes = if result >= 0 { result as u64 } else { 0 };
-                os_log::println!("[SYSCALL] {} ({}) took {} cycles, {} bytes, {:.1} cycles/byte",
-                    syscall_name(number), number, cycles, bytes,
-                    cycles as f64 / bytes.max(1) as f64);
+                os_log::println!(
+                    "[SYSCALL] {} ({}) took {} cycles, {} bytes, {:.1} cycles/byte",
+                    syscall_name(number),
+                    number,
+                    cycles,
+                    bytes,
+                    cycles as f64 / bytes.max(1) as f64
+                );
             } else {
-                os_log::println!("[SYSCALL] {} ({}) took {} cycles",
-                    syscall_name(number), number, cycles);
+                os_log::println!(
+                    "[SYSCALL] {} ({}) took {} cycles",
+                    syscall_name(number),
+                    number,
+                    cycles
+                );
             }
         }
     }

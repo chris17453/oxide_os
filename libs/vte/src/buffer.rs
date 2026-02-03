@@ -166,7 +166,8 @@ impl ScreenBuffer {
         let cells_to_move = lines_to_move * cols;
 
         if cells_to_move > 0 {
-            self.cells.copy_within(src_start..(src_start + cells_to_move), dst_start);
+            self.cells
+                .copy_within(src_start..(src_start + cells_to_move), dst_start);
         }
 
         // Clear bottom lines (batch fill)
@@ -194,7 +195,8 @@ impl ScreenBuffer {
         let cells_to_move = lines_to_move * cols;
 
         if cells_to_move > 0 {
-            self.cells.copy_within(src_start..(src_start + cells_to_move), dst_start);
+            self.cells
+                .copy_within(src_start..(src_start + cells_to_move), dst_start);
         }
 
         // Clear top lines (batch fill)

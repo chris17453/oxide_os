@@ -66,23 +66,23 @@ impl TermColor {
 /// VGA color constants matching standard terminal colors.
 pub fn ansi16_to_rgb(n: u8) -> (u8, u8, u8) {
     match n {
-        0  => (0, 0, 0),         // Black
-        1  => (170, 0, 0),       // Red
-        2  => (0, 170, 0),       // Green
-        3  => (170, 85, 0),      // Brown
-        4  => (0, 0, 170),       // Blue
-        5  => (170, 0, 170),     // Magenta
-        6  => (0, 170, 170),     // Cyan
-        7  => (170, 170, 170),   // Light gray
-        8  => (85, 85, 85),      // Dark gray
-        9  => (255, 85, 85),     // Light red
-        10 => (85, 255, 85),     // Light green
-        11 => (255, 255, 85),    // Yellow
-        12 => (85, 85, 255),     // Light blue
-        13 => (255, 85, 255),    // Light magenta
-        14 => (85, 255, 255),    // Light cyan
-        15 => (255, 255, 255),   // White
-        _  => (170, 170, 170),   // Default: light gray
+        0 => (0, 0, 0),        // Black
+        1 => (170, 0, 0),      // Red
+        2 => (0, 170, 0),      // Green
+        3 => (170, 85, 0),     // Brown
+        4 => (0, 0, 170),      // Blue
+        5 => (170, 0, 170),    // Magenta
+        6 => (0, 170, 170),    // Cyan
+        7 => (170, 170, 170),  // Light gray
+        8 => (85, 85, 85),     // Dark gray
+        9 => (255, 85, 85),    // Light red
+        10 => (85, 255, 85),   // Light green
+        11 => (255, 255, 85),  // Yellow
+        12 => (85, 85, 255),   // Light blue
+        13 => (255, 85, 255),  // Light magenta
+        14 => (85, 255, 255),  // Light cyan
+        15 => (255, 255, 255), // White
+        _ => (170, 170, 170),  // Default: light gray
     }
 }
 

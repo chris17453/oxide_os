@@ -53,9 +53,7 @@ impl Term {
     fn new() -> Self {
         let entry = termcap::load_terminal("xterm").unwrap_or_else(|_| {
             // ── NeonVale: Last resort, build a bare-bones entry ──
-            termcap::load_terminal("vt100").unwrap_or_else(|_| {
-                termcap::TerminalEntry::new("dumb")
-            })
+            termcap::load_terminal("vt100").unwrap_or_else(|_| termcap::TerminalEntry::new("dumb"))
         });
 
         let rows = entry
@@ -559,8 +557,7 @@ impl Editor {
         match ch {
             b'\n' | b'\r' => {
                 // ── WireSaint: Split line at cursor using Vec operations ──
-                let rest: Vec<u8> = self.buffer.lines[self.cursor_line]
-                    .split_off(self.cursor_col);
+                let rest: Vec<u8> = self.buffer.lines[self.cursor_line].split_off(self.cursor_col);
 
                 self.buffer.insert_line(self.cursor_line + 1);
                 self.buffer.lines[self.cursor_line + 1] = rest;

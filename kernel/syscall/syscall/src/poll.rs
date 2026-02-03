@@ -82,7 +82,10 @@ fn check_fd_ready(fd: i32, events: i16) -> i16 {
                 // Use FIONREAD ioctl to check bytes available
                 const FIONREAD: u64 = 0x541B;
                 let mut bytes_available: i32 = 0;
-                if vnode.ioctl(FIONREAD, &mut bytes_available as *mut i32 as u64).is_ok() {
+                if vnode
+                    .ioctl(FIONREAD, &mut bytes_available as *mut i32 as u64)
+                    .is_ok()
+                {
                     if bytes_available > 0 {
                         revents |= events::POLLIN | events::POLLRDNORM;
                     }
