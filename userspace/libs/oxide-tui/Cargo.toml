@@ -1,8 +1,8 @@
 [package]
-name = "ncurses"
-version = "0.1.0"
+name = "oxide-tui"
+version = "6.0.0"
 edition = "2024"
-description = "Full-featured ncurses implementation for OXIDE OS - 100% API compatible"
+description = "Terminal User Interface library for OXIDE OS - ncurses-compatible API"
 
 [features]
 default = ["wide", "color", "mouse", "menu", "form", "panel"]

@@ -172,7 +172,7 @@ dependencies = [
  "compression",
  "heapless",
  "libc 0.1.0",
- "ncurses",
+ "oxide-tui",
  "termcap",
 ]
 
@@ -844,15 +844,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ncurses"
-version = "0.1.0"
-dependencies = [
- "libc 0.1.0",
- "termcap",
- "vte",
-]
-
-[[package]]
 name = "net"
 version = "0.1.0"
 dependencies = [
@@ -966,6 +957,15 @@ name = "oxide-std"
 version = "0.1.0"
 dependencies = [
  "libc 0.1.0",
+]
+
+[[package]]
+name = "oxide-tui"
+version = "6.0.0"
+dependencies = [
+ "libc 0.1.0",
+ "termcap",
+ "vte",
 ]
 
 [[package]]

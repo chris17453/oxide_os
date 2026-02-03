@@ -1,7 +1,9 @@
-//! # Ncurses Library for OXIDE OS
+//! # OXIDE TUI Library (Terminal User Interface)
 //!
-//! Full-featured ncurses implementation providing terminal-independent screen handling
-//! and optimization library for text-based user interfaces.
+//! Previously named "ncurses" - renamed to avoid CVE false positives.
+//!
+//! Full-featured terminal UI library providing ncurses-compatible API.
+//! Pure Rust implementation - memory safe and free from C ncurses vulnerabilities.
 //!
 //! ## Architecture
 //! ```text

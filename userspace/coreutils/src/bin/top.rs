@@ -18,7 +18,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use alloc::format;
 use libc::*;
-use ncurses::{WINDOW, screen, input, output, color, attributes, attrs, window, colors};
+use oxide_tui::{WINDOW, screen, input, output, color, attributes, attrs, window, colors};
 
 /// Process information structure
 #[derive(Clone, Debug)]
