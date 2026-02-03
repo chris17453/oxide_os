@@ -35,7 +35,7 @@ use crate::globals::{HEAP_ALLOCATOR, HEAP_SIZE, HEAP_STORAGE, KERNEL_PML4, MEMOR
 use crate::memory;
 use crate::mount::{kernel_mount, kernel_pivot_root, kernel_umount};
 use crate::process::get_current_task_fs_base;
-use crate::process::{kernel_exec, kernel_fork, kernel_wait, user_exit};
+use crate::process::{kernel_clone, kernel_exec, kernel_fork, kernel_wait, user_exit};
 use crate::scheduler;
 use crate::smp_init;
 
@@ -750,6 +750,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         console_write: Some(console::console_write),
         exit: Some(user_exit),
         fork: Some(kernel_fork),
+        clone: Some(kernel_clone),
         exec: Some(kernel_exec),
         wait: Some(kernel_wait),
         mount: Some(kernel_mount),

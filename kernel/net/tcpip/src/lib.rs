@@ -569,9 +569,16 @@ pub fn stack() -> Option<Arc<TcpIpStack>> {
 
 /// Poll the TCP/IP stack
 pub fn poll() -> NetResult<()> {
-    if let Some(stack) = stack() {
-        stack.poll()
+    // ShadePacket: Use try_lock to avoid deadlock if already polling
+    // This can happen if poll is called recursively or from timer interrupt
+    if let Some(guard) = TCPIP_STACK.try_lock() {
+        if let Some(ref stack) = *guard {
+            stack.poll()
+        } else {
+            Ok(())
+        }
     } else {
+        // Lock held - skip this poll cycle to avoid deadlock
         Ok(())
     }
 }

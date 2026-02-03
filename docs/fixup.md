@@ -77,23 +77,12 @@
 
 ---
 
-## GW-BASIC Fixes
-
-- [x] Replace WATOS VGA syscalls with OXIDE /dev/fb0
-- [x] Use write() instead of mmap for framebuffer
-- [x] Copy .bas examples to /usr/share/gwbasic/
-- [ ] Test graphics mode on real OXIDE boot
-- [ ] Test LOAD command with .bas files
-
----
-
 ## Kernel Gaps (from analv2.md)
 
 ### P0 - Critical
 
 | Issue | Status | Notes |
 |-------|--------|-------|
-| SMAP disabled | ❌ | Security vulnerability |
 | Thread creation (clone with CLONE_VM) | ❌ | Returns ENOSYS |
 | SMP/Multi-core | ❌ | AP boot fails |
 

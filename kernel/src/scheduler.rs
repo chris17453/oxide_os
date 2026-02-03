@@ -133,6 +133,10 @@ pub fn remove_process(pid: u32) {
 /// Implements preemptive scheduling using the sched crate.
 /// Returns the RSP to restore (may be different if we switched processes).
 pub fn scheduler_tick(current_rsp: u64) -> u64 {
+    // BlackLatch: Flush buffered debug output (lock-free, non-blocking)
+    // TODO: Re-enable after fixing race condition in buffer flush
+    // crate::debug_buffer::try_flush_debug();
+
     // Check sleep queue and wake any tasks whose sleep time has expired
     syscall::time::check_sleepers();
 

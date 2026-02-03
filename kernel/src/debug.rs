@@ -3,6 +3,27 @@
 //! Conditional debug output based on Cargo features.
 //! Enable with: cargo build --features debug-all
 //! Or specific: cargo build --features debug-fork,debug-cow
+//!
+//! BlackLatch: Uses lock-free ring buffer to prevent debug feedback loops
+
+/// Helper to write formatted debug to ring buffer
+#[macro_export]
+macro_rules! debug_to_buffer {
+    ($($arg:tt)*) => {
+        {
+            use core::fmt::Write;
+            struct BufferWriter;
+            impl Write for BufferWriter {
+                fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                    $crate::debug_buffer::write_debug(s.as_bytes());
+                    Ok(())
+                }
+            }
+            let mut writer = BufferWriter;
+            let _ = writeln!(writer, $($arg)*);
+        }
+    };
+}
 
 /// Debug print for syscall operations
 #[macro_export]
@@ -10,9 +31,7 @@ macro_rules! debug_syscall {
     ($($arg:tt)*) => {
         #[cfg(feature = "debug-syscall")]
         {
-            use core::fmt::Write;
-            let mut writer = $crate::serial_writer();
-            let _ = writeln!(writer, $($arg)*);
+            $crate::debug_to_buffer!($($arg)*);
         }
     };
 }
@@ -23,9 +42,7 @@ macro_rules! debug_fork {
     ($($arg:tt)*) => {
         #[cfg(feature = "debug-fork")]
         {
-            use core::fmt::Write;
-            let mut writer = $crate::serial_writer();
-            let _ = writeln!(writer, $($arg)*);
+            $crate::debug_to_buffer!($($arg)*);
         }
     };
 }
@@ -36,9 +53,7 @@ macro_rules! debug_cow {
     ($($arg:tt)*) => {
         #[cfg(feature = "debug-cow")]
         {
-            use core::fmt::Write;
-            let mut writer = $crate::serial_writer();
-            let _ = writeln!(writer, $($arg)*);
+            $crate::debug_to_buffer!($($arg)*);
         }
     };
 }
@@ -49,24 +64,18 @@ macro_rules! debug_proc {
     ($($arg:tt)*) => {
         #[cfg(feature = "debug-proc")]
         {
-            use core::fmt::Write;
-            let mut writer = $crate::serial_writer();
-            let _ = writeln!(writer, $($arg)*);
+            $crate::debug_to_buffer!($($arg)*);
         }
     };
 }
 
 /// Debug print for scheduler context switches
-///
-/// Uses unsafe serial writes to avoid deadlock in interrupt context.
 #[macro_export]
 macro_rules! debug_sched {
     ($($arg:tt)*) => {
         #[cfg(feature = "debug-sched")]
         {
-            use core::fmt::Write;
-            let mut writer = $crate::serial_writer();
-            let _ = writeln!(writer, $($arg)*);
+            $crate::debug_to_buffer!($($arg)*);
         }
     };
 }
@@ -101,9 +110,7 @@ macro_rules! debug_mouse {
     ($($arg:tt)*) => {
         #[cfg(feature = "debug-mouse")]
         {
-            use core::fmt::Write;
-            let mut writer = $crate::serial_writer();
-            let _ = writeln!(writer, $($arg)*);
+            $crate::debug_to_buffer!($($arg)*);
         }
     };
 }
@@ -130,9 +137,7 @@ macro_rules! debug_input {
     ($($arg:tt)*) => {
         #[cfg(feature = "debug-input")]
         {
-            use core::fmt::Write;
-            let mut writer = $crate::serial_writer();
-            let _ = writeln!(writer, $($arg)*);
+            $crate::debug_to_buffer!($($arg)*);
         }
     };
 }
@@ -143,9 +148,7 @@ macro_rules! debug_console {
     ($($arg:tt)*) => {
         #[cfg(feature = "debug-console")]
         {
-            use core::fmt::Write;
-            let mut writer = $crate::serial_writer();
-            let _ = writeln!(writer, $($arg)*);
+            $crate::debug_to_buffer!($($arg)*);
         }
     };
 }

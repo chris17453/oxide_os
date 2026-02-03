@@ -67,7 +67,7 @@
 
 ## Retrieval Index (check these first)
 - Repo guides: `AGENTS.md` (repo rules), `THIS.md` (current plan/phase), `FIXME.md` (gaps), `manifesto.md`.
-- Docs: `docs/DRIVES.md` (boot/filesystem flow).
+- Docs: `docs/DRIVES.md` (boot/filesystem flow), `docs/DEBUGGING.md` (debug features - always enabled).
 - Toolchain: `toolchain/README.md`, `toolchain/QUICKSTART.md`, `toolchain/SUMMARY.md`, `toolchain/INTEGRATION.md`.
 - Components: `userspace/coreutils/TEST_PLAN.md`, `userspace/coreutils/UTILITIES.md`, `userspace/shell/BUILTINS.md`, `apps/gwbasic/README.md`.
 - Code roots: `kernel/` (entry + all subsystems), `bootloader/`, `userspace/`, `tools/`, `scripts/`, `external/`.
@@ -93,8 +93,9 @@
 
 ## Quick Commands
 - Build: `make build`, `make build-full`, `make userspace[-pkg PKG=...]`.
-- Run: `make run`, `make run-fedora`.
+- Run: `make run` (debug-all enabled by default in Makefile).
 - Tests: `make test`; targeted `cargo test -p <crate>`.
+- Debug: See `docs/DEBUGGING.md` (debug-all is default, just run `make run`).
 
 ## Change Checklist (before finishing)
 - [ ] Read relevant phase/spec/plan docs

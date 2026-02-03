@@ -18,6 +18,7 @@ use net::{
     IpAddr, Ipv4Addr, Ipv6Addr, NetError, Socket, SocketAddr, SocketDomain, SocketProtocol,
     SocketType,
 };
+use tcpip; // ShadePacket: Network stack polling for packet reception
 
 /// Socket file descriptor offset (to distinguish from file FDs)
 const SOCKET_FD_BASE: i32 = 1000;
@@ -638,6 +639,9 @@ pub fn sys_accept(fd: i32, addr: u64, addrlen: u64) -> i64 {
         None => return errno::EBADF,
     };
 
+    // ShadePacket: Poll network stack to process incoming connection requests (SYN packets)
+    let _ = tcpip::poll();
+
     // Check socket state
     let state = *socket.state.lock();
     if state != SocketState::Listen {
@@ -800,6 +804,9 @@ pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
         return errno::ENOTCONN;
     }
 
+    // ShadePacket: Poll network stack to process ACKs from previous sends
+    let _ = tcpip::poll();
+
     // Enable access to user pages for SMAP
     unsafe {
         core::arch::asm!("stac", options(nomem, nostack));
@@ -928,6 +935,10 @@ pub fn sys_recv(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
         _ => return errno::EINVAL,
     }
 
+    // ShadePacket: Poll network stack to process incoming packets
+    // This is CRITICAL - without this, packets sit in VirtIO-net RX queue!
+    let _ = tcpip::poll();
+
     // Enable access to user pages for SMAP
     unsafe {
         core::arch::asm!("stac", options(nomem, nostack));
@@ -1001,6 +1012,9 @@ pub fn sys_sendto(fd: i32, buf: u64, len: usize, flags: i32, dest_addr: u64, add
         None => return errno::EBADF,
     };
 
+    // ShadePacket: Poll network stack to process any pending responses
+    let _ = tcpip::poll();
+
     unsafe {
         core::arch::asm!("stac", options(nomem, nostack));
     }
@@ -1071,6 +1085,9 @@ pub fn sys_recvfrom(fd: i32, buf: u64, len: usize, flags: i32, src_addr: u64, ad
         Some(s) => s,
         None => return errno::EBADF,
     };
+
+    // ShadePacket: Poll network stack to process incoming packets
+    let _ = tcpip::poll();
 
     unsafe {
         core::arch::asm!("stac", options(nomem, nostack));

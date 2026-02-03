@@ -15,7 +15,8 @@ use crate::fileio::{FileManager, FileMode};
 use crate::graphics::Screen;
 #[cfg(feature = "host")]
 use crate::graphics_backend::WindowBackend;
-use crate::parser::{AstNode, BinaryOperator, UnaryOperator};
+use crate::lexer::Lexer;
+use crate::parser::{AstNode, BinaryOperator, Parser, UnaryOperator};
 use crate::value::Value;
 
 /// Graphics mode selection
@@ -669,17 +670,76 @@ impl Interpreter {
                 Ok(())
             }
             AstNode::Run(start_line) => {
+                // █▓▒░ GraveShift: RUN triggers full program execution loop ░▒▓█
+                // Clear runtime state but preserve program and variables
+                self.call_stack.clear();
+                self.for_stack.clear();
+                self.while_stack.clear();
+
+                // Pre-process DATA statements
+                let mut data_nodes = Vec::new();
+                let mut line_nums: Vec<u32> = self.lines.keys().copied().collect();
+                line_nums.sort();
+
+                for &line_num in &line_nums {
+                    if let Some(statements) = self.lines.get(&line_num) {
+                        for stmt in statements {
+                            if let AstNode::Data(values) = stmt {
+                                data_nodes.extend(values.clone());
+                            }
+                        }
+                    }
+                }
+
+                // Evaluate and store DATA
+                self.data_items.clear();
+                self.data_pointer = 0;
+                for val_node in data_nodes {
+                    let val = self.evaluate_expression(&val_node)?;
+                    self.data_items.push(val);
+                }
+
+                // Set starting line (use provided line or first line)
                 self.current_line = start_line.or_else(|| {
-                    let mut nums: Vec<u32> = self.lines.keys().copied().collect();
-                    nums.sort();
-                    nums.first().copied()
+                    line_nums.first().copied()
                 });
 
-                if let Some(line) = self.current_line {
-                    self.execute_goto(line)
-                } else {
-                    Ok(())
+                // Execute line by line until program ends
+                while let Some(current) = self.current_line {
+                    let statements = match self.lines.get(&current) {
+                        Some(stmts) => stmts.clone(),
+                        None => break, // Line not found
+                    };
+
+                    // Execute all statements on this line
+                    for stmt in statements {
+                        match self.execute_node(stmt) {
+                            Ok(_) => {}
+                            Err(Error::ProgramEnd) => {
+                                self.screen.display();
+                                #[cfg(feature = "host")]
+                                {
+                                    while !self.screen.should_close() {
+                                        self.screen.update()?;
+                                        std::thread::sleep(std::time::Duration::from_millis(16));
+                                    }
+                                }
+                                return Ok(());
+                            }
+                            Err(e) => return Err(e),
+                        }
+                    }
+
+                    // Move to next line (unless GOTO/GOSUB changed it)
+                    if self.current_line == Some(current) {
+                        let next_line = line_nums.iter().find(|&&n| n > current).copied();
+                        self.current_line = next_line;
+                    }
                 }
+
+                // Display graphics when done
+                self.screen.display();
+                Ok(())
             }
 
             // Error Handling
@@ -756,44 +816,69 @@ impl Interpreter {
 
             // Program management
             AstNode::Load(filename) => {
-                // Load program from file
-                // Clear current program
+                // █▓▒░ GraveShift: Full file load with proper tokenization/parsing ░▒▓█
+                // Clear current program state
                 self.lines.clear();
+                self.variables.clear();
+                self.arrays.clear();
+                self.array_dims.clear();
+                self.call_stack.clear();
+                self.data_items.clear();
+                self.data_pointer = 0;
 
-                // Open and read file
+                // Open and read entire file
                 let file_num = 1; // Use temporary file handle
                 match self.file_manager.open(file_num, &filename, FileMode::Input) {
                     Ok(_) => {
-                        // Read all lines and parse them
+                        // Read entire file content
+                        let mut content = String::new();
                         loop {
                             match self.file_manager.read_line(file_num) {
                                 Ok(line) => {
                                     if line.is_empty() {
                                         break; // End of file
                                     }
-                                    // Parse and add line to program
-                                    // Format: "line_number statements"
-                                    if let Some(first_space) = line.find(' ') {
-                                        if let Ok(line_num) = line[..first_space].parse::<u32>() {
-                                            // Re-parse the line content
-                                            // For simplicity, just store as a dummy REM
-                                            self.lines.insert(
-                                                line_num,
-                                                vec![AstNode::Rem(
-                                                    line[first_space + 1..].to_string(),
-                                                )],
-                                            );
-                                        }
-                                    }
+                                    content.push_str(&line);
+                                    content.push('\n');
                                 }
                                 Err(_) => break,
                             }
                         }
                         let _ = self.file_manager.close(file_num);
+
+                        // Now tokenize and parse the content
+                        let mut lexer = Lexer::new(&content);
+                        let tokens = match lexer.tokenize() {
+                            Ok(t) => t,
+                            Err(e) => {
+                                console_println!("Error tokenizing {}: {}", filename, e);
+                                return Err(e);
+                            }
+                        };
+
+                        let mut parser = Parser::new(tokens);
+                        let ast = match parser.parse() {
+                            Ok(a) => a,
+                            Err(e) => {
+                                console_println!("Error parsing {}: {}", filename, e);
+                                return Err(e);
+                            }
+                        };
+
+                        // Execute to load lines into memory
+                        if let Err(e) = self.execute(ast) {
+                            console_println!("Error loading {}: {}", filename, e);
+                            return Err(e);
+                        }
+
                         console_println!("Program loaded from {}", filename);
                     }
                     Err(_) => {
-                        console_println!("Error: Could not load {}", filename);
+                        console_println!("Error: Could not open file {}", filename);
+                        return Err(Error::RuntimeError(format!(
+                            "Could not open file {}",
+                            filename
+                        )));
                     }
                 }
                 Ok(())
@@ -825,79 +910,132 @@ impl Interpreter {
                 Ok(())
             }
             AstNode::Merge(filename) => {
-                // Merge program from file - add lines without clearing existing
+                // █▓▒░ GraveShift: MERGE adds program lines without clearing existing ░▒▓█
                 let file_num = 1;
                 match self.file_manager.open(file_num, &filename, FileMode::Input) {
                     Ok(_) => {
+                        // Read entire file content
+                        let mut content = String::new();
                         loop {
                             match self.file_manager.read_line(file_num) {
                                 Ok(line) => {
                                     if line.is_empty() {
                                         break;
                                     }
-                                    // Parse and merge line (simple version)
-                                    if let Some(first_space) = line.find(' ') {
-                                        if let Ok(line_num) = line[..first_space].parse::<u32>() {
-                                            self.lines.insert(
-                                                line_num,
-                                                vec![AstNode::Rem(
-                                                    line[first_space + 1..].to_string(),
-                                                )],
-                                            );
-                                        }
-                                    }
-                                }
-                                Err(_) => break,
-                            }
-                        }
-                        let _ = self.file_manager.close(file_num);
-                        console_println!("Program merged from {}", filename);
-                    }
-                    Err(_) => {
-                        console_println!("Error: Could not merge {}", filename);
-                    }
-                }
-                Ok(())
-            }
-            AstNode::Chain(filename, start_line) => {
-                // Chain to another program - load and optionally jump to line
-                // First, load the program
-                self.lines.clear();
-                let file_num = 1;
-                match self.file_manager.open(file_num, &filename, FileMode::Input) {
-                    Ok(_) => {
-                        loop {
-                            match self.file_manager.read_line(file_num) {
-                                Ok(line) => {
-                                    if line.is_empty() {
-                                        break;
-                                    }
-                                    if let Some(first_space) = line.find(' ') {
-                                        if let Ok(line_num) = line[..first_space].parse::<u32>() {
-                                            self.lines.insert(
-                                                line_num,
-                                                vec![AstNode::Rem(
-                                                    line[first_space + 1..].to_string(),
-                                                )],
-                                            );
-                                        }
-                                    }
+                                    content.push_str(&line);
+                                    content.push('\n');
                                 }
                                 Err(_) => break,
                             }
                         }
                         let _ = self.file_manager.close(file_num);
 
-                        // Start execution at specified line or first line
+                        // Tokenize and parse
+                        let mut lexer = Lexer::new(&content);
+                        let tokens = match lexer.tokenize() {
+                            Ok(t) => t,
+                            Err(e) => {
+                                console_println!("Error tokenizing {}: {}", filename, e);
+                                return Err(e);
+                            }
+                        };
+
+                        let mut parser = Parser::new(tokens);
+                        let ast = match parser.parse() {
+                            Ok(a) => a,
+                            Err(e) => {
+                                console_println!("Error parsing {}: {}", filename, e);
+                                return Err(e);
+                            }
+                        };
+
+                        // Execute to merge lines (doesn't clear existing lines)
+                        if let Err(e) = self.execute(ast) {
+                            console_println!("Error merging {}: {}", filename, e);
+                            return Err(e);
+                        }
+
+                        console_println!("Program merged from {}", filename);
+                    }
+                    Err(_) => {
+                        console_println!("Error: Could not open file {}", filename);
+                        return Err(Error::RuntimeError(format!(
+                            "Could not open file {}",
+                            filename
+                        )));
+                    }
+                }
+                Ok(())
+            }
+            AstNode::Chain(filename, start_line) => {
+                // █▓▒░ GraveShift: CHAIN loads new program and optionally runs from line ░▒▓█
+                // Clear current program but preserve COMMON variables
+                self.lines.clear();
+                self.call_stack.clear();
+                self.for_stack.clear();
+                self.while_stack.clear();
+                self.data_items.clear();
+                self.data_pointer = 0;
+
+                let file_num = 1;
+                match self.file_manager.open(file_num, &filename, FileMode::Input) {
+                    Ok(_) => {
+                        // Read entire file content
+                        let mut content = String::new();
+                        loop {
+                            match self.file_manager.read_line(file_num) {
+                                Ok(line) => {
+                                    if line.is_empty() {
+                                        break;
+                                    }
+                                    content.push_str(&line);
+                                    content.push('\n');
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                        let _ = self.file_manager.close(file_num);
+
+                        // Tokenize and parse
+                        let mut lexer = Lexer::new(&content);
+                        let tokens = match lexer.tokenize() {
+                            Ok(t) => t,
+                            Err(e) => {
+                                console_println!("Error tokenizing {}: {}", filename, e);
+                                return Err(e);
+                            }
+                        };
+
+                        let mut parser = Parser::new(tokens);
+                        let ast = match parser.parse() {
+                            Ok(a) => a,
+                            Err(e) => {
+                                console_println!("Error parsing {}: {}", filename, e);
+                                return Err(e);
+                            }
+                        };
+
+                        // Execute to load lines
+                        if let Err(e) = self.execute(ast) {
+                            console_println!("Error loading {}: {}", filename, e);
+                            return Err(e);
+                        }
+
+                        // Set execution start point
                         if let Some(line) = start_line {
                             self.current_line = Some(line);
                         } else {
                             self.current_line = self.lines.keys().min().copied();
                         }
+
                         console_println!("Chained to {}", filename);
                     }
                     Err(_) => {
-                        console_println!("Error: Could not chain to {}", filename);
+                        console_println!("Error: Could not open file {}", filename);
+                        return Err(Error::RuntimeError(format!(
+                            "Could not open file {}",
+                            filename
+                        )));
                     }
                 }
                 Ok(())

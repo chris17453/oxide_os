@@ -110,6 +110,7 @@ pub mod nr {
     pub const FUTEX: u64 = 202; // Fast userspace locking
     pub const SET_TID_ADDRESS: u64 = 218; // Set clear_child_tid address
     pub const EXIT_GROUP: u64 = 231; // Exit all threads in group
+    pub const ARCH_PRCTL: u64 = 158; // Set architecture-specific thread state (FS/GS base)
 
     // VFS syscalls
     pub const OPEN: u64 = 20;
@@ -362,6 +363,11 @@ pub type ExitFn = fn(i32) -> !;
 /// Fork callback type - returns child PID to parent, 0 to child, or negative error
 pub type ForkFn = fn() -> i64;
 
+/// Clone callback type - creates threads with CLONE_VM flag
+/// Arguments: flags, stack, parent_tid, child_tid, tls
+/// Returns: child TID to parent, 0 to child, or negative error
+pub type CloneFn = fn(u32, u64, u64, u64, u64) -> i64;
+
 /// Exec callback type - path, argv, envp; returns error code (doesn't return on success)
 /// Arguments:
 /// - path: pointer to path string
@@ -398,6 +404,8 @@ pub struct SyscallContext {
     pub exit: Option<ExitFn>,
     /// Function to fork the current process
     pub fork: Option<ForkFn>,
+    /// Function to clone (create threads with CLONE_VM)
+    pub clone: Option<CloneFn>,
     /// Function to exec a new program
     pub exec: Option<ExecFn>,
     /// Function to wait for child processes
@@ -425,6 +433,7 @@ impl SyscallContext {
             console_write: None,
             exit: None,
             fork: None,
+            clone: None,
             exec: None,
             wait: None,
             mount: None,
@@ -555,6 +564,7 @@ pub fn dispatch(
         nr::FUTEX => sys_futex(arg1, arg2 as i32, arg3 as u32, arg4, arg5, arg6 as u32),
         nr::SET_TID_ADDRESS => sys_set_tid_address(arg1),
         nr::EXIT_GROUP => sys_exit_group(arg1 as i32),
+        nr::ARCH_PRCTL => sys_arch_prctl(arg1 as i32, arg2),
 
         // VFS syscalls
         nr::OPEN => vfs::sys_open(arg1, arg2 as usize, arg3 as u32, arg4 as u32),
@@ -1435,8 +1445,13 @@ fn sys_waitpid(pid: i32, status_ptr: u64, options: i32) -> i64 {
 
 /// sys_getpid - Get current process ID
 fn sys_getpid() -> i64 {
-    // Use the unified model - get PID from scheduler
-    current_pid() as i64
+    // ThreadRogue: Return TGID (thread group ID), not TID
+    // For threads, all threads in the group share the same TGID
+    if let Some(meta) = get_current_meta() {
+        meta.lock().tgid as i64
+    } else {
+        current_pid() as i64
+    }
 }
 
 /// sys_getppid - Get parent process ID
@@ -2391,9 +2406,6 @@ fn sys_getkeymap(buf_ptr: u64, buf_len: usize) -> i64 {
 // Thread syscalls
 // ============================================================================
 
-/// Clone callback type - returns child TID to parent, 0 to child
-pub type CloneFn = fn(u32, u64, u64, u64, u64) -> i64;
-
 /// sys_clone - Create a new process or thread
 ///
 /// # Arguments
@@ -2424,16 +2436,130 @@ fn sys_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls: u64) 
         return sys_fork();
     }
 
-    // Thread creation requires kernel support
-    // For now, return ENOSYS until we wire up the clone callback
-    // In a full implementation, we'd call into the kernel's clone handler
-    errno::ENOSYS
+    // Thread creation with CLONE_VM - call kernel clone handler
+    // BlackLatch: Spawning threads through the clone gate, keep it tight
+    unsafe {
+        let ctx = addr_of!(SYSCALL_CONTEXT);
+        if let Some(clone_fn) = (*ctx).clone {
+            clone_fn(flags, stack, parent_tid, child_tid, tls)
+        } else {
+            errno::ENOSYS
+        }
+    }
 }
 
 /// sys_gettid - Get thread ID
+///
+/// ThreadRogue: Returns the actual TID (unique per thread)
+/// This differs from getpid() which returns TGID (shared by all threads)
 fn sys_gettid() -> i64 {
-    // For now, tid == pid (no thread support yet)
-    current_pid() as i64
+    current_pid() as i64 // Task.pid is the TID
+}
+
+/// ARCH_PRCTL operations
+mod arch_prctl_op {
+    pub const ARCH_SET_GS: i32 = 0x1001;
+    pub const ARCH_SET_FS: i32 = 0x1002;
+    pub const ARCH_GET_FS: i32 = 0x1003;
+    pub const ARCH_GET_GS: i32 = 0x1004;
+}
+
+/// sys_arch_prctl - Set architecture-specific thread state
+///
+/// Used to set FS/GS base registers for thread-local storage.
+///
+/// # Arguments
+/// * `code` - Operation code (ARCH_SET_FS, ARCH_GET_FS, etc.)
+/// * `addr` - Value to set (for SET) or pointer to write value (for GET)
+///
+/// SableWire: Direct hardware register manipulation for TLS
+fn sys_arch_prctl(code: i32, addr: u64) -> i64 {
+    match code {
+        arch_prctl_op::ARCH_SET_FS => {
+            // Set FS base register for TLS
+            let current_pid = current_pid();
+
+            // Get current task context
+            if let Some(mut ctx) = sched::get_task_context(current_pid) {
+                // Update context's fs_base
+                ctx.fs_base = addr;
+                sched::set_task_context(current_pid, ctx);
+
+                // Write to MSR immediately for current CPU
+                unsafe {
+                    core::arch::asm!(
+                        "mov ecx, 0xC0000100", // IA32_FS_BASE
+                        "mov rax, {}",
+                        "mov rdx, {}",
+                        "shr rdx, 32",
+                        "wrmsr",
+                        in(reg) addr,
+                        in(reg) addr,
+                        out("ecx") _,
+                        out("eax") _,
+                        out("edx") _,
+                    );
+                }
+                0
+            } else {
+                errno::ESRCH
+            }
+        }
+        arch_prctl_op::ARCH_GET_FS => {
+            // Read FS base register
+            if addr == 0 || addr >= 0x0000_8000_0000_0000 {
+                return errno::EFAULT;
+            }
+
+            use core::ptr::addr_of;
+            let fs_base = unsafe {
+                let ctx = addr_of!(SYSCALL_CONTEXT);
+                if let Some(get_fs_base) = (*ctx).get_current_fs_base {
+                    get_fs_base()
+                } else {
+                    0
+                }
+            };
+
+            // Write to user memory
+            unsafe {
+                let ptr = addr as *mut u64;
+                *ptr = fs_base;
+            }
+            0
+        }
+        arch_prctl_op::ARCH_SET_GS => {
+            // Set GS base register (similar to FS)
+            let current_pid = current_pid();
+
+            if let Some(mut ctx) = sched::get_task_context(current_pid) {
+                // Note: GS is used by kernel for per-CPU data in some systems
+                // For now we treat it like FS but don't store it in context
+                unsafe {
+                    core::arch::asm!(
+                        "mov ecx, 0xC0000101", // IA32_GS_BASE
+                        "mov rax, {}",
+                        "mov rdx, {}",
+                        "shr rdx, 32",
+                        "wrmsr",
+                        in(reg) addr,
+                        in(reg) addr,
+                        out("ecx") _,
+                        out("eax") _,
+                        out("edx") _,
+                    );
+                }
+                0
+            } else {
+                errno::ESRCH
+            }
+        }
+        arch_prctl_op::ARCH_GET_GS => {
+            // Read GS base register (not fully implemented)
+            errno::ENOSYS
+        }
+        _ => errno::EINVAL,
+    }
 }
 
 /// Futex operations

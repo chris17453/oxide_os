@@ -59,24 +59,39 @@ pub struct TmpDir {
     ino: u64,
     /// Mode/permissions
     mode: Mode,
+    /// Access time (seconds since epoch)
+    atime: RwLock<u64>,
+    /// Modification time (seconds since epoch)
+    mtime: RwLock<u64>,
+    /// Status change time (seconds since epoch)
+    ctime: RwLock<u64>,
 }
 
 impl TmpDir {
     /// Create a new tmpfs root directory
     pub fn new_root() -> Arc<Self> {
+        // WireSaint: Timestamp at creation from wall clock
+        let now = os_core::wall_clock_secs();
         Arc::new(TmpDir {
             entries: RwLock::new(BTreeMap::new()),
             ino: alloc_inode(),
             mode: Mode::DEFAULT_DIR,
+            atime: RwLock::new(now),
+            mtime: RwLock::new(now),
+            ctime: RwLock::new(now),
         })
     }
 
     /// Create a new subdirectory
     fn new_subdir(mode: Mode) -> Arc<Self> {
+        let now = os_core::wall_clock_secs();
         Arc::new(TmpDir {
             entries: RwLock::new(BTreeMap::new()),
             ino: alloc_inode(),
             mode,
+            atime: RwLock::new(now),
+            mtime: RwLock::new(now),
+            ctime: RwLock::new(now),
         })
     }
 }
@@ -241,16 +256,27 @@ impl VnodeOps for TmpDir {
     }
 
     fn stat(&self) -> VfsResult<Stat> {
-        Ok(Stat::new(VnodeType::Directory, self.mode, 0, self.ino))
+        let mut stat = Stat::new(VnodeType::Directory, self.mode, 0, self.ino);
+        stat.atime = *self.atime.read();
+        stat.mtime = *self.mtime.read();
+        stat.ctime = *self.ctime.read();
+        stat.uid = 0; // TODO: Get from creation context
+        stat.gid = 0;
+        Ok(stat)
     }
 
     fn truncate(&self, _size: u64) -> VfsResult<()> {
         Err(VfsError::IsDirectory)
     }
 
-    fn set_times(&self, _atime: Option<u64>, _mtime: Option<u64>) -> VfsResult<()> {
-        // tmpfs doesn't track timestamps (it's in-memory only)
-        // Just return Ok to make utilities happy
+    fn set_times(&self, atime: Option<u64>, mtime: Option<u64>) -> VfsResult<()> {
+        // WireSaint: Update timestamps as requested
+        if let Some(t) = atime {
+            *self.atime.write() = t;
+        }
+        if let Some(t) = mtime {
+            *self.mtime.write() = t;
+        }
         Ok(())
     }
 }
@@ -263,15 +289,25 @@ pub struct TmpFile {
     ino: u64,
     /// Mode/permissions
     mode: Mode,
+    /// Access time (seconds since epoch)
+    atime: RwLock<u64>,
+    /// Modification time (seconds since epoch)
+    mtime: RwLock<u64>,
+    /// Status change time (seconds since epoch)
+    ctime: RwLock<u64>,
 }
 
 impl TmpFile {
     /// Create a new empty file
     fn new(mode: Mode) -> Self {
+        let now = os_core::wall_clock_secs();
         TmpFile {
             data: RwLock::new(Vec::new()),
             ino: alloc_inode(),
             mode,
+            atime: RwLock::new(now),
+            mtime: RwLock::new(now),
+            ctime: RwLock::new(now),
         }
     }
 }
@@ -300,6 +336,10 @@ impl VnodeOps for TmpFile {
         let available = data.len() - offset;
         let to_read = buf.len().min(available);
         buf[..to_read].copy_from_slice(&data[offset..offset + to_read]);
+
+        // WireSaint: Update access time on read
+        *self.atime.write() = os_core::wall_clock_secs();
+
         Ok(to_read)
     }
 
@@ -314,6 +354,10 @@ impl VnodeOps for TmpFile {
         }
 
         data[offset..offset + buf.len()].copy_from_slice(buf);
+
+        // WireSaint: Update modification time on write
+        *self.mtime.write() = os_core::wall_clock_secs();
+
         Ok(buf.len())
     }
 
@@ -339,12 +383,20 @@ impl VnodeOps for TmpFile {
 
     fn stat(&self) -> VfsResult<Stat> {
         let size = self.data.read().len() as u64;
-        Ok(Stat::new(VnodeType::File, self.mode, size, self.ino))
+        let mut stat = Stat::new(VnodeType::File, self.mode, size, self.ino);
+        stat.atime = *self.atime.read();
+        stat.mtime = *self.mtime.read();
+        stat.ctime = *self.ctime.read();
+        stat.uid = 0; // TODO: Get from creation context
+        stat.gid = 0;
+        Ok(stat)
     }
 
     fn truncate(&self, size: u64) -> VfsResult<()> {
         let mut data = self.data.write();
         data.resize(size as usize, 0);
+        // Update mtime on truncate
+        *self.mtime.write() = os_core::wall_clock_secs();
         Ok(())
     }
 
@@ -352,9 +404,14 @@ impl VnodeOps for TmpFile {
         self.data.read().len() as u64
     }
 
-    fn set_times(&self, _atime: Option<u64>, _mtime: Option<u64>) -> VfsResult<()> {
-        // tmpfs doesn't track timestamps (it's in-memory only)
-        // Just return Ok to make utilities happy
+    fn set_times(&self, atime: Option<u64>, mtime: Option<u64>) -> VfsResult<()> {
+        // WireSaint: Update timestamps as requested
+        if let Some(t) = atime {
+            *self.atime.write() = t;
+        }
+        if let Some(t) = mtime {
+            *self.mtime.write() = t;
+        }
         Ok(())
     }
 }
