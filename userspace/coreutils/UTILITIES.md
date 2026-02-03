@@ -42,6 +42,16 @@
 | `cut` | Remove sections from lines | DONE |
 | `tr` | Translate characters | DONE |
 | `tee` | Pipe to file and stdout | DONE |
+| `sed` | Stream editor | DONE |
+| `awk` | Pattern scanning and processing | DONE |
+
+## Priority 2.5: Text Editors
+
+| Utility | Description | Status |
+|---------|-------------|--------|
+| `vim` | Vi IMproved - modal text editor | DONE |
+| `less` | Advanced file viewer | DONE |
+| `more` | Simple file pager | DONE |
 
 ## Priority 3: System Utilities
 
