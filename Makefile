@@ -675,7 +675,6 @@ run-fedora:
 		-device intel-hda \
 		-device hda-duplex,audiodev=snd0 \
 		-serial stdio \
-		-display none \
 		-no-reboot
 
 # Internal target: Run with qemu-kvm (RHEL)
