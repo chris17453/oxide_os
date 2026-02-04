@@ -7,6 +7,23 @@ use spin::Mutex;
 
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
+/// — GraveShift: unconditional COM1 serial write for critical diagnostics
+/// No feature gate — if this path fires, we must see it
+fn raw_serial_str(s: &[u8]) {
+    for &b in s {
+        unsafe {
+            let mut status: u8;
+            loop {
+                core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
+                if status & 0x20 != 0 {
+                    break;
+                }
+            }
+            core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
+        }
+    }
+}
+
 /// Write a string to COM1 serial port (debug-console only)
 #[cfg(feature = "debug-console")]
 fn dbg_serial(s: &str) {
@@ -324,8 +341,9 @@ impl VnodeOps for ConsoleDevice {
                 backend.read(offset, buf)
             }
             None => {
-                #[cfg(feature = "debug-console")]
-                dbg_serial("[CON] read() -> NO BACKEND\n");
+                // — GraveShift: ALWAYS log this — the EIO path kills login reads
+                // No cfg gate: if we hit this, we need to know unconditionally
+                raw_serial_str(b"[CON:READ] NO BACKEND -> EIO\n");
                 Err(VfsError::IoError)
             }
         }

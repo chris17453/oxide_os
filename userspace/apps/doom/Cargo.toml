@@ -6,11 +6,3 @@ license = "MIT"
 
 [dependencies]
 libc = { path = "../../libs/libc" }
-
-[profile.dev]
-panic = "abort"
-
-[profile.release]
-panic = "abort"
-opt-level = 2
-lto = true

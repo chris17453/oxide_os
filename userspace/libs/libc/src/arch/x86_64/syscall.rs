@@ -2,6 +2,15 @@
 //!
 //! Raw syscall wrappers using the x86_64 syscall instruction.
 //! ABI: syscall number in rax, args in rdi, rsi, rdx, r10, r8, r9
+//!
+//! 🔥 GraveShift: The `syscall` instruction clobbers RCX (with RIP) and R11
+//! (with RFLAGS). The kernel's syscall_entry preserves+restores all other
+//! user registers. However, Rust's inline asm considers `in()` registers
+//! dead after the asm block — so the compiler may reuse them as scratch
+//! across inlined syscall sequences. We must declare ALL caller-saved
+//! registers as clobbers so the compiler spills any live values before
+//! the asm block. This prevents the optimizer from placing local variables
+//! in registers that appear "free" between consecutive inlined syscalls. 🔥
 
 use core::arch::asm;
 
@@ -16,6 +25,13 @@ pub fn syscall0(nr: u64) -> i64 {
             lateout("rax") ret,
             lateout("rcx") _,
             lateout("r11") _,
+            // — GraveShift: clobber all syscall-convention scratch regs
+            lateout("rdi") _,
+            lateout("rsi") _,
+            lateout("rdx") _,
+            lateout("r8") _,
+            lateout("r9") _,
+            lateout("r10") _,
             options(nostack),
         );
     }
@@ -34,6 +50,12 @@ pub fn syscall1(nr: u64, arg1: usize) -> i64 {
             lateout("rax") ret,
             lateout("rcx") _,
             lateout("r11") _,
+            // — GraveShift: clobber unused syscall-convention scratch regs
+            lateout("rsi") _,
+            lateout("rdx") _,
+            lateout("r8") _,
+            lateout("r9") _,
+            lateout("r10") _,
             options(nostack),
         );
     }
@@ -53,6 +75,11 @@ pub fn syscall2(nr: u64, arg1: usize, arg2: usize) -> i64 {
             lateout("rax") ret,
             lateout("rcx") _,
             lateout("r11") _,
+            // — GraveShift: clobber unused syscall-convention scratch regs
+            lateout("rdx") _,
+            lateout("r8") _,
+            lateout("r9") _,
+            lateout("r10") _,
             options(nostack),
         );
     }
@@ -73,6 +100,10 @@ pub fn syscall3(nr: u64, arg1: usize, arg2: usize, arg3: usize) -> i64 {
             lateout("rax") ret,
             lateout("rcx") _,
             lateout("r11") _,
+            // — GraveShift: clobber unused syscall-convention scratch regs
+            lateout("r8") _,
+            lateout("r9") _,
+            lateout("r10") _,
             options(nostack),
         );
     }
@@ -94,6 +125,9 @@ pub fn syscall4(nr: u64, arg1: usize, arg2: usize, arg3: usize, arg4: usize) -> 
             lateout("rax") ret,
             lateout("rcx") _,
             lateout("r11") _,
+            // — GraveShift: clobber unused syscall-convention scratch regs
+            lateout("r8") _,
+            lateout("r9") _,
             options(nostack),
         );
     }
@@ -116,6 +150,8 @@ pub fn syscall5(nr: u64, arg1: usize, arg2: usize, arg3: usize, arg4: usize, arg
             lateout("rax") ret,
             lateout("rcx") _,
             lateout("r11") _,
+            // — GraveShift: clobber unused syscall-convention scratch regs
+            lateout("r9") _,
             options(nostack),
         );
     }

@@ -93,6 +93,35 @@ impl File {
         &self.vnode
     }
 
+    // — GraveShift: raw COM1 diag when read() hits a not-readable fd
+    fn serial_debug_not_readable(flag_bits: u32) {
+        fn write_byte(b: u8) {
+            unsafe {
+                let mut status: u8;
+                loop {
+                    core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
+                    if status & 0x20 != 0 { break; }
+                }
+                core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
+            }
+        }
+        fn write_str(s: &[u8]) { for &b in s { write_byte(b); } }
+        fn write_hex(mut n: u32) {
+            write_str(b"0x");
+            if n == 0 { write_byte(b'0'); return; }
+            let mut buf = [0u8; 8];
+            let mut i = 0;
+            while n > 0 { let d = (n & 0xF) as u8; buf[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 }; n >>= 4; i += 1; }
+            while i > 0 { i -= 1; write_byte(buf[i]); }
+        }
+
+        write_str(b"[RD:PERM] flags=");
+        write_hex(flag_bits);
+        write_str(b" accmode=");
+        write_hex(flag_bits & 3);
+        write_byte(b'\n');
+    }
+
     /// Get the flags
     pub fn flags(&self) -> FileFlags {
         FileFlags::from_bits_truncate(self.flags.load(Ordering::Relaxed))
@@ -118,6 +147,9 @@ impl File {
     pub fn read(&self, buf: &mut [u8]) -> VfsResult<usize> {
         let flags = self.flags();
         if !flags.readable() {
+            // — GraveShift: something opened this fd write-only and tried to read
+            // Dump the raw flag bits to serial so we can see what went wrong
+            Self::serial_debug_not_readable(flags.bits());
             return Err(VfsError::PermissionDenied);
         }
 

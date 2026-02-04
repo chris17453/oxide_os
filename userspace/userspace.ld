@@ -1,4 +1,6 @@
 /* Common linker script for OXIDE userspace programs */
+/* -- PulseForge: Page-align sections with different permissions so the  */
+/*    ELF loader can map them with correct R/W/X flags per page.        */
 
 ENTRY(_start)
 
@@ -13,6 +15,13 @@ SECTIONS
 
     .rodata : {
         *(.rodata .rodata.*)
+    }
+
+    /* RW sections on their own page boundary — keeps W^X clean */
+    . = ALIGN(0x1000);
+
+    .got : {
+        *(.got .got.*)
     }
 
     .data : {

@@ -124,6 +124,13 @@ userspace-release:
 			rm -rf $(USERSPACE_OUT_RELEASE)/*; \
 		fi; \
 	fi
+	@# Check if linker script has changed - cargo won't detect .ld changes
+	@if [ -d "$(USERSPACE_OUT_RELEASE)" ] && [ -f "$(USERSPACE_OUT_RELEASE)/init" ]; then \
+		if [ "userspace/userspace.ld" -nt "$(USERSPACE_OUT_RELEASE)/init" ]; then \
+			echo "  linker script changed - cleaning userspace binaries to force relink..."; \
+			rm -rf $(USERSPACE_OUT_RELEASE)/*; \
+		fi; \
+	fi
 	@for pkg in $(USERSPACE_PACKAGES); do \
 		echo "  Building $$pkg (release)..."; \
 		RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package $$pkg --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1; \

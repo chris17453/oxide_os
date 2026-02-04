@@ -430,16 +430,19 @@ pub unsafe extern "C" fn enter_usermode_with_context(
         "2:",
 
         // Load user data segments right before iretq
-        // NOTE: In x86-64 long mode, FS base comes from FS_BASE MSR, not segment descriptor.
-        // We do NOT load FS at all - just leave it as-is after WRMSR set the base.
-        // We need to preserve RAX. Store it at [rsp-16] (different spot to not conflict with debug)
+        // NOTE: In x86-64 long mode, FS/GS base comes from MSRs, not segment descriptors.
+        // We do NOT load FS (set via WRMSR above) or GS (managed by swapgs).
+        // -- GraveShift: Only touch DS/ES selectors. GS_BASE is kernel per-CPU data;
+        // swapgs below saves it to KERNEL_GS_BASE for recovery on next syscall entry.
         "mov [rsp - 16], rax",
         "mov ax, {user_ds}",
         "mov ds, ax",
         "mov es, ax",
-        // Do NOT touch FS - leave it alone after WRMSR
-        "mov gs, ax",
         "mov rax, [rsp - 16]",
+
+        // Swap GS: save kernel GS_BASE → KERNEL_GS_BASE so next syscall's
+        // swapgs restores per-CPU data access via gs:[offset]
+        "swapgs",
 
         // Now RSP points to the iretq frame
         // RAX contains the context's rax value (0 for fork child)

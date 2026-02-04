@@ -1320,9 +1320,7 @@ pub fn kernel_exec(
             println!("[DEBUG] kernel_exec: getting kernel stack for transition");
 
             // Get current task's kernel stack for safe transition
-            let kernel_stack_top = if let Some(task) = sched::get_task(current_pid) {
-                let kstack_phys = task.kernel_stack_phys;
-                let kstack_size = task.kernel_stack_size;
+            let kernel_stack_top = if let Some((kstack_phys, kstack_size)) = sched::get_task_kernel_stack(current_pid) {
                 let kstack_virt = phys_to_virt(kstack_phys);
                 kstack_virt.as_u64() + kstack_size as u64
             } else {

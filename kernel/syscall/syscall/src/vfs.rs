@@ -18,6 +18,155 @@ use crate::{current_pid, with_current_meta, with_current_meta_mut};
 /// Maximum path length for syscalls
 const MAX_PATH: usize = 4096;
 
+// — GraveShift: raw serial diag for the read-path ghost hunt
+// Writes directly to COM1 — no locks, no alloc, ISR-safe
+fn serial_debug_read_fail(pid: u64, fd: u64, errno_val: u64, tag: u8) {
+    // Format: [RD:X] pid=NNNN fd=N err=N\n  where X is tag byte
+    fn write_byte(b: u8) {
+        unsafe {
+            let mut status: u8;
+            loop {
+                core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
+                if status & 0x20 != 0 { break; }
+            }
+            core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
+        }
+    }
+    fn write_str(s: &[u8]) { for &b in s { write_byte(b); } }
+    fn write_num(mut n: u64) {
+        if n == 0 { write_byte(b'0'); return; }
+        let mut buf = [0u8; 20];
+        let mut i = 0;
+        while n > 0 { buf[i] = b'0' + (n % 10) as u8; n /= 10; i += 1; }
+        while i > 0 { i -= 1; write_byte(buf[i]); }
+    }
+    fn write_neg(n: u64) {
+        // Print as negative (for errno)
+        if n == 0 { write_byte(b'0'); return; }
+        write_byte(b'-');
+        write_num(n);
+    }
+
+    write_str(b"[RD:");
+    write_byte(tag);
+    write_str(b"] pid=");
+    write_num(pid);
+    write_str(b" fd=");
+    write_num(fd);
+    write_str(b" err=");
+    write_neg(errno_val);
+    write_byte(b'\n');
+}
+
+// — GraveShift: one-shot write success diag for comparison
+fn serial_debug_write_ok(pid: u64, fd: u64, entries_len: u64, mask: u64) {
+    fn write_byte(b: u8) {
+        unsafe {
+            let mut status: u8;
+            loop {
+                core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
+                if status & 0x20 != 0 { break; }
+            }
+            core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
+        }
+    }
+    fn write_str(s: &[u8]) { for &b in s { write_byte(b); } }
+    fn write_num(mut n: u64) {
+        if n == 0 { write_byte(b'0'); return; }
+        let mut buf = [0u8; 20];
+        let mut i = 0;
+        while n > 0 { buf[i] = b'0' + (n % 10) as u8; n /= 10; i += 1; }
+        while i > 0 { i -= 1; write_byte(buf[i]); }
+    }
+    fn write_hex8(n: u64) {
+        write_str(b"0b");
+        for bit in (0..8).rev() {
+            write_byte(if n & (1 << bit) != 0 { b'1' } else { b'0' });
+        }
+    }
+
+    write_str(b"[WR:OK] pid=");
+    write_num(pid);
+    write_str(b" fd=");
+    write_num(fd);
+    write_str(b" entries_len=");
+    write_num(entries_len);
+    write_str(b" mask=");
+    write_hex8(mask);
+    write_byte(b'\n');
+}
+
+// — GraveShift: dump fd_table state for forensic analysis
+fn serial_debug_fdtable_state(pid: u64, entries_len: u64, mask: u64) {
+    fn write_byte(b: u8) {
+        unsafe {
+            let mut status: u8;
+            loop {
+                core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
+                if status & 0x20 != 0 { break; }
+            }
+            core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
+        }
+    }
+    fn write_str(s: &[u8]) { for &b in s { write_byte(b); } }
+    fn write_num(mut n: u64) {
+        if n == 0 { write_byte(b'0'); return; }
+        let mut buf = [0u8; 20];
+        let mut i = 0;
+        while n > 0 { buf[i] = b'0' + (n % 10) as u8; n /= 10; i += 1; }
+        while i > 0 { i -= 1; write_byte(buf[i]); }
+    }
+    fn write_hex8(n: u64) {
+        write_str(b"0b");
+        for bit in (0..8).rev() {
+            write_byte(if n & (1 << bit) != 0 { b'1' } else { b'0' });
+        }
+    }
+
+    write_str(b"[RD:FD] pid=");
+    write_num(pid);
+    write_str(b" entries_len=");
+    write_num(entries_len);
+    write_str(b" mask=");
+    write_hex8(mask);
+    write_byte(b'\n');
+}
+
+// — GraveShift: log successful read result to catch EIO/short-reads
+fn serial_debug_read_result(pid: u64, fd: u64, result: i64) {
+    fn write_byte(b: u8) {
+        unsafe {
+            let mut status: u8;
+            loop {
+                core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
+                if status & 0x20 != 0 { break; }
+            }
+            core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
+        }
+    }
+    fn write_str(s: &[u8]) { for &b in s { write_byte(b); } }
+    fn write_num(mut n: u64) {
+        if n == 0 { write_byte(b'0'); return; }
+        let mut buf = [0u8; 20];
+        let mut i = 0;
+        while n > 0 { buf[i] = b'0' + (n % 10) as u8; n /= 10; i += 1; }
+        while i > 0 { i -= 1; write_byte(buf[i]); }
+    }
+
+    write_str(b"[RD:R] pid=");
+    write_num(pid);
+    write_str(b" fd=");
+    write_num(fd);
+    write_str(b" ret=");
+    if result < 0 {
+        write_byte(b'-');
+        write_num((-result) as u64);
+    } else {
+        write_num(result as u64);
+    }
+    write_byte(b'\n');
+}
+
 // DEBUG: Module-level statics for tracking fd allocation
 static DEBUG_PRE_ADDR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 static DEBUG_ALLOC_ADDR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
@@ -344,13 +493,43 @@ pub fn sys_read_vfs(fd: i32, buf: u64, count: usize) -> i64 {
         return errno::EFAULT;
     }
 
+    // — GraveShift: dump fd_table state for pid>=3 reading fd 0 (first 3 times)
+    static READ_FD0_COUNT: core::sync::atomic::AtomicU32 =
+        core::sync::atomic::AtomicU32::new(0);
+    if fd == 0 {
+        let count = READ_FD0_COUNT.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+        if count < 3 {
+            let pid = current_pid();
+            serial_debug_read_fail(pid as u64, 0, count as u64, b'P');
+            if let Some((len, mask)) = with_current_meta(|meta| {
+                (meta.fd_table.entries_len(), meta.fd_table.entries_filled_mask())
+            }) {
+                serial_debug_fdtable_state(pid as u64, len as u64, mask as u64);
+            } else {
+                serial_debug_read_fail(pid as u64, 0, 0, b'M');
+            }
+        }
+    }
+
     // Get file using unified model
+    // — GraveShift: intercept fd lookup failures, the ghost in the read path
     let file =
         match with_current_meta(|meta| meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone()))
         {
             Some(Ok(f)) => f,
-            Some(Err(e)) => return vfs_error_to_errno(e),
-            None => return errno::EBADF,
+            Some(Err(e)) => {
+                // — GraveShift: fd lookup returned error, log it to serial
+                let pid = current_pid();
+                let errno_val = vfs_error_to_errno(e);
+                serial_debug_read_fail(pid as u64, fd as u64, errno_val as u64, b'E');
+                return errno_val;
+            }
+            None => {
+                // — GraveShift: with_current_meta returned None — no process context
+                let pid = current_pid();
+                serial_debug_read_fail(pid as u64, fd as u64, 0, b'N');
+                return errno::EBADF;
+            }
         };
 
     // 🔥 O_NONBLOCK SUPPORT (Priority #6) 🔥
@@ -397,6 +576,12 @@ pub fn sys_read_vfs(fd: i32, buf: u64, count: usize) -> i64 {
         }
     }
 
+    // — GraveShift: trace stdin reads that return error/EOF (the login ghost)
+    if fd == 0 && result <= 0 {
+        let pid = current_pid();
+        serial_debug_read_result(pid as u64, fd as u64, result);
+    }
+
     result
 }
 
@@ -416,11 +601,32 @@ pub fn sys_write_vfs(fd: i32, buf: u64, count: usize) -> i64 {
     }
 
     // Get file using unified model
+    // — GraveShift: one-shot write diag to compare fd_table state vs read path
+    static WRITE_DIAG_DONE: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
     let file =
-        match with_current_meta(|meta| meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone()))
+        match with_current_meta(|meta| {
+            let result = meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone());
+            // — GraveShift: first successful write from pid>=3 — dump state once
+            if result.is_ok() && !WRITE_DIAG_DONE.load(core::sync::atomic::Ordering::Relaxed) {
+                let pid = crate::current_pid();
+                if pid >= 3 {
+                    WRITE_DIAG_DONE.store(true, core::sync::atomic::Ordering::Relaxed);
+                    let len = meta.fd_table.entries_len();
+                    let mask = meta.fd_table.entries_filled_mask();
+                    return (result, Some((pid as u64, len as u64, mask as u64)));
+                }
+            }
+            (result, None)
+        })
         {
-            Some(Ok(f)) => f,
-            Some(Err(e)) => return vfs_error_to_errno(e),
+            Some((Ok(f), diag)) => {
+                if let Some((pid, len, mask)) = diag {
+                    serial_debug_write_ok(pid, fd as u64, len, mask);
+                }
+                f
+            },
+            Some((Err(e), _)) => return vfs_error_to_errno(e),
             None => return errno::EBADF, // Invalid FD (match sys_read_vfs)
         };
 

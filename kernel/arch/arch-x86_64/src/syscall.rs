@@ -164,7 +164,6 @@ pub extern "C" fn syscall_entry() {
         "mov gs:[8], rsp",                 // Save user RSP
         "mov gs:[16], rax",                // Save syscall number (user RAX)
         "mov gs:[24], r12",                // Save user R12
-        // gs:[32] is unused - we no longer read from user stack
 
         // Now switch to kernel stack
         "mov rsp, gs:[0]",
@@ -310,30 +309,63 @@ pub extern "C" fn syscall_entry() {
         "pop r9",
         "pop r8",
 
-        // 🔥 GraveShift: Reload context - signal handler may have modified RIP/RSP/RDI 🔥
-        // Stack layout: [R12, R15, R14, R13, RBX, RBP, RSP, RIP, RFLAGS]
-        // Offset from RSP: R12=0, R15=8, R14=16, R13=24, RBX=32, RBP=40, RSP=48, RIP=56, RFLAGS=64
+        // ⚡ GraveShift: RACE FIX - SYSCALL_USER_CONTEXT is a single global ⚡
+        // Another task's syscall during preemption may have overwritten it.
+        // cli first, then resave pristine values from the kernel stack frame
+        // (which was never touched by other tasks), run signal check on the
+        // clean global, then reload the (potentially signal-modified) fields.
+        "cli",
+
+        // -- Resave ALL registers to SYSCALL_USER_CONTEXT from pristine sources --
+        // Stack: [R12(0), R15(8), R14(16), R13(24), RBX(32), RBP(40), RSP(48), RIP(56), RFLAGS(64)]
+        // Registers: rax=retval, rdx/rsi/rdi/r8/r9/r10 = restored user values
         "lea r12, [{user_ctx}]",
-        
-        // Update RIP on stack if modified
-        "mov r13, [r12 + 0]",              // Load ctx.rip
-        "mov [rsp + 56], r13",             // Store to stack (will be loaded to RCX later)
-        
-        // Update RSP on stack if modified  
-        "mov r13, [r12 + 8]",              // Load ctx.rsp
-        "mov [rsp + 48], r13",             // Store to stack
-        
-        // Update RDI if modified (first arg to signal handler)
-        "mov rdi, [r12 + 64]",             // Load ctx.rdi
+        "mov r13, [rsp + 56]", "mov [r12 + 0], r13",     // rip
+        "mov r13, [rsp + 48]", "mov [r12 + 8], r13",     // rsp
+        "mov r13, [rsp + 64]", "mov [r12 + 16], r13",    // rflags
+        "mov [r12 + 24], rax",                             // rax (return value)
+        "mov r13, [rsp + 32]", "mov [r12 + 32], r13",    // rbx
+        "mov r13, [rsp + 56]", "mov [r12 + 40], r13",    // rcx = rip (clobbered by syscall)
+        "mov [r12 + 48], rdx",                             // rdx
+        "mov [r12 + 56], rsi",                             // rsi
+        "mov [r12 + 64], rdi",                             // rdi
+        "mov r13, [rsp + 40]", "mov [r12 + 72], r13",    // rbp
+        "mov [r12 + 80], r8",                              // r8
+        "mov [r12 + 88], r9",                              // r9
+        "mov [r12 + 96], r10",                             // r10
+        "mov r13, [rsp + 64]", "mov [r12 + 104], r13",   // r11 = rflags (clobbered)
+        "mov r13, [rsp + 0]",  "mov [r12 + 112], r13",   // r12 (original user)
+        "mov r13, [rsp + 24]", "mov [r12 + 120], r13",   // r13
+        "mov r13, [rsp + 16]", "mov [r12 + 128], r13",   // r14
+        "mov r13, [rsp + 8]",  "mov [r12 + 136], r13",   // r15
+
+        // -- Signal check under cli: global now holds correct values --
+        "push rax",                                         // Save return value
+        "call {signal_check}",                              // May modify ctx.rip/rsp/rdi
+        "pop rax",                                          // Restore return value
+
+        // -- Reload potentially signal-modified fields from global --
+        // ⚡ GraveShift: Restore ALL caller-saved registers from user context.
+        // The C-ABI signal_check call may clobber RSI, RDX, R8-R10.
+        // The x86_64 syscall ABI requires the kernel to preserve every user
+        // register except RCX and R11, so we must reload them all here. ⚡
+        "lea r12, [{user_ctx}]",
+        "mov r13, [r12 + 0]",              // ctx.rip (maybe signal-modified)
+        "mov [rsp + 56], r13",             // Update stack
+        "mov r13, [r12 + 8]",              // ctx.rsp (maybe signal-modified)
+        "mov [rsp + 48], r13",             // Update stack
+        "mov rdi, [r12 + 64]",             // ctx.rdi (maybe signal-modified)
+        "mov rsi, [r12 + 56]",             // ctx.rsi (clobbered by signal_check)
+        "mov rdx, [r12 + 48]",             // ctx.rdx (clobbered by signal_check)
+        "mov r8,  [r12 + 80]",             // ctx.r8  (clobbered by signal_check)
+        "mov r9,  [r12 + 88]",             // ctx.r9  (clobbered by signal_check)
+        "mov r10, [r12 + 96]",             // ctx.r10 (clobbered by signal_check)
 
         // === EPILOGUE: Restore and sysret ===
         // RAX = return value (preserve it!)
 
         // Disable user memory access (restore SMAP protection)
         "clac",
-
-        // Disable interrupts
-        "cli",
 
         // Restore callee-saved registers
         // Stack: [R12, R15, R14, R13, RBX, RBP, RSP, RIP, RFLAGS]
@@ -377,6 +409,7 @@ pub extern "C" fn syscall_entry() {
         "sysretq",
 
         handler = sym syscall_dispatch,
+        signal_check = sym syscall_signal_check,
         user_ctx = sym SYSCALL_USER_CONTEXT,
         sysret_stack_ptr = sym SYSRET_DEBUG_STACK_PTR,
         sysret_rsp = sym SYSRET_DEBUG_RSP,
@@ -390,7 +423,11 @@ pub extern "C" fn syscall_entry() {
     );
 }
 
-/// Dispatch syscall to the registered handler
+/// Dispatch syscall to the registered handler (handler only, no signal check)
+/// -- GraveShift: Signal check moved to separate call under cli to kill the
+/// SYSCALL_USER_CONTEXT global race. Preemption during the handler could let
+/// another task's syscall overwrite the global; now we resave from the pristine
+/// kernel stack frame before checking signals. --
 extern "C" fn syscall_dispatch(
     number: u64,
     arg1: u64,
@@ -402,26 +439,27 @@ extern "C" fn syscall_dispatch(
 ) -> i64 {
     use core::ptr::addr_of;
 
-    // Call the syscall handler
-    let result = unsafe {
+    unsafe {
         if let Some(handler) = *addr_of!(SYSCALL_HANDLER) {
             handler(number, arg1, arg2, arg3, arg4, arg5, arg6)
         } else {
-            // No handler registered, return -ENOSYS
-            return -38;
+            -38 // -ENOSYS
         }
-    };
+    }
+}
 
-    // 🔥 GraveShift: Check for pending signals before returning to userspace 🔥
-    // This is done by calling into the kernel's signal delivery function
-    // which has access to sched and signal crates
+/// Check for pending signals before returning to userspace
+/// -- GraveShift: Called under cli after SYSCALL_USER_CONTEXT resave from the
+/// pristine kernel stack. Interrupts are disabled so the global cannot be
+/// corrupted between resave and the final reload into sysretq registers. --
+extern "C" fn syscall_signal_check() {
+    use core::ptr::addr_of;
+
     unsafe {
         if let Some(check_fn) = *addr_of!(SIGNAL_CHECK_FUNCTION) {
             check_fn();
         }
     }
-
-    result
 }
 
 /// Per-CPU syscall data
