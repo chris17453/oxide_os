@@ -1317,72 +1317,63 @@ pub fn kernel_exec(
             // Update scheduler task with new exec info
             sched::update_task_exec_info(current_pid, new_pml4, ctx.rip, ctx.rsp, task_ctx);
 
-            println!("[DEBUG] kernel_exec: about to switch CR3 and jump to user");
+            println!("[DEBUG] kernel_exec: getting kernel stack for transition");
+
+            // Get current task's kernel stack for safe transition
+            let kernel_stack_top = if let Some(task) = sched::get_task(current_pid) {
+                let kstack_phys = task.kernel_stack_phys;
+                let kstack_size = task.kernel_stack_size;
+                let kstack_virt = phys_to_virt(kstack_phys);
+                kstack_virt.as_u64() + kstack_size as u64
+            } else {
+                // Fallback - should not happen
+                println!("[DEBUG] kernel_exec: WARNING - could not get task kernel stack");
+                0xffff_8000_0100_0000 // default kernel stack location
+            };
+
+            println!("[DEBUG] kernel_exec: kernel_stack_top={:#x}, calling enter_usermode_with_context", kernel_stack_top);
 
             // Debug: print exec return values
             debug_fork!("[EXEC] Switching to PML4={:#x}", new_pml4.as_u64());
             debug_fork!("[EXEC] rip={:#x} rsp={:#x}", ctx.rip, ctx.rsp);
             debug_fork!("[EXEC] fs_base={:#x} (TLS)", ctx.fs_base);
-            debug_fork!(
-                "[EXEC] rdi={} rsi={:#x} rdx={:#x} (cleared — argc/argv on stack)",
-                ctx.rdi,
-                ctx.rsi,
-                ctx.rdx
-            );
 
-            // Switch to new address space and jump to entry point
+            // Create UserContext for enter_usermode_with_context
+            // This function will copy the context to the kernel stack BEFORE switching CR3
+            let user_ctx = arch::UserContext {
+                rax: 0,
+                rbx: ctx.rbx,
+                rcx: ctx.rcx,
+                rdx: ctx.rdx,
+                rsi: ctx.rsi,
+                rdi: ctx.rdi,
+                rbp: ctx.rbp,
+                rsp: ctx.rsp,
+                r8: ctx.r8,
+                r9: ctx.r9,
+                r10: ctx.r10,
+                r11: ctx.r11,
+                r12: ctx.r12,
+                r13: ctx.r13,
+                r14: ctx.r14,
+                r15: ctx.r15,
+                rip: ctx.rip,
+                rflags: 0x202, // IF set
+            };
+
+            // Use enter_usermode_with_context for safe transition
+            // This copies the context to kernel stack BEFORE switching page tables
             unsafe {
-                write_cr3(new_pml4);
-                flush_tlb_all();
-
-                // Return to user mode at new entry point
-                // We use sysretq which expects: rcx = rip, r11 = rflags
-                // Use explicit registers to prevent compiler from reusing registers
-                // that we overwrite before their values are consumed
-                core::arch::asm!(
-                // Set FS base MSR if fs_base is non-zero (TLS support)
-                "test r15, r15",
-                "jz 2f",
-                "mov ecx, 0xC0000100",  // MSR IA32_FS_BASE
-                "mov rax, r15",
-                "mov rdx, r15",
-                "shr rdx, 32",
-                "wrmsr",
-                "2:",
-                // Set up rip for sysretq
-                "mov rcx, r8",
-                // Set up rflags for sysretq
-                "mov r11, r9",
-                // Set up user stack - do this AFTER loading values into rcx/r11
-                // to avoid any chance of compiler putting inputs in rsp
-                "mov rsp, r10",
-                // GraveShift: Program startup uses STACK for argc/argv, NOT registers.
-                // [rsp+0]=argc, [rsp+8]=argv[0], etc. Clear rdi/rsi/rdx per ABI.
-                "xor edi, edi",
-                "xor esi, esi",
-                "xor edx, edx",
-                // Load user data segment selectors for DS/ES (0x1B = USER_DS | 3)
-                // NOTE: In x86-64 long mode, FS base comes from FS_BASE MSR, not segment descriptor.
-                // We do NOT load FS at all - just leave it as-is after WRMSR set the base.
-                // NOTE: Do NOT load GS - swapgs will handle it
-                "mov ax, 0x1b",
-                "mov ds, ax",
-                "mov es, ax",
-                // Do NOT touch FS - leave it alone after WRMSR
-                // Clear rax for return value
-                "xor rax, rax",
-                // Swap GS back to user mode (required before sysretq)
-                "swapgs",
-                // Return to user mode
-                "sysretq",
-                in("r8") ctx.rip,
-                in("r9") 0x202u64, // IF set
-                in("r10") ctx.rsp,
-                in("r15") ctx.fs_base,
-                    options(noreturn)
+                arch::enter_usermode_with_context(
+                    kernel_stack_top,
+                    new_pml4.as_u64(),
+                    &user_ctx,
+                    ctx.fs_base,
                 );
             }
-            0 // Never reached
+
+            // Never reached
+            0
         }
         Err(e) => {
             let code = match e {
