@@ -30,25 +30,53 @@ impl AdapterManager {
     }
 
     /// Discover network interfaces from /sys/class/net
+    ///
+    /// -- ShadePacket: The Option<Dir> return from opendir is ~4.4KB on the stack.
+    /// When sysfs is a placeholder (no real /sys/class/net), that massive stack
+    /// allocation + LTO can corrupt callee-saved registers. Probe with stat()
+    /// first — cheap syscall, zero stack bloat. Only pull the heavy opendir
+    /// path when sysfs actually exists and has entries.
     pub fn discover_adapters(&mut self) {
         log("[manager] Discovering network adapters");
 
+        // ShadePacket: Probe sysfs with a lightweight stat() before committing
+        // to the 4KB+ Option<Dir> stack frame from opendir. If /sys/class/net
+        // doesn't exist or isn't a real directory, skip straight to defaults.
+        let sysfs_available = {
+            let st = crate::adapter::stat_path("/sys/class/net");
+            st
+        };
+
+        if sysfs_available {
+            self.discover_from_sysfs();
+        } else {
+            // ShadePacket: Fallback when sysfs not available - use known defaults
+            log("[manager] /sys/class/net unavailable, using defaults");
+            self.register_default_adapters();
+        }
+
+        log_count("[manager] Total adapters:", self.adapters.len());
+    }
+
+    /// Scan /sys/class/net for real adapters
+    /// -- ShadePacket: Isolated into its own frame so the ~4.4KB Dir doesn't
+    /// pollute discover_adapters' register allocation
+    fn discover_from_sysfs(&mut self) {
         let dir = opendir("/sys/class/net");
         if let Some(mut dir) = dir {
             while let Some(entry) = readdir(&mut dir) {
                 let name = entry.name();
-                
-                // ShadePacket: Skip directories and hidden entries
+
+                // ShadePacket: Skip dot entries
                 if name == "." || name == ".." {
                     continue;
                 }
 
-                // Check if we already know about this adapter
                 if !self.has_adapter(name) {
                     let mut adapter = NetworkAdapter::new(String::from(name));
                     adapter.update_mac_address();
                     adapter.update_link_status();
-                    
+
                     log_adapter(name, "Discovered new adapter");
                     self.adapters.push(adapter);
                 } else {
@@ -57,17 +85,21 @@ impl AdapterManager {
             }
             closedir(dir);
         } else {
-            // ShadePacket: Fallback when sysfs not available - use known defaults
-            log("[manager] /sys/class/net unavailable, using defaults");
-            if !self.has_adapter("lo") {
-                self.adapters.push(NetworkAdapter::new(String::from("lo")));
-            }
-            if !self.has_adapter("eth0") {
-                self.adapters.push(NetworkAdapter::new(String::from("eth0")));
-            }
+            // ShadePacket: stat() said it exists but opendir failed — degrade gracefully
+            log("[manager] sysfs stat OK but opendir failed, using defaults");
+            self.register_default_adapters();
         }
+    }
 
-        log_count("[manager] Total adapters:", self.adapters.len());
+    /// Register lo + eth0 as default adapters when sysfs is unavailable
+    /// -- ShadePacket: Clean fallback, no heavy stack allocations
+    fn register_default_adapters(&mut self) {
+        if !self.has_adapter("lo") {
+            self.adapters.push(NetworkAdapter::new(String::from("lo")));
+        }
+        if !self.has_adapter("eth0") {
+            self.adapters.push(NetworkAdapter::new(String::from("eth0")));
+        }
     }
 
     /// Check if an adapter with the given name exists

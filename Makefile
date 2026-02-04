@@ -141,7 +141,7 @@ userspace-release:
 	@echo "  Building thread test..."
 	@$(MAKE) thread-test
 	@echo "Stripping binaries..."
-	@for prog in init esh login gwbasic curses-demo htop tls-test thread-test ssh sshd rdpd service networkd journald journalctl evtest argtest $(COREUTILS_BINS); do \
+	@for prog in init esh login getty gwbasic curses-demo htop tls-test thread-test ssh sshd rdpd service networkd journald journalctl soundd evtest argtest doom $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
 			strip "$(USERSPACE_OUT_RELEASE)/$$prog" 2>/dev/null || true; \
 		fi; \
@@ -236,8 +236,14 @@ initramfs: userspace-release
 	@# Copy evtest and argtest
 	@cp "$(USERSPACE_OUT_RELEASE)/evtest" "$(TARGET_DIR)/initramfs/bin/evtest"
 	@cp "$(USERSPACE_OUT_RELEASE)/argtest" "$(TARGET_DIR)/initramfs/bin/argtest"
-	@# Copy signal-test
-	@cp "$(USERSPACE_OUT_RELEASE)/signal-test" "$(TARGET_DIR)/initramfs/bin/signal-test"
+	@# Copy getty
+	@cp "$(USERSPACE_OUT_RELEASE)/getty" "$(TARGET_DIR)/initramfs/bin/getty"
+	@# Copy soundd
+	@cp "$(USERSPACE_OUT_RELEASE)/soundd" "$(TARGET_DIR)/initramfs/bin/soundd"
+	@# Copy doom
+	@cp "$(USERSPACE_OUT_RELEASE)/doom" "$(TARGET_DIR)/initramfs/bin/doom"
+	@# Copy signal-test (optional test utility)
+	@cp "$(USERSPACE_OUT_RELEASE)/signal-test" "$(TARGET_DIR)/initramfs/bin/signal-test" 2>/dev/null || true
 	@# Create services.d directory with service definitions
 	@mkdir -p $(TARGET_DIR)/initramfs/etc/services.d
 	@echo "PATH=/bin/journald" > $(TARGET_DIR)/initramfs/etc/services.d/journald

@@ -190,7 +190,7 @@ fn print(s: &str) {
 /// Main game loop
 /// -- GraveShift: Core game engine timing and orchestration
 #[unsafe(no_mangle)]
-pub extern "C" fn _start() -> ! {
+pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
     print("DOOM for OXIDE OS\n");
     print("=================\n\n");
 
@@ -274,7 +274,7 @@ pub extern "C" fn _start() -> ! {
     }
 
     print("\nExiting DOOM...\n");
-    exit(0);
+    0
 }
 
 /// Sleep for milliseconds

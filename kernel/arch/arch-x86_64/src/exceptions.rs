@@ -491,6 +491,7 @@ pub extern "C" fn mouse_interrupt() {
 
 /// Mouse handler
 extern "C" fn handle_mouse() {
+
     // Forward to the registered mouse callback (ps2::handle_mouse_irq).
     // The callback itself reads port 0x60 — we must NOT read it here
     // or the byte will be consumed before the driver sees it.
@@ -643,6 +644,16 @@ extern "C" fn handle_ipi_tlb_shootdown() {
 
 extern "C" fn handle_divide_error(frame: *const InterruptFrame, _error: u64) {
     let frame = unsafe { &*frame };
+    // -- BlackLatch: User divides by zero, user dies. Not the kernel.
+    if (frame.cs & 3) == 3 {
+        crate::serial_println!("[SIGFPE] User divide error at RIP {:#x}", frame.rip);
+        let kill_cb = unsafe { *core::ptr::addr_of!(USER_FAULT_KILL_CALLBACK) };
+        if let Some(kill) = kill_cb {
+            kill(0, frame.rip, 8); // 8 = SIGFPE
+            return; // -- BlackLatch: Process neutralized, kernel carries on
+        }
+    }
+    // -- GraveShift: Kernel-mode divide error is fatal. No coming back.
     panic!("DIVIDE ERROR at {:#x}", frame.rip);
 }
 
@@ -863,13 +874,7 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
         unsafe {
             core::arch::asm!("mov {}, cr3", out(reg) cr3);
         }
-        crate::serial_println!(
-            "[PF] addr={:#x} rip={:#x} err={:#x} cr3={:#x}",
-            cr2,
-            frame.rip,
-            error,
-            cr3
-        );
+        crate::serial_println!("[PF] addr={:#x} rip={:#x} err={:#x} cr3={:#x}", cr2, frame.rip, error, cr3);
     }
 
     // Try page fault callback first (for COW handling, etc.)
@@ -1137,6 +1142,19 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
         }
     }
 
+    // -- BlackLatch: User-mode page faults kill the process, not the kernel.
+    // Only kernel faults are truly fatal.
+    if error & 4 != 0 {
+        crate::serial_println!("[SIGSEGV] User page fault at addr {:#x}, RIP {:#x}", cr2, frame.rip);
+        let kill_cb = unsafe { *core::ptr::addr_of!(USER_FAULT_KILL_CALLBACK) };
+        if let Some(kill) = kill_cb {
+            kill(0, frame.rip, 11); // 11 = SIGSEGV
+            return; // -- BlackLatch: Process flatlined, kernel survives
+        }
+        // -- GraveShift: No kill callback registered yet, fall through to panic
+        crate::serial_println!("[WARN] No user fault kill callback, kernel panic on user fault");
+    }
+
     panic!("Page fault");
 }
 
@@ -1170,6 +1188,25 @@ const TERMINAL_TICK_INTERVAL: u64 = 3;
 
 /// Last tick when terminal was updated
 static mut LAST_TERMINAL_TICK: u64 = 0;
+
+/// -- BlackLatch: User fault kill callback --
+/// Signature: (pid, faulting_rip, signal_number)
+/// Kills the offending process so the kernel lives on.
+pub type UserFaultKillCallback = fn(u64, u64, u64);
+
+/// Global user fault kill callback
+static mut USER_FAULT_KILL_CALLBACK: Option<UserFaultKillCallback> = None;
+
+/// Register a callback to kill user processes that cause hardware faults.
+///
+/// # Safety
+/// Callback must be safe to call from exception context.
+pub unsafe fn set_user_fault_kill_callback(callback: UserFaultKillCallback) {
+    use core::ptr::addr_of_mut;
+    unsafe {
+        *addr_of_mut!(USER_FAULT_KILL_CALLBACK) = Some(callback);
+    }
+}
 
 /// Page fault callback type
 ///
@@ -1284,11 +1321,7 @@ extern "C" fn handle_timer(current_rsp: u64) -> u64 {
     #[cfg(feature = "debug-timer")]
     {
         if new_rsp != current_rsp {
-            crate::serial_println!(
-                "[TIMER] Context switch: {:#x} -> {:#x}",
-                current_rsp,
-                new_rsp
-            );
+            crate::serial_println!("[TIMER] Context switch: {:#x} -> {:#x}", current_rsp, new_rsp);
         }
     }
 

@@ -21,6 +21,7 @@ extern crate alloc;
 
 use core::cell::UnsafeCell;
 use libc::dirent::{closedir, opendir, readdir};
+use libc::stat::{Stat, stat as libc_stat, S_IFDIR, S_IFMT};
 use libc::time::usleep;
 use libc::*;
 
@@ -153,7 +154,24 @@ fn cstr_to_str(ptr: *const u8) -> &'static str {
     }
 }
 
+/// Lightweight stat() probe — 88 bytes on stack vs opendir's ~4.4KB Dir struct.
+/// Returns true only if the path exists and is a directory.
+///
+/// -- NeonRoot: Same fix as networkd. The Option<Dir> return from opendir is
+/// massive enough to corrupt callee-saved registers under LTO. Probe cheap,
+/// pull heavy only when needed.
+fn stat_path(path: &str) -> bool {
+    let mut st = Stat::zeroed();
+    let ret = libc_stat(path, &mut st);
+    ret == 0 && (st.mode & S_IFMT) == S_IFDIR
+}
+
 /// Load service definitions from /etc/services.d/
+///
+/// -- NeonRoot: The Option<Dir> return from opendir is ~4.4KB on the stack.
+/// Combined with LTO, that corrupts callee-saved registers and poisons the
+/// SERVICES array after load_services returns. Probe with stat() first (88
+/// bytes), isolate the heavy opendir path in its own stack frame.
 fn load_services() {
     log("Loading service definitions");
 
@@ -162,35 +180,42 @@ fn load_services() {
         let count = &mut *SERVICE_COUNT.get();
         *count = 0;
 
-        // Open services directory
-        let dir = opendir("/etc/services.d");
-        if let Some(mut dir) = dir {
-            // Read directory entries
-            while let Some(entry) = readdir(&mut dir) {
-                let name = entry.name();
-
-                // Skip . and ..
-                if name == "." || name == ".." {
-                    continue;
-                }
-
-                // Parse service file
-                if *count < MAX_SERVICES {
-                    if parse_service_file(name, &mut services[*count]) {
-                        *count += 1;
-                    }
-                }
-            }
-            closedir(dir);
+        let sysfs_ok = stat_path("/etc/services.d");
+        if sysfs_ok {
+            load_services_from_dir(services, count);
         } else {
             log("No /etc/services.d directory, using defaults");
-            // Add default services
             add_default_services(services, count);
         }
 
         log("Loaded ");
         print_i64(*count as i64);
         prints(" services\n");
+    }
+}
+
+/// Read service files from /etc/services.d via opendir.
+/// -- NeonRoot: Isolated into its own frame so the ~4.4KB Dir doesn't
+/// poison load_services' register allocation under LTO.
+#[inline(never)]
+fn load_services_from_dir(services: &mut [Service; MAX_SERVICES], count: &mut usize) {
+    let dir = opendir("/etc/services.d");
+    if let Some(mut dir) = dir {
+        while let Some(entry) = readdir(&mut dir) {
+            let name = entry.name();
+            if name == "." || name == ".." {
+                continue;
+            }
+            if *count < MAX_SERVICES {
+                if parse_service_file(name, &mut services[*count]) {
+                    *count += 1;
+                }
+            }
+        }
+        closedir(dir);
+    } else {
+        log("/etc/services.d stat OK but opendir failed, using defaults");
+        add_default_services(services, count);
     }
 }
 

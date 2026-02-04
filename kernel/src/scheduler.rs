@@ -842,10 +842,48 @@ pub fn get_affinity(pid: u32) -> Option<sched::CpuSet> {
 /// Check for pending signals on syscall return
 ///
 /// Called by the syscall dispatch mechanism just before returning to userspace.
+/// -- BlackLatch: Terminate the current user process after a fatal hardware fault.
+/// Called from exception handlers (page fault, divide error, etc.) when a
+/// user-mode instruction triggers an unrecoverable fault. The process becomes
+/// a zombie and the scheduler switches to the next runnable task.
+///
+/// Arguments match UserFaultKillCallback: (pid_hint, faulting_rip, signal_number)
+/// pid_hint == 0 means "current process".
+pub fn kill_faulting_process(_pid: u64, rip: u64, signo: u64) {
+    let current_pid = match sched::current_pid() {
+        Some(pid) if pid > 1 => pid,
+        _ => return, // -- BlackLatch: Never kill idle or init
+    };
+
+    crate::debug_to_buffer!(
+        "[KILL] PID {} terminated by signal {} at RIP {:#x}",
+        current_pid, signo, rip
+    );
+
+    let exit_status = 128 + signo as i32;
+    sched::set_task_exit_status(current_pid, exit_status);
+
+    // -- GraveShift: Wake parent so it can reap the corpse
+    if let Some(ppid) = sched::get_task_ppid(current_pid) {
+        if ppid > 0 {
+            wake_up(ppid);
+        }
+    }
+
+    // -- BlackLatch: Mark as zombie, force reschedule, then halt until
+    // the scheduler pulls us off the CPU
+    sched::block_current(TaskState::TASK_ZOMBIE);
+    sched::set_need_resched();
+
+    loop {
+        unsafe { core::arch::asm!("sti", "hlt", options(nomem, nostack)); }
+    }
+}
+
 /// Checks for deliverable signals and modifies the syscall return context
 /// to redirect to signal handlers if needed.
 ///
-/// — GraveShift: Signal delivery on syscall return, not just timer ticks
+/// -- GraveShift: Signal delivery on syscall return, not just timer ticks
 pub fn check_signals_on_syscall_return() {
     // Get current PID (fast path, no locks)
     let current_pid = match sched::current_pid() {

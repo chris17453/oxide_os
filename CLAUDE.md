@@ -73,13 +73,14 @@
 - Code roots: `kernel/` (entry + all subsystems), `bootloader/`, `userspace/`, `tools/`, `scripts/`, `external/`.
 
 ## Guardrails (must follow)
+- **NEVER REVERT FILES OR COMMITS.** Never run `git checkout` on files, `git reset`, `git revert`, or any command that undoes work. Never restore files to a previous state. If debugging, comment out code or add feature flags — do NOT undo changes. This is an ABSOLUTE rule with ZERO exceptions.
 - **No stubs or TODO fallbacks.** Implement fully or state concrete blockers/needs.
 - **Debug policy:** Never delete debug output; gate via `debug-*` features (`kernel/src/debug.rs`, `kernel/Cargo.toml`). No raw serial writes—use `debug_*!` macros; `debug_sched_unsafe!` only in ISR contexts.
-- **Feature completeness:** Don’t drop or simplify requested features because they’re hard. If blocked, be explicit.
+- **Feature completeness:** Don't drop or simplify requested features because they're hard. If blocked, be explicit.
 - **Structured code:** Prefer structs/enums/bitflags; document magic constants with source.
 - **Architecture scope:** Target x86_64; design portable, implement x86_64 now.
 - **Quality bar:** Production-ready code; consider edge cases, security, performance.
-- **Workflow hygiene:** Small commits per feature (imperative subject); keep worktree clean; never add AI attribution; don’t revert user changes.
+- **Workflow hygiene:** Small commits per feature (imperative subject); keep worktree clean; never add AI attribution; don't revert user changes.
 
 ## Default Behaviors
 - **Retrieval-led reasoning:** Read local docs/specs and code before coding.

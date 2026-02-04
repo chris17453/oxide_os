@@ -501,6 +501,8 @@ pub fn ttyname(fd: i32) -> *const u8 {
 }
 
 /// Scan /dev directory for a device with matching rdev
+/// -- SableWire: Prevent LTO from inlining the ~4.4KB Dir onto ttyname's stack
+#[inline(never)]
 fn scan_dev_for_tty(target_rdev: u64) -> Option<*const u8> {
     use crate::dirent::{closedir, opendir, readdir};
     use crate::stat::{S_IFCHR, S_IFMT, Stat, stat};

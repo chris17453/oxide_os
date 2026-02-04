@@ -31,6 +31,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use libc::c_exports::mkfifo;
 use libc::dirent::{closedir, opendir, readdir};
+use libc::stat::{Stat, stat as libc_stat, S_IFDIR, S_IFMT};
 use libc::time::usleep;
 use libc::*;
 
@@ -176,52 +177,25 @@ fn log(msg: &str) {
     prints("\n");
 }
 
+/// Lightweight stat() probe — 88 bytes on stack vs opendir's ~4.4KB Dir struct.
+/// -- EchoFrame: Same fix as networkd/servicemgr. Probe cheap before pulling
+/// the heavy Dir struct onto the stack.
+fn stat_path(path: &str) -> bool {
+    let mut st = Stat::zeroed();
+    let ret = libc_stat(path, &mut st);
+    ret == 0 && (st.mode & S_IFMT) == S_IFDIR
+}
+
 /// Enumerate audio devices in /dev
+///
+/// -- EchoFrame: The Option<Dir> from opendir is ~4.4KB on the stack. Under LTO
+/// that corrupts callee-saved registers and poisons daemon state. Probe with
+/// stat() first, isolate the opendir path in scan_dev_for_audio().
 fn enumerate_audio_devices(daemon: &mut SoundDaemon) {
     log("Enumerating audio devices");
 
-    let dir = opendir(DEV_DIR);
-    if let Some(mut dir) = dir {
-        while let Some(entry) = readdir(&mut dir) {
-            let name = entry.name();
-
-            // Look for dsp* and audio* devices
-            if name.starts_with("dsp") || name.starts_with("audio") {
-                let mut device = AudioDevice::empty();
-
-                // Build full path
-                let dev_prefix = DEV_DIR.as_bytes();
-                let name_bytes = name.as_bytes();
-
-                if dev_prefix.len() + 1 + name_bytes.len() < 64 {
-                    device.path[..dev_prefix.len()].copy_from_slice(dev_prefix);
-                    device.path[dev_prefix.len()] = b'/';
-                    device.path[dev_prefix.len() + 1..dev_prefix.len() + 1 + name_bytes.len()]
-                        .copy_from_slice(name_bytes);
-                    device.path_len = dev_prefix.len() + 1 + name_bytes.len();
-
-                    // Try to open device (get path_str before modifying device)
-                    let path_str =
-                        core::str::from_utf8(&device.path[..device.path_len]).unwrap_or("");
-                    let fd = open2(path_str, O_RDWR);
-
-                    if fd >= 0 {
-                        device.fd = fd;
-                        device.is_open = true;
-                        // Assume playback support (would need ioctl to query properly)
-                        device.supports_playback = true;
-                        device.supports_capture = name.contains("capture");
-
-                        log("Found audio device: ");
-                        prints(path_str);
-                        prints("\n");
-
-                        daemon.devices.push(device);
-                    }
-                }
-            }
-        }
-        closedir(dir);
+    if stat_path(DEV_DIR) {
+        scan_dev_for_audio(daemon);
     }
 
     if daemon.devices.is_empty() {
@@ -239,6 +213,52 @@ fn enumerate_audio_devices(daemon: &mut SoundDaemon) {
     log("Found ");
     print_i64(daemon.devices.len() as i64);
     prints(" audio devices\n");
+}
+
+/// Scan /dev for dsp*/audio* device nodes via opendir.
+/// -- EchoFrame: Isolated into its own frame so the ~4.4KB Dir struct doesn't
+/// corrupt enumerate_audio_devices' register allocation under LTO.
+#[inline(never)]
+fn scan_dev_for_audio(daemon: &mut SoundDaemon) {
+    let dir = opendir(DEV_DIR);
+    if let Some(mut dir) = dir {
+        while let Some(entry) = readdir(&mut dir) {
+            let name = entry.name();
+
+            if name.starts_with("dsp") || name.starts_with("audio") {
+                let mut device = AudioDevice::empty();
+
+                let dev_prefix = DEV_DIR.as_bytes();
+                let name_bytes = name.as_bytes();
+
+                if dev_prefix.len() + 1 + name_bytes.len() < 64 {
+                    device.path[..dev_prefix.len()].copy_from_slice(dev_prefix);
+                    device.path[dev_prefix.len()] = b'/';
+                    device.path[dev_prefix.len() + 1..dev_prefix.len() + 1 + name_bytes.len()]
+                        .copy_from_slice(name_bytes);
+                    device.path_len = dev_prefix.len() + 1 + name_bytes.len();
+
+                    let path_str =
+                        core::str::from_utf8(&device.path[..device.path_len]).unwrap_or("");
+                    let fd = open2(path_str, O_RDWR);
+
+                    if fd >= 0 {
+                        device.fd = fd;
+                        device.is_open = true;
+                        device.supports_playback = true;
+                        device.supports_capture = name.contains("capture");
+
+                        log("Found audio device: ");
+                        prints(path_str);
+                        prints("\n");
+
+                        daemon.devices.push(device);
+                    }
+                }
+            }
+        }
+        closedir(dir);
+    }
 }
 
 /// Initialize Unix socket server

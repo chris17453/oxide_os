@@ -6,6 +6,16 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use libc::*;
+use libc::stat::{Stat, stat as libc_stat, S_IFDIR, S_IFMT};
+
+/// ShadePacket: Lightweight sysfs probe — stat() is ~88 bytes on stack vs
+/// opendir's ~4.4KB Dir struct. Returns true only if the path exists and
+/// is a directory.
+pub fn stat_path(path: &str) -> bool {
+    let mut st = Stat::zeroed();
+    let ret = libc_stat(path, &mut st);
+    ret == 0 && (st.mode & S_IFMT) == S_IFDIR
+}
 
 /// Adapter state tracking
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

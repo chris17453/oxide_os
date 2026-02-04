@@ -1,6 +1,6 @@
 //! Page fault handler for the OXIDE kernel.
 //!
-//! ── GraveShift: The gate between alive and dead processes ──
+//! -- GraveShift: The gate between alive and dead processes --
 //! Handles COW resolution and dynamic stack growth. One wrong
 //! move here and the whole userland flatlines. No pressure.
 
@@ -11,17 +11,17 @@ use spin::Mutex;
 
 use mm_manager::mm;
 
-/// ── GraveShift: Stack region geometry ──
+/// -- GraveShift: Stack region geometry --
 /// User stack grows downward from this ceiling.
 const USER_STACK_TOP: u64 = 0x0000_7FFF_FFFF_0000;
 
-/// ── GraveShift: 8MB max stack matches Linux default ulimit ──
+/// -- GraveShift: 8MB max stack matches Linux default ulimit --
 const MAX_STACK_SIZE: u64 = 8 * 1024 * 1024;
 
-/// ── GraveShift: Lowest address we'll ever map for stack ──
+/// -- GraveShift: Lowest address we'll ever map for stack --
 const MAX_STACK_BOTTOM: u64 = USER_STACK_TOP - MAX_STACK_SIZE;
 
-/// ── BlackLatch: Spinlock for stack growth serialization ──
+/// -- BlackLatch: Spinlock for stack growth serialization --
 /// Separate from COW lock to avoid contention between the two paths.
 static STACK_GROWTH_LOCK: Mutex<()> = Mutex::new(());
 
@@ -83,7 +83,7 @@ pub fn page_fault_handler(fault_addr: u64, error_code: u64, _rip: u64) -> bool {
         }
     }
 
-    // ── GraveShift: Dynamic stack growth ──
+    // -- GraveShift: Dynamic stack growth --
     // Not-present fault in userspace stack region = grow the stack on demand.
     // Guard page below MAX_STACK_BOTTOM is never mapped (handler rejects it).
     if !is_present && is_userspace_addr {
@@ -115,7 +115,7 @@ pub fn page_fault_handler(fault_addr: u64, error_code: u64, _rip: u64) -> bool {
     false // Fault not handled - will panic
 }
 
-/// ── GraveShift: Demand-page a single stack frame into the process address space ──
+/// -- GraveShift: Demand-page a single stack frame into the process address space --
 ///
 /// Walks the 4-level page table hierarchy, creating intermediate tables as
 /// needed, then maps a zeroed data frame at `page_addr`.
@@ -128,7 +128,7 @@ fn handle_stack_growth(page_addr: u64, pml4_phys: PhysAddr) -> bool {
 
     let allocator = mm();
 
-    // ── GraveShift: Extract page table indices from faulting address ──
+    // -- GraveShift: Extract page table indices from faulting address --
     let pml4_idx = ((page_addr >> 39) & 0x1FF) as usize;
     let pdpt_idx = ((page_addr >> 30) & 0x1FF) as usize;
     let pd_idx = ((page_addr >> 21) & 0x1FF) as usize;
@@ -136,7 +136,7 @@ fn handle_stack_growth(page_addr: u64, pml4_phys: PhysAddr) -> bool {
 
     let table_flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER;
 
-    // ── GraveShift: Walk PML4 -> PDPT ──
+    // -- GraveShift: Walk PML4 -> PDPT --
     let pml4_virt = phys_to_virt(pml4_phys);
     let pml4 = unsafe { &mut *pml4_virt.as_mut_ptr::<PageTable>() };
     let pml4_entry = &mut pml4[pml4_idx];
@@ -148,7 +148,7 @@ fn handle_stack_growth(page_addr: u64, pml4_phys: PhysAddr) -> bool {
             Ok(f) => f,
             Err(_) => return false,
         };
-        // ── BlackLatch: Zero before linking -- stale data = security hole ──
+        // -- BlackLatch: Zero before linking -- stale data = security hole --
         let virt = phys_to_virt(frame);
         let table = unsafe { &mut *virt.as_mut_ptr::<PageTable>() };
         table.clear();
@@ -156,7 +156,7 @@ fn handle_stack_growth(page_addr: u64, pml4_phys: PhysAddr) -> bool {
         frame
     };
 
-    // ── GraveShift: Walk PDPT -> PD ──
+    // -- GraveShift: Walk PDPT -> PD --
     let pdpt_virt = phys_to_virt(pdpt_phys);
     let pdpt = unsafe { &mut *pdpt_virt.as_mut_ptr::<PageTable>() };
     let pdpt_entry = &mut pdpt[pdpt_idx];
@@ -180,7 +180,7 @@ fn handle_stack_growth(page_addr: u64, pml4_phys: PhysAddr) -> bool {
         frame
     };
 
-    // ── GraveShift: Walk PD -> PT ──
+    // -- GraveShift: Walk PD -> PT --
     let pd_virt = phys_to_virt(pd_phys);
     let pd = unsafe { &mut *pd_virt.as_mut_ptr::<PageTable>() };
     let pd_entry = &mut pd[pd_idx];
@@ -204,30 +204,30 @@ fn handle_stack_growth(page_addr: u64, pml4_phys: PhysAddr) -> bool {
         frame
     };
 
-    // ── GraveShift: Check PT entry -- race protection ──
+    // -- GraveShift: Check PT entry -- race protection --
     let pt_virt = phys_to_virt(pt_phys);
     let pt = unsafe { &mut *pt_virt.as_mut_ptr::<PageTable>() };
     let pt_entry = &mut pt[pt_idx];
 
     if pt_entry.is_present() {
-        // ── BlackLatch: Another CPU beat us here, page already mapped ──
+        // -- BlackLatch: Another CPU beat us here, page already mapped --
         debug_cow!("[PF] Stack page already present (race), no-op");
         return true;
     }
 
-    // ── GraveShift: Allocate the actual data frame for the stack page ──
+    // -- GraveShift: Allocate the actual data frame for the stack page --
     let data_frame = match allocator.alloc_frame() {
         Ok(f) => f,
         Err(_) => return false,
     };
 
-    // ── BlackLatch: Zero the data frame -- stack pages must start clean ──
+    // -- BlackLatch: Zero the data frame -- stack pages must start clean --
     let data_virt = phys_to_virt(data_frame);
     unsafe {
         core::ptr::write_bytes(data_virt.as_mut_ptr::<u8>(), 0, 4096);
     }
 
-    // ── GraveShift: Map with PRESENT | WRITABLE | USER | NO_EXECUTE ──
+    // -- GraveShift: Map with PRESENT | WRITABLE | USER | NO_EXECUTE --
     // Stack data is never executable. NX bit keeps us honest.
     let data_flags = PageTableFlags::PRESENT
         | PageTableFlags::WRITABLE
@@ -235,7 +235,7 @@ fn handle_stack_growth(page_addr: u64, pml4_phys: PhysAddr) -> bool {
         | PageTableFlags::NO_EXECUTE;
     pt_entry.set(data_frame, data_flags);
 
-    // ── GraveShift: TLB shootdown so all cores see the new mapping ──
+    // -- GraveShift: TLB shootdown so all cores see the new mapping --
     let page_start = page_addr;
     let page_end = page_addr + 4096;
     smp::tlb_shootdown(page_start, page_end, 0);
