@@ -1268,9 +1268,14 @@ pub fn kernel_exec(
     // Call do_exec - returns ExecResult with new address space and context
     match do_exec(&elf_data, &argv, &envp, mm(), kernel_pml4) {
         Ok(exec_result) => {
+            println!("[DEBUG] kernel_exec: do_exec succeeded");
+            
             // Get new address space PML4
             let new_pml4 = exec_result.address_space.pml4_phys();
             let ctx = &exec_result.context;
+
+            println!("[DEBUG] kernel_exec: new_pml4={:#x} rip={:#x} rsp={:#x}", 
+                     new_pml4.as_u64(), ctx.rip, ctx.rsp);
 
             // Build task context from exec result
             let task_ctx = TaskContext {
@@ -1297,6 +1302,8 @@ pub fn kernel_exec(
                 fs_base: ctx.fs_base,
             };
 
+            println!("[DEBUG] kernel_exec: task_ctx created, updating meta");
+
             // Update ProcessMeta with new address space and cmdline
             if let Some(meta) = sched::get_task_meta(current_pid) {
                 let mut m = meta.lock();
@@ -1305,8 +1312,12 @@ pub fn kernel_exec(
                 m.environ = exec_result.environ;
             }
 
+            println!("[DEBUG] kernel_exec: meta updated, updating task");
+
             // Update scheduler task with new exec info
             sched::update_task_exec_info(current_pid, new_pml4, ctx.rip, ctx.rsp, task_ctx);
+
+            println!("[DEBUG] kernel_exec: about to switch CR3 and jump to user");
 
             // Debug: print exec return values
             debug_fork!("[EXEC] Switching to PML4={:#x}", new_pml4.as_u64());
