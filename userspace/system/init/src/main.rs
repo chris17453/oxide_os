@@ -127,7 +127,7 @@ fn main() -> i32 {
     let test_child = fork();
     if test_child == 0 {
         // Child - exec pwd (should exit after printing)
-        exec("/bin/pwd");
+        exec("/usr/bin/pwd");
         eprintlns("[init] Failed to exec pwd");
         _exit(1);
     } else if test_child > 0 {
