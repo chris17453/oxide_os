@@ -2,11 +2,15 @@
 sysroot/lib/*.rlib
 sysroot/lib/*.so
 sysroot/lib/*.so.*
+sysroot/lib/*.a
 
 # Don't commit test artifacts
 tests/*.o
 tests/test
 tests/a.out
+tests/test-malloc
+tests/test-regex
+tests/test-write
 
 # Don't commit example binaries
 examples/*/hello
