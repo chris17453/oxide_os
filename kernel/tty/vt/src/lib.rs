@@ -384,6 +384,22 @@ impl VtManager {
         }
         Some(self.vts[vt_num].lock().tty.clone())
     }
+
+    /// Set window dimensions on all VTs
+    /// ⚡ GraveShift: Propagate real framebuffer dimensions to every TTY so
+    /// TIOCGWINSZ returns truth instead of the 24x80 lie. ⚡
+    pub fn set_all_winsize(&self, rows: u16, cols: u16, xpixel: u16, ypixel: u16) {
+        use tty::winsize::Winsize;
+        let ws = Winsize {
+            ws_row: rows,
+            ws_col: cols,
+            ws_xpixel: xpixel,
+            ws_ypixel: ypixel,
+        };
+        for i in 0..NUM_VTS {
+            self.vts[i].lock().tty.set_winsize(ws);
+        }
+    }
 }
 
 /// Global VT manager
@@ -421,6 +437,16 @@ pub fn init() -> Arc<VtManager> {
 /// Get the global VT manager
 pub fn get_manager() -> Option<Arc<VtManager>> {
     VT_MANAGER.lock().clone()
+}
+
+/// Set window dimensions on all VTs from framebuffer terminal size
+/// ⚡ GraveShift: Called after terminal::init() to propagate real
+/// framebuffer-derived character grid dimensions to every TTY device.
+/// Without this, TIOCGWINSZ returns the 24x80 default. ⚡
+pub fn set_global_winsize(rows: u16, cols: u16, xpixel: u16, ypixel: u16) {
+    if let Some(manager) = VT_MANAGER.lock().as_ref() {
+        manager.set_all_winsize(rows, cols, xpixel, ypixel);
+    }
 }
 
 /// Push input to the active VT (called from keyboard interrupt handler)

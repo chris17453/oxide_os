@@ -832,6 +832,21 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         vt::NUM_VTS
     );
 
+    // ⚡ GraveShift: Propagate real terminal dimensions to all VT TTYs.
+    // Without this, TIOCGWINSZ returns the 24x80 default and every TUI
+    // app (top, vim, less) thinks it's on a VT100 from 1978. ⚡
+    if let Some((cols, rows)) = terminal::dimensions() {
+        let (xpixel, ypixel) = fb::framebuffer()
+            .map(|fb| (fb.width() as u16, fb.height() as u16))
+            .unwrap_or((0, 0));
+        vt::set_global_winsize(rows as u16, cols as u16, xpixel, ypixel);
+        let _ = writeln!(
+            writer,
+            "[VFS] VT winsize set to {}x{} ({}x{} px)",
+            cols, rows, xpixel, ypixel
+        );
+    }
+
     // Register /dev/tty1 through /dev/tty6 in devfs
     // Wire /dev/console to tty1 (the primary VT)
     for i in 0..vt::NUM_VTS {

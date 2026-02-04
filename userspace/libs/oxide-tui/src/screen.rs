@@ -180,12 +180,32 @@ impl ScreenData {
         // Load terminal definition
         let term = termcap::load_terminal(term_type).ok();
 
-        let lines = term.as_ref()
-            .and_then(|t| t.get_number("lines"))
-            .unwrap_or(24);
-        let cols = term.as_ref()
-            .and_then(|t| t.get_number("cols"))
-            .unwrap_or(80);
+        // ⚡ NeonRoot: Query the TTY for real dimensions first. Termcap's
+        // "lines"/"cols" are static fallbacks from 1978. The kernel knows
+        // the actual framebuffer geometry — ask it via TIOCGWINSZ. ⚡
+        let (lines, cols) = {
+            let mut ws = libc::termios::Winsize {
+                ws_row: 0,
+                ws_col: 0,
+                ws_xpixel: 0,
+                ws_ypixel: 0,
+            };
+            if libc::termios::tcgetwinsize(0, &mut ws) == 0
+                && ws.ws_row > 0
+                && ws.ws_col > 0
+            {
+                (ws.ws_row as i32, ws.ws_col as i32)
+            } else {
+                // Fallback to termcap or hardcoded defaults
+                let l = term.as_ref()
+                    .and_then(|t| t.get_number("lines"))
+                    .unwrap_or(24);
+                let c = term.as_ref()
+                    .and_then(|t| t.get_number("cols"))
+                    .unwrap_or(80);
+                (l, c)
+            }
+        };
         let colors = term.as_ref()
             .and_then(|t| t.get_number("colors"))
             .unwrap_or(8);
@@ -293,13 +313,25 @@ impl Drop for ScreenData {
 static mut CURRENT_SCREEN: Option<Box<ScreenData>> = None;
 
 /// Initialize the screen
+/// ⚡ NeonVale: Per ncurses spec, initscr() enters the alternate screen
+/// buffer (smcup), hides the cursor, and sets clear_flag on stdscr so the
+/// first wrefresh emits ESC[2J to wipe the boot messages. ⚡
 pub fn initscr() -> WINDOW {
     // Get terminal type from environment or use default
     let term_type = "xterm"; // Would read from $TERM
 
     match ScreenData::new(term_type) {
         Ok(screen) => {
+            // Enter alternate screen mode (smcup) — saves main screen,
+            // clears alternate buffer, and hides cursor
+            let _ = screen.putp("smcup");
+            let _ = screen.putp("civis");
+
             let stdscr = screen.stdscr;
+            // Mark stdscr for full clear on first refresh
+            unsafe {
+                (*stdscr).clear_flag = true;
+            }
             unsafe {
                 let ptr = core::ptr::addr_of_mut!(CURRENT_SCREEN);
                 *ptr = Some(screen);

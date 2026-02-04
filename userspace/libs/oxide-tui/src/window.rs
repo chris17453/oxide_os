@@ -127,12 +127,16 @@ impl WindowData {
     
     /// Clear window
     pub fn clear(&mut self) {
+        // ⚡ NeonVale: Per ncurses spec, clear() sets clear_flag so
+        // the next wrefresh emits ESC[2J before redrawing. Without this,
+        // TUI apps like top never actually clear the physical screen. ⚡
         let blank = chtype { ch: ' ' as u32, attr: self.attrs };
         for cell in self.cells.iter_mut() {
             *cell = blank;
         }
         self.cur_y = 0;
         self.cur_x = 0;
+        self.clear_flag = true;
         self.touched = true;
     }
     
