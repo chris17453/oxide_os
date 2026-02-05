@@ -74,11 +74,20 @@ pub fn wgetch(win: WINDOW) -> i32 {
     let mut byte = [0u8; 1];
     let nodelay = unsafe { (*win).nodelay };
 
-    let n = libc::unistd::read(0, &mut byte);
-    if n <= 0 {
-        if nodelay {
+    // — InputShade: nodelay mode must not block. Use poll(timeout=0) to
+    // check for available data before attempting read(). Without this,
+    // read(0,...) blocks until a byte arrives, stalling apps like top
+    // that need timer-driven refresh between keystrokes.
+    if nodelay {
+        let mut pfd = libc::poll::PollFd::new(0, libc::poll::events::POLLIN);
+        let ready = libc::poll::poll(core::slice::from_mut(&mut pfd), 0);
+        if ready <= 0 || (pfd.revents & libc::poll::events::POLLIN) == 0 {
             return -1;
         }
+    }
+
+    let n = libc::unistd::read(0, &mut byte);
+    if n <= 0 {
         return -1;
     }
 

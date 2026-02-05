@@ -22,7 +22,7 @@ LINKER ?= ld.lld
 # debug-syscall-perf: Logs syscalls taking >100K CPU cycles (~33us @ 3GHz)
 # debug-tty-read: Logs TTY read queue status
 # ========================================
-RUN_KERNEL_FEATURES ?= debug-all
+RUN_KERNEL_FEATURES ?=
 # ========================================
 
 # Internal: Don't modify these unless using specific debug targets

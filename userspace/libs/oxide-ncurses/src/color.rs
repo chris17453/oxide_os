@@ -33,6 +33,16 @@ pub fn has_colors() -> bool {
     unsafe { *core::ptr::addr_of!(HAS_COLORS) }
 }
 
+/// — NeonRoot: Called by initscr() after loading termcap. Real ncurses sets
+/// this based on terminal capability; we mirror that here so the standard
+/// `if has_colors() { start_color(); }` pattern works.
+pub fn set_has_colors(val: bool) {
+    unsafe {
+        let hc = core::ptr::addr_of_mut!(HAS_COLORS);
+        *hc = val;
+    }
+}
+
 pub fn can_change_color() -> bool {
     unsafe { *core::ptr::addr_of!(CAN_CHANGE) }
 }

@@ -335,6 +335,11 @@ pub fn initscr() -> WINDOW {
 
     match ScreenData::new(term_type) {
         Ok(screen) => {
+            // — NeonRoot: Tell color module whether this terminal has colors.
+            // Standard ncurses pattern: initscr() → has_colors() → start_color().
+            // Without this, has_colors() always returns false.
+            color::set_has_colors(screen.colors > 0);
+
             // — NeonVale: Switch to alternate screen buffer and clear it.
             // Without smcup, the app stomps the shell's scrollback.
             let _ = screen.putp("smcup");

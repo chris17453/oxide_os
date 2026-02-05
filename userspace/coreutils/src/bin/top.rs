@@ -1015,6 +1015,9 @@ fn run_interactive_mode(config: &mut TopConfig) {
         (*stdscr).scroll = false;
     }
     
+    // — ByteRiot: Standard ncurses pattern — start_color() initializes the
+    // pairs table, then init_pair() populates it. has_colors() is set by
+    // initscr() from termcap data.
     if config.color_mode && color::has_colors() {
         let _ = color::start_color();
         let _ = color::init_pair(1, colors::COLOR_GREEN, colors::COLOR_BLACK);   // Low CPU (< 10%)
@@ -1226,10 +1229,16 @@ fn display_interactive(stats: &SystemStats, processes: &[ProcessInfo], config: &
     row += 1;
     let _ = output::wmove(win, row, 0);
 
-    // Column headers
+    // — ByteRiot: Column headers padded to fill terminal width. Without
+    // padding, reverse-video only covers the text, leaving ragged edges.
     let _ = attributes::wattron(win, attrs::A_REVERSE);
-    let header = "  PID USER      PR  NI    VIRT    RES  %CPU %MEM     TIME+ COMMAND                         ";
-    let _ = output::waddstr(win, &header[..max_x.min(header.len() as i32) as usize]);
+    let header_base = "  PID USER      PR  NI    VIRT    RES  %CPU %MEM     TIME+ COMMAND";
+    let _ = output::waddstr(win, header_base);
+    // Pad remainder of line with spaces for full reverse-video bar
+    let header_len = header_base.len() as i32;
+    for _ in header_len..max_x {
+        let _ = output::waddstr(win, " ");
+    }
     let _ = attributes::wattroff(win, attrs::A_REVERSE);
 
     row += 1;
@@ -1285,8 +1294,14 @@ fn display_interactive(stats: &SystemStats, processes: &[ProcessInfo], config: &
             proc.name_str()
         );
 
+        // — ByteRiot: Truncate to terminal width, then pad remainder so
+        // color attributes fill the entire row cleanly.
         let display_len = max_x.min(proc_line.len() as i32);
         let _ = output::waddstr(win, &proc_line[..display_len as usize]);
+        let line_len = display_len;
+        for _ in line_len..max_x {
+            let _ = output::waddstr(win, " ");
+        }
 
         if config.highlight_running && proc.state == b'R' {
             let _ = attributes::wattroff(win, attrs::A_BOLD);
