@@ -7,6 +7,7 @@ use block::{BlockDevice, BlockDeviceInfo, BlockError, BlockResult};
 use devfs::DevFs;
 use fat32::Fat32;
 use procfs::ProcFs;
+use sysfs::SysFs;
 use tmpfs::TmpDir;
 use vfs::{MountFlags, VfsError, mount::GLOBAL_VFS};
 
@@ -210,10 +211,10 @@ fn mount_procfs(target: &str, flags: MountFlags) -> i64 {
     }
 }
 
-/// Mount sysfs (currently uses tmpfs as placeholder)
+/// Mount sysfs
+/// -- IronGhost: Real sysfs now, no more tmpfs impostor
 fn mount_sysfs(target: &str, flags: MountFlags) -> i64 {
-    // TODO: Implement real sysfs
-    let sysfs = TmpDir::new_root();
+    let sysfs = SysFs::new();
 
     match GLOBAL_VFS.mount(sysfs, target, flags, "sysfs") {
         Ok(()) => 0,

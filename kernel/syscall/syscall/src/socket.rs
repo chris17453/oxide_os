@@ -43,11 +43,8 @@ static SOCKET_PAIRS: Mutex<BTreeMap<i32, i32>> = Mutex::new(BTreeMap::new());
 /// Next ephemeral port for client sockets
 static NEXT_EPHEMERAL_PORT: Mutex<u16> = Mutex::new(49152);
 
-/// UDP/RAW sockets bound to ports (for loopback routing)
-/// Maps (port, protocol) -> socket fd
-static BOUND_SOCKETS: Mutex<BTreeMap<(u16, u8), i32>> = Mutex::new(BTreeMap::new());
-
 /// Unified loopback socket registry
+/// -- ShadePacket: One registry to rule them all, BOUND_SOCKETS is dead weight now
 /// Maps (port, protocol_num) -> socket fd for ALL socket types
 /// Protocol: 0=any, 1=ICMP, 6=TCP, 17=UDP, 58=ICMPv6
 static LOOPBACK_REGISTRY: Mutex<BTreeMap<(u16, u8), i32>> = Mutex::new(BTreeMap::new());
@@ -571,15 +568,8 @@ pub fn sys_bind(fd: i32, addr: u64, addrlen: u32) -> i64 {
 
             let protocol = protocol_to_num(socket.protocol);
 
-            // Register in unified loopback registry (for all socket types)
+            // -- ShadePacket: Register in unified loopback registry (handles all socket types)
             register_loopback_socket(socket_addr.port, protocol, fd);
-
-            // Also register in old BOUND_SOCKETS for compatibility (TODO: remove later)
-            if socket.sock_type == SocketType::Dgram || socket.sock_type == SocketType::Raw {
-                BOUND_SOCKETS
-                    .lock()
-                    .insert((socket_addr.port, protocol), fd);
-            }
 
             0
         }
@@ -1358,20 +1348,7 @@ pub fn close_socket(fd: i32) -> i64 {
         }
     }
 
-    // Remove from bound sockets (for UDP/RAW) - legacy, TODO: remove
-    {
-        let mut bound = BOUND_SOCKETS.lock();
-        let keys_to_remove: Vec<_> = bound
-            .iter()
-            .filter(|&(_, &f)| f == fd)
-            .map(|(k, _)| *k)
-            .collect();
-        for key in keys_to_remove {
-            bound.remove(&key);
-        }
-    }
-
-    // Remove from unified loopback registry
+    // -- ShadePacket: Unified loopback registry handles all socket type cleanup
     unregister_loopback_socket_by_fd(fd);
 
     match remove_socket(fd) {

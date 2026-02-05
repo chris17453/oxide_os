@@ -35,6 +35,7 @@ members = [
     "kernel/vfs/tmpfs",
     "kernel/vfs/initramfs",
     "kernel/vfs/procfs",
+    "kernel/vfs/sysfs",
     "kernel/fs/oxidefs",
     "kernel/fs/fat32",
     "kernel/fs/ext4",
@@ -114,7 +115,6 @@ members = [
     "userspace/libs/compression",
     "userspace/libs/termcap",
     "userspace/libs/oxide-ncurses",
-    "userspace/libs/oxide-tui",
     "userspace/libs/vte",
     # userspace/services — daemons
     "userspace/services/networkd",
@@ -185,6 +185,7 @@ devfs = { path = "kernel/vfs/devfs" }
 tmpfs = { path = "kernel/vfs/tmpfs" }
 initramfs = { path = "kernel/vfs/initramfs" }
 procfs = { path = "kernel/vfs/procfs" }
+sysfs = { path = "kernel/vfs/sysfs" }
 tty = { path = "kernel/tty/tty" }
 pty = { path = "kernel/tty/pty" }
 vt = { path = "kernel/tty/vt" }

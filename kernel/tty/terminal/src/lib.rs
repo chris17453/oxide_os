@@ -655,11 +655,13 @@ impl TerminalEmulator {
         }
 
         // Check for DECRQSS (Request Status String): DCS $ q Pt ST
+        // -- IronGhost: Terminal state queries so vim/tmux know what we can do
+        // -- NightDoc: Without this, vim screams about unknown terminal caps
         if final_char == b'q' && intermediates.first() == Some(&b'$') {
-            // Terminal state query
             #[cfg(feature = "debug-terminal")]
-            os_log::println!("[TERM-DCS] DECRQSS query");
-            // TODO: Respond with requested terminal state
+            os_log::println!("[TERM-DCS] DECRQSS query: {:?}", core::str::from_utf8(data));
+
+            self.handle_decrqss(data);
             return;
         }
 
@@ -670,6 +672,191 @@ impl TerminalEmulator {
             final_char as char,
             intermediates
         );
+    }
+
+    /// Handle DECRQSS (DEC Request Status String)
+    ///
+    /// Responds to terminal state queries from applications like vim/tmux.
+    /// Request: DCS $ q Pt ST  →  Response: DCS Ps $ r Pt ST
+    /// Ps=1 for valid, Ps=0 for invalid query.
+    ///
+    /// -- IronGhost: The terminal speaks when asked, vim listens
+    /// -- NightDoc: Without DECRQSS, vim can't know our SGR state or cursor shape
+    fn handle_decrqss(&mut self, data: &[u8]) {
+        use alloc::vec::Vec;
+
+        // Parse query parameter from DCS data
+        let query = core::str::from_utf8(data).unwrap_or("");
+
+        match query {
+            // SGR (Select Graphic Rendition) attributes query
+            "m" => {
+                let mut response: Vec<u8> = Vec::with_capacity(64);
+                // DCS 1 $ r
+                response.extend_from_slice(b"\x1bP1$r");
+
+                // Encode current SGR attributes
+                let attrs = &self.handler.attrs;
+                let flags = attrs.flags;
+                let mut params: Vec<u8> = Vec::new();
+
+                // Attribute flags → SGR codes
+                if flags.contains(CellFlags::BOLD) {
+                    if !params.is_empty() { params.push(b';'); }
+                    params.push(b'1');
+                }
+                if flags.contains(CellFlags::DIM) {
+                    if !params.is_empty() { params.push(b';'); }
+                    params.push(b'2');
+                }
+                if flags.contains(CellFlags::ITALIC) {
+                    if !params.is_empty() { params.push(b';'); }
+                    params.push(b'3');
+                }
+                if flags.contains(CellFlags::UNDERLINE) {
+                    if !params.is_empty() { params.push(b';'); }
+                    params.push(b'4');
+                }
+                if flags.contains(CellFlags::BLINK) {
+                    if !params.is_empty() { params.push(b';'); }
+                    params.push(b'5');
+                }
+                if flags.contains(CellFlags::REVERSE) {
+                    if !params.is_empty() { params.push(b';'); }
+                    params.push(b'7');
+                }
+                if flags.contains(CellFlags::HIDDEN) {
+                    if !params.is_empty() { params.push(b';'); }
+                    params.push(b'8');
+                }
+                if flags.contains(CellFlags::STRIKETHROUGH) {
+                    if !params.is_empty() { params.push(b';'); }
+                    params.push(b'9');
+                }
+
+                // Foreground color
+                Self::encode_sgr_color(&mut params, &attrs.fg, false);
+
+                // Background color
+                Self::encode_sgr_color(&mut params, &attrs.bg, true);
+
+                // Default to "0" (reset) if no attributes set
+                if params.is_empty() {
+                    params.push(b'0');
+                }
+
+                response.extend_from_slice(&params);
+                response.push(b'm');
+                // ST (String Terminator)
+                response.extend_from_slice(b"\x1b\\");
+
+                crate::send_response(&response);
+            }
+
+            // DECSCUSR (cursor style) query
+            "\" q" | " q" => {
+                let shape_code = match self.handler.cursor.shape {
+                    CursorShape::Block => b'2',     // steady block
+                    CursorShape::Underline => b'4',  // steady underline
+                    CursorShape::Bar => b'6',        // steady bar
+                };
+
+                let response = [
+                    0x1b, b'P', b'1', b'$', b'r',
+                    shape_code,
+                    b' ', b'q',
+                    0x1b, b'\\',
+                ];
+                crate::send_response(&response);
+            }
+
+            // DECSTBM (scroll region) query
+            "r" => {
+                let top = self.handler.scroll_top + 1;
+                let bottom = self.handler.scroll_bottom + 1;
+                let region = alloc::format!("\x1bP1$r{};{}r\x1b\\", top, bottom);
+                crate::send_response(region.as_bytes());
+            }
+
+            // Unknown/unsupported query → invalid response
+            _ => {
+                #[cfg(feature = "debug-terminal")]
+                os_log::println!("[TERM-DCS] DECRQSS unsupported query: {:?}", query);
+
+                // DCS 0 $ r ST (invalid)
+                crate::send_response(b"\x1bP0$r\x1b\\");
+            }
+        }
+    }
+
+    /// Encode a terminal color as SGR parameter bytes
+    /// -- IronGhost: Translating our color model back into ANSI escape dialect
+    fn encode_sgr_color(params: &mut alloc::vec::Vec<u8>, color: &TermColor, is_bg: bool) {
+        let base = if is_bg { 40u8 } else { 30u8 };
+        let bright_base = if is_bg { 100u8 } else { 90u8 };
+
+        match color {
+            TermColor::Ansi16(n) if *n < 8 => {
+                if !params.is_empty() { params.push(b';'); }
+                let code = base + n;
+                if code >= 100 {
+                    params.push(b'0' + code / 100);
+                }
+                if code >= 10 {
+                    params.push(b'0' + (code / 10) % 10);
+                }
+                params.push(b'0' + code % 10);
+            }
+            TermColor::Ansi16(n) => {
+                if !params.is_empty() { params.push(b';'); }
+                let code = bright_base + (n - 8);
+                if code >= 100 {
+                    params.push(b'0' + code / 100);
+                }
+                if code >= 10 {
+                    params.push(b'0' + (code / 10) % 10);
+                }
+                params.push(b'0' + code % 10);
+            }
+            TermColor::Ansi256(n) => {
+                if !params.is_empty() { params.push(b';'); }
+                let ext = if is_bg { b"48;5;" } else { b"38;5;" };
+                params.extend_from_slice(ext);
+                Self::write_decimal_to(params, *n as u32);
+            }
+            TermColor::Rgb(r, g, b) => {
+                if !params.is_empty() { params.push(b';'); }
+                let ext = if is_bg { b"48;2;" } else { b"38;2;" };
+                params.extend_from_slice(ext);
+                Self::write_decimal_to(params, *r as u32);
+                params.push(b';');
+                Self::write_decimal_to(params, *g as u32);
+                params.push(b';');
+                Self::write_decimal_to(params, *b as u32);
+            }
+            TermColor::DefaultFg | TermColor::DefaultBg => {
+                // Default colors — no SGR code needed
+            }
+        }
+    }
+
+    /// Write a u32 as decimal ASCII bytes into a Vec
+    fn write_decimal_to(buf: &mut alloc::vec::Vec<u8>, value: u32) {
+        if value == 0 {
+            buf.push(b'0');
+            return;
+        }
+        let mut digits = [0u8; 10];
+        let mut i = 0;
+        let mut v = value;
+        while v > 0 {
+            digits[i] = b'0' + (v % 10) as u8;
+            v /= 10;
+            i += 1;
+        }
+        for d in digits[..i].iter().rev() {
+            buf.push(*d);
+        }
     }
 
     /// Render Sixel graphics

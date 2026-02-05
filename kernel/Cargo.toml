@@ -52,6 +52,7 @@ devfs = { workspace = true }
 tmpfs = { workspace = true }
 initramfs = { workspace = true }
 procfs = { workspace = true }
+sysfs = { workspace = true }
 tty = { workspace = true }
 pty = { workspace = true }
 vt = { workspace = true }

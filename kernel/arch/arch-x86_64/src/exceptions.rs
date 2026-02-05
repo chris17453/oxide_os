@@ -490,6 +490,8 @@ pub extern "C" fn mouse_interrupt() {
 }
 
 /// Mouse handler
+/// -- TorqueJax: IRQ 12 fires on mouse data. If nobody's listening, drain the byte
+/// or the level-triggered interrupt storms and locks up the CPU forever.
 extern "C" fn handle_mouse() {
 
     // Forward to the registered mouse callback (ps2::handle_mouse_irq).
@@ -498,6 +500,12 @@ extern "C" fn handle_mouse() {
     unsafe {
         if let Some(callback) = MOUSE_CALLBACK {
             callback();
+        } else {
+            // No driver registered yet — drain the byte from port 0x60
+            // to clear the output buffer. Without this, the level-triggered
+            // IRQ 12 re-fires immediately after EOI, creating an interrupt
+            // storm that starves the init code trying to set up the mouse.
+            core::arch::asm!("in al, 0x60", out("al") _, options(nomem, nostack, preserves_flags));
         }
     }
 

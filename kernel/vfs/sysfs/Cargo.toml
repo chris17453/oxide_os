@@ -1,0 +1,9 @@
+[package]
+name = "sysfs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "System filesystem (sysfs) for OXIDE OS"
+
+[dependencies]
+vfs = { workspace = true }

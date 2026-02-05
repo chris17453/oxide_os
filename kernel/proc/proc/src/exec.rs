@@ -199,10 +199,13 @@ pub fn do_exec<A: FrameAllocator>(
     }
 
     // Set up TLS (Thread-Local Storage) if needed
-    // TEMP HACK: Force TLS setup for testing
-    // ALWAYS search manually since ELF parser seems broken
-    let forced_tls = {
-        // Manually search for PT_TLS in the ELF
+    // -- Hexline: ELF parser handles PT_TLS correctly now. Manual fallback retained
+    // for safety until we've validated across all userspace binaries.
+    let parser_tls = elf.tls_template();
+
+    // Fallback: manual PT_TLS scan if parser missed it
+    // -- Hexline: This catches edge cases where the parser's segment array fills up
+    let manual_tls = if parser_tls.is_none() {
         #[repr(C)]
         struct ElfHeader {
             e_ident: [u8; 16],
@@ -244,8 +247,6 @@ pub fn do_exec<A: FrameAllocator>(
                 if ph_start + core::mem::size_of::<ProgHeader>() <= elf_data.len() {
                     let ph = unsafe { &*(elf_data.as_ptr().add(ph_start) as *const ProgHeader) };
                     if ph.p_type == 7 {
-                        // PT_TLS
-                        // Found it! Create TlsTemplate manually
                         found_tls = Some(elf::TlsTemplate {
                             file_offset: ph.p_offset as usize,
                             file_size: ph.p_filesz as usize,
@@ -260,9 +261,18 @@ pub fn do_exec<A: FrameAllocator>(
         } else {
             None
         }
+    } else {
+        None
     };
 
-    let tls_template_to_use = forced_tls.as_ref().or(elf.tls_template());
+    // -- Hexline: Parser-first, manual-fallback. Log when fallback catches something.
+    #[cfg(debug_assertions)]
+    if parser_tls.is_none() && manual_tls.is_some() {
+        extern crate os_log;
+        os_log::println!("[TLS] WARNING: ELF parser missed PT_TLS, manual fallback used");
+    }
+
+    let tls_template_to_use = parser_tls.or(manual_tls.as_ref());
     let tls_base = if let Some(tls_template) = tls_template_to_use {
         // Allocate TLS block
         // TLS block layout: [TLS data] [Thread Control Block (TCB)]

@@ -216,11 +216,11 @@ pub unsafe fn parse_arcs_memory_map(
     let regions = [MemoryRegion::empty(); crate::MAX_MEMORY_REGIONS];
     let count = 0;
 
-    // TODO: Call firmware GetMemoryDescriptor function
-    // This requires understanding ARCS calling convention and working with firmware
-
-    // For now, return empty map - real implementation would iterate through
-    // firmware memory descriptors
+    // -- SableWire: ARCS is MIPS/SGI-specific (IP22 Indy, IP27 Origin, IP30 Octane, IP32 O2)
+    // OXIDE targets x86_64 exclusively. This stub is retained for potential future MIPS port.
+    // Blocked: Requires MIPS cross-compilation toolchain + SGI firmware test environment.
+    // Implementation would call GetMemoryDescriptor via ArcsFirmwareVector callback table,
+    // iterating descriptors until null, converting ArcsMemoryType to our MemoryRegion format.
     (count, regions)
 }
 

@@ -172,7 +172,7 @@ dependencies = [
  "compression",
  "heapless",
  "libc 0.1.0",
- "oxide-tui",
+ "oxide-ncurses",
  "termcap",
 ]
 
@@ -635,6 +635,7 @@ dependencies = [
  "smp",
  "spin 0.9.8",
  "syscall",
+ "sysfs",
  "tcpip",
  "terminal",
  "tmpfs",
@@ -992,15 +993,6 @@ name = "oxide-std"
 version = "0.1.0"
 dependencies = [
  "libc 0.1.0",
-]
-
-[[package]]
-name = "oxide-tui"
-version = "6.0.0"
-dependencies = [
- "libc 0.1.0",
- "termcap",
- "vte",
 ]
 
 [[package]]
@@ -1559,6 +1551,13 @@ name = "syscall-tests"
 version = "0.1.0"
 dependencies = [
  "libc 0.1.0",
+]
+
+[[package]]
+name = "sysfs"
+version = "0.1.0"
+dependencies = [
+ "vfs",
 ]
 
 [[package]]
