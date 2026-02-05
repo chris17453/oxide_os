@@ -279,6 +279,10 @@ pub struct Handler {
     rows: u32,
     /// Response callback for terminal queries (DSR, DA, etc.)
     response_callback: Option<ResponseCallback>,
+    /// Last printed character (for REP sequence)
+    last_char: Option<char>,
+    /// Current working directory (OSC 7)
+    cwd: alloc::string::String,
 }
 
 impl Handler {
@@ -306,6 +310,8 @@ impl Handler {
             cols,
             rows,
             response_callback: None,
+            last_char: None,
+            cwd: alloc::string::String::new(),
         }
     }
 
@@ -385,6 +391,10 @@ impl Handler {
             buffer.set_char(self.cursor.row, self.cursor.col, translated_ch, self.attrs);
             self.cursor.col += 1;
         }
+        
+        // Track last printed character for REP sequence
+        // -- GlassSignal: Remember what we just printed for efficient repetition
+        self.last_char = Some(translated_ch);
     }
 
     /// Carriage return
@@ -687,6 +697,86 @@ impl Handler {
                 // Check for soft reset: CSI ! p (DECSTR)
                 if intermediates.first() == Some(&b'!') {
                     self.soft_reset();
+                }
+                // DECRQSS - Request Status String: CSI $ p
+                else if intermediates.first() == Some(&b'$') {
+                    // vim/tmux query terminal capabilities
+                    // We report that we don't support the requested status
+                    self.send_response(b"\x1bP0$r\x1b\\");
+                }
+            }
+            b't' => {
+                // Window manipulation (XTWINOPS)
+                // -- NeonVale: Window state queries for terminal multiplexers
+                let operation = get_param(params, 0, 0);
+                match operation {
+                    8 => {
+                        // Resize window to params[1] rows and params[2] cols
+                        // We don't support dynamic resize, ignore
+                    }
+                    11 => {
+                        // Report window state (1=open, 2=iconified)
+                        self.send_response(b"\x1b[1t");
+                    }
+                    13 => {
+                        // Report window position
+                        // We're a framebuffer console, report (0, 0)
+                        self.send_response(b"\x1b[3;0;0t");
+                    }
+                    14 => {
+                        // Report window size in pixels
+                        // Calculate from cell dimensions
+                        let width = self.cols * 8; // Assume 8px wide chars
+                        let height = self.rows * 16; // Assume 16px tall chars
+                        let response = alloc::format!("\x1b[4;{};{}t", height, width);
+                        self.send_response(response.as_bytes());
+                    }
+                    18 => {
+                        // Report window size in chars
+                        let response = alloc::format!("\x1b[8;{};{}t", self.rows, self.cols);
+                        self.send_response(response.as_bytes());
+                    }
+                    19 => {
+                        // Report screen size in chars
+                        // Same as window for us
+                        let response = alloc::format!("\x1b[9;{};{}t", self.rows, self.cols);
+                        self.send_response(response.as_bytes());
+                    }
+                    22 => {
+                        // Save icon and window title on stack (we ignore)
+                    }
+                    23 => {
+                        // Restore icon and window title from stack (we ignore)
+                    }
+                    _ => {
+                        // Unknown window operation
+                    }
+                }
+            }
+            b'b' => {
+                // REP - Repeat last character
+                // -- GlassSignal: Character repetition for efficient rendering
+                let n = get_param(params, 0, 1) as u32;
+                if let Some(last_char) = self.last_char {
+                    for _ in 0..n {
+                        self.put_char(last_char, buffer);
+                    }
+                }
+            }
+            b'Z' => {
+                // CBT - Cursor Backward Tab
+                // -- InputShade: Reverse tab navigation for form filling
+                let n = get_param(params, 0, 1);
+                for _ in 0..n {
+                    // Find previous tab stop
+                    let mut col = self.cursor.col;
+                    if col > 0 {
+                        col -= 1;
+                        while col > 0 && !self.tabs[col as usize] {
+                            col -= 1;
+                        }
+                        self.cursor.col = col;
+                    }
                 }
             }
             _ => {
