@@ -629,12 +629,12 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         arch::exceptions::set_page_fault_callback(fault::page_fault_handler);
     }
 
-    // Register terminal tick callback for 30 FPS rendering
+    // Register terminal tick callback for ~30 FPS rendering
     if terminal::is_initialized() {
         unsafe {
             arch::set_terminal_tick_callback(console::terminal_tick);
         }
-        let _ = writeln!(writer, "[INFO] Terminal tick callback registered (30 FPS)");
+        let _ = writeln!(writer, "[INFO] Terminal tick callback registered (~30 FPS)");
     }
 
     // Initialize PS/2 keyboard controller (i8042)
