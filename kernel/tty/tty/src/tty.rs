@@ -184,6 +184,18 @@ impl Tty {
         self.ldisc.lock().can_read()
     }
 
+    /// Non-blocking foreground pgid read — ISR-safe via try_lock
+    /// — GraveShift: For when you need the pgid but can't afford to spin forever
+    pub fn try_get_foreground_pgid(&self) -> Option<i32> {
+        self.foreground_pgid.try_lock().map(|g| *g)
+    }
+
+    /// Check if ISIG is enabled in the line discipline (signals on Ctrl+C etc.)
+    /// — GraveShift: Non-blocking check for ISR signal delivery fast-path
+    pub fn try_isig_enabled(&self) -> Option<bool> {
+        self.ldisc.try_lock().map(|l| l.isig_enabled())
+    }
+
     /// Flush input buffer
     pub fn flush_input(&self) {
         self.ldisc.lock().flush_input();

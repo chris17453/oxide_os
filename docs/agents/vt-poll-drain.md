@@ -55,6 +55,18 @@ IRQ → ring buffer → (never drained) → line discipline → poll() → "no d
 - `kernel/vfs/devfs/src/devices.rs` — `ConsoleDevice::poll_read_ready()` override
 - `kernel/syscall/syscall/src/poll.rs` — `check_fd_ready()` (unchanged, now works correctly)
 
+## Immediate Signal Delivery (push_input fast-path)
+
+Apps that never call `read()` or `poll()` on stdin (animation loops, render loops)
+will never drain the ring buffer. Ctrl+C bytes rot forever, process is unkillable.
+
+Fix: `push_input()` checks for signal characters (0x03/0x1C/0x1A) and delivers
+the signal immediately via `SIGNAL_PGRP_CALLBACK`, using `try_lock` for ISR safety.
+
+- Uses `tty.try_isig_enabled()` to respect ISIG termios flag
+- Uses `tty.try_get_foreground_pgid()` to avoid blocking on pgid mutex
+- Double delivery (here + later in read/poll drain) is harmless — second SIGINT is a no-op
+
 ## See Also
 
 - `docs/agents/isr-lock-safety.md` — the ring buffer exists because ISR can't use blocking locks

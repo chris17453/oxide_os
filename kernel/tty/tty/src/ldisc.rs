@@ -602,6 +602,12 @@ impl LineDiscipline {
         self.input_queue.len()
     }
 
+    /// Check if ISIG (signal generation) is enabled
+    /// — GraveShift: The fast-path check for push_input() signal delivery
+    pub fn isig_enabled(&self) -> bool {
+        self.termios.c_lflag.contains(LocalFlags::ISIG)
+    }
+
     pub fn edit_buf_len(&self) -> usize {
         self.edit_buf.len()
     }

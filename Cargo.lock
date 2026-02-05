@@ -1813,6 +1813,7 @@ dependencies = [
  "os_core",
  "os_log",
  "sched",
+ "signal",
  "spin 0.9.8",
  "tty",
  "vfs",

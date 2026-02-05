@@ -23,6 +23,8 @@ use lockfree_ring::LockFreeRing;
 use tty::{Tty, TtyDriver};
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
+extern crate signal;
+
 /// Write a debug string to serial (debug-console only).
 /// — SableWire: delegates to os_log::write_str_raw() which calls through
 /// to the registered ISR-safe writer with bounded spin. No more inline
@@ -222,22 +224,42 @@ impl VtManager {
             }
         }
 
-        // 🔥 NO IMMEDIATE SIGNAL DELIVERY (Priority #8 Fix) 🔥
+        // 🔥 IMMEDIATE SIGNAL DELIVERY (The Resurrection of Ctrl+C) 🔥
         //
-        // Before: Signal delivered TWICE:
-        // 1. Here in push_input() (IRQ context)
-        // 2. Later in read() when byte is processed (process context)
+        // Apps that never call read() or poll() on stdin (animation loops,
+        // curses demos, anything in a tight render loop) will NEVER drain the
+        // ring buffer. Ctrl+C bytes rot in there forever. The process lives
+        // on, deaf to the user's pleas.
         //
-        // After: Signal delivered ONCE in read() via tty.input()
+        // Fix: Check for signal characters right here in push_input() and
+        // deliver immediately. Uses try_lock to stay ISR-safe — if we can't
+        // get the lock, the poll/read drain path will catch it eventually.
         //
-        // Why this is correct:
-        // - Signals should go through line discipline (ISIG flag check)
-        // - Delivery in process context, not IRQ
-        // - Byte gets consumed properly by line discipline
-        // - No double SIGINT on Ctrl+C
-        //
-        // The byte is safely in the ring buffer. When read() drains it,
-        // tty.input() will check for signals and deliver them properly.
+        // Double delivery is harmless — a second SIGINT on an already-dying
+        // process is a no-op. Better to deliver twice than never. — GraveShift
+        if ch == 0x03 || ch == 0x1C || ch == 0x1A {
+            if let Some(vt) = self.vts[active].try_lock() {
+                // Check if ISIG is enabled before delivering — respect termios
+                let isig = vt.tty.try_isig_enabled().unwrap_or(true);
+                if isig {
+                    let signo = match ch {
+                        0x03 => signal::SIGINT,
+                        0x1C => signal::SIGQUIT,
+                        0x1A => signal::SIGTSTP,
+                        _ => return,
+                    };
+                    unsafe {
+                        if let Some(callback) = SIGNAL_PGRP_CALLBACK {
+                            if let Some(pgid) = vt.tty.try_get_foreground_pgid() {
+                                if pgid > 0 {
+                                    callback(pgid, signo);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Read from VT

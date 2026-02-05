@@ -6,9 +6,9 @@
 //! - Animated moving objects
 //! - Text effects (blink, bold, reverse)
 //!
-//! Press Ctrl+C to quit.
+//! Press 'q' or Ctrl+C to quit.
 //!
-//! -- NeonVale: VGA nostalgia meets modern terminal tech
+//! -- NeonVale: VGA nostalgia meets modern terminal tech. Runs until you kill it.
 
 #![no_std]
 #![no_main]
@@ -17,8 +17,8 @@ extern crate libc;
 extern crate oxide_ncurses as ncurses;
 
 use ncurses::{
-    attrs::*, color_pair, colors::*, endwin, has_colors, init_pair, initscr, mvprintw, refresh,
-    start_color,
+    attrs::*, color_pair, colors::*, endwin, erase, getch, has_colors, init_pair, initscr,
+    mvprintw, refresh, start_color,
 };
 
 /// Sleep for a short duration (animation delay)
@@ -102,80 +102,50 @@ fn fmt_u32(buf: &mut [u8; 12], val: u32) -> &[u8] {
     &buf[i..]
 }
 
-/// Draw a fancy box with VGA-style borders
-/// -- NeonVale: Box renderer - classic terminal aesthetics
-fn draw_box(y: i32, x: i32, height: i32, width: i32, color_idx: i16) {
-    let pair = color_pair(color_idx as i32);
-
-    // Draw corners and edges with color
+/// Set attribute on stdscr — NeonVale: less boilerplate, more neon
+fn set_attr(attr: u32) {
     unsafe {
         let stdscr = ncurses::screen::stdscr();
         if !stdscr.is_null() {
-            (*stdscr).attrs = pair;
+            (*stdscr).attrs = attr;
         }
     }
+}
 
-    // Top left corner
+/// Draw a fancy box with VGA-style borders
+/// -- NeonVale: Box renderer - classic terminal aesthetics
+fn draw_box(y: i32, x: i32, height: i32, width: i32, color_idx: i16) {
+    set_attr(color_pair(color_idx as i32));
+
     let _ = mvprintw(y, x, "┌");
-
-    // Top border
     for i in 1..width - 1 {
         let _ = mvprintw(y, x + i, "─");
     }
-
-    // Top right corner
     let _ = mvprintw(y, x + width - 1, "┐");
 
-    // Sides
     for i in 1..height - 1 {
         let _ = mvprintw(y + i, x, "│");
         let _ = mvprintw(y + i, x + width - 1, "│");
     }
 
-    // Bottom left corner
     let _ = mvprintw(y + height - 1, x, "└");
-
-    // Bottom border
     for i in 1..width - 1 {
         let _ = mvprintw(y + height - 1, x + i, "─");
     }
-
-    // Bottom right corner
     let _ = mvprintw(y + height - 1, x + width - 1, "┘");
 
-    // Reset attributes
-    unsafe {
-        let stdscr = ncurses::screen::stdscr();
-        if !stdscr.is_null() {
-            (*stdscr).attrs = A_NORMAL;
-        }
-    }
+    set_attr(A_NORMAL);
 }
 
 /// Draw a filled block at position
 /// -- NeonVale: Block primitive - the building block of VGA graphics
 fn draw_block(y: i32, x: i32, color_idx: i16, ch: &str) {
-    let pair = color_pair(color_idx as i32);
-
-    unsafe {
-        let stdscr = ncurses::screen::stdscr();
-        if !stdscr.is_null() {
-            (*stdscr).attrs = pair;
-        }
-    }
-
+    set_attr(color_pair(color_idx as i32));
     let _ = mvprintw(y, x, ch);
-
-    unsafe {
-        let stdscr = ncurses::screen::stdscr();
-        if !stdscr.is_null() {
-            (*stdscr).attrs = A_NORMAL;
-        }
-    }
+    set_attr(A_NORMAL);
 }
 
-/// Draw animated bouncing ball
-/// -- NeonVale: Physics simulation - basic collision detection
+/// Animated bouncing ball — NeonVale: Physics simulation in a box
 struct Ball {
     y: i32,
     x: i32,
@@ -199,7 +169,6 @@ impl Ball {
         self.y += self.dy;
         self.x += self.dx;
 
-        // Bounce off walls
         if self.y <= 8 || self.y >= max_y - 3 {
             self.dy = -self.dy;
         }
@@ -214,16 +183,14 @@ impl Ball {
 }
 
 /// Main entry point
-/// -- NeonVale: Demo orchestrator - brings all effects together
+/// -- NeonVale: Demo orchestrator - runs forever until you pull the plug
 #[unsafe(no_mangle)]
 pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
-    // Initialize ncurses
     let stdscr = initscr();
     if stdscr.is_null() {
         return 1;
     }
 
-    // Check for color support
     if !has_colors() {
         endwin();
         let msg = b"Terminal does not support colors!\n";
@@ -231,7 +198,6 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
         return 1;
     }
 
-    // Initialize color pairs
     start_color();
 
     // -- ColdCipher: Color palette setup - cyberpunk theme
@@ -243,17 +209,20 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
     init_pair(6, COLOR_CYAN, COLOR_BLACK);
     init_pair(7, COLOR_WHITE, COLOR_BLACK);
 
-    // Get screen dimensions
+    // -- NeonVale: Nodelay mode — getch() returns immediately so we can
+    // check for 'q' without blocking the animation loop. The demo runs
+    // at full speed and eats keystrokes between frames.
+    unsafe {
+        (*stdscr).nodelay = true;
+    }
+
     let mut max_y = 24;
     let mut max_x = 80;
     unsafe {
-        if !stdscr.is_null() {
-            max_y = (*stdscr).lines;
-            max_x = (*stdscr).cols;
-        }
+        max_y = (*stdscr).lines;
+        max_x = (*stdscr).cols;
     }
 
-    // Initialize bouncing balls
     let mut balls = [
         Ball::new(10, 45, 1, 1, 1),
         Ball::new(12, 50, -1, 1, 2),
@@ -264,89 +233,47 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
     // FPS counter — because if you can't measure it, it doesn't exist — NeonVale
     let mut fps = FpsCounter::new();
 
-    // Animation loop
-    for _frame in 0..200 {
-        // Clear screen by printing spaces
-        for y in 0..max_y {
-            for x in 0..max_x {
-                let _ = mvprintw(y, x, " ");
-            }
+    // -- NeonVale: Infinite loop — runs until 'q' pressed or Ctrl+C kills us.
+    // No more 200-frame time limit. This neon never sleeps.
+    loop {
+        // -- NeonVale: Check for quit key — nodelay getch returns -1 if nothing pressed
+        let ch = getch();
+        if ch == b'q' as i32 || ch == b'Q' as i32 || ch == 27 {
+            break;
         }
+
+        // -- NeonVale: erase() clears the virtual screen buffer in one shot.
+        // The old cell-by-cell clear was doing 1920 individual mvprintw calls
+        // per frame — roughly 70% of the frame budget wasted on spaces. — GraveShift
+        let _ = erase();
 
         // Draw title box
         draw_box(0, 0, 5, max_x, 6);
 
-        // -- NeonVale: Title banner - retro VGA aesthetics
-        let pair = color_pair(6) | A_BOLD;
-        unsafe {
-            let stdscr = ncurses::screen::stdscr();
-            if !stdscr.is_null() {
-                (*stdscr).attrs = pair;
-            }
-        }
+        set_attr(color_pair(6) | A_BOLD);
         let _ = mvprintw(2, 10, "OXIDE OS - TERMINAL CURSES VGA DEMO");
-        unsafe {
-            let stdscr = ncurses::screen::stdscr();
-            if !stdscr.is_null() {
-                (*stdscr).attrs = A_NORMAL;
-            }
-        }
+        set_attr(A_NORMAL);
 
         // Draw info box
         draw_box(6, 2, 10, 35, 2);
-
-        let pair2 = color_pair(2);
-        unsafe {
-            let stdscr = ncurses::screen::stdscr();
-            if !stdscr.is_null() {
-                (*stdscr).attrs = pair2;
-            }
-        }
+        set_attr(color_pair(2));
         let _ = mvprintw(7, 8, "COLOR PALETTE");
-        unsafe {
-            let stdscr = ncurses::screen::stdscr();
-            if !stdscr.is_null() {
-                (*stdscr).attrs = A_NORMAL;
-            }
-        }
+        set_attr(A_NORMAL);
 
         // Show color samples
         for i in 1..=7 {
-            let pair_i = color_pair(i) | A_BOLD;
-            unsafe {
-                let stdscr = ncurses::screen::stdscr();
-                if !stdscr.is_null() {
-                    (*stdscr).attrs = pair_i;
-                }
-            }
+            set_attr(color_pair(i) | A_BOLD);
             let _ = mvprintw(8 + i as i32, 4, "█████");
-            unsafe {
-                let stdscr = ncurses::screen::stdscr();
-                if !stdscr.is_null() {
-                    (*stdscr).attrs = A_NORMAL;
-                }
-            }
+            set_attr(A_NORMAL);
         }
 
         // Draw animation box
         draw_box(6, 39, 14, 39, 4);
-
-        let pair4 = color_pair(4);
-        unsafe {
-            let stdscr = ncurses::screen::stdscr();
-            if !stdscr.is_null() {
-                (*stdscr).attrs = pair4;
-            }
-        }
+        set_attr(color_pair(4));
         let _ = mvprintw(7, 44, "BOUNCING OBJECTS");
-        unsafe {
-            let stdscr = ncurses::screen::stdscr();
-            if !stdscr.is_null() {
-                (*stdscr).attrs = A_NORMAL;
-            }
-        }
+        set_attr(A_NORMAL);
 
-        // Update and draw balls within the animation box
+        // Update and draw balls
         for ball in &mut balls {
             ball.update(19, 76);
             ball.draw();
@@ -354,87 +281,35 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
 
         // Draw effects box
         draw_box(17, 2, 6, 35, 5);
-
-        let pair5 = color_pair(5);
-        unsafe {
-            let stdscr = ncurses::screen::stdscr();
-            if !stdscr.is_null() {
-                (*stdscr).attrs = pair5;
-            }
-        }
+        set_attr(color_pair(5));
         let _ = mvprintw(18, 8, "TEXT EFFECTS");
-        unsafe {
-            let stdscr = ncurses::screen::stdscr();
-            if !stdscr.is_null() {
-                (*stdscr).attrs = A_NORMAL;
-            }
-        }
+        set_attr(A_NORMAL);
 
-        // Show blinking text
-        let blink_pair = color_pair(1) | A_BLINK;
-        unsafe {
-            let stdscr = ncurses::screen::stdscr();
-            if !stdscr.is_null() {
-                (*stdscr).attrs = blink_pair;
-            }
-        }
+        // Blinking text
+        set_attr(color_pair(1) | A_BLINK);
         let _ = mvprintw(19, 4, "BLINKING TEXT");
-        unsafe {
-            let stdscr = ncurses::screen::stdscr();
-            if !stdscr.is_null() {
-                (*stdscr).attrs = A_NORMAL;
-            }
-        }
+        set_attr(A_NORMAL);
 
-        // Show reverse text
-        let rev_pair = color_pair(3) | A_REVERSE;
-        unsafe {
-            let stdscr = ncurses::screen::stdscr();
-            if !stdscr.is_null() {
-                (*stdscr).attrs = rev_pair;
-            }
-        }
+        // Reverse video
+        set_attr(color_pair(3) | A_REVERSE);
         let _ = mvprintw(20, 4, "REVERSE VIDEO");
-        unsafe {
-            let stdscr = ncurses::screen::stdscr();
-            if !stdscr.is_null() {
-                (*stdscr).attrs = A_NORMAL;
-            }
-        }
+        set_attr(A_NORMAL);
 
-        // Show underline
-        let under_pair = color_pair(6) | A_UNDERLINE;
-        unsafe {
-            let stdscr = ncurses::screen::stdscr();
-            if !stdscr.is_null() {
-                (*stdscr).attrs = under_pair;
-            }
-        }
+        // Underline
+        set_attr(color_pair(6) | A_UNDERLINE);
         let _ = mvprintw(21, 4, "UNDERLINED");
-        unsafe {
-            let stdscr = ncurses::screen::stdscr();
-            if !stdscr.is_null() {
-                (*stdscr).attrs = A_NORMAL;
-            }
-        }
+        set_attr(A_NORMAL);
 
-        // Draw status bar at bottom with FPS counter — NeonVale
+        // Status bar with FPS — NeonVale
         let current_fps = fps.tick();
         if max_y > 3 {
             draw_box(max_y - 3, 0, 3, max_x, 7);
-            let pair7 = color_pair(7);
-            unsafe {
-                let stdscr = ncurses::screen::stdscr();
-                if !stdscr.is_null() {
-                    (*stdscr).attrs = pair7;
-                }
-            }
-            let _ = mvprintw(max_y - 2, 2, "VGA Style Terminal Graphics Demo");
+            set_attr(color_pair(7));
+            let _ = mvprintw(max_y - 2, 2, "Press 'q' or Ctrl+C to quit");
 
-            // FPS readout — right-aligned in the status bar like a proper HUD — NeonVale
+            // FPS readout — right-aligned HUD style — NeonVale
             let mut fps_num_buf = [0u8; 12];
             let fps_digits = fmt_u32(&mut fps_num_buf, current_fps);
-            // Build "FPS: NN" string manually (no format! in no_std)
             let mut fps_str = [0u8; 20];
             fps_str[0] = b'F';
             fps_str[1] = b'P';
@@ -449,38 +324,23 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
                 }
             }
 
-            // Convert to str for mvprintw
             if let Ok(s) = core::str::from_utf8(&fps_str[..pos]) {
                 let fps_x = max_x - pos as i32 - 2;
                 if fps_x > 0 {
-                    let fps_color = color_pair(2) | A_BOLD;
-                    unsafe {
-                        let stdscr = ncurses::screen::stdscr();
-                        if !stdscr.is_null() {
-                            (*stdscr).attrs = fps_color;
-                        }
-                    }
+                    set_attr(color_pair(2) | A_BOLD);
                     let _ = mvprintw(max_y - 2, fps_x, s);
                 }
             }
-
-            unsafe {
-                let stdscr = ncurses::screen::stdscr();
-                if !stdscr.is_null() {
-                    (*stdscr).attrs = A_NORMAL;
-                }
-            }
+            set_attr(A_NORMAL);
         }
 
-        // Refresh screen
         let _ = refresh();
 
-        // Animation delay
-        sleep_ms(50);
+        // -- NeonVale: 16ms target = ~60 FPS. The old 50ms cap was dragging
+        // this demo through mud at 20 FPS like it was running on a 486.
+        sleep_ms(16);
     }
 
-    // Cleanup
     let _ = endwin();
-
     0
 }

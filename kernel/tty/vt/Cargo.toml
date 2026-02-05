@@ -12,6 +12,7 @@ debug-console = []  # Enable VT read/write path tracing
 [dependencies]
 vfs = { workspace = true }
 tty = { workspace = true }
+signal = { workspace = true }
 os_core = { workspace = true }
 os_log = { workspace = true }
 sched = { workspace = true }
