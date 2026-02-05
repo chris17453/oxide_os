@@ -1224,10 +1224,12 @@ extern "C" fn handle_simd(frame: *const InterruptFrame, _error: u64) {
 /// the counter or inflate the tick rate 4×.
 static TIMER_TICKS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
-/// Terminal tick callback (called at 30 FPS)
+/// Terminal tick callback (called at ~30 FPS)
 static mut TERMINAL_TICK_CALLBACK: Option<fn()> = None;
 
 /// Ticks between terminal updates (for 30 FPS at 100 Hz timer = 3 ticks)
+/// — NeonVale: Back to 3 now that chunked writes fixed the lock contention.
+/// 30 FPS rendering is plenty when the app can actually get the lock between chunks.
 const TERMINAL_TICK_INTERVAL: u64 = 3;
 
 /// Last tick when terminal was updated

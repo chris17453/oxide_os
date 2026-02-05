@@ -1,7 +1,7 @@
 //! ls - list directory contents
 //!
 //! POSIX-compliant implementation matching Linux ls behavior:
-//! - Default: multi-column output, hide dotfiles
+//! - Default: multi-column output, hide dotfiles, colored output
 //! - Long format (-l) with permissions, links, owner, group, size, date, name
 //! - Show all files (-a) including . and ..
 //! - Almost all (-A) excludes . and ..
@@ -10,6 +10,7 @@
 //! - One entry per line (-1)
 //! - Append indicator (-F): / for dirs, * for executable, @ for symlink
 //! - List directory entry itself (-d)
+//! - Color output (-G or --color, --color=never to disable)
 
 #![no_std]
 #![no_main]
@@ -83,6 +84,21 @@ impl Entry {
     }
 }
 
+/// Get ANSI color code for file type
+/// — NeonVale: Cyberpunk color palette - dirs in blue, executables in green, symlinks in cyan
+fn get_color_code(d_type: u8, mode: u32) -> &'static str {
+    match d_type {
+        DT_DIR => "\x1b[1;34m",      // Bold blue
+        DT_LNK => "\x1b[1;36m",      // Bold cyan
+        DT_FIFO => "\x1b[33m",       // Yellow
+        DT_SOCK => "\x1b[1;35m",     // Bold magenta
+        DT_BLK => "\x1b[1;33;40m",   // Bold yellow on black
+        DT_CHR => "\x1b[1;33;40m",   // Bold yellow on black
+        DT_REG if mode & S_IXUSR != 0 => "\x1b[1;32m", // Bold green (executable)
+        _ => "",                      // No color for regular files
+    }
+}
+
 /// Print a null-terminated string from a byte slice
 fn print_name(name: &[u8]) {
     for &b in name {
@@ -90,6 +106,26 @@ fn print_name(name: &[u8]) {
             break;
         }
         putchar(b);
+    }
+}
+
+/// Print a file name with color
+/// — GlassSignal: Color-coded output so you know what you're looking at
+fn print_name_colored(entry: &Entry, use_color: bool) {
+    if use_color {
+        let color = get_color_code(entry.d_type, entry.mode);
+        if !color.is_empty() {
+            prints(color);
+        }
+    }
+
+    print_name(&entry.name);
+
+    if use_color {
+        let color = get_color_code(entry.d_type, entry.mode);
+        if !color.is_empty() {
+            prints("\x1b[0m"); // Reset color
+        }
     }
 }
 
@@ -209,6 +245,7 @@ struct Args {
     one_per_line: bool,     // -1
     classify: bool,         // -F
     directory_itself: bool, // -d
+    color: bool,            // --color (default true for interactive terminals)
     paths: [[u8; 256]; 16],
     path_count: usize,
 }
@@ -224,6 +261,7 @@ impl Args {
             one_per_line: false,
             classify: false,
             directory_itself: false,
+            color: true, // — GlassSignal: Default to colored output for that cyberpunk vibe
             paths: [[0; 256]; 16],
             path_count: 0,
         }
@@ -276,9 +314,41 @@ fn parse_args(argc: i32, argv: *const *const u8) -> Args {
                     b'1' => args.one_per_line = true,
                     b'F' => args.classify = true,
                     b'd' => args.directory_itself = true,
+                    b'G' => args.color = true, // --color or -G (BSD style)
                     _ => {}
                 }
                 j += 1;
+            }
+        } else if unsafe { *arg == b'-' && *arg.add(1) == b'-' } {
+            // Long options (--color, --no-color)
+            let mut j = 2;
+            let mut opt = [0u8; 32];
+            let mut opt_len = 0;
+            while opt_len < 31 {
+                let c = unsafe { *arg.add(j) };
+                if c == 0 || c == b'=' {
+                    break;
+                }
+                opt[opt_len] = c;
+                opt_len += 1;
+                j += 1;
+            }
+
+            if opt_len == 5 && &opt[..5] == b"color" {
+                // Check if there's a value after =
+                let c = unsafe { *arg.add(j) };
+                if c == b'=' {
+                    let value_start = j + 1;
+                    let v = unsafe { *arg.add(value_start) };
+                    // --color=never
+                    if v == b'n' {
+                        args.color = false;
+                    } else {
+                        args.color = true; // auto or always
+                    }
+                } else {
+                    args.color = true; // --color with no value = always
+                }
             }
         } else {
             // Path argument
@@ -347,7 +417,7 @@ fn print_long_entry(entry: &Entry, args: &Args) {
     prints("Jan  1 00:00 ");
 
     // Name
-    print_name(&entry.name);
+    print_name_colored(entry, args.color);
 
     // Indicator if -F
     if args.classify {
@@ -405,7 +475,7 @@ fn print_columns(entries: &[Entry], count: usize, args: &Args) {
             let entry = &entries[idx];
             let name_len = entry.name_len();
 
-            print_name(&entry.name);
+            print_name_colored(entry, args.color);
 
             // Print indicator if -F
             let indicator = if args.classify {
@@ -556,22 +626,6 @@ fn list_directory(path: &[u8], args: &Args, depth: usize, show_header: bool) -> 
 
     close(fd);
 
-    let mut count_str = [0u8; 20];
-    let mut i = 19;
-    let mut n = entry_count;
-    if n == 0 {
-        count_str[19] = b'0';
-        i = 19;
-    } else {
-        while n > 0 && i > 0 {
-            i -= 1;
-            count_str[i] = b'0' + (n % 10) as u8;
-            n /= 10;
-        }
-    }
-    eprints(unsafe { core::str::from_utf8_unchecked(&count_str[i..]) });
-    eprintlns("");
-
     // Sort entries alphabetically (simple bubble sort)
     for i in 0..entry_count {
         for j in 0..entry_count - 1 - i {
@@ -592,7 +646,7 @@ fn list_directory(path: &[u8], args: &Args, depth: usize, show_header: bool) -> 
         }
     } else if args.one_per_line {
         for i in 0..entry_count {
-            print_name(&entries[i].name);
+            print_name_colored(&entries[i], args.color);
             if args.classify {
                 if let Some(c) = indicator_char(entries[i].d_type, entries[i].mode) {
                     putchar(c);

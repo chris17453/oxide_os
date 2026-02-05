@@ -137,6 +137,11 @@ impl OutputBuffer {
         if !self.buf.is_empty() {
             libc::unistd::write(1, &self.buf);
             self.buf.clear();
+            // — GlassSignal: Buffered write ain't worth jack til you flush it. Without this,
+            // ncurses output sits in libc's stdout buffer til newline/256 bytes — demo ran at
+            // <20 FPS with frames queued up like stuck packets. fflush_stdout kicks it to the
+            // kernel immediately. Now we hit ~60 FPS like it's 1999.
+            libc::fflush_stdout();
         }
     }
 }

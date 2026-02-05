@@ -187,6 +187,7 @@ impl TerminalEmulator {
     }
 
     /// Write bytes to the terminal (rendering deferred to tick())
+    /// — NeonVale: Fast path - just mark dirty and bail. Rendering happens in tick().
     pub fn write(&mut self, data: &[u8]) {
         // If synchronized output mode is active, buffer the data
         if self
@@ -1383,8 +1384,23 @@ pub fn write(data: &[u8]) {
         core::arch::asm!("stac", options(nomem, nostack));
     }
 
-    if let Some(ref mut terminal) = *TERMINAL.lock() {
-        terminal.write(data);
+    // — NeonVale: Process in 256-byte chunks and release lock between chunks.
+    // This lets the timer ISR grab the lock and render between chunks, avoiding
+    // the 20-30ms lock hold that was starving the renderer at 100 FPS.
+    const CHUNK_SIZE: usize = 256;
+    let mut offset = 0;
+
+    while offset < data.len() {
+        let end = (offset + CHUNK_SIZE).min(data.len());
+        let chunk = &data[offset..end];
+
+        if let Some(ref mut terminal) = *TERMINAL.lock() {
+            terminal.write(chunk);
+        }
+
+        offset = end;
+
+        // Yield to let timer ISR render if needed (release lock implicitly)
     }
 
     // Disable access to user pages (CLAC - Supervisor-Mode Access Prevention Clear)

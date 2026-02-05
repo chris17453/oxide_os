@@ -114,7 +114,7 @@ pub fn console_write(data: &[u8]) {
     }
 }
 
-/// Terminal tick callback - called at 30 FPS from timer interrupt
+/// Terminal tick callback - called at ~30 FPS from timer interrupt
 pub fn terminal_tick() {
     // ═══════════════════════════════════════════════════════════════════════════
     // 🔥 DISABLED: DUPLICATE PROCESSING PATH (The Glitch in the Matrix) 🔥

@@ -336,9 +336,7 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
 
         let _ = refresh();
 
-        // -- NeonVale: 16ms target = ~60 FPS. The old 50ms cap was dragging
-        // this demo through mud at 20 FPS like it was running on a 486.
-        sleep_ms(16);
+        // -- NeonVale: No sleep - full throttle to see natural max FPS
     }
 
     let _ = endwin();

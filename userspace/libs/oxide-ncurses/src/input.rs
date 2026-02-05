@@ -114,10 +114,17 @@ pub fn wgetch(win: WINDOW) -> i32 {
                     let mut pfd = libc::poll::PollFd::new(0, libc::poll::events::POLLIN);
                     let ready = libc::poll::poll(core::slice::from_mut(&mut pfd), 50);
                     if ready <= 0 {
+                        // 🔥 InputShade: No follow-up after ESC. Reset parser to
+                        // ensure clean state for next input (ESC alone puts parser
+                        // in Escape state, must reset to Ground). 🔥
+                        state.parser.reset();
                         27 // Raw ESC — no follow-up within 50ms
                     } else {
                     let n2 = libc::unistd::read(0, &mut next);
                     if n2 <= 0 {
+                        // 🔥 InputShade: Read failed after ESC. Reset parser
+                        // to clean state before returning raw ESC. 🔥
+                        state.parser.reset();
                         27 // Read failed
                     } else {
                         // Feed through parser
@@ -197,12 +204,20 @@ fn read_escape_sequence(state: &mut InputState, keypad: bool) -> i32 {
         let mut pfd = libc::poll::PollFd::new(0, libc::poll::events::POLLIN);
         let ready = libc::poll::poll(core::slice::from_mut(&mut pfd), 50);
         if ready <= 0 {
+            // 🔥 InputShade: Timeout waiting for escape sequence completion.
+            // CRITICAL: Reset parser state so next getch() doesn't feed a fresh
+            // byte into a mid-sequence parser. Without this, partial escapes
+            // corrupt the parser state and drop/misinterpret future input. 🔥
+            state.parser.reset();
             return -1; // Timeout — incomplete escape sequence
         }
 
         let mut byte = [0u8; 1];
         let n = libc::unistd::read(0, &mut byte);
         if n <= 0 || attempts > 16 {
+            // 🔥 InputShade: Read failed or too many attempts. Reset parser
+            // state before aborting the escape sequence read. 🔥
+            state.parser.reset();
             return -1;
         }
         attempts += 1;
@@ -225,7 +240,12 @@ fn read_escape_sequence(state: &mut InputState, keypad: bool) -> i32 {
             Action::Print(ch) => return ch as i32,
             Action::Execute(b) => return b as i32,
             Action::None => continue,
-            _ => return -1,
+            _ => {
+                // 🔥 InputShade: Unexpected action type. Reset parser before
+                // returning -1 to avoid stale state. 🔥
+                state.parser.reset();
+                return -1;
+            }
         }
     }
 }
