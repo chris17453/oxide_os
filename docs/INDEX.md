@@ -14,6 +14,7 @@
 ## Architecture
 
 - [System Overview](architecture/overview.md) — high-level architecture diagram and subsystem map
+- [Roadmap (Feb–Mar 2026)](plan/roadmap-2026-02.md) — current 4–6 week build plan
 
 ## Kernel Subsystems
 

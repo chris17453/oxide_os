@@ -1303,9 +1303,13 @@ extern "C" fn handle_timer(current_rsp: u64) -> u64 {
             *last_tick_ptr = current_tick;
             let cb_ptr = addr_of!(TERMINAL_TICK_CALLBACK);
             if let Some(callback) = *cb_ptr {
+                // -- GraveShift: Throttled to 1/sec. At 30 FPS unthrottled, these
+                // blocking serial writes consumed 990 bytes/sec in ISR context.
                 #[cfg(feature = "debug-timer")]
                 {
-                    crate::serial_println!("[TIMER] Terminal tick callback");
+                    if current_tick % 100 == 0 {
+                        crate::serial_println!("[TIMER] Terminal tick callback");
+                    }
                 }
                 callback();
             }
@@ -1316,9 +1320,14 @@ extern "C" fn handle_timer(current_rsp: u64) -> u64 {
     let new_rsp = unsafe {
         let cb_ptr = addr_of!(SCHEDULER_CALLBACK);
         if let Some(callback) = *cb_ptr {
+            // -- GraveShift: Throttled to 1/sec. At 4 CPUs × 100Hz unthrottled,
+            // these 400 blocking serial writes/sec (10,800 bytes/sec) alone
+            // saturated 115200 baud serial and starved all tasks of CPU time.
             #[cfg(feature = "debug-timer")]
             {
-                crate::serial_println!("[TIMER] Calling scheduler");
+                if current_tick % 100 == 0 {
+                    crate::serial_println!("[TIMER] Calling scheduler");
+                }
             }
             callback(current_rsp)
         } else {

@@ -8,6 +8,7 @@
 | `pty` | Pseudo-terminal pairs (master/slave) |
 | `vt` | VT100/xterm terminal emulator (escape sequences, colors) |
 | `terminal` | High-level terminal rendering (framebuffer console) |
+| `oxide-ncurses` | Userspace ncurses-compatible TUI (sole TUI library; previously also named `oxide-tui`) |
 
 ## Architecture
 

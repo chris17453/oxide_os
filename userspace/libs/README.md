@@ -24,9 +24,9 @@ Full-featured terminal capability library:
 - `terminfo` - Binary terminfo format support (default)
 - `termcap` - Text termcap format support
 
-### Ncurses (`userspace/libs/ncurses`)
+### Ncurses (`userspace/libs/oxide-ncurses`)
 
-Complete ncurses implementation:
+Complete ncurses implementation (sole TUI library; supersedes prior `oxide-tui` alias):
 
 **Core Features:**
 - Window management (newwin, delwin, subwin, derwin, dupwin)

@@ -400,4 +400,4 @@ libc = { path = "../libs/libc" }
 heapless = "0.8"
 compression = { path = "../libs/compression" }
 termcap = { path = "../libs/termcap", default-features = false }
-oxide-tui = { path = "../libs/oxide-tui", default-features = false }
+oxide-ncurses = { path = "../libs/oxide-ncurses", default-features = false }
