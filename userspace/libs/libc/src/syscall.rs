@@ -1777,3 +1777,136 @@ pub mod wopt {
     pub const WNOHANG: i32 = 1;
     pub const WNOWAIT: i32 = 0x01000000;
 }
+
+// ============================================================================
+// Week 2-6: New syscall wrappers for roadmap implementation
+// ============================================================================
+
+/// sys_statx - Extended stat syscall
+pub fn sys_statx(
+    dirfd: i32,
+    pathname: u64,
+    pathname_len: usize,
+    flags: i32,
+    mask: u32,
+    statxbuf: u64,
+) -> i64 {
+    syscall6(332, dirfd as usize, pathname as usize, pathname_len, flags as usize, mask as usize, statxbuf as usize)
+}
+
+/// sys_openat2 - Extended openat with resolve flags
+pub fn sys_openat2(dirfd: i32, pathname: u64, pathname_len: usize, how: u64, size: usize) -> i64 {
+    syscall5(437, dirfd as usize, pathname as usize, pathname_len, how as usize, size)
+}
+
+/// sys_faccessat2 - Check file accessibility with flags
+pub fn sys_faccessat2(dirfd: i32, pathname: u64, pathname_len: usize, mode: i32, flags: i32) -> i64 {
+    syscall5(439, dirfd as usize, pathname as usize, pathname_len, mode as usize, flags as usize)
+}
+
+/// sys_mknodat - Create special file
+pub fn sys_mknodat(dirfd: i32, pathname: u64, pathname_len: usize, mode: u32, dev: u64) -> i64 {
+    syscall5(259, dirfd as usize, pathname as usize, pathname_len, mode as usize, dev as usize)
+}
+
+/// sys_unshare - Disassociate parts of execution context
+pub fn sys_unshare(flags: i32) -> i64 {
+    syscall1(272, flags as usize)
+}
+
+/// sys_setns - Join an existing namespace
+pub fn sys_setns(fd: i32, nstype: i32) -> i64 {
+    syscall2(308, fd as usize, nstype as usize)
+}
+
+/// sys_clone3 - Extended clone with args structure
+pub fn sys_clone3(args: u64, size: usize) -> i64 {
+    syscall2(435, args as usize, size)
+}
+
+/// sys_pidfd_open - Get file descriptor for process
+pub fn sys_pidfd_open(pid: i32, flags: u32) -> i64 {
+    syscall2(434, pid as usize, flags as usize)
+}
+
+/// sys_pidfd_send_signal - Send signal via pidfd
+pub fn sys_pidfd_send_signal(pidfd: i32, sig: i32, info: u64, flags: u32) -> i64 {
+    syscall4(424, pidfd as usize, sig as usize, info as usize, flags as usize)
+}
+
+/// sys_pidfd_getfd - Duplicate fd from another process
+pub fn sys_pidfd_getfd(pidfd: i32, targetfd: i32, flags: u32) -> i64 {
+    syscall3(438, pidfd as usize, targetfd as usize, flags as usize)
+}
+
+/// sys_timerfd_create - Create a timer file descriptor
+pub fn sys_timerfd_create(clockid: i32, flags: i32) -> i64 {
+    syscall2(283, clockid as usize, flags as usize)
+}
+
+/// sys_timerfd_settime - Arm a timer
+pub fn sys_timerfd_settime(fd: i32, flags: i32, new_value: u64, old_value: u64) -> i64 {
+    syscall4(286, fd as usize, flags as usize, new_value as usize, old_value as usize)
+}
+
+/// sys_timerfd_gettime - Get current timer setting
+pub fn sys_timerfd_gettime(fd: i32, curr_value: u64) -> i64 {
+    syscall2(287, fd as usize, curr_value as usize)
+}
+
+/// sys_signalfd - Create fd for receiving signals
+pub fn sys_signalfd(fd: i32, mask: u64, flags: i32) -> i64 {
+    syscall3(282, fd as usize, mask as usize, flags as usize)
+}
+
+/// sys_signalfd4 - signalfd with sigmask size
+pub fn sys_signalfd4(fd: i32, mask: u64, sigsetsize: usize, flags: i32) -> i64 {
+    syscall4(289, fd as usize, mask as usize, sigsetsize, flags as usize)
+}
+
+/// sys_epoll_pwait2 - Wait for events with timespec and sigmask
+pub fn sys_epoll_pwait2(
+    epfd: i32,
+    events: u64,
+    maxevents: i32,
+    timeout: u64,
+    sigmask: u64,
+    sigsetsize: usize,
+) -> i64 {
+    syscall6(441, epfd as usize, events as usize, maxevents as usize, timeout as usize, sigmask as usize, sigsetsize)
+}
+
+/// sys_recvmmsg - Receive multiple messages on socket
+pub fn sys_recvmmsg(sockfd: i32, msgvec: u64, vlen: u32, flags: i32, timeout: u64) -> i64 {
+    syscall5(299, sockfd as usize, msgvec as usize, vlen as usize, flags as usize, timeout as usize)
+}
+
+/// sys_sendmmsg - Send multiple messages on socket
+pub fn sys_sendmmsg(sockfd: i32, msgvec: u64, vlen: u32, flags: i32) -> i64 {
+    syscall4(307, sockfd as usize, msgvec as usize, vlen as usize, flags as usize)
+}
+
+/// sys_preadv2 - Positional vector read with flags
+pub fn sys_preadv2(fd: i32, iov: u64, iovcnt: i32, offset: i64, flags: i32) -> i64 {
+    syscall5(327, fd as usize, iov as usize, iovcnt as usize, offset as usize, flags as usize)
+}
+
+/// sys_pwritev2 - Positional vector write with flags
+pub fn sys_pwritev2(fd: i32, iov: u64, iovcnt: i32, offset: i64, flags: i32) -> i64 {
+    syscall5(328, fd as usize, iov as usize, iovcnt as usize, offset as usize, flags as usize)
+}
+
+/// sys_prctl - Process control operations
+pub fn sys_prctl(option: i32, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> i64 {
+    syscall5(157, option as usize, arg2 as usize, arg3 as usize, arg4 as usize, arg5 as usize)
+}
+
+/// sys_capget - Get thread capabilities
+pub fn sys_capget(hdrp: u64, datap: u64) -> i64 {
+    syscall2(125, hdrp as usize, datap as usize)
+}
+
+/// sys_capset - Set thread capabilities
+pub fn sys_capset(hdrp: u64, datap: u64) -> i64 {
+    syscall2(126, hdrp as usize, datap as usize)
+}
