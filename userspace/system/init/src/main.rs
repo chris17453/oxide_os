@@ -136,9 +136,7 @@ fn main() -> i32 {
         _exit(1);
     } else if child > 0 {
         // Parent - reap zombies forever, respawning getty when it exits
-        printlns("[init] Getty started (PID ");
-        print_i64(child as i64);
-        printlns(")");
+        printlns("[init] Getty started");
         reap_zombies(child as i64);
     } else {
         eprintlns("[init] Fork failed");
@@ -392,15 +390,11 @@ fn reap_zombies(mut getty_pid: i64) -> ! {
                     _exit(1);
                 } else if child > 0 {
                     getty_pid = child as i64; // Update tracked getty PID
-                    prints("[init] New getty started (PID ");
-                    print_i64(getty_pid);
-                    printlns(")");
+                    printlns("[init] New getty started");
                 }
             } else {
                 // Some other descendant process exited
-                prints("[init] Descendant process exited, getty still running (PID ");
-                print_i64(getty_pid);
-                printlns(")");
+                printlns("[init] Descendant process exited, getty still running");
             }
         }
     }

@@ -296,6 +296,10 @@ pub fn terminal_tick() {
 
     // Drive the active display: prefer terminal emulator; disable legacy fb cursor to avoid double cursor
     if terminal::is_initialized() {
+        // Erase mouse cursor before terminal render to avoid it getting baked into
+        // the save buffer or painted over by dirty row redraws — SoftGlyph
+        fb::mouse_erase();
+
         // Blink at ~2.5Hz (every 12 frames at 30 FPS)
         static mut BLINK_TICKS: u8 = 0;
         unsafe {
@@ -308,6 +312,9 @@ pub fn terminal_tick() {
                 terminal::tick();
             }
         }
+
+        // Redraw mouse cursor on top of freshly rendered terminal content — SoftGlyph
+        fb::mouse_draw();
     } else if fb::is_initialized() {
         // Fallback pre-terminal: allow fb console cursor only when terminal is not active
         fb::blink_cursor();

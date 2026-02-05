@@ -484,7 +484,10 @@ pub fn wrefresh(win: WINDOW) -> Result<()> {
 
                         out.push_cup(scr_row, scr_col);
                         out.push_sgr(cell.attr);
-                        let ch = char::from_u32(cell.ch & 0xFF).unwrap_or(' ');
+                        // — GlassSignal: Full Unicode codepoint — the old & 0xFF mask
+                        // was a leftover from packed-chtype ncurses and nuked every
+                        // non-ASCII glyph (box-drawing, diamonds, blocks) into oblivion
+                        let ch = char::from_u32(cell.ch).unwrap_or(' ');
                         out.push_char(ch);
 
                         // Mirror to curscr
@@ -511,7 +514,8 @@ pub fn wrefresh(win: WINDOW) -> Result<()> {
                         if win_cell.ch != cur_cell.ch || win_cell.attr != cur_cell.attr {
                             out.push_cup(scr_row, scr_col);
                             out.push_sgr(win_cell.attr);
-                            let ch = char::from_u32(win_cell.ch & 0xFF).unwrap_or(' ');
+                            // — GlassSignal: No masking — chtype.ch holds the full codepoint
+                            let ch = char::from_u32(win_cell.ch).unwrap_or(' ');
                             out.push_char(ch);
                         }
                     }
@@ -622,7 +626,8 @@ pub fn doupdate() -> Result<()> {
                     let col = i as i32 % new_ref.cols;
                     out.push_cup(row, col);
                     out.push_sgr(new_cell.attr);
-                    let ch = char::from_u32(new_cell.ch & 0xFF).unwrap_or(' ');
+                    // — GlassSignal: Full codepoint — doupdate path same fix
+                    let ch = char::from_u32(new_cell.ch).unwrap_or(' ');
                     out.push_char(ch);
                 }
             }

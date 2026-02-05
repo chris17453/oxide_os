@@ -1,7 +1,8 @@
 //! Framebuffer Text Console
 
 use crate::color::Color;
-use crate::font::{Font, PSF2_FONT};
+use crate::font::{Font, GlyphData, PSF2_FONT};
+use crate::font_manager::FontManager;
 use crate::framebuffer::Framebuffer;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -31,11 +32,15 @@ impl Default for Cell {
 }
 
 /// Framebuffer console
+/// Now with a proper font fallback chain — box drawing in the boot console,
+/// because even early boot deserves nice borders. — SoftGlyph
 pub struct FbConsole {
     /// Framebuffer
     fb: Arc<dyn Framebuffer>,
-    /// Font
+    /// Legacy font reference (kept for backward compat)
     font: &'static Font,
+    /// Extended font manager with fallback chain — SoftGlyph
+    font_manager: FontManager,
     /// Number of columns
     cols: u32,
     /// Number of rows
@@ -64,6 +69,8 @@ impl FbConsole {
     /// Create a new framebuffer console
     pub fn new(fb: Arc<dyn Framebuffer>) -> Self {
         let font = &PSF2_FONT;
+        // Extended font manager: primary is BUILTIN_FONT_EX with box drawing — SoftGlyph
+        let font_manager = FontManager::with_builtin();
         let cols = fb.width() / font.width;
         let rows = fb.height() / font.height;
 
@@ -75,6 +82,7 @@ impl FbConsole {
         let mut console = FbConsole {
             fb,
             font,
+            font_manager,
             cols,
             rows,
             cursor_x: 0,
@@ -248,19 +256,33 @@ impl FbConsole {
     }
 
     /// Draw a glyph at pixel position (ULTRA-OPTIMIZED)
+    /// Now routes through FontManager for full Unicode coverage — SoftGlyph
     fn draw_glyph(&self, px: u32, py: u32, ch: char, color: Color) {
-        let glyph = self.font.glyph_or_replacement(ch);
+        let resolved = self.font_manager.resolve(ch);
+
+        match resolved.data {
+            GlyphData::Bitmap { width, height, data } => {
+                self.draw_bitmap_glyph(px, py, width, height, data, color);
+            }
+            GlyphData::Rgba { width, height, data } => {
+                // RGBA path — alpha blend each pixel against background
+                // Phase 4 territory, but the plumbing is here now — SoftGlyph
+                self.draw_rgba_glyph(px, py, width, height, data);
+            }
+        }
+    }
+
+    /// Draw a 1-bit monochrome bitmap glyph — the fast path that never sleeps — SoftGlyph
+    fn draw_bitmap_glyph(&self, px: u32, py: u32, glyph_w: u32, glyph_h: u32, glyph_data: &[u8], color: Color) {
         let bpp = self.fb.format().bytes_per_pixel() as usize;
         let stride = self.fb.stride() as usize;
         let buffer = self.fb.buffer();
-
-        // Convert color to raw bytes for all pixel formats
         let color_bytes = color.to_bytes(self.fb.format());
+        let bytes_per_row = (glyph_w + 7) / 8;
 
         unsafe {
             match bpp {
                 4 => {
-                    // 32-bit pixels: Use u32 writes for maximum speed
                     let pixel_value = u32::from_le_bytes([
                         color_bytes[0],
                         color_bytes[1],
@@ -268,27 +290,28 @@ impl FbConsole {
                         color_bytes[3],
                     ]);
 
-                    for y in 0..glyph.height {
+                    for y in 0..glyph_h {
                         let line_offset = ((py + y) as usize * stride) + (px as usize * 4);
                         let line_ptr = buffer.add(line_offset) as *mut u32;
 
-                        // Write pixels directly without volatile - batch the entire line
-                        for x in 0..glyph.width {
-                            if glyph.pixel(x, y) {
+                        for x in 0..glyph_w {
+                            let byte_idx = (y * bytes_per_row + x / 8) as usize;
+                            let bit_idx = 7 - (x % 8);
+                            if byte_idx < glyph_data.len() && (glyph_data[byte_idx] >> bit_idx) & 1 != 0 {
                                 core::ptr::write(line_ptr.add(x as usize), pixel_value);
                             }
                         }
                     }
                 }
                 3 => {
-                    // 24-bit pixels: Use optimized line copying
-                    for y in 0..glyph.height {
+                    for y in 0..glyph_h {
                         let line_offset = ((py + y) as usize * stride) + (px as usize * 3);
                         let line_ptr = buffer.add(line_offset);
 
-                        // Write pixels directly
-                        for x in 0..glyph.width {
-                            if glyph.pixel(x, y) {
+                        for x in 0..glyph_w {
+                            let byte_idx = (y * bytes_per_row + x / 8) as usize;
+                            let bit_idx = 7 - (x % 8);
+                            if byte_idx < glyph_data.len() && (glyph_data[byte_idx] >> bit_idx) & 1 != 0 {
                                 let pixel_offset = x as usize * 3;
                                 core::ptr::copy_nonoverlapping(
                                     color_bytes.as_ptr(),
@@ -300,28 +323,30 @@ impl FbConsole {
                     }
                 }
                 2 => {
-                    // 16-bit pixels: Use u16 writes
                     let pixel_value = u16::from_le_bytes([color_bytes[0], color_bytes[1]]);
 
-                    for y in 0..glyph.height {
+                    for y in 0..glyph_h {
                         let line_offset = ((py + y) as usize * stride) + (px as usize * 2);
                         let line_ptr = buffer.add(line_offset) as *mut u16;
 
-                        for x in 0..glyph.width {
-                            if glyph.pixel(x, y) {
+                        for x in 0..glyph_w {
+                            let byte_idx = (y * bytes_per_row + x / 8) as usize;
+                            let bit_idx = 7 - (x % 8);
+                            if byte_idx < glyph_data.len() && (glyph_data[byte_idx] >> bit_idx) & 1 != 0 {
                                 core::ptr::write(line_ptr.add(x as usize), pixel_value);
                             }
                         }
                     }
                 }
                 _ => {
-                    // Fallback for unknown formats
-                    for y in 0..glyph.height {
+                    for y in 0..glyph_h {
                         let line_offset = ((py + y) as usize * stride) + (px as usize * bpp);
                         let line_ptr = buffer.add(line_offset);
 
-                        for x in 0..glyph.width {
-                            if glyph.pixel(x, y) {
+                        for x in 0..glyph_w {
+                            let byte_idx = (y * bytes_per_row + x / 8) as usize;
+                            let bit_idx = 7 - (x % 8);
+                            if byte_idx < glyph_data.len() && (glyph_data[byte_idx] >> bit_idx) & 1 != 0 {
                                 let pixel_offset = x as usize * bpp;
                                 core::ptr::copy_nonoverlapping(
                                     color_bytes.as_ptr(),
@@ -329,6 +354,63 @@ impl FbConsole {
                                     bpp,
                                 );
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Draw an RGBA color glyph with alpha blending
+    /// Integer-only math — no FPU in kernel space, we're not animals — SoftGlyph
+    fn draw_rgba_glyph(&self, px: u32, py: u32, glyph_w: u32, glyph_h: u32, glyph_data: &[u8]) {
+        let stride = self.fb.stride() as usize;
+        let bpp = self.fb.format().bytes_per_pixel() as usize;
+        let buffer = self.fb.buffer();
+
+        for y in 0..glyph_h {
+            for x in 0..glyph_w {
+                let src_offset = ((y * glyph_w + x) * 4) as usize;
+                if src_offset + 3 >= glyph_data.len() {
+                    continue;
+                }
+                let sr = glyph_data[src_offset] as u32;
+                let sg = glyph_data[src_offset + 1] as u32;
+                let sb = glyph_data[src_offset + 2] as u32;
+                let sa = glyph_data[src_offset + 3] as u32;
+
+                if sa == 0 {
+                    continue; // Fully transparent
+                }
+
+                let dst_x = px + x;
+                let dst_y = py + y;
+                let dst_offset = dst_y as usize * stride + dst_x as usize * bpp;
+
+                if sa == 255 {
+                    // Fully opaque — skip blend
+                    unsafe {
+                        let dst = buffer.add(dst_offset);
+                        *dst = sr as u8;
+                        *dst.add(1) = sg as u8;
+                        *dst.add(2) = sb as u8;
+                        if bpp == 4 {
+                            *dst.add(3) = 0xFF;
+                        }
+                    }
+                } else {
+                    // Alpha blend: out = src * alpha + dst * (255 - alpha)
+                    unsafe {
+                        let dst = buffer.add(dst_offset);
+                        let dr = *dst as u32;
+                        let dg = *dst.add(1) as u32;
+                        let db = *dst.add(2) as u32;
+                        let inv_a = 255 - sa;
+                        *dst = ((sr * sa + dr * inv_a) / 255) as u8;
+                        *dst.add(1) = ((sg * sa + dg * inv_a) / 255) as u8;
+                        *dst.add(2) = ((sb * sa + db * inv_a) / 255) as u8;
+                        if bpp == 4 {
+                            *dst.add(3) = 0xFF;
                         }
                     }
                 }

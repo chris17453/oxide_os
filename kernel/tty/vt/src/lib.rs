@@ -378,6 +378,51 @@ impl VtManager {
         Some(self.vts[vt_num].lock().tty.clone())
     }
 
+    /// Drain ring buffer into line discipline and check if readable data exists.
+    ///
+    /// 🔥 GraveShift: The Great Buffer Unification — poll() was checking the
+    /// line discipline while keystrokes rotted in the ring buffer. This drains
+    /// pending bytes through the TTY layer (processing signals like SIGINT along
+    /// the way) so poll() can give a truthful answer. Without this, Ctrl+C is
+    /// a letter to nowhere and getch() never returns. 🔥
+    pub fn poll_has_input(&self, vt_num: usize) -> bool {
+        if vt_num >= NUM_VTS {
+            return false;
+        }
+
+        // Grab the TTY and a pointer to the ring buffer
+        let (tty, ring) = {
+            let vt = self.vts[vt_num].lock();
+            let tty = vt.tty.clone();
+            // SAFETY: Ring buffer lives in VtState pinned in the array.
+            // VtManager outlives this call. — GraveShift
+            let ring = unsafe { &*(&vt.input_buffer as *const LockFreeRing) };
+            (tty, ring)
+        };
+
+        // Drain all pending bytes from the ring buffer into the line discipline.
+        // This is the same drain loop as read(), but we don't try to extract
+        // output — we just want the bytes processed (echo, signals, buffering).
+        while let Some(ch) = ring.pop() {
+            if let Some(signal) = tty.input(&[ch]) {
+                // 🔥 GraveShift: Signal delivery during poll drain — the reason
+                // Ctrl+C works now. Process the signal callback so SIGINT actually
+                // reaches the foreground process group. 🔥
+                unsafe {
+                    if let Some(callback) = SIGNAL_PGRP_CALLBACK {
+                        let pgid = tty.get_foreground_pgid();
+                        if pgid > 0 {
+                            callback(pgid, signal.to_signo());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Now check if the line discipline has readable data
+        tty.ldisc_can_read()
+    }
+
     /// Set window dimensions on all VTs
     /// ⚡ GraveShift: Propagate real framebuffer dimensions to every TTY so
     /// TIOCGWINSZ returns truth instead of the 24x80 lie. ⚡
@@ -558,7 +603,11 @@ impl VnodeOps for VtDevice {
     }
 
     fn poll_read_ready(&self) -> bool {
-        true
+        // 🔥 GraveShift: The fix that brought keyboards back from the dead.
+        // Drain the ring buffer into the line discipline (processing Ctrl+C and
+        // friends along the way), then ask the ldisc if it has readable data.
+        // Before this, poll() returned "no data" while bytes rotted in the ring. 🔥
+        self.manager.poll_has_input(self.vt_num)
     }
 
     fn poll_write_ready(&self) -> bool {

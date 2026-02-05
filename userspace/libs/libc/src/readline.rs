@@ -753,38 +753,17 @@ unsafe fn read_line_loop(prompt: &[u8]) -> *mut u8 {
                 match code {
                     b'A' => {
                         // Up: previous history
-                        let _ = crate::syscall::sys_write(2, b"[READLINE] UP: ");
-                        crate::stdio::print_u64(HISTORY_COUNT as u64);
-                        let _ = crate::syscall::sys_write(2, b" cmd, pos=");
-                        crate::stdio::print_u64(HISTORY_POS as u64);
-                        let _ = crate::syscall::sys_write(2, b"\n");
-
                         if HISTORY_COUNT > 0 {
                             // If at fresh line (HISTORY_POS == HISTORY_COUNT), go to last entry
                             if HISTORY_POS >= HISTORY_COUNT {
                                 HISTORY_POS = HISTORY_COUNT - 1;
-                                let _ = crate::syscall::sys_write(
-                                    2,
-                                    b"[READLINE] Loading from history\n",
-                                );
                             } else if HISTORY_POS > 0 {
                                 HISTORY_POS -= 1;
-                                let _ = crate::syscall::sys_write(
-                                    2,
-                                    b"[READLINE] Moving back in history\n",
-                                );
                             } else {
                                 // At first history entry, don't go further
-                                let _ =
-                                    crate::syscall::sys_write(2, b"[READLINE] At first entry\n");
                                 continue;
                             }
-                            let _ =
-                                crate::syscall::sys_write(2, b"[READLINE] Calling replace_line\n");
                             replace_line(&HISTORY[HISTORY_POS], prompt);
-                        } else {
-                            let _ =
-                                crate::syscall::sys_write(2, b"[READLINE] No history available\n");
                         }
                         continue;
                     }

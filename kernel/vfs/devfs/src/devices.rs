@@ -411,6 +411,17 @@ impl VnodeOps for ConsoleDevice {
         Ok(())
     }
 
+    fn poll_read_ready(&self) -> bool {
+        // 🔥 GraveShift: Console must delegate to the VT backend so poll()
+        // actually drains the ring buffer and checks for real input. The old
+        // default-inherited `true` was a lie that made FIONREAD the sole arbiter,
+        // and FIONREAD only saw the (always-empty) line discipline buffer. 🔥
+        match get_console_backend() {
+            Some(backend) => backend.poll_read_ready(),
+            None => false,
+        }
+    }
+
     fn ioctl(&self, request: u64, arg: u64) -> VfsResult<i64> {
         // Delegate to the active VT device
         match get_console_backend() {

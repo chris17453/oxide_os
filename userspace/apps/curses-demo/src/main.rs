@@ -35,6 +35,73 @@ fn sleep_ms(ms: u32) {
     libc::time::nanosleep(&ts, Some(&mut rem));
 }
 
+/// Get monotonic time in nanoseconds
+/// -- GraveShift: The clock that never lies and never goes backwards
+fn now_ns() -> u64 {
+    let mut ts = libc::time::Timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    libc::time::clock_gettime(libc::time::clocks::CLOCK_MONOTONIC, &mut ts);
+    ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
+}
+
+/// FPS counter — exponential moving average so it doesn't flicker
+/// like a dying neon sign. — NeonVale
+struct FpsCounter {
+    last_time: u64,
+    avg_fps: u32,
+    frame_count: u32,
+    accum_ns: u64,
+}
+
+impl FpsCounter {
+    fn new() -> Self {
+        FpsCounter {
+            last_time: now_ns(),
+            avg_fps: 0,
+            frame_count: 0,
+            accum_ns: 0,
+        }
+    }
+
+    /// Call once per frame. Returns smoothed FPS.
+    fn tick(&mut self) -> u32 {
+        let now = now_ns();
+        let delta = now.saturating_sub(self.last_time);
+        self.last_time = now;
+
+        self.accum_ns += delta;
+        self.frame_count += 1;
+
+        // Update display FPS every ~500ms worth of frames
+        if self.accum_ns >= 500_000_000 {
+            self.avg_fps = (self.frame_count as u64 * 1_000_000_000 / self.accum_ns) as u32;
+            self.frame_count = 0;
+            self.accum_ns = 0;
+        }
+
+        self.avg_fps
+    }
+}
+
+/// Format a u32 into a fixed-size decimal string buffer
+/// -- GraveShift: No alloc, no format!, just raw digit extraction
+fn fmt_u32(buf: &mut [u8; 12], val: u32) -> &[u8] {
+    if val == 0 {
+        buf[0] = b'0';
+        return &buf[..1];
+    }
+    let mut n = val;
+    let mut i = 12;
+    while n > 0 && i > 0 {
+        i -= 1;
+        buf[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+    }
+    &buf[i..]
+}
+
 /// Draw a fancy box with VGA-style borders
 /// -- NeonVale: Box renderer - classic terminal aesthetics
 fn draw_box(y: i32, x: i32, height: i32, width: i32, color_idx: i16) {
@@ -194,6 +261,9 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
         Ball::new(16, 60, -1, -1, 4),
     ];
 
+    // FPS counter — because if you can't measure it, it doesn't exist — NeonVale
+    let mut fps = FpsCounter::new();
+
     // Animation loop
     for _frame in 0..200 {
         // Clear screen by printing spaces
@@ -348,7 +418,8 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
             }
         }
 
-        // Draw status bar at bottom
+        // Draw status bar at bottom with FPS counter — NeonVale
+        let current_fps = fps.tick();
         if max_y > 3 {
             draw_box(max_y - 3, 0, 3, max_x, 7);
             let pair7 = color_pair(7);
@@ -359,6 +430,40 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
                 }
             }
             let _ = mvprintw(max_y - 2, 2, "VGA Style Terminal Graphics Demo");
+
+            // FPS readout — right-aligned in the status bar like a proper HUD — NeonVale
+            let mut fps_num_buf = [0u8; 12];
+            let fps_digits = fmt_u32(&mut fps_num_buf, current_fps);
+            // Build "FPS: NN" string manually (no format! in no_std)
+            let mut fps_str = [0u8; 20];
+            fps_str[0] = b'F';
+            fps_str[1] = b'P';
+            fps_str[2] = b'S';
+            fps_str[3] = b':';
+            fps_str[4] = b' ';
+            let mut pos = 5;
+            for &b in fps_digits {
+                if pos < 20 {
+                    fps_str[pos] = b;
+                    pos += 1;
+                }
+            }
+
+            // Convert to str for mvprintw
+            if let Ok(s) = core::str::from_utf8(&fps_str[..pos]) {
+                let fps_x = max_x - pos as i32 - 2;
+                if fps_x > 0 {
+                    let fps_color = color_pair(2) | A_BOLD;
+                    unsafe {
+                        let stdscr = ncurses::screen::stdscr();
+                        if !stdscr.is_null() {
+                            (*stdscr).attrs = fps_color;
+                        }
+                    }
+                    let _ = mvprintw(max_y - 2, fps_x, s);
+                }
+            }
+
             unsafe {
                 let stdscr = ncurses::screen::stdscr();
                 if !stdscr.is_null() {

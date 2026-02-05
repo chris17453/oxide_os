@@ -178,6 +178,12 @@ impl Tty {
         *self.session.lock() = sid;
     }
 
+    /// Check if line discipline has readable data — for poll() without VnodeOps
+    /// — GraveShift: Because sometimes you need the answer without the ceremony
+    pub fn ldisc_can_read(&self) -> bool {
+        self.ldisc.lock().can_read()
+    }
+
     /// Flush input buffer
     pub fn flush_input(&self) {
         self.ldisc.lock().flush_input();

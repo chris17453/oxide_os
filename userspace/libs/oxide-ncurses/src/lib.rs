@@ -82,7 +82,8 @@ impl chtype {
     }
 
     pub fn character(&self) -> char {
-        char::from_u32(self.ch & 0xFF).unwrap_or('\0')
+        // — GlassSignal: Full Unicode codepoint — no 0xFF mask
+        char::from_u32(self.ch).unwrap_or('\0')
     }
 
     pub fn attributes(&self) -> u32 {
