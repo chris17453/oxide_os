@@ -59,6 +59,11 @@ pub struct TmpDir {
     ino: u64,
     /// Mode/permissions
     mode: Mode,
+    /// Owner user ID
+    /// EmberLock: Captured from creating process context
+    uid: u32,
+    /// Owner group ID
+    gid: u32,
     /// Access time (seconds since epoch)
     atime: RwLock<u64>,
     /// Modification time (seconds since epoch)
@@ -72,10 +77,13 @@ impl TmpDir {
     pub fn new_root() -> Arc<Self> {
         // WireSaint: Timestamp at creation from wall clock
         let now = os_core::wall_clock_secs();
+        // EmberLock: Root owned by root (uid=0, gid=0)
         Arc::new(TmpDir {
             entries: RwLock::new(BTreeMap::new()),
             ino: alloc_inode(),
             mode: Mode::DEFAULT_DIR,
+            uid: 0,
+            gid: 0,
             atime: RwLock::new(now),
             mtime: RwLock::new(now),
             ctime: RwLock::new(now),
@@ -85,10 +93,14 @@ impl TmpDir {
     /// Create a new subdirectory
     fn new_subdir(mode: Mode) -> Arc<Self> {
         let now = os_core::wall_clock_secs();
+        // EmberLock: Capture owner from creating process
+        let (uid, gid) = os_core::current_uid_gid();
         Arc::new(TmpDir {
             entries: RwLock::new(BTreeMap::new()),
             ino: alloc_inode(),
             mode,
+            uid,
+            gid,
             atime: RwLock::new(now),
             mtime: RwLock::new(now),
             ctime: RwLock::new(now),
@@ -260,8 +272,9 @@ impl VnodeOps for TmpDir {
         stat.atime = *self.atime.read();
         stat.mtime = *self.mtime.read();
         stat.ctime = *self.ctime.read();
-        stat.uid = 0; // TODO: Get from creation context
-        stat.gid = 0;
+        // EmberLock: Return owner captured at creation
+        stat.uid = self.uid;
+        stat.gid = self.gid;
         Ok(stat)
     }
 
@@ -289,6 +302,11 @@ pub struct TmpFile {
     ino: u64,
     /// Mode/permissions
     mode: Mode,
+    /// Owner user ID
+    /// EmberLock: Captured from creating process context
+    uid: u32,
+    /// Owner group ID
+    gid: u32,
     /// Access time (seconds since epoch)
     atime: RwLock<u64>,
     /// Modification time (seconds since epoch)
@@ -301,10 +319,14 @@ impl TmpFile {
     /// Create a new empty file
     fn new(mode: Mode) -> Self {
         let now = os_core::wall_clock_secs();
+        // EmberLock: Capture owner from creating process
+        let (uid, gid) = os_core::current_uid_gid();
         TmpFile {
             data: RwLock::new(Vec::new()),
             ino: alloc_inode(),
             mode,
+            uid,
+            gid,
             atime: RwLock::new(now),
             mtime: RwLock::new(now),
             ctime: RwLock::new(now),
@@ -387,8 +409,9 @@ impl VnodeOps for TmpFile {
         stat.atime = *self.atime.read();
         stat.mtime = *self.mtime.read();
         stat.ctime = *self.ctime.read();
-        stat.uid = 0; // TODO: Get from creation context
-        stat.gid = 0;
+        // EmberLock: Return owner captured at creation
+        stat.uid = self.uid;
+        stat.gid = self.gid;
         Ok(stat)
     }
 
