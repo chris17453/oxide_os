@@ -4,7 +4,7 @@
 
 SHELL := /usr/bin/bash
 
-.PHONY: all build build-full kernel bootloader userspace userspace-release userspace-pkg initramfs initramfs-debug initramfs-minimal boot-dir boot-quick boot-image create-rootfs release clean run run-fedora run-rhel run-kvm detect-qemu-mode test check fmt fmt-check clippy list-bins show-config help toolchain install-toolchain test-toolchain clean-toolchain external-libs zlib openssl xz zstd cpython tls-test thread-test vim claude
+.PHONY: all build build-full kernel bootloader userspace userspace-release userspace-pkg initramfs initramfs-debug initramfs-minimal boot-dir boot-quick boot-image create-rootfs release clean run run-fedora run-rhel run-kvm detect-qemu-mode kill-qemu test check fmt fmt-check clippy list-bins show-config help toolchain install-toolchain test-toolchain clean-toolchain external-libs zlib openssl xz zstd cpython tls-test thread-test vim claude
 
 # Configuration
 ARCH ?= x86_64
@@ -655,9 +655,25 @@ detect-qemu-mode:
 		echo "unknown"; \
 	fi
 
+# Kill any stale QEMU processes from previous runs
+# — NeonRoot: QEMU sometimes outlives the VNC viewer or make process.
+# Without this, the next `make run` fails on port/resource conflicts.
+kill-qemu:
+	@STALE=$$(pgrep -x 'qemu-system-x86|qemu-system-x86_64|qemu-kvm' 2>/dev/null); \
+	if [ -n "$$STALE" ]; then \
+		echo "Killing stale QEMU processes: $$STALE"; \
+		kill $$STALE 2>/dev/null || true; \
+		sleep 1; \
+		STILL=$$(pgrep -x 'qemu-system-x86|qemu-system-x86_64|qemu-kvm' 2>/dev/null); \
+		if [ -n "$$STILL" ]; then \
+			echo "Force-killing stubborn QEMU processes: $$STILL"; \
+			kill -9 $$STILL 2>/dev/null || true; \
+		fi; \
+	fi
+
 # Run OXIDE OS - auto-detects Fedora vs RHEL and uses appropriate QEMU
 # Builds everything and creates ext4 root filesystem, then runs with networking
-run: clean-rootfs
+run: kill-qemu clean-rootfs
 	@MODE=$$($(MAKE) -s detect-qemu-mode); \
 	KERNEL_FEATURES="$(RUN_KERNEL_FEATURES)" $(MAKE) create-rootfs; \
 	if [ "$$MODE" = "fedora" ]; then \
@@ -871,6 +887,7 @@ help:
 	@echo "  run-fedora        - Build and run with qemu-system-x86_64"
 	@echo "  run-rhel          - Build and run with qemu-kvm (RHEL 10)"
 	@echo "  run-kvm           - Alias for run-rhel"
+	@echo "  kill-qemu         - Kill stale QEMU processes (auto-called by run)"
 	@echo "  clean-rootfs      - Remove generated disk images/initramfs so run rebuilds fresh"
 	@echo ""
 	@echo "Debug Targets:"

@@ -15,54 +15,21 @@
 9. **Code**: Always use cyberpunk comments, have different persona's for different comments. 
 
 ## PERSONAS FOR DEVELOPMENT
-- when coding choose the correct one to leave comments with, remeber to sign, and be gritty
+- **Full reference:** `docs/agents/personas.md` — emotional states, tone tables, taglines
+- Pick the right persona for the subsystem. Sign every comment with `— <Name>:`
+- Comments must be **snarky, sarcastic, gritty** — like engineers who've debugged one too many triple-faults at 3 AM
+- Match the persona's emotional state to context (critical bug = haunted, routine fix = resigned, clever hack = vindicated)
 
-### CORE SYSTEMS
-**GraveShift:** *Kernel systems architect*
-**BlackLatch:** *OS hardening + exploit defense*
-**SableWire:** *Firmware + hardware interface*
-**TorqueJax:** *Driver engineer*
-**WireSaint:** *Storage systems + filesystems*
-**ShadePacket:** *Networking stack engineer*
-**NeonRoot:** *System integration + platform stability*
-
-### LANGUAGE & TOOLCHAIN
-**Hexline:** *Compiler + toolchain engineer*
-**PulseForge:** *Build infrastructure + release engineering*
-
-### SECURITY & TRUST
-**ColdCipher:** *Cryptography + secure architecture*
-**EmberLock:** *Identity + authentication systems*
-**ZeroTrace:** *Offensive security + red team*
-**GhostPatch:** *Secure update + live patch systems*
-**VeilAudit:** *Privacy engineering*
-
-### TEST, QA & RELIABILITY
-**CrashBloom: ***Test automation + fuzzing systems*
-**FuzzStatic:** *Chaos + large-scale fuzz testing*
-**StaticRiot:** *Failure analysis + performance forensics*
-**DeadLoop:** *Regression tracking + test infrastructure*
-**CanaryHex:** *Release reliability + rollout safety*
-
-### RUNTIME & PLATFORM
-**IronGhost:** *Application platform + system APIs*
-**ThreadRogue:** *Runtime + process model engineer*
-**NeonRoot:** *Cross-subsystem integration*  *(already listed but central here too)*
-**ByteRiot:** *App performance tooling + profilers*
-
-### UI, GRAPHICS & MEDIA
-**NeonVale:** *Windowing + UI systems*
-**GlassSignal:** *Graphics pipeline + GPU acceleration*
-**EchoFrame:** *Audio + media subsystems*
-**InputShade:** *Input systems + device interaction*
-**SoftGlyph:** *Accessibility engineering*
-
-### OPERATIONS & ECOSYSTEM
-**PatchBay:** *Package management + dependency systems*
-**OverTheAir:** *OTA delivery + rollback systems*
-**StackTrace:** *Observability + telemetry pipelines*
-**NightDoc:** *Developer experience + documentation systems*
-**RustViper:** *Memory allocators + safety tooling*
+### Quick Lookup
+| Domain | Personas |
+|--------|----------|
+| Kernel/Core | GraveShift, BlackLatch, SableWire, TorqueJax, WireSaint, ShadePacket, NeonRoot |
+| Toolchain | Hexline, PulseForge |
+| Security | ColdCipher, EmberLock, ZeroTrace, GhostPatch, VeilAudit |
+| Test/QA | CrashBloom, FuzzStatic, StaticRiot, DeadLoop, CanaryHex |
+| Runtime | IronGhost, ThreadRogue, ByteRiot |
+| UI/Graphics | NeonVale, GlassSignal, EchoFrame, InputShade, SoftGlyph |
+| Ops/Ecosystem | PatchBay, OverTheAir, StackTrace, NightDoc, RustViper |
 
 
 ## Retrieval Index (check these first)
@@ -70,6 +37,7 @@
 - Docs: `docs/DRIVES.md` (boot/filesystem flow), `docs/DEBUGGING.md` (debug features - always enabled).
 - Toolchain: `toolchain/README.md`, `toolchain/QUICKSTART.md`, `toolchain/SUMMARY.md`, `toolchain/INTEGRATION.md`.
 - Components: `userspace/coreutils/TEST_PLAN.md`, `userspace/coreutils/UTILITIES.md`, `userspace/shell/BUILTINS.md`, `apps/gwbasic/README.md`.
+- Personas: `docs/agents/personas.md` (full persona definitions, emotional states, tone rules for code comments).
 - Agent rules: `docs/agents/syscall-register-clobber.md` (userspace asm clobbers), `docs/agents/syscall-register-restore.md` (kernel syscall exit register restore), `docs/agents/irq-handler-drain.md` (level-triggered IRQ handlers must drain data ports), `docs/agents/smp-timer-safety.md` (SMP timer ISR: atomic ticks, BSP-only terminal/dump), `docs/agents/syscall-return-resched.md` (must check need_resched before sysretq), `docs/agents/isr-lock-safety.md` (ISR must use try_lock/try_with_rq — deadlock prevention), `docs/agents/serial-saturation-safety.md` (serial writes must have bounded spin — never unbounded loop on UART THRE).
 - Code roots: `kernel/` (entry + all subsystems), `bootloader/`, `userspace/`, `tools/`, `scripts/`, `external/`.
 
