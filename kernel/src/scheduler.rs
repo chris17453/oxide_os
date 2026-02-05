@@ -153,13 +153,20 @@ pub fn remove_process(pid: u32) {
 /// Returns the RSP to restore (may be different if we switched processes).
 pub fn scheduler_tick(current_rsp: u64) -> u64 {
     // Check sleep queue and wake any tasks whose sleep time has expired
-    syscall::time::check_sleepers();
+    // — GraveShift: BSP-only. All tasks live on CPU 0 (no migration yet).
+    // Running on APs would redundantly scan + send cross-CPU IPIs.
+    if sched::this_cpu() == 0 {
+        syscall::time::check_sleepers();
+    }
 
     // Debug: full scheduler dump every ~3 seconds (300 ticks)
+    // — GraveShift: BSP-only. APs have empty run queues (no task
+    // migration yet), so their dumps are blank noise. Running on
+    // one CPU also prevents 4 dumps interleaving on serial.
     #[cfg(feature = "debug-sched")]
     {
         let ticks = arch::timer_ticks();
-        if ticks % 300 == 0 {
+        if ticks % 300 == 0 && sched::this_cpu() == 0 {
             if let Some((curr_pid, min_vr, tasks)) = sched::debug_dump_all() {
                 unsafe {
                     use arch_x86_64::serial::{write_byte_unsafe, write_str_unsafe};
@@ -701,13 +708,17 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     // task doesn't have live data on the kernel stack.
     let is_kernel_mode = next_ctx.cs == 0x08 || (next_ctx.cs == 0 && frame.cs == 0x08);
     let frame_size = core::mem::size_of::<InterruptFrame>() as u64;
-    let new_frame_ptr = if is_kernel_mode {
+    let raw_ptr = if is_kernel_mode {
         // Place below the task's saved kernel RSP (where original interrupt frame was)
-        (next_ctx.rsp - frame_size) as *mut InterruptFrame
+        next_ctx.rsp - frame_size
     } else {
         // User-mode: top of kernel stack is safe
-        (kernel_stack_top - frame_size) as *mut InterruptFrame
+        kernel_stack_top - frame_size
     };
+    // — GraveShift: align down to 8-byte boundary. A misaligned RSP from
+    // corrupted saved context must not panic the scheduler — align it and
+    // continue. The task may crash in user mode but the kernel survives.
+    let new_frame_ptr = (raw_ptr & !7u64) as *mut InterruptFrame;
 
     unsafe {
         let ss = if next_ctx.ss != 0 { next_ctx.ss } else { 0x1B };
@@ -745,12 +756,12 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
 /// - Just-woken tasks (blocked tasks don't accumulate vruntime)
 /// - Tasks that haven't run recently
 fn pick_next_process(current_pid: u32) -> u32 {
-    // Use the actual scheduler we built!
+    // — GraveShift: pick_next_task() mutates scheduler state (pops from CFS
+    // tree, changes rq.curr, clears need_resched). DO NOT validate or reject
+    // the result — that would leave the scheduler in a corrupted state where
+    // rq.curr points to one task but the CPU is running another.
     if let Some(next_pid) = sched::pick_next_task() {
-        // Validate that this PID exists (has ProcessMeta) in the unified model
-        if sched::get_task_meta(next_pid).is_some() {
-            return next_pid;
-        }
+        return next_pid;
     }
 
     // Fallback to current if scheduler returns nothing valid
@@ -898,8 +909,36 @@ pub fn kill_faulting_process(_pid: u64, rip: u64, signo: u64) {
 /// Checks for deliverable signals and modifies the syscall return context
 /// to redirect to signal handlers if needed.
 ///
-/// -- GraveShift: Signal delivery on syscall return, not just timer ticks
+/// -- GraveShift: Signal delivery on syscall return, not just timer ticks.
+/// Also handles deferred rescheduling — the timer ISR skips context switches
+/// for kernel-mode tasks (CS=0x08), so a process hammering syscalls
+/// (write/fork/open in a loop) monopolises the CPU. Checking need_resched
+/// here — right before sysretq — gives the scheduler its only reliable
+/// chance to preempt such tasks.
 pub fn check_signals_on_syscall_return() {
+    // — GraveShift: Reschedule check on syscall return.
+    // SYSCALL_USER_CONTEXT is a *global* — another task's syscall_entry will
+    // clobber it while we sleep. Save it to the kernel stack (per-task) and
+    // restore after we're switched back in.
+    if sched::need_resched() {
+        let saved_ctx = unsafe { *arch::syscall::get_user_context_mut() };
+
+        arch::allow_kernel_preempt();
+        unsafe {
+            core::arch::asm!("sti", "hlt", options(nomem, nostack));
+        }
+        arch::disallow_kernel_preempt();
+
+        // — GraveShift: Re-disable interrupts. The asm caller (syscall_entry)
+        // ran CLI before calling us; after sti+hlt+iretq interrupts are
+        // enabled again. Restore the invariant before touching the global.
+        unsafe {
+            core::arch::asm!("cli", options(nomem, nostack));
+        }
+
+        unsafe { *arch::syscall::get_user_context_mut() = saved_ctx; }
+    }
+
     // Get current PID (fast path, no locks)
     let current_pid = match sched::current_pid() {
         Some(pid) if pid > 1 => pid,

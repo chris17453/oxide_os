@@ -172,22 +172,34 @@ pub struct ScreenData {
     pub raw: bool,
     /// NL mode
     pub nl: bool,
+    /// — NeonVale: Saved termios from before initscr(). endwin() restores this
+    /// so the terminal isn't left in raw/cbreak mode when the app exits.
+    pub saved_termios: Option<libc::termios::Termios>,
 }
 
 impl ScreenData {
     /// Create a new screen
+    /// — NeonVale: Probes real terminal size via TIOCGWINSZ, falls back to
+    /// termcap values, saves the pre-init termios for endwin() to restore.
     pub fn new(term_type: &str) -> Result<Box<Self>> {
         // Load terminal definition
         let term = termcap::load_terminal(term_type).ok();
 
-        let lines = term
-            .as_ref()
-            .and_then(|t| t.get_number("lines"))
-            .unwrap_or(24);
-        let cols = term
-            .as_ref()
-            .and_then(|t| t.get_number("cols"))
-            .unwrap_or(80);
+        // — NeonVale: Query the actual terminal dimensions first. Termcap
+        // entries are compile-time defaults (often 24×80); the running
+        // terminal may be any size. Only fall back if the ioctl fails.
+        let mut ws = libc::termios::Winsize::default();
+        let (lines, cols) = if libc::termios::tcgetwinsize(0, &mut ws) == 0
+            && ws.ws_row > 0
+            && ws.ws_col > 0
+        {
+            (ws.ws_row as i32, ws.ws_col as i32)
+        } else {
+            let l = term.as_ref().and_then(|t| t.get_number("lines")).unwrap_or(24);
+            let c = term.as_ref().and_then(|t| t.get_number("cols")).unwrap_or(80);
+            (l, c)
+        };
+
         let colors = term
             .as_ref()
             .and_then(|t| t.get_number("colors"))
@@ -196,6 +208,16 @@ impl ScreenData {
             .as_ref()
             .and_then(|t| t.get_number("pairs"))
             .unwrap_or(64);
+
+        // — NeonVale: Save the original termios BEFORE we touch anything.
+        // endwin() will restore this so the calling shell isn't stuck in
+        // raw/cbreak mode after the ncurses app exits.
+        let mut orig = libc::termios::Termios::default();
+        let saved = if libc::termios::tcgetattr(0, &mut orig) == 0 {
+            Some(orig)
+        } else {
+            None
+        };
 
         // Create windows
         let stdscr = newwin(lines, cols, 0, 0);
@@ -230,6 +252,7 @@ impl ScreenData {
             cbreak: false,
             raw: false,
             nl: true,
+            saved_termios: saved,
         }))
     }
 
@@ -303,12 +326,20 @@ impl Drop for ScreenData {
 static mut CURRENT_SCREEN: Option<Box<ScreenData>> = None;
 
 /// Initialize the screen
+/// — NeonVale: Enters alternate screen buffer (smcup), clears screen.
+/// The saved termios captured in ScreenData::new() lets endwin() undo
+/// everything — even if the app crashes through the normal exit path.
 pub fn initscr() -> WINDOW {
     // Get terminal type from environment or use default
     let term_type = "xterm"; // Would read from $TERM
 
     match ScreenData::new(term_type) {
         Ok(screen) => {
+            // — NeonVale: Switch to alternate screen buffer and clear it.
+            // Without smcup, the app stomps the shell's scrollback.
+            let _ = screen.putp("smcup");
+            let _ = screen.putp("clear");
+
             let stdscr = screen.stdscr;
             unsafe {
                 let ptr = core::ptr::addr_of_mut!(CURRENT_SCREEN);
@@ -321,6 +352,10 @@ pub fn initscr() -> WINDOW {
 }
 
 /// End ncurses mode
+/// — NeonVale: Restores the terminal to its pre-initscr() state. Sends
+/// rmcup (exit alternate screen), cnorm (show cursor), sgr0 (reset attrs),
+/// AND restores the original termios via tcsetattr. Without the termios
+/// restore, the shell inherits raw/cbreak mode and hangs on input.
 pub fn endwin() -> Result<()> {
     unsafe {
         let ptr = core::ptr::addr_of_mut!(CURRENT_SCREEN);
@@ -330,6 +365,13 @@ pub fn endwin() -> Result<()> {
             let _ = screen.putp("cnorm");
             // Reset attributes
             let _ = screen.putp("sgr0");
+
+            // — NeonVale: Restore the termios we saved in initscr().
+            // This is the critical piece — without it cbreak/noecho/raw
+            // modes leak to the parent shell and it hangs on read().
+            if let Some(ref saved) = screen.saved_termios {
+                libc::termios::tcsetattr(0, libc::termios::action::TCSAFLUSH, saved);
+            }
         }
         *ptr = None;
     }
@@ -599,66 +641,112 @@ pub fn doupdate() -> Result<()> {
     Ok(())
 }
 
+/// — NeonVale: Apply the current cbreak/raw/echo/nl flags to the real
+/// terminal via tcsetattr. Called after any mode-change function so the
+/// kernel TTY actually reflects what the ncurses app requested.
+fn apply_termios() {
+    use libc::termios::*;
+    let screen = match current_screen_mut() {
+        Some(s) => s,
+        None => return,
+    };
+
+    // Start from the saved termios (pre-initscr baseline)
+    let mut t = match screen.saved_termios.clone() {
+        Some(saved) => saved,
+        None => {
+            let mut cur = Termios::default();
+            if tcgetattr(0, &mut cur) != 0 {
+                return;
+            }
+            cur
+        }
+    };
+
+    if screen.cbreak {
+        // — NeonVale: cbreak = ICANON off, ISIG on, VMIN=1, VTIME=0
+        t.c_lflag &= !lflag::ICANON;
+        t.c_cc[cc::VMIN] = 1;
+        t.c_cc[cc::VTIME] = 0;
+    } else if screen.raw {
+        // — NeonVale: raw = ICANON off, ISIG off, VMIN=1, VTIME=0
+        t.c_lflag &= !(lflag::ICANON | lflag::ISIG | lflag::IEXTEN);
+        t.c_iflag &= !(iflag::ICRNL | iflag::IXON);
+        t.c_cc[cc::VMIN] = 1;
+        t.c_cc[cc::VTIME] = 0;
+    }
+
+    if !screen.echo {
+        t.c_lflag &= !(lflag::ECHO | lflag::ECHOE | lflag::ECHOK | lflag::ECHOCTL);
+    }
+
+    tcsetattr(0, action::TCSANOW, &t);
+}
+
 /// Set echo mode
 pub fn echo() -> Result<()> {
-    if let Some(screen) = current_screen_mut() {
-        screen.echo = true;
-        Ok(())
-    } else {
-        Err(Error::Err)
+    match current_screen_mut() {
+        Some(screen) => screen.echo = true,
+        None => return Err(Error::Err),
     }
+    apply_termios();
+    Ok(())
 }
 
 /// Disable echo mode
 pub fn noecho() -> Result<()> {
-    if let Some(screen) = current_screen_mut() {
-        screen.echo = false;
-        Ok(())
-    } else {
-        Err(Error::Err)
+    match current_screen_mut() {
+        Some(screen) => screen.echo = false,
+        None => return Err(Error::Err),
     }
+    apply_termios();
+    Ok(())
 }
 
 /// Set cbreak mode (characters available immediately)
 pub fn cbreak() -> Result<()> {
-    if let Some(screen) = current_screen_mut() {
-        screen.cbreak = true;
-        screen.raw = false;
-        Ok(())
-    } else {
-        Err(Error::Err)
+    match current_screen_mut() {
+        Some(screen) => {
+            screen.cbreak = true;
+            screen.raw = false;
+        }
+        None => return Err(Error::Err),
     }
+    apply_termios();
+    Ok(())
 }
 
 /// Disable cbreak mode
 pub fn nocbreak() -> Result<()> {
-    if let Some(screen) = current_screen_mut() {
-        screen.cbreak = false;
-        Ok(())
-    } else {
-        Err(Error::Err)
+    match current_screen_mut() {
+        Some(screen) => screen.cbreak = false,
+        None => return Err(Error::Err),
     }
+    apply_termios();
+    Ok(())
 }
 
 /// Set raw mode (no signal processing)
 pub fn raw() -> Result<()> {
-    if let Some(screen) = current_screen_mut() {
-        screen.raw = true;
-        screen.cbreak = false;
-        Ok(())
-    } else {
-        Err(Error::Err)
+    match current_screen_mut() {
+        Some(screen) => {
+            screen.raw = true;
+            screen.cbreak = false;
+        }
+        None => return Err(Error::Err),
     }
+    apply_termios();
+    Ok(())
 }
 
 /// Disable raw mode
 pub fn noraw() -> Result<()> {
-    if let Some(screen) = current_screen_mut() {
-        screen.raw = false;
-        Ok(())
-    } else {
-        Err(Error::Err)
+    match current_screen_mut() {
+        Some(screen) => screen.raw = false,
+        None => return Err(Error::Err),
     }
+    apply_termios();
+    Ok(())
 }
 
 /// Enable newline translation

@@ -82,8 +82,16 @@ impl SerialPort {
     }
 
     fn write_byte(&self, byte: u8) {
-        // Wait for transmit buffer empty
+        // Bounded wait for transmit buffer empty — under heavy debug load
+        // the UART FIFO can saturate. Rather than stalling the calling task
+        // indefinitely, drop the byte after SPIN_LIMIT iterations.
+        // — SableWire: debug output is best-effort; system liveness is not.
+        let mut spins: u32 = 0;
         while (self.read_reg(regs::LSR) & lsr::THRE) == 0 {
+            spins += 1;
+            if spins >= UNSAFE_WRITE_SPIN_LIMIT {
+                return;
+            }
             core::hint::spin_loop();
         }
         self.write_reg(regs::DATA, byte);
@@ -117,14 +125,27 @@ pub fn write_byte(byte: u8) {
 /// This function is not thread-safe. Only use from interrupt context
 /// where you know no other code can be writing to serial at the same time,
 /// or when you accept potential garbled output.
+/// Maximum spin iterations before dropping a byte in ISR context.
+/// At 115200 baud a single byte takes ~87µs; 2048 spins is generous
+/// but prevents permanent ISR stall when the FIFO is saturated.
+/// — SableWire: ISR must never block. Drop the byte, not the system.
+const UNSAFE_WRITE_SPIN_LIMIT: u32 = 2048;
+
 #[inline]
 pub unsafe fn write_byte_unsafe(byte: u8) {
     use crate::{inb, outb};
-    // Wait for transmit buffer empty
-    // SAFETY: Direct port I/O; caller ensures exclusive access in ISR context
+    // Bounded wait for transmit buffer empty — if FIFO is full after
+    // SPIN_LIMIT iterations, drop the byte. Debug output is best-effort;
+    // a hung ISR is not.
+    // SAFETY: Direct port I/O; caller ensures ISR context
     // — SableWire
     unsafe {
+        let mut spins: u32 = 0;
         while (inb(COM1_PORT + regs::LSR) & lsr::THRE) == 0 {
+            spins += 1;
+            if spins >= UNSAFE_WRITE_SPIN_LIMIT {
+                return; // — SableWire: drop byte, save the system
+            }
             core::hint::spin_loop();
         }
         outb(COM1_PORT + regs::DATA, byte);

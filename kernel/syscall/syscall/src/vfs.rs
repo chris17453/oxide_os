@@ -22,12 +22,17 @@ const MAX_PATH: usize = 4096;
 // Writes directly to COM1 — no locks, no alloc, ISR-safe
 fn serial_debug_read_fail(pid: u64, fd: u64, errno_val: u64, tag: u8) {
     // Format: [RD:X] pid=NNNN fd=N err=N\n  where X is tag byte
+    // — SableWire: bounded spin — drop byte if UART FIFO is saturated
     fn write_byte(b: u8) {
+        const SPIN_LIMIT: u32 = 2048;
         unsafe {
             let mut status: u8;
+            let mut spins: u32 = 0;
             loop {
                 core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
                 if status & 0x20 != 0 { break; }
+                spins += 1;
+                if spins >= SPIN_LIMIT { return; }
             }
             core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
         }
@@ -60,12 +65,17 @@ fn serial_debug_read_fail(pid: u64, fd: u64, errno_val: u64, tag: u8) {
 
 // — GraveShift: one-shot write success diag for comparison
 fn serial_debug_write_ok(pid: u64, fd: u64, entries_len: u64, mask: u64) {
+    // — SableWire: bounded spin — drop byte if UART FIFO is saturated
     fn write_byte(b: u8) {
+        const SPIN_LIMIT: u32 = 2048;
         unsafe {
             let mut status: u8;
+            let mut spins: u32 = 0;
             loop {
                 core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
                 if status & 0x20 != 0 { break; }
+                spins += 1;
+                if spins >= SPIN_LIMIT { return; }
             }
             core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
         }
@@ -98,12 +108,17 @@ fn serial_debug_write_ok(pid: u64, fd: u64, entries_len: u64, mask: u64) {
 
 // — GraveShift: dump fd_table state for forensic analysis
 fn serial_debug_fdtable_state(pid: u64, entries_len: u64, mask: u64) {
+    // — SableWire: bounded spin — drop byte if UART FIFO is saturated
     fn write_byte(b: u8) {
+        const SPIN_LIMIT: u32 = 2048;
         unsafe {
             let mut status: u8;
+            let mut spins: u32 = 0;
             loop {
                 core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
                 if status & 0x20 != 0 { break; }
+                spins += 1;
+                if spins >= SPIN_LIMIT { return; }
             }
             core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
         }
@@ -134,12 +149,17 @@ fn serial_debug_fdtable_state(pid: u64, entries_len: u64, mask: u64) {
 
 // — GraveShift: log successful read result to catch EIO/short-reads
 fn serial_debug_read_result(pid: u64, fd: u64, result: i64) {
+    // — SableWire: bounded spin — drop byte if UART FIFO is saturated
     fn write_byte(b: u8) {
+        const SPIN_LIMIT: u32 = 2048;
         unsafe {
             let mut status: u8;
+            let mut spins: u32 = 0;
             loop {
                 core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
                 if status & 0x20 != 0 { break; }
+                spins += 1;
+                if spins >= SPIN_LIMIT { return; }
             }
             core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
         }

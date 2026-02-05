@@ -13,6 +13,7 @@ debug-tty-read = []  # Filter ANSI escapes from serial output
 [dependencies]
 vfs = { workspace = true }
 os_core = { workspace = true }
+os_log = { workspace = true }
 spin = { workspace = true }
 terminal = { workspace = true }
 sched = { workspace = true }

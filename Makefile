@@ -49,15 +49,33 @@ BOOTLOADER_TARGET := $(TARGET_DIR)/$(ARCH)-unknown-uefi/$(PROFILE)/boot-uefi.efi
 BOOT_DIR := $(TARGET_DIR)/boot
 INITRAMFS := $(TARGET_DIR)/initramfs.cpio
 OVMF := $(shell for p in /usr/share/OVMF/OVMF_CODE.fd /usr/share/edk2-ovmf/x64/OVMF_CODE.fd /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/qemu/OVMF.fd; do [ -f "$$p" ] && echo "$$p" && break; done)
+CONFIG_DIR := build
+RUN_CONFIG := $(CONFIG_DIR)/run.local.mk
+USERSPACE_CONFIG := $(CONFIG_DIR)/userspace-packages.mk
+-include $(RUN_CONFIG)
+-include $(USERSPACE_CONFIG)
 
 # Userspace configuration - use standard target with Fedora's pre-built std
 USERSPACE_TARGET := x86_64-unknown-none
 USERSPACE_OUT := $(TARGET_DIR)/$(USERSPACE_TARGET)/$(PROFILE)
 USERSPACE_OUT_RELEASE := $(TARGET_DIR)/$(USERSPACE_TARGET)/release
 CARGO_USER_FLAGS :=
+RUN_BUILD_USERSPACE ?= 1
 
-# Userspace packages to build
-USERSPACE_PACKAGES := init esh getty login coreutils ssh sshd rdpd service networkd journald journalctl soundd evtest argtest htop doom
+ifeq ($(RUN_BUILD_USERSPACE),1)
+INITRAMFS_PREREQ := userspace-release
+INITRAMFS_MINIMAL_PREREQ := userspace-release
+else
+INITRAMFS_PREREQ :=
+INITRAMFS_MINIMAL_PREREQ :=
+endif
+
+# Userspace packages to build (Cargo-based)
+USERSPACE_ALL_PACKAGES := init esh getty login coreutils ssh sshd rdpd service networkd journald journalctl soundd evtest argtest htop doom gwbasic curses-demo
+USERSPACE_PACKAGES ?= $(USERSPACE_ALL_PACKAGES)
+# Non-Cargo extra targets (built via dedicated rules)
+USERSPACE_EXTRA_TARGETS_ALL := tls-test thread-test
+USERSPACE_EXTRA_TARGETS ?= $(USERSPACE_EXTRA_TARGETS_ALL)
 
 # Coreutils binaries (auto-detected from Cargo.toml [[bin]] entries)
 # Extract binary names from [[bin]] sections in coreutils/Cargo.toml
@@ -109,7 +127,11 @@ userspace:
 	@echo "Building userspace programs..."
 	@for pkg in $(USERSPACE_PACKAGES); do \
 		echo "  Building $$pkg..."; \
-		RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package $$pkg --target $(USERSPACE_TARGET) $(CARGO_USER_FLAGS) || exit 1; \
+		if [ "$$pkg" = "gwbasic" ]; then \
+			RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package oxide-gwbasic --target $(USERSPACE_TARGET) $(CARGO_USER_FLAGS) --features oxide || exit 1; \
+		else \
+			RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package $$pkg --target $(USERSPACE_TARGET) $(CARGO_USER_FLAGS) || exit 1; \
+		fi; \
 	done
 	@echo "Userspace programs built."
 
@@ -133,20 +155,20 @@ userspace-release:
 	fi
 	@for pkg in $(USERSPACE_PACKAGES); do \
 		echo "  Building $$pkg (release)..."; \
-		RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package $$pkg --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1; \
+		if [ "$$pkg" = "gwbasic" ]; then \
+			RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package oxide-gwbasic --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) --features oxide || exit 1; \
+		else \
+			RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package $$pkg --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1; \
+		fi; \
 	done
-	@echo "  Building gwbasic (release)..."
-	@RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package oxide-gwbasic --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) --features oxide || exit 1
-	@echo "  Building curses-demo (release)..."
-	@RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package curses-demo --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1
-	@echo "  Building htop (release)..."
-	@RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package htop --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1
+ifneq (,$(filter coreutils,$(USERSPACE_PACKAGES)))
 	@echo "  Building testcolors (release)..."
 	@RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static -C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" cargo build --package coreutils --bin testcolors --target $(USERSPACE_TARGET) --release $(CARGO_USER_FLAGS) || exit 1
-	@echo "  Building TLS test..."
-	@$(MAKE) tls-test
-	@echo "  Building thread test..."
-	@$(MAKE) thread-test
+endif
+	@for target in $(USERSPACE_EXTRA_TARGETS); do \
+		echo "  Building $$target ..."; \
+		$(MAKE) $$target || exit 1; \
+	done
 	@echo "Stripping binaries..."
 	@for prog in init esh login getty gwbasic curses-demo htop tls-test thread-test ssh sshd rdpd service networkd journald journalctl soundd evtest argtest doom $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
@@ -161,7 +183,7 @@ userspace-pkg:
 	cargo build --package $(PKG) --target $(USERSPACE_TARGET) $(CARGO_USER_FLAGS)
 
 # Create initramfs CPIO archive (release version for smaller size)
-initramfs: userspace-release
+initramfs: $(INITRAMFS_PREREQ)
 	@echo "Creating initramfs (release)..."
 	@rm -rf $(TARGET_DIR)/initramfs
 	@mkdir -p $(TARGET_DIR)/initramfs/bin
@@ -179,29 +201,26 @@ initramfs: userspace-release
 	@mkdir -p $(TARGET_DIR)/initramfs/run
 	@mkdir -p $(TARGET_DIR)/initramfs/run/network
 	@# Copy init to /sbin
-	@cp "$(USERSPACE_OUT_RELEASE)/init" "$(TARGET_DIR)/initramfs/sbin/init"
-	@ln -sf /sbin/init "$(TARGET_DIR)/initramfs/init"
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/init" ]; then cp "$(USERSPACE_OUT_RELEASE)/init" "$(TARGET_DIR)/initramfs/sbin/init"; ln -sf /sbin/init "$(TARGET_DIR)/initramfs/init"; fi
 	@# Copy shell
-	@cp "$(USERSPACE_OUT_RELEASE)/esh" "$(TARGET_DIR)/initramfs/bin/esh"
-	@ln -sf /bin/esh "$(TARGET_DIR)/initramfs/bin/sh"
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/esh" ]; then cp "$(USERSPACE_OUT_RELEASE)/esh" "$(TARGET_DIR)/initramfs/bin/esh"; ln -sf /bin/esh "$(TARGET_DIR)/initramfs/bin/sh"; fi
 	@# Copy login
-	@cp "$(USERSPACE_OUT_RELEASE)/login" "$(TARGET_DIR)/initramfs/bin/login"
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/login" ]; then cp "$(USERSPACE_OUT_RELEASE)/login" "$(TARGET_DIR)/initramfs/bin/login"; fi
 	@# Copy gwbasic
-	@cp "$(USERSPACE_OUT_RELEASE)/gwbasic" "$(TARGET_DIR)/initramfs/bin/gwbasic"
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/gwbasic" ]; then cp "$(USERSPACE_OUT_RELEASE)/gwbasic" "$(TARGET_DIR)/initramfs/bin/gwbasic"; fi
 	@# Copy curses-demo
-	@cp "$(USERSPACE_OUT_RELEASE)/curses-demo" "$(TARGET_DIR)/initramfs/bin/curses-demo"
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/curses-demo" ]; then cp "$(USERSPACE_OUT_RELEASE)/curses-demo" "$(TARGET_DIR)/initramfs/bin/curses-demo"; fi
 	@# Copy htop
-	@cp "$(USERSPACE_OUT_RELEASE)/htop" "$(TARGET_DIR)/initramfs/bin/htop"
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/htop" ]; then cp "$(USERSPACE_OUT_RELEASE)/htop" "$(TARGET_DIR)/initramfs/bin/htop"; fi
 	@# Copy BASIC example programs
 	@mkdir -p "$(TARGET_DIR)/initramfs/usr/share/gwbasic"
 	@cp userspace/apps/gwbasic/examples/*.bas "$(TARGET_DIR)/initramfs/usr/share/gwbasic/" 2>/dev/null || true
 	@# Copy ssh client
-	@cp "$(USERSPACE_OUT_RELEASE)/ssh" "$(TARGET_DIR)/initramfs/bin/ssh"
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/ssh" ]; then cp "$(USERSPACE_OUT_RELEASE)/ssh" "$(TARGET_DIR)/initramfs/bin/ssh"; fi
 	@# Copy sshd
-	@cp "$(USERSPACE_OUT_RELEASE)/sshd" "$(TARGET_DIR)/initramfs/bin/sshd"
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/sshd" ]; then cp "$(USERSPACE_OUT_RELEASE)/sshd" "$(TARGET_DIR)/initramfs/bin/sshd"; fi
 	@# Copy service manager
-	@cp "$(USERSPACE_OUT_RELEASE)/service" "$(TARGET_DIR)/initramfs/bin/service"
-	@ln -sf /bin/service "$(TARGET_DIR)/initramfs/bin/servicemgr"
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/service" ]; then cp "$(USERSPACE_OUT_RELEASE)/service" "$(TARGET_DIR)/initramfs/bin/service"; ln -sf /bin/service "$(TARGET_DIR)/initramfs/bin/servicemgr"; fi
 	@# Copy coreutils
 	@for prog in $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
@@ -234,23 +253,23 @@ initramfs: userspace-release
 	@echo "export PATH=/initramfs/bin:/initramfs/sbin:/bin:/sbin" > $(TARGET_DIR)/initramfs/etc/profile
 	@echo "OXIDE" > $(TARGET_DIR)/initramfs/etc/hostname
 	@# Copy networkd
-	@cp "$(USERSPACE_OUT_RELEASE)/networkd" "$(TARGET_DIR)/initramfs/bin/networkd"
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/networkd" ]; then cp "$(USERSPACE_OUT_RELEASE)/networkd" "$(TARGET_DIR)/initramfs/bin/networkd"; fi
 	@# Copy rdpd
-	@cp "$(USERSPACE_OUT_RELEASE)/rdpd" "$(TARGET_DIR)/initramfs/bin/rdpd"
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/rdpd" ]; then cp "$(USERSPACE_OUT_RELEASE)/rdpd" "$(TARGET_DIR)/initramfs/bin/rdpd"; fi
 	@# Copy journald and journalctl
-	@cp "$(USERSPACE_OUT_RELEASE)/journald" "$(TARGET_DIR)/initramfs/bin/journald"
-	@cp "$(USERSPACE_OUT_RELEASE)/journalctl" "$(TARGET_DIR)/initramfs/bin/journalctl"
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/journald" ]; then cp "$(USERSPACE_OUT_RELEASE)/journald" "$(TARGET_DIR)/initramfs/bin/journald"; fi
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/journalctl" ]; then cp "$(USERSPACE_OUT_RELEASE)/journalctl" "$(TARGET_DIR)/initramfs/bin/journalctl"; fi
 	@# Copy evtest and argtest
-	@cp "$(USERSPACE_OUT_RELEASE)/evtest" "$(TARGET_DIR)/initramfs/bin/evtest"
-	@cp "$(USERSPACE_OUT_RELEASE)/argtest" "$(TARGET_DIR)/initramfs/bin/argtest"
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/evtest" ]; then cp "$(USERSPACE_OUT_RELEASE)/evtest" "$(TARGET_DIR)/initramfs/bin/evtest"; fi
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/argtest" ]; then cp "$(USERSPACE_OUT_RELEASE)/argtest" "$(TARGET_DIR)/initramfs/bin/argtest"; fi
 	@# Copy getty
-	@cp "$(USERSPACE_OUT_RELEASE)/getty" "$(TARGET_DIR)/initramfs/bin/getty"
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/getty" ]; then cp "$(USERSPACE_OUT_RELEASE)/getty" "$(TARGET_DIR)/initramfs/bin/getty"; fi
 	@# Copy soundd
-	@cp "$(USERSPACE_OUT_RELEASE)/soundd" "$(TARGET_DIR)/initramfs/bin/soundd"
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/soundd" ]; then cp "$(USERSPACE_OUT_RELEASE)/soundd" "$(TARGET_DIR)/initramfs/bin/soundd"; fi
 	@# Copy doom
-	@cp "$(USERSPACE_OUT_RELEASE)/doom" "$(TARGET_DIR)/initramfs/bin/doom"
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/doom" ]; then cp "$(USERSPACE_OUT_RELEASE)/doom" "$(TARGET_DIR)/initramfs/bin/doom"; fi
 	@# Copy signal-test (optional test utility)
-	@cp "$(USERSPACE_OUT_RELEASE)/signal-test" "$(TARGET_DIR)/initramfs/bin/signal-test" 2>/dev/null || true
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/signal-test" ]; then cp "$(USERSPACE_OUT_RELEASE)/signal-test" "$(TARGET_DIR)/initramfs/bin/signal-test"; fi
 	@# Create services.d directory with service definitions
 	@mkdir -p $(TARGET_DIR)/initramfs/etc/services.d
 	@echo "PATH=/bin/journald" > $(TARGET_DIR)/initramfs/etc/services.d/journald
@@ -452,12 +471,12 @@ create-rootfs: kernel bootloader initramfs-minimal
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/initramfs && \
 	\
 	echo "  Copying binaries..." && \
-	sudo cp "$(USERSPACE_OUT_RELEASE)/init" $(TARGET_DIR)/mnt/root/sbin/init && \
-	sudo ln -sf /sbin/init $(TARGET_DIR)/mnt/root/init && \
-	sudo cp "$(USERSPACE_OUT_RELEASE)/esh" $(TARGET_DIR)/mnt/root/bin/esh && \
-	sudo ln -sf /bin/esh $(TARGET_DIR)/mnt/root/bin/sh && \
-	sudo cp "$(USERSPACE_OUT_RELEASE)/getty" $(TARGET_DIR)/mnt/root/bin/getty && \
-	sudo cp "$(USERSPACE_OUT_RELEASE)/login" $(TARGET_DIR)/mnt/root/bin/login && \
+	[ -f "$(USERSPACE_OUT_RELEASE)/init" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/init" $(TARGET_DIR)/mnt/root/sbin/init || true && \
+	[ -f "$(USERSPACE_OUT_RELEASE)/init" ] && sudo ln -sf /sbin/init $(TARGET_DIR)/mnt/root/init || true && \
+	[ -f "$(USERSPACE_OUT_RELEASE)/esh" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/esh" $(TARGET_DIR)/mnt/root/bin/esh || true && \
+	[ -f "$(USERSPACE_OUT_RELEASE)/esh" ] && sudo ln -sf /bin/esh $(TARGET_DIR)/mnt/root/bin/sh || true && \
+	[ -f "$(USERSPACE_OUT_RELEASE)/getty" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/getty" $(TARGET_DIR)/mnt/root/bin/getty || true && \
+	[ -f "$(USERSPACE_OUT_RELEASE)/login" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/login" $(TARGET_DIR)/mnt/root/bin/login || true && \
 	for prog in gwbasic curses-demo tls-test thread-test ssh sshd rdpd service networkd journald journalctl evtest argtest vim $(COREUTILS_BINS) testcolors; do \
 		[ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/$$prog" $(TARGET_DIR)/mnt/root/usr/bin/ || true; \
 	done && \
@@ -528,7 +547,7 @@ create-rootfs: kernel bootloader initramfs-minimal
 # Create minimal initramfs for ext4 root boot
 # Only contains: init, login, esh, and essential /etc files
 # Full utilities live on the ext4 root partition
-initramfs-minimal: userspace-release
+initramfs-minimal: $(INITRAMFS_MINIMAL_PREREQ)
 	@echo "Creating minimal initramfs..."
 	@rm -rf $(TARGET_DIR)/initramfs-minimal
 	@mkdir -p $(TARGET_DIR)/initramfs-minimal/bin
@@ -546,12 +565,10 @@ initramfs-minimal: userspace-release
 	@mkdir -p $(TARGET_DIR)/initramfs-minimal/run
 	@mkdir -p $(TARGET_DIR)/initramfs-minimal/mnt
 	@# Copy only essential binaries
-	@cp "$(USERSPACE_OUT_RELEASE)/init" "$(TARGET_DIR)/initramfs-minimal/sbin/init"
-	@ln -sf /sbin/init "$(TARGET_DIR)/initramfs-minimal/init"
-	@cp "$(USERSPACE_OUT_RELEASE)/esh" "$(TARGET_DIR)/initramfs-minimal/bin/esh"
-	@ln -sf /bin/esh "$(TARGET_DIR)/initramfs-minimal/bin/sh"
-	@cp "$(USERSPACE_OUT_RELEASE)/login" "$(TARGET_DIR)/initramfs-minimal/bin/login"
-	@cp "$(USERSPACE_OUT_RELEASE)/getty" "$(TARGET_DIR)/initramfs-minimal/bin/getty"
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/init" ]; then cp "$(USERSPACE_OUT_RELEASE)/init" "$(TARGET_DIR)/initramfs-minimal/sbin/init"; ln -sf /sbin/init "$(TARGET_DIR)/initramfs-minimal/init"; fi
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/esh" ]; then cp "$(USERSPACE_OUT_RELEASE)/esh" "$(TARGET_DIR)/initramfs-minimal/bin/esh"; ln -sf /bin/esh "$(TARGET_DIR)/initramfs-minimal/bin/sh"; fi
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/login" ]; then cp "$(USERSPACE_OUT_RELEASE)/login" "$(TARGET_DIR)/initramfs-minimal/bin/login"; fi
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/getty" ]; then cp "$(USERSPACE_OUT_RELEASE)/getty" "$(TARGET_DIR)/initramfs-minimal/bin/getty"; fi
 	@# Copy coreutils
 	@for prog in $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
@@ -561,23 +578,22 @@ initramfs-minimal: userspace-release
 	@ln -sf /bin/true "$(TARGET_DIR)/initramfs-minimal/bin/:" 2>/dev/null || true
 	@ln -sf /bin/ls "$(TARGET_DIR)/initramfs-minimal/bin/dir" 2>/dev/null || true
 	@# Copy service manager
-	@cp "$(USERSPACE_OUT_RELEASE)/service" "$(TARGET_DIR)/initramfs-minimal/bin/service"
-	@ln -sf /bin/service "$(TARGET_DIR)/initramfs-minimal/bin/servicemgr"
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/service" ]; then cp "$(USERSPACE_OUT_RELEASE)/service" "$(TARGET_DIR)/initramfs-minimal/bin/service"; ln -sf /bin/service "$(TARGET_DIR)/initramfs-minimal/bin/servicemgr"; fi
 	@# Copy daemons
-	@cp "$(USERSPACE_OUT_RELEASE)/networkd" "$(TARGET_DIR)/initramfs-minimal/bin/networkd"
-	@cp "$(USERSPACE_OUT_RELEASE)/journald" "$(TARGET_DIR)/initramfs-minimal/bin/journald"
-	@cp "$(USERSPACE_OUT_RELEASE)/journalctl" "$(TARGET_DIR)/initramfs-minimal/bin/journalctl"
-	@cp "$(USERSPACE_OUT_RELEASE)/sshd" "$(TARGET_DIR)/initramfs-minimal/bin/sshd"
-	@cp "$(USERSPACE_OUT_RELEASE)/ssh" "$(TARGET_DIR)/initramfs-minimal/bin/ssh"
-	@cp "$(USERSPACE_OUT_RELEASE)/gwbasic" "$(TARGET_DIR)/initramfs-minimal/bin/gwbasic"
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/networkd" ]; then cp "$(USERSPACE_OUT_RELEASE)/networkd" "$(TARGET_DIR)/initramfs-minimal/bin/networkd"; fi
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/journald" ]; then cp "$(USERSPACE_OUT_RELEASE)/journald" "$(TARGET_DIR)/initramfs-minimal/bin/journald"; fi
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/journalctl" ]; then cp "$(USERSPACE_OUT_RELEASE)/journalctl" "$(TARGET_DIR)/initramfs-minimal/bin/journalctl"; fi
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/sshd" ]; then cp "$(USERSPACE_OUT_RELEASE)/sshd" "$(TARGET_DIR)/initramfs-minimal/bin/sshd"; fi
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/ssh" ]; then cp "$(USERSPACE_OUT_RELEASE)/ssh" "$(TARGET_DIR)/initramfs-minimal/bin/ssh"; fi
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/gwbasic" ]; then cp "$(USERSPACE_OUT_RELEASE)/gwbasic" "$(TARGET_DIR)/initramfs-minimal/bin/gwbasic"; fi
 	@# Copy curses-demo
-	@cp "$(USERSPACE_OUT_RELEASE)/curses-demo" "$(TARGET_DIR)/initramfs-minimal/bin/curses-demo"
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/curses-demo" ]; then cp "$(USERSPACE_OUT_RELEASE)/curses-demo" "$(TARGET_DIR)/initramfs-minimal/bin/curses-demo"; fi
 	@# Copy BASIC example programs
 	@mkdir -p "$(TARGET_DIR)/initramfs-minimal/usr/share/gwbasic"
 	@cp userspace/apps/gwbasic/examples/*.bas "$(TARGET_DIR)/initramfs-minimal/usr/share/gwbasic/" 2>/dev/null || true
 	@# Copy test utilities
-	@cp "$(USERSPACE_OUT_RELEASE)/evtest" "$(TARGET_DIR)/initramfs-minimal/bin/evtest"
-	@cp "$(USERSPACE_OUT_RELEASE)/argtest" "$(TARGET_DIR)/initramfs-minimal/bin/argtest"
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/evtest" ]; then cp "$(USERSPACE_OUT_RELEASE)/evtest" "$(TARGET_DIR)/initramfs-minimal/bin/evtest"; fi
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/argtest" ]; then cp "$(USERSPACE_OUT_RELEASE)/argtest" "$(TARGET_DIR)/initramfs-minimal/bin/argtest"; fi
 	@# Create service definitions
 	@mkdir -p $(TARGET_DIR)/initramfs-minimal/etc/services.d
 	@echo "PATH=/bin/journald" > $(TARGET_DIR)/initramfs-minimal/etc/services.d/journald
@@ -643,13 +659,12 @@ detect-qemu-mode:
 # Builds everything and creates ext4 root filesystem, then runs with networking
 run: clean-rootfs
 	@MODE=$$($(MAKE) -s detect-qemu-mode); \
+	KERNEL_FEATURES="$(RUN_KERNEL_FEATURES)" $(MAKE) create-rootfs; \
 	if [ "$$MODE" = "fedora" ]; then \
 		echo "Detected Fedora mode (qemu-system-x86_64)"; \
-		KERNEL_FEATURES="$(RUN_KERNEL_FEATURES)" $(MAKE) create-rootfs; \
 		KERNEL_FEATURES="$(RUN_KERNEL_FEATURES)" $(MAKE) run-fedora; \
 	elif [ "$$MODE" = "rhel" ]; then \
 		echo "Detected RHEL mode (qemu-kvm)"; \
-		KERNEL_FEATURES="$(RUN_KERNEL_FEATURES)" $(MAKE) create-rootfs; \
 		KERNEL_FEATURES="$(RUN_KERNEL_FEATURES)" $(MAKE) run-rhel; \
 	else \
 		echo "Error: No compatible QEMU found"; \

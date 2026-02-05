@@ -206,10 +206,74 @@ fn select_task_rq(task: &Task) -> u32 {
     best_cpu
 }
 
+/// Wake up a sleeping task (ISR-safe, non-blocking)
+///
+/// — GraveShift: Identical to wake_up() but uses try_with_rq to avoid
+/// deadlock when the timer ISR interrupts code that already holds the
+/// RQ spin lock. Returns true if the wake succeeded, false if the lock
+/// was contended (caller should retry on the next tick).
+pub fn try_wake_up(pid: Pid) -> bool {
+    let cpu = this_cpu();
+
+    // Try current CPU first (non-blocking)
+    let result = try_with_rq(cpu, |rq| {
+        if let Some(task) = rq.get_task_mut(pid) {
+            task.state = TaskState::TASK_RUNNING;
+            rq.enqueue_task(pid);
+            if let Some(curr_pid) = rq.curr() {
+                if should_preempt(rq, pid, curr_pid) {
+                    rq.set_need_resched(true);
+                }
+            }
+            true
+        } else {
+            false // Not on this CPU
+        }
+    });
+
+    match result {
+        Some(true) => return true,
+        None => return false, // Lock contended — caller should retry
+        Some(false) => {}     // Task not on this CPU, try others
+    }
+
+    // Try other CPUs (non-blocking)
+    for other_cpu in 0..num_cpus() {
+        if other_cpu == cpu {
+            continue;
+        }
+
+        let found = try_with_rq(other_cpu, |rq| {
+            if let Some(task) = rq.get_task_mut(pid) {
+                task.state = TaskState::TASK_RUNNING;
+                rq.enqueue_task(pid);
+                rq.set_need_resched(true);
+                true
+            } else {
+                false
+            }
+        });
+
+        match found {
+            Some(true) => {
+                smp::ipi::send_reschedule(other_cpu);
+                return true;
+            }
+            None => return false, // Lock contended on remote CPU
+            Some(false) => {}     // Not on this CPU either
+        }
+    }
+
+    false // Task not found anywhere
+}
+
 /// Wake up a sleeping task
 ///
 /// Moves the task to TASK_RUNNING and enqueues it on an appropriate run queue.
 /// May trigger preemption if the woken task has higher priority.
+///
+/// WARNING: Uses blocking with_rq — MUST NOT be called from ISR context.
+/// Use try_wake_up() instead for timer interrupt handlers.
 pub fn wake_up(pid: Pid) {
     let cpu = this_cpu();
 

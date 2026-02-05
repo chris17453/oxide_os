@@ -589,6 +589,39 @@ pub unsafe fn set_tlb_shootdown_callback(callback: IpiCallback) {
     }
 }
 
+/// Reschedule IPI handler (vector 0xF0)
+///
+/// — GraveShift: This IPI is a kick — its only job is to break a CPU out
+/// of `hlt` so the scheduler can pick up newly-runnable tasks. No state
+/// mutation needed; just ACK the APIC and return.
+#[unsafe(naked)]
+pub extern "C" fn ipi_reschedule() {
+    naked_asm!(
+        // Save minimal registers (handler is trivial)
+        "push rax",
+        "push rcx",
+        "push rdx",
+
+        // ACK the APIC and return
+        "call {}",
+
+        "pop rdx",
+        "pop rcx",
+        "pop rax",
+
+        "iretq",
+        sym handle_ipi_reschedule,
+    );
+}
+
+/// Handle reschedule IPI — just send EOI
+/// — GraveShift: The wake already set need_resched on the target RQ.
+/// The next scheduler_tick (or the interrupted hlt return path) will
+/// call pick_next_task and context switch.
+extern "C" fn handle_ipi_reschedule() {
+    crate::apic::end_of_interrupt();
+}
+
 /// TLB shootdown IPI handler (vector 0xF1)
 #[unsafe(naked)]
 pub extern "C" fn ipi_tlb_shootdown() {
@@ -1185,8 +1218,11 @@ extern "C" fn handle_simd(frame: *const InterruptFrame, _error: u64) {
     panic!("SIMD EXCEPTION at {:#x}", frame.rip);
 }
 
-/// Timer tick counter
-static mut TIMER_TICKS: u64 = 0;
+/// Timer tick counter — SableWire: AtomicU64 for SMP safety.
+/// Only BSP (APIC ID 0) increments; APs read-only. Prevents the
+/// data-race where 4 CPUs stomp a bare `static mut` and corrupt
+/// the counter or inflate the tick rate 4×.
+static TIMER_TICKS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 /// Terminal tick callback (called at 30 FPS)
 static mut TERMINAL_TICK_CALLBACK: Option<fn()> = None;
@@ -1195,6 +1231,7 @@ static mut TERMINAL_TICK_CALLBACK: Option<fn()> = None;
 const TERMINAL_TICK_INTERVAL: u64 = 3;
 
 /// Last tick when terminal was updated
+/// — SableWire: Only BSP touches this (gated in handle_timer), so no SMP race.
 static mut LAST_TERMINAL_TICK: u64 = 0;
 
 /// -- BlackLatch: User fault kill callback --
@@ -1276,19 +1313,24 @@ pub unsafe fn set_terminal_tick_callback(callback: fn()) {
 ///
 /// Takes current RSP, returns RSP to restore from (may be different for context switch)
 extern "C" fn handle_timer(current_rsp: u64) -> u64 {
-    use core::ptr::{addr_of, addr_of_mut};
+    use core::ptr::addr_of;
+    use core::sync::atomic::Ordering;
 
-    // Increment tick counter
-    let current_tick = unsafe {
-        let ticks_ptr = addr_of_mut!(TIMER_TICKS);
-        *ticks_ptr += 1;
-        *ticks_ptr
+    // — SableWire: SMP-safe tick handling. Only BSP increments the global
+    // counter; APs just read it. This keeps the tick rate at the intended
+    // 100 Hz regardless of CPU count and eliminates the data-race on the
+    // old `static mut` counter.
+    let is_bsp = crate::apic::id() == 0;
+
+    let current_tick = if is_bsp {
+        TIMER_TICKS.fetch_add(1, Ordering::Relaxed) + 1
+    } else {
+        TIMER_TICKS.load(Ordering::Relaxed)
     };
 
     #[cfg(feature = "debug-timer")]
     {
-        // Log every 100 ticks to reduce spam (once per second at 100Hz)
-        if current_tick % 100 == 0 {
+        if is_bsp && current_tick % 100 == 0 {
             crate::serial_println!("[TIMER] tick={:#x} rsp={:#x}", current_tick, current_rsp);
         }
     }
@@ -1296,36 +1338,37 @@ extern "C" fn handle_timer(current_rsp: u64) -> u64 {
     // Send EOI to APIC first (before potentially long scheduler work)
     crate::apic::end_of_interrupt();
 
-    // Call terminal tick callback at ~30 FPS
-    unsafe {
-        let last_tick_ptr = addr_of_mut!(LAST_TERMINAL_TICK);
-        if current_tick.saturating_sub(*last_tick_ptr) >= TERMINAL_TICK_INTERVAL {
-            *last_tick_ptr = current_tick;
-            let cb_ptr = addr_of!(TERMINAL_TICK_CALLBACK);
-            if let Some(callback) = *cb_ptr {
-                // -- GraveShift: Throttled to 1/sec. At 30 FPS unthrottled, these
-                // blocking serial writes consumed 990 bytes/sec in ISR context.
-                #[cfg(feature = "debug-timer")]
-                {
-                    if current_tick % 100 == 0 {
-                        crate::serial_println!("[TIMER] Terminal tick callback");
+    // — SableWire: Terminal tick only on BSP. Console I/O is single-
+    // threaded; running the callback from 4 CPUs races on VT state
+    // and quadruples serial output in ISR context.
+    if is_bsp {
+        unsafe {
+            use core::ptr::addr_of_mut;
+            let last_tick_ptr = addr_of_mut!(LAST_TERMINAL_TICK);
+            if current_tick.saturating_sub(*last_tick_ptr) >= TERMINAL_TICK_INTERVAL {
+                *last_tick_ptr = current_tick;
+                let cb_ptr = addr_of!(TERMINAL_TICK_CALLBACK);
+                if let Some(callback) = *cb_ptr {
+                    #[cfg(feature = "debug-timer")]
+                    {
+                        if current_tick % 100 == 0 {
+                            crate::serial_println!("[TIMER] Terminal tick callback");
+                        }
                     }
+                    callback();
                 }
-                callback();
             }
         }
     }
 
-    // Call scheduler callback if registered
+    // Scheduler callback runs on ALL CPUs — each CPU manages its own
+    // run queue and needs preemption ticks.
     let new_rsp = unsafe {
         let cb_ptr = addr_of!(SCHEDULER_CALLBACK);
         if let Some(callback) = *cb_ptr {
-            // -- GraveShift: Throttled to 1/sec. At 4 CPUs × 100Hz unthrottled,
-            // these 400 blocking serial writes/sec (10,800 bytes/sec) alone
-            // saturated 115200 baud serial and starved all tasks of CPU time.
             #[cfg(feature = "debug-timer")]
             {
-                if current_tick % 100 == 0 {
+                if is_bsp && current_tick % 100 == 0 {
                     crate::serial_println!("[TIMER] Calling scheduler");
                 }
             }
@@ -1347,8 +1390,7 @@ extern "C" fn handle_timer(current_rsp: u64) -> u64 {
 
 /// Get current timer tick count
 pub fn ticks() -> u64 {
-    use core::ptr::addr_of;
-    unsafe { *addr_of!(TIMER_TICKS) }
+    TIMER_TICKS.load(core::sync::atomic::Ordering::Relaxed)
 }
 
 // ============================================================================

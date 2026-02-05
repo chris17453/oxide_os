@@ -685,8 +685,14 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
 
     // Set up input subsystem wake callback for blocking reads on /dev/input/eventN
+    // — GraveShift: This callback fires from keyboard/mouse ISR context.
+    // MUST use try_wake_up (non-blocking) — sched::wake_up would deadlock
+    // if the interrupted code holds the RQ spin lock.
+    fn isr_safe_wake(pid: u32) {
+        sched::try_wake_up(pid);
+    }
     unsafe {
-        input::set_wake_callback(sched::wake_up);
+        input::set_wake_callback(isr_safe_wake);
     }
     let _ = writeln!(writer, "[INFO] Input wake callback registered");
 

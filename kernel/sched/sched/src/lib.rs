@@ -160,6 +160,8 @@ pub use crate::core::{
     // Manual context switch support (for fork/exec)
     switch_to,
     this_cpu,
+    // ISR-safe wake (non-blocking, for timer interrupt)
+    try_wake_up,
     update_clock,
     update_task_exec_info,
     wake_up,

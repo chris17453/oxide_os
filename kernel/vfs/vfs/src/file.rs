@@ -117,12 +117,17 @@ impl File {
 
     // — GraveShift: raw COM1 diag when read() hits a not-readable fd
     fn serial_debug_not_readable(flag_bits: u32) {
+        // — SableWire: bounded spin — drop byte if UART FIFO is saturated
         fn write_byte(b: u8) {
+            const SPIN_LIMIT: u32 = 2048;
             unsafe {
                 let mut status: u8;
+                let mut spins: u32 = 0;
                 loop {
                     core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
                     if status & 0x20 != 0 { break; }
+                    spins += 1;
+                    if spins >= SPIN_LIMIT { return; }
                 }
                 core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
             }

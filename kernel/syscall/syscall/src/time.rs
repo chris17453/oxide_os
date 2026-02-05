@@ -82,6 +82,12 @@ fn sleep_queue_remove(pid: u32) {
 
 /// Check sleep queue and wake expired sleepers.
 /// Called from timer interrupt at 100Hz.
+///
+/// — GraveShift: This runs in ISR context. MUST NOT use blocking locks.
+/// Uses sched::try_wake_up (non-blocking) instead of sched::wake_up.
+/// If the RQ lock is contended (interrupted code holds it on this CPU),
+/// the entry stays in the queue and we retry on the next tick. This
+/// prevents the classic "ISR spins on lock held by interrupted code" deadlock.
 pub fn check_sleepers() {
     let now = get_ticks();
     for slot in &SLEEP_QUEUE {
@@ -89,13 +95,17 @@ pub fn check_sleepers() {
         if pid != 0 {
             let wake_tick = slot.wake_tick.load(Ordering::Acquire);
             if now >= wake_tick {
-                // Clear the slot first, then wake
-                if slot
-                    .pid
-                    .compare_exchange(pid, 0, Ordering::AcqRel, Ordering::Relaxed)
-                    .is_ok()
-                {
-                    // ISR-safe: timer interrupt context, no locks — SableWire
+                // — GraveShift: Try to wake FIRST (non-blocking). Only clear
+                // the slot if the wake succeeds. If the RQ lock is contended,
+                // leave the entry intact — next tick will retry. This avoids
+                // the deadlock where the timer ISR spins on a lock held by
+                // the very code it interrupted.
+                if sched::try_wake_up(pid) {
+                    // Wake succeeded — clear the slot
+                    slot.pid
+                        .compare_exchange(pid, 0, Ordering::AcqRel, Ordering::Relaxed)
+                        .ok();
+
                     #[cfg(feature = "debug-sched")]
                     unsafe {
                         os_log::write_str_raw("[SLEEP-WAKE] pid=");
@@ -131,8 +141,8 @@ pub fn check_sleepers() {
                         }
                         os_log::write_str_raw("\n");
                     }
-                    sched::wake_up(pid);
                 }
+                // If try_wake_up failed (lock contended), entry stays — retry next tick
             }
         }
     }

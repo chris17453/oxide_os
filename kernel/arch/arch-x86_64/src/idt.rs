@@ -291,6 +291,12 @@ pub unsafe fn init() {
         );
 
         // IPI handlers (Inter-Processor Interrupts)
+        // — GraveShift: reschedule IPI breaks CPUs out of hlt
+        (*idt_ptr).set_handler(
+            vector::IPI_RESCHEDULE,
+            exceptions::ipi_reschedule as *const () as u64,
+            GateType::Interrupt,
+        );
         (*idt_ptr).set_handler(
             vector::IPI_TLB_SHOOTDOWN,
             exceptions::ipi_tlb_shootdown as *const () as u64,

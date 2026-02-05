@@ -75,9 +75,17 @@ pub fn set_blocked_reader(device_id: usize, pid: u32) {
 }
 
 /// Wake up all tasks blocked waiting for input on a device
+///
+/// — GraveShift: Called from keyboard/mouse ISR context via report_event().
+/// Uses try_lock() on BLOCKED_READERS because the blocking .lock() would
+/// deadlock if the interrupted code (e.g., set_blocked_reader in a syscall)
+/// holds the same spin lock. If contended, skip — the next IRQ will retry.
 fn wake_blocked_reader(device_id: usize) {
     let pids = {
-        let mut readers = BLOCKED_READERS.lock();
+        let mut readers = match BLOCKED_READERS.try_lock() {
+            Some(guard) => guard,
+            None => return, // Lock contended — retry on next input event
+        };
         if device_id < MAX_DEVICES {
             let pids = readers[device_id].clone();
             readers[device_id].clear();
@@ -87,7 +95,7 @@ fn wake_blocked_reader(device_id: usize) {
         }
     }; // Release lock!
 
-    // Wake all waiting readers
+    // Wake all waiting readers (callback is ISR-safe try_wake_up)
     unsafe {
         if let Some(wake_fn) = WAKE_CALLBACK {
             for pid in pids {
@@ -117,13 +125,28 @@ impl InputDeviceHandle {
         }
     }
 
-    /// Push an event to the queue
+    /// Push an event to the queue (blocking — syscall context only)
     pub fn push_event(&self, event: InputEvent) {
         let mut queue = self.events.lock();
         if queue.len() >= MAX_EVENT_QUEUE {
             queue.pop_front();
         }
         queue.push_back(event);
+    }
+
+    /// Push an event to the queue (non-blocking — ISR-safe).
+    /// — GraveShift: Returns false if the event queue lock is contended.
+    /// Dropping a single input event is acceptable; deadlocking the CPU is not.
+    pub fn try_push_event(&self, event: InputEvent) -> bool {
+        if let Some(mut queue) = self.events.try_lock() {
+            if queue.len() >= MAX_EVENT_QUEUE {
+                queue.pop_front();
+            }
+            queue.push_back(event);
+            true
+        } else {
+            false
+        }
     }
 
     /// Pop an event from the queue
@@ -177,9 +200,15 @@ pub fn register_device_info(info: InputDeviceInfo) -> usize {
     register_device(device)
 }
 
-/// Get device by index
+/// Get device by index (blocking — syscall context only)
 pub fn get_device(index: usize) -> Option<Arc<InputDeviceHandle>> {
     DEVICES.lock().get(index).cloned()
+}
+
+/// Get device by index (non-blocking — ISR-safe).
+/// — GraveShift: Returns None if the device registry lock is contended.
+fn try_get_device(index: usize) -> Option<Arc<InputDeviceHandle>> {
+    DEVICES.try_lock()?.get(index).cloned()
 }
 
 /// Get all devices
@@ -187,10 +216,13 @@ pub fn devices() -> Vec<Arc<InputDeviceHandle>> {
     DEVICES.lock().clone()
 }
 
-/// Report an input event
+/// Report an input event.
+/// — GraveShift: Called from keyboard/mouse ISR context. Every lock on this
+/// path MUST be non-blocking (try_lock). If any lock is contended, drop the
+/// event — the next keystroke will succeed. A dropped event beats a dead CPU.
 pub fn report_event(device_id: usize, event: InputEvent) {
-    if let Some(handle) = get_device(device_id) {
-        handle.push_event(event);
+    if let Some(handle) = try_get_device(device_id) {
+        handle.try_push_event(event);
         debug_input!(
             "[INPUT] dev{} type={} code={} val={}",
             device_id,

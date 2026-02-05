@@ -23,21 +23,14 @@ use lockfree_ring::LockFreeRing;
 use tty::{Tty, TtyDriver};
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
-/// Write a string to COM1 serial port (debug-console only)
+/// Write a debug string to serial (debug-console only).
+/// — SableWire: delegates to os_log::write_str_raw() which calls through
+/// to the registered ISR-safe writer with bounded spin. No more inline
+/// serial port I/O duplication across crates.
 #[cfg(feature = "debug-console")]
+#[inline]
 fn dbg_serial(s: &str) {
-    for &b in s.as_bytes() {
-        unsafe {
-            let mut status: u8;
-            loop {
-                core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
-                if status & 0x20 != 0 {
-                    break;
-                }
-            }
-            core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
-        }
-    }
+    unsafe { os_log::write_str_raw(s); }
 }
 
 /// Yield callback type — called to yield CPU while waiting for input.

@@ -7,38 +7,25 @@ use spin::Mutex;
 
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
-/// — GraveShift: unconditional COM1 serial write for critical diagnostics
-/// No feature gate — if this path fires, we must see it
+/// — SableWire: delegates to os_log::write_str_raw() — bounded spin,
+/// no inline serial I/O duplication. Unconditional for critical diags.
 fn raw_serial_str(s: &[u8]) {
-    for &b in s {
-        unsafe {
-            let mut status: u8;
-            loop {
-                core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
-                if status & 0x20 != 0 {
-                    break;
-                }
-            }
-            core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
+    // Safety: write_str_raw calls the registered ISR-safe writer with bounded spin
+    unsafe {
+        if let Ok(text) = core::str::from_utf8(s) {
+            os_log::write_str_raw(text);
         }
     }
 }
 
-/// Write a string to COM1 serial port (debug-console only)
+/// Write a debug string to serial (debug-console only).
+/// — SableWire: delegates to os_log::write_str_raw() which calls through
+/// to the registered ISR-safe writer with bounded spin. No more inline
+/// serial port I/O duplication across crates.
 #[cfg(feature = "debug-console")]
+#[inline]
 fn dbg_serial(s: &str) {
-    for &b in s.as_bytes() {
-        unsafe {
-            let mut status: u8;
-            loop {
-                core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
-                if status & 0x20 != 0 {
-                    break;
-                }
-            }
-            core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
-        }
-    }
+    unsafe { os_log::write_str_raw(s); }
 }
 
 /// Strip ANSI/CSI escape sequences from output for cleaner serial debug logs
