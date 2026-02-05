@@ -250,7 +250,8 @@ pub fn wake_up(pid: Pid) {
             });
 
             if found == Some(true) {
-                // TODO: Send IPI to other_cpu to trigger reschedule
+                // NeonRoot: Kick remote CPU to reschedule immediately (don't wait for timer tick)
+                smp::ipi::send_reschedule(other_cpu);
                 break;
             }
         }
@@ -612,7 +613,30 @@ pub fn set_affinity(pid: Pid, cpuset: CpuSet) {
         });
 
         if found == Some(true) {
-            // TODO: If task can no longer run on this CPU, migrate it
+            // ThreadRogue: Eager affinity enforcement - migrate immediately if disallowed
+            if !cpuset.is_set(cpu) {
+                // Task exists on this CPU but new affinity excludes this CPU
+                // Extract the task if it's queued (not running)
+                let maybe_task = with_rq(cpu, |rq| {
+                    if rq.curr() == Some(pid) {
+                        // Current task: force reschedule so next schedule() will migrate
+                        rq.set_need_resched(true);
+                        if cpu != this_cpu() {
+                            smp::ipi::send_reschedule(cpu);
+                        }
+                        None
+                    } else {
+                        // Queued task: dequeue and extract for migration
+                        rq.dequeue_task(pid);
+                        rq.remove_task(pid)
+                    }
+                });
+
+                // Re-add task on allowed CPU (outside with_rq lock)
+                if let Some(task) = maybe_task.flatten() {
+                    add_task(task);
+                }
+            }
             break;
         }
     }

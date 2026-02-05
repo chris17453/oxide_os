@@ -1162,60 +1162,12 @@ pub fn is_initialized() -> bool {
 /// Write bytes to global terminal
 /// NOTE: data may point to user memory, so we need STAC/CLAC for SMAP
 pub fn write(data: &[u8]) {
-    // Debug: Log ALL data being sent to terminal, highlighting escape sequences
+    // ⚡ GraveShift: DISABLED debug-tty-read logging in write path
+    // Caused recursive deadlock when os_log tried to write back to terminal
+    // during terminal write. Use serial port directly if debug needed.
     #[cfg(feature = "debug-tty-read")]
     {
-        os_log::print!("[TERM-WRITE] {} bytes: ", data.len());
-
-        let mut i = 0;
-        while i < data.len() {
-            let b = data[i];
-            if b == 0x1b && i + 1 < data.len() {
-                os_log::print!("<ESC");
-                i += 1;
-
-                let mut seq = alloc::vec::Vec::new();
-                seq.push(data[i]);
-
-                if data[i] == b'[' {
-                    os_log::print!("[");
-                    i += 1;
-                    while i < data.len() && data[i] >= 0x20 && data[i] < 0x7F {
-                        seq.push(data[i]);
-                        os_log::print!("{}", data[i] as char);
-                        if (data[i] >= 0x40 && data[i] <= 0x7E) {
-                            break;
-                        }
-                        i += 1;
-                    }
-                } else if data[i] == b'?' || data[i] == b'>' {
-                    os_log::print!("{}", data[i] as char);
-                    i += 1;
-                    if i < data.len() && data[i] == b'[' {
-                        os_log::print!("[");
-                        i += 1;
-                        while i < data.len() && data[i] >= 0x20 && data[i] < 0x7F {
-                            os_log::print!("{}", data[i] as char);
-                            if (data[i] >= 0x40 && data[i] <= 0x7E) {
-                                break;
-                            }
-                            i += 1;
-                        }
-                    }
-                } else {
-                    os_log::print!("{}", data[i] as char);
-                }
-                os_log::print!("> ");
-                i += 1;
-            } else if b >= 0x20 && b < 0x7F {
-                os_log::print!("{}", b as char);
-                i += 1;
-            } else {
-                os_log::print!("<{:02x}>", b);
-                i += 1;
-            }
-        }
-        os_log::println!();
+        // Debug code removed to prevent recursive deadlock
     }
 
     // Enable access to user pages (STAC - Supervisor-Mode Access Prevention Clear)

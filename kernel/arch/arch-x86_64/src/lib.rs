@@ -805,14 +805,81 @@ pub fn read_tsc() -> u64 {
     ((hi as u64) << 32) | (lo as u64)
 }
 
-/// Get TSC frequency in Hz (estimated)
+/// Cached TSC frequency — BSP calibrates via PIT, APs reuse the value.
+/// The PIT is shared hardware (ports 0x42/0x43/0x61); concurrent access from
+/// multiple APs corrupts the calibration and produces garbage frequency measurements.
+/// — SableWire
+static CACHED_TSC_FREQUENCY: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+/// Calibrate TSC frequency using PIT reference
 ///
-/// This is a rough approximation and should be calibrated properly in production.
-/// For now, we assume a typical modern CPU frequency.
+/// Returns TSC frequency in Hz. First caller (BSP) does real PIT calibration;
+/// subsequent callers (APs) reuse cached result to avoid PIT data race.
+/// — SableWire
+pub fn calibrate_tsc() -> u64 {
+    // SableWire: Fast path — return cached result if BSP already calibrated
+    let cached = CACHED_TSC_FREQUENCY.load(core::sync::atomic::Ordering::Acquire);
+    if cached != 0 {
+        return cached;
+    }
+
+    const PIT_FREQUENCY: u32 = 1193182;
+    const CALIBRATION_MS: u32 = 10;
+
+    // Set up PIT channel 2 for calibration
+    let pit_count = (PIT_FREQUENCY / 1000) * CALIBRATION_MS;
+
+    unsafe {
+        // Set PIT to one-shot mode, channel 2
+        outb(0x61, (inb(0x61) & 0xFD) | 0x01); // Gate high, speaker off
+        outb(0x43, 0xB0); // Channel 2, lobyte/hibyte, mode 0, binary
+
+        // Set PIT count
+        outb(0x42, (pit_count & 0xFF) as u8);
+        outb(0x42, ((pit_count >> 8) & 0xFF) as u8);
+    }
+
+    // Read TSC at start
+    let tsc_start = read_tsc();
+
+    unsafe {
+        // Reset PIT gate to start counting
+        let val = inb(0x61) & 0xFE;
+        outb(0x61, val);
+        outb(0x61, val | 0x01);
+
+        // Wait for PIT output to go high (count reached zero)
+        while inb(0x61) & 0x20 == 0 {
+            core::hint::spin_loop();
+        }
+    }
+
+    // Read TSC at end
+    let tsc_end = read_tsc();
+    let tsc_elapsed = tsc_end - tsc_start;
+
+    // Calculate frequency: (ticks / milliseconds) * 1000 = ticks per second (Hz)
+    let frequency = (tsc_elapsed / CALIBRATION_MS as u64) * 1000;
+
+    // SableWire: Cache for APs — they must not touch the PIT
+    CACHED_TSC_FREQUENCY.store(frequency, core::sync::atomic::Ordering::Release);
+
+    frequency
+}
+
+/// Get TSC frequency in Hz
+///
+/// Returns calibrated frequency. Must call calibrate_tsc() first (typically from APIC init).
+/// — SableWire
 pub fn tsc_frequency() -> u64 {
-    // TODO: Calibrate properly using APIC timer or HPET
-    // For now, assume ~2.5 GHz
-    2_500_000_000
+    let freq = CACHED_TSC_FREQUENCY.load(core::sync::atomic::Ordering::Acquire);
+    if freq == 0 {
+        // GraveShift: Fallback for early boot before calibration
+        // This should only happen if tsc_frequency() called before APIC init
+        2_500_000_000
+    } else {
+        freq
+    }
 }
 
 /// Delay for a given number of milliseconds using TSC

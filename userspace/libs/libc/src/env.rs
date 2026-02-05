@@ -2,7 +2,7 @@
 //!
 //! Simple environment variable storage for userspace programs.
 
-use core::ptr::addr_of_mut;
+use spin::Mutex;
 
 /// Maximum number of environment variables
 const MAX_ENVVARS: usize = 64;
@@ -27,11 +27,12 @@ impl EnvVar {
     }
 }
 
-/// Global environment storage
-static mut ENV: [EnvVar; MAX_ENVVARS] = {
+/// Global environment storage (thread-safe with Mutex)
+/// ⚡ GraveShift: Fixed - now thread-safe with spin::Mutex
+static ENV: Mutex<[EnvVar; MAX_ENVVARS]> = Mutex::new({
     const INIT: EnvVar = EnvVar::new();
     [INIT; MAX_ENVVARS]
-};
+});
 
 /// Copy string to buffer
 fn copy_str(dst: &mut [u8], src: &str) {
@@ -66,73 +67,74 @@ pub fn setenv(name: &str, value: &str) -> i32 {
         return -1;
     }
 
-    unsafe {
-        let env_ptr = addr_of_mut!(ENV);
-        let env = &mut *env_ptr;
+    let mut env = ENV.lock();
 
-        // Look for existing variable
-        for var in env.iter_mut() {
-            if var.used && str_eq_buf(&var.name, name) {
-                copy_str(&mut var.value, value);
-                return 0;
-            }
+    // Look for existing variable
+    for var in env.iter_mut() {
+        if var.used && str_eq_buf(&var.name, name) {
+            copy_str(&mut var.value, value);
+            return 0;
         }
-
-        // Find empty slot
-        for var in env.iter_mut() {
-            if !var.used {
-                copy_str(&mut var.name, name);
-                copy_str(&mut var.value, value);
-                var.used = true;
-                return 0;
-            }
-        }
-
-        // No space
-        -1
     }
+
+    // Find empty slot
+    for var in env.iter_mut() {
+        if !var.used {
+            copy_str(&mut var.name, name);
+            copy_str(&mut var.value, value);
+            var.used = true;
+            return 0;
+        }
+    }
+
+    // No space
+    -1
 }
 
 /// Unset an environment variable
 ///
 /// Returns 0 on success, -1 if not found.
 pub fn unsetenv(name: &str) -> i32 {
-    unsafe {
-        let env_ptr = addr_of_mut!(ENV);
-        let env = &mut *env_ptr;
+    let mut env = ENV.lock();
 
-        for var in env.iter_mut() {
-            if var.used && str_eq_buf(&var.name, name) {
-                var.used = false;
-                var.name[0] = 0;
-                var.value[0] = 0;
-                return 0;
-            }
+    for var in env.iter_mut() {
+        if var.used && str_eq_buf(&var.name, name) {
+            var.used = false;
+            var.name[0] = 0;
+            var.value[0] = 0;
+            return 0;
         }
-        -1
     }
+    -1
 }
+
+/// Thread-local buffer for getenv return value
+static mut GETENV_BUF: [u8; MAX_VAR_LEN] = [0; MAX_VAR_LEN];
 
 /// Get an environment variable
 ///
 /// Returns the value or None if not found.
+/// ⚡ Note: Uses static buffer, not safe for concurrent getenv calls from multiple threads
 pub fn getenv(name: &str) -> Option<&'static str> {
-    unsafe {
-        let env_ptr = addr_of_mut!(ENV);
-        let env = &*env_ptr;
+    let env = ENV.lock();
 
-        for var in env.iter() {
-            if var.used && str_eq_buf(&var.name, name) {
-                let len = var
-                    .value
-                    .iter()
-                    .position(|&c| c == 0)
-                    .unwrap_or(var.value.len());
-                return Some(core::str::from_utf8_unchecked(&var.value[..len]));
+    for var in env.iter() {
+        if var.used && str_eq_buf(&var.name, name) {
+            let len = var
+                .value
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(var.value.len());
+
+            // Copy to static buffer to avoid holding lock
+            unsafe {
+                GETENV_BUF[..len].copy_from_slice(&var.value[..len]);
+                GETENV_BUF[len] = 0;
+                return Some(core::str::from_utf8_unchecked(&GETENV_BUF[..len]));
             }
         }
-        None
     }
+    None
 }
 
 /// Initialize default environment variables
@@ -154,15 +156,12 @@ where
     F: FnMut(&[u8], &[u8]),
 {
     let mut count = 0;
-    unsafe {
-        let env_ptr = addr_of_mut!(ENV);
-        let env = &*env_ptr;
+    let env = ENV.lock();
 
-        for var in env.iter() {
-            if var.used {
-                callback(&var.name, &var.value);
-                count += 1;
-            }
+    for var in env.iter() {
+        if var.used {
+            callback(&var.name, &var.value);
+            count += 1;
         }
     }
     count

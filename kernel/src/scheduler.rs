@@ -46,6 +46,20 @@ pub struct InterruptFrame {
     pub ss: u64,
 }
 
+/// Handle reschedule IPI from another CPU
+///
+/// Called when a remote CPU wakes a task that should run on this CPU.
+/// Sets need_resched flag so the next timer tick (or explicit schedule() call)
+/// will switch to the newly-woken task.
+/// — NeonRoot: Cross-CPU scheduler coordination
+fn handle_reschedule_ipi(_vector: u8) {
+    // NeonRoot: Mark this CPU for reschedule — next timer tick will context switch
+    sched::set_need_resched();
+
+    // Send EOI to APIC (acknowledge interrupt)
+    arch::apic::end_of_interrupt();
+}
+
 /// Idle loop - runs when no other tasks are runnable
 ///
 /// This function uses HLT to sleep the CPU until an interrupt arrives,
@@ -110,6 +124,11 @@ pub fn init() {
 
     // Add the idle task to the scheduler
     sched::add_task(idle_task);
+
+    // NeonRoot: Register reschedule IPI handler for cross-CPU wakeups
+    unsafe {
+        smp::ipi::register_handler(smp::ipi::vector::RESCHEDULE, handle_reschedule_ipi);
+    }
 }
 
 /// Add a process to the scheduler
@@ -133,10 +152,6 @@ pub fn remove_process(pid: u32) {
 /// Implements preemptive scheduling using the sched crate.
 /// Returns the RSP to restore (may be different if we switched processes).
 pub fn scheduler_tick(current_rsp: u64) -> u64 {
-    // BlackLatch: Flush buffered debug output (lock-free, non-blocking)
-    // TODO: Re-enable after fixing race condition in buffer flush
-    // crate::debug_buffer::try_flush_debug();
-
     // Check sleep queue and wake any tasks whose sleep time has expired
     syscall::time::check_sleepers();
 

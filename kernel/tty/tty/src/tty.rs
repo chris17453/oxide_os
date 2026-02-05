@@ -518,15 +518,21 @@ impl VnodeOps for Tty {
     }
 
     fn write(&self, _offset: u64, buf: &[u8]) -> VfsResult<usize> {
-        let ldisc = self.ldisc.lock();
+        // 🔥 GraveShift: Process output with lock held, then release before hardware write
+        // Holding lock during driver.write() caused deadlock with timer interrupts
+        let output = {
+            let ldisc = self.ldisc.lock();
 
-        // Pre-allocate output buffer (worst case: 2x size for \n -> \r\n expansion)
-        let mut output = Vec::with_capacity(buf.len() * 2);
+            // Pre-allocate output buffer (worst case: 2x size for \n -> \r\n expansion)
+            let mut output = Vec::with_capacity(buf.len() * 2);
 
-        // Process output through line discipline (OPTIMIZED: single pass, single allocation)
-        ldisc.process_output_bulk(buf, &mut output);
+            // Process output through line discipline (OPTIMIZED: single pass, single allocation)
+            ldisc.process_output_bulk(buf, &mut output);
 
-        // Write to hardware
+            output
+        }; // Release lock!
+
+        // Write to hardware without holding lock
         self.driver.write(&output);
 
         Ok(buf.len())

@@ -138,12 +138,14 @@ pub mod nr {
     pub const EXIT_GROUP: u64 = 231;
 
     // Firewall syscalls
-    pub const FW_ADD_RULE: u64 = 200;
-    pub const FW_DEL_RULE: u64 = 201;
-    pub const FW_LIST_RULES: u64 = 202;
-    pub const FW_SET_POLICY: u64 = 203;
-    pub const FW_FLUSH: u64 = 204;
-    pub const FW_GET_CONNTRACK: u64 = 205;
+    // NOTE: Firewall syscalls moved to 206-211 range to avoid conflict with FUTEX (202)
+    // —GraveShift: syscall numbering collision fixed, FW ops shifted to clear 202 for FUTEX
+    pub const FW_ADD_RULE: u64 = 206;
+    pub const FW_DEL_RULE: u64 = 207;
+    pub const FW_LIST_RULES: u64 = 208;
+    pub const FW_SET_POLICY: u64 = 209;
+    pub const FW_FLUSH: u64 = 210;
+    pub const FW_GET_CONNTRACK: u64 = 211;
 
     // Random number generation
     pub const GETRANDOM: u64 = 318;

@@ -596,6 +596,8 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
                 thread_group: alloc::vec![],
                 umask: 0o022,
                 program_break: 0,
+                next_mmap_addr: 0x0000_7000_0000_0000, // Threads share address space, inherit hint
+                cpu_time_ns: 0,
                 stop_signal: None,
                 continued: false,
                 tty_nr: 0, // Inherit controlling terminal (0 for now)

@@ -350,6 +350,15 @@ impl RunQueue {
                     let delta = sched_traits::TICK_NS;
                     t.update_vruntime(delta);
                     t.sum_exec_runtime += delta;
+
+                    // GraveShift: Sync authoritative scheduler accounting to ProcessMeta
+                    // Used by clock_gettime(CLOCK_PROCESS_CPUTIME_ID) and /proc/[pid]/stat
+                    if let Some(meta_arc) = t.meta.as_ref() {
+                        if let Some(mut meta) = meta_arc.try_lock() {
+                            meta.cpu_time_ns = t.sum_exec_runtime;
+                        }
+                    }
+
                     // Reset exec_start so pick_next_task's account_stop()
                     // doesn't re-count this same period.
                     t.exec_start = self.clock;

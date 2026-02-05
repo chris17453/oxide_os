@@ -10,4 +10,5 @@ os_core = { workspace = true }
 sched-traits = { workspace = true }
 arch-x86_64 = { workspace = true }
 spin = { workspace = true }
+smp = { workspace = true }
 proc = { path = "../../proc/proc" }

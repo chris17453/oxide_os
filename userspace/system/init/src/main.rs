@@ -116,8 +116,12 @@ fn main() -> i32 {
     // (reads ext4 fstab after switch, or initramfs fstab if no switch)
     mount_fstab();
 
+    printlns("[init] DEBUG: mount_fstab completed, about to load firewall rules");
+
     // Load firewall rules early in boot
     load_firewall_rules();
+
+    printlns("[init] DEBUG: load_firewall_rules completed");
 
     // Start service manager in daemon mode
     start_servicemgr();
@@ -153,9 +157,14 @@ fn mount_fstab() {
     }
 
     printlns("[init] Mounting filesystems from /etc/fstab...");
+    printlns("[init] DEBUG: A - after first printlns");
+    printlns("[init] DEBUG: A2 - about to allocate buf");
 
     let mut buf = [0u8; 2048];
+    printlns("[init] DEBUG: B - after buf allocation");
+    printlns("[init] DEBUG: About to read fstab");
     let n = read(fd, &mut buf);
+    printlns("[init] DEBUG: Read fstab completed");
     close(fd);
 
     if n <= 0 {

@@ -3,7 +3,7 @@
 //! Represents an open file with position and flags.
 
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use bitflags::bitflags;
 
@@ -76,6 +76,9 @@ pub struct File {
     /// Open flags (mutable via fcntl F_SETFL)
     /// 🔥 GraveShift: Use AtomicU32 for thread-safe flag updates (fcntl support) 🔥
     flags: AtomicU32,
+    /// Reference to mount's open file counter (for unmount safety)
+    /// WireSaint: Holds mount open while file is open, prevents premature unmount
+    mount_ref_count: Option<Arc<AtomicUsize>>,
 }
 
 impl File {
@@ -85,6 +88,25 @@ impl File {
             vnode,
             position: AtomicU64::new(0),
             flags: AtomicU32::new(flags.bits()),
+            mount_ref_count: None,
+        }
+    }
+
+    /// Create a new file handle with mount reference counting
+    /// WireSaint: Used when opening files to prevent unmounting while open
+    pub fn new_with_mount_ref(
+        vnode: Arc<dyn VnodeOps>,
+        flags: FileFlags,
+        mount_ref: Arc<AtomicUsize>,
+    ) -> Self {
+        // Increment the mount's open file counter
+        mount_ref.fetch_add(1, Ordering::Relaxed);
+
+        File {
+            vnode,
+            position: AtomicU64::new(0),
+            flags: AtomicU32::new(flags.bits()),
+            mount_ref_count: Some(mount_ref),
         }
     }
 
@@ -244,5 +266,14 @@ impl File {
     /// - Write would not block (vnode reports poll_write_ready)
     pub fn can_write(&self) -> bool {
         self.flags().writable() && self.vnode.poll_write_ready()
+    }
+}
+
+/// WireSaint: Decrement mount's open file counter when File is dropped
+impl Drop for File {
+    fn drop(&mut self) {
+        if let Some(ref counter) = self.mount_ref_count {
+            counter.fetch_sub(1, Ordering::Relaxed);
+        }
     }
 }

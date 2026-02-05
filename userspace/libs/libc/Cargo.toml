@@ -8,6 +8,7 @@ description = "Custom libc for OXIDE OS userspace"
 debug-readline = []
 
 [dependencies]
+spin = { version = "0.9", default-features = false, features = ["mutex", "spin_mutex"] }
 
 [lib]
 crate-type = ["rlib", "staticlib"]

@@ -384,8 +384,14 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
         }
     }
 
-    // Create file handle
-    let file = Arc::new(File::new(vnode, flags));
+    // Create file handle with mount reference counting
+    // WireSaint: Track open files to prevent unmounting busy filesystems
+    let file = if let Some(mount_ref) = GLOBAL_VFS.get_mount_ref_for_path(&path) {
+        Arc::new(File::new_with_mount_ref(vnode, flags, mount_ref))
+    } else {
+        // No mount found (shouldn't happen, but fallback to basic File)
+        Arc::new(File::new(vnode, flags))
+    };
 
     // CRITICAL FIX: Do everything in a single with_current_meta_mut call to avoid
     // the fd_table being modified between pre-alloc check and actual alloc!

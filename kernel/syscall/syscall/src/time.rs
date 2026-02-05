@@ -279,10 +279,13 @@ fn get_realtime() -> Timespec {
     let uptime_ns = ticks * NS_PER_TICK;
     let boot_secs = BOOT_TIME_SECS.load(Ordering::SeqCst);
 
-    let total_ns = (boot_secs * 1_000_000_000) + uptime_ns;
+    // ⚡ GraveShift: Avoid overflow by computing seconds and nanoseconds separately
+    let uptime_secs = uptime_ns / 1_000_000_000;
+    let uptime_nsec_remainder = uptime_ns % 1_000_000_000;
+
     Timespec {
-        tv_sec: (total_ns / 1_000_000_000) as i64,
-        tv_nsec: (total_ns % 1_000_000_000) as i64,
+        tv_sec: (boot_secs + uptime_secs) as i64,
+        tv_nsec: uptime_nsec_remainder as i64,
     }
 }
 
@@ -302,9 +305,15 @@ pub fn sys_clock_gettime(clock_id: i32, tp_ptr: usize) -> i64 {
             get_monotonic_time()
         }
         clock::PROCESS_CPUTIME_ID | clock::THREAD_CPUTIME_ID => {
-            // TODO: Track per-process/thread CPU time
-            // For now, return monotonic time
-            get_monotonic_time()
+            // ⚡ GraveShift: Return actual per-process CPU time from ProcessMeta
+            crate::with_current_meta(|meta| {
+                let cpu_ns = meta.cpu_time_ns;
+                Timespec {
+                    tv_sec: (cpu_ns / 1_000_000_000) as i64,
+                    tv_nsec: (cpu_ns % 1_000_000_000) as i64,
+                }
+            })
+            .unwrap_or_else(|| get_monotonic_time())
         }
         _ => return errno::EINVAL,
     };
@@ -593,6 +602,14 @@ pub fn sys_clock_nanosleep(clock_id: i32, flags: i32, req_ptr: usize, rem_ptr: u
                 core::arch::asm!("sti", "hlt", options(nomem, nostack));
             }
             arch::disallow_kernel_preempt();
+
+            // ⚡ GraveShift: POSIX requires checking for signals in TIMER_ABSTIME mode
+            // If interrupted by signal, return EINTR (absolute time doesn't use rem_ptr)
+            let has_signals = crate::with_current_meta(|meta| meta.has_pending_signals())
+                .unwrap_or(false);
+            if has_signals {
+                return errno::EINTR;
+            }
         }
 
         0

@@ -118,6 +118,14 @@ pub struct ProcessMeta {
     /// 🔥 GraveShift: Classic UNIX heap management 🔥
     pub program_break: u64,
 
+    /// Next mmap hint address (per-process mmap allocator)
+    /// ⚡ GraveShift: Fixed - was global, now per-process to avoid mmap collisions
+    pub next_mmap_addr: u64,
+
+    /// CPU time accumulated (nanoseconds)
+    /// Updated by scheduler on context switch
+    pub cpu_time_ns: u64,
+
     /// Signal number that stopped this process (for waitpid WIFSTOPPED)
     /// None = not stopped, Some(sig) = stopped by this signal
     /// — ThreadRogue: freeze-frame state for job control
@@ -164,6 +172,8 @@ impl ProcessMeta {
             thread_group: Vec::new(),
             umask: 0o022,
             program_break: 0x600000, // Initial heap start (after typical program load area)
+            next_mmap_addr: 0x0000_7000_0000_0000, // Initial mmap hint address
+            cpu_time_ns: 0,
             stop_signal: None,
             continued: false,
             tty_nr: 0, // No controlling terminal by default
@@ -202,6 +212,8 @@ impl ProcessMeta {
             thread_group: Vec::new(),
             umask: 0o022,
             program_break: 0x600000, // Initial heap start (after typical program load area)
+            next_mmap_addr: 0x0000_7000_0000_0000, // Initial mmap hint address
+            cpu_time_ns: 0,
             stop_signal: None,
             continued: false,
             tty_nr: 0, // No controlling terminal by default
@@ -237,6 +249,8 @@ impl ProcessMeta {
             thread_group: Vec::new(),
             umask: self.umask,
             program_break: self.program_break, // Inherit parent's program break
+            next_mmap_addr: self.next_mmap_addr, // Inherit parent's mmap hint
+            cpu_time_ns: 0, // Child starts with 0 CPU time
             stop_signal: None,
             continued: false,
             tty_nr: self.tty_nr, // Inherit controlling terminal

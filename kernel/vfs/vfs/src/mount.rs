@@ -6,6 +6,7 @@ use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;
 
 use crate::error::{VfsError, VfsResult};
@@ -67,6 +68,9 @@ pub struct Mount {
     flags: MountFlags,
     /// Filesystem type name
     fs_type: String,
+    /// Open file count - prevents unmount while files are open
+    /// WireSaint: Reference counting for unmount safety
+    open_file_count: Arc<AtomicUsize>,
 }
 
 impl Mount {
@@ -82,6 +86,7 @@ impl Mount {
             mount_point,
             flags,
             fs_type,
+            open_file_count: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -108,6 +113,27 @@ impl Mount {
     /// Is this mount read-only?
     pub fn is_readonly(&self) -> bool {
         self.flags.contains(MountFlags::MS_RDONLY)
+    }
+
+    /// Get reference to open file counter for tracking
+    /// WireSaint: Used by sys_open/sys_close to prevent premature unmount
+    pub fn open_file_counter(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.open_file_count)
+    }
+
+    /// Increment open file count
+    pub fn inc_open_files(&self) {
+        self.open_file_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Decrement open file count
+    pub fn dec_open_files(&self) {
+        self.open_file_count.fetch_sub(1, Ordering::Relaxed);
+    }
+
+    /// Get current open file count
+    pub fn open_files(&self) -> usize {
+        self.open_file_count.load(Ordering::Relaxed)
     }
 }
 
@@ -159,6 +185,18 @@ impl VFS {
             return Err(VfsError::Busy);
         }
 
+        // WireSaint: Check if any files are open on this mount before unmounting
+        {
+            let mounts = self.mounts.read();
+            if let Some(mount) = mounts.get(mount_point) {
+                let open_count = mount.open_files();
+                if open_count > 0 {
+                    // Device or resource busy - files still open
+                    return Err(VfsError::Busy);
+                }
+            }
+        }
+
         let mut mounts = self.mounts.write();
         mounts.remove(mount_point).ok_or(VfsError::NotFound)?;
         Ok(())
@@ -193,6 +231,15 @@ impl VFS {
             };
             (mount.clone(), remaining)
         })
+    }
+
+    /// Get the mount reference counter for a path (for open file tracking)
+    /// WireSaint: Used by sys_open to increment mount's open file count
+    pub fn get_mount_ref_for_path(&self, path: &str) -> Option<Arc<AtomicUsize>> {
+        let normalized = Path::new(path).normalize();
+        let path_str = normalized.to_string();
+        let (mount, _remaining) = self.find_mount(&path_str)?;
+        Some(mount.open_file_counter())
     }
 
     /// Resolve a path to a vnode

@@ -321,6 +321,11 @@ pub fn init() {
 
     crate::serial_println!("[APIC] Initialized, ID: {}, Version: {}", id(), version());
 
+    // SableWire: Calibrate TSC frequency using PIT (BSP only, APs reuse cached value)
+    // Must happen after PIC disabled to avoid interference
+    let tsc_freq = crate::calibrate_tsc();
+    crate::serial_println!("[APIC] TSC calibrated: {} Hz (~{} MHz)", tsc_freq, tsc_freq / 1_000_000);
+
     // Initialize IOAPIC for legacy IRQs
     init_ioapic();
 }

@@ -228,12 +228,14 @@ pub mod nr {
     pub const GETSOCKOPT: u64 = 83;
 
     // Firewall syscalls
-    pub const FW_ADD_RULE: u64 = 200;
-    pub const FW_DEL_RULE: u64 = 201;
-    pub const FW_LIST_RULES: u64 = 202;
-    pub const FW_SET_POLICY: u64 = 203;
-    pub const FW_FLUSH: u64 = 204;
-    pub const FW_GET_CONNTRACK: u64 = 205;
+    // NOTE: 202 was previously used here but conflicts with FUTEX - moved to 206-211 range
+    // —GraveShift: syscall numbering collision fixed, FW ops shifted to clear 202 for FUTEX
+    pub const FW_ADD_RULE: u64 = 206;
+    pub const FW_DEL_RULE: u64 = 207;
+    pub const FW_LIST_RULES: u64 = 208;
+    pub const FW_SET_POLICY: u64 = 209;
+    pub const FW_FLUSH: u64 = 210;
+    pub const FW_GET_CONNTRACK: u64 = 211;
 
     // Random number generation
     pub const GETRANDOM: u64 = 318;
@@ -1047,6 +1049,11 @@ fn syscall_name(num: u64) -> &'static str {
         nr::EPOLL_WAIT => "epoll_wait",
         nr::EVENTFD2 => "eventfd2",
 
+        // Filesystem operations
+        nr::MOUNT => "mount",
+        nr::UMOUNT => "umount",
+        nr::PIVOT_ROOT => "pivot_root",
+
         _ => "unknown",
     }
 }
@@ -1456,11 +1463,8 @@ fn sys_waitpid(pid: i32, status_ptr: u64, options: i32) -> i64 {
 fn sys_getpid() -> i64 {
     // ThreadRogue: Return TGID (thread group ID), not TID
     // For threads, all threads in the group share the same TGID
-    if let Some(meta) = get_current_meta() {
-        meta.lock().tgid as i64
-    } else {
-        current_pid() as i64
-    }
+    // ⚡ GraveShift: Use with_current_meta to avoid deadlock on meta.lock()
+    with_current_meta(|meta| meta.tgid as i64).unwrap_or_else(|| current_pid() as i64)
 }
 
 /// sys_getppid - Get parent process ID
@@ -1576,8 +1580,8 @@ fn sys_getegid() -> i64 {
 /// # Arguments
 /// * `uid` - New user ID
 fn sys_setuid(uid: u32) -> i64 {
-    if let Some(meta) = get_current_meta() {
-        let mut m = meta.lock();
+    // ⚡ GraveShift: Use with_current_meta_mut to avoid deadlock on meta.lock()
+    with_current_meta_mut(|m| {
         let creds = m.credentials;
 
         // If effective UID is 0 (root), set all UIDs
@@ -1601,9 +1605,8 @@ fn sys_setuid(uid: u32) -> i64 {
         } else {
             errno::EPERM
         }
-    } else {
-        errno::ESRCH
-    }
+    })
+    .unwrap_or(errno::ESRCH)
 }
 
 /// sys_setgid - Set group ID
@@ -1611,8 +1614,8 @@ fn sys_setuid(uid: u32) -> i64 {
 /// # Arguments
 /// * `gid` - New group ID
 fn sys_setgid(gid: u32) -> i64 {
-    if let Some(meta) = get_current_meta() {
-        let mut m = meta.lock();
+    // ⚡ GraveShift: Use with_current_meta_mut to avoid deadlock on meta.lock()
+    with_current_meta_mut(|m| {
         let creds = m.credentials;
 
         // If effective UID is 0 (root), set all GIDs
@@ -1636,9 +1639,8 @@ fn sys_setgid(gid: u32) -> i64 {
         } else {
             errno::EPERM
         }
-    } else {
-        errno::ESRCH
-    }
+    })
+    .unwrap_or(errno::ESRCH)
 }
 
 /// sys_seteuid - Set effective user ID only
@@ -1646,8 +1648,8 @@ fn sys_setgid(gid: u32) -> i64 {
 /// # Arguments
 /// * `euid` - New effective user ID
 fn sys_seteuid(euid: u32) -> i64 {
-    if let Some(meta) = get_current_meta() {
-        let mut m = meta.lock();
+    // ⚡ GraveShift: Use with_current_meta_mut to avoid deadlock on meta.lock()
+    with_current_meta_mut(|m| {
         let creds = m.credentials;
 
         // Root can set euid to any value
@@ -1663,9 +1665,8 @@ fn sys_seteuid(euid: u32) -> i64 {
         } else {
             errno::EPERM
         }
-    } else {
-        errno::ESRCH
-    }
+    })
+    .unwrap_or(errno::ESRCH)
 }
 
 /// sys_setegid - Set effective group ID only
@@ -1673,8 +1674,8 @@ fn sys_seteuid(euid: u32) -> i64 {
 /// # Arguments
 /// * `egid` - New effective group ID
 fn sys_setegid(egid: u32) -> i64 {
-    if let Some(meta) = get_current_meta() {
-        let mut m = meta.lock();
+    // ⚡ GraveShift: Use with_current_meta_mut to avoid deadlock on meta.lock()
+    with_current_meta_mut(|m| {
         let creds = m.credentials;
 
         // Root can set egid to any value
@@ -1690,9 +1691,8 @@ fn sys_setegid(egid: u32) -> i64 {
         } else {
             errno::EPERM
         }
-    } else {
-        errno::ESRCH
-    }
+    })
+    .unwrap_or(errno::ESRCH)
 }
 
 // ============================================================================
@@ -2107,9 +2107,8 @@ mod timer {
 /// # Returns
 /// Seconds remaining from previous alarm, or 0
 fn sys_alarm(seconds: u32) -> i64 {
-    if let Some(meta) = get_current_meta() {
-        let mut m = meta.lock();
-
+    // ⚡ GraveShift: Use with_current_meta_mut to avoid deadlock on meta.lock()
+    with_current_meta_mut(|m| {
         // Get remaining time from previous alarm
         let remaining = m.alarm_remaining;
 
@@ -2122,9 +2121,8 @@ fn sys_alarm(seconds: u32) -> i64 {
         }
 
         remaining as i64
-    } else {
-        0
-    }
+    })
+    .unwrap_or(0)
 }
 
 /// Interval timer structure (matches userspace struct itimerval)
@@ -2645,12 +2643,12 @@ fn sys_set_tid_address(tidptr: u64) -> i64 {
         return errno::EFAULT;
     }
 
-    if let Some(meta) = get_current_meta() {
-        meta.lock().clear_child_tid = tidptr;
+    // ⚡ GraveShift: Use with_current_meta_mut to avoid deadlock on meta.lock()
+    with_current_meta_mut(|m| {
+        m.clear_child_tid = tidptr;
         current_pid() as i64
-    } else {
-        errno::ESRCH
-    }
+    })
+    .unwrap_or(errno::ESRCH)
 }
 
 /// sys_exit_group - Exit all threads in the current thread group

@@ -32,9 +32,7 @@ pub mod flags {
 const MMAP_MIN_ADDR: u64 = 0x0000_1000;
 const MMAP_MAX_ADDR: u64 = 0x0000_7FFF_FFFF_F000;
 
-/// Next mmap hint address (simple bump allocator)
-/// In a real implementation, this would be per-process
-static NEXT_MMAP_ADDR: spin::Mutex<u64> = spin::Mutex::new(0x0000_7000_0000_0000);
+/// ⚡ GraveShift: FIXED - Removed global NEXT_MMAP_ADDR, now per-process in ProcessMeta
 
 /// sys_mmap - Map memory
 ///
@@ -463,21 +461,23 @@ pub fn sys_brk(addr: u64) -> i64 {
 
 /// Helper: Allocate an mmap address from the pool
 fn allocate_mmap_addr(length: u64) -> Result<u64, i64> {
-    let mut next = NEXT_MMAP_ADDR.lock();
-
-    let addr = *next;
-    if addr + length > MMAP_MAX_ADDR {
-        // Wrap around
-        *next = MMAP_MIN_ADDR;
-        if MMAP_MIN_ADDR + length > MMAP_MAX_ADDR {
-            return Err(errno::ENOMEM);
+    // ⚡ GraveShift: Use per-process mmap hint instead of global
+    crate::with_current_meta_mut(|meta| {
+        let addr = meta.next_mmap_addr;
+        if addr + length > MMAP_MAX_ADDR {
+            // Wrap around
+            meta.next_mmap_addr = MMAP_MIN_ADDR;
+            if MMAP_MIN_ADDR + length > MMAP_MAX_ADDR {
+                return Err(errno::ENOMEM);
+            }
+            meta.next_mmap_addr = MMAP_MIN_ADDR + length;
+            return Ok(MMAP_MIN_ADDR);
         }
-        *next = MMAP_MIN_ADDR + length;
-        return Ok(MMAP_MIN_ADDR);
-    }
 
-    *next = addr + length;
-    Ok(addr)
+        meta.next_mmap_addr = addr + length;
+        Ok(addr)
+    })
+    .unwrap_or(Err(errno::ESRCH))
 }
 
 /// Helper: Convert protection flags to MemoryFlags
