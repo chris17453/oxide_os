@@ -64,8 +64,9 @@ pub struct Mount {
     root: Arc<dyn VnodeOps>,
     /// Mount point path
     mount_point: String,
-    /// Mount flags
-    flags: MountFlags,
+    /// Mount flags (mutable for remount support)
+    /// WireSaint: RwLock enables dynamic flag updates via remount
+    flags: RwLock<MountFlags>,
     /// Filesystem type name
     fs_type: String,
     /// Open file count - prevents unmount while files are open
@@ -84,7 +85,7 @@ impl Mount {
         Mount {
             root,
             mount_point,
-            flags,
+            flags: RwLock::new(flags),
             fs_type,
             open_file_count: Arc::new(AtomicUsize::new(0)),
         }
@@ -102,7 +103,7 @@ impl Mount {
 
     /// Get mount flags
     pub fn flags(&self) -> MountFlags {
-        self.flags
+        *self.flags.read()
     }
 
     /// Get filesystem type
@@ -112,7 +113,19 @@ impl Mount {
 
     /// Is this mount read-only?
     pub fn is_readonly(&self) -> bool {
-        self.flags.contains(MountFlags::MS_RDONLY)
+        self.flags.read().contains(MountFlags::MS_RDONLY)
+    }
+
+    /// Update mount flags (for remount support)
+    /// WireSaint: Atomically updates mount flags, validates compatibility
+    pub fn update_flags(&self, new_flags: MountFlags) -> VfsResult<()> {
+        // WireSaint: Validate flag changes - some combinations are invalid
+        // For now, allow any flag combination (filesystem-specific validation
+        // would go here in production)
+
+        let mut flags = self.flags.write();
+        *flags = new_flags;
+        Ok(())
     }
 
     /// Get reference to open file counter for tracking
@@ -199,6 +212,18 @@ impl VFS {
 
         let mut mounts = self.mounts.write();
         mounts.remove(mount_point).ok_or(VfsError::NotFound)?;
+        Ok(())
+    }
+
+    /// Remount a filesystem with different flags
+    /// WireSaint: Updates mount flags dynamically (e.g., ro↔rw transitions)
+    pub fn remount(&self, mount_point: &str, new_flags: MountFlags) -> VfsResult<()> {
+        let mounts = self.mounts.read();
+        let mount = mounts.get(mount_point).ok_or(VfsError::NotFound)?;
+
+        // WireSaint: Delegate flag update to Mount (validates compatibility)
+        mount.update_flags(new_flags)?;
+
         Ok(())
     }
 

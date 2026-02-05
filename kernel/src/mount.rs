@@ -8,7 +8,7 @@ use devfs::DevFs;
 use fat32::Fat32;
 use procfs::ProcFs;
 use tmpfs::TmpDir;
-use vfs::{MountFlags, mount::GLOBAL_VFS};
+use vfs::{MountFlags, VfsError, mount::GLOBAL_VFS};
 
 /// Wrapper for static block device references to implement BlockDevice
 ///
@@ -108,19 +108,15 @@ pub fn kernel_mount(source: &str, target: &str, fstype: &str, flags: u32) -> i64
 }
 
 /// Handle remount operation
-fn handle_remount(target: &str, _flags: MountFlags) -> i64 {
-    use alloc::string::ToString;
-
-    // Check if mount exists
-    let mounts = GLOBAL_VFS.mounts();
-    if !mounts.contains(&target.to_string()) {
-        return errno::EINVAL;
+fn handle_remount(target: &str, flags: MountFlags) -> i64 {
+    // WireSaint: Update mount flags dynamically (e.g., ro↔rw transitions)
+    match GLOBAL_VFS.remount(target, flags) {
+        Ok(()) => 0,
+        Err(VfsError::NotFound) => errno::ENOENT,
+        Err(VfsError::InvalidArgument) => errno::EINVAL,
+        Err(VfsError::Busy) => errno::EBUSY,
+        Err(_) => errno::EIO,
     }
-
-    // TODO: Implement full remount support
-    // For now, just return success - the mount exists
-    // A full implementation would update the mount flags
-    0
 }
 
 /// Mount an ext4 filesystem
