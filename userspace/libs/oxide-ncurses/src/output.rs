@@ -13,6 +13,10 @@ pub fn addch(ch: chtype) -> Result<()> {
 }
 
 /// Add a character to a window
+/// — NeonVale: Merges the window's current attributes (set by wattron/wattroff)
+/// into each character. Without this, colors and bold/reverse/etc are ignored.
+/// Standard ncurses behavior: char attrs OR'd with window attrs; window color
+/// pair used when char has no explicit color.
 pub fn waddch(win: WINDOW, ch: chtype) -> Result<()> {
     if win.is_null() {
         return Err(Error::Err);
@@ -21,7 +25,23 @@ pub fn waddch(win: WINDOW, ch: chtype) -> Result<()> {
     unsafe {
         let y = (*win).cur_y;
         let x = (*win).cur_x;
-        (*win).set_cell(y, x, ch)?;
+
+        // Merge window attributes into the character
+        let win_attr = (*win).attrs;
+        let merged_attr = if ch.attr == attrs::A_NORMAL {
+            // Character has no explicit attrs — use window attrs entirely
+            win_attr
+        } else {
+            // Character has explicit attrs — OR them together, but for color
+            // pair the character's takes precedence if set
+            let ch_color = ch.attr & attrs::A_COLOR;
+            let win_color = win_attr & attrs::A_COLOR;
+            let text_attrs = (ch.attr | win_attr) & !attrs::A_COLOR;
+            let color = if ch_color != 0 { ch_color } else { win_color };
+            text_attrs | color
+        };
+        let merged = chtype { ch: ch.ch, attr: merged_attr };
+        (*win).set_cell(y, x, merged)?;
 
         // Advance cursor
         (*win).cur_x += 1;

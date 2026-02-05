@@ -106,12 +106,19 @@ pub fn wgetch(win: WINDOW) -> i32 {
                 0x09 => '\t' as i32, // Tab
                 0x7F => keys::KEY_BACKSPACE,
                 0x1B => {
-                    // ESC received - try to read more for escape sequence
-                    // If nothing follows, return ESC (27)
+                    // — InputShade: ESC received. Could be raw ESC or start of
+                    // an escape sequence (CSI, SS3). Use poll with short timeout
+                    // to check — if no follow-up byte arrives, it's a raw ESC.
+                    // Without this timeout, read() blocks forever on bare ESC.
                     let mut next = [0u8; 1];
+                    let mut pfd = libc::poll::PollFd::new(0, libc::poll::events::POLLIN);
+                    let ready = libc::poll::poll(core::slice::from_mut(&mut pfd), 50);
+                    if ready <= 0 {
+                        27 // Raw ESC — no follow-up within 50ms
+                    } else {
                     let n2 = libc::unistd::read(0, &mut next);
                     if n2 <= 0 {
-                        27 // Raw ESC
+                        27 // Read failed
                     } else {
                         // Feed through parser
                         let action2 = state.parser.advance(next[0]);
@@ -137,6 +144,7 @@ pub fn wgetch(win: WINDOW) -> i32 {
                             }
                             _ => 27,
                         }
+                    }
                     }
                 }
                 _ => b as i32,
@@ -179,10 +187,19 @@ pub fn wgetch(win: WINDOW) -> i32 {
 }
 
 /// Read remaining bytes of an escape sequence from stdin
-/// -- InputShade: Continue reading until VTE parser emits an action
+/// — InputShade: Continue reading until VTE parser emits an action.
+/// Uses poll() with short timeout so partial/broken sequences don't
+/// block forever. If no byte arrives within 50ms, abandon the sequence.
 fn read_escape_sequence(state: &mut InputState, keypad: bool) -> i32 {
     let mut attempts = 0;
     loop {
+        // Check if more data is available before blocking
+        let mut pfd = libc::poll::PollFd::new(0, libc::poll::events::POLLIN);
+        let ready = libc::poll::poll(core::slice::from_mut(&mut pfd), 50);
+        if ready <= 0 {
+            return -1; // Timeout — incomplete escape sequence
+        }
+
         let mut byte = [0u8; 1];
         let n = libc::unistd::read(0, &mut byte);
         if n <= 0 || attempts > 16 {
