@@ -595,6 +595,27 @@ impl TerminalEmulator {
                     }
                 }
 
+                // OSC 7 ; file://host/path - Set current working directory
+                // -- NightDoc: Track shell CWD for intelligent tools
+                7 => {
+                    // Format: OSC 7 ; file://hostname/path ST
+                    // Shell integration - track current directory
+                    // Used by terminal emulators to open new tabs/windows in same dir
+                    #[cfg(feature = "debug-terminal")]
+                    os_log::println!("[TERM-OSC] Set CWD: {}", params);
+                    // We don't store this yet, but acknowledge it
+                }
+
+                // OSC 8 ; params ; URI - Hyperlink
+                // -- NightDoc: Clickable links in terminal output
+                8 => {
+                    // Format: OSC 8 ; id=xxx ; URI ST text OSC 8 ;; ST
+                    // Hyperlinks in terminal - tmux/editors use this
+                    // We acknowledge but don't render differently yet
+                    #[cfg(feature = "debug-terminal")]
+                    os_log::println!("[TERM-OSC] Hyperlink: {}", params);
+                }
+
                 // OSC 104 ; index - Reset ANSI color (or all if no index)
                 104 => {
                     if params.is_empty() {

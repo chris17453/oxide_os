@@ -477,6 +477,21 @@ impl Ps2Keyboard {
                     input::KEY_F10 => Some(b"\x1b[21~"),
                     input::KEY_F11 => Some(b"\x1b[23~"),
                     input::KEY_F12 => Some(b"\x1b[24~"),
+                    // F13-F24 keys for advanced terminal applications
+                    // -- ByteRiot: Extended function keys for power users
+                    input::KEY_F13 => Some(b"\x1b[25~"),
+                    input::KEY_F14 => Some(b"\x1b[26~"),
+                    input::KEY_F15 => Some(b"\x1b[28~"),
+                    input::KEY_F16 => Some(b"\x1b[29~"),
+                    input::KEY_F17 => Some(b"\x1b[31~"),
+                    input::KEY_F18 => Some(b"\x1b[32~"),
+                    input::KEY_F19 => Some(b"\x1b[33~"),
+                    input::KEY_F20 => Some(b"\x1b[34~"),
+                    // F21-F24 use modified sequences
+                    input::KEY_F21 => Some(b"\x1b[23;2~"), // Shift+F11
+                    input::KEY_F22 => Some(b"\x1b[24;2~"), // Shift+F12
+                    input::KEY_F23 => Some(b"\x1b[25;2~"), // Shift+F13
+                    input::KEY_F24 => Some(b"\x1b[26;2~"), // Shift+F14
                     input::KEY_ESC => Some(b"\x1b"),
                     _ => None,
                 };
