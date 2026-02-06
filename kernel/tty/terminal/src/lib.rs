@@ -123,6 +123,19 @@ pub struct TerminalEmulator {
     custom_cursor: Option<Color>,
     /// Clipboard storage (OSC 52)
     clipboard: String,
+    /// Mouse selection state
+    selection: Option<Selection>,
+}
+
+/// Mouse text selection
+#[derive(Debug, Clone, Copy)]
+struct Selection {
+    /// Selection start (col, row) in terminal coordinates
+    start: (u32, u32),
+    /// Selection end (col, row) in terminal coordinates
+    end: (u32, u32),
+    /// Whether selection is active (mouse still pressed)
+    active: bool,
 }
 
 impl TerminalEmulator {
@@ -163,6 +176,7 @@ impl TerminalEmulator {
             custom_bg: None,
             custom_cursor: None,
             clipboard: String::new(),
+            selection: None,
         }
     }
 
@@ -1197,6 +1211,129 @@ impl TerminalEmulator {
         }
     }
 
+    /// Start text selection at pixel coordinates
+    ///
+    /// Called when left mouse button is pressed without modifiers.
+    /// Converts pixel coordinates to cell coordinates. — InputShade
+    pub fn start_selection(&mut self, x_px: i32, y_px: i32) {
+        let col = if self.cell_width > 0 {
+            (x_px as u32 / self.cell_width).min(self.cols - 1)
+        } else {
+            0
+        };
+        let row = if self.cell_height > 0 {
+            (y_px as u32 / self.cell_height).min(self.rows - 1)
+        } else {
+            0
+        };
+
+        self.selection = Some(Selection {
+            start: (col, row),
+            end: (col, row),
+            active: true,
+        });
+
+        // Mark dirty to show selection highlight
+        self.renderer.mark_all_dirty();
+    }
+
+    /// Update selection end point during mouse drag
+    ///
+    /// Called on mouse motion while button is held. — InputShade
+    pub fn update_selection(&mut self, x_px: i32, y_px: i32) {
+        if let Some(ref mut sel) = self.selection {
+            if !sel.active {
+                return;
+            }
+
+            let col = if self.cell_width > 0 {
+                (x_px as u32 / self.cell_width).min(self.cols - 1)
+            } else {
+                0
+            };
+            let row = if self.cell_height > 0 {
+                (y_px as u32 / self.cell_height).min(self.rows - 1)
+            } else {
+                0
+            };
+
+            sel.end = (col, row);
+            self.renderer.mark_all_dirty();
+        }
+    }
+
+    /// Finish selection and copy to clipboard
+    ///
+    /// Called when left mouse button is released. Extracts selected text
+    /// and stores in clipboard. — InputShade
+    pub fn finish_selection(&mut self) {
+        if let Some(ref mut sel) = self.selection {
+            sel.active = false;
+
+            // Extract selected text
+            let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
+            let buffer = if is_alt {
+                &self.alternate
+            } else {
+                &self.primary
+            };
+
+            let (start_col, start_row) = sel.start;
+            let (end_col, end_row) = sel.end;
+
+            // Normalize selection (ensure start <= end)
+            let ((c1, r1), (c2, r2)) = if start_row < end_row
+                || (start_row == end_row && start_col <= end_col)
+            {
+                ((start_col, start_row), (end_col, end_row))
+            } else {
+                ((end_col, end_row), (start_col, start_row))
+            };
+
+            let mut text = String::new();
+            for row in r1..=r2 {
+                if row >= self.rows {
+                    break;
+                }
+                let start = if row == r1 { c1 } else { 0 };
+                let end = if row == r2 { c2 + 1 } else { self.cols };
+
+                for col in start..end {
+                    if col >= self.cols {
+                        break;
+                    }
+                    if let Some(cell) = buffer.get(row, col) {
+                        text.push(cell.ch);
+                    }
+                }
+                // Add newline between rows (except last)
+                if row < r2 {
+                    text.push('\n');
+                }
+            }
+
+            self.clipboard = text;
+            self.renderer.mark_all_dirty();
+        }
+    }
+
+    /// Clear selection
+    ///
+    /// Called on any terminal write or when user clicks without dragging. — InputShade
+    pub fn clear_selection(&mut self) {
+        if self.selection.is_some() {
+            self.selection = None;
+            self.renderer.mark_all_dirty();
+        }
+    }
+
+    /// Paste from clipboard
+    ///
+    /// Returns the clipboard content as bytes to be injected as input. — InputShade
+    pub fn paste_clipboard(&self) -> Vec<u8> {
+        self.clipboard.as_bytes().to_vec()
+    }
+
     /// Render terminal to framebuffer
     pub fn render(&mut self) {
         // Reset scroll offset when content changes
@@ -1614,4 +1751,105 @@ pub fn enable() {
         terminal.renderer.invalidate();
         terminal.render();
     }
+}
+
+/// Scroll terminal view up (towards history) by N lines
+///
+/// Called from terminal_tick on mouse wheel events. Uses try_lock
+/// to avoid deadlock in ISR context. — NeonRoot
+pub fn scroll_up(lines: usize) {
+    if let Some(mut guard) = TERMINAL.try_lock() {
+        if let Some(ref mut terminal) = *guard {
+            terminal.scroll_view_up(lines);
+        }
+    } else {
+        #[cfg(feature = "debug-lock")]
+        lock_contention_warning("TERMINAL (scroll_up)");
+    }
+}
+
+/// Scroll terminal view down (towards current) by N lines
+///
+/// Called from terminal_tick on mouse wheel events. Uses try_lock
+/// to avoid deadlock in ISR context. — NeonRoot
+pub fn scroll_down(lines: usize) {
+    if let Some(mut guard) = TERMINAL.try_lock() {
+        if let Some(ref mut terminal) = *guard {
+            terminal.scroll_view_down(lines);
+        }
+    } else {
+        #[cfg(feature = "debug-lock")]
+        lock_contention_warning("TERMINAL (scroll_down)");
+    }
+}
+
+/// Start text selection at pixel coordinates
+///
+/// Called from terminal_tick when left mouse button pressed. — InputShade
+pub fn start_selection(x_px: i32, y_px: i32) {
+    if let Some(mut guard) = TERMINAL.try_lock() {
+        if let Some(ref mut terminal) = *guard {
+            terminal.start_selection(x_px, y_px);
+        }
+    } else {
+        #[cfg(feature = "debug-lock")]
+        lock_contention_warning("TERMINAL (start_selection)");
+    }
+}
+
+/// Update selection during mouse drag
+///
+/// Called from terminal_tick on mouse motion with button held. — InputShade
+pub fn update_selection(x_px: i32, y_px: i32) {
+    if let Some(mut guard) = TERMINAL.try_lock() {
+        if let Some(ref mut terminal) = *guard {
+            terminal.update_selection(x_px, y_px);
+        }
+    } else {
+        #[cfg(feature = "debug-lock")]
+        lock_contention_warning("TERMINAL (update_selection)");
+    }
+}
+
+/// Finish selection and copy to clipboard
+///
+/// Called from terminal_tick when left mouse button released. — InputShade
+pub fn finish_selection() {
+    if let Some(mut guard) = TERMINAL.try_lock() {
+        if let Some(ref mut terminal) = *guard {
+            terminal.finish_selection();
+        }
+    } else {
+        #[cfg(feature = "debug-lock")]
+        lock_contention_warning("TERMINAL (finish_selection)");
+    }
+}
+
+/// Clear current selection
+///
+/// Called when terminal output occurs or user clicks without dragging. — InputShade
+pub fn clear_selection() {
+    if let Some(mut guard) = TERMINAL.try_lock() {
+        if let Some(ref mut terminal) = *guard {
+            terminal.clear_selection();
+        }
+    } else {
+        #[cfg(feature = "debug-lock")]
+        lock_contention_warning("TERMINAL (clear_selection)");
+    }
+}
+
+/// Paste clipboard content as input
+///
+/// Called from terminal_tick on middle-click or Shift+Insert. — InputShade
+pub fn paste_clipboard() -> Vec<u8> {
+    if let Some(guard) = TERMINAL.try_lock() {
+        if let Some(ref terminal) = *guard {
+            return terminal.paste_clipboard();
+        }
+    } else {
+        #[cfg(feature = "debug-lock")]
+        lock_contention_warning("TERMINAL (paste_clipboard)");
+    }
+    Vec::new()
 }
