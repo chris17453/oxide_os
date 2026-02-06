@@ -71,7 +71,7 @@ INITRAMFS_MINIMAL_PREREQ :=
 endif
 
 # Userspace packages to build (Cargo-based)
-USERSPACE_ALL_PACKAGES := init esh getty login coreutils ssh sshd rdpd service networkd journald journalctl soundd evtest argtest htop doom gwbasic curses-demo
+USERSPACE_ALL_PACKAGES := init esh getty login coreutils ssh sshd rdpd service networkd resolvd journald journalctl soundd evtest argtest htop doom gwbasic curses-demo
 USERSPACE_PACKAGES ?= $(USERSPACE_ALL_PACKAGES)
 # Non-Cargo extra targets (built via dedicated rules)
 USERSPACE_EXTRA_TARGETS_ALL := tls-test thread-test
@@ -254,6 +254,8 @@ initramfs: $(INITRAMFS_PREREQ)
 	@echo "OXIDE" > $(TARGET_DIR)/initramfs/etc/hostname
 	@# Copy networkd
 	@if [ -f "$(USERSPACE_OUT_RELEASE)/networkd" ]; then cp "$(USERSPACE_OUT_RELEASE)/networkd" "$(TARGET_DIR)/initramfs/bin/networkd"; fi
+	@# Copy resolvd
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/resolvd" ]; then cp "$(USERSPACE_OUT_RELEASE)/resolvd" "$(TARGET_DIR)/initramfs/bin/resolvd"; fi
 	@# Copy rdpd
 	@if [ -f "$(USERSPACE_OUT_RELEASE)/rdpd" ]; then cp "$(USERSPACE_OUT_RELEASE)/rdpd" "$(TARGET_DIR)/initramfs/bin/rdpd"; fi
 	@# Copy journald and journalctl
@@ -282,6 +284,9 @@ initramfs: $(INITRAMFS_PREREQ)
 	@echo "PATH=/bin/networkd" > $(TARGET_DIR)/initramfs/etc/services.d/networkd
 	@echo "ENABLED=yes" >> $(TARGET_DIR)/initramfs/etc/services.d/networkd
 	@echo "RESTART=yes" >> $(TARGET_DIR)/initramfs/etc/services.d/networkd
+	@echo "PATH=/bin/resolvd" > $(TARGET_DIR)/initramfs/etc/services.d/resolvd
+	@echo "ENABLED=yes" >> $(TARGET_DIR)/initramfs/etc/services.d/resolvd
+	@echo "RESTART=yes" >> $(TARGET_DIR)/initramfs/etc/services.d/resolvd
 	@echo "PATH=/bin/sshd" > $(TARGET_DIR)/initramfs/etc/services.d/sshd
 	@echo "ENABLED=yes" >> $(TARGET_DIR)/initramfs/etc/services.d/sshd
 	@echo "RESTART=yes" >> $(TARGET_DIR)/initramfs/etc/services.d/sshd
@@ -304,9 +309,19 @@ initramfs: $(INITRAMFS_PREREQ)
 	@echo "# DNS servers" > $(TARGET_DIR)/initramfs/etc/resolv.conf
 	@echo "nameserver 8.8.8.8" >> $(TARGET_DIR)/initramfs/etc/resolv.conf
 	@echo "nameserver 8.8.4.4" >> $(TARGET_DIR)/initramfs/etc/resolv.conf
-	@# Create default hosts file
-	@echo "127.0.0.1 localhost" > $(TARGET_DIR)/initramfs/etc/hosts
-	@echo "::1 localhost" >> $(TARGET_DIR)/initramfs/etc/hosts
+	@# Create default hosts file with common entries
+	@echo "# /etc/hosts - static hostname-to-IP mappings" > $(TARGET_DIR)/initramfs/etc/hosts
+	@echo "# Managed by resolvd and hostctl" >> $(TARGET_DIR)/initramfs/etc/hosts
+	@echo "" >> $(TARGET_DIR)/initramfs/etc/hosts
+	@echo "# Loopback addresses" >> $(TARGET_DIR)/initramfs/etc/hosts
+	@echo "127.0.0.1       localhost localhost.localdomain" >> $(TARGET_DIR)/initramfs/etc/hosts
+	@echo "::1             localhost localhost.localdomain ip6-localhost ip6-loopback" >> $(TARGET_DIR)/initramfs/etc/hosts
+	@echo "" >> $(TARGET_DIR)/initramfs/etc/hosts
+	@echo "# IPv6 special addresses" >> $(TARGET_DIR)/initramfs/etc/hosts
+	@echo "fe00::0         ip6-localnet" >> $(TARGET_DIR)/initramfs/etc/hosts
+	@echo "ff00::0         ip6-mcastprefix" >> $(TARGET_DIR)/initramfs/etc/hosts
+	@echo "ff02::1         ip6-allnodes" >> $(TARGET_DIR)/initramfs/etc/hosts
+	@echo "ff02::2         ip6-allrouters" >> $(TARGET_DIR)/initramfs/etc/hosts
 	@# Create fstab - format: device mountpoint fstype options dump pass
 	@echo "# /etc/fstab - filesystem mount table" > $(TARGET_DIR)/initramfs/etc/fstab
 	@echo "# device    mountpoint    fstype    options    dump pass" >> $(TARGET_DIR)/initramfs/etc/fstab
