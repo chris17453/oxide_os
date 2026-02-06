@@ -4,7 +4,7 @@
 
 SHELL := /usr/bin/bash
 
-.PHONY: all build build-full kernel bootloader userspace userspace-release userspace-pkg initramfs initramfs-debug initramfs-minimal boot-dir boot-quick boot-image create-rootfs release clean run run-fedora run-rhel run-kvm detect-qemu-mode kill-qemu test check fmt fmt-check clippy list-bins show-config help toolchain install-toolchain test-toolchain clean-toolchain external-libs zlib openssl xz zstd cpython tls-test thread-test vim claude
+.PHONY: all build build-full kernel bootloader userspace userspace-release userspace-pkg initramfs initramfs-debug initramfs-minimal boot-dir boot-quick boot-image create-rootfs release clean run run-fedora run-rhel run-kvm detect-qemu-mode kill-qemu test check fmt fmt-check clippy list-bins show-config help toolchain install-toolchain test-toolchain clean-toolchain external-libs external-binaries zlib openssl xz zstd cpython tls-test thread-test vim claude
 
 # Configuration
 ARCH ?= x86_64
@@ -170,7 +170,7 @@ endif
 		$(MAKE) $$target || exit 1; \
 	done
 	@echo "Stripping binaries..."
-	@for prog in init esh login getty gwbasic curses-demo htop tls-test thread-test ssh sshd rdpd service networkd journald journalctl soundd evtest argtest doom $(COREUTILS_BINS); do \
+	@for prog in init esh login getty gwbasic curses-demo htop tls-test thread-test ssh sshd rdpd service networkd journald journalctl soundd evtest argtest doom python $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
 			strip "$(USERSPACE_OUT_RELEASE)/$$prog" 2>/dev/null || true; \
 		fi; \
@@ -268,6 +268,10 @@ initramfs: $(INITRAMFS_PREREQ)
 	@if [ -f "$(USERSPACE_OUT_RELEASE)/soundd" ]; then cp "$(USERSPACE_OUT_RELEASE)/soundd" "$(TARGET_DIR)/initramfs/bin/soundd"; fi
 	@# Copy doom
 	@if [ -f "$(USERSPACE_OUT_RELEASE)/doom" ]; then cp "$(USERSPACE_OUT_RELEASE)/doom" "$(TARGET_DIR)/initramfs/bin/doom"; fi
+	@# Copy python
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/python" ]; then cp "$(USERSPACE_OUT_RELEASE)/python" "$(TARGET_DIR)/initramfs/bin/python"; fi
+	@# Copy vim
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/vim" ]; then cp "$(USERSPACE_OUT_RELEASE)/vim" "$(TARGET_DIR)/initramfs/bin/vim"; fi
 	@# Copy signal-test (optional test utility)
 	@if [ -f "$(USERSPACE_OUT_RELEASE)/signal-test" ]; then cp "$(USERSPACE_OUT_RELEASE)/signal-test" "$(TARGET_DIR)/initramfs/bin/signal-test"; fi
 	@# Create services.d directory with service definitions
@@ -412,7 +416,7 @@ HOME_START := 449
 # - Partition 2 (root): ext4, mounted at / - OS files
 # - Partition 3 (home): ext4, mounted at /home - user data
 # - /tmp is tmpfs (in-memory)
-create-rootfs: kernel bootloader initramfs-minimal
+create-rootfs: kernel bootloader external-binaries initramfs-minimal
 	@echo "Creating OXIDE root filesystem disk image..."
 	@echo ""
 	@# Create empty disk image
@@ -477,12 +481,13 @@ create-rootfs: kernel bootloader initramfs-minimal
 	[ -f "$(USERSPACE_OUT_RELEASE)/esh" ] && sudo ln -sf /bin/esh $(TARGET_DIR)/mnt/root/bin/sh || true && \
 	[ -f "$(USERSPACE_OUT_RELEASE)/getty" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/getty" $(TARGET_DIR)/mnt/root/bin/getty || true && \
 	[ -f "$(USERSPACE_OUT_RELEASE)/login" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/login" $(TARGET_DIR)/mnt/root/bin/login || true && \
-	for prog in gwbasic curses-demo tls-test thread-test ssh sshd rdpd service networkd journald journalctl evtest argtest vim $(COREUTILS_BINS) testcolors; do \
+	for prog in gwbasic curses-demo tls-test thread-test ssh sshd rdpd service networkd journald journalctl evtest argtest vim python $(COREUTILS_BINS) testcolors; do \
 		[ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/$$prog" $(TARGET_DIR)/mnt/root/usr/bin/ || true; \
 	done && \
 	sudo cp userspace/apps/gwbasic/examples/*.bas $(TARGET_DIR)/mnt/root/usr/share/gwbasic/ 2>/dev/null || true; \
 	[ -f "$(USERSPACE_OUT_RELEASE)/tls-test" ] && echo "TLS test installed" || true; \
 	[ -f "$(USERSPACE_OUT_RELEASE)/vim" ] && echo "vim installed" || true; \
+	[ -f "$(USERSPACE_OUT_RELEASE)/python" ] && echo "Python installed" || true; \
 	sudo ln -sf /usr/bin/service $(TARGET_DIR)/mnt/root/usr/bin/servicemgr && \
 	sudo ln -sf /usr/bin/service $(TARGET_DIR)/mnt/root/bin/servicemgr && \
 	\
@@ -594,6 +599,10 @@ initramfs-minimal: $(INITRAMFS_MINIMAL_PREREQ)
 	@# Copy test utilities
 	@if [ -f "$(USERSPACE_OUT_RELEASE)/evtest" ]; then cp "$(USERSPACE_OUT_RELEASE)/evtest" "$(TARGET_DIR)/initramfs-minimal/bin/evtest"; fi
 	@if [ -f "$(USERSPACE_OUT_RELEASE)/argtest" ]; then cp "$(USERSPACE_OUT_RELEASE)/argtest" "$(TARGET_DIR)/initramfs-minimal/bin/argtest"; fi
+	@# Copy python (if built with make cpython)
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/python" ]; then cp "$(USERSPACE_OUT_RELEASE)/python" "$(TARGET_DIR)/initramfs-minimal/bin/python"; fi
+	@# Copy vim (if built with make vim)
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/vim" ]; then cp "$(USERSPACE_OUT_RELEASE)/vim" "$(TARGET_DIR)/initramfs-minimal/bin/vim"; fi
 	@# Create service definitions
 	@mkdir -p $(TARGET_DIR)/initramfs-minimal/etc/services.d
 	@echo "PATH=/bin/journald" > $(TARGET_DIR)/initramfs-minimal/etc/services.d/journald
@@ -1000,8 +1009,35 @@ vim: toolchain
 	@./scripts/build-vim.sh
 	@mkdir -p $(USERSPACE_OUT_RELEASE)
 	@cp external/vim/src/vim $(USERSPACE_OUT_RELEASE)/vim
-	@llvm-strip $(USERSPACE_OUT_RELEASE)/vim
+	@strip $(USERSPACE_OUT_RELEASE)/vim
 	@echo "Vim installed to $(USERSPACE_OUT_RELEASE)/vim"
+
+# — GraveShift: Build external binaries (python, vim) if sources exist and binaries are missing.
+# These are optional heavyweight builds — skip if sources aren't cloned or binaries already exist.
+external-binaries: toolchain
+	@echo "Checking external binaries..."
+	@# Build regex library if not present (needed by vim)
+	@if [ ! -f "toolchain/sysroot/lib/libregex.a" ] && [ -d "external/musl-regex" ]; then \
+		echo "  Building libregex..."; \
+		cd external/musl-regex && make AR=ar RANLIB=ranlib 2>&1 | tail -5; \
+	fi
+	@# Build cpython if source exists and binary is missing
+	@if [ -d "external/cpython" ] && [ ! -f "$(USERSPACE_OUT_RELEASE)/python" ]; then \
+		echo "  Building CPython (this may take a while)..."; \
+		./scripts/build-cpython.sh 2>&1 | tail -10; \
+		mkdir -p $(USERSPACE_OUT_RELEASE); \
+		cp external/cpython-build/python $(USERSPACE_OUT_RELEASE)/python 2>/dev/null || true; \
+	elif [ -f "$(USERSPACE_OUT_RELEASE)/python" ]; then \
+		echo "  Python already built, skipping..."; \
+	fi
+	@# Build vim if source exists and binary is missing
+	@if [ -d "external/vim/src" ] && [ ! -f "$(USERSPACE_OUT_RELEASE)/vim" ]; then \
+		echo "  Building vim..."; \
+		./scripts/build-vim.sh 2>&1 | tail -10; \
+	elif [ -f "$(USERSPACE_OUT_RELEASE)/vim" ]; then \
+		echo "  Vim already built, skipping..."; \
+	fi
+	@echo "External binaries check complete."
 
 toolchain:
 	@echo "Building OXIDE cross-compiler toolchain..."

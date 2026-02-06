@@ -72,6 +72,13 @@ char *realpath(const char *path, char *resolved_path);
 /* System load */
 int getloadavg(double loadavg[], int nelem);
 
+/* Pseudo-terminal (PTY) functions */
+int posix_openpt(int flags);
+int grantpt(int fd);
+int unlockpt(int fd);
+char *ptsname(int fd);
+int ptsname_r(int fd, char *buf, size_t buflen);
+
 /* Exit codes */
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1

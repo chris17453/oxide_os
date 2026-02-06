@@ -60,9 +60,9 @@ ac_cv_sizeof_off_t=8 \
     --enable-multibyte \
     --with-tlib=oxide_libc \
     CC=oxide-cc \
-    AR=llvm-ar \
-    RANLIB=llvm-ranlib \
-    STRIP=llvm-strip \
+    AR=ar \
+    RANLIB=ranlib \
+    STRIP=strip \
     CFLAGS="-O2 -fno-strict-aliasing" \
     LDFLAGS="-static -L$SYSROOT/lib -lregex -loxide_libc"
 
@@ -73,7 +73,7 @@ make -j$(nproc)
 echo "Installing vim..."
 mkdir -p "$OXIDE_ROOT/target/x86_64-unknown-none/release"
 cp vim "$OXIDE_ROOT/target/x86_64-unknown-none/release/vim"
-llvm-strip "$OXIDE_ROOT/target/x86_64-unknown-none/release/vim"
+strip "$OXIDE_ROOT/target/x86_64-unknown-none/release/vim"
 
 echo "vim built successfully!"
 ls -lh "$OXIDE_ROOT/target/x86_64-unknown-none/release/vim"

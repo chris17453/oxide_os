@@ -12,18 +12,18 @@
 # To install in $HOME instead of /usr/local, use:
 #    make install prefix=$HOME
 
-CC=/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc
+CC=/home/nd/repos/oxide_os/toolchain/bin/oxide-cc
 
-CFLAGS=-O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -DHAVE_HIDDEN
+CFLAGS=-O2 -fPIC -I/home/nd/repos/oxide_os/toolchain/sysroot/include -DNO_FSEEKO -DHAVE_HIDDEN
 #CFLAGS=-O -DMAX_WBITS=14 -DMAX_MEM_LEVEL=7
 #CFLAGS=-g -DZLIB_DEBUG
 #CFLAGS=-O3 -Wall -Wwrite-strings -Wpointer-arith -Wconversion \
 #           -Wstrict-prototypes -Wmissing-prototypes
 
-SFLAGS=-O2 -fPIC -I/home/nd/repos/Projects/oxide_os/toolchain/sysroot/include -fPIC -DNO_FSEEKO -DHAVE_HIDDEN
+SFLAGS=-O2 -fPIC -I/home/nd/repos/oxide_os/toolchain/sysroot/include -fPIC -DNO_FSEEKO -DHAVE_HIDDEN
 LDFLAGS=
 TEST_LIBS=-L. libz.a
-LDSHARED=/home/nd/repos/Projects/oxide_os/toolchain/bin/oxide-cc
+LDSHARED=/home/nd/repos/oxide_os/toolchain/bin/oxide-cc
 CPP=
 
 STATICLIB=libz.a
@@ -41,7 +41,7 @@ TAR=tar
 SHELL=/bin/sh
 EXE=
 
-prefix =/home/nd/repos/Projects/oxide_os/toolchain/sysroot
+prefix =/home/nd/repos/oxide_os/toolchain/sysroot
 exec_prefix =${prefix}
 libdir =${exec_prefix}/lib
 sharedlibdir =${libdir}

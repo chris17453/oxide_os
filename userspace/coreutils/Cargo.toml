@@ -47,7 +47,7 @@ name = "echo"
 path = "src/bin/echo.rs"
 
 [[bin]]
-name = "vim"
+name = "vi"
 path = "src/bin/vim.rs"
 
 [[bin]]

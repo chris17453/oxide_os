@@ -1,4 +1,4 @@
-prefix=/home/nd/repos/Projects/oxide_os/toolchain/sysroot
+prefix=/home/nd/repos/oxide_os/toolchain/sysroot
 exec_prefix=${prefix}
 libdir=${exec_prefix}/lib
 sharedlibdir=${libdir}

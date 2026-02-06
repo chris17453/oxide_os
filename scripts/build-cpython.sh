@@ -78,6 +78,13 @@ if [ ! -f "$SYSROOT/lib/liboxide_libc.a" ]; then
     exit 1
 fi
 
+# — SableWire: CPython's Makefile insists on -lm and -ldl like a stubborn
+# configure script that never learned our libc has everything baked in.
+# Symlink 'em to shut it up.
+echo "Creating library symlinks for CPython compatibility..."
+ln -sf liboxide_libc.a "$SYSROOT/lib/libm.a"
+ln -sf liboxide_libc.a "$SYSROOT/lib/libdl.a"
+
 echo "=== Step 1: Build native Python (for host tools) ==="
 if [ ! -f "$CPYTHON_BUILD_NATIVE/python" ]; then
     mkdir -p "$CPYTHON_BUILD_NATIVE"
@@ -144,13 +151,17 @@ cp "$OXIDE_ROOT/external/cpython-Setup.local" "$CPYTHON_BUILD/Modules/Setup.loca
 
 echo ""
 echo "=== Step 3: Build CPython for OXIDE ==="
-make -j$(nproc) SHELL=/usr/bin/bash
+# — GraveShift: Limit parallelism to 4 jobs — full $(nproc) on 8+ core boxes
+# can OOM the linker when it's juggling a 40MB static archive. Ask me how I know.
+make -j4 SHELL=/usr/bin/bash
+
+echo ""
+echo "=== Step 4: Strip binary ==="
+# — TorqueJax: Shed the debug weight. 25MB → 6MB. Still a chonker but at least
+# it'll fit in the initramfs without making QEMU weep.
+strip "$CPYTHON_BUILD/python" 2>/dev/null || true
 
 echo ""
 echo "=== CPython Build Complete ==="
 echo "Binary: $CPYTHON_BUILD/python"
 echo "Size: $(du -h "$CPYTHON_BUILD/python" 2>/dev/null | cut -f1)"
-echo ""
-echo "To install to initramfs, run:"
-echo "  cp $CPYTHON_BUILD/python target/x86_64-unknown-none/release/python"
-echo "  make initramfs"
