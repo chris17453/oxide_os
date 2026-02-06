@@ -51,10 +51,11 @@ priority=50
 type=rpm-src
 
 # Local OXIDE repository (for custom-built packages)
+# Note: Update baseurl to match your pkgmgr/repo/packages path
 [oxide-local]
 name=OXIDE Local Repository
-baseurl=file://%(repo_dir)s/packages
-enabled=1
+baseurl=file:///var/lib/oxide/packages
+enabled=0
 gpgcheck=0
 priority=1
 type=opkg

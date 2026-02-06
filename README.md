@@ -87,6 +87,30 @@ make run           # Boot in QEMU (auto-detects host)
 | `make toolchain` | Build the cross-compiler toolchain |
 | `make clean` | Remove build artifacts |
 
+## Package Manager
+
+OXIDE includes **oxdnf**, a DNF-like package manager that downloads Fedora source RPMs, cross-compiles them for OXIDE, and manages a local repository.
+
+```bash
+# Sync repository metadata from Fedora
+make pkgmgr-sync
+
+# Search for packages
+make pkgmgr-search PKG=bash
+
+# Build a package from source RPM
+make pkgmgr-build PKG=bash
+
+# Install a built package
+make pkgmgr-install PKG=bash
+
+# List available and installed packages
+python3 pkgmgr/bin/oxdnf list available
+python3 pkgmgr/bin/oxdnf list installed
+```
+
+See [pkgmgr/README.md](pkgmgr/README.md) and [pkgmgr/QUICKSTART.md](pkgmgr/QUICKSTART.md) for complete documentation.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
