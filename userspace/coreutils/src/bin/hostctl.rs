@@ -14,6 +14,7 @@
 #![no_main]
 
 use libc::*;
+use libc::c_exports::link;
 
 const HOSTS_FILE: &str = "/etc/hosts";
 const HOSTS_BACKUP: &str = "/etc/hosts.bak";
@@ -159,7 +160,7 @@ fn cmd_add(hostname: &str, ip: &str) -> i32 {
 
             // Parse IP and hostnames
             let mut parts = line.split_whitespace();
-            if let Some(line_ip) = parts.next() {
+            if let Some(_line_ip) = parts.next() {
                 let mut has_hostname = false;
                 for name in parts {
                     if name.eq_ignore_ascii_case(hostname) {

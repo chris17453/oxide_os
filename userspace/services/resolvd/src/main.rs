@@ -101,13 +101,13 @@ fn log(msg: &str) {
 
 /// Resolve hostname with caching
 fn resolve_cached(hostname: &str) -> Option<(u8, u8, u8, u8)> {
-    let now = time();
+    let now = time(None);
 
     unsafe {
         // Check cache first
         if let Some(cache) = &CACHE {
             if let Some(entry) = cache.get(hostname) {
-                if entry.expires_at > now {
+                if entry.expires_at > now as u64 {
                     STATS.cache_hits += 1;
                     return Some(entry.ip);
                 }
@@ -133,7 +133,7 @@ fn resolve_cached(hostname: &str) -> Option<(u8, u8, u8, u8)> {
 
     if let Some(ip) = resolve(hostname, None) {
         // Cache the result
-        let expires_at = now + DEFAULT_TTL_SECS;
+        let expires_at = (now + DEFAULT_TTL_SECS as i64) as u64;
         unsafe {
             if let Some(cache) = &mut CACHE {
                 // ColdCipher: Enforce cache size limit to prevent memory exhaustion
@@ -163,7 +163,7 @@ fn resolve_cached(hostname: &str) -> Option<(u8, u8, u8, u8)> {
 
 /// Clean up expired cache entries
 fn cleanup_cache() {
-    let now = time();
+    let now = time(None);
     let mut removed = 0;
 
     unsafe {
@@ -171,7 +171,7 @@ fn cleanup_cache() {
             // ColdCipher: Collect expired keys first to avoid borrowing issues
             let expired: Vec<String> = cache
                 .iter()
-                .filter(|(_, entry)| entry.expires_at <= now)
+                .filter(|(_, entry)| entry.expires_at <= now as u64)
                 .map(|(k, _)| k.clone())
                 .collect();
 
@@ -217,12 +217,11 @@ fn write_pid_file() {
     if fd >= 0 {
         // ColdCipher: Format PID as string
         let mut buf = [0u8; 16];
-        let mut n = 0;
         let mut p = pid;
         
         if p == 0 {
             buf[0] = b'0';
-            n = 1;
+            let _ = write(fd, &buf[..1]);
         } else {
             let mut temp = [0u8; 16];
             let mut temp_len = 0;
@@ -235,10 +234,9 @@ fn write_pid_file() {
             for i in 0..temp_len {
                 buf[i] = temp[temp_len - 1 - i];
             }
-            n = temp_len;
+            let _ = write(fd, &buf[..temp_len]);
         }
         
-        let _ = write(fd, &buf[..n]);
         let _ = write(fd, b"\n");
         close(fd);
     }
