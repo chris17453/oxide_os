@@ -1,0 +1,44 @@
+# Vim Build Override for OXIDE OS
+
+# Additional configure flags for OXIDE
+CONFIGURE_FLAGS="
+  --with-features=normal
+  --enable-gui=no
+  --disable-gpm
+  --disable-nls
+  --disable-acl
+  --disable-netbeans
+  --disable-pythoninterp
+  --disable-python3interp
+  --disable-rubyinterp
+  --disable-luainterp
+  --with-tlib=ncurses
+"
+
+# Extra CFLAGS
+EXTRA_CFLAGS="-DOXIDE_OS"
+
+# Pre-build hook
+pre_build() {
+    echo "Applying OXIDE-specific patches for vim..."
+    
+    # Set default vimrc location
+    export VIMRUNTIMEDIR=/usr/share/vim
+}
+
+# Post-build hook
+post_build() {
+    echo "Vim built successfully for OXIDE"
+    
+    # Create minimal vimrc
+    mkdir -p install/etc
+    cat > install/etc/vimrc <<'VIMRC'
+" OXIDE OS minimal vimrc
+set nocompatible
+set backspace=indent,eol,start
+syntax on
+set background=dark
+VIMRC
+}
+
+# — SoftGlyph: "Vim on OXIDE... stripped down but still got that text-editing magic."

@@ -1,0 +1,31 @@
+# GNU Coreutils Build Override for OXIDE OS
+
+# Additional configure flags for OXIDE
+CONFIGURE_FLAGS="
+  --enable-single-binary=symlinks
+  --disable-nls
+  --disable-acl
+  --disable-xattr
+  --disable-libcap
+  --without-selinux
+  FORCE_UNSAFE_CONFIGURE=1
+"
+
+# Extra CFLAGS
+EXTRA_CFLAGS="-DOXIDE_OS"
+
+# Pre-build hook
+pre_build() {
+    echo "Applying OXIDE-specific patches for coreutils..."
+    
+    # Disable features requiring advanced system calls
+    export gl_cv_func_getgroups_works=yes
+    export gl_cv_func_working_mktime=yes
+}
+
+# Post-build hook
+post_build() {
+    echo "Coreutils built successfully for OXIDE"
+}
+
+# — WireSaint: "Coreutils... the foundation. Every command, battle-tested for the OXIDE vault."

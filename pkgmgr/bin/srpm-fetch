@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""
+srpm-fetch - Download Fedora SRPMs
+
+Standalone tool for downloading source RPMs from Fedora repositories
+"""
+
+import sys
+import argparse
+from pathlib import Path
+
+# Add lib directory to path
+PKGMGR_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PKGMGR_ROOT / 'lib'))
+
+from fedora import FedoraRepoManager
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Download Fedora source RPMs')
+    parser.add_argument('package', help='Package name to download')
+    parser.add_argument('-o', '--output', help='Output directory',
+                       default=str(PKGMGR_ROOT / 'cache' / 'srpms'))
+    parser.add_argument('--sync', action='store_true',
+                       help='Sync repo metadata first')
+    
+    args = parser.parse_args()
+    
+    config_dir = PKGMGR_ROOT / 'config'
+    repo_mgr = FedoraRepoManager(str(config_dir))
+    
+    if args.sync:
+        print("Syncing repository metadata...")
+        cache_dir = PKGMGR_ROOT / 'cache'
+        repo_mgr.sync_all(str(cache_dir))
+        print()
+    
+    print(f"Downloading {args.package}...")
+    srpm_file = repo_mgr.download_srpm(args.package, args.output)
+    
+    if srpm_file:
+        print(f"\nDownloaded: {srpm_file}")
+        return 0
+    else:
+        print("\nDownload failed")
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

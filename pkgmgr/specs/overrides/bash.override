@@ -1,0 +1,31 @@
+# Bash Build Override for OXIDE OS
+
+# Additional configure flags for OXIDE
+CONFIGURE_FLAGS="
+  --without-bash-malloc
+  --disable-nls
+  --enable-static-link
+  --disable-readline
+  --disable-history
+  --disable-help-builtin
+  --disable-bang-history
+"
+
+# Extra CFLAGS
+EXTRA_CFLAGS="-DOXIDE_OS -DNO_MAIN_ENV_ARG"
+
+# Pre-build hook
+pre_build() {
+    echo "Applying OXIDE-specific patches for bash..."
+    
+    # Disable features that require advanced libc support
+    sed -i 's/#define HAVE_GETPWENT 1//' config.h.in || true
+    sed -i 's/#define HAVE_GETPWNAM 1//' config.h.in || true
+}
+
+# Post-build hook  
+post_build() {
+    echo "Bash built successfully for OXIDE"
+}
+
+# — BlackLatch: "Bash... stripping it down to bare metal, no frills, just shell power."

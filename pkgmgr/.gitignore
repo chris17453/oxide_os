@@ -1,0 +1,32 @@
+# Package Manager Cache and Build Artifacts
+cache/srpms/*.rpm
+cache/extracted/*
+cache/builds/*/
+cache/*.xml
+cache/*.xml.gz
+
+# Local repository packages
+repo/packages/*.opkg
+repo/metadata/*.json
+repo/metadata/*.db
+
+# Logs
+*.log
+build-*.log
+
+# Temporary files
+*.tmp
+*.swp
+*~
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
