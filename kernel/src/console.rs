@@ -198,8 +198,10 @@ pub fn terminal_tick() {
         let mut wheel_delta: i32 = 0;
         let has_mouse_mode = terminal::is_initialized() && terminal::has_mouse_mode();
 
-        // Track button state for escape sequence generation
+        // Track button state for escape sequence generation and selection
         static mut MOUSE_BUTTONS: u8 = 0;
+        static mut LEFT_PRESSED: bool = false;
+        static mut MIDDLE_PRESSED: bool = false;
 
         // Drain all mouse events from input device 1
         if let Some(mouse_handle) = input::get_device(1) {
@@ -216,24 +218,59 @@ pub fn terminal_tick() {
                         }
                     }
                     input::EventType::Key => {
-                        if has_mouse_mode {
-                            // Map button codes to terminal button numbers
-                            let (btn, bit) = match event.code {
-                                0x110 => (0u8, 0x01u8), // BTN_LEFT
-                                0x112 => (1, 0x04),     // BTN_MIDDLE
-                                0x111 => (2, 0x02),     // BTN_RIGHT
-                                _ => continue,
-                            };
-                            let pressed = event.value != 0;
-                            unsafe {
-                                if pressed {
-                                    MOUSE_BUTTONS |= bit;
-                                } else {
-                                    MOUSE_BUTTONS &= !bit;
-                                }
+                        // Map button codes to terminal button numbers
+                        let (btn, bit) = match event.code {
+                            0x110 => (0u8, 0x01u8), // BTN_LEFT
+                            0x112 => (1, 0x04),     // BTN_MIDDLE
+                            0x111 => (2, 0x02),     // BTN_RIGHT
+                            _ => continue,
+                        };
+                        let pressed = event.value != 0;
+                        unsafe {
+                            if pressed {
+                                MOUSE_BUTTONS |= bit;
+                            } else {
+                                MOUSE_BUTTONS &= !bit;
                             }
 
-                            // Generate escape sequence for button press/release
+                            // Track left and middle buttons separately for selection/paste
+                            if event.code == 0x110 {
+                                // Left button
+                                if pressed && !LEFT_PRESSED {
+                                    // Left press - start selection if no mouse mode active
+                                    LEFT_PRESSED = true;
+                                    if !has_mouse_mode {
+                                        if let Some((mx, my)) = fb::mouse_position() {
+                                            terminal::start_selection(mx, my);
+                                        }
+                                    }
+                                } else if !pressed && LEFT_PRESSED {
+                                    // Left release - finish selection
+                                    LEFT_PRESSED = false;
+                                    if !has_mouse_mode {
+                                        terminal::finish_selection();
+                                    }
+                                }
+                            } else if event.code == 0x112 {
+                                // Middle button - paste on press
+                                if pressed && !MIDDLE_PRESSED {
+                                    MIDDLE_PRESSED = true;
+                                    if !has_mouse_mode {
+                                        let paste_data = terminal::paste_clipboard();
+                                        for &byte in &paste_data {
+                                            if let Some(manager) = vt::get_manager() {
+                                                manager.push_input(byte);
+                                            }
+                                        }
+                                    }
+                                } else if !pressed {
+                                    MIDDLE_PRESSED = false;
+                                }
+                            }
+                        }
+
+                        // Generate escape sequence for button press/release if in mouse mode
+                        if has_mouse_mode {
                             if let Some((mx, my)) = fb::mouse_position() {
                                 let esc_btn = if pressed { btn } else { 3 }; // 3 = release
                                 if let Some(seq) =
@@ -253,7 +290,16 @@ pub fn terminal_tick() {
         if total_dx != 0 || total_dy != 0 {
             fb::mouse_move(total_dx, total_dy);
 
-            // Generate motion escape sequences if terminal wants them
+            // Update selection if left button held (no mouse mode)
+            unsafe {
+                if LEFT_PRESSED && !has_mouse_mode {
+                    if let Some((mx, my)) = fb::mouse_position() {
+                        terminal::update_selection(mx, my);
+                    }
+                }
+            }
+
+            // Generate motion escape sequences if terminal wants them (mouse mode)
             if has_mouse_mode {
                 if let Some((mx, my)) = fb::mouse_position() {
                     let held_btn = unsafe {
@@ -280,15 +326,29 @@ pub fn terminal_tick() {
             }
         }
 
-        // Generate wheel escape sequences
-        if wheel_delta != 0 && has_mouse_mode {
-            if let Some((mx, my)) = fb::mouse_position() {
-                let btn = if wheel_delta > 0 { 64u8 } else { 65u8 };
-                let clicks = wheel_delta.unsigned_abs();
-                for _ in 0..clicks {
-                    if let Some(seq) = terminal::mouse_event(btn, mx, my, true, false) {
-                        push_mouse_escape(&seq);
+        // Handle mouse wheel scrolling
+        // — EchoFrame: Scroll wheel now works in two modes:
+        // 1. When mouse mode is OFF: scroll terminal history (default behavior)
+        // 2. When mouse mode is ON: send escape sequences to app (e.g., vim, less)
+        if wheel_delta != 0 {
+            if has_mouse_mode {
+                // App has requested mouse tracking - send wheel as escape sequences
+                if let Some((mx, my)) = fb::mouse_position() {
+                    let btn = if wheel_delta > 0 { 64u8 } else { 65u8 };
+                    let clicks = wheel_delta.unsigned_abs();
+                    for _ in 0..clicks {
+                        if let Some(seq) = terminal::mouse_event(btn, mx, my, true, false) {
+                            push_mouse_escape(&seq);
+                        }
                     }
+                }
+            } else {
+                // No mouse mode - scroll terminal view directly (3 lines per wheel click)
+                let scroll_lines = (wheel_delta.unsigned_abs() as usize) * 3;
+                if wheel_delta > 0 {
+                    terminal::scroll_up(scroll_lines);
+                } else {
+                    terminal::scroll_down(scroll_lines);
                 }
             }
         }
