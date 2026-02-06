@@ -40,6 +40,9 @@ pub struct WindowData {
     pub keypad: bool,
     /// Nodelay mode (getch returns ERR immediately)
     pub nodelay: bool,
+    /// — InputShade: Timeout for wgetch in milliseconds. -1 = blocking (default),
+    /// 0 = non-blocking (same as nodelay), >0 = wait up to N ms then return -1.
+    pub timeout_ms: i32,
     /// Notimeout mode
     pub notimeout: bool,
     /// Clear on next refresh
@@ -78,6 +81,7 @@ impl WindowData {
             scroll_bottom: lines - 1,
             keypad: false,
             nodelay: false,
+            timeout_ms: -1,
             notimeout: false,
             clear_flag: false,
             leaveok: false,

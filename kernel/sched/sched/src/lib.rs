@@ -101,6 +101,7 @@ pub use crate::core::{
     // Debug
     debug_state,
     get_affinity,
+    get_cpu_times,
     get_current_meta,
     get_nice,
     get_scheduler,

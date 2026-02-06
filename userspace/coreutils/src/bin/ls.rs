@@ -50,23 +50,33 @@ const S_IWOTH: u32 = 0o002;
 const S_IXOTH: u32 = 0o001;
 
 /// Entry storage for sorting and display
+/// — GlassSignal: Every file's vital signs — type, perms, timestamps, symlink target
 #[derive(Clone, Copy)]
 struct Entry {
     name: [u8; 256],
+    /// — GlassSignal: Symlink target buffer for `name -> target` display
+    link_target: [u8; 256],
+    link_target_len: usize,
     d_type: u8,
     d_ino: u64,
     size: u64,
     mode: u32,
+    nlink: u64,
+    mtime: u64,
 }
 
 impl Entry {
     fn new() -> Self {
         Entry {
             name: [0; 256],
+            link_target: [0; 256],
+            link_target_len: 0,
             d_type: 0,
             d_ino: 0,
             size: 0,
             mode: 0,
+            nlink: 1,
+            mtime: 0,
         }
     }
 
@@ -241,6 +251,7 @@ struct Args {
     show_all: bool,         // -a (show . and ..)
     show_almost_all: bool,  // -A (hide . and ..)
     human_readable: bool,   // -h
+    sort_by_time: bool,     // -t
     recursive: bool,        // -R
     one_per_line: bool,     // -1
     classify: bool,         // -F
@@ -257,6 +268,7 @@ impl Args {
             show_all: false,
             show_almost_all: false,
             human_readable: false,
+            sort_by_time: false,
             recursive: false,
             one_per_line: false,
             classify: false,
@@ -310,6 +322,7 @@ fn parse_args(argc: i32, argv: *const *const u8) -> Args {
                     b'a' => args.show_all = true,
                     b'A' => args.show_almost_all = true,
                     b'h' => args.human_readable = true,
+                    b't' => args.sort_by_time = true,
                     b'R' => args.recursive = true,
                     b'1' => args.one_per_line = true,
                     b'F' => args.classify = true,
@@ -374,7 +387,56 @@ fn parse_args(argc: i32, argv: *const *const u8) -> Args {
     args
 }
 
+/// Month abbreviation table
+/// — NeonVale: 12 months, 12 chances to misalign a 3-char abbreviation
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/// Format mtime into "Mon DD HH:MM" or "Mon DD  YYYY" (if older than ~6 months)
+/// — NeonVale: Linux ls shows time for recent files, year for old ones.
+/// Since we don't have "current time" vs mtime comparison easily, just show time.
+fn format_mtime(mtime: u64, buf: &mut [u8; 13]) -> usize {
+    let mut tm: libc::time::Tm = unsafe { core::mem::zeroed() };
+    let t = mtime as i64;
+    libc::time::gmtime_r(&t, &mut tm);
+
+    let mon = if tm.tm_mon >= 0 && tm.tm_mon < 12 {
+        MONTHS[tm.tm_mon as usize]
+    } else {
+        "???"
+    };
+    let mon_bytes = mon.as_bytes();
+    buf[0] = mon_bytes[0];
+    buf[1] = mon_bytes[1];
+    buf[2] = mon_bytes[2];
+    buf[3] = b' ';
+
+    // Day (right-aligned in 2 chars)
+    let day = tm.tm_mday as u8;
+    if day >= 10 {
+        buf[4] = b'0' + day / 10;
+    } else {
+        buf[4] = b' ';
+    }
+    buf[5] = b'0' + day % 10;
+    buf[6] = b' ';
+
+    // HH:MM
+    let h = tm.tm_hour as u8;
+    let m = tm.tm_min as u8;
+    buf[7] = b'0' + h / 10;
+    buf[8] = b'0' + h % 10;
+    buf[9] = b':';
+    buf[10] = b'0' + m / 10;
+    buf[11] = b'0' + m % 10;
+    buf[12] = 0;
+    12
+}
+
 /// Print entry in long format
+/// — GlassSignal: Full `ls -l` output: type+perms nlink owner group size date name [-> target]
 fn print_long_entry(entry: &Entry, args: &Args) {
     // Type character
     putchar(type_char(entry.d_type));
@@ -386,10 +448,14 @@ fn print_long_entry(entry: &Entry, args: &Args) {
         putchar(c);
     }
 
-    // Link count (hardcoded to 1 for now)
-    prints("  1 ");
+    // — GlassSignal: Real link count from stat — no more lying about hardlinks
+    let mut nlink_buf = [b' '; 4];
+    let nlink_start = format_number(entry.nlink, &mut nlink_buf, 3);
+    for i in nlink_start..4 {
+        putchar(nlink_buf[i]);
+    }
 
-    // Owner and group (hardcoded for now)
+    // Owner and group (hardcoded until /etc/passwd exists)
     prints("root root ");
 
     // Size
@@ -413,11 +479,25 @@ fn print_long_entry(entry: &Entry, args: &Args) {
 
     prints(" ");
 
-    // Date (hardcoded for now - would need stat)
-    prints("Jan  1 00:00 ");
+    // — NeonVale: Real modification time from stat, not that "Jan 1 00:00" embarrassment
+    let mut date_buf = [0u8; 13];
+    format_mtime(entry.mtime, &mut date_buf);
+    for &b in &date_buf[..12] {
+        putchar(b);
+    }
+    prints(" ");
 
     // Name
     print_name_colored(entry, args.color);
+
+    // — GlassSignal: Symlink target display — the whole reason this rewrite exists.
+    // "service_manager -> service" so you actually know where links point.
+    if entry.d_type == DT_LNK && entry.link_target_len > 0 {
+        prints(" -> ");
+        for i in 0..entry.link_target_len {
+            putchar(entry.link_target[i]);
+        }
+    }
 
     // Indicator if -F
     if args.classify {
@@ -427,6 +507,22 @@ fn print_long_entry(entry: &Entry, args: &Args) {
     }
 
     printlns("");
+}
+
+/// Query terminal width via ioctl, fall back to 80 columns
+/// — GlassSignal: No more assuming 80 cols — ask the TTY driver
+fn get_terminal_width() -> usize {
+    let mut ws = libc::termios::Winsize {
+        ws_row: 0,
+        ws_col: 0,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    if libc::termios::tcgetwinsize(1, &mut ws) == 0 && ws.ws_col > 0 {
+        ws.ws_col as usize
+    } else {
+        80
+    }
 }
 
 /// Print entries in columns (like default ls)
@@ -453,8 +549,8 @@ fn print_columns(entries: &[Entry], count: usize, args: &Args) {
     // Column width (name + 2 spaces minimum)
     let col_width = max_len + 2;
 
-    // Assume 80 column terminal
-    let term_width = 80;
+    // — GlassSignal: Ask the terminal how wide it is instead of guessing 80
+    let term_width = get_terminal_width();
     let num_cols = if col_width > 0 {
         term_width / col_width
     } else {
@@ -595,14 +691,31 @@ fn list_directory(path: &[u8], args: &Args, depth: usize, show_header: bool) -> 
 
             let full_path_str = unsafe { core::str::from_utf8_unchecked(&full_path[..pos]) };
 
-            // Try to stat the file
+            // — GlassSignal: Use lstat for symlinks (don't follow), stat for everything else.
+            // lstat gives us the link's own metadata; stat would give us the target's.
             let mut stat_buf = Stat::zeroed();
-            if stat(full_path_str, &mut stat_buf) == 0 {
+            let stat_ok = if entry.d_type == DT_LNK {
+                lstat(full_path_str, &mut stat_buf) == 0
+            } else {
+                stat(full_path_str, &mut stat_buf) == 0
+            };
+
+            if stat_ok {
                 entry.size = stat_buf.size;
                 entry.mode = stat_buf.mode;
+                entry.nlink = stat_buf.nlink;
+                entry.mtime = stat_buf.mtime;
             } else {
                 // Default permissions based on type
                 entry.mode = if entry.d_type == DT_DIR { 0o755 } else { 0o644 };
+            }
+
+            // — GlassSignal: Read symlink target so we can show "name -> target"
+            if entry.d_type == DT_LNK {
+                let n = sys_readlink(full_path_str, &mut entry.link_target);
+                if n > 0 {
+                    entry.link_target_len = (n as usize).min(255);
+                }
             }
 
             // Filter based on args
@@ -626,12 +739,17 @@ fn list_directory(path: &[u8], args: &Args, depth: usize, show_header: bool) -> 
 
     close(fd);
 
-    // Sort entries alphabetically (simple bubble sort)
+    // — GlassSignal: Sort entries — by mtime (newest first) if -t, else alphabetical.
+    // Simple bubble sort because we cap at 256 entries anyway.
     for i in 0..entry_count {
         for j in 0..entry_count - 1 - i {
-            let cmp = compare_names(&entries[j].name, &entries[j + 1].name);
-            if cmp > 0 {
-                // Swap
+            let swap = if args.sort_by_time {
+                // Newest first: swap if j is OLDER than j+1
+                entries[j].mtime < entries[j + 1].mtime
+            } else {
+                compare_names(&entries[j].name, &entries[j + 1].name) > 0
+            };
+            if swap {
                 let tmp = entries[j];
                 entries[j] = entries[j + 1];
                 entries[j + 1] = tmp;
@@ -641,6 +759,16 @@ fn list_directory(path: &[u8], args: &Args, depth: usize, show_header: bool) -> 
 
     // Print entries
     if args.long_format {
+        // — GlassSignal: "total N" line — sum of 512-byte blocks, converted to 1K blocks
+        let mut total_blocks: u64 = 0;
+        for i in 0..entry_count {
+            // Each file uses at least 1 block (4096 bytes = 8 x 512-byte blocks)
+            total_blocks += (entries[i].size + 4095) / 4096 * 8;
+        }
+        prints("total ");
+        print_u64(total_blocks / 2); // Convert 512-byte blocks to 1K blocks
+        printlns("");
+
         for i in 0..entry_count {
             print_long_entry(&entries[i], args);
         }

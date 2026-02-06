@@ -87,6 +87,12 @@ struct SystemStats {
     cpu_user: u64,
     cpu_system: u64,
     cpu_idle: u64,
+    /// — ByteRiot: Previous /proc/stat snapshot for delta-based CPU% display.
+    /// Without deltas, cumulative counters show near-zero% forever since idle
+    /// dominates from boot. Delta = current - previous over the refresh interval.
+    prev_cpu_user: u64,
+    prev_cpu_system: u64,
+    prev_cpu_idle: u64,
 }
 
 impl SystemStats {
@@ -111,6 +117,9 @@ impl SystemStats {
             cpu_user: 0,
             cpu_system: 0,
             cpu_idle: 0,
+            prev_cpu_user: 0,
+            prev_cpu_system: 0,
+            prev_cpu_idle: 0,
         }
     }
 }
@@ -781,6 +790,13 @@ fn sort_processes(processes: &mut [ProcessInfo], field: SortField, reverse: bool
 
 /// Update system statistics
 fn update_system_stats(stats: &mut SystemStats, processes: &[ProcessInfo]) {
+    // — ByteRiot: Snapshot previous CPU values before reading new ones.
+    // Delta = new - old gives us the CPU activity over this refresh interval
+    // instead of cumulative-since-boot (which is always ~0% user).
+    stats.prev_cpu_user = stats.cpu_user;
+    stats.prev_cpu_system = stats.cpu_system;
+    stats.prev_cpu_idle = stats.cpu_idle;
+
     stats.uptime = read_uptime();
     read_meminfo(stats);
     read_loadavg(stats);
@@ -810,7 +826,7 @@ fn display_batch_header(stats: &SystemStats, iteration: i32) {
     }
 
     prints("top - ");
-    
+
     // Current time (HH:MM:SS)
     let now = time::time(None);
     let hours = (now % 86400) / 3600;
@@ -858,20 +874,23 @@ fn display_batch_header(stats: &SystemStats, iteration: i32) {
     print_u64(stats.num_zombie as u64);
     prints(" zombie\n");
 
-    // CPU line
-    let total_cpu = stats.cpu_user + stats.cpu_system + stats.cpu_idle;
+    // CPU line — delta-based
+    let delta_user = stats.cpu_user.saturating_sub(stats.prev_cpu_user);
+    let delta_sys = stats.cpu_system.saturating_sub(stats.prev_cpu_system);
+    let delta_idle = stats.cpu_idle.saturating_sub(stats.prev_cpu_idle);
+    let total_cpu = delta_user + delta_sys + delta_idle;
     let cpu_user_pct = if total_cpu > 0 {
-        (stats.cpu_user as f32 * 100.0) / total_cpu as f32
+        (delta_user as f32 * 100.0) / total_cpu as f32
     } else {
         0.0
     };
     let cpu_sys_pct = if total_cpu > 0 {
-        (stats.cpu_system as f32 * 100.0) / total_cpu as f32
+        (delta_sys as f32 * 100.0) / total_cpu as f32
     } else {
         0.0
     };
     let cpu_idle_pct = if total_cpu > 0 {
-        (stats.cpu_idle as f32 * 100.0) / total_cpu as f32
+        (delta_idle as f32 * 100.0) / total_cpu as f32
     } else {
         100.0
     };
@@ -983,6 +1002,7 @@ fn display_batch_processes(processes: &[ProcessInfo], max_lines: i32) {
 fn run_batch_mode(config: &TopConfig) {
     let mut prev_processes = Vec::new();
     let mut last_update_ms = get_time_ms();
+    let mut stats = SystemStats::new();
 
     for iteration in 1..=config.iterations {
         if config.iterations > 0 && iteration > config.iterations {
@@ -990,7 +1010,6 @@ fn run_batch_mode(config: &TopConfig) {
         }
 
         let mut processes = read_processes(config);
-        let mut stats = SystemStats::new();
 
         let now_ms = get_time_ms();
         let elapsed_ms = now_ms.saturating_sub(last_update_ms).max(100);
@@ -1026,14 +1045,17 @@ fn run_interactive_mode(config: &mut TopConfig) {
     // Setup ncurses
     let _ = screen::cbreak();
     let _ = screen::noecho();
-    
-    // Set window flags directly
+
+    // — ByteRiot: Use wtimeout instead of nodelay+usleep. wgetch now blocks
+    // up to delay_ms then returns -1 on timeout OR returns immediately on
+    // keypress. No more busy-polling — the kernel's poll() does the waiting.
+    let delay_ms = (config.delay as i32) * 100;
     unsafe {
-        (*stdscr).nodelay = true;
         (*stdscr).keypad = true;
         (*stdscr).scroll = false;
     }
-    
+    input::wtimeout(stdscr, delay_ms);
+
     // — ByteRiot: Standard ncurses pattern — start_color() initializes the
     // pairs table, then init_pair() populates it. has_colors() is set by
     // initscr() from termcap data.
@@ -1049,104 +1071,60 @@ fn run_interactive_mode(config: &mut TopConfig) {
 
     let mut prev_processes = Vec::new();
     let mut last_update_ms: u64 = 0;
-    let mut force_update = true;
+    // — ByteRiot: Persistent stats struct holds prev_cpu_* across iterations
+    // for delta-based CPU% in the header. Without this, cumulative counters
+    // from /proc/stat always show ~0% user because idle dominates from boot.
+    let mut stats = SystemStats::new();
 
     loop {
-        // — ByteRiot: Use gettimeofday for millisecond precision - time() has 1-second
-        // granularity which causes CPU% to be wildly wrong for sub-second updates.
         let now_ms = get_time_ms();
 
-        // Check if we need to update
-        // delay is in deciseconds (30 = 3.0s = 3000ms)
-        let delay_ms = (config.delay as u64) * 100;
-        let should_update = force_update ||
-                           (now_ms.saturating_sub(last_update_ms)) >= delay_ms;
+        // Read data
+        let mut processes = read_processes(config);
 
-        if should_update {
-            // Read data
-            let mut processes = read_processes(config);
-            let mut stats = SystemStats::new();
+        let elapsed_ms = now_ms.saturating_sub(last_update_ms).max(100);
+        calculate_cpu_percentages(&mut processes, &prev_processes, elapsed_ms);
+        calculate_mem_percentages(&mut processes, stats.total_mem);
+        sort_processes(&mut processes, config.sort_field, config.reverse_sort);
+        update_system_stats(&mut stats, &processes);
 
-            // — ByteRiot: elapsed_ms for proper CPU% calculation
-            let elapsed_ms = now_ms.saturating_sub(last_update_ms).max(100); // min 100ms
-            calculate_cpu_percentages(&mut processes, &prev_processes, elapsed_ms);
-            calculate_mem_percentages(&mut processes, stats.total_mem);
-            sort_processes(&mut processes, config.sort_field, config.reverse_sort);
-            update_system_stats(&mut stats, &processes);
+        // Display
+        display_interactive(&stats, &processes, config, stdscr);
 
-            // Display
-            display_interactive(&stats, &processes, config, stdscr);
+        prev_processes = processes;
+        last_update_ms = now_ms;
 
-            prev_processes = processes;
-            last_update_ms = now_ms;
-            force_update = false;
-        }
-
-        // Handle input
+        // — ByteRiot: wgetch blocks up to delay_ms, then returns -1 (timeout)
+        // or returns immediately with a key. Either way, we refresh next iteration.
         let ch = input::getch();
         if ch >= 0 {
-            // Handle special keys first (KEY_* constants > 255)
             if ch == 27 {
-                // ESC key - exit
                 break;
-            } else if ch == keys::KEY_UP {
-                // Scroll up (future enhancement)
-                force_update = true;
-            } else if ch == keys::KEY_DOWN {
-                // Scroll down (future enhancement)
-                force_update = true;
-            } else if ch == keys::KEY_PPAGE {
-                // Page up (future enhancement)
-                force_update = true;
-            } else if ch == keys::KEY_NPAGE {
-                // Page down (future enhancement)
-                force_update = true;
-            } else if ch == keys::KEY_HOME {
-                // Go to top
-                force_update = true;
-            } else if ch == keys::KEY_END {
-                // Go to bottom
-                force_update = true;
+            } else if ch == keys::KEY_UP || ch == keys::KEY_DOWN
+                   || ch == keys::KEY_PPAGE || ch == keys::KEY_NPAGE
+                   || ch == keys::KEY_HOME || ch == keys::KEY_END {
+                // Scroll keys (future enhancement) — just refresh
             } else if ch >= 0x20 && ch < 0x7F {
-                // Regular ASCII character - cast to char safely
                 match ch as u8 as char {
                     'q' | 'Q' => break,
-                    ' ' => force_update = true,
-                    'M' | 'm' => {
-                        config.sort_field = SortField::MemPercent;
-                        force_update = true;
-                    }
-                    'P' | 'p' => {
-                        config.sort_field = SortField::CpuPercent;
-                        force_update = true;
-                    }
-                    'T' | 't' => {
-                        config.sort_field = SortField::Time;
-                        force_update = true;
-                    }
-                    'N' | 'n' => {
-                        config.sort_field = SortField::Pid;
-                        force_update = true;
-                    }
-                    'R' | 'r' => {
-                        config.reverse_sort = !config.reverse_sort;
-                        force_update = true;
-                    }
-                    'i' | 'I' => {
-                        config.show_idle = !config.show_idle;
-                        force_update = true;
-                    }
+                    ' ' => {} // Force refresh (happens next iteration anyway)
+                    'M' | 'm' => config.sort_field = SortField::MemPercent,
+                    'P' | 'p' => config.sort_field = SortField::CpuPercent,
+                    'T' | 't' => config.sort_field = SortField::Time,
+                    'N' | 'n' => config.sort_field = SortField::Pid,
+                    'R' | 'r' => config.reverse_sort = !config.reverse_sort,
+                    'i' | 'I' => config.show_idle = !config.show_idle,
                     'h' | 'H' | '?' => {
-                        display_help_screen(stdscr);
-                        force_update = true;
+                        display_help_screen(stdscr, delay_ms);
+                    }
+                    'd' | 's' => {
+                        // — ByteRiot: Update delay — reconfigure wtimeout
+                        // (future: prompt for value)
                     }
                     _ => {}
                 }
             }
         }
-
-        // Small sleep to reduce CPU usage
-        time::usleep(50_000); // 50ms
     }
 
     // Cleanup
@@ -1205,20 +1183,27 @@ fn display_interactive(stats: &SystemStats, processes: &[ProcessInfo], config: &
     row += 1;
     let _ = output::wmove(win, row, 0);
 
-    // Line 3: CPU
-    let total_cpu = stats.cpu_user + stats.cpu_system + stats.cpu_idle;
-    let cpu_user_pct = if total_cpu > 0 {
-        (stats.cpu_user as f32 * 100.0) / total_cpu as f32
+    // Line 3: CPU — delta-based for meaningful percentages
+    // — ByteRiot: Cumulative counters since boot are useless for display
+    // (idle dominates). Delta = current - previous gives activity over the
+    // last refresh interval, which is what htop/top actually show.
+    let delta_user = stats.cpu_user.saturating_sub(stats.prev_cpu_user);
+    let delta_sys = stats.cpu_system.saturating_sub(stats.prev_cpu_system);
+    let delta_idle = stats.cpu_idle.saturating_sub(stats.prev_cpu_idle);
+    let delta_total = delta_user + delta_sys + delta_idle;
+
+    let cpu_user_pct = if delta_total > 0 {
+        (delta_user as f32 * 100.0) / delta_total as f32
     } else {
         0.0
     };
-    let cpu_sys_pct = if total_cpu > 0 {
-        (stats.cpu_system as f32 * 100.0) / total_cpu as f32
+    let cpu_sys_pct = if delta_total > 0 {
+        (delta_sys as f32 * 100.0) / delta_total as f32
     } else {
         0.0
     };
-    let cpu_idle_pct = if total_cpu > 0 {
-        (stats.cpu_idle as f32 * 100.0) / total_cpu as f32
+    let cpu_idle_pct = if delta_total > 0 {
+        (delta_idle as f32 * 100.0) / delta_total as f32
     } else {
         100.0
     };
@@ -1373,7 +1358,9 @@ fn display_interactive(stats: &SystemStats, processes: &[ProcessInfo], config: &
 }
 
 /// Display help screen
-fn display_help_screen(win: WINDOW) {
+/// — ByteRiot: Uses wtimeout(-1) to block for keypress, then restores
+/// the original delay so the main loop resumes auto-refresh.
+fn display_help_screen(win: WINDOW, restore_delay_ms: i32) {
     let _ = output::werase(win);
     let _ = output::wmove(win, 0, 0);
 
@@ -1405,14 +1392,11 @@ fn display_help_screen(win: WINDOW) {
 
     let _ = screen::wrefresh(win);
 
-    // Wait for key press
-    unsafe {
-        (*win).nodelay = false;
-    }
+    // Block until keypress
+    input::wtimeout(win, -1);
     let _ = input::getch();
-    unsafe {
-        (*win).nodelay = true;
-    }
+    // Restore auto-refresh timeout
+    input::wtimeout(win, restore_delay_ms);
 }
 
 /// Print a number with zero padding

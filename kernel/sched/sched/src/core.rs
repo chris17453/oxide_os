@@ -27,6 +27,15 @@ static RUN_QUEUES: [Mutex<Option<RunQueue>>; MAX_CPUS] = {
     [INIT; MAX_CPUS]
 };
 
+/// — GraveShift: Per-CPU tick counters for /proc/stat. Three slots per CPU:
+/// [cpu*3+0] = user ticks, [cpu*3+1] = system ticks, [cpu*3+2] = idle ticks.
+/// Incremented in scheduler_tick() from ISR context using try_with_rq, so
+/// lock failure conservatively counts as idle. Values in nanoseconds.
+static CPU_TICK_NS: [AtomicU64; MAX_CPUS * 3] = {
+    const INIT: AtomicU64 = AtomicU64::new(0);
+    [INIT; MAX_CPUS * 3]
+};
+
 /// Number of active CPUs
 static ACTIVE_CPUS: AtomicU32 = AtomicU32::new(0);
 
@@ -399,13 +408,49 @@ pub fn scheduler_tick() -> bool {
     let cpu = this_cpu();
     let now = GLOBAL_CLOCK.fetch_add(TICK_NS, Ordering::Relaxed) + TICK_NS;
 
-    // Use try_with_rq to avoid deadlock if lock is held by main code
-    // If lock is held, we just skip this tick - it's not critical
-    try_with_rq(cpu, |rq| {
+    // — GraveShift: Classify this tick for /proc/stat accounting.
+    // try_with_rq avoids deadlock if main code holds the lock.
+    // Lock failure = we can't tell what's running, count as idle.
+    let base = (cpu as usize) * 3;
+    let resched = try_with_rq(cpu, |rq| {
+        let is_idle = match rq.curr() {
+            None => true,
+            Some(pid) => rq.get_task(pid)
+                .map(|t| t.policy == SchedPolicy::Idle)
+                .unwrap_or(true),
+        };
+        if is_idle {
+            CPU_TICK_NS[base + 2].fetch_add(TICK_NS, Ordering::Relaxed);
+        } else {
+            // — GraveShift: All userspace tasks run through syscall for
+            // kernel work, so split as user for now. Real user/system
+            // split needs ring-level tracking in the context switch.
+            CPU_TICK_NS[base + 0].fetch_add(TICK_NS, Ordering::Relaxed);
+        }
         rq.update_clock(now);
         rq.scheduler_tick()
-    })
-    .unwrap_or(false)
+    });
+
+    match resched {
+        Some(r) => r,
+        None => {
+            // Lock held — count as idle conservatively
+            CPU_TICK_NS[base + 2].fetch_add(TICK_NS, Ordering::Relaxed);
+            false
+        }
+    }
+}
+
+/// Get per-CPU tick times in nanoseconds: (user_ns, system_ns, idle_ns)
+///
+/// — GraveShift: Lock-free read of atomic counters. Safe from any context.
+pub fn get_cpu_times(cpu: u32) -> (u64, u64, u64) {
+    let base = (cpu as usize) * 3;
+    (
+        CPU_TICK_NS[base + 0].load(Ordering::Relaxed),
+        CPU_TICK_NS[base + 1].load(Ordering::Relaxed),
+        CPU_TICK_NS[base + 2].load(Ordering::Relaxed),
+    )
 }
 
 /// Pick the next task to run

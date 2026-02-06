@@ -1712,14 +1712,33 @@ impl ProcStat {
     fn generate_content(&self) -> String {
         let mut output = String::new();
 
-        // CPU time statistics (all zeros for now - not tracked yet)
-        // Format: cpu <user> <nice> <system> <idle> <iowait> <irq> <softirq>
-        output.push_str("cpu  0 0 0 0 0 0 0 0 0 0\n");
+        // — GraveShift: Real CPU tick data from scheduler accounting.
+        // Convert nanoseconds to jiffies (10ms ticks, like Linux CLK_TCK=100).
+        let cpu_count = sched::num_cpus();
+        let mut total_user: u64 = 0;
+        let mut total_system: u64 = 0;
+        let mut total_idle: u64 = 0;
+
+        for cpu_id in 0..cpu_count {
+            let (user_ns, sys_ns, idle_ns) = sched::get_cpu_times(cpu_id);
+            total_user += user_ns;
+            total_system += sys_ns;
+            total_idle += idle_ns;
+        }
+
+        // Aggregate CPU line (sum of all CPUs), ns → jiffies (/ 10_000_000)
+        let agg_user = total_user / 10_000_000;
+        let agg_sys = total_system / 10_000_000;
+        let agg_idle = total_idle / 10_000_000;
+        output.push_str(&format!("cpu  {} 0 {} {} 0 0 0 0 0 0\n", agg_user, agg_sys, agg_idle));
 
         // Per-CPU statistics
-        let cpu_count = sched::num_cpus();
         for cpu_id in 0..cpu_count {
-            output.push_str(&format!("cpu{} 0 0 0 0 0 0 0 0 0 0\n", cpu_id));
+            let (user_ns, sys_ns, idle_ns) = sched::get_cpu_times(cpu_id);
+            let u = user_ns / 10_000_000;
+            let s = sys_ns / 10_000_000;
+            let i = idle_ns / 10_000_000;
+            output.push_str(&format!("cpu{} {} 0 {} {} 0 0 0 0 0 0\n", cpu_id, u, s, i));
         }
 
         // Interrupt statistics

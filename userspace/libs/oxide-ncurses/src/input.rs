@@ -72,15 +72,19 @@ pub fn wgetch(win: WINDOW) -> i32 {
 
     // Read from stdin
     let mut byte = [0u8; 1];
+    let timeout_ms = unsafe { (*win).timeout_ms };
     let nodelay = unsafe { (*win).nodelay };
 
-    // — InputShade: nodelay mode must not block. Use poll(timeout=0) to
-    // check for available data before attempting read(). Without this,
-    // read(0,...) blocks until a byte arrives, stalling apps like top
-    // that need timer-driven refresh between keystrokes.
-    if nodelay {
+    // — InputShade: Unified timeout logic. timeout_ms controls blocking:
+    //   -1 = blocking (skip poll, go straight to read)
+    //    0 = non-blocking (poll with timeout=0, same as old nodelay)
+    //   >0 = timed wait (poll with timeout=N ms, return -1 on timeout)
+    // nodelay=true is backwards-compat shorthand for timeout_ms=0.
+    let effective_timeout = if nodelay { 0 } else { timeout_ms };
+
+    if effective_timeout >= 0 {
         let mut pfd = libc::poll::PollFd::new(0, libc::poll::events::POLLIN);
-        let ready = libc::poll::poll(core::slice::from_mut(&mut pfd), 0);
+        let ready = libc::poll::poll(core::slice::from_mut(&mut pfd), effective_timeout);
         if ready <= 0 || (pfd.revents & libc::poll::events::POLLIN) == 0 {
             return -1;
         }
@@ -370,6 +374,22 @@ pub fn ungetch(ch: i32) -> Result<()> {
     let state = input_state();
     state.pushback.push(ch);
     Ok(())
+}
+
+/// Set input timeout for a window
+/// — InputShade: delay < 0 = blocking, delay == 0 = non-blocking,
+/// delay > 0 = wait up to `delay` ms then return ERR.
+pub fn wtimeout(win: WINDOW, delay: i32) {
+    if !win.is_null() {
+        unsafe {
+            (*win).timeout_ms = delay;
+        }
+    }
+}
+
+/// Set input timeout for stdscr
+pub fn timeout(delay: i32) {
+    wtimeout(screen::stdscr(), delay);
 }
 
 /// Has key - check if a key has been pressed
