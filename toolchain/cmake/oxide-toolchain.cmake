@@ -36,8 +36,8 @@ set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 
 # Compiler flags
-set(CMAKE_C_FLAGS_INIT "-ffreestanding")
-set(CMAKE_CXX_FLAGS_INIT "-ffreestanding -fno-exceptions -fno-rtti")
+set(CMAKE_C_FLAGS_INIT "")
+set(CMAKE_CXX_FLAGS_INIT "-fno-exceptions -fno-rtti")
 
 # Don't look for shared libraries (static only)
 set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")

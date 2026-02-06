@@ -1,0 +1,451 @@
+#!/usr/bin/env python3
+"""
+build-pipeline - Mass package build orchestration for OXIDE OS
+
+This script builds multiple packages in dependency order, supporting:
+- Dependency resolution and build ordering
+- Parallel builds for independent packages
+- Override file loading
+- Build status tracking and reporting
+- Resume from failed builds
+
+Usage:
+  build-pipeline [options] <package-list-file>
+  build-pipeline [options] pkg1 pkg2 pkg3...
+
+Options:
+  -j, --jobs N          Number of parallel builds (default: 1)
+  -o, --output DIR      Output directory for packages
+  -c, --continue        Continue after failures
+  -r, --resume          Resume from last failed package
+  -v, --verbose         Verbose output
+  --dry-run             Show build order without building
+  --sync                Sync repo metadata before building
+"""
+
+import sys
+import os
+import argparse
+import json
+from pathlib import Path
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, List, Optional, Set, Tuple
+
+# Add lib directory to path
+PKGMGR_ROOT = Path(__file__).parent.parent
+REPO_ROOT = PKGMGR_ROOT.parent
+sys.path.insert(0, str(PKGMGR_ROOT / 'lib'))
+
+from fedora import FedoraRepoManager
+from builder import BuildConfig, PackageBuilder
+from repository import LocalRepository
+from resolver import DependencyResolver
+
+
+class BuildResult:
+    """Result of a package build"""
+    def __init__(self, package: str):
+        self.package = package
+        self.success = False
+        self.pkg_file = None
+        self.error = None
+        self.duration = 0
+        self.log_file = None
+
+
+class PipelineState:
+    """Persistent state for resumable builds"""
+    def __init__(self, state_file: str):
+        self.state_file = Path(state_file)
+        self.state = self._load()
+    
+    def _load(self) -> Dict:
+        if self.state_file.exists():
+            return json.loads(self.state_file.read_text())
+        return {'completed': [], 'failed': [], 'pending': []}
+    
+    def save(self):
+        self.state_file.write_text(json.dumps(self.state, indent=2))
+    
+    def mark_completed(self, package: str):
+        if package not in self.state['completed']:
+            self.state['completed'].append(package)
+        if package in self.state['pending']:
+            self.state['pending'].remove(package)
+        self.save()
+    
+    def mark_failed(self, package: str):
+        if package not in self.state['failed']:
+            self.state['failed'].append(package)
+        if package in self.state['pending']:
+            self.state['pending'].remove(package)
+        self.save()
+    
+    def set_pending(self, packages: List[str]):
+        self.state['pending'] = packages
+        self.save()
+    
+    def get_remaining(self) -> List[str]:
+        """Get packages that still need to be built"""
+        completed = set(self.state['completed'])
+        return [p for p in self.state['pending'] if p not in completed]
+    
+    def reset(self):
+        self.state = {'completed': [], 'failed': [], 'pending': []}
+        self.save()
+
+
+class BuildPipeline:
+    """Orchestrates mass package builds"""
+    
+    def __init__(self, args):
+        self.args = args
+        self.config_dir = PKGMGR_ROOT / 'config'
+        self.output_dir = Path(args.output) if args.output else PKGMGR_ROOT / 'repo' / 'packages'
+        self.cache_dir = PKGMGR_ROOT / 'cache'
+        self.state_file = self.cache_dir / 'pipeline-state.json'
+        
+        # Initialize components
+        self.repo_mgr = FedoraRepoManager(str(self.config_dir))
+        self.local_repo = LocalRepository(str(PKGMGR_ROOT / 'repo'))
+        self.resolver = DependencyResolver()
+        self.build_config = BuildConfig(
+            str(self.config_dir / 'build.conf'),
+            str(REPO_ROOT)
+        )
+        
+        # Results tracking
+        self.results: List[BuildResult] = []
+        self.state = PipelineState(str(self.state_file))
+    
+    def log(self, msg: str, level: str = 'info'):
+        """Log a message"""
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        prefix = {'info': '→', 'success': '✓', 'error': '✗', 'warn': '!'}
+        print(f"[{timestamp}] {prefix.get(level, '→')} {msg}")
+    
+    def load_package_list(self) -> List[str]:
+        """Load packages from file or command line"""
+        packages = []
+        
+        if self.args.package_file:
+            pkg_file = Path(self.args.package_file)
+            if pkg_file.exists():
+                content = pkg_file.read_text()
+                for line in content.splitlines():
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        packages.append(line.split()[0])  # Take first word
+        
+        packages.extend(self.args.packages or [])
+        return packages
+    
+    def resolve_build_order(self, packages: List[str]) -> Optional[List[str]]:
+        """Resolve dependencies and return build order"""
+        self.log("Resolving dependencies...")
+        
+        # Sync metadata if needed
+        if self.args.sync or not self._has_cached_metadata():
+            self.log("Syncing repository metadata...")
+            self.repo_mgr.sync_all(str(self.cache_dir))
+        
+        # Get dependency info for each package
+        for pkg in packages:
+            result = self.repo_mgr.get_package(pkg)
+            if result:
+                repo, pkg_info = result
+                # For now, use empty deps - full resolution would require parsing specs
+                self.resolver.add_package(pkg, [], pkg_info)
+            else:
+                self.log(f"Package not found in repos: {pkg}", 'warn')
+        
+        # Get build order
+        order = self.resolver.get_build_order(packages)
+        
+        if order is None:
+            cycles = self.resolver.find_cycles()
+            self.log(f"Circular dependencies detected: {cycles}", 'error')
+            return None
+        
+        return order
+    
+    def _has_cached_metadata(self) -> bool:
+        """Check if we have cached repo metadata"""
+        for repo in self.repo_mgr.repos:
+            if repo.enabled and repo.packages_cache:
+                return True
+        return False
+    
+    def build_package(self, package: str) -> BuildResult:
+        """Build a single package"""
+        result = BuildResult(package)
+        start_time = datetime.now()
+        
+        try:
+            self.log(f"Building {package}...")
+            
+            # Download SRPM
+            srpm_cache = self.cache_dir / 'srpms'
+            srpm_file = self.repo_mgr.download_srpm(package, str(srpm_cache))
+            
+            if not srpm_file:
+                result.error = "Failed to download SRPM"
+                return result
+            
+            # Build
+            builder = PackageBuilder(self.build_config)
+            extract_dir = self.cache_dir / 'builds'
+            
+            pkg_file = builder.build_srpm(
+                srpm_file, 
+                str(self.output_dir),
+                str(extract_dir),
+                package_name=package
+            )
+            
+            if pkg_file:
+                result.success = True
+                result.pkg_file = pkg_file
+                
+                # Add to local repo
+                self.local_repo.add_package(pkg_file)
+            else:
+                result.error = "Build failed"
+                
+        except Exception as e:
+            result.error = str(e)
+        
+        result.duration = (datetime.now() - start_time).total_seconds()
+        return result
+    
+    def run_sequential(self, packages: List[str]) -> List[BuildResult]:
+        """Run builds sequentially"""
+        results = []
+        
+        for i, pkg in enumerate(packages, 1):
+            self.log(f"[{i}/{len(packages)}] {pkg}")
+            
+            result = self.build_package(pkg)
+            results.append(result)
+            
+            if result.success:
+                self.log(f"{pkg} built successfully ({result.duration:.1f}s)", 'success')
+                self.state.mark_completed(pkg)
+            else:
+                self.log(f"{pkg} failed: {result.error}", 'error')
+                self.state.mark_failed(pkg)
+                
+                if not self.args.continue_on_error:
+                    self.log("Stopping due to failure. Use -c to continue.", 'warn')
+                    break
+        
+        return results
+    
+    def run_parallel(self, packages: List[str], jobs: int) -> List[BuildResult]:
+        """Run builds in parallel where possible"""
+        results = []
+        
+        # Get parallel build groups
+        groups = self.resolver.suggest_build_groups()
+        
+        if not groups:
+            # Fall back to sequential if no groups
+            return self.run_sequential(packages)
+        
+        total = len(packages)
+        completed = 0
+        
+        for group_num, group in enumerate(groups, 1):
+            # Filter to only requested packages
+            group_pkgs = [p for p in group if p in packages]
+            if not group_pkgs:
+                continue
+            
+            self.log(f"Build group {group_num}: {', '.join(group_pkgs)}")
+            
+            with ThreadPoolExecutor(max_workers=min(jobs, len(group_pkgs))) as executor:
+                futures = {executor.submit(self.build_package, pkg): pkg for pkg in group_pkgs}
+                
+                for future in as_completed(futures):
+                    pkg = futures[future]
+                    completed += 1
+                    
+                    try:
+                        result = future.result()
+                        results.append(result)
+                        
+                        if result.success:
+                            self.log(f"[{completed}/{total}] {pkg} ✓ ({result.duration:.1f}s)", 'success')
+                            self.state.mark_completed(pkg)
+                        else:
+                            self.log(f"[{completed}/{total}] {pkg} ✗ {result.error}", 'error')
+                            self.state.mark_failed(pkg)
+                    except Exception as e:
+                        self.log(f"[{completed}/{total}] {pkg} ✗ {e}", 'error')
+                        self.state.mark_failed(pkg)
+        
+        return results
+    
+    def print_summary(self, results: List[BuildResult]):
+        """Print build summary"""
+        print()
+        print("=" * 60)
+        print("BUILD SUMMARY")
+        print("=" * 60)
+        
+        success = [r for r in results if r.success]
+        failed = [r for r in results if not r.success]
+        
+        print(f"Total: {len(results)}")
+        print(f"Success: {len(success)}")
+        print(f"Failed: {len(failed)}")
+        
+        if success:
+            print("\nSuccessful builds:")
+            for r in success:
+                print(f"  ✓ {r.package} ({r.duration:.1f}s)")
+        
+        if failed:
+            print("\nFailed builds:")
+            for r in failed:
+                print(f"  ✗ {r.package}: {r.error}")
+        
+        total_time = sum(r.duration for r in results)
+        print(f"\nTotal build time: {total_time:.1f}s")
+        print("=" * 60)
+    
+    def run(self) -> int:
+        """Run the build pipeline"""
+        # Load packages
+        packages = self.load_package_list()
+        
+        if not packages:
+            self.log("No packages specified", 'error')
+            return 1
+        
+        self.log(f"Packages to build: {', '.join(packages)}")
+        
+        # Handle resume
+        if self.args.resume:
+            remaining = self.state.get_remaining()
+            if remaining:
+                self.log(f"Resuming with {len(remaining)} remaining packages")
+                packages = remaining
+            else:
+                self.log("No packages to resume, starting fresh")
+                self.state.reset()
+        else:
+            self.state.reset()
+        
+        # Resolve build order
+        build_order = self.resolve_build_order(packages)
+        if not build_order:
+            return 1
+        
+        self.log(f"Build order: {' → '.join(build_order)}")
+        
+        # Dry run
+        if self.args.dry_run:
+            self.log("Dry run complete")
+            return 0
+        
+        # Set pending packages
+        self.state.set_pending(build_order)
+        
+        # Create output directories
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        (self.cache_dir / 'srpms').mkdir(parents=True, exist_ok=True)
+        (self.cache_dir / 'builds').mkdir(parents=True, exist_ok=True)
+        
+        # Run builds
+        jobs = self.args.jobs
+        if jobs > 1:
+            results = self.run_parallel(build_order, jobs)
+        else:
+            results = self.run_sequential(build_order)
+        
+        # Print summary
+        self.print_summary(results)
+        
+        # Return exit code
+        if all(r.success for r in results):
+            return 0
+        return 1
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Build multiple packages for OXIDE OS',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Build packages from a list file
+  build-pipeline packages.txt
+
+  # Build specific packages
+  build-pipeline bash coreutils vim
+
+  # Parallel build with 4 jobs
+  build-pipeline -j4 packages.txt
+
+  # Continue after failures
+  build-pipeline -c packages.txt
+
+  # Resume from last failure
+  build-pipeline -r packages.txt
+
+  # Dry run to see build order
+  build-pipeline --dry-run packages.txt
+
+Package List File Format:
+  # Comment lines start with #
+  bash
+  coreutils
+  vim
+  # Can include version hints (ignored for now)
+  zlib >= 1.2
+        """
+    )
+    
+    parser.add_argument('package_file', nargs='?', help='File containing package list')
+    parser.add_argument('packages', nargs='*', help='Additional packages to build')
+    parser.add_argument('-j', '--jobs', type=int, default=1,
+                       help='Number of parallel builds (default: 1)')
+    parser.add_argument('-o', '--output', help='Output directory for packages')
+    parser.add_argument('-c', '--continue-on-error', action='store_true',
+                       help='Continue building after failures')
+    parser.add_argument('-r', '--resume', action='store_true',
+                       help='Resume from last failed package')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                       help='Verbose output')
+    parser.add_argument('--dry-run', action='store_true',
+                       help='Show build order without building')
+    parser.add_argument('--sync', action='store_true',
+                       help='Sync repo metadata before building')
+    
+    args = parser.parse_args()
+    
+    if not args.package_file and not args.packages:
+        parser.print_help()
+        return 1
+    
+    try:
+        pipeline = BuildPipeline(args)
+        return pipeline.run()
+    except KeyboardInterrupt:
+        print("\n\nInterrupted by user")
+        return 130
+    except Exception as e:
+        print(f"\nERROR: {e}")
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
+
+
+# — CipherVex: "Mass builds need mass control. Pipeline it, parallelize it, package it."

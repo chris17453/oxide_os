@@ -160,32 +160,21 @@ pub fn kernel_fork() -> i64 {
     use alloc::sync::Arc;
     use spin::Mutex;
 
-    println!("[DEBUG] kernel_fork: Starting fork");
-    
     let parent_pid = sched::current_pid().unwrap_or(0);
-
-    println!("[DEBUG] kernel_fork: Parent PID {}", parent_pid);
     
     debug_fork!("[FORK] Fork called from PID {}", parent_pid);
 
     // Get parent's ProcessMeta from scheduler
     let parent_meta_arc = match sched::get_task_meta(parent_pid) {
-        Some(m) => {
-            println!("[DEBUG] kernel_fork: Got parent meta");
-            m
-        },
+        Some(m) => m,
         None => {
-            println!("[DEBUG] kernel_fork: Parent meta not found");
             debug_fork!("[FORK] Parent meta not found");
             return -3; // ESRCH
         }
     };
 
     // Get current process context from syscall user context
-    println!("[DEBUG] kernel_fork: Getting user context");
     let user_ctx = arch::get_user_context();
-
-    println!("[DEBUG] kernel_fork: Got user context rip={:#x} rsp={:#x}", user_ctx.rip, user_ctx.rsp);
 
     debug_fork!(
         "[FORK] user_ctx.rip={:#x} rsp={:#x}",
@@ -216,8 +205,6 @@ pub fn kernel_fork() -> i64 {
         fs_base: 0, // Will be set by exec if TLS is needed
     };
 
-    println!("[DEBUG] kernel_fork: Parent context created");
-
     debug_fork!(
         "[FORK] Parent context: rip={:#x} rsp={:#x}",
         parent_context.rip,
@@ -226,8 +213,6 @@ pub fn kernel_fork() -> i64 {
 
     // Kernel stack size (128KB)
     const KERNEL_STACK_SIZE: usize = 128 * 1024;
-
-    println!("[DEBUG] kernel_fork: About to call do_fork");
 
     // Call do_fork with parent's ProcessMeta
     let parent_meta = parent_meta_arc.lock();
@@ -1061,12 +1046,9 @@ pub fn kernel_exec(
 ) -> i64 {
     let current_pid = sched::current_pid().unwrap_or(0);
 
-    println!("[DEBUG] kernel_exec: PID {} starting exec", current_pid);
-
     // Read path from user space
     let path = unsafe {
         if path_ptr.is_null() || path_len == 0 {
-            println!("[DEBUG] kernel_exec: Invalid path (null or zero len)");
             debug_fork!("[EXEC] Invalid path (null or zero len)");
             return -22; // EINVAL
         }
@@ -1074,14 +1056,12 @@ pub fn kernel_exec(
         match core::str::from_utf8(slice) {
             Ok(s) => s,
             Err(_) => {
-                println!("[DEBUG] kernel_exec: Invalid UTF-8 in path");
                 debug_fork!("[EXEC] Invalid UTF-8 in path");
                 return -22; // EINVAL
             }
         }
     };
 
-    println!("[DEBUG] kernel_exec: PID {} exec(\"{}\")", current_pid, path);
     debug_fork!("[EXEC] PID {} exec(\"{}\")", current_pid, path);
 
     // Read argv from user space
@@ -1270,14 +1250,9 @@ pub fn kernel_exec(
     // Call do_exec - returns ExecResult with new address space and context
     match do_exec(&elf_data, &argv, &envp, mm(), kernel_pml4) {
         Ok(exec_result) => {
-            println!("[DEBUG] kernel_exec: do_exec succeeded");
-            
             // Get new address space PML4
             let new_pml4 = exec_result.address_space.pml4_phys();
             let ctx = &exec_result.context;
-
-            println!("[DEBUG] kernel_exec: new_pml4={:#x} rip={:#x} rsp={:#x}", 
-                     new_pml4.as_u64(), ctx.rip, ctx.rsp);
 
             // Build task context from exec result
             let task_ctx = TaskContext {
@@ -1304,8 +1279,6 @@ pub fn kernel_exec(
                 fs_base: ctx.fs_base,
             };
 
-            println!("[DEBUG] kernel_exec: task_ctx created, updating meta");
-
             // Update ProcessMeta with new address space and cmdline
             if let Some(meta) = sched::get_task_meta(current_pid) {
                 let mut m = meta.lock();
@@ -1314,24 +1287,18 @@ pub fn kernel_exec(
                 m.environ = exec_result.environ;
             }
 
-            println!("[DEBUG] kernel_exec: meta updated, updating task");
-
             // Update scheduler task with new exec info
             sched::update_task_exec_info(current_pid, new_pml4, ctx.rip, ctx.rsp, task_ctx);
-
-            println!("[DEBUG] kernel_exec: getting kernel stack for transition");
 
             // Get current task's kernel stack for safe transition
             let kernel_stack_top = if let Some((kstack_phys, kstack_size)) = sched::get_task_kernel_stack(current_pid) {
                 let kstack_virt = phys_to_virt(kstack_phys);
                 kstack_virt.as_u64() + kstack_size as u64
             } else {
-                // Fallback - should not happen
-                println!("[DEBUG] kernel_exec: WARNING - could not get task kernel stack");
+                // — GraveShift: Fallback — should never happen, but don't crash the world
+                debug_fork!("[EXEC] WARNING - could not get task kernel stack for PID {}", current_pid);
                 0xffff_8000_0100_0000 // default kernel stack location
             };
-
-            println!("[DEBUG] kernel_exec: kernel_stack_top={:#x}, calling enter_usermode_with_context", kernel_stack_top);
 
             // Debug: print exec return values
             debug_fork!("[EXEC] Switching to PML4={:#x}", new_pml4.as_u64());

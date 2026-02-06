@@ -91,6 +91,10 @@ pub struct Renderer {
     /// Blink state counter — text blink toggles every N renders
     /// Ticks up each render; blink text visible when bit 4 is set (~500ms at 30fps). — SoftGlyph
     blink_counter: u32,
+    /// Active selection range: (start_col, start_row, end_col, end_row)
+    /// — InputShade: Ghost coordinates marking the user's text selection.
+    /// When set, selected cells render with swapped fg/bg for that inverted glow.
+    selection: Option<(u32, u32, u32, u32)>,
 }
 
 impl Renderer {
@@ -121,6 +125,7 @@ impl Renderer {
             last_cursor_col: 0,
             last_cursor_visible: false,
             blink_counter: 0,
+            selection: None,
         }
     }
 
@@ -142,6 +147,45 @@ impl Renderer {
     /// Mark all rows dirty
     pub fn mark_all_dirty(&mut self) {
         self.dirty.mark_all();
+    }
+
+    /// Set the active text selection range for highlight rendering.
+    /// Coordinates are (start_col, start_row, end_col, end_row).
+    /// Pass None to clear selection. — InputShade
+    pub fn set_selection(&mut self, selection: Option<(u32, u32, u32, u32)>) {
+        self.selection = selection;
+    }
+
+    /// Check if a cell at (row, col) falls within the active selection.
+    /// Returns true if the cell should be rendered with inverted colors.
+    /// — InputShade: Selection geometry — the neon highlight mask.
+    fn is_cell_selected(&self, row: u32, col: u32) -> bool {
+        let (sc, sr, ec, er) = match self.selection {
+            Some(sel) => sel,
+            None => return false,
+        };
+
+        // Normalize so (r1, c1) <= (r2, c2)
+        let ((c1, r1), (c2, r2)) = if sr < er || (sr == er && sc <= ec) {
+            ((sc, sr), (ec, er))
+        } else {
+            ((ec, er), (sc, sr))
+        };
+
+        if row < r1 || row > r2 {
+            return false;
+        }
+        if r1 == r2 {
+            // Single row selection
+            col >= c1 && col <= c2
+        } else if row == r1 {
+            col >= c1
+        } else if row == r2 {
+            col <= c2
+        } else {
+            // Middle rows are fully selected
+            true
+        }
     }
 
     /// Render the entire screen
@@ -197,7 +241,7 @@ impl Renderer {
 
     /// Render a single row
     /// Handles WIDE cells (2-cell glyphs) and skips WIDE_CONTINUATION placeholders.
-    /// The second cell of a wide char is just dead air — we painted it already. — SoftGlyph
+    /// — SoftGlyph: Now also checks selection state to invert selected cells.
     fn render_row(&self, buffer: &ScreenBuffer, row: u32) {
         let py = row * self.font.height;
 
@@ -211,13 +255,14 @@ impl Renderer {
                 }
 
                 let px = col * self.font.width;
+                let selected = self.is_cell_selected(row, col);
 
                 if cell.attrs.flags.contains(CellFlags::WIDE) {
                     // Wide character: render across 2 cells
-                    self.render_cell_wide(px, py, cell, 2);
+                    self.render_cell_inner(px, py, cell, 2, selected);
                     col += 2;
                 } else {
-                    self.render_cell(px, py, cell);
+                    self.render_cell_inner(px, py, cell, 1, selected);
                     col += 1;
                 }
             } else {
@@ -226,37 +271,33 @@ impl Renderer {
         }
     }
 
-    /// Render a single cell (1 cell width)
-    fn render_cell(&self, px: u32, py: u32, cell: &Cell) {
-        self.render_cell_inner(px, py, cell, 1);
-    }
-
-    /// Render a wide cell (2 cell widths for CJK/emoji)
-    /// Two cells, one glyph, centered like a samurai's stance. — SoftGlyph
-    fn render_cell_wide(&self, px: u32, py: u32, cell: &Cell, cell_count: u32) {
-        self.render_cell_inner(px, py, cell, cell_count);
-    }
-
     /// Check if text blink is currently in the "visible" phase
     /// Blink text shows for ~500ms, hides for ~500ms. — SoftGlyph
     fn blink_text_visible(&self) -> bool {
         (self.blink_counter / 15) % 2 == 0
     }
 
-    /// Inner render logic shared by normal and wide cell paths
-    fn render_cell_inner(&self, px: u32, py: u32, cell: &Cell, cell_count: u32) {
+    /// Inner render logic shared by normal and wide cell paths.
+    /// — InputShade: `selected` flag triggers reverse-video for the selection overlay.
+    fn render_cell_inner(&self, px: u32, py: u32, cell: &Cell, cell_count: u32, selected: bool) {
         // -- GlassSignal: bridge VTE RGB tuples to framebuffer Color
         let (r, g, b) = cell.attrs.effective_fg().to_rgb(true);
-        let fg_color = Color::new(r, g, b);
+        let mut fg_color = Color::new(r, g, b);
         let (r, g, b) = cell.attrs.effective_bg().to_rgb(false);
-        let bg_color = Color::new(r, g, b);
+        let mut bg_color = Color::new(r, g, b);
 
         // Apply bold by brightening foreground
-        let fg_color = if cell.attrs.flags.contains(CellFlags::BOLD) {
+        fg_color = if cell.attrs.flags.contains(CellFlags::BOLD) {
             brighten_color(fg_color)
         } else {
             fg_color
         };
+
+        // — InputShade: Selection inversion — swap fg/bg for that neon highlight.
+        // Applied after bold so the highlighted text stays readable.
+        if selected {
+            core::mem::swap(&mut fg_color, &mut bg_color);
+        }
 
         let total_width = self.font.width * cell_count;
 
@@ -563,9 +604,89 @@ impl Renderer {
         }
     }
 
+    /// Paint a single cell to framebuffer — our fbcon_putcs() for one glyph.
+    /// Cost: exactly 1 cell worth of pixels. No dirty tracking, no row iteration.
+    /// — SoftGlyph: Synchronous glyph blit. The pixel that matters, nothing more.
+    pub fn render_cell(&self, buffer: &ScreenBuffer, row: u32, col: u32) {
+        if row >= self.rows || col >= self.cols {
+            return;
+        }
+        if let Some(cell) = buffer.get(row, col) {
+            if cell.attrs.flags.contains(CellFlags::WIDE_CONTINUATION) {
+                return;
+            }
+            let px = col * self.font.width;
+            let py = row * self.font.height;
+            let selected = self.is_cell_selected(row, col);
+            let cell_count = if cell.attrs.flags.contains(CellFlags::WIDE) { 2 } else { 1 };
+            self.render_cell_inner(px, py, cell, cell_count, selected);
+        }
+    }
+
+    /// Pixel-level scroll — memmove framebuffer up by N text rows.
+    /// — GraveShift: This is what makes synchronous render fast. Instead of
+    /// repainting 24×80 cells after scroll, we memmove the pixels and clear
+    /// the bottom row. The fb already has copy_rect for overlapping regions.
+    pub fn scroll_up_pixels(&self, lines: u32, bg_color: Color) {
+        let pixel_rows = lines * self.font.height;
+        let total_pixel_height = self.rows * self.font.height;
+        if pixel_rows >= total_pixel_height {
+            return;
+        }
+        // — GraveShift: Shift all scanlines up by pixel_rows. copy_rect handles overlap.
+        self.fb.copy_rect(
+            0, pixel_rows,
+            0, 0,
+            self.fb.width(), total_pixel_height - pixel_rows,
+        );
+        // Clear the vacated bottom rows
+        let clear_y = total_pixel_height - pixel_rows;
+        self.fb.fill_rect(0, clear_y, self.fb.width(), pixel_rows, bg_color);
+    }
+
+    /// Paint cursor at current position — call after writes for immediate visibility.
+    /// — SoftGlyph: The blinking caret, rendered on demand.
+    pub fn paint_cursor(&self, buffer: &ScreenBuffer, cursor: &Cursor) {
+        if cursor.visible && cursor.blink_on {
+            self.render_cursor(buffer, cursor);
+        }
+    }
+
+    /// Erase cursor from previous position by repainting the cell underneath.
+    /// — SoftGlyph: Ghost cursor exorcism — repaint what was there before the caret landed.
+    pub fn erase_cursor(&self, buffer: &ScreenBuffer) {
+        if self.last_cursor_visible && self.last_cursor_row < self.rows && self.last_cursor_col < self.cols {
+            self.render_cell(buffer, self.last_cursor_row, self.last_cursor_col);
+        }
+    }
+
+    /// Update cursor tracking after inline rendering so tick() knows where cursor was.
+    /// — SoftGlyph: Breadcrumbs for the next erase_cursor call.
+    pub fn update_cursor_tracking(&mut self, cursor: &Cursor) {
+        self.last_cursor_row = cursor.row;
+        self.last_cursor_col = cursor.col;
+        self.last_cursor_visible = cursor.visible && cursor.blink_on;
+    }
+
+    /// Check if any rows are dirty (from CSI multi-row ops that used mark_all_dirty).
+    /// — GraveShift: The per-glyph path handles Print/LF inline, but bulk ops
+    /// like ED/IL/DL still set dirty flags. This tells write() to flush them.
+    pub fn has_dirty(&self) -> bool {
+        if self.dirty.full_redraw {
+            return true;
+        }
+        self.dirty.dirty_rows.iter().any(|&d| d)
+    }
+
     /// Force full redraw on next render
     pub fn invalidate(&mut self) {
         self.dirty.mark_all();
+    }
+
+    /// Flush framebuffer to hardware — call after per-glyph rendering.
+    /// — SoftGlyph: The final handshake. Pixels committed.
+    pub fn flush_fb(&self) {
+        self.fb.flush();
     }
 
     /// Draw a single pixel at the given coordinates

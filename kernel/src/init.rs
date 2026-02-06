@@ -51,6 +51,23 @@ impl os_log::SerialWriter for OsLogSerialWriter {
 /// Static writer for os_log (needs to live for 'static lifetime)
 static mut OS_LOG_WRITER: OsLogSerialWriter = OsLogSerialWriter;
 
+/// — GraveShift: Dual-output boot writer. Serial from the start, terminal after
+/// framebuffer init. The user deserves to see boot messages, not stare into the
+/// void wondering if their silicon is alive.
+struct BootWriter {
+    console_enabled: bool,
+}
+
+impl core::fmt::Write for BootWriter {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        arch::SerialWriter.write_str(s)?;
+        if self.console_enabled {
+            console::console_write(s.as_bytes());
+        }
+        Ok(())
+    }
+}
+
 /// Callback for terminal query responses (DSR, DA, etc.)
 /// Injects response bytes into VT TTY input so apps receive them
 fn terminal_response_callback(data: &[u8]) {
@@ -133,7 +150,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         );
     }
 
-    let mut writer = arch::SerialWriter;
+    let mut writer = BootWriter { console_enabled: false };
 
     // Print boot banner
     let _ = writeln!(writer);
@@ -449,6 +466,15 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
         // Clear the screen with a dark background
         terminal::clear();
+
+        // — GraveShift: The void ends here. Boot messages now paint to the
+        // framebuffer so the user sees something besides the abyss.
+        writer.console_enabled = true;
+        // — GraveShift: os_log console writer intentionally disabled.
+        // BootWriter handles init.rs boot messages → terminal. os_log registration
+        // would route ALL kernel println! (debug macros, error logs) to the display,
+        // polluting userspace output. Debug stays on serial where it belongs.
+
         let _ = writeln!(writer, "[INFO] Terminal ready");
     } else {
         let _ = writeln!(writer, "[INFO] No framebuffer available, serial-only mode");
@@ -874,11 +900,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         "[VFS] Mounted devfs at /dev with {} VT devices",
         vt::NUM_VTS
     );
-
-    // Set up serial write function for devfs (raw debug output)
-    unsafe {
-        devfs::devices::set_serial_write(console::serial_write_bytes);
-    }
 
     // Set up legacy console write function for devfs (fallback for early boot)
     unsafe {

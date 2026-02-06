@@ -1,0 +1,669 @@
+# config.site override for cross compiling CPython to OXIDE OS
+#
+# Based on Tools/wasm/config.site-wasm32-wasi with OXIDE-specific settings.
+
+# Cannot be detected in cross builds
+ac_cv_buggy_getaddrinfo=no
+
+# PTY device nodes
+ac_cv_file__dev_ptmx=yes
+ac_cv_file__dev_ptc=no
+
+# Resource limits
+ac_cv_header_sys_resource_h=yes
+
+# eventfd implemented with kernel handler
+ac_cv_func_eventfd=yes
+
+# We have pipe
+ac_cv_func_pipe=yes
+
+# mkfifo/mknod - stubs return ENOSYS
+ac_cv_func_mkfifo=no
+ac_cv_func_mkfifoat=no
+ac_cv_func_mknod=no
+ac_cv_func_mknodat=no
+ac_cv_func_makedev=yes
+
+# fdopendir
+ac_cv_func_fdopendir=yes
+
+# AF_UNIX and AF_PACKET
+ac_cv_header_sys_un_h=yes
+ac_cv_header_netpacket_packet_h=yes
+
+# Socket functions
+ac_cv_func_accept=yes
+ac_cv_func_accept4=yes
+
+# Vectored I/O - fully implemented
+ac_cv_func_preadv=yes
+ac_cv_func_readv=yes
+ac_cv_func_pwritev=yes
+ac_cv_func_writev=yes
+ac_cv_func_preadv2=yes
+ac_cv_func_pwritev2=yes
+
+# Fork/exec - fully implemented
+ac_cv_func_fork=yes
+ac_cv_func_fork1=no
+ac_cv_func_vfork=yes
+ac_cv_func_execv=yes
+ac_cv_func_posix_spawn=yes
+ac_cv_func_posix_spawnp=yes
+
+# Dynamic loading - stubs available
+ac_cv_func_dlopen=yes
+ac_cv_func_dlsym=yes
+ac_cv_func_dlclose=yes
+ac_cv_header_dlfcn_h=yes
+ac_cv_lib_dl_dlopen=yes
+
+# Threads - we have pthread support
+ac_cv_pthread=yes
+ac_cv_func_pthread_init=yes
+ac_cv_header_pthread_h=yes
+ac_cv_defined__POSIX_THREADS_unistd_h=yes
+
+# Langinfo
+ac_cv_func_nl_langinfo=yes
+ac_cv_header_langinfo_h=yes
+
+# PTY/terminal functions
+ac_cv_func_openpty=yes
+ac_cv_func_forkpty=yes
+ac_cv_func_login_tty=yes
+ac_cv_header_pty_h=yes
+ac_cv_header_utmp_h=yes
+ac_cv_header_util_h=no
+ac_cv_header_libutil_h=yes
+
+# Enable zlib - stub implementation in libc with CRC32 support
+ac_cv_header_zlib_h=yes
+ac_cv_lib_z_gzread=no
+ac_cv_have_z=yes
+
+# Networking headers - all available
+ac_cv_header_netdb_h=yes
+ac_cv_header_arpa_inet_h=yes
+ac_cv_header_netinet_in_h=yes
+ac_cv_header_netinet_tcp_h=yes
+
+# sys/select - implemented
+ac_cv_header_sys_select_h=yes
+ac_cv_func_select=yes
+
+# Process features - all implemented
+ac_cv_func_setsid=yes
+ac_cv_func_setpgid=yes
+ac_cv_func_setpgrp=yes
+ac_cv_func_getpgid=yes
+ac_cv_func_setgroups=yes
+ac_cv_func_initgroups=yes
+ac_cv_func_getgroups=yes
+ac_cv_func_sched_setaffinity=no
+ac_cv_func_sched_setscheduler=yes
+ac_cv_func_sched_setparam=yes
+ac_cv_func_sched_get_priority_max=yes
+ac_cv_func_sched_rr_get_interval=yes
+
+# Credentials
+ac_cv_func_getresuid=yes
+ac_cv_func_getresgid=yes
+ac_cv_func_setreuid=yes
+ac_cv_func_setregid=yes
+ac_cv_func_setresuid=yes
+ac_cv_func_setresgid=yes
+
+# Passwd/shadow
+ac_cv_func_getpwent=yes
+ac_cv_func_getspent=yes
+ac_cv_func_getspnam=yes
+
+# Functions we have
+ac_cv_func_read=yes
+ac_cv_func_write=yes
+ac_cv_func_close=yes
+ac_cv_func_open=yes
+ac_cv_func_lseek=yes
+ac_cv_func_dup=yes
+ac_cv_func_dup2=yes
+ac_cv_func_getcwd=yes
+ac_cv_func_chdir=yes
+ac_cv_func_mkdir=yes
+ac_cv_func_rmdir=yes
+ac_cv_func_unlink=yes
+ac_cv_func_rename=yes
+ac_cv_func_stat=yes
+ac_cv_func_fstat=yes
+ac_cv_func_lstat=yes
+ac_cv_func_isatty=yes
+ac_cv_func_getpid=yes
+ac_cv_func_getppid=yes
+ac_cv_func_getuid=yes
+ac_cv_func_geteuid=yes
+ac_cv_func_getgid=yes
+ac_cv_func_getegid=yes
+ac_cv_func_nanosleep=yes
+ac_cv_func_clock_gettime=yes
+ac_cv_func_gettimeofday=yes
+ac_cv_func_time=yes
+ac_cv_func_sleep=yes
+ac_cv_func_usleep=yes
+ac_cv_func_mmap=yes
+ac_cv_func_munmap=yes
+ac_cv_func_mprotect=yes
+
+# Signal functions - all implemented
+ac_cv_func_alarm=yes
+ac_cv_func_pause=yes
+ac_cv_func_sigaction=yes
+ac_cv_func_siginterrupt=yes
+ac_cv_func_sigpending=yes
+ac_cv_func_sigprocmask=yes
+ac_cv_func_sigrelse=yes
+ac_cv_func_sigwait=yes
+ac_cv_func_sigwaitinfo=yes
+ac_cv_func_sigtimedwait=yes
+ac_cv_func_kill=yes
+ac_cv_func_killpg=yes
+ac_cv_func_sigaltstack=yes
+
+# Timer functions
+ac_cv_func_getitimer=yes
+ac_cv_func_setitimer=yes
+ac_cv_func_clock_nanosleep=yes
+
+# Process info/control
+ac_cv_func_getloadavg=yes
+ac_cv_func_getlogin=yes
+ac_cv_func_getpass=no
+ac_cv_func_getpriority=yes
+ac_cv_func_setpriority=yes
+
+# I/O functions
+ac_cv_func_sendfile=yes
+ac_cv_func_pread=yes
+ac_cv_func_pwrite=yes
+ac_cv_func_fdatasync=yes
+ac_cv_func_fsync=yes
+ac_cv_func_sync=yes
+ac_cv_func_copy_file_range=yes
+ac_cv_func_close_range=yes
+ac_cv_func_splice=yes
+ac_cv_func_tee=no
+
+# File metadata
+ac_cv_func_statvfs=yes
+ac_cv_func_fstatvfs=yes
+ac_cv_func_lchown=yes
+ac_cv_func_chown=yes
+ac_cv_func_chmod=yes
+ac_cv_func_fchmod=yes
+ac_cv_func_fchown=yes
+ac_cv_func_link=yes
+ac_cv_func_symlink=yes
+ac_cv_func_readlink=yes
+ac_cv_func_realpath=yes
+ac_cv_func_truncate=yes
+ac_cv_func_ftruncate=yes
+ac_cv_func_utimes=yes
+ac_cv_func_futimes=yes
+ac_cv_func_lutimes=yes
+ac_cv_func_umask=yes
+ac_cv_func_access=yes
+
+# *at syscall variants - all implemented
+ac_cv_func_faccessat=yes
+ac_cv_func_fchmodat=yes
+ac_cv_func_fchownat=yes
+ac_cv_func_linkat=yes
+ac_cv_func_mkdirat=yes
+ac_cv_func_openat=yes
+ac_cv_func_renameat=yes
+ac_cv_func_symlinkat=yes
+ac_cv_func_unlinkat=yes
+ac_cv_func_readlinkat=yes
+ac_cv_func_utimensat=yes
+ac_cv_func_futimens=yes
+
+# Wait functions
+ac_cv_func_wait3=yes
+ac_cv_func_wait4=yes
+ac_cv_func_waitid=yes
+ac_cv_func_system=yes
+
+# Config/path functions
+ac_cv_func_confstr=yes
+ac_cv_func_sysconf=yes
+ac_cv_func_fpathconf=yes
+ac_cv_func_pathconf=yes
+ac_cv_func_ctermid=yes
+ac_cv_func_ctermid_r=yes
+ac_cv_func_ttyname=yes
+ac_cv_func_getwd=yes
+ac_cv_func_tempnam=yes
+ac_cv_func_tmpnam_r=yes
+ac_cv_func_getc_unlocked=yes
+ac_cv_func_timegm=yes
+ac_cv_func_fexecve=yes
+
+# Networking
+ac_cv_func_socketpair=yes
+ac_cv_func_getpeername=yes
+ac_cv_func_getsockname=yes
+ac_cv_func_gethostname=yes
+ac_cv_func_sethostname=yes
+ac_cv_func_getaddrinfo=yes
+ac_cv_func_getnameinfo=yes
+ac_cv_func_gethostbyname_r=yes
+ac_cv_func_inet_aton=yes
+ac_cv_func_inet_pton=yes
+ac_cv_func_if_nameindex=yes
+
+# Poll/epoll
+ac_cv_func_poll=yes
+ac_cv_func_epoll_create=yes
+ac_cv_func_epoll_create1=yes
+ac_cv_func_kqueue=no
+
+# Semaphores/shared memory - stubs
+ac_cv_func_sem_open=yes
+ac_cv_func_sem_timedwait=yes
+ac_cv_func_sem_getvalue=yes
+ac_cv_func_sem_unlink=yes
+ac_cv_func_shm_open=no
+ac_cv_func_shm_unlink=no
+
+# Memory management
+ac_cv_func_madvise=yes
+ac_cv_func_mremap=no
+ac_cv_func_posix_fallocate=yes
+ac_cv_func_posix_fadvise=yes
+ac_cv_func_memfd_create=yes
+
+# Security/random
+ac_cv_func_getentropy=yes
+ac_cv_func_getrandom=yes
+
+# Resource/timing
+ac_cv_func_getrusage=yes
+ac_cv_func_times=yes
+
+# String/memory
+ac_cv_func_explicit_bzero=yes
+ac_cv_func_explicit_memset=yes
+
+# Crypto - stubs
+ac_cv_func_crypt=no
+ac_cv_func_crypt_r=no
+
+# Sizes for cross compilation
+ac_cv_sizeof_int=4
+ac_cv_sizeof_long=8
+ac_cv_sizeof_long_long=8
+ac_cv_sizeof_void_p=8
+ac_cv_sizeof_short=2
+ac_cv_sizeof_float=4
+ac_cv_sizeof_double=8
+ac_cv_sizeof_fpos_t=8
+ac_cv_sizeof_size_t=8
+ac_cv_sizeof_pid_t=4
+ac_cv_sizeof_uintptr_t=8
+ac_cv_sizeof_off_t=8
+ac_cv_sizeof_time_t=8
+ac_cv_sizeof_wchar_t=4
+ac_cv_sizeof__Bool=1
+
+# Type alignments
+ac_cv_alignof_int=4
+ac_cv_alignof_long=8
+ac_cv_alignof_long_long=8
+ac_cv_alignof_void_p=8
+ac_cv_alignof_short=2
+ac_cv_alignof_float=4
+ac_cv_alignof_double=8
+ac_cv_alignof_size_t=8
+ac_cv_alignof_max_align_t=16
+
+# Byte order
+ac_cv_c_bigendian=no
+
+# Working types
+ac_cv_type_ssize_t=yes
+ac_cv_type_pid_t=yes
+ac_cv_type_uid_t=yes
+ac_cv_type_gid_t=yes
+ac_cv_type_mode_t=yes
+ac_cv_type_off_t=yes
+
+# Headers we have
+ac_cv_header_stdlib_h=yes
+ac_cv_header_string_h=yes
+ac_cv_header_strings_h=yes
+ac_cv_header_stdio_h=yes
+ac_cv_header_stdint_h=yes
+ac_cv_header_stdbool_h=yes
+ac_cv_header_stdarg_h=yes
+ac_cv_header_stddef_h=yes
+ac_cv_header_errno_h=yes
+ac_cv_header_limits_h=yes
+ac_cv_header_float_h=yes
+ac_cv_header_math_h=yes
+ac_cv_header_ctype_h=yes
+ac_cv_header_signal_h=yes
+ac_cv_header_time_h=yes
+ac_cv_header_unistd_h=yes
+ac_cv_header_fcntl_h=yes
+ac_cv_header_setjmp_h=yes
+ac_cv_header_dirent_h=yes
+ac_cv_header_locale_h=yes
+ac_cv_header_wchar_h=yes
+ac_cv_header_wctype_h=yes
+ac_cv_header_inttypes_h=yes
+ac_cv_header_assert_h=yes
+ac_cv_header_alloca_h=yes
+ac_cv_header_spawn_h=yes
+ac_cv_header_sched_h=yes
+ac_cv_header_shadow_h=yes
+ac_cv_header_crypt_h=yes
+ac_cv_header_poll_h=yes
+ac_cv_header_sys_stat_h=yes
+ac_cv_header_sys_types_h=yes
+ac_cv_header_sys_time_h=yes
+ac_cv_header_sys_mman_h=yes
+ac_cv_header_sys_wait_h=yes
+ac_cv_header_sys_ioctl_h=yes
+ac_cv_header_sys_utsname_h=yes
+ac_cv_header_sys_socket_h=yes
+ac_cv_header_sys_statvfs_h=yes
+ac_cv_header_sys_param_h=yes
+ac_cv_header_sys_file_h=yes
+ac_cv_header_sys_lock_h=yes
+ac_cv_header_sys_random_h=yes
+ac_cv_header_sys_sendfile_h=yes
+ac_cv_header_sys_epoll_h=yes
+ac_cv_header_sys_uio_h=yes
+ac_cv_header_sys_sysmacros_h=yes
+ac_cv_header_sys_resource_h=yes
+ac_cv_header_sys_xattr_h=yes
+ac_cv_header_sys_auxv_h=yes
+ac_cv_header_sys_eventfd_h=yes
+ac_cv_header_sys_memfd_h=yes
+ac_cv_header_sys_times_h=yes
+ac_cv_header_sys_select_h=yes
+ac_cv_header_sysexits_h=yes
+ac_cv_header_syslog_h=yes
+ac_cv_header_termios_h=yes
+ac_cv_header_pwd_h=yes
+ac_cv_header_grp_h=yes
+ac_cv_header_linux_random_h=yes
+ac_cv_header_linux_can_h=yes
+ac_cv_header_linux_tipc_h=yes
+ac_cv_header_linux_vm_sockets_h=yes
+ac_cv_header_linux_limits_h=yes
+ac_cv_header_linux_wait_h=yes
+ac_cv_header_linux_netlink_h=yes
+ac_cv_header_linux_fs_h=yes
+ac_cv_header_linux_auxvec_h=yes
+ac_cv_header_linux_memfd_h=yes
+ac_cv_header_net_if_h=yes
+ac_cv_header_net_ethernet_h=yes
+ac_cv_header_netpacket_packet_h=yes
+
+# Headers we don't have
+ac_cv_header_sys_event_h=no
+ac_cv_header_sys_sem_h=no
+ac_cv_header_sys_shm_h=no
+ac_cv_header_sys_msg_h=no
+ac_cv_header_sys_ipc_h=no
+ac_cv_header_sys_termio_h=yes
+ac_cv_header_sys_kern_control_h=no
+ac_cv_header_sys_loadavg_h=no
+ac_cv_header_sys_mkdev_h=no
+ac_cv_header_sys_modem_h=no
+ac_cv_header_sys_soundcard_h=no
+ac_cv_header_sys_audioio_h=no
+ac_cv_header_sys_bsdtty_h=no
+ac_cv_header_sys_devpoll_h=no
+ac_cv_header_sys_endian_h=yes
+ac_cv_header_term_h=no
+ac_cv_header_curses_h=no
+ac_cv_header_ncurses_h=no
+ac_cv_header_conio_h=no
+ac_cv_header_direct_h=no
+ac_cv_header_io_h=no
+ac_cv_header_process_h=no
+ac_cv_header_libintl_h=no
+ac_cv_header_util_h=no
+ac_cv_header_bluetooth_h=no
+ac_cv_header_bluetooth_bluetooth_h=no
+ac_cv_header_db_h=no
+ac_cv_header_gdbm_h=no
+ac_cv_header_gdbm_ndbm_h=no
+ac_cv_header_ieeefp_h=no
+ac_cv_header_minix_config_h=no
+ac_cv_header_readline_readline_h=yes
+ac_cv_header_stropts_h=no
+ac_cv_header_sqlite3_h=no
+ac_cv_header_panel_h=no
+ac_cv_header_ndbm_h=no
+ac_cv_header_uuid_h=no
+ac_cv_header_uuid_uuid_h=no
+
+# Computed gotos
+ac_cv_computed_gotos=yes
+
+# Standard C library functions
+ac_cv_func_strerror=yes
+ac_cv_func_strftime=yes
+ac_cv_func_strptime=yes
+ac_cv_func_clock=yes
+ac_cv_func_clock_getres=yes
+ac_cv_func_opendir=yes
+ac_cv_func_readdir=yes
+ac_cv_func_closedir=yes
+ac_cv_func_getenv=yes
+ac_cv_func_setenv=yes
+ac_cv_func_unsetenv=yes
+ac_cv_func_tcgetattr=yes
+ac_cv_func_tcsetattr=yes
+ac_cv_func_fileno=yes
+ac_cv_func_fseeko=yes
+ac_cv_func_ftello=yes
+ac_cv_func_dup3=yes
+ac_cv_func_pipe2=yes
+ac_cv_func_login_tty=yes
+
+# Implemented
+ac_cv_func_mkstemp=yes
+ac_cv_func_dprintf=no
+ac_cv_func_vdprintf=yes
+
+# PTY helpers (grantpt/unlockpt are no-ops, ptsname uses TIOCGPTN)
+ac_cv_func_grantpt=yes
+ac_cv_func_unlockpt=yes
+ac_cv_func_ptsname=yes
+
+# Syslog - wired to Rust implementation writing to /dev/kmsg
+ac_cv_func_syslog=yes
+ac_cv_func_openlog=yes
+ac_cv_func_closelog=yes
+
+# Printf
+ac_cv_opt_olimit_ok=no
+
+# Working snprintf
+ac_cv_func_snprintf=yes
+ac_cv_func_vsnprintf=yes
+
+# Math - we have libm functions in our libc
+ac_cv_lib_m_acos=yes
+ac_cv_func_acosh=yes
+ac_cv_func_asinh=yes
+ac_cv_func_atanh=yes
+ac_cv_func_copysign=yes
+ac_cv_func_erf=yes
+ac_cv_func_erfc=yes
+ac_cv_func_expm1=yes
+ac_cv_func_finite=yes
+ac_cv_func_hypot=yes
+ac_cv_func_isinf=yes
+ac_cv_func_isnan=yes
+ac_cv_func_lgamma=yes
+ac_cv_func_log1p=yes
+ac_cv_func_log2=yes
+ac_cv_func_round=yes
+ac_cv_func_tgamma=yes
+
+# Disable int-conversion
+ac_cv_disable_int_conversion=yes
+
+# strlcpy/strlcat
+ac_cv_func_strlcpy=yes
+ac_cv_func_strlcat=yes
+
+# String/locale functions
+ac_cv_func_strdup=yes
+ac_cv_func_strndup=yes
+ac_cv_func_strsignal=yes
+ac_cv_func_setlocale=yes
+ac_cv_func_mbstowcs=yes
+ac_cv_func_wcstombs=yes
+ac_cv_func_mbtowc=yes
+ac_cv_func_wctomb=yes
+ac_cv_func_popen=yes
+ac_cv_func_wcscoll=yes
+ac_cv_func_wcsxfrm=yes
+
+# Pthread extras
+ac_cv_func_pthread_kill=yes
+ac_cv_func_pthread_getcpuclockid=yes
+
+# Large file / 64-bit I/O
+ac_cv_func_fseek64=yes
+ac_cv_func_ftell64=yes
+
+# Process extras
+ac_cv_func_prlimit=yes
+ac_cv_func_popen=yes
+
+# Headers - platform-specific (not available)
+ac_cv_header_linux_qrtr_h=no
+ac_cv_header_linux_soundcard_h=no
+ac_cv_header_asm_types_h=yes
+ac_cv_header_sys_poll_h=yes
+ac_cv_header_netcan_can_h=no
+
+# ABI/platform probes for cross compilation
+ac_cv_have_long_long_format=yes
+ac_cv_have_size_t_format=yes
+ac_cv_buggy_getaddrinfo=no
+ac_cv_pthread_is_default=yes
+ac_cv_pthread_system_supported=yes
+ac_cv_kthread=no
+ac_cv_kpthread=no
+ac_cv_have_chflags=no
+ac_cv_have_lchflags=no
+ac_cv_py_force_utf8_locale=no
+ac_cv_posix_semaphores_enabled=yes
+ac_cv_broken_sem_getvalue=no
+ac_cv_wchar_t_signed=yes
+ac_cv_working_tzset=yes
+ac_cv_header_time_altzone=yes
+ac_cv_disp_option=no
+ac_cv_cc_fno_strict_aliasing=yes
+ac_cv_x87_double_rounding=no
+ac_cv_tanh_preserves_zero_sign=yes
+ac_cv_log1p_drops_zero_sign=no
+ac_cv_always_use_builtin_ffs=no
+ac_cv_gcc_asm_for_mc68881=no
+ac_cv_mvwdelch=no
+ac_cv_buggy_mbstowcs=no
+ac_cv_broken_nice=no
+ac_cv_broken_poll=no
+ac_cv_broken_pipe_ioctl=no
+ac_cv_enable_ipv6=yes
+ac_cv_sockaddr_sa_len=no
+ac_cv_enable_lfs=yes
+ac_cv_float_words_bigendian=no
+ac_cv_xopen_source=yes
+ac_cv_wchar_t_usable=yes
+ac_cv_rshift_extends_sign=yes
+ac_cv_broken_unsetenv=no
+ac_cv_prog_HAS_HG=no
+ac_cv_func___fpu_control=no
+
+# Library search results
+ac_cv_lib_dl_dlopen=yes
+ac_cv_lib_sendfile_sendfile=no
+ac_cv_lib_nsl_t_open=no
+ac_cv_lib_socket_socket=no
+ac_cv_lib_resolv_inet_aton=no
+ac_cv_lib_intl_textdomain=no
+ac_cv_lib_ieee___fpu_control=no
+ac_cv_lib_bsd_openpty=no
+ac_cv_lib_util_openpty=no
+ac_cv_lib_bsd_forkpty=no
+ac_cv_lib_util_forkpty=no
+ac_cv_lib_c_inet_aton=yes
+ac_cv_lib_rt_clock_nanosleep=no
+ac_cv_lib_rt_clock_settime=no
+ac_cv_lib_dld_shl_load=no
+
+# CPython-specific build options
+ac_cv_with_computed_gotos=yes
+ac_cv_with_pymalloc=yes
+ac_cv_digit_size=30
+ac_cv_with_lto=no
+ac_cv_with_pydebug=no
+ac_cv_with_assertions=no
+ac_cv_enable_shared=no
+ac_cv_enable_profiling=no
+ac_cv_enable_bolt=no
+ac_cv_enable_optimizations=no
+ac_cv_enable_pystats=no
+ac_cv_with_valgrind=no
+ac_cv_with_dtrace=no
+ac_cv_with_dsymutil=no
+ac_cv_with_address_sanitizer=no
+ac_cv_with_memory_sanitizer=no
+ac_cv_with_thread_sanitizer=no
+ac_cv_with_undefined_behavior_sanitizer=no
+ac_cv_with_trace_refs=no
+ac_cv_with_strict_overflow=no
+ac_cv_with_platlibdir=lib
+ac_cv_with_system_expat=no
+ac_cv_with_system_libmpdec=no
+ac_cv_enable_loadable_sqlite_extensions=no
+ac_cv_enable_framework=no
+ac_cv_enable_wasm_dynamic_linking=no
+ac_cv_enable_wasm_pthreads=no
+
+# Not Android/Minix/iOS
+ac_cv_android_api_level=no
+
+# Functions we do NOT want (non-standard or not implemented)
+ac_cv_func_spawnv=no
+ac_cv_func_plock=no
+ac_cv_func_setns=no
+ac_cv_func_unshare=no
+ac_cv_func_rtpSpawn=no
+
+# RTLD_MEMBER (AIX-only)
+ac_cv_have_rtld_member=no
+
+# sem_init is in libc (not -lpthread or -lrt)
+ac_cv_lib_pthread_sem_init=no
+
+# yp_match (NIS) - not available
+ac_cv_lib_nsl_yp_match=no
+
+# opendir is in libc
+ac_cv_search_opendir="none required"
+
+# login_tty is in libc
+ac_cv_search_login_tty="none required"
+
+# GNU ld
+ac_cv_prog_gnu_ld=yes

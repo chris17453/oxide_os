@@ -54,6 +54,12 @@ pub trait SerialWriter: Send {
 /// Global serial writer (Mutex-protected).
 static WRITER: Mutex<Option<&'static mut dyn SerialWriter>> = Mutex::new(None);
 
+/// — GraveShift: Console write callback — sends println! output to the terminal too.
+/// Set once during init, read from process context. Without this, kernel boot messages
+/// only go to serial and the user stares at a black screen for 3 seconds.
+type ConsoleWriteFn = fn(&[u8]);
+static CONSOLE_WRITER: Mutex<Option<ConsoleWriteFn>> = Mutex::new(None);
+
 /// Register the normal (locking) serial writer.
 ///
 /// # Safety
@@ -63,6 +69,14 @@ pub unsafe fn register_writer(writer: &'static mut dyn SerialWriter) {
     *WRITER.lock() = Some(writer);
 }
 
+/// Register a console write callback for dual-output println!.
+///
+/// After calling this, `println!` writes to both serial AND the terminal.
+/// — GraveShift: The user deserves to see boot messages, not a black void.
+pub fn register_console_writer(writer: ConsoleWriteFn) {
+    *CONSOLE_WRITER.lock() = Some(writer);
+}
+
 /// Internal writer wrapper for `fmt::Write`.
 struct LogWriter;
 
@@ -70,6 +84,10 @@ impl fmt::Write for LogWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         if let Some(writer) = WRITER.lock().as_mut() {
             writer.write_str(s);
+        }
+        // — GraveShift: Also echo to terminal so boot messages appear on screen.
+        if let Some(console_write) = *CONSOLE_WRITER.lock() {
+            console_write(s.as_bytes());
         }
         Ok(())
     }

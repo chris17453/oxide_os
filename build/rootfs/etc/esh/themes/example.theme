@@ -1,0 +1,46 @@
+# OXIDE Shell Theme Configuration Example
+#
+# This file shows the format for custom theme files.
+# Place custom themes in:
+#   ~/.esh/themes/<name>
+#   /etc/esh/themes/<name>
+#
+# Theme file format:
+# Each line is: element=foreground[,background[,style]]
+#
+# Colors: black, red, green, yellow, blue, magenta, cyan, white
+#         brightblack/gray, brightred, brightgreen, brightyellow
+#         brightblue, brightmagenta, brightcyan, brightwhite
+#         default (terminal default)
+#
+# Styles: bold, dim, italic, underline, blink, reverse
+#         Multiple styles: bold,underline
+
+# Example custom theme: "ocean"
+
+# Prompt elements
+prompt.user=brightcyan
+prompt.host=cyan
+prompt.path=brightblue
+prompt.symbol=brightwhite
+prompt.root=brightred,default,bold
+
+# Output messages
+error=red,default,bold
+warning=yellow
+info=cyan
+success=green
+
+# Tab completion
+completion.directory=blue,default,bold
+completion.executable=green,default,bold
+completion.file=default
+completion.symlink=cyan
+
+# Syntax highlighting (future)
+syntax.builtin=cyan
+syntax.command=green
+syntax.string=yellow
+syntax.variable=magenta
+syntax.operator=white
+syntax.comment=brightblack

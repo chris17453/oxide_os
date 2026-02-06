@@ -1,0 +1,36 @@
+# Meson Cross-Compilation File for OXIDE OS
+#
+# Usage:
+#   meson setup builddir --cross-file=/path/to/oxide-cross.txt
+#
+# This file configures meson to cross-compile for OXIDE OS using
+# the OXIDE toolchain.
+
+[binaries]
+c = 'oxide-cc'
+cpp = 'oxide-c++'
+ar = 'oxide-ar'
+strip = 'llvm-strip'
+pkgconfig = 'oxide-pkg-config'
+ld = 'oxide-ld'
+
+[built-in options]
+c_args = ['-DOXIDE_OS', '-D__oxide__']
+c_link_args = ['-static']
+cpp_args = ['-DOXIDE_OS', '-D__oxide__', '-fno-exceptions', '-fno-rtti']
+cpp_link_args = ['-static']
+
+[properties]
+# Target system root
+sys_root = '@SYSROOT@'
+pkg_config_libdir = '@SYSROOT@/lib/pkgconfig'
+
+# Skip certain checks that won't work in cross-compile
+needs_exe_wrapper = true
+skip_sanity_check = true
+
+[host_machine]
+system = 'oxide'
+cpu_family = 'x86_64'
+cpu = 'x86_64'
+endian = 'little'

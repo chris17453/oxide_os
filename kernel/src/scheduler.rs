@@ -503,12 +503,11 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         return current_rsp;
     }
 
-    // Tick the scheduler - this updates vruntime, checks for preemption, etc.
-    // Note: Do NOT clear kernel_preempt flag here. If try_with_rq fails
-    // (lock contention from yield_current loop), clearing the flag would
-    // permanently prevent preemption for this task. The flag is only cleared
-    // when we actually perform a context switch (below).
-    let need_resched = sched::scheduler_tick();
+    // — GraveShift: Tick the scheduler — but tell it whether this task is
+    // actually computing or just HLT-looping in a blocking syscall.
+    // kernel_preempt_ok == true means poll/nanosleep/read set the flag,
+    // so the process is WAITING, not burning cycles. Don't charge it.
+    let need_resched = sched::scheduler_tick_ex(kernel_preempt_ok);
 
     if !need_resched && !sched::need_resched() {
         return current_rsp;

@@ -1,0 +1,5 @@
+#!/home/cwatkins/repos/cw/oxide_os/external/cpython-build-native/install/bin/python3.13
+
+from idlelib.pyshell import main
+if __name__ == '__main__':
+    main()

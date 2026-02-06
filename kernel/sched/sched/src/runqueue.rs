@@ -307,10 +307,12 @@ impl RunQueue {
     /// Handle a scheduler tick
     ///
     /// Returns true if preemption should occur.
+    /// `in_blocking_wait` = true when the task is HLT-looping in a blocking
+    /// syscall (poll, nanosleep, read). Don't charge CPU time in that case.
     ///
     /// NOTE: The caller (core.rs::scheduler_tick) already called update_clock()
     /// before this method. Do NOT advance self.clock here — that would double-count.
-    pub fn scheduler_tick(&mut self) -> bool {
+    pub fn scheduler_tick(&mut self, in_blocking_wait: bool) -> bool {
         let curr_pid = match self.curr {
             Some(pid) => pid,
             None => return false,
@@ -347,15 +349,20 @@ impl RunQueue {
             SchedPolicy::Normal | SchedPolicy::Batch => {
                 // CFS: update vruntime and check for preemption
                 if let Some(t) = self.tasks.get_mut(&curr_pid) {
-                    let delta = sched_traits::TICK_NS;
-                    t.update_vruntime(delta);
-                    t.sum_exec_runtime += delta;
+                    // — GraveShift: Only charge CPU time when the task is
+                    // actually computing. When in_blocking_wait (poll, nanosleep,
+                    // read HLT loop), the task is WAITING, not working — charging
+                    // it would show idle daemons at 25% CPU and lie to top/htop.
+                    if !in_blocking_wait {
+                        let delta = sched_traits::TICK_NS;
+                        t.update_vruntime(delta);
+                        t.sum_exec_runtime += delta;
 
-                    // GraveShift: Sync authoritative scheduler accounting to ProcessMeta
-                    // Used by clock_gettime(CLOCK_PROCESS_CPUTIME_ID) and /proc/[pid]/stat
-                    if let Some(meta_arc) = t.meta.as_ref() {
-                        if let Some(mut meta) = meta_arc.try_lock() {
-                            meta.cpu_time_ns = t.sum_exec_runtime;
+                        // GraveShift: Sync authoritative scheduler accounting to ProcessMeta
+                        if let Some(meta_arc) = t.meta.as_ref() {
+                            if let Some(mut meta) = meta_arc.try_lock() {
+                                meta.cpu_time_ns = t.sum_exec_runtime;
+                            }
                         }
                     }
 

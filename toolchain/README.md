@@ -94,12 +94,16 @@ toolchain/
 ## Architecture Support
 
 Currently supported:
-- x86_64 (primary target)
+- **x86_64-oxide** (primary target, custom ELF target)
+
+The target triple `x86_64-oxide` identifies binaries as OXIDE OS native. This is used by:
+- Autotools: `--host=x86_64-oxide`
+- CMake: via `oxide-toolchain.cmake`
+- Meson: via `oxide-cross.txt`
 
 Future architectures (as OXIDE OS develops):
-- i686
-- aarch64
-- riscv64
+- aarch64-oxide
+- riscv64-oxide
 
 ## Integration with Build Systems
 
@@ -167,18 +171,19 @@ OXIDE provides a POSIX-compatible libc with syscall wrappers:
 
 ### System Libraries
 
-Available libraries (when implemented):
-- `libm`: Math functions
+Available:
+- `liboxide_libc`: Full C library with POSIX APIs, memory functions, stdio, string ops
+
+Planned:
+- `libm`: Math functions (separate from libc)
 - `libpthread`: POSIX threads
 - `librt`: Real-time extensions
-- `libdl`: Dynamic linking
 
 ## Limitations
 
 Current limitations (to be addressed):
 - C++ standard library not yet available
-- Dynamic linking not fully implemented
-- Limited POSIX compatibility (growing)
+- Dynamic linking not supported (static binaries only)
 - No Fortran/Go/other language support yet
 
 ## Troubleshooting

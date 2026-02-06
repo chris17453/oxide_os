@@ -1,0 +1,5 @@
+#!/home/cwatkins/repos/cw/oxide_os/external/cpython-build-native/install/bin/python3.13
+
+import pydoc
+if __name__ == '__main__':
+    pydoc.cli()

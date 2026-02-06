@@ -13,193 +13,10 @@ pub use vfs::{epoll, eventfd, memfd};
 
 use crate::errno;
 use crate::socket;
-use crate::{current_pid, with_current_meta, with_current_meta_mut};
+use crate::{with_current_meta, with_current_meta_mut};
 
 /// Maximum path length for syscalls
 const MAX_PATH: usize = 4096;
-
-// — GraveShift: raw serial diag for the read-path ghost hunt
-// Writes directly to COM1 — no locks, no alloc, ISR-safe
-fn serial_debug_read_fail(pid: u64, fd: u64, errno_val: u64, tag: u8) {
-    // Format: [RD:X] pid=NNNN fd=N err=N\n  where X is tag byte
-    // — SableWire: bounded spin — drop byte if UART FIFO is saturated
-    fn write_byte(b: u8) {
-        const SPIN_LIMIT: u32 = 2048;
-        unsafe {
-            let mut status: u8;
-            let mut spins: u32 = 0;
-            loop {
-                core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
-                if status & 0x20 != 0 { break; }
-                spins += 1;
-                if spins >= SPIN_LIMIT { return; }
-            }
-            core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
-        }
-    }
-    fn write_str(s: &[u8]) { for &b in s { write_byte(b); } }
-    fn write_num(mut n: u64) {
-        if n == 0 { write_byte(b'0'); return; }
-        let mut buf = [0u8; 20];
-        let mut i = 0;
-        while n > 0 { buf[i] = b'0' + (n % 10) as u8; n /= 10; i += 1; }
-        while i > 0 { i -= 1; write_byte(buf[i]); }
-    }
-    fn write_neg(n: u64) {
-        // Print as negative (for errno)
-        if n == 0 { write_byte(b'0'); return; }
-        write_byte(b'-');
-        write_num(n);
-    }
-
-    write_str(b"[RD:");
-    write_byte(tag);
-    write_str(b"] pid=");
-    write_num(pid);
-    write_str(b" fd=");
-    write_num(fd);
-    write_str(b" err=");
-    write_neg(errno_val);
-    write_byte(b'\n');
-}
-
-// — GraveShift: one-shot write success diag for comparison
-fn serial_debug_write_ok(pid: u64, fd: u64, entries_len: u64, mask: u64) {
-    // — SableWire: bounded spin — drop byte if UART FIFO is saturated
-    fn write_byte(b: u8) {
-        const SPIN_LIMIT: u32 = 2048;
-        unsafe {
-            let mut status: u8;
-            let mut spins: u32 = 0;
-            loop {
-                core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
-                if status & 0x20 != 0 { break; }
-                spins += 1;
-                if spins >= SPIN_LIMIT { return; }
-            }
-            core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
-        }
-    }
-    fn write_str(s: &[u8]) { for &b in s { write_byte(b); } }
-    fn write_num(mut n: u64) {
-        if n == 0 { write_byte(b'0'); return; }
-        let mut buf = [0u8; 20];
-        let mut i = 0;
-        while n > 0 { buf[i] = b'0' + (n % 10) as u8; n /= 10; i += 1; }
-        while i > 0 { i -= 1; write_byte(buf[i]); }
-    }
-    fn write_hex8(n: u64) {
-        write_str(b"0b");
-        for bit in (0..8).rev() {
-            write_byte(if n & (1 << bit) != 0 { b'1' } else { b'0' });
-        }
-    }
-
-    write_str(b"[WR:OK] pid=");
-    write_num(pid);
-    write_str(b" fd=");
-    write_num(fd);
-    write_str(b" entries_len=");
-    write_num(entries_len);
-    write_str(b" mask=");
-    write_hex8(mask);
-    write_byte(b'\n');
-}
-
-// — GraveShift: dump fd_table state for forensic analysis
-fn serial_debug_fdtable_state(pid: u64, entries_len: u64, mask: u64) {
-    // — SableWire: bounded spin — drop byte if UART FIFO is saturated
-    fn write_byte(b: u8) {
-        const SPIN_LIMIT: u32 = 2048;
-        unsafe {
-            let mut status: u8;
-            let mut spins: u32 = 0;
-            loop {
-                core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
-                if status & 0x20 != 0 { break; }
-                spins += 1;
-                if spins >= SPIN_LIMIT { return; }
-            }
-            core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
-        }
-    }
-    fn write_str(s: &[u8]) { for &b in s { write_byte(b); } }
-    fn write_num(mut n: u64) {
-        if n == 0 { write_byte(b'0'); return; }
-        let mut buf = [0u8; 20];
-        let mut i = 0;
-        while n > 0 { buf[i] = b'0' + (n % 10) as u8; n /= 10; i += 1; }
-        while i > 0 { i -= 1; write_byte(buf[i]); }
-    }
-    fn write_hex8(n: u64) {
-        write_str(b"0b");
-        for bit in (0..8).rev() {
-            write_byte(if n & (1 << bit) != 0 { b'1' } else { b'0' });
-        }
-    }
-
-    write_str(b"[RD:FD] pid=");
-    write_num(pid);
-    write_str(b" entries_len=");
-    write_num(entries_len);
-    write_str(b" mask=");
-    write_hex8(mask);
-    write_byte(b'\n');
-}
-
-// — GraveShift: log successful read result to catch EIO/short-reads
-fn serial_debug_read_result(pid: u64, fd: u64, result: i64) {
-    // — SableWire: bounded spin — drop byte if UART FIFO is saturated
-    fn write_byte(b: u8) {
-        const SPIN_LIMIT: u32 = 2048;
-        unsafe {
-            let mut status: u8;
-            let mut spins: u32 = 0;
-            loop {
-                core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
-                if status & 0x20 != 0 { break; }
-                spins += 1;
-                if spins >= SPIN_LIMIT { return; }
-            }
-            core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
-        }
-    }
-    fn write_str(s: &[u8]) { for &b in s { write_byte(b); } }
-    fn write_num(mut n: u64) {
-        if n == 0 { write_byte(b'0'); return; }
-        let mut buf = [0u8; 20];
-        let mut i = 0;
-        while n > 0 { buf[i] = b'0' + (n % 10) as u8; n /= 10; i += 1; }
-        while i > 0 { i -= 1; write_byte(buf[i]); }
-    }
-
-    write_str(b"[RD:R] pid=");
-    write_num(pid);
-    write_str(b" fd=");
-    write_num(fd);
-    write_str(b" ret=");
-    if result < 0 {
-        write_byte(b'-');
-        write_num((-result) as u64);
-    } else {
-        write_num(result as u64);
-    }
-    write_byte(b'\n');
-}
-
-// DEBUG: Module-level statics for tracking fd allocation
-static DEBUG_PRE_ADDR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
-static DEBUG_ALLOC_ADDR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
-static DEBUG_PRE_EXECUTED: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
-static DEBUG_PRE_LEN: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(0xdeadbeef);
-static DEBUG_ALLOC_EXECUTED: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
-static DEBUG_PRE_META_ADDR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
-static DEBUG_ALLOC_META_ADDR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
-static DEBUG_SYS_OPEN_ARC: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
-static DEBUG_SYS_OPEN_PID: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 /// Resolve a path against the current process's working directory
 ///
@@ -413,64 +230,9 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
         Arc::new(File::new(vnode, flags))
     };
 
-    // CRITICAL FIX: Do everything in a single with_current_meta_mut call to avoid
-    // the fd_table being modified between pre-alloc check and actual alloc!
-    // (Previously we called with_current_meta twice, releasing the lock between calls)
-    static FIRST_OPEN_PRE_ALLOC: core::sync::atomic::AtomicBool =
-        core::sync::atomic::AtomicBool::new(true);
-
-    static FIRST_CAPTURE_SYSCALL_ARC: core::sync::atomic::AtomicBool =
-        core::sync::atomic::AtomicBool::new(true);
-    // Mark that we reached this code
-    DEBUG_SYS_OPEN_ARC.store(0xcccccccc, core::sync::atomic::Ordering::SeqCst);
-    if FIRST_CAPTURE_SYSCALL_ARC.swap(false, core::sync::atomic::Ordering::SeqCst) {
-        // Mark that swap() returned true
-        DEBUG_SYS_OPEN_ARC.store(0xbbbbbbbb, core::sync::atomic::Ordering::SeqCst);
-        // Capture the ProcessMeta Arc pointer we receive
-        if let Some(meta_arc) = crate::get_current_meta() {
-            use alloc::sync::Arc;
-            // Get the actual ProcessMeta pointer (what Arc points to), not the Arc variable address
-            let arc_inner_ptr = Arc::as_ptr(&meta_arc) as u64;
-            let locked_meta = meta_arc.lock();
-            let ref_ptr = &*locked_meta as *const _ as u64;
-            DEBUG_SYS_OPEN_ARC.store(arc_inner_ptr, core::sync::atomic::Ordering::SeqCst);
-            DEBUG_SYS_OPEN_PID.store(ref_ptr, core::sync::atomic::Ordering::SeqCst); // Reuse PID field for reference address
-        } else {
-            // Failed to get meta
-            DEBUG_SYS_OPEN_ARC.store(0xdeadbeef, core::sync::atomic::Ordering::SeqCst);
-            DEBUG_SYS_OPEN_PID.store(0xdeadbeef, core::sync::atomic::Ordering::SeqCst);
-        }
-    }
-
+    // — GraveShift: Single with_current_meta_mut call — allocate fd while holding lock.
+    // Previously split across two calls, releasing lock between check and alloc. Never again.
     let result = match with_current_meta_mut(|meta| {
-        // DEBUG: Capture pre-alloc state while holding the lock
-        if FIRST_OPEN_PRE_ALLOC.swap(false, core::sync::atomic::Ordering::SeqCst) {
-            let len = meta.fd_table.entries_len();
-            let mask = meta.fd_table.entries_filled_mask();
-            let fd_table_addr = &meta.fd_table as *const _ as u64;
-            let meta_addr = meta as *const _ as u64;
-
-            DEBUG_PRE_EXECUTED.store(true, core::sync::atomic::Ordering::SeqCst);
-            DEBUG_PRE_LEN.store(len as u32, core::sync::atomic::Ordering::SeqCst);
-            DEBUG_PRE_ADDR.store(fd_table_addr, core::sync::atomic::Ordering::SeqCst);
-            DEBUG_PRE_META_ADDR.store(meta_addr, core::sync::atomic::Ordering::SeqCst);
-            vfs::FdTable::set_pre_alloc_state(len as u32, mask, fd_table_addr);
-        }
-
-        // DEBUG: Store alloc fd_table addr
-        static FIRST_ALLOC_SET_ADDR: core::sync::atomic::AtomicBool =
-            core::sync::atomic::AtomicBool::new(true);
-        if FIRST_ALLOC_SET_ADDR.swap(false, core::sync::atomic::Ordering::SeqCst) {
-            let fd_table_addr = &meta.fd_table as *const _ as u64;
-            let meta_addr = meta as *const _ as u64;
-
-            DEBUG_ALLOC_EXECUTED.store(true, core::sync::atomic::Ordering::SeqCst);
-            DEBUG_ALLOC_ADDR.store(fd_table_addr, core::sync::atomic::Ordering::SeqCst);
-            DEBUG_ALLOC_META_ADDR.store(meta_addr, core::sync::atomic::Ordering::SeqCst);
-            vfs::FdTable::set_alloc_fdtable_addr(fd_table_addr);
-        }
-
-        // NOW allocate the fd, while still holding the lock
         meta.fd_table.alloc(file)
     }) {
         Some(Ok(fd)) => fd as i64,
@@ -519,43 +281,13 @@ pub fn sys_read_vfs(fd: i32, buf: u64, count: usize) -> i64 {
         return errno::EFAULT;
     }
 
-    // — GraveShift: dump fd_table state for pid>=3 reading fd 0 (first 3 times)
-    static READ_FD0_COUNT: core::sync::atomic::AtomicU32 =
-        core::sync::atomic::AtomicU32::new(0);
-    if fd == 0 {
-        let count = READ_FD0_COUNT.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
-        if count < 3 {
-            let pid = current_pid();
-            serial_debug_read_fail(pid as u64, 0, count as u64, b'P');
-            if let Some((len, mask)) = with_current_meta(|meta| {
-                (meta.fd_table.entries_len(), meta.fd_table.entries_filled_mask())
-            }) {
-                serial_debug_fdtable_state(pid as u64, len as u64, mask as u64);
-            } else {
-                serial_debug_read_fail(pid as u64, 0, 0, b'M');
-            }
-        }
-    }
-
-    // Get file using unified model
-    // — GraveShift: intercept fd lookup failures, the ghost in the read path
+    // Get file from fd table
     let file =
         match with_current_meta(|meta| meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone()))
         {
             Some(Ok(f)) => f,
-            Some(Err(e)) => {
-                // — GraveShift: fd lookup returned error, log it to serial
-                let pid = current_pid();
-                let errno_val = vfs_error_to_errno(e);
-                serial_debug_read_fail(pid as u64, fd as u64, errno_val as u64, b'E');
-                return errno_val;
-            }
-            None => {
-                // — GraveShift: with_current_meta returned None — no process context
-                let pid = current_pid();
-                serial_debug_read_fail(pid as u64, fd as u64, 0, b'N');
-                return errno::EBADF;
-            }
+            Some(Err(e)) => return vfs_error_to_errno(e),
+            None => return errno::EBADF,
         };
 
     // 🔥 O_NONBLOCK SUPPORT (Priority #6) 🔥
@@ -602,12 +334,6 @@ pub fn sys_read_vfs(fd: i32, buf: u64, count: usize) -> i64 {
         }
     }
 
-    // — GraveShift: trace stdin reads that return error/EOF (the login ghost)
-    if fd == 0 && result <= 0 {
-        let pid = current_pid();
-        serial_debug_read_result(pid as u64, fd as u64, result);
-    }
-
     result
 }
 
@@ -626,34 +352,15 @@ pub fn sys_write_vfs(fd: i32, buf: u64, count: usize) -> i64 {
         return errno::EFAULT;
     }
 
-    // Get file using unified model
-    // — GraveShift: one-shot write diag to compare fd_table state vs read path
-    static WRITE_DIAG_DONE: core::sync::atomic::AtomicBool =
-        core::sync::atomic::AtomicBool::new(false);
+    // Get file from fd table
     let file =
         match with_current_meta(|meta| {
-            let result = meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone());
-            // — GraveShift: first successful write from pid>=3 — dump state once
-            if result.is_ok() && !WRITE_DIAG_DONE.load(core::sync::atomic::Ordering::Relaxed) {
-                let pid = crate::current_pid();
-                if pid >= 3 {
-                    WRITE_DIAG_DONE.store(true, core::sync::atomic::Ordering::Relaxed);
-                    let len = meta.fd_table.entries_len();
-                    let mask = meta.fd_table.entries_filled_mask();
-                    return (result, Some((pid as u64, len as u64, mask as u64)));
-                }
-            }
-            (result, None)
+            meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
         })
         {
-            Some((Ok(f), diag)) => {
-                if let Some((pid, len, mask)) = diag {
-                    serial_debug_write_ok(pid, fd as u64, len, mask);
-                }
-                f
-            },
-            Some((Err(e), _)) => return vfs_error_to_errno(e),
-            None => return errno::EBADF, // Invalid FD (match sys_read_vfs)
+            Some(Ok(f)) => f,
+            Some(Err(e)) => return vfs_error_to_errno(e),
+            None => return errno::EBADF,
         };
 
     // 🔥 O_NONBLOCK SUPPORT (Priority #6) 🔥
@@ -1503,51 +1210,6 @@ pub fn sys_pivot_root(
     }
 
     result
-}
-
-/// Get the DEBUG_PRE_ADDR value (for debugging fd allocation)
-pub fn get_debug_pre_addr() -> u64 {
-    DEBUG_PRE_ADDR.load(core::sync::atomic::Ordering::SeqCst)
-}
-
-/// Get the DEBUG_ALLOC_ADDR value (for debugging fd allocation)
-pub fn get_debug_alloc_addr() -> u64 {
-    DEBUG_ALLOC_ADDR.load(core::sync::atomic::Ordering::SeqCst)
-}
-
-/// Get whether pre_alloc closure executed
-pub fn debug_pre_executed() -> bool {
-    DEBUG_PRE_EXECUTED.load(core::sync::atomic::Ordering::SeqCst)
-}
-
-/// Get the len value from pre_alloc closure
-pub fn debug_pre_len() -> u32 {
-    DEBUG_PRE_LEN.load(core::sync::atomic::Ordering::SeqCst)
-}
-
-/// Get whether alloc closure executed
-pub fn debug_alloc_executed() -> bool {
-    DEBUG_ALLOC_EXECUTED.load(core::sync::atomic::Ordering::SeqCst)
-}
-
-/// Get ProcessMeta address from pre_alloc
-pub fn debug_pre_meta_addr() -> u64 {
-    DEBUG_PRE_META_ADDR.load(core::sync::atomic::Ordering::SeqCst)
-}
-
-/// Get ProcessMeta address from alloc
-pub fn debug_alloc_meta_addr() -> u64 {
-    DEBUG_ALLOC_META_ADDR.load(core::sync::atomic::Ordering::SeqCst)
-}
-
-/// Get sys_open Arc pointer
-pub fn debug_sys_open_arc() -> u64 {
-    DEBUG_SYS_OPEN_ARC.load(core::sync::atomic::Ordering::SeqCst)
-}
-
-/// Get sys_open PID
-pub fn debug_sys_open_pid() -> u64 {
-    DEBUG_SYS_OPEN_PID.load(core::sync::atomic::Ordering::SeqCst)
 }
 
 /// fcntl - manipulate file descriptor

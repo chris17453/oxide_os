@@ -361,6 +361,30 @@ fn parse_num(s: &[u8]) -> Option<u32> {
     Some(result)
 }
 
+/// — ByteRiot: Parse a signed integer from bytes. /proc/[pid]/stat has negative
+/// nice values and we were silently dropping them like amateurs.
+fn parse_signed_num(s: &[u8]) -> Option<i64> {
+    if s.is_empty() {
+        return None;
+    }
+    let (negative, digits) = if s[0] == b'-' {
+        (true, &s[1..])
+    } else {
+        (false, s)
+    };
+    if digits.is_empty() {
+        return None;
+    }
+    let mut result: i64 = 0;
+    for &b in digits {
+        if b < b'0' || b > b'9' {
+            return None;
+        }
+        result = result.checked_mul(10)?.checked_add((b - b'0') as i64)?;
+    }
+    if negative { Some(-result) } else { Some(result) }
+}
+
 /// Parse a float from string
 fn parse_float(s: &str) -> Option<f32> {
     let bytes = s.as_bytes();
@@ -627,9 +651,10 @@ fn read_proc_stat(pid: u32, info: &mut ProcessInfo) -> bool {
         info.name_len = copy_len;
     }
 
-    // Parse remaining fields after ')'
+    // — ByteRiot: Parse remaining fields after ')'. Use signed parser so
+    // negative nice values don't get silently swallowed into oblivion.
     let rest = &data[paren_end + 1..];
-    let mut fields = Vec::new();
+    let mut fields: Vec<i64> = Vec::new();
     let mut field_start = 0;
     let mut in_field = false;
 
@@ -638,8 +663,8 @@ fn read_proc_stat(pid: u32, info: &mut ProcessInfo) -> bool {
             field_start = i;
             in_field = true;
         } else if rest[i] == b' ' && in_field {
-            if let Some(val) = parse_num(&rest[field_start..i]) {
-                fields.push(val as u64);
+            if let Some(val) = parse_signed_num(&rest[field_start..i]) {
+                fields.push(val);
             } else if field_start < i {
                 // Non-numeric field (like state)
                 if fields.is_empty() && i - field_start == 1 {
@@ -661,16 +686,16 @@ fn read_proc_stat(pid: u32, info: &mut ProcessInfo) -> bool {
         info.ppid = fields[1] as u32;
     }
     if fields.len() > 11 {
-        info.user_time = fields[11];
+        info.user_time = fields[11] as u64;
     }
     if fields.len() > 12 {
-        info.system_time = fields[12];
+        info.system_time = fields[12] as u64;
     }
     if fields.len() > 20 {
-        info.vsize = fields[20];
+        info.vsize = fields[20] as u64;
     }
     if fields.len() > 21 {
-        info.rss = fields[21];
+        info.rss = fields[21] as u64;
     }
     if fields.len() > 15 {
         info.priority = fields[15] as i32;

@@ -1,0 +1,30 @@
+# GCC/Clang specs file for x86_64-oxide target
+#
+# This defines the OXIDE OS target triple and compilation defaults.
+# Used by configure scripts that probe for target capabilities.
+#
+# Target Triple: x86_64-oxide-elf
+# ABI: System V AMD64 ABI (Linux-compatible)
+# Libc: OXIDE libc (POSIX subset)
+
+*oxide_os_version:
+1.0
+
+*oxide_target:
+x86_64-oxide-elf
+
+*oxide_cpp_options:
+-DOXIDE_OS -D__oxide__ -D__x86_64__ -D__LP64__
+
+*oxide_cc1_options:
+-fno-stack-protector -fno-pic -mno-red-zone
+
+*oxide_asm_options:
+-march=x86-64
+
+*oxide_link_options:
+-static -nostdlib
+
+# Defines for autoconf probes
+*oxide_defines:
+-D_POSIX_VERSION=200809L -D_POSIX_C_SOURCE=200809L

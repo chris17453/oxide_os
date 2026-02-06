@@ -1,0 +1,52 @@
+# OXIDE OS Base Package List
+#
+# These packages form the base userspace for OXIDE OS.
+# They are built in dependency order by the build-pipeline tool.
+#
+# Format: package-name [version-hint]
+# Lines starting with # are comments
+
+# Core utilities
+coreutils
+findutils
+grep
+sed
+gawk
+
+# Shell
+bash
+
+# Compression
+gzip
+bzip2
+xz
+zlib
+
+# Text processing
+less
+vim-minimal
+
+# File utilities
+file
+diffutils
+patch
+
+# Build tools (for self-hosting)
+make
+m4
+autoconf
+automake
+libtool
+
+# Network utilities
+curl
+wget
+
+# Archive utilities
+tar
+cpio
+
+# Miscellaneous
+which
+tree
+time

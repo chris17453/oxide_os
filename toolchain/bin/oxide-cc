@@ -14,7 +14,8 @@ SYSROOT="$TOOLCHAIN_ROOT/sysroot"
 PROJECT_ROOT="$(cd "$TOOLCHAIN_ROOT/.." && pwd)"
 
 # Target specification
-TARGET="x86_64-unknown-none"
+TARGET="x86_64-oxide"
+TARGET_TRIPLE="x86_64-oxide-elf"
 TARGET_JSON="$PROJECT_ROOT/userspace/x86_64-user.json"
 
 # Find clang compiler
@@ -28,8 +29,7 @@ fi
 
 # Default flags for OXIDE target
 OXIDE_CFLAGS=(
-    "--target=x86_64-unknown-linux-elf"
-    "-ffreestanding"
+    "--target=x86_64-oxide-elf"
     "-fno-stack-protector"
     "-fno-pic"
     "-fno-pie"

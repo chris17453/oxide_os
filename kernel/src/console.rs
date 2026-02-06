@@ -33,77 +33,14 @@ fn push_mouse_escape(seq: &[u8]) {
     push_escape_sequence(seq);
 }
 
-/// Strip ANSI/CSI escape sequences from output for cleaner serial debug logs
-#[cfg(feature = "debug-tty-read")]
-fn strip_ansi_escapes(data: &[u8]) -> alloc::vec::Vec<u8> {
-    extern crate alloc;
-    use alloc::vec::Vec;
-
-    let mut result = Vec::with_capacity(data.len());
-    let mut i = 0;
-
-    while i < data.len() {
-        if i + 1 < data.len() && data[i] == 0x1B {
-            // ESC
-            // Check for CSI sequence: ESC [
-            if data[i + 1] == b'[' {
-                // Skip until we find the end of CSI sequence (letter A-Z, a-z)
-                i += 2;
-                while i < data.len() {
-                    let c = data[i];
-                    i += 1;
-                    if (c >= b'A' && c <= b'Z') || (c >= b'a' && c <= b'z') {
-                        break;
-                    }
-                }
-                continue;
-            }
-            // Check for other escape sequences: ESC ?
-            else if data[i + 1] == b'?' {
-                // Skip ESC ? sequences
-                i += 2;
-                while i < data.len() {
-                    let c = data[i];
-                    i += 1;
-                    if c == b'h' || c == b'l' {
-                        break;
-                    }
-                }
-                continue;
-            }
-        }
-
-        result.push(data[i]);
-        i += 1;
-    }
-
-    result
-}
-
 /// Console write function for syscalls
 ///
-/// Writes to serial and terminal emulator (if initialized).
+/// — GraveShift: Stdout goes to the terminal emulator ONLY.
+/// Serial was the original sin — every byte of userspace output crawled through
+/// the UART byte-by-byte, 28,800 COM1 spinlock cycles per curses frame.
+/// Debug output has its own path (os_log, debug_*! macros). Stdout is not debug.
 pub fn console_write(data: &[u8]) {
-    // Write to serial for debugging (filter escape sequences for clean debug output)
-    #[cfg(feature = "debug-tty-read")]
-    {
-        extern crate alloc;
-        use alloc::vec::Vec;
-        let filtered = strip_ansi_escapes(data);
-        let mut writer = serial::SerialWriter;
-        for &byte in &filtered {
-            let _ = writer.write_char(byte as char);
-        }
-    }
-    #[cfg(not(feature = "debug-tty-read"))]
-    {
-        let mut writer = serial::SerialWriter;
-        for &byte in data {
-            let _ = writer.write_char(byte as char);
-        }
-    }
-
-    // Write to terminal emulator for ANSI-processed framebuffer output (unfiltered - needs escapes!)
+    // Write to terminal emulator for ANSI-processed framebuffer output
     if terminal::is_initialized() {
         terminal::write(data);
     } else if fb::is_initialized() {
@@ -168,23 +105,8 @@ pub fn terminal_tick() {
     // runs in interrupt context (timer interrupt). Using the locking version
     // would deadlock if process-context code holds the COM1 lock.
     while let Some(byte) = unsafe { arch::serial_read_unsafe() } {
-        // NeonRoot: Debug output MUST use lock-free serial writes here.
-        // terminal_tick runs in timer interrupt context — if the main code
-        // holds the COM1 lock during a writeln!, taking it again deadlocks
-        // and escalates to a triple fault. write_str_unsafe bypasses the lock.
-        if byte < 32 || byte > 126 {
-            unsafe {
-                arch::serial::write_str_unsafe("[SERIAL] Got 0x");
-                let hi = (byte >> 4) & 0xF;
-                let lo = byte & 0xF;
-                arch::serial::write_byte_unsafe(if hi < 10 { b'0' + hi } else { b'a' + hi - 10 });
-                arch::serial::write_byte_unsafe(if lo < 10 { b'0' + lo } else { b'a' + lo - 10 });
-                arch::serial::write_byte_unsafe(b'\n');
-            }
-        }
-
-        // Route serial input to VT subsystem — /dev/console delegates to
-        // the active VT device, so only one push path is needed.
+        // — NeonRoot: Route serial input to VT subsystem. No echo back to serial —
+        // that was spewing hex dumps of every Ctrl+C and escape sequence into ISR context.
         if let Some(manager) = vt::get_manager() {
             manager.push_input(byte);
         }
@@ -405,8 +327,9 @@ pub fn serial_write_bytes(data: &[u8]) {
 
 /// Console write function for devfs (legacy fallback)
 ///
-/// Writes to both serial and framebuffer (if initialized).
-/// Used before terminal emulator is initialized.
+/// — GraveShift: Early-boot fallback only. Once VT is wired up, ConsoleDevice
+/// delegates to VtDevice and this path is dead. No serial — the UART was never
+/// meant to echo every byte of user I/O.
 /// NOTE: data may point to user memory, so we need STAC/CLAC for SMAP
 pub fn console_write_bytes(data: &[u8]) {
     // Enable access to user pages (STAC)
@@ -414,26 +337,10 @@ pub fn console_write_bytes(data: &[u8]) {
         core::arch::asm!("stac", options(nomem, nostack));
     }
 
-    // Write to serial (filter escape sequences for clean debug output)
-    #[cfg(feature = "debug-tty-read")]
-    {
-        extern crate alloc;
-        let filtered = strip_ansi_escapes(data);
-        let mut writer = serial::SerialWriter;
-        for &byte in &filtered {
-            let _ = writer.write_char(byte as char);
-        }
-    }
-    #[cfg(not(feature = "debug-tty-read"))]
-    {
-        let mut writer = serial::SerialWriter;
-        for &byte in data {
-            let _ = writer.write_char(byte as char);
-        }
-    }
-
-    // Write to framebuffer console if available (legacy path - unfiltered, needs escapes!)
-    if fb::is_initialized() && !terminal::is_initialized() {
+    // Write to terminal emulator or framebuffer
+    if terminal::is_initialized() {
+        terminal::write(data);
+    } else if fb::is_initialized() {
         for &byte in data {
             fb::putchar(byte as char);
         }

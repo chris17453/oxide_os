@@ -53,7 +53,25 @@ IRQ → ring buffer → (never drained) → line discipline → poll() → "no d
 - `kernel/tty/vt/src/lib.rs` — `VtManager::poll_has_input()`, `VtDevice::poll_read_ready()`
 - `kernel/tty/tty/src/tty.rs` — `Tty::ldisc_can_read()` (new public method)
 - `kernel/vfs/devfs/src/devices.rs` — `ConsoleDevice::poll_read_ready()` override
-- `kernel/syscall/syscall/src/poll.rs` — `check_fd_ready()` (unchanged, now works correctly)
+- `kernel/syscall/syscall/src/poll.rs` — `check_fd_ready()` MUST use `file.can_read()` (delegates to `poll_read_ready()`). NEVER use `ioctl(FIONREAD)` — it bypasses the ring buffer drain and kills input+signals.
+
+## CRITICAL: check_fd_ready() Must Use file.can_read() (Regression 2026-02-06)
+
+`check_fd_ready()` in `poll.rs` was changed to use `ioctl(FIONREAD)` for CharDevice
+readability checks. This completely **bypassed `poll_read_ready()`**, re-introducing
+the exact same bug. Symptoms:
+
+- Keyboard input dead in ALL programs using poll() (top, curses-demo, shell)
+- Ctrl+C/SIGINT never delivered (signal chars rotted in ring buffer)
+- Programs appeared "hung" — blocking on poll() that never returned
+
+The fix: use `file.can_read()` which calls `vnode.poll_read_ready()`. Never
+use FIONREAD as the sole readability check for TTYs — it only sees the line
+discipline buffer, not the IRQ ring buffer.
+
+**Rule 5: `check_fd_ready()` MUST call `file.can_read()` for ALL file types.**
+Never special-case CharDevices with ioctl. The `poll_read_ready()` trait method
+exists precisely to handle device-specific readability checks.
 
 ## Immediate Signal Delivery (push_input fast-path)
 

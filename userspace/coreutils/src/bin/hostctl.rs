@@ -14,7 +14,6 @@
 #![no_main]
 
 use libc::*;
-use libc::c_exports::link;
 
 const HOSTS_FILE: &str = "/etc/hosts";
 const HOSTS_BACKUP: &str = "/etc/hosts.bak";
@@ -100,9 +99,9 @@ fn read_hosts_file(buf: &mut [u8]) -> isize {
 
 /// Write buffer to /etc/hosts
 fn write_hosts_file(buf: &[u8], len: usize) -> bool {
-    // ColdCipher: Create backup before modifying
+    // — ColdCipher: Create backup before modifying. One copy between you and oblivion.
     let _ = unlink(HOSTS_BACKUP);
-    let _ = link(HOSTS_FILE, HOSTS_BACKUP);
+    let _ = sys_link(HOSTS_FILE, HOSTS_BACKUP);
 
     let fd = open(HOSTS_FILE, (O_WRONLY | O_CREAT | O_TRUNC) as u32, 0o644);
     if fd < 0 {

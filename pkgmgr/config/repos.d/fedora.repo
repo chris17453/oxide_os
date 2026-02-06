@@ -1,42 +1,42 @@
-# Fedora 39 Source Repository
+# Fedora 41 Source Repository (Current Stable)
 [fedora-source]
-name=Fedora 39 - Source
+name=Fedora 41 - Source
 # Primary mirror
-baseurl=https://download.fedoraproject.org/pub/fedora/linux/releases/39/Everything/source/tree/
+baseurl=https://download.fedoraproject.org/pub/fedora/linux/releases/41/Everything/source/tree
 # Mirror list (commented out, use if primary is slow)
-# metalink=https://mirrors.fedoraproject.org/metalink?repo=fedora-source-39&arch=source
+# metalink=https://mirrors.fedoraproject.org/metalink?repo=fedora-source-41&arch=source
 enabled=1
 gpgcheck=0
-gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-39
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-41
 priority=10
 type=rpm-src
 
 [fedora-updates-source]
-name=Fedora 39 - Updates Source  
-baseurl=https://download.fedoraproject.org/pub/fedora/linux/updates/39/Everything/source/tree/
-# metalink=https://mirrors.fedoraproject.org/metalink?repo=updates-released-source-f39&arch=source
+name=Fedora 41 - Updates Source  
+baseurl=https://download.fedoraproject.org/pub/fedora/linux/updates/41/Everything/source/tree
+# metalink=https://mirrors.fedoraproject.org/metalink?repo=updates-released-source-f41&arch=source
 enabled=1
 gpgcheck=0
-gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-39
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-41
 priority=20
 type=rpm-src
 
-# Fedora 40 Source Repository (optional, disabled by default)
-[fedora-40-source]
-name=Fedora 40 - Source
-baseurl=https://download.fedoraproject.org/pub/fedora/linux/releases/40/Everything/source/tree/
+# Fedora 42 Source Repository (Rawhide/development)
+[fedora-42-source]
+name=Fedora 42 - Source
+baseurl=https://download.fedoraproject.org/pub/fedora/linux/releases/42/Everything/source/tree
 enabled=0
 gpgcheck=0
-gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-40
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-42
 priority=30
 type=rpm-src
 
-[fedora-40-updates-source]
-name=Fedora 40 - Updates Source
-baseurl=https://download.fedoraproject.org/pub/fedora/linux/updates/40/Everything/source/tree/
+[fedora-42-updates-source]
+name=Fedora 42 - Updates Source
+baseurl=https://download.fedoraproject.org/pub/fedora/linux/updates/42/Everything/source/tree
 enabled=0
 gpgcheck=0
-gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-40
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-42
 priority=40
 type=rpm-src
 

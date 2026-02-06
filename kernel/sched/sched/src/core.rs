@@ -170,11 +170,17 @@ pub fn add_task(task: Task) {
 }
 
 /// Remove a task from the scheduler
+///
+/// — GraveShift: Fast-path this_cpu() — zombie reap removes from the CPU the task died on.
 pub fn remove_task(pid: Pid) -> Option<Task> {
-    // Try to find and remove from all run queues
-    for cpu in 0..num_cpus() {
-        if let Some(task) = with_rq(cpu, |rq| rq.remove_task(pid)) {
-            return task;
+    let cpu = this_cpu();
+    if let Some(task) = with_rq(cpu, |rq| rq.remove_task(pid)) {
+        if task.is_some() { return task; }
+    }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if let Some(task) = with_rq(other, |rq| rq.remove_task(pid)) {
+            if task.is_some() { return task; }
         }
     }
     None
@@ -403,8 +409,10 @@ pub fn yield_current() {
 /// Handle a scheduler tick
 ///
 /// Called from the timer interrupt handler.
+/// `in_blocking_wait` is true when the current task is in a blocking syscall
+/// (poll, nanosleep, read) doing HLT — it should not be charged as CPU time.
 /// Returns true if rescheduling is needed.
-pub fn scheduler_tick() -> bool {
+pub fn scheduler_tick_ex(in_blocking_wait: bool) -> bool {
     let cpu = this_cpu();
     let now = GLOBAL_CLOCK.fetch_add(TICK_NS, Ordering::Relaxed) + TICK_NS;
 
@@ -419,16 +427,16 @@ pub fn scheduler_tick() -> bool {
                 .map(|t| t.policy == SchedPolicy::Idle)
                 .unwrap_or(true),
         };
-        if is_idle {
+        // — GraveShift: A process HLT-looping in a blocking syscall (poll,
+        // nanosleep, read) is NOT computing — don't charge it as user time.
+        // kernel_preempt_ok == true means the task is waiting, not working.
+        if is_idle || in_blocking_wait {
             CPU_TICK_NS[base + 2].fetch_add(TICK_NS, Ordering::Relaxed);
         } else {
-            // — GraveShift: All userspace tasks run through syscall for
-            // kernel work, so split as user for now. Real user/system
-            // split needs ring-level tracking in the context switch.
             CPU_TICK_NS[base + 0].fetch_add(TICK_NS, Ordering::Relaxed);
         }
         rq.update_clock(now);
-        rq.scheduler_tick()
+        rq.scheduler_tick(in_blocking_wait)
     });
 
     match resched {
@@ -439,6 +447,11 @@ pub fn scheduler_tick() -> bool {
             false
         }
     }
+}
+
+/// Handle a scheduler tick (legacy wrapper, assumes active computation)
+pub fn scheduler_tick() -> bool {
+    scheduler_tick_ex(false)
 }
 
 /// Get per-CPU tick times in nanoseconds: (user_ns, system_ns, idle_ns)
@@ -582,9 +595,17 @@ pub fn switch_to(new_pid: Pid) {
 }
 
 /// Get task state
+///
+/// — GraveShift: Fast-path tries this_cpu() first. The current task is ALWAYS
+/// on the local RQ, and with all tasks on CPU 0, this hits first try 99% of the time.
 pub fn get_task_state(pid: Pid) -> Option<TaskState> {
-    for cpu in 0..num_cpus() {
-        if let Some(state) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.state)).flatten() {
+    let cpu = this_cpu();
+    if let Some(state) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.state)).flatten() {
+        return Some(state);
+    }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if let Some(state) = with_rq(other, |rq| rq.get_task(pid).map(|t| t.state)).flatten() {
             return Some(state);
         }
     }
@@ -592,10 +613,16 @@ pub fn get_task_state(pid: Pid) -> Option<TaskState> {
 }
 
 /// Get task context (for context switching)
+///
+/// — GraveShift: Fast-path this_cpu() — context switches always operate on local tasks.
 pub fn get_task_context(pid: Pid) -> Option<crate::task::TaskContext> {
-    for cpu in 0..num_cpus() {
-        if let Some(ctx) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.context.clone())).flatten()
-        {
+    let cpu = this_cpu();
+    if let Some(ctx) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.context.clone())).flatten() {
+        return Some(ctx);
+    }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if let Some(ctx) = with_rq(other, |rq| rq.get_task(pid).map(|t| t.context.clone())).flatten() {
             return Some(ctx);
         }
     }
@@ -603,9 +630,22 @@ pub fn get_task_context(pid: Pid) -> Option<crate::task::TaskContext> {
 }
 
 /// Update task context (for context switching)
+///
+/// — GraveShift: Fast-path this_cpu() — we only set context on tasks we're about to switch to.
 pub fn set_task_context(pid: Pid, context: crate::task::TaskContext) {
-    for cpu in 0..num_cpus() {
-        let found = with_rq(cpu, |rq| {
+    let cpu = this_cpu();
+    let found = with_rq(cpu, |rq| {
+        if let Some(task) = rq.get_task_mut(pid) {
+            task.context = context;
+            true
+        } else {
+            false
+        }
+    });
+    if found == Some(true) { return; }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        let found = with_rq(other, |rq| {
             if let Some(task) = rq.get_task_mut(pid) {
                 task.context = context;
                 true
@@ -613,17 +653,21 @@ pub fn set_task_context(pid: Pid, context: crate::task::TaskContext) {
                 false
             }
         });
-
-        if found == Some(true) {
-            break;
-        }
+        if found == Some(true) { break; }
     }
 }
 
 /// Get task PML4 physical address (for address space switching)
+///
+/// — GraveShift: Fast-path this_cpu() — address space switches are always local.
 pub fn get_task_pml4(pid: Pid) -> Option<PhysAddr> {
-    for cpu in 0..num_cpus() {
-        if let Some(pml4) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.pml4_phys)).flatten() {
+    let cpu = this_cpu();
+    if let Some(pml4) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.pml4_phys)).flatten() {
+        return Some(pml4);
+    }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if let Some(pml4) = with_rq(other, |rq| rq.get_task(pid).map(|t| t.pml4_phys)).flatten() {
             return Some(pml4);
         }
     }
@@ -631,14 +675,20 @@ pub fn get_task_pml4(pid: Pid) -> Option<PhysAddr> {
 }
 
 /// Get task kernel stack info (for context switching)
+///
+/// — GraveShift: Fast-path this_cpu() — kernel stack queries are local-task ops.
 pub fn get_task_kernel_stack(pid: Pid) -> Option<(PhysAddr, usize)> {
-    for cpu in 0..num_cpus() {
-        if let Some(info) = with_rq(cpu, |rq| {
-            rq.get_task(pid)
-                .map(|t| (t.kernel_stack, t.kernel_stack_size))
-        })
-        .flatten()
-        {
+    let cpu = this_cpu();
+    if let Some(info) = with_rq(cpu, |rq| {
+        rq.get_task(pid).map(|t| (t.kernel_stack, t.kernel_stack_size))
+    }).flatten() {
+        return Some(info);
+    }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if let Some(info) = with_rq(other, |rq| {
+            rq.get_task(pid).map(|t| (t.kernel_stack, t.kernel_stack_size))
+        }).flatten() {
             return Some(info);
         }
     }
@@ -649,6 +699,8 @@ pub fn get_task_kernel_stack(pid: Pid) -> Option<(PhysAddr, usize)> {
 ///
 /// Ensures the scheduler's view of the task matches the fresh address space
 /// created by exec (new CR3, entry point, stack, and user-mode register state).
+///
+/// — GraveShift: Fast-path this_cpu() — exec always modifies the caller's own task.
 pub fn update_task_exec_info(
     pid: Pid,
     pml4_phys: PhysAddr,
@@ -667,8 +719,22 @@ pub fn update_task_exec_info(
     context.rsp = user_stack_top;
     context.rflags |= 0x200; // ensure IF is set
 
-    for cpu in 0..num_cpus() {
-        let updated = with_rq(cpu, |rq| {
+    let cpu = this_cpu();
+    let updated = with_rq(cpu, |rq| {
+        if let Some(task) = rq.get_task_mut(pid) {
+            task.pml4_phys = pml4_phys;
+            task.entry_point = entry_point;
+            task.user_stack_top = user_stack_top;
+            task.context = context;
+            true
+        } else {
+            false
+        }
+    });
+    if updated == Some(true) { return; }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        let updated = with_rq(other, |rq| {
             if let Some(task) = rq.get_task_mut(pid) {
                 task.pml4_phys = pml4_phys;
                 task.entry_point = entry_point;
@@ -679,30 +745,31 @@ pub fn update_task_exec_info(
                 false
             }
         });
-
-        if updated == Some(true) {
-            break;
-        }
+        if updated == Some(true) { break; }
     }
 }
 
 /// Get all context switch info for a task in one call (more efficient)
+///
+/// — GraveShift: Fast-path this_cpu() — context switch info is always for local tasks.
 pub fn get_task_switch_info(
     pid: Pid,
 ) -> Option<(crate::task::TaskContext, PhysAddr, PhysAddr, usize)> {
-    for cpu in 0..num_cpus() {
-        if let Some(info) = with_rq(cpu, |rq| {
-            rq.get_task(pid).map(|t| {
-                (
-                    t.context.clone(),
-                    t.pml4_phys,
-                    t.kernel_stack,
-                    t.kernel_stack_size,
-                )
-            })
+    let cpu = this_cpu();
+    if let Some(info) = with_rq(cpu, |rq| {
+        rq.get_task(pid).map(|t| {
+            (t.context.clone(), t.pml4_phys, t.kernel_stack, t.kernel_stack_size)
         })
-        .flatten()
-        {
+    }).flatten() {
+        return Some(info);
+    }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if let Some(info) = with_rq(other, |rq| {
+            rq.get_task(pid).map(|t| {
+                (t.context.clone(), t.pml4_phys, t.kernel_stack, t.kernel_stack_size)
+            })
+        }).flatten() {
             return Some(info);
         }
     }
@@ -710,53 +777,78 @@ pub fn get_task_switch_info(
 }
 
 /// Set task CPU affinity
+///
+/// — GraveShift: Fast-path this_cpu() for the lookup, then handle migration if needed.
 pub fn set_affinity(pid: Pid, cpuset: CpuSet) {
-    for cpu in 0..num_cpus() {
-        let found = with_rq(cpu, |rq| {
-            if let Some(task) = rq.get_task_mut(pid) {
-                task.cpu_affinity = cpuset;
-                true
-            } else {
-                false
-            }
-        });
-
-        if found == Some(true) {
-            // ThreadRogue: Eager affinity enforcement - migrate immediately if disallowed
-            if !cpuset.is_set(cpu) {
-                // Task exists on this CPU but new affinity excludes this CPU
-                // Extract the task if it's queued (not running)
-                let maybe_task = with_rq(cpu, |rq| {
-                    if rq.curr() == Some(pid) {
-                        // Current task: force reschedule so next schedule() will migrate
-                        rq.set_need_resched(true);
-                        if cpu != this_cpu() {
-                            smp::ipi::send_reschedule(cpu);
-                        }
-                        None
-                    } else {
-                        // Queued task: dequeue and extract for migration
-                        rq.dequeue_task(pid);
-                        rq.remove_task(pid)
-                    }
-                });
-
-                // Re-add task on allowed CPU (outside with_rq lock)
-                if let Some(task) = maybe_task.flatten() {
-                    add_task(task);
+    let start_cpu = this_cpu();
+    let mut found_cpu = None;
+    // Fast-path: try current CPU first
+    let found = with_rq(start_cpu, |rq| {
+        if let Some(task) = rq.get_task_mut(pid) {
+            task.cpu_affinity = cpuset;
+            true
+        } else {
+            false
+        }
+    });
+    if found == Some(true) {
+        found_cpu = Some(start_cpu);
+    } else {
+        for cpu in 0..num_cpus() {
+            if cpu == start_cpu { continue; }
+            let found = with_rq(cpu, |rq| {
+                if let Some(task) = rq.get_task_mut(pid) {
+                    task.cpu_affinity = cpuset;
+                    true
+                } else {
+                    false
                 }
+            });
+            if found == Some(true) {
+                found_cpu = Some(cpu);
+                break;
             }
-            break;
+        }
+    }
+    if let Some(cpu) = found_cpu {
+        // ThreadRogue: Eager affinity enforcement - migrate immediately if disallowed
+        if !cpuset.is_set(cpu) {
+            // Task exists on this CPU but new affinity excludes this CPU
+            // Extract the task if it's queued (not running)
+            let maybe_task = with_rq(cpu, |rq| {
+                if rq.curr() == Some(pid) {
+                    // Current task: force reschedule so next schedule() will migrate
+                    rq.set_need_resched(true);
+                    if cpu != this_cpu() {
+                        smp::ipi::send_reschedule(cpu);
+                    }
+                    None
+                } else {
+                    // Queued task: dequeue and extract for migration
+                    rq.dequeue_task(pid);
+                    rq.remove_task(pid)
+                }
+            });
+
+            // Re-add task on allowed CPU (outside with_rq lock)
+            if let Some(task) = maybe_task.flatten() {
+                add_task(task);
+            }
         }
     }
 }
 
 /// Get task CPU affinity
+///
+/// — GraveShift: Fast-path this_cpu().
 pub fn get_affinity(pid: Pid) -> Option<CpuSet> {
-    for cpu in 0..num_cpus() {
-        if let Some(affinity) =
-            with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.cpu_affinity)).flatten()
-        {
+    let cpu = this_cpu();
+    if let Some(affinity) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.cpu_affinity)).flatten() {
+        return Some(affinity);
+    }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if let Some(affinity) = with_rq(other, |rq| rq.get_task(pid).map(|t| t.cpu_affinity)).flatten() {
             return Some(affinity);
         }
     }
@@ -764,51 +856,49 @@ pub fn get_affinity(pid: Pid) -> Option<CpuSet> {
 }
 
 /// Set task scheduling policy
+///
+/// — GraveShift: Fast-path this_cpu().
 pub fn set_scheduler(pid: Pid, policy: SchedPolicy, priority: u8) {
-    for cpu in 0..num_cpus() {
-        let found = with_rq(cpu, |rq| {
-            // Check if task exists and get its current state
+    let start_cpu = this_cpu();
+    let do_set = |rq: &mut RunQueue| -> bool {
+        let was_on_rq = rq.get_task(pid).map(|t| t.on_rq).unwrap_or(false);
+        if rq.get_task(pid).is_none() { return false; }
+        if was_on_rq { rq.dequeue_task(pid); }
+        if let Some(task) = rq.get_task_mut(pid) {
+            task.set_policy(policy);
+            if policy.is_realtime() { task.set_rt_priority(priority); }
+        }
+        if was_on_rq { rq.enqueue_task(pid); }
+        true
+    };
+    if with_rq(start_cpu, do_set) == Some(true) { return; }
+    for other in 0..num_cpus() {
+        if other == start_cpu { continue; }
+        if with_rq(other, |rq| {
             let was_on_rq = rq.get_task(pid).map(|t| t.on_rq).unwrap_or(false);
-
-            if rq.get_task(pid).is_none() {
-                return false;
-            }
-
-            // Dequeue from old class
-            if was_on_rq {
-                rq.dequeue_task(pid);
-            }
-
-            // Update policy
+            if rq.get_task(pid).is_none() { return false; }
+            if was_on_rq { rq.dequeue_task(pid); }
             if let Some(task) = rq.get_task_mut(pid) {
                 task.set_policy(policy);
-                if policy.is_realtime() {
-                    task.set_rt_priority(priority);
-                }
+                if policy.is_realtime() { task.set_rt_priority(priority); }
             }
-
-            // Re-enqueue with new class
-            if was_on_rq {
-                rq.enqueue_task(pid);
-            }
-
+            if was_on_rq { rq.enqueue_task(pid); }
             true
-        });
-
-        if found == Some(true) {
-            break;
-        }
+        }) == Some(true) { break; }
     }
 }
 
 /// Get task scheduling policy
+///
+/// — GraveShift: Fast-path this_cpu().
 pub fn get_scheduler(pid: Pid) -> Option<(SchedPolicy, u8)> {
-    for cpu in 0..num_cpus() {
-        if let Some(result) = with_rq(cpu, |rq| {
-            rq.get_task(pid).map(|t| (t.policy, t.rt_priority))
-        })
-        .flatten()
-        {
+    let cpu = this_cpu();
+    if let Some(result) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| (t.policy, t.rt_priority))).flatten() {
+        return Some(result);
+    }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if let Some(result) = with_rq(other, |rq| rq.get_task(pid).map(|t| (t.policy, t.rt_priority))).flatten() {
             return Some(result);
         }
     }
@@ -816,27 +906,34 @@ pub fn get_scheduler(pid: Pid) -> Option<(SchedPolicy, u8)> {
 }
 
 /// Set task nice value
+///
+/// — GraveShift: Fast-path this_cpu().
 pub fn set_nice(pid: Pid, nice: i8) {
-    for cpu in 0..num_cpus() {
-        let found = with_rq(cpu, |rq| {
-            if let Some(task) = rq.get_task_mut(pid) {
-                task.set_nice(nice);
-                true
-            } else {
-                false
-            }
+    let cpu = this_cpu();
+    let found = with_rq(cpu, |rq| {
+        if let Some(task) = rq.get_task_mut(pid) { task.set_nice(nice); true } else { false }
+    });
+    if found == Some(true) { return; }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        let found = with_rq(other, |rq| {
+            if let Some(task) = rq.get_task_mut(pid) { task.set_nice(nice); true } else { false }
         });
-
-        if found == Some(true) {
-            break;
-        }
+        if found == Some(true) { break; }
     }
 }
 
 /// Get task nice value
+///
+/// — GraveShift: Fast-path this_cpu().
 pub fn get_nice(pid: Pid) -> Option<i8> {
-    for cpu in 0..num_cpus() {
-        if let Some(nice) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.nice)).flatten() {
+    let cpu = this_cpu();
+    if let Some(nice) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.nice)).flatten() {
+        return Some(nice);
+    }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if let Some(nice) = with_rq(other, |rq| rq.get_task(pid).map(|t| t.nice)).flatten() {
             return Some(nice);
         }
     }
@@ -1013,10 +1110,14 @@ use alloc::sync::Arc;
 use proc::ProcessMeta;
 
 /// Get all PIDs across all CPUs
+///
+/// — GraveShift: Uses try_with_rq to avoid blocking on contended RQ locks.
+/// Non-critical query — missing a PID because of lock contention is harmless
+/// (procfs will just retry on next readdir).
 pub fn all_pids() -> Vec<Pid> {
     let mut pids = Vec::new();
     for cpu in 0..num_cpus() {
-        if let Some(mut cpu_pids) = with_rq(cpu, |rq| rq.all_pids()) {
+        if let Some(mut cpu_pids) = try_with_rq(cpu, |rq| rq.all_pids()) {
             pids.append(&mut cpu_pids);
         }
     }
@@ -1025,13 +1126,16 @@ pub fn all_pids() -> Vec<Pid> {
 
 /// Get process metadata for a task by PID
 ///
-/// Searches all CPU run queues to find the task and returns
-/// a clone of its ProcessMeta Arc (if present).
+/// — GraveShift: Fast-path tries this_cpu() first. With all user tasks on CPU 0,
+/// this avoids the O(num_cpus) blocking lock loop on every syscall that touches meta.
 pub fn get_task_meta(pid: Pid) -> Option<Arc<Mutex<ProcessMeta>>> {
-    for cpu in 0..num_cpus() {
-        if let Some(meta) =
-            with_rq(cpu, |rq| rq.get_task(pid).and_then(|t| t.meta.clone())).flatten()
-        {
+    let cpu = this_cpu();
+    if let Some(meta) = with_rq(cpu, |rq| rq.get_task(pid).and_then(|t| t.meta.clone())).flatten() {
+        return Some(meta);
+    }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if let Some(meta) = with_rq(other, |rq| rq.get_task(pid).and_then(|t| t.meta.clone())).flatten() {
             return Some(meta);
         }
     }
@@ -1039,7 +1143,20 @@ pub fn get_task_meta(pid: Pid) -> Option<Arc<Mutex<ProcessMeta>>> {
 }
 
 /// Get process metadata for the current task
+///
+/// — GraveShift: Ultra-fast path. The current task is ALWAYS on this_cpu()'s RQ.
+/// No need to call current_pid() → get_task_meta() → loop all CPUs.
+/// Single lock acquire, single RQ lookup.
 pub fn get_current_meta() -> Option<Arc<Mutex<ProcessMeta>>> {
+    let cpu = this_cpu();
+    let result = with_rq(cpu, |rq| {
+        let pid = rq.curr()?;
+        rq.get_task(pid).and_then(|t| t.meta.clone())
+    }).flatten();
+    if result.is_some() {
+        return result;
+    }
+    // — GraveShift: Fallback shouldn't happen, but don't panic if it does.
     current_pid().and_then(get_task_meta)
 }
 
@@ -1087,11 +1204,16 @@ where
 }
 
 /// Get the children of a task
+///
+/// — GraveShift: Fast-path this_cpu() — parent is almost always the caller.
 pub fn get_task_children(pid: Pid) -> Vec<Pid> {
-    for cpu in 0..num_cpus() {
-        if let Some(children) =
-            with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.children.clone())).flatten()
-        {
+    let cpu = this_cpu();
+    if let Some(children) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.children.clone())).flatten() {
+        return children;
+    }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if let Some(children) = with_rq(other, |rq| rq.get_task(pid).map(|t| t.children.clone())).flatten() {
             return children;
         }
     }
@@ -1099,9 +1221,22 @@ pub fn get_task_children(pid: Pid) -> Vec<Pid> {
 }
 
 /// Add a child to a task
+///
+/// — GraveShift: Fast-path this_cpu() — parent adding child is always local.
 pub fn add_task_child(pid: Pid, child_pid: Pid) {
-    for cpu in 0..num_cpus() {
-        let found = with_rq(cpu, |rq| {
+    let cpu = this_cpu();
+    let found = with_rq(cpu, |rq| {
+        if let Some(task) = rq.get_task_mut(pid) {
+            task.add_child(child_pid);
+            true
+        } else {
+            false
+        }
+    });
+    if found == Some(true) { return; }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        let found = with_rq(other, |rq| {
             if let Some(task) = rq.get_task_mut(pid) {
                 task.add_child(child_pid);
                 true
@@ -1109,16 +1244,27 @@ pub fn add_task_child(pid: Pid, child_pid: Pid) {
                 false
             }
         });
-        if found == Some(true) {
-            break;
-        }
+        if found == Some(true) { break; }
     }
 }
 
 /// Remove a child from a task
+///
+/// — GraveShift: Fast-path this_cpu().
 pub fn remove_task_child(pid: Pid, child_pid: Pid) {
-    for cpu in 0..num_cpus() {
-        let found = with_rq(cpu, |rq| {
+    let cpu = this_cpu();
+    let found = with_rq(cpu, |rq| {
+        if let Some(task) = rq.get_task_mut(pid) {
+            task.remove_child(child_pid);
+            true
+        } else {
+            false
+        }
+    });
+    if found == Some(true) { return; }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        let found = with_rq(other, |rq| {
             if let Some(task) = rq.get_task_mut(pid) {
                 task.remove_child(child_pid);
                 true
@@ -1126,35 +1272,51 @@ pub fn remove_task_child(pid: Pid, child_pid: Pid) {
                 false
             }
         });
-        if found == Some(true) {
-            break;
-        }
+        if found == Some(true) { break; }
     }
 }
 
 /// Set exit status for a task
+///
+/// — GraveShift: Fast-path this_cpu() — exit() is called by the dying task itself.
 pub fn set_task_exit_status(pid: Pid, status: i32) {
-    for cpu in 0..num_cpus() {
-        let found = with_rq(cpu, |rq| {
+    let cpu = this_cpu();
+    let found = with_rq(cpu, |rq| {
+        if let Some(task) = rq.get_task_mut(pid) {
+            task.exit(status);
+            rq.dequeue_task(pid);
+            true
+        } else {
+            false
+        }
+    });
+    if found == Some(true) { return; }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        let found = with_rq(other, |rq| {
             if let Some(task) = rq.get_task_mut(pid) {
                 task.exit(status);
-                // Dequeue the zombie so the scheduler doesn't pick it
                 rq.dequeue_task(pid);
                 true
             } else {
                 false
             }
         });
-        if found == Some(true) {
-            break;
-        }
+        if found == Some(true) { break; }
     }
 }
 
 /// Get a task's ppid
+///
+/// — GraveShift: Fast-path this_cpu() — waitpid calls this on children, usually local.
 pub fn get_task_ppid(pid: Pid) -> Option<Pid> {
-    for cpu in 0..num_cpus() {
-        if let Some(ppid) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.ppid)).flatten() {
+    let cpu = this_cpu();
+    if let Some(ppid) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.ppid)).flatten() {
+        return Some(ppid);
+    }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if let Some(ppid) = with_rq(other, |rq| rq.get_task(pid).map(|t| t.ppid)).flatten() {
             return Some(ppid);
         }
     }
@@ -1162,15 +1324,22 @@ pub fn get_task_ppid(pid: Pid) -> Option<Pid> {
 }
 
 /// Get task timing info for /proc/[pid]/stat
-/// Returns (state, ppid, start_time, sum_exec_runtime)
-pub fn get_task_timing_info(pid: Pid) -> Option<(TaskState, Pid, u64, u64)> {
-    for cpu in 0..num_cpus() {
-        if let Some(info) = with_rq(cpu, |rq| {
-            rq.get_task(pid)
-                .map(|t| (t.state, t.ppid, t.start_time, t.sum_exec_runtime))
-        })
-        .flatten()
-        {
+/// Returns (state, ppid, start_time, sum_exec_runtime, nice)
+///
+/// — GraveShift: Fast-path this_cpu(). Procfs reads /proc/[pid]/stat for every process
+/// in `top` — this cuts lock contention from O(N*CPUs) to O(N).
+pub fn get_task_timing_info(pid: Pid) -> Option<(TaskState, Pid, u64, u64, i8)> {
+    let cpu = this_cpu();
+    if let Some(info) = with_rq(cpu, |rq| {
+        rq.get_task(pid).map(|t| (t.state, t.ppid, t.start_time, t.sum_exec_runtime, t.nice))
+    }).flatten() {
+        return Some(info);
+    }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if let Some(info) = with_rq(other, |rq| {
+            rq.get_task(pid).map(|t| (t.state, t.ppid, t.start_time, t.sum_exec_runtime, t.nice))
+        }).flatten() {
             return Some(info);
         }
     }
@@ -1178,14 +1347,22 @@ pub fn get_task_timing_info(pid: Pid) -> Option<(TaskState, Pid, u64, u64)> {
 }
 
 /// Get exit status of a task (if zombie)
+///
+/// — GraveShift: Fast-path this_cpu() — zombies are on the CPU they died on.
 pub fn get_task_exit_status(pid: Pid) -> Option<i32> {
-    for cpu in 0..num_cpus() {
+    let cpu = this_cpu();
+    if let Some((state, status)) =
+        with_rq(cpu, |rq| rq.get_task(pid).map(|t| (t.state, t.exit_status))).flatten()
+    {
+        if state == TaskState::TASK_ZOMBIE { return Some(status); }
+        return None;
+    }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
         if let Some((state, status)) =
-            with_rq(cpu, |rq| rq.get_task(pid).map(|t| (t.state, t.exit_status))).flatten()
+            with_rq(other, |rq| rq.get_task(pid).map(|t| (t.state, t.exit_status))).flatten()
         {
-            if state == TaskState::TASK_ZOMBIE {
-                return Some(status);
-            }
+            if state == TaskState::TASK_ZOMBIE { return Some(status); }
             return None;
         }
     }
@@ -1193,13 +1370,20 @@ pub fn get_task_exit_status(pid: Pid) -> Option<i32> {
 }
 
 /// Check if a task is waiting for a specific child
+///
+/// — GraveShift: Fast-path this_cpu() — waitpid checks are always local.
 pub fn is_task_waiting_for(pid: Pid, child_pid: Pid) -> bool {
-    for cpu in 0..num_cpus() {
-        if let Some(waiting) = with_rq(cpu, |rq| {
+    let cpu = this_cpu();
+    if let Some(waiting) = with_rq(cpu, |rq| {
+        rq.get_task(pid).map(|t| t.is_waiting_for(child_pid))
+    }).flatten() {
+        return waiting;
+    }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if let Some(waiting) = with_rq(other, |rq| {
             rq.get_task(pid).map(|t| t.is_waiting_for(child_pid))
-        })
-        .flatten()
-        {
+        }).flatten() {
             return waiting;
         }
     }
@@ -1207,9 +1391,22 @@ pub fn is_task_waiting_for(pid: Pid, child_pid: Pid) -> bool {
 }
 
 /// Set a task to wait for a child
+///
+/// — GraveShift: Fast-path this_cpu() — waitpid sets waiting on the caller.
 pub fn set_task_waiting(pid: Pid, child_pid: i32) {
-    for cpu in 0..num_cpus() {
-        let found = with_rq(cpu, |rq| {
+    let cpu = this_cpu();
+    let found = with_rq(cpu, |rq| {
+        if let Some(task) = rq.get_task_mut(pid) {
+            task.wait_for_child(child_pid);
+            true
+        } else {
+            false
+        }
+    });
+    if found == Some(true) { return; }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        let found = with_rq(other, |rq| {
             if let Some(task) = rq.get_task_mut(pid) {
                 task.wait_for_child(child_pid);
                 true
@@ -1217,16 +1414,27 @@ pub fn set_task_waiting(pid: Pid, child_pid: i32) {
                 false
             }
         });
-        if found == Some(true) {
-            break;
-        }
+        if found == Some(true) { break; }
     }
 }
 
 /// Clear a task's waiting state
+///
+/// — GraveShift: Fast-path this_cpu().
 pub fn clear_task_waiting(pid: Pid) {
-    for cpu in 0..num_cpus() {
-        let found = with_rq(cpu, |rq| {
+    let cpu = this_cpu();
+    let found = with_rq(cpu, |rq| {
+        if let Some(task) = rq.get_task_mut(pid) {
+            task.clear_waiting();
+            true
+        } else {
+            false
+        }
+    });
+    if found == Some(true) { return; }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        let found = with_rq(other, |rq| {
             if let Some(task) = rq.get_task_mut(pid) {
                 task.clear_waiting();
                 true
@@ -1234,9 +1442,7 @@ pub fn clear_task_waiting(pid: Pid) {
                 false
             }
         });
-        if found == Some(true) {
-            break;
-        }
+        if found == Some(true) { break; }
     }
 }
 
@@ -1264,9 +1470,22 @@ pub fn create_task_with_meta(
 }
 
 /// Set ProcessMeta on an existing task
+///
+/// — GraveShift: Fast-path this_cpu().
 pub fn set_task_meta(pid: Pid, meta: Arc<Mutex<ProcessMeta>>) {
-    for cpu in 0..num_cpus() {
-        let found = with_rq(cpu, |rq| {
+    let cpu = this_cpu();
+    let found = with_rq(cpu, |rq| {
+        if let Some(task) = rq.get_task_mut(pid) {
+            task.set_meta(meta.clone());
+            true
+        } else {
+            false
+        }
+    });
+    if found == Some(true) { return; }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        let found = with_rq(other, |rq| {
             if let Some(task) = rq.get_task_mut(pid) {
                 task.set_meta(meta.clone());
                 true
@@ -1274,16 +1493,21 @@ pub fn set_task_meta(pid: Pid, meta: Arc<Mutex<ProcessMeta>>) {
                 false
             }
         });
-        if found == Some(true) {
-            break;
-        }
+        if found == Some(true) { break; }
     }
 }
 
 /// Get nice value for a task
+///
+/// — GraveShift: Fast-path this_cpu().
 pub fn get_task_nice(pid: Pid) -> Option<i8> {
-    for cpu in 0..num_cpus() {
-        if let Some(nice) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.nice)).flatten() {
+    let cpu = this_cpu();
+    if let Some(nice) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.nice)).flatten() {
+        return Some(nice);
+    }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if let Some(nice) = with_rq(other, |rq| rq.get_task(pid).map(|t| t.nice)).flatten() {
             return Some(nice);
         }
     }
@@ -1291,27 +1515,33 @@ pub fn get_task_nice(pid: Pid) -> Option<i8> {
 }
 
 /// Set nice value for a task
+///
+/// — GraveShift: Fast-path this_cpu().
 pub fn set_task_nice(pid: Pid, nice: i8) -> bool {
-    for cpu in 0..num_cpus() {
-        let found = with_rq(cpu, |rq| {
-            if let Some(task) = rq.get_task_mut(pid) {
-                task.set_nice(nice);
-                true
-            } else {
-                false
-            }
-        });
-        if found == Some(true) {
-            return true;
-        }
+    let cpu = this_cpu();
+    if with_rq(cpu, |rq| {
+        if let Some(task) = rq.get_task_mut(pid) { task.set_nice(nice); true } else { false }
+    }) == Some(true) { return true; }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if with_rq(other, |rq| {
+            if let Some(task) = rq.get_task_mut(pid) { task.set_nice(nice); true } else { false }
+        }) == Some(true) { return true; }
     }
     false
 }
 
 /// Get scheduler policy for a task
+///
+/// — GraveShift: Fast-path this_cpu().
 pub fn get_task_policy(pid: Pid) -> Option<SchedPolicy> {
-    for cpu in 0..num_cpus() {
-        if let Some(policy) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.policy)).flatten() {
+    let cpu = this_cpu();
+    if let Some(policy) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.policy)).flatten() {
+        return Some(policy);
+    }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if let Some(policy) = with_rq(other, |rq| rq.get_task(pid).map(|t| t.policy)).flatten() {
             return Some(policy);
         }
     }
@@ -1319,27 +1549,33 @@ pub fn get_task_policy(pid: Pid) -> Option<SchedPolicy> {
 }
 
 /// Set scheduler policy for a task
+///
+/// — GraveShift: Fast-path this_cpu().
 pub fn set_task_policy(pid: Pid, policy: SchedPolicy) -> bool {
-    for cpu in 0..num_cpus() {
-        let found = with_rq(cpu, |rq| {
-            if let Some(task) = rq.get_task_mut(pid) {
-                task.policy = policy;
-                true
-            } else {
-                false
-            }
-        });
-        if found == Some(true) {
-            return true;
-        }
+    let cpu = this_cpu();
+    if with_rq(cpu, |rq| {
+        if let Some(task) = rq.get_task_mut(pid) { task.policy = policy; true } else { false }
+    }) == Some(true) { return true; }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if with_rq(other, |rq| {
+            if let Some(task) = rq.get_task_mut(pid) { task.policy = policy; true } else { false }
+        }) == Some(true) { return true; }
     }
     false
 }
 
 /// Get RT priority for a task
+///
+/// — GraveShift: Fast-path this_cpu().
 pub fn get_task_rt_priority(pid: Pid) -> Option<u8> {
-    for cpu in 0..num_cpus() {
-        if let Some(prio) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.rt_priority)).flatten() {
+    let cpu = this_cpu();
+    if let Some(prio) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.rt_priority)).flatten() {
+        return Some(prio);
+    }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if let Some(prio) = with_rq(other, |rq| rq.get_task(pid).map(|t| t.rt_priority)).flatten() {
             return Some(prio);
         }
     }
@@ -1347,29 +1583,33 @@ pub fn get_task_rt_priority(pid: Pid) -> Option<u8> {
 }
 
 /// Set RT priority for a task
+///
+/// — GraveShift: Fast-path this_cpu().
 pub fn set_task_rt_priority(pid: Pid, priority: u8) -> bool {
-    for cpu in 0..num_cpus() {
-        let found = with_rq(cpu, |rq| {
-            if let Some(task) = rq.get_task_mut(pid) {
-                task.rt_priority = priority;
-                true
-            } else {
-                false
-            }
-        });
-        if found == Some(true) {
-            return true;
-        }
+    let cpu = this_cpu();
+    if with_rq(cpu, |rq| {
+        if let Some(task) = rq.get_task_mut(pid) { task.rt_priority = priority; true } else { false }
+    }) == Some(true) { return true; }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if with_rq(other, |rq| {
+            if let Some(task) = rq.get_task_mut(pid) { task.rt_priority = priority; true } else { false }
+        }) == Some(true) { return true; }
     }
     false
 }
 
 /// Get CPU affinity for a task
+///
+/// — GraveShift: Fast-path this_cpu().
 pub fn get_task_affinity(pid: Pid) -> Option<CpuSet> {
-    for cpu in 0..num_cpus() {
-        if let Some(affinity) =
-            with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.cpu_affinity.clone())).flatten()
-        {
+    let cpu = this_cpu();
+    if let Some(affinity) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.cpu_affinity.clone())).flatten() {
+        return Some(affinity);
+    }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if let Some(affinity) = with_rq(other, |rq| rq.get_task(pid).map(|t| t.cpu_affinity.clone())).flatten() {
             return Some(affinity);
         }
     }
@@ -1377,19 +1617,18 @@ pub fn get_task_affinity(pid: Pid) -> Option<CpuSet> {
 }
 
 /// Set CPU affinity for a task
+///
+/// — GraveShift: Fast-path this_cpu().
 pub fn set_task_affinity(pid: Pid, affinity: CpuSet) -> bool {
-    for cpu in 0..num_cpus() {
-        let found = with_rq(cpu, |rq| {
-            if let Some(task) = rq.get_task_mut(pid) {
-                task.cpu_affinity = affinity.clone();
-                true
-            } else {
-                false
-            }
-        });
-        if found == Some(true) {
-            return true;
-        }
+    let cpu = this_cpu();
+    if with_rq(cpu, |rq| {
+        if let Some(task) = rq.get_task_mut(pid) { task.cpu_affinity = affinity.clone(); true } else { false }
+    }) == Some(true) { return true; }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if with_rq(other, |rq| {
+            if let Some(task) = rq.get_task_mut(pid) { task.cpu_affinity = affinity.clone(); true } else { false }
+        }) == Some(true) { return true; }
     }
     false
 }

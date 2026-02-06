@@ -2,17 +2,21 @@
 //!
 //! A simple shell for OXIDE OS with:
 //! - Command execution
-//! - Builtin commands (cd, exit, echo, pwd, export, unset, help)
+//! - Builtin commands (cd, exit, echo, pwd, export, unset, help, theme)
 //! - I/O redirection (<, >, >>)
 //! - Pipes (|)
 //! - Background jobs (&)
 //! - Tab completion for commands and files
+//! - Color themes (VIM-style)
 
 #![no_std]
 #![no_main]
 #![allow(unused)]
 
+mod theme;
+
 use libc::*;
+use theme::{Color, ColorSpec, Theme, current_theme, set_theme, colors_enabled, set_colors_enabled, load_theme, THEME_NAMES};
 
 /// Maximum command line length
 const MAX_LINE: usize = 256;
@@ -534,6 +538,16 @@ fn main() -> i32 {
     // Source system profile to set PATH and other environment variables
     source_profile(b"/etc/profile\0");
 
+    // Load theme from environment variable if set
+    if let Some(theme_name) = getenv("ESH_THEME") {
+        load_theme(theme_name.as_bytes());
+    }
+    
+    // Check if NO_COLOR is set (standard for disabling colors)
+    if getenv("NO_COLOR").is_some() {
+        set_colors_enabled(false);
+    }
+
     // Print welcome message
     printlns("OXIDE Shell (esh)");
     printlns("Type 'help' for available commands");
@@ -615,6 +629,7 @@ const BUILTINS: &[&[u8]] = &[
     b"bg",
     b"builtin",
     b"cd",
+    b"colors",
     b"command",
     b"declare",
     b"echo",
@@ -639,6 +654,7 @@ const BUILTINS: &[&[u8]] = &[
     b"shift",
     b"source",
     b"test",
+    b"theme",
     b"true",
     b"type",
     b"umask",
@@ -1231,6 +1247,8 @@ fn is_builtin(cmd: &[u8]) -> bool {
         || bytes_eq(cmd, b"kill")
         || bytes_eq(cmd, b"history")
         || bytes_eq(cmd, b"getopts")
+        || bytes_eq(cmd, b"theme")
+        || bytes_eq(cmd, b"colors")
 }
 
 /// Execute a builtin command with optional redirections applied
@@ -1358,6 +1376,13 @@ fn execute_builtin(cmd: &Command) {
         printlns("  unset VAR...    - Unset environment variable(s)");
         printlns("  exit [code]     - Exit shell");
         printlns("  help            - Show this help");
+        printlns("");
+        printlns("Color Themes:");
+        printlns("  theme           - Show current theme");
+        printlns("  theme <name>    - Set color theme");
+        printlns("  theme list      - List available themes");
+        printlns("  colors on|off   - Enable/disable colors");
+        printlns("  colors test     - Show color test pattern");
         printlns("");
         printlns("I/O Redirection:");
         printlns("  cmd < file      - Read input from file");
@@ -1526,6 +1551,10 @@ fn execute_builtin(cmd: &Command) {
     } else if bytes_eq(&cmd.args[0], b"getopts") {
         eprintlns("esh: getopts: not yet implemented");
         shell().last_status = 1;
+    } else if bytes_eq(&cmd.args[0], b"theme") {
+        shell().last_status = builtin_theme(cmd);
+    } else if bytes_eq(&cmd.args[0], b"colors") {
+        shell().last_status = builtin_colors(cmd);
     }
 }
 
@@ -2506,6 +2535,205 @@ fn builtin_history(_cmd: &Command) -> i32 {
         }
     }
     0
+}
+
+/// theme builtin - manage color themes
+fn builtin_theme(cmd: &Command) -> i32 {
+    if cmd.argc < 2 {
+        // Show current theme and list available
+        prints("Current theme: ");
+        print_bytes(&current_theme().name);
+        printlns("");
+        printlns("");
+        printlns("Available themes:");
+        for name in THEME_NAMES {
+            prints("  ");
+            print_bytes(name);
+            printlns("");
+        }
+        printlns("");
+        printlns("Usage: theme <name>   - Set theme");
+        printlns("       theme list     - List themes");
+        printlns("       theme show     - Show current theme colors");
+        return 0;
+    }
+
+    let arg = &cmd.args[1];
+
+    if bytes_eq(arg, b"list") {
+        printlns("Available themes:");
+        for name in THEME_NAMES {
+            prints("  ");
+            print_bytes(name);
+            // Mark current
+            if bytes_eq(name, &current_theme().name) {
+                prints(" (current)");
+            }
+            printlns("");
+        }
+        return 0;
+    }
+
+    if bytes_eq(arg, b"show") {
+        // Show theme colors with samples
+        let theme = current_theme();
+        prints("Theme: ");
+        print_bytes(&theme.name);
+        printlns("");
+        printlns("");
+
+        // Show prompt colors
+        printlns("Prompt colors:");
+        print_colored(b"  user    ", &theme.prompt_user);
+        print_colored(b"  host    ", &theme.prompt_host);
+        print_colored(b"  path    ", &theme.prompt_path);
+        print_colored(b"  symbol  ", &theme.prompt_symbol);
+        printlns("");
+
+        // Show output colors
+        printlns("Output colors:");
+        print_colored(b"  error   ", &theme.error);
+        print_colored(b"  warning ", &theme.warning);
+        print_colored(b"  info    ", &theme.info);
+        print_colored(b"  success ", &theme.success);
+        printlns("");
+
+        // Show completion colors
+        printlns("Completion colors:");
+        print_colored(b"  directory  ", &theme.comp_directory);
+        print_colored(b"  executable ", &theme.comp_executable);
+        print_colored(b"  file       ", &theme.comp_file);
+        print_colored(b"  symlink    ", &theme.comp_symlink);
+        printlns("");
+
+        return 0;
+    }
+
+    // Set theme by name
+    if load_theme(arg) {
+        prints("Theme set to: ");
+        print_bytes(&current_theme().name);
+        printlns("");
+        
+        // Save to ESH_THEME env var for persistence hint
+        let name_str = bytes_to_str(arg);
+        setenv("ESH_THEME", name_str);
+        0
+    } else {
+        eprints("esh: theme: unknown theme: ");
+        print_bytes(arg);
+        eprintlns("");
+        printlns("Use 'theme list' to see available themes");
+        1
+    }
+}
+
+/// colors builtin - enable/disable colors
+fn builtin_colors(cmd: &Command) -> i32 {
+    if cmd.argc < 2 {
+        // Show current status
+        if colors_enabled() {
+            printlns("Colors: enabled");
+        } else {
+            printlns("Colors: disabled");
+        }
+        printlns("");
+        printlns("Usage: colors on|off   - Enable/disable colors");
+        printlns("       colors test     - Show color test pattern");
+        return 0;
+    }
+
+    let arg = &cmd.args[1];
+
+    if bytes_eq(arg, b"on") || bytes_eq(arg, b"enable") || bytes_eq(arg, b"1") {
+        set_colors_enabled(true);
+        printlns("Colors enabled");
+        return 0;
+    }
+
+    if bytes_eq(arg, b"off") || bytes_eq(arg, b"disable") || bytes_eq(arg, b"0") {
+        set_colors_enabled(false);
+        printlns("Colors disabled");
+        return 0;
+    }
+
+    if bytes_eq(arg, b"test") {
+        // Show color test pattern
+        printlns("Color test pattern:");
+        printlns("");
+
+        // Standard colors
+        prints("Standard:  ");
+        for i in 0..8 {
+            let spec = ColorSpec::fg_only(color_from_index(i));
+            print_colored(b"##", &spec);
+            prints(" ");
+        }
+        printlns("");
+
+        // Bright colors
+        prints("Bright:    ");
+        for i in 8..16 {
+            let spec = ColorSpec::fg_only(color_from_index(i));
+            print_colored(b"##", &spec);
+            prints(" ");
+        }
+        printlns("");
+
+        // Background colors
+        prints("Backgrounds: ");
+        for i in 0..8 {
+            let spec = ColorSpec::new(Color::White, color_from_index(i), theme::Style::none());
+            print_colored(b"  ", &spec);
+        }
+        printlns("");
+
+        return 0;
+    }
+
+    eprints("esh: colors: unknown option: ");
+    print_bytes(arg);
+    eprintlns("");
+    1
+}
+
+/// Print text with color specification
+fn print_colored(text: &[u8], spec: &ColorSpec) {
+    if colors_enabled() {
+        let mut buf = [0u8; 32];
+        let len = spec.write_escape(&mut buf);
+        for i in 0..len {
+            putchar(buf[i]);
+        }
+    }
+    print_bytes(text);
+    if colors_enabled() {
+        prints("\x1b[0m");
+    }
+    printlns("");
+}
+
+/// Convert index to Color enum
+fn color_from_index(i: u8) -> Color {
+    match i {
+        0 => Color::Black,
+        1 => Color::Red,
+        2 => Color::Green,
+        3 => Color::Yellow,
+        4 => Color::Blue,
+        5 => Color::Magenta,
+        6 => Color::Cyan,
+        7 => Color::White,
+        8 => Color::BrightBlack,
+        9 => Color::BrightRed,
+        10 => Color::BrightGreen,
+        11 => Color::BrightYellow,
+        12 => Color::BrightBlue,
+        13 => Color::BrightMagenta,
+        14 => Color::BrightCyan,
+        15 => Color::BrightWhite,
+        _ => Color::Default,
+    }
 }
 
 /// Execute an external command

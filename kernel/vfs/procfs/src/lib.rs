@@ -853,8 +853,8 @@ impl ProcPidStat {
         if let Some(meta) = sched::get_task_meta(self.pid) {
             let m = meta.lock();
             
-            // Get task info for timing
-            let (state_char, ppid, start_time, sum_runtime) = if let Some((task_state, task_ppid, task_start_time, task_sum_runtime)) = sched::get_task_timing_info(self.pid) {
+            // — GraveShift: Pull real timing + nice from scheduler for accurate /proc/[pid]/stat
+            let (state_char, ppid, start_time, sum_runtime, nice) = if let Some((task_state, task_ppid, task_start_time, task_sum_runtime, task_nice)) = sched::get_task_timing_info(self.pid) {
                 let state = match task_state {
                     s if s == sched::TaskState::TASK_RUNNING => 'R',
                     s if s == sched::TaskState::TASK_INTERRUPTIBLE => 'S',
@@ -865,10 +865,13 @@ impl ProcPidStat {
                     s if s == sched::TaskState::TASK_DEAD => 'X',
                     _ => 'R',
                 };
-                (state, task_ppid, task_start_time, task_sum_runtime)
+                (state, task_ppid, task_start_time, task_sum_runtime, task_nice)
             } else {
-                ('R', 0, 0, 0)
+                ('R', 0, 0, 0, 0i8)
             };
+            // — GraveShift: Linux maps nice (-20..19) to priority (0..39).
+            // Priority 20 = nice 0, priority 0 = nice -20, priority 39 = nice 19.
+            let priority = 20i64 + nice as i64;
 
             // Get process name from cmdline (first arg, basename only)
             let name = if m.cmdline.is_empty() {
@@ -888,6 +891,12 @@ impl ProcPidStat {
             let utime = sum_runtime / NANOS_PER_JIFFY;
             let stime = 0u64; // Kernel time - not tracked separately yet
             let starttime = start_time / NANOS_PER_JIFFY;
+
+            // — GraveShift: Real memory stats from ProcessMeta.
+            // vsize = program_break (virtual address space extent in bytes).
+            // rss = owned_frames count (physical pages mapped to this process).
+            let vsize = m.program_break;
+            let rss = m.owned_frames.len() as u64;
 
             // Linux /proc/[pid]/stat format (52 fields minimum)
             format!(
@@ -909,13 +918,13 @@ impl ProcPidStat {
                 stime,              // 15: stime (kernel mode jiffies)
                 0i64,               // 16: cutime (child user time)
                 0i64,               // 17: cstime (child system time)
-                20i64,              // 18: priority (static priority)
-                0i64,               // 19: nice
+                priority,           // 18: priority (20 + nice)
+                nice as i64,        // 19: nice (-20 to 19)
                 1u64,               // 20: num_threads
                 0u64,               // 21: itrealvalue (obsolete)
                 starttime,          // 22: starttime (jiffies since boot)
-                0u64,               // 23: vsize (virtual memory size)
-                0u64,               // 24: rss (resident set size in pages)
+                vsize,              // 23: vsize (virtual memory size in bytes)
+                rss,                // 24: rss (resident set size in pages)
                 !0u64,              // 25: rsslim (rss limit)
                 0u64,               // 26: startcode
                 0u64,               // 27: endcode

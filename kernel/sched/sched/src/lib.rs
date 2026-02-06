@@ -141,6 +141,7 @@ pub use crate::core::{
     remove_task_child,
     // Scheduling
     scheduler_tick,
+    scheduler_tick_ex,
     // Affinity
     set_affinity,
     set_need_resched,

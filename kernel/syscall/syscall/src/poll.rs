@@ -70,34 +70,14 @@ fn check_fd_ready(fd: i32, events: i16) -> i16 {
 
     let mut revents: i16 = 0;
 
-    // Check for readability
+    // — GraveShift: Check readability via file.can_read() which delegates to
+    // vnode.poll_read_ready(). For TTYs this drains the IRQ ring buffer into
+    // the line discipline (processing Ctrl+C along the way). The old FIONREAD
+    // ioctl path bypassed this drain — keystrokes rotted in the ring buffer
+    // and signals never fired. Never again.
     if events & (events::POLLIN | events::POLLRDNORM) != 0 {
-        // 🔥 GraveShift: For TTYs/char devices, actually check if data is available 🔥
-        // For regular files, they're always readable if opened for reading
         if file.can_read() {
-            // For char devices (TTYs), check if data is actually available
-            use vfs::VnodeType;
-            let vnode = file.vnode();
-            if vnode.vtype() == VnodeType::CharDevice {
-                // Use FIONREAD ioctl to check bytes available
-                const FIONREAD: u64 = 0x541B;
-                let mut bytes_available: i32 = 0;
-                if vnode
-                    .ioctl(FIONREAD, &mut bytes_available as *mut i32 as u64)
-                    .is_ok()
-                {
-                    if bytes_available > 0 {
-                        revents |= events::POLLIN | events::POLLRDNORM;
-                    }
-                    // else: no data available, don't set POLLIN
-                } else {
-                    // ioctl failed, assume readable for compatibility
-                    revents |= events::POLLIN | events::POLLRDNORM;
-                }
-            } else {
-                // Regular files are always readable
-                revents |= events::POLLIN | events::POLLRDNORM;
-            }
+            revents |= events::POLLIN | events::POLLRDNORM;
         }
     }
 

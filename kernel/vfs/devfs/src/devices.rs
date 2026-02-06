@@ -28,51 +28,6 @@ fn dbg_serial(s: &str) {
     unsafe { os_log::write_str_raw(s); }
 }
 
-/// Strip ANSI/CSI escape sequences from output for cleaner serial debug logs
-#[cfg(feature = "debug-tty-read")]
-fn strip_ansi_escapes(data: &[u8]) -> alloc::vec::Vec<u8> {
-    use alloc::vec::Vec;
-    let mut result = Vec::with_capacity(data.len());
-    let mut i = 0;
-
-    while i < data.len() {
-        if i + 1 < data.len() && data[i] == 0x1B {
-            // ESC
-            // Check for CSI sequence: ESC [
-            if data[i + 1] == b'[' {
-                // Skip until we find the end of CSI sequence (letter A-Z, a-z)
-                i += 2;
-                while i < data.len() {
-                    let c = data[i];
-                    i += 1;
-                    if (c >= b'A' && c <= b'Z') || (c >= b'a' && c <= b'z') {
-                        break;
-                    }
-                }
-                continue;
-            }
-            // Check for other escape sequences: ESC ?
-            else if data[i + 1] == b'?' {
-                // Skip ESC ? sequences
-                i += 2;
-                while i < data.len() {
-                    let c = data[i];
-                    i += 1;
-                    if c == b'h' || c == b'l' {
-                        break;
-                    }
-                }
-                continue;
-            }
-        }
-
-        result.push(data[i]);
-        i += 1;
-    }
-
-    result
-}
-
 // ============================================================================
 // Console → Active VT Delegation
 // ============================================================================
@@ -261,9 +216,6 @@ impl VnodeOps for ZeroDevice {
     }
 }
 
-/// Serial-only write function type (for raw debug output)
-pub type SerialWriteFn = fn(&[u8]);
-
 /// /dev/console - writes go to system console with ANSI processing
 pub struct ConsoleDevice {
     ino: u64,
@@ -272,19 +224,6 @@ pub struct ConsoleDevice {
 impl ConsoleDevice {
     pub fn new(ino: u64) -> Self {
         ConsoleDevice { ino }
-    }
-}
-
-/// Global serial write function (set by kernel, for debug output)
-static mut SERIAL_WRITE: Option<SerialWriteFn> = None;
-
-/// Set the serial write function (for raw debug output)
-///
-/// # Safety
-/// Must be called during single-threaded initialization
-pub unsafe fn set_serial_write(f: SerialWriteFn) {
-    unsafe {
-        SERIAL_WRITE = Some(f);
     }
 }
 
@@ -350,24 +289,8 @@ impl VnodeOps for ConsoleDevice {
                 r
             }
             None => {
-                // Fallback for early boot before VT is ready:
-                // write directly to serial + terminal
-                unsafe {
-                    if let Some(serial_fn) = SERIAL_WRITE {
-                        // Filter ANSI escape sequences for serial debug output
-                        #[cfg(feature = "debug-tty-read")]
-                        {
-                            let filtered = strip_ansi_escapes(buf);
-                            serial_fn(&filtered);
-                        }
-                        #[cfg(not(feature = "debug-tty-read"))]
-                        {
-                            serial_fn(buf);
-                        }
-                    }
-                }
+                // — GraveShift: Early boot fallback. No serial — stdout is not debug.
                 if terminal::is_initialized() {
-                    // Terminal needs escape sequences for rendering
                     terminal::write(buf);
                 } else {
                     unsafe {

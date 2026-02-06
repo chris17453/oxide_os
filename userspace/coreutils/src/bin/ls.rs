@@ -57,6 +57,8 @@ struct Entry {
     /// — GlassSignal: Symlink target buffer for `name -> target` display
     link_target: [u8; 256],
     link_target_len: usize,
+    /// — NeonVale: True if symlink target doesn't exist — dead link, paint it red
+    link_broken: bool,
     d_type: u8,
     d_ino: u64,
     size: u64,
@@ -71,6 +73,7 @@ impl Entry {
             name: [0; 256],
             link_target: [0; 256],
             link_target_len: 0,
+            link_broken: false,
             d_type: 0,
             d_ino: 0,
             size: 0,
@@ -95,10 +98,13 @@ impl Entry {
 }
 
 /// Get ANSI color code for file type
-/// — NeonVale: Cyberpunk color palette - dirs in blue, executables in green, symlinks in cyan
-fn get_color_code(d_type: u8, mode: u32) -> &'static str {
+/// — NeonVale: Cyberpunk color palette - dirs in blue, executables in green,
+/// live symlinks in cyan, dead symlinks in bold red on black — the universal
+/// "something's wrong" signal.
+fn get_color_code(d_type: u8, mode: u32, link_broken: bool) -> &'static str {
     match d_type {
         DT_DIR => "\x1b[1;34m",      // Bold blue
+        DT_LNK if link_broken => "\x1b[1;31;40m", // — NeonVale: Bold red on black = dead link
         DT_LNK => "\x1b[1;36m",      // Bold cyan
         DT_FIFO => "\x1b[33m",       // Yellow
         DT_SOCK => "\x1b[1;35m",     // Bold magenta
@@ -120,10 +126,10 @@ fn print_name(name: &[u8]) {
 }
 
 /// Print a file name with color
-/// — GlassSignal: Color-coded output so you know what you're looking at
+/// — GlassSignal: Color-coded output — live links glow cyan, dead links burn red
 fn print_name_colored(entry: &Entry, use_color: bool) {
     if use_color {
-        let color = get_color_code(entry.d_type, entry.mode);
+        let color = get_color_code(entry.d_type, entry.mode, entry.link_broken);
         if !color.is_empty() {
             prints(color);
         }
@@ -132,7 +138,7 @@ fn print_name_colored(entry: &Entry, use_color: bool) {
     print_name(&entry.name);
 
     if use_color {
-        let color = get_color_code(entry.d_type, entry.mode);
+        let color = get_color_code(entry.d_type, entry.mode, entry.link_broken);
         if !color.is_empty() {
             prints("\x1b[0m"); // Reset color
         }
@@ -492,10 +498,17 @@ fn print_long_entry(entry: &Entry, args: &Args) {
 
     // — GlassSignal: Symlink target display — the whole reason this rewrite exists.
     // "service_manager -> service" so you actually know where links point.
+    // — NeonVale: Broken targets rendered in red so the damage is visible.
     if entry.d_type == DT_LNK && entry.link_target_len > 0 {
         prints(" -> ");
+        if args.color && entry.link_broken {
+            prints("\x1b[1;31m"); // Bold red for dead target
+        }
         for i in 0..entry.link_target_len {
             putchar(entry.link_target[i]);
+        }
+        if args.color && entry.link_broken {
+            prints("\x1b[0m");
         }
     }
 
@@ -672,50 +685,68 @@ fn list_directory(path: &[u8], args: &Args, depth: usize, show_header: bool) -> 
                 i += 1;
             }
 
-            // Get stat info for size and mode
+            // — GlassSignal: Only burn syscalls when we actually need the data.
+            // Column mode just needs d_type from getdents — skip the stat parade.
+            let need_stat = args.long_format || args.sort_by_time || args.classify;
+            let need_full_path = need_stat
+                || (args.recursive && entry.d_type == DT_DIR);
+
             let mut full_path = [0u8; 512];
             let mut pos = 0;
-            for j in 0..path_len {
-                full_path[pos] = path[j];
-                pos += 1;
-            }
-            if pos > 0 && full_path[pos - 1] != b'/' {
-                full_path[pos] = b'/';
-                pos += 1;
-            }
-            let name_len = entry.name_len();
-            for j in 0..name_len {
-                full_path[pos] = entry.name[j];
-                pos += 1;
-            }
 
-            let full_path_str = unsafe { core::str::from_utf8_unchecked(&full_path[..pos]) };
-
-            // — GlassSignal: Use lstat for symlinks (don't follow), stat for everything else.
-            // lstat gives us the link's own metadata; stat would give us the target's.
-            let mut stat_buf = Stat::zeroed();
-            let stat_ok = if entry.d_type == DT_LNK {
-                lstat(full_path_str, &mut stat_buf) == 0
-            } else {
-                stat(full_path_str, &mut stat_buf) == 0
-            };
-
-            if stat_ok {
-                entry.size = stat_buf.size;
-                entry.mode = stat_buf.mode;
-                entry.nlink = stat_buf.nlink;
-                entry.mtime = stat_buf.mtime;
-            } else {
-                // Default permissions based on type
-                entry.mode = if entry.d_type == DT_DIR { 0o755 } else { 0o644 };
-            }
-
-            // — GlassSignal: Read symlink target so we can show "name -> target"
-            if entry.d_type == DT_LNK {
-                let n = sys_readlink(full_path_str, &mut entry.link_target);
-                if n > 0 {
-                    entry.link_target_len = (n as usize).min(255);
+            if need_full_path {
+                for j in 0..path_len {
+                    full_path[pos] = path[j];
+                    pos += 1;
                 }
+                if pos > 0 && full_path[pos - 1] != b'/' {
+                    full_path[pos] = b'/';
+                    pos += 1;
+                }
+                let name_len = entry.name_len();
+                for j in 0..name_len {
+                    full_path[pos] = entry.name[j];
+                    pos += 1;
+                }
+            }
+
+            if need_stat {
+                let full_path_str =
+                    unsafe { core::str::from_utf8_unchecked(&full_path[..pos]) };
+
+                // — GlassSignal: Use lstat for symlinks (don't follow), stat for everything else.
+                let mut stat_buf = Stat::zeroed();
+                let stat_ok = if entry.d_type == DT_LNK {
+                    lstat(full_path_str, &mut stat_buf) == 0
+                } else {
+                    stat(full_path_str, &mut stat_buf) == 0
+                };
+
+                if stat_ok {
+                    entry.size = stat_buf.size;
+                    entry.mode = stat_buf.mode;
+                    entry.nlink = stat_buf.nlink;
+                    entry.mtime = stat_buf.mtime;
+                } else {
+                    entry.mode = if entry.d_type == DT_DIR { 0o755 } else { 0o644 };
+                }
+
+                // — GlassSignal: Read symlink target so we can show "name -> target"
+                // — NeonVale: Only in long format — column mode doesn't show targets.
+                if args.long_format && entry.d_type == DT_LNK {
+                    let n = sys_readlink(full_path_str, &mut entry.link_target);
+                    if n > 0 {
+                        entry.link_target_len = (n as usize).min(255);
+                    }
+                    // — NeonVale: Probe target — if stat fails, it's a dead link
+                    let mut target_stat = Stat::zeroed();
+                    if stat(full_path_str, &mut target_stat) != 0 {
+                        entry.link_broken = true;
+                    }
+                }
+            } else {
+                // — GlassSignal: No stat needed — default perms by type for coloring
+                entry.mode = if entry.d_type == DT_DIR { 0o755 } else { 0o644 };
             }
 
             // Filter based on args

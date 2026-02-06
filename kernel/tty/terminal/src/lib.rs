@@ -200,8 +200,10 @@ impl TerminalEmulator {
         &self.handler.attrs
     }
 
-    /// Write bytes to the terminal (rendering deferred to tick())
-    /// — NeonVale: Fast path - just mark dirty and bail. Rendering happens in tick().
+    /// Write bytes to the terminal with per-glyph rendering (Linux fbcon_putcs style).
+    /// — SoftGlyph: Each Print action paints its glyph inline. Each LF scroll does a
+    /// pixel memmove. CSI bulk ops (ED/IL/DL) still set dirty flags for tick() catch-up.
+    /// After processing all bytes, we paint the cursor and flush the framebuffer.
     pub fn write(&mut self, data: &[u8]) {
         // If synchronized output mode is active, buffer the data
         if self
@@ -211,10 +213,38 @@ impl TerminalEmulator {
         {
             self.sync_buffer.extend_from_slice(data);
         } else {
+            // — SoftGlyph: Pass selection state to renderer before any rendering
+            self.push_selection_to_renderer();
+
+            // — SoftGlyph: Erase cursor once at start of write, not per-byte.
+            // During the write loop, cursor isn't drawn — we paint it at the end.
+            {
+                let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
+                let buffer = if is_alt { &self.alternate } else { &self.primary };
+                self.renderer.erase_cursor(buffer);
+            }
+
             for &byte in data {
                 self.process_byte(byte);
             }
-            self.needs_render = true;
+
+            // — GraveShift: Scrolls handled inline via scroll_up_pixels() now.
+            // Dirty flags only set by CSI bulk ops (ED/IL/DL etc). Render those
+            // synchronously — like Linux's do_con_write() calling con_flush().
+            if self.renderer.has_dirty() {
+                self.render();
+                self.needs_render = false;
+            }
+
+            // — SoftGlyph: Paint cursor at final position and flush.
+            {
+                let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
+                let buffer = if is_alt { &self.alternate } else { &self.primary };
+                let cursor = self.handler.cursor;
+                self.renderer.paint_cursor(buffer, &cursor);
+                self.renderer.update_cursor_tracking(&cursor);
+                self.renderer.flush_fb();
+            }
         }
     }
 
@@ -232,13 +262,10 @@ impl TerminalEmulator {
         self.needs_render = false;
     }
 
-    /// Write and immediately render (for urgent output)
+    /// Write and immediately render (for urgent output).
+    /// — SoftGlyph: Same as write() now — per-glyph rendering is always synchronous.
     pub fn write_immediate(&mut self, data: &[u8]) {
-        for &byte in data {
-            self.process_byte(byte);
-        }
-        self.render();
-        self.needs_render = false;
+        self.write(data);
     }
 
     /// Check if render is pending
@@ -267,8 +294,56 @@ impl TerminalEmulator {
                 } else {
                     &mut self.primary
                 };
+
+                // Track cursor position before put_char to detect autowrap scroll
+                let old_row = self.handler.cursor.row;
+                let old_col = self.handler.cursor.col;
+
                 self.handler.put_char(ch, buffer);
-                self.renderer.mark_dirty(self.handler.cursor.row);
+
+                // — SoftGlyph: Check if put_char triggered autowrap+scroll.
+                // put_char wraps when cursor.col >= cols at entry. If cursor was past
+                // the edge AND we stayed on the same row, linefeed() scrolled internally.
+                // If cursor moved to next row, it was a normal wrap (no scroll needed).
+                let scrolled = old_col >= self.cols && self.handler.cursor.row == old_row;
+
+                if scrolled {
+                    // — GraveShift: Autowrap triggered a scroll. Pixel memmove the
+                    // framebuffer up by one row, then paint the new character.
+                    // Framebuffer is WB-cached so copy_rect is fast (CPU cache, not
+                    // slow MMIO reads). This is the Linux fbcon way — no dirty flags.
+                    let (r, g, b) = self.handler.attrs.effective_bg().to_rgb(false);
+                    let bg = Color::new(r, g, b);
+                    self.renderer.scroll_up_pixels(1, bg);
+
+                    // Now paint the character that was placed after the scroll
+                    let buffer = if is_alt { &self.alternate } else { &self.primary };
+                    let char_col = if self.handler.cursor.col > 0 {
+                        self.handler.cursor.col - 1
+                    } else {
+                        0
+                    };
+                    self.renderer.render_cell(buffer, self.handler.cursor.row, char_col);
+                } else {
+                    // — SoftGlyph: No scroll — paint the glyph directly to framebuffer.
+                    // This is our fbcon_putcs(). The cursor.col is already past the char,
+                    // so the char we just wrote is at (cursor.col - 1) for single-width.
+                    let char_col = if self.handler.cursor.col > 0 {
+                        self.handler.cursor.col - 1
+                    } else {
+                        0
+                    };
+                    self.renderer.render_cell(buffer, self.handler.cursor.row, char_col);
+
+                    // Wide char: also render the previous column if it's the lead cell
+                    if char_col > 0 {
+                        if let Some(prev) = buffer.get(self.handler.cursor.row, char_col - 1) {
+                            if prev.attrs.flags.contains(CellFlags::WIDE) {
+                                self.renderer.render_cell(buffer, self.handler.cursor.row, char_col - 1);
+                            }
+                        }
+                    }
+                }
             }
             Action::Execute(byte) => {
                 self.execute_control(byte);
@@ -391,9 +466,16 @@ impl TerminalEmulator {
                 // BEL - Bell (ignored)
             }
             0x08 => {
-                // BS - Backspace
+                // BS - Backspace — cursor moves left, repaint affected cells
+                // — SoftGlyph: Cursor already erased at write() start. Just move and repaint.
+                let old_col = self.handler.cursor.col;
                 self.handler.backspace();
-                self.renderer.mark_dirty(self.handler.cursor.row);
+                {
+                    let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
+                    let buffer = if is_alt { &self.alternate } else { &self.primary };
+                    self.renderer.render_cell(buffer, self.handler.cursor.row, old_col);
+                    self.renderer.render_cell(buffer, self.handler.cursor.row, self.handler.cursor.col);
+                }
             }
             0x09 => {
                 // HT - Horizontal Tab
@@ -401,27 +483,28 @@ impl TerminalEmulator {
             }
             0x0A | 0x0B | 0x0C => {
                 // LF, VT, FF - Line feed with implicit CR (standard terminal behavior)
-                let old_row = self.handler.cursor.row;
+                let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
 
                 // Implicit carriage return - most terminal output expects this
                 self.handler.carriage_return();
 
-                let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
-
-                let _scrolled = if is_alt {
+                let scrolled = if is_alt {
                     self.handler.linefeed(&mut self.alternate, None)
                 } else {
                     self.handler
                         .linefeed(&mut self.primary, Some(&mut self.scrollback))
                 };
 
-                self.renderer.mark_dirty(old_row);
-                self.renderer.mark_dirty(self.handler.cursor.row);
-
-                // If we scrolled (cursor stayed at same row), mark all rows for redraw
-                if self.handler.cursor.row == old_row {
-                    self.renderer.mark_all_dirty();
+                if scrolled {
+                    // — GraveShift: LF caused a scroll. Pixel memmove up by one row.
+                    // Framebuffer is WB-cached — copy_rect reads from CPU cache, fast.
+                    let (r, g, b) = self.handler.attrs.effective_bg().to_rgb(false);
+                    let bg = Color::new(r, g, b);
+                    self.renderer.scroll_up_pixels(1, bg);
                 }
+                // — SoftGlyph: No dirty mark needed for non-scroll LF.
+                // Characters already rendered per-glyph. Cursor position change
+                // handled by erase_cursor/paint_cursor at write() boundaries.
             }
             0x0D => {
                 // CR - Carriage return (explicit, move to column 0)
@@ -1323,8 +1406,18 @@ impl TerminalEmulator {
     pub fn clear_selection(&mut self) {
         if self.selection.is_some() {
             self.selection = None;
+            self.renderer.set_selection(None);
             self.renderer.mark_all_dirty();
         }
+    }
+
+    /// Push current selection coordinates to the renderer for highlight painting.
+    /// — InputShade: The renderer needs the raw (col, row) range to invert cells.
+    fn push_selection_to_renderer(&mut self) {
+        let sel_range = self.selection.map(|sel| {
+            (sel.start.0, sel.start.1, sel.end.0, sel.end.1)
+        });
+        self.renderer.set_selection(sel_range);
     }
 
     /// Paste from clipboard
@@ -1335,9 +1428,14 @@ impl TerminalEmulator {
     }
 
     /// Render terminal to framebuffer
+    /// — GraveShift: Pushes selection state to renderer before paint, so the
+    /// inverted highlight is visible. Clears it after to avoid stale ghost rects.
     pub fn render(&mut self) {
         // Reset scroll offset when content changes
         self.scroll_offset = 0;
+
+        // Pass selection to renderer BEFORE borrowing buffer
+        self.push_selection_to_renderer();
 
         let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
         let buffer = if is_alt {
@@ -1346,6 +1444,7 @@ impl TerminalEmulator {
             &self.primary
         };
         let cursor = self.handler.cursor;
+
         self.renderer.render(buffer, &cursor);
     }
 
@@ -1368,6 +1467,8 @@ impl TerminalEmulator {
     /// Toggle cursor blink state (called by timer)
     pub fn toggle_cursor_blink(&mut self) {
         self.handler.cursor.blink_on = !self.handler.cursor.blink_on;
+        // Push selection state before borrowing buffer
+        self.push_selection_to_renderer();
         // Always render so the previous cursor cell is cleared; mark both rows dirty happens in renderer
         let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
         let buffer = if is_alt {
@@ -1393,6 +1494,9 @@ impl TerminalEmulator {
     }
 
     /// Render with scrollback offset
+    /// — GraveShift: Composites scrollback history + primary buffer into a temp
+    /// ScreenBuffer based on scroll_offset. When offset=0, we're at the live view.
+    /// When offset>0, older content scrolls into view from the top.
     fn render_with_scrollback(&mut self) {
         // If in alternate screen, scrollback doesn't apply
         let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
@@ -1401,9 +1505,59 @@ impl TerminalEmulator {
             return;
         }
 
-        // For now, just do a normal render
-        // Full scrollback rendering would need to composite scrollback + primary buffer
-        self.render();
+        if self.scroll_offset == 0 {
+            // At live view — normal render path
+            self.push_selection_to_renderer();
+            let buffer = &self.primary;
+            let cursor = self.handler.cursor;
+            self.renderer.render(buffer, &cursor);
+            return;
+        }
+
+        // — GraveShift: Build composited buffer from scrollback + primary.
+        // Full content is: [scrollback_line_0 .. scrollback_line_N] [primary_row_0 .. primary_row_M]
+        // Viewport shows rows starting from (total_lines - scroll_offset - visible_rows).
+        let scrollback_len = self.scrollback.len();
+        let visible_rows = self.rows as usize;
+        let total_lines = scrollback_len + visible_rows;
+        let viewport_start = total_lines
+            .saturating_sub(self.scroll_offset + visible_rows);
+
+        let mut composite = ScreenBuffer::new(self.cols, self.rows);
+
+        for vis_row in 0..self.rows {
+            let content_line = viewport_start + vis_row as usize;
+
+            if content_line < scrollback_len {
+                // This row comes from scrollback history
+                if let Some(sb_line) = self.scrollback.get(content_line) {
+                    for (col, cell) in sb_line.iter().enumerate() {
+                        if (col as u32) < self.cols {
+                            composite.set(vis_row, col as u32, *cell);
+                        }
+                    }
+                }
+            } else {
+                // This row comes from the primary screen buffer
+                let primary_row = (content_line - scrollback_len) as u32;
+                if primary_row < self.rows {
+                    for col in 0..self.cols {
+                        if let Some(cell) = self.primary.get(primary_row, col) {
+                            composite.set(vis_row, col, *cell);
+                        }
+                    }
+                }
+            }
+        }
+
+        // — GraveShift: Hide cursor when scrolled up — it lives in the primary
+        // buffer which may not be visible, and rendering it in the wrong row
+        // would be confusing.
+        let mut cursor = self.handler.cursor;
+        cursor.visible = false;
+
+        self.push_selection_to_renderer();
+        self.renderer.render(&composite, &cursor);
     }
 
     /// Reset terminal to initial state
@@ -1539,42 +1693,31 @@ pub fn is_initialized() -> bool {
     TERMINAL_INITIALIZED.load(Ordering::Acquire)
 }
 
-/// Write bytes to global terminal
+/// Write bytes to global terminal with per-glyph rendering.
 /// NOTE: data may point to user memory, so we need STAC/CLAC for SMAP
+///
+/// — GraveShift: Linux fbcon_putcs() style — synchronous per-glyph rendering.
+///
+/// Each printable character is painted directly to the framebuffer as it's
+/// processed. Scrolls use fb.copy_rect() (pixel memmove) instead of
+/// repainting all rows. CSI bulk ops (ED/IL/DL) still set dirty flags
+/// for tick() catch-up. Cost is proportional to characters written,
+/// not dirty rows — same as Linux's do_con_write() → fbcon_putcs().
+///
+/// Timer ISR tick() handles cursor blink + catch-up for CSI dirty rows.
 pub fn write(data: &[u8]) {
-    // ⚡ GraveShift: DISABLED debug-tty-read logging in write path
-    // Caused recursive deadlock when os_log tried to write back to terminal
-    // during terminal write. Use serial port directly if debug needed.
-    #[cfg(feature = "debug-tty-read")]
-    {
-        // Debug code removed to prevent recursive deadlock
-    }
-
-    // Enable access to user pages (STAC - Supervisor-Mode Access Prevention Clear)
+    // — SableWire: Enable access to user pages (STAC - Supervisor-Mode Access Prevention Clear)
     unsafe {
         core::arch::asm!("stac", options(nomem, nostack));
     }
 
-    // — NeonVale: Process in 256-byte chunks and release lock between chunks.
-    // This lets the timer ISR grab the lock and render between chunks, avoiding
-    // the 20-30ms lock hold that was starving the renderer at 100 FPS.
-    const CHUNK_SIZE: usize = 256;
-    let mut offset = 0;
-
-    while offset < data.len() {
-        let end = (offset + CHUNK_SIZE).min(data.len());
-        let chunk = &data[offset..end];
-
-        if let Some(ref mut terminal) = *TERMINAL.lock() {
-            terminal.write(chunk);
-        }
-
-        offset = end;
-
-        // Yield to let timer ISR render if needed (release lock implicitly)
+    // — GraveShift: Single lock, per-glyph render, flush, release.
+    // write() now paints glyphs inline and flushes the framebuffer before releasing.
+    if let Some(ref mut terminal) = *TERMINAL.lock() {
+        terminal.write(data);
     }
 
-    // Disable access to user pages (CLAC - Supervisor-Mode Access Prevention Clear)
+    // — SableWire: Disable access to user pages (CLAC)
     unsafe {
         core::arch::asm!("clac", options(nomem, nostack));
     }
@@ -1623,8 +1766,12 @@ pub fn reset() {
     }
 }
 
-/// Tick function - call at 30 FPS from timer interrupt to render pending changes
-/// Uses try_lock to avoid deadlock if main thread holds the lock
+/// Timer tick — cursor blink + catch-up render for CSI bulk ops.
+/// — GraveShift: write() now renders per-glyph inline (Linux fbcon_putcs style).
+/// This tick handles cursor blink (like Linux's fb_flashcursor) and renders
+/// any leftover dirty rows from CSI bulk ops (ED/IL/DL/etc that mark_all_dirty).
+/// Uses try_lock because we're in ISR context — if write() holds the lock, we
+/// skip this tick (the buffer is being updated, next tick will catch it).
 pub fn tick() {
     if let Some(mut guard) = TERMINAL.try_lock() {
         if let Some(ref mut terminal) = *guard {
