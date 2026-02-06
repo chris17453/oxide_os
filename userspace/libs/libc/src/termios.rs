@@ -13,7 +13,7 @@ pub const NCCS: usize = 32;
 
 /// Termios structure
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Termios {
     /// Input modes
     pub c_iflag: TcFlag,

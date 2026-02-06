@@ -329,6 +329,14 @@ fn print_help() {
     printlns("  d or s  Set update delay");
 }
 
+/// Get current time in milliseconds
+/// — ByteRiot: gettimeofday gives microsecond precision, convert to ms for sanity
+fn get_time_ms() -> u64 {
+    let mut tv = time::Timeval::default();
+    time::gettimeofday(&mut tv, None);
+    (tv.tv_sec as u64) * 1000 + (tv.tv_usec as u64) / 1000
+}
+
 /// Parse a number from bytes
 fn parse_num(s: &[u8]) -> Option<u32> {
     if s.is_empty() {
@@ -634,10 +642,14 @@ fn read_proc_stat(pid: u32, info: &mut ProcessInfo) -> bool {
         }
     }
 
-    // Field indices (0-based after state):
-    // 0: ppid, 11: utime, 12: stime, 20: vsize, 21: rss, 15: priority, 16: nice
-    if fields.len() > 0 {
-        info.ppid = fields[0] as u32;
+    // — ByteRiot: Field indices in /proc/[pid]/stat after extracting comm and state:
+    // fields[0] = 0 (state placeholder), fields[1] = ppid, fields[2] = pgrp, ...
+    // From proc(5) man page (1-indexed): ppid=4, utime=14, stime=15, priority=18,
+    // nice=19, vsize=23, rss=24. After state extraction, indices shift by 3.
+    // fields[1]=ppid, fields[11]=utime, fields[12]=stime, fields[15]=priority,
+    // fields[16]=nice, fields[20]=vsize, fields[21]=rss
+    if fields.len() > 1 {
+        info.ppid = fields[1] as u32;
     }
     if fields.len() > 11 {
         info.user_time = fields[11];
@@ -701,18 +713,25 @@ fn read_processes(config: &TopConfig) -> Vec<ProcessInfo> {
 }
 
 /// Calculate CPU percentages
-fn calculate_cpu_percentages(processes: &mut [ProcessInfo], prev_processes: &[ProcessInfo], elapsed_time: u64) {
-    if elapsed_time == 0 {
+/// — ByteRiot: elapsed_ms is in MILLISECONDS for sub-second precision.
+/// CPU times from /proc are in jiffies (1/CLK_TCK seconds, typically 100 Hz).
+/// Formula: CPU% = (delta_jiffies * 1000 * 100) / (elapsed_ms * CLK_TCK)
+///        = (delta_jiffies * 100000) / (elapsed_ms * 100)
+///        = delta_jiffies * 1000 / elapsed_ms
+fn calculate_cpu_percentages(processes: &mut [ProcessInfo], prev_processes: &[ProcessInfo], elapsed_ms: u64) {
+    if elapsed_ms == 0 {
         return;
     }
 
     for proc in processes.iter_mut() {
         // Find previous reading
         if let Some(prev) = prev_processes.iter().find(|p| p.pid == proc.pid) {
-            let delta_time = (proc.user_time + proc.system_time).saturating_sub(prev.user_time + prev.system_time);
-            // CPU percent = (delta_time * 100) / (elapsed_time * CLK_TCK)
-            // Assuming CLK_TCK = 100 (standard)
-            proc.cpu_percent = (delta_time as f32 * 100.0) / (elapsed_time as f32 * 100.0);
+            let delta_jiffies = (proc.user_time + proc.system_time)
+                .saturating_sub(prev.user_time + prev.system_time);
+            // — ByteRiot: delta_jiffies are in 1/100th second units (CLK_TCK=100)
+            // elapsed_ms is in milliseconds. Convert both to same base:
+            // delta_jiffies * 10ms = delta_ms, then (delta_ms * 100) / elapsed_ms = %
+            proc.cpu_percent = (delta_jiffies as f32 * 1000.0) / (elapsed_ms as f32);
         }
     }
 }
@@ -963,8 +982,8 @@ fn display_batch_processes(processes: &[ProcessInfo], max_lines: i32) {
 /// Main loop for batch mode
 fn run_batch_mode(config: &TopConfig) {
     let mut prev_processes = Vec::new();
-    let mut last_update = time::time(None);
-    
+    let mut last_update_ms = get_time_ms();
+
     for iteration in 1..=config.iterations {
         if config.iterations > 0 && iteration > config.iterations {
             break;
@@ -973,10 +992,10 @@ fn run_batch_mode(config: &TopConfig) {
         let mut processes = read_processes(config);
         let mut stats = SystemStats::new();
 
-        let now = time::time(None);
-        let elapsed = ((now - last_update) as u64).max(1);
-        
-        calculate_cpu_percentages(&mut processes, &prev_processes, elapsed);
+        let now_ms = get_time_ms();
+        let elapsed_ms = now_ms.saturating_sub(last_update_ms).max(100);
+
+        calculate_cpu_percentages(&mut processes, &prev_processes, elapsed_ms);
         calculate_mem_percentages(&mut processes, stats.total_mem);
         sort_processes(&mut processes, config.sort_field, config.reverse_sort);
         update_system_stats(&mut stats, &processes);
@@ -985,7 +1004,7 @@ fn run_batch_mode(config: &TopConfig) {
         display_batch_processes(&processes, config.max_lines);
 
         prev_processes = processes;
-        last_update = now;
+        last_update_ms = now_ms;
 
         // Sleep for delay
         if config.iterations < 0 || iteration < config.iterations {
@@ -1029,23 +1048,28 @@ fn run_interactive_mode(config: &mut TopConfig) {
     }
 
     let mut prev_processes = Vec::new();
-    let mut last_update = 0i64;
+    let mut last_update_ms: u64 = 0;
     let mut force_update = true;
 
     loop {
-        let now = time::time(None);
-        
+        // — ByteRiot: Use gettimeofday for millisecond precision - time() has 1-second
+        // granularity which causes CPU% to be wildly wrong for sub-second updates.
+        let now_ms = get_time_ms();
+
         // Check if we need to update
-        let should_update = force_update || 
-                           (now - last_update) as u64 >= (config.delay as u64 / 10);
+        // delay is in deciseconds (30 = 3.0s = 3000ms)
+        let delay_ms = (config.delay as u64) * 100;
+        let should_update = force_update ||
+                           (now_ms.saturating_sub(last_update_ms)) >= delay_ms;
 
         if should_update {
             // Read data
             let mut processes = read_processes(config);
             let mut stats = SystemStats::new();
-            
-            let elapsed = ((now - last_update) as u64).max(1);
-            calculate_cpu_percentages(&mut processes, &prev_processes, elapsed);
+
+            // — ByteRiot: elapsed_ms for proper CPU% calculation
+            let elapsed_ms = now_ms.saturating_sub(last_update_ms).max(100); // min 100ms
+            calculate_cpu_percentages(&mut processes, &prev_processes, elapsed_ms);
             calculate_mem_percentages(&mut processes, stats.total_mem);
             sort_processes(&mut processes, config.sort_field, config.reverse_sort);
             update_system_stats(&mut stats, &processes);
@@ -1054,7 +1078,7 @@ fn run_interactive_mode(config: &mut TopConfig) {
             display_interactive(&stats, &processes, config, stdscr);
 
             prev_processes = processes;
-            last_update = now;
+            last_update_ms = now_ms;
             force_update = false;
         }
 

@@ -303,8 +303,30 @@ impl TerminalEmulator {
                     }
                 }
 
-                // Mark affected rows dirty
-                self.renderer.mark_all_dirty();
+                // — GraveShift: Smart dirty marking - don't nuke the entire screen for cursor moves.
+                // Previously mark_all_dirty() was called unconditionally, causing ~24x more row
+                // renders than needed. Now we classify CSI commands:
+                // - Cursor-only (ABCDEFGH, f, d, s, u): no marking needed (renderer handles cursor)
+                // - Attribute-only (m): no marking needed (takes effect on next writes)
+                // - Single-row (K): mark cursor row only
+                // - Multi-row (J, L, M, P, S, T, X, @, etc): mark all
+                match final_char {
+                    // Cursor movement - renderer tracks cursor row changes automatically
+                    b'A' | b'B' | b'C' | b'D' | b'E' | b'F' | b'G' | b'H' | b'f' | b'd' |
+                    b's' | b'u' | // save/restore cursor
+                    b'n' => {} // device status report (cursor position query)
+
+                    // SGR (attributes) - doesn't modify screen content
+                    b'm' => {}
+
+                    // EL (erase line) - only affects cursor row
+                    b'K' => self.renderer.mark_dirty(self.handler.cursor.row),
+
+                    // Everything else might affect multiple rows - mark all dirty
+                    // J (ED), L (IL), M (DL), P (DCH), S (SU), T (SD), X (ECH), @ (ICH),
+                    // r (DECSTBM), h/l (modes), etc.
+                    _ => self.renderer.mark_all_dirty(),
+                }
             }
             Action::EscDispatch {
                 intermediates,
@@ -317,7 +339,19 @@ impl TerminalEmulator {
                     &mut self.primary
                 };
                 self.handler.handle_esc(&intermediates, final_char, buffer);
-                self.renderer.mark_all_dirty();
+
+                // — GraveShift: Smart dirty marking for ESC sequences too
+                match (intermediates.first(), final_char) {
+                    // Cursor save/restore, tab set - no screen content changes
+                    (None, b'7') | (None, b'8') | (None, b'H') => {}
+                    // Character set selection - no screen content changes
+                    (Some(b'('), _) | (Some(b')'), _) => {}
+                    // DECDHL/DECSWL/DECDWL line attrs - just metadata
+                    (Some(b'#'), b'3') | (Some(b'#'), b'4') |
+                    (Some(b'#'), b'5') | (Some(b'#'), b'6') => {}
+                    // Linefeed/scroll, reset, DECALN, etc - might affect multiple rows
+                    _ => self.renderer.mark_all_dirty(),
+                }
             }
             Action::OscDispatch(data) => {
                 // OSC commands (title, colors, etc.)

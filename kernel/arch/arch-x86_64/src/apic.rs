@@ -249,6 +249,10 @@ static CACHED_TICKS_PER_MS: core::sync::atomic::AtomicU32 = core::sync::atomic::
 /// Returns the number of APIC timer ticks per millisecond.
 /// First caller does the real PIT calibration; subsequent callers reuse the
 /// cached result to avoid the PIT data race.
+///
+/// — TorqueJax: Linux-style calibration with explicit state reset. The PIT OUT
+/// signal may be HIGH from BIOS/previous use; we must force it LOW before
+/// measuring, else the wait loop exits immediately and we get garbage.
 pub fn calibrate_timer() -> u32 {
     // SableWire: Fast path — return cached result if BSP already calibrated
     let cached = CACHED_TICKS_PER_MS.load(core::sync::atomic::Ordering::Acquire);
@@ -256,41 +260,74 @@ pub fn calibrate_timer() -> u32 {
         return cached;
     }
 
+    crate::serial_println!("[APIC-CAL] Starting calibration...");
+
     const PIT_FREQUENCY: u32 = 1193182;
     const CALIBRATION_MS: u32 = 10;
 
     // Set up PIT channel 2 for calibration
-    // We'll use one-shot mode and count down from a known value
     let pit_count = (PIT_FREQUENCY / 1000) * CALIBRATION_MS;
 
     unsafe {
-        // Set PIT to one-shot mode, channel 2
-        crate::outb(0x61, (crate::inb(0x61) & 0xFD) | 0x01); // Gate high, speaker off
-        crate::outb(0x43, 0xB0); // Channel 2, lobyte/hibyte, mode 0, binary
+        // TorqueJax: Step 1 — Force gate LOW to reset PIT channel 2 state.
+        let port61_initial = crate::inb(0x61);
+        crate::serial_println!("[APIC-CAL] port61 initial: {:#x}", port61_initial);
 
-        // Set PIT count
+        crate::outb(0x61, (port61_initial & 0xFC) | 0x00); // Gate LOW, speaker off
+
+        // Small delay to let hardware settle
+        for _ in 0..100 {
+            core::hint::spin_loop();
+        }
+
+        let port61_after_low = crate::inb(0x61);
+        crate::serial_println!("[APIC-CAL] port61 after gate LOW: {:#x}", port61_after_low);
+
+        // Step 2 — Program PIT channel 2 in mode 0
+        crate::outb(0x43, 0xB0);
         crate::outb(0x42, (pit_count & 0xFF) as u8);
         crate::outb(0x42, ((pit_count >> 8) & 0xFF) as u8);
     }
 
-    // Set APIC timer to maximum count
+    // Set APIC timer divider and configure for one-shot, masked
     write(reg::TIMER_DIV, TimerDivide::Div16 as u32);
     write(reg::LVT_TIMER, 1 << 16); // Masked, one-shot
+
+    // TorqueJax: Write initial count LAST — this starts the timer counting
     write(reg::TIMER_INIT, 0xFFFF_FFFF);
 
-    // Wait for PIT to count down
-    unsafe {
-        // Reset PIT gate to start counting
-        let val = crate::inb(0x61) & 0xFE;
-        crate::outb(0x61, val);
-        crate::outb(0x61, val | 0x01);
+    let apic_start = timer_current();
+    crate::serial_println!("[APIC-CAL] APIC timer started at: {:#x}", apic_start);
 
-        // Wait for PIT output to go high (count reached zero)
-        while crate::inb(0x61) & 0x20 == 0 {}
+    unsafe {
+        // Step 4 — Set gate HIGH to start PIT countdown
+        let port61 = crate::inb(0x61);
+        crate::outb(0x61, (port61 & 0xFC) | 0x01); // Gate HIGH, speaker off
+
+        let port61_after_high = crate::inb(0x61);
+        crate::serial_println!("[APIC-CAL] port61 after gate HIGH: {:#x}", port61_after_high);
+
+        // Step 5 — Verify OUT went LOW (sanity check)
+        let mut sanity = 0u32;
+        while (crate::inb(0x61) & 0x20) != 0 && sanity < 1000 {
+            sanity += 1;
+            core::hint::spin_loop();
+        }
+        crate::serial_println!("[APIC-CAL] OUT sanity check took {} iterations", sanity);
+
+        // Step 6 — Wait for PIT OUT to go HIGH (count reached zero)
+        let mut wait_count = 0u32;
+        while (crate::inb(0x61) & 0x20) == 0 {
+            wait_count += 1;
+        }
+        crate::serial_println!("[APIC-CAL] PIT wait took {} iterations", wait_count);
     }
 
     // Read APIC timer current count
-    let elapsed = 0xFFFF_FFFF - timer_current();
+    let apic_end = timer_current();
+    let elapsed = 0xFFFF_FFFF - apic_end;
+
+    crate::serial_println!("[APIC-CAL] APIC end: {:#x}, elapsed: {}", apic_end, elapsed);
 
     // Stop APIC timer
     stop_timer();
@@ -298,7 +335,21 @@ pub fn calibrate_timer() -> u32 {
     // Calculate ticks per millisecond
     let ticks_per_ms = elapsed / CALIBRATION_MS;
 
-    // SableWire: Cache for APs — they must not touch the PIT
+    crate::serial_println!("[APIC-CAL] Result: {} ticks/ms", ticks_per_ms);
+
+    // TorqueJax: Sanity check — typical values are 10k-500k ticks/ms
+    if ticks_per_ms < 1000 || ticks_per_ms > 10_000_000 {
+        let fallback = 62500; // ~100MHz bus / 16 div at 100Hz = 62500 ticks/ms
+        CACHED_TICKS_PER_MS.store(fallback, core::sync::atomic::Ordering::Release);
+        crate::serial_println!(
+            "[APIC-CAL] FAILED! {} invalid, using fallback {}",
+            ticks_per_ms,
+            fallback
+        );
+        return fallback;
+    }
+
+    // SableWire: Cache for APs
     CACHED_TICKS_PER_MS.store(ticks_per_ms, core::sync::atomic::Ordering::Release);
 
     ticks_per_ms
@@ -510,19 +561,20 @@ pub fn start_timer(frequency_hz: u32) {
     let interval_ms = 1000 / frequency_hz;
     let initial_count = ticks_per_ms * interval_ms;
 
-    // SableWire: Lock-free serial — this runs on BSP and all APs concurrently.
-    // Using serial_println! here would take the COM1 mutex; if an AP timer fires
-    // while another AP holds that lock, the timer handler's terminal_tick (even
-    // with unsafe writes) interleaves output. Keep it simple and lock-free.
-    unsafe {
-        crate::serial::write_str_unsafe("[APIC] Timer calibrated: ");
-        crate::serial::write_u32_unsafe(ticks_per_ms);
-        crate::serial::write_str_unsafe(" ticks/ms\n");
-        crate::serial::write_str_unsafe("[APIC] Starting timer at ");
-        crate::serial::write_u32_unsafe(frequency_hz);
-        crate::serial::write_str_unsafe("Hz (count: ");
-        crate::serial::write_u32_unsafe(initial_count);
-        crate::serial::write_str_unsafe(")\n");
+    // — GraveShift: Only BSP prints calibration info. APs use cached value and
+    // printing from all CPUs simultaneously garbles output and wastes cycles.
+    let is_bsp = id() == 0;
+    if is_bsp {
+        unsafe {
+            crate::serial::write_str_unsafe("[APIC] Timer calibrated: ");
+            crate::serial::write_u32_unsafe(ticks_per_ms);
+            crate::serial::write_str_unsafe(" ticks/ms\n");
+            crate::serial::write_str_unsafe("[APIC] Starting timer at ");
+            crate::serial::write_u32_unsafe(frequency_hz);
+            crate::serial::write_str_unsafe("Hz (count: ");
+            crate::serial::write_u32_unsafe(initial_count);
+            crate::serial::write_str_unsafe(")\n");
+        }
     }
 
     configure_timer(

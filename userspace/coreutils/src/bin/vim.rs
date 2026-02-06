@@ -23,11 +23,27 @@ extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
 use libc::*;
+use libc::termios::{
+    tcgetattr, tcsetattr, tcgetwinsize, Termios, Winsize,
+    action::TCSAFLUSH,
+    iflag::{ICRNL, IXON},
+    lflag::{ICANON, ECHO, ISIG},
+    cc::{VMIN, VTIME},
+};
 use termcap::capabilities::strings as tcap;
 use termcap::expand::tparm;
 
 const MAX_FILENAME: usize = 256;
 const MAX_COMMAND: usize = 256;
+
+/// ── WireSaint: Write a byte slice to stdout in one syscall ──
+/// Much faster than putchar() in a loop - avoids N syscalls for N chars
+#[inline]
+fn write_bytes(bytes: &[u8]) {
+    if !bytes.is_empty() {
+        unistd::write(1, bytes);
+    }
+}
 
 /// ── GraveShift: Editor modes for modal editing ──
 #[derive(Clone, Copy, PartialEq)]
@@ -49,21 +65,31 @@ struct Term {
 
 impl Term {
     /// ── NeonVale: Initialize terminal from termcap database ──
-    /// Tries "xterm" first -- our QEMU terminal is VT100-compatible.
-    fn new() -> Self {
+    /// — GraveShift: Gets ACTUAL terminal size via tcgetwinsize, not some bullshit hardcoded value.
+    fn new_with_fd(tty_fd: i32) -> Self {
         let entry = termcap::load_terminal("xterm").unwrap_or_else(|_| {
-            // ── NeonVale: Last resort, build a bare-bones entry ──
             termcap::load_terminal("vt100").unwrap_or_else(|_| termcap::TerminalEntry::new("dumb"))
         });
 
-        let rows = entry
-            .get_number(termcap::capabilities::numbers::LINES)
-            .unwrap_or(24) as usize;
-        let cols = entry
-            .get_number(termcap::capabilities::numbers::COLUMNS)
-            .unwrap_or(80) as usize;
+        // — NeonVale: Get real terminal size via tcgetwinsize (wraps TIOCGWINSZ)
+        let mut ws = Winsize::default();
+        let ret = tcgetwinsize(tty_fd, &mut ws);
+
+        let (rows, cols) = if ret == 0 && ws.ws_row > 0 && ws.ws_col > 0 {
+            (ws.ws_row as usize, ws.ws_col as usize)
+        } else {
+            // — GraveShift: Fallback only if ioctl fails
+            let r = entry.get_number(termcap::capabilities::numbers::LINES).unwrap_or(24) as usize;
+            let c = entry.get_number(termcap::capabilities::numbers::COLUMNS).unwrap_or(80) as usize;
+            (r, c)
+        };
 
         Term { entry, rows, cols }
+    }
+
+    /// ── NeonVale: Legacy constructor for when we don't have a fd yet ──
+    fn new() -> Self {
+        Self::new_with_fd(0) // — Try stdin as fallback
     }
 
     /// ── NeonVale: Clear entire screen and home cursor ──
@@ -239,6 +265,7 @@ impl Buffer {
 struct Editor {
     buffer: Buffer,
     term: Term,
+    tty_fd: i32, // — GraveShift: Terminal fd for raw input
     cursor_line: usize,
     cursor_col: usize,
     top_line: usize,
@@ -261,6 +288,7 @@ impl Editor {
         Editor {
             buffer: Buffer::new(),
             term: Term::new(),
+            tty_fd: -1, // — GraveShift: Set by main() after opening terminal
             cursor_line: 0,
             cursor_col: 0,
             top_line: 0,
@@ -306,8 +334,12 @@ impl Editor {
     }
 
     /// ── NeonVale: Render the editor screen via termcap ──
+    /// — GraveShift: NO FULL SCREEN CLEAR. We overwrite lines in place and use
+    /// clrtoeol to handle shorter lines. Full clear causes horrific flicker and
+    /// tanks performance to sub-1-FPS levels.
     fn render(&self) {
-        self.term.clear_screen();
+        // — TorqueJax: Hide cursor during redraw to prevent cursor flicker
+        prints("\x1b[?25l");
 
         let visible_lines = if self.term.rows > 2 {
             self.term.rows - 2
@@ -315,23 +347,27 @@ impl Editor {
             1
         };
 
-        // ── NeonVale: Render visible lines ──
+        // ── NeonVale: Render visible lines by positioning and overwriting ──
         for i in 0..visible_lines {
+            // — GraveShift: Jump to line start, don't rely on newlines
+            self.term.move_cursor(i, 0);
+
             let line_idx = self.top_line + i;
             if line_idx < self.buffer.line_count() {
                 let line = &self.buffer.lines[line_idx];
                 if !line.is_empty() {
-                    for &ch in line {
-                        putchar(ch);
-                    }
+                    // — WireSaint: Batch output - write entire line slice at once
+                    write_bytes(line);
                 }
             } else {
                 prints("~");
             }
-            prints("\r\n");
+            // — NeonVale: Clear to end of line instead of padding with spaces
+            prints("\x1b[K");
         }
 
-        // ── NeonVale: Status line in reverse video ──
+        // ── NeonVale: Status line at row (rows - 2) ──
+        self.term.move_cursor(self.term.rows - 2, 0);
         self.term.enter_reverse();
         match self.mode {
             Mode::Normal => prints(" NORMAL "),
@@ -342,9 +378,7 @@ impl Editor {
 
         prints(" ");
         if self.filename_len > 0 {
-            for i in 0..self.filename_len {
-                putchar(self.filename[i]);
-            }
+            write_bytes(&self.filename[..self.filename_len]);
         } else {
             prints("[No Name]");
         }
@@ -361,41 +395,37 @@ impl Editor {
         prints("/");
         print_num(self.buffer.line_count());
 
-        // ── NeonVale: Pad to end of line ──
-        for _ in 0..40 {
-            prints(" ");
-        }
+        // — NeonVale: Clear to end of line for clean status bar
+        prints("\x1b[K");
         self.term.exit_attributes();
-        prints("\r\n");
 
-        // ── NeonVale: Message / command line ──
+        // ── NeonVale: Message / command line at row (rows - 1) ──
+        self.term.move_cursor(self.term.rows - 1, 0);
         if self.message_len > 0 {
-            for i in 0..self.message_len {
-                putchar(self.message[i]);
-            }
+            write_bytes(&self.message[..self.message_len]);
         } else if self.mode == Mode::Command {
             prints(":");
-            for i in 0..self.command_len {
-                putchar(self.command_buf[i]);
-            }
+            write_bytes(&self.command_buf[..self.command_len]);
         } else if self.mode == Mode::Search {
             if self.search_forward {
                 prints("/");
             } else {
                 prints("?");
             }
-            for i in 0..self.command_len {
-                putchar(self.command_buf[i]);
-            }
+            write_bytes(&self.command_buf[..self.command_len]);
         }
+        prints("\x1b[K");
 
-        // ── NeonVale: Position cursor via termcap ──
+        // ── NeonVale: Position cursor at edit location ──
         let screen_line = if self.cursor_line >= self.top_line {
             self.cursor_line - self.top_line
         } else {
             0
         };
         self.term.move_cursor(screen_line, self.cursor_col);
+
+        // — TorqueJax: Show cursor again
+        prints("\x1b[?25h");
     }
 
     /// ── GraveShift: Process normal mode commands ──
@@ -824,15 +854,15 @@ impl Editor {
     }
 
     fn read_key(&self) -> u8 {
-        let tty_fd = open2("/dev/console", O_RDONLY);
-        if tty_fd < 0 {
+        // — GraveShift: Use the stored tty_fd, don't open a new one every time
+        if self.tty_fd < 0 {
             return 0;
         }
-
         let mut buf = [0u8; 1];
-        read(tty_fd, &mut buf);
-        close(tty_fd);
-
+        let n = read(self.tty_fd, &mut buf);
+        if n <= 0 {
+            return 0;
+        }
         buf[0]
     }
 }
@@ -905,15 +935,39 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     }
 
     // ── TorqueJax: Set up raw terminal mode ──
-    let tty_fd = open2("/dev/console", O_RDONLY);
+    // — GraveShift: Without raw mode we're dead in the water. Line buffering
+    // means no keypress until Enter, echo means double characters. Can't edit shit.
+    let tty_fd = open2("/dev/tty", O_RDWR);
     if tty_fd < 0 {
-        eprintlns("vim: cannot open terminal");
+        eprintlns("vi: cannot open terminal");
         return 1;
     }
+
+    // — NeonVale: Store the fd and reinit terminal with actual size
+    editor.tty_fd = tty_fd;
+    editor.term = Term::new_with_fd(tty_fd);
+
+    // — BlackLatch: Save original termios and switch to raw mode
+    let mut orig_termios: Termios = unsafe { core::mem::zeroed() };
+    tcgetattr(tty_fd, &mut orig_termios);
+
+    let mut raw = orig_termios.clone();
+    // — TorqueJax: Disable canonical mode (line buffering), echo, and signal chars
+    raw.c_lflag &= !(ICANON | ECHO | ISIG);
+    // — TorqueJax: Disable input processing (CR->NL, etc)
+    raw.c_iflag &= !(ICRNL | IXON);
+    // — TorqueJax: Read returns after 1 char, no timeout
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
+    tcsetattr(tty_fd, TCSAFLUSH, &raw);
+
+    // — GraveShift: Initial screen clear ONCE, not every frame
+    editor.term.clear_screen();
 
     // ── GraveShift: Main editor loop ──
     loop {
         editor.render();
+        fflush_stdout(); // — NeonVale: Force output to screen NOW
 
         let mut buf = [0u8; 1];
         let n = read(tty_fd, &mut buf);
@@ -935,10 +989,13 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         }
     }
 
+    // — BlackLatch: Restore original terminal settings before exit
+    tcsetattr(tty_fd, TCSAFLUSH, &orig_termios);
     close(tty_fd);
 
     // ── NeonVale: Clear screen before exit via termcap ──
     editor.term.clear_screen();
+    fflush_stdout();
 
     0
 }

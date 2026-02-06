@@ -34,6 +34,12 @@ mod lcr {
     pub const MODE_8N1: u8 = 0x03;
 }
 
+/// — GraveShift: Max spins waiting for UART TX ready before we drop the byte.
+/// Debug output is best-effort; system liveness is sacred. At 115200 baud,
+/// one byte takes ~87us. 2048 spins at ~50ns each = ~100us - enough for one
+/// byte to drain, but we bail if FIFO is truly backed up.
+const UART_TX_SPIN_LIMIT: u32 = 2048;
+
 /// 8250 UART instance
 pub struct Uart8250 {
     base: u16,
@@ -89,8 +95,15 @@ impl SerialDriver for Uart8250 {
     }
 
     fn write_byte(&mut self, byte: u8) {
-        // Wait for transmit buffer empty
+        // — BlackLatch: BOUNDED spin - never hang the system for debug output
+        // If UART backs up, drop the byte. System liveness > debug completeness.
+        let mut spins: u32 = 0;
         while !self.tx_empty() {
+            spins += 1;
+            if spins >= UART_TX_SPIN_LIMIT {
+                // — GraveShift: FIFO saturated, drop byte and move on
+                return;
+            }
             core::hint::spin_loop();
         }
         self.write_reg(regs::DATA, byte);

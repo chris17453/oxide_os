@@ -49,6 +49,15 @@ pub fn ap_init_callback(apic_id: u8) -> ! {
         core::hint::spin_loop();
     }
 
+    // — GraveShift: Staggered timer start to prevent thundering herd.
+    // All APs exit the spin loop simultaneously, and if they all start their
+    // timers at once, all timer interrupts fire at the same instant causing
+    // race conditions in the scheduler. Delay each AP by (cpu_id * 1ms) so
+    // their timer phases are offset.
+    for _ in 0..(cpu_id as u64 * 100_000) {
+        core::hint::spin_loop();
+    }
+
     // Now safe — all handlers are live on the BSP
     arch::start_timer(100);
     arch::X86_64::enable_interrupts();
