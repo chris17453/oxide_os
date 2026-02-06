@@ -118,6 +118,7 @@ members = [
     "userspace/libs/vte",
     # userspace/services — daemons
     "userspace/services/networkd",
+    "userspace/services/resolvd",
     "userspace/services/sshd",
     "userspace/services/rdpd",
     "userspace/services/journald",

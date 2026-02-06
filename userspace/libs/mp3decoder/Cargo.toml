@@ -1,0 +1,10 @@
+[package]
+name = "mp3decoder"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+minimp3 = { version = "0.6", default-features = false }
+
+[features]
+default = []

@@ -235,6 +235,10 @@ name = "nslookup"
 path = "src/bin/nslookup.rs"
 
 [[bin]]
+name = "hostctl"
+path = "src/bin/hostctl.rs"
+
+[[bin]]
 name = "nc"
 path = "src/bin/nc.rs"
 

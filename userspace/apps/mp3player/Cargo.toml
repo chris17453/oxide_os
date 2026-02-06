@@ -1,0 +1,12 @@
+[package]
+name = "mp3player"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libc = { path = "../../libs/libc" }
+mp3decoder = { path = "../../libs/mp3decoder" }
+
+[[bin]]
+name = "mp3play"
+path = "src/main.rs"
