@@ -37,17 +37,6 @@ const INITRAMFS_PATH: &str = "\\EFI\\OXIDE\\initramfs.cpio";
 /// Page size
 const PAGE_SIZE: u64 = 4096;
 
-#[derive(Clone, Copy)]
-struct ProgressLayout {
-    x: usize,
-    y: usize,
-    width: usize,
-    height: usize,
-    text_y: usize,
-}
-
-static mut PROGRESS_LAYOUT: Option<ProgressLayout> = None;
-
 #[entry]
 fn main() -> Status {
     // Initialize UEFI services
@@ -59,12 +48,7 @@ fn main() -> Status {
     // Clear screen for boot process
     clear_screen();
 
-    // Initialize progress tracking
-    let total_steps = 12;
-    let mut current_step = 0;
-
-    // Step 1: Load kernel
-    update_progress(&mut current_step, total_steps, "Loading kernel file...");
+    // Load kernel
     let kernel_data = match load_kernel_file() {
         Ok(data) => data,
         Err(e) => {
@@ -73,8 +57,7 @@ fn main() -> Status {
         }
     };
 
-    // Step 2: Parse ELF
-    update_progress(&mut current_step, total_steps, "Parsing ELF headers...");
+    // Parse ELF
     let elf_info = match elf::parse_elf(&kernel_data) {
         Ok(info) => info,
         Err(e) => {
@@ -83,60 +66,42 @@ fn main() -> Status {
         }
     };
 
-    // Step 3: Allocate memory for kernel
-    update_progress(
-        &mut current_step,
-        total_steps,
-        "Allocating kernel memory...",
-    );
+    // Allocate memory for kernel
     let kernel_pages = (elf_info.load_size + PAGE_SIZE - 1) / PAGE_SIZE;
     let kernel_phys =
         allocate_pages(kernel_pages as usize).expect("Failed to allocate memory for kernel");
 
-    // Step 4: Load kernel segments
-    update_progress(&mut current_step, total_steps, "Loading kernel segments...");
+    // Load kernel segments
     elf::load_segments(&kernel_data, &elf_info, kernel_phys);
 
-    // Step 5: Load initramfs
-    update_progress(&mut current_step, total_steps, "Loading initramfs...");
+    // Load initramfs
     let (initramfs_phys, initramfs_size) = match load_initramfs() {
         Ok((phys, size)) => (phys, size),
         Err(_) => (0, 0), // Non-fatal
     };
 
-    // Step 6: Initialize graphics
-    update_progress(&mut current_step, total_steps, "Initializing graphics...");
+    // Initialize graphics
     let fb_info = get_framebuffer_info();
 
-    // Step 7: Enumerate video modes
-    update_progress(&mut current_step, total_steps, "Enumerating video modes...");
+    // Enumerate video modes
     let video_modes = enumerate_video_modes();
 
-    // Step 8: Set up page tables
-    update_progress(&mut current_step, total_steps, "Setting up page tables...");
+    // Set up page tables
     let pml4_phys = paging::setup_page_tables(kernel_phys, elf_info.load_size);
 
-    // Step 9: Allocate boot info pages
+    // Allocate boot info pages
     // BootInfo is larger than one page (~5KB due to memory_regions and video_modes arrays),
     // so we must allocate 2 pages to avoid overwriting adjacent page table memory
-    update_progress(&mut current_step, total_steps, "Finalizing boot setup...");
     let boot_info_phys = allocate_pages(2).expect("Failed to allocate boot info pages");
 
-    // Step 10: Get memory map AFTER all UEFI allocations
+    // Get memory map AFTER all UEFI allocations
     // CRITICAL: This must be the last step that performs UEFI allocations.
     // The memory map must accurately reflect page table pages, boot info pages,
     // and all other LOADER_DATA allocations so the kernel doesn't reclaim them
     // into the buddy allocator's free list (which would corrupt page tables).
-    update_progress(&mut current_step, total_steps, "Getting memory map...");
     let memory_regions = get_memory_map();
 
-    // Step 11: Create boot info (no UEFI allocations - struct is on stack)
-    update_progress(
-        &mut current_step,
-        total_steps,
-        "Creating boot information...",
-    );
-
+    // Create boot info (no UEFI allocations - struct is on stack)
     // Extract RSDP physical address from UEFI configuration tables
     // — SableWire: tapping the firmware's ACPI root before we burn the bridge
     let rsdp_phys = find_rsdp_in_config_tables();
@@ -161,13 +126,6 @@ fn main() -> Status {
     // Calculate addresses for kernel jump
     let kernel_entry_virt = KERNEL_VIRT_BASE + (elf_info.entry - elf_info.load_base);
     let boot_info_virt = PHYS_MAP_BASE + boot_info_phys;
-
-    // Step 12: Transfer control to kernel
-    update_progress(
-        &mut current_step,
-        total_steps,
-        "Transferring control to kernel...",
-    );
 
     // Show final boot message
     log("");
@@ -231,23 +189,6 @@ fn display_graphical_logo() -> bool {
     // Draw a simple graphical logo
     draw_oxide_logo(&mut *gop, width, height);
 
-    // Prepare progress layout near bottom of screen
-    let bar_width = width.saturating_mul(2) / 3;
-    let bar_height = 24;
-    let bar_x = (width - bar_width) / 2;
-    let bar_y = height.saturating_sub(80);
-    unsafe {
-        PROGRESS_LAYOUT = Some(ProgressLayout {
-            x: bar_x,
-            y: bar_y,
-            width: bar_width,
-            height: bar_height,
-            text_y: bar_y.saturating_sub(30),
-        });
-    }
-    // Draw initial empty bar
-    draw_progress_bar(&mut *gop, 0, 1, "Starting...");
-
     // Display text information
     log("");
     log("            Operating System - Version 0.1.0");
@@ -259,45 +200,76 @@ fn display_graphical_logo() -> bool {
 
 /// Draw the OXIDE logo graphically
 fn draw_oxide_logo(gop: &mut GraphicsOutput, width: usize, height: usize) {
-    let logo_width = 400;
-    let logo_height = 200;
+    let logo_width = 500;
+    let logo_height = 150;
     let start_x = (width - logo_width) / 2;
-    let start_y = (height - logo_height) / 2;
+    let start_y = height / 3;
 
-    // Create a simple geometric logo
-    let oxide_color = BltPixel::new(0, 150, 255); // Blue
-    let bg_color = BltPixel::new(20, 20, 20); // Dark background
-
-    // Draw background rectangle
+    // Modern color scheme - cyberpunk aesthetic
+    // — NeonVale: these colors will burn their retinas in the best way possible
+    let oxide_orange = BltPixel::new(255, 140, 0);  // Primary brand color
+    let accent_cyan = BltPixel::new(0, 255, 255);   // Accent glow
+    let bg_dark = BltPixel::new(10, 10, 15);        // Deep background
+    
+    // Draw clean background
     for y in start_y..start_y + logo_height {
         for x in start_x..start_x + logo_width {
             let _ = gop.blt(BltOp::VideoFill {
-                color: bg_color,
+                color: bg_dark,
                 dest: (x, y),
                 dims: (1, 1),
             });
         }
     }
 
-    // Draw OXIDE text pattern (simplified geometric representation)
-    // This is a basic implementation - in a real system you'd use proper font rendering
-    draw_letter_o(gop, start_x + 50, start_y + 60, oxide_color);
-    draw_letter_x(gop, start_x + 120, start_y + 60, oxide_color);
-    draw_letter_i(gop, start_x + 190, start_y + 60, oxide_color);
-    draw_letter_d(gop, start_x + 230, start_y + 60, oxide_color);
-    draw_letter_e(gop, start_x + 300, start_y + 60, oxide_color);
+    // Draw modern, clean OXIDE text with better spacing and proportions
+    let letter_y = start_y + 40;
+    let letter_spacing = 85;
+    draw_letter_o_modern(gop, start_x + 20, letter_y, oxide_orange, accent_cyan);
+    draw_letter_x_modern(gop, start_x + 20 + letter_spacing, letter_y, oxide_orange, accent_cyan);
+    draw_letter_i_modern(gop, start_x + 20 + letter_spacing * 2, letter_y, oxide_orange, accent_cyan);
+    draw_letter_d_modern(gop, start_x + 20 + letter_spacing * 3, letter_y, oxide_orange, accent_cyan);
+    draw_letter_e_modern(gop, start_x + 20 + letter_spacing * 4, letter_y, oxide_orange, accent_cyan);
+    
+    // Draw accent line underneath
+    let line_y = start_y + logo_height - 20;
+    for x in start_x + 20..start_x + logo_width - 20 {
+        let _ = gop.blt(BltOp::VideoFill {
+            color: accent_cyan,
+            dest: (x, line_y),
+            dims: (1, 2),
+        });
+    }
 }
 
-/// Draw letter shapes (simplified geometric versions)
-fn draw_letter_o(gop: &mut GraphicsOutput, x: usize, y: usize, color: BltPixel) {
-    // Draw a circle-like shape for 'O'
-    for dy in 0..60 {
-        for dx in 0..40 {
-            if (dx == 0 || dx == 39 || dy == 0 || dy == 59)
-                || (dx > 5 && dx < 35 && (dy < 8 || dy > 52))
-            {
+/// Modern letter drawing functions with clean, bold design
+/// — NeonVale: each glyph is a statement, not an apology
+
+fn draw_letter_o_modern(gop: &mut GraphicsOutput, x: usize, y: usize, primary: BltPixel, accent: BltPixel) {
+    let width = 60;
+    let height = 70;
+    let thickness = 8;
+    
+    // Draw rounded O with clean lines
+    for dy in 0..height {
+        for dx in 0..width {
+            let color = if dy < thickness || dy >= height - thickness {
+                // Top and bottom bars
+                if dx >= 10 && dx < width - 10 {
+                    Some(primary)
+                } else {
+                    None
+                }
+            } else if dx < thickness || dx >= width - thickness {
+                // Side bars
+                Some(primary)
+            } else {
+                None
+            };
+            
+            if let Some(c) = color {
                 let _ = gop.blt(BltOp::VideoFill {
-                    color,
+                    color: c,
                     dest: (x + dx, y + dy),
                     dims: (1, 1),
                 });
@@ -306,48 +278,28 @@ fn draw_letter_o(gop: &mut GraphicsOutput, x: usize, y: usize, color: BltPixel) 
     }
 }
 
-fn draw_letter_x(gop: &mut GraphicsOutput, x: usize, y: usize, color: BltPixel) {
-    // Draw an X shape
-    for dy in 0..60 {
-        for dx in 0..40 {
-            if dx == dy * 40 / 60 || dx == 40 - dy * 40 / 60 {
+fn draw_letter_x_modern(gop: &mut GraphicsOutput, x: usize, y: usize, primary: BltPixel, accent: BltPixel) {
+    let width = 60;
+    let height = 70;
+    let thickness = 8;
+    
+    // Draw clean X with proper diagonals
+    for dy in 0..height {
+        for dx in 0..width {
+            let ratio = dy as f32 / height as f32;
+            let diag1_x = (ratio * width as f32) as usize;
+            let diag2_x = width - (ratio * width as f32) as usize;
+            
+            let color = if (dx >= diag1_x.saturating_sub(thickness/2) && dx < diag1_x + thickness/2) ||
+                           (dx >= diag2_x.saturating_sub(thickness/2) && dx < diag2_x + thickness/2) {
+                Some(primary)
+            } else {
+                None
+            };
+            
+            if let Some(c) = color {
                 let _ = gop.blt(BltOp::VideoFill {
-                    color,
-                    dest: (x + dx, y + dy),
-                    dims: (2, 2),
-                });
-            }
-        }
-    }
-}
-
-fn draw_letter_i(gop: &mut GraphicsOutput, x: usize, y: usize, color: BltPixel) {
-    // Draw an I shape
-    for dy in 0..60 {
-        for dx in 0..20 {
-            if dx > 6 && dx < 14 {
-                let _ = gop.blt(BltOp::VideoFill {
-                    color,
-                    dest: (x + dx, y + dy),
-                    dims: (1, 1),
-                });
-            }
-        }
-    }
-}
-
-fn draw_letter_d(gop: &mut GraphicsOutput, x: usize, y: usize, color: BltPixel) {
-    // Draw a D shape
-    for dy in 0..60 {
-        for dx in 0..40 {
-            if dx == 0
-                || (dx > 20
-                    && ((dy < 8 && dx < 35)
-                        || (dy > 52 && dx < 35)
-                        || (dy >= 8 && dy <= 52 && dx == 35)))
-            {
-                let _ = gop.blt(BltOp::VideoFill {
-                    color,
+                    color: c,
                     dest: (x + dx, y + dy),
                     dims: (1, 1),
                 });
@@ -356,13 +308,94 @@ fn draw_letter_d(gop: &mut GraphicsOutput, x: usize, y: usize, color: BltPixel) 
     }
 }
 
-fn draw_letter_e(gop: &mut GraphicsOutput, x: usize, y: usize, color: BltPixel) {
-    // Draw an E shape
-    for dy in 0..60 {
-        for dx in 0..35 {
-            if dx == 0 || dy == 0 || dy == 30 || dy == 59 {
+fn draw_letter_i_modern(gop: &mut GraphicsOutput, x: usize, y: usize, primary: BltPixel, accent: BltPixel) {
+    let width = 30;
+    let height = 70;
+    let thickness = 8;
+    let bar_width = 12;
+    
+    // Draw clean I with top and bottom bars
+    for dy in 0..height {
+        for dx in 0..width {
+            let color = if dy < thickness || dy >= height - thickness {
+                // Top and bottom bars (full width)
+                Some(primary)
+            } else if dx >= (width - bar_width) / 2 && dx < (width + bar_width) / 2 {
+                // Center vertical bar
+                Some(primary)
+            } else {
+                None
+            };
+            
+            if let Some(c) = color {
                 let _ = gop.blt(BltOp::VideoFill {
-                    color,
+                    color: c,
+                    dest: (x + dx, y + dy),
+                    dims: (1, 1),
+                });
+            }
+        }
+    }
+}
+
+fn draw_letter_d_modern(gop: &mut GraphicsOutput, x: usize, y: usize, primary: BltPixel, accent: BltPixel) {
+    let width = 60;
+    let height = 70;
+    let thickness = 8;
+    
+    // Draw modern D shape
+    for dy in 0..height {
+        for dx in 0..width {
+            let color = if dx < thickness {
+                // Left vertical bar
+                Some(primary)
+            } else if dy < thickness || dy >= height - thickness {
+                // Top and bottom bars
+                if dx >= thickness && dx < width - 10 {
+                    Some(primary)
+                } else {
+                    None
+                }
+            } else if dx >= width - thickness {
+                // Right curved edge
+                Some(primary)
+            } else {
+                None
+            };
+            
+            if let Some(c) = color {
+                let _ = gop.blt(BltOp::VideoFill {
+                    color: c,
+                    dest: (x + dx, y + dy),
+                    dims: (1, 1),
+                });
+            }
+        }
+    }
+}
+
+fn draw_letter_e_modern(gop: &mut GraphicsOutput, x: usize, y: usize, primary: BltPixel, accent: BltPixel) {
+    let width = 55;
+    let height = 70;
+    let thickness = 8;
+    
+    // Draw clean E with three horizontal bars
+    for dy in 0..height {
+        for dx in 0..width {
+            let color = if dx < thickness {
+                // Left vertical bar
+                Some(primary)
+            } else if dy < thickness || dy >= height - thickness || 
+                     (dy >= height/2 - thickness/2 && dy < height/2 + thickness/2) {
+                // Top, middle, and bottom bars
+                Some(primary)
+            } else {
+                None
+            };
+            
+            if let Some(c) = color {
+                let _ = gop.blt(BltOp::VideoFill {
+                    color: c,
                     dest: (x + dx, y + dy),
                     dims: (1, 1),
                 });
@@ -384,291 +417,6 @@ fn display_ascii_logo() {
     log("            Operating System - Version 0.1.0");
     log("              UEFI Bootloader Starting...");
     log("");
-}
-
-/// Display a progress bar
-fn display_progress(current: usize, total: usize, message: &str) {
-    let progress_width = 40;
-    let filled = (current * progress_width) / total;
-    let empty = progress_width - filled;
-
-    let mut progress_bar = alloc::string::String::new();
-    progress_bar.push('[');
-    for _ in 0..filled {
-        progress_bar.push('█');
-    }
-    for _ in 0..empty {
-        progress_bar.push('░');
-    }
-    progress_bar.push(']');
-
-    let percentage = (current * 100) / total;
-
-    // Draw to serial (existing)
-    if let Some(mut st) = uefi::table::system_table_boot() {
-        let _ = st.stdout().write_str("\x1b[2K\r");
-        let _ = st.stdout().write_str("\x1b[1A\x1b[2K\r");
-        log_fmt(format_args!("{} {}% {}", progress_bar, percentage, message));
-        log("");
-    }
-
-    // Draw to graphics if available
-    if let Some(st) = uefi::table::system_table_boot() {
-        let bs = st.boot_services();
-        if let Ok(handle) = bs.get_handle_for_protocol::<GraphicsOutput>() {
-            if let Ok(mut gop) = bs.open_protocol_exclusive::<GraphicsOutput>(handle) {
-                draw_progress_bar(&mut *gop, current, total, message);
-            }
-        }
-    }
-}
-
-/// Update progress and display current operation
-fn update_progress(step: &mut usize, total: usize, message: &str) {
-    *step += 1;
-    display_progress(*step, total, message);
-}
-
-fn draw_progress_bar(gop: &mut GraphicsOutput, current: usize, total: usize, message: &str) {
-    let mode = gop.current_mode_info();
-    let (width, _height) = mode.resolution();
-    let layout = unsafe {
-        PROGRESS_LAYOUT.unwrap_or(ProgressLayout {
-            x: width / 6,
-            y: _height.saturating_sub(80),
-            width: width * 2 / 3,
-            height: 24,
-            text_y: _height.saturating_sub(110),
-        })
-    };
-
-    let bg = BltPixel::new(30, 30, 30);
-    let fill = BltPixel::new(30, 180, 50);
-    let border = BltPixel::new(80, 80, 80);
-    let text_color = BltPixel::new(220, 220, 220);
-
-    // Background and border
-    fill_rect(gop, layout.x, layout.y, layout.width, layout.height, bg);
-    fill_rect(gop, layout.x, layout.y, layout.width, 2, border);
-    fill_rect(
-        gop,
-        layout.x,
-        layout.y + layout.height - 2,
-        layout.width,
-        2,
-        border,
-    );
-    fill_rect(gop, layout.x, layout.y, 2, layout.height, border);
-    fill_rect(
-        gop,
-        layout.x + layout.width - 2,
-        layout.y,
-        2,
-        layout.height,
-        border,
-    );
-
-    // Fill bar
-    let inner_x = layout.x + 3;
-    let inner_y = layout.y + 3;
-    let inner_w = layout.width.saturating_sub(6);
-    let inner_h = layout.height.saturating_sub(6);
-    let filled_w = if total == 0 {
-        0
-    } else {
-        (inner_w * current.min(total)) / total
-    };
-    fill_rect(gop, inner_x, inner_y, inner_w, inner_h, bg);
-    if filled_w > 0 {
-        fill_rect(gop, inner_x, inner_y, filled_w, inner_h, fill);
-    }
-
-    // Render message and percentage
-    let pct = if total == 0 {
-        0
-    } else {
-        (current * 100) / total
-    };
-    let mut upper = String::new();
-    for ch in message.chars() {
-        upper.extend(ch.to_uppercase());
-    }
-    let msg = format!("{}% {}", pct, upper);
-    let max_chars = layout.width / 8;
-    let truncated = if msg.len() > max_chars {
-        &msg[..max_chars]
-    } else {
-        &msg
-    };
-    draw_text(gop, layout.x, layout.text_y, truncated, text_color, bg);
-}
-
-fn fill_rect(gop: &mut GraphicsOutput, x: usize, y: usize, w: usize, h: usize, color: BltPixel) {
-    for yy in y..y + h {
-        for xx in x..x + w {
-            let _ = gop.blt(BltOp::VideoFill {
-                color,
-                dest: (xx, yy),
-                dims: (1, 1),
-            });
-        }
-    }
-}
-
-fn draw_text(gop: &mut GraphicsOutput, x: usize, y: usize, text: &str, fg: BltPixel, bg: BltPixel) {
-    let mut cursor_x = x;
-    for ch in text.chars() {
-        draw_char(gop, cursor_x, y, ch, fg, bg);
-        cursor_x += 8;
-    }
-}
-
-fn draw_char(gop: &mut GraphicsOutput, x: usize, y: usize, ch: char, fg: BltPixel, bg: BltPixel) {
-    let glyph = glyph_for(ch);
-    for (row, bits) in glyph.iter().enumerate() {
-        for col in 0..5 {
-            let color = if (bits >> (4 - col)) & 1 == 1 { fg } else { bg };
-            let _ = gop.blt(BltOp::VideoFill {
-                color,
-                dest: (x + col, y + row),
-                dims: (1, 1),
-            });
-        }
-    }
-}
-
-fn glyph_for(ch: char) -> [u8; 7] {
-    match ch {
-        'A' => [
-            0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
-        ],
-        'B' => [
-            0b11110, 0b10001, 0b11110, 0b10001, 0b10001, 0b10001, 0b11110,
-        ],
-        'C' => [
-            0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110,
-        ],
-        'D' => [
-            0b11100, 0b10010, 0b10001, 0b10001, 0b10001, 0b10010, 0b11100,
-        ],
-        'E' => [
-            0b11111, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000, 0b11111,
-        ],
-        'F' => [
-            0b11111, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000, 0b10000,
-        ],
-        'G' => [
-            0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110,
-        ],
-        'H' => [
-            0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001, 0b10001,
-        ],
-        'I' => [
-            0b01110, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
-        ],
-        'J' => [
-            0b00001, 0b00001, 0b00001, 0b00001, 0b10001, 0b10001, 0b01110,
-        ],
-        'K' => [
-            0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001,
-        ],
-        'L' => [
-            0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111,
-        ],
-        'M' => [
-            0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001,
-        ],
-        'N' => [
-            0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001,
-        ],
-        'O' => [
-            0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
-        ],
-        'P' => [
-            0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000,
-        ],
-        'Q' => [
-            0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101,
-        ],
-        'R' => [
-            0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001,
-        ],
-        'S' => [
-            0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110,
-        ],
-        'T' => [
-            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
-        ],
-        'U' => [
-            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
-        ],
-        'V' => [
-            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100,
-        ],
-        'W' => [
-            0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b10101, 0b01010,
-        ],
-        'X' => [
-            0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001,
-        ],
-        'Y' => [
-            0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100,
-        ],
-        'Z' => [
-            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111,
-        ],
-        '0' => [
-            0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110,
-        ],
-        '1' => [
-            0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
-        ],
-        '2' => [
-            0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111,
-        ],
-        '3' => [
-            0b11110, 0b00001, 0b00001, 0b00110, 0b00001, 0b00001, 0b11110,
-        ],
-        '4' => [
-            0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010,
-        ],
-        '5' => [
-            0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b00001, 0b11110,
-        ],
-        '6' => [
-            0b01110, 0b10000, 0b11110, 0b10001, 0b10001, 0b10001, 0b01110,
-        ],
-        '7' => [
-            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b10000,
-        ],
-        '8' => [
-            0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110,
-        ],
-        '9' => [
-            0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b01110,
-        ],
-        ':' => [
-            0b00000, 0b00100, 0b00000, 0b00000, 0b00000, 0b00100, 0b00000,
-        ],
-        '.' => [
-            0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00100, 0b00000,
-        ],
-        '-' => [
-            0b00000, 0b00000, 0b00000, 0b01110, 0b00000, 0b00000, 0b00000,
-        ],
-        '/' => [
-            0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b00000, 0b00000,
-        ],
-        ' ' => [
-            0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000,
-        ],
-        '_' => [
-            0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b11111,
-        ],
-        _ => [
-            0b11111, 0b10001, 0b10101, 0b10001, 0b10101, 0b10001, 0b11111,
-        ],
-    }
 }
 
 /// Load the kernel file from the EFI system partition
