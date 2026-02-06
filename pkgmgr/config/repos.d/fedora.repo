@@ -1,0 +1,61 @@
+# Fedora 39 Source Repository
+[fedora-source]
+name=Fedora 39 - Source
+# Primary mirror
+baseurl=https://download.fedoraproject.org/pub/fedora/linux/releases/39/Everything/source/tree/
+# Mirror list (commented out, use if primary is slow)
+# metalink=https://mirrors.fedoraproject.org/metalink?repo=fedora-source-39&arch=source
+enabled=1
+gpgcheck=0
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-39
+priority=10
+type=rpm-src
+
+[fedora-updates-source]
+name=Fedora 39 - Updates Source  
+baseurl=https://download.fedoraproject.org/pub/fedora/linux/updates/39/Everything/source/tree/
+# metalink=https://mirrors.fedoraproject.org/metalink?repo=updates-released-source-f39&arch=source
+enabled=1
+gpgcheck=0
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-39
+priority=20
+type=rpm-src
+
+# Fedora 40 Source Repository (optional, disabled by default)
+[fedora-40-source]
+name=Fedora 40 - Source
+baseurl=https://download.fedoraproject.org/pub/fedora/linux/releases/40/Everything/source/tree/
+enabled=0
+gpgcheck=0
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-40
+priority=30
+type=rpm-src
+
+[fedora-40-updates-source]
+name=Fedora 40 - Updates Source
+baseurl=https://download.fedoraproject.org/pub/fedora/linux/updates/40/Everything/source/tree/
+enabled=0
+gpgcheck=0
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-40
+priority=40
+type=rpm-src
+
+# EPEL 9 Source Repository (Enterprise Linux packages)
+[epel-9-source]
+name=Extra Packages for Enterprise Linux 9 - Source
+baseurl=https://download.fedoraproject.org/pub/epel/9/Everything/source/tree/
+enabled=0
+gpgcheck=0
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-EPEL-9
+priority=50
+type=rpm-src
+
+# Local OXIDE repository (for custom-built packages)
+# Note: Update baseurl to match your pkgmgr/repo/packages path
+[oxide-local]
+name=OXIDE Local Repository
+baseurl=file:///var/lib/oxide/packages
+enabled=0
+gpgcheck=0
+priority=1
+type=opkg

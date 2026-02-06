@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""
+repo-sync - Sync Fedora repository metadata
+
+Standalone tool for syncing repository metadata
+"""
+
+import sys
+import argparse
+from pathlib import Path
+
+# Add lib directory to path
+PKGMGR_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PKGMGR_ROOT / 'lib'))
+
+from fedora import FedoraRepoManager
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Sync Fedora repository metadata')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                       help='Verbose output')
+    
+    args = parser.parse_args()
+    
+    config_dir = PKGMGR_ROOT / 'config'
+    cache_dir = PKGMGR_ROOT / 'cache'
+    
+    repo_mgr = FedoraRepoManager(str(config_dir))
+    
+    print("Syncing repository metadata...")
+    print()
+    
+    synced = repo_mgr.sync_all(str(cache_dir))
+    
+    print()
+    print(f"Synced {synced} repositories")
+    
+    # Show package counts
+    for repo in repo_mgr.repos:
+        if repo.enabled and repo.packages_cache:
+            print(f"  {repo.name}: {len(repo.packages_cache)} packages")
+    
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

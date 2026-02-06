@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""
+srpm-build - Build SRPMs for OXIDE
+
+Standalone tool for building source RPMs into OXIDE packages
+"""
+
+import sys
+import argparse
+from pathlib import Path
+
+# Add lib directory to path
+PKGMGR_ROOT = Path(__file__).parent.parent
+REPO_ROOT = PKGMGR_ROOT.parent
+sys.path.insert(0, str(PKGMGR_ROOT / 'lib'))
+
+from builder import BuildConfig, PackageBuilder
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Build SRPM for OXIDE')
+    parser.add_argument('srpm', help='Path to SRPM file')
+    parser.add_argument('-o', '--output', help='Output directory',
+                       default=str(PKGMGR_ROOT / 'repo' / 'packages'))
+    parser.add_argument('-e', '--extract-dir', help='Extraction directory',
+                       default=str(PKGMGR_ROOT / 'cache' / 'builds'))
+    parser.add_argument('-j', '--jobs', type=int, help='Number of make jobs')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                       help='Verbose output')
+    
+    args = parser.parse_args()
+    
+    if not Path(args.srpm).exists():
+        print(f"ERROR: SRPM not found: {args.srpm}")
+        return 1
+    
+    # Load config
+    config_file = PKGMGR_ROOT / 'config' / 'build.conf'
+    build_config = BuildConfig(str(config_file), str(REPO_ROOT))
+    
+    if args.jobs:
+        build_config.make_jobs = str(args.jobs)
+    
+    # Build
+    builder = PackageBuilder(build_config)
+    
+    print(f"Building {args.srpm}...")
+    print()
+    
+    pkg_file = builder.build_srpm(args.srpm, args.output, args.extract_dir)
+    
+    if pkg_file:
+        print()
+        print("=" * 60)
+        print("SUCCESS!")
+        print(f"Package: {pkg_file}")
+        print("=" * 60)
+        return 0
+    else:
+        print()
+        print("=" * 60)
+        print("BUILD FAILED")
+        print("=" * 60)
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

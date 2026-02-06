@@ -1,0 +1,379 @@
+#!/usr/bin/env python3
+"""
+oxdnf - OXIDE Package Manager
+
+DNF-like package manager for OXIDE OS that:
+- Downloads Fedora source RPMs
+- Cross-compiles them for OXIDE
+- Manages local package repository
+"""
+
+import sys
+import os
+import argparse
+from pathlib import Path
+
+# Add lib directory to path
+PKGMGR_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PKGMGR_ROOT / 'lib'))
+
+# Determine repo root
+REPO_ROOT = PKGMGR_ROOT.parent
+
+from fedora import FedoraRepoManager
+from builder import BuildConfig, PackageBuilder
+from repository import LocalRepository, InstalledPackages
+from resolver import DependencyResolver
+
+
+def cmd_search(args, repo_mgr, local_repo):
+    """Search for packages"""
+    print(f"Searching for: {args.query}")
+    print()
+    
+    # Search Fedora repos
+    fedora_results = repo_mgr.search(args.query)
+    
+    if fedora_results:
+        print("Available from Fedora:")
+        print(f"{'Name':<30} {'Version':<15} {'Repo':<20}")
+        print("-" * 70)
+        for pkg in fedora_results[:20]:  # Limit to 20 results
+            print(f"{pkg['name']:<30} {pkg['version']:<15} {pkg['repo']:<20}")
+        
+        if len(fedora_results) > 20:
+            print(f"\n... and {len(fedora_results) - 20} more")
+    
+    # Search local repo
+    local_results = local_repo.search(args.query)
+    
+    if local_results:
+        print("\n\nInstalled locally:")
+        print(f"{'Name':<30} {'Version':<15}")
+        print("-" * 50)
+        for pkg in local_results:
+            print(f"{pkg['name']:<30} {pkg['version']:<15}")
+    
+    if not fedora_results and not local_results:
+        print("No packages found.")
+
+
+def cmd_info(args, repo_mgr, local_repo):
+    """Show package information"""
+    package_name = args.package
+    
+    # Check local first
+    local_info = local_repo.get_package_info(package_name)
+    if local_info:
+        print("Package:", local_info['name'])
+        print("Version:", local_info['version'])
+        print("Release:", local_info['release'])
+        print("Arch:", local_info.get('arch', 'x86_64'))
+        print("Summary:", local_info.get('summary', 'N/A'))
+        print("License:", local_info.get('license', 'N/A'))
+        print("URL:", local_info.get('url', 'N/A'))
+        print("Build Date:", local_info.get('builddate', 'N/A'))
+        print("\nRequires:")
+        for req in local_info.get('requires', []):
+            print(f"  - {req}")
+        return
+    
+    # Check Fedora repos
+    result = repo_mgr.get_package(package_name)
+    if result:
+        repo, pkg_info = result
+        print("Package:", pkg_info['name'])
+        print("Version:", pkg_info['version'])
+        print("Release:", pkg_info['release'])
+        print("Repository:", pkg_info['repo'])
+        print("Summary:", pkg_info.get('summary', 'N/A'))
+        print("Location:", pkg_info.get('location', 'N/A'))
+        print("\nTo build: oxdnf buildsrpm", package_name)
+        return
+    
+    print(f"Package not found: {package_name}")
+
+
+def cmd_repo_sync(args, repo_mgr):
+    """Sync repository metadata"""
+    print("Synchronizing repository metadata...")
+    
+    cache_dir = PKGMGR_ROOT / 'cache'
+    synced = repo_mgr.sync_all(str(cache_dir))
+    
+    print(f"\nSynced {synced} repositories")
+
+
+def cmd_repolist(args, repo_mgr):
+    """List configured repositories"""
+    repos = repo_mgr.list_repos()
+    
+    print(f"{'Repo ID':<25} {'Repo Name':<40} {'Status':<10}")
+    print("-" * 80)
+    
+    for repo in repos:
+        status = 'enabled' if repo.enabled else 'disabled'
+        print(f"{repo.name:<25} {repo.display_name:<40} {status:<10}")
+
+
+def cmd_buildsrpm(args, repo_mgr):
+    """Build package from SRPM"""
+    package_name = args.package
+    
+    print(f"Building package: {package_name}")
+    print()
+    
+    # Download SRPM
+    print("Step 1: Downloading SRPM...")
+    srpm_cache = PKGMGR_ROOT / 'cache' / 'srpms'
+    srpm_file = repo_mgr.download_srpm(package_name, str(srpm_cache))
+    
+    if not srpm_file:
+        print("ERROR: Failed to download SRPM")
+        return 1
+    
+    print(f"Downloaded: {srpm_file}")
+    print()
+    
+    # Build
+    print("Step 2: Building package...")
+    config_file = PKGMGR_ROOT / 'config' / 'build.conf'
+    build_config = BuildConfig(str(config_file), str(REPO_ROOT))
+    builder = PackageBuilder(build_config)
+    
+    output_dir = PKGMGR_ROOT / 'repo' / 'packages'
+    extract_dir = PKGMGR_ROOT / 'cache' / 'builds'
+    
+    pkg_file = builder.build_srpm(srpm_file, str(output_dir), str(extract_dir))
+    
+    if pkg_file:
+        print()
+        print("=" * 60)
+        print("SUCCESS!")
+        print(f"Package created: {pkg_file}")
+        print("=" * 60)
+        
+        # Add to local repo
+        local_repo = LocalRepository(str(PKGMGR_ROOT / 'repo'))
+        local_repo.add_package(pkg_file)
+        
+        return 0
+    else:
+        print()
+        print("=" * 60)
+        print("BUILD FAILED")
+        print("=" * 60)
+        return 1
+
+
+def cmd_install(args):
+    """Install a package"""
+    package_name = args.package
+    install_root = args.installroot or '/'
+    
+    # Find package in local repo
+    local_repo = LocalRepository(str(PKGMGR_ROOT / 'repo'))
+    pkg_info = local_repo.get_package_info(package_name)
+    
+    if not pkg_info:
+        print(f"Package not found in local repository: {package_name}")
+        print("Try: oxdnf buildsrpm", package_name)
+        return 1
+    
+    # Find package file
+    pkg_id = f"{pkg_info['name']}-{pkg_info['version']}-{pkg_info['release']}"
+    pkg_file = None
+    
+    for pid, pinfo in local_repo.db['packages'].items():
+        if pinfo['metadata']['name'] == package_name:
+            pkg_file = pinfo['file']
+            break
+    
+    if not pkg_file:
+        print("ERROR: Package file not found")
+        return 1
+    
+    # Install
+    installed = InstalledPackages()
+    
+    if installed.is_installed(package_name):
+        print(f"Package already installed: {package_name}")
+        return 0
+    
+    print(f"Installing {package_name}...")
+    
+    if installed.install(pkg_file, install_root):
+        print("Installation complete!")
+        return 0
+    else:
+        print("Installation failed")
+        return 1
+
+
+def cmd_remove(args):
+    """Remove a package"""
+    package_name = args.package
+    install_root = args.installroot or '/'
+    
+    installed = InstalledPackages()
+    
+    if not installed.is_installed(package_name):
+        print(f"Package not installed: {package_name}")
+        return 1
+    
+    print(f"Removing {package_name}...")
+    
+    if installed.remove(package_name, install_root):
+        print("Package removed")
+        return 0
+    else:
+        print("Removal failed")
+        return 1
+
+
+def cmd_list(args):
+    """List packages"""
+    if args.list_type == 'installed':
+        installed = InstalledPackages()
+        packages = installed.list_installed()
+        
+        print(f"{'Name':<30} {'Version':<15} {'Installed':<20}")
+        print("-" * 70)
+        for pkg in packages:
+            print(f"{pkg['name']:<30} {pkg['version']:<15} {pkg['installed']:<20}")
+    
+    elif args.list_type == 'available':
+        local_repo = LocalRepository(str(PKGMGR_ROOT / 'repo'))
+        packages = local_repo.list_packages()
+        
+        print(f"{'Name':<30} {'Version':<15} {'Summary':<40}")
+        print("-" * 90)
+        for pkg in packages:
+            summary = pkg.get('summary', '')[:38]
+            print(f"{pkg['name']:<30} {pkg['version']:<15} {summary:<40}")
+
+
+def cmd_clean(args):
+    """Clean cache"""
+    cache_dir = PKGMGR_ROOT / 'cache'
+    
+    if args.clean_type == 'all':
+        # Clean everything
+        for subdir in ['srpms', 'extracted', 'builds']:
+            target = cache_dir / subdir
+            if target.exists():
+                import shutil
+                shutil.rmtree(target)
+                target.mkdir()
+        print("Cache cleaned")
+    
+    elif args.clean_type == 'srpms':
+        target = cache_dir / 'srpms'
+        if target.exists():
+            import shutil
+            shutil.rmtree(target)
+            target.mkdir()
+        print("SRPM cache cleaned")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='oxdnf - OXIDE Package Manager',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  oxdnf search bash
+  oxdnf info bash
+  oxdnf buildsrpm bash
+  oxdnf install bash
+  oxdnf list installed
+  oxdnf repo-sync
+        """
+    )
+    
+    subparsers = parser.add_subparsers(dest='command', help='Commands')
+    
+    # search
+    parser_search = subparsers.add_parser('search', help='Search for packages')
+    parser_search.add_argument('query', help='Search query')
+    
+    # info
+    parser_info = subparsers.add_parser('info', help='Show package information')
+    parser_info.add_argument('package', help='Package name')
+    
+    # repo-sync
+    parser_sync = subparsers.add_parser('repo-sync', help='Sync repository metadata')
+    
+    # repolist
+    parser_repolist = subparsers.add_parser('repolist', help='List repositories')
+    
+    # buildsrpm
+    parser_build = subparsers.add_parser('buildsrpm', help='Build package from SRPM')
+    parser_build.add_argument('package', help='Package name')
+    
+    # install
+    parser_install = subparsers.add_parser('install', help='Install a package')
+    parser_install.add_argument('package', help='Package name')
+    parser_install.add_argument('--installroot', help='Install root directory')
+    
+    # remove
+    parser_remove = subparsers.add_parser('remove', help='Remove a package')
+    parser_remove.add_argument('package', help='Package name')
+    parser_remove.add_argument('--installroot', help='Install root directory')
+    
+    # list
+    parser_list = subparsers.add_parser('list', help='List packages')
+    parser_list.add_argument('list_type', choices=['installed', 'available'],
+                            help='What to list')
+    
+    # clean
+    parser_clean = subparsers.add_parser('clean', help='Clean cache')
+    parser_clean.add_argument('clean_type', choices=['all', 'srpms'],
+                             default='all', nargs='?', help='What to clean')
+    
+    args = parser.parse_args()
+    
+    if not args.command:
+        parser.print_help()
+        return 1
+    
+    # Initialize
+    config_dir = PKGMGR_ROOT / 'config'
+    repo_mgr = FedoraRepoManager(str(config_dir))
+    local_repo = LocalRepository(str(PKGMGR_ROOT / 'repo'))
+    
+    # Execute command
+    try:
+        if args.command == 'search':
+            return cmd_search(args, repo_mgr, local_repo) or 0
+        elif args.command == 'info':
+            return cmd_info(args, repo_mgr, local_repo) or 0
+        elif args.command == 'repo-sync':
+            return cmd_repo_sync(args, repo_mgr) or 0
+        elif args.command == 'repolist':
+            return cmd_repolist(args, repo_mgr) or 0
+        elif args.command == 'buildsrpm':
+            return cmd_buildsrpm(args, repo_mgr)
+        elif args.command == 'install':
+            return cmd_install(args)
+        elif args.command == 'remove':
+            return cmd_remove(args)
+        elif args.command == 'list':
+            return cmd_list(args) or 0
+        elif args.command == 'clean':
+            return cmd_clean(args) or 0
+    except KeyboardInterrupt:
+        print("\n\nInterrupted by user")
+        return 130
+    except Exception as e:
+        print(f"\nERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
+
+
+# — NeonRoot: "Package management done right... because even a cyberpunk OS needs its dependencies sorted."
