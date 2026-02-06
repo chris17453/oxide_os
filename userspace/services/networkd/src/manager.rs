@@ -286,6 +286,10 @@ impl AdapterManager {
     }
 
     /// Configure adapter using DHCP
+    ///
+    /// —ShadePacket: First tries syscall to trigger kernel DHCP, then reads the
+    /// lease file written by the kernel. This allows recovery from boot DHCP
+    /// timeout and proper retry logic.
     fn configure_dhcp(&mut self, index: usize) -> bool {
         if index >= self.adapters.len() {
             return false;
@@ -293,10 +297,22 @@ impl AdapterManager {
 
         let name = self.adapters[index].name.clone();
 
-        // ShadePacket: Check for existing DHCP lease in /var/lib/dhcp/<iface>.lease
+        // —ShadePacket: Step 1 - Try to trigger DHCP via syscall
+        // This handles the case where boot DHCP failed or network wasn't ready
+        log_adapter(&name, "Requesting DHCP via syscall");
+        let result = syscall::dhcp_request(&name);
+
+        if result == 0 {
+            log_adapter(&name, "DHCP syscall succeeded");
+        } else {
+            // —ShadePacket: Syscall failed, but lease file might exist from boot
+            log_adapter(&name, "DHCP syscall failed, checking lease file");
+        }
+
+        // —ShadePacket: Step 2 - Read the lease file (kernel writes it on success)
         let lease_path = format_dhcp_lease_path(&name);
         let fd = open2(&lease_path, O_RDONLY);
-        
+
         if fd < 0 {
             log_adapter(&name, "No DHCP lease file found");
             return false;
@@ -351,7 +367,7 @@ impl AdapterManager {
             if let Some(addr) = addr {
                 let adapter = &mut self.adapters[index];
                 adapter.set_ipv4(addr, netmask.unwrap_or([255, 255, 255, 0]));
-                
+
                 if let Some(gw) = gateway {
                     adapter.set_gateway(gw);
                 }

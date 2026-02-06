@@ -324,6 +324,10 @@ impl TcpIpStack {
                     icmp_packet.sequence,
                     &icmp_packet.data,
                 )?;
+            } else if icmp_packet.icmp_type == icmp::ICMP_ECHO_REPLY {
+                // —ShadePacket: Buffer the reply for raw ICMP sockets
+                // This allows userspace ping to receive responses
+                buffer_icmp_reply(src_ip, payload);
             }
         }
         Ok(())
@@ -489,6 +493,7 @@ impl TcpIpStack {
     }
 
     /// Resolve IP to MAC address
+    /// —ShadePacket: Real network stacks wait for ARP resolution, so do we now
     fn resolve_mac(&self, ip: Ipv4Addr) -> NetResult<MacAddress> {
         // Check cache first
         if let Some(mac) = self.arp_cache.lookup(ip) {
@@ -500,10 +505,43 @@ impl TcpIpStack {
             return Ok(MacAddress::BROADCAST);
         }
 
-        // Send ARP request and wait
-        self.send_arp_request(ip)?;
+        // —ShadePacket: ARP resolution with retry loop
+        // Send ARP request and poll for reply, like a real network stack
+        // Using iteration count instead of time to avoid dependencies
+        const ARP_MAX_ATTEMPTS: u32 = 3;
+        const POLLS_PER_ATTEMPT: u32 = 5000; // Poll ~5000 times per attempt
+        const SPINS_PER_POLL: u32 = 1000; // Spin loop iterations between polls
 
-        // For now, return error (real implementation would wait/retry)
+        for attempt in 0..ARP_MAX_ATTEMPTS {
+            // Send ARP request
+            let _ = self.send_arp_request(ip);
+
+            // Poll for ARP reply
+            for _ in 0..POLLS_PER_ATTEMPT {
+                // Check if already resolved
+                if let Some(mac) = self.arp_cache.lookup(ip) {
+                    return Ok(mac);
+                }
+
+                // Poll for incoming packets (including ARP replies)
+                let mut buf = [0u8; 1536];
+                if let Ok(Some(len)) = self.interface.device.receive(&mut buf) {
+                    let _ = self.process_packet(&buf[..len]);
+
+                    // Check again after processing
+                    if let Some(mac) = self.arp_cache.lookup(ip) {
+                        return Ok(mac);
+                    }
+                }
+
+                // Brief spin to avoid hammering the device
+                for _ in 0..SPINS_PER_POLL {
+                    core::hint::spin_loop();
+                }
+            }
+        }
+
+        // —ShadePacket: All attempts exhausted, host truly unreachable
         Err(NetError::HostUnreachable)
     }
 
@@ -565,10 +603,73 @@ impl TcpIpStack {
 
         Ok(socket)
     }
+
+    /// Get TCP connection by ID
+    /// —ShadePacket: Used by syscall layer to access connection for send/recv
+    pub fn get_tcp_connection(&self, conn_id: u32) -> Option<Arc<TcpConnection>> {
+        self.tcp_connections.lock().get(&conn_id).cloned()
+    }
+
+    /// Transmit pending segments for a TCP connection
+    /// —ShadePacket: Called after send() to actually transmit the queued segments
+    pub fn transmit_tcp_segments(&self, conn: &TcpConnection) -> NetResult<()> {
+        let segments = conn.dequeue_segments();
+        for segment_bytes in segments {
+            self.send_ipv4_packet(conn.remote_ip, IpProtocol::Tcp, &segment_bytes)?;
+        }
+        Ok(())
+    }
 }
 
 /// Global TCP/IP stack instance
 static TCPIP_STACK: Mutex<Option<Arc<TcpIpStack>>> = Mutex::new(None);
+
+// ============================================================================
+// ICMP Reply Buffer for Raw Sockets
+// ============================================================================
+
+/// Buffered ICMP packet (source IP + raw ICMP data)
+pub struct IcmpReply {
+    pub src_ip: Ipv4Addr,
+    pub data: Vec<u8>,
+}
+
+/// Buffer for incoming ICMP replies (for raw socket receive)
+/// —ShadePacket: The TCP/IP stack buffers ICMP echo replies here so that
+/// raw ICMP sockets can receive them via sys_recv()
+static ICMP_REPLY_BUFFER: Mutex<Vec<IcmpReply>> = Mutex::new(Vec::new());
+
+/// Maximum buffered ICMP replies
+const MAX_ICMP_REPLIES: usize = 64;
+
+/// Get a pending ICMP reply (for raw socket receive)
+///
+/// Returns the oldest buffered ICMP reply, or None if buffer is empty
+pub fn get_icmp_reply() -> Option<IcmpReply> {
+    let mut buf = ICMP_REPLY_BUFFER.lock();
+    if buf.is_empty() {
+        None
+    } else {
+        Some(buf.remove(0))
+    }
+}
+
+/// Check if there are pending ICMP replies
+pub fn has_icmp_replies() -> bool {
+    !ICMP_REPLY_BUFFER.lock().is_empty()
+}
+
+/// Buffer an incoming ICMP reply
+fn buffer_icmp_reply(src_ip: Ipv4Addr, data: &[u8]) {
+    let mut buf = ICMP_REPLY_BUFFER.lock();
+    if buf.len() < MAX_ICMP_REPLIES {
+        buf.push(IcmpReply {
+            src_ip,
+            data: data.to_vec(),
+        });
+    }
+    // —ShadePacket: Drop oldest if full (could also drop new, but FIFO is simpler)
+}
 
 /// Initialize the TCP/IP stack
 pub fn init(interface: Arc<NetworkInterface>) {

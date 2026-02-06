@@ -49,6 +49,11 @@ static NEXT_EPHEMERAL_PORT: Mutex<u16> = Mutex::new(49152);
 /// Protocol: 0=any, 1=ICMP, 6=TCP, 17=UDP, 58=ICMPv6
 static LOOPBACK_REGISTRY: Mutex<BTreeMap<(u16, u8), i32>> = Mutex::new(BTreeMap::new());
 
+/// Non-loopback TCP connections
+/// —ShadePacket: Maps socket fd -> TCP connection ID in the tcpip stack
+/// This allows send/recv to use the real TCP/IP stack for external connections
+static TCP_CONNECTIONS: Mutex<BTreeMap<i32, u32>> = Mutex::new(BTreeMap::new());
+
 /// Serial debug print helper (goes to serial port)
 #[allow(dead_code)]
 fn serial_print(msg: &str) {
@@ -698,11 +703,71 @@ pub fn sys_connect(fd: i32, addr: u64, addrlen: u32) -> i64 {
         return loopback_connect(fd, socket, socket_addr);
     }
 
-    // Non-loopback: use standard connect (stub for now)
-    match socket.connect(socket_addr) {
-        Ok(()) => 0,
-        Err(e) => net_error_to_errno(e),
+    // —ShadePacket: Non-loopback TCP - use real TCP/IP stack
+    if socket.sock_type == SocketType::Stream {
+        serial_print("connect: non-loopback TCP, using TCP/IP stack");
+
+        if let Some(stack) = tcpip::stack() {
+            // Initiate TCP connection
+            match stack.tcp_connect(socket_addr) {
+                Ok(conn) => {
+                    let conn_id = conn.id;
+                    serial_print_num("connect: TCP connection initiated, id=", conn_id as i64);
+
+                    // Store mapping from socket fd to TCP connection id
+                    TCP_CONNECTIONS.lock().insert(fd, conn_id);
+
+                    // —ShadePacket: Wait for connection to establish (3-way handshake)
+                    // Poll until connected or timeout
+                    const MAX_POLLS: u32 = 10000;
+                    const SPINS_PER_POLL: u32 = 1000;
+
+                    for _ in 0..MAX_POLLS {
+                        // Poll network stack
+                        let _ = tcpip::poll();
+
+                        // Check connection state
+                        if conn.is_established() {
+                            serial_print("connect: TCP connection established");
+                            // Update socket state
+                            *socket.state.lock() = SocketState::Established;
+                            *socket.remote_addr.lock() = Some(socket_addr);
+                            return 0;
+                        }
+
+                        if conn.is_closed() || conn.is_reset() {
+                            serial_print("connect: TCP connection failed");
+                            TCP_CONNECTIONS.lock().remove(&fd);
+                            return errno::ECONNREFUSED;
+                        }
+
+                        // Brief spin
+                        for _ in 0..SPINS_PER_POLL {
+                            core::hint::spin_loop();
+                        }
+                    }
+
+                    // Timeout
+                    serial_print("connect: TCP connection timeout");
+                    TCP_CONNECTIONS.lock().remove(&fd);
+                    return errno::ETIMEDOUT;
+                }
+                Err(e) => {
+                    serial_print("connect: tcp_connect failed");
+                    return net_error_to_errno(e);
+                }
+            }
+        } else {
+            serial_print("connect: no TCP/IP stack");
+            return errno::ENETDOWN;
+        }
     }
+
+    // Non-loopback non-TCP: use standard connect (for RAW sockets, etc.)
+    // Just store the remote address so send() knows where to send
+    *socket.remote_addr.lock() = Some(socket_addr);
+    *socket.state.lock() = SocketState::Established;
+    0
 }
 
 /// Handle loopback TCP connection
@@ -804,7 +869,7 @@ pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
 
     let data = unsafe { core::slice::from_raw_parts(buf as *const u8, len) };
 
-    // Handle raw ICMP socket loopback using unified system
+    // Handle raw ICMP socket - loopback or real network
     if socket.sock_type == SocketType::Raw && socket.protocol == SocketProtocol::Icmp {
         serial_print("send: RAW ICMP socket detected");
         let remote = socket.remote_addr.lock();
@@ -834,6 +899,48 @@ pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
                     core::arch::asm!("clac", options(nomem, nostack));
                 }
                 return len as i64;
+            } else {
+                // —ShadePacket: Non-loopback ICMP - route through TCP/IP stack
+                // This is the path for pinging external IPs like 8.8.8.8
+                serial_print("send: non-loopback ICMP, using TCP/IP stack");
+
+                let dst_ip = match addr.ip {
+                    IpAddr::V4(ip) => ip,
+                    IpAddr::V6(_) => {
+                        unsafe {
+                            core::arch::asm!("clac", options(nomem, nostack));
+                        }
+                        return errno::EAFNOSUPPORT;
+                    }
+                };
+
+                // Get the TCP/IP stack and send via it
+                if let Some(stack) = tcpip::stack() {
+                    // —ShadePacket: The data is already a complete ICMP packet from userspace
+                    // We just need to wrap it in IP and send it out
+                    match stack.send_ipv4_packet(dst_ip, tcpip::IpProtocol::Icmp, data) {
+                        Ok(()) => {
+                            serial_print("send: ICMP packet sent successfully");
+                            unsafe {
+                                core::arch::asm!("clac", options(nomem, nostack));
+                            }
+                            return len as i64;
+                        }
+                        Err(e) => {
+                            serial_print("send: ICMP send failed");
+                            unsafe {
+                                core::arch::asm!("clac", options(nomem, nostack));
+                            }
+                            return net_error_to_errno(e);
+                        }
+                    }
+                } else {
+                    serial_print("send: no TCP/IP stack available");
+                    unsafe {
+                        core::arch::asm!("clac", options(nomem, nostack));
+                    }
+                    return errno::ENETDOWN;
+                }
             }
         } else {
             serial_print("send: no remote addr set");
@@ -878,7 +985,40 @@ pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
         return len as i64;
     }
 
-    // Non-loopback: use standard socket send (stub for now)
+    // —ShadePacket: Check for non-loopback TCP connection
+    if socket.sock_type == SocketType::Stream {
+        if let Some(conn_id) = TCP_CONNECTIONS.lock().get(&fd).copied() {
+            serial_print_num("send: using TCP connection id=", conn_id as i64);
+            if let Some(stack) = tcpip::stack() {
+                if let Some(conn) = stack.get_tcp_connection(conn_id) {
+                    // Send data through TCP connection
+                    match conn.send(data) {
+                        Ok(n) => {
+                            // Transmit any queued segments
+                            let _ = stack.transmit_tcp_segments(&conn);
+                            unsafe {
+                                core::arch::asm!("clac", options(nomem, nostack));
+                            }
+                            return n as i64;
+                        }
+                        Err(e) => {
+                            unsafe {
+                                core::arch::asm!("clac", options(nomem, nostack));
+                            }
+                            return net_error_to_errno(e);
+                        }
+                    }
+                }
+            }
+            // Connection not found in stack
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
+            return errno::ENOTCONN;
+        }
+    }
+
+    // Non-loopback non-TCP: use standard socket send (stub for now)
     // Handle MSG_DONTWAIT
     let was_nonblocking = socket.is_nonblocking();
     if flags & 0x40 != 0 && !was_nonblocking {
@@ -935,6 +1075,102 @@ pub fn sys_recv(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
     }
 
     let data = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len) };
+
+    // —ShadePacket: Check for buffered ICMP replies from TCP/IP stack (non-loopback)
+    // Raw ICMP sockets receive replies here when pinging external IPs
+    if socket.sock_type == SocketType::Raw && socket.protocol == SocketProtocol::Icmp {
+        if let Some(reply) = tcpip::get_icmp_reply() {
+            serial_print("recv: got ICMP reply from buffer");
+            // —ShadePacket: Build IP+ICMP packet like loopback path does
+            // Ping expects raw socket to return IP header + ICMP data
+            let mut packet = Vec::new();
+
+            // Build minimal IP header (20 bytes)
+            packet.push(0x45); // version=4, IHL=5 (20 bytes)
+            packet.push(0x00); // TOS
+            let total_len = (20 + reply.data.len()) as u16;
+            packet.extend_from_slice(&total_len.to_be_bytes());
+            packet.extend_from_slice(&[0x00, 0x00]); // ID
+            packet.extend_from_slice(&[0x00, 0x00]); // Flags + Fragment offset
+            packet.push(64); // TTL
+            packet.push(1); // Protocol = ICMP
+            packet.extend_from_slice(&[0x00, 0x00]); // Checksum placeholder
+
+            // Source IP (from reply)
+            let src_bytes = reply.src_ip.as_bytes();
+            packet.extend_from_slice(src_bytes);
+
+            // Dest IP (use our local IP or 0.0.0.0)
+            if let Some(stack) = tcpip::stack() {
+                if let Some(local_ip) = stack.interface().ipv4_addr() {
+                    let local_bytes = local_ip.as_bytes();
+                    packet.extend_from_slice(local_bytes);
+                } else {
+                    packet.extend_from_slice(&[0, 0, 0, 0]);
+                }
+            } else {
+                packet.extend_from_slice(&[0, 0, 0, 0]);
+            }
+
+            // Calculate IP header checksum
+            let ip_checksum = internet_checksum(&packet[..20]);
+            packet[10] = (ip_checksum >> 8) as u8;
+            packet[11] = ip_checksum as u8;
+
+            // Append ICMP data
+            packet.extend_from_slice(&reply.data);
+
+            // Copy to user buffer
+            let copy_len = data.len().min(packet.len());
+            data[..copy_len].copy_from_slice(&packet[..copy_len]);
+
+            serial_print_num("recv: returning ICMP packet len=", copy_len as i64);
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
+            return copy_len as i64;
+        }
+    }
+
+    // —ShadePacket: Check for non-loopback TCP connection
+    if socket.sock_type == SocketType::Stream {
+        if let Some(conn_id) = TCP_CONNECTIONS.lock().get(&fd).copied() {
+            if let Some(stack) = tcpip::stack() {
+                if let Some(conn) = stack.get_tcp_connection(conn_id) {
+                    // Receive data from TCP connection
+                    match conn.recv(data) {
+                        Ok(n) if n > 0 => {
+                            serial_print_num("recv: TCP got bytes=", n as i64);
+                            unsafe {
+                                core::arch::asm!("clac", options(nomem, nostack));
+                            }
+                            return n as i64;
+                        }
+                        Ok(_) => {
+                            // No data available, check if connection closed
+                            if conn.is_closed() {
+                                unsafe {
+                                    core::arch::asm!("clac", options(nomem, nostack));
+                                }
+                                return 0; // EOF
+                            }
+                            // Fall through to return EAGAIN
+                        }
+                        Err(_) => {
+                            // Connection error
+                            if conn.is_reset() {
+                                unsafe {
+                                    core::arch::asm!("clac", options(nomem, nostack));
+                                }
+                                return errno::ECONNRESET;
+                            }
+                            // Fall through to return EAGAIN
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // First check the unified loopback queue (for all loopback-delivered data)
     if let Some((read_len, _src_addr)) = receive_loopback_packet(&socket, data) {
@@ -1351,6 +1587,18 @@ pub fn close_socket(fd: i32) -> i64 {
     // -- ShadePacket: Unified loopback registry handles all socket type cleanup
     unregister_loopback_socket_by_fd(fd);
 
+    // —ShadePacket: Clean up non-loopback TCP connection
+    if let Some(conn_id) = TCP_CONNECTIONS.lock().remove(&fd) {
+        // Close the TCP connection in the stack
+        if let Some(stack) = tcpip::stack() {
+            if let Some(conn) = stack.get_tcp_connection(conn_id) {
+                let _ = conn.close();
+                // Transmit FIN segment
+                let _ = stack.transmit_tcp_segments(&conn);
+            }
+        }
+    }
+
     match remove_socket(fd) {
         Some(socket) => {
             let _ = socket.close();
@@ -1496,4 +1744,182 @@ pub fn sys_socketpair(_domain: i32, _socktype: i32, _protocol: i32, sv_ptr: u64)
     // This is a simplification - a real socketpair is bidirectional
     // but for many use cases (e.g., parent-child communication) a pipe suffices
     crate::vfs::sys_pipe(sv_ptr)
+}
+
+// ============================================================================
+// Network Control Syscall
+// ============================================================================
+
+/// Network control operation codes
+pub mod net_op {
+    /// Trigger DHCP lease acquisition
+    pub const DHCP_REQUEST: u64 = 1;
+    /// Release DHCP lease (future)
+    pub const DHCP_RELEASE: u64 = 2;
+    /// Renew DHCP lease (future)
+    pub const DHCP_RENEW: u64 = 3;
+}
+
+/// sys_net_control - Network control operations from userspace
+///
+/// —ShadePacket: Kernel DHCP at boot has a ~2s timeout and limited retries.
+/// This syscall allows userspace (networkd, dhclient) to trigger DHCP after
+/// boot when the network becomes available or when a retry is needed.
+///
+/// # Arguments
+/// * `operation` - Network operation code (NET_OP_DHCP_REQUEST, etc.)
+/// * `iface_ptr` - Pointer to interface name string
+/// * `iface_len` - Length of interface name
+///
+/// # Returns
+/// 0 on success, negative errno on error
+pub fn sys_net_control(operation: u64, iface_ptr: u64, iface_len: usize) -> i64 {
+    use crate::errno;
+    use alloc::format;
+    use alloc::string::String;
+    use crate::vfs::{FileFlags, Mode, GLOBAL_VFS};
+
+    // —ShadePacket: Validate interface name from userspace
+    let iface_name = match copy_iface_from_user(iface_ptr, iface_len) {
+        Some(name) => name,
+        None => return errno::EFAULT,
+    };
+
+    match operation {
+        net_op::DHCP_REQUEST => {
+            // —ShadePacket: Get the network interface by name
+            let interface = match net::interface::get_interface(&iface_name) {
+                Some(iface) => iface,
+                None => {
+                    // —ShadePacket: Interface not found in kernel - might be virtual
+                    return errno::ENODEV;
+                }
+            };
+
+            // —ShadePacket: Perform DHCP lease acquisition
+            // This blocks until DHCP completes or times out
+            match tcpip::acquire_lease(interface) {
+                Ok(lease) => {
+                    // —ShadePacket: Write lease file to /var/lib/dhcp/<iface>.lease
+                    // so networkd can read it and apply the configuration
+                    if let Err(e) = write_dhcp_lease(&iface_name, &lease) {
+                        // —ShadePacket: DHCP succeeded but couldn't write lease file
+                        // Return success anyway - the interface is configured
+                        serial_print(&format!("DHCP OK but lease write failed: {:?}", e));
+                    }
+                    0
+                }
+                Err(e) => {
+                    // —ShadePacket: DHCP failed - return appropriate error
+                    match e {
+                        net::NetError::TimedOut | net::NetError::Timeout => errno::ETIMEDOUT,
+                        net::NetError::NetworkUnreachable => errno::ENETUNREACH,
+                        net::NetError::DeviceDown => errno::ENETDOWN,
+                        _ => errno::EIO,
+                    }
+                }
+            }
+        }
+        net_op::DHCP_RELEASE | net_op::DHCP_RENEW => {
+            // —ShadePacket: Future operations - not yet implemented
+            errno::ENOSYS
+        }
+        _ => errno::EINVAL,
+    }
+}
+
+/// Copy interface name from userspace
+fn copy_iface_from_user(ptr: u64, len: usize) -> Option<alloc::string::String> {
+    // —ShadePacket: Sanity check on length
+    if len == 0 || len > 64 {
+        return None;
+    }
+
+    // Validate pointer is in userspace
+    if ptr < 0x1000 || ptr > 0x0000_7FFF_FFFF_FFFF {
+        return None;
+    }
+
+    // Enable SMAP bypass for userspace access
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
+
+    let slice = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
+    let result = core::str::from_utf8(slice).ok().map(alloc::string::String::from);
+
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
+    }
+
+    result
+}
+
+/// Write DHCP lease to filesystem
+///
+/// Creates /var/lib/dhcp/<iface>.lease with lease information
+fn write_dhcp_lease(iface: &str, lease: &dhcp::DhcpLease) -> Result<(), &'static str> {
+    use alloc::format;
+    use crate::vfs::{FileFlags, Mode, GLOBAL_VFS};
+
+    // —ShadePacket: Ensure directories exist
+    ensure_dir_exists("/var")?;
+    ensure_dir_exists("/var/lib")?;
+    ensure_dir_exists("/var/lib/dhcp")?;
+
+    // —ShadePacket: Format lease content
+    let content = tcpip::format_lease_file(lease);
+
+    // —ShadePacket: Create lease file path
+    let path = format!("/var/lib/dhcp/{}.lease", iface);
+
+    // —ShadePacket: Create or truncate the lease file
+    let vnode = match GLOBAL_VFS.lookup(&path) {
+        Ok(v) => {
+            // File exists, truncate it
+            let _ = v.truncate(0);
+            v
+        }
+        Err(_) => {
+            // File doesn't exist, create it
+            match GLOBAL_VFS.lookup_parent(&path) {
+                Ok((parent, name)) => {
+                    parent.create(&name, Mode::new(0o644))
+                        .map_err(|_| "Failed to create lease file")?
+                }
+                Err(_) => return Err("Parent directory not found"),
+            }
+        }
+    };
+
+    // —ShadePacket: Write lease content
+    vnode.write(0, content.as_bytes())
+        .map_err(|_| "Failed to write lease file")?;
+
+    Ok(())
+}
+
+/// Ensure a directory exists, creating it if needed
+fn ensure_dir_exists(path: &str) -> Result<(), &'static str> {
+    use crate::vfs::{Mode, GLOBAL_VFS, VnodeType};
+
+    match GLOBAL_VFS.lookup(path) {
+        Ok(vnode) => {
+            if vnode.vtype() != VnodeType::Directory {
+                return Err("Path exists but is not a directory");
+            }
+            Ok(())
+        }
+        Err(_) => {
+            // Directory doesn't exist, create it
+            match GLOBAL_VFS.lookup_parent(path) {
+                Ok((parent, name)) => {
+                    parent.mkdir(&name, Mode::new(0o755))
+                        .map_err(|_| "Failed to create directory")?;
+                    Ok(())
+                }
+                Err(_) => Err("Parent directory not found"),
+            }
+        }
+    }
 }

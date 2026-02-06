@@ -211,6 +211,10 @@ path = "src/bin/stat.rs"
 
 # Network utilities
 [[bin]]
+name = "dhclient"
+path = "src/bin/dhclient.rs"
+
+[[bin]]
 name = "wget"
 path = "src/bin/wget.rs"
 

@@ -312,7 +312,11 @@ pub mod nr {
     pub const EPOLL_CREATE1: u64 = 307;
     pub const EPOLL_CTL: u64 = 308;
     pub const EPOLL_WAIT: u64 = 309;
-    
+
+    // Network control syscalls
+    // —ShadePacket: Userspace DHCP trigger since kernel boot DHCP has limited retries
+    pub const NET_CONTROL: u64 = 310;
+
     // Modern filesystem syscalls (Week 2)
     pub const STATX: u64 = 332;
     pub const OPENAT2: u64 = 437;
@@ -373,8 +377,13 @@ pub mod errno {
     pub const EMFILE: i64 = -24; // Too many open files
     pub const EIO: i64 = -5; // I/O error
 
+    // Device errors
+    pub const ENODEV: i64 = -19; // No such device
+    pub const ENETDOWN: i64 = -100; // Network is down
+
     // Socket errors
     pub const ENOTSOCK: i64 = -88; // Socket operation on non-socket
+    pub const EAFNOSUPPORT: i64 = -97; // Address family not supported
     pub const EADDRINUSE: i64 = -98; // Address already in use
     pub const EADDRNOTAVAIL: i64 = -99; // Cannot assign requested address
     pub const ENETUNREACH: i64 = -101; // Network is unreachable
@@ -745,6 +754,10 @@ pub fn dispatch(
             socket::sys_setsockopt(arg1 as i32, arg2 as i32, arg3 as i32, arg4, arg5 as u32)
         }
         nr::GETSOCKOPT => socket::sys_getsockopt(arg1 as i32, arg2 as i32, arg3 as i32, arg4, arg5),
+
+        // Network control syscall
+        // —ShadePacket: Userspace-triggered DHCP for when kernel boot DHCP fails
+        nr::NET_CONTROL => socket::sys_net_control(arg1, arg2, arg3 as usize),
 
         // Firewall syscalls
         nr::FW_ADD_RULE => firewall::sys_fw_add_rule(VirtAddr::new(arg1)),

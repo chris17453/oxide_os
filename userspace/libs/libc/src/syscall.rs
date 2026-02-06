@@ -219,6 +219,10 @@ pub mod nr {
     pub const EPOLL_CTL: u64 = 308;
     pub const EPOLL_WAIT: u64 = 309;
 
+    // Network control syscalls
+    // —ShadePacket: Userspace DHCP trigger for post-boot network setup
+    pub const NET_CONTROL: u64 = 310;
+
     /// AT_FDCWD: use current working directory for *at syscalls
     pub const AT_FDCWD: i32 = -100;
 }
@@ -1909,4 +1913,56 @@ pub fn sys_capget(hdrp: u64, datap: u64) -> i64 {
 /// sys_capset - Set thread capabilities
 pub fn sys_capset(hdrp: u64, datap: u64) -> i64 {
     syscall2(126, hdrp as usize, datap as usize)
+}
+
+// ============================================================================
+// Network Control Syscalls
+// ============================================================================
+
+/// Network control operation codes
+pub mod net_op {
+    /// Trigger DHCP lease acquisition
+    pub const DHCP_REQUEST: u64 = 1;
+    /// Release DHCP lease (future)
+    pub const DHCP_RELEASE: u64 = 2;
+    /// Renew DHCP lease (future)
+    pub const DHCP_RENEW: u64 = 3;
+}
+
+/// sys_net_control - Network control operations
+///
+/// —ShadePacket: Trigger kernel-level network operations from userspace.
+/// Primary use case: DHCP lease acquisition when boot DHCP times out.
+///
+/// # Arguments
+/// * `op` - Operation code (NET_OP_DHCP_REQUEST, etc.)
+/// * `iface` - Interface name
+///
+/// # Returns
+/// 0 on success, negative errno on error:
+/// - ENODEV (-19): Interface not found
+/// - ETIMEDOUT (-110): DHCP timed out
+/// - ENETUNREACH (-101): Network unreachable
+/// - ENETDOWN (-100): Network is down
+pub fn sys_net_control(op: u64, iface: &str) -> i32 {
+    syscall3(
+        nr::NET_CONTROL,
+        op as usize,
+        iface.as_ptr() as usize,
+        iface.len(),
+    ) as i32
+}
+
+/// dhcp_request - Request DHCP lease for an interface
+///
+/// —ShadePacket: High-level wrapper for triggering DHCP acquisition.
+/// This is the primary API for networkd and dhclient to use.
+///
+/// # Arguments
+/// * `iface` - Interface name (e.g., "eth0")
+///
+/// # Returns
+/// 0 on success, negative errno on error
+pub fn dhcp_request(iface: &str) -> i32 {
+    sys_net_control(net_op::DHCP_REQUEST, iface)
 }

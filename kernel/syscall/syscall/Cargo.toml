@@ -19,6 +19,7 @@ vfs = { path = "../../vfs/vfs" }
 signal = { path = "../../signal/signal" }
 net = { path = "../../net/net" }
 tcpip = { path = "../../net/tcpip" }
+dhcp = { path = "../../net/dhcp" }
 input = { path = "../../input/input" }
 mmap = { path = "../../libc-support/mmap" }
 crypto = { path = "../../security/crypto" }

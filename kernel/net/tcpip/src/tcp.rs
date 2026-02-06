@@ -2,7 +2,7 @@
 
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use spin::Mutex;
 
 use net::{Ipv4Addr, NetError, NetResult};
@@ -467,6 +467,9 @@ pub struct TcpConnection {
     has_unacked: AtomicU32,
     /// Transmit queue for outgoing segments
     tx_queue: Mutex<VecDeque<Vec<u8>>>,
+    /// RST received flag
+    /// —ShadePacket: Track if connection was reset for better error reporting
+    reset_received: AtomicBool,
 }
 
 impl TcpConnection {
@@ -528,6 +531,7 @@ impl TcpConnection {
             nagle_enabled: AtomicU32::new(1), // Enabled by default
             has_unacked: AtomicU32::new(0),
             tx_queue: Mutex::new(VecDeque::new()),
+            reset_received: AtomicBool::new(false),
         }
     }
 
@@ -548,6 +552,24 @@ impl TcpConnection {
     /// Get current state
     pub fn state(&self) -> TcpState {
         *self.state.lock()
+    }
+
+    /// Check if connection is established
+    /// —ShadePacket: Helper for syscall layer to check connection state
+    pub fn is_established(&self) -> bool {
+        *self.state.lock() == TcpState::Established
+    }
+
+    /// Check if connection is closed
+    pub fn is_closed(&self) -> bool {
+        *self.state.lock() == TcpState::Closed
+    }
+
+    /// Check if connection was reset
+    pub fn is_reset(&self) -> bool {
+        // —ShadePacket: RST causes immediate transition to Closed
+        // We track this separately via a flag for better error reporting
+        self.reset_received.load(Ordering::SeqCst)
     }
 
     /// Initiate connection (active open)
@@ -616,8 +638,10 @@ impl TcpConnection {
         
         // Process RST flag first (RFC 793)
         if header.flags & tcp_flags::RST != 0 {
+            // —ShadePacket: Track that we received RST for error reporting
+            self.reset_received.store(true, Ordering::SeqCst);
             match *state {
-                TcpState::SynReceived | TcpState::Established | TcpState::FinWait1 
+                TcpState::SynReceived | TcpState::Established | TcpState::FinWait1
                 | TcpState::FinWait2 | TcpState::CloseWait => {
                     *state = TcpState::Closed;
                     return Ok(());

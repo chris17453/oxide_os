@@ -17,7 +17,7 @@ use libc::dns;
 use libc::socket::{
     SOCKADDR_IN_SIZE, af, connect, ipproto, recv, send, sock, sockaddr_in_octets, socket,
 };
-use libc::time::sleep;
+use libc::time::{sleep, clock_gettime, clocks, Timespec};
 use libc::{eprintlns, getpid, printlns, prints, putchar, strlen};
 
 const ICMP_ECHO_REQUEST: u8 = 8;
@@ -83,6 +83,9 @@ struct PingStats {
     transmitted: u32,
     received: u32,
     errors: u32,
+    rtt_min: u64,  // microseconds
+    rtt_max: u64,  // microseconds
+    rtt_sum: u64,  // microseconds (for average)
 }
 
 impl PingStats {
@@ -91,8 +94,28 @@ impl PingStats {
             transmitted: 0,
             received: 0,
             errors: 0,
+            rtt_min: u64::MAX,
+            rtt_max: 0,
+            rtt_sum: 0,
         }
     }
+
+    fn record_rtt(&mut self, rtt_us: u64) {
+        if rtt_us < self.rtt_min {
+            self.rtt_min = rtt_us;
+        }
+        if rtt_us > self.rtt_max {
+            self.rtt_max = rtt_us;
+        }
+        self.rtt_sum += rtt_us;
+    }
+}
+
+/// Get current monotonic time in microseconds
+fn get_time_us() -> u64 {
+    let mut ts = Timespec::default();
+    clock_gettime(clocks::CLOCK_MONOTONIC, &mut ts);
+    (ts.tv_sec as u64) * 1_000_000 + (ts.tv_nsec as u64) / 1000
 }
 
 /// Calculate ICMP checksum
@@ -489,6 +512,9 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         let cksum = checksum(&packet[..packet_len]);
         packet[2..4].copy_from_slice(&cksum.to_be_bytes());
 
+        // Record send time
+        let send_time = get_time_us();
+
         // Send packet
         let n = send(sock, &packet[..packet_len], 0);
         if n < 0 {
@@ -505,6 +531,9 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
             let mut reply = [0u8; 512];
             let n = recv(sock, &mut reply, 0);
 
+            // Record receive time
+            let recv_time = get_time_us();
+
             if n > 0 {
                 let icmp_offset = 20; // IP header is 20 bytes
                 if (n as usize) > icmp_offset {
@@ -512,15 +541,37 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
                     if icmp_type == ICMP_ECHO_REPLY {
                         stats.received += 1;
 
+                        // Calculate RTT in microseconds
+                        let rtt_us = recv_time.saturating_sub(send_time);
+                        stats.record_rtt(rtt_us);
+
                         if !config.quiet {
+                            // —GraveShift: Extract actual TTL from IP header (byte 8)
+                            let ttl = reply[8];
+
                             print_u64((n as usize - icmp_offset) as u64);
                             prints(" bytes from ");
                             print_ip(ip);
                             prints(": icmp_seq=");
                             print_u64(seq as u64);
                             prints(" ttl=");
-                            print_u64(config.ttl as u64);
-                            printlns(" time<1ms");
+                            print_u64(ttl as u64);
+                            prints(" time=");
+
+                            // Display time appropriately
+                            if rtt_us < 1000 {
+                                // Less than 1ms - show in microseconds
+                                print_u64(rtt_us);
+                                printlns(" us");
+                            } else {
+                                // Show in milliseconds with decimal
+                                let ms = rtt_us / 1000;
+                                let frac = (rtt_us % 1000) / 100; // One decimal place
+                                print_u64(ms);
+                                putchar(b'.');
+                                print_u64(frac);
+                                printlns(" ms");
+                            }
                         } else if config.flood {
                             putchar(b'\x08'); // Backspace
                         }
@@ -572,6 +623,46 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     };
     print_u64(loss as u64);
     printlns("% packet loss");
+
+    // Print RTT statistics if we received any replies
+    if stats.received > 0 {
+        let avg_us = stats.rtt_sum / stats.received as u64;
+
+        prints("rtt min/avg/max = ");
+
+        // Min
+        if stats.rtt_min < 1000 {
+            print_u64(stats.rtt_min);
+            prints(" us/");
+        } else {
+            print_u64(stats.rtt_min / 1000);
+            putchar(b'.');
+            print_u64((stats.rtt_min % 1000) / 100);
+            prints(" ms/");
+        }
+
+        // Avg
+        if avg_us < 1000 {
+            print_u64(avg_us);
+            prints(" us/");
+        } else {
+            print_u64(avg_us / 1000);
+            putchar(b'.');
+            print_u64((avg_us % 1000) / 100);
+            prints(" ms/");
+        }
+
+        // Max
+        if stats.rtt_max < 1000 {
+            print_u64(stats.rtt_max);
+            printlns(" us");
+        } else {
+            print_u64(stats.rtt_max / 1000);
+            putchar(b'.');
+            print_u64((stats.rtt_max % 1000) / 100);
+            printlns(" ms");
+        }
+    }
 
     if stats.received == 0 { 1 } else { 0 }
 }
