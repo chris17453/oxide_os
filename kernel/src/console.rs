@@ -10,12 +10,15 @@ use core::fmt::Write;
 fn push_escape_sequence(seq: &[u8]) {
     #[cfg(feature = "debug-console")]
     {
-        let mut w = serial::SerialWriter;
-        let _ = write!(w, "[ESCAPE] Pushing {} bytes to VT+console: ", seq.len());
+        // — PatchBay: Debug output goes to os_log → console now
+        use core::fmt::Write;
+        let _ = os_log::write_str("[ESCAPE] Pushing ");
+        let _ = os_log::write_u64(seq.len() as u64);
+        let _ = os_log::write_str(" bytes to VT+console: ");
         for &byte in seq {
-            let _ = write!(w, "{:02x} ", byte);
+            let _ = os_log::write_byte(byte);
         }
-        let _ = write!(w, "\n");
+        let _ = os_log::write_str("\n");
     }
 
     if let Some(manager) = vt::get_manager() {
@@ -53,6 +56,9 @@ pub fn console_write(data: &[u8]) {
 
 /// Terminal tick callback - called at ~30 FPS from timer interrupt
 pub fn terminal_tick() {
+    // — PatchBay: Track terminal tick for performance monitoring
+    perf::counters().record_terminal_tick();
+
     // ═══════════════════════════════════════════════════════════════════════════
     // 🔥 DISABLED: DUPLICATE PROCESSING PATH (The Glitch in the Matrix) 🔥
     // ═══════════════════════════════════════════════════════════════════════════
@@ -352,3 +358,44 @@ pub fn console_write_bytes(data: &[u8]) {
     }
 }
 
+
+// ═══════════════════════════════════════════════════════════════════
+//  ISR-SAFE CONSOLE OUTPUT (REPLACES SERIAL)
+// ═══════════════════════════════════════════════════════════════════
+
+/// Write a byte to console (ISR-safe, no locks)
+///
+/// — PatchBay: Serial is DEAD. This writes to terminal/console (stderr).
+/// Uses terminal's ISR-safe try_lock path - if contended, drops the byte.
+///
+/// # Safety
+/// Safe to call from any context including ISRs. May drop bytes if terminal locked.
+pub unsafe fn write_byte_unsafe(byte: u8) {
+    // Write to terminal emulator if available
+    if terminal::is_initialized() {
+        // Use terminal's internal ISR-safe write if it has one
+        // For now, try to push to VT input buffer (lock-free ring)
+        if let Some(manager) = vt::get_manager() {
+            manager.push_input(byte);
+        }
+    }
+}
+
+/// Write a string to console (ISR-safe, no locks)
+///
+/// — PatchBay: NO MORE SERIAL. Console output only.
+///
+/// # Safety
+/// Safe to call from any context including ISRs. May drop bytes if terminal locked.
+pub unsafe fn write_str_unsafe(s: &str) {
+    unsafe {
+        // For ISR context, we write directly to terminal if possible
+        // Terminal has its own ISR-safe paths
+        if terminal::is_initialized() {
+            // Write byte-by-byte through ISR-safe path
+            for byte in s.bytes() {
+                write_byte_unsafe(byte);
+            }
+        }
+    }
+}

@@ -36,6 +36,7 @@ debug-all = ["debug-syscall", "debug-fork", "debug-cow", "debug-pagefault", "deb
 [dependencies]
 os_core = { workspace = true }
 os_log = { workspace = true }
+perf = { path = "perf" }
 arch-traits = { workspace = true }
 arch-x86_64 = { path = "arch/arch-x86_64" }
 arch-aarch64 = { path = "arch/arch-aarch64", optional = true }

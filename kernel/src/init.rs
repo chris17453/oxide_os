@@ -39,30 +39,40 @@ use crate::process::{kernel_clone, kernel_exec, kernel_fork, kernel_wait, user_e
 use crate::scheduler;
 use crate::smp_init;
 
-/// Adapter to make arch serial work with os_log
-struct OsLogSerialWriter;
+/// Adapter to make console work with os_log
+/// — PatchBay: Serial is DEAD. This routes os_log to console/stderr.
+struct OsLogConsoleWriter;
 
-impl os_log::SerialWriter for OsLogSerialWriter {
+impl os_log::SerialWriter for OsLogConsoleWriter {
     fn write_byte(&mut self, byte: u8) {
-        arch::serial_write_byte(byte);
+        // Route to console/terminal instead of serial
+        if terminal::is_initialized() {
+            terminal::write(&[byte]);
+        } else if fb::is_initialized() {
+            fb::putchar(byte as char);
+        }
     }
 }
 
 /// Static writer for os_log (needs to live for 'static lifetime)
-static mut OS_LOG_WRITER: OsLogSerialWriter = OsLogSerialWriter;
+static mut OS_LOG_WRITER: OsLogConsoleWriter = OsLogConsoleWriter;
 
-/// — GraveShift: Dual-output boot writer. Serial from the start, terminal after
-/// framebuffer init. The user deserves to see boot messages, not stare into the
-/// void wondering if their silicon is alive.
+/// — PatchBay: Console-only boot writer. Serial is DEAD. All output goes to
+/// framebuffer/terminal (stderr). Early boot shows on screen, not serial port.
 struct BootWriter {
     console_enabled: bool,
 }
 
 impl core::fmt::Write for BootWriter {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        arch::SerialWriter.write_str(s)?;
+        // NO MORE SERIAL. Only write to console/terminal.
         if self.console_enabled {
             console::console_write(s.as_bytes());
+        } else if fb::is_initialized() {
+            // Before terminal is ready, write to basic framebuffer
+            for byte in s.bytes() {
+                fb::putchar(byte as char);
+            }
         }
         Ok(())
     }
@@ -123,9 +133,8 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
         let smap_supported = (ebx_out & (1 << 20)) != 0;
         if smap_supported {
-            arch::SerialWriter.write_str(
-                "[INIT] SMAP supported but DISABLED (needs fix - complex timing issue)\n",
-            );
+            // — PatchBay: NO SERIAL. Early messages suppressed until framebuffer ready.
+            // SMAP detection happens but message waits for proper output.
             // TODO: Fix SMAP - there's a complex timing issue where AC gets cleared between
             // syscalls. The STAC/CLAC coverage is correct, but something else is clearing AC.
             // For now, disable SMAP to get the system working.
@@ -133,9 +142,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             // core::arch::asm!("mov {}, cr4", out(reg) cr4, options(nomem, nostack));
             // cr4 |= 1 << 21; // Set SMAP bit (bit 21)
             // core::arch::asm!("mov cr4, {}", in(reg) cr4, options(nostack));
-            // arch::SerialWriter.write_str("[INIT] SMAP enabled\n");
-        } else {
-            arch::SerialWriter.write_str("[INIT] SMAP not supported by CPU\n");
         }
     }
 
@@ -144,9 +150,10 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // The unsafe writer fns do raw port I/O without any locks.
     unsafe {
         os_log::register_writer(&mut *addr_of_mut!(OS_LOG_WRITER));
+        // — PatchBay: NO MORE SERIAL. Everything goes to console (stderr) now.
         os_log::register_unsafe_writer(
-            arch_x86_64::serial::write_byte_unsafe,
-            arch_x86_64::serial::write_str_unsafe,
+            console::write_byte_unsafe,
+            console::write_str_unsafe,
         );
     }
 
@@ -1955,12 +1962,12 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // that boot code holds (serial, VFS, etc.).
     //
     // CRITICAL: No writeln! after start_timer — the timer fires every 10ms and
-    // terminal_tick/scheduler_tick can run. Any locked serial output here risks
-    // deadlock if a timer tick fires while we hold COM1. Lock-free writes only.
-    unsafe { arch::serial::write_str_unsafe("[INFO] Starting APIC timer at 100Hz...\n"); }
+    // terminal_tick/scheduler_tick can run. Lock-free writes only via os_log.
+    // — PatchBay: NO MORE SERIAL. os_log routes to console now.
+    unsafe { os_log::write_str_raw("[INFO] Starting APIC timer at 100Hz...\n"); }
     arch::start_timer(100);
     smp_init::signal_ap_ready();
-    unsafe { arch::serial::write_str_unsafe("[SMP] AP timer gate released — all CPUs active\n"); }
+    unsafe { os_log::write_str_raw("[SMP] AP timer gate released — all CPUs active\n"); }
 
     // NeonRoot: Straight into usermode — no more locks, no more delays.
     // enter_usermode does cli immediately, so the timer won't fire during

@@ -45,6 +45,8 @@ dependencies = [
  "boot-proto",
  "cc",
  "os_core",
+ "os_log",
+ "perf",
  "ps2",
  "sched-traits",
  "spin 0.9.8",
@@ -625,6 +627,7 @@ dependencies = [
  "os_core",
  "os_log",
  "pci",
+ "perf",
  "proc",
  "proc-traits",
  "procfs",
@@ -1022,6 +1025,15 @@ version = "0.1.0"
 dependencies = [
  "arch-traits",
  "arch-x86_64",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "perf"
+version = "0.1.0"
+dependencies = [
+ "os_core",
+ "os_log",
  "spin 0.9.8",
 ]
 

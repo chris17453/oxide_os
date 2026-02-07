@@ -4,6 +4,30 @@
 
 use core::arch::{asm, naked_asm};
 
+extern crate perf;
+
+/// Helper: Write u32 via os_log (ISR-safe)
+#[inline]
+pub unsafe fn write_u32_via_oslog(n: u32) {
+    unsafe {
+        if n == 0 {
+            os_log::write_byte_raw(b'0');
+            return;
+        }
+        let mut buf = [0u8; 10];
+        let mut v = n;
+        let mut pos = 0;
+        while v > 0 {
+            buf[pos] = b'0' + (v % 10) as u8;
+            v /= 10;
+            pos += 1;
+        }
+        for i in (0..pos).rev() {
+            os_log::write_byte_raw(buf[i]);
+        }
+    }
+}
+
 /// Interrupt stack frame pushed by the CPU
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
@@ -493,6 +517,7 @@ pub extern "C" fn mouse_interrupt() {
 /// -- TorqueJax: IRQ 12 fires on mouse data. If nobody's listening, drain the byte
 /// or the level-triggered interrupt storms and locks up the CPU forever.
 extern "C" fn handle_mouse() {
+    let start_cycles = perf::rdtsc();
 
     // Forward to the registered mouse callback (ps2::handle_mouse_irq).
     // The callback itself reads port 0x60 — we must NOT read it here
@@ -511,6 +536,11 @@ extern "C" fn handle_mouse() {
 
     // Send EOI to APIC
     crate::apic::end_of_interrupt();
+
+    // Record mouse IRQ execution time
+    let end_cycles = perf::rdtsc();
+    let elapsed = end_cycles.saturating_sub(start_cycles);
+    perf::counters().record_mouse_irq(elapsed);
 }
 
 /// Atomic counter of keyboard interrupts (for debugging)
@@ -523,25 +553,26 @@ pub fn keyboard_irq_count() -> u64 {
 
 /// Keyboard handler - simplified non-naked version
 extern "C" fn handle_keyboard() {
+    let start_cycles = perf::rdtsc();
     KEYBOARD_IRQ_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
     #[cfg(feature = "debug-input")]
     unsafe {
-        crate::serial::write_str_unsafe("[KB_IRQ] ");
+        os_log::write_str_raw("[KB_IRQ] ");
     }
 
     // If a platform keyboard handler is registered, delegate to it (it reads the scancode)
     unsafe {
         if let Some(callback) = KEYBOARD_CALLBACK {
             #[cfg(feature = "debug-input")]
-            crate::serial::write_str_unsafe("CB ");
+            os_log::write_str_raw("CB ");
             callback();
             // Send EOI to APIC
             crate::apic::end_of_interrupt();
             return;
         } else {
             #[cfg(feature = "debug-input")]
-            crate::serial::write_str_unsafe("NO_CB ");
+            os_log::write_str_raw("NO_CB ");
         }
     }
 
@@ -566,6 +597,11 @@ extern "C" fn handle_keyboard() {
 
     // Send EOI to APIC
     crate::apic::end_of_interrupt();
+
+    // Record keyboard IRQ execution time
+    let end_cycles = perf::rdtsc();
+    let elapsed = end_cycles.saturating_sub(start_cycles);
+    perf::counters().record_keyboard_irq(elapsed);
 }
 
 // ============================================================================
@@ -785,7 +821,7 @@ extern "C" fn handle_double_fault(frame: *const InterruptFrame, error: u64) {
     // NeonRoot: Raw serial scream — if panic deadlocks on the serial lock,
     // at least these bytes escape. '#DF\n' = double fault reached handler.
     unsafe {
-        crate::serial::write_str_unsafe("\n#DF!");
+        os_log::write_str_raw("\n#DF!");
     }
     let frame = unsafe { &*frame };
     panic!("DOUBLE FAULT at {:#x}, error: {:#x}", frame.rip, error);
@@ -1318,6 +1354,9 @@ extern "C" fn handle_timer(current_rsp: u64) -> u64 {
     use core::ptr::addr_of;
     use core::sync::atomic::Ordering;
 
+    // — PatchBay: Start cycle counter for ISR profiling
+    let start_cycles = perf::rdtsc();
+
     // — SableWire: SMP-safe tick handling. Only BSP increments the global
     // counter; APs just read it. This keeps the tick rate at the intended
     // 100 Hz regardless of CPU count and eliminates the data-race on the
@@ -1339,6 +1378,12 @@ extern "C" fn handle_timer(current_rsp: u64) -> u64 {
 
     // Send EOI to APIC first (before potentially long scheduler work)
     crate::apic::end_of_interrupt();
+
+    // — PatchBay: Print performance statistics every 500 ticks (~5 seconds @ 100Hz)
+    // Only on BSP to avoid interleaved output from multiple CPUs.
+    if is_bsp && current_tick % 500 == 0 {
+        perf::stats::print_perf_stats(perf::counters(), current_tick);
+    }
 
     // — SableWire: Terminal tick only on BSP. Console I/O is single-
     // threaded; running the callback from 4 CPUs races on VT state
@@ -1384,6 +1429,23 @@ extern "C" fn handle_timer(current_rsp: u64) -> u64 {
     {
         if new_rsp != current_rsp {
             crate::serial_println!("[TIMER] Context switch: {:#x} -> {:#x}", current_rsp, new_rsp);
+        }
+    }
+
+    // — PatchBay: Record ISR execution time
+    let end_cycles = perf::rdtsc();
+    let elapsed = end_cycles.saturating_sub(start_cycles);
+    perf::counters().record_timer_irq(elapsed);
+
+    // — PatchBay: Warn if ISR took too long (> 1M cycles ~= 333us @ 3GHz)
+    // This indicates a serious performance problem in the interrupt handler.
+    if elapsed > 1_000_000 {
+        unsafe {
+            os_log::write_str_raw("\n[PERF-WARN] Timer ISR took ");
+            write_u32_via_oslog(elapsed as u32);
+            os_log::write_str_raw(" cycles (");
+            write_u32_via_oslog((elapsed / 1000) as u32);
+            os_log::write_str_raw("K)\n");
         }
     }
 

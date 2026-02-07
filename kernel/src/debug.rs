@@ -82,15 +82,14 @@ macro_rules! debug_sched {
 
 /// Debug print for scheduler context switches (interrupt-safe)
 ///
-/// Uses unsafe direct serial byte writes to avoid lock contention
-/// in interrupt handlers where the normal serial writer may deadlock.
+/// — PatchBay: Routes through os_log → console. No more serial.
 #[macro_export]
 macro_rules! debug_sched_unsafe {
     ($s:expr) => {
         #[cfg(feature = "debug-sched")]
         {
             unsafe {
-                arch_x86_64::serial::write_str_unsafe($s);
+                os_log::write_str_raw($s);
             }
         }
     };
@@ -98,7 +97,7 @@ macro_rules! debug_sched_unsafe {
         #[cfg(feature = "debug-sched")]
         {
             unsafe {
-                arch_x86_64::serial::write_byte_unsafe($b);
+                os_log::write_byte_raw($b);
             }
         }
     };
@@ -117,15 +116,14 @@ macro_rules! debug_mouse {
 
 /// Debug print for mouse/input operations (interrupt-safe)
 ///
-/// Uses unsafe direct serial byte writes to avoid lock contention
-/// in interrupt handlers where the normal serial writer may deadlock.
+/// — PatchBay: Routes through os_log → console. No more serial.
 #[macro_export]
 macro_rules! debug_mouse_unsafe {
     ($s:expr) => {
         #[cfg(feature = "debug-mouse")]
         {
             unsafe {
-                arch_x86_64::serial::write_str_unsafe($s);
+                os_log::write_str_raw($s);
             }
         }
     };
@@ -155,17 +153,16 @@ macro_rules! debug_console {
 
 /// Warn about lock contention in ISR context
 ///
-/// Emits a serial warning when try_lock fails in an interrupt handler.
-/// Uses unsafe direct serial writes since we're in ISR context.
+/// — PatchBay: Routes through os_log → console. No more serial.
 #[macro_export]
 macro_rules! debug_lock_contention {
     ($lock_name:expr) => {
         #[cfg(feature = "debug-lock")]
         {
             unsafe {
-                arch_x86_64::serial::write_str_unsafe("[LOCK] contention: ");
-                arch_x86_64::serial::write_str_unsafe($lock_name);
-                arch_x86_64::serial::write_str_unsafe(" (ISR try_lock failed)\n");
+                os_log::write_str_raw("[LOCK] contention: ");
+                os_log::write_str_raw($lock_name);
+                os_log::write_str_raw(" (ISR try_lock failed)\n");
             }
         }
     };

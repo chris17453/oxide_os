@@ -32,9 +32,20 @@ use arch_traits::Arch as _;
 use core::fmt::Write;
 use core::panic::PanicInfo;
 
-/// Get a serial writer for debug output
-pub fn serial_writer() -> arch::SerialWriter {
-    arch::serial_writer()
+/// Get a console writer for debug output
+/// — PatchBay: Serial is DEAD. Returns console writer now.
+pub fn console_writer() -> ConsoleWriter {
+    ConsoleWriter
+}
+
+/// Console writer for panic/debug output
+pub struct ConsoleWriter;
+
+impl core::fmt::Write for ConsoleWriter {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        console::console_write(s.as_bytes());
+        Ok(())
+    }
 }
 
 /// Kernel entry point - delegates to init module
@@ -44,9 +55,10 @@ pub extern "C" fn kernel_main(boot_info: &'static boot_proto::BootInfo) -> ! {
 }
 
 /// Panic handler
+/// — PatchBay: Panic output goes to console (stderr), not serial
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    let mut writer = arch::SerialWriter;
+    let mut writer = ConsoleWriter;
 
     let _ = writeln!(writer);
     let _ = writeln!(writer, "========================================");

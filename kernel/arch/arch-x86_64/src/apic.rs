@@ -5,6 +5,7 @@
 use core::ptr::{read_volatile, write_volatile};
 
 use boot_proto::PHYS_MAP_BASE;
+use crate::exceptions::write_u32_via_oslog;
 
 /// Physical address of the Local APIC (default)
 const APIC_BASE_PHYS: u64 = 0xFEE0_0000;
@@ -553,7 +554,7 @@ pub fn start_timer(frequency_hz: u32) {
         // SableWire: Fallback — never leave the timer dead
         ticks_per_ms = 1_000;
         unsafe {
-            crate::serial::write_str_unsafe("[APIC] Timer cal=0, fallback\n");
+            os_log::write_str_raw("[APIC] Timer cal=0, fallback\n");
         }
     }
 
@@ -566,14 +567,14 @@ pub fn start_timer(frequency_hz: u32) {
     let is_bsp = id() == 0;
     if is_bsp {
         unsafe {
-            crate::serial::write_str_unsafe("[APIC] Timer calibrated: ");
-            crate::serial::write_u32_unsafe(ticks_per_ms);
-            crate::serial::write_str_unsafe(" ticks/ms\n");
-            crate::serial::write_str_unsafe("[APIC] Starting timer at ");
-            crate::serial::write_u32_unsafe(frequency_hz);
-            crate::serial::write_str_unsafe("Hz (count: ");
-            crate::serial::write_u32_unsafe(initial_count);
-            crate::serial::write_str_unsafe(")\n");
+            os_log::write_str_raw("[APIC] Timer calibrated: ");
+            write_u32_via_oslog(ticks_per_ms);
+            os_log::write_str_raw(" ticks/ms\n");
+            os_log::write_str_raw("[APIC] Starting timer at ");
+            write_u32_via_oslog(frequency_hz);
+            os_log::write_str_raw("Hz (count: ");
+            write_u32_via_oslog(initial_count);
+            os_log::write_str_raw(")\n");
         }
     }
 

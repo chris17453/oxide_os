@@ -244,11 +244,21 @@ fn handle_stack_growth(page_addr: u64, pml4_phys: PhysAddr) -> bool {
 }
 
 /// Dump page table flags for debugging NX issues
+/// — PatchBay: Outputs to os_log → console, not serial
 fn dump_page_table_flags(fault_addr: u64, cr3: u64) {
-    use arch_x86_64::serial::SerialWriter;
     use core::fmt::Write;
 
-    let mut writer = SerialWriter;
+    struct OsLogWriter;
+    impl Write for OsLogWriter {
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            unsafe {
+                os_log::write_str_raw(s);
+            }
+            Ok(())
+        }
+    }
+
+    let mut writer = OsLogWriter;
     let _ = writeln!(writer, "[DEBUG] Page table walk for {:#x}:", fault_addr);
 
     let pml4_phys = PhysAddr::new(cr3 & !0xFFF);

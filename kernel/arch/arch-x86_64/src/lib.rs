@@ -617,16 +617,28 @@ pub unsafe fn inl(port: u16) -> u32 {
     value
 }
 
-/// Print to serial port (for use in arch crate)
+/// Print to console (for use in arch crate)
+/// — PatchBay: Renamed from serial_print but now routes to os_log → console
 #[macro_export]
 macro_rules! serial_print {
     ($($arg:tt)*) => {{
         use core::fmt::Write;
-        let _ = write!($crate::serial::SerialWriter, $($arg)*);
+        struct OsLogWriter;
+        impl Write for OsLogWriter {
+            fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                unsafe {
+                    os_log::write_str_raw(s);
+                }
+                Ok(())
+            }
+        }
+        let mut w = OsLogWriter;
+        let _ = write!(w, $($arg)*);
     }};
 }
 
-/// Print to serial port with newline (for use in arch crate)
+/// Print to console with newline (for use in arch crate)
+/// — PatchBay: Renamed from serial_println but now routes to os_log → console
 #[macro_export]
 macro_rules! serial_println {
     () => ($crate::serial_print!("\n"));

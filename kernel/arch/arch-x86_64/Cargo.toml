@@ -11,6 +11,8 @@ debug-timer = []
 
 [dependencies]
 os_core = { workspace = true }
+os_log = { workspace = true }
+perf = { path = "../../perf" }
 arch-traits = { workspace = true }
 sched-traits = { workspace = true }
 boot-proto = { workspace = true }

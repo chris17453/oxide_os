@@ -133,18 +133,16 @@ const UNSAFE_WRITE_SPIN_LIMIT: u32 = 2048;
 
 #[inline]
 pub unsafe fn write_byte_unsafe(byte: u8) {
+    // — PatchBay: SERIAL IS DEPRECATED. This function kept for compatibility
+    // but should not be called. All output goes through os_log to console.
+    // If you see this being called, FIX THE CALLER.
     use crate::{inb, outb};
-    // Bounded wait for transmit buffer empty — if FIFO is full after
-    // SPIN_LIMIT iterations, drop the byte. Debug output is best-effort;
-    // a hung ISR is not.
-    // SAFETY: Direct port I/O; caller ensures ISR context
-    // — SableWire
     unsafe {
         let mut spins: u32 = 0;
         while (inb(COM1_PORT + regs::LSR) & lsr::THRE) == 0 {
             spins += 1;
             if spins >= UNSAFE_WRITE_SPIN_LIMIT {
-                return; // — SableWire: drop byte, save the system
+                return;
             }
             core::hint::spin_loop();
         }

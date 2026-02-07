@@ -530,6 +530,9 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         arch::clear_kernel_preempt();
     }
 
+    // — PatchBay: Record context switch for performance monitoring
+    perf::counters().record_context_switch();
+
     // Read FS base from MSR for TLS context preservation
     let current_fs_base: u64;
     unsafe {

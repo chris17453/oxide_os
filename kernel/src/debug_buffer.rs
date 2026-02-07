@@ -41,10 +41,11 @@ pub fn write_debug(data: &[u8]) {
         return;
     }
 
-    // Write directly to serial (unsafe but we hold the logical lock)
+    // Write directly to console via os_log (unsafe but we hold the logical lock)
+    // — PatchBay: NO MORE SERIAL. Routes through os_log → console.
     for &byte in data {
         unsafe {
-            arch_x86_64::serial::write_byte_unsafe(byte);
+            os_log::write_byte_raw(byte);
         }
     }
 

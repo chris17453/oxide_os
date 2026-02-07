@@ -1,0 +1,13 @@
+[package]
+name = "perf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+
+[dependencies]
+os_core = { workspace = true }
+os_log = { workspace = true }
+spin = { workspace = true }
