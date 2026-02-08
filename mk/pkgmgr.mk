@@ -3,6 +3,71 @@
 
 .PHONY: pkgmgr-sync pkgmgr-search pkgmgr-build pkgmgr-install pkgmgr-help
 .PHONY: packages packages-base packages-list packages-clean
+.PHONY: pkgmgr-fetch pkgmgr-graph pkgmgr-deps pkgmgr-topo pkgmgr-list
+.PHONY: pkgmgr-crawl pkgmgr-dbstats pkgmgr-rdeps pkgmgr-list-releases
+
+# Default Fedora release for versioned repos
+FEDORA_RELEASE ?= 42
+
+# ========================================
+# SRPM & Dependency Graph targets (NEW)
+# ========================================
+
+# Sync repo metadata (run once — caches 72K+ packages locally)
+pkgmgr-sync:
+	@python3 pkgmgr/bin/oxdnf -r $(FEDORA_RELEASE) sync
+
+# Fetch SRPMs for base packages (or PKG= for specific ones)
+pkgmgr-fetch:
+	@if [ -z "$(PKG)" ]; then \
+		echo "Fetching base SRPMs for Fedora $(FEDORA_RELEASE)..."; \
+		python3 pkgmgr/bin/oxdnf -r $(FEDORA_RELEASE) fetch; \
+	else \
+		echo "Fetching SRPM: $(PKG)"; \
+		python3 pkgmgr/bin/oxdnf -r $(FEDORA_RELEASE) fetch $(PKG); \
+	fi
+
+# Build dependency graph (recursive crawl with SQLite)
+pkgmgr-graph:
+	@if [ -z "$(PKG)" ]; then \
+		python3 pkgmgr/bin/oxdnf -r $(FEDORA_RELEASE) graph $(if $(DEPTH),--depth $(DEPTH),); \
+	else \
+		python3 pkgmgr/bin/oxdnf -r $(FEDORA_RELEASE) graph $(PKG) $(if $(DEPTH),--depth $(DEPTH),); \
+	fi
+
+# Alias: crawl = graph
+pkgmgr-crawl: pkgmgr-graph
+
+# Show build dependencies for a package
+pkgmgr-deps:
+	@if [ -z "$(PKG)" ]; then \
+		echo "Usage: make pkgmgr-deps PKG=<package-name>"; \
+		exit 1; \
+	fi
+	@python3 pkgmgr/bin/oxdnf -r $(FEDORA_RELEASE) deps $(PKG)
+
+# Show reverse dependencies
+pkgmgr-rdeps:
+	@if [ -z "$(PKG)" ]; then \
+		echo "Usage: make pkgmgr-rdeps PKG=<package-name>"; \
+		exit 1; \
+	fi
+	@python3 pkgmgr/bin/oxdnf -r $(FEDORA_RELEASE) rdeps $(PKG)
+
+# Show topological build order
+pkgmgr-topo:
+	@python3 pkgmgr/bin/oxdnf -r $(FEDORA_RELEASE) topo
+
+# Show DB statistics
+pkgmgr-dbstats:
+	@python3 pkgmgr/bin/oxdnf -r $(FEDORA_RELEASE) db-stats
+
+# List cached SRPMs / available / releases
+pkgmgr-list:
+	@python3 pkgmgr/bin/oxdnf -r $(FEDORA_RELEASE) list srpms
+
+pkgmgr-list-releases:
+	@python3 pkgmgr/bin/oxdnf list releases
 
 # ========================================
 # Pipeline targets for mass builds
@@ -59,12 +124,7 @@ packages-clean:
 # Single package targets
 # ========================================
 
-# Sync Fedora repository metadata
-pkgmgr-sync:
-	@echo "Syncing package repository metadata..."
-	@python3 pkgmgr/bin/repo-sync
-
-# Search for packages
+# Search for packages (uses real dnf repoquery now)
 pkgmgr-search:
 	@if [ -z "$(PKG)" ]; then \
 		echo "Usage: make pkgmgr-search PKG=<package-name>"; \
@@ -79,7 +139,7 @@ pkgmgr-build:
 		exit 1; \
 	fi
 	@echo "Building package: $(PKG)"
-	@python3 pkgmgr/bin/oxdnf buildsrpm $(PKG)
+	@python3 pkgmgr/bin/oxdnf -r $(FEDORA_RELEASE) buildsrpm $(PKG)
 
 # Install package
 pkgmgr-install:
@@ -98,22 +158,37 @@ pkgmgr-install:
 pkgmgr-help:
 	@echo "OXIDE Package Manager (oxdnf) - Make Targets"
 	@echo ""
+	@echo "SRPM & Dependency Graph (SQLite-backed):"
+	@echo "  make pkgmgr-sync                     - Sync repo metadata (run once!)"
+	@echo "  make pkgmgr-fetch                    - Fetch base SRPMs from Fedora"
+	@echo "  make pkgmgr-fetch PKG=bash           - Fetch specific SRPM"
+	@echo "  make pkgmgr-graph                    - Build graph from local SRPMs"
+	@echo "  make pkgmgr-graph PKG='bash grep'    - Graph specific packages"
+	@echo "  make pkgmgr-deps PKG=bash            - Show bash build-deps"
+	@echo "  make pkgmgr-rdeps PKG=glibc          - Who depends on glibc?"
+	@echo "  make pkgmgr-topo                     - Topological build order"
+	@echo "  make pkgmgr-dbstats                  - Database statistics"
+	@echo "  make pkgmgr-list                     - List cached SRPMs"
+	@echo "  make pkgmgr-list-releases            - Show versioned repos"
+	@echo ""
+	@echo "Workflow:  make pkgmgr-sync → make pkgmgr-fetch → make pkgmgr-graph"
+	@echo ""
 	@echo "Pipeline Targets (mass builds):"
-	@echo "  make packages-base                  - Build base OXIDE packages"
-	@echo "  make packages LIST=file.txt         - Build packages from list"
+	@echo "  make packages-base                   - Build base OXIDE packages"
+	@echo "  make packages LIST=file.txt          - Build packages from list"
 	@echo "  make packages-parallel LIST=f JOBS=4 - Parallel builds"
-	@echo "  make packages-list [LIST=file]      - Show build order (dry run)"
-	@echo "  make packages-resume [LIST=file]    - Resume failed build"
-	@echo "  make packages-clean                 - Clean build cache"
+	@echo "  make packages-list [LIST=file]       - Show build order (dry run)"
+	@echo "  make packages-resume [LIST=file]     - Resume failed build"
+	@echo "  make packages-clean                  - Clean build cache"
 	@echo ""
-	@echo "Single Package Targets:"
-	@echo "  make pkgmgr-sync                    - Sync Fedora metadata"
-	@echo "  make pkgmgr-search PKG=bash         - Search for packages"
-	@echo "  make pkgmgr-build PKG=bash          - Build single package"
-	@echo "  make pkgmgr-install PKG=bash        - Install a built package"
+	@echo "Single Package:"
+	@echo "  make pkgmgr-search PKG=bash          - Search Fedora repos"
+	@echo "  make pkgmgr-build PKG=bash           - Build single package"
+	@echo "  make pkgmgr-install PKG=bash         - Install a built package"
 	@echo ""
-	@echo "Direct CLI usage:"
+	@echo "Options:"
+	@echo "  FEDORA_RELEASE=42                    - Target Fedora release (default: 42)"
+	@echo ""
+	@echo "Direct CLI:"
 	@echo "  python3 pkgmgr/bin/oxdnf --help"
-	@echo "  python3 pkgmgr/bin/build-pipeline --help"
-	@echo ""
-	@echo "See pkgmgr/README.md for full documentation"
+	@echo "  python3 pkgmgr/bin/srpm-graph --help"

@@ -308,8 +308,13 @@ pub fn mouse_init() {
 pub fn mouse_move(dx: i32, dy: i32) {
     if let Some(fb_guard) = FRAMEBUFFER.try_lock() {
         if let Some(ref fb) = *fb_guard {
-            if let Some(ref mut cursor) = *MOUSE_CURSOR.lock() {
-                cursor.move_by(dx, dy, &**fb);
+            if let Some(mut cursor_guard) = MOUSE_CURSOR.try_lock() {
+                if let Some(ref mut cursor) = *cursor_guard {
+                    cursor.move_by(dx, dy, &**fb);
+                }
+            } else {
+                #[cfg(feature = "debug-lock")]
+                lock_contention_warning("MOUSE_CURSOR (move)");
             }
         }
     } else {
@@ -324,8 +329,13 @@ pub fn mouse_move(dx: i32, dy: i32) {
 pub fn mouse_draw() {
     if let Some(fb_guard) = FRAMEBUFFER.try_lock() {
         if let Some(ref fb) = *fb_guard {
-            if let Some(ref mut cursor) = *MOUSE_CURSOR.lock() {
-                cursor.redraw(&**fb);
+            if let Some(mut cursor_guard) = MOUSE_CURSOR.try_lock() {
+                if let Some(ref mut cursor) = *cursor_guard {
+                    cursor.redraw(&**fb);
+                }
+            } else {
+                #[cfg(feature = "debug-lock")]
+                lock_contention_warning("MOUSE_CURSOR (draw)");
             }
         }
     } else {
@@ -340,8 +350,13 @@ pub fn mouse_draw() {
 pub fn mouse_erase() {
     if let Some(fb_guard) = FRAMEBUFFER.try_lock() {
         if let Some(ref fb) = *fb_guard {
-            if let Some(ref mut cursor) = *MOUSE_CURSOR.lock() {
-                cursor.erase(&**fb);
+            if let Some(mut cursor_guard) = MOUSE_CURSOR.try_lock() {
+                if let Some(ref mut cursor) = *cursor_guard {
+                    cursor.erase(&**fb);
+                }
+            } else {
+                #[cfg(feature = "debug-lock")]
+                lock_contention_warning("MOUSE_CURSOR (erase)");
             }
         }
     } else {

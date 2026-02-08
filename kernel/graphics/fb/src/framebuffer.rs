@@ -341,6 +341,13 @@ pub trait Framebuffer: Send + Sync {
     fn flush(&self) {
         // Default: no-op for direct framebuffers
     }
+
+    /// Flush a specific region to display
+    /// — GlassSignal: why shove 8MB through the pipe when 200 bytes changed?
+    /// Default falls back to full flush for framebuffers that don't track regions.
+    fn flush_region(&self, _x: u32, _y: u32, _w: u32, _h: u32) {
+        self.flush();
+    }
 }
 
 /// Linear framebuffer implementation

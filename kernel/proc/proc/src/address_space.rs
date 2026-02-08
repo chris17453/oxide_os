@@ -204,22 +204,265 @@ impl UserAddressSpace {
         flags: MemoryFlags,
         allocator: &A,
     ) -> Result<(), MapError> {
+        // Linux-style allocation — GraveShift: Allocate all frames first (lock released after each alloc),
+        // then zero and map them. Each alloc_frame() call locks->allocates->unlocks atomically.
+        // Mapping can then safely allocate PT pages without deadlock.
+
+        let mut frames = alloc::vec::Vec::with_capacity(num_pages);
+
+        // Phase 1: Allocate all frames (each alloc is independent, no lock held across calls)
         for i in 0..num_pages {
+            // TRACE — GraveShift: Before alloc_frame
+            if i % 10 == 0 && i > 0 {
+                unsafe {
+                    use arch_x86_64 as arch;
+                    let msg = b"[ALLOC] Pre-alloc page ";
+                    for &byte in msg.iter() {
+                        while arch::inb(0x3FD) & 0x20 == 0 {}
+                        arch::outb(0x3F8, byte);
+                    }
+                    let msg2 = if i < 100 { [b'0' + (i / 10) as u8, b'0' + (i % 10) as u8] } else { [b'X', b'X'] };
+                    for &byte in &msg2 {
+                        while arch::inb(0x3FD) & 0x20 == 0 {}
+                        arch::outb(0x3F8, byte);
+                    }
+                    let msg3 = b"\r\n";
+                    for &byte in msg3.iter() {
+                        while arch::inb(0x3FD) & 0x20 == 0 {}
+                        arch::outb(0x3F8, byte);
+                    }
+                }
+            }
+
+            let frame = match allocator.alloc_frame() {
+                Some(f) => {
+                    // TRACE — BlackLatch: After successful alloc
+                    if i % 10 == 0 && i > 0 {
+                        unsafe {
+                            use arch_x86_64 as arch;
+                            let msg = b"[ALLOC] Post-alloc page ";
+                            for &byte in msg.iter() {
+                                while arch::inb(0x3FD) & 0x20 == 0 {}
+                                arch::outb(0x3F8, byte);
+                            }
+                            let msg2 = if i < 100 { [b'0' + (i / 10) as u8, b'0' + (i % 10) as u8] } else { [b'X', b'X'] };
+                            for &byte in &msg2 {
+                                while arch::inb(0x3FD) & 0x20 == 0 {}
+                                arch::outb(0x3F8, byte);
+                            }
+                            let msg3 = b"\r\n";
+                            for &byte in msg3.iter() {
+                                while arch::inb(0x3FD) & 0x20 == 0 {}
+                                arch::outb(0x3F8, byte);
+                            }
+                        }
+                    }
+                    f
+                }
+                None => {
+                    // Out of memory - trace it
+                    unsafe {
+                        use arch_x86_64 as arch;
+                        let msg = b"[ALLOC-ERROR] OOM at frame ";
+                        for &byte in msg.iter() {
+                            while arch::inb(0x3FD) & 0x20 == 0 {}
+                            arch::outb(0x3F8, byte);
+                        }
+                        let mut n = i;
+                        let mut buf = [0u8; 10];
+                        let mut idx = 0;
+                        while n > 0 {
+                            buf[idx] = b'0' + (n % 10) as u8;
+                            n /= 10;
+                            idx += 1;
+                        }
+                        while idx > 0 {
+                            idx -= 1;
+                            while arch::inb(0x3FD) & 0x20 == 0 {}
+                            arch::outb(0x3F8, buf[idx]);
+                        }
+                        let msg2 = b"\r\n";
+                        for &byte in msg2.iter() {
+                            while arch::inb(0x3FD) & 0x20 == 0 {}
+                            arch::outb(0x3F8, byte);
+                        }
+                    }
+                    return Err(MapError::OutOfMemory);
+                }
+            };
+            self.allocated_frames.push(frame);
+            frames.push(frame);
+
+            // [TRACE] Frame allocated — TorqueJax
+            unsafe {
+                use arch_x86_64 as arch;
+                let msg = b"[FRAME-ALLOC] phys=0x";
+                for &byte in msg.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                let mut n = frame.as_u64();
+                let mut buf = [0u8; 16];
+                let mut idx = 0;
+                loop {
+                    let digit = (n & 0xF) as u8;
+                    buf[idx] = if digit < 10 { b'0' + digit } else { b'a' + (digit - 10) };
+                    n >>= 4;
+                    idx += 1;
+                    if n == 0 {
+                        break;
+                    }
+                }
+                while idx > 0 {
+                    idx -= 1;
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, buf[idx]);
+                }
+                let msg2 = b"\r\n";
+                for &byte in msg2.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+            }
+        }
+
+        // Phase 2: Zero and map (lock not held, mapping can safely allocate PT pages)
+        for (i, &frame) in frames.iter().enumerate() {
             let offset = (i * 4096) as u64;
             let virt = VirtAddr::new(virt_start.as_u64() + offset);
 
-            // Allocate a frame
-            let frame = allocator.alloc_frame().ok_or(MapError::OutOfMemory)?;
-
-            self.allocated_frames.push(frame);
-
             // Zero the frame
             let frame_virt = phys_to_virt(frame);
+
+            // [TRACE] Before zeroing — GraveShift
+            unsafe {
+                use arch_x86_64 as arch;
+                let msg = b"[ZERO-START] phys=0x";
+                for &byte in msg.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                let mut n = frame.as_u64();
+                let mut buf = [0u8; 16];
+                let mut idx = 0;
+                loop {
+                    let digit = (n & 0xF) as u8;
+                    buf[idx] = if digit < 10 { b'0' + digit } else { b'a' + (digit - 10) };
+                    n >>= 4;
+                    idx += 1;
+                    if n == 0 {
+                        break;
+                    }
+                }
+                while idx > 0 {
+                    idx -= 1;
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, buf[idx]);
+                }
+                let msg2 = b" virt=0x";
+                for &byte in msg2.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                let mut n = frame_virt.as_u64();
+                let mut buf = [0u8; 16];
+                let mut idx = 0;
+                loop {
+                    let digit = (n & 0xF) as u8;
+                    buf[idx] = if digit < 10 { b'0' + digit } else { b'a' + (digit - 10) };
+                    n >>= 4;
+                    idx += 1;
+                    if n == 0 {
+                        break;
+                    }
+                }
+                while idx > 0 {
+                    idx -= 1;
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, buf[idx]);
+                }
+                let msg3 = b"\r\n";
+                for &byte in msg3.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+            }
+
+            // [VALIDATE] Check if we're about to zero a free block — ColdCipher: Catch corruption source
+            const FREE_BLOCK_MAGIC: u64 = 0x4652454542304C;
+            unsafe {
+                let first_u64 = core::ptr::read_volatile(frame_virt.as_ptr::<u64>());
+                if first_u64 == FREE_BLOCK_MAGIC {
+                    use arch_x86_64 as arch;
+                    let msg = b"[FATAL] About to zero FREE BLOCK! phys=0x";
+                    for &byte in msg.iter() {
+                        while arch::inb(0x3FD) & 0x20 == 0 {}
+                        arch::outb(0x3F8, byte);
+                    }
+                    let mut n = frame.as_u64();
+                    let mut buf = [0u8; 16];
+                    let mut idx = 0;
+                    loop {
+                        let digit = (n & 0xF) as u8;
+                        buf[idx] = if digit < 10 { b'0' + digit } else { b'a' + (digit - 10) };
+                        n >>= 4;
+                        idx += 1;
+                        if n == 0 {
+                            break;
+                        }
+                    }
+                    while idx > 0 {
+                        idx -= 1;
+                        while arch::inb(0x3FD) & 0x20 == 0 {}
+                        arch::outb(0x3F8, buf[idx]);
+                    }
+                    let msg2 = b" - GPF\r\n";
+                    for &byte in msg2.iter() {
+                        while arch::inb(0x3FD) & 0x20 == 0 {}
+                        arch::outb(0x3F8, byte);
+                    }
+                    core::ptr::write_volatile(0xDEADC0DE as *mut u64, frame.as_u64());
+                }
+            }
+
+            // [RE-ENABLED] Zeroing (not the corruption source) — GraveShift
             unsafe {
                 core::ptr::write_bytes(frame_virt.as_mut_ptr::<u8>(), 0, 4096);
             }
 
-            // Map it
+            // [TRACE] After zeroing (SKIPPED) — GraveShift
+            unsafe {
+                use arch_x86_64 as arch;
+                let msg = b"[ZERO-DONE] phys=0x";
+                for &byte in msg.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                let mut n = frame.as_u64();
+                let mut buf = [0u8; 16];
+                let mut idx = 0;
+                loop {
+                    let digit = (n & 0xF) as u8;
+                    buf[idx] = if digit < 10 { b'0' + digit } else { b'a' + (digit - 10) };
+                    n >>= 4;
+                    idx += 1;
+                    if n == 0 {
+                        break;
+                    }
+                }
+                while idx > 0 {
+                    idx -= 1;
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, buf[idx]);
+                }
+                let msg2 = b"\r\n";
+                for &byte in msg2.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+            }
+
+            // [RE-ENABLED] Mapping (not the corruption source) — BlackLatch
             unsafe { self.map_user_page(virt, frame, flags, allocator)? };
         }
 

@@ -288,38 +288,92 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let kernel_start = boot_info.kernel_phys_base;
     let kernel_end = kernel_start + boot_info.kernel_size;
 
-    // CRITICAL: Protect ALL UEFI-allocated memory!
-    // UEFI allocates page tables, stack, and various data structures using AnyPages,
-    // which scatters them throughout physical memory. We MUST protect ALL of this
-    // memory from being added to the buddy allocator's free list.
-    //
-    // Strategy: Protect a contiguous region from the PML4 area through the stack.
-    // This is conservative but safe - we'd rather lose some usable memory than
-    // corrupt page tables or stack.
+    // [WORKAROUND] Bootloader doesn't mark ALL its allocations correctly — ColdCipher
+    // Corrupted block at 0x1c060000 is marked USABLE but contains page tables.
+    // The BOOTLOADER region starts at 0x1c063000 (12KB after corruption).
+    // Protect 2MB before bootloader regions to catch this bug.
+    const PHYS_MAP_BASE: u64 = 0xFFFF_8000_0000_0000;
     let current_rsp: u64;
-    unsafe {
-        core::arch::asm!("mov {}, rsp", out(reg) current_rsp);
-    }
-
-    let pml4_phys = boot_info.pml4_phys;
-
-    // Start protection from 16MB below PML4 (to catch early UEFI allocations)
-    let uefi_region_start = pml4_phys.saturating_sub(0x1000000); // 16MB before PML4
-
-    // End protection at 256MB or 16MB above stack, whichever is higher
-    // This ensures we protect:
-    // - Page tables allocated by bootloader (scattered around PML4)
-    // - Initramfs and other UEFI data
-    // - UEFI stack (identity-mapped, somewhere in high physical memory)
-    // - Any other UEFI allocations between these regions
-    let stack_protection_end = if current_rsp > 0xf000000 {
-        0x10000000 // Protect up to 256MB if stack is high
+    unsafe { core::arch::asm!("mov {}, rsp", out(reg) current_rsp); }
+    let rsp_phys = if current_rsp >= PHYS_MAP_BASE {
+        current_rsp - PHYS_MAP_BASE
     } else {
-        (current_rsp & !0xFFF).saturating_add(0x1000000) // 16MB above stack
+        current_rsp
     };
 
-    // Use the maximum of the two endpoints to ensure complete coverage
-    let uefi_region_end = stack_protection_end.max(pml4_phys.saturating_add(0x2000000));
+    // Find lowest BOOTLOADER region and protect 2MB before it
+    let mut bootloader_min = u64::MAX;
+    for region in boot_info.memory_regions() {
+        if matches!(region.ty, BootMemoryType::Bootloader) {
+            bootloader_min = bootloader_min.min(region.start);
+        }
+    }
+
+    let uefi_guard_start = if bootloader_min != u64::MAX {
+        bootloader_min.saturating_sub(0x200000) // 2MB before bootloader
+    } else {
+        rsp_phys.saturating_sub(0x200000) // Fallback to RSP - 2MB
+    };
+    let uefi_guard_end = bootloader_min;
+
+    // [SIMPLE] Trust the memory map — ColdCipher: The Linux way
+    // Bootloader marks page tables/stack as MemoryType::Bootloader (LOADER_DATA).
+    // We only use regions marked Usable or BootServices. No manual protection needed.
+    // [DEBUG] Dump ENTIRE memory map to serial — ColdCipher
+    unsafe {
+        use arch_x86_64 as arch;
+        let header = b"[MMAP-DUMP] UEFI Memory Map:\r\n";
+        for &byte in header.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+
+        for region in boot_info.memory_regions() {
+            let type_str: &[u8] = match region.ty {
+                BootMemoryType::Usable => b"USABLE       ",
+                BootMemoryType::Bootloader => b"BOOTLOADER   ",
+                BootMemoryType::BootServices => b"BOOT_SERVICES",
+                BootMemoryType::Reserved => b"RESERVED     ",
+                BootMemoryType::AcpiReclaimable => b"ACPI_RECLAIM ",
+                BootMemoryType::AcpiNvs => b"ACPI_NVS     ",
+                _ => b"OTHER        ",
+            };
+
+            let start = region.start;
+            let end = start + region.len;
+
+            let prefix = b"[MMAP] 0x";
+            for &byte in prefix.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+            for i in (0..16).rev() {
+                let nibble = ((start >> (i * 4)) & 0xF) as u8;
+                let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                arch::outb(0x3F8, hex_char);
+            }
+            let sep = b"-0x";
+            for &byte in sep.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+            for i in (0..16).rev() {
+                let nibble = ((end >> (i * 4)) & 0xF) as u8;
+                let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                arch::outb(0x3F8, hex_char);
+            }
+            let space = b" ";
+            arch::outb(0x3F8, space[0]);
+            for &byte in type_str.iter() {
+                arch::outb(0x3F8, byte);
+            }
+            let newline = b"\r\n";
+            for &byte in newline.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+        }
+    }
 
     let _ = writeln!(writer, "[INFO] Protected regions:");
     let _ = writeln!(writer, "[INFO]   Low memory: 0x0 - {:#x}", LOW_MEM_LIMIT);
@@ -327,11 +381,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         writer,
         "[INFO]   Kernel: {:#x} - {:#x}",
         kernel_start, kernel_end
-    );
-    let _ = writeln!(
-        writer,
-        "[INFO]   UEFI (PML4+Stack): {:#x} - {:#x} (PML4={:#x}, RSP={:#x})",
-        uefi_region_start, uefi_region_end, pml4_phys, current_rsp
     );
 
     // Helper to check if an address range overlaps with protected regions
@@ -344,9 +393,8 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         if addr >= kernel_start && addr < kernel_end {
             return true;
         }
-        // UEFI allocation region (page tables, stack, runtime services, initramfs, etc.)
-        // This is a single unified region from PML4 area through stack
-        if addr >= uefi_region_start && addr < uefi_region_end {
+        // UEFI guard (2MB before bootloader to catch allocation bugs)
+        if uefi_guard_end != u64::MAX && addr >= uefi_guard_start && addr < uefi_guard_end {
             return true;
         }
         false
@@ -356,6 +404,44 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let mut regions: Vec<(os_core::PhysAddr, u64, bool)> = Vec::new();
 
     for boot_region in boot_info.memory_regions() {
+        // [DEBUG] Log memory map entries around problem area — ColdCipher
+        if boot_region.start <= 0x1c060000 && boot_region.start + boot_region.len > 0x1c060000 {
+            unsafe {
+                use arch_x86_64 as arch;
+                let msg = b"[MMAP] 0x";
+                for &byte in msg.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                for i in (0..16).rev() {
+                    let nibble = ((boot_region.start >> (i * 4)) & 0xF) as u8;
+                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    arch::outb(0x3F8, hex_char);
+                }
+                let msg2 = b"-0x";
+                for &byte in msg2.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                let end = boot_region.start + boot_region.len;
+                for i in (0..16).rev() {
+                    let nibble = ((end >> (i * 4)) & 0xF) as u8;
+                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    arch::outb(0x3F8, hex_char);
+                }
+                let type_str = match boot_region.ty {
+                    BootMemoryType::Usable => b" USABLE\r\n" as &[u8],
+                    BootMemoryType::Bootloader => b" BOOTLOADER\r\n" as &[u8],
+                    BootMemoryType::BootServices => b" BOOT_SERVICES\r\n" as &[u8],
+                    _ => b" OTHER\r\n" as &[u8],
+                };
+                for &byte in type_str.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+            }
+        }
+
         let base_usable = matches!(
             boot_region.ty,
             BootMemoryType::Usable | BootMemoryType::BootServices
@@ -678,7 +764,41 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Initialize PS/2 mouse and keyboard drivers (registers with input subsystem)
     debug_mouse!("[mouse] Initializing PS/2 drivers...");
     ps2::init();
+
+    // DEBUG: Direct serial output before enable_interrupts — GraveShift
+    unsafe {
+        let msg = b"[INIT-DEBUG] ps2::init() returned, about to enable interrupts\r\n";
+        for &byte in msg.iter() {
+            // Wait for THRE (transmit holding register empty) — COM1 status port 0x3FD
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            // Write byte to COM1 data port 0x3F8
+            arch::outb(0x3F8, byte);
+        }
+    }
+
+    // CRITICAL FIX: Re-enable interrupts immediately after PS/2 init
+    // PS/2 init calls cli() but doesn't call sti(). Without this, all subsequent
+    // writeln! calls hang because terminal rendering needs interrupts.
+    arch::X86_64::enable_interrupts();
+
+    // DEBUG: After sti — GraveShift
+    unsafe {
+        let msg = b"[INIT-DEBUG] enable_interrupts() returned successfully!\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
+
     let _ = writeln!(writer, "[INFO] PS/2 drivers initialized (keyboard + mouse)");
+
+    unsafe {
+        let msg = b"[INIT-DEBUG] After first writeln\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
 
     // Connect keyboard IRQ 1 to PS/2 keyboard driver
     debug_input!("[INPUT] Registering IRQ 1 callback for PS/2 keyboard");
@@ -687,12 +807,28 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
     let _ = writeln!(writer, "[INFO] PS/2 keyboard IRQ callback registered");
 
+    unsafe {
+        let msg = b"[INIT-DEBUG] After set_keyboard_callback\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
+
     // Connect PS/2 keyboard input to console
     // Safety: Called during single-threaded initialization
     unsafe {
         ps2::set_console_callback(devfs::console_input_callback);
     }
     let _ = writeln!(writer, "[INFO] PS/2 console callback registered");
+
+    unsafe {
+        let msg = b"[INIT-DEBUG] After set_console_callback\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
 
     // Connect PS/2 Alt+Fn keys to VT switching
     // Safety: Called during single-threaded initialization
@@ -701,6 +837,14 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
     let _ = writeln!(writer, "[INFO] PS/2 VT switch callback registered");
 
+    unsafe {
+        let msg = b"[INIT-DEBUG] After set_vt_switch_callback\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
+
     // Connect mouse IRQ 12 to PS/2 mouse driver
     debug_mouse!("[mouse] Registering IRQ 12 callback for PS/2 mouse");
     unsafe {
@@ -708,11 +852,27 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
     let _ = writeln!(writer, "[INFO] PS/2 mouse IRQ callback registered");
 
+    unsafe {
+        let msg = b"[INIT-DEBUG] After set_mouse_callback\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
+
     // Initialize graphical mouse cursor on framebuffer
     if fb::is_initialized() {
         debug_mouse!("[mouse] Initializing graphical cursor on framebuffer");
         fb::mouse_init();
         let _ = writeln!(writer, "[INFO] Mouse cursor initialized");
+
+        unsafe {
+            let msg = b"[INIT-DEBUG] After fb::mouse_init\r\n";
+            for &byte in msg.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+        }
     } else {
         debug_mouse!("[mouse] No framebuffer — skipping graphical cursor init");
     }
@@ -730,7 +890,25 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(writer, "[INFO] Input wake callback registered");
 
     // Initialize and register preemptive scheduler (BSP)
+
+    unsafe {
+        let msg = b"[INIT-DEBUG] Before scheduler::init()\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
+
     scheduler::init();
+
+    unsafe {
+        let msg = b"[INIT-DEBUG] After scheduler::init()\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
+
     let _ = writeln!(writer, "[INFO] Scheduler initialized");
 
     // NeonRoot: Register the hardware CPU ID callback BEFORE timers or APs can
@@ -764,13 +942,51 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // current task. Starting the timer after sti gives a clean first tick.
     let _ = writeln!(writer, "[INFO] Enabling interrupts...");
 
+    let _ = writeln!(writer, "[dbg] *** ENABLING INTERRUPTS NOW ***");
     arch::X86_64::enable_interrupts();
+    let _ = writeln!(writer, "[dbg] *** INTERRUPTS ENABLED ***");
+
+    unsafe {
+        let msg = b"[INIT-DEBUG] After second enable_interrupts()\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
 
     let _ = writeln!(writer, "[INFO] Interrupts enabled");
 
     // BlackLatch: Unmask IOAPIC keyboard/mouse now that sti is live and
     // all handlers are registered. Any stale PS2 data will fire here safely.
     arch::unmask_io_irqs();
+
+    // — InputShade: Verify interrupts are enabled after unmasking
+    let if_enabled = arch::X86_64::interrupts_enabled();
+    unsafe {
+        let prefix = b"[IRQ-CHECK] After unmask: interrupts ";
+        for &byte in prefix.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+        let status: &[u8] = if if_enabled { b"ENABLED" } else { b"DISABLED" };
+        for &byte in status.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+        let suffix = b"\r\n";
+        for &byte in suffix.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
+
+    unsafe {
+        let msg = b"[INIT-DEBUG] After unmask_io_irqs()\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
 
     // NeonRoot: Timer and AP release are DEFERRED until right before entering
     // usermode. The entire boot sequence runs as a single kernel thread with
@@ -799,10 +1015,26 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(writer, "========================================");
     let _ = writeln!(writer);
 
+    unsafe {
+        let msg = b"[INIT-DEBUG] Entering Phase 3: User Mode Test\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
+
     // Initialize syscall mechanism
     let _ = writeln!(writer, "[USER] Initializing syscall mechanism...");
     unsafe {
         arch::syscall::init();
+    }
+
+    unsafe {
+        let msg = b"[INIT-DEBUG] After syscall::init()\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
     }
 
     // Set up syscall handlers
@@ -846,6 +1078,14 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // ========================================
     let _ = writeln!(writer, "[VFS] Initializing virtual filesystem...");
 
+    unsafe {
+        let msg = b"[INIT-DEBUG] Before VFS mount\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
+
     // Mount tmpfs as root filesystem
     let root_fs = TmpDir::new_root();
     if let Err(e) = GLOBAL_VFS.mount(root_fs.clone(), "/", MountFlags::empty(), "tmpfs") {
@@ -853,6 +1093,14 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         arch::X86_64::halt();
     }
     let _ = writeln!(writer, "[VFS] Mounted tmpfs at /");
+
+    unsafe {
+        let msg = b"[INIT-DEBUG] After VFS mount\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
 
     // Create /dev directory
     if let Err(e) = root_fs.mkdir("dev", vfs::Mode::DEFAULT_DIR) {
@@ -863,8 +1111,25 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Mount devfs at /dev
     let dev_fs = DevFs::new();
 
+    unsafe {
+        let msg = b"[INIT-DEBUG] Before vt::init()\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
+
     // Initialize VT (virtual terminal) subsystem before mounting devfs
     let vt_manager = vt::init();
+
+    unsafe {
+        let msg = b"[INIT-DEBUG] After vt::init()\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
+
     let _ = writeln!(
         writer,
         "[VFS] VT manager initialized ({} virtual terminals)",
@@ -1425,6 +1690,15 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             "[INITRAMFS] Loading initramfs ({} bytes)...",
             initramfs_data.len()
         );
+
+        unsafe {
+            let msg = b"[INIT-DEBUG] Before initramfs::load()\r\n";
+            for &byte in msg.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+        }
+
         let initramfs_root = match initramfs::load(initramfs_data) {
             Ok(root) => root,
             Err(e) => {
@@ -1432,6 +1706,40 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                 arch::X86_64::halt();
             }
         };
+
+        unsafe {
+            let msg = b"[INIT-DEBUG] After initramfs::load()\r\n";
+            for &byte in msg.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+        }
+
+        // SIMPLE SERIAL TEST — GraveShift: Testing if serial writes work here
+        unsafe {
+            let test_msg = b"[SERIAL-TEST] If you see this, serial works!\r\n";
+            for &byte in test_msg.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+        }
+
+        // DIRECT KERNEL SCREEN DUMP — GraveShift: Dump screen BEFORE anything else can hang!
+        unsafe {
+            let msg = b"\r\n=== KERNEL VT SCREEN DUMP (after initramfs load) ===\r\n";
+            for &byte in msg.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+        }
+        vt::debug_dump_screen_to_serial();
+        unsafe {
+            let msg = b"=== END KERNEL SCREEN DUMP ===\r\n\r\n";
+            for &byte in msg.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+        }
 
         // Mount initramfs as root filesystem
         if let Err(e) = GLOBAL_VFS.mount(
@@ -1444,6 +1752,15 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             arch::X86_64::halt();
         }
         let _ = writeln!(writer, "[INITRAMFS] Mounted as root filesystem at /");
+
+        // SERIAL TRACE — GraveShift: Where the fuck is the kernel now?
+        unsafe {
+            let msg = b"[SERIAL-TRACE] Initramfs mounted successfully\r\n";
+            for &byte in msg.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+        }
 
         // Mount tmpfs on writable directories (initramfs is read-only)
         let writable_dirs = ["/run", "/tmp", "/var/log", "/var/lib", "/var/run"];
@@ -1482,6 +1799,15 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                 } else {
                     let _ = writeln!(writer, "[EXT4] Mounted ext4 filesystem at /mnt/root");
                 }
+            }
+        }
+
+        // SERIAL TRACE — GraveShift: Filesystem mounts complete
+        unsafe {
+            let msg = b"[SERIAL-TRACE] All filesystem mounts complete\r\n";
+            for &byte in msg.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
             }
         }
     }
@@ -1563,19 +1889,147 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         user_pml4.as_u64()
     );
 
+    // SERIAL TRACE — GraveShift: User address space created
+    unsafe {
+        let msg = b"[SERIAL-TRACE] User address space created\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
+
+    // SERIAL TRACE — GraveShift: About to load ELF segments
+    unsafe {
+        let msg = b"[SERIAL-TRACE] Starting ELF segment loading\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
+
     // Load ELF segments into user address space
     // Handle overlapping segments by checking if pages are already mapped
     for seg in elf.segments() {
+        // SERIAL TRACE — GraveShift: Processing a segment
+        unsafe {
+            let msg = b"[SERIAL-TRACE] Loading segment\r\n";
+            for &byte in msg.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+        }
+
         let (page_base, page_size) = elf::ElfLoader::segment_pages(seg);
         let num_pages = page_size / 4096;
         let _page_offset = elf::ElfLoader::segment_page_offset(seg);
 
+        // SERIAL TRACE — GraveShift: Show num_pages (simple decimal output)
+        unsafe {
+            let msg = b"[SERIAL-TRACE] Allocating pages, num=";
+            for &byte in msg.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+            // Write num_pages as decimal
+            let mut n = num_pages;
+            if n == 0 {
+                arch::outb(0x3F8, b'0');
+            } else {
+                let mut buf = [0u8; 20];
+                let mut i = 0;
+                while n > 0 {
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    i += 1;
+                }
+                while i > 0 {
+                    i -= 1;
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, buf[i]);
+                }
+            }
+            let msg2 = b"\r\n";
+            for &byte in msg2.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+        }
+
         // Allocate pages that aren't already mapped, or update flags if already mapped
         for i in 0..num_pages {
+            // SERIAL TRACE — GraveShift: Every 10th page, or every page near 30-40
+            if i % 10 == 0 || (i >= 30 && i < 45) {
+                unsafe {
+                    let msg = b"[SERIAL-TRACE] Page ";
+                    for &byte in msg.iter() {
+                        while arch::inb(0x3FD) & 0x20 == 0 {}
+                        arch::outb(0x3F8, byte);
+                    }
+                    // Write i as decimal
+                    let mut n = i;
+                    if n == 0 {
+                        arch::outb(0x3F8, b'0');
+                    } else {
+                        let mut buf = [0u8; 20];
+                        let mut idx = 0;
+                        while n > 0 {
+                            buf[idx] = b'0' + (n % 10) as u8;
+                            n /= 10;
+                            idx += 1;
+                        }
+                        while idx > 0 {
+                            idx -= 1;
+                            while arch::inb(0x3FD) & 0x20 == 0 {}
+                            arch::outb(0x3F8, buf[idx]);
+                        }
+                    }
+                    let msg2 = b"\r\n";
+                    for &byte in msg2.iter() {
+                        while arch::inb(0x3FD) & 0x20 == 0 {}
+                        arch::outb(0x3F8, byte);
+                    }
+                }
+            }
+
             let page_addr = VirtAddr::new(page_base.as_u64() + (i as u64 * 4096));
+
+            // SERIAL TRACE — GraveShift: Before translate for page 38
+            if i == 38 {
+                unsafe {
+                    let msg = b"[SERIAL-TRACE] Page 38: before translate\r\n";
+                    for &byte in msg.iter() {
+                        while arch::inb(0x3FD) & 0x20 == 0 {}
+                        arch::outb(0x3F8, byte);
+                    }
+                }
+            }
+
             // Check if page is already mapped
             let existing = user_space.translate(page_addr);
+
+            // SERIAL TRACE — GraveShift: After translate for page 38
+            if i == 38 {
+                unsafe {
+                    let msg = b"[SERIAL-TRACE] Page 38: after translate\r\n";
+                    for &byte in msg.iter() {
+                        while arch::inb(0x3FD) & 0x20 == 0 {}
+                        arch::outb(0x3F8, byte);
+                    }
+                }
+            }
+
             if existing.is_none() {
+                // SERIAL TRACE — GraveShift: Before allocate for page 38
+                if i == 38 {
+                    unsafe {
+                        let msg = b"[SERIAL-TRACE] Page 38: before allocate\r\n";
+                        for &byte in msg.iter() {
+                            while arch::inb(0x3FD) & 0x20 == 0 {}
+                            arch::outb(0x3F8, byte);
+                        }
+                    }
+                }
+
                 // Allocate single page
                 if let Err(e) = user_space.allocate_pages(page_addr, 1, seg.flags, mm_manager::mm())
                 {
@@ -1602,6 +2056,15 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         let mut data_offset = 0usize;
         let mut mem_offset = 0usize;
 
+        // SERIAL TRACE — GraveShift: About to copy segment data
+        unsafe {
+            let msg = b"[SERIAL-TRACE] Copying segment data\r\n";
+            for &byte in msg.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+        }
+
         while data_offset < seg_data.len() || mem_offset < seg.mem_size {
             // Calculate which virtual page we're on
             let current_vaddr = seg_vaddr_start + mem_offset as u64;
@@ -1621,6 +2084,28 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                     arch::X86_64::halt();
                 }
             };
+
+            // [TRACE] Log if we're about to copy to target range — ColdCipher
+            if phys.as_u64() >= 0x0c400000 && phys.as_u64() <= 0x0c500000 {
+                unsafe {
+                    let msg = b"[ELF-COPY] dest_phys=0x";
+                    for &byte in msg.iter() {
+                        while arch::inb(0x3FD) & 0x20 == 0 {}
+                        arch::outb(0x3F8, byte);
+                    }
+                    let addr = phys.as_u64();
+                    for i in (0..16).rev() {
+                        let nibble = ((addr >> (i * 4)) & 0xF) as u8;
+                        let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                        arch::outb(0x3F8, hex_char);
+                    }
+                    let msg2 = b"\r\n";
+                    for &byte in msg2.iter() {
+                        while arch::inb(0x3FD) & 0x20 == 0 {}
+                        arch::outb(0x3F8, byte);
+                    }
+                }
+            }
 
             let dest_virt = phys_to_virt(phys);
             let dest = unsafe { dest_virt.as_mut_ptr::<u8>().add(in_page_offset) };
@@ -1664,6 +2149,24 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             }
 
             mem_offset += bytes_remaining_in_page;
+        }
+
+        // SERIAL TRACE — GraveShift: Segment done
+        unsafe {
+            let msg = b"[SERIAL-TRACE] Segment done\r\n";
+            for &byte in msg.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+        }
+    }
+
+    // SERIAL TRACE — GraveShift: ELF segments loaded
+    unsafe {
+        let msg = b"[SERIAL-TRACE] ELF segments loaded successfully\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
         }
     }
 
@@ -1923,6 +2426,15 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Wrap in Arc<Mutex<>> for Task
     let init_meta_arc = Arc::new(spin::Mutex::new(init_meta));
 
+    // SERIAL TRACE — GraveShift: About to create init task
+    unsafe {
+        let msg = b"[SERIAL-TRACE] About to create init task\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
+
     // Create a Task for init with the ProcessMeta
     let _ = writeln!(writer, "[USER] Adding init to scheduler...");
     let init_task = sched::Task::new_with_meta(
@@ -1942,6 +2454,15 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     sched::switch_to(init_pid); // Mark init as the currently running task
 
     let _ = writeln!(writer, "[USER] Init process registered");
+
+    // SERIAL TRACE — GraveShift: Init added to scheduler
+    unsafe {
+        let msg = b"[SERIAL-TRACE] Init task added to scheduler\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
 
     // Get the PML4 from the init meta
     let user_pml4_phys = init_meta_arc.lock().address_space.pml4_phys();
@@ -1964,10 +2485,67 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // CRITICAL: No writeln! after start_timer — the timer fires every 10ms and
     // terminal_tick/scheduler_tick can run. Lock-free writes only via os_log.
     // — PatchBay: NO MORE SERIAL. os_log routes to console now.
+
+    unsafe {
+        let msg = b"[INIT-DEBUG] About to start APIC timer and enter usermode!\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
+
+    // DIRECT KERNEL SCREEN DUMP — GraveShift: Show us WTF is on the screen!
+    unsafe {
+        let msg = b"\r\n=== KERNEL VT SCREEN DUMP (before usermode) ===\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
+
+    // Call the VT screen dump directly from kernel space
+    vt::debug_dump_screen_to_serial();
+
+    unsafe {
+        let msg = b"=== END KERNEL SCREEN DUMP ===\r\n\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
+
+    // — InputShade: Verify interrupts are enabled before entering userspace
+    let if_enabled = arch::X86_64::interrupts_enabled();
+    unsafe {
+        let prefix = b"[IRQ-CHECK] Interrupts ";
+        for &byte in prefix.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+        let status: &[u8] = if if_enabled { b"ENABLED" } else { b"DISABLED" };
+        for &byte in status.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+        let suffix = b" before userspace\r\n";
+        for &byte in suffix.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
+
     unsafe { os_log::write_str_raw("[INFO] Starting APIC timer at 100Hz...\n"); }
     arch::start_timer(100);
     smp_init::signal_ap_ready();
     unsafe { os_log::write_str_raw("[SMP] AP timer gate released — all CPUs active\n"); }
+
+    unsafe {
+        let msg = b"[INIT-DEBUG] Entering usermode NOW!\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
 
     // NeonRoot: Straight into usermode — no more locks, no more delays.
     // enter_usermode does cli immediately, so the timer won't fire during

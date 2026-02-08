@@ -1,0 +1,327 @@
+flowchart LR
+    subgraph Host["Host Build + Tooling"]
+        Toolchain["toolchain/: oxide-cc/ld toolchains"]
+        Scripts["scripts/, mk/, Makefile automation"]
+        PkgMgr["pkgmgr/: oxdnf builder"]
+        Build["build/, target/, targets/: artifacts"]
+    end
+    Toolchain --> Build
+    Scripts --> Build
+    PkgMgr --> Build
+
+    subgraph Boot["Boot Path"]
+        Firmware["UEFI firmware"]
+        BootUEFI["bootloader/boot-uefi"]
+        BootInfo["boot_proto::BootInfo + mem map"]
+    end
+    Build --> BootUEFI
+    Firmware --> BootUEFI
+    BootUEFI --> BootInfo
+
+    subgraph Kernel["Kernel (kernel/)"]
+        KernelMain["kernel/src/init.rs::kernel_main"]
+        subgraph Arch["Architecture + platform"]
+            ArchX86["arch-x86_64"]
+            ArchAarch["arch-aarch64 stub"]
+            ArchMips["arch-mips64 stub"]
+            ACPI["acpi/ firmware tables"]
+            SMP["smp/ + smp_init.rs"]
+        end
+        subgraph Memory["Memory management"]
+            MMCore["mm-core/mm-manager"]
+            Paging["mm-paging"]
+            Heap["mm-heap + mm-slab"]
+            COW["mm-cow"]
+        end
+        subgraph ProcSched["Tasks & syscalls"]
+            Scheduler["sched/"]
+            Process["proc/ + exec/ + signal/"]
+            Syscall["syscall/ boundary"]
+            IPC["tty/pty + async glue"]
+        end
+        subgraph Storage["Storage + filesystems"]
+            BlockLayer["block/block + gpt"]
+            MediaAuto["media/automount"]
+            VFS["vfs/ mount glue"]
+            Ext4["fs/ext4"]
+            FAT32["fs/fat32"]
+            OxideFS["fs/oxidefs"]
+            Tmpfs["tmpfs"]
+            Procfs["procfs"]
+            Devfs["devfs"]
+        end
+        subgraph Networking["Networking stack"]
+            TCPIP["net/tcpip"]
+            DHCP["net/dhcp"]
+            DNS["net/dns"]
+            SMB["net/smb"]
+            NFS["net/nfs"]
+            RDP["net/rdp"]
+        end
+        subgraph SecurityContainer["Security + containerization"]
+            Crypto["security/{crypto,x509,trust}"]
+            Quarantine["security/quarantine"]
+            Namespaces["container/namespace"]
+            Cgroups["container/cgroup"]
+            Seccomp["container/seccomp"]
+        end
+        subgraph Hypervisor["hypervisor/"]
+            VMX["vmx"]
+            VMM["vmm"]
+            VirtioEmu["virtio-emu"]
+        end
+        subgraph IO["Display/input/audio/USB/perf/AI"]
+            Framebuffer["graphics/fb"]
+            Terminal["tty/terminal + vt"]
+            PTY["tty/pty + pts dir"]
+            InputCore["input/"]
+            AudioCore["audio/"]
+            USBStack["usb/"]
+            PerfMon["perf/"]
+            AI["ai/{embed,hnsw,indexd}"]
+        end
+        subgraph Drivers["drivers/* + module/"]
+            DriverFramework["driver-traits + module loader"]
+            subgraph BlockDrv["Block drivers"]
+                VirtIOBlk["virtio-blk"]
+                NVMe["nvme"]
+                AHCI["ahci"]
+            end
+            subgraph NetDrv["Network drivers"]
+                VirtIONet["virtio-net"]
+            end
+            subgraph GPUD["GPU driver"]
+                VirtIOGPU["virtio-gpu"]
+            end
+            subgraph AudioDrv["Audio drivers"]
+                IntelHDA["intel-hda"]
+                VirtIOSnd["virtio-snd"]
+            end
+            subgraph InputDrv["Input drivers"]
+                PS2["ps2"]
+                VirtIOInput["virtio-input"]
+            end
+            subgraph USBDrv["USB drivers"]
+                XHCI["xhci host"]
+                USBHID["usb-hid"]
+                USBMSC["usb-msc"]
+            end
+            Serial["serial/uart-8250"]
+        end
+    end
+
+    BootInfo --> KernelMain
+    KernelMain --> ArchX86
+    KernelMain --> ArchAarch
+    KernelMain --> ArchMips
+    KernelMain --> ACPI
+    KernelMain --> MMCore
+    KernelMain --> Scheduler
+    KernelMain --> Process
+    KernelMain --> Syscall
+    KernelMain --> BlockLayer
+    KernelMain --> TCPIP
+    KernelMain --> Crypto
+    KernelMain --> VMX
+    KernelMain --> Framebuffer
+    KernelMain --> InputCore
+    KernelMain --> AudioCore
+    KernelMain --> USBStack
+    KernelMain --> PerfMon
+    KernelMain --> AI
+    KernelMain --> DriverFramework
+    ArchX86 --> SMP
+    ACPI --> ArchX86
+    MMCore --> Paging
+    MMCore --> Heap
+    Heap --> COW
+    Scheduler --> Process
+    Process --> IPC
+    Syscall --> Scheduler
+    Syscall --> Process
+    Syscall --> Namespaces
+    Syscall --> Cgroups
+    Syscall --> Seccomp
+    Syscall --> VFS
+    Syscall --> TCPIP
+    Syscall --> Framebuffer
+    Syscall --> Terminal
+    Syscall --> AudioCore
+    Syscall --> USBStack
+    Syscall --> AI
+    Syscall --> VMX
+    BlockLayer --> VFS
+    BlockLayer --> MediaAuto
+    VFS --> Ext4
+    VFS --> FAT32
+    VFS --> OxideFS
+    VFS --> Tmpfs
+    VFS --> Procfs
+    VFS --> Devfs
+    TCPIP --> DHCP
+    TCPIP --> DNS
+    TCPIP --> SMB
+    TCPIP --> NFS
+    TCPIP --> RDP
+    Namespaces --> Procfs
+    DriverFramework --> VirtIOBlk
+    DriverFramework --> NVMe
+    DriverFramework --> AHCI
+    DriverFramework --> VirtIONet
+    DriverFramework --> VirtIOGPU
+    DriverFramework --> IntelHDA
+    DriverFramework --> VirtIOSnd
+    DriverFramework --> PS2
+    DriverFramework --> VirtIOInput
+    DriverFramework --> XHCI
+    DriverFramework --> USBHID
+    DriverFramework --> USBMSC
+    DriverFramework --> Serial
+    VirtIOBlk --> BlockLayer
+    NVMe --> BlockLayer
+    AHCI --> BlockLayer
+    VirtIONet --> TCPIP
+    VirtIOGPU --> Framebuffer
+    IntelHDA --> AudioCore
+    VirtIOSnd --> AudioCore
+    PS2 --> InputCore
+    VirtIOInput --> InputCore
+    XHCI --> USBStack
+    USBHID --> InputCore
+    USBMSC --> BlockLayer
+    Serial --> Terminal
+    InputCore --> Terminal
+    Terminal --> PTY
+    PTY --> IPC
+    RDP --> Framebuffer
+    RDP --> InputCore
+
+    subgraph Userspace["Userspace (userspace/)"]
+        subgraph System["system/"]
+            Init["init"]
+            ServiceMgr["servicemgr"]
+            Getty["getty"]
+            Login["login"]
+            Passwd["passwd"]
+        end
+        subgraph ShellCoreutils["shell/ + coreutils/"]
+            Shell["shell"]
+            Coreutils["coreutils (90+)"]
+        end
+        subgraph Services["services/"]
+            Journald["journald"]
+            Journalctl["journalctl"]
+            Networkd["networkd"]
+            Resolvd["resolvd"]
+            Soundd["soundd"]
+            RDPD["rdpd"]
+            SSHD["sshd"]
+        end
+        subgraph Apps["apps/"]
+            CursesDemo["curses-demo"]
+            Doom["doom"]
+            GWBASIC["gwbasic"]
+            Htop["htop"]
+            MP3["mp3player"]
+            SoundClient["sound-client"]
+        end
+        subgraph NetworkApps["network/"]
+            SSHClient["ssh client"]
+        end
+        subgraph DevTools["devtools/"]
+            AR["ar"]
+            AS["as"]
+            LD["ld"]
+            Make["make"]
+            Modutils["modutils"]
+            Search["search"]
+        end
+        subgraph Libs["libs/"]
+            Libc["libc"]
+            OxideStd["oxide-std"]
+            Compression["compression"]
+            MP3Dec["mp3decoder"]
+            Termcap["termcap + vte"]
+            Ncurses["oxide-ncurses"]
+        end
+        subgraph Tests["tests/ + test-programs/"]
+            IntegrationTests["tests"]
+            StressProgs["test-programs"]
+        end
+    end
+
+    Init --> Syscall
+    Init --> ServiceMgr
+    ServiceMgr --> Syscall
+    ServiceMgr --> Process
+    ServiceMgr --> Journald
+    ServiceMgr --> Networkd
+    ServiceMgr --> Soundd
+    ServiceMgr --> RDPD
+    ServiceMgr --> SSHD
+    Getty --> Syscall
+    Getty --> Terminal
+    Login --> Syscall
+    Login --> Crypto
+    Passwd --> Syscall
+    Passwd --> Crypto
+    Shell --> Syscall
+    Shell --> Terminal
+    Coreutils --> Syscall
+    Coreutils --> VFS
+    Coreutils --> Procfs
+    Journald --> Syscall
+    Journald --> VFS
+    Journalctl --> Syscall
+    Journalctl --> Journald
+    Networkd --> Syscall
+    Networkd --> TCPIP
+    Networkd --> DHCP
+    Resolvd --> Syscall
+    Resolvd --> DNS
+    Soundd --> Syscall
+    Soundd --> AudioCore
+    RDPD --> Syscall
+    RDPD --> RDP
+    RDPD --> Framebuffer
+    RDPD --> InputCore
+    SSHD --> Syscall
+    SSHD --> TCPIP
+    SSHClient --> Syscall
+    SSHClient --> TCPIP
+    CursesDemo --> Syscall
+    CursesDemo --> Terminal
+    Doom --> Syscall
+    Doom --> Framebuffer
+    Doom --> InputCore
+    Doom --> AudioCore
+    GWBASIC --> Syscall
+    GWBASIC --> Terminal
+    Htop --> Syscall
+    Htop --> Procfs
+    MP3 --> Syscall
+    MP3 --> Soundd
+    MP3 --> AudioCore
+    SoundClient --> Syscall
+    SoundClient --> Soundd
+    AR --> Syscall
+    AS --> Syscall
+    LD --> Syscall
+    Make --> Syscall
+    Search --> Syscall
+    DevTools --> VFS
+    Modutils --> Syscall
+    Modutils --> DriverFramework
+    IntegrationTests --> Syscall
+    StressProgs --> Syscall
+    Libc -.-> Shell
+    Libc -.-> Coreutils
+    Libc -.-> Services
+    Libc -.-> Apps
+    OxideStd -.-> Shell
+    OxideStd -.-> Apps
+    Compression -.-> Coreutils
+    MP3Dec -.-> MP3
+    Termcap -.-> Shell
+    Ncurses -.-> CursesDemo
+    Ncurses -.-> Htop

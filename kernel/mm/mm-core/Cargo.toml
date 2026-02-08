@@ -10,3 +10,4 @@ mm-traits = { workspace = true }
 spin = { workspace = true }
 log = { workspace = true }
 bitflags = { workspace = true }
+arch-x86_64 = { path = "../../arch/arch-x86_64" }

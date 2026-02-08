@@ -132,8 +132,8 @@ pub fn terminal_tick() {
         static mut MIDDLE_PRESSED: bool = false;
 
         // Drain all mouse events from input device 1
-        if let Some(mouse_handle) = input::get_device(1) {
-            while let Some(event) = mouse_handle.pop_event() {
+        if let Some(mouse_handle) = input::try_get_device(1) {
+            while let Some(event) = mouse_handle.try_pop_event() {
                 debug_mouse_unsafe!("M");
                 match event.event_type() {
                     input::EventType::Rel => {
@@ -357,7 +357,6 @@ pub fn console_write_bytes(data: &[u8]) {
         core::arch::asm!("clac", options(nomem, nostack));
     }
 }
-
 
 // ═══════════════════════════════════════════════════════════════════
 //  ISR-SAFE CONSOLE OUTPUT (REPLACES SERIAL)

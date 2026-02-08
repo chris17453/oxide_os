@@ -36,6 +36,10 @@ QEMU ?= $(shell \
 		echo "qemu-system-x86_64"; \
 	fi)
 
+GDB ?= gdb
+GDB_AUTO ?= 1
+GDB_CMDS ?= -ex 'target remote :1234' -ex 'continue'
+
 # Randomized host port for SSH forwarding (override via SSH_HOST_PORT=2223, etc.)
 SSH_HOST_PORT ?= $(shell python3 -c 'import socket; s = socket.socket(); s.bind(("", 0)); print(s.getsockname()[1])')
 

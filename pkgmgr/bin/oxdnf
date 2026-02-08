@@ -3,9 +3,10 @@
 oxdnf - OXIDE Package Manager
 
 DNF-like package manager for OXIDE OS that:
-- Downloads Fedora source RPMs
-- Cross-compiles them for OXIDE
-- Manages local package repository
+- Downloads Fedora source RPMs (via host dnf)
+- Builds SRPM dependency graphs with Graphviz output
+- Cross-compiles packages for OXIDE
+- Manages versioned local package repositories (per Fedora release)
 """
 
 import sys
@@ -20,261 +21,495 @@ sys.path.insert(0, str(PKGMGR_ROOT / 'lib'))
 # Determine repo root
 REPO_ROOT = PKGMGR_ROOT.parent
 
-from fedora import FedoraRepoManager
+from srpm_graph import (
+    SRPMGraph, download_srpms, search_packages, get_package_info_from_dnf,
+    get_srpm_metadata, CapabilityResolver, DEFAULT_MAX_DEPTH,
+    sync_repo_metadata, is_synced,
+)
 from builder import BuildConfig, PackageBuilder
 from repository import LocalRepository, InstalledPackages
 from resolver import DependencyResolver
 
-
-def cmd_search(args, repo_mgr, local_repo):
-    """Search for packages"""
-    print(f"Searching for: {args.query}")
-    print()
-    
-    # Search Fedora repos
-    fedora_results = repo_mgr.search(args.query)
-    
-    if fedora_results:
-        print("Available from Fedora:")
-        print(f"{'Name':<30} {'Version':<15} {'Repo':<20}")
-        print("-" * 70)
-        for pkg in fedora_results[:20]:  # Limit to 20 results
-            print(f"{pkg['name']:<30} {pkg['version']:<15} {pkg['repo']:<20}")
-        
-        if len(fedora_results) > 20:
-            print(f"\n... and {len(fedora_results) - 20} more")
-    
-    # Search local repo
-    local_results = local_repo.search(args.query)
-    
-    if local_results:
-        print("\n\nInstalled locally:")
-        print(f"{'Name':<30} {'Version':<15}")
-        print("-" * 50)
-        for pkg in local_results:
-            print(f"{pkg['name']:<30} {pkg['version']:<15}")
-    
-    if not fedora_results and not local_results:
-        print("No packages found.")
+# — NeonRoot: "Default Fedora release. Bump this when we migrate."
+DEFAULT_RELEASE = "42"
 
 
-def cmd_info(args, repo_mgr, local_repo):
-    """Show package information"""
-    package_name = args.package
-    
-    # Check local first
-    local_info = local_repo.get_package_info(package_name)
-    if local_info:
-        print("Package:", local_info['name'])
-        print("Version:", local_info['version'])
-        print("Release:", local_info['release'])
-        print("Arch:", local_info.get('arch', 'x86_64'))
-        print("Summary:", local_info.get('summary', 'N/A'))
-        print("License:", local_info.get('license', 'N/A'))
-        print("URL:", local_info.get('url', 'N/A'))
-        print("Build Date:", local_info.get('builddate', 'N/A'))
-        print("\nRequires:")
-        for req in local_info.get('requires', []):
-            print(f"  - {req}")
-        return
-    
-    # Check Fedora repos
-    result = repo_mgr.get_package(package_name)
-    if result:
-        repo, pkg_info = result
-        print("Package:", pkg_info['name'])
-        print("Version:", pkg_info['version'])
-        print("Release:", pkg_info['release'])
-        print("Repository:", pkg_info['repo'])
-        print("Summary:", pkg_info.get('summary', 'N/A'))
-        print("Location:", pkg_info.get('location', 'N/A'))
-        print("\nTo build: oxdnf buildsrpm", package_name)
-        return
-    
-    print(f"Package not found: {package_name}")
+def _repo_dir(release: str) -> Path:
+    """Versioned repo: pkgmgr/repo/fedora-<release>/"""
+    d = PKGMGR_ROOT / "repo" / f"fedora-{release}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
-def cmd_repo_sync(args, repo_mgr):
-    """Sync repository metadata"""
-    print("Synchronizing repository metadata...")
-    
-    cache_dir = PKGMGR_ROOT / 'cache'
-    synced = repo_mgr.sync_all(str(cache_dir))
-    
-    print(f"\nSynced {synced} repositories")
+def _srpms_dir(release: str) -> Path:
+    d = _repo_dir(release) / "srpms"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
-def cmd_repolist(args, repo_mgr):
-    """List configured repositories"""
-    repos = repo_mgr.list_repos()
-    
-    print(f"{'Repo ID':<25} {'Repo Name':<40} {'Status':<10}")
-    print("-" * 80)
-    
-    for repo in repos:
-        status = 'enabled' if repo.enabled else 'disabled'
-        print(f"{repo.name:<25} {repo.display_name:<40} {status:<10}")
+def _graph_dir(release: str) -> Path:
+    d = _repo_dir(release) / "graph"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
-def cmd_buildsrpm(args, repo_mgr):
-    """Build package from SRPM"""
-    package_name = args.package
-    
-    print(f"Building package: {package_name}")
-    print()
-    
-    # Download SRPM
-    print("Step 1: Downloading SRPM...")
-    srpm_cache = PKGMGR_ROOT / 'cache' / 'srpms'
-    srpm_file = repo_mgr.download_srpm(package_name, str(srpm_cache))
-    
-    if not srpm_file:
-        print("ERROR: Failed to download SRPM")
+def _packages_dir(release: str) -> Path:
+    d = _repo_dir(release) / "packages"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _metadata_dir(release: str) -> Path:
+    d = _repo_dir(release) / "metadata"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _db_path(release: str) -> str:
+    p = _metadata_dir(release) / "graph.db"
+    return str(p)
+
+
+def _open_graph(release: str) -> SRPMGraph:
+    """Open the SQLite-backed graph for this release."""
+    return SRPMGraph(_db_path(release))
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Commands
+# ═══════════════════════════════════════════════════════════════════
+
+def cmd_search(args):
+    """Search Fedora repos for packages."""
+    results = search_packages(args.query)
+    if not results:
+        print(f"No packages matching '{args.query}'")
         return 1
-    
-    print(f"Downloaded: {srpm_file}")
-    print()
-    
-    # Build
-    print("Step 2: Building package...")
-    config_file = PKGMGR_ROOT / 'config' / 'build.conf'
-    build_config = BuildConfig(str(config_file), str(REPO_ROOT))
-    builder = PackageBuilder(build_config)
-    
-    output_dir = PKGMGR_ROOT / 'repo' / 'packages'
-    extract_dir = PKGMGR_ROOT / 'cache' / 'builds'
-    
-    pkg_file = builder.build_srpm(srpm_file, str(output_dir), str(extract_dir))
-    
-    if pkg_file:
-        print()
-        print("=" * 60)
-        print("SUCCESS!")
-        print(f"Package created: {pkg_file}")
-        print("=" * 60)
-        
-        # Add to local repo
-        local_repo = LocalRepository(str(PKGMGR_ROOT / 'repo'))
-        local_repo.add_package(pkg_file)
-        
+
+    print(f"{'Name':<30} {'Version':<15} {'Summary'}")
+    print("─" * 80)
+    for r in results[:30]:
+        print(f"{r['name']:<30} {r['version']:<15} {r.get('summary', '')[:35]}")
+    if len(results) > 30:
+        print(f"\n... and {len(results) - 30} more")
+    return 0
+
+
+def cmd_info(args):
+    """Show package details."""
+    # Check graph DB first
+    g = _open_graph(args.release)
+    info = g.get_package_info(args.package)
+    if info and info.get('crawled'):
+        print(f"Name:       {info['name']}")
+        print(f"Version:    {info['version']}-{info.get('release', '')}")
+        print(f"Summary:    {info.get('summary', 'N/A')}")
+        print(f"License:    {info.get('license', 'N/A')}")
+        print(f"URL:        {info.get('url', 'N/A')}")
+        print(f"Crawled:    yes (depth {info.get('depth', '?')})")
+        brs = g.get_build_requires_for(args.package)
+        if brs:
+            print(f"\nBuildRequires ({len(brs)}):")
+            for br in brs:
+                res = f"→ {br['source_package']}" if br['source_package'] else "✗"
+                print(f"  {br['capability']:<40} {res}")
+        g.close()
         return 0
+    g.close()
+
+    # Fallback to dnf
+    info = get_package_info_from_dnf(args.package)
+    if not info:
+        print(f"Package not found: {args.package}", file=sys.stderr)
+        return 1
+
+    print(f"Name:       {info['name']}")
+    print(f"Version:    {info['version']}-{info['release']}")
+    print(f"Summary:    {info['summary']}")
+    print(f"License:    {info['license']}")
+    print(f"URL:        {info['url']}")
+    print(f"Source RPM: {info['sourcerpm']}")
+    if info['requires']:
+        print(f"Requires ({len(info['requires'])}):")
+        for r in info['requires'][:20]:
+            print(f"  {r}")
+    return 0
+
+
+def cmd_fetch(args):
+    """Download SRPMs."""
+    packages = args.packages
+    if not packages:
+        base_file = PKGMGR_ROOT / "packages-base.txt"
+        if base_file.exists():
+            packages = []
+            for line in base_file.read_text().splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    packages.append(line.split()[0])
+            print(f"Reading {len(packages)} packages from {base_file}")
+        else:
+            print("No packages specified.", file=sys.stderr)
+            return 1
+
+    dest = str(_srpms_dir(args.release))
+    results = download_srpms(packages, dest)
+    print(f"\n{len(results)}/{len(packages)} SRPMs → {dest}")
+    return 0
+
+
+def cmd_sync(args):
+    """Sync Fedora repo metadata into local SQLite for offline graph building."""
+    g = _open_graph(args.release)
+    print(f"⚡ Syncing Fedora {args.release} repo metadata...")
+    print(f"   DB: {_db_path(args.release)}\n")
+
+    stats = sync_repo_metadata(g.db)
+
+    if stats["packages"] > 0:
+        print(f"\n   Ready for offline graph building.")
+        print(f"   Next: oxdnf fetch <packages>  then  oxdnf graph")
+    g.close()
+    return 0
+
+
+def cmd_graph(args):
+    """Build dependency graph from local SRPMs (offline after sync)."""
+    # — TorqueJax: "--all means ALL. no filtering. every SRPM in the dir gets graphed."
+    if getattr(args, 'all', False):
+        packages = None
     else:
-        print()
-        print("=" * 60)
-        print("BUILD FAILED")
-        print("=" * 60)
-        return 1
+        packages = args.packages
+        if not packages:
+            base_file = PKGMGR_ROOT / "packages-base.txt"
+            if base_file.exists():
+                packages = []
+                for line in base_file.read_text().splitlines():
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        packages.append(line.split()[0])
 
+    g = _open_graph(args.release)
+    sd = str(_srpms_dir(args.release))
 
-def cmd_install(args):
-    """Install a package"""
-    package_name = args.package
-    install_root = args.installroot or '/'
-    
-    # Find package in local repo
-    local_repo = LocalRepository(str(PKGMGR_ROOT / 'repo'))
-    pkg_info = local_repo.get_package_info(package_name)
-    
-    if not pkg_info:
-        print(f"Package not found in local repository: {package_name}")
-        print("Try: oxdnf buildsrpm", package_name)
-        return 1
-    
-    # Find package file
-    pkg_id = f"{pkg_info['name']}-{pkg_info['version']}-{pkg_info['release']}"
-    pkg_file = None
-    
-    for pid, pinfo in local_repo.db['packages'].items():
-        if pinfo['metadata']['name'] == package_name:
-            pkg_file = pinfo['file']
-            break
-    
-    if not pkg_file:
-        print("ERROR: Package file not found")
-        return 1
-    
-    # Install
-    installed = InstalledPackages()
-    
-    if installed.is_installed(package_name):
-        print(f"Package already installed: {package_name}")
-        return 0
-    
-    print(f"Installing {package_name}...")
-    
-    if installed.install(pkg_file, install_root):
-        print("Installation complete!")
-        return 0
+    # — NeonRoot: "If synced → local build (seconds). If not → old crawl (minutes)."
+    if is_synced(g.db):
+        print(f"⚡ Local graph build: {len(packages) if packages else 'all'} packages")
+        print(f"   DB: {_db_path(args.release)}")
+        print(f"   SRPMs: {sd}\n")
+
+        count = g.build_local(sd, packages if packages else None)
+        if count == 0:
+            print(f"\nNo SRPMs found. Download first: oxdnf fetch {' '.join(packages or ['<packages>'])}")
+            g.close()
+            return 1
     else:
-        print("Installation failed")
-        return 1
+        if not packages:
+            print("No packages specified.", file=sys.stderr)
+            g.close()
+            return 1
+
+        depth = getattr(args, 'depth', DEFAULT_MAX_DEPTH)
+        print(f"🕷  Recursive crawl: {len(packages)} root(s), max depth {depth}")
+        print(f"   DB: {_db_path(args.release)}")
+        print(f"   SRPMs: {sd}")
+        print(f"   ⚠ Slow mode — run 'oxdnf sync' first for 10x faster builds\n")
+        g.crawl(packages, sd, max_depth=depth)
+
+    print(f"\n{'─' * 50}")
+    print(g.summary())
+
+    # Save DOT + SVG
+    dot_file = _graph_dir(args.release) / "deps.dot"
+    dot_file.write_text(g.to_dot())
+    print(f"\nDOT: {dot_file}")
+
+    svg_file = _graph_dir(args.release) / "deps.svg"
+    try:
+        import subprocess
+        subprocess.run(["dot", "-Tsvg", str(dot_file), "-o", str(svg_file)],
+                       check=True, timeout=120)
+        print(f"SVG: {svg_file}")
+    except Exception:
+        print(f"(render: dot -Tsvg {dot_file} -o {svg_file})")
+
+    g.close()
+    return 0
 
 
-def cmd_remove(args):
-    """Remove a package"""
-    package_name = args.package
-    install_root = args.installroot or '/'
-    
-    installed = InstalledPackages()
-    
-    if not installed.is_installed(package_name):
-        print(f"Package not installed: {package_name}")
+def cmd_deps(args):
+    """Show build dependencies for a package."""
+    g = _open_graph(args.release)
+    pkg = args.package
+
+    if pkg not in g.get_nodes():
+        print(f"'{pkg}' not in graph. Run: oxdnf graph {pkg}",
+              file=sys.stderr)
+        g.close()
         return 1
-    
-    print(f"Removing {package_name}...")
-    
-    if installed.remove(package_name, install_root):
-        print("Package removed")
+
+    info = g.get_package_info(pkg)
+    ver = info.get("version", "") if info else ""
+    direct = sorted(g.deps_of(pkg))
+    trans = sorted(g.transitive_deps(pkg))
+
+    print(f"╔═══ {pkg} {ver} ═══╗")
+    print(f"║ Direct build-deps ({len(direct)}):")
+    for d in direct:
+        di = g.get_package_info(d)
+        dv = f" ({di['version']})" if di and di.get('version') else ""
+        print(f"║   → {d}{dv}")
+
+    indirect = sorted(set(trans) - set(direct))
+    if indirect:
+        print(f"║ Transitive ({len(indirect)} more):")
+        for d in indirect:
+            print(f"║     ↳ {d}")
+
+    brs = g.get_build_requires_for(pkg)
+    if brs:
+        print(f"║ BuildRequires ({len(brs)}):")
+        for br in brs:
+            resolved = f"→ {br['binary_package']}" if br['binary_package'] else "✗ unresolved"
+            src = f" (src: {br['source_package']})" if br['source_package'] else ""
+            cap_ver = ""
+            if br['cap_op'] and br['cap_version']:
+                cap_ver = f" {br['cap_op']} {br['cap_version']}"
+            print(f"║   • {br['cap_name']}{cap_ver}  {resolved}{src}")
+
+    unres = g.get_unresolved(pkg)
+    if unres:
+        print(f"║ ⚠ Unresolved ({len(unres)}):")
+        for u in unres:
+            print(f"║   ✗ {u['capability']}")
+
+    print(f"╚{'═' * (len(pkg) + len(ver) + 9)}╝")
+    g.close()
+    return 0
+
+
+def cmd_rdeps(args):
+    """Show reverse build dependencies."""
+    g = _open_graph(args.release)
+    pkg = args.package
+
+    if pkg not in g.get_nodes():
+        print(f"'{pkg}' not in graph.", file=sys.stderr)
+        g.close()
+        return 1
+
+    direct = sorted(g.rdeps_of(pkg))
+    trans = sorted(g.transitive_rdeps(pkg))
+
+    print(f"Packages that build-depend on {pkg}:")
+    print(f"  Direct ({len(direct)}): {', '.join(direct) or '(none)'}")
+    if len(trans) > len(direct):
+        print(f"  Transitive ({len(trans)}): {', '.join(trans)}")
+    g.close()
+    return 0
+
+
+def cmd_topo(args):
+    """Topological build order."""
+    g = _open_graph(args.release)
+    order = g.topo_sort()
+
+    if order is None:
+        print("⚠ Cycles detected — SCC-grouped build order:\n")
+        groups = g.parallel_build_groups()
+        for i, group in enumerate(groups):
+            print(f"  Layer {i}: {', '.join(group)}")
+        g.close()
         return 0
-    else:
-        print("Removal failed")
-        return 1
+
+    print(f"Build order ({len(order)} packages):\n")
+    for i, pkg in enumerate(order, 1):
+        deps = g.deps_of(pkg)
+        info = g.get_package_info(pkg)
+        ver = f" ({info['version']})" if info and info.get('version') else ""
+        dep_str = f"  ← {', '.join(sorted(deps))}" if deps else ""
+        print(f"  {i:3}. {pkg}{ver}{dep_str}")
+
+    print(f"\nParallel build layers:")
+    groups = g.parallel_build_groups()
+    for i, group in enumerate(groups):
+        print(f"  Layer {i} ({len(group)}): {', '.join(group)}")
+    g.close()
+    return 0
 
 
 def cmd_list(args):
-    """List packages"""
-    if args.list_type == 'installed':
+    """List packages."""
+    release = args.release
+    list_type = args.list_type
+
+    if list_type == "srpms":
+        sd = _srpms_dir(release)
+        srpms = sorted(sd.glob("*.src.rpm"))
+        if not srpms:
+            print(f"No SRPMs in {sd}")
+            return 0
+
+        print(f"{'Name':<30} {'Version':<20} {'Size':>10}")
+        print("─" * 65)
+        for f in srpms:
+            meta = get_srpm_metadata(str(f))
+            name = meta.get("name", f.stem)
+            ver = meta.get("version", "?")
+            sz = f.stat().st_size
+            sz_str = (f"{sz/1_000_000:.1f}M" if sz > 1_000_000
+                      else f"{sz/1_000:.0f}K" if sz > 1_000
+                      else f"{sz}B")
+            print(f"{name:<30} {ver:<20} {sz_str:>10}")
+        print(f"\n{len(srpms)} SRPMs")
+
+    elif list_type == "available":
+        # — NeonRoot: "SQLite is the graph now. JSON is dead."
+        g = _open_graph(release)
+        nodes = sorted(g.get_nodes())
+        if not nodes:
+            print("Graph empty. Run: oxdnf graph <packages>")
+            g.close()
+            return 0
+        print(f"{'Name':<30} {'Version':<15} {'Crawled':>8}")
+        print("─" * 58)
+        for pkg in nodes:
+            info = g.get_package_info(pkg)
+            ver = info.get("version", "") if info else ""
+            crawled = "✓" if info and info.get("crawled") else "·"
+            print(f"  {pkg:<30} {ver:<15} {crawled:>8}")
+        print(f"\n{len(nodes)} packages in graph")
+        g.close()
+
+    elif list_type == "installed":
         installed = InstalledPackages()
         packages = installed.list_installed()
-        
         print(f"{'Name':<30} {'Version':<15} {'Installed':<20}")
-        print("-" * 70)
+        print("─" * 70)
         for pkg in packages:
             print(f"{pkg['name']:<30} {pkg['version']:<15} {pkg['installed']:<20}")
-    
-    elif args.list_type == 'available':
-        local_repo = LocalRepository(str(PKGMGR_ROOT / 'repo'))
-        packages = local_repo.list_packages()
-        
-        print(f"{'Name':<30} {'Version':<15} {'Summary':<40}")
-        print("-" * 90)
-        for pkg in packages:
-            summary = pkg.get('summary', '')[:38]
-            print(f"{pkg['name']:<30} {pkg['version']:<15} {summary:<40}")
+
+    elif list_type == "releases":
+        repo_root = PKGMGR_ROOT / "repo"
+        if not repo_root.exists():
+            print("No releases configured.")
+            return 0
+        for d in sorted(repo_root.iterdir()):
+            if d.is_dir() and d.name.startswith("fedora-"):
+                rel = d.name.replace("fedora-", "")
+                n_srpms = len(list((d / "srpms").glob("*.src.rpm")))
+                has_db = (d / "metadata" / "graph.db").exists()
+                print(f"  {d.name:<20} {n_srpms:>4} SRPMs  "
+                      f"{'✓ graph.db' if has_db else '  no graph'}")
+
+    return 0
+
+
+def cmd_dbstats(args):
+    """Show database statistics."""
+    g = _open_graph(args.release)
+    stats = g.db_stats()
+    print(f"═══ Graph DB: fedora-{args.release} ═══")
+    print(f"  Source packages: {stats['source_packages']}")
+    print(f"    Crawled:       {stats['source_crawled']}")
+    print(f"    Uncrawled:     {stats['source_packages'] - stats['source_crawled']}")
+    print(f"  Binary packages: {stats['binary_packages']}")
+    print(f"  BuildRequires:   {stats['build_requires_total']}")
+    print(f"    Resolved:      {stats['build_requires_resolved']}")
+    print(f"    Unresolved:    {stats['build_requires_unresolved']}")
+    print(f"  Edges:           {stats['edges']}")
+    print(f"  DB size:         {stats['db_size_kb'] / 1024:.2f} MB")
+    g.close()
+    return 0
+
+
+def cmd_buildsrpm(args):
+    """Build package from SRPM (legacy cross-compile command)."""
+    package_name = args.package
+    release = args.release
+
+    print(f"Building package: {package_name}")
+
+    # Download SRPM
+    srpm_cache = _srpms_dir(release)
+    results = download_srpms([package_name], str(srpm_cache))
+
+    if package_name not in results:
+        print("ERROR: Failed to download SRPM")
+        return 1
+
+    srpm_file = results[package_name]
+    print(f"SRPM: {srpm_file}")
+
+    # Build
+    config_file = PKGMGR_ROOT / 'config' / 'build.conf'
+    build_config = BuildConfig(str(config_file), str(REPO_ROOT))
+    builder = PackageBuilder(build_config)
+
+    output_dir = str(_packages_dir(release))
+    extract_dir = str(PKGMGR_ROOT / 'cache' / 'builds')
+
+    pkg_file = builder.build_srpm(srpm_file, output_dir, extract_dir)
+
+    if pkg_file:
+        print(f"\n{'=' * 60}")
+        print(f"SUCCESS: {pkg_file}")
+        print(f"{'=' * 60}")
+        return 0
+    else:
+        print(f"\n{'=' * 60}")
+        print(f"BUILD FAILED")
+        print(f"{'=' * 60}")
+        return 1
 
 
 def cmd_clean(args):
-    """Clean cache"""
-    cache_dir = PKGMGR_ROOT / 'cache'
-    
-    if args.clean_type == 'all':
-        # Clean everything
-        for subdir in ['srpms', 'extracted', 'builds']:
-            target = cache_dir / subdir
+    """Clean cache."""
+    import shutil
+    release = args.release
+    clean_type = args.clean_type
+
+    if clean_type == "all":
+        for subdir in ["srpms", "graph", "packages"]:
+            target = _repo_dir(release) / subdir
             if target.exists():
-                import shutil
                 shutil.rmtree(target)
                 target.mkdir()
-        print("Cache cleaned")
-    
-    elif args.clean_type == 'srpms':
-        target = cache_dir / 'srpms'
-        if target.exists():
-            import shutil
-            shutil.rmtree(target)
-            target.mkdir()
-        print("SRPM cache cleaned")
+        # Kill the DB
+        db = Path(_db_path(release))
+        if db.exists():
+            db.unlink()
+            print(f"  Removed {db}")
+        # Also clean build cache
+        for subdir in ["srpms", "extracted", "builds"]:
+            target = PKGMGR_ROOT / "cache" / subdir
+            if target.exists():
+                shutil.rmtree(target)
+                target.mkdir(exist_ok=True)
+        print(f"Cleaned all caches for fedora-{release}")
 
+    elif clean_type == "srpms":
+        target = _srpms_dir(release)
+        shutil.rmtree(target)
+        target.mkdir()
+        print(f"Cleaned SRPMs for fedora-{release}")
+
+    elif clean_type == "graph":
+        target = _graph_dir(release)
+        shutil.rmtree(target)
+        target.mkdir()
+        db = Path(_db_path(release))
+        if db.exists():
+            db.unlink()
+            print(f"  Removed {db}")
+        print(f"Cleaned graph + DB for fedora-{release}")
+
+    return 0
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Main
+# ═══════════════════════════════════════════════════════════════════
 
 def main():
     parser = argparse.ArgumentParser(
@@ -282,91 +517,113 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  oxdnf search bash
-  oxdnf info bash
-  oxdnf buildsrpm bash
-  oxdnf install bash
-  oxdnf list installed
-  oxdnf repo-sync
+  oxdnf sync                              Pre-cache repo metadata (run once!)
+  oxdnf fetch bash coreutils grep         Download SRPMs
+  oxdnf fetch                             Download all from packages-base.txt
+  oxdnf graph                             Build graph from local SRPMs (fast)
+  oxdnf graph bash coreutils              Graph specific packages only
+  oxdnf search bash                       Search Fedora repos
+  oxdnf info bash                         Package details
+  oxdnf deps bash                         Show bash build-deps
+  oxdnf rdeps glibc                       Who needs glibc?
+  oxdnf topo                              Topological build order
+  oxdnf db-stats                          Database statistics
+  oxdnf list srpms                        List cached SRPMs
+  oxdnf list available                    List packages in graph
+  oxdnf list releases                     Show versioned repos
+  oxdnf clean all                         Wipe everything
+
+Workflow:
+  1. oxdnf sync                    # once — caches 72K packages + 742K provides
+  2. oxdnf fetch                   # download SRPMs (packages-base.txt)
+  3. oxdnf graph                   # build graph offline (seconds, not minutes)
         """
     )
-    
+
+    parser.add_argument("--release", "-r", default=DEFAULT_RELEASE,
+                        help=f"Fedora release (default: {DEFAULT_RELEASE})")
+
     subparsers = parser.add_subparsers(dest='command', help='Commands')
-    
+
+    # sync (run first!)
+    subparsers.add_parser('sync', help='Sync repo metadata for offline graph building')
+
     # search
-    parser_search = subparsers.add_parser('search', help='Search for packages')
-    parser_search.add_argument('query', help='Search query')
-    
+    sp = subparsers.add_parser('search', help='Search Fedora repos')
+    sp.add_argument('query', help='Search query')
+
     # info
-    parser_info = subparsers.add_parser('info', help='Show package information')
-    parser_info.add_argument('package', help='Package name')
-    
-    # repo-sync
-    parser_sync = subparsers.add_parser('repo-sync', help='Sync repository metadata')
-    
-    # repolist
-    parser_repolist = subparsers.add_parser('repolist', help='List repositories')
-    
-    # buildsrpm
-    parser_build = subparsers.add_parser('buildsrpm', help='Build package from SRPM')
-    parser_build.add_argument('package', help='Package name')
-    
-    # install
-    parser_install = subparsers.add_parser('install', help='Install a package')
-    parser_install.add_argument('package', help='Package name')
-    parser_install.add_argument('--installroot', help='Install root directory')
-    
-    # remove
-    parser_remove = subparsers.add_parser('remove', help='Remove a package')
-    parser_remove.add_argument('package', help='Package name')
-    parser_remove.add_argument('--installroot', help='Install root directory')
-    
+    sp = subparsers.add_parser('info', help='Package details')
+    sp.add_argument('package', help='Package name')
+
+    # fetch
+    sp = subparsers.add_parser('fetch', help='Download SRPMs')
+    sp.add_argument('packages', nargs='*', help='Package names (empty = packages-base.txt)')
+    sp.add_argument('--force', '-f', action='store_true', help='Re-download')
+
+    # graph (recursive crawl)
+    sp = subparsers.add_parser('graph', help='Recursive dependency crawl')
+    sp.add_argument('packages', nargs='*', help='Root packages (empty = packages-base.txt)')
+    sp.add_argument('--all', '-a', action='store_true',
+                    help='Graph ALL SRPMs in the repo (ignore packages-base.txt)')
+    sp.add_argument('--depth', '-d', type=int, default=DEFAULT_MAX_DEPTH,
+                    help=f'Max crawl depth (default: {DEFAULT_MAX_DEPTH})')
+
+    # deps
+    sp = subparsers.add_parser('deps', help='Show build dependencies')
+    sp.add_argument('package', help='Package name')
+
+    # rdeps
+    sp = subparsers.add_parser('rdeps', help='Show reverse build dependencies')
+    sp.add_argument('package', help='Package name')
+
+    # topo
+    subparsers.add_parser('topo', help='Topological build order')
+
+    # db-stats
+    subparsers.add_parser('db-stats', help='Show database statistics')
+
     # list
-    parser_list = subparsers.add_parser('list', help='List packages')
-    parser_list.add_argument('list_type', choices=['installed', 'available'],
-                            help='What to list')
-    
+    sp = subparsers.add_parser('list', help='List packages/SRPMs')
+    sp.add_argument('list_type', choices=['srpms', 'available', 'installed', 'releases'],
+                    help='What to list')
+
+    # buildsrpm
+    sp = subparsers.add_parser('buildsrpm', help='Build package from SRPM')
+    sp.add_argument('package', help='Package name')
+
     # clean
-    parser_clean = subparsers.add_parser('clean', help='Clean cache')
-    parser_clean.add_argument('clean_type', choices=['all', 'srpms'],
-                             default='all', nargs='?', help='What to clean')
-    
+    sp = subparsers.add_parser('clean', help='Clean cache')
+    sp.add_argument('clean_type', choices=['all', 'srpms', 'graph'],
+                    default='all', nargs='?')
+
     args = parser.parse_args()
-    
+
     if not args.command:
         parser.print_help()
         return 1
-    
-    # Initialize
-    config_dir = PKGMGR_ROOT / 'config'
-    repo_mgr = FedoraRepoManager(str(config_dir))
-    local_repo = LocalRepository(str(PKGMGR_ROOT / 'repo'))
-    
-    # Execute command
+
     try:
-        if args.command == 'search':
-            return cmd_search(args, repo_mgr, local_repo) or 0
-        elif args.command == 'info':
-            return cmd_info(args, repo_mgr, local_repo) or 0
-        elif args.command == 'repo-sync':
-            return cmd_repo_sync(args, repo_mgr) or 0
-        elif args.command == 'repolist':
-            return cmd_repolist(args, repo_mgr) or 0
-        elif args.command == 'buildsrpm':
-            return cmd_buildsrpm(args, repo_mgr)
-        elif args.command == 'install':
-            return cmd_install(args)
-        elif args.command == 'remove':
-            return cmd_remove(args)
-        elif args.command == 'list':
-            return cmd_list(args) or 0
-        elif args.command == 'clean':
-            return cmd_clean(args) or 0
+        commands = {
+            'sync': cmd_sync,
+            'search': cmd_search,
+            'info': cmd_info,
+            'fetch': cmd_fetch,
+            'graph': cmd_graph,
+            'deps': cmd_deps,
+            'rdeps': cmd_rdeps,
+            'topo': cmd_topo,
+            'db-stats': cmd_dbstats,
+            'list': cmd_list,
+            'buildsrpm': cmd_buildsrpm,
+            'clean': cmd_clean,
+        }
+        return commands[args.command](args) or 0
     except KeyboardInterrupt:
-        print("\n\nInterrupted by user")
+        print("\n\nInterrupted")
         return 130
     except Exception as e:
-        print(f"\nERROR: {e}")
+        print(f"\nERROR: {e}", file=sys.stderr)
         import traceback
         traceback.print_exc()
         return 1
@@ -376,4 +633,5 @@ if __name__ == '__main__':
     sys.exit(main())
 
 
-# — NeonRoot: "Package management done right... because even a cyberpunk OS needs its dependencies sorted."
+# — NeonRoot: "Package management done right — versioned repos, real dnf,
+#   dependency graphs that actually mean something. Welcome to OXIDE."

@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>OXIDE OS Architecture Map</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+        margin: 0;
+        background: #05070c;
+        color: #e0e6f0;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        padding: 1.25rem 2rem 1rem;
+        background: #0d111b;
+        border-bottom: 1px solid #161c2c;
+      }
+      header h1 {
+        margin: 0 0 0.25rem;
+        font-size: 1.9rem;
+      }
+      header p {
+        margin: 0;
+        color: #8fa3c7;
+      }
+      .layout {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+      }
+      nav {
+        width: 260px;
+        background: #090e17;
+        border-right: 1px solid #161c2c;
+        padding: 1.25rem 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+      }
+      nav h2 {
+        margin: 0 0 0.5rem;
+        font-size: 1rem;
+        color: #6f82a5;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+      nav button {
+        background: #111727;
+        border: 1px solid #1f2a41;
+        color: #cbd5f1;
+        font-size: 0.95rem;
+        padding: 0.9rem 1rem;
+        border-radius: 10px;
+        text-align: left;
+        cursor: pointer;
+        transition: background 0.15s, border 0.15s;
+      }
+      nav button:hover {
+        background: #18223a;
+      }
+      nav button.active {
+        background: #1f2b45;
+        border-color: #3b63ff;
+      }
+      main.viewer {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+      .viewer-header {
+        padding: 1rem 1.5rem;
+        border-bottom: 1px solid #161c2c;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: #0b101b;
+      }
+      .viewer-header h2 {
+        margin: 0;
+        font-size: 1.2rem;
+      }
+      .viewer-header span {
+        color: #7d90b3;
+        font-size: 0.9rem;
+      }
+      .diagram-stage {
+        flex: 1;
+        position: relative;
+        min-height: 0;
+        overflow: hidden;
+        background: #05070c;
+      }
+      .diagram-stage svg {
+        width: 100% !important;
+        height: 100% !important;
+        max-width: none !important;
+      }
+      .diagram-stage .status {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: #8fa3c7;
+        font-size: 1rem;
+      }
+      .hint {
+        padding: 0.75rem 1.5rem 1rem;
+        font-size: 0.9rem;
+        color: #7b8dae;
+        border-top: 1px solid #161c2c;
+        background: #080c15;
+      }
+      code.inline {
+        background: #111727;
+        padding: 0.15rem 0.4rem;
+        border-radius: 4px;
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+    <script>
+      mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
+
+      const diagrams = {
+        host: {
+          title: 'Host Build → Boot Handoff',
+          desc: 'toolchain/ + scripts/ produce build artifacts, bootloader hands control + BootInfo to kernel/src/init.rs',
+          def: `flowchart TB
+HostEnv["Host Build Inputs\\n- toolchain/\\n- Makefile + mk/ + scripts/\\n- pkgmgr/"]
+Artifacts["Artifacts\\nbuild/, target/, targets/"]
+Bootloader["UEFI Bootloader\\nbootloader/boot-uefi"]
+BootPayloads["Boot Payloads\\nboot_proto::BootInfo\\nframebuffer setup\\ninitramfs.cpio"]
+KernelEntry["Kernel Entry\\nkernel/src/init.rs::kernel_main"]
+KernelGlobals["Kernel Globals\\nkernel/src/globals.rs"]
+
+HostEnv --> Artifacts --> Bootloader --> BootPayloads --> KernelEntry --> KernelGlobals`
+        },
+        kernel: {
+          title: 'Kernel Subsystems',
+          desc: 'Single north–south chain of every major subsystem rooted at kernel/src/init.rs',
+          def: `flowchart TB
+KernelMain["Kernel Entry\\nkernel/src/init.rs"]
+ArchStage["Architecture & Firmware\\narch/arch-x86_64\\narch/arch-aarch64 stub\\narch/arch-mips64 stub\\nacpi/\\nsmp/"]
+MemoryStage["Memory Management\\nmm/mm-manager\\nmm/mm-paging\\nmm/mm-heap\\nmm/mm-slab\\nmm/mm-cow\\nmm/mm-traits"]
+SchedulerStage["Scheduling & Processes\\nsched/\\nproc/\\nexec/\\nsignal/\\nfault.rs"]
+SyscallStage["Syscall & IPC\\nsyscall/\\ntty/\\npty/\\nasync/\\nprocess glue"]
+StorageStage["Storage & Filesystems\\nblock/ + block/gpt\\nvfs/ + mount/ glue\\nfs/{ext4,fat32,oxidefs}\\ntmpfs, procfs, devfs\\nmedia/automount"]
+NetworkStage["Networking\\nnet/{tcpip,dhcp,dns,smb,nfs,rdp}"]
+SecurityStage["Security & Containers\\nsecurity/{crypto,x509,trust,quarantine}\\ncontainer/{namespace,cgroup,seccomp}"]
+VirtualStage["Virtualization\\nhypervisor/{vmx,vmm,virtio-emu}"]
+IOStage["I/O Stacks\\ngraphics/fb\\nterminal/vt/pty\\ninput/\\naudio/\\nusb/\\nperf/\\nai/{embed,hnsw,indexd}"]
+
+KernelMain --> ArchStage --> MemoryStage --> SchedulerStage --> SyscallStage --> StorageStage --> NetworkStage --> SecurityStage --> VirtualStage --> IOStage`
+        },
+        drivers: {
+          title: 'Driver Stack',
+          desc: 'drivers/* crates shown vertically with accurate links into their kernel subsystems',
+          def: `flowchart TB
+DriverCore["Driver Framework\\ndrivers/driver-traits + module/"]
+PCI["PCI Bus\\ndrivers/pci"]
+
+subgraph Drivers[Device Drivers]
+    direction TB
+    VirtioBlk["drivers/block/virtio-blk"]
+    NVMe["drivers/block/nvme"]
+    AHCI["drivers/block/ahci"]
+    VirtioNet["drivers/net/virtio-net"]
+    VirtioGPU["drivers/gpu/virtio-gpu"]
+    IntelHDA["drivers/audio/intel-hda"]
+    VirtioSnd["drivers/audio/virtio-snd"]
+    PS2["drivers/input/ps2"]
+    VirtioInput["drivers/input/virtio-input"]
+    XHCI["drivers/usb/xhci"]
+    USBHID["drivers/usb/usb-hid"]
+    USBMSC["drivers/usb/usb-msc"]
+    Serial8250["drivers/serial/driver-uart-8250"]
+end
+
+subgraph KernelTargets[Kernel Subsystems]
+    direction TB
+    BlockLayer["kernel/block/"]
+    NetStack["kernel/net/tcpip"]
+    GfxStack["kernel/graphics/fb"]
+    AudioStack["kernel/audio/"]
+    InputStack["kernel/input/"]
+    USBStack["kernel/usb/"]
+    Console["kernel/tty/"]
+end
+
+DriverCore --> PCI
+DriverCore --> Serial8250
+PCI --> VirtioBlk
+PCI --> NVMe
+PCI --> AHCI
+PCI --> VirtioNet
+PCI --> VirtioGPU
+PCI --> IntelHDA
+PCI --> VirtioSnd
+PCI --> PS2
+PCI --> VirtioInput
+PCI --> XHCI
+PCI --> USBHID
+PCI --> USBMSC
+
+VirtioBlk --> BlockLayer
+NVMe --> BlockLayer
+AHCI --> BlockLayer
+VirtioNet --> NetStack
+VirtioGPU --> GfxStack
+IntelHDA --> AudioStack
+VirtioSnd --> AudioStack
+PS2 --> InputStack
+VirtioInput --> InputStack
+USBHID --> InputStack
+USBMSC --> BlockLayer
+XHCI --> USBStack
+Serial8250 --> Console`
+        },
+        userspace: {
+          title: 'Userspace → Kernel Flow',
+          desc: 'Userspace binaries, services, libs, and tests mapped to the kernel facilities they consume',
+          def: `flowchart TB
+subgraph Programs[Userspace Programs]
+    direction TB
+    Init["system/init"]
+    ServiceMgr["system/servicemgr"]
+    Getty["system/getty"]
+    Login["system/login"]
+    Passwd["system/passwd"]
+    Shell["shell/"]
+    Coreutils["coreutils/ (90+)"]
+    Journald["services/journald"]
+    Journalctl["services/journalctl"]
+    Networkd["services/networkd"]
+    Resolvd["services/resolvd"]
+    Soundd["services/soundd"]
+    RDPD["services/rdpd"]
+    SSHD["services/sshd"]
+    SSHClient["network/ssh"]
+    CursesDemo["apps/curses-demo"]
+    Doom["apps/doom"]
+    GWBASIC["apps/gwbasic"]
+    Htop["apps/htop"]
+    MP3Player["apps/mp3player"]
+    SoundClient["apps/sound-client"]
+    ARTool["devtools/ar"]
+    ASTool["devtools/as"]
+    LDTool["devtools/ld"]
+    MakeTool["devtools/make"]
+    Modutils["devtools/modutils"]
+    SearchTool["devtools/search"]
+    Libc["libs/libc"]
+    OxideStd["libs/oxide-std"]
+    CompressionLib["libs/compression"]
+    MP3DecoderLib["libs/mp3decoder"]
+    TermcapLib["libs/termcap + vte"]
+    NcursesLib["libs/oxide-ncurses"]
+    Tests["tests/ + test-programs/"]
+end
+
+subgraph Kernel[Kernel Interfaces]
+    direction TB
+    Syscall["syscall boundary"]
+    ProcessCtl["process scheduler"]
+    VFS["vfs + storage"]
+    Procfs["procfs"]
+    NetStack["net/tcpip"]
+    AudioStack["audio/"]
+    Graphics["graphics/fb"]
+    Terminal["tty/terminal"]
+    InputStack["input/"]
+    DriverModule["driver module"]
+end
+
+Init --> Syscall
+ServiceMgr --> Syscall
+ServiceMgr --> ProcessCtl
+Getty --> Terminal
+Getty --> Syscall
+Login --> Syscall
+Login --> Procfs
+Passwd --> Syscall
+Shell --> Syscall
+Shell --> Terminal
+Coreutils --> Syscall
+Coreutils --> VFS
+Coreutils --> Procfs
+
+Journald --> Syscall
+Journald --> VFS
+Journalctl --> Syscall
+Journalctl --> Journald
+Networkd --> NetStack
+Resolvd --> NetStack
+Soundd --> AudioStack
+RDPD --> Graphics
+RDPD --> InputStack
+RDPD --> NetStack
+SSHD --> NetStack
+SSHClient --> NetStack
+
+CursesDemo --> Terminal
+Doom --> Graphics
+Doom --> InputStack
+Doom --> AudioStack
+GWBASIC --> Terminal
+Htop --> Procfs
+MP3Player --> AudioStack
+MP3Player --> Soundd
+SoundClient --> Soundd
+
+ARTool --> Syscall
+ASTool --> Syscall
+LDTool --> Syscall
+MakeTool --> Syscall
+Modutils --> Syscall
+Modutils --> DriverModule
+SearchTool --> Syscall
+Tests --> Syscall
+
+Libc -.-> Shell
+Libc -.-> Coreutils
+Libc -.-> Services
+Libc -.-> Apps
+OxideStd -.-> Shell
+OxideStd -.-> Apps
+CompressionLib -.-> Coreutils
+MP3DecoderLib -.-> MP3Player
+TermcapLib -.-> Shell
+NcursesLib -.-> CursesDemo
+NcursesLib -.-> Htop`
+        }
+      };
+
+      function enablePanZoom(container) {
+        const svg = container.querySelector('svg');
+        if (!svg) return;
+        svg.style.background = '#05070c';
+        svgPanZoom(svg, {
+          zoomEnabled: true,
+          controlIconsEnabled: true,
+          fit: true,
+          center: true,
+          minZoom: 0.15,
+          maxZoom: 16,
+        });
+      }
+
+      async function renderDiagram(key) {
+        const diagram = diagrams[key];
+        if (!diagram) return;
+        document.querySelectorAll('nav button').forEach((btn) => {
+          btn.classList.toggle('active', btn.dataset.diagram === key);
+        });
+        const titleEl = document.getElementById('viewer-title');
+        const descEl = document.getElementById('viewer-desc');
+        titleEl.textContent = diagram.title;
+        descEl.textContent = diagram.desc;
+
+        const stage = document.getElementById('diagram-stage');
+        stage.innerHTML = '<div class="status">Rendering diagram…</div>';
+        try {
+          const { svg } = await mermaid.render(`diagram-${key}-${Date.now()}`, diagram.def);
+          stage.innerHTML = svg;
+          enablePanZoom(stage);
+        } catch (err) {
+          stage.innerHTML = `<div class="status">Failed to render: ${err.message}</div>`;
+          console.error(err);
+        }
+      }
+
+      window.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('nav button').forEach((btn) => {
+          btn.addEventListener('click', () => renderDiagram(btn.dataset.diagram));
+        });
+        renderDiagram('host');
+      });
+    </script>
+  </head>
+  <body>
+    <header>
+      <h1>OXIDE OS Architecture Map</h1>
+      <p>Click a section on the left to render its top-to-bottom Mermaid map derived from <code class="inline">bootloader/</code>, <code class="inline">kernel/</code>, and <code class="inline">userspace/</code>.</p>
+    </header>
+    <div class="layout">
+      <nav>
+        <h2>Sections</h2>
+        <button class="active" data-diagram="host">1 · Host → Boot</button>
+        <button data-diagram="kernel">2 · Kernel Subsystems</button>
+        <button data-diagram="drivers">3 · Driver Stack</button>
+        <button data-diagram="userspace">4 · Userspace Flow</button>
+      </nav>
+      <main class="viewer">
+        <div class="viewer-header">
+          <h2 id="viewer-title">Loading…</h2>
+          <span id="viewer-desc"></span>
+        </div>
+        <div id="diagram-stage" class="diagram-stage">
+          <div class="status">Rendering diagram…</div>
+        </div>
+        <div class="hint">Use the zoom controls on the SVG (or scroll + drag) to inspect dense sections.</div>
+      </main>
+    </div>
+  </body>
+</html>

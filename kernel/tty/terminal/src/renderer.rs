@@ -64,6 +64,23 @@ impl DirtyRegion {
             *dirty = false;
         }
     }
+
+    /// Get min/max dirty row indices (inclusive)
+    /// — GlassSignal: the bounding box of what actually changed — nothing more
+    pub fn dirty_bounds(&self) -> Option<(u32, u32)> {
+        let mut min_row = None;
+        let mut max_row = None;
+        for (i, &dirty) in self.dirty_rows.iter().enumerate() {
+            if dirty || self.full_redraw {
+                let row = i as u32;
+                if min_row.is_none() {
+                    min_row = Some(row);
+                }
+                max_row = Some(row);
+            }
+        }
+        min_row.zip(max_row)
+    }
 }
 
 /// Terminal renderer
@@ -223,6 +240,14 @@ impl Renderer {
             pixel_count += (self.font.width * self.font.height) as u64;
         }
 
+        // Compute dirty pixel bounds BEFORE clearing flags
+        // — GlassSignal: row-granularity → pixel-rect → surgical GPU flush
+        let dirty_pixel_bounds = self.dirty.dirty_bounds().map(|(min_row, max_row)| {
+            let y = min_row * self.font.height;
+            let h = (max_row - min_row + 1) * self.font.height;
+            (0u32, y, self.fb.width(), h)
+        });
+
         // Clear dirty flags
         self.dirty.clear();
 
@@ -231,8 +256,11 @@ impl Renderer {
         self.last_cursor_col = cursor.col;
         self.last_cursor_visible = cursor.visible && cursor.blink_on;
 
-        // Flush to hardware for immediate display
-        self.fb.flush();
+        // Flush only the dirty region to hardware
+        // — GlassSignal: 1 dirty row on a 60-row terminal = 1/60th the bandwidth
+        if let Some((x, y, w, h)) = dirty_pixel_bounds {
+            self.fb.flush_region(x, y, w, h);
+        }
 
         // Record performance metrics
         fb::record_pixels(pixel_count);

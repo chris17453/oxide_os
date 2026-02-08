@@ -37,6 +37,9 @@ const INITRAMFS_PATH: &str = "\\EFI\\OXIDE\\initramfs.cpio";
 /// Page size
 const PAGE_SIZE: u64 = 4096;
 
+/// Kernel stack size (256KB) — WireSaint: enough headroom for deep call chains + debug
+const KERNEL_STACK_SIZE: usize = 256 * 1024;
+
 #[entry]
 fn main() -> Status {
     // Initialize UEFI services
@@ -94,12 +97,68 @@ fn main() -> Status {
     // so we must allocate 2 pages to avoid overwriting adjacent page table memory
     let boot_info_phys = allocate_pages(2).expect("Failed to allocate boot info pages");
 
+    // Allocate kernel stack (256KB) — GraveShift: UEFI stack is tiny & unmapped post-jump
+    let stack_pages = KERNEL_STACK_SIZE / PAGE_SIZE as usize;
+    let stack_phys = allocate_pages(stack_pages).expect("Failed to allocate kernel stack");
+    let stack_top_virt = PHYS_MAP_BASE + stack_phys + KERNEL_STACK_SIZE as u64;
+
+    // [DEBUG] Log stack allocation — ColdCipher: Verify memory map correctness
+    use core::fmt::Write;
+    let mut debug_msg = [0u8; 100];
+    let mut cursor = 0;
+    for &b in b"[BOOT-ALLOC] Stack: 0x" {
+        debug_msg[cursor] = b;
+        cursor += 1;
+    }
+    for i in (0..16).rev() {
+        let nibble = ((stack_phys >> (i * 4)) & 0xF) as u8;
+        debug_msg[cursor] = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+        cursor += 1;
+    }
+    for &b in b" size=" {
+        debug_msg[cursor] = b;
+        cursor += 1;
+    }
+    let size = KERNEL_STACK_SIZE as u64;
+    for i in (0..16).rev() {
+        let nibble = ((size >> (i * 4)) & 0xF) as u8;
+        debug_msg[cursor] = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+        cursor += 1;
+    }
+    debug_msg[cursor] = b'\n';
+    cursor += 1;
+    log(core::str::from_utf8(&debug_msg[..cursor]).unwrap_or("???"));
+
     // Get memory map AFTER all UEFI allocations
     // CRITICAL: This must be the last step that performs UEFI allocations.
     // The memory map must accurately reflect page table pages, boot info pages,
     // and all other LOADER_DATA allocations so the kernel doesn't reclaim them
     // into the buddy allocator's free list (which would corrupt page tables).
-    let memory_regions = get_memory_map();
+    let mut memory_regions = get_memory_map();
+
+    // [FIX] Verify stack allocation is in memory map — ColdCipher
+    // UEFI sometimes reports LOADER_DATA starting AFTER our allocation,
+    // leaving a gap that the kernel will try to use, causing corruption.
+    let stack_end = stack_phys + KERNEL_STACK_SIZE as u64;
+    let mut stack_covered = false;
+    for region in &memory_regions {
+        if region.ty == MemoryType::Bootloader {
+            if region.start <= stack_phys && region.start + region.len >= stack_end {
+                stack_covered = true;
+                break;
+            }
+        }
+    }
+
+    if !stack_covered {
+        log("[BOOT-FIX] Stack allocation NOT in memory map - manually adding it");
+        // Insert stack region into memory map as Bootloader type
+        memory_regions.push(MemoryRegion::new(
+            stack_phys,
+            KERNEL_STACK_SIZE as u64,
+            MemoryType::Bootloader,
+        ));
+    }
 
     // Create boot info (no UEFI allocations - struct is on stack)
     // Extract RSDP physical address from UEFI configuration tables
@@ -145,12 +204,15 @@ fn main() -> Status {
         core::arch::asm!(
             // Load new CR3 (switch page tables)
             "mov cr3, rax",
+            // Set up kernel stack (RSP must be set AFTER CR3 for virtual address)
+            "mov rsp, rdx",
             // Jump to kernel with boot_info in rdi (System V ABI)
             "mov rdi, rsi",
             "jmp rcx",
             in("rax") pml4_phys,
             in("rsi") boot_info_virt,
             in("rcx") kernel_entry_virt,
+            in("rdx") stack_top_virt,
             options(noreturn)
         );
     }
@@ -554,7 +616,37 @@ fn get_memory_map() -> Vec<MemoryRegion> {
             }
             UefiMemoryType::ACPI_RECLAIM => MemoryType::AcpiReclaimable,
             UefiMemoryType::ACPI_NON_VOLATILE => MemoryType::AcpiNvs,
-            UefiMemoryType::LOADER_CODE | UefiMemoryType::LOADER_DATA => MemoryType::Bootloader,
+            UefiMemoryType::LOADER_CODE | UefiMemoryType::LOADER_DATA => {
+                // [DEBUG] Log LOADER_DATA regions — ColdCipher
+                let start = desc.phys_start;
+                let end = start + desc.page_count * PAGE_SIZE;
+                if start <= 0x1c070000 && end >= 0x1c050000 {
+                    let mut debug_msg = [0u8; 100];
+                    let mut cursor = 0;
+                    for &b in b"[BOOT-MMAP] LOADER_DATA: 0x" {
+                        debug_msg[cursor] = b;
+                        cursor += 1;
+                    }
+                    for i in (0..16).rev() {
+                        let nibble = ((start >> (i * 4)) & 0xF) as u8;
+                        debug_msg[cursor] = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                        cursor += 1;
+                    }
+                    for &b in b"-0x" {
+                        debug_msg[cursor] = b;
+                        cursor += 1;
+                    }
+                    for i in (0..16).rev() {
+                        let nibble = ((end >> (i * 4)) & 0xF) as u8;
+                        debug_msg[cursor] = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                        cursor += 1;
+                    }
+                    debug_msg[cursor] = b'\n';
+                    cursor += 1;
+                    log(core::str::from_utf8(&debug_msg[..cursor]).unwrap_or("???"));
+                }
+                MemoryType::Bootloader
+            },
             _ => MemoryType::Reserved,
         };
 

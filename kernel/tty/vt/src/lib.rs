@@ -17,6 +17,8 @@ extern crate alloc;
 mod lockfree_ring;
 
 use alloc::sync::Arc;
+use core::ptr;
+use core::sync::atomic::{AtomicPtr, Ordering};
 use spin::Mutex;
 
 use lockfree_ring::LockFreeRing;
@@ -462,8 +464,11 @@ impl VtManager {
     }
 }
 
-/// Global VT manager
-static VT_MANAGER: Mutex<Option<Arc<VtManager>>> = Mutex::new(None);
+/// Raw pointer to the global VT manager (set once, read lock-free)
+static VT_MANAGER_PTR: AtomicPtr<VtManager> = AtomicPtr::new(ptr::null_mut());
+
+/// Owner Arc that keeps the manager alive for the lifetime of the kernel
+static VT_MANAGER_OWNER: Mutex<Option<Arc<VtManager>>> = Mutex::new(None);
 
 /// Active VT index (separate from manager to avoid circular dependency)
 static ACTIVE_VT: spin::RwLock<usize> = spin::RwLock::new(0);
@@ -490,13 +495,25 @@ static mut VT_SWITCH_CALLBACK: Option<VtSwitchFn> = None;
 /// Initialize VT subsystem
 pub fn init() -> Arc<VtManager> {
     let manager = Arc::new(VtManager::new());
-    *VT_MANAGER.lock() = Some(manager.clone());
+    let raw = Arc::as_ptr(&manager) as *mut VtManager;
+    if VT_MANAGER_PTR
+        .compare_exchange(ptr::null_mut(), raw, Ordering::Release, Ordering::Relaxed)
+        .is_err()
+    {
+        panic!("vt::init called twice");
+    }
+    *VT_MANAGER_OWNER.lock() = Some(manager.clone());
     manager
 }
 
-/// Get the global VT manager
-pub fn get_manager() -> Option<Arc<VtManager>> {
-    VT_MANAGER.lock().clone()
+/// Get a lock-free reference to the VT manager (safe even in IRQ context)
+pub fn get_manager() -> Option<&'static VtManager> {
+    let ptr = VT_MANAGER_PTR.load(Ordering::Acquire);
+    if ptr.is_null() {
+        None
+    } else {
+        Some(unsafe { &*ptr })
+    }
 }
 
 /// Set window dimensions on all VTs from framebuffer terminal size
@@ -504,14 +521,14 @@ pub fn get_manager() -> Option<Arc<VtManager>> {
 /// framebuffer-derived character grid dimensions to every TTY device.
 /// Without this, TIOCGWINSZ returns the 24x80 default. ⚡
 pub fn set_global_winsize(rows: u16, cols: u16, xpixel: u16, ypixel: u16) {
-    if let Some(manager) = VT_MANAGER.lock().as_ref() {
+    if let Some(manager) = get_manager() {
         manager.set_all_winsize(rows, cols, xpixel, ypixel);
     }
 }
 
 /// Push input to the active VT (called from keyboard interrupt handler)
 pub fn push_input_global(ch: u8) {
-    if let Some(manager) = VT_MANAGER.lock().as_ref() {
+    if let Some(manager) = get_manager() {
         manager.push_input(ch);
     }
 }
@@ -616,7 +633,7 @@ impl VnodeOps for VtDevice {
 
     fn stat(&self) -> VfsResult<Stat> {
         let mut stat = Stat::new(VnodeType::CharDevice, Mode::new(0o620), 0, self.ino);
-        stat.rdev = make_dev(4, self.vt_num as u32); // tty major 4
+        stat.rdev = make_dev(4, self.vt_num as u64); // tty major 4
         Ok(stat)
     }
 
@@ -645,6 +662,16 @@ impl VnodeOps for VtDevice {
     }
 }
 
-fn make_dev(major: u32, minor: u32) -> u64 {
-    ((major as u64) << 32) | (minor as u64)
+/// Create a device number from major and minor numbers
+fn make_dev(major: u64, minor: u64) -> u64 {
+    (major << 8) | (minor & 0xFF)
+}
+
+// ============================================================================
+// DEBUG FUNCTION - Dump VT screen to serial — GraveShift
+// ============================================================================
+#[unsafe(no_mangle)]
+pub extern "Rust" fn debug_dump_screen_to_serial() {
+    // Call the terminal module's screen dump function
+    terminal::debug_dump_screen_to_serial();
 }

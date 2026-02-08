@@ -1,0 +1,221 @@
+{
+  "nodes": [
+    "acl",
+    "audit",
+    "autoconf",
+    "automake",
+    "bash",
+    "bison",
+    "gcc",
+    "gettext",
+    "glibc",
+    "gnupg2",
+    "grep",
+    "libselinux",
+    "make",
+    "ncurses",
+    "pcre2",
+    "perl",
+    "perl-Getopt-Long",
+    "sed",
+    "texinfo",
+    "valgrind"
+  ],
+  "edges": [
+    [
+      "bash",
+      "audit"
+    ],
+    [
+      "bash",
+      "autoconf"
+    ],
+    [
+      "bash",
+      "bison"
+    ],
+    [
+      "bash",
+      "gcc"
+    ],
+    [
+      "bash",
+      "gettext"
+    ],
+    [
+      "bash",
+      "glibc"
+    ],
+    [
+      "bash",
+      "gnupg2"
+    ],
+    [
+      "bash",
+      "make"
+    ],
+    [
+      "bash",
+      "ncurses"
+    ],
+    [
+      "bash",
+      "texinfo"
+    ],
+    [
+      "grep",
+      "autoconf"
+    ],
+    [
+      "grep",
+      "automake"
+    ],
+    [
+      "grep",
+      "gcc"
+    ],
+    [
+      "grep",
+      "gettext"
+    ],
+    [
+      "grep",
+      "glibc"
+    ],
+    [
+      "grep",
+      "gnupg2"
+    ],
+    [
+      "grep",
+      "make"
+    ],
+    [
+      "grep",
+      "pcre2"
+    ],
+    [
+      "grep",
+      "perl"
+    ],
+    [
+      "grep",
+      "texinfo"
+    ],
+    [
+      "sed",
+      "acl"
+    ],
+    [
+      "sed",
+      "autoconf"
+    ],
+    [
+      "sed",
+      "automake"
+    ],
+    [
+      "sed",
+      "gcc"
+    ],
+    [
+      "sed",
+      "glibc"
+    ],
+    [
+      "sed",
+      "libselinux"
+    ],
+    [
+      "sed",
+      "make"
+    ],
+    [
+      "sed",
+      "perl"
+    ],
+    [
+      "sed",
+      "perl-Getopt-Long"
+    ],
+    [
+      "sed",
+      "valgrind"
+    ]
+  ],
+  "metadata": {
+    "bash": {
+      "name": "bash",
+      "version": "5.2.37",
+      "release": "1.fc42",
+      "summary": "The GNU Bourne Again shell",
+      "license": "GPL-3.0-or-later",
+      "url": "https://www.gnu.org/software/bash"
+    },
+    "grep": {
+      "name": "grep",
+      "version": "3.11",
+      "release": "10.fc42",
+      "summary": "Pattern matching utilities",
+      "license": "GPL-3.0-or-later AND LGPL-3.0-or-later AND LGPL-2.1-or-later AND GPL-2.0-or-later AND LGPL-2.0-or-later AND GFDL-1.3-no-invariants-or-later",
+      "url": "https://www.gnu.org/software/grep/"
+    },
+    "sed": {
+      "name": "sed",
+      "version": "4.9",
+      "release": "4.fc42",
+      "summary": "A GNU stream text editor",
+      "license": "GPL-3.0-or-later",
+      "url": "http://sed.sourceforge.net/"
+    }
+  },
+  "build_requires": {
+    "bash": [
+      "audit-libs-devel",
+      "autoconf",
+      "bison",
+      "gcc",
+      "gettext",
+      "glibc-all-langpacks",
+      "gnupg2",
+      "make",
+      "ncurses-devel",
+      "texinfo"
+    ],
+    "grep": [
+      "autoconf",
+      "automake",
+      "gcc",
+      "gettext",
+      "gettext-devel",
+      "glibc-all-langpacks",
+      "gnupg2",
+      "make",
+      "pcre2-devel",
+      "perl(FileHandle)",
+      "texinfo"
+    ],
+    "sed": [
+      "autoconf",
+      "automake",
+      "gcc",
+      "glibc-devel",
+      "glibc-langpack-el",
+      "glibc-langpack-en",
+      "glibc-langpack-ru",
+      "libacl-devel",
+      "libselinux-devel",
+      "make",
+      "perl(FileHandle)",
+      "perl-Getopt-Long",
+      "valgrind"
+    ]
+  },
+  "unresolved": {},
+  "stats": {
+    "cap_hits": 12,
+    "cap_misses": 22,
+    "src_hits": 12,
+    "src_misses": 22
+  }
+}

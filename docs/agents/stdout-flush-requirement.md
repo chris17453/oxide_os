@@ -1,83 +1,65 @@
-# stdout Flush Requirement for Terminal Control Sequences
+# STDOUT Flush Requirement for Interactive Prompts
 
-**Problem:** ANSI/VT100 escape sequences sent via `prints()` or raw `write(1, ...)` don't reach the terminal immediately.
+**Rule**: Always call `fflush_stdout()` after printing a prompt and before calling `read()` or any blocking input operation.
 
-**Root Cause:** libc buffering. The stdout buffer (`STDOUT_BUFFER` in `userspace/libs/libc/src/stdio.rs`) only flushes when:
-1. A newline (`\n`) is encountered
-2. The buffer reaches 256 bytes
-3. `fflush_stdout()` is explicitly called
+## Context
 
-**Impact:**
-- Terminal control sequences (clear screen, cursor movement, colors) sit in buffer
-- Applications appear frozen or unresponsive
-- Ncurses/curses apps run at <20 FPS instead of target 60 FPS
-- Commands like `clear` don't execute until next newline output
+OXIDE OS terminal output is buffered for performance. When a program prints a prompt (like "login: ") and immediately blocks on `read()`, the prompt remains in the buffer and is never displayed to the user. The user sees a blinking cursor but no prompt.
 
-**Solution:** Always call `fflush_stdout()` after emitting terminal control sequences.
+## Symptoms
 
-## Fixed Issues
+- User sees a blinking cursor but no visible prompt
+- Terminal appears to be waiting for input but user doesn't know what to enter
+- Described as "screen clears and a blinking cursor. NO LOGIN"
 
-### 1. `clear` command (coreutils)
-**File:** `userspace/coreutils/src/bin/clear.rs`
+## Root Cause
 
-**Before:**
+Programs like login print interactive prompts using `prints()`, which writes to stdout. The output is buffered in userspace. When the program immediately calls `read()` to wait for user input, it blocks before the buffer is flushed. The kernel scheduler switches away, and the prompt never reaches the terminal.
+
+## Solution
+
+Call `fflush_stdout()` immediately after printing any interactive prompt:
+
 ```rust
-prints("\x1b[2J\x1b[H");  // Sits in buffer forever
+// WRONG - prompt not visible
+prints("login: ");
+let input = read_line(&mut buf, true);
+
+// CORRECT - flush before blocking
+prints("login: ");
+fflush_stdout();  // — SoftGlyph: flush prompt before blocking on read
+let input = read_line(&mut buf, true);
 ```
 
-**After:**
-```rust
-prints("\x1b[2J\x1b[H");
-fflush_stdout();  // Kicks to kernel immediately
-```
+## Affected Programs
 
-### 2. ncurses `refresh()`
-**File:** `userspace/libs/oxide-ncurses/src/screen.rs:136`
+- login: username and password prompts
+- Any interactive CLI tool that prints a prompt and waits for input
+- Shell command-line prompts (if using buffered I/O)
 
-**Before:**
-```rust
-fn flush(&mut self) {
-    if !self.buf.is_empty() {
-        libc::unistd::write(1, &self.buf);
-        self.buf.clear();
-    }
-}
-```
+## Technical Details
 
-**After:**
-```rust
-fn flush(&mut self) {
-    if !self.buf.is_empty() {
-        libc::unistd::write(1, &self.buf);
-        self.buf.clear();
-        libc::fflush_stdout();  // Force kernel write
-    }
-}
-```
+The libc implementation provides:
+- `prints(s: &str)` - writes to stdout buffer
+- `fflush_stdout()` - forces write syscall to flush buffer to kernel
+- `read(fd, buf)` - blocks waiting for input
 
-**Result:** curses-demo FPS jumped from <20 to ~60 FPS.
+Without `fflush_stdout()`, the sequence is:
+1. `prints("login: ")` → adds to buffer
+2. `read(0, buf)` → blocks immediately, buffer not flushed
+3. Scheduler switches to another task
+4. User sees nothing, waits forever
 
-## Rule
+With `fflush_stdout()`:
+1. `prints("login: ")` → adds to buffer
+2. `fflush_stdout()` → syscall writes buffer to terminal
+3. `read(0, buf)` → blocks, but user can see prompt
 
-**When writing ANSI/VT100 sequences without trailing newlines:**
-```rust
-// ❌ BAD - escape sequences sit in buffer
-prints("\x1b[31mRED\x1b[0m");
-prints("\x1b[2J\x1b[H");  // clear screen
+## Detection
 
-// ✅ GOOD - explicit flush
-prints("\x1b[31mRED\x1b[0m");
-fflush_stdout();
+If a program appears to hang with a blinking cursor but no visible output:
+1. Check if it prints a prompt before calling `read()` or similar blocking I/O
+2. Add `fflush_stdout()` between the `prints()` and blocking call
+3. Test again
 
-// ✅ ALSO GOOD - newline auto-flushes
-prints("\x1b[31mRED\x1b[0m\n");
-```
-
-**Exception:** If the output naturally ends with `\n` or accumulates >256 bytes before next flush point, explicit flush may be unnecessary.
-
-## Related Files
-- `userspace/libs/libc/src/stdio.rs` - stdout buffer implementation
-- `kernel/tty/terminal/src/lib.rs` - terminal emulator that receives flushed output
-- `docs/agents/vt-poll-drain.md` - VT polling drain requirement (input side)
-
-— GlassSignal: Flush it or lose it. Buffering is for throughput, not interactivity.
+— SoftGlyph: buffering breaks interactivity; flush before blocking

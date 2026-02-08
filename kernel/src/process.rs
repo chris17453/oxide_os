@@ -161,7 +161,7 @@ pub fn kernel_fork() -> i64 {
     use spin::Mutex;
 
     let parent_pid = sched::current_pid().unwrap_or(0);
-    
+
     debug_fork!("[FORK] Fork called from PID {}", parent_pid);
 
     // Get parent's ProcessMeta from scheduler
@@ -1291,12 +1291,17 @@ pub fn kernel_exec(
             sched::update_task_exec_info(current_pid, new_pml4, ctx.rip, ctx.rsp, task_ctx);
 
             // Get current task's kernel stack for safe transition
-            let kernel_stack_top = if let Some((kstack_phys, kstack_size)) = sched::get_task_kernel_stack(current_pid) {
+            let kernel_stack_top = if let Some((kstack_phys, kstack_size)) =
+                sched::get_task_kernel_stack(current_pid)
+            {
                 let kstack_virt = phys_to_virt(kstack_phys);
                 kstack_virt.as_u64() + kstack_size as u64
             } else {
                 // — GraveShift: Fallback — should never happen, but don't crash the world
-                debug_fork!("[EXEC] WARNING - could not get task kernel stack for PID {}", current_pid);
+                debug_fork!(
+                    "[EXEC] WARNING - could not get task kernel stack for PID {}",
+                    current_pid
+                );
                 0xffff_8000_0100_0000 // default kernel stack location
             };
 

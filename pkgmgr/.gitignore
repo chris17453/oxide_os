@@ -5,10 +5,20 @@ cache/builds/*/
 cache/*.xml
 cache/*.xml.gz
 
-# Local repository packages
+# Local repository packages (legacy flat layout)
 repo/packages/*.opkg
 repo/metadata/*.json
 repo/metadata/*.db
+
+# Versioned repo directories — SRPMs and build output are BIG
+repo/fedora-*/srpms/
+repo/fedora-*/packages/
+repo/fedora-*/graph/*.svg
+repo/fedora-*/graph/*.png
+repo/fedora-*/graph/*.pdf
+repo/fedora-*/graph/*.dot
+repo/fedora-*/metadata/packages.json
+repo/fedora-*/metadata/*.db
 
 # Logs
 *.log

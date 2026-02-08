@@ -154,6 +154,11 @@ impl InputDeviceHandle {
         self.events.lock().pop_front()
     }
 
+    /// Try to pop an event without blocking (ISR-safe)
+    pub fn try_pop_event(&self) -> Option<InputEvent> {
+        self.events.try_lock()?.pop_front()
+    }
+
     /// Check if events are available
     pub fn has_events(&self) -> bool {
         !self.events.lock().is_empty()
@@ -207,7 +212,7 @@ pub fn get_device(index: usize) -> Option<Arc<InputDeviceHandle>> {
 
 /// Get device by index (non-blocking — ISR-safe).
 /// — GraveShift: Returns None if the device registry lock is contended.
-fn try_get_device(index: usize) -> Option<Arc<InputDeviceHandle>> {
+pub fn try_get_device(index: usize) -> Option<Arc<InputDeviceHandle>> {
     DEVICES.try_lock()?.get(index).cloned()
 }
 

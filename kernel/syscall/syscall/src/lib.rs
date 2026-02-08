@@ -922,6 +922,9 @@ pub fn dispatch(
         nr::CAPGET => security::sys_capget(arg1, arg2),
         nr::CAPSET => security::sys_capset(arg1, arg2),
 
+        // DEBUG syscall - dump VT screen buffer to serial — GraveShift
+        999 => sys_debug_screen_dump(),
+
         _ => errno::ENOSYS,
     };
 
@@ -3401,6 +3404,21 @@ fn sys_sethostname(name_ptr: u64, name_len: usize) -> i64 {
         h[..name_len].copy_from_slice(&buf[..name_len]);
         h[name_len] = 0;
         *(&raw mut HOSTNAME_LEN) = name_len;
+    }
+
+    0
+}
+
+// ============================================================================
+// DEBUG SYSCALL 999 - Screen dump to serial — GraveShift
+// ============================================================================
+fn sys_debug_screen_dump() -> i64 {
+    unsafe extern "Rust" {
+        fn debug_dump_screen_to_serial();
+    }
+
+    unsafe {
+        debug_dump_screen_to_serial();
     }
 
     0

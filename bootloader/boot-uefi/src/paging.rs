@@ -89,8 +89,9 @@ fn setup_physical_map(pml4_phys: u64) {
         ptr::write_bytes(pdpt, 0, 1);
     }
 
-    // Map first 4GB with 1GB huge pages
-    for i in 0..4 {
+    // Map first 512GB with 1GB huge pages (full PDPT coverage)
+    // — TorqueJax: UEFI can allocate high — we map the whole canonical range
+    for i in 0..512 {
         let phys_addr = (i as u64) * (1024 * 1024 * 1024);
         unsafe {
             (*pdpt)[i] = phys_addr | PRESENT | WRITABLE | HUGE_PAGE;

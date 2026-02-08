@@ -988,11 +988,12 @@ pub fn init() -> bool {
     send_command(cmd::WRITE_CONFIG);
     send_data(config | 0x02);
 
-    serial_debug(b"[PS2] init: done, re-enabling IRQs\r\n");
+    serial_debug(b"[PS2] init: done\r\n");
 
-    // -- TorqueJax: Unmask interrupts. Any pending IRQs fire now, but both
-    // KEYBOARD and MOUSE are populated, and the handlers drain-first.
-    unsafe { sti(); }
+    // -- TorqueJax: Do NOT call sti() here! Kernel enables interrupts globally later.
+    // ps2::init() is called during early boot before arch::X86_64::enable_interrupts().
+    // Calling sti() here causes deadlock when subsequent code tries to take locks
+    // (like CONSOLE.lock in writeln!) before the kernel is ready for interrupts.
     true
 }
 
@@ -1023,8 +1024,29 @@ pub fn handle_keyboard_irq() {
     KEYBOARD_IRQ_COUNT.fetch_add(1, Ordering::Relaxed);
     LAST_SCANCODE.store(scancode, Ordering::Relaxed);
 
-    // Store in debug log (try_lock — never spin in IRQ context)
+    // [TRACE] Log first few keyboard IRQs — InputShade: Debug intermittent input
     let count = KEYBOARD_IRQ_COUNT.load(Ordering::Relaxed);
+    if count <= 5 {
+        unsafe {
+            let msg = b"[KBD-IRQ] sc=0x";
+            for &byte in msg.iter() {
+                while inb(0x3FD) & 0x20 == 0 {}
+                outb(0x3F8, byte);
+            }
+            let nibbles = [(scancode >> 4) & 0xF, scancode & 0xF];
+            for nibble in nibbles {
+                let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                outb(0x3F8, hex_char);
+            }
+            let msg2 = b"\r\n";
+            for &byte in msg2.iter() {
+                while inb(0x3FD) & 0x20 == 0 {}
+                outb(0x3F8, byte);
+            }
+        }
+    }
+
+    // Store in debug log (try_lock — never spin in IRQ context)
     if count <= 50 {
         if let Some(mut log) = SCANCODE_LOG.try_lock() {
             let len = log.len();
@@ -1053,6 +1075,29 @@ pub fn get_scancode_log() -> [u8; 20] {
 pub fn handle_mouse_irq() {
     // ALWAYS read the data byte BEFORE touching any locks.
     let byte = unsafe { inb(DATA_PORT) };
+
+    // [TRACE] Log first few mouse IRQs — InputShade: Debug intermittent input
+    static MOUSE_IRQ_COUNT: AtomicUsize = AtomicUsize::new(0);
+    let count = MOUSE_IRQ_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    if count <= 5 {
+        unsafe {
+            let msg = b"[MOUSE-IRQ] byte=0x";
+            for &byte_ch in msg.iter() {
+                while inb(0x3FD) & 0x20 == 0 {}
+                outb(0x3F8, byte_ch);
+            }
+            let nibbles = [(byte >> 4) & 0xF, byte & 0xF];
+            for nibble in nibbles {
+                let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                outb(0x3F8, hex_char);
+            }
+            let msg2 = b"\r\n";
+            for &byte_ch in msg2.iter() {
+                while inb(0x3FD) & 0x20 == 0 {}
+                outb(0x3F8, byte_ch);
+            }
+        }
+    }
 
     // try_lock prevents deadlock if init() holds the lock.
     if let Some(guard) = MOUSE.try_lock() {

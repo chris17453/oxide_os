@@ -3,6 +3,7 @@
 //! Maps scan codes to keycodes.
 
 use crate::keycodes::*;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 /// Scan code set 1 (XT) to keycode mapping
 pub static SCANCODE_SET1: [u16; 128] = [
@@ -379,14 +380,14 @@ pub fn keycode_to_char(
     layout.get_char(keycode, shift, altgr, capslock)
 }
 
-/// Global current keyboard layout
-static CURRENT_LAYOUT: spin::Mutex<&'static crate::layouts::KeyboardLayout> =
-    spin::Mutex::new(&crate::layouts::LAYOUT_US);
+/// Global current keyboard layout (lock-free for IRQ handlers)
+static CURRENT_LAYOUT: AtomicPtr<crate::layouts::KeyboardLayout> =
+    AtomicPtr::new(&crate::layouts::LAYOUT_US as *const _ as *mut _);
 
 /// Set the current keyboard layout by name
 pub fn set_layout(name: &str) -> bool {
     if let Some(layout) = crate::layouts::get_layout(name) {
-        *CURRENT_LAYOUT.lock() = layout;
+        CURRENT_LAYOUT.store(layout as *const _ as *mut _, Ordering::Release);
         true
     } else {
         false
@@ -395,7 +396,12 @@ pub fn set_layout(name: &str) -> bool {
 
 /// Get the current keyboard layout
 pub fn current_layout() -> &'static crate::layouts::KeyboardLayout {
-    *CURRENT_LAYOUT.lock()
+    let ptr = CURRENT_LAYOUT.load(Ordering::Acquire);
+    if ptr.is_null() {
+        crate::layouts::default_layout()
+    } else {
+        unsafe { &*ptr }
+    }
 }
 
 /// Convert keycode to character using the current layout

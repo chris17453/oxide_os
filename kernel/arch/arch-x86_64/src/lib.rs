@@ -670,7 +670,7 @@ pub unsafe fn init() {
         static mut DOUBLE_FAULT_STACK: [u8; 4096 * 5] = [0; 4096 * 5];
         let stack_ptr = addr_of_mut!(DOUBLE_FAULT_STACK);
         let stack_top = (stack_ptr as *const u8).add((*stack_ptr).len()) as u64;
-        gdt::set_ist(0, stack_top); // IST1 (index 0)
+        gdt::set_ist(1, stack_top); // IST1 (index 1)
 
         // Initialize IDT
         idt::init();

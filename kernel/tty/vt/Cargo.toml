@@ -17,3 +17,4 @@ os_core = { workspace = true }
 os_log = { workspace = true }
 sched = { workspace = true }
 spin = { workspace = true }
+terminal = { path = "../terminal" }

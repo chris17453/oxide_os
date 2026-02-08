@@ -781,56 +781,6 @@ impl VirtioGpu {
         Ok(())
     }
 
-    /// Flush framebuffer to display (full screen)
-    pub fn flush(&self) {
-        self.flush_region(0, 0, self.width, self.height);
-    }
-
-    /// Flush a specific region to display (optimized for partial updates)
-    pub fn flush_region(&self, x: u32, y: u32, width: u32, height: u32) {
-        if self.framebuffer.is_none() {
-            return;
-        }
-
-        // Transfer to host
-        let transfer_cmd = TransferToHost2d {
-            hdr: CtrlHeader {
-                type_: cmd::TRANSFER_TO_HOST_2D,
-                ..Default::default()
-            },
-            r: Rect {
-                x,
-                y,
-                width,
-                height,
-            },
-            offset: 0,
-            resource_id: self.resource_id,
-            padding: 0,
-        };
-
-        let mut resp = CtrlHeader::default();
-        let _ = self.send_command(&transfer_cmd, &mut resp);
-
-        // Flush resource
-        let flush_cmd = ResourceFlush {
-            hdr: CtrlHeader {
-                type_: cmd::RESOURCE_FLUSH,
-                ..Default::default()
-            },
-            r: Rect {
-                x,
-                y,
-                width,
-                height,
-            },
-            resource_id: self.resource_id,
-            padding: 0,
-        };
-
-        let _ = self.send_command(&flush_cmd, &mut resp);
-    }
-
     /// Get framebuffer info
     pub fn framebuffer_info(&self) -> Option<FramebufferInfo> {
         self.framebuffer.as_ref().map(|fb| FramebufferInfo {
@@ -881,8 +831,53 @@ impl Framebuffer for VirtioGpu {
     }
 
     fn flush(&self) {
-        // Call flush_region for full screen flush
+        // — GlassSignal: full-screen fallback — callers should prefer flush_region
         self.flush_region(0, 0, self.width, self.height);
+    }
+
+    fn flush_region(&self, x: u32, y: u32, w: u32, h: u32) {
+        // — GlassSignal: surgical transfer — only the pixels that actually changed
+        if self.framebuffer.is_none() {
+            return;
+        }
+
+        // Transfer dirty region to host
+        let transfer_cmd = TransferToHost2d {
+            hdr: CtrlHeader {
+                type_: cmd::TRANSFER_TO_HOST_2D,
+                ..Default::default()
+            },
+            r: Rect {
+                x,
+                y,
+                width: w,
+                height: h,
+            },
+            offset: 0,
+            resource_id: self.resource_id,
+            padding: 0,
+        };
+
+        let mut resp = CtrlHeader::default();
+        let _ = self.send_command(&transfer_cmd, &mut resp);
+
+        // Flush that region to display
+        let flush_cmd = ResourceFlush {
+            hdr: CtrlHeader {
+                type_: cmd::RESOURCE_FLUSH,
+                ..Default::default()
+            },
+            r: Rect {
+                x,
+                y,
+                width: w,
+                height: h,
+            },
+            resource_id: self.resource_id,
+            padding: 0,
+        };
+
+        let _ = self.send_command(&flush_cmd, &mut resp);
     }
 }
 

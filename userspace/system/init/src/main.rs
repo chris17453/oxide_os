@@ -137,6 +137,25 @@ fn main() -> i32 {
     } else if child > 0 {
         // Parent - reap zombies forever, respawning getty when it exits
         printlns("[init] Getty started");
+
+        // DEBUG: Wait a bit for getty to draw its prompt, then dump screen — GraveShift
+        printlns("[init] DEBUG: Waiting 3 seconds before screen dump...");
+        sleep(3);
+        printlns("[init] DEBUG: Calling syscall 999 to dump screen to serial...");
+        let result: i64;
+        unsafe {
+            core::arch::asm!(
+                "mov rax, 999",
+                "syscall",
+                out("rax") result,
+                lateout("rcx") _,
+                lateout("r11") _,
+            );
+        }
+        prints("[init] DEBUG: Syscall 999 returned: ");
+        print_i64(result);
+        printlns("");
+
         reap_zombies(child as i64);
     } else {
         eprintlns("[init] Fork failed");

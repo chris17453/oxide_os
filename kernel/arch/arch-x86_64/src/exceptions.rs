@@ -3,6 +3,7 @@
 //! Provides the low-level handlers that are installed in the IDT.
 
 use core::arch::{asm, naked_asm};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 extern crate perf;
 
@@ -135,6 +136,93 @@ impl InterruptContext {
         }
     }
 }
+
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct FaultRecord {
+    pub vec: u8,
+    pub _pad: [u8; 7],
+    pub error: u64,
+    pub rip: u64,
+    pub rsp: u64,
+    pub rflags: u64,
+    pub cr2: u64,
+}
+
+const FAULT_LOG_LEN: usize = 128;
+
+#[repr(C, align(64))]
+pub struct FaultLog {
+    head: AtomicUsize,
+    entries: [FaultRecord; FAULT_LOG_LEN],
+}
+
+impl FaultLog {
+    pub const fn new() -> Self {
+        const ZERO: FaultRecord = FaultRecord {
+            vec: 0,
+            _pad: [0; 7],
+            error: 0,
+            rip: 0,
+            rsp: 0,
+            rflags: 0,
+            cr2: 0,
+        };
+        Self {
+            head: AtomicUsize::new(0),
+            entries: [ZERO; FAULT_LOG_LEN],
+        }
+    }
+
+    fn push(&self, record: FaultRecord) {
+        let idx = self.head.fetch_add(1, Ordering::Relaxed) % FAULT_LOG_LEN;
+        unsafe {
+            core::ptr::write_volatile(self.entries.as_ptr().add(idx) as *mut FaultRecord, record);
+        }
+    }
+
+    pub fn entries(&self) -> &[FaultRecord; FAULT_LOG_LEN] {
+        &self.entries
+    }
+}
+
+static FAULT_LOG: FaultLog = FaultLog::new();
+
+pub fn fault_log() -> &'static FaultLog {
+    &FAULT_LOG
+}
+
+#[inline(always)]
+fn dbg_byte(b: u8) {
+    unsafe {
+        asm!("out dx, al", in("dx") 0xe9u16, in("al") b, options(nomem, nostack, preserves_flags));
+    }
+}
+
+fn log_fault(vec: u8, error: u64, rip: u64, rsp: u64, rflags: u64, cr2: u64) {
+    dbg_byte(vec);
+    let record = FaultRecord {
+        vec,
+        _pad: [0; 7],
+        error,
+        rip,
+        rsp,
+        rflags,
+        cr2,
+    };
+    FAULT_LOG.push(record);
+}
+
+macro_rules! record_and_halt {
+    ($vec:expr, $error:expr, $frame:expr, $cr2:expr) => {{
+        let frame = unsafe { &*$frame };
+        log_fault($vec, $error, frame.rip, frame.rsp, frame.rflags, $cr2);
+        loop {
+            unsafe { core::arch::asm!("hlt", options(nomem, nostack, preserves_flags)); }
+        }
+    }};
+}
+
 
 // Macro to create exception handler without error code
 macro_rules! exception_handler {
@@ -818,13 +906,11 @@ extern "C" fn handle_device_not_available(frame: *const InterruptFrame, _error: 
 }
 
 extern "C" fn handle_double_fault(frame: *const InterruptFrame, error: u64) {
-    // NeonRoot: Raw serial scream — if panic deadlocks on the serial lock,
-    // at least these bytes escape. '#DF\n' = double fault reached handler.
-    unsafe {
-        os_log::write_str_raw("\n#DF!");
-    }
     let frame = unsafe { &*frame };
-    panic!("DOUBLE FAULT at {:#x}, error: {:#x}", frame.rip, error);
+    log_fault(8, error, frame.rip, frame.rsp, frame.rflags, 0);
+    loop {
+        unsafe { core::arch::asm!("hlt", options(nomem, nostack, preserves_flags)); }
+    }
 }
 
 extern "C" fn handle_invalid_tss(frame: *const InterruptFrame, error: u64) {
@@ -849,91 +935,7 @@ extern "C" fn handle_stack_segment(frame: *const InterruptFrame, error: u64) {
 }
 
 extern "C" fn handle_general_protection(frame: *const InterruptFrame, error: u64) {
-    let frame = unsafe { &*frame };
-
-    // Get saved registers from stack (same layout as page fault handler)
-    let frame_ptr = frame as *const InterruptFrame as *const u8;
-    let saved_regs_ptr = frame_ptr.wrapping_sub(15 * 8 + 8);
-
-    // Extract saved register values
-    let saved_r15 = unsafe { *(saved_regs_ptr.wrapping_add(0) as *const u64) };
-    let saved_r14 = unsafe { *(saved_regs_ptr.wrapping_add(8) as *const u64) };
-    let saved_r13 = unsafe { *(saved_regs_ptr.wrapping_add(16) as *const u64) };
-    let saved_r12 = unsafe { *(saved_regs_ptr.wrapping_add(24) as *const u64) };
-    let saved_r11 = unsafe { *(saved_regs_ptr.wrapping_add(32) as *const u64) };
-    let saved_r10 = unsafe { *(saved_regs_ptr.wrapping_add(40) as *const u64) };
-    let saved_r9 = unsafe { *(saved_regs_ptr.wrapping_add(48) as *const u64) };
-    let saved_r8 = unsafe { *(saved_regs_ptr.wrapping_add(56) as *const u64) };
-    let saved_rbp = unsafe { *(saved_regs_ptr.wrapping_add(64) as *const u64) };
-    let saved_rdi = unsafe { *(saved_regs_ptr.wrapping_add(72) as *const u64) };
-    let saved_rsi = unsafe { *(saved_regs_ptr.wrapping_add(80) as *const u64) };
-    let saved_rdx = unsafe { *(saved_regs_ptr.wrapping_add(88) as *const u64) };
-    let saved_rcx = unsafe { *(saved_regs_ptr.wrapping_add(96) as *const u64) };
-    let saved_rbx = unsafe { *(saved_regs_ptr.wrapping_add(104) as *const u64) };
-    let saved_rax = unsafe { *(saved_regs_ptr.wrapping_add(112) as *const u64) };
-
-    crate::serial_println!("========================================");
-    crate::serial_println!("  GENERAL PROTECTION FAULT");
-    crate::serial_println!("========================================");
-    crate::serial_println!("  RIP: {:#x}", frame.rip);
-    crate::serial_println!("  RSP: {:#x}", frame.rsp);
-    crate::serial_println!("  CS:  {:#x}", frame.cs);
-    crate::serial_println!("  SS:  {:#x}", frame.ss);
-    crate::serial_println!("  RFLAGS: {:#x}", frame.rflags);
-    crate::serial_println!("  Error code: {:#x}", error);
-    crate::serial_println!("");
-    crate::serial_println!("  Saved registers:");
-    crate::serial_println!("    RAX: {:#018x}  RBX: {:#018x}", saved_rax, saved_rbx);
-    crate::serial_println!("    RCX: {:#018x}  RDX: {:#018x}", saved_rcx, saved_rdx);
-    crate::serial_println!("    RSI: {:#018x}  RDI: {:#018x}", saved_rsi, saved_rdi);
-    crate::serial_println!("    RBP: {:#018x}  R8:  {:#018x}", saved_rbp, saved_r8);
-    crate::serial_println!("    R9:  {:#018x}  R10: {:#018x}", saved_r9, saved_r10);
-    crate::serial_println!("    R11: {:#018x}  R12: {:#018x}", saved_r11, saved_r12);
-    crate::serial_println!("    R13: {:#018x}  R14: {:#018x}", saved_r13, saved_r14);
-    crate::serial_println!("    R15: {:#018x}", saved_r15);
-    crate::serial_println!("");
-
-    // Check if this is a user-mode fault
-    let is_user = (frame.cs & 3) == 3;
-    crate::serial_println!(
-        "  Fault from: {}",
-        if is_user {
-            "User mode (Ring 3)"
-        } else {
-            "Kernel mode (Ring 0)"
-        }
-    );
-
-    // Print debug values from sysret path
-    unsafe {
-        use crate::syscall::{
-            SYSRET_DEBUG_R11, SYSRET_DEBUG_RAX, SYSRET_DEBUG_RCX, SYSRET_DEBUG_RSP,
-            SYSRET_DEBUG_STACK_PTR,
-        };
-        use core::ptr::addr_of;
-        crate::serial_println!("");
-        crate::serial_println!("  Last syscall sysret debug:");
-        crate::serial_println!(
-            "    kernel stack ptr: {:#x}",
-            *addr_of!(SYSRET_DEBUG_STACK_PTR)
-        );
-        crate::serial_println!("    user RSP: {:#x}", *addr_of!(SYSRET_DEBUG_RSP));
-        crate::serial_println!("    user RIP (RCX): {:#x}", *addr_of!(SYSRET_DEBUG_RCX));
-        crate::serial_println!("    user RFLAGS (R11): {:#x}", *addr_of!(SYSRET_DEBUG_R11));
-        crate::serial_println!("    return value (RAX): {:#x}", *addr_of!(SYSRET_DEBUG_RAX));
-    }
-
-    // Try to read the instruction bytes at RIP if accessible
-    if is_user && frame.rip < 0x0000_8000_0000_0000 {
-        crate::serial_println!("");
-        crate::serial_println!("  Attempting to read instruction bytes at RIP...");
-        // Note: This might fault if the page isn't mapped in kernel, but it's worth trying
-    }
-
-    panic!(
-        "GENERAL PROTECTION FAULT at {:#x}, error: {:#x}",
-        frame.rip, error
-    );
+    record_and_halt!(13, error, frame, 0);
 }
 
 extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {

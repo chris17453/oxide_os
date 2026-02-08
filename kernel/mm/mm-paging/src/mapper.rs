@@ -85,6 +85,41 @@ impl PageMapper {
             return Err(MapError::AlreadyMapped);
         }
 
+        // [TRACE] Log PTE writes to track corruption — ColdCipher
+        let entry_addr = entry as *const _ as u64;
+        let entry_phys = entry_addr - 0xFFFF_8000_0000_0000; // virt_to_phys
+        if entry_phys >= 0x0c400000 && entry_phys <= 0x0c500000 {
+            unsafe {
+                use arch_x86_64 as arch;
+                let msg = b"[PTE-WRITE] entry_phys=0x";
+                for &byte in msg.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                for i in (0..16).rev() {
+                    let nibble = ((entry_phys >> (i * 4)) & 0xF) as u8;
+                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    arch::outb(0x3F8, hex_char);
+                }
+                let msg2 = b" val=0x";
+                for &byte in msg2.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                let val = (phys.as_u64() | (flags | PageTableFlags::PRESENT).bits());
+                for i in (0..16).rev() {
+                    let nibble = ((val >> (i * 4)) & 0xF) as u8;
+                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    arch::outb(0x3F8, hex_char);
+                }
+                let msg3 = b"\r\n";
+                for &byte in msg3.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+            }
+        }
+
         entry.set(phys, flags | PageTableFlags::PRESENT);
         Ok(())
     }
@@ -241,9 +276,56 @@ impl PageMapper {
             // Zero the new table
             let new_virt = phys_to_virt(new_table);
             let table = unsafe { &mut *new_virt.as_mut_ptr::<PageTable>() };
+
+            // [TRACE] Check if we're about to clear target range — BlackLatch
+            if new_table.as_u64() >= 0x0c400000 && new_table.as_u64() <= 0x0c500000 {
+                unsafe {
+                    use arch_x86_64 as arch;
+                    let msg = b"[PT-CLEAR] phys=0x";
+                    for &byte in msg.iter() {
+                        while arch::inb(0x3FD) & 0x20 == 0 {}
+                        arch::outb(0x3F8, byte);
+                    }
+                    let addr = new_table.as_u64();
+                    for i in (0..16).rev() {
+                        let nibble = ((addr >> (i * 4)) & 0xF) as u8;
+                        let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                        arch::outb(0x3F8, hex_char);
+                    }
+                    let msg2 = b"\r\n";
+                    for &byte in msg2.iter() {
+                        while arch::inb(0x3FD) & 0x20 == 0 {}
+                        arch::outb(0x3F8, byte);
+                    }
+                }
+            }
+
             table.clear();
 
             // Set the parent entry
+            let parent_entry_addr = entry as *const _ as u64;
+            let parent_entry_phys = parent_entry_addr - 0xFFFF_8000_0000_0000;
+            if parent_entry_phys >= 0x0c400000 && parent_entry_phys <= 0x0c500000 {
+                unsafe {
+                    use arch_x86_64 as arch;
+                    let msg = b"[PT-ENTRY] entry_phys=0x";
+                    for &byte in msg.iter() {
+                        while arch::inb(0x3FD) & 0x20 == 0 {}
+                        arch::outb(0x3F8, byte);
+                    }
+                    for i in (0..16).rev() {
+                        let nibble = ((parent_entry_phys >> (i * 4)) & 0xF) as u8;
+                        let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                        arch::outb(0x3F8, hex_char);
+                    }
+                    let msg2 = b"\r\n";
+                    for &byte in msg2.iter() {
+                        while arch::inb(0x3FD) & 0x20 == 0 {}
+                        arch::outb(0x3F8, byte);
+                    }
+                }
+            }
+
             entry.set(
                 new_table,
                 PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER,

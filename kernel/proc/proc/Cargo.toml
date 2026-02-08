@@ -19,3 +19,4 @@ vfs = { path = "../../vfs/vfs" }
 signal = { path = "../../signal/signal" }
 smp = { path = "../../smp/smp" }
 spin = "0.9"
+arch-x86_64 = { path = "../../arch/arch-x86_64" }

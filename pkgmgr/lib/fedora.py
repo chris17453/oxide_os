@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import configparser
 import gzip
+import shutil
 
 
 class FedoraRepo:
@@ -48,10 +49,10 @@ class FedoraRepo:
         
         try:
             print(f"Fetching metadata from {self.name}...")
-            urllib.request.urlretrieve(repomd_url, str(repomd_file))
+            _download_with_redirect(repomd_url, str(repomd_file))
             self.metadata = self._parse_repomd(repomd_file)
             return True
-        except urllib.error.URLError as e:
+        except (urllib.error.URLError, Exception) as e:
             print(f"Error fetching metadata from {self.name}: {e}")
             return False
     
@@ -85,7 +86,7 @@ class FedoraRepo:
         
         try:
             print(f"Downloading package list for {self.name}...")
-            urllib.request.urlretrieve(primary_url, str(primary_file))
+            _download_with_redirect(primary_url, str(primary_file))
             
             # Extract and parse
             primary_xml = cache_path / "primary.xml"
@@ -166,7 +167,7 @@ class FedoraRepo:
         
         try:
             print(f"Downloading {package_name} from {self.name}...")
-            urllib.request.urlretrieve(url, str(dest_file))
+            _download_with_redirect(url, str(dest_file))
             print(f"Downloaded to {dest_file}")
             return str(dest_file)
         except Exception as e:

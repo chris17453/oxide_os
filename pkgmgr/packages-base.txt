@@ -20,11 +20,11 @@ bash
 gzip
 bzip2
 xz
-zlib
+zlib-ng
 
 # Text processing
 less
-vim-minimal
+vim
 
 # File utilities
 file
@@ -40,7 +40,7 @@ libtool
 
 # Network utilities
 curl
-wget
+wget2
 
 # Archive utilities
 tar
@@ -48,5 +48,5 @@ cpio
 
 # Miscellaneous
 which
-tree
+tree-pkg
 time

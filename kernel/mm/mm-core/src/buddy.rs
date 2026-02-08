@@ -30,12 +30,17 @@ fn phys_to_virt(phys: PhysAddr) -> *mut u64 {
     PHYS_MAP_BASE.wrapping_add(phys.as_u64()) as *mut u64
 }
 
-/// Free block header stored in the first 8 bytes of a free block
-/// Contains the frame number of the next free block at this order
+/// Free block header stored in the first 24 bytes of a free block — BlackLatch
+/// Doubly-linked list for O(1) removal (the Linux way, not that amateur singly-linked bullshit)
+/// Now with corruption detection canary — GraveShift: Trust but verify
 #[repr(C)]
 struct FreeBlock {
-    next: u64, // Frame number of next free block, or 0 if none
+    magic: u64, // Canary value 0xFREEBL0C (0x4652454542304C) — corruption detector
+    next: u64,  // Frame number of next free block, or 0 if none
+    prev: u64,  // Frame number of previous free block, or 0 if head — TorqueJax
 }
+
+const FREE_BLOCK_MAGIC: u64 = 0x4652454542304C; // "FREEBL0C" in hex — SableWire
 
 /// Buddy allocator managing multiple memory zones
 pub struct BuddyAllocator {
@@ -180,10 +185,124 @@ impl BuddyAllocator {
         let old_head = zone.free_lists[order].head;
         let frame_num = addr >> FRAME_SHIFT;
 
-        // Insert at head of free list
+        // [TRACE] Log adds in target range AND check existing magic — ColdCipher
+        if addr >= 0xc400000 && addr <= 0xc500000 {
+            // Read existing value BEFORE we write the magic
+            let existing_magic = unsafe { core::ptr::read_volatile(virt as *const u64) };
+
+            unsafe {
+                use arch_x86_64 as arch;
+                let msg = b"[ADD-FREE] 0x";
+                for &byte in msg.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                for i in (0..16).rev() {
+                    let nibble = ((addr >> (i * 4)) & 0xF) as u8;
+                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    arch::outb(0x3F8, hex_char);
+                }
+                let msg2 = b" order=";
+                for &byte in msg2.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                arch::outb(0x3F8, b'0' + order as u8);
+                let msg3 = b" old_magic=0x";
+                for &byte in msg3.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                for i in (0..16).rev() {
+                    let nibble = ((existing_magic >> (i * 4)) & 0xF) as u8;
+                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    arch::outb(0x3F8, hex_char);
+                }
+                let msg4 = b"\r\n";
+                for &byte in msg4.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+            }
+        }
+
+        // Set canary — GraveShift: Mark this as a valid free block
+        block.magic = FREE_BLOCK_MAGIC;
+        // Insert at head of free list — Doubly-linked style, update prev pointers
         block.next = old_head;
+        block.prev = 0; // New head has no predecessor
+
+        // Update old head's prev pointer to point back to new head — SableWire
+        if old_head != 0 {
+            let old_head_addr = old_head << FRAME_SHIFT;
+            let old_head_virt = phys_to_virt(PhysAddr::new(old_head_addr));
+            let old_head_block = unsafe { &mut *(old_head_virt as *mut FreeBlock) };
+
+            // VALIDATE — BlackLatch: Check old head's canary before writing
+            if old_head_block.magic != FREE_BLOCK_MAGIC {
+                unsafe {
+                    use arch_x86_64 as arch;
+                    let msg = b"[BUDDY-FATAL] Old head corrupted! magic=0x";
+                    for &byte in msg.iter() {
+                        while arch::inb(0x3FD) & 0x20 == 0 {}
+                        arch::outb(0x3F8, byte);
+                    }
+                    for i in (0..16).rev() {
+                        let nibble = ((old_head_block.magic >> (i * 4)) & 0xF) as u8;
+                        let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                        arch::outb(0x3F8, hex_char);
+                    }
+                    let msg2 = b", expected=0x";
+                    for &byte in msg2.iter() {
+                        while arch::inb(0x3FD) & 0x20 == 0 {}
+                        arch::outb(0x3F8, byte);
+                    }
+                    for i in (0..16).rev() {
+                        let nibble = ((FREE_BLOCK_MAGIC >> (i * 4)) & 0xF) as u8;
+                        let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                        arch::outb(0x3F8, hex_char);
+                    }
+                    let msg3 = b" - GPF\r\n";
+                    for &byte in msg3.iter() {
+                        while arch::inb(0x3FD) & 0x20 == 0 {}
+                        arch::outb(0x3F8, byte);
+                    }
+                    core::ptr::write_volatile(0xBADBAD as *mut u64, old_head_block.magic);
+                }
+            }
+
+            old_head_block.prev = frame_num;
+        }
+
         zone.free_lists[order].head = frame_num; // Store frame number
+        let old_count = zone.free_lists[order].count;
         zone.free_lists[order].count += 1;
+        let new_count = zone.free_lists[order].count;
+
+        // TRACE EVERY COUNT CHANGE — GraveShift
+        unsafe {
+            use arch_x86_64 as arch;
+            let msg = b"[COUNT+] order=";
+            for &byte in msg.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+            arch::outb(0x3F8, b'0' + order as u8);
+            let msg2 = b", ";
+            for &byte in msg2.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+            arch::outb(0x3F8, b'0' + (old_count as u8));
+            arch::outb(0x3F8, b'-');
+            arch::outb(0x3F8, b'>');
+            arch::outb(0x3F8, b'0' + (new_count as u8));
+            let msg3 = b"\r\n";
+            for &byte in msg3.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+        }
     }
 
     /// Remove and return a free block from a zone's free list
@@ -191,27 +310,344 @@ impl BuddyAllocator {
     /// # Safety
     /// The zone must have been properly initialized.
     unsafe fn pop_free_block(&self, zone: &mut MemoryZone, order: usize) -> Option<u64> {
-        if zone.free_lists[order].count == 0 {
+        let initial_count = zone.free_lists[order].count;
+
+        if initial_count == 0 {
             return None;
         }
 
         let frame_num = zone.free_lists[order].head;
         let addr = frame_num << FRAME_SHIFT;
 
+        // [MONITOR] Log ALL pops of order >= 4 — ColdCipher
+        if order >= 4 {
+            unsafe {
+                use arch_x86_64 as arch;
+                let msg = b"[POP-O";
+                for &byte in msg.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                arch::outb(0x3F8, b'0' + order as u8);
+                let msg2 = b"] 0x";
+                for &byte in msg2.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                for i in (0..16).rev() {
+                    let nibble = ((addr >> (i * 4)) & 0xF) as u8;
+                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    arch::outb(0x3F8, hex_char);
+                }
+                let msg3 = b"\r\n";
+                for &byte in msg3.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+            }
+        }
+
         let virt = phys_to_virt(PhysAddr::new(addr));
+
+        // TRACE — GraveShift: About to access block memory
+        unsafe {
+            use arch_x86_64 as arch;
+            let msg = b"[POP-TRACE] Accessing block\r\n";
+            for &byte in msg.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+        }
+
         // SAFETY: Frame was previously added to free list so memory is valid
-        let block = unsafe { &*(virt as *const FreeBlock) };
+        let block = unsafe { &mut *(virt as *mut FreeBlock) };
+
+        // VALIDATE CANARY — GraveShift: Check magic before trusting this block
+        if block.magic != FREE_BLOCK_MAGIC {
+            unsafe {
+                use arch_x86_64 as arch;
+                let msg = b"[BUDDY-FATAL] Block corrupted at pop! magic=0x";
+                for &byte in msg.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                for i in (0..16).rev() {
+                    let nibble = ((block.magic >> (i * 4)) & 0xF) as u8;
+                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    arch::outb(0x3F8, hex_char);
+                }
+                let msg2 = b", addr=0x";
+                for &byte in msg2.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                for i in (0..16).rev() {
+                    let nibble = ((addr >> (i * 4)) & 0xF) as u8;
+                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    arch::outb(0x3F8, hex_char);
+                }
+                let msg3 = b", order=";
+                for &byte in msg3.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                arch::outb(0x3F8, b'0' + order as u8);
+                let msg4 = b" - GPF\r\n";
+                for &byte in msg4.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                // Trigger GPF with aligned address
+                core::ptr::write_volatile(0xDEAD0000 as *mut u64, block.magic);
+            }
+        }
+
         let next_frame = block.next;
 
-        // Read next pointer and update head
+        // TRACE — TorqueJax: Read next successfully
+        unsafe {
+            use arch_x86_64 as arch;
+            let msg = b"[POP-TRACE] Read next OK\r\n";
+            for &byte in msg.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+        }
+
+        // [TRACE] Return marker — BlackLatch: Verify we return from pop
+        unsafe {
+            use arch_x86_64 as arch;
+            let msg = b"[POP-RETURN]\r\n";
+            for &byte in msg.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+
+            // [MONITOR] Check target block's magic — ColdCipher: Track when it corrupts
+            let target_addr = 0x0c480000u64;
+            let target_virt = phys_to_virt(PhysAddr::new(target_addr));
+            let target_magic = core::ptr::read_volatile(target_virt as *const u64);
+            if target_magic != FREE_BLOCK_MAGIC && target_magic != 0 {
+                let msg = b"[WATCH] 0xc480000 magic=0x";
+                for &byte in msg.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                for i in (0..16).rev() {
+                    let nibble = ((target_magic >> (i * 4)) & 0xF) as u8;
+                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    arch::outb(0x3F8, hex_char);
+                }
+                let msg2 = b"\r\n";
+                for &byte in msg2.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+            }
+        }
+
+        // Clear the popped block's canary and pointers — WireSaint: Prevent use-after-free detection
+        // [TRACE] Log every magic clear to catch double-clears — ColdCipher
+        if addr >= 0xc400000 && addr <= 0xc500000 {
+            unsafe {
+                use arch_x86_64 as arch;
+                let msg = b"[CLEAR-MAGIC] 0x";
+                for &byte in msg.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                for i in (0..16).rev() {
+                    let nibble = ((addr >> (i * 4)) & 0xF) as u8;
+                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    arch::outb(0x3F8, hex_char);
+                }
+                let msg2 = b"\r\n";
+                for &byte in msg2.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+            }
+        }
+        block.magic = 0; // Invalidate canary — any future access will detect corruption
+        block.next = 0;
+        block.prev = 0;
+
+        // Update head and fix new head's prev pointer — BlackLatch: Clean up the doubly-linked chain
         zone.free_lists[order].head = next_frame;
+        if next_frame != 0 {
+            let next_addr = next_frame << FRAME_SHIFT;
+
+            // VALIDATE — GraveShift: Check if next_frame is sane (< 512MB for 512M RAM)
+            // Frame numbers above 0x20000 (512MB / 4KB) are invalid
+            if next_frame > 0x20000 {
+                unsafe {
+                    use arch_x86_64 as arch;
+                    let msg = b"[BUDDY-FATAL] Corrupted next_frame=0x";
+                    for &byte in msg.iter() {
+                        while arch::inb(0x3FD) & 0x20 == 0 {}
+                        arch::outb(0x3F8, byte);
+                    }
+                    for i in (0..16).rev() {
+                        let nibble = ((next_frame >> (i * 4)) & 0xF) as u8;
+                        let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                        arch::outb(0x3F8, hex_char);
+                    }
+                    let msg2 = b" - TRIGGERING GPF\r\n";
+                    for &byte in msg2.iter() {
+                        while arch::inb(0x3FD) & 0x20 == 0 {}
+                        arch::outb(0x3F8, byte);
+                    }
+                    // Trigger GPF — Die screaming
+                    core::ptr::write_volatile(0xBADBAD as *mut u64, next_frame);
+                }
+            }
+
+            let next_virt = phys_to_virt(PhysAddr::new(next_addr));
+
+            // TRACE — BlackLatch: About to dereference pointer
+            unsafe {
+                use arch_x86_64 as arch;
+                let msg = b"[POP-TRACE] About to access next_virt=0x";
+                for &byte in msg.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                let virt_addr = next_virt as u64;
+                for i in (0..16).rev() {
+                    let nibble = ((virt_addr >> (i * 4)) & 0xF) as u8;
+                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    arch::outb(0x3F8, hex_char);
+                }
+                let msg2 = b"\r\n";
+                for &byte in msg2.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+            }
+
+            let next_block = unsafe { &mut *(next_virt as *mut FreeBlock) };
+
+            // TRACE — TorqueJax: Successfully accessed next block
+            unsafe {
+                use arch_x86_64 as arch;
+                let msg = b"[POP-TRACE] Accessed next block OK\r\n";
+                for &byte in msg.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+            }
+
+            next_block.prev = 0; // New head has no predecessor
+
+            // TRACE — SableWire: Set prev = 0 successfully
+            unsafe {
+                use arch_x86_64 as arch;
+                let msg = b"[POP-TRACE] Set prev=0 OK\r\n";
+                for &byte in msg.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+            }
+        }
+
+        // Re-read count to detect corruption — GraveShift
+        let current_count = zone.free_lists[order].count;
+        if current_count != initial_count {
+            // Count changed between read and now! Memory corruption! — SableWire
+            // TRIGGER GPF — This is unrecoverable corruption
+            unsafe {
+                use arch_x86_64 as arch;
+                let msg = b"[BUDDY-FATAL] Count corrupted! initial=";
+                for &byte in msg.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                arch::outb(0x3F8, b'0' + (initial_count as u8));
+                let msg2 = b", current=";
+                for &byte in msg2.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                arch::outb(0x3F8, b'0' + (current_count as u8));
+                let msg3 = b", order=";
+                for &byte in msg3.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                arch::outb(0x3F8, b'0' + order as u8);
+                let msg4 = b" - TRIGGERING GPF\r\n";
+                for &byte in msg4.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+
+                // Trigger GPF by accessing invalid memory — GraveShift: Die screaming
+                core::ptr::write_volatile(0xDEADBEEF as *mut u64, 0xCAFEBABE);
+            }
+        }
+
+        // Check for underflow — BlackLatch: Better to crash than corrupt silently
+        if current_count == 0 {
+            // Count is 0 but we're about to decrement! MEMORY CORRUPTION!
+            unsafe {
+                use arch_x86_64 as arch;
+                let msg = b"[BUDDY-FATAL] Count underflow! order=";
+                for &byte in msg.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+                arch::outb(0x3F8, b'0' + order as u8);
+                let msg2 = b" - TRIGGERING GPF\r\n";
+                for &byte in msg2.iter() {
+                    while arch::inb(0x3FD) & 0x20 == 0 {}
+                    arch::outb(0x3F8, byte);
+                }
+
+                // Trigger GPF — TorqueJax: Fail loud not silent
+                core::ptr::write_volatile(0xDEADBEEF as *mut u64, 0xDEADC0DE);
+            }
+        }
+
+        let old_count_before_dec = zone.free_lists[order].count;
         zone.free_lists[order].count -= 1;
+        let new_count_after_dec = zone.free_lists[order].count;
+
+        // TRACE EVERY COUNT CHANGE — BlackLatch
+        unsafe {
+            use arch_x86_64 as arch;
+            let msg = b"[COUNT-] order=";
+            for &byte in msg.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+            arch::outb(0x3F8, b'0' + order as u8);
+            let msg2 = b", ";
+            for &byte in msg2.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+            arch::outb(0x3F8, b'0' + (old_count_before_dec as u8));
+            arch::outb(0x3F8, b'-');
+            arch::outb(0x3F8, b'>');
+            arch::outb(0x3F8, b'0' + (new_count_after_dec as u8));
+            let msg3 = b" (pop)\r\n";
+            for &byte in msg3.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+        }
 
         Some(addr)
     }
 
     /// Allocate memory with the given request
     pub fn alloc(&self, request: &AllocRequest) -> MmResult<PhysAddr> {
+        // [TRACE] Entry marker — BlackLatch
+        unsafe {
+            use arch_x86_64 as arch;
+            arch::outb(0x3F8, b'[');
+        }
+
         if request.order > MAX_ORDER {
             return Err(MmError::InvalidOrder);
         }
@@ -226,6 +662,7 @@ impl BuddyAllocator {
 
         for zone_idx in zone_order {
             let mut zone = self.zones[zone_idx].lock();
+
             if zone.is_empty() {
                 continue;
             }
@@ -234,6 +671,38 @@ impl BuddyAllocator {
             if let Some(addr) = unsafe { self.alloc_from_zone(&mut zone, request.order) } {
                 let pages = 1u64 << request.order;
                 self.stats.record_alloc(pages * FRAME_SIZE as u64);
+
+                // [TRACE] Log allocation details — BlackLatch: Track all allocs including PT frames
+                unsafe {
+                    use arch_x86_64 as arch;
+                    arch::outb(0x3F8, b'A');
+                    // Only log detailed info for non-page table allocations (order 0)
+                    // to reduce spam, but log ALL order > 0 allocations
+                    if request.order > 0 {
+                        let msg = b"[ALLOC-O";
+                        for &byte in msg.iter() {
+                            while arch::inb(0x3FD) & 0x20 == 0 {}
+                            arch::outb(0x3F8, byte);
+                        }
+                        arch::outb(0x3F8, b'0' + request.order as u8);
+                        let msg2 = b"] 0x";
+                        for &byte in msg2.iter() {
+                            while arch::inb(0x3FD) & 0x20 == 0 {}
+                            arch::outb(0x3F8, byte);
+                        }
+                        for i in (0..16).rev() {
+                            let nibble = ((addr >> (i * 4)) & 0xF) as u8;
+                            let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                            arch::outb(0x3F8, hex_char);
+                        }
+                        let msg3 = b"\r\n";
+                        for &byte in msg3.iter() {
+                            while arch::inb(0x3FD) & 0x20 == 0 {}
+                            arch::outb(0x3F8, byte);
+                        }
+                    }
+                }
+
                 return Ok(PhysAddr::new(addr));
             }
         }
@@ -250,11 +719,10 @@ impl BuddyAllocator {
         // Try to find a free block at the requested order or higher
         for current_order in order..=MAX_ORDER {
             if zone.free_lists[current_order].count > 0 {
-                // Found a block, may need to split
-                // SAFETY: Zone is initialized
+                // Found a block, may need to split — SAFETY: Zone is initialized
                 let addr = unsafe { self.pop_free_block(zone, current_order)? };
 
-                // Split larger blocks down to requested size
+                // Split larger blocks down to requested size — TorqueJax
                 // When splitting order N to get order M (where N > M):
                 // - We keep the low half at each level
                 // - We add the high half (buddy) to the free list
@@ -343,7 +811,7 @@ impl BuddyAllocator {
         zone.stats.free_pages[current_order].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Try to remove a specific block from a free list
+    /// Try to remove a specific block from a free list — GraveShift: O(1) removal, no traversal needed
     ///
     /// # Safety
     /// Zone must be initialized and the address must be valid.
@@ -354,35 +822,80 @@ impl BuddyAllocator {
             return false;
         }
 
-        // Check if target is the head
+        // Check if target is the head — fast path
         if zone.free_lists[order].head == target_frame {
             // SAFETY: Zone is initialized
             unsafe { self.pop_free_block(zone, order) };
             return true;
         }
 
-        // Search through the list
-        let mut current_frame = zone.free_lists[order].head;
-        while current_frame != 0 {
-            let current_addr = current_frame << FRAME_SHIFT;
-            let virt = phys_to_virt(PhysAddr::new(current_addr));
-            // SAFETY: Frame is in free list so memory is valid
-            let block = unsafe { &mut *(virt as *mut FreeBlock) };
+        // O(1) removal using doubly-linked list — BlackLatch: The Linux way, motherfucker
+        // Get the target block directly (no traversal!)
+        let target_virt = phys_to_virt(PhysAddr::new(addr));
+        let target_block = unsafe { &mut *(target_virt as *mut FreeBlock) };
 
-            if block.next == target_frame {
-                // Found it - remove from list
-                let target_virt = phys_to_virt(PhysAddr::new(addr));
-                // SAFETY: Target frame is in free list so memory is valid
-                let target_block = unsafe { &*(target_virt as *const FreeBlock) };
-                block.next = target_block.next;
-                zone.free_lists[order].count -= 1;
-                return true;
-            }
-
-            current_frame = block.next;
+        // Verify block is actually in the free list — SableWire: Paranoid but necessary
+        // If prev is 0, target should be head (already checked above)
+        // If next is 0 and prev is 0, block was cleared (not in list)
+        if target_block.prev == 0 || (target_block.prev == 0 && target_block.next == 0) {
+            return false;
         }
 
-        false
+        // Verify the chain integrity — TorqueJax: Check predecessor points to us
+        let prev_addr = target_block.prev << FRAME_SHIFT;
+        let prev_virt = phys_to_virt(PhysAddr::new(prev_addr));
+        let prev_block = unsafe { &mut *(prev_virt as *mut FreeBlock) };
+
+        if prev_block.next != target_frame {
+            // Chain is broken, block not actually in list — WireSaint
+            return false;
+        }
+
+        // Update predecessor's next pointer
+        prev_block.next = target_block.next;
+
+        // Update successor's prev pointer (if exists)
+        if target_block.next != 0 {
+            let next_addr = target_block.next << FRAME_SHIFT;
+            let next_virt = phys_to_virt(PhysAddr::new(next_addr));
+            let next_block = unsafe { &mut *(next_virt as *mut FreeBlock) };
+            next_block.prev = target_block.prev;
+        }
+
+        // Clear removed block's pointers — GraveShift: Poison the corpse
+        target_block.next = 0;
+        target_block.prev = 0;
+
+        let old_count_remove = zone.free_lists[order].count;
+        zone.free_lists[order].count -= 1;
+        let new_count_remove = zone.free_lists[order].count;
+
+        // TRACE EVERY COUNT CHANGE — TorqueJax
+        unsafe {
+            use arch_x86_64 as arch;
+            let msg = b"[COUNT-] order=";
+            for &byte in msg.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+            arch::outb(0x3F8, b'0' + order as u8);
+            let msg2 = b", ";
+            for &byte in msg2.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+            arch::outb(0x3F8, b'0' + (old_count_remove as u8));
+            arch::outb(0x3F8, b'-');
+            arch::outb(0x3F8, b'>');
+            arch::outb(0x3F8, b'0' + (new_count_remove as u8));
+            let msg3 = b" (remove)\r\n";
+            for &byte in msg3.iter() {
+                while arch::inb(0x3FD) & 0x20 == 0 {}
+                arch::outb(0x3F8, byte);
+            }
+        }
+
+        true
     }
 
     /// Get memory statistics

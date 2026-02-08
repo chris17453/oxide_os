@@ -1,0 +1,1059 @@
+Cleaning generated rootfs artifacts...
+make[1]: Entering directory '/home/nd/repos/Projects/oxide_os'
+Building kernel...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+   Compiling kernel v0.1.0 (/home/nd/repos/Projects/oxide_os/kernel)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.40s
+Building bootloader...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+Building OXIDE cross-compiler toolchain...
+  Building assembler (as)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.03s
+  Building linker (ld)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.04s
+  Building archiver (ar)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.03s
+  Building libc...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.04s
+  Building pthread...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.03s
+
+Installing toolchain components to sysroot...
+
+OXIDE toolchain built successfully!
+
+To use the toolchain:
+  export PATH=/home/nd/repos/Projects/oxide_os/toolchain/bin:$PATH
+  oxide-cc -o hello hello.c
+
+See toolchain/README.md for documentation.
+See toolchain/examples/ for examples.
+Checking external binaries...
+  Python already built, skipping...
+  Building vim...
+Building vim for OXIDE OS...
+Configuring vim...
+configure: loading cache auto/config.cache
+checking whether make sets $(MAKE)... (cached) yes
+checking for x86_64-unknown-oxide-elf-gcc... (cached) oxide-cc
+checking whether the C compiler works... no
+configure: error: in '/home/nd/repos/Projects/oxide_os/external/vim/src':
+configure: error: C compiler cannot create executables
+See 'config.log' for more details
+External binaries check complete.
+Building userspace programs (release)...
+  Building init (release)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.04s
+  Building esh (release)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.04s
+  Building getty (release)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.04s
+  Building login (release)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.03s
+  Building coreutils (release)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+warning: unused import: `alloc::boxed::Box`
+  --> userspace/libs/oxide-ncurses/src/lib.rs:38:5
+   |
+38 | use alloc::boxed::Box;
+   |     ^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `alloc::collections::BTreeMap`
+  --> userspace/libs/oxide-ncurses/src/lib.rs:39:5
+   |
+39 | use alloc::collections::BTreeMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `String` and `ToString`
+  --> userspace/libs/oxide-ncurses/src/lib.rs:40:21
+   |
+40 | use alloc::string::{String, ToString};
+   |                     ^^^^^^  ^^^^^^^^
+
+warning: unused import: `alloc::vec::Vec`
+  --> userspace/libs/oxide-ncurses/src/lib.rs:41:5
+   |
+41 | use alloc::vec::Vec;
+   |     ^^^^^^^^^^^^^^^
+
+warning: unused import: `core::fmt`
+  --> userspace/libs/oxide-ncurses/src/lib.rs:42:5
+   |
+42 | use core::fmt;
+   |     ^^^^^^^^^
+
+warning: unused import: `alloc::format`
+ --> userspace/libs/oxide-ncurses/src/output.rs:8:5
+  |
+8 | use alloc::format;
+  |     ^^^^^^^^^^^^^
+
+warning: unused import: `WindowData`
+  --> userspace/libs/oxide-ncurses/src/screen.rs:10:21
+   |
+10 | use crate::window::{WindowData, delwin, newwin};
+   |                     ^^^^^^^^^^
+
+warning: unused import: `chtype`
+  --> userspace/libs/oxide-ncurses/src/screen.rs:11:43
+   |
+11 | use crate::{Error, Result, WINDOW, attrs, chtype};
+   |                                           ^^^^^^
+
+warning: `oxide-ncurses` (lib) generated 8 warnings (run `cargo fix --lib -p oxide-ncurses` to apply 8 suggestions)
+warning: unused import: `String`
+  --> userspace/coreutils/src/bin/top.rs:17:21
+   |
+17 | use alloc::string::{String, ToString};
+   |                     ^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `window`
+  --> userspace/coreutils/src/bin/top.rs:21:78
+   |
+21 | use oxide_ncurses::{WINDOW, screen, input, output, color, attributes, attrs, window, colors, keys};
+   |                                                                              ^^^^^^
+
+warning: method `state_char` is never used
+  --> userspace/coreutils/src/bin/top.rs:64:8
+   |
+41 | impl ProcessInfo {
+   | ---------------- method in this implementation
+...
+64 |     fn state_char(&self) -> char {
+   |        ^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: fields `case_sensitive` and `highlight_changes` are never read
+   --> userspace/coreutils/src/bin/top.rs:134:5
+    |
+128 | struct TopConfig {
+    |        --------- fields in this struct
+...
+134 |     case_sensitive: bool, // Case-sensitive filtering
+    |     ^^^^^^^^^^^^^^
+...
+139 |     highlight_changes: bool,
+    |     ^^^^^^^^^^^^^^^^^
+
+warning: `coreutils` (bin "top") generated 4 warnings (run `cargo fix --bin "top" -p coreutils` to apply 2 suggestions)
+warning: field `cols` is never read
+  --> userspace/coreutils/src/bin/vim.rs:63:5
+   |
+60 | struct Term {
+   |        ---- field in this struct
+...
+63 |     cols: usize,
+   |     ^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `clrtoeol` is never used
+   --> userspace/coreutils/src/bin/vim.rs:141:8
+    |
+ 66 | impl Term {
+    | --------- method in this implementation
+...
+141 |     fn clrtoeol(&self) {
+    |        ^^^^^^^^
+
+warning: `coreutils` (bin "vi") generated 2 warnings
+    Finished `release` profile [optimized] target(s) in 0.05s
+  Building ssh (release)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.04s
+  Building sshd (release)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.03s
+  Building rdpd (release)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.03s
+  Building service (release)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.03s
+  Building networkd (release)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.03s
+  Building resolvd (release)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+warning: constant `MAX_CACHE_ENTRIES` is never used
+  --> userspace/services/resolvd/src/main.rs:32:7
+   |
+32 | const MAX_CACHE_ENTRIES: usize = 256;
+   |       ^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `DEFAULT_TTL_SECS` is never used
+  --> userspace/services/resolvd/src/main.rs:35:7
+   |
+35 | const DEFAULT_TTL_SECS: u64 = 300;
+   |       ^^^^^^^^^^^^^^^^
+
+warning: field `ip` is never read
+  --> userspace/services/resolvd/src/main.rs:69:5
+   |
+68 | struct CacheEntry {
+   |        ---------- field in this struct
+69 |     ip: (u8, u8, u8, u8),
+   |     ^^
+
+warning: function `resolve_cached` is never used
+   --> userspace/services/resolvd/src/main.rs:103:4
+    |
+103 | fn resolve_cached(hostname: &str) -> Option<(u8, u8, u8, u8)> {
+    |    ^^^^^^^^^^^^^^
+
+warning: creating a shared reference to mutable static
+   --> userspace/services/resolvd/src/main.rs:108:30
+    |
+108 |         if let Some(cache) = &CACHE {
+    |                              ^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+    = note: `#[warn(static_mut_refs)]` (part of `#[warn(rust_2024_compatibility)]`) on by default
+help: use `&raw const` instead to create a raw pointer
+    |
+108 |         if let Some(cache) = &raw const CACHE {
+    |                               +++++++++
+
+warning: creating a mutable reference to mutable static
+   --> userspace/services/resolvd/src/main.rs:138:34
+    |
+138 |             if let Some(cache) = &mut CACHE {
+    |                                  ^^^^^^^^^^ mutable reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+    = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+help: use `&raw mut` instead to create a raw pointer
+    |
+138 |             if let Some(cache) = &raw mut CACHE {
+    |                                   +++
+
+warning: creating a mutable reference to mutable static
+   --> userspace/services/resolvd/src/main.rs:170:30
+    |
+170 |         if let Some(cache) = &mut CACHE {
+    |                              ^^^^^^^^^^ mutable reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+    = note: mutable references to mutable statics are dangerous; it's undefined behavior if any other pointer to the static is used or if any other reference is created for the static while the mutable reference lives
+help: use `&raw mut` instead to create a raw pointer
+    |
+170 |         if let Some(cache) = &raw mut CACHE {
+    |                               +++
+
+warning: creating a shared reference to mutable static
+   --> userspace/services/resolvd/src/main.rs:205:30
+    |
+205 |         if let Some(cache) = &CACHE {
+    |                              ^^^^^^ shared reference to mutable static
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/static-mut-references.html>
+    = note: shared references to mutable statics are dangerous; it's undefined behavior if the static is mutated or if a mutable reference is created for it while the shared reference lives
+help: use `&raw const` instead to create a raw pointer
+    |
+205 |         if let Some(cache) = &raw const CACHE {
+    |                               +++++++++
+
+warning: `resolvd` (bin "resolvd") generated 8 warnings
+    Finished `release` profile [optimized] target(s) in 0.03s
+  Building journald (release)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.03s
+  Building journalctl (release)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.03s
+  Building soundd (release)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+warning: unused import: `alloc::string::String`
+  --> userspace/services/soundd/src/main.rs:30:5
+   |
+30 | use alloc::string::String;
+   |     ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `daemon`
+   --> userspace/services/soundd/src/main.rs:265:23
+    |
+265 | fn init_server_socket(daemon: &mut SoundDaemon) -> bool {
+    |                       ^^^^^^ help: if this is intentional, prefix it with an underscore: `_daemon`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `MAX_STREAMS_PER_CLIENT` is never used
+  --> userspace/services/soundd/src/main.rs:51:7
+   |
+51 | const MAX_STREAMS_PER_CLIENT: usize = 8;
+   |       ^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `BUFFER_SIZE` is never used
+  --> userspace/services/soundd/src/main.rs:54:7
+   |
+54 | const BUFFER_SIZE: usize = 4096;
+   |       ^^^^^^^^^^^
+
+warning: constant `SAMPLE_RATE` is never used
+  --> userspace/services/soundd/src/main.rs:57:7
+   |
+57 | const SAMPLE_RATE: u32 = 48000;
+   |       ^^^^^^^^^^^
+
+warning: constant `CHANNELS` is never used
+  --> userspace/services/soundd/src/main.rs:60:7
+   |
+60 | const CHANNELS: u8 = 2;
+   |       ^^^^^^^^
+
+warning: constant `BYTES_PER_SAMPLE` is never used
+  --> userspace/services/soundd/src/main.rs:63:7
+   |
+63 | const BYTES_PER_SAMPLE: usize = 2;
+   |       ^^^^^^^^^^^^^^^^
+
+warning: struct `AudioStream` is never constructed
+  --> userspace/services/soundd/src/main.rs:95:8
+   |
+95 | struct AudioStream {
+   |        ^^^^^^^^^^^
+
+warning: associated function `empty` is never used
+   --> userspace/services/soundd/src/main.rs:105:8
+    |
+104 | impl AudioStream {
+    | ---------------- associated function in this implementation
+105 |     fn empty() -> Self {
+    |        ^^^^^
+
+warning: fields `uid`, `gid`, `pid`, and `stream_count` are never read
+   --> userspace/services/soundd/src/main.rs:121:5
+    |
+119 | struct Client {
+    |        ------ fields in this struct
+120 |     fd: i32,
+121 |     uid: u32,
+    |     ^^^
+122 |     gid: u32,
+    |     ^^^
+123 |     pid: i32,
+    |     ^^^
+124 |     active: bool,
+125 |     stream_count: usize,
+    |     ^^^^^^^^^^^^
+    |
+    = note: `Client` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: fields `server_fd` and `next_stream_id` are never read
+   --> userspace/services/soundd/src/main.rs:147:5
+    |
+142 | struct SoundDaemon {
+    |        ----------- fields in this struct
+...
+147 |     server_fd: i32,
+    |     ^^^^^^^^^
+148 |     next_stream_id: u32,
+    |     ^^^^^^^^^^^^^^
+
+warning: function `accept_client` is never used
+   --> userspace/services/soundd/src/main.rs:295:4
+    |
+295 | fn accept_client(daemon: &mut SoundDaemon) {
+    |    ^^^^^^^^^^^^^
+
+warning: `soundd` (bin "soundd") generated 12 warnings (run `cargo fix --bin "soundd" -p soundd` to apply 2 suggestions)
+    Finished `release` profile [optimized] target(s) in 0.03s
+  Building evtest (release)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.03s
+  Building argtest (release)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.04s
+  Building htop (release)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+warning: unused import: `alloc::boxed::Box`
+  --> userspace/libs/oxide-ncurses/src/lib.rs:38:5
+   |
+38 | use alloc::boxed::Box;
+   |     ^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `alloc::collections::BTreeMap`
+  --> userspace/libs/oxide-ncurses/src/lib.rs:39:5
+   |
+39 | use alloc::collections::BTreeMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `String` and `ToString`
+  --> userspace/libs/oxide-ncurses/src/lib.rs:40:21
+   |
+40 | use alloc::string::{String, ToString};
+   |                     ^^^^^^  ^^^^^^^^
+
+warning: unused import: `alloc::vec::Vec`
+  --> userspace/libs/oxide-ncurses/src/lib.rs:41:5
+   |
+41 | use alloc::vec::Vec;
+   |     ^^^^^^^^^^^^^^^
+
+warning: unused import: `core::fmt`
+  --> userspace/libs/oxide-ncurses/src/lib.rs:42:5
+   |
+42 | use core::fmt;
+   |     ^^^^^^^^^
+
+warning: unused import: `alloc::format`
+ --> userspace/libs/oxide-ncurses/src/output.rs:8:5
+  |
+8 | use alloc::format;
+  |     ^^^^^^^^^^^^^
+
+warning: unused import: `WindowData`
+  --> userspace/libs/oxide-ncurses/src/screen.rs:10:21
+   |
+10 | use crate::window::{WindowData, delwin, newwin};
+   |                     ^^^^^^^^^^
+
+warning: unused import: `chtype`
+  --> userspace/libs/oxide-ncurses/src/screen.rs:11:43
+   |
+11 | use crate::{Error, Result, WINDOW, attrs, chtype};
+   |                                           ^^^^^^
+
+warning: unused import: `WINDOW`
+ --> userspace/libs/oxide-ncurses/src/menu.rs:5:21
+  |
+5 | use crate::{Result, WINDOW};
+  |                     ^^^^^^
+
+warning: unused import: `WINDOW`
+ --> userspace/libs/oxide-ncurses/src/form.rs:5:21
+  |
+5 | use crate::{Result, WINDOW};
+  |                     ^^^^^^
+
+warning: unused variable: `win`
+  --> userspace/libs/oxide-ncurses/src/panel.rs:13:18
+   |
+13 | pub fn new_panel(win: WINDOW) -> *mut Panel {
+   |                  ^^^ help: if this is intentional, prefix it with an underscore: `_win`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: fields `win`, `below`, and `above` are never read
+  --> userspace/libs/oxide-ncurses/src/panel.rs:8:5
+   |
+ 7 | pub struct Panel {
+   |            ----- fields in this struct
+ 8 |     win: WINDOW,
+   |     ^^^
+ 9 |     below: Option<*mut Panel>,
+   |     ^^^^^
+10 |     above: Option<*mut Panel>,
+   |     ^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `oxide-ncurses` (lib) generated 12 warnings (run `cargo fix --lib -p oxide-ncurses` to apply 11 suggestions)
+warning: value assigned to `path_buf` is never read
+  --> userspace/apps/htop/src/main.rs:97:5
+   |
+97 |     path_buf[path_bytes.len()] = 0;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: maybe it is overwritten before being read?
+   = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `pid_digits` is never read
+   --> userspace/apps/htop/src/main.rs:207:9
+    |
+207 |         pid_digits[0] = b'0';
+    |         ^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: field `cpu_percent` is never read
+  --> userspace/apps/htop/src/main.rs:37:5
+   |
+31 | struct ProcessInfo {
+   |        ----------- field in this struct
+...
+37 |     cpu_percent: u32,  // Scaled by 100 (e.g., 1550 = 15.50%)
+   |     ^^^^^^^^^^^
+   |
+   = note: `ProcessInfo` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `uptime_secs` is never read
+  --> userspace/apps/htop/src/main.rs:71:5
+   |
+66 | struct SystemInfo {
+   |        ---------- field in this struct
+...
+71 |     uptime_secs: u64,
+   |     ^^^^^^^^^^^
+
+warning: `htop` (bin "htop") generated 4 warnings
+    Finished `release` profile [optimized] target(s) in 0.04s
+  Building doom (release)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+warning: value assigned to `i` is never read
+  --> userspace/apps/doom/src/render.rs:22:17
+   |
+22 |     let mut i = 0;
+   |                 ^
+   |
+   = help: maybe it is overwritten before being read?
+   = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: fields `lumps` and `num_lumps` are never read
+  --> userspace/apps/doom/src/wad.rs:28:5
+   |
+26 | pub struct WadFile {
+   |            ------- fields in this struct
+27 |     fd: i32,
+28 |     lumps: [WadLump; 4096],  // Fixed size array for no_std
+   |     ^^^^^
+29 |     num_lumps: usize,
+   |     ^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: methods `find_lump`, `read_lump`, and `num_lumps` are never used
+   --> userspace/apps/doom/src/wad.rs:104:12
+    |
+ 32 | impl WadFile {
+    | ------------ methods in this implementation
+...
+104 |     pub fn find_lump(&self, name: &[u8; 8]) -> Option<&WadLump> {
+    |            ^^^^^^^^^
+...
+115 |     pub fn read_lump(&self, lump: &WadLump, buffer: &mut [u8]) -> bool {
+    |            ^^^^^^^^^
+...
+125 |     pub fn num_lumps(&self) -> usize {
+    |            ^^^^^^^^^
+
+warning: `doom` (bin "doom") generated 3 warnings
+    Finished `release` profile [optimized] target(s) in 0.04s
+  Building gwbasic (release)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.04s
+  Building curses-demo (release)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+warning: unused import: `alloc::boxed::Box`
+  --> userspace/libs/oxide-ncurses/src/lib.rs:38:5
+   |
+38 | use alloc::boxed::Box;
+   |     ^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `alloc::collections::BTreeMap`
+  --> userspace/libs/oxide-ncurses/src/lib.rs:39:5
+   |
+39 | use alloc::collections::BTreeMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `String` and `ToString`
+  --> userspace/libs/oxide-ncurses/src/lib.rs:40:21
+   |
+40 | use alloc::string::{String, ToString};
+   |                     ^^^^^^  ^^^^^^^^
+
+warning: unused import: `alloc::vec::Vec`
+  --> userspace/libs/oxide-ncurses/src/lib.rs:41:5
+   |
+41 | use alloc::vec::Vec;
+   |     ^^^^^^^^^^^^^^^
+
+warning: unused import: `core::fmt`
+  --> userspace/libs/oxide-ncurses/src/lib.rs:42:5
+   |
+42 | use core::fmt;
+   |     ^^^^^^^^^
+
+warning: unused import: `alloc::format`
+ --> userspace/libs/oxide-ncurses/src/output.rs:8:5
+  |
+8 | use alloc::format;
+  |     ^^^^^^^^^^^^^
+
+warning: unused import: `WindowData`
+  --> userspace/libs/oxide-ncurses/src/screen.rs:10:21
+   |
+10 | use crate::window::{WindowData, delwin, newwin};
+   |                     ^^^^^^^^^^
+
+warning: unused import: `chtype`
+  --> userspace/libs/oxide-ncurses/src/screen.rs:11:43
+   |
+11 | use crate::{Error, Result, WINDOW, attrs, chtype};
+   |                                           ^^^^^^
+
+warning: unused import: `WINDOW`
+ --> userspace/libs/oxide-ncurses/src/menu.rs:5:21
+  |
+5 | use crate::{Result, WINDOW};
+  |                     ^^^^^^
+
+warning: unused import: `WINDOW`
+ --> userspace/libs/oxide-ncurses/src/form.rs:5:21
+  |
+5 | use crate::{Result, WINDOW};
+  |                     ^^^^^^
+
+warning: unused variable: `win`
+  --> userspace/libs/oxide-ncurses/src/panel.rs:13:18
+   |
+13 | pub fn new_panel(win: WINDOW) -> *mut Panel {
+   |                  ^^^ help: if this is intentional, prefix it with an underscore: `_win`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: fields `win`, `below`, and `above` are never read
+  --> userspace/libs/oxide-ncurses/src/panel.rs:8:5
+   |
+ 7 | pub struct Panel {
+   |            ----- fields in this struct
+ 8 |     win: WINDOW,
+   |     ^^^
+ 9 |     below: Option<*mut Panel>,
+   |     ^^^^^
+10 |     above: Option<*mut Panel>,
+   |     ^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `oxide-ncurses` (lib) generated 12 warnings (run `cargo fix --lib -p oxide-ncurses` to apply 11 suggestions)
+warning: value assigned to `max_y` is never read
+   --> userspace/apps/curses-demo/src/main.rs:219:21
+    |
+219 |     let mut max_y = 24;
+    |                     ^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `max_x` is never read
+   --> userspace/apps/curses-demo/src/main.rs:220:21
+    |
+220 |     let mut max_x = 80;
+    |                     ^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: function `sleep_ms` is never used
+  --> userspace/apps/curses-demo/src/main.rs:26:4
+   |
+26 | fn sleep_ms(ms: u32) {
+   |    ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused `Result` that must be used
+   --> userspace/apps/curses-demo/src/main.rs:195:9
+    |
+195 |         endwin();
+    |         ^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+    = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+    |
+195 |         let _ = endwin();
+    |         +++++++
+
+warning: unused `Result` that must be used
+   --> userspace/apps/curses-demo/src/main.rs:201:5
+    |
+201 |     start_color();
+    |     ^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+201 |     let _ = start_color();
+    |     +++++++
+
+warning: unused `Result` that must be used
+   --> userspace/apps/curses-demo/src/main.rs:204:5
+    |
+204 |     init_pair(1, COLOR_RED, COLOR_BLACK);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+204 |     let _ = init_pair(1, COLOR_RED, COLOR_BLACK);
+    |     +++++++
+
+warning: unused `Result` that must be used
+   --> userspace/apps/curses-demo/src/main.rs:205:5
+    |
+205 |     init_pair(2, COLOR_GREEN, COLOR_BLACK);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+205 |     let _ = init_pair(2, COLOR_GREEN, COLOR_BLACK);
+    |     +++++++
+
+warning: unused `Result` that must be used
+   --> userspace/apps/curses-demo/src/main.rs:206:5
+    |
+206 |     init_pair(3, COLOR_YELLOW, COLOR_BLACK);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+206 |     let _ = init_pair(3, COLOR_YELLOW, COLOR_BLACK);
+    |     +++++++
+
+warning: unused `Result` that must be used
+   --> userspace/apps/curses-demo/src/main.rs:207:5
+    |
+207 |     init_pair(4, COLOR_BLUE, COLOR_BLACK);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+207 |     let _ = init_pair(4, COLOR_BLUE, COLOR_BLACK);
+    |     +++++++
+
+warning: unused `Result` that must be used
+   --> userspace/apps/curses-demo/src/main.rs:208:5
+    |
+208 |     init_pair(5, COLOR_MAGENTA, COLOR_BLACK);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+208 |     let _ = init_pair(5, COLOR_MAGENTA, COLOR_BLACK);
+    |     +++++++
+
+warning: unused `Result` that must be used
+   --> userspace/apps/curses-demo/src/main.rs:209:5
+    |
+209 |     init_pair(6, COLOR_CYAN, COLOR_BLACK);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+209 |     let _ = init_pair(6, COLOR_CYAN, COLOR_BLACK);
+    |     +++++++
+
+warning: unused `Result` that must be used
+   --> userspace/apps/curses-demo/src/main.rs:210:5
+    |
+210 |     init_pair(7, COLOR_WHITE, COLOR_BLACK);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+help: use `let _ = ...` to ignore the resulting value
+    |
+210 |     let _ = init_pair(7, COLOR_WHITE, COLOR_BLACK);
+    |     +++++++
+
+warning: `curses-demo` (bin "curses-demo") generated 12 warnings
+    Finished `release` profile [optimized] target(s) in 0.03s
+  Building testcolors (release)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+warning: unused import: `alloc::boxed::Box`
+  --> userspace/libs/oxide-ncurses/src/lib.rs:38:5
+   |
+38 | use alloc::boxed::Box;
+   |     ^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `alloc::collections::BTreeMap`
+  --> userspace/libs/oxide-ncurses/src/lib.rs:39:5
+   |
+39 | use alloc::collections::BTreeMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `String` and `ToString`
+  --> userspace/libs/oxide-ncurses/src/lib.rs:40:21
+   |
+40 | use alloc::string::{String, ToString};
+   |                     ^^^^^^  ^^^^^^^^
+
+warning: unused import: `alloc::vec::Vec`
+  --> userspace/libs/oxide-ncurses/src/lib.rs:41:5
+   |
+41 | use alloc::vec::Vec;
+   |     ^^^^^^^^^^^^^^^
+
+warning: unused import: `core::fmt`
+  --> userspace/libs/oxide-ncurses/src/lib.rs:42:5
+   |
+42 | use core::fmt;
+   |     ^^^^^^^^^
+
+warning: unused import: `alloc::format`
+ --> userspace/libs/oxide-ncurses/src/output.rs:8:5
+  |
+8 | use alloc::format;
+  |     ^^^^^^^^^^^^^
+
+warning: unused import: `WindowData`
+  --> userspace/libs/oxide-ncurses/src/screen.rs:10:21
+   |
+10 | use crate::window::{WindowData, delwin, newwin};
+   |                     ^^^^^^^^^^
+
+warning: unused import: `chtype`
+  --> userspace/libs/oxide-ncurses/src/screen.rs:11:43
+   |
+11 | use crate::{Error, Result, WINDOW, attrs, chtype};
+   |                                           ^^^^^^
+
+warning: `oxide-ncurses` (lib) generated 8 warnings (run `cargo fix --lib -p oxide-ncurses` to apply 8 suggestions)
+    Finished `release` profile [optimized] target(s) in 0.04s
+  Building tls-test ...
+make[2]: Entering directory '/home/nd/repos/Projects/oxide_os'
+Building OXIDE cross-compiler toolchain...
+  Building assembler (as)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.04s
+  Building linker (ld)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.03s
+  Building archiver (ar)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.03s
+  Building libc...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.03s
+  Building pthread...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.04s
+
+Installing toolchain components to sysroot...
+
+OXIDE toolchain built successfully!
+
+To use the toolchain:
+  export PATH=/home/nd/repos/Projects/oxide_os/toolchain/bin:$PATH
+  oxide-cc -o hello hello.c
+
+See toolchain/README.md for documentation.
+See toolchain/examples/ for examples.
+Building TLS test program...
+TLS test built: target/x86_64-unknown-none/release/tls-test
+make[2]: Leaving directory '/home/nd/repos/Projects/oxide_os'
+  Building thread-test ...
+make[2]: Entering directory '/home/nd/repos/Projects/oxide_os'
+Building OXIDE cross-compiler toolchain...
+  Building assembler (as)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.04s
+  Building linker (ld)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.03s
+  Building archiver (ar)...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.03s
+  Building libc...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.03s
+  Building pthread...
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/nd/repos/Projects/oxide_os/userspace/services/resolvd/Cargo.toml
+workspace: /home/nd/repos/Projects/oxide_os/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.03s
+
+Installing toolchain components to sysroot...
+
+OXIDE toolchain built successfully!
+
+To use the toolchain:
+  export PATH=/home/nd/repos/Projects/oxide_os/toolchain/bin:$PATH
+  oxide-cc -o hello hello.c
+
+See toolchain/README.md for documentation.
+See toolchain/examples/ for examples.
+Building thread test program...
+Thread test built: target/x86_64-unknown-none/release/thread-test
+make[2]: Leaving directory '/home/nd/repos/Projects/oxide_os'
+Stripping binaries...
+Userspace programs built (release).
+Creating initramfs (bootstrap)...
+Initramfs created: target/initramfs.cpio
+-rw-r--r-- 1 nd nd 2522624 Feb  7 07:53 target/initramfs.cpio
+Creating OXIDE root filesystem disk image...
+
+dd if=/dev/zero of=target/oxide-disk.img bs=1M count=800 status=none
+parted -s target/oxide-disk.img mklabel gpt
+parted -s target/oxide-disk.img mkpart boot fat32 1MiB 65MiB
+parted -s target/oxide-disk.img set 1 esp on
+parted -s target/oxide-disk.img mkpart root ext4 65MiB 449MiB
+parted -s target/oxide-disk.img mkpart home ext4 449MiB 100%
+Formatting partitions...
+Loop device: /dev/loop0
+mkfs.fat 4.2 (2021-01-31)
+
+Populating /boot (ESP)...
+Populating / (root filesystem)...
+  Copying binaries...
+TLS test installed
+Python installed
+  Creating /etc/passwd...
+  Creating /etc/group...
+  Creating /etc/fstab...
+  Creating other config files...
+Populating /home...
+
+===============================================
+OXIDE disk image created: target/oxide-disk.img
+===============================================
+
+Partition layout:
+  1. /boot  (ESP)   64MB  FAT32  - bootloader, kernel, initramfs
+  2. /      (root)  384MB  ext4   - OS files
+  3. /home          64MB  ext4   - user data
+  4. /tmp           (tmpfs)         - in-memory
+
+Model:  (file)
+Disk /home/nd/repos/Projects/oxide_os/target/oxide-disk.img: 839MB
+Sector size (logical/physical): 512B/512B
+Partition Table: gpt
+Disk Flags: 
+
+Number  Start   End     Size    File system  Name  Flags
+ 1      1049kB  68.2MB  67.1MB  fat32        boot  boot, esp
+ 2      68.2MB  471MB   403MB   ext4         root
+ 3      471MB   838MB   367MB   ext4         home
+
+make[1]: Leaving directory '/home/nd/repos/Projects/oxide_os'
+Detected Fedora mode (qemu-system-x86_64)
+make[1]: Entering directory '/home/nd/repos/Projects/oxide_os'
+Running OXIDE OS with qemu-system-x86_64...
+Forwarding SSH to localhost:58195
+TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
+	-machine q35 \
+	-cpu qemu64,+smap,+smep \
+	-smp 4 \
+	-m 256M \
+	-bios "/usr/share/OVMF/OVMF_CODE.fd" \
+	-drive file=target/oxide-disk.img,format=raw,if=none,id=disk \
+	-device virtio-blk-pci,drive=disk \
+	-device virtio-net-pci,netdev=net0 \
+	-netdev user,id=net0,hostfwd=tcp::58357-:22 \
+	-device virtio-gpu-pci \
+	-audiodev none,id=snd0 \
+	-device intel-hda \
+	-device hda-duplex,audiodev=snd0 \
+	-serial stdio \
+	-no-reboot
+[2J[01;01H[=3h[2J[01;01H[2J[01;01H[8;042;160t0[2J[01;01H[2J[01;01H[8;056;240t0[2J[01;01HBdsDxe: loading Boot0002 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x2,0x0)
+BdsDxe: starting Boot0002 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x2,0x0)
+
+            Operating System - Version 0.1.0
+              UEFI Bootloader Starting...
+
+[2J[01;01H[ACPI] RSDP v2.0 found at 0x000000000f77e014
+
+
+
+[dbg] serial init
+[dbg] os_log writers registered
+make[1]: Leaving directory '/home/nd/repos/Projects/oxide_os'

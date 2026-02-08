@@ -885,7 +885,9 @@ pub fn kill_faulting_process(_pid: u64, rip: u64, signo: u64) {
 
     crate::debug_to_buffer!(
         "[KILL] PID {} terminated by signal {} at RIP {:#x}",
-        current_pid, signo, rip
+        current_pid,
+        signo,
+        rip
     );
 
     let exit_status = 128 + signo as i32;
@@ -904,7 +906,9 @@ pub fn kill_faulting_process(_pid: u64, rip: u64, signo: u64) {
     sched::set_need_resched();
 
     loop {
-        unsafe { core::arch::asm!("sti", "hlt", options(nomem, nostack)); }
+        unsafe {
+            core::arch::asm!("sti", "hlt", options(nomem, nostack));
+        }
     }
 }
 
@@ -938,7 +942,9 @@ pub fn check_signals_on_syscall_return() {
             core::arch::asm!("cli", options(nomem, nostack));
         }
 
-        unsafe { *arch::syscall::get_user_context_mut() = saved_ctx; }
+        unsafe {
+            *arch::syscall::get_user_context_mut() = saved_ctx;
+        }
     }
 
     // Get current PID (fast path, no locks)
@@ -965,7 +971,7 @@ pub fn check_signals_on_syscall_return() {
     }
 
     let signal_mask = meta.signal_mask;
-    
+
     // Dequeue the highest priority pending signal
     let pending = match meta.pending_signals.dequeue(&signal_mask) {
         Some(p) => p,
@@ -973,7 +979,7 @@ pub fn check_signals_on_syscall_return() {
     };
 
     let signo = pending.signo;
-    
+
     // Get the signal action
     let action = if signo >= 1 && signo <= signal::NSIG as i32 {
         meta.sigactions[(signo - 1) as usize]
@@ -1002,7 +1008,7 @@ pub fn check_signals_on_syscall_return() {
 
             // Block ourselves (we're now a zombie)
             sched::block_current(TaskState::TASK_ZOMBIE);
-            
+
             // Note: When we return from syscall, scheduler will switch us out
         }
         SignalResult::UserHandler {
@@ -1013,10 +1019,10 @@ pub fn check_signals_on_syscall_return() {
             handler_mask,
         } => {
             // 🔥 GraveShift: Redirect to user's signal handler 🔥
-            
+
             unsafe {
                 let ctx = arch::syscall::get_user_context_mut();
-                
+
                 // Build saved registers from current context
                 let regs = signal::delivery::SavedRegisters {
                     rax: ctx.rax,

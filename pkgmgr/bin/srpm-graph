@@ -1,0 +1,523 @@
+#!/usr/bin/env python3
+"""
+srpm-graph — OXIDE OS SRPM Dependency Graph Builder (SQLite-backed)
+
+— BlackLatch: "Point me at a list of packages and I'll recursively crawl
+  every BuildRequires down to the bedrock. SQLite keeps the receipts."
+
+Usage:
+  srpm-graph fetch bash coreutils systemd    # download SRPMs
+  srpm-graph crawl bash coreutils            # recursive: fetch → resolve → fetch deps → ...
+  srpm-graph crawl --depth 3                 # limit recursion depth
+  srpm-graph deps bash                       # show deps for one package
+  srpm-graph rdeps glibc                     # who build-depends on glibc?
+  srpm-graph topo                            # topological build order
+  srpm-graph dot                             # emit Graphviz DOT
+  srpm-graph summary                         # quick stats
+  srpm-graph list                            # list all cached SRPMs
+  srpm-graph db-stats                        # SQLite database statistics
+  srpm-graph query <sql>                     # raw SQL query against the DB
+"""
+
+import sys
+import os
+import argparse
+import json
+from pathlib import Path
+
+PKGMGR_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PKGMGR_ROOT / "lib"))
+
+from srpm_graph import (
+    SRPMGraph, download_srpms, search_packages, get_package_info_from_dnf,
+    get_srpm_metadata, DEFAULT_MAX_DEPTH, sync_repo_metadata, is_synced,
+)
+
+# — TorqueJax: "Default to Fedora 42 because that's what we're cross-compiling from."
+DEFAULT_RELEASE = "42"
+
+
+def repo_dir(release: str) -> Path:
+    d = PKGMGR_ROOT / "repo" / f"fedora-{release}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def srpms_dir(release: str) -> Path:
+    d = repo_dir(release) / "srpms"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def graph_dir(release: str) -> Path:
+    d = repo_dir(release) / "graph"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def db_path(release: str) -> str:
+    return str(repo_dir(release) / "metadata" / "graph.db")
+
+
+def open_graph(release: str) -> SRPMGraph:
+    p = db_path(release)
+    Path(p).parent.mkdir(parents=True, exist_ok=True)
+    return SRPMGraph(p)
+
+
+def _base_packages() -> list:
+    """Read packages-base.txt."""
+    base_file = PKGMGR_ROOT / "packages-base.txt"
+    if not base_file.exists():
+        return []
+    pkgs = []
+    for line in base_file.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            pkgs.append(line.split()[0])
+    return pkgs
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  Commands
+# ═══════════════════════════════════════════════════════════════════
+
+def cmd_sync(args):
+    """Sync repo metadata for offline graph building."""
+    g = open_graph(args.release)
+    print(f"⚡ Syncing Fedora {args.release} repo metadata...")
+    print(f"   DB: {db_path(args.release)}\n")
+    stats = sync_repo_metadata(g.db)
+    if stats["packages"] > 0:
+        print(f"\n   Ready. Next: srpm-graph fetch <packages>  then  srpm-graph build-local")
+    g.close()
+    return 0
+
+
+def cmd_build_local(args):
+    """Build graph from local SRPMs (offline, fast)."""
+    g = open_graph(args.release)
+    sd = str(srpms_dir(args.release))
+    packages = args.packages or None
+
+    print(f"⚡ Local graph build")
+    print(f"   DB: {db_path(args.release)}")
+    print(f"   SRPMs: {sd}\n")
+
+    count = g.build_local(sd, packages)
+    if count == 0:
+        g.close()
+        return 1
+
+    print(f"\n{'─' * 50}")
+    print(g.summary())
+
+    dot_file = graph_dir(args.release) / "deps.dot"
+    dot_file.write_text(g.to_dot())
+    print(f"\nDOT: {dot_file}")
+
+    svg_file = graph_dir(args.release) / "deps.svg"
+    try:
+        import subprocess
+        subprocess.run(["dot", "-Tsvg", str(dot_file), "-o", str(svg_file)],
+                       check=True, timeout=120)
+        print(f"SVG: {svg_file}")
+    except Exception:
+        print(f"(render: dot -Tsvg {dot_file} -o {svg_file})")
+
+    g.close()
+    return 0
+
+
+def cmd_fetch(args):
+    """Download SRPMs (no dependency resolution)."""
+    packages = args.packages or _base_packages()
+    if not packages:
+        print("No packages specified.", file=sys.stderr)
+        return 1
+
+    dest = str(srpms_dir(args.release))
+    results = download_srpms(packages, dest, skip_existing=not args.force)
+    print(f"\n{'─' * 50}")
+    print(f"Downloaded: {len(results)}/{len(packages)} SRPMs → {dest}")
+    return 0
+
+
+def cmd_crawl(args):
+    """Recursive crawl: fetch → resolve BuildRequires → fetch deps → repeat."""
+    packages = args.packages or _base_packages()
+    if not packages:
+        print("No packages specified.", file=sys.stderr)
+        return 1
+
+    g = open_graph(args.release)
+    sd = str(srpms_dir(args.release))
+
+    print(f"🕷  Recursive crawl: {len(packages)} root(s), max depth {args.depth}")
+    print(f"   DB: {db_path(args.release)}")
+    print(f"   SRPMs: {sd}\n")
+
+    crawled = g.crawl(packages, sd, max_depth=args.depth)
+
+    print(f"\n{'─' * 50}")
+    print(g.summary())
+
+    # Save DOT + SVG
+    dot_file = graph_dir(args.release) / "deps.dot"
+    dot_file.write_text(g.to_dot())
+    print(f"\nDOT: {dot_file}")
+
+    svg_file = graph_dir(args.release) / "deps.svg"
+    try:
+        import subprocess
+        subprocess.run(["dot", "-Tsvg", str(dot_file), "-o", str(svg_file)],
+                       check=True, timeout=120)
+        print(f"SVG: {svg_file}")
+    except Exception:
+        print(f"(render: dot -Tsvg {dot_file} -o {svg_file})")
+
+    g.close()
+    return 0
+
+
+def cmd_deps(args):
+    """Show build dependencies for a package."""
+    g = open_graph(args.release)
+    pkg = args.package
+
+    if pkg not in g.get_nodes():
+        print(f"'{pkg}' not in graph.", file=sys.stderr)
+        g.close()
+        return 1
+
+    info = g.get_package_info(pkg)
+    ver = info.get("version", "") if info else ""
+    direct = sorted(g.deps_of(pkg))
+    trans = sorted(g.transitive_deps(pkg))
+
+    print(f"╔═══ {pkg} {ver} ═══╗")
+    print(f"║ Direct build-deps ({len(direct)}):")
+    for d in direct:
+        di = g.get_package_info(d)
+        dv = f" ({di['version']})" if di and di.get('version') else ""
+        print(f"║   → {d}{dv}")
+
+    indirect = sorted(set(trans) - set(direct))
+    if indirect:
+        print(f"║ Transitive ({len(indirect)} more):")
+        for d in indirect:
+            print(f"║     ↳ {d}")
+
+    # Detailed BuildRequires with resolution
+    brs = g.get_build_requires_for(pkg)
+    if brs:
+        print(f"║ BuildRequires ({len(brs)}):")
+        for br in brs:
+            resolved = f"→ {br['binary_package']}" if br['binary_package'] else "✗ unresolved"
+            src = f" (src: {br['source_package']})" if br['source_package'] else ""
+            ver = ""
+            if br['cap_op'] and br['cap_version']:
+                ver = f" {br['cap_op']} {br['cap_version']}"
+            print(f"║   • {br['cap_name']}{ver}  {resolved}{src}")
+
+    print(f"╚{'═' * (len(pkg) + len(ver) + 9)}╝")
+    g.close()
+    return 0
+
+
+def cmd_rdeps(args):
+    """Show reverse build dependencies."""
+    g = open_graph(args.release)
+    pkg = args.package
+
+    if pkg not in g.get_nodes():
+        print(f"'{pkg}' not in graph.", file=sys.stderr)
+        g.close()
+        return 1
+
+    direct = sorted(g.rdeps_of(pkg))
+    trans = sorted(g.transitive_rdeps(pkg))
+
+    print(f"Packages that build-depend on {pkg}:")
+    print(f"  Direct ({len(direct)}): {', '.join(direct) or '(none)'}")
+    if len(trans) > len(direct):
+        print(f"  Transitive ({len(trans)}): {', '.join(trans)}")
+    g.close()
+    return 0
+
+
+def cmd_topo(args):
+    """Show topological build order."""
+    g = open_graph(args.release)
+    order = g.topo_sort()
+
+    if order is None:
+        print("⚠ Cycles detected — SCC-grouped build order:\n")
+        groups = g.parallel_build_groups()
+        for i, group in enumerate(groups):
+            print(f"  Layer {i}: {', '.join(group)}")
+        g.close()
+        return 0
+
+    print(f"Build order ({len(order)} packages):\n")
+    for i, pkg in enumerate(order, 1):
+        deps = g.deps_of(pkg)
+        info = g.get_package_info(pkg)
+        ver = f" ({info['version']})" if info and info.get('version') else ""
+        dep_str = f"  ← {', '.join(sorted(deps))}" if deps else ""
+        print(f"  {i:3}. {pkg}{ver}{dep_str}")
+
+    print(f"\nParallel build layers:")
+    groups = g.parallel_build_groups()
+    for i, group in enumerate(groups):
+        print(f"  Layer {i} ({len(group)}): {', '.join(group)}")
+
+    g.close()
+    return 0
+
+
+def cmd_dot(args):
+    """Emit Graphviz DOT to stdout."""
+    g = open_graph(args.release)
+    print(g.to_dot())
+    g.close()
+    return 0
+
+
+def cmd_json(args):
+    """Emit graph as JSON."""
+    g = open_graph(args.release)
+    print(g.to_json())
+    g.close()
+    return 0
+
+
+def cmd_summary(args):
+    """Show graph summary."""
+    g = open_graph(args.release)
+    print(g.summary())
+    g.close()
+    return 0
+
+
+def cmd_db_stats(args):
+    """Show detailed database statistics."""
+    g = open_graph(args.release)
+    stats = g.db_stats()
+
+    print(f"Database: {db_path(args.release)}")
+    print(f"Size: {stats['db_size_kb']} KB\n")
+    print(f"  Source packages:  {stats['source_packages']:>6} ({stats['source_crawled']} crawled)")
+    print(f"  Binary packages:  {stats['binary_packages']:>6}")
+    print(f"  BuildRequires:    {stats['build_requires_total']:>6} "
+          f"({stats['build_requires_resolved']} resolved, "
+          f"{stats['build_requires_unresolved']} unresolved)")
+    print(f"  Edges:            {stats['edges']:>6}")
+    print(f"\nResolver: {stats['resolver']}")
+
+    g.close()
+    return 0
+
+
+def cmd_query(args):
+    """Run raw SQL against the graph database."""
+    g = open_graph(args.release)
+    try:
+        rows = g.db.execute(args.sql).fetchall()
+        if rows:
+            # Get column names
+            desc = g.db.execute(args.sql).description
+            if desc:
+                cols = [d[0] for d in desc]
+                print("\t".join(cols))
+                print("─" * (len(cols) * 20))
+            for row in rows:
+                print("\t".join(str(c) for c in row))
+        print(f"\n{len(rows)} rows")
+    except Exception as e:
+        print(f"SQL error: {e}", file=sys.stderr)
+        g.close()
+        return 1
+    g.close()
+    return 0
+
+
+def cmd_list(args):
+    """List cached SRPMs."""
+    sd = srpms_dir(args.release)
+    srpms = sorted(sd.glob("*.src.rpm"))
+
+    if not srpms:
+        print(f"No SRPMs in {sd}")
+        return 0
+
+    print(f"{'Name':<30} {'Version':<20} {'Size':>10}")
+    print("─" * 65)
+
+    for f in srpms:
+        meta = get_srpm_metadata(str(f))
+        name = meta.get("name", f.stem)
+        ver = meta.get("version", "?")
+        size = f.stat().st_size
+        sz = (f"{size/1_000_000:.1f}M" if size > 1_000_000
+              else f"{size/1_000:.0f}K" if size > 1_000 else f"{size}B")
+        print(f"{name:<30} {ver:<20} {sz:>10}")
+
+    print(f"\n{len(srpms)} SRPMs in {sd}")
+    return 0
+
+
+def cmd_search(args):
+    """Search Fedora repos."""
+    results = search_packages(args.query)
+    if not results:
+        print(f"No packages matching '{args.query}'")
+        return 1
+
+    print(f"{'Name':<30} {'Version':<15} {'Summary'}")
+    print("─" * 80)
+    for r in results[:30]:
+        print(f"{r['name']:<30} {r['version']:<15} {r.get('summary', '')[:35]}")
+    if len(results) > 30:
+        print(f"\n... and {len(results) - 30} more")
+    return 0
+
+
+def cmd_info(args):
+    """Show package info."""
+    # Check graph DB first
+    g = open_graph(args.release)
+    info = g.get_package_info(args.package)
+    if info:
+        print(f"Name:       {info['name']}")
+        print(f"Version:    {info['version']}-{info.get('release', '')}")
+        print(f"Summary:    {info.get('summary', 'N/A')}")
+        print(f"License:    {info.get('license', 'N/A')}")
+        print(f"URL:        {info.get('url', 'N/A')}")
+        print(f"Crawled:    {'yes' if info.get('crawled') else 'no'}")
+        print(f"Depth:      {info.get('depth', -1)}")
+        brs = g.get_build_requires_for(args.package)
+        if brs:
+            print(f"\nBuildRequires ({len(brs)}):")
+            for br in brs:
+                res = f"→ {br['source_package']}" if br['source_package'] else "✗"
+                print(f"  {br['capability']:<40} {res}")
+        g.close()
+        return 0
+
+    g.close()
+
+    # Fallback to dnf
+    info = get_package_info_from_dnf(args.package)
+    if not info:
+        print(f"Not found: {args.package}", file=sys.stderr)
+        return 1
+
+    print(f"Name:       {info['name']}")
+    print(f"Version:    {info['version']}-{info['release']}")
+    print(f"Summary:    {info['summary']}")
+    print(f"License:    {info['license']}")
+    print(f"URL:        {info['url']}")
+    print(f"Source RPM: {info['sourcerpm']}")
+    return 0
+
+
+# ═══════════════════════════════════════════════════════════════════
+
+def main():
+    p = argparse.ArgumentParser(
+        prog="srpm-graph",
+        description="OXIDE OS SRPM Dependency Graph Builder (SQLite-backed)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  srpm-graph fetch bash coreutils grep sed
+  srpm-graph crawl bash coreutils    # recursive dep crawl (default depth: 5)
+  srpm-graph crawl --depth 2 bash    # shallow crawl
+  srpm-graph crawl                   # crawl all from packages-base.txt
+  srpm-graph deps bash               # show bash's build deps (from DB)
+  srpm-graph rdeps glibc             # who needs glibc to build?
+  srpm-graph topo                    # topological build order
+  srpm-graph dot | dot -Tsvg > g.svg # render graph
+  srpm-graph db-stats                # database stats
+  srpm-graph query "SELECT name, version FROM source_packages"
+        """,
+    )
+    p.add_argument("--release", "-r", default=DEFAULT_RELEASE,
+                   help=f"Fedora release (default: {DEFAULT_RELEASE})")
+
+    sub = p.add_subparsers(dest="command")
+
+    # sync (run first!)
+    sub.add_parser("sync", help="Sync repo metadata for offline graph building")
+
+    # build-local (the fast one — requires sync)
+    sp = sub.add_parser("build-local", help="Build graph from local SRPMs (offline)")
+    sp.add_argument("packages", nargs="*", help="Optional: only these packages")
+
+    # fetch
+    sp = sub.add_parser("fetch", help="Download SRPMs (no dep resolution)")
+    sp.add_argument("packages", nargs="*")
+    sp.add_argument("--force", "-f", action="store_true")
+
+    # crawl (the slow one — legacy, pre-sync)
+    sp = sub.add_parser("crawl", help="Recursive dep crawl: fetch → resolve → repeat (slow)")
+    sp.add_argument("packages", nargs="*")
+    sp.add_argument("--depth", "-d", type=int, default=DEFAULT_MAX_DEPTH,
+                    help=f"Max recursion depth (default: {DEFAULT_MAX_DEPTH})")
+
+    # deps
+    sp = sub.add_parser("deps", help="Show build dependencies")
+    sp.add_argument("package")
+
+    # rdeps
+    sp = sub.add_parser("rdeps", help="Show reverse build dependencies")
+    sp.add_argument("package")
+
+    # topo / dot / json / summary / db-stats
+    sub.add_parser("topo", help="Topological build order")
+    sub.add_parser("dot", help="Emit Graphviz DOT")
+    sub.add_parser("json", help="Emit graph as JSON")
+    sub.add_parser("summary", help="Graph summary stats")
+    sub.add_parser("db-stats", help="Database statistics")
+    sub.add_parser("list", help="List cached SRPMs")
+
+    # query
+    sp = sub.add_parser("query", help="Raw SQL query")
+    sp.add_argument("sql")
+
+    # search / info
+    sp = sub.add_parser("search", help="Search Fedora repos")
+    sp.add_argument("query")
+    sp = sub.add_parser("info", help="Package details")
+    sp.add_argument("package")
+
+    args = p.parse_args()
+    if not args.command:
+        p.print_help()
+        return 1
+
+    commands = {
+        "sync": cmd_sync, "build-local": cmd_build_local,
+        "fetch": cmd_fetch, "crawl": cmd_crawl,
+        "deps": cmd_deps, "rdeps": cmd_rdeps,
+        "topo": cmd_topo, "dot": cmd_dot, "json": cmd_json,
+        "summary": cmd_summary, "db-stats": cmd_db_stats,
+        "query": cmd_query, "list": cmd_list,
+        "search": cmd_search, "info": cmd_info,
+    }
+
+    try:
+        return commands[args.command](args) or 0
+    except KeyboardInterrupt:
+        print("\n\nInterrupted.")
+        return 130
+    except Exception as e:
+        print(f"\n✗ ERROR: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

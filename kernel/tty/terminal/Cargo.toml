@@ -16,3 +16,4 @@ spin.workspace = true
 fb = { path = "../../graphics/fb" }
 os_log = { path = "../../core/os_log" }
 vte = { path = "../../../userspace/libs/vte" }
+arch-x86_64 = { path = "../../arch/arch-x86_64" }

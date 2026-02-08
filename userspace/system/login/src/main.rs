@@ -243,6 +243,7 @@ pub fn main() -> i32 {
     loop {
         // Print login prompt
         prints("\nOXIDE OS login: ");
+        fflush_stdout(); // — SoftGlyph: Flush prompt before blocking on read
 
         // Read username — don't echo here; the TTY line discipline
         // echoes each keystroke in canonical mode already.
@@ -268,6 +269,7 @@ pub fn main() -> i32 {
 
         // Prompt for password
         prints("Password: ");
+        fflush_stdout(); // — SoftGlyph: Flush password prompt before blocking on read
         let mut password = [0u8; MAX_INPUT];
         let pw_len = read_line(&mut password, false);
         prints("\n");

@@ -52,3 +52,5 @@ package-lock.json
 
 # Credentials
 .ahoy_creds
+__pycache__/
+*.pyc
