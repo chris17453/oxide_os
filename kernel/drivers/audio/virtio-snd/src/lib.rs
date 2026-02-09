@@ -858,3 +858,46 @@ pub fn init(mmio_base: usize) -> Result<(), &'static str> {
 pub fn device_count() -> usize {
     if VIRTIO_SND.lock().is_some() { 1 } else { 0 }
 }
+
+// ============================================================================
+// PciDriver Implementation for Dynamic Driver Loading
+// ============================================================================
+// — SoftGlyph: audio driver, auto-probed
+
+use driver_core::{PciDriver, PciDeviceId, DriverError, DriverBindingData};
+
+/// Device ID table for VirtIO sound devices
+static VIRTIO_SND_IDS: &[PciDeviceId] = &[
+    PciDeviceId::new(pci::vendor::VIRTIO, pci::virtio_modern::SOUND),   // Modern only
+];
+
+/// VirtIO sound driver for driver-core system
+struct VirtioSndDriver;
+
+impl PciDriver for VirtioSndDriver {
+    fn name(&self) -> &'static str {
+        "virtio-snd"
+    }
+
+    fn id_table(&self) -> &'static [PciDeviceId] {
+        VIRTIO_SND_IDS
+    }
+
+    fn probe(&self, dev: &pci::PciDevice, _id: &PciDeviceId) -> Result<DriverBindingData, DriverError> {
+        // SAFETY: PCI device is valid and matches our ID table
+        let _ = unsafe { init_from_pci(dev) }
+            .map_err(|_| DriverError::InitFailed)?;
+
+        Ok(DriverBindingData::new(0))
+    }
+
+    unsafe fn remove(&self, _dev: &pci::PciDevice, _binding_data: DriverBindingData) {
+        // TODO: Implement proper audio device removal
+    }
+}
+
+/// Static driver instance for registration
+static VIRTIO_SND_DRIVER: VirtioSndDriver = VirtioSndDriver;
+
+// Register driver via compile-time linker section
+driver_core::register_pci_driver!(VIRTIO_SND_DRIVER);

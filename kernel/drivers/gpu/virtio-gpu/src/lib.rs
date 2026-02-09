@@ -948,3 +948,51 @@ pub fn dimensions() -> Option<(u32, u32)> {
         .as_ref()
         .map(|gpu| (gpu.width, gpu.height))
 }
+
+// ============================================================================
+// PciDriver Implementation for Dynamic Driver Loading
+// ============================================================================
+// — EchoFrame: display driver, auto-probed
+
+use driver_core::{PciDriver, PciDeviceId, DriverError, DriverBindingData};
+
+/// Device ID table for VirtIO GPU devices
+static VIRTIO_GPU_IDS: &[PciDeviceId] = &[
+    PciDeviceId::new(pci::vendor::VIRTIO, pci::virtio_modern::GPU),   // Modern only
+];
+
+/// VirtIO GPU driver for driver-core system
+struct VirtioGpuDriver;
+
+impl PciDriver for VirtioGpuDriver {
+    fn name(&self) -> &'static str {
+        "virtio-gpu"
+    }
+
+    fn id_table(&self) -> &'static [PciDeviceId] {
+        VIRTIO_GPU_IDS
+    }
+
+    fn probe(&self, dev: &pci::PciDevice, _id: &PciDeviceId) -> Result<DriverBindingData, DriverError> {
+        // SAFETY: PCI device is valid and matches our ID table
+        // Only initialize if no framebuffer is active
+        if fb::is_initialized() {
+            return Err(DriverError::AlreadyBound);
+        }
+
+        let _ = unsafe { init_from_pci(dev) }
+            .map_err(|_| DriverError::InitFailed)?;
+
+        Ok(DriverBindingData::new(0))
+    }
+
+    unsafe fn remove(&self, _dev: &pci::PciDevice, _binding_data: DriverBindingData) {
+        // TODO: Implement proper GPU device removal
+    }
+}
+
+/// Static driver instance for registration
+static VIRTIO_GPU_DRIVER: VirtioGpuDriver = VirtioGpuDriver;
+
+// Register driver via compile-time linker section
+driver_core::register_pci_driver!(VIRTIO_GPU_DRIVER);

@@ -6,4 +6,6 @@ edition = "2024"
 [dependencies]
 audio = { path = "../../../audio/audio" }
 pci = { path = "../../pci" }
+driver-core = { path = "../../driver-core" }
+virtio-core = { path = "../../virtio-core" }
 spin = "0.9"

@@ -1802,9 +1802,11 @@ name = "virtio-gpu"
 version = "0.1.0"
 dependencies = [
  "boot-proto",
+ "driver-core",
  "fb",
  "pci",
  "spin 0.9.8",
+ "virtio-core",
 ]
 
 [[package]]
@@ -1838,8 +1840,10 @@ name = "virtio-snd"
 version = "0.1.0"
 dependencies = [
  "audio",
+ "driver-core",
  "pci",
  "spin 0.9.8",
+ "virtio-core",
 ]
 
 [[package]]
