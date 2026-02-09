@@ -1166,3 +1166,63 @@ fn outl(port: u16, value: u32) {
         );
     }
 }
+
+// ============================================================================
+// PciDriver Implementation for Dynamic Driver Loading
+// ============================================================================
+// — GraveShift: the new way, automatic probe, no manual init.rs wiring
+
+use driver_core::{PciDriver, PciDeviceId, DriverError, DriverBindingData};
+
+/// Device ID table for VirtIO block devices
+static VIRTIO_BLK_IDS: &[PciDeviceId] = &[
+    PciDeviceId::new(pci::vendor::VIRTIO, pci::virtio_device::BLOCK),   // Legacy
+    PciDeviceId::new(pci::vendor::VIRTIO, pci::virtio_modern::BLOCK),   // Modern
+];
+
+/// VirtIO block driver for driver-core system
+struct VirtioBlkDriver;
+
+impl PciDriver for VirtioBlkDriver {
+    fn name(&self) -> &'static str {
+        "virtio-blk"
+    }
+
+    fn id_table(&self) -> &'static [PciDeviceId] {
+        VIRTIO_BLK_IDS
+    }
+
+    fn probe(&self, dev: &pci::PciDevice, _id: &PciDeviceId) -> Result<DriverBindingData, DriverError> {
+        // SAFETY: PCI device is valid and matches our ID table
+        let device = unsafe { VirtioBlk::from_pci(dev) }
+            .ok_or(DriverError::InitFailed)?;
+
+        // Register with block subsystem
+        let name = alloc::format!("vd{}", get_next_drive_letter());
+        block::register_device(name, Box::new(device));
+
+        // Return dummy binding data (we don't need to track anything for removal yet)
+        Ok(DriverBindingData::new(0))
+    }
+
+    unsafe fn remove(&self, _dev: &pci::PciDevice, _binding_data: DriverBindingData) {
+        // TODO: Implement proper device removal
+        // - Unregister from block subsystem
+        // - Free virtqueue
+        // - Free DMA buffers
+    }
+}
+
+/// Static driver instance for registration
+static VIRTIO_BLK_DRIVER: VirtioBlkDriver = VirtioBlkDriver;
+
+// Register driver via compile-time linker section
+driver_core::register_pci_driver!(VIRTIO_BLK_DRIVER);
+
+/// Drive letter counter for device naming (vda, vdb, vdc, ...)
+static DRIVE_COUNTER: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+fn get_next_drive_letter() -> char {
+    let n = DRIVE_COUNTER.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+    (b'a' + n) as char
+}

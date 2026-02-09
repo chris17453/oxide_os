@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 block = { path = "../../../block/block" }
 pci = { path = "../../pci" }
+driver-core = { path = "../../driver-core" }
+virtio-core = { path = "../../virtio-core" }
 mm-manager = { path = "../../../mm/mm-manager" }
 mm-traits = { path = "../../../mm/mm-traits" }
 spin = "0.10"

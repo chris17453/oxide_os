@@ -1771,10 +1771,12 @@ name = "virtio-blk"
 version = "0.1.0"
 dependencies = [
  "block",
+ "driver-core",
  "mm-manager",
  "mm-traits",
  "pci",
  "spin 0.10.0",
+ "virtio-core",
 ]
 
 [[package]]
