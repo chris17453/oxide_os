@@ -1,0 +1,12 @@
+[package]
+name = "driver-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pci = { path = "../pci" }
+spin = { workspace = true }
+
+[lib]
+name = "driver_core"
+path = "src/lib.rs"
