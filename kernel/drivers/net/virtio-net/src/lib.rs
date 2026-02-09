@@ -904,3 +904,56 @@ impl NetworkDevice for VirtioNet {
 // SAFETY: VirtioNet uses internal synchronization (Mutex)
 unsafe impl Send for VirtioNet {}
 unsafe impl Sync for VirtioNet {}
+
+// ============================================================================
+// PciDriver Implementation for Dynamic Driver Loading
+// ============================================================================
+// — NeonRoot: packet pusher, auto-probed
+
+use driver_core::{PciDriver, PciDeviceId, DriverError, DriverBindingData};
+
+/// Device ID table for VirtIO network devices
+static VIRTIO_NET_IDS: &[PciDeviceId] = &[
+    PciDeviceId::new(pci::vendor::VIRTIO, pci::virtio_device::NET),   // Legacy
+    PciDeviceId::new(pci::vendor::VIRTIO, pci::virtio_modern::NET),   // Modern
+];
+
+/// VirtIO network driver for driver-core system
+struct VirtioNetDriver;
+
+impl PciDriver for VirtioNetDriver {
+    fn name(&self) -> &'static str {
+        "virtio-net"
+    }
+
+    fn id_table(&self) -> &'static [PciDeviceId] {
+        VIRTIO_NET_IDS
+    }
+
+    fn probe(&self, dev: &pci::PciDevice, _id: &PciDeviceId) -> Result<DriverBindingData, DriverError> {
+        // SAFETY: PCI device is valid and matches our ID table
+        let device = unsafe { VirtioNet::from_pci(dev) }
+            .ok_or(DriverError::InitFailed)?;
+
+        // Register with network subsystem
+        let device = alloc::sync::Arc::new(device);
+        net::register_device(device.clone());
+
+        // Store Arc pointer for cleanup
+        let binding_data = alloc::sync::Arc::into_raw(device) as usize;
+        Ok(DriverBindingData::new(binding_data))
+    }
+
+    unsafe fn remove(&self, _dev: &pci::PciDevice, binding_data: DriverBindingData) {
+        // TODO: Implement proper device removal
+        // Reconstruct Arc and drop it (this will free the device)
+        let _device = alloc::sync::Arc::from_raw(binding_data.as_ptr::<VirtioNet>());
+        // TODO: Add net::unregister_device() to remove from network subsystem
+    }
+}
+
+/// Static driver instance for registration
+static VIRTIO_NET_DRIVER: VirtioNetDriver = VirtioNetDriver;
+
+// Register driver via compile-time linker section
+driver_core::register_pci_driver!(VIRTIO_NET_DRIVER);

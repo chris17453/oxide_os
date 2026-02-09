@@ -8,4 +8,6 @@ mm-manager = { path = "../../../mm/mm-manager" }
 mm-traits = { path = "../../../mm/mm-traits" }
 net = { path = "../../../net/net" }
 pci = { path = "../../pci" }
+driver-core = { path = "../../driver-core" }
+virtio-core = { path = "../../virtio-core" }
 spin = "0.9"

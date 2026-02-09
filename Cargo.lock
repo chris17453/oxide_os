@@ -1822,11 +1822,13 @@ dependencies = [
 name = "virtio-net"
 version = "0.1.0"
 dependencies = [
+ "driver-core",
  "mm-manager",
  "mm-traits",
  "net",
  "pci",
  "spin 0.9.8",
+ "virtio-core",
 ]
 
 [[package]]
