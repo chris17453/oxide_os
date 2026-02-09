@@ -14,6 +14,7 @@ extern crate alloc;
 #[macro_use]
 mod debug;
 mod debug_buffer;
+mod exports;
 
 // Kernel modules
 mod arch;
