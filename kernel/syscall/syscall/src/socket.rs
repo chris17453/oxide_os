@@ -1775,9 +1775,9 @@ pub mod net_op {
 /// 0 on success, negative errno on error
 pub fn sys_net_control(operation: u64, iface_ptr: u64, iface_len: usize) -> i64 {
     use crate::errno;
+    use crate::vfs::{FileFlags, GLOBAL_VFS, Mode};
     use alloc::format;
     use alloc::string::String;
-    use crate::vfs::{FileFlags, Mode, GLOBAL_VFS};
 
     // —ShadePacket: Validate interface name from userspace
     let iface_name = match copy_iface_from_user(iface_ptr, iface_len) {
@@ -1846,7 +1846,9 @@ fn copy_iface_from_user(ptr: u64, len: usize) -> Option<alloc::string::String> {
     }
 
     let slice = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
-    let result = core::str::from_utf8(slice).ok().map(alloc::string::String::from);
+    let result = core::str::from_utf8(slice)
+        .ok()
+        .map(alloc::string::String::from);
 
     unsafe {
         core::arch::asm!("clac", options(nomem, nostack));
@@ -1859,8 +1861,8 @@ fn copy_iface_from_user(ptr: u64, len: usize) -> Option<alloc::string::String> {
 ///
 /// Creates /var/lib/dhcp/<iface>.lease with lease information
 fn write_dhcp_lease(iface: &str, lease: &dhcp::DhcpLease) -> Result<(), &'static str> {
+    use crate::vfs::{FileFlags, GLOBAL_VFS, Mode};
     use alloc::format;
-    use crate::vfs::{FileFlags, Mode, GLOBAL_VFS};
 
     // —ShadePacket: Ensure directories exist
     ensure_dir_exists("/var")?;
@@ -1883,17 +1885,17 @@ fn write_dhcp_lease(iface: &str, lease: &dhcp::DhcpLease) -> Result<(), &'static
         Err(_) => {
             // File doesn't exist, create it
             match GLOBAL_VFS.lookup_parent(&path) {
-                Ok((parent, name)) => {
-                    parent.create(&name, Mode::new(0o644))
-                        .map_err(|_| "Failed to create lease file")?
-                }
+                Ok((parent, name)) => parent
+                    .create(&name, Mode::new(0o644))
+                    .map_err(|_| "Failed to create lease file")?,
                 Err(_) => return Err("Parent directory not found"),
             }
         }
     };
 
     // —ShadePacket: Write lease content
-    vnode.write(0, content.as_bytes())
+    vnode
+        .write(0, content.as_bytes())
         .map_err(|_| "Failed to write lease file")?;
 
     Ok(())
@@ -1901,7 +1903,7 @@ fn write_dhcp_lease(iface: &str, lease: &dhcp::DhcpLease) -> Result<(), &'static
 
 /// Ensure a directory exists, creating it if needed
 fn ensure_dir_exists(path: &str) -> Result<(), &'static str> {
-    use crate::vfs::{Mode, GLOBAL_VFS, VnodeType};
+    use crate::vfs::{GLOBAL_VFS, Mode, VnodeType};
 
     match GLOBAL_VFS.lookup(path) {
         Ok(vnode) => {
@@ -1914,7 +1916,8 @@ fn ensure_dir_exists(path: &str) -> Result<(), &'static str> {
             // Directory doesn't exist, create it
             match GLOBAL_VFS.lookup_parent(path) {
                 Ok((parent, name)) => {
-                    parent.mkdir(&name, Mode::new(0o755))
+                    parent
+                        .mkdir(&name, Mode::new(0o755))
                         .map_err(|_| "Failed to create directory")?;
                     Ok(())
                 }

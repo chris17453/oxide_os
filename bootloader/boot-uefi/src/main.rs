@@ -112,7 +112,11 @@ fn main() -> Status {
     }
     for i in (0..16).rev() {
         let nibble = ((stack_phys >> (i * 4)) & 0xF) as u8;
-        debug_msg[cursor] = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+        debug_msg[cursor] = if nibble < 10 {
+            b'0' + nibble
+        } else {
+            b'a' + nibble - 10
+        };
         cursor += 1;
     }
     for &b in b" size=" {
@@ -122,7 +126,11 @@ fn main() -> Status {
     let size = KERNEL_STACK_SIZE as u64;
     for i in (0..16).rev() {
         let nibble = ((size >> (i * 4)) & 0xF) as u8;
-        debug_msg[cursor] = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+        debug_msg[cursor] = if nibble < 10 {
+            b'0' + nibble
+        } else {
+            b'a' + nibble - 10
+        };
         cursor += 1;
     }
     debug_msg[cursor] = b'\n';
@@ -269,10 +277,10 @@ fn draw_oxide_logo(gop: &mut GraphicsOutput, width: usize, height: usize) {
 
     // Modern color scheme - cyberpunk aesthetic
     // — NeonVale: these colors will burn their retinas in the best way possible
-    let oxide_orange = BltPixel::new(255, 140, 0);  // Primary brand color
-    let accent_cyan = BltPixel::new(0, 255, 255);   // Accent glow
-    let bg_dark = BltPixel::new(10, 10, 15);        // Deep background
-    
+    let oxide_orange = BltPixel::new(255, 140, 0); // Primary brand color
+    let accent_cyan = BltPixel::new(0, 255, 255); // Accent glow
+    let bg_dark = BltPixel::new(10, 10, 15); // Deep background
+
     // Draw clean background
     for y in start_y..start_y + logo_height {
         for x in start_x..start_x + logo_width {
@@ -288,11 +296,35 @@ fn draw_oxide_logo(gop: &mut GraphicsOutput, width: usize, height: usize) {
     let letter_y = start_y + 40;
     let letter_spacing = 85;
     draw_letter_o_modern(gop, start_x + 20, letter_y, oxide_orange, accent_cyan);
-    draw_letter_x_modern(gop, start_x + 20 + letter_spacing, letter_y, oxide_orange, accent_cyan);
-    draw_letter_i_modern(gop, start_x + 20 + letter_spacing * 2, letter_y, oxide_orange, accent_cyan);
-    draw_letter_d_modern(gop, start_x + 20 + letter_spacing * 3, letter_y, oxide_orange, accent_cyan);
-    draw_letter_e_modern(gop, start_x + 20 + letter_spacing * 4, letter_y, oxide_orange, accent_cyan);
-    
+    draw_letter_x_modern(
+        gop,
+        start_x + 20 + letter_spacing,
+        letter_y,
+        oxide_orange,
+        accent_cyan,
+    );
+    draw_letter_i_modern(
+        gop,
+        start_x + 20 + letter_spacing * 2,
+        letter_y,
+        oxide_orange,
+        accent_cyan,
+    );
+    draw_letter_d_modern(
+        gop,
+        start_x + 20 + letter_spacing * 3,
+        letter_y,
+        oxide_orange,
+        accent_cyan,
+    );
+    draw_letter_e_modern(
+        gop,
+        start_x + 20 + letter_spacing * 4,
+        letter_y,
+        oxide_orange,
+        accent_cyan,
+    );
+
     // Draw accent line underneath
     let line_y = start_y + logo_height - 20;
     for x in start_x + 20..start_x + logo_width - 20 {
@@ -307,11 +339,17 @@ fn draw_oxide_logo(gop: &mut GraphicsOutput, width: usize, height: usize) {
 /// Modern letter drawing functions with clean, bold design
 /// — NeonVale: each glyph is a statement, not an apology
 
-fn draw_letter_o_modern(gop: &mut GraphicsOutput, x: usize, y: usize, primary: BltPixel, accent: BltPixel) {
+fn draw_letter_o_modern(
+    gop: &mut GraphicsOutput,
+    x: usize,
+    y: usize,
+    primary: BltPixel,
+    accent: BltPixel,
+) {
     let width = 60;
     let height = 70;
     let thickness = 8;
-    
+
     // Draw rounded O with clean lines
     for dy in 0..height {
         for dx in 0..width {
@@ -328,7 +366,7 @@ fn draw_letter_o_modern(gop: &mut GraphicsOutput, x: usize, y: usize, primary: B
             } else {
                 None
             };
-            
+
             if let Some(c) = color {
                 let _ = gop.blt(BltOp::VideoFill {
                     color: c,
@@ -340,25 +378,33 @@ fn draw_letter_o_modern(gop: &mut GraphicsOutput, x: usize, y: usize, primary: B
     }
 }
 
-fn draw_letter_x_modern(gop: &mut GraphicsOutput, x: usize, y: usize, primary: BltPixel, accent: BltPixel) {
+fn draw_letter_x_modern(
+    gop: &mut GraphicsOutput,
+    x: usize,
+    y: usize,
+    primary: BltPixel,
+    accent: BltPixel,
+) {
     let width = 60;
     let height = 70;
     let thickness = 8;
-    
+
     // Draw clean X with proper diagonals
     for dy in 0..height {
         for dx in 0..width {
             let ratio = dy as f32 / height as f32;
             let diag1_x = (ratio * width as f32) as usize;
             let diag2_x = width - (ratio * width as f32) as usize;
-            
-            let color = if (dx >= diag1_x.saturating_sub(thickness/2) && dx < diag1_x + thickness/2) ||
-                           (dx >= diag2_x.saturating_sub(thickness/2) && dx < diag2_x + thickness/2) {
+
+            let color = if (dx >= diag1_x.saturating_sub(thickness / 2)
+                && dx < diag1_x + thickness / 2)
+                || (dx >= diag2_x.saturating_sub(thickness / 2) && dx < diag2_x + thickness / 2)
+            {
                 Some(primary)
             } else {
                 None
             };
-            
+
             if let Some(c) = color {
                 let _ = gop.blt(BltOp::VideoFill {
                     color: c,
@@ -370,12 +416,18 @@ fn draw_letter_x_modern(gop: &mut GraphicsOutput, x: usize, y: usize, primary: B
     }
 }
 
-fn draw_letter_i_modern(gop: &mut GraphicsOutput, x: usize, y: usize, primary: BltPixel, accent: BltPixel) {
+fn draw_letter_i_modern(
+    gop: &mut GraphicsOutput,
+    x: usize,
+    y: usize,
+    primary: BltPixel,
+    accent: BltPixel,
+) {
     let width = 30;
     let height = 70;
     let thickness = 8;
     let bar_width = 12;
-    
+
     // Draw clean I with top and bottom bars
     for dy in 0..height {
         for dx in 0..width {
@@ -388,7 +440,7 @@ fn draw_letter_i_modern(gop: &mut GraphicsOutput, x: usize, y: usize, primary: B
             } else {
                 None
             };
-            
+
             if let Some(c) = color {
                 let _ = gop.blt(BltOp::VideoFill {
                     color: c,
@@ -400,11 +452,17 @@ fn draw_letter_i_modern(gop: &mut GraphicsOutput, x: usize, y: usize, primary: B
     }
 }
 
-fn draw_letter_d_modern(gop: &mut GraphicsOutput, x: usize, y: usize, primary: BltPixel, accent: BltPixel) {
+fn draw_letter_d_modern(
+    gop: &mut GraphicsOutput,
+    x: usize,
+    y: usize,
+    primary: BltPixel,
+    accent: BltPixel,
+) {
     let width = 60;
     let height = 70;
     let thickness = 8;
-    
+
     // Draw modern D shape
     for dy in 0..height {
         for dx in 0..width {
@@ -424,7 +482,7 @@ fn draw_letter_d_modern(gop: &mut GraphicsOutput, x: usize, y: usize, primary: B
             } else {
                 None
             };
-            
+
             if let Some(c) = color {
                 let _ = gop.blt(BltOp::VideoFill {
                     color: c,
@@ -436,25 +494,33 @@ fn draw_letter_d_modern(gop: &mut GraphicsOutput, x: usize, y: usize, primary: B
     }
 }
 
-fn draw_letter_e_modern(gop: &mut GraphicsOutput, x: usize, y: usize, primary: BltPixel, accent: BltPixel) {
+fn draw_letter_e_modern(
+    gop: &mut GraphicsOutput,
+    x: usize,
+    y: usize,
+    primary: BltPixel,
+    accent: BltPixel,
+) {
     let width = 55;
     let height = 70;
     let thickness = 8;
-    
+
     // Draw clean E with three horizontal bars
     for dy in 0..height {
         for dx in 0..width {
             let color = if dx < thickness {
                 // Left vertical bar
                 Some(primary)
-            } else if dy < thickness || dy >= height - thickness || 
-                     (dy >= height/2 - thickness/2 && dy < height/2 + thickness/2) {
+            } else if dy < thickness
+                || dy >= height - thickness
+                || (dy >= height / 2 - thickness / 2 && dy < height / 2 + thickness / 2)
+            {
                 // Top, middle, and bottom bars
                 Some(primary)
             } else {
                 None
             };
-            
+
             if let Some(c) = color {
                 let _ = gop.blt(BltOp::VideoFill {
                     color: c,
@@ -629,7 +695,11 @@ fn get_memory_map() -> Vec<MemoryRegion> {
                     }
                     for i in (0..16).rev() {
                         let nibble = ((start >> (i * 4)) & 0xF) as u8;
-                        debug_msg[cursor] = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                        debug_msg[cursor] = if nibble < 10 {
+                            b'0' + nibble
+                        } else {
+                            b'a' + nibble - 10
+                        };
                         cursor += 1;
                     }
                     for &b in b"-0x" {
@@ -638,7 +708,11 @@ fn get_memory_map() -> Vec<MemoryRegion> {
                     }
                     for i in (0..16).rev() {
                         let nibble = ((end >> (i * 4)) & 0xF) as u8;
-                        debug_msg[cursor] = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                        debug_msg[cursor] = if nibble < 10 {
+                            b'0' + nibble
+                        } else {
+                            b'a' + nibble - 10
+                        };
                         cursor += 1;
                     }
                     debug_msg[cursor] = b'\n';
@@ -646,7 +720,7 @@ fn get_memory_map() -> Vec<MemoryRegion> {
                     log(core::str::from_utf8(&debug_msg[..cursor]).unwrap_or("???"));
                 }
                 MemoryType::Bootloader
-            },
+            }
             _ => MemoryType::Reserved,
         };
 

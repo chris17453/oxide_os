@@ -250,7 +250,7 @@ impl ProcessMeta {
             umask: self.umask,
             program_break: self.program_break, // Inherit parent's program break
             next_mmap_addr: self.next_mmap_addr, // Inherit parent's mmap hint
-            cpu_time_ns: 0, // Child starts with 0 CPU time
+            cpu_time_ns: 0,                    // Child starts with 0 CPU time
             stop_signal: None,
             continued: false,
             tty_nr: self.tty_nr, // Inherit controlling terminal

@@ -45,11 +45,11 @@
 use libc::*;
 
 // --- Constants for the grid of data flowing through the system ---
-const MAX_ARGS: usize = 256;        // Doubled for high-throughput scenarios
-const MAX_ARG_LEN: usize = 4096;    // Larger buffers for modern workloads
-const MAX_CMD_LEN: usize = 131072;  // 128KB command line limit (Linux default)
+const MAX_ARGS: usize = 256; // Doubled for high-throughput scenarios
+const MAX_ARG_LEN: usize = 4096; // Larger buffers for modern workloads
+const MAX_CMD_LEN: usize = 131072; // 128KB command line limit (Linux default)
 const MAX_REPLACE_LEN: usize = 256;
-const MAX_PROCS: usize = 64;        // Max parallel processes
+const MAX_PROCS: usize = 64; // Max parallel processes
 const MAX_PATH_LEN: usize = 4096;
 
 // --- Configuration struct: The control panel in our chrome cockpit ---
@@ -61,20 +61,20 @@ struct XargsConfig {
     replace_len: usize,
     max_args: usize,
     max_chars: usize,
-    max_lines: usize,        // NEW: -L flag
+    max_lines: usize, // NEW: -L flag
     no_run_if_empty: bool,
     verbose: bool,
-    verbose_stats: bool,     // NEW: --verbose-stats
+    verbose_stats: bool, // NEW: --verbose-stats
     interactive: bool,
-    max_procs: usize,        // NEW: -P flag for parallel execution
-    exit_on_error: bool,     // NEW: -x flag
-    open_tty: bool,          // NEW: -o flag
-    show_limits: bool,       // NEW: --show-limits
-    arg_file: Option<[u8; MAX_PATH_LEN]>,  // NEW: -a flag
+    max_procs: usize,                     // NEW: -P flag for parallel execution
+    exit_on_error: bool,                  // NEW: -x flag
+    open_tty: bool,                       // NEW: -o flag
+    show_limits: bool,                    // NEW: --show-limits
+    arg_file: Option<[u8; MAX_PATH_LEN]>, // NEW: -a flag
     arg_file_len: usize,
     eof_string: Option<[u8; MAX_REPLACE_LEN]>, // NEW: -e flag
     eof_len: usize,
-    insert_mode: bool,       // NEW: -i flag (like -I but with {})
+    insert_mode: bool, // NEW: -i flag (like -I but with {})
 }
 
 impl XargsConfig {
@@ -86,12 +86,12 @@ impl XargsConfig {
             replace_len: 0,
             max_args: MAX_ARGS,
             max_chars: MAX_CMD_LEN,
-            max_lines: 0,        // 0 means no line limit
+            max_lines: 0, // 0 means no line limit
             no_run_if_empty: false,
             verbose: false,
             verbose_stats: false,
             interactive: false,
-            max_procs: 1,        // Sequential by default
+            max_procs: 1, // Sequential by default
             exit_on_error: false,
             open_tty: false,
             show_limits: false,
@@ -165,7 +165,9 @@ fn parse_number(s: &str) -> Option<usize> {
     let mut result = 0usize;
     for b in s.bytes() {
         if b >= b'0' && b <= b'9' {
-            result = result.saturating_mul(10).saturating_add((b - b'0') as usize);
+            result = result
+                .saturating_mul(10)
+                .saturating_add((b - b'0') as usize);
         } else {
             return None;
         }
@@ -254,18 +256,18 @@ fn print_number(n: usize) {
     let mut buf = [0u8; 32];
     let mut pos = 0;
     let mut num = n;
-    
+
     if num == 0 {
         eprints("0");
         return;
     }
-    
+
     while num > 0 {
         buf[pos] = b'0' + (num % 10) as u8;
         num /= 10;
         pos += 1;
     }
-    
+
     // Reverse
     for i in 0..pos {
         let c = buf[pos - 1 - i];
@@ -307,8 +309,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
             }
             config.delimiter = delim_str.as_bytes()[0];
             arg_idx += 1;
-        }
-        else if str_equals(arg, "-d") {
+        } else if str_equals(arg, "-d") {
             arg_idx += 1;
             if arg_idx >= argc {
                 eprintlns("xargs: option -d requires an argument");
@@ -329,8 +330,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
                 return 1;
             }
             arg_idx += 1;
-        }
-        else if str_equals(arg, "-I") || str_equals(arg, "--replace") {
+        } else if str_equals(arg, "-I") || str_equals(arg, "--replace") {
             arg_idx += 1;
             if arg_idx >= argc {
                 eprintlns("xargs: option -I requires an argument");
@@ -341,8 +341,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
                 return 1;
             }
             arg_idx += 1;
-        }
-        else if str_equals(arg, "-i") || str_equals(arg, "--replace-i") {
+        } else if str_equals(arg, "-i") || str_equals(arg, "--replace-i") {
             // -i is same as -I{} for compatibility
             if !set_replace_string(&mut config, "{}") {
                 return 1;
@@ -361,8 +360,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
                 }
             }
             arg_idx += 1;
-        }
-        else if str_equals(arg, "-n") {
+        } else if str_equals(arg, "-n") {
             arg_idx += 1;
             if arg_idx >= argc {
                 eprintlns("xargs: option -n requires an argument");
@@ -389,8 +387,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
                 }
             }
             arg_idx += 1;
-        }
-        else if str_equals(arg, "-L") {
+        } else if str_equals(arg, "-L") {
             arg_idx += 1;
             if arg_idx >= argc {
                 eprintlns("xargs: option -L requires an argument");
@@ -417,8 +414,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
                 }
             }
             arg_idx += 1;
-        }
-        else if str_equals(arg, "-s") {
+        } else if str_equals(arg, "-s") {
             arg_idx += 1;
             if arg_idx >= argc {
                 eprintlns("xargs: option -s requires an argument");
@@ -445,8 +441,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
                 }
             }
             arg_idx += 1;
-        }
-        else if str_equals(arg, "-P") {
+        } else if str_equals(arg, "-P") {
             arg_idx += 1;
             if arg_idx >= argc {
                 eprintlns("xargs: option -P requires an argument");
@@ -469,8 +464,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
                 return 1;
             }
             arg_idx += 1;
-        }
-        else if str_equals(arg, "-e") || str_equals(arg, "--eof") {
+        } else if str_equals(arg, "-e") || str_equals(arg, "--eof") {
             arg_idx += 1;
             if arg_idx < argc {
                 let next_arg = unsafe { cstr_to_str(*argv.add(arg_idx as usize)) };
@@ -498,8 +492,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
                 return 1;
             }
             arg_idx += 1;
-        }
-        else if str_equals(arg, "-a") {
+        } else if str_equals(arg, "-a") {
             arg_idx += 1;
             if arg_idx >= argc {
                 eprintlns("xargs: option -a requires an argument");
@@ -515,25 +508,20 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         else if str_equals(arg, "-r") || str_equals(arg, "--no-run-if-empty") {
             config.no_run_if_empty = true;
             arg_idx += 1;
-        }
-        else if str_equals(arg, "-t") || str_equals(arg, "--verbose") {
+        } else if str_equals(arg, "-t") || str_equals(arg, "--verbose") {
             config.verbose = true;
             arg_idx += 1;
-        }
-        else if str_equals(arg, "--verbose-stats") {
+        } else if str_equals(arg, "--verbose-stats") {
             config.verbose_stats = true;
             arg_idx += 1;
-        }
-        else if str_equals(arg, "-p") || str_equals(arg, "--interactive") {
+        } else if str_equals(arg, "-p") || str_equals(arg, "--interactive") {
             config.interactive = true;
             config.verbose = true; // -p implies -t
             arg_idx += 1;
-        }
-        else if str_equals(arg, "-x") || str_equals(arg, "--exit") {
+        } else if str_equals(arg, "-x") || str_equals(arg, "--exit") {
             config.exit_on_error = true;
             arg_idx += 1;
-        }
-        else if str_equals(arg, "-o") || str_equals(arg, "--open-tty") {
+        } else if str_equals(arg, "-o") || str_equals(arg, "--open-tty") {
             config.open_tty = true;
             arg_idx += 1;
         }
@@ -616,7 +604,14 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         0 // Whitespace mode
     };
 
-    if !read_args(&config, delimiter, &mut args, &mut arg_lens, &mut arg_count, &mut stats) {
+    if !read_args(
+        &config,
+        delimiter,
+        &mut args,
+        &mut arg_lens,
+        &mut arg_count,
+        &mut stats,
+    ) {
         return 1;
     }
 
@@ -629,14 +624,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
 
     // Execute commands
     let exit_code = execute_all(
-        &config,
-        &cmd_parts,
-        &cmd_lens,
-        cmd_count,
-        &args,
-        &arg_lens,
-        arg_count,
-        &mut stats,
+        &config, &cmd_parts, &cmd_lens, cmd_count, &args, &arg_lens, arg_count, &mut stats,
     );
 
     // Print statistics if requested
@@ -699,9 +687,7 @@ fn read_args(
 ) -> bool {
     // Choose input source
     let input_fd = if let Some(ref file_buf) = config.arg_file {
-        let file_path = unsafe {
-            core::str::from_utf8_unchecked(&file_buf[..config.arg_file_len])
-        };
+        let file_path = unsafe { core::str::from_utf8_unchecked(&file_buf[..config.arg_file_len]) };
         let fd = open2(file_path, O_RDONLY);
         if fd < 0 {
             eprints("xargs: cannot open file: ");
@@ -713,7 +699,7 @@ fn read_args(
         STDIN_FILENO
     };
 
-    let mut buf = [0u8; 8192];  // Larger read buffer for efficiency
+    let mut buf = [0u8; 8192]; // Larger read buffer for efficiency
     let mut current_arg = [0u8; MAX_ARG_LEN];
     let mut current_len = 0;
     let mut line_count = 0;
@@ -732,10 +718,8 @@ fn read_args(
             // Check for EOF string
             if let Some(ref eof_buf) = config.eof_string {
                 if current_len >= config.eof_len {
-                    let matches = check_eof_match(
-                        &current_arg[..current_len],
-                        &eof_buf[..config.eof_len],
-                    );
+                    let matches =
+                        check_eof_match(&current_arg[..current_len], &eof_buf[..config.eof_len]);
                     if matches {
                         // Hit EOF string, stop reading
                         if input_fd != STDIN_FILENO {
@@ -852,14 +836,7 @@ fn execute_all(
         if config.max_procs > 1 {
             // Parallel replace mode
             overall_status = execute_parallel_replace(
-                config,
-                cmd_parts,
-                cmd_lens,
-                cmd_count,
-                args,
-                arg_lens,
-                arg_count,
-                stats,
+                config, cmd_parts, cmd_lens, cmd_count, args, arg_lens, arg_count, stats,
             );
         } else {
             // Sequential replace mode
@@ -884,18 +861,11 @@ fn execute_all(
     } else {
         // Batch mode: execute with groups of arguments
         let mut i = 0;
-        
+
         if config.max_procs > 1 {
             // Parallel batch mode
             overall_status = execute_parallel_batch(
-                config,
-                cmd_parts,
-                cmd_lens,
-                cmd_count,
-                args,
-                arg_lens,
-                arg_count,
-                stats,
+                config, cmd_parts, cmd_lens, cmd_count, args, arg_lens, arg_count, stats,
             );
         } else {
             // Sequential batch mode
@@ -917,7 +887,8 @@ fn execute_all(
 
             // Handle case where there are no arguments but we should run anyway
             if arg_count == 0 && !config.no_run_if_empty {
-                let status = execute_batch(config, cmd_parts, cmd_lens, cmd_count, args, arg_lens, 0, 0);
+                let status =
+                    execute_batch(config, cmd_parts, cmd_lens, cmd_count, args, arg_lens, 0, 0);
                 stats.commands_executed += 1;
                 if status != 0 {
                     stats.commands_failed += 1;
@@ -934,11 +905,11 @@ fn execute_all(
 fn map_exit_status(status: i32) -> i32 {
     match status {
         0 => 0,
-        1..=125 => 123,  // Any child exit 1-125 returns 123
-        126 => 126,      // Command cannot be run
-        127 => 127,      // Command not found
-        255 => 125,      // Map 255 to 125
-        _ => 1,          // Other errors
+        1..=125 => 123, // Any child exit 1-125 returns 123
+        126 => 126,     // Command cannot be run
+        127 => 127,     // Command not found
+        255 => 125,     // Map 255 to 125
+        _ => 1,         // Other errors
     }
 }
 
@@ -1044,7 +1015,8 @@ fn execute_parallel_batch(
     // Handle empty case
     if arg_count == 0 {
         if !config.no_run_if_empty {
-            let status = execute_batch(config, cmd_parts, cmd_lens, cmd_count, args, arg_lens, 0, 0);
+            let status =
+                execute_batch(config, cmd_parts, cmd_lens, cmd_count, args, arg_lens, 0, 0);
             stats.commands_executed += 1;
             if status != 0 {
                 stats.commands_failed += 1;
@@ -1058,19 +1030,12 @@ fn execute_parallel_batch(
         // Start new processes
         while active_count < config.max_procs && next_idx < arg_count {
             let batch_size = (arg_count - next_idx).min(config.max_args);
-            
+
             let pid = fork();
             if pid == 0 {
                 // Child: execute batch
                 let status = execute_batch(
-                    config,
-                    cmd_parts,
-                    cmd_lens,
-                    cmd_count,
-                    args,
-                    arg_lens,
-                    next_idx,
-                    batch_size,
+                    config, cmd_parts, cmd_lens, cmd_count, args, arg_lens, next_idx, batch_size,
                 );
                 exit(status);
             } else if pid > 0 {
@@ -1153,13 +1118,13 @@ fn execute_with_replace(
         if contains_pattern(part, replace_pattern) {
             // Replace pattern with argument
             let new_len = replacement.len().min(MAX_ARG_LEN);
-            
+
             // Check command length limit
             if config.exit_on_error && total_len + new_len > config.max_chars {
                 eprintlns("xargs: command line too long");
                 return 124;
             }
-            
+
             final_cmd[final_count][..new_len].copy_from_slice(&replacement[..new_len]);
             final_lens[final_count] = new_len;
             total_len += new_len + 1; // +1 for space
@@ -1169,7 +1134,7 @@ fn execute_with_replace(
                 eprintlns("xargs: command line too long");
                 return 124;
             }
-            
+
             final_cmd[final_count][..cmd_lens[i]].copy_from_slice(part);
             final_lens[final_count] = cmd_lens[i];
             total_len += cmd_lens[i] + 1;
@@ -1232,13 +1197,13 @@ fn execute_batch(
             break;
         }
         let arg_idx = start_idx + i;
-        
+
         // Check command length limit
         if config.exit_on_error && total_len + arg_lens[arg_idx] > config.max_chars {
             eprintlns("xargs: command line too long");
             return 124;
         }
-        
+
         final_cmd[final_count][..arg_lens[arg_idx]]
             .copy_from_slice(&args[arg_idx][..arg_lens[arg_idx]]);
         final_lens[final_count] = arg_lens[arg_idx];
@@ -1290,7 +1255,7 @@ fn execute_command(
         } else {
             open2("/dev/console", O_RDONLY)
         };
-        
+
         if tty_fd >= 0 {
             let mut response = [0u8; 2];
             let n = read(tty_fd, &mut response);
@@ -1330,23 +1295,23 @@ fn print_stats(stats: &ExecutionStats) {
     eprintlns("╔════════════════════════════════════════════════════════════════╗");
     eprintlns("║                    Execution Statistics                        ║");
     eprintlns("╚════════════════════════════════════════════════════════════════╝");
-    
+
     eprints("Commands executed:    ");
     print_number(stats.commands_executed);
     eprintlns("");
-    
+
     eprints("Commands failed:      ");
     print_number(stats.commands_failed);
     eprintlns("");
-    
+
     eprints("Max parallel:         ");
     print_number(stats.max_parallel);
     eprintlns("");
-    
+
     eprints("Arguments processed:  ");
     print_number(stats.total_args_processed);
     eprintlns("");
-    
+
     eprints("Bytes read:           ");
     print_number(stats.bytes_read);
     eprintlns("");

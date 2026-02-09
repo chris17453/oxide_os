@@ -25,22 +25,22 @@
 
 extern crate libc;
 
-use libc::{write, close, exit};
+use libc::O_RDWR;
+use libc::syscall::{map_flags, prot, sys_ioctl, sys_mmap, sys_munmap};
 use libc::unistd::open;
-use libc::syscall::{sys_ioctl, sys_mmap, sys_munmap, prot, map_flags};
-use libc::{O_RDWR};
+use libc::{close, exit, write};
 
-mod wad;
-mod render;
 mod game;
 mod input;
+mod render;
 mod sound;
+mod wad;
 
-use wad::WadFile;
-use render::Renderer;
 use game::Game;
 use input::InputState;
+use render::Renderer;
 use sound::SoundSystem;
+use wad::WadFile;
 
 /// Framebuffer screen info structure
 #[repr(C)]
@@ -296,21 +296,21 @@ fn print_u32(val: u32) {
     let mut buf = [0u8; 16];
     let mut n = val;
     let mut i = 0;
-    
+
     if n == 0 {
         write(1, b"0");
         return;
     }
-    
+
     while n > 0 {
         buf[i] = (n % 10) as u8 + b'0';
         n /= 10;
         i += 1;
     }
-    
+
     while i > 0 {
         i -= 1;
-        write(1, &buf[i..i+1]);
+        write(1, &buf[i..i + 1]);
     }
 }
 

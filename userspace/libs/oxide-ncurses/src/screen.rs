@@ -194,16 +194,20 @@ impl ScreenData {
         // entries are compile-time defaults (often 24×80); the running
         // terminal may be any size. Only fall back if the ioctl fails.
         let mut ws = libc::termios::Winsize::default();
-        let (lines, cols) = if libc::termios::tcgetwinsize(0, &mut ws) == 0
-            && ws.ws_row > 0
-            && ws.ws_col > 0
-        {
-            (ws.ws_row as i32, ws.ws_col as i32)
-        } else {
-            let l = term.as_ref().and_then(|t| t.get_number("lines")).unwrap_or(24);
-            let c = term.as_ref().and_then(|t| t.get_number("cols")).unwrap_or(80);
-            (l, c)
-        };
+        let (lines, cols) =
+            if libc::termios::tcgetwinsize(0, &mut ws) == 0 && ws.ws_row > 0 && ws.ws_col > 0 {
+                (ws.ws_row as i32, ws.ws_col as i32)
+            } else {
+                let l = term
+                    .as_ref()
+                    .and_then(|t| t.get_number("lines"))
+                    .unwrap_or(24);
+                let c = term
+                    .as_ref()
+                    .and_then(|t| t.get_number("cols"))
+                    .unwrap_or(80);
+                (l, c)
+            };
 
         let colors = term
             .as_ref()

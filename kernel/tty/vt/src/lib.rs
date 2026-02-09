@@ -34,7 +34,9 @@ extern crate signal;
 #[cfg(feature = "debug-console")]
 #[inline]
 fn dbg_serial(s: &str) {
-    unsafe { os_log::write_str_raw(s); }
+    unsafe {
+        os_log::write_str_raw(s);
+    }
 }
 
 /// Yield callback type — called to yield CPU while waiting for input.

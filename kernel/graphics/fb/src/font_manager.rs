@@ -6,8 +6,8 @@
 
 extern crate alloc;
 
+use crate::font::{BUILTIN_FONT_EX, FontEx, GlyphData};
 use alloc::vec::Vec;
-use crate::font::{FontEx, GlyphData, BUILTIN_FONT_EX};
 
 /// Resolved glyph with cell width metadata
 /// Because some glyphs think they deserve two cells. — SoftGlyph
@@ -94,13 +94,11 @@ impl FontManager {
 
         // -- Nothing found: replacement glyph from primary font
         // The void stares back with a question mark. — SoftGlyph
-        let replacement = self.fonts[0]
-            .glyph('?')
-            .unwrap_or(GlyphData::Bitmap {
-                width: self.cell_width,
-                height: self.cell_height,
-                data: &[],
-            });
+        let replacement = self.fonts[0].glyph('?').unwrap_or(GlyphData::Bitmap {
+            width: self.cell_width,
+            height: self.cell_height,
+            data: &[],
+        });
         ResolvedGlyph {
             data: replacement,
             cell_width: 1,

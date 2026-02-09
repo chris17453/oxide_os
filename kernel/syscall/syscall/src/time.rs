@@ -615,8 +615,8 @@ pub fn sys_clock_nanosleep(clock_id: i32, flags: i32, req_ptr: usize, rem_ptr: u
 
             // ⚡ GraveShift: POSIX requires checking for signals in TIMER_ABSTIME mode
             // If interrupted by signal, return EINTR (absolute time doesn't use rem_ptr)
-            let has_signals = crate::with_current_meta(|meta| meta.has_pending_signals())
-                .unwrap_or(false);
+            let has_signals =
+                crate::with_current_meta(|meta| meta.has_pending_signals()).unwrap_or(false);
             if has_signals {
                 return errno::EINTR;
             }

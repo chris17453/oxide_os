@@ -199,7 +199,11 @@ impl BuddyAllocator {
                 }
                 for i in (0..16).rev() {
                     let nibble = ((addr >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    let hex_char = if nibble < 10 {
+                        b'0' + nibble
+                    } else {
+                        b'a' + nibble - 10
+                    };
                     arch::outb(0x3F8, hex_char);
                 }
                 let msg2 = b" order=";
@@ -215,7 +219,11 @@ impl BuddyAllocator {
                 }
                 for i in (0..16).rev() {
                     let nibble = ((existing_magic >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    let hex_char = if nibble < 10 {
+                        b'0' + nibble
+                    } else {
+                        b'a' + nibble - 10
+                    };
                     arch::outb(0x3F8, hex_char);
                 }
                 let msg4 = b"\r\n";
@@ -249,7 +257,11 @@ impl BuddyAllocator {
                     }
                     for i in (0..16).rev() {
                         let nibble = ((old_head_block.magic >> (i * 4)) & 0xF) as u8;
-                        let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                        let hex_char = if nibble < 10 {
+                            b'0' + nibble
+                        } else {
+                            b'a' + nibble - 10
+                        };
                         arch::outb(0x3F8, hex_char);
                     }
                     let msg2 = b", expected=0x";
@@ -259,7 +271,11 @@ impl BuddyAllocator {
                     }
                     for i in (0..16).rev() {
                         let nibble = ((FREE_BLOCK_MAGIC >> (i * 4)) & 0xF) as u8;
-                        let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                        let hex_char = if nibble < 10 {
+                            b'0' + nibble
+                        } else {
+                            b'a' + nibble - 10
+                        };
                         arch::outb(0x3F8, hex_char);
                     }
                     let msg3 = b" - GPF\r\n";
@@ -336,7 +352,11 @@ impl BuddyAllocator {
                 }
                 for i in (0..16).rev() {
                     let nibble = ((addr >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    let hex_char = if nibble < 10 {
+                        b'0' + nibble
+                    } else {
+                        b'a' + nibble - 10
+                    };
                     arch::outb(0x3F8, hex_char);
                 }
                 let msg3 = b"\r\n";
@@ -373,7 +393,11 @@ impl BuddyAllocator {
                 }
                 for i in (0..16).rev() {
                     let nibble = ((block.magic >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    let hex_char = if nibble < 10 {
+                        b'0' + nibble
+                    } else {
+                        b'a' + nibble - 10
+                    };
                     arch::outb(0x3F8, hex_char);
                 }
                 let msg2 = b", addr=0x";
@@ -383,7 +407,11 @@ impl BuddyAllocator {
                 }
                 for i in (0..16).rev() {
                     let nibble = ((addr >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    let hex_char = if nibble < 10 {
+                        b'0' + nibble
+                    } else {
+                        b'a' + nibble - 10
+                    };
                     arch::outb(0x3F8, hex_char);
                 }
                 let msg3 = b", order=";
@@ -435,7 +463,11 @@ impl BuddyAllocator {
                 }
                 for i in (0..16).rev() {
                     let nibble = ((target_magic >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    let hex_char = if nibble < 10 {
+                        b'0' + nibble
+                    } else {
+                        b'a' + nibble - 10
+                    };
                     arch::outb(0x3F8, hex_char);
                 }
                 let msg2 = b"\r\n";
@@ -458,7 +490,11 @@ impl BuddyAllocator {
                 }
                 for i in (0..16).rev() {
                     let nibble = ((addr >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    let hex_char = if nibble < 10 {
+                        b'0' + nibble
+                    } else {
+                        b'a' + nibble - 10
+                    };
                     arch::outb(0x3F8, hex_char);
                 }
                 let msg2 = b"\r\n";
@@ -489,7 +525,11 @@ impl BuddyAllocator {
                     }
                     for i in (0..16).rev() {
                         let nibble = ((next_frame >> (i * 4)) & 0xF) as u8;
-                        let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                        let hex_char = if nibble < 10 {
+                            b'0' + nibble
+                        } else {
+                            b'a' + nibble - 10
+                        };
                         arch::outb(0x3F8, hex_char);
                     }
                     let msg2 = b" - TRIGGERING GPF\r\n";
@@ -515,7 +555,11 @@ impl BuddyAllocator {
                 let virt_addr = next_virt as u64;
                 for i in (0..16).rev() {
                     let nibble = ((virt_addr >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    let hex_char = if nibble < 10 {
+                        b'0' + nibble
+                    } else {
+                        b'a' + nibble - 10
+                    };
                     arch::outb(0x3F8, hex_char);
                 }
                 let msg2 = b"\r\n";
@@ -692,7 +736,11 @@ impl BuddyAllocator {
                         }
                         for i in (0..16).rev() {
                             let nibble = ((addr >> (i * 4)) & 0xF) as u8;
-                            let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                            let hex_char = if nibble < 10 {
+                                b'0' + nibble
+                            } else {
+                                b'a' + nibble - 10
+                            };
                             arch::outb(0x3F8, hex_char);
                         }
                         let msg3 = b"\r\n";

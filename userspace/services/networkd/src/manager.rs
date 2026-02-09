@@ -10,7 +10,7 @@ use libc::dirent::{closedir, opendir, readdir};
 use libc::*;
 
 use crate::adapter::{AdapterState, ConfigMode, NetworkAdapter};
-use crate::config::{read_interface_config, InterfaceConfig};
+use crate::config::{InterfaceConfig, read_interface_config};
 
 /// Default DNS servers (used when no adapters provide DNS)
 const DEFAULT_DNS_SERVERS: &[[u8; 4]] = &[[8, 8, 8, 8], [8, 8, 4, 4]];
@@ -98,7 +98,8 @@ impl AdapterManager {
             self.adapters.push(NetworkAdapter::new(String::from("lo")));
         }
         if !self.has_adapter("eth0") {
-            self.adapters.push(NetworkAdapter::new(String::from("eth0")));
+            self.adapters
+                .push(NetworkAdapter::new(String::from("eth0")));
         }
     }
 
@@ -128,7 +129,7 @@ impl AdapterManager {
 
         for i in 0..self.adapters.len() {
             let name = self.adapters[i].name.clone();
-            
+
             // ShadePacket: Special handling for loopback - always configure
             if name == "lo" {
                 self.configure_loopback(i);
@@ -152,14 +153,14 @@ impl AdapterManager {
         if let Some(config) = read_interface_config(&name) {
             let mode = config.mode;
             let has_address = config.has_address;
-            
+
             // ShadePacket: Apply configuration based on mode
             {
                 let adapter = &mut self.adapters[index];
                 adapter.mode = mode;
                 adapter.mtu = config.mtu;
             }
-            
+
             match mode {
                 ConfigMode::Static => {
                     if has_address {
@@ -168,22 +169,22 @@ impl AdapterManager {
                         if config.has_gateway {
                             adapter.set_gateway(config.gateway);
                         }
-                        
+
                         // ShadePacket: Copy DNS servers
                         adapter.clear_dns();
                         for i in 0..config.dns_count {
                             adapter.add_dns(config.dns_servers[i]);
                         }
-                        
+
                         adapter.set_state(AdapterState::Configuring);
                     }
-                        
+
                     // Apply configuration (separate call to avoid borrow issues)
                     self.apply_configuration(index);
-                        
+
                     self.adapters[index].set_state(AdapterState::Up);
                     log_adapter(&name, "Configured (static)");
-                    
+
                     if !has_address {
                         log_adapter(&name, "Static mode but no address in config");
                         self.adapters[index].set_state(AdapterState::Error);
@@ -192,7 +193,7 @@ impl AdapterManager {
                 ConfigMode::Dhcp => {
                     log_adapter(&name, "Starting DHCP");
                     self.adapters[index].set_state(AdapterState::Configuring);
-                    
+
                     // ShadePacket: DHCP handled by separate function
                     if self.configure_dhcp(index) {
                         self.adapters[index].set_state(AdapterState::Up);
@@ -223,7 +224,7 @@ impl AdapterManager {
         }
 
         let name = self.adapters[index].name.clone();
-        
+
         {
             let adapter = &mut self.adapters[index];
             adapter.mode = ConfigMode::Loopback;
@@ -232,9 +233,9 @@ impl AdapterManager {
             adapter.link_up = true;
             adapter.set_state(AdapterState::Configuring);
         }
-        
+
         self.apply_configuration(index);
-        
+
         self.adapters[index].set_state(AdapterState::Up);
         log_adapter(&name, "Configured (loopback)");
     }
@@ -246,7 +247,7 @@ impl AdapterManager {
         }
 
         let adapter = &self.adapters[index];
-        
+
         // ShadePacket: Write active config to /run/network/ for kernel consumption
         let _ = mkdir("/run", 0o755);
         let _ = mkdir("/run/network", 0o755);
@@ -388,11 +389,11 @@ impl AdapterManager {
     /// Bring an adapter up
     pub fn bring_up(&mut self, name: &str) -> bool {
         log_adapter(name, "Bringing up");
-        
+
         if let Some(adapter) = self.get_adapter_mut(name) {
             if adapter.state == AdapterState::Down || adapter.state == AdapterState::Error {
                 adapter.set_state(AdapterState::Configuring);
-                
+
                 // ShadePacket: Reconfigure from config file
                 let idx = self.adapters.iter().position(|a| a.name == name);
                 if let Some(idx) = idx {
@@ -401,34 +402,34 @@ impl AdapterManager {
                 }
             }
         }
-        
+
         false
     }
 
     /// Bring an adapter down
     pub fn bring_down(&mut self, name: &str) -> bool {
         log_adapter(name, "Bringing down");
-        
+
         if let Some(adapter) = self.get_adapter_mut(name) {
             adapter.set_state(AdapterState::Down);
             adapter.ipv4_addr = None;
             adapter.ipv4_gateway = None;
             adapter.clear_dns();
-            
+
             // ShadePacket: Remove active configuration
             let path = format_run_path(name);
             let _ = unlink(&path);
-            
+
             return true;
         }
-        
+
         false
     }
 
     /// Reload adapter configuration
     pub fn reload_adapter(&mut self, name: &str) -> bool {
         log_adapter(name, "Reloading configuration");
-        
+
         // ShadePacket: Bring down and bring back up
         self.bring_down(name);
         self.bring_up(name)
@@ -445,7 +446,7 @@ impl AdapterManager {
     /// Get DNS servers from all configured adapters
     pub fn collect_dns_servers(&self) -> Vec<[u8; 4]> {
         let mut dns_list: Vec<[u8; 4]> = Vec::new();
-        
+
         for adapter in &self.adapters {
             if adapter.state == AdapterState::Up {
                 for dns in &adapter.dns_servers {

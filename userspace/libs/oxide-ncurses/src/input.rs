@@ -124,38 +124,38 @@ pub fn wgetch(win: WINDOW) -> i32 {
                         state.parser.reset();
                         27 // Raw ESC — no follow-up within 50ms
                     } else {
-                    let n2 = libc::unistd::read(0, &mut next);
-                    if n2 <= 0 {
-                        // 🔥 InputShade: Read failed after ESC. Reset parser
-                        // to clean state before returning raw ESC. 🔥
-                        state.parser.reset();
-                        27 // Read failed
-                    } else {
-                        // Feed through parser
-                        let action2 = state.parser.advance(next[0]);
-                        match action2 {
-                            Action::None => {
-                                // Parser needs more input - keep reading
-                                read_escape_sequence(state, keypad)
+                        let n2 = libc::unistd::read(0, &mut next);
+                        if n2 <= 0 {
+                            // 🔥 InputShade: Read failed after ESC. Reset parser
+                            // to clean state before returning raw ESC. 🔥
+                            state.parser.reset();
+                            27 // Read failed
+                        } else {
+                            // Feed through parser
+                            let action2 = state.parser.advance(next[0]);
+                            match action2 {
+                                Action::None => {
+                                    // Parser needs more input - keep reading
+                                    read_escape_sequence(state, keypad)
+                                }
+                                Action::CsiDispatch {
+                                    params,
+                                    intermediates: _,
+                                    final_char,
+                                } => map_csi_to_key(&params, final_char, keypad),
+                                Action::EscDispatch {
+                                    intermediates: _,
+                                    final_char,
+                                } => map_esc_to_key(final_char),
+                                Action::Print(ch) => {
+                                    // Alt+char
+                                    // Push char to pending, return ESC
+                                    state.pending.push(ch as i32);
+                                    27
+                                }
+                                _ => 27,
                             }
-                            Action::CsiDispatch {
-                                params,
-                                intermediates: _,
-                                final_char,
-                            } => map_csi_to_key(&params, final_char, keypad),
-                            Action::EscDispatch {
-                                intermediates: _,
-                                final_char,
-                            } => map_esc_to_key(final_char),
-                            Action::Print(ch) => {
-                                // Alt+char
-                                // Push char to pending, return ESC
-                                state.pending.push(ch as i32);
-                                27
-                            }
-                            _ => 27,
                         }
-                    }
                     }
                 }
                 _ => b as i32,

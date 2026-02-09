@@ -47,6 +47,7 @@ pub mod virtio_modern {
     pub const NET: u16 = 0x1041; // Network card (type 1)
     pub const BLOCK: u16 = 0x1042; // Block device (type 2)
     pub const GPU: u16 = 0x1050; // GPU device (type 16)
+    pub const INPUT: u16 = 0x1052; // Input device (type 18)
     pub const SOUND: u16 = 0x1059; // Sound device (type 25)
 }
 
@@ -130,6 +131,12 @@ impl PciDevice {
     /// Check if this is a VirtIO sound device (modern only — no legacy transitional ID)
     pub fn is_virtio_snd(&self) -> bool {
         self.vendor_id == vendor::VIRTIO && self.device_id == virtio_modern::SOUND
+    }
+
+    /// Check if this is a VirtIO input device (keyboard/mouse/tablet)
+    /// — InputShade: Modern PCI only, no legacy transitional ID
+    pub fn is_virtio_input(&self) -> bool {
+        self.vendor_id == vendor::VIRTIO && self.device_id == virtio_modern::INPUT
     }
 
     /// Check if this is an Intel HDA controller (ICH6 variant used by QEMU)
@@ -399,6 +406,17 @@ pub fn find_virtio_snd() -> Vec<PciDevice> {
         .collect()
 }
 
+/// Find all VirtIO input devices (keyboard, mouse, tablet)
+/// — InputShade: keypresses are just voltage spikes on the bus
+pub fn find_virtio_input() -> Vec<PciDevice> {
+    DEVICES
+        .lock()
+        .iter()
+        .filter(|d| d.is_virtio_input())
+        .cloned()
+        .collect()
+}
+
 /// Find all Intel HDA controllers on the PCI bus
 /// — TorqueJax: hunting for real audio hardware among the silicon
 pub fn find_intel_hda() -> Vec<PciDevice> {
@@ -510,15 +528,18 @@ pub fn find_virtio_caps(dev: &PciDevice) -> VirtioPciCaps {
         // VirtIO vendor-specific capability: cap_id == 0x09
         if cap_id == 0x09 {
             // VirtIO PCI cap layout (VirtIO spec §4.1.4):
-            //   offset +2: cfg_type (u8)
-            //   offset +3: bar (u8)
-            //   offset +4: offset within BAR (u32, LE)
-            //   offset +8: length (u32, LE)
-            //   For notify cap, offset +12: notify_off_multiplier (u32, LE)
-            let type_bar = config_read32(dev.address, cap_ptr + 4);
-            let cfg_type = (type_bar & 0xFF) as u8;
-            let bar = ((type_bar >> 8) & 0xFF) as u8;
-            // padding at +6,+7
+            //   +0: cap_vndr (u8)  — already read as cap_id
+            //   +1: cap_next (u8)  — already read as next_ptr
+            //   +2: cap_len  (u8)
+            //   +3: cfg_type (u8)  — identifies the structure
+            //   +4: bar      (u8)  — which BAR
+            //   +5: id       (u8)
+            //   +6,+7: padding
+            //   +8: offset   (le32) — offset within BAR
+            //   +12: length  (le32) — length of the structure
+            //   For notify cap, +16: notify_off_multiplier (le32)
+            let cfg_type = config_read8(dev.address, cap_ptr + 3);
+            let bar = config_read8(dev.address, cap_ptr + 4);
             let bar_offset = config_read32(dev.address, cap_ptr + 8);
             let bar_length = config_read32(dev.address, cap_ptr + 12);
 

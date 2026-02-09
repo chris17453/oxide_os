@@ -1,39 +1,36 @@
 //! VirtIO Input Device Driver
 //!
-//! Implements the VirtIO input device specification for keyboard, mouse,
-//! and other input devices in virtualized environments.
+//! — InputShade: Rebuilt from the ground up. The old driver confused PCI transport
+//! with MMIO transport, passed virtual addresses to hardware, and never wired
+//! interrupts. This version uses VirtioPciTransport (same as virtio-gpu) for
+//! modern PCI devices, fixes all address translation, and bridges keyboard
+//! events to the VT console layer so the shell actually receives keystrokes.
 
 #![no_std]
 #![allow(unused)]
 
 extern crate alloc;
 
-use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::ptr::{read_volatile, write_volatile};
+use core::sync::atomic::{fence, Ordering};
 use input::{InputDeviceInfo, InputDeviceType, KeyValue};
+use pci;
 use spin::Mutex;
 
 /// VirtIO input device configuration select values
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VirtioInputConfigSelect {
-    /// Returns the name of the device
     IdName = 0x01,
-    /// Returns a serial number
     IdSerial = 0x02,
-    /// Device type identifier
     IdDevids = 0x03,
-    /// Input property bits
     PropBits = 0x10,
-    /// Event type bits
     EvBits = 0x11,
-    /// Absolute axis info
     AbsInfo = 0x12,
 }
 
-/// VirtIO input device IDs
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct VirtioInputDevids {
@@ -43,18 +40,6 @@ pub struct VirtioInputDevids {
     pub version: u16,
 }
 
-/// VirtIO input absolute axis info
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct VirtioInputAbsinfo {
-    pub min: u32,
-    pub max: u32,
-    pub fuzz: u32,
-    pub flat: u32,
-    pub res: u32,
-}
-
-/// VirtIO input configuration space
 #[repr(C)]
 pub struct VirtioInputConfig {
     pub select: u8,
@@ -64,7 +49,7 @@ pub struct VirtioInputConfig {
     pub data: [u8; 128],
 }
 
-/// VirtIO input event structure
+/// VirtIO input event — 8 bytes, matches Linux evdev
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct VirtioInputEvent {
@@ -73,56 +58,16 @@ pub struct VirtioInputEvent {
     pub value: u32,
 }
 
-/// VirtIO input device type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VirtioInputType {
-    /// Keyboard device
     Keyboard,
-    /// Mouse device
     Mouse,
-    /// Tablet (absolute pointing device)
     Tablet,
-    /// Generic input device
     Generic,
 }
 
-/// VirtIO input device driver
-pub struct VirtioInput {
-    /// MMIO base address
-    mmio_base: usize,
-    /// Configuration space pointer
-    config: *mut VirtioInputConfig,
-    /// Event virtqueue
-    event_queue: VirtQueue,
-    /// Status virtqueue
-    status_queue: VirtQueue,
-    /// Device name
-    name: String,
-    /// Device type
-    device_type: VirtioInputType,
-    /// Device IDs
-    devids: VirtioInputDevids,
-    /// Input device handle
-    device_id: Option<usize>,
-}
-
-/// Virtqueue structure for input events
-struct VirtQueue {
-    /// Descriptor table
-    descriptors: *mut VirtqDesc,
-    /// Available ring
-    available: *mut VirtqAvail,
-    /// Used ring
-    used: *mut VirtqUsed,
-    /// Queue size
-    size: u16,
-    /// Next descriptor index
-    next_desc: u16,
-    /// Last seen used index
-    last_used: u16,
-    /// Event buffers
-    buffers: Vec<Box<VirtioInputEvent>>,
-}
+// — InputShade: virtqueue descriptor table, spec §2.6. The unholy trinity of
+// desc/avail/used that every virtio driver must get right or hardware goes brrr.
 
 #[repr(C)]
 struct VirtqDesc {
@@ -153,183 +98,336 @@ struct VirtqUsedElem {
     len: u32,
 }
 
-/// VirtIO MMIO register offsets
-const VIRTIO_MMIO_MAGIC: usize = 0x000;
-const VIRTIO_MMIO_VERSION: usize = 0x004;
-const VIRTIO_MMIO_DEVICE_ID: usize = 0x008;
-const VIRTIO_MMIO_VENDOR_ID: usize = 0x00c;
-const VIRTIO_MMIO_DEVICE_FEATURES: usize = 0x010;
-const VIRTIO_MMIO_DEVICE_FEATURES_SEL: usize = 0x014;
-const VIRTIO_MMIO_DRIVER_FEATURES: usize = 0x020;
-const VIRTIO_MMIO_DRIVER_FEATURES_SEL: usize = 0x024;
-const VIRTIO_MMIO_QUEUE_SEL: usize = 0x030;
-const VIRTIO_MMIO_QUEUE_NUM_MAX: usize = 0x034;
-const VIRTIO_MMIO_QUEUE_NUM: usize = 0x038;
-const VIRTIO_MMIO_QUEUE_READY: usize = 0x044;
-const VIRTIO_MMIO_QUEUE_NOTIFY: usize = 0x050;
-const VIRTIO_MMIO_INTERRUPT_STATUS: usize = 0x060;
-const VIRTIO_MMIO_INTERRUPT_ACK: usize = 0x064;
-const VIRTIO_MMIO_STATUS: usize = 0x070;
-const VIRTIO_MMIO_QUEUE_DESC_LOW: usize = 0x080;
-const VIRTIO_MMIO_QUEUE_DESC_HIGH: usize = 0x084;
-const VIRTIO_MMIO_QUEUE_AVAIL_LOW: usize = 0x090;
-const VIRTIO_MMIO_QUEUE_AVAIL_HIGH: usize = 0x094;
-const VIRTIO_MMIO_QUEUE_USED_LOW: usize = 0x0a0;
-const VIRTIO_MMIO_QUEUE_USED_HIGH: usize = 0x0a4;
-const VIRTIO_MMIO_CONFIG: usize = 0x100;
-
-/// VirtIO status bits
-const VIRTIO_STATUS_ACKNOWLEDGE: u32 = 1;
-const VIRTIO_STATUS_DRIVER: u32 = 2;
-const VIRTIO_STATUS_FEATURES_OK: u32 = 8;
-const VIRTIO_STATUS_DRIVER_OK: u32 = 4;
-const VIRTIO_STATUS_FAILED: u32 = 128;
-
-/// VirtIO descriptor flags
 const VIRTQ_DESC_F_WRITE: u16 = 2;
+const PHYS_MAP_BASE: u64 = 0xFFFF_8000_0000_0000;
+const EVENT_QUEUE: u16 = 0;
+const STATUS_QUEUE: u16 = 1;
 
-/// Event queue index
-const VIRTIO_INPUT_EVENT_QUEUE: u32 = 0;
-/// Status queue index
-const VIRTIO_INPUT_STATUS_QUEUE: u32 = 1;
+const VIRTIO_STATUS_ACKNOWLEDGE: u8 = 1;
+const VIRTIO_STATUS_DRIVER: u8 = 2;
+const VIRTIO_STATUS_DRIVER_OK: u8 = 4;
+const VIRTIO_STATUS_FEATURES_OK: u8 = 8;
 
-impl VirtioInput {
-    /// Probe for a VirtIO input device at the given MMIO address
-    pub fn probe(mmio_base: usize) -> Option<Self> {
-        let magic = unsafe { read_volatile((mmio_base + VIRTIO_MMIO_MAGIC) as *const u32) };
-        if magic != 0x74726976 {
-            return None;
+/// — InputShade: physical-map virtual address for a known physical address.
+#[inline]
+fn phys_to_virt(phys: u64) -> u64 {
+    phys + PHYS_MAP_BASE
+}
+
+/// VirtIO input device driver
+/// — InputShade: one instance per PCI input device (keyboard, mouse, tablet).
+/// All DMA buffers are allocated from the physical frame allocator and accessed
+/// through the direct physical map — kernel heap addresses are NOT valid for DMA.
+pub struct VirtioInput {
+    transport: pci::VirtioPciTransport,
+    config: *mut VirtioInputConfig,
+    event_desc: *mut VirtqDesc,
+    event_avail: *mut VirtqAvail,
+    event_used: *mut VirtqUsed,
+    event_size: u16,
+    event_last_used: u16,
+    /// — InputShade: base pointer into physical-map region, NOT heap.
+    /// Each event buffer is at event_buf_base + i * sizeof(VirtioInputEvent).
+    event_buf_base: *mut VirtioInputEvent,
+    status_desc: *mut VirtqDesc,
+    status_avail: *mut VirtqAvail,
+    status_used: *mut VirtqUsed,
+    status_size: u16,
+    name: String,
+    device_type: VirtioInputType,
+    devids: VirtioInputDevids,
+    device_id: Option<usize>,
+}
+
+// ============================================================================
+// Public API — matches the interface init.rs and console.rs expect
+// ============================================================================
+
+static VIRTIO_INPUT_DEVICES: Mutex<Vec<VirtioInput>> = Mutex::new(Vec::new());
+
+/// Probe all virtio-input devices on the PCI bus
+/// — InputShade: called once during boot from init.rs
+pub fn probe_all_pci() -> usize {
+    // — InputShade: trace PCI scan results for debugging
+    let all_devs = pci::devices();
+    unsafe {
+        let msg = b"[VIRTIO-INPUT] PCI devices total: ";
+        for &b in msg.iter() {
+            while (core::ptr::read_volatile(&0x3FDu16 as *const _ as *const u8) & 0x20) == 0 {
+                core::arch::asm!("in al, dx", out("al") _, in("dx") 0x3FDu16, options(nomem, nostack, preserves_flags));
+            }
+            core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack, preserves_flags));
         }
+    }
+    serial_write_num(all_devs.len());
+    serial_write_crlf();
 
-        let version = unsafe { read_volatile((mmio_base + VIRTIO_MMIO_VERSION) as *const u32) };
-        if version != 2 {
-            return None;
+    // Log virtio devices specifically
+    for d in &all_devs {
+        if d.vendor_id == 0x1AF4 {
+            serial_write_str(b"[VIRTIO-INPUT] VirtIO dev ");
+            serial_write_hex16(d.device_id);
+            serial_write_str(b" class=");
+            serial_write_hex8(d.class_code);
+            serial_write_str(b" sub=");
+            serial_write_hex8(d.subclass);
+            serial_write_str(b" is_input=");
+            serial_write_str(if d.is_virtio_input() { b"Y" } else { b"N" });
+            serial_write_crlf();
         }
-
-        let device_id = unsafe { read_volatile((mmio_base + VIRTIO_MMIO_DEVICE_ID) as *const u32) };
-        if device_id != 18 {
-            // Not an input device
-            return None;
-        }
-
-        Some(Self::new(mmio_base))
     }
 
-    /// Create a new VirtIO input device driver
-    fn new(mmio_base: usize) -> Self {
-        Self {
-            mmio_base,
-            config: (mmio_base + VIRTIO_MMIO_CONFIG) as *mut VirtioInputConfig,
-            event_queue: VirtQueue::empty(),
-            status_queue: VirtQueue::empty(),
+    let pci_devices = pci::find_virtio_input();
+    serial_write_str(b"[VIRTIO-INPUT] find_virtio_input returned ");
+    serial_write_num(pci_devices.len());
+    serial_write_crlf();
+
+    let mut devices = VIRTIO_INPUT_DEVICES.lock();
+    let mut count = 0;
+
+    for pci_dev in pci_devices {
+        serial_write_str(b"[VIRTIO-INPUT] Probing device 0x");
+        serial_write_hex16(pci_dev.device_id);
+        serial_write_crlf();
+        if let Some(dev) = VirtioInput::from_pci(&pci_dev) {
+            serial_write_str(b"[VIRTIO-INPUT] Device initialized OK\r\n");
+            devices.push(dev);
+            count += 1;
+        } else {
+            serial_write_str(b"[VIRTIO-INPUT] Device init FAILED\r\n");
+        }
+    }
+
+    count
+}
+
+// — InputShade: raw serial helpers for ISR-safe debugging
+fn serial_write_str(s: &[u8]) {
+    for &b in s {
+        unsafe {
+            loop {
+                let status: u8;
+                core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack, preserves_flags));
+                if status & 0x20 != 0 { break; }
+            }
+            core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack, preserves_flags));
+        }
+    }
+}
+
+fn serial_write_crlf() { serial_write_str(b"\r\n"); }
+
+fn serial_write_num(n: usize) {
+    if n == 0 { serial_write_str(b"0"); return; }
+    let mut buf = [0u8; 10];
+    let mut i = 0;
+    let mut v = n;
+    while v > 0 { buf[i] = b'0' + (v % 10) as u8; v /= 10; i += 1; }
+    while i > 0 { i -= 1; serial_write_str(&[buf[i]]); }
+}
+
+fn serial_write_hex16(v: u16) {
+    let nibbles = [(v >> 12) as u8 & 0xF, (v >> 8) as u8 & 0xF, (v >> 4) as u8 & 0xF, v as u8 & 0xF];
+    for n in nibbles {
+        let c = if n < 10 { b'0' + n } else { b'a' + n - 10 };
+        serial_write_str(&[c]);
+    }
+}
+
+fn serial_write_hex8(v: u8) {
+    let nibbles = [(v >> 4) & 0xF, v & 0xF];
+    for n in nibbles {
+        let c = if n < 10 { b'0' + n } else { b'a' + n - 10 };
+        serial_write_str(&[c]);
+    }
+}
+
+fn serial_write_hex_usize(v: usize) {
+    // Print as 16-digit hex for 64-bit addresses
+    for i in (0..16).rev() {
+        let n = ((v >> (i * 4)) & 0xF) as u8;
+        let c = if n < 10 { b'0' + n } else { b'a' + n - 10 };
+        serial_write_str(&[c]);
+    }
+}
+
+/// Poll all VirtIO input devices for pending events
+/// — InputShade: called from terminal_tick() at ~30 FPS as interrupt fallback
+pub fn poll() {
+    if let Some(mut devices) = VIRTIO_INPUT_DEVICES.try_lock() {
+        for device in devices.iter_mut() {
+            device.process_events();
+        }
+    }
+}
+
+/// Handle interrupt for all VirtIO input devices
+pub fn handle_interrupt() {
+    if let Some(mut devices) = VIRTIO_INPUT_DEVICES.try_lock() {
+        for device in devices.iter_mut() {
+            let isr = device.transport.read_isr();
+            if isr & 1 != 0 {
+                device.process_events();
+            }
+        }
+    }
+}
+
+/// Get the number of initialized VirtIO input devices
+pub fn device_count() -> usize {
+    VIRTIO_INPUT_DEVICES.lock().len()
+}
+
+// ============================================================================
+// Driver implementation
+// ============================================================================
+
+impl VirtioInput {
+    /// Create and initialize a VirtIO input device from a PCI device
+    /// — InputShade: uses VirtioPciTransport, same pattern as virtio-gpu.
+    /// No more MMIO magic probing on PCI bars, no more virtual-as-physical.
+    pub fn from_pci(pci_dev: &pci::PciDevice) -> Option<Self> {
+        if !pci_dev.is_virtio_input() {
+            serial_write_str(b"[VIRTIO-INPUT] not virtio input, skip\r\n");
+            return None;
+        }
+
+        pci::enable_bus_master(pci_dev.address);
+        pci::enable_memory_space(pci_dev.address);
+
+        serial_write_str(b"[VIRTIO-INPUT] finding caps...\r\n");
+        let caps = pci::find_virtio_caps(pci_dev);
+        serial_write_str(b"[VIRTIO-INPUT] from_caps...\r\n");
+        let transport = match pci::VirtioPciTransport::from_caps(pci_dev, &caps) {
+            Some(t) => {
+                serial_write_str(b"[VIRTIO-INPUT] transport OK\r\n");
+                t
+            }
+            None => {
+                serial_write_str(b"[VIRTIO-INPUT] transport FAILED (no caps?)\r\n");
+                return None;
+            }
+        };
+
+        let config = if transport.device_cfg != 0 {
+            serial_write_str(b"[VIRTIO-INPUT] device_cfg OK\r\n");
+            transport.device_cfg as *mut VirtioInputConfig
+        } else {
+            serial_write_str(b"[VIRTIO-INPUT] device_cfg is 0 - FAIL\r\n");
+            return None;
+        };
+
+        let mut dev = VirtioInput {
+            transport,
+            config,
+            event_desc: core::ptr::null_mut(),
+            event_avail: core::ptr::null_mut(),
+            event_used: core::ptr::null_mut(),
+            event_size: 0,
+            event_last_used: 0,
+            event_buf_base: core::ptr::null_mut(),
+            status_desc: core::ptr::null_mut(),
+            status_avail: core::ptr::null_mut(),
+            status_used: core::ptr::null_mut(),
+            status_size: 0,
             name: String::new(),
             device_type: VirtioInputType::Generic,
             devids: VirtioInputDevids::default(),
             device_id: None,
-        }
-    }
+        };
 
-    /// Initialize the VirtIO input device
-    pub fn init(&mut self) -> Result<(), &'static str> {
-        // Reset device
-        self.write_reg(VIRTIO_MMIO_STATUS, 0);
+        // VirtIO init sequence (spec 3.1.1)
+        serial_write_str(b"[VIRTIO-INPUT] common=0x");
+        serial_write_hex_usize(dev.transport.common);
+        serial_write_str(b" notify=0x");
+        serial_write_hex_usize(dev.transport.notify);
+        serial_write_str(b" device_cfg=0x");
+        serial_write_hex_usize(dev.transport.device_cfg);
+        serial_write_str(b"\r\n");
+        serial_write_str(b"[VIRTIO-INPUT] writing status 0 (reset)...\r\n");
+        dev.transport.write_status(0);
+        dev.transport.write_status(VIRTIO_STATUS_ACKNOWLEDGE);
+        dev.transport
+            .write_status(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
 
-        // Acknowledge device
-        self.write_reg(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACKNOWLEDGE);
+        // Feature negotiation
+        let features0 = dev.transport.read_device_features(0);
+        let features1 = dev.transport.read_device_features(1);
+        dev.transport.write_driver_features(0, features0);
+        dev.transport.write_driver_features(1, features1 & 0x1);
 
-        // Driver loaded
-        self.write_reg(
-            VIRTIO_MMIO_STATUS,
-            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
-        );
-
-        // Read device features
-        self.write_reg(VIRTIO_MMIO_DEVICE_FEATURES_SEL, 0);
-        let _features = self.read_reg(VIRTIO_MMIO_DEVICE_FEATURES);
-
-        // Write driver features (accept all for now)
-        self.write_reg(VIRTIO_MMIO_DRIVER_FEATURES_SEL, 0);
-        self.write_reg(VIRTIO_MMIO_DRIVER_FEATURES, 0);
-
-        // Features OK
-        self.write_reg(
-            VIRTIO_MMIO_STATUS,
+        dev.transport.write_status(
             VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
         );
-
-        // Verify features accepted
-        let status = self.read_reg(VIRTIO_MMIO_STATUS);
+        let status = dev.transport.read_status();
         if status & VIRTIO_STATUS_FEATURES_OK == 0 {
-            self.write_reg(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_FAILED);
-            return Err("Features not accepted");
+            serial_write_str(b"[VIRTIO-INPUT] FEATURES_OK not set - FAIL\r\n");
+            dev.transport.write_status(128);
+            return None;
         }
+        serial_write_str(b"[VIRTIO-INPUT] features OK\r\n");
 
-        // Read device configuration
-        self.read_device_config();
+        dev.read_device_config();
 
-        // Initialize virtqueues
-        self.init_event_queue()?;
-        self.init_status_queue()?;
+        serial_write_str(b"[VIRTIO-INPUT] init event queue...\r\n");
+        if dev.init_event_queue().is_err() {
+            serial_write_str(b"[VIRTIO-INPUT] event queue init FAILED\r\n");
+            dev.transport.write_status(128);
+            return None;
+        }
+        serial_write_str(b"[VIRTIO-INPUT] event queue OK, init status queue...\r\n");
+        let _ = dev.init_status_queue();
 
-        // Driver ready
-        self.write_reg(
-            VIRTIO_MMIO_STATUS,
+        dev.transport.write_status(
             VIRTIO_STATUS_ACKNOWLEDGE
                 | VIRTIO_STATUS_DRIVER
                 | VIRTIO_STATUS_FEATURES_OK
                 | VIRTIO_STATUS_DRIVER_OK,
         );
 
-        // Register with input subsystem
-        let device_type = match self.device_type {
+        let device_type = match dev.device_type {
             VirtioInputType::Keyboard => InputDeviceType::Keyboard,
             VirtioInputType::Mouse => InputDeviceType::Mouse,
             VirtioInputType::Tablet => InputDeviceType::Tablet,
             VirtioInputType::Generic => InputDeviceType::Unknown,
         };
-
         let info = InputDeviceInfo {
-            name: self.name.clone(),
-            phys: String::from("virtio"),
+            name: dev.name.clone(),
+            phys: String::from("virtio-pci"),
             uniq: String::new(),
             device_type,
-            vendor: self.devids.vendor,
-            product: self.devids.product,
-            version: self.devids.version,
+            vendor: dev.devids.vendor,
+            product: dev.devids.product,
+            version: dev.devids.version,
         };
+        dev.device_id = Some(input::register_device_info(info));
 
-        self.device_id = Some(input::register_device_info(info));
-
-        Ok(())
+        Some(dev)
     }
 
-    /// Read device configuration
     fn read_device_config(&mut self) {
-        // Read device name
         unsafe {
-            (*self.config).select = VirtioInputConfigSelect::IdName as u8;
-            (*self.config).subsel = 0;
-
-            core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+            write_volatile(&mut (*self.config).select, VirtioInputConfigSelect::IdName as u8);
+            write_volatile(&mut (*self.config).subsel, 0);
+            fence(Ordering::SeqCst);
 
             let size = read_volatile(&(*self.config).size) as usize;
             if size > 0 && size <= 128 {
-                let mut name_bytes = [0u8; 128];
+                let mut buf = [0u8; 128];
                 for i in 0..size {
-                    name_bytes[i] = read_volatile(&(*self.config).data[i]);
+                    buf[i] = read_volatile(&(*self.config).data[i]);
                 }
-                if let Ok(name) = core::str::from_utf8(&name_bytes[..size]) {
+                if let Ok(name) = core::str::from_utf8(&buf[..size]) {
                     self.name = String::from(name.trim_end_matches('\0'));
                 }
             }
-        }
 
-        // Read device IDs
-        unsafe {
-            (*self.config).select = VirtioInputConfigSelect::IdDevids as u8;
-            (*self.config).subsel = 0;
-
-            core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+            write_volatile(
+                &mut (*self.config).select,
+                VirtioInputConfigSelect::IdDevids as u8,
+            );
+            write_volatile(&mut (*self.config).subsel, 0);
+            fence(Ordering::SeqCst);
 
             let size = read_volatile(&(*self.config).size) as usize;
             if size >= core::mem::size_of::<VirtioInputDevids>() {
@@ -342,362 +440,267 @@ impl VirtioInput {
                 self.devids.version =
                     read_volatile(&(*self.config).data[6] as *const u8 as *const u16);
             }
-        }
 
-        // Determine device type from event bits
-        unsafe {
-            // Check for keyboard (EV_KEY with keyboard keys)
-            (*self.config).select = VirtioInputConfigSelect::EvBits as u8;
-            (*self.config).subsel = 1; // EV_KEY
-
-            core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
-
+            write_volatile(
+                &mut (*self.config).select,
+                VirtioInputConfigSelect::EvBits as u8,
+            );
+            write_volatile(&mut (*self.config).subsel, 1);
+            fence(Ordering::SeqCst);
             let size = read_volatile(&(*self.config).size) as usize;
-            if size > 0 {
-                // Has key events, check if it has letter keys
-                if size > 4 {
-                    let byte4 = read_volatile(&(*self.config).data[4]);
-                    if byte4 != 0 {
-                        self.device_type = VirtioInputType::Keyboard;
-                        return;
-                    }
+            if size > 4 {
+                let byte4 = read_volatile(&(*self.config).data[4]);
+                if byte4 != 0 {
+                    self.device_type = VirtioInputType::Keyboard;
+                    return;
                 }
             }
 
-            // Check for mouse/tablet (EV_REL or EV_ABS)
-            (*self.config).select = VirtioInputConfigSelect::EvBits as u8;
-            (*self.config).subsel = 2; // EV_REL
-
-            core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
-
-            let size = read_volatile(&(*self.config).size) as usize;
-            if size > 0 {
+            write_volatile(
+                &mut (*self.config).select,
+                VirtioInputConfigSelect::EvBits as u8,
+            );
+            write_volatile(&mut (*self.config).subsel, 2);
+            fence(Ordering::SeqCst);
+            if read_volatile(&(*self.config).size) > 0 {
                 self.device_type = VirtioInputType::Mouse;
                 return;
             }
 
-            (*self.config).select = VirtioInputConfigSelect::EvBits as u8;
-            (*self.config).subsel = 3; // EV_ABS
-
-            core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
-
-            let size = read_volatile(&(*self.config).size) as usize;
-            if size > 0 {
+            write_volatile(
+                &mut (*self.config).select,
+                VirtioInputConfigSelect::EvBits as u8,
+            );
+            write_volatile(&mut (*self.config).subsel, 3);
+            fence(Ordering::SeqCst);
+            if read_volatile(&(*self.config).size) > 0 {
                 self.device_type = VirtioInputType::Tablet;
             }
         }
     }
 
-    /// Initialize the event virtqueue
     fn init_event_queue(&mut self) -> Result<(), &'static str> {
-        self.write_reg(VIRTIO_MMIO_QUEUE_SEL, VIRTIO_INPUT_EVENT_QUEUE);
+        use mm_manager::mm;
+        use mm_traits::FrameAllocator;
 
-        let max_size = self.read_reg(VIRTIO_MMIO_QUEUE_NUM_MAX) as u16;
+        self.transport.select_queue(EVENT_QUEUE);
+        let max_size = self.transport.queue_max_size();
         if max_size == 0 {
             return Err("Event queue not available");
         }
-
         let size = max_size.min(64);
-        self.write_reg(VIRTIO_MMIO_QUEUE_NUM, size as u32);
+        self.event_size = size;
+        self.transport.set_queue_size(size);
 
-        self.event_queue = VirtQueue::new(size)?;
+        // — InputShade: DMA buffers MUST come from the physical frame allocator, not the
+        // kernel heap. The heap lives at KERNEL_VIRT_BASE (0xFFFF_FFFF_80xx), and
+        // `addr - PHYS_MAP_BASE` gives a bogus ~128TB "physical" address. The frame
+        // allocator returns REAL physical addresses; we access them via the direct map.
+        let desc_bytes = size as usize * core::mem::size_of::<VirtqDesc>();
+        let avail_bytes = core::mem::size_of::<VirtqAvail>();
+        let used_bytes = core::mem::size_of::<VirtqUsed>();
+        let ring_total = desc_bytes + avail_bytes + used_bytes;
+        let ring_pages = (ring_total + 4095) / 4096;
 
-        // Set queue addresses
-        let desc_addr = self.event_queue.descriptors as u64;
-        let avail_addr = self.event_queue.available as u64;
-        let used_addr = self.event_queue.used as u64;
+        let ring_phys = mm()
+            .alloc_contiguous(ring_pages)
+            .map_err(|_| "alloc ring frames")?;
+        let ring_phys_base = ring_phys.as_u64();
+        let ring_virt_base = (PHYS_MAP_BASE + ring_phys_base) as *mut u8;
 
-        self.write_reg(VIRTIO_MMIO_QUEUE_DESC_LOW, desc_addr as u32);
-        self.write_reg(VIRTIO_MMIO_QUEUE_DESC_HIGH, (desc_addr >> 32) as u32);
-        self.write_reg(VIRTIO_MMIO_QUEUE_AVAIL_LOW, avail_addr as u32);
-        self.write_reg(VIRTIO_MMIO_QUEUE_AVAIL_HIGH, (avail_addr >> 32) as u32);
-        self.write_reg(VIRTIO_MMIO_QUEUE_USED_LOW, used_addr as u32);
-        self.write_reg(VIRTIO_MMIO_QUEUE_USED_HIGH, (used_addr >> 32) as u32);
+        // Zero the DMA region
+        unsafe {
+            core::ptr::write_bytes(ring_virt_base, 0, ring_pages * 4096);
+        }
 
-        // Enable queue
-        self.write_reg(VIRTIO_MMIO_QUEUE_READY, 1);
+        // Layout: desc | avail | used (contiguous in physical memory)
+        self.event_desc = ring_virt_base as *mut VirtqDesc;
+        self.event_avail = unsafe { ring_virt_base.add(desc_bytes) } as *mut VirtqAvail;
+        self.event_used = unsafe { ring_virt_base.add(desc_bytes + avail_bytes) } as *mut VirtqUsed;
 
-        // Populate event queue with buffers
+        self.transport.set_queue_desc(ring_phys_base);
+        self.transport
+            .set_queue_avail(ring_phys_base + desc_bytes as u64);
+        self.transport
+            .set_queue_used(ring_phys_base + desc_bytes as u64 + avail_bytes as u64);
+        self.transport.enable_queue();
+
+        // Allocate event buffers from physical frames
+        let buf_bytes = size as usize * core::mem::size_of::<VirtioInputEvent>();
+        let buf_pages = (buf_bytes + 4095) / 4096;
+        let buf_phys = mm()
+            .alloc_contiguous(buf_pages)
+            .map_err(|_| "alloc event buf frames")?;
+        let buf_phys_base = buf_phys.as_u64();
+        let buf_virt_base = (PHYS_MAP_BASE + buf_phys_base) as *mut VirtioInputEvent;
+
+        unsafe {
+            core::ptr::write_bytes(
+                buf_virt_base as *mut u8,
+                0,
+                buf_pages * 4096,
+            );
+        }
+
+        self.event_buf_base = buf_virt_base;
+
+        // Fill descriptors and avail ring
+        let event_sz = core::mem::size_of::<VirtioInputEvent>() as u64;
         for i in 0..size {
-            let event = Box::new(VirtioInputEvent::default());
-            let addr = &*event as *const VirtioInputEvent as u64;
+            let buf_phys_addr = buf_phys_base + (i as u64) * event_sz;
 
             unsafe {
-                let desc = &mut *self.event_queue.descriptors.add(i as usize);
-                desc.addr = addr;
-                desc.len = core::mem::size_of::<VirtioInputEvent>() as u32;
-                desc.flags = VIRTQ_DESC_F_WRITE;
-                desc.next = 0;
+                let desc = &mut *self.event_desc.add(i as usize);
+                write_volatile(&mut desc.addr, buf_phys_addr);
+                write_volatile(&mut desc.len, event_sz as u32);
+                write_volatile(&mut desc.flags, VIRTQ_DESC_F_WRITE);
+                write_volatile(&mut desc.next, 0);
 
-                let avail = &mut *self.event_queue.available;
-                avail.ring[i as usize] = i;
+                write_volatile(&mut (*self.event_avail).ring[i as usize], i);
             }
-
-            self.event_queue.buffers.push(event);
         }
 
-        // Update available index
         unsafe {
-            let avail = &mut *self.event_queue.available;
-            avail.idx = size;
+            fence(Ordering::Release);
+            write_volatile(&mut (*self.event_avail).idx, size);
         }
 
-        self.event_queue.next_desc = size;
-
-        // Notify device
-        self.write_reg(VIRTIO_MMIO_QUEUE_NOTIFY, VIRTIO_INPUT_EVENT_QUEUE);
+        self.transport.notify_queue(EVENT_QUEUE);
 
         Ok(())
     }
 
-    /// Initialize the status virtqueue
     fn init_status_queue(&mut self) -> Result<(), &'static str> {
-        self.write_reg(VIRTIO_MMIO_QUEUE_SEL, VIRTIO_INPUT_STATUS_QUEUE);
+        use mm_manager::mm;
+        use mm_traits::FrameAllocator;
 
-        let max_size = self.read_reg(VIRTIO_MMIO_QUEUE_NUM_MAX) as u16;
+        self.transport.select_queue(STATUS_QUEUE);
+        let max_size = self.transport.queue_max_size();
         if max_size == 0 {
             return Err("Status queue not available");
         }
-
         let size = max_size.min(16);
-        self.write_reg(VIRTIO_MMIO_QUEUE_NUM, size as u32);
+        self.status_size = size;
+        self.transport.set_queue_size(size);
 
-        self.status_queue = VirtQueue::new(size)?;
+        // — InputShade: same DMA-safe allocation as event queue
+        let desc_bytes = size as usize * core::mem::size_of::<VirtqDesc>();
+        let avail_bytes = core::mem::size_of::<VirtqAvail>();
+        let used_bytes = core::mem::size_of::<VirtqUsed>();
+        let ring_total = desc_bytes + avail_bytes + used_bytes;
+        let ring_pages = (ring_total + 4095) / 4096;
 
-        // Set queue addresses
-        let desc_addr = self.status_queue.descriptors as u64;
-        let avail_addr = self.status_queue.available as u64;
-        let used_addr = self.status_queue.used as u64;
+        let ring_phys = mm()
+            .alloc_contiguous(ring_pages)
+            .map_err(|_| "alloc status ring frames")?;
+        let ring_phys_base = ring_phys.as_u64();
+        let ring_virt_base = (PHYS_MAP_BASE + ring_phys_base) as *mut u8;
 
-        self.write_reg(VIRTIO_MMIO_QUEUE_DESC_LOW, desc_addr as u32);
-        self.write_reg(VIRTIO_MMIO_QUEUE_DESC_HIGH, (desc_addr >> 32) as u32);
-        self.write_reg(VIRTIO_MMIO_QUEUE_AVAIL_LOW, avail_addr as u32);
-        self.write_reg(VIRTIO_MMIO_QUEUE_AVAIL_HIGH, (avail_addr >> 32) as u32);
-        self.write_reg(VIRTIO_MMIO_QUEUE_USED_LOW, used_addr as u32);
-        self.write_reg(VIRTIO_MMIO_QUEUE_USED_HIGH, (used_addr >> 32) as u32);
+        unsafe {
+            core::ptr::write_bytes(ring_virt_base, 0, ring_pages * 4096);
+        }
 
-        // Enable queue
-        self.write_reg(VIRTIO_MMIO_QUEUE_READY, 1);
+        self.status_desc = ring_virt_base as *mut VirtqDesc;
+        self.status_avail = unsafe { ring_virt_base.add(desc_bytes) } as *mut VirtqAvail;
+        self.status_used =
+            unsafe { ring_virt_base.add(desc_bytes + avail_bytes) } as *mut VirtqUsed;
+
+        self.transport.set_queue_desc(ring_phys_base);
+        self.transport
+            .set_queue_avail(ring_phys_base + desc_bytes as u64);
+        self.transport
+            .set_queue_used(ring_phys_base + desc_bytes as u64 + avail_bytes as u64);
+        self.transport.enable_queue();
 
         Ok(())
     }
 
-    /// Handle interrupt from device
-    pub fn handle_interrupt(&mut self) {
-        let status = self.read_reg(VIRTIO_MMIO_INTERRUPT_STATUS);
-        self.write_reg(VIRTIO_MMIO_INTERRUPT_ACK, status);
-
-        if status & 1 != 0 {
-            // Used buffer notification
-            self.process_events();
-        }
-    }
-
-    /// Process pending input events
     fn process_events(&mut self) {
-        loop {
-            let used_idx = unsafe { read_volatile(&(*self.event_queue.used).idx) };
+        let mut had_events = false;
 
-            if self.event_queue.last_used == used_idx {
+        loop {
+            let used_idx = unsafe { read_volatile(&(*self.event_used).idx) };
+            if self.event_last_used == used_idx {
                 break;
             }
 
-            let idx = (self.event_queue.last_used % self.event_queue.size) as usize;
-            let used_elem = unsafe { read_volatile(&(*self.event_queue.used).ring[idx]) };
-
+            let ring_idx = (self.event_last_used % self.event_size) as usize;
+            let used_elem = unsafe { read_volatile(&(*self.event_used).ring[ring_idx]) };
             let desc_idx = used_elem.id as usize;
-            if desc_idx < self.event_queue.buffers.len() {
-                let event = &self.event_queue.buffers[desc_idx];
-                self.dispatch_event(event);
+
+            if desc_idx < self.event_size as usize {
+                // — InputShade: read event from physical-map-backed buffer
+                let event = unsafe { read_volatile(self.event_buf_base.add(desc_idx)) };
+                self.dispatch_event(&event);
             }
 
-            // Re-add buffer to available ring
-            let avail_idx = unsafe { read_volatile(&(*self.event_queue.available).idx) };
+            let avail_idx = unsafe { read_volatile(&(*self.event_avail).idx) };
             unsafe {
-                let avail = &mut *self.event_queue.available;
-                avail.ring[(avail_idx % self.event_queue.size) as usize] = desc_idx as u16;
-                core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
-                write_volatile(&mut avail.idx, avail_idx.wrapping_add(1));
+                write_volatile(
+                    &mut (*self.event_avail).ring[(avail_idx % self.event_size) as usize],
+                    desc_idx as u16,
+                );
+                fence(Ordering::Release);
+                write_volatile(&mut (*self.event_avail).idx, avail_idx.wrapping_add(1));
             }
 
-            self.event_queue.last_used = self.event_queue.last_used.wrapping_add(1);
+            self.event_last_used = self.event_last_used.wrapping_add(1);
+            had_events = true;
         }
 
-        // Notify device of new available buffers
-        self.write_reg(VIRTIO_MMIO_QUEUE_NOTIFY, VIRTIO_INPUT_EVENT_QUEUE);
+        if had_events {
+            self.transport.notify_queue(EVENT_QUEUE);
+        }
     }
 
-    /// Dispatch an input event to the input subsystem
+    /// Dispatch event to input subsystem AND console/VT layer
+    /// — InputShade: reports to evdev AND uses shared kbd module for console bridge.
+    /// No more inline keyboard conversion — kbd.rs handles that for ALL drivers.
     fn dispatch_event(&self, event: &VirtioInputEvent) {
-        if let Some(device_id) = self.device_id {
-            match event.event_type {
-                0 => {
-                    // EV_SYN
-                    input::report_sync(device_id);
-                }
-                1 => {
-                    // EV_KEY
-                    let value = match event.value {
-                        0 => KeyValue::Released,
-                        1 => KeyValue::Pressed,
-                        2 => KeyValue::Repeat,
-                        _ => return,
-                    };
-                    input::report_key(device_id, event.code, value);
-                }
-                2 => {
-                    // EV_REL
-                    input::report_rel(device_id, event.code, event.value as i32);
-                }
-                3 => {
-                    // EV_ABS
-                    input::report_abs(device_id, event.code, event.value as i32);
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// Send LED status to device
-    pub fn set_led(&mut self, led: u16, on: bool) {
-        if self.status_queue.size == 0 {
-            return;
-        }
-
-        let event = VirtioInputEvent {
-            event_type: 0x11, // EV_LED
-            code: led,
-            value: if on { 1 } else { 0 },
+        let device_id = match self.device_id {
+            Some(id) => id,
+            None => return,
         };
 
-        // Find a free descriptor
-        let avail_idx = unsafe { read_volatile(&(*self.status_queue.available).idx) };
-        let desc_idx = (avail_idx % self.status_queue.size) as usize;
+        match event.event_type {
+            0 => {
+                input::report_sync(device_id);
+            }
+            1 => {
+                // EV_KEY
+                let value = match event.value {
+                    0 => KeyValue::Released,
+                    1 => KeyValue::Pressed,
+                    2 => KeyValue::Repeat,
+                    _ => return,
+                };
+                input::report_key(device_id, event.code, value);
 
-        // Set up descriptor
-        unsafe {
-            let desc = &mut *self.status_queue.descriptors.add(desc_idx);
-
-            // Use stack-allocated event copied to a stable location
-            let event_ptr = Box::into_raw(Box::new(event));
-            desc.addr = event_ptr as u64;
-            desc.len = core::mem::size_of::<VirtioInputEvent>() as u32;
-            desc.flags = 0; // Device reads from us
-            desc.next = 0;
-
-            let avail = &mut *self.status_queue.available;
-            avail.ring[desc_idx] = desc_idx as u16;
-            core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
-            write_volatile(&mut avail.idx, avail_idx.wrapping_add(1));
+                // — InputShade: shared kbd module does modifier tracking, Ctrl codes,
+                // ANSI escapes, keymap lookup, and VT push. Same path PS/2 uses.
+                if self.device_type == VirtioInputType::Keyboard {
+                    let pressed = event.value == 1 || event.value == 2;
+                    input::kbd::process_key_event(event.code, pressed);
+                }
+            }
+            2 => {
+                input::report_rel(device_id, event.code, event.value as i32);
+            }
+            3 => {
+                input::report_abs(device_id, event.code, event.value as i32);
+            }
+            _ => {}
         }
-
-        // Notify device
-        self.write_reg(VIRTIO_MMIO_QUEUE_SEL, VIRTIO_INPUT_STATUS_QUEUE);
-        self.write_reg(VIRTIO_MMIO_QUEUE_NOTIFY, VIRTIO_INPUT_STATUS_QUEUE);
     }
 
-    /// Get device type
     pub fn device_type(&self) -> VirtioInputType {
         self.device_type
     }
 
-    /// Get device name
     pub fn name(&self) -> &str {
         &self.name
-    }
-
-    fn read_reg(&self, offset: usize) -> u32 {
-        unsafe { read_volatile((self.mmio_base + offset) as *const u32) }
-    }
-
-    fn write_reg(&self, offset: usize, value: u32) {
-        unsafe { write_volatile((self.mmio_base + offset) as *mut u32, value) }
-    }
-}
-
-impl VirtQueue {
-    fn empty() -> Self {
-        Self {
-            descriptors: core::ptr::null_mut(),
-            available: core::ptr::null_mut(),
-            used: core::ptr::null_mut(),
-            size: 0,
-            next_desc: 0,
-            last_used: 0,
-            buffers: Vec::new(),
-        }
-    }
-
-    fn new(size: u16) -> Result<Self, &'static str> {
-        use alloc::alloc::{Layout, alloc_zeroed};
-
-        // Allocate descriptor table
-        let desc_size = size as usize * core::mem::size_of::<VirtqDesc>();
-        let desc_layout =
-            Layout::from_size_align(desc_size, 16).map_err(|_| "Invalid descriptor layout")?;
-        let descriptors = unsafe { alloc_zeroed(desc_layout) } as *mut VirtqDesc;
-        if descriptors.is_null() {
-            return Err("Failed to allocate descriptors");
-        }
-
-        // Allocate available ring
-        let avail_size = core::mem::size_of::<VirtqAvail>();
-        let avail_layout =
-            Layout::from_size_align(avail_size, 2).map_err(|_| "Invalid available ring layout")?;
-        let available = unsafe { alloc_zeroed(avail_layout) } as *mut VirtqAvail;
-        if available.is_null() {
-            return Err("Failed to allocate available ring");
-        }
-
-        // Allocate used ring
-        let used_size = core::mem::size_of::<VirtqUsed>();
-        let used_layout =
-            Layout::from_size_align(used_size, 4).map_err(|_| "Invalid used ring layout")?;
-        let used = unsafe { alloc_zeroed(used_layout) } as *mut VirtqUsed;
-        if used.is_null() {
-            return Err("Failed to allocate used ring");
-        }
-
-        Ok(Self {
-            descriptors,
-            available,
-            used,
-            size,
-            next_desc: 0,
-            last_used: 0,
-            buffers: Vec::with_capacity(size as usize),
-        })
     }
 }
 
 unsafe impl Send for VirtioInput {}
 unsafe impl Sync for VirtioInput {}
-
-/// Global VirtIO input devices
-static VIRTIO_INPUT_DEVICES: Mutex<Vec<VirtioInput>> = Mutex::new(Vec::new());
-
-/// Initialize VirtIO input devices from device tree
-pub fn init_from_mmio(base_addresses: &[usize]) {
-    let mut devices = VIRTIO_INPUT_DEVICES.lock();
-
-    for &base in base_addresses {
-        if let Some(mut device) = VirtioInput::probe(base) {
-            if device.init().is_ok() {
-                devices.push(device);
-            }
-        }
-    }
-}
-
-/// Handle interrupt for all VirtIO input devices
-pub fn handle_interrupt() {
-    let mut devices = VIRTIO_INPUT_DEVICES.lock();
-    for device in devices.iter_mut() {
-        device.handle_interrupt();
-    }
-}
-
-/// Get the number of initialized VirtIO input devices
-pub fn device_count() -> usize {
-    VIRTIO_INPUT_DEVICES.lock().len()
-}

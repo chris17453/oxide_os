@@ -40,7 +40,10 @@ pub fn waddch(win: WINDOW, ch: chtype) -> Result<()> {
             let color = if ch_color != 0 { ch_color } else { win_color };
             text_attrs | color
         };
-        let merged = chtype { ch: ch.ch, attr: merged_attr };
+        let merged = chtype {
+            ch: ch.ch,
+            attr: merged_attr,
+        };
         (*win).set_cell(y, x, merged)?;
 
         // Advance cursor

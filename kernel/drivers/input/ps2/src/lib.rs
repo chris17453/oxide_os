@@ -162,24 +162,10 @@ fn read_data() -> Option<u8> {
 pub struct Ps2Keyboard {
     /// Device ID for input subsystem
     device_id: AtomicU8,
-    /// Keymap
+    /// Keymap (scancode → keycode translation)
     keymap: Mutex<Keymap>,
-    /// LED state (Scroll, Num, Caps)
+    /// LED state (Scroll, Num, Caps) — for PS/2 hardware LED commands
     leds: AtomicU8,
-    /// Shift pressed
-    shift: AtomicBool,
-    /// Ctrl pressed
-    ctrl: AtomicBool,
-    /// Alt pressed (left alt)
-    alt: AtomicBool,
-    /// AltGr pressed (right alt)
-    altgr: AtomicBool,
-    /// Num Lock state
-    numlock: AtomicBool,
-    /// Caps Lock state (🔥 NOW ACTUALLY IMPLEMENTED 🔥)
-    capslock: AtomicBool,
-    /// Scroll Lock state (🔥 ALSO IMPLEMENTED 🔥)
-    scrolllock: AtomicBool,
 }
 
 impl Ps2Keyboard {
@@ -189,22 +175,49 @@ impl Ps2Keyboard {
             device_id: AtomicU8::new(255),
             keymap: Mutex::new(Keymap::new()),
             leds: AtomicU8::new(0x02), // Num Lock on by default
-            shift: AtomicBool::new(false),
-            ctrl: AtomicBool::new(false),
-            alt: AtomicBool::new(false),
-            altgr: AtomicBool::new(false),
-            numlock: AtomicBool::new(true),
-            capslock: AtomicBool::new(false), // Caps Lock off by default (normal behavior)
-            scrolllock: AtomicBool::new(false), // Scroll Lock off by default
         }
     }
 
     /// Initialize the keyboard
+    /// — TorqueJax: Send ENABLE_SCANNING so the device actually emits scancodes.
+    /// Without this the 8042 sits there, IRQs wired, LEDs blinking, but the
+    /// keyboard never utters a byte. Ask me how long that took to find.
     pub fn init(&self) -> bool {
-        // Minimal approach: keyboard should already be working in QEMU
-        // Just verify it's responsive
+        // Probe: send ECHO (0xEE) to see if anyone's home on port 1.
+        // If no PS/2 keyboard is present (e.g. pure VirtIO config), read_data()
+        // times out and we bail — no point enabling something that isn't there.
+        send_data(kbd_cmd::ECHO);
+        match read_data() {
+            Some(0xEE) => {} // — TorqueJax: keyboard echoed back, device is alive
+            Some(0xFE) => {
+                // RESEND means the device exists but didn't like the command — try anyway
+                serial_debug(b"[PS2] keyboard echo got RESEND, continuing\r\n");
+            }
+            _ => {
+                serial_debug(b"[PS2] keyboard echo timeout - no PS/2 device present\r\n");
+                return false;
+            }
+        }
+
+        // Enable scanning — the command that actually makes the keyboard talk
+        send_data(kbd_cmd::ENABLE_SCANNING);
+        match read_data() {
+            Some(0xFA) => {} // ACK
+            Some(0xFE) => {
+                // RESEND — retry once
+                serial_debug(b"[PS2] ENABLE_SCANNING got RESEND, retrying\r\n");
+                send_data(kbd_cmd::ENABLE_SCANNING);
+                let _ = read_data();
+            }
+            _ => {
+                serial_debug(b"[PS2] ENABLE_SCANNING failed - keyboard unresponsive\r\n");
+                return false;
+            }
+        }
+
         // Set initial LED state (Num Lock on by default)
         self.update_leds();
+        serial_debug(b"[PS2] keyboard scanning enabled\r\n");
         true
     }
 
@@ -219,89 +232,16 @@ impl Ps2Keyboard {
     }
 
     /// Handle a scancode
+    /// Process a scancode from the PS/2 keyboard
+    /// — GraveShift: translate scancode → keycode, report to input subsystem,
+    /// then hand off to the shared kbd module for console conversion.
+    /// No more 300 lines of inline conversion — kbd.rs owns that now.
     pub fn handle_scancode(&self, scancode: u8) {
         debug_input!("[PS2] Scancode: 0x{:02x}", scancode);
         let mut keymap = self.keymap.lock();
 
         if let Some((keycode, pressed)) = keymap.process_scancode(scancode) {
-            // Update modifier state
-            match keycode {
-                input::KEY_LEFTSHIFT | input::KEY_RIGHTSHIFT => {
-                    self.shift.store(pressed, Ordering::SeqCst);
-                }
-                input::KEY_LEFTCTRL | input::KEY_RIGHTCTRL => {
-                    self.ctrl.store(pressed, Ordering::SeqCst);
-                }
-                input::KEY_LEFTALT => {
-                    self.alt.store(pressed, Ordering::SeqCst);
-                }
-                input::KEY_RIGHTALT => {
-                    // Right Alt = AltGr on most international layouts
-                    self.altgr.store(pressed, Ordering::SeqCst);
-                }
-                input::KEY_NUMLOCK => {
-                    if pressed {
-                        let new_state = !self.numlock.load(Ordering::SeqCst);
-                        self.numlock.store(new_state, Ordering::SeqCst);
-                        let mut leds = self.leds.load(Ordering::SeqCst);
-                        if new_state {
-                            leds |= 0x02; // Num Lock LED bit
-                        } else {
-                            leds &= !0x02;
-                        }
-                        self.leds.store(leds, Ordering::SeqCst);
-                        self.update_leds();
-                    }
-                    // Don't forward NumLock itself to console
-                    return;
-                }
-                input::KEY_CAPSLOCK => {
-                    // 🔥 CAPS LOCK: THE FIX THE WORLD NEEDED 🔥
-                    //
-                    // OLD CODE: Key pressed, nothing happens, users cry
-                    // NEW CODE: Actually toggles Caps Lock state and LED like it's 2077
-                    if pressed {
-                        let new_state = !self.capslock.load(Ordering::SeqCst);
-                        self.capslock.store(new_state, Ordering::SeqCst);
-                        let mut leds = self.leds.load(Ordering::SeqCst);
-                        if new_state {
-                            leds |= 0x04; // Caps Lock LED bit (bit 2)
-                        } else {
-                            leds &= !0x04;
-                        }
-                        self.leds.store(leds, Ordering::SeqCst);
-                        self.update_leds();
-                    }
-                    // Don't forward Caps Lock key itself to console
-                    return;
-                }
-                input::KEY_SCROLLLOCK => {
-                    // 🔥 SCROLL LOCK: WELCOME TO THE LOCK PARTY (Priority #11) 🔥
-                    //
-                    // Before: Key pressed, nothing happens, LED stays dark
-                    // After: Toggles Scroll Lock state and LED
-                    //
-                    // Note: Traditional Scroll Lock behavior (pause terminal output)
-                    // is not implemented yet - this just tracks the LED state.
-                    if pressed {
-                        let new_state = !self.scrolllock.load(Ordering::SeqCst);
-                        self.scrolllock.store(new_state, Ordering::SeqCst);
-                        let mut leds = self.leds.load(Ordering::SeqCst);
-                        if new_state {
-                            leds |= 0x01; // Scroll Lock LED bit (bit 0)
-                        } else {
-                            leds &= !0x01;
-                        }
-                        self.leds.store(leds, Ordering::SeqCst);
-                        self.update_leds();
-                    }
-                    // Don't forward Scroll Lock key itself to console
-                    return;
-                }
-                _ => {}
-            }
-
-            // Report to input subsystem
+            // Report to input subsystem (evdev path)
             let value = if pressed {
                 KeyValue::Pressed
             } else {
@@ -316,204 +256,19 @@ impl Ps2Keyboard {
             input::report_key(self.device_id() as usize, keycode, value);
             input::report_sync(self.device_id() as usize);
 
-            // Push to console on key press (not release)
-            if pressed {
-                let shift = self.shift.load(Ordering::SeqCst);
-                let ctrl = self.ctrl.load(Ordering::SeqCst);
-                let altgr = self.altgr.load(Ordering::SeqCst);
-                let numlock = self.numlock.load(Ordering::SeqCst);
-
-                // Handle Ctrl+key combinations (send control codes)
-                // But not if AltGr is pressed (Ctrl+Alt is often used for AltGr on some systems)
-                if ctrl && !altgr {
-                    let ctrl_char = match keycode {
-                        input::KEY_A => Some(0x01), // Ctrl+A
-                        input::KEY_B => Some(0x02),
-                        input::KEY_C => Some(0x03), // Ctrl+C (SIGINT)
-                        input::KEY_D => Some(0x04), // Ctrl+D (EOF)
-                        input::KEY_E => Some(0x05),
-                        input::KEY_F => Some(0x06),
-                        input::KEY_G => Some(0x07),
-                        input::KEY_H => Some(0x08),
-                        input::KEY_I => Some(0x09),
-                        input::KEY_J => Some(0x0A),
-                        input::KEY_K => {
-                            // Visual indicator for Ctrl+K
-                            #[cfg(feature = "debug-input")]
-                            {
-                                // Send visual feedback to console via callback
-                                push_to_console(b"\n\r*** CTRL+K PRESSED ***\n\r");
-                            }
-                            Some(0x0B)
-                        }
-                        input::KEY_L => Some(0x0C),
-                        input::KEY_M => Some(0x0D),
-                        input::KEY_N => Some(0x0E),
-                        input::KEY_O => Some(0x0F),
-                        input::KEY_P => Some(0x10),
-                        input::KEY_Q => Some(0x11),
-                        input::KEY_R => Some(0x12),
-                        input::KEY_S => Some(0x13),
-                        input::KEY_T => Some(0x14),
-                        input::KEY_U => Some(0x15),
-                        input::KEY_V => Some(0x16),
-                        input::KEY_W => Some(0x17),
-                        input::KEY_X => Some(0x18),
-                        input::KEY_Y => Some(0x19),
-                        input::KEY_Z => Some(0x1A), // Ctrl+Z (SIGTSTP)
-                        _ => None,
-                    };
-                    if let Some(ch) = ctrl_char {
-                        push_to_console(&[ch]);
-                        return;
-                    }
+            // — GraveShift: shared kbd module handles modifiers, Ctrl codes,
+            // ANSI escapes, numpad, VT switching, and keymap lookup.
+            // PS/2 only needs to update hardware LEDs when lock keys toggle.
+            match input::kbd::process_key_event(keycode, pressed) {
+                input::kbd::KeyAction::LedChange(leds) => {
+                    let mut led_byte = 0u8;
+                    if leds.scrolllock { led_byte |= 0x01; }
+                    if leds.numlock { led_byte |= 0x02; }
+                    if leds.capslock { led_byte |= 0x04; }
+                    self.leds.store(led_byte, Ordering::SeqCst);
+                    self.update_leds();
                 }
-
-                // Handle keypad in navigation mode (Num Lock off)
-                if !numlock {
-                    let nav_seq: Option<&[u8]> = match keycode {
-                        input::KEY_KP8 => Some(b"\x1b[A"),
-                        input::KEY_KP2 => Some(b"\x1b[B"),
-                        input::KEY_KP6 => Some(b"\x1b[C"),
-                        input::KEY_KP4 => Some(b"\x1b[D"),
-                        input::KEY_KP7 => Some(b"\x1b[H"),
-                        input::KEY_KP1 => Some(b"\x1b[F"),
-                        input::KEY_KP9 => Some(b"\x1b[5~"),
-                        input::KEY_KP3 => Some(b"\x1b[6~"),
-                        input::KEY_KP0 => Some(b"\x1b[2~"),
-                        input::KEY_KPDOT => Some(b"\x1b[3~"),
-                        input::KEY_KP5 => Some(b"\x1b[E"),
-                        _ => None,
-                    };
-                    if let Some(seq) = nav_seq {
-                        push_to_console(seq);
-                        return;
-                    }
-                }
-
-                // Handle keypad in numeric mode (Num Lock on) to ensure digits always emit
-                if numlock {
-                    let kp_char: Option<u8> = match keycode {
-                        input::KEY_KP0 => Some(b'0'),
-                        input::KEY_KP1 => Some(b'1'),
-                        input::KEY_KP2 => Some(b'2'),
-                        input::KEY_KP3 => Some(b'3'),
-                        input::KEY_KP4 => Some(b'4'),
-                        input::KEY_KP5 => Some(b'5'),
-                        input::KEY_KP6 => Some(b'6'),
-                        input::KEY_KP7 => Some(b'7'),
-                        input::KEY_KP8 => Some(b'8'),
-                        input::KEY_KP9 => Some(b'9'),
-                        input::KEY_KPDOT => Some(b'.'),
-                        input::KEY_KPENTER => Some(b'\n'),
-                        input::KEY_KPPLUS => Some(b'+'),
-                        input::KEY_KPMINUS => Some(b'-'),
-                        input::KEY_KPASTERISK => Some(b'*'),
-                        input::KEY_KPSLASH => Some(b'/'),
-                        _ => None,
-                    };
-                    if let Some(ch) = kp_char {
-                        push_to_console(&[ch]);
-                        return;
-                    }
-                }
-
-                // 🔥 VT SWITCHING: Alt+F1 through Alt+F6 (v3 analysis fix) 🔥
-                // Before: Alt+F1 just sent escape sequence
-                // After: Switches to VT 0-5 respectively
-                let alt = self.alt.load(Ordering::SeqCst);
-                let altgr = self.altgr.load(Ordering::SeqCst);
-                if alt || altgr {
-                    let vt_num = match keycode {
-                        input::KEY_F1 => Some(0),
-                        input::KEY_F2 => Some(1),
-                        input::KEY_F3 => Some(2),
-                        input::KEY_F4 => Some(3),
-                        input::KEY_F5 => Some(4),
-                        input::KEY_F6 => Some(5),
-                        _ => None,
-                    };
-
-                    if let Some(vt) = vt_num {
-                        // Call VT switch callback
-                        unsafe {
-                            if let Some(callback) = VT_SWITCH_CALLBACK {
-                                callback(vt);
-                            }
-                        }
-                        return; // Don't generate escape sequence
-                    }
-                }
-
-                // Handle special keys (arrow keys, etc.) - send ANSI escape sequences
-                let ansi_seq: Option<&[u8]> = match keycode {
-                    input::KEY_UP => Some(b"\x1b[A"),
-                    input::KEY_DOWN => Some(b"\x1b[B"),
-                    input::KEY_RIGHT => Some(b"\x1b[C"),
-                    input::KEY_LEFT => Some(b"\x1b[D"),
-                    input::KEY_HOME => Some(b"\x1b[H"),
-                    input::KEY_END => Some(b"\x1b[F"),
-                    input::KEY_INSERT => {
-                        // Visual indicator for INSERT key
-                        #[cfg(feature = "debug-input")]
-                        {
-                            // Send visual feedback to console via callback
-                            push_to_console(b"\n\r*** INSERT KEY PRESSED ***\n\r");
-                        }
-                        Some(b"\x1b[2~")
-                    }
-                    input::KEY_DELETE => Some(b"\x1b[3~"),
-                    input::KEY_PAGEUP => Some(b"\x1b[5~"),
-                    input::KEY_PAGEDOWN => Some(b"\x1b[6~"),
-                    input::KEY_F1 => Some(b"\x1bOP"),
-                    input::KEY_F2 => Some(b"\x1bOQ"),
-                    input::KEY_F3 => Some(b"\x1bOR"),
-                    input::KEY_F4 => Some(b"\x1bOS"),
-                    input::KEY_F5 => Some(b"\x1b[15~"),
-                    input::KEY_F6 => Some(b"\x1b[17~"),
-                    input::KEY_F7 => Some(b"\x1b[18~"),
-                    input::KEY_F8 => Some(b"\x1b[19~"),
-                    input::KEY_F9 => Some(b"\x1b[20~"),
-                    input::KEY_F10 => Some(b"\x1b[21~"),
-                    input::KEY_F11 => Some(b"\x1b[23~"),
-                    input::KEY_F12 => Some(b"\x1b[24~"),
-                    // F13-F24 keys for advanced terminal applications
-                    // -- ByteRiot: Extended function keys for power users
-                    input::KEY_F13 => Some(b"\x1b[25~"),
-                    input::KEY_F14 => Some(b"\x1b[26~"),
-                    input::KEY_F15 => Some(b"\x1b[28~"),
-                    input::KEY_F16 => Some(b"\x1b[29~"),
-                    input::KEY_F17 => Some(b"\x1b[31~"),
-                    input::KEY_F18 => Some(b"\x1b[32~"),
-                    input::KEY_F19 => Some(b"\x1b[33~"),
-                    input::KEY_F20 => Some(b"\x1b[34~"),
-                    // F21-F24 use modified sequences
-                    input::KEY_F21 => Some(b"\x1b[23;2~"), // Shift+F11
-                    input::KEY_F22 => Some(b"\x1b[24;2~"), // Shift+F12
-                    input::KEY_F23 => Some(b"\x1b[25;2~"), // Shift+F13
-                    input::KEY_F24 => Some(b"\x1b[26;2~"), // Shift+F14
-                    input::KEY_ESC => Some(b"\x1b"),
-                    _ => None,
-                };
-
-                if let Some(seq) = ansi_seq {
-                    push_to_console(seq);
-                    return;
-                }
-
-                // 🔥 CAPS LOCK NOW ACTUALLY WORKS 🔥
-                // Caps Lock XORs with Shift for LETTERS ONLY (not symbols)
-                // - Caps + 'a' = 'A'
-                // - Caps + Shift + 'a' = 'a' (they cancel)
-                // - Caps + '1' = '1' (NOT '!', Caps Lock ignores non-letters)
-                let capslock = self.capslock.load(Ordering::SeqCst);
-                if let Some(ch) =
-                    input::keymap::keycode_to_char_current(keycode, shift, altgr, capslock)
-                {
-                    let mut buf = [0u8; 4];
-                    let s = ch.encode_utf8(&mut buf);
-                    push_to_console(s.as_bytes());
-                }
+                input::kbd::KeyAction::None => {}
             }
         }
     }
@@ -527,19 +282,19 @@ impl Ps2Keyboard {
         let _ = read_data(); // ACK
     }
 
-    /// Check if shift is pressed
+    /// Check if shift is pressed (reads from shared kbd module)
     pub fn is_shift(&self) -> bool {
-        self.shift.load(Ordering::SeqCst)
+        input::kbd::shift_pressed()
     }
 
-    /// Check if ctrl is pressed
+    /// Check if ctrl is pressed (reads from shared kbd module)
     pub fn is_ctrl(&self) -> bool {
-        self.ctrl.load(Ordering::SeqCst)
+        input::kbd::ctrl_pressed()
     }
 
-    /// Check if alt is pressed
+    /// Check if alt is pressed (reads from shared kbd module)
     pub fn is_alt(&self) -> bool {
-        self.alt.load(Ordering::SeqCst)
+        input::kbd::alt_pressed()
     }
 }
 
@@ -873,49 +628,6 @@ static KEYBOARD: Mutex<Option<Arc<Ps2Keyboard>>> = Mutex::new(None);
 /// Global mouse instance
 static MOUSE: Mutex<Option<Arc<Ps2Mouse>>> = Mutex::new(None);
 
-/// Console character callback type
-/// Called with bytes to push to console input buffer (may be single char or ANSI sequence)
-pub type ConsoleCharCallback = fn(&[u8]);
-
-/// VT switch callback type
-/// Called with VT number (0-5) when Alt+F1 through Alt+F6 is pressed
-pub type VtSwitchCallback = fn(usize);
-
-/// Global console callback
-static mut CONSOLE_CALLBACK: Option<ConsoleCharCallback> = None;
-
-/// Global VT switch callback
-static mut VT_SWITCH_CALLBACK: Option<VtSwitchCallback> = None;
-
-/// Set the console character callback
-///
-/// # Safety
-/// Must be called during single-threaded initialization
-pub unsafe fn set_console_callback(callback: ConsoleCharCallback) {
-    unsafe {
-        CONSOLE_CALLBACK = Some(callback);
-    }
-}
-
-/// Set the VT switch callback
-///
-/// # Safety
-/// Must be called during single-threaded initialization
-pub unsafe fn set_vt_switch_callback(callback: VtSwitchCallback) {
-    unsafe {
-        VT_SWITCH_CALLBACK = Some(callback);
-    }
-}
-
-/// Call the console callback with character(s)
-fn push_to_console(data: &[u8]) {
-    unsafe {
-        if let Some(callback) = CONSOLE_CALLBACK {
-            callback(data);
-        }
-    }
-}
-
 /// Debug flag to track init status
 static INIT_STATUS: AtomicU8 = AtomicU8::new(0);
 // 0 = not started, 1 = controller init failed, 2 = keyboard init failed,
@@ -938,14 +650,18 @@ pub fn init() -> bool {
     //   1. Config byte stolen by keyboard IRQ → wrong config written
     //   2. Mouse ACK/self-test stolen by drain path → timeouts
     //   3. Spinlock deadlock if handler fires while we hold KEYBOARD/MOUSE
-    unsafe { cli(); }
+    unsafe {
+        cli();
+    }
 
     serial_debug(b"[PS2] init: starting (IRQs disabled)\r\n");
 
     if !init_controller() {
         serial_debug(b"[PS2] init: controller FAILED\r\n");
         INIT_STATUS.store(1, Ordering::Relaxed);
-        unsafe { sti(); }
+        unsafe {
+            sti();
+        }
         return false;
     }
 
@@ -1035,7 +751,11 @@ pub fn handle_keyboard_irq() {
             }
             let nibbles = [(scancode >> 4) & 0xF, scancode & 0xF];
             for nibble in nibbles {
-                let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                let hex_char = if nibble < 10 {
+                    b'0' + nibble
+                } else {
+                    b'a' + nibble - 10
+                };
                 outb(0x3F8, hex_char);
             }
             let msg2 = b"\r\n";
@@ -1058,7 +778,33 @@ pub fn handle_keyboard_irq() {
     // If lock is contended, the byte is already drained — just drop it.
     if let Some(guard) = KEYBOARD.try_lock() {
         if let Some(keyboard) = guard.as_ref() {
+            // — InputShade: trace to confirm handle_scancode is called
+            if count <= 10 {
+                unsafe {
+                    let msg = b"[KBD-IRQ] calling handle_scancode\r\n";
+                    for &byte in msg.iter() {
+                        while inb(0x3FD) & 0x20 == 0 {}
+                        outb(0x3F8, byte);
+                    }
+                }
+            }
             keyboard.handle_scancode(scancode);
+        } else if count <= 5 {
+            unsafe {
+                let msg = b"[KBD-IRQ] KEYBOARD is None!\r\n";
+                for &byte in msg.iter() {
+                    while inb(0x3FD) & 0x20 == 0 {}
+                    outb(0x3F8, byte);
+                }
+            }
+        }
+    } else if count <= 5 {
+        unsafe {
+            let msg = b"[KBD-IRQ] KEYBOARD try_lock FAILED!\r\n";
+            for &byte in msg.iter() {
+                while inb(0x3FD) & 0x20 == 0 {}
+                outb(0x3F8, byte);
+            }
         }
     }
 }
@@ -1088,7 +834,11 @@ pub fn handle_mouse_irq() {
             }
             let nibbles = [(byte >> 4) & 0xF, byte & 0xF];
             for nibble in nibbles {
-                let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                let hex_char = if nibble < 10 {
+                    b'0' + nibble
+                } else {
+                    b'a' + nibble - 10
+                };
                 outb(0x3F8, hex_char);
             }
             let msg2 = b"\r\n";

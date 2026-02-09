@@ -647,6 +647,7 @@ dependencies = [
  "vfs",
  "virtio-blk",
  "virtio-gpu",
+ "virtio-input",
  "virtio-net",
  "virtio-snd",
  "vt",
@@ -1791,6 +1792,9 @@ name = "virtio-input"
 version = "0.1.0"
 dependencies = [
  "input",
+ "mm-manager",
+ "mm-traits",
+ "pci",
  "spin 0.9.8",
 ]
 

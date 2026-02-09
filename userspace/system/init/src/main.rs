@@ -123,6 +123,9 @@ fn main() -> i32 {
 
     printlns("[init] DEBUG: load_firewall_rules completed");
 
+    // Load console keyboard layout from /etc/vconsole.conf
+    load_vconsole_config();
+
     // Start service manager in daemon mode
     start_servicemgr();
 
@@ -348,6 +351,48 @@ fn load_firewall_rules() {
         }
     } else {
         printlns("[init] No firewall rules file found");
+    }
+}
+
+/// Load console configuration from /etc/vconsole.conf
+/// — GraveShift: Linux-standard config file. Reads KEYMAP= and sets keyboard layout
+/// via SYS_SETKEYMAP syscall. If the file doesn't exist, defaults stay (US QWERTY).
+fn load_vconsole_config() {
+    let fd = open("/etc/vconsole.conf", 0, 0);
+    if fd < 0 {
+        return;
+    }
+
+    let mut buf = [0u8; 512];
+    let n = read(fd, &mut buf);
+    close(fd);
+    if n <= 0 {
+        return;
+    }
+
+    let content = unsafe { core::str::from_utf8_unchecked(&buf[..n as usize]) };
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+
+        if let Some(keymap) = line.strip_prefix("KEYMAP=") {
+            let keymap = keymap.trim();
+            if !keymap.is_empty() {
+                let result = libc::syscall::syscall2(
+                    libc::syscall::SYS_SETKEYMAP,
+                    keymap.as_ptr() as usize,
+                    keymap.len(),
+                );
+                if result == 0 {
+                    printlns("[init] Keyboard layout set from /etc/vconsole.conf");
+                } else {
+                    eprintlns("[init] Failed to set keyboard layout");
+                }
+            }
+        }
     }
 }
 

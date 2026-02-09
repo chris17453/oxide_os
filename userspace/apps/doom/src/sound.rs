@@ -3,9 +3,9 @@
 //! Connects to the soundd daemon for audio output.
 //! -- EchoFrame: Audio + media subsystems integration
 
-use libc::{write, read, close};
-use libc::socket::{socket, connect, SockAddrUn, SockAddrIn, af, sock};
 use crate::game::Game;
+use libc::socket::{SockAddrIn, SockAddrUn, af, connect, sock, socket};
+use libc::{close, read, write};
 
 /// Sound system state
 pub struct SoundSystem {
@@ -30,7 +30,7 @@ impl SoundSystem {
             sun_family: af::UNIX as u16,
             sun_path: [0; 108],
         };
-        
+
         let socket_path = b"/run/soundd.sock";
         let path_len = socket_path.len().min(108);
         for i in 0..path_len {
@@ -41,7 +41,11 @@ impl SoundSystem {
         // The connect function in libc expects SockAddrIn but we can transmute
         let connected = unsafe {
             let addr_generic = core::mem::transmute::<&SockAddrUn, &SockAddrIn>(&addr);
-            connect(socket_fd, addr_generic, core::mem::size_of::<SockAddrUn>() as u32) >= 0
+            connect(
+                socket_fd,
+                addr_generic,
+                core::mem::size_of::<SockAddrUn>() as u32,
+            ) >= 0
         };
 
         if !connected {
@@ -107,12 +111,12 @@ impl SoundSystem {
         let vol = volume.min(100);
         let mut cmd = [0u8; 32];
         let vol_str = format_volume(vol);
-        
+
         let cmd_str = b"VOLUME:";
         for i in 0..cmd_str.len() {
             cmd[i] = cmd_str[i];
         }
-        
+
         let mut offset = cmd_str.len();
         for &b in vol_str.iter() {
             if b == 0 {
@@ -139,12 +143,12 @@ fn format_volume(vol: u8) -> [u8; 4] {
     let mut buf = [0u8; 4];
     let mut v = vol;
     let mut i = 0;
-    
+
     if v == 0 {
         buf[0] = b'0';
         return buf;
     }
-    
+
     let mut temp = [0u8; 3];
     let mut j = 0;
     while v > 0 {
@@ -152,12 +156,12 @@ fn format_volume(vol: u8) -> [u8; 4] {
         v /= 10;
         j += 1;
     }
-    
+
     while j > 0 {
         j -= 1;
         buf[i] = temp[j];
         i += 1;
     }
-    
+
     buf
 }

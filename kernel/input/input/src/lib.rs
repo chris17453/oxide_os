@@ -22,6 +22,7 @@ macro_rules! debug_input {
 
 pub mod device;
 pub mod event;
+pub mod kbd;
 pub mod keycodes;
 pub mod keymap;
 pub mod layouts;

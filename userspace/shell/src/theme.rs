@@ -102,7 +102,10 @@ impl Color {
             Some(Color::Cyan)
         } else if bytes_eq_ignore_case(name, b"white") {
             Some(Color::White)
-        } else if bytes_eq_ignore_case(name, b"brightblack") || bytes_eq_ignore_case(name, b"gray") || bytes_eq_ignore_case(name, b"grey") {
+        } else if bytes_eq_ignore_case(name, b"brightblack")
+            || bytes_eq_ignore_case(name, b"gray")
+            || bytes_eq_ignore_case(name, b"grey")
+        {
             Some(Color::BrightBlack)
         } else if bytes_eq_ignore_case(name, b"brightred") {
             Some(Color::BrightRed)

@@ -24,7 +24,7 @@ extern crate alloc;
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use libc::dns::{resolve, lookup_hosts_file, get_dns_servers};
+use libc::dns::{get_dns_servers, lookup_hosts_file, resolve};
 use libc::time::{time, usleep};
 use libc::*;
 
@@ -143,10 +143,7 @@ fn resolve_cached(hostname: &str) -> Option<(u8, u8, u8, u8)> {
                         cache.remove(&key);
                     }
                 }
-                cache.insert(
-                    hostname.to_string(),
-                    CacheEntry { ip, expires_at },
-                );
+                cache.insert(hostname.to_string(), CacheEntry { ip, expires_at });
             }
         }
 
@@ -183,7 +180,10 @@ fn cleanup_cache() {
     }
 
     if removed > 0 {
-        log(&alloc::format!("Cleaned up {} expired cache entries", removed));
+        log(&alloc::format!(
+            "Cleaned up {} expired cache entries",
+            removed
+        ));
     }
 }
 
@@ -201,7 +201,7 @@ fn print_stats() {
         print_u64(STATS.dns_queries);
         prints("\n  Failed queries: ");
         print_u64(STATS.failed_queries);
-        
+
         if let Some(cache) = &CACHE {
             prints("\n  Cache entries:  ");
             print_u64(cache.len() as u64);
@@ -218,7 +218,7 @@ fn write_pid_file() {
         // ColdCipher: Format PID as string
         let mut buf = [0u8; 16];
         let mut p = pid;
-        
+
         if p == 0 {
             buf[0] = b'0';
             let _ = write(fd, &buf[..1]);
@@ -236,7 +236,7 @@ fn write_pid_file() {
             }
             let _ = write(fd, &buf[..temp_len]);
         }
-        
+
         let _ = write(fd, b"\n");
         close(fd);
     }
@@ -280,7 +280,7 @@ fn main() -> i32 {
     loop {
         // ColdCipher: In a real implementation, this would listen on a socket
         // for resolution requests. For now, it performs periodic maintenance.
-        
+
         usleep(sleep_interval);
         cleanup_counter += 1;
 

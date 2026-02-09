@@ -12,7 +12,7 @@
 #![no_main]
 
 use libc::syscall::dhcp_request;
-use libc::{printlns, prints, print_i64};
+use libc::{print_i64, printlns, prints};
 
 /// Error codes returned by DHCP syscall
 mod err {

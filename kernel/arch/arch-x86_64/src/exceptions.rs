@@ -218,11 +218,12 @@ macro_rules! record_and_halt {
         let frame = unsafe { &*$frame };
         log_fault($vec, $error, frame.rip, frame.rsp, frame.rflags, $cr2);
         loop {
-            unsafe { core::arch::asm!("hlt", options(nomem, nostack, preserves_flags)); }
+            unsafe {
+                core::arch::asm!("hlt", options(nomem, nostack, preserves_flags));
+            }
         }
     }};
 }
-
 
 // Macro to create exception handler without error code
 macro_rules! exception_handler {
@@ -909,7 +910,9 @@ extern "C" fn handle_double_fault(frame: *const InterruptFrame, error: u64) {
     let frame = unsafe { &*frame };
     log_fault(8, error, frame.rip, frame.rsp, frame.rflags, 0);
     loop {
-        unsafe { core::arch::asm!("hlt", options(nomem, nostack, preserves_flags)); }
+        unsafe {
+            core::arch::asm!("hlt", options(nomem, nostack, preserves_flags));
+        }
     }
 }
 
@@ -953,7 +956,13 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
         unsafe {
             core::arch::asm!("mov {}, cr3", out(reg) cr3);
         }
-        crate::serial_println!("[PF] addr={:#x} rip={:#x} err={:#x} cr3={:#x}", cr2, frame.rip, error, cr3);
+        crate::serial_println!(
+            "[PF] addr={:#x} rip={:#x} err={:#x} cr3={:#x}",
+            cr2,
+            frame.rip,
+            error,
+            cr3
+        );
     }
 
     // Try page fault callback first (for COW handling, etc.)
@@ -1224,7 +1233,11 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
     // -- BlackLatch: User-mode page faults kill the process, not the kernel.
     // Only kernel faults are truly fatal.
     if error & 4 != 0 {
-        crate::serial_println!("[SIGSEGV] User page fault at addr {:#x}, RIP {:#x}", cr2, frame.rip);
+        crate::serial_println!(
+            "[SIGSEGV] User page fault at addr {:#x}, RIP {:#x}",
+            cr2,
+            frame.rip
+        );
         let kill_cb = unsafe { *core::ptr::addr_of!(USER_FAULT_KILL_CALLBACK) };
         if let Some(kill) = kill_cb {
             kill(0, frame.rip, 11); // 11 = SIGSEGV
@@ -1430,7 +1443,11 @@ extern "C" fn handle_timer(current_rsp: u64) -> u64 {
     #[cfg(feature = "debug-timer")]
     {
         if new_rsp != current_rsp {
-            crate::serial_println!("[TIMER] Context switch: {:#x} -> {:#x}", current_rsp, new_rsp);
+            crate::serial_println!(
+                "[TIMER] Context switch: {:#x} -> {:#x}",
+                current_rsp,
+                new_rsp
+            );
         }
     }
 

@@ -5,8 +5,8 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use libc::stat::{S_IFDIR, S_IFMT, Stat, stat as libc_stat};
 use libc::*;
-use libc::stat::{Stat, stat as libc_stat, S_IFDIR, S_IFMT};
 
 /// ShadePacket: Lightweight sysfs probe — stat() is ~88 bytes on stack vs
 /// opendir's ~4.4KB Dir struct. Returns true only if the path exists and
@@ -266,7 +266,7 @@ fn parse_mac_address(buf: &[u8]) -> Option<[u8; 6]> {
                 // Invalid character - not a hex digit
                 return None;
             };
-            
+
             current = (current << 4) | nibble;
             nibble_count += 1;
             if nibble_count > 2 {
@@ -281,11 +281,7 @@ fn parse_mac_address(buf: &[u8]) -> Option<[u8; 6]> {
         byte_idx += 1;
     }
 
-    if byte_idx == 6 {
-        Some(mac)
-    } else {
-        None
-    }
+    if byte_idx == 6 { Some(mac) } else { None }
 }
 
 /// Format a path by concatenating strings
@@ -315,7 +311,7 @@ fn read_sysfs_u64(path: &str) -> Option<u64> {
     // Parse decimal number
     let text = core::str::from_utf8(&buf[..n as usize]).ok()?;
     let text = text.trim();
-    
+
     let mut val: u64 = 0;
     for c in text.bytes() {
         if c.is_ascii_digit() {

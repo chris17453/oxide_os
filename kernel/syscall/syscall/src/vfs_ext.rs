@@ -1082,7 +1082,7 @@ pub struct Statx {
 }
 
 /// sys_statx - Extended stat with more info and flags
-/// 
+///
 /// # Arguments
 /// * `dirfd` - Directory fd for relative paths (or AT_FDCWD)
 /// * `path_ptr` - Path to file
@@ -1094,11 +1094,18 @@ pub struct Statx {
 /// # GraveShift
 /// Provides richer metadata than stat: birth time, mount ID, file attributes.
 /// Used by modern tools that need precise filesystem info.
-pub fn sys_statx(dirfd: i32, path_ptr: u64, path_len: usize, _flags: i32, _mask: u32, statxbuf: u64) -> i64 {
+pub fn sys_statx(
+    dirfd: i32,
+    path_ptr: u64,
+    path_len: usize,
+    _flags: i32,
+    _mask: u32,
+    statxbuf: u64,
+) -> i64 {
     if dirfd != nr::AT_FDCWD {
         return errno::ENOSYS;
     }
-    
+
     if statxbuf == 0 || statxbuf >= 0x0000_8000_0000_0000 {
         return errno::EFAULT;
     }
@@ -1137,7 +1144,7 @@ pub fn sys_statx(dirfd: i32, path_ptr: u64, path_len: usize, _flags: i32, _mask:
             return vfs_error_to_errno(e);
         }
     };
-    
+
     let statx = Statx {
         stx_mask: 0x7FF, // All basic fields
         stx_blksize: 4096,
@@ -1192,7 +1199,7 @@ pub fn sys_openat2(dirfd: i32, path_ptr: u64, path_len: usize, how_ptr: u64, _si
     if dirfd != nr::AT_FDCWD {
         return errno::ENOSYS;
     }
-    
+
     if how_ptr == 0 || how_ptr >= 0x0000_8000_0000_0000 {
         return errno::EFAULT;
     }
@@ -1201,7 +1208,7 @@ pub fn sys_openat2(dirfd: i32, path_ptr: u64, path_len: usize, how_ptr: u64, _si
         core::arch::asm!("stac", options(nomem, nostack));
         let how = core::ptr::read_volatile(how_ptr as *const OpenHow);
         core::arch::asm!("clac", options(nomem, nostack));
-        
+
         // For now, ignore resolve flags and use regular open
         vfs::sys_open(path_ptr, path_len, how.flags as u32, how.mode as u32)
     }
@@ -1224,7 +1231,7 @@ pub fn sys_renameat2(
     if olddirfd != nr::AT_FDCWD || newdirfd != nr::AT_FDCWD {
         return errno::ENOSYS;
     }
-    
+
     // For now, ignore flags and use regular rename
     crate::dir::sys_rename(oldpath_ptr, oldpath_len, newpath_ptr, newpath_len)
 }
@@ -1248,16 +1255,23 @@ pub fn sys_mknodat(dirfd: i32, path_ptr: u64, path_len: usize, mode: u32, _dev: 
     if dirfd != nr::AT_FDCWD {
         return errno::ENOSYS;
     }
-    
+
     // Extract file type from mode
     let file_type = mode & 0xF000;
-    
+
     // For now, only support regular files and FIFOs
     match file_type {
-        0x8000 => { // S_IFREG - regular file
-            vfs::sys_open(path_ptr, path_len, 0x41 /* O_CREAT|O_WRONLY */, mode & 0o777)
+        0x8000 => {
+            // S_IFREG - regular file
+            vfs::sys_open(
+                path_ptr,
+                path_len,
+                0x41, /* O_CREAT|O_WRONLY */
+                mode & 0o777,
+            )
         }
-        0x1000 => { // S_IFIFO - FIFO
+        0x1000 => {
+            // S_IFIFO - FIFO
             // Create a FIFO would need special VFS support
             errno::ENOSYS
         }

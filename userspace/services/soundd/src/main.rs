@@ -31,7 +31,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use libc::c_exports::mkfifo;
 use libc::dirent::{closedir, opendir, readdir};
-use libc::stat::{Stat, stat as libc_stat, S_IFDIR, S_IFMT};
+use libc::stat::{S_IFDIR, S_IFMT, Stat, stat as libc_stat};
 use libc::time::usleep;
 use libc::*;
 

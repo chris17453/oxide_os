@@ -118,6 +118,10 @@ pub fn terminal_tick() {
         }
     }
 
+    // Drain VirtIO input devices (keyboard/mouse) if we're running on a
+    // configuration where PCI interrupts aren't wired yet.
+    virtio_input::poll();
+
     // Process mouse events from input subsystem
     // Mouse device is typically device 1 (keyboard is device 0)
     if fb::mouse_initialized() {

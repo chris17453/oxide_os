@@ -7,8 +7,8 @@
 //!
 //! -- GraveShift: Game engine logic - where demons meet their fate
 
-use crate::wad::WadFile;
 use crate::input::InputState;
+use crate::wad::WadFile;
 use libc::math::{cosf, sinf};
 
 /// Simple map cell types
@@ -23,7 +23,7 @@ pub struct Game {
     player_angle: f32,
     player_health: u32,
     player_ammo: u32,
-    map: [[u8; 64]; 64],  // Simple 64x64 map
+    map: [[u8; 64]; 64], // Simple 64x64 map
 }
 
 impl Game {
@@ -146,11 +146,11 @@ impl Game {
 
         // Strafe
         if input.is_strafe_left() {
-            dx += cosf(self.player_angle - 1.5708) * move_speed;  // -90 degrees
+            dx += cosf(self.player_angle - 1.5708) * move_speed; // -90 degrees
             dy += sinf(self.player_angle - 1.5708) * move_speed;
         }
         if input.is_strafe_right() {
-            dx += cosf(self.player_angle + 1.5708) * move_speed;  // +90 degrees
+            dx += cosf(self.player_angle + 1.5708) * move_speed; // +90 degrees
             dy += sinf(self.player_angle + 1.5708) * move_speed;
         }
 
@@ -170,7 +170,7 @@ impl Game {
             // Check for doors in front of player
             let check_x = (self.player_x + cosf(self.player_angle) * 1.5) as i32;
             let check_y = (self.player_y + sinf(self.player_angle) * 1.5) as i32;
-            
+
             if check_x >= 0 && check_x < 64 && check_y >= 0 && check_y < 64 {
                 if self.map[check_y as usize][check_x as usize] == CELL_DOOR {
                     self.map[check_y as usize][check_x as usize] = CELL_EMPTY;
@@ -202,9 +202,19 @@ impl Game {
     }
 
     // Getters for renderer
-    pub fn player_x(&self) -> f32 { self.player_x }
-    pub fn player_y(&self) -> f32 { self.player_y }
-    pub fn player_angle(&self) -> f32 { self.player_angle }
-    pub fn player_health(&self) -> u32 { self.player_health }
-    pub fn player_ammo(&self) -> u32 { self.player_ammo }
+    pub fn player_x(&self) -> f32 {
+        self.player_x
+    }
+    pub fn player_y(&self) -> f32 {
+        self.player_y
+    }
+    pub fn player_angle(&self) -> f32 {
+        self.player_angle
+    }
+    pub fn player_health(&self) -> u32 {
+        self.player_health
+    }
+    pub fn player_ammo(&self) -> u32 {
+        self.player_ammo
+    }
 }

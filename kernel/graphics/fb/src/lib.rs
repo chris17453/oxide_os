@@ -18,7 +18,9 @@ pub mod perf;
 
 pub use color::{Color, PixelFormat};
 pub use console::{Cell, FbConsole};
-pub use font::{Font, FontEx, FontFormat, Glyph, GlyphData, UnicodeRange, PSF2_FONT, BUILTIN_FONT_EX};
+pub use font::{
+    BUILTIN_FONT_EX, Font, FontEx, FontFormat, Glyph, GlyphData, PSF2_FONT, UnicodeRange,
+};
 pub use font_manager::{FontManager, ResolvedGlyph};
 pub use framebuffer::{Framebuffer, FramebufferInfo, LinearFramebuffer};
 pub use mode::{set_mode, set_mode_setter};

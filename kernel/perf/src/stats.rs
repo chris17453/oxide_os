@@ -29,10 +29,16 @@ pub fn print_perf_stats(counters: &PerfCounters, uptime_ticks: u64) {
     write_str("╠══════════════════════════════════════════════════════════════════╣\n");
 
     // Timer IRQ
-    let timer_count = counters.timer_irq_count.load(core::sync::atomic::Ordering::Relaxed);
+    let timer_count = counters
+        .timer_irq_count
+        .load(core::sync::atomic::Ordering::Relaxed);
     let timer_avg = counters.timer_irq_avg_cycles();
-    let timer_min = counters.timer_irq_cycles_min.load(core::sync::atomic::Ordering::Relaxed);
-    let timer_max = counters.timer_irq_cycles_max.load(core::sync::atomic::Ordering::Relaxed);
+    let timer_min = counters
+        .timer_irq_cycles_min
+        .load(core::sync::atomic::Ordering::Relaxed);
+    let timer_max = counters
+        .timer_irq_cycles_max
+        .load(core::sync::atomic::Ordering::Relaxed);
 
     write_str("║  Timer IRQ:     ");
     print_decimal(timer_count);
@@ -51,7 +57,9 @@ pub fn print_perf_stats(counters: &PerfCounters, uptime_ticks: u64) {
     write_str("║\n");
 
     // Keyboard IRQ
-    let kb_count = counters.keyboard_irq_count.load(core::sync::atomic::Ordering::Relaxed);
+    let kb_count = counters
+        .keyboard_irq_count
+        .load(core::sync::atomic::Ordering::Relaxed);
     let kb_avg = counters.keyboard_irq_avg_cycles();
     if kb_count > 0 {
         write_str("║  Keyboard IRQ:  ");
@@ -64,7 +72,9 @@ pub fn print_perf_stats(counters: &PerfCounters, uptime_ticks: u64) {
     }
 
     // Mouse IRQ
-    let mouse_count = counters.mouse_irq_count.load(core::sync::atomic::Ordering::Relaxed);
+    let mouse_count = counters
+        .mouse_irq_count
+        .load(core::sync::atomic::Ordering::Relaxed);
     let mouse_avg = counters.mouse_irq_avg_cycles();
     if mouse_count > 0 {
         write_str("║  Mouse IRQ:     ");
@@ -80,8 +90,12 @@ pub fn print_perf_stats(counters: &PerfCounters, uptime_ticks: u64) {
     write_str("║  SCHEDULER STATISTICS                                            ║\n");
     write_str("╠══════════════════════════════════════════════════════════════════╣\n");
 
-    let ctx_switches = counters.context_switches.load(core::sync::atomic::Ordering::Relaxed);
-    let preemptions = counters.preemptions.load(core::sync::atomic::Ordering::Relaxed);
+    let ctx_switches = counters
+        .context_switches
+        .load(core::sync::atomic::Ordering::Relaxed);
+    let preemptions = counters
+        .preemptions
+        .load(core::sync::atomic::Ordering::Relaxed);
 
     write_str("║  Context switches: ");
     print_decimal(ctx_switches);
@@ -97,9 +111,15 @@ pub fn print_perf_stats(counters: &PerfCounters, uptime_ticks: u64) {
     write_str("║  OUTPUT HEALTH (STDERR)                                          ║\n");
     write_str("╠══════════════════════════════════════════════════════════════════╣\n");
 
-    let serial_written = counters.serial_bytes_written.load(core::sync::atomic::Ordering::Relaxed);
-    let serial_dropped = counters.serial_bytes_dropped.load(core::sync::atomic::Ordering::Relaxed);
-    let serial_spins = counters.serial_spin_limit_hits.load(core::sync::atomic::Ordering::Relaxed);
+    let serial_written = counters
+        .serial_bytes_written
+        .load(core::sync::atomic::Ordering::Relaxed);
+    let serial_dropped = counters
+        .serial_bytes_dropped
+        .load(core::sync::atomic::Ordering::Relaxed);
+    let serial_spins = counters
+        .serial_spin_limit_hits
+        .load(core::sync::atomic::Ordering::Relaxed);
     let drop_rate = counters.serial_drop_rate();
 
     write_str("║  Bytes written:    ");
@@ -121,8 +141,12 @@ pub fn print_perf_stats(counters: &PerfCounters, uptime_ticks: u64) {
     write_str("║\n");
 
     // Terminal rendering stats
-    let term_ticks = counters.terminal_ticks.load(core::sync::atomic::Ordering::Relaxed);
-    let term_renders = counters.terminal_renders.load(core::sync::atomic::Ordering::Relaxed);
+    let term_ticks = counters
+        .terminal_ticks
+        .load(core::sync::atomic::Ordering::Relaxed);
+    let term_renders = counters
+        .terminal_renders
+        .load(core::sync::atomic::Ordering::Relaxed);
     let term_avg = counters.terminal_render_avg_cycles();
 
     if term_ticks > 0 {

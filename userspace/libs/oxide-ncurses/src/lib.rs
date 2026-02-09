@@ -258,7 +258,9 @@ impl From<BoolOption> for bool {
 pub use attributes::{attr_get, attr_set, attroff, attron, attrset};
 pub use color::{can_change_color, color_pair, has_colors, init_color, init_pair, start_color};
 pub use input::{getch, getstr, timeout, wgetch, wgetstr, wtimeout};
-pub use output::{addch, addstr, clear, erase, mvprintw, printw, waddch, waddstr, wclear, werase, wprintw};
+pub use output::{
+    addch, addstr, clear, erase, mvprintw, printw, waddch, waddstr, wclear, werase, wprintw,
+};
 pub use screen::{ScreenData, endwin, initscr, newterm, refresh, wrefresh};
 pub use window::{WindowData, delwin, mvwin, newwin};
 

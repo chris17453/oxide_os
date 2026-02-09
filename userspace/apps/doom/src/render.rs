@@ -8,8 +8,8 @@
 //!
 //! -- GlassSignal: Software rasterization, pixel by pixel warfare
 
-use crate::wad::WadFile;
 use crate::game::Game;
+use crate::wad::WadFile;
 use libc::math::{cosf, sinf};
 
 /// Color palette (Doom's 256 color palette)
@@ -20,10 +20,10 @@ const PALETTE: [u32; 256] = generate_doom_palette();
 const fn generate_doom_palette() -> [u32; 256] {
     let mut pal = [0u32; 256];
     let mut i = 0;
-    
+
     // Black
     pal[0] = 0xFF000000;
-    
+
     // Grays (1-31)
     i = 1;
     while i < 32 {
@@ -31,7 +31,7 @@ const fn generate_doom_palette() -> [u32; 256] {
         pal[i] = 0xFF000000 | (intensity << 16) | (intensity << 8) | intensity;
         i += 1;
     }
-    
+
     // Reds (32-63)
     i = 32;
     while i < 64 {
@@ -39,7 +39,7 @@ const fn generate_doom_palette() -> [u32; 256] {
         pal[i] = 0xFF000000 | (intensity << 16);
         i += 1;
     }
-    
+
     // Greens (64-95)
     i = 64;
     while i < 96 {
@@ -47,7 +47,7 @@ const fn generate_doom_palette() -> [u32; 256] {
         pal[i] = 0xFF000000 | (intensity << 8);
         i += 1;
     }
-    
+
     // Blues (96-127)
     i = 96;
     while i < 128 {
@@ -55,7 +55,7 @@ const fn generate_doom_palette() -> [u32; 256] {
         pal[i] = 0xFF000000 | intensity;
         i += 1;
     }
-    
+
     // Browns/tans (128-159)
     i = 128;
     while i < 160 {
@@ -63,7 +63,7 @@ const fn generate_doom_palette() -> [u32; 256] {
         pal[i] = 0xFF000000 | (intensity << 16) | ((intensity / 2) << 8);
         i += 1;
     }
-    
+
     // Fill rest with variations
     while i < 256 {
         let r = ((i * 13) % 256) as u32;
@@ -72,7 +72,7 @@ const fn generate_doom_palette() -> [u32; 256] {
         pal[i] = 0xFF000000 | (r << 16) | (g << 8) | b;
         i += 1;
     }
-    
+
     pal
 }
 
@@ -80,7 +80,7 @@ const fn generate_doom_palette() -> [u32; 256] {
 pub struct Renderer {
     width: u32,
     height: u32,
-    frame_buffer: [u8; 1024 * 768],  // Temporary frame buffer for indexed colors
+    frame_buffer: [u8; 1024 * 768], // Temporary frame buffer for indexed colors
 }
 
 impl Renderer {
@@ -97,8 +97,8 @@ impl Renderer {
     /// -- GlassSignal: The render loop - where the magic happens
     pub fn render(&mut self, game: &Game, fb: &mut [u8]) {
         // Clear screen with ceiling color
-        let ceiling_color = 96u8;  // Light blue
-        let floor_color = 64u8;    // Gray
+        let ceiling_color = 96u8; // Light blue
+        let floor_color = 64u8; // Gray
 
         let half_height = self.height / 2;
 
@@ -135,8 +135,9 @@ impl Renderer {
 
         // Cast a ray for each column of the screen
         for x in 0..self.width {
-            let ray_angle = player_angle + ((x as f32 - self.width as f32 / 2.0) / self.width as f32) * 1.0;
-            
+            let ray_angle =
+                player_angle + ((x as f32 - self.width as f32 / 2.0) / self.width as f32) * 1.0;
+
             // Cast ray and find wall hit
             let (hit_dist, wall_type) = self.cast_ray(player_x, player_y, ray_angle, game);
 
@@ -165,7 +166,7 @@ impl Renderer {
     fn cast_ray(&self, start_x: f32, start_y: f32, angle: f32, game: &Game) -> (f32, u8) {
         let dx = cosf(angle);
         let dy = sinf(angle);
-        
+
         let mut dist = 0.0;
         let max_dist = 20.0;
         let step = 0.1;
@@ -195,7 +196,7 @@ impl Renderer {
             for x in 0..self.width {
                 let idx = (y * self.width + x) as usize;
                 if idx < self.frame_buffer.len() {
-                    self.frame_buffer[idx] = 0;  // Black
+                    self.frame_buffer[idx] = 0; // Black
                 }
             }
         }
@@ -203,14 +204,14 @@ impl Renderer {
         // Draw health/ammo (simplified)
         let health = game.player_health();
         let ammo = game.player_ammo();
-        
+
         // Draw health bar (red)
         let health_width = (self.width / 4) * health / 100;
         for x in 10..10 + health_width {
             for y in bar_start + 10..bar_start + 20 {
                 let idx = (y * self.width + x) as usize;
                 if idx < self.frame_buffer.len() {
-                    self.frame_buffer[idx] = 40;  // Red
+                    self.frame_buffer[idx] = 40; // Red
                 }
             }
         }
@@ -221,7 +222,7 @@ impl Renderer {
             for y in bar_start + 10..bar_start + 20 {
                 let idx = (y * self.width + x) as usize;
                 if idx < self.frame_buffer.len() {
-                    self.frame_buffer[idx] = 160;  // Yellow
+                    self.frame_buffer[idx] = 160; // Yellow
                 }
             }
         }
@@ -243,10 +244,10 @@ impl Renderer {
                 // Write as BGRA (assuming 32bpp framebuffer)
                 let fb_idx = idx * 4;
                 if fb_idx + 3 < fb.len() {
-                    fb[fb_idx] = (rgb & 0xFF) as u8;         // B
-                    fb[fb_idx + 1] = ((rgb >> 8) & 0xFF) as u8;  // G
+                    fb[fb_idx] = (rgb & 0xFF) as u8; // B
+                    fb[fb_idx + 1] = ((rgb >> 8) & 0xFF) as u8; // G
                     fb[fb_idx + 2] = ((rgb >> 16) & 0xFF) as u8; // R
-                    fb[fb_idx + 3] = 0xFF;                   // A
+                    fb[fb_idx + 3] = 0xFF; // A
                 }
             }
         }

@@ -5,4 +5,7 @@ edition = "2024"
 
 [dependencies]
 input = { path = "../../../input/input" }
+pci = { path = "../../pci" }
+mm-manager = { path = "../../../mm/mm-manager" }
+mm-traits = { path = "../../../mm/mm-traits" }
 spin = "0.9"

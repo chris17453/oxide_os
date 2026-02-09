@@ -361,7 +361,9 @@ impl VnodeOps for ProcPid {
     }
 
     fn readdir(&self, offset: u64) -> VfsResult<Option<DirEntry>> {
-        let entries = [".", "..", "status", "cmdline", "stat", "statm", "exe", "cwd"];
+        let entries = [
+            ".", "..", "status", "cmdline", "stat", "statm", "exe", "cwd",
+        ];
         let types = [
             VnodeType::Directory,
             VnodeType::Directory,
@@ -843,18 +845,26 @@ impl ProcPidStat {
     }
 
     /// Generate /proc/[pid]/stat content
-    /// Format: pid (comm) state ppid pgrp session tty_nr tpgid flags minflt cminflt majflt 
-    /// cmajflt utime stime cutime cstime priority nice num_threads itrealvalue starttime 
-    /// vsize rss rsslim startcode endcode startstack kstkesp kstkeip signal blocked sigignore 
-    /// sigcatch wchan nswap cnswap exit_signal processor rt_priority policy 
-    /// delayacct_blkio_ticks guest_time cguest_time start_data end_data start_brk arg_start 
+    /// Format: pid (comm) state ppid pgrp session tty_nr tpgid flags minflt cminflt majflt
+    /// cmajflt utime stime cutime cstime priority nice num_threads itrealvalue starttime
+    /// vsize rss rsslim startcode endcode startstack kstkesp kstkeip signal blocked sigignore
+    /// sigcatch wchan nswap cnswap exit_signal processor rt_priority policy
+    /// delayacct_blkio_ticks guest_time cguest_time start_data end_data start_brk arg_start
     /// arg_end env_start env_end exit_code
     fn generate_content(&self) -> String {
         if let Some(meta) = sched::get_task_meta(self.pid) {
             let m = meta.lock();
-            
+
             // — GraveShift: Pull real timing + nice from scheduler for accurate /proc/[pid]/stat
-            let (state_char, ppid, start_time, sum_runtime, nice) = if let Some((task_state, task_ppid, task_start_time, task_sum_runtime, task_nice)) = sched::get_task_timing_info(self.pid) {
+            let (state_char, ppid, start_time, sum_runtime, nice) = if let Some((
+                task_state,
+                task_ppid,
+                task_start_time,
+                task_sum_runtime,
+                task_nice,
+            )) =
+                sched::get_task_timing_info(self.pid)
+            {
                 let state = match task_state {
                     s if s == sched::TaskState::TASK_RUNNING => 'R',
                     s if s == sched::TaskState::TASK_INTERRUPTIBLE => 'S',
@@ -865,7 +875,13 @@ impl ProcPidStat {
                     s if s == sched::TaskState::TASK_DEAD => 'X',
                     _ => 'R',
                 };
-                (state, task_ppid, task_start_time, task_sum_runtime, task_nice)
+                (
+                    state,
+                    task_ppid,
+                    task_start_time,
+                    task_sum_runtime,
+                    task_nice,
+                )
             } else {
                 ('R', 0, 0, 0, 0i8)
             };
@@ -901,58 +917,58 @@ impl ProcPidStat {
             // Linux /proc/[pid]/stat format (52 fields minimum)
             format!(
                 "{} ({}) {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}\n",
-                self.pid,           // 1: pid
-                name,               // 2: comm (in parentheses)
-                state_char,         // 3: state
-                ppid,               // 4: ppid
-                m.pgid,             // 5: pgrp
-                m.sid,              // 6: session
-                m.tty_nr,           // 7: tty_nr
-                m.pgid,             // 8: tpgid (foreground process group)
-                0u64,               // 9: flags
-                0u64,               // 10: minflt (minor faults)
-                0u64,               // 11: cminflt (child minor faults)
-                0u64,               // 12: majflt (major faults)
-                0u64,               // 13: cmajflt (child major faults)
-                utime,              // 14: utime (user mode jiffies)
-                stime,              // 15: stime (kernel mode jiffies)
-                0i64,               // 16: cutime (child user time)
-                0i64,               // 17: cstime (child system time)
-                priority,           // 18: priority (20 + nice)
-                nice as i64,        // 19: nice (-20 to 19)
-                1u64,               // 20: num_threads
-                0u64,               // 21: itrealvalue (obsolete)
-                starttime,          // 22: starttime (jiffies since boot)
-                vsize,              // 23: vsize (virtual memory size in bytes)
-                rss,                // 24: rss (resident set size in pages)
-                !0u64,              // 25: rsslim (rss limit)
-                0u64,               // 26: startcode
-                0u64,               // 27: endcode
-                0u64,               // 28: startstack
-                0u64,               // 29: kstkesp
-                0u64,               // 30: kstkeip
-                0u64,               // 31: signal (pending signals bitmap)
-                0u64,               // 32: blocked (blocked signals bitmap)
-                0u64,               // 33: sigignore (ignored signals bitmap)
-                0u64,               // 34: sigcatch (caught signals bitmap)
-                0u64,               // 35: wchan (wait channel)
-                0u64,               // 36: nswap (swapped pages)
-                0u64,               // 37: cnswap (child swapped pages)
-                0i32,               // 38: exit_signal
-                0i32,               // 39: processor (CPU number)
-                0u32,               // 40: rt_priority
-                0u32,               // 41: policy
-                0u64,               // 42: delayacct_blkio_ticks
-                0u64,               // 43: guest_time
-                0i64,               // 44: cguest_time
-                0u64,               // 45: start_data
-                0u64,               // 46: end_data
-                m.program_break,    // 47: start_brk
-                0u64,               // 48: arg_start
-                0u64,               // 49: arg_end
-                0u64,               // 50: env_start
-                0u64,               // 51: env_end
-                0i32,               // 52: exit_code
+                self.pid,        // 1: pid
+                name,            // 2: comm (in parentheses)
+                state_char,      // 3: state
+                ppid,            // 4: ppid
+                m.pgid,          // 5: pgrp
+                m.sid,           // 6: session
+                m.tty_nr,        // 7: tty_nr
+                m.pgid,          // 8: tpgid (foreground process group)
+                0u64,            // 9: flags
+                0u64,            // 10: minflt (minor faults)
+                0u64,            // 11: cminflt (child minor faults)
+                0u64,            // 12: majflt (major faults)
+                0u64,            // 13: cmajflt (child major faults)
+                utime,           // 14: utime (user mode jiffies)
+                stime,           // 15: stime (kernel mode jiffies)
+                0i64,            // 16: cutime (child user time)
+                0i64,            // 17: cstime (child system time)
+                priority,        // 18: priority (20 + nice)
+                nice as i64,     // 19: nice (-20 to 19)
+                1u64,            // 20: num_threads
+                0u64,            // 21: itrealvalue (obsolete)
+                starttime,       // 22: starttime (jiffies since boot)
+                vsize,           // 23: vsize (virtual memory size in bytes)
+                rss,             // 24: rss (resident set size in pages)
+                !0u64,           // 25: rsslim (rss limit)
+                0u64,            // 26: startcode
+                0u64,            // 27: endcode
+                0u64,            // 28: startstack
+                0u64,            // 29: kstkesp
+                0u64,            // 30: kstkeip
+                0u64,            // 31: signal (pending signals bitmap)
+                0u64,            // 32: blocked (blocked signals bitmap)
+                0u64,            // 33: sigignore (ignored signals bitmap)
+                0u64,            // 34: sigcatch (caught signals bitmap)
+                0u64,            // 35: wchan (wait channel)
+                0u64,            // 36: nswap (swapped pages)
+                0u64,            // 37: cnswap (child swapped pages)
+                0i32,            // 38: exit_signal
+                0i32,            // 39: processor (CPU number)
+                0u32,            // 40: rt_priority
+                0u32,            // 41: policy
+                0u64,            // 42: delayacct_blkio_ticks
+                0u64,            // 43: guest_time
+                0i64,            // 44: cguest_time
+                0u64,            // 45: start_data
+                0u64,            // 46: end_data
+                m.program_break, // 47: start_brk
+                0u64,            // 48: arg_start
+                0u64,            // 49: arg_end
+                0u64,            // 50: env_start
+                0u64,            // 51: env_end
+                0i32,            // 52: exit_code
             )
         } else {
             String::new()
@@ -1739,7 +1755,10 @@ impl ProcStat {
         let agg_user = total_user / 10_000_000;
         let agg_sys = total_system / 10_000_000;
         let agg_idle = total_idle / 10_000_000;
-        output.push_str(&format!("cpu  {} 0 {} {} 0 0 0 0 0 0\n", agg_user, agg_sys, agg_idle));
+        output.push_str(&format!(
+            "cpu  {} 0 {} {} 0 0 0 0 0 0\n",
+            agg_user, agg_sys, agg_idle
+        ));
 
         // Per-CPU statistics
         for cpu_id in 0..cpu_count {

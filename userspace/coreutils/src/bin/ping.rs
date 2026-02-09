@@ -17,7 +17,7 @@ use libc::dns;
 use libc::socket::{
     SOCKADDR_IN_SIZE, af, connect, ipproto, recv, send, sock, sockaddr_in_octets, socket,
 };
-use libc::time::{sleep, clock_gettime, clocks, Timespec};
+use libc::time::{Timespec, clock_gettime, clocks, sleep};
 use libc::{eprintlns, getpid, printlns, prints, putchar, strlen};
 
 const ICMP_ECHO_REQUEST: u8 = 8;
@@ -83,9 +83,9 @@ struct PingStats {
     transmitted: u32,
     received: u32,
     errors: u32,
-    rtt_min: u64,  // microseconds
-    rtt_max: u64,  // microseconds
-    rtt_sum: u64,  // microseconds (for average)
+    rtt_min: u64, // microseconds
+    rtt_max: u64, // microseconds
+    rtt_sum: u64, // microseconds (for average)
 }
 
 impl PingStats {

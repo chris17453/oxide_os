@@ -57,7 +57,8 @@ pub fn read_interface_config(iface_name: &str) -> Option<InterfaceConfig> {
     path_buf[..prefix.len()].copy_from_slice(prefix);
     path_buf[prefix.len()] = b'/';
     path_buf[prefix.len() + 1..prefix.len() + 1 + name_bytes.len()].copy_from_slice(name_bytes);
-    path_buf[prefix.len() + 1 + name_bytes.len()..prefix.len() + 1 + name_bytes.len() + suffix.len()]
+    path_buf
+        [prefix.len() + 1 + name_bytes.len()..prefix.len() + 1 + name_bytes.len() + suffix.len()]
         .copy_from_slice(suffix);
     let path_len = prefix.len() + 1 + name_bytes.len() + suffix.len();
 

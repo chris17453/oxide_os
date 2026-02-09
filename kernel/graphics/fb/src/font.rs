@@ -91,9 +91,17 @@ impl<'a> Glyph<'a> {
 #[derive(Clone, Copy)]
 pub enum GlyphData<'a> {
     /// 1-bit monochrome bitmap (existing fast path)
-    Bitmap { width: u32, height: u32, data: &'a [u8] },
+    Bitmap {
+        width: u32,
+        height: u32,
+        data: &'a [u8],
+    },
     /// 32-bit RGBA color data (4 bytes per pixel, row-major)
-    Rgba { width: u32, height: u32, data: &'a [u8] },
+    Rgba {
+        width: u32,
+        height: u32,
+        data: &'a [u8],
+    },
 }
 
 /// Unicode codepoint range → glyph index mapping
@@ -235,13 +243,29 @@ static EXTENDED_FONT_DATA: [u8; EXTENDED_FONT_SIZE] = generate_font_extended();
 /// Sorted by start codepoint for binary search — SoftGlyph
 static BUILTIN_UNICODE_MAP: [UnicodeRange; 4] = [
     // Latin/ASCII: U+0000 - U+00FF → glyphs 0-255
-    UnicodeRange { start: 0x0000, end: 0x00FF, glyph_offset: 0 },
+    UnicodeRange {
+        start: 0x0000,
+        end: 0x00FF,
+        glyph_offset: 0,
+    },
     // Box Drawing: U+2500 - U+257F → glyphs 256-383
-    UnicodeRange { start: 0x2500, end: 0x257F, glyph_offset: 256 },
+    UnicodeRange {
+        start: 0x2500,
+        end: 0x257F,
+        glyph_offset: 256,
+    },
     // Block Elements: U+2580 - U+259F → glyphs 384-415
-    UnicodeRange { start: 0x2580, end: 0x259F, glyph_offset: 384 },
+    UnicodeRange {
+        start: 0x2580,
+        end: 0x259F,
+        glyph_offset: 384,
+    },
     // Geometric Shapes: U+25A0 - U+25CF → glyphs 416-463
-    UnicodeRange { start: 0x25A0, end: 0x25CF, glyph_offset: 416 },
+    UnicodeRange {
+        start: 0x25A0,
+        end: 0x25CF,
+        glyph_offset: 416,
+    },
 ];
 
 /// Generate extended font data at compile time
@@ -271,15 +295,15 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     // Horizontal center rows: 7 and 8 (0-indexed)
 
     // Horizontal line masks
-    let h_full: u8 = 0xFF;         // all columns lit
-    let h_left: u8 = 0xF0;         // left half (cols 0-3)  bits 7-4
-    let h_right: u8 = 0x1F;        // right half (cols 3-7) bits 4-0
+    let h_full: u8 = 0xFF; // all columns lit
+    let h_left: u8 = 0xF0; // left half (cols 0-3)  bits 7-4
+    let h_right: u8 = 0x1F; // right half (cols 3-7) bits 4-0
     // Vertical column masks
-    let v_center: u8 = 0x18;       // cols 3-4 (bits 4,3)
+    let v_center: u8 = 0x18; // cols 3-4 (bits 4,3)
 
     // Double-line offsets
-    let h_full_d: u8 = 0xFF;       // same as single
-    let v_double: u8 = 0x24;       // cols 2+5 (bits 5,2)
+    let h_full_d: u8 = 0xFF; // same as single
+    let v_double: u8 = 0x24; // cols 2+5 (bits 5,2)
     // Double horizontal rows: 6 and 9 (offset from single center)
     // Double vertical cols: 2 and 5
 
@@ -291,7 +315,10 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     {
         let g = 258;
         let mut r = 0;
-        while r < 16 { data[g * 16 + r] = v_center; r += 1; }
+        while r < 16 {
+            data[g * 16 + r] = v_center;
+            r += 1;
+        }
     }
 
     // ┌ U+250C (glyph 268): BOX DRAWINGS LIGHT DOWN AND RIGHT
@@ -299,7 +326,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         let g = 268;
         data[g * 16 + 7] = h_right;
         data[g * 16 + 8] = h_right;
-        let mut r = 7; while r < 16 { data[g * 16 + r] |= v_center; r += 1; }
+        let mut r = 7;
+        while r < 16 {
+            data[g * 16 + r] |= v_center;
+            r += 1;
+        }
     }
 
     // ┐ U+2510 (glyph 272): BOX DRAWINGS LIGHT DOWN AND LEFT
@@ -307,7 +338,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         let g = 272;
         data[g * 16 + 7] = h_left;
         data[g * 16 + 8] = h_left;
-        let mut r = 7; while r < 16 { data[g * 16 + r] |= v_center; r += 1; }
+        let mut r = 7;
+        while r < 16 {
+            data[g * 16 + r] |= v_center;
+            r += 1;
+        }
     }
 
     // └ U+2514 (glyph 276): BOX DRAWINGS LIGHT UP AND RIGHT
@@ -315,7 +350,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         let g = 276;
         data[g * 16 + 7] = h_right;
         data[g * 16 + 8] = h_right;
-        let mut r = 0; while r <= 8 { data[g * 16 + r] |= v_center; r += 1; }
+        let mut r = 0;
+        while r <= 8 {
+            data[g * 16 + r] |= v_center;
+            r += 1;
+        }
     }
 
     // ┘ U+2518 (glyph 280): BOX DRAWINGS LIGHT UP AND LEFT
@@ -323,7 +362,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         let g = 280;
         data[g * 16 + 7] = h_left;
         data[g * 16 + 8] = h_left;
-        let mut r = 0; while r <= 8 { data[g * 16 + r] |= v_center; r += 1; }
+        let mut r = 0;
+        while r <= 8 {
+            data[g * 16 + r] |= v_center;
+            r += 1;
+        }
     }
 
     // ├ U+251C (glyph 284): BOX DRAWINGS LIGHT VERTICAL AND RIGHT
@@ -331,7 +374,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         let g = 284;
         data[g * 16 + 7] = h_right;
         data[g * 16 + 8] = h_right;
-        let mut r = 0; while r < 16 { data[g * 16 + r] |= v_center; r += 1; }
+        let mut r = 0;
+        while r < 16 {
+            data[g * 16 + r] |= v_center;
+            r += 1;
+        }
     }
 
     // ┤ U+2524 (glyph 292): BOX DRAWINGS LIGHT VERTICAL AND LEFT
@@ -339,7 +386,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         let g = 292;
         data[g * 16 + 7] = h_left;
         data[g * 16 + 8] = h_left;
-        let mut r = 0; while r < 16 { data[g * 16 + r] |= v_center; r += 1; }
+        let mut r = 0;
+        while r < 16 {
+            data[g * 16 + r] |= v_center;
+            r += 1;
+        }
     }
 
     // ┬ U+252C (glyph 300): BOX DRAWINGS LIGHT DOWN AND HORIZONTAL
@@ -347,7 +398,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         let g = 300;
         data[g * 16 + 7] = h_full;
         data[g * 16 + 8] = h_full;
-        let mut r = 7; while r < 16 { data[g * 16 + r] |= v_center; r += 1; }
+        let mut r = 7;
+        while r < 16 {
+            data[g * 16 + r] |= v_center;
+            r += 1;
+        }
     }
 
     // ┴ U+2534 (glyph 308): BOX DRAWINGS LIGHT UP AND HORIZONTAL
@@ -355,7 +410,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         let g = 308;
         data[g * 16 + 7] = h_full;
         data[g * 16 + 8] = h_full;
-        let mut r = 0; while r <= 8 { data[g * 16 + r] |= v_center; r += 1; }
+        let mut r = 0;
+        while r <= 8 {
+            data[g * 16 + r] |= v_center;
+            r += 1;
+        }
     }
 
     // ┼ U+253C (glyph 316): BOX DRAWINGS LIGHT VERTICAL AND HORIZONTAL
@@ -363,7 +422,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         let g = 316;
         data[g * 16 + 7] = h_full;
         data[g * 16 + 8] = h_full;
-        let mut r = 0; while r < 16 { data[g * 16 + r] |= v_center; r += 1; }
+        let mut r = 0;
+        while r < 16 {
+            data[g * 16 + r] |= v_center;
+            r += 1;
+        }
     }
 
     // ═ U+2550 (glyph 336): BOX DRAWINGS DOUBLE HORIZONTAL
@@ -374,7 +437,10 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     {
         let g = 337;
         let mut r = 0;
-        while r < 16 { data[g * 16 + r] = v_double; r += 1; }
+        while r < 16 {
+            data[g * 16 + r] = v_double;
+            r += 1;
+        }
     }
 
     // ╔ U+2554 (glyph 340): BOX DRAWINGS DOUBLE DOWN AND RIGHT
@@ -384,7 +450,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         data[g * 16 + 6] = 0x1F; // right half
         data[g * 16 + 9] = 0x1F;
         // Double vertical lines from row 6 downward
-        let mut r = 6; while r < 16 { data[g * 16 + r] |= v_double; r += 1; }
+        let mut r = 6;
+        while r < 16 {
+            data[g * 16 + r] |= v_double;
+            r += 1;
+        }
     }
 
     // ╗ U+2557 (glyph 343): BOX DRAWINGS DOUBLE DOWN AND LEFT
@@ -392,7 +462,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         let g = 343;
         data[g * 16 + 6] = 0xF0; // left half
         data[g * 16 + 9] = 0xF0;
-        let mut r = 6; while r < 16 { data[g * 16 + r] |= v_double; r += 1; }
+        let mut r = 6;
+        while r < 16 {
+            data[g * 16 + r] |= v_double;
+            r += 1;
+        }
     }
 
     // ╚ U+255A (glyph 346): BOX DRAWINGS DOUBLE UP AND RIGHT
@@ -400,7 +474,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         let g = 346;
         data[g * 16 + 6] = 0x1F;
         data[g * 16 + 9] = 0x1F;
-        let mut r = 0; while r <= 9 { data[g * 16 + r] |= v_double; r += 1; }
+        let mut r = 0;
+        while r <= 9 {
+            data[g * 16 + r] |= v_double;
+            r += 1;
+        }
     }
 
     // ╝ U+255D (glyph 349): BOX DRAWINGS DOUBLE UP AND LEFT
@@ -408,7 +486,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         let g = 349;
         data[g * 16 + 6] = 0xF0;
         data[g * 16 + 9] = 0xF0;
-        let mut r = 0; while r <= 9 { data[g * 16 + r] |= v_double; r += 1; }
+        let mut r = 0;
+        while r <= 9 {
+            data[g * 16 + r] |= v_double;
+            r += 1;
+        }
     }
 
     // ╠ U+2560 (glyph 352): BOX DRAWINGS DOUBLE VERTICAL AND RIGHT
@@ -416,7 +498,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         let g = 352;
         data[g * 16 + 6] = 0x1F;
         data[g * 16 + 9] = 0x1F;
-        let mut r = 0; while r < 16 { data[g * 16 + r] |= v_double; r += 1; }
+        let mut r = 0;
+        while r < 16 {
+            data[g * 16 + r] |= v_double;
+            r += 1;
+        }
     }
 
     // ╣ U+2563 (glyph 355): BOX DRAWINGS DOUBLE VERTICAL AND LEFT
@@ -424,7 +510,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         let g = 355;
         data[g * 16 + 6] = 0xF0;
         data[g * 16 + 9] = 0xF0;
-        let mut r = 0; while r < 16 { data[g * 16 + r] |= v_double; r += 1; }
+        let mut r = 0;
+        while r < 16 {
+            data[g * 16 + r] |= v_double;
+            r += 1;
+        }
     }
 
     // ╦ U+2566 (glyph 358): BOX DRAWINGS DOUBLE DOWN AND HORIZONTAL
@@ -432,7 +522,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         let g = 358;
         data[g * 16 + 6] = h_full_d;
         data[g * 16 + 9] = h_full_d;
-        let mut r = 6; while r < 16 { data[g * 16 + r] |= v_double; r += 1; }
+        let mut r = 6;
+        while r < 16 {
+            data[g * 16 + r] |= v_double;
+            r += 1;
+        }
     }
 
     // ╩ U+2569 (glyph 361): BOX DRAWINGS DOUBLE UP AND HORIZONTAL
@@ -440,7 +534,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         let g = 361;
         data[g * 16 + 6] = h_full_d;
         data[g * 16 + 9] = h_full_d;
-        let mut r = 0; while r <= 9 { data[g * 16 + r] |= v_double; r += 1; }
+        let mut r = 0;
+        while r <= 9 {
+            data[g * 16 + r] |= v_double;
+            r += 1;
+        }
     }
 
     // ╬ U+256C (glyph 364): BOX DRAWINGS DOUBLE VERTICAL AND HORIZONTAL
@@ -448,7 +546,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         let g = 364;
         data[g * 16 + 6] = h_full_d;
         data[g * 16 + 9] = h_full_d;
-        let mut r = 0; while r < 16 { data[g * 16 + r] |= v_double; r += 1; }
+        let mut r = 0;
+        while r < 16 {
+            data[g * 16 + r] |= v_double;
+            r += 1;
+        }
     }
 
     // ━ U+2501 (glyph 257): BOX DRAWINGS HEAVY HORIZONTAL (thick = rows 6-9)
@@ -464,7 +566,10 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     {
         let g = 259;
         let mut r = 0;
-        while r < 16 { data[g * 16 + r] = 0x3C; r += 1; }
+        while r < 16 {
+            data[g * 16 + r] = 0x3C;
+            r += 1;
+        }
     }
 
     // ┏ U+250F (glyph 271): BOX DRAWINGS HEAVY DOWN AND RIGHT
@@ -474,7 +579,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         data[g * 16 + 7] = h_right;
         data[g * 16 + 8] = h_right;
         data[g * 16 + 9] = h_right;
-        let mut r = 6; while r < 16 { data[g * 16 + r] |= 0x3C; r += 1; }
+        let mut r = 6;
+        while r < 16 {
+            data[g * 16 + r] |= 0x3C;
+            r += 1;
+        }
     }
 
     // ┓ U+2513 (glyph 275): BOX DRAWINGS HEAVY DOWN AND LEFT
@@ -484,7 +593,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         data[g * 16 + 7] = h_left;
         data[g * 16 + 8] = h_left;
         data[g * 16 + 9] = h_left;
-        let mut r = 6; while r < 16 { data[g * 16 + r] |= 0x3C; r += 1; }
+        let mut r = 6;
+        while r < 16 {
+            data[g * 16 + r] |= 0x3C;
+            r += 1;
+        }
     }
 
     // ┗ U+2517 (glyph 279): BOX DRAWINGS HEAVY UP AND RIGHT
@@ -494,7 +607,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         data[g * 16 + 7] = h_right;
         data[g * 16 + 8] = h_right;
         data[g * 16 + 9] = h_right;
-        let mut r = 0; while r <= 9 { data[g * 16 + r] |= 0x3C; r += 1; }
+        let mut r = 0;
+        while r <= 9 {
+            data[g * 16 + r] |= 0x3C;
+            r += 1;
+        }
     }
 
     // ┛ U+251B (glyph 283): BOX DRAWINGS HEAVY UP AND LEFT
@@ -504,7 +621,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         data[g * 16 + 7] = h_left;
         data[g * 16 + 8] = h_left;
         data[g * 16 + 9] = h_left;
-        let mut r = 0; while r <= 9 { data[g * 16 + r] |= 0x3C; r += 1; }
+        let mut r = 0;
+        while r <= 9 {
+            data[g * 16 + r] |= 0x3C;
+            r += 1;
+        }
     }
 
     // ┣ U+2523 (glyph 291): BOX DRAWINGS HEAVY VERTICAL AND RIGHT
@@ -514,7 +635,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         data[g * 16 + 7] = h_right;
         data[g * 16 + 8] = h_right;
         data[g * 16 + 9] = h_right;
-        let mut r = 0; while r < 16 { data[g * 16 + r] |= 0x3C; r += 1; }
+        let mut r = 0;
+        while r < 16 {
+            data[g * 16 + r] |= 0x3C;
+            r += 1;
+        }
     }
 
     // ┫ U+252B (glyph 299): BOX DRAWINGS HEAVY VERTICAL AND LEFT
@@ -524,7 +649,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         data[g * 16 + 7] = h_left;
         data[g * 16 + 8] = h_left;
         data[g * 16 + 9] = h_left;
-        let mut r = 0; while r < 16 { data[g * 16 + r] |= 0x3C; r += 1; }
+        let mut r = 0;
+        while r < 16 {
+            data[g * 16 + r] |= 0x3C;
+            r += 1;
+        }
     }
 
     // ┳ U+2533 (glyph 307): BOX DRAWINGS HEAVY DOWN AND HORIZONTAL
@@ -534,7 +663,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         data[g * 16 + 7] = h_full;
         data[g * 16 + 8] = h_full;
         data[g * 16 + 9] = h_full;
-        let mut r = 6; while r < 16 { data[g * 16 + r] |= 0x3C; r += 1; }
+        let mut r = 6;
+        while r < 16 {
+            data[g * 16 + r] |= 0x3C;
+            r += 1;
+        }
     }
 
     // ┻ U+253B (glyph 315): BOX DRAWINGS HEAVY UP AND HORIZONTAL
@@ -544,7 +677,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         data[g * 16 + 7] = h_full;
         data[g * 16 + 8] = h_full;
         data[g * 16 + 9] = h_full;
-        let mut r = 0; while r <= 9 { data[g * 16 + r] |= 0x3C; r += 1; }
+        let mut r = 0;
+        while r <= 9 {
+            data[g * 16 + r] |= 0x3C;
+            r += 1;
+        }
     }
 
     // ╋ U+254B (glyph 331): BOX DRAWINGS HEAVY VERTICAL AND HORIZONTAL
@@ -554,7 +691,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         data[g * 16 + 7] = h_full;
         data[g * 16 + 8] = h_full;
         data[g * 16 + 9] = h_full;
-        let mut r = 0; while r < 16 { data[g * 16 + r] |= 0x3C; r += 1; }
+        let mut r = 0;
+        while r < 16 {
+            data[g * 16 + r] |= 0x3C;
+            r += 1;
+        }
     }
 
     // ╌ U+254C (glyph 332): BOX DRAWINGS LIGHT DOUBLE DASH HORIZONTAL
@@ -571,7 +712,9 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         let g = 334;
         let mut r = 0;
         while r < 16 {
-            if (r / 2) % 2 == 0 { data[g * 16 + r] = v_center; }
+            if (r / 2) % 2 == 0 {
+                data[g * 16 + r] = v_center;
+            }
             r += 1;
         }
     }
@@ -580,11 +723,15 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     {
         let g = 365;
         // Approximate rounded corner with diagonal + straight segments
-        data[g * 16 + 5] = 0x04;  // bit 2 (col 5)
-        data[g * 16 + 6] = 0x08;  // bit 3 (col 4)
-        data[g * 16 + 7] = 0x18;  // center
+        data[g * 16 + 5] = 0x04; // bit 2 (col 5)
+        data[g * 16 + 6] = 0x08; // bit 3 (col 4)
+        data[g * 16 + 7] = 0x18; // center
         data[g * 16 + 8] = 0x18;
-        let mut r = 8; while r < 16 { data[g * 16 + r] |= v_center; r += 1; }
+        let mut r = 8;
+        while r < 16 {
+            data[g * 16 + r] |= v_center;
+            r += 1;
+        }
     }
 
     // ╮ U+256E (glyph 366): BOX DRAWINGS LIGHT ARC DOWN AND LEFT
@@ -594,13 +741,21 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         data[g * 16 + 6] = 0x10; // bit 4 (col 3)
         data[g * 16 + 7] = 0x18;
         data[g * 16 + 8] = 0x18;
-        let mut r = 8; while r < 16 { data[g * 16 + r] |= v_center; r += 1; }
+        let mut r = 8;
+        while r < 16 {
+            data[g * 16 + r] |= v_center;
+            r += 1;
+        }
     }
 
     // ╯ U+256F (glyph 367): BOX DRAWINGS LIGHT ARC UP AND LEFT
     {
         let g = 367;
-        let mut r = 0; while r <= 7 { data[g * 16 + r] |= v_center; r += 1; }
+        let mut r = 0;
+        while r <= 7 {
+            data[g * 16 + r] |= v_center;
+            r += 1;
+        }
         data[g * 16 + 7] |= 0x18;
         data[g * 16 + 8] = 0x18;
         data[g * 16 + 9] = 0x10;
@@ -610,7 +765,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     // ╰ U+2570 (glyph 368): BOX DRAWINGS LIGHT ARC UP AND RIGHT
     {
         let g = 368;
-        let mut r = 0; while r <= 7 { data[g * 16 + r] |= v_center; r += 1; }
+        let mut r = 0;
+        while r <= 7 {
+            data[g * 16 + r] |= v_center;
+            r += 1;
+        }
         data[g * 16 + 7] |= 0x18;
         data[g * 16 + 8] = 0x18;
         data[g * 16 + 9] = 0x08;
@@ -627,7 +786,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     // ╵ U+2575 (glyph 373): BOX DRAWINGS LIGHT UP
     {
         let g = 373;
-        let mut r = 0; while r <= 8 { data[g * 16 + r] = v_center; r += 1; }
+        let mut r = 0;
+        while r <= 8 {
+            data[g * 16 + r] = v_center;
+            r += 1;
+        }
     }
 
     // ╶ U+2576 (glyph 374): BOX DRAWINGS LIGHT RIGHT
@@ -640,7 +803,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     // ╷ U+2577 (glyph 375): BOX DRAWINGS LIGHT DOWN
     {
         let g = 375;
-        let mut r = 7; while r < 16 { data[g * 16 + r] = v_center; r += 1; }
+        let mut r = 7;
+        while r < 16 {
+            data[g * 16 + r] = v_center;
+            r += 1;
+        }
     }
 
     // ── Block Elements (U+2580-U+259F) → glyphs 384-415 ──
@@ -649,7 +816,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     // ▀ U+2580 (glyph 384): UPPER HALF BLOCK
     {
         let g = 384;
-        let mut r = 0; while r < 8 { data[g * 16 + r] = 0xFF; r += 1; }
+        let mut r = 0;
+        while r < 8 {
+            data[g * 16 + r] = 0xFF;
+            r += 1;
+        }
     }
 
     // ▁ U+2581 (glyph 385): LOWER ONE EIGHTH BLOCK
@@ -662,91 +833,151 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     // ▂ U+2582 (glyph 386): LOWER ONE QUARTER BLOCK
     {
         let g = 386;
-        let mut r = 12; while r < 16 { data[g * 16 + r] = 0xFF; r += 1; }
+        let mut r = 12;
+        while r < 16 {
+            data[g * 16 + r] = 0xFF;
+            r += 1;
+        }
     }
 
     // ▃ U+2583 (glyph 387): LOWER THREE EIGHTHS BLOCK
     {
         let g = 387;
-        let mut r = 10; while r < 16 { data[g * 16 + r] = 0xFF; r += 1; }
+        let mut r = 10;
+        while r < 16 {
+            data[g * 16 + r] = 0xFF;
+            r += 1;
+        }
     }
 
     // ▄ U+2584 (glyph 388): LOWER HALF BLOCK
     {
         let g = 388;
-        let mut r = 8; while r < 16 { data[g * 16 + r] = 0xFF; r += 1; }
+        let mut r = 8;
+        while r < 16 {
+            data[g * 16 + r] = 0xFF;
+            r += 1;
+        }
     }
 
     // ▅ U+2585 (glyph 389): LOWER FIVE EIGHTHS BLOCK
     {
         let g = 389;
-        let mut r = 6; while r < 16 { data[g * 16 + r] = 0xFF; r += 1; }
+        let mut r = 6;
+        while r < 16 {
+            data[g * 16 + r] = 0xFF;
+            r += 1;
+        }
     }
 
     // ▆ U+2586 (glyph 390): LOWER THREE QUARTERS BLOCK
     {
         let g = 390;
-        let mut r = 4; while r < 16 { data[g * 16 + r] = 0xFF; r += 1; }
+        let mut r = 4;
+        while r < 16 {
+            data[g * 16 + r] = 0xFF;
+            r += 1;
+        }
     }
 
     // ▇ U+2587 (glyph 391): LOWER SEVEN EIGHTHS BLOCK
     {
         let g = 391;
-        let mut r = 2; while r < 16 { data[g * 16 + r] = 0xFF; r += 1; }
+        let mut r = 2;
+        while r < 16 {
+            data[g * 16 + r] = 0xFF;
+            r += 1;
+        }
     }
 
     // █ U+2588 (glyph 392): FULL BLOCK
     {
         let g = 392;
-        let mut r = 0; while r < 16 { data[g * 16 + r] = 0xFF; r += 1; }
+        let mut r = 0;
+        while r < 16 {
+            data[g * 16 + r] = 0xFF;
+            r += 1;
+        }
     }
 
     // ▉ U+2589 (glyph 393): LEFT SEVEN EIGHTHS BLOCK
     {
         let g = 393;
-        let mut r = 0; while r < 16 { data[g * 16 + r] = 0xFE; r += 1; }
+        let mut r = 0;
+        while r < 16 {
+            data[g * 16 + r] = 0xFE;
+            r += 1;
+        }
     }
 
     // ▊ U+258A (glyph 394): LEFT THREE QUARTERS BLOCK
     {
         let g = 394;
-        let mut r = 0; while r < 16 { data[g * 16 + r] = 0xFC; r += 1; }
+        let mut r = 0;
+        while r < 16 {
+            data[g * 16 + r] = 0xFC;
+            r += 1;
+        }
     }
 
     // ▋ U+258B (glyph 395): LEFT FIVE EIGHTHS BLOCK
     {
         let g = 395;
-        let mut r = 0; while r < 16 { data[g * 16 + r] = 0xF8; r += 1; }
+        let mut r = 0;
+        while r < 16 {
+            data[g * 16 + r] = 0xF8;
+            r += 1;
+        }
     }
 
     // ▌ U+258C (glyph 396): LEFT HALF BLOCK
     {
         let g = 396;
-        let mut r = 0; while r < 16 { data[g * 16 + r] = 0xF0; r += 1; }
+        let mut r = 0;
+        while r < 16 {
+            data[g * 16 + r] = 0xF0;
+            r += 1;
+        }
     }
 
     // ▍ U+258D (glyph 397): LEFT THREE EIGHTHS BLOCK
     {
         let g = 397;
-        let mut r = 0; while r < 16 { data[g * 16 + r] = 0xE0; r += 1; }
+        let mut r = 0;
+        while r < 16 {
+            data[g * 16 + r] = 0xE0;
+            r += 1;
+        }
     }
 
     // ▎ U+258E (glyph 398): LEFT ONE QUARTER BLOCK
     {
         let g = 398;
-        let mut r = 0; while r < 16 { data[g * 16 + r] = 0xC0; r += 1; }
+        let mut r = 0;
+        while r < 16 {
+            data[g * 16 + r] = 0xC0;
+            r += 1;
+        }
     }
 
     // ▏ U+258F (glyph 399): LEFT ONE EIGHTH BLOCK
     {
         let g = 399;
-        let mut r = 0; while r < 16 { data[g * 16 + r] = 0x80; r += 1; }
+        let mut r = 0;
+        while r < 16 {
+            data[g * 16 + r] = 0x80;
+            r += 1;
+        }
     }
 
     // ▐ U+2590 (glyph 400): RIGHT HALF BLOCK
     {
         let g = 400;
-        let mut r = 0; while r < 16 { data[g * 16 + r] = 0x0F; r += 1; }
+        let mut r = 0;
+        while r < 16 {
+            data[g * 16 + r] = 0x0F;
+            r += 1;
+        }
     }
 
     // ░ U+2591 (glyph 401): LIGHT SHADE (25%)
@@ -789,73 +1020,141 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     // ▕ U+2595 (glyph 405): RIGHT ONE EIGHTH BLOCK
     {
         let g = 405;
-        let mut r = 0; while r < 16 { data[g * 16 + r] = 0x01; r += 1; }
+        let mut r = 0;
+        while r < 16 {
+            data[g * 16 + r] = 0x01;
+            r += 1;
+        }
     }
 
     // ▖ U+2596 (glyph 406): QUADRANT LOWER LEFT
     {
         let g = 406;
-        let mut r = 8; while r < 16 { data[g * 16 + r] = 0xF0; r += 1; }
+        let mut r = 8;
+        while r < 16 {
+            data[g * 16 + r] = 0xF0;
+            r += 1;
+        }
     }
 
     // ▗ U+2597 (glyph 407): QUADRANT LOWER RIGHT
     {
         let g = 407;
-        let mut r = 8; while r < 16 { data[g * 16 + r] = 0x0F; r += 1; }
+        let mut r = 8;
+        while r < 16 {
+            data[g * 16 + r] = 0x0F;
+            r += 1;
+        }
     }
 
     // ▘ U+2598 (glyph 408): QUADRANT UPPER LEFT
     {
         let g = 408;
-        let mut r = 0; while r < 8 { data[g * 16 + r] = 0xF0; r += 1; }
+        let mut r = 0;
+        while r < 8 {
+            data[g * 16 + r] = 0xF0;
+            r += 1;
+        }
     }
 
     // ▙ U+2599 (glyph 409): QUADRANT UPPER LEFT AND LOWER LEFT AND LOWER RIGHT
     {
         let g = 409;
-        let mut r = 0; while r < 8 { data[g * 16 + r] = 0xF0; r += 1; }
-        let mut r2 = 8; while r2 < 16 { data[g * 16 + r2] = 0xFF; r2 += 1; }
+        let mut r = 0;
+        while r < 8 {
+            data[g * 16 + r] = 0xF0;
+            r += 1;
+        }
+        let mut r2 = 8;
+        while r2 < 16 {
+            data[g * 16 + r2] = 0xFF;
+            r2 += 1;
+        }
     }
 
     // ▚ U+259A (glyph 410): QUADRANT UPPER LEFT AND LOWER RIGHT
     {
         let g = 410;
-        let mut r = 0; while r < 8 { data[g * 16 + r] = 0xF0; r += 1; }
-        let mut r2 = 8; while r2 < 16 { data[g * 16 + r2] = 0x0F; r2 += 1; }
+        let mut r = 0;
+        while r < 8 {
+            data[g * 16 + r] = 0xF0;
+            r += 1;
+        }
+        let mut r2 = 8;
+        while r2 < 16 {
+            data[g * 16 + r2] = 0x0F;
+            r2 += 1;
+        }
     }
 
     // ▛ U+259B (glyph 411): QUADRANT UPPER LEFT AND UPPER RIGHT AND LOWER LEFT
     {
         let g = 411;
-        let mut r = 0; while r < 8 { data[g * 16 + r] = 0xFF; r += 1; }
-        let mut r2 = 8; while r2 < 16 { data[g * 16 + r2] = 0xF0; r2 += 1; }
+        let mut r = 0;
+        while r < 8 {
+            data[g * 16 + r] = 0xFF;
+            r += 1;
+        }
+        let mut r2 = 8;
+        while r2 < 16 {
+            data[g * 16 + r2] = 0xF0;
+            r2 += 1;
+        }
     }
 
     // ▜ U+259C (glyph 412): QUADRANT UPPER LEFT AND UPPER RIGHT AND LOWER RIGHT
     {
         let g = 412;
-        let mut r = 0; while r < 8 { data[g * 16 + r] = 0xFF; r += 1; }
-        let mut r2 = 8; while r2 < 16 { data[g * 16 + r2] = 0x0F; r2 += 1; }
+        let mut r = 0;
+        while r < 8 {
+            data[g * 16 + r] = 0xFF;
+            r += 1;
+        }
+        let mut r2 = 8;
+        while r2 < 16 {
+            data[g * 16 + r2] = 0x0F;
+            r2 += 1;
+        }
     }
 
     // ▝ U+259D (glyph 413): QUADRANT UPPER RIGHT
     {
         let g = 413;
-        let mut r = 0; while r < 8 { data[g * 16 + r] = 0x0F; r += 1; }
+        let mut r = 0;
+        while r < 8 {
+            data[g * 16 + r] = 0x0F;
+            r += 1;
+        }
     }
 
     // ▞ U+259E (glyph 414): QUADRANT UPPER RIGHT AND LOWER LEFT
     {
         let g = 414;
-        let mut r = 0; while r < 8 { data[g * 16 + r] = 0x0F; r += 1; }
-        let mut r2 = 8; while r2 < 16 { data[g * 16 + r2] = 0xF0; r2 += 1; }
+        let mut r = 0;
+        while r < 8 {
+            data[g * 16 + r] = 0x0F;
+            r += 1;
+        }
+        let mut r2 = 8;
+        while r2 < 16 {
+            data[g * 16 + r2] = 0xF0;
+            r2 += 1;
+        }
     }
 
     // ▟ U+259F (glyph 415): QUADRANT UPPER RIGHT AND LOWER LEFT AND LOWER RIGHT
     {
         let g = 415;
-        let mut r = 0; while r < 8 { data[g * 16 + r] = 0x0F; r += 1; }
-        let mut r2 = 8; while r2 < 16 { data[g * 16 + r2] = 0xFF; r2 += 1; }
+        let mut r = 0;
+        while r < 8 {
+            data[g * 16 + r] = 0x0F;
+            r += 1;
+        }
+        let mut r2 = 8;
+        while r2 < 16 {
+            data[g * 16 + r2] = 0xFF;
+            r2 += 1;
+        }
     }
 
     // ── Geometric Shapes (U+25A0-U+25CF) → glyphs 416-463 ──
@@ -865,14 +1164,22 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     // ■ U+25A0 (glyph 416): BLACK SQUARE — filled 6x12 centered
     {
         let g = 416;
-        let mut r = 2; while r < 14 { data[g * 16 + r] = 0x7E; r += 1; }
+        let mut r = 2;
+        while r < 14 {
+            data[g * 16 + r] = 0x7E;
+            r += 1;
+        }
     }
 
     // □ U+25A1 (glyph 417): WHITE SQUARE — hollow 6x12
     {
         let g = 417;
         data[g * 16 + 2] = 0x7E;
-        let mut r = 3; while r < 13 { data[g * 16 + r] = 0x42; r += 1; }
+        let mut r = 3;
+        while r < 13 {
+            data[g * 16 + r] = 0x42;
+            r += 1;
+        }
         data[g * 16 + 13] = 0x7E;
     }
 
@@ -881,7 +1188,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         let g = 418;
         data[g * 16 + 2] = 0x3C;
         data[g * 16 + 3] = 0x42;
-        let mut r = 4; while r < 12 { data[g * 16 + r] = 0x42; r += 1; }
+        let mut r = 4;
+        while r < 12 {
+            data[g * 16 + r] = 0x42;
+            r += 1;
+        }
         data[g * 16 + 12] = 0x42;
         data[g * 16 + 13] = 0x3C;
     }
@@ -892,7 +1203,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
         data[g * 16 + 2] = 0x7E;
         data[g * 16 + 3] = 0x42;
         data[g * 16 + 4] = 0x42;
-        let mut r = 5; while r < 11 { data[g * 16 + r] = 0x5A; r += 1; }
+        let mut r = 5;
+        while r < 11 {
+            data[g * 16 + r] = 0x5A;
+            r += 1;
+        }
         data[g * 16 + 11] = 0x42;
         data[g * 16 + 12] = 0x42;
         data[g * 16 + 13] = 0x7E;
@@ -902,7 +1217,8 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     {
         let g = 420;
         data[g * 16 + 2] = 0x7E;
-        let mut r = 3; while r < 13 {
+        let mut r = 3;
+        while r < 13 {
             data[g * 16 + r] = if r % 2 == 0 { 0x7E } else { 0x42 };
             r += 1;
         }
@@ -913,7 +1229,11 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     {
         let g = 421;
         data[g * 16 + 2] = 0x7E;
-        let mut r = 3; while r < 13 { data[g * 16 + r] = 0x6A; r += 1; }
+        let mut r = 3;
+        while r < 13 {
+            data[g * 16 + r] = 0x6A;
+            r += 1;
+        }
         data[g * 16 + 13] = 0x7E;
     }
 
@@ -921,7 +1241,8 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     {
         let g = 422;
         data[g * 16 + 2] = 0x7E;
-        let mut r = 3; while r < 13 {
+        let mut r = 3;
+        while r < 13 {
             data[g * 16 + r] = if r % 2 == 0 { 0x7E } else { 0x6A };
             r += 1;
         }
@@ -934,27 +1255,35 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     // ▰ U+25B0 (glyph 432): BLACK PARALLELOGRAM — approximate with slanted fill
     {
         let g = 432;
-        let mut r = 4; while r < 12 { data[g * 16 + r] = 0x3E; r += 1; }
+        let mut r = 4;
+        while r < 12 {
+            data[g * 16 + r] = 0x3E;
+            r += 1;
+        }
     }
 
     // ▱ U+25B1 (glyph 433): WHITE PARALLELOGRAM
     {
         let g = 433;
         data[g * 16 + 4] = 0x3E;
-        let mut r = 5; while r < 11 { data[g * 16 + r] = 0x22; r += 1; }
+        let mut r = 5;
+        while r < 11 {
+            data[g * 16 + r] = 0x22;
+            r += 1;
+        }
         data[g * 16 + 11] = 0x3E;
     }
 
     // ▲ U+25B2 (glyph 434): BLACK UP-POINTING TRIANGLE
     {
         let g = 434;
-        data[g * 16 + 3]  = 0x08;
-        data[g * 16 + 4]  = 0x08;
-        data[g * 16 + 5]  = 0x1C;
-        data[g * 16 + 6]  = 0x1C;
-        data[g * 16 + 7]  = 0x3E;
-        data[g * 16 + 8]  = 0x3E;
-        data[g * 16 + 9]  = 0x7F;
+        data[g * 16 + 3] = 0x08;
+        data[g * 16 + 4] = 0x08;
+        data[g * 16 + 5] = 0x1C;
+        data[g * 16 + 6] = 0x1C;
+        data[g * 16 + 7] = 0x3E;
+        data[g * 16 + 8] = 0x3E;
+        data[g * 16 + 9] = 0x7F;
         data[g * 16 + 10] = 0x7F;
         data[g * 16 + 11] = 0xFF;
         data[g * 16 + 12] = 0xFF;
@@ -963,13 +1292,13 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     // △ U+25B3 (glyph 435): WHITE UP-POINTING TRIANGLE
     {
         let g = 435;
-        data[g * 16 + 3]  = 0x08;
-        data[g * 16 + 4]  = 0x14;
-        data[g * 16 + 5]  = 0x14;
-        data[g * 16 + 6]  = 0x22;
-        data[g * 16 + 7]  = 0x22;
-        data[g * 16 + 8]  = 0x41;
-        data[g * 16 + 9]  = 0x41;
+        data[g * 16 + 3] = 0x08;
+        data[g * 16 + 4] = 0x14;
+        data[g * 16 + 5] = 0x14;
+        data[g * 16 + 6] = 0x22;
+        data[g * 16 + 7] = 0x22;
+        data[g * 16 + 8] = 0x41;
+        data[g * 16 + 9] = 0x41;
         data[g * 16 + 10] = 0x41;
         data[g * 16 + 11] = 0xFF;
         data[g * 16 + 12] = 0xFF;
@@ -978,35 +1307,35 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     // ▴ U+25B4 (glyph 436): BLACK UP-POINTING SMALL TRIANGLE
     {
         let g = 436;
-        data[g * 16 + 5]  = 0x10;
-        data[g * 16 + 6]  = 0x38;
-        data[g * 16 + 7]  = 0x38;
-        data[g * 16 + 8]  = 0x7C;
-        data[g * 16 + 9]  = 0x7C;
+        data[g * 16 + 5] = 0x10;
+        data[g * 16 + 6] = 0x38;
+        data[g * 16 + 7] = 0x38;
+        data[g * 16 + 8] = 0x7C;
+        data[g * 16 + 9] = 0x7C;
         data[g * 16 + 10] = 0xFE;
     }
 
     // ▵ U+25B5 (glyph 437): WHITE UP-POINTING SMALL TRIANGLE
     {
         let g = 437;
-        data[g * 16 + 5]  = 0x10;
-        data[g * 16 + 6]  = 0x28;
-        data[g * 16 + 7]  = 0x28;
-        data[g * 16 + 8]  = 0x44;
-        data[g * 16 + 9]  = 0x44;
+        data[g * 16 + 5] = 0x10;
+        data[g * 16 + 6] = 0x28;
+        data[g * 16 + 7] = 0x28;
+        data[g * 16 + 8] = 0x44;
+        data[g * 16 + 9] = 0x44;
         data[g * 16 + 10] = 0xFE;
     }
 
     // ▶ U+25B6 (glyph 438): BLACK RIGHT-POINTING TRIANGLE
     {
         let g = 438;
-        data[g * 16 + 3]  = 0xC0;
-        data[g * 16 + 4]  = 0xF0;
-        data[g * 16 + 5]  = 0xFC;
-        data[g * 16 + 6]  = 0xFF;
-        data[g * 16 + 7]  = 0xFF;
-        data[g * 16 + 8]  = 0xFF;
-        data[g * 16 + 9]  = 0xFC;
+        data[g * 16 + 3] = 0xC0;
+        data[g * 16 + 4] = 0xF0;
+        data[g * 16 + 5] = 0xFC;
+        data[g * 16 + 6] = 0xFF;
+        data[g * 16 + 7] = 0xFF;
+        data[g * 16 + 8] = 0xFF;
+        data[g * 16 + 9] = 0xFC;
         data[g * 16 + 10] = 0xF0;
         data[g * 16 + 11] = 0xC0;
     }
@@ -1014,13 +1343,13 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     // ▷ U+25B7 (glyph 439): WHITE RIGHT-POINTING TRIANGLE
     {
         let g = 439;
-        data[g * 16 + 3]  = 0xC0;
-        data[g * 16 + 4]  = 0xB0;
-        data[g * 16 + 5]  = 0x8C;
-        data[g * 16 + 6]  = 0x83;
-        data[g * 16 + 7]  = 0x83;
-        data[g * 16 + 8]  = 0x83;
-        data[g * 16 + 9]  = 0x8C;
+        data[g * 16 + 3] = 0xC0;
+        data[g * 16 + 4] = 0xB0;
+        data[g * 16 + 5] = 0x8C;
+        data[g * 16 + 6] = 0x83;
+        data[g * 16 + 7] = 0x83;
+        data[g * 16 + 8] = 0x83;
+        data[g * 16 + 9] = 0x8C;
         data[g * 16 + 10] = 0xB0;
         data[g * 16 + 11] = 0xC0;
     }
@@ -1030,13 +1359,13 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     // ▼ U+25BC (glyph 444): BLACK DOWN-POINTING TRIANGLE
     {
         let g = 444;
-        data[g * 16 + 3]  = 0xFF;
-        data[g * 16 + 4]  = 0xFF;
-        data[g * 16 + 5]  = 0x7F;
-        data[g * 16 + 6]  = 0x7F;
-        data[g * 16 + 7]  = 0x3E;
-        data[g * 16 + 8]  = 0x3E;
-        data[g * 16 + 9]  = 0x1C;
+        data[g * 16 + 3] = 0xFF;
+        data[g * 16 + 4] = 0xFF;
+        data[g * 16 + 5] = 0x7F;
+        data[g * 16 + 6] = 0x7F;
+        data[g * 16 + 7] = 0x3E;
+        data[g * 16 + 8] = 0x3E;
+        data[g * 16 + 9] = 0x1C;
         data[g * 16 + 10] = 0x1C;
         data[g * 16 + 11] = 0x08;
         data[g * 16 + 12] = 0x08;
@@ -1045,13 +1374,13 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     // ▽ U+25BD (glyph 445): WHITE DOWN-POINTING TRIANGLE
     {
         let g = 445;
-        data[g * 16 + 3]  = 0xFF;
-        data[g * 16 + 4]  = 0xFF;
-        data[g * 16 + 5]  = 0x41;
-        data[g * 16 + 6]  = 0x41;
-        data[g * 16 + 7]  = 0x22;
-        data[g * 16 + 8]  = 0x22;
-        data[g * 16 + 9]  = 0x14;
+        data[g * 16 + 3] = 0xFF;
+        data[g * 16 + 4] = 0xFF;
+        data[g * 16 + 5] = 0x41;
+        data[g * 16 + 6] = 0x41;
+        data[g * 16 + 7] = 0x22;
+        data[g * 16 + 8] = 0x22;
+        data[g * 16 + 9] = 0x14;
         data[g * 16 + 10] = 0x14;
         data[g * 16 + 11] = 0x08;
     }
@@ -1061,13 +1390,13 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     // ◀ U+25C0 (glyph 448): BLACK LEFT-POINTING TRIANGLE
     {
         let g = 448;
-        data[g * 16 + 3]  = 0x03;
-        data[g * 16 + 4]  = 0x0F;
-        data[g * 16 + 5]  = 0x3F;
-        data[g * 16 + 6]  = 0xFF;
-        data[g * 16 + 7]  = 0xFF;
-        data[g * 16 + 8]  = 0xFF;
-        data[g * 16 + 9]  = 0x3F;
+        data[g * 16 + 3] = 0x03;
+        data[g * 16 + 4] = 0x0F;
+        data[g * 16 + 5] = 0x3F;
+        data[g * 16 + 6] = 0xFF;
+        data[g * 16 + 7] = 0xFF;
+        data[g * 16 + 8] = 0xFF;
+        data[g * 16 + 9] = 0x3F;
         data[g * 16 + 10] = 0x0F;
         data[g * 16 + 11] = 0x03;
     }
@@ -1075,13 +1404,13 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     // ◁ U+25C1 (glyph 449): WHITE LEFT-POINTING TRIANGLE
     {
         let g = 449;
-        data[g * 16 + 3]  = 0x03;
-        data[g * 16 + 4]  = 0x0D;
-        data[g * 16 + 5]  = 0x31;
-        data[g * 16 + 6]  = 0xC1;
-        data[g * 16 + 7]  = 0xC1;
-        data[g * 16 + 8]  = 0xC1;
-        data[g * 16 + 9]  = 0x31;
+        data[g * 16 + 3] = 0x03;
+        data[g * 16 + 4] = 0x0D;
+        data[g * 16 + 5] = 0x31;
+        data[g * 16 + 6] = 0xC1;
+        data[g * 16 + 7] = 0xC1;
+        data[g * 16 + 8] = 0xC1;
+        data[g * 16 + 9] = 0x31;
         data[g * 16 + 10] = 0x0D;
         data[g * 16 + 11] = 0x03;
     }
@@ -1091,13 +1420,13 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     // ◆ U+25C6 (glyph 454): BLACK DIAMOND — the bouncing ball's true form — SoftGlyph
     {
         let g = 454;
-        data[g * 16 + 3]  = 0x08;
-        data[g * 16 + 4]  = 0x1C;
-        data[g * 16 + 5]  = 0x3E;
-        data[g * 16 + 6]  = 0x7F;
-        data[g * 16 + 7]  = 0xFF;
-        data[g * 16 + 8]  = 0xFF;
-        data[g * 16 + 9]  = 0x7F;
+        data[g * 16 + 3] = 0x08;
+        data[g * 16 + 4] = 0x1C;
+        data[g * 16 + 5] = 0x3E;
+        data[g * 16 + 6] = 0x7F;
+        data[g * 16 + 7] = 0xFF;
+        data[g * 16 + 8] = 0xFF;
+        data[g * 16 + 9] = 0x7F;
         data[g * 16 + 10] = 0x3E;
         data[g * 16 + 11] = 0x1C;
         data[g * 16 + 12] = 0x08;
@@ -1106,13 +1435,13 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     // ◇ U+25C7 (glyph 455): WHITE DIAMOND
     {
         let g = 455;
-        data[g * 16 + 3]  = 0x08;
-        data[g * 16 + 4]  = 0x14;
-        data[g * 16 + 5]  = 0x22;
-        data[g * 16 + 6]  = 0x41;
-        data[g * 16 + 7]  = 0x80;
-        data[g * 16 + 8]  = 0x80;
-        data[g * 16 + 9]  = 0x41;
+        data[g * 16 + 3] = 0x08;
+        data[g * 16 + 4] = 0x14;
+        data[g * 16 + 5] = 0x22;
+        data[g * 16 + 6] = 0x41;
+        data[g * 16 + 7] = 0x80;
+        data[g * 16 + 8] = 0x80;
+        data[g * 16 + 9] = 0x41;
         data[g * 16 + 10] = 0x22;
         data[g * 16 + 11] = 0x14;
         data[g * 16 + 12] = 0x08;
@@ -1121,13 +1450,13 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     // ◈ U+25C8 (glyph 456): WHITE DIAMOND CONTAINING BLACK SMALL DIAMOND
     {
         let g = 456;
-        data[g * 16 + 3]  = 0x08;
-        data[g * 16 + 4]  = 0x14;
-        data[g * 16 + 5]  = 0x22;
-        data[g * 16 + 6]  = 0x49;
-        data[g * 16 + 7]  = 0x9C;
-        data[g * 16 + 8]  = 0x9C;
-        data[g * 16 + 9]  = 0x49;
+        data[g * 16 + 3] = 0x08;
+        data[g * 16 + 4] = 0x14;
+        data[g * 16 + 5] = 0x22;
+        data[g * 16 + 6] = 0x49;
+        data[g * 16 + 7] = 0x9C;
+        data[g * 16 + 8] = 0x9C;
+        data[g * 16 + 9] = 0x49;
         data[g * 16 + 10] = 0x22;
         data[g * 16 + 11] = 0x14;
         data[g * 16 + 12] = 0x08;
@@ -1136,13 +1465,13 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     // ○ U+25CB (glyph 459): WHITE CIRCLE
     {
         let g = 459;
-        data[g * 16 + 3]  = 0x3C;
-        data[g * 16 + 4]  = 0x42;
-        data[g * 16 + 5]  = 0x42;
-        data[g * 16 + 6]  = 0x81;
-        data[g * 16 + 7]  = 0x81;
-        data[g * 16 + 8]  = 0x81;
-        data[g * 16 + 9]  = 0x81;
+        data[g * 16 + 3] = 0x3C;
+        data[g * 16 + 4] = 0x42;
+        data[g * 16 + 5] = 0x42;
+        data[g * 16 + 6] = 0x81;
+        data[g * 16 + 7] = 0x81;
+        data[g * 16 + 8] = 0x81;
+        data[g * 16 + 9] = 0x81;
         data[g * 16 + 10] = 0x42;
         data[g * 16 + 11] = 0x42;
         data[g * 16 + 12] = 0x3C;
@@ -1151,13 +1480,13 @@ pub const fn generate_font_extended() -> [u8; EXTENDED_FONT_SIZE] {
     // ● U+25CF (glyph 463): BLACK CIRCLE
     {
         let g = 463;
-        data[g * 16 + 3]  = 0x3C;
-        data[g * 16 + 4]  = 0x7E;
-        data[g * 16 + 5]  = 0x7E;
-        data[g * 16 + 6]  = 0xFF;
-        data[g * 16 + 7]  = 0xFF;
-        data[g * 16 + 8]  = 0xFF;
-        data[g * 16 + 9]  = 0xFF;
+        data[g * 16 + 3] = 0x3C;
+        data[g * 16 + 4] = 0x7E;
+        data[g * 16 + 5] = 0x7E;
+        data[g * 16 + 6] = 0xFF;
+        data[g * 16 + 7] = 0xFF;
+        data[g * 16 + 8] = 0xFF;
+        data[g * 16 + 9] = 0xFF;
         data[g * 16 + 10] = 0x7E;
         data[g * 16 + 11] = 0x7E;
         data[g * 16 + 12] = 0x3C;

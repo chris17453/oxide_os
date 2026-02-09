@@ -109,8 +109,18 @@ impl TcpOptions {
                         if len >= 2 && i + len <= data.len() && (len - 2) % 8 == 0 {
                             let mut j = i + 2;
                             while j + 8 <= i + len {
-                                let left = u32::from_be_bytes([data[j], data[j+1], data[j+2], data[j+3]]);
-                                let right = u32::from_be_bytes([data[j+4], data[j+5], data[j+6], data[j+7]]);
+                                let left = u32::from_be_bytes([
+                                    data[j],
+                                    data[j + 1],
+                                    data[j + 2],
+                                    data[j + 3],
+                                ]);
+                                let right = u32::from_be_bytes([
+                                    data[j + 4],
+                                    data[j + 5],
+                                    data[j + 6],
+                                    data[j + 7],
+                                ]);
                                 opts.sack_blocks.push((left, right));
                                 j += 8;
                             }
@@ -124,8 +134,18 @@ impl TcpOptions {
                 }
                 tcp_option::TIMESTAMP => {
                     if i + 10 <= data.len() && data[i + 1] == 10 {
-                        opts.timestamp = Some(u32::from_be_bytes([data[i+2], data[i+3], data[i+4], data[i+5]]));
-                        opts.timestamp_echo = Some(u32::from_be_bytes([data[i+6], data[i+7], data[i+8], data[i+9]]));
+                        opts.timestamp = Some(u32::from_be_bytes([
+                            data[i + 2],
+                            data[i + 3],
+                            data[i + 4],
+                            data[i + 5],
+                        ]));
+                        opts.timestamp_echo = Some(u32::from_be_bytes([
+                            data[i + 6],
+                            data[i + 7],
+                            data[i + 8],
+                            data[i + 9],
+                        ]));
                         i += 10;
                     } else {
                         break;
@@ -346,7 +366,7 @@ impl TcpSegment {
     pub fn parse(data: &[u8]) -> NetResult<Self> {
         let header = TcpHeader::parse(data)?;
         let header_len = header.data_offset();
-        
+
         if data.len() < header_len {
             return Err(NetError::InvalidArgument);
         }
@@ -427,7 +447,7 @@ pub struct TcpConnection {
     retransmit_queue: Mutex<Vec<(u32, Vec<u8>, u64)>>,
     /// Last activity timestamp
     last_activity: AtomicU64,
-    
+
     // TorqueJax: Congestion control fields for RFC 5681 compliance
     /// Congestion window (in bytes)
     cwnd: AtomicU32,
@@ -437,7 +457,7 @@ pub struct TcpConnection {
     mss: AtomicU32,
     /// Receive MSS
     rcv_mss: AtomicU32,
-    
+
     // WireSaint: RTT estimation fields (RFC 6298)
     /// Smoothed round-trip time (microseconds)
     srtt: AtomicU64,
@@ -445,7 +465,7 @@ pub struct TcpConnection {
     rttvar: AtomicU64,
     /// Retransmission timeout (microseconds)
     rto: AtomicU64,
-    
+
     // GraveShift: Additional RFC compliance fields
     /// Window scale shift count (send)
     snd_wscale: AtomicU32,
@@ -483,7 +503,7 @@ impl TcpConnection {
     const KEEPALIVE_INTERVAL: u64 = 2 * 3600 * 1_000_000;
     // TIME_WAIT timeout (2*MSL = 4 minutes)
     const TIME_WAIT_TIMEOUT: u64 = 4 * 60 * 1_000_000;
-    
+
     /// Create a new TCP connection
     pub fn new(
         id: u32,
@@ -513,7 +533,7 @@ impl TcpConnection {
             last_activity: AtomicU64::new(0),
             // Initialize congestion control per RFC 5681
             cwnd: AtomicU32::new(init_mss as u32 * 2), // Initial cwnd = 2*MSS
-            ssthresh: AtomicU32::new(u32::MAX), // Initially unlimited
+            ssthresh: AtomicU32::new(u32::MAX),        // Initially unlimited
             mss: AtomicU32::new(init_mss as u32),
             rcv_mss: AtomicU32::new(init_mss as u32),
             // Initialize RTT tracking per RFC 6298
@@ -582,16 +602,16 @@ impl TcpConnection {
         // GraveShift: Build SYN with RFC-compliant options
         let seq = self.snd_nxt.load(Ordering::SeqCst);
         let mss = self.mss.load(Ordering::SeqCst) as u16;
-        
+
         let mut options = TcpOptions::default();
         options.mss = Some(mss);
         options.window_scale = Some(7); // Scale factor for 64KB->8MB window
         options.sack_permitted = true;
         options.timestamp = Some(Self::get_timestamp());
         options.timestamp_echo = Some(0);
-        
+
         self.rcv_wscale.store(7, Ordering::SeqCst);
-        
+
         let segment = TcpSegment::new_with_options(
             self.local_port,
             self.remote_port,
@@ -627,22 +647,25 @@ impl TcpConnection {
         let header = &segment.header;
         let options = &segment.options;
         let data = &segment.data;
-        
+
         // NeonRoot: Validate sequence number per RFC 793
         if !self.seq_acceptable(header.seq_num, data.len() as u32) {
             // Segment not acceptable - send ACK
             return Ok(());
         }
-        
+
         let mut state = self.state.lock();
-        
+
         // Process RST flag first (RFC 793)
         if header.flags & tcp_flags::RST != 0 {
             // —ShadePacket: Track that we received RST for error reporting
             self.reset_received.store(true, Ordering::SeqCst);
             match *state {
-                TcpState::SynReceived | TcpState::Established | TcpState::FinWait1
-                | TcpState::FinWait2 | TcpState::CloseWait => {
+                TcpState::SynReceived
+                | TcpState::Established
+                | TcpState::FinWait1
+                | TcpState::FinWait2
+                | TcpState::CloseWait => {
                     *state = TcpState::Closed;
                     return Ok(());
                 }
@@ -659,7 +682,8 @@ impl TcpConnection {
                 if header.flags & tcp_flags::SYN != 0 {
                     // BlackLatch: Handle incoming SYN with option negotiation
                     if let Some(peer_mss) = options.mss {
-                        self.mss.store(peer_mss.min(TCP_MSS_ETHERNET) as u32, Ordering::SeqCst);
+                        self.mss
+                            .store(peer_mss.min(TCP_MSS_ETHERNET) as u32, Ordering::SeqCst);
                     }
                     if let Some(wscale) = options.window_scale {
                         self.snd_wscale.store(wscale as u32, Ordering::SeqCst);
@@ -670,8 +694,9 @@ impl TcpConnection {
                     if let Some(ts) = options.timestamp {
                         self.ts_recent.store(ts, Ordering::SeqCst);
                     }
-                    
-                    self.rcv_nxt.store(header.seq_num.wrapping_add(1), Ordering::SeqCst);
+
+                    self.rcv_nxt
+                        .store(header.seq_num.wrapping_add(1), Ordering::SeqCst);
                     *state = TcpState::SynReceived;
                     self.send_syn_ack();
                 }
@@ -680,7 +705,8 @@ impl TcpConnection {
                 if header.flags & tcp_flags::SYN != 0 && header.flags & tcp_flags::ACK != 0 {
                     // SYN-ACK received - process options
                     if let Some(peer_mss) = options.mss {
-                        self.mss.store(peer_mss.min(TCP_MSS_ETHERNET) as u32, Ordering::SeqCst);
+                        self.mss
+                            .store(peer_mss.min(TCP_MSS_ETHERNET) as u32, Ordering::SeqCst);
                     }
                     if let Some(wscale) = options.window_scale {
                         self.snd_wscale.store(wscale as u32, Ordering::SeqCst);
@@ -688,14 +714,16 @@ impl TcpConnection {
                     if options.sack_permitted {
                         self.sack_permitted.store(1, Ordering::SeqCst);
                     }
-                    
+
                     self.snd_una.store(header.ack_num, Ordering::SeqCst);
-                    self.rcv_nxt.store(header.seq_num.wrapping_add(1), Ordering::SeqCst);
+                    self.rcv_nxt
+                        .store(header.seq_num.wrapping_add(1), Ordering::SeqCst);
                     *state = TcpState::Established;
                     self.send_ack();
                 } else if header.flags & tcp_flags::SYN != 0 {
                     // Simultaneous open
-                    self.rcv_nxt.store(header.seq_num.wrapping_add(1), Ordering::SeqCst);
+                    self.rcv_nxt
+                        .store(header.seq_num.wrapping_add(1), Ordering::SeqCst);
                     *state = TcpState::SynReceived;
                     self.send_syn_ack();
                 }
@@ -708,14 +736,17 @@ impl TcpConnection {
             }
             TcpState::Established => {
                 // WireSaint: Update activity timestamp
-                self.last_activity.store(Self::get_timestamp_us(), Ordering::SeqCst);
-                
+                self.last_activity
+                    .store(Self::get_timestamp_us(), Ordering::SeqCst);
+
                 // Process ACKs with congestion control
                 if header.flags & tcp_flags::ACK != 0 {
                     self.process_ack(header.ack_num);
-                    
+
                     // Update RTT if timestamp present
-                    if let (Some(ts_val), Some(ts_ecr)) = (options.timestamp, options.timestamp_echo) {
+                    if let (Some(ts_val), Some(ts_ecr)) =
+                        (options.timestamp, options.timestamp_echo)
+                    {
                         if ts_ecr > 0 {
                             let now = Self::get_timestamp();
                             // BlackLatch: RTT in timestamp units (actual unit depends on clock source)
@@ -734,18 +765,18 @@ impl TcpConnection {
                         let mut recv_buf = self.recv_buf.lock();
                         recv_buf.extend(data);
                         self.rcv_nxt.fetch_add(data.len() as u32, Ordering::SeqCst);
-                        
+
                         // Update receive window based on buffer space
                         let available = TCP_WINDOW_SIZE as usize - recv_buf.len();
                         self.rcv_wnd.store(available as u32, Ordering::SeqCst);
-                        
+
                         self.send_ack();
                     } else {
                         // Out-of-order data - would queue for reassembly
                         self.send_ack(); // Send duplicate ACK
                     }
                 }
-                
+
                 // Process URG flag
                 if header.flags & tcp_flags::URG != 0 {
                     // Handle urgent data up to urgent_ptr
@@ -767,7 +798,8 @@ impl TcpConnection {
                     self.rcv_nxt.fetch_add(1, Ordering::SeqCst);
                     if *state == TcpState::FinWait2 {
                         *state = TcpState::TimeWait;
-                        self.time_wait_timer.store(Self::get_timestamp_us(), Ordering::SeqCst);
+                        self.time_wait_timer
+                            .store(Self::get_timestamp_us(), Ordering::SeqCst);
                     } else {
                         *state = TcpState::Closing;
                     }
@@ -781,7 +813,8 @@ impl TcpConnection {
                 if header.flags & tcp_flags::FIN != 0 {
                     self.rcv_nxt.fetch_add(1, Ordering::SeqCst);
                     *state = TcpState::TimeWait;
-                    self.time_wait_timer.store(Self::get_timestamp_us(), Ordering::SeqCst);
+                    self.time_wait_timer
+                        .store(Self::get_timestamp_us(), Ordering::SeqCst);
                     self.send_ack();
                 }
             }
@@ -795,7 +828,8 @@ impl TcpConnection {
                 if header.flags & tcp_flags::ACK != 0 {
                     self.process_ack(header.ack_num);
                     *state = TcpState::TimeWait;
-                    self.time_wait_timer.store(Self::get_timestamp_us(), Ordering::SeqCst);
+                    self.time_wait_timer
+                        .store(Self::get_timestamp_us(), Ordering::SeqCst);
                 }
             }
             TcpState::LastAck => {
@@ -807,7 +841,8 @@ impl TcpConnection {
             TcpState::TimeWait => {
                 // Reset TIME_WAIT timer if we get another FIN
                 if header.flags & tcp_flags::FIN != 0 {
-                    self.time_wait_timer.store(Self::get_timestamp_us(), Ordering::SeqCst);
+                    self.time_wait_timer
+                        .store(Self::get_timestamp_us(), Ordering::SeqCst);
                     self.send_ack();
                 }
             }
@@ -827,35 +862,35 @@ impl TcpConnection {
         let mut send_buf = self.send_buf.lock();
         send_buf.extend(data);
         drop(send_buf);
-        
+
         // Trigger immediate transmission if Nagle allows
         self.transmit_data()?;
-        
+
         Ok(data.len())
     }
-    
+
     /// ShadePacket: Transmit pending data from send buffer
     fn transmit_data(&self) -> NetResult<()> {
         let state = *self.state.lock();
         if state != TcpState::Established && state != TcpState::CloseWait {
             return Ok(());
         }
-        
+
         let mut send_buf = self.send_buf.lock();
         if send_buf.is_empty() {
             return Ok(());
         }
-        
+
         let mss = self.mss.load(Ordering::SeqCst) as usize;
         let snd_wnd = self.snd_wnd.load(Ordering::SeqCst);
         let cwnd = self.cwnd.load(Ordering::SeqCst);
         let effective_window = snd_wnd.min(cwnd);
-        
+
         // Check if we can send (Nagle + window check)
         let una = self.snd_una.load(Ordering::SeqCst);
         let nxt = self.snd_nxt.load(Ordering::SeqCst);
         let in_flight = nxt.wrapping_sub(una);
-        
+
         if in_flight >= effective_window {
             // Window is full - check for zero window probe
             if snd_wnd == 0 {
@@ -863,22 +898,22 @@ impl TcpConnection {
             }
             return Ok(());
         }
-        
+
         let available_window = effective_window - in_flight;
         let to_send = send_buf.len().min(available_window as usize).min(mss);
-        
+
         if to_send > 0 && self.can_send_segment(to_send) {
             let data: Vec<u8> = send_buf.drain(..to_send).collect();
             let seq = self.snd_nxt.load(Ordering::SeqCst);
             let ack = self.rcv_nxt.load(Ordering::SeqCst);
             let window = self.rcv_wnd.load(Ordering::SeqCst) as u16;
-            
+
             let mut options = TcpOptions::default();
             if self.sack_permitted.load(Ordering::SeqCst) != 0 {
                 options.timestamp = Some(Self::get_timestamp());
                 options.timestamp_echo = Some(self.ts_recent.load(Ordering::SeqCst));
             }
-            
+
             let flags = tcp_flags::ACK | tcp_flags::PSH;
             let segment = TcpSegment::new_with_options(
                 self.local_port,
@@ -890,28 +925,28 @@ impl TcpConnection {
                 options,
                 &data,
             );
-            
+
             self.queue_segment(segment);
             self.snd_nxt.fetch_add(data.len() as u32, Ordering::SeqCst);
             self.has_unacked.store(1, Ordering::SeqCst);
         }
-        
+
         Ok(())
     }
-    
+
     /// WireSaint: Send zero window probe (1 byte)
     fn send_zero_window_probe(&self) {
         let mut send_buf = self.send_buf.lock();
         if send_buf.is_empty() {
             return;
         }
-        
+
         // Send one byte as probe
         let probe_byte = send_buf[0];
         let seq = self.snd_nxt.load(Ordering::SeqCst);
         let ack = self.rcv_nxt.load(Ordering::SeqCst);
         let window = self.rcv_wnd.load(Ordering::SeqCst) as u16;
-        
+
         let segment = TcpSegment::new(
             self.local_port,
             self.remote_port,
@@ -921,7 +956,7 @@ impl TcpConnection {
             window,
             &[probe_byte],
         );
-        
+
         self.queue_segment(segment);
     }
 
@@ -975,10 +1010,10 @@ impl TcpConnection {
     pub fn process_timers(&self) -> NetResult<()> {
         let now = Self::get_timestamp_us();
         let state = *self.state.lock();
-        
+
         // WireSaint: Retransmission timer
         self.check_retransmission(now)?;
-        
+
         // Keepalive timer
         if state == TcpState::Established {
             let last_activity = self.last_activity.load(Ordering::SeqCst);
@@ -987,7 +1022,7 @@ impl TcpConnection {
                 self.last_activity.store(now, Ordering::SeqCst);
             }
         }
-        
+
         // TIME_WAIT timeout
         if state == TcpState::TimeWait {
             let timer = self.time_wait_timer.load(Ordering::SeqCst);
@@ -996,51 +1031,55 @@ impl TcpConnection {
                 *state = TcpState::Closed;
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// TorqueJax: Check and handle retransmissions with exponential backoff
     fn check_retransmission(&self, now: u64) -> NetResult<()> {
         let mut queue = self.retransmit_queue.lock();
         let rto = self.rto.load(Ordering::SeqCst);
-        
+
         for (seq, data, timestamp) in queue.iter_mut() {
             if now.saturating_sub(*timestamp) > rto {
                 // Retransmit needed
                 // Would send segment here
                 *timestamp = now;
-                
+
                 // Exponential backoff: double RTO (up to max)
                 let new_rto = (rto * 2).min(Self::MAX_RTO);
                 self.rto.store(new_rto, Ordering::SeqCst);
-                
+
                 // Reduce congestion window (multiplicative decrease)
                 let ssthresh = self.cwnd.load(Ordering::SeqCst) / 2;
-                self.ssthresh.store(ssthresh.max(2 * self.mss.load(Ordering::SeqCst)), Ordering::SeqCst);
-                self.cwnd.store(self.mss.load(Ordering::SeqCst), Ordering::SeqCst);
+                self.ssthresh.store(
+                    ssthresh.max(2 * self.mss.load(Ordering::SeqCst)),
+                    Ordering::SeqCst,
+                );
+                self.cwnd
+                    .store(self.mss.load(Ordering::SeqCst), Ordering::SeqCst);
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Send keepalive probe
     fn send_keepalive(&self) -> NetResult<()> {
         // Send segment with seq = snd_una - 1 (one byte before window)
         Ok(())
     }
-    
+
     /// RustViper: Update RTT estimate using Karn's algorithm (RFC 6298)
     fn update_rtt(&self, measured_rtt: u64) {
         let srtt = self.srtt.load(Ordering::SeqCst);
         let rttvar = self.rttvar.load(Ordering::SeqCst);
-        
+
         if srtt == 0 {
             // First measurement
             self.srtt.store(measured_rtt, Ordering::SeqCst);
             self.rttvar.store(measured_rtt / 2, Ordering::SeqCst);
-            
+
             // RTO = SRTT + max(G, K*RTTVAR) where G=clock granularity, K=4
             let new_rto = (measured_rtt + measured_rtt * 2).clamp(Self::MIN_RTO, Self::MAX_RTO);
             self.rto.store(new_rto, Ordering::SeqCst);
@@ -1053,55 +1092,62 @@ impl TcpConnection {
             } else {
                 measured_rtt - srtt
             };
-            
+
             let new_rttvar = (rttvar * 3 / 4) + (diff / 4);
             let new_srtt = (srtt * 7 / 8) + (measured_rtt / 8);
-            
+
             self.rttvar.store(new_rttvar, Ordering::SeqCst);
             self.srtt.store(new_srtt, Ordering::SeqCst);
-            
+
             // RTO = SRTT + max(G, K*RTTVAR) - use updated values
             let new_rto = (new_srtt + new_rttvar * 4).clamp(Self::MIN_RTO, Self::MAX_RTO);
             self.rto.store(new_rto, Ordering::SeqCst);
         }
     }
-    
+
     /// GraveShift: Process ACK with congestion control (RFC 5681)
     fn process_ack(&self, ack_num: u32) {
         let una = self.snd_una.load(Ordering::SeqCst);
-        
+
         if ack_num == una {
             // Duplicate ACK
             let dup_count = self.dup_acks.fetch_add(1, Ordering::SeqCst) + 1;
-            
+
             if dup_count == 3 {
                 // Fast retransmit (RFC 5681)
                 self.fast_retransmit();
                 // Enter fast recovery
                 let ssthresh = self.cwnd.load(Ordering::SeqCst) / 2;
-                self.ssthresh.store(ssthresh.max(2 * self.mss.load(Ordering::SeqCst)), Ordering::SeqCst);
-                self.cwnd.store(ssthresh + 3 * self.mss.load(Ordering::SeqCst), Ordering::SeqCst);
+                self.ssthresh.store(
+                    ssthresh.max(2 * self.mss.load(Ordering::SeqCst)),
+                    Ordering::SeqCst,
+                );
+                self.cwnd.store(
+                    ssthresh + 3 * self.mss.load(Ordering::SeqCst),
+                    Ordering::SeqCst,
+                );
             } else if dup_count > 3 {
                 // Inflate cwnd for each additional duplicate ACK
-                self.cwnd.fetch_add(self.mss.load(Ordering::SeqCst), Ordering::SeqCst);
+                self.cwnd
+                    .fetch_add(self.mss.load(Ordering::SeqCst), Ordering::SeqCst);
             }
         } else if Self::seq_gt(ack_num, una) {
             // New ACK - clear duplicate counter
             self.dup_acks.store(0, Ordering::SeqCst);
             self.snd_una.store(ack_num, Ordering::SeqCst);
-            
+
             // Remove acknowledged data from retransmit queue
             let mut queue = self.retransmit_queue.lock();
             queue.retain(|(seq, data, _)| {
                 let end_seq = seq.wrapping_add(data.len() as u32);
                 Self::seq_gt(end_seq, ack_num)
             });
-            
+
             // Congestion control
             let cwnd = self.cwnd.load(Ordering::SeqCst);
             let ssthresh = self.ssthresh.load(Ordering::SeqCst);
             let mss = self.mss.load(Ordering::SeqCst);
-            
+
             if cwnd < ssthresh {
                 // Slow start: cwnd += MSS for each ACK
                 self.cwnd.store(cwnd + mss, Ordering::SeqCst);
@@ -1112,13 +1158,13 @@ impl TcpConnection {
             }
         }
     }
-    
+
     /// Fast retransmit on triple duplicate ACK
     fn fast_retransmit(&self) {
         // Retransmit first unacknowledged segment
         let una = self.snd_una.load(Ordering::SeqCst);
         let queue = self.retransmit_queue.lock();
-        
+
         for (seq, data, _) in queue.iter() {
             if *seq == una {
                 // Would retransmit this segment here
@@ -1126,70 +1172,68 @@ impl TcpConnection {
             }
         }
     }
-    
+
     /// ShadePacket: Apply Nagle algorithm check
     fn can_send_segment(&self, data_len: usize) -> bool {
         if self.nagle_enabled.load(Ordering::SeqCst) == 0 {
             return true; // Nagle disabled
         }
-        
+
         // Can send if: full-sized segment OR no unacked data OR no buffered data
         let mss = self.mss.load(Ordering::SeqCst) as usize;
         let has_unacked = self.has_unacked.load(Ordering::SeqCst) != 0;
-        
+
         data_len >= mss || !has_unacked
     }
-    
+
     /// Get current timestamp in arbitrary units (e.g., milliseconds)
     fn get_timestamp() -> u32 {
         // Would use actual clock source
         0
     }
-    
+
     /// Get current timestamp in microseconds
     fn get_timestamp_us() -> u64 {
         // Would use actual clock source
         0
     }
-    
+
     /// GraveShift: Queue a segment for transmission
     fn queue_segment(&self, segment: TcpSegment) {
         let bytes = segment.to_bytes(self.local_ip, self.remote_ip);
         self.tx_queue.lock().push_back(bytes);
-        
+
         // Add to retransmit queue if it contains data or SYN/FIN
-        if !segment.data.is_empty() 
-            || segment.header.flags & tcp_flags::SYN != 0 
-            || segment.header.flags & tcp_flags::FIN != 0 
+        if !segment.data.is_empty()
+            || segment.header.flags & tcp_flags::SYN != 0
+            || segment.header.flags & tcp_flags::FIN != 0
         {
             let now = Self::get_timestamp_us();
-            self.retransmit_queue.lock().push((
-                segment.header.seq_num,
-                segment.data.clone(),
-                now,
-            ));
+            self.retransmit_queue
+                .lock()
+                .push((segment.header.seq_num, segment.data.clone(), now));
         }
     }
-    
+
     /// ShadePacket: Dequeue pending segments for transmission (called by stack)
     pub fn dequeue_segments(&self) -> Vec<Vec<u8>> {
         let mut queue = self.tx_queue.lock();
         let segments: Vec<_> = queue.drain(..).collect();
         segments
     }
-    
+
     /// TorqueJax: Send ACK for received data
     fn send_ack(&self) {
         let seq = self.snd_nxt.load(Ordering::SeqCst);
         let ack = self.rcv_nxt.load(Ordering::SeqCst);
         let window = self.rcv_wnd.load(Ordering::SeqCst) as u16;
-        
+
         let mut options = TcpOptions::default();
         if self.sack_permitted.load(Ordering::SeqCst) != 0 {
             options.timestamp = Some(Self::get_timestamp());
             options.timestamp_echo = Some(self.ts_recent.load(Ordering::SeqCst));
         }
-        
+
         let segment = TcpSegment::new_with_options(
             self.local_port,
             self.remote_port,
@@ -1200,23 +1244,23 @@ impl TcpConnection {
             options,
             &[],
         );
-        
+
         self.queue_segment(segment);
     }
-    
+
     /// WireSaint: Send SYN-ACK for incoming connection
     fn send_syn_ack(&self) {
         let seq = self.snd_nxt.load(Ordering::SeqCst);
         let ack = self.rcv_nxt.load(Ordering::SeqCst);
         let mss = self.mss.load(Ordering::SeqCst) as u16;
-        
+
         let mut options = TcpOptions::default();
         options.mss = Some(mss);
         options.window_scale = Some(self.rcv_wscale.load(Ordering::SeqCst) as u8);
         options.sack_permitted = true;
         options.timestamp = Some(Self::get_timestamp());
         options.timestamp_echo = Some(self.ts_recent.load(Ordering::SeqCst));
-        
+
         let segment = TcpSegment::new_with_options(
             self.local_port,
             self.remote_port,
@@ -1227,16 +1271,16 @@ impl TcpConnection {
             options,
             &[],
         );
-        
+
         self.queue_segment(segment);
         self.snd_nxt.fetch_add(1, Ordering::SeqCst); // SYN consumes one seq number
     }
-    
+
     /// BlackLatch: Send RST to terminate connection
     fn send_rst(&self) {
         let seq = self.snd_nxt.load(Ordering::SeqCst);
         let ack = self.rcv_nxt.load(Ordering::SeqCst);
-        
+
         let segment = TcpSegment::new(
             self.local_port,
             self.remote_port,
@@ -1246,16 +1290,16 @@ impl TcpConnection {
             0,
             &[],
         );
-        
+
         self.queue_segment(segment);
     }
-    
+
     /// NeonRoot: Send FIN to close connection
     fn send_fin(&self) {
         let seq = self.snd_nxt.load(Ordering::SeqCst);
         let ack = self.rcv_nxt.load(Ordering::SeqCst);
         let window = self.rcv_wnd.load(Ordering::SeqCst) as u16;
-        
+
         let segment = TcpSegment::new(
             self.local_port,
             self.remote_port,
@@ -1265,28 +1309,28 @@ impl TcpConnection {
             window,
             &[],
         );
-        
+
         self.queue_segment(segment);
         self.snd_nxt.fetch_add(1, Ordering::SeqCst); // FIN consumes one seq number
     }
-    
+
     /// Validate sequence number (RFC 793 segment acceptance test)
     fn seq_acceptable(&self, seq: u32, len: u32) -> bool {
         let rcv_nxt = self.rcv_nxt.load(Ordering::SeqCst);
         let rcv_wnd = self.rcv_wnd.load(Ordering::SeqCst);
-        
+
         if rcv_wnd == 0 {
             return len == 0 && seq == rcv_nxt;
         }
-        
+
         if len == 0 {
             // Zero-length segment
             Self::seq_ge(seq, rcv_nxt) && Self::seq_lt(seq, rcv_nxt.wrapping_add(rcv_wnd))
         } else {
-            // Non-zero length segment  
+            // Non-zero length segment
             let seq_end = seq.wrapping_add(len - 1);
             let wnd_end = rcv_nxt.wrapping_add(rcv_wnd);
-            
+
             (Self::seq_ge(seq, rcv_nxt) && Self::seq_lt(seq, wnd_end))
                 || (Self::seq_ge(seq_end, rcv_nxt) && Self::seq_lt(seq_end, wnd_end))
         }
@@ -1302,12 +1346,12 @@ impl TcpConnection {
         let diff = a.wrapping_sub(b) as i32;
         diff >= 0
     }
-    
+
     fn seq_lt(a: u32, b: u32) -> bool {
         let diff = a.wrapping_sub(b) as i32;
         diff < 0
     }
-    
+
     fn seq_le(a: u32, b: u32) -> bool {
         let diff = a.wrapping_sub(b) as i32;
         diff <= 0

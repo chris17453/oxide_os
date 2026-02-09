@@ -56,10 +56,22 @@ impl VnodeOps for SysFs {
     fn lookup(&self, name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
         match name {
             "kernel" => Ok(Arc::new(SysKernel { ino: 10 })),
-            "devices" => Ok(Arc::new(SysEmpty { ino: 20, name: "devices" })),
-            "class" => Ok(Arc::new(SysEmpty { ino: 30, name: "class" })),
-            "bus" => Ok(Arc::new(SysEmpty { ino: 40, name: "bus" })),
-            "firmware" => Ok(Arc::new(SysEmpty { ino: 50, name: "firmware" })),
+            "devices" => Ok(Arc::new(SysEmpty {
+                ino: 20,
+                name: "devices",
+            })),
+            "class" => Ok(Arc::new(SysEmpty {
+                ino: 30,
+                name: "class",
+            })),
+            "bus" => Ok(Arc::new(SysEmpty {
+                ino: 40,
+                name: "bus",
+            })),
+            "firmware" => Ok(Arc::new(SysEmpty {
+                ino: 50,
+                name: "firmware",
+            })),
             _ => Err(VfsError::NotFound),
         }
     }
@@ -69,16 +81,20 @@ impl VnodeOps for SysFs {
 
         // . and ..
         match idx {
-            0 => return Ok(Some(DirEntry {
-                name: String::from("."),
-                ino: self.ino,
-                file_type: VnodeType::Directory,
-            })),
-            1 => return Ok(Some(DirEntry {
-                name: String::from(".."),
-                ino: self.ino,
-                file_type: VnodeType::Directory,
-            })),
+            0 => {
+                return Ok(Some(DirEntry {
+                    name: String::from("."),
+                    ino: self.ino,
+                    file_type: VnodeType::Directory,
+                }));
+            }
+            1 => {
+                return Ok(Some(DirEntry {
+                    name: String::from(".."),
+                    ino: self.ino,
+                    file_type: VnodeType::Directory,
+                }));
+            }
             _ => {}
         }
 
@@ -96,7 +112,12 @@ impl VnodeOps for SysFs {
     }
 
     fn stat(&self) -> VfsResult<Stat> {
-        Ok(Stat::new(VnodeType::Directory, Mode::new(0o555), 0, self.ino))
+        Ok(Stat::new(
+            VnodeType::Directory,
+            Mode::new(0o555),
+            0,
+            self.ino,
+        ))
     }
 
     fn read(&self, _offset: u64, _buf: &mut [u8]) -> VfsResult<usize> {
@@ -142,9 +163,7 @@ struct SysKernel {
     ino: u64,
 }
 
-const KERNEL_ENTRIES: &[(&str, u64, VnodeType)] = &[
-    ("debug", 11, VnodeType::Directory),
-];
+const KERNEL_ENTRIES: &[(&str, u64, VnodeType)] = &[("debug", 11, VnodeType::Directory)];
 
 impl VnodeOps for SysKernel {
     fn vtype(&self) -> VnodeType {
@@ -153,7 +172,10 @@ impl VnodeOps for SysKernel {
 
     fn lookup(&self, name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
         match name {
-            "debug" => Ok(Arc::new(SysEmpty { ino: 11, name: "debug" })),
+            "debug" => Ok(Arc::new(SysEmpty {
+                ino: 11,
+                name: "debug",
+            })),
             _ => Err(VfsError::NotFound),
         }
     }
@@ -188,7 +210,12 @@ impl VnodeOps for SysKernel {
     }
 
     fn stat(&self) -> VfsResult<Stat> {
-        Ok(Stat::new(VnodeType::Directory, Mode::new(0o555), 0, self.ino))
+        Ok(Stat::new(
+            VnodeType::Directory,
+            Mode::new(0o555),
+            0,
+            self.ino,
+        ))
     }
 
     fn read(&self, _offset: u64, _buf: &mut [u8]) -> VfsResult<usize> {
@@ -261,7 +288,12 @@ impl VnodeOps for SysEmpty {
     }
 
     fn stat(&self) -> VfsResult<Stat> {
-        Ok(Stat::new(VnodeType::Directory, Mode::new(0o555), 0, self.ino))
+        Ok(Stat::new(
+            VnodeType::Directory,
+            Mode::new(0o555),
+            0,
+            self.ino,
+        ))
     }
 
     fn read(&self, _offset: u64, _buf: &mut [u8]) -> VfsResult<usize> {

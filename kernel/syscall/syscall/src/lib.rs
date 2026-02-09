@@ -7,18 +7,18 @@
 
 extern crate alloc;
 
+pub mod container;
 pub mod dir;
+pub mod event_io;
 pub mod firewall;
 pub mod memory;
 pub mod poll;
+pub mod security;
 pub mod signal;
 pub mod socket;
 pub mod time;
 pub mod vfs;
 pub mod vfs_ext;
-pub mod container;
-pub mod event_io;
-pub mod security;
 
 use alloc::sync::Arc;
 use os_core::VirtAddr;
@@ -323,7 +323,7 @@ pub mod nr {
     pub const RENAMEAT2: u64 = 316;
     pub const FACCESSAT2: u64 = 439;
     pub const MKNODAT: u64 = 259;
-    
+
     // Container primitives (Week 3)
     pub const UNSHARE: u64 = 272;
     pub const SETNS: u64 = 308;
@@ -331,7 +331,7 @@ pub mod nr {
     pub const PIDFD_OPEN: u64 = 434;
     pub const PIDFD_SEND_SIGNAL: u64 = 424;
     pub const PIDFD_GETFD: u64 = 438;
-    
+
     // Event-driven I/O (Week 4)
     pub const TIMERFD_CREATE: u64 = 283;
     pub const TIMERFD_SETTIME: u64 = 286;
@@ -343,7 +343,7 @@ pub mod nr {
     pub const SENDMMSG: u64 = 307;
     pub const PREADV2: u64 = 327;
     pub const PWRITEV2: u64 = 328;
-    
+
     // Security primitives (Week 6)
     pub const PRCTL: u64 = 157;
     pub const CAPGET: u64 = 125;
@@ -894,7 +894,9 @@ pub fn dispatch(
             arg6 as usize,
             0, // flags - would be arg7 but we only have 6
         ),
-        nr::FACCESSAT2 => vfs_ext::sys_faccessat2(arg1 as i32, arg2, arg3 as usize, arg4 as i32, arg5 as i32),
+        nr::FACCESSAT2 => {
+            vfs_ext::sys_faccessat2(arg1 as i32, arg2, arg3 as usize, arg4 as i32, arg5 as i32)
+        }
         nr::MKNODAT => vfs_ext::sys_mknodat(arg1 as i32, arg2, arg3 as usize, arg4 as u32, arg5),
 
         // Week 3: Container primitives
@@ -902,7 +904,9 @@ pub fn dispatch(
         nr::SETNS => container::sys_setns(arg1 as i32, arg2 as i32),
         nr::CLONE3 => container::sys_clone3(arg1, arg2 as usize),
         nr::PIDFD_OPEN => container::sys_pidfd_open(arg1 as i32, arg2 as u32),
-        nr::PIDFD_SEND_SIGNAL => container::sys_pidfd_send_signal(arg1 as i32, arg2 as i32, arg3, arg4 as u32),
+        nr::PIDFD_SEND_SIGNAL => {
+            container::sys_pidfd_send_signal(arg1 as i32, arg2 as i32, arg3, arg4 as u32)
+        }
         nr::PIDFD_GETFD => container::sys_pidfd_getfd(arg1 as i32, arg2 as i32, arg3 as u32),
 
         // Week 4: Event-driven I/O
@@ -911,11 +915,17 @@ pub fn dispatch(
         nr::TIMERFD_GETTIME => event_io::sys_timerfd_gettime(arg1 as i32, arg2),
         nr::SIGNALFD => event_io::sys_signalfd(arg1 as i32, arg2, arg3 as i32),
         nr::SIGNALFD4 => event_io::sys_signalfd4(arg1 as i32, arg2, arg3 as usize, arg4 as i32),
-        nr::EPOLL_PWAIT2 => event_io::sys_epoll_pwait2(arg1 as i32, arg2, arg3 as i32, arg4, arg5, arg6 as usize),
+        nr::EPOLL_PWAIT2 => {
+            event_io::sys_epoll_pwait2(arg1 as i32, arg2, arg3 as i32, arg4, arg5, arg6 as usize)
+        }
         nr::RECVMMSG => event_io::sys_recvmmsg(arg1 as i32, arg2, arg3 as u32, arg4 as i32, arg5),
         nr::SENDMMSG => event_io::sys_sendmmsg(arg1 as i32, arg2, arg3 as u32, arg4 as i32),
-        nr::PREADV2 => event_io::sys_preadv2(arg1 as i32, arg2, arg3 as i32, arg4 as i64, arg5 as i32),
-        nr::PWRITEV2 => event_io::sys_pwritev2(arg1 as i32, arg2, arg3 as i32, arg4 as i64, arg5 as i32),
+        nr::PREADV2 => {
+            event_io::sys_preadv2(arg1 as i32, arg2, arg3 as i32, arg4 as i64, arg5 as i32)
+        }
+        nr::PWRITEV2 => {
+            event_io::sys_pwritev2(arg1 as i32, arg2, arg3 as i32, arg4 as i64, arg5 as i32)
+        }
 
         // Week 6: Security
         nr::PRCTL => security::sys_prctl(arg1 as i32, arg2, arg3, arg4, arg5),

@@ -61,6 +61,9 @@ initramfs: $(INITRAMFS_PREREQ)
 	@echo "OXIDE" > $(TARGET_DIR)/initramfs/etc/hostname
 	@echo "127.0.0.1 localhost" > $(TARGET_DIR)/initramfs/etc/hosts
 	@echo "::1 localhost" >> $(TARGET_DIR)/initramfs/etc/hosts
+	@# — BlackLatch: Console keyboard config. Init reads this on boot.
+	@echo "# Console keyboard layout (us, uk, de, fr)" > $(TARGET_DIR)/initramfs/etc/vconsole.conf
+	@echo "KEYMAP=us" >> $(TARGET_DIR)/initramfs/etc/vconsole.conf
 	@# — BlackLatch: Fallback fstab. If pivot succeeds, ext4's fstab wins.
 	@echo "# initramfs fallback (ext4 fstab takes over after pivot)" > $(TARGET_DIR)/initramfs/etc/fstab
 	@echo "proc   /proc  proc   defaults  0  0" >> $(TARGET_DIR)/initramfs/etc/fstab

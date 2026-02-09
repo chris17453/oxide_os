@@ -76,25 +76,36 @@ fn setup_physical_map(pml4_phys: u64) {
 
     // PHYS_MAP_BASE = 0xFFFF_8000_0000_0000
     // PML4 index: bits 47:39 = 256
-    let pml4_idx = ((PHYS_MAP_BASE >> 39) & 0x1FF) as usize;
+    // Each PML4 entry covers 512GB. We need multiple entries because
+    // PCIe 64-bit BARs (e.g. QEMU Q35 virtio-*-pci) can be placed above
+    // 512GB (typically around 0xC000000000 = 768GB). Map 4TB total
+    // (8 PML4 entries × 512GB) to cover all reasonable MMIO ranges.
+    // — TorqueJax: one PDPT per PML4 slot, 1GB huge pages throughout.
+    let base_pml4_idx = ((PHYS_MAP_BASE >> 39) & 0x1FF) as usize; // 256
+    let num_pml4_entries = 8; // 8 × 512GB = 4TB
 
-    // Allocate PDPT
-    let pdpt_phys = allocate_page_table();
-    unsafe {
-        (*pml4)[pml4_idx] = pdpt_phys | PRESENT | WRITABLE;
-    }
+    for entry in 0..num_pml4_entries {
+        let pml4_idx = base_pml4_idx + entry;
+        if pml4_idx >= ENTRIES_PER_TABLE {
+            break;
+        }
 
-    let pdpt = pdpt_phys as *mut [u64; ENTRIES_PER_TABLE];
-    unsafe {
-        ptr::write_bytes(pdpt, 0, 1);
-    }
-
-    // Map first 512GB with 1GB huge pages (full PDPT coverage)
-    // — TorqueJax: UEFI can allocate high — we map the whole canonical range
-    for i in 0..512 {
-        let phys_addr = (i as u64) * (1024 * 1024 * 1024);
+        let pdpt_phys = allocate_page_table();
         unsafe {
-            (*pdpt)[i] = phys_addr | PRESENT | WRITABLE | HUGE_PAGE;
+            (*pml4)[pml4_idx] = pdpt_phys | PRESENT | WRITABLE;
+        }
+
+        let pdpt = pdpt_phys as *mut [u64; ENTRIES_PER_TABLE];
+        unsafe {
+            ptr::write_bytes(pdpt, 0, 1);
+        }
+
+        // Map 512GB per PDPT with 1GB huge pages
+        for i in 0..512 {
+            let phys_addr = ((entry as u64) * 512 + (i as u64)) * (1024 * 1024 * 1024);
+            unsafe {
+                (*pdpt)[i] = phys_addr | PRESENT | WRITABLE | HUGE_PAGE;
+            }
         }
     }
 }

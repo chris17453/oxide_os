@@ -391,7 +391,7 @@ impl Handler {
             buffer.set_char(self.cursor.row, self.cursor.col, translated_ch, self.attrs);
             self.cursor.col += 1;
         }
-        
+
         // Track last printed character for REP sequence
         // -- GlassSignal: Remember what we just printed for efficient repetition
         self.last_char = Some(translated_ch);

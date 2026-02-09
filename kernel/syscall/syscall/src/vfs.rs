@@ -232,9 +232,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
 
     // — GraveShift: Single with_current_meta_mut call — allocate fd while holding lock.
     // Previously split across two calls, releasing lock between check and alloc. Never again.
-    let result = match with_current_meta_mut(|meta| {
-        meta.fd_table.alloc(file)
-    }) {
+    let result = match with_current_meta_mut(|meta| meta.fd_table.alloc(file)) {
         Some(Ok(fd)) => fd as i64,
         Some(Err(e)) => vfs_error_to_errno(e),
         None => errno::ESRCH,
@@ -354,9 +352,7 @@ pub fn sys_write_vfs(fd: i32, buf: u64, count: usize) -> i64 {
 
     // Get file from fd table
     let file =
-        match with_current_meta(|meta| {
-            meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
-        })
+        match with_current_meta(|meta| meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone()))
         {
             Some(Ok(f)) => f,
             Some(Err(e)) => return vfs_error_to_errno(e),

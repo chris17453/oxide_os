@@ -384,7 +384,12 @@ impl TcpIpStack {
         // Find connection
         let connections = self.tcp_connections.lock();
         for conn in connections.values() {
-            if conn.matches(src_ip, segment.header.src_port, dst_ip, segment.header.dst_port) {
+            if conn.matches(
+                src_ip,
+                segment.header.src_port,
+                dst_ip,
+                segment.header.dst_port,
+            ) {
                 conn.process_segment(&segment)?;
                 return Ok(());
             }
@@ -550,7 +555,7 @@ impl TcpIpStack {
         let connections = self.tcp_connections.lock();
         for conn in connections.values() {
             conn.process_timers()?;
-            
+
             // SableWire: Transmit any queued segments
             let segments = conn.dequeue_segments();
             for segment_bytes in segments {
@@ -584,7 +589,7 @@ impl TcpIpStack {
 
         // Initiate connection (send SYN)
         conn.connect()?;
-        
+
         // NeonRoot: Immediately transmit the SYN
         let segments = conn.dequeue_segments();
         for segment_bytes in segments {

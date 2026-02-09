@@ -19,9 +19,9 @@ mod clock_id {
 
 /// timerfd flags
 mod tfd_flags {
-    pub const TFD_NONBLOCK: i32 = 0x800;      // O_NONBLOCK
-    pub const TFD_CLOEXEC: i32 = 0x80000;     // O_CLOEXEC
-    pub const TFD_TIMER_ABSTIME: i32 = 1;     // Absolute time
+    pub const TFD_NONBLOCK: i32 = 0x800; // O_NONBLOCK
+    pub const TFD_CLOEXEC: i32 = 0x80000; // O_CLOEXEC
+    pub const TFD_TIMER_ABSTIME: i32 = 1; // Absolute time
     pub const TFD_TIMER_CANCEL_ON_SET: i32 = 2;
 }
 
@@ -179,8 +179,8 @@ pub fn sys_epoll_pwait2(
 /// mmsghdr for recvmmsg/sendmmsg
 #[repr(C)]
 pub struct MmsgHdr {
-    msg_hdr: u64,      // struct msghdr*
-    msg_len: u32,      // bytes sent/received
+    msg_hdr: u64, // struct msghdr*
+    msg_len: u32, // bytes sent/received
 }
 
 /// sys_recvmmsg - Receive multiple messages on socket
@@ -218,11 +218,11 @@ pub fn sys_sendmmsg(_sockfd: i32, _msgvec: u64, _vlen: u32, _flags: i32) -> i64 
 
 /// RWF flags for preadv2/pwritev2
 mod rwf_flags {
-    pub const RWF_HIPRI: i32 = 0x00000001;       // High priority read/write
-    pub const RWF_DSYNC: i32 = 0x00000002;       // Per-write O_DSYNC
-    pub const RWF_SYNC: i32 = 0x00000004;        // Per-write O_SYNC
-    pub const RWF_NOWAIT: i32 = 0x00000008;      // Non-blocking I/O
-    pub const RWF_APPEND: i32 = 0x00000010;      // Per-write append mode
+    pub const RWF_HIPRI: i32 = 0x00000001; // High priority read/write
+    pub const RWF_DSYNC: i32 = 0x00000002; // Per-write O_DSYNC
+    pub const RWF_SYNC: i32 = 0x00000004; // Per-write O_SYNC
+    pub const RWF_NOWAIT: i32 = 0x00000008; // Non-blocking I/O
+    pub const RWF_APPEND: i32 = 0x00000010; // Per-write append mode
 }
 
 /// sys_preadv2 - Positional vector read with flags

@@ -3,7 +3,7 @@
 //! Reads keyboard input from stdin (tty device).
 //! -- InputShade: Input systems + device interaction
 
-use libc::{read};
+use libc::read;
 
 // fcntl constants
 const F_GETFL: i32 = 3;
@@ -65,15 +65,15 @@ impl InputState {
                     0x1B => {
                         if i + 2 < n as usize && buf[i + 1] == b'[' {
                             match buf[i + 2] {
-                                b'A' => self.forward = true,   // Up arrow
-                                b'B' => self.backward = true,  // Down arrow
-                                b'C' => self.right = true,     // Right arrow
-                                b'D' => self.left = true,      // Left arrow
+                                b'A' => self.forward = true,  // Up arrow
+                                b'B' => self.backward = true, // Down arrow
+                                b'C' => self.right = true,    // Right arrow
+                                b'D' => self.left = true,     // Left arrow
                                 _ => {}
                             }
                             i += 3;
                         } else {
-                            self.quit = true;  // ESC pressed alone
+                            self.quit = true; // ESC pressed alone
                             i += 1;
                         }
                     }
@@ -83,11 +83,11 @@ impl InputState {
                     b'a' | b'A' => self.strafe_left = true,
                     b'd' | b'D' => self.strafe_right = true,
                     // Actions
-                    b' ' => self.use_key = true,  // Space - use/open
-                    0x11 => self.fire = true,     // Ctrl+Q - fire
+                    b' ' => self.use_key = true, // Space - use/open
+                    0x11 => self.fire = true,    // Ctrl+Q - fire
                     // Quit
                     b'q' | b'Q' => self.quit = true,
-                    0x03 => self.quit = true,     // Ctrl+C
+                    0x03 => self.quit = true, // Ctrl+C
                     _ => {}
                 }
                 i += 1;
@@ -96,13 +96,31 @@ impl InputState {
     }
 
     // Input state queries
-    pub fn is_forward(&self) -> bool { self.forward }
-    pub fn is_backward(&self) -> bool { self.backward }
-    pub fn is_left(&self) -> bool { self.left }
-    pub fn is_right(&self) -> bool { self.right }
-    pub fn is_strafe_left(&self) -> bool { self.strafe_left }
-    pub fn is_strafe_right(&self) -> bool { self.strafe_right }
-    pub fn is_fire(&self) -> bool { self.fire }
-    pub fn is_use(&self) -> bool { self.use_key }
-    pub fn is_quit(&self) -> bool { self.quit }
+    pub fn is_forward(&self) -> bool {
+        self.forward
+    }
+    pub fn is_backward(&self) -> bool {
+        self.backward
+    }
+    pub fn is_left(&self) -> bool {
+        self.left
+    }
+    pub fn is_right(&self) -> bool {
+        self.right
+    }
+    pub fn is_strafe_left(&self) -> bool {
+        self.strafe_left
+    }
+    pub fn is_strafe_right(&self) -> bool {
+        self.strafe_right
+    }
+    pub fn is_fire(&self) -> bool {
+        self.fire
+    }
+    pub fn is_use(&self) -> bool {
+        self.use_key
+    }
+    pub fn is_quit(&self) -> bool {
+        self.quit
+    }
 }

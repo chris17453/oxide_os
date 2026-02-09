@@ -220,7 +220,11 @@ impl TerminalEmulator {
             // During the write loop, cursor isn't drawn — we paint it at the end.
             {
                 let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
-                let buffer = if is_alt { &self.alternate } else { &self.primary };
+                let buffer = if is_alt {
+                    &self.alternate
+                } else {
+                    &self.primary
+                };
                 self.renderer.erase_cursor(buffer);
             }
 
@@ -239,7 +243,11 @@ impl TerminalEmulator {
             // — SoftGlyph: Paint cursor at final position and flush.
             {
                 let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
-                let buffer = if is_alt { &self.alternate } else { &self.primary };
+                let buffer = if is_alt {
+                    &self.alternate
+                } else {
+                    &self.primary
+                };
                 let cursor = self.handler.cursor;
                 self.renderer.paint_cursor(buffer, &cursor);
                 self.renderer.update_cursor_tracking(&cursor);
@@ -317,13 +325,18 @@ impl TerminalEmulator {
                     self.renderer.scroll_up_pixels(1, bg);
 
                     // Now paint the character that was placed after the scroll
-                    let buffer = if is_alt { &self.alternate } else { &self.primary };
+                    let buffer = if is_alt {
+                        &self.alternate
+                    } else {
+                        &self.primary
+                    };
                     let char_col = if self.handler.cursor.col > 0 {
                         self.handler.cursor.col - 1
                     } else {
                         0
                     };
-                    self.renderer.render_cell(buffer, self.handler.cursor.row, char_col);
+                    self.renderer
+                        .render_cell(buffer, self.handler.cursor.row, char_col);
                 } else {
                     // — SoftGlyph: No scroll — paint the glyph directly to framebuffer.
                     // This is our fbcon_putcs(). The cursor.col is already past the char,
@@ -333,13 +346,18 @@ impl TerminalEmulator {
                     } else {
                         0
                     };
-                    self.renderer.render_cell(buffer, self.handler.cursor.row, char_col);
+                    self.renderer
+                        .render_cell(buffer, self.handler.cursor.row, char_col);
 
                     // Wide char: also render the previous column if it's the lead cell
                     if char_col > 0 {
                         if let Some(prev) = buffer.get(self.handler.cursor.row, char_col - 1) {
                             if prev.attrs.flags.contains(CellFlags::WIDE) {
-                                self.renderer.render_cell(buffer, self.handler.cursor.row, char_col - 1);
+                                self.renderer.render_cell(
+                                    buffer,
+                                    self.handler.cursor.row,
+                                    char_col - 1,
+                                );
                             }
                         }
                     }
@@ -436,8 +454,10 @@ impl TerminalEmulator {
                     // Character set selection - no screen content changes
                     (Some(b'('), _) | (Some(b')'), _) => {}
                     // DECDHL/DECSWL/DECDWL line attrs - just metadata
-                    (Some(b'#'), b'3') | (Some(b'#'), b'4') |
-                    (Some(b'#'), b'5') | (Some(b'#'), b'6') => {}
+                    (Some(b'#'), b'3')
+                    | (Some(b'#'), b'4')
+                    | (Some(b'#'), b'5')
+                    | (Some(b'#'), b'6') => {}
                     // Linefeed/scroll, reset, DECALN, etc - might affect multiple rows
                     _ => self.renderer.mark_all_dirty(),
                 }
@@ -472,9 +492,18 @@ impl TerminalEmulator {
                 self.handler.backspace();
                 {
                     let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
-                    let buffer = if is_alt { &self.alternate } else { &self.primary };
-                    self.renderer.render_cell(buffer, self.handler.cursor.row, old_col);
-                    self.renderer.render_cell(buffer, self.handler.cursor.row, self.handler.cursor.col);
+                    let buffer = if is_alt {
+                        &self.alternate
+                    } else {
+                        &self.primary
+                    };
+                    self.renderer
+                        .render_cell(buffer, self.handler.cursor.row, old_col);
+                    self.renderer.render_cell(
+                        buffer,
+                        self.handler.cursor.row,
+                        self.handler.cursor.col,
+                    );
                 }
             }
             0x09 => {
@@ -855,35 +884,51 @@ impl TerminalEmulator {
 
                 // Attribute flags → SGR codes
                 if flags.contains(CellFlags::BOLD) {
-                    if !params.is_empty() { params.push(b';'); }
+                    if !params.is_empty() {
+                        params.push(b';');
+                    }
                     params.push(b'1');
                 }
                 if flags.contains(CellFlags::DIM) {
-                    if !params.is_empty() { params.push(b';'); }
+                    if !params.is_empty() {
+                        params.push(b';');
+                    }
                     params.push(b'2');
                 }
                 if flags.contains(CellFlags::ITALIC) {
-                    if !params.is_empty() { params.push(b';'); }
+                    if !params.is_empty() {
+                        params.push(b';');
+                    }
                     params.push(b'3');
                 }
                 if flags.contains(CellFlags::UNDERLINE) {
-                    if !params.is_empty() { params.push(b';'); }
+                    if !params.is_empty() {
+                        params.push(b';');
+                    }
                     params.push(b'4');
                 }
                 if flags.contains(CellFlags::BLINK) {
-                    if !params.is_empty() { params.push(b';'); }
+                    if !params.is_empty() {
+                        params.push(b';');
+                    }
                     params.push(b'5');
                 }
                 if flags.contains(CellFlags::REVERSE) {
-                    if !params.is_empty() { params.push(b';'); }
+                    if !params.is_empty() {
+                        params.push(b';');
+                    }
                     params.push(b'7');
                 }
                 if flags.contains(CellFlags::HIDDEN) {
-                    if !params.is_empty() { params.push(b';'); }
+                    if !params.is_empty() {
+                        params.push(b';');
+                    }
                     params.push(b'8');
                 }
                 if flags.contains(CellFlags::STRIKETHROUGH) {
-                    if !params.is_empty() { params.push(b';'); }
+                    if !params.is_empty() {
+                        params.push(b';');
+                    }
                     params.push(b'9');
                 }
 
@@ -910,15 +955,12 @@ impl TerminalEmulator {
             "\" q" | " q" => {
                 let shape_code = match self.handler.cursor.shape {
                     CursorShape::Block => b'2',     // steady block
-                    CursorShape::Underline => b'4',  // steady underline
-                    CursorShape::Bar => b'6',        // steady bar
+                    CursorShape::Underline => b'4', // steady underline
+                    CursorShape::Bar => b'6',       // steady bar
                 };
 
                 let response = [
-                    0x1b, b'P', b'1', b'$', b'r',
-                    shape_code,
-                    b' ', b'q',
-                    0x1b, b'\\',
+                    0x1b, b'P', b'1', b'$', b'r', shape_code, b' ', b'q', 0x1b, b'\\',
                 ];
                 crate::send_response(&response);
             }
@@ -950,7 +992,9 @@ impl TerminalEmulator {
 
         match color {
             TermColor::Ansi16(n) if *n < 8 => {
-                if !params.is_empty() { params.push(b';'); }
+                if !params.is_empty() {
+                    params.push(b';');
+                }
                 let code = base + n;
                 if code >= 100 {
                     params.push(b'0' + code / 100);
@@ -961,7 +1005,9 @@ impl TerminalEmulator {
                 params.push(b'0' + code % 10);
             }
             TermColor::Ansi16(n) => {
-                if !params.is_empty() { params.push(b';'); }
+                if !params.is_empty() {
+                    params.push(b';');
+                }
                 let code = bright_base + (n - 8);
                 if code >= 100 {
                     params.push(b'0' + code / 100);
@@ -972,13 +1018,17 @@ impl TerminalEmulator {
                 params.push(b'0' + code % 10);
             }
             TermColor::Ansi256(n) => {
-                if !params.is_empty() { params.push(b';'); }
+                if !params.is_empty() {
+                    params.push(b';');
+                }
                 let ext = if is_bg { b"48;5;" } else { b"38;5;" };
                 params.extend_from_slice(ext);
                 Self::write_decimal_to(params, *n as u32);
             }
             TermColor::Rgb(r, g, b) => {
-                if !params.is_empty() { params.push(b';'); }
+                if !params.is_empty() {
+                    params.push(b';');
+                }
                 let ext = if is_bg { b"48;2;" } else { b"38;2;" };
                 params.extend_from_slice(ext);
                 Self::write_decimal_to(params, *r as u32);
@@ -1365,13 +1415,12 @@ impl TerminalEmulator {
             let (end_col, end_row) = sel.end;
 
             // Normalize selection (ensure start <= end)
-            let ((c1, r1), (c2, r2)) = if start_row < end_row
-                || (start_row == end_row && start_col <= end_col)
-            {
-                ((start_col, start_row), (end_col, end_row))
-            } else {
-                ((end_col, end_row), (start_col, start_row))
-            };
+            let ((c1, r1), (c2, r2)) =
+                if start_row < end_row || (start_row == end_row && start_col <= end_col) {
+                    ((start_col, start_row), (end_col, end_row))
+                } else {
+                    ((end_col, end_row), (start_col, start_row))
+                };
 
             let mut text = String::new();
             for row in r1..=r2 {
@@ -1414,9 +1463,9 @@ impl TerminalEmulator {
     /// Push current selection coordinates to the renderer for highlight painting.
     /// — InputShade: The renderer needs the raw (col, row) range to invert cells.
     fn push_selection_to_renderer(&mut self) {
-        let sel_range = self.selection.map(|sel| {
-            (sel.start.0, sel.start.1, sel.end.0, sel.end.1)
-        });
+        let sel_range = self
+            .selection
+            .map(|sel| (sel.start.0, sel.start.1, sel.end.0, sel.end.1));
         self.renderer.set_selection(sel_range);
     }
 
@@ -1520,8 +1569,7 @@ impl TerminalEmulator {
         let scrollback_len = self.scrollback.len();
         let visible_rows = self.rows as usize;
         let total_lines = scrollback_len + visible_rows;
-        let viewport_start = total_lines
-            .saturating_sub(self.scroll_offset + visible_rows);
+        let viewport_start = total_lines.saturating_sub(self.scroll_offset + visible_rows);
 
         let mut composite = ScreenBuffer::new(self.cols, self.rows);
 
@@ -2021,14 +2069,18 @@ pub fn debug_dump_screen_to_serial() {
     // Helper to write a string to serial
     unsafe fn serial_write_str(s: &str) {
         for &byte in s.as_bytes() {
-            unsafe { serial_write(byte); }
+            unsafe {
+                serial_write(byte);
+            }
         }
     }
 
     // Helper to write a decimal number
     unsafe fn serial_write_u32(mut n: u32) {
         if n == 0 {
-            unsafe { serial_write(b'0'); }
+            unsafe {
+                serial_write(b'0');
+            }
             return;
         }
         let mut buf = [0u8; 10];
@@ -2041,15 +2093,23 @@ pub fn debug_dump_screen_to_serial() {
         // Write digits in reverse order
         while i > 0 {
             i -= 1;
-            unsafe { serial_write(buf[i]); }
+            unsafe {
+                serial_write(buf[i]);
+            }
         }
     }
 
     unsafe {
         serial_write_str("\r\n");
-        serial_write_str("╔════════════════════════════════════════════════════════════════════════════╗\r\n");
-        serial_write_str("║                    VT SCREEN BUFFER DUMP (SERIAL)                         ║\r\n");
-        serial_write_str("╠════════════════════════════════════════════════════════════════════════════╣\r\n");
+        serial_write_str(
+            "╔════════════════════════════════════════════════════════════════════════════╗\r\n",
+        );
+        serial_write_str(
+            "║                    VT SCREEN BUFFER DUMP (SERIAL)                         ║\r\n",
+        );
+        serial_write_str(
+            "╠════════════════════════════════════════════════════════════════════════════╣\r\n",
+        );
     }
 
     if let Some(guard) = TERMINAL.try_lock() {
@@ -2062,7 +2122,9 @@ pub fn debug_dump_screen_to_serial() {
                 serial_write_str(" x ");
                 serial_write_u32(rows);
                 serial_write_str("\r\n");
-                serial_write_str("╠════════════════════════════════════════════════════════════════════════════╣\r\n");
+                serial_write_str(
+                    "╠════════════════════════════════════════════════════════════════════════════╣\r\n",
+                );
             }
 
             // Access the primary screen buffer
@@ -2098,19 +2160,29 @@ pub fn debug_dump_screen_to_serial() {
             }
 
             unsafe {
-                serial_write_str("╚════════════════════════════════════════════════════════════════════════════╝\r\n");
+                serial_write_str(
+                    "╚════════════════════════════════════════════════════════════════════════════╝\r\n",
+                );
                 serial_write_str("\r\n");
             }
         } else {
             unsafe {
-                serial_write_str("║ ERROR: Terminal not initialized                                           ║\r\n");
-                serial_write_str("╚════════════════════════════════════════════════════════════════════════════╝\r\n");
+                serial_write_str(
+                    "║ ERROR: Terminal not initialized                                           ║\r\n",
+                );
+                serial_write_str(
+                    "╚════════════════════════════════════════════════════════════════════════════╝\r\n",
+                );
             }
         }
     } else {
         unsafe {
-            serial_write_str("║ ERROR: Could not lock TERMINAL mutex                                      ║\r\n");
-            serial_write_str("╚════════════════════════════════════════════════════════════════════════════╝\r\n");
+            serial_write_str(
+                "║ ERROR: Could not lock TERMINAL mutex                                      ║\r\n",
+            );
+            serial_write_str(
+                "╚════════════════════════════════════════════════════════════════════════════╝\r\n",
+            );
         }
     }
 }

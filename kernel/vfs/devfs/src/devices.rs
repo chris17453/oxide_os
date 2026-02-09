@@ -25,7 +25,9 @@ fn raw_serial_str(s: &[u8]) {
 #[cfg(feature = "debug-console")]
 #[inline]
 fn dbg_serial(s: &str) {
-    unsafe { os_log::write_str_raw(s); }
+    unsafe {
+        os_log::write_str_raw(s);
+    }
 }
 
 // ============================================================================

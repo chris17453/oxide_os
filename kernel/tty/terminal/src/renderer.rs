@@ -346,7 +346,11 @@ impl Renderer {
             let is_italic = cell.attrs.flags.contains(CellFlags::ITALIC);
 
             match resolved.data {
-                GlyphData::Bitmap { width, height, data } => {
+                GlyphData::Bitmap {
+                    width,
+                    height,
+                    data,
+                } => {
                     if is_italic {
                         self.draw_bitmap_italic(px, py, width, height, data, fg_color);
                         if is_bold {
@@ -359,7 +363,11 @@ impl Renderer {
                         self.draw_bitmap_glyph(px, py, width, height, data, fg_color);
                     }
                 }
-                GlyphData::Rgba { width, height, data } => {
+                GlyphData::Rgba {
+                    width,
+                    height,
+                    data,
+                } => {
                     // RGBA emoji/color glyph — alpha blend onto background
                     // Bold/italic don't apply to color glyphs — SoftGlyph
                     self.draw_rgba_glyph(px, py, width, height, data);
@@ -381,7 +389,15 @@ impl Renderer {
     }
 
     /// Draw a 1-bit monochrome bitmap glyph with optimized pixel writes — SoftGlyph
-    fn draw_bitmap_glyph(&self, px: u32, py: u32, glyph_w: u32, glyph_h: u32, glyph_data: &[u8], color: Color) {
+    fn draw_bitmap_glyph(
+        &self,
+        px: u32,
+        py: u32,
+        glyph_w: u32,
+        glyph_h: u32,
+        glyph_data: &[u8],
+        color: Color,
+    ) {
         let bpp = self.fb.format().bytes_per_pixel() as usize;
         let stride = self.fb.stride() as usize;
         let buffer = self.fb.buffer();
@@ -405,7 +421,9 @@ impl Renderer {
                         for x in 0..glyph_w {
                             let byte_idx = (y * bytes_per_row + x / 8) as usize;
                             let bit_idx = 7 - (x % 8);
-                            if byte_idx < glyph_data.len() && (glyph_data[byte_idx] >> bit_idx) & 1 != 0 {
+                            if byte_idx < glyph_data.len()
+                                && (glyph_data[byte_idx] >> bit_idx) & 1 != 0
+                            {
                                 core::ptr::write(line_ptr.add(x as usize), pixel_value);
                             }
                         }
@@ -421,7 +439,9 @@ impl Renderer {
                         for x in 0..glyph_w {
                             let byte_idx = (y * bytes_per_row + x / 8) as usize;
                             let bit_idx = 7 - (x % 8);
-                            if byte_idx < glyph_data.len() && (glyph_data[byte_idx] >> bit_idx) & 1 != 0 {
+                            if byte_idx < glyph_data.len()
+                                && (glyph_data[byte_idx] >> bit_idx) & 1 != 0
+                            {
                                 core::ptr::write(line_ptr.add(x as usize), pixel_value);
                             }
                         }
@@ -432,7 +452,9 @@ impl Renderer {
                         for x in 0..glyph_w {
                             let byte_idx = (y * bytes_per_row + x / 8) as usize;
                             let bit_idx = 7 - (x % 8);
-                            if byte_idx < glyph_data.len() && (glyph_data[byte_idx] >> bit_idx) & 1 != 0 {
+                            if byte_idx < glyph_data.len()
+                                && (glyph_data[byte_idx] >> bit_idx) & 1 != 0
+                            {
                                 self.fb.set_pixel(px + x, py + y, color);
                             }
                         }
@@ -444,7 +466,15 @@ impl Renderer {
 
     /// Draw a bitmap glyph with synthetic italic slant
     /// Top rows shift right, bottom rows don't — a lean, mean pixel machine. — SoftGlyph
-    fn draw_bitmap_italic(&self, px: u32, py: u32, glyph_w: u32, glyph_h: u32, glyph_data: &[u8], color: Color) {
+    fn draw_bitmap_italic(
+        &self,
+        px: u32,
+        py: u32,
+        glyph_w: u32,
+        glyph_h: u32,
+        glyph_data: &[u8],
+        color: Color,
+    ) {
         let bytes_per_row = (glyph_w + 7) / 8;
 
         for y in 0..glyph_h {
@@ -551,7 +581,12 @@ impl Renderer {
                     .fill_rect(px, py, self.font.width, self.font.height, bg_color);
                 if cell.ch != ' ' {
                     let resolved = self.font_manager.resolve(cell.ch);
-                    if let GlyphData::Bitmap { width, height, data } = resolved.data {
+                    if let GlyphData::Bitmap {
+                        width,
+                        height,
+                        data,
+                    } = resolved.data
+                    {
                         self.draw_bitmap_glyph(px, py, width, height, data, fg_color);
                     }
                 }
@@ -646,7 +681,11 @@ impl Renderer {
             let px = col * self.font.width;
             let py = row * self.font.height;
             let selected = self.is_cell_selected(row, col);
-            let cell_count = if cell.attrs.flags.contains(CellFlags::WIDE) { 2 } else { 1 };
+            let cell_count = if cell.attrs.flags.contains(CellFlags::WIDE) {
+                2
+            } else {
+                1
+            };
             self.render_cell_inner(px, py, cell, cell_count, selected);
         }
     }
@@ -663,13 +702,17 @@ impl Renderer {
         }
         // — GraveShift: Shift all scanlines up by pixel_rows. copy_rect handles overlap.
         self.fb.copy_rect(
-            0, pixel_rows,
-            0, 0,
-            self.fb.width(), total_pixel_height - pixel_rows,
+            0,
+            pixel_rows,
+            0,
+            0,
+            self.fb.width(),
+            total_pixel_height - pixel_rows,
         );
         // Clear the vacated bottom rows
         let clear_y = total_pixel_height - pixel_rows;
-        self.fb.fill_rect(0, clear_y, self.fb.width(), pixel_rows, bg_color);
+        self.fb
+            .fill_rect(0, clear_y, self.fb.width(), pixel_rows, bg_color);
     }
 
     /// Paint cursor at current position — call after writes for immediate visibility.
@@ -683,7 +726,10 @@ impl Renderer {
     /// Erase cursor from previous position by repainting the cell underneath.
     /// — SoftGlyph: Ghost cursor exorcism — repaint what was there before the caret landed.
     pub fn erase_cursor(&self, buffer: &ScreenBuffer) {
-        if self.last_cursor_visible && self.last_cursor_row < self.rows && self.last_cursor_col < self.cols {
+        if self.last_cursor_visible
+            && self.last_cursor_row < self.rows
+            && self.last_cursor_col < self.cols
+        {
             self.render_cell(buffer, self.last_cursor_row, self.last_cursor_col);
         }
     }

@@ -19,11 +19,11 @@
 extern crate libc;
 extern crate oxide_ncurses as ncurses;
 
-use ncurses::{
-    attrs::*, color_pair, colors::*, endwin, has_colors, init_pair, initscr, mvprintw, refresh,
-    start_color, getch,
-};
 use ncurses::output::clear as ncurses_clear;
+use ncurses::{
+    attrs::*, color_pair, colors::*, endwin, getch, has_colors, init_pair, initscr, mvprintw,
+    refresh, start_color,
+};
 
 /// Process information structure
 /// -- ThreadRogue: Process metadata - everything we know about a task
@@ -34,7 +34,7 @@ struct ProcessInfo {
     name: [u8; 64],
     name_len: usize,
     state: u8,
-    cpu_percent: u32,  // Scaled by 100 (e.g., 1550 = 15.50%)
+    cpu_percent: u32, // Scaled by 100 (e.g., 1550 = 15.50%)
     mem_kb: u64,
     threads: u32,
 }
@@ -193,12 +193,12 @@ fn read_process_status(pid: u32, proc: &mut ProcessInfo) -> bool {
     // Build path: /proc/[pid]/status
     let mut path = [0u8; 64];
     let mut path_len = 0;
-    
+
     // Add "/proc/"
     let prefix = b"/proc/";
     path[..prefix.len()].copy_from_slice(prefix);
     path_len += prefix.len();
-    
+
     // Add PID
     let mut pid_val = pid;
     let mut pid_digits = [0u8; 10];
@@ -218,13 +218,16 @@ fn read_process_status(pid: u32, proc: &mut ProcessInfo) -> bool {
         }
     }
     path_len += pid_len;
-    
+
     // Add "/status"
     let suffix = b"/status\0";
     path[path_len..path_len + suffix.len()].copy_from_slice(suffix);
 
     let mut buf = [0u8; 2048];
-    let n = read_proc_file(core::str::from_utf8(&path[..path_len + 7]).unwrap_or(""), &mut buf);
+    let n = read_proc_file(
+        core::str::from_utf8(&path[..path_len + 7]).unwrap_or(""),
+        &mut buf,
+    );
     if n <= 0 {
         return false;
     }
@@ -353,21 +356,21 @@ fn draw_header(sys: &SystemInfo, _max_y: i32, max_x: i32) {
     } else {
         0
     };
-    
+
     // Format: "Mem: 1234/5678 MB"
     let _ = mvprintw(1, 2, "Mem:");
-    
+
     // Convert to MB for display
     let _mem_used_mb = mem_used / 1024;
     let _mem_total_mb = sys.total_mem_kb / 1024;
-    
+
     unsafe {
         let stdscr = ncurses::screen::stdscr();
         if !stdscr.is_null() {
             (*stdscr).attrs = A_NORMAL;
         }
     }
-    
+
     // Simple number printing (avoiding complex formatting)
     let _ = mvprintw(1, 8, "Used/Total MB");
 
@@ -550,15 +553,15 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
 
     // Initialize colors
     let _ = start_color();
-    
+
     // -- ColdCipher: Color scheme - cyber aesthetic
-    let _ = init_pair(1, COLOR_CYAN, COLOR_BLACK);      // Title/status bar
-    let _ = init_pair(2, COLOR_GREEN, COLOR_BLACK);     // Memory info
-    let _ = init_pair(3, COLOR_YELLOW, COLOR_BLACK);    // Task count
-    let _ = init_pair(4, COLOR_BLUE, COLOR_BLACK);      // Separator
-    let _ = init_pair(5, COLOR_MAGENTA, COLOR_BLACK);   // Column headers
-    let _ = init_pair(6, COLOR_WHITE, COLOR_BLACK);     // Process entries
-    let _ = init_pair(7, COLOR_BLACK, COLOR_WHITE);     // Selected process
+    let _ = init_pair(1, COLOR_CYAN, COLOR_BLACK); // Title/status bar
+    let _ = init_pair(2, COLOR_GREEN, COLOR_BLACK); // Memory info
+    let _ = init_pair(3, COLOR_YELLOW, COLOR_BLACK); // Task count
+    let _ = init_pair(4, COLOR_BLUE, COLOR_BLACK); // Separator
+    let _ = init_pair(5, COLOR_MAGENTA, COLOR_BLACK); // Column headers
+    let _ = init_pair(6, COLOR_WHITE, COLOR_BLACK); // Process entries
+    let _ = init_pair(7, COLOR_BLACK, COLOR_WHITE); // Selected process
 
     // Get screen dimensions
     let mut max_y = 24;
@@ -582,13 +585,13 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
         if !read_meminfo(&mut sys_info) {
             // If we can't read meminfo, use dummy values
             sys_info.total_mem_kb = 1024 * 1024; // 1 GB
-            sys_info.free_mem_kb = 512 * 1024;   // 512 MB
+            sys_info.free_mem_kb = 512 * 1024; // 512 MB
         }
 
         // List processes
         let proc_count = list_processes(&mut processes, 256);
         sys_info.total_procs = proc_count as u32;
-        
+
         // Count running processes
         let mut running_count = 0;
         for i in 0..proc_count {
@@ -607,7 +610,7 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
         // Draw processes (leave room for header and status bar)
         let list_start_y = 5;
         let list_height = (max_y - list_start_y - 1).max(0) as usize;
-        
+
         for i in 0..list_height {
             let proc_idx = scroll_offset + i;
             if proc_idx < proc_count {

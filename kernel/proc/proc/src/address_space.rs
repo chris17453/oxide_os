@@ -221,7 +221,11 @@ impl UserAddressSpace {
                         while arch::inb(0x3FD) & 0x20 == 0 {}
                         arch::outb(0x3F8, byte);
                     }
-                    let msg2 = if i < 100 { [b'0' + (i / 10) as u8, b'0' + (i % 10) as u8] } else { [b'X', b'X'] };
+                    let msg2 = if i < 100 {
+                        [b'0' + (i / 10) as u8, b'0' + (i % 10) as u8]
+                    } else {
+                        [b'X', b'X']
+                    };
                     for &byte in &msg2 {
                         while arch::inb(0x3FD) & 0x20 == 0 {}
                         arch::outb(0x3F8, byte);
@@ -245,7 +249,11 @@ impl UserAddressSpace {
                                 while arch::inb(0x3FD) & 0x20 == 0 {}
                                 arch::outb(0x3F8, byte);
                             }
-                            let msg2 = if i < 100 { [b'0' + (i / 10) as u8, b'0' + (i % 10) as u8] } else { [b'X', b'X'] };
+                            let msg2 = if i < 100 {
+                                [b'0' + (i / 10) as u8, b'0' + (i % 10) as u8]
+                            } else {
+                                [b'X', b'X']
+                            };
                             for &byte in &msg2 {
                                 while arch::inb(0x3FD) & 0x20 == 0 {}
                                 arch::outb(0x3F8, byte);
@@ -306,7 +314,11 @@ impl UserAddressSpace {
                 let mut idx = 0;
                 loop {
                     let digit = (n & 0xF) as u8;
-                    buf[idx] = if digit < 10 { b'0' + digit } else { b'a' + (digit - 10) };
+                    buf[idx] = if digit < 10 {
+                        b'0' + digit
+                    } else {
+                        b'a' + (digit - 10)
+                    };
                     n >>= 4;
                     idx += 1;
                     if n == 0 {
@@ -347,7 +359,11 @@ impl UserAddressSpace {
                 let mut idx = 0;
                 loop {
                     let digit = (n & 0xF) as u8;
-                    buf[idx] = if digit < 10 { b'0' + digit } else { b'a' + (digit - 10) };
+                    buf[idx] = if digit < 10 {
+                        b'0' + digit
+                    } else {
+                        b'a' + (digit - 10)
+                    };
                     n >>= 4;
                     idx += 1;
                     if n == 0 {
@@ -369,7 +385,11 @@ impl UserAddressSpace {
                 let mut idx = 0;
                 loop {
                     let digit = (n & 0xF) as u8;
-                    buf[idx] = if digit < 10 { b'0' + digit } else { b'a' + (digit - 10) };
+                    buf[idx] = if digit < 10 {
+                        b'0' + digit
+                    } else {
+                        b'a' + (digit - 10)
+                    };
                     n >>= 4;
                     idx += 1;
                     if n == 0 {
@@ -404,7 +424,11 @@ impl UserAddressSpace {
                     let mut idx = 0;
                     loop {
                         let digit = (n & 0xF) as u8;
-                        buf[idx] = if digit < 10 { b'0' + digit } else { b'a' + (digit - 10) };
+                        buf[idx] = if digit < 10 {
+                            b'0' + digit
+                        } else {
+                            b'a' + (digit - 10)
+                        };
                         n >>= 4;
                         idx += 1;
                         if n == 0 {
@@ -443,7 +467,11 @@ impl UserAddressSpace {
                 let mut idx = 0;
                 loop {
                     let digit = (n & 0xF) as u8;
-                    buf[idx] = if digit < 10 { b'0' + digit } else { b'a' + (digit - 10) };
+                    buf[idx] = if digit < 10 {
+                        b'0' + digit
+                    } else {
+                        b'a' + (digit - 10)
+                    };
                     n >>= 4;
                     idx += 1;
                     if n == 0 {

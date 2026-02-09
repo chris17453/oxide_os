@@ -14,11 +14,13 @@
 
 extern crate alloc;
 
+use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use alloc::format;
 use libc::*;
-use oxide_ncurses::{WINDOW, screen, input, output, color, attributes, attrs, window, colors, keys};
+use oxide_ncurses::{
+    WINDOW, attributes, attrs, color, colors, input, keys, output, screen, window,
+};
 
 /// Process information structure
 #[derive(Clone, Debug)]
@@ -30,8 +32,8 @@ struct ProcessInfo {
     name_len: usize,
     user_time: u64,
     system_time: u64,
-    vsize: u64,      // Virtual memory size in bytes
-    rss: u64,        // Resident set size in pages
+    vsize: u64, // Virtual memory size in bytes
+    rss: u64,   // Resident set size in pages
     cpu_percent: f32,
     mem_percent: f32,
     priority: i32,
@@ -139,7 +141,7 @@ struct TopConfig {
     highlight_changes: bool,
     user_filter: Option<u32>, // Filter by UID
     pid_filter: Option<u32>,  // Filter by PID
-    max_lines: i32,       // Number of process lines to display
+    max_lines: i32,           // Number of process lines to display
 }
 
 impl TopConfig {
@@ -382,7 +384,11 @@ fn parse_signed_num(s: &[u8]) -> Option<i64> {
         }
         result = result.checked_mul(10)?.checked_add((b - b'0') as i64)?;
     }
-    if negative { Some(-result) } else { Some(result) }
+    if negative {
+        Some(-result)
+    } else {
+        Some(result)
+    }
 }
 
 /// Parse a float from string
@@ -391,7 +397,7 @@ fn parse_float(s: &str) -> Option<f32> {
     let mut result: f32 = 0.0;
     let mut decimal = false;
     let mut divisor: f32 = 1.0;
-    
+
     for &b in bytes {
         if b == b'.' {
             if decimal {
@@ -482,7 +488,10 @@ fn parse_meminfo_value(line: &[u8]) -> u64 {
         None => return 0,
     };
 
-    let value_start = match line[colon_pos + 1..].iter().position(|&c| c >= b'0' && c <= b'9') {
+    let value_start = match line[colon_pos + 1..]
+        .iter()
+        .position(|&c| c >= b'0' && c <= b'9')
+    {
         Some(p) => colon_pos + 1 + p,
         None => return 0,
     };
@@ -607,7 +616,7 @@ fn build_proc_path(pid: u32, filename: &[u8], path: &mut [u8]) -> usize {
 fn read_proc_stat(pid: u32, info: &mut ProcessInfo) -> bool {
     let mut path = [0u8; 64];
     let path_len = build_proc_path(pid, b"stat", &mut path);
-    
+
     let path_str = match core::str::from_utf8(&path[..path_len]) {
         Ok(s) => s,
         Err(_) => return false,
@@ -620,7 +629,7 @@ fn read_proc_stat(pid: u32, info: &mut ProcessInfo) -> bool {
     }
 
     let data = &buf[..n as usize];
-    
+
     // Parse stat format: pid (comm) state ppid ...
     // Find the last ')' to handle commands with spaces/parens
     let mut paren_end = 0;
@@ -630,7 +639,7 @@ fn read_proc_stat(pid: u32, info: &mut ProcessInfo) -> bool {
             break;
         }
     }
-    
+
     if paren_end == 0 {
         return false;
     }
@@ -643,7 +652,7 @@ fn read_proc_stat(pid: u32, info: &mut ProcessInfo) -> bool {
             break;
         }
     }
-    
+
     if paren_start > 0 {
         let name_bytes = &data[paren_start + 1..paren_end];
         let copy_len = name_bytes.len().min(info.name.len() - 1);
@@ -733,7 +742,11 @@ fn read_processes(config: &TopConfig) -> Vec<ProcessInfo> {
 
             if read_proc_stat(pid, &mut info) {
                 // Apply idle filter
-                if !config.show_idle && info.state == b'S' && info.user_time == 0 && info.system_time == 0 {
+                if !config.show_idle
+                    && info.state == b'S'
+                    && info.user_time == 0
+                    && info.system_time == 0
+                {
                     continue;
                 }
 
@@ -752,7 +765,11 @@ fn read_processes(config: &TopConfig) -> Vec<ProcessInfo> {
 /// Formula: CPU% = (delta_jiffies * 1000 * 100) / (elapsed_ms * CLK_TCK)
 ///        = (delta_jiffies * 100000) / (elapsed_ms * 100)
 ///        = delta_jiffies * 1000 / elapsed_ms
-fn calculate_cpu_percentages(processes: &mut [ProcessInfo], prev_processes: &[ProcessInfo], elapsed_ms: u64) {
+fn calculate_cpu_percentages(
+    processes: &mut [ProcessInfo],
+    prev_processes: &[ProcessInfo],
+    elapsed_ms: u64,
+) {
     if elapsed_ms == 0 {
         return;
     }
@@ -788,28 +805,24 @@ fn sort_processes(processes: &mut [ProcessInfo], field: SortField, reverse: bool
     processes.sort_by(|a, b| {
         let cmp = match field {
             SortField::Pid => a.pid.cmp(&b.pid),
-            SortField::CpuPercent => {
-                b.cpu_percent.partial_cmp(&a.cpu_percent).unwrap_or(core::cmp::Ordering::Equal)
-            }
-            SortField::MemPercent => {
-                b.mem_percent.partial_cmp(&a.mem_percent).unwrap_or(core::cmp::Ordering::Equal)
-            }
+            SortField::CpuPercent => b
+                .cpu_percent
+                .partial_cmp(&a.cpu_percent)
+                .unwrap_or(core::cmp::Ordering::Equal),
+            SortField::MemPercent => b
+                .mem_percent
+                .partial_cmp(&a.mem_percent)
+                .unwrap_or(core::cmp::Ordering::Equal),
             SortField::Time => {
                 let a_time = a.user_time + a.system_time;
                 let b_time = b.user_time + b.system_time;
                 b_time.cmp(&a_time)
             }
-            SortField::Command => {
-                a.name_str().cmp(b.name_str())
-            }
+            SortField::Command => a.name_str().cmp(b.name_str()),
             SortField::User => a.pid.cmp(&b.pid), // TODO: implement user comparison
         };
 
-        if reverse {
-            cmp.reverse()
-        } else {
-            cmp
-        }
+        if reverse { cmp.reverse() } else { cmp }
     });
 }
 
@@ -964,7 +977,7 @@ fn display_batch_processes(processes: &[ProcessInfo], max_lines: i32) {
 
     for i in 0..limit.min(processes.len()) {
         let proc = &processes[i];
-        
+
         // PID
         print_padded_num(proc.pid, 5);
         prints(" ");
@@ -1086,11 +1099,11 @@ fn run_interactive_mode(config: &mut TopConfig) {
     // initscr() from termcap data.
     if config.color_mode && color::has_colors() {
         let _ = color::start_color();
-        let _ = color::init_pair(1, colors::COLOR_GREEN, colors::COLOR_BLACK);   // Low CPU (< 10%)
-        let _ = color::init_pair(2, colors::COLOR_YELLOW, colors::COLOR_BLACK);  // Medium CPU (10-50%)
-        let _ = color::init_pair(3, colors::COLOR_RED, colors::COLOR_BLACK);     // High CPU (> 50%)
-        let _ = color::init_pair(4, colors::COLOR_CYAN, colors::COLOR_BLACK);    // Sleeping processes
-        let _ = color::init_pair(5, colors::COLOR_WHITE, colors::COLOR_BLUE);    // Headers
+        let _ = color::init_pair(1, colors::COLOR_GREEN, colors::COLOR_BLACK); // Low CPU (< 10%)
+        let _ = color::init_pair(2, colors::COLOR_YELLOW, colors::COLOR_BLACK); // Medium CPU (10-50%)
+        let _ = color::init_pair(3, colors::COLOR_RED, colors::COLOR_BLACK); // High CPU (> 50%)
+        let _ = color::init_pair(4, colors::COLOR_CYAN, colors::COLOR_BLACK); // Sleeping processes
+        let _ = color::init_pair(5, colors::COLOR_WHITE, colors::COLOR_BLUE); // Headers
         let _ = color::init_pair(6, colors::COLOR_MAGENTA, colors::COLOR_BLACK); // Zombie processes
     }
 
@@ -1125,9 +1138,13 @@ fn run_interactive_mode(config: &mut TopConfig) {
         if ch >= 0 {
             if ch == 27 {
                 break;
-            } else if ch == keys::KEY_UP || ch == keys::KEY_DOWN
-                   || ch == keys::KEY_PPAGE || ch == keys::KEY_NPAGE
-                   || ch == keys::KEY_HOME || ch == keys::KEY_END {
+            } else if ch == keys::KEY_UP
+                || ch == keys::KEY_DOWN
+                || ch == keys::KEY_PPAGE
+                || ch == keys::KEY_NPAGE
+                || ch == keys::KEY_HOME
+                || ch == keys::KEY_END
+            {
                 // Scroll keys (future enhancement) — just refresh
             } else if ch >= 0x20 && ch < 0x7F {
                 match ch as u8 as char {
@@ -1157,14 +1174,17 @@ fn run_interactive_mode(config: &mut TopConfig) {
 }
 
 /// Display interactive screen
-fn display_interactive(stats: &SystemStats, processes: &[ProcessInfo], config: &TopConfig, win: WINDOW) {
+fn display_interactive(
+    stats: &SystemStats,
+    processes: &[ProcessInfo],
+    config: &TopConfig,
+    win: WINDOW,
+) {
     let _ = output::werase(win);
     let _ = output::wmove(win, 0, 0);
 
     // Get window size
-    let (max_y, max_x) = unsafe {
-        ((*win).lines, (*win).cols)
-    };
+    let (max_y, max_x) = unsafe { ((*win).lines, (*win).cols) };
 
     let mut row = 0;
 
@@ -1178,10 +1198,10 @@ fn display_interactive(stats: &SystemStats, processes: &[ProcessInfo], config: &
     let hours = (now % 86400) / 3600;
     let mins = (now % 3600) / 60;
     let secs = now % 60;
-    
+
     let time_str = format!("{:02}:{:02}:{:02}", hours, mins, secs);
     let _ = output::waddstr(win, &time_str);
-    
+
     let _ = output::waddstr(win, " up ");
     let uptime_hours = stats.uptime / 3600;
     let uptime_mins = (stats.uptime % 3600) / 60;
@@ -1191,18 +1211,21 @@ fn display_interactive(stats: &SystemStats, processes: &[ProcessInfo], config: &
         format!("{} min", uptime_mins)
     };
     let _ = output::waddstr(win, &uptime_str);
-    
-    let load_str = format!(",  1 user,  load average: {:.2}, {:.2}, {:.2}",
-                          stats.load_avg_1, stats.load_avg_5, stats.load_avg_15);
+
+    let load_str = format!(
+        ",  1 user,  load average: {:.2}, {:.2}, {:.2}",
+        stats.load_avg_1, stats.load_avg_5, stats.load_avg_15
+    );
     let _ = output::waddstr(win, &load_str);
 
     row += 1;
     let _ = output::wmove(win, row, 0);
 
     // Line 2: Tasks
-    let tasks_str = format!("Tasks: {} total,   {} running,   {} sleeping,   {} stopped,   {} zombie",
-                           stats.num_tasks, stats.num_running, stats.num_sleeping,
-                           stats.num_stopped, stats.num_zombie);
+    let tasks_str = format!(
+        "Tasks: {} total,   {} running,   {} sleeping,   {} stopped,   {} zombie",
+        stats.num_tasks, stats.num_running, stats.num_sleeping, stats.num_stopped, stats.num_zombie
+    );
     let _ = output::waddstr(win, &tasks_str);
 
     row += 1;
@@ -1233,17 +1256,23 @@ fn display_interactive(stats: &SystemStats, processes: &[ProcessInfo], config: &
         100.0
     };
 
-    let cpu_str = format!("%Cpu(s): {:5.1} us, {:5.1} sy,  0.0 ni, {:5.1} id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st",
-                         cpu_user_pct, cpu_sys_pct, cpu_idle_pct);
+    let cpu_str = format!(
+        "%Cpu(s): {:5.1} us, {:5.1} sy,  0.0 ni, {:5.1} id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st",
+        cpu_user_pct, cpu_sys_pct, cpu_idle_pct
+    );
     let _ = output::waddstr(win, &cpu_str);
 
     row += 1;
     let _ = output::wmove(win, row, 0);
 
     // Line 4: Memory
-    let mem_str = format!("MiB Mem : {:7} total, {:7} free, {:7} used, {:7} buff/cache",
-                         stats.total_mem / 1024, stats.free_mem / 1024,
-                         stats.used_mem / 1024, (stats.buffers + stats.cached) / 1024);
+    let mem_str = format!(
+        "MiB Mem : {:7} total, {:7} free, {:7} used, {:7} buff/cache",
+        stats.total_mem / 1024,
+        stats.free_mem / 1024,
+        stats.used_mem / 1024,
+        (stats.buffers + stats.cached) / 1024
+    );
     let _ = output::waddstr(win, &mem_str);
 
     row += 1;
@@ -1251,9 +1280,12 @@ fn display_interactive(stats: &SystemStats, processes: &[ProcessInfo], config: &
 
     // Line 5: Swap
     let swap_used = stats.total_swap.saturating_sub(stats.free_swap);
-    let swap_str = format!("MiB Swap: {:7} total, {:7} free, {:7} used.",
-                          stats.total_swap / 1024, stats.free_swap / 1024,
-                          swap_used / 1024);
+    let swap_str = format!(
+        "MiB Swap: {:7} total, {:7} free, {:7} used.",
+        stats.total_swap / 1024,
+        stats.free_swap / 1024,
+        swap_used / 1024
+    );
     let _ = output::waddstr(win, &swap_str);
 
     row += 1;
@@ -1293,17 +1325,17 @@ fn display_interactive(stats: &SystemStats, processes: &[ProcessInfo], config: &
         // Apply colors based on CPU usage and state
         if config.color_mode && color::has_colors() {
             let color_pair_num = if proc.state == b'Z' {
-                6  // Magenta for zombie
+                6 // Magenta for zombie
             } else if proc.state == b'R' {
                 if proc.cpu_percent > 50.0 {
-                    3  // Red for high CPU
+                    3 // Red for high CPU
                 } else if proc.cpu_percent > 10.0 {
-                    2  // Yellow for medium CPU
+                    2 // Yellow for medium CPU
                 } else {
-                    1  // Green for low CPU
+                    1 // Green for low CPU
                 }
             } else {
-                4  // Cyan for sleeping/other
+                4 // Cyan for sleeping/other
             };
             let _ = attributes::wattron(win, color::color_pair(color_pair_num));
         }
@@ -1317,7 +1349,11 @@ fn display_interactive(stats: &SystemStats, processes: &[ProcessInfo], config: &
             "{:5} {:8} {:3} {:3} {:7} {:6} {:4.1} {:4.1} {:5}:{:02} {}",
             proc.pid,
             "root",
-            if proc.priority >= 0 { format!("{:2}", proc.priority) } else { "rt".to_string() },
+            if proc.priority >= 0 {
+                format!("{:2}", proc.priority)
+            } else {
+                "rt".to_string()
+            },
             proc.nice,
             proc.vsize / 1024,
             (proc.rss * 4096) / 1024,
@@ -1352,7 +1388,7 @@ fn display_interactive(stats: &SystemStats, processes: &[ProcessInfo], config: &
     if max_y > row + 1 {
         let _ = output::wmove(win, max_y - 1, 0);
         let _ = attributes::wattron(win, attrs::A_REVERSE);
-        
+
         let sort_name = match config.sort_field {
             SortField::Pid => "PID",
             SortField::CpuPercent => "CPU",
@@ -1361,21 +1397,21 @@ fn display_interactive(stats: &SystemStats, processes: &[ProcessInfo], config: &
             SortField::Command => "CMD",
             SortField::User => "USER",
         };
-        
+
         let status = format!(
             " Sort: {} {} | q/ESC:Quit h:Help M/P/T/N:Sort R:Reverse i:Idle ",
             sort_name,
             if config.reverse_sort { "▼" } else { "▲" }
         );
-        
+
         let display_len = max_x.min(status.len() as i32);
         let _ = output::waddstr(win, &status[..display_len as usize]);
-        
+
         // Fill rest of line with spaces for full reverse video
         for _ in display_len..max_x {
             let _ = output::waddstr(win, " ");
         }
-        
+
         let _ = attributes::wattroff(win, attrs::A_REVERSE);
     }
 
@@ -1467,14 +1503,22 @@ fn print_float(f: f32, decimals: u32) {
     let int_part = f as u64;
     print_u64(int_part);
     prints(".");
-    
+
     let mut frac = f - (int_part as f32);
     for _ in 0..decimals {
         frac *= 10.0;
         let digit = frac as u32 % 10;
         prints(match digit {
-            0 => "0", 1 => "1", 2 => "2", 3 => "3", 4 => "4",
-            5 => "5", 6 => "6", 7 => "7", 8 => "8", 9 => "9",
+            0 => "0",
+            1 => "1",
+            2 => "2",
+            3 => "3",
+            4 => "4",
+            5 => "5",
+            6 => "6",
+            7 => "7",
+            8 => "8",
+            9 => "9",
             _ => "0",
         });
     }

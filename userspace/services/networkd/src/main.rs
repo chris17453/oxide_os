@@ -213,7 +213,7 @@ fn show_status() {
     for adapter in manager.get_all_adapters() {
         prints(&adapter.name);
         prints(":\n");
-        
+
         // State
         prints("  State: ");
         match adapter.state {
@@ -462,7 +462,7 @@ fn reload_config(iface_name: Option<&str>) {
 fn print_hex_byte(byte: u8) {
     let high = (byte >> 4) & 0x0F;
     let low = byte & 0x0F;
-    
+
     print_hex_nibble(high);
     print_hex_nibble(low);
 }

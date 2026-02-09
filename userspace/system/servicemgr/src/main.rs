@@ -21,7 +21,7 @@ extern crate alloc;
 
 use core::cell::UnsafeCell;
 use libc::dirent::{closedir, opendir, readdir};
-use libc::stat::{Stat, stat as libc_stat, S_IFDIR, S_IFMT};
+use libc::stat::{S_IFDIR, S_IFMT, Stat, stat as libc_stat};
 use libc::time::usleep;
 use libc::*;
 

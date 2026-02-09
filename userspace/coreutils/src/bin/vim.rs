@@ -22,14 +22,15 @@ extern crate alloc;
 
 use alloc::vec;
 use alloc::vec::Vec;
-use libc::*;
 use libc::termios::{
-    tcgetattr, tcsetattr, tcgetwinsize, Termios, Winsize,
+    Termios, Winsize,
     action::TCSAFLUSH,
-    iflag::{ICRNL, IXON},
-    lflag::{ICANON, ECHO, ISIG},
     cc::{VMIN, VTIME},
+    iflag::{ICRNL, IXON},
+    lflag::{ECHO, ICANON, ISIG},
+    tcgetattr, tcgetwinsize, tcsetattr,
 };
+use libc::*;
 use termcap::capabilities::strings as tcap;
 use termcap::expand::tparm;
 
@@ -79,8 +80,12 @@ impl Term {
             (ws.ws_row as usize, ws.ws_col as usize)
         } else {
             // — GraveShift: Fallback only if ioctl fails
-            let r = entry.get_number(termcap::capabilities::numbers::LINES).unwrap_or(24) as usize;
-            let c = entry.get_number(termcap::capabilities::numbers::COLUMNS).unwrap_or(80) as usize;
+            let r = entry
+                .get_number(termcap::capabilities::numbers::LINES)
+                .unwrap_or(24) as usize;
+            let c = entry
+                .get_number(termcap::capabilities::numbers::COLUMNS)
+                .unwrap_or(80) as usize;
             (r, c)
         };
 

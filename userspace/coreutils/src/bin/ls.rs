@@ -103,15 +103,15 @@ impl Entry {
 /// "something's wrong" signal.
 fn get_color_code(d_type: u8, mode: u32, link_broken: bool) -> &'static str {
     match d_type {
-        DT_DIR => "\x1b[1;34m",      // Bold blue
-        DT_LNK if link_broken => "\x1b[1;31;40m", // — NeonVale: Bold red on black = dead link
-        DT_LNK => "\x1b[1;36m",      // Bold cyan
-        DT_FIFO => "\x1b[33m",       // Yellow
-        DT_SOCK => "\x1b[1;35m",     // Bold magenta
-        DT_BLK => "\x1b[1;33;40m",   // Bold yellow on black
-        DT_CHR => "\x1b[1;33;40m",   // Bold yellow on black
+        DT_DIR => "\x1b[1;34m",                        // Bold blue
+        DT_LNK if link_broken => "\x1b[1;31;40m",      // — NeonVale: Bold red on black = dead link
+        DT_LNK => "\x1b[1;36m",                        // Bold cyan
+        DT_FIFO => "\x1b[33m",                         // Yellow
+        DT_SOCK => "\x1b[1;35m",                       // Bold magenta
+        DT_BLK => "\x1b[1;33;40m",                     // Bold yellow on black
+        DT_CHR => "\x1b[1;33;40m",                     // Bold yellow on black
         DT_REG if mode & S_IXUSR != 0 => "\x1b[1;32m", // Bold green (executable)
-        _ => "",                      // No color for regular files
+        _ => "",                                       // No color for regular files
     }
 }
 
@@ -396,8 +396,7 @@ fn parse_args(argc: i32, argv: *const *const u8) -> Args {
 /// Month abbreviation table
 /// — NeonVale: 12 months, 12 chances to misalign a 3-char abbreviation
 const MONTHS: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
 /// Format mtime into "Mon DD HH:MM" or "Mon DD  YYYY" (if older than ~6 months)
@@ -688,8 +687,7 @@ fn list_directory(path: &[u8], args: &Args, depth: usize, show_header: bool) -> 
             // — GlassSignal: Only burn syscalls when we actually need the data.
             // Column mode just needs d_type from getdents — skip the stat parade.
             let need_stat = args.long_format || args.sort_by_time || args.classify;
-            let need_full_path = need_stat
-                || (args.recursive && entry.d_type == DT_DIR);
+            let need_full_path = need_stat || (args.recursive && entry.d_type == DT_DIR);
 
             let mut full_path = [0u8; 512];
             let mut pos = 0;
@@ -711,8 +709,7 @@ fn list_directory(path: &[u8], args: &Args, depth: usize, show_header: bool) -> 
             }
 
             if need_stat {
-                let full_path_str =
-                    unsafe { core::str::from_utf8_unchecked(&full_path[..pos]) };
+                let full_path_str = unsafe { core::str::from_utf8_unchecked(&full_path[..pos]) };
 
                 // — GlassSignal: Use lstat for symlinks (don't follow), stat for everything else.
                 let mut stat_buf = Stat::zeroed();

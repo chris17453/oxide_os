@@ -56,7 +56,7 @@ impl Options {
                 if ARGV.is_null() || (*ARGV.add(i)).is_null() {
                     break;
                 }
-                
+
                 let arg = cstr_to_str(*ARGV.add(i));
 
                 if arg.is_empty() {
@@ -240,10 +240,10 @@ struct ProcInfo {
     cmdline: [u8; 512],
     cmdline_len: usize,
     is_kernel_thread: bool,
-    tty_nr: u32,      // TTY device number
-    start_time: u64,  // Start time in jiffies
-    utime: u64,       // User CPU time in jiffies
-    stime: u64,       // System CPU time in jiffies
+    tty_nr: u32,     // TTY device number
+    start_time: u64, // Start time in jiffies
+    utime: u64,      // User CPU time in jiffies
+    stime: u64,      // System CPU time in jiffies
 }
 
 impl ProcInfo {
@@ -488,7 +488,6 @@ fn format_start_time(start_jiffies: u64, buf: &mut [u8]) -> usize {
     }
 }
 
-
 /// Read process info from /proc/[pid]/status and /proc/[pid]/cmdline
 fn read_proc_info(pid: u32) -> Option<ProcInfo> {
     let mut info = ProcInfo::new();
@@ -599,7 +598,9 @@ fn read_proc_info(pid: u32) -> Option<ProcInfo> {
     let stat_n = read_file(stat_path_str, &mut stat_buf);
 
     if stat_n > 0 {
-        if let Some((state, ppid, tty_nr, start_time, utime, stime)) = parse_stat_file(&stat_buf[..stat_n as usize]) {
+        if let Some((state, ppid, tty_nr, start_time, utime, stime)) =
+            parse_stat_file(&stat_buf[..stat_n as usize])
+        {
             // Update from stat file (more authoritative for these fields)
             info.state = state;
             info.ppid = ppid;
@@ -662,7 +663,7 @@ fn print_padded_str(s: &str, width: usize) {
 fn print_stat(state: u8, is_kernel: bool) {
     // Base state
     prints(core::str::from_utf8(&[state]).unwrap_or("?"));
-    
+
     // Add modifiers
     if is_kernel {
         prints("s"); // Session leader / kernel thread
@@ -673,7 +674,7 @@ fn print_stat(state: u8, is_kernel: bool) {
 fn print_default(info: &ProcInfo) {
     print_padded_num(info.pid, 5);
     prints(" ");
-    
+
     // TTY
     let mut tty_buf = [0u8; 16];
     let tty_len = format_tty(info.tty_nr, &mut tty_buf);
@@ -683,7 +684,7 @@ fn print_default(info: &ProcInfo) {
         prints("?       ");
     }
     prints(" ");
-    
+
     // TIME (total CPU time = utime + stime)
     let total_time = info.utime + info.stime;
     let mut time_buf = [0u8; 16];
@@ -694,7 +695,7 @@ fn print_default(info: &ProcInfo) {
         prints("00:00:00");
     }
     prints(" ");
-    
+
     // CMD - show kernel threads in brackets
     if info.is_kernel_thread {
         prints("[");
@@ -711,23 +712,23 @@ fn print_user_format(info: &ProcInfo) {
     // USER (8 chars)
     print_padded_str(info.user_name(), 8);
     prints(" ");
-    
+
     // PID (5 chars)
     print_padded_num(info.pid, 5);
     prints(" ");
-    
+
     // %CPU (4 chars) - TODO: calculate real CPU%
     prints(" 0.0 ");
-    
+
     // %MEM (4 chars) - TODO: calculate real MEM%
     prints(" 0.0 ");
-    
+
     // VSZ (6 chars) - TODO: get from statm
     prints("     0 ");
-    
+
     // RSS (5 chars) - TODO: get from statm
     prints("    0 ");
-    
+
     // TTY (8 chars)
     let mut tty_buf = [0u8; 16];
     let tty_len = format_tty(info.tty_nr, &mut tty_buf);
@@ -737,11 +738,11 @@ fn print_user_format(info: &ProcInfo) {
         prints("?       ");
     }
     prints(" ");
-    
+
     // STAT (4 chars)
     print_stat(info.state, info.is_kernel_thread);
     prints("   ");
-    
+
     // START (5 chars)
     let mut start_buf = [0u8; 16];
     let start_len = format_start_time(info.start_time, &mut start_buf);
@@ -751,7 +752,7 @@ fn print_user_format(info: &ProcInfo) {
         prints("?    ");
     }
     prints(" ");
-    
+
     // TIME (8 chars)
     let total_time = info.utime + info.stime;
     let mut time_buf = [0u8; 16];
@@ -762,7 +763,7 @@ fn print_user_format(info: &ProcInfo) {
         prints("00:00:00");
     }
     prints(" ");
-    
+
     // COMMAND
     if info.is_kernel_thread {
         prints("[");
@@ -779,18 +780,18 @@ fn print_full_format(info: &ProcInfo) {
     // UID (8 chars)
     print_padded_num(info.uid, 8);
     prints(" ");
-    
+
     // PID (5 chars)
     print_padded_num(info.pid, 5);
     prints(" ");
-    
+
     // PPID (5 chars)
     print_padded_num(info.ppid, 5);
     prints(" ");
-    
+
     // C (CPU utilization) - TODO: calculate
     prints("  0 ");
-    
+
     // STIME (start time)
     let mut start_buf = [0u8; 16];
     let start_len = format_start_time(info.start_time, &mut start_buf);
@@ -800,7 +801,7 @@ fn print_full_format(info: &ProcInfo) {
         prints("?    ");
     }
     prints(" ");
-    
+
     // TTY
     let mut tty_buf = [0u8; 16];
     let tty_len = format_tty(info.tty_nr, &mut tty_buf);
@@ -810,7 +811,7 @@ fn print_full_format(info: &ProcInfo) {
         prints("?       ");
     }
     prints(" ");
-    
+
     // TIME
     let total_time = info.utime + info.stime;
     let mut time_buf = [0u8; 16];
@@ -821,7 +822,7 @@ fn print_full_format(info: &ProcInfo) {
         prints("00:00:00");
     }
     prints(" ");
-    
+
     // CMD
     if info.is_kernel_thread {
         prints("[");
@@ -839,7 +840,7 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
         ARGC = argc as usize;
         ARGV = argv;
     }
-    
+
     let opts = Options::parse();
 
     // Print header based on format

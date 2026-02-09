@@ -12,18 +12,18 @@ use crate::errno;
 
 /// prctl options
 mod prctl_options {
-    pub const PR_SET_NAME: i32 = 15;              // Set process name
-    pub const PR_GET_NAME: i32 = 16;              // Get process name
-    pub const PR_SET_DUMPABLE: i32 = 4;           // Set coredump filter
-    pub const PR_GET_DUMPABLE: i32 = 3;           // Get coredump filter
-    pub const PR_SET_KEEPCAPS: i32 = 8;           // Keep caps on setuid
-    pub const PR_GET_KEEPCAPS: i32 = 7;           // Get keepcaps
-    pub const PR_SET_NO_NEW_PRIVS: i32 = 38;      // Disable privilege grants
-    pub const PR_GET_NO_NEW_PRIVS: i32 = 39;      // Get no_new_privs state
-    pub const PR_SET_SECCOMP: i32 = 22;           // Set seccomp mode
-    pub const PR_GET_SECCOMP: i32 = 21;           // Get seccomp mode
-    pub const PR_CAPBSET_READ: i32 = 23;          // Check capability
-    pub const PR_CAPBSET_DROP: i32 = 24;          // Drop capability
+    pub const PR_SET_NAME: i32 = 15; // Set process name
+    pub const PR_GET_NAME: i32 = 16; // Get process name
+    pub const PR_SET_DUMPABLE: i32 = 4; // Set coredump filter
+    pub const PR_GET_DUMPABLE: i32 = 3; // Get coredump filter
+    pub const PR_SET_KEEPCAPS: i32 = 8; // Keep caps on setuid
+    pub const PR_GET_KEEPCAPS: i32 = 7; // Get keepcaps
+    pub const PR_SET_NO_NEW_PRIVS: i32 = 38; // Disable privilege grants
+    pub const PR_GET_NO_NEW_PRIVS: i32 = 39; // Get no_new_privs state
+    pub const PR_SET_SECCOMP: i32 = 22; // Set seccomp mode
+    pub const PR_GET_SECCOMP: i32 = 21; // Get seccomp mode
+    pub const PR_CAPBSET_READ: i32 = 23; // Check capability
+    pub const PR_CAPBSET_DROP: i32 = 24; // Drop capability
 }
 
 /// sys_prctl - Process control operations
@@ -107,9 +107,9 @@ pub fn sys_capget(hdrp: u64, datap: u64) -> i64 {
 
     unsafe {
         core::arch::asm!("stac", options(nomem, nostack));
-        
+
         let hdr = core::ptr::read_volatile(hdrp as *const CapUserHeader);
-        
+
         // Check version
         if hdr.version != LINUX_CAPABILITY_VERSION_3 {
             core::arch::asm!("clac", options(nomem, nostack));
@@ -125,7 +125,7 @@ pub fn sys_capget(hdrp: u64, datap: u64) -> i64 {
             };
             core::ptr::write_volatile(datap as *mut CapUserData, data);
         }
-        
+
         core::arch::asm!("clac", options(nomem, nostack));
     }
 
@@ -152,7 +152,7 @@ pub fn sys_capset(hdrp: u64, _datap: u64) -> i64 {
         core::arch::asm!("stac", options(nomem, nostack));
         let hdr = core::ptr::read_volatile(hdrp as *const CapUserHeader);
         core::arch::asm!("clac", options(nomem, nostack));
-        
+
         // Check version
         if hdr.version != LINUX_CAPABILITY_VERSION_3 {
             return errno::EINVAL;

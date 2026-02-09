@@ -12,16 +12,16 @@ use crate::errno;
 
 /// unshare flags
 mod unshare_flags {
-    pub const CLONE_NEWNS: i32 = 0x00020000;      // Mount namespace
-    pub const CLONE_NEWUTS: i32 = 0x04000000;     // UTS namespace (hostname)
-    pub const CLONE_NEWIPC: i32 = 0x08000000;     // IPC namespace
-    pub const CLONE_NEWUSER: i32 = 0x10000000;    // User namespace
-    pub const CLONE_NEWPID: i32 = 0x20000000;     // PID namespace
-    pub const CLONE_NEWNET: i32 = 0x40000000;     // Network namespace
-    pub const CLONE_NEWCGROUP: i32 = 0x02000000;  // Cgroup namespace
-    pub const CLONE_FILES: i32 = 0x00000400;      // Unshare file descriptors
-    pub const CLONE_FS: i32 = 0x00000200;         // Unshare filesystem info
-    pub const CLONE_SYSVSEM: i32 = 0x00040000;    // Unshare SysV semaphores
+    pub const CLONE_NEWNS: i32 = 0x00020000; // Mount namespace
+    pub const CLONE_NEWUTS: i32 = 0x04000000; // UTS namespace (hostname)
+    pub const CLONE_NEWIPC: i32 = 0x08000000; // IPC namespace
+    pub const CLONE_NEWUSER: i32 = 0x10000000; // User namespace
+    pub const CLONE_NEWPID: i32 = 0x20000000; // PID namespace
+    pub const CLONE_NEWNET: i32 = 0x40000000; // Network namespace
+    pub const CLONE_NEWCGROUP: i32 = 0x02000000; // Cgroup namespace
+    pub const CLONE_FILES: i32 = 0x00000400; // Unshare file descriptors
+    pub const CLONE_FS: i32 = 0x00000200; // Unshare filesystem info
+    pub const CLONE_SYSVSEM: i32 = 0x00040000; // Unshare SysV semaphores
 }
 
 /// sys_unshare - Disassociate parts of execution context

@@ -3,12 +3,12 @@
 //! Handles loading and parsing of Doom WAD files.
 //! -- WireSaint: Storage systems + filesystems integration
 
-use libc::{open, read, close, lseek, O_RDONLY, SEEK_SET};
+use libc::{O_RDONLY, SEEK_SET, close, lseek, open, read};
 
 /// WAD file header
 #[repr(C, packed)]
 struct WadHeader {
-    magic: [u8; 4],     // "IWAD" or "PWAD"
+    magic: [u8; 4], // "IWAD" or "PWAD"
     num_lumps: u32,
     dir_offset: u32,
 }
@@ -25,7 +25,7 @@ pub struct WadLump {
 /// WAD file data structure
 pub struct WadFile {
     fd: i32,
-    lumps: [WadLump; 4096],  // Fixed size array for no_std
+    lumps: [WadLump; 4096], // Fixed size array for no_std
     num_lumps: usize,
 }
 

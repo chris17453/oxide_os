@@ -10,7 +10,7 @@
 pub mod output;
 pub mod stats;
 
-use core::sync::atomic::{AtomicU64, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 /// Performance event counters (Linux perf_event style)
 ///
@@ -104,7 +104,8 @@ impl PerfCounters {
     #[inline]
     pub fn record_timer_irq(&self, cycles: u64) {
         self.timer_irq_count.fetch_add(1, Ordering::Relaxed);
-        self.timer_irq_cycles_total.fetch_add(cycles, Ordering::Relaxed);
+        self.timer_irq_cycles_total
+            .fetch_add(cycles, Ordering::Relaxed);
 
         // Update min (fetch_min not in stable Rust, manual CAS loop)
         let mut current_min = self.timer_irq_cycles_min.load(Ordering::Relaxed);
@@ -139,14 +140,16 @@ impl PerfCounters {
     #[inline]
     pub fn record_keyboard_irq(&self, cycles: u64) {
         self.keyboard_irq_count.fetch_add(1, Ordering::Relaxed);
-        self.keyboard_irq_cycles_total.fetch_add(cycles, Ordering::Relaxed);
+        self.keyboard_irq_cycles_total
+            .fetch_add(cycles, Ordering::Relaxed);
     }
 
     /// Record mouse interrupt
     #[inline]
     pub fn record_mouse_irq(&self, cycles: u64) {
         self.mouse_irq_count.fetch_add(1, Ordering::Relaxed);
-        self.mouse_irq_cycles_total.fetch_add(cycles, Ordering::Relaxed);
+        self.mouse_irq_cycles_total
+            .fetch_add(cycles, Ordering::Relaxed);
     }
 
     /// Record context switch
@@ -170,13 +173,15 @@ impl PerfCounters {
     /// Record terminal lock contention
     #[inline]
     pub fn record_terminal_lock_contention(&self) {
-        self.terminal_lock_contentions.fetch_add(1, Ordering::Relaxed);
+        self.terminal_lock_contentions
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record scheduler lock contention
     #[inline]
     pub fn record_scheduler_lock_contention(&self) {
-        self.scheduler_lock_contentions.fetch_add(1, Ordering::Relaxed);
+        self.scheduler_lock_contentions
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record VT lock contention
@@ -189,7 +194,8 @@ impl PerfCounters {
     #[inline]
     pub fn record_syscall(&self, cycles: u64) {
         self.syscall_count.fetch_add(1, Ordering::Relaxed);
-        self.syscall_cycles_total.fetch_add(cycles, Ordering::Relaxed);
+        self.syscall_cycles_total
+            .fetch_add(cycles, Ordering::Relaxed);
 
         // Flag slow syscalls (> 100K cycles ~= 33us @ 3GHz)
         if cycles > 100_000 {
@@ -223,7 +229,8 @@ impl PerfCounters {
     #[inline]
     pub fn record_terminal_render(&self, cycles: u64) {
         self.terminal_renders.fetch_add(1, Ordering::Relaxed);
-        self.terminal_render_cycles.fetch_add(cycles, Ordering::Relaxed);
+        self.terminal_render_cycles
+            .fetch_add(cycles, Ordering::Relaxed);
     }
 
     /// Record mouse event processing
@@ -335,10 +342,7 @@ pub fn rdtsc() -> u64 {
 #[inline]
 pub fn serialize() {
     unsafe {
-        core::arch::asm!(
-            "lfence",
-            options(nomem, nostack, preserves_flags)
-        );
+        core::arch::asm!("lfence", options(nomem, nostack, preserves_flags));
     }
 }
 

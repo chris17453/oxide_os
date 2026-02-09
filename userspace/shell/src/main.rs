@@ -16,7 +16,10 @@
 mod theme;
 
 use libc::*;
-use theme::{Color, ColorSpec, Theme, current_theme, set_theme, colors_enabled, set_colors_enabled, load_theme, THEME_NAMES};
+use theme::{
+    Color, ColorSpec, THEME_NAMES, Theme, colors_enabled, current_theme, load_theme,
+    set_colors_enabled, set_theme,
+};
 
 /// Maximum command line length
 const MAX_LINE: usize = 256;
@@ -542,7 +545,7 @@ fn main() -> i32 {
     if let Some(theme_name) = getenv("ESH_THEME") {
         load_theme(theme_name.as_bytes());
     }
-    
+
     // Check if NO_COLOR is set (standard for disabling colors)
     if getenv("NO_COLOR").is_some() {
         set_colors_enabled(false);
@@ -2614,7 +2617,7 @@ fn builtin_theme(cmd: &Command) -> i32 {
         prints("Theme set to: ");
         print_bytes(&current_theme().name);
         printlns("");
-        
+
         // Save to ESH_THEME env var for persistence hint
         let name_str = bytes_to_str(arg);
         setenv("ESH_THEME", name_str);

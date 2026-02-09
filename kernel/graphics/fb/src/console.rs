@@ -261,10 +261,18 @@ impl FbConsole {
         let resolved = self.font_manager.resolve(ch);
 
         match resolved.data {
-            GlyphData::Bitmap { width, height, data } => {
+            GlyphData::Bitmap {
+                width,
+                height,
+                data,
+            } => {
                 self.draw_bitmap_glyph(px, py, width, height, data, color);
             }
-            GlyphData::Rgba { width, height, data } => {
+            GlyphData::Rgba {
+                width,
+                height,
+                data,
+            } => {
                 // RGBA path — alpha blend each pixel against background
                 // Phase 4 territory, but the plumbing is here now — SoftGlyph
                 self.draw_rgba_glyph(px, py, width, height, data);
@@ -273,7 +281,15 @@ impl FbConsole {
     }
 
     /// Draw a 1-bit monochrome bitmap glyph — the fast path that never sleeps — SoftGlyph
-    fn draw_bitmap_glyph(&self, px: u32, py: u32, glyph_w: u32, glyph_h: u32, glyph_data: &[u8], color: Color) {
+    fn draw_bitmap_glyph(
+        &self,
+        px: u32,
+        py: u32,
+        glyph_w: u32,
+        glyph_h: u32,
+        glyph_data: &[u8],
+        color: Color,
+    ) {
         let bpp = self.fb.format().bytes_per_pixel() as usize;
         let stride = self.fb.stride() as usize;
         let buffer = self.fb.buffer();
@@ -297,7 +313,9 @@ impl FbConsole {
                         for x in 0..glyph_w {
                             let byte_idx = (y * bytes_per_row + x / 8) as usize;
                             let bit_idx = 7 - (x % 8);
-                            if byte_idx < glyph_data.len() && (glyph_data[byte_idx] >> bit_idx) & 1 != 0 {
+                            if byte_idx < glyph_data.len()
+                                && (glyph_data[byte_idx] >> bit_idx) & 1 != 0
+                            {
                                 core::ptr::write(line_ptr.add(x as usize), pixel_value);
                             }
                         }
@@ -311,7 +329,9 @@ impl FbConsole {
                         for x in 0..glyph_w {
                             let byte_idx = (y * bytes_per_row + x / 8) as usize;
                             let bit_idx = 7 - (x % 8);
-                            if byte_idx < glyph_data.len() && (glyph_data[byte_idx] >> bit_idx) & 1 != 0 {
+                            if byte_idx < glyph_data.len()
+                                && (glyph_data[byte_idx] >> bit_idx) & 1 != 0
+                            {
                                 let pixel_offset = x as usize * 3;
                                 core::ptr::copy_nonoverlapping(
                                     color_bytes.as_ptr(),
@@ -332,7 +352,9 @@ impl FbConsole {
                         for x in 0..glyph_w {
                             let byte_idx = (y * bytes_per_row + x / 8) as usize;
                             let bit_idx = 7 - (x % 8);
-                            if byte_idx < glyph_data.len() && (glyph_data[byte_idx] >> bit_idx) & 1 != 0 {
+                            if byte_idx < glyph_data.len()
+                                && (glyph_data[byte_idx] >> bit_idx) & 1 != 0
+                            {
                                 core::ptr::write(line_ptr.add(x as usize), pixel_value);
                             }
                         }
@@ -346,7 +368,9 @@ impl FbConsole {
                         for x in 0..glyph_w {
                             let byte_idx = (y * bytes_per_row + x / 8) as usize;
                             let bit_idx = 7 - (x % 8);
-                            if byte_idx < glyph_data.len() && (glyph_data[byte_idx] >> bit_idx) & 1 != 0 {
+                            if byte_idx < glyph_data.len()
+                                && (glyph_data[byte_idx] >> bit_idx) & 1 != 0
+                            {
                                 let pixel_offset = x as usize * bpp;
                                 core::ptr::copy_nonoverlapping(
                                     color_bytes.as_ptr(),

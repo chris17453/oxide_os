@@ -23,8 +23,8 @@ const MAX_CONTEXT: usize = 100;
 
 // ANSI color codes for highlighting matches
 // -- SoftGlyph: Accessibility means *contrast* – red pops even on cheap VGA
-const COLOR_MATCH: &[u8] = b"\x1b[31m";      // Red for matched text
-const COLOR_RESET: &[u8] = b"\x1b[0m";       // Reset to default
+const COLOR_MATCH: &[u8] = b"\x1b[31m"; // Red for matched text
+const COLOR_RESET: &[u8] = b"\x1b[0m"; // Reset to default
 
 struct GrepConfig {
     pattern: [u8; 256],
@@ -414,7 +414,11 @@ fn grep_fd(fd: i32, filename: &str, config: &GrepConfig, show_filename: bool) ->
                             prints(":");
                         }
                         if config.color {
-                            print_line_with_color(&line[..line_len], config.pattern_str(), config.ignore_case);
+                            print_line_with_color(
+                                &line[..line_len],
+                                config.pattern_str(),
+                                config.ignore_case,
+                            );
                         } else {
                             for j in 0..line_len {
                                 putchar(line[j]);
@@ -484,7 +488,11 @@ fn grep_fd(fd: i32, filename: &str, config: &GrepConfig, show_filename: bool) ->
                     prints(":");
                 }
                 if config.color {
-                    print_line_with_color(&line[..line_len], config.pattern_str(), config.ignore_case);
+                    print_line_with_color(
+                        &line[..line_len],
+                        config.pattern_str(),
+                        config.ignore_case,
+                    );
                 } else {
                     for j in 0..line_len {
                         putchar(line[j]);

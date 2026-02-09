@@ -4,8 +4,8 @@
 
 use core::ptr::{read_volatile, write_volatile};
 
-use boot_proto::PHYS_MAP_BASE;
 use crate::exceptions::write_u32_via_oslog;
+use boot_proto::PHYS_MAP_BASE;
 
 /// Physical address of the Local APIC (default)
 const APIC_BASE_PHYS: u64 = 0xFEE0_0000;
@@ -306,7 +306,10 @@ pub fn calibrate_timer() -> u32 {
         crate::outb(0x61, (port61 & 0xFC) | 0x01); // Gate HIGH, speaker off
 
         let port61_after_high = crate::inb(0x61);
-        crate::serial_println!("[APIC-CAL] port61 after gate HIGH: {:#x}", port61_after_high);
+        crate::serial_println!(
+            "[APIC-CAL] port61 after gate HIGH: {:#x}",
+            port61_after_high
+        );
 
         // Step 5 — Verify OUT went LOW (sanity check)
         let mut sanity = 0u32;
@@ -376,7 +379,11 @@ pub fn init() {
     // SableWire: Calibrate TSC frequency using PIT (BSP only, APs reuse cached value)
     // Must happen after PIC disabled to avoid interference
     let tsc_freq = crate::calibrate_tsc();
-    crate::serial_println!("[APIC] TSC calibrated: {} Hz (~{} MHz)", tsc_freq, tsc_freq / 1_000_000);
+    crate::serial_println!(
+        "[APIC] TSC calibrated: {} Hz (~{} MHz)",
+        tsc_freq,
+        tsc_freq / 1_000_000
+    );
 
     // Initialize IOAPIC for legacy IRQs
     init_ioapic();

@@ -992,7 +992,7 @@ pub extern "Rust" fn main() -> i32 {
 
 fn test_statx() -> TestResult {
     use libc::syscall::sys_statx;
-    
+
     #[repr(C)]
     struct Statx {
         stx_mask: u32,
@@ -1021,7 +1021,7 @@ fn test_statx() -> TestResult {
         stx_dev_minor: u32,
         _spare2: [u64; 14],
     }
-    
+
     let mut statx: Statx = unsafe { core::mem::zeroed() };
     let result = sys_statx(
         -100, // AT_FDCWD
@@ -1031,23 +1031,23 @@ fn test_statx() -> TestResult {
         0x7FF, // All fields
         &mut statx as *mut _ as u64,
     );
-    
+
     if result < 0 {
         libc::println!("  statx returned {}", result);
         return TestResult::Fail;
     }
-    
+
     if statx.stx_size == 0 {
         libc::println!("  statx reported size 0");
         return TestResult::Fail;
     }
-    
+
     TestResult::Pass
 }
 
 fn test_faccessat2() -> TestResult {
     use libc::syscall::sys_faccessat2;
-    
+
     let result = sys_faccessat2(
         -100, // AT_FDCWD
         "/etc/passwd".as_ptr() as u64,
@@ -1055,12 +1055,12 @@ fn test_faccessat2() -> TestResult {
         0, // F_OK - test existence
         0, // flags
     );
-    
+
     if result < 0 {
         libc::println!("  faccessat2(/etc/passwd) returned {}", result);
         return TestResult::Fail;
     }
-    
+
     // Test non-existent file
     let result = sys_faccessat2(
         -100,
@@ -1069,12 +1069,12 @@ fn test_faccessat2() -> TestResult {
         0,
         0,
     );
-    
+
     if result >= 0 {
         libc::println!("  faccessat2 returned success for non-existent file");
         return TestResult::Fail;
     }
-    
+
     TestResult::Pass
 }
 
@@ -1084,63 +1084,60 @@ fn test_faccessat2() -> TestResult {
 
 fn test_prctl() -> TestResult {
     use libc::syscall::sys_prctl;
-    
+
     // PR_GET_DUMPABLE = 3
     let result = sys_prctl(3, 0, 0, 0, 0);
     if result < 0 {
         libc::println!("  prctl(PR_GET_DUMPABLE) returned {}", result);
         return TestResult::Fail;
     }
-    
+
     // PR_SET_DUMPABLE = 4
     let result = sys_prctl(4, 1, 0, 0, 0);
     if result < 0 {
         libc::println!("  prctl(PR_SET_DUMPABLE) returned {}", result);
         return TestResult::Fail;
     }
-    
+
     TestResult::Pass
 }
 
 fn test_capget() -> TestResult {
     use libc::syscall::sys_capget;
-    
+
     #[repr(C)]
     struct CapUserHeader {
         version: u32,
         pid: i32,
     }
-    
+
     #[repr(C)]
     struct CapUserData {
         effective: u32,
         permitted: u32,
         inheritable: u32,
     }
-    
+
     let hdr = CapUserHeader {
         version: 0x20080522, // LINUX_CAPABILITY_VERSION_3
         pid: 0,              // current process
     };
-    
+
     let mut data: CapUserData = unsafe { core::mem::zeroed() };
-    
-    let result = sys_capget(
-        &hdr as *const _ as u64,
-        &mut data as *mut _ as u64,
-    );
-    
+
+    let result = sys_capget(&hdr as *const _ as u64, &mut data as *mut _ as u64);
+
     if result < 0 {
         libc::println!("  capget returned {}", result);
         return TestResult::Fail;
     }
-    
+
     // Should have some capabilities set
     if data.effective == 0 && data.permitted == 0 {
         libc::println!("  capget returned no capabilities");
         return TestResult::Fail;
     }
-    
+
     TestResult::Pass
 }
 
@@ -1151,34 +1148,34 @@ fn test_capget() -> TestResult {
 fn test_new_syscalls_available() -> TestResult {
     // Test that all new syscalls are registered and return expected errors
     use libc::syscall::{
-        sys_timerfd_create, sys_signalfd, sys_unshare, sys_pidfd_open,
-        sys_epoll_pwait2, sys_recvmmsg, sys_sendmmsg,
+        sys_epoll_pwait2, sys_pidfd_open, sys_recvmmsg, sys_sendmmsg, sys_signalfd,
+        sys_timerfd_create, sys_unshare,
     };
-    
+
     // These should return ENOSYS (-38) not EINVAL or other errors
     let result = sys_timerfd_create(1, 0);
     if result != -38 {
         libc::println!("  timerfd_create returned {} instead of ENOSYS", result);
         return TestResult::Fail;
     }
-    
+
     let result = sys_signalfd(-1, 0, 0);
     if result != -38 {
         libc::println!("  signalfd returned {} instead of ENOSYS", result);
         return TestResult::Fail;
     }
-    
+
     let result = sys_unshare(0);
     if result != -38 {
         libc::println!("  unshare returned {} instead of ENOSYS", result);
         return TestResult::Fail;
     }
-    
+
     let result = sys_pidfd_open(1, 0);
     if result != -38 {
         libc::println!("  pidfd_open returned {} instead of ENOSYS", result);
         return TestResult::Fail;
     }
-    
+
     TestResult::Pass
 }

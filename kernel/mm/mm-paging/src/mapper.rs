@@ -98,7 +98,11 @@ impl PageMapper {
                 }
                 for i in (0..16).rev() {
                     let nibble = ((entry_phys >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    let hex_char = if nibble < 10 {
+                        b'0' + nibble
+                    } else {
+                        b'a' + nibble - 10
+                    };
                     arch::outb(0x3F8, hex_char);
                 }
                 let msg2 = b" val=0x";
@@ -109,7 +113,11 @@ impl PageMapper {
                 let val = (phys.as_u64() | (flags | PageTableFlags::PRESENT).bits());
                 for i in (0..16).rev() {
                     let nibble = ((val >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    let hex_char = if nibble < 10 {
+                        b'0' + nibble
+                    } else {
+                        b'a' + nibble - 10
+                    };
                     arch::outb(0x3F8, hex_char);
                 }
                 let msg3 = b"\r\n";
@@ -289,7 +297,11 @@ impl PageMapper {
                     let addr = new_table.as_u64();
                     for i in (0..16).rev() {
                         let nibble = ((addr >> (i * 4)) & 0xF) as u8;
-                        let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                        let hex_char = if nibble < 10 {
+                            b'0' + nibble
+                        } else {
+                            b'a' + nibble - 10
+                        };
                         arch::outb(0x3F8, hex_char);
                     }
                     let msg2 = b"\r\n";
@@ -315,7 +327,11 @@ impl PageMapper {
                     }
                     for i in (0..16).rev() {
                         let nibble = ((parent_entry_phys >> (i * 4)) & 0xF) as u8;
-                        let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                        let hex_char = if nibble < 10 {
+                            b'0' + nibble
+                        } else {
+                            b'a' + nibble - 10
+                        };
                         arch::outb(0x3F8, hex_char);
                     }
                     let msg2 = b"\r\n";

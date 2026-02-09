@@ -10,8 +10,8 @@ use alloc::vec::Vec;
 use core::fmt::Write;
 use core::ptr::addr_of_mut;
 
-use arch_traits::Arch;
 use crate::arch;
+use arch_traits::Arch;
 use block::{BlockDevice, BlockDeviceInfo, BlockError, BlockResult};
 use boot_proto::{BootInfo, MemoryType as BootMemoryType};
 use devfs::DevFs;
@@ -151,13 +151,12 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     unsafe {
         os_log::register_writer(&mut *addr_of_mut!(OS_LOG_WRITER));
         // — PatchBay: NO MORE SERIAL. Everything goes to console (stderr) now.
-        os_log::register_unsafe_writer(
-            console::write_byte_unsafe,
-            console::write_str_unsafe,
-        );
+        os_log::register_unsafe_writer(console::write_byte_unsafe, console::write_str_unsafe);
     }
 
-    let mut writer = BootWriter { console_enabled: false };
+    let mut writer = BootWriter {
+        console_enabled: false,
+    };
 
     // Print boot banner
     let _ = writeln!(writer);
@@ -185,23 +184,77 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let mut first = true;
 
     #[cfg(feature = "debug-syscall")]
-    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-syscall"); first = false; }
+    {
+        if !first {
+            let _ = write!(writer, ", ");
+        }
+        let _ = write!(writer, "debug-syscall");
+        first = false;
+    }
     #[cfg(feature = "debug-fork")]
-    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-fork"); first = false; }
+    {
+        if !first {
+            let _ = write!(writer, ", ");
+        }
+        let _ = write!(writer, "debug-fork");
+        first = false;
+    }
     #[cfg(feature = "debug-cow")]
-    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-cow"); first = false; }
+    {
+        if !first {
+            let _ = write!(writer, ", ");
+        }
+        let _ = write!(writer, "debug-cow");
+        first = false;
+    }
     #[cfg(feature = "debug-proc")]
-    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-proc"); first = false; }
+    {
+        if !first {
+            let _ = write!(writer, ", ");
+        }
+        let _ = write!(writer, "debug-proc");
+        first = false;
+    }
     #[cfg(feature = "debug-sched")]
-    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-sched"); first = false; }
+    {
+        if !first {
+            let _ = write!(writer, ", ");
+        }
+        let _ = write!(writer, "debug-sched");
+        first = false;
+    }
     #[cfg(feature = "debug-mouse")]
-    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-mouse"); first = false; }
+    {
+        if !first {
+            let _ = write!(writer, ", ");
+        }
+        let _ = write!(writer, "debug-mouse");
+        first = false;
+    }
     #[cfg(feature = "debug-input")]
-    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-input"); first = false; }
+    {
+        if !first {
+            let _ = write!(writer, ", ");
+        }
+        let _ = write!(writer, "debug-input");
+        first = false;
+    }
     #[cfg(feature = "debug-lock")]
-    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-lock"); first = false; }
+    {
+        if !first {
+            let _ = write!(writer, ", ");
+        }
+        let _ = write!(writer, "debug-lock");
+        first = false;
+    }
     #[cfg(feature = "debug-console")]
-    { if !first { let _ = write!(writer, ", "); } let _ = write!(writer, "debug-console"); first = false; }
+    {
+        if !first {
+            let _ = write!(writer, ", ");
+        }
+        let _ = write!(writer, "debug-console");
+        first = false;
+    }
 
     if first {
         let _ = write!(writer, "none");
@@ -294,7 +347,9 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Protect 2MB before bootloader regions to catch this bug.
     const PHYS_MAP_BASE: u64 = 0xFFFF_8000_0000_0000;
     let current_rsp: u64;
-    unsafe { core::arch::asm!("mov {}, rsp", out(reg) current_rsp); }
+    unsafe {
+        core::arch::asm!("mov {}, rsp", out(reg) current_rsp);
+    }
     let rsp_phys = if current_rsp >= PHYS_MAP_BASE {
         current_rsp - PHYS_MAP_BASE
     } else {
@@ -349,7 +404,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             }
             for i in (0..16).rev() {
                 let nibble = ((start >> (i * 4)) & 0xF) as u8;
-                let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                let hex_char = if nibble < 10 {
+                    b'0' + nibble
+                } else {
+                    b'a' + nibble - 10
+                };
                 arch::outb(0x3F8, hex_char);
             }
             let sep = b"-0x";
@@ -359,7 +418,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             }
             for i in (0..16).rev() {
                 let nibble = ((end >> (i * 4)) & 0xF) as u8;
-                let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                let hex_char = if nibble < 10 {
+                    b'0' + nibble
+                } else {
+                    b'a' + nibble - 10
+                };
                 arch::outb(0x3F8, hex_char);
             }
             let space = b" ";
@@ -415,7 +478,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                 }
                 for i in (0..16).rev() {
                     let nibble = ((boot_region.start >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    let hex_char = if nibble < 10 {
+                        b'0' + nibble
+                    } else {
+                        b'a' + nibble - 10
+                    };
                     arch::outb(0x3F8, hex_char);
                 }
                 let msg2 = b"-0x";
@@ -426,7 +493,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                 let end = boot_region.start + boot_region.len;
                 for i in (0..16).rev() {
                     let nibble = ((end >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                    let hex_char = if nibble < 10 {
+                        b'0' + nibble
+                    } else {
+                        b'a' + nibble - 10
+                    };
                     arch::outb(0x3F8, hex_char);
                 }
                 let type_str = match boot_region.ty {
@@ -626,8 +697,9 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                 }); acpi::madt::MAX_MADT_CPUS];
 
                 // Safety: MADT is mapped through phys_map_base
-                let num_cpus =
-                    unsafe { acpi::parse_madt(boot_info.phys_map_base, madt_phys, &mut madt_entries) };
+                let num_cpus = unsafe {
+                    acpi::parse_madt(boot_info.phys_map_base, madt_phys, &mut madt_entries)
+                };
                 let _ = writeln!(writer, "[ACPI] MADT reports {} usable CPU(s)", num_cpus);
 
                 // Register each AP (skip BSP by matching APIC ID)
@@ -689,7 +761,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Boot Application Processors via INIT-SIPI-SIPI — GraveShift: igniting each core
     if smp::cpu::cpu_count() > 1 {
         let total_aps = smp::cpu::cpu_count() - 1;
-        let _ = writeln!(writer, "[SMP] Booting {} Application Processor(s)...", total_aps);
+        let _ = writeln!(
+            writer,
+            "[SMP] Booting {} Application Processor(s)...",
+            total_aps
+        );
 
         // Get CR3 for APs to use (current page table)
         let cr3 = <arch::X86_64 as arch_traits::TlbControl>::read_root();
@@ -715,11 +791,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                 );
             }
 
-            let _ = writeln!(
-                writer,
-                "[SMP] Sending INIT-SIPI-SIPI to CPU {}...",
-                cpu_id
-            );
+            let _ = writeln!(writer, "[SMP] Sending INIT-SIPI-SIPI to CPU {}...", cpu_id);
             match smp::cpu::boot_ap(cpu_id, arch::ap_boot::TRAMPOLINE_PAGE) {
                 Ok(()) => {
                     let _ = writeln!(writer, "[SMP] CPU {} is now online!", cpu_id);
@@ -815,12 +887,14 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         }
     }
 
-    // Connect PS/2 keyboard input to console
+    // Connect keyboard input to console via shared kbd module
+    // — GraveShift: both PS/2 and VirtIO now use input::kbd for key→console conversion.
+    // Register callbacks once here instead of per-driver.
     // Safety: Called during single-threaded initialization
     unsafe {
-        ps2::set_console_callback(devfs::console_input_callback);
+        input::kbd::set_console_callback(devfs::console_input_callback);
     }
-    let _ = writeln!(writer, "[INFO] PS/2 console callback registered");
+    let _ = writeln!(writer, "[INFO] Keyboard console callback registered (shared kbd module)");
 
     unsafe {
         let msg = b"[INIT-DEBUG] After set_console_callback\r\n";
@@ -830,12 +904,12 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         }
     }
 
-    // Connect PS/2 Alt+Fn keys to VT switching
+    // Connect Alt+Fn keys to VT switching via shared kbd module
     // Safety: Called during single-threaded initialization
     unsafe {
-        ps2::set_vt_switch_callback(vt_switch_callback);
+        input::kbd::set_vt_switch_callback(vt_switch_callback);
     }
-    let _ = writeln!(writer, "[INFO] PS/2 VT switch callback registered");
+    let _ = writeln!(writer, "[INFO] VT switch callback registered (shared kbd module)");
 
     unsafe {
         let msg = b"[INIT-DEBUG] After set_vt_switch_callback\r\n";
@@ -875,6 +949,57 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         }
     } else {
         debug_mouse!("[mouse] No framebuffer — skipping graphical cursor init");
+    }
+
+    // — InputShade: PCI enumeration must happen before VirtIO input probe.
+    // Previously this lived in network init (Phase 3), but VirtIO keyboard/tablet
+    // are PCI devices discovered here. enumerate() is idempotent — it early-returns
+    // if already called, so the network phase re-call is harmless.
+    pci::enumerate();
+
+    // Initialize VirtIO input devices (keyboard, mouse, tablet) from PCI bus
+    // — InputShade: Modern VirtIO input takes priority over PS/2 for virtualized environments
+    unsafe {
+        let msg = b"[INIT-DEBUG] Before virtio_input::probe_all_pci()\r\n";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+    }
+    let _ = writeln!(writer, "[DEBUG] Calling virtio_input::probe_all_pci()...");
+    let virtio_input_count = virtio_input::probe_all_pci();
+    unsafe {
+        let msg = b"[INIT-DEBUG] After virtio_input::probe_all_pci() count=";
+        for &byte in msg.iter() {
+            while arch::inb(0x3FD) & 0x20 == 0 {}
+            arch::outb(0x3F8, byte);
+        }
+        let digit = b'0' + (virtio_input_count as u8 % 10);
+        while arch::inb(0x3FD) & 0x20 == 0 {}
+        arch::outb(0x3F8, digit);
+        while arch::inb(0x3FD) & 0x20 == 0 {}
+        arch::outb(0x3F8, b'\r');
+        while arch::inb(0x3FD) & 0x20 == 0 {}
+        arch::outb(0x3F8, b'\n');
+    }
+    let _ = writeln!(
+        writer,
+        "[DEBUG] probe_all_pci() returned {} devices",
+        virtio_input_count
+    );
+    if virtio_input_count > 0 {
+        let _ = writeln!(
+            writer,
+            "[INFO] Found {} VirtIO input device(s) on PCI bus",
+            virtio_input_count
+        );
+        let _ = writeln!(writer, "[DEBUG] VirtIO input initialized successfully");
+    } else {
+        let _ = writeln!(
+            writer,
+            "[INFO] No VirtIO input devices found — using PS/2 fallback"
+        );
+        let _ = writeln!(writer, "[DEBUG] Falling back to PS/2 for input");
     }
 
     // Set up input subsystem wake callback for blocking reads on /dev/input/eventN
@@ -1415,8 +1540,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         let _ = writeln!(
             writer,
             "[SND] Intel HDA found at {:02x}:{:02x}.{} (PCI {:04x}:{:04x})",
-            pci_dev.address.bus, pci_dev.address.device, pci_dev.address.function,
-            pci_dev.vendor_id, pci_dev.device_id
+            pci_dev.address.bus,
+            pci_dev.address.device,
+            pci_dev.address.function,
+            pci_dev.vendor_id,
+            pci_dev.device_id
         );
         match intel_hda::init_from_pci(pci_dev) {
             Ok(()) => {
@@ -2096,7 +2224,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                     let addr = phys.as_u64();
                     for i in (0..16).rev() {
                         let nibble = ((addr >> (i * 4)) & 0xF) as u8;
-                        let hex_char = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                        let hex_char = if nibble < 10 {
+                            b'0' + nibble
+                        } else {
+                            b'a' + nibble - 10
+                        };
                         arch::outb(0x3F8, hex_char);
                     }
                     let msg2 = b"\r\n";
@@ -2534,10 +2666,14 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         }
     }
 
-    unsafe { os_log::write_str_raw("[INFO] Starting APIC timer at 100Hz...\n"); }
+    unsafe {
+        os_log::write_str_raw("[INFO] Starting APIC timer at 100Hz...\n");
+    }
     arch::start_timer(100);
     smp_init::signal_ap_ready();
-    unsafe { os_log::write_str_raw("[SMP] AP timer gate released — all CPUs active\n"); }
+    unsafe {
+        os_log::write_str_raw("[SMP] AP timer gate released — all CPUs active\n");
+    }
 
     unsafe {
         let msg = b"[INIT-DEBUG] Entering usermode NOW!\r\n";
@@ -2627,10 +2763,7 @@ fn kmsg_get_proc_name(pid: u32, buf: &mut [u8]) -> usize {
 /// Get current process UID/GID for the os_core credentials bridge
 /// — EmberLock: identity extraction for subsystem consumption
 fn current_process_uid_gid() -> (u32, u32) {
-    sched::with_current_meta(|meta| {
-        (meta.credentials.uid, meta.credentials.gid)
-    })
-    .unwrap_or((0, 0))
+    sched::with_current_meta(|meta| (meta.credentials.uid, meta.credentials.gid)).unwrap_or((0, 0))
 }
 
 /// Signal process group callback for PTYs
