@@ -1199,17 +1199,23 @@ impl PciDriver for VirtioBlkDriver {
 
         // Register with block subsystem
         let name = alloc::format!("vd{}", get_next_drive_letter());
+        let device_name = name.clone();
         block::register_device(name, Box::new(device));
 
-        // Return dummy binding data (we don't need to track anything for removal yet)
-        Ok(DriverBindingData::new(0))
+        // Store device name for removal
+        let name_ptr = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(device_name));
+        Ok(DriverBindingData::new(name_ptr as usize))
     }
 
-    unsafe fn remove(&self, _dev: &pci::PciDevice, _binding_data: DriverBindingData) {
-        // TODO: Implement proper device removal
-        // - Unregister from block subsystem
-        // - Free virtqueue
-        // - Free DMA buffers
+    unsafe fn remove(&self, _dev: &pci::PciDevice, binding_data: DriverBindingData) {
+        // Reconstruct device name and unregister
+        let name_ptr = binding_data.as_ptr::<alloc::string::String>();
+        if !name_ptr.is_null() {
+            let name = alloc::boxed::Box::from_raw(name_ptr);
+            let _ = block::unregister_device(&name);
+            // Device (VirtioBlk) is dropped automatically by block subsystem
+            // Virtqueue and DMA buffers are freed by VirtioBlk's Drop implementation
+        }
     }
 }
 
