@@ -704,3 +704,50 @@ impl VirtioInput {
 
 unsafe impl Send for VirtioInput {}
 unsafe impl Sync for VirtioInput {}
+
+// ============================================================================
+// PciDriver Implementation for Dynamic Driver Loading
+// ============================================================================
+// — InputShade: keyboard and mouse, auto-discovered
+
+use driver_core::{PciDriver, PciDeviceId, DriverError, DriverBindingData};
+
+/// Device ID table for VirtIO input devices
+static VIRTIO_INPUT_IDS: &[PciDeviceId] = &[
+    PciDeviceId::new(pci::vendor::VIRTIO, pci::virtio_modern::INPUT),   // Modern only
+];
+
+/// VirtIO input driver for driver-core system
+struct VirtioInputDriver;
+
+impl PciDriver for VirtioInputDriver {
+    fn name(&self) -> &'static str {
+        "virtio-input"
+    }
+
+    fn id_table(&self) -> &'static [PciDeviceId] {
+        VIRTIO_INPUT_IDS
+    }
+
+    fn probe(&self, dev: &pci::PciDevice, _id: &PciDeviceId) -> Result<DriverBindingData, DriverError> {
+        // SAFETY: PCI device is valid and matches our ID table
+        let device = unsafe { VirtioInput::from_pci(dev) }
+            .ok_or(DriverError::InitFailed)?;
+
+        // Add to internal device list (virtio-input uses its own registry)
+        VIRTIO_INPUT_DEVICES.lock().push(device);
+
+        // Return dummy binding data
+        Ok(DriverBindingData::new(0))
+    }
+
+    unsafe fn remove(&self, _dev: &pci::PciDevice, _binding_data: DriverBindingData) {
+        // TODO: Implement proper device removal from VIRTIO_INPUT_DEVICES
+    }
+}
+
+/// Static driver instance for registration
+static VIRTIO_INPUT_DRIVER: VirtioInputDriver = VirtioInputDriver;
+
+// Register driver via compile-time linker section
+driver_core::register_pci_driver!(VIRTIO_INPUT_DRIVER);
