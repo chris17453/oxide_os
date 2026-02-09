@@ -119,6 +119,19 @@ impl MemoryManager {
         self.buddy.alloc(&AllocRequest::new(order))
     }
 
+    /// Free contiguous physical frames
+    ///
+    /// # Arguments
+    /// * `addr` - Base address of the first frame
+    /// * `count` - Number of frames to free (will be rounded up to power of 2)
+    pub fn free_contiguous(&self, addr: PhysAddr, count: usize) -> MmResult<()> {
+        if count == 0 {
+            return Err(MmError::InvalidOrder);
+        }
+        let order = count.next_power_of_two().trailing_zeros() as usize;
+        self.free_frames(addr, order)
+    }
+
     /// Allocate frames from DMA zone (below 16MB)
     pub fn alloc_dma(&self, order: usize) -> MmResult<PhysAddr> {
         self.buddy.alloc(&AllocRequest::dma(order))

@@ -26,8 +26,21 @@ pub unsafe extern "C" fn __kernel_mm_alloc_contiguous(num_pages: usize) -> u64 {
     }
 }
 
-// Note: free_contiguous not implemented in FrameAllocator trait yet
-// TODO: Add when memory management supports it
+/// Free contiguous physical memory frames
+///
+/// # Safety
+/// Physical address must have been allocated via __kernel_mm_alloc_contiguous.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __kernel_mm_free_contiguous(phys_addr: u64, num_pages: usize) -> i32 {
+    if phys_addr == 0 {
+        return -1; // Invalid address
+    }
+    let addr = os_core::PhysAddr::new(phys_addr);
+    match mm().free_contiguous(addr, num_pages) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
 
 // ============================================================================
 // PCI Configuration Space Access Exports
@@ -161,6 +174,10 @@ pub fn get_kernel_symbols() -> alloc::vec::Vec<KernelSymbol> {
         KernelSymbol {
             name: "mm_alloc_contiguous",
             addr: __kernel_mm_alloc_contiguous as usize,
+        },
+        KernelSymbol {
+            name: "mm_free_contiguous",
+            addr: __kernel_mm_free_contiguous as usize,
         },
         // PCI config space
         KernelSymbol {
