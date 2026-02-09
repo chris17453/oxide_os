@@ -21,6 +21,18 @@ SECTIONS
     .rodata : ALIGN(4K)
     {
         *(.rodata .rodata.*)
+
+        /* Driver registration sections for compile-time driver discovery */
+        /* — BlackLatch: the linker collects drivers from the void */
+        . = ALIGN(8);
+        __start_pci_drivers = .;
+        *(.pci_drivers)
+        __stop_pci_drivers = .;
+
+        . = ALIGN(8);
+        __start_isa_drivers = .;
+        *(.isa_drivers)
+        __stop_isa_drivers = .;
     }
 
     .data : ALIGN(4K)
