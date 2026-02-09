@@ -1,0 +1,14 @@
+[package]
+name = "virtio-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pci = { path = "../pci" }
+mm-manager = { workspace = true }
+mm-traits = { workspace = true }
+spin = { workspace = true }
+
+[lib]
+name = "virtio_core"
+path = "src/lib.rs"

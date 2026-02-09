@@ -25,6 +25,7 @@ members = [
     "kernel/boot/boot-proto",
     "kernel/drivers/driver-traits",
     "kernel/drivers/driver-core",
+    "kernel/drivers/virtio-core",
     "kernel/drivers/serial/driver-uart-8250",
     "kernel/drivers/block/virtio-blk",
     "kernel/drivers/block/nvme",
@@ -183,6 +184,7 @@ syscall = { path = "kernel/syscall/syscall" }
 boot-proto = { path = "kernel/boot/boot-proto" }
 driver-traits = { path = "kernel/drivers/driver-traits" }
 driver-core = { path = "kernel/drivers/driver-core" }
+virtio-core = { path = "kernel/drivers/virtio-core" }
 vfs = { path = "kernel/vfs/vfs" }
 devfs = { path = "kernel/vfs/devfs" }
 tmpfs = { path = "kernel/vfs/tmpfs" }

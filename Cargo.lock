@@ -1778,6 +1778,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "virtio-core"
+version = "0.1.0"
+dependencies = [
+ "mm-manager",
+ "mm-traits",
+ "pci",
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "virtio-emu"
 version = "0.1.0"
 dependencies = [
