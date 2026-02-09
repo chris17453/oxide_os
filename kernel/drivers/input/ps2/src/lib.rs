@@ -881,3 +881,7 @@ pub fn is_keyboard_initialized() -> bool {
 pub fn read_status() -> u8 {
     unsafe { inb(STATUS_PORT) }
 }
+
+// TODO: Add IsaDriver implementation once circular dependency is resolved
+// Circular dep: ps2 → driver-core → pci → arch-x86_64 → ps2
+// Solution: Split driver-core into driver-core-traits (no deps) and driver-core-registry
