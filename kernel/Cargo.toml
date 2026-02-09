@@ -68,6 +68,7 @@ tcpip = { workspace = true }
 dhcp = { workspace = true }
 virtio-net = { workspace = true }
 pci = { workspace = true }
+driver-core = { workspace = true }
 fb = { workspace = true }
 virtio-gpu = { workspace = true }
 audio = { workspace = true }

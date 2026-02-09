@@ -14,7 +14,15 @@ use pci::PciDevice;
 pub mod registry;
 pub mod binding;
 
-pub use registry::{init_driver_registry, probe_all_devices, register_pci_driver_runtime, register_isa_driver_runtime};
+pub use registry::{
+    init_driver_registry,
+    probe_all_devices,
+    probe_isa_devices,
+    register_pci_driver_runtime,
+    register_isa_driver_runtime,
+    list_pci_drivers,
+    list_isa_drivers,
+};
 pub use binding::{DriverBindingData, DeviceBinding};
 
 /// PCI device ID for driver matching

@@ -33,24 +33,44 @@ extern "C" {
 /// Initialize driver registry from linker sections
 ///
 /// Called once at boot to collect all statically registered drivers.
+/// Walks the .pci_drivers and .isa_drivers linker sections which contain
+/// fat pointers (16 bytes each on x86_64: data pointer + vtable pointer).
 /// — BlackLatch: pulling drivers from the void, one vtable at a time
 pub fn init_driver_registry() {
-    // TODO: Walk linker sections once linker script is updated
-    // For now, drivers will register manually via runtime registration
+    unsafe {
+        // Walk PCI drivers section
+        let start = &START_PCI_DRIVERS as *const _ as *const u8;
+        let stop = &STOP_PCI_DRIVERS as *const _ as *const u8;
+        let size = core::mem::size_of::<&'static dyn PciDriver>();
 
-    // This will be implemented like:
-    // unsafe {
-    //     let start = &START_PCI_DRIVERS as *const _ as usize;
-    //     let stop = &STOP_PCI_DRIVERS as *const _ as usize;
-    //     let size = core::mem::size_of::<&'static dyn PciDriver>();
-    //     let count = (stop - start) / size;
-    //
-    //     let mut drivers = PCI_DRIVERS.lock();
-    //     for i in 0..count {
-    //         let ptr = (start + i * size) as *const &'static dyn PciDriver;
-    //         drivers.push(*ptr);
-    //     }
-    // }
+        if stop as usize > start as usize {
+            let count = (stop as usize - start as usize) / size;
+            let mut drivers = PCI_DRIVERS.lock();
+
+            for i in 0..count {
+                // Each entry in the linker section is a &'static dyn PciDriver (fat pointer)
+                let ptr = (start as usize + i * size) as *const &'static dyn PciDriver;
+                let driver: &'static dyn PciDriver = *ptr;
+                drivers.push(driver);
+            }
+        }
+
+        // Walk ISA drivers section
+        let start = &START_ISA_DRIVERS as *const _ as *const u8;
+        let stop = &STOP_ISA_DRIVERS as *const _ as *const u8;
+        let size = core::mem::size_of::<&'static dyn IsaDriver>();
+
+        if stop as usize > start as usize {
+            let count = (stop as usize - start as usize) / size;
+            let mut drivers = ISA_DRIVERS.lock();
+
+            for i in 0..count {
+                let ptr = (start as usize + i * size) as *const &'static dyn IsaDriver;
+                let driver: &'static dyn IsaDriver = *ptr;
+                drivers.push(driver);
+            }
+        }
+    }
 }
 
 /// Register a PCI driver at runtime

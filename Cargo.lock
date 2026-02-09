@@ -618,6 +618,7 @@ dependencies = [
  "crypto",
  "devfs",
  "dhcp",
+ "driver-core",
  "elf",
  "ext4",
  "fat32",

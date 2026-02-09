@@ -957,6 +957,26 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // if already called, so the network phase re-call is harmless.
     pci::enumerate();
 
+    // ========================================
+    // Dynamic Driver Loading System (NEW)
+    // ========================================
+    // — GraveShift: collect drivers from linker sections and auto-probe
+    let _ = writeln!(writer, "[DRIVER] Initializing driver registry from linker sections...");
+    driver_core::init_driver_registry();
+
+    let _ = writeln!(writer, "[DRIVER] Probing all PCI devices with registered drivers...");
+    let _ = driver_core::probe_all_devices();
+
+    let _ = writeln!(writer, "[DRIVER] Probing ISA devices...");
+    let _ = driver_core::probe_isa_devices();
+
+    // Log registered drivers
+    let pci_drivers = driver_core::list_pci_drivers();
+    let _ = writeln!(writer, "[DRIVER] Registered PCI drivers: {}", pci_drivers.len());
+    for driver_name in pci_drivers.iter() {
+        let _ = writeln!(writer, "[DRIVER]   - {}", driver_name);
+    }
+
     // Initialize VirtIO input devices (keyboard, mouse, tablet) from PCI bus
     // — InputShade: Modern VirtIO input takes priority over PS/2 for virtualized environments
     unsafe {
