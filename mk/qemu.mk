@@ -1,7 +1,7 @@
 # — NeonRoot: QEMU launch orchestration.
 # Auto-detects Fedora vs RHEL, kills stale instances, and prays the OVMF gods are merciful.
 
-.PHONY: detect-qemu-mode kill-qemu run run-fedora-debug run-rhel-debug run-disk run-fedora run-rhel run-kvm run-debug-input-gui run-debug-mouse run-debug-lock run-debug-fork run-debug-sched run-debug-all debug-server debug-capture debug-boot-check debug-exec debug-repl
+.PHONY: detect-qemu-mode kill-qemu run run-disk run-fedora run-rhel run-kvm run-debug-input-gui run-debug-mouse run-debug-lock run-debug-fork run-debug-sched run-debug-all
 
 # Auto-detect QEMU mode (Fedora vs RHEL)
 detect-qemu-mode:
@@ -29,15 +29,16 @@ kill-qemu:
 		fi; \
 	fi
 
-# Debug-first run (ext4 rootfs with init/getty/login, GDB-ready QEMU)
+# — NeonRoot: Primary run target. Builds rootfs, detects platform, launches QEMU with VNC.
+# No GDB, no training wheels. Just boot the damn thing.
 run: kill-qemu create-rootfs
 	@MODE=$$($(MAKE) -s detect-qemu-mode); \
 	if [ "$$MODE" = "fedora" ]; then \
-		echo "Detected Fedora mode (debug QEMU run)"; \
-		$(MAKE) run-fedora-debug; \
+		echo "Detected Fedora mode"; \
+		$(MAKE) run-fedora; \
 	elif [ "$$MODE" = "rhel" ]; then \
-		echo "Detected RHEL mode (debug QEMU run)"; \
-		$(MAKE) run-rhel-debug; \
+		echo "Detected RHEL mode"; \
+		$(MAKE) run-rhel; \
 	else \
 		echo "Error: No compatible QEMU found"; \
 		echo "Install: sudo dnf install qemu-system-x86 (Fedora) or qemu-kvm (RHEL)"; \
@@ -59,90 +60,6 @@ run-disk: kill-qemu clean-rootfs
 		echo "Install: sudo dnf install qemu-system-x86 (Fedora) or qemu-kvm (RHEL)"; \
 		exit 1; \
 	fi
-
-QEMU_DEBUG_LOG ?= $(TARGET_DIR)/qemu.log
-DEBUG_SERIAL ?= file:$(TARGET_DIR)/serial.log
-GDB_PAUSE ?= 1
-DEBUG_QEMU_ARGS = \
-	-machine q35 \
-	-cpu qemu64,+smap,+smep \
-	-smp 1 \
-	-m 512M \
-	-drive file=$(ROOTFS_IMAGE),format=raw,if=none,id=disk \
-	-device virtio-blk-pci,drive=disk \
-	-device isa-debugcon,iobase=0xe9,chardev=dbg \
-	-chardev stdio,id=dbg,signal=off \
-	-serial $(DEBUG_SERIAL) \
-	-device virtio-gpu-pci \
-	-device virtio-keyboard-pci \
-	-device virtio-tablet-pci \
-	-no-reboot -no-shutdown \
-	-d int,cpu_reset,guest_errors \
-	-D $(QEMU_DEBUG_LOG) \
-	$(if $(filter 1,$(GDB_PAUSE)),-s -S,)
-
-run-fedora-debug:
-	@set -e; \
-	echo "Running OXIDE OS with qemu-system-x86_64 (debug mode)..."; \
-	if [ -z "$(OVMF)" ]; then \
-		echo "Error: OVMF firmware not found"; exit 1; \
-	fi; \
-	mkdir -p /tmp/qemu-oxide $(TARGET_DIR); \
-	echo "Serial log: $(TARGET_DIR)/serial.log"; \
-	echo "QEMU log: $(QEMU_DEBUG_LOG)"; \
-	TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
-		-bios "$(OVMF)" \
-		$(DEBUG_QEMU_ARGS) \
-		& \
-	QEMU_PID=$$!; \
-	trap 'kill $$QEMU_PID 2>/dev/null || true' INT TERM; \
-	echo "QEMU started (PID $$QEMU_PID)."; \
-	sleep 1; \
-	if [ "$(GDB_AUTO)" = "1" ]; then \
-		echo "Launching $(GDB) with $(GDB_CMDS)"; \
-		$(GDB) -q $(KERNEL_TARGET) $(GDB_CMDS); \
-	else \
-		echo "Attach manually with: $(GDB) -q $(KERNEL_TARGET) $(GDB_CMDS)"; \
-		wait $$QEMU_PID; \
-	fi; \
-	kill $$QEMU_PID 2>/dev/null || true; \
-	wait $$QEMU_PID 2>/dev/null || true
-
-
-run-rhel-debug:
-	@set -e; \
-	echo "Running OXIDE OS with qemu-kvm (debug mode)..."; \
-	if [ ! -f /usr/share/edk2/ovmf/OVMF_CODE.fd ]; then \
-		echo "Error: OVMF firmware not found"; \
-		echo "Install: sudo dnf install edk2-ovmf"; \
-		exit 1; \
-	fi; \
-	if [ ! -f /usr/libexec/qemu-kvm ]; then \
-		echo "Error: /usr/libexec/qemu-kvm not found"; \
-		echo "Install: sudo dnf install qemu-kvm"; \
-		exit 1; \
-	fi; \
-	mkdir -p $(TARGET_DIR) /tmp/qemu-oxide; \
-	echo "Serial log: $(TARGET_DIR)/serial.log"; \
-	echo "QEMU log: $(QEMU_DEBUG_LOG)"; \
-	TMPDIR=/tmp/qemu-oxide /usr/libexec/qemu-kvm \
-		-drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE.fd \
-		$(DEBUG_QEMU_ARGS) \
-		& \
-	QEMU_PID=$$!; \
-	trap 'kill $$QEMU_PID 2>/dev/null || true' INT TERM; \
-	echo "QEMU started (PID $$QEMU_PID)."; \
-	sleep 1; \
-	if [ "$(GDB_AUTO)" = "1" ]; then \
-		echo "Launching $(GDB) with $(GDB_CMDS)"; \
-		$(GDB) -q $(KERNEL_TARGET) $(GDB_CMDS); \
-	else \
-		echo "Attach manually with: $(GDB) -q $(KERNEL_TARGET) $(GDB_CMDS)"; \
-		wait $$QEMU_PID; \
-	fi; \
-	kill $$QEMU_PID 2>/dev/null || true; \
-	wait $$QEMU_PID 2>/dev/null || true
-
 
 # Internal target: Run with qemu-system-x86_64 (Fedora)
 run-fedora:
@@ -278,116 +195,3 @@ run-debug-sched: run
 run-debug-all: KERNEL_FEATURES = debug-all
 run-debug-all: run
 
-# ========================================
-# Autonomous GDB Debugging Targets
-# — ColdCipher: Because debugging at 3 AM requires programmatic control, not point-and-click.
-# ========================================
-
-# Start QEMU with GDB server (no auto-launch GDB)
-# Use this when you want to connect GDB manually or programmatically
-debug-server: kill-qemu boot-image
-	@echo "Starting QEMU with GDB server on port 1234 (paused at start)..."
-	@if [ -z "$(OVMF)" ]; then \
-		echo "Error: OVMF firmware not found"; exit 1; \
-	fi; \
-	mkdir -p /tmp/qemu-oxide $(TARGET_DIR); \
-	echo "Serial log: $(TARGET_DIR)/serial.log"; \
-	echo "QEMU log: $(QEMU_DEBUG_LOG)"; \
-	echo "Connect with: gdb $(KERNEL_TARGET) -ex 'target remote :1234'"; \
-	echo "Or use: ./scripts/gdb-autonomous.py --repl"; \
-	TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
-		-bios "$(OVMF)" \
-		$(DEBUG_QEMU_ARGS)
-
-# Autonomous crash capture - runs until crash, then dumps state
-debug-capture: kill-qemu boot-image
-	@echo "Running autonomous crash capture..."
-	@if [ -z "$(OVMF)" ]; then \
-		echo "Error: OVMF firmware not found"; exit 1; \
-	fi; \
-	mkdir -p /tmp/qemu-oxide $(TARGET_DIR); \
-	echo "Starting QEMU with GDB server..."; \
-	TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
-		-bios "$(OVMF)" \
-		$(DEBUG_QEMU_ARGS) \
-		& \
-	QEMU_PID=$$!; \
-	trap 'kill $$QEMU_PID 2>/dev/null || true' INT TERM EXIT; \
-	sleep 1; \
-	echo "Attaching GDB with crash capture script..."; \
-	$(GDB) -q -batch \
-		-x scripts/gdb-capture-crash.gdb \
-		$(KERNEL_TARGET) \
-		> $(TARGET_DIR)/crash-capture.log 2>&1; \
-	echo "Crash capture log saved to $(TARGET_DIR)/crash-capture.log"; \
-	cat $(TARGET_DIR)/crash-capture.log; \
-	kill $$QEMU_PID 2>/dev/null || true; \
-	wait $$QEMU_PID 2>/dev/null || true
-
-# Quick boot sanity check
-debug-boot-check: kill-qemu boot-image
-	@echo "Running boot sanity check..."
-	@if [ -z "$(OVMF)" ]; then \
-		echo "Error: OVMF firmware not found"; exit 1; \
-	fi; \
-	mkdir -p /tmp/qemu-oxide $(TARGET_DIR); \
-	TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
-		-bios "$(OVMF)" \
-		$(DEBUG_QEMU_ARGS) \
-		& \
-	QEMU_PID=$$!; \
-	trap 'kill $$QEMU_PID 2>/dev/null || true' INT TERM EXIT; \
-	sleep 1; \
-	timeout 30 $(GDB) -q -batch \
-		-x scripts/gdb-check-boot.gdb \
-		$(KERNEL_TARGET) \
-		> $(TARGET_DIR)/boot-check.log 2>&1 || true; \
-	echo "Boot check results:"; \
-	cat $(TARGET_DIR)/boot-check.log; \
-	kill $$QEMU_PID 2>/dev/null || true; \
-	wait $$QEMU_PID 2>/dev/null || true
-
-# Execute specific GDB commands autonomously
-# Usage: make debug-exec CMD="bt"
-# Usage: make debug-exec CMD="info registers"
-debug-exec: kill-qemu boot-image
-	@if [ -z "$(CMD)" ]; then \
-		echo "Error: Must specify CMD=<gdb-command>"; \
-		echo "Example: make debug-exec CMD='bt'"; \
-		exit 1; \
-	fi; \
-	echo "Executing GDB command: $(CMD)"; \
-	if [ -z "$(OVMF)" ]; then \
-		echo "Error: OVMF firmware not found"; exit 1; \
-	fi; \
-	mkdir -p /tmp/qemu-oxide $(TARGET_DIR); \
-	TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
-		-bios "$(OVMF)" \
-		$(DEBUG_QEMU_ARGS) \
-		& \
-	QEMU_PID=$$!; \
-	trap 'kill $$QEMU_PID 2>/dev/null || true' INT TERM EXIT; \
-	sleep 1; \
-	./scripts/gdb-autonomous.py --exec "$(CMD)"; \
-	kill $$QEMU_PID 2>/dev/null || true; \
-	wait $$QEMU_PID 2>/dev/null || true
-
-# Interactive autonomous REPL (programmatic control)
-debug-repl: kill-qemu boot-image
-	@echo "Starting autonomous GDB REPL..."
-	@if [ -z "$(OVMF)" ]; then \
-		echo "Error: OVMF firmware not found"; exit 1; \
-	fi; \
-	mkdir -p /tmp/qemu-oxide $(TARGET_DIR); \
-	echo "Launching QEMU with GDB server..."; \
-	TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
-		-bios "$(OVMF)" \
-		$(DEBUG_QEMU_ARGS) \
-		& \
-	QEMU_PID=$$!; \
-	trap 'kill $$QEMU_PID 2>/dev/null || true' INT TERM EXIT; \
-	sleep 2; \
-	echo "Connecting autonomous GDB controller..."; \
-	./scripts/gdb-autonomous.py --repl; \
-	kill $$QEMU_PID 2>/dev/null || true; \
-	wait $$QEMU_PID 2>/dev/null || true
