@@ -15,6 +15,7 @@ extern crate alloc;
 mod debug;
 mod debug_buffer;
 mod exports;
+mod module_driver_bridge;
 
 // Kernel modules
 mod arch;
