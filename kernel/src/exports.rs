@@ -61,8 +61,19 @@ pub extern "C" fn __kernel_pci_config_write32(bus: u8, device: u8, function: u8,
     pci::config_write32(addr, offset, value);
 }
 
-// Note: config_write16 and config_write8 not available in pci crate
-// TODO: Add when needed
+/// Write 16-bit value to PCI configuration space
+#[unsafe(no_mangle)]
+pub extern "C" fn __kernel_pci_config_write16(bus: u8, device: u8, function: u8, offset: u8, value: u16) {
+    let addr = pci::PciAddress::new(bus, device, function);
+    pci::config_write16(addr, offset, value);
+}
+
+/// Write 8-bit value to PCI configuration space
+#[unsafe(no_mangle)]
+pub extern "C" fn __kernel_pci_config_write8(bus: u8, device: u8, function: u8, offset: u8, value: u8) {
+    let addr = pci::PciAddress::new(bus, device, function);
+    pci::config_write8(addr, offset, value);
+}
 
 /// Enable PCI bus mastering
 #[unsafe(no_mangle)]
@@ -167,6 +178,14 @@ pub fn get_kernel_symbols() -> alloc::vec::Vec<KernelSymbol> {
         KernelSymbol {
             name: "pci_config_write32",
             addr: __kernel_pci_config_write32 as usize,
+        },
+        KernelSymbol {
+            name: "pci_config_write16",
+            addr: __kernel_pci_config_write16 as usize,
+        },
+        KernelSymbol {
+            name: "pci_config_write8",
+            addr: __kernel_pci_config_write8 as usize,
         },
         KernelSymbol {
             name: "pci_enable_bus_master",

@@ -177,6 +177,30 @@ pub fn config_write32(addr: PciAddress, offset: u8, value: u32) {
     }
 }
 
+/// Write a 16-bit value to PCI configuration space
+pub fn config_write16(addr: PciAddress, offset: u8, value: u16) {
+    let aligned_offset = offset & 0xFC;
+    let shift = ((offset & 2) * 8) as u32;
+
+    // Read-modify-write to preserve other bytes
+    let val32 = config_read32(addr, aligned_offset);
+    let mask = !(0xFFFF << shift);
+    let new_val = (val32 & mask) | ((value as u32) << shift);
+    config_write32(addr, aligned_offset, new_val);
+}
+
+/// Write an 8-bit value to PCI configuration space
+pub fn config_write8(addr: PciAddress, offset: u8, value: u8) {
+    let aligned_offset = offset & 0xFC;
+    let shift = ((offset & 3) * 8) as u32;
+
+    // Read-modify-write to preserve other bytes
+    let val32 = config_read32(addr, aligned_offset);
+    let mask = !(0xFF << shift);
+    let new_val = (val32 & mask) | ((value as u32) << shift);
+    config_write32(addr, aligned_offset, new_val);
+}
+
 /// Read a 16-bit value from PCI configuration space
 pub fn config_read16(addr: PciAddress, offset: u8) -> u16 {
     let val32 = config_read32(addr, offset & 0xFC);
