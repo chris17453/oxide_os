@@ -33,13 +33,32 @@ fn map_label(label: &str) -> Option<&'static str> {
 ///
 /// Returns true if the switch succeeded, false if staying on initramfs.
 fn switch_root() -> bool {
-    // Check if ext4 root is available by probing for /sbin/init on it
+    // — GraveShift: Don't just check /sbin/init exists. Verify the ext4 root is
+    // actually usable. A half-assed pivot is worse than no pivot at all.
     let fd = open("/mnt/root/sbin/init", O_RDONLY, 0);
     if fd < 0 {
-        printlns("[init] No ext4 root filesystem at /mnt/root, staying on initramfs");
+        printlns("[init] No ext4 root at /mnt/root, staying on initramfs");
         return false;
     }
     close(fd);
+
+    // — GraveShift: Paranoia checks. Every one of these has caused a boot hang.
+    let critical_files = [
+        "/mnt/root/etc/passwd",
+        "/mnt/root/bin/getty",
+        "/mnt/root/bin/login",
+        "/mnt/root/bin/esh",
+    ];
+    for path in &critical_files {
+        let fd = open(path, O_RDONLY, 0);
+        if fd < 0 {
+            prints("[init] Missing critical file on ext4: ");
+            printlns(path);
+            printlns("[init] Aborting switch_root, staying on initramfs");
+            return false;
+        }
+        close(fd);
+    }
 
     printlns("[init] Switching to ext4 root filesystem...");
 

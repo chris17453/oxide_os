@@ -38,6 +38,7 @@ initramfs: $(INITRAMFS_PREREQ)
 	@mkdir -p $(TARGET_DIR)/initramfs/mnt
 	@mkdir -p $(TARGET_DIR)/initramfs/initramfs
 	@# — BlackLatch: init does the pivot. esh is the "oh shit" recovery shell.
+	@# getty + login MUST be here — if pivot_root fails, init still needs to spawn a console.
 	@# coreutils gives you ls/cat/mount if pivot fails at 3AM.
 	@if [ -f "$(USERSPACE_OUT_RELEASE)/init" ]; then \
 		cp "$(USERSPACE_OUT_RELEASE)/init" "$(TARGET_DIR)/initramfs/sbin/init"; \
@@ -46,6 +47,21 @@ initramfs: $(INITRAMFS_PREREQ)
 	@if [ -f "$(USERSPACE_OUT_RELEASE)/esh" ]; then \
 		cp "$(USERSPACE_OUT_RELEASE)/esh" "$(TARGET_DIR)/initramfs/bin/esh"; \
 		ln -sf /bin/esh "$(TARGET_DIR)/initramfs/bin/sh"; \
+	fi
+	@# — BlackLatch: getty + login are NOT optional. Init forks getty unconditionally.
+	@# Without these, a failed pivot_root = infinite fork/exec-fail/reap loop.
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/getty" ]; then \
+		cp "$(USERSPACE_OUT_RELEASE)/getty" "$(TARGET_DIR)/initramfs/bin/getty"; \
+	fi
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/login" ]; then \
+		cp "$(USERSPACE_OUT_RELEASE)/login" "$(TARGET_DIR)/initramfs/bin/login"; \
+	fi
+	@# — BlackLatch: servicemgr too — init tries to start it before getty.
+	@if [ -f "$(USERSPACE_OUT_RELEASE)/service" ]; then \
+		mkdir -p "$(TARGET_DIR)/initramfs/usr/bin"; \
+		cp "$(USERSPACE_OUT_RELEASE)/service" "$(TARGET_DIR)/initramfs/usr/bin/service"; \
+		ln -sf /usr/bin/service "$(TARGET_DIR)/initramfs/bin/servicemgr"; \
+		ln -sf /usr/bin/service "$(TARGET_DIR)/initramfs/usr/bin/servicemgr"; \
 	fi
 	@for prog in $(COREUTILS_BINS); do \
 		if [ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ]; then \
@@ -75,8 +91,8 @@ initramfs: $(INITRAMFS_PREREQ)
 
 # List what goes where
 list-bins:
-	@echo "Initramfs (bootstrap only):"
-	@echo "  init, esh (sh), coreutils"
+	@echo "Initramfs (bootstrap + essentials):"
+	@echo "  init, esh (sh), getty, login, servicemgr, coreutils"
 	@echo ""
 	@echo "Rootfs (ext4 — everything else):"
 	@echo "  System:   login, getty, service/servicemgr"

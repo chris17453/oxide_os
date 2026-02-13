@@ -1,7 +1,7 @@
 # — NeonRoot: QEMU launch orchestration.
 # Auto-detects Fedora vs RHEL, kills stale instances, and prays the OVMF gods are merciful.
 
-.PHONY: detect-qemu-mode kill-qemu run run-disk run-fedora run-rhel run-kvm run-debug-input-gui run-debug-mouse run-debug-lock run-debug-fork run-debug-sched run-debug-all
+.PHONY: detect-qemu-mode kill-qemu run run-disk run-fedora run-rhel run-kvm run-debug-input-gui run-debug-mouse run-debug-lock run-debug-fork run-debug-sched run-debug-all attach
 
 # Auto-detect QEMU mode (Fedora vs RHEL)
 detect-qemu-mode:
@@ -88,6 +88,7 @@ run-fedora:
 		-device intel-hda \
 		-device hda-duplex,audiodev=snd0 \
 		-serial stdio \
+		-s \
 		-no-reboot
 
 # Internal target: Run with qemu-kvm (RHEL)
@@ -128,6 +129,7 @@ run-rhel:
 		-vga std \
 		-vnc :0 \
 		-serial stdio \
+		-s \
 		-no-reboot & \
 	QEMU_PID=$$!; \
 	trap 'kill $$QEMU_PID 2>/dev/null; exit' INT TERM; \
@@ -194,4 +196,23 @@ run-debug-sched: run
 
 run-debug-all: KERNEL_FEATURES = debug-all
 run-debug-all: run
+
+# — GraveShift: Attach GDB to a running QEMU and dump all CPU backtraces.
+# Run this from a SECOND terminal when the system hangs.
+# QEMU must be running with -s (GDB server on port 1234).
+KERNEL_BIN := $(TARGET_DIR)/x86_64-unknown-none/debug/kernel
+attach:
+	@echo "=== Attaching GDB to QEMU (port 1234) ==="
+	@echo "Dumping all CPU backtraces..."
+	@gdb -batch -q \
+		-ex "file $(KERNEL_BIN)" \
+		-ex "target remote :1234" \
+		-ex "set pagination off" \
+		-ex "thread apply all bt" \
+		-ex "echo \n=== REGISTERS (current CPU) ===\n" \
+		-ex "info registers" \
+		-ex "echo \n=== ALL THREADS ===\n" \
+		-ex "info threads" \
+		-ex "detach" \
+		-ex "quit"
 
