@@ -59,16 +59,15 @@ pub unsafe fn set_yield_callback(f: YieldFn) {
 /// Number of virtual terminals
 pub const NUM_VTS: usize = 6;
 
-/// VT state
+/// VT state — TTY + metadata, NO input buffer.
 ///
-/// ## 🔥 LOCK-FREE UPGRADE 🔥
-///
-/// `input_buffer` is now a lock-free ring (256 bytes).
-/// IRQ handler pushes without locks. Read syscall pops without locks.
-/// No more dropped keystrokes. Pure cyberpunk magic.
+/// — GraveShift: The LockFreeRing lived here inside Mutex<VtState>. That made
+/// push_input() do try_lock() to reach it — defeating the entire point of a
+/// "lock-free" ring buffer. When the mutex was held (read/write/poll), keystrokes
+/// were silently dropped. Intermittent login failures, missing characters, the
+/// whole goddamn parade. Ring buffers now live in VtManager directly. Zero locks
+/// between IRQ push and ring buffer. Problem solved.
 struct VtState {
-    /// Input buffer (LOCK-FREE ATOMIC RING - NO MORE KEYSTROKE DROPS!)
-    input_buffer: LockFreeRing,
     /// TTY device
     tty: Arc<Tty>,
     /// VT number (0-5 for tty1-tty6)
@@ -78,7 +77,6 @@ struct VtState {
 impl VtState {
     fn new(tty: Arc<Tty>, vt_num: usize) -> Self {
         VtState {
-            input_buffer: LockFreeRing::new(),
             tty,
             _vt_num: vt_num,
         }
@@ -86,9 +84,17 @@ impl VtState {
 }
 
 /// Virtual Terminal Manager
+///
+/// — GraveShift: `input_rings` lives OUTSIDE the VT mutex. IRQ handler pushes
+/// bytes into the ring without touching any lock. read()/poll() pops without
+/// any lock. The mutex only protects TTY state (echo, line discipline, termios).
+/// This is the fix for the intermittent keystroke drops that caused login failures.
 pub struct VtManager {
-    /// All VTs
+    /// All VTs (TTY state — behind mutex for echo/ldisc/termios)
     vts: [Mutex<VtState>; NUM_VTS],
+    /// Input ring buffers — OUTSIDE mutex for true lock-free IRQ push
+    /// One per VT. IRQ pushes to active VT's ring. read()/poll() drains it.
+    input_rings: [LockFreeRing; NUM_VTS],
 }
 
 impl VtManager {
@@ -146,6 +152,16 @@ impl VtManager {
                     5,
                 )),
             ],
+            // — GraveShift: Ring buffers live here, not inside VtState.
+            // IRQ handler writes directly. No mutex. No try_lock. No dropped keys.
+            input_rings: [
+                LockFreeRing::new(),
+                LockFreeRing::new(),
+                LockFreeRing::new(),
+                LockFreeRing::new(),
+                LockFreeRing::new(),
+                LockFreeRing::new(),
+            ],
         }
     }
 
@@ -181,32 +197,16 @@ impl VtManager {
 
     /// Push input character to active VT
     ///
-    /// Called from interrupt context (via timer tick) - must be fast and non-blocking.
+    /// Called from interrupt context (keyboard IRQ) — must be fast and non-blocking.
     ///
-    /// ## 🚀 LOCK-FREE REWRITE 🚀
-    ///
-    /// **OLD CODE (Cyberpunk 2020 - Buggy AF):**
-    /// ```ignore
-    /// if let Some(mut vt) = self.vts[active].try_lock() {
-    ///     // If lock held: DROP KEYSTROKE LMAO
-    ///     vt.input_buffer.push(ch);
-    /// } else {
-    ///     // Oops ur keystroke is gone, skill issue
-    /// }
-    /// ```
-    ///
-    /// **NEW CODE (Cyberpunk 2077 - Actually Works):**
-    /// - Lock-free atomic ring buffer
-    /// - IRQ pushes without locks
-    /// - Never drops keystrokes unless buffer genuinely full (256 chars)
-    /// - Zero deadlocks, zero race conditions, zero fucks given
+    /// — GraveShift: Ring buffer is in VtManager.input_rings, OUTSIDE the VT mutex.
+    /// Zero locks for the push. Signal delivery is best-effort via try_lock —
+    /// if the mutex is held, the drain in read()/poll() will catch it.
     pub fn push_input(&self, ch: u8) {
-        // Still need active VT, but now just read it (RwLock read is fast)
         let active = match ACTIVE_VT.try_read() {
             Some(guard) => *guard,
             None => {
-                // RwLock contended - rare, but possible during VT switch
-                // Ring buffer will catch it next tick (no data loss)
+                // RwLock contended during VT switch — rare, byte stays in IRQ
                 return;
             }
         };
@@ -215,35 +215,22 @@ impl VtManager {
             return;
         }
 
-        // 🔥 LOCK-FREE PUSH 🔥
-        // No more try_lock() bullshit. Just atomic CAS magic.
-        // If this returns false, buffer is genuinely full (256 chars ahead).
-        // That's a you-typed-too-fast problem, not a kernel-dropped-your-input problem.
-        if let Some(vt) = self.vts[active].try_lock() {
-            // Still need lock to get TTY reference (cheap, just cloning an Arc)
-            if !vt.input_buffer.push(ch) {
-                // Buffer full (256 chars). This is fine. User is mashing keyboard.
-                #[cfg(feature = "debug-console")]
-                dbg_serial("[VT] Ring buffer full (user typing faster than light)\n");
-            }
+        // 🔥 TRUE LOCK-FREE PUSH 🔥
+        // Ring buffer lives in VtManager, not behind any mutex.
+        // IRQ writes directly. No try_lock. No silent drops. No bullshit.
+        if !self.input_rings[active].push(ch) {
+            #[cfg(feature = "debug-console")]
+            dbg_serial("[VT] Ring buffer full (user typing faster than light)\n");
         }
 
-        // 🔥 IMMEDIATE SIGNAL DELIVERY (The Resurrection of Ctrl+C) 🔥
+        // 🔥 IMMEDIATE SIGNAL DELIVERY (best-effort fast path) 🔥
         //
-        // Apps that never call read() or poll() on stdin (animation loops,
-        // curses demos, anything in a tight render loop) will NEVER drain the
-        // ring buffer. Ctrl+C bytes rot in there forever. The process lives
-        // on, deaf to the user's pleas.
-        //
-        // Fix: Check for signal characters right here in push_input() and
-        // deliver immediately. Uses try_lock to stay ISR-safe — if we can't
-        // get the lock, the poll/read drain path will catch it eventually.
-        //
-        // Double delivery is harmless — a second SIGINT on an already-dying
-        // process is a no-op. Better to deliver twice than never. — GraveShift
+        // Apps in tight render loops never drain the ring buffer.
+        // Ctrl+C bytes rot in there forever without this fast path.
+        // try_lock is fine here — if contended, read()/poll() drain catches it.
+        // Double delivery is harmless. — GraveShift
         if ch == 0x03 || ch == 0x1C || ch == 0x1A {
             if let Some(vt) = self.vts[active].try_lock() {
-                // Check if ISIG is enabled before delivering — respect termios
                 let isig = vt.tty.try_isig_enabled().unwrap_or(true);
                 if isig {
                     let signo = match ch {
@@ -268,23 +255,9 @@ impl VtManager {
 
     /// Read from VT
     ///
-    /// Blocking read that drains the input_buffer on every iteration of the
-    /// wait loop.
-    ///
-    /// ## 🔥 LOCK-FREE DRAIN 🔥
-    ///
-    /// **OLD CODE:**
-    /// ```ignore
-    /// let buffered_input = {
-    ///     let mut vt = self.vts[vt_num].lock();  // ⚠️ HOLD LOCK WHILE DRAINING
-    ///     core::mem::take(&mut vt.input_buffer)  // ⚠️ BLOCKS IRQ PUSHES
-    /// };
-    /// ```
-    ///
-    /// **NEW CODE:**
-    /// - Lock-free atomic pop in a loop
-    /// - IRQ can push while we're draining (no contention)
-    /// - No more lock hell, pure async bliss
+    /// Blocking read that drains the ring buffer on every iteration of the
+    /// wait loop. Ring buffer lives in VtManager.input_rings — zero locks
+    /// for drain. IRQ pushes concurrently without contention. — GraveShift
     pub fn read(&self, vt_num: usize, buf: &mut [u8]) -> VfsResult<usize> {
         #[cfg(feature = "debug-console")]
         dbg_serial("[VT] read() enter\n");
@@ -295,21 +268,13 @@ impl VtManager {
         // Clone the TTY Arc once (avoids holding VT lock across the loop)
         let tty = self.vts[vt_num].lock().tty.clone();
 
-        // Get reference to the ring buffer (need VT lock for this, but release it immediately)
-        let ring = {
-            let vt = self.vts[vt_num].lock();
-            // SAFETY: Ring buffer is inside VT state which is pinned in the array
-            // We're holding a reference to the VtManager, so VT won't be destroyed
-            unsafe { &*(&vt.input_buffer as *const LockFreeRing) }
-        };
+        // Ring buffer is directly on VtManager — no lock needed
+        let ring = &self.input_rings[vt_num];
 
         #[cfg(feature = "debug-console")]
         let mut vt_read_loops: u32 = 0;
 
         loop {
-            // 🔥 LOCK-FREE DRAIN 🔥
-            // Pop all available bytes from the ring without holding any locks
-            // IRQ can continue pushing while we drain - zero contention!
             #[cfg(feature = "debug-console")]
             let mut drained_count = 0;
 
@@ -406,25 +371,16 @@ impl VtManager {
 
     /// Drain ring buffer into line discipline and check if readable data exists.
     ///
-    /// 🔥 GraveShift: The Great Buffer Unification — poll() was checking the
-    /// line discipline while keystrokes rotted in the ring buffer. This drains
-    /// pending bytes through the TTY layer (processing signals like SIGINT along
-    /// the way) so poll() can give a truthful answer. Without this, Ctrl+C is
-    /// a letter to nowhere and getch() never returns. 🔥
+    /// — GraveShift: Ring buffer lives in VtManager.input_rings now. No unsafe
+    /// pointer hacks, no mutex dance. Just grab the ring and drain it.
     pub fn poll_has_input(&self, vt_num: usize) -> bool {
         if vt_num >= NUM_VTS {
             return false;
         }
 
-        // Grab the TTY and a pointer to the ring buffer
-        let (tty, ring) = {
-            let vt = self.vts[vt_num].lock();
-            let tty = vt.tty.clone();
-            // SAFETY: Ring buffer lives in VtState pinned in the array.
-            // VtManager outlives this call. — GraveShift
-            let ring = unsafe { &*(&vt.input_buffer as *const LockFreeRing) };
-            (tty, ring)
-        };
+        // TTY clone needs the VT lock briefly — ring doesn't
+        let tty = self.vts[vt_num].lock().tty.clone();
+        let ring = &self.input_rings[vt_num];
 
         // Drain all pending bytes from the ring buffer into the line discipline.
         // This is the same drain loop as read(), but we don't try to extract

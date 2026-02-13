@@ -59,12 +59,25 @@ while let Some(ch) = ring.pop() { ... }
 | `unsafe { &*ptr }` to escape lock | FRAGILE | Works but why bother |
 | Lock-free struct behind RwLock | NO | Same problem, different lock |
 
+## Init Ordering (Companion Fix)
+
+VT manager must be initialized BEFORE PS/2 keyboard IRQ is enabled:
+1. `vt::init()` — creates VtManager, sets VT_MANAGER_PTR
+2. `arch::init_ps2_keyboard()` — enables PS/2 controller, IRQs can fire
+3. `set_keyboard_callback()` — connects IRQ 1 to PS/2 handler
+4. `set_console_callback()` — connects kbd → vt::push_input_global
+
+If `vt::init()` comes after PS/2 init, keystrokes during the gap hit
+`push_input_global()` → `get_manager()` → `None` → silently dropped.
+This race was exposed when serial trace cleanup made boot faster.
+
 ## Prevention
 
 - If a field uses atomic operations for thread safety, it doesn't belong inside a Mutex
 - ISR push paths must have ZERO lock acquisitions between IRQ entry and data delivery
 - `try_lock()` in an ISR input path = silent data loss. Always.
 - read()/poll() must never hold a lock that the data producer needs
+- VT manager init must precede any input subsystem init that could generate keystrokes
 
 ---
 

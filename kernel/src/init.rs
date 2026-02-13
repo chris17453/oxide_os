@@ -1256,30 +1256,10 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Mount devfs at /dev
     let dev_fs = DevFs::new();
 
-    unsafe {
-        let msg = b"[INIT-DEBUG] Before vt::init()\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
-
-    // Initialize VT (virtual terminal) subsystem before mounting devfs
+    // — GraveShift: VT manager init. Creates TTY devices + lock-free input rings.
+    // Must happen before devfs registration (VtDevice needs the Arc<VtManager>).
     let vt_manager = vt::init();
-
-    unsafe {
-        let msg = b"[INIT-DEBUG] After vt::init()\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
-
-    let _ = writeln!(
-        writer,
-        "[VFS] VT manager initialized ({} virtual terminals)",
-        vt::NUM_VTS
-    );
+    let _ = writeln!(writer, "[INFO] VT manager initialized ({} virtual terminals)", vt::NUM_VTS);
 
     // ⚡ GraveShift: Propagate real terminal dimensions to all VT TTYs.
     // Without this, TIOCGWINSZ returns the 24x80 default and every TUI
