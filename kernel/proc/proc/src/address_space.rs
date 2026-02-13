@@ -212,88 +212,24 @@ impl UserAddressSpace {
 
         // Phase 1: Allocate all frames (each alloc is independent, no lock held across calls)
         for i in 0..num_pages {
-            // TRACE — GraveShift: Before alloc_frame
+            // — GraveShift: Alloc progress trace, gated (fires per-page = insane serial load)
+            #[cfg(feature = "debug-paging")]
             if i % 10 == 0 && i > 0 {
                 unsafe {
-                    use arch_x86_64 as arch;
-                    let msg = b"[ALLOC] Pre-alloc page ";
-                    for &byte in msg.iter() {
-                        while arch::inb(0x3FD) & 0x20 == 0 {}
-                        arch::outb(0x3F8, byte);
-                    }
-                    let msg2 = if i < 100 {
-                        [b'0' + (i / 10) as u8, b'0' + (i % 10) as u8]
-                    } else {
-                        [b'X', b'X']
-                    };
-                    for &byte in &msg2 {
-                        while arch::inb(0x3FD) & 0x20 == 0 {}
-                        arch::outb(0x3F8, byte);
-                    }
-                    let msg3 = b"\r\n";
-                    for &byte in msg3.iter() {
-                        while arch::inb(0x3FD) & 0x20 == 0 {}
-                        arch::outb(0x3F8, byte);
-                    }
+                    arch_x86_64::serial::write_str_unsafe("[ALLOC] page ");
+                    arch_x86_64::serial::write_u32_unsafe(i as u32);
+                    arch_x86_64::serial::write_str_unsafe("\n");
                 }
             }
 
             let frame = match allocator.alloc_frame() {
-                Some(f) => {
-                    // TRACE — BlackLatch: After successful alloc
-                    if i % 10 == 0 && i > 0 {
-                        unsafe {
-                            use arch_x86_64 as arch;
-                            let msg = b"[ALLOC] Post-alloc page ";
-                            for &byte in msg.iter() {
-                                while arch::inb(0x3FD) & 0x20 == 0 {}
-                                arch::outb(0x3F8, byte);
-                            }
-                            let msg2 = if i < 100 {
-                                [b'0' + (i / 10) as u8, b'0' + (i % 10) as u8]
-                            } else {
-                                [b'X', b'X']
-                            };
-                            for &byte in &msg2 {
-                                while arch::inb(0x3FD) & 0x20 == 0 {}
-                                arch::outb(0x3F8, byte);
-                            }
-                            let msg3 = b"\r\n";
-                            for &byte in msg3.iter() {
-                                while arch::inb(0x3FD) & 0x20 == 0 {}
-                                arch::outb(0x3F8, byte);
-                            }
-                        }
-                    }
-                    f
-                }
+                Some(f) => f,
                 None => {
-                    // Out of memory - trace it
+                    // — BlackLatch: OOM is FATAL — always report, bounded serial
                     unsafe {
-                        use arch_x86_64 as arch;
-                        let msg = b"[ALLOC-ERROR] OOM at frame ";
-                        for &byte in msg.iter() {
-                            while arch::inb(0x3FD) & 0x20 == 0 {}
-                            arch::outb(0x3F8, byte);
-                        }
-                        let mut n = i;
-                        let mut buf = [0u8; 10];
-                        let mut idx = 0;
-                        while n > 0 {
-                            buf[idx] = b'0' + (n % 10) as u8;
-                            n /= 10;
-                            idx += 1;
-                        }
-                        while idx > 0 {
-                            idx -= 1;
-                            while arch::inb(0x3FD) & 0x20 == 0 {}
-                            arch::outb(0x3F8, buf[idx]);
-                        }
-                        let msg2 = b"\r\n";
-                        for &byte in msg2.iter() {
-                            while arch::inb(0x3FD) & 0x20 == 0 {}
-                            arch::outb(0x3F8, byte);
-                        }
+                        arch_x86_64::serial::write_str_unsafe("[ALLOC-ERROR] OOM at frame ");
+                        arch_x86_64::serial::write_u32_unsafe(i as u32);
+                        arch_x86_64::serial::write_str_unsafe("\n");
                     }
                     return Err(MapError::OutOfMemory);
                 }
@@ -301,40 +237,12 @@ impl UserAddressSpace {
             self.allocated_frames.push(frame);
             frames.push(frame);
 
-            // [TRACE] Frame allocated — TorqueJax
+            // — TorqueJax: Per-frame alloc trace, gated (100 pages = 3KB serial)
+            #[cfg(feature = "debug-paging")]
             unsafe {
-                use arch_x86_64 as arch;
-                let msg = b"[FRAME-ALLOC] phys=0x";
-                for &byte in msg.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-                let mut n = frame.as_u64();
-                let mut buf = [0u8; 16];
-                let mut idx = 0;
-                loop {
-                    let digit = (n & 0xF) as u8;
-                    buf[idx] = if digit < 10 {
-                        b'0' + digit
-                    } else {
-                        b'a' + (digit - 10)
-                    };
-                    n >>= 4;
-                    idx += 1;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                while idx > 0 {
-                    idx -= 1;
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, buf[idx]);
-                }
-                let msg2 = b"\r\n";
-                for &byte in msg2.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
+                arch_x86_64::serial::write_str_unsafe("[FRAME-ALLOC] phys=");
+                arch_x86_64::serial::write_u64_hex_unsafe(frame.as_u64());
+                arch_x86_64::serial::write_str_unsafe("\n");
             }
         }
 
@@ -346,151 +254,42 @@ impl UserAddressSpace {
             // Zero the frame
             let frame_virt = phys_to_virt(frame);
 
-            // [TRACE] Before zeroing — GraveShift
+            // — GraveShift: Zero-start trace, gated (100 pages × 60 bytes = 6KB serial per exec)
+            #[cfg(feature = "debug-paging")]
             unsafe {
-                use arch_x86_64 as arch;
-                let msg = b"[ZERO-START] phys=0x";
-                for &byte in msg.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-                let mut n = frame.as_u64();
-                let mut buf = [0u8; 16];
-                let mut idx = 0;
-                loop {
-                    let digit = (n & 0xF) as u8;
-                    buf[idx] = if digit < 10 {
-                        b'0' + digit
-                    } else {
-                        b'a' + (digit - 10)
-                    };
-                    n >>= 4;
-                    idx += 1;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                while idx > 0 {
-                    idx -= 1;
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, buf[idx]);
-                }
-                let msg2 = b" virt=0x";
-                for &byte in msg2.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-                let mut n = frame_virt.as_u64();
-                let mut buf = [0u8; 16];
-                let mut idx = 0;
-                loop {
-                    let digit = (n & 0xF) as u8;
-                    buf[idx] = if digit < 10 {
-                        b'0' + digit
-                    } else {
-                        b'a' + (digit - 10)
-                    };
-                    n >>= 4;
-                    idx += 1;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                while idx > 0 {
-                    idx -= 1;
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, buf[idx]);
-                }
-                let msg3 = b"\r\n";
-                for &byte in msg3.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
+                arch_x86_64::serial::write_str_unsafe("[ZERO-START] phys=");
+                arch_x86_64::serial::write_u64_hex_unsafe(frame.as_u64());
+                arch_x86_64::serial::write_str_unsafe(" virt=");
+                arch_x86_64::serial::write_u64_hex_unsafe(frame_virt.as_u64());
+                arch_x86_64::serial::write_str_unsafe("\n");
             }
 
-            // [VALIDATE] Check if we're about to zero a free block — ColdCipher: Catch corruption source
+            // — ColdCipher: Free block canary check — FATAL, always on, bounded serial
             const FREE_BLOCK_MAGIC: u64 = 0x4652454542304C;
             unsafe {
                 let first_u64 = core::ptr::read_volatile(frame_virt.as_ptr::<u64>());
                 if first_u64 == FREE_BLOCK_MAGIC {
-                    use arch_x86_64 as arch;
-                    let msg = b"[FATAL] About to zero FREE BLOCK! phys=0x";
-                    for &byte in msg.iter() {
-                        while arch::inb(0x3FD) & 0x20 == 0 {}
-                        arch::outb(0x3F8, byte);
-                    }
-                    let mut n = frame.as_u64();
-                    let mut buf = [0u8; 16];
-                    let mut idx = 0;
-                    loop {
-                        let digit = (n & 0xF) as u8;
-                        buf[idx] = if digit < 10 {
-                            b'0' + digit
-                        } else {
-                            b'a' + (digit - 10)
-                        };
-                        n >>= 4;
-                        idx += 1;
-                        if n == 0 {
-                            break;
-                        }
-                    }
-                    while idx > 0 {
-                        idx -= 1;
-                        while arch::inb(0x3FD) & 0x20 == 0 {}
-                        arch::outb(0x3F8, buf[idx]);
-                    }
-                    let msg2 = b" - GPF\r\n";
-                    for &byte in msg2.iter() {
-                        while arch::inb(0x3FD) & 0x20 == 0 {}
-                        arch::outb(0x3F8, byte);
-                    }
+                    arch_x86_64::serial::write_str_unsafe("[FATAL] About to zero FREE BLOCK! phys=");
+                    arch_x86_64::serial::write_u64_hex_unsafe(frame.as_u64());
+                    arch_x86_64::serial::write_str_unsafe(" - GPF\n");
                     core::ptr::write_volatile(0xDEADC0DE as *mut u64, frame.as_u64());
                 }
             }
 
-            // [RE-ENABLED] Zeroing (not the corruption source) — GraveShift
+            // — GraveShift: Zero the frame
             unsafe {
                 core::ptr::write_bytes(frame_virt.as_mut_ptr::<u8>(), 0, 4096);
             }
 
-            // [TRACE] After zeroing (SKIPPED) — GraveShift
+            // — GraveShift: Zero-done trace, gated
+            #[cfg(feature = "debug-paging")]
             unsafe {
-                use arch_x86_64 as arch;
-                let msg = b"[ZERO-DONE] phys=0x";
-                for &byte in msg.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-                let mut n = frame.as_u64();
-                let mut buf = [0u8; 16];
-                let mut idx = 0;
-                loop {
-                    let digit = (n & 0xF) as u8;
-                    buf[idx] = if digit < 10 {
-                        b'0' + digit
-                    } else {
-                        b'a' + (digit - 10)
-                    };
-                    n >>= 4;
-                    idx += 1;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                while idx > 0 {
-                    idx -= 1;
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, buf[idx]);
-                }
-                let msg2 = b"\r\n";
-                for &byte in msg2.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
+                arch_x86_64::serial::write_str_unsafe("[ZERO-DONE] phys=");
+                arch_x86_64::serial::write_u64_hex_unsafe(frame.as_u64());
+                arch_x86_64::serial::write_str_unsafe("\n");
             }
 
-            // [RE-ENABLED] Mapping (not the corruption source) — BlackLatch
+            // — BlackLatch: Map the page
             unsafe { self.map_user_page(virt, frame, flags, allocator)? };
         }
 

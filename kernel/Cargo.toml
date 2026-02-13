@@ -17,6 +17,9 @@ debug-cow = []        # Enable COW page fault debug output
 debug-pagefault = ["arch-x86_64/debug-pagefault"]  # Enable all page fault debug output
 debug-timer = ["arch-x86_64/debug-timer"]  # Enable timer interrupt debug output
 debug-mmap = ["mm-manager/debug-mmap"]  # Enable memory mapping debug output
+debug-buddy = ["mm-manager/debug-buddy"]  # Enable buddy allocator trace output (EXTREMELY noisy — fires on every alloc/free)
+debug-paging = ["proc/debug-paging"]  # Enable page table/alloc/zero traces during exec (EXTREMELY noisy — fires on every page map + alloc)
+debug-perf = ["arch-x86_64/debug-perf"]  # Enable per-ISR PERF-WARN messages (53 bytes × hundreds/sec = feedback loop)
 debug-proc = []       # Enable process management debug output
 debug-sched = ["syscall/debug-sched"]  # Enable scheduler context switch debug output
 debug-mouse = []      # Enable mouse/input debug output (ISR-safe)
@@ -25,12 +28,13 @@ debug-lock = ["terminal/debug-lock", "fb/debug-lock"]  # Enable lock contention 
 debug-console = ["devfs/debug-console", "vt/debug-console"]  # Enable console→VT I/O path tracing
 debug-syscall-perf = ["syscall/debug-syscall-perf"]  # Log slow syscalls (>50K cycles)
 debug-tty-read = ["tty/debug-tty-read", "devfs/debug-tty-read", "terminal/debug-tty-read"]  # Log TTY read operations + filter serial escapes
-# -- GraveShift: debug-timer and debug-lock excluded from debug-all.
+# -- GraveShift: debug-timer, debug-lock, debug-buddy, debug-paging excluded from debug-all.
 # debug-timer prints on EVERY timer tick on EVERY CPU (400/sec at 4×100Hz).
 # debug-lock prints on EVERY terminal tick when contended (60/sec).
-# Combined, they exceed 115200 baud serial bandwidth (11,520 bytes/sec),
-# blocking timer interrupt handlers on serial I/O and starving all tasks.
-# Enable individually with: KERNEL_FEATURES="debug-all,debug-timer,debug-lock"
+# debug-buddy fires on EVERY alloc/free (~45 serial writes per operation).
+# debug-paging fires on EVERY page map + alloc during exec (~30KB serial per fork+exec).
+# Any of these alone saturates 115200 baud (11,520 bytes/sec), blocking ISRs and starving tasks.
+# Enable individually with: KERNEL_FEATURES="debug-all,debug-paging"
 debug-all = ["debug-syscall", "debug-fork", "debug-cow", "debug-pagefault", "debug-mmap", "debug-proc", "debug-sched", "debug-mouse", "debug-input", "debug-console", "debug-syscall-perf", "debug-tty-read"]
 
 [dependencies]

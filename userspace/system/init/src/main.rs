@@ -141,23 +141,28 @@ fn main() -> i32 {
         // Parent - reap zombies forever, respawning getty when it exits
         printlns("[init] Getty started");
 
-        // DEBUG: Wait a bit for getty to draw its prompt, then dump screen — GraveShift
-        printlns("[init] DEBUG: Waiting 3 seconds before screen dump...");
-        sleep(3);
-        printlns("[init] DEBUG: Calling syscall 999 to dump screen to serial...");
-        let result: i64;
-        unsafe {
-            core::arch::asm!(
-                "mov rax, 999",
-                "syscall",
-                out("rax") result,
-                lateout("rcx") _,
-                lateout("r11") _,
-            );
+        // — GraveShift: Screen dump gated behind debug-screendump feature.
+        // Holds TERMINAL mutex for ~1.3s during 14KB serial output, blocking
+        // the shell from printing its prompt. Only enable for VT debugging.
+        #[cfg(feature = "debug-screendump")]
+        {
+            printlns("[init] DEBUG: Waiting 3 seconds before screen dump...");
+            sleep(3);
+            printlns("[init] DEBUG: Calling syscall 999 to dump screen to serial...");
+            let result: i64;
+            unsafe {
+                core::arch::asm!(
+                    "mov rax, 999",
+                    "syscall",
+                    out("rax") result,
+                    lateout("rcx") _,
+                    lateout("r11") _,
+                );
+            }
+            prints("[init] DEBUG: Syscall 999 returned: ");
+            print_i64(result);
+            printlns("");
         }
-        prints("[init] DEBUG: Syscall 999 returned: ");
-        print_i64(result);
-        printlns("");
 
         reap_zombies(child as i64);
     } else {

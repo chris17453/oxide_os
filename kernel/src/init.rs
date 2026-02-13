@@ -39,23 +39,23 @@ use crate::process::{kernel_clone, kernel_exec, kernel_fork, kernel_wait, user_e
 use crate::scheduler;
 use crate::smp_init;
 
-/// Adapter to make console work with os_log
-/// — PatchBay: Serial is DEAD. This routes os_log to console/stderr.
-struct OsLogConsoleWriter;
+/// Serial writer adapter for os_log normal (locking) path
+///
+/// — GraveShift: os_log::println!() goes to COM1 serial. Period.
+/// The old code routed it to terminal::write() which dumped kernel log
+/// messages onto the user's screen — debug noise mixed with login prompts.
+/// Terminal output has its own paths (BootWriter for boot, VtTtyDriver for echo).
+/// See docs/agents/isr-output-serial-only.md for the full horror story.
+struct OsLogSerialWriter;
 
-impl os_log::SerialWriter for OsLogConsoleWriter {
+impl os_log::SerialWriter for OsLogSerialWriter {
     fn write_byte(&mut self, byte: u8) {
-        // Route to console/terminal instead of serial
-        if terminal::is_initialized() {
-            terminal::write(&[byte]);
-        } else if fb::is_initialized() {
-            fb::putchar(byte as char);
-        }
+        arch::serial::write_byte(byte);
     }
 }
 
 /// Static writer for os_log (needs to live for 'static lifetime)
-static mut OS_LOG_WRITER: OsLogConsoleWriter = OsLogConsoleWriter;
+static mut OS_LOG_WRITER: OsLogSerialWriter = OsLogSerialWriter;
 
 /// — PatchBay: Console-only boot writer. Serial is DEAD. All output goes to
 /// framebuffer/terminal (stderr). Early boot shows on screen, not serial port.

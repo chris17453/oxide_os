@@ -7,6 +7,7 @@ license.workspace = true
 [features]
 default = []
 debug-demand = []  # Enable debug output for demand paging/page faults
+debug-paging = []  # Enable page table mapping traces (PT-CLEAR/PT-ENTRY/PTE-WRITE — EXTREMELY noisy, fires on every map call)
 
 [dependencies]
 os_core = { workspace = true }

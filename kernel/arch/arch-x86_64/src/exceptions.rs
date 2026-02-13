@@ -1456,8 +1456,10 @@ extern "C" fn handle_timer(current_rsp: u64) -> u64 {
     let elapsed = end_cycles.saturating_sub(start_cycles);
     perf::counters().record_timer_irq(elapsed);
 
-    // — PatchBay: Warn if ISR took too long (> 1M cycles ~= 333us @ 3GHz)
-    // This indicates a serious performance problem in the interrupt handler.
+    // — PatchBay: PERF-WARN gated behind debug-perf. Each message = 53 bytes serial.
+    // Under load, fires hundreds/sec → exceeds baud rate → creates feedback loop
+    // where serial I/O causes next ISR to exceed threshold too. See perf-warn-feedback-loop.md.
+    #[cfg(feature = "debug-perf")]
     if elapsed > 1_000_000 {
         unsafe {
             os_log::write_str_raw("\n[PERF-WARN] Timer ISR took ");

@@ -42,6 +42,25 @@ struct FreeBlock {
 
 const FREE_BLOCK_MAGIC: u64 = 0x4652454542304C; // "FREEBL0C" in hex — SableWire
 
+/// Bounded serial hex output for allocator FATAL traces — SableWire
+/// Uses serial::write_byte_unsafe which has 2048-iteration spin limit.
+/// Never stalls the allocator waiting on UART THRE.
+///
+/// # Safety
+/// Lock-free port I/O with bounded spin. Safe from any context including ISRs.
+#[inline]
+unsafe fn serial_hex64(val: u64) {
+    for i in (0..16).rev() {
+        let nibble = ((val >> (i * 4)) & 0xF) as u8;
+        let hex_char = if nibble < 10 {
+            b'0' + nibble
+        } else {
+            b'a' + nibble - 10
+        };
+        unsafe { arch_x86_64::serial::write_byte_unsafe(hex_char) };
+    }
+}
+
 /// Buddy allocator managing multiple memory zones
 pub struct BuddyAllocator {
     /// Memory zones (DMA, Normal, High)
@@ -186,51 +205,17 @@ impl BuddyAllocator {
         let frame_num = addr >> FRAME_SHIFT;
 
         // [TRACE] Log adds in target range AND check existing magic — ColdCipher
+        #[cfg(feature = "debug-buddy")]
         if addr >= 0xc400000 && addr <= 0xc500000 {
-            // Read existing value BEFORE we write the magic
             let existing_magic = unsafe { core::ptr::read_volatile(virt as *const u64) };
-
             unsafe {
-                use arch_x86_64 as arch;
-                let msg = b"[ADD-FREE] 0x";
-                for &byte in msg.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-                for i in (0..16).rev() {
-                    let nibble = ((addr >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 {
-                        b'0' + nibble
-                    } else {
-                        b'a' + nibble - 10
-                    };
-                    arch::outb(0x3F8, hex_char);
-                }
-                let msg2 = b" order=";
-                for &byte in msg2.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-                arch::outb(0x3F8, b'0' + order as u8);
-                let msg3 = b" old_magic=0x";
-                for &byte in msg3.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-                for i in (0..16).rev() {
-                    let nibble = ((existing_magic >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 {
-                        b'0' + nibble
-                    } else {
-                        b'a' + nibble - 10
-                    };
-                    arch::outb(0x3F8, hex_char);
-                }
-                let msg4 = b"\r\n";
-                for &byte in msg4.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
+                arch_x86_64::serial::write_str_unsafe("[ADD-FREE] 0x");
+                serial_hex64(addr);
+                arch_x86_64::serial::write_str_unsafe(" order=");
+                arch_x86_64::serial::write_byte_unsafe(b'0' + order as u8);
+                arch_x86_64::serial::write_str_unsafe(" old_magic=0x");
+                serial_hex64(existing_magic);
+                arch_x86_64::serial::write_str_unsafe("\n");
             }
         }
 
@@ -248,41 +233,13 @@ impl BuddyAllocator {
 
             // VALIDATE — BlackLatch: Check old head's canary before writing
             if old_head_block.magic != FREE_BLOCK_MAGIC {
+                // — SableWire: Bounded serial writes. Never stall the allocator on UART THRE.
                 unsafe {
-                    use arch_x86_64 as arch;
-                    let msg = b"[BUDDY-FATAL] Old head corrupted! magic=0x";
-                    for &byte in msg.iter() {
-                        while arch::inb(0x3FD) & 0x20 == 0 {}
-                        arch::outb(0x3F8, byte);
-                    }
-                    for i in (0..16).rev() {
-                        let nibble = ((old_head_block.magic >> (i * 4)) & 0xF) as u8;
-                        let hex_char = if nibble < 10 {
-                            b'0' + nibble
-                        } else {
-                            b'a' + nibble - 10
-                        };
-                        arch::outb(0x3F8, hex_char);
-                    }
-                    let msg2 = b", expected=0x";
-                    for &byte in msg2.iter() {
-                        while arch::inb(0x3FD) & 0x20 == 0 {}
-                        arch::outb(0x3F8, byte);
-                    }
-                    for i in (0..16).rev() {
-                        let nibble = ((FREE_BLOCK_MAGIC >> (i * 4)) & 0xF) as u8;
-                        let hex_char = if nibble < 10 {
-                            b'0' + nibble
-                        } else {
-                            b'a' + nibble - 10
-                        };
-                        arch::outb(0x3F8, hex_char);
-                    }
-                    let msg3 = b" - GPF\r\n";
-                    for &byte in msg3.iter() {
-                        while arch::inb(0x3FD) & 0x20 == 0 {}
-                        arch::outb(0x3F8, byte);
-                    }
+                    arch_x86_64::serial::write_str_unsafe("[BUDDY-FATAL] Old head corrupted! magic=0x");
+                    serial_hex64(old_head_block.magic);
+                    arch_x86_64::serial::write_str_unsafe(", expected=0x");
+                    serial_hex64(FREE_BLOCK_MAGIC);
+                    arch_x86_64::serial::write_str_unsafe(" - GPF\n");
                     core::ptr::write_volatile(0xBADBAD as *mut u64, old_head_block.magic);
                 }
             }
@@ -291,33 +248,19 @@ impl BuddyAllocator {
         }
 
         zone.free_lists[order].head = frame_num; // Store frame number
-        let old_count = zone.free_lists[order].count;
         zone.free_lists[order].count += 1;
-        let new_count = zone.free_lists[order].count;
 
         // TRACE EVERY COUNT CHANGE — GraveShift
+        #[cfg(feature = "debug-buddy")]
         unsafe {
-            use arch_x86_64 as arch;
-            let msg = b"[COUNT+] order=";
-            for &byte in msg.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-            arch::outb(0x3F8, b'0' + order as u8);
-            let msg2 = b", ";
-            for &byte in msg2.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-            arch::outb(0x3F8, b'0' + (old_count as u8));
-            arch::outb(0x3F8, b'-');
-            arch::outb(0x3F8, b'>');
-            arch::outb(0x3F8, b'0' + (new_count as u8));
-            let msg3 = b"\r\n";
-            for &byte in msg3.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
+            let count = zone.free_lists[order].count;
+            arch_x86_64::serial::write_str_unsafe("[COUNT+] order=");
+            arch_x86_64::serial::write_byte_unsafe(b'0' + order as u8);
+            arch_x86_64::serial::write_str_unsafe(", ");
+            arch_x86_64::serial::write_byte_unsafe(b'0' + ((count - 1) as u8));
+            arch_x86_64::serial::write_str_unsafe("->");
+            arch_x86_64::serial::write_byte_unsafe(b'0' + (count as u8));
+            arch_x86_64::serial::write_str_unsafe("\n");
         }
     }
 
@@ -336,47 +279,23 @@ impl BuddyAllocator {
         let addr = frame_num << FRAME_SHIFT;
 
         // [MONITOR] Log ALL pops of order >= 4 — ColdCipher
+        #[cfg(feature = "debug-buddy")]
         if order >= 4 {
             unsafe {
-                use arch_x86_64 as arch;
-                let msg = b"[POP-O";
-                for &byte in msg.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-                arch::outb(0x3F8, b'0' + order as u8);
-                let msg2 = b"] 0x";
-                for &byte in msg2.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-                for i in (0..16).rev() {
-                    let nibble = ((addr >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 {
-                        b'0' + nibble
-                    } else {
-                        b'a' + nibble - 10
-                    };
-                    arch::outb(0x3F8, hex_char);
-                }
-                let msg3 = b"\r\n";
-                for &byte in msg3.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
+                arch_x86_64::serial::write_str_unsafe("[POP-O");
+                arch_x86_64::serial::write_byte_unsafe(b'0' + order as u8);
+                arch_x86_64::serial::write_str_unsafe("] 0x");
+                serial_hex64(addr);
+                arch_x86_64::serial::write_str_unsafe("\n");
             }
         }
 
         let virt = phys_to_virt(PhysAddr::new(addr));
 
         // TRACE — GraveShift: About to access block memory
+        #[cfg(feature = "debug-buddy")]
         unsafe {
-            use arch_x86_64 as arch;
-            let msg = b"[POP-TRACE] Accessing block\r\n";
-            for &byte in msg.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
+            arch_x86_64::serial::write_str_unsafe("[POP-TRACE] Accessing block\n");
         }
 
         // SAFETY: Frame was previously added to free list so memory is valid
@@ -384,47 +303,15 @@ impl BuddyAllocator {
 
         // VALIDATE CANARY — GraveShift: Check magic before trusting this block
         if block.magic != FREE_BLOCK_MAGIC {
+            // — SableWire: Bounded serial writes. Die loud but don't hang.
             unsafe {
-                use arch_x86_64 as arch;
-                let msg = b"[BUDDY-FATAL] Block corrupted at pop! magic=0x";
-                for &byte in msg.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-                for i in (0..16).rev() {
-                    let nibble = ((block.magic >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 {
-                        b'0' + nibble
-                    } else {
-                        b'a' + nibble - 10
-                    };
-                    arch::outb(0x3F8, hex_char);
-                }
-                let msg2 = b", addr=0x";
-                for &byte in msg2.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-                for i in (0..16).rev() {
-                    let nibble = ((addr >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 {
-                        b'0' + nibble
-                    } else {
-                        b'a' + nibble - 10
-                    };
-                    arch::outb(0x3F8, hex_char);
-                }
-                let msg3 = b", order=";
-                for &byte in msg3.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-                arch::outb(0x3F8, b'0' + order as u8);
-                let msg4 = b" - GPF\r\n";
-                for &byte in msg4.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
+                arch_x86_64::serial::write_str_unsafe("[BUDDY-FATAL] Block corrupted at pop! magic=0x");
+                serial_hex64(block.magic);
+                arch_x86_64::serial::write_str_unsafe(", addr=0x");
+                serial_hex64(addr);
+                arch_x86_64::serial::write_str_unsafe(", order=");
+                arch_x86_64::serial::write_byte_unsafe(b'0' + order as u8);
+                arch_x86_64::serial::write_str_unsafe(" - GPF\n");
                 // Trigger GPF with aligned address
                 core::ptr::write_volatile(0xDEAD0000 as *mut u64, block.magic);
             }
@@ -433,75 +320,35 @@ impl BuddyAllocator {
         let next_frame = block.next;
 
         // TRACE — TorqueJax: Read next successfully
+        #[cfg(feature = "debug-buddy")]
         unsafe {
-            use arch_x86_64 as arch;
-            let msg = b"[POP-TRACE] Read next OK\r\n";
-            for &byte in msg.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
+            arch_x86_64::serial::write_str_unsafe("[POP-TRACE] Read next OK\n");
         }
 
-        // [TRACE] Return marker — BlackLatch: Verify we return from pop
+        // [TRACE] Return marker + WATCH target block — BlackLatch
+        #[cfg(feature = "debug-buddy")]
         unsafe {
-            use arch_x86_64 as arch;
-            let msg = b"[POP-RETURN]\r\n";
-            for &byte in msg.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
+            arch_x86_64::serial::write_str_unsafe("[POP-RETURN]\n");
 
             // [MONITOR] Check target block's magic — ColdCipher: Track when it corrupts
             let target_addr = 0x0c480000u64;
             let target_virt = phys_to_virt(PhysAddr::new(target_addr));
             let target_magic = core::ptr::read_volatile(target_virt as *const u64);
             if target_magic != FREE_BLOCK_MAGIC && target_magic != 0 {
-                let msg = b"[WATCH] 0xc480000 magic=0x";
-                for &byte in msg.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-                for i in (0..16).rev() {
-                    let nibble = ((target_magic >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 {
-                        b'0' + nibble
-                    } else {
-                        b'a' + nibble - 10
-                    };
-                    arch::outb(0x3F8, hex_char);
-                }
-                let msg2 = b"\r\n";
-                for &byte in msg2.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
+                arch_x86_64::serial::write_str_unsafe("[WATCH] 0xc480000 magic=0x");
+                serial_hex64(target_magic);
+                arch_x86_64::serial::write_str_unsafe("\n");
             }
         }
 
         // Clear the popped block's canary and pointers — WireSaint: Prevent use-after-free detection
         // [TRACE] Log every magic clear to catch double-clears — ColdCipher
+        #[cfg(feature = "debug-buddy")]
         if addr >= 0xc400000 && addr <= 0xc500000 {
             unsafe {
-                use arch_x86_64 as arch;
-                let msg = b"[CLEAR-MAGIC] 0x";
-                for &byte in msg.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-                for i in (0..16).rev() {
-                    let nibble = ((addr >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 {
-                        b'0' + nibble
-                    } else {
-                        b'a' + nibble - 10
-                    };
-                    arch::outb(0x3F8, hex_char);
-                }
-                let msg2 = b"\r\n";
-                for &byte in msg2.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
+                arch_x86_64::serial::write_str_unsafe("[CLEAR-MAGIC] 0x");
+                serial_hex64(addr);
+                arch_x86_64::serial::write_str_unsafe("\n");
             }
         }
         block.magic = 0; // Invalidate canary — any future access will detect corruption
@@ -516,27 +363,11 @@ impl BuddyAllocator {
             // VALIDATE — GraveShift: Check if next_frame is sane (< 512MB for 512M RAM)
             // Frame numbers above 0x20000 (512MB / 4KB) are invalid
             if next_frame > 0x20000 {
+                // — SableWire: Bounded serial. Die loud, not hung.
                 unsafe {
-                    use arch_x86_64 as arch;
-                    let msg = b"[BUDDY-FATAL] Corrupted next_frame=0x";
-                    for &byte in msg.iter() {
-                        while arch::inb(0x3FD) & 0x20 == 0 {}
-                        arch::outb(0x3F8, byte);
-                    }
-                    for i in (0..16).rev() {
-                        let nibble = ((next_frame >> (i * 4)) & 0xF) as u8;
-                        let hex_char = if nibble < 10 {
-                            b'0' + nibble
-                        } else {
-                            b'a' + nibble - 10
-                        };
-                        arch::outb(0x3F8, hex_char);
-                    }
-                    let msg2 = b" - TRIGGERING GPF\r\n";
-                    for &byte in msg2.iter() {
-                        while arch::inb(0x3FD) & 0x20 == 0 {}
-                        arch::outb(0x3F8, byte);
-                    }
+                    arch_x86_64::serial::write_str_unsafe("[BUDDY-FATAL] Corrupted next_frame=0x");
+                    serial_hex64(next_frame);
+                    arch_x86_64::serial::write_str_unsafe(" - TRIGGERING GPF\n");
                     // Trigger GPF — Die screaming
                     core::ptr::write_volatile(0xBADBAD as *mut u64, next_frame);
                 }
@@ -545,52 +376,27 @@ impl BuddyAllocator {
             let next_virt = phys_to_virt(PhysAddr::new(next_addr));
 
             // TRACE — BlackLatch: About to dereference pointer
+            #[cfg(feature = "debug-buddy")]
             unsafe {
-                use arch_x86_64 as arch;
-                let msg = b"[POP-TRACE] About to access next_virt=0x";
-                for &byte in msg.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-                let virt_addr = next_virt as u64;
-                for i in (0..16).rev() {
-                    let nibble = ((virt_addr >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 {
-                        b'0' + nibble
-                    } else {
-                        b'a' + nibble - 10
-                    };
-                    arch::outb(0x3F8, hex_char);
-                }
-                let msg2 = b"\r\n";
-                for &byte in msg2.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
+                arch_x86_64::serial::write_str_unsafe("[POP-TRACE] About to access next_virt=0x");
+                serial_hex64(next_virt as u64);
+                arch_x86_64::serial::write_str_unsafe("\n");
             }
 
             let next_block = unsafe { &mut *(next_virt as *mut FreeBlock) };
 
             // TRACE — TorqueJax: Successfully accessed next block
+            #[cfg(feature = "debug-buddy")]
             unsafe {
-                use arch_x86_64 as arch;
-                let msg = b"[POP-TRACE] Accessed next block OK\r\n";
-                for &byte in msg.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
+                arch_x86_64::serial::write_str_unsafe("[POP-TRACE] Accessed next block OK\n");
             }
 
             next_block.prev = 0; // New head has no predecessor
 
             // TRACE — SableWire: Set prev = 0 successfully
+            #[cfg(feature = "debug-buddy")]
             unsafe {
-                use arch_x86_64 as arch;
-                let msg = b"[POP-TRACE] Set prev=0 OK\r\n";
-                for &byte in msg.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
+                arch_x86_64::serial::write_str_unsafe("[POP-TRACE] Set prev=0 OK\n");
             }
         }
 
@@ -598,33 +404,15 @@ impl BuddyAllocator {
         let current_count = zone.free_lists[order].count;
         if current_count != initial_count {
             // Count changed between read and now! Memory corruption! — SableWire
-            // TRIGGER GPF — This is unrecoverable corruption
+            // — SableWire: Bounded serial. Scream into the wire, then die.
             unsafe {
-                use arch_x86_64 as arch;
-                let msg = b"[BUDDY-FATAL] Count corrupted! initial=";
-                for &byte in msg.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-                arch::outb(0x3F8, b'0' + (initial_count as u8));
-                let msg2 = b", current=";
-                for &byte in msg2.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-                arch::outb(0x3F8, b'0' + (current_count as u8));
-                let msg3 = b", order=";
-                for &byte in msg3.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-                arch::outb(0x3F8, b'0' + order as u8);
-                let msg4 = b" - TRIGGERING GPF\r\n";
-                for &byte in msg4.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-
+                arch_x86_64::serial::write_str_unsafe("[BUDDY-FATAL] Count corrupted! initial=");
+                arch_x86_64::serial::write_byte_unsafe(b'0' + (initial_count as u8));
+                arch_x86_64::serial::write_str_unsafe(", current=");
+                arch_x86_64::serial::write_byte_unsafe(b'0' + (current_count as u8));
+                arch_x86_64::serial::write_str_unsafe(", order=");
+                arch_x86_64::serial::write_byte_unsafe(b'0' + order as u8);
+                arch_x86_64::serial::write_str_unsafe(" - TRIGGERING GPF\n");
                 // Trigger GPF by accessing invalid memory — GraveShift: Die screaming
                 core::ptr::write_volatile(0xDEADBEEF as *mut u64, 0xCAFEBABE);
             }
@@ -634,51 +422,27 @@ impl BuddyAllocator {
         if current_count == 0 {
             // Count is 0 but we're about to decrement! MEMORY CORRUPTION!
             unsafe {
-                use arch_x86_64 as arch;
-                let msg = b"[BUDDY-FATAL] Count underflow! order=";
-                for &byte in msg.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-                arch::outb(0x3F8, b'0' + order as u8);
-                let msg2 = b" - TRIGGERING GPF\r\n";
-                for &byte in msg2.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-
+                arch_x86_64::serial::write_str_unsafe("[BUDDY-FATAL] Count underflow! order=");
+                arch_x86_64::serial::write_byte_unsafe(b'0' + order as u8);
+                arch_x86_64::serial::write_str_unsafe(" - TRIGGERING GPF\n");
                 // Trigger GPF — TorqueJax: Fail loud not silent
                 core::ptr::write_volatile(0xDEADBEEF as *mut u64, 0xDEADC0DE);
             }
         }
 
-        let old_count_before_dec = zone.free_lists[order].count;
         zone.free_lists[order].count -= 1;
-        let new_count_after_dec = zone.free_lists[order].count;
 
         // TRACE EVERY COUNT CHANGE — BlackLatch
+        #[cfg(feature = "debug-buddy")]
         unsafe {
-            use arch_x86_64 as arch;
-            let msg = b"[COUNT-] order=";
-            for &byte in msg.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-            arch::outb(0x3F8, b'0' + order as u8);
-            let msg2 = b", ";
-            for &byte in msg2.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-            arch::outb(0x3F8, b'0' + (old_count_before_dec as u8));
-            arch::outb(0x3F8, b'-');
-            arch::outb(0x3F8, b'>');
-            arch::outb(0x3F8, b'0' + (new_count_after_dec as u8));
-            let msg3 = b" (pop)\r\n";
-            for &byte in msg3.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
+            let new_count = zone.free_lists[order].count;
+            arch_x86_64::serial::write_str_unsafe("[COUNT-] order=");
+            arch_x86_64::serial::write_byte_unsafe(b'0' + order as u8);
+            arch_x86_64::serial::write_str_unsafe(", ");
+            arch_x86_64::serial::write_byte_unsafe(b'0' + ((new_count + 1) as u8));
+            arch_x86_64::serial::write_str_unsafe("->");
+            arch_x86_64::serial::write_byte_unsafe(b'0' + (new_count as u8));
+            arch_x86_64::serial::write_str_unsafe(" (pop)\n");
         }
 
         Some(addr)
@@ -687,9 +451,9 @@ impl BuddyAllocator {
     /// Allocate memory with the given request
     pub fn alloc(&self, request: &AllocRequest) -> MmResult<PhysAddr> {
         // [TRACE] Entry marker — BlackLatch
+        #[cfg(feature = "debug-buddy")]
         unsafe {
-            use arch_x86_64 as arch;
-            arch::outb(0x3F8, b'[');
+            arch_x86_64::serial::write_byte_unsafe(b'[');
         }
 
         if request.order > MAX_ORDER {
@@ -717,37 +481,15 @@ impl BuddyAllocator {
                 self.stats.record_alloc(pages * FRAME_SIZE as u64);
 
                 // [TRACE] Log allocation details — BlackLatch: Track all allocs including PT frames
+                #[cfg(feature = "debug-buddy")]
                 unsafe {
-                    use arch_x86_64 as arch;
-                    arch::outb(0x3F8, b'A');
-                    // Only log detailed info for non-page table allocations (order 0)
-                    // to reduce spam, but log ALL order > 0 allocations
+                    arch_x86_64::serial::write_byte_unsafe(b'A');
                     if request.order > 0 {
-                        let msg = b"[ALLOC-O";
-                        for &byte in msg.iter() {
-                            while arch::inb(0x3FD) & 0x20 == 0 {}
-                            arch::outb(0x3F8, byte);
-                        }
-                        arch::outb(0x3F8, b'0' + request.order as u8);
-                        let msg2 = b"] 0x";
-                        for &byte in msg2.iter() {
-                            while arch::inb(0x3FD) & 0x20 == 0 {}
-                            arch::outb(0x3F8, byte);
-                        }
-                        for i in (0..16).rev() {
-                            let nibble = ((addr >> (i * 4)) & 0xF) as u8;
-                            let hex_char = if nibble < 10 {
-                                b'0' + nibble
-                            } else {
-                                b'a' + nibble - 10
-                            };
-                            arch::outb(0x3F8, hex_char);
-                        }
-                        let msg3 = b"\r\n";
-                        for &byte in msg3.iter() {
-                            while arch::inb(0x3FD) & 0x20 == 0 {}
-                            arch::outb(0x3F8, byte);
-                        }
+                        arch_x86_64::serial::write_str_unsafe("[ALLOC-O");
+                        arch_x86_64::serial::write_byte_unsafe(b'0' + request.order as u8);
+                        arch_x86_64::serial::write_str_unsafe("] 0x");
+                        serial_hex64(addr);
+                        arch_x86_64::serial::write_str_unsafe("\n");
                     }
                 }
 
@@ -914,33 +656,19 @@ impl BuddyAllocator {
         target_block.next = 0;
         target_block.prev = 0;
 
-        let old_count_remove = zone.free_lists[order].count;
         zone.free_lists[order].count -= 1;
-        let new_count_remove = zone.free_lists[order].count;
 
         // TRACE EVERY COUNT CHANGE — TorqueJax
+        #[cfg(feature = "debug-buddy")]
         unsafe {
-            use arch_x86_64 as arch;
-            let msg = b"[COUNT-] order=";
-            for &byte in msg.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-            arch::outb(0x3F8, b'0' + order as u8);
-            let msg2 = b", ";
-            for &byte in msg2.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-            arch::outb(0x3F8, b'0' + (old_count_remove as u8));
-            arch::outb(0x3F8, b'-');
-            arch::outb(0x3F8, b'>');
-            arch::outb(0x3F8, b'0' + (new_count_remove as u8));
-            let msg3 = b" (remove)\r\n";
-            for &byte in msg3.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
+            let new_count = zone.free_lists[order].count;
+            arch_x86_64::serial::write_str_unsafe("[COUNT-] order=");
+            arch_x86_64::serial::write_byte_unsafe(b'0' + order as u8);
+            arch_x86_64::serial::write_str_unsafe(", ");
+            arch_x86_64::serial::write_byte_unsafe(b'0' + ((new_count + 1) as u8));
+            arch_x86_64::serial::write_str_unsafe("->");
+            arch_x86_64::serial::write_byte_unsafe(b'0' + (new_count as u8));
+            arch_x86_64::serial::write_str_unsafe(" (remove)\n");
         }
 
         true

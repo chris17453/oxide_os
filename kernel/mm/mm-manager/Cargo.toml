@@ -6,6 +6,7 @@ license.workspace = true
 
 [features]
 debug-mmap = []
+debug-buddy = ["mm-core/debug-buddy"]
 
 [dependencies]
 os_core = { workspace = true }

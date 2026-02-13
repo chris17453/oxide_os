@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 description = "Init process (PID 1) for OXIDE OS"
 
+[features]
+debug-screendump = []  # Enable sleep(3) + syscall 999 screen dump after getty spawn (blocks terminal for ~1.3s)
+
 [[bin]]
 name = "init"
 path = "src/main.rs"

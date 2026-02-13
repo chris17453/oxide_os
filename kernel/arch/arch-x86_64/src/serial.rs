@@ -195,6 +195,33 @@ pub unsafe fn write_u32_unsafe(n: u32) {
     }
 }
 
+/// Write a u64 as hex (0x prefix) to COM1 without locks (ISR/boot-safe)
+///
+/// — SableWire: Bounded spin per byte. Use for FATAL/trace addresses in
+/// ISR context where you can't afford a mutex. Drops bytes rather than hangs.
+///
+/// # Safety
+/// See write_byte_unsafe
+#[inline]
+pub unsafe fn write_u64_hex_unsafe(n: u64) {
+    unsafe {
+        write_byte_unsafe(b'0');
+        write_byte_unsafe(b'x');
+        // — SableWire: Skip leading zeros, print at least one digit
+        let mut started = false;
+        for i in (0..16).rev() {
+            let nibble = ((n >> (i * 4)) & 0xF) as u8;
+            if nibble != 0 {
+                started = true;
+            }
+            if started || i == 0 {
+                let ch = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                write_byte_unsafe(ch);
+            }
+        }
+    }
+}
+
 /// Read a byte from COM1 (non-blocking)
 pub fn read_byte() -> Option<u8> {
     COM1.lock().read_byte()

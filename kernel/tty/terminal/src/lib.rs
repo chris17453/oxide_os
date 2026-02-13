@@ -2055,61 +2055,15 @@ pub fn paste_clipboard() -> Vec<u8> {
 /// Bypasses all buffers, writes raw text directly to COM1. Because sometimes
 /// the framebuffer lies and serial is the only truth left.
 pub fn debug_dump_screen_to_serial() {
-    use arch_x86_64 as arch;
+    // — GraveShift: All serial writes use bounded-spin helpers from arch_x86_64::serial.
+    // Old code had unbounded `while THRE==0 {}` per byte × 13,440 chars = hang city.
 
-    // Helper to write a byte to serial port 0x3F8 (COM1)
-    unsafe fn serial_write(byte: u8) {
-        // Wait for transmit holding register empty (THRE)
-        unsafe {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
-
-    // Helper to write a string to serial
-    unsafe fn serial_write_str(s: &str) {
-        for &byte in s.as_bytes() {
-            unsafe {
-                serial_write(byte);
-            }
-        }
-    }
-
-    // Helper to write a decimal number
-    unsafe fn serial_write_u32(mut n: u32) {
-        if n == 0 {
-            unsafe {
-                serial_write(b'0');
-            }
-            return;
-        }
-        let mut buf = [0u8; 10];
-        let mut i = 0;
-        while n > 0 {
-            buf[i] = b'0' + (n % 10) as u8;
-            n /= 10;
-            i += 1;
-        }
-        // Write digits in reverse order
-        while i > 0 {
-            i -= 1;
-            unsafe {
-                serial_write(buf[i]);
-            }
-        }
-    }
+    use arch_x86_64::serial::{write_str_unsafe, write_byte_unsafe, write_u32_unsafe};
 
     unsafe {
-        serial_write_str("\r\n");
-        serial_write_str(
-            "╔════════════════════════════════════════════════════════════════════════════╗\r\n",
-        );
-        serial_write_str(
-            "║                    VT SCREEN BUFFER DUMP (SERIAL)                         ║\r\n",
-        );
-        serial_write_str(
-            "╠════════════════════════════════════════════════════════════════════════════╣\r\n",
-        );
+        write_str_unsafe("\n╔════════════════════════════════════════════════════════════════════════════╗\n");
+        write_str_unsafe("║                    VT SCREEN BUFFER DUMP (SERIAL)                         ║\n");
+        write_str_unsafe("╠════════════════════════════════════════════════════════════════════════════╣\n");
     }
 
     if let Some(guard) = TERMINAL.try_lock() {
@@ -2117,14 +2071,12 @@ pub fn debug_dump_screen_to_serial() {
             let (cols, rows) = terminal.dimensions();
 
             unsafe {
-                serial_write_str("║ Dimensions: ");
-                serial_write_u32(cols);
-                serial_write_str(" x ");
-                serial_write_u32(rows);
-                serial_write_str("\r\n");
-                serial_write_str(
-                    "╠════════════════════════════════════════════════════════════════════════════╣\r\n",
-                );
+                write_str_unsafe("║ Dimensions: ");
+                write_u32_unsafe(cols);
+                write_str_unsafe(" x ");
+                write_u32_unsafe(rows);
+                write_str_unsafe("\n");
+                write_str_unsafe("╠════════════════════════════════════════════════════════════════════════════╣\n");
             }
 
             // Access the primary screen buffer
@@ -2132,57 +2084,39 @@ pub fn debug_dump_screen_to_serial() {
 
             // Dump each row
             for row in 0..rows {
-                unsafe {
-                    serial_write_str("║ ");
-                }
+                unsafe { write_str_unsafe("║ "); }
 
                 for col in 0..cols {
                     if let Some(cell) = buffer.get(row, col) {
                         let ch = cell.ch;
-                        // Convert char to UTF-8 bytes and write
                         let mut utf8_buf = [0u8; 4];
                         let utf8_str = ch.encode_utf8(&mut utf8_buf);
                         unsafe {
                             for &byte in utf8_str.as_bytes() {
-                                serial_write(byte);
+                                write_byte_unsafe(byte);
                             }
                         }
                     } else {
-                        unsafe {
-                            serial_write(b' ');
-                        }
+                        unsafe { write_byte_unsafe(b' '); }
                     }
                 }
 
-                unsafe {
-                    serial_write_str(" ║\r\n");
-                }
+                unsafe { write_str_unsafe(" ║\n"); }
             }
 
             unsafe {
-                serial_write_str(
-                    "╚════════════════════════════════════════════════════════════════════════════╝\r\n",
-                );
-                serial_write_str("\r\n");
+                write_str_unsafe("╚════════════════════════════════════════════════════════════════════════════╝\n\n");
             }
         } else {
             unsafe {
-                serial_write_str(
-                    "║ ERROR: Terminal not initialized                                           ║\r\n",
-                );
-                serial_write_str(
-                    "╚════════════════════════════════════════════════════════════════════════════╝\r\n",
-                );
+                write_str_unsafe("║ ERROR: Terminal not initialized                                           ║\n");
+                write_str_unsafe("╚════════════════════════════════════════════════════════════════════════════╝\n");
             }
         }
     } else {
         unsafe {
-            serial_write_str(
-                "║ ERROR: Could not lock TERMINAL mutex                                      ║\r\n",
-            );
-            serial_write_str(
-                "╚════════════════════════════════════════════════════════════════════════════╝\r\n",
-            );
+            write_str_unsafe("║ ERROR: Could not lock TERMINAL mutex                                      ║\n");
+            write_str_unsafe("╚════════════════════════════════════════════════════════════════════════════╝\n");
         }
     }
 }

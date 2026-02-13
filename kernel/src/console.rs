@@ -366,39 +366,31 @@ pub fn console_write_bytes(data: &[u8]) {
 //  ISR-SAFE CONSOLE OUTPUT (REPLACES SERIAL)
 // ═══════════════════════════════════════════════════════════════════
 
-/// Write a byte to console (ISR-safe, no locks)
+/// Write a byte to serial COM1 (ISR-safe, no locks)
 ///
-/// — PatchBay: Serial is DEAD. This writes to terminal/console (stderr).
-/// Uses terminal's ISR-safe try_lock path - if contended, drops the byte.
+/// — GraveShift: ISR debug output goes to the UART wire, period.
+/// push_input() is for keyboard scancodes — not debug spew.
+/// The old code shoved every byte of `[APIC-CAL]` into the VT input ring,
+/// getty read it as a username, failed auth three times, and the kernel
+/// "logged itself in." Never again.
 ///
 /// # Safety
-/// Safe to call from any context including ISRs. May drop bytes if terminal locked.
+/// Safe to call from any context including ISRs. Bounded spin on UART THRE.
 pub unsafe fn write_byte_unsafe(byte: u8) {
-    // Write to terminal emulator if available
-    if terminal::is_initialized() {
-        // Use terminal's internal ISR-safe write if it has one
-        // For now, try to push to VT input buffer (lock-free ring)
-        if let Some(manager) = vt::get_manager() {
-            manager.push_input(byte);
-        }
+    unsafe {
+        arch::serial::write_byte_unsafe(byte);
     }
 }
 
-/// Write a string to console (ISR-safe, no locks)
+/// Write a string to serial COM1 (ISR-safe, no locks)
 ///
-/// — PatchBay: NO MORE SERIAL. Console output only.
+/// — GraveShift: Debug output belongs on the wire, not in the VT input ring.
+/// See docs/agents/isr-output-serial-only.md for the full horror story.
 ///
 /// # Safety
-/// Safe to call from any context including ISRs. May drop bytes if terminal locked.
+/// Safe to call from any context including ISRs. Bounded spin on UART THRE.
 pub unsafe fn write_str_unsafe(s: &str) {
     unsafe {
-        // For ISR context, we write directly to terminal if possible
-        // Terminal has its own ISR-safe paths
-        if terminal::is_initialized() {
-            // Write byte-by-byte through ISR-safe path
-            for byte in s.bytes() {
-                write_byte_unsafe(byte);
-            }
-        }
+        arch::serial::write_str_unsafe(s);
     }
 }

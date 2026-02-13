@@ -5,6 +5,7 @@ edition = "2024"
 
 [features]
 debug-fork = []
+debug-paging = ["mm-paging/debug-paging"]  # Enable page alloc/zero traces during exec (EXTREMELY noisy — fires on every page)
 
 [dependencies]
 os_core = { path = "../../core/os_core" }
