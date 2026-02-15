@@ -205,6 +205,45 @@ impl TerminalEmulator {
     /// pixel memmove. CSI bulk ops (ED/IL/DL) still set dirty flags for tick() catch-up.
     /// After processing all bytes, we paint the cursor and flush the framebuffer.
     pub fn write(&mut self, data: &[u8]) {
+        // — GraveShift: Trace ALL write calls unconditionally (debug curses-demo).
+        // Direct serial I/O — no locks, no alloc, ISR-safe.
+        #[cfg(feature = "debug-terminal")]
+        unsafe {
+            let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
+            let tag: &[u8] = if is_alt {
+                b"[WR] A l="
+            } else {
+                b"[WR] P l="
+            };
+            for &b in tag {
+                core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nomem, nostack));
+            }
+            let mut n = data.len();
+            let mut digits = [0u8; 10];
+            let mut i = 0;
+            if n == 0 { digits[0] = b'0'; i = 1; } else {
+                while n > 0 { digits[i] = b'0' + (n % 10) as u8; n /= 10; i += 1; }
+            }
+            for d in digits[..i].iter().rev() {
+                core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") *d, options(nomem, nostack));
+            }
+            // Print first few bytes hex for context
+            for &b in b" d=" {
+                core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nomem, nostack));
+            }
+            let show = if data.len() > 16 { 16 } else { data.len() };
+            for j in 0..show {
+                let byte = data[j];
+                let hex_chars: [u8; 16] = *b"0123456789abcdef";
+                let hi = hex_chars[(byte >> 4) as usize];
+                let lo = hex_chars[(byte & 0xf) as usize];
+                core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") hi, options(nomem, nostack));
+                core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") lo, options(nomem, nostack));
+            }
+            let nl = b'\n';
+            core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") nl, options(nomem, nostack));
+        }
+
         // If synchronized output mode is active, buffer the data
         if self
             .handler
@@ -1741,6 +1780,19 @@ pub fn is_initialized() -> bool {
     TERMINAL_INITIALIZED.load(Ordering::Acquire)
 }
 
+/// Hot-swap the global terminal's framebuffer after GPU driver init.
+/// — GlassSignal: the UEFI GOP buffer becomes a ghost after VirtIO-GPU takes the scanout.
+/// This hands the renderer a new canvas backed by the GPU's resource memory, then forces
+/// a full repaint so every glyph reaches the display. Called once from init.rs after
+/// driver_core::probe_all_devices().
+pub fn update_framebuffer(fb: Arc<dyn Framebuffer>) {
+    if let Some(ref mut terminal) = *TERMINAL.lock() {
+        terminal.renderer.update_framebuffer(fb);
+        terminal.renderer.invalidate();
+        terminal.render();
+    }
+}
+
 /// Write bytes to global terminal with per-glyph rendering.
 /// NOTE: data may point to user memory, so we need STAC/CLAC for SMAP
 ///
@@ -1761,8 +1813,10 @@ pub fn write(data: &[u8]) {
 
     // — GraveShift: Single lock, per-glyph render, flush, release.
     // write() now paints glyphs inline and flushes the framebuffer before releasing.
-    if let Some(ref mut terminal) = *TERMINAL.lock() {
-        terminal.write(data);
+    {
+        if let Some(ref mut terminal) = *TERMINAL.lock() {
+            terminal.write(data);
+        }
     }
 
     // — SableWire: Disable access to user pages (CLAC)

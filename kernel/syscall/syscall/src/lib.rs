@@ -1308,11 +1308,11 @@ fn sys_fork() -> i64 {
     unsafe {
         let ctx = addr_of!(SYSCALL_CONTEXT);
         if let Some(fork_fn) = (*ctx).fork {
-            return fork_fn();
+            fork_fn()
+        } else {
+            errno::ENOSYS
         }
     }
-
-    errno::ENOSYS
 }
 
 /// sys_exec - Replace process image with new executable

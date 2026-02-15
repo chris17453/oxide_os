@@ -217,6 +217,12 @@ pub fn try_get_device(index: usize) -> Option<Arc<InputDeviceHandle>> {
     DEVICES.try_lock()?.get(index).cloned()
 }
 
+/// Get number of registered devices (ISR-safe).
+/// — InputShade: Used by terminal_tick to iterate all devices for mouse events.
+pub fn device_count() -> usize {
+    DEVICES.try_lock().map_or(0, |d| d.len())
+}
+
 /// Get all devices
 pub fn devices() -> Vec<Arc<InputDeviceHandle>> {
     DEVICES.lock().clone()

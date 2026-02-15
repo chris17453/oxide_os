@@ -1,17 +1,20 @@
-//! Terminal renderer
+//! Terminal renderer — double-buffered
 //!
-//! Renders terminal content to framebuffer with double buffering.
-//! Now with FontManager fallback chain — box drawing, block elements,
-//! and wide character rendering. The pixels bow to no 7-bit tyrant. — SoftGlyph
+//! All rendering targets the software back_buffer (regular RAM, fast).
+//! The final blit copies only dirty scanlines to the MMIO framebuffer.
+//! This turns a 25-second ESC[2J into milliseconds.
+//! — GlassSignal: The MMIO graveyard is closed. Pixels live in RAM now.
 
 extern crate alloc;
 
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::cell::Cell;
+use core::ptr;
 use fb::{Color, Font, FontManager, Framebuffer, GlyphData, PSF2_FONT};
 use vte::ScreenBuffer;
-use vte::{Cell, CellAttrs, CellFlags, Cursor, CursorShape};
+use vte::{Cell as VteCell, CellAttrs, CellFlags, Cursor, CursorShape};
 
 /// Dirty region tracking
 pub struct DirtyRegion {
@@ -87,7 +90,7 @@ impl DirtyRegion {
 /// Wields a FontManager fallback chain for full Unicode glyph resolution.
 /// Wide chars get two cells. Box drawing gets real lines. — SoftGlyph
 pub struct Renderer {
-    /// Framebuffer reference
+    /// Framebuffer reference (MMIO — only touched during blit)
     fb: Arc<dyn Framebuffer>,
     /// Legacy font reference (kept for cell dimension calculations)
     font: &'static Font,
@@ -97,7 +100,8 @@ pub struct Renderer {
     cols: u32,
     /// Number of rows
     rows: u32,
-    /// Back buffer for double buffering
+    /// Back buffer for double buffering — all rendering targets this
+    /// — GlassSignal: RAM is fast, MMIO is a graveyard. Render here, blit once.
     back_buffer: Option<Vec<u8>>,
     /// Dirty region tracking
     dirty: DirtyRegion,
@@ -112,6 +116,11 @@ pub struct Renderer {
     /// — InputShade: Ghost coordinates marking the user's text selection.
     /// When set, selected cells render with swapped fg/bg for that inverted glow.
     selection: Option<(u32, u32, u32, u32)>,
+    /// Blit tracking — pixel Y range that needs copying to MMIO
+    /// — GlassSignal: Cell<> for interior mutability through &self rendering methods
+    blit_y_min: Cell<u32>,
+    blit_y_max: Cell<u32>,
+    blit_pending: Cell<bool>,
 }
 
 impl Renderer {
@@ -143,8 +152,279 @@ impl Renderer {
             last_cursor_visible: false,
             blink_counter: 0,
             selection: None,
+            blit_y_min: Cell::new(0),
+            blit_y_max: Cell::new(0),
+            blit_pending: Cell::new(false),
         }
     }
+
+    /// Hot-swap the framebuffer after GPU driver init.
+    /// — GlassSignal: when VirtIO-GPU replaces the UEFI GOP buffer, the renderer
+    /// must follow or we're painting on a disconnected canvas. Invalidates everything
+    /// so the next render pushes the full terminal state to the new buffer.
+    pub fn update_framebuffer(&mut self, fb: Arc<dyn Framebuffer>) {
+        let cols = fb.width() / self.font.width;
+        let rows = fb.height() / self.font.height;
+
+        let back_buffer = if fb.size() > 0 {
+            Some(vec![0u8; fb.size()])
+        } else {
+            None
+        };
+
+        self.fb = fb;
+        self.cols = cols;
+        self.rows = rows;
+        self.back_buffer = back_buffer;
+        self.dirty = DirtyRegion::new(rows);
+        self.dirty.mark_all();
+        self.blit_y_min.set(0);
+        self.blit_y_max.set(0);
+        self.blit_pending.set(false);
+    }
+
+    // ── Double-buffer helpers ──────────────────────────────────────────
+    // — GlassSignal: All rendering writes to render_target() (back buffer if
+    //   available, MMIO fallback if not). Blit tracking records which scanlines
+    //   changed. flush_fb() copies only dirty scanlines to the real framebuffer.
+    //   This turns ESC[2J from 25 seconds of per-pixel MMIO torture into a
+    //   sub-millisecond RAM render + one fast sequential blit.
+
+    /// Render target — back buffer pointer if available, MMIO pointer as fallback
+    fn render_target(&self) -> *mut u8 {
+        if let Some(ref bb) = self.back_buffer {
+            bb.as_ptr() as *mut u8
+        } else {
+            self.fb.buffer()
+        }
+    }
+
+    /// Record pixel region that needs blitting to MMIO
+    fn extend_blit_region(&self, y: u32, h: u32) {
+        if self.back_buffer.is_none() {
+            return;
+        }
+        let y_end = (y + h).min(self.fb.height());
+        if !self.blit_pending.get() {
+            self.blit_y_min.set(y);
+            self.blit_y_max.set(y_end);
+            self.blit_pending.set(true);
+        } else {
+            self.blit_y_min.set(self.blit_y_min.get().min(y));
+            self.blit_y_max.set(self.blit_y_max.get().max(y_end));
+        }
+    }
+
+    /// Fill rectangle on the render target (non-volatile, fast for RAM)
+    /// — GlassSignal: no volatile writes, no VM exits, just raw speed
+    fn bb_fill_rect(&self, x: u32, y: u32, w: u32, h: u32, color: Color) {
+        let target = self.render_target();
+        let bpp = self.fb.format().bytes_per_pixel() as usize;
+        let stride = self.fb.stride() as usize;
+
+        let x_end = (x + w).min(self.fb.width());
+        let y_end = (y + h).min(self.fb.height());
+
+        if x >= x_end || y >= y_end {
+            return;
+        }
+
+        let mut color_bytes = [0u8; 4];
+        color.write_to(&mut color_bytes, self.fb.format());
+
+        unsafe {
+            for py in y..y_end {
+                let row_start = py as usize * stride + x as usize * bpp;
+                match bpp {
+                    4 => {
+                        let pixel_value = u32::from_le_bytes([
+                            color_bytes[0],
+                            color_bytes[1],
+                            color_bytes[2],
+                            color_bytes[3],
+                        ]);
+                        let line_ptr = target.add(row_start) as *mut u32;
+                        for i in 0..(x_end - x) as usize {
+                            ptr::write(line_ptr.add(i), pixel_value);
+                        }
+                    }
+                    2 => {
+                        let pixel_value = u16::from_le_bytes([color_bytes[0], color_bytes[1]]);
+                        let line_ptr = target.add(row_start) as *mut u16;
+                        for i in 0..(x_end - x) as usize {
+                            ptr::write(line_ptr.add(i), pixel_value);
+                        }
+                    }
+                    _ => {
+                        for i in 0..(x_end - x) as usize {
+                            ptr::copy_nonoverlapping(
+                                color_bytes.as_ptr(),
+                                target.add(row_start + i * bpp),
+                                bpp,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        self.extend_blit_region(y, y_end - y);
+    }
+
+    /// Set single pixel on the render target
+    fn bb_set_pixel(&self, x: u32, y: u32, color: Color) {
+        if x >= self.fb.width() || y >= self.fb.height() {
+            return;
+        }
+        let target = self.render_target();
+        let bpp = self.fb.format().bytes_per_pixel() as usize;
+        let offset = y as usize * self.fb.stride() as usize + x as usize * bpp;
+        unsafe {
+            let mut bytes = [0u8; 4];
+            color.write_to(&mut bytes, self.fb.format());
+            ptr::copy_nonoverlapping(bytes.as_ptr(), target.add(offset), bpp);
+        }
+        self.extend_blit_region(y, 1);
+    }
+
+    /// Horizontal line on the render target
+    fn bb_hline(&self, x: u32, y: u32, w: u32, color: Color) {
+        self.bb_fill_rect(x, y, w, 1, color);
+    }
+
+    /// Copy rectangle within the render target (handles overlapping regions)
+    fn bb_copy_rect(&self, src_x: u32, src_y: u32, dst_x: u32, dst_y: u32, w: u32, h: u32) {
+        let target = self.render_target();
+        let bpp = self.fb.format().bytes_per_pixel() as usize;
+        let stride = self.fb.stride() as usize;
+        let row_bytes = w as usize * bpp;
+
+        let copy_forward = dst_y < src_y || (dst_y == src_y && dst_x <= src_x);
+
+        if copy_forward {
+            for row in 0..h {
+                let src_offset = (src_y + row) as usize * stride + src_x as usize * bpp;
+                let dst_offset = (dst_y + row) as usize * stride + dst_x as usize * bpp;
+                unsafe {
+                    ptr::copy(target.add(src_offset), target.add(dst_offset), row_bytes);
+                }
+            }
+        } else {
+            for row in (0..h).rev() {
+                let src_offset = (src_y + row) as usize * stride + src_x as usize * bpp;
+                let dst_offset = (dst_y + row) as usize * stride + dst_x as usize * bpp;
+                unsafe {
+                    ptr::copy(target.add(src_offset), target.add(dst_offset), row_bytes);
+                }
+            }
+        }
+
+        // Mark destination region for blit
+        let min_y = dst_y;
+        let max_y = dst_y + h;
+        self.extend_blit_region(min_y, max_y - min_y);
+    }
+
+    /// Clear entire render target with color
+    fn bb_clear(&self, color: Color) {
+        self.bb_fill_rect(0, 0, self.fb.width(), self.fb.height(), color);
+    }
+
+    /// Blit dirty scanlines from back_buffer to MMIO framebuffer.
+    /// — GlassSignal: u64-aligned blit — compiler_builtins memcpy generates
+    /// rep movsb which is byte-granularity in QEMU TCG. For a 7MB framebuffer
+    /// that's 7M byte writes. This uses rep movsq (8 bytes/iteration) cutting
+    /// the operation count by 8×. The difference between 25 seconds and <1 second.
+    fn blit_to_fb(&self) {
+        if !self.blit_pending.get() {
+            return;
+        }
+        if let Some(ref bb) = self.back_buffer {
+            let stride = self.fb.stride() as usize;
+            let fb_ptr = self.fb.buffer();
+            let bb_ptr = bb.as_ptr();
+            let y_start = self.blit_y_min.get() as usize;
+            let y_end = self.blit_y_max.get().min(self.fb.height()) as usize;
+
+            // — GraveShift: Trace blit region for debug-console
+            #[cfg(feature = "debug-terminal")]
+            unsafe {
+                for &b in b"[BLIT] y=" {
+                    core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nomem, nostack));
+                }
+                let mut n = y_start;
+                let mut digits = [0u8; 10];
+                let mut i = 0;
+                if n == 0 { digits[0] = b'0'; i = 1; } else {
+                    while n > 0 { digits[i] = b'0' + (n % 10) as u8; n /= 10; i += 1; }
+                }
+                for d in digits[..i].iter().rev() {
+                    core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") *d, options(nomem, nostack));
+                }
+                for &b in b".." {
+                    core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nomem, nostack));
+                }
+                n = y_end;
+                i = 0;
+                if n == 0 { digits[0] = b'0'; i = 1; } else {
+                    while n > 0 { digits[i] = b'0' + (n % 10) as u8; n /= 10; i += 1; }
+                }
+                for d in digits[..i].iter().rev() {
+                    core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") *d, options(nomem, nostack));
+                }
+                let nl = b'\n';
+                core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") nl, options(nomem, nostack));
+            }
+
+            if y_start < y_end {
+                let byte_offset = y_start * stride;
+                let byte_count = (y_end - y_start) * stride;
+
+                unsafe {
+                    let src = bb_ptr.add(byte_offset);
+                    let dst = fb_ptr.add(byte_offset);
+
+                    // — GlassSignal: rep movsq on x86_64 — the CPU's own DMA engine.
+                    // 8 bytes per iteration, hardware-optimized store buffer forwarding.
+                    // TCG emulates this as 8 bytes per simulated instruction vs 1 byte
+                    // for rep movsb. For 7MB: 875K iterations vs 7M iterations.
+                    let qword_count = byte_count / 8;
+                    let tail_bytes = byte_count % 8;
+
+                    if qword_count > 0 {
+                        core::arch::asm!(
+                            "cld",
+                            "rep movsq",
+                            inout("rcx") qword_count => _,
+                            inout("rsi") src => _,
+                            inout("rdi") dst => _,
+                            options(nostack)
+                        );
+                    }
+
+                    // Handle remaining bytes (stride is typically 4-aligned so tail = 0)
+                    if tail_bytes > 0 {
+                        let tail_src = src.add(qword_count * 8);
+                        let tail_dst = dst.add(qword_count * 8);
+                        for i in 0..tail_bytes {
+                            ptr::write(tail_dst.add(i), ptr::read(tail_src.add(i)));
+                        }
+                    }
+                }
+            }
+
+            // Fire GPU flush callback for the blitted region
+            self.fb.flush_region(
+                0,
+                self.blit_y_min.get(),
+                self.fb.width(),
+                self.blit_y_max.get() - self.blit_y_min.get(),
+            );
+        }
+        self.blit_pending.set(false);
+    }
+
+    // ── End double-buffer helpers ──────────────────────────────────────
 
     /// Get terminal dimensions (cols, rows)
     pub fn dimensions(&self) -> (u32, u32) {
@@ -225,28 +505,22 @@ impl Renderer {
             self.dirty.mark_row(cursor.row);
         }
 
-        // Render dirty rows
+        // Render dirty rows to back buffer
         let mut pixel_count = 0u64;
+        let mut dirty_count = 0u32;
         for row in 0..self.rows {
             if self.dirty.is_row_dirty(row) {
                 self.render_row(buffer, row);
                 pixel_count += (self.cols * self.font.width * self.font.height) as u64;
+                dirty_count += 1;
             }
         }
 
-        // Render cursor
+        // Render cursor to back buffer
         if cursor.visible && cursor.blink_on {
             self.render_cursor(buffer, cursor);
             pixel_count += (self.font.width * self.font.height) as u64;
         }
-
-        // Compute dirty pixel bounds BEFORE clearing flags
-        // — GlassSignal: row-granularity → pixel-rect → surgical GPU flush
-        let dirty_pixel_bounds = self.dirty.dirty_bounds().map(|(min_row, max_row)| {
-            let y = min_row * self.font.height;
-            let h = (max_row - min_row + 1) * self.font.height;
-            (0u32, y, self.fb.width(), h)
-        });
 
         // Clear dirty flags
         self.dirty.clear();
@@ -256,11 +530,9 @@ impl Renderer {
         self.last_cursor_col = cursor.col;
         self.last_cursor_visible = cursor.visible && cursor.blink_on;
 
-        // Flush only the dirty region to hardware
-        // — GlassSignal: 1 dirty row on a 60-row terminal = 1/60th the bandwidth
-        if let Some((x, y, w, h)) = dirty_pixel_bounds {
-            self.fb.flush_region(x, y, w, h);
-        }
+        // Blit dirty region from back buffer to MMIO
+        // — GlassSignal: one sequential copy, not a million volatile writes
+        self.blit_to_fb();
 
         // Record performance metrics
         fb::record_pixels(pixel_count);
@@ -306,8 +578,9 @@ impl Renderer {
     }
 
     /// Inner render logic shared by normal and wide cell paths.
+    /// All pixel writes go to the back buffer (fast RAM).
     /// — InputShade: `selected` flag triggers reverse-video for the selection overlay.
-    fn render_cell_inner(&self, px: u32, py: u32, cell: &Cell, cell_count: u32, selected: bool) {
+    fn render_cell_inner(&self, px: u32, py: u32, cell: &VteCell, cell_count: u32, selected: bool) {
         // -- GlassSignal: bridge VTE RGB tuples to framebuffer Color
         let (r, g, b) = cell.attrs.effective_fg().to_rgb(true);
         let mut fg_color = Color::new(r, g, b);
@@ -329,9 +602,8 @@ impl Renderer {
 
         let total_width = self.font.width * cell_count;
 
-        // Draw background (covers all cells for wide chars)
-        self.fb
-            .fill_rect(px, py, total_width, self.font.height, bg_color);
+        // Draw background to back buffer
+        self.bb_fill_rect(px, py, total_width, self.font.height, bg_color);
 
         // Blink text: when in "off" phase, only draw background — SoftGlyph
         let is_blink = cell.attrs.flags.contains(CellFlags::BLINK);
@@ -378,17 +650,17 @@ impl Renderer {
         // Draw underline (spans full cell width)
         if cell.attrs.flags.contains(CellFlags::UNDERLINE) {
             let underline_y = py + self.font.height - 2;
-            self.fb.hline(px, underline_y, total_width, fg_color);
+            self.bb_hline(px, underline_y, total_width, fg_color);
         }
 
         // Draw strikethrough (spans full cell width)
         if cell.attrs.flags.contains(CellFlags::STRIKETHROUGH) {
             let strike_y = py + self.font.height / 2;
-            self.fb.hline(px, strike_y, total_width, fg_color);
+            self.bb_hline(px, strike_y, total_width, fg_color);
         }
     }
 
-    /// Draw a 1-bit monochrome bitmap glyph with optimized pixel writes — SoftGlyph
+    /// Draw a 1-bit monochrome bitmap glyph to back buffer — SoftGlyph
     fn draw_bitmap_glyph(
         &self,
         px: u32,
@@ -400,7 +672,7 @@ impl Renderer {
     ) {
         let bpp = self.fb.format().bytes_per_pixel() as usize;
         let stride = self.fb.stride() as usize;
-        let buffer = self.fb.buffer();
+        let buffer = self.render_target();
         let color_bytes = color.to_bytes(self.fb.format());
         let bytes_per_row = (glyph_w + 7) / 8;
 
@@ -424,7 +696,7 @@ impl Renderer {
                             if byte_idx < glyph_data.len()
                                 && (glyph_data[byte_idx] >> bit_idx) & 1 != 0
                             {
-                                core::ptr::write(line_ptr.add(x as usize), pixel_value);
+                                ptr::write(line_ptr.add(x as usize), pixel_value);
                             }
                         }
                     }
@@ -442,7 +714,7 @@ impl Renderer {
                             if byte_idx < glyph_data.len()
                                 && (glyph_data[byte_idx] >> bit_idx) & 1 != 0
                             {
-                                core::ptr::write(line_ptr.add(x as usize), pixel_value);
+                                ptr::write(line_ptr.add(x as usize), pixel_value);
                             }
                         }
                     }
@@ -455,16 +727,18 @@ impl Renderer {
                             if byte_idx < glyph_data.len()
                                 && (glyph_data[byte_idx] >> bit_idx) & 1 != 0
                             {
-                                self.fb.set_pixel(px + x, py + y, color);
+                                self.bb_set_pixel(px + x, py + y, color);
                             }
                         }
                     }
                 }
             }
         }
+
+        // Blit region tracked by bb_fill_rect (background) already covers this
     }
 
-    /// Draw a bitmap glyph with synthetic italic slant
+    /// Draw a bitmap glyph with synthetic italic slant to back buffer
     /// Top rows shift right, bottom rows don't — a lean, mean pixel machine. — SoftGlyph
     fn draw_bitmap_italic(
         &self,
@@ -489,18 +763,18 @@ impl Renderer {
                 let bit_idx = 7 - (x % 8);
                 if byte_idx < glyph_data.len() && (glyph_data[byte_idx] >> bit_idx) & 1 != 0 {
                     let offset_x = px + x + slant_offset;
-                    self.fb.set_pixel(offset_x, py + y, color);
+                    self.bb_set_pixel(offset_x, py + y, color);
                 }
             }
         }
     }
 
-    /// Draw an RGBA color glyph with alpha blending
+    /// Draw an RGBA color glyph with alpha blending to back buffer
     /// Integer-only: (src * alpha + dst * (255 - alpha)) / 255. No FPU here. — SoftGlyph
     fn draw_rgba_glyph(&self, px: u32, py: u32, glyph_w: u32, glyph_h: u32, glyph_data: &[u8]) {
         let stride = self.fb.stride() as usize;
         let bpp = self.fb.format().bytes_per_pixel() as usize;
-        let buffer = self.fb.buffer();
+        let buffer = self.render_target();
 
         for y in 0..glyph_h {
             for x in 0..glyph_w {
@@ -548,9 +822,10 @@ impl Renderer {
                 }
             }
         }
+        // Blit region tracked by bb_fill_rect (background) already covers this
     }
 
-    /// Render cursor
+    /// Render cursor to back buffer
     /// Block cursor: inverted cell. Bar: 2px vertical. Underline: 2px horizontal.
     /// Now resolves the glyph under cursor through FontManager too. — SoftGlyph
     fn render_cursor(&self, buffer: &ScreenBuffer, cursor: &Cursor) {
@@ -577,8 +852,7 @@ impl Renderer {
         match cursor.shape {
             CursorShape::Block => {
                 // Draw inverted cell
-                self.fb
-                    .fill_rect(px, py, self.font.width, self.font.height, bg_color);
+                self.bb_fill_rect(px, py, self.font.width, self.font.height, bg_color);
                 if cell.ch != ' ' {
                     let resolved = self.font_manager.resolve(cell.ch);
                     if let GlyphData::Bitmap {
@@ -594,32 +868,31 @@ impl Renderer {
             CursorShape::Underline => {
                 // Draw underline cursor
                 let cursor_y = py + self.font.height - 2;
-                self.fb
-                    .fill_rect(px, cursor_y, self.font.width, 2, bg_color);
+                self.bb_fill_rect(px, cursor_y, self.font.width, 2, bg_color);
             }
             CursorShape::Bar => {
                 // Draw vertical bar cursor
-                self.fb.fill_rect(px, py, 2, self.font.height, bg_color);
+                self.bb_fill_rect(px, py, 2, self.font.height, bg_color);
             }
         }
     }
 
-    /// Clear the screen with background color
+    /// Clear the screen with background color (writes to back buffer)
     pub fn clear(&self, attrs: &CellAttrs) {
         let (r, g, b) = attrs.effective_bg().to_rgb(false);
         let bg = Color::new(r, g, b);
-        self.fb.clear(bg);
+        self.bb_clear(bg);
     }
 
-    /// Scroll the display (for fast scrolling)
+    /// Scroll the display up (writes to back buffer)
     pub fn scroll_up(&self, lines: u32, bg_color: Color) {
         let line_height = self.font.height;
         let scroll_pixels = lines * line_height;
         let total_height = self.rows * line_height;
 
         if scroll_pixels < total_height {
-            // Copy screen content up
-            self.fb.copy_rect(
+            // Copy screen content up within back buffer
+            self.bb_copy_rect(
                 0,
                 scroll_pixels,
                 0,
@@ -629,7 +902,7 @@ impl Renderer {
             );
 
             // Clear bottom area
-            self.fb.fill_rect(
+            self.bb_fill_rect(
                 0,
                 total_height - scroll_pixels,
                 self.fb.width(),
@@ -638,19 +911,19 @@ impl Renderer {
             );
         } else {
             // Scroll more than screen height - just clear
-            self.fb.clear(bg_color);
+            self.bb_clear(bg_color);
         }
     }
 
-    /// Scroll the display down
+    /// Scroll the display down (writes to back buffer)
     pub fn scroll_down(&self, lines: u32, bg_color: Color) {
         let line_height = self.font.height;
         let scroll_pixels = lines * line_height;
         let total_height = self.rows * line_height;
 
         if scroll_pixels < total_height {
-            // Copy screen content down
-            self.fb.copy_rect(
+            // Copy screen content down within back buffer
+            self.bb_copy_rect(
                 0,
                 0,
                 0,
@@ -660,14 +933,13 @@ impl Renderer {
             );
 
             // Clear top area
-            self.fb
-                .fill_rect(0, 0, self.fb.width(), scroll_pixels, bg_color);
+            self.bb_fill_rect(0, 0, self.fb.width(), scroll_pixels, bg_color);
         } else {
-            self.fb.clear(bg_color);
+            self.bb_clear(bg_color);
         }
     }
 
-    /// Paint a single cell to framebuffer — our fbcon_putcs() for one glyph.
+    /// Paint a single cell to back buffer — our fbcon_putcs() for one glyph.
     /// Cost: exactly 1 cell worth of pixels. No dirty tracking, no row iteration.
     /// — SoftGlyph: Synchronous glyph blit. The pixel that matters, nothing more.
     pub fn render_cell(&self, buffer: &ScreenBuffer, row: u32, col: u32) {
@@ -690,18 +962,18 @@ impl Renderer {
         }
     }
 
-    /// Pixel-level scroll — memmove framebuffer up by N text rows.
+    /// Pixel-level scroll — memmove back buffer up by N text rows.
     /// — GraveShift: This is what makes synchronous render fast. Instead of
     /// repainting 24×80 cells after scroll, we memmove the pixels and clear
-    /// the bottom row. The fb already has copy_rect for overlapping regions.
+    /// the bottom row. The back buffer has copy_rect for overlapping regions.
     pub fn scroll_up_pixels(&self, lines: u32, bg_color: Color) {
         let pixel_rows = lines * self.font.height;
         let total_pixel_height = self.rows * self.font.height;
         if pixel_rows >= total_pixel_height {
             return;
         }
-        // — GraveShift: Shift all scanlines up by pixel_rows. copy_rect handles overlap.
-        self.fb.copy_rect(
+        // — GraveShift: Shift all scanlines up by pixel_rows within back buffer.
+        self.bb_copy_rect(
             0,
             pixel_rows,
             0,
@@ -711,8 +983,7 @@ impl Renderer {
         );
         // Clear the vacated bottom rows
         let clear_y = total_pixel_height - pixel_rows;
-        self.fb
-            .fill_rect(0, clear_y, self.fb.width(), pixel_rows, bg_color);
+        self.bb_fill_rect(0, clear_y, self.fb.width(), pixel_rows, bg_color);
     }
 
     /// Paint cursor at current position — call after writes for immediate visibility.
@@ -757,19 +1028,18 @@ impl Renderer {
         self.dirty.mark_all();
     }
 
-    /// Flush framebuffer to hardware — call after per-glyph rendering.
-    /// — SoftGlyph: The final handshake. Pixels committed.
+    /// Flush back buffer to MMIO framebuffer — the final blit.
+    /// — GlassSignal: All accumulated renders become visible in one sequential copy.
     pub fn flush_fb(&self) {
-        self.fb.flush();
+        self.blit_to_fb();
     }
 
     /// Draw a single pixel at the given coordinates
     ///
-    /// 🔥 PRIORITY #5 FIX - Sixel graphics rendering support 🔥
-    /// Used by Sixel renderer to draw individual pixels directly to framebuffer
+    /// Used by Sixel renderer to draw individual pixels directly
     pub fn draw_pixel(&mut self, x: u32, y: u32, color: Color) {
         if x < self.fb.width() && y < self.fb.height() {
-            self.fb.set_pixel(x, y, color);
+            self.bb_set_pixel(x, y, color);
         }
     }
 }

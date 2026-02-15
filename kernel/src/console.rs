@@ -122,11 +122,16 @@ pub fn terminal_tick() {
     // configuration where PCI interrupts aren't wired yet.
     virtio_input::poll();
 
-    // Process mouse events from input subsystem
-    // Mouse device is typically device 1 (keyboard is device 0)
+    // — InputShade: Process mouse/tablet events from ALL input devices.
+    // QEMU uses virtio-tablet-pci (EV_ABS — absolute coordinates), NOT
+    // virtio-mouse-pci (EV_REL — relative deltas). The old code only handled
+    // EV_REL from hardcoded device 1, so the cursor never moved. Now we drain
+    // all devices and handle both ABS and REL events. The tablet is finally alive.
     if fb::mouse_initialized() {
         let mut total_dx: i32 = 0;
         let mut total_dy: i32 = 0;
+        let mut abs_x: Option<i32> = None;
+        let mut abs_y: Option<i32> = None;
         let mut wheel_delta: i32 = 0;
         let has_mouse_mode = terminal::is_initialized() && terminal::has_mouse_mode();
 
@@ -135,18 +140,34 @@ pub fn terminal_tick() {
         static mut LEFT_PRESSED: bool = false;
         static mut MIDDLE_PRESSED: bool = false;
 
-        // Drain all mouse events from input device 1
-        if let Some(mouse_handle) = input::try_get_device(1) {
-            while let Some(event) = mouse_handle.try_pop_event() {
-                debug_mouse_unsafe!("M");
+        // — InputShade: Drain mouse/tablet events from all registered input devices.
+        // Device order depends on PCI enumeration — don't hardcode indices.
+        let device_count = input::device_count();
+        for dev_idx in 0..device_count {
+            let handle = match input::try_get_device(dev_idx) {
+                Some(h) => h,
+                None => continue,
+            };
+            while let Some(event) = handle.try_pop_event() {
                 match event.event_type() {
                     input::EventType::Rel => {
+                        debug_mouse_unsafe!("R");
                         if event.code == input::REL_X {
                             total_dx += event.value;
                         } else if event.code == input::REL_Y {
                             total_dy += event.value;
                         } else if event.code == input::REL_WHEEL {
                             wheel_delta += event.value;
+                        }
+                    }
+                    input::EventType::Abs => {
+                        // — InputShade: Tablet sends absolute coords (0..32767).
+                        // Scale to screen pixel coordinates.
+                        debug_mouse_unsafe!("A");
+                        if event.code == input::ABS_X {
+                            abs_x = Some(event.value);
+                        } else if event.code == input::ABS_Y {
+                            abs_y = Some(event.value);
                         }
                     }
                     input::EventType::Key => {
@@ -167,9 +188,7 @@ pub fn terminal_tick() {
 
                             // Track left and middle buttons separately for selection/paste
                             if event.code == 0x110 {
-                                // Left button
                                 if pressed && !LEFT_PRESSED {
-                                    // Left press - start selection if no mouse mode active
                                     LEFT_PRESSED = true;
                                     if !has_mouse_mode {
                                         if let Some((mx, my)) = fb::mouse_position() {
@@ -177,14 +196,12 @@ pub fn terminal_tick() {
                                         }
                                     }
                                 } else if !pressed && LEFT_PRESSED {
-                                    // Left release - finish selection
                                     LEFT_PRESSED = false;
                                     if !has_mouse_mode {
                                         terminal::finish_selection();
                                     }
                                 }
                             } else if event.code == 0x112 {
-                                // Middle button - paste on press
                                 if pressed && !MIDDLE_PRESSED {
                                     MIDDLE_PRESSED = true;
                                     if !has_mouse_mode {
@@ -204,7 +221,7 @@ pub fn terminal_tick() {
                         // Generate escape sequence for button press/release if in mouse mode
                         if has_mouse_mode {
                             if let Some((mx, my)) = fb::mouse_position() {
-                                let esc_btn = if pressed { btn } else { 3 }; // 3 = release
+                                let esc_btn = if pressed { btn } else { 3 };
                                 if let Some(seq) =
                                     terminal::mouse_event(esc_btn, mx, my, pressed, false)
                                 {
@@ -218,10 +235,30 @@ pub fn terminal_tick() {
             }
         }
 
-        // Move graphical cursor
+        // — InputShade: Handle absolute positioning (tablet) — scale from
+        // input range (0..32767) to screen pixels. This is what makes the
+        // cursor actually track the host mouse in QEMU.
+        let mut cursor_moved = false;
+        if abs_x.is_some() || abs_y.is_some() {
+            if let Some((screen_w, screen_h)) = fb::screen_dimensions() {
+                let px = abs_x
+                    .map(|ax| ((ax as i64) * screen_w as i64 / 32768) as i32)
+                    .unwrap_or_else(|| fb::mouse_position().map(|(x, _)| x).unwrap_or(0));
+                let py = abs_y
+                    .map(|ay| ((ay as i64) * screen_h as i64 / 32768) as i32)
+                    .unwrap_or_else(|| fb::mouse_position().map(|(_, y)| y).unwrap_or(0));
+                fb::mouse_set_position(px, py);
+                cursor_moved = true;
+            }
+        }
+
+        // Move graphical cursor (relative mode — traditional mouse)
         if total_dx != 0 || total_dy != 0 {
             fb::mouse_move(total_dx, total_dy);
+            cursor_moved = true;
+        }
 
+        if cursor_moved {
             // Update selection if left button held (no mouse mode)
             unsafe {
                 if LEFT_PRESSED && !has_mouse_mode {
@@ -235,21 +272,10 @@ pub fn terminal_tick() {
             if has_mouse_mode {
                 if let Some((mx, my)) = fb::mouse_position() {
                     let held_btn = unsafe {
-                        if MOUSE_BUTTONS & 0x01 != 0 {
-                            0u8
-                        }
-                        // Left
-                        else if MOUSE_BUTTONS & 0x04 != 0 {
-                            1
-                        }
-                        // Middle
-                        else if MOUSE_BUTTONS & 0x02 != 0 {
-                            2
-                        }
-                        // Right
-                        else {
-                            3
-                        } // No button
+                        if MOUSE_BUTTONS & 0x01 != 0 { 0u8 }
+                        else if MOUSE_BUTTONS & 0x04 != 0 { 1 }
+                        else if MOUSE_BUTTONS & 0x02 != 0 { 2 }
+                        else { 3 }
                     };
                     if let Some(seq) = terminal::mouse_event(held_btn, mx, my, true, true) {
                         push_mouse_escape(&seq);
@@ -259,12 +285,11 @@ pub fn terminal_tick() {
         }
 
         // Handle mouse wheel scrolling
-        // — EchoFrame: Scroll wheel now works in two modes:
-        // 1. When mouse mode is OFF: scroll terminal history (default behavior)
-        // 2. When mouse mode is ON: send escape sequences to app (e.g., vim, less)
+        // — EchoFrame: Scroll wheel in two modes:
+        // 1. Mouse mode OFF: scroll terminal history (default)
+        // 2. Mouse mode ON: send escape sequences to app (vim, less)
         if wheel_delta != 0 {
             if has_mouse_mode {
-                // App has requested mouse tracking - send wheel as escape sequences
                 if let Some((mx, my)) = fb::mouse_position() {
                     let btn = if wheel_delta > 0 { 64u8 } else { 65u8 };
                     let clicks = wheel_delta.unsigned_abs();
@@ -275,7 +300,6 @@ pub fn terminal_tick() {
                     }
                 }
             } else {
-                // No mouse mode - scroll terminal view directly (3 lines per wheel click)
                 let scroll_lines = (wheel_delta.unsigned_abs() as usize) * 3;
                 if wheel_delta > 0 {
                     terminal::scroll_up(scroll_lines);

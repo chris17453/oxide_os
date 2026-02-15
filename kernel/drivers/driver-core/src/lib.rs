@@ -8,7 +8,6 @@
 
 extern crate alloc;
 
-use core::fmt;
 use pci::PciDevice;
 
 pub mod registry;
@@ -23,7 +22,15 @@ pub use registry::{
     list_pci_drivers,
     list_isa_drivers,
 };
-pub use binding::{DriverBindingData, DeviceBinding};
+pub use binding::DeviceBinding;
+
+// — SableWire: Re-export shared types from driver-traits so existing code
+// that imports from driver_core keeps working. The canonical definitions
+// live in driver-traits (zero deps) to break circular dependency chains.
+pub use driver_traits::{DriverBindingData, DriverError, IsaDriver};
+
+// Re-export the ISA registration macro so `driver_core::register_isa_driver!` works
+pub use driver_traits::register_isa_driver;
 
 /// PCI device ID for driver matching
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,35 +101,7 @@ impl PciDeviceId {
     }
 }
 
-/// Driver errors
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DriverError {
-    /// Device not supported by this driver
-    NotSupported,
-    /// Hardware initialization failed
-    InitFailed,
-    /// Resource allocation failed
-    ResourceAllocation,
-    /// DMA setup failed
-    DmaError,
-    /// Invalid device configuration
-    InvalidConfig,
-    /// Already bound to another driver
-    AlreadyBound,
-}
-
-impl fmt::Display for DriverError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotSupported => write!(f, "device not supported"),
-            Self::InitFailed => write!(f, "hardware init failed"),
-            Self::ResourceAllocation => write!(f, "resource allocation failed"),
-            Self::DmaError => write!(f, "DMA setup failed"),
-            Self::InvalidConfig => write!(f, "invalid device config"),
-            Self::AlreadyBound => write!(f, "device already bound"),
-        }
-    }
-}
+// — GraveShift: DriverError is defined in driver-traits and re-exported above
 
 /// PCI driver interface
 ///
@@ -159,19 +138,7 @@ pub trait PciDriver: Send + Sync {
     unsafe fn remove(&self, dev: &PciDevice, binding_data: DriverBindingData);
 }
 
-/// ISA driver interface (for legacy devices)
-pub trait IsaDriver: Send + Sync {
-    /// Driver name
-    fn name(&self) -> &'static str;
-
-    /// Probe for ISA devices
-    ///
-    /// ISA doesn't have enumeration, so driver must probe for hardware presence.
-    fn probe(&self) -> Result<DriverBindingData, DriverError>;
-
-    /// Remove the device
-    unsafe fn remove(&self, binding_data: DriverBindingData);
-}
+// — GraveShift: IsaDriver trait is defined in driver-traits and re-exported above
 
 /// Compile-time driver registration
 ///
@@ -192,12 +159,4 @@ macro_rules! register_pci_driver {
     };
 }
 
-/// ISA driver registration macro
-#[macro_export]
-macro_rules! register_isa_driver {
-    ($driver:expr) => {
-        #[used]
-        #[link_section = ".isa_drivers"]
-        static DRIVER_REGISTRATION: &'static dyn $crate::IsaDriver = &$driver;
-    };
-}
+// — GraveShift: register_isa_driver! macro is defined in driver-traits and re-exported above

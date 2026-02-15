@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 pci = { path = "../pci" }
+driver-traits = { workspace = true }
 os_log = { workspace = true }
 spin = { workspace = true }
 

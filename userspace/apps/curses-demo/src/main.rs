@@ -17,8 +17,8 @@ extern crate libc;
 extern crate oxide_ncurses as ncurses;
 
 use ncurses::{
-    attrs::*, color_pair, colors::*, endwin, erase, getch, has_colors, init_pair, initscr,
-    mvprintw, refresh, start_color,
+    attrs::*, color_pair, colors::*, endwin, erase, has_colors, init_pair, initscr,
+    mvprintw, refresh, screen::{cbreak, noecho}, start_color,
 };
 
 /// Sleep for a short duration (animation delay)
@@ -186,19 +186,35 @@ impl Ball {
 /// -- NeonVale: Demo orchestrator - runs forever until you pull the plug
 #[unsafe(no_mangle)]
 pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
+    // — GraveShift: PHASE 1 — Raw write BEFORE any ncurses.
+    // If this doesn't appear, the process itself is broken (fd 1 dead, crash on startup).
+    libc::unistd::write(1, b"PHASE1: raw write before ncurses\r\n");
+    sleep_ms(500);
+
+    // — GraveShift: PHASE 2 — initscr() sets up ncurses, switches to alt screen
     let stdscr = initscr();
     if stdscr.is_null() {
+        libc::unistd::write(1, b"FATAL: initscr returned null\r\n");
         return 1;
     }
 
+    // — GraveShift: PHASE 3 — Raw write after initscr (should be on alt screen now)
+    libc::unistd::write(1, b"\x1b[2;2HPHASE3: post-initscr raw write");
+    sleep_ms(500);
+
     if !has_colors() {
         endwin();
-        let msg = b"Terminal does not support colors!\n";
-        libc::unistd::write(1, msg);
+        libc::unistd::write(1, b"Terminal does not support colors!\r\n");
         return 1;
     }
 
     start_color();
+    let _ = cbreak();
+    let _ = noecho();
+
+    // — GraveShift: PHASE 4 — Raw write after cbreak/noecho
+    libc::unistd::write(1, b"\x1b[4;2HPHASE4: post-cbreak raw write");
+    sleep_ms(500);
 
     // -- ColdCipher: Color palette setup - cyberpunk theme
     init_pair(1, COLOR_RED, COLOR_BLACK);
@@ -209,9 +225,7 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
     init_pair(6, COLOR_CYAN, COLOR_BLACK);
     init_pair(7, COLOR_WHITE, COLOR_BLACK);
 
-    // -- NeonVale: Nodelay mode — getch() returns immediately so we can
-    // check for 'q' without blocking the animation loop. The demo runs
-    // at full speed and eats keystrokes between frames.
+    // -- NeonVale: Nodelay mode (no keyboard blocking)
     unsafe {
         (*stdscr).nodelay = true;
     }
@@ -233,18 +247,8 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
     // FPS counter — because if you can't measure it, it doesn't exist — NeonVale
     let mut fps = FpsCounter::new();
 
-    // -- NeonVale: Infinite loop — runs until 'q' pressed or Ctrl+C kills us.
-    // No more 200-frame time limit. This neon never sleeps.
-    loop {
-        // -- NeonVale: Check for quit key — nodelay getch returns -1 if nothing pressed
-        let ch = getch();
-        if ch == b'q' as i32 || ch == b'Q' as i32 || ch == 27 {
-            break;
-        }
-
-        // -- NeonVale: erase() clears the virtual screen buffer in one shot.
-        // The old cell-by-cell clear was doing 1920 individual mvprintw calls
-        // per frame — roughly 70% of the frame budget wasted on spaces. — GraveShift
+    // -- NeonVale: Run 300 frames then exit cleanly. No getch() — pure render test.
+    for _frame in 0..300 {
         let _ = erase();
 
         // Draw title box
@@ -305,7 +309,7 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
         if max_y > 3 {
             draw_box(max_y - 3, 0, 3, max_x, 7);
             set_attr(color_pair(7));
-            let _ = mvprintw(max_y - 2, 2, "Press 'q' or Ctrl+C to quit");
+            let _ = mvprintw(max_y - 2, 2, "Auto-running 300 frames...");
 
             // FPS readout — right-aligned HUD style — NeonVale
             let mut fps_num_buf = [0u8; 12];
@@ -336,9 +340,13 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
 
         let _ = refresh();
 
-        // -- NeonVale: No sleep - full throttle to see natural max FPS
+        // — NeonVale: 16ms frame budget (~60 FPS). Without this, the tight loop
+        // monopolizes the CPU on a non-preemptive single-core OS — other processes
+        // starve and the system appears frozen. nanosleep yields to the scheduler.
+        sleep_ms(16);
     }
 
     let _ = endwin();
+    libc::unistd::write(1, b"Demo finished (300 frames).\r\n");
     0
 }

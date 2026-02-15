@@ -27,7 +27,7 @@ pub use mode::{set_mode, set_mode_setter};
 pub use perf::{get_fps, get_stats, record_flush, record_frame, record_pixels, reset_stats};
 
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 use spin::Mutex;
 
 /// Emit a lock contention warning to serial port (ISR-safe, no dependencies).
@@ -59,6 +59,29 @@ static CONSOLE: Mutex<Option<FbConsole>> = Mutex::new(None);
 
 /// Initialization flag
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+/// — GlassSignal: GPU flush pipeline — VirtIO-GPU registers its TRANSFER_TO_HOST_2D
+/// callback here so LinearFramebuffer::flush_region() actually reaches the display.
+/// AtomicPtr because this fires from ISR context (terminal tick) — no locks allowed.
+static FLUSH_CALLBACK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Register a flush callback for GPU-backed framebuffers.
+/// Called once during VirtIO-GPU init — never changes after.
+/// — GlassSignal: the wire between pixel memory and the scanout pipeline
+pub fn set_flush_callback(cb: fn(u32, u32, u32, u32)) {
+    FLUSH_CALLBACK.store(cb as *mut (), Ordering::Release);
+}
+
+/// Call the registered flush callback (if any).
+/// Lock-free — safe from ISR context. — GlassSignal
+pub fn call_flush_callback(x: u32, y: u32, w: u32, h: u32) {
+    let ptr = FLUSH_CALLBACK.load(Ordering::Acquire);
+    if !ptr.is_null() {
+        // SAFETY: pointer was stored from a valid fn(u32,u32,u32,u32) in set_flush_callback
+        let cb: fn(u32, u32, u32, u32) = unsafe { core::mem::transmute(ptr) };
+        cb(x, y, w, h);
+    }
+}
 
 /// Physical base address of framebuffer (for /dev/fb0)
 static FB_PHYS_BASE: Mutex<u64> = Mutex::new(0);
@@ -386,6 +409,36 @@ pub fn mouse_show() {
     if let Some(ref mut cursor) = *MOUSE_CURSOR.lock() {
         cursor.show();
     }
+}
+
+/// Set mouse cursor to an absolute pixel position
+/// — InputShade: For tablet devices that send absolute coordinates instead of deltas.
+/// Uses try_lock — called from timer ISR (terminal_tick).
+pub fn mouse_set_position(x: i32, y: i32) {
+    if let Some(fb_guard) = FRAMEBUFFER.try_lock() {
+        if let Some(ref fb) = *fb_guard {
+            if let Some(mut cursor_guard) = MOUSE_CURSOR.try_lock() {
+                if let Some(ref mut cursor) = *cursor_guard {
+                    cursor.move_to(x, y, &**fb);
+                }
+            } else {
+                #[cfg(feature = "debug-lock")]
+                lock_contention_warning("MOUSE_CURSOR (set_position)");
+            }
+        }
+    } else {
+        #[cfg(feature = "debug-lock")]
+        lock_contention_warning("FRAMEBUFFER (mouse_set_position)");
+    }
+}
+
+/// Get framebuffer dimensions in pixels (for coordinate mapping).
+/// — InputShade: Tablet ABS coords (0..32767) need screen dimensions for scaling.
+/// Uses try_lock — called from ISR context.
+pub fn screen_dimensions() -> Option<(u32, u32)> {
+    FRAMEBUFFER
+        .try_lock()
+        .and_then(|guard| guard.as_ref().map(|fb| (fb.width(), fb.height())))
 }
 
 /// Get the current mouse cursor position in pixels

@@ -18,10 +18,11 @@ unsafe fn serial_trace(msg: &[u8]) {
     for &b in msg {
         loop {
             let status: u8;
-            core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack, preserves_flags));
+            // — GraveShift: asm in unsafe fn still needs its own unsafe block post-2024
+            unsafe { core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack, preserves_flags)); }
             if status & 0x20 != 0 { break; }
         }
-        core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack, preserves_flags));
+        unsafe { core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack, preserves_flags)); }
     }
 }
 

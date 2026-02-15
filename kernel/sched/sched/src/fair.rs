@@ -143,11 +143,18 @@ impl CfsRunQueue {
     ///
     /// min_vruntime is monotonically increasing and tracks the minimum
     /// vruntime of all runnable tasks.
+    ///
+    /// — GraveShift: The running task was popped from the tree (on_rq=false),
+    /// so its vruntime must NOT clamp min_vruntime downward. Otherwise a low-
+    /// vruntime blocker (poll/nanosleep loop) holds min_vruntime back, starving
+    /// any task whose vruntime ran ahead while it was actually executing. Linux
+    /// CFS only uses curr->vruntime when curr->on_rq; we mirror that by using
+    /// curr_vruntime only when the tree is empty.
     pub fn update_min_vruntime(&mut self, curr_vruntime: u64) {
         let min_from_tree = self.tasks.peek().map(|Reverse(e)| e.vruntime);
 
         let new_min = match min_from_tree {
-            Some(tree_min) => tree_min.min(curr_vruntime),
+            Some(tree_min) => tree_min,
             None => curr_vruntime,
         };
 

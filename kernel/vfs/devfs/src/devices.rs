@@ -278,16 +278,10 @@ impl VnodeOps for ConsoleDevice {
     }
 
     fn write(&self, offset: u64, buf: &[u8]) -> VfsResult<usize> {
-        #[cfg(feature = "debug-console")]
-        dbg_serial("[CON] write() enter\n");
         // Delegate to the active VT device
         match get_console_backend() {
             Some(backend) => {
-                #[cfg(feature = "debug-console")]
-                dbg_serial("[CON] write() -> backend\n");
                 let r = backend.write(offset, buf);
-                #[cfg(feature = "debug-console")]
-                dbg_serial("[CON] write() <- backend done\n");
                 r
             }
             None => {

@@ -9,22 +9,17 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU16, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU16, AtomicU32, AtomicU64, Ordering};
 use spin::Mutex;
 
 use block::{BlockDevice, BlockDeviceInfo, BlockError, BlockResult};
 use mm_manager::mm;
 use mm_traits::FrameAllocator;
 
-/// VirtIO device status
-mod status {
-    pub const ACKNOWLEDGE: u8 = 1;
-    pub const DRIVER: u8 = 2;
-    pub const DRIVER_OK: u8 = 4;
-    pub const FEATURES_OK: u8 = 8;
-    pub const DEVICE_NEEDS_RESET: u8 = 64;
-    pub const FAILED: u8 = 128;
-}
+// — WireSaint: Shared virtio plumbing. No more copy-paste virtqueue séances.
+use virtio_core::status;
+use virtio_core::virtqueue::{desc_flags, VirtqDesc};
+use virtio_core::{phys_to_virt, virt_to_phys, Virtqueue};
 
 /// VirtIO block request types
 mod req_type {
@@ -95,300 +90,8 @@ struct VirtioBlkReqHeader {
     sector: u64,
 }
 
-/// VirtIO virtqueue descriptor
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Default)]
-struct VirtqDesc {
-    /// Physical address of buffer
-    addr: u64,
-    /// Length of buffer
-    len: u32,
-    /// Flags (NEXT, WRITE, INDIRECT)
-    flags: u16,
-    /// Next descriptor index (if NEXT flag set)
-    next: u16,
-}
-
-/// Virtqueue descriptor flags
-mod desc_flags {
-    pub const NEXT: u16 = 1;
-    pub const WRITE: u16 = 2;
-    pub const INDIRECT: u16 = 4;
-}
-
-/// VirtIO available ring
-#[repr(C)]
-struct VirtqAvail {
-    flags: u16,
-    idx: u16,
-    ring: [u16; 256],
-    used_event: u16,
-}
-
-/// VirtIO used ring element
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Default)]
-struct VirtqUsedElem {
-    id: u32,
-    len: u32,
-}
-
-/// VirtIO used ring
-#[repr(C)]
-struct VirtqUsed {
-    flags: u16,
-    idx: u16,
-    ring: [VirtqUsedElem; 256],
-    avail_event: u16,
-}
-
-/// Queue size (number of descriptors)
-const QUEUE_SIZE: usize = 256;
-
-/// Physical memory mapping base (same as mm-paging PHYS_MAP_BASE)
-const PHYS_MAP_BASE: u64 = 0xFFFF_8000_0000_0000;
-
-/// Convert physical address to virtual address
-#[inline]
-fn phys_to_virt(phys: u64) -> u64 {
-    phys + PHYS_MAP_BASE
-}
-
-/// Convert virtual address to physical address
-#[inline]
-fn virt_to_phys(virt: u64) -> u64 {
-    virt - PHYS_MAP_BASE
-}
-
-/// Virtqueue management structure
-struct Virtqueue {
-    /// Descriptor table (physical address)
-    desc_phys: u64,
-    /// Descriptor table (virtual address for kernel access)
-    desc: *mut VirtqDesc,
-    /// Available ring (physical address)
-    avail_phys: u64,
-    /// Available ring (virtual address)
-    avail: *mut VirtqAvail,
-    /// Used ring (physical address)
-    used_phys: u64,
-    /// Used ring (virtual address)
-    used: *mut VirtqUsed,
-    /// Number of descriptors
-    num: u16,
-    /// Free descriptor list head
-    free_head: u16,
-    /// Number of free descriptors
-    num_free: u16,
-    /// Last used index we processed
-    last_used_idx: u16,
-}
-
-impl Virtqueue {
-    /// Allocate and initialize a new virtqueue for modern VirtIO (MMIO)
-    ///
-    /// # Safety
-    /// Requires a working heap allocator.
-    unsafe fn new(num: u16) -> Option<Self> {
-        // Calculate sizes
-        // Descriptors: 16 bytes each
-        let desc_size = (num as usize) * core::mem::size_of::<VirtqDesc>();
-        // Available ring: 2 + 2 + 2*num + 2 (flags, idx, ring, used_event)
-        let avail_size = 6 + 2 * (num as usize);
-        // Used ring: 2 + 2 + 8*num + 2 (flags, idx, ring, avail_event)
-        let used_size = 6 + 8 * (num as usize);
-
-        // Allocate memory with proper alignment
-        // VirtIO requires specific alignment:
-        // - Descriptor table: 16 bytes
-        // - Available ring: 2 bytes
-        // - Used ring: 4 bytes
-        // We'll allocate a contiguous block with proper alignment
-        let total_size = desc_size + avail_size + used_size + 4096; // Extra for alignment
-        let layout = alloc::alloc::Layout::from_size_align(total_size, 4096).ok()?;
-        // SAFETY: Layout is valid and we check for null
-        let ptr = unsafe { alloc::alloc::alloc_zeroed(layout) };
-        if ptr.is_null() {
-            return None;
-        }
-
-        // Calculate addresses within the allocation
-        let desc = ptr as *mut VirtqDesc;
-        // SAFETY: ptr is valid and desc_size is within our allocation
-        let avail = unsafe { ptr.add(desc_size) } as *mut VirtqAvail;
-        // Used ring needs 4-byte alignment, round up
-        let used_offset = ((desc_size + avail_size) + 3) & !3;
-        // SAFETY: ptr is valid and used_offset is within our allocation
-        let used = unsafe { ptr.add(used_offset) } as *mut VirtqUsed;
-
-        // Calculate physical addresses
-        let desc_phys = virt_to_phys(desc as u64);
-        let avail_phys = virt_to_phys(avail as u64);
-        let used_phys = virt_to_phys(used as u64);
-
-        // Initialize free list - chain all descriptors together
-        for i in 0..num {
-            // SAFETY: desc is valid and i is within bounds
-            unsafe { (*desc.add(i as usize)).next = i + 1 };
-        }
-
-        Some(Virtqueue {
-            desc_phys,
-            desc,
-            avail_phys,
-            avail,
-            used_phys,
-            used,
-            num,
-            free_head: 0,
-            num_free: num,
-            last_used_idx: 0,
-        })
-    }
-
-    /// Allocate and initialize a new virtqueue for legacy VirtIO PCI
-    ///
-    /// Legacy VirtIO requires all three rings in a single contiguous region with
-    /// the used ring starting at a page boundary.
-    ///
-    /// Layout:
-    /// - Descriptor table: at offset 0, size = 16 * num
-    /// - Available ring: immediately after descriptors, size = 6 + 2 * num
-    /// - Padding to next page boundary
-    /// - Used ring: at page-aligned offset, size = 6 + 8 * num
-    ///
-    /// # Safety
-    /// Requires a working memory manager (call mm_manager::init_global first).
-    unsafe fn new_legacy(num: u16) -> Option<Self> {
-        // Calculate sizes
-        let desc_size = (num as usize) * core::mem::size_of::<VirtqDesc>();
-        let avail_size = 6 + 2 * (num as usize);
-        let used_size = 6 + 8 * (num as usize);
-
-        // For legacy, used ring must be at page boundary
-        // Calculate offset: round up (desc_size + avail_size) to page boundary
-        let avail_end = desc_size + avail_size;
-        let used_offset = (avail_end + 4095) & !4095; // Round up to 4096
-
-        let total_size = used_offset + used_size;
-        let num_pages = (total_size + 4095) / 4096;
-
-        // Allocate physical frames using the frame allocator
-        // This gives us a known physical address that we can use for DMA
-        let phys_addr = mm().alloc_contiguous(num_pages).ok()?;
-        let phys_base = phys_addr.as_u64();
-
-        // Access the physical memory through the physical map
-        let virt_base = phys_to_virt(phys_base);
-        let ptr = virt_base as *mut u8;
-
-        // Zero the memory
-        unsafe {
-            core::ptr::write_bytes(ptr, 0, num_pages * 4096);
-        }
-
-        // Calculate addresses within the allocation
-        let desc = ptr as *mut VirtqDesc;
-        let avail = unsafe { ptr.add(desc_size) } as *mut VirtqAvail;
-        let used = unsafe { ptr.add(used_offset) } as *mut VirtqUsed;
-
-        // Physical addresses are straightforward since we allocated physical frames
-        let desc_phys = phys_base;
-        let avail_phys = phys_base + desc_size as u64;
-        let used_phys = phys_base + used_offset as u64;
-
-        // Initialize free list - chain all descriptors together
-        for i in 0..num {
-            unsafe { (*desc.add(i as usize)).next = i + 1 };
-        }
-
-        Some(Virtqueue {
-            desc_phys,
-            desc,
-            avail_phys,
-            avail,
-            used_phys,
-            used,
-            num,
-            free_head: 0,
-            num_free: num,
-            last_used_idx: 0,
-        })
-    }
-
-    /// Allocate a descriptor from the free list
-    fn alloc_desc(&mut self) -> Option<u16> {
-        if self.num_free == 0 {
-            return None;
-        }
-        let idx = self.free_head;
-        unsafe {
-            self.free_head = (*self.desc.add(idx as usize)).next;
-        }
-        self.num_free -= 1;
-        Some(idx)
-    }
-
-    /// Free a descriptor chain starting at idx
-    fn free_chain(&mut self, mut idx: u16) {
-        loop {
-            unsafe {
-                let desc = &mut *self.desc.add(idx as usize);
-                let next = desc.next;
-                let has_next = desc.flags & desc_flags::NEXT != 0;
-
-                // Add to free list
-                desc.next = self.free_head;
-                self.free_head = idx;
-                self.num_free += 1;
-
-                if !has_next {
-                    break;
-                }
-                idx = next;
-            }
-        }
-    }
-
-    /// Add a descriptor chain to the available ring
-    fn add_available(&mut self, head: u16) {
-        unsafe {
-            let avail = &mut *self.avail;
-            let idx = avail.idx as usize % self.num as usize;
-            avail.ring[idx] = head;
-            // Memory barrier to ensure descriptor is visible before idx update
-            core::sync::atomic::fence(Ordering::Release);
-            avail.idx = avail.idx.wrapping_add(1);
-        }
-    }
-
-    /// Check if there are completed requests in the used ring
-    fn has_completed(&self) -> bool {
-        unsafe {
-            let used = &*self.used;
-            // Memory barrier to ensure we see the latest idx
-            core::sync::atomic::fence(Ordering::Acquire);
-            used.idx != self.last_used_idx
-        }
-    }
-
-    /// Get next completed request (descriptor chain head)
-    fn pop_used(&mut self) -> Option<(u16, u32)> {
-        unsafe {
-            let used = &*self.used;
-            core::sync::atomic::fence(Ordering::Acquire);
-            if used.idx == self.last_used_idx {
-                return None;
-            }
-
-            let idx = self.last_used_idx as usize % self.num as usize;
-            let elem = used.ring[idx];
-            self.last_used_idx = self.last_used_idx.wrapping_add(1);
-
-            Some((elem.id as u16, elem.len))
-        }
-    }
-}
+// — WireSaint: Queue size constant lives here so DMA buffer math stays sane
+const QUEUE_SIZE: usize = virtio_core::virtqueue::MAX_QUEUE_SIZE;
 
 /// VirtIO block device
 pub struct VirtioBlk {
@@ -586,30 +289,31 @@ impl VirtioBlk {
             // Set queue size
             core::ptr::write_volatile((mmio_base + mmio::QUEUE_NUM) as *mut u32, queue_size as u32);
 
-            // Set queue addresses
+            // — TorqueJax: Set queue addresses via the public getter
+            let (desc_phys, avail_phys, used_phys) = queue.physical_addresses();
             core::ptr::write_volatile(
                 (mmio_base + mmio::QUEUE_DESC_LOW) as *mut u32,
-                queue.desc_phys as u32,
+                desc_phys as u32,
             );
             core::ptr::write_volatile(
                 (mmio_base + mmio::QUEUE_DESC_HIGH) as *mut u32,
-                (queue.desc_phys >> 32) as u32,
+                (desc_phys >> 32) as u32,
             );
             core::ptr::write_volatile(
                 (mmio_base + mmio::QUEUE_AVAIL_LOW) as *mut u32,
-                queue.avail_phys as u32,
+                avail_phys as u32,
             );
             core::ptr::write_volatile(
                 (mmio_base + mmio::QUEUE_AVAIL_HIGH) as *mut u32,
-                (queue.avail_phys >> 32) as u32,
+                (avail_phys >> 32) as u32,
             );
             core::ptr::write_volatile(
                 (mmio_base + mmio::QUEUE_USED_LOW) as *mut u32,
-                queue.used_phys as u32,
+                used_phys as u32,
             );
             core::ptr::write_volatile(
                 (mmio_base + mmio::QUEUE_USED_HIGH) as *mut u32,
-                (queue.used_phys >> 32) as u32,
+                (used_phys >> 32) as u32,
             );
 
             // Enable queue
@@ -700,17 +404,18 @@ impl VirtioBlk {
         // Get DMA-safe data bounce buffer
         let (bounce_ptr, bounce_phys) = buffers.data_buffer(slot);
 
-        // Build descriptor chain
+        // — TorqueJax: Build descriptor chain via write_desc. No more raw pointer
+        // arithmetic into virtqueue internals — that's virtio-core's problem now.
         unsafe {
-            // Header descriptor (device-readable)
-            let hdr = &mut *queue.desc.add(desc_header as usize);
-            hdr.addr = header_phys;
-            hdr.len = core::mem::size_of::<VirtioBlkReqHeader>() as u32;
-
             if let (Some(desc_data), Some(data)) = (desc_data, data.as_ref()) {
-                // Has data buffer - use bounce buffer for DMA safety
-                hdr.flags = desc_flags::NEXT;
-                hdr.next = desc_data;
+                // Header → Data → Status chain
+                queue.write_desc(
+                    desc_header,
+                    header_phys,
+                    core::mem::size_of::<VirtioBlkReqHeader>() as u32,
+                    desc_flags::NEXT,
+                    desc_data,
+                );
 
                 // For writes (OUT), copy data from caller buffer to bounce buffer
                 if req_type == req_type::OUT {
@@ -718,33 +423,30 @@ impl VirtioBlk {
                     core::ptr::copy_nonoverlapping(data.as_ptr(), bounce_ptr, copy_len);
                 }
 
-                // Data descriptor - use bounce buffer physical address
-                let dat = &mut *queue.desc.add(desc_data as usize);
-                dat.addr = bounce_phys;
-                dat.len = data.len().min(SECTOR_SIZE as usize) as u32;
-                dat.flags = desc_flags::NEXT;
+                let mut data_flags = desc_flags::NEXT;
                 if req_type == req_type::IN {
-                    dat.flags |= desc_flags::WRITE; // Device writes to this buffer
+                    data_flags |= desc_flags::WRITE;
                 }
-                dat.next = desc_status;
+                queue.write_desc(
+                    desc_data,
+                    bounce_phys,
+                    data.len().min(SECTOR_SIZE) as u32,
+                    data_flags,
+                    desc_status,
+                );
 
-                // Status descriptor (device-writable)
-                let stat = &mut *queue.desc.add(desc_status as usize);
-                stat.addr = status_phys;
-                stat.len = 1;
-                stat.flags = desc_flags::WRITE;
-                stat.next = 0;
+                queue.write_desc(desc_status, status_phys, 1, desc_flags::WRITE, 0);
             } else {
-                // No data buffer (e.g., flush)
-                hdr.flags = desc_flags::NEXT;
-                hdr.next = desc_status;
+                // Header → Status chain (no data, e.g. flush)
+                queue.write_desc(
+                    desc_header,
+                    header_phys,
+                    core::mem::size_of::<VirtioBlkReqHeader>() as u32,
+                    desc_flags::NEXT,
+                    desc_status,
+                );
 
-                // Status descriptor (device-writable)
-                let stat = &mut *queue.desc.add(desc_status as usize);
-                stat.addr = status_phys;
-                stat.len = 1;
-                stat.flags = desc_flags::WRITE;
-                stat.next = 0;
+                queue.write_desc(desc_status, status_phys, 1, desc_flags::WRITE, 0);
             }
         }
 
@@ -1044,10 +746,9 @@ impl VirtioBlk {
             // SAFETY: Requires working heap allocator
             let queue = unsafe { Virtqueue::new_legacy(queue_size)? };
 
-            // Legacy virtio uses page-aligned queue at single physical address
-            // The queue PFN (Page Frame Number) is written to the device
-            // For legacy: all three rings must be contiguous with used at page boundary
-            let queue_pfn = (queue.desc_phys / 4096) as u32;
+            // — TorqueJax: Legacy virtio PFN from the shared Virtqueue getter
+            let (desc_phys, _, _) = queue.physical_addresses();
+            let queue_pfn = (desc_phys / 4096) as u32;
             outl(io_base + pci_io::QUEUE_ADDRESS, queue_pfn);
 
             // Set DRIVER_OK
@@ -1208,13 +909,11 @@ impl PciDriver for VirtioBlkDriver {
     }
 
     unsafe fn remove(&self, _dev: &pci::PciDevice, binding_data: DriverBindingData) {
-        // Reconstruct device name and unregister
-        let name_ptr = binding_data.as_ptr::<alloc::string::String>();
+        // — GraveShift: Rust 2024 wants unsafe blocks inside unsafe fn. Fine.
+        let name_ptr = unsafe { binding_data.as_ptr::<alloc::string::String>() };
         if !name_ptr.is_null() {
-            let name = alloc::boxed::Box::from_raw(name_ptr);
+            let name = unsafe { alloc::boxed::Box::from_raw(name_ptr) };
             let _ = block::unregister_device(&name);
-            // Device (VirtioBlk) is dropped automatically by block subsystem
-            // Virtqueue and DMA buffers are freed by VirtioBlk's Drop implementation
         }
     }
 }

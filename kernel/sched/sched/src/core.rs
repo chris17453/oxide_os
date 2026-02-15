@@ -498,6 +498,7 @@ pub fn pick_next_task() -> Option<Pid> {
             if should_requeue {
                 rq.put_prev_task(prev_pid);
             }
+
         }
 
         // Pop the next task (removes from run queue, sets on_rq = false)

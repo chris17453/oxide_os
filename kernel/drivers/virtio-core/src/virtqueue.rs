@@ -4,7 +4,6 @@
 //! Eliminates ~500 LOC duplication per VirtIO driver.
 //! — WireSaint: one ring to manage them all, in the darkness bind them
 
-use alloc::alloc::{alloc, alloc_zeroed, Layout};
 use core::sync::atomic::Ordering;
 use mm_manager::mm;
 use mm_traits::FrameAllocator;
@@ -94,13 +93,16 @@ pub struct Virtqueue {
 }
 
 impl Virtqueue {
-    /// Allocate and initialize a new virtqueue for modern VirtIO (MMIO)
+    /// Allocate and initialize a new virtqueue for modern VirtIO (PCI/MMIO)
     ///
-    /// Allocates separate memory regions for descriptor table, available ring,
-    /// and used ring using the kernel heap allocator.
+    /// Uses the frame allocator for DMA-safe physical addresses. The kernel heap
+    /// lives at 0xFFFF_FFFF_8xxx_xxxx (kernel text region) — virt_to_phys() on
+    /// heap pointers yields ~128TB bogus addresses. Frame allocator gives us
+    /// memory in the PHYS_MAP region where virt_to_phys() actually works.
+    /// — WireSaint: the heap was never meant for DMA. Stack pointers lie too.
     ///
     /// # Safety
-    /// Requires a working heap allocator.
+    /// Requires a working memory manager (call mm_manager::init_global first).
     pub unsafe fn new(num: u16) -> Option<Self> {
         // Calculate sizes
         // Descriptors: 16 bytes each
@@ -110,33 +112,34 @@ impl Virtqueue {
         // Used ring: 2 + 2 + 8*num + 2 (flags, idx, ring, avail_event)
         let used_size = 6 + 8 * (num as usize);
 
-        // Allocate memory with proper alignment
-        // VirtIO requires specific alignment:
-        // - Descriptor table: 16 bytes
-        // - Available ring: 2 bytes
-        // - Used ring: 4 bytes
-        let total_size = desc_size + avail_size + used_size + 4096; // Extra for alignment
-        let layout = Layout::from_size_align(total_size, 4096).ok()?;
+        // Used ring needs 4-byte alignment, round up
+        let used_offset = ((desc_size + avail_size) + 3) & !3;
+        let total_size = used_offset + used_size;
+        let num_pages = (total_size + 4095) / 4096;
 
-        // SAFETY: Layout is valid and we check for null
-        let ptr = unsafe { alloc_zeroed(layout) };
-        if ptr.is_null() {
-            return None;
+        // — WireSaint: frame allocator gives physical frames with known addresses.
+        // DMA devices need real physical addresses, not kernel virtual illusions.
+        let phys_addr = mm().alloc_contiguous(num_pages).ok()?;
+        let phys_base = phys_addr.as_u64();
+
+        // Access through the physical map where virt_to_phys() is an identity op
+        let virt_base = phys_to_virt(phys_base);
+        let ptr = virt_base as *mut u8;
+
+        // Zero the memory
+        unsafe {
+            core::ptr::write_bytes(ptr, 0, num_pages * 4096);
         }
 
         // Calculate addresses within the allocation
         let desc = ptr as *mut VirtqDesc;
-        // SAFETY: ptr is valid and desc_size is within our allocation
         let avail = unsafe { ptr.add(desc_size) } as *mut VirtqAvail;
-        // Used ring needs 4-byte alignment, round up
-        let used_offset = ((desc_size + avail_size) + 3) & !3;
-        // SAFETY: ptr is valid and used_offset is within our allocation
         let used = unsafe { ptr.add(used_offset) } as *mut VirtqUsed;
 
-        // Calculate physical addresses
-        let desc_phys = virt_to_phys(desc as u64);
-        let avail_phys = virt_to_phys(avail as u64);
-        let used_phys = virt_to_phys(used as u64);
+        // Physical addresses are straightforward — we allocated physical frames
+        let desc_phys = phys_base;
+        let avail_phys = phys_base + desc_size as u64;
+        let used_phys = phys_base + used_offset as u64;
 
         // Initialize free list - chain all descriptors together
         for i in 0..num {

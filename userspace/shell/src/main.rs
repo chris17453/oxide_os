@@ -530,8 +530,9 @@ fn main() -> i32 {
     // Child processes will inherit default SIGINT behavior
     signal(SIGINT, SIG_IGN);
 
-    // Enable visible blinking cursor if terminal supports it
-    prints("\x1b[?25h\x1b[?12h");
+    // — GraveShift: cursor escape codes removed. The GOP framebuffer shows the
+    // terminal cursor via paint_cursor() — no need for DEC Private Mode toggles
+    // that can trigger blink timer contention with the TERMINAL spinlock.
 
     // Register tab completion callback with readline
     unsafe {

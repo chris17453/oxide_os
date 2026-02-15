@@ -88,6 +88,7 @@ run-fedora:
 		-device intel-hda \
 		-device hda-duplex,audiodev=snd0 \
 		-serial stdio \
+		-monitor unix:$(TARGET_DIR)/qemu-monitor.sock,server,nowait \
 		-s \
 		-no-reboot
 

@@ -8,6 +8,7 @@ debug-input = []
 
 [dependencies]
 input = { path = "../../../input/input" }
-# TODO: Add driver-core once circular dependency is resolved
-# (ps2 → driver-core → pci → arch-x86_64 → ps2)
+# — SableWire: driver-traits has ZERO deps, breaking the circular chain
+# (ps2 → driver-core → pci → arch-x86_64 → ps2 was the old curse)
+driver-traits = { workspace = true }
 spin = "0.9"

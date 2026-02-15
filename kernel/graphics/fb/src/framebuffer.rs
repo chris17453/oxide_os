@@ -392,6 +392,17 @@ impl Framebuffer for LinearFramebuffer {
         self.info.size
     }
 
+    /// — GlassSignal: GPU-backed framebuffers need explicit flush commands.
+    /// Without this, VirtIO-GPU's QEMU display stays frozen at UEFI's last frame.
+    fn flush(&self) {
+        crate::call_flush_callback(0, 0, self.info.width, self.info.height);
+    }
+
+    /// — GlassSignal: surgical flush — only the pixels that changed reach the wire
+    fn flush_region(&self, x: u32, y: u32, w: u32, h: u32) {
+        crate::call_flush_callback(x, y, w, h);
+    }
+
     fn fill_rect(&self, x: u32, y: u32, w: u32, h: u32, color: Color) {
         let bpp = self.format().bytes_per_pixel();
         let stride = self.stride();

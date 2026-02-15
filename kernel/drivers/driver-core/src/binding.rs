@@ -7,38 +7,8 @@ use alloc::vec::Vec;
 use pci::PciAddress;
 use spin::Mutex;
 
-/// Opaque driver-specific binding data
-///
-/// Drivers return this from probe() and receive it back in remove().
-/// Typically stores a pointer to the device instance (e.g., Arc<VirtioNet>).
-#[derive(Debug, Clone, Copy)]
-pub struct DriverBindingData {
-    /// Opaque pointer value
-    data: usize,
-}
-
-impl DriverBindingData {
-    /// Create binding data from a raw pointer
-    ///
-    /// # Safety
-    /// Pointer must remain valid until remove() is called.
-    pub fn new(data: usize) -> Self {
-        Self { data }
-    }
-
-    /// Get the raw pointer value
-    pub fn as_usize(&self) -> usize {
-        self.data
-    }
-
-    /// Convert to typed pointer
-    ///
-    /// # Safety
-    /// Type must match what was originally stored.
-    pub unsafe fn as_ptr<T>(&self) -> *mut T {
-        self.data as *mut T
-    }
-}
+// — WireSaint: DriverBindingData lives in driver-traits now (zero deps)
+use driver_traits::DriverBindingData;
 
 /// Device binding record
 #[derive(Debug, Clone)]

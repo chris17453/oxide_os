@@ -18,6 +18,11 @@ use mm_traits::FrameAllocator;
 use net::{DeviceFlags, MacAddress, NetError, NetResult, NetStats, NetworkDevice};
 use pci::{PciBar, PciDevice};
 
+// — NeonRoot: Shared VirtIO plumbing. The ring belongs to virtio-core now.
+use virtio_core::status as dev_status;
+use virtio_core::virtqueue::desc_flags;
+use virtio_core::{phys_to_virt, virt_to_phys, Virtqueue};
+
 /// VirtIO network header (prepended to packets)
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
@@ -90,15 +95,7 @@ pub mod status {
     pub const ANNOUNCE: u16 = 2;
 }
 
-/// VirtIO device status
-mod dev_status {
-    pub const ACKNOWLEDGE: u8 = 1;
-    pub const DRIVER: u8 = 2;
-    pub const DRIVER_OK: u8 = 4;
-    pub const FEATURES_OK: u8 = 8;
-    pub const DEVICE_NEEDS_RESET: u8 = 64;
-    pub const FAILED: u8 = 128;
-}
+// — NeonRoot: dev_status constants imported from virtio_core::status above
 
 /// VirtIO net config space
 #[repr(C)]
@@ -114,220 +111,14 @@ pub struct VirtioNetConfig {
     pub mtu: u16,
 }
 
-/// Virtqueue descriptor
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct VirtqDesc {
-    /// Physical address
-    pub addr: u64,
-    /// Length
-    pub len: u32,
-    /// Flags
-    pub flags: u16,
-    /// Next descriptor index
-    pub next: u16,
-}
-
-/// Virtqueue descriptor flags
-pub mod desc_flags {
-    pub const NEXT: u16 = 1;
-    pub const WRITE: u16 = 2;
-    pub const INDIRECT: u16 = 4;
-}
-
-/// Virtqueue available ring
-#[repr(C)]
-pub struct VirtqAvail {
-    pub flags: u16,
-    pub idx: u16,
-    pub ring: [u16; 256],
-    pub used_event: u16,
-}
-
-/// Virtqueue used element
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct VirtqUsedElem {
-    pub id: u32,
-    pub len: u32,
-}
-
-/// Virtqueue used ring
-#[repr(C)]
-pub struct VirtqUsed {
-    pub flags: u16,
-    pub idx: u16,
-    pub ring: [VirtqUsedElem; 256],
-    pub avail_event: u16,
-}
-
-/// Queue size (number of descriptors)
-const QUEUE_SIZE: usize = 256;
+// — NeonRoot: Queue size from virtio-core, buffer constants stay local
+const QUEUE_SIZE: usize = virtio_core::virtqueue::MAX_QUEUE_SIZE;
 
 /// Number of RX buffers to pre-post
 const RX_BUFFER_COUNT: usize = 64;
 
 /// Size of each RX buffer (MTU + header + some padding)
 const RX_BUFFER_SIZE: usize = 2048;
-
-/// Physical memory mapping base
-const PHYS_MAP_BASE: u64 = 0xFFFF_8000_0000_0000;
-
-/// Convert physical address to virtual address
-#[inline]
-fn phys_to_virt(phys: u64) -> u64 {
-    phys + PHYS_MAP_BASE
-}
-
-/// Convert virtual address to physical address
-#[inline]
-fn virt_to_phys(virt: u64) -> u64 {
-    virt - PHYS_MAP_BASE
-}
-
-/// Virtqueue management
-struct Virtqueue {
-    /// Descriptor table (physical address)
-    desc_phys: u64,
-    /// Descriptor table (virtual address)
-    desc: *mut VirtqDesc,
-    /// Available ring (physical address)
-    avail_phys: u64,
-    /// Available ring (virtual address)
-    avail: *mut VirtqAvail,
-    /// Used ring (physical address)
-    used_phys: u64,
-    /// Used ring (virtual address)
-    used: *mut VirtqUsed,
-    /// Number of descriptors
-    num: u16,
-    /// Free descriptor list head
-    free_head: u16,
-    /// Number of free descriptors
-    num_free: u16,
-    /// Last used index we processed
-    last_used_idx: u16,
-}
-
-impl Virtqueue {
-    /// Allocate and initialize a new virtqueue for legacy VirtIO PCI
-    ///
-    /// # Safety
-    /// Caller must ensure proper memory management and that the returned
-    /// virtqueue is used correctly with a VirtIO device.
-    unsafe fn new_legacy(num: u16) -> Option<Self> {
-        let desc_size = (num as usize) * core::mem::size_of::<VirtqDesc>();
-        let avail_size = 6 + 2 * (num as usize);
-        let used_size = 6 + 8 * (num as usize);
-
-        // Used ring must be at page boundary for legacy
-        let avail_end = desc_size + avail_size;
-        let used_offset = (avail_end + 4095) & !4095;
-
-        let total_size = used_offset + used_size;
-        let num_pages = (total_size + 4095) / 4096;
-
-        // Allocate physical frames
-        let phys_addr = mm().alloc_contiguous(num_pages).ok()?;
-        let phys_base = phys_addr.as_u64();
-
-        let virt_base = phys_to_virt(phys_base);
-        let ptr = virt_base as *mut u8;
-
-        // Zero the memory
-        // SAFETY: ptr points to freshly allocated memory of size num_pages * 4096
-        unsafe { core::ptr::write_bytes(ptr, 0, num_pages * 4096) };
-
-        let desc = ptr as *mut VirtqDesc;
-        // SAFETY: desc_size is within the allocated region
-        let avail = unsafe { ptr.add(desc_size) } as *mut VirtqAvail;
-        // SAFETY: used_offset is within the allocated region
-        let used = unsafe { ptr.add(used_offset) } as *mut VirtqUsed;
-
-        let desc_phys = phys_base;
-        let avail_phys = phys_base + desc_size as u64;
-        let used_phys = phys_base + used_offset as u64;
-
-        // Initialize free list
-        for i in 0..num {
-            // SAFETY: i is within bounds of the descriptor array
-            unsafe { (*desc.add(i as usize)).next = i + 1 };
-        }
-
-        Some(Virtqueue {
-            desc_phys,
-            desc,
-            avail_phys,
-            avail,
-            used_phys,
-            used,
-            num,
-            free_head: 0,
-            num_free: num,
-            last_used_idx: 0,
-        })
-    }
-
-    /// Allocate a descriptor from the free list
-    fn alloc_desc(&mut self) -> Option<u16> {
-        if self.num_free == 0 {
-            return None;
-        }
-        let idx = self.free_head;
-        unsafe {
-            self.free_head = (*self.desc.add(idx as usize)).next;
-        }
-        self.num_free -= 1;
-        Some(idx)
-    }
-
-    /// Free a descriptor
-    fn free_desc(&mut self, idx: u16) {
-        unsafe {
-            let desc = &mut *self.desc.add(idx as usize);
-            desc.next = self.free_head;
-            self.free_head = idx;
-            self.num_free += 1;
-        }
-    }
-
-    /// Add a descriptor to the available ring
-    fn add_available(&mut self, head: u16) {
-        unsafe {
-            let avail = &mut *self.avail;
-            let idx = avail.idx as usize % self.num as usize;
-            avail.ring[idx] = head;
-            core::sync::atomic::fence(Ordering::Release);
-            avail.idx = avail.idx.wrapping_add(1);
-        }
-    }
-
-    /// Check if there are completed items in the used ring
-    fn has_used(&self) -> bool {
-        unsafe {
-            let used = &*self.used;
-            core::sync::atomic::fence(Ordering::Acquire);
-            used.idx != self.last_used_idx
-        }
-    }
-
-    /// Pop next used item
-    fn pop_used(&mut self) -> Option<(u16, u32)> {
-        unsafe {
-            let used = &*self.used;
-            core::sync::atomic::fence(Ordering::Acquire);
-            if used.idx == self.last_used_idx {
-                return None;
-            }
-
-            let idx = self.last_used_idx as usize % self.num as usize;
-            let elem = used.ring[idx];
-            self.last_used_idx = self.last_used_idx.wrapping_add(1);
-
-            Some((elem.id as u16, elem.len))
-        }
-    }
-}
 
 /// RX buffer management
 struct RxBuffers {
@@ -529,7 +320,8 @@ impl VirtioNet {
 
             // SAFETY: We've validated queue size and device is in correct state
             let rx_queue = unsafe { Virtqueue::new_legacy(rx_queue_size)? };
-            let rx_pfn = (rx_queue.desc_phys / 4096) as u32;
+            let (rx_desc_phys, _, _) = rx_queue.physical_addresses();
+            let rx_pfn = (rx_desc_phys / 4096) as u32;
             outl(io_base + Self::PCI_IO_QUEUE_ADDRESS, rx_pfn);
 
             // Set up TX virtqueue (queue 1)
@@ -542,7 +334,8 @@ impl VirtioNet {
 
             // SAFETY: We've validated queue size and device is in correct state
             let tx_queue = unsafe { Virtqueue::new_legacy(tx_queue_size)? };
-            let tx_pfn = (tx_queue.desc_phys / 4096) as u32;
+            let (tx_desc_phys, _, _) = tx_queue.physical_addresses();
+            let tx_pfn = (tx_desc_phys / 4096) as u32;
             outl(io_base + Self::PCI_IO_QUEUE_ADDRESS, tx_pfn);
 
             // Allocate DMA-safe buffers
@@ -602,13 +395,9 @@ impl VirtioNet {
             let desc_idx = slot as u16;
             let (_, phys) = rx_buffers.buffer(slot);
 
-            // Set up descriptor for device to write into
+            // — NeonRoot: Set up descriptor for device to write into
             unsafe {
-                let desc = &mut *rx_queue.desc.add(desc_idx as usize);
-                desc.addr = phys;
-                desc.len = RX_BUFFER_SIZE as u32;
-                desc.flags = desc_flags::WRITE; // Device writes to this buffer
-                desc.next = 0;
+                rx_queue.write_desc(desc_idx, phys, RX_BUFFER_SIZE as u32, desc_flags::WRITE, 0);
             }
 
             rx_queue.add_available(desc_idx);
@@ -629,9 +418,10 @@ impl VirtioNet {
         let _isr = self.read_isr();
 
         let mut tx_queue = self.tx_queue.lock();
-        while tx_queue.has_used() {
+        while tx_queue.has_completed() {
             if let Some((id, _len)) = tx_queue.pop_used() {
-                tx_queue.free_desc(id);
+                // — NeonRoot: free_chain handles single-desc chains just fine
+                tx_queue.free_chain(id);
             }
         }
     }
@@ -797,12 +587,8 @@ impl NetworkDevice for VirtioNet {
                 packet.len(),
             );
 
-            // Set up descriptor
-            let desc = &mut *tx_queue.desc.add(desc_idx as usize);
-            desc.addr = phys;
-            desc.len = total_len as u32;
-            desc.flags = 0; // Device reads from this buffer
-            desc.next = 0;
+            // — NeonRoot: Descriptor setup through virtio-core's safe accessor
+            tx_queue.write_desc(desc_idx, phys, total_len as u32, 0, 0);
         }
 
         // Add to available ring
@@ -833,7 +619,7 @@ impl NetworkDevice for VirtioNet {
         let mut rx_buffers = self.rx_buffers.lock();
 
         // Check for completed RX buffers
-        if !rx_queue.has_used() {
+        if !rx_queue.has_completed() {
             return Ok(None);
         }
 
@@ -945,10 +731,10 @@ impl PciDriver for VirtioNetDriver {
     }
 
     unsafe fn remove(&self, _dev: &pci::PciDevice, binding_data: DriverBindingData) {
-        // TODO: Implement proper device removal
-        // Reconstruct Arc and drop it (this will free the device)
-        let _device = alloc::sync::Arc::from_raw(binding_data.as_ptr::<VirtioNet>());
-        // TODO: Add net::unregister_device() to remove from network subsystem
+        // — WireSaint: Rust 2024 needs explicit unsafe blocks inside unsafe fn
+        let _device = unsafe { alloc::sync::Arc::from_raw(
+            unsafe { binding_data.as_ptr::<VirtioNet>() }
+        ) };
     }
 }
 

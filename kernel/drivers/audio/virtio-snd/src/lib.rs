@@ -19,10 +19,10 @@ use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use pci::{PciDevice, VirtioPciTransport};
 use spin::Mutex;
-
-/// Physical memory map base — DMA descriptors need real silicon addresses
-/// — EchoFrame: sound travels through physics, not virtual memory
-const PHYS_MAP_BASE: u64 = 0xFFFF_8000_0000_0000;
+/// — EchoFrame: shared virtio plumbing — one crate to carry the signal chain
+use virtio_core::status as dev_status;
+use virtio_core::virtqueue::desc_flags;
+use virtio_core::{phys_to_virt, virt_to_phys, Virtqueue};
 
 /// VirtIO sound control commands
 mod cmd {
@@ -180,12 +180,7 @@ const VIRTIO_MMIO_QUEUE_USED_LOW: usize = 0x0a0;
 const VIRTIO_MMIO_QUEUE_USED_HIGH: usize = 0x0a4;
 const VIRTIO_MMIO_CONFIG: usize = 0x100;
 
-/// VirtIO status bits
-const VIRTIO_STATUS_ACKNOWLEDGE: u32 = 1;
-const VIRTIO_STATUS_DRIVER: u32 = 2;
-const VIRTIO_STATUS_FEATURES_OK: u32 = 8;
-const VIRTIO_STATUS_DRIVER_OK: u32 = 4;
-const VIRTIO_STATUS_FAILED: u32 = 128;
+/// — EchoFrame: device status bits delegated to virtio-core — no more copy-paste liturgy
 
 /// Queue indices
 const CONTROLQ: u32 = 0;
@@ -193,42 +188,8 @@ const EVENTQ: u32 = 1;
 const TXQ: u32 = 2;
 const RXQ: u32 = 3;
 
-/// Descriptor flags
-const VIRTQ_DESC_F_NEXT: u16 = 1;
-const VIRTQ_DESC_F_WRITE: u16 = 2;
-
-/// Virtqueue descriptor
-#[repr(C)]
-struct VirtqDesc {
-    addr: u64,
-    len: u32,
-    flags: u16,
-    next: u16,
-}
-
-/// Virtqueue available ring
-#[repr(C)]
-struct VirtqAvail {
-    flags: u16,
-    idx: u16,
-    ring: [u16; 256],
-}
-
-/// Virtqueue used element
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct VirtqUsedElem {
-    id: u32,
-    len: u32,
-}
-
-/// Virtqueue used ring
-#[repr(C)]
-struct VirtqUsed {
-    flags: u16,
-    idx: u16,
-    ring: [VirtqUsedElem; 256],
-}
+/// — EchoFrame: descriptor flags and ring structs live in virtio-core now —
+/// no more hand-rolled VirtqDesc nightmares in every driver
 
 /// VirtIO sound configuration
 #[repr(C)]
@@ -247,34 +208,20 @@ struct StreamInfo {
     rates: u64,
 }
 
+/// — EchoFrame: queue size inherits from the shared virtqueue spec — 256 slots of sonic potential
+const QUEUE_SIZE: usize = virtio_core::virtqueue::MAX_QUEUE_SIZE;
+
 /// VirtIO sound device
+/// — EchoFrame: the whole audio pipeline, wired through shared virtqueues now
 pub struct VirtioSnd {
     /// MMIO base address (0 when using PCI transport)
     mmio_base: usize,
     /// PCI transport (None for MMIO mode)
     transport: Option<VirtioPciTransport>,
-    /// Control queue descriptors
-    ctrl_desc: *mut VirtqDesc,
-    /// Control queue available
-    ctrl_avail: *mut VirtqAvail,
-    /// Control queue used
-    ctrl_used: *mut VirtqUsed,
-    /// TX queue descriptors
-    tx_desc: *mut VirtqDesc,
-    /// TX queue available
-    tx_avail: *mut VirtqAvail,
-    /// TX queue used
-    tx_used: *mut VirtqUsed,
-    /// Queue size
-    queue_size: u16,
-    /// Next control descriptor
-    ctrl_next: u16,
-    /// Last used control index
-    ctrl_last_used: u16,
-    /// Next TX descriptor
-    tx_next: u16,
-    /// Last used TX index
-    tx_last_used: u16,
+    /// Control virtqueue — shared infrastructure, no more raw pointer rodeos
+    ctrl_queue: Option<Virtqueue>,
+    /// TX virtqueue — audio data flows through here
+    tx_queue: Option<Virtqueue>,
     /// Number of streams
     num_streams: u32,
     /// Stream info
@@ -308,17 +255,8 @@ impl VirtioSnd {
         Some(VirtioSnd {
             mmio_base: 0,
             transport: Some(transport),
-            ctrl_desc: core::ptr::null_mut(),
-            ctrl_avail: core::ptr::null_mut(),
-            ctrl_used: core::ptr::null_mut(),
-            tx_desc: core::ptr::null_mut(),
-            tx_avail: core::ptr::null_mut(),
-            tx_used: core::ptr::null_mut(),
-            queue_size: 0,
-            ctrl_next: 0,
-            ctrl_last_used: 0,
-            tx_next: 0,
-            tx_last_used: 0,
+            ctrl_queue: None,
+            tx_queue: None,
             num_streams: 0,
             streams: Vec::new(),
             config: None,
@@ -350,17 +288,8 @@ impl VirtioSnd {
         Some(VirtioSnd {
             mmio_base,
             transport: None,
-            ctrl_desc: core::ptr::null_mut(),
-            ctrl_avail: core::ptr::null_mut(),
-            ctrl_used: core::ptr::null_mut(),
-            tx_desc: core::ptr::null_mut(),
-            tx_avail: core::ptr::null_mut(),
-            tx_used: core::ptr::null_mut(),
-            queue_size: 0,
-            ctrl_next: 0,
-            ctrl_last_used: 0,
-            tx_next: 0,
-            tx_last_used: 0,
+            ctrl_queue: None,
+            tx_queue: None,
             num_streams: 0,
             streams: Vec::new(),
             config: None,
@@ -392,25 +321,26 @@ impl VirtioSnd {
     }
 
     /// PCI transport VirtIO handshake
+    /// — EchoFrame: the sacred PCI init dance — acknowledge, negotiate, pray
     fn init_pci_handshake(&mut self) -> Result<(), &'static str> {
         let t = self.transport.as_ref().ok_or("No PCI transport")?;
 
         // Reset
         t.write_status(0);
-        t.write_status(VIRTIO_STATUS_ACKNOWLEDGE as u8);
-        t.write_status((VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER) as u8);
+        t.write_status(dev_status::ACKNOWLEDGE);
+        t.write_status(dev_status::ACKNOWLEDGE | dev_status::DRIVER);
 
         // Features
         let _features = t.read_device_features(0);
         t.write_driver_features(0, 0);
 
         t.write_status(
-            (VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK) as u8,
+            dev_status::ACKNOWLEDGE | dev_status::DRIVER | dev_status::FEATURES_OK,
         );
 
         let status = t.read_status();
-        if status & VIRTIO_STATUS_FEATURES_OK as u8 == 0 {
-            t.write_status(VIRTIO_STATUS_FAILED as u8);
+        if status & dev_status::FEATURES_OK == 0 {
+            t.write_status(dev_status::FAILED);
             return Err("Features not accepted");
         }
 
@@ -420,29 +350,30 @@ impl VirtioSnd {
         // Release borrow for queue init
         let _ = t;
 
-        // Initialize queues via PCI transport
+        // — EchoFrame: initialize queues via PCI transport using shared Virtqueue
         self.init_queue_pci(CONTROLQ)?;
         self.init_queue_pci(TXQ)?;
 
         // Driver ready
         let t = self.transport.as_ref().ok_or("No PCI transport")?;
         t.write_status(
-            (VIRTIO_STATUS_ACKNOWLEDGE
-                | VIRTIO_STATUS_DRIVER
-                | VIRTIO_STATUS_FEATURES_OK
-                | VIRTIO_STATUS_DRIVER_OK) as u8,
+            dev_status::ACKNOWLEDGE
+                | dev_status::DRIVER
+                | dev_status::FEATURES_OK
+                | dev_status::DRIVER_OK,
         );
 
         Ok(())
     }
 
     /// MMIO transport VirtIO handshake
+    /// — EchoFrame: MMIO path — same ritual, different wire
     fn init_mmio_handshake(&mut self) -> Result<(), &'static str> {
         self.write_reg(VIRTIO_MMIO_STATUS, 0);
-        self.write_reg(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACKNOWLEDGE);
+        self.write_reg(VIRTIO_MMIO_STATUS, dev_status::ACKNOWLEDGE as u32);
         self.write_reg(
             VIRTIO_MMIO_STATUS,
-            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+            (dev_status::ACKNOWLEDGE | dev_status::DRIVER) as u32,
         );
 
         self.write_reg(VIRTIO_MMIO_DEVICE_FEATURES_SEL, 0);
@@ -453,12 +384,12 @@ impl VirtioSnd {
 
         self.write_reg(
             VIRTIO_MMIO_STATUS,
-            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+            (dev_status::ACKNOWLEDGE | dev_status::DRIVER | dev_status::FEATURES_OK) as u32,
         );
 
         let status = self.read_reg(VIRTIO_MMIO_STATUS);
-        if status & VIRTIO_STATUS_FEATURES_OK == 0 {
-            self.write_reg(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_FAILED);
+        if status & dev_status::FEATURES_OK as u32 == 0 {
+            self.write_reg(VIRTIO_MMIO_STATUS, dev_status::FAILED as u32);
             return Err("Features not accepted");
         }
 
@@ -471,17 +402,17 @@ impl VirtioSnd {
 
         self.write_reg(
             VIRTIO_MMIO_STATUS,
-            VIRTIO_STATUS_ACKNOWLEDGE
-                | VIRTIO_STATUS_DRIVER
-                | VIRTIO_STATUS_FEATURES_OK
-                | VIRTIO_STATUS_DRIVER_OK,
+            (dev_status::ACKNOWLEDGE
+                | dev_status::DRIVER
+                | dev_status::FEATURES_OK
+                | dev_status::DRIVER_OK) as u32,
         );
 
         Ok(())
     }
 
-    /// Initialize a virtqueue via PCI transport (physical DMA addresses)
-    /// — EchoFrame: the queue needs real addresses for DMA, not kernel fantasies
+    /// Initialize a virtqueue via PCI transport using shared Virtqueue
+    /// — EchoFrame: let virtio-core handle the descriptor table swamp
     fn init_queue_pci(&mut self, queue_idx: u32) -> Result<(), &'static str> {
         let t = self.transport.as_ref().ok_or("No PCI transport")?;
 
@@ -493,49 +424,30 @@ impl VirtioSnd {
         }
 
         let size = max_size.min(64);
-        self.queue_size = size;
         t.set_queue_size(size);
 
-        use alloc::alloc::{Layout, alloc_zeroed};
+        // — EchoFrame: Virtqueue::new handles all the alloc/alignment nightmares for us
+        let queue = unsafe { Virtqueue::new(size) }
+            .ok_or("Failed to allocate virtqueue")?;
 
-        let desc_size = size as usize * core::mem::size_of::<VirtqDesc>();
-        let desc_layout = Layout::from_size_align(desc_size, 16).unwrap();
-        let desc = unsafe { alloc_zeroed(desc_layout) } as *mut VirtqDesc;
-
-        let avail_layout = Layout::from_size_align(core::mem::size_of::<VirtqAvail>(), 2).unwrap();
-        let avail = unsafe { alloc_zeroed(avail_layout) } as *mut VirtqAvail;
-
-        let used_layout = Layout::from_size_align(core::mem::size_of::<VirtqUsed>(), 4).unwrap();
-        let used = unsafe { alloc_zeroed(used_layout) } as *mut VirtqUsed;
-
-        match queue_idx {
-            CONTROLQ => {
-                self.ctrl_desc = desc;
-                self.ctrl_avail = avail;
-                self.ctrl_used = used;
-            }
-            TXQ => {
-                self.tx_desc = desc;
-                self.tx_avail = avail;
-                self.tx_used = used;
-            }
-            _ => {}
-        }
-
-        // PCI transport needs physical addresses
-        let desc_phys = desc as u64 - PHYS_MAP_BASE;
-        let avail_phys = avail as u64 - PHYS_MAP_BASE;
-        let used_phys = used as u64 - PHYS_MAP_BASE;
+        let (desc_phys, avail_phys, used_phys) = queue.physical_addresses();
 
         t.set_queue_desc(desc_phys);
         t.set_queue_avail(avail_phys);
         t.set_queue_used(used_phys);
         t.enable_queue();
 
+        match queue_idx {
+            CONTROLQ => { self.ctrl_queue = Some(queue); }
+            TXQ => { self.tx_queue = Some(queue); }
+            _ => {}
+        }
+
         Ok(())
     }
 
-    /// Initialize a virtqueue (MMIO path)
+    /// Initialize a virtqueue (MMIO path) using shared Virtqueue
+    /// — EchoFrame: MMIO queues get the same virtio-core treatment
     fn init_queue(&mut self, queue_idx: u32) -> Result<(), &'static str> {
         self.write_reg(VIRTIO_MMIO_QUEUE_SEL, queue_idx);
 
@@ -545,47 +457,28 @@ impl VirtioSnd {
         }
 
         let size = max_size.min(64);
-        self.queue_size = size;
         self.write_reg(VIRTIO_MMIO_QUEUE_NUM, size as u32);
 
-        use alloc::alloc::{Layout, alloc_zeroed};
+        // — EchoFrame: shared Virtqueue handles the allocation graveyard
+        let queue = unsafe { Virtqueue::new(size) }
+            .ok_or("Failed to allocate virtqueue")?;
 
-        let desc_size = size as usize * core::mem::size_of::<VirtqDesc>();
-        let desc_layout = Layout::from_size_align(desc_size, 16).unwrap();
-        let desc = unsafe { alloc_zeroed(desc_layout) } as *mut VirtqDesc;
+        let (desc_phys, avail_phys, used_phys) = queue.physical_addresses();
 
-        let avail_layout = Layout::from_size_align(core::mem::size_of::<VirtqAvail>(), 2).unwrap();
-        let avail = unsafe { alloc_zeroed(avail_layout) } as *mut VirtqAvail;
-
-        let used_layout = Layout::from_size_align(core::mem::size_of::<VirtqUsed>(), 4).unwrap();
-        let used = unsafe { alloc_zeroed(used_layout) } as *mut VirtqUsed;
-
-        match queue_idx {
-            CONTROLQ => {
-                self.ctrl_desc = desc;
-                self.ctrl_avail = avail;
-                self.ctrl_used = used;
-            }
-            TXQ => {
-                self.tx_desc = desc;
-                self.tx_avail = avail;
-                self.tx_used = used;
-            }
-            _ => {}
-        }
-
-        let desc_addr = desc as u64;
-        let avail_addr = avail as u64;
-        let used_addr = used as u64;
-
-        self.write_reg(VIRTIO_MMIO_QUEUE_DESC_LOW, desc_addr as u32);
-        self.write_reg(VIRTIO_MMIO_QUEUE_DESC_HIGH, (desc_addr >> 32) as u32);
-        self.write_reg(VIRTIO_MMIO_QUEUE_AVAIL_LOW, avail_addr as u32);
-        self.write_reg(VIRTIO_MMIO_QUEUE_AVAIL_HIGH, (avail_addr >> 32) as u32);
-        self.write_reg(VIRTIO_MMIO_QUEUE_USED_LOW, used_addr as u32);
-        self.write_reg(VIRTIO_MMIO_QUEUE_USED_HIGH, (used_addr >> 32) as u32);
+        self.write_reg(VIRTIO_MMIO_QUEUE_DESC_LOW, desc_phys as u32);
+        self.write_reg(VIRTIO_MMIO_QUEUE_DESC_HIGH, (desc_phys >> 32) as u32);
+        self.write_reg(VIRTIO_MMIO_QUEUE_AVAIL_LOW, avail_phys as u32);
+        self.write_reg(VIRTIO_MMIO_QUEUE_AVAIL_HIGH, (avail_phys >> 32) as u32);
+        self.write_reg(VIRTIO_MMIO_QUEUE_USED_LOW, used_phys as u32);
+        self.write_reg(VIRTIO_MMIO_QUEUE_USED_HIGH, (used_phys >> 32) as u32);
 
         self.write_reg(VIRTIO_MMIO_QUEUE_READY, 1);
+
+        match queue_idx {
+            CONTROLQ => { self.ctrl_queue = Some(queue); }
+            TXQ => { self.tx_queue = Some(queue); }
+            _ => {}
+        }
 
         Ok(())
     }
@@ -645,47 +538,30 @@ impl VirtioSnd {
     }
 
     /// Send control command (dual PCI/MMIO path)
-    /// — EchoFrame: push commands through the control queue
+    /// — EchoFrame: push commands through the control queue — now via shared Virtqueue API
     fn send_ctrl<C, R>(&mut self, cmd: &C, resp: &mut R) -> Result<(), &'static str> {
         let cmd_size = core::mem::size_of::<C>();
         let resp_size = core::mem::size_of::<R>();
-        let is_pci = self.transport.is_some();
 
-        let desc_idx = self.ctrl_next;
-        self.ctrl_next = (self.ctrl_next + 2) % self.queue_size;
+        let queue = self.ctrl_queue.as_mut().ok_or("Control queue not initialized")?;
+
+        // — EchoFrame: allocate two descriptors from the shared free list
+        let desc0 = queue.alloc_desc().ok_or("No free descriptors")?;
+        let desc1 = queue.alloc_desc().ok_or("No free descriptors")?;
+
+        // — EchoFrame: virt_to_phys handles the address translation — no more manual PHYS_MAP_BASE arithmetic
+        let cmd_phys = virt_to_phys(cmd as *const C as u64);
+        let resp_phys = virt_to_phys(resp as *mut R as u64);
 
         unsafe {
-            let cmd_addr = if is_pci {
-                cmd as *const C as u64 - PHYS_MAP_BASE
-            } else {
-                cmd as *const C as u64
-            };
-            let resp_addr = if is_pci {
-                resp as *mut R as u64 - PHYS_MAP_BASE
-            } else {
-                resp as *mut R as u64
-            };
-
-            let desc0 = &mut *self.ctrl_desc.add(desc_idx as usize);
-            desc0.addr = cmd_addr;
-            desc0.len = cmd_size as u32;
-            desc0.flags = VIRTQ_DESC_F_NEXT;
-            desc0.next = (desc_idx + 1) % self.queue_size;
-
-            let desc1 = &mut *self
-                .ctrl_desc
-                .add(((desc_idx + 1) % self.queue_size) as usize);
-            desc1.addr = resp_addr;
-            desc1.len = resp_size as u32;
-            desc1.flags = VIRTQ_DESC_F_WRITE;
-            desc1.next = 0;
-
-            let avail = &mut *self.ctrl_avail;
-            let avail_idx = avail.idx;
-            avail.ring[(avail_idx % self.queue_size) as usize] = desc_idx;
-            core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
-            write_volatile(&mut avail.idx, avail_idx.wrapping_add(1));
+            // Command buffer: device-readable, chained to response descriptor
+            queue.write_desc(desc0, cmd_phys, cmd_size as u32, desc_flags::NEXT, desc1);
+            // Response buffer: device-writable, end of chain
+            queue.write_desc(desc1, resp_phys, resp_size as u32, desc_flags::WRITE, 0);
         }
+
+        // Submit the chain head to the available ring
+        queue.add_available(desc0);
 
         // Notify — PCI transport or MMIO register
         if let Some(ref t) = self.transport {
@@ -694,11 +570,14 @@ impl VirtioSnd {
             self.write_reg(VIRTIO_MMIO_QUEUE_NOTIFY, CONTROLQ);
         }
 
-        // Wait for completion
+        // — EchoFrame: spin until the device processes our command — has_completed() watches the used ring
+        let queue = self.ctrl_queue.as_mut().ok_or("Control queue not initialized")?;
         loop {
-            let used_idx = unsafe { read_volatile(&(*self.ctrl_used).idx) };
-            if used_idx != self.ctrl_last_used {
-                self.ctrl_last_used = used_idx;
+            if queue.has_completed() {
+                // Drain the completed entry and free the descriptor chain
+                if let Some((head, _len)) = queue.pop_used() {
+                    queue.free_chain(head);
+                }
                 break;
             }
             core::hint::spin_loop();

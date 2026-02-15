@@ -4,5 +4,6 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+# — SableWire: ZERO dependencies. That's the whole point of this crate.
+# Breaking circular deps means this crate trusts nobody.
 [dependencies]
-os_core = { workspace = true }

@@ -9,7 +9,7 @@ use pci::PciDevice;
 use spin::Mutex;
 
 use crate::{PciDriver, IsaDriver, PciDeviceId, DriverError};
-use crate::binding::{register_binding, DriverBindingData};
+use crate::binding::register_binding;
 
 /// Global PCI driver registry
 static PCI_DRIVERS: Mutex<Vec<&'static dyn PciDriver>> = Mutex::new(Vec::new());
@@ -17,17 +17,20 @@ static PCI_DRIVERS: Mutex<Vec<&'static dyn PciDriver>> = Mutex::new(Vec::new());
 /// Global ISA driver registry
 static ISA_DRIVERS: Mutex<Vec<&'static dyn IsaDriver>> = Mutex::new(Vec::new());
 
-/// Linker-provided symbols for driver sections
-extern "C" {
+// — NeonRoot: linker-section symbols for driver auto-discovery.
+// These are raw byte boundaries, not real trait objects — we walk
+// them as fat-pointer-sized slots in init_driver_registry().
+// Using u8 to sidestep improper_ctypes warnings on dyn Trait.
+unsafe extern "C" {
     #[link_name = "__start_pci_drivers"]
-    static START_PCI_DRIVERS: &'static dyn PciDriver;
+    static START_PCI_DRIVERS: u8;
     #[link_name = "__stop_pci_drivers"]
-    static STOP_PCI_DRIVERS: &'static dyn PciDriver;
+    static STOP_PCI_DRIVERS: u8;
 
     #[link_name = "__start_isa_drivers"]
-    static START_ISA_DRIVERS: &'static dyn IsaDriver;
+    static START_ISA_DRIVERS: u8;
     #[link_name = "__stop_isa_drivers"]
-    static STOP_ISA_DRIVERS: &'static dyn IsaDriver;
+    static STOP_ISA_DRIVERS: u8;
 }
 
 /// Initialize driver registry from linker sections

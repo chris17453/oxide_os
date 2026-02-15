@@ -19,6 +19,12 @@ use input::{InputDeviceInfo, InputDeviceType, KeyValue};
 use pci;
 use spin::Mutex;
 
+// — InputShade: purged the local virtqueue copypasta. One ring implementation
+// to bind them all — virtio-core owns the descriptor table now.
+use virtio_core::status;
+use virtio_core::virtqueue::desc_flags;
+use virtio_core::{phys_to_virt, Virtqueue};
+
 /// VirtIO input device configuration select values
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,53 +72,10 @@ pub enum VirtioInputType {
     Generic,
 }
 
-// — InputShade: virtqueue descriptor table, spec §2.6. The unholy trinity of
-// desc/avail/used that every virtio driver must get right or hardware goes brrr.
-
-#[repr(C)]
-struct VirtqDesc {
-    addr: u64,
-    len: u32,
-    flags: u16,
-    next: u16,
-}
-
-#[repr(C)]
-struct VirtqAvail {
-    flags: u16,
-    idx: u16,
-    ring: [u16; 256],
-}
-
-#[repr(C)]
-struct VirtqUsed {
-    flags: u16,
-    idx: u16,
-    ring: [VirtqUsedElem; 256],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct VirtqUsedElem {
-    id: u32,
-    len: u32,
-}
-
-const VIRTQ_DESC_F_WRITE: u16 = 2;
-const PHYS_MAP_BASE: u64 = 0xFFFF_8000_0000_0000;
+// — InputShade: local virtqueue structs and status constants cremated.
+// virtio-core handles the ring ceremony now. We just drive the input.
 const EVENT_QUEUE: u16 = 0;
 const STATUS_QUEUE: u16 = 1;
-
-const VIRTIO_STATUS_ACKNOWLEDGE: u8 = 1;
-const VIRTIO_STATUS_DRIVER: u8 = 2;
-const VIRTIO_STATUS_DRIVER_OK: u8 = 4;
-const VIRTIO_STATUS_FEATURES_OK: u8 = 8;
-
-/// — InputShade: physical-map virtual address for a known physical address.
-#[inline]
-fn phys_to_virt(phys: u64) -> u64 {
-    phys + PHYS_MAP_BASE
-}
 
 /// VirtIO input device driver
 /// — InputShade: one instance per PCI input device (keyboard, mouse, tablet).
@@ -121,18 +84,13 @@ fn phys_to_virt(phys: u64) -> u64 {
 pub struct VirtioInput {
     transport: pci::VirtioPciTransport,
     config: *mut VirtioInputConfig,
-    event_desc: *mut VirtqDesc,
-    event_avail: *mut VirtqAvail,
-    event_used: *mut VirtqUsed,
-    event_size: u16,
-    event_last_used: u16,
+    /// — InputShade: virtio-core manages the ring dance now. No more raw
+    /// descriptor pointer juggling — one Virtqueue per direction.
+    event_queue: Option<Virtqueue>,
     /// — InputShade: base pointer into physical-map region, NOT heap.
     /// Each event buffer is at event_buf_base + i * sizeof(VirtioInputEvent).
     event_buf_base: *mut VirtioInputEvent,
-    status_desc: *mut VirtqDesc,
-    status_avail: *mut VirtqAvail,
-    status_used: *mut VirtqUsed,
-    status_size: u16,
+    status_queue: Option<Virtqueue>,
     name: String,
     device_type: VirtioInputType,
     devids: VirtioInputDevids,
@@ -320,16 +278,9 @@ impl VirtioInput {
         let mut dev = VirtioInput {
             transport,
             config,
-            event_desc: core::ptr::null_mut(),
-            event_avail: core::ptr::null_mut(),
-            event_used: core::ptr::null_mut(),
-            event_size: 0,
-            event_last_used: 0,
+            event_queue: None,
             event_buf_base: core::ptr::null_mut(),
-            status_desc: core::ptr::null_mut(),
-            status_avail: core::ptr::null_mut(),
-            status_used: core::ptr::null_mut(),
-            status_size: 0,
+            status_queue: None,
             name: String::new(),
             device_type: VirtioInputType::Generic,
             devids: VirtioInputDevids::default(),
@@ -345,10 +296,12 @@ impl VirtioInput {
         serial_write_hex_usize(dev.transport.device_cfg);
         serial_write_str(b"\r\n");
         serial_write_str(b"[VIRTIO-INPUT] writing status 0 (reset)...\r\n");
+        // — InputShade: VirtIO init liturgy (spec 3.1.1) — now using shared
+        // status constants so we stop reinventing the same damn enum everywhere.
         dev.transport.write_status(0);
-        dev.transport.write_status(VIRTIO_STATUS_ACKNOWLEDGE);
+        dev.transport.write_status(status::ACKNOWLEDGE);
         dev.transport
-            .write_status(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
+            .write_status(status::ACKNOWLEDGE | status::DRIVER);
 
         // Feature negotiation
         let features0 = dev.transport.read_device_features(0);
@@ -357,12 +310,12 @@ impl VirtioInput {
         dev.transport.write_driver_features(1, features1 & 0x1);
 
         dev.transport.write_status(
-            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+            status::ACKNOWLEDGE | status::DRIVER | status::FEATURES_OK,
         );
-        let status = dev.transport.read_status();
-        if status & VIRTIO_STATUS_FEATURES_OK == 0 {
+        let dev_status = dev.transport.read_status();
+        if dev_status & status::FEATURES_OK == 0 {
             serial_write_str(b"[VIRTIO-INPUT] FEATURES_OK not set - FAIL\r\n");
-            dev.transport.write_status(128);
+            dev.transport.write_status(status::FAILED);
             return None;
         }
         serial_write_str(b"[VIRTIO-INPUT] features OK\r\n");
@@ -372,17 +325,17 @@ impl VirtioInput {
         serial_write_str(b"[VIRTIO-INPUT] init event queue...\r\n");
         if dev.init_event_queue().is_err() {
             serial_write_str(b"[VIRTIO-INPUT] event queue init FAILED\r\n");
-            dev.transport.write_status(128);
+            dev.transport.write_status(status::FAILED);
             return None;
         }
         serial_write_str(b"[VIRTIO-INPUT] event queue OK, init status queue...\r\n");
         let _ = dev.init_status_queue();
 
         dev.transport.write_status(
-            VIRTIO_STATUS_ACKNOWLEDGE
-                | VIRTIO_STATUS_DRIVER
-                | VIRTIO_STATUS_FEATURES_OK
-                | VIRTIO_STATUS_DRIVER_OK,
+            status::ACKNOWLEDGE
+                | status::DRIVER
+                | status::FEATURES_OK
+                | status::DRIVER_OK,
         );
 
         let device_type = match dev.device_type {
@@ -489,40 +442,18 @@ impl VirtioInput {
             return Err("Event queue not available");
         }
         let size = max_size.min(64);
-        self.event_size = size;
         self.transport.set_queue_size(size);
 
-        // — InputShade: DMA buffers MUST come from the physical frame allocator, not the
-        // kernel heap. The heap lives at KERNEL_VIRT_BASE (0xFFFF_FFFF_80xx), and
-        // `addr - PHYS_MAP_BASE` gives a bogus ~128TB "physical" address. The frame
-        // allocator returns REAL physical addresses; we access them via the direct map.
-        let desc_bytes = size as usize * core::mem::size_of::<VirtqDesc>();
-        let avail_bytes = core::mem::size_of::<VirtqAvail>();
-        let used_bytes = core::mem::size_of::<VirtqUsed>();
-        let ring_total = desc_bytes + avail_bytes + used_bytes;
-        let ring_pages = (ring_total + 4095) / 4096;
+        // — InputShade: virtio-core handles the DMA-safe ring allocation now.
+        // new_legacy() uses the frame allocator — no more kernel heap address
+        // nightmares giving hardware bogus ~128TB "physical" addresses.
+        let queue = unsafe { Virtqueue::new_legacy(size) }
+            .ok_or("alloc event virtqueue")?;
 
-        let ring_phys = mm()
-            .alloc_contiguous(ring_pages)
-            .map_err(|_| "alloc ring frames")?;
-        let ring_phys_base = ring_phys.as_u64();
-        let ring_virt_base = (PHYS_MAP_BASE + ring_phys_base) as *mut u8;
-
-        // Zero the DMA region
-        unsafe {
-            core::ptr::write_bytes(ring_virt_base, 0, ring_pages * 4096);
-        }
-
-        // Layout: desc | avail | used (contiguous in physical memory)
-        self.event_desc = ring_virt_base as *mut VirtqDesc;
-        self.event_avail = unsafe { ring_virt_base.add(desc_bytes) } as *mut VirtqAvail;
-        self.event_used = unsafe { ring_virt_base.add(desc_bytes + avail_bytes) } as *mut VirtqUsed;
-
-        self.transport.set_queue_desc(ring_phys_base);
-        self.transport
-            .set_queue_avail(ring_phys_base + desc_bytes as u64);
-        self.transport
-            .set_queue_used(ring_phys_base + desc_bytes as u64 + avail_bytes as u64);
+        let (desc_phys, avail_phys, used_phys) = queue.physical_addresses();
+        self.transport.set_queue_desc(desc_phys);
+        self.transport.set_queue_avail(avail_phys);
+        self.transport.set_queue_used(used_phys);
         self.transport.enable_queue();
 
         // Allocate event buffers from physical frames
@@ -532,7 +463,7 @@ impl VirtioInput {
             .alloc_contiguous(buf_pages)
             .map_err(|_| "alloc event buf frames")?;
         let buf_phys_base = buf_phys.as_u64();
-        let buf_virt_base = (PHYS_MAP_BASE + buf_phys_base) as *mut VirtioInputEvent;
+        let buf_virt_base = phys_to_virt(buf_phys_base) as *mut VirtioInputEvent;
 
         unsafe {
             core::ptr::write_bytes(
@@ -544,25 +475,17 @@ impl VirtioInput {
 
         self.event_buf_base = buf_virt_base;
 
-        // Fill descriptors and avail ring
+        // — InputShade: fill descriptors with write_desc() and feed them to the
+        // avail ring. Each descriptor points at a device-writable event buffer.
         let event_sz = core::mem::size_of::<VirtioInputEvent>() as u64;
+        self.event_queue = Some(queue);
+        let queue = self.event_queue.as_mut().unwrap();
         for i in 0..size {
             let buf_phys_addr = buf_phys_base + (i as u64) * event_sz;
-
             unsafe {
-                let desc = &mut *self.event_desc.add(i as usize);
-                write_volatile(&mut desc.addr, buf_phys_addr);
-                write_volatile(&mut desc.len, event_sz as u32);
-                write_volatile(&mut desc.flags, VIRTQ_DESC_F_WRITE);
-                write_volatile(&mut desc.next, 0);
-
-                write_volatile(&mut (*self.event_avail).ring[i as usize], i);
+                queue.write_desc(i, buf_phys_addr, event_sz as u32, desc_flags::WRITE, 0);
             }
-        }
-
-        unsafe {
-            fence(Ordering::Release);
-            write_volatile(&mut (*self.event_avail).idx, size);
+            queue.add_available(i);
         }
 
         self.transport.notify_queue(EVENT_QUEUE);
@@ -571,84 +494,62 @@ impl VirtioInput {
     }
 
     fn init_status_queue(&mut self) -> Result<(), &'static str> {
-        use mm_manager::mm;
-        use mm_traits::FrameAllocator;
-
         self.transport.select_queue(STATUS_QUEUE);
         let max_size = self.transport.queue_max_size();
         if max_size == 0 {
             return Err("Status queue not available");
         }
         let size = max_size.min(16);
-        self.status_size = size;
         self.transport.set_queue_size(size);
 
-        // — InputShade: same DMA-safe allocation as event queue
-        let desc_bytes = size as usize * core::mem::size_of::<VirtqDesc>();
-        let avail_bytes = core::mem::size_of::<VirtqAvail>();
-        let used_bytes = core::mem::size_of::<VirtqUsed>();
-        let ring_total = desc_bytes + avail_bytes + used_bytes;
-        let ring_pages = (ring_total + 4095) / 4096;
+        // — InputShade: same DMA-safe allocation as event queue, virtio-core
+        // handles the gritty ring layout details. One less place to screw up.
+        let queue = unsafe { Virtqueue::new_legacy(size) }
+            .ok_or("alloc status virtqueue")?;
 
-        let ring_phys = mm()
-            .alloc_contiguous(ring_pages)
-            .map_err(|_| "alloc status ring frames")?;
-        let ring_phys_base = ring_phys.as_u64();
-        let ring_virt_base = (PHYS_MAP_BASE + ring_phys_base) as *mut u8;
-
-        unsafe {
-            core::ptr::write_bytes(ring_virt_base, 0, ring_pages * 4096);
-        }
-
-        self.status_desc = ring_virt_base as *mut VirtqDesc;
-        self.status_avail = unsafe { ring_virt_base.add(desc_bytes) } as *mut VirtqAvail;
-        self.status_used =
-            unsafe { ring_virt_base.add(desc_bytes + avail_bytes) } as *mut VirtqUsed;
-
-        self.transport.set_queue_desc(ring_phys_base);
-        self.transport
-            .set_queue_avail(ring_phys_base + desc_bytes as u64);
-        self.transport
-            .set_queue_used(ring_phys_base + desc_bytes as u64 + avail_bytes as u64);
+        let (desc_phys, avail_phys, used_phys) = queue.physical_addresses();
+        self.transport.set_queue_desc(desc_phys);
+        self.transport.set_queue_avail(avail_phys);
+        self.transport.set_queue_used(used_phys);
         self.transport.enable_queue();
 
+        self.status_queue = Some(queue);
         Ok(())
     }
 
     fn process_events(&mut self) {
-        let mut had_events = false;
+        // — InputShade: collect events from the used ring first, then dispatch.
+        // Splitting the borrow: queue needs &mut self.event_queue, dispatch
+        // needs &self — can't have both at once. So we batch.
+        let queue = match self.event_queue.as_mut() {
+            Some(q) => q,
+            None => return,
+        };
 
-        loop {
-            let used_idx = unsafe { read_volatile(&(*self.event_used).idx) };
-            if self.event_last_used == used_idx {
-                break;
-            }
+        // — InputShade: drain used ring into a stack buffer. 64 events per poll
+        // is generous — VirtIO input typically fires 1-3 per IRQ.
+        let mut pending: [(usize, VirtioInputEvent); 64] = unsafe { core::mem::zeroed() };
+        let mut count = 0usize;
 
-            let ring_idx = (self.event_last_used % self.event_size) as usize;
-            let used_elem = unsafe { read_volatile(&(*self.event_used).ring[ring_idx]) };
-            let desc_idx = used_elem.id as usize;
-
-            if desc_idx < self.event_size as usize {
-                // — InputShade: read event from physical-map-backed buffer
+        while let Some((desc_idx, _len)) = queue.pop_used() {
+            let desc_idx = desc_idx as usize;
+            if desc_idx < queue.size() as usize {
                 let event = unsafe { read_volatile(self.event_buf_base.add(desc_idx)) };
-                self.dispatch_event(&event);
+                if count < pending.len() {
+                    pending[count] = (desc_idx, event);
+                    count += 1;
+                }
             }
-
-            let avail_idx = unsafe { read_volatile(&(*self.event_avail).idx) };
-            unsafe {
-                write_volatile(
-                    &mut (*self.event_avail).ring[(avail_idx % self.event_size) as usize],
-                    desc_idx as u16,
-                );
-                fence(Ordering::Release);
-                write_volatile(&mut (*self.event_avail).idx, avail_idx.wrapping_add(1));
-            }
-
-            self.event_last_used = self.event_last_used.wrapping_add(1);
-            had_events = true;
+            // Re-arm: put the descriptor back in the avail ring for the device
+            queue.add_available(desc_idx as u16);
         }
 
-        if had_events {
+        // — InputShade: now dispatch with &self — no queue borrow conflict
+        for i in 0..count {
+            self.dispatch_event(&pending[i].1);
+        }
+
+        if count > 0 {
             self.transport.notify_queue(EVENT_QUEUE);
         }
     }

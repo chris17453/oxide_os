@@ -303,18 +303,27 @@ impl BuddyAllocator {
 
         // VALIDATE CANARY — GraveShift: Check magic before trusting this block
         if block.magic != FREE_BLOCK_MAGIC {
-            // — SableWire: Bounded serial writes. Die loud but don't hang.
+            // — SableWire: Corrupted block? Skip it. Dying on every bad canary
+            // was cascade-crashing the whole free list because the GPF handler
+            // would page-fault on the garbage `next` pointer too. Now we amputate
+            // the rot and keep limping. Better to lose one frame than the whole OS.
             unsafe {
-                arch_x86_64::serial::write_str_unsafe("[BUDDY-FATAL] Block corrupted at pop! magic=0x");
+                arch_x86_64::serial::write_str_unsafe("[BUDDY-WARN] Corrupted block skipped: magic=0x");
                 serial_hex64(block.magic);
                 arch_x86_64::serial::write_str_unsafe(", addr=0x");
                 serial_hex64(addr);
                 arch_x86_64::serial::write_str_unsafe(", order=");
                 arch_x86_64::serial::write_byte_unsafe(b'0' + order as u8);
-                arch_x86_64::serial::write_str_unsafe(" - GPF\n");
-                // Trigger GPF with aligned address
-                core::ptr::write_volatile(0xDEAD0000 as *mut u64, block.magic);
+                arch_x86_64::serial::write_str_unsafe("\n");
             }
+            // — GraveShift: Sever the head. We can't trust `next` either —
+            // it's probably garbage from whatever stomped the canary. Zero the
+            // free list head so we don't chase a wild pointer into the abyss.
+            zone.free_lists[order].head = 0;
+            if zone.free_lists[order].count > 0 {
+                zone.free_lists[order].count -= 1;
+            }
+            return None;
         }
 
         let next_frame = block.next;

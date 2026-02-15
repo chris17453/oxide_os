@@ -11,12 +11,16 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use boot_proto::VideoMode;
+use core::cell::UnsafeCell;
 use core::ptr::{read_volatile, write_volatile};
-use core::sync::atomic::{AtomicU16, Ordering};
-use fb::mode::ModeSetter;
 use fb::{Color, Framebuffer, FramebufferInfo, PixelFormat};
 use pci::{PciDevice, VirtioPciTransport};
 use spin::Mutex;
+
+// — GlassSignal: shared virtio plumbing — one ring crate to stop the copy-paste bleeding
+use virtio_core::status as dev_status;
+use virtio_core::virtqueue::desc_flags;
+use virtio_core::{phys_to_virt, virt_to_phys, Virtqueue};
 
 /// VirtIO GPU control commands
 mod cmd {
@@ -173,77 +177,46 @@ const VIRTIO_MMIO_QUEUE_AVAIL_HIGH: usize = 0x094;
 const VIRTIO_MMIO_QUEUE_USED_LOW: usize = 0x0a0;
 const VIRTIO_MMIO_QUEUE_USED_HIGH: usize = 0x0a4;
 
-/// VirtIO status bits
-const VIRTIO_STATUS_ACKNOWLEDGE: u32 = 1;
-const VIRTIO_STATUS_DRIVER: u32 = 2;
-const VIRTIO_STATUS_FEATURES_OK: u32 = 8;
-const VIRTIO_STATUS_DRIVER_OK: u32 = 4;
-const VIRTIO_STATUS_FAILED: u32 = 128;
+/// — GlassSignal: queue size cap — virtio-core defines the ceiling, we take what the device gives
+const QUEUE_SIZE: usize = virtio_core::virtqueue::MAX_QUEUE_SIZE;
 
 /// Control virtqueue
 const VIRTIO_GPU_CONTROLQ: u32 = 0;
 /// Cursor virtqueue
 const VIRTIO_GPU_CURSORQ: u32 = 1;
 
-/// Descriptor flags
-const VIRTQ_DESC_F_NEXT: u16 = 1;
-const VIRTQ_DESC_F_WRITE: u16 = 2;
+// — GlassSignal: descriptor structs, status bits, phys_to_virt — all live in virtio-core now
+// no more copy-paste virtqueue boilerplate in every driver
 
-/// Virtqueue descriptor
-#[repr(C)]
-struct VirtqDesc {
-    addr: u64,
-    len: u32,
-    flags: u16,
-    next: u16,
+/// Framebuffer backing memory — may be DMA-allocated (PCI) or heap-allocated (MMIO).
+/// — GlassSignal: DMA memory from the frame allocator must NOT be freed by the heap allocator.
+/// This wrapper prevents Box<[u8]> from calling dealloc on physical-map pointers.
+struct FbBacking {
+    /// Virtual address of the framebuffer data
+    ptr: *mut u8,
+    /// Size in bytes
+    len: usize,
+    /// Physical address (valid for PCI DMA, 0 for MMIO)
+    phys: u64,
 }
 
-/// Virtqueue available ring
-#[repr(C)]
-struct VirtqAvail {
-    flags: u16,
-    idx: u16,
-    ring: [u16; 256],
-}
-
-/// Virtqueue used ring element
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct VirtqUsedElem {
-    id: u32,
-    len: u32,
-}
-
-/// Virtqueue used ring
-#[repr(C)]
-struct VirtqUsed {
-    flags: u16,
-    idx: u16,
-    ring: [VirtqUsedElem; 256],
-}
-
-/// Physical memory map base for converting kernel virtual <-> physical DMA addresses
-/// — GlassSignal: the membrane between address spaces
-const PHYS_MAP_BASE: u64 = 0xFFFF_8000_0000_0000;
+/// SAFETY: protected by outer VIRTIO_GPU mutex — GlassSignal
+unsafe impl Send for FbBacking {}
+unsafe impl Sync for FbBacking {}
 
 /// VirtIO GPU device
+/// — GlassSignal: pixel pipeline from PCI bus to scanout — now powered by shared virtqueue core
 pub struct VirtioGpu {
     /// MMIO base address (0 when using PCI transport)
     mmio_base: usize,
     /// PCI transport (None for MMIO mode)
     transport: Option<VirtioPciTransport>,
-    /// Descriptor table
-    descriptors: *mut VirtqDesc,
-    /// Available ring
-    available: *mut VirtqAvail,
-    /// Used ring
-    used: *mut VirtqUsed,
-    /// Queue size
-    queue_size: u16,
-    /// Next descriptor (uses interior mutability for flush)
-    next_desc: AtomicU16,
-    /// Last used index (uses interior mutability for flush)
-    last_used: AtomicU16,
+    /// Control virtqueue — shared implementation from virtio-core
+    /// UnsafeCell for interior mutability: Framebuffer trait needs &self for flush,
+    /// but Virtqueue operations need &mut. The outer Mutex<Option<VirtioGpu>> ensures
+    /// exclusive access at runtime — this just makes the borrow checker stop screaming.
+    /// — GlassSignal: the cell is unsafe, but the lock is not
+    controlq: UnsafeCell<Option<Virtqueue>>,
     /// Display width
     width: u32,
     /// Display height
@@ -256,8 +229,9 @@ pub struct VirtioGpu {
     virtio_format: u32,
     /// Framebuffer resource ID
     resource_id: u32,
-    /// Framebuffer memory
-    framebuffer: Option<Box<[u8]>>,
+    /// Framebuffer backing memory — DMA-safe for PCI, heap for MMIO
+    /// — GlassSignal: intentionally leaked on destroy — GPU framebuffer outlives mode switches
+    framebuffer: Option<FbBacking>,
     /// Display info cache
     displays: [DisplayOne; 16],
     /// Number of displays reported
@@ -283,12 +257,7 @@ impl VirtioGpu {
         Some(VirtioGpu {
             mmio_base: 0,
             transport: Some(transport),
-            descriptors: core::ptr::null_mut(),
-            available: core::ptr::null_mut(),
-            used: core::ptr::null_mut(),
-            queue_size: 0,
-            next_desc: AtomicU16::new(0),
-            last_used: AtomicU16::new(0),
+            controlq: UnsafeCell::new(None),
             width: 0,
             height: 0,
             pixel_format: PixelFormat::BGRA8888,
@@ -299,6 +268,7 @@ impl VirtioGpu {
             displays: [DisplayOne::default(); 16],
             display_count: 0,
         })
+
     }
 
     /// Probe for VirtIO GPU at MMIO address
@@ -322,12 +292,7 @@ impl VirtioGpu {
         Some(VirtioGpu {
             mmio_base,
             transport: None,
-            descriptors: core::ptr::null_mut(),
-            available: core::ptr::null_mut(),
-            used: core::ptr::null_mut(),
-            queue_size: 0,
-            next_desc: AtomicU16::new(0),
-            last_used: AtomicU16::new(0),
+            controlq: UnsafeCell::new(None),
             width: 0,
             height: 0,
             pixel_format: PixelFormat::BGRA8888,
@@ -338,6 +303,7 @@ impl VirtioGpu {
             displays: [DisplayOne::default(); 16],
             display_count: 0,
         })
+
     }
 
     /// Initialize the GPU device (works for both MMIO and PCI transport)
@@ -345,11 +311,13 @@ impl VirtioGpu {
     pub fn init(&mut self) -> Result<(), &'static str> {
         let has_pci = self.transport.is_some();
 
+
         if has_pci {
             self.init_pci_handshake()?;
         } else {
             self.init_mmio_handshake()?;
         }
+
 
         // Get display info
         self.get_display_info()?;
@@ -361,13 +329,14 @@ impl VirtioGpu {
     }
 
     /// PCI transport VirtIO handshake
+    /// — GlassSignal: reset, acknowledge, negotiate, ready — the sacred four-step
     fn init_pci_handshake(&mut self) -> Result<(), &'static str> {
         let t = self.transport.as_ref().ok_or("No PCI transport")?;
 
         // Reset
         t.write_status(0);
-        t.write_status(VIRTIO_STATUS_ACKNOWLEDGE as u8);
-        t.write_status((VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER) as u8);
+        t.write_status(dev_status::ACKNOWLEDGE);
+        t.write_status(dev_status::ACKNOWLEDGE | dev_status::DRIVER);
 
         // Read features, accept none for basic 2D
         let _features = t.read_device_features(0);
@@ -375,12 +344,12 @@ impl VirtioGpu {
 
         // Features OK
         t.write_status(
-            (VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK) as u8,
+            dev_status::ACKNOWLEDGE | dev_status::DRIVER | dev_status::FEATURES_OK,
         );
 
         let status = t.read_status();
-        if status & VIRTIO_STATUS_FEATURES_OK as u8 == 0 {
-            t.write_status(VIRTIO_STATUS_FAILED as u8);
+        if status & dev_status::FEATURES_OK == 0 {
+            t.write_status(dev_status::FAILED);
             return Err("Features not accepted");
         }
 
@@ -393,22 +362,23 @@ impl VirtioGpu {
         // Driver ready
         let t = self.transport.as_ref().ok_or("No PCI transport")?;
         t.write_status(
-            (VIRTIO_STATUS_ACKNOWLEDGE
-                | VIRTIO_STATUS_DRIVER
-                | VIRTIO_STATUS_FEATURES_OK
-                | VIRTIO_STATUS_DRIVER_OK) as u8,
+            dev_status::ACKNOWLEDGE
+                | dev_status::DRIVER
+                | dev_status::FEATURES_OK
+                | dev_status::DRIVER_OK,
         );
 
         Ok(())
     }
 
     /// MMIO transport VirtIO handshake (legacy path)
+    /// — GlassSignal: same dance, MMIO flavor — registers instead of PCI config space
     fn init_mmio_handshake(&mut self) -> Result<(), &'static str> {
         self.write_reg(VIRTIO_MMIO_STATUS, 0);
-        self.write_reg(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_ACKNOWLEDGE);
+        self.write_reg(VIRTIO_MMIO_STATUS, dev_status::ACKNOWLEDGE as u32);
         self.write_reg(
             VIRTIO_MMIO_STATUS,
-            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+            (dev_status::ACKNOWLEDGE | dev_status::DRIVER) as u32,
         );
 
         self.write_reg(VIRTIO_MMIO_DEVICE_FEATURES_SEL, 0);
@@ -419,12 +389,12 @@ impl VirtioGpu {
 
         self.write_reg(
             VIRTIO_MMIO_STATUS,
-            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+            (dev_status::ACKNOWLEDGE | dev_status::DRIVER | dev_status::FEATURES_OK) as u32,
         );
 
         let status = self.read_reg(VIRTIO_MMIO_STATUS);
-        if status & VIRTIO_STATUS_FEATURES_OK == 0 {
-            self.write_reg(VIRTIO_MMIO_STATUS, VIRTIO_STATUS_FAILED);
+        if status & dev_status::FEATURES_OK as u32 == 0 {
+            self.write_reg(VIRTIO_MMIO_STATUS, dev_status::FAILED as u32);
             return Err("Features not accepted");
         }
 
@@ -432,17 +402,20 @@ impl VirtioGpu {
 
         self.write_reg(
             VIRTIO_MMIO_STATUS,
-            VIRTIO_STATUS_ACKNOWLEDGE
-                | VIRTIO_STATUS_DRIVER
-                | VIRTIO_STATUS_FEATURES_OK
-                | VIRTIO_STATUS_DRIVER_OK,
+            (dev_status::ACKNOWLEDGE
+                | dev_status::DRIVER
+                | dev_status::FEATURES_OK
+                | dev_status::DRIVER_OK) as u32,
         );
 
         Ok(())
     }
 
     fn destroy_resource(&mut self) {
-        // Drop framebuffer backing
+        // — GlassSignal: intentionally leak old backing memory on mode switch.
+        // DMA-allocated frames can't be freed through the heap allocator,
+        // and we'd need RESOURCE_DETACH_BACKING + frame dealloc for proper cleanup.
+        // GPU framebuffer memory is tiny vs total RAM — acceptable leak.
         self.framebuffer = None;
     }
 
@@ -506,35 +479,28 @@ impl VirtioGpu {
         }
 
         let size = max_size.min(64);
-        self.queue_size = size;
         t.set_queue_size(size);
 
-        use alloc::alloc::{Layout, alloc_zeroed};
-
-        let desc_size = size as usize * core::mem::size_of::<VirtqDesc>();
-        let desc_layout = Layout::from_size_align(desc_size, 16).unwrap();
-        self.descriptors = unsafe { alloc_zeroed(desc_layout) } as *mut VirtqDesc;
-
-        let avail_layout = Layout::from_size_align(core::mem::size_of::<VirtqAvail>(), 2).unwrap();
-        self.available = unsafe { alloc_zeroed(avail_layout) } as *mut VirtqAvail;
-
-        let used_layout = Layout::from_size_align(core::mem::size_of::<VirtqUsed>(), 4).unwrap();
-        self.used = unsafe { alloc_zeroed(used_layout) } as *mut VirtqUsed;
+        // — GlassSignal: let virtio-core handle the ring allocation — no more artisanal malloc
+        let queue = unsafe { Virtqueue::new(size) }
+            .ok_or("Failed to allocate control virtqueue")?;
 
         // PCI transport needs physical addresses for virtqueue rings
-        let desc_phys = self.descriptors as u64 - PHYS_MAP_BASE;
-        let avail_phys = self.available as u64 - PHYS_MAP_BASE;
-        let used_phys = self.used as u64 - PHYS_MAP_BASE;
+        let (desc_phys, avail_phys, used_phys) = queue.physical_addresses();
 
         t.set_queue_desc(desc_phys);
         t.set_queue_avail(avail_phys);
         t.set_queue_used(used_phys);
         t.enable_queue();
 
+        // SAFETY: we have &mut self so exclusive access is guaranteed
+        unsafe { *self.controlq.get() = Some(queue); }
+
         Ok(())
     }
 
     /// Initialize control queue (MMIO path)
+    /// — GlassSignal: MMIO rings — same virtqueue core, different address plumbing
     fn init_controlq(&mut self) -> Result<(), &'static str> {
         self.write_reg(VIRTIO_MMIO_QUEUE_SEL, VIRTIO_GPU_CONTROLQ);
 
@@ -544,35 +510,25 @@ impl VirtioGpu {
         }
 
         let size = max_size.min(64);
-        self.queue_size = size;
         self.write_reg(VIRTIO_MMIO_QUEUE_NUM, size as u32);
 
-        // Allocate queue structures
-        use alloc::alloc::{Layout, alloc_zeroed};
+        // — GlassSignal: let virtio-core handle the ring allocation
+        let queue = unsafe { Virtqueue::new(size) }
+            .ok_or("Failed to allocate control virtqueue")?;
 
-        let desc_size = size as usize * core::mem::size_of::<VirtqDesc>();
-        let desc_layout = Layout::from_size_align(desc_size, 16).unwrap();
-        self.descriptors = unsafe { alloc_zeroed(desc_layout) } as *mut VirtqDesc;
+        let (desc_phys, avail_phys, used_phys) = queue.physical_addresses();
 
-        let avail_layout = Layout::from_size_align(core::mem::size_of::<VirtqAvail>(), 2).unwrap();
-        self.available = unsafe { alloc_zeroed(avail_layout) } as *mut VirtqAvail;
-
-        let used_layout = Layout::from_size_align(core::mem::size_of::<VirtqUsed>(), 4).unwrap();
-        self.used = unsafe { alloc_zeroed(used_layout) } as *mut VirtqUsed;
-
-        // Set queue addresses
-        let desc_addr = self.descriptors as u64;
-        let avail_addr = self.available as u64;
-        let used_addr = self.used as u64;
-
-        self.write_reg(VIRTIO_MMIO_QUEUE_DESC_LOW, desc_addr as u32);
-        self.write_reg(VIRTIO_MMIO_QUEUE_DESC_HIGH, (desc_addr >> 32) as u32);
-        self.write_reg(VIRTIO_MMIO_QUEUE_AVAIL_LOW, avail_addr as u32);
-        self.write_reg(VIRTIO_MMIO_QUEUE_AVAIL_HIGH, (avail_addr >> 32) as u32);
-        self.write_reg(VIRTIO_MMIO_QUEUE_USED_LOW, used_addr as u32);
-        self.write_reg(VIRTIO_MMIO_QUEUE_USED_HIGH, (used_addr >> 32) as u32);
+        self.write_reg(VIRTIO_MMIO_QUEUE_DESC_LOW, desc_phys as u32);
+        self.write_reg(VIRTIO_MMIO_QUEUE_DESC_HIGH, (desc_phys >> 32) as u32);
+        self.write_reg(VIRTIO_MMIO_QUEUE_AVAIL_LOW, avail_phys as u32);
+        self.write_reg(VIRTIO_MMIO_QUEUE_AVAIL_HIGH, (avail_phys >> 32) as u32);
+        self.write_reg(VIRTIO_MMIO_QUEUE_USED_LOW, used_phys as u32);
+        self.write_reg(VIRTIO_MMIO_QUEUE_USED_HIGH, (used_phys >> 32) as u32);
 
         self.write_reg(VIRTIO_MMIO_QUEUE_READY, 1);
+
+        // SAFETY: we have &mut self so exclusive access is guaranteed
+        unsafe { *self.controlq.get() = Some(queue); }
 
         Ok(())
     }
@@ -645,17 +601,31 @@ impl VirtioGpu {
             return Err("Failed to create resource");
         }
 
-        // Allocate framebuffer
+        // Allocate framebuffer from physical frame allocator for DMA safety
+        // — GlassSignal: heap addresses live at KERNEL_VIRT_BASE (0xFFFF_FFFF_8000_0000),
+        // virt_to_phys on them gives ~128TB bogus addresses. Frame allocator gives
+        // real physical addresses accessible through PHYS_MAP_BASE — hardware can DMA to them.
         let fb_size = (self.width * self.height * self.bytes_per_pixel) as usize;
-        let fb = alloc::vec![0u8; fb_size].into_boxed_slice();
-        let fb_virt = fb.as_ptr() as u64;
+        let num_pages = (fb_size + 4095) / 4096;
 
-        // DMA backing address: PCI needs physical, MMIO uses virtual
-        // — GlassSignal: the device sees silicon, not kernel address space
-        let fb_dma = if self.transport.is_some() {
-            fb_virt - PHYS_MAP_BASE
+        let backing = if self.transport.is_some() {
+            // PCI path: allocate from physical frame allocator for DMA
+            let phys_addr = mm_manager::mm()
+                .alloc_contiguous(num_pages)
+                .map_err(|_| "Failed to alloc DMA frames for GPU framebuffer")?;
+            let phys = phys_addr.as_u64();
+            let virt = phys_to_virt(phys) as *mut u8;
+            // Zero the memory
+            unsafe { core::ptr::write_bytes(virt, 0, num_pages * 4096); }
+            FbBacking { ptr: virt, len: fb_size, phys }
         } else {
-            fb_virt
+            // MMIO path: heap allocation is fine (no DMA translation needed)
+            let fb = alloc::vec![0u8; fb_size].into_boxed_slice();
+            let ptr = fb.as_ptr() as *mut u8;
+            let virt_addr = ptr as u64;
+            // Leak the box — MMIO framebuffer outlives everything
+            core::mem::forget(fb);
+            FbBacking { ptr, len: fb_size, phys: virt_addr }
         };
 
         // Attach backing
@@ -675,7 +645,7 @@ impl VirtioGpu {
                 nr_entries: 1,
             },
             entry: MemEntry {
-                addr: fb_dma,
+                addr: backing.phys,
                 length: fb_size as u32,
                 padding: 0,
             },
@@ -709,56 +679,52 @@ impl VirtioGpu {
             return Err("Failed to set scanout");
         }
 
-        self.framebuffer = Some(fb);
+        self.framebuffer = Some(backing);
         Ok(())
     }
 
     /// Send a command and wait for response
     /// — GlassSignal: push bytes through the virtqueue pipeline, wait for the echo
+    ///
+    /// Takes &self (not &mut self) so Framebuffer trait flush methods can call it.
+    /// SAFETY: the outer VIRTIO_GPU Mutex guarantees exclusive access at runtime;
+    /// we use UnsafeCell to get the mutable Virtqueue reference the borrow checker won't give us.
     fn send_command<C, R>(&self, cmd: &C, resp: &mut R) -> Result<(), &'static str> {
         let cmd_size = core::mem::size_of::<C>();
         let resp_size = core::mem::size_of::<R>();
         let is_pci = self.transport.is_some();
 
-        // Setup descriptors (use atomic operations for thread-safety)
-        let desc_idx = (self.next_desc.fetch_add(2, Ordering::SeqCst) % self.queue_size).into();
+        // SAFETY: caller holds VIRTIO_GPU mutex — no concurrent access possible
+        let queue = unsafe { &mut *self.controlq.get() }
+            .as_mut()
+            .ok_or("Control queue not initialized")?;
+
+        // — GlassSignal: allocate two descriptors — command out, response back
+        let desc0 = queue.alloc_desc().ok_or("No free descriptors for cmd")?;
+        let desc1 = queue.alloc_desc().ok_or("No free descriptors for resp")?;
+
+        // For PCI transport, descriptor addresses must be physical
+        let cmd_addr = if is_pci {
+            virt_to_phys(cmd as *const C as u64)
+        } else {
+            cmd as *const C as u64
+        };
+        let resp_addr = if is_pci {
+            virt_to_phys(resp as *mut R as u64)
+        } else {
+            resp as *mut R as u64
+        };
 
         unsafe {
-            // For PCI transport, descriptor addresses must be physical
-            let cmd_addr = if is_pci {
-                cmd as *const C as u64 - PHYS_MAP_BASE
-            } else {
-                cmd as *const C as u64
-            };
-            let resp_addr = if is_pci {
-                resp as *mut R as u64 - PHYS_MAP_BASE
-            } else {
-                resp as *mut R as u64
-            };
+            // Command descriptor — device reads this
+            queue.write_desc(desc0, cmd_addr, cmd_size as u32, desc_flags::NEXT, desc1);
 
-            // Command descriptor
-            let desc0 = &mut *self.descriptors.add(desc_idx);
-            desc0.addr = cmd_addr;
-            desc0.len = cmd_size as u32;
-            desc0.flags = VIRTQ_DESC_F_NEXT;
-            desc0.next = ((desc_idx as u16 + 1) % self.queue_size) as u16;
-
-            // Response descriptor
-            let desc1 = &mut *self
-                .descriptors
-                .add(((desc_idx as u16 + 1) % self.queue_size) as usize);
-            desc1.addr = resp_addr;
-            desc1.len = resp_size as u32;
-            desc1.flags = VIRTQ_DESC_F_WRITE;
-            desc1.next = 0;
-
-            // Add to available ring
-            let avail = &mut *self.available;
-            let avail_idx = avail.idx;
-            avail.ring[(avail_idx % self.queue_size) as usize] = desc_idx as u16;
-            core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
-            write_volatile(&mut avail.idx, avail_idx.wrapping_add(1));
+            // Response descriptor — device writes here
+            queue.write_desc(desc1, resp_addr, resp_size as u32, desc_flags::WRITE, 0);
         }
+
+        // Submit chain to available ring
+        queue.add_available(desc0);
 
         // Notify device — PCI uses transport, MMIO uses register write
         if let Some(ref t) = self.transport {
@@ -767,13 +733,27 @@ impl VirtioGpu {
             self.write_reg(VIRTIO_MMIO_QUEUE_NOTIFY, VIRTIO_GPU_CONTROLQ);
         }
 
-        // Wait for completion
-        let last_used = self.last_used.load(Ordering::Acquire);
+        // — GlassSignal: spin until the device responds, but with a hard ceiling.
+        // We're often called from terminal::write() with the TERMINAL spinlock held.
+        // An unbounded spin here deadlocks every future console write. The GOP
+        // framebuffer is memory-mapped and visible without GPU commands, so a
+        // dropped flush is cosmetic only — not a hang. — NeonRoot
+        let mut spins = 0u32;
+        const MAX_SPINS: u32 = 100_000;
         loop {
-            let used_idx = unsafe { read_volatile(&(*self.used).idx) };
-            if used_idx != last_used {
-                self.last_used.store(used_idx, Ordering::Release);
+            if queue.has_completed() {
+                if let Some((head, _len)) = queue.pop_used() {
+                    queue.free_chain(head);
+                }
                 break;
+            }
+            spins += 1;
+            if spins >= MAX_SPINS {
+                // — GlassSignal: GPU didn't respond in time. Free the descriptor
+                // chain to avoid leaking them, and bail. GOP framebuffer still
+                // shows the data since blit_to_fb already did the memcpy. — NeonRoot
+                queue.free_chain(desc0);
+                return Err("GPU command timed out");
             }
             core::hint::spin_loop();
         }
@@ -784,8 +764,8 @@ impl VirtioGpu {
     /// Get framebuffer info
     pub fn framebuffer_info(&self) -> Option<FramebufferInfo> {
         self.framebuffer.as_ref().map(|fb| FramebufferInfo {
-            base: fb.as_ptr() as usize,
-            size: fb.len(),
+            base: fb.ptr as usize,
+            size: fb.len,
             width: self.width,
             height: self.height,
             stride: self.width * self.bytes_per_pixel,
@@ -822,12 +802,12 @@ impl Framebuffer for VirtioGpu {
     fn buffer(&self) -> *mut u8 {
         self.framebuffer
             .as_ref()
-            .map(|fb| fb.as_ptr() as *mut u8)
+            .map(|fb| fb.ptr)
             .unwrap_or(core::ptr::null_mut())
     }
 
     fn size(&self) -> usize {
-        self.framebuffer.as_ref().map(|fb| fb.len()).unwrap_or(0)
+        self.framebuffer.as_ref().map(|fb| fb.len).unwrap_or(0)
     }
 
     fn flush(&self) {
@@ -888,21 +868,38 @@ unsafe impl Sync for VirtioGpu {}
 static VIRTIO_GPU: Mutex<Option<VirtioGpu>> = Mutex::new(None);
 
 /// Initialize VirtIO GPU from PCI device
-/// — GlassSignal: from PCI bus to framebuffer in one function call
+/// — GlassSignal: probe the device but DON'T replace the framebuffer.
+/// UEFI's GOP framebuffer is memory-mapped and works without TRANSFER_TO_HOST_2D.
+/// Our SET_SCANOUT to a new resource doesn't take effect in QEMU — the display
+/// continues showing UEFI's GOP memory. So we keep using the UEFI GOP buffer
+/// and just store the GPU device for future mode-switching capability.
 pub fn init_from_pci(pci_dev: &PciDevice) -> Result<(), &'static str> {
     let mut gpu = VirtioGpu::from_pci(pci_dev).ok_or("VirtIO GPU PCI probe failed")?;
     gpu.init()?;
 
-    // Initialize framebuffer subsystem
-    if let Some(info) = gpu.framebuffer_info() {
-        fb::init(info);
-    }
+    // — GlassSignal: DON'T call fb::init() — the UEFI GOP framebuffer is the one
+    // QEMU actually displays. Our VirtIO-GPU resource lives in a DMA buffer that
+    // QEMU ignores. The UEFI GOP fb is memory-mapped: writes appear immediately,
+    // no TRANSFER_TO_HOST_2D or RESOURCE_FLUSH needed.
 
-    // Register mode setter so fb userspace can switch
+    // Register mode setter for future use
     fb::mode::set_mode_setter(set_mode_from_fb);
 
+    // Store the GPU for future use (mode switching, acceleration)
     *VIRTIO_GPU.lock() = Some(gpu);
+
     Ok(())
+}
+
+/// Flush callback — bridges LinearFramebuffer::flush_region() to VirtIO-GPU commands.
+/// — GlassSignal: the pixel pipeline's last mile — guest memory to host scanout.
+/// Uses try_lock because this may fire from ISR context (terminal tick).
+fn gpu_flush_region(x: u32, y: u32, w: u32, h: u32) {
+    if let Some(guard) = VIRTIO_GPU.try_lock() {
+        if let Some(ref gpu) = *guard {
+            <VirtioGpu as Framebuffer>::flush_region(gpu, x, y, w, h);
+        }
+    }
 }
 
 /// Initialize VirtIO GPU from MMIO address
@@ -974,13 +971,10 @@ impl PciDriver for VirtioGpuDriver {
     }
 
     fn probe(&self, dev: &pci::PciDevice, _id: &PciDeviceId) -> Result<DriverBindingData, DriverError> {
-        // SAFETY: PCI device is valid and matches our ID table
-        // Only initialize if no framebuffer is active
-        if fb::is_initialized() {
-            return Err(DriverError::AlreadyBound);
-        }
-
-        let _ = unsafe { init_from_pci(dev) }
+        // — GlassSignal: ALWAYS initialize VirtIO-GPU, even if UEFI GOP set up a boot framebuffer.
+        // GOP provides early boot display; we take over with proper flush support.
+        // Without our driver, QEMU's VirtIO-GPU display freezes at UEFI's last frame.
+        init_from_pci(dev)
             .map_err(|_| DriverError::InitFailed)?;
 
         Ok(DriverBindingData::new(0))

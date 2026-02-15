@@ -265,6 +265,7 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 name = "driver-core"
 version = "0.1.0"
 dependencies = [
+ "driver-traits",
  "os_log",
  "pci",
  "spin 0.9.8",
@@ -273,9 +274,6 @@ dependencies = [
 [[package]]
 name = "driver-traits"
 version = "0.1.0"
-dependencies = [
- "os_core",
-]
 
 [[package]]
 name = "driver-uart-8250"
@@ -1119,6 +1117,7 @@ dependencies = [
 name = "ps2"
 version = "0.1.0"
 dependencies = [
+ "driver-traits",
  "input",
  "spin 0.9.8",
 ]
@@ -1806,6 +1805,7 @@ dependencies = [
  "boot-proto",
  "driver-core",
  "fb",
+ "mm-manager",
  "pci",
  "spin 0.9.8",
  "virtio-core",

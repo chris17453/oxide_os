@@ -4,6 +4,13 @@
 
 extern crate alloc;
 
+// — GraveShift: force-link driver crates so their #[used] #[link_section = ".pci_drivers"]
+// statics survive linker GC. Without these, crates with no direct symbol references
+// get stripped entirely, taking their driver registrations with them into the void.
+extern crate virtio_gpu;
+extern crate virtio_net;
+extern crate virtio_snd;
+
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -302,10 +309,10 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     );
     let mut total_usable = 0u64;
     for region in boot_info.memory_regions() {
-        if matches!(
-            region.ty,
-            BootMemoryType::Usable | BootMemoryType::BootServices
-        ) {
+        // — ColdCipher: BOOT_SERVICES regions are cursed ground. UEFI firmware
+        // scribbles runtime data into them after ExitBootServices, corrupting our
+        // buddy allocator canaries. Linux excludes them by default. So do we now.
+        if matches!(region.ty, BootMemoryType::Usable) {
             total_usable += region.len;
         }
     }
@@ -371,73 +378,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     };
     let uefi_guard_end = bootloader_min;
 
-    // [SIMPLE] Trust the memory map — ColdCipher: The Linux way
-    // Bootloader marks page tables/stack as MemoryType::Bootloader (LOADER_DATA).
-    // We only use regions marked Usable or BootServices. No manual protection needed.
-    // [DEBUG] Dump ENTIRE memory map to serial — ColdCipher
-    unsafe {
-        use arch_x86_64 as arch;
-        let header = b"[MMAP-DUMP] UEFI Memory Map:\r\n";
-        for &byte in header.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-
-        for region in boot_info.memory_regions() {
-            let type_str: &[u8] = match region.ty {
-                BootMemoryType::Usable => b"USABLE       ",
-                BootMemoryType::Bootloader => b"BOOTLOADER   ",
-                BootMemoryType::BootServices => b"BOOT_SERVICES",
-                BootMemoryType::Reserved => b"RESERVED     ",
-                BootMemoryType::AcpiReclaimable => b"ACPI_RECLAIM ",
-                BootMemoryType::AcpiNvs => b"ACPI_NVS     ",
-                _ => b"OTHER        ",
-            };
-
-            let start = region.start;
-            let end = start + region.len;
-
-            let prefix = b"[MMAP] 0x";
-            for &byte in prefix.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-            for i in (0..16).rev() {
-                let nibble = ((start >> (i * 4)) & 0xF) as u8;
-                let hex_char = if nibble < 10 {
-                    b'0' + nibble
-                } else {
-                    b'a' + nibble - 10
-                };
-                arch::outb(0x3F8, hex_char);
-            }
-            let sep = b"-0x";
-            for &byte in sep.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-            for i in (0..16).rev() {
-                let nibble = ((end >> (i * 4)) & 0xF) as u8;
-                let hex_char = if nibble < 10 {
-                    b'0' + nibble
-                } else {
-                    b'a' + nibble - 10
-                };
-                arch::outb(0x3F8, hex_char);
-            }
-            let space = b" ";
-            arch::outb(0x3F8, space[0]);
-            for &byte in type_str.iter() {
-                arch::outb(0x3F8, byte);
-            }
-            let newline = b"\r\n";
-            for &byte in newline.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-        }
-    }
-
     let _ = writeln!(writer, "[INFO] Protected regions:");
     let _ = writeln!(writer, "[INFO]   Low memory: 0x0 - {:#x}", LOW_MEM_LIMIT);
     let _ = writeln!(
@@ -467,56 +407,9 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let mut regions: Vec<(os_core::PhysAddr, u64, bool)> = Vec::new();
 
     for boot_region in boot_info.memory_regions() {
-        // [DEBUG] Log memory map entries around problem area — ColdCipher
-        if boot_region.start <= 0x1c060000 && boot_region.start + boot_region.len > 0x1c060000 {
-            unsafe {
-                use arch_x86_64 as arch;
-                let msg = b"[MMAP] 0x";
-                for &byte in msg.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-                for i in (0..16).rev() {
-                    let nibble = ((boot_region.start >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 {
-                        b'0' + nibble
-                    } else {
-                        b'a' + nibble - 10
-                    };
-                    arch::outb(0x3F8, hex_char);
-                }
-                let msg2 = b"-0x";
-                for &byte in msg2.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-                let end = boot_region.start + boot_region.len;
-                for i in (0..16).rev() {
-                    let nibble = ((end >> (i * 4)) & 0xF) as u8;
-                    let hex_char = if nibble < 10 {
-                        b'0' + nibble
-                    } else {
-                        b'a' + nibble - 10
-                    };
-                    arch::outb(0x3F8, hex_char);
-                }
-                let type_str = match boot_region.ty {
-                    BootMemoryType::Usable => b" USABLE\r\n" as &[u8],
-                    BootMemoryType::Bootloader => b" BOOTLOADER\r\n" as &[u8],
-                    BootMemoryType::BootServices => b" BOOT_SERVICES\r\n" as &[u8],
-                    _ => b" OTHER\r\n" as &[u8],
-                };
-                for &byte in type_str.iter() {
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, byte);
-                }
-            }
-        }
-
-        let base_usable = matches!(
-            boot_region.ty,
-            BootMemoryType::Usable | BootMemoryType::BootServices
-        );
+        // — ColdCipher: Only trust Usable. BOOT_SERVICES is a graveyard of
+        // firmware ghosts that stomp our free-block headers post-ExitBootServices.
+        let base_usable = matches!(boot_region.ty, BootMemoryType::Usable);
 
         if !base_usable {
             // Non-usable regions pass through as-is
@@ -837,40 +730,12 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     debug_mouse!("[mouse] Initializing PS/2 drivers...");
     ps2::init();
 
-    // DEBUG: Direct serial output before enable_interrupts — GraveShift
-    unsafe {
-        let msg = b"[INIT-DEBUG] ps2::init() returned, about to enable interrupts\r\n";
-        for &byte in msg.iter() {
-            // Wait for THRE (transmit holding register empty) — COM1 status port 0x3FD
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            // Write byte to COM1 data port 0x3F8
-            arch::outb(0x3F8, byte);
-        }
-    }
-
     // CRITICAL FIX: Re-enable interrupts immediately after PS/2 init
     // PS/2 init calls cli() but doesn't call sti(). Without this, all subsequent
     // writeln! calls hang because terminal rendering needs interrupts.
     arch::X86_64::enable_interrupts();
 
-    // DEBUG: After sti — GraveShift
-    unsafe {
-        let msg = b"[INIT-DEBUG] enable_interrupts() returned successfully!\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
-
     let _ = writeln!(writer, "[INFO] PS/2 drivers initialized (keyboard + mouse)");
-
-    unsafe {
-        let msg = b"[INIT-DEBUG] After first writeln\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
 
     // Connect keyboard IRQ 1 to PS/2 keyboard driver
     debug_input!("[INPUT] Registering IRQ 1 callback for PS/2 keyboard");
@@ -878,14 +743,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         arch::set_keyboard_callback(ps2::handle_keyboard_irq);
     }
     let _ = writeln!(writer, "[INFO] PS/2 keyboard IRQ callback registered");
-
-    unsafe {
-        let msg = b"[INIT-DEBUG] After set_keyboard_callback\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
 
     // Connect keyboard input to console via shared kbd module
     // — GraveShift: both PS/2 and VirtIO now use input::kbd for key→console conversion.
@@ -896,28 +753,12 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
     let _ = writeln!(writer, "[INFO] Keyboard console callback registered (shared kbd module)");
 
-    unsafe {
-        let msg = b"[INIT-DEBUG] After set_console_callback\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
-
     // Connect Alt+Fn keys to VT switching via shared kbd module
     // Safety: Called during single-threaded initialization
     unsafe {
         input::kbd::set_vt_switch_callback(vt_switch_callback);
     }
     let _ = writeln!(writer, "[INFO] VT switch callback registered (shared kbd module)");
-
-    unsafe {
-        let msg = b"[INIT-DEBUG] After set_vt_switch_callback\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
 
     // Connect mouse IRQ 12 to PS/2 mouse driver
     debug_mouse!("[mouse] Registering IRQ 12 callback for PS/2 mouse");
@@ -926,27 +767,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
     let _ = writeln!(writer, "[INFO] PS/2 mouse IRQ callback registered");
 
-    unsafe {
-        let msg = b"[INIT-DEBUG] After set_mouse_callback\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
-
     // Initialize graphical mouse cursor on framebuffer
     if fb::is_initialized() {
         debug_mouse!("[mouse] Initializing graphical cursor on framebuffer");
         fb::mouse_init();
         let _ = writeln!(writer, "[INFO] Mouse cursor initialized");
-
-        unsafe {
-            let msg = b"[INIT-DEBUG] After fb::mouse_init\r\n";
-            for &byte in msg.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-        }
     } else {
         debug_mouse!("[mouse] No framebuffer — skipping graphical cursor init");
     }
@@ -965,6 +790,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     driver_core::init_driver_registry();
 
     let _ = writeln!(writer, "[DRIVER] Probing all PCI devices with registered drivers...");
+
     let _ = driver_core::probe_all_devices();
 
     let _ = writeln!(writer, "[DRIVER] Probing ISA devices...");
@@ -977,50 +803,14 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         let _ = writeln!(writer, "[DRIVER]   - {}", driver_name);
     }
 
-    // Initialize VirtIO input devices (keyboard, mouse, tablet) from PCI bus
-    // — InputShade: Modern VirtIO input takes priority over PS/2 for virtualized environments
-    unsafe {
-        let msg = b"[INIT-DEBUG] Before virtio_input::probe_all_pci()\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
-    let _ = writeln!(writer, "[DEBUG] Calling virtio_input::probe_all_pci()...");
-    let virtio_input_count = virtio_input::probe_all_pci();
-    unsafe {
-        let msg = b"[INIT-DEBUG] After virtio_input::probe_all_pci() count=";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-        let digit = b'0' + (virtio_input_count as u8 % 10);
-        while arch::inb(0x3FD) & 0x20 == 0 {}
-        arch::outb(0x3F8, digit);
-        while arch::inb(0x3FD) & 0x20 == 0 {}
-        arch::outb(0x3F8, b'\r');
-        while arch::inb(0x3FD) & 0x20 == 0 {}
-        arch::outb(0x3F8, b'\n');
-    }
-    let _ = writeln!(
-        writer,
-        "[DEBUG] probe_all_pci() returned {} devices",
-        virtio_input_count
-    );
-    if virtio_input_count > 0 {
-        let _ = writeln!(
-            writer,
-            "[INFO] Found {} VirtIO input device(s) on PCI bus",
-            virtio_input_count
-        );
-        let _ = writeln!(writer, "[DEBUG] VirtIO input initialized successfully");
-    } else {
-        let _ = writeln!(
-            writer,
-            "[INFO] No VirtIO input devices found — using PS/2 fallback"
-        );
-        let _ = writeln!(writer, "[DEBUG] Falling back to PS/2 for input");
-    }
+    // — InputShade: VirtIO input devices are probed by driver_core above.
+    // No more double-probing with probe_all_pci() — the PciDriver::probe()
+    // handles device init and input subsystem registration.
+
+    // — GlassSignal: the UEFI GOP framebuffer is memory-mapped and works without
+    // explicit GPU flushes. VirtIO-GPU's SET_SCANOUT to a new resource doesn't take
+    // effect in QEMU — the display continues showing UEFI's GOP memory.
+    // So we keep the UEFI GOP fb and don't switch the terminal to a different buffer.
 
     // Set up input subsystem wake callback for blocking reads on /dev/input/eventN
     // — GraveShift: This callback fires from keyboard/mouse ISR context.
@@ -1036,23 +826,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     // Initialize and register preemptive scheduler (BSP)
 
-    unsafe {
-        let msg = b"[INIT-DEBUG] Before scheduler::init()\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
-
     scheduler::init();
-
-    unsafe {
-        let msg = b"[INIT-DEBUG] After scheduler::init()\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
 
     let _ = writeln!(writer, "[INFO] Scheduler initialized");
 
@@ -1087,51 +861,12 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // current task. Starting the timer after sti gives a clean first tick.
     let _ = writeln!(writer, "[INFO] Enabling interrupts...");
 
-    let _ = writeln!(writer, "[dbg] *** ENABLING INTERRUPTS NOW ***");
     arch::X86_64::enable_interrupts();
-    let _ = writeln!(writer, "[dbg] *** INTERRUPTS ENABLED ***");
-
-    unsafe {
-        let msg = b"[INIT-DEBUG] After second enable_interrupts()\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
-
     let _ = writeln!(writer, "[INFO] Interrupts enabled");
 
     // BlackLatch: Unmask IOAPIC keyboard/mouse now that sti is live and
     // all handlers are registered. Any stale PS2 data will fire here safely.
     arch::unmask_io_irqs();
-
-    // — InputShade: Verify interrupts are enabled after unmasking
-    let if_enabled = arch::X86_64::interrupts_enabled();
-    unsafe {
-        let prefix = b"[IRQ-CHECK] After unmask: interrupts ";
-        for &byte in prefix.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-        let status: &[u8] = if if_enabled { b"ENABLED" } else { b"DISABLED" };
-        for &byte in status.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-        let suffix = b"\r\n";
-        for &byte in suffix.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
-
-    unsafe {
-        let msg = b"[INIT-DEBUG] After unmask_io_irqs()\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
 
     // NeonRoot: Timer and AP release are DEFERRED until right before entering
     // usermode. The entire boot sequence runs as a single kernel thread with
@@ -1160,26 +895,10 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(writer, "========================================");
     let _ = writeln!(writer);
 
-    unsafe {
-        let msg = b"[INIT-DEBUG] Entering Phase 3: User Mode Test\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
-
     // Initialize syscall mechanism
     let _ = writeln!(writer, "[USER] Initializing syscall mechanism...");
     unsafe {
         arch::syscall::init();
-    }
-
-    unsafe {
-        let msg = b"[INIT-DEBUG] After syscall::init()\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
     }
 
     // Set up syscall handlers
@@ -1223,14 +942,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // ========================================
     let _ = writeln!(writer, "[VFS] Initializing virtual filesystem...");
 
-    unsafe {
-        let msg = b"[INIT-DEBUG] Before VFS mount\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
-
     // Mount tmpfs as root filesystem
     let root_fs = TmpDir::new_root();
     if let Err(e) = GLOBAL_VFS.mount(root_fs.clone(), "/", MountFlags::empty(), "tmpfs") {
@@ -1238,14 +949,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         arch::X86_64::halt();
     }
     let _ = writeln!(writer, "[VFS] Mounted tmpfs at /");
-
-    unsafe {
-        let msg = b"[INIT-DEBUG] After VFS mount\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
 
     // Create /dev directory
     if let Err(e) = root_fs.mkdir("dev", vfs::Mode::DEFAULT_DIR) {
@@ -1385,80 +1088,48 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // ========================================
     let _ = writeln!(writer, "[NET] Initializing network stack...");
 
-    // Enumerate PCI devices to find network cards
-    pci::enumerate();
-    let pci_devices = pci::devices();
-
-    // Look for VirtIO network devices
-    let virtio_net_devices = pci::find_virtio_net();
-    let _ = writeln!(
-        writer,
-        "[NET] Found {} VirtIO network devices",
-        virtio_net_devices.len()
-    );
-
-    // Initialize the first VirtIO network device found
-    let net_initialized = if let Some(pci_dev) = virtio_net_devices.first() {
+    // — NeonRoot: driver_core already probed and registered VirtIO net via PciDriver::probe().
+    // We just need to grab it from the net subsystem and wire up the higher-level stack.
+    let net_devices = net::devices();
+    let net_initialized = if let Some(device) = net_devices.first() {
+        let mac = device.mac_address();
+        let _ = writeln!(writer, "[NET] VirtIO network device found via driver_core");
         let _ = writeln!(
             writer,
-            "[NET] Initializing VirtIO network device at {:02x}:{:02x}.{}",
-            pci_dev.address.bus, pci_dev.address.device, pci_dev.address.function
+            "[NET] MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+            mac.0[0], mac.0[1], mac.0[2], mac.0[3], mac.0[4], mac.0[5]
         );
 
-        match unsafe { virtio_net::VirtioNet::from_pci(pci_dev) } {
-            Some(virtio_net) => {
-                let mac = virtio_net.mac_address();
-                let _ = writeln!(writer, "[NET] VirtIO network device initialized");
-                let _ = writeln!(
-                    writer,
-                    "[NET] MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-                    mac.0[0], mac.0[1], mac.0[2], mac.0[3], mac.0[4], mac.0[5]
-                );
+        // Create network interface and initialize TCP/IP stack
+        let interface = Arc::new(net::NetworkInterface::new(device.clone()));
+        net::interface::add_interface(interface.clone());
 
-                // Create network interface
-                let device = Arc::new(virtio_net);
-                net::register_device(device.clone());
+        tcpip::init(interface.clone());
+        let _ = writeln!(writer, "[NET] TCP/IP stack initialized");
 
-                let interface = Arc::new(net::NetworkInterface::new(device));
-                net::interface::add_interface(interface.clone());
-
-                // Initialize TCP/IP stack
-                tcpip::init(interface.clone());
-                let _ = writeln!(writer, "[NET] TCP/IP stack initialized");
-
-                // Try to acquire IP address via DHCP (with short timeout)
-                // If it fails, the network daemon will try again from userspace
-                let _ = writeln!(writer, "[NET] Attempting DHCP (timeout: 2s)...");
-
-                // Use a short timeout for kernel DHCP - userspace networkd will retry
-                let dhcp_result = tcpip::acquire_lease(interface.clone());
-                match dhcp_result {
-                    Ok(lease) => {
-                        let _ = writeln!(writer, "[NET] DHCP lease acquired: {}", lease.ip_addr);
-                        let _ = writeln!(writer, "[NET]   Netmask: {}", lease.subnet_mask);
-                        if let Some(gw) = lease.gateway {
-                            let _ = writeln!(writer, "[NET]   Gateway: {}", gw);
-                        }
-                        for dns in &lease.dns_servers {
-                            let _ = writeln!(writer, "[NET]   DNS: {}", dns);
-                        }
-                        let _ =
-                            writeln!(writer, "[NET]   Lease time: {} seconds", lease.lease_time);
-                    }
-                    Err(e) => {
-                        let _ = writeln!(writer, "[NET] DHCP failed: {:?}, networkd will retry", e);
-                    }
+        // Try to acquire IP address via DHCP (with short timeout)
+        let _ = writeln!(writer, "[NET] Attempting DHCP (timeout: 2s)...");
+        let dhcp_result = tcpip::acquire_lease(interface.clone());
+        match dhcp_result {
+            Ok(lease) => {
+                let _ = writeln!(writer, "[NET] DHCP lease acquired: {}", lease.ip_addr);
+                let _ = writeln!(writer, "[NET]   Netmask: {}", lease.subnet_mask);
+                if let Some(gw) = lease.gateway {
+                    let _ = writeln!(writer, "[NET]   Gateway: {}", gw);
                 }
-
-                true
+                for dns in &lease.dns_servers {
+                    let _ = writeln!(writer, "[NET]   DNS: {}", dns);
+                }
+                let _ = writeln!(writer, "[NET]   Lease time: {} seconds", lease.lease_time);
             }
-            None => {
-                let _ = writeln!(writer, "[NET] Failed to initialize VirtIO network device");
-                false
+            Err(e) => {
+                let _ = writeln!(writer, "[NET] DHCP failed: {:?}, networkd will retry", e);
             }
         }
+
+        true
     } else {
-        let _ = writeln!(writer, "[NET] No VirtIO network device found");
+        let _ = writeln!(writer, "[NET] No network device registered by driver_core");
         false
     };
 
@@ -1480,56 +1151,9 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     let _ = writeln!(writer, "[NET] Network initialization complete");
 
-    // ========================================
-    // VirtIO GPU Probe
-    // ========================================
-    // — GlassSignal: scan the bus for pixels
-    let virtio_gpu_devices = pci::find_virtio_gpu();
-    if let Some(pci_dev) = virtio_gpu_devices.first() {
-        let _ = writeln!(
-            writer,
-            "[GPU] VirtIO GPU found at {:02x}:{:02x}.{}",
-            pci_dev.address.bus, pci_dev.address.device, pci_dev.address.function
-        );
-        // Only initialize VirtIO GPU if no UEFI GOP framebuffer is active —
-        // disrupting a working display mid-boot is a recipe for a black screen
-        if !fb::is_initialized() {
-            match virtio_gpu::init_from_pci(pci_dev) {
-                Ok(()) => {
-                    let _ = writeln!(writer, "[GPU] VirtIO GPU initialized as primary display");
-                }
-                Err(e) => {
-                    let _ = writeln!(writer, "[GPU] VirtIO GPU init failed: {}", e);
-                }
-            }
-        } else {
-            let _ = writeln!(
-                writer,
-                "[GPU] VirtIO GPU available (UEFI GOP active, skipping)"
-            );
-        }
-    }
-
-    // ========================================
-    // VirtIO Sound Probe
-    // ========================================
-    // — EchoFrame: listening for sound on the bus
-    let virtio_snd_devices = pci::find_virtio_snd();
-    if let Some(pci_dev) = virtio_snd_devices.first() {
-        let _ = writeln!(
-            writer,
-            "[SND] VirtIO sound found at {:02x}:{:02x}.{}",
-            pci_dev.address.bus, pci_dev.address.device, pci_dev.address.function
-        );
-        match virtio_snd::init_from_pci(pci_dev) {
-            Ok(()) => {
-                let _ = writeln!(writer, "[SND] VirtIO sound device initialized");
-            }
-            Err(e) => {
-                let _ = writeln!(writer, "[SND] VirtIO sound init failed: {}", e);
-            }
-        }
-    }
+    // — GlassSignal: VirtIO GPU and VirtIO SND are probed by driver_core above.
+    // GPU's PciDriver::probe() checks fb::is_initialized() before stealing the display.
+    // SND's PciDriver::probe() calls init_from_pci() directly. No legacy code needed.
 
     // ========================================
     // Intel HDA Audio Probe
@@ -1819,14 +1443,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             initramfs_data.len()
         );
 
-        unsafe {
-            let msg = b"[INIT-DEBUG] Before initramfs::load()\r\n";
-            for &byte in msg.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-        }
-
         let initramfs_root = match initramfs::load(initramfs_data) {
             Ok(root) => root,
             Err(e) => {
@@ -1835,39 +1451,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             }
         };
 
-        unsafe {
-            let msg = b"[INIT-DEBUG] After initramfs::load()\r\n";
-            for &byte in msg.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-        }
 
-        // SIMPLE SERIAL TEST — GraveShift: Testing if serial writes work here
-        unsafe {
-            let test_msg = b"[SERIAL-TEST] If you see this, serial works!\r\n";
-            for &byte in test_msg.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-        }
-
-        // DIRECT KERNEL SCREEN DUMP — GraveShift: Dump screen BEFORE anything else can hang!
-        unsafe {
-            let msg = b"\r\n=== KERNEL VT SCREEN DUMP (after initramfs load) ===\r\n";
-            for &byte in msg.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-        }
-        vt::debug_dump_screen_to_serial();
-        unsafe {
-            let msg = b"=== END KERNEL SCREEN DUMP ===\r\n\r\n";
-            for &byte in msg.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-        }
 
         // Mount initramfs as root filesystem
         if let Err(e) = GLOBAL_VFS.mount(
@@ -1880,15 +1464,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             arch::X86_64::halt();
         }
         let _ = writeln!(writer, "[INITRAMFS] Mounted as root filesystem at /");
-
-        // SERIAL TRACE — GraveShift: Where the fuck is the kernel now?
-        unsafe {
-            let msg = b"[SERIAL-TRACE] Initramfs mounted successfully\r\n";
-            for &byte in msg.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-        }
 
         // Mount tmpfs on writable directories (initramfs is read-only)
         let writable_dirs = ["/run", "/tmp", "/var/log", "/var/lib", "/var/run"];
@@ -1930,14 +1505,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             }
         }
 
-        // SERIAL TRACE — GraveShift: Filesystem mounts complete
-        unsafe {
-            let msg = b"[SERIAL-TRACE] All filesystem mounts complete\r\n";
-            for &byte in msg.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-        }
     }
 
     // Load /sbin/init
@@ -2017,147 +1584,21 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         user_pml4.as_u64()
     );
 
-    // SERIAL TRACE — GraveShift: User address space created
-    unsafe {
-        let msg = b"[SERIAL-TRACE] User address space created\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
-
-    // SERIAL TRACE — GraveShift: About to load ELF segments
-    unsafe {
-        let msg = b"[SERIAL-TRACE] Starting ELF segment loading\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
-
     // Load ELF segments into user address space
     // Handle overlapping segments by checking if pages are already mapped
     for seg in elf.segments() {
-        // SERIAL TRACE — GraveShift: Processing a segment
-        unsafe {
-            let msg = b"[SERIAL-TRACE] Loading segment\r\n";
-            for &byte in msg.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-        }
-
         let (page_base, page_size) = elf::ElfLoader::segment_pages(seg);
         let num_pages = page_size / 4096;
         let _page_offset = elf::ElfLoader::segment_page_offset(seg);
 
-        // SERIAL TRACE — GraveShift: Show num_pages (simple decimal output)
-        unsafe {
-            let msg = b"[SERIAL-TRACE] Allocating pages, num=";
-            for &byte in msg.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-            // Write num_pages as decimal
-            let mut n = num_pages;
-            if n == 0 {
-                arch::outb(0x3F8, b'0');
-            } else {
-                let mut buf = [0u8; 20];
-                let mut i = 0;
-                while n > 0 {
-                    buf[i] = b'0' + (n % 10) as u8;
-                    n /= 10;
-                    i += 1;
-                }
-                while i > 0 {
-                    i -= 1;
-                    while arch::inb(0x3FD) & 0x20 == 0 {}
-                    arch::outb(0x3F8, buf[i]);
-                }
-            }
-            let msg2 = b"\r\n";
-            for &byte in msg2.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-        }
-
         // Allocate pages that aren't already mapped, or update flags if already mapped
         for i in 0..num_pages {
-            // SERIAL TRACE — GraveShift: Every 10th page, or every page near 30-40
-            if i % 10 == 0 || (i >= 30 && i < 45) {
-                unsafe {
-                    let msg = b"[SERIAL-TRACE] Page ";
-                    for &byte in msg.iter() {
-                        while arch::inb(0x3FD) & 0x20 == 0 {}
-                        arch::outb(0x3F8, byte);
-                    }
-                    // Write i as decimal
-                    let mut n = i;
-                    if n == 0 {
-                        arch::outb(0x3F8, b'0');
-                    } else {
-                        let mut buf = [0u8; 20];
-                        let mut idx = 0;
-                        while n > 0 {
-                            buf[idx] = b'0' + (n % 10) as u8;
-                            n /= 10;
-                            idx += 1;
-                        }
-                        while idx > 0 {
-                            idx -= 1;
-                            while arch::inb(0x3FD) & 0x20 == 0 {}
-                            arch::outb(0x3F8, buf[idx]);
-                        }
-                    }
-                    let msg2 = b"\r\n";
-                    for &byte in msg2.iter() {
-                        while arch::inb(0x3FD) & 0x20 == 0 {}
-                        arch::outb(0x3F8, byte);
-                    }
-                }
-            }
-
             let page_addr = VirtAddr::new(page_base.as_u64() + (i as u64 * 4096));
-
-            // SERIAL TRACE — GraveShift: Before translate for page 38
-            if i == 38 {
-                unsafe {
-                    let msg = b"[SERIAL-TRACE] Page 38: before translate\r\n";
-                    for &byte in msg.iter() {
-                        while arch::inb(0x3FD) & 0x20 == 0 {}
-                        arch::outb(0x3F8, byte);
-                    }
-                }
-            }
 
             // Check if page is already mapped
             let existing = user_space.translate(page_addr);
 
-            // SERIAL TRACE — GraveShift: After translate for page 38
-            if i == 38 {
-                unsafe {
-                    let msg = b"[SERIAL-TRACE] Page 38: after translate\r\n";
-                    for &byte in msg.iter() {
-                        while arch::inb(0x3FD) & 0x20 == 0 {}
-                        arch::outb(0x3F8, byte);
-                    }
-                }
-            }
-
             if existing.is_none() {
-                // SERIAL TRACE — GraveShift: Before allocate for page 38
-                if i == 38 {
-                    unsafe {
-                        let msg = b"[SERIAL-TRACE] Page 38: before allocate\r\n";
-                        for &byte in msg.iter() {
-                            while arch::inb(0x3FD) & 0x20 == 0 {}
-                            arch::outb(0x3F8, byte);
-                        }
-                    }
-                }
-
                 // Allocate single page
                 if let Err(e) = user_space.allocate_pages(page_addr, 1, seg.flags, mm_manager::mm())
                 {
@@ -2184,15 +1625,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         let mut data_offset = 0usize;
         let mut mem_offset = 0usize;
 
-        // SERIAL TRACE — GraveShift: About to copy segment data
-        unsafe {
-            let msg = b"[SERIAL-TRACE] Copying segment data\r\n";
-            for &byte in msg.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-        }
-
         while data_offset < seg_data.len() || mem_offset < seg.mem_size {
             // Calculate which virtual page we're on
             let current_vaddr = seg_vaddr_start + mem_offset as u64;
@@ -2212,32 +1644,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                     arch::X86_64::halt();
                 }
             };
-
-            // [TRACE] Log if we're about to copy to target range — ColdCipher
-            if phys.as_u64() >= 0x0c400000 && phys.as_u64() <= 0x0c500000 {
-                unsafe {
-                    let msg = b"[ELF-COPY] dest_phys=0x";
-                    for &byte in msg.iter() {
-                        while arch::inb(0x3FD) & 0x20 == 0 {}
-                        arch::outb(0x3F8, byte);
-                    }
-                    let addr = phys.as_u64();
-                    for i in (0..16).rev() {
-                        let nibble = ((addr >> (i * 4)) & 0xF) as u8;
-                        let hex_char = if nibble < 10 {
-                            b'0' + nibble
-                        } else {
-                            b'a' + nibble - 10
-                        };
-                        arch::outb(0x3F8, hex_char);
-                    }
-                    let msg2 = b"\r\n";
-                    for &byte in msg2.iter() {
-                        while arch::inb(0x3FD) & 0x20 == 0 {}
-                        arch::outb(0x3F8, byte);
-                    }
-                }
-            }
 
             let dest_virt = phys_to_virt(phys);
             let dest = unsafe { dest_virt.as_mut_ptr::<u8>().add(in_page_offset) };
@@ -2283,23 +1689,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             mem_offset += bytes_remaining_in_page;
         }
 
-        // SERIAL TRACE — GraveShift: Segment done
-        unsafe {
-            let msg = b"[SERIAL-TRACE] Segment done\r\n";
-            for &byte in msg.iter() {
-                while arch::inb(0x3FD) & 0x20 == 0 {}
-                arch::outb(0x3F8, byte);
-            }
-        }
-    }
-
-    // SERIAL TRACE — GraveShift: ELF segments loaded
-    unsafe {
-        let msg = b"[SERIAL-TRACE] ELF segments loaded successfully\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
     }
 
     // Set up TLS (Thread-Local Storage) if needed
@@ -2558,15 +1947,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Wrap in Arc<Mutex<>> for Task
     let init_meta_arc = Arc::new(spin::Mutex::new(init_meta));
 
-    // SERIAL TRACE — GraveShift: About to create init task
-    unsafe {
-        let msg = b"[SERIAL-TRACE] About to create init task\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
-
     // Create a Task for init with the ProcessMeta
     let _ = writeln!(writer, "[USER] Adding init to scheduler...");
     let init_task = sched::Task::new_with_meta(
@@ -2586,15 +1966,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     sched::switch_to(init_pid); // Mark init as the currently running task
 
     let _ = writeln!(writer, "[USER] Init process registered");
-
-    // SERIAL TRACE — GraveShift: Init added to scheduler
-    unsafe {
-        let msg = b"[SERIAL-TRACE] Init task added to scheduler\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
 
     // Get the PML4 from the init meta
     let user_pml4_phys = init_meta_arc.lock().address_space.pml4_phys();
@@ -2619,68 +1990,12 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // — PatchBay: NO MORE SERIAL. os_log routes to console now.
 
     unsafe {
-        let msg = b"[INIT-DEBUG] About to start APIC timer and enter usermode!\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
-
-    // DIRECT KERNEL SCREEN DUMP — GraveShift: Show us WTF is on the screen!
-    unsafe {
-        let msg = b"\r\n=== KERNEL VT SCREEN DUMP (before usermode) ===\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
-
-    // Call the VT screen dump directly from kernel space
-    vt::debug_dump_screen_to_serial();
-
-    unsafe {
-        let msg = b"=== END KERNEL SCREEN DUMP ===\r\n\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
-
-    // — InputShade: Verify interrupts are enabled before entering userspace
-    let if_enabled = arch::X86_64::interrupts_enabled();
-    unsafe {
-        let prefix = b"[IRQ-CHECK] Interrupts ";
-        for &byte in prefix.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-        let status: &[u8] = if if_enabled { b"ENABLED" } else { b"DISABLED" };
-        for &byte in status.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-        let suffix = b" before userspace\r\n";
-        for &byte in suffix.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
-    }
-
-    unsafe {
         os_log::write_str_raw("[INFO] Starting APIC timer at 100Hz...\n");
     }
     arch::start_timer(100);
     smp_init::signal_ap_ready();
     unsafe {
         os_log::write_str_raw("[SMP] AP timer gate released — all CPUs active\n");
-    }
-
-    unsafe {
-        let msg = b"[INIT-DEBUG] Entering usermode NOW!\r\n";
-        for &byte in msg.iter() {
-            while arch::inb(0x3FD) & 0x20 == 0 {}
-            arch::outb(0x3F8, byte);
-        }
     }
 
     // NeonRoot: Straight into usermode — no more locks, no more delays.

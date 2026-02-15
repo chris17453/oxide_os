@@ -645,6 +645,12 @@ pub fn init_status() -> u8 {
 /// causing read_data() to return None and us to write corrupt config values.
 /// cli/sti gates the whole sequence so port 0x60 data is exclusively ours.
 pub fn init() -> bool {
+    // — TorqueJax: once is enough for this graveyard of port I/O
+    static INITIALIZED: AtomicBool = AtomicBool::new(false);
+    if INITIALIZED.swap(true, Ordering::SeqCst) {
+        return init_status() >= 3; // already ran, return previous result
+    }
+
     // -- TorqueJax: Kill all interrupts. No IRQ handler touches port 0x60
     // while we're configuring the controller. This prevents:
     //   1. Config byte stolen by keyboard IRQ → wrong config written
@@ -882,6 +888,37 @@ pub fn read_status() -> u8 {
     unsafe { inb(STATUS_PORT) }
 }
 
-// TODO: Add IsaDriver implementation once circular dependency is resolved
-// Circular dep: ps2 → driver-core → pci → arch-x86_64 → ps2
-// Solution: Split driver-core into driver-core-traits (no deps) and driver-core-registry
+// ============================================================================
+// IsaDriver Implementation for Dynamic Driver Loading
+// ============================================================================
+// — InputShade: the circular dependency is dead. Long live driver-traits.
+// ps2 → driver-traits (zero deps) instead of ps2 → driver-core → pci → arch-x86_64 → ps2
+
+use driver_traits::{IsaDriver, DriverBindingData, DriverError};
+
+struct Ps2IsaDriver;
+
+impl IsaDriver for Ps2IsaDriver {
+    fn name(&self) -> &'static str {
+        "ps2-keyboard"
+    }
+
+    fn probe(&self) -> Result<DriverBindingData, DriverError> {
+        // — InputShade: ISA doesn't enumerate. We poke the 8042 and pray.
+        if init() {
+            Ok(DriverBindingData::new(0))
+        } else {
+            Err(DriverError::InitFailed)
+        }
+    }
+
+    unsafe fn remove(&self, _binding_data: DriverBindingData) {
+        // — InputShade: PS/2 is eternal. You don't remove the 8042.
+        // (But if you did, you'd disable IRQs 1 and 12 here)
+    }
+}
+
+static PS2_ISA_DRIVER: Ps2IsaDriver = Ps2IsaDriver;
+
+// Register via linker section for automatic discovery at boot
+driver_traits::register_isa_driver!(PS2_ISA_DRIVER);
