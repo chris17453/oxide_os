@@ -278,13 +278,17 @@ impl VnodeOps for ConsoleDevice {
     }
 
     fn write(&self, offset: u64, buf: &[u8]) -> VfsResult<usize> {
+        // — GraveShift: tracing the 256M ghost — does write reach console device?
+        unsafe { os_log::write_str_raw("[CON:W] "); }
         // Delegate to the active VT device
         match get_console_backend() {
             Some(backend) => {
+                unsafe { os_log::write_str_raw("->backend\n"); }
                 let r = backend.write(offset, buf);
                 r
             }
             None => {
+                unsafe { os_log::write_str_raw("->fallback\n"); }
                 // — GraveShift: Early boot fallback. No serial — stdout is not debug.
                 if terminal::is_initialized() {
                     terminal::write(buf);

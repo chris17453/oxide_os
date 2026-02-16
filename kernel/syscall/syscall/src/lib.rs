@@ -574,6 +574,27 @@ pub fn dispatch(
         tsc
     };
 
+    // — GraveShift: syscall entry trace — hunting the 256M ghost
+    // Include PID to identify which process is calling
+    if number == nr::OPEN || number == nr::WRITE || number == nr::DUP2 {
+        let pid = sched::current_pid().unwrap_or(99) as u8;
+        unsafe {
+            os_log::write_str_raw("[SC] ");
+            if number == nr::OPEN { os_log::write_str_raw("open"); }
+            else if number == nr::WRITE { os_log::write_str_raw("write"); }
+            else { os_log::write_str_raw("dup2"); }
+            os_log::write_str_raw(" p=");
+            // Print PID as 1-2 digits
+            if pid >= 10 { os_log::write_byte_raw(b'0' + (pid / 10)); }
+            os_log::write_byte_raw(b'0' + (pid % 10));
+            if number == nr::WRITE {
+                os_log::write_str_raw(" fd=");
+                os_log::write_byte_raw(b'0' + (arg1 as u8));
+            }
+            os_log::write_str_raw("\n");
+        }
+    }
+
     let result = match number {
         // Process syscalls
         nr::EXIT => sys_exit(arg1 as i32),
@@ -975,6 +996,31 @@ pub fn dispatch(
                     cycles
                 );
             }
+        }
+    }
+
+    // — GraveShift: trace open/dup2 return values to catch fd failures
+    if number == nr::OPEN || number == nr::DUP2 {
+        let pid = sched::current_pid().unwrap_or(99) as u8;
+        unsafe {
+            os_log::write_str_raw("[SC] ");
+            if number == nr::OPEN { os_log::write_str_raw("open"); }
+            else { os_log::write_str_raw("dup2"); }
+            os_log::write_str_raw(" p=");
+            if pid >= 10 { os_log::write_byte_raw(b'0' + (pid / 10)); }
+            os_log::write_byte_raw(b'0' + (pid % 10));
+            os_log::write_str_raw(" ret=");
+            if result < 0 {
+                os_log::write_str_raw("-");
+                let abs = (-result) as u8;
+                if abs >= 10 { os_log::write_byte_raw(b'0' + (abs / 10)); }
+                os_log::write_byte_raw(b'0' + (abs % 10));
+            } else {
+                let r = result as u8;
+                if r >= 10 { os_log::write_byte_raw(b'0' + (r / 10)); }
+                os_log::write_byte_raw(b'0' + (r % 10));
+            }
+            os_log::write_str_raw("\n");
         }
     }
 

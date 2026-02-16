@@ -1,7 +1,7 @@
 # — NeonRoot: QEMU launch orchestration.
 # Auto-detects Fedora vs RHEL, kills stale instances, and prays the OVMF gods are merciful.
 
-.PHONY: detect-qemu-mode kill-qemu run run-disk run-fedora run-rhel run-kvm run-debug-input-gui run-debug-mouse run-debug-lock run-debug-fork run-debug-sched run-debug-all attach
+.PHONY: detect-qemu-mode kill-qemu run run-disk run-fedora run-rhel run-kvm run-debug-input-gui run-debug-mouse run-debug-lock run-debug-fork run-debug-sched run-debug-all run-256m run-256m-novgpu attach
 
 # Auto-detect QEMU mode (Fedora vs RHEL)
 detect-qemu-mode:
@@ -75,7 +75,7 @@ run-fedora:
 		-machine q35 \
 		-cpu qemu64,+smap,+smep \
 		-smp 4 \
-		-m 256M \
+		-m 512M \
 		-bios "$(OVMF)" \
 		-drive file=$(ROOTFS_IMAGE),format=raw,if=none,id=disk \
 		-device virtio-blk-pci,drive=disk \
@@ -114,7 +114,7 @@ run-rhel:
 		-machine q35,accel=kvm:tcg \
 		-cpu max,+invtsc \
 		-smp 4 \
-		-m 256M \
+		-m 512M \
 		-drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE.fd \
 		-drive if=pflash,format=raw,file=$(TARGET_DIR)/OVMF_VARS.fd \
 		-drive file=$(ROOTFS_IMAGE),format=raw,if=none,id=bootdisk \
@@ -155,6 +155,97 @@ run-rhel:
 # Alias for backward compatibility
 run-kvm: run-rhel
 
+# — GraveShift: 256M diagnostic targets — hunting the blank screen ghost.
+# These isolate variables: memory size, VirtIO GPU presence.
+# Serial goes to stdout for easy capture: make run-256m 2>&1 | tee target/serial-256m.log
+
+# 256M with all devices (reproduces blank screen on RHEL)
+run-256m: kill-qemu create-rootfs
+	@mkdir -p $(TARGET_DIR)
+	@cp /usr/share/edk2/ovmf/OVMF_VARS.fd $(TARGET_DIR)/OVMF_VARS.fd 2>/dev/null || true
+	@mkdir -p /tmp/qemu-oxide
+	@echo "=== 256M TEST: VGA std + VirtIO GPU (should reproduce blank screen) ==="
+	@TMPDIR=/tmp/qemu-oxide /usr/libexec/qemu-kvm \
+		-machine q35,accel=kvm:tcg \
+		-cpu max,+invtsc \
+		-smp 4 \
+		-m 256M \
+		-drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE.fd \
+		-drive if=pflash,format=raw,file=$(TARGET_DIR)/OVMF_VARS.fd \
+		-drive file=$(ROOTFS_IMAGE),format=raw,if=none,id=bootdisk \
+		-device virtio-blk-pci,drive=bootdisk \
+		-device virtio-net-pci,netdev=net0 \
+		-netdev user,id=net0,hostfwd=tcp::$(SSH_HOST_PORT)-:22 \
+		-device virtio-gpu-pci \
+		-device virtio-keyboard-pci \
+		-device virtio-tablet-pci \
+		-audiodev none,id=snd0 \
+		-device intel-hda \
+		-device hda-duplex,audiodev=snd0 \
+		-vga std \
+		-vnc :0 \
+		-serial stdio \
+		-monitor unix:$(TARGET_DIR)/qemu-monitor.sock,server,nowait \
+		-s \
+		-no-reboot & \
+	QEMU_PID=$$!; \
+	trap 'kill $$QEMU_PID 2>/dev/null; exit' INT TERM; \
+	echo "QEMU started (PID: $$QEMU_PID)"; \
+	sleep 2; \
+	if command -v vncviewer >/dev/null 2>&1; then \
+		vncviewer -Scaling=2x localhost:5900 2>/dev/null || vncviewer localhost:5900 2>/dev/null; \
+	elif flatpak list --app 2>/dev/null | grep -q tigervnc; then \
+		flatpak run org.tigervnc.vncviewer -Scaling=2x localhost:5900 2>/dev/null || flatpak run org.tigervnc.vncviewer localhost:5900 2>/dev/null; \
+	else \
+		echo "VNC viewer not found - connect manually to localhost:5900"; \
+		wait $$QEMU_PID; \
+	fi; \
+	kill $$QEMU_PID 2>/dev/null || true; \
+	wait $$QEMU_PID 2>/dev/null || true
+
+# 256M WITHOUT VirtIO GPU — isolates whether SET_SCANOUT steals the display
+run-256m-novgpu: kill-qemu create-rootfs
+	@mkdir -p $(TARGET_DIR)
+	@cp /usr/share/edk2/ovmf/OVMF_VARS.fd $(TARGET_DIR)/OVMF_VARS.fd 2>/dev/null || true
+	@mkdir -p /tmp/qemu-oxide
+	@echo "=== 256M TEST: VGA std ONLY (no VirtIO GPU) ==="
+	@TMPDIR=/tmp/qemu-oxide /usr/libexec/qemu-kvm \
+		-machine q35,accel=kvm:tcg \
+		-cpu max,+invtsc \
+		-smp 4 \
+		-m 256M \
+		-drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/ovmf/OVMF_CODE.fd \
+		-drive if=pflash,format=raw,file=$(TARGET_DIR)/OVMF_VARS.fd \
+		-drive file=$(ROOTFS_IMAGE),format=raw,if=none,id=bootdisk \
+		-device virtio-blk-pci,drive=bootdisk \
+		-device virtio-net-pci,netdev=net0 \
+		-netdev user,id=net0,hostfwd=tcp::$(SSH_HOST_PORT)-:22 \
+		-device virtio-keyboard-pci \
+		-device virtio-tablet-pci \
+		-audiodev none,id=snd0 \
+		-device intel-hda \
+		-device hda-duplex,audiodev=snd0 \
+		-vga std \
+		-vnc :0 \
+		-serial stdio \
+		-monitor unix:$(TARGET_DIR)/qemu-monitor.sock,server,nowait \
+		-s \
+		-no-reboot & \
+	QEMU_PID=$$!; \
+	trap 'kill $$QEMU_PID 2>/dev/null; exit' INT TERM; \
+	echo "QEMU started (PID: $$QEMU_PID)"; \
+	sleep 2; \
+	if command -v vncviewer >/dev/null 2>&1; then \
+		vncviewer -Scaling=2x localhost:5900 2>/dev/null || vncviewer localhost:5900 2>/dev/null; \
+	elif flatpak list --app 2>/dev/null | grep -q tigervnc; then \
+		flatpak run org.tigervnc.vncviewer -Scaling=2x localhost:5900 2>/dev/null || flatpak run org.tigervnc.vncviewer localhost:5900 2>/dev/null; \
+	else \
+		echo "VNC viewer not found - connect manually to localhost:5900"; \
+		wait $$QEMU_PID; \
+	fi; \
+	kill $$QEMU_PID 2>/dev/null || true; \
+	wait $$QEMU_PID 2>/dev/null || true
+
 # Debug run with graphical display for PS/2 keyboard testing
 run-debug-input-gui:
 	@echo "Running OXIDE OS with graphical display for PS/2 keyboard testing..."
@@ -169,7 +260,7 @@ run-debug-input-gui:
 	TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
 		-machine q35 \
 		-cpu qemu64,+smap,+smep \
-		-m 256M \
+		-m 512M \
 		-bios "$(OVMF)" \
 		-drive file=$(ROOTFS_IMAGE),format=raw,if=none,id=disk \
 		-device virtio-blk-pci,drive=disk \

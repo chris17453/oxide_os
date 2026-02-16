@@ -544,6 +544,23 @@ impl VirtioInput {
             queue.add_available(desc_idx as u16);
         }
 
+        // — InputShade: trace event processing — hunting the 256M keyboard death.
+        // Shows total events lifetime + avail ring state after recycle.
+        if count > 0 {
+            use core::sync::atomic::{AtomicU64, Ordering as AtOrd};
+            static TOTAL_EVENTS: AtomicU64 = AtomicU64::new(0);
+            let total = TOTAL_EVENTS.fetch_add(count as u64, AtOrd::Relaxed) + count as u64;
+            unsafe {
+                os_log::write_str_raw("[VINPUT] ev=");
+                arch_x86_64::serial::write_u64_hex_unsafe(count as u64);
+                os_log::write_str_raw(" total=");
+                arch_x86_64::serial::write_u64_hex_unsafe(total);
+                os_log::write_str_raw(" free=");
+                arch_x86_64::serial::write_u64_hex_unsafe(queue.num_free() as u64);
+                os_log::write_str_raw("\n");
+            }
+        }
+
         // — InputShade: now dispatch with &self — no queue borrow conflict
         for i in 0..count {
             self.dispatch_event(&pending[i].1);

@@ -1802,10 +1802,12 @@ dependencies = [
 name = "virtio-gpu"
 version = "0.1.0"
 dependencies = [
+ "arch-x86_64",
  "boot-proto",
  "driver-core",
  "fb",
  "mm-manager",
+ "os_log",
  "pci",
  "spin 0.9.8",
  "virtio-core",
@@ -1815,10 +1817,12 @@ dependencies = [
 name = "virtio-input"
 version = "0.1.0"
 dependencies = [
+ "arch-x86_64",
  "driver-core",
  "input",
  "mm-manager",
  "mm-traits",
+ "os_log",
  "pci",
  "spin 0.9.8",
  "virtio-core",

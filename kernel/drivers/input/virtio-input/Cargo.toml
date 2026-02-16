@@ -11,3 +11,5 @@ virtio-core = { path = "../../virtio-core" }
 mm-manager = { path = "../../../mm/mm-manager" }
 mm-traits = { path = "../../../mm/mm-traits" }
 spin = "0.9"
+os_log = { path = "../../../core/os_log" }
+arch-x86_64 = { path = "../../../arch/arch-x86_64" }

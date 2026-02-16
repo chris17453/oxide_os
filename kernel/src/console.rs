@@ -43,11 +43,10 @@ fn push_mouse_escape(seq: &[u8]) {
 /// the UART byte-by-byte, 28,800 COM1 spinlock cycles per curses frame.
 /// Debug output has its own path (os_log, debug_*! macros). Stdout is not debug.
 pub fn console_write(data: &[u8]) {
-    // Write to terminal emulator for ANSI-processed framebuffer output
     if terminal::is_initialized() {
         terminal::write(data);
     } else if fb::is_initialized() {
-        // Fallback to basic fb console before terminal is ready
+        // — GraveShift: fallback to basic fb console before terminal is ready
         for &byte in data {
             fb::putchar(byte as char);
         }

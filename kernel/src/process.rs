@@ -1064,6 +1064,11 @@ pub fn kernel_exec(
 
     debug_fork!("[EXEC] PID {} exec(\"{}\")", current_pid, path);
 
+    // — GraveShift: unconditional exec trace for boot debugging
+    unsafe { os_log::write_str_raw("[EXEC] "); }
+    unsafe { os_log::write_str_raw(path); }
+    unsafe { os_log::write_str_raw("\n"); }
+
     // Read argv from user space
     let mut argv: Vec<String> = Vec::new();
     if !argv_ptr.is_null() {
@@ -1227,8 +1232,10 @@ pub fn kernel_exec(
     // Read the file contents
     let size = vnode.size() as usize;
     debug_fork!("[EXEC] File size: {} bytes", size);
+    unsafe { os_log::write_str_raw("[EXEC] reading file...\n"); }
 
     let mut elf_data = alloc::vec![0u8; size];
+    unsafe { os_log::write_str_raw("[EXEC] heap alloc done, reading vnode...\n"); }
     let read_result = vnode.read(0, &mut elf_data);
     let bytes_read = match read_result {
         Ok(n) => n,
@@ -1244,12 +1251,16 @@ pub fn kernel_exec(
     }
     debug_fork!("[EXEC] Read {} bytes, calling do_exec", bytes_read);
 
+    // — GraveShift: trace read completion
+    unsafe { os_log::write_str_raw("[EXEC] read done, calling do_exec\n"); }
+
     // Get kernel PML4 for creating new address space
     let kernel_pml4 = PhysAddr::new(unsafe { KERNEL_PML4 });
 
     // Call do_exec - returns ExecResult with new address space and context
     match do_exec(&elf_data, &argv, &envp, mm(), kernel_pml4) {
         Ok(exec_result) => {
+            unsafe { os_log::write_str_raw("[EXEC] do_exec OK\n"); }
             // Get new address space PML4
             let new_pml4 = exec_result.address_space.pml4_phys();
             let ctx = &exec_result.context;
@@ -1348,6 +1359,15 @@ pub fn kernel_exec(
             0
         }
         Err(e) => {
+            unsafe { os_log::write_str_raw("[EXEC] FAILED: "); }
+            unsafe { os_log::write_str_raw(match e {
+                proc::ExecError::InvalidElf => "InvalidElf",
+                proc::ExecError::OutOfMemory => "OOM",
+                proc::ExecError::ProcessNotFound => "ProcessNotFound",
+                proc::ExecError::InvalidAddress => "InvalidAddress",
+                proc::ExecError::InvalidArgument => "InvalidArgument",
+            }); }
+            unsafe { os_log::write_str_raw("\n"); }
             let code = match e {
                 proc::ExecError::InvalidElf => {
                     debug_fork!("[EXEC] Error: InvalidElf");

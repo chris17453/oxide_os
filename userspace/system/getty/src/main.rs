@@ -66,9 +66,6 @@ fn setup_terminal(config: &TermConfig) -> i32 {
         close(fd);
     }
 
-    // Make this the controlling terminal (setsid + ioctl TIOCSCTTY)
-    // For now, we skip this as it requires more kernel support
-
     0
 }
 
@@ -91,7 +88,7 @@ pub fn main() -> i32 {
     loop {
         // Setup terminal
         if setup_terminal(&config) < 0 {
-            // Can't print error since stdio not set up
+            // — SableWire: can't print — stdio not set up yet
             exit(1);
         }
 

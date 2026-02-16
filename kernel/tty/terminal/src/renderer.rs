@@ -134,8 +134,14 @@ impl Renderer {
 
         // Allocate back buffer for double buffering
         let back_buffer = if fb.size() > 0 {
+            unsafe {
+                os_log::write_str_raw("[REND] alloc bb size=0x");
+                arch_x86_64::serial::write_u64_hex_unsafe(fb.size() as u64);
+                os_log::write_str_raw("\n");
+            }
             Some(vec![0u8; fb.size()])
         } else {
+            unsafe { os_log::write_str_raw("[REND] NO bb (size=0)!\n"); }
             None
         };
 

@@ -250,6 +250,20 @@ impl TerminalEmulator {
             .modes
             .contains(TerminalModes::SYNCHRONIZED_OUTPUT)
         {
+            // — GraveShift: SYNC MODE IS SWALLOWING ALL OUTPUT!
+            unsafe { os_log::write_str_raw("[TERM] SYNC MODE ON! buffering "); }
+            unsafe {
+                let mut n = data.len();
+                let mut digits = [0u8; 10];
+                let mut i = 0;
+                if n == 0 { digits[0] = b'0'; i = 1; } else {
+                    while n > 0 { digits[i] = b'0' + (n % 10) as u8; n /= 10; i += 1; }
+                }
+                for d in digits[..i].iter().rev() {
+                    os_log::write_byte_raw(*d);
+                }
+                os_log::write_str_raw(" bytes\n");
+            }
             self.sync_buffer.extend_from_slice(data);
         } else {
             // — SoftGlyph: Pass selection state to renderer before any rendering
@@ -1815,7 +1829,11 @@ pub fn write(data: &[u8]) {
     // write() now paints glyphs inline and flushes the framebuffer before releasing.
     {
         if let Some(ref mut terminal) = *TERMINAL.lock() {
+            unsafe { os_log::write_str_raw("[TW] got lock, writing\n"); }
             terminal.write(data);
+            unsafe { os_log::write_str_raw("[TW] done\n"); }
+        } else {
+            unsafe { os_log::write_str_raw("[TW] TERMINAL=None!\n"); }
         }
     }
 

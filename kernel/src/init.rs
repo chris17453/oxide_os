@@ -309,10 +309,13 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     );
     let mut total_usable = 0u64;
     for region in boot_info.memory_regions() {
-        // — ColdCipher: BOOT_SERVICES regions are cursed ground. UEFI firmware
-        // scribbles runtime data into them after ExitBootServices, corrupting our
-        // buddy allocator canaries. Linux excludes them by default. So do we now.
-        if matches!(region.ty, BootMemoryType::Usable) {
+        // — ColdCipher: After ExitBootServices(), BOOT_SERVICES memory is fully
+        // reclaimable — Linux does this too (efi_memmap_usable). Previous exclusion
+        // starved the buddy allocator with 256M RAM, causing getty to OOM-hang.
+        if matches!(
+            region.ty,
+            BootMemoryType::Usable | BootMemoryType::BootServices
+        ) {
             total_usable += region.len;
         }
     }
@@ -407,9 +410,13 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let mut regions: Vec<(os_core::PhysAddr, u64, bool)> = Vec::new();
 
     for boot_region in boot_info.memory_regions() {
-        // — ColdCipher: Only trust Usable. BOOT_SERVICES is a graveyard of
-        // firmware ghosts that stomp our free-block headers post-ExitBootServices.
-        let base_usable = matches!(boot_region.ty, BootMemoryType::Usable);
+        // — ColdCipher: BootServices memory is safe after ExitBootServices().
+        // Firmware only retains RuntimeServices regions. Excluding BootServices
+        // starved the system at 256M, killing getty before it could print.
+        let base_usable = matches!(
+            boot_region.ty,
+            BootMemoryType::Usable | BootMemoryType::BootServices
+        );
 
         if !base_usable {
             // Non-usable regions pass through as-is
@@ -470,6 +477,14 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     let total_bytes = MEMORY_MANAGER.total_bytes();
     let free_bytes = MEMORY_MANAGER.free_bytes();
+    // — GraveShift: dump memory info to serial for 256M investigation
+    unsafe {
+        os_log::write_str_raw("[MEM] total=0x");
+        arch::serial::write_u64_hex_unsafe(total_bytes as u64);
+        os_log::write_str_raw(" free=0x");
+        arch::serial::write_u64_hex_unsafe(free_bytes as u64);
+        os_log::write_str_raw("\n");
+    }
     let _ = writeln!(
         writer,
         "[INFO] Total memory: {} MB ({} bytes)",
@@ -486,6 +501,18 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Initialize framebuffer if available
     if let Some(ref fb_info) = boot_info.framebuffer {
         let _ = writeln!(writer, "[INFO] Initializing framebuffer...");
+        // — GraveShift: dump FB address to serial — hunting the 256M framebuffer ghost
+        unsafe {
+            os_log::write_str_raw("[FB] base=0x");
+            arch::serial::write_u64_hex_unsafe(fb_info.base);
+            os_log::write_str_raw(" ");
+            arch::serial::write_u64_hex_unsafe(fb_info.width as u64);
+            os_log::write_str_raw("x");
+            arch::serial::write_u64_hex_unsafe(fb_info.height as u64);
+            os_log::write_str_raw(" phys_map=0x");
+            arch::serial::write_u64_hex_unsafe(boot_info.phys_map_base);
+            os_log::write_str_raw("\n");
+        }
         let _ = writeln!(
             writer,
             "[INFO] Framebuffer: {}x{} @ {:#x}",

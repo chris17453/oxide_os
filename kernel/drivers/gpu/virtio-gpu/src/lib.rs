@@ -658,6 +658,8 @@ impl VirtioGpu {
         }
 
         // Set scanout
+        // — GlassSignal: this is the moment of truth — does SET_SCANOUT steal VGA display?
+        unsafe { os_log::write_str_raw("[VGPU] sending SET_SCANOUT scanout_id=0...\n"); }
         let scanout_cmd = SetScanout {
             hdr: CtrlHeader {
                 type_: cmd::SET_SCANOUT,
@@ -674,6 +676,7 @@ impl VirtioGpu {
         };
 
         self.send_command(&scanout_cmd, &mut resp)?;
+        unsafe { os_log::write_str_raw("[VGPU] SET_SCANOUT response received\n"); }
 
         if resp.type_ != resp::OK_NODATA {
             return Err("Failed to set scanout");
@@ -874,8 +877,23 @@ static VIRTIO_GPU: Mutex<Option<VirtioGpu>> = Mutex::new(None);
 /// continues showing UEFI's GOP memory. So we keep using the UEFI GOP buffer
 /// and just store the GPU device for future mode-switching capability.
 pub fn init_from_pci(pci_dev: &PciDevice) -> Result<(), &'static str> {
+    // — GlassShift: If a working GOP framebuffer already exists (set up by OVMF),
+    // skip VirtIO-GPU init entirely. The problem: setup_framebuffer() sends
+    // SET_SCANOUT which binds a NEW blank resource to scanout 0, replacing
+    // whatever OVMF was displaying. If OVMF used VirtIO-GPU for GOP, our
+    // SET_SCANOUT steals the display and shows a black screen. The kernel
+    // keeps writing to the old GOP address but QEMU displays our empty resource.
+    // This is the root cause of the "256M blank screen" — at lower RAM,
+    // OVMF picks VirtIO-GPU for GOP instead of VGA std.
+    if fb::framebuffer().is_some() {
+        unsafe { os_log::write_str_raw("[VGPU] GOP framebuffer already active, skipping init (SET_SCANOUT would steal display)\n"); }
+        return Ok(());
+    }
+
+    unsafe { os_log::write_str_raw("[VGPU] no GOP fb, initializing VirtIO-GPU...\n"); }
     let mut gpu = VirtioGpu::from_pci(pci_dev).ok_or("VirtIO GPU PCI probe failed")?;
     gpu.init()?;
+    unsafe { os_log::write_str_raw("[VGPU] init done, SET_SCANOUT sent\n"); }
 
     // — GlassSignal: DON'T call fb::init() — the UEFI GOP framebuffer is the one
     // QEMU actually displays. Our VirtIO-GPU resource lives in a DMA buffer that
@@ -887,6 +905,7 @@ pub fn init_from_pci(pci_dev: &PciDevice) -> Result<(), &'static str> {
 
     // Store the GPU for future use (mode switching, acceleration)
     *VIRTIO_GPU.lock() = Some(gpu);
+    unsafe { os_log::write_str_raw("[VGPU] stored, init complete\n"); }
 
     Ok(())
 }

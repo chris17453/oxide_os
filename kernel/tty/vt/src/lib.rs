@@ -106,21 +106,26 @@ impl VtManager {
         }
         impl TtyDriver for VtTtyDriver {
             fn write(&self, data: &[u8]) {
+                // — GraveShift: trace the 256M phantom — is the driver even called?
+                unsafe { os_log::write_str_raw("[VTD] "); }
                 // Only write if this is the active VT (check global directly)
                 let active = *ACTIVE_VT.read();
+                unsafe { os_log::write_str_raw("a="); }
+                unsafe { os_log::write_byte_raw(b'0' + (active as u8)); }
+                unsafe { os_log::write_str_raw(" v="); }
+                unsafe { os_log::write_byte_raw(b'0' + (self.vt_num as u8)); }
                 if active == self.vt_num {
                     // Write to console output (terminal emulator + serial)
                     unsafe {
                         if let Some(write_fn) = CONSOLE_WRITE_CALLBACK {
+                            os_log::write_str_raw(" ->CW\n");
                             write_fn(data);
                         } else {
-                            #[cfg(feature = "debug-console")]
-                            dbg_serial("[VT] driver.write(): NO CALLBACK!\n");
+                            os_log::write_str_raw(" NO-CB!\n");
                         }
                     }
                 } else {
-                    #[cfg(feature = "debug-console")]
-                    dbg_serial("[VT] driver.write(): not active VT, dropped\n");
+                    unsafe { os_log::write_str_raw(" SKIP\n"); }
                 }
             }
         }
@@ -219,8 +224,8 @@ impl VtManager {
         // Ring buffer lives in VtManager, not behind any mutex.
         // IRQ writes directly. No try_lock. No silent drops. No bullshit.
         if !self.input_rings[active].push(ch) {
-            #[cfg(feature = "debug-console")]
-            dbg_serial("[VT] Ring buffer full (user typing faster than light)\n");
+            // — GraveShift: ALWAYS trace ring full — this is the smoking gun for input death
+            unsafe { os_log::write_str_raw("[VT] RING FULL! byte dropped\n"); }
         }
 
         // 🔥 IMMEDIATE SIGNAL DELIVERY (best-effort fast path) 🔥

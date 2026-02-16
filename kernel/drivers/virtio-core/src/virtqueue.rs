@@ -237,6 +237,11 @@ impl Virtqueue {
         self.num
     }
 
+    /// Get number of free descriptors (for diagnostics)
+    pub fn num_free(&self) -> u16 {
+        self.num_free
+    }
+
     /// Get physical addresses for queue setup (descriptor, avail, used)
     pub fn physical_addresses(&self) -> (u64, u64, u64) {
         (self.desc_phys, self.avail_phys, self.used_phys)
