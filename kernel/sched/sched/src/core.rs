@@ -148,6 +148,15 @@ where
     }
 }
 
+/// — SableWire: Check if the RQ lock for this CPU is available (non-blocking probe).
+/// Called from the timer ISR before attempting a context switch. If the interrupted
+/// code was inside a scheduler operation (yield_current, block_current, etc.) the
+/// lock is held and any blocking with_rq call would deadlock the ISR forever.
+pub fn rq_lock_available() -> bool {
+    let cpu = this_cpu();
+    try_with_rq(cpu, |_| ()).is_some()
+}
+
 /// Get the global clock
 pub fn global_clock() -> u64 {
     GLOBAL_CLOCK.load(Ordering::Relaxed)
@@ -495,6 +504,7 @@ pub fn pick_next_task() -> Option<Pid> {
                 .get_task(prev_pid)
                 .map(|task| task.state.is_runnable() && !task.is_idle())
                 .unwrap_or(false);
+
             if should_requeue {
                 rq.put_prev_task(prev_pid);
             }
@@ -675,6 +685,61 @@ pub fn set_task_context(pid: Pid, context: crate::task::TaskContext) {
             break;
         }
     }
+}
+
+/// Save kernel_preempt_ok flag to a task's saved state.
+///
+/// — GraveShift: Called on switch-out. The per-CPU flag is about to be cleared,
+/// so we stash the value in the task struct. On switch-in, load_kernel_preempt
+/// restores it → no more lost preemption allowance → no more deadlock.
+pub fn save_kernel_preempt(pid: Pid, value: bool) {
+    // — SableWire: ISR-safe — use try_with_rq. Called from timer ISR during context
+    // switch. If the lock can't be acquired (shouldn't happen since we checked
+    // rq_lock_available earlier), silently skip — the task keeps its old value.
+    let cpu = this_cpu();
+    let found = try_with_rq(cpu, |rq| {
+        if let Some(task) = rq.get_task_mut(pid) {
+            task.kernel_preempt_ok = value;
+            true
+        } else {
+            false
+        }
+    });
+    if found == Some(true) {
+        return;
+    }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        let found = try_with_rq(other, |rq| {
+            if let Some(task) = rq.get_task_mut(pid) {
+                task.kernel_preempt_ok = value;
+                true
+            } else {
+                false
+            }
+        });
+        if found == Some(true) {
+            return;
+        }
+    }
+}
+
+/// Load kernel_preempt_ok flag from a task's saved state.
+///
+/// — GraveShift: Called on switch-in. Returns the value saved at last switch-out.
+/// ISR-safe — uses try_with_rq to avoid deadlock if lock is held.
+pub fn load_kernel_preempt(pid: Pid) -> bool {
+    let cpu = this_cpu();
+    if let Some(val) = try_with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.kernel_preempt_ok)).flatten() {
+        return val;
+    }
+    for other in 0..num_cpus() {
+        if other == cpu { continue; }
+        if let Some(val) = try_with_rq(other, |rq| rq.get_task(pid).map(|t| t.kernel_preempt_ok)).flatten() {
+            return val;
+        }
+    }
+    false
 }
 
 /// Get task PML4 physical address (for address space switching)

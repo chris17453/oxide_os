@@ -576,15 +576,16 @@ pub fn dispatch(
 
     // — GraveShift: syscall entry trace — hunting the 256M ghost
     // Include PID to identify which process is calling
-    if number == nr::OPEN || number == nr::WRITE || number == nr::DUP2 {
+    if number == nr::OPEN || number == nr::WRITE || number == nr::DUP2 || number == nr::SETPGID || number == nr::EXIT {
         let pid = sched::current_pid().unwrap_or(99) as u8;
         unsafe {
             os_log::write_str_raw("[SC] ");
             if number == nr::OPEN { os_log::write_str_raw("open"); }
             else if number == nr::WRITE { os_log::write_str_raw("write"); }
+            else if number == nr::SETPGID { os_log::write_str_raw("setpgid"); }
+            else if number == nr::EXIT { os_log::write_str_raw("exit"); }
             else { os_log::write_str_raw("dup2"); }
             os_log::write_str_raw(" p=");
-            // Print PID as 1-2 digits
             if pid >= 10 { os_log::write_byte_raw(b'0' + (pid / 10)); }
             os_log::write_byte_raw(b'0' + (pid % 10));
             if number == nr::WRITE {

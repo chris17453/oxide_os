@@ -520,15 +520,21 @@ unsafe extern "C" fn shell_completion(text: *const u8, start: i32, _end: i32) ->
 /// Main shell entry point
 #[unsafe(no_mangle)]
 fn main() -> i32 {
+    // — GraveShift: stderr breadcrumbs — bypass stdout buffering to catch silent crashes
+    eprints("[esh] start\n");
+
     // Put shell in its own process group
     setpgid(0, 0);
+    eprints("[esh] setpgid OK\n");
 
     // Make this shell the foreground process group of the controlling terminal
     tcsetpgrp(0, getpid());
+    eprints("[esh] tcsetpgrp OK\n");
 
     // Ignore SIGINT (Ctrl+C) in the shell itself
     // Child processes will inherit default SIGINT behavior
     signal(SIGINT, SIG_IGN);
+    eprints("[esh] signal OK\n");
 
     // — GraveShift: cursor escape codes removed. The GOP framebuffer shows the
     // terminal cursor via paint_cursor() — no need for DEC Private Mode toggles
@@ -538,9 +544,11 @@ fn main() -> i32 {
     unsafe {
         libc::readline::rl_attempted_completion_function = Some(shell_completion);
     }
+    eprints("[esh] readline init OK\n");
 
     // Source system profile to set PATH and other environment variables
     source_profile(b"/etc/profile\0");
+    eprints("[esh] profile sourced\n");
 
     // Load theme from environment variable if set
     if let Some(theme_name) = getenv("ESH_THEME") {
@@ -553,11 +561,13 @@ fn main() -> i32 {
     }
 
     // Print welcome message
+    eprints("[esh] printing welcome\n");
     printlns("OXIDE Shell (esh)");
     printlns("Type 'help' for available commands");
     printlns("");
 
     // Main shell loop
+    eprints("[esh] entering main loop\n");
     loop {
         // Build prompt string (NUL-terminated)
         let prompt = get_prompt_string();

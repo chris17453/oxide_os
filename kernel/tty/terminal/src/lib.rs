@@ -1844,8 +1844,12 @@ pub fn write(data: &[u8]) {
     // write() now paints glyphs inline and flushes the framebuffer before releasing.
     {
         if let Some(ref mut terminal) = *TERMINAL.lock() {
+            // — GraveShift: [TW] traces gated behind debug-terminal. Unconditional serial writes
+            // on every glyph render saturate 115200 baud and make colors output glacially slow.
+            #[cfg(feature = "debug-terminal")]
             unsafe { os_log::write_str_raw("[TW] got lock, writing\n"); }
             terminal.write(data);
+            #[cfg(feature = "debug-terminal")]
             unsafe { os_log::write_str_raw("[TW] done\n"); }
         } else {
             unsafe { os_log::write_str_raw("[TW] TERMINAL=None!\n"); }

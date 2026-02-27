@@ -2064,13 +2064,29 @@ fn kill_pgrp(pgid: u32, sig: i32) {
 /// CPU because the timer interrupt refuses to preempt non-preemptible
 /// kernel code.
 fn vt_yield() {
+    // — SableWire: yield the CPU but PRESERVE the caller's kernel_preempt_ok state.
+    // CRITICAL: Disable kernel preemption BEFORE scheduler operations. yield_current()
+    // and set_need_resched() acquire the RQ lock via with_rq. If kernel_preempt_ok is
+    // true when the timer fires during that lock hold, the ISR won't take the early
+    // return and will try pick_next_task → with_rq → deadlock on the same lock.
+    // Disabling preemption here makes the ISR bail (in_kernel && !kernel_preempt_ok).
+    // Re-enable only for the HLT wait, where no locks are held.
+    let was_preempt_ok = arch::is_kernel_preempt_allowed();
+    if was_preempt_ok {
+        arch::disallow_kernel_preempt();
+    }
     sched::yield_current();
     sched::set_need_resched();
+    // — SableWire: Re-enable preemption for HLT. No locks held here — safe for the
+    // timer ISR to context-switch us out while we sleep.
     arch::allow_kernel_preempt();
     unsafe {
         core::arch::asm!("sti", "hlt", options(nomem, nostack));
     }
-    arch::disallow_kernel_preempt();
+    // Restore the caller's preemption state — don't clobber it
+    if !was_preempt_ok {
+        arch::disallow_kernel_preempt();
+    }
 }
 
 /// Kmsg callback: get current PID

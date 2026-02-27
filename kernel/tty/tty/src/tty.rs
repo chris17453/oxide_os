@@ -103,15 +103,17 @@ impl Tty {
     /// Returns a signal if one should be delivered.
     pub fn input(&self, data: &[u8]) -> Option<Signal> {
         let mut signal = None;
+        let mut echo_buf = Vec::new();
 
-        // Process input with lock held
+        // Process input while holding ldisc lock, but defer driver writes until
+        // after the lock is released to avoid LDISC -> TERMINAL lock nesting.
         {
             let mut ldisc = self.ldisc.lock();
 
             for &c in data {
                 // Process character with echo callback
                 let sig = ldisc.input_char(c, |echo_data| {
-                    self.driver.write(echo_data);
+                    echo_buf.extend_from_slice(echo_data);
                 });
 
                 if sig.is_some() {
@@ -119,6 +121,10 @@ impl Tty {
                 }
             }
         } // Release ldisc lock
+
+        if !echo_buf.is_empty() {
+            self.driver.write(&echo_buf);
+        }
 
         // Wake all processes waiting to read
         // 🔥 NO MORE SPINLOOPS - Wake sleeping readers when data arrives 🔥

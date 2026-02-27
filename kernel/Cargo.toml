@@ -29,14 +29,16 @@ debug-console = ["devfs/debug-console", "vt/debug-console"]  # Enable console→
 debug-syscall-perf = ["syscall/debug-syscall-perf"]  # Log slow syscalls (>50K cycles)
 debug-tty-read = ["tty/debug-tty-read", "devfs/debug-tty-read", "terminal/debug-tty-read"]  # Log TTY read operations + filter serial escapes
 debug-terminal = ["terminal/debug-terminal"]  # Trace terminal write/blit operations
-# -- GraveShift: debug-timer, debug-lock, debug-buddy, debug-paging excluded from debug-all.
-# debug-timer prints on EVERY timer tick on EVERY CPU (400/sec at 4×100Hz).
-# debug-lock prints on EVERY terminal tick when contended (60/sec).
-# debug-buddy fires on EVERY alloc/free (~45 serial writes per operation).
-# debug-paging fires on EVERY page map + alloc during exec (~30KB serial per fork+exec).
+# -- GraveShift: hot-path features excluded from debug-all — they saturate 115200 baud.
+# debug-timer: EVERY timer tick on EVERY CPU (400/sec at 4×100Hz).
+# debug-lock: EVERY terminal tick when contended (60/sec).
+# debug-buddy: EVERY alloc/free (~45 serial writes per operation).
+# debug-paging: EVERY page map + alloc during exec (~30KB serial per fork+exec).
+# debug-console: EVERY terminal write (VTD traces) — fires hundreds of times during colors test.
+# debug-terminal: EVERY terminal write ([TW] traces) — same as debug-console, twice as many bytes.
 # Any of these alone saturates 115200 baud (11,520 bytes/sec), blocking ISRs and starving tasks.
-# Enable individually with: KERNEL_FEATURES="debug-all,debug-paging"
-debug-all = ["debug-syscall", "debug-fork", "debug-cow", "debug-pagefault", "debug-mmap", "debug-proc", "debug-sched", "debug-mouse", "debug-input", "debug-console", "debug-syscall-perf", "debug-tty-read"]
+# Enable individually with: KERNEL_FEATURES="debug-all,debug-console"
+debug-all = ["debug-syscall", "debug-fork", "debug-cow", "debug-pagefault", "debug-mmap", "debug-proc", "debug-sched", "debug-mouse", "debug-input", "debug-syscall-perf", "debug-tty-read"]
 
 [dependencies]
 os_core = { workspace = true }

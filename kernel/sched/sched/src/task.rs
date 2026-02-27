@@ -86,6 +86,13 @@ pub struct Task {
     /// Entry point address
     pub entry_point: u64,
 
+    /// — GraveShift: Per-task kernel preemption state. Saved on switch-out, restored on
+    /// switch-in. The per-CPU flag alone is insufficient — scheduler clears it on context
+    /// switch, but resumed tasks that already called allow_kernel_preempt() won't call it
+    /// again. Without save/restore, preempted tasks lose their preemption allowance and
+    /// deadlock on TERMINAL.lock() (or any contended spinlock).
+    pub kernel_preempt_ok: bool,
+
     // ========================================
     // Real-time scheduling fields
     // ========================================
@@ -216,6 +223,7 @@ impl Task {
             children: Vec::new(),
             exit_status: 0,
             waiting_for_child: 0,
+            kernel_preempt_ok: false,
             meta: None,
         }
     }
@@ -258,6 +266,7 @@ impl Task {
             children: Vec::new(),
             exit_status: 0,
             waiting_for_child: 0,
+            kernel_preempt_ok: false,
             meta: Some(meta),
         }
     }
@@ -273,6 +282,7 @@ impl Task {
             pml4_phys: PhysAddr::new(0), // Idle task uses kernel page tables
             user_stack_top: 0,
             entry_point: 0,
+            kernel_preempt_ok: false,
             rt_priority: 0,
             time_slice: 0,
             nice: 19, // Lowest priority
@@ -330,6 +340,7 @@ impl Task {
             children: Vec::new(),
             exit_status: 0,
             waiting_for_child: 0,
+            kernel_preempt_ok: false,
             meta: Some(meta),
         }
     }

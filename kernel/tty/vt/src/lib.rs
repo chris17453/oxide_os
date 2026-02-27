@@ -106,25 +106,30 @@ impl VtManager {
         }
         impl TtyDriver for VtTtyDriver {
             fn write(&self, data: &[u8]) {
-                // — GraveShift: trace the 256M phantom — is the driver even called?
-                unsafe { os_log::write_str_raw("[VTD] "); }
                 // Only write if this is the active VT (check global directly)
                 let active = *ACTIVE_VT.read();
-                unsafe { os_log::write_str_raw("a="); }
-                unsafe { os_log::write_byte_raw(b'0' + (active as u8)); }
-                unsafe { os_log::write_str_raw(" v="); }
-                unsafe { os_log::write_byte_raw(b'0' + (self.vt_num as u8)); }
+                // — GraveShift: [VTD] traces gated — these fired on EVERY glyph write,
+                // saturating 115200 baud serial and making colors output take 10x longer.
+                #[cfg(feature = "debug-console")]
+                {
+                    unsafe { os_log::write_str_raw("[VTD] a="); }
+                    unsafe { os_log::write_byte_raw(b'0' + (active as u8)); }
+                    unsafe { os_log::write_str_raw(" v="); }
+                    unsafe { os_log::write_byte_raw(b'0' + (self.vt_num as u8)); }
+                }
                 if active == self.vt_num {
                     // Write to console output (terminal emulator + serial)
                     unsafe {
                         if let Some(write_fn) = CONSOLE_WRITE_CALLBACK {
+                            #[cfg(feature = "debug-console")]
                             os_log::write_str_raw(" ->CW\n");
                             write_fn(data);
                         } else {
-                            os_log::write_str_raw(" NO-CB!\n");
+                            unsafe { os_log::write_str_raw("[VTD] NO-CB!\n"); }
                         }
                     }
                 } else {
+                    #[cfg(feature = "debug-console")]
                     unsafe { os_log::write_str_raw(" SKIP\n"); }
                 }
             }

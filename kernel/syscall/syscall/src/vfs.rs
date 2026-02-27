@@ -369,6 +369,18 @@ pub fn sys_write_vfs(fd: i32, buf: u64, count: usize) -> i64 {
         }
     }
 
+    // — GraveShift: Allow kernel preemption during write. Without this, sys_write spins on
+    // TERMINAL.lock() in non-preemptable kernel context. If the lock is held by a task that
+    // was preempted mid-echo (kernel_preempt_ok was set for sys_read), the write spins forever
+    // because the timer ISR can't context-switch back to the lock holder. Permanent deadlock.
+    // Enabling preemption here lets the scheduler break the spin and return to the echo path.
+    use core::ptr::addr_of;
+    unsafe {
+        if let Some(f) = (*addr_of!(super::SYSCALL_CONTEXT)).allow_kernel_preempt {
+            f();
+        }
+    }
+
     // Get user buffer (requires STAC/CLAC for SMAP)
     // Enable access to user pages
     unsafe {
@@ -385,6 +397,13 @@ pub fn sys_write_vfs(fd: i32, buf: u64, count: usize) -> i64 {
     // Disable access to user pages
     unsafe {
         core::arch::asm!("clac", options(nomem, nostack));
+    }
+
+    // Disallow kernel preemption once write is complete
+    unsafe {
+        if let Some(f) = (*addr_of!(super::SYSCALL_CONTEXT)).disallow_kernel_preempt {
+            f();
+        }
     }
 
     result
@@ -642,6 +661,17 @@ pub fn sys_ioctl(fd: i32, request: u64, arg: u64) -> i64 {
             None => return errno::ESRCH,
         };
 
+    // — SableWire: Allow kernel preemption during ioctl. tcsetattr() (TCSANOW) from curses
+    // cbreak()/noecho() goes through here. The ioctl handler grabs tty/ldisc locks — if those
+    // are held by a preempted task, we spin forever without preemption. Same deadlock pattern
+    // as sys_write on TERMINAL.lock(). Let the scheduler break the spin.
+    use core::ptr::addr_of;
+    unsafe {
+        if let Some(f) = (*addr_of!(super::SYSCALL_CONTEXT)).allow_kernel_preempt {
+            f();
+        }
+    }
+
     // — GraveShift: STAC before ioctl — handlers like TIOCGWINSZ write to user pointers.
     // No STAC = SMAP violation = GPF. Every ioctl that touches arg as a pointer needs this.
     unsafe {
@@ -655,6 +685,13 @@ pub fn sys_ioctl(fd: i32, request: u64, arg: u64) -> i64 {
 
     unsafe {
         core::arch::asm!("clac", options(nomem, nostack));
+    }
+
+    // — SableWire: Ioctl done, back to non-preemptable kernel context.
+    unsafe {
+        if let Some(f) = (*addr_of!(super::SYSCALL_CONTEXT)).disallow_kernel_preempt {
+            f();
+        }
     }
 
     result

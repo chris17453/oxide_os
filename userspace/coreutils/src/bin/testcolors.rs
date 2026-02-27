@@ -2,9 +2,8 @@
 //!
 //! Prints a matrix of standard, bright, 256-color cube, and truecolor gradients.
 //!
-//! 🔥 PERFORMANCE FIX: Uses buffered writes instead of putchar() per byte 🔥
-//! Before: 1000+ syscalls for 256-color cube (SLOW AS SHIT)
-//! After:  ~10 syscalls for entire cube (FAST AF)
+//! — NeonVale: Every color in the 256-cube gets its moment. Backgrounds this time
+//! so the dark ones aren't invisible on a dark terminal. Judge every shade fairly.
 
 #![no_std]
 #![no_main]
@@ -25,8 +24,12 @@ fn main() -> i32 {
 
     print_standard();
     print_bright();
-    print_256_cube();
+    print_256_bg();
     print_truecolor();
+
+    // Final marker so we know the program actually completed
+    // — NeonVale: If you see DONE, the process finished. If not, something hung.
+    printlns("\x1b[0mDONE");
 
     // Flush any remaining buffered output
     flush_buffer();
@@ -56,33 +59,50 @@ fn print_bright() {
     printlns("");
 }
 
-fn print_256_cube() {
-    printlns("256-color cube (indices 16-231):");
+// — NeonVale: Use BACKGROUND 256-color so every shade is visible against the default fg.
+// Foreground 256-color on a dark terminal hides the dark cube entries. BG shows everything.
+fn print_256_bg() {
+    printlns("256-color cube BG (indices 16-231):");
     for row in 0..6 {
         for col in 0..36 {
-            let idx = 16 + row * 36 + col;
-            prints("\x1b[38;5;");
+            let idx: u8 = 16 + row * 36 + col;
+            // — NeonVale: Reset first, then set background color.
+            // Two separate CSIs: simpler, avoids multi-param 256-color edge cases.
+            prints("\x1b[0m\x1b[48;5;");
             printd(idx);
-            prints("m");
-            prints("██");
+            prints("m  ");
         }
         printlns("\x1b[0m");
     }
     printlns("");
+
+    // — NeonVale: Also show grayscale ramp (232-255) — 24 shades from dark to bright
+    printlns("Grayscale ramp BG (indices 232-255):");
+    for i in 0..24u8 {
+        let idx: u8 = 232 + i;
+        prints("\x1b[0m\x1b[48;5;");
+        printd(idx);
+        prints("m  ");
+    }
+    printlns("\x1b[0m");
+    printlns("");
 }
 
 fn print_truecolor() {
-    printlns("Truecolor gradient:");
-    for r in (0..=255).step_by(32) {
-        for g in (0..=255).step_by(32) {
-            let b = 255 - g;
-            prints("\x1b[38;2;");
+    // — NeonVale: Use explicit loop indices to avoid u8 step_by overflow UB in debug builds.
+    printlns("Truecolor gradient BG:");
+    for ri in 0..8u8 {
+        let r = ri * 32;
+        for gi in 0..8u8 {
+            let g = gi * 32;
+            let b: u8 = 224 - g;
+            prints("\x1b[0m\x1b[48;2;");
             printd(r);
             prints(";");
             printd(g);
             prints(";");
             printd(b);
-            prints("m██");
+            prints("m  ");
         }
         printlns("\x1b[0m");
     }
@@ -107,7 +127,7 @@ fn printlns(s: &str) {
 }
 
 fn prints(s: &str) {
-    // 🔥 PERFORMANCE FIX: Buffer bytes instead of putchar() per byte 🔥
+    // — NeonVale: Buffer bytes for batch writes — fewer syscalls, same result
     unsafe {
         if let Some(ref mut buf) = OUTPUT_BUFFER {
             buf.extend_from_slice(s.as_bytes());
@@ -132,7 +152,6 @@ fn printd(mut n: u8) {
             n /= 10;
         }
     }
-    // 🔥 PERFORMANCE FIX: Buffer digits instead of putchar() per byte 🔥
     unsafe {
         if let Some(ref mut buf) = OUTPUT_BUFFER {
             buf.extend_from_slice(&digits[i..]);
@@ -141,12 +160,10 @@ fn printd(mut n: u8) {
 }
 
 /// Flush buffered output to stdout
-/// 🔥 PERFORMANCE FIX: Batch write reduces syscalls by 100x 🔥
 fn flush_buffer() {
     unsafe {
         if let Some(ref mut buf) = OUTPUT_BUFFER {
             if !buf.is_empty() {
-                // Single syscall for entire buffer
                 sys_write(STDOUT_FILENO, buf.as_slice());
                 buf.clear();
             }

@@ -351,8 +351,14 @@ pub fn initscr() -> WINDOW {
 
             // — NeonVale: Switch to alternate screen buffer and clear it.
             // Without smcup, the app stomps the shell's scrollback.
+            // — SableWire: MUST flush after smcup — putp() writes escape bytes
+            // via libc::write but they may sit in stdout buffer until flushed.
+            // Without flush, the terminal never receives \x1b[?1049h and the
+            // alternate screen never activates.
             let _ = screen.putp("smcup");
+            libc::fflush_stdout();
             let _ = screen.putp("clear");
+            libc::fflush_stdout();
 
             let stdscr = screen.stdscr;
             unsafe {

@@ -118,6 +118,11 @@ pub use crate::core::{
     get_task_nice,
     get_task_pml4,
     get_task_policy,
+    // Kernel preemption save/restore (per-task)
+    save_kernel_preempt,
+    load_kernel_preempt,
+    // ISR lock safety
+    rq_lock_available,
     get_task_ppid,
     get_task_rt_priority,
     get_task_state,

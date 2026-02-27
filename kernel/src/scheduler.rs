@@ -513,6 +513,16 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         return current_rsp;
     }
 
+    // — SableWire: ISR lock safety gate. The context-switch path below calls
+    // pick_next_task, set_task_context, get_task_switch_info — all use with_rq
+    // (blocking lock). If the interrupted code was inside a scheduler operation
+    // (yield_current, block_current, set_need_resched) the RQ lock is held.
+    // Attempting with_rq here would deadlock the ISR forever. Bail and retry
+    // on the next tick — the interrupted code will release the lock and complete.
+    if !sched::rq_lock_available() {
+        return current_rsp;
+    }
+
     // Find next task to run using the scheduler
     let next_pid = pick_next_process(current_pid);
 
@@ -523,9 +533,14 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         return current_rsp;
     }
 
-    // We're actually switching — clear the kernel preempt flag now.
-    // The task we switch TO will set it itself if it needs preemption
-    // (e.g., via allow_kernel_preempt in blocking syscalls or idle loop).
+    // — GraveShift: Save kernel_preempt_ok to the OUTGOING task. The per-CPU flag
+    // alone is insufficient: when we clear it below and switch to another task,
+    // the preempted task's allow_kernel_preempt() call is "lost". On resume, the
+    // task expects preemption to be enabled (it already called allow_kernel_preempt)
+    // but the flag is false → spins on TERMINAL.lock() forever → deadlock.
+    sched::save_kernel_preempt(current_pid, kernel_preempt_ok);
+
+    // Clear the per-CPU flag. The incoming task's saved state will be restored below.
     if kernel_preempt_ok {
         arch::clear_kernel_preempt();
     }
@@ -692,6 +707,13 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
                 options(nostack, preserves_flags)
             );
         }
+    }
+
+    // — GraveShift: Restore the incoming task's kernel_preempt_ok state.
+    // Without this, tasks preempted mid-syscall (after allow_kernel_preempt but before
+    // file.write) resume with kernel_preempt_ok=false and deadlock on contended spinlocks.
+    if sched::load_kernel_preempt(next_pid) {
+        arch::allow_kernel_preempt();
     }
 
     // Build interrupt frame for next process.
@@ -927,6 +949,14 @@ pub fn check_signals_on_syscall_return() {
     // clobber it while we sleep. Save it to the kernel stack (per-task) and
     // restore after we're switched back in.
     if sched::need_resched() {
+        // — GraveShift: Trace syscall-return yields to see who's being preempted
+        let _dbg_pid = sched::current_pid().unwrap_or(99) as u8;
+        unsafe {
+            os_log::write_str_raw("[SCR] p=");
+            if _dbg_pid >= 10 { os_log::write_byte_raw(b'0' + (_dbg_pid / 10)); }
+            os_log::write_byte_raw(b'0' + (_dbg_pid % 10));
+            os_log::write_str_raw("\n");
+        }
         let saved_ctx = unsafe { *arch::syscall::get_user_context_mut() };
 
         arch::allow_kernel_preempt();
@@ -934,6 +964,15 @@ pub fn check_signals_on_syscall_return() {
             core::arch::asm!("sti", "hlt", options(nomem, nostack));
         }
         arch::disallow_kernel_preempt();
+
+        // — GraveShift: Resumed from yield. Trace to confirm p=3 wakeup.
+        unsafe {
+            let _r_pid = sched::current_pid().unwrap_or(99) as u8;
+            os_log::write_str_raw("[SCR] resume p=");
+            if _r_pid >= 10 { os_log::write_byte_raw(b'0' + (_r_pid / 10)); }
+            os_log::write_byte_raw(b'0' + (_r_pid % 10));
+            os_log::write_str_raw("\n");
+        }
 
         // — GraveShift: Re-disable interrupts. The asm caller (syscall_entry)
         // ran CLI before calling us; after sti+hlt+iretq interrupts are
@@ -993,6 +1032,16 @@ pub fn check_signals_on_syscall_return() {
     match result {
         SignalResult::Terminate | SignalResult::CoreDump => {
             // 🔥 GraveShift: Process gets the axe 🔥
+            // — GraveShift: Trace signal kills so we catch who's getting axed
+            unsafe {
+                os_log::write_str_raw("[SIG] KILL p=");
+                let pid_b = current_pid as u8;
+                if pid_b >= 10 { os_log::write_byte_raw(b'0' + (pid_b / 10)); }
+                os_log::write_byte_raw(b'0' + (pid_b % 10));
+                os_log::write_str_raw(" sig=");
+                os_log::write_byte_raw(b'0' + signo as u8);
+                os_log::write_str_raw("\n");
+            }
             drop(meta); // Release lock before calling scheduler
 
             // Exit with signal status (128 + signal number)
