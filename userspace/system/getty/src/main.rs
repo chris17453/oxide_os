@@ -109,10 +109,7 @@ pub fn main() -> i32 {
         }
 
         if pid == 0 {
-            // Child - exec login
             exec("/bin/login");
-            // If exec fails, try shell directly
-            exec("/bin/esh");
             prints("getty: failed to exec login\n");
             exit(1);
         }

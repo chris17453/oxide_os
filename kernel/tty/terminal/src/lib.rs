@@ -451,6 +451,21 @@ impl TerminalEmulator {
                     );
                 }
 
+                // — GraveShift: Detect ALT_SCREEN transitions triggered by ?1049h/?1049l.
+                // set_private_mode() toggles the flag INSIDE handle_csi, so is_alt above is the
+                // PRE-call state. Compare before/after to catch the switch and act on it.
+                // Without this, smcup just sets a flag but never clears the alt buffer or
+                // re-renders — curses apps see a blank screen forever. Classic VTE oversight.
+                let now_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
+                if !is_alt && now_alt {
+                    // Entered alternate screen — clear it and render blank
+                    self.alternate.clear();
+                    self.renderer.invalidate();
+                } else if is_alt && !now_alt {
+                    // Left alternate screen — restore primary view
+                    self.renderer.invalidate();
+                }
+
                 // If synchronized mode was just turned off, flush buffered output
                 let is_sync = self
                     .handler

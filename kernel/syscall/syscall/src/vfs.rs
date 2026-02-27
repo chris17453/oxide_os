@@ -642,11 +642,22 @@ pub fn sys_ioctl(fd: i32, request: u64, arg: u64) -> i64 {
             None => return errno::ESRCH,
         };
 
-    // Call ioctl on the file
-    match file.ioctl(request, arg) {
+    // — GraveShift: STAC before ioctl — handlers like TIOCGWINSZ write to user pointers.
+    // No STAC = SMAP violation = GPF. Every ioctl that touches arg as a pointer needs this.
+    unsafe {
+        core::arch::asm!("stac", options(nomem, nostack));
+    }
+
+    let result = match file.ioctl(request, arg) {
         Ok(result) => result,
         Err(e) => vfs_error_to_errno(e),
+    };
+
+    unsafe {
+        core::arch::asm!("clac", options(nomem, nostack));
     }
+
+    result
 }
 
 /// sys_chmod - Change file mode bits
