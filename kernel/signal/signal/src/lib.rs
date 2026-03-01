@@ -25,7 +25,7 @@ pub use action::{
 pub use action::{SigAction, SigFlags, SigHandler, SigInfo};
 pub use delivery::{
     SavedRegisters, SignalFrame, SignalResult, determine_action, restore_from_frame,
-    setup_signal_handler, should_interrupt_for_signal,
+    set_sigreturn_frame, setup_signal_handler, should_interrupt_for_signal, take_sigreturn_frame,
 };
 pub use pending::{PendingSignal, PendingSignals};
 pub use signal::{

@@ -17,7 +17,7 @@ extern crate libc;
 extern crate oxide_ncurses as ncurses;
 
 use ncurses::{
-    attrs::*, color_pair, colors::*, endwin, erase, has_colors, init_pair, initscr,
+    attrs::*, color_pair, colors::*, endwin, erase, getch, has_colors, init_pair, initscr,
     mvprintw, refresh, screen::{cbreak, noecho}, start_color,
 };
 
@@ -247,7 +247,10 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
     // FPS counter — because if you can't measure it, it doesn't exist — NeonVale
     let mut fps = FpsCounter::new();
 
-    // -- NeonVale: Run 300 frames then exit cleanly. No getch() — pure render test.
+    // Keep demo bounded by wall clock so shell always regains control quickly,
+    // even when terminal rendering is slow.
+    let demo_start_ns = now_ns();
+    let demo_timeout_ns = 8_000_000_000u64;
     for _frame in 0..300 {
         let _ = erase();
 
@@ -339,6 +342,17 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
         }
 
         let _ = refresh();
+
+        // Non-blocking quit key for manual exit.
+        let ch = getch();
+        if ch == 'q' as i32 || ch == 'Q' as i32 {
+            break;
+        }
+
+        // Hard timeout to avoid long foreground hangs on slow consoles.
+        if now_ns().saturating_sub(demo_start_ns) >= demo_timeout_ns {
+            break;
+        }
 
         // — NeonVale: 16ms frame budget (~60 FPS). Without this, the tight loop
         // monopolizes the CPU on a non-preemptive single-core OS — other processes

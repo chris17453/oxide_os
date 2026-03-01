@@ -298,3 +298,34 @@ pub fn should_interrupt_for_signal(
 
     false
 }
+
+/// — GraveShift: Deferred sigreturn frame storage.
+/// sys_sigreturn() can't modify SYSCALL_USER_CONTEXT because the asm resaves from the kernel
+/// stack AFTER the handler returns. So sigreturn stashes the frame here, and the signal check
+/// on syscall return applies it under CLI where it sticks through to sysretq.
+/// Using UnsafeCell+MaybeUninit to avoid Rust 2024 static_mut_refs lint.
+use core::cell::UnsafeCell;
+
+struct SigreturnSlot {
+    frame: UnsafeCell<Option<SignalFrame>>,
+}
+
+// SAFETY: Only accessed under CLI from single CPU context (syscall path)
+unsafe impl Sync for SigreturnSlot {}
+
+static SIGRETURN_SLOT: SigreturnSlot = SigreturnSlot {
+    frame: UnsafeCell::new(None),
+};
+
+/// Store a signal frame for deferred restoration on syscall return.
+///
+/// # Safety
+/// Must only be called from syscall handler context (per-CPU, under CLI before sysret).
+pub unsafe fn set_sigreturn_frame(frame: SignalFrame) {
+    unsafe { *SIGRETURN_SLOT.frame.get() = Some(frame); }
+}
+
+/// Take (and clear) any pending sigreturn frame.
+pub fn take_sigreturn_frame() -> Option<SignalFrame> {
+    unsafe { (*SIGRETURN_SLOT.frame.get()).take() }
+}

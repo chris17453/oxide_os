@@ -1062,6 +1062,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         vt::set_console_write_callback(console::console_write); // VT output
         vt::set_yield_callback(vt_yield); // VT blocking yield
         vt::set_vt_switch_callback(terminal_vt_switch_callback); // 🔥 VT switch redraw 🔥
+        vt::set_signal_pending_callback(is_signal_pending); // — GraveShift: EINTR for blocked reads
     }
 
     // Create /proc directory
@@ -2040,17 +2041,49 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 }
 
 /// Send signal to all processes in a process group
+///
+/// — GraveShift: Called from BOTH ISR context (push_input Ctrl+C fast path) and
+/// normal kernel context (VT drain path). Uses try_lock everywhere because ISR
+/// context can't spin on contended locks — that's a one-way ticket to deadlock city.
+/// After queuing the signal, try_wake_up() kicks TASK_INTERRUPTIBLE processes back
+/// to TASK_RUNNING so they don't sleep through their own death sentence. Linux does
+/// this in complete_signal() → signal_wake_up() → wake_up_state(). Without it,
+/// Ctrl+C queues SIGINT but the process snoozes through nanosleep blissfully unaware.
 fn kill_pgrp(pgid: u32, sig: i32) {
     use signal::SigInfo;
 
     let info = SigInfo::kill(sig, 0, 0);
     let all_pids = sched::all_pids();
 
+    unsafe {
+        os_log::write_str_raw("[KILL-PGRP] pgid=");
+        arch_x86_64::serial::write_u64_hex_unsafe(pgid as u64);
+        os_log::write_str_raw(" sig=");
+        arch_x86_64::serial::write_u64_hex_unsafe(sig as u64);
+        os_log::write_str_raw("\n");
+    }
+
     for pid in all_pids {
         if let Some(meta) = sched::get_task_meta(pid) {
-            let process_pgid = meta.lock().pgid;
-            if process_pgid == pgid {
-                meta.lock().send_signal(sig, Some(info.clone()));
+            // — GraveShift: try_lock because we may be in ISR context.
+            // If contended, skip this PID — signal delivery will catch it on next drain.
+            if let Some(mut guard) = meta.try_lock() {
+                if guard.pgid == pgid {
+                    guard.send_signal(sig, Some(info.clone()));
+                    drop(guard);
+                    unsafe {
+                        os_log::write_str_raw("[KILL-PGRP] sent sig to pid=");
+                        arch_x86_64::serial::write_u64_hex_unsafe(pid as u64);
+                        os_log::write_str_raw("\n");
+                    }
+                    // — GraveShift: Wake the process if it's sleeping.
+                    let woke = sched::try_wake_up(pid);
+                    unsafe {
+                        os_log::write_str_raw("[KILL-PGRP] wake=");
+                        os_log::write_str_raw(if woke { "OK" } else { "FAIL" });
+                        os_log::write_str_raw("\n");
+                    }
+                }
             }
         }
     }
@@ -2122,6 +2155,28 @@ fn kmsg_get_proc_name(pid: u32, buf: &mut [u8]) -> usize {
 /// — EmberLock: identity extraction for subsystem consumption
 fn current_process_uid_gid() -> (u32, u32) {
     sched::with_current_meta(|meta| (meta.credentials.uid, meta.credentials.gid)).unwrap_or((0, 0))
+}
+
+/// Check if the current process has pending signals that should interrupt a blocking read.
+///
+/// — GraveShift: Filters out SIG_IGN signals so the shell (which ignores SIGINT) doesn't
+/// get spuriously interrupted from read(). Only returns true for signals that would
+/// actually DO something — terminate, stop, or invoke a user handler.
+fn is_signal_pending() -> bool {
+    let pid = match sched::current_pid() {
+        Some(pid) if pid > 1 => pid,
+        _ => return false,
+    };
+    if let Some(meta_arc) = sched::get_task_meta(pid) {
+        if let Some(meta) = meta_arc.try_lock() {
+            return signal::delivery::should_interrupt_for_signal(
+                &meta.pending_signals.set(),
+                &meta.signal_mask,
+                &meta.sigactions,
+            );
+        }
+    }
+    false
 }
 
 /// Signal process group callback for PTYs

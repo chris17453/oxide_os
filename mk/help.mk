@@ -17,6 +17,7 @@ help:
 	@echo "OXIDE OS Build System"
 	@echo ""
 	@echo "Run Targets:"
+	@echo "  go                - Boot existing disk image (no rebuild)"
 	@echo "  run               - Build and run (auto-detects Fedora/RHEL)"
 	@echo "  run-fedora        - Build and run with qemu-system-x86_64"
 	@echo "  run-rhel          - Build and run with qemu-kvm (RHEL 10)"

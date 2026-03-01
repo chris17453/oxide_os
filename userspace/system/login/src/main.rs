@@ -234,11 +234,73 @@ fn lookup_user(username: &[u8]) -> Option<&'static PasswdEntry> {
     None
 }
 
+/// — GraveShift: Check if autologin is enabled via /etc/autologin.
+/// Returns true if file exists and contains a valid username. — GraveShift
+fn check_autologin(user_buf: &mut [u8; MAX_INPUT]) -> Option<&'static PasswdEntry> {
+    let fd = open2("/etc/autologin", O_RDONLY);
+    if fd < 0 {
+        return None;
+    }
+    let mut buf = [0u8; 64];
+    let n = read(fd, &mut buf);
+    close(fd);
+    if n <= 0 {
+        return None;
+    }
+    // Trim trailing newline/whitespace
+    let mut len = n as usize;
+    while len > 0 && (buf[len - 1] == b'\n' || buf[len - 1] == b'\r' || buf[len - 1] == b' ') {
+        len -= 1;
+    }
+    if len == 0 {
+        return None;
+    }
+    user_buf[..len].copy_from_slice(&buf[..len]);
+    user_buf[len] = 0;
+    lookup_user(user_buf)
+}
+
 /// Main entry point
 #[unsafe(no_mangle)]
 pub fn main() -> i32 {
     let mut attempts = 0;
     const MAX_ATTEMPTS: i32 = 3;
+
+    // — GraveShift: autologin shortcut — if /etc/autologin exists with a username,
+    // skip the prompt dance entirely. Because debugging Ctrl+C at 3 AM without
+    // keyboard input is a special kind of hell. — GraveShift
+    {
+        let mut auto_user = [0u8; MAX_INPUT];
+        if let Some(entry) = check_autologin(&mut auto_user) {
+            prints("Auto-login: ");
+            prints(entry.username);
+            prints("\n");
+
+            // Skip straight to shell spawn
+            let pid = fork();
+            if pid < 0 {
+                prints("Failed to fork\n");
+                return 1;
+            }
+            if pid == 0 {
+                setenv("HOME", entry.home);
+                setenv("USER", entry.username);
+                setenv("SHELL", entry.shell);
+                setenv("PWD", entry.home);
+                let _ = chdir(entry.home);
+                let _ = setgid(entry.gid);
+                let _ = setuid(entry.uid);
+                exec(entry.shell);
+                prints("Failed to exec shell\n");
+                exit(1);
+            } else {
+                let mut status = 0;
+                waitpid(pid, &mut status, 0);
+                prints("\n[login] Session ended\n");
+                return 0;
+            }
+        }
+    }
 
     loop {
         // Print login prompt

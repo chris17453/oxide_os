@@ -1,7 +1,7 @@
 # — NeonRoot: QEMU launch orchestration.
 # Auto-detects Fedora vs RHEL, kills stale instances, and prays the OVMF gods are merciful.
 
-.PHONY: detect-qemu-mode kill-qemu run run-disk run-fedora run-rhel run-kvm run-debug-input-gui run-debug-mouse run-debug-lock run-debug-fork run-debug-sched run-debug-all run-256m run-256m-novgpu attach
+.PHONY: detect-qemu-mode kill-qemu go run run-disk run-fedora run-rhel run-kvm run-debug-input-gui run-debug-mouse run-debug-lock run-debug-fork run-debug-sched run-debug-all run-256m run-256m-novgpu attach
 
 # Auto-detect QEMU mode (Fedora vs RHEL)
 detect-qemu-mode:
@@ -27,6 +27,27 @@ kill-qemu:
 			echo "Force-killing stubborn QEMU processes: $$STILL"; \
 			kill -9 $$STILL 2>/dev/null || true; \
 		fi; \
+	fi
+
+# — NeonRoot: Skip the rebuild circus. Boot the last image we already built.
+# For when you've been staring at a 90-second create-rootfs for the 47th time today. — NeonRoot
+go: kill-qemu
+	@if [ ! -f $(ROOTFS_IMAGE) ]; then \
+		echo "Error: No disk image found at $(ROOTFS_IMAGE)"; \
+		echo "Run 'make run' first to build one, then 'make go' to reboot it."; \
+		exit 1; \
+	fi
+	@MODE=$$($(MAKE) -s detect-qemu-mode); \
+	if [ "$$MODE" = "fedora" ]; then \
+		echo "Detected Fedora mode (reusing existing image)"; \
+		$(MAKE) run-fedora; \
+	elif [ "$$MODE" = "rhel" ]; then \
+		echo "Detected RHEL mode (reusing existing image)"; \
+		$(MAKE) run-rhel; \
+	else \
+		echo "Error: No compatible QEMU found"; \
+		echo "Install: sudo dnf install qemu-system-x86 (Fedora) or qemu-kvm (RHEL)"; \
+		exit 1; \
 	fi
 
 # — NeonRoot: Primary run target. Builds rootfs, detects platform, launches QEMU with VNC.

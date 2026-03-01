@@ -429,7 +429,14 @@ pub fn yield_current() {
 /// Returns true if rescheduling is needed.
 pub fn scheduler_tick_ex(in_blocking_wait: bool) -> bool {
     let cpu = this_cpu();
-    let now = GLOBAL_CLOCK.fetch_add(TICK_NS, Ordering::Relaxed) + TICK_NS;
+    // — SableWire: SMP rule #1 — only BSP (CPU 0) advances the global clock.
+    // With N CPUs all calling fetch_add, the clock ran N× too fast, corrupting
+    // every timing calculation in the system. APs just read the current value.
+    let now = if cpu == 0 {
+        GLOBAL_CLOCK.fetch_add(TICK_NS, Ordering::Relaxed) + TICK_NS
+    } else {
+        GLOBAL_CLOCK.load(Ordering::Relaxed)
+    };
 
     // — GraveShift: Classify this tick for /proc/stat accounting.
     // try_with_rq avoids deadlock if main code holds the lock.
@@ -490,12 +497,32 @@ pub fn pick_next_task() -> Option<Pid> {
     let cpu = this_cpu();
 
     with_rq(cpu, |rq| {
+        // — GraveShift: Sync rq.clock from GLOBAL_CLOCK BEFORE accounting.
+        // scheduler_tick_ex uses try_with_rq (non-blocking) — when the timer ISR
+        // interrupts code that holds the RQ lock, try_with_rq fails and rq.clock
+        // stays stale. Without this sync, account_stop() computes delta ≈ 0,
+        // the task's vruntime never advances, and CFS starves every other task.
+        // GLOBAL_CLOCK always advances (atomic fetch_add outside the lock).
+        let fresh_now = GLOBAL_CLOCK.load(Ordering::Relaxed);
+        rq.update_clock(fresh_now);
+
         // Put back the previous task
         if let Some(prev_pid) = rq.curr() {
             // Update its accounting
             let now = rq.clock();
             if let Some(task) = rq.get_task_mut(prev_pid) {
-                let delta = task.account_stop(now);
+                let mut delta = task.account_stop(now);
+                // — GraveShift: Sub-tick vruntime floor. With 10ms tick-based
+                // accounting, a task that runs for <1 tick (e.g. servicemgr:
+                // wake → usleep → HLT in microseconds) gets delta=0, so its
+                // vruntime NEVER advances. Combined with the wakeup credit
+                // (min_vruntime - SCHED_LATENCY), these rapid-sleepers permanently
+                // starve every other task. Charging TICK_NS minimum ensures CFS
+                // makes forward progress even without a TSC-based update_curr.
+                // A full tick is the coarsest fair charge — we can't measure less.
+                if delta == 0 && task.policy.is_fair() {
+                    delta = TICK_NS;
+                }
                 task.update_vruntime(delta);
             }
 
@@ -574,7 +601,9 @@ pub fn switch_to(new_pid: Pid) {
         // Dequeue the new task from the run queue (it's becoming current)
         rq.dequeue_task(new_pid);
 
-        // Set the new task as current
+        // — GraveShift: Sync clock from GLOBAL_CLOCK (same stale-clock fix as pick_next_task)
+        let fresh_now = GLOBAL_CLOCK.load(Ordering::Relaxed);
+        rq.update_clock(fresh_now);
         let now = rq.clock();
         if let Some(task) = rq.get_task_mut(new_pid) {
             task.state = TaskState::TASK_RUNNING;

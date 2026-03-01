@@ -29,6 +29,36 @@ use crate::scheduler::{add_process, wake_parent};
 use mm_manager::mm;
 use sched::TaskContext;
 
+fn trace_u64(mut n: u64) {
+    unsafe {
+        if n == 0 {
+            os_log::write_byte_raw(b'0');
+            return;
+        }
+        let mut buf = [0u8; 20];
+        let mut pos = 0;
+        while n > 0 {
+            buf[pos] = b'0' + (n % 10) as u8;
+            n /= 10;
+            pos += 1;
+        }
+        for i in (0..pos).rev() {
+            os_log::write_byte_raw(buf[i]);
+        }
+    }
+}
+
+fn trace_i32(n: i32) {
+    unsafe {
+        if n < 0 {
+            os_log::write_byte_raw(b'-');
+            trace_u64((-n) as u64);
+        } else {
+            trace_u64(n as u64);
+        }
+    }
+}
+
 /// User exit function
 ///
 /// ThreadRogue: Handle both thread and process exit - clean termination paths
@@ -41,6 +71,17 @@ pub fn user_exit(status: i32) -> ! {
         let tgid = meta.tgid;
         let clear_child_tid = meta.clear_child_tid;
         let is_thread = current_tid != tgid;
+        unsafe {
+            os_log::write_str_raw("[EXIT] pid=");
+            trace_u64(current_tid as u64);
+            os_log::write_str_raw(" tgid=");
+            trace_u64(tgid as u64);
+            os_log::write_str_raw(" status=");
+            trace_i32(status);
+            os_log::write_str_raw(" thread=");
+            os_log::write_byte_raw(if is_thread { b'1' } else { b'0' });
+            os_log::write_str_raw("\n");
+        }
 
         debug_proc!(
             "[EXIT] TID={} TGID={} status={} is_thread={}",
@@ -100,6 +141,13 @@ pub fn user_exit(status: i32) -> ! {
         // This is the main process exit (thread group leader)
         // BlackLatch: Main process termination - zombie state for parent reaping
         let parent_pid = sched::get_task_ppid(current_tid).unwrap_or(0);
+        unsafe {
+            os_log::write_str_raw("[EXIT] zombie pid=");
+            trace_u64(current_tid as u64);
+            os_log::write_str_raw(" ppid=");
+            trace_u64(parent_pid as u64);
+            os_log::write_str_raw("\n");
+        }
 
         debug_proc!(
             "[EXIT] Main process {} exiting, parent={}",
@@ -686,12 +734,30 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
 pub fn kernel_wait(pid: i32, options: i32) -> i64 {
     let parent_pid = sched::current_pid().unwrap_or(0);
     let wait_opts = WaitOptions::from(options);
+    unsafe {
+        os_log::write_str_raw("[WAIT] enter ppid=");
+        trace_u64(parent_pid as u64);
+        os_log::write_str_raw(" target=");
+        trace_i32(pid);
+        os_log::write_str_raw(" opts=");
+        trace_i32(options);
+        os_log::write_str_raw("\n");
+    }
 
     debug_proc!("[WAIT] pid={} waiting for child={}", parent_pid, pid);
     loop {
         // Check for state changes: zombie, stopped (WUNTRACED), continued (WCONTINUED)
         match find_child_state_change(parent_pid, pid, &wait_opts) {
             Ok(result) => {
+                unsafe {
+                    os_log::write_str_raw("[WAIT] hit ppid=");
+                    trace_u64(parent_pid as u64);
+                    os_log::write_str_raw(" child=");
+                    trace_u64(result.pid as u64);
+                    os_log::write_str_raw(" status=");
+                    trace_i32(result.status);
+                    os_log::write_str_raw("\n");
+                }
                 debug_proc!(
                     "[WAIT] pid={} found state change: child={} status=0x{:x}",
                     parent_pid,
@@ -719,6 +785,13 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
                         if wait_opts.nohang {
                             return 0; // No child exited yet
                         }
+                        unsafe {
+                            os_log::write_str_raw("[WAIT] block ppid=");
+                            trace_u64(parent_pid as u64);
+                            os_log::write_str_raw(" target=");
+                            trace_i32(pid);
+                            os_log::write_str_raw("\n");
+                        }
 
                         // Update scheduler's Task state - mark as waiting
                         sched::set_task_waiting(parent_pid, pid);
@@ -742,6 +815,24 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
 
                         // Clear preempt flag if we're still running
                         arch::disallow_kernel_preempt();
+
+                        // — GraveShift: Check for pending signals after wakeup. If the
+                        // current process has an actionable signal (not SIG_IGN, not blocked),
+                        // bail with EINTR. check_signals_on_syscall_return() delivers on exit.
+                        // Without this, waitpid looped forever even when the parent had pending
+                        // signals — it only checked for child state changes, never its own signals.
+                        if let Some(meta_arc) = sched::get_task_meta(parent_pid) {
+                            if let Some(meta) = meta_arc.try_lock() {
+                                if signal::delivery::should_interrupt_for_signal(
+                                    &meta.pending_signals.set(),
+                                    &meta.signal_mask,
+                                    &meta.sigactions,
+                                ) {
+                                    return -4; // EINTR
+                                }
+                            }
+                        }
+
                         continue;
                     }
                 }
@@ -759,6 +850,15 @@ fn find_child_state_change(
     opts: &WaitOptions,
 ) -> Result<WaitResult, proc::WaitError> {
     let children = sched::get_task_children(parent_pid);
+    unsafe {
+        os_log::write_str_raw("[WAIT] scan ppid=");
+        trace_u64(parent_pid as u64);
+        os_log::write_str_raw(" target=");
+        trace_i32(target_pid);
+        os_log::write_str_raw(" nchild=");
+        trace_u64(children.len() as u64);
+        os_log::write_str_raw("\n");
+    }
 
     if children.is_empty() {
         return Err(proc::WaitError::NoChildren);
@@ -1296,6 +1396,22 @@ pub fn kernel_exec(
                 m.address_space = exec_result.address_space;
                 m.cmdline = exec_result.cmdline;
                 m.environ = exec_result.environ;
+
+                // — GraveShift: POSIX exec signal reset. Caught handlers point into the OLD
+                // address space — calling them after exec = instant GPF. SIG_IGN survives exec
+                // (POSIX says so), SIG_DFL is already SIG_DFL. Everything else → SIG_DFL.
+                // Linux does this in flush_signal_handlers(). We do it here because we're not
+                // Linux and we don't have that many layers of indirection. — GraveShift
+                for i in 0..signal::NSIG {
+                    let action = &m.sigactions[i];
+                    if action.handler().is_user_handler() {
+                        m.sigactions[i] = signal::SigAction::new();
+                    }
+                }
+
+                // — GraveShift: Clear pending signals on exec. The old process image is gone;
+                // signals queued for it are meaningless now. Fresh start. — GraveShift
+                m.pending_signals = signal::PendingSignals::new();
             }
 
             // Update scheduler task with new exec info

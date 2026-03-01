@@ -162,6 +162,7 @@ create-rootfs: kernel bootloader external-binaries initramfs
 	printf "nameserver 8.8.8.8\nnameserver 8.8.4.4\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/resolv.conf > /dev/null && \
 	printf "# /etc/hosts - static hostname-to-IP mappings\n127.0.0.1       localhost localhost.localdomain\n::1             localhost localhost.localdomain ip6-localhost ip6-loopback\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/hosts > /dev/null && \
 	printf "# /etc/vconsole.conf - console keyboard and font configuration\n# KEYMAP: keyboard layout (us, uk, de, fr)\n# Use 'loadkeys -l' to list available layouts\nKEYMAP=us\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/vconsole.conf > /dev/null && \
+	printf "root\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/autologin > /dev/null && \
 	sudo umount $(TARGET_DIR)/mnt/root && \
 	\
 	echo "Populating /home..." && \

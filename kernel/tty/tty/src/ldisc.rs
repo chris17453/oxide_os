@@ -59,6 +59,11 @@ pub struct LineDiscipline {
     pending_signal: Option<Signal>,
     /// Next character should be literal (^V prefix)
     literal_next: bool,
+    /// EOF was signaled (Ctrl+D on empty line) — waiting for read to consume it
+    /// — GraveShift: Without this flag, Ctrl+D commits an empty line that's indistinguishable
+    /// from "no data yet". The read loop spins forever. Now read() sees eof_pending, returns 0,
+    /// and the process finally gets its goddamn EOF.
+    eof_pending: bool,
 }
 
 // Full line discipline implementation; some methods reserved for future canonical mode work
@@ -75,6 +80,7 @@ impl LineDiscipline {
             column: 0,
             pending_signal: None,
             literal_next: false,
+            eof_pending: false,
         }
     }
 
@@ -197,8 +203,13 @@ impl LineDiscipline {
                 return None;
             }
 
-            // Handle EOF
+            // Handle EOF (Ctrl+D)
+            // — GraveShift: Empty line + Ctrl+D = true EOF. Mid-line + Ctrl+D = flush partial data.
+            // Linux n_tty does the same dance. The eof_pending flag tells the read loop to stop.
             if c == self.termios.c_cc[VEOF] && self.termios.c_cc[VEOF] != 0 {
+                if self.edit_buf.is_empty() {
+                    self.eof_pending = true;
+                }
                 self.commit_line();
                 return None;
             }
@@ -524,12 +535,17 @@ impl LineDiscipline {
     }
 
     /// Read in canonical mode (line by line)
+    /// — GraveShift: Returns 0 for EOF (Ctrl+D on empty line). Clears the eof flag so the
+    /// next read blocks again. One EOF per Ctrl+D, just like Linux.
     fn read_canonical(&mut self, buf: &mut [u8]) -> usize {
         let mut count = 0;
 
-        // Check if we have a complete line (or EOF)
+        // Check if we have a complete line, partial data (Ctrl+D mid-line), or EOF
         let has_line = self.input_queue.iter().any(|&c| c == b'\n');
         if !has_line && self.input_queue.is_empty() {
+            if self.eof_pending {
+                self.eof_pending = false;
+            }
             return 0;
         }
 
@@ -586,10 +602,14 @@ impl LineDiscipline {
     }
 
     /// Check if there's data available to read
+    /// — GraveShift: eof_pending is the difference between "no data yet" and "Ctrl+D means stop".
     pub fn can_read(&self) -> bool {
+        if self.eof_pending {
+            return true;
+        }
         if self.termios.c_lflag.contains(LocalFlags::ICANON) {
-            // Canonical: need complete line (newline in queue)
-            self.input_queue.iter().any(|&c| c == b'\n')
+            // Canonical: need complete line (newline in queue) or committed partial (Ctrl+D mid-line)
+            self.input_queue.iter().any(|&c| c == b'\n') || !self.input_queue.is_empty()
         } else {
             // Raw: check VMIN
             let vmin = self.termios.c_cc[VMIN] as usize;

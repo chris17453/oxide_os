@@ -43,6 +43,10 @@ pub enum VfsError {
     BrokenPipe,
     /// Operation would block
     WouldBlock,
+    /// Interrupted by signal
+    /// — GraveShift: The ghost of EINTR haunts every blocking syscall. You wanted Unix semantics?
+    /// You got Unix semantics. Welcome to the pain.
+    Interrupted,
     /// Invalid operation for file type
     InvalidOperation,
     /// Invalid/unrecognized filesystem
@@ -74,6 +78,7 @@ impl VfsError {
             VfsError::NoDevice => -19,           // ENODEV
             VfsError::BrokenPipe => -32,         // EPIPE
             VfsError::WouldBlock => -11,         // EAGAIN
+            VfsError::Interrupted => -4,         // EINTR
             VfsError::InvalidOperation => -22,   // EINVAL
             VfsError::InvalidFilesystem => -22,  // EINVAL
             VfsError::CorruptedFilesystem => -5, // EIO
@@ -103,6 +108,7 @@ impl fmt::Display for VfsError {
             VfsError::NoDevice => write!(f, "No such device"),
             VfsError::BrokenPipe => write!(f, "Broken pipe"),
             VfsError::WouldBlock => write!(f, "Operation would block"),
+            VfsError::Interrupted => write!(f, "Interrupted system call"),
             VfsError::InvalidOperation => write!(f, "Invalid operation"),
             VfsError::InvalidFilesystem => write!(f, "Invalid filesystem"),
             VfsError::CorruptedFilesystem => write!(f, "Corrupted filesystem"),

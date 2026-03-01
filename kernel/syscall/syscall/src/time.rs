@@ -90,6 +90,7 @@ fn sleep_queue_remove(pid: u32) {
 /// prevents the classic "ISR spins on lock held by interrupted code" deadlock.
 pub fn check_sleepers() {
     let now = get_ticks();
+
     for slot in &SLEEP_QUEUE {
         let pid = slot.pid.load(Ordering::Acquire);
         if pid != 0 {
@@ -100,7 +101,8 @@ pub fn check_sleepers() {
                 // leave the entry intact — next tick will retry. This avoids
                 // the deadlock where the timer ISR spins on a lock held by
                 // the very code it interrupted.
-                if sched::try_wake_up(pid) {
+                let woke = sched::try_wake_up(pid);
+                if woke {
                     // Wake succeeded — clear the slot
                     slot.pid
                         .compare_exchange(pid, 0, Ordering::AcqRel, Ordering::Relaxed)
@@ -464,6 +466,14 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
         // Check for pending signals
         let has_signals = with_current_meta(|meta| meta.has_pending_signals()).unwrap_or(false);
         if has_signals {
+            // — GraveShift: Signal woke us from slumber. Bail with EINTR.
+            unsafe {
+                os_log::write_str_raw("[NSLEEP] EINTR p=");
+                let pid_b = current_pid as u8;
+                if pid_b >= 10 { os_log::write_byte_raw(b'0' + (pid_b / 10)); }
+                os_log::write_byte_raw(b'0' + (pid_b % 10));
+                os_log::write_str_raw("\n");
+            }
             // Remove from sleep queue on signal
             if queued {
                 sleep_queue_remove(current_pid);

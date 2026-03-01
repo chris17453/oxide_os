@@ -30,6 +30,19 @@ fn phys_to_virt(phys: PhysAddr) -> *mut u64 {
     PHYS_MAP_BASE.wrapping_add(phys.as_u64()) as *mut u64
 }
 
+#[inline]
+fn block_in_zone(zone: &MemoryZone, addr: u64, order: usize) -> bool {
+    let size = (1u64 << order) << FRAME_SHIFT;
+    let zone_start = zone.base.as_u64();
+    let Some(zone_end) = zone_start.checked_add(zone.size) else {
+        return false;
+    };
+    let Some(block_end) = addr.checked_add(size) else {
+        return false;
+    };
+    addr >= zone_start && block_end <= zone_end
+}
+
 /// Free block header stored in the first 24 bytes of a free block — BlackLatch
 /// Doubly-linked list for O(1) removal (the Linux way, not that amateur singly-linked bullshit)
 /// Now with corruption detection canary — GraveShift: Trust but verify
@@ -151,6 +164,11 @@ impl BuddyAllocator {
         // Add free blocks to appropriate order lists
         let mut addr = start.as_u64();
         let mut remaining = size;
+        if addr == 0 && remaining >= FRAME_SIZE as u64 {
+            // Frame 0 is reserved because free-list uses 0 as the null sentinel.
+            addr += FRAME_SIZE as u64;
+            remaining -= FRAME_SIZE as u64;
+        }
 
         while remaining >= FRAME_SIZE as u64 {
             // Find the largest order that fits and is properly aligned
@@ -197,12 +215,19 @@ impl BuddyAllocator {
     /// # Safety
     /// The address must point to valid physical memory that is part of this zone.
     unsafe fn add_free_block(&self, zone: &mut MemoryZone, order: usize, addr: u64) {
+        if addr == 0 || !block_in_zone(zone, addr, order) {
+            return;
+        }
+
         let virt = phys_to_virt(PhysAddr::new(addr));
         // SAFETY: Caller guarantees addr is valid physical memory
         let block = unsafe { &mut *(virt as *mut FreeBlock) };
 
         let old_head = zone.free_lists[order].head;
         let frame_num = addr >> FRAME_SHIFT;
+        if frame_num == 0 {
+            return;
+        }
 
         // [TRACE] Log adds in target range AND check existing magic — ColdCipher
         #[cfg(feature = "debug-buddy")]
@@ -276,7 +301,16 @@ impl BuddyAllocator {
         }
 
         let frame_num = zone.free_lists[order].head;
+        if frame_num == 0 {
+            zone.free_lists[order].count = 0;
+            return None;
+        }
         let addr = frame_num << FRAME_SHIFT;
+        if !block_in_zone(zone, addr, order) {
+            zone.free_lists[order].head = 0;
+            zone.free_lists[order].count = 0;
+            return None;
+        }
 
         // [MONITOR] Log ALL pops of order >= 4 — ColdCipher
         #[cfg(feature = "debug-buddy")]
@@ -320,9 +354,7 @@ impl BuddyAllocator {
             // it's probably garbage from whatever stomped the canary. Zero the
             // free list head so we don't chase a wild pointer into the abyss.
             zone.free_lists[order].head = 0;
-            if zone.free_lists[order].count > 0 {
-                zone.free_lists[order].count -= 1;
-            }
+            zone.free_lists[order].count = 0;
             return None;
         }
 
@@ -576,6 +608,10 @@ impl BuddyAllocator {
     /// # Safety
     /// Address must have been previously allocated from this zone.
     unsafe fn free_to_zone(&self, zone: &mut MemoryZone, addr: u64, order: usize) {
+        if addr == 0 {
+            return;
+        }
+
         let mut current_addr = addr;
         let mut current_order = order;
 
@@ -615,7 +651,13 @@ impl BuddyAllocator {
     /// # Safety
     /// Zone must be initialized and the address must be valid.
     unsafe fn remove_from_free_list(&self, zone: &mut MemoryZone, order: usize, addr: u64) -> bool {
+        if addr == 0 || !block_in_zone(zone, addr, order) {
+            return false;
+        }
         let target_frame = addr >> FRAME_SHIFT;
+        if target_frame == 0 {
+            return false;
+        }
 
         if zone.free_lists[order].count == 0 {
             return false;
@@ -624,19 +666,21 @@ impl BuddyAllocator {
         // Check if target is the head — fast path
         if zone.free_lists[order].head == target_frame {
             // SAFETY: Zone is initialized
-            unsafe { self.pop_free_block(zone, order) };
-            return true;
+            return unsafe { self.pop_free_block(zone, order) } == Some(addr);
         }
 
         // O(1) removal using doubly-linked list — BlackLatch: The Linux way, motherfucker
         // Get the target block directly (no traversal!)
         let target_virt = phys_to_virt(PhysAddr::new(addr));
         let target_block = unsafe { &mut *(target_virt as *mut FreeBlock) };
+        if target_block.magic != FREE_BLOCK_MAGIC {
+            return false;
+        }
 
         // Verify block is actually in the free list — SableWire: Paranoid but necessary
         // If prev is 0, target should be head (already checked above)
         // If next is 0 and prev is 0, block was cleared (not in list)
-        if target_block.prev == 0 || (target_block.prev == 0 && target_block.next == 0) {
+        if target_block.prev == 0 {
             return false;
         }
 
@@ -662,6 +706,7 @@ impl BuddyAllocator {
         }
 
         // Clear removed block's pointers — GraveShift: Poison the corpse
+        target_block.magic = 0;
         target_block.next = 0;
         target_block.prev = 0;
 

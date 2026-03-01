@@ -33,13 +33,24 @@ be SMP-safe:
    Use `AtomicU64`/`AtomicBool` or gate access to a single CPU. Every `static
    mut` touched by the timer handler must be audited for SMP safety.
 
-5. **Scheduler callback runs on ALL CPUs.**
-   Each CPU manages its own run queue and needs preemption ticks. The sched
-   crate's `GLOBAL_CLOCK` is already `AtomicU64` — safe for concurrent updates.
+5. **Scheduler callback runs on ALL CPUs, but GLOBAL_CLOCK is BSP-only.**
+   Each CPU manages its own run queue and needs preemption ticks. However,
+   `GLOBAL_CLOCK.fetch_add(TICK_NS)` MUST only run on BSP (CPU 0). APs
+   call `GLOBAL_CLOCK.load()`. With N CPUs all doing fetch_add, the clock
+   advances N× too fast — corrupting all timing (nanosleep, vruntime, etc.).
+   **Location:** `kernel/sched/sched/src/core.rs`, `scheduler_tick_ex()`.
 
 6. **ISR serial output (`write_byte_unsafe`) has no inter-CPU lock.**
    Minimize ISR serial writes. Gate debug output to BSP when possible.
    Multi-line dumps from different CPUs will garble each other.
+
+7. **Per-CPU state in ISR must use per-CPU arrays, not global statics.**
+   The KPO grace period streak tracker (`KPO_STREAK_PID`, `KPO_STREAK_COUNT`)
+   must be indexed by `this_cpu()`. Global statics get trashed when 4 CPUs
+   hit the timer ISR simultaneously — CPU 0 tracks PID 3's streak, CPU 1
+   overwrites with its idle task, streak never accumulates, forced preemption
+   never fires, and one task monopolizes CPU 0 forever.
+   **Location:** `kernel/src/scheduler.rs`, kpo grace period gate.
 
 ## Files
 

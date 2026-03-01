@@ -524,7 +524,15 @@ pub fn sys_select(
             return errno::EINTR;
         }
 
-        core::hint::spin_loop();
+        // — GraveShift: HLT yields CPU until next interrupt. spin_loop() was a
+        // death sentence — PAUSE instruction burns 100% CPU in kernel mode with
+        // kpo=0 so the scheduler can't even preempt us. Every process using
+        // select() became an unkillable CPU hog. Now we HLT like civilized code.
+        arch_x86_64::allow_kernel_preempt();
+        unsafe {
+            core::arch::asm!("sti", "hlt", options(nomem, nostack));
+        }
+        arch_x86_64::disallow_kernel_preempt();
     }
 }
 
@@ -691,6 +699,12 @@ pub fn sys_pselect6(
             return errno::EINTR;
         }
 
-        core::hint::spin_loop();
+        // — GraveShift: Same HLT fix as sys_select. Without this, pselect6
+        // callers spin at 100% CPU in ring 0, untouchable by the scheduler.
+        arch_x86_64::allow_kernel_preempt();
+        unsafe {
+            core::arch::asm!("sti", "hlt", options(nomem, nostack));
+        }
+        arch_x86_64::disallow_kernel_preempt();
     }
 }

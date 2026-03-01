@@ -1286,6 +1286,16 @@ fn sys_write(fd: i32, buf: u64, count: usize) -> i64 {
     // Fallback for stdout/stderr: use console callback when no fd table entry
     // exists (early boot, kernel threads, or before fd table is initialized)
     if fd == 1 || fd == 2 {
+        // Mirror sys_write_vfs preemption behavior for the console fallback path.
+        // If this path contends on TERMINAL.lock() with preemption disabled, the
+        // lock holder may never run again on a single CPU system.
+        unsafe {
+            let ctx = addr_of!(SYSCALL_CONTEXT);
+            if let Some(f) = (*ctx).allow_kernel_preempt {
+                f();
+            }
+        }
+
         // Enable access to user pages for SMAP
         unsafe {
             core::arch::asm!("stac", options(nomem, nostack));
@@ -1306,6 +1316,13 @@ fn sys_write(fd: i32, buf: u64, count: usize) -> i64 {
         // Disable access to user pages
         unsafe {
             core::arch::asm!("clac", options(nomem, nostack));
+        }
+
+        unsafe {
+            let ctx = addr_of!(SYSCALL_CONTEXT);
+            if let Some(f) = (*ctx).disallow_kernel_preempt {
+                f();
+            }
         }
 
         return result;
@@ -1588,6 +1605,44 @@ fn sys_wait(status_ptr: u64) -> i64 {
 /// * `options` - Wait options
 fn sys_waitpid(pid: i32, status_ptr: u64, options: i32) -> i64 {
     use core::ptr::addr_of;
+    fn trace_u64(mut n: u64) {
+        unsafe {
+            if n == 0 {
+                os_log::write_byte_raw(b'0');
+                return;
+            }
+            let mut buf = [0u8; 20];
+            let mut pos = 0;
+            while n > 0 {
+                buf[pos] = b'0' + (n % 10) as u8;
+                n /= 10;
+                pos += 1;
+            }
+            for i in (0..pos).rev() {
+                os_log::write_byte_raw(buf[i]);
+            }
+        }
+    }
+    fn trace_i32(n: i32) {
+        unsafe {
+            if n < 0 {
+                os_log::write_byte_raw(b'-');
+                trace_u64((-n) as u64);
+            } else {
+                trace_u64(n as u64);
+            }
+        }
+    }
+
+    unsafe {
+        os_log::write_str_raw("[WAIT] sys_waitpid caller=");
+        trace_u64(current_pid() as u64);
+        os_log::write_str_raw(" pid=");
+        trace_i32(pid);
+        os_log::write_str_raw(" opts=");
+        trace_i32(options);
+        os_log::write_str_raw("\n");
+    }
 
     unsafe {
         let ctx = addr_of!(SYSCALL_CONTEXT);
@@ -1603,8 +1658,20 @@ fn sys_waitpid(pid: i32, status_ptr: u64, options: i32) -> i64 {
                 if status_ptr != 0 {
                     let _ = write_user_i32(status_ptr, status);
                 }
+                unsafe {
+                    os_log::write_str_raw("[WAIT] sys_waitpid ret child=");
+                    trace_i32(child_pid);
+                    os_log::write_str_raw(" status=");
+                    trace_i32(status);
+                    os_log::write_str_raw("\n");
+                }
 
                 return child_pid as i64;
+            }
+            unsafe {
+                os_log::write_str_raw("[WAIT] sys_waitpid ret err=");
+                trace_u64(result as u64);
+                os_log::write_str_raw("\n");
             }
 
             return result;
@@ -1636,6 +1703,25 @@ fn sys_getppid() -> i64 {
 /// * `pid` - Process to modify (0 = current)
 /// * `pgid` - New process group (0 = use pid)
 fn sys_setpgid(pid: Pid, pgid: Pid) -> i64 {
+    fn trace_u64(mut n: u64) {
+        unsafe {
+            if n == 0 {
+                os_log::write_byte_raw(b'0');
+                return;
+            }
+            let mut buf = [0u8; 20];
+            let mut pos = 0;
+            while n > 0 {
+                buf[pos] = b'0' + (n % 10) as u8;
+                n /= 10;
+                pos += 1;
+            }
+            for i in (0..pos).rev() {
+                os_log::write_byte_raw(buf[i]);
+            }
+        }
+    }
+
     // Get target PID
     let target_pid = if pid == 0 { current_pid() } else { pid };
 
@@ -1645,8 +1731,26 @@ fn sys_setpgid(pid: Pid, pgid: Pid) -> i64 {
     // Get the process
     if let Some(meta) = get_meta(target_pid) {
         meta.lock().pgid = target_pgid;
+        unsafe {
+            os_log::write_str_raw("[JC] setpgid caller=");
+            trace_u64(current_pid() as u64);
+            os_log::write_str_raw(" pid=");
+            trace_u64(target_pid as u64);
+            os_log::write_str_raw(" pgid=");
+            trace_u64(target_pgid as u64);
+            os_log::write_str_raw(" ret=0\n");
+        }
         0
     } else {
+        unsafe {
+            os_log::write_str_raw("[JC] setpgid caller=");
+            trace_u64(current_pid() as u64);
+            os_log::write_str_raw(" pid=");
+            trace_u64(target_pid as u64);
+            os_log::write_str_raw(" pgid=");
+            trace_u64(target_pgid as u64);
+            os_log::write_str_raw(" ret=ESRCH\n");
+        }
         errno::ESRCH
     }
 }
@@ -1667,6 +1771,25 @@ fn sys_getpgid(pid: Pid) -> i64 {
 
 /// sys_setsid - Create new session
 fn sys_setsid() -> i64 {
+    fn trace_u64(mut n: u64) {
+        unsafe {
+            if n == 0 {
+                os_log::write_byte_raw(b'0');
+                return;
+            }
+            let mut buf = [0u8; 20];
+            let mut pos = 0;
+            while n > 0 {
+                buf[pos] = b'0' + (n % 10) as u8;
+                n /= 10;
+                pos += 1;
+            }
+            for i in (0..pos).rev() {
+                os_log::write_byte_raw(buf[i]);
+            }
+        }
+    }
+
     let pid = current_pid();
 
     if let Some(meta) = get_meta(pid) {
@@ -1674,20 +1797,46 @@ fn sys_setsid() -> i64 {
 
         // Check if already a session leader
         if m.sid == pid {
+            unsafe {
+                os_log::write_str_raw("[JC] setsid pid=");
+                trace_u64(pid as u64);
+                os_log::write_str_raw(" ret=EPERM(sid)\n");
+            }
             return errno::EPERM;
         }
 
         // Check if already a process group leader
         if m.pgid == pid {
+            unsafe {
+                os_log::write_str_raw("[JC] setsid pid=");
+                trace_u64(pid as u64);
+                os_log::write_str_raw(" ret=EPERM(pgid)\n");
+            }
             return errno::EPERM;
         }
 
         // Create new session
         m.sid = pid;
         m.pgid = pid;
+        unsafe {
+            os_log::write_str_raw("[JC] setsid pid=");
+            trace_u64(pid as u64);
+            os_log::write_str_raw(" sid=");
+            trace_u64(pid as u64);
+            os_log::write_str_raw(" pgid=");
+            trace_u64(pid as u64);
+            os_log::write_str_raw(" ret=");
+            trace_u64(pid as u64);
+            os_log::write_str_raw("\n");
+        }
 
         pid as i64
     } else {
+        unsafe {
+            os_log::write_str_raw("[JC] setsid pid=");
+            trace_u64(pid as u64);
+            os_log::write_str_raw(" ret=ESRCH\n");
+        }
         errno::ESRCH
     }
 }

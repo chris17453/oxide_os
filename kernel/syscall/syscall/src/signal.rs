@@ -2,6 +2,7 @@
 //!
 //! Implements kill, sigaction, sigprocmask, sigpending, etc.
 
+use arch_x86_64 as arch;
 use signal::{SIGKILL, SIGSTOP, SigAction, SigHow, SigInfo, SigSet, can_catch, is_valid};
 
 use crate::errno;
@@ -53,6 +54,11 @@ pub fn sys_kill(pid: i32, sig: i32) -> i64 {
 }
 
 /// Send signal to a specific PID
+///
+/// — GraveShift: After queuing the signal, wake the target if it's sleeping in
+/// TASK_INTERRUPTIBLE (nanosleep, blocking read, waitpid HLT loop). Linux does
+/// this in complete_signal() → signal_wake_up(). Without it, signals queue up
+/// but sleeping processes never notice them until their blocking call times out.
 fn send_signal_to_pid(pid: u32, sig: i32, sender_pid: u32, sender_uid: u32) -> i64 {
     if let Some(meta) = get_meta(pid) {
         // Signal 0 just checks if process exists
@@ -62,6 +68,8 @@ fn send_signal_to_pid(pid: u32, sig: i32, sender_pid: u32, sender_uid: u32) -> i
 
         let info = SigInfo::kill(sig, sender_pid, sender_uid);
         meta.lock().send_signal(sig, Some(info));
+        // — GraveShift: Wake the process so it can notice the signal.
+        sched::wake_up(pid);
         0
     } else {
         errno::ESRCH
@@ -69,6 +77,9 @@ fn send_signal_to_pid(pid: u32, sig: i32, sender_pid: u32, sender_uid: u32) -> i
 }
 
 /// Send signal to all processes in a process group
+///
+/// — GraveShift: Same wake-on-signal pattern as send_signal_to_pid. Every process
+/// in the group gets woken so they can die together like a proper tragedy.
 fn send_signal_to_pgrp(pgid: u32, sig: i32, sender_pid: u32, sender_uid: u32) -> i64 {
     let mut sent = false;
 
@@ -80,6 +91,8 @@ fn send_signal_to_pgrp(pgid: u32, sig: i32, sender_pid: u32, sender_uid: u32) ->
                 if sig != 0 {
                     let info = SigInfo::kill(sig, sender_pid, sender_uid);
                     meta.lock().send_signal(sig, Some(info));
+                    // — GraveShift: Wake sleeping processes so they notice the signal.
+                    sched::wake_up(pid);
                 }
                 sent = true;
             }
@@ -254,11 +267,39 @@ pub fn sys_pause() -> i64 {
 
 /// sys_sigreturn - Return from signal handler
 ///
-/// This restores the process context from the signal frame on the stack.
-/// The actual implementation needs architecture-specific handling.
+/// — GraveShift: The previous "implementation" was literally `return 0`. That's not an
+/// implementation, that's a confession. We can't modify SYSCALL_USER_CONTEXT here because
+/// the asm resaves from the kernel stack AFTER this handler returns. Instead, we stash
+/// the SignalFrame in a global and check_signals_on_syscall_return() applies it under CLI
+/// where it sticks. Deferred restoration — the only way to beat the asm resave race.
 pub fn sys_sigreturn() -> i64 {
-    // This needs to restore context from the signal frame
-    // For now, just return success (actual implementation is arch-specific)
+    use signal::delivery::SignalFrame;
+
+    // Get current user context — RSP points past the retaddr field (handler did `ret`)
+    let ctx = unsafe { arch::syscall::get_user_context_mut() };
+
+    // Frame starts 8 bytes below current RSP (retaddr was popped by `ret`)
+    let frame_ptr = (ctx.rsp - 8) as *const SignalFrame;
+
+    // Validate pointer is in user space
+    if (frame_ptr as u64) >= 0x0000_8000_0000_0000 {
+        return crate::errno::EFAULT;
+    }
+
+    // Enable user memory access (SMAP)
+    unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+
+    // Read the signal frame from user stack
+    let frame = unsafe { core::ptr::read_volatile(frame_ptr) };
+
+    // Disable user memory access
+    unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+
+    // Stash for deferred restoration in check_signals_on_syscall_return()
+    unsafe { signal::delivery::set_sigreturn_frame(frame); }
+
+    // Return value doesn't matter — check_signals_on_syscall_return will
+    // overwrite ctx.rax with frame.saved_rax before sysretq
     0
 }
 

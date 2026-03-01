@@ -47,6 +47,7 @@ pub const SA_ONSTACK: u64 = 0x08000000;
 pub const SA_RESTART: u64 = 0x10000000;
 pub const SA_NODEFER: u64 = 0x40000000;
 pub const SA_RESETHAND: u64 = 0x80000000;
+pub const SA_RESTORER: u64 = 0x04000000;
 
 /// Signal set
 #[derive(Clone, Copy, Default)]
@@ -113,13 +114,30 @@ pub fn raise(sig: i32) -> i32 {
     kill(pid, sig)
 }
 
+/// Sigreturn trampoline — when a signal handler returns, it lands here.
+/// — GraveShift: Without this, returning from a handler jumps to address 0 and the process
+/// triple-faults into the void. This tiny function calls SYS_SIGRETURN to restore the
+/// pre-signal register state from the SignalFrame on the stack.
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub unsafe extern "C" fn __oxide_sigreturn() {
+    unsafe {
+        core::arch::asm!(
+            "mov rax, {nr}",
+            "syscall",
+            nr = const crate::syscall::nr::SIGRETURN,
+            options(noreturn),
+        );
+    }
+}
+
 /// Set signal handler (simple interface)
 /// Returns previous handler on success, SIG_ERR on error
 pub fn signal(sig: i32, handler: u64) -> u64 {
     let new_action = SigAction {
         sa_handler: handler,
-        sa_flags: SA_RESTART,
-        sa_restorer: 0,
+        sa_flags: SA_RESTART | SA_RESTORER,
+        sa_restorer: __oxide_sigreturn as *const () as u64,
         sa_mask: SigSet::empty(),
     };
 

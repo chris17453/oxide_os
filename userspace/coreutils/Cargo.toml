@@ -403,6 +403,11 @@ path = "src/bin/proctest.rs"
 name = "testcolors"
 path = "src/bin/testcolors.rs"
 
+# Signal delivery test
+[[bin]]
+name = "sigtest"
+path = "src/bin/sigtest.rs"
+
 [dependencies]
 libc = { path = "../libs/libc" }
 heapless = "0.8"

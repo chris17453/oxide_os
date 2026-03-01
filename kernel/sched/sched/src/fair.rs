@@ -24,11 +24,11 @@ const WAKEUP_GRANULARITY_NS: u64 = 1_000_000; // 1ms
 
 /// Entry in the CFS tree
 #[derive(Clone, Copy, Debug)]
-struct CfsEntry {
+pub(crate) struct CfsEntry {
     /// Virtual runtime (used for ordering)
-    vruntime: u64,
+    pub(crate) vruntime: u64,
     /// Process ID
-    pid: Pid,
+    pub(crate) pid: Pid,
 }
 
 impl PartialEq for CfsEntry {
@@ -62,7 +62,7 @@ impl Ord for CfsEntry {
 /// Linux uses a red-black tree, but a binary heap is simpler and sufficient.
 pub struct CfsRunQueue {
     /// Min-heap of tasks ordered by vruntime
-    tasks: BinaryHeap<Reverse<CfsEntry>>,
+    pub(crate) tasks: BinaryHeap<Reverse<CfsEntry>>,
     /// Total weight of all tasks in the queue
     load_weight: u64,
     /// Minimum vruntime (floor for new tasks to prevent starvation)

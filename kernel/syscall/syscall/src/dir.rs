@@ -203,6 +203,19 @@ pub fn sys_getdents(fd: i32, buf: u64, count: usize) -> i64 {
         return errno::ENOTDIR;
     }
 
+    // — GraveShift: Enable kernel preemption for directory reads. Without this,
+    // procfs readdir calls sched::all_pids() which locks all CPU RQs, and the
+    // entire loop runs with kpo=0. When top reads /proc with 10+ processes,
+    // the KPO grace period (100ms) is the ONLY way to preempt — every other
+    // task starves while we iterate. With kpo=1, the scheduler can context-switch
+    // us mid-loop on any timer tick, keeping the system responsive.
+    use core::ptr::addr_of;
+    unsafe {
+        if let Some(f) = (*addr_of!(super::SYSCALL_CONTEXT)).allow_kernel_preempt {
+            f();
+        }
+    }
+
     let mut offset = file.position();
     let mut bytes_written: usize = 0;
 
@@ -211,7 +224,15 @@ pub fn sys_getdents(fd: i32, buf: u64, count: usize) -> i64 {
         let entry = match file.vnode().readdir(offset) {
             Ok(Some(e)) => e,
             Ok(None) => break, // End of directory
-            Err(e) => return vfs_error_to_errno(e),
+            Err(e) => {
+                // — GraveShift: Restore kpo before returning error
+                unsafe {
+                    if let Some(f) = (*addr_of!(super::SYSCALL_CONTEXT)).disallow_kernel_preempt {
+                        f();
+                    }
+                }
+                return vfs_error_to_errno(e);
+            }
         };
 
         // Calculate entry size (header + name + null terminator, aligned to 8)
@@ -241,18 +262,33 @@ pub fn sys_getdents(fd: i32, buf: u64, count: usize) -> i64 {
                 core::mem::size_of::<UserDirEntry>(),
             );
             if !copy_to_user(entry_ptr, header_bytes) {
+                unsafe {
+                    if let Some(f) = (*addr_of!(super::SYSCALL_CONTEXT)).disallow_kernel_preempt {
+                        f();
+                    }
+                }
                 return errno::EFAULT;
             }
 
             // Write name immediately after header
             let name_ptr = entry_ptr + core::mem::size_of::<UserDirEntry>() as u64;
             if !copy_to_user(name_ptr, entry.name.as_bytes()) {
+                unsafe {
+                    if let Some(f) = (*addr_of!(super::SYSCALL_CONTEXT)).disallow_kernel_preempt {
+                        f();
+                    }
+                }
                 return errno::EFAULT;
             }
 
             // Write null terminator
             let null_byte = [0u8];
             if !copy_to_user(name_ptr + name_len as u64, &null_byte) {
+                unsafe {
+                    if let Some(f) = (*addr_of!(super::SYSCALL_CONTEXT)).disallow_kernel_preempt {
+                        f();
+                    }
+                }
                 return errno::EFAULT;
             }
         }
@@ -263,6 +299,13 @@ pub fn sys_getdents(fd: i32, buf: u64, count: usize) -> i64 {
 
     // Update file position
     file.set_position(offset);
+
+    // — GraveShift: Restore non-preemptable state before returning to syscall dispatch
+    unsafe {
+        if let Some(f) = (*addr_of!(super::SYSCALL_CONTEXT)).disallow_kernel_preempt {
+            f();
+        }
+    }
 
     bytes_written as i64
 }

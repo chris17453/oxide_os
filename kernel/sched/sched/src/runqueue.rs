@@ -31,11 +31,11 @@ pub struct RunQueue {
     /// Real-time run queue
     rt_rq: RtRunQueue,
     /// CFS (fair) run queue
-    cfs_rq: CfsRunQueue,
+    pub(crate) cfs_rq: CfsRunQueue,
     /// Run queue clock (nanoseconds since boot)
     clock: u64,
     /// Tasks on this run queue (scheduler's view)
-    tasks: BTreeMap<Pid, Task>,
+    pub(crate) tasks: BTreeMap<Pid, Task>,
     /// Need reschedule flag
     need_resched: bool,
 }
@@ -349,13 +349,15 @@ impl RunQueue {
             SchedPolicy::Normal | SchedPolicy::Batch => {
                 // CFS: update vruntime and check for preemption
                 if let Some(t) = self.tasks.get_mut(&curr_pid) {
-                    // — GraveShift: Only charge CPU time when the task is
-                    // actually computing. When in_blocking_wait (poll, nanosleep,
-                    // read HLT loop), the task is WAITING, not working — charging
-                    // it would show idle daemons at 25% CPU and lie to top/htop.
+                    // — GraveShift: ALWAYS advance vruntime for CFS fairness.
+                    // A task occupying the CPU (even just HLTing in a blocking
+                    // wait) must pay CFS rent — otherwise its low vruntime
+                    // permanently starves every other task. But only charge
+                    // sum_exec_runtime (top/htop CPU%) when actively computing.
+                    let delta = sched_traits::TICK_NS;
+                    t.update_vruntime(delta);
+
                     if !in_blocking_wait {
-                        let delta = sched_traits::TICK_NS;
-                        t.update_vruntime(delta);
                         t.sum_exec_runtime += delta;
 
                         // GraveShift: Sync authoritative scheduler accounting to ProcessMeta

@@ -207,14 +207,15 @@ impl Tty {
         self.ldisc.lock().flush_input();
     }
 
-    /// Non-blocking read: returns data if available, 0 bytes if not.
+    /// Non-blocking read: Some(n) if data/EOF ready, None if still waiting.
     ///
-    /// Unlike the VnodeOps::read() which spinloops, this returns immediately.
-    /// Used by VtManager to own the blocking loop so it can drain input_buffer
-    /// on every iteration.
-    pub fn try_read(&self, buf: &mut [u8]) -> usize {
+    /// — GraveShift: Returns Some(0) for EOF (Ctrl+D on empty line) and Some(n) for data.
+    /// None means "nothing to read yet, keep looping". The VtManager read loop uses this
+    /// to distinguish "no data" from "explicit EOF" — because returning 0 from read()
+    /// actually means something in Unix-land.
+    pub fn try_read(&self, buf: &mut [u8]) -> Option<usize> {
         let mut ldisc = self.ldisc.lock();
-        if ldisc.can_read() { ldisc.read(buf) } else { 0 }
+        if ldisc.can_read() { Some(ldisc.read(buf)) } else { None }
     }
 
     /// Non-blocking check if a byte is a signal character
@@ -273,6 +274,25 @@ impl Tty {
 
     /// Handle ioctl
     pub fn ioctl(&self, request: u64, arg: u64) -> VfsResult<i64> {
+        fn trace_u64(mut n: u64) {
+            unsafe {
+                if n == 0 {
+                    os_log::write_byte_raw(b'0');
+                    return;
+                }
+                let mut buf = [0u8; 20];
+                let mut pos = 0;
+                while n > 0 {
+                    buf[pos] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    pos += 1;
+                }
+                for i in (0..pos).rev() {
+                    os_log::write_byte_raw(buf[i]);
+                }
+            }
+        }
+
         match request {
             TCGETS => {
                 // Get termios - arg is pointer to Termios
@@ -347,8 +367,12 @@ impl Tty {
                 if ptr.is_null() {
                     return Err(VfsError::InvalidArgument);
                 }
+                let pg = self.get_foreground_pgid();
                 unsafe {
-                    *ptr = self.get_foreground_pgid();
+                    *ptr = pg;
+                    os_log::write_str_raw("[JC] TIOCGPGRP pgid=");
+                    trace_u64(pg as u64);
+                    os_log::write_str_raw("\n");
                 }
                 Ok(0)
             }
@@ -360,6 +384,11 @@ impl Tty {
                 }
                 let pgid = unsafe { *ptr };
                 self.set_foreground_pgid(pgid);
+                unsafe {
+                    os_log::write_str_raw("[JC] TIOCSPGRP pgid=");
+                    trace_u64(pgid as u64);
+                    os_log::write_str_raw("\n");
+                }
                 Ok(0)
             }
             FIONREAD => {

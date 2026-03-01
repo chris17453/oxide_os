@@ -349,10 +349,32 @@ impl VnodeOps for ConsoleDevice {
     }
 
     fn ioctl(&self, request: u64, arg: u64) -> VfsResult<i64> {
+        // — GraveShift: Trace TIOCSPGRP through /dev/console to verify delegation chain.
+        if request == 0x5410 {
+            unsafe { os_log::write_str_raw("[CON] TIOCSPGRP delegating to backend\n"); }
+        }
         // Delegate to the active VT device
         match get_console_backend() {
-            Some(backend) => backend.ioctl(request, arg),
-            None => Err(VfsError::IoError),
+            Some(backend) => {
+                let result = backend.ioctl(request, arg);
+                if request == 0x5410 {
+                    unsafe {
+                        os_log::write_str_raw("[CON] TIOCSPGRP result=");
+                        match &result {
+                            Ok(v) => { os_log::write_str_raw("OK"); }
+                            Err(_) => { os_log::write_str_raw("ERR"); }
+                        }
+                        os_log::write_str_raw("\n");
+                    }
+                }
+                result
+            }
+            None => {
+                if request == 0x5410 {
+                    unsafe { os_log::write_str_raw("[CON] TIOCSPGRP NO BACKEND!\n"); }
+                }
+                Err(VfsError::IoError)
+            }
         }
     }
 }

@@ -390,7 +390,9 @@ pub fn endwin() -> Result<()> {
             // This is the critical piece — without it cbreak/noecho/raw
             // modes leak to the parent shell and it hangs on read().
             if let Some(ref saved) = screen.saved_termios {
-                libc::termios::tcsetattr(0, libc::termios::action::TCSAFLUSH, saved);
+                // Restore immediately without drain/flush. Using TCSAFLUSH here can
+                // block in terminal flush paths and keep the parent shell stuck in waitpid.
+                libc::termios::tcsetattr(0, libc::termios::action::TCSANOW, saved);
             }
         }
         *ptr = None;

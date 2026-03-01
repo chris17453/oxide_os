@@ -566,6 +566,16 @@ fn main() -> i32 {
     printlns("Type 'help' for available commands");
     printlns("");
 
+    // — GraveShift: Auto-run signal test to verify Ctrl+C signal delivery works.
+    // This bypasses keyboard input (which MCP QEMU can't reliably inject).
+    {
+        eprints("[esh] auto-running sigtest\n");
+        let test_cmd = b"sigtest\0";
+        let input = unsafe { core::slice::from_raw_parts(test_cmd.as_ptr(), 7) };
+        execute_line(input);
+        eprints("[esh] sigtest done\n");
+    }
+
     // Main shell loop
     eprints("[esh] entering main loop\n");
     loop {
@@ -1111,10 +1121,8 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
                 setpgid(0, pids[0]); // Join the first child's process group
             }
 
-            // Make this process group the foreground group (for signals like Ctrl+C)
-            if !background {
-                tcsetpgrp(0, getpid()); // stdin is fd 0
-            }
+            // Foreground terminal handoff is parent-owned to avoid races.
+            // Child only sets/join process group; parent calls tcsetpgrp().
 
             // Setup input
             if i > 0 {
@@ -1190,7 +1198,13 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
 
                 // Make this the foreground process group if not background
                 if !background {
-                    tcsetpgrp(0, pgid);
+                    let tret = tcsetpgrp(0, pgid);
+                    // — GraveShift: Trace tcsetpgrp return to debug Ctrl+C targeting wrong PGID.
+                    eprints("[esh] tcsetpgrp(0,");
+                    print_i64(pgid as i64);
+                    eprints(")=");
+                    print_i64(tret as i64);
+                    eprints("\n");
                 }
             } else {
                 setpgid(pid, pgid); // Join the process group
@@ -1207,14 +1221,29 @@ fn execute_pipeline(commands: &[Command; MAX_PIPES], num_commands: usize, backgr
     }
 
     // Wait for all children
+    // — GraveShift: Retry on EINTR. When the child dies from SIGINT, the shell may
+    // also get woken up with EINTR. The child is still a zombie until we reap it.
+    // Loop until waitpid actually returns the child PID or an unrecoverable error.
     if !background {
         for i in 0..num_commands {
             let mut status = 0;
-            waitpid(pids[i], &mut status, 0);
+            loop {
+                let ret = waitpid(pids[i], &mut status, 0);
+                if ret == pids[i] || (ret < 0 && ret != -(libc::errno::EINTR as i32)) {
+                    break;
+                }
+                // EINTR — retry
+            }
         }
 
         // Restore shell as foreground process group
-        tcsetpgrp(0, getpid());
+        // Retry a few times to survive transient race windows around child exit.
+        for _ in 0..8 {
+            if tcsetpgrp(0, getpid()) == 0 {
+                break;
+            }
+            sched_yield();
+        }
     } else {
         prints("[");
         print_i64(pids[num_commands - 1] as i64);

@@ -144,6 +144,25 @@ pub fn add_process(_pid: u32) {
 ///
 /// Called when a process exits.
 pub fn remove_process(pid: u32) {
+    unsafe {
+        os_log::write_str_raw("[WAIT] reap pid=");
+        if pid == 0 {
+            os_log::write_byte_raw(b'0');
+        } else {
+            let mut n = pid;
+            let mut buf = [0u8; 10];
+            let mut pos = 0;
+            while n > 0 {
+                buf[pos] = b'0' + (n % 10) as u8;
+                n /= 10;
+                pos += 1;
+            }
+            for i in (0..pos).rev() {
+                os_log::write_byte_raw(buf[i]);
+            }
+        }
+        os_log::write_str_raw("\n");
+    }
     sched::remove_task(pid);
 }
 
@@ -345,8 +364,17 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     let in_user_mode = frame.cs == 0x23;
     if in_user_mode && current_pid > 1 {
         if let Some(meta_arc) = sched::get_task_meta(current_pid) {
-            if let Some(mut meta) = meta_arc.try_lock() {
+            match meta_arc.try_lock() {
+            Some(mut meta) => {
                 if meta.has_pending_signals() {
+                    // — GraveShift: ISR signal path trace — confirm we actually see pending signals
+                    unsafe {
+                        os_log::write_str_raw("[ISR-SIG] p=");
+                        let pid_b = current_pid as u8;
+                        if pid_b >= 10 { os_log::write_byte_raw(b'0' + (pid_b / 10)); }
+                        os_log::write_byte_raw(b'0' + (pid_b % 10));
+                        os_log::write_str_raw(" HAS pending\n");
+                    }
                     let signal_mask = meta.signal_mask;
                     if let Some(pending) = meta.pending_signals.dequeue(&signal_mask) {
                         let signo = pending.signo;
@@ -359,6 +387,16 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
 
                         match result {
                             SignalResult::Terminate | SignalResult::CoreDump => {
+                                // — GraveShift: ISR Terminate trace — confirm we reach this path
+                                unsafe {
+                                    os_log::write_str_raw("[ISR-SIG] TERMINATE p=");
+                                    let pid_b = current_pid as u8;
+                                    if pid_b >= 10 { os_log::write_byte_raw(b'0' + (pid_b / 10)); }
+                                    os_log::write_byte_raw(b'0' + (pid_b % 10));
+                                    os_log::write_str_raw(" sig=");
+                                    os_log::write_byte_raw(b'0' + signo as u8);
+                                    os_log::write_str_raw("\n");
+                                }
                                 // Release ProcessMeta lock before calling scheduler functions
                                 drop(meta);
 
@@ -366,10 +404,14 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
                                 let exit_status = 128 + signo;
                                 sched::set_task_exit_status(current_pid, exit_status);
 
-                                // Wake parent so it can reap via wait()
+                                // — GraveShift: Wake parent so it can reap via wait().
+                                // MUST use try_wake_up — we're in ISR context. Blocking
+                                // wake_up() would deadlock if the parent's CPU holds its
+                                // RQ lock. If try_wake_up fails (contention), the parent
+                                // wakes on its next timer tick or scheduler_tick anyway.
                                 if let Some(ppid) = sched::get_task_ppid(current_pid) {
                                     if ppid > 0 {
-                                        wake_up(ppid);
+                                        sched::try_wake_up(ppid);
                                     }
                                 }
 
@@ -442,11 +484,14 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
                                 // Signal ignored - do nothing
                             }
                             SignalResult::Stop => {
-                                // — ThreadRogue: freezing the process in its tracks
+                                // — ThreadRogue: freezing the process in its tracks.
+                                // ISR context — all wakes MUST be try_wake_up to avoid
+                                // deadlock on contended RQ locks. block_current uses
+                                // with_rq but is safe here because user-mode code
+                                // (cs==0x23 gate above) never holds kernel locks.
                                 meta.stop_signal = Some(signo as u8);
                                 meta.continued = false;
 
-                                // Wake parent for WUNTRACED waitpid
                                 let ppid_opt = sched::get_task_ppid(current_pid);
                                 drop(meta);
 
@@ -454,12 +499,14 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
 
                                 if let Some(ppid) = ppid_opt {
                                     if ppid > 0 {
-                                        wake_up(ppid);
+                                        sched::try_wake_up(ppid);
                                     }
                                 }
                             }
                             SignalResult::Continue => {
-                                // — ThreadRogue: thawing from the ice
+                                // — ThreadRogue: thawing from the ice.
+                                // ISR context — try_wake_up only. If contention
+                                // prevents wake, next timer tick catches it.
                                 meta.stop_signal = None;
                                 meta.continued = true;
 
@@ -470,13 +517,13 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
                                 if sched::get_task_state(current_pid)
                                     == Some(TaskState::TASK_STOPPED)
                                 {
-                                    wake_up(current_pid);
+                                    sched::try_wake_up(current_pid);
                                 }
 
                                 // Wake parent for WCONTINUED waitpid
                                 if let Some(ppid) = ppid_opt {
                                     if ppid > 0 {
-                                        wake_up(ppid);
+                                        sched::try_wake_up(ppid);
                                     }
                                 }
                             }
@@ -486,7 +533,12 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
                         }
                     }
                 }
+            } // — end Some(mut meta) arm
+            None => {
+                // — GraveShift: ISR try_lock failure — meta is contended during timer tick
+                // This means someone else holds ProcessMeta. Signal delivery deferred.
             }
+            } // — end match meta_arc.try_lock()
         }
     }
 
@@ -497,20 +549,65 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     // - User mode (CS = 0x23) - always safe
     // - Kernel mode if KERNEL_PREEMPT_OK flag is set (blocking syscalls)
     let in_kernel = frame.cs != 0x23;
+
     if in_kernel && !kernel_preempt_ok {
-        // Still tick the scheduler to update accounting
+        // — GraveShift: Task is in non-preemptable kernel code (holding locks).
+        // Preempting here MIGHT deadlock if the next task needs those locks.
+        // However, some kernel paths (ext4 mkdir, file create) can block for
+        // hundreds of milliseconds on disk I/O, starving every other task.
+        //
+        // Strategy: grant a grace period of KPO_GRACE_TICKS. Short operations
+        // (fork, page table ops) complete well within this window. Long I/O
+        // operations get forcefully preempted after the grace period expires —
+        // the rq_lock_available() check below still prevents scheduler deadlocks,
+        // and application-level lock waiters use kpo=1 so they can be preempted.
+        use core::sync::atomic::{AtomicU32, AtomicU64, Ordering as AO};
+
+        // — GraveShift: 10 ticks = 100ms grace period. Fork/exec complete in
+        // <5 ticks. Disk I/O may exceed this, but that's the whole point.
+        const KPO_GRACE_TICKS: u32 = 10;
+
+        // — SableWire: Per-CPU KPO streak tracking. With SMP, multiple CPUs hit
+        // the timer ISR simultaneously. Global statics caused CPU 0's streak for
+        // PID 3 to be clobbered by CPU 1's idle task — permanent starvation.
+        // 8 CPUs max. Each entry is (pid, count) packed into one cache line pair.
+        const MAX_CPUS: usize = 8;
+        static KPO_STREAK_PID: [AtomicU64; MAX_CPUS] = [const { AtomicU64::new(0) }; MAX_CPUS];
+        static KPO_STREAK_COUNT: [AtomicU32; MAX_CPUS] = [const { AtomicU32::new(0) }; MAX_CPUS];
+
+        let cpu = sched::this_cpu() as usize;
+        let cpu_idx = if cpu < MAX_CPUS { cpu } else { 0 };
+
+        let pid64 = current_pid as u64;
+        let prev_pid = KPO_STREAK_PID[cpu_idx].load(AO::Relaxed);
+        let streak = if prev_pid == pid64 {
+            KPO_STREAK_COUNT[cpu_idx].fetch_add(1, AO::Relaxed) + 1
+        } else {
+            KPO_STREAK_PID[cpu_idx].store(pid64, AO::Relaxed);
+            KPO_STREAK_COUNT[cpu_idx].store(1, AO::Relaxed);
+            1
+        };
+
+        // Still tick the scheduler for vruntime accounting
         sched::scheduler_tick();
-        return current_rsp;
-    }
 
-    // — GraveShift: Tick the scheduler — but tell it whether this task is
-    // actually computing or just HLT-looping in a blocking syscall.
-    // kernel_preempt_ok == true means poll/nanosleep/read set the flag,
-    // so the process is WAITING, not burning cycles. Don't charge it.
-    let need_resched = sched::scheduler_tick_ex(kernel_preempt_ok);
+        if streak < KPO_GRACE_TICKS {
+            return current_rsp;
+        }
 
-    if !need_resched && !sched::need_resched() {
-        return current_rsp;
+        // Grace period expired — fall through to preemption path.
+        // Reset streak so the task gets a fresh grace period when it resumes.
+        KPO_STREAK_COUNT[cpu_idx].store(0, AO::Relaxed);
+
+        // Fall through — forced preemption after grace period
+    } else {
+        // — GraveShift: Normal path — task is in userspace or has kpo=1.
+        // Tick the scheduler and check if preemption is needed.
+        let need_resched = sched::scheduler_tick_ex(kernel_preempt_ok);
+
+        if !need_resched && !sched::need_resched() {
+            return current_rsp;
+        }
     }
 
     // — SableWire: ISR lock safety gate. The context-switch path below calls
@@ -788,7 +885,15 @@ fn pick_next_process(current_pid: u32) -> u32 {
         return next_pid;
     }
 
-    // Fallback to current if scheduler returns nothing valid
+    // — GraveShift: Fallback — only reached when with_rq returns None (lock
+    // contention). NEVER fall back to a zombie — that creates an unkillable
+    // revenant that resumes user code after signal termination. Return idle
+    // (PID 0) if current is dead. The next timer tick retries properly.
+    if let Some(state) = sched::get_task_state(current_pid) {
+        if state == TaskState::TASK_ZOMBIE || state == TaskState::TASK_DEAD {
+            return 0; // idle
+        }
+    }
     current_pid
 }
 
@@ -944,6 +1049,46 @@ pub fn kill_faulting_process(_pid: u64, rip: u64, signo: u64) {
 /// here — right before sysretq — gives the scheduler its only reliable
 /// chance to preempt such tasks.
 pub fn check_signals_on_syscall_return() {
+    // — GraveShift: Sigreturn deferred restoration. sys_sigreturn() stashed a SignalFrame
+    // because the asm resave clobbers SYSCALL_USER_CONTEXT after the handler returns.
+    // Apply it here (under CLI, after resave) so it sticks through to sysretq.
+    if let Some(frame) = signal::delivery::take_sigreturn_frame() {
+        unsafe {
+            let ctx = arch::syscall::get_user_context_mut();
+            ctx.rip = frame.saved_rip;
+            ctx.rsp = frame.saved_rsp;
+            ctx.rflags = frame.saved_rflags;
+            ctx.rax = frame.saved_rax;
+            ctx.rbx = frame.saved_rbx;
+            ctx.rcx = frame.saved_rcx;
+            ctx.rdx = frame.saved_rdx;
+            ctx.rsi = frame.saved_rsi;
+            ctx.rdi = frame.saved_rdi;
+            ctx.rbp = frame.saved_rbp;
+            ctx.r8 = frame.saved_r8;
+            ctx.r9 = frame.saved_r9;
+            ctx.r10 = frame.saved_r10;
+            ctx.r11 = frame.saved_r11;
+            ctx.r12 = frame.saved_r12;
+            ctx.r13 = frame.saved_r13;
+            ctx.r14 = frame.saved_r14;
+            ctx.r15 = frame.saved_r15;
+        }
+        // Restore signal mask
+        let current_pid = sched::current_pid().unwrap_or(0);
+        if current_pid > 1 {
+            if let Some(meta_arc) = sched::get_task_meta(current_pid) {
+                if let Some(mut meta) = meta_arc.try_lock() {
+                    let mut restored_mask = frame.saved_mask;
+                    restored_mask.remove(signal::SIGKILL);
+                    restored_mask.remove(signal::SIGSTOP);
+                    meta.signal_mask = restored_mask;
+                }
+            }
+        }
+        return; // Don't check for new signals — just return to pre-signal state
+    }
+
     // — GraveShift: Reschedule check on syscall return.
     // SYSCALL_USER_CONTEXT is a *global* — another task's syscall_entry will
     // clobber it while we sleep. Save it to the kernel stack (per-task) and
@@ -1001,7 +1146,17 @@ pub fn check_signals_on_syscall_return() {
     // Try to lock metadata (non-blocking to avoid deadlock)
     let mut meta = match meta_arc.try_lock() {
         Some(guard) => guard,
-        None => return, // Can't lock, skip for now (will be delivered on next opportunity)
+        None => {
+            // — GraveShift: Trace try_lock failure — hunting signal delivery blackhole
+            unsafe {
+                os_log::write_str_raw("[SCR-SIG] try_lock FAIL p=");
+                let pid_b = current_pid as u8;
+                if pid_b >= 10 { os_log::write_byte_raw(b'0' + (pid_b / 10)); }
+                os_log::write_byte_raw(b'0' + (pid_b % 10));
+                os_log::write_str_raw("\n");
+            }
+            return;
+        }
     };
 
     // Check if there are any deliverable signals
@@ -1009,15 +1164,33 @@ pub fn check_signals_on_syscall_return() {
         return;
     }
 
+    // — GraveShift: Signal detected! Trace everything so we can hunt down delivery failures.
+    unsafe {
+        os_log::write_str_raw("[SIGCHK] p=");
+        let pid_b = current_pid as u8;
+        if pid_b >= 10 { os_log::write_byte_raw(b'0' + (pid_b / 10)); }
+        os_log::write_byte_raw(b'0' + (pid_b % 10));
+        os_log::write_str_raw(" HAS pending\n");
+    }
+
     let signal_mask = meta.signal_mask;
 
     // Dequeue the highest priority pending signal
     let pending = match meta.pending_signals.dequeue(&signal_mask) {
         Some(p) => p,
-        None => return,
+        None => {
+            unsafe { os_log::write_str_raw("[SIGCHK] dequeue=NONE\n"); }
+            return;
+        }
     };
 
     let signo = pending.signo;
+
+    unsafe {
+        os_log::write_str_raw("[SIGCHK] sig=");
+        os_log::write_byte_raw(b'0' + signo as u8);
+        os_log::write_str_raw("\n");
+    }
 
     // Get the signal action
     let action = if signo >= 1 && signo <= signal::NSIG as i32 {
@@ -1025,6 +1198,20 @@ pub fn check_signals_on_syscall_return() {
     } else {
         signal::SigAction::new()
     };
+
+    // — GraveShift: Log the handler type so we know if SIG_IGN is eating our signals.
+    unsafe {
+        os_log::write_str_raw("[SIGCHK] handler=");
+        let h = action.sa_handler;
+        if h == 0 {
+            os_log::write_str_raw("DFL");
+        } else if h == 1 {
+            os_log::write_str_raw("IGN");
+        } else {
+            os_log::write_str_raw("USR");
+        }
+        os_log::write_str_raw("\n");
+    }
 
     // Determine what to do with this signal
     let result = determine_action(&pending, &action, &signal_mask);
@@ -1058,7 +1245,28 @@ pub fn check_signals_on_syscall_return() {
             // Block ourselves (we're now a zombie)
             sched::block_current(TaskState::TASK_ZOMBIE);
 
-            // Note: When we return from syscall, scheduler will switch us out
+            // — GraveShift: CRITICAL — must yield CPU here. If we return, the asm does
+            // sysretq and the zombie runs free in user mode. nanosleep then overwrites
+            // TASK_ZOMBIE with TASK_INTERRUPTIBLE, and the sleep queue keeps waking us.
+            // The process lives forever like an unkillable revenant. Yield now so the
+            // scheduler context-switches us out permanently. The zombie never wakes.
+            unsafe {
+                os_log::write_str_raw("[SIG] yielding zombie p=");
+                let pid_b = current_pid as u8;
+                if pid_b >= 10 { os_log::write_byte_raw(b'0' + (pid_b / 10)); }
+                os_log::write_byte_raw(b'0' + (pid_b % 10));
+                os_log::write_str_raw("\n");
+            }
+            sched::set_need_resched();
+            arch::allow_kernel_preempt();
+            unsafe {
+                core::arch::asm!("sti", "hlt", options(nomem, nostack));
+            }
+            // — GraveShift: If we somehow resume (shouldn't happen — nobody reschedules
+            // a zombie), loop forever so we never escape to user mode.
+            loop {
+                unsafe { core::arch::asm!("cli", "hlt", options(nomem, nostack)); }
+            }
         }
         SignalResult::UserHandler {
             handler,
@@ -1123,7 +1331,16 @@ pub fn check_signals_on_syscall_return() {
             }
         }
         SignalResult::Ignore => {
-            // Signal ignored - nothing to do
+            // — GraveShift: Trace ignored signals so we can catch SIG_IGN stealing our kills.
+            unsafe {
+                os_log::write_str_raw("[SIGCHK] IGNORED sig=");
+                os_log::write_byte_raw(b'0' + signo as u8);
+                os_log::write_str_raw(" p=");
+                let pid_b = current_pid as u8;
+                if pid_b >= 10 { os_log::write_byte_raw(b'0' + (pid_b / 10)); }
+                os_log::write_byte_raw(b'0' + (pid_b % 10));
+                os_log::write_str_raw("\n");
+            }
         }
         SignalResult::Stop => {
             // — ThreadRogue: Freeze the process
@@ -1142,6 +1359,16 @@ pub fn check_signals_on_syscall_return() {
                     wake_up(ppid);
                 }
             }
+
+            // — ThreadRogue: Same as Terminate — must yield or the stopped process
+            // returns to user mode and nanosleep overwrites TASK_STOPPED.
+            sched::set_need_resched();
+            arch::allow_kernel_preempt();
+            unsafe {
+                core::arch::asm!("sti", "hlt", options(nomem, nostack));
+            }
+            arch::disallow_kernel_preempt();
+            // — ThreadRogue: For stopped tasks, we CAN resume here after SIGCONT.
         }
         SignalResult::Continue => {
             // — ThreadRogue: Thaw the process

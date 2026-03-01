@@ -652,6 +652,20 @@ pub fn sys_pipe(pipefd_ptr: u64) -> i64 {
 /// * `request` - ioctl request code
 /// * `arg` - ioctl argument (request-specific)
 pub fn sys_ioctl(fd: i32, request: u64, arg: u64) -> i64 {
+    // — GraveShift: Trace TIOCSPGRP to debug why foreground PGID never updates.
+    // TIOCSPGRP = 0x5410. If this trace doesn't fire, shell never calls ioctl(fd, TIOCSPGRP).
+    if request == 0x5410 {
+        unsafe {
+            os_log::write_str_raw("[IOCTL] TIOCSPGRP fd=");
+            arch_x86_64::serial::write_u64_hex_unsafe(fd as u64);
+            os_log::write_str_raw(" arg=");
+            arch_x86_64::serial::write_u64_hex_unsafe(arg);
+            os_log::write_str_raw(" pid=");
+            arch_x86_64::serial::write_u64_hex_unsafe(crate::current_pid() as u64);
+            os_log::write_str_raw("\n");
+        }
+    }
+
     // Get file using unified model
     let file =
         match with_current_meta(|meta| meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone()))
@@ -691,6 +705,15 @@ pub fn sys_ioctl(fd: i32, request: u64, arg: u64) -> i64 {
     unsafe {
         if let Some(f) = (*addr_of!(super::SYSCALL_CONTEXT)).disallow_kernel_preempt {
             f();
+        }
+    }
+
+    // — GraveShift: Log TIOCSPGRP result to see if it succeeds or returns error.
+    if request == 0x5410 {
+        unsafe {
+            os_log::write_str_raw("[IOCTL] TIOCSPGRP result=");
+            arch_x86_64::serial::write_u64_hex_unsafe(result as u64);
+            os_log::write_str_raw("\n");
         }
     }
 

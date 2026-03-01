@@ -458,7 +458,13 @@ impl ProcPidStatus {
 
     fn generate_content(&self) -> String {
         if let Some(meta) = sched::get_task_meta(self.pid) {
-            let m = meta.lock();
+            // — GraveShift: try_lock to avoid spinning on contended ProcessMeta.
+            // ISR signal delivery also locks this — blocking here causes priority
+            // inversion. Empty string on contention; next read() gets fresh data.
+            let m = match meta.try_lock() {
+                Some(guard) => guard,
+                None => return String::new(),
+            };
             let state = Self::format_state(self.pid, ProcessState::Running);
             let ppid = sched::get_task_ppid(self.pid).unwrap_or(0);
 
@@ -853,7 +859,15 @@ impl ProcPidStat {
     /// arg_end env_start env_end exit_code
     fn generate_content(&self) -> String {
         if let Some(meta) = sched::get_task_meta(self.pid) {
-            let m = meta.lock();
+            // — GraveShift: try_lock to avoid spinning on contended ProcessMeta.
+            // top reads /proc/<pid>/stat for every process — blocking lock() caused
+            // priority inversion when the timer ISR held the same meta for signal
+            // delivery. Empty string on contention; read_proc_stat returns false
+            // and top simply skips the process this cycle.
+            let m = match meta.try_lock() {
+                Some(guard) => guard,
+                None => return String::new(),
+            };
 
             // — GraveShift: Pull real timing + nice from scheduler for accurate /proc/[pid]/stat
             let (state_char, ppid, start_time, sum_runtime, nice) = if let Some((

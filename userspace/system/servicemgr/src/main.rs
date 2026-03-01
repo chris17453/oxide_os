@@ -836,13 +836,32 @@ fn run_daemon() {
 
     log("All services started, monitoring...");
 
-    // Main loop - monitor services
+    // — GraveShift: Main loop — monitor services with proper CPU-yielding sleep.
+    // The old usleep fallback (200× sched_yield) completed in microseconds and
+    // turned this daemon into a CPU furnace. poll() with an empty fd set and
+    // 1000ms timeout blocks via HLT in the kernel — zero CPU burn while waiting.
+    // If both nanosleep AND poll somehow fail, we still yield but with enough
+    // iterations that the scheduler can actually run other tasks between checks.
     loop {
         // Check service health
         check_services();
 
-        // Sleep for a bit before next check
-        usleep(1000000); // 1 second
+        // — GraveShift: Primary sleep path — nanosleep is the clean way.
+        // If it fails (EINTR from signal), use poll() as fallback which
+        // also HLTs properly. The 200-yield deathtrap is gone.
+        if usleep(1_000_000) < 0 {
+            // poll() on zero fds with timeout = proper kernel HLT sleep
+            let ret = libc::poll::poll(&mut [], 1000);
+            if ret < 0 {
+                // — GraveShift: Nuclear fallback — both sleep paths failed.
+                // Yield enough times to let at least a few timer ticks pass.
+                // 10000 yields ≈ multiple scheduler quanta. Still not great
+                // but infinitely better than the old 200-yield hot loop.
+                for _ in 0..10_000 {
+                    sched_yield();
+                }
+            }
+        }
     }
 }
 

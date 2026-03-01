@@ -240,8 +240,18 @@ impl VtManager {
         // try_lock is fine here — if contended, read()/poll() drain catches it.
         // Double delivery is harmless. — GraveShift
         if ch == 0x03 || ch == 0x1C || ch == 0x1A {
+            // — GraveShift: Diagnostic breadcrumbs for signal delivery debugging.
+            // If Ctrl+C isn't killing your app, follow the trail of "[SIG-FAST]" in serial.
+            unsafe { os_log::write_str_raw("[SIG-FAST] signal byte\n"); }
+
             if let Some(vt) = self.vts[active].try_lock() {
                 let isig = vt.tty.try_isig_enabled().unwrap_or(true);
+                if isig {
+                    unsafe { os_log::write_str_raw("[SIG-FAST] isig=true\n"); }
+                } else {
+                    unsafe { os_log::write_str_raw("[SIG-FAST] isig=FALSE, skip\n"); }
+                }
+
                 if isig {
                     let signo = match ch {
                         0x03 => signal::SIGINT,
@@ -252,13 +262,39 @@ impl VtManager {
                     unsafe {
                         if let Some(callback) = SIGNAL_PGRP_CALLBACK {
                             if let Some(pgid) = vt.tty.try_get_foreground_pgid() {
-                                if pgid > 0 {
-                                    callback(pgid, signo);
+                                // — GraveShift: Show raw PGID value to debug stale PGID mystery.
+                                os_log::write_str_raw("[SIG-FAST] raw pgid=");
+                                // Decimal print without arch dependency
+                                {
+                                    let v = pgid as u32;
+                                    if v == 0 {
+                                        os_log::write_byte_raw(b'0');
+                                    } else {
+                                        let mut buf = [0u8; 10];
+                                        let mut pos = 0;
+                                        let mut n = v;
+                                        while n > 0 { buf[pos] = b'0' + (n % 10) as u8; n /= 10; pos += 1; }
+                                        for i in (0..pos).rev() { os_log::write_byte_raw(buf[i]); }
+                                    }
                                 }
+                                os_log::write_str_raw("\n");
+                                if pgid > 0 {
+                                    os_log::write_str_raw("[SIG-FAST] SENDING to pgid>0\n");
+                                    callback(pgid, signo);
+                                    os_log::write_str_raw("[SIG-FAST] SENT!\n");
+                                } else {
+                                    os_log::write_str_raw("[SIG-FAST] pgid<=0!\n");
+                                }
+                            } else {
+                                os_log::write_str_raw("[SIG-FAST] pgid lock FAIL\n");
                             }
+                        } else {
+                            os_log::write_str_raw("[SIG-FAST] NO CALLBACK!\n");
                         }
                     }
                 }
+            } else {
+                unsafe { os_log::write_str_raw("[SIG-FAST] vt lock FAIL\n"); }
             }
         }
     }
@@ -267,7 +303,12 @@ impl VtManager {
     ///
     /// Blocking read that drains the ring buffer on every iteration of the
     /// wait loop. Ring buffer lives in VtManager.input_rings — zero locks
-    /// for drain. IRQ pushes concurrently without contention. — GraveShift
+    /// for drain. IRQ pushes concurrently without contention.
+    ///
+    /// — GraveShift: NOW with signal interruption. Previously this loop spun forever even
+    /// when SIGINT was pending — Ctrl+C was queued but never checked. The process had to
+    /// wait for the heat death of the universe. Now we check pending signals after each
+    /// yield and bail with EINTR so check_signals_on_syscall_return() can do its thing.
     pub fn read(&self, vt_num: usize, buf: &mut [u8]) -> VfsResult<usize> {
         #[cfg(feature = "debug-console")]
         dbg_serial("[VT] read() enter\n");
@@ -319,12 +360,27 @@ impl VtManager {
                 dbg_serial(&msg);
             }
 
-            // Check if line discipline now has a complete result to return
-            let n = tty.try_read(buf);
-            if n > 0 {
+            // Check if line discipline now has a complete result to return.
+            // Some(n) = data (n>0) or EOF (n=0). None = not ready yet.
+            if let Some(n) = tty.try_read(buf) {
                 #[cfg(feature = "debug-console")]
-                dbg_serial("[VT] read() returning data\n");
+                dbg_serial("[VT] read() returning data/EOF\n");
                 return Ok(n);
+            }
+
+            // — GraveShift: THE FIX. Check if the current process has pending signals that
+            // would actually do something (not SIG_IGN). If so, bail out with EINTR.
+            // check_signals_on_syscall_return() will deliver the signal on our way out.
+            // Without this, Ctrl+C queued SIGINT but the process just kept looping here
+            // like a zombie that doesn't know it's dead.
+            unsafe {
+                if let Some(check_fn) = SIGNAL_PENDING_CALLBACK {
+                    if check_fn() {
+                        #[cfg(feature = "debug-console")]
+                        dbg_serial("[VT] read() interrupted by signal\n");
+                        return Err(VfsError::Interrupted);
+                    }
+                }
             }
 
             #[cfg(feature = "debug-console")]
@@ -447,6 +503,14 @@ pub type SignalPgrpFn = fn(pgid: i32, sig: i32);
 /// Global signal callback (set by kernel)
 static mut SIGNAL_PGRP_CALLBACK: Option<SignalPgrpFn> = None;
 
+/// Callback type for checking if current process has actionable pending signals.
+/// — GraveShift: Returns true when a blocking read should bail out with EINTR.
+/// Filters out SIG_IGN signals so the shell doesn't get spuriously interrupted.
+pub type SignalPendingFn = fn() -> bool;
+
+/// Global signal-pending callback (set by kernel)
+static mut SIGNAL_PENDING_CALLBACK: Option<SignalPendingFn> = None;
+
 /// Callback type for console output
 pub type ConsoleWriteFn = fn(&[u8]);
 
@@ -510,6 +574,16 @@ pub unsafe fn set_signal_pgrp_callback(f: SignalPgrpFn) {
     // — NeonRoot
     unsafe {
         SIGNAL_PGRP_CALLBACK = Some(f);
+    }
+}
+
+/// Set the signal-pending callback for VT blocking reads
+///
+/// # Safety
+/// Must be called during single-threaded initialization
+pub unsafe fn set_signal_pending_callback(f: SignalPendingFn) {
+    unsafe {
+        SIGNAL_PENDING_CALLBACK = Some(f);
     }
 }
 
