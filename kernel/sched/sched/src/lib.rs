@@ -114,6 +114,7 @@ pub use crate::core::{
     get_task_kernel_stack,
     // ProcessMeta accessors
     get_task_meta,
+    try_get_task_meta,
     // Task scheduling properties
     get_task_nice,
     get_task_pml4,
@@ -124,8 +125,10 @@ pub use crate::core::{
     // ISR lock safety
     rq_lock_available,
     get_task_ppid,
+    try_get_task_ppid,
     get_task_rt_priority,
     get_task_state,
+    try_get_task_state,
     get_task_switch_info,
     get_task_timing_info,
     // Clock

@@ -734,6 +734,7 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
 pub fn kernel_wait(pid: i32, options: i32) -> i64 {
     let parent_pid = sched::current_pid().unwrap_or(0);
     let wait_opts = WaitOptions::from(options);
+    #[cfg(feature = "debug-proc")]
     unsafe {
         os_log::write_str_raw("[WAIT] enter ppid=");
         trace_u64(parent_pid as u64);
@@ -749,6 +750,7 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
         // Check for state changes: zombie, stopped (WUNTRACED), continued (WCONTINUED)
         match find_child_state_change(parent_pid, pid, &wait_opts) {
             Ok(result) => {
+                #[cfg(feature = "debug-proc")]
                 unsafe {
                     os_log::write_str_raw("[WAIT] hit ppid=");
                     trace_u64(parent_pid as u64);
@@ -785,6 +787,7 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
                         if wait_opts.nohang {
                             return 0; // No child exited yet
                         }
+                        #[cfg(feature = "debug-proc")]
                         unsafe {
                             os_log::write_str_raw("[WAIT] block ppid=");
                             trace_u64(parent_pid as u64);
@@ -850,6 +853,7 @@ fn find_child_state_change(
     opts: &WaitOptions,
 ) -> Result<WaitResult, proc::WaitError> {
     let children = sched::get_task_children(parent_pid);
+    #[cfg(feature = "debug-proc")]
     unsafe {
         os_log::write_str_raw("[WAIT] scan ppid=");
         trace_u64(parent_pid as u64);

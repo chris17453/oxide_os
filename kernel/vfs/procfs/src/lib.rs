@@ -28,10 +28,19 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 
+use alloc::vec::Vec;
 use proc_traits::Pid;
 use proc_traits::ProcessState;
 use sched::{self, TaskState as SchedTaskState};
+use spin::Mutex;
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
+
+// — GraveShift: Cached PID list for procfs readdir. Without this, every single
+// readdir offset calls sched::all_pids() which does try_lock on all 4 CPU RQs
+// and allocates a fresh Vec. For N processes, that's N * 4 = 40 lock attempts
+// per readdir sweep. Cache it once when offset hits the process entries region,
+// and reuse until the next sweep starts (pid_idx == 0).
+static PROCFS_PID_CACHE: Mutex<Vec<Pid>> = Mutex::new(Vec::new());
 
 // ============================================================================
 // Memory info callback
@@ -126,7 +135,7 @@ impl VnodeOps for ProcFs {
 
         // Try to parse as PID
         if let Ok(pid) = name.parse::<u32>() {
-            if sched::get_task_meta(pid).is_some() {
+            if sched::try_get_task_meta(pid).is_some() {
                 return Ok(Arc::new(ProcPid::new(pid)));
             }
         }
@@ -175,16 +184,28 @@ impl VnodeOps for ProcFs {
             }));
         }
 
-        // Process directories
-        let pids = sched::all_pids();
+        // Process directories — use cached PID list to avoid hammering scheduler locks
         let pid_idx = offset - entries.len();
-        if pid_idx < pids.len() {
-            let pid = pids[pid_idx];
-            return Ok(Some(DirEntry {
-                name: format!("{}", pid),
-                ino: 1000 + pid as u64,
-                file_type: VnodeType::Directory,
-            }));
+
+        // — GraveShift: Refresh cache at start of each readdir sweep (pid_idx == 0).
+        // Subsequent offsets reuse the cached list. Cuts lock contention from
+        // O(N * num_cpus) down to O(num_cpus) per sweep.
+        if pid_idx == 0 {
+            let fresh = sched::all_pids();
+            if let Some(mut cache) = PROCFS_PID_CACHE.try_lock() {
+                *cache = fresh;
+            }
+        }
+
+        if let Some(cache) = PROCFS_PID_CACHE.try_lock() {
+            if pid_idx < cache.len() {
+                let pid = cache[pid_idx];
+                return Ok(Some(DirEntry {
+                    name: format!("{}", pid),
+                    ino: 1000 + pid as u64,
+                    file_type: VnodeType::Directory,
+                }));
+            }
         }
 
         Ok(None)
@@ -405,7 +426,7 @@ impl VnodeOps for ProcPid {
 
     fn stat(&self) -> VfsResult<Stat> {
         // Verify process exists
-        if sched::get_task_meta(self.pid).is_none() {
+        if sched::try_get_task_meta(self.pid).is_none() {
             return Err(VfsError::NotFound);
         }
         Ok(Stat::new(
@@ -436,7 +457,7 @@ impl ProcPidStatus {
     }
 
     fn format_state(pid: Pid, fallback: ProcessState) -> &'static str {
-        if let Some(ts) = sched::get_task_state(pid) {
+        if let Some(ts) = sched::try_get_task_state(pid) {
             return match ts {
                 s if s == SchedTaskState::TASK_RUNNING => "R (running)",
                 s if s == SchedTaskState::TASK_INTERRUPTIBLE => "S (sleeping)",
@@ -457,7 +478,7 @@ impl ProcPidStatus {
     }
 
     fn generate_content(&self) -> String {
-        if let Some(meta) = sched::get_task_meta(self.pid) {
+        if let Some(meta) = sched::try_get_task_meta(self.pid) {
             // — GraveShift: try_lock to avoid spinning on contended ProcessMeta.
             // ISR signal delivery also locks this — blocking here causes priority
             // inversion. Empty string on contention; next read() gets fresh data.
@@ -466,7 +487,7 @@ impl ProcPidStatus {
                 None => return String::new(),
             };
             let state = Self::format_state(self.pid, ProcessState::Running);
-            let ppid = sched::get_task_ppid(self.pid).unwrap_or(0);
+            let ppid = sched::try_get_task_ppid(self.pid).unwrap_or(0);
 
             // Get process name from cmdline (first arg, basename only)
             let name = if m.cmdline.is_empty() {
@@ -591,8 +612,15 @@ impl ProcPidCmdline {
 
 impl ProcPidCmdline {
     fn generate_content(&self) -> alloc::vec::Vec<u8> {
-        if let Some(meta) = sched::get_task_meta(self.pid) {
-            let m = meta.lock();
+        if let Some(meta) = sched::try_get_task_meta(self.pid) {
+            // — GraveShift: try_lock to avoid spinning on contended ProcessMeta.
+            // Same pattern as ProcPidStat. Blocking lock() here caused deadlocks
+            // when top hammered /proc/[pid]/cmdline while timer ISR held the meta
+            // for signal delivery. Empty on contention — next read gets fresh data.
+            let m = match meta.try_lock() {
+                Some(guard) => guard,
+                None => return alloc::vec![0u8],
+            };
 
             if m.cmdline.is_empty() {
                 return alloc::vec![0u8];
@@ -858,7 +886,7 @@ impl ProcPidStat {
     /// delayacct_blkio_ticks guest_time cguest_time start_data end_data start_brk arg_start
     /// arg_end env_start env_end exit_code
     fn generate_content(&self) -> String {
-        if let Some(meta) = sched::get_task_meta(self.pid) {
+        if let Some(meta) = sched::try_get_task_meta(self.pid) {
             // — GraveShift: try_lock to avoid spinning on contended ProcessMeta.
             // top reads /proc/<pid>/stat for every process — blocking lock() caused
             // priority inversion when the timer ISR held the same meta for signal
@@ -1655,7 +1683,7 @@ impl ProcLoadavg {
         // Count running processes
         let mut running = 0;
         for &pid in &pids {
-            if let Some(state) = sched::get_task_state(pid) {
+            if let Some(state) = sched::try_get_task_state(pid) {
                 if state == sched::TaskState::TASK_RUNNING {
                     running += 1;
                 }
@@ -1799,7 +1827,7 @@ impl ProcStat {
         // Running processes count
         let mut running = 0;
         for &pid in &pids {
-            if let Some(state) = sched::get_task_state(pid) {
+            if let Some(state) = sched::try_get_task_state(pid) {
                 if state == sched::TaskState::TASK_RUNNING {
                     running += 1;
                 }
@@ -1810,7 +1838,7 @@ impl ProcStat {
         // Blocked processes (in uninterruptible sleep)
         let mut blocked = 0;
         for &pid in &pids {
-            if let Some(state) = sched::get_task_state(pid) {
+            if let Some(state) = sched::try_get_task_state(pid) {
                 if state == sched::TaskState::TASK_UNINTERRUPTIBLE {
                     blocked += 1;
                 }

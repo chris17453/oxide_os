@@ -3,21 +3,26 @@
 
 .PHONY: kernel bootloader release
 
+# — SableWire: Custom target requires building core/alloc from source.
+# Same dance the bootloader does for x86_64-unknown-uefi. — SableWire
+KERNEL_TARGET_JSON := targets/x86_64-unknown-oxide.json
+KERNEL_BUILD_STD := -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem
+
 # Build kernel
 # Pass KERNEL_FEATURES to enable debug output, e.g.: make run KERNEL_FEATURES=debug-all
 kernel:
 	@echo "Building kernel..."
 ifeq ($(PROFILE),release)
 ifneq ($(KERNEL_FEATURES),)
-	@cargo build --package kernel --release --features $(KERNEL_FEATURES)
+	@cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD) --release --features $(KERNEL_FEATURES)
 else
-	@cargo build --package kernel --release
+	@cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD) --release
 endif
 else
 ifneq ($(KERNEL_FEATURES),)
-	@cargo build --package kernel --features $(KERNEL_FEATURES)
+	@cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD) --features $(KERNEL_FEATURES)
 else
-	@cargo build --package kernel
+	@cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD)
 endif
 endif
 
@@ -32,5 +37,5 @@ endif
 
 # Build release
 release:
-	cargo build --package kernel --release
+	cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD) --release
 	cargo build --package boot-uefi --target $(ARCH)-unknown-uefi --release

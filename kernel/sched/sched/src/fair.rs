@@ -3,11 +3,13 @@
 //! Implements Completely Fair Scheduler semantics using virtual runtime (vruntime).
 //! Tasks with lower vruntime are scheduled first, and vruntime accumulates
 //! faster for lower-weight (higher nice) tasks.
+//!
+//! — GraveShift: Fixed-capacity min-heap, zero dynamic allocation. The old
+//! BinaryHeap triggered Vec::grow_one → realloc → HEAP_ALLOCATOR.lock() inside
+//! timer ISR context, permanently deadlocking when the interrupted task held
+//! the heap lock. This implementation uses a pre-allocated array with manual
+//! sift operations. Every enqueue, dequeue, and pick is ISR-safe by construction.
 
-extern crate alloc;
-
-use alloc::collections::BinaryHeap;
-use core::cmp::Reverse;
 use sched_traits::{NICE_0_WEIGHT, Pid, RunQueueOps, SchedClass, TICK_NS};
 
 /// Minimum scheduling granularity in nanoseconds
@@ -22,6 +24,12 @@ const SCHED_LATENCY_NS: u64 = 6_000_000; // 6ms
 /// A waking task preempts if its vruntime is this much smaller than current
 const WAKEUP_GRANULARITY_NS: u64 = 1_000_000; // 1ms
 
+/// — GraveShift: Maximum CFS tasks per CPU in the fixed-capacity heap.
+/// Each CfsEntry is 16 bytes, so 256 entries = 4KB per CPU. The kernel
+/// won't have 256 runnable CFS tasks on a single CPU — if it does,
+/// we drop the task with a serial warning instead of deadlocking the system.
+const MAX_CFS_TASKS: usize = 256;
+
 /// Entry in the CFS tree
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CfsEntry {
@@ -29,6 +37,14 @@ pub(crate) struct CfsEntry {
     pub(crate) vruntime: u64,
     /// Process ID
     pub(crate) pid: Pid,
+}
+
+impl CfsEntry {
+    /// Sentinel for unoccupied heap slots
+    const EMPTY: Self = Self {
+        vruntime: u64::MAX,
+        pid: 0,
+    };
 }
 
 impl PartialEq for CfsEntry {
@@ -47,8 +63,8 @@ impl PartialOrd for CfsEntry {
 
 impl Ord for CfsEntry {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        // Primary: lower vruntime is "greater" (we use Reverse for min-heap)
-        // Secondary: lower PID wins ties for determinism
+        // — GraveShift: Natural ordering — lower vruntime is Less (min-heap root).
+        // Lower PID wins ties for determinism.
         match self.vruntime.cmp(&other.vruntime) {
             core::cmp::Ordering::Equal => self.pid.cmp(&other.pid),
             ord => ord,
@@ -56,13 +72,19 @@ impl Ord for CfsEntry {
     }
 }
 
-/// CFS run queue
+/// CFS run queue — fixed-capacity binary min-heap
 ///
-/// Implements a min-heap ordered by vruntime for O(log n) operations.
-/// Linux uses a red-black tree, but a binary heap is simpler and sufficient.
+/// — GraveShift: The heart of CFS scheduling. A binary min-heap ordered by
+/// vruntime gives O(log n) enqueue/pop and O(1) peek. The fixed-size array
+/// eliminates ALL dynamic allocation, making every operation ISR-safe.
+/// Linux uses an intrusive red-black tree (zero-alloc by design). Our fixed
+/// heap achieves the same ISR safety with simpler code and better cache locality.
 pub struct CfsRunQueue {
-    /// Min-heap of tasks ordered by vruntime
-    pub(crate) tasks: BinaryHeap<Reverse<CfsEntry>>,
+    /// Fixed-capacity min-heap. heap[0] has the lowest vruntime.
+    /// Valid entries occupy heap[0..len].
+    heap: [CfsEntry; MAX_CFS_TASKS],
+    /// Number of valid entries in the heap
+    len: usize,
     /// Total weight of all tasks in the queue
     load_weight: u64,
     /// Minimum vruntime (floor for new tasks to prevent starvation)
@@ -75,12 +97,53 @@ impl CfsRunQueue {
     /// Create a new empty CFS run queue
     pub fn new() -> Self {
         Self {
-            tasks: BinaryHeap::new(),
+            heap: [CfsEntry::EMPTY; MAX_CFS_TASKS],
+            len: 0,
             load_weight: 0,
             min_vruntime: 0,
             nr_running: 0,
         }
     }
+
+    // ─── Heap internals: zero allocation, ISR-safe ─────────────────────
+
+    /// Restore min-heap property by moving element at `idx` toward the root.
+    /// Called after insertion (new element at bottom may be smaller than parent).
+    fn sift_up(&mut self, mut idx: usize) {
+        while idx > 0 {
+            let parent = (idx - 1) / 2;
+            if self.heap[idx] < self.heap[parent] {
+                self.heap.swap(idx, parent);
+                idx = parent;
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Restore min-heap property by moving element at `idx` toward the leaves.
+    /// Called after removal (replacement element at top may be larger than children).
+    fn sift_down(&mut self, mut idx: usize) {
+        loop {
+            let left = 2 * idx + 1;
+            let right = 2 * idx + 2;
+            let mut smallest = idx;
+
+            if left < self.len && self.heap[left] < self.heap[smallest] {
+                smallest = left;
+            }
+            if right < self.len && self.heap[right] < self.heap[smallest] {
+                smallest = right;
+            }
+            if smallest == idx {
+                break;
+            }
+            self.heap.swap(idx, smallest);
+            idx = smallest;
+        }
+    }
+
+    // ─── Public API ────────────────────────────────────────────────────
 
     /// Enqueue a task
     ///
@@ -96,53 +159,96 @@ impl CfsRunQueue {
         // causing the woken task to wait behind all of them.
         let adjusted_vruntime = vruntime.max(self.min_vruntime.saturating_sub(SCHED_LATENCY_NS));
 
-        self.tasks.push(Reverse(CfsEntry {
-            vruntime: adjusted_vruntime,
-            pid,
-        }));
+        if self.len < MAX_CFS_TASKS {
+            self.heap[self.len] = CfsEntry {
+                vruntime: adjusted_vruntime,
+                pid,
+            };
+            self.len += 1;
+            self.sift_up(self.len - 1);
+        } else {
+            // — GraveShift: 256 CFS tasks on one CPU. Something is deeply
+            // wrong, but deadlocking the system is worse than dropping a task.
+            unsafe {
+                arch_x86_64::serial::write_str_unsafe(
+                    "[CFS-FATAL] heap full, cannot enqueue task\n",
+                );
+            }
+        }
+
         self.load_weight = self.load_weight.saturating_add(weight);
         self.nr_running += 1;
 
         adjusted_vruntime
     }
 
-    /// Dequeue a specific task
+    /// Dequeue a specific task by PID
+    ///
+    /// O(n) scan to find the task + O(log n) heap fix. Zero allocation.
+    /// The old code did drain().collect() + filter().collect() — two Vec
+    /// allocations that could deadlock in ISR context. Never again.
     pub fn dequeue(&mut self, pid: Pid, weight: u64) -> bool {
-        // This is O(n) unfortunately, but we need to remove arbitrary tasks
-        // A production implementation would use a more sophisticated data structure
-        let len_before = self.tasks.len();
-        let old_tasks: alloc::vec::Vec<_> = self.tasks.drain().collect();
-        self.tasks = old_tasks
-            .into_iter()
-            .filter(|Reverse(e)| e.pid != pid)
-            .collect();
+        let pos = match (0..self.len).find(|&i| self.heap[i].pid == pid) {
+            Some(p) => p,
+            None => return false,
+        };
 
-        if self.tasks.len() < len_before {
-            self.load_weight = self.load_weight.saturating_sub(weight);
-            self.nr_running = self.nr_running.saturating_sub(1);
-            true
+        self.len -= 1;
+
+        if pos < self.len {
+            // Move last element to the vacated position and fix heap
+            self.heap[pos] = self.heap[self.len];
+            self.heap[self.len] = CfsEntry::EMPTY;
+
+            // The replacement element may need to go up or down
+            if pos > 0 && self.heap[pos] < self.heap[(pos - 1) / 2] {
+                self.sift_up(pos);
+            } else {
+                self.sift_down(pos);
+            }
         } else {
-            false
+            // Removed the last element — heap is already valid
+            self.heap[self.len] = CfsEntry::EMPTY;
         }
+
+        self.load_weight = self.load_weight.saturating_sub(weight);
+        self.nr_running = self.nr_running.saturating_sub(1);
+        true
     }
 
-    /// Pick the task with minimum vruntime
+    /// Pick the task with minimum vruntime (peek, no removal)
     pub fn pick_next(&self) -> Option<Pid> {
-        self.tasks.peek().map(|Reverse(e)| e.pid)
+        if self.len > 0 {
+            Some(self.heap[0].pid)
+        } else {
+            None
+        }
     }
 
     /// Remove and return the task with minimum vruntime
     pub fn pop_next(&mut self, weight: u64) -> Option<Pid> {
-        let entry = self.tasks.pop()?;
+        if self.len == 0 {
+            return None;
+        }
+
+        let min_pid = self.heap[0].pid;
+        self.len -= 1;
+
+        if self.len > 0 {
+            // Move last element to root and sift down
+            self.heap[0] = self.heap[self.len];
+            self.heap[self.len] = CfsEntry::EMPTY;
+            self.sift_down(0);
+        } else {
+            self.heap[0] = CfsEntry::EMPTY;
+        }
+
         self.load_weight = self.load_weight.saturating_sub(weight);
         self.nr_running = self.nr_running.saturating_sub(1);
-        Some(entry.0.pid)
+        Some(min_pid)
     }
 
     /// Update min_vruntime based on leftmost task
-    ///
-    /// min_vruntime is monotonically increasing and tracks the minimum
-    /// vruntime of all runnable tasks.
     ///
     /// — GraveShift: The running task was popped from the tree (on_rq=false),
     /// so its vruntime must NOT clamp min_vruntime downward. Otherwise a low-
@@ -151,11 +257,10 @@ impl CfsRunQueue {
     /// CFS only uses curr->vruntime when curr->on_rq; we mirror that by using
     /// curr_vruntime only when the tree is empty.
     pub fn update_min_vruntime(&mut self, curr_vruntime: u64) {
-        let min_from_tree = self.tasks.peek().map(|Reverse(e)| e.vruntime);
-
-        let new_min = match min_from_tree {
-            Some(tree_min) => tree_min,
-            None => curr_vruntime,
+        let new_min = if self.len > 0 {
+            self.heap[0].vruntime
+        } else {
+            curr_vruntime
         };
 
         // min_vruntime only increases
@@ -403,5 +508,70 @@ mod tests {
         // Lower weight (higher nice) task: vruntime grows faster
         let delta_low = FairSchedClass::calc_vruntime_delta(1000, NICE_0_WEIGHT / 2);
         assert!(delta_low > 1000);
+    }
+
+    #[test]
+    fn test_cfs_dequeue() {
+        let mut cfs = CfsRunQueue::new();
+
+        cfs.enqueue(1, 1000, 1024);
+        cfs.enqueue(2, 500, 1024);
+        cfs.enqueue(3, 2000, 1024);
+
+        // Dequeue the middle task
+        assert!(cfs.dequeue(1, 1024));
+        assert_eq!(cfs.nr_running(), 2);
+
+        // Remaining should be in order: 2 (vr=500), 3 (vr=2000)
+        assert_eq!(cfs.pick_next(), Some(2));
+        cfs.pop_next(1024);
+        assert_eq!(cfs.pick_next(), Some(3));
+    }
+
+    #[test]
+    fn test_cfs_dequeue_root() {
+        let mut cfs = CfsRunQueue::new();
+
+        cfs.enqueue(1, 500, 1024);
+        cfs.enqueue(2, 1000, 1024);
+        cfs.enqueue(3, 2000, 1024);
+
+        // Dequeue the root (min vruntime)
+        assert!(cfs.dequeue(1, 1024));
+
+        // Next should be pid 2
+        assert_eq!(cfs.pick_next(), Some(2));
+    }
+
+    #[test]
+    fn test_cfs_dequeue_nonexistent() {
+        let mut cfs = CfsRunQueue::new();
+
+        cfs.enqueue(1, 1000, 1024);
+
+        // Dequeue a pid that doesn't exist
+        assert!(!cfs.dequeue(99, 1024));
+        assert_eq!(cfs.nr_running(), 1);
+    }
+
+    #[test]
+    fn test_cfs_heap_integrity_after_many_ops() {
+        let mut cfs = CfsRunQueue::new();
+
+        // Enqueue many tasks in reverse vruntime order
+        for i in (1..=20).rev() {
+            cfs.enqueue(i, (i as u64) * 100, 1024);
+        }
+
+        // Pop all — should come out in ascending vruntime order
+        let mut prev_vr = 0u64;
+        for _ in 0..20 {
+            let pid = cfs.pop_next(1024).unwrap();
+            let vr = (pid as u64) * 100;
+            assert!(vr >= prev_vr, "heap violated: vr={} after prev={}", vr, prev_vr);
+            prev_vr = vr;
+        }
+
+        assert!(cfs.is_empty());
     }
 }

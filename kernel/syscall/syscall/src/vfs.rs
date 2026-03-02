@@ -10,6 +10,7 @@ use alloc::sync::Arc;
 pub use vfs::mount::GLOBAL_VFS;
 pub use vfs::{File, FileFlags, Mode, SeekFrom, VfsError, VnodeType};
 pub use vfs::{epoll, eventfd, memfd};
+pub use vfs::flock::{InodeId, FLOCK_REGISTRY};
 
 use crate::errno;
 use crate::socket;
@@ -1353,5 +1354,109 @@ pub fn sys_fcntl(fd: i32, cmd: i32, arg: u64) -> i64 {
             // Unsupported fcntl command
             errno::EINVAL as i64
         }
+    }
+}
+
+/// sys_flock — Advisory file locking (BSD flock semantics)
+///
+/// — ColdCipher: LOCK_SH=1, LOCK_EX=2, LOCK_NB=4, LOCK_UN=8.
+/// Blocking waits use HLT+kpo like every other civilized blocking syscall.
+/// Returns 0 on success, negative errno on failure.
+pub fn sys_flock(fd: i32, operation: i32) -> i64 {
+    const LOCK_SH: i32 = 1;
+    const LOCK_EX: i32 = 2;
+    const LOCK_NB: i32 = 4;
+    const LOCK_UN: i32 = 8;
+
+    // — ColdCipher: Get the Arc<File> from fd table. This is the identity
+    // that owns the lock — dup'd fds share the same Arc, same lock.
+    let file = match with_current_meta(|meta| meta.fd_table.get_file(fd)) {
+        Some(Some(f)) => f,
+        _ => return errno::EBADF as i64,
+    };
+
+    let stat = match file.stat() {
+        Ok(s) => s,
+        Err(e) => return vfs_error_to_errno(e),
+    };
+    let inode_id = InodeId { dev: stat.dev, ino: stat.ino };
+    let owner_id = file.owner_id();
+
+    let non_blocking = (operation & LOCK_NB) != 0;
+    let op = operation & !LOCK_NB;
+
+    match op {
+        LOCK_UN => {
+            FLOCK_REGISTRY.unlock(inode_id, owner_id);
+            file.clear_flock_held();
+            0
+        }
+        LOCK_SH => {
+            let ret = if non_blocking {
+                match FLOCK_REGISTRY.try_lock_shared(inode_id, owner_id) {
+                    Ok(()) => 0,
+                    Err(e) => vfs_error_to_errno(e),
+                }
+            } else {
+                // — ColdCipher: Blocking shared lock. HLT+kpo until we get it
+                // or a signal rudely interrupts our beauty sleep.
+                sys_flock_blocking(inode_id, owner_id, false)
+            };
+            if ret == 0 { file.mark_flock_held(); }
+            ret
+        }
+        LOCK_EX => {
+            let ret = if non_blocking {
+                match FLOCK_REGISTRY.try_lock_exclusive(inode_id, owner_id) {
+                    Ok(()) => 0,
+                    Err(e) => vfs_error_to_errno(e),
+                }
+            } else {
+                // — ColdCipher: Blocking exclusive lock. Same drill.
+                sys_flock_blocking(inode_id, owner_id, true)
+            };
+            if ret == 0 { file.mark_flock_held(); }
+            ret
+        }
+        _ => {
+            // — ColdCipher: Invalid operation. LOCK_SH|LOCK_EX is not allowed either.
+            errno::EINVAL as i64
+        }
+    }
+}
+
+/// — ColdCipher: Blocking flock wait loop. HLT yields CPU, kpo lets scheduler
+/// preempt us, signals break us out with EINTR. Standard blocking syscall pattern.
+fn sys_flock_blocking(inode_id: InodeId, owner_id: u64, exclusive: bool) -> i64 {
+    use crate::with_current_meta;
+
+    loop {
+        // Try to acquire the lock
+        let result = if exclusive {
+            FLOCK_REGISTRY.try_lock_exclusive(inode_id, owner_id)
+        } else {
+            FLOCK_REGISTRY.try_lock_shared(inode_id, owner_id)
+        };
+
+        match result {
+            Ok(()) => return 0,
+            Err(VfsError::WouldBlock) => {
+                // — ColdCipher: Lock is contended. Check signals, then sleep.
+            }
+            Err(e) => return vfs_error_to_errno(e),
+        }
+
+        // Check for pending signals before sleeping
+        if with_current_meta(|meta| meta.has_pending_signals()).unwrap_or(false) {
+            return errno::EINTR;
+        }
+
+        // — ColdCipher: HLT+kpo pattern. Allow preemption, sleep until
+        // next interrupt, then retry. Same as sys_poll, sys_select, etc.
+        arch_x86_64::allow_kernel_preempt();
+        unsafe {
+            core::arch::asm!("sti", "hlt", options(nomem, nostack));
+        }
+        arch_x86_64::disallow_kernel_preempt();
     }
 }

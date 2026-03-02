@@ -1797,6 +1797,14 @@ fn send_response(data: &[u8]) {
     }
 }
 
+/// — WireSaint: Lock-free write counters for passive diagnostics. No serial
+/// output in the hot path (that caused COM1 mutex deadlock with timer ISR).
+/// Read from perf stats or debug dump: TERMINAL_WRITE_COUNT, TERMINAL_WRITE_BYTES.
+pub static TERMINAL_WRITE_COUNT: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(0);
+pub static TERMINAL_WRITE_BYTES: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(0);
+
 /// Initialize global terminal with framebuffer
 pub fn init(fb: Arc<dyn Framebuffer>) {
     let terminal = TerminalEmulator::new(fb);
@@ -1835,24 +1843,22 @@ pub fn update_framebuffer(fb: Arc<dyn Framebuffer>) {
 ///
 /// Timer ISR tick() handles cursor blink + catch-up for CSI dirty rows.
 pub fn write(data: &[u8]) {
+    // — WireSaint: Lock-free write counter for diagnostics. No serial output here —
+    // that caused COM1 mutex deadlock with timer ISR. Counter readable via
+    // TERMINAL_WRITE_COUNT.load() from perf stats or debug dump.
+    TERMINAL_WRITE_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    TERMINAL_WRITE_BYTES.fetch_add(data.len() as u64, core::sync::atomic::Ordering::Relaxed);
+
     // — SableWire: Enable access to user pages (STAC - Supervisor-Mode Access Prevention Clear)
     unsafe {
         core::arch::asm!("stac", options(nomem, nostack));
     }
 
-    // — GraveShift: Single lock, per-glyph render, flush, release.
-    // write() now paints glyphs inline and flushes the framebuffer before releasing.
     {
-        if let Some(ref mut terminal) = *TERMINAL.lock() {
-            // — GraveShift: [TW] traces gated behind debug-terminal. Unconditional serial writes
-            // on every glyph render saturate 115200 baud and make colors output glacially slow.
-            #[cfg(feature = "debug-terminal")]
-            unsafe { os_log::write_str_raw("[TW] got lock, writing\n"); }
+        let mut guard = TERMINAL.lock();
+
+        if let Some(ref mut terminal) = *guard {
             terminal.write(data);
-            #[cfg(feature = "debug-terminal")]
-            unsafe { os_log::write_str_raw("[TW] done\n"); }
-        } else {
-            unsafe { os_log::write_str_raw("[TW] TERMINAL=None!\n"); }
         }
     }
 
@@ -1924,17 +1930,19 @@ pub fn tick() {
 
 /// Write and immediately render (for urgent/interactive output)
 /// NOTE: data may point to user memory, so we need STAC/CLAC for SMAP
+/// — WireSaint: Same bounded-spin diagnostic pattern as write().
 pub fn write_immediate(data: &[u8]) {
-    // Enable access to user pages (STAC)
     unsafe {
         core::arch::asm!("stac", options(nomem, nostack));
     }
 
-    if let Some(ref mut terminal) = *TERMINAL.lock() {
-        terminal.write_immediate(data);
+    {
+        let mut guard = TERMINAL.lock();
+        if let Some(ref mut terminal) = *guard {
+            terminal.write_immediate(data);
+        }
     }
 
-    // Disable access to user pages (CLAC)
     unsafe {
         core::arch::asm!("clac", options(nomem, nostack));
     }
@@ -2022,6 +2030,18 @@ pub fn mouse_event(
 pub fn flush() {
     if let Some(ref mut terminal) = *TERMINAL.lock() {
         terminal.render();
+    }
+}
+
+/// ISR-safe flush — uses try_lock to avoid deadlock when called from interrupt context.
+/// — WireSaint: VT switch callback runs inside keyboard ISR. If sys_write holds
+/// TERMINAL lock on this CPU, blocking lock() = instant deadlock. try_lock() just
+/// skips the flush — next tick() or write() will pick it up anyway.
+pub fn try_flush() {
+    if let Some(mut guard) = TERMINAL.try_lock() {
+        if let Some(ref mut terminal) = *guard {
+            terminal.render();
+        }
     }
 }
 

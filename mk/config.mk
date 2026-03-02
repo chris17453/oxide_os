@@ -41,7 +41,7 @@ SSH_HOST_PORT ?= $(shell python3 -c 'import socket; s = socket.socket(); s.bind(
 
 # Paths
 TARGET_DIR := target
-KERNEL_TARGET := $(TARGET_DIR)/$(ARCH)-unknown-none/$(PROFILE)/kernel
+KERNEL_TARGET := $(TARGET_DIR)/$(ARCH)-unknown-oxide/$(PROFILE)/kernel
 BOOTLOADER_TARGET := $(TARGET_DIR)/$(ARCH)-unknown-uefi/$(PROFILE)/boot-uefi.efi
 BOOT_DIR := $(TARGET_DIR)/boot
 INITRAMFS := $(TARGET_DIR)/initramfs.cpio
@@ -58,6 +58,12 @@ USERSPACE_OUT := $(TARGET_DIR)/$(USERSPACE_TARGET)/$(PROFILE)
 USERSPACE_OUT_RELEASE := $(TARGET_DIR)/$(USERSPACE_TARGET)/release
 CARGO_USER_FLAGS :=
 RUN_BUILD_USERSPACE ?= 1
+
+# — IronGhost: std-enabled userspace configuration (Rust std via -Zbuild-std)
+USERSPACE_STD_TARGET_JSON := targets/x86_64-unknown-oxide-user.json
+USERSPACE_STD_OUT := $(TARGET_DIR)/x86_64-unknown-oxide-user/$(PROFILE)
+USERSPACE_STD_OUT_RELEASE := $(TARGET_DIR)/x86_64-unknown-oxide-user/release
+OXIDE_SYSROOT := $(TARGET_DIR)/oxide-sysroot
 
 ifeq ($(RUN_BUILD_USERSPACE),1)
 INITRAMFS_PREREQ := userspace-release

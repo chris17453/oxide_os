@@ -202,7 +202,9 @@ pub extern "C" fn syscall_entry() {
         "mov r12, gs:[24]",
         "push r12",
 
-        // === Save to SYSCALL_USER_CONTEXT for fork() ===
+        // === Save to per-CPU SYSCALL_USER_CONTEXT for fork() ===
+        // — GraveShift: gs:[48] holds a pointer to THIS CPU's user context.
+        // No more global — each CPU saves to its own slot. SMP-safe at last.
         // Stack layout after 9 pushes:
         // [rsp+0]  = user R12 (original)
         // [rsp+8]  = R15
@@ -214,7 +216,7 @@ pub extern "C" fn syscall_entry() {
         // [rsp+56] = user RIP
         // [rsp+64] = user RFLAGS
 
-        "lea r13, [{user_ctx}]",
+        "mov r13, gs:[48]",            // per-CPU user context pointer
 
         // RIP, RSP, RFLAGS from stack
         "mov r12, [rsp + 56]",             // User RIP
@@ -316,10 +318,11 @@ pub extern "C" fn syscall_entry() {
         // clean global, then reload the (potentially signal-modified) fields.
         "cli",
 
-        // -- Resave ALL registers to SYSCALL_USER_CONTEXT from pristine sources --
+        // -- Resave ALL registers to per-CPU SYSCALL_USER_CONTEXT from pristine sources --
+        // — GraveShift: gs:[48] = this CPU's context pointer. Under CLI so it's stable.
         // Stack: [R12(0), R15(8), R14(16), R13(24), RBX(32), RBP(40), RSP(48), RIP(56), RFLAGS(64)]
         // Registers: rax=retval, rdx/rsi/rdi/r8/r9/r10 = restored user values
-        "lea r12, [{user_ctx}]",
+        "mov r12, gs:[48]",
         "mov r13, [rsp + 56]", "mov [r12 + 0], r13",     // rip
         "mov r13, [rsp + 48]", "mov [r12 + 8], r13",     // rsp
         "mov r13, [rsp + 64]", "mov [r12 + 16], r13",    // rflags
@@ -344,12 +347,12 @@ pub extern "C" fn syscall_entry() {
         "call {signal_check}",                              // May modify ctx.rip/rsp/rdi
         "pop rax",                                          // Restore return value
 
-        // -- Reload potentially signal-modified fields from global --
+        // -- Reload potentially signal-modified fields from per-CPU context --
         // ⚡ GraveShift: Restore ALL caller-saved registers from user context.
         // The C-ABI signal_check call may clobber RSI, RDX, R8-R10.
         // The x86_64 syscall ABI requires the kernel to preserve every user
         // register except RCX and R11, so we must reload them all here. ⚡
-        "lea r12, [{user_ctx}]",
+        "mov r12, gs:[48]",
         "mov r13, [r12 + 0]",              // ctx.rip (maybe signal-modified)
         "mov [rsp + 56], r13",             // Update stack
         "mov r13, [r12 + 8]",              // ctx.rsp (maybe signal-modified)
@@ -410,7 +413,6 @@ pub extern "C" fn syscall_entry() {
 
         handler = sym syscall_dispatch,
         signal_check = sym syscall_signal_check,
-        user_ctx = sym SYSCALL_USER_CONTEXT,
         sysret_stack_ptr = sym SYSRET_DEBUG_STACK_PTR,
         sysret_rsp = sym SYSRET_DEBUG_RSP,
         sysret_rcx = sym SYSRET_DEBUG_RCX,
@@ -462,15 +464,17 @@ extern "C" fn syscall_signal_check() {
     }
 }
 
-/// Per-CPU syscall data
+/// — GraveShift: Per-CPU syscall data — the thing that makes SMP not crash.
 ///
-/// This must be set up before syscalls can work.
+/// Each CPU gets its own instance via KERNEL_GS_BASE + swapgs.
 /// Fields are accessed at fixed offsets from GS base in assembly:
 /// - offset 0:  kernel_rsp
 /// - offset 8:  scratch_rsp (for saving user RSP)
 /// - offset 16: scratch_rax (for saving syscall number)
 /// - offset 24: scratch_r12 (for saving user R12)
 /// - offset 32: scratch_rcx (for saving user RCX prior to syscall)
+/// - offset 40: cpu_id (logical CPU index, for per-CPU array lookups)
+/// - offset 48: user_ctx_ptr (pointer to this CPU's SyscallUserContext)
 #[repr(C)]
 pub struct SyscallCpuData {
     /// Kernel stack pointer for syscall entry
@@ -483,6 +487,14 @@ pub struct SyscallCpuData {
     pub scratch_r12: u64, // offset 24
     /// Scratch space for original user RCX (saved by libc before syscall)
     pub scratch_rcx: u64, // offset 32
+    /// — GraveShift: Logical CPU ID — identity in the machine, not just a number.
+    /// Read by asm at gs:[40] for per-CPU array indexing.
+    pub cpu_id: u64, // offset 40
+    /// — GraveShift: Pointer to this CPU's SyscallUserContext.
+    /// The asm loads this at gs:[48] instead of using a single global.
+    /// Without this, two CPUs entering syscalls simultaneously would
+    /// clobber each other's saved registers. Ask me how I know.
+    pub user_ctx_ptr: u64, // offset 48
 }
 
 /// User context at syscall entry
@@ -512,26 +524,19 @@ pub struct SyscallUserContext {
     pub r15: u64,
 }
 
-/// Global syscall user context (populated on each syscall entry)
-static mut SYSCALL_USER_CONTEXT: SyscallUserContext = SyscallUserContext {
-    rip: 0,
-    rsp: 0,
-    rflags: 0,
-    rax: 0,
-    rbx: 0,
-    rcx: 0,
-    rdx: 0,
-    rsi: 0,
-    rdi: 0,
-    rbp: 0,
-    r8: 0,
-    r9: 0,
-    r10: 0,
-    r11: 0,
-    r12: 0,
-    r13: 0,
-    r14: 0,
-    r15: 0,
+/// — GraveShift: Per-CPU syscall user contexts — one per silicon core.
+/// The old single global was a ticking SMP time bomb: two CPUs entering
+/// syscalls simultaneously clobbered each other's saved registers.
+/// Process A returns with Process B's RIP/RSP → instant catastrophe.
+const MAX_CPUS: usize = 256;
+
+static mut SYSCALL_USER_CONTEXTS: [SyscallUserContext; MAX_CPUS] = {
+    const INIT: SyscallUserContext = SyscallUserContext {
+        rip: 0, rsp: 0, rflags: 0, rax: 0, rbx: 0, rcx: 0,
+        rdx: 0, rsi: 0, rdi: 0, rbp: 0, r8: 0, r9: 0,
+        r10: 0, r11: 0, r12: 0, r13: 0, r14: 0, r15: 0,
+    };
+    [INIT; MAX_CPUS]
 };
 
 /// Debug: capture values before sysretq
@@ -560,119 +565,129 @@ pub static mut AC_AT_ENTRY: u64 = 0xDEAD;
 
 /// Get the current syscall user context
 ///
-/// This returns the user context at the point of syscall entry.
-/// Only valid when called from within a syscall handler.
+/// — GraveShift: Reads the per-CPU user context pointer from gs:[48].
+/// Each CPU's swapgs loads the right GS base, so this naturally returns
+/// the correct CPU's context. No global races, no clobbering.
+///
+/// Only valid when called from kernel context (after swapgs at syscall/ISR entry).
 pub fn get_user_context() -> SyscallUserContext {
-    use core::ptr::addr_of;
-    unsafe { *addr_of!(SYSCALL_USER_CONTEXT) }
+    let ptr: u64;
+    unsafe {
+        asm!(
+            "mov {}, gs:[48]",
+            out(reg) ptr,
+            options(nostack, preserves_flags, readonly)
+        );
+        *(ptr as *const SyscallUserContext)
+    }
 }
 
 /// Get a mutable reference to the syscall user context
 ///
-/// This allows modifying the context that will be restored on sysret.
-/// Used by signal delivery to redirect to signal handlers.
+/// — GraveShift: Same gs:[48] trick, but mutable. Used by signal delivery
+/// to redirect RIP/RSP to signal handlers before sysret.
 ///
 /// # Safety
-/// Only valid when called from within a syscall handler.
+/// Only valid when called from kernel context (after swapgs).
 /// Caller must ensure modifications are valid for sysret.
 pub unsafe fn get_user_context_mut() -> &'static mut SyscallUserContext {
-    use core::ptr::addr_of_mut;
-    unsafe { &mut *addr_of_mut!(SYSCALL_USER_CONTEXT) }
-}
-
-/// Save user context (called from syscall entry asm)
-///
-/// # Safety
-/// Only called from syscall_entry assembly.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn save_syscall_context(
-    user_rip: u64,
-    user_rsp: u64,
-    user_rflags: u64,
-    syscall_num: u64,
-    arg1: u64, // rdi
-    arg2: u64, // rsi
-    arg3: u64, // rdx
-    arg4: u64, // r10
-    arg5: u64, // r8
-    arg6: u64, // r9
-    rbx: u64,
-    rbp: u64,
-    r12: u64, // Note: this is caller-saved R12, not user RSP
-    r13: u64,
-    r14: u64,
-    r15: u64,
-) {
-    use core::ptr::addr_of_mut;
+    let ptr: u64;
     unsafe {
-        let ctx = addr_of_mut!(SYSCALL_USER_CONTEXT);
-        (*ctx).rip = user_rip;
-        (*ctx).rsp = user_rsp;
-        (*ctx).rflags = user_rflags;
-        (*ctx).rax = syscall_num;
-        (*ctx).rdi = arg1;
-        (*ctx).rsi = arg2;
-        (*ctx).rdx = arg3;
-        (*ctx).r10 = arg4;
-        (*ctx).r8 = arg5;
-        (*ctx).r9 = arg6;
-        (*ctx).rbx = rbx;
-        (*ctx).rbp = rbp;
-        // RCX and R11 are clobbered by syscall, so use user values
-        (*ctx).rcx = user_rip; // RCX had user RIP
-        (*ctx).r11 = user_rflags; // R11 had user RFLAGS
-        (*ctx).r12 = r12;
-        (*ctx).r13 = r13;
-        (*ctx).r14 = r14;
-        (*ctx).r15 = r15;
+        asm!(
+            "mov {}, gs:[48]",
+            out(reg) ptr,
+            options(nostack, preserves_flags, readonly)
+        );
+        &mut *(ptr as *mut SyscallUserContext)
     }
 }
 
-/// Per-CPU syscall data (static for single-CPU; would be per-CPU TLS on SMP)
-static mut CPU_DATA: SyscallCpuData = SyscallCpuData {
-    kernel_rsp: 0,
-    scratch_rsp: 0,
-    scratch_rax: 0,
-    scratch_r12: 0,
-    scratch_rcx: 0,
+/// — GraveShift: Per-CPU syscall data array — each CPU gets its own slot.
+/// KERNEL_GS_BASE on each CPU points to its own entry. swapgs at syscall
+/// entry loads the right one. No more global data races on SMP.
+static mut CPU_DATA_ARRAY: [SyscallCpuData; MAX_CPUS] = {
+    const INIT: SyscallCpuData = SyscallCpuData {
+        kernel_rsp: 0,
+        scratch_rsp: 0,
+        scratch_rax: 0,
+        scratch_r12: 0,
+        scratch_rcx: 0,
+        cpu_id: 0,
+        user_ctx_ptr: 0,
+    };
+    [INIT; MAX_CPUS]
 };
 
-/// Initialize per-CPU syscall data and set up KERNEL_GS_BASE MSR.
+/// Initialize per-CPU syscall data and set up GS_BASE + KERNEL_GS_BASE MSRs.
 ///
-/// This must be called ONCE during kernel initialization (before any syscalls).
-/// It sets the KERNEL_GS_BASE MSR to point to CPU_DATA so that swapgs at
-/// syscall entry loads the correct GS base.
+/// — GraveShift: Each CPU MUST call this before it can handle syscalls OR
+/// context switches. Sets BOTH GS_BASE and KERNEL_GS_BASE to this CPU's
+/// per-CPU data slot.
+///
+/// Why both? Because:
+///   - KERNEL_GS_BASE is loaded into GS_BASE by swapgs at syscall entry
+///   - GS_BASE is used directly by kernel code (set_kernel_stack, gs:[N] access)
+///   - Before the first swapgs, GS_BASE is 0 (AP boot default)
+///   - Timer ISR from kernel mode does NOT swapgs (CS & 3 == 0)
+///   - So set_kernel_stack's `mov gs:[0], reg` writes to address 0 → crash
+///   - Worse: ISR iretq to user DOES swapgs, putting 0 into KERNEL_GS_BASE
+///     → next syscall's swapgs loads 0 → gs:[0] reads address 0 → double death
+///
+/// Setting both to per-CPU makes all swapgs operations effectively no-ops
+/// (swapping identical values). User code uses FS for TLS, not GS, so
+/// having GS_BASE = per-CPU in user mode is harmless.
 ///
 /// # Safety
-/// Must be called with a valid kernel stack pointer, before syscalls are enabled.
-pub unsafe fn init_kernel_stack(kernel_rsp: u64) {
+/// Must be called with a valid kernel stack pointer and correct cpu_id.
+/// Must be called once per CPU during initialization.
+pub unsafe fn init_kernel_stack(cpu_id: u32, kernel_rsp: u64) {
+    const GS_BASE_MSR: u32 = 0xC000_0101;
     const KERNEL_GS_BASE_MSR: u32 = 0xC000_0102;
+
+    let idx = cpu_id as usize;
+    if idx >= MAX_CPUS {
+        return;
+    }
 
     use core::ptr::addr_of_mut;
     unsafe {
-        let cpu_data = addr_of_mut!(CPU_DATA);
-        (*cpu_data).kernel_rsp = kernel_rsp;
+        let array = addr_of_mut!(CPU_DATA_ARRAY);
+        let entry = &mut (*array)[idx];
+        entry.kernel_rsp = kernel_rsp;
+        entry.cpu_id = cpu_id as u64;
 
-        // Set KERNEL_GS_BASE to point to our CPU data
-        // This will be swapped in on syscall entry via swapgs
-        wrmsr(KERNEL_GS_BASE_MSR, cpu_data as u64);
+        let ctxs = addr_of_mut!(SYSCALL_USER_CONTEXTS);
+        entry.user_ctx_ptr = &(*ctxs)[idx] as *const SyscallUserContext as u64;
+
+        let percpu_addr = entry as *const SyscallCpuData as u64;
+
+        // — GraveShift: Set BOTH MSRs to per-CPU data.
+        // GS_BASE: immediate kernel gs:[N] access (set_kernel_stack, context switch)
+        // KERNEL_GS_BASE: swapgs at syscall/ISR entry loads this into GS_BASE
+        // Both must be per-CPU or the first timer ISR swapgs corrupts everything.
+        wrmsr(GS_BASE_MSR, percpu_addr);
+        wrmsr(KERNEL_GS_BASE_MSR, percpu_addr);
     }
 }
 
 /// Update the kernel stack pointer for the current task.
 ///
-/// Called during context switches to ensure syscall_entry uses the correct
-/// kernel stack for the newly-scheduled task. Only updates CPU_DATA.kernel_rsp;
-/// does NOT rewrite the KERNEL_GS_BASE MSR (which would destroy the saved
-/// user GS base if called while in a syscall context where swapgs has already
-/// been performed).
+/// — GraveShift: Writes directly via gs:[0] — naturally per-CPU because
+/// each CPU's KERNEL_GS_BASE points at its own CPU_DATA_ARRAY entry.
+/// Called during context switches so the next syscall on this CPU uses
+/// the newly-scheduled task's kernel stack.
+///
+/// Does NOT rewrite KERNEL_GS_BASE (that would destroy the saved user GS
+/// base if we're inside a swapgs context).
 ///
 /// # Safety
-/// Must be called with a valid kernel stack pointer.
+/// Must be called from kernel context (after swapgs) with a valid kernel stack pointer.
 pub unsafe fn set_kernel_stack(kernel_rsp: u64) {
-    use core::ptr::addr_of_mut;
     unsafe {
-        let cpu_data = addr_of_mut!(CPU_DATA);
-        (*cpu_data).kernel_rsp = kernel_rsp;
+        asm!(
+            "mov gs:[0], {}",
+            in(reg) kernel_rsp,
+            options(nostack, preserves_flags)
+        );
     }
 }

@@ -125,7 +125,7 @@ impl VtManager {
                             os_log::write_str_raw(" ->CW\n");
                             write_fn(data);
                         } else {
-                            unsafe { os_log::write_str_raw("[VTD] NO-CB!\n"); }
+                            os_log::write_str_raw("[VTD] NO-CB!\n");
                         }
                     }
                 } else {
@@ -181,18 +181,33 @@ impl VtManager {
     }
 
     /// Switch to a different VT
+    ///
+    /// — WireSaint: Uses try_write() because this is called from ISR context
+    /// (keyboard interrupt → Alt+F1-F6). Blocking ACTIVE_VT.write() in ISR
+    /// deadlocks when sys_write holds ACTIVE_VT.read() on the same CPU.
+    /// If the RwLock is contended, we bail — the switch just doesn't happen
+    /// this interrupt cycle. User presses Alt+F2 again and it works.
     pub fn switch_to(&self, vt_num: usize) -> bool {
         if vt_num >= NUM_VTS {
             return false;
         }
 
-        let mut active = ACTIVE_VT.write();
+        // — WireSaint: try_write() — ISR-safe. Never block in interrupt context.
+        let mut active = match ACTIVE_VT.try_write() {
+            Some(guard) => guard,
+            None => {
+                // RwLock contended (reader on another CPU or same CPU interrupted)
+                // — WireSaint: silent bail. VT switch deferred until next keypress.
+                return false;
+            }
+        };
+
         if *active != vt_num {
             *active = vt_num;
 
-            // 🔥 PRIORITY #2 FIX - VT switch screen buffer notification 🔥
             // Notify terminal emulator to switch screen buffer and force full redraw
-            // This prevents stale screen state when switching to/from vim on different VTs
+            // — WireSaint: VT_SWITCH_CALLBACK (terminal_vt_switch_callback) also uses
+            // try_lock internally now — no blocking locks anywhere in this ISR path.
             unsafe {
                 if let Some(callback) = VT_SWITCH_CALLBACK {
                     callback(vt_num);

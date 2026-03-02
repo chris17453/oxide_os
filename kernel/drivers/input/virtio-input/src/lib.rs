@@ -544,8 +544,10 @@ impl VirtioInput {
             queue.add_available(desc_idx as u16);
         }
 
-        // — InputShade: trace event processing — hunting the 256M keyboard death.
-        // Shows total events lifetime + avail ring state after recycle.
+        // — InputShade: trace event processing — gated behind debug-input.
+        // Fires on every keypress in ISR context. Was unconditional, adding serial
+        // traffic during keyboard bursts that competed with syscall tracing.
+        #[cfg(feature = "debug-input")]
         if count > 0 {
             use core::sync::atomic::{AtomicU64, Ordering as AtOrd};
             static TOTAL_EVENTS: AtomicU64 = AtomicU64::new(0);

@@ -41,7 +41,7 @@ class GDBController:
     def _find_kernel_binary(self):
         """Find the kernel binary in target directory."""
         repo_root = Path(__file__).parent.parent
-        kernel_path = repo_root / "target/x86_64-unknown-none/debug/kernel"
+        kernel_path = repo_root / "target/x86_64-unknown-oxide/debug/kernel"
         if not kernel_path.exists():
             raise FileNotFoundError(f"Kernel binary not found at {kernel_path}")
         return str(kernel_path)

@@ -5,8 +5,3 @@ edition = "2021"
 
 [dependencies]
 libc = { path = "../../libs/libc" }
-
-[profile.release]
-panic = "abort"
-opt-level = "z"
-lto = true

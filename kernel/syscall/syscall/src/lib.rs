@@ -106,6 +106,8 @@ pub mod nr {
     pub const SETGID: u64 = 19;
     pub const SETEUID: u64 = 140;
     pub const SETEGID: u64 = 141;
+    /// — ColdCipher: Advisory file locking, finally
+    pub const FLOCK: u64 = 143;
 
     // Thread syscalls
     pub const CLONE: u64 = 56; // Create thread/process
@@ -574,8 +576,11 @@ pub fn dispatch(
         tsc
     };
 
-    // — GraveShift: syscall entry trace — hunting the 256M ghost
-    // Include PID to identify which process is calling
+    // — GraveShift: syscall entry trace — gated behind debug-syscall.
+    // Was unconditional, causing serial saturation when top hammered /proc
+    // with 20+ opens per refresh. Each trace = serial write + blocking
+    // current_pid(). 40+ serial lines per refresh cycle = 115200 baud death.
+    #[cfg(feature = "debug-syscall")]
     if number == nr::OPEN || number == nr::WRITE || number == nr::DUP2 || number == nr::SETPGID || number == nr::EXIT {
         let pid = sched::current_pid().unwrap_or(99) as u8;
         unsafe {
@@ -662,6 +667,7 @@ pub fn dispatch(
         // TTY/device syscalls
         nr::IOCTL => vfs::sys_ioctl(arg1 as i32, arg2, arg3),
         nr::FCNTL => vfs::sys_fcntl(arg1 as i32, arg2 as i32, arg3),
+        nr::FLOCK => vfs::sys_flock(arg1 as i32, arg2 as i32),
         nr::SETKEYMAP => sys_setkeymap(arg1, arg2 as usize),
         nr::GETKEYMAP => sys_getkeymap(arg1, arg2 as usize),
 
@@ -1000,7 +1006,8 @@ pub fn dispatch(
         }
     }
 
-    // — GraveShift: trace open/dup2 return values to catch fd failures
+    // — GraveShift: trace open/dup2 return values — gated behind debug-syscall.
+    #[cfg(feature = "debug-syscall")]
     if number == nr::OPEN || number == nr::DUP2 {
         let pid = sched::current_pid().unwrap_or(99) as u8;
         unsafe {
@@ -1086,6 +1093,7 @@ fn syscall_name(num: u64) -> &'static str {
         // TTY/Device
         nr::IOCTL => "ioctl",
         nr::FCNTL => "fcntl",
+        nr::FLOCK => "flock",
 
         // Poll/Select
         nr::POLL => "poll",
@@ -1634,6 +1642,7 @@ fn sys_waitpid(pid: i32, status_ptr: u64, options: i32) -> i64 {
         }
     }
 
+    #[cfg(feature = "debug-proc")]
     unsafe {
         os_log::write_str_raw("[WAIT] sys_waitpid caller=");
         trace_u64(current_pid() as u64);
@@ -1658,6 +1667,7 @@ fn sys_waitpid(pid: i32, status_ptr: u64, options: i32) -> i64 {
                 if status_ptr != 0 {
                     let _ = write_user_i32(status_ptr, status);
                 }
+                #[cfg(feature = "debug-proc")]
                 unsafe {
                     os_log::write_str_raw("[WAIT] sys_waitpid ret child=");
                     trace_i32(child_pid);
@@ -1668,6 +1678,7 @@ fn sys_waitpid(pid: i32, status_ptr: u64, options: i32) -> i64 {
 
                 return child_pid as i64;
             }
+            #[cfg(feature = "debug-proc")]
             unsafe {
                 os_log::write_str_raw("[WAIT] sys_waitpid ret err=");
                 trace_u64(result as u64);

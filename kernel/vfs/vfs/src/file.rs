@@ -3,11 +3,12 @@
 //! Represents an open file with position and flags.
 
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use bitflags::bitflags;
 
 use crate::error::{VfsError, VfsResult};
+use crate::flock::{self, InodeId};
 use crate::vnode::VnodeOps;
 
 bitflags! {
@@ -79,6 +80,14 @@ pub struct File {
     /// Reference to mount's open file counter (for unmount safety)
     /// WireSaint: Holds mount open while file is open, prevents premature unmount
     mount_ref_count: Option<Arc<AtomicUsize>>,
+    /// — ColdCipher: Unique identity for advisory file locking.
+    /// Each Arc<File> gets its own owner_id at birth. dup()/fork() share
+    /// the Arc, so they share the lock. Last close releases it.
+    owner_id: u64,
+    /// — ColdCipher: Set to true when this file holds an advisory lock.
+    /// Avoids stat()+spin::Mutex on every close for the 99.99% of files
+    /// that never call flock(). SMP can't afford that tax.
+    has_flock: AtomicBool,
 }
 
 impl File {
@@ -89,6 +98,8 @@ impl File {
             position: AtomicU64::new(0),
             flags: AtomicU32::new(flags.bits()),
             mount_ref_count: None,
+            owner_id: flock::next_owner_id(),
+            has_flock: AtomicBool::new(false),
         }
     }
 
@@ -107,12 +118,31 @@ impl File {
             position: AtomicU64::new(0),
             flags: AtomicU32::new(flags.bits()),
             mount_ref_count: Some(mount_ref),
+            owner_id: flock::next_owner_id(),
+            has_flock: AtomicBool::new(false),
         }
     }
 
     /// Get the vnode
     pub fn vnode(&self) -> &Arc<dyn VnodeOps> {
         &self.vnode
+    }
+
+    /// — ColdCipher: Get the unique owner ID for advisory file locking.
+    /// This is the identity used by FlockRegistry to track who holds what.
+    pub fn owner_id(&self) -> u64 {
+        self.owner_id
+    }
+
+    /// — ColdCipher: Mark this file as holding an advisory lock.
+    /// Called by sys_flock when a lock is acquired. Enables Drop cleanup.
+    pub fn mark_flock_held(&self) {
+        self.has_flock.store(true, Ordering::Relaxed);
+    }
+
+    /// — ColdCipher: Clear the flock flag (on explicit LOCK_UN).
+    pub fn clear_flock_held(&self) {
+        self.has_flock.store(false, Ordering::Relaxed);
     }
 
     // — GraveShift: raw COM1 diag when read() hits a not-readable fd
@@ -294,8 +324,20 @@ impl File {
 }
 
 /// WireSaint: Decrement mount's open file counter when File is dropped
+/// — ColdCipher: Also release any advisory flock held by this file description.
+/// This is the "last close releases the lock" guarantee from POSIX.
 impl Drop for File {
     fn drop(&mut self) {
+        // — ColdCipher: Only touch the flock registry if this file actually
+        // holds a lock. Avoids stat() + spin::Mutex on every close.
+        // SMP with 4 CPUs closing fds during exec/fork can't afford that.
+        if *self.has_flock.get_mut() {
+            if let Ok(st) = self.vnode.stat() {
+                let inode_id = InodeId { dev: st.dev, ino: st.ino };
+                flock::FLOCK_REGISTRY.unlock(inode_id, self.owner_id);
+            }
+        }
+
         if let Some(ref counter) = self.mount_ref_count {
             counter.fetch_sub(1, Ordering::Relaxed);
         }

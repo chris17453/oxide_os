@@ -102,13 +102,12 @@ fn vt_switch_callback(vt_num: usize) {
 }
 
 /// Callback for VT switch notification to terminal emulator
-/// 🔥 PRIORITY #2 FIX - VT switch screen buffer notification 🔥
-/// Called after VT switch completes to force terminal redraw
+/// — WireSaint: Called from ISR context (keyboard IRQ → Alt+F1-F6 → vt::switch_to).
+/// MUST use try_flush() — blocking flush() deadlocks if sys_write holds TERMINAL lock
+/// on the same CPU. If try_lock fails, the next tick() or write() will render anyway.
 fn terminal_vt_switch_callback(_vt_num: usize) {
-    // Force terminal to flush/redraw on VT switch
-    // This prevents stale screen state when switching to/from vim
     if terminal::is_initialized() {
-        terminal::flush();
+        terminal::try_flush();
     }
 }
 
@@ -1914,8 +1913,9 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Set kernel stack for:
     // 1. Syscalls (stored in GS base for syscall handler)
     // 2. Interrupts (TSS.RSP0 for privilege level changes)
+    // — GraveShift: BSP = cpu 0. Each CPU needs its own per-CPU syscall data.
     unsafe {
-        arch::syscall::init_kernel_stack(kernel_stack_top);
+        arch::syscall::init_kernel_stack(0, kernel_stack_top);
     }
     arch::gdt::set_kernel_stack(kernel_stack_top); // TSS.RSP0 for interrupts
 

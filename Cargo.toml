@@ -113,6 +113,7 @@ members = [
     "userspace/coreutils",
     # userspace/libs — shared libraries
     "userspace/libs/libc",
+    "userspace/libs/oxide-rt",
     "userspace/libs/oxide-std",
     "userspace/libs/compression",
     "userspace/libs/termcap",
@@ -142,6 +143,7 @@ members = [
     "userspace/apps/doom",
     "userspace/apps/htop",
     # userspace/tests — test harnesses
+    "userspace/tests/hello-std",
     "userspace/tests/syscall-tests",
     "userspace/tests/evtest",
     "userspace/tests/argtest",

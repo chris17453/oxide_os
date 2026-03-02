@@ -37,6 +37,25 @@ pub fn ap_init_callback(apic_id: u8) -> ! {
     // If we couldn't resolve the CPU ID, halt safely
     let cpu_id = cpu_id.unwrap_or(0);
 
+    // — GraveShift: CRITICAL SMP FIX — each AP must initialize its own syscall
+    // infrastructure. Without this, the first userspace syscall on this CPU:
+    //   1. Has EFER.SCE unset → syscall instruction #UDs
+    //   2. Has LSTAR=0 → RIP jumps to 0 on syscall
+    //   3. Has KERNEL_GS_BASE=0 → swapgs loads garbage → RSP = trash → death
+    // The old code only called these on the BSP, which is why SMP booted ~50%
+    // of the time (tasks that never got scheduled on APs were fine).
+    unsafe {
+        // Set EFER.SCE, STAR, LSTAR, SFMASK for this CPU's syscall instruction
+        arch::syscall::init();
+
+        // Set KERNEL_GS_BASE to this CPU's per-CPU data slot.
+        // Use current RSP as initial kernel stack — the scheduler will overwrite
+        // it with the real task stack on the first context switch via set_kernel_stack().
+        let boot_rsp: u64;
+        core::arch::asm!("mov {}, rsp", out(reg) boot_rsp, options(nostack, nomem));
+        arch::syscall::init_kernel_stack(cpu_id, boot_rsp);
+    }
+
     // Initialize scheduler structures for this CPU and set per-CPU ID
     sched::set_this_cpu(cpu_id);
     sched::init_cpu(cpu_id, 0);

@@ -49,7 +49,7 @@ boot-image: boot-dir
 # - Partition 2 (root): ext4, mounted at / - OS files
 # - Partition 3 (home): ext4, mounted at /home - user data
 # - /tmp is tmpfs (in-memory)
-create-rootfs: kernel bootloader external-binaries initramfs
+create-rootfs: kernel bootloader external-binaries initramfs userspace-std
 	@echo "Creating OXIDE root filesystem disk image..."
 	@echo ""
 	@# Create empty disk image
@@ -118,6 +118,14 @@ create-rootfs: kernel bootloader external-binaries initramfs
 		[ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/$$prog" $(TARGET_DIR)/mnt/root/usr/bin/ || true; \
 	done && \
 	sudo cp userspace/apps/gwbasic/examples/*.bas $(TARGET_DIR)/mnt/root/usr/share/gwbasic/ 2>/dev/null || true; \
+	echo "  Copying std userspace binaries (if any)..." && \
+	for prog in hello-std; do \
+		if [ -f "$(USERSPACE_STD_OUT)/$$prog" ]; then \
+			sudo cp "$(USERSPACE_STD_OUT)/$$prog" $(TARGET_DIR)/mnt/root/usr/bin/ && echo "    Installed $$prog (std)"; \
+		elif [ -f "$(USERSPACE_STD_OUT_RELEASE)/$$prog" ]; then \
+			sudo cp "$(USERSPACE_STD_OUT_RELEASE)/$$prog" $(TARGET_DIR)/mnt/root/usr/bin/ && echo "    Installed $$prog (std-release)"; \
+		fi; \
+	done; \
 	[ -f "$(USERSPACE_OUT_RELEASE)/tls-test" ] && echo "TLS test installed" || true; \
 	[ -f "$(USERSPACE_OUT_RELEASE)/vim" ] && echo "vim installed" || true; \
 	[ -f "$(USERSPACE_OUT_RELEASE)/python" ] && echo "Python installed" || true; \
@@ -162,7 +170,6 @@ create-rootfs: kernel bootloader external-binaries initramfs
 	printf "nameserver 8.8.8.8\nnameserver 8.8.4.4\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/resolv.conf > /dev/null && \
 	printf "# /etc/hosts - static hostname-to-IP mappings\n127.0.0.1       localhost localhost.localdomain\n::1             localhost localhost.localdomain ip6-localhost ip6-loopback\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/hosts > /dev/null && \
 	printf "# /etc/vconsole.conf - console keyboard and font configuration\n# KEYMAP: keyboard layout (us, uk, de, fr)\n# Use 'loadkeys -l' to list available layouts\nKEYMAP=us\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/vconsole.conf > /dev/null && \
-	printf "root\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/autologin > /dev/null && \
 	sudo umount $(TARGET_DIR)/mnt/root && \
 	\
 	echo "Populating /home..." && \

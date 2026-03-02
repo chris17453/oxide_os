@@ -62,3 +62,42 @@ endif
 userspace-pkg:
 	@if [ -z "$(PKG)" ]; then echo "Usage: make userspace-pkg PKG=<package>"; exit 1; fi
 	cargo build --package $(PKG) --target $(USERSPACE_TARGET) $(CARGO_USER_FLAGS)
+
+# — IronGhost: Build a single std-enabled userspace package
+# Uses -Zbuild-std to compile Rust's std with OXIDE PAL support.
+# Requires: scripts/setup-std-source.sh has been run first.
+# Usage: make userspace-std-pkg PKG=hello-std
+.PHONY: userspace-std-pkg setup-std-source
+
+setup-std-source:
+	@if [ ! -d "$(OXIDE_SYSROOT)" ]; then \
+		echo "Setting up std source (first time)..."; \
+		./scripts/setup-std-source.sh; \
+	fi
+
+userspace-std-pkg: setup-std-source
+	@if [ -z "$(PKG)" ]; then echo "Usage: make userspace-std-pkg PKG=<package>"; exit 1; fi
+	@echo "Building $(PKG) with Rust std..."
+	__CARGO_TESTS_ONLY_SRC_ROOT=$(CURDIR)/rust-std/library \
+	RUSTC_BOOTSTRAP=1 \
+	RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static \
+		-C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" \
+	cargo +nightly build --package $(PKG) \
+		--target $(USERSPACE_STD_TARGET_JSON) \
+		-Zbuild-std=std,panic_abort \
+		-Zbuild-std-features=compiler-builtins-mem \
+		$(CARGO_USER_FLAGS)
+
+# Build hello-std (std userspace test program)
+.PHONY: userspace-std
+userspace-std:
+	@echo "Building std userspace binaries..."
+	__CARGO_TESTS_ONLY_SRC_ROOT=$(CURDIR)/rust-std/library \
+	RUSTC_BOOTSTRAP=1 \
+	RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static \
+		-C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" \
+	cargo build --package hello-std \
+		--target $(USERSPACE_STD_TARGET_JSON) \
+		-Zbuild-std=std,panic_abort \
+		-Zbuild-std-features=compiler-builtins-mem \
+		$(CARGO_USER_FLAGS)

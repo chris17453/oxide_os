@@ -1,0 +1,16 @@
+# — IronGhost: The bridge between Rust's std and OXIDE's syscalls.
+# This crate exists so std can call into OXIDE without depending on libc.
+# Break the dependency chain or die trying.
+
+[package]
+name = "oxide-rt"
+version = "0.1.0"
+edition = "2024"
+description = "OXIDE OS runtime for Rust std support"
+
+[features]
+default = []
+rustc-dep-of-std = ["core"]
+
+[dependencies]
+core = { version = "1.0.0", optional = true, package = "rustc-std-workspace-core" }

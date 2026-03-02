@@ -144,6 +144,7 @@ pub fn add_process(_pid: u32) {
 ///
 /// Called when a process exits.
 pub fn remove_process(pid: u32) {
+    #[cfg(feature = "debug-proc")]
     unsafe {
         os_log::write_str_raw("[WAIT] reap pid=");
         if pid == 0 {
@@ -1094,13 +1095,17 @@ pub fn check_signals_on_syscall_return() {
     // clobber it while we sleep. Save it to the kernel stack (per-task) and
     // restore after we're switched back in.
     if sched::need_resched() {
-        // — GraveShift: Trace syscall-return yields to see who's being preempted
-        let _dbg_pid = sched::current_pid().unwrap_or(99) as u8;
-        unsafe {
-            os_log::write_str_raw("[SCR] p=");
-            if _dbg_pid >= 10 { os_log::write_byte_raw(b'0' + (_dbg_pid / 10)); }
-            os_log::write_byte_raw(b'0' + (_dbg_pid % 10));
-            os_log::write_str_raw("\n");
+        // — GraveShift: Trace syscall-return yields — gated behind debug-syscall.
+        // Fires on every preemption point, saturates serial when top runs.
+        #[cfg(feature = "debug-syscall")]
+        {
+            let _dbg_pid = sched::current_pid().unwrap_or(99) as u8;
+            unsafe {
+                os_log::write_str_raw("[SCR] p=");
+                if _dbg_pid >= 10 { os_log::write_byte_raw(b'0' + (_dbg_pid / 10)); }
+                os_log::write_byte_raw(b'0' + (_dbg_pid % 10));
+                os_log::write_str_raw("\n");
+            }
         }
         let saved_ctx = unsafe { *arch::syscall::get_user_context_mut() };
 
@@ -1110,7 +1115,8 @@ pub fn check_signals_on_syscall_return() {
         }
         arch::disallow_kernel_preempt();
 
-        // — GraveShift: Resumed from yield. Trace to confirm p=3 wakeup.
+        // — GraveShift: Resumed from yield — gated behind debug-syscall.
+        #[cfg(feature = "debug-syscall")]
         unsafe {
             let _r_pid = sched::current_pid().unwrap_or(99) as u8;
             os_log::write_str_raw("[SCR] resume p=");

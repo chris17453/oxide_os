@@ -1,0 +1,9 @@
+# — CrashBloom: The proof that std works on OXIDE OS.
+# If this prints "Hello from OXIDE std!", we've won.
+
+[package]
+name = "hello-std"
+version = "0.1.0"
+edition = "2024"
+
+# No dependencies needed — std provides everything!

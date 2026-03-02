@@ -131,7 +131,26 @@ fn with_rq<F, R>(cpu: u32, f: F) -> Option<R>
 where
     F: FnOnce(&mut RunQueue) -> R,
 {
-    let mut rq_slot = RUN_QUEUES[cpu as usize].lock();
+    // — WireSaint: Bounded spin with deadlock detection on RQ lock.
+    // Timer ISR uses try_with_rq so it shouldn't hold this. But if
+    // we're spinning here, something is fundamentally wrong.
+    let mut rq_slot = {
+        let mut spins: u32 = 0;
+        loop {
+            if let Some(g) = RUN_QUEUES[cpu as usize].try_lock() {
+                break g;
+            }
+            spins += 1;
+            if spins == 50_000_000 {
+                unsafe { arch_x86_64::serial::write_str_unsafe("[DEADLOCK?] RQ.lock spin>50M\n"); }
+            }
+            if spins > 100_000_000 {
+                unsafe { arch_x86_64::serial::write_str_unsafe("[DEADLOCK] RQ falling to .lock()\n"); }
+                break RUN_QUEUES[cpu as usize].lock();
+            }
+            core::hint::spin_loop();
+        }
+    };
     rq_slot.as_mut().map(f)
 }
 
@@ -655,6 +674,27 @@ pub fn get_task_state(pid: Pid) -> Option<TaskState> {
             continue;
         }
         if let Some(state) = with_rq(other, |rq| rq.get_task(pid).map(|t| t.state)).flatten() {
+            return Some(state);
+        }
+    }
+    None
+}
+
+/// Non-blocking variant of get_task_state for diagnostic contexts (procfs).
+///
+/// — GraveShift: ProcStat and ProcLoadavg loop all PIDs calling this per-PID.
+/// Blocking with_rq in a loop = contention nightmare on SMP. Returns None
+/// on contention — procfs just undercounts running/blocked by one process.
+pub fn try_get_task_state(pid: Pid) -> Option<TaskState> {
+    let cpu = this_cpu();
+    if let Some(state) = try_with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.state)).flatten() {
+        return Some(state);
+    }
+    for other in 0..num_cpus() {
+        if other == cpu {
+            continue;
+        }
+        if let Some(state) = try_with_rq(other, |rq| rq.get_task(pid).map(|t| t.state)).flatten() {
             return Some(state);
         }
     }
@@ -1349,6 +1389,31 @@ pub fn get_task_meta(pid: Pid) -> Option<Arc<Mutex<ProcessMeta>>> {
     None
 }
 
+/// Non-blocking variant of get_task_meta for diagnostic contexts (procfs).
+///
+/// — GraveShift: procfs hammers this for every PID in /proc. Using blocking
+/// with_rq() here caused brutal contention on SMP — four CPUs fighting over
+/// RQ spinlocks 240 times per `top` refresh. Returns None on contention;
+/// procfs just shows empty/stale data for that process. Better than locking
+/// up the entire system.
+pub fn try_get_task_meta(pid: Pid) -> Option<Arc<Mutex<ProcessMeta>>> {
+    let cpu = this_cpu();
+    if let Some(meta) = try_with_rq(cpu, |rq| rq.get_task(pid).and_then(|t| t.meta.clone())).flatten() {
+        return Some(meta);
+    }
+    for other in 0..num_cpus() {
+        if other == cpu {
+            continue;
+        }
+        if let Some(meta) =
+            try_with_rq(other, |rq| rq.get_task(pid).and_then(|t| t.meta.clone())).flatten()
+        {
+            return Some(meta);
+        }
+    }
+    None
+}
+
 /// Get process metadata for the current task
 ///
 /// — GraveShift: Ultra-fast path. The current task is ALWAYS on this_cpu()'s RQ.
@@ -1380,8 +1445,26 @@ where
     F: FnOnce(&ProcessMeta) -> R,
 {
     let meta_arc = get_current_meta()?;
-    // Keep the guard alive for the entire closure execution
-    let guard = meta_arc.lock();
+    // — WireSaint: Bounded spin with deadlock detection on ProcessMeta lock.
+    // ISR signal delivery uses try_lock so it shouldn't contend long,
+    // but SMP timing can surprise you at 3 AM.
+    let guard = {
+        let mut spins: u32 = 0;
+        loop {
+            if let Some(g) = meta_arc.try_lock() {
+                break g;
+            }
+            spins += 1;
+            if spins == 50_000_000 {
+                unsafe { arch_x86_64::serial::write_str_unsafe("[DEADLOCK?] ProcessMeta.lock spin>50M\n"); }
+            }
+            if spins > 100_000_000 {
+                unsafe { arch_x86_64::serial::write_str_unsafe("[DEADLOCK] ProcessMeta falling to .lock()\n"); }
+                break meta_arc.lock();
+            }
+            core::hint::spin_loop();
+        }
+    };
     // Dereference the guard to get &ProcessMeta
     let meta_ref: &ProcessMeta = &*guard;
 
@@ -1404,9 +1487,24 @@ where
     F: FnOnce(&mut ProcessMeta) -> R,
 {
     let meta_arc = get_current_meta()?;
-    // Keep the guard alive for the entire closure execution
-    let mut guard = meta_arc.lock();
-    // Dereference the guard to get &mut ProcessMeta
+    // — WireSaint: Bounded spin with deadlock detection
+    let mut guard = {
+        let mut spins: u32 = 0;
+        loop {
+            if let Some(g) = meta_arc.try_lock() {
+                break g;
+            }
+            spins += 1;
+            if spins == 50_000_000 {
+                unsafe { arch_x86_64::serial::write_str_unsafe("[DEADLOCK?] ProcessMeta_mut spin>50M\n"); }
+            }
+            if spins > 100_000_000 {
+                unsafe { arch_x86_64::serial::write_str_unsafe("[DEADLOCK] ProcessMeta_mut falling to .lock()\n"); }
+                break meta_arc.lock();
+            }
+            core::hint::spin_loop();
+        }
+    };
     let meta_ref: &mut ProcessMeta = &mut *guard;
     Some(f(meta_ref))
 }
@@ -1557,14 +1655,35 @@ pub fn get_task_ppid(pid: Pid) -> Option<Pid> {
     None
 }
 
+/// Non-blocking variant of get_task_ppid for diagnostic contexts (procfs).
+///
+/// — GraveShift: Same deal as try_get_task_state. Returns None on contention
+/// rather than spinning on RQ locks. Procfs shows ppid=0 on contention.
+pub fn try_get_task_ppid(pid: Pid) -> Option<Pid> {
+    let cpu = this_cpu();
+    if let Some(ppid) = try_with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.ppid)).flatten() {
+        return Some(ppid);
+    }
+    for other in 0..num_cpus() {
+        if other == cpu {
+            continue;
+        }
+        if let Some(ppid) = try_with_rq(other, |rq| rq.get_task(pid).map(|t| t.ppid)).flatten() {
+            return Some(ppid);
+        }
+    }
+    None
+}
+
 /// Get task timing info for /proc/[pid]/stat
 /// Returns (state, ppid, start_time, sum_exec_runtime, nice)
 ///
-/// — GraveShift: Fast-path this_cpu(). Procfs reads /proc/[pid]/stat for every process
-/// in `top` — this cuts lock contention from O(N*CPUs) to O(N).
+/// — GraveShift: Non-blocking. Only called from procfs which hammers this
+/// for every PID. Blocking with_rq() on 4 CPUs × N processes = deadlock city.
+/// Returns None on contention — procfs just skips the process this cycle.
 pub fn get_task_timing_info(pid: Pid) -> Option<(TaskState, Pid, u64, u64, i8)> {
     let cpu = this_cpu();
-    if let Some(info) = with_rq(cpu, |rq| {
+    if let Some(info) = try_with_rq(cpu, |rq| {
         rq.get_task(pid)
             .map(|t| (t.state, t.ppid, t.start_time, t.sum_exec_runtime, t.nice))
     })
@@ -1576,7 +1695,7 @@ pub fn get_task_timing_info(pid: Pid) -> Option<(TaskState, Pid, u64, u64, i8)> 
         if other == cpu {
             continue;
         }
-        if let Some(info) = with_rq(other, |rq| {
+        if let Some(info) = try_with_rq(other, |rq| {
             rq.get_task(pid)
                 .map(|t| (t.state, t.ppid, t.start_time, t.sum_exec_runtime, t.nice))
         })

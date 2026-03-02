@@ -3,6 +3,10 @@ name = "virtio-input"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+debug-input = []  # Enable VirtIO input event tracing
+
 [dependencies]
 input = { path = "../../../input/input" }
 pci = { path = "../../pci" }

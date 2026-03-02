@@ -104,7 +104,7 @@ done
 echo
 echo "[6/6] Checking kernel binary..."
 
-if [ -f "target/x86_64-unknown-none/debug/kernel" ]; then
+if [ -f "target/x86_64-unknown-oxide/debug/kernel" ]; then
     echo "  ✓ Kernel binary found"
 else
     echo "  ⚠ Kernel binary not found (run 'make build' first)"

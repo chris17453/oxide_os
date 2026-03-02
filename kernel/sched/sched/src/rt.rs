@@ -2,22 +2,32 @@
 //!
 //! Implements FIFO and Round-Robin real-time scheduling policies.
 //! RT tasks always preempt fair (CFS) tasks.
+//!
+//! — BlackLatch: Fixed-capacity per-priority FIFO queues. The old VecDeque
+//! could trigger realloc → HEAP_ALLOCATOR.lock() inside timer ISR context,
+//! same class of deadlock as the CFS BinaryHeap bug. Every operation here
+//! is ISR-safe — no dynamic allocation, ever.
 
-extern crate alloc;
-
-use alloc::collections::VecDeque;
 use sched_traits::{Pid, RT_PRIO_MAX, RunQueueOps, SchedClass, SchedPolicy};
 
 /// Number of RT priority levels (1-99)
 const RT_PRIO_LEVELS: usize = 99;
 
+/// — BlackLatch: Max RT tasks per priority level. 8 RT tasks at the same
+/// priority on a single CPU is already extreme. If you hit this, your
+/// RT design needs a rethink, not a bigger array.
+const MAX_RT_PER_PRIO: usize = 8;
+
 /// Real-time run queue
 ///
-/// Contains per-priority queues and a bitmap for O(1) lookup of
-/// the highest priority non-empty queue.
+/// Contains per-priority FIFO queues backed by fixed-size arrays and
+/// a bitmap for O(1) lookup of the highest priority non-empty queue.
 pub struct RtRunQueue {
     /// Per-priority FIFO queues (index 0 = priority 1, index 98 = priority 99)
-    queues: [VecDeque<Pid>; RT_PRIO_LEVELS],
+    /// Fixed-capacity arrays — no dynamic allocation.
+    queues: [[Pid; MAX_RT_PER_PRIO]; RT_PRIO_LEVELS],
+    /// Number of tasks at each priority level
+    queue_lens: [u8; RT_PRIO_LEVELS],
     /// Bitmap of non-empty queues (bit N set = queue N has tasks)
     /// Lower bits = lower priority
     bitmap: u128,
@@ -29,7 +39,8 @@ impl RtRunQueue {
     /// Create a new empty RT run queue
     pub fn new() -> Self {
         Self {
-            queues: core::array::from_fn(|_| VecDeque::new()),
+            queues: [[0; MAX_RT_PER_PRIO]; RT_PRIO_LEVELS],
+            queue_lens: [0; RT_PRIO_LEVELS],
             bitmap: 0,
             nr_running: 0,
         }
@@ -40,17 +51,36 @@ impl RtRunQueue {
     /// Priority is 1-99 (higher = more important)
     pub fn enqueue(&mut self, pid: Pid, priority: u8) {
         let idx = priority_to_index(priority);
-        self.queues[idx].push_back(pid);
-        self.bitmap |= 1u128 << idx;
-        self.nr_running += 1;
+        let len = self.queue_lens[idx] as usize;
+
+        if len < MAX_RT_PER_PRIO {
+            self.queues[idx][len] = pid;
+            self.queue_lens[idx] += 1;
+            self.bitmap |= 1u128 << idx;
+            self.nr_running += 1;
+        } else {
+            // — BlackLatch: 8 RT tasks at one priority level on one CPU.
+            // Your real-time design has bigger problems than this warning.
+            unsafe {
+                arch_x86_64::serial::write_str_unsafe(
+                    "[RT-FATAL] per-priority queue full, task dropped\n",
+                );
+            }
+        }
     }
 
     /// Dequeue a specific task
     pub fn dequeue(&mut self, pid: Pid, priority: u8) -> bool {
         let idx = priority_to_index(priority);
-        if let Some(pos) = self.queues[idx].iter().position(|&p| p == pid) {
-            self.queues[idx].remove(pos);
-            if self.queues[idx].is_empty() {
+        let len = self.queue_lens[idx] as usize;
+
+        if let Some(pos) = (0..len).find(|&i| self.queues[idx][i] == pid) {
+            // Shift remaining elements left to maintain FIFO order
+            for i in pos..len - 1 {
+                self.queues[idx][i] = self.queues[idx][i + 1];
+            }
+            self.queue_lens[idx] -= 1;
+            if self.queue_lens[idx] == 0 {
                 self.bitmap &= !(1u128 << idx);
             }
             self.nr_running -= 1;
@@ -70,7 +100,11 @@ impl RtRunQueue {
         }
         // Find highest priority (highest bit set)
         let idx = (127 - self.bitmap.leading_zeros()) as usize;
-        self.queues[idx].front().copied()
+        if self.queue_lens[idx] > 0 {
+            Some(self.queues[idx][0])
+        } else {
+            None
+        }
     }
 
     /// Remove and return the highest priority task
@@ -79,23 +113,37 @@ impl RtRunQueue {
             return None;
         }
         let idx = (127 - self.bitmap.leading_zeros()) as usize;
-        let pid = self.queues[idx].pop_front();
-        if self.queues[idx].is_empty() {
+        let len = self.queue_lens[idx] as usize;
+        if len == 0 {
+            return None;
+        }
+
+        let pid = self.queues[idx][0];
+
+        // Shift remaining elements left (FIFO: remove from front)
+        for i in 0..len - 1 {
+            self.queues[idx][i] = self.queues[idx][i + 1];
+        }
+        self.queue_lens[idx] -= 1;
+        if self.queue_lens[idx] == 0 {
             self.bitmap &= !(1u128 << idx);
         }
-        if pid.is_some() {
-            self.nr_running -= 1;
-        }
-        pid
+        self.nr_running -= 1;
+        Some(pid)
     }
 
     /// Move a task to the back of its priority queue (for RR time slice expiry)
     pub fn requeue_tail(&mut self, pid: Pid, priority: u8) {
         let idx = priority_to_index(priority);
-        // Remove from current position and add to back
-        if let Some(pos) = self.queues[idx].iter().position(|&p| p == pid) {
-            self.queues[idx].remove(pos);
-            self.queues[idx].push_back(pid);
+        let len = self.queue_lens[idx] as usize;
+
+        if let Some(pos) = (0..len).find(|&i| self.queues[idx][i] == pid) {
+            // Shift elements left to close the gap
+            for i in pos..len - 1 {
+                self.queues[idx][i] = self.queues[idx][i + 1];
+            }
+            // Place at the back
+            self.queues[idx][len - 1] = pid;
         }
     }
 
@@ -300,5 +348,22 @@ mod tests {
         assert_eq!(rq.pop_next(), Some(2));
         assert_eq!(rq.pop_next(), Some(3));
         assert_eq!(rq.pop_next(), Some(1));
+    }
+
+    #[test]
+    fn test_rt_queue_dequeue_middle() {
+        let mut rq = RtRunQueue::new();
+
+        rq.enqueue(1, 50);
+        rq.enqueue(2, 50);
+        rq.enqueue(3, 50);
+
+        // Remove middle task
+        assert!(rq.dequeue(2, 50));
+        assert_eq!(rq.nr_running(), 2);
+
+        // Should now be 1, 3
+        assert_eq!(rq.pop_next(), Some(1));
+        assert_eq!(rq.pop_next(), Some(3));
     }
 }

@@ -22,7 +22,7 @@ cd "$REPO_ROOT"
 
 # Configuration
 TARGET_DIR="${TARGET_DIR:-target}"
-KERNEL_TARGET="$TARGET_DIR/x86_64-unknown-none/debug/kernel"
+KERNEL_TARGET="$TARGET_DIR/x86_64-unknown-oxide/debug/kernel"
 OVMF="${OVMF:-$(find /usr/share -name "OVMF_CODE.fd" -o -name "OVMF.fd" 2>/dev/null | head -1 || true)}"
 QEMU_LOG="$TARGET_DIR/qemu.log"
 SERIAL_LOG="$TARGET_DIR/serial.log"
