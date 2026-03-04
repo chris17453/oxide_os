@@ -38,7 +38,7 @@ use vfs::{File, FileFlags, MountFlags, VnodeOps, mount::GLOBAL_VFS};
 
 use crate::console;
 use crate::fault;
-use crate::globals::{HEAP_ALLOCATOR, HEAP_SIZE, HEAP_STORAGE, KERNEL_PML4, MEMORY_MANAGER};
+use crate::globals::{HEAP_ALLOCATOR, HEAP_SIZE, HEAP_STORAGE, KERNEL_PML4, KERNEL_PML4_256_ENTRY, MEMORY_MANAGER};
 use crate::memory;
 use crate::mount::{kernel_mount, kernel_pivot_root, kernel_umount};
 use crate::process::get_current_task_fs_base;
@@ -566,6 +566,15 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     unsafe {
         arch::init();
     }
+
+    // — GraveShift: Register preempt hooks so KernelMutex can call
+    // arch::preempt_disable/enable. Must happen after arch::init() (APIC is
+    // needed for per-CPU counter indexing) but before any KernelMutex is used.
+    // The heap allocator uses KernelMutex — every Vec::push after this point
+    // is preemption-safe. Before this point, KernelMutex degrades to a raw
+    // spinlock, which is fine because there's no scheduler to preempt us yet.
+    os_core::register_preempt_hooks(arch::preempt_disable, arch::preempt_enable);
+    let _ = writeln!(writer, "[INFO] Preemption hooks registered (Linux-model preempt_count)");
 
     // Initialize SMP subsystem for Bootstrap Processor
     let _ = writeln!(writer, "[INFO] Initializing SMP subsystem...");
@@ -1615,6 +1624,15 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Store kernel PML4 for fork/exec
     unsafe {
         KERNEL_PML4 = kernel_pml4.as_u64();
+
+        // — CrashBloom: Capture PML4[256] golden reference. This is the direct
+        // physical map entry that every process must have. If any process's
+        // PML4[256] differs from this, kernel entries are corrupted.
+        let pml4_virt = mm_paging::phys_to_virt(kernel_pml4);
+        let pml4_ptr = pml4_virt.as_ptr::<u64>();
+        KERNEL_PML4_256_ENTRY = core::ptr::read_volatile(pml4_ptr.add(256));
+        let golden = KERNEL_PML4_256_ENTRY;
+        let _ = writeln!(writer, "[BOOT] PML4[256] golden ref: {:#018x}", golden);
     }
 
     let mut user_space =

@@ -43,6 +43,13 @@ pub static mut USER_EXIT_STATUS: i32 = 0;
 /// Kernel PML4 physical address (for creating new address spaces)
 pub static mut KERNEL_PML4: u64 = 0;
 
+/// — CrashBloom: Golden reference for PML4[256] — the direct physical map entry.
+/// Captured at boot, verified on every context switch. If a process's PML4[256]
+/// doesn't match this, its kernel entries are corrupted and switching to it would
+/// triple-fault (exception handlers can't even load from unmapped kernel addresses).
+/// This is the canary that screams before the mine explodes.
+pub static mut KERNEL_PML4_256_ENTRY: u64 = 0;
+
 /// Mutex that disables preemption while locked so the scheduler interrupt
 /// doesn't deadlock trying to take a lock already held by the preempted task.
 pub struct InterruptMutex<T> {

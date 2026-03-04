@@ -12,5 +12,5 @@ pub mod time;
 
 pub use addr::{PhysAddr, VirtAddr};
 pub use creds::{current_uid_gid, register_creds_provider};
-pub use sync::{Mutex, MutexGuard};
+pub use sync::{Mutex, MutexGuard, KernelMutex, KernelMutexGuard, register_preempt_hooks};
 pub use time::{register_wall_clock, wall_clock_secs};

@@ -12,7 +12,7 @@ use crate::linked_list::LinkedListAllocator;
 use core::alloc::Layout;
 use core::mem;
 use core::ptr;
-use spin::Mutex;
+use os_core::sync::KernelMutex;
 
 /// Debug macro for heap operations — routes through os_log
 #[cfg(feature = "debug-heap")]
@@ -299,15 +299,21 @@ impl HardenedHeapAllocator {
 }
 
 /// Locked hardened heap for global allocator use
+///
+/// — GraveShift: Uses KernelMutex instead of raw spin::Mutex. Every alloc/dealloc
+/// now calls preempt_disable before spinning, preempt_enable after releasing.
+/// The scheduler sees preempt_count > 0 and skips the context switch. No more
+/// "preempted while holding heap lock → next task deadlocks" — the bug that
+/// killed Build 67 eleven times before we admitted the preemption model was broken.
 pub struct LockedHardenedHeap {
-    inner: Mutex<HardenedHeapAllocator>,
+    inner: KernelMutex<HardenedHeapAllocator>,
 }
 
 impl LockedHardenedHeap {
     /// Create a new empty locked hardened heap
     pub const fn empty() -> Self {
         Self {
-            inner: Mutex::new(HardenedHeapAllocator::empty()),
+            inner: KernelMutex::new(HardenedHeapAllocator::empty()),
         }
     }
 

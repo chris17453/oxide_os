@@ -1068,47 +1068,117 @@ pub fn delay_us(us: u64) {
 }
 
 // ============================================================================
-// Kernel Preemption Control
+// Kernel Preemption Control — Linux-style preempt_count
+//
+// — GraveShift: The old KERNEL_PREEMPT_OK boolean was a per-CPU "please preempt
+// me" flag that had to be manually toggled by every blocking syscall (~56 sites).
+// Set it around VFS/block ops that hold spinlocks? Congrats, the scheduler
+// preempts the lock holder and the next task deadlocks on the same lock. Don't
+// set it? Task stalls until the emergency timeout fires. Pick your poison.
+//
+// Linux's answer: every spin_lock() increments preempt_count, every spin_unlock()
+// decrements it. Scheduler only preempts when count == 0. No manual annotations.
+// No foot-guns. The lock TELLS you when it's safe. Revolutionary, I know.
 // ============================================================================
 
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicI32, Ordering};
 
 const MAX_CPUS: usize = 256;
 
-fn preempt_flag() -> &'static AtomicBool {
-    // — SableWire: APIC IDs are sparse (0, 2, 4, 6 on HT systems). The scheduler
-    // uses *logical* CPU IDs (0, 1, 2, 3). Index by raw APIC ID and we're checking
-    // the wrong slot — CPU 1 reads KERNEL_PREEMPT_OK[2], scheduler wrote [1].
-    // That's the kind of subtle corruption that makes you question reality at 3 AM.
-    // Use gdt::cpu_id_from_apic() — the same mapping the scheduler was born from.
+/// — GraveShift: Per-CPU preemption nesting counter. Zero means preemptable.
+/// Each spinlock acquire increments, each unlock decrements. Lock-free atomics
+/// because this gets hammered from both thread and ISR context. The timer ISR
+/// reads it to decide "can I context-switch this CPU?" — if non-zero, something
+/// holds a lock and preempting would be suicide-by-deadlock.
+static PREEMPT_COUNT: [AtomicI32; MAX_CPUS] = [const { AtomicI32::new(0) }; MAX_CPUS];
+
+/// Get this CPU's preempt counter. ISR-safe, lock-free.
+#[inline]
+fn preempt_counter() -> &'static AtomicI32 {
     let apic_id = crate::apic::id();
     let cpu_id = gdt::cpu_id_from_apic(apic_id);
     let idx = core::cmp::min(cpu_id, MAX_CPUS - 1);
-    &KERNEL_PREEMPT_OK[idx]
+    &PREEMPT_COUNT[idx]
 }
 
-/// Per-CPU flag indicating whether kernel code is currently safe to preempt.
-/// A blocking syscall sets its CPU's flag before halting so the scheduler can
-/// safely context switch without impacting other CPUs.
-static KERNEL_PREEMPT_OK: [AtomicBool; MAX_CPUS] = [const { AtomicBool::new(false) }; MAX_CPUS];
+/// Disable preemption (increment counter). Called by spinlock acquire.
+/// Lock-free, ISR-safe, nesting-safe.
+/// — GraveShift: Every lock() bumps this. Every unlock() drops it. When the
+/// timer ISR fires and sees count > 0, it knows we're holding a lock and backs
+/// off. No more "preempted while holding heap lock → next task deadlocks."
+#[inline]
+pub fn preempt_disable() {
+    preempt_counter().fetch_add(1, Ordering::Relaxed);
+}
 
-/// Allow kernel preemption at current point
-/// Call this before HLT in yielding syscalls like nanosleep
+/// Enable preemption (decrement counter). Called by spinlock release.
+/// Lock-free, ISR-safe, nesting-safe.
+/// — GraveShift: When this hits zero, the CPU is fair game for preemption again.
+#[inline]
+pub fn preempt_enable() {
+    preempt_counter().fetch_sub(1, Ordering::Relaxed);
+}
+
+/// Check if current CPU is preemptable (counter == 0).
+/// — GraveShift: The scheduler's one question: "can I yank this task?" If any
+/// lock is held (count > 0), the answer is no. Period.
+#[inline]
+pub fn preemptable() -> bool {
+    preempt_counter().load(Ordering::Relaxed) == 0
+}
+
+/// Get current preempt_count value (for save/restore across context switches).
+#[inline]
+pub fn get_preempt_count() -> i32 {
+    preempt_counter().load(Ordering::Relaxed)
+}
+
+/// Set preempt_count (for restore after context switch to incoming task).
+/// — GraveShift: The incoming task was preempted mid-lock. Its saved count
+/// tells us exactly how deep it was. Restore it so the lock depth matches
+/// reality when the task resumes.
+#[inline]
+pub fn set_preempt_count(val: i32) {
+    preempt_counter().store(val, Ordering::Relaxed);
+}
+
+// ============================================================================
+// Backward-compat aliases — kpo (kernel_preempt_ok) API
+//
+// — GraveShift: The old boolean API is used by ~56 call sites across syscalls.
+// These aliases translate the old semantics into the new counter model:
+//   allow_kernel_preempt()   → set count to 0 (fully preemptable)
+//   disallow_kernel_preempt() → set count to 1 (one "virtual lock" held)
+//   is_kernel_preempt_allowed() → check count == 0
+//   clear_kernel_preempt()   → set count to 0
+//
+// These are LEGACY. New code should use KernelMutex (which calls
+// preempt_disable/enable automatically) instead of manual kpo toggling.
+// ============================================================================
+
+/// Legacy: allow kernel preemption (sets counter to 0).
+/// Call this before HLT in yielding syscalls like nanosleep.
 pub fn allow_kernel_preempt() {
-    preempt_flag().store(true, Ordering::Release);
+    preempt_counter().store(0, Ordering::Relaxed);
 }
 
-/// Disallow kernel preemption
+/// Legacy: disallow kernel preemption (sets counter to 1).
 pub fn disallow_kernel_preempt() {
-    preempt_flag().store(false, Ordering::Release);
+    // — GraveShift: Only bump if we're currently preemptable. Old code toggled
+    // a boolean, so calling disallow twice was idempotent. We preserve that
+    // behavior — don't stack counts from legacy callers who aren't paired.
+    let current = preempt_counter().load(Ordering::Relaxed);
+    if current <= 0 {
+        preempt_counter().store(1, Ordering::Relaxed);
+    }
 }
 
-/// Check if kernel preemption is currently allowed
+/// Legacy: check if kernel preemption is currently allowed.
 pub fn is_kernel_preempt_allowed() -> bool {
-    preempt_flag().load(Ordering::Acquire)
+    preemptable()
 }
 
-/// Clear kernel preemption flag (called by scheduler after preempting)
+/// Legacy: clear kernel preemption flag (called by scheduler after preempting).
 pub fn clear_kernel_preempt() {
-    preempt_flag().store(false, Ordering::Release);
+    preempt_counter().store(0, Ordering::Relaxed);
 }

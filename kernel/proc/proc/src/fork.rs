@@ -204,6 +204,27 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
     let parent_pml4 = unsafe { &mut *parent_pml4_virt.as_mut_ptr::<PageTable>() };
     let child_pml4 = unsafe { &mut *child_pml4_virt.as_mut_ptr::<PageTable>() };
 
+    // — GraveShift: Check if the frame is still on the buddy free list (magic
+    // canary present = genuine double allocation). The PML4[256] check was removed —
+    // it was a false positive. ALL recycled PML4 frames have stale kernel entries at
+    // PML4[256] because pop_free_block() only zeros the first 24 bytes (magic/next/prev).
+    // The rest of the 4KB frame retains whatever was there before. Since every process
+    // shares the same kernel mappings at PML4[256..512], any recycled PML4 frame will
+    // match. This is normal and harmless — we clear() the frame two lines below.
+    {
+        let child_first_u64 = unsafe {
+            core::ptr::read_volatile(child_pml4_virt.as_ptr::<u64>())
+        };
+        if child_first_u64 == 0x4652454542304C {
+            // — CrashBloom: Frame is STILL on the free list! Double allocation!
+            unsafe {
+                os_log::write_str_raw("[FORK-DOUBLE-ALLOC] PML4 frame still FREE! phys=0x");
+                os_log::write_u64_hex_raw(child_pml4_phys.as_u64());
+                os_log::write_str_raw("\n");
+            }
+        }
+    }
+
     // Clear child PML4
     child_pml4.clear();
 
@@ -211,6 +232,12 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
     for i in 256..512 {
         child_pml4[i] = parent_pml4[i];
     }
+
+    // — CrashBloom: Snapshot the golden PML4[256] value right after kernel copy.
+    // If anything corrupts it during the PT walk below, we'll catch it.
+    let golden_256 = unsafe {
+        core::ptr::read_volatile(child_pml4_virt.as_ptr::<u64>().add(256))
+    };
 
     // — BlackLatch: Accumulate every virt addr we demote to read-only.
     // We'll fire ONE cross-CPU TLB shootdown after the full walk instead of
@@ -229,12 +256,34 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
         let child_pdpt_phys = allocator.alloc_frame().ok_or(ForkError::OutOfMemory)?;
         guard.push(child_pdpt_phys);
 
+        // — CrashBloom: Detect buddy double-alloc — if any PT frame is the same
+        // as the PML4 frame, clearing it will destroy the PML4.
+        if child_pdpt_phys == child_pml4_phys {
+            unsafe {
+                os_log::write_str_raw("[FORK-BUG] PDPT alloc returned PML4 frame! phys=0x");
+                os_log::write_u64_hex_raw(child_pdpt_phys.as_u64());
+                os_log::write_str_raw("\n");
+            }
+        }
+
         let parent_pdpt_virt = phys_to_virt(pml4_entry.addr());
         let child_pdpt_virt = phys_to_virt(child_pdpt_phys);
 
         let parent_pdpt = unsafe { &mut *parent_pdpt_virt.as_mut_ptr::<PageTable>() };
         let child_pdpt = unsafe { &mut *child_pdpt_virt.as_mut_ptr::<PageTable>() };
         child_pdpt.clear();
+
+        // — CrashBloom: Catch corruption at the exact point
+        let check_256 = unsafe { core::ptr::read_volatile(child_pml4_virt.as_ptr::<u64>().add(256)) };
+        if check_256 != golden_256 {
+            unsafe {
+                os_log::write_str_raw("[FORK-CORRUPT-PDPT] PML4[256] destroyed by PDPT clear! pdpt_phys=0x");
+                os_log::write_u64_hex_raw(child_pdpt_phys.as_u64());
+                os_log::write_str_raw(" pml4=0x");
+                os_log::write_u64_hex_raw(child_pml4_phys.as_u64());
+                os_log::write_str_raw("\n");
+            }
+        }
 
         // Set child PML4 entry
         // IMPORTANT: Do NOT propagate NO_EXECUTE from parent - intermediate entries
@@ -254,8 +303,8 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
             }
 
             if pdpt_entry.is_huge() {
-                // 1GB huge page - mark as COW if writable
                 if pdpt_entry.is_writable() {
+                    // — BlackLatch: 1GB writable huge page → COW demote.
                     let flags = pdpt_entry.flags();
                     pdpt_entry.set_flags(flags & !PageTableFlags::WRITABLE | PageTableFlags::COW);
                     child_pdpt[pdpt_idx].set(
@@ -263,14 +312,17 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
                         flags & !PageTableFlags::WRITABLE | PageTableFlags::COW,
                     );
                     cow_tracker().increment(pdpt_entry.addr());
-                    // — BlackLatch: 1GB demoted. Track the range.
                     let virt = compute_virt_addr(pml4_idx, pdpt_idx, 0, 0);
                     let v = virt.as_u64();
                     cow_demoted_min = cow_demoted_min.min(v);
                     cow_demoted_max = cow_demoted_max.max(v + (1u64 << 30));
                     any_cow_demoted = true;
                 } else {
-                    child_pdpt[pdpt_idx] = *pdpt_entry;
+                    // — BlackLatch: Read-only 1GB huge page — still COW-tag it.
+                    let flags = pdpt_entry.flags() | PageTableFlags::COW;
+                    pdpt_entry.set_flags(flags);
+                    child_pdpt[pdpt_idx].set(pdpt_entry.addr(), flags);
+                    cow_tracker().increment(pdpt_entry.addr());
                 }
                 continue;
             }
@@ -285,6 +337,18 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
             let parent_pd = unsafe { &mut *parent_pd_virt.as_mut_ptr::<PageTable>() };
             let child_pd = unsafe { &mut *child_pd_virt.as_mut_ptr::<PageTable>() };
             child_pd.clear();
+
+            // — CrashBloom: Catch corruption at the exact point it happens
+            let check_256 = unsafe { core::ptr::read_volatile(child_pml4_virt.as_ptr::<u64>().add(256)) };
+            if check_256 != golden_256 {
+                unsafe {
+                    os_log::write_str_raw("[FORK-CORRUPT-PD] PML4[256] destroyed by PD clear! pd_phys=0x");
+                    os_log::write_u64_hex_raw(child_pd_phys.as_u64());
+                    os_log::write_str_raw(" pml4=0x");
+                    os_log::write_u64_hex_raw(child_pml4_phys.as_u64());
+                    os_log::write_str_raw("\n");
+                }
+            }
 
             // Set child PDPT entry
             // IMPORTANT: Do NOT propagate NO_EXECUTE from parent - intermediate entries
@@ -304,8 +368,8 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
                 }
 
                 if pd_entry.is_huge() {
-                    // 2MB huge page - mark as COW if writable
                     if pd_entry.is_writable() {
+                        // — BlackLatch: 2MB writable huge page → COW demote.
                         let flags = pd_entry.flags();
                         pd_entry.set_flags(flags & !PageTableFlags::WRITABLE | PageTableFlags::COW);
                         child_pd[pd_idx].set(
@@ -313,14 +377,17 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
                             flags & !PageTableFlags::WRITABLE | PageTableFlags::COW,
                         );
                         cow_tracker().increment(pd_entry.addr());
-                        // — BlackLatch: 2MB demoted. Expand the dirty window.
                         let virt = compute_virt_addr(pml4_idx, pdpt_idx, pd_idx, 0);
                         let v = virt.as_u64();
                         cow_demoted_min = cow_demoted_min.min(v);
                         cow_demoted_max = cow_demoted_max.max(v + (1u64 << 21));
                         any_cow_demoted = true;
                     } else {
-                        child_pd[pd_idx] = *pd_entry;
+                        // — BlackLatch: Read-only 2MB huge page — still COW-tag it.
+                        let flags = pd_entry.flags() | PageTableFlags::COW;
+                        pd_entry.set_flags(flags);
+                        child_pd[pd_idx].set(pd_entry.addr(), flags);
+                        cow_tracker().increment(pd_entry.addr());
                     }
                     continue;
                 }
@@ -335,6 +402,18 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
                 let parent_pt = unsafe { &mut *parent_pt_virt.as_mut_ptr::<PageTable>() };
                 let child_pt = unsafe { &mut *child_pt_virt.as_mut_ptr::<PageTable>() };
                 child_pt.clear();
+
+                // — CrashBloom: Catch corruption at the exact point
+                let check_256 = unsafe { core::ptr::read_volatile(child_pml4_virt.as_ptr::<u64>().add(256)) };
+                if check_256 != golden_256 {
+                    unsafe {
+                        os_log::write_str_raw("[FORK-CORRUPT-PT] PML4[256] destroyed by PT clear! pt_phys=0x");
+                        os_log::write_u64_hex_raw(child_pt_phys.as_u64());
+                        os_log::write_str_raw(" pml4=0x");
+                        os_log::write_u64_hex_raw(child_pml4_phys.as_u64());
+                        os_log::write_str_raw("\n");
+                    }
+                }
 
                 // Set child PD entry
                 // IMPORTANT: Do NOT propagate NO_EXECUTE from parent - intermediate entries
@@ -354,8 +433,10 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
                         continue;
                     }
 
-                    // Mark as COW if writable
                     if pt_entry.is_writable() {
+                        // — BlackLatch: Writable page → must mark COW in both
+                        // parent and child. Strip write, add COW. Standard Linux
+                        // fork behavior — nobody writes for free after fork().
                         let flags = pt_entry.flags();
                         let new_flags = flags & !PageTableFlags::WRITABLE | PageTableFlags::COW;
                         pt_entry.set_flags(new_flags);
@@ -372,9 +453,16 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
                         cow_demoted_max = cow_demoted_max.max(v + 0x1000);
                         any_cow_demoted = true;
                     } else {
-                        // Read-only or non-writable page - just share
-                        child_pt[pt_idx] = *pt_entry;
-                        // Still increment ref count for proper cleanup
+                        // — BlackLatch: Read-only page — still mark COW. Without
+                        // VMAs we can't tell if this is genuinely read-only (code)
+                        // or a writable-segment page that's temporarily RO. COW is
+                        // harmless for real code pages (nobody writes, so the COW
+                        // handler is never invoked). For data pages, COW gives the
+                        // child a private copy on write instead of a SIGSEGV.
+                        // Defense in depth — one bit to rule them all.
+                        let flags = pt_entry.flags() | PageTableFlags::COW;
+                        pt_entry.set_flags(flags);
+                        child_pt[pt_idx].set(pt_entry.addr(), flags);
                         cow_tracker().increment(pt_entry.addr());
                     }
                 }
@@ -395,11 +483,38 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
         smp::tlb_shootdown(cow_demoted_min, cow_demoted_max, 0);
     }
 
+    // — CrashBloom: Post-fork PML4[256] validation. If any PT frame allocation
+    // during the walk stomped on the child PML4 (buddy double-alloc), PML4[256]
+    // would be zeroed or corrupted. Catch it before the child is ever scheduled.
+    {
+        let final_256 = unsafe {
+            core::ptr::read_volatile(child_pml4_virt.as_ptr::<u64>().add(256))
+        };
+        let parent_256 = unsafe {
+            core::ptr::read_volatile(parent_pml4_virt.as_ptr::<u64>().add(256))
+        };
+        if final_256 != parent_256 {
+            unsafe {
+                os_log::write_str_raw("[FORK-CORRUPT] Child PML4[256] CHANGED during fork! child=0x");
+                os_log::write_u64_hex_raw(final_256);
+                os_log::write_str_raw(" parent=0x");
+                os_log::write_u64_hex_raw(parent_256);
+                os_log::write_str_raw(" pml4=0x");
+                os_log::write_u64_hex_raw(child_pml4_phys.as_u64());
+                os_log::write_str_raw("\n");
+            }
+        }
+    }
+
     // — SableWire: Success path — defuse the guard and transfer ownership of all
     // PT frames to the child address space. From here, UserAddressSpace::Drop
     // owns them and will free them when the child process exits.
+    // — NeonRoot: Clone the parent's VMA metadata for the child. O(n) Vec clone.
+    // The PT walk above already handled the actual COW marking on physical frames;
+    // this is just the semantic overlay that says "these pages are stack/heap/text".
+    let child_vmas = parent.vmas.clone_for_fork();
     let child_frames = guard.defuse();
-    let child_as = unsafe { UserAddressSpace::from_raw(child_pml4_phys, child_frames) };
+    let child_as = unsafe { UserAddressSpace::from_raw(child_pml4_phys, child_frames, child_vmas) };
 
     Ok(child_as)
 }

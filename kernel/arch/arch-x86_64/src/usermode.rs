@@ -383,6 +383,19 @@ pub unsafe extern "C" fn enter_usermode_with_context(
         "mov rax, [r15 + 56]",
         "mov [{debug_rsp}], rax",
 
+        // — GraveShift: Set FS base MSR BEFORE register restore. r12 holds
+        // fs_base from line 293 — the context restore below clobbers r12 with
+        // ctx.r12 (which is 0 after exec). WRMSR clobbers rax/rcx/rdx but
+        // those get restored from context afterward. No harm done.
+        "test r12, r12",
+        "jz 2f",
+        "mov rcx, 0xC0000100",         // IA32_FS_BASE MSR
+        "mov rax, r12",                // Low 32 bits of fs_base
+        "mov rdx, r12",
+        "shr rdx, 32",                 // High 32 bits of fs_base
+        "wrmsr",
+        "2:",
+
         // Now restore all general purpose registers from copied context
         "mov r14, [r15 + 112]",   // r14
         "mov r13, [r15 + 104]",   // r13
@@ -419,15 +432,9 @@ pub unsafe extern "C" fn enter_usermode_with_context(
         "mov [{debug_iretq_rsp}], rax",    // Save iretq RSP
         "mov rax, [rsp - 8]",              // Restore user's RAX
 
-        // Set FS base MSR if fs_base is non-zero (IA32_FS_BASE = 0xC0000100)
-        "test r12, r12",
-        "jz 2f",                       // Skip if fs_base is 0
-        "mov rcx, 0xC0000100",         // MSR number for FS_BASE
-        "mov rax, r12",                // Low 32 bits of fs_base
-        "mov rdx, r12",
-        "shr rdx, 32",                 // High 32 bits of fs_base
-        "wrmsr",                       // Write MSR
-        "2:",
+        // — GraveShift: FS_BASE WRMSR moved above register restore (label "2:").
+        // The old location here ran AFTER r12 was clobbered by ctx.r12, so
+        // WRMSR never fired for exec'd processes. TLS was DOA. Fixed now.
 
         // Load user data segments right before iretq
         // NOTE: In x86-64 long mode, FS/GS base comes from MSRs, not segment descriptors.

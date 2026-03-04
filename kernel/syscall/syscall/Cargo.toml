@@ -10,6 +10,7 @@ debug-syscall = []  # Enable syscall entry/exit traces ([SC] open/write/dup2)
 debug-syscall-perf = []  # Log syscalls taking >50K cycles (~16us @ 3GHz)
 debug-exit = []  # Debug output for exit syscall
 debug-proc = []  # Enable waitpid/process debug traces
+debug-vma = ["mm-vma/debug-vma"]  # Enable VMA insert/remove traces
 
 [dependencies]
 os_core = { path = "../../core/os_core" }
@@ -17,6 +18,7 @@ proc = { path = "../../proc/proc" }
 proc-traits = { path = "../../proc/proc-traits" }
 mm-traits = { path = "../../mm/mm-traits" }
 mm-manager = { path = "../../mm/mm-manager" }
+mm-vma = { path = "../../mm/mm-vma" }
 vfs = { path = "../../vfs/vfs" }
 signal = { path = "../../signal/signal" }
 net = { path = "../../net/net" }

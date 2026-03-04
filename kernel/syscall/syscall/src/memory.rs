@@ -8,6 +8,7 @@ use crate::{get_current_meta, with_current_meta_mut};
 use mm_cow::cow_tracker;
 use mm_manager::mm;
 use mm_traits::FrameAllocator;
+use mm_vma::{VmArea, VmFlags, VmType};
 use os_core::VirtAddr;
 use proc_traits::MemoryFlags;
 
@@ -81,7 +82,14 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
         None
     };
 
-    // Determine mapping address
+    // Get the current process
+    let meta = match get_current_meta() {
+        Some(m) => m,
+        None => return errno::ESRCH,
+    };
+
+    // — NeonRoot: Determine mapping address using VMA gap-finding instead of
+    // the old blind bump allocator. Now we actually know what's already mapped.
     let map_addr = if map_flags & flags::MAP_FIXED != 0 {
         // Fixed address - must be page aligned
         if addr & 0xFFF != 0 {
@@ -90,30 +98,30 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
         if addr < MMAP_MIN_ADDR || addr + length > MMAP_MAX_ADDR {
             return errno::ENOMEM;
         }
+        // — NeonRoot: MAP_FIXED — remove any existing VMAs in the target range.
+        // Linux does this too: MAP_FIXED stomps whatever was there.
+        {
+            let mut m = meta.lock();
+            let _ = m.address_space.remove_vma_range(addr, addr + length);
+        }
         addr
-    } else if addr != 0 {
-        // Hint address - try to use it, but fall back if not available
-        let aligned = (addr + 0xFFF) & !0xFFF;
-        if aligned >= MMAP_MIN_ADDR && aligned + length <= MMAP_MAX_ADDR {
-            aligned
-        } else {
-            match allocate_mmap_addr(length) {
-                Ok(a) => a,
-                Err(e) => return e,
+    } else {
+        // — NeonRoot: Use VMA-aware gap finder. Falls back to bump allocator
+        // if VMA list is empty (e.g., kernel tasks, early boot).
+        let mut m = meta.lock();
+        let hint = if addr != 0 { (addr + 0xFFF) & !0xFFF } else { 0 };
+        match m.address_space.vmas.find_free_region(length, hint, MMAP_MAX_ADDR) {
+            Some(a) => a,
+            None => {
+                // — NeonRoot: Fallback to legacy bump allocator for compatibility.
+                // This covers the case where VMAs aren't fully populated yet.
+                drop(m);
+                match allocate_mmap_addr(length) {
+                    Ok(a) => a,
+                    Err(e) => return e,
+                }
             }
         }
-    } else {
-        // No hint - allocate from our pool
-        match allocate_mmap_addr(length) {
-            Ok(a) => a,
-            Err(e) => return e,
-        }
-    };
-
-    // Get the current process
-    let meta = match get_current_meta() {
-        Some(m) => m,
-        None => return errno::ESRCH,
     };
 
     // Convert protection flags to MemoryFlags
@@ -137,6 +145,16 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
             Ok(()) => {}
             Err(_) => return errno::ENOMEM,
         }
+
+        // — NeonRoot: Register VMA for the new mapping. Non-fatal on overlap —
+        // page tables are the real authority, VMAs are metadata.
+        let vm_type = if is_anonymous { VmType::Anon } else { VmType::FileBacked };
+        let _ = m.address_space.add_vma(VmArea::new(
+            map_addr,
+            map_addr + length,
+            prot_to_vm_flags(prot, map_flags),
+            vm_type,
+        ));
     }
 
     // If file-backed, read file contents into the mapped pages
@@ -222,6 +240,10 @@ pub fn sys_munmap(addr: u64, length: u64) -> i64 {
         let mut m = meta.lock();
         let cow = cow_tracker();
         let allocator = mm();
+
+        // — NeonRoot: Remove VMA metadata for the unmapped range. Handles
+        // partial overlap via split/trim. Non-fatal — page tables are authority.
+        let _ = m.address_space.remove_vma_range(addr, addr + length);
 
         // — GraveShift: Unmap each page AND free the physical frame. The old code
         // discarded the PhysAddr returned by unmap_user_page with `let _ = ...`,
@@ -483,6 +505,21 @@ pub fn sys_brk(addr: u64) -> i64 {
 
     // Update program break
     m.program_break = new_break;
+
+    // — NeonRoot: Update the heap VMA to reflect the new break. Remove the old
+    // heap VMA and insert a fresh one with the updated range. This is O(n) but
+    // brk() is infrequent — typically called once at startup and then mmap takes over.
+    let _ = m.address_space.remove_vma_range(HEAP_START, MMAP_MAX_ADDR.min(old_break.max(new_break)));
+    if new_break > HEAP_START {
+        let _ = m.address_space.add_vma(VmArea::new_named(
+            HEAP_START,
+            new_break,
+            VmFlags::READ | VmFlags::WRITE,
+            VmType::Heap,
+            b"[heap]",
+        ));
+    }
+
     new_break as i64
 }
 
@@ -525,6 +562,30 @@ fn prot_to_memory_flags(prot: i32) -> MemoryFlags {
     flags = flags.union(MemoryFlags::USER);
 
     flags
+}
+
+/// — NeonRoot: Convert POSIX prot + map flags to VMA VmFlags.
+fn prot_to_vm_flags(prot: i32, map_flags: i32) -> VmFlags {
+    let mut vf = VmFlags::empty();
+    if prot & prot::PROT_READ != 0 {
+        vf |= VmFlags::READ;
+    }
+    if prot & prot::PROT_WRITE != 0 {
+        vf |= VmFlags::WRITE;
+    }
+    if prot & prot::PROT_EXEC != 0 {
+        vf |= VmFlags::EXEC;
+    }
+    if map_flags & flags::MAP_SHARED != 0 {
+        vf |= VmFlags::SHARED;
+    }
+    if map_flags & flags::MAP_GROWSDOWN != 0 {
+        vf |= VmFlags::GROWSDOWN;
+    }
+    if map_flags & flags::MAP_STACK != 0 {
+        vf |= VmFlags::STACK;
+    }
+    vf
 }
 
 /// sys_madvise - Advise kernel about memory usage patterns

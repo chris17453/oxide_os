@@ -205,6 +205,16 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
     let flags = FileFlags::from_bits_truncate(flags);
     let mode = Mode::new(mode);
 
+    // — GraveShift: Enable kernel preemption for VFS lookups. These can trigger
+    // block I/O through ext4 → virtio-blk, which polls for disk completion.
+    // Without kpo, the task is non-preemptible for the entire disk I/O duration.
+    use core::ptr::addr_of;
+    unsafe {
+        if let Some(f) = (*addr_of!(super::SYSCALL_CONTEXT)).allow_kernel_preempt {
+            f();
+        }
+    }
+
     // Try to look up the file
     let vnode = if flags.contains(FileFlags::O_CREAT) {
         // O_CREAT: create if not exists
@@ -257,6 +267,13 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
             }
         }
     };
+
+    // — GraveShift: VFS lookup done — disable preemption for the fast path below.
+    unsafe {
+        if let Some(f) = (*addr_of!(super::SYSCALL_CONTEXT)).disallow_kernel_preempt {
+            f();
+        }
+    }
 
     // — EmberLock: DAC permission check on the resolved vnode.
     // Newly created files pass automatically because the filesystem sets uid to

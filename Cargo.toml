@@ -12,7 +12,7 @@ members = [
     "kernel/mm/mm-traits",
     "kernel/mm/mm-core",
     "kernel/mm/mm-manager",
-    "kernel/mm/mm-slab",
+    "kernel/mm/mm-vma",
     "kernel/mm/mm-paging",
     "kernel/mm/mm-heap",
     "kernel/mm/mm-cow",
@@ -174,7 +174,7 @@ arch-mips64 = { path = "kernel/arch/arch-mips64" }
 mm-traits = { path = "kernel/mm/mm-traits" }
 mm-core = { path = "kernel/mm/mm-core" }
 mm-manager = { path = "kernel/mm/mm-manager" }
-mm-slab = { path = "kernel/mm/mm-slab" }
+mm-vma = { path = "kernel/mm/mm-vma" }
 mm-paging = { path = "kernel/mm/mm-paging" }
 mm-heap = { path = "kernel/mm/mm-heap" }
 mm-cow = { path = "kernel/mm/mm-cow" }

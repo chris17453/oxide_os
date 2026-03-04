@@ -14,6 +14,8 @@ use os_core::{PhysAddr, VirtAddr};
 use proc_traits::MemoryFlags;
 use smp;
 
+use mm_vma::{VmArea, VmFlags, VmType};
+
 use crate::{ProcessContext, UserAddressSpace};
 
 /// Error during exec
@@ -231,6 +233,41 @@ pub fn do_exec<A: FrameAllocator>(
                 }
             }
         }
+
+        // — Hexline: Trace segment mapping so we can triage faults against
+        // the actual page table layout. Costs nothing in release builds.
+        #[cfg(debug_assertions)]
+        {
+            extern crate os_log;
+            unsafe {
+                os_log::write_str_raw("[EXEC-SEG] ");
+                os_log::write_u64_hex_raw(page_start.as_u64());
+                os_log::write_str_raw("-");
+                os_log::write_u64_hex_raw(page_start.as_u64() + total_size as u64);
+                if segment.flags.contains(MemoryFlags::WRITE) {
+                    os_log::write_str_raw(" RW");
+                } else {
+                    os_log::write_str_raw(" RO");
+                }
+                if segment.flags.contains(MemoryFlags::EXECUTE) {
+                    os_log::write_str_raw(" X");
+                }
+                os_log::write_str_raw("\n");
+            }
+        }
+
+        // — NeonRoot: Register a VMA for this ELF segment. Now the kernel knows
+        // "0x400000-0x402000 is .text" instead of guessing from page table flags.
+        let seg_end = page_start.as_u64() + total_size as u64;
+        let vm_flags = mem_flags_to_vm(segment.flags);
+        let vm_type = if segment.flags.contains(MemoryFlags::EXECUTE) {
+            VmType::Text
+        } else if segment.flags.contains(MemoryFlags::WRITE) {
+            VmType::Data
+        } else {
+            VmType::Data
+        };
+        let _ = new_address_space.add_vma(VmArea::new(page_start.as_u64(), seg_end, vm_flags, vm_type));
     }
 
     // Set up TLS (Thread-Local Storage) if needed
@@ -336,20 +373,38 @@ pub fn do_exec<A: FrameAllocator>(
             )
             .map_err(|_| ExecError::OutOfMemory)?;
 
-        // x86-64 TLS ABI Variant II layout: [TCB] [TLS data]
-        // FS register points to TCB, TLS data is at positive offsets from there
+        // — GraveShift: x86-64 TLS ABI Variant II layout:
+        //   [TLS init data (file_size)] [BSS zeros (mem_size - file_size)] [TCB (8 bytes)]
+        //   ^                                                               ^
+        //   tls_vaddr                                                       tcb_addr = FS base
+        //
+        // Compiler generates NEGATIVE offsets from FS base: `%fs:0` reads the
+        // self-pointer (TCB), then `lea -offset(%rax)` reaches TLS data BELOW.
+        // The old layout had TCB at the START with TLS data after — every TLS
+        // access read from below the allocation into unmapped memory. Oops.
 
-        let tcb_addr = tls_vaddr.as_u64();
+        // TCB sits right after the TLS block
+        let tcb_addr = tls_vaddr.as_u64() + tls_size as u64;
 
-        // Write self-pointer to TCB (required by x86-64 TLS ABI)
+        // Write self-pointer to TCB (required by x86-64 TLS ABI — %fs:0 = tp)
         write_to_user_stack(&new_address_space, tcb_addr, &tcb_addr.to_le_bytes())?;
 
-        // Copy TLS initialization data AFTER the TCB
+        // Copy TLS initialization data to the START of the block (before TCB)
         let tls_data = elf.tls_data();
         if !tls_data.is_empty() {
-            let tls_data_addr = tcb_addr + tcb_size as u64;
-            write_to_user_stack(&new_address_space, tls_data_addr, tls_data)?;
+            write_to_user_stack(&new_address_space, tls_vaddr.as_u64(), tls_data)?;
         }
+        // BSS portion (mem_size - file_size) is already zero from page allocation
+
+        // — NeonRoot: Register the TLS VMA so /proc and fault handlers know about it.
+        let tls_end = tls_vaddr.as_u64() + (pages_needed * 4096) as u64;
+        let _ = new_address_space.add_vma(VmArea::new_named(
+            tls_vaddr.as_u64(),
+            tls_end,
+            VmFlags::READ | VmFlags::WRITE,
+            VmType::Tls,
+            b"[tls]",
+        ));
 
         Some(tcb_addr)
     } else {
@@ -382,6 +437,16 @@ pub fn do_exec<A: FrameAllocator>(
             allocator,
         )
         .map_err(|_| ExecError::OutOfMemory)?;
+
+    // — NeonRoot: Register the user stack VMA. GROWSDOWN tells the fault handler
+    // this region can expand downward on demand (dynamic stack growth).
+    let _ = new_address_space.add_vma(VmArea::new_named(
+        stack_bottom.as_u64(),
+        randomized_stack_top,
+        VmFlags::READ | VmFlags::WRITE | VmFlags::GROWSDOWN | VmFlags::STACK,
+        VmType::Stack,
+        b"[stack]",
+    ));
 
     let entry_point = elf.entry_point();
 
@@ -607,4 +672,21 @@ fn write_to_user_stack(
     }
 
     Ok(())
+}
+
+/// — NeonRoot: Convert proc-traits MemoryFlags to VMA VmFlags.
+/// The mapping is straightforward — both encode R/W/X. VmFlags adds
+/// semantic bits (GROWSDOWN, STACK, DONTCOPY) that MemoryFlags doesn't have.
+fn mem_flags_to_vm(mf: MemoryFlags) -> VmFlags {
+    let mut vf = VmFlags::empty();
+    if mf.readable() {
+        vf |= VmFlags::READ;
+    }
+    if mf.writable() {
+        vf |= VmFlags::WRITE;
+    }
+    if mf.executable() {
+        vf |= VmFlags::EXEC;
+    }
+    vf
 }

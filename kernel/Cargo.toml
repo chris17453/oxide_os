@@ -44,6 +44,7 @@ debug-terminal = ["terminal/debug-terminal"]  # Trace terminal write/blit operat
 # debug-syscall: EVERY open/write/dup2/exit entry+exit (~46 bytes × 20 opens = 920 bytes per top refresh).
 # Any of these alone saturates 115200 baud (11,520 bytes/sec), blocking ISRs and starving tasks.
 # Enable individually with: KERNEL_FEATURES="debug-all,debug-syscall"
+debug-vma = ["mm-vma/debug-vma", "proc/debug-vma", "syscall/debug-vma"]
 debug-all = ["debug-fork", "debug-cow", "debug-pagefault", "debug-mmap", "debug-proc", "debug-sched", "debug-mouse", "debug-input", "debug-syscall-perf", "debug-tty-read"]
 
 [dependencies]
@@ -58,6 +59,7 @@ mm-traits = { workspace = true }
 mm-manager = { workspace = true }
 mm-paging = { workspace = true }
 mm-heap = { workspace = true }
+mm-vma = { workspace = true }
 mm-cow = { workspace = true }
 sched = { workspace = true }
 sched-traits = { workspace = true }

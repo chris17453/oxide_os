@@ -59,6 +59,116 @@ fn trace_i32(n: i32) {
     }
 }
 
+/// — CrashBloom: Walk a PML4's user-half page tables and check for buddy allocator
+/// FreeBlock canary corruption. If a PT structure frame was freed while still
+/// referenced, the buddy writes 0x4652454542304C ("FREEBL0C") into its first
+/// 8 bytes. We detect this by checking every intermediate entry's target frame.
+///
+/// Returns the number of corrupted entries found. Logs every hit to serial.
+/// Call this after exec/fork to catch corruption before it causes triple faults.
+unsafe fn validate_page_tables(pml4_phys: PhysAddr, label: &str) -> u32 {
+    const FREE_BLOCK_MAGIC: u64 = 0x4652454542304C;
+    let mut corrupt_count: u32 = 0;
+
+    let pml4_virt = phys_to_virt(pml4_phys);
+    let pml4 = unsafe { &*pml4_virt.as_ptr::<mm_paging::PageTable>() };
+
+    // — CrashBloom: Check PML4 frame itself for corruption
+    let pml4_first = unsafe { core::ptr::read_volatile(pml4_virt.as_ptr::<u64>()) };
+    if pml4_first == FREE_BLOCK_MAGIC {
+        unsafe {
+            os_log::write_str_raw("[PT-CORRUPT] ");
+            os_log::write_str_raw(label);
+            os_log::write_str_raw(": PML4 frame IS a FreeBlock! pml4=0x");
+            os_log::write_u64_hex_raw(pml4_phys.as_u64());
+            os_log::write_str_raw("\n");
+        }
+        return 999; // catastrophic — PML4 itself is freed
+    }
+
+    for pml4_idx in 0..256usize {
+        let pml4_entry = &pml4[pml4_idx];
+        if !pml4_entry.is_present() {
+            continue;
+        }
+
+        let pdpt_phys = pml4_entry.addr();
+        let pdpt_virt = phys_to_virt(pdpt_phys);
+        let pdpt_first = unsafe { core::ptr::read_volatile(pdpt_virt.as_ptr::<u64>()) };
+        if pdpt_first == FREE_BLOCK_MAGIC {
+            unsafe {
+                os_log::write_str_raw("[PT-CORRUPT] ");
+                os_log::write_str_raw(label);
+                os_log::write_str_raw(": PDPT[");
+                os_log::write_u32_raw(pml4_idx as u32);
+                os_log::write_str_raw("] frame=0x");
+                os_log::write_u64_hex_raw(pdpt_phys.as_u64());
+                os_log::write_str_raw(" is FreeBlock!\n");
+            }
+            corrupt_count += 1;
+            continue; // don't dereference further — the entries are garbage
+        }
+
+        let pdpt = unsafe { &*pdpt_virt.as_ptr::<mm_paging::PageTable>() };
+        for pdpt_idx in 0..512usize {
+            let pdpt_entry = &pdpt[pdpt_idx];
+            if !pdpt_entry.is_present() || pdpt_entry.is_huge() {
+                continue;
+            }
+
+            let pd_phys = pdpt_entry.addr();
+            let pd_virt = phys_to_virt(pd_phys);
+            let pd_first = unsafe { core::ptr::read_volatile(pd_virt.as_ptr::<u64>()) };
+            if pd_first == FREE_BLOCK_MAGIC {
+                unsafe {
+                    os_log::write_str_raw("[PT-CORRUPT] ");
+                    os_log::write_str_raw(label);
+                    os_log::write_str_raw(": PD[");
+                    os_log::write_u32_raw(pml4_idx as u32);
+                    os_log::write_str_raw("][");
+                    os_log::write_u32_raw(pdpt_idx as u32);
+                    os_log::write_str_raw("] frame=0x");
+                    os_log::write_u64_hex_raw(pd_phys.as_u64());
+                    os_log::write_str_raw(" is FreeBlock!\n");
+                }
+                corrupt_count += 1;
+                continue;
+            }
+
+            let pd = unsafe { &*pd_virt.as_ptr::<mm_paging::PageTable>() };
+            for pd_idx in 0..512usize {
+                let pd_entry = &pd[pd_idx];
+                if !pd_entry.is_present() || pd_entry.is_huge() {
+                    continue;
+                }
+
+                let pt_phys = pd_entry.addr();
+                let pt_virt = phys_to_virt(pt_phys);
+                let pt_first = unsafe { core::ptr::read_volatile(pt_virt.as_ptr::<u64>()) };
+                if pt_first == FREE_BLOCK_MAGIC {
+                    unsafe {
+                        os_log::write_str_raw("[PT-CORRUPT] ");
+                        os_log::write_str_raw(label);
+                        os_log::write_str_raw(": PT[");
+                        os_log::write_u32_raw(pml4_idx as u32);
+                        os_log::write_str_raw("][");
+                        os_log::write_u32_raw(pdpt_idx as u32);
+                        os_log::write_str_raw("][");
+                        os_log::write_u32_raw(pd_idx as u32);
+                        os_log::write_str_raw("] frame=0x");
+                        os_log::write_u64_hex_raw(pt_phys.as_u64());
+                        os_log::write_str_raw(" is FreeBlock!\n");
+                    }
+                    corrupt_count += 1;
+                    continue;
+                }
+            }
+        }
+    }
+
+    corrupt_count
+}
+
 /// User exit function
 ///
 /// ThreadRogue: Handle both thread and process exit - clean termination paths
@@ -163,8 +273,21 @@ pub fn user_exit(status: i32) -> ! {
             parent_pid
         );
 
-        // Mark task as zombie and set exit status
-        sched::set_task_exit_status(current_tid, status);
+        // — GraveShift: Close all file descriptors BEFORE zombie state (Linux exit_files).
+        // The zombie only needs PID + exit status for waitpid. Keeping fds open is
+        // catastrophic: a zombie holding PipeWrite keeps has_writers()=true → parent's
+        // pipe read blocks forever → parent never reaches waitpid → deadlock.
+        // Address space stays alive (zombie CR3 still loaded) — freed on waitpid reap.
+        if let Some(meta_arc) = sched::get_task_meta(current_tid) {
+            let mut meta = meta_arc.lock();
+            meta.fd_table = vfs::FdTable::new();
+            meta.shared_fd_table = None;
+        }
+
+        // — GraveShift: Encode exit status in Linux waitpid format.
+        // Normal exit: bits [15:8] = exit code, bits [7:0] = 0.
+        // waitpid consumers decode with WEXITSTATUS = (status >> 8) & 0xFF.
+        sched::set_task_exit_status(current_tid, (status & 0xFF) << 8);
 
         unsafe {
             USER_EXIT_STATUS = status;
@@ -648,6 +771,7 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
                     proc::UserAddressSpace::from_raw(
                         clone_result.shared_address_space.lock().pml4_phys(),
                         alloc::vec![],
+                        mm_vma::VmAreaList::new(),
                     )
                 },
                 shared_address_space: Some(clone_result.shared_address_space.clone()),
@@ -1352,6 +1476,13 @@ pub fn kernel_exec(
         }
     }
 
+    // — GraveShift: VFS lookup no longer needs manual kpo toggling. KernelMutex on
+    // the heap allocator handles preemption automatically — when heap locks are held
+    // (preempt_count > 0), scheduler backs off. When in virtio-blk polling (no locks
+    // held, count == 0), scheduler can preempt freely. The old manual kpo around this
+    // block caused Build 67's heap deadlocks: kpo=true → preempted while holding heap
+    // lock → next task deadlocks forever. Linux-model preempt_count kills that pattern.
+
     // Look up the file in VFS, following symlinks
     let mut vnode = match GLOBAL_VFS.lookup(path) {
         Ok(v) => v,
@@ -1415,6 +1546,9 @@ pub fn kernel_exec(
 
     let mut elf_data = alloc::vec![0u8; size];
     unsafe { os_log::write_str_raw("[EXEC] heap alloc done, reading vnode...\n"); }
+
+    // — GraveShift: VFS read triggers ext2 → virtio-blk block I/O. KernelMutex on
+    // the heap handles preemption automatically — no manual kpo needed.
     let read_result = vnode.read(0, &mut elf_data);
     let bytes_read = match read_result {
         Ok(n) => n,
@@ -1442,6 +1576,23 @@ pub fn kernel_exec(
             unsafe { os_log::write_str_raw("[EXEC] do_exec OK\n"); }
             // Get new address space PML4
             let new_pml4 = exec_result.address_space.pml4_phys();
+
+            // — CrashBloom: Validate new address space PT integrity immediately
+            // after do_exec. If corruption exists HERE, the bug is in do_exec or
+            // the buddy allocator (double-alloc). If clean here but corrupt later,
+            // it's a race between Drop and CR3.
+            #[cfg(debug_assertions)]
+            {
+                let n = unsafe { validate_page_tables(new_pml4, "post-do_exec") };
+                if n > 0 {
+                    unsafe {
+                        os_log::write_str_raw("[EXEC] ABORT: new PT corrupt after do_exec (");
+                        os_log::write_u32_raw(n);
+                        os_log::write_str_raw(" entries)\n");
+                    }
+                    return -5; // ENOMEM-ish — refuse to enter corrupted address space
+                }
+            }
 
             // — BlackLatch: Extract ALL values from exec_result.context before moving
             // address_space. We need local copies because Rust won't let us reference
@@ -1528,10 +1679,32 @@ pub fn kernel_exec(
             // allocated) or new (properly initialized) PML4. — BlackLatch
             sched::update_task_exec_info(current_pid, new_pml4, entry_rip, entry_rsp, task_ctx);
 
-            // NOW safe to replace address_space — task already points to new PML4,
-            // so any timer-interrupt context switch between here and enter_usermode
-            // uses the new (valid) page tables. The old address space Drop frees the
-            // old PML4, but nobody references it anymore.
+            // — GraveShift: CRITICAL FIX — Switch CR3 to new PML4 BEFORE dropping
+            // the old address space. update_task_exec_info only stores the new PML4
+            // in the task struct for future context switches. It does NOT change the
+            // hardware CR3 register. So right now, CR3 still points to the OLD PML4.
+            //
+            // When the Drop below frees the old PML4 frame, the buddy allocator
+            // writes FreeBlock{magic, next, prev} to its first 24 bytes. If the freed
+            // frame is then reallocated and zeroed (e.g., for another process's data
+            // page or page table), PML4[256-511] — the kernel higher-half mappings —
+            // become zeros. Any kernel TLB miss after that point reads "not present"
+            // for kernel addresses → page fault in ring 0 → double fault → triple
+            // fault → QEMU reset. Intermittent because it depends on how fast the
+            // freed frame is recycled.
+            //
+            // By switching CR3 here, the hardware uses the new (valid) PML4 for all
+            // page table walks. The old PML4 can be safely freed because no hardware
+            // register references it. The new PML4 has identical PML4[256-511] kernel
+            // mappings, so kernel code continues seamlessly. — GraveShift
+            unsafe {
+                core::arch::asm!("mov cr3, {}", in(reg) new_pml4.as_u64());
+            }
+
+            // NOW safe to replace address_space — CR3 points to new PML4 and
+            // task.pml4_phys also points to new PML4. No hardware or scheduler
+            // reference to the old PML4 remains. The old address space Drop frees
+            // the old PML4 and all its PT structure frames harmlessly.
             {
                 let mut m = meta.lock();
                 m.address_space = exec_result.address_space;
@@ -1545,6 +1718,18 @@ pub fn kernel_exec(
                 // base — which makes ASLR for the stack pointless because ld.so is
                 // still predictable.
                 m.next_mmap_addr = exec_mmap_base;
+
+                // — NeonRoot: Register the heap VMA so brk/sbrk can find and extend it.
+                // Initial heap spans [0x600000, program_break) — may be zero-length if
+                // the binary hasn't called brk yet. That's fine; sys_brk will extend it.
+                let pb = m.program_break;
+                let _ = m.address_space.add_vma(mm_vma::VmArea::new_named(
+                    0x600000,
+                    pb,
+                    mm_vma::VmFlags::READ | mm_vma::VmFlags::WRITE,
+                    mm_vma::VmType::Heap,
+                    b"[heap]",
+                ));
 
                 // — GraveShift: POSIX exec signal reset. Caught handlers point into the OLD
                 // address space — calling them after exec = instant GPF. SIG_IGN survives exec
@@ -1561,6 +1746,21 @@ pub fn kernel_exec(
                 // — GraveShift: Clear pending signals on exec. The old process image is gone;
                 // signals queued for it are meaningless now. Fresh start. — GraveShift
                 m.pending_signals = signal::PendingSignals::new();
+            }
+
+            // — CrashBloom: Post-Drop validation. The old address space is dead.
+            // CR3 already points to new_pml4 (switched above). Verify the new PT
+            // tree survived the Drop's frame freeing with no collateral damage.
+            #[cfg(debug_assertions)]
+            {
+                let n = unsafe { validate_page_tables(new_pml4, "post-drop") };
+                if n > 0 {
+                    unsafe {
+                        os_log::write_str_raw("[EXEC] WARNING: PT corrupt after Drop (");
+                        os_log::write_u32_raw(n);
+                        os_log::write_str_raw(" entries) — CR3 fix may not be sufficient\n");
+                    }
+                }
             }
 
             // Get current task's kernel stack for safe transition

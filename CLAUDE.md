@@ -45,6 +45,8 @@
 - Kernel preemption in syscalls: `docs/agents/write-syscall-kernel-preempt.md` (sys_write MUST enable kernel preemption — spinning on TERMINAL.lock() without it = permanent deadlock) (ncurses apps MUST call cbreak()+noecho() after initscr() — canonical mode prevents getch from detecting keys).
 - Signal delivery: `docs/agents/signal-delivery-blocking-reads.md` (every kernel blocking loop MUST check for pending actionable signals and return -EINTR — without this, Ctrl+C is silently swallowed).
 - SMP syscall safety: `docs/agents/percpu-syscall-data.md` (SYSCALL_USER_CONTEXT and CPU_DATA MUST be per-CPU arrays — single globals cause SMP register clobbering; every AP must call syscall::init() + init_kernel_stack()).
+- Preemption model: `docs/agents/preempt-count-model.md` (Linux-style per-CPU preempt_count counter replaces kpo boolean — KernelMutex auto-disables preemption on lock, scheduler checks preemptable() in timer ISR).
+- Fork COW: `docs/agents/fork-cow-all-pages.md` (fork MUST mark ALL present user pages as COW — not just writable ones; without VMAs, can't distinguish RO code from temporarily-RO data segments).
 
 ## Guardrails (must follow)
 - **NEVER REVERT FILES OR COMMITS.** Never run `git checkout` on files, `git reset`, `git revert`, or any command that undoes work. Never restore files to a previous state. If debugging, comment out code or add feature flags — do NOT undo changes. This is an ABSOLUTE rule with ZERO exceptions.

@@ -17,6 +17,7 @@ use proc::ProcessMeta;
 use sched::{self, SchedPolicy, Task, TaskState};
 use signal::delivery::{SignalResult, determine_action};
 use spin::Mutex;
+use vfs;
 
 /// Interrupt stack frame layout
 /// Matches what timer_interrupt pushes in exceptions.rs
@@ -182,6 +183,43 @@ pub fn remove_process(pid: u32) {
 /// Implements preemptive scheduling using the sched crate.
 /// Returns the RSP to restore (may be different if we switched processes).
 pub fn scheduler_tick(current_rsp: u64) -> u64 {
+    // — CrashBloom: PML4[256] CANARY — check CURRENT page tables every tick.
+    // If the currently-loaded CR3 has corrupted kernel entries, we're living
+    // on borrowed time. The ISR itself runs from kernel memory, so if we got
+    // here, PML4[256] WAS valid at ISR entry. But checking it catches the case
+    // where corruption happened between ticks — the NEXT code path that touches
+    // an unmapped kernel address would triple-fault. Catch it here first.
+    // Also check every Nth tick for the RUNNING process's PML4 frame being freed.
+    unsafe {
+        let golden = crate::globals::KERNEL_PML4_256_ENTRY;
+        if golden != 0 {
+            let cr3: u64;
+            core::arch::asm!("mov {}, cr3", out(reg) cr3, options(nostack, preserves_flags));
+            let pml4_virt = mm_paging::phys_to_virt(PhysAddr::new(cr3));
+            let current_entry = core::ptr::read_volatile(
+                pml4_virt.as_ptr::<u64>().add(256)
+            );
+            if current_entry != golden {
+                let pid = sched::current_pid_lockfree().unwrap_or(0);
+                os_log::write_str_raw("[PML4-LIVE-CORRUPT] pid=");
+                os_log::write_u32_raw(pid);
+                os_log::write_str_raw(" cr3=0x");
+                os_log::write_u64_hex_raw(cr3);
+                os_log::write_str_raw(" PML4[256]=0x");
+                os_log::write_u64_hex_raw(current_entry);
+                os_log::write_str_raw(" expected=0x");
+                os_log::write_u64_hex_raw(golden);
+                os_log::write_str_raw("\n");
+
+                // Check if PML4 frame itself is a freed buddy block
+                let pml4_first = core::ptr::read_volatile(pml4_virt.as_ptr::<u64>());
+                if pml4_first == 0x4652454542304C {
+                    os_log::write_str_raw("[PML4-LIVE-CORRUPT] PML4 IS FreeBlock! USE-AFTER-FREE!\n");
+                }
+            }
+        }
+    }
+
     // Check sleep queue and wake any tasks whose sleep time has expired
     // — GraveShift: BSP-only. All tasks live on CPU 0 (no migration yet).
     // Running on APs would redundantly scan + send cross-CPU IPIs.
@@ -411,8 +449,11 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
                                 // Release ProcessMeta lock before calling scheduler functions
                                 drop(meta);
 
-                                // Exit status: 128 + signal number (Unix convention)
-                                let exit_status = 128 + signo;
+                                // — GraveShift: Linux waitpid format for signal death:
+                                // bits [6:0] = signal number, bit 7 = core dump (0 here).
+                                // WTERMSIG(status) = status & 0x7F. Raw "128 + signo" was
+                                // wrong — made WIFEXITED true and WEXITSTATUS = 128+sig.
+                                let exit_status = signo & 0x7F;
                                 sched::set_task_exit_status(current_pid, exit_status);
 
                                 // — GraveShift: Wake parent so it can reap via wait().
@@ -553,64 +594,105 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         }
     }
 
-    // Check if kernel code has explicitly allowed preemption (e.g., poll, nanosleep)
-    let kernel_preempt_ok = arch::is_kernel_preempt_allowed();
+    // — GraveShift: Linux-model preempt_count check. preemptable() returns true
+    // when count == 0 (no locks held). KernelMutex increments on lock, decrements
+    // on unlock. Old kpo call sites also work through the backward-compat aliases.
+    let kernel_preempt_ok = arch::preemptable();
+    let preempt_count_val = arch::get_preempt_count();
 
     // Only preempt:
     // - User mode (CS = 0x23) - always safe
     // - Kernel mode if KERNEL_PREEMPT_OK flag is set (blocking syscalls)
     let in_kernel = frame.cs != 0x23;
 
+    // — CrashBloom: Kernel-mode stall watchdog. If the same task has been stuck in
+    // kernel mode for 200+ ticks (2 seconds) without a context switch, dump the RIP
+    // so we can see WHERE it's spinning. Nondeterministic hangs need observability.
+    {
+        use core::sync::atomic::{AtomicU32, AtomicU64, Ordering as AO};
+        static STALL_PID: AtomicU32 = AtomicU32::new(0);
+        static STALL_COUNT: AtomicU32 = AtomicU32::new(0);
+        static STALL_REPORTED: AtomicU32 = AtomicU32::new(0);
+
+        if in_kernel && current_pid > 1 {
+            let prev = STALL_PID.load(AO::Relaxed);
+            if prev == current_pid {
+                let count = STALL_COUNT.fetch_add(1, AO::Relaxed) + 1;
+                // Report every 200 ticks (2 sec) while stalled
+                if count % 200 == 0 && STALL_REPORTED.load(AO::Relaxed) < 5 {
+                    STALL_REPORTED.fetch_add(1, AO::Relaxed);
+                    unsafe {
+                        os_log::write_str_raw("[STALL] pid=");
+                        os_log::write_u32_raw(current_pid);
+                        os_log::write_str_raw(" kernel-mode ");
+                        os_log::write_u32_raw(count);
+                        os_log::write_str_raw(" ticks, RIP=0x");
+                        os_log::write_u64_hex_raw(frame.rip);
+                        os_log::write_str_raw(" RSP=0x");
+                        os_log::write_u64_hex_raw(frame.rsp);
+                        os_log::write_str_raw(" preempt_count=");
+                        os_log::write_u32_raw(preempt_count_val as u32);
+                        os_log::write_str_raw("\n");
+                    }
+                }
+            } else {
+                STALL_PID.store(current_pid, AO::Relaxed);
+                STALL_COUNT.store(1, AO::Relaxed);
+                STALL_REPORTED.store(0, AO::Relaxed);
+            }
+        } else {
+            // Reset if user mode or idle
+            STALL_COUNT.store(0, AO::Relaxed);
+            STALL_REPORTED.store(0, AO::Relaxed);
+        }
+    }
+
     if in_kernel && !kernel_preempt_ok {
-        // — GraveShift: Task is in non-preemptable kernel code (holding locks).
-        // Preempting here MIGHT deadlock if the next task needs those locks.
-        // However, some kernel paths (ext4 mkdir, file create) can block for
-        // hundreds of milliseconds on disk I/O, starving every other task.
+        // — GraveShift: Linux model — don't preempt kernel mode without kpo.
+        // spin_lock() holders don't set kpo. If we preempt them, the next task
+        // tries the same lock → permanent deadlock. The task will finish its
+        // syscall, return to userspace, and get preempted there.
         //
-        // Strategy: grant a grace period of KPO_GRACE_TICKS. Short operations
-        // (fork, page table ops) complete well within this window. Long I/O
-        // operations get forcefully preempted after the grace period expires —
-        // the rq_lock_available() check below still prevents scheduler deadlocks,
-        // and application-level lock waiters use kpo=1 so they can be preempted.
+        // Safety net: if a task has been in kernel mode without kpo for 500+
+        // ticks (5 seconds), something is genuinely stuck (not a spinlock — no
+        // spinlock is held for 5 seconds). Force-preempt to prevent permanent
+        // CPU lockup. This is purely a recovery mechanism for pathological cases
+        // like a driver polling loop that forgot kpo.
         use core::sync::atomic::{AtomicU32, AtomicU64, Ordering as AO};
 
-        // — GraveShift: 10 ticks = 100ms grace period. Fork/exec complete in
-        // <5 ticks. Disk I/O may exceed this, but that's the whole point.
-        const KPO_GRACE_TICKS: u32 = 10;
-
-        // — SableWire: Per-CPU KPO streak tracking. With SMP, multiple CPUs hit
-        // the timer ISR simultaneously. Global statics caused CPU 0's streak for
-        // PID 3 to be clobbered by CPU 1's idle task — permanent starvation.
-        // 8 CPUs max. Each entry is (pid, count) packed into one cache line pair.
+        // — GraveShift: 50 ticks = 500ms. No spinlock is held for 500ms.
+        // The longest legitimate non-kpo path is <1ms (lock acquire, PT walk).
+        // virtio-blk polling takes 10-50ms typically — this catches stuck drivers
+        // without making the whole system crawl at 5 seconds per context switch.
+        const EMERGENCY_TICKS: u32 = 50; // 500ms — no spinlock lasts this long
         const MAX_CPUS: usize = 8;
-        static KPO_STREAK_PID: [AtomicU64; MAX_CPUS] = [const { AtomicU64::new(0) }; MAX_CPUS];
-        static KPO_STREAK_COUNT: [AtomicU32; MAX_CPUS] = [const { AtomicU32::new(0) }; MAX_CPUS];
+        static NOKPO_PID: [AtomicU64; MAX_CPUS] = [const { AtomicU64::new(0) }; MAX_CPUS];
+        static NOKPO_COUNT: [AtomicU32; MAX_CPUS] = [const { AtomicU32::new(0) }; MAX_CPUS];
 
         let cpu = sched::this_cpu() as usize;
         let cpu_idx = if cpu < MAX_CPUS { cpu } else { 0 };
 
         let pid64 = current_pid as u64;
-        let prev_pid = KPO_STREAK_PID[cpu_idx].load(AO::Relaxed);
+        let prev_pid = NOKPO_PID[cpu_idx].load(AO::Relaxed);
         let streak = if prev_pid == pid64 {
-            KPO_STREAK_COUNT[cpu_idx].fetch_add(1, AO::Relaxed) + 1
+            NOKPO_COUNT[cpu_idx].fetch_add(1, AO::Relaxed) + 1
         } else {
-            KPO_STREAK_PID[cpu_idx].store(pid64, AO::Relaxed);
-            KPO_STREAK_COUNT[cpu_idx].store(1, AO::Relaxed);
+            NOKPO_PID[cpu_idx].store(pid64, AO::Relaxed);
+            NOKPO_COUNT[cpu_idx].store(1, AO::Relaxed);
             1
         };
 
-        // Still tick the scheduler for vruntime accounting
+        // Still tick vruntime for CFS accounting
         sched::scheduler_tick();
 
-        if streak < KPO_GRACE_TICKS {
+        if streak < EMERGENCY_TICKS {
             return current_rsp;
         }
 
-        // Grace period expired — fall through to preemption path.
-        // Reset streak so the task gets a fresh grace period when it resumes.
-        KPO_STREAK_COUNT[cpu_idx].store(0, AO::Relaxed);
-
-        // Fall through — forced preemption after grace period
+        // — CrashBloom: Emergency preempt — task stuck in kernel for 5+ seconds.
+        // Reset streak so it gets a fresh window if re-scheduled.
+        NOKPO_COUNT[cpu_idx].store(0, AO::Relaxed);
+        // Fall through to context switch path
     } else {
         // — GraveShift: Normal path — task is in userspace or has kpo=1.
         // Tick the scheduler and check if preemption is needed.
@@ -713,21 +795,23 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     //   5. load_kernel_preempt  (incoming task's saved kpo flag)
     // All five happen under a single try_with_rq. Less contention, no state
     // drift between operations, one cache miss instead of five.
+    // — GraveShift: Pass the raw preempt_count to the context switch transaction.
+    // The outgoing task's count is saved in its Task struct so it resumes with the
+    // correct lock depth. The incoming task's saved count is restored below.
     let switch_info = match sched::context_switch_transaction(
         current_pid,
         next_pid,
         current_ctx,
-        kernel_preempt_ok,
+        preempt_count_val,
     ) {
         Some(info) => info,
         None => return current_rsp, // Lock contended or task not found — retry next tick
     };
 
-    // Clear the per-CPU kernel-preempt flag now that we've saved it.
-    // The incoming task's flag is in switch_info.new_kpo and restored below.
-    if kernel_preempt_ok {
-        arch::clear_kernel_preempt();
-    }
+    // — GraveShift: Clear the outgoing task's preempt_count on this CPU.
+    // We saved it in the task struct; it'll be restored when this task is
+    // switched back in. The incoming task's count is set below.
+    arch::set_preempt_count(0);
 
     let next_ctx = switch_info.new_ctx;
     let kernel_stack_top = {
@@ -816,6 +900,47 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     }
     arch::gdt::set_kernel_stack(kernel_stack_top);
 
+    // — CrashBloom: PRE-SWITCH PML4[256] CANARY CHECK.
+    // Validate the target CR3's kernel entries before loading it. If PML4[256]
+    // (direct physical map) is corrupted, switching to this CR3 would immediately
+    // triple-fault because even the page fault handler lives in kernel space.
+    // One memory read to prevent a silent, undiagnosable death. Worth every cycle.
+    unsafe {
+        let golden = crate::globals::KERNEL_PML4_256_ENTRY;
+        if golden != 0 {
+            let target_pml4_virt = mm_paging::phys_to_virt(PhysAddr::new(switch_info.new_cr3));
+            let target_entry = core::ptr::read_volatile(
+                target_pml4_virt.as_ptr::<u64>().add(256)
+            );
+            if target_entry != golden {
+                // — CrashBloom: CORRUPTION DETECTED! Log everything and skip the switch.
+                // Without this check we'd triple-fault with zero diagnostic output.
+                os_log::write_str_raw("[PML4-CORRUPT] pid=");
+                os_log::write_u32_raw(next_pid);
+                os_log::write_str_raw(" cr3=0x");
+                os_log::write_u64_hex_raw(switch_info.new_cr3);
+                os_log::write_str_raw(" PML4[256]=0x");
+                os_log::write_u64_hex_raw(target_entry);
+                os_log::write_str_raw(" expected=0x");
+                os_log::write_u64_hex_raw(golden);
+                os_log::write_str_raw(" — SKIPPING SWITCH, killing task\n");
+
+                // Also check PML4 frame itself — is it a freed buddy block?
+                let pml4_first = core::ptr::read_volatile(
+                    target_pml4_virt.as_ptr::<u64>()
+                );
+                if pml4_first == 0x4652454542304C {
+                    os_log::write_str_raw("[PML4-CORRUPT] PML4 frame IS a FreeBlock! USE-AFTER-FREE!\n");
+                }
+
+                // Kill the corrupted task so we don't keep trying to switch to it
+                sched::set_task_exit_status(next_pid, 139); // SIGSEGV-style exit
+                sched::set_need_resched();
+                return current_rsp;
+            }
+        }
+    }
+
     // Switch page tables
     unsafe {
         core::arch::asm!("mov cr3, {}", in(reg) switch_info.new_cr3);
@@ -859,12 +984,11 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         );
     }
 
-    // — GraveShift: Restore the incoming task's kernel_preempt_ok state.
-    // Without this, tasks preempted mid-syscall (after allow_kernel_preempt but before
-    // file.write) resume with kernel_preempt_ok=false and deadlock on contended spinlocks.
-    if switch_info.new_kpo {
-        arch::allow_kernel_preempt();
-    }
+    // — GraveShift: Restore the incoming task's preempt_count. Without this, a task
+    // preempted while holding a KernelMutex (count > 0) would resume with count=0,
+    // making the scheduler think it's safe to preempt again mid-lock. The saved count
+    // preserves the exact lock nesting depth across context switches.
+    arch::set_preempt_count(switch_info.new_preempt_count);
 
     // Build interrupt frame for next process.
     //
@@ -1111,7 +1235,19 @@ pub fn kill_faulting_process(_pid: u64, rip: u64, signo: u64) {
         rip
     );
 
-    let exit_status = 128 + signo as i32;
+    // — GraveShift: Close all file descriptors BEFORE zombie state.
+    // Same bug as user_exit() — a signal-killed process holding PipeWrite keeps
+    // has_writers()=true → parent's pipe read blocks forever → deadlock.
+    // Zombies only need PID + exit status for waitpid. Kill the fds.
+    if let Some(meta_arc) = sched::get_task_meta(current_pid) {
+        let mut meta = meta_arc.lock();
+        meta.fd_table = vfs::FdTable::new();
+        meta.shared_fd_table = None;
+    }
+
+    // — GraveShift: Linux waitpid format for signal kill:
+    // bits [6:0] = signal number. WTERMSIG(status) = status & 0x7F.
+    let exit_status = (signo as i32) & 0x7F;
     sched::set_task_exit_status(current_pid, exit_status);
 
     // -- GraveShift: Wake parent so it can reap the corpse
@@ -1328,10 +1464,17 @@ pub fn check_signals_on_syscall_return() {
                 os_log::write_byte_raw(b'0' + signo as u8);
                 os_log::write_str_raw("\n");
             }
+            // — GraveShift: Close all fds while we still hold the lock.
+            // Same fix as user_exit() and kill_faulting_process() — zombie holding
+            // PipeWrite = pipe deadlock. Kill them before we die.
+            meta.fd_table = vfs::FdTable::new();
+            meta.shared_fd_table = None;
+
             drop(meta); // Release lock before calling scheduler
 
-            // Exit with signal status (128 + signal number)
-            let exit_status = 128 + signo;
+            // — GraveShift: Linux waitpid format for signal kill:
+            // bits [6:0] = signal number. WTERMSIG(status) = status & 0x7F.
+            let exit_status = signo & 0x7F;
             sched::set_task_exit_status(current_pid, exit_status);
 
             // Wake parent to reap us

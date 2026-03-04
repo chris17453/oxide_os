@@ -627,6 +627,7 @@ dependencies = [
  "mm-manager",
  "mm-paging",
  "mm-traits",
+ "mm-vma",
  "net",
  "os_core",
  "os_log",
@@ -833,21 +834,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "mm-slab"
-version = "0.1.0"
-dependencies = [
- "log",
- "mm-core",
- "mm-traits",
- "os_core",
- "spin 0.9.8",
-]
-
-[[package]]
 name = "mm-traits"
 version = "0.1.0"
 dependencies = [
  "os_core",
+]
+
+[[package]]
+name = "mm-vma"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.10.0",
+ "os_core",
+ "os_log",
 ]
 
 [[package]]
@@ -1082,6 +1081,7 @@ dependencies = [
  "mm-manager",
  "mm-paging",
  "mm-traits",
+ "mm-vma",
  "os_core",
  "os_log",
  "proc-traits",
@@ -1542,6 +1542,7 @@ dependencies = [
  "mm-cow",
  "mm-manager",
  "mm-traits",
+ "mm-vma",
  "mmap",
  "net",
  "os_core",

@@ -12,6 +12,7 @@ use mm_manager::try_mm;
 use mm_paging::{MapError as PagingMapError, PageMapper, PageTable, PageTableFlags};
 use mm_paging::{phys_to_virt, write_cr3};
 use mm_traits::FrameAllocator;
+use mm_vma::{VmArea, VmAreaError, VmAreaList};
 use os_core::{PhysAddr, VirtAddr};
 use proc_traits::{AddressSpace, MapError, MemoryFlags, UnmapError};
 
@@ -27,6 +28,10 @@ pub struct UserAddressSpace {
     /// Frames allocated for this address space's page tables
     /// (so we can free them when the address space is destroyed)
     allocated_frames: Vec<PhysAddr>,
+    /// — NeonRoot: Virtual memory area metadata — tracks what's mapped where.
+    /// The page tables are still the authority for frame ownership; this is
+    /// the semantic layer that knows "this is a stack" vs "this is .text".
+    pub vmas: VmAreaList,
 }
 
 impl UserAddressSpace {
@@ -63,6 +68,7 @@ impl UserAddressSpace {
             pml4_phys: pml4_frame,
             mapper,
             allocated_frames: alloc::vec![pml4_frame],
+            vmas: VmAreaList::new(),
         })
     }
 
@@ -71,17 +77,33 @@ impl UserAddressSpace {
         self.pml4_phys
     }
 
+    /// — GraveShift: Hollow out this address space for early exit cleanup.
+    /// Returns a new UserAddressSpace owning all the frames, leaving self
+    /// as an empty husk (pml4=0, no frames). The caller drops the returned
+    /// value after switching CR3 away. Self's Drop becomes a no-op.
+    pub fn take_for_exit(&mut self) -> Self {
+        let taken = Self {
+            pml4_phys: self.pml4_phys,
+            mapper: unsafe { PageMapper::new(self.pml4_phys) },
+            allocated_frames: core::mem::take(&mut self.allocated_frames),
+            vmas: core::mem::take(&mut self.vmas),
+        };
+        self.pml4_phys = PhysAddr::new(0);
+        taken
+    }
+
     /// Create from raw PML4 and frame list
     ///
     /// # Safety
     /// The PML4 must be a valid page table and all frames in the list
     /// must be owned by this address space.
-    pub unsafe fn from_raw(pml4_phys: PhysAddr, frames: Vec<PhysAddr>) -> Self {
+    pub unsafe fn from_raw(pml4_phys: PhysAddr, frames: Vec<PhysAddr>, vmas: VmAreaList) -> Self {
         let mapper = unsafe { PageMapper::new(pml4_phys) };
         Self {
             pml4_phys,
             mapper,
             allocated_frames: frames,
+            vmas,
         }
     }
 
@@ -325,6 +347,18 @@ impl UserAddressSpace {
         }
 
         Ok(())
+    }
+
+    /// — NeonRoot: Add a VMA to the address space metadata. Errors are
+    /// non-fatal — the page tables are the real authority. VMA overlap just
+    /// means our bookkeeping is slightly off, not that memory is corrupted.
+    pub fn add_vma(&mut self, vma: VmArea) -> Result<(), VmAreaError> {
+        self.vmas.insert(vma)
+    }
+
+    /// — NeonRoot: Remove VMAs covering [start, end). Returns the affected VMAs.
+    pub fn remove_vma_range(&mut self, start: u64, end: u64) -> Result<Vec<VmArea>, VmAreaError> {
+        self.vmas.remove(start, end)
     }
 }
 

@@ -1,0 +1,13 @@
+[package]
+name = "mm-vma"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+debug-vma = []
+
+[dependencies]
+os_core = { path = "../../core/os_core" }
+os_log = { path = "../../core/os_log" }
+bitflags = { workspace = true }

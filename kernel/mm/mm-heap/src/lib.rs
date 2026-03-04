@@ -32,18 +32,21 @@ pub use linked_list::LinkedListAllocator;
 pub use hardened::{HardenedHeapAllocator, LockedHardenedHeap};
 
 use core::alloc::{GlobalAlloc, Layout};
-use spin::Mutex;
+use os_core::sync::KernelMutex;
 
 /// Global kernel heap allocator (standard version)
+///
+/// — GraveShift: KernelMutex wraps every alloc/dealloc with preempt_disable/enable.
+/// The scheduler can't yank us mid-allocation anymore. Build 67 sends its regards.
 pub struct LockedHeap {
-    inner: Mutex<LinkedListAllocator>,
+    inner: KernelMutex<LinkedListAllocator>,
 }
 
 impl LockedHeap {
     /// Create a new empty locked heap
     pub const fn empty() -> Self {
         Self {
-            inner: Mutex::new(LinkedListAllocator::empty()),
+            inner: KernelMutex::new(LinkedListAllocator::empty()),
         }
     }
 

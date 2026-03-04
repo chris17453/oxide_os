@@ -185,7 +185,7 @@ pub fn do_clone<A: FrameAllocator>(
     } else {
         // Parent is the thread group leader, create shared wrapper
         let parent_as = unsafe {
-            UserAddressSpace::from_raw(parent_meta.address_space.pml4_phys(), alloc::vec![])
+            UserAddressSpace::from_raw(parent_meta.address_space.pml4_phys(), alloc::vec![], mm_vma::VmAreaList::new())
         };
         Arc::new(Mutex::new(parent_as))
     };

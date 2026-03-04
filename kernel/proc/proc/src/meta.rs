@@ -245,7 +245,7 @@ impl ProcessMeta {
     /// Create ProcessMeta for a kernel task (like idle)
     pub fn new_kernel() -> Self {
         // Create a minimal address space for kernel tasks
-        let address_space = unsafe { UserAddressSpace::from_raw(PhysAddr::new(0), Vec::new()) };
+        let address_space = unsafe { UserAddressSpace::from_raw(PhysAddr::new(0), Vec::new(), mm_vma::VmAreaList::new()) };
 
         Self {
             tgid: 0,

@@ -891,11 +891,20 @@ extern "C" fn handle_invalid_opcode(frame: *const InterruptFrame, _error: u64) {
         regs[0]
     );
 
-    // Try to read bytes at RIP if it's in user space
-    if frame.rip < 0x8000_0000_0000_0000 {
-        // Try to read instruction bytes (may fault)
-        crate::serial_println!("Trying to read bytes at RIP...");
-        // Can't safely read user memory here without proper page table handling
+    // — GraveShift: User-mode #UD → deliver SIGILL, don't nuke the system.
+    // Rust's panic_abort uses ud2 as its abort instruction, so every unwinding
+    // panic in a userspace std binary lands here. The process dies; life goes on.
+    if (frame.cs & 3) != 0 {
+        crate::serial_println!(
+            "[SIGILL] User invalid opcode at RIP {:#x}",
+            frame.rip
+        );
+        let kill_cb = unsafe { *core::ptr::addr_of!(USER_FAULT_KILL_CALLBACK) };
+        if let Some(kill) = kill_cb {
+            kill(0, frame.rip, 4); // 4 = SIGILL
+            return;
+        }
+        // — GraveShift: No kill callback (early boot). Fall through to panic.
     }
 
     panic!("INVALID OPCODE at {:#x}", frame.rip);
@@ -1120,6 +1129,43 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
     // Print debug values from syscall sysretq path and AC tracking.
     // — NeonRoot: Old code imported racy single-global statics; now we read
     // THIS CPU's per-CPU slot. Same information, zero cross-CPU contamination.
+    //
+    // — GraveShift: Guard against GS_BASE=0. If GS_BASE is null (uninitialized CPU,
+    // corrupted state, or nested fault during early boot), reading gs:[40] triggers
+    // page fault at 0x28 → cascading fault → double fault → dead. Read GS_BASE
+    // via rdmsr first. If it's 0, skip the per-CPU debug dump entirely.
+    unsafe {
+        let gs_base: u64;
+        core::arch::asm!(
+            "mov ecx, 0xC0000101",  // MSR IA32_GS_BASE
+            "rdmsr",
+            "shl rdx, 32",
+            "or rax, rdx",
+            out("ecx") _,
+            out("rax") gs_base,
+            out("rdx") _,
+            options(nomem, nostack),
+        );
+        if gs_base == 0 {
+            crate::serial_println!("  [SKIP] GS_BASE is NULL — per-CPU debug slot unavailable");
+        }
+    }
+    // — GraveShift: Only access per-CPU data if GS_BASE is valid (non-zero).
+    let gs_base_valid = unsafe {
+        let gs_base: u64;
+        core::arch::asm!(
+            "mov ecx, 0xC0000101",
+            "rdmsr",
+            "shl rdx, 32",
+            "or rax, rdx",
+            out("ecx") _,
+            out("rax") gs_base,
+            out("rdx") _,
+            options(nomem, nostack),
+        );
+        gs_base != 0
+    };
+    if gs_base_valid {
     unsafe {
         let dbg = crate::syscall::get_current_cpu_debug_slot();
         crate::serial_println!("  DEBUG from syscall sysretq (this CPU's slot):");
@@ -1159,6 +1205,7 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
             if (after_call >> 18) & 1 != 0 { "SET" } else { "CLEAR" }
         );
     }
+    } // — GraveShift: end of gs_base_valid guard
 
     // Walk the page tables to see what's mapped
     crate::serial_println!("  === PAGE TABLE WALK ===");
@@ -1272,14 +1319,61 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
         }
     }
 
-    // -- BlackLatch: User-mode page faults kill the process, not the kernel.
-    // Only kernel faults are truly fatal.
+    // — BlackLatch: User-mode page faults kill the process, not the kernel.
+    // Only kernel faults are truly fatal. Enhanced diagnostics so we stop
+    // guessing whether it's COW, corruption, or a ghost in the machine.
     if error & 4 != 0 {
         crate::serial_println!(
-            "[SIGSEGV] User page fault at addr {:#x}, RIP {:#x}",
+            "[SIGSEGV] User page fault at addr {:#x}, RIP {:#x}, error={:#x}",
             cr2,
-            frame.rip
+            frame.rip,
+            error
         );
+        // — GraveShift: Decode the error code bits. Every bit tells a story,
+        // usually a horror story.
+        crate::serial_println!(
+            "  error bits: present={} write={} user={} rsvd={} ifetch={}",
+            error & 1,
+            (error >> 1) & 1,
+            (error >> 2) & 1,
+            (error >> 3) & 1,
+            (error >> 4) & 1
+        );
+        // — GraveShift: PTE walk for the faulting address — check COW bit (bit 9).
+        // The generic walk above already ran, but this summary is what matters
+        // for the SIGSEGV triage.
+        unsafe {
+            let cr3_val: u64;
+            core::arch::asm!("mov {}, cr3", out(reg) cr3_val, options(nomem, nostack));
+            let pml4_phys = cr3_val & 0xFFFF_FFFF_F000;
+            let pml4_virt = 0xFFFF_8000_0000_0000 | pml4_phys;
+            let pml4_idx = (cr2 >> 39) & 0x1FF;
+            let pml4e = *((pml4_virt + pml4_idx * 8) as *const u64);
+            if pml4e & 1 != 0 {
+                let pdpt_virt = 0xFFFF_8000_0000_0000 | (pml4e & 0xFFFF_FFFF_F000);
+                let pdpt_idx = (cr2 >> 30) & 0x1FF;
+                let pdpte = *((pdpt_virt + pdpt_idx * 8) as *const u64);
+                if pdpte & 1 != 0 && (pdpte >> 7) & 1 == 0 {
+                    let pd_virt = 0xFFFF_8000_0000_0000 | (pdpte & 0xFFFF_FFFF_F000);
+                    let pd_idx = (cr2 >> 21) & 0x1FF;
+                    let pde = *((pd_virt + pd_idx * 8) as *const u64);
+                    if pde & 1 != 0 && (pde >> 7) & 1 == 0 {
+                        let pt_virt = 0xFFFF_8000_0000_0000 | (pde & 0xFFFF_FFFF_F000);
+                        let pt_idx = (cr2 >> 12) & 0x1FF;
+                        let pte = *((pt_virt + pt_idx * 8) as *const u64);
+                        crate::serial_println!(
+                            "  PTE={:#x} P={} W={} U={} COW={} phys={:#x}",
+                            pte,
+                            pte & 1,
+                            (pte >> 1) & 1,
+                            (pte >> 2) & 1,
+                            (pte >> 9) & 1,
+                            pte & 0xFFFF_FFFF_F000
+                        );
+                    }
+                }
+            }
+        }
         let kill_cb = unsafe { *core::ptr::addr_of!(USER_FAULT_KILL_CALLBACK) };
         if let Some(kill) = kill_cb {
             kill(0, frame.rip, 11); // 11 = SIGSEGV

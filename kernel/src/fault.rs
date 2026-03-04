@@ -5,6 +5,7 @@
 //! move here and the whole userland flatlines. No pressure.
 
 use mm_paging::{PageTable, PageTableFlags, phys_to_virt};
+use mm_vma::{VmFlags, VmType};
 use os_core::{PhysAddr, VirtAddr};
 use proc::handle_cow_fault;
 use spin::Mutex;
@@ -86,7 +87,25 @@ pub fn page_fault_handler(fault_addr: u64, error_code: u64, _rip: u64) -> bool {
         }
     }
 
-    // -- GraveShift: Dynamic stack growth --
+    // — NeonRoot: VMA-based fault classification. If we can identify the faulting
+    // address's VMA, we can make smarter decisions (e.g., stack growth only for
+    // GROWSDOWN VMAs, not for any address in the stack region). Uses try_lock to
+    // avoid deadlocking in exception context — falls back to legacy checks if
+    // the ProcessMeta lock is contended.
+    if is_write && is_userspace_addr {
+        if let Some((vm_type, vm_flags)) = classify_fault_by_vma(fault_addr) {
+            if vm_type == VmType::Stack && vm_flags.contains(VmFlags::GROWSDOWN) {
+                let page_addr = fault_addr & !0xFFF;
+                let pml4_phys = PhysAddr::new(actual_cr3 & !0xFFF);
+                if handle_stack_growth(page_addr, pml4_phys) {
+                    debug_cow!("[PF] VMA-guided stack growth handled OK");
+                    return true;
+                }
+            }
+        }
+    }
+
+    // -- GraveShift: Dynamic stack growth (legacy fallback) --
     // Handles both not-present faults AND failed COW resolutions in the stack
     // region. The COW handler can fail when intermediate page table entries
     // (PD/PDPT) are missing — e.g., SMP race or address space partially torn
@@ -329,6 +348,18 @@ fn handle_stack_growth(page_addr: u64, pml4_phys: PhysAddr) -> bool {
     smp::tlb_shootdown(page_start, page_end, 0);
 
     true
+}
+
+/// — NeonRoot: Try to classify a fault address using VMA metadata.
+/// Uses try_lock on the scheduler's ProcessMeta to avoid deadlocking
+/// in exception context. Returns None if the lock is contended or
+/// no VMA covers the faulting address.
+fn classify_fault_by_vma(fault_addr: u64) -> Option<(VmType, VmFlags)> {
+    let pid = sched::current_pid()?;
+    let meta_arc = sched::try_get_task_meta(pid)?;
+    let meta = meta_arc.try_lock()?;
+    let vma = meta.address_space.vmas.find(fault_addr)?;
+    Some((vma.vm_type, vma.flags))
 }
 
 /// Dump page table flags for debugging NX issues

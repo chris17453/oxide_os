@@ -236,6 +236,8 @@ async function startQemu(options = {}) {
         "-monitor", `unix:${MONITOR_SOCKET},server,nowait`,
         "-display", "vnc=:99",
         "-no-reboot",
+        "-d", "cpu_reset",
+        "-D", join(PROJECT_ROOT, "target/debug.log"),
       ];
     } else {
       args = [
@@ -255,6 +257,8 @@ async function startQemu(options = {}) {
         "-monitor", `unix:${MONITOR_SOCKET},server,nowait`,
         "-display", "vnc=:99",
         "-no-reboot",
+        "-d", "cpu_reset",
+        "-D", join(PROJECT_ROOT, "target/debug.log"),
       ];
     }
 

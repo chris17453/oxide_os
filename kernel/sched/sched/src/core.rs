@@ -1102,8 +1102,11 @@ pub struct SwitchInfo {
     pub new_kernel_stack: PhysAddr,
     /// Size of incoming task's kernel stack in bytes.
     pub new_kernel_stack_size: usize,
-    /// Incoming task's saved kernel_preempt_ok flag.
-    pub new_kpo: bool,
+    /// — GraveShift: Incoming task's saved preempt_count. Preserves lock nesting
+    /// depth across context switches. If a task was preempted holding 2 KernelMutex
+    /// locks (count=2), it resumes with count=2 so the scheduler knows not to
+    /// preempt it again until both locks are released.
+    pub new_preempt_count: i32,
     /// Full saved context for the incoming task (for interrupt frame rebuild).
     pub new_ctx: crate::task::TaskContext,
 }
@@ -1116,9 +1119,13 @@ pub struct SwitchInfo {
 /// Now: one with_rq call does all of it. Less contention, no window for the
 /// scheduler to change state between operations, fewer cache misses.
 ///
-/// Saves `old_ctx` + `kpo_value` into `old_pid`'s task, then collects all
+/// Saves `old_ctx` + `preempt_count` into `old_pid`'s task, then collects all
 /// switch info for `new_pid`, marks it as current, and returns `SwitchInfo`.
 /// Returns `None` if either task is not found on this CPU's run queue.
+///
+/// — GraveShift: preempt_count replaces the old boolean kpo_value. The counter
+/// captures exact lock nesting depth — a task holding 3 KernelMutex locks has
+/// count=3, and it'll resume with count=3 on switch-in. Boolean was lossy.
 ///
 /// SAFETY: Must be called from the timer ISR with rq_lock_available() == true.
 /// Uses try_with_rq (non-blocking) — callers must have checked the lock first.
@@ -1126,7 +1133,7 @@ pub fn context_switch_transaction(
     old_pid: Pid,
     new_pid: Pid,
     old_ctx: crate::task::TaskContext,
-    kpo_value: bool,
+    preempt_count: i32,
 ) -> Option<SwitchInfo> {
     let cpu = this_cpu();
 
@@ -1137,7 +1144,7 @@ pub fn context_switch_transaction(
         // --- Save outgoing task ---
         if let Some(old_task) = rq.get_task_mut(old_pid) {
             old_task.context = old_ctx;
-            old_task.kernel_preempt_ok = kpo_value;
+            old_task.preempt_count = preempt_count as u32;
         }
         // If old task not found on this CPU, bail — something is very wrong
         // but we don't want to corrupt state by continuing half-blind.
@@ -1161,7 +1168,7 @@ pub fn context_switch_transaction(
             new_gs_base: new_task.context.gs_base,
             new_kernel_stack: new_task.kernel_stack,
             new_kernel_stack_size: new_task.kernel_stack_size,
-            new_kpo: new_task.kernel_preempt_ok,
+            new_preempt_count: new_task.preempt_count as i32,
             new_ctx: new_task.context,
         };
 
