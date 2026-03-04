@@ -118,7 +118,6 @@ pub(crate) mod guard {
         any(
             target_os = "hermit",
             target_os = "xous",
-            target_os = "oxide",
         ) => {
             // `std` is the only runtime, so it just calls the destructor functions
             // itself when the time comes.
@@ -188,25 +187,19 @@ pub(crate) mod key {
             pub(super) use xous::{Key, get, set};
             use xous::{create, destroy};
         }
-        target_os = "oxide" => {
-            // — IronGhost: OXIDE uses native TLS (target_thread_local=true).
-            // Key-based TLS is only needed for destructor guard registration.
-            // Provide minimal stubs — real TLS uses the native path above.
-            pub(super) type Key = usize;
-            pub(super) fn get(_key: Key) -> *mut u8 { core::ptr::null_mut() }
-            pub(super) fn set(_key: Key, _val: *mut u8) {}
-            fn create(_dtor: Option<unsafe extern "C" fn(*mut u8)>) -> Key { 0 }
-            fn destroy(_key: Key) {}
-            pub(super) struct LazyKey {
-                key: crate::sync::atomic::AtomicUsize,
-                dtor: Option<unsafe extern "C" fn(*mut u8)>,
-            }
-            impl LazyKey {
-                pub const fn new(dtor: Option<unsafe extern "C" fn(*mut u8)>) -> Self {
-                    Self { key: crate::sync::atomic::AtomicUsize::new(0), dtor }
-                }
-                pub fn force(&self) -> Key { 0 }
-            }
+    target_os = "oxide" => {
+        mod racy;
+        pub(super) use racy::LazyKey;
+        pub(super) use oxide_rt::tls::{Key, get, set};
+        use oxide_rt::tls::{create, destroy};
+    }
+        target_os = "motor" => {
+            mod racy;
+            #[cfg(test)]
+            mod tests;
+            pub(super) use racy::LazyKey;
+            pub(super) use moto_rt::tls::{Key, get, set};
+            use moto_rt::tls::{create, destroy};
         }
         _ => {}
     }

@@ -122,11 +122,17 @@ pub fn invalidate_page(addr: u64) {
 pub fn invalidate_range(start: u64, end: u64) {
     const PAGE_SIZE: u64 = 4096;
 
-    // Align to page boundaries
+    // Align to page boundaries — saturating to avoid overflow when end == u64::MAX
+    // — SableWire: exec() passes (0, u64::MAX) for full address space flush.
+    // Wrapping that around would ruin everybody's day.
     let start_aligned = start & !(PAGE_SIZE - 1);
-    let end_aligned = (end + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+    let end_aligned = end.saturating_add(PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
 
-    // If range is too large, just flush all
+    // If range is too large or wraps, just flush all
+    if end_aligned <= start_aligned {
+        flush_tlb_all();
+        return;
+    }
     let num_pages = (end_aligned - start_aligned) / PAGE_SIZE;
     if num_pages > 32 {
         // Full TLB flush is cheaper for large ranges
@@ -134,11 +140,12 @@ pub fn invalidate_range(start: u64, end: u64) {
         return;
     }
 
-    // Invalidate each page
+    // Invalidate each page — SableWire: wrapping_add because debug-mode overflow
+    // panics at 0xFFFF_FFFF_FFFF_F000 + 0x1000 are not a good look
     let mut addr = start_aligned;
     while addr < end_aligned {
         invalidate_page(addr);
-        addr += PAGE_SIZE;
+        addr = addr.wrapping_add(PAGE_SIZE);
     }
 }
 

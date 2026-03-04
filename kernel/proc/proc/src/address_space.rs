@@ -1,9 +1,14 @@
 //! User address space management
 //!
 //! Creates and manages user-mode virtual address spaces.
+//!
+//! — GraveShift: Every process takes a PML4 + PDPT/PD/PT tree + user data frames.
+//! Used to be: none of it came back. Now it does. You're welcome, buddy allocator.
 
 use alloc::vec::Vec;
 use core::cell::RefCell;
+use mm_cow::cow_tracker;
+use mm_manager::try_mm;
 use mm_paging::{MapError as PagingMapError, PageMapper, PageTable, PageTableFlags};
 use mm_paging::{phys_to_virt, write_cr3};
 use mm_traits::FrameAllocator;
@@ -211,14 +216,19 @@ impl UserAddressSpace {
         let mut frames = alloc::vec::Vec::with_capacity(num_pages);
 
         // Phase 1: Allocate all frames (each alloc is independent, no lock held across calls)
+        //
+        // — GraveShift: User data frames are NOT tracked in allocated_frames.
+        // They live in the page tables — Drop walks the PT to find and free them.
+        // allocated_frames is reserved for page table frames (PML4/PDPT/PD/PT)
+        // so the Drop impl can free them unconditionally without COW checks.
         for i in 0..num_pages {
             // — GraveShift: Alloc progress trace, gated (fires per-page = insane serial load)
             #[cfg(feature = "debug-paging")]
             if i % 10 == 0 && i > 0 {
                 unsafe {
-                    arch_x86_64::serial::write_str_unsafe("[ALLOC] page ");
-                    arch_x86_64::serial::write_u32_unsafe(i as u32);
-                    arch_x86_64::serial::write_str_unsafe("\n");
+                    os_log::write_str_raw("[ALLOC] page ");
+                    os_log::write_u32_raw(i as u32);
+                    os_log::write_str_raw("\n");
                 }
             }
 
@@ -227,22 +237,33 @@ impl UserAddressSpace {
                 None => {
                     // — BlackLatch: OOM is FATAL — always report, bounded serial
                     unsafe {
-                        arch_x86_64::serial::write_str_unsafe("[ALLOC-ERROR] OOM at frame ");
-                        arch_x86_64::serial::write_u32_unsafe(i as u32);
-                        arch_x86_64::serial::write_str_unsafe("\n");
+                        os_log::write_str_raw("[ALLOC-ERROR] OOM at frame ");
+                        os_log::write_u32_raw(i as u32);
+                        os_log::write_str_raw("\n");
+                    }
+                    // — ColdCipher: C6 — Free all frames we already allocated before
+                    // returning. The old code just returned Err and dropped the Vec,
+                    // which leaks every physical frame collected so far. These frames
+                    // aren't in allocated_frames (by design — they're user data frames
+                    // tracked via PT walk), so Drop can't find them. We must free them
+                    // explicitly here or they're gone forever. One OOM per fork/exec
+                    // cycle = slow memory death.
+                    for &leaked in &frames {
+                        allocator.free_frame(leaked);
                     }
                     return Err(MapError::OutOfMemory);
                 }
             };
-            self.allocated_frames.push(frame);
+            // — GraveShift: Do NOT push to allocated_frames here. User data frames
+            // are freed via page table walk in Drop. Only PT-structure frames belong here.
             frames.push(frame);
 
             // — TorqueJax: Per-frame alloc trace, gated (100 pages = 3KB serial)
             #[cfg(feature = "debug-paging")]
             unsafe {
-                arch_x86_64::serial::write_str_unsafe("[FRAME-ALLOC] phys=");
-                arch_x86_64::serial::write_u64_hex_unsafe(frame.as_u64());
-                arch_x86_64::serial::write_str_unsafe("\n");
+                os_log::write_str_raw("[FRAME-ALLOC] phys=");
+                os_log::write_u64_hex_raw(frame.as_u64());
+                os_log::write_str_raw("\n");
             }
         }
 
@@ -257,11 +278,11 @@ impl UserAddressSpace {
             // — GraveShift: Zero-start trace, gated (100 pages × 60 bytes = 6KB serial per exec)
             #[cfg(feature = "debug-paging")]
             unsafe {
-                arch_x86_64::serial::write_str_unsafe("[ZERO-START] phys=");
-                arch_x86_64::serial::write_u64_hex_unsafe(frame.as_u64());
-                arch_x86_64::serial::write_str_unsafe(" virt=");
-                arch_x86_64::serial::write_u64_hex_unsafe(frame_virt.as_u64());
-                arch_x86_64::serial::write_str_unsafe("\n");
+                os_log::write_str_raw("[ZERO-START] phys=");
+                os_log::write_u64_hex_raw(frame.as_u64());
+                os_log::write_str_raw(" virt=");
+                os_log::write_u64_hex_raw(frame_virt.as_u64());
+                os_log::write_str_raw("\n");
             }
 
             // — ColdCipher: Free block canary check — FATAL, always on, bounded serial
@@ -269,9 +290,9 @@ impl UserAddressSpace {
             unsafe {
                 let first_u64 = core::ptr::read_volatile(frame_virt.as_ptr::<u64>());
                 if first_u64 == FREE_BLOCK_MAGIC {
-                    arch_x86_64::serial::write_str_unsafe("[FATAL] About to zero FREE BLOCK! phys=");
-                    arch_x86_64::serial::write_u64_hex_unsafe(frame.as_u64());
-                    arch_x86_64::serial::write_str_unsafe(" - GPF\n");
+                    os_log::write_str_raw("[FATAL] About to zero FREE BLOCK! phys=");
+                    os_log::write_u64_hex_raw(frame.as_u64());
+                    os_log::write_str_raw(" - GPF\n");
                     core::ptr::write_volatile(0xDEADC0DE as *mut u64, frame.as_u64());
                 }
             }
@@ -284,13 +305,23 @@ impl UserAddressSpace {
             // — GraveShift: Zero-done trace, gated
             #[cfg(feature = "debug-paging")]
             unsafe {
-                arch_x86_64::serial::write_str_unsafe("[ZERO-DONE] phys=");
-                arch_x86_64::serial::write_u64_hex_unsafe(frame.as_u64());
-                arch_x86_64::serial::write_str_unsafe("\n");
+                os_log::write_str_raw("[ZERO-DONE] phys=");
+                os_log::write_u64_hex_raw(frame.as_u64());
+                os_log::write_str_raw("\n");
             }
 
-            // — BlackLatch: Map the page
-            unsafe { self.map_user_page(virt, frame, flags, allocator)? };
+            // — BlackLatch: Map the page. If mapping fails (PT allocation OOM),
+            // free all remaining unmapped frames. Already-mapped frames are tracked
+            // in the page tables and will be freed by Drop's PT walk.
+            if let Err(e) = unsafe { self.map_user_page(virt, frame, flags, allocator) } {
+                // — ColdCipher: C6 Phase 2 — Free this frame and all subsequent
+                // unmapped frames. frames[0..i] are already mapped and owned by PTs.
+                allocator.free_frame(frame);
+                for &remaining in &frames[i + 1..] {
+                    allocator.free_frame(remaining);
+                }
+                return Err(e);
+            }
         }
 
         Ok(())
@@ -323,6 +354,220 @@ impl AddressSpace for UserAddressSpace {
 
     fn translate(&self, virt: VirtAddr) -> Option<PhysAddr> {
         self.mapper.translate(virt)
+    }
+}
+
+/// Drop implementation for UserAddressSpace — the anti-OOM guarantee.
+///
+/// — GraveShift: Six months of process churn, six months of frame leaks.
+/// Every process exit used to vaporize its entire address space into the void.
+/// PML4, PDPTs, PDs, PTs, user data — all of it just gone. The buddy
+/// allocator's free list shrank by a few hundred frames on every exec.
+/// This is the fix. This is the floor that catches what used to fall forever.
+///
+/// Strategy:
+///   1. Walk the user-space portion of the PML4 (entries 0-255) and free
+///      every leaf page frame via COW-aware logic:
+///        - decrement the COW tracker
+///        - free to buddy only if we're the last owner (count == 0 after dec)
+///        - frames not in the COW tracker (count == 0 initially) are exclusively
+///          owned and always freed
+///   2. Free all frames in `allocated_frames` — these are page-table structure
+///      frames (PML4, PDPTs, PDs, PTs) that are always exclusively owned.
+///
+/// Kernel mappings (PML4 indices 256-511) are shared across all address spaces
+/// and must NEVER be freed here — they live for the entire kernel lifetime.
+///
+/// # Safety invariants
+/// - try_mm() is used so this is safe to call even if mm isn't initialized
+///   (kernel tasks with empty address spaces hit this path on shutdown)
+/// - The PML4 frame itself is in allocated_frames[0]; it is freed last in step 2
+/// - We never touch CR3 here — the process is already dead by the time Drop runs
+impl Drop for UserAddressSpace {
+    fn drop(&mut self) {
+        // — GraveShift: No mm = early boot task or mm went away. Either way,
+        // we can't free. Frames are gone. That's acceptable for boot-time tasks.
+        let mm = match try_mm() {
+            Some(m) => m,
+            None => return,
+        };
+
+        // — GraveShift: Kernel pseudo-tasks (idle, etc.) have pml4_phys == 0
+        // and an empty allocated_frames. Nothing to walk, nothing to free.
+        if self.pml4_phys.as_u64() == 0 {
+            return;
+        }
+
+        let cow = cow_tracker();
+
+        // ----------------------------------------------------------------
+        // Step 1: Walk user-space page tables (PML4 indices 0-255) and
+        // free all leaf user data frames with COW reference counting.
+        // — GraveShift: The walk is O(mapped pages). For typical userspace
+        // processes that's a few hundred frames — fast enough for exit path.
+        // ----------------------------------------------------------------
+
+        // Safety: pml4_phys is valid — we checked above. phys_to_virt maps
+        // physical addresses into the kernel's direct-map region.
+        let pml4_virt = phys_to_virt(self.pml4_phys);
+        let pml4 = unsafe { &*pml4_virt.as_ptr::<PageTable>() };
+
+        #[cfg(feature = "debug-proc")]
+        let mut freed_leaf: u32 = 0;
+        #[cfg(feature = "debug-proc")]
+        let mut skipped_cow: u32 = 0;
+
+        // — TorqueJax: Collect ALL PT structure frames discovered during the walk,
+        // not just the ones in allocated_frames. handle_stack_growth() creates
+        // intermediate PDPT/PD/PT frames via direct alloc_frame() calls that bypass
+        // the TrackingAllocator, so they're invisible to allocated_frames. By
+        // collecting them during the walk we catch every frame regardless of how it
+        // was allocated. The PML4 itself is freed separately (it's always index 0
+        // in allocated_frames or we handle it explicitly).
+        let mut walked_pt_frames: Vec<PhysAddr> = Vec::new();
+
+        // Only walk user-space (indices 0-255). Kernel half (256-511) is shared.
+        for pml4_idx in 0..256usize {
+            let pml4_entry = &pml4[pml4_idx];
+            if !pml4_entry.is_present() {
+                continue;
+            }
+
+            let pdpt_phys = pml4_entry.addr();
+            walked_pt_frames.push(pdpt_phys);
+            let pdpt_virt = phys_to_virt(pdpt_phys);
+            let pdpt = unsafe { &*pdpt_virt.as_ptr::<PageTable>() };
+
+            for pdpt_idx in 0..512usize {
+                let pdpt_entry = &pdpt[pdpt_idx];
+                if !pdpt_entry.is_present() {
+                    continue;
+                }
+
+                if pdpt_entry.is_huge() {
+                    let phys = pdpt_entry.addr();
+                    let remaining = cow.decrement(phys);
+                    if remaining == 0 {
+                        let _ = mm.free_frames(phys, 18);
+                        #[cfg(feature = "debug-proc")]
+                        { freed_leaf += 1; }
+                    } else {
+                        #[cfg(feature = "debug-proc")]
+                        { skipped_cow += 1; }
+                    }
+                    continue;
+                }
+
+                let pd_phys = pdpt_entry.addr();
+                walked_pt_frames.push(pd_phys);
+                let pd_virt = phys_to_virt(pd_phys);
+                let pd = unsafe { &*pd_virt.as_ptr::<PageTable>() };
+
+                for pd_idx in 0..512usize {
+                    let pd_entry = &pd[pd_idx];
+                    if !pd_entry.is_present() {
+                        continue;
+                    }
+
+                    if pd_entry.is_huge() {
+                        let phys = pd_entry.addr();
+                        let remaining = cow.decrement(phys);
+                        if remaining == 0 {
+                            let _ = mm.free_frames(phys, 9);
+                            #[cfg(feature = "debug-proc")]
+                            { freed_leaf += 1; }
+                        } else {
+                            #[cfg(feature = "debug-proc")]
+                            { skipped_cow += 1; }
+                        }
+                        continue;
+                    }
+
+                    let pt_phys = pd_entry.addr();
+                    walked_pt_frames.push(pt_phys);
+                    let pt_virt = phys_to_virt(pt_phys);
+                    let pt = unsafe { &*pt_virt.as_ptr::<PageTable>() };
+
+                    for pt_idx in 0..512usize {
+                        let pt_entry = &pt[pt_idx];
+                        if !pt_entry.is_present() {
+                            continue;
+                        }
+
+                        let phys = pt_entry.addr();
+                        let remaining = cow.decrement(phys);
+                        if remaining == 0 {
+                            let _ = mm.free_frame(phys);
+                            #[cfg(feature = "debug-proc")]
+                            { freed_leaf += 1; }
+                        } else {
+                            #[cfg(feature = "debug-proc")]
+                            { skipped_cow += 1; }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ----------------------------------------------------------------
+        // Step 2: Free ALL page-table structure frames.
+        // — TorqueJax: We now free the walked PT frames (discovered during the
+        // tree walk) PLUS the PML4 frame itself. This catches frames from BOTH
+        // TrackingAllocator (map_user_page) AND direct alloc_frame calls
+        // (handle_stack_growth). The old code only freed allocated_frames which
+        // missed anything created outside TrackingAllocator.
+        //
+        // Dedup: some frames appear in BOTH walked_pt_frames AND allocated_frames
+        // (e.g., PT frames from map_user_page go into both). We use the allocated_frames
+        // set for the PML4 and any frames not discovered during the walk (shouldn't
+        // happen, but belt and suspenders).
+        // ----------------------------------------------------------------
+
+        #[cfg(feature = "debug-proc")]
+        let pt_frame_count = (walked_pt_frames.len() + 1) as u32; // +1 for PML4
+
+        // — GraveShift: Free all PT structure frames found during the walk.
+        // These are PDPT, PD, and PT frames. Never COW-shared — always ours.
+        for &pt_frame in &walked_pt_frames {
+            if pt_frame.as_u64() == 0 {
+                continue;
+            }
+            let _ = mm.free_frame(pt_frame);
+        }
+
+        // — GraveShift: Free the PML4 frame itself (always exclusively owned).
+        // The PML4 was not visited during the walk (it's the root, not a child).
+        if self.pml4_phys.as_u64() != 0 {
+            let _ = mm.free_frame(self.pml4_phys);
+        }
+
+        // — TorqueJax: Free any remaining frames in allocated_frames that weren't
+        // found during the walk. In theory this should be empty (all PT frames
+        // should be reachable from the PML4), but belt and suspenders beats
+        // silent leaks. Skip frames we already freed above to avoid double-free.
+        for &pt_frame in &self.allocated_frames {
+            if pt_frame.as_u64() == 0 || pt_frame == self.pml4_phys {
+                continue;
+            }
+            // — SableWire: Only free if NOT already freed via the walk.
+            // Linear scan is fine — allocated_frames is typically <20 entries.
+            if !walked_pt_frames.contains(&pt_frame) {
+                let _ = mm.free_frame(pt_frame);
+            }
+        }
+
+        #[cfg(feature = "debug-proc")]
+        unsafe {
+            os_log::write_str_raw("[ADDR-DROP] pml4=");
+            os_log::write_u64_hex_raw(self.pml4_phys.as_u64());
+            os_log::write_str_raw(" freed_leaf=");
+            os_log::write_u32_raw(freed_leaf);
+            os_log::write_str_raw(" skipped_cow=");
+            os_log::write_u32_raw(skipped_cow);
+            os_log::write_str_raw(" pt_frames=");
+            os_log::write_u32_raw(pt_frame_count);
+            os_log::write_str_raw("\n");
+        }
     }
 }
 

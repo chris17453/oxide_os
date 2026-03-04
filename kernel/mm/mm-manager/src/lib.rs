@@ -248,6 +248,11 @@ impl MemoryManager {
     pub fn buddy(&self) -> &BuddyAllocator {
         &self.buddy
     }
+
+    /// — GraveShift: Verify all free list canaries. Passthrough to buddy allocator.
+    pub fn verify_free_lists(&self) {
+        self.buddy.verify_free_lists()
+    }
 }
 
 impl Default for MemoryManager {

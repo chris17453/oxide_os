@@ -15,8 +15,10 @@ use mm_manager::mm;
 /// User stack grows downward from this ceiling.
 const USER_STACK_TOP: u64 = 0x0000_7FFF_FFFF_0000;
 
-/// -- GraveShift: 8MB max stack matches Linux default ulimit --
-const MAX_STACK_SIZE: u64 = 8 * 1024 * 1024;
+/// -- GraveShift: 16MB max stack covers ASLR shift (4MB) + growth (8MB) + margin --
+/// — SableWire: must be >= ASLR_STACK_ENTROPY + actual stack limit or the
+/// demand-pager rejects valid stack addresses. Ask me how I know.
+const MAX_STACK_SIZE: u64 = 16 * 1024 * 1024;
 
 /// -- GraveShift: Lowest address we'll ever map for stack --
 const MAX_STACK_BOTTOM: u64 = USER_STACK_TOP - MAX_STACK_SIZE;
@@ -73,8 +75,9 @@ pub fn page_fault_handler(fault_addr: u64, error_code: u64, _rip: u64) -> bool {
             pml4.as_u64()
         );
 
-        // Try to handle as COW fault
-        // This is safe from exception context because handle_cow_fault doesn't acquire locks
+        // — BlackLatch: Try to handle as COW fault. handle_cow_fault DOES acquire
+        // COW_FAULT_LOCK, but uses try_lock so it's safe from exception context.
+        // If contended, it returns false and we fall through to stack growth.
         if handle_cow_fault(VirtAddr::new(fault_addr), pml4, mm()) {
             debug_cow!("[PF] COW handled OK");
             return true; // Fault handled
@@ -84,9 +87,17 @@ pub fn page_fault_handler(fault_addr: u64, error_code: u64, _rip: u64) -> bool {
     }
 
     // -- GraveShift: Dynamic stack growth --
-    // Not-present fault in userspace stack region = grow the stack on demand.
-    // Guard page below MAX_STACK_BOTTOM is never mapped (handler rejects it).
-    if !is_present && is_userspace_addr {
+    // Handles both not-present faults AND failed COW resolutions in the stack
+    // region. The COW handler can fail when intermediate page table entries
+    // (PD/PDPT) are missing — e.g., SMP race or address space partially torn
+    // down. Stack growth creates missing intermediate tables and maps the page.
+    //
+    // — SableWire: The old code gated this on `!is_present`, which meant a COW
+    // fault (present=true) that failed never got a second chance. Now we try
+    // stack growth for ANY write fault to a userspace stack address, regardless
+    // of the present bit. The growth handler is idempotent — if the page is
+    // already mapped, it returns true harmlessly.
+    if is_write && is_userspace_addr {
         let page_addr = fault_addr & !0xFFF;
         if page_addr >= MAX_STACK_BOTTOM && page_addr < USER_STACK_TOP {
             let pml4_phys = PhysAddr::new(actual_cr3 & !0xFFF);
@@ -102,6 +113,61 @@ pub fn page_fault_handler(fault_addr: u64, error_code: u64, _rip: u64) -> bool {
                 debug_cow!("[PF] Stack growth FAILED for {:#x}", page_addr);
             }
         }
+    }
+
+    // — BlackLatch: Kernel stack overflow detection.
+    // Guard pages are in the physical direct map (0xFFFF_8000 + phys_ram_range).
+    // Only flag as guard page if the faulting address is plausibly within
+    // physical RAM (< 4GB for typical QEMU configs). Wild pointers to 103TB
+    // physical offsets are NOT guard pages — they're corruption and should fall
+    // through to the generic page fault handler.
+    const PHYS_MAP_BASE: u64 = 0xFFFF_8000_0000_0000;
+    const MAX_PLAUSIBLE_PHYS: u64 = 0x2_0000_0000; // 8GB — generous ceiling
+    if !is_present && !is_user && fault_addr >= PHYS_MAP_BASE {
+        let phys_equiv = fault_addr - PHYS_MAP_BASE;
+        // — BlackLatch: Only treat this as a guard page hit if the physical
+        // address is within plausible RAM range. Otherwise it's a wild pointer.
+        if phys_equiv >= MAX_PLAUSIBLE_PHYS {
+            return false; // Not a guard page — let generic handler deal with it
+        }
+        let rsp: u64;
+        unsafe {
+            core::arch::asm!("mov {}, rsp", out(reg) rsp, options(nostack, nomem));
+        }
+
+        // — BlackLatch: Log the guard hit with enough context to reconstruct the crime.
+        // This fires in the #PF handler, so serial output is our only lifeline.
+        unsafe {
+            os_log::write_str_raw("
+[GUARD] *** KERNEL STACK OVERFLOW ***
+");
+            os_log::write_str_raw("[GUARD] fault_addr=");
+        }
+        // Use the ConsoleWriter for formatted output
+        {
+            use core::fmt::Write;
+            struct RawWriter;
+            impl Write for RawWriter {
+                fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                    unsafe { os_log::write_str_raw(s); }
+                    Ok(())
+                }
+            }
+            let mut w = RawWriter;
+            let _ = writeln!(w, "
+[KSTACK OVERFLOW DETECTED]");
+            let _ = writeln!(w, "  fault_addr = {:#018x}", fault_addr);
+            let _ = writeln!(w, "  phys_equiv = {:#018x}", phys_equiv);
+            let _ = writeln!(w, "  rip        = {:#018x}", _rip);
+            let _ = writeln!(w, "  rsp        = {:#018x}", rsp);
+            let _ = writeln!(w, "  error_code = {:#x}", error_code);
+            let _ = writeln!(w, "Kernel stack has been exhausted — guard page hit.");
+            let _ = writeln!(w, "System must halt.");
+        }
+
+        // — BlackLatch: Return false → the exception handler will panic/halt.
+        // We don't try to recover. A blown kernel stack has undefined state.
+        return false;
     }
 
     debug_cow!("[PF] Fault NOT handled - will panic");
@@ -124,7 +190,20 @@ pub fn page_fault_handler(fault_addr: u64, error_code: u64, _rip: u64) -> bool {
 /// Caller must ensure `page_addr` is page-aligned and within the valid stack region.
 /// The page table pointed to by `pml4_phys` must be the current process's PML4.
 fn handle_stack_growth(page_addr: u64, pml4_phys: PhysAddr) -> bool {
-    let _guard = STACK_GROWTH_LOCK.lock();
+    // — BlackLatch: C8 — Use try_lock instead of lock. If a page fault fires
+    // inside an ISR (e.g., kernel stack overflow during interrupt handling) and
+    // the interrupted code already holds the stack growth lock or a buddy zone
+    // lock, .lock() would deadlock forever — the interrupted code can never
+    // release its lock because we're in its exception handler. try_lock returns
+    // None immediately if contended. The process gets killed (SIGSEGV) which is
+    // infinitely better than a permanent deadlock that freezes the entire CPU.
+    let _guard = match STACK_GROWTH_LOCK.try_lock() {
+        Some(g) => g,
+        None => {
+            debug_cow!("[PF] Stack growth lock contended — bailing to prevent deadlock");
+            return false;
+        }
+    };
 
     let allocator = mm();
 
@@ -215,7 +294,16 @@ fn handle_stack_growth(page_addr: u64, pml4_phys: PhysAddr) -> bool {
         return true;
     }
 
-    // -- GraveShift: Allocate the actual data frame for the stack page --
+    // — GraveShift: Allocate the actual data frame for the stack page.
+    // If THIS alloc fails, intermediate tables (PDPT/PD/PT) created above
+    // are still linked into the page table tree. This is safe because:
+    //   - The process gets false → SIGSEGV → process killed
+    //   - On process exit, UserAddressSpace::Drop walks the ENTIRE PT tree
+    //     and frees all intermediate frames it discovers during the walk.
+    //     This catches frames from ANY allocation path — TrackingAllocator
+    //     or direct alloc_frame() like we use here.
+    //   - On retry (if we don't kill), the tables already exist so the next
+    //     stack growth attempt only allocates the missing data frame
     let data_frame = match allocator.alloc_frame() {
         Ok(f) => f,
         Err(_) => return false,

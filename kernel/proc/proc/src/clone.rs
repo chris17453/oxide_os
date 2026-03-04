@@ -80,10 +80,15 @@ pub struct CloneResult {
     pub ppid: Pid,
     /// Child's initial context
     pub child_context: ProcessContext,
-    /// Physical address of kernel stack
+    /// Physical address of kernel stack (above the guard frame)
     pub kernel_stack_phys: PhysAddr,
-    /// Size of kernel stack
+    /// Size of kernel stack (NOT including guard frame)
     pub kernel_stack_size: usize,
+    /// Physical address of the guard frame (alloc_base, one page below kernel_stack_phys).
+    /// The kernel crate calls kstack_guard::unmap_guard_page(guard_phys) after CloneResult
+    /// is returned to clear the PTE. Also added to child_meta.guard_pages for Drop cleanup.
+    /// — BlackLatch: Zero means no guard (e.g. early-boot init stack before guard support).
+    pub guard_phys: PhysAddr,
     /// Shared address space (Arc for thread sharing)
     pub shared_address_space: Arc<Mutex<UserAddressSpace>>,
     /// Shared fd table (if CLONE_FILES)
@@ -159,11 +164,20 @@ pub fn do_clone<A: FrameAllocator>(
     // Get parent's TGID (all threads in group share this)
     let tgid = parent_meta.tgid;
 
-    // Allocate kernel stack for the new thread
+    // — BlackLatch: Allocate (stack_pages + 1) contiguous frames for this thread.
+    // Frame 0 = guard page (PTE cleared by caller in process.rs).
+    // Frames 1..N = actual kernel stack.
+    // The guard frame physically belongs to this allocation; cleanup via
+    // owned_frames uses total_pages so the buddy block is freed correctly.
     let kernel_stack_pages = kernel_stack_size / 4096;
-    let kernel_stack_phys = allocator
-        .alloc_frames(kernel_stack_pages)
+    let total_pages = kernel_stack_pages + 1;
+    let alloc_base = allocator
+        .alloc_frames(total_pages)
         .ok_or(CloneError::OutOfMemory)?;
+
+    // Guard = alloc_base; real stack starts one page above.
+    let guard_phys = alloc_base;
+    let kernel_stack_phys = PhysAddr::new(alloc_base.as_u64() + 4096);
 
     // Create or get shared address space
     let shared_address_space = if let Some(shared) = &parent_meta.shared_address_space {
@@ -239,6 +253,7 @@ pub fn do_clone<A: FrameAllocator>(
         child_context,
         kernel_stack_phys,
         kernel_stack_size,
+        guard_phys,
         shared_address_space,
         shared_fd_table,
         credentials: parent_meta.credentials,

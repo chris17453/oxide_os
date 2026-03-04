@@ -17,15 +17,19 @@ use crate::copy_to_user;
 use crate::errno;
 use crate::vfs::{copy_path_from_user, resolve_path, validate_user_buffer, vfs_error_to_errno};
 
-/// Copy a path from user space (internal helper)
-fn get_path(path_ptr: u64, path_len: usize) -> Option<&'static str> {
+/// Copy a path from user space into a kernel-owned String.
+///
+/// — ColdCipher: Wraps copy_path_from_user so dir.rs callers don't hold
+/// &'static str aliases into userspace. The returned String is kernel-owned;
+/// the TOCTOU window is closed the moment this returns.
+fn get_path(path_ptr: u64, path_len: usize) -> Option<String> {
     copy_path_from_user(path_ptr, path_len)
 }
 
-/// Get path and resolve against cwd
+/// Get path and resolve against cwd — returns a fully normalized kernel String.
 fn get_resolved_path(path_ptr: u64, path_len: usize) -> Option<String> {
     let raw = get_path(path_ptr, path_len)?;
-    Some(resolve_path(raw))
+    Some(resolve_path(&raw))
 }
 
 /// sys_mkdir - Create a directory
@@ -441,7 +445,8 @@ pub fn sys_symlink(target_ptr: u64, target_len: usize, link_ptr: u64, link_len: 
     };
 
     // Create the symbolic link
-    match link_parent.symlink(&link_name, target_path) {
+    // — ColdCipher: target_path is now a kernel String; deref coercion gives &str.
+    match link_parent.symlink(&link_name, &target_path) {
         Ok(_) => 0, // Returns Arc<dyn VnodeOps> but we don't need it
         Err(e) => vfs_error_to_errno(e),
     }

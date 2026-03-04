@@ -184,6 +184,64 @@ pub unsafe fn write_str_raw(s: &str) {
     }
 }
 
+/// Write a u32 as decimal through the lock-free path.
+///
+/// — SableWire: Arch-agnostic replacement for arch_x86_64::serial::write_u32_unsafe().
+/// No heap, no locks, no format_args!. Just raw digits to the wire.
+///
+/// # Safety
+/// Same constraints as `_print_unsafe`.
+#[inline]
+pub unsafe fn write_u32_raw(n: u32) {
+    unsafe {
+        if n == 0 {
+            write_byte_raw(b'0');
+            return;
+        }
+        let mut buf = [0u8; 10];
+        let mut v = n;
+        let mut pos = 0;
+        while v > 0 {
+            buf[pos] = b'0' + (v % 10) as u8;
+            v /= 10;
+            pos += 1;
+        }
+        let mut i = pos;
+        while i > 0 {
+            i -= 1;
+            write_byte_raw(buf[i]);
+        }
+    }
+}
+
+/// Write a u64 as hex (0x prefix) through the lock-free path.
+///
+/// — SableWire: Arch-agnostic replacement for arch_x86_64::serial::write_u64_hex_unsafe().
+/// Skips leading zeros, always prints at least one digit. Bounded output: max 18 bytes.
+///
+/// # Safety
+/// Same constraints as `_print_unsafe`.
+#[inline]
+pub unsafe fn write_u64_hex_raw(n: u64) {
+    unsafe {
+        write_byte_raw(b'0');
+        write_byte_raw(b'x');
+        let mut started = false;
+        let mut i: i32 = 15;
+        while i >= 0 {
+            let nibble = ((n >> (i as u64 * 4)) & 0xF) as u8;
+            if nibble != 0 {
+                started = true;
+            }
+            if started || i == 0 {
+                let ch = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+                write_byte_raw(ch);
+            }
+            i -= 1;
+        }
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════
 //  MACROS — normal (locking) path
 // ═══════════════════════════════════════════════════════════════════

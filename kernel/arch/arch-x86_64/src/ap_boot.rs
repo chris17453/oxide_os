@@ -86,6 +86,11 @@ pub unsafe fn register_ap_init_callback(callback: ApInitCallback) {
 /// AP entry point in Rust
 ///
 /// This is called by the trampoline after the AP is in long mode.
+///
+/// — WireSaint: Boot order matters. We must read APIC ID *before* loading
+/// the GDT so we know which per-CPU GDT slot to initialize. The BSP already
+/// called gdt::register_cpu(apic_id, logical_cpu_id) for each AP before
+/// sending the SIPI, so our APIC_TO_CPU map is ready.
 #[unsafe(no_mangle)]
 pub extern "C" fn ap_entry_rust() -> ! {
     // At this point:
@@ -94,18 +99,28 @@ pub extern "C" fn ap_entry_rust() -> ! {
     // - Stack is set up
     // - Interrupts are disabled
 
-    // Load GDT (each CPU needs to load it)
+    // Read APIC ID first — we need it to find our logical cpu_id.
+    // — WireSaint: APIC ID is available immediately; no GDT required to read it.
+    let apic_id = crate::apic::id();
+
+    // Load this AP's own per-CPU GDT and TSS.
+    // gdt::register_cpu was called by the BSP before the SIPI, so the
+    // APIC_TO_CPU map resolves apic_id → cpu_id correctly here.
+    //
+    // — WireSaint: DO NOT call gdt::init() here. That resets cpu 0's GDT slot.
+    // Each AP must call init_cpu with its own logical cpu_id, derived from the
+    // APIC ID we just read and the mapping the BSP pre-registered.
     unsafe {
-        crate::gdt::init();
+        // Derive cpu_id from our APIC ID via the pre-registered mapping.
+        // register_cpu was called by the BSP's init loop before sending SIPI.
+        let cpu_id = crate::gdt::cpu_id_from_apic(apic_id);
+        crate::gdt::init_cpu(cpu_id);
     }
 
     // Load IDT so we can handle interrupts and IPIs
     unsafe {
         crate::idt::init();
     }
-
-    // Read APIC ID to identify which CPU we are
-    let apic_id = crate::apic::id();
 
     // Initialize this CPU's APIC to receive IPIs
     crate::apic::enable();

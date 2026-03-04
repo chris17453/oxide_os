@@ -11,6 +11,7 @@ pub use vfs::mount::GLOBAL_VFS;
 pub use vfs::{File, FileFlags, Mode, SeekFrom, VfsError, VnodeType};
 pub use vfs::{epoll, eventfd, memfd};
 pub use vfs::flock::{InodeId, FLOCK_REGISTRY};
+use vfs::permission;
 
 use crate::errno;
 use crate::socket;
@@ -75,11 +76,22 @@ fn normalize_path(path: &str) -> String {
     }
 }
 
-/// Copy a path from user space
+/// Copy a path from user space into a kernel-owned String.
 ///
-/// Returns None if the path is invalid or too long.
-pub fn copy_path_from_user(path_ptr: u64, path_len: usize) -> Option<&'static str> {
-    // Validate pointer is in user space
+/// Returns None if the path is invalid, too long, or not valid UTF-8.
+///
+/// # Security
+/// — ColdCipher: The old &'static str return was a TOCTOU lie — userspace owns that
+/// memory and can race to corrupt it after we validate. We now copy the bytes into the
+/// kernel heap before returning. The attacker's race window is closed: whatever they
+/// corrupt after this call touches only their own memory, not our String. P0.3 fix.
+///
+/// # Safety
+/// Caller must have issued STAC before calling this function.
+pub fn copy_path_from_user(path_ptr: u64, path_len: usize) -> Option<String> {
+    // — ColdCipher: Reject if pointer is above the canonical user-space ceiling.
+    // Anything at or above 0x0000_8000_0000_0000 is kernel territory; touching it
+    // from a syscall path without STAC would #GP us right back to the stone age.
     if path_ptr >= 0x0000_8000_0000_0000 {
         return None;
     }
@@ -88,22 +100,70 @@ pub fn copy_path_from_user(path_ptr: u64, path_len: usize) -> Option<&'static st
         return None;
     }
 
+    // — ColdCipher: Saturating add prevents wrap-around tricks where
+    // ptr + len overflows back into kernel space. Classic pointer confusion.
     if path_ptr.saturating_add(path_len as u64) >= 0x0000_8000_0000_0000 {
         return None;
     }
 
-    // Get the path slice (caller must have done STAC)
+    // — ColdCipher: Read bytes from userspace (caller must have STAC active).
+    // We validate UTF-8 BEFORE copying so we don't store garbage in the kernel heap.
+    // Then we copy into a kernel-owned String — the race window is now closed.
+    // A userspace thread mutating the path after this point writes into their own
+    // String copy, not ours. TOCTOU eliminated.
     let path_bytes = unsafe { core::slice::from_raw_parts(path_ptr as *const u8, path_len) };
 
-    core::str::from_utf8(path_bytes).ok()
+    core::str::from_utf8(path_bytes).ok().map(|s| String::from(s))
+}
+
+/// Copy an arbitrary userspace string (not necessarily a path) into a kernel-owned String.
+///
+/// # Security
+/// — ColdCipher: General-purpose userspace string copy. Same TOCTOU protection as
+/// copy_path_from_user — we own the bytes the moment this returns, not userspace.
+/// Use this for argv entries, environment variables, and other non-path strings.
+///
+/// # Safety
+/// Caller must have issued STAC before calling this function.
+pub fn copy_string_from_user(ptr: u64, len: usize) -> Option<String> {
+    // — ColdCipher: Max 64KB for arbitrary strings — paths have MAX_PATH, but
+    // generic strings need a sane upper bound to prevent kernel heap exhaustion.
+    const MAX_STRING: usize = 65536;
+
+    if ptr >= 0x0000_8000_0000_0000 {
+        return None;
+    }
+
+    if len > MAX_STRING {
+        return None;
+    }
+
+    if ptr.saturating_add(len as u64) >= 0x0000_8000_0000_0000 {
+        return None;
+    }
+
+    // — ColdCipher: Same deal as copy_path_from_user — validate then copy.
+    // One atomic snapshot of userspace memory, then we're out of their reach.
+    let bytes = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
+
+    core::str::from_utf8(bytes).ok().map(|s| String::from(s))
 }
 
 /// Validate a user buffer
+///
+/// — ColdCipher: Three checks, three chances to reject garbage:
+///   null pointer, kernel-space pointer, and overflow-wrapped pointer.
+/// The old version missed null — a classic skip that turns a null-deref into
+/// a kernel read of address 0x0. Not today.
 pub fn validate_user_buffer(buf: u64, len: usize) -> bool {
+    // — ColdCipher: Null is not a valid user buffer. Ever. Not "sometimes". Always.
+    if buf == 0 {
+        return false;
+    }
     if buf >= 0x0000_8000_0000_0000 {
         return false;
     }
-    if buf.saturating_add(len as u64) >= 0x0000_8000_0000_0000 {
+    if buf.saturating_add(len as u64) > 0x0000_8000_0000_0000 {
         return false;
     }
     true
@@ -127,6 +187,8 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
         core::arch::asm!("stac", options(nomem, nostack));
     }
 
+    // — ColdCipher: copy_path_from_user now returns a kernel-owned String.
+    // The bytes are ours the moment this call returns — userspace can't race us.
     let raw_path = match copy_path_from_user(path_ptr, path_len) {
         Some(p) => p,
         None => {
@@ -138,7 +200,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
     };
 
     // Resolve relative paths against cwd
-    let path = resolve_path(raw_path);
+    let path = resolve_path(&raw_path);
 
     let flags = FileFlags::from_bits_truncate(flags);
     let mode = Mode::new(mode);
@@ -195,6 +257,56 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
             }
         }
     };
+
+    // — EmberLock: DAC permission check on the resolved vnode.
+    // Newly created files pass automatically because the filesystem sets uid to
+    // the caller's uid — so the owner check in check_permission returns true.
+    // Existing files go through the full owner/group/other bit check.
+    // Root (euid=0) always passes — check_permission short-circuits for uid 0.
+    {
+        // Determine what access mode we need based on open flags
+        let required_access = if flags.readable() && flags.writable() {
+            permission::R_OK | permission::W_OK
+        } else if flags.writable() {
+            permission::W_OK
+        } else {
+            permission::R_OK // O_RDONLY is 0; default to read check
+        };
+
+        // Get file ownership and mode from vnode stat
+        let stat = match vnode.stat() {
+            Ok(s) => s,
+            Err(e) => {
+                unsafe {
+                    core::arch::asm!("clac", options(nomem, nostack));
+                }
+                return vfs_error_to_errno(e);
+            }
+        };
+
+        // Get caller credentials — euid for permission, egid for group check
+        let (caller_euid, caller_egid) =
+            with_current_meta(|m| (m.credentials.euid, m.credentials.egid))
+                .unwrap_or((0, 0));
+
+        // — EmberLock: Mask out file type bits — only the low 9 bits are rwxrwxrwx.
+        // The upper bits (S_IFREG, S_IFDIR, etc.) are not permission bits.
+        let file_perm_bits = stat.mode & 0o777;
+
+        if !permission::check_permission(
+            stat.uid,
+            stat.gid,
+            file_perm_bits,
+            caller_euid,
+            caller_egid,
+            required_access,
+        ) {
+            unsafe {
+                core::arch::asm!("clac", options(nomem, nostack));
+            }
+            return errno::EACCES;
+        }
+    }
 
     // Check O_DIRECTORY
     if flags.contains(FileFlags::O_DIRECTORY) && vnode.vtype() != VnodeType::Directory {
@@ -308,23 +420,28 @@ pub fn sys_read_vfs(fd: i32, buf: u64, count: usize) -> i64 {
         }
     }
 
-    // Read into user buffer (requires STAC/CLAC for SMAP)
-    // Enable access to user pages
-    unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
-    }
+    // — GraveShift: Read into a KERNEL buffer, not user space. The VFS/TTY read
+    // path calls terminal::write() for echo, which does STAC/CLAC internally.
+    // That CLAC nukes the AC flag we set here — and then ldisc.read_canonical()
+    // writes to buf[0] with AC=0 → SMAP fault → silent process death.
+    // By reading into kernel memory first, the entire VFS stack never touches
+    // user pages. We copy to user space in a tight STAC/CLAC window after.
+    const KBUF_SIZE: usize = 2048;
+    let mut kbuf = [0u8; KBUF_SIZE];
+    let chunk = count.min(KBUF_SIZE);
 
-    let buffer = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, count) };
-
-    let result = match file.read(buffer) {
-        Ok(n) => n as i64,
+    let result = match file.read(&mut kbuf[..chunk]) {
+        Ok(n) => {
+            // — ColdCipher: Copy to user space — STAC window is tiny, no yields,
+            // no terminal writes, no lock acquisitions. Just a memcpy.
+            unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+            let user_buf = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, n) };
+            user_buf.copy_from_slice(&kbuf[..n]);
+            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            n as i64
+        }
         Err(e) => vfs_error_to_errno(e),
     };
-
-    // Disable access to user pages
-    unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
-    }
 
     // Disable kernel preemption after read completes
     unsafe {
@@ -382,23 +499,24 @@ pub fn sys_write_vfs(fd: i32, buf: u64, count: usize) -> i64 {
         }
     }
 
-    // Get user buffer (requires STAC/CLAC for SMAP)
-    // Enable access to user pages
-    unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
-    }
+    // — GraveShift: Copy from user space into kernel buffer FIRST. Same SMAP landmine
+    // as sys_read — terminal::write() does STAC/CLAC internally which nukes the AC flag.
+    // If the VFS write path reads from user-space `data` after terminal::write echoed,
+    // AC=0 → SMAP fault. Copy once, write from kernel memory, never touch user pages again.
+    const KBUF_SIZE: usize = 2048;
+    let mut kbuf = [0u8; KBUF_SIZE];
+    let chunk = count.min(KBUF_SIZE);
 
-    let buffer = unsafe { core::slice::from_raw_parts(buf as *const u8, count) };
+    // — ColdCipher: Tight STAC/CLAC window — just a memcpy, no locks, no yields.
+    unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+    let user_buf = unsafe { core::slice::from_raw_parts(buf as *const u8, chunk) };
+    kbuf[..chunk].copy_from_slice(user_buf);
+    unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
 
-    let result = match file.write(buffer) {
+    let result = match file.write(&kbuf[..chunk]) {
         Ok(n) => n as i64,
         Err(e) => vfs_error_to_errno(e),
     };
-
-    // Disable access to user pages
-    unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
-    }
 
     // Disallow kernel preemption once write is complete
     unsafe {
@@ -477,13 +595,14 @@ pub fn sys_fstat(fd: i32, stat_buf: u64) -> i64 {
 /// * `path_len` - Length of path string
 /// * `stat_buf` - Pointer to stat structure
 pub fn sys_stat(path_ptr: u64, path_len: usize, stat_buf: u64) -> i64 {
+    // — ColdCipher: kernel-owned copy — TOCTOU closed.
     let raw_path = match copy_path_from_user(path_ptr, path_len) {
         Some(p) => p,
         None => return errno::EFAULT,
     };
 
     // Resolve relative paths against cwd
-    let path = resolve_path(raw_path);
+    let path = resolve_path(&raw_path);
 
     if !validate_user_buffer(stat_buf, core::mem::size_of::<vfs::Stat>()) {
         return errno::EFAULT;
@@ -515,13 +634,14 @@ pub fn sys_stat(path_ptr: u64, path_len: usize, stat_buf: u64) -> i64 {
 /// * `path_len` - Length of path string
 /// * `stat_buf` - Pointer to stat structure
 pub fn sys_lstat(path_ptr: u64, path_len: usize, stat_buf: u64) -> i64 {
+    // — ColdCipher: kernel-owned copy — TOCTOU closed.
     let raw_path = match copy_path_from_user(path_ptr, path_len) {
         Some(p) => p,
         None => return errno::EFAULT,
     };
 
     // Resolve relative paths against cwd
-    let path = resolve_path(raw_path);
+    let path = resolve_path(&raw_path);
 
     if !validate_user_buffer(stat_buf, core::mem::size_of::<vfs::Stat>()) {
         return errno::EFAULT;
@@ -945,14 +1065,14 @@ pub fn sys_statfs(path_ptr: u64, path_len: usize, buf_ptr: usize) -> i64 {
         return errno::EFAULT;
     }
 
-    // Copy path from user space
+    // — ColdCipher: kernel-owned copy — TOCTOU closed.
     let raw_path = match copy_path_from_user(path_ptr, path_len) {
         Some(p) => p,
         None => return errno::EFAULT,
     };
 
     // Resolve relative paths against cwd
-    let path = resolve_path(raw_path);
+    let path = resolve_path(&raw_path);
 
     // Get VFS stats for the path
     let statfs = if let Ok(info) = GLOBAL_VFS.statfs(&path) {
@@ -1111,10 +1231,22 @@ pub fn sys_mount(
     use crate::errno;
     use core::ptr::addr_of;
 
+    // — EmberLock: mount(2) is a root-only operation. Full stop.
+    // Letting unprivileged processes mount arbitrary filesystems is the
+    // express lane to arbitrary code execution. Not today.
+    let caller_euid = with_current_meta(|m| m.credentials.euid).unwrap_or(u32::MAX);
+    if !permission::is_root(caller_euid) {
+        return errno::EPERM;
+    }
+
     // Enable access to user pages for SMAP
     unsafe {
         core::arch::asm!("stac", options(nomem, nostack));
     }
+
+    // — ColdCipher: Copy all three strings from userspace into kernel-owned Strings
+    // before any validation logic runs. The moment each copy_path_from_user returns,
+    // the bytes are ours — userspace racing to corrupt paths after this point is moot.
 
     // Copy source path (may be null/empty for some filesystems like tmpfs)
     let source = if source_ptr != 0 && source_len > 0 {
@@ -1128,7 +1260,7 @@ pub fn sys_mount(
             }
         }
     } else {
-        ""
+        String::new()
     };
 
     // Copy target (mount point) path
@@ -1157,13 +1289,13 @@ pub fn sys_mount(
     };
 
     // Resolve target path
-    let mount_point = resolve_path(target);
+    let mount_point = resolve_path(&target);
 
     // Call the kernel mount callback
     let result = unsafe {
         let ctx = addr_of!(SYSCALL_CONTEXT);
         if let Some(mount_fn) = (*ctx).mount {
-            mount_fn(source, &mount_point, fstype, flags)
+            mount_fn(&source, &mount_point, &fstype, flags)
         } else {
             errno::ENOSYS
         }
@@ -1191,14 +1323,22 @@ pub fn sys_umount(target_ptr: u64, target_len: usize, flags: u32) -> i64 {
     use crate::errno;
     use core::ptr::addr_of;
 
-    // Copy target path
+    // — EmberLock: umount(2) is a root-only operation. Same reasoning as mount:
+    // unprivileged umount could be used to force unmount of filesystems with open
+    // files, triggering use-after-free in drivers. Root only. Non-negotiable.
+    let caller_euid = with_current_meta(|m| m.credentials.euid).unwrap_or(u32::MAX);
+    if !permission::is_root(caller_euid) {
+        return errno::EPERM;
+    }
+
+    // — ColdCipher: kernel-owned copy — TOCTOU closed.
     let target = match copy_path_from_user(target_ptr, target_len) {
         Some(t) => t,
         None => return errno::EFAULT,
     };
 
     // Resolve path
-    let mount_point = resolve_path(target);
+    let mount_point = resolve_path(&target);
 
     // Call the kernel umount callback
     unsafe {
@@ -1236,7 +1376,7 @@ pub fn sys_pivot_root(
         core::arch::asm!("stac", options(nomem, nostack));
     }
 
-    // Copy new_root path
+    // — ColdCipher: kernel-owned copies — TOCTOU closed for both paths.
     let new_root = match copy_path_from_user(new_root_ptr, new_root_len) {
         Some(s) => s,
         None => {
@@ -1259,8 +1399,8 @@ pub fn sys_pivot_root(
     };
 
     // Resolve paths
-    let resolved_new_root = resolve_path(new_root);
-    let resolved_put_old = resolve_path(put_old);
+    let resolved_new_root = resolve_path(&new_root);
+    let resolved_put_old = resolve_path(&put_old);
 
     // Call the kernel pivot_root callback
     let result = unsafe {
@@ -1387,8 +1527,14 @@ pub fn sys_flock(fd: i32, operation: i32) -> i64 {
 
     match op {
         LOCK_UN => {
-            FLOCK_REGISTRY.unlock(inode_id, owner_id);
+            // — EmberLock: unlock() now returns the list of sleeping waiters.
+            // Wake them directly — no more 10ms timer-tick lottery.
+            // Spurious wakeups are safe; they'll retry the lock and re-sleep.
+            let waiters = FLOCK_REGISTRY.unlock(inode_id, owner_id);
             file.clear_flock_held();
+            for pid in waiters {
+                sched::wake_up(pid);
+            }
             0
         }
         LOCK_SH => {
@@ -1425,12 +1571,27 @@ pub fn sys_flock(fd: i32, operation: i32) -> i64 {
     }
 }
 
-/// — ColdCipher: Blocking flock wait loop. HLT yields CPU, kpo lets scheduler
-/// preempt us, signals break us out with EINTR. Standard blocking syscall pattern.
+/// Blocking flock wait loop with direct wakeup support.
+///
+/// — EmberLock: The old pattern slept on timer ticks (10ms latency floor).
+/// Now we register ourselves as a waiter BEFORE sleeping. When unlock() fires,
+/// it drains the waiter list and calls wake_up(pid) for each entry directly.
+/// We still retry after waking — spurious wakeups are allowed and harmless.
+/// The register→check→sleep sequence must be tight: register first, THEN
+/// re-check the lock, THEN sleep. This eliminates the race where unlock()
+/// fires between our failed try_lock and our sleep registration.
 fn sys_flock_blocking(inode_id: InodeId, owner_id: u64, exclusive: bool) -> i64 {
     use crate::with_current_meta;
 
+    let my_pid = crate::current_pid();
+
     loop {
+        // — EmberLock: Register as waiter BEFORE trying the lock.
+        // This is the critical ordering: if we register first, any unlock()
+        // that races with our try_lock will still see our PID and wake us.
+        // The worst case is a spurious wakeup — perfectly acceptable.
+        FLOCK_REGISTRY.register_waiter(inode_id, my_pid);
+
         // Try to acquire the lock
         let result = if exclusive {
             FLOCK_REGISTRY.try_lock_exclusive(inode_id, owner_id)
@@ -1439,24 +1600,37 @@ fn sys_flock_blocking(inode_id: InodeId, owner_id: u64, exclusive: bool) -> i64 
         };
 
         match result {
-            Ok(()) => return 0,
-            Err(VfsError::WouldBlock) => {
-                // — ColdCipher: Lock is contended. Check signals, then sleep.
+            Ok(()) => {
+                // — EmberLock: Got the lock. Clean up our waiter entry —
+                // unlock() may have already drained us, but be tidy anyway.
+                FLOCK_REGISTRY.unregister_waiter(inode_id, my_pid);
+                return 0;
             }
-            Err(e) => return vfs_error_to_errno(e),
+            Err(VfsError::WouldBlock) => {
+                // — EmberLock: Still blocked. Check signals, then sleep.
+            }
+            Err(e) => {
+                FLOCK_REGISTRY.unregister_waiter(inode_id, my_pid);
+                return vfs_error_to_errno(e);
+            }
         }
 
         // Check for pending signals before sleeping
         if with_current_meta(|meta| meta.has_pending_signals()).unwrap_or(false) {
+            // — EmberLock: Signal interrupted us. Remove waiter entry so
+            // a future unlock() doesn't try to wake a task that gave up.
+            FLOCK_REGISTRY.unregister_waiter(inode_id, my_pid);
             return errno::EINTR;
         }
 
-        // — ColdCipher: HLT+kpo pattern. Allow preemption, sleep until
-        // next interrupt, then retry. Same as sys_poll, sys_select, etc.
+        // — EmberLock: HLT+kpo pattern. Allow preemption, sleep until woken
+        // by unlock() via wake_up(pid) or the next timer tick (belt+suspenders).
         arch_x86_64::allow_kernel_preempt();
         unsafe {
             core::arch::asm!("sti", "hlt", options(nomem, nostack));
         }
         arch_x86_64::disallow_kernel_preempt();
+        // waiter entry stays registered — unlock() may have already removed us
+        // via drain_waiters(), and re-registering at loop top handles the rest.
     }
 }

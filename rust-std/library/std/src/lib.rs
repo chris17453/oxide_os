@@ -441,10 +441,6 @@ extern crate alloc as alloc_crate;
 #[cfg(not(all(windows, target_env = "msvc")))]
 extern crate libc;
 
-// — IronGhost: OXIDE runtime crate — syscall wrappers, types, TLS
-#[cfg(target_os = "oxide")]
-extern crate oxide_rt;
-
 // We always need an unwinder currently for backtraces
 #[doc(masked)]
 #[allow(unused_extern_crates)]

@@ -37,6 +37,15 @@ pub fn ap_init_callback(apic_id: u8) -> ! {
     // If we couldn't resolve the CPU ID, halt safely
     let cpu_id = cpu_id.unwrap_or(0);
 
+    // — WireSaint: P0.2 — Set up per-CPU IST double-fault stack now that we
+    // know our logical cpu_id. gdt::init_cpu already ran in ap_entry_rust,
+    // so the TSS descriptor is live. init_ap writes ist[0] (IST1) for this CPU.
+    // Must happen before we enable interrupts or start the timer — otherwise
+    // the first double fault fires with ist[0]=0 and triple-faults silently.
+    unsafe {
+        arch::init_ap(cpu_id as usize);
+    }
+
     // — GraveShift: CRITICAL SMP FIX — each AP must initialize its own syscall
     // infrastructure. Without this, the first userspace syscall on this CPU:
     //   1. Has EFER.SCE unset → syscall instruction #UDs
@@ -60,6 +69,43 @@ pub fn ap_init_callback(apic_id: u8) -> ! {
     sched::set_this_cpu(cpu_id);
     sched::init_cpu(cpu_id, 0);
 
+    // — WireSaint: CRITICAL SMP FIX — create a proper idle Task for this AP.
+    // The BSP creates PID 0's Task in scheduler::init() with cs=0x08, ss=0x10.
+    // But that Task only lives in CPU 0's BTreeMap. Without an idle Task on THIS
+    // CPU's RQ, pick_next_task() returns idle PID 0 but context_switch_transaction
+    // fails (get_task(0) → None), corrupting rq.curr and causing the scheduler to
+    // build iret frames with stale/default contexts. Each AP needs its own PID 0
+    // Task so the scheduler can save/restore idle context correctly.
+    //
+    // PID 0 in multiple BTreeMaps is fine — each CPU has an independent RQ.
+    // The idle task uses the kernel PML4 and the AP's boot stack (no separate stack).
+    let mut ap_idle = sched::Task::new_idle(
+        0,                                   // PID 0 = idle
+        cpu_id,                              // pinned to this AP
+        os_core::PhysAddr::new(0),           // no separate kernel stack (uses boot stack)
+        0,                                   // stack size = 0 (idle uses boot stack)
+    );
+    // — WireSaint: Idle task MUST have a fully valid context — not just selectors.
+    // TaskContext::default() leaves rip=0, rsp=0. If the scheduler ever builds an
+    // iret frame from these before the first timer preemption overwrites them,
+    // rsp(0) - frame_size underflows → writes to 0xFFFFFFFFFFFFFF60 → instant death.
+    // Defense-in-depth: set rip to the shared idle_loop and rsp to this AP's boot
+    // stack. The first timer tick will overwrite these with real interrupt-frame
+    // values, but at least the initial state is sane if anything goes sideways.
+    ap_idle.context.cs = 0x08;
+    ap_idle.context.ss = 0x10;
+    ap_idle.context.rflags = 0x202; // IF + reserved bit 1
+    ap_idle.context.rip = crate::scheduler::idle_loop as *const () as u64;
+    // — GraveShift: boot_rsp was captured above (line 64). Reuse it for the idle
+    // task's initial RSP so the scheduler has a valid kernel stack pointer if it
+    // ever needs to build an iret frame for idle before the first preemption.
+    let idle_boot_rsp: u64;
+    unsafe {
+        core::arch::asm!("mov {}, rsp", out(reg) idle_boot_rsp, options(nostack, nomem));
+    }
+    ap_idle.context.rsp = idle_boot_rsp;
+    sched::add_task_to_cpu(ap_idle, cpu_id);
+
     // NeonRoot: Wait for BSP to finish registering all fault handlers,
     // scheduler callback, and enabling its own interrupts. Without this
     // gate, an AP timer tick that page-faults has no handler registered
@@ -81,11 +127,7 @@ pub fn ap_init_callback(apic_id: u8) -> ! {
     arch::start_timer(100);
     arch::X86_64::enable_interrupts();
 
-    // AP is now online - enter scheduler idle loop
-    loop {
-        sched::yield_current();
-        unsafe {
-            core::arch::asm!("hlt");
-        }
-    }
+    // — WireSaint: AP idle loop — use the SAME idle_loop as the BSP.
+    // No duplicated logic, no drift. One idle function to rule them all.
+    crate::scheduler::idle_loop();
 }

@@ -717,13 +717,15 @@ pub fn sys_connect(fd: i32, addr: u64, addrlen: u32) -> i64 {
                     // Store mapping from socket fd to TCP connection id
                     TCP_CONNECTIONS.lock().insert(fd, conn_id);
 
-                    // —ShadePacket: Wait for connection to establish (3-way handshake)
-                    // Poll until connected or timeout
-                    const MAX_POLLS: u32 = 10000;
-                    const SPINS_PER_POLL: u32 = 1000;
+                    // — TorqueJax: Wait for TCP 3-way handshake to complete.
+                    // The old spin_loop() burned 100% CPU in ring 0 for up to
+                    // 10M iterations. Replaced with HLT+kpo: allow preemption so
+                    // the network stack's timer IRQ can run, poll after each wakeup.
+                    // 500 HLT wakeups × ~10ms tick ≈ 5 second connect timeout.
+                    const MAX_HLT_POLLS: u32 = 500;
 
-                    for _ in 0..MAX_POLLS {
-                        // Poll network stack
+                    for _ in 0..MAX_HLT_POLLS {
+                        // Poll network stack before sleeping
                         let _ = tcpip::poll();
 
                         // Check connection state
@@ -741,10 +743,13 @@ pub fn sys_connect(fd: i32, addr: u64, addrlen: u32) -> i64 {
                             return errno::ECONNREFUSED;
                         }
 
-                        // Brief spin
-                        for _ in 0..SPINS_PER_POLL {
-                            core::hint::spin_loop();
-                        }
+                        // — TorqueJax: HLT backoff — wake on next timer IRQ.
+                        // allow_kernel_preempt lets the scheduler context-switch
+                        // while we're blocked; clear it after wakeup so we don't
+                        // get unexpectedly preempted mid-critical-section below.
+                        arch_x86_64::allow_kernel_preempt();
+                        unsafe { core::arch::asm!("sti", "hlt", options(nomem, nostack)); }
+                        arch_x86_64::disallow_kernel_preempt();
                     }
 
                     // Timeout

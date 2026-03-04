@@ -159,14 +159,28 @@ pub fn probe_all_pci() -> usize {
     count
 }
 
-// — InputShade: raw serial helpers for ISR-safe debugging
+// — SableWire: spin limit so a backed-up FIFO doesn't turn debug output
+// into an infinite hang. drop byte, keep the system alive. always.
+const UART_TX_SPIN_LIMIT: u32 = 2048;
+
+// — SableWire: raw serial helpers for ISR-safe debugging.
+// bounded spin — THRE poll exits after UART_TX_SPIN_LIMIT iterations.
+// at 115200 baud that's ~100µs; if it's still full after that, we drop
+// the byte. debug output is best-effort, system liveness is not.
 fn serial_write_str(s: &[u8]) {
     for &b in s {
         unsafe {
+            let mut spins: u32 = 0;
             loop {
                 let status: u8;
                 core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack, preserves_flags));
                 if status & 0x20 != 0 { break; }
+                spins += 1;
+                if spins >= UART_TX_SPIN_LIMIT {
+                    // — SableWire: FIFO still full after spin limit.
+                    // drop byte rather than hang the world. not proud, just alive.
+                    return;
+                }
             }
             core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack, preserves_flags));
         }
@@ -542,25 +556,6 @@ impl VirtioInput {
             }
             // Re-arm: put the descriptor back in the avail ring for the device
             queue.add_available(desc_idx as u16);
-        }
-
-        // — InputShade: trace event processing — gated behind debug-input.
-        // Fires on every keypress in ISR context. Was unconditional, adding serial
-        // traffic during keyboard bursts that competed with syscall tracing.
-        #[cfg(feature = "debug-input")]
-        if count > 0 {
-            use core::sync::atomic::{AtomicU64, Ordering as AtOrd};
-            static TOTAL_EVENTS: AtomicU64 = AtomicU64::new(0);
-            let total = TOTAL_EVENTS.fetch_add(count as u64, AtOrd::Relaxed) + count as u64;
-            unsafe {
-                os_log::write_str_raw("[VINPUT] ev=");
-                arch_x86_64::serial::write_u64_hex_unsafe(count as u64);
-                os_log::write_str_raw(" total=");
-                arch_x86_64::serial::write_u64_hex_unsafe(total);
-                os_log::write_str_raw(" free=");
-                arch_x86_64::serial::write_u64_hex_unsafe(queue.num_free() as u64);
-                os_log::write_str_raw("\n");
-            }
         }
 
         // — InputShade: now dispatch with &self — no queue borrow conflict

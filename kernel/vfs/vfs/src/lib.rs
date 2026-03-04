@@ -15,6 +15,7 @@ pub mod flock;
 pub mod memfd;
 pub mod mount;
 pub mod path;
+pub mod permission;
 pub mod pipe;
 pub mod vnode;
 

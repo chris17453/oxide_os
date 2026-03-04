@@ -565,10 +565,22 @@ impl InputDevice for Ps2Mouse {
 
 /// Write a debug string to COM1 serial port (no locks, no deps)
 /// -- TorqueJax: Raw serial for tracing init before anything else is up
+// — SableWire: bounded THRE poll. unbounded loops in driver code are
+// a footgun — UART saturation during heavy init tracing will stall init
+// indefinitely. drop byte after UART_TX_SPIN_LIMIT, press on.
+const UART_TX_SPIN_LIMIT: u32 = 2048;
+
 fn serial_debug(msg: &[u8]) {
     for &b in msg {
-        // Wait for THRE (transmit holding register empty)
-        while unsafe { inb(0x3FD) } & 0x20 == 0 {}
+        // — SableWire: wait for THRE with spin limit — drop byte, not system
+        let mut spins: u32 = 0;
+        loop {
+            if unsafe { inb(0x3FD) } & 0x20 != 0 { break; }
+            spins += 1;
+            if spins >= UART_TX_SPIN_LIMIT {
+                return; // — SableWire: FIFO full, byte dropped, life goes on
+            }
+        }
         unsafe { outb(0x3F8, b) };
     }
 }
@@ -719,6 +731,34 @@ pub fn init() -> bool {
     true
 }
 
+/// ISR-safe bounded serial byte write — drop byte rather than spin forever.
+/// — SableWire: inline so no stack frame in IRQ context. THRE poll is bounded
+/// by UART_TX_SPIN_LIMIT — at 115200 baud that's ~100µs max wait. if the
+/// FIFO is still full after that, we're already in serial saturation territory
+/// and dropping a debug trace byte is infinitely better than hanging in an ISR.
+#[inline(always)]
+unsafe fn isr_serial_write_byte(b: u8) {
+    let mut spins: u32 = 0;
+    // SAFETY: port I/O to COM1 LSR (0x3FD) and THR (0x3F8) — arch-level access
+    while unsafe { inb(0x3FD) } & 0x20 == 0 {
+        spins += 1;
+        if spins >= UART_TX_SPIN_LIMIT {
+            return; // — SableWire: drop byte, never stall an ISR
+        }
+    }
+    unsafe { outb(0x3F8, b) };
+}
+
+/// ISR-safe bounded serial string write — calls isr_serial_write_byte per byte.
+/// — SableWire: only call from IRQ context where locks are forbidden.
+#[inline(always)]
+unsafe fn isr_serial_write(msg: &[u8]) {
+    for &b in msg {
+        // SAFETY: caller guarantees ISR context; isr_serial_write_byte is unsafe
+        unsafe { isr_serial_write_byte(b) };
+    }
+}
+
 /// Debug counter for keyboard interrupts
 static KEYBOARD_IRQ_COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -747,14 +787,11 @@ pub fn handle_keyboard_irq() {
     LAST_SCANCODE.store(scancode, Ordering::Relaxed);
 
     // [TRACE] Log first few keyboard IRQs — InputShade: Debug intermittent input
+    // — SableWire: all serial writes in ISR use isr_serial_write — bounded spin only
     let count = KEYBOARD_IRQ_COUNT.load(Ordering::Relaxed);
     if count <= 5 {
         unsafe {
-            let msg = b"[KBD-IRQ] sc=0x";
-            for &byte in msg.iter() {
-                while inb(0x3FD) & 0x20 == 0 {}
-                outb(0x3F8, byte);
-            }
+            isr_serial_write(b"[KBD-IRQ] sc=0x");
             let nibbles = [(scancode >> 4) & 0xF, scancode & 0xF];
             for nibble in nibbles {
                 let hex_char = if nibble < 10 {
@@ -762,13 +799,9 @@ pub fn handle_keyboard_irq() {
                 } else {
                     b'a' + nibble - 10
                 };
-                outb(0x3F8, hex_char);
+                isr_serial_write_byte(hex_char);
             }
-            let msg2 = b"\r\n";
-            for &byte in msg2.iter() {
-                while inb(0x3FD) & 0x20 == 0 {}
-                outb(0x3F8, byte);
-            }
+            isr_serial_write(b"\r\n");
         }
     }
 
@@ -785,33 +818,20 @@ pub fn handle_keyboard_irq() {
     if let Some(guard) = KEYBOARD.try_lock() {
         if let Some(keyboard) = guard.as_ref() {
             // — InputShade: trace to confirm handle_scancode is called
+            // — SableWire: bounded ISR serial write
             if count <= 10 {
                 unsafe {
-                    let msg = b"[KBD-IRQ] calling handle_scancode\r\n";
-                    for &byte in msg.iter() {
-                        while inb(0x3FD) & 0x20 == 0 {}
-                        outb(0x3F8, byte);
-                    }
+                    isr_serial_write(b"[KBD-IRQ] calling handle_scancode\r\n");
                 }
             }
             keyboard.handle_scancode(scancode);
         } else if count <= 5 {
-            unsafe {
-                let msg = b"[KBD-IRQ] KEYBOARD is None!\r\n";
-                for &byte in msg.iter() {
-                    while inb(0x3FD) & 0x20 == 0 {}
-                    outb(0x3F8, byte);
-                }
-            }
+            // — SableWire: bounded ISR serial write
+            unsafe { isr_serial_write(b"[KBD-IRQ] KEYBOARD is None!\r\n"); }
         }
     } else if count <= 5 {
-        unsafe {
-            let msg = b"[KBD-IRQ] KEYBOARD try_lock FAILED!\r\n";
-            for &byte in msg.iter() {
-                while inb(0x3FD) & 0x20 == 0 {}
-                outb(0x3F8, byte);
-            }
-        }
+        // — SableWire: bounded ISR serial write
+        unsafe { isr_serial_write(b"[KBD-IRQ] KEYBOARD try_lock FAILED!\r\n"); }
     }
 }
 
@@ -829,15 +849,12 @@ pub fn handle_mouse_irq() {
     let byte = unsafe { inb(DATA_PORT) };
 
     // [TRACE] Log first few mouse IRQs — InputShade: Debug intermittent input
+    // — SableWire: bounded isr_serial_write in ISR — no unbounded THRE polls here
     static MOUSE_IRQ_COUNT: AtomicUsize = AtomicUsize::new(0);
     let count = MOUSE_IRQ_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     if count <= 5 {
         unsafe {
-            let msg = b"[MOUSE-IRQ] byte=0x";
-            for &byte_ch in msg.iter() {
-                while inb(0x3FD) & 0x20 == 0 {}
-                outb(0x3F8, byte_ch);
-            }
+            isr_serial_write(b"[MOUSE-IRQ] byte=0x");
             let nibbles = [(byte >> 4) & 0xF, byte & 0xF];
             for nibble in nibbles {
                 let hex_char = if nibble < 10 {
@@ -845,13 +862,9 @@ pub fn handle_mouse_irq() {
                 } else {
                     b'a' + nibble - 10
                 };
-                outb(0x3F8, hex_char);
+                isr_serial_write_byte(hex_char);
             }
-            let msg2 = b"\r\n";
-            for &byte_ch in msg2.iter() {
-                while inb(0x3FD) & 0x20 == 0 {}
-                outb(0x3F8, byte_ch);
-            }
+            isr_serial_write(b"\r\n");
         }
     }
 

@@ -55,6 +55,12 @@ pub struct BootInfo {
     /// RSDP physical address from UEFI config tables (0 if not found)
     /// — SableWire: firmware handshake for ACPI topology discovery
     pub rsdp_physical_address: u64,
+    /// Kernel command line — boot options passed from the boot manager
+    /// Null-terminated UTF-8 string. Empty = no options specified.
+    /// — BlackLatch: the last message from the boot manager before the bridge burns
+    pub cmdline: [u8; 256],
+    /// Length of the command line string (excluding null terminator)
+    pub cmdline_len: u32,
 }
 
 impl BootInfo {
@@ -74,6 +80,8 @@ impl BootInfo {
             initramfs_phys: 0,
             initramfs_size: 0,
             rsdp_physical_address: 0,
+            cmdline: [0u8; 256],
+            cmdline_len: 0,
         }
     }
 
@@ -85,6 +93,17 @@ impl BootInfo {
     /// Get memory regions as a slice
     pub fn memory_regions(&self) -> &[MemoryRegion] {
         &self.memory_regions[..self.memory_region_count as usize]
+    }
+
+    /// Get the kernel command line as a string slice.
+    /// Returns None if no command line was specified.
+    /// — BlackLatch: the kernel's first words from the boot manager
+    pub fn cmdline(&self) -> Option<&str> {
+        if self.cmdline_len == 0 {
+            return None;
+        }
+        let len = (self.cmdline_len as usize).min(255);
+        core::str::from_utf8(&self.cmdline[..len]).ok()
     }
 
     /// Get initramfs as a virtual address slice (through physical map)

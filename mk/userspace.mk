@@ -88,16 +88,23 @@ userspace-std-pkg: setup-std-source
 		-Zbuild-std-features=compiler-builtins-mem \
 		$(CARGO_USER_FLAGS)
 
-# Build hello-std (std userspace test program)
+# Build std-enabled userspace binaries (hello-std + oxide-test)
+# — CrashBloom: every std binary gets forged here. One -Zbuild-std invocation
+# to rule them all, because recompiling std per-package is for masochists.
+USERSPACE_STD_PACKAGES := hello-std oxide-test
+
 .PHONY: userspace-std
 userspace-std:
 	@echo "Building std userspace binaries..."
-	__CARGO_TESTS_ONLY_SRC_ROOT=$(CURDIR)/rust-std/library \
-	RUSTC_BOOTSTRAP=1 \
-	RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static \
-		-C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" \
-	cargo build --package hello-std \
-		--target $(USERSPACE_STD_TARGET_JSON) \
-		-Zbuild-std=std,panic_abort \
-		-Zbuild-std-features=compiler-builtins-mem \
-		$(CARGO_USER_FLAGS)
+	@for pkg in $(USERSPACE_STD_PACKAGES); do \
+		echo "  Building $$pkg (std)..."; \
+		__CARGO_TESTS_ONLY_SRC_ROOT=$(CURDIR)/rust-std/library \
+		RUSTC_BOOTSTRAP=1 \
+		RUSTFLAGS="-C linker=$(LINKER) -C relocation-model=static \
+			-C link-arg=-Tuserspace/userspace.ld -C link-arg=-e_start" \
+		cargo build --package $$pkg \
+			--target $(USERSPACE_STD_TARGET_JSON) \
+			-Zbuild-std=std,panic_abort \
+			-Zbuild-std-features=compiler-builtins-mem \
+			$(CARGO_USER_FLAGS) || exit 1; \
+	done

@@ -6,6 +6,7 @@ edition = "2024"
 [features]
 debug-fork = []
 debug-paging = ["mm-paging/debug-paging"]  # Enable page alloc/zero traces during exec (EXTREMELY noisy — fires on every page)
+debug-proc = []  # Enable process lifecycle debug traces (frame alloc/free, Drop paths)
 
 [dependencies]
 os_core = { path = "../../core/os_core" }
@@ -14,6 +15,7 @@ proc-traits = { path = "../proc-traits" }
 mm-paging = { path = "../../mm/mm-paging" }
 mm-traits = { path = "../../mm/mm-traits" }
 mm-cow = { path = "../../mm/mm-cow" }
+mm-manager = { path = "../../mm/mm-manager" }
 elf = { path = "../../exec/elf" }
 sched-traits = { path = "../../sched/sched-traits" }
 vfs = { path = "../../vfs/vfs" }

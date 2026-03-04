@@ -8,10 +8,11 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 use elf::{ElfExecutable, ElfLoader};
-use mm_paging::{flush_tlb_all, phys_to_virt};
+use mm_paging::phys_to_virt;
 use mm_traits::FrameAllocator;
 use os_core::{PhysAddr, VirtAddr};
 use proc_traits::MemoryFlags;
+use smp;
 
 use crate::{ProcessContext, UserAddressSpace};
 
@@ -46,13 +47,42 @@ pub struct ExecResult {
     pub cmdline: Vec<String>,
     /// Environment variables (for /proc/[pid]/environ)
     pub environ: Vec<String>,
+    /// ASLR-randomized mmap base for this process image.
+    ///
+    /// — ColdCipher: Fresh exec, fresh layout. Caller must install this into
+    /// ProcessMeta::next_mmap_addr so all subsequent mmap(NULL) calls start
+    /// from the jittered base rather than the predictable default.
+    pub mmap_base: u64,
 }
 
 /// User stack size (1MB)
 const USER_STACK_SIZE: usize = 1024 * 1024;
 
-/// User stack top address (just below kernel space)
+/// User stack top address (just below kernel space) — canonical upper limit.
+///
+/// — ColdCipher: This is the ceiling, not the law. ASLR slides the actual top
+/// downward by up to ASLR_STACK_ENTROPY bytes so every exec lands somewhere
+/// different. Predictable stacks are attacker gift wrap.
 const USER_STACK_TOP: u64 = 0x0000_7FFF_FFFF_0000;
+
+/// Maximum random downward shift for the user stack top.
+///
+/// — ColdCipher: 4MB window, page-aligned mask. 1023 pages of entropy.
+/// The 1MB stack still fits — worst-case bottom is ~5MB below the ceiling.
+/// Nobody wins by guessing 1-in-1024. — ColdCipher
+const ASLR_STACK_ENTROPY: u64 = 0x3F_F000; // 4MB - 4KB, page-aligned mask
+
+/// Default mmap base address (before ASLR jitter).
+///
+/// — ColdCipher: Kept in sync with meta::MMAP_BASE_DEFAULT.
+/// exec() generates a fresh offset and writes it back into ProcessMeta.
+const MMAP_BASE_DEFAULT: u64 = 0x0000_7000_0000_0000;
+
+/// Maximum random downward shift for the mmap base on exec.
+///
+/// — ColdCipher: 4MB page-aligned mask — same window as the stack entropy.
+/// Combined with stack ASLR, the cost to brute-force the full layout doubles.
+const ASLR_MMAP_ENTROPY: u64 = 0x3FF_F000; // 4MB - 4KB, page-aligned mask
 
 /// Execute a new program
 ///
@@ -155,11 +185,16 @@ pub fn do_exec<A: FrameAllocator>(
                     core::ptr::write_bytes(frame_virt.as_mut_ptr::<u8>(), 0, 4096);
                 }
 
-                // Map the page
-                unsafe {
-                    new_address_space
-                        .map_user_page(page_virt, frame, segment.flags, allocator)
-                        .map_err(|_| ExecError::OutOfMemory)?;
+                // — ColdCipher: Map the page. If mapping fails (PT allocation OOM),
+                // free the data frame we just allocated. Without this, the frame is
+                // orphaned — not in the page tables (so Drop can't find it), not in
+                // allocated_frames (by design). One leaked frame per failed exec
+                // under memory pressure.
+                if let Err(_) = unsafe {
+                    new_address_space.map_user_page(page_virt, frame, segment.flags, allocator)
+                } {
+                    allocator.free_frame(frame);
+                    return Err(ExecError::OutOfMemory);
                 }
 
                 frame_virt
@@ -283,7 +318,11 @@ pub fn do_exec<A: FrameAllocator>(
 
         // Align to page boundary
         let pages_needed = (total_size + 4095) / 4096;
-        let tls_vaddr = VirtAddr::new(0x0000_7000_0000_0000); // TLS region
+        // — ColdCipher: TLS lives BELOW the mmap region (0x7000_0000_0000) so they
+        // can't collide. mmap grows downward from its base; TLS is a fixed allocation
+        // at a distinct address. The old value (0x7000_0000_0000) was exactly
+        // MMAP_BASE_DEFAULT — the first mmap(NULL) would stomp right on the TCB.
+        let tls_vaddr = VirtAddr::new(0x0000_6FFF_F000_0000); // TLS region — below mmap base
 
         // Allocate TLS pages
         new_address_space
@@ -317,9 +356,21 @@ pub fn do_exec<A: FrameAllocator>(
         None
     };
 
+    // — ColdCipher: ASLR — randomize the stack top within a 4MB window.
+    // The canonical limit is USER_STACK_TOP. We shift down by a page-aligned
+    // random offset so every exec lands in a different spot. The 1MB allocation
+    // still fits; worst case the bottom is ~5MB below the canonical ceiling.
+    let stack_aslr_shift = crate::meta::aslr_random() & ASLR_STACK_ENTROPY; // page-aligned
+    let randomized_stack_top = USER_STACK_TOP - stack_aslr_shift;
+
+    // — ColdCipher: mmap base ASLR — fresh jitter per exec. The randomized base
+    // gets written into ProcessMeta::next_mmap_addr by the caller (process.rs).
+    let mmap_aslr_shift = crate::meta::aslr_random() & ASLR_MMAP_ENTROPY; // page-aligned
+    let randomized_mmap_base = MMAP_BASE_DEFAULT - mmap_aslr_shift;
+
     // Set up user stack
     let stack_pages = USER_STACK_SIZE / 4096;
-    let stack_bottom = VirtAddr::new(USER_STACK_TOP - USER_STACK_SIZE as u64);
+    let stack_bottom = VirtAddr::new(randomized_stack_top - USER_STACK_SIZE as u64);
 
     new_address_space
         .allocate_pages(
@@ -349,7 +400,7 @@ pub fn do_exec<A: FrameAllocator>(
     // [argc]         <- number of arguments
     // <- rsp points here
 
-    let mut stack_ptr = USER_STACK_TOP;
+    let mut stack_ptr = randomized_stack_top;
 
     // Calculate total size needed for strings
     let mut string_data_size = 0usize;
@@ -395,7 +446,7 @@ pub fn do_exec<A: FrameAllocator>(
     {
         extern crate os_log;
         os_log::debug!("[EXEC] Stack layout:");
-        os_log::debug!("[EXEC]   USER_STACK_TOP = {:#x}", USER_STACK_TOP);
+        os_log::debug!("[EXEC]   USER_STACK_TOP (ASLR) = {:#x}", randomized_stack_top);
         os_log::debug!("[EXEC]   strings_base = {:#x}", strings_base);
         os_log::debug!("[EXEC]   string_data_size = {}", string_data_size);
         os_log::debug!("[EXEC]   pointers_size = {}", pointers_size);
@@ -499,8 +550,14 @@ pub fn do_exec<A: FrameAllocator>(
     context.rsi = 0;
     context.rdx = 0; // Could be set to rtld_fini for dynamic linking (future)
 
-    // Flush TLB
-    flush_tlb_all();
+    // — BlackLatch: flush_tlb_all() only reloads CR3 on THIS core. If any CLONE_VM
+    // thread is running on another CPU it still has valid TLB entries pointing into
+    // the old address space. After exec we install a brand-new PML4, so those stale
+    // entries now map into freed frames. Shoot them all down before we hand control
+    // to the new image. tlb_shootdown(0, MAX, 0) drives a full CR3 reload on every
+    // CPU — cheap flat cost, not per-page, because invalidate_range promotes large
+    // ranges automatically.
+    smp::tlb_shootdown(0, u64::MAX, 0);
 
     Ok(ExecResult {
         address_space: new_address_space,
@@ -509,6 +566,7 @@ pub fn do_exec<A: FrameAllocator>(
         context,
         cmdline: argv.iter().cloned().collect(),
         environ: envp.iter().cloned().collect(),
+        mmap_base: randomized_mmap_base,
     })
 }
 

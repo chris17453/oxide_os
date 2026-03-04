@@ -152,6 +152,75 @@ impl VnodeOps for NullDevice {
     }
 }
 
+/// /dev/serial — raw COM1 output for test harnesses and diagnostics.
+/// — SableWire: write-only pipe straight to the UART. No buffering,
+/// no line discipline, no mercy. Your bytes hit the wire or they don't.
+pub struct SerialDevice {
+    ino: u64,
+}
+
+impl SerialDevice {
+    pub fn new(ino: u64) -> Self {
+        SerialDevice { ino }
+    }
+}
+
+impl VnodeOps for SerialDevice {
+    fn vtype(&self) -> VnodeType {
+        VnodeType::CharDevice
+    }
+
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn read(&self, _offset: u64, _buf: &mut [u8]) -> VfsResult<usize> {
+        // — SableWire: write-only device. You want input? Talk to /dev/console.
+        Ok(0)
+    }
+
+    fn write(&self, _offset: u64, buf: &[u8]) -> VfsResult<usize> {
+        // — SableWire: straight to the UART, no questions asked
+        raw_serial_str(buf);
+        Ok(buf.len())
+    }
+
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rmdir(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn unlink(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn stat(&self) -> VfsResult<Stat> {
+        // — SableWire: major 4 (ttyS), minor 64 (COM1) — matches Linux convention
+        let mut stat = Stat::new(VnodeType::CharDevice, Mode::new(0o222), 0, self.ino);
+        stat.rdev = make_dev(4, 64);
+        Ok(stat)
+    }
+
+    fn truncate(&self, _size: u64) -> VfsResult<()> {
+        Ok(())
+    }
+}
+
 /// /dev/zero - reads return zeros, writes are discarded
 pub struct ZeroDevice {
     ino: u64,
@@ -291,6 +360,7 @@ impl VnodeOps for ConsoleDevice {
                 r
             }
             None => {
+                #[cfg(feature = "debug-console")]
                 unsafe { os_log::write_str_raw("[CON:W] ->fallback\n"); }
                 // — GraveShift: Early boot fallback. No serial — stdout is not debug.
                 if terminal::is_initialized() {

@@ -59,20 +59,17 @@ impl fmt::Debug for Instant {
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SystemTime {
-    secs: u64,
-    nanos: u32,
+    pub(crate) secs: u64,
+    pub(crate) nanos: u32,
 }
 
 pub const UNIX_EPOCH: SystemTime = SystemTime { secs: 0, nanos: 0 };
 
 impl SystemTime {
-    pub const MAX: SystemTime = SystemTime { secs: u64::MAX, nanos: 999_999_999 };
+    /// — WireSaint: Minimum representable time (epoch)
     pub const MIN: SystemTime = SystemTime { secs: 0, nanos: 0 };
-
-    /// — WireSaint: Construct from raw seconds (for stat timestamps).
-    pub fn from_secs(secs: u64) -> Self {
-        Self { secs, nanos: 0 }
-    }
+    /// — WireSaint: Maximum representable time (u64::MAX seconds)
+    pub const MAX: SystemTime = SystemTime { secs: u64::MAX, nanos: 999_999_999 };
 
     pub fn now() -> Self {
         let mut ts = oxide_rt::types::Timespec::zero();

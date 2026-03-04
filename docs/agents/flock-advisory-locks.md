@@ -33,9 +33,12 @@ std::fs::File::lock()           ← Rust std PAL (sys/fs/oxide.rs)
    - If the same `owner_id` already holds a lock, calling flock again changes the lock type (shared→exclusive or vice versa).
    - This matches Linux behavior.
 
-4. **Blocking waits use HLT+kpo.**
-   - Same pattern as `sys_poll`, `sys_select`, etc.
-   - Signals break out with `-EINTR`.
+4. **Blocking waits use HLT+kpo with direct wakeup notification.**
+   - `sys_flock_blocking()` registers the calling PID via `FLOCK_REGISTRY.register_waiter()` BEFORE attempting `try_lock_*`.
+   - When `unlock()` releases a lock it drains the waiter list and returns the PIDs. The caller calls `sched::wake_up(pid)` for each.
+   - This eliminates the 10ms timer-tick polling latency floor (P3.6 fix).
+   - Signals break out with `-EINTR`; `unregister_waiter()` is called on signal or successful lock acquisition to avoid ghost PIDs.
+   - Spurious wakeups are safe — the loop always re-checks the lock condition.
 
 5. **Non-blocking failures return `-EAGAIN` (errno 11).**
    - `VfsError::WouldBlock` maps to errno -11.

@@ -6,7 +6,7 @@
 //! - Kernel mapping at 0xFFFF_FFFF_8000_0000
 
 use core::ptr;
-use uefi::table::boot::{AllocateType, MemoryType};
+use crate::efi;
 
 use boot_proto::{KERNEL_VIRT_BASE, PHYS_MAP_BASE};
 
@@ -61,7 +61,6 @@ fn setup_identity_mapping(pml4_phys: u64) {
     }
 
     // Map first 4GB with 1GB huge pages (PDPT entries)
-    // Note: 1GB pages require PDPE.PS bit, which we use here
     for i in 0..4 {
         let phys_addr = (i as u64) * (1024 * 1024 * 1024); // 1GB per entry
         unsafe {
@@ -77,9 +76,7 @@ fn setup_physical_map(pml4_phys: u64) {
     // PHYS_MAP_BASE = 0xFFFF_8000_0000_0000
     // PML4 index: bits 47:39 = 256
     // Each PML4 entry covers 512GB. We need multiple entries because
-    // PCIe 64-bit BARs (e.g. QEMU Q35 virtio-*-pci) can be placed above
-    // 512GB (typically around 0xC000000000 = 768GB). Map 4TB total
-    // (8 PML4 entries × 512GB) to cover all reasonable MMIO ranges.
+    // PCIe 64-bit BARs can be placed above 512GB. Map 4TB total.
     // — TorqueJax: one PDPT per PML4 slot, 1GB huge pages throughout.
     let base_pml4_idx = ((PHYS_MAP_BASE >> 39) & 0x1FF) as usize; // 256
     let num_pml4_entries = 8; // 8 × 512GB = 4TB
@@ -178,13 +175,9 @@ fn setup_kernel_mapping(pml4_phys: u64, kernel_phys: u64, kernel_size: u64) {
 }
 
 /// Allocate a page table (one 4KB page, zeroed)
+/// — SableWire: raw UEFI page allocation — no wrappers, no excuses
 fn allocate_page_table() -> u64 {
-    let st = uefi::table::system_table_boot().expect("Boot services not available");
-    let bs = st.boot_services();
-
-    let addr = bs
-        .allocate_pages(AllocateType::AnyPages, MemoryType::LOADER_DATA, 1)
-        .expect("Failed to allocate page table");
+    let addr = efi::allocate_pages(1).expect("Failed to allocate page table");
 
     // Zero the page
     unsafe {

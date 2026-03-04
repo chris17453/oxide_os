@@ -21,8 +21,13 @@ mod efer {
 }
 
 /// RFLAGS bits to mask on syscall entry
-/// We clear: IF (interrupts), DF (direction), TF (trap), AC (alignment check)
-const SFMASK_VALUE: u64 = 0x4700; // IF=0x200, DF=0x400, TF=0x100, AC=0x4_0000
+/// We clear: IF (interrupts), DF (direction), TF (trap), AC (alignment check/SMAP)
+/// — ColdCipher: 0x44700 = IF(0x200) | TF(0x100) | DF(0x400) | AC(0x40000)
+/// AC MUST be cleared on syscall entry so SMAP is active by default in kernel mode.
+/// Without this the kernel runs with AC=1 (user-set), SMAP disabled, and any
+/// random kernel dereference of a user pointer silently succeeds. Not a bug — a
+/// security crater. The old 0x4700 simply forgot the top nibble. Classic.
+const SFMASK_VALUE: u64 = 0x44700; // IF=0x200, TF=0x100, DF=0x400, AC=0x40000
 
 /// Read a Model Specific Register
 #[inline]
@@ -168,10 +173,11 @@ pub extern "C" fn syscall_entry() {
         // Now switch to kernel stack
         "mov rsp, gs:[0]",
 
-        // DEBUG: Save RFLAGS at syscall entry (before STAC)
+        // DEBUG: Save RFLAGS at syscall entry (before STAC) — per-CPU slot gs:[56]
+        // — SableWire: gs:[56] = debug_ac_at_entry. No shared global, no race.
         "pushfq",
         "pop r12",
-        "mov [{ac_at_entry}], r12",
+        "mov gs:[56], r12",
 
         // === Push user state for sysret ===
         // Stack layout (growing down):
@@ -262,10 +268,11 @@ pub extern "C" fn syscall_entry() {
         // Enable user memory access for SMAP
         "stac",
 
-        // DEBUG: Check if AC flag is actually set after STAC
+        // DEBUG: Check if AC flag is actually set after STAC — per-CPU slot gs:[64]
+        // — SableWire: gs:[64] = debug_stac_rflags. Per-CPU, no lock needed.
         "pushfq",
         "pop r12",
-        "mov [{stac_debug_rflags}], r12",
+        "mov gs:[64], r12",
 
         // Save caller-saved registers that must be preserved for the user
         // (syscall only clobbers RCX and R11 according to ABI)
@@ -288,17 +295,19 @@ pub extern "C" fn syscall_entry() {
         "mov rsi, rdi",                    // arg1 (was in rdi)
         "mov rdi, gs:[16]",                // syscall number from scratch
 
-        // DEBUG: Save AC flag before call
+        // DEBUG: Save AC flag before call — per-CPU slot gs:[72]
+        // — SableWire: gs:[72] = debug_ac_before_call. Each CPU writes its own slot.
         "pushfq",
         "pop r12",
-        "mov [{ac_before_call}], r12",
+        "mov gs:[72], r12",
 
         "call {handler}",
 
-        // DEBUG: Save AC flag after call
+        // DEBUG: Save AC flag after call — per-CPU slot gs:[80]
+        // — SableWire: gs:[80] = debug_ac_after_call. No mutex needed here.
         "pushfq",
         "pop r12",
-        "mov [{ac_after_call}], r12",
+        "mov gs:[80], r12",
 
         // Clean up stack arg (the pushed arg6)
         "add rsp, 8",
@@ -384,21 +393,24 @@ pub extern "C" fn syscall_entry() {
         // RAX has return value - keep it there!
         // IMPORTANT: Don't use R10 as scratch - it must be preserved for user!
 
-        // DEBUG: Save stack pointer before reads
-        "mov [{sysret_stack_ptr}], rsp",
+        // DEBUG: Save stack pointer before reads — per-CPU slot gs:[88]
+        // — SableWire: gs:[88] = debug_sysret_stack. Per-CPU, no contention.
+        "mov gs:[88], rsp",
 
         // Load sysret values - load RCX and R11 first (they're clobbered by sysret anyway)
         "mov rcx, [rsp + 8]",              // User RIP -> RCX (for sysret) [potentially modified]
         "mov r11, [rsp + 16]",             // User RFLAGS -> R11 (for sysret)
 
-        // DEBUG: Save loaded values (use rcx value we just loaded for rsp debug)
+        // DEBUG: Save loaded values — per-CPU slots gs:[96], gs:[104], gs:[112], gs:[120]
+        // — SableWire: Each of these replaces a formerly racy global static.
+        // The page fault handler reads THIS CPU's slots for diagnostics.
         "push rax",                        // Save return value temporarily
         "mov rax, [rsp + 8]",              // Get user RSP (offset +8 because we pushed rax)
-        "mov [{sysret_rsp}], rax",
+        "mov gs:[96], rax",                // debug_sysret_rsp
         "pop rax",                         // Restore return value
-        "mov [{sysret_rcx}], rcx",
-        "mov [{sysret_r11}], r11",
-        "mov [{sysret_rax}], rax",
+        "mov gs:[104], rcx",               // debug_sysret_rcx (user RIP)
+        "mov gs:[112], r11",               // debug_sysret_r11 (user RFLAGS)
+        "mov gs:[120], rax",               // debug_sysret_rax (return value)
 
         // Swap GS back to user mode (BEFORE switching RSP!)
         "swapgs",
@@ -411,17 +423,10 @@ pub extern "C" fn syscall_entry() {
         // RAX = return value, RCX = user RIP, R11 = user RFLAGS
         "sysretq",
 
+        // — SableWire: All debug sym references removed. Debug values now go to
+        // per-CPU gs:[56..120] slots in SyscallCpuData. No shared globals, no races.
         handler = sym syscall_dispatch,
         signal_check = sym syscall_signal_check,
-        sysret_stack_ptr = sym SYSRET_DEBUG_STACK_PTR,
-        sysret_rsp = sym SYSRET_DEBUG_RSP,
-        sysret_rcx = sym SYSRET_DEBUG_RCX,
-        sysret_r11 = sym SYSRET_DEBUG_R11,
-        sysret_rax = sym SYSRET_DEBUG_RAX,
-        stac_debug_rflags = sym STAC_DEBUG_RFLAGS,
-        ac_before_call = sym AC_BEFORE_CALL,
-        ac_after_call = sym AC_AFTER_CALL,
-        ac_at_entry = sym AC_AT_ENTRY,
     );
 }
 
@@ -468,13 +473,28 @@ extern "C" fn syscall_signal_check() {
 ///
 /// Each CPU gets its own instance via KERNEL_GS_BASE + swapgs.
 /// Fields are accessed at fixed offsets from GS base in assembly:
-/// - offset 0:  kernel_rsp
-/// - offset 8:  scratch_rsp (for saving user RSP)
-/// - offset 16: scratch_rax (for saving syscall number)
-/// - offset 24: scratch_r12 (for saving user R12)
-/// - offset 32: scratch_rcx (for saving user RCX prior to syscall)
-/// - offset 40: cpu_id (logical CPU index, for per-CPU array lookups)
-/// - offset 48: user_ctx_ptr (pointer to this CPU's SyscallUserContext)
+/// - offset 0:   kernel_rsp
+/// - offset 8:   scratch_rsp (for saving user RSP)
+/// - offset 16:  scratch_rax (for saving syscall number)
+/// - offset 24:  scratch_r12 (for saving user R12)
+/// - offset 32:  scratch_rcx (for saving user RCX prior to syscall)
+/// - offset 40:  cpu_id (logical CPU index, for per-CPU array lookups)
+/// - offset 48:  user_ctx_ptr (pointer to this CPU's SyscallUserContext)
+///
+/// Debug fields (per-CPU, written by syscall_entry inline asm):
+/// - offset 56:  debug_ac_at_entry    (RFLAGS at syscall entry, before STAC)
+/// - offset 64:  debug_stac_rflags    (RFLAGS after STAC instruction)
+/// - offset 72:  debug_ac_before_call (RFLAGS before handler dispatch)
+/// - offset 80:  debug_ac_after_call  (RFLAGS after handler returns)
+/// - offset 88:  debug_sysret_stack   (RSP value before sysret epilogue)
+/// - offset 96:  debug_sysret_rsp     (user RSP loaded for sysret)
+/// - offset 104: debug_sysret_rcx     (user RIP loaded into RCX for sysret)
+/// - offset 112: debug_sysret_r11     (user RFLAGS loaded into R11 for sysret)
+/// - offset 120: debug_sysret_rax     (return value in RAX at sysret)
+///
+/// — SableWire: These replaced the old single-global debug statics that every
+/// CPU was racing to write simultaneously. Per-CPU means no data race, and the
+/// page fault handler can read THIS CPU's last syscall state for diagnostics.
 #[repr(C)]
 pub struct SyscallCpuData {
     /// Kernel stack pointer for syscall entry
@@ -495,6 +515,28 @@ pub struct SyscallCpuData {
     /// Without this, two CPUs entering syscalls simultaneously would
     /// clobber each other's saved registers. Ask me how I know.
     pub user_ctx_ptr: u64, // offset 48
+
+    // === Per-CPU debug slots (offset 56+) ===
+    // — SableWire: Written by syscall_entry asm via gs:[offset] — no races,
+    // no shared globals, no CPU stepping on another CPU's diagnostic breadcrumbs.
+    /// RFLAGS at syscall entry, before STAC (gs:[56])
+    pub debug_ac_at_entry: u64, // offset 56
+    /// RFLAGS immediately after STAC (gs:[64])
+    pub debug_stac_rflags: u64, // offset 64
+    /// RFLAGS just before calling syscall handler (gs:[72])
+    pub debug_ac_before_call: u64, // offset 72
+    /// RFLAGS just after syscall handler returns (gs:[80])
+    pub debug_ac_after_call: u64, // offset 80
+    /// RSP value at the start of sysret epilogue (gs:[88])
+    pub debug_sysret_stack: u64, // offset 88
+    /// User RSP loaded for sysret (gs:[96])
+    pub debug_sysret_rsp: u64, // offset 96
+    /// User RIP loaded into RCX for sysret (gs:[104])
+    pub debug_sysret_rcx: u64, // offset 104
+    /// User RFLAGS loaded into R11 for sysret (gs:[112])
+    pub debug_sysret_r11: u64, // offset 112
+    /// Return value in RAX at sysret (gs:[120])
+    pub debug_sysret_rax: u64, // offset 120
 }
 
 /// User context at syscall entry
@@ -539,29 +581,38 @@ static mut SYSCALL_USER_CONTEXTS: [SyscallUserContext; MAX_CPUS] = {
     [INIT; MAX_CPUS]
 };
 
-/// Debug: capture values before sysretq
-#[unsafe(no_mangle)]
-pub static mut SYSRET_DEBUG_RSP: u64 = 0xDEAD;
-#[unsafe(no_mangle)]
-pub static mut SYSRET_DEBUG_RCX: u64 = 0xDEAD;
-#[unsafe(no_mangle)]
-pub static mut SYSRET_DEBUG_R11: u64 = 0xDEAD;
-#[unsafe(no_mangle)]
-pub static mut SYSRET_DEBUG_RAX: u64 = 0xDEAD;
-#[unsafe(no_mangle)]
-pub static mut SYSRET_DEBUG_STACK_PTR: u64 = 0xDEAD;
-
-#[unsafe(no_mangle)]
-pub static mut STAC_DEBUG_RFLAGS: u64 = 0xDEAD;
-
-#[unsafe(no_mangle)]
-pub static mut AC_BEFORE_CALL: u64 = 0xDEAD;
-
-#[unsafe(no_mangle)]
-pub static mut AC_AFTER_CALL: u64 = 0xDEAD;
-
-#[unsafe(no_mangle)]
-pub static mut AC_AT_ENTRY: u64 = 0xDEAD;
+/// — SableWire: The old single-global debug statics (`SYSRET_DEBUG_RSP`, etc.) are gone.
+/// Every CPU was writing to the same addresses on every syscall — a textbook data race.
+/// The debug values now live in each CPU's own `SyscallCpuData` slot (offsets 56–120),
+/// written via `gs:[offset]` in the syscall_entry asm. No shared state, no races.
+///
+/// Callers that need these values for post-mortem diagnostics (e.g., the page fault
+/// handler) should use `get_current_cpu_debug_slot()` to get THIS CPU's snapshot.
+///
+/// Get a reference to the current CPU's SyscallCpuData for reading debug fields.
+///
+/// # Safety
+/// Must be called from kernel context where GS_BASE points to per-CPU data.
+/// The returned reference is valid for the lifetime of the current kernel context.
+pub unsafe fn get_current_cpu_debug_slot() -> &'static SyscallCpuData {
+    use core::ptr::addr_of;
+    // — SableWire: gs:[40] = cpu_id for this CPU (SyscallCpuData::cpu_id field).
+    // GS_BASE points to this CPU's SyscallCpuData entry in CPU_DATA_ARRAY.
+    // Reading gs:[40] gives us the logical CPU index, which we use to index
+    // CPU_DATA_ARRAY. This is correct even if GS was not swapped (GS_BASE always
+    // points to per-CPU data after init_kernel_stack()).
+    unsafe {
+        let cpu_id: u64;
+        core::arch::asm!(
+            "mov {}, gs:[40]",
+            out(reg) cpu_id,
+            options(nostack, preserves_flags, readonly)
+        );
+        let idx = (cpu_id as usize).min(MAX_CPUS - 1); // clamp for safety
+        let array = addr_of!(CPU_DATA_ARRAY);
+        &(*array)[idx]
+    }
+}
 
 /// Get the current syscall user context
 ///
@@ -614,6 +665,18 @@ static mut CPU_DATA_ARRAY: [SyscallCpuData; MAX_CPUS] = {
         scratch_rcx: 0,
         cpu_id: 0,
         user_ctx_ptr: 0,
+        // — SableWire: Debug slots zeroed at boot. 0xDEAD was the old initializer
+        // for the single globals; per-CPU slots start at 0 because each CPU owns
+        // its slot and never conflicts with another. No point lying with 0xDEAD.
+        debug_ac_at_entry: 0,
+        debug_stac_rflags: 0,
+        debug_ac_before_call: 0,
+        debug_ac_after_call: 0,
+        debug_sysret_stack: 0,
+        debug_sysret_rsp: 0,
+        debug_sysret_rcx: 0,
+        debug_sysret_r11: 0,
+        debug_sysret_rax: 0,
     };
     [INIT; MAX_CPUS]
 };

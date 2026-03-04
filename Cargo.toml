@@ -148,6 +148,7 @@ members = [
     "userspace/tests/evtest",
     "userspace/tests/argtest",
     "userspace/tests/signal-test",
+    "userspace/tests/oxide-test",
     # bootloader
     "bootloader/boot-uefi",
 ]

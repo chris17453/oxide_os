@@ -11,11 +11,14 @@ boot-dir: kernel bootloader initramfs
 	@mkdir -p $(BOOT_DIR)/EFI/OXIDE
 	@cp $(BOOTLOADER_TARGET) $(BOOT_DIR)/EFI/BOOT/BOOTX64.EFI
 	@cp $(KERNEL_TARGET) $(BOOT_DIR)/EFI/OXIDE/kernel.elf
+	@cp $(KERNEL_TARGET) $(BOOT_DIR)/EFI/OXIDE/kernel-$(OXIDE_VERSION).elf
 	@cp $(TARGET_DIR)/initramfs.cpio $(BOOT_DIR)/EFI/OXIDE/initramfs.cpio
+	@printf "# OXIDE Boot Manager Configuration\n[defaults]\ntimeout = 5\ndefault = latest\n\n[kernel.$(OXIDE_VERSION)]\npath = \\\\EFI\\\\OXIDE\\\\kernel-$(OXIDE_VERSION).elf\nlabel = OXIDE $(OXIDE_FULL_VERSION)\noptions = \ninitramfs = \\\\EFI\\\\OXIDE\\\\initramfs.cpio\n" > $(BOOT_DIR)/EFI/OXIDE/boot.cfg
 	@echo "Boot directory created at $(BOOT_DIR)"
 	@echo "  - Bootloader: EFI/BOOT/BOOTX64.EFI"
-	@echo "  - Kernel: EFI/OXIDE/kernel.elf"
+	@echo "  - Kernel: EFI/OXIDE/kernel.elf + kernel-$(OXIDE_VERSION).elf"
 	@echo "  - Initramfs: EFI/OXIDE/initramfs.cpio"
+	@echo "  - Config: EFI/OXIDE/boot.cfg"
 
 # Quick boot - same as create-rootfs (builds ext4 disk image with minimal initramfs)
 boot-quick: create-rootfs
@@ -79,7 +82,13 @@ create-rootfs: kernel bootloader external-binaries initramfs userspace-std
 	sudo mkdir -p $(TARGET_DIR)/mnt/boot/EFI/OXIDE && \
 	sudo cp $(BOOTLOADER_TARGET) $(TARGET_DIR)/mnt/boot/EFI/BOOT/BOOTX64.EFI && \
 	sudo cp $(KERNEL_TARGET) $(TARGET_DIR)/mnt/boot/EFI/OXIDE/kernel.elf && \
+	sudo cp $(KERNEL_TARGET) $(TARGET_DIR)/mnt/boot/EFI/OXIDE/kernel-$(OXIDE_VERSION).elf && \
 	sudo cp $(INITRAMFS) $(TARGET_DIR)/mnt/boot/EFI/OXIDE/initramfs.cpio && \
+	echo "  Generating boot.cfg..." && \
+	printf "# OXIDE Boot Manager Configuration\n" | sudo tee $(TARGET_DIR)/mnt/boot/EFI/OXIDE/boot.cfg > /dev/null && \
+	printf "# — NeonRoot: the gatekeeper before the kernel awakens\n\n" | sudo tee -a $(TARGET_DIR)/mnt/boot/EFI/OXIDE/boot.cfg > /dev/null && \
+	printf "[defaults]\ntimeout = 5\ndefault = latest\nresolution = auto\n\n" | sudo tee -a $(TARGET_DIR)/mnt/boot/EFI/OXIDE/boot.cfg > /dev/null && \
+	printf "[kernel.$(OXIDE_VERSION)]\npath = \\\\EFI\\\\OXIDE\\\\kernel-$(OXIDE_VERSION).elf\nlabel = OXIDE $(OXIDE_FULL_VERSION)\noptions = \ninitramfs = \\\\EFI\\\\OXIDE\\\\initramfs.cpio\n" | sudo tee -a $(TARGET_DIR)/mnt/boot/EFI/OXIDE/boot.cfg > /dev/null && \
 	sudo umount $(TARGET_DIR)/mnt/boot && \
 	\
 	echo "Populating / (root filesystem)..." && \
@@ -119,7 +128,7 @@ create-rootfs: kernel bootloader external-binaries initramfs userspace-std
 	done && \
 	sudo cp userspace/apps/gwbasic/examples/*.bas $(TARGET_DIR)/mnt/root/usr/share/gwbasic/ 2>/dev/null || true; \
 	echo "  Copying std userspace binaries (if any)..." && \
-	for prog in hello-std; do \
+	for prog in hello-std oxide-test; do \
 		if [ -f "$(USERSPACE_STD_OUT)/$$prog" ]; then \
 			sudo cp "$(USERSPACE_STD_OUT)/$$prog" $(TARGET_DIR)/mnt/root/usr/bin/ && echo "    Installed $$prog (std)"; \
 		elif [ -f "$(USERSPACE_STD_OUT_RELEASE)/$$prog" ]; then \

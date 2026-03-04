@@ -1,0 +1,9 @@
+# — CrashBloom: The gauntlet. Every kernel subsystem gets dragged through
+# this binary and either proves it works or confesses where it dies.
+
+[package]
+name = "oxide-test"
+version = "0.1.0"
+edition = "2024"
+
+# No deps needed — std provides everything!

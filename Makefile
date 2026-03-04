@@ -15,8 +15,17 @@ include mk/config.mk
 # ========================================
 all: build
 
-# Build kernel + bootloader
-build: kernel bootloader
+# Build kernel + bootloader (auto-increments build number)
+# — PatchBay: NT-style versioning — every build gets a unique number
+build: increment-build kernel bootloader
+
+# Increment build number — one tick per build, no exceptions
+# — PatchBay: the counter that never lies
+increment-build:
+	@BUILD=$$(cat build/build-number 2>/dev/null || echo 0) && \
+	BUILD=$$((BUILD + 1)) && \
+	echo $$BUILD > build/build-number && \
+	echo "Build $(OXIDE_VERSION).$$BUILD"
 
 # Build with userspace
 build-full: kernel bootloader userspace initramfs

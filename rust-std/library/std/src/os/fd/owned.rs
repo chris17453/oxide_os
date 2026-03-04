@@ -3,20 +3,8 @@
 #![stable(feature = "io_safety", since = "1.63.0")]
 #![deny(unsafe_op_in_unsafe_fn)]
 
-#[cfg(target_os = "oxide")]
-mod libc {
-    // — ColdCipher: Inline libc shim for fd operations. No moto_rt here.
-    pub const F_DUPFD_CLOEXEC: i32 = 1030;
-    pub const F_DUPFD: i32 = 0;
-    pub fn close(fd: i32) -> i32 {
-        oxide_rt::io::close(fd)
-    }
-    pub unsafe fn fcntl(fd: i32, cmd: i32, arg: i32) -> i32 {
-        // — ColdCipher: F_DUPFD/F_DUPFD_CLOEXEC just dup the fd.
-        // OXIDE doesn't have CLOEXEC yet, so both behave the same.
-        oxide_rt::io::dup(fd)
-    }
-}
+#[cfg(target_os = "motor")]
+use moto_rt::libc;
 
 use super::raw::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
 #[cfg(not(target_os = "trusty"))]
@@ -28,6 +16,7 @@ use crate::mem::ManuallyDrop;
     target_env = "sgx",
     target_os = "hermit",
     target_os = "trusty",
+    target_os = "motor",
     target_os = "oxide"
 )))]
 use crate::sys::cvt;
@@ -119,6 +108,7 @@ impl BorrowedFd<'_> {
         target_arch = "wasm32",
         target_os = "hermit",
         target_os = "trusty",
+        target_os = "motor",
         target_os = "oxide"
     )))]
     #[stable(feature = "io_safety", since = "1.63.0")]
@@ -151,16 +141,20 @@ impl BorrowedFd<'_> {
 
     /// Creates a new `OwnedFd` instance that shares the same underlying file
     /// description as the existing `BorrowedFd` instance.
+    #[cfg(target_os = "motor")]
+    #[stable(feature = "io_safety", since = "1.63.0")]
+    pub fn try_clone_to_owned(&self) -> io::Result<OwnedFd> {
+        let fd = moto_rt::fs::duplicate(self.as_raw_fd()).map_err(crate::sys::map_motor_error)?;
+        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    }
+
+    /// â SableWire: OXIDE clone via dup syscall
     #[cfg(target_os = "oxide")]
     #[stable(feature = "io_safety", since = "1.63.0")]
     pub fn try_clone_to_owned(&self) -> io::Result<OwnedFd> {
-        // — ColdCipher: oxide_rt::io::dup does the job. No CLOEXEC support yet.
         let fd = oxide_rt::io::dup(self.as_raw_fd());
-        if fd < 0 {
-            Err(io::Error::from_raw_os_error(-fd))
-        } else {
-            Ok(unsafe { OwnedFd::from_raw_fd(fd) })
-        }
+        if fd < 0 { Err(io::Error::from_raw_os_error(-fd)) }
+        else { Ok(unsafe { OwnedFd::from_raw_fd(fd) }) }
     }
 }
 
@@ -225,7 +219,11 @@ impl Drop for OwnedFd {
             // not-POSIX-compliant implementation, the consequences could be really bad since we may
             // close the wrong FD. Helpful link to an epic discussion by POSIX workgroup that led to
             // the latest POSIX wording: http://austingroupbugs.net/view.php?id=529
-            #[cfg(not(target_os = "hermit"))]
+            #[cfg(target_os = "oxide")]
+            {
+                let _ = oxide_rt::io::close(self.fd.as_inner());
+            }
+            #[cfg(not(any(target_os = "hermit", target_os = "oxide")))]
             {
                 #[cfg(unix)]
                 crate::sys::fs::debug_assert_fd_is_open(self.fd.as_inner());

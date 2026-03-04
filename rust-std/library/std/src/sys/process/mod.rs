@@ -11,6 +11,11 @@ cfg_select! {
         mod uefi;
         use uefi as imp;
     }
+    target_os = "oxide" => { mod oxide; use oxide as imp; }
+    target_os = "motor" => {
+        mod motor;
+        use motor as imp;
+    }
     _ => {
         mod unsupported;
         use unsupported as imp;
@@ -39,6 +44,8 @@ pub use imp::{
         ))
     ),
     target_os = "windows",
+    target_os = "motor",
+    target_os = "oxide"
 ))]
 pub fn output(cmd: &mut Command) -> crate::io::Result<(ExitStatus, Vec<u8>, Vec<u8>)> {
     let (mut process, mut pipes) = cmd.spawn(Stdio::MakePipe, false)?;
@@ -76,5 +83,7 @@ pub fn output(cmd: &mut Command) -> crate::io::Result<(ExitStatus, Vec<u8>, Vec<
         ))
     ),
     target_os = "windows",
+    target_os = "motor",
+    target_os = "oxide"
 )))]
 pub use imp::output;

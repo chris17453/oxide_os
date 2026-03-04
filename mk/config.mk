@@ -82,15 +82,24 @@ USERSPACE_EXTRA_TARGETS ?= $(USERSPACE_EXTRA_TARGETS_ALL)
 # — PulseForge: Grep-based detection because hardcoding bin lists is a recipe for drift.
 COREUTILS_BINS := $(shell grep -A1 '^\[\[bin\]\]' userspace/coreutils/Cargo.toml | grep '^name' | sed 's/.*= *"\([^"]*\)".*/\1/' | tr '\n' ' ')
 
+# OXIDE version (extracted from workspace Cargo.toml or git tag)
+# — PatchBay: single source of truth for the version string
+OXIDE_VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*= *"\([^"]*\)".*/\1/')
+
+# Build number — NT-style auto-incrementing integer
+# — PatchBay: every build gets a unique number, no arguments, no exceptions
+OXIDE_BUILD := $(shell cat build/build-number 2>/dev/null || echo 0)
+OXIDE_FULL_VERSION := $(OXIDE_VERSION).$(OXIDE_BUILD)
+
 # Disk image configuration for root filesystem
 ROOTFS_IMAGE := $(TARGET_DIR)/oxide-disk.img
-ROOTFS_SIZE := 800
-BOOT_SIZE := 64
+ROOTFS_SIZE := 896
+BOOT_SIZE := 128
 ROOT_SIZE := 384
 HOME_SIZE := 64
 BOOT_START := 1
-ROOT_START := 65
-HOME_START := 449
+ROOT_START := 129
+HOME_START := 513
 
 # Toolchain install prefix
 INSTALL_PREFIX ?= /usr/local/oxide

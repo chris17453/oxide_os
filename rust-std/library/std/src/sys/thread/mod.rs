@@ -6,9 +6,10 @@ cfg_select! {
         mod unsupported;
         pub use unsupported::{current_os_id, set_name};
     }
-    target_os = "oxide" => {
-        mod oxide;
-        pub use oxide::*;
+    target_os = "oxide" => { mod oxide; pub use oxide::*; }
+    target_os = "motor" => {
+        mod motor;
+        pub use motor::*;
     }
     all(target_vendor = "fortanix", target_env = "sgx") => {
         mod sgx;

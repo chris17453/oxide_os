@@ -28,5 +28,7 @@ crypto = { path = "../../security/crypto" }
 arch-x86_64 = { path = "../../arch/arch-x86_64" }
 os_log = { path = "../../core/os_log" }
 sched = { path = "../../sched/sched" }
+smp = { path = "../../smp/smp" }
+mm-cow = { path = "../../mm/mm-cow" }
 sched-traits = { path = "../../sched/sched-traits" }
 spin = "0.9"

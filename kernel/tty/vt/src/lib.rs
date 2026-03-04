@@ -231,7 +231,7 @@ impl VtManager {
         let active = match ACTIVE_VT.try_read() {
             Some(guard) => *guard,
             None => {
-                // RwLock contended during VT switch — rare, byte stays in IRQ
+                // — GraveShift: RwLock contended during VT switch — rare, byte stays in IRQ
                 return;
             }
         };

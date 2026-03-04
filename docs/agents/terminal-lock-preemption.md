@@ -62,15 +62,38 @@ if was_preemptable {
 
 | Function | Context | Lock Method | Preempt Control |
 |----------|---------|-------------|-----------------|
-| `write()` | syscall | `lock()` | disable while held |
-| `write_immediate()` | syscall | `lock()` | disable while held |
-| `tick()` | timer ISR | `try_lock()` | N/A (ISR) |
-| `try_flush()` | any ISR | `try_lock()` | N/A (ISR) |
-| `flush()` | syscall only | `lock()` | caller's responsibility |
+| `write()` | syscall | `TERMINAL.lock()` | disable while held |
+| `write_immediate()` | syscall | `TERMINAL.lock()` | disable while held |
+| `tick()` | timer ISR | `TERMINAL.try_lock()` | N/A (ISR) |
+| `try_flush()` | any ISR | `TERMINAL.try_lock()` | N/A (ISR) |
+| `flush()` | syscall only | `TERMINAL.lock()` | caller's responsibility |
+| `has_mouse_mode()` | timer ISR | `MOUSE_INPUT.try_lock()` | N/A (ISR) |
+| `mouse_event()` | timer ISR | `MOUSE_INPUT.try_lock()` | N/A (ISR) |
+
+## Lock Splitting (P3.5)
+
+Two locks protect different concerns:
+
+- **`TERMINAL: Mutex<Option<TerminalEmulator>>`** — full emulator state (screen
+  buffer, renderer, parser, cursor, scrollback, clipboard). Held during all write
+  and render operations. ISR uses `try_lock()` for tick/flush only.
+
+- **`MOUSE_INPUT: Mutex<MouseInputState>`** — ISR-facing mouse state mirror
+  (`mouse_mode`, `mouse_encoding`, `cell_width`, `cell_height`, `cols`, `rows`).
+  Held only for ~6 word copies. Never contended by write path.
+
+**Lock order** (must be respected to prevent inversion):
+1. `TERMINAL` (outer — write path holds this)
+2. `MOUSE_INPUT` (inner — acquired ONLY after TERMINAL is released)
+
+The write path captures a mouse-state snapshot while holding `TERMINAL`, releases
+`TERMINAL`, then updates `MOUSE_INPUT`. ISR only ever acquires `MOUSE_INPUT`.
+The two locks are NEVER held simultaneously.
 
 ## Key Invariants
 
-- ISR code MUST use `try_lock()` on `TERMINAL` — never `lock()`
+- ISR code MUST use `try_lock()` on BOTH `TERMINAL` and `MOUSE_INPUT` — never `lock()`
 - `ACTIVE_VT` in ISR: use `try_read()`/`try_write()` — never `read()`/`write()`
+- `TERMINAL` and `MOUSE_INPUT` are NEVER held simultaneously — release-before-acquire
 - Preemption disable around spinlock hold is an OPTIMIZATION, not correctness
   (without it: wasted context switches; with it: faster lock release)

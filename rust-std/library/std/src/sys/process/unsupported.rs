@@ -30,12 +30,8 @@ pub enum Stdio {
     MakePipe,
     ParentStdout,
     ParentStderr,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // This variant exists only for the Debug impl
     InheritFile(File),
-    // — SableWire: OXIDE has real pipes/fds even though process spawn is unsupported.
-    // Without this variant, FromRawFd for process::Stdio can't compile.
-    #[allow(dead_code)]
-    Fd(crate::sys::fd::FileDesc),
 }
 
 impl Command {
@@ -112,8 +108,7 @@ pub fn output(_cmd: &mut Command) -> io::Result<(ExitStatus, Vec<u8>, Vec<u8>)> 
 
 impl From<ChildPipe> for Stdio {
     fn from(pipe: ChildPipe) -> Stdio {
-        // — SableWire: ChildPipe = FileDesc on OXIDE. Wrap it.
-        Stdio::Fd(pipe)
+        pipe.diverge()
     }
 }
 
@@ -325,12 +320,10 @@ impl<'a> fmt::Debug for CommandArgs<'a> {
 pub type ChildPipe = crate::sys::pipe::Pipe;
 
 pub fn read_output(
-    _out: ChildPipe,
+    out: ChildPipe,
     _stdout: &mut Vec<u8>,
     _err: ChildPipe,
     _stderr: &mut Vec<u8>,
 ) -> io::Result<()> {
-    // — SableWire: spawn() returns unsupported, so this is dead code.
-    // But it must compile since OXIDE's ChildPipe = FileDesc (inhabited).
-    unsupported()
+    match out.diverge() {}
 }

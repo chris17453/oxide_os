@@ -57,6 +57,7 @@ pub fn sys_faccessat(dirfd: i32, path_ptr: u64, path_len: usize, _mode: i32) -> 
         core::arch::asm!("stac", options(nomem, nostack));
     }
 
+    // — ColdCipher: kernel-owned copy — TOCTOU closed.
     let raw_path = match copy_path_from_user(path_ptr, path_len) {
         Some(p) => p,
         None => {
@@ -66,7 +67,7 @@ pub fn sys_faccessat(dirfd: i32, path_ptr: u64, path_len: usize, _mode: i32) -> 
             return errno::EFAULT;
         }
     };
-    let path = resolve_path(raw_path);
+    let path = resolve_path(&raw_path);
 
     unsafe {
         core::arch::asm!("clac", options(nomem, nostack));
@@ -104,6 +105,7 @@ pub fn sys_utimensat(dirfd: i32, path_ptr: u64, path_len: usize, times_ptr: u64)
         core::arch::asm!("stac", options(nomem, nostack));
     }
 
+    // — ColdCipher: kernel-owned copy — TOCTOU closed.
     let raw_path = match copy_path_from_user(path_ptr, path_len) {
         Some(p) => p,
         None => {
@@ -113,7 +115,7 @@ pub fn sys_utimensat(dirfd: i32, path_ptr: u64, path_len: usize, times_ptr: u64)
             return errno::EFAULT;
         }
     };
-    let path = resolve_path(raw_path);
+    let path = resolve_path(&raw_path);
 
     let (atime, mtime) = if times_ptr == 0 {
         (None, None)
@@ -400,6 +402,7 @@ pub fn sys_truncate(path_ptr: u64, path_len: usize, length: i64) -> i64 {
         core::arch::asm!("stac", options(nomem, nostack));
     }
 
+    // — ColdCipher: kernel-owned copy — TOCTOU closed.
     let raw_path = match copy_path_from_user(path_ptr, path_len) {
         Some(p) => p,
         None => {
@@ -409,7 +412,7 @@ pub fn sys_truncate(path_ptr: u64, path_len: usize, length: i64) -> i64 {
             return errno::EFAULT;
         }
     };
-    let path = resolve_path(raw_path);
+    let path = resolve_path(&raw_path);
 
     unsafe {
         core::arch::asm!("clac", options(nomem, nostack));
@@ -1114,6 +1117,7 @@ pub fn sys_statx(
         core::arch::asm!("stac", options(nomem, nostack));
     }
 
+    // — ColdCipher: kernel-owned copy — TOCTOU closed.
     let raw_path = match copy_path_from_user(path_ptr, path_len) {
         Some(p) => p,
         None => {
@@ -1123,7 +1127,7 @@ pub fn sys_statx(
             return errno::EFAULT;
         }
     };
-    let path = resolve_path(raw_path);
+    let path = resolve_path(&raw_path);
 
     let node = match GLOBAL_VFS.lookup(&path) {
         Ok(n) => n,

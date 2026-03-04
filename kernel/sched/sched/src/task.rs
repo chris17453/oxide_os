@@ -19,7 +19,7 @@ use spin::Mutex;
 /// Saved CPU context for context switching
 ///
 /// Contains all registers that need to be saved/restored when switching tasks.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct TaskContext {
     /// Instruction pointer
@@ -50,6 +50,43 @@ pub struct TaskContext {
     pub ss: u64,
     /// FS base register (for Thread-Local Storage)
     pub fs_base: u64,
+    // — SableWire: User's GS base, stashed in KERNEL_GS_BASE (0xC0000102) during
+    // syscall context. Not the kernel's GS — that lives in GS_BASE (0xC0000101).
+    // Restored at context switch so each thread gets its own GS on the way out.
+    /// GS base register (for optional user TLS / runtime use)
+    pub gs_base: u64,
+}
+
+// — BlackLatch: All-zeros TaskContext = guaranteed GPF on iretq (cs=0, ss=0, rip=0).
+// Fork/clone used to enqueue tasks before setting context — a microsecond race across
+// 4 CPUs at 100Hz. Default now uses valid kernel selectors so even an unpatched
+// context won't triple-fault. rip=0/rsp=0 are sentinels caught by is_schedulable().
+impl Default for TaskContext {
+    fn default() -> Self {
+        Self {
+            cs: 0x08,       // kernel code segment — valid, won't GPF on segment load
+            ss: 0x10,       // kernel data segment — matches cs RPL
+            rflags: 0x202,  // IF + reserved bit 1 — interrupts enabled
+            rip: 0,         // sentinel: caught by is_schedulable() before iretq
+            rsp: 0,         // sentinel: caught by is_schedulable() before iretq
+            rax: 0, rbx: 0, rcx: 0, rdx: 0,
+            rsi: 0, rdi: 0, rbp: 0,
+            r8: 0, r9: 0, r10: 0, r11: 0,
+            r12: 0, r13: 0, r14: 0, r15: 0,
+            fs_base: 0, gs_base: 0,
+        }
+    }
+}
+
+impl TaskContext {
+    // — ColdCipher: Last line of defense before iretq. If rip or rsp is zero,
+    // this context was never properly initialized — scheduling it would be a
+    // one-way ticket to #GP or #PF. cs must be a known GDT selector.
+    pub fn is_schedulable(&self) -> bool {
+        self.rip != 0
+            && self.rsp != 0
+            && (self.cs == 0x08 || self.cs == 0x23)
+    }
 }
 
 /// The primary schedulable entity in OXIDE
@@ -150,6 +187,16 @@ pub struct Task {
     pub need_resched: bool,
 
     // ========================================
+    // CFS double-charge prevention
+    // ========================================
+    /// — GraveShift: Set by scheduler_tick() when vruntime is charged during the
+    /// timer ISR. pick_next_task() checks this before applying the delta=0 floor
+    /// of TICK_NS via account_stop(). Without it, a preempted task gets billed
+    /// twice — once in the ISR tick, again on context switch. Two charges, one
+    /// crime, one very unfair CFS. Clear after use in pick_next_task().
+    pub vruntime_charged_this_tick: bool,
+
+    // ========================================
     // Kernel stack
     // ========================================
     /// Physical address of kernel stack
@@ -217,6 +264,7 @@ impl Task {
             start_time: 0, // Will be set by scheduler when task is created
             preempt_count: 0,
             need_resched: false,
+            vruntime_charged_this_tick: false,
             kernel_stack,
             kernel_stack_size,
             on_rq: false,
@@ -260,6 +308,7 @@ impl Task {
             start_time: 0, // Will be set by scheduler when task is created
             preempt_count: 0,
             need_resched: false,
+            vruntime_charged_this_tick: false,
             kernel_stack,
             kernel_stack_size,
             on_rq: false,
@@ -295,6 +344,7 @@ impl Task {
             start_time: 0, // Will be set by scheduler when task is created
             preempt_count: 0,
             need_resched: false,
+            vruntime_charged_this_tick: false,
             kernel_stack,
             kernel_stack_size,
             on_rq: false,
@@ -334,6 +384,7 @@ impl Task {
             start_time: 0, // Will be set by scheduler when task is created
             preempt_count: 0,
             need_resched: false,
+            vruntime_charged_this_tick: false,
             kernel_stack,
             kernel_stack_size,
             on_rq: false,

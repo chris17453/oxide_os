@@ -1,4 +1,5 @@
 //! ELF file parser for kernel loading
+//! — SableWire: zero-heap ELF parsing — fixed arrays, no alloc, no excuses
 
 use core::mem;
 use core::ptr;
@@ -14,6 +15,10 @@ const ELFDATA2LSB: u8 = 1;
 
 /// Program header type: loadable segment
 const PT_LOAD: u32 = 1;
+
+/// Maximum number of loadable segments we support
+/// — SableWire: 16 segments covers any sane kernel — if you have more, you have other problems
+const MAX_SEGMENTS: usize = 16;
 
 /// ELF64 file header
 #[repr(C)]
@@ -58,12 +63,14 @@ pub struct ElfInfo {
     pub load_base: u64,
     /// Total size needed in memory
     pub load_size: u64,
-    /// Program headers
-    pub segments: alloc::vec::Vec<Segment>,
+    /// Program headers — fixed array, no heap
+    pub segments: [Segment; MAX_SEGMENTS],
+    /// Number of valid segments
+    pub segment_count: usize,
 }
 
 /// A loadable segment
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Segment {
     /// Offset in file
     pub file_offset: u64,
@@ -73,6 +80,17 @@ pub struct Segment {
     pub vaddr: u64,
     /// Size in memory
     pub mem_size: u64,
+}
+
+impl Default for Segment {
+    fn default() -> Self {
+        Self {
+            file_offset: 0,
+            file_size: 0,
+            vaddr: 0,
+            mem_size: 0,
+        }
+    }
 }
 
 /// Parse an ELF file and extract loading information
@@ -110,7 +128,8 @@ pub fn parse_elf(data: &[u8]) -> Result<ElfInfo, &'static str> {
     let ph_count = header.e_phnum as usize;
 
     // Find all loadable segments
-    let mut segments = alloc::vec::Vec::new();
+    let mut segments = [Segment::default(); MAX_SEGMENTS];
+    let mut segment_count = 0;
     let mut load_base = u64::MAX;
     let mut load_end = 0u64;
 
@@ -123,12 +142,17 @@ pub fn parse_elf(data: &[u8]) -> Result<ElfInfo, &'static str> {
         let ph = unsafe { &*(data.as_ptr().add(ph_start) as *const Elf64ProgramHeader) };
 
         if ph.p_type == PT_LOAD {
-            segments.push(Segment {
+            if segment_count >= MAX_SEGMENTS {
+                return Err("Too many loadable segments");
+            }
+
+            segments[segment_count] = Segment {
                 file_offset: ph.p_offset,
                 file_size: ph.p_filesz,
                 vaddr: ph.p_vaddr,
                 mem_size: ph.p_memsz,
-            });
+            };
+            segment_count += 1;
 
             if ph.p_vaddr < load_base {
                 load_base = ph.p_vaddr;
@@ -141,7 +165,7 @@ pub fn parse_elf(data: &[u8]) -> Result<ElfInfo, &'static str> {
         }
     }
 
-    if segments.is_empty() {
+    if segment_count == 0 {
         return Err("No loadable segments");
     }
 
@@ -152,6 +176,7 @@ pub fn parse_elf(data: &[u8]) -> Result<ElfInfo, &'static str> {
         load_base,
         load_size,
         segments,
+        segment_count,
     })
 }
 
@@ -160,7 +185,9 @@ pub fn parse_elf(data: &[u8]) -> Result<ElfInfo, &'static str> {
 /// The kernel is loaded at `phys_base`, and the segments are copied
 /// according to their virtual addresses relative to the ELF load base.
 pub fn load_segments(data: &[u8], info: &ElfInfo, phys_base: u64) {
-    for segment in &info.segments {
+    for i in 0..info.segment_count {
+        let segment = &info.segments[i];
+
         // Calculate destination in physical memory
         let offset = segment.vaddr - info.load_base;
         let dest = (phys_base + offset) as *mut u8;

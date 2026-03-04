@@ -11,9 +11,10 @@ cfg_select! {
         mod hermit;
         pub use hermit::*;
     }
-    target_os = "oxide" => {
-        mod oxide;
-        pub use oxide::*;
+    target_os = "oxide" => { mod oxide; pub use oxide::*; }
+    target_os = "motor" => {
+        mod motor;
+        pub use motor::*;
     }
     all(target_vendor = "fortanix", target_env = "sgx") => {
         mod sgx;

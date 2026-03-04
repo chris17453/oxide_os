@@ -5,7 +5,9 @@
 use crate::copy_to_user;
 use crate::errno;
 use crate::{get_current_meta, with_current_meta_mut};
+use mm_cow::cow_tracker;
 use mm_manager::mm;
+use mm_traits::FrameAllocator;
 use os_core::VirtAddr;
 use proc_traits::MemoryFlags;
 
@@ -218,14 +220,30 @@ pub fn sys_munmap(addr: u64, length: u64) -> i64 {
 
     {
         let mut m = meta.lock();
+        let cow = cow_tracker();
+        let allocator = mm();
 
-        // Unmap each page
+        // — GraveShift: Unmap each page AND free the physical frame. The old code
+        // discarded the PhysAddr returned by unmap_user_page with `let _ = ...`,
+        // which leaked every single unmapped frame permanently. Every munmap() call
+        // was a slow death by a thousand frame leaks. COW-aware logic: decrement
+        // the tracker first — only free to buddy if we're the last owner.
         for i in 0..num_pages {
             let page_addr = VirtAddr::new(addr + (i as u64 * 0x1000));
-            // Ignore errors for pages that aren't mapped
-            let _ = m.address_space.unmap_user_page(page_addr);
+            if let Ok(phys) = m.address_space.unmap_user_page(page_addr) {
+                let remaining = cow.decrement(phys);
+                if remaining == 0 {
+                    allocator.free_frame(phys);
+                }
+            }
         }
     }
+
+    // — SableWire: TLB shootdown after unmapping. Without this, other CPUs
+    // still have stale TLB entries pointing at the now-freed frames. That's
+    // a use-after-free the CPU helpfully makes invisible until the frame gets
+    // reused for something else and you get "impossible" data corruption.
+    smp::tlb_shootdown(addr, addr + length, 0);
 
     0
 }
@@ -444,14 +462,23 @@ pub fn sys_brk(addr: u64) -> i64 {
             Err(_) => return errno::ENOMEM,
         }
     } else if new_break < old_break {
-        // Shrinking heap - unmap and free pages
+        // — GraveShift: Shrinking heap — unmap pages AND free the physical frames.
+        // Same bug as sys_munmap: the old code just discarded the PhysAddr.
         let num_pages = ((old_break - new_break) / page_size) as usize;
+        let cow = cow_tracker();
+        let allocator = mm();
 
         for i in 0..num_pages {
             let virt = VirtAddr::new(new_break + (i as u64 * page_size));
-            // Ignore errors - page might not have been mapped
-            let _ = m.address_space.unmap_user_page(virt);
+            if let Ok(phys) = m.address_space.unmap_user_page(virt) {
+                let remaining = cow.decrement(phys);
+                if remaining == 0 {
+                    allocator.free_frame(phys);
+                }
+            }
         }
+        // — SableWire: TLB shootdown for the unmapped range.
+        smp::tlb_shootdown(new_break, old_break, 0);
     }
 
     // Update program break

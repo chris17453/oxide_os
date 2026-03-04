@@ -101,21 +101,26 @@ async function monitorCommand(cmd) {
     try {
       const sock = await connectMonitor();
       let response = "";
+      let commandSent = false;
+      let promptCount = 0;
 
       sock.on("data", (data) => {
         response += data.toString();
-        // Wait for (qemu) prompt
-        if (response.includes("(qemu)")) {
+        // Count (qemu) prompts — first is the welcome banner, second is command response
+        const prompts = (response.match(/\(qemu\)/g) || []).length;
+        if (!commandSent && prompts >= 1) {
+          // Got initial prompt, send the command now
+          commandSent = true;
+          response = ""; // Reset to capture only command response
+          sock.write(cmd + "\n");
+        } else if (commandSent && prompts >= 1) {
+          // Got response prompt after command — done
           sock.end();
           resolve(response);
         }
       });
 
-      // Wait a bit for initial prompt, then send command
-      setTimeout(() => {
-        sock.write(cmd + "\n");
-      }, 100);
-
+      // Timeout fallback
       setTimeout(() => {
         sock.end();
         resolve(response);

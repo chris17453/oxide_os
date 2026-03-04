@@ -49,18 +49,18 @@ ln -sf "$STD_DST" "$SYSROOT_DIR/lib/rustlib/src/rust/library"
 echo "  Sysroot created at $SYSROOT_DIR"
 
 # ── Step 4: Add oxide-rt dependency to std's Cargo.toml ──
+# — PulseForge: target-gated dependency, same pattern motor uses.
+# This means oxide-rt is automatically linked when target_os = "oxide" — no feature flag needed.
 echo "Patching std/Cargo.toml..."
 STD_CARGO="$STD_DST/std/Cargo.toml"
 if ! grep -q 'oxide-rt' "$STD_CARGO"; then
-    # Add oxide-rt to [dependencies]
-    sed -i '/^\[dependencies\]/a oxide-rt = { path = "'"$REPO_ROOT"'/userspace/libs/oxide-rt", features = ["rustc-dep-of-std"], optional = true }' "$STD_CARGO"
-    # Add oxide feature to [features]
-    if grep -q '^\[features\]' "$STD_CARGO"; then
-        sed -i '/^\[features\]/a oxide = ["oxide-rt"]' "$STD_CARGO"
-    else
-        echo -e '\n[features]\noxide = ["oxide-rt"]' >> "$STD_CARGO"
-    fi
-    echo "  Added oxide-rt dependency"
+    # Append oxide-rt target-gated dependency section to Cargo.toml
+    cat >> "$STD_CARGO" <<TOML
+
+[target.'cfg(target_os = "oxide")'.dependencies]
+oxide-rt = { path = "$REPO_ROOT/userspace/libs/oxide-rt", features = ["rustc-dep-of-std"], public = true }
+TOML
+    echo "  Added oxide-rt target-gated dependency"
 else
     echo "  oxide-rt already present"
 fi
@@ -298,13 +298,18 @@ impl fmt::Debug for Instant {
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SystemTime {
-    secs: u64,
-    nanos: u32,
+    pub(crate) secs: u64,
+    pub(crate) nanos: u32,
 }
 
 pub const UNIX_EPOCH: SystemTime = SystemTime { secs: 0, nanos: 0 };
 
 impl SystemTime {
+    /// — WireSaint: Minimum representable time (epoch)
+    pub const MIN: SystemTime = SystemTime { secs: 0, nanos: 0 };
+    /// — WireSaint: Maximum representable time (u64::MAX seconds)
+    pub const MAX: SystemTime = SystemTime { secs: u64::MAX, nanos: 999_999_999 };
+
     pub fn now() -> Self {
         let mut ts = oxide_rt::types::Timespec::zero();
         oxide_rt::time::clock_gettime(oxide_rt::time::CLOCK_REALTIME, &mut ts);
@@ -647,6 +652,70 @@ pub fn fill_bytes(bytes: &mut [u8]) {
 }
 OXIDE_RANDOM
 echo "  Created sys/random/oxide.rs"
+
+# sys/io/error/oxide.rs — OXIDE error mapping (Linux errno ABI)
+cat > "$STD_DST/std/src/sys/io/error/oxide.rs" << 'OXIDE_IO_ERROR'
+//! — ByteRiot: OXIDE error mapping. Linux errno ABI — syscalls return -errno directly.
+use crate::io;
+use crate::sys::io::RawOsError;
+
+pub fn errno() -> RawOsError {
+    0 // OXIDE propagates errors via return values, not thread-local errno
+}
+
+pub fn is_interrupted(code: io::RawOsError) -> bool {
+    code == 4 // EINTR
+}
+
+pub fn decode_error_kind(code: io::RawOsError) -> io::ErrorKind {
+    match code {
+        1 => io::ErrorKind::PermissionDenied,       // EPERM
+        2 => io::ErrorKind::NotFound,               // ENOENT
+        4 => io::ErrorKind::Interrupted,             // EINTR
+        9 => io::ErrorKind::InvalidInput,            // EBADF
+        11 => io::ErrorKind::WouldBlock,             // EAGAIN
+        12 => io::ErrorKind::OutOfMemory,            // ENOMEM
+        13 => io::ErrorKind::PermissionDenied,       // EACCES
+        17 => io::ErrorKind::AlreadyExists,          // EEXIST
+        20 => io::ErrorKind::NotADirectory,          // ENOTDIR
+        21 => io::ErrorKind::IsADirectory,           // EISDIR
+        22 => io::ErrorKind::InvalidInput,           // EINVAL
+        28 => io::ErrorKind::StorageFull,            // ENOSPC
+        32 => io::ErrorKind::BrokenPipe,             // EPIPE
+        36 => io::ErrorKind::InvalidFilename,        // ENAMETOOLONG
+        38 => io::ErrorKind::Unsupported,            // ENOSYS
+        39 => io::ErrorKind::DirectoryNotEmpty,      // ENOTEMPTY
+        110 => io::ErrorKind::TimedOut,              // ETIMEDOUT
+        111 => io::ErrorKind::ConnectionRefused,     // ECONNREFUSED
+        _ => io::ErrorKind::Uncategorized,
+    }
+}
+
+pub fn error_string(errno: RawOsError) -> String {
+    match errno {
+        1 => "Operation not permitted".to_string(),
+        2 => "No such file or directory".to_string(),
+        4 => "Interrupted system call".to_string(),
+        9 => "Bad file descriptor".to_string(),
+        11 => "Resource temporarily unavailable".to_string(),
+        12 => "Out of memory".to_string(),
+        13 => "Permission denied".to_string(),
+        17 => "File exists".to_string(),
+        20 => "Not a directory".to_string(),
+        21 => "Is a directory".to_string(),
+        22 => "Invalid argument".to_string(),
+        28 => "No space left on device".to_string(),
+        32 => "Broken pipe".to_string(),
+        36 => "File name too long".to_string(),
+        38 => "Function not implemented".to_string(),
+        39 => "Directory not empty".to_string(),
+        110 => "Connection timed out".to_string(),
+        111 => "Connection refused".to_string(),
+        _ => format!("Unknown error {}", errno),
+    }
+}
+OXIDE_IO_ERROR
+echo "  Created sys/io/error/oxide.rs"
 
 # sys/fd/oxide.rs
 cat > "$STD_DST/std/src/sys/fd/oxide.rs" << 'OXIDE_FD'
@@ -1074,12 +1143,14 @@ pub fn canonicalize(path: &Path) -> io::Result<PathBuf> {
 }
 
 pub fn copy(from: &Path, to: &Path) -> io::Result<u64> {
-    let mut reader = File::open(from, OpenOptions::new().read(true).as_ref())?;
-    let opts = &mut OpenOptions::new();
-    opts.write(true);
-    opts.create(true);
-    opts.truncate(true);
-    let mut writer = File::open(to, opts)?;
+    let mut read_opts = OpenOptions::new();
+    read_opts.read(true);
+    let mut reader = File::open(from, &read_opts)?;
+    let mut write_opts = OpenOptions::new();
+    write_opts.write(true);
+    write_opts.create(true);
+    write_opts.truncate(true);
+    let mut writer = File::open(to, &write_opts)?;
     let mut buf = [0u8; 8192];
     let mut total: u64 = 0;
     loop {
@@ -1774,134 +1845,270 @@ echo "  Created os/oxide/ (mod.rs, ffi.rs)"
 
 # ── Step 8: Apply dispatch patches ──
 echo ""
-echo "Applying dispatch patches to cfg_select! macros..."
-
-# Helper function to add oxide arm to cfg_select!
-add_oxide_arm() {
-    local file="$1"
-    local pattern="$2"
-    local replacement="$3"
-
-    if [ -f "$file" ] && ! grep -q 'target_os = "oxide"' "$file"; then
-        sed -i "s|$pattern|$replacement|" "$file"
-        echo "  Patched: $(basename "$(dirname "$file")")/$(basename "$file")"
-    fi
-}
+echo "Applying dispatch patches..."
 
 SYS="$STD_DST/std/src/sys"
 OS="$STD_DST/std/src/os"
 
-# sys/pal/mod.rs — add oxide arm before motor
-sed -i '/target_os = "motor" =>.*mod motor/i\    target_os = "oxide" => { mod oxide; pub use self::oxide::*; }' \
-    "$SYS/pal/mod.rs" 2>/dev/null && echo "  Patched: pal/mod.rs" || echo "  WARN: pal/mod.rs needs manual patch"
+# ── Helper: add oxide as a SEPARATE cfg_select! arm (before motor) ──
+# These modules have their own oxide/ implementation files.
+add_oxide_cfg_select_arm() {
+    local file="$1"
+    local oxide_arm="$2"
+    if [ -f "$file" ] && ! grep -q 'target_os = "oxide"' "$file"; then
+        sed -i "/target_os = \"motor\" =>/i\\    $oxide_arm" "$file" 2>/dev/null
+        echo "  Patched: $file"
+    fi
+}
 
-# sys/alloc/mod.rs — add oxide arm before motor
-sed -i '/target_os = "motor" =>.*mod motor/i\    target_os = "oxide" => { mod oxide; }' \
-    "$SYS/alloc/mod.rs" 2>/dev/null && echo "  Patched: alloc/mod.rs" || echo "  WARN: alloc/mod.rs needs manual patch"
+# ── Helper: add oxide to an any() list inside cfg_select! or #[cfg(any(...))] ──
+# These are places where oxide shares the SAME implementation path as motor.
+add_oxide_to_any_list() {
+    local file="$1"
+    if [ -f "$file" ]; then
+        # Only add after motor entries that are inside any() — i.e., where motor
+        # appears with a trailing comma (list item) rather than with => (arm condition).
+        # Pattern: target_os = "motor",  →  target_os = "motor", target_os = "oxide",
+        sed -i 's/target_os = "motor",$/target_os = "motor", target_os = "oxide",/' "$file" 2>/dev/null
+        echo "  Patched: $file (any-list)"
+    fi
+}
 
-# sys/args/mod.rs — add oxide to motor's cfg and common
-sed -i 's/target_os = "motor"/target_os = "motor", target_os = "oxide"/g' \
-    "$SYS/args/mod.rs" 2>/dev/null && echo "  Patched: args/mod.rs" || true
-# Also add oxide arm for dispatch
-sed -i '/target_os = "motor" =>.*mod motor.*pub use motor/i\    target_os = "oxide" => { mod oxide; pub use oxide::*; }' \
-    "$SYS/args/mod.rs" 2>/dev/null || true
+# ═══ sys/pal/mod.rs — separate oxide PAL ═══
+add_oxide_cfg_select_arm "$SYS/pal/mod.rs" \
+    'target_os = "oxide" => { mod oxide; pub use self::oxide::*; }'
 
-# sys/env/mod.rs
-sed -i 's/target_os = "motor"/target_os = "motor", target_os = "oxide"/g' \
-    "$SYS/env/mod.rs" 2>/dev/null && echo "  Patched: env/mod.rs" || true
-sed -i '/target_os = "motor" =>.*mod motor.*pub use motor/i\    target_os = "oxide" => { mod oxide; pub use oxide::*; }' \
-    "$SYS/env/mod.rs" 2>/dev/null || true
+# ═══ sys/alloc/mod.rs — separate oxide allocator ═══
+add_oxide_cfg_select_arm "$SYS/alloc/mod.rs" \
+    'target_os = "oxide" => { mod oxide; }'
 
-# sys/stdio/mod.rs
-sed -i '/target_os = "motor" =>.*mod motor.*pub use motor/i\    target_os = "oxide" => { mod oxide; pub use oxide::*; }' \
-    "$SYS/stdio/mod.rs" 2>/dev/null && echo "  Patched: stdio/mod.rs" || true
+# ═══ sys/args/mod.rs — separate oxide args + shared #[cfg(any(...))] ═══
+add_oxide_cfg_select_arm "$SYS/args/mod.rs" \
+    'target_os = "oxide" => { mod oxide; pub use oxide::*; }'
+# Also add oxide to the #[cfg(any(...))] that gates `mod common`
+add_oxide_to_any_list "$SYS/args/mod.rs"
 
-# sys/random/mod.rs
-sed -i '/target_os = "motor" =>.*mod motor.*pub use motor/i\    target_os = "oxide" => { mod oxide; pub use oxide::fill_bytes; }' \
-    "$SYS/random/mod.rs" 2>/dev/null && echo "  Patched: random/mod.rs" || true
+# ═══ sys/env/mod.rs — separate oxide env + shared #[cfg(any(...))] ═══
+add_oxide_cfg_select_arm "$SYS/env/mod.rs" \
+    'target_os = "oxide" => { mod oxide; pub use oxide::*; }'
+add_oxide_to_any_list "$SYS/env/mod.rs"
 
-# sys/fd/mod.rs
-sed -i '/target_os = "motor" =>.*mod motor.*pub use motor/i\    target_os = "oxide" => { mod oxide; pub use oxide::*; }' \
-    "$SYS/fd/mod.rs" 2>/dev/null && echo "  Patched: fd/mod.rs" || true
+# ═══ sys/stdio/mod.rs ═══
+add_oxide_cfg_select_arm "$SYS/stdio/mod.rs" \
+    'target_os = "oxide" => { mod oxide; pub use oxide::*; }'
 
-# sys/fs/mod.rs
-sed -i '/target_os = "motor" =>.*mod motor.*use motor as imp/i\    target_os = "oxide" => { mod oxide; use oxide as imp; }' \
-    "$SYS/fs/mod.rs" 2>/dev/null && echo "  Patched: fs/mod.rs" || true
+# ═══ sys/random/mod.rs ═══
+add_oxide_cfg_select_arm "$SYS/random/mod.rs" \
+    'target_os = "oxide" => { mod oxide; pub use oxide::fill_bytes; }'
 
-# sys/thread/mod.rs
-sed -i '/target_os = "motor" =>.*mod motor.*pub use motor/i\    target_os = "oxide" => { mod oxide; pub use oxide::*; }' \
-    "$SYS/thread/mod.rs" 2>/dev/null && echo "  Patched: thread/mod.rs" || true
+# ═══ sys/fd/mod.rs ═══
+add_oxide_cfg_select_arm "$SYS/fd/mod.rs" \
+    'target_os = "oxide" => { mod oxide; pub use oxide::*; }'
 
-# sys/process/mod.rs
-sed -i '/target_os = "motor" =>.*mod motor.*use motor as imp/i\    target_os = "oxide" => { mod oxide; use oxide as imp; }' \
-    "$SYS/process/mod.rs" 2>/dev/null && echo "  Patched: process/mod.rs" || true
+# ═══ sys/fs/mod.rs ═══
+add_oxide_cfg_select_arm "$SYS/fs/mod.rs" \
+    'target_os = "oxide" => { mod oxide; use oxide as imp; }'
 
-# sys/pipe/mod.rs
-sed -i '/target_os = "motor" =>.*mod motor.*pub use motor/i\    target_os = "oxide" => { mod oxide; pub use oxide::{Pipe, pipe}; }' \
-    "$SYS/pipe/mod.rs" 2>/dev/null && echo "  Patched: pipe/mod.rs" || true
+# ═══ sys/thread/mod.rs ═══
+add_oxide_cfg_select_arm "$SYS/thread/mod.rs" \
+    'target_os = "oxide" => { mod oxide; pub use oxide::*; }'
 
-# sys/io/is_terminal dispatch
-if [ -f "$SYS/io/is_terminal/mod.rs" ]; then
-    sed -i '/target_os = "motor" =>.*mod motor.*pub use motor/i\    target_os = "oxide" => { mod oxide; pub use oxide::*; }' \
-        "$SYS/io/is_terminal/mod.rs" 2>/dev/null && echo "  Patched: io/is_terminal/mod.rs" || true
-elif [ -f "$SYS/io/mod.rs" ]; then
-    # The is_terminal dispatch might be inline in io/mod.rs
-    sed -i 's/target_os = "motor"/target_os = "motor", target_os = "oxide"/g' \
-        "$SYS/io/mod.rs" 2>/dev/null && echo "  Patched: io/mod.rs" || true
+# ═══ sys/process/mod.rs ═══
+add_oxide_cfg_select_arm "$SYS/process/mod.rs" \
+    'target_os = "oxide" => { mod oxide; use oxide as imp; }'
+# — BlackLatch: oxide supports process spawning, so use the generic output() function.
+# Add oxide to both the positive and negative #[cfg(any(...))] gates around pub fn output.
+if [ -f "$SYS/process/mod.rs" ]; then
+    python3 -c "
+import sys
+with open(sys.argv[1], 'r') as f:
+    content = f.read()
+# Add oxide after motor in both cfg blocks around the output() function
+# Pattern: target_os = \"motor\"\n))] before pub fn output
+content = content.replace(
+    '    target_os = \"motor\"\n))]\npub fn output',
+    '    target_os = \"motor\",\n    target_os = \"oxide\"\n))]\npub fn output'
+)
+# Pattern: target_os = \"motor\"\n)))]\npub use imp::output
+content = content.replace(
+    '    target_os = \"motor\"\n)))]\npub use imp::output',
+    '    target_os = \"motor\",\n    target_os = \"oxide\"\n)))]\npub use imp::output'
+)
+with open(sys.argv[1], 'w') as f:
+    f.write(content)
+" "$SYS/process/mod.rs"
+    echo "  Patched: process/mod.rs (output cfg gates)"
+fi
+# Fix IntoInner import in oxide process module
+if [ -f "$SYS/process/oxide/mod.rs" ]; then
+    sed -i 's/use crate::sys::{AsInner, FromInner};/use crate::sys::{AsInner, FromInner, IntoInner};/' \
+        "$SYS/process/oxide/mod.rs" 2>/dev/null || true
 fi
 
-# sys/net/connection/mod.rs
-sed -i '/target_os = "motor" =>.*mod motor.*pub use motor/i\    target_os = "oxide" => { mod oxide; pub use oxide::*; }' \
-    "$SYS/net/connection/mod.rs" 2>/dev/null && echo "  Patched: net/connection/mod.rs" || true
+# ═══ sys/pipe/mod.rs ═══
+add_oxide_cfg_select_arm "$SYS/pipe/mod.rs" \
+    'target_os = "oxide" => { mod oxide; pub use oxide::{Pipe, pipe}; }'
 
-# sys/sync — add oxide to futex arms (alongside motor)
+# ═══ sys/io/mod.rs — oxide io dispatch ═══
+if [ -f "$SYS/io/mod.rs" ]; then
+    # Add oxide arm to the is_terminal cfg_select if present
+    add_oxide_cfg_select_arm "$SYS/io/mod.rs" \
+        'target_os = "oxide" => { mod oxide; pub use oxide::*; }'
+fi
+if [ -f "$SYS/io/is_terminal/mod.rs" ]; then
+    add_oxide_cfg_select_arm "$SYS/io/is_terminal/mod.rs" \
+        'target_os = "oxide" => { mod oxide; pub use oxide::*; }'
+fi
+
+# ═══ sys/io/error/mod.rs — oxide error mapping ═══
+add_oxide_cfg_select_arm "$SYS/io/error/mod.rs" \
+    'target_os = "oxide" => { mod oxide; pub use oxide::*; }'
+
+# ═══ sys/net/connection/mod.rs ═══
+add_oxide_cfg_select_arm "$SYS/net/connection/mod.rs" \
+    'target_os = "oxide" => { mod oxide; pub use oxide::*; }'
+
+# ═══ sys/sync — oxide shares futex impl with motor (inside any() lists) ═══
+# The sync modules use cfg_select! with any() lists that already include motor.
+# We add oxide alongside motor INSIDE the any() predicate.
 for syncmod in mutex condvar rwlock once thread_parking; do
     if [ -f "$SYS/sync/$syncmod/mod.rs" ]; then
-        sed -i 's/target_os = "motor"/target_os = "motor", target_os = "oxide"/g' \
-            "$SYS/sync/$syncmod/mod.rs" 2>/dev/null && echo "  Patched: sync/$syncmod/mod.rs" || true
+        add_oxide_to_any_list "$SYS/sync/$syncmod/mod.rs"
+        echo "  Patched: sync/$syncmod/mod.rs (futex shared)"
     fi
 done
 
-# sys/personality/mod.rs — add oxide to aborting stub arm
+# ═══ sys/personality/mod.rs — oxide shares aborting stub (inside any()) ═══
 if [ -f "$SYS/personality/mod.rs" ]; then
-    sed -i 's/target_os = "motor"/target_os = "motor", target_os = "oxide"/g' \
-        "$SYS/personality/mod.rs" 2>/dev/null && echo "  Patched: personality/mod.rs" || true
+    add_oxide_to_any_list "$SYS/personality/mod.rs"
+    echo "  Patched: personality/mod.rs"
 fi
 
-# os/mod.rs — add oxide module
-if [ -f "$OS/mod.rs" ] && ! grep -q 'target_os = "oxide"' "$OS/mod.rs"; then
-    sed -i '/#\[cfg(target_os = "motor")\]/a #[cfg(target_os = "oxide")]\npub mod oxide;' \
-        "$OS/mod.rs" 2>/dev/null && echo "  Patched: os/mod.rs" || true
-fi
-
-# os/fd/raw.rs — add oxide alongside motor
-if [ -f "$OS/fd/raw.rs" ]; then
-    sed -i 's/target_os = "motor"/target_os = "motor", target_os = "oxide"/g' \
-        "$OS/fd/raw.rs" 2>/dev/null && echo "  Patched: os/fd/raw.rs" || true
-fi
-
-# os/fd/owned.rs — add oxide alongside motor
-if [ -f "$OS/fd/owned.rs" ]; then
-    sed -i 's/target_os = "motor"/target_os = "motor", target_os = "oxide"/g' \
-        "$OS/fd/owned.rs" 2>/dev/null && echo "  Patched: os/fd/owned.rs" || true
-fi
-
-# os/fd/mod.rs — add oxide to the fd module cfg if needed
-if [ -f "$OS/fd/mod.rs" ]; then
-    sed -i 's/target_os = "motor"/target_os = "motor", target_os = "oxide"/g' \
-        "$OS/fd/mod.rs" 2>/dev/null && echo "  Patched: os/fd/mod.rs" || true
-fi
-
-# os/mod.rs — add oxide to the fd module's cfg gate
-if [ -f "$OS/mod.rs" ]; then
-    sed -i 's/target_os = "motor"/target_os = "motor", target_os = "oxide"/g' \
-        "$OS/mod.rs" 2>/dev/null || true
-fi
-
-# sys/thread_local — add oxide to racy key arm
+# ═══ sys/thread_local/mod.rs — oxide thread-local dispatch ═══
 if [ -f "$SYS/thread_local/mod.rs" ]; then
-    sed -i 's/target_os = "motor"/target_os = "motor", target_os = "oxide"/g' \
-        "$SYS/thread_local/mod.rs" 2>/dev/null && echo "  Patched: thread_local/mod.rs" || true
+    # Add oxide as separate arm before motor's arm (includes racy lazy-init wrapper)
+    if ! grep -q 'target_os = "oxide"' "$SYS/thread_local/mod.rs"; then
+        sed -i '/target_os = "motor" =>/i\
+    target_os = "oxide" => {\
+        mod racy;\
+        pub(super) use racy::LazyKey;\
+        pub(super) use oxide_rt::tls::{Key, get, set};\
+        use oxide_rt::tls::{create, destroy};\
+    }' "$SYS/thread_local/mod.rs" 2>/dev/null
+        echo "  Patched: $SYS/thread_local/mod.rs"
+    fi
+    # skip the generic add_oxide_cfg_select_arm since we did it manually above
+    true
+    # Also add to any() lists (for #[cfg(any(...))] guards)
+    add_oxide_to_any_list "$SYS/thread_local/mod.rs"
+fi
+
+# ═══ os/mod.rs — add oxide module declaration ═══
+if [ -f "$OS/mod.rs" ] && ! grep -q 'target_os = "oxide"' "$OS/mod.rs"; then
+    # Add oxide module AFTER the motor module declaration (pub mod motor;)
+    sed -i '/^pub mod motor;/a\
+#[cfg(target_os = "oxide")]\
+pub mod oxide;' "$OS/mod.rs" 2>/dev/null && echo "  Patched: os/mod.rs (module decl)"
+fi
+# Add oxide to the fd module's #[cfg(any(...))] gate in os/mod.rs
+add_oxide_to_any_list "$OS/mod.rs"
+
+# ═══ os/fd/raw.rs — oxide fd types ═══
+# — PulseForge: oxide uses i32 for RawFd (like motor), imports OwnedFd from super,
+#   provides oxide_rt::libc for STDIN/STDOUT/STDERR_FILENO constants.
+#   IMPORTANT: oxide has SEPARATE code paths from motor — never share moto_rt references.
+if [ -f "$OS/fd/raw.rs" ] && ! grep -q 'target_os = "oxide"' "$OS/fd/raw.rs"; then
+    python3 -c "
+import re, sys
+with open(sys.argv[1], 'r') as f:
+    content = f.read()
+
+# 1. Add oxide libc import AFTER motor's moto_rt::libc line (separate, not shared)
+content = content.replace(
+    '#[cfg(target_os = \"motor\")]\nuse moto_rt::libc;',
+    '#[cfg(target_os = \"motor\")]\nuse moto_rt::libc;\n#[cfg(target_os = \"oxide\")]\nuse oxide_rt::libc;'
+)
+
+# 2. Add oxide OwnedFd import — the line '#[cfg(target_os = \"motor\")]\nuse super::owned::OwnedFd;'
+content = content.replace(
+    '#[cfg(target_os = \"motor\")]\nuse super::owned::OwnedFd;',
+    '#[cfg(any(target_os = \"motor\", target_os = \"oxide\"))]\nuse super::owned::OwnedFd;'
+)
+
+# 3. Add oxide to RawFd = i32 gate
+content = content.replace(
+    'any(target_os = \"hermit\", target_os = \"motor\")',
+    'any(target_os = \"hermit\", target_os = \"motor\", target_os = \"oxide\")'
+)
+
+# 4. Exclude oxide from raw::c_int RawFd path (the not(target_os = \"motor\") guards)
+content = content.replace(
+    'not(target_os = \"motor\")',
+    'not(any(target_os = \"motor\", target_os = \"oxide\"))'
+)
+
+with open(sys.argv[1], 'w') as f:
+    f.write(content)
+" "$OS/fd/raw.rs"
+    echo "  Patched: os/fd/raw.rs"
+fi
+
+# ═══ os/fd/owned.rs — oxide fd ownership (uses oxide_rt::io) ═══
+# — PulseForge: oxide needs its own try_clone_to_owned (via oxide_rt::io::dup) and
+#   its own close in Drop (via oxide_rt::io::close). Completely separate from motor.
+if [ -f "$OS/fd/owned.rs" ] && ! grep -q 'target_os = "oxide"' "$OS/fd/owned.rs"; then
+    python3 -c "
+import sys
+with open(sys.argv[1], 'r') as f:
+    content = f.read()
+
+# 1a. Exclude oxide from the cvt import (oxide doesn't use libc::fcntl)
+#     Pattern: target_os = \"motor\"\n)))]\nuse crate::sys::cvt;
+content = content.replace(
+    '    target_os = \"motor\"\n)))]\nuse crate::sys::cvt;',
+    '    target_os = \"motor\",\n    target_os = \"oxide\"\n)))]\nuse crate::sys::cvt;'
+)
+
+# 1b. Exclude oxide from the cvt/libc-based try_clone_to_owned cfg gate
+#     Pattern: target_os = \"motor\"\n    )))]\n    #[stable...
+content = content.replace(
+    '        target_os = \"motor\"\n    )))]\n    #[stable(feature = \"io_safety\", since = \"1.63.0\")]\n    pub fn try_clone_to_owned(&self) -> io::Result<OwnedFd> {\n        // We want to atomically',
+    '        target_os = \"motor\",\n        target_os = \"oxide\"\n    )))]\n    #[stable(feature = \"io_safety\", since = \"1.63.0\")]\n    pub fn try_clone_to_owned(&self) -> io::Result<OwnedFd> {\n        // We want to atomically'
+)
+
+# 2. Add oxide try_clone_to_owned AFTER motor's closing brace
+#    Motor's block ends with: Ok(unsafe { OwnedFd::from_raw_fd(fd) })\n    }
+#    followed by the closing '}' of impl BorrowedFd
+# Find the motor try_clone block end and insert oxide's after it
+# Match: motor's closing brace + the impl closing brace
+motor_clone_end = '        Ok(unsafe { OwnedFd::from_raw_fd(fd) })\n    }\n}'
+oxide_clone = '        Ok(unsafe { OwnedFd::from_raw_fd(fd) })\n    }\n\n    /// \xe2\x80\x94 SableWire: OXIDE clone via dup syscall\n    #[cfg(target_os = \"oxide\")]\n    #[stable(feature = \"io_safety\", since = \"1.63.0\")]\n    pub fn try_clone_to_owned(&self) -> io::Result<OwnedFd> {\n        let fd = oxide_rt::io::dup(self.as_raw_fd());\n        if fd < 0 { Err(io::Error::from_raw_os_error(-fd)) }\n        else { Ok(unsafe { OwnedFd::from_raw_fd(fd) }) }\n    }\n}'
+content = content.replace(motor_clone_end, oxide_clone, 1)
+
+# 3. Fix Drop impl — add oxide close and exclude oxide from libc::close block
+#    Original Drop has:
+#      #[cfg(not(target_os = \"hermit\"))]
+#      {
+#          #[cfg(unix)]
+#          crate::sys::fs::debug_assert_fd_is_open(self.fd.as_inner());
+#
+#          let _ = libc::close(self.fd.as_inner());
+#      }
+content = content.replace(
+    '            #[cfg(not(target_os = \"hermit\"))]\n            {\n                #[cfg(unix)]\n                crate::sys::fs::debug_assert_fd_is_open(self.fd.as_inner());\n\n                let _ = libc::close(self.fd.as_inner());\n            }',
+    '            #[cfg(target_os = \"oxide\")]\n            {\n                let _ = oxide_rt::io::close(self.fd.as_inner());\n            }\n            #[cfg(not(any(target_os = \"hermit\", target_os = \"oxide\")))]\n            {\n                #[cfg(unix)]\n                crate::sys::fs::debug_assert_fd_is_open(self.fd.as_inner());\n\n                let _ = libc::close(self.fd.as_inner());\n            }'
+)
+
+with open(sys.argv[1], 'w') as f:
+    f.write(content)
+" "$OS/fd/owned.rs"
+    echo "  Patched: os/fd/owned.rs"
+fi
+
+# ═══ os/fd/mod.rs — add oxide to fd module cfg gate ═══
+if [ -f "$OS/fd/mod.rs" ]; then
+    add_oxide_to_any_list "$OS/fd/mod.rs"
+    echo "  Patched: os/fd/mod.rs"
 fi
 
 echo ""

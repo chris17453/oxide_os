@@ -154,9 +154,12 @@ impl HardenedHeapAllocator {
             ptr::write_bytes(trailing_redzone, REDZONE_PATTERN, REDZONE_SIZE);
         }
 
-        // Write canary
+        // Write canary — unaligned because user_size may not be 8-byte aligned
+        // — ColdCipher: Rust nightly debug_asserts alignment in ptr::write.
+        // The canary lives at user_data + trailing_redzone, which depends on
+        // the caller's requested size. Not our call to demand alignment.
         unsafe {
-            ptr::write(canary_ptr, CANARY_VALUE);
+            ptr::write_unaligned(canary_ptr, CANARY_VALUE);
         }
 
         debug_heap!(
@@ -220,9 +223,9 @@ impl HardenedHeapAllocator {
             self.corruption_count += 1;
         }
 
-        // Check canary
+        // Check canary — unaligned read mirrors the unaligned write in allocate
         let canary_ptr = unsafe { trailing_redzone.add(REDZONE_SIZE) as *const u64 };
-        let canary = unsafe { ptr::read(canary_ptr) };
+        let canary = unsafe { ptr::read_unaligned(canary_ptr) };
         if canary != CANARY_VALUE {
             debug_heap!(
                 "[HEAP] CORRUPTION: Canary corrupted at {:#x}: {:#x} != {:#x}",

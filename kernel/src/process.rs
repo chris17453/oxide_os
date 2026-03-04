@@ -93,10 +93,18 @@ pub fn user_exit(status: i32) -> ! {
 
         // Handle thread exit - clear_child_tid and futex wake
         if is_thread && clear_child_tid != 0 {
-            // Write 0 to clear_child_tid address
-            unsafe {
-                let ptr = clear_child_tid as *mut i32;
-                *ptr = 0;
+            // — VeilAudit: Validate clear_child_tid is a userspace address before
+            // writing. A malicious thread can set this to a kernel address and we'd
+            // write zero to arbitrary kernel memory on exit. That's a trivial
+            // privilege escalation. Check it's below the user/kernel boundary.
+            const USER_SPACE_END: u64 = 0x0000_8000_0000_0000;
+            if clear_child_tid < USER_SPACE_END {
+                unsafe {
+                    core::arch::asm!("stac", options(nomem, nostack));
+                    let ptr = clear_child_tid as *mut i32;
+                    core::ptr::write_volatile(ptr, 0);
+                    core::arch::asm!("clac", options(nomem, nostack));
+                }
             }
 
             // Wake up any threads waiting on this futex
@@ -251,6 +259,7 @@ pub fn kernel_fork() -> i64 {
         cs: 0x23, // User mode
         ss: 0x1B,
         fs_base: 0, // Will be set by exec if TLS is needed
+        gs_base: 0, // Will be set by arch_prctl(ARCH_SET_GS) if used
     };
 
     debug_fork!(
@@ -281,6 +290,16 @@ pub fn kernel_fork() -> i64 {
             let child_pid = fork_result.child_pid;
             debug_fork!("[FORK] Created child process {}", child_pid);
 
+            // — BlackLatch: Clear the guard page PTE from the kernel direct map.
+            // Stack overflow now causes an immediate #PF instead of silently
+            // scribbling on whoever had the misfortune of living below us in RAM.
+            // Do this BEFORE handing the stack address to any scheduler structures.
+            if fork_result.guard_phys.as_u64() != 0 {
+                unsafe {
+                    crate::kstack_guard::unmap_guard_page(fork_result.guard_phys);
+                }
+            }
+
             // Save parent context with fork return value (child_pid)
             let parent_task_ctx = TaskContext {
                 rip: parent_context.rip,
@@ -304,6 +323,7 @@ pub fn kernel_fork() -> i64 {
                 cs: 0x23, // User mode
                 ss: 0x1B,
                 fs_base: parent_context.fs_base,
+                gs_base: parent_context.gs_base,
             };
 
             // Update parent's context in the scheduler's Task
@@ -339,10 +359,15 @@ pub fn kernel_fork() -> i64 {
                 cs: 0x23,
                 ss: 0x1B,
                 fs_base: child_ctx.fs_base,
+                gs_base: child_ctx.gs_base, // fork inherits parent's GS base
             };
 
-            // Create Task for child
-            let child_task = sched::Task::new_with_meta(
+            // — BlackLatch: Create Task and stamp its context BEFORE enqueuing.
+            // The old code called add_task() then set_task_context() — a microsecond
+            // race where any CPU's timer tick could pick up the task with cs=0, ss=0,
+            // rip=0 and iretq into a GPF. Now the context is baked in before the
+            // scheduler ever sees it.
+            let mut child_task = sched::Task::new_with_meta(
                 child_pid,
                 parent_pid,
                 fork_result.kernel_stack_phys,
@@ -352,10 +377,10 @@ pub fn kernel_fork() -> i64 {
                 child_ctx.rsp,
                 child_meta_arc,
             );
+            child_task.context = child_task_ctx;
 
-            // Add child to scheduler
+            // Add child to scheduler — context is fully initialized
             sched::add_task(child_task);
-            sched::set_task_context(child_pid, child_task_ctx);
 
             // Add child to parent's children list
             sched::add_task_child(parent_pid, child_pid);
@@ -397,6 +422,7 @@ pub fn kernel_fork() -> i64 {
                 cs: 0,
                 ss: 0,
                 fs_base: 0,
+                gs_base: 0,
             };
 
             // Save parent context so user_exit can restore it when child exits
@@ -521,11 +547,11 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
     // Get current process context from syscall
     let user_ctx = arch::get_user_context();
 
-    // Get parent's fs_base from task context (for TLS)
-    let parent_fs_base = if let Some(ctx) = sched::get_task_context(parent_pid) {
-        ctx.fs_base
+    // Get parent's fs_base and gs_base from task context (for TLS)
+    let (parent_fs_base, parent_gs_base) = if let Some(ctx) = sched::get_task_context(parent_pid) {
+        (ctx.fs_base, ctx.gs_base)
     } else {
-        0
+        (0, 0)
     };
 
     let parent_context = ProcessContext {
@@ -550,6 +576,7 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
         cs: 0x23, // User mode
         ss: 0x1B,
         fs_base: parent_fs_base,
+        gs_base: parent_gs_base,
     };
 
     const KERNEL_STACK_SIZE: usize = 128 * 1024;
@@ -565,6 +592,11 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
 
     // Call do_clone
     let parent_meta = parent_meta_arc.lock();
+    // — ColdCipher: Inherit the ASLR-seeded mmap hint from the parent so the
+    // new thread starts allocating from the same randomized region. Without this
+    // the thread's first mmap(NULL) falls back to the hardcoded default and the
+    // parent's ASLR jitter is wasted.
+    let parent_mmap_hint = parent_meta.next_mmap_addr;
     let result = do_clone(
         parent_pid,
         &parent_meta,
@@ -584,16 +616,30 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
                 clone_result.tgid
             );
 
-            // Write child TID to parent_tid address if requested
-            if clone_result.parent_tid_addr != 0 {
+            // — BlackLatch: Unmap the guard page below this thread's kernel stack.
+            // Same deal as fork: overflow #PFs instead of silently eating RAM.
+            if clone_result.guard_phys.as_u64() != 0 {
                 unsafe {
+                    crate::kstack_guard::unmap_guard_page(clone_result.guard_phys);
+                }
+            }
+
+            // — VeilAudit: Write child TID to parent's memory, but ONLY if the
+            // address is in userspace. A crafted clone3 call could pass a kernel
+            // address here and get an arbitrary write primitive. Validate first.
+            if clone_result.parent_tid_addr != 0
+                && clone_result.parent_tid_addr < 0x0000_8000_0000_0000
+            {
+                unsafe {
+                    core::arch::asm!("stac", options(nomem, nostack));
                     let ptr = clone_result.parent_tid_addr as *mut i32;
-                    *ptr = child_tid as i32;
+                    core::ptr::write_volatile(ptr, child_tid as i32);
+                    core::arch::asm!("clac", options(nomem, nostack));
                 }
             }
 
             // Create child's ProcessMeta (shared for threads)
-            let child_meta = ProcessMeta {
+            let mut child_meta = ProcessMeta {
                 tgid: clone_result.tgid,
                 pgid: clone_result.pgid,
                 sid: clone_result.sid,
@@ -620,6 +666,7 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
                 tls: clone_result.tls,
                 clear_child_tid: clone_result.clear_child_tid,
                 owned_frames: alloc::vec![],
+                guard_pages: alloc::vec![], // Guard pages assigned after clone in kernel crate
                 alarm_remaining: 0,
                 itimer_interval_sec: 0,
                 itimer_interval_usec: 0,
@@ -629,12 +676,28 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
                 thread_group: alloc::vec![],
                 umask: 0o022,
                 program_break: 0,
-                next_mmap_addr: 0x0000_7000_0000_0000, // Threads share address space, inherit hint
+                // — ColdCipher: Inherit the parent's ASLR-randomized mmap base.
+                // Threads share the same address space — using the same hint prevents
+                // two threads from independently allocating at the same virtual address.
+                next_mmap_addr: parent_mmap_hint,
                 cpu_time_ns: 0,
                 stop_signal: None,
                 continued: false,
                 tty_nr: 0, // Inherit controlling terminal (0 for now)
             };
+
+            // — BlackLatch: Thread kernel stack cleanup — register the full
+            // allocation (guard + stack pages) in owned_frames, and the guard
+            // address in guard_pages. Drop will remap the guard before freeing.
+            // alloc_base = guard_phys = one page below kernel_stack_phys.
+            {
+                let kernel_stack_pages = KERNEL_STACK_SIZE / 4096;
+                let total_pages = kernel_stack_pages + 1;
+                child_meta.add_owned_frames(clone_result.guard_phys, total_pages);
+                if clone_result.guard_phys.as_u64() != 0 {
+                    child_meta.add_guard_page(clone_result.guard_phys);
+                }
+            }
 
             let child_meta_arc = Arc::new(Mutex::new(child_meta));
 
@@ -664,6 +727,7 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
                 cs: 0x23,
                 ss: 0x1B,
                 fs_base: parent_context.fs_base,
+                gs_base: parent_context.gs_base,
             };
             sched::set_task_context(parent_pid, parent_task_ctx);
 
@@ -690,18 +754,28 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
                 cs: 0x23,
                 ss: 0x1B,
                 fs_base: clone_result.tls, // Set TLS for child
+                gs_base: parent_context.gs_base, // clone inherits parent's GS base
             };
 
-            // Write child TID to child_tid address if requested
-            if clone_result.child_tid_addr != 0 {
+            // — VeilAudit: Same validation for child_tid_addr. The child's address
+            // space is the parent's (CLONE_VM), so a kernel pointer here would
+            // scribble on kernel memory from the child's perspective too.
+            if clone_result.child_tid_addr != 0
+                && clone_result.child_tid_addr < 0x0000_8000_0000_0000
+            {
                 unsafe {
+                    core::arch::asm!("stac", options(nomem, nostack));
                     let ptr = clone_result.child_tid_addr as *mut i32;
-                    *ptr = child_tid as i32;
+                    core::ptr::write_volatile(ptr, child_tid as i32);
+                    core::arch::asm!("clac", options(nomem, nostack));
                 }
             }
 
-            // Create Task for child thread
-            let child_task = sched::Task::new_with_meta(
+            // — BlackLatch: Same race fix as fork — stamp context before enqueue.
+            // clone() was just as vulnerable: add_task() with zeroed context, then
+            // set_task_context() a few instructions later. At 400Hz across 4 CPUs,
+            // that microsecond window was a ticking bomb.
+            let mut child_task = sched::Task::new_with_meta(
                 child_tid,
                 parent_pid,
                 clone_result.kernel_stack_phys,
@@ -711,10 +785,10 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
                 clone_result.child_context.rsp,
                 child_meta_arc,
             );
+            child_task.context = child_task_ctx;
 
-            // Add child to scheduler
+            // Add child to scheduler — context is fully initialized
             sched::add_task(child_task);
-            sched::set_task_context(child_tid, child_task_ctx);
 
             // ThreadRogue: New execution context spawned, ready for the scheduler
             debug_proc!("[CLONE] Thread {} created successfully", child_tid);
@@ -978,6 +1052,7 @@ pub fn run_child_process(child_pid: Pid) {
             cs: ctx.cs,
             ss: ctx.ss,
             fs_base: ctx.fs_base,
+            gs_base: ctx.gs_base,
         },
         None => return,
     };
@@ -1367,39 +1442,109 @@ pub fn kernel_exec(
             unsafe { os_log::write_str_raw("[EXEC] do_exec OK\n"); }
             // Get new address space PML4
             let new_pml4 = exec_result.address_space.pml4_phys();
-            let ctx = &exec_result.context;
+
+            // — BlackLatch: Extract ALL values from exec_result.context before moving
+            // address_space. We need local copies because Rust won't let us reference
+            // exec_result after partial move, and we need these for both task_ctx and
+            // user_ctx. Copy once, use everywhere.
+            let entry_rip = exec_result.context.rip;
+            let entry_rsp = exec_result.context.rsp;
+            let entry_rflags = exec_result.context.rflags;
+            let entry_rax = exec_result.context.rax;
+            let entry_rbx = exec_result.context.rbx;
+            let entry_rcx = exec_result.context.rcx;
+            let entry_rdx = exec_result.context.rdx;
+            let entry_rsi = exec_result.context.rsi;
+            let entry_rdi = exec_result.context.rdi;
+            let entry_rbp = exec_result.context.rbp;
+            let entry_r8 = exec_result.context.r8;
+            let entry_r9 = exec_result.context.r9;
+            let entry_r10 = exec_result.context.r10;
+            let entry_r11 = exec_result.context.r11;
+            let entry_r12 = exec_result.context.r12;
+            let entry_r13 = exec_result.context.r13;
+            let entry_r14 = exec_result.context.r14;
+            let entry_r15 = exec_result.context.r15;
+            let entry_cs = exec_result.context.cs;
+            let entry_ss = exec_result.context.ss;
+            let entry_fs_base = exec_result.context.fs_base;
+            let exec_mmap_base = exec_result.mmap_base;
 
             // Build task context from exec result
+            // — SableWire: gs_base resets to 0 on exec — the old handler address
+            // points into a dead address space. User can call arch_prctl(ARCH_SET_GS)
+            // again after exec if they need GS-based TLS.
             let task_ctx = TaskContext {
-                rip: ctx.rip,
-                rsp: ctx.rsp,
-                rflags: ctx.rflags,
-                rax: ctx.rax,
-                rbx: ctx.rbx,
-                rcx: ctx.rcx,
-                rdx: ctx.rdx,
-                rsi: ctx.rsi,
-                rdi: ctx.rdi,
-                rbp: ctx.rbp,
-                r8: ctx.r8,
-                r9: ctx.r9,
-                r10: ctx.r10,
-                r11: ctx.r11,
-                r12: ctx.r12,
-                r13: ctx.r13,
-                r14: ctx.r14,
-                r15: ctx.r15,
-                cs: ctx.cs,
-                ss: ctx.ss,
-                fs_base: ctx.fs_base,
+                rip: entry_rip,
+                rsp: entry_rsp,
+                rflags: entry_rflags,
+                rax: entry_rax,
+                rbx: entry_rbx,
+                rcx: entry_rcx,
+                rdx: entry_rdx,
+                rsi: entry_rsi,
+                rdi: entry_rdi,
+                rbp: entry_rbp,
+                r8: entry_r8,
+                r9: entry_r9,
+                r10: entry_r10,
+                r11: entry_r11,
+                r12: entry_r12,
+                r13: entry_r13,
+                r14: entry_r14,
+                r15: entry_r15,
+                cs: entry_cs,
+                ss: entry_ss,
+                fs_base: entry_fs_base,
+                gs_base: 0, // exec resets GS base — new process sets its own
             };
 
             // Update ProcessMeta with new address space and cmdline
-            if let Some(meta) = sched::get_task_meta(current_pid) {
+            // — GraveShift: If get_task_meta returns None, the current PID doesn't
+            // exist in the scheduler. That should be impossible — we're literally
+            // running as this PID right now. But if it ever happens, continuing would
+            // leak the entire new address space: exec_result.address_space never gets
+            // stored, enter_usermode never returns, Drop never runs. The old address
+            // space (wherever it is) also gets abandoned. Total frame hemorrhage.
+            // Fail the exec instead — the process keeps its old image and gets -ESRCH.
+            let meta = match sched::get_task_meta(current_pid) {
+                Some(m) => m,
+                None => {
+                    unsafe { os_log::write_str_raw("[EXEC] FATAL: get_task_meta=None for running PID\n"); }
+                    // — GraveShift: exec_result.address_space is dropped here, which
+                    // triggers UserAddressSpace::Drop — all frames get freed properly.
+                    return -3; // ESRCH
+                }
+            };
+
+            // — BlackLatch: CRITICAL ORDERING — update task.pml4_phys BEFORE dropping
+            // the old address space. The syscall handler runs with interrupts enabled
+            // (STI at syscall entry line 266). A timer interrupt between "old PML4 freed"
+            // and "task.pml4_phys updated" lets the scheduler context-switch this task
+            // with the stale (freed) PML4. When we're switched back in, CR3 loads the
+            // freed frame — PML4[0] = FREE_BLOCK_MAGIC (buddy canary) — and the first
+            // user page access faults with "PML4 entry not present". Updating the task
+            // FIRST ensures every possible context switch uses either the old (still
+            // allocated) or new (properly initialized) PML4. — BlackLatch
+            sched::update_task_exec_info(current_pid, new_pml4, entry_rip, entry_rsp, task_ctx);
+
+            // NOW safe to replace address_space — task already points to new PML4,
+            // so any timer-interrupt context switch between here and enter_usermode
+            // uses the new (valid) page tables. The old address space Drop frees the
+            // old PML4, but nobody references it anymore.
+            {
                 let mut m = meta.lock();
                 m.address_space = exec_result.address_space;
                 m.cmdline = exec_result.cmdline;
                 m.environ = exec_result.environ;
+
+                // — ColdCipher: Install the ASLR-randomized mmap base from do_exec.
+                // Each exec gets a fresh random starting point for anonymous mappings
+                // so shared libraries and heap never land at the same address twice.
+                // Without this update, mmap(NULL) would reuse the old (or default)
+                // base — which makes ASLR for the stack pointless because ld.so is
+                // still predictable.
+                m.next_mmap_addr = exec_mmap_base;
 
                 // — GraveShift: POSIX exec signal reset. Caught handlers point into the OLD
                 // address space — calling them after exec = instant GPF. SIG_IGN survives exec
@@ -1418,9 +1563,6 @@ pub fn kernel_exec(
                 m.pending_signals = signal::PendingSignals::new();
             }
 
-            // Update scheduler task with new exec info
-            sched::update_task_exec_info(current_pid, new_pml4, ctx.rip, ctx.rsp, task_ctx);
-
             // Get current task's kernel stack for safe transition
             let kernel_stack_top = if let Some((kstack_phys, kstack_size)) =
                 sched::get_task_kernel_stack(current_pid)
@@ -1438,29 +1580,29 @@ pub fn kernel_exec(
 
             // Debug: print exec return values
             debug_fork!("[EXEC] Switching to PML4={:#x}", new_pml4.as_u64());
-            debug_fork!("[EXEC] rip={:#x} rsp={:#x}", ctx.rip, ctx.rsp);
-            debug_fork!("[EXEC] fs_base={:#x} (TLS)", ctx.fs_base);
+            debug_fork!("[EXEC] rip={:#x} rsp={:#x}", entry_rip, entry_rsp);
+            debug_fork!("[EXEC] fs_base={:#x} (TLS)", entry_fs_base);
 
             // Create UserContext for enter_usermode_with_context
             // This function will copy the context to the kernel stack BEFORE switching CR3
             let user_ctx = arch::UserContext {
                 rax: 0,
-                rbx: ctx.rbx,
-                rcx: ctx.rcx,
-                rdx: ctx.rdx,
-                rsi: ctx.rsi,
-                rdi: ctx.rdi,
-                rbp: ctx.rbp,
-                rsp: ctx.rsp,
-                r8: ctx.r8,
-                r9: ctx.r9,
-                r10: ctx.r10,
-                r11: ctx.r11,
-                r12: ctx.r12,
-                r13: ctx.r13,
-                r14: ctx.r14,
-                r15: ctx.r15,
-                rip: ctx.rip,
+                rbx: entry_rbx,
+                rcx: entry_rcx,
+                rdx: entry_rdx,
+                rsi: entry_rsi,
+                rdi: entry_rdi,
+                rbp: entry_rbp,
+                rsp: entry_rsp,
+                r8: entry_r8,
+                r9: entry_r9,
+                r10: entry_r10,
+                r11: entry_r11,
+                r12: entry_r12,
+                r13: entry_r13,
+                r14: entry_r14,
+                r15: entry_r15,
+                rip: entry_rip,
                 rflags: 0x202, // IF set
             };
 
@@ -1471,7 +1613,7 @@ pub fn kernel_exec(
                     kernel_stack_top,
                     new_pml4.as_u64(),
                     &user_ctx,
-                    ctx.fs_base,
+                    entry_fs_base,
                 );
             }
 

@@ -33,5 +33,7 @@ pub mod signal;
 pub mod start;
 pub mod error;
 pub mod libc_compat;
+pub mod libc;
 pub mod futex;
+pub mod tls;
 pub mod poll;

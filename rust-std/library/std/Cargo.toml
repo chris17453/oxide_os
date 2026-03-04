@@ -13,8 +13,6 @@ autobenches = false
 crate-type = ["dylib", "rlib"]
 
 [dependencies]
-[target.'cfg(target_os = "oxide")'.dependencies]
-oxide-rt = { path = "/home/nd/repos/Projects/oxide_os/userspace/libs/oxide-rt", features = ["rustc-dep-of-std"] }
 alloc = { path = "../alloc", public = true }
 # std no longer uses cfg-if directly, but the included copy of backtrace does.
 cfg-if = { version = "1.0", features = ['rustc-dep-of-std'] }
@@ -176,3 +174,6 @@ check-cfg = [
     'cfg(target_has_reliable_f128)',
     'cfg(target_has_reliable_f128_math)',
 ]
+
+[target.'cfg(target_os = "oxide")'.dependencies]
+oxide-rt = { path = "/home/nd/repos/Projects/oxide_os/userspace/libs/oxide-rt", features = ["rustc-dep-of-std"], public = true }

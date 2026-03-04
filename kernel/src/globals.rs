@@ -7,13 +7,23 @@ use core::sync::atomic::AtomicBool;
 
 use arch_traits::Arch;
 use arch_x86_64::X86_64;
-use mm_heap::LockedHeap;
+// — ColdCipher: KernelHeap resolves to LockedHardenedHeap when heap-hardening
+// is active, plain LockedHeap otherwise. The feature flag does the heavy lifting;
+// we just stop lying about which type we want.
+use mm_heap::{new_kernel_heap, KernelHeap};
 use mm_manager::MemoryManager;
 use spin::{Mutex, MutexGuard};
 
-/// Global kernel heap allocator
+/// Global kernel heap allocator — hardened by default (P3.2).
+///
+/// When the `heap-hardening` feature is enabled (the default), every allocation
+/// gets 16-byte redzones filled with 0xFD, a trailing 0xDEAD_BEEF_CAFE_BABE
+/// canary, and freed memory is poisoned with 0xDD.  Corruption is reported at
+/// deallocation time via the `corruption_count` counter.
+///
+/// — ColdCipher: because "hope nobody overflows the heap" isn't a security policy.
 #[global_allocator]
-pub static HEAP_ALLOCATOR: LockedHeap = LockedHeap::empty();
+pub static HEAP_ALLOCATOR: KernelHeap = new_kernel_heap();
 
 /// Heap size: 16 MB
 pub const HEAP_SIZE: usize = 32 * 1024 * 1024; // 32MB for large executables like Python

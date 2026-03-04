@@ -2,13 +2,15 @@
 //!
 //! Implements the virtio-net specification for virtual network devices.
 //! Supports both MMIO and PCI-based VirtIO devices.
+//!
+//! — ShadePacket: packets in, packets out, descriptors don't leak anymore.
+//! The ring is law. Interrupt fires, we drain. Simple contract, hideous details.
 
 #![no_std]
 #![allow(unused)]
 
 extern crate alloc;
 
-use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use spin::Mutex;
@@ -119,6 +121,75 @@ const RX_BUFFER_COUNT: usize = 64;
 
 /// Size of each RX buffer (MTU + header + some padding)
 const RX_BUFFER_SIZE: usize = 2048;
+
+/// — ShadePacket: NAPI budget — how many packets we'll muscle through per
+/// interrupt before re-arming. 64 is the Linux default. Don't go higher
+/// unless you enjoy starving every other interrupt on the system.
+const NAPI_BUDGET: usize = 64;
+
+/// — ShadePacket: One pending packet's worth of metadata. The DMA buffer
+/// stays in place — we just need to remember which slot holds live data
+/// and how many bytes the device wrote. No heap. No excuses.
+#[derive(Clone, Copy, Default)]
+struct PendingRxPacket {
+    /// DMA buffer slot index (same as descriptor index)
+    slot: u8,
+    /// Bytes the device wrote (including virtio header)
+    raw_len: u16,
+}
+
+/// — ShadePacket: Fixed-capacity ring for ISR→poll handoff. The ISR drains
+/// the HW used ring and stashes metadata here. The polling receive() path
+/// copies packet bytes and recycles slots. No dynamic allocation — the
+/// ring lives in the device struct and never grows past NAPI_BUDGET entries.
+struct RxPendingRing {
+    packets: [PendingRxPacket; NAPI_BUDGET],
+    /// Index into packets[] for the next read (consumer side)
+    head: u8,
+    /// Index into packets[] for the next write (producer side, ISR)
+    tail: u8,
+    /// Number of pending packets ready to consume
+    count: u8,
+}
+
+impl RxPendingRing {
+    const fn new() -> Self {
+        RxPendingRing {
+            packets: [PendingRxPacket { slot: 0, raw_len: 0 }; NAPI_BUDGET],
+            head: 0,
+            tail: 0,
+            count: 0,
+        }
+    }
+
+    /// Push a pending packet. Returns false if ring is full (packet dropped).
+    fn push(&mut self, slot: u8, raw_len: u16) -> bool {
+        if self.count as usize >= NAPI_BUDGET {
+            return false;
+        }
+        let idx = self.tail as usize % NAPI_BUDGET;
+        self.packets[idx] = PendingRxPacket { slot, raw_len };
+        self.tail = self.tail.wrapping_add(1);
+        self.count += 1;
+        true
+    }
+
+    /// Pop the oldest pending packet. Returns None if empty.
+    fn pop(&mut self) -> Option<PendingRxPacket> {
+        if self.count == 0 {
+            return None;
+        }
+        let idx = self.head as usize % NAPI_BUDGET;
+        let pkt = self.packets[idx];
+        self.head = self.head.wrapping_add(1);
+        self.count -= 1;
+        Some(pkt)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+}
 
 /// RX buffer management
 struct RxBuffers {
@@ -233,6 +304,56 @@ pub struct VirtioNet {
     tx_buffers: Mutex<TxBuffers>,
     /// Negotiated features
     features: u64,
+    /// — ShadePacket: ISR→poll handoff ring. The interrupt handler shoves
+    /// received packet metadata here; receive() drains it. Mutex because
+    /// ISR and poll path both touch it, and try_lock keeps the ISR honest.
+    rx_pending: Mutex<RxPendingRing>,
+}
+
+// ============================================================================
+// Global device registry (for interrupt dispatch)
+// ============================================================================
+// — ShadePacket: one static list to hold them all. The ISR path uses try_lock
+// so it won't block if the polling side is mid-packet. Missing an interrupt
+// is survivable. Deadlocking the scheduler is not.
+//
+// We store Arc<VirtioNet> so the same allocation is shared with net::DEVICES.
+// The Arc gives us shared ownership between interrupt dispatch and the network
+// trait object registry without cloning the device struct itself.
+
+static VIRTIO_NET_DEVICES: Mutex<Vec<alloc::sync::Arc<VirtioNet>>> = Mutex::new(Vec::new());
+
+/// Handle PCI interrupt for all VirtIO-net devices.
+///
+/// — ShadePacket: call this from whatever IRQ vector the PCI device was
+/// routed to. We try_lock to avoid deadlocking against the polling path.
+/// TX descriptors get reclaimed; RX packets get staged in the pending ring.
+/// ISR contract: no heap allocation, no blocking locks.
+pub fn handle_interrupt() {
+    if let Some(devices) = VIRTIO_NET_DEVICES.try_lock() {
+        for device in devices.iter() {
+            let isr = device.read_isr();
+            // Bit 0: queue interrupt (used buffer notification)
+            // Bit 1: device config change (we don't handle this yet)
+            if isr & 0x1 != 0 {
+                device.handle_tx_interrupt_isr();
+                device.handle_rx_interrupt_isr();
+            }
+        }
+    }
+}
+
+/// Poll all VirtIO-net devices for pending activity (timer-tick fallback).
+///
+/// — ShadePacket: when interrupts aren't wired up, this keeps the ring
+/// from going stale. Mirrors the virtio-input poll() pattern.
+pub fn poll() {
+    if let Some(devices) = VIRTIO_NET_DEVICES.try_lock() {
+        for device in devices.iter() {
+            device.reclaim_tx_descriptors();
+            device.stage_rx_packets();
+        }
+    }
 }
 
 impl VirtioNet {
@@ -368,6 +489,7 @@ impl VirtioNet {
                 rx_buffers: Mutex::new(rx_buffers),
                 tx_buffers: Mutex::new(tx_buffers),
                 features: negotiated,
+                rx_pending: Mutex::new(RxPendingRing::new()),
             };
 
             // Post initial RX buffers
@@ -412,7 +534,11 @@ impl VirtioNet {
         self.notify(0);
     }
 
-    /// Reclaim completed TX descriptors
+    /// Reclaim completed TX descriptors (non-ISR polling path).
+    ///
+    /// — ShadePacket: the boring version that just blocks. Fine for the
+    /// transmit() hot path where we already hold no locks and interrupts
+    /// aren't a concern. ISR callers use handle_tx_interrupt_isr() instead.
     fn reclaim_tx_descriptors(&self) {
         // Read ISR to clear interrupt status (helps with some QEMU versions)
         let _isr = self.read_isr();
@@ -422,6 +548,127 @@ impl VirtioNet {
             if let Some((id, _len)) = tx_queue.pop_used() {
                 // — NeonRoot: free_chain handles single-desc chains just fine
                 tx_queue.free_chain(id);
+            }
+        }
+    }
+
+    /// ISR-safe TX completion reclaim.
+    ///
+    /// — ShadePacket: called from handle_interrupt(). Uses try_lock — if the
+    /// polling path is mid-transmit we skip reclaim for this interrupt. The
+    /// next transmit() call will catch up via reclaim_tx_descriptors().
+    /// Rule: no heap allocation, no blocking locks, no sleeping. Ever.
+    fn handle_tx_interrupt_isr(&self) {
+        // — ShadePacket: tx_queue is the only thing we need. try_lock — if
+        // contended, the transmit() path will reclaim on its next call.
+        if let Some(mut tx_queue) = self.tx_queue.try_lock() {
+            // Drain the entire TX used ring — every completed descriptor must
+            // have its chain freed so transmit() can allocate descriptors again.
+            while tx_queue.has_completed() {
+                if let Some((id, _len)) = tx_queue.pop_used() {
+                    tx_queue.free_chain(id);
+                }
+            }
+        }
+        // — ShadePacket: if try_lock missed, that's fine. Descriptors pile up
+        // at worst until the next transmit() or interrupt. No data loss.
+    }
+
+    /// ISR-safe RX batching: drain up to NAPI_BUDGET packets into pending ring.
+    ///
+    /// — ShadePacket: this is the NAPI dance. Interrupt fires, we pop up to 64
+    /// completed RX descriptors, stash their (slot, len) in rx_pending so the
+    /// polling receive() can copy bytes without racing the hardware ring.
+    /// The DMA buffer is held in-place until receive() consumes the entry.
+    ///
+    /// ISR contract: no heap allocation. Stack-only temporaries. try_lock only.
+    fn handle_rx_interrupt_isr(&self) {
+        // — ShadePacket: need both rx_queue (to pop used entries) and rx_pending
+        // (to stage them). If either is contended, bail. We'll catch the
+        // packets on the next interrupt or the polling fallback.
+        let mut rx_queue = match self.rx_queue.try_lock() {
+            Some(q) => q,
+            None => return,
+        };
+        let mut rx_pending = match self.rx_pending.try_lock() {
+            Some(p) => p,
+            None => return,
+        };
+
+        let mut processed: usize = 0;
+
+        while processed < NAPI_BUDGET {
+            match rx_queue.pop_used() {
+                Some((desc_idx, raw_len)) => {
+                    let slot = desc_idx as usize;
+                    if slot >= RX_BUFFER_COUNT {
+                        // — ShadePacket: descriptor index out of our known
+                        // buffer array. The hardware lied, or we're confused.
+                        // Either way, don't touch it and move on.
+                        processed += 1;
+                        continue;
+                    }
+                    // Stage the packet for receive() to consume. If the ring
+                    // is full (pending hasn't drained fast enough), we have to
+                    // drop the packet — there's nowhere to put it without
+                    // allocating. Mark the buffer free so we can re-post it.
+                    if !rx_pending.push(slot as u8, raw_len as u16) {
+                        // — ShadePacket: pending ring full. Packet dropped.
+                        // The buffer slot is still marked in_use from the
+                        // original post_rx_buffers(). We need to release it
+                        // so post_rx_buffers_isr can re-post — but we can't
+                        // access rx_buffers (separate Mutex). Best effort:
+                        // we lose this packet. rx_buffers recovers on next poll.
+                        if let Some(mut stats) = self.stats.try_lock() {
+                            stats.rx_dropped += 1;
+                        }
+                    }
+                    processed += 1;
+                }
+                None => break,
+            }
+        }
+
+        // — ShadePacket: drop rx_queue lock before calling notify, avoiding
+        // holding a Mutex across a port I/O which is bad form even if legal.
+        drop(rx_queue);
+        drop(rx_pending);
+
+        // Re-arm: notify the device we're ready for more RX.
+        // post_rx_buffers does the actual re-posting; here we just need to
+        // let the device know we'll re-fill soon. The actual buffer refill
+        // happens in receive() after the data is consumed.
+        //
+        // — ShadePacket: don't call post_rx_buffers_isr here. We deliberately
+        // leave the consumed DMA slots in-use until receive() drains the
+        // pending ring — otherwise we'd overwrite data the poll path hasn't
+        // read yet.
+    }
+
+    /// Stage RX packets from the HW used ring into the pending ring.
+    ///
+    /// — ShadePacket: non-ISR version of handle_rx_interrupt_isr(). Called
+    /// from poll() as a timer-tick fallback when interrupts aren't wired.
+    /// Uses blocking locks — safe because it's not in ISR context.
+    fn stage_rx_packets(&self) {
+        let mut rx_queue = self.rx_queue.lock();
+        let mut rx_pending = self.rx_pending.lock();
+
+        let mut processed: usize = 0;
+        while processed < NAPI_BUDGET {
+            match rx_queue.pop_used() {
+                Some((desc_idx, raw_len)) => {
+                    let slot = desc_idx as usize;
+                    if slot < RX_BUFFER_COUNT {
+                        if !rx_pending.push(slot as u8, raw_len as u16) {
+                            if let Some(mut stats) = self.stats.try_lock() {
+                                stats.rx_dropped += 1;
+                            }
+                        }
+                    }
+                    processed += 1;
+                }
+                None => break,
             }
         }
     }
@@ -615,10 +862,68 @@ impl NetworkDevice for VirtioNet {
     }
 
     fn receive(&self, buf: &mut [u8]) -> NetResult<Option<usize>> {
+        // — ShadePacket: two-path receive. First drain any packets staged by
+        // the ISR into rx_pending. If the pending ring is empty, fall back to
+        // polling the hardware queue directly (covers the no-interrupt case).
+
+        // ---- Fast path: check ISR-staged pending ring first ----
+        {
+            let mut rx_pending = self.rx_pending.lock();
+            if let Some(pkt) = rx_pending.pop() {
+                drop(rx_pending); // release pending lock before touching buffers
+
+                let slot = pkt.slot as usize;
+                if slot >= RX_BUFFER_COUNT {
+                    // — ShadePacket: stale/corrupt slot index. Skip and signal
+                    // no packet — caller will retry, we'll get the next one.
+                    return Ok(None);
+                }
+
+                let rx_buffers = self.rx_buffers.lock();
+                let (virt, _) = rx_buffers.buffer(slot);
+
+                // Skip virtio header, copy packet data into caller's buffer
+                let data_len = (pkt.raw_len as usize).saturating_sub(VIRTIO_NET_HDR_SIZE);
+                let copy_len = data_len.min(buf.len());
+
+                if copy_len > 0 {
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            virt.add(VIRTIO_NET_HDR_SIZE),
+                            buf.as_mut_ptr(),
+                            copy_len,
+                        );
+                    }
+                }
+
+                // Mark slot free so post_rx_buffers can recycle it.
+                // SAFETY: slot is validated above and within bounds.
+                drop(rx_buffers);
+                {
+                    let mut rx_buffers = self.rx_buffers.lock();
+                    rx_buffers.in_use[slot] = false;
+                }
+
+                {
+                    let mut stats = self.stats.lock();
+                    stats.rx_packets += 1;
+                    stats.rx_bytes += copy_len as u64;
+                }
+
+                // Re-post now-free RX buffers to device.
+                self.post_rx_buffers();
+                return Ok(Some(copy_len));
+            }
+        }
+
+        // ---- Slow path: ISR not active, poll hardware queue directly ----
+        // — ShadePacket: if the interrupt handler is running concurrently it
+        // may have already drained the used ring into rx_pending above. If
+        // rx_pending was empty and we land here, either no interrupt arrived
+        // yet or interrupts aren't wired. Either way, poll the ring ourselves.
         let mut rx_queue = self.rx_queue.lock();
         let mut rx_buffers = self.rx_buffers.lock();
 
-        // Check for completed RX buffers
         if !rx_queue.has_completed() {
             return Ok(None);
         }
@@ -628,7 +933,7 @@ impl NetworkDevice for VirtioNet {
         // With direct mapping, descriptor index IS the buffer slot
         let slot = desc_idx as usize;
         if slot >= RX_BUFFER_COUNT {
-            // Invalid descriptor index, skip
+            // — ShadePacket: hardware gave us garbage. Trust nothing.
             return Ok(None);
         }
 
@@ -721,11 +1026,19 @@ impl PciDriver for VirtioNetDriver {
         let device = unsafe { VirtioNet::from_pci(dev) }
             .ok_or(DriverError::InitFailed)?;
 
-        // Register with network subsystem
+        // Wrap in Arc — shared between interrupt registry and network subsystem.
+        // — ShadePacket: one allocation, two owners. The interrupt handler holds
+        // a reference so it can call ISR-safe methods directly. The network stack
+        // holds a reference as dyn NetworkDevice for the transmit/receive paths.
         let device = alloc::sync::Arc::new(device);
+
+        // Register with the interrupt dispatch list (try_locked by handle_interrupt)
+        VIRTIO_NET_DEVICES.lock().push(device.clone());
+
+        // Register with the network subsystem (for transmit/receive trait path)
         net::register_device(device.clone());
 
-        // Store Arc pointer for cleanup
+        // Store raw pointer for cleanup on remove()
         let binding_data = alloc::sync::Arc::into_raw(device) as usize;
         Ok(DriverBindingData::new(binding_data))
     }

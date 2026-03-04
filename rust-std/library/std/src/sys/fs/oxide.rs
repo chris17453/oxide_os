@@ -54,13 +54,13 @@ impl FileAttr {
     pub fn perm(&self) -> FilePermissions { FilePermissions { mode: self.stat.mode & 0o777 } }
     pub fn file_type(&self) -> FileType { FileType { mode: self.stat.mode } }
     pub fn modified(&self) -> io::Result<SystemTime> {
-        Ok(SystemTime::from_secs(self.stat.mtime))
+        Ok(SystemTime { secs: self.stat.mtime, nanos: 0 })
     }
     pub fn accessed(&self) -> io::Result<SystemTime> {
-        Ok(SystemTime::from_secs(self.stat.atime))
+        Ok(SystemTime { secs: self.stat.atime, nanos: 0 })
     }
     pub fn created(&self) -> io::Result<SystemTime> {
-        Ok(SystemTime::from_secs(self.stat.ctime))
+        Ok(SystemTime { secs: self.stat.ctime, nanos: 0 })
     }
 }
 
@@ -164,34 +164,12 @@ impl File {
         else { Ok(()) }
     }
     pub fn set_times(&self, _times: FileTimes) -> io::Result<()> { unsupported() }
-    // — ColdCipher: Real advisory file locking via kernel flock() syscall.
-    pub fn lock(&self) -> io::Result<()> {
-        let ret = oxide_rt::fs::flock(self.0.as_raw_fd(), 2); // LOCK_EX
-        if ret < 0 { Err(io::Error::from_raw_os_error(-ret)) } else { Ok(()) }
-    }
-    pub fn lock_shared(&self) -> io::Result<()> {
-        let ret = oxide_rt::fs::flock(self.0.as_raw_fd(), 1); // LOCK_SH
-        if ret < 0 { Err(io::Error::from_raw_os_error(-ret)) } else { Ok(()) }
-    }
-    pub fn try_lock(&self) -> Result<(), crate::fs::TryLockError> {
-        let ret = oxide_rt::fs::flock(self.0.as_raw_fd(), 2 | 4); // LOCK_EX | LOCK_NB
-        if ret == 0 { Ok(()) }
-        else if ret == -11 { Err(crate::fs::TryLockError::WouldBlock) }
-        else { Err(crate::fs::TryLockError::Error(io::Error::from_raw_os_error(-ret))) }
-    }
-    pub fn try_lock_shared(&self) -> Result<(), crate::fs::TryLockError> {
-        let ret = oxide_rt::fs::flock(self.0.as_raw_fd(), 1 | 4); // LOCK_SH | LOCK_NB
-        if ret == 0 { Ok(()) }
-        else if ret == -11 { Err(crate::fs::TryLockError::WouldBlock) }
-        else { Err(crate::fs::TryLockError::Error(io::Error::from_raw_os_error(-ret))) }
-    }
-    pub fn unlock(&self) -> io::Result<()> {
-        let ret = oxide_rt::fs::flock(self.0.as_raw_fd(), 8); // LOCK_UN
-        if ret < 0 { Err(io::Error::from_raw_os_error(-ret)) } else { Ok(()) }
-    }
-    pub fn size(&self) -> Option<io::Result<u64>> {
-        Some(self.file_attr().map(|a| a.size()))
-    }
+    pub fn lock(&self) -> io::Result<()> { unsupported() }
+    pub fn lock_shared(&self) -> io::Result<()> { unsupported() }
+    pub fn try_lock(&self) -> Result<(), crate::fs::TryLockError> { Err(crate::fs::TryLockError::Error(io::Error::UNSUPPORTED_PLATFORM)) }
+    pub fn try_lock_shared(&self) -> Result<(), crate::fs::TryLockError> { Err(crate::fs::TryLockError::Error(io::Error::UNSUPPORTED_PLATFORM)) }
+    pub fn unlock(&self) -> io::Result<()> { unsupported() }
+    pub fn size(&self) -> Option<io::Result<u64>> { None }
 }
 
 impl AsInner<FileDesc> for File {
@@ -333,14 +311,14 @@ pub fn canonicalize(path: &Path) -> io::Result<PathBuf> {
 }
 
 pub fn copy(from: &Path, to: &Path) -> io::Result<u64> {
-    let mut ropts = OpenOptions::new();
-    ropts.read(true);
-    let mut reader = File::open(from, &ropts)?;
-    let mut wopts = OpenOptions::new();
-    wopts.write(true);
-    wopts.create(true);
-    wopts.truncate(true);
-    let mut writer = File::open(to, &wopts)?;
+    let mut read_opts = OpenOptions::new();
+    read_opts.read(true);
+    let mut reader = File::open(from, &read_opts)?;
+    let mut write_opts = OpenOptions::new();
+    write_opts.write(true);
+    write_opts.create(true);
+    write_opts.truncate(true);
+    let mut writer = File::open(to, &write_opts)?;
     let mut buf = [0u8; 8192];
     let mut total: u64 = 0;
     loop {

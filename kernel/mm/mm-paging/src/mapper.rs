@@ -92,12 +92,12 @@ impl PageMapper {
             let entry_phys = entry_addr - 0xFFFF_8000_0000_0000;
             if entry_phys >= 0x0c400000 && entry_phys <= 0x0c500000 {
                 unsafe {
-                    arch_x86_64::serial::write_str_unsafe("[PTE-WRITE] entry_phys=");
-                    arch_x86_64::serial::write_u64_hex_unsafe(entry_phys);
-                    arch_x86_64::serial::write_str_unsafe(" val=");
+                    os_log::write_str_raw("[PTE-WRITE] entry_phys=");
+                    os_log::write_u64_hex_raw(entry_phys);
+                    os_log::write_str_raw(" val=");
                     let val = phys.as_u64() | (flags | PageTableFlags::PRESENT).bits();
-                    arch_x86_64::serial::write_u64_hex_unsafe(val);
-                    arch_x86_64::serial::write_str_unsafe("\n");
+                    os_log::write_u64_hex_raw(val);
+                    os_log::write_str_raw("\n");
                 }
             }
         }
@@ -264,9 +264,9 @@ impl PageMapper {
             {
                 if new_table.as_u64() >= 0x0c400000 && new_table.as_u64() <= 0x0c500000 {
                     unsafe {
-                        arch_x86_64::serial::write_str_unsafe("[PT-CLEAR] phys=");
-                        arch_x86_64::serial::write_u64_hex_unsafe(new_table.as_u64());
-                        arch_x86_64::serial::write_str_unsafe("\n");
+                        os_log::write_str_raw("[PT-CLEAR] phys=");
+                        os_log::write_u64_hex_raw(new_table.as_u64());
+                        os_log::write_str_raw("\n");
                     }
                 }
             }
@@ -280,9 +280,9 @@ impl PageMapper {
                 let parent_entry_phys = parent_entry_addr - 0xFFFF_8000_0000_0000;
                 if parent_entry_phys >= 0x0c400000 && parent_entry_phys <= 0x0c500000 {
                     unsafe {
-                        arch_x86_64::serial::write_str_unsafe("[PT-ENTRY] entry_phys=");
-                        arch_x86_64::serial::write_u64_hex_unsafe(parent_entry_phys);
-                        arch_x86_64::serial::write_str_unsafe("\n");
+                        os_log::write_str_raw("[PT-ENTRY] entry_phys=");
+                        os_log::write_u64_hex_raw(parent_entry_phys);
+                        os_log::write_str_raw("\n");
                     }
                 }
             }

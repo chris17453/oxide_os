@@ -109,6 +109,11 @@ pub struct ProcessContext {
     pub ss: u64,
     /// FS base register (for Thread-Local Storage)
     pub fs_base: u64,
+    // — SableWire: User GS base. Mirrored from TaskContext.gs_base so fork/exec
+    // paths can propagate it through the ProcessContext intermediate without losing it.
+    // exec() leaves this 0 (new process has no GS TLS until it calls arch_prctl).
+    /// GS base register (for optional user TLS / runtime use)
+    pub gs_base: u64,
 }
 
 /// PID allocator

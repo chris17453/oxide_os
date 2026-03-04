@@ -357,6 +357,12 @@ impl RunQueue {
                     let delta = sched_traits::TICK_NS;
                     t.update_vruntime(delta);
 
+                    // — GraveShift: Mark that vruntime was charged this tick so
+                    // pick_next_task()'s account_stop() path doesn't bill TICK_NS
+                    // again via the delta=0 floor. One tick, one charge — not two.
+                    // This flag is cleared in pick_next_task() after the check.
+                    t.vruntime_charged_this_tick = true;
+
                     if !in_blocking_wait {
                         t.sum_exec_runtime += delta;
 

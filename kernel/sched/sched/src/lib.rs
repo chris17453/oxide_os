@@ -83,11 +83,17 @@ pub use sched_traits::{
     nice_to_weight,
 };
 
+// Re-export commonly used types from this crate
+pub use crate::core::SwitchInfo;
+
 // Re-export core functions for convenience
 pub use crate::core::{
     TaskDebugInfo,
     // Task management
     add_task,
+    add_task_to_cpu,
+    // O(1) PID-to-CPU hint table (P3.9)
+    pid_to_cpu,
     add_task_child,
     all_pids,
     block_current,
@@ -107,6 +113,8 @@ pub use crate::core::{
     get_scheduler,
     get_task_affinity,
     get_task_children,
+    // Atomic context-switch transaction (P2.1)
+    context_switch_transaction,
     // Context switching support
     get_task_context,
     get_task_exit_status,

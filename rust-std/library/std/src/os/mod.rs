@@ -155,6 +155,8 @@ pub mod ios;
 pub mod l4re;
 #[cfg(target_os = "macos")]
 pub mod macos;
+#[cfg(target_os = "motor")]
+pub mod motor;
 #[cfg(target_os = "oxide")]
 pub mod oxide;
 #[cfg(target_os = "netbsd")]
@@ -189,7 +191,7 @@ pub mod xous;
     target_os = "hermit",
     target_os = "trusty",
     target_os = "wasi",
-    target_os = "oxide",
+    target_os = "motor", target_os = "oxide",
     doc
 ))]
 pub mod fd;

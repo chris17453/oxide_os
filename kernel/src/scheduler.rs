@@ -70,7 +70,7 @@ fn handle_reschedule_ipi(_vector: u8) {
 /// switches for kernel-mode tasks unless kernel_preempt_ok is set.
 /// Without this, once idle starts running, the timer interrupt can never
 /// switch to a woken user process — the system deadlocks.
-extern "C" fn idle_loop() -> ! {
+pub extern "C" fn idle_loop() -> ! {
     loop {
         // Allow the timer interrupt to preempt us and switch to a runnable task
         arch::allow_kernel_preempt();
@@ -114,9 +114,19 @@ pub fn init() {
         idle_meta,
     );
 
-    // Set the idle task's RIP to the idle_loop function
+    // — WireSaint: BSP idle MUST have a fully valid context — rip AND rsp.
+    // TaskContext::default() leaves rsp=0. If the scheduler ever switches to idle
+    // before a timer tick overwrites the context, the frame builder computes
+    // rsp(0) - frame_size → underflow to 0xFFFFFFFFFFFFFF60 → writes the iretq
+    // frame to random kernel memory → cascading corruption. Same fix as AP idle
+    // in smp_init.rs — capture boot RSP so the initial context is sane.
+    let boot_rsp: u64;
+    unsafe {
+        core::arch::asm!("mov {}, rsp", out(reg) boot_rsp, options(nostack, nomem));
+    }
     let mut ctx = idle_task.context;
     ctx.rip = idle_loop as *const () as u64;
+    ctx.rsp = boot_rsp;
     ctx.rflags = 0x202; // IF (interrupts enabled) + reserved bit 1
     ctx.cs = 0x08; // Kernel code segment
     ctx.ss = 0x10; // Kernel data segment
@@ -631,18 +641,6 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         return current_rsp;
     }
 
-    // — GraveShift: Save kernel_preempt_ok to the OUTGOING task. The per-CPU flag
-    // alone is insufficient: when we clear it below and switch to another task,
-    // the preempted task's allow_kernel_preempt() call is "lost". On resume, the
-    // task expects preemption to be enabled (it already called allow_kernel_preempt)
-    // but the flag is false → spins on TERMINAL.lock() forever → deadlock.
-    sched::save_kernel_preempt(current_pid, kernel_preempt_ok);
-
-    // Clear the per-CPU flag. The incoming task's saved state will be restored below.
-    if kernel_preempt_ok {
-        arch::clear_kernel_preempt();
-    }
-
     // — PatchBay: Record context switch for performance monitoring
     perf::counters().record_context_switch();
 
@@ -661,7 +659,26 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         );
     }
 
-    // Save current task context from interrupt frame to scheduler's Task
+    // — SableWire: Read user GS base from KERNEL_GS_BASE (0xC0000102).
+    // In kernel context (after swapgs at ISR entry from user, or always for kernel ISR):
+    //   GS_BASE       (0xC0000101) = kernel per-CPU data
+    //   KERNEL_GS_BASE (0xC0000102) = user's saved GS value
+    // We capture it here so context switches properly restore user GS on the way out.
+    let current_gs_base: u64;
+    unsafe {
+        core::arch::asm!(
+            "mov ecx, 0xC0000102",  // MSR IA32_KERNEL_GS_BASE
+            "rdmsr",
+            "shl rdx, 32",
+            "or rax, rdx",
+            out("rax") current_gs_base,
+            out("rcx") _,
+            out("rdx") _,
+            options(nostack, preserves_flags)
+        );
+    }
+
+    // Build current task's context from interrupt frame + MSR values
     let current_ctx = sched::TaskContext {
         rip: frame.rip,
         rsp: frame.rsp,
@@ -684,19 +701,38 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         cs: frame.cs,
         ss: frame.ss,
         fs_base: current_fs_base,
+        gs_base: current_gs_base,
     };
-    sched::set_task_context(current_pid, current_ctx);
 
-    // Get next task's context switch info from the scheduler
-    let (next_ctx, next_pml4, kernel_stack, kernel_stack_size) =
-        match sched::get_task_switch_info(next_pid) {
-            Some(info) => info,
-            None => return current_rsp,
-        };
+    // — TorqueJax: One lock to rule them all.
+    // context_switch_transaction replaces five separate RQ lock acquisitions:
+    //   1. save_kernel_preempt  (outgoing task's kpo flag)
+    //   2. set_task_context     (save interrupt frame → Task.context)
+    //   3. get_task_switch_info (read incoming CR3/stack/ctx)
+    //   4. switch_to            (re-enqueue old, dequeue new, set rq.curr)
+    //   5. load_kernel_preempt  (incoming task's saved kpo flag)
+    // All five happen under a single try_with_rq. Less contention, no state
+    // drift between operations, one cache miss instead of five.
+    let switch_info = match sched::context_switch_transaction(
+        current_pid,
+        next_pid,
+        current_ctx,
+        kernel_preempt_ok,
+    ) {
+        Some(info) => info,
+        None => return current_rsp, // Lock contended or task not found — retry next tick
+    };
 
+    // Clear the per-CPU kernel-preempt flag now that we've saved it.
+    // The incoming task's flag is in switch_info.new_kpo and restored below.
+    if kernel_preempt_ok {
+        arch::clear_kernel_preempt();
+    }
+
+    let next_ctx = switch_info.new_ctx;
     let kernel_stack_top = {
-        let ks_virt = phys_to_virt(kernel_stack);
-        ks_virt.as_u64() + kernel_stack_size as u64
+        let ks_virt = phys_to_virt(switch_info.new_kernel_stack);
+        ks_virt.as_u64() + switch_info.new_kernel_stack_size as u64
     };
 
     // Debug: log context switches with process names (interrupt-safe)
@@ -769,10 +805,6 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         write_str_unsafe("\n");
     }
 
-    // Switch to next process via scheduler
-    // The scheduler handles state updates internally
-    sched::switch_to(next_pid);
-
     // ALWAYS update kernel stack pointers when switching tasks.
     // Even if the next task is currently in kernel mode (CS=0x08, preempted during
     // a syscall), it will eventually return to user mode and may make new syscalls.
@@ -786,7 +818,7 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
 
     // Switch page tables
     unsafe {
-        core::arch::asm!("mov cr3, {}", in(reg) next_pml4.as_u64());
+        core::arch::asm!("mov cr3, {}", in(reg) switch_info.new_cr3);
     }
 
     // Restore FS base MSR for next process (TLS support)
@@ -807,10 +839,30 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         }
     }
 
+    // — SableWire: Restore incoming task's user GS base to KERNEL_GS_BASE (0xC0000102).
+    // The outgoing task's user GS was saved (line ~660, rdmsr 0xC0000102) into its
+    // TaskContext.gs_base. Without restoring the incoming task's value here, the ISR
+    // exit swapgs gives the new task the OLD task's user GS. For TLS-heavy workloads
+    // (Go, Rust std) this silently corrupts thread-local storage across context switches.
+    unsafe {
+        core::arch::asm!(
+            "mov ecx, 0xC0000102",  // MSR IA32_KERNEL_GS_BASE
+            "mov rax, {gs_base}",
+            "mov rdx, {gs_base}",
+            "shr rdx, 32",
+            "wrmsr",
+            gs_base = in(reg) next_ctx.gs_base,
+            out("rax") _,
+            out("rcx") _,
+            out("rdx") _,
+            options(nostack, preserves_flags)
+        );
+    }
+
     // — GraveShift: Restore the incoming task's kernel_preempt_ok state.
     // Without this, tasks preempted mid-syscall (after allow_kernel_preempt but before
     // file.write) resume with kernel_preempt_ok=false and deadlock on contended spinlocks.
-    if sched::load_kernel_preempt(next_pid) {
+    if switch_info.new_kpo {
         arch::allow_kernel_preempt();
     }
 
@@ -828,7 +880,50 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     //
     // For user-mode tasks (CS=0x23): kernel_stack_top is correct because the user
     // task doesn't have live data on the kernel stack.
-    let is_kernel_mode = next_ctx.cs == 0x08 || (next_ctx.cs == 0 && frame.cs == 0x08);
+    // — BlackLatch: CRITICAL FIX — resolve CS first, then derive SS from it.
+    // In x86-64 long mode, interrupt delivery from ring 3→0 sets SS=0 (null selector).
+    // Task contexts can end up with ss=0 through scheduler state corruption (e.g., AP
+    // idle tasks without real Task structs, or edge cases during context_switch_transaction
+    // failures). The old code defaulted ALL zero-SS contexts to USER_DATA (0x1B). For
+    // kernel-mode returns (CS=0x08), iretq requires SS.RPL == CPL(0). SS=0x1B has RPL=3
+    // → #GP(0x18). Only two valid combos exist in our GDT:
+    //   CS=0x08 (kernel) → SS=0x10 (KERNEL_DATA)
+    //   CS=0x23 (user)   → SS=0x1B (USER_DATA)
+    // Deriving SS from CS prevents the GPF regardless of context corruption. — BlackLatch
+    let cs = if next_ctx.cs != 0 { next_ctx.cs } else { 0x23 };
+    let ss = if cs == 0x08 { 0x10 } else { 0x1B };
+    let is_kernel_mode = cs == 0x08;
+
+    // — BlackLatch: Diagnostic — catch any context that would have GPF'd before the fix.
+    // If the saved SS doesn't match what CS demands, log it so we can trace the corruption.
+    #[cfg(feature = "debug-sched")]
+    if next_ctx.cs != 0 && next_ctx.ss != ss {
+        unsafe {
+            use arch_x86_64::serial::{write_byte_unsafe, write_str_unsafe};
+            write_str_unsafe("[SCHED-GPF-GUARD] ctx.cs=0x");
+            let cs_hi = ((next_ctx.cs >> 4) & 0xF) as u8;
+            let cs_lo = (next_ctx.cs & 0xF) as u8;
+            write_byte_unsafe(if cs_hi < 10 { b'0' + cs_hi } else { b'a' + cs_hi - 10 });
+            write_byte_unsafe(if cs_lo < 10 { b'0' + cs_lo } else { b'a' + cs_lo - 10 });
+            write_str_unsafe(" ctx.ss=0x");
+            let ss_hi = ((next_ctx.ss >> 4) & 0xF) as u8;
+            let ss_lo = (next_ctx.ss & 0xF) as u8;
+            write_byte_unsafe(if ss_hi < 10 { b'0' + ss_hi } else { b'a' + ss_hi - 10 });
+            write_byte_unsafe(if ss_lo < 10 { b'0' + ss_lo } else { b'a' + ss_lo - 10 });
+            write_str_unsafe(" fixed_ss=0x");
+            let fss_hi = ((ss >> 4) & 0xF) as u8;
+            let fss_lo = (ss & 0xF) as u8;
+            write_byte_unsafe(if fss_hi < 10 { b'0' + fss_hi } else { b'a' + fss_hi - 10 });
+            write_byte_unsafe(if fss_lo < 10 { b'0' + fss_lo } else { b'a' + fss_lo - 10 });
+            write_str_unsafe(" pid=");
+            let pid_b = next_pid as u8;
+            if pid_b >= 100 { write_byte_unsafe(b'0' + (pid_b / 100)); }
+            if pid_b >= 10 { write_byte_unsafe(b'0' + ((pid_b / 10) % 10)); }
+            write_byte_unsafe(b'0' + (pid_b % 10));
+            write_str_unsafe("\n");
+        }
+    }
+
     let frame_size = core::mem::size_of::<InterruptFrame>() as u64;
     let raw_ptr = if is_kernel_mode {
         // Place below the task's saved kernel RSP (where original interrupt frame was)
@@ -843,8 +938,6 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     let new_frame_ptr = (raw_ptr & !7u64) as *mut InterruptFrame;
 
     unsafe {
-        let ss = if next_ctx.ss != 0 { next_ctx.ss } else { 0x1B };
-        let cs = if next_ctx.cs != 0 { next_ctx.cs } else { 0x23 };
 
         (*new_frame_ptr).ss = ss;
         (*new_frame_ptr).rsp = next_ctx.rsp;

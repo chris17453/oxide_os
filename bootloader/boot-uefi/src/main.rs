@@ -1,15 +1,20 @@
-//! OXIDE UEFI Bootloader
+//! OXIDE UEFI Boot Manager
 //!
-//! Loads the OXIDE kernel and transfers control to it.
+//! A cyberpunk-themed pre-boot environment with graphical kernel selection,
+//! boot option editing, and a UEFI diagnostic console. This is not your
+//! grandmother's bootloader — it has opinions about typography.
+//!
+//! Boot flow:
+//!   UEFI firmware → BOOTX64.EFI → scan kernels → graphical boot menu →
+//!   user selects/edits options → load selected kernel → pass boot options →
+//!   jump to kernel
+//!
+//! — NeonRoot: the gatekeeper before the kernel awakens
 
 #![no_std]
 #![no_main]
 #![allow(unused)]
-#![allow(deprecated)] // uefi-rs API migration pending
 
-extern crate alloc;
-
-use alloc::{format, string::String, vec::Vec};
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::ptr;
@@ -18,21 +23,23 @@ use boot_proto::{
     BOOT_INFO_MAGIC, BootInfo, FramebufferInfo, KERNEL_VIRT_BASE, MAX_MEMORY_REGIONS, MemoryRegion,
     MemoryType, PHYS_MAP_BASE, PixelFormat,
 };
-use uefi::mem::memory_map::MemoryMap;
-use uefi::prelude::*;
-use uefi::proto::console::gop::{BltOp, BltPixel, GraphicsOutput};
-use uefi::proto::media::file::{File, FileAttribute, FileInfo, FileMode, FileType};
-use uefi::proto::media::fs::SimpleFileSystem;
-use uefi::table::boot::{AllocateType, MemoryType as UefiMemoryType};
 
+mod config;
+mod console;
+mod discovery;
+mod editor;
+mod efi;
 mod elf;
+mod font;
+mod input;
+mod menu;
 mod paging;
 
-/// Kernel file path on the EFI partition
-const KERNEL_PATH: &str = "\\EFI\\OXIDE\\kernel.elf";
-
-/// Initramfs file path on the EFI partition
-const INITRAMFS_PATH: &str = "\\EFI\\OXIDE\\initramfs.cpio";
+use efi::{
+    EfiBltPixel, EfiBltOperation, EfiGraphicsOutputProtocol, EfiInputKey,
+    EfiHandle, EfiStatus, EfiSystemTable, FmtBuf,
+    EFI_SUCCESS,
+};
 
 /// Page size
 const PAGE_SIZE: u64 = 4096;
@@ -40,31 +47,101 @@ const PAGE_SIZE: u64 = 4096;
 /// Kernel stack size (256KB) — WireSaint: enough headroom for deep call chains + debug
 const KERNEL_STACK_SIZE: usize = 256 * 1024;
 
-#[entry]
-fn main() -> Status {
-    // Initialize UEFI services
-    uefi::helpers::init().expect("Failed to initialize UEFI helpers");
+#[unsafe(no_mangle)]
+pub extern "efiapi" fn efi_main(handle: EfiHandle, st: *mut EfiSystemTable) -> EfiStatus {
+    // Initialize our custom EFI bindings — SableWire: plugging in the umbilical cord
+    unsafe { efi::init(handle, st) };
 
-    // Show graphical logo (non-blocking) and continue boot
-    let _ = display_graphical_logo();
+    // — PatchBay: announce ourselves with NT-style build number
+    log_fmt(format_args!(
+        "[BOOT] OXIDE Boot Manager v{} (Build {})",
+        env!("OXIDE_VERSION_STRING"),
+        env!("OXIDE_BUILD_NUMBER")
+    ));
 
-    // Clear screen for boot process
-    clear_screen();
+    // ── Phase 1: Discovery ──
+    // — NeonRoot: scanning the ESP for signs of intelligent kernel life
 
-    // Load kernel
-    let kernel_data = match load_kernel_file() {
+    // Try config-driven discovery first, fall back to auto-scan
+    let mut boot_config = match discovery::load_config_file() {
+        Some(mut cfg) => {
+            log("[BOOT] Loaded boot.cfg");
+            discovery::validate_config_entries(&mut cfg);
+            cfg
+        }
+        None => {
+            log("[BOOT] No boot.cfg found, auto-scanning for kernels...");
+            discovery::auto_scan_kernels()
+        }
+    };
+
+    // Get screen dimensions for menu layout
+    let (screen_width, screen_height) = get_screen_dimensions();
+
+    // ── Phase 2: Menu / Selection ──
+    // — NeonRoot: the moment of choice — which kernel lives, which kernel sleeps
+
+    let mut boot_options_buf = [0u8; 256];
+    let mut boot_options_len: usize = 0;
+
+    let selected_index = if boot_config.entry_count == 0 {
+        // No kernels found — show error and wait
+        show_error_screen(screen_width, screen_height);
+        halt();
+    } else if boot_config.entry_count == 1 && boot_config.timeout_secs == 0 {
+        // Single kernel, instant boot — no menu needed
+        // — NeonRoot: one kernel to rule them all, one kernel to bind them
+        let opts = boot_config.entries[0].options_str().as_bytes();
+        let len = opts.len().min(255);
+        boot_options_buf[..len].copy_from_slice(&opts[..len]);
+        boot_options_len = len;
+        0usize
+    } else {
+        // Show graphical boot menu
+        let (idx, opts_buf, opts_len) = run_boot_menu(&mut boot_config, screen_width, screen_height);
+        boot_options_buf[..opts_len].copy_from_slice(&opts_buf[..opts_len]);
+        boot_options_len = opts_len;
+        idx
+    };
+
+    // ── Phase 3: Load and Boot ──
+    // — NeonRoot: the point of no return — next stop: kernel_main
+
+    let entry = &boot_config.entries[selected_index];
+    {
+        let mut buf = FmtBuf::<128>::new();
+        write!(buf, "[BOOT] Booting: {}", entry.label_str()).ok();
+        log(buf.as_str());
+    }
+    if boot_options_len > 0 {
+        let opts_str = core::str::from_utf8(&boot_options_buf[..boot_options_len]).unwrap_or("");
+        let mut buf = FmtBuf::<256>::new();
+        write!(buf, "[BOOT] Options: {}", opts_str).ok();
+        log(buf.as_str());
+    }
+
+    // Clear screen before kernel load
+    efi::clear_screen();
+
+    // Load kernel from the selected entry's path using page-backed allocation
+    // — SableWire: kernel ELF can be 33MB+ in debug mode — scratch arena won't cut it
+    let kernel_data = match load_kernel_from_entry(entry) {
         Ok(data) => data,
         Err(e) => {
-            log_fmt(format_args!("[ERROR] Failed to load kernel: {}", e));
+            let mut buf = FmtBuf::<128>::new();
+            write!(buf, "[ERROR] Failed to load kernel: {}", e).ok();
+            log(buf.as_str());
             halt();
         }
     };
 
     // Parse ELF
-    let elf_info = match elf::parse_elf(&kernel_data) {
+    let elf_info = match elf::parse_elf(kernel_data) {
         Ok(info) => info,
         Err(e) => {
-            log_fmt(format_args!("[ERROR] Failed to parse ELF: {}", e));
+            let mut buf = FmtBuf::<128>::new();
+            write!(buf, "[ERROR] Failed to parse ELF: {}", e).ok();
+            log(buf.as_str());
             halt();
         }
     };
@@ -72,16 +149,15 @@ fn main() -> Status {
     // Allocate memory for kernel
     let kernel_pages = (elf_info.load_size + PAGE_SIZE - 1) / PAGE_SIZE;
     let kernel_phys =
-        allocate_pages(kernel_pages as usize).expect("Failed to allocate memory for kernel");
+        efi::allocate_pages(kernel_pages as usize).expect("Failed to allocate memory for kernel");
 
-    // Load kernel segments
-    elf::load_segments(&kernel_data, &elf_info, kernel_phys);
+    // Load kernel segments into final location
+    elf::load_segments(kernel_data, &elf_info, kernel_phys);
+    // Note: kernel_data pages (LOADER_DATA) remain allocated but are dead weight
+    // after segments are copied. The kernel can reclaim them via the memory map.
 
-    // Load initramfs
-    let (initramfs_phys, initramfs_size) = match load_initramfs() {
-        Ok((phys, size)) => (phys, size),
-        Err(_) => (0, 0), // Non-fatal
-    };
+    // Load initramfs (from entry's initramfs path, or default)
+    let (initramfs_phys, initramfs_size) = load_initramfs_from_entry(entry);
 
     // Initialize graphics
     let fb_info = get_framebuffer_info();
@@ -92,64 +168,81 @@ fn main() -> Status {
     // Set up page tables
     let pml4_phys = paging::setup_page_tables(kernel_phys, elf_info.load_size);
 
-    // Allocate boot info pages
-    // BootInfo is larger than one page (~5KB due to memory_regions and video_modes arrays),
-    // so we must allocate 2 pages to avoid overwriting adjacent page table memory
-    let boot_info_phys = allocate_pages(2).expect("Failed to allocate boot info pages");
+    // Allocate boot info pages (BootInfo is ~5KB due to arrays + cmdline)
+    let boot_info_phys = efi::allocate_pages(2).expect("Failed to allocate boot info pages");
 
     // Allocate kernel stack (256KB) — GraveShift: UEFI stack is tiny & unmapped post-jump
     let stack_pages = KERNEL_STACK_SIZE / PAGE_SIZE as usize;
-    let stack_phys = allocate_pages(stack_pages).expect("Failed to allocate kernel stack");
+    let stack_phys = efi::allocate_pages(stack_pages).expect("Failed to allocate kernel stack");
     let stack_top_virt = PHYS_MAP_BASE + stack_phys + KERNEL_STACK_SIZE as u64;
 
-    // [DEBUG] Log stack allocation — ColdCipher: Verify memory map correctness
-    use core::fmt::Write;
-    let mut debug_msg = [0u8; 100];
-    let mut cursor = 0;
-    for &b in b"[BOOT-ALLOC] Stack: 0x" {
-        debug_msg[cursor] = b;
-        cursor += 1;
-    }
-    for i in (0..16).rev() {
-        let nibble = ((stack_phys >> (i * 4)) & 0xF) as u8;
-        debug_msg[cursor] = if nibble < 10 {
-            b'0' + nibble
-        } else {
-            b'a' + nibble - 10
-        };
-        cursor += 1;
-    }
-    for &b in b" size=" {
-        debug_msg[cursor] = b;
-        cursor += 1;
-    }
-    let size = KERNEL_STACK_SIZE as u64;
-    for i in (0..16).rev() {
-        let nibble = ((size >> (i * 4)) & 0xF) as u8;
-        debug_msg[cursor] = if nibble < 10 {
-            b'0' + nibble
-        } else {
-            b'a' + nibble - 10
-        };
-        cursor += 1;
-    }
-    debug_msg[cursor] = b'\n';
-    cursor += 1;
-    log(core::str::from_utf8(&debug_msg[..cursor]).unwrap_or("???"));
+    // Get memory map and exit boot services simultaneously
+    // — SableWire: the spec-required exit_boot_services dance — get map, exit, retry if stale
+    let mut mmap_buf = [0u8; 16384]; // 16KB should be enough for any memory map
+    let mut map_key: usize = 0;
+    let mut desc_size: usize = 0;
+    let mut desc_count: usize = 0;
 
-    // Get memory map AFTER all UEFI allocations
-    // CRITICAL: This must be the last step that performs UEFI allocations.
-    // The memory map must accurately reflect page table pages, boot info pages,
-    // and all other LOADER_DATA allocations so the kernel doesn't reclaim them
-    // into the buddy allocator's free list (which would corrupt page tables).
-    let mut memory_regions = get_memory_map();
+    // Parse memory map into our format BEFORE exit_boot_services
+    // We need to read the map first, then exit
+    let mut memory_regions = [MemoryRegion::empty(); MAX_MEMORY_REGIONS];
+    let mut region_count: usize = 0;
 
-    // [FIX] Verify stack allocation is in memory map — ColdCipher
-    // UEFI sometimes reports LOADER_DATA starting AFTER our allocation,
-    // leaving a gap that the kernel will try to use, causing corruption.
+    {
+        // Get memory map for our use (before exit)
+        let bs = efi::boot_services().expect("Boot services not available");
+        let mut map_size = mmap_buf.len();
+        let mut mk: usize = 0;
+        let mut ds: usize = 0;
+        let mut dv: u32 = 0;
+
+        let status = unsafe {
+            (bs.get_memory_map)(
+                &mut map_size,
+                mmap_buf.as_mut_ptr() as *mut efi::EfiMemoryDescriptor,
+                &mut mk,
+                &mut ds,
+                &mut dv,
+            )
+        };
+
+        if !efi::efi_error(status) && ds > 0 {
+            let count = map_size / ds;
+            for i in 0..count {
+                if region_count >= MAX_MEMORY_REGIONS {
+                    break;
+                }
+                let offset = i * ds;
+                let desc = unsafe {
+                    &*(mmap_buf.as_ptr().add(offset) as *const efi::EfiMemoryDescriptor)
+                };
+
+                let ty = match desc.memory_type {
+                    efi::boot_services::EFI_CONVENTIONAL_MEMORY => MemoryType::Usable,
+                    efi::boot_services::EFI_BOOT_SERVICES_CODE
+                    | efi::boot_services::EFI_BOOT_SERVICES_DATA => MemoryType::BootServices,
+                    efi::boot_services::EFI_ACPI_RECLAIM_MEMORY => MemoryType::AcpiReclaimable,
+                    efi::boot_services::EFI_ACPI_MEMORY_NVS => MemoryType::AcpiNvs,
+                    efi::boot_services::EFI_LOADER_CODE
+                    | efi::boot_services::EFI_LOADER_DATA => MemoryType::Bootloader,
+                    _ => MemoryType::Reserved,
+                };
+
+                memory_regions[region_count] = MemoryRegion::new(
+                    desc.physical_start,
+                    desc.number_of_pages * PAGE_SIZE,
+                    ty,
+                );
+                region_count += 1;
+            }
+        }
+    }
+
+    // Verify stack allocation is in memory map — ColdCipher
     let stack_end = stack_phys + KERNEL_STACK_SIZE as u64;
     let mut stack_covered = false;
-    for region in &memory_regions {
+    for i in 0..region_count {
+        let region = &memory_regions[i];
         if region.ty == MemoryType::Bootloader {
             if region.start <= stack_phys && region.start + region.len >= stack_end {
                 stack_covered = true;
@@ -158,32 +251,38 @@ fn main() -> Status {
         }
     }
 
-    if !stack_covered {
+    if !stack_covered && region_count < MAX_MEMORY_REGIONS {
         log("[BOOT-FIX] Stack allocation NOT in memory map - manually adding it");
-        // Insert stack region into memory map as Bootloader type
-        memory_regions.push(MemoryRegion::new(
+        memory_regions[region_count] = MemoryRegion::new(
             stack_phys,
             KERNEL_STACK_SIZE as u64,
             MemoryType::Bootloader,
-        ));
+        );
+        region_count += 1;
     }
 
-    // Create boot info (no UEFI allocations - struct is on stack)
     // Extract RSDP physical address from UEFI configuration tables
     // — SableWire: tapping the firmware's ACPI root before we burn the bridge
     let rsdp_phys = find_rsdp_in_config_tables();
 
-    let boot_info = create_boot_info(
+    // Create boot info with command line from selected options
+    let mut boot_info = create_boot_info(
         kernel_phys,
         elf_info.load_size,
         pml4_phys,
-        &memory_regions,
+        &memory_regions[..region_count],
         fb_info,
         video_modes,
         initramfs_phys,
         initramfs_size,
         rsdp_phys,
     );
+
+    // Copy boot options into BootInfo cmdline
+    // — BlackLatch: the last message from the boot manager before the bridge burns
+    let cmdline_len = boot_options_len.min(255);
+    boot_info.cmdline[..cmdline_len].copy_from_slice(&boot_options_buf[..cmdline_len]);
+    boot_info.cmdline_len = cmdline_len as u32;
 
     // Write boot info to the pre-allocated pages
     unsafe {
@@ -196,25 +295,30 @@ fn main() -> Status {
 
     // Show final boot message
     log("");
-    log("🚀 Boot complete! Launching OXIDE OS...");
+    log("Launching OXIDE OS...");
     log("");
 
-    // Exit boot services - after this, no more UEFI calls!
-    let st = uefi::table::system_table_boot().expect("Boot services not available");
-    unsafe {
-        st.exit_boot_services(uefi::table::boot::MemoryType::LOADER_DATA);
+    // Exit boot services — the point of no return!
+    // — SableWire: burning the bridge — after this, UEFI is dead to us
+    let exited = unsafe {
+        efi::exit_boot_services(
+            &mut mmap_buf,
+            &mut map_key,
+            &mut desc_size,
+            &mut desc_count,
+        )
+    };
+
+    if !exited {
+        // Can't even print — boot services are gone. Just halt.
+        loop { unsafe { core::arch::asm!("hlt") }; }
     }
 
     // Switch to our page tables and jump to kernel
-    // Use inline assembly to ensure correct register setup
-    // Use explicit registers to prevent the compiler from reusing registers
     unsafe {
         core::arch::asm!(
-            // Load new CR3 (switch page tables)
             "mov cr3, rax",
-            // Set up kernel stack (RSP must be set AFTER CR3 for virtual address)
             "mov rsp, rdx",
-            // Jump to kernel with boot_info in rdi (System V ABI)
             "mov rdi, rsi",
             "jmp rcx",
             in("rax") pml4_phys,
@@ -226,603 +330,299 @@ fn main() -> Status {
     }
 }
 
-/// Clear the screen
-fn clear_screen() {
-    if let Some(mut st) = uefi::table::system_table_boot() {
-        let _ = st.stdout().clear();
-    }
-}
+// ══════════════════════════════════════════════════════════════════
+// Boot Menu Orchestration
+// — NeonRoot: the conductor of the pre-boot symphony
+// ══════════════════════════════════════════════════════════════════
 
-/// Display graphical logo (if graphics available)
-fn display_graphical_logo() -> bool {
-    // Try to get graphics output protocol
-    let st = match uefi::table::system_table_boot() {
-        Some(st) => st,
-        None => return false,
-    };
-    let bs = st.boot_services();
+/// Run the graphical boot menu and return (selected_index, options_buf, options_len)
+fn run_boot_menu(
+    config: &mut config::BootConfig,
+    width: usize,
+    height: usize,
+) -> (usize, [u8; 256], usize) {
+    loop {
+        // Create menu state
+        let mut state = menu::MenuState::new(config, width, height);
 
-    // Get graphics output protocol
-    let gop_handle = match bs.get_handle_for_protocol::<GraphicsOutput>() {
-        Ok(handle) => handle,
-        Err(_) => return false,
-    };
-
-    let mut gop = match bs.open_protocol_exclusive::<GraphicsOutput>(gop_handle) {
-        Ok(gop) => gop,
-        Err(_) => return false,
-    };
-
-    let mode = gop.current_mode_info();
-    let (width, height) = mode.resolution();
-
-    // Draw a simple graphical logo
-    draw_oxide_logo(&mut *gop, width, height);
-
-    // Display text information
-    log("");
-    log("            Operating System - Version 0.1.0");
-    log("              UEFI Bootloader Starting...");
-    log("");
-
-    true
-}
-
-/// Draw the OXIDE logo graphically
-fn draw_oxide_logo(gop: &mut GraphicsOutput, width: usize, height: usize) {
-    let logo_width = 500;
-    let logo_height = 150;
-    let start_x = (width - logo_width) / 2;
-    let start_y = height / 3;
-
-    // Modern color scheme - cyberpunk aesthetic
-    // — NeonVale: these colors will burn their retinas in the best way possible
-    let oxide_orange = BltPixel::new(255, 140, 0); // Primary brand color
-    let accent_cyan = BltPixel::new(0, 255, 255); // Accent glow
-    let bg_dark = BltPixel::new(10, 10, 15); // Deep background
-
-    // Draw clean background
-    for y in start_y..start_y + logo_height {
-        for x in start_x..start_x + logo_width {
-            let _ = gop.blt(BltOp::VideoFill {
-                color: bg_dark,
-                dest: (x, y),
-                dims: (1, 1),
-            });
-        }
-    }
-
-    // Draw modern, clean OXIDE text with better spacing and proportions
-    let letter_y = start_y + 40;
-    let letter_spacing = 85;
-    draw_letter_o_modern(gop, start_x + 20, letter_y, oxide_orange, accent_cyan);
-    draw_letter_x_modern(
-        gop,
-        start_x + 20 + letter_spacing,
-        letter_y,
-        oxide_orange,
-        accent_cyan,
-    );
-    draw_letter_i_modern(
-        gop,
-        start_x + 20 + letter_spacing * 2,
-        letter_y,
-        oxide_orange,
-        accent_cyan,
-    );
-    draw_letter_d_modern(
-        gop,
-        start_x + 20 + letter_spacing * 3,
-        letter_y,
-        oxide_orange,
-        accent_cyan,
-    );
-    draw_letter_e_modern(
-        gop,
-        start_x + 20 + letter_spacing * 4,
-        letter_y,
-        oxide_orange,
-        accent_cyan,
-    );
-
-    // Draw accent line underneath
-    let line_y = start_y + logo_height - 20;
-    for x in start_x + 20..start_x + logo_width - 20 {
-        let _ = gop.blt(BltOp::VideoFill {
-            color: accent_cyan,
-            dest: (x, line_y),
-            dims: (1, 2),
+        // Render the full menu
+        with_gop(|gop| {
+            menu::render_full_menu(gop, config, &state);
         });
-    }
-}
 
-/// Modern letter drawing functions with clean, bold design
-/// — NeonVale: each glyph is a statement, not an apology
+        // Run the input event loop
+        match input::run_menu_loop(config, &mut state) {
+            input::MenuResult::Boot(idx) => {
+                let mut opts = [0u8; 256];
+                let len = get_entry_options(config, idx, &mut opts);
+                return (idx, opts, len);
+            }
+            input::MenuResult::Console => {
+                // Run diagnostic console
+                match console::run_console(config) {
+                    console::ConsoleResult::ReturnToMenu => {
+                        // Loop back to render menu again
+                        continue;
+                    }
+                    console::ConsoleResult::Boot(idx) => {
+                        let mut opts = [0u8; 256];
+                        let len = get_entry_options(config, idx, &mut opts);
+                        return (idx, opts, len);
+                    }
+                    console::ConsoleResult::ManualBoot {
+                        path,
+                        path_len,
+                        options,
+                        options_len,
+                    } => {
+                        // Create a temporary entry for manual boot
+                        let mut entry = config::BootEntry::empty();
+                        entry.path[..path_len].copy_from_slice(&path[..path_len]);
+                        entry.path_len = path_len;
+                        entry.label[..7].copy_from_slice(b"Manual ");
+                        entry.label_len = 7;
+                        entry.options[..options_len]
+                            .copy_from_slice(&options[..options_len]);
+                        entry.options_len = options_len;
+                        // Set default initramfs
+                        let ifr = b"\\EFI\\OXIDE\\initramfs.cpio";
+                        entry.initramfs_path[..ifr.len()].copy_from_slice(ifr);
+                        entry.initramfs_path_len = ifr.len();
+                        entry.valid = true;
 
-fn draw_letter_o_modern(
-    gop: &mut GraphicsOutput,
-    x: usize,
-    y: usize,
-    primary: BltPixel,
-    accent: BltPixel,
-) {
-    let width = 60;
-    let height = 70;
-    let thickness = 8;
-
-    // Draw rounded O with clean lines
-    for dy in 0..height {
-        for dx in 0..width {
-            let color = if dy < thickness || dy >= height - thickness {
-                // Top and bottom bars
-                if dx >= 10 && dx < width - 10 {
-                    Some(primary)
-                } else {
-                    None
+                        // Add to config temporarily
+                        if config.entry_count < config::MAX_ENTRIES {
+                            let idx = config.entry_count;
+                            config.entries[idx] = entry;
+                            config.entry_count += 1;
+                            let mut opts = [0u8; 256];
+                            let len = get_entry_options(config, idx, &mut opts);
+                            return (idx, opts, len);
+                        }
+                        // Config full — just boot first entry
+                        let mut opts = [0u8; 256];
+                        let len = get_entry_options(config, 0, &mut opts);
+                        return (0, opts, len);
+                    }
                 }
-            } else if dx < thickness || dx >= width - thickness {
-                // Side bars
-                Some(primary)
-            } else {
-                None
-            };
-
-            if let Some(c) = color {
-                let _ = gop.blt(BltOp::VideoFill {
-                    color: c,
-                    dest: (x + dx, y + dy),
-                    dims: (1, 1),
-                });
+            }
+            input::MenuResult::Error => {
+                // Shouldn't happen, but fall through to first entry
+                let mut opts = [0u8; 256];
+                let len = get_entry_options(config, 0, &mut opts);
+                return (0, opts, len);
             }
         }
     }
 }
 
-fn draw_letter_x_modern(
-    gop: &mut GraphicsOutput,
-    x: usize,
-    y: usize,
-    primary: BltPixel,
-    accent: BltPixel,
-) {
-    let width = 60;
-    let height = 70;
-    let thickness = 8;
+/// Show error screen when no kernels are found
+fn show_error_screen(width: usize, height: usize) {
+    with_gop(|gop| {
+        menu::render_error_screen(gop, width, height, "No bootable kernels found on ESP");
+    });
 
-    // Draw clean X with proper diagonals
-    for dy in 0..height {
-        for dx in 0..width {
-            let ratio = dy as f32 / height as f32;
-            let diag1_x = (ratio * width as f32) as usize;
-            let diag2_x = width - (ratio * width as f32) as usize;
-
-            let color = if (dx >= diag1_x.saturating_sub(thickness / 2)
-                && dx < diag1_x + thickness / 2)
-                || (dx >= diag2_x.saturating_sub(thickness / 2) && dx < diag2_x + thickness / 2)
-            {
-                Some(primary)
-            } else {
-                None
-            };
-
-            if let Some(c) = color {
-                let _ = gop.blt(BltOp::VideoFill {
-                    color: c,
-                    dest: (x + dx, y + dy),
-                    dims: (1, 1),
-                });
-            }
-        }
-    }
-}
-
-fn draw_letter_i_modern(
-    gop: &mut GraphicsOutput,
-    x: usize,
-    y: usize,
-    primary: BltPixel,
-    accent: BltPixel,
-) {
-    let width = 30;
-    let height = 70;
-    let thickness = 8;
-    let bar_width = 12;
-
-    // Draw clean I with top and bottom bars
-    for dy in 0..height {
-        for dx in 0..width {
-            let color = if dy < thickness || dy >= height - thickness {
-                // Top and bottom bars (full width)
-                Some(primary)
-            } else if dx >= (width - bar_width) / 2 && dx < (width + bar_width) / 2 {
-                // Center vertical bar
-                Some(primary)
-            } else {
-                None
-            };
-
-            if let Some(c) = color {
-                let _ = gop.blt(BltOp::VideoFill {
-                    color: c,
-                    dest: (x + dx, y + dy),
-                    dims: (1, 1),
-                });
-            }
-        }
-    }
-}
-
-fn draw_letter_d_modern(
-    gop: &mut GraphicsOutput,
-    x: usize,
-    y: usize,
-    primary: BltPixel,
-    accent: BltPixel,
-) {
-    let width = 60;
-    let height = 70;
-    let thickness = 8;
-
-    // Draw modern D shape
-    for dy in 0..height {
-        for dx in 0..width {
-            let color = if dx < thickness {
-                // Left vertical bar
-                Some(primary)
-            } else if dy < thickness || dy >= height - thickness {
-                // Top and bottom bars
-                if dx >= thickness && dx < width - 10 {
-                    Some(primary)
-                } else {
-                    None
+    // Wait for key — C opens console, anything else halts
+    loop {
+        if let Some(key) = efi::read_key() {
+            if key.scan_code == 0 && key.unicode_char != 0 {
+                let c = key.unicode_char;
+                if c == b'c' as u16 || c == b'C' as u16 {
+                    let mut empty_config = config::BootConfig::empty();
+                    let result = console::run_console(&mut empty_config);
+                    match result {
+                        console::ConsoleResult::ReturnToMenu => {
+                            // Re-show error
+                            with_gop(|gop| {
+                                menu::render_error_screen(
+                                    gop,
+                                    width,
+                                    height,
+                                    "No bootable kernels found on ESP",
+                                );
+                            });
+                            continue;
+                        }
+                        _ => return, // Console handled it
+                    }
                 }
-            } else if dx >= width - thickness {
-                // Right curved edge
-                Some(primary)
+                return;
             } else {
-                None
-            };
-
-            if let Some(c) = color {
-                let _ = gop.blt(BltOp::VideoFill {
-                    color: c,
-                    dest: (x + dx, y + dy),
-                    dims: (1, 1),
-                });
+                return;
             }
+        }
+        efi::stall(50_000);
+    }
+}
+
+/// Get the boot options bytes for an entry into a buffer. Returns length.
+fn get_entry_options(config: &config::BootConfig, idx: usize, out: &mut [u8; 256]) -> usize {
+    if idx < config.entry_count {
+        let entry = &config.entries[idx];
+        let len = entry.options_len.min(255);
+        out[..len].copy_from_slice(&entry.options[..len]);
+        len
+    } else {
+        0
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Kernel & Initramfs Loading
+// — SableWire: the file I/O layer that bridges firmware and kernel
+// ══════════════════════════════════════════════════════════════════
+
+/// Load kernel ELF from a boot entry's path into scratch arena
+fn load_kernel_from_entry(entry: &config::BootEntry) -> Result<&'static [u8], &'static str> {
+    if entry.path_len == 0 {
+        return Err("Empty kernel path");
+    }
+
+    // — SableWire: use page-backed allocation for kernel images (can be 33MB+ in debug mode)
+    // The 2MB scratch arena is for config files and small data only.
+    match discovery::load_large_file_from_esp(&entry.path, entry.path_len) {
+        Some(data) if !data.is_empty() => Ok(data),
+        Some(_) => Err("Kernel file is empty"),
+        None => {
+            // Fallback: try the hardcoded default path
+            // — SableWire: if the config lied, try the obvious place
+            load_kernel_file_default()
         }
     }
 }
 
-fn draw_letter_e_modern(
-    gop: &mut GraphicsOutput,
-    x: usize,
-    y: usize,
-    primary: BltPixel,
-    accent: BltPixel,
-) {
-    let width = 55;
-    let height = 70;
-    let thickness = 8;
+/// Load kernel from the default hardcoded path (fallback)
+fn load_kernel_file_default() -> Result<&'static [u8], &'static str> {
+    let default_path = b"\\EFI\\OXIDE\\kernel.elf";
+    discovery::load_large_file_from_esp(default_path, default_path.len())
+        .ok_or("Kernel file not found")
+}
 
-    // Draw clean E with three horizontal bars
-    for dy in 0..height {
-        for dx in 0..width {
-            let color = if dx < thickness {
-                // Left vertical bar
-                Some(primary)
-            } else if dy < thickness
-                || dy >= height - thickness
-                || (dy >= height / 2 - thickness / 2 && dy < height / 2 + thickness / 2)
-            {
-                // Top, middle, and bottom bars
-                Some(primary)
-            } else {
-                None
-            };
-
-            if let Some(c) = color {
-                let _ = gop.blt(BltOp::VideoFill {
-                    color: c,
-                    dest: (x + dx, y + dy),
-                    dims: (1, 1),
-                });
+/// Load initramfs from a boot entry's initramfs path, or the default path
+/// — SableWire: uses page-backed loading because initramfs can exceed 2MB scratch arena
+fn load_initramfs_from_entry(entry: &config::BootEntry) -> (u64, u64) {
+    // Try entry-specific initramfs path first
+    if entry.initramfs_path_len > 0 {
+        if let Some(data) =
+            discovery::load_large_file_from_esp(&entry.initramfs_path, entry.initramfs_path_len)
+        {
+            if !data.is_empty() {
+                // — SableWire: data is already in allocated pages from load_large_file_from_esp,
+                // return the physical address directly (no double-copy needed)
+                let phys_addr = data.as_ptr() as u64;
+                return (phys_addr, data.len() as u64);
             }
         }
     }
-}
 
-/// Display ASCII logo
-fn display_ascii_logo() {
-    log("");
-    log("        ██████╗ ██╗  ██╗██╗██████╗ ███████╗");
-    log("       ██╔═══██╗╚██╗██╔╝██║██╔══██╗██╔════╝");
-    log("       ██║   ██║ ╚███╔╝ ██║██║  ██║█████╗  ");
-    log("       ██║   ██║ ██╔██╗ ██║██║  ██║██╔══╝  ");
-    log("       ╚██████╔╝██╔╝ ██╗██║██████╔╝███████╗");
-    log("        ╚═════╝ ╚═╝  ╚═╝╚═╝╚═════╝ ╚══════╝");
-    log("");
-    log("            Operating System - Version 0.1.0");
-    log("              UEFI Bootloader Starting...");
-    log("");
-}
-
-/// Load the kernel file from the EFI system partition
-fn load_kernel_file() -> Result<Vec<u8>, &'static str> {
-    let st = uefi::table::system_table_boot().ok_or("No boot services")?;
-    let bs = st.boot_services();
-
-    // Get the filesystem protocol
-    let fs_handle = bs
-        .get_handle_for_protocol::<SimpleFileSystem>()
-        .map_err(|_| "No filesystem")?;
-
-    let mut fs = bs
-        .open_protocol_exclusive::<SimpleFileSystem>(fs_handle)
-        .map_err(|_| "Failed to open filesystem")?;
-
-    // Open the root directory
-    let mut root = fs.open_volume().map_err(|_| "Failed to open volume")?;
-
-    // Open the kernel file
-    let kernel_handle = root
-        .open(
-            cstr16!("\\EFI\\OXIDE\\kernel.elf"),
-            FileMode::Read,
-            FileAttribute::empty(),
-        )
-        .map_err(|_| "Kernel file not found")?;
-
-    let mut kernel_file = match kernel_handle.into_type().map_err(|_| "Invalid file type")? {
-        FileType::Regular(f) => f,
-        FileType::Dir(_) => return Err("Kernel path is a directory"),
-    };
-
-    // Get file size
-    let mut info_buf = [0u8; 256];
-    let info = kernel_file
-        .get_info::<FileInfo>(&mut info_buf)
-        .map_err(|_| "Failed to get file info")?;
-    let file_size = info.file_size() as usize;
-
-    // Read the file
-    let mut data = alloc::vec![0u8; file_size];
-    kernel_file
-        .read(&mut data)
-        .map_err(|_| "Failed to read kernel file")?;
-
-    Ok(data)
-}
-
-/// Load the initramfs file from the EFI system partition
-/// Returns (physical address, size) of the loaded initramfs
-fn load_initramfs() -> Result<(u64, u64), &'static str> {
-    let st = uefi::table::system_table_boot().ok_or("No boot services")?;
-    let bs = st.boot_services();
-
-    // Get the filesystem protocol
-    let fs_handle = bs
-        .get_handle_for_protocol::<SimpleFileSystem>()
-        .map_err(|_| "No filesystem")?;
-
-    let mut fs = bs
-        .open_protocol_exclusive::<SimpleFileSystem>(fs_handle)
-        .map_err(|_| "Failed to open filesystem")?;
-
-    // Open the root directory
-    let mut root = fs.open_volume().map_err(|_| "Failed to open volume")?;
-
-    // Open the initramfs file
-    let initramfs_handle = root
-        .open(
-            cstr16!("\\EFI\\OXIDE\\initramfs.cpio"),
-            FileMode::Read,
-            FileAttribute::empty(),
-        )
-        .map_err(|_| "Initramfs file not found")?;
-
-    let mut initramfs_file = match initramfs_handle
-        .into_type()
-        .map_err(|_| "Invalid file type")?
-    {
-        FileType::Regular(f) => f,
-        FileType::Dir(_) => return Err("Initramfs path is a directory"),
-    };
-
-    // Get file size
-    let mut info_buf = [0u8; 256];
-    let info = initramfs_file
-        .get_info::<FileInfo>(&mut info_buf)
-        .map_err(|_| "Failed to get file info")?;
-    let file_size = info.file_size() as u64;
-
-    if file_size == 0 {
-        return Err("Initramfs is empty");
+    // Fallback to default path
+    let default_path = b"\\EFI\\OXIDE\\initramfs.cpio";
+    match discovery::load_large_file_from_esp(default_path, default_path.len()) {
+        Some(data) if !data.is_empty() => {
+            let phys_addr = data.as_ptr() as u64;
+            (phys_addr, data.len() as u64)
+        }
+        _ => (0, 0), // Non-fatal — SableWire: kernel can boot without initramfs
     }
-
-    // Allocate memory for the initramfs
-    let pages = (file_size + PAGE_SIZE - 1) / PAGE_SIZE;
-    let phys_addr = allocate_pages(pages as usize).ok_or("Failed to allocate initramfs memory")?;
-
-    // Read directly into the allocated memory
-    let buffer =
-        unsafe { core::slice::from_raw_parts_mut(phys_addr as *mut u8, file_size as usize) };
-    initramfs_file
-        .read(buffer)
-        .map_err(|_| "Failed to read initramfs file")?;
-
-    Ok((phys_addr, file_size))
 }
 
-/// Allocate pages of memory
-fn allocate_pages(count: usize) -> Option<u64> {
-    let st = uefi::table::system_table_boot()?;
-    let bs = st.boot_services();
 
-    bs.allocate_pages(AllocateType::AnyPages, UefiMemoryType::LOADER_DATA, count)
-        .ok()
-}
-
-/// Get the memory map from UEFI
-fn get_memory_map() -> Vec<MemoryRegion> {
-    let st = uefi::table::system_table_boot().expect("Boot services not available");
-    let bs = st.boot_services();
-
-    let mmap = bs
-        .memory_map(UefiMemoryType::LOADER_DATA)
-        .expect("Failed to get memory map");
-
-    let mut regions = Vec::new();
-
-    for desc in mmap.entries() {
-        let ty = match desc.ty {
-            UefiMemoryType::CONVENTIONAL => MemoryType::Usable,
-            UefiMemoryType::BOOT_SERVICES_CODE | UefiMemoryType::BOOT_SERVICES_DATA => {
-                MemoryType::BootServices
-            }
-            UefiMemoryType::ACPI_RECLAIM => MemoryType::AcpiReclaimable,
-            UefiMemoryType::ACPI_NON_VOLATILE => MemoryType::AcpiNvs,
-            UefiMemoryType::LOADER_CODE | UefiMemoryType::LOADER_DATA => {
-                // [DEBUG] Log LOADER_DATA regions — ColdCipher
-                let start = desc.phys_start;
-                let end = start + desc.page_count * PAGE_SIZE;
-                if start <= 0x1c070000 && end >= 0x1c050000 {
-                    let mut debug_msg = [0u8; 100];
-                    let mut cursor = 0;
-                    for &b in b"[BOOT-MMAP] LOADER_DATA: 0x" {
-                        debug_msg[cursor] = b;
-                        cursor += 1;
-                    }
-                    for i in (0..16).rev() {
-                        let nibble = ((start >> (i * 4)) & 0xF) as u8;
-                        debug_msg[cursor] = if nibble < 10 {
-                            b'0' + nibble
-                        } else {
-                            b'a' + nibble - 10
-                        };
-                        cursor += 1;
-                    }
-                    for &b in b"-0x" {
-                        debug_msg[cursor] = b;
-                        cursor += 1;
-                    }
-                    for i in (0..16).rev() {
-                        let nibble = ((end >> (i * 4)) & 0xF) as u8;
-                        debug_msg[cursor] = if nibble < 10 {
-                            b'0' + nibble
-                        } else {
-                            b'a' + nibble - 10
-                        };
-                        cursor += 1;
-                    }
-                    debug_msg[cursor] = b'\n';
-                    cursor += 1;
-                    log(core::str::from_utf8(&debug_msg[..cursor]).unwrap_or("???"));
-                }
-                MemoryType::Bootloader
-            }
-            _ => MemoryType::Reserved,
-        };
-
-        regions.push(MemoryRegion::new(
-            desc.phys_start,
-            desc.page_count * PAGE_SIZE,
-            ty,
-        ));
-    }
-
-    regions
-}
+// ══════════════════════════════════════════════════════════════════
+// UEFI Utilities
+// — SableWire: the plumbing behind the curtain
+// ══════════════════════════════════════════════════════════════════
 
 /// Get framebuffer info from GOP
 fn get_framebuffer_info() -> Option<FramebufferInfo> {
-    let st = uefi::table::system_table_boot()?;
-    let bs = st.boot_services();
+    let gop_handle = efi::locate_handle_for_protocol(&efi::EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID)?;
+    let gop: *mut EfiGraphicsOutputProtocol = efi::handle_protocol(
+        gop_handle,
+        &efi::EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID,
+    )?;
 
-    let gop_handle = bs.get_handle_for_protocol::<GraphicsOutput>().ok()?;
-    let mut gop = bs
-        .open_protocol_exclusive::<GraphicsOutput>(gop_handle)
-        .ok()?;
+    unsafe {
+        let mode = &*(*gop).mode;
+        let info = &*mode.info;
 
-    let mode = gop.current_mode_info();
-    let mut fb = gop.frame_buffer();
+        let format = match info.pixel_format {
+            efi::gop::EfiGraphicsPixelFormat::PixelRedGreenBlueReserved8BitPerColor => PixelFormat::Rgb,
+            efi::gop::EfiGraphicsPixelFormat::PixelBlueGreenRedReserved8BitPerColor => PixelFormat::Bgr,
+            _ => PixelFormat::Unknown,
+        };
 
-    let format = match mode.pixel_format() {
-        uefi::proto::console::gop::PixelFormat::Rgb => PixelFormat::Rgb,
-        uefi::proto::console::gop::PixelFormat::Bgr => PixelFormat::Bgr,
-        _ => PixelFormat::Unknown,
-    };
-
-    Some(FramebufferInfo {
-        base: fb.as_mut_ptr() as u64,
-        size: fb.size() as u64,
-        width: mode.resolution().0 as u32,
-        height: mode.resolution().1 as u32,
-        stride: mode.stride() as u32,
-        bpp: 32,
-        format,
-    })
+        Some(FramebufferInfo {
+            base: mode.frame_buffer_base,
+            size: mode.frame_buffer_size as u64,
+            width: info.horizontal_resolution,
+            height: info.vertical_resolution,
+            stride: info.pixels_per_scan_line,
+            bpp: 32,
+            format,
+        })
+    }
 }
 
 /// Enumerate all available video modes from GOP
 fn enumerate_video_modes() -> Option<boot_proto::VideoModeList> {
     use boot_proto::{MAX_VIDEO_MODES, VideoMode, VideoModeList};
 
-    let st = uefi::table::system_table_boot()?;
-    let bs = st.boot_services();
-
-    let gop_handle = bs.get_handle_for_protocol::<GraphicsOutput>().ok()?;
-    let gop = bs
-        .open_protocol_exclusive::<GraphicsOutput>(gop_handle)
-        .ok()?;
+    let gop_handle = efi::locate_handle_for_protocol(&efi::EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID)?;
+    let gop: *mut EfiGraphicsOutputProtocol = efi::handle_protocol(
+        gop_handle,
+        &efi::EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID,
+    )?;
 
     let mut mode_list = VideoModeList::empty();
 
-    // Get current mode info to find which mode is active
-    let current_info = gop.current_mode_info();
-    let current_res = current_info.resolution();
+    unsafe {
+        let mode_ptr = (*gop).mode;
+        let current_info = &*(*mode_ptr).info;
+        let current_w = current_info.horizontal_resolution;
+        let current_h = current_info.vertical_resolution;
+        let current_stride = current_info.pixels_per_scan_line;
+        let max_mode = (*mode_ptr).max_mode;
 
-    // Iterate through all modes using the modes() iterator
-    for (mode_num, mode) in gop.modes().enumerate() {
-        if mode_list.count as usize >= MAX_VIDEO_MODES {
-            break;
+        for mode_num in 0..max_mode {
+            if mode_list.count as usize >= MAX_VIDEO_MODES {
+                break;
+            }
+
+            let mut info_size: usize = 0;
+            let mut info_ptr: *const efi::gop::EfiGraphicsOutputModeInformation = ptr::null();
+            let status = ((*gop).query_mode)(gop, mode_num, &mut info_size, &mut info_ptr);
+            if efi::efi_error(status) || info_ptr.is_null() {
+                continue;
+            }
+
+            let mode_info = &*info_ptr;
+            let format = match mode_info.pixel_format {
+                efi::gop::EfiGraphicsPixelFormat::PixelRedGreenBlueReserved8BitPerColor => PixelFormat::Rgb,
+                efi::gop::EfiGraphicsPixelFormat::PixelBlueGreenRedReserved8BitPerColor => PixelFormat::Bgr,
+                _ => PixelFormat::Unknown,
+            };
+
+            let bpp = 32u32;
+            let width = mode_info.horizontal_resolution;
+            let height = mode_info.vertical_resolution;
+            let stride = mode_info.pixels_per_scan_line;
+            let framebuffer_size = (stride as u64) * (height as u64) * ((bpp / 8) as u64);
+
+            mode_list.modes[mode_list.count as usize] = VideoMode {
+                mode_number: mode_num,
+                width,
+                height,
+                bpp,
+                format,
+                stride,
+                framebuffer_size,
+            };
+
+            if width == current_w && height == current_h && stride == current_stride {
+                mode_list.current_mode = mode_list.count;
+            }
+
+            mode_list.count += 1;
         }
-
-        let mode_info = mode.info();
-
-        let format = match mode_info.pixel_format() {
-            uefi::proto::console::gop::PixelFormat::Rgb => PixelFormat::Rgb,
-            uefi::proto::console::gop::PixelFormat::Bgr => PixelFormat::Bgr,
-            _ => PixelFormat::Unknown,
-        };
-
-        // Calculate BPP based on format
-        let bpp = match mode_info.pixel_format() {
-            uefi::proto::console::gop::PixelFormat::Rgb
-            | uefi::proto::console::gop::PixelFormat::Bgr => 32,
-            _ => 32, // Default assumption
-        };
-
-        let (width, height) = mode_info.resolution();
-        let stride = mode_info.stride() as u32;
-        let framebuffer_size = (stride as u64) * (height as u64) * ((bpp / 8) as u64);
-
-        mode_list.modes[mode_list.count as usize] = VideoMode {
-            mode_number: mode_num as u32,
-            width: width as u32,
-            height: height as u32,
-            bpp,
-            format,
-            stride,
-            framebuffer_size,
-        };
-
-        // Track which mode is current (compare by resolution as a heuristic)
-        if mode_info.resolution() == current_res && mode_info.stride() == current_info.stride() {
-            mode_list.current_mode = mode_list.count;
-        }
-
-        mode_list.count += 1;
     }
 
     if mode_list.count > 0 {
@@ -833,41 +633,69 @@ fn enumerate_video_modes() -> Option<boot_proto::VideoModeList> {
 }
 
 /// Find the ACPI RSDP physical address from UEFI configuration tables.
-///
-/// Prefers ACPI 2.0+ (XSDT capable) over legacy ACPI 1.0.
-/// Returns 0 if no RSDP is found.
-///
 /// — SableWire: scanning the firmware config table for the ACPI anchor
-fn find_rsdp_in_config_tables() -> u64 {
-    use uefi::table::cfg::{ACPI_GUID, ACPI2_GUID};
+pub fn find_rsdp_in_config_tables() -> u64 {
+    let count = efi::config_table_count();
 
-    let st = match uefi::table::system_table_boot() {
-        Some(st) => st,
-        None => return 0,
+    // Prefer ACPI 2.0 (XSDP)
+    for i in 0..count {
+        if let Some(entry) = efi::config_table_entry(i) {
+            if entry.vendor_guid == efi::ACPI_20_TABLE_GUID {
+                return entry.vendor_table as u64;
+            }
+        }
+    }
+
+    // Fallback to ACPI 1.0 (RSDP)
+    for i in 0..count {
+        if let Some(entry) = efi::config_table_entry(i) {
+            if entry.vendor_guid == efi::ACPI_TABLE_GUID {
+                return entry.vendor_table as u64;
+            }
+        }
+    }
+
+    0
+}
+
+/// Get screen dimensions from GOP
+fn get_screen_dimensions() -> (usize, usize) {
+    let gop_handle = match efi::locate_handle_for_protocol(&efi::EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID) {
+        Some(h) => h,
+        None => return (1024, 768), // — NeonRoot: sensible fallback
     };
 
-    let config_entries = st.config_table();
+    let gop: *mut EfiGraphicsOutputProtocol = match efi::handle_protocol(
+        gop_handle,
+        &efi::EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID,
+    ) {
+        Some(g) => g,
+        None => return (1024, 768),
+    };
 
-    // Prefer ACPI 2.0 RSDP (has XSDT with 64-bit pointers)
-    for entry in config_entries {
-        if entry.guid == ACPI2_GUID {
-            let addr = entry.address as u64;
-            log_fmt(format_args!("[ACPI] RSDP v2.0 found at 0x{:016x}", addr));
-            return addr;
-        }
+    unsafe {
+        let mode = &*(*gop).mode;
+        let info = &*mode.info;
+        (info.horizontal_resolution as usize, info.vertical_resolution as usize)
     }
+}
 
-    // Fall back to ACPI 1.0 RSDP (RSDT with 32-bit pointers)
-    for entry in config_entries {
-        if entry.guid == ACPI_GUID {
-            let addr = entry.address as u64;
-            log_fmt(format_args!("[ACPI] RSDP v1.0 found at 0x{:016x}", addr));
-            return addr;
-        }
-    }
+/// Helper to get GOP and run a closure with it
+pub(crate) fn with_gop(f: impl FnOnce(*mut EfiGraphicsOutputProtocol)) {
+    let gop_handle = match efi::locate_handle_for_protocol(&efi::EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID) {
+        Some(h) => h,
+        None => return,
+    };
 
-    log("[ACPI] No RSDP found in UEFI config tables");
-    0
+    let gop: *mut EfiGraphicsOutputProtocol = match efi::handle_protocol(
+        gop_handle,
+        &efi::EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID,
+    ) {
+        Some(g) => g,
+        None => return,
+    };
+
+    f(gop);
 }
 
 /// Create boot info structure
@@ -904,20 +732,248 @@ fn create_boot_info(
     info
 }
 
-/// Log a message to UEFI console
-fn log(msg: &str) {
-    if let Some(mut st) = uefi::table::system_table_boot() {
-        let _ = st.stdout().write_str(msg);
-        let _ = st.stdout().write_str("\r\n");
+// ══════════════════════════════════════════════════════════════════
+// OXIDE Logo Drawing (preserved from original)
+// — NeonVale: the iconic OXIDE wordmark, pixel by pixel
+// ══════════════════════════════════════════════════════════════════
+
+/// Draw the OXIDE logo graphically
+/// Made pub(crate) so menu.rs can call it for the boot menu header
+pub(crate) fn draw_oxide_logo(gop: *mut EfiGraphicsOutputProtocol, width: usize, height: usize) {
+    let logo_width = 500;
+    let logo_height = 150;
+    let start_x = if width >= logo_width {
+        (width - logo_width) / 2
+    } else {
+        0
+    };
+    // — NeonVale: Logo goes at the TOP. Period. Small margin so it doesn't
+    // kiss the bezel, then everything else flows below it.
+    let start_y = 20;
+
+    let oxide_orange = EfiBltPixel::new(255, 140, 0);
+    let accent_cyan = EfiBltPixel::new(0, 255, 255);
+    let bg_dark = EfiBltPixel::new(10, 10, 15);
+
+    // Draw clean background for logo area
+    font::fill_rect(gop, start_x, start_y, logo_width, logo_height, bg_dark);
+
+    // Draw modern, clean OXIDE text
+    let letter_y = start_y + 40;
+    let letter_spacing = 85;
+    draw_letter_o_modern(gop, start_x + 20, letter_y, oxide_orange, accent_cyan);
+    draw_letter_x_modern(
+        gop,
+        start_x + 20 + letter_spacing,
+        letter_y,
+        oxide_orange,
+        accent_cyan,
+    );
+    draw_letter_i_modern(
+        gop,
+        start_x + 20 + letter_spacing * 2,
+        letter_y,
+        oxide_orange,
+        accent_cyan,
+    );
+    draw_letter_d_modern(
+        gop,
+        start_x + 20 + letter_spacing * 3,
+        letter_y,
+        oxide_orange,
+        accent_cyan,
+    );
+    draw_letter_e_modern(
+        gop,
+        start_x + 20 + letter_spacing * 4,
+        letter_y,
+        oxide_orange,
+        accent_cyan,
+    );
+
+    // Accent line underneath
+    let line_y = start_y + logo_height - 20;
+    for x in start_x + 20..start_x + logo_width - 20 {
+        blt_fill(gop, accent_cyan, x, line_y, 1, 2);
     }
+}
+
+/// Helper to call GOP Blt with VideoFill
+/// — NeonVale: the atomic pixel operation — one color, one rectangle
+#[inline]
+pub(crate) fn blt_fill(
+    gop: *mut EfiGraphicsOutputProtocol,
+    color: EfiBltPixel,
+    x: usize,
+    y: usize,
+    w: usize,
+    h: usize,
+) {
+    unsafe {
+        ((*gop).blt)(
+            gop,
+            &color,
+            EfiBltOperation::BltVideoFill,
+            0, 0,
+            x, y,
+            w, h,
+            0,
+        );
+    }
+}
+
+/// Modern letter drawing functions with clean, bold design
+/// — NeonVale: each glyph is a statement, not an apology
+
+fn draw_letter_o_modern(
+    gop: *mut EfiGraphicsOutputProtocol,
+    x: usize,
+    y: usize,
+    primary: EfiBltPixel,
+    _accent: EfiBltPixel,
+) {
+    let width = 60;
+    let height = 70;
+    let thickness = 8;
+
+    for dy in 0..height {
+        for dx in 0..width {
+            let draw = if dy < thickness || dy >= height - thickness {
+                dx >= 10 && dx < width - 10
+            } else {
+                dx < thickness || dx >= width - thickness
+            };
+            if draw {
+                blt_fill(gop, primary, x + dx, y + dy, 1, 1);
+            }
+        }
+    }
+}
+
+fn draw_letter_x_modern(
+    gop: *mut EfiGraphicsOutputProtocol,
+    x: usize,
+    y: usize,
+    primary: EfiBltPixel,
+    _accent: EfiBltPixel,
+) {
+    let width = 60;
+    let height = 70;
+    let thickness = 8;
+
+    for dy in 0..height {
+        for dx in 0..width {
+            let ratio = dy as f32 / height as f32;
+            let diag1_x = (ratio * width as f32) as usize;
+            let diag2_x = width - (ratio * width as f32) as usize;
+
+            let draw = (dx >= diag1_x.saturating_sub(thickness / 2)
+                && dx < diag1_x + thickness / 2)
+                || (dx >= diag2_x.saturating_sub(thickness / 2) && dx < diag2_x + thickness / 2);
+
+            if draw {
+                blt_fill(gop, primary, x + dx, y + dy, 1, 1);
+            }
+        }
+    }
+}
+
+fn draw_letter_i_modern(
+    gop: *mut EfiGraphicsOutputProtocol,
+    x: usize,
+    y: usize,
+    primary: EfiBltPixel,
+    _accent: EfiBltPixel,
+) {
+    let width = 30;
+    let height = 70;
+    let thickness = 8;
+    let bar_width = 12;
+
+    for dy in 0..height {
+        for dx in 0..width {
+            let draw = if dy < thickness || dy >= height - thickness {
+                true
+            } else {
+                dx >= (width - bar_width) / 2 && dx < (width + bar_width) / 2
+            };
+            if draw {
+                blt_fill(gop, primary, x + dx, y + dy, 1, 1);
+            }
+        }
+    }
+}
+
+fn draw_letter_d_modern(
+    gop: *mut EfiGraphicsOutputProtocol,
+    x: usize,
+    y: usize,
+    primary: EfiBltPixel,
+    _accent: EfiBltPixel,
+) {
+    let width = 60;
+    let height = 70;
+    let thickness = 8;
+
+    for dy in 0..height {
+        for dx in 0..width {
+            let draw = if dx < thickness {
+                true
+            } else if dy < thickness || dy >= height - thickness {
+                dx >= thickness && dx < width - 10
+            } else {
+                dx >= width - thickness
+            };
+            if draw {
+                blt_fill(gop, primary, x + dx, y + dy, 1, 1);
+            }
+        }
+    }
+}
+
+fn draw_letter_e_modern(
+    gop: *mut EfiGraphicsOutputProtocol,
+    x: usize,
+    y: usize,
+    primary: EfiBltPixel,
+    _accent: EfiBltPixel,
+) {
+    let width = 55;
+    let height = 70;
+    let thickness = 8;
+
+    for dy in 0..height {
+        for dx in 0..width {
+            let draw = if dx < thickness {
+                true
+            } else {
+                dy < thickness
+                    || dy >= height - thickness
+                    || (dy >= height / 2 - thickness / 2 && dy < height / 2 + thickness / 2)
+            };
+            if draw {
+                blt_fill(gop, primary, x + dx, y + dy, 1, 1);
+            }
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Logging & Panic
+// ══════════════════════════════════════════════════════════════════
+
+/// Log a message to UEFI console
+pub(crate) fn log(msg: &str) {
+    efi::print_ascii(msg);
+    efi::print_ucs2(&[b'\r' as u16, b'\n' as u16, 0]);
 }
 
 /// Log a formatted message
 pub fn log_fmt(args: core::fmt::Arguments) {
-    if let Some(mut st) = uefi::table::system_table_boot() {
-        let _ = st.stdout().write_fmt(args);
-        let _ = st.stdout().write_str("\r\n");
-    }
+    let mut buf = FmtBuf::<512>::new();
+    let _ = buf.write_fmt(args);
+    efi::print_ascii(buf.as_str());
+    efi::print_ucs2(&[b'\r' as u16, b'\n' as u16, 0]);
 }
 
 /// Halt the CPU
@@ -931,8 +987,8 @@ fn halt() -> ! {
 fn panic(info: &PanicInfo) -> ! {
     log("");
     log("BOOTLOADER PANIC!");
-    if let Some(mut st) = uefi::table::system_table_boot() {
-        let _ = st.stdout().write_fmt(format_args!("{}\r\n", info));
-    }
+    let mut buf = FmtBuf::<512>::new();
+    let _ = write!(buf, "{}", info);
+    log(buf.as_str());
     halt()
 }

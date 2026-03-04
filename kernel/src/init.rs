@@ -64,19 +64,23 @@ impl os_log::SerialWriter for OsLogSerialWriter {
 /// Static writer for os_log (needs to live for 'static lifetime)
 static mut OS_LOG_WRITER: OsLogSerialWriter = OsLogSerialWriter;
 
-/// — PatchBay: Console-only boot writer. Serial is DEAD. All output goes to
-/// framebuffer/terminal (stderr). Early boot shows on screen, not serial port.
+/// — GraveShift: Dual-output boot writer. Every init message goes to BOTH
+/// framebuffer/terminal AND serial. The user sees it on screen, the developer
+/// sees it on COM1. No more blind spots during boot — every subsystem init
+/// is visible everywhere it should be.
 struct BootWriter {
     console_enabled: bool,
 }
 
 impl core::fmt::Write for BootWriter {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        // NO MORE SERIAL. Only write to console/terminal.
+        // — GraveShift: serial gets EVERYTHING. Screen and COM1, always.
+        arch::serial::write_str(s);
+
+        // Screen output: terminal if ready, raw framebuffer if not
         if self.console_enabled {
             console::console_write(s.as_bytes());
         } else if fb::is_initialized() {
-            // Before terminal is ready, write to basic framebuffer
             for byte in s.bytes() {
                 fb::putchar(byte as char);
             }
@@ -118,45 +122,19 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Initialize serial port first for early debugging
     arch::serial_init();
 
-    // Enable SMAP (Supervisor Mode Access Prevention) if supported
-    // SMAP allows STAC/CLAC instructions to work properly
-    // Note: qemu64 CPU doesn't support SMAP, so STAC/CLAC will cause INVALID OPCODE
-    unsafe {
-        // Check if SMAP is supported via CPUID (EAX=7, ECX=0): SMAP = EBX bit 20
-        let ebx_out: u32;
-        core::arch::asm!(
-            "push rbx",           // Save RBX (callee-saved)
-            "mov eax, 7",
-            "xor ecx, ecx",
-            "cpuid",
-            "mov {0:e}, ebx",      // Move EBX to output without using EBX as constraint
-            "pop rbx",            // Restore RBX
-            out(reg) ebx_out,
-            out("eax") _,
-            out("ecx") _,
-            out("edx") _,
-        );
-
-        let smap_supported = (ebx_out & (1 << 20)) != 0;
-        if smap_supported {
-            // — PatchBay: NO SERIAL. Early messages suppressed until framebuffer ready.
-            // SMAP detection happens but message waits for proper output.
-            // TODO: Fix SMAP - there's a complex timing issue where AC gets cleared between
-            // syscalls. The STAC/CLAC coverage is correct, but something else is clearing AC.
-            // For now, disable SMAP to get the system working.
-            // let mut cr4: u64;
-            // core::arch::asm!("mov {}, cr4", out(reg) cr4, options(nomem, nostack));
-            // cr4 |= 1 << 21; // Set SMAP bit (bit 21)
-            // core::arch::asm!("mov cr4, {}", in(reg) cr4, options(nostack));
-        }
-    }
+    // — ColdCipher: P3.1 — SMEP + SMAP are now armed inside arch::init(), which
+    // is called below after the GDT/IDT are live. The old stub here is gone.
+    // P1.3 already fixed SFMASK to clear AC on every syscall entry (0x44700).
+    // arch::enable_smap_smep() wires up CR4.SMEP (bit 20) + CR4.SMAP (bit 21)
+    // on the BSP. APs arm the same bits in their init_ap() call from smp_init.rs.
+    // STAC/CLAC in uaccess.rs now enforce hardware-backed user-space isolation.
 
     // Register os_log writers — normal (locking) + ISR-safe (lock-free)
     // SAFETY: OS_LOG_WRITER is static and serial::init() has been called.
     // The unsafe writer fns do raw port I/O without any locks.
     unsafe {
         os_log::register_writer(&mut *addr_of_mut!(OS_LOG_WRITER));
-        // — PatchBay: NO MORE SERIAL. Everything goes to console (stderr) now.
+        // — GraveShift: ISR-safe path → serial via lock-free port I/O
         os_log::register_unsafe_writer(console::write_byte_unsafe, console::write_str_unsafe);
     }
 
@@ -164,20 +142,39 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         console_enabled: false,
     };
 
-    // Print boot banner
+    // Parse kernel command line from boot manager (before anything uses the options)
+    // — GraveShift: the kernel's first act of introspection
+    crate::cmdline::parse_cmdline(boot_info);
+
+    // Print boot banner — GraveShift: the kernel announces itself to the void
     let _ = writeln!(writer);
     let _ = writeln!(writer, "========================================");
     let _ = writeln!(writer, "  OXIDE Operating System");
-    let _ = writeln!(writer, "  Version 0.1.0");
+    let _ = writeln!(
+        writer,
+        "  Version {} (Build {})",
+        env!("OXIDE_VERSION_STRING"),
+        env!("OXIDE_BUILD_NUMBER")
+    );
     let _ = writeln!(writer, "========================================");
     let _ = writeln!(writer);
+
+    // Log command line if present
+    if let Some(cmdline) = boot_info.cmdline() {
+        let _ = writeln!(writer, "  Cmdline: {}", cmdline);
+    }
 
     let _ = writeln!(writer, "[INFO] Kernel started on x86_64");
     let _ = writeln!(writer, "[INFO] Serial output initialized");
     let _ = writeln!(writer);
     let _ = writeln!(writer, "[CONFIG] System Configuration:");
     let _ = writeln!(writer, "[CONFIG]   OS Type:      OXIDE Operating System");
-    let _ = writeln!(writer, "[CONFIG]   Version:      0.1.0");
+    let _ = writeln!(
+        writer,
+        "[CONFIG]   Version:      {}.{}",
+        env!("OXIDE_VERSION_STRING"),
+        env!("OXIDE_BUILD_NUMBER")
+    );
     let _ = writeln!(writer, "[CONFIG]   Architecture: x86_64");
     let _ = writeln!(writer, "[CONFIG]   Target:       x86_64-unknown-none");
 
@@ -474,16 +471,29 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         "[INFO] Memory manager initialized (buddy allocator)"
     );
 
+    // — GraveShift: Verify free list integrity RIGHT AFTER init.
+    // If corruption exists here, it was introduced during init (not by later code).
+    // If clean here but corrupt later, something post-init stomps free list pages.
+    MEMORY_MANAGER.verify_free_lists();
+
+    // — ColdCipher: Dump memory map entries near the corrupted addresses.
+    // Previous investigation found corruption at 0x1ff13000 and 0x1feea000.
+    // Print every region overlapping 0x1fe00000-0x20000000 to see what type they are.
+    let _ = writeln!(writer, "[DIAG] Memory map entries near top of RAM (0x1fe00000-0x20000000):");
+    for region in boot_info.memory_regions() {
+        let region_end = region.start + region.len;
+        // Check overlap with 0x1fe00000-0x20000000
+        if region.start < 0x2000_0000 && region_end > 0x1fe0_0000 {
+            let _ = writeln!(
+                writer,
+                "[DIAG]   {:#010x}-{:#010x} ({:>7} KB) {:?}",
+                region.start, region_end, region.len / 1024, region.ty,
+            );
+        }
+    }
+
     let total_bytes = MEMORY_MANAGER.total_bytes();
     let free_bytes = MEMORY_MANAGER.free_bytes();
-    // — GraveShift: dump memory info to serial for 256M investigation
-    unsafe {
-        os_log::write_str_raw("[MEM] total=0x");
-        arch::serial::write_u64_hex_unsafe(total_bytes as u64);
-        os_log::write_str_raw(" free=0x");
-        arch::serial::write_u64_hex_unsafe(free_bytes as u64);
-        os_log::write_str_raw("\n");
-    }
     let _ = writeln!(
         writer,
         "[INFO] Total memory: {} MB ({} bytes)",
@@ -500,18 +510,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Initialize framebuffer if available
     if let Some(ref fb_info) = boot_info.framebuffer {
         let _ = writeln!(writer, "[INFO] Initializing framebuffer...");
-        // — GraveShift: dump FB address to serial — hunting the 256M framebuffer ghost
-        unsafe {
-            os_log::write_str_raw("[FB] base=0x");
-            arch::serial::write_u64_hex_unsafe(fb_info.base);
-            os_log::write_str_raw(" ");
-            arch::serial::write_u64_hex_unsafe(fb_info.width as u64);
-            os_log::write_str_raw("x");
-            arch::serial::write_u64_hex_unsafe(fb_info.height as u64);
-            os_log::write_str_raw(" phys_map=0x");
-            arch::serial::write_u64_hex_unsafe(boot_info.phys_map_base);
-            os_log::write_str_raw("\n");
-        }
         let _ = writeln!(
             writer,
             "[INFO] Framebuffer: {}x{} @ {:#x}",
@@ -701,6 +699,24 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                 .expect("Failed to allocate AP stack");
             let ap_stack_virt = mm_paging::phys_to_virt(ap_stack_phys).as_u64() + (4 * 4096);
 
+            // Register the APIC ID → logical cpu_id mapping in the GDT module
+            // BEFORE sending the SIPI. ap_entry_rust reads APIC ID and calls
+            // gdt::init_cpu using this pre-registered map.
+            //
+            // — WireSaint: If we skip this, ap_entry_rust can't find its cpu_id
+            // and falls back to slot 0 — clobbering the BSP's GDT. That's a
+            // bad time. Register first, then wake the AP.
+            if let Some(apic_id) = smp::cpu::get_apic_id(cpu_id) {
+                unsafe {
+                    arch::gdt::register_cpu(apic_id as u8, cpu_id as usize);
+                }
+                let _ = writeln!(
+                    writer,
+                    "[SMP] Registered cpu_id={} apic_id={} in GDT map",
+                    cpu_id, apic_id
+                );
+            }
+
             // Set up trampoline code at 0x8000 (rewritten per AP)
             unsafe {
                 arch::ap_boot::setup_trampoline(
@@ -828,6 +844,12 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     for driver_name in pci_drivers.iter() {
         let _ = writeln!(writer, "[DRIVER]   - {}", driver_name);
     }
+
+    // — GraveShift: Second verification checkpoint — after SMP boot and driver
+    // probing, which are the prime suspects for DMA-related corruption.
+    // If the first verify (right after buddy init) was clean but THIS one is dirty,
+    // the corruption was introduced by SMP init or VirtIO driver probing.
+    MEMORY_MANAGER.verify_free_lists();
 
     // — InputShade: VirtIO input devices are probed by driver_core above.
     // No more double-probing with probe_all_pci() — the PciDriver::probe()
@@ -1900,15 +1922,25 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     // Allocate kernel stack for syscalls and interrupts
     let _ = writeln!(writer, "[USER] Allocating kernel stack...");
-    // Allocate 128KB kernel stack - fork+COW uses ~67KB during deep recursion
+    // — BlackLatch: Allocate (stack_pages + 1) contiguous frames.
+    // Bottom frame = guard (PTE will be cleared). Stack lives in the pages above.
+    // 128KB stack + 4KB guard = 33 pages total.
     const KERNEL_STACK_SIZE: usize = 128 * 1024;
     let kernel_stack_pages = KERNEL_STACK_SIZE / 4096;
-    let kernel_stack_phys = mm_manager::mm()
-        .alloc_contiguous(kernel_stack_pages)
-        .expect("Failed to allocate kernel stack");
+    let total_stack_pages = kernel_stack_pages + 1; // +1 for guard page
+    let guard_and_stack_base = mm_manager::mm()
+        .alloc_contiguous(total_stack_pages)
+        .expect("Failed to allocate guarded kernel stack");
+    // Guard page = guard_and_stack_base. Real stack starts one page above.
+    let guard_phys_init = guard_and_stack_base;
+    let kernel_stack_phys = os_core::PhysAddr::new(guard_and_stack_base.as_u64() + 4096);
     // Convert physical to virtual for the kernel to use
     let kernel_stack_virt = phys_to_virt(kernel_stack_phys);
     let kernel_stack_top = kernel_stack_virt.as_u64() + KERNEL_STACK_SIZE as u64;
+    // — BlackLatch: Unmap the guard page PTE so overflow causes an immediate #PF.
+    unsafe {
+        crate::kstack_guard::unmap_guard_page(guard_phys_init);
+    }
 
     // Set kernel stack for:
     // 1. Syscalls (stored in GS base for syscall handler)
@@ -1972,12 +2004,20 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Set cmdline for init so ps shows it correctly
     init_meta.cmdline = alloc::vec![alloc::string::String::from("/init")];
 
+    // — BlackLatch: Register the guarded kernel stack allocation in owned_frames
+    // so ProcessMeta Drop frees the full buddy block (guard + stack pages).
+    // Also register the guard address so Drop remaps it before freeing.
+    init_meta.add_owned_frames(guard_phys_init, total_stack_pages);
+    init_meta.add_guard_page(guard_phys_init);
+
     // Wrap in Arc<Mutex<>> for Task
     let init_meta_arc = Arc::new(spin::Mutex::new(init_meta));
 
-    // Create a Task for init with the ProcessMeta
+    // — NeonRoot: Defense-in-depth — stamp init's context before enqueue.
+    // Timer doesn't start until L2031, so no actual race here, but future-proof
+    // against anyone moving start_timer() earlier. Same pattern as fork/clone.
     let _ = writeln!(writer, "[USER] Adding init to scheduler...");
-    let init_task = sched::Task::new_with_meta(
+    let mut init_task = sched::Task::new_with_meta(
         init_pid,
         0, // ppid
         kernel_stack_phys,
@@ -1987,8 +2027,16 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         user_stack_top.as_u64(),
         init_meta_arc.clone(),
     );
+    init_task.context = sched::TaskContext {
+        rip: elf.entry_point().as_u64(),
+        rsp: user_stack_top.as_u64(),
+        rflags: 0x202,
+        cs: 0x23,
+        ss: 0x1B,
+        ..Default::default()
+    };
 
-    // Add to scheduler
+    // Add to scheduler — context is fully initialized
     sched::add_task(init_task);
     let _ = writeln!(writer, "[USER] Calling sched::switch_to...");
     sched::switch_to(init_pid); // Mark init as the currently running task
@@ -2015,7 +2063,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     //
     // CRITICAL: No writeln! after start_timer — the timer fires every 10ms and
     // terminal_tick/scheduler_tick can run. Lock-free writes only via os_log.
-    // — PatchBay: NO MORE SERIAL. os_log routes to console now.
+    // — GraveShift: os_log::write_str_raw → serial via lock-free port I/O.
 
     unsafe {
         os_log::write_str_raw("[INFO] Starting APIC timer at 100Hz...\n");

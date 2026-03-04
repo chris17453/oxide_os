@@ -478,13 +478,13 @@ impl TerminalEmulator {
                     }
                 }
 
-                // — GraveShift: Smart dirty marking - don't nuke the entire screen for cursor moves.
+                // — NeonVale: Smart dirty marking - don't nuke the entire screen for cursor moves.
                 // Previously mark_all_dirty() was called unconditionally, causing ~24x more row
                 // renders than needed. Now we classify CSI commands:
                 // - Cursor-only (ABCDEFGH, f, d, s, u): no marking needed (renderer handles cursor)
                 // - Attribute-only (m): no marking needed (takes effect on next writes)
-                // - Single-row (K): mark cursor row only
-                // - Multi-row (J, L, M, P, S, T, X, @, etc): mark all
+                // - Single-row (K, @, P, X): mark cursor row only
+                // - Multi-row (J, L, M, S, T, etc): mark all
                 match final_char {
                     // Cursor movement - renderer tracks cursor row changes automatically
                     b'A' | b'B' | b'C' | b'D' | b'E' | b'F' | b'G' | b'H' | b'f' | b'd' |
@@ -497,8 +497,16 @@ impl TerminalEmulator {
                     // EL (erase line) - only affects cursor row
                     b'K' => self.renderer.mark_dirty(self.handler.cursor.row),
 
+                    // — NeonVale: ICH/DCH/ECH all shuffle or blank cells within the cursor row only.
+                    // No scroll, no line insertion — single-row repaint is all we owe the display.
+                    // Full-screen invalidation for a 5-cell shift? Not on my watch.
+                    b'@' | // ICH - Insert Character: shifts cells right within cursor row
+                    b'P' | // DCH - Delete Character: shifts cells left within cursor row
+                    b'X'   // ECH - Erase Character: blanks N cells from cursor col, cursor row
+                    => self.renderer.mark_dirty(self.handler.cursor.row),
+
                     // Everything else might affect multiple rows - mark all dirty
-                    // J (ED), L (IL), M (DL), P (DCH), S (SU), T (SD), X (ECH), @ (ICH),
+                    // J (ED), L (IL), M (DL), S (SU), T (SD),
                     // r (DECSTBM), h/l (modes), etc.
                     _ => self.renderer.mark_all_dirty(),
                 }
@@ -1581,12 +1589,22 @@ impl TerminalEmulator {
         self.renderer.invalidate();
     }
 
-    /// Toggle cursor blink state (called by timer)
+    /// Toggle cursor blink state (called by timer ISR)
+    ///
+    /// — GraveShift: ISR-lightweight cursor blink. The old code called the full
+    /// renderer.render() path which incremented blink_counter, and every 15 frames
+    /// hit mark_all_dirty() → full-screen back-buffer render → 3MB MMIO blit via
+    /// rep movsq. Each MMIO write is a KVM exit or TCG simulation step. At 384K
+    /// writes per blit × ~2us per exit = 768ms with interrupts disabled. The BSP
+    /// goes dark for nearly a second, starving every other CPU waiting for IPI ack.
+    /// The perf counter showed max timer ISR = 1.7 BILLION cycles. That's this blit.
+    ///
+    /// Fix: only repaint the cursor cell (erase old + paint new) and blit just those
+    /// 1-2 rows (~16KB). Text blink (BLINK attribute) is deferred to process-context
+    /// writes — nobody uses blinking text in 2026 anyway. — GraveShift
     pub fn toggle_cursor_blink(&mut self) {
         self.handler.cursor.blink_on = !self.handler.cursor.blink_on;
-        // Push selection state before borrowing buffer
-        self.push_selection_to_renderer();
-        // Always render so the previous cursor cell is cleared; mark both rows dirty happens in renderer
+
         let is_alt = self.handler.modes.contains(TerminalModes::ALT_SCREEN);
         let buffer = if is_alt {
             &self.alternate
@@ -1594,7 +1612,12 @@ impl TerminalEmulator {
             &self.primary
         };
         let cursor = self.handler.cursor;
-        self.renderer.render(buffer, &cursor);
+
+        // Erase cursor from previous position, paint at current, blit only affected rows
+        self.renderer.erase_cursor(buffer);
+        self.renderer.paint_cursor(buffer, &cursor);
+        self.renderer.update_cursor_tracking(&cursor);
+        self.renderer.flush_fb();
     }
 
     /// Scroll up in scrollback (for viewing history)
@@ -1757,6 +1780,89 @@ static TERMINAL: Mutex<Option<TerminalEmulator>> = Mutex::new(None);
 /// Atomic flag for lock-free initialization check (safe from interrupt context)
 static TERMINAL_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// INPUT LOCK — P3.5 Terminal Lock Splitting
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// — NeonVale: One lock to write glyphs. Another to query mouse state.
+// The timer ISR wants to know if the mouse is in tracking mode before
+// generating escape sequences. Previously, it had to try_lock the entire
+// TERMINAL — which is held for the duration of every sys_write() call.
+// Result: ISR drops mouse events whenever a process is printing.
+//
+// Fix: mirror the handful of mouse-routing fields into a lightweight
+// MouseInputState behind its own lock. ISR only touches MOUSE_INPUT —
+// never TERMINAL — so it's uncontended during writes. Write path updates
+// MOUSE_INPUT after each terminal.write() call finishes.
+//
+// LOCK ORDER (must be respected, or we get lock inversion):
+//   1. TERMINAL  (write path, outer lock)
+//   2. MOUSE_INPUT (update path, inner lock — acquired AFTER releasing TERMINAL)
+//
+// ISR callers MUST use try_lock on MOUSE_INPUT — never blocking lock().
+// — NeonVale
+
+/// State snapshot replicated from TerminalEmulator for ISR-safe mouse reads.
+///
+/// — NeonVale: All fields are write-path-set, ISR-path-read. MOUSE_INPUT is
+/// updated after every terminal.write() / init / update_framebuffer call.
+/// The ISR reads a snapshot — stale by at most one write call (~16ms at 60fps).
+/// Good enough for 200Hz mouse polling. Nobody notices a one-frame lag. — NeonVale
+struct MouseInputState {
+    /// Current mouse tracking mode (None / X10 / Normal / ButtonMotion / AnyMotion)
+    mouse_mode: MouseMode,
+    /// Mouse escape sequence encoding (X10 / Utf8 / SGR / Urxvt)
+    mouse_encoding: MouseEncoding,
+    /// Cell width in pixels — for px→col coordinate conversion
+    cell_width: u32,
+    /// Cell height in pixels — for px→row coordinate conversion
+    cell_height: u32,
+    /// Terminal column count — for clamping cell coordinates
+    cols: u32,
+    /// Terminal row count — for clamping cell coordinates
+    rows: u32,
+}
+
+impl MouseInputState {
+    const fn default() -> Self {
+        MouseInputState {
+            mouse_mode: MouseMode::None,
+            mouse_encoding: MouseEncoding::X10,
+            cell_width: 0,
+            cell_height: 0,
+            cols: 0,
+            rows: 0,
+        }
+    }
+}
+
+/// ISR-facing mouse input state — lightweight, low-contention lock.
+///
+/// — NeonVale: MOUSE_INPUT is the bouncer at the ISR door. Tiny struct,
+/// tiny lock, never held for more than a microsecond. No glyph rendering,
+/// no dirty tracking, no scrollback compositing behind this lock.
+/// ISR can always grab it — even during a 4KB write to the terminal.
+static MOUSE_INPUT: Mutex<MouseInputState> = Mutex::new(MouseInputState::default());
+
+/// Sync MOUSE_INPUT from the live TerminalEmulator state.
+///
+/// — NeonVale: Called AFTER releasing TERMINAL lock — never while holding it.
+/// Lock order: TERMINAL first (held during write), MOUSE_INPUT second (held
+/// during update). ISR only holds MOUSE_INPUT. No deadlock possible.
+///
+/// # Safety: caller must NOT hold TERMINAL lock when calling this.
+fn sync_mouse_input(terminal: &TerminalEmulator) {
+    // — NeonVale: Blocking lock is fine here — we're in process context
+    // (post write() call), never in ISR. The lock is held for ~100ns.
+    let mut state = MOUSE_INPUT.lock();
+    state.mouse_mode = terminal.handler.mouse_mode;
+    state.mouse_encoding = terminal.handler.mouse_encoding;
+    state.cell_width = terminal.cell_width;
+    state.cell_height = terminal.cell_height;
+    state.cols = terminal.cols;
+    state.rows = terminal.rows;
+}
+
 /// Callback type for terminal query responses (DSR, DA, etc.)
 ///
 /// When terminal receives query sequences like CSI 6 n (cursor position request),
@@ -1808,6 +1914,9 @@ pub static TERMINAL_WRITE_BYTES: core::sync::atomic::AtomicU64 =
 /// Initialize global terminal with framebuffer
 pub fn init(fb: Arc<dyn Framebuffer>) {
     let terminal = TerminalEmulator::new(fb);
+    // — NeonVale: Sync mouse state before marking initialized, so ISR can
+    // safely read MOUSE_INPUT from the moment TERMINAL_INITIALIZED goes true.
+    sync_mouse_input(&terminal);
     *TERMINAL.lock() = Some(terminal);
     TERMINAL_INITIALIZED.store(true, Ordering::Release);
 }
@@ -1823,10 +1932,37 @@ pub fn is_initialized() -> bool {
 /// a full repaint so every glyph reaches the display. Called once from init.rs after
 /// driver_core::probe_all_devices().
 pub fn update_framebuffer(fb: Arc<dyn Framebuffer>) {
-    if let Some(ref mut terminal) = *TERMINAL.lock() {
-        terminal.renderer.update_framebuffer(fb);
-        terminal.renderer.invalidate();
-        terminal.render();
+    // — NeonVale: Take a snapshot for MOUSE_INPUT after the framebuffer swap —
+    // cell_width/cell_height may change if the new fb has different pixel density.
+    let snapshot = {
+        let mut guard = TERMINAL.lock();
+        if let Some(ref mut terminal) = *guard {
+            terminal.renderer.update_framebuffer(fb);
+            terminal.renderer.invalidate();
+            terminal.render();
+            // Capture snapshot while we still hold TERMINAL — released before sync.
+            Some((
+                terminal.handler.mouse_mode,
+                terminal.handler.mouse_encoding,
+                terminal.cell_width,
+                terminal.cell_height,
+                terminal.cols,
+                terminal.rows,
+            ))
+        } else {
+            None
+        }
+    }; // — NeonVale: TERMINAL lock released here — BEFORE we grab MOUSE_INPUT.
+    // This is the lock order guarantee: TERMINAL is never held when MOUSE_INPUT
+    // is acquired. ISR only takes MOUSE_INPUT. No inversion possible. — NeonVale
+    if let Some((mm, me, cw, ch, cols, rows)) = snapshot {
+        let mut state = MOUSE_INPUT.lock();
+        state.mouse_mode = mm;
+        state.mouse_encoding = me;
+        state.cell_width = cw;
+        state.cell_height = ch;
+        state.cols = cols;
+        state.rows = rows;
     }
 }
 
@@ -1854,17 +1990,46 @@ pub fn write(data: &[u8]) {
         core::arch::asm!("stac", options(nomem, nostack));
     }
 
-    {
+    // — NeonVale: Snapshot mouse state after write — write() may process escape
+    // sequences that toggle mouse tracking mode (e.g., CSI ?1000h / ?1000l).
+    // We capture the snapshot while holding TERMINAL, then release TERMINAL
+    // BEFORE acquiring MOUSE_INPUT to respect lock order.
+    let mouse_snapshot = {
         let mut guard = TERMINAL.lock();
-
         if let Some(ref mut terminal) = *guard {
             terminal.write(data);
+            // Capture only if mouse-relevant fields may have changed.
+            // We always capture — the escape sequence parser doesn't tell us
+            // which fields it touched, and the copy is 6 words. Cheap. — NeonVale
+            Some((
+                terminal.handler.mouse_mode,
+                terminal.handler.mouse_encoding,
+                terminal.cell_width,
+                terminal.cell_height,
+                terminal.cols,
+                terminal.rows,
+            ))
+        } else {
+            None
         }
-    }
+    }; // — NeonVale: TERMINAL released. Now safe to acquire MOUSE_INPUT.
 
     // — SableWire: Disable access to user pages (CLAC)
     unsafe {
         core::arch::asm!("clac", options(nomem, nostack));
+    }
+
+    // — NeonVale: Update the ISR-facing mouse state mirror. This lock is
+    // never held during framebuffer rendering — just 6 word copies.
+    // ISR can try_lock this without ever racing the write path. — NeonVale
+    if let Some((mm, me, cw, ch, cols, rows)) = mouse_snapshot {
+        let mut state = MOUSE_INPUT.lock();
+        state.mouse_mode = mm;
+        state.mouse_encoding = me;
+        state.cell_width = cw;
+        state.cell_height = ch;
+        state.cols = cols;
+        state.rows = rows;
     }
 }
 
@@ -1906,8 +2071,32 @@ pub fn toggle_cursor_blink() {
 
 /// Reset terminal
 pub fn reset() {
-    if let Some(ref mut terminal) = *TERMINAL.lock() {
-        terminal.reset();
+    // — NeonVale: reset() sets mouse_mode = None — sync the snapshot so ISR
+    // doesn't see stale mouse mode after terminal reset. — NeonVale
+    let mouse_snapshot = {
+        let mut guard = TERMINAL.lock();
+        if let Some(ref mut terminal) = *guard {
+            terminal.reset();
+            Some((
+                terminal.handler.mouse_mode,
+                terminal.handler.mouse_encoding,
+                terminal.cell_width,
+                terminal.cell_height,
+                terminal.cols,
+                terminal.rows,
+            ))
+        } else {
+            None
+        }
+    };
+    if let Some((mm, me, cw, ch, cols, rows)) = mouse_snapshot {
+        let mut state = MOUSE_INPUT.lock();
+        state.mouse_mode = mm;
+        state.mouse_encoding = me;
+        state.cell_width = cw;
+        state.cell_height = ch;
+        state.cols = cols;
+        state.rows = rows;
     }
 }
 
@@ -1931,20 +2120,43 @@ pub fn tick() {
 /// Write and immediately render (for urgent/interactive output)
 /// NOTE: data may point to user memory, so we need STAC/CLAC for SMAP
 /// — WireSaint: Same bounded-spin diagnostic pattern as write().
+/// — NeonVale: Syncs MOUSE_INPUT after write_immediate for the same reason
+/// as write() — escape sequences inside data may change mouse mode. — NeonVale
 pub fn write_immediate(data: &[u8]) {
     unsafe {
         core::arch::asm!("stac", options(nomem, nostack));
     }
 
-    {
+    // — NeonVale: Capture snapshot after write, release TERMINAL before MOUSE_INPUT.
+    let mouse_snapshot = {
         let mut guard = TERMINAL.lock();
         if let Some(ref mut terminal) = *guard {
             terminal.write_immediate(data);
+            Some((
+                terminal.handler.mouse_mode,
+                terminal.handler.mouse_encoding,
+                terminal.cell_width,
+                terminal.cell_height,
+                terminal.cols,
+                terminal.rows,
+            ))
+        } else {
+            None
         }
-    }
+    }; // — NeonVale: TERMINAL released here.
 
     unsafe {
         core::arch::asm!("clac", options(nomem, nostack));
+    }
+
+    if let Some((mm, me, cw, ch, cols, rows)) = mouse_snapshot {
+        let mut state = MOUSE_INPUT.lock();
+        state.mouse_mode = mm;
+        state.mouse_encoding = me;
+        state.cell_width = cw;
+        state.cell_height = ch;
+        state.cols = cols;
+        state.rows = rows;
     }
 }
 
@@ -1987,18 +2199,20 @@ pub fn restore_state() {
 
 /// Check if mouse tracking mode is active
 ///
-/// Uses try_lock because this is called from timer ISR context (terminal_tick).
-/// If the lock is held by process-context code (e.g., terminal::write), we
-/// skip rather than deadlock.
+/// — NeonVale: P3.5 split lock path. Reads from MOUSE_INPUT — the lightweight
+/// ISR-facing mirror of mouse state — instead of the full TERMINAL lock.
+/// MOUSE_INPUT is uncontended during write() calls, so ISR never drops mouse
+/// mode checks due to a process printing to the terminal. — NeonVale
+///
+/// ISR MUST use try_lock — never blocking lock() on any terminal lock.
 pub fn has_mouse_mode() -> bool {
-    if let Some(guard) = TERMINAL.try_lock() {
-        if let Some(ref terminal) = *guard {
-            return terminal.has_mouse_mode();
-        }
-    } else {
-        #[cfg(feature = "debug-lock")]
-        lock_contention_warning("TERMINAL (has_mouse_mode)");
+    if let Some(guard) = MOUSE_INPUT.try_lock() {
+        return guard.mouse_mode != MouseMode::None;
     }
+    // — NeonVale: MOUSE_INPUT contended — only happens if another ISR is mid-update
+    // (sub-microsecond window). Return false conservatively; next tick will catch it.
+    #[cfg(feature = "debug-lock")]
+    lock_contention_warning("MOUSE_INPUT (has_mouse_mode)");
     false
 }
 
@@ -2007,7 +2221,12 @@ pub fn has_mouse_mode() -> bool {
 /// Returns the escape sequence bytes, or None if mouse mode is not active
 /// or doesn't want this event type.
 ///
-/// Uses try_lock because this is called from timer ISR context (terminal_tick).
+/// — NeonVale: P3.5 split lock path. Uses MOUSE_INPUT instead of TERMINAL so
+/// ISR-generated mouse events are never dropped because a write() holds TERMINAL.
+/// The snapshot is at most one write-call stale (~1ms at 1kHz write rate) —
+/// acceptable latency for mouse escape sequences. — NeonVale
+///
+/// ISR MUST use try_lock — never blocking lock().
 pub fn mouse_event(
     button: u8,
     x_px: i32,
@@ -2015,15 +2234,112 @@ pub fn mouse_event(
     pressed: bool,
     motion: bool,
 ) -> Option<Vec<u8>> {
-    if let Some(guard) = TERMINAL.try_lock() {
-        if let Some(ref terminal) = *guard {
-            return terminal.mouse_event(button, x_px, y_px, pressed, motion);
+    let state = if let Some(guard) = MOUSE_INPUT.try_lock() {
+        // — NeonVale: Copy the 6 fields out while holding the lock, release
+        // immediately, then do the (potentially allocating) escape seq build
+        // without any lock held. ISR-safe alloc path. — NeonVale
+        if guard.mouse_mode == MouseMode::None {
+            return None;
         }
+        (
+            guard.mouse_mode,
+            guard.mouse_encoding,
+            guard.cell_width,
+            guard.cell_height,
+            guard.cols,
+            guard.rows,
+        )
     } else {
+        // — NeonVale: MOUSE_INPUT momentarily held — another update in flight.
+        // Drop the event rather than blocking. Timer fires at 30Hz; we have
+        // ~33ms to catch the next one. — NeonVale
         #[cfg(feature = "debug-lock")]
-        lock_contention_warning("TERMINAL (mouse_event)");
+        lock_contention_warning("MOUSE_INPUT (mouse_event)");
+        return None;
+    };
+
+    let (mouse_mode, mouse_encoding, cell_width, cell_height, cols, rows) = state;
+
+    // Convert pixel coordinates to 1-based cell coordinates
+    let col = if cell_width > 0 {
+        (x_px as u32 / cell_width) + 1
+    } else {
+        1
+    };
+    let row = if cell_height > 0 {
+        (y_px as u32 / cell_height) + 1
+    } else {
+        1
+    };
+
+    // Clamp to terminal dimensions
+    let col = col.min(cols).max(1);
+    let row = row.min(rows).max(1);
+
+    // Check if this event should be reported based on mode
+    match mouse_mode {
+        MouseMode::None => return None,
+        MouseMode::X10 => {
+            // X10: only button press events
+            if !pressed || motion {
+                return None;
+            }
+        }
+        MouseMode::Normal => {
+            // Normal: press and release, no motion
+            if motion {
+                return None;
+            }
+        }
+        MouseMode::ButtonMotion => {
+            // Button-event: press, release, and motion while button held
+        }
+        MouseMode::AnyMotion => {
+            // Any-event: all events including motion without buttons
+        }
     }
-    None
+
+    // Build the button byte
+    let mut btn = button;
+    if motion {
+        btn += 32; // Motion flag
+    }
+
+    // Generate escape sequence based on encoding
+    match mouse_encoding {
+        MouseEncoding::Sgr => {
+            // SGR format: ESC [ < btn ; col ; row M (press) or m (release)
+            let suffix = if pressed { b'M' } else { b'm' };
+            let mut seq = Vec::new();
+            seq.extend_from_slice(b"\x1b[<");
+            write_decimal(&mut seq, btn as u32);
+            seq.push(b';');
+            write_decimal(&mut seq, col);
+            seq.push(b';');
+            write_decimal(&mut seq, row);
+            seq.push(suffix);
+            Some(seq)
+        }
+        MouseEncoding::Urxvt => {
+            // Urxvt format: ESC [ btn+32 ; col ; row M
+            let mut seq = Vec::new();
+            seq.extend_from_slice(b"\x1b[");
+            write_decimal(&mut seq, (btn as u32) + 32);
+            seq.push(b';');
+            write_decimal(&mut seq, col);
+            seq.push(b';');
+            write_decimal(&mut seq, row);
+            seq.push(b'M');
+            Some(seq)
+        }
+        MouseEncoding::X10 | MouseEncoding::Utf8 => {
+            // X10 format: ESC [ M btn+32 col+32 row+32
+            let cb = btn + 32;
+            let cx = if col > 223 { 0u8 } else { (col as u8) + 32 };
+            let cy = if row > 223 { 0u8 } else { (row as u8) + 32 };
+            Some(vec![0x1b, b'[', b'M', cb, cx, cy])
+        }
+    }
 }
 
 /// Force render/flush to framebuffer

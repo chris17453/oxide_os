@@ -5,7 +5,7 @@ cfg_select! {
         mod wtf8;
         pub use wtf8::{Buf, Slice};
     }
-    target_os = "oxide" => {
+    any(target_os = "motor") => {
         mod utf8;
         pub use utf8::{Buf, Slice};
     }

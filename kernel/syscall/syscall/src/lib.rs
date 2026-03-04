@@ -17,6 +17,7 @@ pub mod security;
 pub mod signal;
 pub mod socket;
 pub mod time;
+pub mod uaccess;
 pub mod vfs;
 pub mod vfs_ext;
 
@@ -367,6 +368,7 @@ pub mod errno {
     pub const EAGAIN: i64 = -11; // Resource temporarily unavailable
     pub const EPERM: i64 = -1; // Operation not permitted
     pub const ENOENT: i64 = -2; // No such file or directory
+    pub const EACCES: i64 = -13; // Permission denied
     pub const EEXIST: i64 = -17; // File exists
     pub const ENOTDIR: i64 = -20; // Not a directory
     pub const EISDIR: i64 = -21; // Is a directory
@@ -2851,15 +2853,28 @@ fn sys_arch_prctl(code: i32, addr: u64) -> i64 {
             0
         }
         arch_prctl_op::ARCH_SET_GS => {
-            // Set GS base register (similar to FS)
+            // — SableWire: P0.4 fix — set KERNEL_GS_BASE (0xC0000102), NOT GS_BASE.
+            //
+            // Context: we are running inside a syscall handler. swapgs at syscall entry
+            // already ran, so the MSR state right now is:
+            //   GS_BASE       (0xC0000101) = kernel per-CPU data   ← touch this = corruption
+            //   KERNEL_GS_BASE (0xC0000102) = user's GS value      ← write here instead
+            //
+            // swapgs at sysretq will flip them, putting the user's new GS base into
+            // GS_BASE (0xC0000101) and preserving per-CPU data in KERNEL_GS_BASE.
+            // Writing to 0xC0000101 would silently blast the kernel's per-CPU pointer
+            // and cause gs:[0] to read from a user-controlled address on the next
+            // kernel entry — a fantastic way to crash or get exploited.
             let current_pid = current_pid();
 
             if let Some(mut ctx) = sched::get_task_context(current_pid) {
-                // Note: GS is used by kernel for per-CPU data in some systems
-                // For now we treat it like FS but don't store it in context
+                // Persist in task context so context switches restore it correctly.
+                ctx.gs_base = addr;
+                sched::set_task_context(current_pid, ctx);
+
                 unsafe {
                     core::arch::asm!(
-                        "mov ecx, 0xC0000101", // IA32_GS_BASE
+                        "mov ecx, 0xC0000102", // IA32_KERNEL_GS_BASE — user GS lives here during syscall
                         "mov rax, {}",
                         "mov rdx, {}",
                         "shr rdx, 32",
@@ -2877,8 +2892,30 @@ fn sys_arch_prctl(code: i32, addr: u64) -> i64 {
             }
         }
         arch_prctl_op::ARCH_GET_GS => {
-            // Read GS base register (not fully implemented)
-            errno::ENOSYS
+            // — SableWire: Read KERNEL_GS_BASE (0xC0000102) — that's where the user's
+            // GS value lives during syscall context (see ARCH_SET_GS comment above).
+            // Reading GS_BASE (0xC0000101) would return the kernel per-CPU pointer,
+            // which is both a security leak and completely wrong.
+            if addr == 0 || addr >= 0x0000_8000_0000_0000 {
+                return errno::EFAULT;
+            }
+
+            let gs_base: u64;
+            unsafe {
+                core::arch::asm!(
+                    "mov ecx, 0xC0000102", // IA32_KERNEL_GS_BASE
+                    "rdmsr",
+                    "shl rdx, 32",
+                    "or rax, rdx",
+                    out("ecx") _,
+                    out("rax") gs_base,
+                    out("rdx") _,
+                );
+
+                let ptr = addr as *mut u64;
+                *ptr = gs_base;
+            }
+            0
         }
         _ => errno::EINVAL,
     }

@@ -141,9 +141,9 @@ impl Drop for PipeRead {
 
             // Wake waiting writers - pipe is now broken (no readers)
             // They'll get EPIPE when they retry
-            let waiters = buf.write_waiters.clone();
-            buf.write_waiters.clear();
-            waiters
+            // — ByteRiot: take() swaps in an empty Vec, zero allocation while holding the lock.
+            // clone()+clear() was handing the allocator a cheque we couldn't afford under contention.
+            core::mem::take(&mut buf.write_waiters)
         };
 
         for pid in write_waiters {
@@ -185,10 +185,10 @@ impl VnodeOps for PipeRead {
                 let has_writers = buffer.has_writers();
 
                 // If we read data and buffer was full, collect waiting writers to wake
+                // — ByteRiot: take() gives us the Vec and leaves an empty one in its place.
+                // No heap round-trip while the pipe lock is live.
                 let write_waiters = if n > 0 && buffer.count + n == PIPE_BUF_SIZE {
-                    let waiters = buffer.write_waiters.clone();
-                    buffer.write_waiters.clear();
-                    waiters
+                    core::mem::take(&mut buffer.write_waiters)
                 } else {
                     Vec::new()
                 };
@@ -299,9 +299,9 @@ impl Drop for PipeWrite {
             buf.writers.fetch_sub(1, Ordering::Release);
 
             // Wake waiting readers - they'll get EOF (no writers, buffer empty)
-            let waiters = buf.read_waiters.clone();
-            buf.read_waiters.clear();
-            waiters
+            // — ByteRiot: take() instead of clone()+clear(). The allocator doesn't need
+            // another job while we're tearing down under the lock.
+            core::mem::take(&mut buf.read_waiters)
         };
 
         for pid in read_waiters {
@@ -347,10 +347,10 @@ impl VnodeOps for PipeWrite {
                 let has_readers = buffer.has_readers();
 
                 // If we wrote data, collect waiting readers to wake
+                // — ByteRiot: take() atomically empties the waiter list with zero allocation.
+                // clone()+clear() was buying heap tickets in a casino called "spinlock contention".
                 let read_waiters = if n > 0 {
-                    let waiters = buffer.read_waiters.clone();
-                    buffer.read_waiters.clear();
-                    waiters
+                    core::mem::take(&mut buffer.read_waiters)
                 } else {
                     Vec::new()
                 };

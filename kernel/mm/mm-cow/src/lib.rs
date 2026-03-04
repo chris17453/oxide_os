@@ -112,6 +112,46 @@ impl CowTracker {
         }
     }
 
+    /// Atomically claim exclusive ownership of a frame.
+    ///
+    /// — ColdCipher: The old ref_count() + remove()/decrement() dance was a
+    /// TOCTOU time bomb. Between releasing the read lock and acquiring the write
+    /// lock, a concurrent fork() can increment the count. Result: two processes
+    /// both think they own the frame exclusively, both make it writable, both
+    /// write to the same physical memory. Silent corruption, zero signals.
+    ///
+    /// This method holds a SINGLE write lock for the entire check-and-act:
+    ///   - count was 0 (not tracked): exclusive owner, returns true
+    ///   - count was 1: last sharer, removes entry, returns true
+    ///   - count was >1: still shared, decrements, returns false (caller must copy)
+    ///
+    /// If this returns true, the caller can make the page writable in-place.
+    /// If false, the caller must allocate a new frame, copy, and remap.
+    pub fn try_claim_exclusive(&self, phys: PhysAddr) -> bool {
+        let frame = phys.as_usize() / FRAME_SIZE;
+        let mut counts = self.counts.write();
+
+        match counts.get_mut(&frame) {
+            Some(count) if *count <= 1 => {
+                // — ColdCipher: We're the last one holding this frame. Remove
+                // the tracker entry entirely — no one else has a reference.
+                counts.remove(&frame);
+                true
+            }
+            Some(count) => {
+                // — ColdCipher: Still shared. Decrement our reference and tell
+                // the caller to copy. The frame stays tracked for other owners.
+                *count -= 1;
+                false
+            }
+            None => {
+                // — ColdCipher: Not tracked = never was COW, or already removed.
+                // Either way, we own it exclusively.
+                true
+            }
+        }
+    }
+
     /// Get number of tracked frames
     pub fn tracked_count(&self) -> usize {
         self.counts.read().len()

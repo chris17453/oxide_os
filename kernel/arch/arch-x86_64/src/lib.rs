@@ -648,36 +648,191 @@ macro_rules! serial_println {
     }};
 }
 
-/// Initialize x86_64 architecture components
+// ============================================================================
+// Per-CPU double-fault IST stacks
+//
+// — WireSaint: Each CPU needs its own double-fault stack in its own TSS.
+// If two CPUs share an IST stack and both double-fault simultaneously,
+// they corrupt each other's fault frame. That would be spectacular.
+// Spectacular in the "QEMU silent exit" way. Not the fireworks way.
+// ============================================================================
+
+/// Page size for IST stack sizing
+const DF_STACK_PAGES: usize = 5; // 20KB — double faults rarely recurse deep
+const DF_STACK_SIZE: usize = 4096 * DF_STACK_PAGES;
+
+/// Per-CPU double-fault IST stacks.
 ///
-/// This sets up:
-/// - GDT with TSS
-/// - IDT with exception handlers
-/// - Local APIC
+/// Static fixed-size arrays are ideal here — no heap needed, no allocation
+/// failure possible. The BSP uses slot 0; each AP uses its logical cpu_id slot.
+///
+/// — WireSaint: This is 256 * 20KB = 5MB of static BSS. Fine for a kernel.
+/// The alternative — heap allocating these — requires the heap to be up before
+/// GDT init, which creates a circular dependency. Static wins.
+static mut DF_STACKS: [[u8; DF_STACK_SIZE]; MAX_CPUS] = [[0; DF_STACK_SIZE]; MAX_CPUS];
+
+// ============================================================================
+// SMAP / SMEP — Supervisor Mode Access/Execution Prevention
+//
+// — ColdCipher: CR4.SMAP (bit 21) and CR4.SMEP (bit 20) are per-CPU control
+// bits. Every CPU — BSP and every AP — must set them independently. Forgetting
+// a single AP leaves it running naked: kernel code can freely touch user pages
+// and execute user mappings. That's not a kernel. That's a suggestion.
+//
+// CPUID leaf 7, subleaf 0 (EAX=7, ECX=0):
+//   EBX bit  7 → SMEP supported (CR4 bit 20)
+//   EBX bit 20 → SMAP supported (CR4 bit 21)
+//
+// Precondition: P1.3 already baked AC into SFMASK (0x44700). Every syscall
+// entry clears AC automatically, so SMAP is enforced from syscall entry until
+// the dispatcher explicitly calls STAC. The CR4 bits just arm the hardware
+// enforcement. Without them, STAC/CLAC are liturgy without a god — they do
+// nothing. With them, an AC=0 kernel touch of user memory is a hard #PF.
+// ============================================================================
+
+/// CR4 bit 20 — Supervisor Mode Execution Prevention
+const CR4_SMEP: u64 = 1 << 20;
+/// CR4 bit 21 — Supervisor Mode Access Prevention
+const CR4_SMAP: u64 = 1 << 21;
+
+/// Enable SMEP and SMAP in CR4 on the calling CPU, if the CPU supports them.
+///
+/// — ColdCipher: Call this on every CPU during its init path. CR4 is per-CPU
+/// hardware; setting it on the BSP does exactly nothing for the APs. Every
+/// CPU that skips this call is a CPU that will happily dereference user pointers
+/// in kernel mode without raising a finger. We do not allow that.
 ///
 /// # Safety
-/// Must only be called once during kernel initialization.
+/// Must be called with interrupts disabled or from single-threaded init context.
+/// The CPUID check gates the CR4 write — if the CPU lacks the feature, we skip
+/// the bit. This is safe even in heterogeneous virtual environments.
+pub unsafe fn enable_smap_smep() {
+    // — ColdCipher: CPUID leaf 7 / subleaf 0 is the structured extended feature
+    // leaf. EBX returns the feature bits. We need both SMEP (bit 7) and SMAP
+    // (bit 20). RBX is callee-saved in the SysV ABI but CPUID clobbers it, so
+    // we push/pop around it to keep the compiler's register allocator sane.
+    let ebx: u32;
+    unsafe {
+        core::arch::asm!(
+            "push rbx",
+            "mov eax, 7",
+            "xor ecx, ecx",
+            "cpuid",
+            "mov {0:e}, ebx",
+            "pop rbx",
+            out(reg) ebx,
+            out("eax") _,
+            out("ecx") _,
+            out("edx") _,
+        );
+    }
+
+    let smep_supported = (ebx & (1 << 7)) != 0;
+    let smap_supported = (ebx & (1 << 20)) != 0;
+
+    if !smep_supported && !smap_supported {
+        // — ColdCipher: Nothing to do. Probably running on something ancient or
+        // a stripped-down QEMU config without these features. Not ideal, but we
+        // don't GP-fault trying to set bits the CPU won't accept.
+        return;
+    }
+
+    let mut cr4: u64;
+    unsafe {
+        core::arch::asm!("mov {}, cr4", out(reg) cr4, options(nomem, nostack));
+    }
+
+    // — ColdCipher: SMEP first. Execution prevention before access prevention.
+    // Belt AND suspenders. We don't trust user mappings to be inert.
+    if smep_supported {
+        cr4 |= CR4_SMEP;
+    }
+    if smap_supported {
+        cr4 |= CR4_SMAP;
+    }
+
+    unsafe {
+        // — ColdCipher: Writing CR4 is serializing on x86. No need for MFENCE.
+        // From this instruction forward, the CPU enforces the new policy.
+        // Any kernel code that was relying on silent user-page access just broke.
+        // Good. It deserved to break.
+        core::arch::asm!("mov cr4, {}", in(reg) cr4, options(nostack));
+    }
+}
+
+/// Initialize x86_64 architecture components for the BSP (CPU 0).
+///
+/// This sets up:
+/// - Per-CPU GDT with TSS for CPU 0
+/// - Double-fault IST stack for CPU 0
+/// - IDT with exception handlers (shared, loaded by each CPU)
+/// - Local APIC
+/// - SMEP + SMAP in CR4 (P3.1: hardware enforcement of user-space isolation)
+///
+/// # Safety
+/// Must only be called once, on the BSP (CPU 0), during kernel initialization.
 pub unsafe fn init() {
     use core::ptr::addr_of_mut;
 
     unsafe {
-        // Initialize GDT first (needed for IDT)
+        // Initialize per-CPU GDT + TSS for the BSP (cpu 0).
+        // This calls gdt::init() which does register_cpu(0, 0) + init_cpu(0).
         gdt::init();
-        serial_println!("[x86_64] GDT initialized");
+        serial_println!("[x86_64] GDT initialized (BSP cpu 0)");
 
-        // Set up IST stack for double fault
-        // Use a static stack for now
-        static mut DOUBLE_FAULT_STACK: [u8; 4096 * 5] = [0; 4096 * 5];
-        let stack_ptr = addr_of_mut!(DOUBLE_FAULT_STACK);
-        let stack_top = (stack_ptr as *const u8).add((*stack_ptr).len()) as u64;
-        gdt::set_ist(1, stack_top); // IST1 (index 1)
+        // Set up per-CPU IST stack for double faults (IST slot 0 = hardware IST1).
+        // — WireSaint: DF_STACKS[0] is the BSP's double-fault stack.
+        // Stack grows down, so top = base + size.
+        let stack_top = addr_of_mut!(DF_STACKS[0]) as u64 + DF_STACK_SIZE as u64;
+        gdt::set_ist(0, stack_top); // ist[0] = IST1 — used by double fault handler
 
-        // Initialize IDT
+        // Initialize IDT (shared structure; each CPU loads it via LIDT in idt::init())
         idt::init();
         serial_println!("[x86_64] IDT initialized");
 
+        // — ColdCipher: P3.1 — Arm SMEP and SMAP on the BSP. SFMASK already
+        // clears AC on every syscall entry (P1.3). Now we tell the hardware to
+        // actually enforce it. CR4 bits 20 and 21, set and forgotten. Beautiful.
+        enable_smap_smep();
+
         // Initialize APIC
         apic::init();
+    }
+}
+
+/// Initialize x86_64 per-CPU components for an Application Processor.
+///
+/// Call this from the AP's init callback after gdt::init_cpu has already run.
+/// Sets up this CPU's double-fault IST stack in its own TSS slot, and arms
+/// SMEP + SMAP in this CPU's CR4.
+///
+/// # Safety
+/// Must be called on the AP itself (not cross-CPU). cpu_id must be < MAX_CPUS.
+/// Must be called after gdt::init_cpu(cpu_id).
+///
+/// — WireSaint: Keeps IST population DRY by mirroring what BSP init() does.
+/// Each AP calls this once. Don't skip it or the double-fault handler gets a
+/// zero IST address on that CPU and triple-faults on the first double fault.
+/// — ColdCipher: CR4 is per-CPU. If you only set SMAP/SMEP on the BSP and
+/// forget the APs, every AP-scheduled task runs without hardware memory isolation.
+/// That's not a bug. That's a policy decision. A very bad one.
+pub unsafe fn init_ap(cpu_id: usize) {
+    use core::ptr::addr_of_mut;
+
+    if cpu_id >= MAX_CPUS {
+        return;
+    }
+
+    unsafe {
+        // — WireSaint: Each AP slot in DF_STACKS is pre-zeroed (BSS).
+        // Stack grows down: top of stack = base address + size.
+        let stack_top = addr_of_mut!(DF_STACKS[cpu_id]) as u64 + DF_STACK_SIZE as u64;
+        gdt::set_ist(0, stack_top); // ist[0] = IST1 for this CPU's double fault
+
+        // — ColdCipher: P3.1 — Each AP needs its own CR4 write. The BSP's CR4
+        // setting does not propagate to APs — they each boot with whatever the
+        // trampoline left in CR4 (PAE only). SMEP and SMAP must be re-armed here.
+        enable_smap_smep();
     }
 }
 
@@ -921,8 +1076,14 @@ use core::sync::atomic::{AtomicBool, Ordering};
 const MAX_CPUS: usize = 256;
 
 fn preempt_flag() -> &'static AtomicBool {
-    let cpu = crate::apic::id() as usize;
-    let idx = core::cmp::min(cpu, MAX_CPUS - 1);
+    // — SableWire: APIC IDs are sparse (0, 2, 4, 6 on HT systems). The scheduler
+    // uses *logical* CPU IDs (0, 1, 2, 3). Index by raw APIC ID and we're checking
+    // the wrong slot — CPU 1 reads KERNEL_PREEMPT_OK[2], scheduler wrote [1].
+    // That's the kind of subtle corruption that makes you question reality at 3 AM.
+    // Use gdt::cpu_id_from_apic() — the same mapping the scheduler was born from.
+    let apic_id = crate::apic::id();
+    let cpu_id = gdt::cpu_id_from_apic(apic_id);
+    let idx = core::cmp::min(cpu_id, MAX_CPUS - 1);
     &KERNEL_PREEMPT_OK[idx]
 }
 

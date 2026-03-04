@@ -56,11 +56,11 @@ struct FreeBlock {
 const FREE_BLOCK_MAGIC: u64 = 0x4652454542304C; // "FREEBL0C" in hex — SableWire
 
 /// Bounded serial hex output for allocator FATAL traces — SableWire
-/// Uses serial::write_byte_unsafe which has 2048-iteration spin limit.
-/// Never stalls the allocator waiting on UART THRE.
+/// Routes through os_log::write_byte_raw which delegates to the registered
+/// ISR-safe writer. No arch coupling — works on any platform with a registered writer.
 ///
 /// # Safety
-/// Lock-free port I/O with bounded spin. Safe from any context including ISRs.
+/// Lock-free output via registered function pointer. Safe from any context including ISRs.
 #[inline]
 unsafe fn serial_hex64(val: u64) {
     for i in (0..16).rev() {
@@ -70,7 +70,7 @@ unsafe fn serial_hex64(val: u64) {
         } else {
             b'a' + nibble - 10
         };
-        unsafe { arch_x86_64::serial::write_byte_unsafe(hex_char) };
+        unsafe { os_log::write_byte_raw(hex_char) };
     }
 }
 
@@ -234,13 +234,13 @@ impl BuddyAllocator {
         if addr >= 0xc400000 && addr <= 0xc500000 {
             let existing_magic = unsafe { core::ptr::read_volatile(virt as *const u64) };
             unsafe {
-                arch_x86_64::serial::write_str_unsafe("[ADD-FREE] 0x");
+                os_log::write_str_raw("[ADD-FREE] 0x");
                 serial_hex64(addr);
-                arch_x86_64::serial::write_str_unsafe(" order=");
-                arch_x86_64::serial::write_byte_unsafe(b'0' + order as u8);
-                arch_x86_64::serial::write_str_unsafe(" old_magic=0x");
+                os_log::write_str_raw(" order=");
+                os_log::write_byte_raw(b'0' + order as u8);
+                os_log::write_str_raw(" old_magic=0x");
                 serial_hex64(existing_magic);
-                arch_x86_64::serial::write_str_unsafe("\n");
+                os_log::write_str_raw("\n");
             }
         }
 
@@ -260,11 +260,11 @@ impl BuddyAllocator {
             if old_head_block.magic != FREE_BLOCK_MAGIC {
                 // — SableWire: Bounded serial writes. Never stall the allocator on UART THRE.
                 unsafe {
-                    arch_x86_64::serial::write_str_unsafe("[BUDDY-FATAL] Old head corrupted! magic=0x");
+                    os_log::write_str_raw("[BUDDY-FATAL] Old head corrupted! magic=0x");
                     serial_hex64(old_head_block.magic);
-                    arch_x86_64::serial::write_str_unsafe(", expected=0x");
+                    os_log::write_str_raw(", expected=0x");
                     serial_hex64(FREE_BLOCK_MAGIC);
-                    arch_x86_64::serial::write_str_unsafe(" - GPF\n");
+                    os_log::write_str_raw(" - GPF\n");
                     core::ptr::write_volatile(0xBADBAD as *mut u64, old_head_block.magic);
                 }
             }
@@ -279,13 +279,13 @@ impl BuddyAllocator {
         #[cfg(feature = "debug-buddy")]
         unsafe {
             let count = zone.free_lists[order].count;
-            arch_x86_64::serial::write_str_unsafe("[COUNT+] order=");
-            arch_x86_64::serial::write_byte_unsafe(b'0' + order as u8);
-            arch_x86_64::serial::write_str_unsafe(", ");
-            arch_x86_64::serial::write_byte_unsafe(b'0' + ((count - 1) as u8));
-            arch_x86_64::serial::write_str_unsafe("->");
-            arch_x86_64::serial::write_byte_unsafe(b'0' + (count as u8));
-            arch_x86_64::serial::write_str_unsafe("\n");
+            os_log::write_str_raw("[COUNT+] order=");
+            os_log::write_byte_raw(b'0' + order as u8);
+            os_log::write_str_raw(", ");
+            os_log::write_byte_raw(b'0' + ((count - 1) as u8));
+            os_log::write_str_raw("->");
+            os_log::write_byte_raw(b'0' + (count as u8));
+            os_log::write_str_raw("\n");
         }
     }
 
@@ -294,7 +294,7 @@ impl BuddyAllocator {
     /// # Safety
     /// The zone must have been properly initialized.
     unsafe fn pop_free_block(&self, zone: &mut MemoryZone, order: usize) -> Option<u64> {
-        let initial_count = zone.free_lists[order].count;
+        let mut initial_count = zone.free_lists[order].count;
 
         if initial_count == 0 {
             return None;
@@ -316,11 +316,11 @@ impl BuddyAllocator {
         #[cfg(feature = "debug-buddy")]
         if order >= 4 {
             unsafe {
-                arch_x86_64::serial::write_str_unsafe("[POP-O");
-                arch_x86_64::serial::write_byte_unsafe(b'0' + order as u8);
-                arch_x86_64::serial::write_str_unsafe("] 0x");
+                os_log::write_str_raw("[POP-O");
+                os_log::write_byte_raw(b'0' + order as u8);
+                os_log::write_str_raw("] 0x");
                 serial_hex64(addr);
-                arch_x86_64::serial::write_str_unsafe("\n");
+                os_log::write_str_raw("\n");
             }
         }
 
@@ -329,7 +329,7 @@ impl BuddyAllocator {
         // TRACE — GraveShift: About to access block memory
         #[cfg(feature = "debug-buddy")]
         unsafe {
-            arch_x86_64::serial::write_str_unsafe("[POP-TRACE] Accessing block\n");
+            os_log::write_str_raw("[POP-TRACE] Accessing block\n");
         }
 
         // SAFETY: Frame was previously added to free list so memory is valid
@@ -337,24 +337,54 @@ impl BuddyAllocator {
 
         // VALIDATE CANARY — GraveShift: Check magic before trusting this block
         if block.magic != FREE_BLOCK_MAGIC {
-            // — SableWire: Corrupted block? Skip it. Dying on every bad canary
-            // was cascade-crashing the whole free list because the GPF handler
-            // would page-fault on the garbage `next` pointer too. Now we amputate
-            // the rot and keep limping. Better to lose one frame than the whole OS.
+            // — SableWire: C1 — Corrupted head? Try to salvage the chain instead
+            // of nuking the entire free list. The old code zeroed head+count, which
+            // lost potentially hundreds of MB of valid blocks behind one rotten
+            // entry. Now we read block.next BEFORE trusting it — if it points to a
+            // sane in-zone frame with a valid canary, we skip the rotten head and
+            // keep the rest. Only lose one frame instead of the whole list.
             unsafe {
-                arch_x86_64::serial::write_str_unsafe("[BUDDY-WARN] Corrupted block skipped: magic=0x");
+                os_log::write_str_raw("[BUDDY-WARN] Corrupted head: magic=0x");
                 serial_hex64(block.magic);
-                arch_x86_64::serial::write_str_unsafe(", addr=0x");
+                os_log::write_str_raw(", addr=0x");
                 serial_hex64(addr);
-                arch_x86_64::serial::write_str_unsafe(", order=");
-                arch_x86_64::serial::write_byte_unsafe(b'0' + order as u8);
-                arch_x86_64::serial::write_str_unsafe("\n");
+                os_log::write_str_raw(", order=");
+                os_log::write_byte_raw(b'0' + order as u8);
             }
-            // — GraveShift: Sever the head. We can't trust `next` either —
-            // it's probably garbage from whatever stomped the canary. Zero the
-            // free list head so we don't chase a wild pointer into the abyss.
+
+            // — GraveShift: Read the next pointer. It might be garbage, but if it
+            // points to a valid block we can salvage the chain. block.next is at
+            // offset 8 in FreeBlock (after the corrupted magic at offset 0).
+            let candidate_next = block.next;
+            if candidate_next != 0 {
+                let candidate_addr = candidate_next << FRAME_SHIFT;
+                if block_in_zone(zone, candidate_addr, order) {
+                    let candidate_virt = phys_to_virt(PhysAddr::new(candidate_addr));
+                    let candidate_block = unsafe { &mut *(candidate_virt as *mut FreeBlock) };
+                    if candidate_block.magic == FREE_BLOCK_MAGIC {
+                        // — SableWire: The next block is valid! Promote it to head,
+                        // lose only the one corrupted frame. That's the deal.
+                        candidate_block.prev = 0;
+                        zone.free_lists[order].head = candidate_next;
+                        if zone.free_lists[order].count > 0 {
+                            zone.free_lists[order].count -= 1;
+                        }
+                        unsafe {
+                            os_log::write_str_raw(" — salvaged chain (next=0x");
+                            serial_hex64(candidate_next);
+                            os_log::write_str_raw(")\n");
+                        }
+                        return None;
+                    }
+                }
+            }
+            // — GraveShift: Both head AND next are garbage. Chain is unsalvageable.
+            // Sever it entirely — this is the nuclear option, but we tried.
             zone.free_lists[order].head = 0;
             zone.free_lists[order].count = 0;
+            unsafe {
+                os_log::write_str_raw(" — chain unsalvageable, zeroed\n");
+            }
             return None;
         }
 
@@ -363,22 +393,22 @@ impl BuddyAllocator {
         // TRACE — TorqueJax: Read next successfully
         #[cfg(feature = "debug-buddy")]
         unsafe {
-            arch_x86_64::serial::write_str_unsafe("[POP-TRACE] Read next OK\n");
+            os_log::write_str_raw("[POP-TRACE] Read next OK\n");
         }
 
         // [TRACE] Return marker + WATCH target block — BlackLatch
         #[cfg(feature = "debug-buddy")]
         unsafe {
-            arch_x86_64::serial::write_str_unsafe("[POP-RETURN]\n");
+            os_log::write_str_raw("[POP-RETURN]\n");
 
             // [MONITOR] Check target block's magic — ColdCipher: Track when it corrupts
             let target_addr = 0x0c480000u64;
             let target_virt = phys_to_virt(PhysAddr::new(target_addr));
             let target_magic = core::ptr::read_volatile(target_virt as *const u64);
             if target_magic != FREE_BLOCK_MAGIC && target_magic != 0 {
-                arch_x86_64::serial::write_str_unsafe("[WATCH] 0xc480000 magic=0x");
+                os_log::write_str_raw("[WATCH] 0xc480000 magic=0x");
                 serial_hex64(target_magic);
-                arch_x86_64::serial::write_str_unsafe("\n");
+                os_log::write_str_raw("\n");
             }
         }
 
@@ -387,9 +417,9 @@ impl BuddyAllocator {
         #[cfg(feature = "debug-buddy")]
         if addr >= 0xc400000 && addr <= 0xc500000 {
             unsafe {
-                arch_x86_64::serial::write_str_unsafe("[CLEAR-MAGIC] 0x");
+                os_log::write_str_raw("[CLEAR-MAGIC] 0x");
                 serial_hex64(addr);
-                arch_x86_64::serial::write_str_unsafe("\n");
+                os_log::write_str_raw("\n");
             }
         }
         block.magic = 0; // Invalidate canary — any future access will detect corruption
@@ -401,43 +431,61 @@ impl BuddyAllocator {
         if next_frame != 0 {
             let next_addr = next_frame << FRAME_SHIFT;
 
-            // VALIDATE — GraveShift: Check if next_frame is sane (< 512MB for 512M RAM)
-            // Frame numbers above 0x20000 (512MB / 4KB) are invalid
-            if next_frame > 0x20000 {
-                // — SableWire: Bounded serial. Die loud, not hung.
+            // — SableWire: Validate new head is actually in this zone. The old code
+            // hardcoded 0x20000 (512MB) which would reject valid frames on >512MB
+            // systems. block_in_zone() uses the actual zone bounds — works for any
+            // RAM size, from 256MB QEMU to 128GB production iron.
+            if !block_in_zone(zone, next_addr, order) {
+                // — GraveShift: New head is outside zone bounds. The chain past the
+                // popped block is garbage. Sever it and report the loss.
                 unsafe {
-                    arch_x86_64::serial::write_str_unsafe("[BUDDY-FATAL] Corrupted next_frame=0x");
+                    os_log::write_str_raw("[BUDDY-WARN] New head out-of-zone: frame=0x");
                     serial_hex64(next_frame);
-                    arch_x86_64::serial::write_str_unsafe(" - TRIGGERING GPF\n");
-                    // Trigger GPF — Die screaming
-                    core::ptr::write_volatile(0xBADBAD as *mut u64, next_frame);
+                    os_log::write_str_raw(" addr=0x");
+                    serial_hex64(next_addr);
+                    os_log::write_str_raw(" order=");
+                    os_log::write_byte_raw(b'0' + order as u8);
+                    os_log::write_str_raw(" — severing chain\n");
                 }
-            }
+                zone.free_lists[order].head = 0;
+                zone.free_lists[order].count = 1; // will be decremented below
+                initial_count = 1; // — GraveShift: We severed it — tell the count-check we did this on purpose
+            } else {
+                let next_virt = phys_to_virt(PhysAddr::new(next_addr));
 
-            let next_virt = phys_to_virt(PhysAddr::new(next_addr));
+                // TRACE — BlackLatch: About to dereference pointer
+                #[cfg(feature = "debug-buddy")]
+                unsafe {
+                    os_log::write_str_raw("[POP-TRACE] About to access next_virt=0x");
+                    serial_hex64(next_virt as u64);
+                    os_log::write_str_raw("\n");
+                }
 
-            // TRACE — BlackLatch: About to dereference pointer
-            #[cfg(feature = "debug-buddy")]
-            unsafe {
-                arch_x86_64::serial::write_str_unsafe("[POP-TRACE] About to access next_virt=0x");
-                serial_hex64(next_virt as u64);
-                arch_x86_64::serial::write_str_unsafe("\n");
-            }
+                let next_block = unsafe { &mut *(next_virt as *mut FreeBlock) };
 
-            let next_block = unsafe { &mut *(next_virt as *mut FreeBlock) };
+                // — ColdCipher: H1 — validate new head's canary before writing prev=0.
+                // If the new head's memory is corrupt, writing prev=0 into it would
+                // scribble on whatever garbage lives there. Better to sever the chain.
+                if next_block.magic != FREE_BLOCK_MAGIC {
+                    unsafe {
+                        os_log::write_str_raw("[BUDDY-WARN] New head corrupted: magic=0x");
+                        serial_hex64(next_block.magic);
+                        os_log::write_str_raw(" addr=0x");
+                        serial_hex64(next_addr);
+                        os_log::write_str_raw(" — severing chain\n");
+                    }
+                    zone.free_lists[order].head = 0;
+                    zone.free_lists[order].count = 1; // will be decremented below
+                    initial_count = 1; // — ColdCipher: We severed it — prevent false-positive count corruption GPF
+                } else {
+                    next_block.prev = 0; // New head has no predecessor
 
-            // TRACE — TorqueJax: Successfully accessed next block
-            #[cfg(feature = "debug-buddy")]
-            unsafe {
-                arch_x86_64::serial::write_str_unsafe("[POP-TRACE] Accessed next block OK\n");
-            }
-
-            next_block.prev = 0; // New head has no predecessor
-
-            // TRACE — SableWire: Set prev = 0 successfully
-            #[cfg(feature = "debug-buddy")]
-            unsafe {
-                arch_x86_64::serial::write_str_unsafe("[POP-TRACE] Set prev=0 OK\n");
+                    // TRACE — SableWire: Set prev = 0 successfully
+                    #[cfg(feature = "debug-buddy")]
+                    unsafe {
+                        os_log::write_str_raw("[POP-TRACE] Set prev=0 OK\n");
+                    }
+                }
             }
         }
 
@@ -447,13 +495,13 @@ impl BuddyAllocator {
             // Count changed between read and now! Memory corruption! — SableWire
             // — SableWire: Bounded serial. Scream into the wire, then die.
             unsafe {
-                arch_x86_64::serial::write_str_unsafe("[BUDDY-FATAL] Count corrupted! initial=");
-                arch_x86_64::serial::write_byte_unsafe(b'0' + (initial_count as u8));
-                arch_x86_64::serial::write_str_unsafe(", current=");
-                arch_x86_64::serial::write_byte_unsafe(b'0' + (current_count as u8));
-                arch_x86_64::serial::write_str_unsafe(", order=");
-                arch_x86_64::serial::write_byte_unsafe(b'0' + order as u8);
-                arch_x86_64::serial::write_str_unsafe(" - TRIGGERING GPF\n");
+                os_log::write_str_raw("[BUDDY-FATAL] Count corrupted! initial=");
+                os_log::write_u32_raw(initial_count as u32);
+                os_log::write_str_raw(", current=");
+                os_log::write_u32_raw(current_count as u32);
+                os_log::write_str_raw(", order=");
+                os_log::write_u32_raw(order as u32);
+                os_log::write_str_raw(" - TRIGGERING GPF\n");
                 // Trigger GPF by accessing invalid memory — GraveShift: Die screaming
                 core::ptr::write_volatile(0xDEADBEEF as *mut u64, 0xCAFEBABE);
             }
@@ -463,9 +511,9 @@ impl BuddyAllocator {
         if current_count == 0 {
             // Count is 0 but we're about to decrement! MEMORY CORRUPTION!
             unsafe {
-                arch_x86_64::serial::write_str_unsafe("[BUDDY-FATAL] Count underflow! order=");
-                arch_x86_64::serial::write_byte_unsafe(b'0' + order as u8);
-                arch_x86_64::serial::write_str_unsafe(" - TRIGGERING GPF\n");
+                os_log::write_str_raw("[BUDDY-FATAL] Count underflow! order=");
+                os_log::write_u32_raw(order as u32);
+                os_log::write_str_raw(" - TRIGGERING GPF\n");
                 // Trigger GPF — TorqueJax: Fail loud not silent
                 core::ptr::write_volatile(0xDEADBEEF as *mut u64, 0xDEADC0DE);
             }
@@ -477,13 +525,13 @@ impl BuddyAllocator {
         #[cfg(feature = "debug-buddy")]
         unsafe {
             let new_count = zone.free_lists[order].count;
-            arch_x86_64::serial::write_str_unsafe("[COUNT-] order=");
-            arch_x86_64::serial::write_byte_unsafe(b'0' + order as u8);
-            arch_x86_64::serial::write_str_unsafe(", ");
-            arch_x86_64::serial::write_byte_unsafe(b'0' + ((new_count + 1) as u8));
-            arch_x86_64::serial::write_str_unsafe("->");
-            arch_x86_64::serial::write_byte_unsafe(b'0' + (new_count as u8));
-            arch_x86_64::serial::write_str_unsafe(" (pop)\n");
+            os_log::write_str_raw("[COUNT-] order=");
+            os_log::write_byte_raw(b'0' + order as u8);
+            os_log::write_str_raw(", ");
+            os_log::write_byte_raw(b'0' + ((new_count + 1) as u8));
+            os_log::write_str_raw("->");
+            os_log::write_byte_raw(b'0' + (new_count as u8));
+            os_log::write_str_raw(" (pop)\n");
         }
 
         Some(addr)
@@ -494,7 +542,7 @@ impl BuddyAllocator {
         // [TRACE] Entry marker — BlackLatch
         #[cfg(feature = "debug-buddy")]
         unsafe {
-            arch_x86_64::serial::write_byte_unsafe(b'[');
+            os_log::write_byte_raw(b'[');
         }
 
         if request.order > MAX_ORDER {
@@ -524,13 +572,13 @@ impl BuddyAllocator {
                 // [TRACE] Log allocation details — BlackLatch: Track all allocs including PT frames
                 #[cfg(feature = "debug-buddy")]
                 unsafe {
-                    arch_x86_64::serial::write_byte_unsafe(b'A');
+                    os_log::write_byte_raw(b'A');
                     if request.order > 0 {
-                        arch_x86_64::serial::write_str_unsafe("[ALLOC-O");
-                        arch_x86_64::serial::write_byte_unsafe(b'0' + request.order as u8);
-                        arch_x86_64::serial::write_str_unsafe("] 0x");
+                        os_log::write_str_raw("[ALLOC-O");
+                        os_log::write_byte_raw(b'0' + request.order as u8);
+                        os_log::write_str_raw("] 0x");
                         serial_hex64(addr);
-                        arch_x86_64::serial::write_str_unsafe("\n");
+                        os_log::write_str_raw("\n");
                     }
                 }
 
@@ -551,7 +599,14 @@ impl BuddyAllocator {
         for current_order in order..=MAX_ORDER {
             if zone.free_lists[current_order].count > 0 {
                 // Found a block, may need to split — SAFETY: Zone is initialized
-                let addr = unsafe { self.pop_free_block(zone, current_order)? };
+                // — SableWire: Don't use `?` here — a corrupted head at this order
+                // should NOT abort the entire allocation. Skip to the next order
+                // and try again. The old `?` was nuking allocations because one
+                // bad canary at order 0 prevented splitting from order 1+.
+                let addr = match unsafe { self.pop_free_block(zone, current_order) } {
+                    Some(a) => a,
+                    None => continue, // — GraveShift: corrupted head, try next order
+                };
 
                 // Split larger blocks down to requested size — TorqueJax
                 // When splitting order N to get order M (where N > M):
@@ -609,6 +664,24 @@ impl BuddyAllocator {
     /// Address must have been previously allocated from this zone.
     unsafe fn free_to_zone(&self, zone: &mut MemoryZone, addr: u64, order: usize) {
         if addr == 0 {
+            return;
+        }
+
+        // — ColdCipher: C3 — O(1) double-free detection. If the block already has
+        // a valid free-block canary, someone is freeing an already-free frame. This
+        // creates a cycle in the linked list — two allocations return the same
+        // physical frame, silent corruption, then data loss. One memory read to
+        // prevent catastrophe. Worth every cycle.
+        let virt = phys_to_virt(PhysAddr::new(addr));
+        let existing_magic = unsafe { core::ptr::read_volatile(virt as *const u64) };
+        if existing_magic == FREE_BLOCK_MAGIC {
+            unsafe {
+                os_log::write_str_raw("[BUDDY-DFREE] Double-free detected! addr=0x");
+                serial_hex64(addr);
+                os_log::write_str_raw(" order=");
+                os_log::write_byte_raw(b'0' + order as u8);
+                os_log::write_str_raw(" — dropped, not added to free list\n");
+            }
             return;
         }
 
@@ -684,10 +757,21 @@ impl BuddyAllocator {
             return false;
         }
 
-        // Verify the chain integrity — TorqueJax: Check predecessor points to us
+        // — TorqueJax: C2 — Verify predecessor's canary BEFORE dereferencing its
+        // fields. If prev_block.magic is garbage, reading prev_block.next follows
+        // a wild pointer chain that ends in a GPF. Check the canary first — if
+        // prev is corrupted, bail cleanly instead of crashing the allocator.
         let prev_addr = target_block.prev << FRAME_SHIFT;
         let prev_virt = phys_to_virt(PhysAddr::new(prev_addr));
         let prev_block = unsafe { &mut *(prev_virt as *mut FreeBlock) };
+
+        if prev_block.magic != FREE_BLOCK_MAGIC {
+            // — WireSaint: Predecessor is corrupt. Don't trust anything it says.
+            // Return false — the coalesce loop will skip this buddy and just
+            // add the freed block at the current order. One lost coalesce is
+            // infinitely better than a GPF in the allocator.
+            return false;
+        }
 
         if prev_block.next != target_frame {
             // Chain is broken, block not actually in list — WireSaint
@@ -716,13 +800,13 @@ impl BuddyAllocator {
         #[cfg(feature = "debug-buddy")]
         unsafe {
             let new_count = zone.free_lists[order].count;
-            arch_x86_64::serial::write_str_unsafe("[COUNT-] order=");
-            arch_x86_64::serial::write_byte_unsafe(b'0' + order as u8);
-            arch_x86_64::serial::write_str_unsafe(", ");
-            arch_x86_64::serial::write_byte_unsafe(b'0' + ((new_count + 1) as u8));
-            arch_x86_64::serial::write_str_unsafe("->");
-            arch_x86_64::serial::write_byte_unsafe(b'0' + (new_count as u8));
-            arch_x86_64::serial::write_str_unsafe(" (remove)\n");
+            os_log::write_str_raw("[COUNT-] order=");
+            os_log::write_byte_raw(b'0' + order as u8);
+            os_log::write_str_raw(", ");
+            os_log::write_byte_raw(b'0' + ((new_count + 1) as u8));
+            os_log::write_str_raw("->");
+            os_log::write_byte_raw(b'0' + (new_count as u8));
+            os_log::write_str_raw(" (remove)\n");
         }
 
         true
@@ -788,6 +872,117 @@ impl BuddyAllocator {
                     break;
                 }
             }
+        }
+    }
+
+    /// — GraveShift: Post-mortem audit of every free list head.
+    /// Walks all zones and orders, checks that head blocks have valid canaries.
+    /// Reports corrupted heads and their addresses. Called after init to verify
+    /// the buddy allocator didn't inherit garbage from the bootloader.
+    pub fn verify_free_lists(&self) {
+        unsafe {
+            os_log::write_str_raw("[BUDDY-VERIFY] Checking all free list heads...\n");
+        }
+        let mut bad_count = 0u32;
+        let mut good_count = 0u32;
+
+        for zone_idx in 0..3 {
+            let zone = self.zones[zone_idx].lock();
+            for order in 0..=MAX_ORDER {
+                let count = zone.free_lists[order].count;
+                let head = zone.free_lists[order].head;
+                if count == 0 || head == 0 {
+                    continue;
+                }
+
+                let addr = head << FRAME_SHIFT;
+                let virt = phys_to_virt(PhysAddr::new(addr));
+                let block = unsafe { &*(virt as *const FreeBlock) };
+
+                if block.magic != FREE_BLOCK_MAGIC {
+                    unsafe {
+                        os_log::write_str_raw("[BUDDY-VERIFY] BAD: zone=");
+                        os_log::write_byte_raw(b'0' + zone_idx as u8);
+                        os_log::write_str_raw(" order=");
+                        os_log::write_byte_raw(b'0' + order as u8);
+                        os_log::write_str_raw(" addr=0x");
+                        serial_hex64(addr);
+                        os_log::write_str_raw(" magic=0x");
+                        serial_hex64(block.magic);
+                        os_log::write_str_raw(" count=");
+                        serial_hex64(count);
+                        os_log::write_str_raw("\n");
+                    }
+                    bad_count += 1;
+                } else {
+                    good_count += 1;
+
+                    // — SableWire: H2 — Walk deeper into the chain to find internal
+                    // corruption. Old limit was 32 entries which misses corruption
+                    // lurking in the middle of large free lists. 256 covers most
+                    // real-world chains without stalling boot. Also validate count
+                    // field matches actual chain length when we walk the whole thing.
+                    let mut walk_addr = addr;
+                    let mut walk_count = 0u64;
+                    let max_walk = if count < 256 { count } else { 256 }; // Cap traversal
+                    loop {
+                        if walk_count >= max_walk {
+                            break;
+                        }
+                        let wv = phys_to_virt(PhysAddr::new(walk_addr));
+                        let wb = unsafe { &*(wv as *const FreeBlock) };
+                        if wb.magic != FREE_BLOCK_MAGIC {
+                            unsafe {
+                                os_log::write_str_raw("[BUDDY-VERIFY] CHAIN-BAD: zone=");
+                                os_log::write_byte_raw(b'0' + zone_idx as u8);
+                                os_log::write_str_raw(" order=");
+                                os_log::write_byte_raw(b'0' + order as u8);
+                                os_log::write_str_raw(" pos=");
+                                serial_hex64(walk_count);
+                                os_log::write_str_raw(" addr=0x");
+                                serial_hex64(walk_addr);
+                                os_log::write_str_raw(" magic=0x");
+                                serial_hex64(wb.magic);
+                                os_log::write_str_raw("\n");
+                            }
+                            bad_count += 1;
+                            break;
+                        }
+                        if wb.next == 0 {
+                            walk_count += 1; // count this last block
+                            break;
+                        }
+                        walk_addr = wb.next << FRAME_SHIFT;
+                        walk_count += 1;
+                    }
+
+                    // — TorqueJax: H2 — If we walked the whole chain (not capped),
+                    // verify the count field matches actual chain length. Divergence
+                    // means corruption silently incremented/decremented the counter.
+                    if walk_count < 256 && walk_count != count {
+                        unsafe {
+                            os_log::write_str_raw("[BUDDY-VERIFY] COUNT-MISMATCH: zone=");
+                            os_log::write_byte_raw(b'0' + zone_idx as u8);
+                            os_log::write_str_raw(" order=");
+                            os_log::write_byte_raw(b'0' + order as u8);
+                            os_log::write_str_raw(" counted=");
+                            serial_hex64(walk_count);
+                            os_log::write_str_raw(" stored=");
+                            serial_hex64(count);
+                            os_log::write_str_raw("\n");
+                        }
+                        bad_count += 1;
+                    }
+                }
+            }
+        }
+
+        unsafe {
+            os_log::write_str_raw("[BUDDY-VERIFY] Done: good=");
+            serial_hex64(good_count as u64);
+            os_log::write_str_raw(" bad=");
+            serial_hex64(bad_count as u64);
+            os_log::write_str_raw("\n");
         }
     }
 }

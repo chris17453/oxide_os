@@ -19,10 +19,12 @@ mod module_driver_bridge;
 
 // Kernel modules
 mod arch;
+mod cmdline;
 mod console;
 mod fault;
 mod globals;
 mod init;
+mod kstack_guard;
 mod memory;
 mod mount;
 mod process;
@@ -57,9 +59,41 @@ pub extern "C" fn kernel_main(boot_info: &'static boot_proto::BootInfo) -> ! {
 }
 
 /// Panic handler
-/// — PatchBay: Panic output goes to console (stderr), not serial
+/// — GraveShift: Panic output goes to BOTH console AND serial. If the screen is
+/// dead or we triple-faulted into a reboot loop, serial is the only witness.
+/// ISR-safe path — no locks, no allocations, just raw bytes to the wire.
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    // — GraveShift: Serial first. If the console write deadlocks (because we panicked
+    // while holding the terminal lock), at least the serial port has the evidence.
+    unsafe {
+        os_log::write_str_raw("\n========================================\n");
+        os_log::write_str_raw("  KERNEL PANIC!\n");
+        os_log::write_str_raw("========================================\n");
+    }
+
+    if let Some(location) = info.location() {
+        unsafe {
+            os_log::write_str_raw("Location: ");
+            os_log::write_str_raw(location.file());
+            os_log::write_str_raw(":");
+            os_log::write_u32_raw(location.line());
+            os_log::write_str_raw(":");
+            os_log::write_u32_raw(location.column());
+            os_log::write_str_raw("\n");
+        }
+    }
+
+    // — GraveShift: format_args! for the message — it might contain useful context
+    // but we can't use write! on the ISR path. Print what we can.
+    unsafe {
+        os_log::write_str_raw("Message: ");
+        // Use the lock-free formatted path for the full panic message
+        os_log::_print_unsafe(format_args!("{}\n", info.message()));
+        os_log::write_str_raw("\nSystem halted.\n");
+    }
+
+    // — GraveShift: Now try the console too. If we're lucky, the user sees it on screen.
     let mut writer = ConsoleWriter;
 
     let _ = writeln!(writer);

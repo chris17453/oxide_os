@@ -5,7 +5,7 @@ cfg_select! {
         target_os = "android",
         target_os = "freebsd",
         target_os = "openbsd",
-        target_os = "oxide",
+        target_os = "motor", target_os = "oxide",
         target_os = "dragonfly",
         all(target_family = "wasm", target_feature = "atomics"),
         target_os = "hermit",

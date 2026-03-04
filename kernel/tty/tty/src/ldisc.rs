@@ -607,14 +607,15 @@ impl LineDiscipline {
         if self.eof_pending {
             return true;
         }
-        if self.termios.c_lflag.contains(LocalFlags::ICANON) {
+        let result = if self.termios.c_lflag.contains(LocalFlags::ICANON) {
             // Canonical: need complete line (newline in queue) or committed partial (Ctrl+D mid-line)
             self.input_queue.iter().any(|&c| c == b'\n') || !self.input_queue.is_empty()
         } else {
             // Raw: check VMIN
             let vmin = self.termios.c_cc[VMIN] as usize;
             self.input_queue.len() >= vmin.max(1)
-        }
+        };
+        result
     }
 
     /// Get number of bytes in input queue

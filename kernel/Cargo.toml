@@ -5,7 +5,12 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-default = []
+# — ColdCipher: hardened heap on by default — redzones, canaries, freed-fill.
+# UAF shows up as 0xDD, overflow trips the 0xFD fence. Pain now, pain-free later.
+default = ["heap-hardening"]
+
+# P3.2: heap hardening — forwards the feature flag into mm-heap
+heap-hardening = ["mm-heap/heap-hardening"]
 
 # Architecture selection (mutually exclusive)
 arch-aarch64 = ["dep:arch-aarch64"]
@@ -20,7 +25,7 @@ debug-mmap = ["mm-manager/debug-mmap"]  # Enable memory mapping debug output
 debug-buddy = ["mm-manager/debug-buddy"]  # Enable buddy allocator trace output (EXTREMELY noisy — fires on every alloc/free)
 debug-paging = ["proc/debug-paging"]  # Enable page table/alloc/zero traces during exec (EXTREMELY noisy — fires on every page map + alloc)
 debug-perf = ["arch-x86_64/debug-perf"]  # Enable per-ISR PERF-WARN messages (53 bytes × hundreds/sec = feedback loop)
-debug-proc = ["syscall/debug-proc"]       # Enable process management debug output
+debug-proc = ["syscall/debug-proc", "proc/debug-proc"]       # Enable process management debug output
 debug-sched = ["syscall/debug-sched"]  # Enable scheduler context switch debug output
 debug-mouse = []      # Enable mouse/input debug output (ISR-safe)
 debug-input = ["input/debug-input", "ps2/debug-input", "arch-x86_64/debug-input", "virtio-input/debug-input"]      # Enable input event path debug output

@@ -21,6 +21,26 @@ use crate::task::Task;
 /// Maximum number of CPUs supported
 pub const MAX_CPUS: usize = 256;
 
+/// — TorqueJax: Sentinel meaning "this PID is not on any CPU."
+/// MAX is the least likely valid CPU ID — safe sentinel for atomics.
+const CPU_NONE: u32 = u32::MAX;
+
+/// — TorqueJax: Global PID-to-CPU mapping. O(1) task locality without touching a
+/// single RQ spinlock. Before this, every "which CPU is pid X on?" query scanned
+/// up to 256 run queues — a full memory-bus beating at every signal delivery,
+/// proc read, and wake_up call. Now it's one atomic load. One. Glorious. Load.
+///
+/// Updated on: add_task (enqueue), remove_task (dequeue/exit), migration (re-add).
+/// Sentinel CPU_NONE (u32::MAX) = task not on any CPU (zombie, exited, or not yet added).
+/// Stale entries are possible in the window between dequeue and remove — the fallback
+/// RQ scan in every lookup function catches this. The mapping trades stale-but-fast
+/// for correct-but-slow: hint first, trust only after RQ confirms.
+const MAX_PIDS: usize = 4096;
+static PID_TO_CPU: [AtomicU32; MAX_PIDS] = {
+    const INIT: AtomicU32 = AtomicU32::new(CPU_NONE);
+    [INIT; MAX_PIDS]
+};
+
 /// Per-CPU run queues
 static RUN_QUEUES: [Mutex<Option<RunQueue>>; MAX_CPUS] = {
     const INIT: Mutex<Option<RunQueue>> = Mutex::new(None);
@@ -81,6 +101,116 @@ fn set_current_pid_lockfree(cpu: u32, pid: Option<Pid>) {
     CURRENT_PIDS[cpu as usize].store(val, Ordering::Relaxed);
 }
 
+/// — TorqueJax: O(1) PID-to-CPU hint. Returns the CPU the task was last
+/// assigned to, or None if the PID is out of range or not tracked.
+///
+/// This is a HINT, not a guarantee — the task may have migrated or exited
+/// in the window between the atomic load and the caller's RQ lock acquisition.
+/// Always validate by actually checking the target CPU's run queue.
+/// The fallback full-CPU scan in lookup functions handles stale entries.
+pub fn pid_to_cpu(pid: Pid) -> Option<u32> {
+    // — TorqueJax: PID 0 is the idle task — always CPU-local, caller knows which CPU.
+    // PIDs >= MAX_PIDS are outside the fast-path table; caller falls back to scan.
+    if pid as usize >= MAX_PIDS {
+        return None;
+    }
+    let cpu = PID_TO_CPU[pid as usize].load(Ordering::Relaxed);
+    if cpu == CPU_NONE { None } else { Some(cpu) }
+}
+
+/// — TorqueJax: Update PID-to-CPU mapping when a task is assigned to a CPU.
+/// Called from add_task (initial placement) and after migration (re-add after remove).
+fn pid_to_cpu_set(pid: Pid, cpu: u32) {
+    if (pid as usize) < MAX_PIDS {
+        PID_TO_CPU[pid as usize].store(cpu, Ordering::Relaxed);
+    }
+}
+
+/// — TorqueJax: Clear PID-to-CPU mapping when a task is fully removed.
+/// Called from remove_task. Guards against spurious hits on recycled PIDs.
+fn pid_to_cpu_clear(pid: Pid) {
+    if (pid as usize) < MAX_PIDS {
+        PID_TO_CPU[pid as usize].store(CPU_NONE, Ordering::Relaxed);
+    }
+}
+
+/// — TorqueJax: Three-tier blocking task lookup: this_cpu → PID_TO_CPU hint → full scan.
+///
+/// Tier 1: this_cpu() — the task is usually on the calling CPU (hot path, no atomic load).
+/// Tier 2: PID_TO_CPU[pid] — O(1) direct hit for cross-CPU tasks without scanning.
+/// Tier 3: full O(N_CPUS) scan — safety net for stale hints and task migrations.
+///
+/// The closure F receives `&mut RunQueue` and returns `Option<R>`. Return `None` to
+/// signal "task not found on this RQ"; return `Some(val)` to stop and return val.
+fn with_task_on_any_cpu<F, R>(pid: Pid, f: F) -> Option<R>
+where
+    F: Fn(&mut RunQueue) -> Option<R>,
+{
+    let cpu = this_cpu();
+
+    // Tier 1: this_cpu — covers current task and tasks running locally
+    if let Some(result) = with_rq(cpu, |rq| f(rq)).flatten() {
+        return Some(result);
+    }
+
+    // Tier 2: PID_TO_CPU hint — skip the O(N_CPUS) loop if we know the CPU
+    if let Some(hint_cpu) = pid_to_cpu(pid) {
+        if hint_cpu != cpu {
+            if let Some(result) = with_rq(hint_cpu, |rq| f(rq)).flatten() {
+                return Some(result);
+            }
+            // — TorqueJax: Hint was stale (task migrated between hint-read and RQ-lock).
+            // Fall through to full scan — not going to let a stale atom break correctness.
+        }
+    }
+
+    // Tier 3: Full scan — the correctness backstop. Slow but never wrong.
+    for other in 0..num_cpus() {
+        if other == cpu {
+            continue;
+        }
+        if let Some(result) = with_rq(other, |rq| f(rq)).flatten() {
+            return Some(result);
+        }
+    }
+    None
+}
+
+/// — TorqueJax: Three-tier NON-BLOCKING task lookup (ISR/procfs safe).
+/// Same logic as with_task_on_any_cpu but uses try_with_rq throughout.
+/// Returns None on lock contention rather than spinning — safe from ISR context.
+fn try_with_task_on_any_cpu<F, R>(pid: Pid, f: F) -> Option<R>
+where
+    F: Fn(&mut RunQueue) -> Option<R>,
+{
+    let cpu = this_cpu();
+
+    // Tier 1: this_cpu (try_lock)
+    if let Some(result) = try_with_rq(cpu, |rq| f(rq)).flatten() {
+        return Some(result);
+    }
+
+    // Tier 2: PID_TO_CPU hint (try_lock on hint CPU)
+    if let Some(hint_cpu) = pid_to_cpu(pid) {
+        if hint_cpu != cpu {
+            if let Some(result) = try_with_rq(hint_cpu, |rq| f(rq)).flatten() {
+                return Some(result);
+            }
+        }
+    }
+
+    // Tier 3: Full scan (try_lock per CPU)
+    for other in 0..num_cpus() {
+        if other == cpu {
+            continue;
+        }
+        if let Some(result) = try_with_rq(other, |rq| f(rq)).flatten() {
+            return Some(result);
+        }
+    }
+    None
+}
+
 /// Initialize the scheduler for a CPU
 ///
 /// Must be called once for each CPU before scheduling can begin.
@@ -97,6 +227,11 @@ pub fn init_cpu(cpu: u32, idle_pid: Pid) {
 
     // Initialize lock-free current PID to idle task
     set_current_pid_lockfree(cpu, Some(idle_pid));
+
+    // — TorqueJax: Register the idle task in PID_TO_CPU. Each CPU's idle task is
+    // always local — this seeds the table so idle-task lookups hit the hint on the
+    // first call. Without this, the first get_task_state(0) scan touches all CPUs.
+    pid_to_cpu_set(idle_pid, cpu);
 }
 
 /// Get the current CPU's logical ID.
@@ -127,31 +262,34 @@ pub fn num_cpus() -> u32 {
 }
 
 /// Get access to a run queue
+///
+/// — TorqueJax: 100M spins was basically "spin until the heat death of the universe."
+/// 10K fast spins (~50µs at 4GHz) covers all legitimate contention windows.
+/// After that, HLT backoff lets the IRQ that holds the lock make progress.
+/// Final blocking lock is the last resort — bounded by the HLT wakeups above.
 fn with_rq<F, R>(cpu: u32, f: F) -> Option<R>
 where
     F: FnOnce(&mut RunQueue) -> R,
 {
-    // — WireSaint: Bounded spin with deadlock detection on RQ lock.
-    // Timer ISR uses try_with_rq so it shouldn't hold this. But if
-    // we're spinning here, something is fundamentally wrong.
-    let mut rq_slot = {
-        let mut spins: u32 = 0;
-        loop {
-            if let Some(g) = RUN_QUEUES[cpu as usize].try_lock() {
-                break g;
-            }
-            spins += 1;
-            if spins == 50_000_000 {
-                unsafe { arch_x86_64::serial::write_str_unsafe("[DEADLOCK?] RQ.lock spin>50M\n"); }
-            }
-            if spins > 100_000_000 {
-                unsafe { arch_x86_64::serial::write_str_unsafe("[DEADLOCK] RQ falling to .lock()\n"); }
-                break RUN_QUEUES[cpu as usize].lock();
-            }
-            core::hint::spin_loop();
+    // Fast path: 10K spins (~50µs at 4GHz). Covers normal scheduler contention.
+    for _ in 0..10_000 {
+        if let Some(mut g) = RUN_QUEUES[cpu as usize].try_lock() {
+            return g.as_mut().map(f);
         }
-    };
-    rq_slot.as_mut().map(f)
+        core::hint::spin_loop();
+    }
+    // — TorqueJax: Patience, padawan. HLT backoff — wake on next IRQ.
+    // The lock holder is probably in a scheduler path that ends on the next tick.
+    // Burning cycles here just heats the CPU and delays the unlock.
+    for _ in 0..10 {
+        unsafe { core::arch::asm!("sti", "hlt", options(nomem, nostack)); }
+        if let Some(mut g) = RUN_QUEUES[cpu as usize].try_lock() {
+            return g.as_mut().map(f);
+        }
+    }
+    // — TorqueJax: Fine. Blocking it is. We already waited. No shame.
+    let mut g = RUN_QUEUES[cpu as usize].lock();
+    g.as_mut().map(f)
 }
 
 /// Try to get access to a run queue (non-blocking)
@@ -191,28 +329,70 @@ pub fn update_clock(now: u64) {
 /// The task is added to the appropriate run queue based on its CPU affinity.
 pub fn add_task(task: Task) {
     let cpu = select_task_rq(&task);
+    let pid = task.pid;
 
     with_rq(cpu, |rq| {
         rq.add_task(task);
     });
+
+    // — TorqueJax: Record which CPU owns this PID. Do this AFTER the RQ insert
+    // so that any concurrent lookup that reads PID_TO_CPU and then tries the RQ
+    // will find the task already there. Write-after-insert = no phantom hits.
+    pid_to_cpu_set(pid, cpu);
+}
+
+/// Add a task to a specific CPU's run queue.
+///
+/// — WireSaint: Used for per-CPU idle tasks that MUST live on their own CPU's RQ,
+/// bypassing select_task_rq() which would place them on the wrong CPU (since
+/// new tasks default to last_cpu=0). Without proper idle Tasks on each AP's RQ,
+/// pick_next_task returns idle PID 0 but context_switch_transaction fails (no Task
+/// found), corrupting rq.curr and causing cascading scheduler state issues.
+pub fn add_task_to_cpu(task: Task, cpu: u32) {
+    let pid = task.pid;
+    with_rq(cpu, |rq| {
+        rq.add_task(task);
+    });
+    pid_to_cpu_set(pid, cpu);
 }
 
 /// Remove a task from the scheduler
 ///
 /// — GraveShift: Fast-path this_cpu() — zombie reap removes from the CPU the task died on.
+/// — TorqueJax: Now uses PID_TO_CPU hint before falling back to the O(N_CPUS) scan.
 pub fn remove_task(pid: Pid) -> Option<Task> {
     let cpu = this_cpu();
+
+    // Fast-path: try this_cpu() first (common case: task dies on its own CPU)
     if let Some(task) = with_rq(cpu, |rq| rq.remove_task(pid)) {
         if task.is_some() {
+            pid_to_cpu_clear(pid);
             return task;
         }
     }
+
+    // — TorqueJax: PID_TO_CPU hint — skip the full scan if we know which CPU owns it.
+    // If the hint CPU differs from this_cpu() (already tried), jump straight there.
+    // Stale hint? The verify-then-scan fallback below catches it.
+    if let Some(hint_cpu) = pid_to_cpu(pid) {
+        if hint_cpu != cpu {
+            if let Some(task) = with_rq(hint_cpu, |rq| rq.remove_task(pid)) {
+                if task.is_some() {
+                    pid_to_cpu_clear(pid);
+                    return task;
+                }
+            }
+        }
+    }
+
+    // Full scan fallback — handles stale PID_TO_CPU entries and migrated tasks
     for other in 0..num_cpus() {
         if other == cpu {
             continue;
         }
         if let Some(task) = with_rq(other, |rq| rq.remove_task(pid)) {
             if task.is_some() {
+                pid_to_cpu_clear(pid);
                 return task;
             }
         }
@@ -261,6 +441,7 @@ fn select_task_rq(task: &Task) -> u32 {
 /// deadlock when the timer ISR interrupts code that already holds the
 /// RQ spin lock. Returns true if the wake succeeded, false if the lock
 /// was contended (caller should retry on the next tick).
+/// — TorqueJax: PID_TO_CPU hint as tier-2 before the full scan.
 pub fn try_wake_up(pid: Pid) -> bool {
     let cpu = this_cpu();
 
@@ -284,6 +465,34 @@ pub fn try_wake_up(pid: Pid) -> bool {
         Some(true) => return true,
         None => return false, // Lock contended — caller should retry
         Some(false) => {}     // Task not on this CPU, try others
+    }
+
+    // — TorqueJax: PID_TO_CPU hint — try the known CPU before scanning all of them
+    if let Some(hint_cpu) = pid_to_cpu(pid) {
+        if hint_cpu != cpu {
+            let found = try_with_rq(hint_cpu, |rq| {
+                if let Some(task) = rq.get_task_mut(pid) {
+                    task.state = TaskState::TASK_RUNNING;
+                    rq.enqueue_task(pid);
+                    if let Some(curr_pid) = rq.curr() {
+                        if should_preempt(rq, pid, curr_pid) {
+                            rq.set_need_resched(true);
+                        }
+                    }
+                    true
+                } else {
+                    false
+                }
+            });
+            match found {
+                Some(true) => {
+                    smp::ipi::send_reschedule(hint_cpu);
+                    return true;
+                }
+                None => return false, // Lock contended
+                Some(false) => {}     // Stale hint, fall through to scan
+            }
+        }
     }
 
     // Try other CPUs (non-blocking)
@@ -323,10 +532,11 @@ pub fn try_wake_up(pid: Pid) -> bool {
 ///
 /// WARNING: Uses blocking with_rq — MUST NOT be called from ISR context.
 /// Use try_wake_up() instead for timer interrupt handlers.
+/// — TorqueJax: PID_TO_CPU hint as tier-2 before the O(N_CPUS) scan.
 pub fn wake_up(pid: Pid) {
     let cpu = this_cpu();
 
-    // Find the task and update its state
+    // Tier 1: this_cpu — task is usually local (blocking with_rq OK here)
     let task_cpu = with_rq(cpu, |rq| {
         if let Some(task) = rq.get_task_mut(pid) {
             task.state = TaskState::TASK_RUNNING;
@@ -346,12 +556,10 @@ pub fn wake_up(pid: Pid) {
 
     // If task wasn't on current CPU's run queue, search others
     if task_cpu.is_none() {
-        for other_cpu in 0..num_cpus() {
-            if other_cpu == cpu {
-                continue;
-            }
-
-            let found = with_rq(other_cpu, |rq| {
+        // — TorqueJax: Tier 2 — PID_TO_CPU hint. If we know the CPU, skip straight there.
+        let hint_cpu = pid_to_cpu(pid);
+        let hint_found = hint_cpu.filter(|&h| h != cpu).and_then(|h| {
+            let found = with_rq(h, |rq| {
                 if let Some(task) = rq.get_task_mut(pid) {
                     task.state = TaskState::TASK_RUNNING;
                     rq.enqueue_task(pid);
@@ -361,11 +569,42 @@ pub fn wake_up(pid: Pid) {
                     false
                 }
             });
-
             if found == Some(true) {
-                // NeonRoot: Kick remote CPU to reschedule immediately (don't wait for timer tick)
-                smp::ipi::send_reschedule(other_cpu);
-                break;
+                // NeonRoot: Kick remote CPU to reschedule immediately
+                smp::ipi::send_reschedule(h);
+                Some(h)
+            } else {
+                None
+            }
+        });
+
+        // Tier 3: Full scan — only if hint missed (stale or no hint)
+        if hint_found.is_none() {
+            for other_cpu in 0..num_cpus() {
+                if other_cpu == cpu {
+                    continue;
+                }
+                // Skip the hint CPU — we already tried it above
+                if hint_cpu == Some(other_cpu) {
+                    continue;
+                }
+
+                let found = with_rq(other_cpu, |rq| {
+                    if let Some(task) = rq.get_task_mut(pid) {
+                        task.state = TaskState::TASK_RUNNING;
+                        rq.enqueue_task(pid);
+                        rq.set_need_resched(true);
+                        true
+                    } else {
+                        false
+                    }
+                });
+
+                if found == Some(true) {
+                    // NeonRoot: Kick remote CPU to reschedule immediately (don't wait for timer tick)
+                    smp::ipi::send_reschedule(other_cpu);
+                    break;
+                }
             }
         }
     }
@@ -539,7 +778,16 @@ pub fn pick_next_task() -> Option<Pid> {
                 // starve every other task. Charging TICK_NS minimum ensures CFS
                 // makes forward progress even without a TSC-based update_curr.
                 // A full tick is the coarsest fair charge — we can't measure less.
-                if delta == 0 && task.policy.is_fair() {
+                //
+                // — GraveShift: BUT — if scheduler_tick() already charged TICK_NS
+                // this tick (vruntime_charged_this_tick == true), skip the delta=0
+                // floor entirely. The timer ISR already paid the bill; we would be
+                // double-charging the evicted task and tanking its fairness slot.
+                // Clear the flag unconditionally so it does not persist into next tick.
+                let already_charged = task.vruntime_charged_this_tick;
+                task.vruntime_charged_this_tick = false;
+
+                if delta == 0 && task.policy.is_fair() && !already_charged {
                     delta = TICK_NS;
                 }
                 task.update_vruntime(delta);
@@ -640,6 +888,11 @@ pub fn switch_to(new_pid: Pid) {
     // Restore FS base register for Thread-Local Storage (TLS)
     // This must be done on every context switch because FS_BASE is not saved/restored
     // by the CPU during interrupts (unlike general-purpose registers)
+    //
+    // — SableWire: Also restore the user's GS base into KERNEL_GS_BASE (0xC0000102).
+    // During syscall context GS_BASE holds kernel per-CPU data; KERNEL_GS_BASE holds
+    // the user's GS. swapgs at sysret flips them, so restoring into 0xC0000102 here
+    // means the correct user GS appears in GS_BASE the moment we're back in user mode.
     if let Some(ctx) = get_task_context(new_pid) {
         if ctx.fs_base != 0 {
             unsafe {
@@ -657,6 +910,25 @@ pub fn switch_to(new_pid: Pid) {
                 );
             }
         }
+        if ctx.gs_base != 0 {
+            // — SableWire: Write to KERNEL_GS_BASE (0xC0000102), not GS_BASE (0xC0000101).
+            // We are in kernel context: GS_BASE = per-CPU data, KERNEL_GS_BASE = user GS.
+            // swapgs at sysret will promote this into GS_BASE for the returning task.
+            unsafe {
+                core::arch::asm!(
+                    "mov rcx, 0xC0000102",  // IA32_KERNEL_GS_BASE MSR
+                    "mov rax, {0}",          // Low 32 bits
+                    "mov rdx, {0}",          // Copy for shift
+                    "shr rdx, 32",           // High 32 bits
+                    "wrmsr",
+                    in(reg) ctx.gs_base,
+                    out("rax") _,
+                    out("rcx") _,
+                    out("rdx") _,
+                    options(nostack, preserves_flags)
+                );
+            }
+        }
     }
 }
 
@@ -664,20 +936,9 @@ pub fn switch_to(new_pid: Pid) {
 ///
 /// — GraveShift: Fast-path tries this_cpu() first. The current task is ALWAYS
 /// on the local RQ, and with all tasks on CPU 0, this hits first try 99% of the time.
+/// — TorqueJax: Now uses PID_TO_CPU hint as tier-2 before the O(N_CPUS) scan.
 pub fn get_task_state(pid: Pid) -> Option<TaskState> {
-    let cpu = this_cpu();
-    if let Some(state) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.state)).flatten() {
-        return Some(state);
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if let Some(state) = with_rq(other, |rq| rq.get_task(pid).map(|t| t.state)).flatten() {
-            return Some(state);
-        }
-    }
-    None
+    with_task_on_any_cpu(pid, |rq| rq.get_task(pid).map(|t| t.state))
 }
 
 /// Non-blocking variant of get_task_state for diagnostic contexts (procfs).
@@ -685,75 +946,32 @@ pub fn get_task_state(pid: Pid) -> Option<TaskState> {
 /// — GraveShift: ProcStat and ProcLoadavg loop all PIDs calling this per-PID.
 /// Blocking with_rq in a loop = contention nightmare on SMP. Returns None
 /// on contention — procfs just undercounts running/blocked by one process.
+/// — TorqueJax: PID_TO_CPU hint in tier-2 cuts the scan from O(N_CPUS) to O(1) typical.
 pub fn try_get_task_state(pid: Pid) -> Option<TaskState> {
-    let cpu = this_cpu();
-    if let Some(state) = try_with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.state)).flatten() {
-        return Some(state);
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if let Some(state) = try_with_rq(other, |rq| rq.get_task(pid).map(|t| t.state)).flatten() {
-            return Some(state);
-        }
-    }
-    None
+    try_with_task_on_any_cpu(pid, |rq| rq.get_task(pid).map(|t| t.state))
 }
 
 /// Get task context (for context switching)
 ///
 /// — GraveShift: Fast-path this_cpu() — context switches always operate on local tasks.
+/// — TorqueJax: PID_TO_CPU hint in tier-2 skips the O(N_CPUS) scan for cross-CPU ops.
 pub fn get_task_context(pid: Pid) -> Option<crate::task::TaskContext> {
-    let cpu = this_cpu();
-    if let Some(ctx) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.context.clone())).flatten() {
-        return Some(ctx);
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if let Some(ctx) =
-            with_rq(other, |rq| rq.get_task(pid).map(|t| t.context.clone())).flatten()
-        {
-            return Some(ctx);
-        }
-    }
-    None
+    with_task_on_any_cpu(pid, |rq| rq.get_task(pid).map(|t| t.context.clone()))
 }
 
 /// Update task context (for context switching)
 ///
 /// — GraveShift: Fast-path this_cpu() — we only set context on tasks we're about to switch to.
+/// — TorqueJax: PID_TO_CPU hint in tier-2 skips the O(N_CPUS) scan for cross-CPU ops.
 pub fn set_task_context(pid: Pid, context: crate::task::TaskContext) {
-    let cpu = this_cpu();
-    let found = with_rq(cpu, |rq| {
+    with_task_on_any_cpu(pid, |rq| {
         if let Some(task) = rq.get_task_mut(pid) {
             task.context = context;
-            true
+            Some(())
         } else {
-            false
+            None
         }
     });
-    if found == Some(true) {
-        return;
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        let found = with_rq(other, |rq| {
-            if let Some(task) = rq.get_task_mut(pid) {
-                task.context = context;
-                true
-            } else {
-                false
-            }
-        });
-        if found == Some(true) {
-            break;
-        }
-    }
 }
 
 /// Save kernel_preempt_ok flag to a task's saved state.
@@ -761,102 +979,46 @@ pub fn set_task_context(pid: Pid, context: crate::task::TaskContext) {
 /// — GraveShift: Called on switch-out. The per-CPU flag is about to be cleared,
 /// so we stash the value in the task struct. On switch-in, load_kernel_preempt
 /// restores it → no more lost preemption allowance → no more deadlock.
+/// — TorqueJax: ISR-safe non-blocking path uses try_with_task_on_any_cpu.
 pub fn save_kernel_preempt(pid: Pid, value: bool) {
-    // — SableWire: ISR-safe — use try_with_rq. Called from timer ISR during context
-    // switch. If the lock can't be acquired (shouldn't happen since we checked
-    // rq_lock_available earlier), silently skip — the task keeps its old value.
-    let cpu = this_cpu();
-    let found = try_with_rq(cpu, |rq| {
+    // — SableWire: ISR-safe — try_with_task_on_any_cpu uses try_with_rq throughout.
+    try_with_task_on_any_cpu(pid, |rq| {
         if let Some(task) = rq.get_task_mut(pid) {
             task.kernel_preempt_ok = value;
-            true
+            Some(())
         } else {
-            false
+            None
         }
     });
-    if found == Some(true) {
-        return;
-    }
-    for other in 0..num_cpus() {
-        if other == cpu { continue; }
-        let found = try_with_rq(other, |rq| {
-            if let Some(task) = rq.get_task_mut(pid) {
-                task.kernel_preempt_ok = value;
-                true
-            } else {
-                false
-            }
-        });
-        if found == Some(true) {
-            return;
-        }
-    }
 }
 
 /// Load kernel_preempt_ok flag from a task's saved state.
 ///
 /// — GraveShift: Called on switch-in. Returns the value saved at last switch-out.
 /// ISR-safe — uses try_with_rq to avoid deadlock if lock is held.
+/// — TorqueJax: PID_TO_CPU hint skips the scan for the common ISR case.
 pub fn load_kernel_preempt(pid: Pid) -> bool {
-    let cpu = this_cpu();
-    if let Some(val) = try_with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.kernel_preempt_ok)).flatten() {
-        return val;
-    }
-    for other in 0..num_cpus() {
-        if other == cpu { continue; }
-        if let Some(val) = try_with_rq(other, |rq| rq.get_task(pid).map(|t| t.kernel_preempt_ok)).flatten() {
-            return val;
-        }
-    }
-    false
+    try_with_task_on_any_cpu(pid, |rq| rq.get_task(pid).map(|t| t.kernel_preempt_ok))
+        .unwrap_or(false)
 }
 
 /// Get task PML4 physical address (for address space switching)
 ///
 /// — GraveShift: Fast-path this_cpu() — address space switches are always local.
+/// — TorqueJax: PID_TO_CPU hint added as tier-2 for cross-CPU lookups.
 pub fn get_task_pml4(pid: Pid) -> Option<PhysAddr> {
-    let cpu = this_cpu();
-    if let Some(pml4) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.pml4_phys)).flatten() {
-        return Some(pml4);
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if let Some(pml4) = with_rq(other, |rq| rq.get_task(pid).map(|t| t.pml4_phys)).flatten() {
-            return Some(pml4);
-        }
-    }
-    None
+    with_task_on_any_cpu(pid, |rq| rq.get_task(pid).map(|t| t.pml4_phys))
 }
 
 /// Get task kernel stack info (for context switching)
 ///
 /// — GraveShift: Fast-path this_cpu() — kernel stack queries are local-task ops.
+/// — TorqueJax: PID_TO_CPU hint added as tier-2 for cross-CPU lookups.
 pub fn get_task_kernel_stack(pid: Pid) -> Option<(PhysAddr, usize)> {
-    let cpu = this_cpu();
-    if let Some(info) = with_rq(cpu, |rq| {
+    with_task_on_any_cpu(pid, |rq| {
         rq.get_task(pid)
             .map(|t| (t.kernel_stack, t.kernel_stack_size))
     })
-    .flatten()
-    {
-        return Some(info);
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if let Some(info) = with_rq(other, |rq| {
-            rq.get_task(pid)
-                .map(|t| (t.kernel_stack, t.kernel_stack_size))
-        })
-        .flatten()
-        {
-            return Some(info);
-        }
-    }
-    None
 }
 
 /// Update task execution context after exec()
@@ -883,50 +1045,29 @@ pub fn update_task_exec_info(
     context.rsp = user_stack_top;
     context.rflags |= 0x200; // ensure IF is set
 
-    let cpu = this_cpu();
-    let updated = with_rq(cpu, |rq| {
+    // — TorqueJax: PID_TO_CPU hint: exec() always modifies the caller's task.
+    // Tier-1 (this_cpu) handles the common case; hint handles cross-CPU exec edge cases.
+    with_task_on_any_cpu(pid, |rq| {
         if let Some(task) = rq.get_task_mut(pid) {
             task.pml4_phys = pml4_phys;
             task.entry_point = entry_point;
             task.user_stack_top = user_stack_top;
             task.context = context;
-            true
+            Some(())
         } else {
-            false
+            None
         }
     });
-    if updated == Some(true) {
-        return;
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        let updated = with_rq(other, |rq| {
-            if let Some(task) = rq.get_task_mut(pid) {
-                task.pml4_phys = pml4_phys;
-                task.entry_point = entry_point;
-                task.user_stack_top = user_stack_top;
-                task.context = context;
-                true
-            } else {
-                false
-            }
-        });
-        if updated == Some(true) {
-            break;
-        }
-    }
 }
 
 /// Get all context switch info for a task in one call (more efficient)
 ///
 /// — GraveShift: Fast-path this_cpu() — context switch info is always for local tasks.
+/// — TorqueJax: PID_TO_CPU hint as tier-2 eliminates the scan for cross-CPU cases.
 pub fn get_task_switch_info(
     pid: Pid,
 ) -> Option<(crate::task::TaskContext, PhysAddr, PhysAddr, usize)> {
-    let cpu = this_cpu();
-    if let Some(info) = with_rq(cpu, |rq| {
+    with_task_on_any_cpu(pid, |rq| {
         rq.get_task(pid).map(|t| {
             (
                 t.context.clone(),
@@ -936,68 +1077,154 @@ pub fn get_task_switch_info(
             )
         })
     })
-    .flatten()
-    {
-        return Some(info);
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
+}
+
+/// All context-switch data returned in one atomic RQ transaction.
+///
+/// — TorqueJax: One struct to rule them all. Carrying every piece of data the
+/// caller needs so we never have to re-enter the lock after we leave.
+/// pml4_phys is the CR3 value (physical PML4 address). kernel_stack and
+/// kernel_stack_size let the caller compute the virtual stack top via
+/// phys_to_virt — the sched crate doesn't pull in mm_paging.
+#[derive(Debug, Clone, Copy)]
+pub struct SwitchInfo {
+    /// Physical address of PML4 — write directly to CR3.
+    pub new_cr3: u64,
+    /// Incoming task's saved instruction pointer.
+    pub new_rip: u64,
+    /// Incoming task's saved stack pointer.
+    pub new_rsp: u64,
+    /// Incoming task's FS base for TLS.
+    pub new_fs_base: u64,
+    /// Incoming task's user GS base (stored in KERNEL_GS_BASE during syscall).
+    pub new_gs_base: u64,
+    /// Physical address of incoming task's kernel stack.
+    pub new_kernel_stack: PhysAddr,
+    /// Size of incoming task's kernel stack in bytes.
+    pub new_kernel_stack_size: usize,
+    /// Incoming task's saved kernel_preempt_ok flag.
+    pub new_kpo: bool,
+    /// Full saved context for the incoming task (for interrupt frame rebuild).
+    pub new_ctx: crate::task::TaskContext,
+}
+
+/// Atomic context-switch transaction — five lock acquisitions in one.
+///
+/// — TorqueJax: One lock to rule them all. Five acquisitions was five too many.
+/// Previously: save_kernel_preempt → set_task_context → get_task_switch_info
+///             → switch_to → load_kernel_preempt = 5 separate RQ lock/unlock cycles.
+/// Now: one with_rq call does all of it. Less contention, no window for the
+/// scheduler to change state between operations, fewer cache misses.
+///
+/// Saves `old_ctx` + `kpo_value` into `old_pid`'s task, then collects all
+/// switch info for `new_pid`, marks it as current, and returns `SwitchInfo`.
+/// Returns `None` if either task is not found on this CPU's run queue.
+///
+/// SAFETY: Must be called from the timer ISR with rq_lock_available() == true.
+/// Uses try_with_rq (non-blocking) — callers must have checked the lock first.
+pub fn context_switch_transaction(
+    old_pid: Pid,
+    new_pid: Pid,
+    old_ctx: crate::task::TaskContext,
+    kpo_value: bool,
+) -> Option<SwitchInfo> {
+    let cpu = this_cpu();
+
+    // — TorqueJax: try_with_rq here — we are in ISR context, the caller has already
+    // verified rq_lock_available(). If somehow the lock is contended anyway (race
+    // between the check and here), bail — next tick will retry cleanly.
+    let result = try_with_rq(cpu, |rq| {
+        // --- Save outgoing task ---
+        if let Some(old_task) = rq.get_task_mut(old_pid) {
+            old_task.context = old_ctx;
+            old_task.kernel_preempt_ok = kpo_value;
         }
-        if let Some(info) = with_rq(other, |rq| {
-            rq.get_task(pid).map(|t| {
-                (
-                    t.context.clone(),
-                    t.pml4_phys,
-                    t.kernel_stack,
-                    t.kernel_stack_size,
-                )
-            })
-        })
-        .flatten()
-        {
-            return Some(info);
+        // If old task not found on this CPU, bail — something is very wrong
+        // but we don't want to corrupt state by continuing half-blind.
+
+        // --- Collect incoming task info ---
+        let new_task = rq.get_task(new_pid)?;
+
+        // — ColdCipher: Last checkpoint before iretq builds the frame.
+        // If rip=0 or rsp=0, this task's context was never initialized —
+        // bail and let next tick retry. Two u64 comparisons, negligible
+        // vs the CR3 write and MSR ops that follow.
+        if !new_task.context.is_schedulable() {
+            return None;
         }
+
+        let info = SwitchInfo {
+            new_cr3: new_task.pml4_phys.as_u64(),
+            new_rip: new_task.context.rip,
+            new_rsp: new_task.context.rsp,
+            new_fs_base: new_task.context.fs_base,
+            new_gs_base: new_task.context.gs_base,
+            new_kernel_stack: new_task.kernel_stack,
+            new_kernel_stack_size: new_task.kernel_stack_size,
+            new_kpo: new_task.kernel_preempt_ok,
+            new_ctx: new_task.context,
+        };
+
+        // --- switch_to inline: re-enqueue old, dequeue new, set current ---
+        // Re-enqueue old task if still runnable
+        let should_requeue = rq
+            .get_task(old_pid)
+            .map(|t| t.state.is_runnable() && !t.is_idle())
+            .unwrap_or(false);
+        if should_requeue {
+            rq.put_prev_task(old_pid);
+        }
+
+        // Dequeue new task (it's becoming current — not on run queue)
+        rq.dequeue_task(new_pid);
+
+        // Sync clock from GLOBAL_CLOCK before accounting (stale-clock fix)
+        let fresh_now = GLOBAL_CLOCK.load(Ordering::Relaxed);
+        rq.update_clock(fresh_now);
+        let now = rq.clock();
+
+        if let Some(new_task_mut) = rq.get_task_mut(new_pid) {
+            new_task_mut.state = TaskState::TASK_RUNNING;
+            new_task_mut.last_cpu = cpu;
+            new_task_mut.exec_start = now;
+            new_task_mut.on_rq = false;
+        }
+
+        rq.set_curr(Some(new_pid));
+        rq.set_need_resched(false);
+
+        Some(info)
+    });
+
+    // Flatten two layers of Option (try_with_rq returns Option<Option<SwitchInfo>>)
+    let info = result.flatten();
+
+    // — TorqueJax: Update lock-free current PID mirror. switch_to() used to do this
+    // after releasing the RQ lock. We replicate it here: if the transaction succeeded,
+    // new_pid is the new current — update the ISR-visible atomic immediately.
+    if info.is_some() {
+        set_current_pid_lockfree(cpu, Some(new_pid));
     }
-    None
+
+    info
 }
 
 /// Set task CPU affinity
 ///
 /// — GraveShift: Fast-path this_cpu() for the lookup, then handle migration if needed.
+/// — TorqueJax: PID_TO_CPU hint as tier-2 before the O(N_CPUS) search for the task's
+/// current CPU. Migration re-adds via add_task(), which updates PID_TO_CPU automatically.
 pub fn set_affinity(pid: Pid, cpuset: CpuSet) {
-    let start_cpu = this_cpu();
-    let mut found_cpu = None;
-    // Fast-path: try current CPU first
-    let found = with_rq(start_cpu, |rq| {
+    // Find the CPU that currently owns this task (with hint-accelerated lookup)
+    let found_cpu = with_task_on_any_cpu(pid, |rq| {
         if let Some(task) = rq.get_task_mut(pid) {
             task.cpu_affinity = cpuset;
-            true
+            Some(rq.cpu())
         } else {
-            false
+            None
         }
     });
-    if found == Some(true) {
-        found_cpu = Some(start_cpu);
-    } else {
-        for cpu in 0..num_cpus() {
-            if cpu == start_cpu {
-                continue;
-            }
-            let found = with_rq(cpu, |rq| {
-                if let Some(task) = rq.get_task_mut(pid) {
-                    task.cpu_affinity = cpuset;
-                    true
-                } else {
-                    false
-                }
-            });
-            if found == Some(true) {
-                found_cpu = Some(cpu);
-                break;
-            }
-        }
-    }
+
     if let Some(cpu) = found_cpu {
         // ThreadRogue: Eager affinity enforcement - migrate immediately if disallowed
         if !cpuset.is_set(cpu) {
@@ -1018,8 +1245,12 @@ pub fn set_affinity(pid: Pid, cpuset: CpuSet) {
                 }
             });
 
-            // Re-add task on allowed CPU (outside with_rq lock)
+            // Re-add task on allowed CPU (outside with_rq lock).
+            // — TorqueJax: add_task() will call pid_to_cpu_set() with the new CPU.
+            // PID_TO_CPU is briefly stale between dequeue and re-add — the lookup
+            // helpers' fallback scan handles this window correctly.
             if let Some(task) = maybe_task.flatten() {
+                pid_to_cpu_clear(pid); // — TorqueJax: Clear stale entry before re-add
                 add_task(task);
             }
         }
@@ -1029,33 +1260,20 @@ pub fn set_affinity(pid: Pid, cpuset: CpuSet) {
 /// Get task CPU affinity
 ///
 /// — GraveShift: Fast-path this_cpu().
+/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU affinity queries.
 pub fn get_affinity(pid: Pid) -> Option<CpuSet> {
-    let cpu = this_cpu();
-    if let Some(affinity) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.cpu_affinity)).flatten() {
-        return Some(affinity);
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if let Some(affinity) =
-            with_rq(other, |rq| rq.get_task(pid).map(|t| t.cpu_affinity)).flatten()
-        {
-            return Some(affinity);
-        }
-    }
-    None
+    with_task_on_any_cpu(pid, |rq| rq.get_task(pid).map(|t| t.cpu_affinity))
 }
 
 /// Set task scheduling policy
 ///
 /// — GraveShift: Fast-path this_cpu().
+/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU policy changes.
 pub fn set_scheduler(pid: Pid, policy: SchedPolicy, priority: u8) {
-    let start_cpu = this_cpu();
-    let do_set = |rq: &mut RunQueue| -> bool {
+    with_task_on_any_cpu(pid, |rq| {
         let was_on_rq = rq.get_task(pid).map(|t| t.on_rq).unwrap_or(false);
         if rq.get_task(pid).is_none() {
-            return false;
+            return None;
         }
         if was_on_rq {
             rq.dequeue_task(pid);
@@ -1069,118 +1287,41 @@ pub fn set_scheduler(pid: Pid, policy: SchedPolicy, priority: u8) {
         if was_on_rq {
             rq.enqueue_task(pid);
         }
-        true
-    };
-    if with_rq(start_cpu, do_set) == Some(true) {
-        return;
-    }
-    for other in 0..num_cpus() {
-        if other == start_cpu {
-            continue;
-        }
-        if with_rq(other, |rq| {
-            let was_on_rq = rq.get_task(pid).map(|t| t.on_rq).unwrap_or(false);
-            if rq.get_task(pid).is_none() {
-                return false;
-            }
-            if was_on_rq {
-                rq.dequeue_task(pid);
-            }
-            if let Some(task) = rq.get_task_mut(pid) {
-                task.set_policy(policy);
-                if policy.is_realtime() {
-                    task.set_rt_priority(priority);
-                }
-            }
-            if was_on_rq {
-                rq.enqueue_task(pid);
-            }
-            true
-        }) == Some(true)
-        {
-            break;
-        }
-    }
+        Some(())
+    });
 }
 
 /// Get task scheduling policy
 ///
 /// — GraveShift: Fast-path this_cpu().
+/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU policy queries.
 pub fn get_scheduler(pid: Pid) -> Option<(SchedPolicy, u8)> {
-    let cpu = this_cpu();
-    if let Some(result) = with_rq(cpu, |rq| {
+    with_task_on_any_cpu(pid, |rq| {
         rq.get_task(pid).map(|t| (t.policy, t.rt_priority))
     })
-    .flatten()
-    {
-        return Some(result);
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if let Some(result) = with_rq(other, |rq| {
-            rq.get_task(pid).map(|t| (t.policy, t.rt_priority))
-        })
-        .flatten()
-        {
-            return Some(result);
-        }
-    }
-    None
 }
 
 /// Set task nice value
 ///
 /// — GraveShift: Fast-path this_cpu().
+/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU nice changes.
 pub fn set_nice(pid: Pid, nice: i8) {
-    let cpu = this_cpu();
-    let found = with_rq(cpu, |rq| {
+    with_task_on_any_cpu(pid, |rq| {
         if let Some(task) = rq.get_task_mut(pid) {
             task.set_nice(nice);
-            true
+            Some(())
         } else {
-            false
+            None
         }
     });
-    if found == Some(true) {
-        return;
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        let found = with_rq(other, |rq| {
-            if let Some(task) = rq.get_task_mut(pid) {
-                task.set_nice(nice);
-                true
-            } else {
-                false
-            }
-        });
-        if found == Some(true) {
-            break;
-        }
-    }
 }
 
 /// Get task nice value
 ///
 /// — GraveShift: Fast-path this_cpu().
+/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU nice queries.
 pub fn get_nice(pid: Pid) -> Option<i8> {
-    let cpu = this_cpu();
-    if let Some(nice) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.nice)).flatten() {
-        return Some(nice);
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if let Some(nice) = with_rq(other, |rq| rq.get_task(pid).map(|t| t.nice)).flatten() {
-            return Some(nice);
-        }
-    }
-    None
+    with_task_on_any_cpu(pid, |rq| rq.get_task(pid).map(|t| t.nice))
 }
 
 /// Move a task to a scheduling group
@@ -1371,22 +1512,10 @@ pub fn all_pids() -> Vec<Pid> {
 ///
 /// — GraveShift: Fast-path tries this_cpu() first. With all user tasks on CPU 0,
 /// this avoids the O(num_cpus) blocking lock loop on every syscall that touches meta.
+/// — TorqueJax: PID_TO_CPU hint as tier-2 — signals and syscalls hit the fast path
+/// 99% of the time without burning a full CPU-scan just to find the task.
 pub fn get_task_meta(pid: Pid) -> Option<Arc<Mutex<ProcessMeta>>> {
-    let cpu = this_cpu();
-    if let Some(meta) = with_rq(cpu, |rq| rq.get_task(pid).and_then(|t| t.meta.clone())).flatten() {
-        return Some(meta);
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if let Some(meta) =
-            with_rq(other, |rq| rq.get_task(pid).and_then(|t| t.meta.clone())).flatten()
-        {
-            return Some(meta);
-        }
-    }
-    None
+    with_task_on_any_cpu(pid, |rq| rq.get_task(pid).and_then(|t| t.meta.clone()))
 }
 
 /// Non-blocking variant of get_task_meta for diagnostic contexts (procfs).
@@ -1396,22 +1525,9 @@ pub fn get_task_meta(pid: Pid) -> Option<Arc<Mutex<ProcessMeta>>> {
 /// RQ spinlocks 240 times per `top` refresh. Returns None on contention;
 /// procfs just shows empty/stale data for that process. Better than locking
 /// up the entire system.
+/// — TorqueJax: PID_TO_CPU hint cuts the typical procfs path from O(N_CPUS) to O(1).
 pub fn try_get_task_meta(pid: Pid) -> Option<Arc<Mutex<ProcessMeta>>> {
-    let cpu = this_cpu();
-    if let Some(meta) = try_with_rq(cpu, |rq| rq.get_task(pid).and_then(|t| t.meta.clone())).flatten() {
-        return Some(meta);
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if let Some(meta) =
-            try_with_rq(other, |rq| rq.get_task(pid).and_then(|t| t.meta.clone())).flatten()
-        {
-            return Some(meta);
-        }
-    }
-    None
+    try_with_task_on_any_cpu(pid, |rq| rq.get_task(pid).and_then(|t| t.meta.clone()))
 }
 
 /// Get process metadata for the current task
@@ -1448,21 +1564,32 @@ where
     // — WireSaint: Bounded spin with deadlock detection on ProcessMeta lock.
     // ISR signal delivery uses try_lock so it shouldn't contend long,
     // but SMP timing can surprise you at 3 AM.
+    // — TorqueJax: Same 10K + HLT recipe as with_rq. ProcessMeta is contended by
+    // ISR signal delivery (try_lock) and syscalls. 100M spins was a silent hang.
     let guard = {
-        let mut spins: u32 = 0;
-        loop {
+        let mut acquired = None;
+        for _ in 0..10_000 {
             if let Some(g) = meta_arc.try_lock() {
-                break g;
-            }
-            spins += 1;
-            if spins == 50_000_000 {
-                unsafe { arch_x86_64::serial::write_str_unsafe("[DEADLOCK?] ProcessMeta.lock spin>50M\n"); }
-            }
-            if spins > 100_000_000 {
-                unsafe { arch_x86_64::serial::write_str_unsafe("[DEADLOCK] ProcessMeta falling to .lock()\n"); }
-                break meta_arc.lock();
+                acquired = Some(g);
+                break;
             }
             core::hint::spin_loop();
+        }
+        if acquired.is_none() {
+            for _ in 0..10 {
+                unsafe { core::arch::asm!("sti", "hlt", options(nomem, nostack)); }
+                if let Some(g) = meta_arc.try_lock() {
+                    acquired = Some(g);
+                    break;
+                }
+            }
+        }
+        match acquired {
+            Some(g) => g,
+            None => {
+                unsafe { arch_x86_64::serial::write_str_unsafe("[DEADLOCK] ProcessMeta falling to .lock()\n"); }
+                meta_arc.lock()
+            }
         }
     };
     // Dereference the guard to get &ProcessMeta
@@ -1487,22 +1614,32 @@ where
     F: FnOnce(&mut ProcessMeta) -> R,
 {
     let meta_arc = get_current_meta()?;
-    // — WireSaint: Bounded spin with deadlock detection
+    // — TorqueJax: Same 10K + HLT recipe. ProcessMeta_mut called from syscall paths
+    // that already hold the scheduler lock — long spins = guaranteed priority inversion.
     let mut guard = {
-        let mut spins: u32 = 0;
-        loop {
+        let mut acquired = None;
+        for _ in 0..10_000 {
             if let Some(g) = meta_arc.try_lock() {
-                break g;
-            }
-            spins += 1;
-            if spins == 50_000_000 {
-                unsafe { arch_x86_64::serial::write_str_unsafe("[DEADLOCK?] ProcessMeta_mut spin>50M\n"); }
-            }
-            if spins > 100_000_000 {
-                unsafe { arch_x86_64::serial::write_str_unsafe("[DEADLOCK] ProcessMeta_mut falling to .lock()\n"); }
-                break meta_arc.lock();
+                acquired = Some(g);
+                break;
             }
             core::hint::spin_loop();
+        }
+        if acquired.is_none() {
+            for _ in 0..10 {
+                unsafe { core::arch::asm!("sti", "hlt", options(nomem, nostack)); }
+                if let Some(g) = meta_arc.try_lock() {
+                    acquired = Some(g);
+                    break;
+                }
+            }
+        }
+        match acquired {
+            Some(g) => g,
+            None => {
+                unsafe { arch_x86_64::serial::write_str_unsafe("[DEADLOCK] ProcessMeta_mut falling to .lock()\n"); }
+                meta_arc.lock()
+            }
         }
     };
     let meta_ref: &mut ProcessMeta = &mut *guard;
@@ -1512,167 +1649,74 @@ where
 /// Get the children of a task
 ///
 /// — GraveShift: Fast-path this_cpu() — parent is almost always the caller.
+/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU parent lookups.
 pub fn get_task_children(pid: Pid) -> Vec<Pid> {
-    let cpu = this_cpu();
-    if let Some(children) =
-        with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.children.clone())).flatten()
-    {
-        return children;
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if let Some(children) =
-            with_rq(other, |rq| rq.get_task(pid).map(|t| t.children.clone())).flatten()
-        {
-            return children;
-        }
-    }
-    Vec::new()
+    with_task_on_any_cpu(pid, |rq| rq.get_task(pid).map(|t| t.children.clone()))
+        .unwrap_or_default()
 }
 
 /// Add a child to a task
 ///
 /// — GraveShift: Fast-path this_cpu() — parent adding child is always local.
+/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU parent updates.
 pub fn add_task_child(pid: Pid, child_pid: Pid) {
-    let cpu = this_cpu();
-    let found = with_rq(cpu, |rq| {
+    with_task_on_any_cpu(pid, |rq| {
         if let Some(task) = rq.get_task_mut(pid) {
             task.add_child(child_pid);
-            true
+            Some(())
         } else {
-            false
+            None
         }
     });
-    if found == Some(true) {
-        return;
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        let found = with_rq(other, |rq| {
-            if let Some(task) = rq.get_task_mut(pid) {
-                task.add_child(child_pid);
-                true
-            } else {
-                false
-            }
-        });
-        if found == Some(true) {
-            break;
-        }
-    }
 }
 
 /// Remove a child from a task
 ///
 /// — GraveShift: Fast-path this_cpu().
+/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU parent updates.
 pub fn remove_task_child(pid: Pid, child_pid: Pid) {
-    let cpu = this_cpu();
-    let found = with_rq(cpu, |rq| {
+    with_task_on_any_cpu(pid, |rq| {
         if let Some(task) = rq.get_task_mut(pid) {
             task.remove_child(child_pid);
-            true
+            Some(())
         } else {
-            false
+            None
         }
     });
-    if found == Some(true) {
-        return;
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        let found = with_rq(other, |rq| {
-            if let Some(task) = rq.get_task_mut(pid) {
-                task.remove_child(child_pid);
-                true
-            } else {
-                false
-            }
-        });
-        if found == Some(true) {
-            break;
-        }
-    }
 }
 
 /// Set exit status for a task
 ///
 /// — GraveShift: Fast-path this_cpu() — exit() is called by the dying task itself.
+/// — TorqueJax: PID_TO_CPU stays set after exit (task is zombie, still on the RQ
+/// until reaped by remove_task). The hint remains valid until remove_task clears it.
 pub fn set_task_exit_status(pid: Pid, status: i32) {
-    let cpu = this_cpu();
-    let found = with_rq(cpu, |rq| {
+    with_task_on_any_cpu(pid, |rq| {
         if let Some(task) = rq.get_task_mut(pid) {
             task.exit(status);
             rq.dequeue_task(pid);
-            true
+            Some(())
         } else {
-            false
+            None
         }
     });
-    if found == Some(true) {
-        return;
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        let found = with_rq(other, |rq| {
-            if let Some(task) = rq.get_task_mut(pid) {
-                task.exit(status);
-                rq.dequeue_task(pid);
-                true
-            } else {
-                false
-            }
-        });
-        if found == Some(true) {
-            break;
-        }
-    }
 }
 
 /// Get a task's ppid
 ///
 /// — GraveShift: Fast-path this_cpu() — waitpid calls this on children, usually local.
+/// — TorqueJax: PID_TO_CPU hint as tier-2 — waitpid on a remote child no longer scans all CPUs.
 pub fn get_task_ppid(pid: Pid) -> Option<Pid> {
-    let cpu = this_cpu();
-    if let Some(ppid) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.ppid)).flatten() {
-        return Some(ppid);
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if let Some(ppid) = with_rq(other, |rq| rq.get_task(pid).map(|t| t.ppid)).flatten() {
-            return Some(ppid);
-        }
-    }
-    None
+    with_task_on_any_cpu(pid, |rq| rq.get_task(pid).map(|t| t.ppid))
 }
 
 /// Non-blocking variant of get_task_ppid for diagnostic contexts (procfs).
 ///
 /// — GraveShift: Same deal as try_get_task_state. Returns None on contention
 /// rather than spinning on RQ locks. Procfs shows ppid=0 on contention.
+/// — TorqueJax: PID_TO_CPU hint as tier-2 for non-blocking procfs path.
 pub fn try_get_task_ppid(pid: Pid) -> Option<Pid> {
-    let cpu = this_cpu();
-    if let Some(ppid) = try_with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.ppid)).flatten() {
-        return Some(ppid);
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if let Some(ppid) = try_with_rq(other, |rq| rq.get_task(pid).map(|t| t.ppid)).flatten() {
-            return Some(ppid);
-        }
-    }
-    None
+    try_with_task_on_any_cpu(pid, |rq| rq.get_task(pid).map(|t| t.ppid))
 }
 
 /// Get task timing info for /proc/[pid]/stat
@@ -1681,156 +1725,75 @@ pub fn try_get_task_ppid(pid: Pid) -> Option<Pid> {
 /// — GraveShift: Non-blocking. Only called from procfs which hammers this
 /// for every PID. Blocking with_rq() on 4 CPUs × N processes = deadlock city.
 /// Returns None on contention — procfs just skips the process this cycle.
+/// — TorqueJax: PID_TO_CPU hint cuts procfs from O(N_CPUS × N_PIDS) to O(N_PIDS) typical.
 pub fn get_task_timing_info(pid: Pid) -> Option<(TaskState, Pid, u64, u64, i8)> {
-    let cpu = this_cpu();
-    if let Some(info) = try_with_rq(cpu, |rq| {
+    try_with_task_on_any_cpu(pid, |rq| {
         rq.get_task(pid)
             .map(|t| (t.state, t.ppid, t.start_time, t.sum_exec_runtime, t.nice))
     })
-    .flatten()
-    {
-        return Some(info);
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if let Some(info) = try_with_rq(other, |rq| {
-            rq.get_task(pid)
-                .map(|t| (t.state, t.ppid, t.start_time, t.sum_exec_runtime, t.nice))
-        })
-        .flatten()
-        {
-            return Some(info);
-        }
-    }
-    None
 }
 
 /// Get exit status of a task (if zombie)
 ///
 /// — GraveShift: Fast-path this_cpu() — zombies are on the CPU they died on.
+/// — TorqueJax: PID_TO_CPU hint — reaping a zombie no longer scans all CPUs.
 pub fn get_task_exit_status(pid: Pid) -> Option<i32> {
-    let cpu = this_cpu();
-    if let Some((state, status)) =
-        with_rq(cpu, |rq| rq.get_task(pid).map(|t| (t.state, t.exit_status))).flatten()
-    {
-        if state == TaskState::TASK_ZOMBIE {
-            return Some(status);
-        }
-        return None;
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if let Some((state, status)) = with_rq(other, |rq| {
-            rq.get_task(pid).map(|t| (t.state, t.exit_status))
-        })
-        .flatten()
-        {
-            if state == TaskState::TASK_ZOMBIE {
-                return Some(status);
+    // — TorqueJax: We return Option<i32> but the closure must signal "found task but
+    // not zombie" vs "task not found here". Encode as Option<Option<i32>>:
+    //   Some(Some(status)) = zombie found, here's the exit code
+    //   Some(None)         = task found but not zombie — stop searching
+    //   None               = task not found on this RQ — keep looking
+    let result: Option<Option<i32>> = with_task_on_any_cpu(pid, |rq| {
+        rq.get_task(pid).map(|t| {
+            if t.state == TaskState::TASK_ZOMBIE {
+                Some(t.exit_status)
+            } else {
+                None
             }
-            return None;
-        }
-    }
-    None
+        })
+    });
+    result.flatten()
 }
 
 /// Check if a task is waiting for a specific child
 ///
 /// — GraveShift: Fast-path this_cpu() — waitpid checks are always local.
+/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU wait checks.
 pub fn is_task_waiting_for(pid: Pid, child_pid: Pid) -> bool {
-    let cpu = this_cpu();
-    if let Some(waiting) = with_rq(cpu, |rq| {
+    with_task_on_any_cpu(pid, |rq| {
         rq.get_task(pid).map(|t| t.is_waiting_for(child_pid))
     })
-    .flatten()
-    {
-        return waiting;
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if let Some(waiting) = with_rq(other, |rq| {
-            rq.get_task(pid).map(|t| t.is_waiting_for(child_pid))
-        })
-        .flatten()
-        {
-            return waiting;
-        }
-    }
-    false
+    .unwrap_or(false)
 }
 
 /// Set a task to wait for a child
 ///
 /// — GraveShift: Fast-path this_cpu() — waitpid sets waiting on the caller.
+/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU wait-set ops.
 pub fn set_task_waiting(pid: Pid, child_pid: i32) {
-    let cpu = this_cpu();
-    let found = with_rq(cpu, |rq| {
+    with_task_on_any_cpu(pid, |rq| {
         if let Some(task) = rq.get_task_mut(pid) {
             task.wait_for_child(child_pid);
-            true
+            Some(())
         } else {
-            false
+            None
         }
     });
-    if found == Some(true) {
-        return;
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        let found = with_rq(other, |rq| {
-            if let Some(task) = rq.get_task_mut(pid) {
-                task.wait_for_child(child_pid);
-                true
-            } else {
-                false
-            }
-        });
-        if found == Some(true) {
-            break;
-        }
-    }
 }
 
 /// Clear a task's waiting state
 ///
 /// — GraveShift: Fast-path this_cpu().
+/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU clear ops.
 pub fn clear_task_waiting(pid: Pid) {
-    let cpu = this_cpu();
-    let found = with_rq(cpu, |rq| {
+    with_task_on_any_cpu(pid, |rq| {
         if let Some(task) = rq.get_task_mut(pid) {
             task.clear_waiting();
-            true
+            Some(())
         } else {
-            false
+            None
         }
     });
-    if found == Some(true) {
-        return;
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        let found = with_rq(other, |rq| {
-            if let Some(task) = rq.get_task_mut(pid) {
-                task.clear_waiting();
-                true
-            } else {
-                false
-            }
-        });
-        if found == Some(true) {
-            break;
-        }
-    }
 }
 
 /// Create a task with ProcessMeta
@@ -1859,253 +1822,110 @@ pub fn create_task_with_meta(
 /// Set ProcessMeta on an existing task
 ///
 /// — GraveShift: Fast-path this_cpu().
+/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU meta-set ops.
 pub fn set_task_meta(pid: Pid, meta: Arc<Mutex<ProcessMeta>>) {
-    let cpu = this_cpu();
-    let found = with_rq(cpu, |rq| {
+    with_task_on_any_cpu(pid, |rq| {
         if let Some(task) = rq.get_task_mut(pid) {
             task.set_meta(meta.clone());
-            true
+            Some(())
         } else {
-            false
+            None
         }
     });
-    if found == Some(true) {
-        return;
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        let found = with_rq(other, |rq| {
-            if let Some(task) = rq.get_task_mut(pid) {
-                task.set_meta(meta.clone());
-                true
-            } else {
-                false
-            }
-        });
-        if found == Some(true) {
-            break;
-        }
-    }
 }
 
 /// Get nice value for a task
 ///
 /// — GraveShift: Fast-path this_cpu().
+/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU nice queries.
 pub fn get_task_nice(pid: Pid) -> Option<i8> {
-    let cpu = this_cpu();
-    if let Some(nice) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.nice)).flatten() {
-        return Some(nice);
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if let Some(nice) = with_rq(other, |rq| rq.get_task(pid).map(|t| t.nice)).flatten() {
-            return Some(nice);
-        }
-    }
-    None
+    with_task_on_any_cpu(pid, |rq| rq.get_task(pid).map(|t| t.nice))
 }
 
 /// Set nice value for a task
 ///
 /// — GraveShift: Fast-path this_cpu().
+/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU nice changes.
 pub fn set_task_nice(pid: Pid, nice: i8) -> bool {
-    let cpu = this_cpu();
-    if with_rq(cpu, |rq| {
+    with_task_on_any_cpu(pid, |rq| {
         if let Some(task) = rq.get_task_mut(pid) {
             task.set_nice(nice);
-            true
+            Some(())
         } else {
-            false
+            None
         }
-    }) == Some(true)
-    {
-        return true;
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if with_rq(other, |rq| {
-            if let Some(task) = rq.get_task_mut(pid) {
-                task.set_nice(nice);
-                true
-            } else {
-                false
-            }
-        }) == Some(true)
-        {
-            return true;
-        }
-    }
-    false
+    })
+    .is_some()
 }
 
 /// Get scheduler policy for a task
 ///
 /// — GraveShift: Fast-path this_cpu().
+/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU policy queries.
 pub fn get_task_policy(pid: Pid) -> Option<SchedPolicy> {
-    let cpu = this_cpu();
-    if let Some(policy) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.policy)).flatten() {
-        return Some(policy);
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if let Some(policy) = with_rq(other, |rq| rq.get_task(pid).map(|t| t.policy)).flatten() {
-            return Some(policy);
-        }
-    }
-    None
+    with_task_on_any_cpu(pid, |rq| rq.get_task(pid).map(|t| t.policy))
 }
 
 /// Set scheduler policy for a task
 ///
 /// — GraveShift: Fast-path this_cpu().
+/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU policy changes.
 pub fn set_task_policy(pid: Pid, policy: SchedPolicy) -> bool {
-    let cpu = this_cpu();
-    if with_rq(cpu, |rq| {
+    with_task_on_any_cpu(pid, |rq| {
         if let Some(task) = rq.get_task_mut(pid) {
             task.policy = policy;
-            true
+            Some(())
         } else {
-            false
+            None
         }
-    }) == Some(true)
-    {
-        return true;
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if with_rq(other, |rq| {
-            if let Some(task) = rq.get_task_mut(pid) {
-                task.policy = policy;
-                true
-            } else {
-                false
-            }
-        }) == Some(true)
-        {
-            return true;
-        }
-    }
-    false
+    })
+    .is_some()
 }
 
 /// Get RT priority for a task
 ///
 /// — GraveShift: Fast-path this_cpu().
+/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU priority queries.
 pub fn get_task_rt_priority(pid: Pid) -> Option<u8> {
-    let cpu = this_cpu();
-    if let Some(prio) = with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.rt_priority)).flatten() {
-        return Some(prio);
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if let Some(prio) = with_rq(other, |rq| rq.get_task(pid).map(|t| t.rt_priority)).flatten() {
-            return Some(prio);
-        }
-    }
-    None
+    with_task_on_any_cpu(pid, |rq| rq.get_task(pid).map(|t| t.rt_priority))
 }
 
 /// Set RT priority for a task
 ///
 /// — GraveShift: Fast-path this_cpu().
+/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU priority changes.
 pub fn set_task_rt_priority(pid: Pid, priority: u8) -> bool {
-    let cpu = this_cpu();
-    if with_rq(cpu, |rq| {
+    with_task_on_any_cpu(pid, |rq| {
         if let Some(task) = rq.get_task_mut(pid) {
             task.rt_priority = priority;
-            true
+            Some(())
         } else {
-            false
+            None
         }
-    }) == Some(true)
-    {
-        return true;
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if with_rq(other, |rq| {
-            if let Some(task) = rq.get_task_mut(pid) {
-                task.rt_priority = priority;
-                true
-            } else {
-                false
-            }
-        }) == Some(true)
-        {
-            return true;
-        }
-    }
-    false
+    })
+    .is_some()
 }
 
 /// Get CPU affinity for a task
 ///
 /// — GraveShift: Fast-path this_cpu().
+/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU affinity queries.
 pub fn get_task_affinity(pid: Pid) -> Option<CpuSet> {
-    let cpu = this_cpu();
-    if let Some(affinity) =
-        with_rq(cpu, |rq| rq.get_task(pid).map(|t| t.cpu_affinity.clone())).flatten()
-    {
-        return Some(affinity);
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if let Some(affinity) =
-            with_rq(other, |rq| rq.get_task(pid).map(|t| t.cpu_affinity.clone())).flatten()
-        {
-            return Some(affinity);
-        }
-    }
-    None
+    with_task_on_any_cpu(pid, |rq| rq.get_task(pid).map(|t| t.cpu_affinity.clone()))
 }
 
 /// Set CPU affinity for a task
 ///
 /// — GraveShift: Fast-path this_cpu().
+/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU affinity changes.
 pub fn set_task_affinity(pid: Pid, affinity: CpuSet) -> bool {
-    let cpu = this_cpu();
-    if with_rq(cpu, |rq| {
+    with_task_on_any_cpu(pid, |rq| {
         if let Some(task) = rq.get_task_mut(pid) {
             task.cpu_affinity = affinity.clone();
-            true
+            Some(())
         } else {
-            false
+            None
         }
-    }) == Some(true)
-    {
-        return true;
-    }
-    for other in 0..num_cpus() {
-        if other == cpu {
-            continue;
-        }
-        if with_rq(other, |rq| {
-            if let Some(task) = rq.get_task_mut(pid) {
-                task.cpu_affinity = affinity.clone();
-                true
-            } else {
-                false
-            }
-        }) == Some(true)
-        {
-            return true;
-        }
-    }
-    false
+    })
+    .is_some()
 }

@@ -8,7 +8,7 @@ use crate::num::NonZeroI32;
 use crate::path::Path;
 use crate::process::StdioPipes;
 use crate::sys::fs::File;
-use crate::sys::{AsInner, FromInner};
+use crate::sys::{AsInner, FromInner, IntoInner};
 use crate::{fmt, io};
 
 pub enum Stdio {

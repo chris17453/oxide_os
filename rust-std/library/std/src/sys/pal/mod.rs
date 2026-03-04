@@ -20,9 +20,10 @@ cfg_select! {
         mod hermit;
         pub use self::hermit::*;
     }
-    target_os = "oxide" => {
-        mod oxide;
-        pub use self::oxide::*;
+    target_os = "oxide" => { mod oxide; pub use self::oxide::*; }
+    target_os = "motor" => {
+        mod motor;
+        pub use self::motor::*;
     }
     target_os = "trusty" => {
         mod trusty;

@@ -908,6 +908,30 @@ extern "C" fn handle_device_not_available(frame: *const InterruptFrame, _error: 
 
 extern "C" fn handle_double_fault(frame: *const InterruptFrame, error: u64) {
     let frame = unsafe { &*frame };
+
+    // — NeonRoot: Double fault = the kernel already tried to handle an exception
+    // and failed. Stack is likely corrupt. fmt is dead. Use raw serial writes only.
+    // This is the last breath before the machine goes dark.
+    unsafe {
+        crate::serial::write_str_unsafe("\r\n[KERNEL DOUBLE FAULT] The kernel exception handler faulted.\r\n");
+        crate::serial::write_str_unsafe("  RIP: ");
+        crate::serial::write_u64_hex_unsafe(frame.rip);
+        crate::serial::write_str_unsafe("\r\n");
+        crate::serial::write_str_unsafe("  RSP: ");
+        crate::serial::write_u64_hex_unsafe(frame.rsp);
+        crate::serial::write_str_unsafe("\r\n");
+        crate::serial::write_str_unsafe("  RFLAGS: ");
+        crate::serial::write_u64_hex_unsafe(frame.rflags);
+        crate::serial::write_str_unsafe("\r\n");
+        crate::serial::write_str_unsafe("  Error code: ");
+        crate::serial::write_u64_hex_unsafe(error);
+        crate::serial::write_str_unsafe("\r\n");
+        crate::serial::write_str_unsafe("  CS: ");
+        crate::serial::write_u64_hex_unsafe(frame.cs);
+        crate::serial::write_str_unsafe("\r\n");
+        crate::serial::write_str_unsafe("  Halting.\r\n");
+    }
+
     log_fault(8, error, frame.rip, frame.rsp, frame.rflags, 0);
     loop {
         unsafe {
@@ -938,7 +962,57 @@ extern "C" fn handle_stack_segment(frame: *const InterruptFrame, error: u64) {
 }
 
 extern "C" fn handle_general_protection(frame: *const InterruptFrame, error: u64) {
-    record_and_halt!(13, error, frame, 0);
+    let frame = unsafe { &*frame };
+
+    // — NeonRoot: CPL check. Ring 3 bit set means a user process committed
+    // a hardware crime. The process dies; the kernel survives. Elegant.
+    if (frame.cs & 3) != 0 {
+        // User-mode GPF — send SIGSEGV and return. Do NOT halt the system.
+        crate::serial_println!(
+            "[SIGSEGV] User GPF at RIP {:#x}, error code {:#x}",
+            frame.rip,
+            error
+        );
+        let kill_cb = unsafe { *core::ptr::addr_of!(USER_FAULT_KILL_CALLBACK) };
+        if let Some(kill) = kill_cb {
+            kill(0, frame.rip, 11); // 11 = SIGSEGV
+            return; // — NeonRoot: Process flatlined; kernel lives to fight another day
+        }
+        // — NeonRoot: No kill callback yet (early boot). Fall through to halt.
+    }
+
+    // Kernel-mode GPF — the kernel itself broke the rules. Print everything,
+    // then die gracefully (halt, don't corrupt further state).
+    // — NeonRoot: We use lock-free serial writes because fmt machinery may
+    // itself be corrupted. Trust no heap. Trust no locks.
+    unsafe {
+        crate::serial::write_str_unsafe("\r\n[KERNEL GPF] General Protection Fault!\r\n");
+        crate::serial::write_str_unsafe("  RIP: ");
+        crate::serial::write_u64_hex_unsafe(frame.rip);
+        crate::serial::write_str_unsafe("\r\n");
+        crate::serial::write_str_unsafe("  RSP: ");
+        crate::serial::write_u64_hex_unsafe(frame.rsp);
+        crate::serial::write_str_unsafe("\r\n");
+        crate::serial::write_str_unsafe("  RFLAGS: ");
+        crate::serial::write_u64_hex_unsafe(frame.rflags);
+        crate::serial::write_str_unsafe("\r\n");
+        crate::serial::write_str_unsafe("  Error code: ");
+        crate::serial::write_u64_hex_unsafe(error);
+        crate::serial::write_str_unsafe("\r\n");
+        crate::serial::write_str_unsafe("  CS: ");
+        crate::serial::write_u64_hex_unsafe(frame.cs);
+        crate::serial::write_str_unsafe("\r\n");
+    }
+
+    // Log to fault record ring buffer for GDB post-mortem
+    log_fault(13, error, frame.rip, frame.rsp, frame.rflags, 0);
+
+    // — NeonRoot: Halt. Not panic. Panic allocates; we don't trust the heap now.
+    loop {
+        unsafe {
+            core::arch::asm!("hlt", options(nomem, nostack, preserves_flags));
+        }
+    }
 }
 
 extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
@@ -1043,78 +1117,46 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
         crate::serial_println!("    iretq frame RSP: {:#x}", *addr_of!(DEBUG_IRETQ_RSP));
     }
 
-    // Print debug values from syscall sysretq path
+    // Print debug values from syscall sysretq path and AC tracking.
+    // — NeonRoot: Old code imported racy single-global statics; now we read
+    // THIS CPU's per-CPU slot. Same information, zero cross-CPU contamination.
     unsafe {
-        use crate::syscall::{
-            SYSRET_DEBUG_R11, SYSRET_DEBUG_RAX, SYSRET_DEBUG_RCX, SYSRET_DEBUG_RSP,
-            SYSRET_DEBUG_STACK_PTR,
-        };
-        use core::ptr::addr_of;
-        crate::serial_println!("  DEBUG from syscall sysretq:");
-        crate::serial_println!(
-            "    kernel stack ptr: {:#x}",
-            *addr_of!(SYSRET_DEBUG_STACK_PTR)
-        );
-        crate::serial_println!("    loaded RSP: {:#x}", *addr_of!(SYSRET_DEBUG_RSP));
-        crate::serial_println!(
-            "    loaded RCX (user RIP): {:#x}",
-            *addr_of!(SYSRET_DEBUG_RCX)
-        );
-        crate::serial_println!(
-            "    loaded R11 (user RFLAGS): {:#x}",
-            *addr_of!(SYSRET_DEBUG_R11)
-        );
-        crate::serial_println!("    RAX (return value): {:#x}", *addr_of!(SYSRET_DEBUG_RAX));
-    }
+        let dbg = crate::syscall::get_current_cpu_debug_slot();
+        crate::serial_println!("  DEBUG from syscall sysretq (this CPU's slot):");
+        crate::serial_println!("    kernel stack ptr: {:#x}", dbg.debug_sysret_stack);
+        crate::serial_println!("    loaded RSP: {:#x}", dbg.debug_sysret_rsp);
+        crate::serial_println!("    loaded RCX (user RIP): {:#x}", dbg.debug_sysret_rcx);
+        crate::serial_println!("    loaded R11 (user RFLAGS): {:#x}", dbg.debug_sysret_r11);
+        crate::serial_println!("    RAX (return value): {:#x}", dbg.debug_sysret_rax);
 
-    // Print STAC debug
-    unsafe {
-        use crate::syscall::{AC_AFTER_CALL, AC_AT_ENTRY, AC_BEFORE_CALL, STAC_DEBUG_RFLAGS};
-        use core::ptr::addr_of;
-        crate::serial_println!("  DEBUG from syscall AC tracking:");
+        crate::serial_println!("  DEBUG from syscall AC tracking (this CPU's slot):");
 
-        let at_entry = *addr_of!(AC_AT_ENTRY);
+        let at_entry = dbg.debug_ac_at_entry;
         crate::serial_println!("    RFLAGS at entry: {:#x}", at_entry);
         crate::serial_println!(
             "    AC flag at entry: {}",
-            if (at_entry >> 18) & 1 != 0 {
-                "SET"
-            } else {
-                "CLEAR"
-            }
+            if (at_entry >> 18) & 1 != 0 { "SET" } else { "CLEAR" }
         );
 
-        let rflags = *addr_of!(STAC_DEBUG_RFLAGS);
-        crate::serial_println!("    RFLAGS after STAC: {:#x}", rflags);
+        let stac_rflags = dbg.debug_stac_rflags;
+        crate::serial_println!("    RFLAGS after STAC: {:#x}", stac_rflags);
         crate::serial_println!(
             "    AC flag after STAC: {}",
-            if (rflags >> 18) & 1 != 0 {
-                "SET"
-            } else {
-                "CLEAR"
-            }
+            if (stac_rflags >> 18) & 1 != 0 { "SET" } else { "CLEAR" }
         );
 
-        let before_call = *addr_of!(AC_BEFORE_CALL);
+        let before_call = dbg.debug_ac_before_call;
         crate::serial_println!("    RFLAGS before handler call: {:#x}", before_call);
         crate::serial_println!(
             "    AC flag before call: {}",
-            if (before_call >> 18) & 1 != 0 {
-                "SET"
-            } else {
-                "CLEAR"
-            }
+            if (before_call >> 18) & 1 != 0 { "SET" } else { "CLEAR" }
         );
 
-        let after_call = *addr_of!(AC_AFTER_CALL);
+        let after_call = dbg.debug_ac_after_call;
         crate::serial_println!("    RFLAGS after handler call: {:#x}", after_call);
         crate::serial_println!(
             "    AC flag after call: {}",
-            if (after_call >> 18) & 1 != 0 {
-                "SET"
-            } else {
-                "CLEAR"
-            }
+            if (after_call >> 18) & 1 != 0 { "SET" } else { "CLEAR" }
         );
     }
 

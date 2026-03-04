@@ -235,9 +235,24 @@ impl VFS {
         let mut best_match: Option<(&String, &Arc<Mount>)> = None;
 
         for (mount_point, mount) in mounts.iter() {
-            if path.starts_with(mount_point.as_str())
-                || (mount_point == "/" && path.starts_with('/'))
-            {
+            // — SableWire: starts_with alone is not enough. "/home" would
+            // match "/homework" because the prefix check passes. We require
+            // the character immediately after the mount point in `path` to be
+            // '/' — or the path must equal the mount point exactly. The root
+            // mount "/" is special: every absolute path starts with it.
+            let is_match = if mount_point == "/" {
+                path.starts_with('/')
+            } else {
+                path == mount_point.as_str()
+                    || (path.starts_with(mount_point.as_str())
+                        && path
+                            .as_bytes()
+                            .get(mount_point.len())
+                            .copied()
+                            == Some(b'/'))
+            };
+
+            if is_match {
                 match best_match {
                     None => best_match = Some((mount_point, mount)),
                     Some((best_mp, _)) if mount_point.len() > best_mp.len() => {
