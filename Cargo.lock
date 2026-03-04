@@ -1317,6 +1317,7 @@ version = "0.1.0"
 dependencies = [
  "arch-x86_64",
  "os_core",
+ "os_log",
  "proc",
  "sched-traits",
  "smp",
