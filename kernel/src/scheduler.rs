@@ -921,7 +921,11 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     // One memory read to prevent a silent, undiagnosable death. Worth every cycle.
     unsafe {
         let golden = crate::globals::KERNEL_PML4_256_ENTRY;
-        if golden != 0 {
+        // — CrashBloom: Skip canary check for idle/kernel tasks (cr3=0) — they
+        // run on the kernel PML4 directly. Reading phys 0x0 + 256*8 gives garbage
+        // and false-positives the corruption detector, killing PID 0 and freezing
+        // the entire system. Don't shoot the idle loop.
+        if golden != 0 && switch_info.new_cr3 != 0 {
             let target_pml4_virt = mm_paging::phys_to_virt(PhysAddr::new(switch_info.new_cr3));
             let target_entry = core::ptr::read_volatile(
                 target_pml4_virt.as_ptr::<u64>().add(256)
