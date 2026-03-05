@@ -33,15 +33,20 @@ pub const ENTRIES_PER_TABLE: usize = 512;
 pub const PHYS_MAP_BASE: u64 = 0xFFFF_8000_0000_0000;
 
 /// Convert a physical address to its direct-mapped virtual address
+///
+/// — GraveShift: Uses wrapping_add because the direct map lives in the upper
+/// canonical half (0xFFFF_8000...). Debug overflow checks would panic on any
+/// phys address, since PHYS_MAP_BASE is already near u64::MAX. The wrapping is
+/// intentional — it's how x86_64 canonical addressing works.
 #[inline]
 pub const fn phys_to_virt(phys: PhysAddr) -> VirtAddr {
-    VirtAddr::new(phys.as_u64() + PHYS_MAP_BASE)
+    VirtAddr::new(phys.as_u64().wrapping_add(PHYS_MAP_BASE))
 }
 
 /// Convert a direct-mapped virtual address back to physical
 #[inline]
 pub const fn virt_to_phys(virt: VirtAddr) -> PhysAddr {
-    PhysAddr::new(virt.as_u64() - PHYS_MAP_BASE)
+    PhysAddr::new(virt.as_u64().wrapping_sub(PHYS_MAP_BASE))
 }
 
 /// Page table level (4 = PML4, 3 = PDPT, 2 = PD, 1 = PT)

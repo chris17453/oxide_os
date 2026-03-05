@@ -258,10 +258,11 @@ pub fn set_boot_time(secs_since_epoch: u64) {
 /// Suitable for registration with `os_core::register_wall_clock()` so
 /// subsystems like ext4 can stamp inodes without depending on arch crates.
 ///
-/// — WireSaint: the clock face for filesystem timestamps
+/// — WireSaint: the clock face for filesystem timestamps — now TSC-backed
 pub fn wall_clock_secs() -> u64 {
-    let ticks = arch::timer_ticks();
-    let uptime_secs = (ticks * NS_PER_TICK) / 1_000_000_000;
+    let tsc = arch::read_tsc();
+    let freq = arch::tsc_frequency();
+    let uptime_secs = tsc / freq;
     let boot_secs = BOOT_TIME_SECS.load(Ordering::Relaxed);
     boot_secs + uptime_secs
 }
@@ -280,24 +281,40 @@ fn ticks_to_timespec(ticks: u64) -> Timespec {
     }
 }
 
-/// Get monotonic time (time since boot)
+/// Get monotonic time (time since boot) with nanosecond precision via TSC.
+///
+/// — SableWire: The 100Hz tick counter gives 10ms granularity — two back-to-back
+/// clock_gettime calls return identical values. TSC (calibrated at boot via PIT)
+/// gives cycle-accurate resolution. We divide into seconds and remainder to avoid
+/// u64 overflow: at 4GHz, raw TSC overflows ns multiplication after ~4.6 seconds.
 fn get_monotonic_time() -> Timespec {
-    ticks_to_timespec(get_ticks())
+    let tsc = arch::read_tsc();
+    let freq = arch::tsc_frequency();
+    let secs = tsc / freq;
+    let remainder = tsc % freq;
+    // — SableWire: remainder < freq (max ~4.2×10⁹), so remainder * 10⁹ fits u64
+    // (4.2×10⁹ × 10⁹ = 4.2×10¹⁸ < u64::MAX = 1.8×10¹⁹). Safe.
+    let nsec = remainder * 1_000_000_000 / freq;
+    Timespec {
+        tv_sec: secs as i64,
+        tv_nsec: nsec as i64,
+    }
 }
 
-/// Get real (wall clock) time
+/// Get real (wall clock) time with nanosecond precision via TSC.
+///
+/// — SableWire: Same TSC trick as get_monotonic_time, plus the boot epoch offset.
 fn get_realtime() -> Timespec {
-    let ticks = get_ticks();
-    let uptime_ns = ticks * NS_PER_TICK;
+    let tsc = arch::read_tsc();
+    let freq = arch::tsc_frequency();
+    let uptime_secs = tsc / freq;
+    let remainder = tsc % freq;
+    let uptime_nsec = remainder * 1_000_000_000 / freq;
     let boot_secs = BOOT_TIME_SECS.load(Ordering::SeqCst);
-
-    // ⚡ GraveShift: Avoid overflow by computing seconds and nanoseconds separately
-    let uptime_secs = uptime_ns / 1_000_000_000;
-    let uptime_nsec_remainder = uptime_ns % 1_000_000_000;
 
     Timespec {
         tv_sec: (boot_secs + uptime_secs) as i64,
-        tv_nsec: uptime_nsec_remainder as i64,
+        tv_nsec: uptime_nsec as i64,
     }
 }
 
@@ -369,10 +386,10 @@ pub fn sys_clock_getres(clock_id: i32, res_ptr: usize) -> i64 {
         return 0;
     }
 
-    // Our resolution is 10ms (100 Hz timer)
+    // — SableWire: TSC gives ~1ns resolution on modern CPUs. Report 1ns.
     let res = Timespec {
         tv_sec: 0,
-        tv_nsec: NS_PER_TICK as i64,
+        tv_nsec: 1,
     };
 
     unsafe {

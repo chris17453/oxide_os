@@ -895,6 +895,8 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     // The syscall entry point reads kernel RSP from GS:[0] (CPU_DATA), so it must
     // always reflect the CURRENT task's kernel stack. Similarly, TSS.RSP0 must be
     // correct for interrupts that trigger privilege-level changes.
+
+    arch::syscall::LAST_SET_KSTACK_SITE.store(1, core::sync::atomic::Ordering::Relaxed);
     unsafe {
         arch::syscall::set_kernel_stack(kernel_stack_top);
     }

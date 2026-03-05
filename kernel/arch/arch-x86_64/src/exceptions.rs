@@ -1147,7 +1147,24 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
             options(nomem, nostack),
         );
         if gs_base == 0 {
-            crate::serial_println!("  [SKIP] GS_BASE is NULL — per-CPU debug slot unavailable");
+            // — CrashBloom: Which set_kernel_stack call site was last hit before the crash?
+            // 0=none, 1=scheduler, 2=fork, 3=run_child_process
+            let site = crate::syscall::LAST_SET_KSTACK_SITE.load(core::sync::atomic::Ordering::Relaxed);
+            crate::serial_println!("  [SKIP] GS_BASE is NULL — per-CPU debug slot unavailable (last_kstack_site={})", site);
+
+            // — CrashBloom: Read KERNEL_GS_BASE to see if swapgs state is inverted
+            let kgs: u64;
+            core::arch::asm!(
+                "mov ecx, 0xC0000102",
+                "rdmsr",
+                "shl rdx, 32",
+                "or rax, rdx",
+                out("ecx") _,
+                out("rax") kgs,
+                out("rdx") _,
+                options(nomem, nostack),
+            );
+            crate::serial_println!("  [DIAG] KERNEL_GS_BASE=0x{:016x}", kgs);
         }
     }
     // — GraveShift: Only access per-CPU data if GS_BASE is valid (non-zero).

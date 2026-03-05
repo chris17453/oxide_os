@@ -517,8 +517,11 @@ pub fn kernel_fork() -> i64 {
                 child_kstack_virt.as_u64() + fork_result.kernel_stack_size as u64;
 
             // Update kernel stack
+            // — CrashBloom: Use checked version in fork path (not hot path).
+            // If GS_BASE got corrupted, we recover before the crash.
+            arch::syscall::LAST_SET_KSTACK_SITE.store(2, core::sync::atomic::Ordering::Relaxed);
             unsafe {
-                arch::syscall::set_kernel_stack(child_kstack_top);
+                arch::syscall::set_kernel_stack_checked(child_kstack_top);
             }
             arch::gdt::set_kernel_stack(child_kstack_top);
 
@@ -1147,8 +1150,10 @@ pub fn run_child_process(child_pid: Pid) {
     let child_kernel_stack_top = kernel_stack_virt.as_u64() + kernel_stack_size as u64;
 
     // Set kernel stack for child's syscalls/interrupts
+    // — CrashBloom: Use checked version in run_child_process (not hot path).
+    arch::syscall::LAST_SET_KSTACK_SITE.store(3, core::sync::atomic::Ordering::Relaxed);
     unsafe {
-        arch::syscall::set_kernel_stack(child_kernel_stack_top);
+        arch::syscall::set_kernel_stack_checked(child_kernel_stack_top);
     }
     arch::gdt::set_kernel_stack(child_kernel_stack_top);
 

@@ -1135,7 +1135,8 @@ fn test_readdir(t: &mut TestRunner) -> Result<(), String> {
 
 fn test_stat(t: &mut TestRunner) -> Result<(), String> {
     // — ByteRiot: stat various files, check types
-    let checks = [
+    // Use raw syscalls to avoid std::path hanging issues
+    let checks: &[(&str, bool)] = &[
         ("/dev/null", true),    // exists
         ("/dev/zero", true),    // exists
         ("/dev/serial", true),  // exists (we just added it)
@@ -1143,10 +1144,20 @@ fn test_stat(t: &mut TestRunner) -> Result<(), String> {
         ("/nonexistent", false), // should not exist
     ];
 
-    for (path, should_exist) in &checks {
-        let exists = std::path::Path::new(path).exists();
-        if *should_exist && !exists {
-            return Err(format!("{} should exist but doesn't", path));
+    for &(path, should_exist) in checks {
+        // — CrashBloom: use raw STAT syscall (nr=24) to avoid any std bloat
+        let mut stat_buf = [0u8; 104]; // sizeof(Stat)
+        let ret = unsafe {
+            syscall3(
+                24, // SYS_STAT
+                path.as_ptr() as u64,
+                path.len() as u64,
+                stat_buf.as_mut_ptr() as u64,
+            )
+        };
+        let exists = ret == 0;
+        if should_exist && !exists {
+            return Err(format!("{} should exist but stat returned {}", path, ret));
         }
         if !should_exist && exists {
             return Err(format!("{} should not exist but does", path));

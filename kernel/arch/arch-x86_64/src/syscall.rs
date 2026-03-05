@@ -6,6 +6,12 @@ use core::arch::{asm, naked_asm};
 
 use crate::gdt::{KERNEL_CS, KERNEL_DS};
 
+/// — CrashBloom: Track which call site last called set_kernel_stack.
+/// 0=none, 1=scheduler, 2=fork(process.rs), 3=run_child(process.rs)
+/// Read from page fault handler to identify GS_BASE=0 crash source.
+pub static LAST_SET_KSTACK_SITE: core::sync::atomic::AtomicU32 =
+    core::sync::atomic::AtomicU32::new(0);
+
 /// MSR addresses
 mod msr {
     pub const EFER: u32 = 0xC000_0080;
@@ -747,6 +753,56 @@ pub unsafe fn init_kernel_stack(cpu_id: u32, kernel_rsp: u64) {
 /// Must be called from kernel context (after swapgs) with a valid kernel stack pointer.
 pub unsafe fn set_kernel_stack(kernel_rsp: u64) {
     unsafe {
+        asm!(
+            "mov gs:[0], {}",
+            in(reg) kernel_rsp,
+            options(nostack, preserves_flags)
+        );
+    }
+}
+
+/// — CrashBloom: Checked version of set_kernel_stack for non-hot-path callers
+/// (fork, exec). Reads GS_BASE MSR, logs + recovers if NULL. Too expensive
+/// for the timer ISR context switch path (rdmsr is ~30 cycles).
+pub unsafe fn set_kernel_stack_checked(kernel_rsp: u64) {
+    unsafe {
+        let gs_base: u64;
+        asm!(
+            "mov ecx, 0xC0000101",
+            "rdmsr",
+            "shl rdx, 32",
+            "or rax, rdx",
+            out("rax") gs_base,
+            out("rcx") _,
+            out("rdx") _,
+            options(nostack, preserves_flags)
+        );
+        if gs_base == 0 {
+            os_log::write_str_raw("[GS_BASE-NULL] in fork/exec path!");
+
+            let kgs: u64;
+            asm!(
+                "mov ecx, 0xC0000102",
+                "rdmsr",
+                "shl rdx, 32",
+                "or rax, rdx",
+                out("rax") kgs,
+                out("rcx") _,
+                out("rdx") _,
+                options(nostack, preserves_flags)
+            );
+            os_log::write_str_raw(" KERNEL_GS_BASE=0x");
+            os_log::write_u64_hex_raw(kgs);
+            os_log::write_str_raw("\n");
+
+            if kgs != 0 && kgs > 0xFFFF_8000_0000_0000 {
+                os_log::write_str_raw("[GS_BASE-NULL] RECOVERING via swapgs\n");
+                asm!("swapgs", options(nostack, preserves_flags));
+            } else {
+                os_log::write_str_raw("[GS_BASE-NULL] FATAL: no recovery possible\n");
+                return;
+            }
+        }
         asm!(
             "mov gs:[0], {}",
             in(reg) kernel_rsp,
