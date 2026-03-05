@@ -581,11 +581,14 @@ impl VnodeOps for ProcPidStatus {
     }
 
     fn stat(&self) -> VfsResult<Stat> {
-        let content = self.generate_content();
+        // — GraveShift: Linux reports size 0 for /proc files. Tools read until
+        // EOF — nobody trusts stat.st_size on procfs. This avoids generating
+        // content twice (stat + read) which doubled lock contention and heap
+        // allocations on every /proc access. seq_file without the ceremony.
         Ok(Stat::new(
             VnodeType::File,
             Mode::new(0o444),
-            content.len() as u64,
+            0,
             self.ino,
         ))
     }
@@ -694,11 +697,14 @@ impl VnodeOps for ProcPidCmdline {
     }
 
     fn stat(&self) -> VfsResult<Stat> {
-        let content = self.generate_content();
+        // — GraveShift: Linux reports size 0 for /proc files. Tools read until
+        // EOF — nobody trusts stat.st_size on procfs. This avoids generating
+        // content twice (stat + read) which doubled lock contention and heap
+        // allocations on every /proc access. seq_file without the ceremony.
         Ok(Stat::new(
             VnodeType::File,
             Mode::new(0o444),
-            content.len() as u64,
+            0,
             self.ino,
         ))
     }
@@ -1071,11 +1077,14 @@ impl VnodeOps for ProcPidStat {
     }
 
     fn stat(&self) -> VfsResult<Stat> {
-        let content = self.generate_content();
+        // — GraveShift: Linux reports size 0 for /proc files. Tools read until
+        // EOF — nobody trusts stat.st_size on procfs. This avoids generating
+        // content twice (stat + read) which doubled lock contention and heap
+        // allocations on every /proc access. seq_file without the ceremony.
         Ok(Stat::new(
             VnodeType::File,
             Mode::new(0o444),
-            content.len() as u64,
+            0,
             self.ino,
         ))
     }
@@ -1162,11 +1171,14 @@ impl VnodeOps for ProcPidStatm {
     }
 
     fn stat(&self) -> VfsResult<Stat> {
-        let content = self.generate_content();
+        // — GraveShift: Linux reports size 0 for /proc files. Tools read until
+        // EOF — nobody trusts stat.st_size on procfs. This avoids generating
+        // content twice (stat + read) which doubled lock contention and heap
+        // allocations on every /proc access. seq_file without the ceremony.
         Ok(Stat::new(
             VnodeType::File,
             Mode::new(0o444),
-            content.len() as u64,
+            0,
             self.ino,
         ))
     }
@@ -1270,11 +1282,14 @@ impl VnodeOps for ProcMeminfo {
     }
 
     fn stat(&self) -> VfsResult<Stat> {
-        let content = self.generate_content();
+        // — GraveShift: Linux reports size 0 for /proc files. Tools read until
+        // EOF — nobody trusts stat.st_size on procfs. This avoids generating
+        // content twice (stat + read) which doubled lock contention and heap
+        // allocations on every /proc access. seq_file without the ceremony.
         Ok(Stat::new(
             VnodeType::File,
             Mode::new(0o444),
-            content.len() as u64,
+            0,
             self.ino,
         ))
     }
@@ -1550,11 +1565,14 @@ impl VnodeOps for ProcCpuinfo {
     }
 
     fn stat(&self) -> VfsResult<Stat> {
-        let content = self.generate_content();
+        // — GraveShift: Linux reports size 0 for /proc files. Tools read until
+        // EOF — nobody trusts stat.st_size on procfs. This avoids generating
+        // content twice (stat + read) which doubled lock contention and heap
+        // allocations on every /proc access. seq_file without the ceremony.
         Ok(Stat::new(
             VnodeType::File,
             Mode::new(0o444),
-            content.len() as u64,
+            0,
             self.ino,
         ))
     }
@@ -1648,11 +1666,14 @@ impl VnodeOps for ProcUptime {
     }
 
     fn stat(&self) -> VfsResult<Stat> {
-        let content = self.generate_content();
+        // — GraveShift: Linux reports size 0 for /proc files. Tools read until
+        // EOF — nobody trusts stat.st_size on procfs. This avoids generating
+        // content twice (stat + read) which doubled lock contention and heap
+        // allocations on every /proc access. seq_file without the ceremony.
         Ok(Stat::new(
             VnodeType::File,
             Mode::new(0o444),
-            content.len() as u64,
+            0,
             self.ino,
         ))
     }
@@ -1750,11 +1771,14 @@ impl VnodeOps for ProcLoadavg {
     }
 
     fn stat(&self) -> VfsResult<Stat> {
-        let content = self.generate_content();
+        // — GraveShift: Linux reports size 0 for /proc files. Tools read until
+        // EOF — nobody trusts stat.st_size on procfs. This avoids generating
+        // content twice (stat + read) which doubled lock contention and heap
+        // allocations on every /proc access. seq_file without the ceremony.
         Ok(Stat::new(
             VnodeType::File,
             Mode::new(0o444),
-            content.len() as u64,
+            0,
             self.ino,
         ))
     }
@@ -1903,11 +1927,14 @@ impl VnodeOps for ProcStat {
     }
 
     fn stat(&self) -> VfsResult<Stat> {
-        let content = self.generate_content();
+        // — GraveShift: Linux reports size 0 for /proc files. Tools read until
+        // EOF — nobody trusts stat.st_size on procfs. This avoids generating
+        // content twice (stat + read) which doubled lock contention and heap
+        // allocations on every /proc access. seq_file without the ceremony.
         Ok(Stat::new(
             VnodeType::File,
             Mode::new(0o444),
-            content.len() as u64,
+            0,
             self.ino,
         ))
     }
@@ -1991,11 +2018,14 @@ impl VnodeOps for ProcVersion {
     }
 
     fn stat(&self) -> VfsResult<Stat> {
-        let content = self.generate_content();
+        // — GraveShift: Linux reports size 0 for /proc files. Tools read until
+        // EOF — nobody trusts stat.st_size on procfs. This avoids generating
+        // content twice (stat + read) which doubled lock contention and heap
+        // allocations on every /proc access. seq_file without the ceremony.
         Ok(Stat::new(
             VnodeType::File,
             Mode::new(0o444),
-            content.len() as u64,
+            0,
             self.ino,
         ))
     }
@@ -2088,11 +2118,14 @@ impl VnodeOps for ProcDevices {
     }
 
     fn stat(&self) -> VfsResult<Stat> {
-        let content = self.generate_content();
+        // — GraveShift: Linux reports size 0 for /proc files. Tools read until
+        // EOF — nobody trusts stat.st_size on procfs. This avoids generating
+        // content twice (stat + read) which doubled lock contention and heap
+        // allocations on every /proc access. seq_file without the ceremony.
         Ok(Stat::new(
             VnodeType::File,
             Mode::new(0o444),
-            content.len() as u64,
+            0,
             self.ino,
         ))
     }
@@ -2183,11 +2216,14 @@ impl VnodeOps for ProcFilesystems {
     }
 
     fn stat(&self) -> VfsResult<Stat> {
-        let content = self.generate_content();
+        // — GraveShift: Linux reports size 0 for /proc files. Tools read until
+        // EOF — nobody trusts stat.st_size on procfs. This avoids generating
+        // content twice (stat + read) which doubled lock contention and heap
+        // allocations on every /proc access. seq_file without the ceremony.
         Ok(Stat::new(
             VnodeType::File,
             Mode::new(0o444),
-            content.len() as u64,
+            0,
             self.ino,
         ))
     }

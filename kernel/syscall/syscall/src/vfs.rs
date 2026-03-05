@@ -149,25 +149,9 @@ pub fn copy_string_from_user(ptr: u64, len: usize) -> Option<String> {
     core::str::from_utf8(bytes).ok().map(|s| String::from(s))
 }
 
-/// Validate a user buffer
-///
-/// — ColdCipher: Three checks, three chances to reject garbage:
-///   null pointer, kernel-space pointer, and overflow-wrapped pointer.
-/// The old version missed null — a classic skip that turns a null-deref into
-/// a kernel read of address 0x0. Not today.
-pub fn validate_user_buffer(buf: u64, len: usize) -> bool {
-    // — ColdCipher: Null is not a valid user buffer. Ever. Not "sometimes". Always.
-    if buf == 0 {
-        return false;
-    }
-    if buf >= 0x0000_8000_0000_0000 {
-        return false;
-    }
-    if buf.saturating_add(len as u64) > 0x0000_8000_0000_0000 {
-        return false;
-    }
-    true
-}
+// — ColdCipher: validate_user_buffer consolidated into uaccess.rs. One source
+// of truth for user-pointer validation. No duplicates, no drift, no excuses.
+pub use crate::uaccess::validate_user_buffer;
 
 /// Convert VfsError to errno
 pub fn vfs_error_to_errno(e: VfsError) -> i64 {
