@@ -2134,11 +2134,21 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 /// the terminal's underlying buffer atomically (preempt-disable during swap to
 /// prevent ISR cursor blink from hitting a partially-swapped framebuffer).
 fn display_takeover(writer: &mut impl Write) {
-    // — NeonVale: Try Bochs display first. Simple, no DMA, MMIO framebuffer at BAR0.
+    // — NeonVale: Display takeover is ONLY for headless boots where UEFI GOP
+    // didn't give us a framebuffer. If GOP is working, leave it alone — the
+    // bootloader already set the mode and the terminal is rendering to it.
+    // Replacing a working GOP with Bochs DISPI or VirtIO-GPU SET_SCANOUT
+    // causes resolution mismatches and garbled displays. Learned the hard way.
+    if fb::framebuffer().is_some() {
+        let _ = writeln!(writer, "[DISPLAY] UEFI GOP framebuffer active — no takeover needed");
+        return;
+    }
+
+    // — NeonVale: No GOP framebuffer. Try Bochs display first (simple, no DMA).
     let pci_devices = pci::devices();
     for dev in pci_devices.iter() {
         if dev.vendor_id == 0x1234 && dev.device_id == 0x1111 {
-            let _ = writeln!(writer, "[DISPLAY] Found Bochs VGA, attempting takeover...");
+            let _ = writeln!(writer, "[DISPLAY] No GOP, trying Bochs VGA...");
             match bochs_display::init_from_pci(dev) {
                 Ok(info) => {
                     let _ = writeln!(
@@ -2146,8 +2156,6 @@ fn display_takeover(writer: &mut impl Write) {
                         "[DISPLAY] Bochs takeover: {}x{} @ {:#x}",
                         info.width, info.height, info.base
                     );
-                    // — NeonVale: Re-init the fb crate with the new framebuffer.
-                    // This replaces the UEFI GOP framebuffer atomically.
                     fb::init(info);
                     let _ = writeln!(writer, "[DISPLAY] Framebuffer switched to Bochs VGA");
                     return;
@@ -2159,11 +2167,8 @@ fn display_takeover(writer: &mut impl Write) {
         }
     }
 
-    // — NeonVale: No Bochs display. Try VirtIO-GPU takeover.
-    // Only do this if there's NO GOP framebuffer (per the UEFI-GOP-VirtIO-GPU
-    // conflict rule — SET_SCANOUT steals display at low RAM where OVMF uses
-    // VirtIO-GPU for GOP).
-    if fb::framebuffer().is_none() {
+    // — NeonVale: No Bochs either. Try VirtIO-GPU takeover.
+    {
         for dev in pci_devices.iter() {
             if dev.is_virtio_gpu() {
                 let _ = writeln!(writer, "[DISPLAY] No GOP, trying VirtIO-GPU takeover...");
@@ -2186,12 +2191,8 @@ fn display_takeover(writer: &mut impl Write) {
         }
     }
 
-    // — NeonVale: Fall back to existing UEFI GOP framebuffer (current behavior).
-    if fb::framebuffer().is_some() {
-        let _ = writeln!(writer, "[DISPLAY] Keeping UEFI GOP framebuffer (no takeover needed)");
-    } else {
-        let _ = writeln!(writer, "[DISPLAY] WARNING: No display available!");
-    }
+    // — NeonVale: Neither Bochs nor VirtIO-GPU available. No display at all.
+    let _ = writeln!(writer, "[DISPLAY] WARNING: No display available!");
 }
 
 fn kill_pgrp(pgid: u32, sig: i32) {
