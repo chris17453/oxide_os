@@ -1515,6 +1515,81 @@ pub fn all_pids() -> Vec<Pid> {
     pids
 }
 
+/// — ThreadRogue: Idle CPU work stealing. Called from the idle loop before HLT.
+/// Scans all other CPUs for the most-loaded one and steals a task if profitable.
+/// Returns true if a task was stolen (caller should NOT HLT — let timer ISR
+/// context-switch to the stolen task instead).
+///
+/// CRITICAL: Uses try_with_rq exclusively — we're in the idle loop with
+/// interrupts potentially disabled. Blocking = deadlock. If any RQ lock is
+/// contended, we skip that CPU. Better to miss a steal opportunity than to
+/// freeze the idle loop.
+pub fn idle_try_steal() -> bool {
+    let my_cpu = this_cpu();
+    let ncpus = num_cpus();
+
+    if ncpus <= 1 {
+        return false;
+    }
+
+    // — ThreadRogue: Find the most-loaded CPU that has >1 runnable task.
+    // We need >1 because stealing the ONLY task from a CPU is anti-social.
+    let mut best_cpu: Option<u32> = None;
+    let mut best_load: u32 = 1; // minimum threshold: must have >1
+
+    for cpu in 0..ncpus {
+        if cpu == my_cpu {
+            continue;
+        }
+        if let Some(nr) = try_with_rq(cpu, |rq| rq.nr_running()) {
+            if nr > best_load {
+                best_load = nr;
+                best_cpu = Some(cpu);
+            }
+        }
+    }
+
+    let victim_cpu = match best_cpu {
+        Some(c) => c,
+        None => return false,
+    };
+
+    // — ThreadRogue: Steal from the victim. try_with_rq returns None if the
+    // lock is contended (timer ISR on that CPU is mid-tick). That's fine —
+    // we'll try again on the next idle loop iteration.
+    let stolen_task = match try_with_rq(victim_cpu, |rq| rq.steal_task(my_cpu)) {
+        Some(Some(task)) => task,
+        _ => return false,
+    };
+
+    let stolen_pid = stolen_task.pid;
+
+    #[cfg(feature = "debug-sched")]
+    unsafe {
+        os_log::write_str_raw("[STEAL] CPU ");
+        os_log::write_u32_raw(my_cpu);
+        os_log::write_str_raw(" stole PID ");
+        os_log::write_u32_raw(stolen_pid);
+        os_log::write_str_raw(" from CPU ");
+        os_log::write_u32_raw(victim_cpu);
+        os_log::write_str_raw("\n");
+    }
+
+    // — ThreadRogue: Add to our RQ and update PID_TO_CPU.
+    // Use with_rq (blocking) for OUR RQ — we own this CPU and nobody else
+    // should be touching our RQ from the idle loop context.
+    with_rq(my_cpu, |rq| {
+        rq.add_task(stolen_task);
+    });
+    pid_to_cpu_set(stolen_pid, my_cpu);
+
+    // — ThreadRogue: Flag reschedule so the next timer tick picks up the
+    // stolen task instead of continuing to run idle.
+    set_need_resched();
+
+    true
+}
+
 /// Get process metadata for a task by PID
 ///
 /// — GraveShift: Fast-path tries this_cpu() first. With all user tasks on CPU 0,

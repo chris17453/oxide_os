@@ -27,6 +27,7 @@ mod init;
 mod kstack_guard;
 mod memory;
 mod mount;
+mod oom;
 mod process;
 mod scheduler;
 mod smp_init;

@@ -422,6 +422,57 @@ impl RunQueue {
         &mut self.cfs_rq
     }
 
+    /// — ThreadRogue: Steal the lowest-priority CFS task from this run queue
+    /// for migration to an idle CPU. Returns the full Task (removed from this RQ)
+    /// or None if nothing is stealable.
+    ///
+    /// Rules:
+    /// - Never steal the currently running task (it's mid-execution)
+    /// - Never steal idle or RT tasks (idle is per-CPU, RT has strict affinity)
+    /// - Only steal if nr_running > 1 (leave at least one task for this CPU)
+    /// - Check CPU affinity — don't steal a task pinned to this CPU
+    pub fn steal_task(&mut self, dest_cpu: u32) -> Option<Task> {
+        if self.nr_running <= 1 {
+            return None;
+        }
+
+        // — ThreadRogue: Find the CFS task with the highest vruntime (lowest
+        // priority). That's the one that's been getting the LEAST cpu time
+        // relative to its fair share — ironic, but it's also the one that
+        // benefits MOST from running on an otherwise-idle CPU.
+        let mut best_pid: Option<Pid> = None;
+        let mut best_vruntime: u64 = 0;
+
+        for slot in self.slots.iter() {
+            if let Some(task) = slot {
+                // — ThreadRogue: Skip the currently running task, idle, RT,
+                // tasks not on the run queue, dead tasks, and pinned tasks.
+                if Some(task.pid) == self.curr {
+                    continue;
+                }
+                if task.policy != SchedPolicy::Normal {
+                    continue;
+                }
+                if !task.on_rq {
+                    continue;
+                }
+                if task.state.is_dead() {
+                    continue;
+                }
+                if !task.can_run_on(dest_cpu) {
+                    continue;
+                }
+                if task.vruntime > best_vruntime || best_pid.is_none() {
+                    best_vruntime = task.vruntime;
+                    best_pid = Some(task.pid);
+                }
+            }
+        }
+
+        let victim_pid = best_pid?;
+        self.remove_task(victim_pid)
+    }
+
     /// Check if there are runnable tasks
     pub fn has_runnable(&self) -> bool {
         self.nr_running > 0

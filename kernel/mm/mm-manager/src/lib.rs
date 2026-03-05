@@ -24,6 +24,29 @@ use os_core::PhysAddr;
 /// Global memory manager instance
 static GLOBAL_MM: AtomicPtr<MemoryManager> = AtomicPtr::new(core::ptr::null_mut());
 
+/// — IronGhost: OOM callback — invoked when buddy allocator returns OutOfMemory.
+/// Returns true if it killed something (caller should retry the alloc once).
+/// Returns false if nothing could be killed (caller propagates the OOM).
+static OOM_CALLBACK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Register an OOM callback function.
+/// The callback should attempt to free memory (e.g., by killing a process).
+/// Returns true if memory was freed and the allocation should be retried.
+pub fn register_oom_callback(cb: fn() -> bool) {
+    OOM_CALLBACK.store(cb as *mut (), Ordering::Release);
+}
+
+/// — IronGhost: Invoke the OOM callback if registered. Returns true if
+/// the callback freed something and the caller should retry.
+fn try_oom_recover() -> bool {
+    let ptr = OOM_CALLBACK.load(Ordering::Acquire);
+    if ptr.is_null() {
+        return false;
+    }
+    let cb: fn() -> bool = unsafe { core::mem::transmute(ptr) };
+    cb()
+}
+
 /// Initialize the global memory manager
 ///
 /// # Safety
@@ -261,10 +284,22 @@ impl Default for MemoryManager {
     }
 }
 
-/// Implement FrameAllocator trait for compatibility with existing code
+/// Implement FrameAllocator trait for compatibility with existing code.
+/// — IronGhost: OOM recovery integrated — if buddy returns empty, invoke
+/// the OOM callback to kill a memory hog and retry once. One shot only;
+/// if the retry also fails, we're genuinely out of memory.
 impl FrameAllocator for MemoryManager {
     fn alloc_frame(&self) -> Option<PhysAddr> {
-        MemoryManager::alloc_frame(self).ok()
+        match MemoryManager::alloc_frame(self) {
+            Ok(addr) => Some(addr),
+            Err(_) => {
+                if try_oom_recover() {
+                    MemoryManager::alloc_frame(self).ok()
+                } else {
+                    None
+                }
+            }
+        }
     }
 
     fn free_frame(&self, addr: PhysAddr) {

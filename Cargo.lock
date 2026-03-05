@@ -109,6 +109,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bochs-display"
+version = "0.1.0"
+dependencies = [
+ "driver-core",
+ "fb",
+ "mm-manager",
+ "os_log",
+ "pci",
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "boot-proto"
 version = "0.1.0"
 
@@ -609,6 +621,7 @@ dependencies = [
  "arch-x86_64",
  "audio",
  "block",
+ "bochs-display",
  "boot-proto",
  "crypto",
  "devfs",

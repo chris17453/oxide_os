@@ -76,6 +76,18 @@ pub extern "C" fn idle_loop() -> ! {
         // Allow the timer interrupt to preempt us and switch to a runnable task
         arch::allow_kernel_preempt();
 
+        // — ThreadRogue: Before sleeping, try to steal work from a busy CPU.
+        // If we stole something, don't HLT — let the timer ISR context-switch
+        // to the stolen task on the next tick. Skipping HLT means we respond
+        // within one tick (~10ms) instead of sleeping until an unrelated IRQ
+        // wakes us. The stolen task is already on our RQ and need_resched is set.
+        if sched::idle_try_steal() {
+            unsafe {
+                core::arch::asm!("sti", options(nomem, nostack));
+            }
+            continue;
+        }
+
         // Enable interrupts and halt atomically
         // The CPU will wake up on the next interrupt (timer, keyboard, etc.)
         unsafe {

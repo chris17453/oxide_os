@@ -910,6 +910,47 @@ pub fn init_from_pci(pci_dev: &PciDevice) -> Result<(), &'static str> {
     Ok(())
 }
 
+/// — GlassSignal: Take over the display from GOP. Called from kernel init when
+/// we explicitly want VirtIO-GPU to own the display pipeline. Unlike init_from_pci
+/// (which skips if GOP exists), this FORCES initialization and replaces the
+/// framebuffer. Only call this when Bochs display isn't available.
+pub fn take_over_display() -> Result<FramebufferInfo, &'static str> {
+    // — GlassSignal: Need a VirtIO-GPU device on the PCI bus.
+    // If init_from_pci already ran (and skipped), the device is enumerated
+    // but VIRTIO_GPU is empty. We need to find it again.
+    let devices = pci::devices();
+    let gpu_dev = devices
+        .iter()
+        .find(|d| d.is_virtio_gpu())
+        .ok_or("No VirtIO-GPU device on PCI bus")?;
+
+    unsafe {
+        os_log::write_str_raw("[VGPU] Takeover: initializing VirtIO-GPU for display ownership\n");
+    }
+
+    let mut gpu = VirtioGpu::from_pci(gpu_dev).ok_or("VirtIO GPU PCI probe failed")?;
+    gpu.init()?;
+
+    let info = gpu
+        .framebuffer_info()
+        .ok_or("VirtIO-GPU framebuffer setup failed")?;
+
+    // Register flush callback for TRANSFER_TO_HOST_2D
+    fb::set_flush_callback(gpu_flush_region);
+
+    *VIRTIO_GPU.lock() = Some(gpu);
+
+    unsafe {
+        os_log::write_str_raw("[VGPU] Takeover complete: ");
+        os_log::write_u32_raw(info.width);
+        os_log::write_str_raw("x");
+        os_log::write_u32_raw(info.height);
+        os_log::write_str_raw("\n");
+    }
+
+    Ok(info)
+}
+
 /// Flush callback — bridges LinearFramebuffer::flush_region() to VirtIO-GPU commands.
 /// — GlassSignal: the pixel pipeline's last mile — guest memory to host scanout.
 /// Uses try_lock because this may fire from ISR context (terminal tick).

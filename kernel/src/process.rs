@@ -1682,6 +1682,14 @@ pub fn kernel_exec(
             // user page access faults with "PML4 entry not present". Updating the task
             // FIRST ensures every possible context switch uses either the old (still
             // allocated) or new (properly initialized) PML4. — BlackLatch
+            // — GraveShift: CRITICAL — disable preemption for the entire
+            // update_task_exec_info → CR3 write → meta.address_space swap sequence.
+            // A timer ISR context switch in the middle leaves us with a half-updated
+            // state: scheduler sees new PML4 but CR3 still points to old, or vice
+            // versa. Either direction = use-after-free on the old PML4 frame.
+            // One atomic transaction, no windows. — GraveShift
+            arch::preempt_disable();
+
             sched::update_task_exec_info(current_pid, new_pml4, entry_rip, entry_rsp, task_ctx);
 
             // — GraveShift: CRITICAL FIX — Switch CR3 to new PML4 BEFORE dropping
@@ -1752,6 +1760,11 @@ pub fn kernel_exec(
                 // signals queued for it are meaningless now. Fresh start. — GraveShift
                 m.pending_signals = signal::PendingSignals::new();
             }
+
+            // — GraveShift: Transaction complete. Scheduler metadata, CR3, and
+            // ProcessMeta.address_space all point to the new PML4. Safe to let
+            // timer ISR preempt us again. — GraveShift
+            arch::preempt_enable();
 
             // — CrashBloom: Post-Drop validation. The old address space is dead.
             // CR3 already points to new_pml4 (switched above). Verify the new PT

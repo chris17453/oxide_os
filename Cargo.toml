@@ -53,6 +53,7 @@ members = [
     "kernel/graphics/fb",
     "kernel/tty/terminal",
     "kernel/drivers/gpu/virtio-gpu",
+    "kernel/drivers/gpu/bochs-display",
     "kernel/audio/audio",
     "kernel/drivers/audio/virtio-snd",
     "kernel/drivers/audio/intel-hda",
@@ -221,6 +222,7 @@ virtio-input = { path = "kernel/drivers/input/virtio-input" }
 fb = { path = "kernel/graphics/fb" }
 terminal = { path = "kernel/tty/terminal" }
 virtio-gpu = { path = "kernel/drivers/gpu/virtio-gpu" }
+bochs-display = { path = "kernel/drivers/gpu/bochs-display" }
 audio = { path = "kernel/audio/audio" }
 virtio-snd = { path = "kernel/drivers/audio/virtio-snd" }
 intel-hda = { path = "kernel/drivers/audio/intel-hda" }

@@ -513,7 +513,12 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
     // The PT walk above already handled the actual COW marking on physical frames;
     // this is just the semantic overlay that says "these pages are stack/heap/text".
     let child_vmas = parent.vmas.clone_for_fork();
-    let child_frames = guard.defuse();
+    // — CrashBloom: Filter PML4 out of allocated_frames. PML4 is tracked separately
+    // as UserAddressSpace.pml4_phys and freed explicitly in Drop. Having it in BOTH
+    // allocated_frames AND pml4_phys = double-free when the buddy allocator recycles
+    // the frame mid-flight. That's your PML4[0] = FREEB0L mystery right there.
+    let mut child_frames = guard.defuse();
+    child_frames.retain(|&f| f != child_pml4_phys);
     let child_as = unsafe { UserAddressSpace::from_raw(child_pml4_phys, child_frames, child_vmas) };
 
     Ok(child_as)

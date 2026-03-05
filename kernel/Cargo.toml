@@ -86,6 +86,7 @@ pci = { workspace = true }
 driver-core = { workspace = true }
 fb = { workspace = true }
 virtio-gpu = { workspace = true }
+bochs-display = { workspace = true }
 audio = { workspace = true }
 virtio-snd = { workspace = true }
 intel-hda = { workspace = true }

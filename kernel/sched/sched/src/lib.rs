@@ -120,6 +120,8 @@ pub use crate::core::{
     get_task_exit_status,
     get_task_group,
     get_task_kernel_stack,
+    // SMP idle work stealing
+    idle_try_steal,
     // ProcessMeta accessors
     get_task_meta,
     try_get_task_meta,

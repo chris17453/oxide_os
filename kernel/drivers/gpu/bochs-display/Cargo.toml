@@ -1,0 +1,12 @@
+[package]
+name = "bochs-display"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fb = { path = "../../../graphics/fb" }
+pci = { path = "../../pci" }
+driver-core = { path = "../../driver-core" }
+mm-manager = { path = "../../../mm/mm-manager" }
+spin = "0.9"
+os_log = { path = "../../../core/os_log" }

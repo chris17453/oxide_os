@@ -67,7 +67,11 @@ impl UserAddressSpace {
         Some(Self {
             pml4_phys: pml4_frame,
             mapper,
-            allocated_frames: alloc::vec![pml4_frame],
+            // — CrashBloom: PML4 is tracked as self.pml4_phys — NOT in allocated_frames.
+            // Having it in both causes double-free: Drop walks PT tree + frees pml4_phys
+            // explicitly, then also frees everything in allocated_frames. Two frees of the
+            // same frame = buddy corruption = PML4[0] shows up as FREEB0L canary.
+            allocated_frames: Vec::new(),
             vmas: VmAreaList::new(),
         })
     }
@@ -75,6 +79,14 @@ impl UserAddressSpace {
     /// Get the physical address of the PML4 table
     pub fn pml4_phys(&self) -> PhysAddr {
         self.pml4_phys
+    }
+
+    /// — ByteRiot: How many PT structure frames does this address space own?
+    /// Used by the OOM killer to score memory hogs. Doesn't count user data
+    /// frames (those are in the page tables, not in allocated_frames). But PT
+    /// frame count correlates with mapped pages — good enough proxy for RSS.
+    pub fn allocated_frames_count(&self) -> usize {
+        self.allocated_frames.len()
     }
 
     /// — GraveShift: Hollow out this address space for early exit cleanup.
@@ -98,6 +110,12 @@ impl UserAddressSpace {
     /// The PML4 must be a valid page table and all frames in the list
     /// must be owned by this address space.
     pub unsafe fn from_raw(pml4_phys: PhysAddr, frames: Vec<PhysAddr>, vmas: VmAreaList) -> Self {
+        // — CrashBloom: PML4 must NEVER appear in allocated_frames. It's tracked
+        // separately as self.pml4_phys and freed explicitly in Drop. Duplicates = double-free.
+        debug_assert!(
+            !frames.contains(&pml4_phys),
+            "PML4 must not be in allocated_frames — double-free guaranteed"
+        );
         let mapper = unsafe { PageMapper::new(pml4_phys) };
         Self {
             pml4_phys,
