@@ -771,7 +771,25 @@ impl PciDriver for VirtioSndDriver {
     }
 
     unsafe fn remove(&self, _dev: &pci::PciDevice, _binding_data: DriverBindingData) {
-        // TODO: Implement proper audio device removal
+        // — EchoFrame: tear down everything probe() built — in reverse order,
+        // like defusing a bomb you assembled drunk at 4 AM.
+
+        // 1. Unregister from audio subsystem (drops our Arc clone there)
+        audio::unregister_device(0);
+
+        // 2. Take device out of global static (drops the Arc<VirtioSnd>)
+        let device = VIRTIO_SND.lock().take();
+
+        // 3. Reset VirtIO device status so it stops DMA
+        if let Some(ref dev) = device {
+            if let Some(ref transport) = dev.transport {
+                transport.write_status(0);
+            }
+        }
+
+        // 4. Virtqueues drop automatically when VirtioSnd drops (if Arc refcount hits 0),
+        // and Virtqueue::drop frees the DMA descriptor/ring frames.
+        drop(device);
     }
 }
 

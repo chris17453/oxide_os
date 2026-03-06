@@ -1414,18 +1414,36 @@ pub fn sys_setsockopt(fd: i32, level: i32, optname: i32, optval: u64, optlen: u3
                     opts.recv_buf_size = val as u32;
                 }
             }
-            _ => {}
+            15 => {
+                // — ShadePacket: SO_REUSEPORT — let multiple sockets bind the same port
+                if optlen >= 4 {
+                    let val = unsafe { *(optval as *const i32) };
+                    opts.reuse_port = val != 0;
+                }
+            }
+            _ => {
+                // — ShadePacket: unknown SOL_SOCKET option — don't silently swallow it
+                return errno::ENOPROTOOPT;
+            }
         }
     }
     // IPPROTO_TCP level
     else if level == 6 {
-        if optname == 1 {
-            // TCP_NODELAY
-            if optlen >= 4 {
-                let val = unsafe { *(optval as *const i32) };
-                opts.tcp_nodelay = val != 0;
+        match optname {
+            1 => {
+                // TCP_NODELAY
+                if optlen >= 4 {
+                    let val = unsafe { *(optval as *const i32) };
+                    opts.tcp_nodelay = val != 0;
+                }
+            }
+            _ => {
+                return errno::ENOPROTOOPT;
             }
         }
+    } else {
+        // — ShadePacket: unknown protocol level
+        return errno::ENOPROTOOPT;
     }
 
     0
@@ -1487,20 +1505,38 @@ pub fn sys_getsockopt(fd: i32, level: i32, optname: i32, optval: u64, optlen: u6
                     }
                 }
             }
-            _ => {}
+            15 => {
+                // — ShadePacket: SO_REUSEPORT
+                unsafe {
+                    *(optval as *mut i32) = if opts.reuse_port { 1 } else { 0 };
+                    if !len_ptr.is_null() {
+                        *len_ptr = 4;
+                    }
+                }
+            }
+            _ => {
+                return errno::ENOPROTOOPT;
+            }
         }
     }
     // IPPROTO_TCP level
     else if level == 6 {
-        if optname == 1 {
-            // TCP_NODELAY
-            unsafe {
-                *(optval as *mut i32) = if opts.tcp_nodelay { 1 } else { 0 };
-                if !len_ptr.is_null() {
-                    *len_ptr = 4;
+        match optname {
+            1 => {
+                // TCP_NODELAY
+                unsafe {
+                    *(optval as *mut i32) = if opts.tcp_nodelay { 1 } else { 0 };
+                    if !len_ptr.is_null() {
+                        *len_ptr = 4;
+                    }
                 }
             }
+            _ => {
+                return errno::ENOPROTOOPT;
+            }
         }
+    } else {
+        return errno::ENOPROTOOPT;
     }
 
     0

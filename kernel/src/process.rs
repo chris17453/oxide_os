@@ -25,7 +25,7 @@ use crate::debug_fork;
 use crate::globals::{
     CHILD_DONE, KERNEL_PML4, PARENT_CONTEXT, ParentContext, USER_EXIT_STATUS, USER_EXITED,
 };
-use crate::scheduler::{add_process, wake_parent};
+use crate::scheduler::wake_parent;
 use mm_manager::mm;
 use sched::TaskContext;
 
@@ -819,10 +819,12 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
                 owned_frames: alloc::vec![],
                 guard_pages: alloc::vec![], // Guard pages assigned after clone in kernel crate
                 alarm_remaining: 0,
-                itimer_interval_sec: 0,
-                itimer_interval_usec: 0,
-                itimer_value_sec: 0,
-                itimer_value_usec: 0,
+                itimer_real_interval_us: 0,
+                itimer_real_value_us: 0,
+                itimer_virtual_interval_us: 0,
+                itimer_virtual_value_us: 0,
+                itimer_prof_interval_us: 0,
+                itimer_prof_value_us: 0,
                 is_thread_leader: false, // This is a thread, not the leader
                 thread_group: alloc::vec![],
                 umask: 0o022,

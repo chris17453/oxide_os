@@ -206,6 +206,17 @@ pub fn register_device_info(info: InputDeviceInfo) -> usize {
     register_device(device)
 }
 
+/// Unregister an input device by index
+/// — InputShade: returns the handle so cleanup can finish before the Arc drops
+pub fn unregister_device(index: usize) -> Option<Arc<InputDeviceHandle>> {
+    let mut devices = DEVICES.lock();
+    if index < devices.len() {
+        Some(devices.remove(index))
+    } else {
+        None
+    }
+}
+
 /// Get device by index (blocking — syscall context only)
 pub fn get_device(index: usize) -> Option<Arc<InputDeviceHandle>> {
     DEVICES.lock().get(index).cloned()

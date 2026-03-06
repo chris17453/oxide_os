@@ -130,10 +130,27 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
     // Allocate and map the pages
     let num_pages = (length / 0x1000) as usize;
 
-    {
-        let mut m = meta.lock();
+    // — NeonRoot: Demand paging for MAP_ANONYMOUS + MAP_PRIVATE. Instead of
+    // eagerly allocating all physical frames upfront, just record the VMA and
+    // let the page fault handler map zeroed pages on first access. This saves
+    // physical memory for large sparse allocations (e.g., malloc arenas, thread
+    // stacks via mmap). File-backed and MAP_SHARED mappings still allocate eagerly
+    // because we need to read file data or share physical pages.
+    let is_private = (map_flags & flags::MAP_PRIVATE) != 0;
 
-        // Use the memory manager to allocate and map pages
+    if is_anonymous && is_private {
+        // — NeonRoot: Demand-paged anonymous private mapping. No physical frames
+        // allocated now — the fault handler will supply zeroed pages on access.
+        let mut m = meta.lock();
+        let _ = m.address_space.add_vma(VmArea::new(
+            map_addr,
+            map_addr + length,
+            prot_to_vm_flags(prot, map_flags),
+            VmType::Anon,
+        ));
+    } else {
+        // — NeonRoot: Eager allocation for file-backed or shared mappings.
+        let mut m = meta.lock();
         let allocator = mm();
 
         match m.address_space.allocate_pages(
@@ -146,8 +163,6 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
             Err(_) => return errno::ENOMEM,
         }
 
-        // — NeonRoot: Register VMA for the new mapping. Non-fatal on overlap —
-        // page tables are the real authority, VMAs are metadata.
         let vm_type = if is_anonymous { VmType::Anon } else { VmType::FileBacked };
         let _ = m.address_space.add_vma(VmArea::new(
             map_addr,

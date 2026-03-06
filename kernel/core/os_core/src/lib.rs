@@ -7,6 +7,7 @@
 
 pub mod addr;
 pub mod creds;
+pub mod loadavg;
 pub mod sync;
 pub mod time;
 

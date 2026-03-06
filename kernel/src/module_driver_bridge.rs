@@ -80,8 +80,17 @@ pub struct DriverStats {
 /// 4. Kernel calls `module_driver_bridge::module_drivers_loaded()`
 /// 5. New driver probes all PCI devices
 /// 6. Matching devices are initialized
-pub fn load_driver_module(_module_data: &[u8]) -> Result<(), ()> {
-    // TODO: Integrate with kernel/module/module loader
-    // For now, this is a placeholder
-    Err(())
+/// — PatchBay: Load a .ko driver module, run its init_module(), then
+/// probe all devices so the new driver can claim matching hardware.
+pub fn load_driver_module(module_data: &[u8]) -> Result<(), ()> {
+    use module::ModuleFlags;
+
+    module::load_module(module_data, "", ModuleFlags::NONE)
+        .map_err(|_| ())?;
+
+    // — PatchBay: After loading, re-probe devices so the new driver
+    // can match against PCI/ISA devices it was compiled for.
+    module_drivers_loaded();
+
+    Ok(())
 }

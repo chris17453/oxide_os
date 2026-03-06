@@ -7,6 +7,7 @@
 use core::sync::atomic::Ordering;
 use mm_manager::mm;
 use mm_traits::FrameAllocator;
+use os_core::PhysAddr;
 
 use crate::{phys_to_virt, virt_to_phys};
 
@@ -329,6 +330,33 @@ impl Virtqueue {
             self.last_used_idx = self.last_used_idx.wrapping_add(1);
 
             Some((elem.id as u16, elem.len))
+        }
+    }
+}
+
+/// — WireSaint: dropping a virtqueue frees the DMA descriptor/ring pages.
+/// Without this, every device removal leaks physical frames until OOM.
+impl Drop for Virtqueue {
+    fn drop(&mut self) {
+        // Reconstruct the allocation size to free the right number of pages
+        let desc_size = (self.num as usize) * core::mem::size_of::<VirtqDesc>();
+        let avail_size = 6 + 2 * (self.num as usize);
+        let used_size = 6 + 8 * (self.num as usize);
+
+        // — WireSaint: we don't know if this was legacy (page-aligned used ring)
+        // or modern (4-byte aligned). Use the larger calculation to be safe —
+        // both allocated from desc_phys as base with the same frame count.
+        let avail_end = desc_size + avail_size;
+        let used_offset_legacy = (avail_end + 4095) & !4095;
+        let used_offset_modern = (avail_end + 3) & !3;
+        let total_legacy = used_offset_legacy + used_size;
+        let total_modern = used_offset_modern + used_size;
+        let total_size = total_legacy.max(total_modern);
+        let num_pages = (total_size + 4095) / 4096;
+
+        // Free the contiguous physical frames back to the buddy allocator
+        if self.desc_phys != 0 {
+            let _ = mm().free_contiguous(PhysAddr::new(self.desc_phys), num_pages);
         }
     }
 }

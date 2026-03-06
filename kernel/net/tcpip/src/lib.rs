@@ -14,7 +14,9 @@ pub mod dhcp_client;
 pub mod ethernet;
 pub mod filter;
 pub mod icmp;
+pub mod icmpv6;
 pub mod ip;
+pub mod ipv6;
 pub mod tcp;
 pub mod udp;
 
@@ -25,7 +27,8 @@ use core::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use spin::Mutex;
 
 use net::{
-    IpAddr, Ipv4Addr, MacAddress, NetError, NetResult, NetworkDevice, NetworkInterface, SocketAddr,
+    IpAddr, Ipv4Addr, Ipv6Addr, MacAddress, NetError, NetResult, NetworkDevice, NetworkInterface,
+    SocketAddr,
 };
 
 pub use arp::ArpCache;
@@ -128,7 +131,7 @@ impl TcpIpStack {
                 self.process_ipv4(payload)?;
             }
             EtherType::Ipv6 => {
-                // IPv6 not yet implemented
+                self.process_ipv6(payload)?;
             }
             _ => {}
         }
@@ -311,6 +314,92 @@ impl TcpIpStack {
         }
 
         Ok(())
+    }
+
+    /// — ShadePacket: Process IPv6 packet. Minimal path: ICMPv6 echo only.
+    /// TCP/UDP over IPv6 shares the same transport code as IPv4 — just needs
+    /// address plumbing, which is deferred until we have real v6 sockets.
+    fn process_ipv6(&self, payload: &[u8]) -> NetResult<()> {
+        let ip6_header = ipv6::Ipv6Header::parse(payload)?;
+        let ip6_payload = &payload[ipv6::IPV6_HEADER_LEN..];
+
+        // — ShadePacket: Verify destination is for us (loopback or our interface addr)
+        let is_for_us = ip6_header.dst.is_loopback()
+            || ip6_header.dst.is_any()
+            || self.interface.has_addr(IpAddr::V6(ip6_header.dst));
+
+        if !is_for_us {
+            return Ok(());
+        }
+
+        match ip6_header.next_header {
+            ipv6::NextHeader::Icmpv6 => {
+                self.process_icmpv6(ip6_header.src, ip6_header.dst, ip6_payload)?;
+            }
+            _ => {
+                // — ShadePacket: TCP/UDP over IPv6 not wired yet. Silent drop.
+            }
+        }
+
+        Ok(())
+    }
+
+    /// — ShadePacket: Process ICMPv6 packet — echo request → echo reply
+    fn process_icmpv6(
+        &self,
+        src_ip: Ipv6Addr,
+        dst_ip: Ipv6Addr,
+        payload: &[u8],
+    ) -> NetResult<()> {
+        if let Some(pkt) = icmpv6::Icmpv6Packet::parse(payload) {
+            if pkt.icmp_type == icmpv6::ICMPV6_ECHO_REQUEST {
+                let reply = icmpv6::Icmpv6Packet::new_echo_reply(
+                    pkt.identifier,
+                    pkt.sequence,
+                    &pkt.data,
+                );
+                // — ShadePacket: Swap src/dst for the reply
+                let reply_bytes = reply.to_bytes_with_checksum(dst_ip, src_ip);
+                self.send_ipv6_packet(src_ip, ipv6::NextHeader::Icmpv6, &reply_bytes, dst_ip)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// — ShadePacket: Send an IPv6 packet. Loopback for ::1 and own addresses.
+    /// No NDP yet — we can only talk to the gateway (uses the same gateway MAC
+    /// as IPv4, which works for QEMU SLIRP).
+    pub fn send_ipv6_packet(
+        &self,
+        dst_ip: Ipv6Addr,
+        next_header: ipv6::NextHeader,
+        payload: &[u8],
+        src_ip: Ipv6Addr,
+    ) -> NetResult<()> {
+        let packet = ipv6::Ipv6Packet::new(src_ip, dst_ip, next_header, payload);
+        let ip_bytes = packet.to_bytes();
+
+        // — ShadePacket: Loopback for ::1 or our own address
+        if dst_ip.is_loopback() || self.interface.has_addr(IpAddr::V6(dst_ip)) {
+            return self.process_ipv6(&ip_bytes);
+        }
+
+        // — ShadePacket: No NDP yet. For external traffic, use the IPv4 gateway's
+        // MAC (works in QEMU SLIRP where gateway handles both v4 and v6).
+        let dst_mac = if let Some(gw) = self.interface.ipv4_gateway() {
+            self.resolve_mac(gw)?
+        } else {
+            return Err(NetError::NetworkUnreachable);
+        };
+
+        let frame = ethernet::EthernetFrame::new(
+            dst_mac,
+            self.interface.mac_address(),
+            EtherType::Ipv6,
+            &ip_bytes,
+        );
+
+        self.interface.device.transmit(&frame.to_bytes())
     }
 
     /// Process ICMP packet

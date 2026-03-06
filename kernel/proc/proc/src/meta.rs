@@ -138,17 +138,18 @@ pub struct ProcessMeta {
     /// Alarm remaining time in seconds (0 = no alarm)
     pub alarm_remaining: u32,
 
-    /// Interval timer - interval seconds
-    pub itimer_interval_sec: i64,
-
-    /// Interval timer - interval microseconds
-    pub itimer_interval_usec: i64,
-
-    /// Interval timer - current value seconds
-    pub itimer_value_sec: i64,
-
-    /// Interval timer - current value microseconds
-    pub itimer_value_usec: i64,
+    /// — GraveShift: interval timers (POSIX itimer triplet).
+    /// Each timer has interval (repeat period) + value (time until next fire).
+    /// Stored as microseconds to avoid the sec+usec split everywhere.
+    /// ITIMER_REAL: wall clock, fires SIGALRM
+    pub itimer_real_interval_us: i64,
+    pub itimer_real_value_us: i64,
+    /// ITIMER_VIRTUAL: user CPU time only, fires SIGVTALRM
+    pub itimer_virtual_interval_us: i64,
+    pub itimer_virtual_value_us: i64,
+    /// ITIMER_PROF: user + kernel CPU time, fires SIGPROF
+    pub itimer_prof_interval_us: i64,
+    pub itimer_prof_value_us: i64,
 
     /// Is this the thread group leader's metadata?
     pub is_thread_leader: bool,
@@ -211,10 +212,12 @@ impl ProcessMeta {
             owned_frames: Vec::new(),
             guard_pages: Vec::new(),
             alarm_remaining: 0,
-            itimer_interval_sec: 0,
-            itimer_interval_usec: 0,
-            itimer_value_sec: 0,
-            itimer_value_usec: 0,
+            itimer_real_interval_us: 0,
+            itimer_real_value_us: 0,
+            itimer_virtual_interval_us: 0,
+            itimer_virtual_value_us: 0,
+            itimer_prof_interval_us: 0,
+            itimer_prof_value_us: 0,
             is_thread_leader: true,
             thread_group: Vec::new(),
             umask: 0o022,
@@ -257,10 +260,12 @@ impl ProcessMeta {
             owned_frames: Vec::new(),
             guard_pages: Vec::new(),
             alarm_remaining: 0,
-            itimer_interval_sec: 0,
-            itimer_interval_usec: 0,
-            itimer_value_sec: 0,
-            itimer_value_usec: 0,
+            itimer_real_interval_us: 0,
+            itimer_real_value_us: 0,
+            itimer_virtual_interval_us: 0,
+            itimer_virtual_value_us: 0,
+            itimer_prof_interval_us: 0,
+            itimer_prof_value_us: 0,
             is_thread_leader: true,
             thread_group: Vec::new(),
             umask: 0o022,
@@ -295,10 +300,12 @@ impl ProcessMeta {
             owned_frames: Vec::new(), // Child doesn't own parent's frames
             guard_pages: Vec::new(),  // Guard pages assigned after fork in kernel crate
             alarm_remaining: 0,       // Alarms not inherited
-            itimer_interval_sec: 0,
-            itimer_interval_usec: 0,
-            itimer_value_sec: 0,
-            itimer_value_usec: 0,
+            itimer_real_interval_us: 0,
+            itimer_real_value_us: 0,
+            itimer_virtual_interval_us: 0,
+            itimer_virtual_value_us: 0,
+            itimer_prof_interval_us: 0,
+            itimer_prof_value_us: 0,
             is_thread_leader: true,
             thread_group: Vec::new(),
             umask: self.umask,
@@ -382,28 +389,61 @@ impl ProcessMeta {
         core::mem::take(&mut self.owned_frames)
     }
 
-    /// Get interval timer
-    pub fn get_itimer(&self) -> (i64, i64, i64, i64) {
-        (
-            self.itimer_interval_sec,
-            self.itimer_interval_usec,
-            self.itimer_value_sec,
-            self.itimer_value_usec,
-        )
+    /// — GraveShift: get/set interval timers. All values in microseconds internally.
+    /// which: 0=REAL, 1=VIRTUAL, 2=PROF
+    pub fn get_itimer(&self, which: i32) -> (i64, i64) {
+        match which {
+            0 => (self.itimer_real_interval_us, self.itimer_real_value_us),
+            1 => (self.itimer_virtual_interval_us, self.itimer_virtual_value_us),
+            2 => (self.itimer_prof_interval_us, self.itimer_prof_value_us),
+            _ => (0, 0),
+        }
     }
 
-    /// Set interval timer
-    pub fn set_itimer(
-        &mut self,
-        interval_sec: i64,
-        interval_usec: i64,
-        value_sec: i64,
-        value_usec: i64,
-    ) {
-        self.itimer_interval_sec = interval_sec;
-        self.itimer_interval_usec = interval_usec;
-        self.itimer_value_sec = value_sec;
-        self.itimer_value_usec = value_usec;
+    pub fn set_itimer(&mut self, which: i32, interval_us: i64, value_us: i64) {
+        match which {
+            0 => {
+                self.itimer_real_interval_us = interval_us;
+                self.itimer_real_value_us = value_us;
+            }
+            1 => {
+                self.itimer_virtual_interval_us = interval_us;
+                self.itimer_virtual_value_us = value_us;
+            }
+            2 => {
+                self.itimer_prof_interval_us = interval_us;
+                self.itimer_prof_value_us = value_us;
+            }
+            _ => {}
+        }
+    }
+
+    /// Tick an interval timer by `elapsed_us` microseconds.
+    /// Returns true if the timer fired (value crossed zero).
+    pub fn tick_itimer(&mut self, which: i32, elapsed_us: i64) -> bool {
+        let (interval, value) = match which {
+            0 => (&mut self.itimer_real_interval_us, &mut self.itimer_real_value_us),
+            1 => (&mut self.itimer_virtual_interval_us, &mut self.itimer_virtual_value_us),
+            2 => (&mut self.itimer_prof_interval_us, &mut self.itimer_prof_value_us),
+            _ => return false,
+        };
+
+        if *value <= 0 {
+            return false;
+        }
+
+        *value -= elapsed_us;
+        if *value <= 0 {
+            // Timer fired — reload from interval or disarm
+            if *interval > 0 {
+                *value = *interval;
+            } else {
+                *value = 0;
+            }
+            true
+        } else {
+            false
+        }
     }
 }
 

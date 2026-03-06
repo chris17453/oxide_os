@@ -118,21 +118,14 @@ pub fn probe_all_devices() -> Result<(), DriverError> {
             // Found a matching driver, probe it
             match driver.probe(dev, &id) {
                 Ok(binding_data) => {
-                    // Success! Register the binding
                     register_binding(dev.address, driver.name(), binding_data);
-
-                    // Log success (in real kernel, this would use proper logging)
-                    #[cfg(debug_assertions)]
-                    {
-                        // TODO: Use kernel logging once available
-                    }
+                    // — PatchBay: finally wired up after living as a TODO since day one
+                    os_log::info!("[DRV] {} probed {:02x}:{:02x}.{}", driver.name(),
+                        dev.address.bus, dev.address.device, dev.address.function);
                 }
                 Err(_e) => {
-                    // Probe failed, try next driver
-                    #[cfg(debug_assertions)]
-                    {
-                        // TODO: Log probe failure
-                    }
+                    os_log::warn!("[DRV] {} probe FAILED {:02x}:{:02x}.{}", driver.name(),
+                        dev.address.bus, dev.address.device, dev.address.function);
                 }
             }
         }
@@ -155,11 +148,8 @@ pub fn probe_isa_devices() -> Result<(), DriverError> {
                 register_binding(dummy_addr, driver.name(), binding_data);
             }
             Err(_e) => {
-                // Probe failed, driver's hardware not present
-                #[cfg(debug_assertions)]
-                {
-                    // TODO: Log probe failure
-                }
+                // — PatchBay: ISA probe failures are normal (hardware not present)
+                os_log::trace!("[DRV] ISA {} not present", driver.name());
             }
         }
     }

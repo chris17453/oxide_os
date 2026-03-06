@@ -8,220 +8,269 @@ pub use crate::arch::syscall::{
     syscall_exit, syscall0, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6,
 };
 
-/// Syscall numbers (must match kernel)
+/// — GraveShift: Syscall numbers — Linux x86_64 ABI (asm/unistd_64.h).
+/// Must match kernel/syscall/syscall/src/lib.rs::nr exactly.
 pub mod nr {
-    pub const EXIT: u64 = 0;
+    // Core I/O (0-8)
+    pub const READ: u64 = 0;
     pub const WRITE: u64 = 1;
-    pub const READ: u64 = 2;
-    pub const FORK: u64 = 3;
-    pub const EXEC: u64 = 4;
-    pub const WAIT: u64 = 5;
-    pub const WAITPID: u64 = 6;
-    pub const GETPID: u64 = 7;
-    pub const GETPPID: u64 = 8;
-    pub const SETPGID: u64 = 9;
-    pub const GETPGID: u64 = 10;
-    pub const SETSID: u64 = 11;
-    pub const GETSID: u64 = 12;
-    pub const EXECVE: u64 = 13;
-    pub const OPEN: u64 = 20;
-    pub const CLOSE: u64 = 21;
-    pub const LSEEK: u64 = 22;
-    pub const FSTAT: u64 = 23;
-    pub const STAT: u64 = 24;
-    pub const LSTAT: u64 = 28;
-    pub const DUP: u64 = 25;
-    pub const DUP2: u64 = 26;
-    pub const FTRUNCATE: u64 = 27;
-    pub const MKDIR: u64 = 30;
-    pub const RMDIR: u64 = 31;
-    pub const UNLINK: u64 = 32;
-    pub const RENAME: u64 = 33;
-    pub const GETDENTS: u64 = 34;
-    pub const CHDIR: u64 = 35;
-    pub const GETCWD: u64 = 36;
-    pub const PIPE: u64 = 37;
-    pub const LINK: u64 = 38;
-    pub const SYMLINK: u64 = 39;
-    pub const IOCTL: u64 = 40;
-    pub const READLINK: u64 = 41;
-    pub const KILL: u64 = 50;
-    pub const SIGACTION: u64 = 51;
-    pub const SIGPROCMASK: u64 = 52;
-    pub const SIGPENDING: u64 = 53;
-    pub const SIGSUSPEND: u64 = 54;
-    pub const PAUSE: u64 = 55;
-    pub const SIGRETURN: u64 = 57;
-    // Time syscalls
-    pub const GETTIMEOFDAY: u64 = 60;
-    pub const CLOCK_GETTIME: u64 = 61;
-    pub const CLOCK_GETRES: u64 = 62;
-    pub const NANOSLEEP: u64 = 63;
-    // System info syscalls
-    pub const UNAME: u64 = 64;
-    pub const STATFS: u64 = 65;
-    pub const FSTATFS: u64 = 66;
-    // Socket syscalls (must match kernel)
-    pub const SOCKET: u64 = 70;
-    pub const BIND: u64 = 71;
-    pub const LISTEN: u64 = 72;
-    pub const ACCEPT: u64 = 73;
-    pub const CONNECT: u64 = 74;
-    pub const SEND: u64 = 75;
-    pub const RECV: u64 = 76;
-    pub const SENDTO: u64 = 77;
-    pub const RECVFROM: u64 = 78;
-    pub const SHUTDOWN: u64 = 79;
-    pub const GETSOCKNAME: u64 = 80;
-    pub const GETPEERNAME: u64 = 81;
-    pub const SETSOCKOPT: u64 = 82;
-    pub const GETSOCKOPT: u64 = 83;
-    // Directory syscalls
-    pub const GETDENTS64: u64 = 84;
-    // Poll/select syscalls (must match kernel - avoid collision with MMAP)
-    pub const POLL: u64 = 95;
-    pub const PPOLL: u64 = 96;
-    pub const SELECT: u64 = 97;
-    pub const PSELECT6: u64 = 98;
-    // User/group syscalls (MUST match kernel syscall numbers!)
-    pub const GETUID: u64 = 14;
-    pub const GETGID: u64 = 15;
-    pub const GETEUID: u64 = 16;
-    pub const GETEGID: u64 = 17;
-    pub const SETUID: u64 = 18;
-    pub const SETGID: u64 = 19;
-    pub const SETEUID: u64 = 140;
-    pub const SETEGID: u64 = 141;
-    // Memory syscalls (must match kernel)
-    pub const MMAP: u64 = 90;
-    pub const MUNMAP: u64 = 91;
-    pub const MPROTECT: u64 = 92;
-    pub const MREMAP: u64 = 93;
-    pub const BRK: u64 = 94;
-    // Keyboard layout syscalls
-    pub const SETKEYMAP: u64 = 120;
-    pub const GETKEYMAP: u64 = 121;
+    pub const OPEN: u64 = 2;
+    pub const CLOSE: u64 = 3;
+    pub const STAT: u64 = 4;
+    pub const FSTAT: u64 = 5;
+    pub const LSTAT: u64 = 6;
+    pub const POLL: u64 = 7;
+    pub const LSEEK: u64 = 8;
 
-    // Process priority syscalls
-    pub const NICE: u64 = 122;
-    pub const GETPRIORITY: u64 = 123;
-    pub const SETPRIORITY: u64 = 124;
+    // Memory (9-12, 25, 28)
+    pub const MMAP: u64 = 9;
+    pub const MPROTECT: u64 = 10;
+    pub const MUNMAP: u64 = 11;
+    pub const BRK: u64 = 12;
+    pub const MREMAP: u64 = 25;
+    pub const MADVISE: u64 = 28;
 
-    // Timer/alarm syscalls
-    pub const ALARM: u64 = 125;
-    pub const SETITIMER: u64 = 126;
-    pub const GETITIMER: u64 = 127;
+    // Signals (13-15, 34-38, 62, 127-131, 200)
+    pub const SIGACTION: u64 = 13;   // rt_sigaction
+    pub const SIGPROCMASK: u64 = 14; // rt_sigprocmask
+    pub const SIGRETURN: u64 = 15;   // rt_sigreturn
+    pub const PAUSE: u64 = 34;
+    pub const NANOSLEEP: u64 = 35;
+    pub const GETITIMER: u64 = 36;
+    pub const ALARM: u64 = 37;
+    pub const SETITIMER: u64 = 38;
+    pub const KILL: u64 = 62;
+    pub const SIGPENDING: u64 = 127; // rt_sigpending
+    pub const SIGSUSPEND: u64 = 130; // rt_sigsuspend
+    pub const SIGALTSTACK: u64 = 131;
+    pub const TKILL: u64 = 200;
 
-    // Scheduler syscalls
-    pub const SCHED_YIELD: u64 = 130;
-    pub const SCHED_SETSCHEDULER: u64 = 131;
-    pub const SCHED_GETSCHEDULER: u64 = 132;
-    pub const SCHED_SETPARAM: u64 = 133;
-    pub const SCHED_GETPARAM: u64 = 134;
-    pub const SCHED_SETAFFINITY: u64 = 135;
-    pub const SCHED_GETAFFINITY: u64 = 136;
-    pub const SCHED_RR_GET_INTERVAL: u64 = 137;
+    // I/O operations (16-20)
+    pub const IOCTL: u64 = 16;
+    pub const PREAD64: u64 = 17;
+    pub const PWRITE64: u64 = 18;
+    pub const READV: u64 = 19;
+    pub const WRITEV: u64 = 20;
 
-    // File permission syscalls
-    pub const CHMOD: u64 = 150;
-    pub const FCHMOD: u64 = 151;
-    pub const CHOWN: u64 = 152;
-    pub const FCHOWN: u64 = 153;
-    pub const UTIMES: u64 = 154;
-    pub const FUTIMES: u64 = 155;
+    // File access/permissions (21-22, 32-33, 72-93)
+    pub const ACCESS: u64 = 21;
+    pub const PIPE: u64 = 22;
+    pub const SELECT: u64 = 23;
+    pub const DUP: u64 = 32;
+    pub const DUP2: u64 = 33;
+    pub const FCNTL: u64 = 72;
+    pub const FLOCK: u64 = 73;
+    pub const FSYNC: u64 = 74;
+    pub const FDATASYNC: u64 = 75;
+    pub const TRUNCATE: u64 = 76;
+    pub const FTRUNCATE: u64 = 77;
+    pub const GETDENTS: u64 = 78;
+    pub const GETCWD: u64 = 79;
+    pub const CHDIR: u64 = 80;
+    pub const FCHDIR: u64 = 81;
+    pub const RENAME: u64 = 82;
+    pub const MKDIR: u64 = 83;
+    pub const RMDIR: u64 = 84;
+    pub const LINK: u64 = 86;
+    pub const UNLINK: u64 = 87;
+    pub const SYMLINK: u64 = 88;
+    pub const READLINK: u64 = 89;
+    pub const CHMOD: u64 = 90;
+    pub const FCHMOD: u64 = 91;
+    pub const CHOWN: u64 = 92;
+    pub const FCHOWN: u64 = 93;
 
-    // Thread syscalls (Linux-compatible numbers)
-    pub const CLONE: u64 = 56;
+    // Scheduler / yield (24)
+    pub const SCHED_YIELD: u64 = 24;
+
+    // Sendfile (40)
+    pub const SENDFILE: u64 = 40;
+
+    // Process identity (39, 102-126, 186)
+    pub const GETPID: u64 = 39;
+    pub const GETUID: u64 = 102;
+    pub const GETGID: u64 = 104;
+    pub const SETUID: u64 = 105;
+    pub const SETGID: u64 = 106;
+    pub const GETEUID: u64 = 107;
+    pub const GETEGID: u64 = 108;
+    pub const SETPGID: u64 = 109;
+    pub const GETPPID: u64 = 110;
+    pub const GETPGRP: u64 = 111;
+    pub const SETSID: u64 = 112;
+    pub const SETREUID: u64 = 113;
+    pub const SETREGID: u64 = 114;
+    pub const GETGROUPS: u64 = 115;
+    pub const SETGROUPS: u64 = 116;
+    pub const SETRESUID: u64 = 117;
+    pub const GETRESUID: u64 = 118;
+    pub const SETRESGID: u64 = 119;
+    pub const GETRESGID: u64 = 120;
+    pub const GETPGID: u64 = 121;
+    pub const SETEUID: u64 = 113;  // — GraveShift: alias to setreuid
+    pub const SETEGID: u64 = 114;  // — GraveShift: alias to setregid
+    pub const GETSID: u64 = 124;
+    pub const CAPGET: u64 = 125;
+    pub const CAPSET: u64 = 126;
     pub const GETTID: u64 = 186;
+    pub const UMASK: u64 = 95;
+
+    // Socket syscalls (41-55)
+    pub const SOCKET: u64 = 41;
+    pub const CONNECT: u64 = 42;
+    pub const ACCEPT: u64 = 43;
+    pub const SENDTO: u64 = 44;
+    pub const RECVFROM: u64 = 45;
+    pub const SENDMSG: u64 = 46;
+    pub const RECVMSG: u64 = 47;
+    pub const SHUTDOWN: u64 = 48;
+    pub const BIND: u64 = 49;
+    pub const LISTEN: u64 = 50;
+    pub const GETSOCKNAME: u64 = 51;
+    pub const GETPEERNAME: u64 = 52;
+    pub const SOCKETPAIR: u64 = 53;
+    pub const SETSOCKOPT: u64 = 54;
+    pub const GETSOCKOPT: u64 = 55;
+
+    // Process creation (56-61)
+    pub const CLONE: u64 = 56;
+    pub const FORK: u64 = 57;
+    pub const EXEC: u64 = 58;    // vfork in Linux, we use for legacy exec
+    pub const EXECVE: u64 = 59;
+    pub const EXIT: u64 = 60;
+    pub const WAIT4: u64 = 61;
+    pub const WAIT: u64 = 61;     // — GraveShift: alias for wait4
+    pub const WAITPID: u64 = 61;  // — GraveShift: alias for wait4
+
+    // System info (63, 99)
+    pub const UNAME: u64 = 63;
+    pub const SYSINFO: u64 = 99;
+
+    // Time (96, 100, 228-230)
+    pub const GETTIMEOFDAY: u64 = 96;
+    pub const TIMES: u64 = 100;
+    pub const CLOCK_GETTIME: u64 = 228;
+    pub const CLOCK_GETRES: u64 = 229;
+    pub const CLOCK_NANOSLEEP: u64 = 230;
+
+    // Filesystem / mount / scheduler (137-178)
+    pub const STATFS: u64 = 137;
+    pub const FSTATFS: u64 = 138;
+    pub const GETPRIORITY: u64 = 140;
+    pub const SETPRIORITY: u64 = 141;
+    pub const SCHED_SETPARAM: u64 = 142;
+    pub const SCHED_GETPARAM: u64 = 143;
+    pub const SCHED_SETSCHEDULER: u64 = 144;
+    pub const SCHED_GETSCHEDULER: u64 = 145;
+    pub const SCHED_GET_PRIORITY_MAX: u64 = 146;
+    pub const SCHED_GET_PRIORITY_MIN: u64 = 147;
+    pub const SCHED_RR_GET_INTERVAL: u64 = 148;
+    pub const PIVOT_ROOT: u64 = 155;
+    pub const PRCTL: u64 = 157;
+    pub const ARCH_PRCTL: u64 = 158;
+    pub const SETRLIMIT: u64 = 160;
+    pub const SYNC: u64 = 162;
+    pub const MOUNT: u64 = 165;
+    pub const UMOUNT: u64 = 166;
+    pub const SETHOSTNAME: u64 = 170;
+    pub const INIT_MODULE: u64 = 175;
+    pub const DELETE_MODULE: u64 = 176;
+
+    // Futex / threading (202-204, 218, 231)
     pub const FUTEX: u64 = 202;
+    pub const SCHED_SETAFFINITY: u64 = 203;
+    pub const SCHED_GETAFFINITY: u64 = 204;
     pub const SET_TID_ADDRESS: u64 = 218;
     pub const EXIT_GROUP: u64 = 231;
 
-    // Firewall syscalls
-    // NOTE: Firewall syscalls moved to 206-211 range to avoid conflict with FUTEX (202)
-    // —GraveShift: syscall numbering collision fixed, FW ops shifted to clear 202 for FUTEX
-    pub const FW_ADD_RULE: u64 = 206;
-    pub const FW_DEL_RULE: u64 = 207;
-    pub const FW_LIST_RULES: u64 = 208;
-    pub const FW_SET_POLICY: u64 = 209;
-    pub const FW_FLUSH: u64 = 210;
-    pub const FW_GET_CONNTRACK: u64 = 211;
+    // Epoll (213, 217, 232-233)
+    pub const EPOLL_CREATE: u64 = 213;
+    pub const GETDENTS64: u64 = 217;
+    pub const EPOLL_WAIT: u64 = 232;
+    pub const EPOLL_CTL: u64 = 233;
 
-    // Random number generation
+    // Utimes / waitid (235, 247)
+    pub const UTIMES: u64 = 235;
+    pub const WAITID: u64 = 247;
+
+    // *at syscalls (257-272, 275, 280-281)
+    pub const OPENAT: u64 = 257;
+    pub const MKDIRAT: u64 = 258;
+    pub const MKNODAT: u64 = 259;
+    pub const FCHOWNAT: u64 = 260;
+    pub const FUTIMENS: u64 = 261;   // futimesat in Linux
+    pub const NEWFSTATAT: u64 = 262;
+    pub const UNLINKAT: u64 = 263;
+    pub const RENAMEAT: u64 = 264;
+    pub const LINKAT: u64 = 265;
+    pub const SYMLINKAT: u64 = 266;
+    pub const READLINKAT: u64 = 267;
+    pub const FCHMODAT: u64 = 268;
+    pub const FACCESSAT: u64 = 269;
+    pub const PSELECT6: u64 = 270;
+    pub const PPOLL: u64 = 271;
+    pub const UNSHARE: u64 = 272;
+    pub const SPLICE: u64 = 275;
+    pub const UTIMENSAT: u64 = 280;
+    pub const EPOLL_PWAIT: u64 = 281;
+
+    // Event/timer FDs (282-293)
+    pub const SIGNALFD: u64 = 282;
+    pub const TIMERFD_CREATE: u64 = 283;
+    pub const EVENTFD: u64 = 284;
+    pub const TIMERFD_SETTIME: u64 = 286;
+    pub const TIMERFD_GETTIME: u64 = 287;
+    pub const ACCEPT4: u64 = 288;
+    pub const SIGNALFD4: u64 = 289;
+    pub const EVENTFD2: u64 = 290;
+    pub const EPOLL_CREATE1: u64 = 291;
+    pub const DUP3: u64 = 292;
+    pub const PIPE2: u64 = 293;
+
+    // Modern I/O (295-332)
+    pub const PREADV: u64 = 295;
+    pub const PWRITEV: u64 = 296;
+    pub const RECVMMSG: u64 = 299;
+    pub const PRLIMIT: u64 = 302;   // prlimit64
+    pub const SENDMMSG: u64 = 307;
+    pub const SETNS: u64 = 308;
+    pub const GETRUSAGE: u64 = 98;
+    pub const RENAMEAT2: u64 = 316;
     pub const GETRANDOM: u64 = 318;
+    pub const MEMFD_CREATE: u64 = 319;
+    pub const COPY_FILE_RANGE: u64 = 326;
+    pub const PREADV2: u64 = 327;
+    pub const PWRITEV2: u64 = 328;
+    pub const STATX: u64 = 332;
+    pub const POSIX_FADVISE: u64 = 221;  // fadvise64
 
-    // Filesystem mount syscalls
-    pub const MOUNT: u64 = 165;
-    pub const UMOUNT: u64 = 166;
-    pub const PIVOT_ROOT: u64 = 167;
+    // Close range / pidfd / clone3 (424-441)
+    pub const CLOSE_RANGE: u64 = 436;
+    pub const PIDFD_SEND_SIGNAL: u64 = 424;
+    pub const PIDFD_OPEN: u64 = 434;
+    pub const CLONE3: u64 = 435;
+    pub const OPENAT2: u64 = 437;
+    pub const PIDFD_GETFD: u64 = 438;
+    pub const FACCESSAT2: u64 = 439;
+    pub const EPOLL_PWAIT2: u64 = 441;
 
-    // *at variants (operate relative to directory fd)
-    pub const OPENAT: u64 = 250;
-    pub const MKDIRAT: u64 = 251;
-    pub const UNLINKAT: u64 = 252;
-    pub const RENAMEAT: u64 = 253;
-    pub const FACCESSAT: u64 = 254;
-    pub const FCHMODAT: u64 = 255;
-    pub const FCHOWNAT: u64 = 256;
-    pub const READLINKAT: u64 = 257;
-    pub const SYMLINKAT: u64 = 258;
-    pub const LINKAT: u64 = 259;
-    pub const UTIMENSAT: u64 = 260;
-    pub const FUTIMENS: u64 = 261;
+    // OXIDE-specific syscalls (500+)
+    // — GraveShift: Custom syscalls live above 500 to avoid collision
+    // with present or future Linux syscall numbers.
+    pub const SETKEYMAP: u64 = 500;
+    pub const GETKEYMAP: u64 = 501;
+    pub const NICE: u64 = 502;
+    pub const FW_ADD_RULE: u64 = 510;
+    pub const FW_DEL_RULE: u64 = 511;
+    pub const FW_LIST_RULES: u64 = 512;
+    pub const FW_SET_POLICY: u64 = 513;
+    pub const FW_FLUSH: u64 = 514;
+    pub const FW_GET_CONNTRACK: u64 = 515;
+    pub const NET_CONTROL: u64 = 520;
 
-    // I/O extensions
-    pub const READV: u64 = 262;
-    pub const WRITEV: u64 = 263;
-    pub const PREAD64: u64 = 264;
-    pub const PWRITE64: u64 = 265;
-    pub const DUP3: u64 = 266;
-    pub const PIPE2: u64 = 267;
-    pub const TRUNCATE: u64 = 268;
-    pub const FSYNC: u64 = 269;
-    pub const FDATASYNC: u64 = 270;
-    pub const SENDFILE: u64 = 271;
-
-    // Process extensions
-    pub const WAIT4: u64 = 274;
-    pub const WAITID: u64 = 275;
-    pub const GETRUSAGE: u64 = 276;
-    pub const GETGROUPS: u64 = 278;
-    pub const SETGROUPS: u64 = 279;
-    pub const GETRESUID: u64 = 280;
-    pub const GETRESGID: u64 = 281;
-    pub const SETRESUID: u64 = 282;
-    pub const SETRESGID: u64 = 283;
-    pub const PRLIMIT: u64 = 284;
-    pub const MADVISE: u64 = 285;
-    pub const CLOSE_RANGE: u64 = 286;
-    pub const ACCEPT4: u64 = 287;
-
-    // Additional syscalls
-    pub const SYNC: u64 = 288;
-    pub const POSIX_FADVISE: u64 = 289;
-    pub const SETREUID: u64 = 290;
-    pub const SETREGID: u64 = 291;
-    pub const SCHED_GET_PRIORITY_MAX: u64 = 292;
-    pub const SCHED_GET_PRIORITY_MIN: u64 = 293;
-    pub const COPY_FILE_RANGE: u64 = 294;
-    pub const UMASK: u64 = 295;
-    pub const SOCKETPAIR: u64 = 296;
-    pub const MEMFD_CREATE: u64 = 297;
-    pub const CLOCK_NANOSLEEP: u64 = 298;
-    pub const SIGALTSTACK: u64 = 299;
-    pub const PREADV: u64 = 300;
-    pub const PWRITEV: u64 = 301;
-    pub const FCHDIR: u64 = 302;
-    pub const SPLICE: u64 = 304;
-    pub const SETHOSTNAME: u64 = 305;
-    pub const EVENTFD2: u64 = 306;
-    pub const EPOLL_CREATE1: u64 = 307;
-    pub const EPOLL_CTL: u64 = 308;
-    pub const EPOLL_WAIT: u64 = 309;
-
-    // Network control syscalls
-    // —ShadePacket: Userspace DHCP trigger for post-boot network setup
-    pub const NET_CONTROL: u64 = 310;
+    // Legacy aliases — send/recv map to sendto/recvfrom
+    pub const SEND: u64 = SENDTO;
+    pub const RECV: u64 = RECVFROM;
 
     /// AT_FDCWD: use current working directory for *at syscalls
     pub const AT_FDCWD: i32 = -100;
@@ -1796,7 +1845,7 @@ pub fn sys_statx(
     statxbuf: u64,
 ) -> i64 {
     syscall6(
-        332,
+        nr::STATX,
         dirfd as usize,
         pathname as usize,
         pathname_len,
@@ -1809,7 +1858,7 @@ pub fn sys_statx(
 /// sys_openat2 - Extended openat with resolve flags
 pub fn sys_openat2(dirfd: i32, pathname: u64, pathname_len: usize, how: u64, size: usize) -> i64 {
     syscall5(
-        437,
+        nr::OPENAT2,
         dirfd as usize,
         pathname as usize,
         pathname_len,
@@ -1827,7 +1876,7 @@ pub fn sys_faccessat2(
     flags: i32,
 ) -> i64 {
     syscall5(
-        439,
+        nr::FACCESSAT2,
         dirfd as usize,
         pathname as usize,
         pathname_len,
@@ -1839,7 +1888,7 @@ pub fn sys_faccessat2(
 /// sys_mknodat - Create special file
 pub fn sys_mknodat(dirfd: i32, pathname: u64, pathname_len: usize, mode: u32, dev: u64) -> i64 {
     syscall5(
-        259,
+        nr::MKNODAT,
         dirfd as usize,
         pathname as usize,
         pathname_len,
@@ -1850,28 +1899,28 @@ pub fn sys_mknodat(dirfd: i32, pathname: u64, pathname_len: usize, mode: u32, de
 
 /// sys_unshare - Disassociate parts of execution context
 pub fn sys_unshare(flags: i32) -> i64 {
-    syscall1(272, flags as usize)
+    syscall1(nr::UNSHARE, flags as usize)
 }
 
 /// sys_setns - Join an existing namespace
 pub fn sys_setns(fd: i32, nstype: i32) -> i64 {
-    syscall2(308, fd as usize, nstype as usize)
+    syscall2(nr::SETNS, fd as usize, nstype as usize)
 }
 
 /// sys_clone3 - Extended clone with args structure
 pub fn sys_clone3(args: u64, size: usize) -> i64 {
-    syscall2(435, args as usize, size)
+    syscall2(nr::CLONE3, args as usize, size)
 }
 
 /// sys_pidfd_open - Get file descriptor for process
 pub fn sys_pidfd_open(pid: i32, flags: u32) -> i64 {
-    syscall2(434, pid as usize, flags as usize)
+    syscall2(nr::PIDFD_OPEN, pid as usize, flags as usize)
 }
 
 /// sys_pidfd_send_signal - Send signal via pidfd
 pub fn sys_pidfd_send_signal(pidfd: i32, sig: i32, info: u64, flags: u32) -> i64 {
     syscall4(
-        424,
+        nr::PIDFD_SEND_SIGNAL,
         pidfd as usize,
         sig as usize,
         info as usize,
@@ -1881,18 +1930,18 @@ pub fn sys_pidfd_send_signal(pidfd: i32, sig: i32, info: u64, flags: u32) -> i64
 
 /// sys_pidfd_getfd - Duplicate fd from another process
 pub fn sys_pidfd_getfd(pidfd: i32, targetfd: i32, flags: u32) -> i64 {
-    syscall3(438, pidfd as usize, targetfd as usize, flags as usize)
+    syscall3(nr::PIDFD_GETFD, pidfd as usize, targetfd as usize, flags as usize)
 }
 
 /// sys_timerfd_create - Create a timer file descriptor
 pub fn sys_timerfd_create(clockid: i32, flags: i32) -> i64 {
-    syscall2(283, clockid as usize, flags as usize)
+    syscall2(nr::TIMERFD_CREATE, clockid as usize, flags as usize)
 }
 
 /// sys_timerfd_settime - Arm a timer
 pub fn sys_timerfd_settime(fd: i32, flags: i32, new_value: u64, old_value: u64) -> i64 {
     syscall4(
-        286,
+        nr::TIMERFD_SETTIME,
         fd as usize,
         flags as usize,
         new_value as usize,
@@ -1902,17 +1951,17 @@ pub fn sys_timerfd_settime(fd: i32, flags: i32, new_value: u64, old_value: u64) 
 
 /// sys_timerfd_gettime - Get current timer setting
 pub fn sys_timerfd_gettime(fd: i32, curr_value: u64) -> i64 {
-    syscall2(287, fd as usize, curr_value as usize)
+    syscall2(nr::TIMERFD_GETTIME, fd as usize, curr_value as usize)
 }
 
 /// sys_signalfd - Create fd for receiving signals
 pub fn sys_signalfd(fd: i32, mask: u64, flags: i32) -> i64 {
-    syscall3(282, fd as usize, mask as usize, flags as usize)
+    syscall3(nr::SIGNALFD, fd as usize, mask as usize, flags as usize)
 }
 
 /// sys_signalfd4 - signalfd with sigmask size
 pub fn sys_signalfd4(fd: i32, mask: u64, sigsetsize: usize, flags: i32) -> i64 {
-    syscall4(289, fd as usize, mask as usize, sigsetsize, flags as usize)
+    syscall4(nr::SIGNALFD4, fd as usize, mask as usize, sigsetsize, flags as usize)
 }
 
 /// sys_epoll_pwait2 - Wait for events with timespec and sigmask
@@ -1925,7 +1974,7 @@ pub fn sys_epoll_pwait2(
     sigsetsize: usize,
 ) -> i64 {
     syscall6(
-        441,
+        nr::EPOLL_PWAIT2,
         epfd as usize,
         events as usize,
         maxevents as usize,
@@ -1938,7 +1987,7 @@ pub fn sys_epoll_pwait2(
 /// sys_recvmmsg - Receive multiple messages on socket
 pub fn sys_recvmmsg(sockfd: i32, msgvec: u64, vlen: u32, flags: i32, timeout: u64) -> i64 {
     syscall5(
-        299,
+        nr::RECVMMSG,
         sockfd as usize,
         msgvec as usize,
         vlen as usize,
@@ -1950,7 +1999,7 @@ pub fn sys_recvmmsg(sockfd: i32, msgvec: u64, vlen: u32, flags: i32, timeout: u6
 /// sys_sendmmsg - Send multiple messages on socket
 pub fn sys_sendmmsg(sockfd: i32, msgvec: u64, vlen: u32, flags: i32) -> i64 {
     syscall4(
-        307,
+        nr::SENDMMSG,
         sockfd as usize,
         msgvec as usize,
         vlen as usize,
@@ -1961,7 +2010,7 @@ pub fn sys_sendmmsg(sockfd: i32, msgvec: u64, vlen: u32, flags: i32) -> i64 {
 /// sys_preadv2 - Positional vector read with flags
 pub fn sys_preadv2(fd: i32, iov: u64, iovcnt: i32, offset: i64, flags: i32) -> i64 {
     syscall5(
-        327,
+        nr::PREADV2,
         fd as usize,
         iov as usize,
         iovcnt as usize,
@@ -1973,7 +2022,7 @@ pub fn sys_preadv2(fd: i32, iov: u64, iovcnt: i32, offset: i64, flags: i32) -> i
 /// sys_pwritev2 - Positional vector write with flags
 pub fn sys_pwritev2(fd: i32, iov: u64, iovcnt: i32, offset: i64, flags: i32) -> i64 {
     syscall5(
-        328,
+        nr::PWRITEV2,
         fd as usize,
         iov as usize,
         iovcnt as usize,
@@ -1985,7 +2034,7 @@ pub fn sys_pwritev2(fd: i32, iov: u64, iovcnt: i32, offset: i64, flags: i32) -> 
 /// sys_prctl - Process control operations
 pub fn sys_prctl(option: i32, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> i64 {
     syscall5(
-        157,
+        nr::PRCTL,
         option as usize,
         arg2 as usize,
         arg3 as usize,
@@ -1996,12 +2045,12 @@ pub fn sys_prctl(option: i32, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> i64
 
 /// sys_capget - Get thread capabilities
 pub fn sys_capget(hdrp: u64, datap: u64) -> i64 {
-    syscall2(125, hdrp as usize, datap as usize)
+    syscall2(nr::CAPGET, hdrp as usize, datap as usize)
 }
 
 /// sys_capset - Set thread capabilities
 pub fn sys_capset(hdrp: u64, datap: u64) -> i64 {
-    syscall2(126, hdrp as usize, datap as usize)
+    syscall2(nr::CAPSET, hdrp as usize, datap as usize)
 }
 
 // ============================================================================

@@ -644,6 +644,7 @@ dependencies = [
  "mm-paging",
  "mm-traits",
  "mm-vma",
+ "module",
  "net",
  "os_core",
  "os_log",
@@ -1743,6 +1744,7 @@ version = "0.1.0"
 dependencies = [
  "mm-manager",
  "mm-traits",
+ "os_core",
  "pci",
  "spin 0.9.8",
 ]

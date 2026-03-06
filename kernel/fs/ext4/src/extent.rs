@@ -175,7 +175,9 @@ pub fn map_block(
     logical_block: u64,
 ) -> Ext4Result<Option<u64>> {
     if !inode.uses_extents() {
-        // Fall back to indirect blocks (not implemented yet)
+        // — BlackLatch: indirect block mapping is a legacy format from ext2/ext3.
+        // Modern ext4 always uses extents (INCOMPAT_EXTENTS flag). If we see an
+        // inode without extents, the filesystem is either ancient or corrupt.
         return Err(Ext4Error::UnsupportedFeature);
     }
 
@@ -388,7 +390,11 @@ pub fn insert_extent(
 
     // Check if we have room for another extent
     if current_entries >= max_extents {
-        // Would need to grow the tree - not implemented yet
+        // — BlackLatch: inode extent slots full (max 4 in i_block). Growing the tree
+        // to depth 1+ requires allocating a new block, moving extents there, and
+        // converting the inode root to an index node. Not yet implemented — this
+        // limits files to 4 non-contiguous extent regions. Contiguous writes are
+        // fine (try_extend_extent merges adjacent blocks into one extent).
         return Err(Ext4Error::NoSpace);
     }
 

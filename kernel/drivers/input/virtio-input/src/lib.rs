@@ -90,6 +90,10 @@ pub struct VirtioInput {
     /// — InputShade: base pointer into physical-map region, NOT heap.
     /// Each event buffer is at event_buf_base + i * sizeof(VirtioInputEvent).
     event_buf_base: *mut VirtioInputEvent,
+    /// — InputShade: physical address + page count of event buffer frames,
+    /// needed for cleanup on device removal.
+    event_buf_phys: u64,
+    event_buf_pages: usize,
     status_queue: Option<Virtqueue>,
     name: String,
     device_type: VirtioInputType,
@@ -283,6 +287,8 @@ impl VirtioInput {
             config,
             event_queue: None,
             event_buf_base: core::ptr::null_mut(),
+            event_buf_phys: 0,
+            event_buf_pages: 0,
             status_queue: None,
             name: String::new(),
             device_type: VirtioInputType::Generic,
@@ -477,6 +483,8 @@ impl VirtioInput {
         }
 
         self.event_buf_base = buf_virt_base;
+        self.event_buf_phys = buf_phys_base;
+        self.event_buf_pages = buf_pages;
 
         // — InputShade: fill descriptors with write_desc() and feed them to the
         // avail ring. Each descriptor points at a device-writable event buffer.
@@ -606,6 +614,20 @@ impl VirtioInput {
     }
 }
 
+/// — InputShade: free the event buffer DMA pages on drop.
+/// Virtqueue::drop handles the ring pages; this handles the separate event data buffers.
+impl Drop for VirtioInput {
+    fn drop(&mut self) {
+        if self.event_buf_phys != 0 && self.event_buf_pages > 0 {
+            let _ = mm_manager::mm().free_contiguous(
+                os_core::PhysAddr::new(self.event_buf_phys),
+                self.event_buf_pages,
+            );
+        }
+        // event_queue and status_queue drop automatically (Virtqueue::drop frees ring pages)
+    }
+}
+
 unsafe impl Send for VirtioInput {}
 unsafe impl Sync for VirtioInput {}
 
@@ -638,15 +660,33 @@ impl PciDriver for VirtioInputDriver {
         let device = unsafe { VirtioInput::from_pci(dev) }
             .ok_or(DriverError::InitFailed)?;
 
-        // Add to internal device list (virtio-input uses its own registry)
+        // — InputShade: stash the transport's common config address as binding data
+        // so remove() can find this specific device in the list.
+        let common_addr = device.transport.common;
         VIRTIO_INPUT_DEVICES.lock().push(device);
 
-        // Return dummy binding data
-        Ok(DriverBindingData::new(0))
+        Ok(DriverBindingData::new(common_addr))
     }
 
-    unsafe fn remove(&self, _dev: &pci::PciDevice, _binding_data: DriverBindingData) {
-        // TODO: Implement proper device removal from VIRTIO_INPUT_DEVICES
+    unsafe fn remove(&self, _dev: &pci::PciDevice, binding_data: DriverBindingData) {
+        // — InputShade: find the device by its PCI common config address,
+        // unregister from the input subsystem, and let Drop clean up virtqueues.
+        let common_addr = binding_data.as_usize();
+
+        let mut devices = VIRTIO_INPUT_DEVICES.lock();
+        if let Some(idx) = devices.iter().position(|d| d.transport.common == common_addr) {
+            let device = devices.remove(idx);
+
+            // Reset VirtIO device status — stops DMA before we free the queues
+            device.transport.write_status(0);
+
+            // Unregister from input subsystem
+            if let Some(input_id) = device.device_id {
+                input::unregister_device(input_id);
+            }
+
+            // device drops here — Virtqueue::drop frees DMA ring pages
+        }
     }
 }
 

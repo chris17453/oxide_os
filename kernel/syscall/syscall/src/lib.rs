@@ -82,275 +82,316 @@ where
     sched::with_current_meta_mut(f)
 }
 
-/// Syscall numbers
+/// — GraveShift: Syscall numbers — Linux x86_64 ABI (asm/unistd_64.h).
+/// Every number here matches `ausyscall x86_64 <name>`. No more custom
+/// numbering, no more collisions. Burn the old table, start clean.
 pub mod nr {
-    // Process syscalls
-    pub const EXIT: u64 = 0;
+    // ========================================================================
+    // Core I/O (0-8)
+    // ========================================================================
+    pub const READ: u64 = 0;
     pub const WRITE: u64 = 1;
-    pub const READ: u64 = 2;
-    pub const FORK: u64 = 3;
-    pub const EXEC: u64 = 4;
-    pub const WAIT: u64 = 5;
-    pub const WAITPID: u64 = 6;
-    pub const GETPID: u64 = 7;
-    pub const GETPPID: u64 = 8;
-    pub const SETPGID: u64 = 9;
-    pub const GETPGID: u64 = 10;
-    pub const SETSID: u64 = 11;
-    pub const GETSID: u64 = 12;
-    pub const EXECVE: u64 = 13; // exec with argv/envp
-    pub const GETUID: u64 = 14;
-    pub const GETGID: u64 = 15;
-    pub const GETEUID: u64 = 16;
-    pub const GETEGID: u64 = 17;
-    pub const SETUID: u64 = 18;
-    pub const SETGID: u64 = 19;
-    pub const SETEUID: u64 = 140;
-    pub const SETEGID: u64 = 141;
-    /// — ColdCipher: Advisory file locking, finally
-    pub const FLOCK: u64 = 143;
+    pub const OPEN: u64 = 2;
+    pub const CLOSE: u64 = 3;
+    pub const STAT: u64 = 4;
+    pub const FSTAT: u64 = 5;
+    pub const LSTAT: u64 = 6;
+    pub const POLL: u64 = 7;
+    pub const LSEEK: u64 = 8;
 
-    // Thread syscalls
-    pub const CLONE: u64 = 56; // Create thread/process
-    pub const GETTID: u64 = 186; // Get thread ID
-    pub const FUTEX: u64 = 202; // Fast userspace locking
-    pub const SET_TID_ADDRESS: u64 = 218; // Set clear_child_tid address
-    pub const EXIT_GROUP: u64 = 231; // Exit all threads in group
-    pub const ARCH_PRCTL: u64 = 158; // Set architecture-specific thread state (FS/GS base)
+    // ========================================================================
+    // Memory (9-12, 25, 28)
+    // ========================================================================
+    pub const MMAP: u64 = 9;
+    pub const MPROTECT: u64 = 10;
+    pub const MUNMAP: u64 = 11;
+    pub const BRK: u64 = 12;
+    pub const MREMAP: u64 = 25;
+    pub const MADVISE: u64 = 28;
 
-    // VFS syscalls
-    pub const OPEN: u64 = 20;
-    pub const CLOSE: u64 = 21;
-    pub const LSEEK: u64 = 22;
-    pub const FSTAT: u64 = 23;
-    pub const STAT: u64 = 24;
-    pub const LSTAT: u64 = 28; // stat without following symlinks
-    pub const DUP: u64 = 25;
-    pub const DUP2: u64 = 26;
-    pub const FTRUNCATE: u64 = 27;
+    // ========================================================================
+    // Signals (13-15, 34-35, 62, 127-131, 200)
+    // ========================================================================
+    pub const SIGACTION: u64 = 13;   // rt_sigaction
+    pub const SIGPROCMASK: u64 = 14; // rt_sigprocmask
+    pub const SIGRETURN: u64 = 15;   // rt_sigreturn
+    pub const PAUSE: u64 = 34;
+    pub const NANOSLEEP: u64 = 35;
+    pub const GETITIMER: u64 = 36;
+    pub const ALARM: u64 = 37;
+    pub const SETITIMER: u64 = 38;
+    pub const KILL: u64 = 62;
+    pub const SIGPENDING: u64 = 127; // rt_sigpending
+    pub const SIGSUSPEND: u64 = 130; // rt_sigsuspend
+    pub const SIGALTSTACK: u64 = 131;
+    pub const TKILL: u64 = 200;
 
-    // Directory syscalls
-    pub const MKDIR: u64 = 30;
-    pub const RMDIR: u64 = 31;
-    pub const UNLINK: u64 = 32;
-    pub const RENAME: u64 = 33;
-    pub const GETDENTS: u64 = 34;
-    pub const CHDIR: u64 = 35;
-    pub const GETCWD: u64 = 36;
-    pub const PIPE: u64 = 37;
-    pub const LINK: u64 = 38;
-    pub const SYMLINK: u64 = 39;
-    pub const READLINK: u64 = 41;
-    pub const GETDENTS64: u64 = 84;
+    // ========================================================================
+    // I/O operations (16-20)
+    // ========================================================================
+    pub const IOCTL: u64 = 16;
+    pub const PREAD64: u64 = 17;
+    pub const PWRITE64: u64 = 18;
+    pub const READV: u64 = 19;
+    pub const WRITEV: u64 = 20;
 
-    // TTY/device syscalls
-    pub const IOCTL: u64 = 40;
-    pub const FCNTL: u64 = 42;
+    // ========================================================================
+    // File access/permissions (21, 32-33, 72)
+    // ========================================================================
+    pub const ACCESS: u64 = 21;
+    pub const PIPE: u64 = 22;
+    pub const SELECT: u64 = 23;
+    pub const DUP: u64 = 32;
+    pub const DUP2: u64 = 33;
+    pub const FCNTL: u64 = 72;
+    pub const FLOCK: u64 = 73;
+    pub const FSYNC: u64 = 74;
+    pub const FDATASYNC: u64 = 75;
+    pub const TRUNCATE: u64 = 76;
+    pub const FTRUNCATE: u64 = 77;
+    pub const GETDENTS: u64 = 78;
+    pub const GETCWD: u64 = 79;
+    pub const CHDIR: u64 = 80;
+    pub const FCHDIR: u64 = 81;
+    pub const RENAME: u64 = 82;
+    pub const MKDIR: u64 = 83;
+    pub const RMDIR: u64 = 84;
+    pub const LINK: u64 = 86;
+    pub const UNLINK: u64 = 87;
+    pub const SYMLINK: u64 = 88;
+    pub const READLINK: u64 = 89;
+    pub const CHMOD: u64 = 90;
+    pub const FCHMOD: u64 = 91;
+    pub const CHOWN: u64 = 92;
+    pub const FCHOWN: u64 = 93;
 
-    // Keyboard layout syscalls
-    pub const SETKEYMAP: u64 = 120; // Set keyboard layout
-    pub const GETKEYMAP: u64 = 121; // Get current keyboard layout name
+    // ========================================================================
+    // Scheduler / yield (24)
+    // ========================================================================
+    pub const SCHED_YIELD: u64 = 24;
 
-    // Process priority syscalls
-    pub const NICE: u64 = 122;
-    pub const GETPRIORITY: u64 = 123;
-    pub const SETPRIORITY: u64 = 124;
+    // ========================================================================
+    // Sendfile (40)
+    // ========================================================================
+    pub const SENDFILE: u64 = 40;
 
-    // Timer/alarm syscalls
-    pub const ALARM: u64 = 125;
-    pub const SETITIMER: u64 = 126;
-    pub const GETITIMER: u64 = 127;
+    // ========================================================================
+    // Socket syscalls (41-55)
+    // ========================================================================
+    pub const SOCKET: u64 = 41;
+    pub const CONNECT: u64 = 42;
+    pub const ACCEPT: u64 = 43;
+    pub const SENDTO: u64 = 44;
+    pub const RECVFROM: u64 = 45;
+    pub const SENDMSG: u64 = 46;
+    pub const RECVMSG: u64 = 47;
+    pub const SHUTDOWN: u64 = 48;
+    pub const BIND: u64 = 49;
+    pub const LISTEN: u64 = 50;
+    pub const GETSOCKNAME: u64 = 51;
+    pub const GETPEERNAME: u64 = 52;
+    pub const SOCKETPAIR: u64 = 53;
+    pub const SETSOCKOPT: u64 = 54;
+    pub const GETSOCKOPT: u64 = 55;
 
-    // Scheduler syscalls
-    pub const SCHED_YIELD: u64 = 130;
-    pub const SCHED_SETSCHEDULER: u64 = 131;
-    pub const SCHED_GETSCHEDULER: u64 = 132;
-    pub const SCHED_SETPARAM: u64 = 133;
-    pub const SCHED_GETPARAM: u64 = 134;
-    pub const SCHED_SETAFFINITY: u64 = 135;
-    pub const SCHED_GETAFFINITY: u64 = 136;
-    pub const SCHED_RR_GET_INTERVAL: u64 = 137;
+    // ========================================================================
+    // Process creation (56-61)
+    // ========================================================================
+    pub const CLONE: u64 = 56;
+    pub const FORK: u64 = 57;
+    pub const EXEC: u64 = 58;    // vfork in Linux, we use for legacy exec
+    pub const EXECVE: u64 = 59;
+    pub const EXIT: u64 = 60;
+    pub const WAIT4: u64 = 61;
+    pub const WAIT: u64 = 61;     // — GraveShift: alias for wait4
+    pub const WAITPID: u64 = 61;  // — GraveShift: alias for wait4
 
-    // Time syscalls
-    pub const GETTIMEOFDAY: u64 = 60;
-    pub const CLOCK_GETTIME: u64 = 61;
-    pub const CLOCK_GETRES: u64 = 62;
-    pub const NANOSLEEP: u64 = 63;
+    // ========================================================================
+    // System info (63-66)
+    // ========================================================================
+    pub const UNAME: u64 = 63;
+    pub const SYSINFO: u64 = 99;
 
-    // System info syscalls
-    pub const UNAME: u64 = 64;
-    pub const STATFS: u64 = 65;
-    pub const FSTATFS: u64 = 66;
+    // ========================================================================
+    // Time (96-100, 228-230)
+    // ========================================================================
+    pub const GETTIMEOFDAY: u64 = 96;
+    pub const TIMES: u64 = 100;
+    pub const CLOCK_GETTIME: u64 = 228;
+    pub const CLOCK_GETRES: u64 = 229;
+    pub const CLOCK_NANOSLEEP: u64 = 230;
 
-    // Poll/Select syscalls
-    pub const POLL: u64 = 95;
-    pub const PPOLL: u64 = 96;
-    pub const SELECT: u64 = 97;
-    pub const PSELECT6: u64 = 98;
-
-    // Module syscalls (not implemented, moved to higher numbers)
-    pub const INIT_MODULE: u64 = 160;
-    pub const DELETE_MODULE: u64 = 161;
-    pub const QUERY_MODULE: u64 = 162;
-
-    // Signal syscalls
-    pub const KILL: u64 = 50;
-    pub const SIGACTION: u64 = 51;
-    pub const SIGPROCMASK: u64 = 52;
-    pub const SIGPENDING: u64 = 53;
-    pub const SIGSUSPEND: u64 = 54;
-    pub const PAUSE: u64 = 55;
-    pub const SIGRETURN: u64 = 57;
-
-    // Memory mapping syscalls
-    pub const MMAP: u64 = 90;
-    pub const MUNMAP: u64 = 91;
-    pub const MPROTECT: u64 = 92;
-    pub const MREMAP: u64 = 93;
-    pub const BRK: u64 = 94;
-
-    // File permission syscalls
-    pub const CHMOD: u64 = 150;
-    pub const FCHMOD: u64 = 151;
-    pub const CHOWN: u64 = 152;
-    pub const FCHOWN: u64 = 153;
-    pub const UTIMES: u64 = 154;
-    pub const FUTIMES: u64 = 155;
-
-    // Socket syscalls
-    pub const SOCKET: u64 = 70;
-    pub const BIND: u64 = 71;
-    pub const LISTEN: u64 = 72;
-    pub const ACCEPT: u64 = 73;
-    pub const CONNECT: u64 = 74;
-    pub const SEND: u64 = 75;
-    pub const RECV: u64 = 76;
-    pub const SENDTO: u64 = 77;
-    pub const RECVFROM: u64 = 78;
-    pub const SHUTDOWN: u64 = 79;
-    pub const GETSOCKNAME: u64 = 80;
-    pub const GETPEERNAME: u64 = 81;
-    pub const SETSOCKOPT: u64 = 82;
-    pub const GETSOCKOPT: u64 = 83;
-
-    // Firewall syscalls
-    // NOTE: 202 was previously used here but conflicts with FUTEX - moved to 206-211 range
-    // —GraveShift: syscall numbering collision fixed, FW ops shifted to clear 202 for FUTEX
-    pub const FW_ADD_RULE: u64 = 206;
-    pub const FW_DEL_RULE: u64 = 207;
-    pub const FW_LIST_RULES: u64 = 208;
-    pub const FW_SET_POLICY: u64 = 209;
-    pub const FW_FLUSH: u64 = 210;
-    pub const FW_GET_CONNTRACK: u64 = 211;
-
-    // Random number generation
-    pub const GETRANDOM: u64 = 318;
-
-    // Filesystem mount syscalls
-    pub const MOUNT: u64 = 165;
-    pub const UMOUNT: u64 = 166;
-    pub const PIVOT_ROOT: u64 = 167;
-
-    // *at variants (operate relative to directory fd)
-    pub const OPENAT: u64 = 250;
-    pub const MKDIRAT: u64 = 251;
-    pub const UNLINKAT: u64 = 252;
-    pub const RENAMEAT: u64 = 253;
-    pub const FACCESSAT: u64 = 254;
-    pub const FCHMODAT: u64 = 255;
-    pub const FCHOWNAT: u64 = 256;
-    pub const READLINKAT: u64 = 257;
-    pub const SYMLINKAT: u64 = 258;
-    pub const LINKAT: u64 = 259;
-    pub const UTIMENSAT: u64 = 260;
-    pub const FUTIMENS: u64 = 261;
-
-    // I/O extensions
-    pub const READV: u64 = 262;
-    pub const WRITEV: u64 = 263;
-    pub const PREAD64: u64 = 264;
-    pub const PWRITE64: u64 = 265;
-    pub const DUP3: u64 = 266;
-    pub const PIPE2: u64 = 267;
-    pub const TRUNCATE: u64 = 268;
-    pub const FSYNC: u64 = 269;
-    pub const FDATASYNC: u64 = 270;
-    pub const SENDFILE: u64 = 271;
-
-    // Process extensions
-    pub const WAIT4: u64 = 274;
-    pub const WAITID: u64 = 275;
-    pub const GETRUSAGE: u64 = 276;
-    pub const TIMES: u64 = 277;
-    pub const GETGROUPS: u64 = 278;
-    pub const SETGROUPS: u64 = 279;
-    pub const GETRESUID: u64 = 280;
-    pub const GETRESGID: u64 = 281;
-    pub const SETRESUID: u64 = 282;
-    pub const SETRESGID: u64 = 283;
-    pub const PRLIMIT: u64 = 284;
-    pub const MADVISE: u64 = 285;
-    pub const CLOSE_RANGE: u64 = 286;
-    pub const ACCEPT4: u64 = 287;
-
-    // Additional syscalls
-    pub const SYNC: u64 = 288;
-    pub const POSIX_FADVISE: u64 = 289;
-    pub const SETREUID: u64 = 290;
-    pub const SETREGID: u64 = 291;
-    pub const SCHED_GET_PRIORITY_MAX: u64 = 292;
-    pub const SCHED_GET_PRIORITY_MIN: u64 = 293;
-    pub const COPY_FILE_RANGE: u64 = 294;
-    pub const UMASK: u64 = 295;
-    pub const SOCKETPAIR: u64 = 296;
-    pub const MEMFD_CREATE: u64 = 297;
-    pub const CLOCK_NANOSLEEP: u64 = 298;
-    pub const SIGALTSTACK: u64 = 299;
-    pub const PREADV: u64 = 300;
-    pub const PWRITEV: u64 = 301;
-    pub const FCHDIR: u64 = 302;
-    pub const SPLICE: u64 = 304;
-    pub const SETHOSTNAME: u64 = 305;
-    pub const EVENTFD2: u64 = 306;
-    pub const EPOLL_CREATE1: u64 = 307;
-    pub const EPOLL_CTL: u64 = 308;
-    pub const EPOLL_WAIT: u64 = 309;
-
-    // Network control syscalls
-    // —ShadePacket: Userspace DHCP trigger since kernel boot DHCP has limited retries
-    pub const NET_CONTROL: u64 = 310;
-
-    // Modern filesystem syscalls (Week 2)
-    pub const STATX: u64 = 332;
-    pub const OPENAT2: u64 = 437;
-    pub const RENAMEAT2: u64 = 316;
-    pub const FACCESSAT2: u64 = 439;
-    pub const MKNODAT: u64 = 259;
-
-    // Container primitives (Week 3)
-    pub const UNSHARE: u64 = 272;
-    pub const SETNS: u64 = 308;
-    pub const CLONE3: u64 = 435;
-    pub const PIDFD_OPEN: u64 = 434;
-    pub const PIDFD_SEND_SIGNAL: u64 = 424;
-    pub const PIDFD_GETFD: u64 = 438;
-
-    // Event-driven I/O (Week 4)
-    pub const TIMERFD_CREATE: u64 = 283;
-    pub const TIMERFD_SETTIME: u64 = 286;
-    pub const TIMERFD_GETTIME: u64 = 287;
-    pub const SIGNALFD: u64 = 282;
-    pub const SIGNALFD4: u64 = 289;
-    pub const EPOLL_PWAIT2: u64 = 441;
-    pub const RECVMMSG: u64 = 299;
-    pub const SENDMMSG: u64 = 307;
-    pub const PREADV2: u64 = 327;
-    pub const PWRITEV2: u64 = 328;
-
-    // Security primitives (Week 6)
-    pub const PRCTL: u64 = 157;
+    // ========================================================================
+    // Process identity (102-124, 186)
+    // ========================================================================
+    pub const GETUID: u64 = 102;
+    pub const GETGID: u64 = 104;
+    pub const SETUID: u64 = 105;
+    pub const SETGID: u64 = 106;
+    pub const GETEUID: u64 = 107;
+    pub const GETEGID: u64 = 108;
+    pub const SETPGID: u64 = 109;
+    pub const GETPPID: u64 = 110;
+    pub const GETPGRP: u64 = 111;
+    pub const SETSID: u64 = 112;
+    pub const SETREUID: u64 = 113;
+    pub const SETREGID: u64 = 114;
+    pub const GETGROUPS: u64 = 115;
+    pub const SETGROUPS: u64 = 116;
+    pub const SETRESUID: u64 = 117;
+    pub const GETRESUID: u64 = 118;
+    pub const SETRESGID: u64 = 119;
+    pub const GETRESGID: u64 = 120;
+    pub const GETPGID: u64 = 121;
+    pub const SETEUID: u64 = 113;  // — GraveShift: Linux has no seteuid — alias to setreuid
+    pub const SETEGID: u64 = 114;  // — GraveShift: Linux has no setegid — alias to setregid
+    pub const GETSID: u64 = 124;
     pub const CAPGET: u64 = 125;
     pub const CAPSET: u64 = 126;
+    pub const GETPID: u64 = 39;
+    pub const GETTID: u64 = 186;
+    pub const UMASK: u64 = 95;
+
+    // ========================================================================
+    // Filesystem / mount (137-138, 155, 161-162, 165-170)
+    // ========================================================================
+    pub const STATFS: u64 = 137;
+    pub const FSTATFS: u64 = 138;
+    pub const GETPRIORITY: u64 = 140;
+    pub const SETPRIORITY: u64 = 141;
+    pub const SCHED_SETPARAM: u64 = 142;
+    pub const SCHED_GETPARAM: u64 = 143;
+    pub const SCHED_SETSCHEDULER: u64 = 144;
+    pub const SCHED_GETSCHEDULER: u64 = 145;
+    pub const SCHED_GET_PRIORITY_MAX: u64 = 146;
+    pub const SCHED_GET_PRIORITY_MIN: u64 = 147;
+    pub const SCHED_RR_GET_INTERVAL: u64 = 148;
+    pub const PIVOT_ROOT: u64 = 155;
+    pub const PRCTL: u64 = 157;
+    pub const ARCH_PRCTL: u64 = 158;
+    pub const SETRLIMIT: u64 = 160;
+    pub const SYNC: u64 = 162;
+    pub const MOUNT: u64 = 165;
+    pub const UMOUNT: u64 = 166;
+    pub const SETHOSTNAME: u64 = 170;
+    pub const INIT_MODULE: u64 = 175;
+    pub const DELETE_MODULE: u64 = 176;
+    pub const QUERY_MODULE: u64 = 178;   // Deprecated
+
+    // ========================================================================
+    // Futex / threading (202-203, 218, 231)
+    // ========================================================================
+    pub const FUTEX: u64 = 202;
+    pub const SCHED_SETAFFINITY: u64 = 203;
+    pub const SCHED_GETAFFINITY: u64 = 204;
+    pub const SET_TID_ADDRESS: u64 = 218;
+    pub const EXIT_GROUP: u64 = 231;
+
+    // ========================================================================
+    // Epoll (213, 232-233)
+    // ========================================================================
+    pub const EPOLL_CREATE: u64 = 213;
+    pub const GETDENTS64: u64 = 217;
+    pub const EPOLL_WAIT: u64 = 232;
+    pub const EPOLL_CTL: u64 = 233;
+
+    // ========================================================================
+    // Utimes / inotify (235, 247)
+    // ========================================================================
+    pub const UTIMES: u64 = 235;
+    pub const WAITID: u64 = 247;
+
+    // ========================================================================
+    // *at syscalls (257-269)
+    // ========================================================================
+    pub const OPENAT: u64 = 257;
+    pub const MKDIRAT: u64 = 258;
+    pub const MKNODAT: u64 = 259;
+    pub const FCHOWNAT: u64 = 260;
+    pub const FUTIMENS: u64 = 261;   // futimesat in Linux
+    pub const NEWFSTATAT: u64 = 262;
+    pub const UNLINKAT: u64 = 263;
+    pub const RENAMEAT: u64 = 264;
+    pub const LINKAT: u64 = 265;
+    pub const SYMLINKAT: u64 = 266;
+    pub const READLINKAT: u64 = 267;
+    pub const FCHMODAT: u64 = 268;
+    pub const FACCESSAT: u64 = 269;
+    pub const PSELECT6: u64 = 270;
+    pub const PPOLL: u64 = 271;
+    pub const UNSHARE: u64 = 272;
+    pub const SPLICE: u64 = 275;
+    pub const UTIMENSAT: u64 = 280;
+    pub const EPOLL_PWAIT: u64 = 281;
+
+    // ========================================================================
+    // Event/timer FDs (282-293)
+    // ========================================================================
+    pub const SIGNALFD: u64 = 282;
+    pub const TIMERFD_CREATE: u64 = 283;
+    pub const EVENTFD: u64 = 284;
+    pub const TIMERFD_SETTIME: u64 = 286;
+    pub const TIMERFD_GETTIME: u64 = 287;
+    pub const ACCEPT4: u64 = 288;
+    pub const SIGNALFD4: u64 = 289;
+    pub const EVENTFD2: u64 = 290;
+    pub const EPOLL_CREATE1: u64 = 291;
+    pub const DUP3: u64 = 292;
+    pub const PIPE2: u64 = 293;
+
+    // ========================================================================
+    // Modern I/O (295-299, 302, 307-308, 316-318, 326-328, 332)
+    // ========================================================================
+    pub const PREADV: u64 = 295;
+    pub const PWRITEV: u64 = 296;
+    pub const RECVMMSG: u64 = 299;
+    pub const PRLIMIT: u64 = 302;   // prlimit64
+    pub const SENDMMSG: u64 = 307;
+    pub const SETNS: u64 = 308;
+    pub const GETRUSAGE: u64 = 98;
+    pub const RENAMEAT2: u64 = 316;
+    pub const GETRANDOM: u64 = 318;
+    pub const MEMFD_CREATE: u64 = 319;
+    pub const COPY_FILE_RANGE: u64 = 326;
+    pub const PREADV2: u64 = 327;
+    pub const PWRITEV2: u64 = 328;
+    pub const STATX: u64 = 332;
+    pub const POSIX_FADVISE: u64 = 221;  // fadvise64
+
+    // ========================================================================
+    // Close range / pidfd / clone3 (436-441)
+    // ========================================================================
+    pub const CLOSE_RANGE: u64 = 436;
+    pub const PIDFD_SEND_SIGNAL: u64 = 424;
+    pub const PIDFD_OPEN: u64 = 434;
+    pub const CLONE3: u64 = 435;
+    pub const OPENAT2: u64 = 437;
+    pub const PIDFD_GETFD: u64 = 438;
+    pub const FACCESSAT2: u64 = 439;
+    pub const EPOLL_PWAIT2: u64 = 441;
+
+    // ========================================================================
+    // OXIDE-specific syscalls (500+)
+    // — GraveShift: Custom syscalls live above 500 to avoid any collision
+    // with present or future Linux syscall numbers. Firewall, keyboard
+    // layout, VGA, and NET_CONTROL are OXIDE extensions — not in Linux ABI.
+    // ========================================================================
+    pub const SETKEYMAP: u64 = 500;
+    pub const GETKEYMAP: u64 = 501;
+    pub const NICE: u64 = 502;     // Linux has nice() at 0 but it's obsolete
+    pub const FW_ADD_RULE: u64 = 510;
+    pub const FW_DEL_RULE: u64 = 511;
+    pub const FW_LIST_RULES: u64 = 512;
+    pub const FW_SET_POLICY: u64 = 513;
+    pub const FW_FLUSH: u64 = 514;
+    pub const FW_GET_CONNTRACK: u64 = 515;
+    pub const NET_CONTROL: u64 = 520;
+
+    // ========================================================================
+    // Legacy aliases — send/recv map to sendto/recvfrom with NULL addr
+    // ========================================================================
+    pub const SEND: u64 = SENDTO;
+    pub const RECV: u64 = RECVFROM;
 
     /// AT_FDCWD: use current working directory for *at syscalls
     pub const AT_FDCWD: i32 = -100;
@@ -402,6 +443,7 @@ pub mod errno {
     pub const EALREADY: i64 = -114; // Operation already in progress
     pub const EINPROGRESS: i64 = -115; // Operation now in progress
     pub const EPIPE: i64 = -32; // Broken pipe
+    pub const ENOPROTOOPT: i64 = -92; // Protocol not available
 }
 
 /// Console output callback type
@@ -622,8 +664,8 @@ pub fn dispatch(
             arg3 as *const *const u8,
             arg4 as *const *const u8,
         ),
-        nr::WAIT => sys_wait(arg1),
-        nr::WAITPID => sys_waitpid(arg1 as i32, arg2, arg3 as i32),
+        // — GraveShift: WAIT/WAITPID/WAIT4 all map to 61 in Linux ABI.
+        // Dispatch handled by WAIT4 arm below; legacy wait() uses arg1==-1, options==0.
         nr::GETPID => sys_getpid(),
         nr::GETPPID => sys_getppid(),
         nr::SETPGID => sys_setpgid(arg1 as Pid, arg2 as Pid),
@@ -636,8 +678,11 @@ pub fn dispatch(
         nr::GETEGID => sys_getegid(),
         nr::SETUID => sys_setuid(arg1 as u32),
         nr::SETGID => sys_setgid(arg1 as u32),
-        nr::SETEUID => sys_seteuid(arg1 as u32),
-        nr::SETEGID => sys_setegid(arg1 as u32),
+        // — GraveShift: SETEUID/SETEGID alias SETREUID/SETREGID (113/114) in Linux ABI.
+        // Linux uses setreuid(ruid, euid) — seteuid is setreuid(-1, euid).
+        // We handle both via setreuid/setregid which cover the single-arg case.
+        nr::SETREUID => sys_setreuid(arg1 as u32, arg2 as u32),
+        nr::SETREGID => sys_setregid(arg1 as u32, arg2 as u32),
 
         // Thread syscalls
         nr::CLONE => sys_clone(arg1 as u32, arg2, arg3, arg4, arg5),
@@ -770,8 +815,8 @@ pub fn dispatch(
         nr::LISTEN => socket::sys_listen(arg1 as i32, arg2 as i32),
         nr::ACCEPT => socket::sys_accept(arg1 as i32, arg2, arg3),
         nr::CONNECT => socket::sys_connect(arg1 as i32, arg2, arg3 as u32),
-        nr::SEND => socket::sys_send(arg1 as i32, arg2, arg3 as usize, arg4 as i32),
-        nr::RECV => socket::sys_recv(arg1 as i32, arg2, arg3 as usize, arg4 as i32),
+        // — GraveShift: SEND/RECV are aliases for SENDTO/RECVFROM in Linux ABI.
+        // Handled by SENDTO/RECVFROM arms — userspace passes NULL addr for send/recv.
         nr::SENDTO => socket::sys_sendto(
             arg1 as i32,
             arg2,
@@ -874,8 +919,7 @@ pub fn dispatch(
         // Additional syscalls
         nr::SYNC => 0,          // No-op: VFS does not cache writes
         nr::POSIX_FADVISE => 0, // Advisory only
-        nr::SETREUID => sys_setreuid(arg1 as u32, arg2 as u32),
-        nr::SETREGID => sys_setregid(arg1 as u32, arg2 as u32),
+        // nr::SETREUID/SETREGID handled above (= SETEUID/SETEGID alias)
         nr::SCHED_GET_PRIORITY_MAX => 99, // Linux-compatible max RT priority
         nr::SCHED_GET_PRIORITY_MIN => 1,  // Linux-compatible min RT priority
         nr::COPY_FILE_RANGE => vfs_ext::sys_copy_file_range(
@@ -1043,185 +1087,172 @@ pub fn dispatch(
 #[cfg(feature = "debug-syscall-perf")]
 fn syscall_name(num: u64) -> &'static str {
     match num {
-        // Process
-        nr::EXIT => "exit",
-        nr::WRITE => "write",
+        // — GraveShift: Linux x86_64 syscall name lookup.
+        // No duplicate constants (aliases like WAIT/WAITPID/WAIT4 share one arm).
         nr::READ => "read",
-        nr::FORK => "fork",
-        nr::EXEC => "exec",
-        nr::WAIT => "wait",
-        nr::WAITPID => "waitpid",
-        nr::GETPID => "getpid",
-        nr::GETPPID => "getppid",
-        nr::SETPGID => "setpgid",
-        nr::GETPGID => "getpgid",
-        nr::SETSID => "setsid",
-        nr::GETSID => "getsid",
-        nr::EXECVE => "execve",
-        nr::GETUID => "getuid",
-        nr::GETGID => "getgid",
-        nr::GETEUID => "geteuid",
-        nr::GETEGID => "getegid",
-        nr::SETUID => "setuid",
-        nr::SETGID => "setgid",
-        nr::SETEUID => "seteuid",
-        nr::SETEGID => "setegid",
-
-        // VFS
+        nr::WRITE => "write",
         nr::OPEN => "open",
         nr::CLOSE => "close",
-        nr::LSEEK => "lseek",
-        nr::FSTAT => "fstat",
         nr::STAT => "stat",
+        nr::FSTAT => "fstat",
         nr::LSTAT => "lstat",
-        nr::DUP => "dup",
-        nr::DUP2 => "dup2",
-        nr::DUP3 => "dup3",
-        nr::PIPE => "pipe",
-        nr::PIPE2 => "pipe2",
-        nr::FTRUNCATE => "ftruncate",
-        nr::TRUNCATE => "truncate",
-
-        // Directory
-        nr::MKDIR => "mkdir",
-        nr::RMDIR => "rmdir",
-        nr::UNLINK => "unlink",
-        nr::RENAME => "rename",
-        nr::GETDENTS => "getdents",
-        nr::GETDENTS64 => "getdents64",
-        nr::CHDIR => "chdir",
-        nr::GETCWD => "getcwd",
-        nr::LINK => "link",
-        nr::SYMLINK => "symlink",
-        nr::READLINK => "readlink",
-
-        // TTY/Device
-        nr::IOCTL => "ioctl",
-        nr::FCNTL => "fcntl",
-        nr::FLOCK => "flock",
-
-        // Poll/Select
         nr::POLL => "poll",
-        nr::PPOLL => "ppoll",
-        nr::SELECT => "select",
-        nr::PSELECT6 => "pselect6",
-
-        // I/O
-        nr::READV => "readv",
-        nr::WRITEV => "writev",
+        nr::LSEEK => "lseek",
+        nr::MMAP => "mmap",
+        nr::MPROTECT => "mprotect",
+        nr::MUNMAP => "munmap",
+        nr::BRK => "brk",
+        nr::SIGACTION => "rt_sigaction",
+        nr::SIGPROCMASK => "rt_sigprocmask",
+        nr::SIGRETURN => "rt_sigreturn",
+        nr::IOCTL => "ioctl",
         nr::PREAD64 => "pread64",
         nr::PWRITE64 => "pwrite64",
-        nr::PREADV => "preadv",
-        nr::PWRITEV => "pwritev",
-        nr::FSYNC => "fsync",
-        nr::FDATASYNC => "fdatasync",
-
-        // Memory
-        nr::MMAP => "mmap",
-        nr::MUNMAP => "munmap",
-        nr::MPROTECT => "mprotect",
-        nr::BRK => "brk",
-        nr::MADVISE => "madvise",
-
-        // Signal
-        nr::KILL => "kill",
-        nr::SIGACTION => "sigaction",
-        nr::SIGPROCMASK => "sigprocmask",
-        nr::SIGPENDING => "sigpending",
-        nr::SIGSUSPEND => "sigsuspend",
-        nr::PAUSE => "pause",
-        nr::SIGRETURN => "sigreturn",
-        nr::SIGALTSTACK => "sigaltstack",
-
-        // Time
-        nr::GETTIMEOFDAY => "gettimeofday",
-        nr::CLOCK_GETTIME => "clock_gettime",
-        nr::CLOCK_GETRES => "clock_getres",
-        nr::NANOSLEEP => "nanosleep",
-        nr::CLOCK_NANOSLEEP => "clock_nanosleep",
-
-        // *at variants
-        nr::OPENAT => "openat",
-        nr::MKDIRAT => "mkdirat",
-        nr::UNLINKAT => "unlinkat",
-        nr::RENAMEAT => "renameat",
-        nr::FACCESSAT => "faccessat",
-        nr::FCHMODAT => "fchmodat",
-        nr::FCHOWNAT => "fchownat",
-        nr::READLINKAT => "readlinkat",
-        nr::SYMLINKAT => "symlinkat",
-        nr::LINKAT => "linkat",
-        nr::UTIMENSAT => "utimensat",
-        nr::FUTIMENS => "futimens",
-
-        // Thread
-        nr::CLONE => "clone",
-        nr::GETTID => "gettid",
-        nr::FUTEX => "futex",
-        nr::SET_TID_ADDRESS => "set_tid_address",
-        nr::EXIT_GROUP => "exit_group",
-
-        // Scheduler
+        nr::READV => "readv",
+        nr::WRITEV => "writev",
+        nr::ACCESS => "access",
+        nr::PIPE => "pipe",
+        nr::SELECT => "select",
         nr::SCHED_YIELD => "sched_yield",
-        nr::SCHED_SETSCHEDULER => "sched_setscheduler",
-        nr::SCHED_GETSCHEDULER => "sched_getscheduler",
-        nr::SCHED_SETPARAM => "sched_setparam",
-        nr::SCHED_GETPARAM => "sched_getparam",
-        nr::SCHED_SETAFFINITY => "sched_setaffinity",
-        nr::SCHED_GETAFFINITY => "sched_getaffinity",
-        nr::SCHED_RR_GET_INTERVAL => "sched_rr_get_interval",
-        nr::NICE => "nice",
-        nr::GETPRIORITY => "getpriority",
-        nr::SETPRIORITY => "setpriority",
-
-        // Timers
+        nr::MREMAP => "mremap",
+        nr::MADVISE => "madvise",
+        nr::DUP => "dup",
+        nr::DUP2 => "dup2",
+        nr::PAUSE => "pause",
+        nr::NANOSLEEP => "nanosleep",
+        nr::GETITIMER => "getitimer",
         nr::ALARM => "alarm",
         nr::SETITIMER => "setitimer",
-        nr::GETITIMER => "getitimer",
-
-        // Filesystem
-        nr::STATFS => "statfs",
-        nr::FSTATFS => "fstatfs",
+        nr::GETPID => "getpid",
+        nr::SENDFILE => "sendfile",
+        nr::SOCKET => "socket",
+        nr::CONNECT => "connect",
+        nr::ACCEPT => "accept",
+        nr::SENDTO => "sendto",
+        nr::RECVFROM => "recvfrom",
+        nr::SHUTDOWN => "shutdown",
+        nr::BIND => "bind",
+        nr::LISTEN => "listen",
+        nr::GETSOCKNAME => "getsockname",
+        nr::GETPEERNAME => "getpeername",
+        nr::SOCKETPAIR => "socketpair",
+        nr::SETSOCKOPT => "setsockopt",
+        nr::GETSOCKOPT => "getsockopt",
+        nr::CLONE => "clone",
+        nr::FORK => "fork",
+        nr::EXEC => "vfork/exec",
+        nr::EXECVE => "execve",
+        nr::EXIT => "exit",
+        nr::WAIT4 => "wait4",  // WAIT/WAITPID alias here too
+        nr::KILL => "kill",
+        nr::UNAME => "uname",
+        nr::FCNTL => "fcntl",
+        nr::FLOCK => "flock",
+        nr::FSYNC => "fsync",
+        nr::FDATASYNC => "fdatasync",
+        nr::TRUNCATE => "truncate",
+        nr::FTRUNCATE => "ftruncate",
+        nr::GETDENTS => "getdents",
+        nr::GETCWD => "getcwd",
+        nr::CHDIR => "chdir",
+        nr::FCHDIR => "fchdir",
+        nr::RENAME => "rename",
+        nr::MKDIR => "mkdir",
+        nr::RMDIR => "rmdir",
+        nr::LINK => "link",
+        nr::UNLINK => "unlink",
+        nr::SYMLINK => "symlink",
+        nr::READLINK => "readlink",
         nr::CHMOD => "chmod",
         nr::FCHMOD => "fchmod",
         nr::CHOWN => "chown",
         nr::FCHOWN => "fchown",
+        nr::UMASK => "umask",
+        nr::GETTIMEOFDAY => "gettimeofday",
+        nr::GETRUSAGE => "getrusage",
+        nr::SYSINFO => "sysinfo",
+        nr::GETUID => "getuid",
+        nr::GETGID => "getgid",
+        nr::SETUID => "setuid",
+        nr::SETGID => "setgid",
+        nr::GETEUID => "geteuid",
+        nr::GETEGID => "getegid",
+        nr::SETPGID => "setpgid",
+        nr::GETPPID => "getppid",
+        nr::SETSID => "setsid",
+        nr::SETREUID => "setreuid",  // also seteuid alias
+        nr::GETGROUPS => "getgroups",
+        nr::SETGROUPS => "setgroups",
+        nr::SETRESUID => "setresuid",
+        nr::GETRESUID => "getresuid",
+        nr::SETRESGID => "setresgid",
+        nr::GETRESGID => "getresgid",
+        nr::GETPGID => "getpgid",
+        nr::GETSID => "getsid",
+        nr::CAPGET => "capget",
+        nr::CAPSET => "capset",
+        nr::SIGPENDING => "rt_sigpending",
+        nr::SIGSUSPEND => "rt_sigsuspend",
+        nr::SIGALTSTACK => "sigaltstack",
+        nr::STATFS => "statfs",
+        nr::FSTATFS => "fstatfs",
+        nr::GETPRIORITY => "getpriority",
+        nr::SETPRIORITY => "setpriority",
+        nr::SCHED_SETPARAM => "sched_setparam",
+        nr::SCHED_GETPARAM => "sched_getparam",
+        nr::SCHED_SETSCHEDULER => "sched_setscheduler",
+        nr::SCHED_GETSCHEDULER => "sched_getscheduler",
+        nr::SCHED_GET_PRIORITY_MAX => "sched_get_priority_max",
+        nr::SCHED_GET_PRIORITY_MIN => "sched_get_priority_min",
+        nr::SCHED_RR_GET_INTERVAL => "sched_rr_get_interval",
+        nr::MOUNT => "mount",
+        nr::UMOUNT => "umount2",
+        nr::SETHOSTNAME => "sethostname",
+        nr::GETTID => "gettid",
+        nr::FUTEX => "futex",
+        nr::SCHED_SETAFFINITY => "sched_setaffinity",
+        nr::SCHED_GETAFFINITY => "sched_getaffinity",
+        nr::SET_TID_ADDRESS => "set_tid_address",
+        nr::GETDENTS64 => "getdents64",
+        nr::CLOCK_GETTIME => "clock_gettime",
+        nr::CLOCK_GETRES => "clock_getres",
+        nr::CLOCK_NANOSLEEP => "clock_nanosleep",
+        nr::EXIT_GROUP => "exit_group",
+        nr::EPOLL_WAIT => "epoll_wait",
+        nr::EPOLL_CTL => "epoll_ctl",
         nr::UTIMES => "utimes",
-        nr::FUTIMES => "futimes",
-
-        // Keyboard
+        nr::OPENAT => "openat",
+        nr::MKDIRAT => "mkdirat",
+        nr::UNLINKAT => "unlinkat",
+        nr::RENAMEAT => "renameat",
+        nr::LINKAT => "linkat",
+        nr::SYMLINKAT => "symlinkat",
+        nr::READLINKAT => "readlinkat",
+        nr::FCHMODAT => "fchmodat",
+        nr::FACCESSAT => "faccessat",
+        nr::PSELECT6 => "pselect6",
+        nr::PPOLL => "ppoll",
+        nr::UTIMENSAT => "utimensat",
+        nr::FUTIMENS => "futimens",
+        nr::ACCEPT4 => "accept4",
+        nr::EVENTFD2 => "eventfd2",
+        nr::EPOLL_CREATE1 => "epoll_create1",
+        nr::DUP3 => "dup3",
+        nr::PIPE2 => "pipe2",
+        nr::PREADV => "preadv",
+        nr::PWRITEV => "pwritev",
+        nr::PRLIMIT => "prlimit64",
+        nr::GETRANDOM => "getrandom",
+        nr::MEMFD_CREATE => "memfd_create",
+        nr::COPY_FILE_RANGE => "copy_file_range",
+        nr::CLOSE_RANGE => "close_range",
+        nr::NICE => "nice",
         nr::SETKEYMAP => "setkeymap",
         nr::GETKEYMAP => "getkeymap",
-
-        // Sockets
-        nr::SOCKET => "socket",
-        nr::BIND => "bind",
-        nr::LISTEN => "listen",
-        nr::ACCEPT => "accept",
-        nr::CONNECT => "connect",
-        nr::SEND => "send",
-        nr::RECV => "recv",
-        nr::SENDTO => "sendto",
-        nr::RECVFROM => "recvfrom",
-        nr::SHUTDOWN => "shutdown",
-        nr::GETSOCKNAME => "getsockname",
-        nr::GETPEERNAME => "getpeername",
-        nr::SETSOCKOPT => "setsockopt",
-        nr::GETSOCKOPT => "getsockopt",
-
-        // Misc
-        nr::UNAME => "uname",
-        nr::GETRANDOM => "getrandom",
-        nr::EPOLL_CREATE1 => "epoll_create1",
-        nr::EPOLL_CTL => "epoll_ctl",
-        nr::EPOLL_WAIT => "epoll_wait",
-        nr::EVENTFD2 => "eventfd2",
-
-        // Filesystem operations
-        nr::MOUNT => "mount",
-        nr::UMOUNT => "umount",
+        nr::NET_CONTROL => "net_control",
+        nr::FW_ADD_RULE => "fw_add_rule",
         nr::PIVOT_ROOT => "pivot_root",
-
+        nr::SENDFILE => "sendfile",
         _ => "unknown",
     }
 }
@@ -2418,107 +2449,84 @@ struct ITimerVal {
     it_value_usec: i64,    // Current value (microseconds)
 }
 
+/// — GraveShift: convert ITimerVal (sec+usec pair from userspace) to/from
+/// our internal microsecond representation. Less error-prone than carrying
+/// two fields through every path.
+fn itimerval_to_us(tv: &ITimerVal) -> (i64, i64) {
+    let interval = tv.it_interval_sec * 1_000_000 + tv.it_interval_usec;
+    let value = tv.it_value_sec * 1_000_000 + tv.it_value_usec;
+    (interval, value)
+}
+
+fn us_to_itimerval(interval_us: i64, value_us: i64) -> ITimerVal {
+    ITimerVal {
+        it_interval_sec: interval_us / 1_000_000,
+        it_interval_usec: interval_us % 1_000_000,
+        it_value_sec: value_us / 1_000_000,
+        it_value_usec: value_us % 1_000_000,
+    }
+}
+
 /// sys_setitimer - Set value of an interval timer
-///
-/// # Arguments
-/// * `which` - ITIMER_REAL, ITIMER_VIRTUAL, or ITIMER_PROF
-/// * `new_value` - Pointer to new timer value
-/// * `old_value` - Pointer to receive old timer value (may be null)
+/// — GraveShift: all three timer types (REAL/VIRTUAL/PROF) now work.
 fn sys_setitimer(which: i32, new_value: u64, old_value: u64) -> i64 {
-    // Validate pointers
     if new_value == 0 || new_value >= 0x0000_8000_0000_0000 {
         return errno::EFAULT;
     }
-
     if old_value != 0 && old_value >= 0x0000_8000_0000_0000 {
         return errno::EFAULT;
     }
 
+    match which {
+        timer::ITIMER_REAL | timer::ITIMER_VIRTUAL | timer::ITIMER_PROF => {}
+        _ => return errno::EINVAL,
+    }
+
     let meta = match get_current_meta() {
         Some(m) => m,
         None => return errno::ESRCH,
     };
 
-    match which {
-        timer::ITIMER_REAL => {
-            let mut m = meta.lock();
+    let mut m = meta.lock();
 
-            // Read old value if requested
-            if old_value != 0 {
-                let (int_sec, int_usec, val_sec, val_usec) = m.get_itimer();
-                let old_timer = ITimerVal {
-                    it_interval_sec: int_sec,
-                    it_interval_usec: int_usec,
-                    it_value_sec: val_sec,
-                    it_value_usec: val_usec,
-                };
-
-                unsafe {
-                    let dest = old_value as *mut ITimerVal;
-                    *dest = old_timer;
-                }
-            }
-
-            // Read new value
-            let new_timer = unsafe { *(new_value as *const ITimerVal) };
-
-            // Set new timer
-            m.set_itimer(
-                new_timer.it_interval_sec,
-                new_timer.it_interval_usec,
-                new_timer.it_value_sec,
-                new_timer.it_value_usec,
-            );
-
-            0
-        }
-        timer::ITIMER_VIRTUAL | timer::ITIMER_PROF => {
-            errno::ENOSYS // Virtual and prof timers not yet implemented
-        }
-        _ => errno::EINVAL,
+    // Return old value if requested
+    if old_value != 0 {
+        let (int_us, val_us) = m.get_itimer(which);
+        let old_timer = us_to_itimerval(int_us, val_us);
+        unsafe { *(old_value as *mut ITimerVal) = old_timer; }
     }
+
+    // Set new value
+    let new_timer = unsafe { *(new_value as *const ITimerVal) };
+    let (interval_us, value_us) = itimerval_to_us(&new_timer);
+    m.set_itimer(which, interval_us, value_us);
+
+    0
 }
 
 /// sys_getitimer - Get value of an interval timer
-///
-/// # Arguments
-/// * `which` - ITIMER_REAL, ITIMER_VIRTUAL, or ITIMER_PROF
-/// * `curr_value` - Pointer to receive current timer value
+/// — GraveShift: all three timer types now work.
 fn sys_getitimer(which: i32, curr_value: u64) -> i64 {
-    // Validate pointer
     if curr_value == 0 || curr_value >= 0x0000_8000_0000_0000 {
         return errno::EFAULT;
     }
 
+    match which {
+        timer::ITIMER_REAL | timer::ITIMER_VIRTUAL | timer::ITIMER_PROF => {}
+        _ => return errno::EINVAL,
+    }
+
     let meta = match get_current_meta() {
         Some(m) => m,
         None => return errno::ESRCH,
     };
 
-    match which {
-        timer::ITIMER_REAL => {
-            let m = meta.lock();
-            let (int_sec, int_usec, val_sec, val_usec) = m.get_itimer();
+    let m = meta.lock();
+    let (int_us, val_us) = m.get_itimer(which);
+    let timer = us_to_itimerval(int_us, val_us);
+    unsafe { *(curr_value as *mut ITimerVal) = timer; }
 
-            let timer = ITimerVal {
-                it_interval_sec: int_sec,
-                it_interval_usec: int_usec,
-                it_value_sec: val_sec,
-                it_value_usec: val_usec,
-            };
-
-            unsafe {
-                let dest = curr_value as *mut ITimerVal;
-                *dest = timer;
-            }
-
-            0
-        }
-        timer::ITIMER_VIRTUAL | timer::ITIMER_PROF => {
-            errno::ENOSYS // Virtual and prof timers not yet implemented
-        }
-        _ => errno::EINVAL,
-    }
+    0
 }
 
 /// sys_init_module - Load a kernel module

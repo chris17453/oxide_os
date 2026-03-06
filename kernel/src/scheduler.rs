@@ -164,15 +164,6 @@ pub fn init() {
     }
 }
 
-/// Add a process to the scheduler
-///
-/// DEPRECATED: kernel_fork now creates Tasks directly.
-/// This function is kept for legacy compatibility but does nothing.
-pub fn add_process(_pid: u32) {
-    // In the unified model, Tasks are created directly with ProcessMeta
-    // by kernel_fork. This function is no longer needed.
-}
-
 /// Remove a process from the scheduler
 ///
 /// Called when a process exits.
@@ -246,6 +237,56 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     // Running on APs would redundantly scan + send cross-CPU IPIs.
     if sched::this_cpu() == 0 {
         syscall::time::check_sleepers();
+
+        // — StackTrace: update load averages (samples every 5s internally)
+        let nr_running = sched::all_pids().iter()
+            .filter(|&&pid| sched::try_get_task_state(pid) == Some(TaskState::TASK_RUNNING))
+            .count() as u64;
+        os_core::loadavg::update(nr_running);
+    }
+
+    // — GraveShift: tick interval timers for the current task.
+    // 100Hz timer = 10_000us per tick. ITIMER_REAL always ticks (wall clock).
+    // ITIMER_VIRTUAL ticks in user mode only. ITIMER_PROF ticks in user+kernel.
+    {
+        const TICK_US: i64 = 10_000; // 100Hz = 10ms per tick
+        let in_usermode = unsafe {
+            let frame = &*(current_rsp as *const InterruptFrame);
+            frame.cs == 0x23
+        };
+        let current = sched::current_pid_lockfree().unwrap_or(0);
+        if current > 0 {
+            if let Some(meta_arc) = sched::try_get_task_meta(current) {
+                if let Some(mut m) = meta_arc.try_lock() {
+                    // ITIMER_REAL: wall clock, always ticks
+                    if m.tick_itimer(0, TICK_US) {
+                        m.send_signal(signal::SIGALRM, None);
+                    }
+                    // ITIMER_VIRTUAL: user CPU time only
+                    if in_usermode && m.tick_itimer(1, TICK_US) {
+                        m.send_signal(signal::SIGVTALRM, None);
+                    }
+                    // ITIMER_PROF: user + kernel CPU time
+                    if m.tick_itimer(2, TICK_US) {
+                        m.send_signal(signal::SIGPROF, None);
+                    }
+                    // Also tick alarm() countdown (separate from itimer)
+                    if m.alarm_remaining > 0 {
+                        // alarm_remaining is in seconds, tick at 100Hz
+                        // Decrement every 100 ticks (1 second)
+                        static ALARM_COUNTER: core::sync::atomic::AtomicU32 =
+                            core::sync::atomic::AtomicU32::new(0);
+                        let count = ALARM_COUNTER.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                        if count % 100 == 99 {
+                            m.alarm_remaining -= 1;
+                            if m.alarm_remaining == 0 {
+                                m.send_signal(signal::SIGALRM, None);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // Debug: full scheduler dump every ~3 seconds (300 ticks)

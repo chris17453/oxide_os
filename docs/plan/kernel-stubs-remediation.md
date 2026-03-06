@@ -3,7 +3,11 @@
 > Audit completed March 2026. 16 genuine stubs found in x86_64 kernel subsystems.
 > aarch64/mips64 arch stubs (44 total) tracked separately — those ports aren't active.
 >
-> **STATUS: PLANNING**
+> **STATUS: IN PROGRESS**
+>
+> **Completed:** P0.1 (VirtIO removal), P1.1 (ITIMER), P2.1 (loadavg), P2.2 (driver logging), P2.3 (socket opts), P3.3 (dead code)
+> **Improved:** P0.2 (ext4 error messages)
+> **Remaining:** P1.2 (MAP_PRIVATE COW — functional but not optimal), P1.3 (IPv6), P2.4 (dlopen), P3.1 (modules), P3.2 (AI mock — intentional)
 
 ---
 

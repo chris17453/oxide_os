@@ -1641,12 +1641,13 @@ pub struct ProcLoadavg {
 
 impl ProcLoadavg {
     fn generate_content(&self) -> String {
-        // For now, report zeros for load averages (not yet tracked)
+        // — StackTrace: real load averages from exponential moving average tracker
+        let lavg = os_core::loadavg::get_formatted();
+
         // Get running/total process counts
         let pids = sched::all_pids();
         let total_procs = pids.len();
 
-        // Count running processes
         let mut running = 0;
         for &pid in &pids {
             if let Some(state) = sched::try_get_task_state(pid) {
@@ -1656,10 +1657,13 @@ impl ProcLoadavg {
             }
         }
 
-        // Last PID is the highest one
         let last_pid = pids.iter().max().copied().unwrap_or(0);
 
-        format!("0.00 0.00 0.00 {}/{} {}\n", running, total_procs, last_pid)
+        format!("{}.{:02} {}.{:02} {}.{:02} {}/{} {}\n",
+            lavg[0].0, lavg[0].1,
+            lavg[1].0, lavg[1].1,
+            lavg[2].0, lavg[2].1,
+            running, total_procs, last_pid)
     }
 }
 

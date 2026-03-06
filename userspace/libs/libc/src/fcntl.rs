@@ -52,7 +52,8 @@ pub const FD_CLOEXEC: i32 = 1;
 /// — GraveShift: must go through errno conversion — raw cast was swallowing errors
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fcntl(fd: i32, cmd: i32, arg: u64) -> i32 {
-    let raw = crate::syscall::syscall3(42, fd as usize, cmd as usize, arg as usize);
+    // — GraveShift: use nr::FCNTL (72) — not hardcoded magic numbers
+    let raw = crate::syscall::syscall3(crate::syscall::nr::FCNTL, fd as usize, cmd as usize, arg as usize);
     // — IronGhost: errno dance — negative kernel returns become -1 + ERRNO_VAR
     if raw < 0 && raw >= -4096 {
         crate::c_exports::set_errno_raw((-raw) as i32);

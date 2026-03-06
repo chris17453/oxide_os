@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 pci = { path = "../pci" }
+os_core = { workspace = true }
 mm-manager = { workspace = true }
 mm-traits = { workspace = true }
 spin = { workspace = true }

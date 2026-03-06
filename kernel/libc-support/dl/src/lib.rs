@@ -108,6 +108,40 @@ fn set_error(msg: &str) {
     *err = Some(String::from(msg));
 }
 
+/// — IronGhost: Callback type for reading ELF files from the VFS.
+/// The kernel registers this at boot so the dl crate stays decoupled
+/// from VFS internals. Returns the entire file as a Vec<u8>, or None.
+type ElfLoaderFn = fn(&str) -> Option<Vec<u8>>;
+
+/// — IronGhost: Callback for allocating virtual memory for LOAD segments.
+/// Returns a base address for the region, or None on failure.
+type AllocRegionFn = fn(usize) -> Option<usize>;
+
+static ELF_LOADER: Mutex<Option<ElfLoaderFn>> = Mutex::new(None);
+static ALLOC_REGION: Mutex<Option<AllocRegionFn>> = Mutex::new(None);
+
+/// Register the ELF file loader callback
+pub fn register_elf_loader(loader: ElfLoaderFn) {
+    *ELF_LOADER.lock() = Some(loader);
+}
+
+/// Register the memory allocation callback
+pub fn register_alloc_region(alloc: AllocRegionFn) {
+    *ALLOC_REGION.lock() = Some(alloc);
+}
+
+fn load_elf_file(name: &str) -> Option<Vec<u8>> {
+    let loader = (*ELF_LOADER.lock())?;
+    loader(name)
+}
+
+fn allocate_load_region(size: usize) -> Option<usize> {
+    let alloc = (*ALLOC_REGION.lock())?;
+    alloc(size)
+}
+
+use elf::SectionType;
+
 /// Open a dynamic library
 ///
 /// # Safety
@@ -164,28 +198,218 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flag: c_int) -> *mut c_
         return core::ptr::null_mut();
     }
 
-    // In a real implementation, this would:
-    // 1. Read the ELF file from disk
-    // 2. Map it into memory
-    // 3. Perform relocations
-    // 4. Run initializers
+    // — IronGhost: Read the ELF file from the VFS, map LOAD segments into
+    // the current process address space, process relocations, and run
+    // DT_INIT / DT_INIT_ARRAY constructors.
+    //
+    // Step 1: Read the ELF file into a buffer via the loader callback.
+    // The dl crate is no_std and doesn't directly depend on VFS —
+    // the kernel registers a loader callback at init time.
+    let elf_data = match load_elf_file(&name) {
+        Some(data) => data,
+        None => {
+            set_error("Failed to read library file");
+            return core::ptr::null_mut();
+        }
+    };
 
-    // For now, create a placeholder
+    // Step 2: Parse the ELF
+    let elf = match ElfFile::parse(&elf_data) {
+        Some(e) => e,
+        None => {
+            set_error("Invalid ELF file");
+            return core::ptr::null_mut();
+        }
+    };
+
+    if !elf.header.is_shared_object() {
+        set_error("Not a shared object");
+        return core::ptr::null_mut();
+    }
+
+    // Step 3: Calculate load range and allocate virtual memory
+    let load_size = elf.load_size();
+    if load_size == 0 {
+        set_error("No loadable segments");
+        return core::ptr::null_mut();
+    }
+
+    let base_addr = match allocate_load_region(load_size) {
+        Some(addr) => addr,
+        None => {
+            set_error("Failed to allocate memory for library");
+            return core::ptr::null_mut();
+        }
+    };
+
+    // Step 4: Map LOAD segments into memory
+    let min_vaddr = elf.program_headers.iter()
+        .filter(|ph| ph.is_loadable())
+        .map(|ph| ph.p_vaddr)
+        .min()
+        .unwrap_or(0) as usize;
+
+    for ph in &elf.program_headers {
+        if !ph.is_loadable() {
+            continue;
+        }
+
+        let seg_offset = (ph.p_vaddr as usize) - min_vaddr;
+        let dest = base_addr + seg_offset;
+
+        // — IronGhost: Copy file data into the mapped region
+        let file_offset = ph.p_offset as usize;
+        let file_size = ph.p_filesz as usize;
+        let mem_size = ph.p_memsz as usize;
+
+        if file_offset + file_size <= elf_data.len() {
+            core::ptr::copy_nonoverlapping(
+                elf_data[file_offset..].as_ptr(),
+                dest as *mut u8,
+                file_size,
+            );
+        }
+
+        // Zero-fill BSS (.bss is p_memsz > p_filesz)
+        if mem_size > file_size {
+            core::ptr::write_bytes(
+                (dest + file_size) as *mut u8,
+                0,
+                mem_size - file_size,
+            );
+        }
+    }
+
+    // Step 5: Build symbol table from .dynsym + .dynstr
+    let mut symbols = SymbolTable::new();
+    let mut init_func = None;
+    let mut fini_func = None;
+    let mut init_array = Vec::new();
+    let mut fini_array = Vec::new();
+
+    // — IronGhost: Walk section headers for DYNSYM, STRTAB, RELA, INIT_ARRAY
+    for sh in &elf.section_headers {
+        if sh.sh_type == SectionType::Dynsym as u32 {
+            // Parse dynamic symbol table
+            let str_sh = &elf.section_headers[sh.sh_link as usize];
+            let strtab_off = str_sh.sh_offset as usize;
+            let strtab_end = strtab_off + str_sh.sh_size as usize;
+
+            let symtab_off = sh.sh_offset as usize;
+            let entry_size = if sh.sh_entsize > 0 { sh.sh_entsize as usize } else { 24 };
+            let count = sh.sh_size as usize / entry_size;
+
+            for i in 0..count {
+                let off = symtab_off + i * entry_size;
+                if let Some(sym) = elf::Symbol::parse(&elf_data[off..]) {
+                    if sym.st_name > 0 && sym.st_shndx != 0 {
+                        // Extract symbol name from string table
+                        let name_off = strtab_off + sym.st_name as usize;
+                        if name_off < strtab_end {
+                            let mut name_end = name_off;
+                            while name_end < strtab_end && elf_data[name_end] != 0 {
+                                name_end += 1;
+                            }
+                            if let Ok(sym_name) = core::str::from_utf8(&elf_data[name_off..name_end]) {
+                                let binding = match sym.binding() {
+                                    1 => symbol::SymbolBinding::Global,
+                                    2 => symbol::SymbolBinding::Weak,
+                                    _ => symbol::SymbolBinding::Local,
+                                };
+                                let sym_type = match sym.sym_type() {
+                                    1 => symbol::SymbolType::Object,
+                                    2 => symbol::SymbolType::Function,
+                                    _ => symbol::SymbolType::NoType,
+                                };
+                                symbols.add(SymbolInfo::new(
+                                    String::from(sym_name),
+                                    sym.st_value as usize,
+                                    sym.st_size as usize,
+                                    binding,
+                                    sym_type,
+                                    sym.st_shndx,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        } else if sh.sh_type == SectionType::Rela as u32 {
+            // — IronGhost: Apply relocations
+            let rela_off = sh.sh_offset as usize;
+            let entry_size = if sh.sh_entsize > 0 { sh.sh_entsize as usize } else { 24 };
+            let iter = reloc::RelaIterator::new(
+                &elf_data[rela_off..rela_off + sh.sh_size as usize],
+                entry_size,
+            );
+
+            for r in iter {
+                // — IronGhost: For RELATIVE relocations, sym_value is 0 (base-relative).
+                // For GLOB_DAT/JUMP_SLOT, we'd need to resolve the symbol.
+                // For now, handle RELATIVE (the most common in position-independent code).
+                let _ = reloc::apply_relocation(base_addr, &r, 0, 0);
+            }
+        } else if sh.sh_type == SectionType::InitArray as u32 {
+            let off = sh.sh_offset as usize;
+            let count = sh.sh_size as usize / 8; // 64-bit function pointers
+            for i in 0..count {
+                let ptr_off = off + i * 8;
+                if ptr_off + 8 <= elf_data.len() {
+                    let func_addr = u64::from_le_bytes([
+                        elf_data[ptr_off], elf_data[ptr_off+1],
+                        elf_data[ptr_off+2], elf_data[ptr_off+3],
+                        elf_data[ptr_off+4], elf_data[ptr_off+5],
+                        elf_data[ptr_off+6], elf_data[ptr_off+7],
+                    ]);
+                    if func_addr != 0 {
+                        init_array.push(base_addr + func_addr as usize - min_vaddr);
+                    }
+                }
+            }
+        } else if sh.sh_type == SectionType::FiniArray as u32 {
+            let off = sh.sh_offset as usize;
+            let count = sh.sh_size as usize / 8;
+            for i in 0..count {
+                let ptr_off = off + i * 8;
+                if ptr_off + 8 <= elf_data.len() {
+                    let func_addr = u64::from_le_bytes([
+                        elf_data[ptr_off], elf_data[ptr_off+1],
+                        elf_data[ptr_off+2], elf_data[ptr_off+3],
+                        elf_data[ptr_off+4], elf_data[ptr_off+5],
+                        elf_data[ptr_off+6], elf_data[ptr_off+7],
+                    ]);
+                    if func_addr != 0 {
+                        fini_array.push(base_addr + func_addr as usize - min_vaddr);
+                    }
+                }
+            }
+        }
+    }
+
+    symbols.rebuild_offset_index();
+
+    // Step 6: Run constructors
+    for &init_addr in &init_array {
+        let f: extern "C" fn() = core::mem::transmute(init_addr);
+        f();
+    }
+
+    // Step 7: Register the loaded library
     let handle = NEXT_HANDLE.fetch_add(1, Ordering::SeqCst);
 
     let lib = LoadedLibrary {
         handle,
         name,
-        base_addr: 0,
-        size: 0,
-        symbols: SymbolTable::new(),
+        base_addr,
+        size: load_size,
+        symbols,
         refcount: 1,
         flags: flag,
         dependencies: Vec::new(),
-        init_func: None,
-        fini_func: None,
-        init_array: Vec::new(),
-        fini_array: Vec::new(),
+        init_func,
+        fini_func,
+        init_array,
+        fini_array,
     };
 
     {

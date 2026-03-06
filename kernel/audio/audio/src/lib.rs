@@ -63,6 +63,17 @@ pub fn register_device(device: Arc<dyn AudioDevice>) -> usize {
     id
 }
 
+/// Unregister an audio device by index
+/// — EchoFrame: returns the Arc so the caller can drop the last reference
+pub fn unregister_device(index: usize) -> Option<Arc<dyn AudioDevice>> {
+    let mut devices = DEVICES.lock();
+    if index < devices.len() {
+        Some(devices.remove(index))
+    } else {
+        None
+    }
+}
+
 /// Get device by index
 pub fn get_device(index: usize) -> Option<Arc<dyn AudioDevice>> {
     DEVICES.lock().get(index).cloned()

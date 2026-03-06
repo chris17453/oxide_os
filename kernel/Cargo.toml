@@ -109,3 +109,4 @@ virtio-blk = { workspace = true }
 gpt = { workspace = true }
 ext4 = { workspace = true }
 fat32 = { workspace = true }
+module = { workspace = true }

@@ -1041,7 +1041,23 @@ impl PciDriver for VirtioGpuDriver {
     }
 
     unsafe fn remove(&self, _dev: &pci::PciDevice, _binding_data: DriverBindingData) {
-        // TODO: Implement proper GPU device removal
+        // — GlassSignal: GPU teardown — reset the device and release the controlq.
+        // Framebuffer DMA pages are intentionally NOT freed — the display subsystem
+        // may still reference them, and we can't unmap a live scanout safely.
+
+        let mut guard = VIRTIO_GPU.lock();
+        if let Some(ref mut gpu) = *guard {
+            // Reset VirtIO device status — stops all DMA
+            if let Some(ref transport) = gpu.transport {
+                transport.write_status(0);
+            }
+
+            // Drop the controlq (Virtqueue::drop frees DMA ring pages)
+            unsafe { *gpu.controlq.get() = None; }
+        }
+
+        // Drop the device struct
+        *guard = None;
     }
 }
 
