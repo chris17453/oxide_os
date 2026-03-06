@@ -123,7 +123,7 @@ fn print_usage(console: &mut OxideConsole) {
     console.print("  gwbasic --gui program.bas         Run with graphics\n");
 }
 
-fn run_file(console: &mut OxideConsole, filename: &str, _use_graphics: bool) -> i32 {
+fn run_file(console: &mut OxideConsole, filename: &str, use_graphics: bool) -> i32 {
     // Read the file
     let fd = libc::open(filename, libc::O_RDONLY, 0);
     if fd < 0 {
@@ -171,8 +171,19 @@ fn run_file(console: &mut OxideConsole, filename: &str, _use_graphics: bool) -> 
         }
     };
 
-    // Create interpreter
-    let mut interpreter = Interpreter::new();
+    // — GlassSignal: if --gui was requested, fire up the framebuffer backend.
+    // Otherwise fall back to text-only mode like a civilized terminal app.
+    let mut interpreter = if use_graphics {
+        match Interpreter::new_with_gui() {
+            Ok(interp) => interp,
+            Err(_) => {
+                console.print("Warning: Graphics init failed, falling back to text mode\n");
+                Interpreter::new()
+            }
+        }
+    } else {
+        Interpreter::new()
+    };
 
     // Tokenize
     let mut lexer = Lexer::new(&content_str);

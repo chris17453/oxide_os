@@ -64,6 +64,10 @@ pub struct Interpreter {
     /// DATA storage
     data_items: Vec<Value>,
     data_pointer: usize,
+
+    /// — GlassSignal: graphics op counter — flush the framebuffer every N pixel
+    /// writes so the user doesn't stare at a void while the Mandelbrot cooks.
+    gfx_op_count: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -97,6 +101,7 @@ impl Interpreter {
             file_manager: FileManager::new(),
             data_items: Vec::new(),
             data_pointer: 0,
+            gfx_op_count: 0,
         }
     }
 
@@ -120,6 +125,7 @@ impl Interpreter {
             file_manager: FileManager::new(),
             data_items: Vec::new(),
             data_pointer: 0,
+            gfx_op_count: 0,
         })
     }
 
@@ -146,6 +152,7 @@ impl Interpreter {
             file_manager: FileManager::new(),
             data_items: Vec::new(),
             data_pointer: 0,
+            gfx_op_count: 0,
         })
     }
 
@@ -172,6 +179,7 @@ impl Interpreter {
             file_manager: FileManager::new(),
             data_items: Vec::new(),
             data_pointer: 0,
+            gfx_op_count: 0,
         })
     }
 
@@ -198,6 +206,7 @@ impl Interpreter {
             file_manager: FileManager::new(),
             data_items: Vec::new(),
             data_pointer: 0,
+            gfx_op_count: 0,
         })
     }
 
@@ -395,6 +404,9 @@ impl Interpreter {
                 let c = self.evaluate_expression(&col)?.as_integer()? as usize;
                 self.screen
                     .locate(r.saturating_sub(1), c.saturating_sub(1))?;
+                // — GlassSignal: LOCATE implies a UI update is coming —
+                // flush pending graphics so progress indicators actually show
+                self.screen.display();
                 Ok(())
             }
             AstNode::Color(fg, bg) => {
@@ -514,6 +526,12 @@ impl Interpreter {
                     None
                 };
                 self.screen.pset(x_val, y_val, c_val)?;
+                // — GlassSignal: auto-flush every 320 pixels so the user
+                // sees scanlines appear instead of staring into the void
+                self.gfx_op_count += 1;
+                if self.gfx_op_count % 320 == 0 {
+                    self.screen.display();
+                }
                 Ok(())
             }
             AstNode::DrawLine(x1, y1, x2, y2, color) => {
@@ -527,6 +545,8 @@ impl Interpreter {
                     None
                 };
                 self.screen.line(x1_val, y1_val, x2_val, y2_val, c_val)?;
+                // — GlassSignal: flush after each line draw — they're big ops
+                self.screen.display();
                 Ok(())
             }
             AstNode::Circle(x, y, radius, color) => {
@@ -539,6 +559,8 @@ impl Interpreter {
                     None
                 };
                 self.screen.circle(x_val, y_val, r_val, c_val)?;
+                // — GlassSignal: flush after each circle — immediate visual feedback
+                self.screen.display();
                 Ok(())
             }
 
@@ -1100,6 +1122,11 @@ impl Interpreter {
                     None
                 };
                 self.screen.pset(x_val, y_val, c)?;
+                // — GlassSignal: same auto-flush as PSET — PRESET is just PSET's evil twin
+                self.gfx_op_count += 1;
+                if self.gfx_op_count % 320 == 0 {
+                    self.screen.display();
+                }
                 Ok(())
             }
             AstNode::Paint(_x, _y, _paint_color, _border_color) => {
