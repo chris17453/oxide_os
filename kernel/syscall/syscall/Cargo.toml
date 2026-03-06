@@ -32,5 +32,6 @@ os_log = { path = "../../core/os_log" }
 sched = { path = "../../sched/sched" }
 smp = { path = "../../smp/smp" }
 mm-cow = { path = "../../mm/mm-cow" }
+mm-pagedb = { path = "../../mm/mm-pagedb" }
 sched-traits = { path = "../../sched/sched-traits" }
 spin = "0.9"

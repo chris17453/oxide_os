@@ -325,16 +325,21 @@ impl UserAddressSpace {
                 os_log::write_str_raw("\n");
             }
 
-            // — ColdCipher: Free block canary check — FATAL, always on, bounded serial
+            // — ColdCipher: Free block canary check — FATAL, always on, bounded serial.
+            // If the buddy allocator handed us a frame that still has the free-list
+            // magic canary, the free list is corrupted (frame was double-allocated).
+            // Skip this frame entirely — zeroing it would corrupt the free list further.
             const FREE_BLOCK_MAGIC: u64 = 0x4652454542304C;
-            unsafe {
-                let first_u64 = core::ptr::read_volatile(frame_virt.as_ptr::<u64>());
-                if first_u64 == FREE_BLOCK_MAGIC {
-                    os_log::write_str_raw("[FATAL] About to zero FREE BLOCK! phys=");
+            let has_canary = unsafe {
+                core::ptr::read_volatile(frame_virt.as_ptr::<u64>()) == FREE_BLOCK_MAGIC
+            };
+            if has_canary {
+                unsafe {
+                    os_log::write_str_raw("[FATAL] allocate_pages: frame still has FREE canary! phys=0x");
                     os_log::write_u64_hex_raw(frame.as_u64());
-                    os_log::write_str_raw(" - GPF\n");
-                    core::ptr::write_volatile(0xDEADC0DE as *mut u64, frame.as_u64());
+                    os_log::write_str_raw(" — skipping (buddy corruption)\n");
                 }
+                continue;
             }
 
             // — GraveShift: Zero the frame
@@ -348,6 +353,13 @@ impl UserAddressSpace {
                 os_log::write_str_raw("[ZERO-DONE] phys=");
                 os_log::write_u64_hex_raw(frame.as_u64());
                 os_log::write_str_raw("\n");
+            }
+
+            // — GraveShift: Mark user data frame in page frame database
+            if let Some(db) = mm_pagedb::try_pagedb() {
+                if let Some(pf) = db.get(frame) {
+                    pf.set_flags(mm_pagedb::PF_ALLOCATED | mm_pagedb::PF_MAPPED);
+                }
             }
 
             // — BlackLatch: Map the page. If mapping fails (PT allocation OOM),
@@ -498,8 +510,16 @@ impl Drop for UserAddressSpace {
 
                 if pdpt_entry.is_huge() {
                     let phys = pdpt_entry.addr();
+                    if let Some(db) = mm_pagedb::try_pagedb() {
+                        if let Some(pf) = db.get(phys) {
+                            if pf.has_flag(mm_pagedb::PF_RESERVED) {
+                                continue;
+                            }
+                        }
+                    }
                     let remaining = cow.decrement(phys);
                     if remaining == 0 {
+                        mm_pagedb::set_free_context(mm_pagedb::CTX_DROP_LEAF);
                         let _ = mm.free_frames(phys, 18);
                         #[cfg(feature = "debug-proc")]
                         { freed_leaf += 1; }
@@ -523,8 +543,16 @@ impl Drop for UserAddressSpace {
 
                     if pd_entry.is_huge() {
                         let phys = pd_entry.addr();
+                        if let Some(db) = mm_pagedb::try_pagedb() {
+                            if let Some(pf) = db.get(phys) {
+                                if pf.has_flag(mm_pagedb::PF_RESERVED) {
+                                    continue;
+                                }
+                            }
+                        }
                         let remaining = cow.decrement(phys);
                         if remaining == 0 {
+                            mm_pagedb::set_free_context(mm_pagedb::CTX_DROP_LEAF);
                             let _ = mm.free_frames(phys, 9);
                             #[cfg(feature = "debug-proc")]
                             { freed_leaf += 1; }
@@ -547,9 +575,91 @@ impl Drop for UserAddressSpace {
                         }
 
                         let phys = pt_entry.addr();
+
+                        // — ColdCipher: Guard against corrupted/stale PT entries.
+                        // Skip frames that are: reserved, already free, or page
+                        // table structures. The pagedb tells us the truth about
+                        // each frame's state — trust it over the PT entry.
+                        //
+                        // — GraveShift: The PF_PAGETABLE guard is CRITICAL. When
+                        // buddy free-list corruption causes a frame to be double-
+                        // allocated (once as user data, once as PT structure), a
+                        // leaf PTE can point to a physical frame that's actually a
+                        // PT structure belonging to another process. Without this
+                        // guard, the leaf walk frees the PT frame (cow.decrement +
+                        // free_frame), then Step 2's PT walk tries to free it again
+                        // → DoubleFree. The ring buffer confirmed this: frame freed
+                        // as Drop-leaf with flags=ALLOC|PT, then DoubleFree from
+                        // Drop-pt-walk. This is the root cause of ALL remaining
+                        // DoubleFree errors in fork stress tests.
+                        // — ColdCipher: Full state dump for every leaf frame we
+                        // touch. This is the ONLY way to trace DoubleFree root causes.
+                        // Log: phys, pagedb flags, pagedb rc, cow count, PTE flags,
+                        // and the VA (pml4_idx/pdpt_idx/pd_idx/pt_idx).
+                        let cow_count = cow.ref_count(phys);
+                        let mut skip = false;
+                        if let Some(db) = mm_pagedb::try_pagedb() {
+                            if let Some(pf) = db.get(phys) {
+                                let flags = pf.flags();
+                                let rc = pf.refcount();
+                                if flags & mm_pagedb::PF_RESERVED != 0 {
+                                    skip = true;
+                                } else if flags == mm_pagedb::PF_FREE && rc == 0 {
+                                    // — WireSaint: Frame already freed. Log it.
+                                    unsafe {
+                                        os_log::write_str_raw("[DROP-LEAF-STALE] phys=0x");
+                                        os_log::write_u64_hex_raw(phys.as_u64());
+                                        os_log::write_str_raw(" pml4=0x");
+                                        os_log::write_u64_hex_raw(self.pml4_phys.as_u64());
+                                        os_log::write_str_raw(" idx=");
+                                        os_log::write_u32_raw(pml4_idx as u32);
+                                        os_log::write_str_raw("/");
+                                        os_log::write_u32_raw(pdpt_idx as u32);
+                                        os_log::write_str_raw("/");
+                                        os_log::write_u32_raw(pd_idx as u32);
+                                        os_log::write_str_raw("/");
+                                        os_log::write_u32_raw(pt_idx as u32);
+                                        os_log::write_str_raw(" cow=");
+                                        os_log::write_u32_raw(cow_count);
+                                        os_log::write_str_raw(" pte=0x");
+                                        os_log::write_u64_hex_raw(pt_entry.raw());
+                                        os_log::write_str_raw("\n");
+                                    }
+                                    skip = true;
+                                } else if flags & mm_pagedb::PF_PAGETABLE != 0 {
+                                    skip = true;
+                                }
+                            }
+                        }
+                        if skip {
+                            continue;
+                        }
+
                         let remaining = cow.decrement(phys);
                         if remaining == 0 {
-                            let _ = mm.free_frame(phys);
+                            mm_pagedb::set_free_context(mm_pagedb::CTX_DROP_LEAF);
+                            let result = mm.free_frame(phys);
+                            // — ColdCipher: If free_frame failed, something freed
+                            // this frame between our guard check and now. Log it.
+                            if result.is_err() {
+                                unsafe {
+                                    os_log::write_str_raw("[DROP-LEAF-DFREE] phys=0x");
+                                    os_log::write_u64_hex_raw(phys.as_u64());
+                                    os_log::write_str_raw(" cow_was=");
+                                    os_log::write_u32_raw(cow_count);
+                                    os_log::write_str_raw(" pml4=0x");
+                                    os_log::write_u64_hex_raw(self.pml4_phys.as_u64());
+                                    os_log::write_str_raw(" idx=");
+                                    os_log::write_u32_raw(pml4_idx as u32);
+                                    os_log::write_str_raw("/");
+                                    os_log::write_u32_raw(pdpt_idx as u32);
+                                    os_log::write_str_raw("/");
+                                    os_log::write_u32_raw(pd_idx as u32);
+                                    os_log::write_str_raw("/");
+                                    os_log::write_u32_raw(pt_idx as u32);
+                                    os_log::write_str_raw("\n");
+                                }
+                            }
                             #[cfg(feature = "debug-proc")]
                             { freed_leaf += 1; }
                         } else {
@@ -580,6 +690,22 @@ impl Drop for UserAddressSpace {
 
         // — GraveShift: Free all PT structure frames found during the walk.
         // These are PDPT, PD, and PT frames. Never COW-shared — always ours.
+        // — ColdCipher: Dedup first. If two PT entries at the same level point to
+        // the same physical frame (shouldn't happen, but does under buddy corruption
+        // or stale mappings), freeing the same frame twice is a DoubleFree.
+        let pre_dedup = walked_pt_frames.len();
+        walked_pt_frames.sort_unstable_by_key(|f| f.as_u64());
+        walked_pt_frames.dedup_by_key(|f| f.as_u64());
+        if walked_pt_frames.len() < pre_dedup {
+            unsafe {
+                os_log::write_str_raw("[DROP-DEDUP] Removed ");
+                os_log::write_u32_raw((pre_dedup - walked_pt_frames.len()) as u32);
+                os_log::write_str_raw(" duplicate PT frames from walk (pml4=0x");
+                os_log::write_u64_hex_raw(self.pml4_phys.as_u64());
+                os_log::write_str_raw(")\n");
+            }
+        }
+        mm_pagedb::set_free_context(mm_pagedb::CTX_DROP_PT_WALK);
         for &pt_frame in &walked_pt_frames {
             if pt_frame.as_u64() == 0 {
                 continue;
@@ -590,6 +716,7 @@ impl Drop for UserAddressSpace {
         // — GraveShift: Free the PML4 frame itself (always exclusively owned).
         // The PML4 was not visited during the walk (it's the root, not a child).
         if self.pml4_phys.as_u64() != 0 {
+            mm_pagedb::set_free_context(mm_pagedb::CTX_DROP_PML4);
             let _ = mm.free_frame(self.pml4_phys);
         }
 
@@ -597,6 +724,7 @@ impl Drop for UserAddressSpace {
         // found during the walk. In theory this should be empty (all PT frames
         // should be reachable from the PML4), but belt and suspenders beats
         // silent leaks. Skip frames we already freed above to avoid double-free.
+        mm_pagedb::set_free_context(mm_pagedb::CTX_DROP_ALLOC);
         for &pt_frame in &self.allocated_frames {
             if pt_frame.as_u64() == 0 || pt_frame == self.pml4_phys {
                 continue;
@@ -633,6 +761,10 @@ impl<'a, A: FrameAllocator> FrameAllocator for TrackingAllocator<'a, A> {
     fn alloc_frame(&self) -> Option<PhysAddr> {
         let frame = self.inner.alloc_frame()?;
         self.allocated.borrow_mut().push(frame);
+        // — GraveShift: PT structure frame — mark in page frame database
+        if let Some(db) = mm_pagedb::try_pagedb() {
+            db.mark_pagetable(frame, 0);
+        }
         Some(frame)
     }
 

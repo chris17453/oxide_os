@@ -1,0 +1,36 @@
+# ncurses Build Override for OXIDE OS
+# — NeonRoot: "ncurses is the bedrock. Without it, vim is just a fancy cat."
+
+# Additional configure flags for OXIDE
+CONFIGURE_FLAGS="
+  --without-ada
+  --without-cxx-binding
+  --without-manpages
+  --without-progs
+  --without-tests
+  --without-debug
+  --without-profile
+  --without-gpm
+  --without-dlsym
+  --enable-widec
+  --enable-pc-files
+  --with-pkg-config-libdir=/usr/lib/pkgconfig
+  --with-terminfo-dirs=/usr/share/terminfo
+  --with-default-terminfo-dir=/usr/share/terminfo
+  --disable-stripping
+  --enable-termcap
+  cf_cv_func_nanosleep=yes
+"
+
+# Extra CFLAGS
+EXTRA_CFLAGS="-DOXIDE_OS -DNDEBUG"
+
+# Pre-build hook
+pre_build() {
+    echo "Building ncurses for OXIDE OS..."
+}
+
+# Post-build hook
+post_build() {
+    echo "ncurses built for OXIDE"
+}

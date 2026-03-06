@@ -106,13 +106,13 @@ pub fn sys_capget(hdrp: u64, datap: u64) -> i64 {
     }
 
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
 
         let hdr = core::ptr::read_volatile(hdrp as *const CapUserHeader);
 
         // Check version
         if hdr.version != LINUX_CAPABILITY_VERSION_3 {
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
             return errno::EINVAL;
         }
 
@@ -126,7 +126,7 @@ pub fn sys_capget(hdrp: u64, datap: u64) -> i64 {
             core::ptr::write_volatile(datap as *mut CapUserData, data);
         }
 
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     0
@@ -149,9 +149,9 @@ pub fn sys_capset(hdrp: u64, _datap: u64) -> i64 {
     }
 
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         let hdr = core::ptr::read_volatile(hdrp as *const CapUserHeader);
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
 
         // Check version
         if hdr.version != LINUX_CAPABILITY_VERSION_3 {

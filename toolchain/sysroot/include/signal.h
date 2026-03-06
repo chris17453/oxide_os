@@ -69,7 +69,10 @@ typedef unsigned long pthread_t;
 #define SIG_SETMASK     2
 
 /* Signal set type */
+#ifndef __sigset_t_defined
 typedef unsigned long sigset_t;
+#define __sigset_t_defined
+#endif
 
 /* siginfo_t */
 typedef struct {
@@ -86,19 +89,18 @@ typedef struct {
     } _sifields;
 } siginfo_t;
 
-/* sigaction structure */
+/* sigaction structure
+ * — GraveShift: "Union + macro approach collides with readline's sa_handler usage. Just use anonymous union."
+ */
 struct sigaction {
     union {
         void (*sa_handler)(int);
         void (*sa_sigaction)(int, siginfo_t *, void *);
-    } __sa_handler;
+    };
     sigset_t sa_mask;
     int sa_flags;
     void (*sa_restorer)(void);
 };
-
-#define sa_handler   __sa_handler.sa_handler
-#define sa_sigaction __sa_handler.sa_sigaction
 
 /* Stack */
 typedef struct {

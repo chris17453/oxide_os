@@ -1,0 +1,104 @@
+# Python 3.13 Build Override for OXIDE OS
+# — IronGhost: "Cross-compiling CPython is like performing open-heart surgery on a running engine. Fun times."
+
+# Additional configure flags for OXIDE
+CONFIGURE_FLAGS="
+  --without-ensurepip
+  --without-pymalloc
+  --disable-ipv6
+  --disable-shared
+  --enable-static
+  --without-system-expat
+  --without-system-ffi
+  --without-dtrace
+  --without-lto
+  --without-doc-strings
+  --disable-test-modules
+  --with-build-python=python3
+  --with-builtin-hashlib-hashes=md5,sha1,sha256,sha512,sha3,blake2
+  ac_cv_file__dev_ptmx=yes
+  ac_cv_file__dev_ptc=no
+  ac_cv_buggy_getaddrinfo=no
+  ac_cv_func_eventfd=yes
+  ac_cv_func_pipe=yes
+  ac_cv_func_mkfifo=no
+  ac_cv_func_mknod=no
+  ac_cv_func_fork=yes
+  ac_cv_func_fdopendir=yes
+  ac_cv_func_accept=yes
+  ac_cv_func_preadv=yes
+  ac_cv_func_readv=yes
+  ac_cv_func_writev=yes
+  ac_cv_func_pwritev=yes
+  ac_cv_working_tzset=yes
+  ac_cv_func_chflags=no
+  ac_cv_func_lchflags=no
+  ac_cv_func_getentropy=no
+  ac_cv_func_copy_file_range=no
+  ac_cv_func_fork1=no
+  ac_cv_func_plock=no
+  ac_cv_func_setns=no
+  ac_cv_func_rtpSpawn=no
+  ac_cv_func_unshare=no
+"
+
+# Extra CFLAGS
+EXTRA_CFLAGS="-DOXIDE_OS -DNDEBUG"
+EXTRA_LDFLAGS="-loxide_libc -lm"
+
+# Pre-build hook
+pre_build() {
+    echo "Cross-compiling Python 3.13 for OXIDE OS..."
+}
+
+# — IronGhost: "pyconfig.h is a minefield of false detections in cross-compile. Nuke the wrong ones."
+post_configure() {
+    # Remove false positives from pyconfig.h
+    sed -i 's/#define HAVE_CHFLAGS 1/\/\* #undef HAVE_CHFLAGS \*\//' pyconfig.h
+    sed -i 's/#define HAVE_LCHFLAGS 1/\/\* #undef HAVE_LCHFLAGS \*\//' pyconfig.h
+    sed -i 's/#define HAVE_GETENTROPY 1/\/\* #undef HAVE_GETENTROPY \*\//' pyconfig.h
+    sed -i 's/#define HAVE_COPY_FILE_RANGE 1/\/\* #undef HAVE_COPY_FILE_RANGE \*\//' pyconfig.h
+    # VxWorks/Solaris/BSD false positives
+    sed -i 's/#define HAVE_FORK1 1/\/\* #undef HAVE_FORK1 \*\//' pyconfig.h
+    sed -i 's/#define HAVE_PLOCK 1/\/\* #undef HAVE_PLOCK \*\//' pyconfig.h
+    sed -i 's/#define HAVE_SETNS 1/\/\* #undef HAVE_SETNS \*\//' pyconfig.h
+    sed -i 's/#define HAVE_RTPSPAWN 1/\/\* #undef HAVE_RTPSPAWN \*\//' pyconfig.h
+    sed -i 's/#define HAVE_UNSHARE 1/\/\* #undef HAVE_UNSHARE \*\//' pyconfig.h
+    # TIPC is a Linux kernel protocol we don't support
+    sed -i 's/#define HAVE_LINUX_TIPC_H 1/\/\* #undef HAVE_LINUX_TIPC_H \*\//' pyconfig.h
+    sed -i 's/#define HAVE_SOCKADDR_TIPC 1/\/\* #undef HAVE_SOCKADDR_TIPC \*\//' pyconfig.h
+    # Disable modules that need missing libraries
+    sed -i 's/#define HAVE_BZ2_H 1/\/\* #undef HAVE_BZ2_H \*\//' pyconfig.h
+    # Patch Modules/Setup.local to disable modules that need missing libraries
+    if [ -f Modules/Setup.local ]; then
+        echo '*disabled*' >> Modules/Setup.local
+        echo '_bz2' >> Modules/Setup.local
+        echo '_lzma' >> Modules/Setup.local
+        echo '_dbm' >> Modules/Setup.local
+        echo '_gdbm' >> Modules/Setup.local
+        echo '_tkinter' >> Modules/Setup.local
+        echo '_ssl' >> Modules/Setup.local
+        echo '_hashlib' >> Modules/Setup.local
+        echo '_ctypes' >> Modules/Setup.local
+        echo '_sqlite3' >> Modules/Setup.local
+        echo '_curses' >> Modules/Setup.local
+        echo '_curses_panel' >> Modules/Setup.local
+        echo '_uuid' >> Modules/Setup.local
+        echo '_multiprocessing' >> Modules/Setup.local
+        echo '_blake2' >> Modules/Setup.local
+        echo '_socket' >> Modules/Setup.local
+        echo 'select' >> Modules/Setup.local
+        echo 'zlib' >> Modules/Setup.local
+        echo 'binascii' >> Modules/Setup.local
+        echo '_elementtree' >> Modules/Setup.local
+        echo 'pyexpat' >> Modules/Setup.local
+        echo 'readline' >> Modules/Setup.local
+        echo '_posixshmem' >> Modules/Setup.local
+    fi
+    echo "  -> Patched pyconfig.h + disabled shared modules + disabled missing modules for OXIDE cross-compile"
+}
+
+# Post-build hook
+post_build() {
+    echo "Python 3.13 built for OXIDE"
+}

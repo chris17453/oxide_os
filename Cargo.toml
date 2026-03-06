@@ -16,6 +16,7 @@ members = [
     "kernel/mm/mm-paging",
     "kernel/mm/mm-heap",
     "kernel/mm/mm-cow",
+    "kernel/mm/mm-pagedb",
     "kernel/sched/sched-traits",
     "kernel/sched/sched",
     "kernel/proc/proc-traits",
@@ -179,6 +180,7 @@ mm-vma = { path = "kernel/mm/mm-vma" }
 mm-paging = { path = "kernel/mm/mm-paging" }
 mm-heap = { path = "kernel/mm/mm-heap" }
 mm-cow = { path = "kernel/mm/mm-cow" }
+mm-pagedb = { path = "kernel/mm/mm-pagedb" }
 sched-traits = { path = "kernel/sched/sched-traits" }
 sched = { path = "kernel/sched/sched" }
 proc-traits = { path = "kernel/proc/proc-traits" }

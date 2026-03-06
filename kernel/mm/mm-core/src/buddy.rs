@@ -191,19 +191,19 @@ impl BuddyAllocator {
 
             // Add block to free list
             // SAFETY: We're in an unsafe fn, memory is valid
-            unsafe { self.add_free_block(&mut zone, order, addr) };
-
-            // Update statistics
-            let pages = 1u64 << order;
-            zone.stats.free_pages[order].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-            self.stats.free_bytes.fetch_add(
-                pages * FRAME_SIZE as u64,
-                core::sync::atomic::Ordering::Relaxed,
-            );
-            self.stats.total_bytes.fetch_add(
-                pages * FRAME_SIZE as u64,
-                core::sync::atomic::Ordering::Relaxed,
-            );
+            if unsafe { self.add_free_block(&mut zone, order, addr) } {
+                // Update statistics
+                let pages = 1u64 << order;
+                zone.stats.free_pages[order].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                self.stats.free_bytes.fetch_add(
+                    pages * FRAME_SIZE as u64,
+                    core::sync::atomic::Ordering::Relaxed,
+                );
+                self.stats.total_bytes.fetch_add(
+                    pages * FRAME_SIZE as u64,
+                    core::sync::atomic::Ordering::Relaxed,
+                );
+            }
 
             addr += block_size;
             remaining -= block_size;
@@ -214,9 +214,9 @@ impl BuddyAllocator {
     ///
     /// # Safety
     /// The address must point to valid physical memory that is part of this zone.
-    unsafe fn add_free_block(&self, zone: &mut MemoryZone, order: usize, addr: u64) {
+    unsafe fn add_free_block(&self, zone: &mut MemoryZone, order: usize, addr: u64) -> bool {
         if addr == 0 || !block_in_zone(zone, addr, order) {
-            return;
+            return false;
         }
 
         let virt = phys_to_virt(PhysAddr::new(addr));
@@ -226,13 +226,30 @@ impl BuddyAllocator {
         let old_head = zone.free_lists[order].head;
         let frame_num = addr >> FRAME_SHIFT;
         if frame_num == 0 {
-            return;
+            return false;
+        }
+
+        // Duplicate insertion corrupts the chain (cycles / repeated alloc of same frame).
+        // If this frame is already linked in the list for this order, drop the insert.
+        let existing_magic = unsafe { core::ptr::read_volatile(virt as *const u64) };
+        if existing_magic == FREE_BLOCK_MAGIC {
+            let already_head = old_head == frame_num;
+            let already_linked = block.next != 0 || block.prev != 0;
+            if already_head || already_linked {
+                unsafe {
+                    os_log::write_str_raw("[BUDDY-DUP-ADD] drop duplicate free-list insert addr=0x");
+                    serial_hex64(addr);
+                    os_log::write_str_raw(" order=");
+                    os_log::write_byte_raw(b'0' + order as u8);
+                    os_log::write_str_raw("\n");
+                }
+                return false;
+            }
         }
 
         // [TRACE] Log adds in target range AND check existing magic — ColdCipher
         #[cfg(feature = "debug-buddy")]
         if addr >= 0xc400000 && addr <= 0xc500000 {
-            let existing_magic = unsafe { core::ptr::read_volatile(virt as *const u64) };
             unsafe {
                 os_log::write_str_raw("[ADD-FREE] 0x");
                 serial_hex64(addr);
@@ -287,6 +304,7 @@ impl BuddyAllocator {
             os_log::write_byte_raw(b'0' + (count as u8));
             os_log::write_str_raw("\n");
         }
+        true
     }
 
     /// Remove and return a free block from a zone's free list
@@ -582,6 +600,17 @@ impl BuddyAllocator {
                     }
                 }
 
+                // — GraveShift: Mark ALL frames in the block as allocated in the
+                // page frame database. For order > 0, mark every individual frame
+                // so validate_free works correctly if the block is later freed as
+                // individual pages or if we need to track per-frame state.
+                if let Some(db) = mm_pagedb::try_pagedb() {
+                    let num_frames = 1u64 << request.order;
+                    for i in 0..num_frames {
+                        db.mark_allocated(PhysAddr::new(addr + i * FRAME_SIZE as u64), 0);
+                    }
+                }
+
                 return Ok(PhysAddr::new(addr));
             }
         }
@@ -608,6 +637,62 @@ impl BuddyAllocator {
                     None => continue, // — GraveShift: corrupted head, try next order
                 };
 
+                // If pagedb says this block (or any frame inside it) is already non-free,
+                // this free-list node is stale/corrupt. Drop it and keep searching.
+                if let Some(db) = mm_pagedb::try_pagedb() {
+                    let num_frames = 1u64 << current_order;
+                    let mut block_is_free = true;
+                    let mut bad_offset = 0u64;
+                    let mut bad_flags = 0u32;
+                    let mut bad_rc = 0u32;
+                    let mut bad_owner = 0u32;
+                    let mut bad_none = false;
+                    for i in 0..num_frames {
+                        let frame = PhysAddr::new(addr + i * FRAME_SIZE as u64);
+                        match db.get(frame) {
+                            Some(pf) if pf.is_free() => {}
+                            Some(pf) => {
+                                block_is_free = false;
+                                bad_offset = i;
+                                bad_flags = pf.flags();
+                                bad_rc = pf.refcount();
+                                bad_owner = pf.owner();
+                                break;
+                            }
+                            None => {
+                                block_is_free = false;
+                                bad_offset = i;
+                                bad_none = true;
+                                break;
+                            }
+                        }
+                    }
+                    if !block_is_free {
+                        unsafe {
+                            os_log::write_str_raw("[BUDDY-DUP-ALLOC] addr=0x");
+                            serial_hex64(addr);
+                            os_log::write_str_raw(" order=");
+                            os_log::write_byte_raw(b'0' + current_order as u8);
+                            if bad_none {
+                                os_log::write_str_raw(" frame+");
+                                serial_hex64(bad_offset);
+                                os_log::write_str_raw(" OUT-OF-RANGE\n");
+                            } else {
+                                os_log::write_str_raw(" frame+");
+                                serial_hex64(bad_offset);
+                                os_log::write_str_raw(" flags=0x");
+                                serial_hex64(bad_flags as u64);
+                                os_log::write_str_raw(" rc=");
+                                serial_hex64(bad_rc as u64);
+                                os_log::write_str_raw(" owner=");
+                                serial_hex64(bad_owner as u64);
+                                os_log::write_str_raw("\n");
+                            }
+                        }
+                        continue;
+                    }
+                }
+
                 // Split larger blocks down to requested size — TorqueJax
                 // When splitting order N to get order M (where N > M):
                 // - We keep the low half at each level
@@ -616,9 +701,10 @@ impl BuddyAllocator {
                 for split_order in (order..current_order).rev() {
                     let buddy_addr = addr + ((1u64 << split_order) << FRAME_SHIFT);
                     // SAFETY: Buddy address is valid as it comes from splitting a larger valid block
-                    unsafe { self.add_free_block(zone, split_order, buddy_addr) };
-                    zone.stats.free_pages[split_order]
-                        .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    if unsafe { self.add_free_block(zone, split_order, buddy_addr) } {
+                        zone.stats.free_pages[split_order]
+                            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    }
                 }
 
                 zone.stats.free_pages[current_order]
@@ -641,11 +727,69 @@ impl BuddyAllocator {
             return Err(MmError::NotAligned);
         }
 
+        // — CrashBloom: Frame watchdog — catch use-after-free on critical frames.
+        // If fork is in progress and someone tries to free the child PML4 frame,
+        // that's a bug. Log it and skip the free to prevent buddy corruption.
+        // For higher-order frees, check if the watched frame falls within the
+        // range being freed (block covers [addr, addr + 2^order * 4096)).
+        {
+            let watched = mm_traits::WATCHED_FRAME.load(core::sync::atomic::Ordering::Acquire);
+            if watched != 0 {
+                let block_start = addr.as_u64();
+                let block_end = block_start + ((1u64 << order) << FRAME_SHIFT);
+                if watched >= block_start && watched < block_end {
+                    unsafe {
+                        os_log::write_str_raw("[WATCHDOG-HIT] Someone freeing watched frame! addr=0x");
+                        serial_hex64(block_start);
+                        os_log::write_str_raw(" order=");
+                        os_log::write_byte_raw(b'0' + order as u8);
+                        os_log::write_str_raw(" watched=0x");
+                        serial_hex64(watched);
+                        os_log::write_str_raw(" — BLOCKED\n");
+                    }
+                    return Ok(()); // — CrashBloom: Skip the free. Leak the frame
+                                   // rather than corrupt the PML4 mid-fork.
+                }
+            }
+        }
+
+        // — GraveShift: Validate frame state in the page database before freeing.
+        // Catches double-frees and reserved-frame-frees at the source.
+        // Returns Err — the error is REAL. Skip the actual free to prevent
+        // corrupting the buddy free list (leak beats corruption). Callers
+        // decide what to do with the Err — most use `let _ =` which is fine,
+        // the frame leaks but the system doesn't crash.
+        if let Some(db) = mm_pagedb::try_pagedb() {
+            if let Err(_e) = db.validate_free(addr) {
+                // — ColdCipher: Diagnostics already printed by validate_free
+                // with caller context. The frame is NOT freed — it leaks.
+                // This is intentional: a leaked frame is recoverable, a
+                // corrupted free list is a death spiral.
+                return Err(MmError::DoubleFree);
+            }
+        }
+
         let zone_type = ZoneType::for_address(addr);
         let mut zone = self.zones[zone_type.index()].lock();
 
         if zone.is_empty() {
             return Err(MmError::ZoneNotFound);
+        }
+
+        // — GraveShift: Mark ALL frames in the block as free in the page database
+        // BEFORE adding to free list. The old order (mark_free AFTER free_to_zone)
+        // created a window where the frame was on the free list and allocatable but
+        // still marked PF_ALLOCATED/PF_PAGETABLE in pagedb. Another CPU's alloc
+        // could pop it, and the DUP-ALLOC guard would see PF_FREE (because the
+        // first CPU's mark_free ran by then) — but a third CPU's mark_pagetable
+        // from a concurrent fork could stomp the entry in between. By marking free
+        // FIRST, the pagedb and free list stay in sync: frame is PF_FREE before
+        // it becomes allocatable.
+        if let Some(db) = mm_pagedb::try_pagedb() {
+            let num_frames = 1u64 << order;
+            for i in 0..num_frames {
+                let _ = db.mark_free(PhysAddr::new(addr.as_u64() + i * FRAME_SIZE as u64));
+            }
         }
 
         // SAFETY: Caller guarantees addr was previously allocated
@@ -699,6 +843,35 @@ impl BuddyAllocator {
                 break;
             }
 
+            // — SableWire: Before coalescing, verify EVERY frame in the buddy
+            // block is PF_FREE in pagedb. The canary check in remove_from_free_list
+            // only validates the buddy's head frame. If ANY sub-frame is allocated
+            // (e.g., user data that happens to contain FREE_BLOCK_MAGIC, or a split
+            // buddy that was individually allocated), coalescing would create an
+            // overlapping free-list entry — a large block on the free list with
+            // allocated frames inside it. The DUP-ALLOC guard catches some of these
+            // at alloc time, but not all. Kill the bug at the source.
+            if let Some(db) = mm_pagedb::try_pagedb() {
+                let buddy_frames = 1u64 << current_order;
+                let mut buddy_clean = true;
+                for i in 0..buddy_frames {
+                    let frame = PhysAddr::new(buddy_addr + i * FRAME_SIZE as u64);
+                    match db.get(frame) {
+                        Some(pf) if pf.is_free() => {}
+                        _ => {
+                            buddy_clean = false;
+                            break;
+                        }
+                    }
+                }
+                if !buddy_clean {
+                    // — ColdCipher: Buddy has non-free frames. Refuse to coalesce.
+                    // The freed block stays at the current order. One missed coalesce
+                    // is infinitely better than overlapping free-list entries.
+                    break;
+                }
+            }
+
             // Try to find and remove buddy from free list
             // SAFETY: Zone is initialized
             if !unsafe { self.remove_from_free_list(zone, current_order, buddy_addr) } {
@@ -715,8 +888,10 @@ impl BuddyAllocator {
 
         // Add the (possibly merged) block to the free list
         // SAFETY: Address is valid as it was just freed
-        unsafe { self.add_free_block(zone, current_order, current_addr) };
-        zone.stats.free_pages[current_order].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        if unsafe { self.add_free_block(zone, current_order, current_addr) } {
+            zone.stats.free_pages[current_order]
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        }
     }
 
     /// Try to remove a specific block from a free list — GraveShift: O(1) removal, no traversal needed

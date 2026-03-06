@@ -1,4 +1,6 @@
-/* OXIDE OS sys/select.h stub - minimal select support */
+/* OXIDE OS sys/select.h — select/pselect support
+ * — BlackLatch: "POSIX says pselect needs sigset_t. Every cross-compiled package will scream without this."
+ */
 
 #ifndef _SYS_SELECT_H
 #define _SYS_SELECT_H
@@ -8,6 +10,12 @@ extern "C" {
 #endif
 
 #include <sys/time.h>
+
+/* — BlackLatch: "Can't include signal.h here (circular via sys/types.h). Forward-declare sigset_t for pselect." */
+#ifndef __sigset_t_defined
+typedef unsigned long sigset_t;
+#define __sigset_t_defined
+#endif
 
 /* Maximum number of file descriptors in fd_set */
 #define FD_SETSIZE 1024
@@ -39,9 +47,11 @@ typedef struct {
 #define FD_ISSET(d, set) \
     (((set)->fds_bits[__FD_ELT(d)] & __FD_MASK(d)) != 0)
 
-/* select() - stub, not implemented */
 int select(int nfds, fd_set *readfds, fd_set *writefds,
            fd_set *exceptfds, struct timeval *timeout);
+int pselect(int nfds, fd_set *readfds, fd_set *writefds,
+            fd_set *exceptfds, const struct timespec *timeout,
+            const sigset_t *sigmask);
 
 #ifdef __cplusplus
 }

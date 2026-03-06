@@ -408,6 +408,11 @@ path = "src/bin/testcolors.rs"
 name = "sigtest"
 path = "src/bin/sigtest.rs"
 
+# Comprehensive OS stress test suite
+[[bin]]
+name = "stresstest"
+path = "src/bin/stresstest.rs"
+
 [dependencies]
 libc = { path = "../libs/libc" }
 heapless = "0.8"

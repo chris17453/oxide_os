@@ -78,6 +78,10 @@ struct cmsghdr {
 #define SO_BROADCAST    6
 #define SO_REUSEPORT    15
 #define SO_ACCEPTCONN   30
+#define SO_PASSCRED     16
+
+/* listen() backlog */
+#define SOMAXCONN       4096
 
 /* Message flags */
 #define MSG_OOB         0x01

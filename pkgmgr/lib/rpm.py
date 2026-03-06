@@ -225,14 +225,18 @@ class SpecFile:
                         self.install_commands.append(line)
     
     def get_configure_flags(self) -> List[str]:
-        """Extract configure flags from build commands"""
+        """Extract configure flags from build commands
+        — GraveShift: 'RPM specs dump all kinds of garbage in %build. Only trust things that smell like flags.'"""
         flags = []
         for cmd in self.build_commands:
             if './configure' in cmd:
-                # Extract flags after ./configure
                 parts = cmd.split('./configure', 1)
                 if len(parts) > 1:
-                    flags.extend(parts[1].strip().split())
+                    for token in parts[1].strip().split():
+                        # — SableWire: 'Filter out RPM macros, bare paths, and random dots. Only real --flags survive.'
+                        if token.startswith('--') and not token.startswith(('--host=', '--build=', '--target=')):
+                            if '%{' not in token and '%(' not in token:
+                                flags.append(token)
         return flags
     
     def to_dict(self) -> Dict:

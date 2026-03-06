@@ -1308,7 +1308,7 @@ fn sys_write(fd: i32, buf: u64, count: usize) -> i64 {
 
         // Enable access to user pages for SMAP
         unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
         }
 
         let buffer = unsafe { core::slice::from_raw_parts(buf as *const u8, count) };
@@ -1325,7 +1325,7 @@ fn sys_write(fd: i32, buf: u64, count: usize) -> i64 {
 
         // Disable access to user pages
         unsafe {
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
         }
 
         unsafe {
@@ -1418,7 +1418,7 @@ fn sys_exec(path: u64, path_len: usize, argv: *const *const u8, envp: *const *co
 
     // Enable user memory access (SMAP)
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
 
     let result = unsafe {
@@ -1458,7 +1458,7 @@ fn sys_exec(path: u64, path_len: usize, argv: *const *const u8, envp: *const *co
 
     // Disable user memory access (SMAP)
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
     result
 }
@@ -1476,7 +1476,7 @@ unsafe fn prefault_pages(user_ptr: u64, len: usize) {
 
     #[cfg(target_arch = "x86_64")]
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
 
     // Touch each page to trigger COW faults NOW (while we don't hold locks)
@@ -1507,7 +1507,7 @@ unsafe fn prefault_pages(user_ptr: u64, len: usize) {
 
     #[cfg(target_arch = "x86_64")]
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 }
 
@@ -1741,9 +1741,19 @@ fn sys_setpgid(pid: Pid, pgid: Pid) -> i64 {
     // Get target PGID
     let target_pgid = if pgid == 0 { target_pid } else { pgid };
 
+    unsafe {
+        os_log::write_str_raw("[SETPGID] enter caller=");
+        trace_u64(current_pid() as u64);
+        os_log::write_str_raw(" target=");
+        trace_u64(target_pid as u64);
+        os_log::write_str_raw("\n");
+    }
+
     // Get the process
     if let Some(meta) = get_meta(target_pid) {
+        unsafe { os_log::write_str_raw("[SETPGID] got meta, locking...\n"); }
         meta.lock().pgid = target_pgid;
+        unsafe { os_log::write_str_raw("[SETPGID] locked+set\n"); }
         unsafe {
             os_log::write_str_raw("[JC] setpgid caller=");
             trace_u64(current_pid() as u64);
@@ -2092,9 +2102,9 @@ fn sys_wait4(pid: i32, status_ptr: u64, options: i32, rusage_ptr: u64) -> i64 {
         }
         let zeroed = Rusage::zeroed();
         unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
             core::ptr::write(rusage_ptr as *mut Rusage, zeroed);
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
         }
     }
     // Delegate to waitpid
@@ -2108,9 +2118,9 @@ fn sys_getrusage(_who: i32, rusage_ptr: u64) -> i64 {
     }
     let zeroed = Rusage::zeroed();
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         core::ptr::write(rusage_ptr as *mut Rusage, zeroed);
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
     0
 }
@@ -2139,7 +2149,7 @@ fn sys_getresuid(ruid_ptr: u64, euid_ptr: u64, suid_ptr: u64) -> i64 {
     };
 
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         if ruid_ptr != 0 && ruid_ptr < 0x0000_8000_0000_0000 {
             *(ruid_ptr as *mut u32) = uid;
         }
@@ -2149,7 +2159,7 @@ fn sys_getresuid(ruid_ptr: u64, euid_ptr: u64, suid_ptr: u64) -> i64 {
         if suid_ptr != 0 && suid_ptr < 0x0000_8000_0000_0000 {
             *(suid_ptr as *mut u32) = euid; // saved uid = effective uid
         }
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
     0
 }
@@ -2163,7 +2173,7 @@ fn sys_getresgid(rgid_ptr: u64, egid_ptr: u64, sgid_ptr: u64) -> i64 {
     };
 
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         if rgid_ptr != 0 && rgid_ptr < 0x0000_8000_0000_0000 {
             *(rgid_ptr as *mut u32) = gid;
         }
@@ -2173,7 +2183,7 @@ fn sys_getresgid(rgid_ptr: u64, egid_ptr: u64, sgid_ptr: u64) -> i64 {
         if sgid_ptr != 0 && sgid_ptr < 0x0000_8000_0000_0000 {
             *(sgid_ptr as *mut u32) = egid; // saved gid = effective gid
         }
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
     0
 }
@@ -2241,9 +2251,9 @@ fn sys_prlimit(_pid: i32, resource: i32, new_limit_ptr: u64, old_limit_ptr: u64)
             return errno::EFAULT;
         }
         unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
             core::ptr::write(old_limit_ptr as *mut Rlimit, default_limit);
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
         }
     }
 
@@ -2571,7 +2581,7 @@ fn sys_init_module(image: u64, len: usize, params: u64) -> i64 {
     }
 
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
 
     // Get the module data
@@ -2593,7 +2603,7 @@ fn sys_init_module(image: u64, len: usize, params: u64) -> i64 {
     };
 
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     // NOTE: In full implementation, this would:
@@ -2660,7 +2670,7 @@ fn sys_setkeymap(name_ptr: u64, name_len: usize) -> i64 {
 
     // Enable access to user pages for SMAP
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
 
     // Read layout name
@@ -2677,7 +2687,7 @@ fn sys_setkeymap(name_ptr: u64, name_len: usize) -> i64 {
 
     // Disable access to user pages
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     result
@@ -2710,7 +2720,7 @@ fn sys_getkeymap(buf_ptr: u64, buf_len: usize) -> i64 {
 
     // Enable access to user pages for SMAP
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
 
     // Copy layout name to user buffer
@@ -2720,7 +2730,7 @@ fn sys_getkeymap(buf_ptr: u64, buf_len: usize) -> i64 {
 
     // Disable access to user pages
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     name_bytes.len() as i64
@@ -3092,9 +3102,9 @@ fn sys_sched_setscheduler(pid: i32, policy: i32, param_ptr: u64) -> i64 {
 
     // Read param from userspace
     let param: SchedParam = unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         let p = core::ptr::read_volatile(param_ptr as *const SchedParam);
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
         p
     };
 
@@ -3157,9 +3167,9 @@ fn sys_sched_setparam(pid: i32, param_ptr: u64) -> i64 {
 
     // Read param from userspace
     let param: SchedParam = unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         let p = core::ptr::read_volatile(param_ptr as *const SchedParam);
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
         p
     };
 
@@ -3211,9 +3221,9 @@ fn sys_sched_getparam(pid: i32, param_ptr: u64) -> i64 {
 
     // Write param to userspace
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         core::ptr::write_volatile(param_ptr as *mut SchedParam, param);
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     0
@@ -3244,12 +3254,12 @@ fn sys_sched_setaffinity(pid: i32, cpusetsize: usize, mask_ptr: u64) -> i64 {
     // Read mask from userspace
     let mut mask_bytes = [0u8; 32];
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         let src = mask_ptr as *const u8;
         for i in 0..cpusetsize {
             mask_bytes[i] = core::ptr::read_volatile(src.add(i));
         }
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     // Convert to CpuSet
@@ -3317,12 +3327,12 @@ fn sys_sched_getaffinity(pid: i32, cpusetsize: usize, mask_ptr: u64) -> i64 {
     // Write to userspace (only up to cpusetsize bytes)
     let write_size = cpusetsize.min(32);
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         let dest = mask_ptr as *mut u8;
         for i in 0..write_size {
             core::ptr::write_volatile(dest.add(i), mask_bytes[i]);
         }
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     write_size as i64
@@ -3349,11 +3359,11 @@ fn sys_sched_rr_get_interval(pid: i32, tp_ptr: u64) -> i64 {
     // Return the RR time slice (100ms = 0.1s)
     // timespec: tv_sec (i64), tv_nsec (i64)
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         let tp = tp_ptr as *mut i64;
         core::ptr::write_volatile(tp, 0); // tv_sec
         core::ptr::write_volatile(tp.add(1), 100_000_000); // tv_nsec = 100ms
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     0
@@ -3424,10 +3434,10 @@ fn sys_uname(buf_ptr: usize) -> i64 {
 
     // Copy to userspace
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         let dest = buf_ptr as *mut UtsName;
         core::ptr::write_volatile(dest, utsname);
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     0
@@ -3644,10 +3654,10 @@ fn sys_sethostname(name_ptr: u64, name_len: usize) -> i64 {
     // Read hostname from userspace
     let mut buf = [0u8; 64];
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         let src = name_ptr as *const u8;
         core::ptr::copy_nonoverlapping(src, buf.as_mut_ptr(), name_len);
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     // Store it (in the global hostname - for uname to pick up)

@@ -13,6 +13,7 @@ use alloc::vec::Vec;
 use spin::Mutex;
 
 use crate::errno;
+use crate::uaccess;
 use net::socket::{Shutdown, SocketState};
 use net::{
     IpAddr, Ipv4Addr, Ipv6Addr, NetError, Socket, SocketAddr, SocketDomain, SocketProtocol,
@@ -447,26 +448,24 @@ fn parse_sockaddr_in(addr: u64, addrlen: u32) -> Option<SocketAddr> {
         return None;
     }
 
-    unsafe {
-        let ptr = addr as *const u8;
+    let raw = uaccess::copy_from_user(addr, 16).ok()?;
 
-        // sockaddr_in: family (2), port (2), addr (4), zero (8)
-        let family = u16::from_ne_bytes([*ptr, *ptr.add(1)]);
-        if family != 2 {
-            // AF_INET
-            return None;
-        }
-
-        let port = u16::from_be_bytes([*ptr.add(2), *ptr.add(3)]);
-
-        // The IP address is stored as a u32 created by from_be_bytes([a,b,c,d]).
-        // On little-endian x86, this u32 is stored in memory as [d,c,b,a].
-        // So to get the original bytes [a,b,c,d], we read in reverse order.
-        let ip_bytes = [*ptr.add(7), *ptr.add(6), *ptr.add(5), *ptr.add(4)];
-        let ip = Ipv4Addr::new(ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]);
-
-        Some(SocketAddr::new(IpAddr::V4(ip), port))
+    // sockaddr_in: family (2), port (2), addr (4), zero (8)
+    let family = u16::from_ne_bytes([raw[0], raw[1]]);
+    if family != 2 {
+        // AF_INET
+        return None;
     }
+
+    let port = u16::from_be_bytes([raw[2], raw[3]]);
+
+    // The IP address is stored as a u32 created by from_be_bytes([a,b,c,d]).
+    // On little-endian x86, this u32 is stored in memory as [d,c,b,a].
+    // So to get the original bytes [a,b,c,d], we read in reverse order.
+    let ip_bytes = [raw[7], raw[6], raw[5], raw[4]];
+    let ip = Ipv4Addr::new(ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]);
+
+    Some(SocketAddr::new(IpAddr::V4(ip), port))
 }
 
 /// Parse sockaddr_in6 structure from user memory
@@ -476,24 +475,20 @@ fn parse_sockaddr_in6(addr: u64, addrlen: u32) -> Option<SocketAddr> {
         return None;
     }
 
-    unsafe {
-        let ptr = addr as *const u8;
+    let raw = uaccess::copy_from_user(addr, 28).ok()?;
 
-        let family = u16::from_ne_bytes([*ptr, *ptr.add(1)]);
-        if family != 10 {
-            // AF_INET6
-            return None;
-        }
-
-        let port = u16::from_be_bytes([*ptr.add(2), *ptr.add(3)]);
-        let mut ip_bytes = [0u8; 16];
-        for i in 0..16 {
-            ip_bytes[i] = *ptr.add(8 + i);
-        }
-        let ip = Ipv6Addr(ip_bytes);
-
-        Some(SocketAddr::new(IpAddr::V6(ip), port))
+    let family = u16::from_ne_bytes([raw[0], raw[1]]);
+    if family != 10 {
+        // AF_INET6
+        return None;
     }
+
+    let port = u16::from_be_bytes([raw[2], raw[3]]);
+    let mut ip_bytes = [0u8; 16];
+    ip_bytes.copy_from_slice(&raw[8..24]);
+    let ip = Ipv6Addr(ip_bytes);
+
+    Some(SocketAddr::new(IpAddr::V6(ip), port))
 }
 
 /// Parse sockaddr (IPv4 or IPv6) from user memory
@@ -508,38 +503,33 @@ fn write_sockaddr_in(addr: u64, addrlen: u64, socket_addr: &SocketAddr) -> i64 {
         return 0;
     }
 
-    unsafe {
-        let ptr = addr as *mut u8;
-        let len_ptr = addrlen as *mut u32;
+    let mut raw = [0u8; 16];
 
-        // Write family
-        let family: u16 = 2; // AF_INET
-        *ptr = family as u8;
-        *ptr.add(1) = (family >> 8) as u8;
+    // Write family
+    let family: u16 = 2; // AF_INET
+    raw[0] = family as u8;
+    raw[1] = (family >> 8) as u8;
 
-        // Write port (big-endian)
-        let port_be = socket_addr.port.to_be_bytes();
-        *ptr.add(2) = port_be[0];
-        *ptr.add(3) = port_be[1];
+    // Write port (big-endian)
+    let port_be = socket_addr.port.to_be_bytes();
+    raw[2] = port_be[0];
+    raw[3] = port_be[1];
 
-        // Write IP address
-        if let IpAddr::V4(ip) = socket_addr.ip {
-            let bytes = ip.as_bytes();
-            *ptr.add(4) = bytes[0];
-            *ptr.add(5) = bytes[1];
-            *ptr.add(6) = bytes[2];
-            *ptr.add(7) = bytes[3];
-        }
+    // Write IP address
+    if let IpAddr::V4(ip) = socket_addr.ip {
+        let bytes = ip.as_bytes();
+        raw[4] = bytes[0];
+        raw[5] = bytes[1];
+        raw[6] = bytes[2];
+        raw[7] = bytes[3];
+    }
 
-        // Zero padding
-        for i in 8..16 {
-            *ptr.add(i) = 0;
-        }
+    if uaccess::copy_to_user(addr, &raw).is_err() {
+        return errno::EFAULT;
+    }
 
-        // Write length
-        if !len_ptr.is_null() {
-            *len_ptr = 16;
-        }
+    if addrlen != 0 && uaccess::put_user(addrlen, 16u32).is_err() {
+        return errno::EFAULT;
     }
 
     0
@@ -649,7 +639,10 @@ pub fn sys_accept(fd: i32, addr: u64, addrlen: u64) -> i64 {
         // Write peer address if requested
         if addr != 0 {
             if let Some(peer) = new_socket.peer_addr() {
-                write_sockaddr_in(addr, addrlen, &peer);
+                let rc = write_sockaddr_in(addr, addrlen, &peer);
+                if rc < 0 {
+                    return rc;
+                }
             }
         }
 
@@ -867,12 +860,17 @@ pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
     // ShadePacket: Poll network stack to process ACKs from previous sends
     let _ = tcpip::poll();
 
-    // Enable access to user pages for SMAP
-    unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
-    }
-
-    let data = unsafe { core::slice::from_raw_parts(buf as *const u8, len) };
+    // Copy user payload into kernel-owned memory immediately. Keeping a borrowed
+    // user slice alive across deeper stack calls can fault if AC/SMAP state flips.
+    let data_vec = match uaccess::copy_from_user(buf, len) {
+        Ok(v) => v,
+        Err(e) => {
+            serial_print_num("send: copy_from_user failed, buf=", buf as i64);
+            serial_print_num("send: copy_from_user failed, len=", len as i64);
+            return e;
+        }
+    };
+    let data = data_vec.as_slice();
 
     // Handle raw ICMP socket - loopback or real network
     if socket.sock_type == SocketType::Raw && socket.protocol == SocketProtocol::Icmp {
@@ -893,16 +891,10 @@ pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
                     .unwrap_or_else(|| SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0));
                 if let Some(result) = handle_icmp_echo(&socket, data, src_addr) {
                     serial_print_num("send: handle_icmp_echo returned", result);
-                    unsafe {
-                        core::arch::asm!("clac", options(nomem, nostack));
-                    }
                     return result;
                 }
                 serial_print("send: handle_icmp_echo returned None");
                 // If not an echo request, just pretend we sent it
-                unsafe {
-                    core::arch::asm!("clac", options(nomem, nostack));
-                }
                 return len as i64;
             } else {
                 // —ShadePacket: Non-loopback ICMP - route through TCP/IP stack
@@ -912,9 +904,6 @@ pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
                 let dst_ip = match addr.ip {
                     IpAddr::V4(ip) => ip,
                     IpAddr::V6(_) => {
-                        unsafe {
-                            core::arch::asm!("clac", options(nomem, nostack));
-                        }
                         return errno::EAFNOSUPPORT;
                     }
                 };
@@ -923,27 +912,19 @@ pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
                 if let Some(stack) = tcpip::stack() {
                     // —ShadePacket: The data is already a complete ICMP packet from userspace
                     // We just need to wrap it in IP and send it out
+                    serial_print_num("send: ICMP payload len=", data.len() as i64);
                     match stack.send_ipv4_packet(dst_ip, tcpip::IpProtocol::Icmp, data) {
                         Ok(()) => {
                             serial_print("send: ICMP packet sent successfully");
-                            unsafe {
-                                core::arch::asm!("clac", options(nomem, nostack));
-                            }
                             return len as i64;
                         }
                         Err(e) => {
                             serial_print("send: ICMP send failed");
-                            unsafe {
-                                core::arch::asm!("clac", options(nomem, nostack));
-                            }
                             return net_error_to_errno(e);
                         }
                     }
                 } else {
                     serial_print("send: no TCP/IP stack available");
-                    unsafe {
-                        core::arch::asm!("clac", options(nomem, nostack));
-                    }
                     return errno::ENETDOWN;
                 }
             }
@@ -962,9 +943,6 @@ pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
             None => {
                 // Peer closed - remove from pairs and signal error
                 SOCKET_PAIRS.lock().remove(&fd);
-                unsafe {
-                    core::arch::asm!("clac", options(nomem, nostack));
-                }
                 return errno::EPIPE;
             }
         };
@@ -976,17 +954,11 @@ pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
             .load(core::sync::atomic::Ordering::SeqCst)
             || peer_state == SocketState::Closed
         {
-            unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
-            }
             return errno::EPIPE;
         }
 
         // Add data to peer's receive buffer
         peer_socket.recv_buf.lock().extend_from_slice(data);
-        unsafe {
-            core::arch::asm!("clac", options(nomem, nostack));
-        }
         return len as i64;
     }
 
@@ -1001,24 +973,15 @@ pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
                         Ok(n) => {
                             // Transmit any queued segments
                             let _ = stack.transmit_tcp_segments(&conn);
-                            unsafe {
-                                core::arch::asm!("clac", options(nomem, nostack));
-                            }
                             return n as i64;
                         }
                         Err(e) => {
-                            unsafe {
-                                core::arch::asm!("clac", options(nomem, nostack));
-                            }
                             return net_error_to_errno(e);
                         }
                     }
                 }
             }
             // Connection not found in stack
-            unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
-            }
             return errno::ENOTCONN;
         }
     }
@@ -1038,11 +1001,6 @@ pub fn sys_send(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
     // Restore nonblocking state
     if flags & 0x40 != 0 && !was_nonblocking {
         socket.set_nonblocking(false);
-    }
-
-    // Disable access to user pages
-    unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
     }
 
     result
@@ -1073,13 +1031,6 @@ pub fn sys_recv(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
     // ShadePacket: Poll network stack to process incoming packets
     // This is CRITICAL - without this, packets sit in VirtIO-net RX queue!
     let _ = tcpip::poll();
-
-    // Enable access to user pages for SMAP
-    unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
-    }
-
-    let data = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len) };
 
     // —ShadePacket: Check for buffered ICMP replies from TCP/IP stack (non-loopback)
     // Raw ICMP sockets receive replies here when pinging external IPs
@@ -1126,13 +1077,14 @@ pub fn sys_recv(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
             packet.extend_from_slice(&reply.data);
 
             // Copy to user buffer
-            let copy_len = data.len().min(packet.len());
-            data[..copy_len].copy_from_slice(&packet[..copy_len]);
+            let copy_len = len.min(packet.len());
+            if uaccess::copy_to_user(buf, &packet[..copy_len]).is_err() {
+                serial_print_num("recv: copy_to_user failed, buf=", buf as i64);
+                serial_print_num("recv: copy_to_user failed, len=", copy_len as i64);
+                return errno::EFAULT;
+            }
 
             serial_print_num("recv: returning ICMP packet len=", copy_len as i64);
-            unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
-            }
             return copy_len as i64;
         }
     }
@@ -1142,21 +1094,22 @@ pub fn sys_recv(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
         if let Some(conn_id) = TCP_CONNECTIONS.lock().get(&fd).copied() {
             if let Some(stack) = tcpip::stack() {
                 if let Some(conn) = stack.get_tcp_connection(conn_id) {
+                    let mut kbuf = Vec::new();
+                    kbuf.resize(len, 0);
                     // Receive data from TCP connection
-                    match conn.recv(data) {
+                    match conn.recv(&mut kbuf) {
                         Ok(n) if n > 0 => {
-                            serial_print_num("recv: TCP got bytes=", n as i64);
-                            unsafe {
-                                core::arch::asm!("clac", options(nomem, nostack));
+                            if uaccess::copy_to_user(buf, &kbuf[..n]).is_err() {
+                                serial_print_num("recv: tcp copy_to_user failed, buf=", buf as i64);
+                                serial_print_num("recv: tcp copy_to_user failed, len=", n as i64);
+                                return errno::EFAULT;
                             }
+                            serial_print_num("recv: TCP got bytes=", n as i64);
                             return n as i64;
                         }
                         Ok(_) => {
                             // No data available, check if connection closed
                             if conn.is_closed() {
-                                unsafe {
-                                    core::arch::asm!("clac", options(nomem, nostack));
-                                }
                                 return 0; // EOF
                             }
                             // Fall through to return EAGAIN
@@ -1164,9 +1117,6 @@ pub fn sys_recv(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
                         Err(_) => {
                             // Connection error
                             if conn.is_reset() {
-                                unsafe {
-                                    core::arch::asm!("clac", options(nomem, nostack));
-                                }
                                 return errno::ECONNRESET;
                             }
                             // Fall through to return EAGAIN
@@ -1178,9 +1128,13 @@ pub fn sys_recv(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
     }
 
     // First check the unified loopback queue (for all loopback-delivered data)
-    if let Some((read_len, _src_addr)) = receive_loopback_packet(&socket, data) {
-        unsafe {
-            core::arch::asm!("clac", options(nomem, nostack));
+    let mut kbuf = Vec::new();
+    kbuf.resize(len, 0);
+    if let Some((read_len, _src_addr)) = receive_loopback_packet(&socket, &mut kbuf) {
+        if uaccess::copy_to_user(buf, &kbuf[..read_len]).is_err() {
+            serial_print_num("recv: loopback copy_to_user failed, buf=", buf as i64);
+            serial_print_num("recv: loopback copy_to_user failed, len=", read_len as i64);
+            return errno::EFAULT;
         }
         return read_len as i64;
     }
@@ -1190,10 +1144,12 @@ pub fn sys_recv(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
         let mut recv_buf = socket.recv_buf.lock();
         if !recv_buf.is_empty() {
             let to_read = len.min(recv_buf.len());
-            data[..to_read].copy_from_slice(&recv_buf[..to_read]);
+            let chunk = recv_buf[..to_read].to_vec();
             recv_buf.drain(..to_read);
-            unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
+            if uaccess::copy_to_user(buf, &chunk).is_err() {
+                serial_print_num("recv: legacy copy_to_user failed, buf=", buf as i64);
+                serial_print_num("recv: legacy copy_to_user failed, len=", to_read as i64);
+                return errno::EFAULT;
             }
             return to_read as i64;
         }
@@ -1204,25 +1160,16 @@ pub fn sys_recv(fd: i32, buf: u64, len: usize, flags: i32) -> i64 {
     if let Some(peer_fd) = peer_fd {
         let peer_socket = get_socket(peer_fd);
         if peer_socket.is_none() {
-            unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
-            }
             return 0; // EOF - peer closed
         }
         let peer = peer_socket.unwrap();
         if peer.closed.load(core::sync::atomic::Ordering::SeqCst) {
-            unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
-            }
             return 0; // EOF
         }
     }
 
     // No data available - return EAGAIN
     // Userspace should retry with sched_yield() to let sender run
-    unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
-    }
     errno::EAGAIN
 }
 
@@ -1246,32 +1193,28 @@ pub fn sys_sendto(fd: i32, buf: u64, len: usize, flags: i32, dest_addr: u64, add
     // ShadePacket: Poll network stack to process any pending responses
     let _ = tcpip::poll();
 
-    unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
-    }
-
-    let data = unsafe { core::slice::from_raw_parts(buf as *const u8, len) };
+    // Copy user payload up front so later socket/tcpip calls never dereference
+    // userspace memory directly.
+    let data_vec = match uaccess::copy_from_user(buf, len) {
+        Ok(v) => v,
+        Err(e) => {
+            serial_print_num("sendto: copy_from_user failed, buf=", buf as i64);
+            serial_print_num("sendto: copy_from_user failed, len=", len as i64);
+            return e;
+        }
+    };
+    let data = data_vec.as_slice();
 
     let dest = if dest_addr != 0 {
         match parse_sockaddr_in(dest_addr, addrlen) {
             Some(a) => a,
-            None => {
-                unsafe {
-                    core::arch::asm!("clac", options(nomem, nostack));
-                }
-                return errno::EINVAL;
-            }
+            None => return errno::EINVAL,
         }
     } else {
         // Use connected address
         match socket.peer_addr() {
             Some(a) => a,
-            None => {
-                unsafe {
-                    core::arch::asm!("clac", options(nomem, nostack));
-                }
-                return errno::ENOTCONN;
-            }
+            None => return errno::ENOTCONN,
         }
     };
 
@@ -1279,22 +1222,14 @@ pub fn sys_sendto(fd: i32, buf: u64, len: usize, flags: i32, dest_addr: u64, add
 
     // Check if destination is loopback - use unified loopback system
     if is_loopback_addr(&dest) {
-        let result = loopback_send(&socket, data, &dest);
-        unsafe {
-            core::arch::asm!("clac", options(nomem, nostack));
-        }
-        return result;
+        return loopback_send(&socket, data, &dest);
     }
 
     // Non-loopback: use real network stack
-    let result = match socket.sendto(data, dest) {
+    match socket.sendto(data, dest) {
         Ok(n) => n as i64,
         Err(e) => net_error_to_errno(e),
-    };
-    unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
     }
-    result
 }
 
 /// sys_recvfrom - Receive data with source address (UDP)
@@ -1320,21 +1255,22 @@ pub fn sys_recvfrom(fd: i32, buf: u64, len: usize, flags: i32, src_addr: u64, ad
     // ShadePacket: Poll network stack to process incoming packets
     let _ = tcpip::poll();
 
-    unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
-    }
-
-    let data = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len) };
-
     let _ = flags; // Flags not fully supported yet
+    let mut kbuf = Vec::new();
+    kbuf.resize(len, 0);
 
     // First check the unified loopback queue (returns proper source address!)
-    if let Some((read_len, sender_addr)) = receive_loopback_packet(&socket, data) {
-        if src_addr != 0 {
-            write_sockaddr_in(src_addr, addrlen, &sender_addr);
+    if let Some((read_len, sender_addr)) = receive_loopback_packet(&socket, &mut kbuf) {
+        if uaccess::copy_to_user(buf, &kbuf[..read_len]).is_err() {
+            serial_print_num("recvfrom: copy_to_user failed, buf=", buf as i64);
+            serial_print_num("recvfrom: copy_to_user failed, len=", read_len as i64);
+            return errno::EFAULT;
         }
-        unsafe {
-            core::arch::asm!("clac", options(nomem, nostack));
+        if src_addr != 0 {
+            let rc = write_sockaddr_in(src_addr, addrlen, &sender_addr);
+            if rc < 0 {
+                return rc;
+            }
         }
         return read_len as i64;
     }
@@ -1344,24 +1280,26 @@ pub fn sys_recvfrom(fd: i32, buf: u64, len: usize, flags: i32, src_addr: u64, ad
         let mut recv_buf = socket.recv_buf.lock();
         if !recv_buf.is_empty() {
             let to_read = len.min(recv_buf.len());
-            data[..to_read].copy_from_slice(&recv_buf[..to_read]);
+            let chunk = recv_buf[..to_read].to_vec();
             recv_buf.drain(..to_read);
+            if uaccess::copy_to_user(buf, &chunk).is_err() {
+                serial_print_num("recvfrom: legacy copy_to_user failed, buf=", buf as i64);
+                serial_print_num("recvfrom: legacy copy_to_user failed, len=", to_read as i64);
+                return errno::EFAULT;
+            }
             // No source address for legacy path - use placeholder
             if src_addr != 0 {
                 let placeholder = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0);
-                write_sockaddr_in(src_addr, addrlen, &placeholder);
-            }
-            unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
+                let rc = write_sockaddr_in(src_addr, addrlen, &placeholder);
+                if rc < 0 {
+                    return rc;
+                }
             }
             return to_read as i64;
         }
     }
 
     // No data available
-    unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
-    }
     errno::EAGAIN
 }
 
@@ -1847,7 +1785,7 @@ fn copy_iface_from_user(ptr: u64, len: usize) -> Option<alloc::string::String> {
 
     // Enable SMAP bypass for userspace access
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
 
     let slice = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
@@ -1856,7 +1794,7 @@ fn copy_iface_from_user(ptr: u64, len: usize) -> Option<alloc::string::String> {
         .map(alloc::string::String::from);
 
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     result

@@ -407,9 +407,13 @@ impl SchedClass for FairSchedClass {
             // Reset exec_start for next period
             rq.set_task_exec_start(pid, now);
 
-            // Check if we've run long enough
-            // With a single tick, this is approximate
-            return delta >= TICK_NS && rq.nr_running() > 1;
+            // — GraveShift: Preempt when there's at least one OTHER task waiting.
+            // nr_running counts tasks on the CFS tree (queued). The currently
+            // running task is NOT on the tree (on_rq=false after pop_next_task).
+            // Old check was > 1, which required TWO waiting tasks — meaning a
+            // fork child would monopolize the CPU forever when only its parent
+            // was waiting. One task waiting = one task starving. Preempt.
+            return delta >= TICK_NS && rq.nr_running() > 0;
         }
 
         false

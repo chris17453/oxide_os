@@ -449,7 +449,8 @@ def cmd_buildsrpm(args):
     output_dir = str(_packages_dir(release))
     extract_dir = str(PKGMGR_ROOT / 'cache' / 'builds')
 
-    pkg_file = builder.build_srpm(srpm_file, output_dir, extract_dir)
+    # — PatchBay: 'Pass package_name so the builder can find overrides. This was missing and broke every override.'
+    pkg_file = builder.build_srpm(srpm_file, output_dir, extract_dir, package_name=package_name)
 
     if pkg_file:
         print(f"\n{'=' * 60}")

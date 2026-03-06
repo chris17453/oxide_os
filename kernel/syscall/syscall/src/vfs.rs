@@ -168,7 +168,7 @@ pub fn vfs_error_to_errno(e: VfsError) -> i64 {
 pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
     // Enable access to user pages for SMAP (path string is in user space)
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
 
     // — ColdCipher: copy_path_from_user now returns a kernel-owned String.
@@ -177,7 +177,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
         Some(p) => p,
         None => {
             unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             return errno::EFAULT;
         }
@@ -207,7 +207,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
                 if flags.contains(FileFlags::O_EXCL) {
                     // O_EXCL with O_CREAT: fail if exists
                     unsafe {
-                        core::arch::asm!("clac", options(nomem, nostack));
+                        core::arch::asm!("clac", options(nostack));
                     }
                     return errno::EEXIST;
                 }
@@ -220,14 +220,14 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
                         Ok(vnode) => vnode,
                         Err(e) => {
                             unsafe {
-                                core::arch::asm!("clac", options(nomem, nostack));
+                                core::arch::asm!("clac", options(nostack));
                             }
                             return vfs_error_to_errno(e);
                         }
                     },
                     Err(e) => {
                         unsafe {
-                            core::arch::asm!("clac", options(nomem, nostack));
+                            core::arch::asm!("clac", options(nostack));
                         }
                         return vfs_error_to_errno(e);
                     }
@@ -235,7 +235,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
             }
             Err(e) => {
                 unsafe {
-                    core::arch::asm!("clac", options(nomem, nostack));
+                    core::arch::asm!("clac", options(nostack));
                 }
                 return vfs_error_to_errno(e);
             }
@@ -245,7 +245,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
             Ok(vnode) => vnode,
             Err(e) => {
                 unsafe {
-                    core::arch::asm!("clac", options(nomem, nostack));
+                    core::arch::asm!("clac", options(nostack));
                 }
                 return vfs_error_to_errno(e);
             }
@@ -279,7 +279,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
             Ok(s) => s,
             Err(e) => {
                 unsafe {
-                    core::arch::asm!("clac", options(nomem, nostack));
+                    core::arch::asm!("clac", options(nostack));
                 }
                 return vfs_error_to_errno(e);
             }
@@ -303,7 +303,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
             required_access,
         ) {
             unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             return errno::EACCES;
         }
@@ -312,7 +312,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
     // Check O_DIRECTORY
     if flags.contains(FileFlags::O_DIRECTORY) && vnode.vtype() != VnodeType::Directory {
         unsafe {
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
         }
         return errno::ENOTDIR;
     }
@@ -320,7 +320,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
     // Check if trying to write to directory
     if flags.writable() && vnode.vtype() == VnodeType::Directory {
         unsafe {
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
         }
         return errno::EISDIR;
     }
@@ -329,7 +329,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
     if flags.contains(FileFlags::O_TRUNC) && flags.writable() {
         if let Err(e) = vnode.truncate(0) {
             unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             return vfs_error_to_errno(e);
         }
@@ -354,7 +354,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
 
     // Disable access to user pages
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     result
@@ -435,10 +435,10 @@ pub fn sys_read_vfs(fd: i32, buf: u64, count: usize) -> i64 {
         Ok(n) => {
             // — ColdCipher: Copy to user space — STAC window is tiny, no yields,
             // no terminal writes, no lock acquisitions. Just a memcpy.
-            unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+            unsafe { core::arch::asm!("stac", options(nostack)); }
             let user_buf = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, n) };
             user_buf.copy_from_slice(&kbuf[..n]);
-            unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+            unsafe { core::arch::asm!("clac", options(nostack)); }
             n as i64
         }
         Err(e) => vfs_error_to_errno(e),
@@ -509,10 +509,10 @@ pub fn sys_write_vfs(fd: i32, buf: u64, count: usize) -> i64 {
     let chunk = count.min(KBUF_SIZE);
 
     // — ColdCipher: Tight STAC/CLAC window — just a memcpy, no locks, no yields.
-    unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+    unsafe { core::arch::asm!("stac", options(nostack)); }
     let user_buf = unsafe { core::slice::from_raw_parts(buf as *const u8, chunk) };
     kbuf[..chunk].copy_from_slice(user_buf);
-    unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+    unsafe { core::arch::asm!("clac", options(nostack)); }
 
     let result = match file.write(&kbuf[..chunk]) {
         Ok(n) => n as i64,
@@ -811,7 +811,7 @@ pub fn sys_ioctl(fd: i32, request: u64, arg: u64) -> i64 {
     // — GraveShift: STAC before ioctl — handlers like TIOCGWINSZ write to user pointers.
     // No STAC = SMAP violation = GPF. Every ioctl that touches arg as a pointer needs this.
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
 
     let result = match file.ioctl(request, arg) {
@@ -820,7 +820,7 @@ pub fn sys_ioctl(fd: i32, request: u64, arg: u64) -> i64 {
     };
 
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     // — SableWire: Ioctl done, back to non-preemptable kernel context.
@@ -859,7 +859,7 @@ pub fn sys_chmod(path_ptr: u64, path_len: usize, mode: u32) -> i64 {
 
     // Enable access to user pages for SMAP
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
 
     let path_slice = unsafe { core::slice::from_raw_parts(path_ptr as *const u8, path_len) };
@@ -868,7 +868,7 @@ pub fn sys_chmod(path_ptr: u64, path_len: usize, mode: u32) -> i64 {
         Ok(s) => s,
         Err(_) => {
             unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             return errno::EINVAL;
         }
@@ -890,7 +890,7 @@ pub fn sys_chmod(path_ptr: u64, path_len: usize, mode: u32) -> i64 {
 
     // Disable access to user pages
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     result
@@ -936,7 +936,7 @@ pub fn sys_chown(path_ptr: u64, path_len: usize, uid: i32, gid: i32) -> i64 {
 
     // Enable access to user pages for SMAP
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
 
     let path_slice = unsafe { core::slice::from_raw_parts(path_ptr as *const u8, path_len) };
@@ -945,7 +945,7 @@ pub fn sys_chown(path_ptr: u64, path_len: usize, uid: i32, gid: i32) -> i64 {
         Ok(s) => s,
         Err(_) => {
             unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             return errno::EINVAL;
         }
@@ -969,7 +969,7 @@ pub fn sys_chown(path_ptr: u64, path_len: usize, uid: i32, gid: i32) -> i64 {
 
     // Disable access to user pages
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     result
@@ -1098,10 +1098,10 @@ pub fn sys_statfs(path_ptr: u64, path_len: usize, buf_ptr: usize) -> i64 {
 
     // Copy to userspace
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         let dest = buf_ptr as *mut Statfs;
         core::ptr::write_volatile(dest, statfs);
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     0
@@ -1155,10 +1155,10 @@ pub fn sys_fstatfs(fd: i32, buf_ptr: usize) -> i64 {
 
     // Copy to userspace
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         let dest = buf_ptr as *mut Statfs;
         core::ptr::write_volatile(dest, statfs);
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     0
@@ -1242,7 +1242,7 @@ pub fn sys_mount(
 
     // Enable access to user pages for SMAP
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
 
     // — ColdCipher: Copy all three strings from userspace into kernel-owned Strings
@@ -1255,7 +1255,7 @@ pub fn sys_mount(
             Some(s) => s,
             None => {
                 unsafe {
-                    core::arch::asm!("clac", options(nomem, nostack));
+                    core::arch::asm!("clac", options(nostack));
                 }
                 return errno::EFAULT;
             }
@@ -1269,7 +1269,7 @@ pub fn sys_mount(
         Some(t) => t,
         None => {
             unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             return errno::EFAULT;
         }
@@ -1283,7 +1283,7 @@ pub fn sys_mount(
         Some(f) => f,
         None => {
             unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             return errno::EFAULT;
         }
@@ -1304,7 +1304,7 @@ pub fn sys_mount(
 
     // Disable access to user pages
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     result
@@ -1374,7 +1374,7 @@ pub fn sys_pivot_root(
 
     // Enable access to user pages for SMAP
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
 
     // — ColdCipher: kernel-owned copies — TOCTOU closed for both paths.
@@ -1382,7 +1382,7 @@ pub fn sys_pivot_root(
         Some(s) => s,
         None => {
             unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             return errno::EFAULT;
         }
@@ -1393,7 +1393,7 @@ pub fn sys_pivot_root(
         Some(s) => s,
         None => {
             unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             return errno::EFAULT;
         }
@@ -1415,7 +1415,7 @@ pub fn sys_pivot_root(
 
     // Disable access to user pages
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     result

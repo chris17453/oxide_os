@@ -614,6 +614,8 @@ impl Renderer {
         // Blink text: when in "off" phase, only draw background — SoftGlyph
         let is_blink = cell.attrs.flags.contains(CellFlags::BLINK);
         if is_blink && !self.blink_text_visible() {
+            // — GlassSignal: Still need to mark the blit region for the background we drew
+            self.extend_blit_region(py, self.font.height);
             return;
         }
 
@@ -664,6 +666,12 @@ impl Renderer {
             let strike_y = py + self.font.height / 2;
             self.bb_hline(px, strike_y, total_width, fg_color);
         }
+
+        // — GlassSignal: Mark this cell's pixel region for blit to MMIO framebuffer.
+        // Without this, per-glyph inline rendering writes to the back buffer but
+        // flush_fb() → blit_to_fb() sees blit_pending=false and skips the copy.
+        // The screen stays black. Every. Single. Time. — GlassSignal
+        self.extend_blit_region(py, self.font.height);
     }
 
     /// Draw a 1-bit monochrome bitmap glyph to back buffer — SoftGlyph
@@ -881,6 +889,9 @@ impl Renderer {
                 self.bb_fill_rect(px, py, 2, self.font.height, bg_color);
             }
         }
+
+        // — GlassSignal: Mark cursor region for blit — same disease as render_cell_inner.
+        self.extend_blit_region(py, self.font.height);
     }
 
     /// Clear the screen with background color (writes to back buffer)
@@ -888,6 +899,8 @@ impl Renderer {
         let (r, g, b) = attrs.effective_bg().to_rgb(false);
         let bg = Color::new(r, g, b);
         self.bb_clear(bg);
+        // — GlassSignal: Mark entire screen for blit after clear
+        self.extend_blit_region(0, self.fb.height());
     }
 
     /// Scroll the display up (writes to back buffer)
@@ -915,9 +928,12 @@ impl Renderer {
                 scroll_pixels,
                 bg_color,
             );
+            // — GlassSignal: bb_fill_rect doesn't mark blit region — do it here
+            self.extend_blit_region(total_height - scroll_pixels, scroll_pixels);
         } else {
             // Scroll more than screen height - just clear
             self.bb_clear(bg_color);
+            self.extend_blit_region(0, total_height);
         }
     }
 
@@ -940,8 +956,11 @@ impl Renderer {
 
             // Clear top area
             self.bb_fill_rect(0, 0, self.fb.width(), scroll_pixels, bg_color);
+            // — GlassSignal: bb_fill_rect doesn't mark blit region — do it here
+            self.extend_blit_region(0, scroll_pixels);
         } else {
             self.bb_clear(bg_color);
+            self.extend_blit_region(0, total_height);
         }
     }
 
@@ -990,6 +1009,8 @@ impl Renderer {
         // Clear the vacated bottom rows
         let clear_y = total_pixel_height - pixel_rows;
         self.bb_fill_rect(0, clear_y, self.fb.width(), pixel_rows, bg_color);
+        // — GlassSignal: Mark cleared bottom region for blit
+        self.extend_blit_region(clear_y, pixel_rows);
     }
 
     /// Paint cursor at current position — call after writes for immediate visibility.

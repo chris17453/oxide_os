@@ -430,9 +430,12 @@ fn start_servicemgr() {
 
         let child = fork();
         if child == 0 {
-            // Child - exec servicemgr (defaults to daemon mode when argc < 2)
+            // Child - exec servicemgr in explicit daemon mode
             setsid();
-            exec("/bin/servicemgr");
+            let arg0 = b"servicemgr\0";
+            let arg1 = b"daemon\0";
+            let argv = [arg0.as_ptr(), arg1.as_ptr(), core::ptr::null()];
+            execv("/bin/servicemgr", argv.as_ptr());
             _exit(1);
         } else if child > 0 {
             printlns("[init] Service manager started");

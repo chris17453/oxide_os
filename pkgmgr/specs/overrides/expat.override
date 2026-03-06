@@ -1,0 +1,23 @@
+# expat Build Override for OXIDE OS
+# — SableWire: "expat tries to build xmlwf and tests which fail in cross-compile. Just build the lib."
+
+CONFIGURE_FLAGS="
+  --without-xmlwf
+  --without-examples
+  --without-tests
+  --without-docbook
+"
+
+# Extra CFLAGS
+EXTRA_CFLAGS="-DOXIDE_OS"
+
+# Only build the library, not xmlwf/tests
+MAKE_TARGET="lib/libexpat.la"
+
+# Custom install - just the lib and headers
+CUSTOM_INSTALL_CMD="mkdir -p $DESTDIR/usr/lib $DESTDIR/usr/include && cp lib/.libs/libexpat.a $DESTDIR/usr/lib/ && cp lib/expat.h lib/expat_external.h $DESTDIR/usr/include/"
+
+# Post-build hook
+post_build() {
+    echo "expat built for OXIDE"
+}

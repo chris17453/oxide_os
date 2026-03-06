@@ -15,15 +15,15 @@ kernel:
 	@echo "Building kernel..."
 ifeq ($(PROFILE),release)
 ifneq ($(KERNEL_FEATURES),)
-	@OXIDE_BUILD_NUMBER=$(OXIDE_BUILD) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD) --release --features $(KERNEL_FEATURES)
+	@OXIDE_BUILD_NUMBER=$$(cat build/build-number 2>/dev/null || echo 0) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD) --release --features $(KERNEL_FEATURES)
 else
-	@OXIDE_BUILD_NUMBER=$(OXIDE_BUILD) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD) --release
+	@OXIDE_BUILD_NUMBER=$$(cat build/build-number 2>/dev/null || echo 0) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD) --release
 endif
 else
 ifneq ($(KERNEL_FEATURES),)
-	@OXIDE_BUILD_NUMBER=$(OXIDE_BUILD) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD) --features $(KERNEL_FEATURES)
+	@OXIDE_BUILD_NUMBER=$$(cat build/build-number 2>/dev/null || echo 0) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD) --features $(KERNEL_FEATURES)
 else
-	@OXIDE_BUILD_NUMBER=$(OXIDE_BUILD) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD)
+	@OXIDE_BUILD_NUMBER=$$(cat build/build-number 2>/dev/null || echo 0) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD)
 endif
 endif
 
@@ -31,9 +31,9 @@ endif
 bootloader:
 	@echo "Building bootloader..."
 ifeq ($(PROFILE),release)
-	@OXIDE_BUILD_NUMBER=$(OXIDE_BUILD) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package boot-uefi --target $(ARCH)-unknown-uefi --release -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem
+	@OXIDE_BUILD_NUMBER=$$(cat build/build-number 2>/dev/null || echo 0) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package boot-uefi --target $(ARCH)-unknown-uefi --release -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem
 else
-	@OXIDE_BUILD_NUMBER=$(OXIDE_BUILD) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package boot-uefi --target $(ARCH)-unknown-uefi -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem
+	@OXIDE_BUILD_NUMBER=$$(cat build/build-number 2>/dev/null || echo 0) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package boot-uefi --target $(ARCH)-unknown-uefi -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem
 endif
 
 # Build release

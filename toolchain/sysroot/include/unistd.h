@@ -1,7 +1,14 @@
-/* OXIDE OS POSIX API */
+/* OXIDE OS POSIX API
+ * — GraveShift: "Every cross-compiled package checks _POSIX_VERSION first. Without it, readline thinks we're BSD."
+ */
 
 #ifndef _UNISTD_H
 #define _UNISTD_H
+
+/* POSIX version compliance */
+#define _POSIX_VERSION  200809L
+#define _POSIX2_VERSION 200809L
+#define _XOPEN_VERSION  700
 
 /* POSIX threads support */
 #define _POSIX_THREADS 200809L

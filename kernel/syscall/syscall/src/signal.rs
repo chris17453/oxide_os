@@ -286,9 +286,9 @@ pub fn sys_sigsuspend(mask_ptr: u64) -> i64 {
     // Read the temporary mask from userspace and install it atomically.
     // — WireSaint: stac/clac bracket because mask_ptr is a user pointer.
     let temp_mask = unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         let m = core::ptr::read_volatile(mask_ptr as *const SigSet);
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
         m
     };
 
@@ -398,13 +398,13 @@ pub fn sys_sigreturn() -> i64 {
     }
 
     // Enable user memory access (SMAP)
-    unsafe { core::arch::asm!("stac", options(nomem, nostack)); }
+    unsafe { core::arch::asm!("stac", options(nostack)); }
 
     // Read the signal frame from user stack
     let frame = unsafe { core::ptr::read_volatile(frame_ptr) };
 
     // Disable user memory access
-    unsafe { core::arch::asm!("clac", options(nomem, nostack)); }
+    unsafe { core::arch::asm!("clac", options(nostack)); }
 
     // Stash for deferred restoration in check_signals_on_syscall_return()
     unsafe { signal::delivery::set_sigreturn_frame(frame); }
@@ -447,18 +447,18 @@ pub fn sys_sigaltstack(ss_ptr: u64, old_ss_ptr: u64) -> i64 {
             ss_size: 0,
         };
         unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
             core::ptr::write_volatile(old_ss_ptr as *mut StackT, old);
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
         }
     }
 
     // Set the new stack if provided
     if ss_ptr != 0 && ss_ptr < 0x0000_8000_0000_0000 {
         let ss: StackT = unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
             let val = core::ptr::read_volatile(ss_ptr as *const StackT);
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
             val
         };
 
@@ -486,9 +486,9 @@ pub fn read_sigset(ptr: usize) -> Option<SigSet> {
     }
 
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         let sigset = core::ptr::read_volatile(ptr as *const SigSet);
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
         Some(sigset)
     }
 }

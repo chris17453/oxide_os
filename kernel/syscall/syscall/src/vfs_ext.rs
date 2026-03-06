@@ -54,7 +54,7 @@ pub fn sys_faccessat(dirfd: i32, path_ptr: u64, path_len: usize, _mode: i32) -> 
     }
 
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
 
     // — ColdCipher: kernel-owned copy — TOCTOU closed.
@@ -62,7 +62,7 @@ pub fn sys_faccessat(dirfd: i32, path_ptr: u64, path_len: usize, _mode: i32) -> 
         Some(p) => p,
         None => {
             unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             return errno::EFAULT;
         }
@@ -70,7 +70,7 @@ pub fn sys_faccessat(dirfd: i32, path_ptr: u64, path_len: usize, _mode: i32) -> 
     let path = resolve_path(&raw_path);
 
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     match GLOBAL_VFS.lookup(&path) {
@@ -102,7 +102,7 @@ pub fn sys_utimensat(dirfd: i32, path_ptr: u64, path_len: usize, times_ptr: u64)
     }
 
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
 
     // — ColdCipher: kernel-owned copy — TOCTOU closed.
@@ -110,7 +110,7 @@ pub fn sys_utimensat(dirfd: i32, path_ptr: u64, path_len: usize, times_ptr: u64)
         Some(p) => p,
         None => {
             unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             return errno::EFAULT;
         }
@@ -122,7 +122,7 @@ pub fn sys_utimensat(dirfd: i32, path_ptr: u64, path_len: usize, times_ptr: u64)
     } else {
         if !validate_user_buffer(times_ptr, core::mem::size_of::<[Timespec; 2]>()) {
             unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             return errno::EFAULT;
         }
@@ -149,7 +149,7 @@ pub fn sys_utimensat(dirfd: i32, path_ptr: u64, path_len: usize, times_ptr: u64)
     };
 
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
     result
 }
@@ -166,11 +166,11 @@ pub fn sys_futimens(fd: i32, times_ptr: u64) -> i64 {
         (None, None)
     } else {
         unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
         }
         if !validate_user_buffer(times_ptr, core::mem::size_of::<[Timespec; 2]>()) {
             unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             return errno::EFAULT;
         }
@@ -186,7 +186,7 @@ pub fn sys_futimens(fd: i32, times_ptr: u64) -> i64 {
             Some(times[1].tv_sec as u64)
         };
         unsafe {
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
         }
         (a, m)
     };
@@ -214,14 +214,14 @@ pub fn sys_readv(fd: i32, iov_ptr: u64, iovcnt: i32) -> i64 {
 
     // Copy IoVec array from user space to kernel to avoid STAC/CLAC nesting
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
     let iovs: Vec<IoVec> = unsafe {
         let src = core::slice::from_raw_parts(iov_ptr as *const IoVec, iovcnt);
         src.to_vec()
     };
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     let mut total: i64 = 0;
@@ -258,14 +258,14 @@ pub fn sys_writev(fd: i32, iov_ptr: u64, iovcnt: i32) -> i64 {
 
     // Copy IoVec array from user space to kernel
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
     let iovs: Vec<IoVec> = unsafe {
         let src = core::slice::from_raw_parts(iov_ptr as *const IoVec, iovcnt);
         src.to_vec()
     };
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     let mut total: i64 = 0;
@@ -318,7 +318,7 @@ pub fn sys_pread64(fd: i32, buf: u64, count: usize, offset: i64) -> i64 {
     }
 
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
     let buffer = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, count) };
     let result = match file.read(buffer) {
@@ -326,7 +326,7 @@ pub fn sys_pread64(fd: i32, buf: u64, count: usize, offset: i64) -> i64 {
         Err(e) => vfs_error_to_errno(e),
     };
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     // Restore original position
@@ -358,7 +358,7 @@ pub fn sys_pwrite64(fd: i32, buf: u64, count: usize, offset: i64) -> i64 {
     }
 
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
     let buffer = unsafe { core::slice::from_raw_parts(buf as *const u8, count) };
     let result = match file.write(buffer) {
@@ -366,7 +366,7 @@ pub fn sys_pwrite64(fd: i32, buf: u64, count: usize, offset: i64) -> i64 {
         Err(e) => vfs_error_to_errno(e),
     };
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     file.set_position(saved_pos);
@@ -399,7 +399,7 @@ pub fn sys_truncate(path_ptr: u64, path_len: usize, length: i64) -> i64 {
     }
 
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
 
     // — ColdCipher: kernel-owned copy — TOCTOU closed.
@@ -407,7 +407,7 @@ pub fn sys_truncate(path_ptr: u64, path_len: usize, length: i64) -> i64 {
         Some(p) => p,
         None => {
             unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             return errno::EFAULT;
         }
@@ -415,7 +415,7 @@ pub fn sys_truncate(path_ptr: u64, path_len: usize, length: i64) -> i64 {
     let path = resolve_path(&raw_path);
 
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     let vnode = match GLOBAL_VFS.lookup(&path) {
@@ -462,17 +462,17 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
     // Handle offset pointer: if non-null, seek in_fd to that offset
     if offset_ptr != 0 {
         unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
         }
         if !validate_user_buffer(offset_ptr, 8) {
             unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             return errno::EFAULT;
         }
         let off = unsafe { *(offset_ptr as *const i64) };
         unsafe {
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
         }
         if off < 0 {
             return errno::EINVAL;
@@ -509,9 +509,9 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
                         // Update offset and return partial
                         if offset_ptr != 0 {
                             unsafe {
-                                core::arch::asm!("stac", options(nomem, nostack));
+                                core::arch::asm!("stac", options(nostack));
                                 *(offset_ptr as *mut i64) = in_file.position() as i64;
-                                core::arch::asm!("clac", options(nomem, nostack));
+                                core::arch::asm!("clac", options(nostack));
                             }
                         }
                         return total as i64;
@@ -526,9 +526,9 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
     // Update offset pointer if provided
     if offset_ptr != 0 {
         unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
             *(offset_ptr as *mut i64) = in_file.position() as i64;
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
         }
     }
 
@@ -588,9 +588,9 @@ pub fn sys_copy_file_range(
             return errno::EFAULT;
         }
         unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
             let off = *(off_in_ptr as *const i64);
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
             let _ = in_file.seek(SeekFrom::Start(off as u64));
         }
     }
@@ -601,9 +601,9 @@ pub fn sys_copy_file_range(
             return errno::EFAULT;
         }
         unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
             let off = *(off_out_ptr as *const i64);
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
             let _ = out_file.seek(SeekFrom::Start(off as u64));
         }
     }
@@ -647,16 +647,16 @@ pub fn sys_copy_file_range(
     // Update offsets
     if off_in_ptr != 0 {
         unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
             *(off_in_ptr as *mut i64) += total as i64;
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
         }
     }
     if off_out_ptr != 0 {
         unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
             *(off_out_ptr as *mut i64) += total as i64;
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
         }
     }
 
@@ -680,10 +680,10 @@ pub fn sys_preadv(fd: i32, iov_ptr: u64, iovcnt: i32, offset: i64) -> i64 {
 
     for i in 0..iovcnt as usize {
         let iov: IoVec = unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
             let ptr = (iov_ptr as *const IoVec).add(i);
             let val = core::ptr::read_volatile(ptr);
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
             val
         };
 
@@ -725,10 +725,10 @@ pub fn sys_pwritev(fd: i32, iov_ptr: u64, iovcnt: i32, offset: i64) -> i64 {
 
     for i in 0..iovcnt as usize {
         let iov: IoVec = unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
             let ptr = (iov_ptr as *const IoVec).add(i);
             let val = core::ptr::read_volatile(ptr);
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
             val
         };
 
@@ -871,9 +871,9 @@ pub fn sys_epoll_ctl(epfd: i32, op: i32, fd: i32, event_ptr: u64) -> i64 {
             return errno::EFAULT;
         }
         unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
             let ev = core::ptr::read_volatile(event_ptr as *const vfs::epoll::EpollEvent);
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
             Some(ev)
         }
     } else {
@@ -961,12 +961,12 @@ pub fn sys_epoll_wait(epfd: i32, events_ptr: u64, maxevents: i32, _timeout: i32)
         Some(Ok(events)) => {
             let count = events.len();
             unsafe {
-                core::arch::asm!("stac", options(nomem, nostack));
+                core::arch::asm!("stac", options(nostack));
                 let out = events_ptr as *mut vfs::epoll::EpollEvent;
                 for (i, ev) in events.iter().enumerate() {
                     core::ptr::write_volatile(out.add(i), *ev);
                 }
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             count as i64
         }
@@ -1114,7 +1114,7 @@ pub fn sys_statx(
     }
 
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
 
     // — ColdCipher: kernel-owned copy — TOCTOU closed.
@@ -1122,7 +1122,7 @@ pub fn sys_statx(
         Some(p) => p,
         None => {
             unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             return errno::EFAULT;
         }
@@ -1133,7 +1133,7 @@ pub fn sys_statx(
         Ok(n) => n,
         Err(e) => {
             unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             return vfs_error_to_errno(e);
         }
@@ -1143,7 +1143,7 @@ pub fn sys_statx(
         Ok(s) => s,
         Err(e) => {
             unsafe {
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             return vfs_error_to_errno(e);
         }
@@ -1179,7 +1179,7 @@ pub fn sys_statx(
 
     unsafe {
         core::ptr::write_volatile(statxbuf as *mut Statx, statx);
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     0
@@ -1209,9 +1209,9 @@ pub fn sys_openat2(dirfd: i32, path_ptr: u64, path_len: usize, how_ptr: u64, _si
     }
 
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         let how = core::ptr::read_volatile(how_ptr as *const OpenHow);
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
 
         // For now, ignore resolve flags and use regular open
         vfs::sys_open(path_ptr, path_len, how.flags as u32, how.mode as u32)

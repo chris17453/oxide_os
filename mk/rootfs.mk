@@ -52,7 +52,7 @@ boot-image: boot-dir
 # - Partition 2 (root): ext4, mounted at / - OS files
 # - Partition 3 (home): ext4, mounted at /home - user data
 # - /tmp is tmpfs (in-memory)
-create-rootfs: kernel bootloader external-binaries initramfs userspace-std
+create-rootfs: increment-build kernel bootloader pkgmgr-binaries initramfs userspace-std
 	@echo "Creating OXIDE root filesystem disk image..."
 	@echo ""
 	@# Create empty disk image
@@ -116,17 +116,39 @@ create-rootfs: kernel bootloader external-binaries initramfs userspace-std
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/mnt && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/initramfs && \
 	\
-	echo "  Copying binaries..." && \
+	echo "  Copying Rust userspace binaries..." && \
 	[ -f "$(USERSPACE_OUT_RELEASE)/init" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/init" $(TARGET_DIR)/mnt/root/sbin/init || true && \
 	[ -f "$(USERSPACE_OUT_RELEASE)/init" ] && sudo ln -sf /sbin/init $(TARGET_DIR)/mnt/root/init || true && \
 	[ -f "$(USERSPACE_OUT_RELEASE)/esh" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/esh" $(TARGET_DIR)/mnt/root/bin/esh || true && \
 	[ -f "$(USERSPACE_OUT_RELEASE)/esh" ] && sudo ln -sf /bin/esh $(TARGET_DIR)/mnt/root/bin/sh || true && \
 	[ -f "$(USERSPACE_OUT_RELEASE)/getty" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/getty" $(TARGET_DIR)/mnt/root/bin/getty || true && \
 	[ -f "$(USERSPACE_OUT_RELEASE)/login" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/login" $(TARGET_DIR)/mnt/root/bin/login || true && \
-	for prog in gwbasic curses-demo tls-test thread-test ssh sshd rdpd service networkd resolvd journald journalctl evtest argtest vim python $(COREUTILS_BINS) testcolors; do \
+	for prog in gwbasic curses-demo tls-test thread-test ssh sshd rdpd service networkd resolvd journald journalctl evtest argtest $(COREUTILS_BINS) testcolors; do \
 		[ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/$$prog" $(TARGET_DIR)/mnt/root/usr/bin/ || true; \
 	done && \
 	sudo cp userspace/apps/gwbasic/examples/*.bas $(TARGET_DIR)/mnt/root/usr/share/gwbasic/ 2>/dev/null || true; \
+	\
+	echo "  Installing pkgmgr binaries from staging..." && \
+	if [ -f "$(PKGMGR_STAGING)/bin/vim" ]; then \
+		sudo cp $(PKGMGR_STAGING)/bin/vim $(TARGET_DIR)/mnt/root/usr/bin/vim && \
+		sudo ln -sf vim $(TARGET_DIR)/mnt/root/usr/bin/vi && \
+		echo "    vim installed"; \
+	fi && \
+	if [ -f "$(PKGMGR_STAGING)/bin/python" ]; then \
+		sudo cp $(PKGMGR_STAGING)/bin/python $(TARGET_DIR)/mnt/root/usr/bin/python && \
+		echo "    python installed"; \
+	fi && \
+	if [ -d "$(PKGMGR_STAGING)/share/vim" ]; then \
+		sudo mkdir -p $(TARGET_DIR)/mnt/root/usr/share/vim && \
+		sudo cp -r $(PKGMGR_STAGING)/share/vim/* $(TARGET_DIR)/mnt/root/usr/share/vim/ && \
+		echo "    vim runtime installed"; \
+	fi && \
+	if [ -d "$(PKGMGR_STAGING)/lib/python3.13" ]; then \
+		sudo mkdir -p $(TARGET_DIR)/mnt/root/usr/lib/python3.13 && \
+		sudo cp -r $(PKGMGR_STAGING)/lib/python3.13/* $(TARGET_DIR)/mnt/root/usr/lib/python3.13/ && \
+		echo "    python stdlib installed"; \
+	fi && \
+	\
 	echo "  Copying std userspace binaries (if any)..." && \
 	for prog in hello-std oxide-test; do \
 		if [ -f "$(USERSPACE_STD_OUT)/$$prog" ]; then \
@@ -135,9 +157,6 @@ create-rootfs: kernel bootloader external-binaries initramfs userspace-std
 			sudo cp "$(USERSPACE_STD_OUT_RELEASE)/$$prog" $(TARGET_DIR)/mnt/root/usr/bin/ && echo "    Installed $$prog (std-release)"; \
 		fi; \
 	done; \
-	[ -f "$(USERSPACE_OUT_RELEASE)/tls-test" ] && echo "TLS test installed" || true; \
-	[ -f "$(USERSPACE_OUT_RELEASE)/vim" ] && echo "vim installed" || true; \
-	[ -f "$(USERSPACE_OUT_RELEASE)/python" ] && echo "Python installed" || true; \
 	sudo ln -sf /usr/bin/service $(TARGET_DIR)/mnt/root/usr/bin/servicemgr && \
 	sudo ln -sf /usr/bin/service $(TARGET_DIR)/mnt/root/bin/servicemgr && \
 	\

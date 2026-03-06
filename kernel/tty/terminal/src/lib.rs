@@ -1987,7 +1987,7 @@ pub fn write(data: &[u8]) {
 
     // — SableWire: Enable access to user pages (STAC - Supervisor-Mode Access Prevention Clear)
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
 
     // — NeonVale: Snapshot mouse state after write — write() may process escape
@@ -2016,7 +2016,7 @@ pub fn write(data: &[u8]) {
 
     // — SableWire: Disable access to user pages (CLAC)
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     // — NeonVale: Update the ISR-facing mouse state mirror. This lock is
@@ -2124,7 +2124,7 @@ pub fn tick() {
 /// as write() — escape sequences inside data may change mouse mode. — NeonVale
 pub fn write_immediate(data: &[u8]) {
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
 
     // — NeonVale: Capture snapshot after write, release TERMINAL before MOUSE_INPUT.
@@ -2146,7 +2146,7 @@ pub fn write_immediate(data: &[u8]) {
     }; // — NeonVale: TERMINAL released here.
 
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     if let Some((mm, me, cw, ch, cols, rows)) = mouse_snapshot {

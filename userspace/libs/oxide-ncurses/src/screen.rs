@@ -135,7 +135,32 @@ impl OutputBuffer {
     /// -- GlassSignal: Single write syscall for the entire frame
     fn flush(&mut self) {
         if !self.buf.is_empty() {
-            libc::unistd::write(1, &self.buf);
+            // Writes to TTY/PTY can be partial; pushing only once can truncate
+            // ANSI sequences mid-frame and corrupt rendering. Drain the buffer.
+            let mut written = 0usize;
+            let mut stalls = 0u32;
+            while written < self.buf.len() {
+                let n = libc::unistd::write(1, &self.buf[written..]);
+                if n > 0 {
+                    written = written.saturating_add(n as usize);
+                    stalls = 0;
+                    continue;
+                }
+
+                // Retry transient short-write conditions.
+                // -EINTR = -4, -EAGAIN = -11 in this libc/syscall ABI.
+                if n == 0 || n == -4 || n == -11 {
+                    stalls = stalls.saturating_add(1);
+                    if stalls > 1024 {
+                        break;
+                    }
+                    libc::unistd::sched_yield();
+                    continue;
+                }
+
+                // Hard error: stop retrying this frame.
+                break;
+            }
             self.buf.clear();
             // — GlassSignal: Buffered write ain't worth jack til you flush it. Without this,
             // ncurses output sits in libc's stdout buffer til newline/256 bytes — demo ran at

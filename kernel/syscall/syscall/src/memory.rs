@@ -171,7 +171,7 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
         }
 
         unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
         }
 
         // Read file data into the mapped region
@@ -188,7 +188,7 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
             Err(_) => {
                 // Failed to read - unmap and return error
                 unsafe {
-                    core::arch::asm!("clac", options(nomem, nostack));
+                    core::arch::asm!("clac", options(nostack));
                 }
                 let _ = sys_munmap(map_addr, length);
                 return errno::EIO;
@@ -196,7 +196,7 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
         }
 
         unsafe {
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
         }
 
         // Note: MAP_SHARED vs MAP_PRIVATE handling
@@ -250,9 +250,23 @@ pub fn sys_munmap(addr: u64, length: u64) -> i64 {
         // which leaked every single unmapped frame permanently. Every munmap() call
         // was a slow death by a thousand frame leaks. COW-aware logic: decrement
         // the tracker first — only free to buddy if we're the last owner.
+        mm_pagedb::set_free_context(mm_pagedb::CTX_MUNMAP);
         for i in 0..num_pages {
             let page_addr = VirtAddr::new(addr + (i as u64 * 0x1000));
             if let Ok(phys) = m.address_space.unmap_user_page(page_addr) {
+                // — WireSaint: Guard against freeing frames that are already
+                // back in the buddy free list. If the pagedb says FREE+rc=0,
+                // the PTE was stale — the frame was freed by another path
+                // (buddy coalescing reuse, exec cleanup, etc.). Calling
+                // cow.decrement would create a stale BTreeMap entry, and
+                // free_frame would corrupt the buddy free list.
+                if let Some(db) = mm_pagedb::try_pagedb() {
+                    if let Some(pf) = db.get(phys) {
+                        if pf.flags() == mm_pagedb::PF_FREE && pf.refcount() == 0 {
+                            continue;
+                        }
+                    }
+                }
                 let remaining = cow.decrement(phys);
                 if remaining == 0 {
                     allocator.free_frame(phys);
@@ -490,6 +504,7 @@ pub fn sys_brk(addr: u64) -> i64 {
         let cow = cow_tracker();
         let allocator = mm();
 
+        mm_pagedb::set_free_context(mm_pagedb::CTX_BRK_SHRINK);
         for i in 0..num_pages {
             let virt = VirtAddr::new(new_break + (i as u64 * page_size));
             if let Ok(phys) = m.address_space.unmap_user_page(virt) {

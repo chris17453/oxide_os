@@ -11,6 +11,7 @@ extern crate alloc;
 
 use alloc::sync::Arc;
 use arch_x86_64 as arch;
+use core::sync::atomic::{AtomicU32, Ordering};
 use mm_paging::phys_to_virt;
 use os_core::PhysAddr;
 use proc::ProcessMeta;
@@ -18,6 +19,19 @@ use sched::{self, SchedPolicy, Task, TaskState};
 use signal::delivery::{SignalResult, determine_action};
 use spin::Mutex;
 use vfs;
+
+// Throttled SMP scheduler diagnostics (ISR-safe raw serial writes).
+static SDBG_RQ_LOCK_BUSY: AtomicU32 = AtomicU32::new(0);
+static SDBG_SAME_PID: AtomicU32 = AtomicU32::new(0);
+static SDBG_TXN_FAIL: AtomicU32 = AtomicU32::new(0);
+static SDBG_IDLE_SNAPSHOT: AtomicU32 = AtomicU32::new(0);
+static SDBG_SIG_MASKED: AtomicU32 = AtomicU32::new(0);
+
+#[inline]
+fn sdbg_should_log(counter: &AtomicU32) -> bool {
+    let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
+    n <= 32 || (n & 0x3f) == 0
+}
 
 /// Interrupt stack frame layout
 /// Matches what timer_interrupt pushes in exceptions.rs
@@ -604,6 +618,56 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
             }
             } // — end match meta_arc.try_lock()
         }
+    } else if current_pid > 1 {
+        // Kernel-mode fallback: if a default-fatal signal is pending while the task
+        // is stuck in syscall/kernel loops, consume it and kill immediately.
+        // We cannot run user handlers from kernel mode here.
+        if let Some(meta_arc) = sched::try_get_task_meta(current_pid) {
+            if let Some(mut meta) = meta_arc.try_lock() {
+                if meta.has_pending_signals() {
+                    let signal_mask = meta.signal_mask;
+                    let deliverable = meta.pending_signals.set().difference(&signal_mask);
+                    if let Some(signo) = deliverable.first() {
+                        let pending = signal::PendingSignal {
+                            signo,
+                            info: meta.pending_signals.get_info(signo).copied(),
+                        };
+                        let action = if signo >= 1 && signo <= signal::NSIG as i32 {
+                            meta.sigactions[(signo - 1) as usize]
+                        } else {
+                            signal::SigAction::new()
+                        };
+                        let result = determine_action(&pending, &action, &signal_mask);
+
+                        if matches!(result, SignalResult::Terminate | SignalResult::CoreDump) {
+                            // Consume the specific signal now that we're committing.
+                            let _ = meta.pending_signals.remove(signo);
+                            // Close fds before zombifying to avoid pipe writer deadlocks.
+                            meta.fd_table = vfs::FdTable::new();
+                            meta.shared_fd_table = None;
+                            drop(meta);
+
+                            unsafe {
+                                os_log::write_str_raw("[ISR-SIG-K] TERMINATE p=");
+                                os_log::write_u32_raw(current_pid);
+                                os_log::write_str_raw(" sig=");
+                                os_log::write_u32_raw(signo as u32);
+                                os_log::write_str_raw("\n");
+                            }
+
+                            let exit_status = signo & 0x7F;
+                            sched::set_task_exit_status(current_pid, exit_status);
+                            if let Some(ppid) = sched::get_task_ppid(current_pid) {
+                                if ppid > 0 {
+                                    sched::try_wake_up(ppid);
+                                }
+                            }
+                            sched::set_need_resched();
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // — GraveShift: Linux-model preempt_count check. preemptable() returns true
@@ -722,6 +786,21 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     // Attempting with_rq here would deadlock the ISR forever. Bail and retry
     // on the next tick — the interrupted code will release the lock and complete.
     if !sched::rq_lock_available() {
+        if sdbg_should_log(&SDBG_RQ_LOCK_BUSY) {
+            unsafe {
+                arch_x86_64::serial::write_str_unsafe("[SDBG] rq_lock_busy cpu=");
+                arch_x86_64::serial::write_u32_unsafe(sched::this_cpu());
+                arch_x86_64::serial::write_str_unsafe(" pid=");
+                arch_x86_64::serial::write_u32_unsafe(current_pid);
+                arch_x86_64::serial::write_str_unsafe(" cs=0x");
+                arch_x86_64::serial::write_u64_hex_unsafe(frame.cs);
+                arch_x86_64::serial::write_str_unsafe(" pc=");
+                arch_x86_64::serial::write_u32_unsafe(preempt_count_val as u32);
+                arch_x86_64::serial::write_str_unsafe(" need=");
+                arch_x86_64::serial::write_u32_unsafe(if sched::need_resched() { 1 } else { 0 });
+                arch_x86_64::serial::write_str_unsafe("\n");
+            }
+        }
         return current_rsp;
     }
 
@@ -729,6 +808,49 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     let next_pid = pick_next_process(current_pid);
 
     if next_pid == current_pid {
+        if sdbg_should_log(&SDBG_SAME_PID) {
+            unsafe {
+                arch_x86_64::serial::write_str_unsafe("[SDBG] no_switch cpu=");
+                arch_x86_64::serial::write_u32_unsafe(sched::this_cpu());
+                arch_x86_64::serial::write_str_unsafe(" pid=");
+                arch_x86_64::serial::write_u32_unsafe(current_pid);
+                arch_x86_64::serial::write_str_unsafe(" cs=0x");
+                arch_x86_64::serial::write_u64_hex_unsafe(frame.cs);
+                arch_x86_64::serial::write_str_unsafe(" need=");
+                arch_x86_64::serial::write_u32_unsafe(if sched::need_resched() { 1 } else { 0 });
+                arch_x86_64::serial::write_str_unsafe("\n");
+            }
+        }
+        // If BSP is idling with no resched, dump all CPU runqueue heads.
+        // This exposes "tasks stranded on AP" vs "all queues empty" instantly.
+        if current_pid == 0 && sched::this_cpu() == 0 && sdbg_should_log(&SDBG_IDLE_SNAPSHOT) {
+            let ncpus = sched::num_cpus();
+            for c in 0..ncpus {
+                unsafe {
+                    arch_x86_64::serial::write_str_unsafe("[SDBG] cpu=");
+                    arch_x86_64::serial::write_u32_unsafe(c);
+                    arch_x86_64::serial::write_str_unsafe(" state=");
+                }
+                if let Some((curr, nr_running, cfs_count, rt_count)) = sched::try_debug_state_cpu(c) {
+                    let curr_pid: u32 = curr.unwrap_or(u32::MAX);
+                    unsafe {
+                        arch_x86_64::serial::write_str_unsafe("curr=");
+                        arch_x86_64::serial::write_u32_unsafe(curr_pid);
+                        arch_x86_64::serial::write_str_unsafe(" nr=");
+                        arch_x86_64::serial::write_u32_unsafe(nr_running);
+                        arch_x86_64::serial::write_str_unsafe(" cfs=");
+                        arch_x86_64::serial::write_u32_unsafe(cfs_count);
+                        arch_x86_64::serial::write_str_unsafe(" rt=");
+                        arch_x86_64::serial::write_u32_unsafe(rt_count);
+                        arch_x86_64::serial::write_str_unsafe("\n");
+                    }
+                } else {
+                    unsafe {
+                        arch_x86_64::serial::write_str_unsafe("LOCKED\n");
+                    }
+                }
+            }
+        }
         // Nothing to switch to — clear need_resched so we don't repeat the
         // expensive pick_next_task path on every tick for no reason.
         // A future wake_up() or block_current() will set it again when needed.
@@ -817,7 +939,24 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         preempt_count_val,
     ) {
         Some(info) => info,
-        None => return current_rsp, // Lock contended or task not found — retry next tick
+        None => {
+            if sdbg_should_log(&SDBG_TXN_FAIL) {
+                unsafe {
+                    arch_x86_64::serial::write_str_unsafe("[SDBG] txn_fail cpu=");
+                    arch_x86_64::serial::write_u32_unsafe(sched::this_cpu());
+                    arch_x86_64::serial::write_str_unsafe(" old=");
+                    arch_x86_64::serial::write_u32_unsafe(current_pid);
+                    arch_x86_64::serial::write_str_unsafe(" new=");
+                    arch_x86_64::serial::write_u32_unsafe(next_pid);
+                    arch_x86_64::serial::write_str_unsafe(" cs=0x");
+                    arch_x86_64::serial::write_u64_hex_unsafe(frame.cs);
+                    arch_x86_64::serial::write_str_unsafe(" pc=");
+                    arch_x86_64::serial::write_u32_unsafe(preempt_count_val as u32);
+                    arch_x86_64::serial::write_str_unsafe("\n");
+                }
+            }
+            return current_rsp;
+        } // Lock contended or task not found — retry next tick
     };
 
     // — GraveShift: Clear the outgoing task's preempt_count on this CPU.
@@ -925,6 +1064,17 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         // run on the kernel PML4 directly. Reading phys 0x0 + 256*8 gives garbage
         // and false-positives the corruption detector, killing PID 0 and freezing
         // the entire system. Don't shoot the idle loop.
+        // — CrashBloom: CR3=0 is only valid for idle tasks (PID 0). Any user
+        // task with cr3=0 has an uninitialized/freed address space — loading it
+        // triple-faults instantly because phys 0x0 has no valid page tables.
+        if switch_info.new_cr3 == 0 && next_pid != 0 {
+            os_log::write_str_raw("[PML4-NULL] pid=");
+            os_log::write_u32_raw(next_pid);
+            os_log::write_str_raw(" has cr3=0! Uninitialized or freed address space — SKIPPING\n");
+            sched::set_task_exit_status(next_pid, 139);
+            sched::set_need_resched();
+            return current_rsp;
+        }
         if golden != 0 && switch_info.new_cr3 != 0 {
             let target_pml4_virt = mm_paging::phys_to_virt(PhysAddr::new(switch_info.new_cr3));
             let target_entry = core::ptr::read_volatile(
@@ -932,7 +1082,6 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
             );
             if target_entry != golden {
                 // — CrashBloom: CORRUPTION DETECTED! Log everything and skip the switch.
-                // Without this check we'd triple-fault with zero diagnostic output.
                 os_log::write_str_raw("[PML4-CORRUPT] pid=");
                 os_log::write_u32_raw(next_pid);
                 os_log::write_str_raw(" cr3=0x");
@@ -943,7 +1092,6 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
                 os_log::write_u64_hex_raw(golden);
                 os_log::write_str_raw(" — SKIPPING SWITCH, killing task\n");
 
-                // Also check PML4 frame itself — is it a freed buddy block?
                 let pml4_first = core::ptr::read_volatile(
                     target_pml4_virt.as_ptr::<u64>()
                 );
@@ -951,8 +1099,7 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
                     os_log::write_str_raw("[PML4-CORRUPT] PML4 frame IS a FreeBlock! USE-AFTER-FREE!\n");
                 }
 
-                // Kill the corrupted task so we don't keep trying to switch to it
-                sched::set_task_exit_status(next_pid, 139); // SIGSEGV-style exit
+                sched::set_task_exit_status(next_pid, 139);
                 sched::set_need_resched();
                 return current_rsp;
             }
@@ -960,8 +1107,17 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     }
 
     // Switch page tables
+    // — GraveShift: CR3=0 means idle/kernel task — load the kernel PML4 instead
+    // of writing literal 0 into CR3 (which triple-faults since phys 0x0 has no
+    // valid page tables). This was THE crash bug: scheduler would preempt a user
+    // task, pick idle, write CR3=0, and die on the next instruction fetch.
     unsafe {
-        core::arch::asm!("mov cr3, {}", in(reg) switch_info.new_cr3);
+        let target_cr3 = if switch_info.new_cr3 == 0 {
+            crate::globals::KERNEL_PML4
+        } else {
+            switch_info.new_cr3
+        };
+        core::arch::asm!("mov cr3, {}", in(reg) target_cr3);
     }
 
     // Restore FS base MSR for next process (TLS support)
@@ -1412,8 +1568,28 @@ pub fn check_signals_on_syscall_return() {
         }
     };
 
+    // Distinguish "no pending at all" vs "pending but masked/ignored" so Ctrl+C
+    // deadlocks don't vanish silently in logs.
+    let pending_set = meta.pending_signals.set();
+    if pending_set.is_empty() {
+        return;
+    }
+
     // Check if there are any deliverable signals
     if !meta.has_pending_signals() {
+        if sdbg_should_log(&SDBG_SIG_MASKED) {
+            let first = pending_set.first().unwrap_or(0);
+            let blocked = first > 0 && meta.signal_mask.contains(first);
+            unsafe {
+                os_log::write_str_raw("[SIGCHK-BLOCK] p=");
+                os_log::write_u32_raw(current_pid);
+                os_log::write_str_raw(" first=");
+                os_log::write_u32_raw(first as u32);
+                os_log::write_str_raw(" blocked=");
+                os_log::write_str_raw(if blocked { "YES" } else { "NO" });
+                os_log::write_str_raw("\n");
+            }
+        }
         return;
     }
 

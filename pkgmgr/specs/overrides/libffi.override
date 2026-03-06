@@ -1,0 +1,15 @@
+# libffi Build Override for OXIDE OS
+# — TorqueJax: "libffi does weird out-of-tree builds. We just need the .a and the headers."
+
+CONFIGURE_FLAGS="
+  --disable-docs
+  --disable-multi-os-directory
+"
+
+# Extra CFLAGS
+EXTRA_CFLAGS="-DOXIDE_OS"
+
+# Post-build hook
+post_build() {
+    echo "libffi built for OXIDE"
+}

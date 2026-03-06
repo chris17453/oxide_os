@@ -51,6 +51,14 @@ impl CowTracker {
         let mut counts = self.counts.write();
         let count = counts.entry(frame).or_insert(1);
         *count += 1;
+
+        // — SableWire: Mirror refcount to page frame database
+        if let Some(db) = mm_pagedb::try_pagedb() {
+            db.ref_inc(phys);
+            if let Some(pf) = db.get(phys) {
+                pf.set_flag(mm_pagedb::PF_COW);
+            }
+        }
     }
 
     /// Decrement reference count for a frame
@@ -58,6 +66,12 @@ impl CowTracker {
     /// Called when a process no longer references a frame.
     /// Returns the new reference count.
     /// If count reaches 0, removes the entry.
+    ///
+    /// — ColdCipher: Stale entry guard — if the pagedb shows the frame as
+    /// already FREE, the BTreeMap entry is a ghost. Remove it without calling
+    /// ref_dec (which would underflow and cascade into DoubleFree). This happens
+    /// when a frame is freed through a non-COW path (munmap, exec cleanup) but
+    /// the BTreeMap wasn't updated.
     pub fn decrement(&self, phys: PhysAddr) -> u32 {
         let frame = phys.as_usize() / FRAME_SIZE;
         let mut counts = self.counts.write();
@@ -68,6 +82,38 @@ impl CowTracker {
 
             if new_count == 0 {
                 counts.remove(&frame);
+            }
+
+            // — SableWire: Mirror decrement to page frame database.
+            // But first check if the frame is still alive and still a data page.
+            // Guard 1: if already freed (PF_FREE, rc=0), skip ref_dec to prevent underflow.
+            // Guard 2: if recycled as a PT structure (PF_PAGETABLE), this BTreeMap
+            // entry is stale — the frame was freed, returned to buddy, and re-allocated
+            // as a page table by a later fork. PT frames are NEVER COW-shared.
+            // Decrementing their refcount cascades into RefcountUnderflow and then
+            // DoubleFree when their actual owner's Drop tries to free them.
+            if let Some(db) = mm_pagedb::try_pagedb() {
+                if let Some(pf) = db.get(phys) {
+                    let flags = pf.flags();
+                    if flags == mm_pagedb::PF_FREE && pf.refcount() == 0 {
+                        // — ColdCipher: Stale entry. Frame was freed elsewhere.
+                        // BTreeMap is cleaned up above. Don't touch pagedb.
+                        return new_count;
+                    }
+                    if flags & mm_pagedb::PF_PAGETABLE != 0 {
+                        // — WireSaint: Frame was recycled as a PT structure.
+                        // This BTreeMap entry is a ghost from when the frame was
+                        // a user data page. Purge it silently — the PT frame's
+                        // owner manages its refcount through mark_pagetable/mark_free.
+                        return new_count;
+                    }
+                }
+                db.ref_dec(phys);
+                if new_count <= 1 {
+                    if let Some(pf) = db.get(phys) {
+                        pf.clear_flag(mm_pagedb::PF_COW);
+                    }
+                }
             }
 
             new_count
@@ -136,12 +182,48 @@ impl CowTracker {
                 // — ColdCipher: We're the last one holding this frame. Remove
                 // the tracker entry entirely — no one else has a reference.
                 counts.remove(&frame);
+
+                // — SableWire: Claiming exclusive ownership — do NOT ref_dec.
+                // The frame transitions from COW-shared to single-owner. The
+                // pagedb refcount should stay at 1 (one live owner). If we
+                // decremented here, rc would drop to 0 while the frame is
+                // still mapped and in use. Then a subsequent fork() would
+                // ref_inc from 0→1 while BTreeMap goes 0→2, creating a
+                // desync that cascades into RefcountUnderflow on every
+                // downstream decrement. Just clear the COW flag.
+                if let Some(db) = mm_pagedb::try_pagedb() {
+                    if let Some(pf) = db.get(phys) {
+                        pf.clear_flag(mm_pagedb::PF_COW);
+                    }
+                }
+
                 true
             }
             Some(count) => {
                 // — ColdCipher: Still shared. Decrement our reference and tell
                 // the caller to copy. The frame stays tracked for other owners.
                 *count -= 1;
+
+                // — SableWire: Mirror decrement to pagedb. Guard against stale
+                // and recycled entries — same logic as decrement() above.
+                if let Some(db) = mm_pagedb::try_pagedb() {
+                    let skip = db.get(phys).map_or(false, |pf| {
+                        let flags = pf.flags();
+                        // — ColdCipher: Already freed — stale BTreeMap entry.
+                        (flags == mm_pagedb::PF_FREE && pf.refcount() == 0)
+                        // — WireSaint: Recycled as PT structure — not COW anymore.
+                        || (flags & mm_pagedb::PF_PAGETABLE != 0)
+                    });
+                    if !skip {
+                        db.ref_dec(phys);
+                    }
+                    if *count <= 1 {
+                        if let Some(pf) = db.get(phys) {
+                            pf.clear_flag(mm_pagedb::PF_COW);
+                        }
+                    }
+                }
+
                 false
             }
             None => {

@@ -1,0 +1,33 @@
+# readline Build Override for OXIDE OS
+# — NeonRoot: "readline needs ncurses in the sysroot and doesn't like shared libs."
+
+CONFIGURE_FLAGS="
+  --with-curses
+  --disable-install-examples
+  bash_cv_wcwidth_broken=no
+  bash_cv_func_sigsetjmp=present
+  bash_cv_termcap_lib=libncursesw
+"
+
+# — NeonRoot: "readline's configure can't cross-compile link tests. Force the right values."
+post_configure() {
+    sed -i 's/.*HAVE_SGTTY_H.*/#undef HAVE_SGTTY_H/' config.h
+    sed -i 's/.*HAVE_TERMIO_H.*/#undef HAVE_TERMIO_H/' config.h
+    if ! grep -q 'HAVE_TERMIOS_H' config.h; then
+        echo '#define HAVE_TERMIOS_H 1' >> config.h
+    fi
+    # readline 8.2 bug: readfds declared inside HAVE_PSELECT but used in HAVE_PSELECT||HAVE_SELECT
+    sed -i 's|/\* #undef HAVE_PSELECT \*/|#define HAVE_PSELECT 1|' config.h
+    echo "  -> Forced HAVE_TERMIOS_H, HAVE_PSELECT"
+}
+
+# Extra CFLAGS
+EXTRA_CFLAGS="-DOXIDE_OS"
+
+# Only build the static lib, skip shared and examples
+MAKE_TARGET="static"
+
+# Post-build hook
+post_build() {
+    echo "readline built for OXIDE"
+}

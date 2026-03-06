@@ -14,6 +14,7 @@
 
 use libc::close;
 use libc::dns;
+use libc::signal::{SIG_DFL, SIGINT, SIGQUIT, signal};
 use libc::socket::{
     SOCKADDR_IN_SIZE, af, connect, ipproto, recv, send, sock, sockaddr_in_octets, socket,
 };
@@ -23,7 +24,7 @@ use libc::{eprintlns, getpid, printlns, prints, putchar, strlen};
 const ICMP_ECHO_REQUEST: u8 = 8;
 const ICMP_ECHO_REPLY: u8 = 0;
 const DEFAULT_PACKET_SIZE: usize = 56;
-const DEFAULT_COUNT: u32 = u32::MAX; // Unlimited by default
+const DEFAULT_COUNT: u32 = 4; // Match expected default: send 4 probes then summarize
 const DEFAULT_INTERVAL: u32 = 1; // 1 second
 const DEFAULT_TIMEOUT: u32 = 5; // 5 seconds
 const DEFAULT_TTL: u8 = 64;
@@ -420,6 +421,14 @@ fn main(argc: i32, argv: *const *const u8) -> i32 {
     if !parse_args(argc, argv, &mut config) {
         return 1;
     }
+
+    // Defensive reset: interactive shells may ignore SIGINT/SIGQUIT.
+    // Ping must be interruptible regardless of parent disposition.
+    signal(SIGINT, SIG_DFL);
+    signal(SIGQUIT, SIG_DFL);
+    const SIG_SETMASK: i32 = 2;
+    let empty_mask: u64 = 0;
+    let _ = libc::sys_sigprocmask(SIG_SETMASK, &empty_mask as *const u64, core::ptr::null_mut());
 
     // Resolve target
     let ip = match resolve_hostname(config.target_str()) {

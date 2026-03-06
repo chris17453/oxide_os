@@ -87,9 +87,10 @@ COREUTILS_BINS := $(shell grep -A1 '^\[\[bin\]\]' userspace/coreutils/Cargo.toml
 OXIDE_VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*= *"\([^"]*\)".*/\1/')
 
 # Build number — NT-style auto-incrementing integer
-# — PatchBay: every build gets a unique number, no arguments, no exceptions
-OXIDE_BUILD := $(shell cat build/build-number 2>/dev/null || echo 0)
-OXIDE_FULL_VERSION := $(OXIDE_VERSION).$(OXIDE_BUILD)
+# — PatchBay: use recursive expansion so targets that run after increment-build
+# see the freshly bumped value in the same make invocation.
+OXIDE_BUILD = $(shell cat build/build-number 2>/dev/null || echo 0)
+OXIDE_FULL_VERSION = $(OXIDE_VERSION).$(OXIDE_BUILD)
 
 # Disk image configuration for root filesystem
 ROOTFS_IMAGE := $(TARGET_DIR)/oxide-disk.img

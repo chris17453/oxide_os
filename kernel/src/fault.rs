@@ -334,6 +334,13 @@ fn handle_stack_growth(page_addr: u64, pml4_phys: PhysAddr) -> bool {
         core::ptr::write_bytes(data_virt.as_mut_ptr::<u8>(), 0, 4096);
     }
 
+    // — GraveShift: Mark data frame in page frame database as mapped user page
+    if let Some(db) = mm_pagedb::try_pagedb() {
+        if let Some(pf) = db.get(data_frame) {
+            pf.set_flags(mm_pagedb::PF_ALLOCATED | mm_pagedb::PF_MAPPED);
+        }
+    }
+
     // -- GraveShift: Map with PRESENT | WRITABLE | USER | NO_EXECUTE --
     // Stack data is never executable. NX bit keeps us honest.
     let data_flags = PageTableFlags::PRESENT

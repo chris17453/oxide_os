@@ -12,7 +12,21 @@ CONFIGURE_FLAGS="
   --disable-python3interp
   --disable-rubyinterp
   --disable-luainterp
-  --with-tlib=ncurses
+  --disable-perlinterp
+  --disable-tclinterp
+  --disable-cscope
+  --disable-xsmp
+  --disable-xim
+  --without-x
+  --disable-selinux
+  --disable-sysmouse
+  --with-tlib=ncursesw
+  vim_cv_toupper_strstrstr=yes
+  vim_cv_terminfo=yes
+  vim_cv_tgetent=zero
+  vim_cv_getcwd_broken=no
+  vim_cv_stat_ignores_slash=no
+  vim_cv_memmove_handles_overlap=yes
 "
 
 # Extra CFLAGS
@@ -21,15 +35,28 @@ EXTRA_CFLAGS="-DOXIDE_OS"
 # Pre-build hook
 pre_build() {
     echo "Applying OXIDE-specific patches for vim..."
-    
-    # Set default vimrc location
     export VIMRUNTIMEDIR=/usr/share/vim
+}
+
+# — SoftGlyph: "Vim 9.2 hardcodes wayland. post_configure nukes it from config.h AND config.mk after configure runs."
+post_configure() {
+    cd src
+    sed -i '/FEAT_WAYLAND/d' auto/config.h
+    sed -i '/HAVE_WAYLAND/d' auto/config.h
+    sed -i '/WANT_WAYLAND/d' auto/config.h
+    sed -i 's/^WAYLAND_LIBS.*/WAYLAND_LIBS =/' auto/config.mk
+    sed -i 's/^WAYLAND_SRC.*/WAYLAND_SRC =/' auto/config.mk
+    sed -i 's/^WAYLAND_OBJ.*/WAYLAND_OBJ =/' auto/config.mk
+    sed -i 's/^WAYLAND_CFLAGS.*/WAYLAND_CFLAGS =/' auto/config.mk
+    sed -i 's/^WAYLAND_CPPFLAGS.*/WAYLAND_CPPFLAGS =/' auto/config.mk
+    echo "  -> Wayland nuked from config.h and config.mk"
+    cd ..
 }
 
 # Post-build hook
 post_build() {
     echo "Vim built successfully for OXIDE"
-    
+
     # Create minimal vimrc
     mkdir -p install/etc
     cat > install/etc/vimrc <<'VIMRC'
@@ -41,4 +68,5 @@ set background=dark
 VIMRC
 }
 
-# — SoftGlyph: "Vim on OXIDE... stripped down but still got that text-editing magic."
+# — SoftGlyph: "Vim's install target is 'just a suggestion' when cross-compiling. Manual install it is."
+CUSTOM_INSTALL_CMD="mkdir -p $DESTDIR/usr/bin $DESTDIR/usr/share/vim/vim92 $DESTDIR/etc && cp src/vim $DESTDIR/usr/bin/vim && ln -sf vim $DESTDIR/usr/bin/vi && cp -r runtime/syntax $DESTDIR/usr/share/vim/vim92/ && cp -r runtime/doc $DESTDIR/usr/share/vim/vim92/ && cp -r runtime/colors $DESTDIR/usr/share/vim/vim92/ && cp -r runtime/indent $DESTDIR/usr/share/vim/vim92/ && cp -r runtime/ftplugin $DESTDIR/usr/share/vim/vim92/ && cp runtime/filetype.vim $DESTDIR/usr/share/vim/vim92/ && cp runtime/defaults.vim $DESTDIR/usr/share/vim/vim92/"

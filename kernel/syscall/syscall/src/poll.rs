@@ -154,12 +154,12 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
     let mut fds: Vec<PollFd> = Vec::with_capacity(nfds);
 
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         let ptr = fds_ptr as *const PollFd;
         for i in 0..nfds {
             fds.push(core::ptr::read_volatile(ptr.add(i)));
         }
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     // Calculate deadline
@@ -199,12 +199,12 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
         if ready_count > 0 {
             // Write results back to userspace
             unsafe {
-                core::arch::asm!("stac", options(nomem, nostack));
+                core::arch::asm!("stac", options(nostack));
                 let ptr = fds_ptr as *mut PollFd;
                 for (i, pollfd) in fds.iter().enumerate() {
                     core::ptr::write_volatile(ptr.add(i), *pollfd);
                 }
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             return ready_count;
         }
@@ -214,12 +214,12 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
         if current_ticks >= deadline_ticks {
             // Timeout - write back results (all zero revents) and return 0
             unsafe {
-                core::arch::asm!("stac", options(nomem, nostack));
+                core::arch::asm!("stac", options(nostack));
                 let ptr = fds_ptr as *mut PollFd;
                 for (i, pollfd) in fds.iter().enumerate() {
                     core::ptr::write_volatile(ptr.add(i), *pollfd);
                 }
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             return 0;
         }
@@ -262,10 +262,10 @@ pub fn sys_ppoll(fds_ptr: usize, nfds: usize, timeout_ptr: usize, sigmask_ptr: u
         -1 // Infinite
     } else {
         let ts: Timespec = unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
             let tp = timeout_ptr as *const Timespec;
             let val = core::ptr::read_volatile(tp);
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
             val
         };
 
@@ -377,7 +377,7 @@ pub fn sys_select(
     let mut exceptfds = FdSet::new();
 
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
 
         if readfds_ptr != 0 {
             readfds = core::ptr::read_volatile(readfds_ptr as *const FdSet);
@@ -389,7 +389,7 @@ pub fn sys_select(
             exceptfds = core::ptr::read_volatile(exceptfds_ptr as *const FdSet);
         }
 
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     // Read timeout
@@ -397,9 +397,9 @@ pub fn sys_select(
         -1i32 // Infinite
     } else {
         unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
             let tv = core::ptr::read_volatile(timeout_ptr as *const time::Timeval);
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
 
             if tv.tv_sec < 0 || tv.tv_usec < 0 {
                 return errno::EINVAL;
@@ -501,7 +501,7 @@ pub fn sys_select(
         if ready_count > 0 || get_ticks() >= deadline_ticks {
             // Write results back to userspace
             unsafe {
-                core::arch::asm!("stac", options(nomem, nostack));
+                core::arch::asm!("stac", options(nostack));
 
                 if readfds_ptr != 0 {
                     core::ptr::write_volatile(readfds_ptr as *mut FdSet, result_read);
@@ -513,7 +513,7 @@ pub fn sys_select(
                     core::ptr::write_volatile(exceptfds_ptr as *mut FdSet, result_except);
                 }
 
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
 
             return ready_count;
@@ -564,10 +564,10 @@ pub fn sys_pselect6(
     }
 
     let ts: Timespec = unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         let tp = timeout_ptr as *const Timespec;
         let val = core::ptr::read_volatile(tp);
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
         val
     };
 
@@ -597,7 +597,7 @@ pub fn sys_pselect6(
     let mut exceptfds = FdSet::new();
 
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         if readfds_ptr != 0 {
             readfds = core::ptr::read_volatile(readfds_ptr as *const FdSet);
         }
@@ -607,7 +607,7 @@ pub fn sys_pselect6(
         if exceptfds_ptr != 0 {
             exceptfds = core::ptr::read_volatile(exceptfds_ptr as *const FdSet);
         }
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     let start_ticks = get_ticks();
@@ -673,7 +673,7 @@ pub fn sys_pselect6(
 
         if ready_count > 0 || get_ticks() >= deadline_ticks {
             unsafe {
-                core::arch::asm!("stac", options(nomem, nostack));
+                core::arch::asm!("stac", options(nostack));
                 if readfds_ptr != 0 {
                     core::ptr::write_volatile(readfds_ptr as *mut FdSet, result_read);
                 }
@@ -683,7 +683,7 @@ pub fn sys_pselect6(
                 if exceptfds_ptr != 0 {
                     core::ptr::write_volatile(exceptfds_ptr as *mut FdSet, result_except);
                 }
-                core::arch::asm!("clac", options(nomem, nostack));
+                core::arch::asm!("clac", options(nostack));
             }
             let res = ready_count;
             if let Some(mask) = old_mask {

@@ -1,7 +1,11 @@
-# — Hexline: Toolchain and external library builds.
+# — Hexline: Toolchain and package manager builds.
 # Cross-compilers, sysroot wrangling, and the dark art of getting C code to link against our kernel.
 
-.PHONY: toolchain install-toolchain test-toolchain clean-toolchain external-libs external-binaries zlib openssl xz zstd cpython tls-test thread-test vim
+.PHONY: toolchain install-toolchain test-toolchain clean-toolchain external-libs pkgmgr-binaries pkgmgr-sysroot-deps pkgmgr-ncurses pkgmgr-readline pkgmgr-vim pkgmgr-python pkgmgr-rebuild-vim pkgmgr-rebuild-python clean-pkgmgr zlib openssl xz zstd tls-test thread-test
+
+# — PulseForge: Stable staging directory for package manager outputs.
+# oxdnf builds go here so the rootfs pipeline has a deterministic path.
+PKGMGR_STAGING := pkgmgr/staging
 
 # Build toolchain components
 toolchain:
@@ -75,12 +79,7 @@ external-libs: toolchain zlib openssl xz zstd
 
 zlib: toolchain
 	@echo "Building zlib..."
-	@./scripts/build-zlib.sh || (echo "Note: zlib test tools failed, but library may be OK" && \
-		cd external/zlib-1.3.1 && \
-		ar rcs libz.a adler32.o crc32.o deflate.o infback.o inffast.o inflate.o inftrees.o trees.o zutil.o compress.o uncompr.o gzclose.o gzlib.o gzread.o gzwrite.o 2>/dev/null && \
-		mkdir -p $(CURDIR)/toolchain/sysroot/lib && \
-		cp libz.a $(CURDIR)/toolchain/sysroot/lib/ && \
-		echo "zlib library installed to sysroot")
+	@./scripts/build-zlib.sh
 
 openssl: toolchain zlib
 	@echo "Building OpenSSL..."
@@ -94,14 +93,6 @@ zstd: toolchain
 	@echo "Building Zstandard..."
 	@./scripts/build-zstd.sh
 
-# CPython cross-compilation
-cpython: toolchain zlib
-	@echo "Building CPython for OXIDE..."
-	@./scripts/build-cpython.sh
-	@mkdir -p $(USERSPACE_OUT_RELEASE)
-	@cp external/cpython-build/python $(USERSPACE_OUT_RELEASE)/python
-	@echo "Python installed to $(USERSPACE_OUT_RELEASE)/python"
-
 # TLS test program
 tls-test: toolchain
 	@echo "Building TLS test program..."
@@ -113,37 +104,112 @@ thread-test: toolchain
 	@toolchain/bin/oxide-cc -o $(USERSPACE_OUT_RELEASE)/thread-test userspace/tests/thread-test.c
 	@echo "Thread test built: $(USERSPACE_OUT_RELEASE)/thread-test"
 
-vim: toolchain
-	@echo "Building vim for OXIDE..."
-	@./scripts/build-vim.sh
-	@mkdir -p $(USERSPACE_OUT_RELEASE)
-	@cp external/vim/src/vim $(USERSPACE_OUT_RELEASE)/vim
-	@strip $(USERSPACE_OUT_RELEASE)/vim
-	@echo "Vim installed to $(USERSPACE_OUT_RELEASE)/vim"
+# — Hexline: Package manager builds via oxdnf.
+# Fetches Fedora SRPMs, cross-compiles with overrides, stages binaries for rootfs.
+# Dependencies (ncurses, readline) are built as sysroot libraries.
+# Applications (vim, python) are staged as userspace binaries.
+#
+# Flow: oxdnf buildsrpm <pkg> → pkgmgr/cache/builds/ → extract to staging/
+#
+# To add a new package:
+#   1. Create pkgmgr/specs/overrides/<pkg>.override
+#   2. Add a target below following the pattern
+#   3. Add the binary name to the install loop in rootfs.mk line ~126
 
-# — GraveShift: Build external binaries (python, vim) if sources exist and binaries are missing.
-# These are optional heavyweight builds — skip if sources aren't cloned or binaries already exist.
-external-binaries: toolchain
-	@echo "Checking external binaries..."
-	@# Build regex library if not present (needed by vim)
-	@if [ ! -f "toolchain/sysroot/lib/libregex.a" ] && [ -d "external/musl-regex" ]; then \
-		echo "  Building libregex..."; \
-		cd external/musl-regex && make AR=ar RANLIB=ranlib 2>&1 | tail -5; \
+# — Hexline: Build sysroot deps first, then applications that link against them.
+pkgmgr-binaries: toolchain pkgmgr-sysroot-deps pkgmgr-vim pkgmgr-python
+	@echo "Package manager binaries staged."
+
+# — Hexline: Sysroot dependencies — ncurses and readline are libraries, not binaries.
+# They install to toolchain/sysroot/ so vim/python can link against them.
+pkgmgr-sysroot-deps: pkgmgr-ncurses pkgmgr-readline
+
+pkgmgr-ncurses: toolchain
+	@if [ -f "toolchain/sysroot/lib/libncursesw.a" ]; then \
+		echo "  ncurses already in sysroot, skipping..."; \
+	else \
+		echo "  Building ncurses via oxdnf..."; \
+		python3 pkgmgr/bin/oxdnf buildsrpm ncurses 2>&1 | tail -5; \
 	fi
-	@# Build cpython if source exists and binary is missing
-	@if [ -d "external/cpython" ] && [ ! -f "$(USERSPACE_OUT_RELEASE)/python" ]; then \
-		echo "  Building CPython (this may take a while)..."; \
-		./scripts/build-cpython.sh 2>&1 | tail -10; \
-		mkdir -p $(USERSPACE_OUT_RELEASE); \
-		cp external/cpython-build/python $(USERSPACE_OUT_RELEASE)/python 2>/dev/null || true; \
-	elif [ -f "$(USERSPACE_OUT_RELEASE)/python" ]; then \
-		echo "  Python already built, skipping..."; \
+
+pkgmgr-readline: toolchain pkgmgr-ncurses
+	@if [ -f "toolchain/sysroot/lib/libreadline.a" ]; then \
+		echo "  readline already in sysroot, skipping..."; \
+	else \
+		echo "  Building readline via oxdnf..."; \
+		python3 pkgmgr/bin/oxdnf buildsrpm readline 2>&1 | tail -5; \
 	fi
-	@# Build vim if source exists and binary is missing
-	@if [ -d "external/vim/src" ] && [ ! -f "$(USERSPACE_OUT_RELEASE)/vim" ]; then \
-		echo "  Building vim..."; \
-		./scripts/build-vim.sh 2>&1 | tail -10; \
-	elif [ -f "$(USERSPACE_OUT_RELEASE)/vim" ]; then \
-		echo "  Vim already built, skipping..."; \
+
+# — Hexline: Application binaries — built from Fedora SRPMs, staged for rootfs inclusion.
+pkgmgr-vim: toolchain pkgmgr-sysroot-deps
+	@mkdir -p $(PKGMGR_STAGING)/bin $(PKGMGR_STAGING)/share
+	@if [ -f "$(PKGMGR_STAGING)/bin/vim" ]; then \
+		echo "  vim already staged, skipping..."; \
+	else \
+		echo "  Building vim via oxdnf..."; \
+		python3 pkgmgr/bin/oxdnf buildsrpm vim 2>&1 | tail -5; \
+		VIM_BUILD=$$(ls -td pkgmgr/cache/builds/build-*/build/vim*/src/vim 2>/dev/null | head -1); \
+		if [ -n "$$VIM_BUILD" ] && [ -f "$$VIM_BUILD" ]; then \
+			cp "$$VIM_BUILD" $(PKGMGR_STAGING)/bin/vim; \
+			echo "  vim staged: $(PKGMGR_STAGING)/bin/vim"; \
+		else \
+			echo "  ERROR: vim binary not found after build"; \
+			exit 1; \
+		fi; \
+		VIM_RT=$$(ls -td pkgmgr/cache/builds/build-*/build/vim*/runtime 2>/dev/null | head -1); \
+		if [ -n "$$VIM_RT" ] && [ -d "$$VIM_RT" ]; then \
+			mkdir -p $(PKGMGR_STAGING)/share/vim/vim92; \
+			cp -r $$VIM_RT/syntax $(PKGMGR_STAGING)/share/vim/vim92/; \
+			cp -r $$VIM_RT/colors $(PKGMGR_STAGING)/share/vim/vim92/; \
+			cp -r $$VIM_RT/indent $(PKGMGR_STAGING)/share/vim/vim92/; \
+			cp -r $$VIM_RT/ftplugin $(PKGMGR_STAGING)/share/vim/vim92/; \
+			cp $$VIM_RT/filetype.vim $(PKGMGR_STAGING)/share/vim/vim92/ 2>/dev/null || true; \
+			cp $$VIM_RT/defaults.vim $(PKGMGR_STAGING)/share/vim/vim92/ 2>/dev/null || true; \
+			echo "  vim runtime staged"; \
+		fi; \
 	fi
-	@echo "External binaries check complete."
+
+pkgmgr-python: toolchain pkgmgr-sysroot-deps
+	@mkdir -p $(PKGMGR_STAGING)/bin $(PKGMGR_STAGING)/lib
+	@if [ -f "$(PKGMGR_STAGING)/bin/python" ]; then \
+		echo "  python already staged, skipping..."; \
+	else \
+		echo "  Building Python 3.13 via oxdnf..."; \
+		python3 pkgmgr/bin/oxdnf buildsrpm python3.13 2>&1 | tail -5; \
+		PY_BIN=$$(ls -td pkgmgr/cache/builds/build-*/install/usr/bin/python3.13 2>/dev/null | head -1); \
+		if [ -n "$$PY_BIN" ] && [ -f "$$PY_BIN" ]; then \
+			cp "$$PY_BIN" $(PKGMGR_STAGING)/bin/python; \
+			echo "  python staged: $(PKGMGR_STAGING)/bin/python"; \
+		else \
+			echo "  ERROR: python binary not found after build"; \
+			exit 1; \
+		fi; \
+		PY_LIB=$$(ls -td pkgmgr/cache/builds/build-*/install/usr/lib/python3.13 2>/dev/null | head -1); \
+		if [ -n "$$PY_LIB" ] && [ -d "$$PY_LIB" ]; then \
+			mkdir -p $(PKGMGR_STAGING)/lib/python3.13; \
+			cp -r $$PY_LIB/*.py $(PKGMGR_STAGING)/lib/python3.13/ 2>/dev/null || true; \
+			for subdir in encodings collections importlib json email http; do \
+				if [ -d "$$PY_LIB/$$subdir" ]; then \
+					cp -r $$PY_LIB/$$subdir $(PKGMGR_STAGING)/lib/python3.13/; \
+				fi; \
+			done; \
+			echo "  python stdlib staged"; \
+		fi; \
+	fi
+
+# — Hexline: Force rebuild of a specific package (usage: make pkgmgr-rebuild-vim)
+pkgmgr-rebuild-vim:
+	@rm -f $(PKGMGR_STAGING)/bin/vim
+	@rm -rf $(PKGMGR_STAGING)/share/vim
+	@$(MAKE) pkgmgr-vim
+
+pkgmgr-rebuild-python:
+	@rm -f $(PKGMGR_STAGING)/bin/python
+	@rm -rf $(PKGMGR_STAGING)/lib/python3.13
+	@$(MAKE) pkgmgr-python
+
+# Clean package manager staging
+clean-pkgmgr:
+	@echo "Cleaning package manager staging..."
+	@rm -rf $(PKGMGR_STAGING)
+	@echo "  (build cache in pkgmgr/cache/builds/ preserved — run 'rm -rf pkgmgr/cache/builds' to nuke)"

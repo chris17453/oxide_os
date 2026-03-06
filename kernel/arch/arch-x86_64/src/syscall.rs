@@ -3,6 +3,7 @@
 //! Sets up the syscall instruction for fast user-to-kernel transitions.
 
 use core::arch::{asm, naked_asm};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::gdt::{KERNEL_CS, KERNEL_DS};
 
@@ -84,6 +85,16 @@ static mut SYSCALL_HANDLER: Option<SyscallHandler> = None;
 
 /// Global signal check function
 static mut SIGNAL_CHECK_FUNCTION: Option<SignalCheckFunction> = None;
+
+// Throttled diagnostics for syscall-return signal hook liveness.
+static SDBG_SIGCHK_CALL: AtomicU32 = AtomicU32::new(0);
+static SDBG_SIGCHK_NONE: AtomicU32 = AtomicU32::new(0);
+
+#[inline]
+fn sdbg_should_log(counter: &AtomicU32) -> bool {
+    let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
+    n <= 16 || (n & 0x3ff) == 0
+}
 
 /// Register a syscall handler
 ///
@@ -470,7 +481,12 @@ extern "C" fn syscall_signal_check() {
 
     unsafe {
         if let Some(check_fn) = *addr_of!(SIGNAL_CHECK_FUNCTION) {
+            if sdbg_should_log(&SDBG_SIGCHK_CALL) {
+                crate::serial::write_str_unsafe("[SCR-HOOK] call\n");
+            }
             check_fn();
+        } else if sdbg_should_log(&SDBG_SIGCHK_NONE) {
+            crate::serial::write_str_unsafe("[SCR-HOOK] NONE\n");
         }
     }
 }

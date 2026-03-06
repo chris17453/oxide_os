@@ -39,7 +39,7 @@ use vfs::{File, FileFlags, MountFlags, VnodeOps, mount::GLOBAL_VFS};
 
 use crate::console;
 use crate::fault;
-use crate::globals::{HEAP_ALLOCATOR, HEAP_SIZE, HEAP_STORAGE, KERNEL_PML4, KERNEL_PML4_256_ENTRY, MEMORY_MANAGER};
+use crate::globals::{HEAP_ALLOCATOR, HEAP_SIZE, HEAP_STORAGE, KERNEL_PML4, KERNEL_PML4_256_ENTRY, MEMORY_MANAGER, PAGE_DATABASE};
 use crate::memory;
 use crate::mount::{kernel_mount, kernel_pivot_root, kernel_umount};
 use crate::process::get_current_task_fs_base;
@@ -305,6 +305,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         boot_info.memory_region_count
     );
     let mut total_usable = 0u64;
+    let mut max_phys_addr = 0u64;
     for region in boot_info.memory_regions() {
         // — ColdCipher: After ExitBootServices(), BOOT_SERVICES memory is fully
         // reclaimable — Linux does this too (efi_memmap_usable). Previous exclusion
@@ -314,6 +315,19 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             BootMemoryType::Usable | BootMemoryType::BootServices
         ) {
             total_usable += region.len;
+        }
+        // — GraveShift: Track the highest physical address across USABLE region
+        // types only. The pagedb must cover every PFN the buddy allocator manages,
+        // but NOT MMIO regions at multi-GB addresses (framebuffer at 0x80000000
+        // etc.) — those would make the array enormous and fail to allocate.
+        if matches!(
+            region.ty,
+            BootMemoryType::Usable | BootMemoryType::BootServices
+        ) {
+            let region_end = region.start + region.len;
+            if region_end > max_phys_addr {
+                max_phys_addr = region_end;
+            }
         }
     }
     let _ = writeln!(
@@ -378,6 +392,20 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     };
     let uefi_guard_end = bootloader_min;
 
+    // — GraveShift: Walk the boot PML4 BEFORE buddy init. Collect every page table
+    // structure frame so we can exclude them from the buddy allocator's free lists.
+    // Without this, the bootloader's PT frames (at arbitrary physical addresses
+    // outside the kernel region) get treated as free memory → allocated to user
+    // processes → kernel page table corruption → triple fault. The 3 AM bug that
+    // kept coming back because we were treating symptoms instead of the disease.
+    unsafe { os_log::write_str_raw("[PTFIX] About to collect kernel PT frames\n"); }
+    let kernel_pt_frames = unsafe { collect_kernel_pt_frames(boot_info.pml4_phys) };
+    unsafe {
+        os_log::write_str_raw("[PTFIX] Collected ");
+        os_log::write_u32_raw(kernel_pt_frames.len() as u32);
+        os_log::write_str_raw(" PT frames\n");
+    }
+
     let _ = writeln!(writer, "[INFO] Protected regions:");
     let _ = writeln!(writer, "[INFO]   Low memory: 0x0 - {:#x}", LOW_MEM_LIMIT);
     let _ = writeln!(
@@ -385,6 +413,15 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         "[INFO]   Kernel: {:#x} - {:#x}",
         kernel_start, kernel_end
     );
+    let _ = writeln!(
+        writer,
+        "[INFO]   Page tables: {} frames from boot PML4 {:#x}",
+        kernel_pt_frames.len(),
+        boot_info.pml4_phys
+    );
+    for &pt_frame in &kernel_pt_frames {
+        let _ = writeln!(writer, "[INFO]     PT frame: {:#x}", pt_frame);
+    }
 
     // Helper to check if an address range overlaps with protected regions
     let is_protected = |addr: u64| -> bool {
@@ -398,6 +435,13 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         }
         // UEFI guard (2MB before bootloader to catch allocation bugs)
         if uefi_guard_end != u64::MAX && addr >= uefi_guard_start && addr < uefi_guard_end {
+            return true;
+        }
+        // — GraveShift: Boot page table structure frames. These are the PML4,
+        // PDPT, PD, and PT frames allocated by the UEFI bootloader. They live
+        // at physical addresses outside the kernel code/data region and MUST
+        // not be added to the buddy allocator's free lists.
+        if kernel_pt_frames.contains(&addr) {
             return true;
         }
         false
@@ -507,6 +551,107 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         free_bytes / (1024 * 1024),
         free_bytes
     );
+
+    // ================================================================
+    // Initialize Page Frame Database — GraveShift: Linux-style struct page
+    // array. Every physical frame gets 16 bytes of metadata. Corruption
+    // detection at the point of error, not three faults downstream.
+    // ================================================================
+    {
+        let _ = writeln!(writer, "[INFO] Initializing page frame database...");
+
+        // — GraveShift: Size the pagedb array by the HIGHEST physical address,
+        // not by buddy's total_bytes. total_bytes excludes reserved regions,
+        // so it's smaller than the actual address space. Frames at high PFNs
+        // (above total_bytes/4096) would fall off the array, causing db.get()
+        // to return None and the DUP-ALLOC guard to leak them as "stale".
+        let max_pfn = (max_phys_addr / 4096) as usize;
+        let array_size = max_pfn * core::mem::size_of::<mm_pagedb::PageFrame>();
+        // Round up to pages
+        let array_pages = (array_size + 4095) / 4096;
+        let array_order = array_pages.next_power_of_two().trailing_zeros() as usize;
+
+        let _ = writeln!(
+            writer,
+            "[PAGEDB] frames={} array_size={} KB order={}",
+            max_pfn,
+            array_size / 1024,
+            array_order
+        );
+
+        // Allocate from buddy allocator
+        match MEMORY_MANAGER.alloc_contiguous(1 << array_order) {
+            Ok(array_phys) => {
+                let array_virt = mm_paging::phys_to_virt(array_phys);
+                // Zero-initialize the entire array
+                unsafe {
+                    core::ptr::write_bytes(array_virt.as_mut_ptr::<u8>(), 0, (1 << array_order) * 4096);
+                }
+
+                // Initialize the global PageDatabase
+                unsafe {
+                    let db_ptr = &PAGE_DATABASE as *const mm_pagedb::PageDatabase
+                        as *mut mm_pagedb::PageDatabase;
+                    (*db_ptr).init(
+                        array_virt.as_mut_ptr::<mm_pagedb::PageFrame>(),
+                        max_pfn,
+                    );
+                    mm_pagedb::init_global(&PAGE_DATABASE);
+                }
+
+                // Pre-populate reserved frames
+                // Low memory (0 - 1MB)
+                for pfn in 0..(LOW_MEM_LIMIT / 4096) {
+                    PAGE_DATABASE.mark_reserved(os_core::PhysAddr::new(pfn * 4096));
+                }
+
+                // Kernel code/data
+                let kern_start_pfn = kernel_start / 4096;
+                let kern_end_pfn = (kernel_end + 4095) / 4096;
+                for pfn in kern_start_pfn..kern_end_pfn {
+                    PAGE_DATABASE.mark_reserved_kernel(os_core::PhysAddr::new(pfn * 4096));
+                }
+
+                // Boot page table frames
+                for &pt_frame in &kernel_pt_frames {
+                    PAGE_DATABASE.mark_reserved_pagetable(os_core::PhysAddr::new(pt_frame));
+                }
+
+                // UEFI guard region
+                if uefi_guard_end != u64::MAX {
+                    let guard_start_pfn = uefi_guard_start / 4096;
+                    let guard_end_pfn = uefi_guard_end / 4096;
+                    for pfn in guard_start_pfn..guard_end_pfn {
+                        PAGE_DATABASE.mark_reserved(os_core::PhysAddr::new(pfn * 4096));
+                    }
+                }
+
+                // The PageDatabase array itself
+                let db_start_pfn = array_phys.as_u64() / 4096;
+                let db_pages = 1u64 << array_order;
+                for i in 0..db_pages {
+                    PAGE_DATABASE.mark_reserved_kernel(os_core::PhysAddr::new(
+                        (db_start_pfn + i) * 4096,
+                    ));
+                }
+
+                // Print summary
+                let stats = PAGE_DATABASE.stats();
+                let _ = writeln!(
+                    writer,
+                    "[PAGEDB] Initialized: {} frames, {} reserved, {} free",
+                    stats.total, stats.reserved, stats.free
+                );
+            }
+            Err(_) => {
+                let _ = writeln!(
+                    writer,
+                    "[PAGEDB] WARNING: Could not allocate page database array (order {})",
+                    array_order
+                );
+            }
+        }
+    }
 
     // Initialize framebuffer if available
     if let Some(ref fb_info) = boot_info.framebuffer {
@@ -2196,10 +2341,9 @@ fn display_takeover(writer: &mut impl Write) {
 }
 
 fn kill_pgrp(pgid: u32, sig: i32) {
-    use signal::SigInfo;
+    use signal::{NSIG, SigInfo};
 
     let info = SigInfo::kill(sig, 0, 0);
-    let all_pids = sched::all_pids();
 
     unsafe {
         os_log::write_str_raw("[KILL-PGRP] pgid=");
@@ -2209,28 +2353,79 @@ fn kill_pgrp(pgid: u32, sig: i32) {
         os_log::write_str_raw("\n");
     }
 
-    for pid in all_pids {
-        if let Some(meta) = sched::get_task_meta(pid) {
-            // — GraveShift: try_lock because we may be in ISR context.
-            // If contended, skip this PID — signal delivery will catch it on next drain.
-            if let Some(mut guard) = meta.try_lock() {
-                if guard.pgid == pgid {
-                    guard.send_signal(sig, Some(info.clone()));
-                    drop(guard);
-                    unsafe {
-                        os_log::write_str_raw("[KILL-PGRP] sent sig to pid=");
-                        arch_x86_64::serial::write_u64_hex_unsafe(pid as u64);
-                        os_log::write_str_raw("\n");
-                    }
-                    // — GraveShift: Wake the process if it's sleeping.
-                    let woke = sched::try_wake_up(pid);
-                    unsafe {
-                        os_log::write_str_raw("[KILL-PGRP] wake=");
-                        os_log::write_str_raw(if woke { "OK" } else { "FAIL" });
-                        os_log::write_str_raw("\n");
+    // ISR-safe signal fanout: all operations below are non-blocking.
+    // A key IRQ can preempt scheduler code that currently holds RQ/meta locks;
+    // retry a couple of times instead of blocking in interrupt context.
+    const RETRIES: usize = 3;
+    let mut sent_any = false;
+
+    for attempt in 0..RETRIES {
+        let mut sent_this_attempt = 0usize;
+        let all_pids = sched::all_pids();
+
+        for pid in all_pids {
+            if let Some(meta) = sched::try_get_task_meta(pid) {
+                if let Some(mut guard) = meta.try_lock() {
+                    if guard.pgid == pgid {
+                        let blocked = guard.signal_mask.contains(sig);
+                        let handler_raw = if sig >= 1 && sig <= NSIG as i32 {
+                            guard.sigactions[(sig - 1) as usize].sa_handler
+                        } else {
+                            0
+                        };
+                        unsafe {
+                            os_log::write_str_raw("[KILL-PGRP] target pid=");
+                            arch_x86_64::serial::write_u64_hex_unsafe(pid as u64);
+                            os_log::write_str_raw(" blocked=");
+                            os_log::write_str_raw(if blocked { "YES" } else { "NO" });
+                            os_log::write_str_raw(" handler=");
+                            if handler_raw == 0 {
+                                os_log::write_str_raw("DFL");
+                            } else if handler_raw == 1 {
+                                os_log::write_str_raw("IGN");
+                            } else {
+                                os_log::write_str_raw("USR");
+                            }
+                            os_log::write_str_raw("\n");
+                        }
+                        guard.send_signal(sig, Some(info.clone()));
+                        let has_any_pending = !guard.pending_signals.is_empty();
+                        let has_deliverable = guard.has_pending_signals();
+                        drop(guard);
+                        unsafe {
+                            os_log::write_str_raw("[KILL-PGRP] sent sig to pid=");
+                            arch_x86_64::serial::write_u64_hex_unsafe(pid as u64);
+                            os_log::write_str_raw("\n");
+                            os_log::write_str_raw("[KILL-PGRP] postq pending=");
+                            os_log::write_str_raw(if has_any_pending { "YES" } else { "NO" });
+                            os_log::write_str_raw(" deliverable=");
+                            os_log::write_str_raw(if has_deliverable { "YES" } else { "NO" });
+                            os_log::write_str_raw("\n");
+                        }
+                        let woke = sched::try_wake_up(pid);
+                        unsafe {
+                            os_log::write_str_raw("[KILL-PGRP] wake=");
+                            os_log::write_str_raw(if woke { "OK" } else { "FAIL" });
+                            os_log::write_str_raw("\n");
+                        }
+                        sent_any = true;
+                        sent_this_attempt += 1;
                     }
                 }
             }
+        }
+
+        if sent_this_attempt > 0 {
+            break;
+        }
+        if attempt + 1 < RETRIES {
+            core::hint::spin_loop();
+        }
+    }
+
+    if !sent_any {
+        unsafe {
+            os_log::write_str_raw("[KILL-PGRP] no-delivery (contended or no targets)\n");
         }
     }
 }
@@ -2406,4 +2601,73 @@ impl BlockDevice for BlockDeviceWrapper {
         self.0.is_read_only()
     }
 }
-// Force rebuild 1769738726
+
+/// — GraveShift: Walk the boot PML4 page table tree and collect every page table
+/// structure frame (PML4, PDPT, PD, PT). These are allocated by the UEFI bootloader
+/// at arbitrary physical addresses — often OUTSIDE the kernel code/data region.
+/// If we don't exclude them from the buddy allocator, they get treated as free memory,
+/// allocated to user processes, and kernel page tables get corrupted.
+/// Root cause of the PML4[256] → buddy canary → triple fault bug.
+unsafe fn collect_kernel_pt_frames(pml4_phys: u64) -> Vec<u64> {
+    const PHYS_MAP_BASE: u64 = 0xFFFF_8000_0000_0000;
+    const FRAME_MASK: u64 = 0x000F_FFFF_FFFF_F000;
+    const PRESENT: u64 = 1;
+    const HUGE_PAGE: u64 = 1 << 7;
+
+    let mut frames = Vec::with_capacity(64);
+
+    // — GraveShift: Mark the PML4 frame itself. This is the root of the whole tree.
+    let pml4_addr = pml4_phys & FRAME_MASK;
+    frames.push(pml4_addr);
+
+    let pml4_virt = (PHYS_MAP_BASE + pml4_addr) as *const u64;
+
+    // Walk ALL 512 entries — bootloader may have lower-half identity maps too
+    for pml4_idx in 0..512 {
+        let pml4e = core::ptr::read_volatile(pml4_virt.add(pml4_idx));
+        if pml4e & PRESENT == 0 {
+            continue;
+        }
+
+        let pdpt_phys = pml4e & FRAME_MASK;
+        if !frames.contains(&pdpt_phys) {
+            frames.push(pdpt_phys);
+        }
+
+        let pdpt_virt = (PHYS_MAP_BASE + pdpt_phys) as *const u64;
+
+        for pdpt_idx in 0..512 {
+            let pdpte = core::ptr::read_volatile(pdpt_virt.add(pdpt_idx));
+            if pdpte & PRESENT == 0 {
+                continue;
+            }
+            if pdpte & HUGE_PAGE != 0 {
+                continue; // 1GB huge page — leaf, no PD frame
+            }
+
+            let pd_phys = pdpte & FRAME_MASK;
+            if !frames.contains(&pd_phys) {
+                frames.push(pd_phys);
+            }
+
+            let pd_virt = (PHYS_MAP_BASE + pd_phys) as *const u64;
+
+            for pd_idx in 0..512 {
+                let pde = core::ptr::read_volatile(pd_virt.add(pd_idx));
+                if pde & PRESENT == 0 {
+                    continue;
+                }
+                if pde & HUGE_PAGE != 0 {
+                    continue; // 2MB huge page — leaf, no PT frame
+                }
+
+                let pt_phys = pde & FRAME_MASK;
+                if !frames.contains(&pt_phys) {
+                    frames.push(pt_phys);
+                }
+            }
+        }
+    }
+
+    frames
+}

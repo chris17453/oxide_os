@@ -252,15 +252,20 @@ impl RunQueue {
             return None;
         }
 
+        // If the task is still queued, remove it from class queues and fix
+        // runnable accounting before dropping the slot mapping.
+        if task.on_rq {
+            if task.policy.is_realtime() {
+                self.rt_rq.dequeue(pid, task.rt_priority);
+            } else if task.policy.is_fair() {
+                self.cfs_rq.dequeue(pid, task.weight);
+            }
+            self.nr_running = self.nr_running.saturating_sub(1);
+        }
+
         // Clear the PID→slot mapping
         PID_TO_SLOT[pid as usize].store(SLOT_NONE, Ordering::Relaxed);
         self.free_slot(slot);
-
-        if task.policy.is_realtime() {
-            self.rt_rq.dequeue(pid, task.rt_priority);
-        } else if task.policy.is_fair() {
-            self.cfs_rq.dequeue(pid, task.weight);
-        }
 
         Some(task)
     }

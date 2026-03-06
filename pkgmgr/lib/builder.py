@@ -31,12 +31,14 @@ class PackageOverride:
         self.extra_cflags = ""
         self.extra_ldflags = ""
         self.pre_build_script = None
+        self.post_configure_script = None
         self.post_build_script = None
         self.patches = []
         self.skip_configure = False
         self.skip_build = False
         self.custom_build_cmd = None
         self.custom_install_cmd = None
+        self.make_target = None  # — WireSaint: 'Override the make target when "all" tries to build tests that fail in cross-compile'
         
         if Path(override_file).exists():
             self._parse(override_file)
@@ -66,10 +68,20 @@ class PackageOverride:
         if pre_build_match:
             self.pre_build_script = pre_build_match.group(1).strip()
         
+        # Extract post_configure function
+        post_configure_match = re.search(r'post_configure\s*\(\)\s*\{([^}]*)\}', content, re.DOTALL)
+        if post_configure_match:
+            self.post_configure_script = post_configure_match.group(1).strip()
+
         # Extract post_build function
         post_build_match = re.search(r'post_build\s*\(\)\s*\{([^}]*)\}', content, re.DOTALL)
         if post_build_match:
             self.post_build_script = post_build_match.group(1).strip()
+
+        # Extract MAKE_TARGET
+        make_target_match = re.search(r'MAKE_TARGET\s*=\s*"([^"]*)"', content)
+        if make_target_match:
+            self.make_target = make_target_match.group(1).strip()
         
         # Extract PATCHES array
         patches_match = re.search(r'PATCHES\s*=\s*\(([^)]*)\)', content)
@@ -108,12 +120,16 @@ class BuildConfig:
         self.build_dir = None
         self.make_jobs = self.config.get('oxide', 'make_jobs', fallback='4')
         
-        # Target triple
-        self.target_triple = "x86_64-oxide"
+        # — SableWire: 'config.sub doesn't know "oxide" from a hole in the ground. Use linux-musl so autotools stays calm.'
+        self.target_triple = "x86_64-unknown-linux-musl"
         
     def get_env(self, override: PackageOverride = None) -> Dict[str, str]:
-        """Get cross-compilation environment variables"""
+        """Get cross-compilation environment variables
+        — TorqueJax: 'Every env var is a loaded gun. Set them right or the whole build backfires.'"""
         env = os.environ.copy()
+
+        # — BlackLatch: 'Host config.site poisons cross-builds. Nuke it from orbit.'
+        env['CONFIG_SITE'] = ''
         
         # Set toolchain
         env['PATH'] = f"{self.toolchain_path}/bin:{env.get('PATH', '')}"
@@ -274,6 +290,12 @@ class PackageBuilder:
             else:
                 self.log("Skipping configure (override)")
             
+            # Step 6.5: Run post-configure hook if defined
+            if self.override and self.override.post_configure_script:
+                self.log("Running post-configure hook...")
+                if not self._run_hook(build_path, self.override.post_configure_script):
+                    self.log("WARNING: Post-configure hook had issues")
+
             # Step 7: Build
             self.log("Building...")
             if not self._build(build_path, build_system):
@@ -395,17 +417,18 @@ class PackageBuilder:
                 # Get configure flags from spec
                 spec_flags = spec.get_configure_flags()
                 
-                # Standard OXIDE flags
+                # — BlackLatch: 'Autotools needs both --build and --host or it gets confused and segfaults on config.sub.'
                 flags = [
                     '--prefix=/usr',
                     '--sysconfdir=/etc',
                     '--localstatedir=/var',
+                    f'--build=x86_64-linux-gnu',
                     f'--host={self.config.target_triple}',
                     '--enable-static',
                     '--disable-shared',
                     '--disable-nls',
                 ]
-                
+
                 flags.extend(spec_flags)
                 
                 # Add override flags
@@ -500,8 +523,12 @@ class PackageBuilder:
                     timeout=1800
                 )
             elif build_system == 'autotools' or build_system == 'make':
+                # — WireSaint: 'Some packages fail on "all" because tests try to link. Let overrides target just the lib.'
+                make_cmd = ['make', f'-j{self.config.make_jobs}']
+                if self.override and self.override.make_target:
+                    make_cmd.append(self.override.make_target)
                 subprocess.run(
-                    ['make', f'-j{self.config.make_jobs}'],
+                    make_cmd,
                     cwd=str(src_dir),
                     env=env,
                     check=True,

@@ -1,0 +1,15 @@
+[package]
+name = "mm-pagedb"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Linux-style page frame database (struct page) for OXIDE"
+
+[features]
+default = []
+debug-pagedb = []  # Log every alloc/free/pagetable/refcount state transition
+
+[dependencies]
+os_core = { workspace = true }
+os_log = { path = "../../core/os_log" }
+spin = { workspace = true }

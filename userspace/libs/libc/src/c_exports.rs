@@ -4181,6 +4181,12 @@ pub unsafe extern "C" fn wcsncpy(dest: *mut i32, src: *const i32, n: usize) -> *
     crate::wchar::wcsncpy(dest, src, n)
 }
 
+// — ByteRiot: "wcscat was missing its C export. Python's linker noticed. Of course it did."
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wcscat(dest: *mut i32, src: *const i32) -> *mut i32 {
+    crate::wchar::wcscat(dest, src)
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wcscmp(s1: *const i32, s2: *const i32) -> i32 {
     crate::wchar::wcscmp(s1, s2)

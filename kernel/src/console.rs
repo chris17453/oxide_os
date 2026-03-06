@@ -345,7 +345,7 @@ pub fn serial_write_bytes(data: &[u8]) {
 
     // Enable access to user pages (STAC - Supervisor-Mode Access Prevention Clear)
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
 
     for &byte in data {
@@ -354,7 +354,7 @@ pub fn serial_write_bytes(data: &[u8]) {
 
     // Disable access to user pages (CLAC - Supervisor-Mode Access Prevention Clear)
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 }
 
@@ -367,7 +367,7 @@ pub fn serial_write_bytes(data: &[u8]) {
 pub fn console_write_bytes(data: &[u8]) {
     // Enable access to user pages (STAC)
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
     }
 
     // Write to terminal emulator or framebuffer
@@ -381,7 +381,7 @@ pub fn console_write_bytes(data: &[u8]) {
 
     // Disable access to user pages (CLAC)
     unsafe {
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 }
 

@@ -13,6 +13,8 @@ include mk/config.mk
 # ========================================
 # Default target
 # ========================================
+.PHONY: all build build-full increment-build
+
 all: build
 
 # Build kernel + bootloader (auto-increments build number)
@@ -28,7 +30,7 @@ increment-build:
 	echo "Build $(OXIDE_VERSION).$$BUILD"
 
 # Build with userspace
-build-full: kernel bootloader userspace initramfs
+build-full: increment-build kernel bootloader userspace initramfs
 
 # ========================================
 # Include all build subsystems

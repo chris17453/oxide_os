@@ -8,3 +8,4 @@ description = "Copy-on-Write page tracking for OXIDE"
 os_core = { path = "../../core/os_core" }
 mm-traits = { path = "../mm-traits" }
 spin = "0.9"
+mm-pagedb = { path = "../mm-pagedb" }

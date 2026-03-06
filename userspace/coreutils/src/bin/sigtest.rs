@@ -15,22 +15,34 @@ use libc::*;
 
 static mut PASS_COUNT: u32 = 0;
 static mut FAIL_COUNT: u32 = 0;
+static mut SERIAL_FD: i32 = -1;
+
+/// — GraveShift: Write to both stdout and serial so results are always visible.
+fn tprint(s: &str) {
+    prints(s);
+    unsafe {
+        if SERIAL_FD >= 0 {
+            write(SERIAL_FD, s.as_bytes());
+        }
+    }
+}
 
 #[unsafe(no_mangle)]
 pub fn main() -> i32 {
-    prints("=== Signal Delivery Test Suite ===\n\n");
+    unsafe { SERIAL_FD = open("/dev/serial", 1, 0); }
+    tprint("=== Signal Delivery Test Suite ===\n\n");
 
     test_direct_kill();
     test_pgid_kill();
     test_signal_during_nanosleep();
     test_self_group_kill();
 
-    prints("\n=== Results: ");
+    tprint("\n=== Results: ");
     unsafe {
         print_num(PASS_COUNT);
-        prints(" passed, ");
+        tprint(" passed, ");
         print_num(FAIL_COUNT);
-        prints(" failed ===\n");
+        tprint(" failed ===\n");
     }
 
     unsafe { if FAIL_COUNT > 0 { 1 } else { 0 } }
@@ -40,11 +52,11 @@ pub fn main() -> i32 {
 /// — GraveShift: Baseline test. Parent sends kill() directly to child PID.
 /// Signal goes through send_signal_to_pid (blocking lock, blocking wake_up).
 fn test_direct_kill() {
-    prints("[TEST 1] Direct kill(pid, SIGINT)\n");
+    tprint("[TEST 1] Direct kill(pid, SIGINT)\n");
 
     let pid = fork();
     if pid < 0 {
-        prints("  FAIL: fork() failed\n");
+        tprint("  FAIL: fork() failed\n");
         unsafe { FAIL_COUNT += 1; }
         return;
     }
@@ -62,9 +74,9 @@ fn test_direct_kill() {
     nanosleep_ms(200);
     let ret = kill(pid, 2); // SIGINT = 2
     if ret != 0 {
-        prints("  FAIL: kill() returned ");
+        tprint("  FAIL: kill() returned ");
         print_num(ret as u32);
-        prints("\n");
+        tprint("\n");
     }
 
     let status = wait_for_child(pid);
@@ -76,11 +88,11 @@ fn test_direct_kill() {
 /// Child calls setpgid(0,0) to become group leader, parent sends to -pgid.
 /// Signal goes through send_signal_to_pgrp (iterates PIDs, blocking lock).
 fn test_pgid_kill() {
-    prints("[TEST 2] PGID kill(-pgid, SIGINT)\n");
+    tprint("[TEST 2] PGID kill(-pgid, SIGINT)\n");
 
     let pid = fork();
     if pid < 0 {
-        prints("  FAIL: fork() failed\n");
+        tprint("  FAIL: fork() failed\n");
         unsafe { FAIL_COUNT += 1; }
         return;
     }
@@ -103,9 +115,9 @@ fn test_pgid_kill() {
     // Send to process group (negative PID = PGID)
     let ret = kill(-pid, 2); // kill(-pgid, SIGINT)
     if ret != 0 {
-        prints("  FAIL: kill(-pgid) returned ");
+        tprint("  FAIL: kill(-pgid) returned ");
         print_num(ret as u32);
-        prints("\n");
+        tprint("\n");
     }
 
     let status = wait_for_child(pid);
@@ -119,11 +131,11 @@ fn test_pgid_kill() {
 /// nanosleep must detect pending signal → return EINTR → signal delivered on
 /// syscall return via check_signals_on_syscall_return().
 fn test_signal_during_nanosleep() {
-    prints("[TEST 3] Signal during nanosleep (EINTR path)\n");
+    tprint("[TEST 3] Signal during nanosleep (EINTR path)\n");
 
     let pid = fork();
     if pid < 0 {
-        prints("  FAIL: fork() failed\n");
+        tprint("  FAIL: fork() failed\n");
         unsafe { FAIL_COUNT += 1; }
         return;
     }
@@ -142,9 +154,9 @@ fn test_signal_during_nanosleep() {
 
     let ret = kill(pid, 2);
     if ret != 0 {
-        prints("  FAIL: kill() returned ");
+        tprint("  FAIL: kill() returned ");
         print_num(ret as u32);
-        prints("\n");
+        tprint("\n");
     }
 
     let status = wait_for_child(pid);
@@ -155,11 +167,11 @@ fn test_signal_during_nanosleep() {
 /// — GraveShift: Child creates its own process group then sends SIGINT to
 /// its own group (kill(0, SIGINT)). Tests self-signal delivery.
 fn test_self_group_kill() {
-    prints("[TEST 4] Self group kill(0, SIGINT)\n");
+    tprint("[TEST 4] Self group kill(0, SIGINT)\n");
 
     let pid = fork();
     if pid < 0 {
-        prints("  FAIL: fork() failed\n");
+        tprint("  FAIL: fork() failed\n");
         unsafe { FAIL_COUNT += 1; }
         return;
     }
@@ -202,9 +214,9 @@ fn wait_for_child(pid: i32) -> i32 {
             return status;
         }
         if ret < 0 && ret != -(libc::errno::EINTR as i32) {
-            prints("  FAIL: waitpid error ");
+            tprint("  FAIL: waitpid error ");
             print_num((-ret) as u32);
-            prints("\n");
+            tprint("\n");
             return -1;
         }
         // EINTR — retry
@@ -213,9 +225,9 @@ fn wait_for_child(pid: i32) -> i32 {
 
 fn check_signal_death(status: i32, expected_sig: i32, test_name: &str) {
     if status < 0 {
-        prints("  FAIL: ");
-        prints(test_name);
-        prints(" — waitpid error\n");
+        tprint("  FAIL: ");
+        tprint(test_name);
+        tprint(" — waitpid error\n");
         unsafe { FAIL_COUNT += 1; }
         return;
     }
@@ -226,54 +238,54 @@ fn check_signal_death(status: i32, expected_sig: i32, test_name: &str) {
     if termsig != 0 && termsig != 0x7F {
         // — GraveShift: WIFSIGNALED — child killed by signal directly
         if termsig == expected_sig {
-            prints("  PASS: ");
-            prints(test_name);
-            prints(" — killed by signal ");
+            tprint("  PASS: ");
+            tprint(test_name);
+            tprint(" — killed by signal ");
             print_num(termsig as u32);
-            prints("\n");
+            tprint("\n");
             unsafe { PASS_COUNT += 1; }
         } else {
-            prints("  FAIL: ");
-            prints(test_name);
-            prints(" — wrong signal ");
+            tprint("  FAIL: ");
+            tprint(test_name);
+            tprint(" — wrong signal ");
             print_num(termsig as u32);
-            prints(" (expected ");
+            tprint(" (expected ");
             print_num(expected_sig as u32);
-            prints(")\n");
+            tprint(")\n");
             unsafe { FAIL_COUNT += 1; }
         }
     } else if exit_code == (128 + expected_sig) as i32 {
         // — GraveShift: Our set_task_exit_status convention: exit code = 128+signo
-        prints("  PASS: ");
-        prints(test_name);
-        prints(" — exit code ");
+        tprint("  PASS: ");
+        tprint(test_name);
+        tprint(" — exit code ");
         print_num(exit_code as u32);
-        prints(" (128+");
+        tprint(" (128+");
         print_num(expected_sig as u32);
-        prints(")\n");
+        tprint(")\n");
         unsafe { PASS_COUNT += 1; }
     } else if exit_code == 99 {
-        prints("  FAIL: ");
-        prints(test_name);
-        prints(" — child survived (exit 99), signal never delivered!\n");
+        tprint("  FAIL: ");
+        tprint(test_name);
+        tprint(" — child survived (exit 99), signal never delivered!\n");
         unsafe { FAIL_COUNT += 1; }
     } else {
-        prints("  FAIL: ");
-        prints(test_name);
-        prints(" — unexpected status=");
+        tprint("  FAIL: ");
+        tprint(test_name);
+        tprint(" — unexpected status=");
         print_num(status as u32);
-        prints(" termsig=");
+        tprint(" termsig=");
         print_num(termsig as u32);
-        prints(" exit=");
+        tprint(" exit=");
         print_num(exit_code as u32);
-        prints("\n");
+        tprint("\n");
         unsafe { FAIL_COUNT += 1; }
     }
 }
 
 fn print_num(n: u32) {
     if n == 0 {
-        prints("0");
+        tprint("0");
         return;
     }
     let mut buf = [0u8; 12];
@@ -286,6 +298,6 @@ fn print_num(n: u32) {
         i -= 1;
     }
     if let Ok(s) = core::str::from_utf8(&buf[i + 1..12]) {
-        prints(s);
+        tprint(s);
     }
 }

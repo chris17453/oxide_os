@@ -52,6 +52,10 @@ impl<'a, A: FrameAllocator> Drop for FrameGuard<'a, A> {
         if self.defused {
             return;
         }
+        // — CrashBloom: Disarm the watchdog before freeing — we WANT to free the
+        // PML4 on error paths (fork failed, frames are orphaned). The watchdog
+        // only protects against EXTERNAL frees during the fork walk.
+        mm_traits::clear_frame_watch();
         // — GraveShift: Fork failed. Every frame we allocated for the child's
         // page table tree is now orphaned. Free them all or they're lost forever.
         for &frame in &self.frames {
@@ -197,6 +201,18 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
     let child_pml4_phys = allocator.alloc_frame().ok_or(ForkError::OutOfMemory)?;
     guard.push(child_pml4_phys);
 
+    unsafe {
+        os_log::write_str_raw("[FORK-TRACE] PML4 alloc: 0x");
+        os_log::write_u64_hex_raw(child_pml4_phys.as_u64());
+        os_log::write_str_raw("\n");
+    }
+
+    // — CrashBloom: Arm the frame watchdog. If ANY code path (process exit,
+    // OOM kill, stale reference) tries to free this frame while we're building
+    // the child's page tables, the buddy allocator will catch it and log the
+    // violation instead of corrupting our PML4.
+    mm_traits::set_frame_watch(child_pml4_phys.as_u64());
+
     // Get virtual addresses for both PML4s
     let parent_pml4_virt = phys_to_virt(parent_pml4_phys);
     let child_pml4_virt = phys_to_virt(child_pml4_phys);
@@ -256,14 +272,27 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
         let child_pdpt_phys = allocator.alloc_frame().ok_or(ForkError::OutOfMemory)?;
         guard.push(child_pdpt_phys);
 
+        unsafe {
+            os_log::write_str_raw("[FORK-TRACE] PDPT alloc: 0x");
+            os_log::write_u64_hex_raw(child_pdpt_phys.as_u64());
+            os_log::write_str_raw(" (pml4=0x");
+            os_log::write_u64_hex_raw(child_pml4_phys.as_u64());
+            os_log::write_str_raw(")\n");
+        }
+
         // — CrashBloom: Detect buddy double-alloc — if any PT frame is the same
-        // as the PML4 frame, clearing it will destroy the PML4.
+        // as the PML4 frame, clearing it will destroy the PML4. Abort the fork
+        // instead of triple-faulting. The watchdog should have prevented this,
+        // but defense in depth.
         if child_pdpt_phys == child_pml4_phys {
             unsafe {
-                os_log::write_str_raw("[FORK-BUG] PDPT alloc returned PML4 frame! phys=0x");
+                os_log::write_str_raw("[FORK-FATAL] PDPT alloc returned PML4 frame! pdpt=0x");
                 os_log::write_u64_hex_raw(child_pdpt_phys.as_u64());
-                os_log::write_str_raw("\n");
+                os_log::write_str_raw(" pml4=0x");
+                os_log::write_u64_hex_raw(child_pml4_phys.as_u64());
+                os_log::write_str_raw(" — aborting fork\n");
             }
+            return Err(ForkError::Internal);
         }
 
         let parent_pdpt_virt = phys_to_virt(pml4_entry.addr());
@@ -283,6 +312,7 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
                 os_log::write_u64_hex_raw(child_pml4_phys.as_u64());
                 os_log::write_str_raw("\n");
             }
+            return Err(ForkError::Internal);
         }
 
         // Set child PML4 entry
@@ -331,6 +361,18 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
             let child_pd_phys = allocator.alloc_frame().ok_or(ForkError::OutOfMemory)?;
             guard.push(child_pd_phys);
 
+            // — CrashBloom: Abort if buddy returned the PML4 frame.
+            if child_pd_phys == child_pml4_phys {
+                unsafe {
+                    os_log::write_str_raw("[FORK-FATAL] PD alloc returned PML4 frame! pd=0x");
+                    os_log::write_u64_hex_raw(child_pd_phys.as_u64());
+                    os_log::write_str_raw(" pml4=0x");
+                    os_log::write_u64_hex_raw(child_pml4_phys.as_u64());
+                    os_log::write_str_raw(" — aborting fork\n");
+                }
+                return Err(ForkError::Internal);
+            }
+
             let parent_pd_virt = phys_to_virt(pdpt_entry.addr());
             let child_pd_virt = phys_to_virt(child_pd_phys);
 
@@ -348,6 +390,7 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
                     os_log::write_u64_hex_raw(child_pml4_phys.as_u64());
                     os_log::write_str_raw("\n");
                 }
+                return Err(ForkError::Internal);
             }
 
             // Set child PDPT entry
@@ -396,6 +439,18 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
                 let child_pt_phys = allocator.alloc_frame().ok_or(ForkError::OutOfMemory)?;
                 guard.push(child_pt_phys);
 
+                // — CrashBloom: Abort if buddy returned the PML4 frame.
+                if child_pt_phys == child_pml4_phys {
+                    unsafe {
+                        os_log::write_str_raw("[FORK-FATAL] PT alloc returned PML4 frame! pt=0x");
+                        os_log::write_u64_hex_raw(child_pt_phys.as_u64());
+                        os_log::write_str_raw(" pml4=0x");
+                        os_log::write_u64_hex_raw(child_pml4_phys.as_u64());
+                        os_log::write_str_raw(" — aborting fork\n");
+                    }
+                    return Err(ForkError::Internal);
+                }
+
                 let parent_pt_virt = phys_to_virt(pd_entry.addr());
                 let child_pt_virt = phys_to_virt(child_pt_phys);
 
@@ -413,6 +468,7 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
                         os_log::write_u64_hex_raw(child_pml4_phys.as_u64());
                         os_log::write_str_raw("\n");
                     }
+                    return Err(ForkError::Internal);
                 }
 
                 // Set child PD entry
@@ -512,6 +568,15 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
     // — NeonRoot: Clone the parent's VMA metadata for the child. O(n) Vec clone.
     // The PT walk above already handled the actual COW marking on physical frames;
     // this is just the semantic overlay that says "these pages are stack/heap/text".
+    // — GraveShift: Mark all child PT frames in the page frame database.
+    // Every frame in the guard is a page table structure (PML4/PDPT/PD/PT).
+    // Owner = 0 for now — will be updated to child PID by caller if needed.
+    if let Some(db) = mm_pagedb::try_pagedb() {
+        for &frame in &guard.frames {
+            db.mark_pagetable(frame, 0);
+        }
+    }
+
     let child_vmas = parent.vmas.clone_for_fork();
     // — CrashBloom: Filter PML4 out of allocated_frames. PML4 is tracked separately
     // as UserAddressSpace.pml4_phys and freed explicitly in Drop. Having it in BOTH
@@ -519,6 +584,11 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
     // the frame mid-flight. That's your PML4[0] = FREEB0L mystery right there.
     let mut child_frames = guard.defuse();
     child_frames.retain(|&f| f != child_pml4_phys);
+
+    // — CrashBloom: Disarm the frame watchdog. The child PML4 is now owned by
+    // the child's UserAddressSpace and protected by normal Drop semantics.
+    mm_traits::clear_frame_watch();
+
     let child_as = unsafe { UserAddressSpace::from_raw(child_pml4_phys, child_frames, child_vmas) };
 
     Ok(child_as)

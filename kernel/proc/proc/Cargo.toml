@@ -17,6 +17,7 @@ mm-paging = { path = "../../mm/mm-paging" }
 mm-vma = { path = "../../mm/mm-vma" }
 mm-traits = { path = "../../mm/mm-traits" }
 mm-cow = { path = "../../mm/mm-cow" }
+mm-pagedb = { path = "../../mm/mm-pagedb" }
 mm-manager = { path = "../../mm/mm-manager" }
 elf = { path = "../../exec/elf" }
 sched-traits = { path = "../../sched/sched-traits" }

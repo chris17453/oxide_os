@@ -61,6 +61,7 @@ mm-paging = { workspace = true }
 mm-heap = { workspace = true }
 mm-vma = { workspace = true }
 mm-cow = { workspace = true }
+mm-pagedb = { workspace = true }
 sched = { workspace = true }
 sched-traits = { workspace = true }
 proc = { workspace = true }

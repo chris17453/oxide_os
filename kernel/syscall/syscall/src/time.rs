@@ -7,6 +7,7 @@ use crate::with_current_meta;
 use arch_x86_64 as arch;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use sched::TaskState;
+use signal::delivery::{SignalResult, determine_action};
 
 /// Timer frequency in Hz (ticks per second)
 const TIMER_HZ: u64 = 100;
@@ -42,6 +43,81 @@ impl Sleeper {
 
 /// Global sleep queue - checked by timer interrupt each tick
 static SLEEP_QUEUE: [Sleeper; MAX_SLEEPERS] = [const { Sleeper::empty() }; MAX_SLEEPERS];
+
+/// Deliver a fatal pending signal immediately from blocking sleep paths.
+///
+/// This is a safety net for cases where a process keeps getting EINTR wakeups
+/// but never reaches the syscall-return signal hook. We only handle default
+/// fatal actions here (Terminate/CoreDump); everything else is left for the
+/// normal signal-return machinery.
+fn deliver_fatal_signal_now(current_pid: u32) -> bool {
+    let meta_arc = match crate::get_current_meta() {
+        Some(m) => m,
+        None => return false,
+    };
+
+    let signo = {
+        let mut meta = meta_arc.lock();
+        if !meta.has_pending_signals() {
+            return false;
+        }
+
+        let signal_mask = meta.signal_mask;
+        let deliverable = meta.pending_signals.set().difference(&signal_mask);
+        let signo = match deliverable.first() {
+            Some(s) => s,
+            None => return false,
+        };
+
+        let pending = signal::PendingSignal {
+            signo,
+            info: meta.pending_signals.get_info(signo).copied(),
+        };
+        let action = if signo >= 1 && signo <= signal::NSIG as i32 {
+            meta.sigactions[(signo - 1) as usize]
+        } else {
+            signal::SigAction::new()
+        };
+
+        match determine_action(&pending, &action, &signal_mask) {
+            SignalResult::Terminate | SignalResult::CoreDump => {
+                // Consume the signal we're committing to.
+                let _ = meta.pending_signals.remove(signo);
+                // Close FDs before zombifying to avoid pipe writer deadlocks.
+                meta.fd_table = vfs::FdTable::new();
+                meta.shared_fd_table = None;
+                signo
+            }
+            _ => return false,
+        }
+    };
+
+    unsafe {
+        os_log::write_str_raw("[NSLEEP-SIG] TERMINATE p=");
+        os_log::write_u32_raw(current_pid);
+        os_log::write_str_raw(" sig=");
+        os_log::write_u32_raw(signo as u32);
+        os_log::write_str_raw("\n");
+    }
+
+    // Linux wait status signal format: low 7 bits = signal number.
+    sched::set_task_exit_status(current_pid, signo & 0x7F);
+    if let Some(ppid) = sched::get_task_ppid(current_pid) {
+        if ppid > 0 {
+            sched::wake_up(ppid);
+        }
+    }
+
+    sched::block_current(TaskState::TASK_ZOMBIE);
+    sched::set_need_resched();
+    arch::allow_kernel_preempt();
+    unsafe {
+        core::arch::asm!("sti", "hlt", options(nomem, nostack));
+    }
+    loop {
+        unsafe { core::arch::asm!("cli", "hlt", options(nomem, nostack)); }
+    }
+}
 
 /// Register a task in the sleep queue
 ///
@@ -350,13 +426,13 @@ pub fn sys_clock_gettime(clock_id: i32, tp_ptr: usize) -> i64 {
     // Write to userspace
     unsafe {
         // Enable SMAP access
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
 
         let tp = tp_ptr as *mut Timespec;
         core::ptr::write_volatile(tp, ts);
 
         // Disable SMAP access
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     0
@@ -393,10 +469,10 @@ pub fn sys_clock_getres(clock_id: i32, res_ptr: usize) -> i64 {
     };
 
     unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         let rp = res_ptr as *mut Timespec;
         core::ptr::write_volatile(rp, res);
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
     }
 
     0
@@ -416,10 +492,10 @@ pub fn sys_gettimeofday(tv_ptr: usize, tz_ptr: usize) -> i64 {
         };
 
         unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
             let tvp = tv_ptr as *mut Timeval;
             core::ptr::write_volatile(tvp, tv);
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
         }
     }
 
@@ -431,10 +507,10 @@ pub fn sys_gettimeofday(tv_ptr: usize, tz_ptr: usize) -> i64 {
         };
 
         unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
             let tzp = tz_ptr as *mut Timezone;
             core::ptr::write_volatile(tzp, tz);
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
         }
     }
 
@@ -453,10 +529,10 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
 
     // Read requested time from userspace
     let req: Timespec = unsafe {
-        core::arch::asm!("stac", options(nomem, nostack));
+        core::arch::asm!("stac", options(nostack));
         let rp = req_ptr as *const Timespec;
         let val = core::ptr::read_volatile(rp);
-        core::arch::asm!("clac", options(nomem, nostack));
+        core::arch::asm!("clac", options(nostack));
         val
     };
 
@@ -496,6 +572,10 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
                 sleep_queue_remove(current_pid);
             }
 
+            // Safety net: if this is a default-fatal signal (e.g. SIGINT), kill
+            // now instead of relying solely on syscall-return signal delivery.
+            let _ = deliver_fatal_signal_now(current_pid);
+
             let elapsed_ticks = get_ticks() - start_ticks;
             let remaining_ticks = sleep_ticks.saturating_sub(elapsed_ticks);
 
@@ -507,10 +587,10 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
                 };
 
                 unsafe {
-                    core::arch::asm!("stac", options(nomem, nostack));
+                    core::arch::asm!("stac", options(nostack));
                     let rp = rem_ptr as *mut Timespec;
                     core::ptr::write_volatile(rp, rem);
-                    core::arch::asm!("clac", options(nomem, nostack));
+                    core::arch::asm!("clac", options(nostack));
                 }
             }
 
@@ -550,10 +630,10 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
         };
 
         unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
             let rp = rem_ptr as *mut Timespec;
             core::ptr::write_volatile(rp, rem);
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
         }
     }
 
@@ -588,10 +668,10 @@ pub fn sys_clock_nanosleep(clock_id: i32, flags: i32, req_ptr: usize, rem_ptr: u
         }
 
         let req: Timespec = unsafe {
-            core::arch::asm!("stac", options(nomem, nostack));
+            core::arch::asm!("stac", options(nostack));
             let rp = req_ptr as *const Timespec;
             let val = core::ptr::read_volatile(rp);
-            core::arch::asm!("clac", options(nomem, nostack));
+            core::arch::asm!("clac", options(nostack));
             val
         };
 
@@ -645,6 +725,10 @@ pub fn sys_clock_nanosleep(clock_id: i32, flags: i32, req_ptr: usize, rem_ptr: u
             let has_signals =
                 crate::with_current_meta(|meta| meta.has_pending_signals()).unwrap_or(false);
             if has_signals {
+                if queued {
+                    sleep_queue_remove(current_pid);
+                }
+                let _ = deliver_fatal_signal_now(current_pid);
                 return errno::EINTR;
             }
         }

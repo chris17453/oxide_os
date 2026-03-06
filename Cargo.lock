@@ -638,6 +638,7 @@ dependencies = [
  "mm-cow",
  "mm-heap",
  "mm-manager",
+ "mm-pagedb",
  "mm-paging",
  "mm-traits",
  "mm-vma",
@@ -799,6 +800,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.10.0",
  "log",
+ "mm-pagedb",
  "mm-traits",
  "os_core",
  "os_log",
@@ -809,6 +811,7 @@ dependencies = [
 name = "mm-cow"
 version = "0.1.0"
 dependencies = [
+ "mm-pagedb",
  "mm-traits",
  "os_core",
  "spin 0.9.8",
@@ -831,6 +834,15 @@ dependencies = [
  "mm-core",
  "mm-traits",
  "os_core",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "mm-pagedb"
+version = "0.1.0"
+dependencies = [
+ "os_core",
+ "os_log",
  "spin 0.9.8",
 ]
 
@@ -1092,6 +1104,7 @@ dependencies = [
  "elf",
  "mm-cow",
  "mm-manager",
+ "mm-pagedb",
  "mm-paging",
  "mm-traits",
  "mm-vma",
@@ -1555,6 +1568,7 @@ dependencies = [
  "input",
  "mm-cow",
  "mm-manager",
+ "mm-pagedb",
  "mm-traits",
  "mm-vma",
  "mmap",

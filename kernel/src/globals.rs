@@ -12,6 +12,7 @@ use arch_x86_64::X86_64;
 // we just stop lying about which type we want.
 use mm_heap::{new_kernel_heap, KernelHeap};
 use mm_manager::MemoryManager;
+use mm_pagedb::PageDatabase;
 use spin::{Mutex, MutexGuard};
 
 /// Global kernel heap allocator — hardened by default (P3.2).
@@ -33,6 +34,11 @@ pub static mut HEAP_STORAGE: [u8; HEAP_SIZE] = [0; HEAP_SIZE];
 
 /// Global memory manager (buddy allocator - no 4GB cap)
 pub static MEMORY_MANAGER: MemoryManager = MemoryManager::new();
+
+/// — GraveShift: Global page frame database. Linux calls it `mem_map[]`.
+/// Every physical frame in the system gets 16 bytes of metadata: state, refcount,
+/// owner PID, flags. The array itself is allocated from the buddy allocator at boot.
+pub static PAGE_DATABASE: PageDatabase = PageDatabase::new();
 
 /// Flag to track if user process has exited
 pub static USER_EXITED: AtomicBool = AtomicBool::new(false);

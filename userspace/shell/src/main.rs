@@ -566,16 +566,6 @@ fn main() -> i32 {
     printlns("Type 'help' for available commands");
     printlns("");
 
-    // — GraveShift: Auto-run signal test to verify Ctrl+C signal delivery works.
-    // This bypasses keyboard input (which MCP QEMU can't reliably inject).
-    {
-        eprints("[esh] auto-running sigtest\n");
-        let test_cmd = b"sigtest\0";
-        let input = unsafe { core::slice::from_raw_parts(test_cmd.as_ptr(), 7) };
-        execute_line(input);
-        eprints("[esh] sigtest done\n");
-    }
-
     // Main shell loop
     eprints("[esh] entering main loop\n");
     loop {
@@ -2781,9 +2771,17 @@ fn color_from_index(i: u8) -> Color {
 
 /// Execute an external command
 fn execute_external(cmd: &Command) {
-    // Reset SIGINT to default behavior for child process
-    // (shell ignores it, but child should be interruptible)
+    // Reset interactive signal dispositions for child process.
+    // Shell ignores SIGINT itself; child must not inherit that.
     signal(SIGINT, SIG_DFL);
+    signal(SIGQUIT, SIG_DFL);
+
+    // Clear inherited blocked-signal mask in the child before exec.
+    // If SIGINT remains blocked, Ctrl+C gets queued forever and commands
+    // like ping become effectively unkillable from the foreground TTY.
+    const SIG_SETMASK: i32 = 2;
+    let empty_mask: u64 = 0;
+    let _ = sys_sigprocmask(SIG_SETMASK, &empty_mask as *const u64, core::ptr::null_mut());
 
     let arg = &cmd.args[0];
 

@@ -210,10 +210,10 @@ pub fn user_exit(status: i32) -> ! {
             const USER_SPACE_END: u64 = 0x0000_8000_0000_0000;
             if clear_child_tid < USER_SPACE_END {
                 unsafe {
-                    core::arch::asm!("stac", options(nomem, nostack));
+                    core::arch::asm!("stac", options(nostack));
                     let ptr = clear_child_tid as *mut i32;
                     core::ptr::write_volatile(ptr, 0);
-                    core::arch::asm!("clac", options(nomem, nostack));
+                    core::arch::asm!("clac", options(nostack));
                 }
             }
 
@@ -296,7 +296,27 @@ pub fn user_exit(status: i32) -> ! {
 
         // Wake parent if it's blocked waiting for us
         if parent_pid > 0 {
+            unsafe {
+                os_log::write_str_raw("[EXIT] waking parent pid=");
+                trace_u64(parent_pid as u64);
+                os_log::write_str_raw(" parent_state=");
+                if let Some(st) = sched::get_task_state(parent_pid) {
+                    trace_u64(st.0 as u64);
+                } else {
+                    os_log::write_str_raw("NONE");
+                }
+                os_log::write_str_raw("\n");
+            }
             wake_parent(parent_pid);
+            unsafe {
+                os_log::write_str_raw("[EXIT] wake_parent done, parent_state=");
+                if let Some(st) = sched::get_task_state(parent_pid) {
+                    trace_u64(st.0 as u64);
+                } else {
+                    os_log::write_str_raw("NONE");
+                }
+                os_log::write_str_raw("\n");
+            }
         }
 
         // Clear any stale PARENT_CONTEXT
@@ -502,14 +522,21 @@ pub fn kernel_fork() -> i64 {
             );
             child_task.context = child_task_ctx;
 
-            // Add child to scheduler — context is fully initialized
-            sched::add_task(child_task);
+            // Add child to THIS CPU's scheduler — fork immediately switches on
+            // the local CPU, so enqueueing remotely (via last_cpu default=0)
+            // can leave rq.curr pointing to a PID with no local Task slot.
+            let cpu = sched::this_cpu();
+            sched::add_task_to_cpu(child_task, cpu);
 
             // Add child to parent's children list
             sched::add_task_child(parent_pid, child_pid);
 
             // Tell scheduler we're switching to child
             sched::switch_to(child_pid);
+            // Force a scheduler pass on the next timer tick so the parent can
+            // resume even if CFS's vruntime preemption heuristic doesn't fire.
+            // Fork semantics need both tasks to make progress promptly.
+            sched::set_need_resched();
 
             // Get child's kernel stack top
             let child_kstack_virt = phys_to_virt(fork_result.kernel_stack_phys);
@@ -524,32 +551,6 @@ pub fn kernel_fork() -> i64 {
                 arch::syscall::set_kernel_stack_checked(child_kstack_top);
             }
             arch::gdt::set_kernel_stack(child_kstack_top);
-
-            // Switch to child via sysretq (child's fork returns 0)
-            static mut FORK_CHILD_CTX: ProcessContext = ProcessContext {
-                rip: 0,
-                rsp: 0,
-                rflags: 0,
-                rax: 0,
-                rbx: 0,
-                rcx: 0,
-                rdx: 0,
-                rsi: 0,
-                rdi: 0,
-                rbp: 0,
-                r8: 0,
-                r9: 0,
-                r10: 0,
-                r11: 0,
-                r12: 0,
-                r13: 0,
-                r14: 0,
-                r15: 0,
-                cs: 0,
-                ss: 0,
-                fs_base: 0,
-                gs_base: 0,
-            };
 
             // Save parent context so user_exit can restore it when child exits
             *PARENT_CONTEXT.lock() = Some(ParentContext {
@@ -576,13 +577,39 @@ pub fn kernel_fork() -> i64 {
             });
             CHILD_DONE.store(false, Ordering::SeqCst);
 
+            // — GraveShift: Capture for diagnostics before child_ctx is moved.
+            let diag_rip = child_ctx.rip;
+            let diag_rsp = child_ctx.rsp;
+            // Per-call child context (stack local): avoids cross-CPU races from a
+            // function-static context buffer when two CPUs fork concurrently.
+            let mut fork_child_ctx = child_ctx;
+
             unsafe {
-                *addr_of_mut!(FORK_CHILD_CTX) = child_ctx;
+                // — GraveShift: Pre-switch diagnostic — validate child PML4 before loading CR3.
+                {
+                    let pml4_virt = mm_paging::phys_to_virt(child_pml4);
+                    let entry_256 = core::ptr::read_volatile(pml4_virt.as_ptr::<u64>().add(256));
+                    let entry_0 = core::ptr::read_volatile(pml4_virt.as_ptr::<u64>());
+                    os_log::write_str_raw("[FORK-CR3] About to load child cr3=0x");
+                    os_log::write_u64_hex_raw(child_pml4.as_u64());
+                    os_log::write_str_raw(" PML4[0]=0x");
+                    os_log::write_u64_hex_raw(entry_0);
+                    os_log::write_str_raw(" PML4[256]=0x");
+                    os_log::write_u64_hex_raw(entry_256);
+                    os_log::write_str_raw("\n");
+                    os_log::write_str_raw("[FORK-CR3] child RIP=0x");
+                    os_log::write_u64_hex_raw(diag_rip);
+                    os_log::write_str_raw(" child RSP=0x");
+                    os_log::write_u64_hex_raw(diag_rsp);
+                    os_log::write_str_raw("\n");
+                }
 
                 // Switch page tables
                 core::arch::asm!("mov cr3, {}", in(reg) child_pml4.as_u64());
 
-                let ctx_ptr = addr_of_mut!(FORK_CHILD_CTX) as u64;
+                os_log::write_str_raw("[FORK-CR3] CR3 loaded OK, about to sysretq\n");
+
+                let ctx_ptr = (&mut fork_child_ctx as *mut ProcessContext) as u64;
 
                 // Child's fork() returns 0
                 core::arch::asm!(
@@ -757,10 +784,10 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
                 && clone_result.parent_tid_addr < 0x0000_8000_0000_0000
             {
                 unsafe {
-                    core::arch::asm!("stac", options(nomem, nostack));
+                    core::arch::asm!("stac", options(nostack));
                     let ptr = clone_result.parent_tid_addr as *mut i32;
                     core::ptr::write_volatile(ptr, child_tid as i32);
-                    core::arch::asm!("clac", options(nomem, nostack));
+                    core::arch::asm!("clac", options(nostack));
                 }
             }
 
@@ -891,10 +918,10 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
                 && clone_result.child_tid_addr < 0x0000_8000_0000_0000
             {
                 unsafe {
-                    core::arch::asm!("stac", options(nomem, nostack));
+                    core::arch::asm!("stac", options(nostack));
                     let ptr = clone_result.child_tid_addr as *mut i32;
                     core::ptr::write_volatile(ptr, child_tid as i32);
-                    core::arch::asm!("clac", options(nomem, nostack));
+                    core::arch::asm!("clac", options(nostack));
                 }
             }
 
@@ -914,8 +941,10 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
             );
             child_task.context = child_task_ctx;
 
-            // Add child to scheduler — context is fully initialized
-            sched::add_task(child_task);
+            // Keep clone child local for the same reason as fork: the caller's
+            // CPU is about to run/schedule it, so avoid remote enqueue by default.
+            let cpu = sched::this_cpu();
+            sched::add_task_to_cpu(child_task, cpu);
 
             // ThreadRogue: New execution context spawned, ready for the scheduler
             debug_proc!("[CLONE] Thread {} created successfully", child_tid);
@@ -948,6 +977,14 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
 
     debug_proc!("[WAIT] pid={} waiting for child={}", parent_pid, pid);
     loop {
+        // — GraveShift: Trace each waitpid iteration unconditionally for zombie hang debug
+        unsafe {
+            os_log::write_str_raw("[WAIT-LOOP] ppid=");
+            trace_u64(parent_pid as u64);
+            os_log::write_str_raw(" target=");
+            trace_i32(pid);
+            os_log::write_str_raw("\n");
+        }
         // Check for state changes: zombie, stopped (WUNTRACED), continued (WCONTINUED)
         match find_child_state_change(parent_pid, pid, &wait_opts) {
             Ok(result) => {
@@ -997,13 +1034,17 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
                             os_log::write_str_raw("\n");
                         }
 
-                        // Update scheduler's Task state - mark as waiting
+                        // Update scheduler's Task state bookkeeping.
                         sched::set_task_waiting(parent_pid, pid);
-
-                        // Block the current task in the scheduler
-                        sched::block_current(TaskState::TASK_INTERRUPTIBLE);
-
-                        // Mark that we need a reschedule
+                        // Request reschedule and cooperatively sleep one interrupt.
+                        //
+                        // NOTE: Do NOT hard-block here via block_current(). There is
+                        // a lost-wakeup window:
+                        //   1) find_child_state_change() says WouldBlock
+                        //   2) child exits and wake_parent() runs
+                        //   3) parent executes block_current() and sleeps forever
+                        // because the wake already happened. Using sti+hlt polling
+                        // avoids that deadlock while still yielding CPU.
                         sched::set_need_resched();
 
                         // Allow scheduler to preempt us while we wait
