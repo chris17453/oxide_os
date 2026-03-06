@@ -4,7 +4,6 @@
 
 use crate::errno;
 use crate::with_current_meta;
-use arch_x86_64 as arch;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use sched::TaskState;
 use signal::delivery::{SignalResult, determine_action};
@@ -110,12 +109,10 @@ fn deliver_fatal_signal_now(current_pid: u32) -> bool {
 
     sched::block_current(TaskState::TASK_ZOMBIE);
     sched::set_need_resched();
-    arch::allow_kernel_preempt();
-    unsafe {
-        core::arch::asm!("sti", "hlt", options(nomem, nostack));
-    }
+    os_core::allow_kernel_preempt();
+    os_core::wait_for_interrupt();
     loop {
-        unsafe { core::arch::asm!("cli", "hlt", options(nomem, nostack)); }
+        os_core::disable_interrupts();
     }
 }
 
@@ -270,11 +267,10 @@ pub fn block_deciseconds(deciseconds: u8) -> bool {
             sched::set_need_resched();
         }
 
-        arch::allow_kernel_preempt();
+        os_core::allow_kernel_preempt();
 
-        unsafe {
-            core::arch::asm!("sti", "hlt", "cli", options(nomem, nostack));
-        }
+        os_core::wait_for_interrupt();
+        os_core::disable_interrupts();
 
         // If we get here and time hasn't expired, we were woken early (by data or signal)
         if get_ticks() < wake_ticks {
@@ -329,23 +325,36 @@ pub fn set_boot_time(secs_since_epoch: u64) {
     BOOT_TIME_SECS.store(secs_since_epoch, Ordering::SeqCst);
 }
 
+/// Get the boot time in seconds since Unix epoch.
+///
+/// — WireSaint: exposed for the hires wall-clock provider in init.rs,
+/// which needs the epoch offset without depending on arch crates.
+pub fn boot_time_secs() -> u64 {
+    BOOT_TIME_SECS.load(Ordering::Relaxed)
+}
+
 /// Get current wall-clock time as seconds since Unix epoch.
 ///
 /// Suitable for registration with `os_core::register_wall_clock()` so
 /// subsystems like ext4 can stamp inodes without depending on arch crates.
 ///
-/// — WireSaint: the clock face for filesystem timestamps — now TSC-backed
+/// — WireSaint: the clock face for filesystem timestamps — now routed
+/// through os_core hires bridge so we don't need arch crate here.
 pub fn wall_clock_secs() -> u64 {
-    let tsc = arch::read_tsc();
-    let freq = arch::tsc_frequency();
-    let uptime_secs = tsc / freq;
-    let boot_secs = BOOT_TIME_SECS.load(Ordering::Relaxed);
-    boot_secs + uptime_secs
+    let (secs, _ns) = os_core::realtime_secs_ns();
+    if secs > 0 {
+        secs
+    } else {
+        // — WireSaint: fallback for early boot before hires provider registered
+        BOOT_TIME_SECS.load(Ordering::Relaxed)
+    }
 }
 
 /// Get current timer ticks
+///
+/// — WireSaint: routed through os_core tick bridge instead of direct arch call.
 fn get_ticks() -> u64 {
-    arch::timer_ticks()
+    os_core::ticks()
 }
 
 /// Convert ticks to timespec (monotonic time since boot)
@@ -357,40 +366,29 @@ fn ticks_to_timespec(ticks: u64) -> Timespec {
     }
 }
 
-/// Get monotonic time (time since boot) with nanosecond precision via TSC.
+/// Get monotonic time (time since boot) with nanosecond precision.
 ///
-/// — SableWire: The 100Hz tick counter gives 10ms granularity — two back-to-back
-/// clock_gettime calls return identical values. TSC (calibrated at boot via PIT)
-/// gives cycle-accurate resolution. We divide into seconds and remainder to avoid
-/// u64 overflow: at 4GHz, raw TSC overflows ns multiplication after ~4.6 seconds.
+/// — SableWire: Routed through os_core hires monotonic bridge. The actual TSC
+/// math lives in the provider registered at boot (init.rs). This keeps the
+/// syscall crate free of arch dependencies while preserving cycle-accurate
+/// resolution.
 fn get_monotonic_time() -> Timespec {
-    let tsc = arch::read_tsc();
-    let freq = arch::tsc_frequency();
-    let secs = tsc / freq;
-    let remainder = tsc % freq;
-    // — SableWire: remainder < freq (max ~4.2×10⁹), so remainder * 10⁹ fits u64
-    // (4.2×10⁹ × 10⁹ = 4.2×10¹⁸ < u64::MAX = 1.8×10¹⁹). Safe.
-    let nsec = remainder * 1_000_000_000 / freq;
+    let (secs, nsec) = os_core::monotonic_secs_ns();
     Timespec {
         tv_sec: secs as i64,
         tv_nsec: nsec as i64,
     }
 }
 
-/// Get real (wall clock) time with nanosecond precision via TSC.
+/// Get real (wall clock) time with nanosecond precision.
 ///
-/// — SableWire: Same TSC trick as get_monotonic_time, plus the boot epoch offset.
+/// — SableWire: Routed through os_core hires wall-clock bridge. TSC math
+/// in the provider (init.rs), epoch offset from BOOT_TIME_SECS.
 fn get_realtime() -> Timespec {
-    let tsc = arch::read_tsc();
-    let freq = arch::tsc_frequency();
-    let uptime_secs = tsc / freq;
-    let remainder = tsc % freq;
-    let uptime_nsec = remainder * 1_000_000_000 / freq;
-    let boot_secs = BOOT_TIME_SECS.load(Ordering::SeqCst);
-
+    let (secs, nsec) = os_core::realtime_secs_ns();
     Timespec {
-        tv_sec: (boot_secs + uptime_secs) as i64,
-        tv_nsec: uptime_nsec as i64,
+        tv_sec: secs as i64,
+        tv_nsec: nsec as i64,
     }
 }
 
@@ -426,13 +424,13 @@ pub fn sys_clock_gettime(clock_id: i32, tp_ptr: usize) -> i64 {
     // Write to userspace
     unsafe {
         // Enable SMAP access
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
 
         let tp = tp_ptr as *mut Timespec;
         core::ptr::write_volatile(tp, ts);
 
         // Disable SMAP access
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     0
@@ -469,10 +467,10 @@ pub fn sys_clock_getres(clock_id: i32, res_ptr: usize) -> i64 {
     };
 
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         let rp = res_ptr as *mut Timespec;
         core::ptr::write_volatile(rp, res);
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     0
@@ -492,10 +490,10 @@ pub fn sys_gettimeofday(tv_ptr: usize, tz_ptr: usize) -> i64 {
         };
 
         unsafe {
-            core::arch::asm!("stac", options(nostack));
+            os_core::user_access_begin();
             let tvp = tv_ptr as *mut Timeval;
             core::ptr::write_volatile(tvp, tv);
-            core::arch::asm!("clac", options(nostack));
+            os_core::user_access_end();
         }
     }
 
@@ -507,10 +505,10 @@ pub fn sys_gettimeofday(tv_ptr: usize, tz_ptr: usize) -> i64 {
         };
 
         unsafe {
-            core::arch::asm!("stac", options(nostack));
+            os_core::user_access_begin();
             let tzp = tz_ptr as *mut Timezone;
             core::ptr::write_volatile(tzp, tz);
-            core::arch::asm!("clac", options(nostack));
+            os_core::user_access_end();
         }
     }
 
@@ -529,10 +527,10 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
 
     // Read requested time from userspace
     let req: Timespec = unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         let rp = req_ptr as *const Timespec;
         let val = core::ptr::read_volatile(rp);
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
         val
     };
 
@@ -587,10 +585,10 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
                 };
 
                 unsafe {
-                    core::arch::asm!("stac", options(nostack));
+                    os_core::user_access_begin();
                     let rp = rem_ptr as *mut Timespec;
                     core::ptr::write_volatile(rp, rem);
-                    core::arch::asm!("clac", options(nostack));
+                    os_core::user_access_end();
                 }
             }
 
@@ -606,7 +604,7 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
         }
 
         // Allow scheduler to preempt us while we wait
-        arch::allow_kernel_preempt();
+        os_core::allow_kernel_preempt();
 
         // HLT yields CPU until next interrupt.
         // If queued: scheduler will switch away (we're blocked), timer will wake us.
@@ -614,12 +612,10 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
         // NOTE: sti + hlt MUST be in the same asm block.  If separated, a timer
         // interrupt can fire between them; the ISR handles it, returns, and then
         // the CPU hits HLT and waits another full tick unnecessarily.
-        unsafe {
-            core::arch::asm!("sti", "hlt", options(nomem, nostack));
-        }
+        os_core::wait_for_interrupt();
 
         // Clear preempt flag
-        arch::disallow_kernel_preempt();
+        os_core::disallow_kernel_preempt();
     }
 
     // Sleep complete, set remaining to zero if requested
@@ -630,10 +626,10 @@ pub fn sys_nanosleep(req_ptr: usize, rem_ptr: usize) -> i64 {
         };
 
         unsafe {
-            core::arch::asm!("stac", options(nostack));
+            os_core::user_access_begin();
             let rp = rem_ptr as *mut Timespec;
             core::ptr::write_volatile(rp, rem);
-            core::arch::asm!("clac", options(nostack));
+            os_core::user_access_end();
         }
     }
 
@@ -668,10 +664,10 @@ pub fn sys_clock_nanosleep(clock_id: i32, flags: i32, req_ptr: usize, rem_ptr: u
         }
 
         let req: Timespec = unsafe {
-            core::arch::asm!("stac", options(nostack));
+            os_core::user_access_begin();
             let rp = req_ptr as *const Timespec;
             let val = core::ptr::read_volatile(rp);
-            core::arch::asm!("clac", options(nostack));
+            os_core::user_access_end();
             val
         };
 
@@ -714,11 +710,9 @@ pub fn sys_clock_nanosleep(clock_id: i32, flags: i32, req_ptr: usize, rem_ptr: u
                 sched::block_current(TaskState::TASK_INTERRUPTIBLE);
                 sched::set_need_resched();
             }
-            arch::allow_kernel_preempt();
-            unsafe {
-                core::arch::asm!("sti", "hlt", options(nomem, nostack));
-            }
-            arch::disallow_kernel_preempt();
+            os_core::allow_kernel_preempt();
+            os_core::wait_for_interrupt();
+            os_core::disallow_kernel_preempt();
 
             // ⚡ GraveShift: POSIX requires checking for signals in TIMER_ABSTIME mode
             // If interrupted by signal, return EINTR (absolute time doesn't use rem_ptr)

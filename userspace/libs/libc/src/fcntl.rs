@@ -49,8 +49,15 @@ pub const F_SETFL: i32 = 4;
 pub const FD_CLOEXEC: i32 = 1;
 
 /// fcntl - File control operations
-/// 🔥 GraveShift: Now properly calls kernel syscall instead of stub 🔥
+/// — GraveShift: must go through errno conversion — raw cast was swallowing errors
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fcntl(fd: i32, cmd: i32, arg: u64) -> i32 {
-    crate::syscall::syscall3(42, fd as usize, cmd as usize, arg as usize) as i32
+    let raw = crate::syscall::syscall3(42, fd as usize, cmd as usize, arg as usize);
+    // — IronGhost: errno dance — negative kernel returns become -1 + ERRNO_VAR
+    if raw < 0 && raw >= -4096 {
+        crate::c_exports::set_errno_raw((-raw) as i32);
+        -1
+    } else {
+        raw as i32
+    }
 }

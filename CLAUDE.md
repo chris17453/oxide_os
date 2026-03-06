@@ -33,7 +33,8 @@
 
 
 ## Retrieval Index (check these first)
-- **Active plan:** `docs/plan/perf-security-audit-plan.md` (P0-P3 remediation plan from March 2026 audit — ~100 findings across scheduler, syscalls, VFS, memory, drivers, boot/SMP).
+- **Active plan:** `docs/plan/kernel-stubs-remediation.md` (P0-P3 stub/TODO remediation — 16 kernel subsystem stubs, 44 arch port stubs).
+- **Completed plan:** `docs/plan/perf-security-audit-plan.md` (P0-P3 remediation plan from March 2026 audit — ~100 findings across scheduler, syscalls, VFS, memory, drivers, boot/SMP — ALL COMPLETE).
 - Repo guides: `AGENTS.md` (repo rules), `THIS.md` (current plan/phase), `FIXME.md` (gaps), `manifesto.md`.
 - Docs: `docs/DRIVES.md` (boot/filesystem flow), `docs/DEBUGGING.md` (debug features - always enabled), `docs/AUTONOMOUS-DEBUGGING.md` (GDB automation for autonomous debugging - crash capture, boot checks, programmatic control).
 - Toolchain: `toolchain/README.md`, `toolchain/QUICKSTART.md`, `toolchain/SUMMARY.md`, `toolchain/INTEGRATION.md`.

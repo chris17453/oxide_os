@@ -115,6 +115,7 @@ dependencies = [
  "driver-core",
  "fb",
  "mm-manager",
+ "os_core",
  "os_log",
  "pci",
  "spin 0.9.8",
@@ -283,7 +284,6 @@ version = "0.1.0"
 name = "driver-uart-8250"
 version = "0.1.0"
 dependencies = [
- "arch-x86_64",
  "driver-traits",
  "os_core",
 ]
@@ -363,6 +363,7 @@ name = "fb"
 version = "0.1.0"
 dependencies = [
  "boot-proto",
+ "os_core",
  "spin 0.9.8",
 ]
 
@@ -555,6 +556,7 @@ dependencies = [
 name = "input"
 version = "0.1.0"
 dependencies = [
+ "os_core",
  "spin 0.9.8",
 ]
 
@@ -851,7 +853,6 @@ name = "mm-paging"
 version = "0.1.0"
 dependencies = [
  "arch-traits",
- "arch-x86_64",
  "bitflags 2.10.0",
  "mm-traits",
  "os_core",
@@ -1044,8 +1045,8 @@ version = "0.1.0"
 name = "oxidefs"
 version = "0.1.0"
 dependencies = [
- "arch-x86_64",
  "block",
+ "os_core",
  "proc",
  "sched",
  "spin 0.10.0",
@@ -1064,8 +1065,7 @@ dependencies = [
 name = "pci"
 version = "0.1.0"
 dependencies = [
- "arch-traits",
- "arch-x86_64",
+ "os_core",
  "spin 0.9.8",
 ]
 
@@ -1100,7 +1100,6 @@ checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 name = "proc"
 version = "0.1.0"
 dependencies = [
- "arch-x86_64",
  "elf",
  "mm-cow",
  "mm-manager",
@@ -1138,7 +1137,6 @@ dependencies = [
 name = "procfs"
 version = "0.1.0"
 dependencies = [
- "arch-x86_64",
  "os_core",
  "proc",
  "proc-traits",
@@ -1153,6 +1151,7 @@ version = "0.1.0"
 dependencies = [
  "driver-traits",
  "input",
+ "os_core",
  "spin 0.9.8",
 ]
 
@@ -1341,7 +1340,6 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 name = "sched"
 version = "0.1.0"
 dependencies = [
- "arch-x86_64",
  "os_core",
  "os_log",
  "proc",
@@ -1488,8 +1486,6 @@ dependencies = [
 name = "smp"
 version = "0.1.0"
 dependencies = [
- "arch-traits",
- "arch-x86_64",
  "os_core",
  "spin 0.9.8",
 ]
@@ -1562,7 +1558,6 @@ dependencies = [
 name = "syscall"
 version = "0.1.0"
 dependencies = [
- "arch-x86_64",
  "crypto",
  "dhcp",
  "input",
@@ -1637,9 +1632,9 @@ version = "0.1.0"
 name = "terminal"
 version = "0.1.0"
 dependencies = [
- "arch-x86_64",
  "bitflags 2.10.0",
  "fb",
+ "os_core",
  "os_log",
  "spin 0.9.8",
  "vte",
@@ -1736,6 +1731,7 @@ dependencies = [
  "driver-core",
  "mm-manager",
  "mm-traits",
+ "os_core",
  "pci",
  "spin 0.10.0",
  "virtio-core",
@@ -1763,7 +1759,6 @@ dependencies = [
 name = "virtio-gpu"
 version = "0.1.0"
 dependencies = [
- "arch-x86_64",
  "boot-proto",
  "driver-core",
  "fb",
@@ -1778,11 +1773,11 @@ dependencies = [
 name = "virtio-input"
 version = "0.1.0"
 dependencies = [
- "arch-x86_64",
  "driver-core",
  "input",
  "mm-manager",
  "mm-traits",
+ "os_core",
  "os_log",
  "pci",
  "spin 0.9.8",
@@ -1797,6 +1792,7 @@ dependencies = [
  "mm-manager",
  "mm-traits",
  "net",
+ "os_core",
  "pci",
  "spin 0.9.8",
  "virtio-core",

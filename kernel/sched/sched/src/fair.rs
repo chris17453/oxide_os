@@ -170,7 +170,7 @@ impl CfsRunQueue {
             // — GraveShift: 256 CFS tasks on one CPU. Something is deeply
             // wrong, but deadlocking the system is worse than dropping a task.
             unsafe {
-                arch_x86_64::serial::write_str_unsafe(
+                os_log::write_str_raw(
                     "[CFS-FATAL] heap full, cannot enqueue task\n",
                 );
             }

@@ -47,23 +47,22 @@ const BOCHS_DEVICE: u16 = 0x1111;
 /// PHYS_MAP_BASE — kernel direct physical memory map
 const PHYS_MAP_BASE: u64 = 0xFFFF_8000_0000_0000;
 
-/// Read a DISPI register
+// — NeonVale: DISPI register access through os_core hooks. The VBE index/data
+// port dance is the same, but the arch-specific asm is gone from driver code.
+// os_core owns the instructions — we just call the portable API.
 #[inline]
 fn dispi_read(index: u16) -> u16 {
     unsafe {
-        core::arch::asm!("out dx, ax", in("dx") VBE_DISPI_INDEX, in("ax") index, options(nomem, nostack));
-        let val: u16;
-        core::arch::asm!("in ax, dx", in("dx") VBE_DISPI_DATA, out("ax") val, options(nomem, nostack));
-        val
+        os_core::outw(VBE_DISPI_INDEX, index);
+        os_core::inw(VBE_DISPI_DATA)
     }
 }
 
-/// Write a DISPI register
 #[inline]
 fn dispi_write(index: u16, value: u16) {
     unsafe {
-        core::arch::asm!("out dx, ax", in("dx") VBE_DISPI_INDEX, in("ax") index, options(nomem, nostack));
-        core::arch::asm!("out dx, ax", in("dx") VBE_DISPI_DATA, in("ax") value, options(nomem, nostack));
+        os_core::outw(VBE_DISPI_INDEX, index);
+        os_core::outw(VBE_DISPI_DATA, value);
     }
 }
 

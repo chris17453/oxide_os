@@ -318,32 +318,22 @@ pub fn counters() -> &'static PerfCounters {
 ///
 /// — PatchBay: TSC is the gold standard for cycle-accurate profiling.
 /// On modern CPUs (invariant TSC), it's constant-rate and synchronized across cores.
-#[cfg(target_arch = "x86_64")]
+/// Routed through os_core arch abstraction — no more raw asm in the perf crate.
 #[inline]
 pub fn rdtsc() -> u64 {
-    unsafe {
-        let low: u32;
-        let high: u32;
-        core::arch::asm!(
-            "rdtsc",
-            out("eax") low,
-            out("edx") high,
-            options(nomem, nostack, preserves_flags)
-        );
-        ((high as u64) << 32) | (low as u64)
-    }
+    // — PatchBay: delegated to os_core — one fewer inline asm to haunt us
+    os_core::read_tsc()
 }
 
 /// Helper: Serialize instruction execution (x86_64 LFENCE)
 ///
 /// Use before RDTSC to ensure all prior instructions have completed.
 /// LFENCE is the standard way to serialize on modern CPUs.
-#[cfg(target_arch = "x86_64")]
+/// — PatchBay: routed through os_core — the arch crate owns the fence now
 #[inline]
 pub fn serialize() {
-    unsafe {
-        core::arch::asm!("lfence", options(nomem, nostack, preserves_flags));
-    }
+    // — PatchBay: one less raw asm site to audit during the next security sweep
+    os_core::read_fence()
 }
 
 /// Performance event scope guard (RAII for automatic measurement)

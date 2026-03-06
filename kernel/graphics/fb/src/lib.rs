@@ -37,16 +37,16 @@ use spin::Mutex;
 #[cfg(feature = "debug-lock")]
 #[inline(never)]
 fn lock_contention_warning(lock_name: &str) {
-    #[cfg(target_arch = "x86_64")]
+    // — ShadePacket: framebuffer lock contention trace — os_core::outb is arch-safe, no cfg needed
     unsafe {
         for &b in b"[LOCK] fb::" {
-            core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nomem, nostack));
+            os_core::outb(0x3F8, b);
         }
         for &b in lock_name.as_bytes() {
-            core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nomem, nostack));
+            os_core::outb(0x3F8, b);
         }
         for &b in b" contention\n" {
-            core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nomem, nostack));
+            os_core::outb(0x3F8, b);
         }
     }
 }

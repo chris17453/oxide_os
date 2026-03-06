@@ -102,5 +102,9 @@ BOOT_START := 1
 ROOT_START := 129
 HOME_START := 513
 
+# — PatchBay: kernel archive — accumulates builds so the boot manager can offer rollback
+KERNEL_ARCHIVE := build/kernels
+MAX_KERNEL_ARCHIVE := 2
+
 # Toolchain install prefix
 INSTALL_PREFIX ?= /usr/local/oxide

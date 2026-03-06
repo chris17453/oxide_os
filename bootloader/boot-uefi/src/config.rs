@@ -34,10 +34,12 @@ pub struct BootEntry {
     /// Path to initramfs (optional)
     pub initramfs_path: [u8; MAX_PATH],
     pub initramfs_path_len: usize,
-    /// Parsed version for sorting (0.0.0 if unparseable)
+    /// Parsed version for sorting (0.0.0.0 if unparseable)
+    /// — BlackLatch: 4-part version: major.minor.patch.build (NT-style build number)
     pub version_major: u16,
     pub version_minor: u16,
     pub version_patch: u16,
+    pub version_build: u16,
     /// Whether this entry has been validated (file exists)
     pub valid: bool,
 }
@@ -56,6 +58,7 @@ impl BootEntry {
             version_major: 0,
             version_minor: 0,
             version_patch: 0,
+            version_build: 0,
             valid: false,
         }
     }
@@ -81,10 +84,14 @@ impl BootEntry {
     }
 
     /// Compare versions for sorting (descending — newest first)
+    /// — BlackLatch: 4-part compare so build 173 beats build 172 even when semver matches
     pub fn version_cmp(&self, other: &Self) -> core::cmp::Ordering {
         match self.version_major.cmp(&other.version_major) {
             core::cmp::Ordering::Equal => match self.version_minor.cmp(&other.version_minor) {
-                core::cmp::Ordering::Equal => self.version_patch.cmp(&other.version_patch),
+                core::cmp::Ordering::Equal => match self.version_patch.cmp(&other.version_patch) {
+                    core::cmp::Ordering::Equal => self.version_build.cmp(&other.version_build),
+                    ord => ord,
+                },
                 ord => ord,
             },
             ord => ord,
@@ -132,16 +139,16 @@ fn copy_to_buf(dst: &mut [u8], src: &[u8]) -> usize {
     len
 }
 
-/// Parse a version string like "0.2.0" into (major, minor, patch)
-/// — BlackLatch: semver without the crate dependency — shocking, I know
-fn parse_version(s: &[u8]) -> (u16, u16, u16) {
-    let mut parts = [0u16; 3];
+/// Parse a version string like "0.2.0.172" into (major, minor, patch, build)
+/// — BlackLatch: semver+build without the crate dependency — shocking, I know
+fn parse_version(s: &[u8]) -> (u16, u16, u16, u16) {
+    let mut parts = [0u16; 4];
     let mut part_idx = 0;
     let mut current = 0u16;
 
     for &b in s {
         if b == b'.' {
-            if part_idx < 3 {
+            if part_idx < 4 {
                 parts[part_idx] = current;
                 part_idx += 1;
                 current = 0;
@@ -153,11 +160,11 @@ fn parse_version(s: &[u8]) -> (u16, u16, u16) {
             break;
         }
     }
-    if part_idx < 3 {
+    if part_idx < 4 {
         parts[part_idx] = current;
     }
 
-    (parts[0], parts[1], parts[2])
+    (parts[0], parts[1], parts[2], parts[3])
 }
 
 /// Parse the boot.cfg file content into a BootConfig.
@@ -219,10 +226,11 @@ pub fn parse_config(data: &[u8]) -> BootConfig {
                             // Extract version from section name (e.g., "kernel.0.2.0")
                             if section.len() > 7 && section[6] == b'.' {
                                 let ver_str = &section[7..];
-                                let (maj, min, pat) = parse_version(ver_str);
+                                let (maj, min, pat, bld) = parse_version(ver_str);
                                 config.entries[idx].version_major = maj;
                                 config.entries[idx].version_minor = min;
                                 config.entries[idx].version_patch = pat;
+                                config.entries[idx].version_build = bld;
                             }
                         }
                     }

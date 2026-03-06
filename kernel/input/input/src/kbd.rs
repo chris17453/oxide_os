@@ -13,16 +13,15 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// — GraveShift: raw serial write for ISR-context debug.
 /// We can't call into any allocating/locking code from here.
+/// — NeonRoot: asm ripped out, os_core owns the port now
 #[inline]
 unsafe fn serial_trace(msg: &[u8]) {
     for &b in msg {
         loop {
-            let status: u8;
-            // — GraveShift: asm in unsafe fn still needs its own unsafe block post-2024
-            unsafe { core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack, preserves_flags)); }
+            let status = unsafe { os_core::inb(0x3FD) };
             if status & 0x20 != 0 { break; }
         }
-        unsafe { core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack, preserves_flags)); }
+        unsafe { os_core::outb(0x3F8, b); }
     }
 }
 

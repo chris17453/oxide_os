@@ -151,7 +151,8 @@ pkgmgr-vim: toolchain pkgmgr-sysroot-deps
 		VIM_BUILD=$$(ls -td pkgmgr/cache/builds/build-*/build/vim*/src/vim 2>/dev/null | head -1); \
 		if [ -n "$$VIM_BUILD" ] && [ -f "$$VIM_BUILD" ]; then \
 			cp "$$VIM_BUILD" $(PKGMGR_STAGING)/bin/vim; \
-			echo "  vim staged: $(PKGMGR_STAGING)/bin/vim"; \
+			llvm-strip $(PKGMGR_STAGING)/bin/vim 2>/dev/null || strip $(PKGMGR_STAGING)/bin/vim 2>/dev/null || true; \
+			echo "  vim staged (stripped): $(PKGMGR_STAGING)/bin/vim"; \
 		else \
 			echo "  ERROR: vim binary not found after build"; \
 			exit 1; \
@@ -179,7 +180,8 @@ pkgmgr-python: toolchain pkgmgr-sysroot-deps
 		PY_BIN=$$(ls -td pkgmgr/cache/builds/build-*/install/usr/bin/python3.13 2>/dev/null | head -1); \
 		if [ -n "$$PY_BIN" ] && [ -f "$$PY_BIN" ]; then \
 			cp "$$PY_BIN" $(PKGMGR_STAGING)/bin/python; \
-			echo "  python staged: $(PKGMGR_STAGING)/bin/python"; \
+			llvm-strip $(PKGMGR_STAGING)/bin/python 2>/dev/null || strip $(PKGMGR_STAGING)/bin/python 2>/dev/null || true; \
+			echo "  python staged (stripped): $(PKGMGR_STAGING)/bin/python"; \
 		else \
 			echo "  ERROR: python binary not found after build"; \
 			exit 1; \

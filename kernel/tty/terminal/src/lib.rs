@@ -66,16 +66,16 @@ use crate::renderer::Renderer;
 #[cfg(feature = "debug-lock")]
 #[inline(never)]
 fn lock_contention_warning(lock_name: &str) {
-    #[cfg(target_arch = "x86_64")]
+    // — WireSaint: os_core::outb is a no-op on non-x86 (no I/O ports to hit) — cfg gate exorcised
     unsafe {
         for &b in b"[LOCK] terminal::" {
-            core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nomem, nostack));
+            os_core::outb(0x3F8, b);
         }
         for &b in lock_name.as_bytes() {
-            core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nomem, nostack));
+            os_core::outb(0x3F8, b);
         }
         for &b in b" contention\n" {
-            core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nomem, nostack));
+            os_core::outb(0x3F8, b);
         }
     }
 }
@@ -215,8 +215,9 @@ impl TerminalEmulator {
             } else {
                 b"[WR] P l="
             };
+            // — NeonRoot: serial debug trace now goes through the arch abstraction — no more raw port ops
             for &b in tag {
-                core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nomem, nostack));
+                os_core::outb(0x3F8, b);
             }
             let mut n = data.len();
             let mut digits = [0u8; 10];
@@ -225,11 +226,11 @@ impl TerminalEmulator {
                 while n > 0 { digits[i] = b'0' + (n % 10) as u8; n /= 10; i += 1; }
             }
             for d in digits[..i].iter().rev() {
-                core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") *d, options(nomem, nostack));
+                os_core::outb(0x3F8, *d);
             }
             // Print first few bytes hex for context
             for &b in b" d=" {
-                core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nomem, nostack));
+                os_core::outb(0x3F8, b);
             }
             let show = if data.len() > 16 { 16 } else { data.len() };
             for j in 0..show {
@@ -237,11 +238,11 @@ impl TerminalEmulator {
                 let hex_chars: [u8; 16] = *b"0123456789abcdef";
                 let hi = hex_chars[(byte >> 4) as usize];
                 let lo = hex_chars[(byte & 0xf) as usize];
-                core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") hi, options(nomem, nostack));
-                core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") lo, options(nomem, nostack));
+                os_core::outb(0x3F8, hi);
+                os_core::outb(0x3F8, lo);
             }
             let nl = b'\n';
-            core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") nl, options(nomem, nostack));
+            os_core::outb(0x3F8, nl);
         }
 
         // If synchronized output mode is active, buffer the data
@@ -1987,7 +1988,7 @@ pub fn write(data: &[u8]) {
 
     // — SableWire: Enable access to user pages (STAC - Supervisor-Mode Access Prevention Clear)
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
     }
 
     // — NeonVale: Snapshot mouse state after write — write() may process escape
@@ -2016,7 +2017,7 @@ pub fn write(data: &[u8]) {
 
     // — SableWire: Disable access to user pages (CLAC)
     unsafe {
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     // — NeonVale: Update the ISR-facing mouse state mirror. This lock is
@@ -2124,7 +2125,7 @@ pub fn tick() {
 /// as write() — escape sequences inside data may change mouse mode. — NeonVale
 pub fn write_immediate(data: &[u8]) {
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
     }
 
     // — NeonVale: Capture snapshot after write, release TERMINAL before MOUSE_INPUT.
@@ -2146,7 +2147,7 @@ pub fn write_immediate(data: &[u8]) {
     }; // — NeonVale: TERMINAL released here.
 
     unsafe {
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     if let Some((mm, me, cw, ch, cols, rows)) = mouse_snapshot {
@@ -2482,10 +2483,10 @@ pub fn paste_clipboard() -> Vec<u8> {
 /// Bypasses all buffers, writes raw text directly to COM1. Because sometimes
 /// the framebuffer lies and serial is the only truth left.
 pub fn debug_dump_screen_to_serial() {
-    // — GraveShift: All serial writes use bounded-spin helpers from arch_x86_64::serial.
+    // — GraveShift: All serial writes use bounded-spin helpers from os_log.
     // Old code had unbounded `while THRE==0 {}` per byte × 13,440 chars = hang city.
 
-    use arch_x86_64::serial::{write_str_unsafe, write_byte_unsafe, write_u32_unsafe};
+    use os_log::{write_str_raw as write_str_unsafe, write_byte_raw as write_byte_unsafe, write_u32_raw as write_u32_unsafe};
 
     unsafe {
         write_str_unsafe("\n╔════════════════════════════════════════════════════════════════════════════╗\n");

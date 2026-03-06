@@ -740,9 +740,9 @@ pub fn sys_connect(fd: i32, addr: u64, addrlen: u32) -> i64 {
                         // allow_kernel_preempt lets the scheduler context-switch
                         // while we're blocked; clear it after wakeup so we don't
                         // get unexpectedly preempted mid-critical-section below.
-                        arch_x86_64::allow_kernel_preempt();
-                        unsafe { core::arch::asm!("sti", "hlt", options(nomem, nostack)); }
-                        arch_x86_64::disallow_kernel_preempt();
+                        os_core::allow_kernel_preempt();
+                        os_core::wait_for_interrupt();
+                        os_core::disallow_kernel_preempt();
                     }
 
                     // Timeout
@@ -1785,7 +1785,7 @@ fn copy_iface_from_user(ptr: u64, len: usize) -> Option<alloc::string::String> {
 
     // Enable SMAP bypass for userspace access
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
     }
 
     let slice = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
@@ -1794,7 +1794,7 @@ fn copy_iface_from_user(ptr: u64, len: usize) -> Option<alloc::string::String> {
         .map(alloc::string::String::from);
 
     unsafe {
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     result

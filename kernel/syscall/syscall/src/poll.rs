@@ -48,8 +48,9 @@ pub struct PollFd {
 const TIMER_HZ: u64 = 100;
 const NS_PER_TICK: u64 = 1_000_000_000 / TIMER_HZ;
 
+/// — GraveShift: routed through os_core tick bridge instead of direct arch call.
 fn get_ticks() -> u64 {
-    arch_x86_64::timer_ticks()
+    os_core::ticks()
 }
 
 /// Check if a file descriptor is ready for the requested operations
@@ -154,12 +155,12 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
     let mut fds: Vec<PollFd> = Vec::with_capacity(nfds);
 
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         let ptr = fds_ptr as *const PollFd;
         for i in 0..nfds {
             fds.push(core::ptr::read_volatile(ptr.add(i)));
         }
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     // Calculate deadline
@@ -199,12 +200,12 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
         if ready_count > 0 {
             // Write results back to userspace
             unsafe {
-                core::arch::asm!("stac", options(nostack));
+                os_core::user_access_begin();
                 let ptr = fds_ptr as *mut PollFd;
                 for (i, pollfd) in fds.iter().enumerate() {
                     core::ptr::write_volatile(ptr.add(i), *pollfd);
                 }
-                core::arch::asm!("clac", options(nostack));
+                os_core::user_access_end();
             }
             return ready_count;
         }
@@ -214,12 +215,12 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
         if current_ticks >= deadline_ticks {
             // Timeout - write back results (all zero revents) and return 0
             unsafe {
-                core::arch::asm!("stac", options(nostack));
+                os_core::user_access_begin();
                 let ptr = fds_ptr as *mut PollFd;
                 for (i, pollfd) in fds.iter().enumerate() {
                     core::ptr::write_volatile(ptr.add(i), *pollfd);
                 }
-                core::arch::asm!("clac", options(nostack));
+                os_core::user_access_end();
             }
             return 0;
         }
@@ -233,19 +234,17 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
         // Note: We don't save user context here. When scheduler_tick preempts
         // us at hlt, it saves kernel context. When we resume, we continue
         // this loop and return normally via the syscall return path.
-        arch_x86_64::allow_kernel_preempt();
+        os_core::allow_kernel_preempt();
 
         // HLT yields CPU until next interrupt
         // With KERNEL_PREEMPT_OK set, scheduler will switch to other processes
         // NOTE: sti + hlt MUST be in the same asm block. If separated, an
         // interrupt can fire between them, handle it, return, and then the
         // CPU hits HLT and waits an extra tick unnecessarily.
-        unsafe {
-            core::arch::asm!("sti", "hlt", options(nomem, nostack));
-        }
+        os_core::wait_for_interrupt();
 
         // Clear preempt flag if we're still running (no switch occurred)
-        arch_x86_64::disallow_kernel_preempt();
+        os_core::disallow_kernel_preempt();
     }
 }
 
@@ -262,10 +261,10 @@ pub fn sys_ppoll(fds_ptr: usize, nfds: usize, timeout_ptr: usize, sigmask_ptr: u
         -1 // Infinite
     } else {
         let ts: Timespec = unsafe {
-            core::arch::asm!("stac", options(nostack));
+            os_core::user_access_begin();
             let tp = timeout_ptr as *const Timespec;
             let val = core::ptr::read_volatile(tp);
-            core::arch::asm!("clac", options(nostack));
+            os_core::user_access_end();
             val
         };
 
@@ -377,7 +376,7 @@ pub fn sys_select(
     let mut exceptfds = FdSet::new();
 
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
 
         if readfds_ptr != 0 {
             readfds = core::ptr::read_volatile(readfds_ptr as *const FdSet);
@@ -389,7 +388,7 @@ pub fn sys_select(
             exceptfds = core::ptr::read_volatile(exceptfds_ptr as *const FdSet);
         }
 
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     // Read timeout
@@ -397,9 +396,9 @@ pub fn sys_select(
         -1i32 // Infinite
     } else {
         unsafe {
-            core::arch::asm!("stac", options(nostack));
+            os_core::user_access_begin();
             let tv = core::ptr::read_volatile(timeout_ptr as *const time::Timeval);
-            core::arch::asm!("clac", options(nostack));
+            os_core::user_access_end();
 
             if tv.tv_sec < 0 || tv.tv_usec < 0 {
                 return errno::EINVAL;
@@ -501,7 +500,7 @@ pub fn sys_select(
         if ready_count > 0 || get_ticks() >= deadline_ticks {
             // Write results back to userspace
             unsafe {
-                core::arch::asm!("stac", options(nostack));
+                os_core::user_access_begin();
 
                 if readfds_ptr != 0 {
                     core::ptr::write_volatile(readfds_ptr as *mut FdSet, result_read);
@@ -513,7 +512,7 @@ pub fn sys_select(
                     core::ptr::write_volatile(exceptfds_ptr as *mut FdSet, result_except);
                 }
 
-                core::arch::asm!("clac", options(nostack));
+                os_core::user_access_end();
             }
 
             return ready_count;
@@ -528,11 +527,9 @@ pub fn sys_select(
         // death sentence — PAUSE instruction burns 100% CPU in kernel mode with
         // kpo=0 so the scheduler can't even preempt us. Every process using
         // select() became an unkillable CPU hog. Now we HLT like civilized code.
-        arch_x86_64::allow_kernel_preempt();
-        unsafe {
-            core::arch::asm!("sti", "hlt", options(nomem, nostack));
-        }
-        arch_x86_64::disallow_kernel_preempt();
+        os_core::allow_kernel_preempt();
+        os_core::wait_for_interrupt();
+        os_core::disallow_kernel_preempt();
     }
 }
 
@@ -564,10 +561,10 @@ pub fn sys_pselect6(
     }
 
     let ts: Timespec = unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         let tp = timeout_ptr as *const Timespec;
         let val = core::ptr::read_volatile(tp);
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
         val
     };
 
@@ -597,7 +594,7 @@ pub fn sys_pselect6(
     let mut exceptfds = FdSet::new();
 
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         if readfds_ptr != 0 {
             readfds = core::ptr::read_volatile(readfds_ptr as *const FdSet);
         }
@@ -607,7 +604,7 @@ pub fn sys_pselect6(
         if exceptfds_ptr != 0 {
             exceptfds = core::ptr::read_volatile(exceptfds_ptr as *const FdSet);
         }
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     let start_ticks = get_ticks();
@@ -673,7 +670,7 @@ pub fn sys_pselect6(
 
         if ready_count > 0 || get_ticks() >= deadline_ticks {
             unsafe {
-                core::arch::asm!("stac", options(nostack));
+                os_core::user_access_begin();
                 if readfds_ptr != 0 {
                     core::ptr::write_volatile(readfds_ptr as *mut FdSet, result_read);
                 }
@@ -683,7 +680,7 @@ pub fn sys_pselect6(
                 if exceptfds_ptr != 0 {
                     core::ptr::write_volatile(exceptfds_ptr as *mut FdSet, result_except);
                 }
-                core::arch::asm!("clac", options(nostack));
+                os_core::user_access_end();
             }
             let res = ready_count;
             if let Some(mask) = old_mask {
@@ -701,10 +698,8 @@ pub fn sys_pselect6(
 
         // — GraveShift: Same HLT fix as sys_select. Without this, pselect6
         // callers spin at 100% CPU in ring 0, untouchable by the scheduler.
-        arch_x86_64::allow_kernel_preempt();
-        unsafe {
-            core::arch::asm!("sti", "hlt", options(nomem, nostack));
-        }
-        arch_x86_64::disallow_kernel_preempt();
+        os_core::allow_kernel_preempt();
+        os_core::wait_for_interrupt();
+        os_core::disallow_kernel_preempt();
     }
 }

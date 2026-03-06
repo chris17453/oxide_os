@@ -1,7 +1,7 @@
 //! Console I/O and keyboard handling for the OXIDE kernel.
 
-use arch_x86_64 as arch;
-use arch_x86_64::serial;
+use crate::arch;
+use crate::arch::serial;
 use core::fmt::Write;
 
 /// Push any escape sequence bytes to the input subsystem
@@ -343,19 +343,15 @@ pub fn terminal_tick() {
 pub fn serial_write_bytes(data: &[u8]) {
     let mut writer = serial::SerialWriter;
 
-    // Enable access to user pages (STAC - Supervisor-Mode Access Prevention Clear)
-    unsafe {
-        core::arch::asm!("stac", options(nostack));
-    }
+    // — SableWire: Enable access to user pages (SMAP bypass)
+    unsafe { crate::arch::user_access_begin(); }
 
     for &byte in data {
         let _ = writer.write_char(byte as char);
     }
 
-    // Disable access to user pages (CLAC - Supervisor-Mode Access Prevention Clear)
-    unsafe {
-        core::arch::asm!("clac", options(nostack));
-    }
+    // — SableWire: Revoke access to user pages (SMAP re-engaged)
+    unsafe { crate::arch::user_access_end(); }
 }
 
 /// Console write function for devfs (legacy fallback)
@@ -365,10 +361,8 @@ pub fn serial_write_bytes(data: &[u8]) {
 /// meant to echo every byte of user I/O.
 /// NOTE: data may point to user memory, so we need STAC/CLAC for SMAP
 pub fn console_write_bytes(data: &[u8]) {
-    // Enable access to user pages (STAC)
-    unsafe {
-        core::arch::asm!("stac", options(nostack));
-    }
+    // — SableWire: Enable access to user pages (SMAP bypass)
+    unsafe { crate::arch::user_access_begin(); }
 
     // Write to terminal emulator or framebuffer
     if terminal::is_initialized() {
@@ -379,10 +373,8 @@ pub fn console_write_bytes(data: &[u8]) {
         }
     }
 
-    // Disable access to user pages (CLAC)
-    unsafe {
-        core::arch::asm!("clac", options(nostack));
-    }
+    // — SableWire: Revoke access to user pages (SMAP re-engaged)
+    unsafe { crate::arch::user_access_end(); }
 }
 
 // ═══════════════════════════════════════════════════════════════════

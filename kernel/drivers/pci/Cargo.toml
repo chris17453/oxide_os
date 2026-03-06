@@ -5,5 +5,4 @@ edition = "2021"
 
 [dependencies]
 spin = "0.9"
-arch-traits = { path = "../../arch/arch-traits" }
-arch-x86_64 = { path = "../../arch/arch-x86_64" }
+os_core = { path = "../../core/os_core" }

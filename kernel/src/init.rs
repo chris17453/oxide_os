@@ -367,10 +367,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // The BOOTLOADER region starts at 0x1c063000 (12KB after corruption).
     // Protect 2MB before bootloader regions to catch this bug.
     const PHYS_MAP_BASE: u64 = 0xFFFF_8000_0000_0000;
-    let current_rsp: u64;
-    unsafe {
-        core::arch::asm!("mov {}, rsp", out(reg) current_rsp);
-    }
+    let current_rsp: u64 = crate::arch::read_stack_pointer();
     let rsp_phys = if current_rsp >= PHYS_MAP_BASE {
         current_rsp - PHYS_MAP_BASE
     } else {
@@ -720,7 +717,59 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // is preemption-safe. Before this point, KernelMutex degrades to a raw
     // spinlock, which is fine because there's no scheduler to preempt us yet.
     os_core::register_preempt_hooks(arch::preempt_disable, arch::preempt_enable);
-    let _ = writeln!(writer, "[INFO] Preemption hooks registered (Linux-model preempt_count)");
+    // — GraveShift: Legacy kpo API for blocking syscall HLT loops (nanosleep,
+    // poll, select, connect, flock). Separate from KernelMutex disable/enable.
+    os_core::register_preempt_control(arch::allow_kernel_preempt, arch::disallow_kernel_preempt);
+    // — NeonRoot: arch CPU ops for subsystem crates that can't use crate::arch
+    os_core::register_arch_ops(
+        arch::user_access_begin,
+        arch::user_access_end,
+        arch::wait_for_interrupt,
+        arch::enable_interrupts,
+        arch::disable_interrupts,
+    );
+    // — NeonRoot: port I/O hooks for subsystem crates (terminal, vfs, fb, input)
+    os_core::register_port_io(
+        arch::inb,
+        arch::outb,
+        arch::inw,
+        arch::outw,
+        arch::inl,
+        arch::outl,
+    );
+    // — GraveShift: MSR/TSC/cpuid/fence hooks for subsystem crates (sched, syscall, perf, procfs)
+    os_core::register_sys_ops(
+        arch::read_msr,
+        arch::write_msr,
+        arch::read_tsc,
+        arch::cpuid,
+        arch::memory_fence,
+        arch::read_fence,
+    );
+    // — NeonRoot: TLB hooks for mm-paging and smp/tlb — no more cfg(target_arch) in those crates
+    os_core::register_tlb_ops(
+        arch::tlb_flush,
+        arch::tlb_flush_all,
+    );
+    // — NeonRoot: page table root hooks — mm-paging reads/writes CR3 without knowing it's CR3
+    os_core::register_page_table_root_ops(
+        arch::read_page_table_root_raw,
+        arch::write_page_table_root_raw,
+    );
+    // — NeonRoot: ELF machine hook — module loader validates e_machine without cfg gates
+    os_core::register_elf_machine(arch::elf_machine);
+    // — NeonRoot: SMP ops hooks for smp crate — eliminates all cfg(target_arch) from SMP code
+    os_core::register_smp_ops(
+        arch::smp_send_ipi_to,
+        arch::smp_send_ipi_broadcast,
+        arch::smp_send_ipi_self,
+        arch::smp_boot_ap,
+        arch::smp_cpu_id,
+        arch::smp_delay_us,
+        arch::smp_monotonic_counter,
+        arch::smp_monotonic_freq,
+    );
+    let _ = writeln!(writer, "[INFO] All arch hooks registered (preempt, port I/O, sys ops, TLB, SMP)");
 
     // — IronGhost: Register OOM killer callback. When buddy alloc fails, the mm-manager
     // invokes this to SIGKILL the fattest process and retry. Without this, OOM = kernel
@@ -1057,7 +1106,14 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Register wall-clock provider for subsystems (ext4 timestamps, etc.)
     // — WireSaint: bridging the tick counter to filesystem time
     os_core::register_wall_clock(syscall::time::wall_clock_secs);
-    let _ = writeln!(writer, "[INFO] Wall-clock time bridge registered");
+    // — WireSaint: monotonic tick source for arch-independent scheduler code
+    os_core::register_tick_source(crate::arch::timer_ticks, 10_000_000);
+    // — WireSaint: high-res time providers for clock_gettime without arch coupling.
+    // TSC-backed nanosecond precision — arch crate does the heavy lifting, os_core
+    // just holds the function pointers so syscall crate doesn't need arch-x86_64.
+    os_core::register_hires_monotonic(hires_monotonic_provider);
+    os_core::register_hires_wall_clock(hires_realtime_provider);
+    let _ = writeln!(writer, "[INFO] Wall-clock + tick source + hires time bridges registered");
 
     // Register credentials provider for subsystems (ext4 ownership, etc.)
     // — EmberLock: bridging process identity to filesystem ownership
@@ -1126,6 +1182,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         get_current_fs_base: Some(get_current_task_fs_base),
         allow_kernel_preempt: Some(arch::allow_kernel_preempt),
         disallow_kernel_preempt: Some(arch::disallow_kernel_preempt),
+        get_user_rsp: Some(get_current_user_rsp),
     };
     unsafe {
         syscall::init(syscall_ctx);
@@ -2347,9 +2404,9 @@ fn kill_pgrp(pgid: u32, sig: i32) {
 
     unsafe {
         os_log::write_str_raw("[KILL-PGRP] pgid=");
-        arch_x86_64::serial::write_u64_hex_unsafe(pgid as u64);
+        os_log::write_u64_hex_raw(pgid as u64);
         os_log::write_str_raw(" sig=");
-        arch_x86_64::serial::write_u64_hex_unsafe(sig as u64);
+        os_log::write_u64_hex_raw(sig as u64);
         os_log::write_str_raw("\n");
     }
 
@@ -2375,7 +2432,7 @@ fn kill_pgrp(pgid: u32, sig: i32) {
                         };
                         unsafe {
                             os_log::write_str_raw("[KILL-PGRP] target pid=");
-                            arch_x86_64::serial::write_u64_hex_unsafe(pid as u64);
+                            os_log::write_u64_hex_raw(pid as u64);
                             os_log::write_str_raw(" blocked=");
                             os_log::write_str_raw(if blocked { "YES" } else { "NO" });
                             os_log::write_str_raw(" handler=");
@@ -2394,7 +2451,7 @@ fn kill_pgrp(pgid: u32, sig: i32) {
                         drop(guard);
                         unsafe {
                             os_log::write_str_raw("[KILL-PGRP] sent sig to pid=");
-                            arch_x86_64::serial::write_u64_hex_unsafe(pid as u64);
+                            os_log::write_u64_hex_raw(pid as u64);
                             os_log::write_str_raw("\n");
                             os_log::write_str_raw("[KILL-PGRP] postq pending=");
                             os_log::write_str_raw(if has_any_pending { "YES" } else { "NO" });
@@ -2454,9 +2511,8 @@ fn vt_yield() {
     // — SableWire: Re-enable preemption for HLT. No locks held here — safe for the
     // timer ISR to context-switch us out while we sleep.
     arch::allow_kernel_preempt();
-    unsafe {
-        core::arch::asm!("sti", "hlt", options(nomem, nostack));
-    }
+    // — GraveShift: Park CPU until next interrupt — arch-abstracted, no raw asm
+    crate::arch::wait_for_interrupt();
     // Restore the caller's preemption state — don't clobber it
     if !was_preempt_ok {
         arch::disallow_kernel_preempt();
@@ -2490,6 +2546,45 @@ fn kmsg_get_proc_name(pid: u32, buf: &mut [u8]) -> usize {
         }
     }
     0
+}
+
+/// Get current syscall user stack pointer for sigreturn.
+///
+/// — GraveShift: wraps arch_x86_64::syscall::get_user_context_mut() so the
+/// syscall crate can read user RSP without a direct arch dependency. Used
+/// exclusively by sys_sigreturn to locate the SignalFrame on the user stack.
+fn get_current_user_rsp() -> u64 {
+    unsafe { arch::syscall::get_user_context_mut().rsp }
+}
+
+/// High-resolution monotonic time provider for os_core bridge.
+///
+/// — WireSaint: TSC-backed nanosecond precision. Divides into seconds and
+/// remainder to avoid u64 overflow (at 4GHz, raw TSC × 10⁹ overflows after
+/// ~4.6 seconds). Returns (seconds_since_boot, nanoseconds_remainder).
+fn hires_monotonic_provider() -> (u64, u64) {
+    let tsc = crate::arch::read_tsc();
+    let freq = crate::arch::tsc_frequency();
+    if freq == 0 { return (0, 0); }
+    let secs = tsc / freq;
+    let remainder = tsc % freq;
+    let nsec = remainder * 1_000_000_000 / freq;
+    (secs, nsec)
+}
+
+/// High-resolution wall-clock time provider for os_core bridge.
+///
+/// — WireSaint: Same TSC trick as monotonic, plus the boot epoch offset.
+/// Returns (seconds_since_epoch, nanoseconds_remainder).
+fn hires_realtime_provider() -> (u64, u64) {
+    let tsc = crate::arch::read_tsc();
+    let freq = crate::arch::tsc_frequency();
+    if freq == 0 { return (0, 0); }
+    let uptime_secs = tsc / freq;
+    let remainder = tsc % freq;
+    let uptime_nsec = remainder * 1_000_000_000 / freq;
+    let boot_secs = syscall::time::boot_time_secs();
+    (boot_secs + uptime_secs, uptime_nsec)
 }
 
 /// Get current process UID/GID for the os_core credentials bridge

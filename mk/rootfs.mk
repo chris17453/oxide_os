@@ -1,7 +1,21 @@
 # — TorqueJax: Disk image fabrication and root filesystem assembly.
 # Three partitions, one loop device, and a prayer that sudo doesn't ask for a password mid-build.
 
-.PHONY: boot-dir boot-quick boot-image create-rootfs clean-rootfs
+.PHONY: boot-dir boot-quick boot-image create-rootfs clean-rootfs archive-kernel
+
+# — PatchBay: archive current kernel build for multi-boot support.
+# Keeps the last MAX_KERNEL_ARCHIVE builds so the boot manager can offer rollback.
+archive-kernel: kernel
+	@mkdir -p $(KERNEL_ARCHIVE)
+	@cp $(KERNEL_TARGET) $(KERNEL_ARCHIVE)/kernel-$(OXIDE_FULL_VERSION).elf
+	@echo "  Archived kernel-$(OXIDE_FULL_VERSION).elf"
+	@# — PatchBay: prune old builds, keep newest MAX_KERNEL_ARCHIVE
+	@KEPT=0; for f in $$(ls -t $(KERNEL_ARCHIVE)/kernel-*.elf 2>/dev/null); do \
+		KEPT=$$((KEPT + 1)); \
+		if [ $$KEPT -gt $(MAX_KERNEL_ARCHIVE) ]; then \
+			rm -f "$$f"; \
+		fi; \
+	done
 
 # Create boot directory structure with kernel, bootloader, and initramfs
 # NOTE: This target rebuilds kernel, bootloader, and initramfs before creating boot dir
@@ -52,7 +66,7 @@ boot-image: boot-dir
 # - Partition 2 (root): ext4, mounted at / - OS files
 # - Partition 3 (home): ext4, mounted at /home - user data
 # - /tmp is tmpfs (in-memory)
-create-rootfs: increment-build kernel bootloader pkgmgr-binaries initramfs userspace-std
+create-rootfs: increment-build kernel bootloader archive-kernel pkgmgr-binaries initramfs userspace-std
 	@echo "Creating OXIDE root filesystem disk image..."
 	@echo ""
 	@# Create empty disk image
@@ -82,13 +96,22 @@ create-rootfs: increment-build kernel bootloader pkgmgr-binaries initramfs users
 	sudo mkdir -p $(TARGET_DIR)/mnt/boot/EFI/OXIDE && \
 	sudo cp $(BOOTLOADER_TARGET) $(TARGET_DIR)/mnt/boot/EFI/BOOT/BOOTX64.EFI && \
 	sudo cp $(KERNEL_TARGET) $(TARGET_DIR)/mnt/boot/EFI/OXIDE/kernel.elf && \
-	sudo cp $(KERNEL_TARGET) $(TARGET_DIR)/mnt/boot/EFI/OXIDE/kernel-$(OXIDE_VERSION).elf && \
 	sudo cp $(INITRAMFS) $(TARGET_DIR)/mnt/boot/EFI/OXIDE/initramfs.cpio && \
-	echo "  Generating boot.cfg..." && \
+	echo "  Copying archived kernels to ESP..." && \
+	for kelf in $$(ls -t $(KERNEL_ARCHIVE)/kernel-*.elf 2>/dev/null | head -$(MAX_KERNEL_ARCHIVE)); do \
+		KNAME=$$(basename $$kelf); \
+		sudo cp $$kelf $(TARGET_DIR)/mnt/boot/EFI/OXIDE/$$KNAME; \
+		echo "    $$KNAME"; \
+	done && \
+	echo "  Generating multi-entry boot.cfg..." && \
 	printf "# OXIDE Boot Manager Configuration\n" | sudo tee $(TARGET_DIR)/mnt/boot/EFI/OXIDE/boot.cfg > /dev/null && \
 	printf "# — NeonRoot: the gatekeeper before the kernel awakens\n\n" | sudo tee -a $(TARGET_DIR)/mnt/boot/EFI/OXIDE/boot.cfg > /dev/null && \
 	printf "[defaults]\ntimeout = 5\ndefault = latest\nresolution = auto\n\n" | sudo tee -a $(TARGET_DIR)/mnt/boot/EFI/OXIDE/boot.cfg > /dev/null && \
-	printf "[kernel.$(OXIDE_VERSION)]\npath = \\\\EFI\\\\OXIDE\\\\kernel-$(OXIDE_VERSION).elf\nlabel = OXIDE $(OXIDE_FULL_VERSION)\noptions = \ninitramfs = \\\\EFI\\\\OXIDE\\\\initramfs.cpio\n" | sudo tee -a $(TARGET_DIR)/mnt/boot/EFI/OXIDE/boot.cfg > /dev/null && \
+	for kelf in $$(ls -t $(KERNEL_ARCHIVE)/kernel-*.elf 2>/dev/null | head -$(MAX_KERNEL_ARCHIVE)); do \
+		KNAME=$$(basename $$kelf); \
+		KVER=$$(echo $$KNAME | sed 's/kernel-//;s/\.elf//'); \
+		printf "[kernel.$$KVER]\npath = \\\\EFI\\\\OXIDE\\\\$$KNAME\nlabel = OXIDE $$KVER\noptions = \ninitramfs = \\\\EFI\\\\OXIDE\\\\initramfs.cpio\n\n" | sudo tee -a $(TARGET_DIR)/mnt/boot/EFI/OXIDE/boot.cfg > /dev/null; \
+	done && \
 	sudo umount $(TARGET_DIR)/mnt/boot && \
 	\
 	echo "Populating / (root filesystem)..." && \

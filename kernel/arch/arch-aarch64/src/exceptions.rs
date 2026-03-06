@@ -27,3 +27,19 @@ impl Default for ExceptionFrame {
         }
     }
 }
+
+// — NeonRoot: keyboard/mouse stubs so arch.rs doesn't need cfg gates.
+// ARM uses different input (e.g., USB HID or device-tree GPIO).
+
+/// Initialize PS/2 keyboard (no-op on ARM — uses USB HID or DT input)
+pub fn init_ps2_keyboard() {}
+
+/// Set keyboard IRQ callback (no-op on ARM)
+pub unsafe fn set_keyboard_callback(_callback: fn()) {}
+
+/// Get keyboard IRQ count (always 0 on ARM)
+pub fn keyboard_irq_count() -> u64 { 0 }
+
+/// Set mouse IRQ callback (no-op on ARM)
+pub unsafe fn set_mouse_callback(_callback: fn()) {}
+

@@ -4,27 +4,28 @@
 .PHONY: kernel bootloader release
 
 # — SableWire: Custom target requires building core/alloc from source.
-# Same dance the bootloader does for x86_64-unknown-uefi. — SableWire
-KERNEL_TARGET_JSON := targets/x86_64-unknown-oxide.json
+# Target JSON is parameterized by $(ARCH) — add a new arch, add a new JSON. Done.
+KERNEL_TARGET_JSON := targets/$(ARCH)-unknown-oxide.json
 KERNEL_BUILD_STD := -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem
+
+# — SableWire: arch feature is always injected — Makefile is the single source of truth
+# for which architecture we're building. KERNEL_FEATURES adds debug flags on top.
+ARCH_FEATURE := arch-$(ARCH)
+ifneq ($(KERNEL_FEATURES),)
+ALL_KERNEL_FEATURES := $(ARCH_FEATURE),$(KERNEL_FEATURES)
+else
+ALL_KERNEL_FEATURES := $(ARCH_FEATURE)
+endif
 
 # Build kernel
 # Pass KERNEL_FEATURES to enable debug output, e.g.: make run KERNEL_FEATURES=debug-all
 # — PatchBay: OXIDE_BUILD_NUMBER env var injects the NT-style build counter at compile time
 kernel:
-	@echo "Building kernel..."
+	@echo "Building kernel ($(ARCH))..."
 ifeq ($(PROFILE),release)
-ifneq ($(KERNEL_FEATURES),)
-	@OXIDE_BUILD_NUMBER=$$(cat build/build-number 2>/dev/null || echo 0) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD) --release --features $(KERNEL_FEATURES)
+	@OXIDE_BUILD_NUMBER=$$(cat build/build-number 2>/dev/null || echo 0) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD) --release --features $(ALL_KERNEL_FEATURES)
 else
-	@OXIDE_BUILD_NUMBER=$$(cat build/build-number 2>/dev/null || echo 0) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD) --release
-endif
-else
-ifneq ($(KERNEL_FEATURES),)
-	@OXIDE_BUILD_NUMBER=$$(cat build/build-number 2>/dev/null || echo 0) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD) --features $(KERNEL_FEATURES)
-else
-	@OXIDE_BUILD_NUMBER=$$(cat build/build-number 2>/dev/null || echo 0) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD)
-endif
+	@OXIDE_BUILD_NUMBER=$$(cat build/build-number 2>/dev/null || echo 0) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD) --features $(ALL_KERNEL_FEATURES)
 endif
 
 # Build bootloader
@@ -38,5 +39,5 @@ endif
 
 # Build release
 release:
-	cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD) --release
+	cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD) --release --features $(ARCH_FEATURE)
 	cargo build --package boot-uefi --target $(ARCH)-unknown-uefi --release

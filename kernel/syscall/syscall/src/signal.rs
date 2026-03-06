@@ -2,7 +2,6 @@
 //!
 //! Implements kill, sigaction, sigprocmask, sigpending, etc.
 
-use arch_x86_64 as arch;
 use signal::{SIGKILL, SIGSTOP, SigAction, SigHow, SigInfo, SigSet, can_catch, is_valid};
 use vfs::permission;
 
@@ -286,9 +285,9 @@ pub fn sys_sigsuspend(mask_ptr: u64) -> i64 {
     // Read the temporary mask from userspace and install it atomically.
     // — WireSaint: stac/clac bracket because mask_ptr is a user pointer.
     let temp_mask = unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         let m = core::ptr::read_volatile(mask_ptr as *const SigSet);
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
         m
     };
 
@@ -324,9 +323,9 @@ pub fn sys_sigsuspend(mask_ptr: u64) -> i64 {
             break;
         }
 
-        arch::allow_kernel_preempt();
-        unsafe { core::arch::asm!("sti", "hlt", options(nomem, nostack)); }
-        arch::disallow_kernel_preempt();
+        os_core::allow_kernel_preempt();
+        os_core::wait_for_interrupt();
+        os_core::disallow_kernel_preempt();
     }
 
     // Restore old signal mask before returning.
@@ -367,9 +366,9 @@ pub fn sys_pause() -> i64 {
             break;
         }
 
-        arch::allow_kernel_preempt();
-        unsafe { core::arch::asm!("sti", "hlt", options(nomem, nostack)); }
-        arch::disallow_kernel_preempt();
+        os_core::allow_kernel_preempt();
+        os_core::wait_for_interrupt();
+        os_core::disallow_kernel_preempt();
     }
 
     // pause() always returns -EINTR.
@@ -386,11 +385,19 @@ pub fn sys_pause() -> i64 {
 pub fn sys_sigreturn() -> i64 {
     use signal::delivery::SignalFrame;
 
-    // Get current user context — RSP points past the retaddr field (handler did `ret`)
-    let ctx = unsafe { arch::syscall::get_user_context_mut() };
+    // — GraveShift: Get user RSP through the SYSCALL_CONTEXT function pointer
+    // instead of reaching into arch_x86_64 directly. The provider is registered
+    // at boot from init.rs.
+    let user_rsp = unsafe {
+        use core::ptr::addr_of;
+        match (*addr_of!(super::SYSCALL_CONTEXT)).get_user_rsp {
+            Some(f) => f(),
+            None => return crate::errno::EFAULT,
+        }
+    };
 
     // Frame starts 8 bytes below current RSP (retaddr was popped by `ret`)
-    let frame_ptr = (ctx.rsp - 8) as *const SignalFrame;
+    let frame_ptr = (user_rsp - 8) as *const SignalFrame;
 
     // Validate pointer is in user space
     if (frame_ptr as u64) >= 0x0000_8000_0000_0000 {
@@ -398,13 +405,13 @@ pub fn sys_sigreturn() -> i64 {
     }
 
     // Enable user memory access (SMAP)
-    unsafe { core::arch::asm!("stac", options(nostack)); }
+    unsafe { os_core::user_access_begin(); }
 
     // Read the signal frame from user stack
     let frame = unsafe { core::ptr::read_volatile(frame_ptr) };
 
     // Disable user memory access
-    unsafe { core::arch::asm!("clac", options(nostack)); }
+    unsafe { os_core::user_access_end(); }
 
     // Stash for deferred restoration in check_signals_on_syscall_return()
     unsafe { signal::delivery::set_sigreturn_frame(frame); }
@@ -447,18 +454,18 @@ pub fn sys_sigaltstack(ss_ptr: u64, old_ss_ptr: u64) -> i64 {
             ss_size: 0,
         };
         unsafe {
-            core::arch::asm!("stac", options(nostack));
+            os_core::user_access_begin();
             core::ptr::write_volatile(old_ss_ptr as *mut StackT, old);
-            core::arch::asm!("clac", options(nostack));
+            os_core::user_access_end();
         }
     }
 
     // Set the new stack if provided
     if ss_ptr != 0 && ss_ptr < 0x0000_8000_0000_0000 {
         let ss: StackT = unsafe {
-            core::arch::asm!("stac", options(nostack));
+            os_core::user_access_begin();
             let val = core::ptr::read_volatile(ss_ptr as *const StackT);
-            core::arch::asm!("clac", options(nostack));
+            os_core::user_access_end();
             val
         };
 
@@ -486,9 +493,9 @@ pub fn read_sigset(ptr: usize) -> Option<SigSet> {
     }
 
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         let sigset = core::ptr::read_volatile(ptr as *const SigSet);
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
         Some(sigset)
     }
 }

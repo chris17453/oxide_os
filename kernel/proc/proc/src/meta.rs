@@ -50,20 +50,10 @@ const ASLR_MMAP_INIT_ENTROPY: u64 = 0x3FF_F000; // 4MB - 4KB, page-aligned
 /// spread entropy across all 64 bits.
 #[inline]
 pub(crate) fn aslr_random() -> u64 {
-    let lo: u64;
-    let hi: u64;
-    unsafe {
-        core::arch::asm!(
-            "rdtsc",
-            out("rax") lo,
-            out("rdx") hi,
-            options(nomem, nostack),
-        );
-    }
-    // — ColdCipher: XOR the halves and rotate — TSC low bits have the
-    // most jitter, high bits have the most range. Mix them.
-    let combined = (hi << 32) | lo;
-    combined ^ combined.rotate_right(17)
+    // — ColdCipher: routed through os_core arch abstraction — no more raw rdtsc
+    // in process code. The low bits still have the most jitter; mix them.
+    let tsc = os_core::read_tsc();
+    tsc ^ tsc.rotate_right(17)
 }
 
 /// Process metadata shared between threads
@@ -478,11 +468,11 @@ impl Drop for ProcessMeta {
 
         #[cfg(feature = "debug-proc")]
         unsafe {
-            arch_x86_64::serial::write_str_unsafe("[META-DROP] tgid=");
-            arch_x86_64::serial::write_u32_unsafe(self.tgid);
-            arch_x86_64::serial::write_str_unsafe(" freed_owned=");
-            arch_x86_64::serial::write_u32_unsafe(count);
-            arch_x86_64::serial::write_str_unsafe("\n");
+            os_log::write_str_raw("[META-DROP] tgid=");
+            os_log::write_u32_raw(self.tgid);
+            os_log::write_str_raw(" freed_owned=");
+            os_log::write_u32_raw(count);
+            os_log::write_str_raw("\n");
         }
     }
 }

@@ -30,6 +30,11 @@ mod allocator {
     /// Maximum number of mmap arenas (2MB × 32 = 64MB ceiling).
     const MAX_ARENAS: usize = 32;
 
+    /// — IronGhost: Allocations above this threshold bypass the arena bump allocator
+    /// and go straight to mmap. Without this, a 20MB malloc spins through every 2MB
+    /// arena, finds none large enough, and OOMs. Classic bump-allocator blind spot.
+    const LARGE_ALLOC_THRESHOLD: usize = ARENA_SIZE / 2; // 1MB
+
     #[repr(C, align(16))]
     struct BootstrapHeap {
         data: UnsafeCell<[u8; BOOTSTRAP_SIZE]>,
@@ -55,6 +60,11 @@ mod allocator {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
             let size = layout.size();
             let align = layout.align();
+
+            // — IronGhost: large allocations go straight to mmap — no arena can hold them
+            if size >= LARGE_ALLOC_THRESHOLD {
+                return Self::large_alloc(size, align);
+            }
 
             // ── Try bootstrap heap first ────────────────────────────
             let pos = BOOTSTRAP_POS.load(Ordering::Relaxed);
@@ -82,6 +92,36 @@ mod allocator {
     }
 
     impl BumpAllocator {
+        /// — IronGhost: Direct mmap for allocations too large for 2MB arenas.
+        /// Rounds up to page size. These pages are never reused (bump allocator),
+        /// but at least we don't OOM on a 20MB Python heap request.
+        fn large_alloc(size: usize, align: usize) -> *mut u8 {
+            // Round up to page boundary (4KB pages)
+            let alloc_size = (size + 4095) & !4095;
+            // Add alignment padding if needed (align > page size is exotic but handle it)
+            let total = if align > 4096 { alloc_size + align } else { alloc_size };
+
+            let ptr = unsafe {
+                crate::syscall::sys_mmap(
+                    core::ptr::null_mut(),
+                    total,
+                    0x3,  // PROT_READ | PROT_WRITE
+                    0x22, // MAP_PRIVATE | MAP_ANONYMOUS
+                    -1,
+                    0,
+                )
+            };
+
+            if ptr.is_null() || ptr as usize == usize::MAX {
+                return core::ptr::null_mut();
+            }
+
+            // Align within the mapped region
+            let addr = ptr as usize;
+            let aligned = (addr + align - 1) & !(align - 1);
+            aligned as *mut u8
+        }
+
         /// Allocate from the current mmap arena, creating a new one if needed.
         unsafe fn arena_alloc(&self, size: usize, align: usize) -> *mut u8 {
             loop {

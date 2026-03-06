@@ -171,7 +171,7 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
         }
 
         unsafe {
-            core::arch::asm!("stac", options(nostack));
+            os_core::user_access_begin();
         }
 
         // Read file data into the mapped region
@@ -188,7 +188,7 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
             Err(_) => {
                 // Failed to read - unmap and return error
                 unsafe {
-                    core::arch::asm!("clac", options(nostack));
+                    os_core::user_access_end();
                 }
                 let _ = sys_munmap(map_addr, length);
                 return errno::EIO;
@@ -196,7 +196,7 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
         }
 
         unsafe {
-            core::arch::asm!("clac", options(nostack));
+            os_core::user_access_end();
         }
 
         // Note: MAP_SHARED vs MAP_PRIVATE handling
@@ -412,33 +412,13 @@ pub fn sys_mremap(
     // Copy data from old to new
     // Use STAC/CLAC to allow kernel access to user pages during the copy
     unsafe {
-        #[cfg(target_arch = "x86_64")]
-        {
-            core::arch::asm!(
-                "stac",                                      // Enable user page access
-                "mov rcx, {len}",                           // Length in RCX
-                "mov rsi, {src}",                           // Source in RSI
-                "mov rdi, {dst}",                           // Destination in RDI
-                "rep movsb",                                 // Copy bytes
-                "clac",                                      // Disable user page access
-                src = in(reg) old_addr,
-                dst = in(reg) new_addr,
-                len = in(reg) old_size,
-                out("rcx") _,
-                out("rsi") _,
-                out("rdi") _,
-                options(nostack)
-            );
-        }
-
-        #[cfg(not(target_arch = "x86_64"))]
-        {
-            core::ptr::copy_nonoverlapping(
-                old_addr as *const u8,
-                new_addr as *mut u8,
-                old_size as usize,
-            );
-        }
+        os_core::user_access_begin();
+        core::ptr::copy_nonoverlapping(
+            old_addr as *const u8,
+            new_addr as *mut u8,
+            old_size as usize,
+        );
+        os_core::user_access_end();
     }
 
     // Unmap old region

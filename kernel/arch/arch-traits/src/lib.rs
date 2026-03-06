@@ -178,13 +178,18 @@ pub trait Arch: Send + Sync {
     /// Architecture name
     fn name() -> &'static str;
 
+    /// ELF machine type (e_machine) for this architecture
+    /// — BlackLatch: x86_64 = 0x3E (EM_X86_64), AArch64 = 0xB7 (EM_AARCH64),
+    /// MIPS = 0x08 (EM_MIPS). Module loader uses this to validate ELF binaries.
+    const ELF_MACHINE: u16;
+
     /// Page size in bytes
     fn page_size() -> usize;
 
     /// Kernel virtual base address
     fn kernel_base() -> VirtAddr;
 
-    /// Halt the CPU
+    /// Halt the CPU (diverging — never returns)
     fn halt() -> !;
 
     /// Disable interrupts
@@ -195,6 +200,62 @@ pub trait Arch: Send + Sync {
 
     /// Are interrupts enabled?
     fn interrupts_enabled() -> bool;
+
+    /// Enable interrupts and wait for the next interrupt, then return.
+    ///
+    /// — NeonRoot: x86 = `sti; hlt` (atomically enables + halts so no
+    /// interrupt window race). ARM = `wfi`. MIPS = `wait`. Every idle loop
+    /// and blocking syscall sleep calls this instead of inlining asm.
+    fn wait_for_interrupt();
+
+    /// Begin a user-memory access region (disable SMAP/PAN protection).
+    ///
+    /// — NeonRoot: x86 = `stac` (Set AC flag to allow supervisor access to
+    /// user pages). ARM = clear PAN bit. MIPS = nop (no equivalent).
+    ///
+    /// # Safety
+    /// Caller must call `user_access_end()` when done. Leaving user access
+    /// enabled is a security hole — any kernel bug can read/write user memory.
+    unsafe fn user_access_begin();
+
+    /// End a user-memory access region (re-enable SMAP/PAN protection).
+    ///
+    /// — NeonRoot: x86 = `clac` (Clear AC flag). ARM = set PAN bit.
+    unsafe fn user_access_end();
+
+    /// Read the current page table root (CR3 on x86, TTBR on ARM)
+    fn read_page_table_root() -> PhysAddr;
+
+    /// Switch to a different page table
+    ///
+    /// # Safety
+    /// `root` must point to a valid page table structure.
+    unsafe fn switch_page_table(root: PhysAddr);
+
+    /// Read the current stack pointer
+    fn read_stack_pointer() -> u64;
+
+    /// Read the timestamp counter (TSC on x86, CNTPCT on ARM, Count on MIPS)
+    /// — WireSaint: raw counter value, no calibration. For calibrated ns use os_core::now_ns().
+    fn read_tsc() -> u64;
+
+    /// Execute CPUID (x86) or equivalent feature query
+    /// Returns (eax, ebx, ecx, edx) on x86; arch-specific on others
+    /// — WireSaint: leaf/subleaf map to EAX/ECX inputs on x86. Other arches
+    /// can repurpose or ignore them.
+    fn cpuid(leaf: u32, subleaf: u32) -> (u32, u32, u32, u32);
+
+    /// Full memory fence (mfence on x86, dmb ish on ARM, sync on MIPS)
+    /// — WireSaint: serializes all loads and stores across the fence.
+    fn memory_fence();
+
+    /// Read memory fence (lfence on x86, dmb ishld on ARM)
+    /// — WireSaint: serializes loads only. Stores may reorder past this.
+    fn read_fence();
+
+    /// Write memory fence (sfence on x86, dmb ishst on ARM)
+    /// — WireSaint: serializes stores only. Loads may reorder past this.
+    fn write_fence();
 }
 
 /// Serial port trait for early console
@@ -618,4 +679,46 @@ pub trait VirtualizationExt {
     /// # Safety
     /// Returns VMCS/VMCB or equivalent
     unsafe fn create_vmcs() -> Option<Self::VmcsType>;
+}
+
+// ============================================================================
+// SMP Operations
+// — NeonRoot: the INIT/SIPI sequence, APIC IPIs, TSC timing — all of that
+// belongs in the arch crate. Generic SMP code calls through this trait.
+// ARM uses PSCI/GIC, MIPS uses cop0/KSEG — none of them have APICs.
+// ============================================================================
+
+/// SMP hardware operations — everything the generic SMP layer needs from arch
+pub trait SmpOps {
+    /// Get the current logical CPU ID
+    fn cpu_id() -> Option<u32>;
+
+    /// Execute the arch-specific AP boot sequence (INIT/SIPI/SIPI on x86,
+    /// PSCI on ARM, etc). Does NOT do state tracking or timeout — that's
+    /// the generic SMP crate's job.
+    ///
+    /// `hw_id` — hardware CPU identifier (APIC ID on x86, MPIDR on ARM)
+    /// `trampoline_page` — page number containing AP startup trampoline
+    fn boot_ap_sequence(hw_id: u32, trampoline_page: u8);
+
+    /// Send a fixed-delivery IPI to a specific CPU by hardware ID
+    fn send_ipi_to(hw_id: u32, vector: u8);
+
+    /// Send IPI to all CPUs (optionally including self)
+    fn send_ipi_broadcast(vector: u8, include_self: bool);
+
+    /// Send IPI to self only
+    fn send_ipi_self(vector: u8);
+
+    /// Busy-wait for `ms` milliseconds
+    fn delay_ms(ms: u64);
+
+    /// Busy-wait for `us` microseconds
+    fn delay_us(us: u64);
+
+    /// Read a monotonic hardware counter (TSC on x86, CNTPCT on ARM)
+    fn monotonic_counter() -> u64;
+
+    /// Get the frequency of the monotonic counter in Hz
+    fn monotonic_frequency() -> u64;
 }

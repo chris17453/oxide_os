@@ -108,15 +108,8 @@ static VIRTIO_INPUT_DEVICES: Mutex<Vec<VirtioInput>> = Mutex::new(Vec::new());
 pub fn probe_all_pci() -> usize {
     // — InputShade: trace PCI scan results for debugging
     let all_devs = pci::devices();
-    unsafe {
-        let msg = b"[VIRTIO-INPUT] PCI devices total: ";
-        for &b in msg.iter() {
-            while (core::ptr::read_volatile(&0x3FDu16 as *const _ as *const u8) & 0x20) == 0 {
-                core::arch::asm!("in al, dx", out("al") _, in("dx") 0x3FDu16, options(nomem, nostack, preserves_flags));
-            }
-            core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack, preserves_flags));
-        }
-    }
+    // — InputShade: serial trace through arch abstraction, no more raw asm in driver code
+    serial_write_str(b"[VIRTIO-INPUT] PCI devices total: ");
     serial_write_num(all_devs.len());
     serial_write_crlf();
 
@@ -169,21 +162,17 @@ const UART_TX_SPIN_LIMIT: u32 = 2048;
 // the byte. debug output is best-effort, system liveness is not.
 fn serial_write_str(s: &[u8]) {
     for &b in s {
-        unsafe {
-            let mut spins: u32 = 0;
-            loop {
-                let status: u8;
-                core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack, preserves_flags));
-                if status & 0x20 != 0 { break; }
-                spins += 1;
-                if spins >= UART_TX_SPIN_LIMIT {
-                    // — SableWire: FIFO still full after spin limit.
-                    // drop byte rather than hang the world. not proud, just alive.
-                    return;
-                }
+        // — SableWire: bounded THRE poll through os_core hooks. drop byte, not system.
+        let mut spins: u32 = 0;
+        loop {
+            let status = unsafe { os_core::inb(0x3FD) };
+            if status & 0x20 != 0 { break; }
+            spins += 1;
+            if spins >= UART_TX_SPIN_LIMIT {
+                return;
             }
-            core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack, preserves_flags));
         }
+        unsafe { os_core::outb(0x3F8, b) };
     }
 }
 

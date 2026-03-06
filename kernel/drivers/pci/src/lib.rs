@@ -10,7 +10,6 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use arch_traits::PortIo;
 use core::sync::atomic::{AtomicBool, Ordering};
 use spin::Mutex;
 
@@ -876,15 +875,16 @@ impl VirtioPciTransport {
     }
 }
 
-// Architecture-agnostic I/O port access via trait
-// Uses the current architecture's PortIo implementation
-// — TorqueJax
+// — TorqueJax: Port I/O through os_core hooks. The cfg-gated arch imports are
+// dead — os_core routes to the right arch at runtime. ARM would use ECAM MMIO
+// instead, wired through the same HAL. Portable config space access, finally.
+
 #[inline]
 unsafe fn outl(port: u16, value: u32) {
-    unsafe { arch_x86_64::X86_64::outl(port, value) }
+    unsafe { os_core::outl(port, value) }
 }
 
 #[inline]
 unsafe fn inl(port: u16) -> u32 {
-    unsafe { arch_x86_64::X86_64::inl(port) }
+    unsafe { os_core::inl(port) }
 }

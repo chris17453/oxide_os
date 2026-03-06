@@ -136,7 +136,7 @@ impl Renderer {
         let back_buffer = if fb.size() > 0 {
             unsafe {
                 os_log::write_str_raw("[REND] alloc bb size=0x");
-                arch_x86_64::serial::write_u64_hex_unsafe(fb.size() as u64);
+                os_log::write_u64_hex_raw(fb.size() as u64);
                 os_log::write_str_raw("\n");
             }
             Some(vec![0u8; fb.size()])
@@ -353,10 +353,11 @@ impl Renderer {
             let y_end = self.blit_y_max.get().min(self.fb.height()) as usize;
 
             // — GraveShift: Trace blit region for debug-console
+            // — GlassSignal: blit debug trace exorcised of raw asm — os_core handles the port whispers now
             #[cfg(feature = "debug-terminal")]
             unsafe {
                 for &b in b"[BLIT] y=" {
-                    core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nomem, nostack));
+                    os_core::outb(0x3F8, b);
                 }
                 let mut n = y_start;
                 let mut digits = [0u8; 10];
@@ -365,10 +366,10 @@ impl Renderer {
                     while n > 0 { digits[i] = b'0' + (n % 10) as u8; n /= 10; i += 1; }
                 }
                 for d in digits[..i].iter().rev() {
-                    core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") *d, options(nomem, nostack));
+                    os_core::outb(0x3F8, *d);
                 }
                 for &b in b".." {
-                    core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") b, options(nomem, nostack));
+                    os_core::outb(0x3F8, b);
                 }
                 n = y_end;
                 i = 0;
@@ -376,10 +377,10 @@ impl Renderer {
                     while n > 0 { digits[i] = b'0' + (n % 10) as u8; n /= 10; i += 1; }
                 }
                 for d in digits[..i].iter().rev() {
-                    core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") *d, options(nomem, nostack));
+                    os_core::outb(0x3F8, *d);
                 }
                 let nl = b'\n';
-                core::arch::asm!("out dx, al", in("dx") 0x3F8u16, in("al") nl, options(nomem, nostack));
+                os_core::outb(0x3F8, nl);
             }
 
             if y_start < y_end {
@@ -390,32 +391,9 @@ impl Renderer {
                     let src = bb_ptr.add(byte_offset);
                     let dst = fb_ptr.add(byte_offset);
 
-                    // — GlassSignal: rep movsq on x86_64 — the CPU's own DMA engine.
-                    // 8 bytes per iteration, hardware-optimized store buffer forwarding.
-                    // TCG emulates this as 8 bytes per simulated instruction vs 1 byte
-                    // for rep movsb. For 7MB: 875K iterations vs 7M iterations.
-                    let qword_count = byte_count / 8;
-                    let tail_bytes = byte_count % 8;
-
-                    if qword_count > 0 {
-                        core::arch::asm!(
-                            "cld",
-                            "rep movsq",
-                            inout("rcx") qword_count => _,
-                            inout("rsi") src => _,
-                            inout("rdi") dst => _,
-                            options(nostack)
-                        );
-                    }
-
-                    // Handle remaining bytes (stride is typically 4-aligned so tail = 0)
-                    if tail_bytes > 0 {
-                        let tail_src = src.add(qword_count * 8);
-                        let tail_dst = dst.add(qword_count * 8);
-                        for i in 0..tail_bytes {
-                            ptr::write(tail_dst.add(i), ptr::read(tail_src.add(i)));
-                        }
-                    }
+                    // — GlassSignal: replaced rep movsq asm with ptr::copy_nonoverlapping —
+                    // the compiler knows how to emit the same thing, and now we're arch-clean
+                    core::ptr::copy_nonoverlapping(src, dst, byte_count);
                 }
             }
 

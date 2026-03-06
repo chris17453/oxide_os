@@ -10,7 +10,7 @@ use core::ptr::addr_of_mut;
 use core::sync::atomic::Ordering;
 
 use arch_traits::Arch;
-use arch_x86_64 as arch;
+use crate::arch;
 use mm_paging::{flush_tlb_all, phys_to_virt, write_cr3};
 use os_core::PhysAddr;
 use os_log::println;
@@ -210,10 +210,10 @@ pub fn user_exit(status: i32) -> ! {
             const USER_SPACE_END: u64 = 0x0000_8000_0000_0000;
             if clear_child_tid < USER_SPACE_END {
                 unsafe {
-                    core::arch::asm!("stac", options(nostack));
+                    arch::user_access_begin();
                     let ptr = clear_child_tid as *mut i32;
                     core::ptr::write_volatile(ptr, 0);
-                    core::arch::asm!("clac", options(nostack));
+                    arch::user_access_end();
                 }
             }
 
@@ -251,9 +251,7 @@ pub fn user_exit(status: i32) -> ! {
         sched::set_need_resched();
         arch::allow_kernel_preempt();
         loop {
-            unsafe {
-                core::arch::asm!("sti", "hlt", options(nomem, nostack));
-            }
+            arch::wait_for_interrupt();
         }
     } else {
         // This is the main process exit (thread group leader)
@@ -333,9 +331,7 @@ pub fn user_exit(status: i32) -> ! {
         sched::set_need_resched();
         arch::allow_kernel_preempt();
         loop {
-            unsafe {
-                core::arch::asm!("sti", "hlt", options(nomem, nostack));
-            }
+            arch::wait_for_interrupt();
         }
     }
 }
@@ -605,13 +601,14 @@ pub fn kernel_fork() -> i64 {
                 }
 
                 // Switch page tables
-                core::arch::asm!("mov cr3, {}", in(reg) child_pml4.as_u64());
+                arch::switch_page_table(os_core::PhysAddr::new(child_pml4.as_u64()));
 
                 os_log::write_str_raw("[FORK-CR3] CR3 loaded OK, about to sysretq\n");
 
                 let ctx_ptr = (&mut fork_child_ctx as *mut ProcessContext) as u64;
 
                 // Child's fork() returns 0
+                // TODO: move to arch crate — arch-specific context switch/usermode entry
                 core::arch::asm!(
                     "mov rax, {ctx}",
                     "mov rcx, [rax]",       // rip
@@ -784,10 +781,10 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
                 && clone_result.parent_tid_addr < 0x0000_8000_0000_0000
             {
                 unsafe {
-                    core::arch::asm!("stac", options(nostack));
+                    arch::user_access_begin();
                     let ptr = clone_result.parent_tid_addr as *mut i32;
                     core::ptr::write_volatile(ptr, child_tid as i32);
-                    core::arch::asm!("clac", options(nostack));
+                    arch::user_access_end();
                 }
             }
 
@@ -918,10 +915,10 @@ pub fn kernel_clone(flags: u32, stack: u64, parent_tid: u64, child_tid: u64, tls
                 && clone_result.child_tid_addr < 0x0000_8000_0000_0000
             {
                 unsafe {
-                    core::arch::asm!("stac", options(nostack));
+                    arch::user_access_begin();
                     let ptr = clone_result.child_tid_addr as *mut i32;
                     core::ptr::write_volatile(ptr, child_tid as i32);
-                    core::arch::asm!("clac", options(nostack));
+                    arch::user_access_end();
                 }
             }
 
@@ -977,7 +974,8 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
 
     debug_proc!("[WAIT] pid={} waiting for child={}", parent_pid, pid);
     loop {
-        // — GraveShift: Trace each waitpid iteration unconditionally for zombie hang debug
+        // — GraveShift: Trace each waitpid iteration — gated behind debug-proc
+        #[cfg(feature = "debug-proc")]
         unsafe {
             os_log::write_str_raw("[WAIT-LOOP] ppid=");
             trace_u64(parent_pid as u64);
@@ -1054,9 +1052,7 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
                         // When child exits, wake_parent() will wake us up
                         // NOTE: sti + hlt must be in the same asm block to avoid
                         // an extra tick delay if a timer fires between them.
-                        unsafe {
-                            core::arch::asm!("sti", "hlt", options(nomem, nostack));
-                        }
+                        arch::wait_for_interrupt();
 
                         // Clear preempt flag if we're still running
                         arch::disallow_kernel_preempt();
@@ -1346,13 +1342,12 @@ pub fn run_child_process(child_pid: Pid) {
         // Now switch to child's page tables and read back
         unsafe {
             // Read CR3 to verify current value
-            let current_cr3: u64;
-            core::arch::asm!("mov {}, cr3", out(reg) current_cr3);
+            let current_cr3 = arch::read_page_table_root().as_u64();
             debug_fork!("[CHILD] Current CR3: {:#x}", current_cr3);
             debug_fork!("[CHILD] Child PML4: {:#x}", child_pml4.as_u64());
 
             // Switch to child's page tables
-            core::arch::asm!("mov cr3, {}", in(reg) child_pml4.as_u64());
+            arch::switch_page_table(os_core::PhysAddr::new(child_pml4.as_u64()));
 
             // Read back from the copied context
             let read_rax = *dest_ptr.add(0);
@@ -1360,7 +1355,7 @@ pub fn run_child_process(child_pid: Pid) {
             let read_rip = *dest_ptr.add(16);
 
             // Switch back to original page tables
-            core::arch::asm!("mov cr3, {}", in(reg) current_cr3);
+            arch::switch_page_table(os_core::PhysAddr::new(current_cr3));
 
             debug_fork!("[CHILD] After CR3 switch and back:");
             debug_fork!("[CHILD]   read_rax={:#x}", read_rax);
@@ -1585,16 +1580,94 @@ pub fn kernel_exec(
         return -21; // EISDIR or not a file
     }
 
-    // Read the file contents
-    let size = vnode.size() as usize;
-    debug_fork!("[EXEC] File size: {} bytes", size);
-    unsafe { os_log::write_str_raw("[EXEC] reading file...\n"); }
+    // — GraveShift: Smart ELF loading — read ONLY the bytes we need, not the whole file.
+    // Debug info, symbol tables, and section headers can bloat an ELF to 20MB+ but we
+    // only need the ELF header, program headers, and LOAD/TLS segment data. A 500MB
+    // binary with 4MB of segments? We read 4MB. No artificial limits.
+    let file_size = vnode.size() as usize;
+    debug_fork!("[EXEC] File size: {} bytes", file_size);
 
-    let mut elf_data = alloc::vec![0u8; size];
-    unsafe { os_log::write_str_raw("[EXEC] heap alloc done, reading vnode...\n"); }
+    if file_size < 64 {
+        debug_fork!("[EXEC] File too small for ELF header");
+        return -8; // ENOEXEC
+    }
 
-    // — GraveShift: VFS read triggers ext2 → virtio-blk block I/O. KernelMutex on
-    // the heap handles preemption automatically — no manual kpo needed.
+    // Step 1: Read the ELF header (64 bytes) to find program header table
+    let mut header_buf = [0u8; 64];
+    match vnode.read(0, &mut header_buf) {
+        Ok(n) if n >= 64 => {}
+        _ => {
+            debug_fork!("[EXEC] Failed to read ELF header");
+            return -5; // EIO
+        }
+    }
+
+    // Validate ELF magic
+    if header_buf[0..4] != [0x7f, b'E', b'L', b'F'] {
+        debug_fork!("[EXEC] Not an ELF file");
+        return -8; // ENOEXEC
+    }
+
+    // Parse header fields we need
+    let e_phoff = u64::from_le_bytes(header_buf[32..40].try_into().unwrap()) as usize;
+    let e_phentsize = u16::from_le_bytes(header_buf[54..56].try_into().unwrap()) as usize;
+    let e_phnum = u16::from_le_bytes(header_buf[56..58].try_into().unwrap()) as usize;
+
+    // Step 2: Read program headers to find max file extent needed
+    let ph_table_size = e_phentsize * e_phnum;
+    let ph_table_end = e_phoff + ph_table_size;
+
+    // Allocate buffer for program headers
+    let mut ph_buf = alloc::vec![0u8; ph_table_size];
+    match vnode.read(e_phoff as u64, &mut ph_buf) {
+        Ok(n) if n >= ph_table_size => {}
+        _ => {
+            debug_fork!("[EXEC] Failed to read program headers");
+            return -5; // EIO
+        }
+    }
+
+    // Scan all program headers to find the maximum file offset we need to read
+    let mut max_file_extent: usize = ph_table_end; // at minimum, need the headers
+    for i in 0..e_phnum {
+        let ph_start = i * e_phentsize;
+        if ph_start + 56 > ph_buf.len() {
+            break;
+        }
+        let p_type = u32::from_le_bytes(ph_buf[ph_start..ph_start + 4].try_into().unwrap());
+        let p_offset =
+            u64::from_le_bytes(ph_buf[ph_start + 8..ph_start + 16].try_into().unwrap()) as usize;
+        let p_filesz =
+            u64::from_le_bytes(ph_buf[ph_start + 32..ph_start + 40].try_into().unwrap()) as usize;
+
+        // PT_LOAD=1, PT_TLS=7 — these are the only segment types we need file data for
+        if (p_type == 1 || p_type == 7) && p_filesz > 0 {
+            let extent = p_offset + p_filesz;
+            if extent > max_file_extent {
+                max_file_extent = extent;
+            }
+        }
+    }
+
+    // Cap to actual file size
+    let read_size = max_file_extent.min(file_size);
+    debug_fork!(
+        "[EXEC] Reading {} of {} bytes (segments end at {})",
+        read_size,
+        file_size,
+        max_file_extent
+    );
+
+    unsafe {
+        os_log::write_str_raw("[EXEC] reading ");
+        os_log::write_u64_hex_raw(read_size as u64);
+        os_log::write_str_raw(" of ");
+        os_log::write_u64_hex_raw(file_size as u64);
+        os_log::write_str_raw(" bytes\n");
+    }
+
+    let mut elf_data = alloc::vec![0u8; read_size];
+
     let read_result = vnode.read(0, &mut elf_data);
     let bytes_read = match read_result {
         Ok(n) => n,
@@ -1604,9 +1677,9 @@ pub fn kernel_exec(
         }
     };
 
-    if bytes_read != size {
-        debug_fork!("[EXEC] Short read: {} of {} bytes", bytes_read, size);
-        return -5; // EIO - short read
+    if bytes_read < read_size {
+        debug_fork!("[EXEC] Short read: {} of {} bytes", bytes_read, read_size);
+        return -5; // EIO
     }
     debug_fork!("[EXEC] Read {} bytes, calling do_exec", bytes_read);
 
@@ -1752,7 +1825,7 @@ pub fn kernel_exec(
             // register references it. The new PML4 has identical PML4[256-511] kernel
             // mappings, so kernel code continues seamlessly. — GraveShift
             unsafe {
-                core::arch::asm!("mov cr3, {}", in(reg) new_pml4.as_u64());
+                arch::switch_page_table(os_core::PhysAddr::new(new_pml4.as_u64()));
             }
 
             // NOW safe to replace address_space — CR3 points to new PML4 and

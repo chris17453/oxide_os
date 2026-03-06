@@ -206,7 +206,7 @@ impl RunQueue {
     /// Add a task to this run queue
     pub fn add_task(&mut self, mut task: Task) {
         if task.start_time == 0 {
-            task.start_time = arch_x86_64::timer_ticks() * 10_000_000;
+            task.start_time = os_core::now_ns();
         }
         let pid = task.pid;
 

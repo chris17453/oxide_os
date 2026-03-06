@@ -11,4 +11,5 @@ input = { path = "../../../input/input" }
 # — SableWire: driver-traits has ZERO deps, breaking the circular chain
 # (ps2 → driver-core → pci → arch-x86_64 → ps2 was the old curse)
 driver-traits = { workspace = true }
+os_core = { workspace = true }
 spin = "0.9"

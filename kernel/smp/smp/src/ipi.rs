@@ -1,6 +1,8 @@
 //! Inter-Processor Interrupts (IPI)
 //!
-//! Used for communication between CPUs.
+//! — NeonRoot: generic IPI interface. The actual hardware dispatch (APIC ICR
+//! on x86, GIC SGI on ARM) lives in the arch crate's SmpOps impl. This module
+//! provides the arch-independent API that the rest of the kernel calls.
 
 use crate::CpuId;
 
@@ -56,73 +58,45 @@ pub fn handle_ipi(vector: u8) {
 
 /// Send an IPI
 ///
-/// The actual sending is architecture-specific and implemented
-/// in the architecture crate. This is a placeholder interface.
+/// — NeonRoot: dispatches to arch SmpOps. No APIC, no GIC — just the trait.
 pub fn send_ipi(target: IpiTarget, vector: u8) {
-    // Architecture-specific implementation would go here
-    // For x86_64, this involves writing to the APIC ICR registers
-
     match target {
         IpiTarget::Cpu(cpu_id) => {
-            // Send to specific CPU via APIC ID
             send_ipi_to_cpu(cpu_id, vector);
         }
         IpiTarget::AllExceptSelf => {
-            // Shorthand: all excluding self
-            send_ipi_broadcast(vector, false);
+            send_ipi_broadcast_impl(vector, false);
         }
         IpiTarget::All => {
-            // Shorthand: all including self
-            send_ipi_broadcast(vector, true);
+            send_ipi_broadcast_impl(vector, true);
         }
         IpiTarget::Self_ => {
-            // Self IPI
-            send_ipi_self(vector);
+            send_ipi_self_impl(vector);
         }
     }
 }
 
-/// Send IPI to a specific CPU
+/// Send IPI to a specific CPU — looks up hardware ID, delegates to arch
 fn send_ipi_to_cpu(cpu_id: CpuId, vector: u8) {
-    // Get the APIC ID for the target CPU
-    let apic_id = match crate::cpu::get_apic_id(cpu_id) {
+    let hw_id = match crate::cpu::get_apic_id(cpu_id) {
         Some(id) => id,
-        None => return, // CPU not present
+        None => return,
     };
 
-    // Send IPI to specific APIC ID
-    arch_x86_64::apic::send_ipi(
-        apic_id as u8,
-        vector,
-        arch_x86_64::apic::DeliveryMode::Fixed,
-        arch_x86_64::apic::DestShorthand::None,
-    );
+    // — NeonRoot: arch-agnostic IPI dispatch. No APIC, no GIC — os_core handles it.
+    os_core::smp_send_ipi_to(hw_id, vector);
 }
 
-/// Send broadcast IPI
-fn send_ipi_broadcast(vector: u8, include_self: bool) {
-    let shorthand = if include_self {
-        arch_x86_64::apic::DestShorthand::All
-    } else {
-        arch_x86_64::apic::DestShorthand::AllExceptSelf
-    };
-
-    arch_x86_64::apic::send_ipi(
-        0, // Ignored for broadcast
-        vector,
-        arch_x86_64::apic::DeliveryMode::Fixed,
-        shorthand,
-    );
+/// Send broadcast IPI — delegates to arch
+fn send_ipi_broadcast_impl(vector: u8, include_self: bool) {
+    // — NeonRoot: broadcast through os_core — the arch crate figures out shorthand vs mask
+    os_core::smp_send_ipi_broadcast(vector, include_self);
 }
 
-/// Send self IPI
-fn send_ipi_self(vector: u8) {
-    arch_x86_64::apic::send_ipi(
-        0, // Ignored for self
-        vector,
-        arch_x86_64::apic::DeliveryMode::Fixed,
-        arch_x86_64::apic::DestShorthand::Self_,
-    );
+/// Send self IPI — delegates to arch
+fn send_ipi_self_impl(vector: u8) {
+    // — NeonRoot: self-IPI, useful for deferred work. os_core routes it.
+    os_core::smp_send_ipi_self(vector);
 }
 
 /// Send a reschedule IPI to a CPU

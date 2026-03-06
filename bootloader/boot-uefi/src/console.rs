@@ -413,8 +413,9 @@ fn read_line(buf: &mut [u8; 256]) -> usize {
     loop {
         // Poll for key
         if let Some(key) = efi::read_key() {
-            // Printable character
-            if key.scan_code == SCAN_NULL && key.unicode_char != 0 {
+            // — InputShade: check unicode_char regardless of scan_code —
+            // VirtIO keyboard sets both fields for printable keys
+            if key.unicode_char != 0 {
                 let c = key.unicode_char;
                 if c == 0x000D || c == 0x000A {
                     // Enter

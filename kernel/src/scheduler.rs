@@ -10,7 +10,7 @@
 extern crate alloc;
 
 use alloc::sync::Arc;
-use arch_x86_64 as arch;
+use crate::arch;
 use core::sync::atomic::{AtomicU32, Ordering};
 use mm_paging::phys_to_virt;
 use os_core::PhysAddr;
@@ -20,13 +20,20 @@ use signal::delivery::{SignalResult, determine_action};
 use spin::Mutex;
 use vfs;
 
-// Throttled SMP scheduler diagnostics (ISR-safe raw serial writes).
+// — SableWire: throttled SMP scheduler diagnostics — gated behind debug-sched so release builds
+// don't waste cycles on atomic increments and serial writes nobody reads.
+#[cfg(feature = "debug-sched")]
 static SDBG_RQ_LOCK_BUSY: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "debug-sched")]
 static SDBG_SAME_PID: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "debug-sched")]
 static SDBG_TXN_FAIL: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "debug-sched")]
 static SDBG_IDLE_SNAPSHOT: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "debug-sched")]
 static SDBG_SIG_MASKED: AtomicU32 = AtomicU32::new(0);
 
+#[cfg(feature = "debug-sched")]
 #[inline]
 fn sdbg_should_log(counter: &AtomicU32) -> bool {
     let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
@@ -96,21 +103,13 @@ pub extern "C" fn idle_loop() -> ! {
         // within one tick (~10ms) instead of sleeping until an unrelated IRQ
         // wakes us. The stolen task is already on our RQ and need_resched is set.
         if sched::idle_try_steal() {
-            unsafe {
-                core::arch::asm!("sti", options(nomem, nostack));
-            }
+            arch::enable_interrupts();
             continue;
         }
 
         // Enable interrupts and halt atomically
         // The CPU will wake up on the next interrupt (timer, keyboard, etc.)
-        unsafe {
-            core::arch::asm!(
-                "sti", // Enable interrupts
-                "hlt", // Halt until interrupt
-                options(nomem, nostack)
-            );
-        }
+        arch::wait_for_interrupt();
 
         // Note: don't clear the preempt flag here — the timer interrupt's
         // scheduler_tick() clears it after checking. We re-set it on every
@@ -147,10 +146,7 @@ pub fn init() {
     // rsp(0) - frame_size → underflow to 0xFFFFFFFFFFFFFF60 → writes the iretq
     // frame to random kernel memory → cascading corruption. Same fix as AP idle
     // in smp_init.rs — capture boot RSP so the initial context is sane.
-    let boot_rsp: u64;
-    unsafe {
-        core::arch::asm!("mov {}, rsp", out(reg) boot_rsp, options(nostack, nomem));
-    }
+    let boot_rsp = arch::read_stack_pointer();
     let mut ctx = idle_task.context;
     ctx.rip = idle_loop as *const () as u64;
     ctx.rsp = boot_rsp;
@@ -219,8 +215,7 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     unsafe {
         let golden = crate::globals::KERNEL_PML4_256_ENTRY;
         if golden != 0 {
-            let cr3: u64;
-            core::arch::asm!("mov {}, cr3", out(reg) cr3, options(nostack, preserves_flags));
+            let cr3: u64 = arch::read_page_table_root().as_u64();
             let pml4_virt = mm_paging::phys_to_virt(PhysAddr::new(cr3));
             let current_entry = core::ptr::read_volatile(
                 pml4_virt.as_ptr::<u64>().add(256)
@@ -263,7 +258,7 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         if ticks % 300 == 0 && sched::this_cpu() == 0 {
             if let Some((curr_pid, min_vr, tasks)) = sched::debug_dump_all() {
                 unsafe {
-                    use arch_x86_64::serial::{write_byte_unsafe, write_str_unsafe};
+                    use os_log::{write_byte_raw as write_byte_unsafe, write_str_raw as write_str_unsafe};
 
                     // Helper: print u64 decimal (interrupt-safe, no alloc)
                     fn print_u64(n: u64) {
@@ -690,6 +685,7 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         static STALL_COUNT: AtomicU32 = AtomicU32::new(0);
         static STALL_REPORTED: AtomicU32 = AtomicU32::new(0);
 
+        #[cfg(feature = "debug-sched")]
         if in_kernel && current_pid > 1 {
             let prev = STALL_PID.load(AO::Relaxed);
             if prev == current_pid {
@@ -786,19 +782,20 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     // Attempting with_rq here would deadlock the ISR forever. Bail and retry
     // on the next tick — the interrupted code will release the lock and complete.
     if !sched::rq_lock_available() {
+        #[cfg(feature = "debug-sched")]
         if sdbg_should_log(&SDBG_RQ_LOCK_BUSY) {
             unsafe {
-                arch_x86_64::serial::write_str_unsafe("[SDBG] rq_lock_busy cpu=");
-                arch_x86_64::serial::write_u32_unsafe(sched::this_cpu());
-                arch_x86_64::serial::write_str_unsafe(" pid=");
-                arch_x86_64::serial::write_u32_unsafe(current_pid);
-                arch_x86_64::serial::write_str_unsafe(" cs=0x");
-                arch_x86_64::serial::write_u64_hex_unsafe(frame.cs);
-                arch_x86_64::serial::write_str_unsafe(" pc=");
-                arch_x86_64::serial::write_u32_unsafe(preempt_count_val as u32);
-                arch_x86_64::serial::write_str_unsafe(" need=");
-                arch_x86_64::serial::write_u32_unsafe(if sched::need_resched() { 1 } else { 0 });
-                arch_x86_64::serial::write_str_unsafe("\n");
+                os_log::write_str_raw("[SDBG] rq_lock_busy cpu=");
+                os_log::write_u32_raw(sched::this_cpu());
+                os_log::write_str_raw(" pid=");
+                os_log::write_u32_raw(current_pid);
+                os_log::write_str_raw(" cs=0x");
+                os_log::write_u64_hex_raw(frame.cs);
+                os_log::write_str_raw(" pc=");
+                os_log::write_u32_raw(preempt_count_val as u32);
+                os_log::write_str_raw(" need=");
+                os_log::write_u32_raw(if sched::need_resched() { 1 } else { 0 });
+                os_log::write_str_raw("\n");
             }
         }
         return current_rsp;
@@ -808,45 +805,47 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     let next_pid = pick_next_process(current_pid);
 
     if next_pid == current_pid {
+        #[cfg(feature = "debug-sched")]
         if sdbg_should_log(&SDBG_SAME_PID) {
             unsafe {
-                arch_x86_64::serial::write_str_unsafe("[SDBG] no_switch cpu=");
-                arch_x86_64::serial::write_u32_unsafe(sched::this_cpu());
-                arch_x86_64::serial::write_str_unsafe(" pid=");
-                arch_x86_64::serial::write_u32_unsafe(current_pid);
-                arch_x86_64::serial::write_str_unsafe(" cs=0x");
-                arch_x86_64::serial::write_u64_hex_unsafe(frame.cs);
-                arch_x86_64::serial::write_str_unsafe(" need=");
-                arch_x86_64::serial::write_u32_unsafe(if sched::need_resched() { 1 } else { 0 });
-                arch_x86_64::serial::write_str_unsafe("\n");
+                os_log::write_str_raw("[SDBG] no_switch cpu=");
+                os_log::write_u32_raw(sched::this_cpu());
+                os_log::write_str_raw(" pid=");
+                os_log::write_u32_raw(current_pid);
+                os_log::write_str_raw(" cs=0x");
+                os_log::write_u64_hex_raw(frame.cs);
+                os_log::write_str_raw(" need=");
+                os_log::write_u32_raw(if sched::need_resched() { 1 } else { 0 });
+                os_log::write_str_raw("\n");
             }
         }
         // If BSP is idling with no resched, dump all CPU runqueue heads.
         // This exposes "tasks stranded on AP" vs "all queues empty" instantly.
+        #[cfg(feature = "debug-sched")]
         if current_pid == 0 && sched::this_cpu() == 0 && sdbg_should_log(&SDBG_IDLE_SNAPSHOT) {
             let ncpus = sched::num_cpus();
             for c in 0..ncpus {
                 unsafe {
-                    arch_x86_64::serial::write_str_unsafe("[SDBG] cpu=");
-                    arch_x86_64::serial::write_u32_unsafe(c);
-                    arch_x86_64::serial::write_str_unsafe(" state=");
+                    os_log::write_str_raw("[SDBG] cpu=");
+                    os_log::write_u32_raw(c);
+                    os_log::write_str_raw(" state=");
                 }
                 if let Some((curr, nr_running, cfs_count, rt_count)) = sched::try_debug_state_cpu(c) {
                     let curr_pid: u32 = curr.unwrap_or(u32::MAX);
                     unsafe {
-                        arch_x86_64::serial::write_str_unsafe("curr=");
-                        arch_x86_64::serial::write_u32_unsafe(curr_pid);
-                        arch_x86_64::serial::write_str_unsafe(" nr=");
-                        arch_x86_64::serial::write_u32_unsafe(nr_running);
-                        arch_x86_64::serial::write_str_unsafe(" cfs=");
-                        arch_x86_64::serial::write_u32_unsafe(cfs_count);
-                        arch_x86_64::serial::write_str_unsafe(" rt=");
-                        arch_x86_64::serial::write_u32_unsafe(rt_count);
-                        arch_x86_64::serial::write_str_unsafe("\n");
+                        os_log::write_str_raw("curr=");
+                        os_log::write_u32_raw(curr_pid);
+                        os_log::write_str_raw(" nr=");
+                        os_log::write_u32_raw(nr_running);
+                        os_log::write_str_raw(" cfs=");
+                        os_log::write_u32_raw(cfs_count);
+                        os_log::write_str_raw(" rt=");
+                        os_log::write_u32_raw(rt_count);
+                        os_log::write_str_raw("\n");
                     }
                 } else {
                     unsafe {
-                        arch_x86_64::serial::write_str_unsafe("LOCKED\n");
+                        os_log::write_str_raw("LOCKED\n");
                     }
                 }
             }
@@ -860,39 +859,14 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     // — PatchBay: Record context switch for performance monitoring
     perf::counters().record_context_switch();
 
-    // Read FS base from MSR for TLS context preservation
-    let current_fs_base: u64;
-    unsafe {
-        core::arch::asm!(
-            "mov ecx, 0xC0000100",  // MSR IA32_FS_BASE
-            "rdmsr",
-            "shl rdx, 32",
-            "or rax, rdx",
-            out("rax") current_fs_base,
-            out("rcx") _,
-            out("rdx") _,
-            options(nostack, preserves_flags)
-        );
-    }
+    // — SableWire: TLS context preservation — read FS_BASE before we lose this task's state.
+    // Inlined asm finally exorcised; arch abstraction handles the rdmsr dance now.
+    let current_fs_base = unsafe { crate::arch::read_msr(0xC0000100) };
 
     // — SableWire: Read user GS base from KERNEL_GS_BASE (0xC0000102).
-    // In kernel context (after swapgs at ISR entry from user, or always for kernel ISR):
-    //   GS_BASE       (0xC0000101) = kernel per-CPU data
-    //   KERNEL_GS_BASE (0xC0000102) = user's saved GS value
-    // We capture it here so context switches properly restore user GS on the way out.
-    let current_gs_base: u64;
-    unsafe {
-        core::arch::asm!(
-            "mov ecx, 0xC0000102",  // MSR IA32_KERNEL_GS_BASE
-            "rdmsr",
-            "shl rdx, 32",
-            "or rax, rdx",
-            out("rax") current_gs_base,
-            out("rcx") _,
-            out("rdx") _,
-            options(nostack, preserves_flags)
-        );
-    }
+    // In kernel context: GS_BASE = kernel per-CPU, KERNEL_GS_BASE = user's saved GS.
+    // We capture it so context switches properly restore user GS on the way out.
+    let current_gs_base = unsafe { crate::arch::read_msr(0xC0000102) };
 
     // Build current task's context from interrupt frame + MSR values
     let current_ctx = sched::TaskContext {
@@ -940,19 +914,20 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     ) {
         Some(info) => info,
         None => {
+            #[cfg(feature = "debug-sched")]
             if sdbg_should_log(&SDBG_TXN_FAIL) {
                 unsafe {
-                    arch_x86_64::serial::write_str_unsafe("[SDBG] txn_fail cpu=");
-                    arch_x86_64::serial::write_u32_unsafe(sched::this_cpu());
-                    arch_x86_64::serial::write_str_unsafe(" old=");
-                    arch_x86_64::serial::write_u32_unsafe(current_pid);
-                    arch_x86_64::serial::write_str_unsafe(" new=");
-                    arch_x86_64::serial::write_u32_unsafe(next_pid);
-                    arch_x86_64::serial::write_str_unsafe(" cs=0x");
-                    arch_x86_64::serial::write_u64_hex_unsafe(frame.cs);
-                    arch_x86_64::serial::write_str_unsafe(" pc=");
-                    arch_x86_64::serial::write_u32_unsafe(preempt_count_val as u32);
-                    arch_x86_64::serial::write_str_unsafe("\n");
+                    os_log::write_str_raw("[SDBG] txn_fail cpu=");
+                    os_log::write_u32_raw(sched::this_cpu());
+                    os_log::write_str_raw(" old=");
+                    os_log::write_u32_raw(current_pid);
+                    os_log::write_str_raw(" new=");
+                    os_log::write_u32_raw(next_pid);
+                    os_log::write_str_raw(" cs=0x");
+                    os_log::write_u64_hex_raw(frame.cs);
+                    os_log::write_str_raw(" pc=");
+                    os_log::write_u32_raw(preempt_count_val as u32);
+                    os_log::write_str_raw("\n");
                 }
             }
             return current_rsp;
@@ -973,7 +948,7 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     // Debug: log context switches with process names (interrupt-safe)
     #[cfg(feature = "debug-sched")]
     unsafe {
-        use arch_x86_64::serial::{write_byte_unsafe, write_str_unsafe};
+        use os_log::{write_byte_raw as write_byte_unsafe, write_str_raw as write_str_unsafe};
         fn print_pid(pid: u32) {
             unsafe {
                 if pid == 0 {
@@ -1111,52 +1086,25 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     // of writing literal 0 into CR3 (which triple-faults since phys 0x0 has no
     // valid page tables). This was THE crash bug: scheduler would preempt a user
     // task, pick idle, write CR3=0, and die on the next instruction fetch.
-    unsafe {
-        let target_cr3 = if switch_info.new_cr3 == 0 {
+    let target_cr3 = unsafe {
+        if switch_info.new_cr3 == 0 {
             crate::globals::KERNEL_PML4
         } else {
             switch_info.new_cr3
-        };
-        core::arch::asm!("mov cr3, {}", in(reg) target_cr3);
-    }
-
-    // Restore FS base MSR for next process (TLS support)
-    if next_ctx.fs_base != 0 {
-        unsafe {
-            core::arch::asm!(
-                "mov ecx, 0xC0000100",  // MSR IA32_FS_BASE
-                "mov rax, {fs_base}",
-                "mov rdx, {fs_base}",
-                "shr rdx, 32",
-                "wrmsr",
-                fs_base = in(reg) next_ctx.fs_base,
-                out("rax") _,
-                out("rcx") _,
-                out("rdx") _,
-                options(nostack, preserves_flags)
-            );
         }
+    };
+    unsafe { arch::switch_page_table(os_core::PhysAddr::new(target_cr3)); }
+
+    // — SableWire: Restore FS base MSR for incoming task's TLS. Zero means no TLS segment,
+    // so skip the wrmsr — no point writing a null base the CPU will ignore anyway.
+    if next_ctx.fs_base != 0 {
+        unsafe { crate::arch::write_msr(0xC0000100, next_ctx.fs_base); }
     }
 
     // — SableWire: Restore incoming task's user GS base to KERNEL_GS_BASE (0xC0000102).
-    // The outgoing task's user GS was saved (line ~660, rdmsr 0xC0000102) into its
-    // TaskContext.gs_base. Without restoring the incoming task's value here, the ISR
-    // exit swapgs gives the new task the OLD task's user GS. For TLS-heavy workloads
-    // (Go, Rust std) this silently corrupts thread-local storage across context switches.
-    unsafe {
-        core::arch::asm!(
-            "mov ecx, 0xC0000102",  // MSR IA32_KERNEL_GS_BASE
-            "mov rax, {gs_base}",
-            "mov rdx, {gs_base}",
-            "shr rdx, 32",
-            "wrmsr",
-            gs_base = in(reg) next_ctx.gs_base,
-            out("rax") _,
-            out("rcx") _,
-            out("rdx") _,
-            options(nostack, preserves_flags)
-        );
-    }
+    // Without this, ISR exit swapgs hands the new task the OLD task's user GS —
+    // silent TLS corruption for anything with thread-locals. Ask me how I know.
+    unsafe { crate::arch::write_msr(0xC0000102, next_ctx.gs_base); }
 
     // — GraveShift: Restore the incoming task's preempt_count. Without this, a task
     // preempted while holding a KernelMutex (count > 0) would resume with count=0,
@@ -1197,7 +1145,7 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     #[cfg(feature = "debug-sched")]
     if next_ctx.cs != 0 && next_ctx.ss != ss {
         unsafe {
-            use arch_x86_64::serial::{write_byte_unsafe, write_str_unsafe};
+            use os_log::{write_byte_raw as write_byte_unsafe, write_str_raw as write_str_unsafe};
             write_str_unsafe("[SCHED-GPF-GUARD] ctx.cs=0x");
             let cs_hi = ((next_ctx.cs >> 4) & 0xF) as u8;
             let cs_lo = (next_ctx.cs & 0xF) as u8;
@@ -1344,11 +1292,8 @@ pub fn kernel_yield() -> i64 {
     arch::allow_kernel_preempt();
 
     // Brief halt to give the timer a chance to fire and switch us.
-    // sti + hlt must be in the same asm block so an interrupt can't
-    // fire between them and cause an extra tick of delay.
-    unsafe {
-        core::arch::asm!("sti", "hlt", options(nomem, nostack));
-    }
+    // sti + hlt must be atomic so an interrupt can't fire between them.
+    arch::wait_for_interrupt();
 
     // If we get here, the timer fired and the scheduler chose to keep us running
     arch::disallow_kernel_preempt();
@@ -1437,9 +1382,7 @@ pub fn kill_faulting_process(_pid: u64, rip: u64, signo: u64) {
     sched::set_need_resched();
 
     loop {
-        unsafe {
-            core::arch::asm!("sti", "hlt", options(nomem, nostack));
-        }
+        arch::wait_for_interrupt();
     }
 }
 
@@ -1513,9 +1456,7 @@ pub fn check_signals_on_syscall_return() {
         let saved_ctx = unsafe { *arch::syscall::get_user_context_mut() };
 
         arch::allow_kernel_preempt();
-        unsafe {
-            core::arch::asm!("sti", "hlt", options(nomem, nostack));
-        }
+        arch::wait_for_interrupt();
         arch::disallow_kernel_preempt();
 
         // — GraveShift: Resumed from yield — gated behind debug-syscall.
@@ -1531,9 +1472,7 @@ pub fn check_signals_on_syscall_return() {
         // — GraveShift: Re-disable interrupts. The asm caller (syscall_entry)
         // ran CLI before calling us; after sti+hlt+iretq interrupts are
         // enabled again. Restore the invariant before touching the global.
-        unsafe {
-            core::arch::asm!("cli", options(nomem, nostack));
-        }
+        arch::disable_interrupts();
 
         unsafe {
             *arch::syscall::get_user_context_mut() = saved_ctx;
@@ -1577,6 +1516,7 @@ pub fn check_signals_on_syscall_return() {
 
     // Check if there are any deliverable signals
     if !meta.has_pending_signals() {
+        #[cfg(feature = "debug-sched")]
         if sdbg_should_log(&SDBG_SIG_MASKED) {
             let first = pending_set.first().unwrap_or(0);
             let blocked = first > 0 && meta.signal_mask.contains(first);
@@ -1695,13 +1635,11 @@ pub fn check_signals_on_syscall_return() {
             }
             sched::set_need_resched();
             arch::allow_kernel_preempt();
-            unsafe {
-                core::arch::asm!("sti", "hlt", options(nomem, nostack));
-            }
+            arch::wait_for_interrupt();
             // — GraveShift: If we somehow resume (shouldn't happen — nobody reschedules
             // a zombie), loop forever so we never escape to user mode.
             loop {
-                unsafe { core::arch::asm!("cli", "hlt", options(nomem, nostack)); }
+                arch::disable_interrupts();
             }
         }
         SignalResult::UserHandler {
@@ -1800,9 +1738,7 @@ pub fn check_signals_on_syscall_return() {
             // returns to user mode and nanosleep overwrites TASK_STOPPED.
             sched::set_need_resched();
             arch::allow_kernel_preempt();
-            unsafe {
-                core::arch::asm!("sti", "hlt", options(nomem, nostack));
-            }
+            arch::wait_for_interrupt();
             arch::disallow_kernel_preempt();
             // — ThreadRogue: For stopped tasks, we CAN resume here after SIGCONT.
         }

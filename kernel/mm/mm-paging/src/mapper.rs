@@ -310,41 +310,33 @@ impl PageMapper {
     }
 }
 
-// TLB and CR3 operations - delegates to the arch layer
-
-#[cfg(target_arch = "x86_64")]
-use arch_x86_64::X86_64;
-
-#[cfg(target_arch = "x86_64")]
-use arch_traits::TlbControl;
+// — NeonRoot: TLB and page table root operations — all arch awareness purged.
+// These delegate through os_core function-pointer hooks registered at boot.
+// The concrete arch crate (arch-x86_64, arch-aarch64, etc.) is never imported here.
 
 /// Flush the TLB for a specific virtual address
-#[cfg(target_arch = "x86_64")]
 #[inline]
 pub fn flush_tlb(addr: VirtAddr) {
-    X86_64::flush(addr);
+    os_core::tlb_flush(addr.as_u64());
 }
 
-/// Flush the entire TLB by reloading CR3
-#[cfg(target_arch = "x86_64")]
+/// Flush the entire TLB (reloads CR3 on x86, TLBI on ARM, etc.)
 #[inline]
 pub fn flush_tlb_all() {
-    X86_64::flush_all();
+    os_core::tlb_flush_all();
 }
 
-/// Read the current CR3 value (PML4 physical address)
-#[cfg(target_arch = "x86_64")]
+/// Read the current page table root physical address (CR3 on x86, TTBR0 on ARM)
 #[inline]
 pub fn read_cr3() -> PhysAddr {
-    X86_64::read_root()
+    PhysAddr::new(os_core::read_page_table_root())
 }
 
-/// Write a new CR3 value (switches page tables)
+/// Write a new page table root (switches page tables)
 ///
 /// # Safety
-/// The new CR3 must point to a valid PML4 table.
-#[cfg(target_arch = "x86_64")]
+/// The physical address must point to a valid, properly aligned page table.
 #[inline]
 pub unsafe fn write_cr3(pml4: PhysAddr) {
-    unsafe { X86_64::write_root(pml4) };
+    unsafe { os_core::write_page_table_root(pml4.as_u64()) };
 }

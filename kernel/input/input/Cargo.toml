@@ -8,3 +8,4 @@ debug-input = []
 
 [dependencies]
 spin = "0.9"
+os_core = { workspace = true }

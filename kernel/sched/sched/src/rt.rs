@@ -62,7 +62,7 @@ impl RtRunQueue {
             // — BlackLatch: 8 RT tasks at one priority level on one CPU.
             // Your real-time design has bigger problems than this warning.
             unsafe {
-                arch_x86_64::serial::write_str_unsafe(
+                os_log::write_str_raw(
                     "[RT-FATAL] per-priority queue full, task dropped\n",
                 );
             }

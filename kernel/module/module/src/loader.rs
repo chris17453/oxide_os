@@ -21,7 +21,8 @@ const ELFCLASS64: u8 = 2;
 /// ELF type: relocatable
 const ET_REL: u16 = 1;
 
-/// ELF machine: x86_64
+/// ELF machine: x86_64 (kept for reference — runtime check uses os_core::elf_machine())
+#[allow(dead_code)]
 const EM_X86_64: u16 = 62;
 
 /// Section type: symtab
@@ -118,9 +119,10 @@ pub fn load_module(data: &[u8], _params: &str, flags: ModuleFlags) -> ModuleResu
         return Err(ModuleError::InvalidFormat);
     }
 
-    // Check machine
-    #[cfg(target_arch = "x86_64")]
-    if ehdr.e_machine != EM_X86_64 {
+    // — NeonRoot: machine check via os_core hook — no cfg gate needed.
+    // os_core::elf_machine() returns the native ELF type (62 for x86_64, etc.)
+    let native_machine = os_core::elf_machine();
+    if native_machine != 0 && ehdr.e_machine != native_machine {
         return Err(ModuleError::InvalidFormat);
     }
 
@@ -287,7 +289,8 @@ pub fn load_module(data: &[u8], _params: &str, flags: ModuleFlags) -> ModuleResu
             )
         };
 
-        #[cfg(target_arch = "x86_64")]
+        // — NeonRoot: relocation application — currently only handles x86_64 reloc types.
+        // When adding a new arch, this function needs to dispatch on elf_machine().
         unsafe {
             apply_relocations_x86_64(section_base, rela, symtab, strtab)?;
         }

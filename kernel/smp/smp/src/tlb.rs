@@ -97,25 +97,11 @@ pub fn handle_tlb_shootdown() {
 
 /// Invalidate a single TLB entry
 ///
-/// On x86_64, this uses the INVLPG instruction.
+/// — SableWire: routed through os_core hooks now. invlpg on x86_64,
+/// whatever the arch needs on other platforms. Zero arch imports here.
 #[inline]
 pub fn invalidate_page(addr: u64) {
-    // Architecture-specific implementation
-    // On x86_64: invlpg [addr]
-    #[cfg(target_arch = "x86_64")]
-    unsafe {
-        core::arch::asm!(
-            "invlpg [{}]",
-            in(reg) addr,
-            options(nostack, preserves_flags)
-        );
-    }
-
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        // Other architectures would have their own implementation
-        let _ = addr;
-    }
+    os_core::tlb_flush(addr);
 }
 
 /// Invalidate a range of TLB entries
@@ -151,20 +137,10 @@ pub fn invalidate_range(start: u64, end: u64) {
 
 /// Flush the entire TLB
 ///
-/// On x86_64, this reloads CR3.
+/// — SableWire: os_core::tlb_flush_all() handles the CR3 reload dance on x86_64.
+/// Other arches get their own implementation through the hook. No trait, no import, no drama.
 pub fn flush_tlb_all() {
-    #[cfg(target_arch = "x86_64")]
-    unsafe {
-        // Reload CR3 to flush entire TLB
-        let cr3: u64;
-        core::arch::asm!("mov {}, cr3", out(reg) cr3, options(nostack, preserves_flags));
-        core::arch::asm!("mov cr3, {}", in(reg) cr3, options(nostack, preserves_flags));
-    }
-
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        // Other architectures would have their own implementation
-    }
+    os_core::tlb_flush_all();
 }
 
 /// Flush TLB on all CPUs

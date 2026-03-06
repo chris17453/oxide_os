@@ -253,14 +253,14 @@ pub fn sys_fw_list_rules(buf_ptr: VirtAddr, buf_len: usize) -> i64 {
     }
 
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
     }
 
     let buf = unsafe {
         let ptr = buf_ptr.as_mut_ptr::<FwRule>();
         if ptr.is_null() {
             unsafe {
-                core::arch::asm!("clac", options(nostack));
+                os_core::user_access_end();
             }
             return errno::EFAULT;
         }
@@ -276,7 +276,7 @@ pub fn sys_fw_list_rules(buf_ptr: VirtAddr, buf_len: usize) -> i64 {
     });
 
     unsafe {
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
     result
 }

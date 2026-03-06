@@ -7,6 +7,4 @@ description = "SMP (Symmetric Multiprocessing) support for OXIDE OS"
 
 [dependencies]
 os_core = { workspace = true }
-arch-traits = { workspace = true }
-arch-x86_64 = { path = "../../arch/arch-x86_64" }
 spin = { workspace = true }

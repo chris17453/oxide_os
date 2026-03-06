@@ -8,13 +8,14 @@
 
 use arch_traits::{
     Arch, AtomicOps, CacheOps, ControlRegisters, DmaOps, Endianness, ExceptionHandler,
-    InterruptContext as ArchInterruptContext, PortIo, SyscallInterface, SystemRegisters,
+    InterruptContext as ArchInterruptContext, PortIo, SmpOps, SyscallInterface, SystemRegisters,
     TlbControl,
 };
 use os_core::{PhysAddr, VirtAddr};
 
 pub mod context;
 pub mod exceptions;
+pub mod serial;
 pub mod syscall;
 
 /// ARM64 architecture implementation
@@ -26,6 +27,8 @@ pub struct AArch64;
 // ============================================================================
 
 impl Arch for AArch64 {
+    const ELF_MACHINE: u16 = 0xB7; // EM_AARCH64
+
     fn name() -> &'static str {
         "aarch64"
     }
@@ -69,6 +72,90 @@ impl Arch for AArch64 {
         }
         // I bit is bit 7 of DAIF
         (daif & (1 << 7)) == 0
+    }
+
+    #[inline]
+    fn wait_for_interrupt() {
+        unsafe {
+            // — NeonRoot: WFI — Wait For Interrupt. ARM equivalent of x86 sti+hlt.
+            core::arch::asm!("msr daifclr, #2", options(nomem, nostack)); // enable IRQs
+            core::arch::asm!("wfi", options(nomem, nostack));
+        }
+    }
+
+    #[inline]
+    unsafe fn user_access_begin() {
+        unsafe {
+            // — NeonRoot: Clear PAN (Privileged Access Never) to allow
+            // supervisor access to user pages. ARM equivalent of x86 STAC.
+            core::arch::asm!("msr pan, #0", options(nomem, nostack));
+        }
+    }
+
+    #[inline]
+    unsafe fn user_access_end() {
+        unsafe {
+            // — NeonRoot: Set PAN to re-enable user page protection.
+            // ARM equivalent of x86 CLAC.
+            core::arch::asm!("msr pan, #1", options(nomem, nostack));
+        }
+    }
+
+    #[inline]
+    fn read_page_table_root() -> PhysAddr {
+        let ttbr0: u64;
+        unsafe {
+            core::arch::asm!("mrs {}, ttbr0_el1", out(reg) ttbr0, options(nomem, nostack));
+        }
+        PhysAddr::new(ttbr0)
+    }
+
+    #[inline]
+    unsafe fn switch_page_table(root: PhysAddr) {
+        unsafe {
+            core::arch::asm!(
+                "msr ttbr0_el1, {}",
+                "isb",
+                in(reg) root.as_u64(),
+                options(nostack)
+            );
+        }
+    }
+
+    #[inline]
+    fn read_stack_pointer() -> u64 {
+        let sp: u64;
+        unsafe {
+            core::arch::asm!("mov {}, sp", out(reg) sp, options(nomem, nostack));
+        }
+        sp
+    }
+
+    #[inline]
+    fn read_tsc() -> u64 {
+        // — WireSaint: TODO — read CNTPCT_EL0 when ARM target is active
+        0
+    }
+
+    #[inline]
+    fn cpuid(_leaf: u32, _subleaf: u32) -> (u32, u32, u32, u32) {
+        // — WireSaint: TODO — read MIDR_EL1 / feature regs when ARM target is active
+        (0, 0, 0, 0)
+    }
+
+    #[inline]
+    fn memory_fence() {
+        // — WireSaint: TODO — dmb ish
+    }
+
+    #[inline]
+    fn read_fence() {
+        // — WireSaint: TODO — dmb ishld
+    }
+
+    #[inline]
+    fn write_fence() {
+        // — WireSaint: TODO — dmb ishst
     }
 }
 
@@ -561,5 +648,59 @@ impl SyscallInterface for AArch64 {
     fn set_syscall_return(frame: &mut Self::SyscallFrame, value: usize) {
         // Return value goes in x0
         frame.x0 = value as u64;
+    }
+}
+
+// ============================================================================
+// SMP Operations — NeonRoot: ARM uses PSCI for AP boot, GIC for IPIs
+// ============================================================================
+
+impl SmpOps for AArch64 {
+    fn cpu_id() -> Option<u32> {
+        let mpidr: u64;
+        unsafe {
+            core::arch::asm!("mrs {}, mpidr_el1", out(reg) mpidr, options(nomem, nostack));
+        }
+        Some((mpidr & 0xFF) as u32)
+    }
+
+    fn boot_ap_sequence(_hw_id: u32, _trampoline_page: u8) {
+        // TODO: PSCI CPU_ON call
+    }
+
+    fn send_ipi_to(_hw_id: u32, _vector: u8) {
+        // TODO: GIC SGI to specific PE
+    }
+
+    fn send_ipi_broadcast(_vector: u8, _include_self: bool) {
+        // TODO: GIC SGI broadcast
+    }
+
+    fn send_ipi_self(_vector: u8) {
+        // TODO: GIC SGI to self
+    }
+
+    fn delay_ms(_ms: u64) {
+        // TODO: generic timer delay
+    }
+
+    fn delay_us(_us: u64) {
+        // TODO: generic timer delay
+    }
+
+    fn monotonic_counter() -> u64 {
+        let cnt: u64;
+        unsafe {
+            core::arch::asm!("mrs {}, cntpct_el0", out(reg) cnt, options(nomem, nostack));
+        }
+        cnt
+    }
+
+    fn monotonic_frequency() -> u64 {
+        let freq: u64;
+        unsafe {
+            core::arch::asm!("mrs {}, cntfrq_el0", out(reg) freq, options(nomem, nostack));
+        }
+        freq
     }
 }

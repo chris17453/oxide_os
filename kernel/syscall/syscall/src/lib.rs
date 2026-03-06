@@ -446,6 +446,12 @@ pub type SerialWriteFn = fn(&[u8]);
 /// Get current task's FS base callback type
 pub type GetFsBaseFn = fn() -> u64;
 
+/// Get current syscall user stack pointer callback type
+///
+/// — GraveShift: Used by sys_sigreturn to locate the signal frame on the
+/// user stack without depending on arch_x86_64::syscall::get_user_context_mut().
+pub type GetUserRspFn = fn() -> u64;
+
 /// Syscall context containing callbacks for I/O operations
 pub struct SyscallContext {
     /// Function to write to console (fd 1 and 2)
@@ -474,6 +480,8 @@ pub struct SyscallContext {
     pub allow_kernel_preempt: Option<fn()>,
     /// Function to disallow kernel preemption
     pub disallow_kernel_preempt: Option<fn()>,
+    /// Function to get current syscall user stack pointer
+    pub get_user_rsp: Option<GetUserRspFn>,
 }
 
 impl SyscallContext {
@@ -493,6 +501,7 @@ impl SyscallContext {
             get_current_fs_base: None,
             allow_kernel_preempt: None,
             disallow_kernel_preempt: None,
+            get_user_rsp: None,
         }
     }
 }
@@ -572,11 +581,8 @@ pub fn dispatch(
     arg6: u64,
 ) -> i64 {
     #[cfg(feature = "debug-syscall-perf")]
-    let start_tsc = unsafe {
-        let tsc: u64;
-        core::arch::asm!("rdtsc", out("rax") tsc, out("rdx") _, options(nomem, nostack));
-        tsc
-    };
+    // — GraveShift: TSC read delegated to os_core — no raw asm in syscall dispatch
+    let start_tsc = os_core::read_tsc();
 
     // — GraveShift: syscall entry trace — gated behind debug-syscall.
     // Was unconditional, causing serial saturation when top hammered /proc
@@ -970,11 +976,8 @@ pub fn dispatch(
 
     #[cfg(feature = "debug-syscall-perf")]
     {
-        let end_tsc = unsafe {
-            let tsc: u64;
-            core::arch::asm!("rdtsc", out("rax") tsc, out("rdx") _, options(nomem, nostack));
-            tsc
-        };
+        // — GraveShift: TSC read delegated to os_core — raw asm belongs in arch, not here
+        let end_tsc = os_core::read_tsc();
         let cycles = end_tsc.wrapping_sub(start_tsc);
 
         // Count syscalls
@@ -1308,7 +1311,7 @@ fn sys_write(fd: i32, buf: u64, count: usize) -> i64 {
 
         // Enable access to user pages for SMAP
         unsafe {
-            core::arch::asm!("stac", options(nostack));
+            os_core::user_access_begin();
         }
 
         let buffer = unsafe { core::slice::from_raw_parts(buf as *const u8, count) };
@@ -1325,7 +1328,7 @@ fn sys_write(fd: i32, buf: u64, count: usize) -> i64 {
 
         // Disable access to user pages
         unsafe {
-            core::arch::asm!("clac", options(nostack));
+            os_core::user_access_end();
         }
 
         unsafe {
@@ -1418,7 +1421,7 @@ fn sys_exec(path: u64, path_len: usize, argv: *const *const u8, envp: *const *co
 
     // Enable user memory access (SMAP)
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
     }
 
     let result = unsafe {
@@ -1439,18 +1442,8 @@ fn sys_exec(path: u64, path_len: usize, argv: *const *const u8, envp: *const *co
             if let Some(get_fs_fn) = (*ctx).get_current_fs_base {
                 let fs_base = get_fs_fn();
                 if fs_base != 0 {
-                    core::arch::asm!(
-                        "mov rcx, 0xC0000100",  // IA32_FS_BASE MSR
-                        "mov rax, {0}",          // Low 32 bits
-                        "mov rdx, {0}",          // Copy for shift
-                        "shr rdx, 32",           // High 32 bits
-                        "wrmsr",
-                        in(reg) fs_base,
-                        out("rax") _,
-                        out("rcx") _,
-                        out("rdx") _,
-                        options(nostack, preserves_flags)
-                    );
+                    // — NeonRoot: FS_BASE restore after failed exec — routed through os_core
+                    os_core::write_msr(0xC0000100, fs_base); // IA32_FS_BASE
                 }
             }
         }
@@ -1458,7 +1451,7 @@ fn sys_exec(path: u64, path_len: usize, argv: *const *const u8, envp: *const *co
 
     // Disable user memory access (SMAP)
     unsafe {
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
     result
 }
@@ -1474,9 +1467,8 @@ unsafe fn prefault_pages(user_ptr: u64, len: usize) {
     let start_page = user_ptr / page_size;
     let end_page = (user_ptr + len as u64 - 1) / page_size;
 
-    #[cfg(target_arch = "x86_64")]
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
     }
 
     // Touch each page to trigger COW faults NOW (while we don't hold locks)
@@ -1486,28 +1478,16 @@ unsafe fn prefault_pages(user_ptr: u64, len: usize) {
         let addr = page * page_size;
         let ptr = addr as *mut u8;
 
-        #[cfg(target_arch = "x86_64")]
-        {
-            // Read-modify-write to trigger COW without changing data
-            // Use volatile to prevent optimization
-            unsafe {
-                let val = ptr.read_volatile();
-                ptr.write_volatile(val);
-            }
-        }
-
-        #[cfg(not(target_arch = "x86_64"))]
-        {
-            unsafe {
-                let val = ptr.read_volatile();
-                ptr.write_volatile(val);
-            }
+        // Read-modify-write to trigger COW without changing data
+        // Use volatile to prevent optimization
+        unsafe {
+            let val = ptr.read_volatile();
+            ptr.write_volatile(val);
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
     unsafe {
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 }
 
@@ -1535,34 +1515,10 @@ pub(crate) unsafe fn copy_to_user(user_ptr: u64, kernel_data: &[u8]) -> bool {
     // This prevents deadlocks in the page fault handler
     unsafe { prefault_pages(user_ptr, len) };
 
-    #[cfg(target_arch = "x86_64")]
-    {
-        // On x86_64, use STAC/CLAC to temporarily allow supervisor access to user pages
-        // STAC = Set AC flag in EFLAGS (bit 18) to allow access
-        // CLAC = Clear AC flag to restore protection
-        // These are only available if SMAP is supported, but are safe NOPs otherwise
-        unsafe {
-            core::arch::asm!(
-                "stac",                                      // Enable user page access
-                "mov rcx, {len}",                           // Length in RCX
-                "mov rsi, {src}",                           // Source (kernel) in RSI
-                "mov rdi, {dst}",                           // Destination (user) in RDI
-                "rep movsb",                                 // Copy bytes
-                "clac",                                      // Disable user page access
-                src = in(reg) kernel_data.as_ptr(),
-                dst = in(reg) user_ptr,
-                len = in(reg) len,
-                out("rcx") _,
-                out("rsi") _,
-                out("rdi") _,
-                options(nostack)
-            );
-        }
-    }
-
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        unsafe { core::ptr::copy_nonoverlapping(kernel_data.as_ptr(), user_ptr as *mut u8, len) };
+    unsafe {
+        os_core::user_access_begin();
+        core::ptr::copy_nonoverlapping(kernel_data.as_ptr(), user_ptr as *mut u8, len);
+        os_core::user_access_end();
     }
 
     true
@@ -2102,9 +2058,9 @@ fn sys_wait4(pid: i32, status_ptr: u64, options: i32, rusage_ptr: u64) -> i64 {
         }
         let zeroed = Rusage::zeroed();
         unsafe {
-            core::arch::asm!("stac", options(nostack));
+            os_core::user_access_begin();
             core::ptr::write(rusage_ptr as *mut Rusage, zeroed);
-            core::arch::asm!("clac", options(nostack));
+            os_core::user_access_end();
         }
     }
     // Delegate to waitpid
@@ -2118,9 +2074,9 @@ fn sys_getrusage(_who: i32, rusage_ptr: u64) -> i64 {
     }
     let zeroed = Rusage::zeroed();
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         core::ptr::write(rusage_ptr as *mut Rusage, zeroed);
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
     0
 }
@@ -2149,7 +2105,7 @@ fn sys_getresuid(ruid_ptr: u64, euid_ptr: u64, suid_ptr: u64) -> i64 {
     };
 
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         if ruid_ptr != 0 && ruid_ptr < 0x0000_8000_0000_0000 {
             *(ruid_ptr as *mut u32) = uid;
         }
@@ -2159,7 +2115,7 @@ fn sys_getresuid(ruid_ptr: u64, euid_ptr: u64, suid_ptr: u64) -> i64 {
         if suid_ptr != 0 && suid_ptr < 0x0000_8000_0000_0000 {
             *(suid_ptr as *mut u32) = euid; // saved uid = effective uid
         }
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
     0
 }
@@ -2173,7 +2129,7 @@ fn sys_getresgid(rgid_ptr: u64, egid_ptr: u64, sgid_ptr: u64) -> i64 {
     };
 
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         if rgid_ptr != 0 && rgid_ptr < 0x0000_8000_0000_0000 {
             *(rgid_ptr as *mut u32) = gid;
         }
@@ -2183,7 +2139,7 @@ fn sys_getresgid(rgid_ptr: u64, egid_ptr: u64, sgid_ptr: u64) -> i64 {
         if sgid_ptr != 0 && sgid_ptr < 0x0000_8000_0000_0000 {
             *(sgid_ptr as *mut u32) = egid; // saved gid = effective gid
         }
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
     0
 }
@@ -2251,9 +2207,9 @@ fn sys_prlimit(_pid: i32, resource: i32, new_limit_ptr: u64, old_limit_ptr: u64)
             return errno::EFAULT;
         }
         unsafe {
-            core::arch::asm!("stac", options(nostack));
+            os_core::user_access_begin();
             core::ptr::write(old_limit_ptr as *mut Rlimit, default_limit);
-            core::arch::asm!("clac", options(nostack));
+            os_core::user_access_end();
         }
     }
 
@@ -2581,7 +2537,7 @@ fn sys_init_module(image: u64, len: usize, params: u64) -> i64 {
     }
 
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
     }
 
     // Get the module data
@@ -2603,7 +2559,7 @@ fn sys_init_module(image: u64, len: usize, params: u64) -> i64 {
     };
 
     unsafe {
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     // NOTE: In full implementation, this would:
@@ -2670,7 +2626,7 @@ fn sys_setkeymap(name_ptr: u64, name_len: usize) -> i64 {
 
     // Enable access to user pages for SMAP
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
     }
 
     // Read layout name
@@ -2687,7 +2643,7 @@ fn sys_setkeymap(name_ptr: u64, name_len: usize) -> i64 {
 
     // Disable access to user pages
     unsafe {
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     result
@@ -2720,7 +2676,7 @@ fn sys_getkeymap(buf_ptr: u64, buf_len: usize) -> i64 {
 
     // Enable access to user pages for SMAP
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
     }
 
     // Copy layout name to user buffer
@@ -2730,7 +2686,7 @@ fn sys_getkeymap(buf_ptr: u64, buf_len: usize) -> i64 {
 
     // Disable access to user pages
     unsafe {
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     name_bytes.len() as i64
@@ -2819,21 +2775,8 @@ fn sys_arch_prctl(code: i32, addr: u64) -> i64 {
                 ctx.fs_base = addr;
                 sched::set_task_context(current_pid, ctx);
 
-                // Write to MSR immediately for current CPU
-                unsafe {
-                    core::arch::asm!(
-                        "mov ecx, 0xC0000100", // IA32_FS_BASE
-                        "mov rax, {}",
-                        "mov rdx, {}",
-                        "shr rdx, 32",
-                        "wrmsr",
-                        in(reg) addr,
-                        in(reg) addr,
-                        out("ecx") _,
-                        out("eax") _,
-                        out("edx") _,
-                    );
-                }
+                // — SableWire: write FS_BASE MSR immediately — arch abstraction handles the split
+                unsafe { os_core::write_msr(0xC0000100, addr); } // IA32_FS_BASE
                 0
             } else {
                 errno::ESRCH
@@ -2882,20 +2825,8 @@ fn sys_arch_prctl(code: i32, addr: u64) -> i64 {
                 ctx.gs_base = addr;
                 sched::set_task_context(current_pid, ctx);
 
-                unsafe {
-                    core::arch::asm!(
-                        "mov ecx, 0xC0000102", // IA32_KERNEL_GS_BASE — user GS lives here during syscall
-                        "mov rax, {}",
-                        "mov rdx, {}",
-                        "shr rdx, 32",
-                        "wrmsr",
-                        in(reg) addr,
-                        in(reg) addr,
-                        out("ecx") _,
-                        out("eax") _,
-                        out("edx") _,
-                    );
-                }
+                // — SableWire: user GS base goes to KERNEL_GS_BASE (swapped on syscall entry)
+                unsafe { os_core::write_msr(0xC0000102, addr); } // IA32_KERNEL_GS_BASE
                 0
             } else {
                 errno::ESRCH
@@ -2910,18 +2841,9 @@ fn sys_arch_prctl(code: i32, addr: u64) -> i64 {
                 return errno::EFAULT;
             }
 
-            let gs_base: u64;
+            // — SableWire: read user GS from KERNEL_GS_BASE — os_core handles the split
+            let gs_base = unsafe { os_core::read_msr(0xC0000102) }; // IA32_KERNEL_GS_BASE
             unsafe {
-                core::arch::asm!(
-                    "mov ecx, 0xC0000102", // IA32_KERNEL_GS_BASE
-                    "rdmsr",
-                    "shl rdx, 32",
-                    "or rax, rdx",
-                    out("ecx") _,
-                    out("rax") gs_base,
-                    out("rdx") _,
-                );
-
                 let ptr = addr as *mut u64;
                 *ptr = gs_base;
             }
@@ -3102,9 +3024,9 @@ fn sys_sched_setscheduler(pid: i32, policy: i32, param_ptr: u64) -> i64 {
 
     // Read param from userspace
     let param: SchedParam = unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         let p = core::ptr::read_volatile(param_ptr as *const SchedParam);
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
         p
     };
 
@@ -3167,9 +3089,9 @@ fn sys_sched_setparam(pid: i32, param_ptr: u64) -> i64 {
 
     // Read param from userspace
     let param: SchedParam = unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         let p = core::ptr::read_volatile(param_ptr as *const SchedParam);
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
         p
     };
 
@@ -3221,9 +3143,9 @@ fn sys_sched_getparam(pid: i32, param_ptr: u64) -> i64 {
 
     // Write param to userspace
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         core::ptr::write_volatile(param_ptr as *mut SchedParam, param);
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     0
@@ -3254,12 +3176,12 @@ fn sys_sched_setaffinity(pid: i32, cpusetsize: usize, mask_ptr: u64) -> i64 {
     // Read mask from userspace
     let mut mask_bytes = [0u8; 32];
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         let src = mask_ptr as *const u8;
         for i in 0..cpusetsize {
             mask_bytes[i] = core::ptr::read_volatile(src.add(i));
         }
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     // Convert to CpuSet
@@ -3327,12 +3249,12 @@ fn sys_sched_getaffinity(pid: i32, cpusetsize: usize, mask_ptr: u64) -> i64 {
     // Write to userspace (only up to cpusetsize bytes)
     let write_size = cpusetsize.min(32);
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         let dest = mask_ptr as *mut u8;
         for i in 0..write_size {
             core::ptr::write_volatile(dest.add(i), mask_bytes[i]);
         }
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     write_size as i64
@@ -3359,11 +3281,11 @@ fn sys_sched_rr_get_interval(pid: i32, tp_ptr: u64) -> i64 {
     // Return the RR time slice (100ms = 0.1s)
     // timespec: tv_sec (i64), tv_nsec (i64)
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         let tp = tp_ptr as *mut i64;
         core::ptr::write_volatile(tp, 0); // tv_sec
         core::ptr::write_volatile(tp.add(1), 100_000_000); // tv_nsec = 100ms
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     0
@@ -3434,10 +3356,10 @@ fn sys_uname(buf_ptr: usize) -> i64 {
 
     // Copy to userspace
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         let dest = buf_ptr as *mut UtsName;
         core::ptr::write_volatile(dest, utsname);
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     0
@@ -3487,45 +3409,24 @@ fn sys_getrandom(buf: u64, buflen: usize, flags: u32) -> i64 {
 
     // Generate random bytes directly into user buffer
     // Using STAC/CLAC for safe user-space access
-    #[cfg(target_arch = "x86_64")]
-    {
-        // Generate random data into a stack buffer first, then copy
-        // (crypto::random doesn't take arbitrary pointers)
-        let mut temp = [0u8; 4096];
-        let mut written = 0;
+    // Generate random data into a stack buffer first, then copy
+    // (crypto::random doesn't take arbitrary pointers)
+    let mut temp = [0u8; 4096];
+    let mut written = 0;
 
-        while written < len {
-            let chunk_size = (len - written).min(4096);
-            crypto::random::fill_bytes(&mut temp[..chunk_size]);
+    while written < len {
+        let chunk_size = (len - written).min(4096);
+        crypto::random::fill_bytes(&mut temp[..chunk_size]);
 
-            // Copy to userspace
-            unsafe {
-                let dest = (buf + written as u64) as *mut u8;
-                core::arch::asm!(
-                    "stac",
-                    "mov rcx, {len}",
-                    "mov rsi, {src}",
-                    "mov rdi, {dst}",
-                    "rep movsb",
-                    "clac",
-                    src = in(reg) temp.as_ptr(),
-                    dst = in(reg) dest,
-                    len = in(reg) chunk_size,
-                    out("rcx") _,
-                    out("rsi") _,
-                    out("rdi") _,
-                    options(nostack)
-                );
-            }
-
-            written += chunk_size;
+        // Copy to userspace
+        unsafe {
+            let dest = (buf + written as u64) as *mut u8;
+            os_core::user_access_begin();
+            core::ptr::copy_nonoverlapping(temp.as_ptr(), dest, chunk_size);
+            os_core::user_access_end();
         }
-    }
 
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        let user_buf = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, len) };
-        crypto::random::fill_bytes(user_buf);
+        written += chunk_size;
     }
 
     len as i64
@@ -3654,10 +3555,10 @@ fn sys_sethostname(name_ptr: u64, name_len: usize) -> i64 {
     // Read hostname from userspace
     let mut buf = [0u8; 64];
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         let src = name_ptr as *const u8;
         core::ptr::copy_nonoverlapping(src, buf.as_mut_ptr(), name_len);
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     // Store it (in the global hostname - for uname to pick up)

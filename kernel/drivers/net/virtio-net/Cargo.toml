@@ -10,4 +10,5 @@ net = { path = "../../../net/net" }
 pci = { path = "../../pci" }
 driver-core = { path = "../../driver-core" }
 virtio-core = { path = "../../virtio-core" }
+os_core = { path = "../../../core/os_core" }
 spin = "0.9"

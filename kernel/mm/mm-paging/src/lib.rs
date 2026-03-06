@@ -15,9 +15,7 @@ mod mapper;
 mod table;
 
 pub use entry::{PageTableEntry, PageTableFlags};
-#[cfg(not(target_arch = "x86_64"))]
-pub use mapper::{MapError, PageMapper};
-#[cfg(target_arch = "x86_64")]
+// — NeonRoot: no more cfg gates — all arch ops route through os_core hooks
 pub use mapper::{MapError, PageMapper, flush_tlb, flush_tlb_all, read_cr3, write_cr3};
 pub use table::PageTable;
 

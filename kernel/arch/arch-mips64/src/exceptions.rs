@@ -55,3 +55,18 @@ pub enum ExceptionCode {
     FloatingPoint = 15,
     Watch = 23,
 }
+
+// — NeonRoot: keyboard/mouse stubs so arch.rs doesn't need cfg gates.
+// SGI MIPS uses different input hardware (SGI keyboard controller).
+
+/// Initialize PS/2 keyboard (no-op on MIPS — SGI uses different input)
+pub fn init_ps2_keyboard() {}
+
+/// Set keyboard IRQ callback (no-op on MIPS)
+pub unsafe fn set_keyboard_callback(_callback: fn()) {}
+
+/// Get keyboard IRQ count (always 0 on MIPS)
+pub fn keyboard_irq_count() -> u64 { 0 }
+
+/// Set mouse IRQ callback (no-op on MIPS)
+pub unsafe fn set_mouse_callback(_callback: fn()) {}

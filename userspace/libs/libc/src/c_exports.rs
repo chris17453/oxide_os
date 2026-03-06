@@ -77,6 +77,11 @@ pub struct posix_spawn_file_actions_t {
 
 static mut ERRNO_VAR: i32 = 0;
 
+/// — IronGhost: let other modules (fcntl.rs) set errno without touching ERRNO_VAR directly
+pub unsafe fn set_errno_raw(val: i32) {
+    ERRNO_VAR = val;
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn __errno_location() -> *mut i32 {
     unsafe { &raw mut ERRNO_VAR }
@@ -318,6 +323,8 @@ pub unsafe extern "C" fn system(cmd: *const u8) -> i32 {
     }
     let pid = syscall::sys_fork();
     if pid < 0 {
+        // — IronGhost: propagate fork errno
+        ERRNO_VAR = -pid;
         return -1;
     }
     if pid == 0 {
@@ -333,12 +340,13 @@ pub unsafe extern "C" fn system(cmd: *const u8) -> i32 {
     // Parent: wait for child
     let mut status: i32 = 0;
     let ret = syscall::sys_waitpid(pid, &mut status, 0);
-    if ret < 0 { -1 } else { status }
+    if ret < 0 { ERRNO_VAR = -ret; -1 } else { status }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn realpath(path: *const u8, resolved: *mut u8) -> *mut u8 {
     if path.is_null() {
+        ERRNO_VAR = errno::EINVAL;
         return core::ptr::null_mut();
     }
     // Simple: just copy path if it starts with /
@@ -726,81 +734,126 @@ pub unsafe extern "C" fn sigprocmask(_how: i32, _set: *const u64, _oldset: *mut 
 
 // ============ unistd wrappers ============
 
+// — IronGhost: C convention — syscalls return negative errno on failure. C library must
+// convert to: return -1, set errno. Without this, CPython reads errno=0 and reports
+// "OSError: [Errno 0] Error" on every failed syscall. Linux libc does this in __syscall_ret.
+
+/// Convert a raw syscall result (negative = -errno) to C convention for isize returns.
+/// Returns the value on success, or -1 with errno set on failure.
+#[inline(always)]
+unsafe fn syscall_ret_ssize(raw: i64) -> isize {
+    if raw < 0 && raw >= -4096 {
+        // — IronGhost: raw result is -errno (e.g., -2 = ENOENT)
+        ERRNO_VAR = (-raw) as i32;
+        -1
+    } else {
+        raw as isize
+    }
+}
+
+/// Convert a raw syscall result to C convention for int returns (open, close, etc).
+#[inline(always)]
+unsafe fn syscall_ret_int(raw: i64) -> i32 {
+    if raw < 0 && raw >= -4096 {
+        ERRNO_VAR = (-raw) as i32;
+        -1
+    } else {
+        raw as i32
+    }
+}
+
+/// Convert a raw syscall result to C convention for i64 returns (lseek).
+#[inline(always)]
+unsafe fn syscall_ret_i64(raw: i64) -> i64 {
+    if raw < 0 && raw >= -4096 {
+        ERRNO_VAR = (-raw) as i32;
+        -1
+    } else {
+        raw
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn read(fd: i32, buf: *mut u8, count: usize) -> isize {
-    syscall::syscall3(syscall::nr::READ, fd as usize, buf as usize, count) as isize
+    let raw = syscall::syscall3(syscall::nr::READ, fd as usize, buf as usize, count);
+    syscall_ret_ssize(raw)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn write(fd: i32, buf: *const u8, count: usize) -> isize {
-    // TODO: Re-enable buffering after fixing keyboard input issue
-    // Buffering was causing issues - need to investigate
-    syscall::syscall3(syscall::nr::WRITE, fd as usize, buf as usize, count) as isize
+    let raw = syscall::syscall3(syscall::nr::WRITE, fd as usize, buf as usize, count);
+    syscall_ret_ssize(raw)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn close(fd: i32) -> i32 {
-    syscall::sys_close(fd)
+    let raw = syscall::sys_close(fd);
+    if raw < 0 { ERRNO_VAR = -raw; -1 } else { raw }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lseek(fd: i32, offset: i64, whence: i32) -> i64 {
-    syscall::sys_lseek(fd, offset, whence)
+    let raw = syscall::sys_lseek(fd, offset, whence);
+    syscall_ret_i64(raw)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn open(path: *const u8, flags: i32, mode: i32) -> i32 {
-    syscall::syscall4(
+    let raw = syscall::syscall4(
         syscall::nr::OPEN,
         path as usize,
         cstr_len(path),
         flags as usize,
         mode as usize,
-    ) as i32
+    );
+    syscall_ret_int(raw)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn openat(dirfd: i32, path: *const u8, flags: i32, mode: u32) -> i32 {
-    syscall::syscall5(
+    let raw = syscall::syscall5(
         syscall::nr::OPENAT,
         dirfd as usize,
         path as usize,
         cstr_len(path),
         flags as usize,
         mode as usize,
-    ) as i32
+    );
+    syscall_ret_int(raw)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mkdirat(dirfd: i32, path: *const u8, mode: u32) -> i32 {
-    syscall::syscall4(
+    syscall_ret_int(syscall::syscall4(
         syscall::nr::MKDIRAT,
         dirfd as usize,
         path as usize,
         cstr_len(path),
         mode as usize,
-    ) as i32
+    ))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn unlinkat(dirfd: i32, path: *const u8, flags: i32) -> i32 {
-    syscall::syscall4(
+    syscall_ret_int(syscall::syscall4(
         syscall::nr::UNLINKAT,
         dirfd as usize,
         path as usize,
         cstr_len(path),
         flags as usize,
-    ) as i32
+    ))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dup(oldfd: i32) -> i32 {
-    syscall::sys_dup(oldfd)
+    let ret = syscall::sys_dup(oldfd);
+    if ret < 0 { ERRNO_VAR = -ret; -1 } else { ret }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dup2(oldfd: i32, newfd: i32) -> i32 {
-    syscall::sys_dup2(oldfd, newfd)
+    let ret = syscall::sys_dup2(oldfd, newfd);
+    if ret < 0 { ERRNO_VAR = -ret; -1 } else { ret }
 }
 
 #[unsafe(no_mangle)]
@@ -825,24 +878,24 @@ pub unsafe extern "C" fn execve(
     argv: *const *const u8,
     envp: *const *const u8,
 ) -> i32 {
-    syscall::syscall4(
+    syscall_ret_int(syscall::syscall4(
         syscall::nr::EXECVE,
         path as usize,
         cstr_len(path),
         argv as usize,
         envp as usize,
-    ) as i32
+    ))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn execv(path: *const u8, argv: *const *const u8) -> i32 {
-    syscall::syscall4(
+    syscall_ret_int(syscall::syscall4(
         syscall::nr::EXECVE,
         path as usize,
         cstr_len(path),
         argv as usize,
         core::ptr::null::<*const u8>() as usize,
-    ) as i32
+    ))
 }
 
 #[unsafe(no_mangle)]
@@ -955,30 +1008,32 @@ pub unsafe extern "C" fn getegid() -> u32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn setuid(uid: u32) -> i32 {
-    syscall::syscall1(syscall::nr::SETUID, uid as usize) as i32
+    // — IronGhost: propagate kernel errno — raw cast was swallowing error codes
+    syscall_ret_int(syscall::syscall1(syscall::nr::SETUID, uid as usize))
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn setgid(gid: u32) -> i32 {
-    syscall::syscall1(syscall::nr::SETGID, gid as usize) as i32
+    syscall_ret_int(syscall::syscall1(syscall::nr::SETGID, gid as usize))
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn seteuid(uid: u32) -> i32 {
-    syscall::syscall1(syscall::nr::SETEUID, uid as usize) as i32
+    syscall_ret_int(syscall::syscall1(syscall::nr::SETEUID, uid as usize))
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn setegid(gid: u32) -> i32 {
-    syscall::syscall1(syscall::nr::SETEGID, gid as usize) as i32
+    syscall_ret_int(syscall::syscall1(syscall::nr::SETEGID, gid as usize))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chdir(path: *const u8) -> i32 {
-    syscall::syscall2(syscall::nr::CHDIR, path as usize, cstr_len(path)) as i32
+    syscall_ret_int(syscall::syscall2(syscall::nr::CHDIR, path as usize, cstr_len(path)))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getcwd(buf: *mut u8, size: usize) -> *mut u8 {
     let ret = syscall::syscall2(syscall::nr::GETCWD, buf as usize, size) as i32;
     if ret < 0 {
+        ERRNO_VAR = -ret;
         return core::ptr::null_mut();
     }
     buf
@@ -994,53 +1049,58 @@ pub unsafe extern "C" fn access(path: *const u8, _mode: i32) -> i32 {
         cstr_len(path),
         &mut stat_buf as *mut crate::stat::Stat as usize,
     ) as i32;
-    if ret < 0 { -1 } else { 0 }
+    if ret < 0 { ERRNO_VAR = -ret; -1 } else { 0 }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn unlink(path: *const u8) -> i32 {
-    syscall::syscall2(syscall::nr::UNLINK, path as usize, cstr_len(path)) as i32
+    let raw = syscall::syscall2(syscall::nr::UNLINK, path as usize, cstr_len(path));
+    syscall_ret_int(raw)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rmdir(path: *const u8) -> i32 {
-    syscall::syscall2(syscall::nr::RMDIR, path as usize, cstr_len(path)) as i32
+    let raw = syscall::syscall2(syscall::nr::RMDIR, path as usize, cstr_len(path));
+    syscall_ret_int(raw)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mkdir(path: *const u8, mode: u32) -> i32 {
-    syscall::syscall3(
+    let raw = syscall::syscall3(
         syscall::nr::MKDIR,
         path as usize,
         cstr_len(path),
         mode as usize,
-    ) as i32
+    );
+    syscall_ret_int(raw)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rename(oldpath: *const u8, newpath: *const u8) -> i32 {
-    syscall::syscall4(
+    let raw = syscall::syscall4(
         syscall::nr::RENAME,
         oldpath as usize,
         cstr_len(oldpath),
         newpath as usize,
         cstr_len(newpath),
-    ) as i32
+    );
+    syscall_ret_int(raw)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn link(oldpath: *const u8, newpath: *const u8) -> i32 {
-    syscall::syscall2(syscall::nr::LINK, oldpath as usize, newpath as usize) as i32
+    syscall_ret_int(syscall::syscall2(syscall::nr::LINK, oldpath as usize, newpath as usize))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn symlink(target: *const u8, linkpath: *const u8) -> i32 {
-    syscall::syscall2(syscall::nr::SYMLINK, target as usize, linkpath as usize) as i32
+    syscall_ret_int(syscall::syscall2(syscall::nr::SYMLINK, target as usize, linkpath as usize))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn readlink(path: *const u8, buf: *mut u8, bufsiz: usize) -> isize {
-    syscall::syscall3(syscall::nr::READLINK, path as usize, buf as usize, bufsiz) as isize
+    let raw = syscall::syscall3(syscall::nr::READLINK, path as usize, buf as usize, bufsiz);
+    syscall_ret_ssize(raw)
 }
 
 #[unsafe(no_mangle)]
@@ -1050,18 +1110,20 @@ pub unsafe extern "C" fn readlinkat(
     buf: *mut u8,
     bufsiz: usize,
 ) -> isize {
-    syscall::syscall4(
+    let raw = syscall::syscall4(
         syscall::nr::READLINKAT,
         dirfd as usize,
         path as usize,
         buf as usize,
         bufsiz,
-    ) as isize
+    );
+    syscall_ret_ssize(raw)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ftruncate(fd: i32, length: i64) -> i32 {
-    syscall::syscall2(syscall::nr::FTRUNCATE, fd as usize, length as usize) as i32
+    let raw = syscall::syscall2(syscall::nr::FTRUNCATE, fd as usize, length as usize);
+    syscall_ret_int(raw)
 }
 
 #[unsafe(no_mangle)]
@@ -1231,16 +1293,18 @@ pub unsafe extern "C" fn getlogin_r(buf: *mut u8, bufsize: usize) -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getgroups(size: i32, list: *mut u32) -> i32 {
-    syscall::syscall2(syscall::nr::GETGROUPS, size as usize, list as usize) as i32
+    syscall_ret_int(syscall::syscall2(syscall::nr::GETGROUPS, size as usize, list as usize))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn nice(inc: i32) -> i32 {
-    syscall::syscall1(syscall::nr::NICE, inc as usize) as i32
+    syscall_ret_int(syscall::syscall1(syscall::nr::NICE, inc as usize))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn brk(_addr: *mut u8) -> i32 {
+    // — IronGhost: brk not implemented — use mmap instead
+    ERRNO_VAR = errno::ENOMEM;
     -1
 }
 
@@ -1357,7 +1421,8 @@ pub unsafe extern "C" fn mmap(
     offset: i64,
 ) -> *mut u8 {
     let ret = syscall::sys_mmap(addr, length, prot, flags, fd, offset);
-    if ret == syscall::MAP_FAILED {
+    if ret == syscall::MAP_FAILED || ret.is_null() {
+        ERRNO_VAR = errno::ENOMEM;
         (-1isize) as *mut u8 // MAP_FAILED
     } else {
         ret
@@ -1366,17 +1431,18 @@ pub unsafe extern "C" fn mmap(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn munmap(addr: *mut u8, length: usize) -> i32 {
-    syscall::sys_munmap(addr, length)
+    let ret = syscall::sys_munmap(addr, length);
+    if ret < 0 { ERRNO_VAR = -ret; -1 } else { ret }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mprotect(addr: *mut u8, len: usize, prot: i32) -> i32 {
-    syscall::sys_mprotect(addr, len, prot)
+    syscall_ret_int(syscall::syscall3(syscall::nr::MPROTECT, addr as usize, len, prot as usize))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn madvise(addr: *mut u8, length: usize, advice: i32) -> i32 {
-    syscall::syscall3(syscall::nr::MADVISE, addr as usize, length, advice as usize) as i32
+    syscall_ret_int(syscall::syscall3(syscall::nr::MADVISE, addr as usize, length, advice as usize))
 }
 
 #[unsafe(no_mangle)]
@@ -2022,17 +2088,17 @@ pub unsafe extern "C" fn fstatat(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chmod(path: *const u8, mode: u32) -> i32 {
-    syscall::syscall3(
+    syscall_ret_int(syscall::syscall3(
         syscall::nr::CHMOD,
         path as usize,
         cstr_len(path),
         mode as usize,
-    ) as i32
+    ))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fchmod(fd: i32, mode: u32) -> i32 {
-    syscall::syscall2(syscall::nr::FCHMOD, fd as usize, mode as usize) as i32
+    syscall_ret_int(syscall::syscall2(syscall::nr::FCHMOD, fd as usize, mode as usize))
 }
 
 #[unsafe(no_mangle)]
@@ -2045,23 +2111,23 @@ pub unsafe extern "C" fn umask(mask: u32) -> u32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn chown(path: *const u8, owner: u32, group: u32) -> i32 {
-    syscall::syscall4(
+    syscall_ret_int(syscall::syscall4(
         syscall::nr::CHOWN,
         path as usize,
         cstr_len(path),
         owner as usize,
         group as usize,
-    ) as i32
+    ))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fchown(fd: i32, owner: u32, group: u32) -> i32 {
-    syscall::syscall3(
+    syscall_ret_int(syscall::syscall3(
         syscall::nr::FCHOWN,
         fd as usize,
         owner as usize,
         group as usize,
-    ) as i32
+    ))
 }
 
 #[unsafe(no_mangle)]
@@ -2076,7 +2142,7 @@ pub unsafe extern "C" fn utimensat(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn futimens(fd: i32, times: *const u8) -> i32 {
-    syscall::syscall2(syscall::nr::FUTIMENS, fd as usize, times as usize) as i32
+    syscall_ret_int(syscall::syscall2(syscall::nr::FUTIMENS, fd as usize, times as usize))
 }
 
 // ============ fcntl ============
@@ -2091,20 +2157,21 @@ pub unsafe extern "C" fn flock(_fd: i32, _operation: i32) -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ioctl(fd: i32, request: u64, arg: u64) -> i32 {
-    // 🔥 GraveShift: Properly cast i64 to i32 - was truncating before 🔥
-    syscall::sys_ioctl(fd, request, arg) as i32
+    // — GraveShift: propagate kernel errno through the standard dance
+    let raw = syscall::sys_ioctl(fd, request, arg);
+    syscall_ret_int(raw as i64)
 }
 
 // ============ poll/select ============
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn poll(fds: *mut u8, nfds: u64, timeout: i32) -> i32 {
-    syscall::syscall3(
+    syscall_ret_int(syscall::syscall3(
         syscall::nr::POLL,
         fds as usize,
         nfds as usize,
         timeout as usize,
-    ) as i32
+    ))
 }
 
 #[unsafe(no_mangle)]
@@ -2115,34 +2182,38 @@ pub unsafe extern "C" fn select(
     exceptfds: *mut u8,
     timeout: *mut u8,
 ) -> i32 {
-    syscall::syscall5(
+    syscall_ret_int(syscall::syscall5(
         syscall::nr::SELECT,
         nfds as usize,
         readfds as usize,
         writefds as usize,
         exceptfds as usize,
         timeout as usize,
-    ) as i32
+    ))
 }
 
 // ============ dirent ============
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn opendir(name: *const u8) -> *mut u8 {
-    let fd = syscall::syscall4(
+    let raw = syscall::syscall4(
         syscall::nr::OPEN,
         name as usize,
         cstr_len(name),
         (O_RDONLY | O_DIRECTORY) as usize,
         0,
-    ) as i32;
-    if fd < 0 {
+    );
+    if raw < 0 {
+        // — IronGhost: propagate kernel errno for directory open failures
+        if raw >= -4096 { ERRNO_VAR = (-raw) as i32; }
         return core::ptr::null_mut();
     }
+    let fd = raw as i32;
     // Allocate DIR struct: fd (4) + buffer offset
     let dir = malloc(4096 + 16);
     if dir.is_null() {
         syscall::sys_close(fd);
+        ERRNO_VAR = errno::ENOMEM;
         return core::ptr::null_mut();
     }
     *(dir as *mut i32) = fd;
@@ -2154,6 +2225,7 @@ pub unsafe extern "C" fn opendir(name: *const u8) -> *mut u8 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn closedir(dirp: *mut u8) -> i32 {
     if dirp.is_null() {
+        ERRNO_VAR = errno::EINVAL;
         return -1;
     }
     let fd = *(dirp as *const i32);
@@ -2190,6 +2262,7 @@ pub unsafe extern "C" fn readdir(dirp: *mut u8) -> *mut u8 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dirfd(dirp: *mut u8) -> i32 {
     if dirp.is_null() {
+        ERRNO_VAR = errno::EINVAL;
         return -1;
     }
     *(dirp as *const i32)
@@ -2335,103 +2408,103 @@ pub unsafe extern "C" fn getrusage(_who: i32, usage: *mut u8) -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getpriority(which: i32, who: i32) -> i32 {
-    syscall::syscall2(syscall::nr::GETPRIORITY, which as usize, who as usize) as i32
+    syscall_ret_int(syscall::syscall2(syscall::nr::GETPRIORITY, which as usize, who as usize))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn setpriority(which: i32, who: i32, prio: i32) -> i32 {
-    syscall::syscall3(
+    syscall_ret_int(syscall::syscall3(
         syscall::nr::SETPRIORITY,
         which as usize,
         who as usize,
         prio as usize,
-    ) as i32
+    ))
 }
 
 // ============ socket operations ============
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn socket(domain: i32, typ: i32, protocol: i32) -> i32 {
-    syscall::syscall3(
+    syscall_ret_int(syscall::syscall3(
         syscall::nr::SOCKET,
         domain as usize,
         typ as usize,
         protocol as usize,
-    ) as i32
+    ))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn socketpair(domain: i32, typ: i32, protocol: i32, sv: *mut i32) -> i32 {
-    syscall::syscall4(
+    syscall_ret_int(syscall::syscall4(
         syscall::nr::SOCKETPAIR,
         domain as usize,
         typ as usize,
         protocol as usize,
         sv as usize,
-    ) as i32
+    ))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bind(fd: i32, addr: *const u8, len: u32) -> i32 {
-    syscall::syscall3(syscall::nr::BIND, fd as usize, addr as usize, len as usize) as i32
+    syscall_ret_int(syscall::syscall3(syscall::nr::BIND, fd as usize, addr as usize, len as usize))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn listen(fd: i32, backlog: i32) -> i32 {
-    syscall::syscall2(syscall::nr::LISTEN, fd as usize, backlog as usize) as i32
+    syscall_ret_int(syscall::syscall2(syscall::nr::LISTEN, fd as usize, backlog as usize))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn accept(fd: i32, addr: *mut u8, len: *mut u32) -> i32 {
-    syscall::syscall3(
+    syscall_ret_int(syscall::syscall3(
         syscall::nr::ACCEPT,
         fd as usize,
         addr as usize,
         len as usize,
-    ) as i32
+    ))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn accept4(fd: i32, addr: *mut u8, len: *mut u32, flags: i32) -> i32 {
-    syscall::syscall4(
+    syscall_ret_int(syscall::syscall4(
         syscall::nr::ACCEPT4,
         fd as usize,
         addr as usize,
         len as usize,
         flags as usize,
-    ) as i32
+    ))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn connect(fd: i32, addr: *const u8, len: u32) -> i32 {
-    syscall::syscall3(
+    syscall_ret_int(syscall::syscall3(
         syscall::nr::CONNECT,
         fd as usize,
         addr as usize,
         len as usize,
-    ) as i32
+    ))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn send(fd: i32, buf: *const u8, len: usize, flags: i32) -> isize {
-    syscall::syscall4(
+    syscall_ret_ssize(syscall::syscall4(
         syscall::nr::SEND,
         fd as usize,
         buf as usize,
         len,
         flags as usize,
-    ) as isize
+    ))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn recv(fd: i32, buf: *mut u8, len: usize, flags: i32) -> isize {
-    syscall::syscall4(
+    syscall_ret_ssize(syscall::syscall4(
         syscall::nr::RECV,
         fd as usize,
         buf as usize,
         len,
         flags as usize,
-    ) as isize
+    ))
 }
 
 #[unsafe(no_mangle)]
@@ -2443,7 +2516,7 @@ pub unsafe extern "C" fn sendto(
     addr: *const u8,
     addrlen: u32,
 ) -> isize {
-    syscall::syscall6(
+    syscall_ret_ssize(syscall::syscall6(
         syscall::nr::SENDTO,
         fd as usize,
         buf as usize,
@@ -2451,7 +2524,7 @@ pub unsafe extern "C" fn sendto(
         flags as usize,
         addr as usize,
         addrlen as usize,
-    ) as isize
+    ))
 }
 
 #[unsafe(no_mangle)]
@@ -2463,7 +2536,7 @@ pub unsafe extern "C" fn recvfrom(
     addr: *mut u8,
     addrlen: *mut u32,
 ) -> isize {
-    syscall::syscall6(
+    syscall_ret_ssize(syscall::syscall6(
         syscall::nr::RECVFROM,
         fd as usize,
         buf as usize,
@@ -2471,32 +2544,32 @@ pub unsafe extern "C" fn recvfrom(
         flags as usize,
         addr as usize,
         addrlen as usize,
-    ) as isize
+    ))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn shutdown(fd: i32, how: i32) -> i32 {
-    syscall::syscall2(syscall::nr::SHUTDOWN, fd as usize, how as usize) as i32
+    syscall_ret_int(syscall::syscall2(syscall::nr::SHUTDOWN, fd as usize, how as usize))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getsockname(fd: i32, addr: *mut u8, len: *mut u32) -> i32 {
-    syscall::syscall3(
+    syscall_ret_int(syscall::syscall3(
         syscall::nr::GETSOCKNAME,
         fd as usize,
         addr as usize,
         len as usize,
-    ) as i32
+    ))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getpeername(fd: i32, addr: *mut u8, len: *mut u32) -> i32 {
-    syscall::syscall3(
+    syscall_ret_int(syscall::syscall3(
         syscall::nr::GETPEERNAME,
         fd as usize,
         addr as usize,
         len as usize,
-    ) as i32
+    ))
 }
 
 #[unsafe(no_mangle)]
@@ -2507,14 +2580,14 @@ pub unsafe extern "C" fn setsockopt(
     optval: *const u8,
     optlen: u32,
 ) -> i32 {
-    syscall::syscall5(
+    syscall_ret_int(syscall::syscall5(
         syscall::nr::SETSOCKOPT,
         fd as usize,
         level as usize,
         optname as usize,
         optval as usize,
         optlen as usize,
-    ) as i32
+    ))
 }
 
 #[unsafe(no_mangle)]
@@ -2525,14 +2598,14 @@ pub unsafe extern "C" fn getsockopt(
     optval: *mut u8,
     optlen: *mut u32,
 ) -> i32 {
-    syscall::syscall5(
+    syscall_ret_int(syscall::syscall5(
         syscall::nr::GETSOCKOPT,
         fd as usize,
         level as usize,
         optname as usize,
         optval as usize,
         optlen as usize,
-    ) as i32
+    ))
 }
 
 // ============ netdb ============
@@ -2715,6 +2788,7 @@ const AF_INET6: i32 = 10;
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn inet_pton(af: i32, src: *const u8, dst: *mut u8) -> i32 {
     if src.is_null() || dst.is_null() {
+        ERRNO_VAR = errno::EFAULT;
         return -1;
     }
     match af {
@@ -3337,10 +3411,11 @@ pub unsafe extern "C" fn getrandom(buf: *mut u8, buflen: usize, _flags: u32) -> 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getentropy(buf: *mut u8, buflen: usize) -> i32 {
     if buflen > 256 {
+        ERRNO_VAR = errno::EINVAL;
         return -1;
     }
     let ret = getrandom(buf, buflen, 0);
-    if ret < 0 { -1 } else { 0 }
+    if ret < 0 { ERRNO_VAR = errno::EIO; -1 } else { 0 }
 }
 
 // Environ
@@ -3370,6 +3445,7 @@ pub unsafe extern "C" fn getenv(name: *const u8) -> *mut u8 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn setenv(name: *const u8, value: *const u8, _overwrite: i32) -> i32 {
     if name.is_null() || value.is_null() {
+        ERRNO_VAR = errno::EINVAL;
         return -1;
     }
     let name_len = cstr_len(name);
@@ -3382,6 +3458,7 @@ pub unsafe extern "C" fn setenv(name: *const u8, value: *const u8, _overwrite: i
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn unsetenv(name: *const u8) -> i32 {
     if name.is_null() {
+        ERRNO_VAR = errno::EINVAL;
         return -1;
     }
     let len = cstr_len(name);
@@ -5060,42 +5137,42 @@ pub unsafe extern "C" fn getloadavg(loadavg: *mut f64, nelem: i32) -> i32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn memfd_create(name: *const u8, flags: u32) -> i32 {
     let name_len = if name.is_null() { 0 } else { cstr_len(name) };
-    syscall::syscall3(
+    syscall_ret_int(syscall::syscall3(
         syscall::nr::MEMFD_CREATE,
         name as usize,
         name_len,
         flags as usize,
-    ) as i32
+    ))
 }
 
 // ============ eventfd ============
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn eventfd(initval: u32, flags: i32) -> i32 {
-    syscall::syscall2(syscall::nr::EVENTFD2, initval as usize, flags as usize) as i32
+    syscall_ret_int(syscall::syscall2(syscall::nr::EVENTFD2, initval as usize, flags as usize))
 }
 
 // ============ epoll ============
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn epoll_create(_size: i32) -> i32 {
-    syscall::syscall1(syscall::nr::EPOLL_CREATE1, 0) as i32
+    syscall_ret_int(syscall::syscall1(syscall::nr::EPOLL_CREATE1, 0))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn epoll_create1(flags: i32) -> i32 {
-    syscall::syscall1(syscall::nr::EPOLL_CREATE1, flags as usize) as i32
+    syscall_ret_int(syscall::syscall1(syscall::nr::EPOLL_CREATE1, flags as usize))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: *mut u8) -> i32 {
-    syscall::syscall4(
+    syscall_ret_int(syscall::syscall4(
         syscall::nr::EPOLL_CTL,
         epfd as usize,
         op as usize,
         fd as usize,
         event as usize,
-    ) as i32
+    ))
 }
 
 #[unsafe(no_mangle)]
@@ -5105,13 +5182,13 @@ pub unsafe extern "C" fn epoll_wait(
     maxevents: i32,
     timeout: i32,
 ) -> i32 {
-    syscall::syscall4(
+    syscall_ret_int(syscall::syscall4(
         syscall::nr::EPOLL_WAIT,
         epfd as usize,
         events as usize,
         maxevents as usize,
         timeout as usize,
-    ) as i32
+    ))
 }
 
 // ============ vfork (alias to fork) ============
@@ -5141,6 +5218,7 @@ fn is_leap_year(y: i64) -> bool {
 pub unsafe extern "C" fn timegm(tm: *mut u8) -> i64 {
     // struct tm layout: sec(i32), min(i32), hour(i32), mday(i32), mon(i32), year(i32), ...
     if tm.is_null() {
+        ERRNO_VAR = errno::EINVAL;
         return -1;
     }
     let sec = *(tm as *const i32);
@@ -5247,6 +5325,7 @@ pub unsafe extern "C" fn siginterrupt(sig: i32, flag: i32) -> i32 {
         &mut old as *mut KSigaction as *mut u8,
     );
     if ret < 0 {
+        ERRNO_VAR = -ret;
         return -1;
     }
 
@@ -5366,7 +5445,7 @@ pub unsafe extern "C" fn preadv(
     iovcnt: i32,
     offset: i64,
 ) -> isize {
-    syscall::sys_preadv(fd, iov, iovcnt, offset)
+    syscall_ret_ssize(syscall::syscall4(syscall::nr::PREADV, fd as usize, iov as usize, iovcnt as usize, offset as usize))
 }
 
 #[unsafe(no_mangle)]
@@ -5376,7 +5455,7 @@ pub unsafe extern "C" fn pwritev(
     iovcnt: i32,
     offset: i64,
 ) -> isize {
-    syscall::sys_pwritev(fd, iov, iovcnt, offset)
+    syscall_ret_ssize(syscall::syscall4(syscall::nr::PWRITEV, fd as usize, iov as usize, iovcnt as usize, offset as usize))
 }
 
 #[unsafe(no_mangle)]
@@ -5387,7 +5466,7 @@ pub unsafe extern "C" fn preadv2(
     offset: i64,
     _flags: i32,
 ) -> isize {
-    syscall::sys_preadv(fd, iov, iovcnt, offset) // ignore flags
+    syscall_ret_ssize(syscall::syscall4(syscall::nr::PREADV, fd as usize, iov as usize, iovcnt as usize, offset as usize))
 }
 
 #[unsafe(no_mangle)]
@@ -5398,7 +5477,7 @@ pub unsafe extern "C" fn pwritev2(
     offset: i64,
     _flags: i32,
 ) -> isize {
-    syscall::sys_pwritev(fd, iov, iovcnt, offset) // ignore flags
+    syscall_ret_ssize(syscall::syscall4(syscall::nr::PWRITEV, fd as usize, iov as usize, iovcnt as usize, offset as usize))
 }
 
 // ============ sendfile C wrapper ============
@@ -5410,7 +5489,14 @@ pub unsafe extern "C" fn sendfile(
     offset: *mut i64,
     count: usize,
 ) -> isize {
-    syscall::sys_sendfile(out_fd, in_fd, offset, count)
+    let raw = syscall::syscall4(
+        syscall::nr::SENDFILE,
+        out_fd as usize,
+        in_fd as usize,
+        offset as usize,
+        count,
+    );
+    syscall_ret_ssize(raw)
 }
 
 // ============ close_range C wrapper ============
@@ -5583,6 +5669,8 @@ pub unsafe extern "C" fn forkpty(
 
     let pid = syscall::sys_fork();
     if pid < 0 {
+        // — IronGhost: propagate fork errno
+        ERRNO_VAR = -pid;
         close(master);
         close(slave);
         return -1;
@@ -6698,17 +6786,17 @@ struct ITimerVal {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getitimer(which: i32, curr_value: *mut u8) -> i32 {
-    syscall::syscall2(syscall::nr::GETITIMER, which as usize, curr_value as usize) as i32
+    syscall_ret_int(syscall::syscall2(syscall::nr::GETITIMER, which as usize, curr_value as usize))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn setitimer(which: i32, new_value: *const u8, old_value: *mut u8) -> i32 {
-    syscall::syscall3(
+    syscall_ret_int(syscall::syscall3(
         syscall::nr::SETITIMER,
         which as usize,
         new_value as usize,
         old_value as usize,
-    ) as i32
+    ))
 }
 
 // ============ prlimit / prlimit64 ============
@@ -6829,6 +6917,7 @@ pub unsafe extern "C" fn popen(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pclose(stream: *mut crate::filestream::FILE) -> i32 {
     if stream.is_null() {
+        ERRNO_VAR = errno::EINVAL;
         return -1;
     }
     let mut pid = 0i32;
@@ -6897,13 +6986,13 @@ pub unsafe extern "C" fn mkostemp(template: *mut u8, flags: i32) -> i32 {
         val = val.wrapping_mul(1103515245).wrapping_add(12345);
     }
     let o_flags = 0x42 | flags as u32; // O_RDWR | O_CREAT | O_EXCL
-    syscall::syscall4(
+    syscall_ret_int(syscall::syscall4(
         syscall::nr::OPEN,
         template as usize,
         cstr_len(template),
         o_flags as usize,
         0o600usize,
-    ) as i32
+    ))
 }
 
 // ============ dprintf / vdprintf ============
@@ -7422,8 +7511,12 @@ pub unsafe extern "C" fn llistxattr(_path: *const u8, _list: *mut u8, _size: usi
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn eventfd_read(fd: i32, value: *mut u64) -> i32 {
-    let r = syscall::syscall3(syscall::nr::READ, fd as usize, value as usize, 8) as isize;
-    if r == 8 { 0 } else { -1 }
+    let r = syscall::syscall3(syscall::nr::READ, fd as usize, value as usize, 8);
+    if r == 8 { 0 } else {
+        // — IronGhost: propagate kernel errno or set EIO for short reads
+        if r < 0 && r >= -4096 { ERRNO_VAR = (-r) as i32; } else { ERRNO_VAR = errno::EIO; }
+        -1
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -7433,8 +7526,11 @@ pub unsafe extern "C" fn eventfd_write(fd: i32, value: u64) -> i32 {
         fd as usize,
         &value as *const u64 as usize,
         8,
-    ) as isize;
-    if r == 8 { 0 } else { -1 }
+    );
+    if r == 8 { 0 } else {
+        if r < 0 && r >= -4096 { ERRNO_VAR = (-r) as i32; } else { ERRNO_VAR = errno::EIO; }
+        -1
+    }
 }
 
 // getopt C exports

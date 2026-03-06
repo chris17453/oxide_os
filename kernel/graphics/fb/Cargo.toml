@@ -10,3 +10,4 @@ debug-lock = []  # Emit serial warnings on lock contention in ISR context
 [dependencies]
 spin = "0.9"
 boot-proto = { path = "../../boot/boot-proto" }
+os_core = { workspace = true }

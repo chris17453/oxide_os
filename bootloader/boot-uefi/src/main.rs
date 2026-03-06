@@ -425,7 +425,8 @@ fn show_error_screen(width: usize, height: usize) {
     // Wait for key — C opens console, anything else halts
     loop {
         if let Some(key) = efi::read_key() {
-            if key.scan_code == 0 && key.unicode_char != 0 {
+            // — NeonRoot: VirtIO keyboard sets scan_code for all keys, check unicode_char directly
+            if key.unicode_char != 0 {
                 let c = key.unicode_char;
                 if c == b'c' as u16 || c == b'C' as u16 {
                     let mut empty_config = config::BootConfig::empty();

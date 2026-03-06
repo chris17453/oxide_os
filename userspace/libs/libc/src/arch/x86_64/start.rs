@@ -53,10 +53,12 @@ pub unsafe extern "C" fn _start() -> ! {
     )
 }
 
-// Wrapper to call the user's main function with argc/argv
+// — GraveShift: Wrapper must use C ABI — Python and other clang-compiled binaries
+// export main() with C calling convention. Rust programs on x86_64 pass (i32, ptr)
+// identically through both ABIs, so this is safe for everyone.
 #[inline(never)]
 fn _main_wrapper(argc: i32, argv: *const *const u8) -> i32 {
-    unsafe extern "Rust" {
+    unsafe extern "C" {
         fn main(argc: i32, argv: *const *const u8) -> i32;
     }
     unsafe { main(argc, argv) }

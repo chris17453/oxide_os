@@ -168,7 +168,7 @@ pub fn vfs_error_to_errno(e: VfsError) -> i64 {
 pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
     // Enable access to user pages for SMAP (path string is in user space)
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
     }
 
     // — ColdCipher: copy_path_from_user now returns a kernel-owned String.
@@ -177,7 +177,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
         Some(p) => p,
         None => {
             unsafe {
-                core::arch::asm!("clac", options(nostack));
+                os_core::user_access_end();
             }
             return errno::EFAULT;
         }
@@ -207,7 +207,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
                 if flags.contains(FileFlags::O_EXCL) {
                     // O_EXCL with O_CREAT: fail if exists
                     unsafe {
-                        core::arch::asm!("clac", options(nostack));
+                        os_core::user_access_end();
                     }
                     return errno::EEXIST;
                 }
@@ -220,14 +220,14 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
                         Ok(vnode) => vnode,
                         Err(e) => {
                             unsafe {
-                                core::arch::asm!("clac", options(nostack));
+                                os_core::user_access_end();
                             }
                             return vfs_error_to_errno(e);
                         }
                     },
                     Err(e) => {
                         unsafe {
-                            core::arch::asm!("clac", options(nostack));
+                            os_core::user_access_end();
                         }
                         return vfs_error_to_errno(e);
                     }
@@ -235,7 +235,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
             }
             Err(e) => {
                 unsafe {
-                    core::arch::asm!("clac", options(nostack));
+                    os_core::user_access_end();
                 }
                 return vfs_error_to_errno(e);
             }
@@ -245,7 +245,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
             Ok(vnode) => vnode,
             Err(e) => {
                 unsafe {
-                    core::arch::asm!("clac", options(nostack));
+                    os_core::user_access_end();
                 }
                 return vfs_error_to_errno(e);
             }
@@ -279,7 +279,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
             Ok(s) => s,
             Err(e) => {
                 unsafe {
-                    core::arch::asm!("clac", options(nostack));
+                    os_core::user_access_end();
                 }
                 return vfs_error_to_errno(e);
             }
@@ -303,7 +303,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
             required_access,
         ) {
             unsafe {
-                core::arch::asm!("clac", options(nostack));
+                os_core::user_access_end();
             }
             return errno::EACCES;
         }
@@ -312,7 +312,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
     // Check O_DIRECTORY
     if flags.contains(FileFlags::O_DIRECTORY) && vnode.vtype() != VnodeType::Directory {
         unsafe {
-            core::arch::asm!("clac", options(nostack));
+            os_core::user_access_end();
         }
         return errno::ENOTDIR;
     }
@@ -320,7 +320,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
     // Check if trying to write to directory
     if flags.writable() && vnode.vtype() == VnodeType::Directory {
         unsafe {
-            core::arch::asm!("clac", options(nostack));
+            os_core::user_access_end();
         }
         return errno::EISDIR;
     }
@@ -329,7 +329,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
     if flags.contains(FileFlags::O_TRUNC) && flags.writable() {
         if let Err(e) = vnode.truncate(0) {
             unsafe {
-                core::arch::asm!("clac", options(nostack));
+                os_core::user_access_end();
             }
             return vfs_error_to_errno(e);
         }
@@ -354,7 +354,7 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
 
     // Disable access to user pages
     unsafe {
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     result
@@ -435,10 +435,10 @@ pub fn sys_read_vfs(fd: i32, buf: u64, count: usize) -> i64 {
         Ok(n) => {
             // — ColdCipher: Copy to user space — STAC window is tiny, no yields,
             // no terminal writes, no lock acquisitions. Just a memcpy.
-            unsafe { core::arch::asm!("stac", options(nostack)); }
+            unsafe { os_core::user_access_begin(); }
             let user_buf = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, n) };
             user_buf.copy_from_slice(&kbuf[..n]);
-            unsafe { core::arch::asm!("clac", options(nostack)); }
+            unsafe { os_core::user_access_end(); }
             n as i64
         }
         Err(e) => vfs_error_to_errno(e),
@@ -509,10 +509,10 @@ pub fn sys_write_vfs(fd: i32, buf: u64, count: usize) -> i64 {
     let chunk = count.min(KBUF_SIZE);
 
     // — ColdCipher: Tight STAC/CLAC window — just a memcpy, no locks, no yields.
-    unsafe { core::arch::asm!("stac", options(nostack)); }
+    unsafe { os_core::user_access_begin(); }
     let user_buf = unsafe { core::slice::from_raw_parts(buf as *const u8, chunk) };
     kbuf[..chunk].copy_from_slice(user_buf);
-    unsafe { core::arch::asm!("clac", options(nostack)); }
+    unsafe { os_core::user_access_end(); }
 
     let result = match file.write(&kbuf[..chunk]) {
         Ok(n) => n as i64,
@@ -779,11 +779,11 @@ pub fn sys_ioctl(fd: i32, request: u64, arg: u64) -> i64 {
     if request == 0x5410 {
         unsafe {
             os_log::write_str_raw("[IOCTL] TIOCSPGRP fd=");
-            arch_x86_64::serial::write_u64_hex_unsafe(fd as u64);
+            os_log::write_u64_hex_raw(fd as u64);
             os_log::write_str_raw(" arg=");
-            arch_x86_64::serial::write_u64_hex_unsafe(arg);
+            os_log::write_u64_hex_raw(arg);
             os_log::write_str_raw(" pid=");
-            arch_x86_64::serial::write_u64_hex_unsafe(crate::current_pid() as u64);
+            os_log::write_u64_hex_raw(crate::current_pid() as u64);
             os_log::write_str_raw("\n");
         }
     }
@@ -811,7 +811,7 @@ pub fn sys_ioctl(fd: i32, request: u64, arg: u64) -> i64 {
     // — GraveShift: STAC before ioctl — handlers like TIOCGWINSZ write to user pointers.
     // No STAC = SMAP violation = GPF. Every ioctl that touches arg as a pointer needs this.
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
     }
 
     let result = match file.ioctl(request, arg) {
@@ -820,7 +820,7 @@ pub fn sys_ioctl(fd: i32, request: u64, arg: u64) -> i64 {
     };
 
     unsafe {
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     // — SableWire: Ioctl done, back to non-preemptable kernel context.
@@ -834,7 +834,7 @@ pub fn sys_ioctl(fd: i32, request: u64, arg: u64) -> i64 {
     if request == 0x5410 {
         unsafe {
             os_log::write_str_raw("[IOCTL] TIOCSPGRP result=");
-            arch_x86_64::serial::write_u64_hex_unsafe(result as u64);
+            os_log::write_u64_hex_raw(result as u64);
             os_log::write_str_raw("\n");
         }
     }
@@ -859,7 +859,7 @@ pub fn sys_chmod(path_ptr: u64, path_len: usize, mode: u32) -> i64 {
 
     // Enable access to user pages for SMAP
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
     }
 
     let path_slice = unsafe { core::slice::from_raw_parts(path_ptr as *const u8, path_len) };
@@ -868,7 +868,7 @@ pub fn sys_chmod(path_ptr: u64, path_len: usize, mode: u32) -> i64 {
         Ok(s) => s,
         Err(_) => {
             unsafe {
-                core::arch::asm!("clac", options(nostack));
+                os_core::user_access_end();
             }
             return errno::EINVAL;
         }
@@ -890,7 +890,7 @@ pub fn sys_chmod(path_ptr: u64, path_len: usize, mode: u32) -> i64 {
 
     // Disable access to user pages
     unsafe {
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     result
@@ -936,7 +936,7 @@ pub fn sys_chown(path_ptr: u64, path_len: usize, uid: i32, gid: i32) -> i64 {
 
     // Enable access to user pages for SMAP
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
     }
 
     let path_slice = unsafe { core::slice::from_raw_parts(path_ptr as *const u8, path_len) };
@@ -945,7 +945,7 @@ pub fn sys_chown(path_ptr: u64, path_len: usize, uid: i32, gid: i32) -> i64 {
         Ok(s) => s,
         Err(_) => {
             unsafe {
-                core::arch::asm!("clac", options(nostack));
+                os_core::user_access_end();
             }
             return errno::EINVAL;
         }
@@ -969,7 +969,7 @@ pub fn sys_chown(path_ptr: u64, path_len: usize, uid: i32, gid: i32) -> i64 {
 
     // Disable access to user pages
     unsafe {
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     result
@@ -1098,10 +1098,10 @@ pub fn sys_statfs(path_ptr: u64, path_len: usize, buf_ptr: usize) -> i64 {
 
     // Copy to userspace
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         let dest = buf_ptr as *mut Statfs;
         core::ptr::write_volatile(dest, statfs);
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     0
@@ -1155,10 +1155,10 @@ pub fn sys_fstatfs(fd: i32, buf_ptr: usize) -> i64 {
 
     // Copy to userspace
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         let dest = buf_ptr as *mut Statfs;
         core::ptr::write_volatile(dest, statfs);
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     0
@@ -1242,7 +1242,7 @@ pub fn sys_mount(
 
     // Enable access to user pages for SMAP
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
     }
 
     // — ColdCipher: Copy all three strings from userspace into kernel-owned Strings
@@ -1255,7 +1255,7 @@ pub fn sys_mount(
             Some(s) => s,
             None => {
                 unsafe {
-                    core::arch::asm!("clac", options(nostack));
+                    os_core::user_access_end();
                 }
                 return errno::EFAULT;
             }
@@ -1269,7 +1269,7 @@ pub fn sys_mount(
         Some(t) => t,
         None => {
             unsafe {
-                core::arch::asm!("clac", options(nostack));
+                os_core::user_access_end();
             }
             return errno::EFAULT;
         }
@@ -1283,7 +1283,7 @@ pub fn sys_mount(
         Some(f) => f,
         None => {
             unsafe {
-                core::arch::asm!("clac", options(nostack));
+                os_core::user_access_end();
             }
             return errno::EFAULT;
         }
@@ -1304,7 +1304,7 @@ pub fn sys_mount(
 
     // Disable access to user pages
     unsafe {
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     result
@@ -1374,7 +1374,7 @@ pub fn sys_pivot_root(
 
     // Enable access to user pages for SMAP
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
     }
 
     // — ColdCipher: kernel-owned copies — TOCTOU closed for both paths.
@@ -1382,7 +1382,7 @@ pub fn sys_pivot_root(
         Some(s) => s,
         None => {
             unsafe {
-                core::arch::asm!("clac", options(nostack));
+                os_core::user_access_end();
             }
             return errno::EFAULT;
         }
@@ -1393,7 +1393,7 @@ pub fn sys_pivot_root(
         Some(s) => s,
         None => {
             unsafe {
-                core::arch::asm!("clac", options(nostack));
+                os_core::user_access_end();
             }
             return errno::EFAULT;
         }
@@ -1415,7 +1415,7 @@ pub fn sys_pivot_root(
 
     // Disable access to user pages
     unsafe {
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
     }
 
     result
@@ -1428,27 +1428,88 @@ pub fn sys_pivot_root(
 /// Implements F_GETFL and F_SETFL commands for managing file flags,
 /// particularly O_NONBLOCK which vim uses for async operations.
 pub fn sys_fcntl(fd: i32, cmd: i32, arg: u64) -> i64 {
-    // fcntl command codes
-    const F_GETFL: i32 = 3; // Get file status flags
-    const F_SETFL: i32 = 4; // Set file status flags
+    // — GraveShift: fcntl command codes — CPython hammers F_GETFD/F_SETFD on every open()
+    const F_DUPFD: i32 = 0;
+    const F_GETFD: i32 = 1;
+    const F_SETFD: i32 = 2;
+    const F_GETFL: i32 = 3;
+    const F_SETFL: i32 = 4;
+    const F_DUPFD_CLOEXEC: i32 = 1030;
+    const FD_CLOEXEC: u32 = 1;
 
     match cmd {
+        F_GETFD => {
+            // — GraveShift: return close-on-exec flag for this fd
+            with_current_meta(|meta| {
+                if let Some(file) = meta.fd_table.get_file(fd) {
+                    // We store cloexec in file flags — check O_CLOEXEC bit
+                    let flags = file.flags().bits();
+                    if (flags & 0o2000000) != 0 { FD_CLOEXEC as i64 } else { 0i64 }
+                } else {
+                    -(errno::EBADF as i64)
+                }
+            })
+            .unwrap_or(-(errno::EBADF as i64))
+        }
+
+        F_SETFD => {
+            // — GraveShift: set close-on-exec flag (or clear it)
+            // CPython sets FD_CLOEXEC on every fd it opens
+            with_current_meta_mut(|meta| {
+                if let Some(file) = meta.fd_table.get_file(fd) {
+                    let current = file.flags().bits();
+                    let new_flags = if (arg as u32 & FD_CLOEXEC) != 0 {
+                        current | 0o2000000 // set O_CLOEXEC
+                    } else {
+                        current & !0o2000000 // clear O_CLOEXEC
+                    };
+                    file.set_flags(FileFlags::from_bits_truncate(new_flags));
+                    0
+                } else {
+                    -(errno::EBADF as i64)
+                }
+            })
+            .unwrap_or(-(errno::EBADF as i64))
+        }
+
+        F_DUPFD | F_DUPFD_CLOEXEC => {
+            // — GraveShift: duplicate fd to lowest available >= arg
+            let min_fd = arg as i32;
+            with_current_meta_mut(|meta| {
+                if let Some(file) = meta.fd_table.get_file(fd) {
+                    let file_clone = file.clone();
+                    // — GraveShift: if CLOEXEC variant, set close-on-exec on the new fd
+                    if cmd == F_DUPFD_CLOEXEC {
+                        let cur = file_clone.flags().bits();
+                        file_clone.set_flags(FileFlags::from_bits_truncate(cur | 0o2000000));
+                    }
+                    match meta.fd_table.alloc_at_least(min_fd, file_clone) {
+                        Ok(new_fd) => new_fd as i64,
+                        Err(_) => -(errno::EMFILE as i64),
+                    }
+                } else {
+                    -(errno::EBADF as i64)
+                }
+            })
+            .unwrap_or(-(errno::EBADF as i64))
+        }
+
         F_GETFL => {
             // Get file flags
             with_current_meta(|meta| {
                 if let Some(file) = meta.fd_table.get_file(fd) {
                     file.flags().bits() as i64
                 } else {
-                    errno::EBADF as i64
+                    -(errno::EBADF as i64)
                 }
             })
-            .unwrap_or(errno::EBADF as i64)
+            .unwrap_or(-(errno::EBADF as i64))
         }
 
         F_SETFL => {
             // Set file flags
             // Only certain flags can be set: O_APPEND, O_NONBLOCK, O_ASYNC
-            // 🔥 GraveShift: fcntl F_SETFL lets userspace change blocking mode 🔥
+            // — GraveShift: fcntl F_SETFL lets userspace change blocking mode
             let new_flags = arg as u32;
             let allowed_flags = FileFlags::O_APPEND.bits() | FileFlags::O_NONBLOCK.bits();
             let flags_to_set = new_flags & allowed_flags;
@@ -1468,12 +1529,8 @@ pub fn sys_fcntl(fd: i32, cmd: i32, arg: u64) -> i64 {
                     let new_nonblock = (flags_to_set & FileFlags::O_NONBLOCK.bits()) != 0;
 
                     if old_nonblock != new_nonblock {
-                        // Check if this is a TTY and notify it
                         let vnode = file.vnode();
                         if vnode.vtype() == VnodeType::CharDevice {
-                            // Notify TTY via custom ioctl (TIOC_SET_NONBLOCK)
-                            // TTY will check ioctl code and update internal nonblocking flag
-                            // 🔥 GraveShift: Propagate errors instead of silent failure 🔥
                             const TIOC_SET_NONBLOCK: u64 = 0x5490;
                             if let Err(e) = vnode.ioctl(TIOC_SET_NONBLOCK, new_nonblock as u64) {
                                 return vfs_error_to_errno(e);
@@ -1481,19 +1538,18 @@ pub fn sys_fcntl(fd: i32, cmd: i32, arg: u64) -> i64 {
                         }
                     }
 
-                    // Update the file flags atomically
                     file.set_flags(new_flags);
                     0
                 } else {
-                    errno::EBADF as i64
+                    -(errno::EBADF as i64)
                 }
             })
-            .unwrap_or(errno::EBADF as i64)
+            .unwrap_or(-(errno::EBADF as i64))
         }
 
         _ => {
-            // Unsupported fcntl command
-            errno::EINVAL as i64
+            // — GraveShift: unknown fcntl command — negative errno, not positive
+            -(errno::EINVAL as i64)
         }
     }
 }
@@ -1626,11 +1682,9 @@ fn sys_flock_blocking(inode_id: InodeId, owner_id: u64, exclusive: bool) -> i64 
 
         // — EmberLock: HLT+kpo pattern. Allow preemption, sleep until woken
         // by unlock() via wake_up(pid) or the next timer tick (belt+suspenders).
-        arch_x86_64::allow_kernel_preempt();
-        unsafe {
-            core::arch::asm!("sti", "hlt", options(nomem, nostack));
-        }
-        arch_x86_64::disallow_kernel_preempt();
+        os_core::allow_kernel_preempt();
+        os_core::wait_for_interrupt();
+        os_core::disallow_kernel_preempt();
         // waiter entry stays registered — unlock() may have already removed us
         // via drain_waiters(), and re-registering at loop top handles the rest.
     }

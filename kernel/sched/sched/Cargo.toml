@@ -6,13 +6,12 @@ license.workspace = true
 description = "Scheduler implementation for OXIDE OS"
 
 [features]
-debug-sched = ["os_log"]
+debug-sched = []
 
 [dependencies]
 os_core = { workspace = true }
-os_log = { workspace = true, optional = true }
+os_log = { workspace = true }
 sched-traits = { workspace = true }
-arch-x86_64 = { workspace = true }
 spin = { workspace = true }
 smp = { workspace = true }
 proc = { path = "../../proc/proc" }

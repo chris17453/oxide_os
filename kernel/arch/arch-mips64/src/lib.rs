@@ -25,13 +25,14 @@
 
 use arch_traits::{
     Arch, AtomicOps, CacheOps, ControlRegisters, DmaOps, Endianness, ExceptionHandler,
-    InterruptContext as ArchInterruptContext, PortIo, SyscallInterface, SystemRegisters,
+    InterruptContext as ArchInterruptContext, PortIo, SmpOps, SyscallInterface, SystemRegisters,
     TlbControl,
 };
 use os_core::{PhysAddr, VirtAddr};
 
 pub mod context;
 pub mod exceptions;
+pub mod serial;
 pub mod syscall;
 
 /// MIPS64 architecture implementation (SGI big-endian)
@@ -58,6 +59,8 @@ pub const XKPHYS_UNCACHED: u64 = 0x9000_0000_0000_0000;
 // ============================================================================
 
 impl Arch for Mips64 {
+    const ELF_MACHINE: u16 = 0x08; // EM_MIPS
+
     fn name() -> &'static str {
         "mips64-sgi"
     }
@@ -120,6 +123,94 @@ impl Arch for Mips64 {
         }
         // IE bit is bit 0
         (status & 0x1) != 0
+    }
+
+    #[inline]
+    fn wait_for_interrupt() {
+        unsafe {
+            // — NeonRoot: enable interrupts then WAIT for next interrupt
+            let status: u64;
+            core::arch::asm!(
+                "mfc0 {status}, $12",
+                "ori {status}, {status}, 0x0001",
+                "mtc0 {status}, $12",
+                "wait",
+                status = out(reg) status,
+                options(nomem, nostack)
+            );
+        }
+    }
+
+    #[inline]
+    unsafe fn user_access_begin() {
+        // — NeonRoot: MIPS has no hardware SMAP/PAN equivalent.
+        // User/kernel separation is via address ranges (KUSEG vs KSEG).
+        // No-op — but the trait call keeps the code portable.
+    }
+
+    #[inline]
+    unsafe fn user_access_end() {
+        // — NeonRoot: No-op on MIPS. See user_access_begin().
+    }
+
+    #[inline]
+    fn read_page_table_root() -> PhysAddr {
+        let context: u64;
+        unsafe {
+            core::arch::asm!(
+                "dmfc0 {}, $4",  // Read CP0 Context register
+                out(reg) context,
+                options(nomem, nostack)
+            );
+        }
+        PhysAddr::new(context)
+    }
+
+    #[inline]
+    unsafe fn switch_page_table(root: PhysAddr) {
+        unsafe {
+            core::arch::asm!(
+                "dmtc0 {}, $4",  // Write CP0 Context register
+                in(reg) root.as_u64(),
+                options(nostack)
+            );
+        }
+    }
+
+    #[inline]
+    fn read_stack_pointer() -> u64 {
+        let sp: u64;
+        unsafe {
+            core::arch::asm!("move {}, $sp", out(reg) sp, options(nomem, nostack));
+        }
+        sp
+    }
+
+    #[inline]
+    fn read_tsc() -> u64 {
+        // — WireSaint: TODO — read CP0 Count register when MIPS target is active
+        0
+    }
+
+    #[inline]
+    fn cpuid(_leaf: u32, _subleaf: u32) -> (u32, u32, u32, u32) {
+        // — WireSaint: TODO — read CP0 PRId when MIPS target is active
+        (0, 0, 0, 0)
+    }
+
+    #[inline]
+    fn memory_fence() {
+        // — WireSaint: TODO — sync instruction
+    }
+
+    #[inline]
+    fn read_fence() {
+        // — WireSaint: TODO — sync (MIPS has no separate load fence)
+    }
+
+    #[inline]
+    fn write_fence() {
+        // — WireSaint: TODO — sync (MIPS has no separate store fence)
     }
 }
 
@@ -671,5 +762,64 @@ impl SyscallInterface for Mips64 {
     fn set_syscall_return(frame: &mut Self::SyscallFrame, value: usize) {
         // Return value goes in v0 (register $2)
         frame.v0 = value as u64;
+    }
+}
+
+// ============================================================================
+// SMP Operations — NeonRoot: MIPS SMP stubs (SGI Origin uses hub-based IPC)
+// ============================================================================
+
+impl SmpOps for Mips64 {
+    fn cpu_id() -> Option<u32> {
+        let ebase: u64;
+        unsafe {
+            core::arch::asm!(
+                "mfc0 {}, $15, 1",  // CP0 EBase, select 1
+                out(reg) ebase,
+                options(nomem, nostack)
+            );
+        }
+        Some((ebase & 0x3FF) as u32) // CPUNum field
+    }
+
+    fn boot_ap_sequence(_hw_id: u32, _trampoline_page: u8) {
+        // TODO: SGI Origin uses HUB chip for AP boot
+    }
+
+    fn send_ipi_to(_hw_id: u32, _vector: u8) {
+        // TODO: HUB-based IPI for SGI Origin
+    }
+
+    fn send_ipi_broadcast(_vector: u8, _include_self: bool) {
+        // TODO: HUB broadcast
+    }
+
+    fn send_ipi_self(_vector: u8) {
+        // TODO: Cause register SW interrupt
+    }
+
+    fn delay_ms(_ms: u64) {
+        // TODO: CP0 Count-based delay
+    }
+
+    fn delay_us(_us: u64) {
+        // TODO: CP0 Count-based delay
+    }
+
+    fn monotonic_counter() -> u64 {
+        let count: u64;
+        unsafe {
+            core::arch::asm!(
+                "dmfc0 {}, $9",  // CP0 Count register
+                out(reg) count,
+                options(nomem, nostack)
+            );
+        }
+        count
+    }
+
+    fn monotonic_frequency() -> u64 {
+        // TODO: detect from CP0 or firmware
+        100_000_000 // 100MHz placeholder
     }
 }

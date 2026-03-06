@@ -12,4 +12,3 @@ proc-traits = { workspace = true }
 os_core = { workspace = true }
 spin = { workspace = true }
 sched = { workspace = true }
-arch-x86_64 = { workspace = true }

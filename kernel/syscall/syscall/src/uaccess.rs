@@ -68,10 +68,10 @@ pub fn copy_from_user(ptr: u64, len: usize) -> Result<Vec<u8>, i64> {
     // STAC/CLAC bracket the access so SMAP enforcement is temporarily suspended
     // for exactly this window. The resulting Vec is kernel-heap owned.
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         let slice = core::slice::from_raw_parts(ptr as *const u8, len);
         let result = slice.to_vec();
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
         Ok(result)
     }
 }
@@ -90,10 +90,10 @@ pub fn copy_to_user(dst: u64, src: &[u8]) -> Result<(), i64> {
     // Safety: validate_user_buffer confirmed [dst, dst+len) is in userspace.
     // STAC/CLAC bracket the write window.
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         let dst_slice = core::slice::from_raw_parts_mut(dst as *mut u8, src.len());
         dst_slice.copy_from_slice(src);
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
         Ok(())
     }
 }
@@ -117,9 +117,9 @@ pub fn get_user<T: Copy>(ptr: u64) -> Result<T, i64> {
     // Safety: validate_user_buffer confirmed the range is in userspace.
     // read_volatile prevents the load from migrating outside the STAC/CLAC fence.
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         let val = core::ptr::read_volatile(ptr as *const T);
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
         Ok(val)
     }
 }
@@ -139,9 +139,9 @@ pub fn put_user<T: Copy>(ptr: u64, val: T) -> Result<(), i64> {
     // Safety: validate_user_buffer confirmed the range is in userspace.
     // write_volatile prevents the store from migrating outside the STAC/CLAC fence.
     unsafe {
-        core::arch::asm!("stac", options(nostack));
+        os_core::user_access_begin();
         core::ptr::write_volatile(ptr as *mut T, val);
-        core::arch::asm!("clac", options(nostack));
+        os_core::user_access_end();
         Ok(())
     }
 }

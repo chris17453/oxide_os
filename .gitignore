@@ -1,6 +1,7 @@
 # Build artifacts
 /target/
 /build/images/
+/build/kernels/
 
 # Binary build artifacts (global)
 *.o

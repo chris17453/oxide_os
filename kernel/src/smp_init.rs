@@ -6,7 +6,7 @@
 //!   silent QEMU exit. The BSP signals readiness via `signal_ap_ready()`.
 
 use arch_traits::Arch;
-use arch_x86_64 as arch;
+use crate::arch;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 /// BSP sets this after all interrupt callbacks are registered and interrupts
@@ -60,8 +60,7 @@ pub fn ap_init_callback(apic_id: u8) -> ! {
         // Set KERNEL_GS_BASE to this CPU's per-CPU data slot.
         // Use current RSP as initial kernel stack — the scheduler will overwrite
         // it with the real task stack on the first context switch via set_kernel_stack().
-        let boot_rsp: u64;
-        core::arch::asm!("mov {}, rsp", out(reg) boot_rsp, options(nostack, nomem));
+        let boot_rsp: u64 = crate::arch::read_stack_pointer();
         arch::syscall::init_kernel_stack(cpu_id, boot_rsp);
     }
 
@@ -99,10 +98,7 @@ pub fn ap_init_callback(apic_id: u8) -> ! {
     // — GraveShift: boot_rsp was captured above (line 64). Reuse it for the idle
     // task's initial RSP so the scheduler has a valid kernel stack pointer if it
     // ever needs to build an iret frame for idle before the first preemption.
-    let idle_boot_rsp: u64;
-    unsafe {
-        core::arch::asm!("mov {}, rsp", out(reg) idle_boot_rsp, options(nostack, nomem));
-    }
+    let idle_boot_rsp: u64 = crate::arch::read_stack_pointer();
     ap_idle.context.rsp = idle_boot_rsp;
     sched::add_task_to_cpu(ap_idle, cpu_id);
 

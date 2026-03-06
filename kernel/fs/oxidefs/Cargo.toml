@@ -11,8 +11,8 @@ spin = "0.10"
 # Optional dependencies for kernel integration
 proc = { path = "../../proc/proc", optional = true }
 sched = { path = "../../sched/sched", optional = true }
-arch-x86_64 = { path = "../../arch/arch-x86_64", optional = true }
+os_core = { path = "../../core/os_core", optional = true }
 
 [features]
 default = ["kernel"]
-kernel = ["proc", "sched", "arch-x86_64"]
+kernel = ["proc", "sched", "os_core"]

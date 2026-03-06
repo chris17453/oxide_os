@@ -7,6 +7,3 @@ license.workspace = true
 [dependencies]
 os_core = { workspace = true }
 driver-traits = { workspace = true }
-
-[target.'cfg(target_arch = "x86_64")'.dependencies]
-arch-x86_64 = { workspace = true }

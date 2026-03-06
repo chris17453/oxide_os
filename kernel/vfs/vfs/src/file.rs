@@ -147,14 +147,14 @@ impl File {
 
     // — GraveShift: raw COM1 diag when read() hits a not-readable fd
     fn serial_debug_not_readable(flag_bits: u32) {
-        // — SableWire: bounded spin — drop byte if UART FIFO is saturated
+        // — SableWire: bounded spin — drop byte if UART FIFO is saturated.
+        // raw asm purged, os_core handles the port-level incantations now — TorqueJax
         fn write_byte(b: u8) {
             const SPIN_LIMIT: u32 = 2048;
             unsafe {
-                let mut status: u8;
                 let mut spins: u32 = 0;
                 loop {
-                    core::arch::asm!("in al, dx", out("al") status, in("dx") 0x3FDu16, options(nomem, nostack));
+                    let status = os_core::inb(0x3FD);
                     if status & 0x20 != 0 {
                         break;
                     }
@@ -163,7 +163,7 @@ impl File {
                         return;
                     }
                 }
-                core::arch::asm!("out dx, al", in("al") b, in("dx") 0x3F8u16, options(nomem, nostack));
+                os_core::outb(0x3F8, b);
             }
         }
         fn write_str(s: &[u8]) {

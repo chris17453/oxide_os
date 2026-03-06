@@ -282,7 +282,7 @@ where
     // The lock holder is probably in a scheduler path that ends on the next tick.
     // Burning cycles here just heats the CPU and delays the unlock.
     for _ in 0..10 {
-        unsafe { core::arch::asm!("sti", "hlt", options(nomem, nostack)); }
+        os_core::wait_for_interrupt();
         if let Some(mut g) = RUN_QUEUES[cpu as usize].try_lock() {
             return g.as_mut().map(f);
         }
@@ -894,40 +894,16 @@ pub fn switch_to(new_pid: Pid) {
     // the user's GS. swapgs at sysret flips them, so restoring into 0xC0000102 here
     // means the correct user GS appears in GS_BASE the moment we're back in user mode.
     if let Some(ctx) = get_task_context(new_pid) {
+        // — WireSaint: Restore FS_BASE for TLS — the arch layer does the rdmsr/wrmsr
+        // so we don't have to hand-roll register shuffles like it's 1999.
         if ctx.fs_base != 0 {
-            unsafe {
-                core::arch::asm!(
-                    "mov rcx, 0xC0000100",  // IA32_FS_BASE MSR
-                    "mov rax, {0}",          // Low 32 bits
-                    "mov rdx, {0}",          // Copy for shift
-                    "shr rdx, 32",           // High 32 bits
-                    "wrmsr",
-                    in(reg) ctx.fs_base,
-                    out("rax") _,
-                    out("rcx") _,
-                    out("rdx") _,
-                    options(nostack, preserves_flags)
-                );
-            }
+            unsafe { os_core::write_msr(0xC0000100, ctx.fs_base); }
         }
+        // — SableWire: Write to KERNEL_GS_BASE (0xC0000102), not GS_BASE (0xC0000101).
+        // We are in kernel context: GS_BASE = per-CPU data, KERNEL_GS_BASE = user GS.
+        // swapgs at sysret will promote this into GS_BASE for the returning task.
         if ctx.gs_base != 0 {
-            // — SableWire: Write to KERNEL_GS_BASE (0xC0000102), not GS_BASE (0xC0000101).
-            // We are in kernel context: GS_BASE = per-CPU data, KERNEL_GS_BASE = user GS.
-            // swapgs at sysret will promote this into GS_BASE for the returning task.
-            unsafe {
-                core::arch::asm!(
-                    "mov rcx, 0xC0000102",  // IA32_KERNEL_GS_BASE MSR
-                    "mov rax, {0}",          // Low 32 bits
-                    "mov rdx, {0}",          // Copy for shift
-                    "shr rdx, 32",           // High 32 bits
-                    "wrmsr",
-                    in(reg) ctx.gs_base,
-                    out("rax") _,
-                    out("rcx") _,
-                    out("rdx") _,
-                    options(nostack, preserves_flags)
-                );
-            }
+            unsafe { os_core::write_msr(0xC0000102, ctx.gs_base); }
         }
     }
 }
@@ -1135,8 +1111,11 @@ pub fn context_switch_transaction(
     old_ctx: crate::task::TaskContext,
     preempt_count: i32,
 ) -> Option<SwitchInfo> {
+    #[cfg(feature = "debug-sched")]
     static SDBG_OLD_MISS: AtomicU32 = AtomicU32::new(0);
+    #[cfg(feature = "debug-sched")]
     static SDBG_NEW_MISS: AtomicU32 = AtomicU32::new(0);
+    #[cfg(feature = "debug-sched")]
     static SDBG_NEW_BAD_CTX: AtomicU32 = AtomicU32::new(0);
     let cpu = this_cpu();
 
@@ -1144,6 +1123,7 @@ pub fn context_switch_transaction(
     // verified rq_lock_available(). If somehow the lock is contended anyway (race
     // between the check and here), bail — next tick will retry cleanly.
     let result = try_with_rq(cpu, |rq| {
+        #[cfg(feature = "debug-sched")]
         let should_log = |counter: &AtomicU32| -> bool {
             let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
             n <= 32 || (n & 0x3f) == 0
@@ -1154,17 +1134,18 @@ pub fn context_switch_transaction(
             old_task.context = old_ctx;
             old_task.preempt_count = preempt_count as u32;
         } else {
+            #[cfg(feature = "debug-sched")]
             if should_log(&SDBG_OLD_MISS) {
                 unsafe {
-                    arch_x86_64::serial::write_str_unsafe("[SDBG] txn_old_missing cpu=");
-                    arch_x86_64::serial::write_u32_unsafe(cpu);
-                    arch_x86_64::serial::write_str_unsafe(" old=");
-                    arch_x86_64::serial::write_u32_unsafe(old_pid);
-                    arch_x86_64::serial::write_str_unsafe(" new=");
-                    arch_x86_64::serial::write_u32_unsafe(new_pid);
-                    arch_x86_64::serial::write_str_unsafe(" rq.curr=");
-                    arch_x86_64::serial::write_u32_unsafe(rq.curr().unwrap_or(u32::MAX));
-                    arch_x86_64::serial::write_str_unsafe("\n");
+                    os_log::write_str_raw("[SDBG] txn_old_missing cpu=");
+                    os_log::write_u32_raw(cpu);
+                    os_log::write_str_raw(" old=");
+                    os_log::write_u32_raw(old_pid);
+                    os_log::write_str_raw(" new=");
+                    os_log::write_u32_raw(new_pid);
+                    os_log::write_str_raw(" rq.curr=");
+                    os_log::write_u32_raw(rq.curr().unwrap_or(u32::MAX));
+                    os_log::write_str_raw("\n");
                 }
             }
             return None;
@@ -1176,17 +1157,18 @@ pub fn context_switch_transaction(
         let new_task = match rq.get_task(new_pid) {
             Some(t) => t,
             None => {
+                #[cfg(feature = "debug-sched")]
                 if should_log(&SDBG_NEW_MISS) {
                     unsafe {
-                        arch_x86_64::serial::write_str_unsafe("[SDBG] txn_new_missing cpu=");
-                        arch_x86_64::serial::write_u32_unsafe(cpu);
-                        arch_x86_64::serial::write_str_unsafe(" old=");
-                        arch_x86_64::serial::write_u32_unsafe(old_pid);
-                        arch_x86_64::serial::write_str_unsafe(" new=");
-                        arch_x86_64::serial::write_u32_unsafe(new_pid);
-                        arch_x86_64::serial::write_str_unsafe(" rq.curr=");
-                        arch_x86_64::serial::write_u32_unsafe(rq.curr().unwrap_or(u32::MAX));
-                        arch_x86_64::serial::write_str_unsafe("\n");
+                        os_log::write_str_raw("[SDBG] txn_new_missing cpu=");
+                        os_log::write_u32_raw(cpu);
+                        os_log::write_str_raw(" old=");
+                        os_log::write_u32_raw(old_pid);
+                        os_log::write_str_raw(" new=");
+                        os_log::write_u32_raw(new_pid);
+                        os_log::write_str_raw(" rq.curr=");
+                        os_log::write_u32_raw(rq.curr().unwrap_or(u32::MAX));
+                        os_log::write_str_raw("\n");
                     }
                 }
                 return None;
@@ -1198,19 +1180,20 @@ pub fn context_switch_transaction(
         // bail and let next tick retry. Two u64 comparisons, negligible
         // vs the CR3 write and MSR ops that follow.
         if !new_task.context.is_schedulable() {
+            #[cfg(feature = "debug-sched")]
             if should_log(&SDBG_NEW_BAD_CTX) {
                 unsafe {
-                    arch_x86_64::serial::write_str_unsafe("[SDBG] txn_new_badctx cpu=");
-                    arch_x86_64::serial::write_u32_unsafe(cpu);
-                    arch_x86_64::serial::write_str_unsafe(" new=");
-                    arch_x86_64::serial::write_u32_unsafe(new_pid);
-                    arch_x86_64::serial::write_str_unsafe(" rip=");
-                    arch_x86_64::serial::write_u64_hex_unsafe(new_task.context.rip);
-                    arch_x86_64::serial::write_str_unsafe(" rsp=");
-                    arch_x86_64::serial::write_u64_hex_unsafe(new_task.context.rsp);
-                    arch_x86_64::serial::write_str_unsafe(" cs=");
-                    arch_x86_64::serial::write_u64_hex_unsafe(new_task.context.cs);
-                    arch_x86_64::serial::write_str_unsafe("\n");
+                    os_log::write_str_raw("[SDBG] txn_new_badctx cpu=");
+                    os_log::write_u32_raw(cpu);
+                    os_log::write_str_raw(" new=");
+                    os_log::write_u32_raw(new_pid);
+                    os_log::write_str_raw(" rip=");
+                    os_log::write_u64_hex_raw(new_task.context.rip);
+                    os_log::write_str_raw(" rsp=");
+                    os_log::write_u64_hex_raw(new_task.context.rsp);
+                    os_log::write_str_raw(" cs=");
+                    os_log::write_u64_hex_raw(new_task.context.cs);
+                    os_log::write_str_raw("\n");
                 }
             }
             return None;
@@ -1594,11 +1577,16 @@ pub fn all_pids() -> Vec<Pid> {
 /// contended, we skip that CPU. Better to miss a steal opportunity than to
 /// freeze the idle loop.
 pub fn idle_try_steal() -> bool {
+    #[cfg(feature = "debug-sched")]
     static SDBG_STEAL_NONE: AtomicU32 = AtomicU32::new(0);
+    #[cfg(feature = "debug-sched")]
     static SDBG_STEAL_LOCK: AtomicU32 = AtomicU32::new(0);
+    #[cfg(feature = "debug-sched")]
     static SDBG_STEAL_EMPTY: AtomicU32 = AtomicU32::new(0);
+    #[cfg(feature = "debug-sched")]
     static SDBG_STEAL_OK: AtomicU32 = AtomicU32::new(0);
 
+    #[cfg(feature = "debug-sched")]
     #[inline]
     fn sdbg_should_log(counter: &AtomicU32) -> bool {
         let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
@@ -1632,11 +1620,12 @@ pub fn idle_try_steal() -> bool {
     let victim_cpu = match best_cpu {
         Some(c) => c,
         None => {
+            #[cfg(feature = "debug-sched")]
             if my_cpu == 0 && sdbg_should_log(&SDBG_STEAL_NONE) {
                 unsafe {
-                    arch_x86_64::serial::write_str_unsafe("[SDBG] steal_none cpu=");
-                    arch_x86_64::serial::write_u32_unsafe(my_cpu);
-                    arch_x86_64::serial::write_str_unsafe("\n");
+                    os_log::write_str_raw("[SDBG] steal_none cpu=");
+                    os_log::write_u32_raw(my_cpu);
+                    os_log::write_str_raw("\n");
                 }
             }
             return false;
@@ -1649,29 +1638,31 @@ pub fn idle_try_steal() -> bool {
     let stolen_task = match try_with_rq(victim_cpu, |rq| rq.steal_task(my_cpu)) {
         Some(Some(task)) => task,
         None => {
+            #[cfg(feature = "debug-sched")]
             if my_cpu == 0 && sdbg_should_log(&SDBG_STEAL_LOCK) {
                 unsafe {
-                    arch_x86_64::serial::write_str_unsafe("[SDBG] steal_lock cpu=");
-                    arch_x86_64::serial::write_u32_unsafe(my_cpu);
-                    arch_x86_64::serial::write_str_unsafe(" victim=");
-                    arch_x86_64::serial::write_u32_unsafe(victim_cpu);
-                    arch_x86_64::serial::write_str_unsafe(" load=");
-                    arch_x86_64::serial::write_u32_unsafe(best_load);
-                    arch_x86_64::serial::write_str_unsafe("\n");
+                    os_log::write_str_raw("[SDBG] steal_lock cpu=");
+                    os_log::write_u32_raw(my_cpu);
+                    os_log::write_str_raw(" victim=");
+                    os_log::write_u32_raw(victim_cpu);
+                    os_log::write_str_raw(" load=");
+                    os_log::write_u32_raw(best_load);
+                    os_log::write_str_raw("\n");
                 }
             }
             return false;
         }
         Some(None) => {
+            #[cfg(feature = "debug-sched")]
             if my_cpu == 0 && sdbg_should_log(&SDBG_STEAL_EMPTY) {
                 unsafe {
-                    arch_x86_64::serial::write_str_unsafe("[SDBG] steal_empty cpu=");
-                    arch_x86_64::serial::write_u32_unsafe(my_cpu);
-                    arch_x86_64::serial::write_str_unsafe(" victim=");
-                    arch_x86_64::serial::write_u32_unsafe(victim_cpu);
-                    arch_x86_64::serial::write_str_unsafe(" load=");
-                    arch_x86_64::serial::write_u32_unsafe(best_load);
-                    arch_x86_64::serial::write_str_unsafe("\n");
+                    os_log::write_str_raw("[SDBG] steal_empty cpu=");
+                    os_log::write_u32_raw(my_cpu);
+                    os_log::write_str_raw(" victim=");
+                    os_log::write_u32_raw(victim_cpu);
+                    os_log::write_str_raw(" load=");
+                    os_log::write_u32_raw(best_load);
+                    os_log::write_str_raw("\n");
                 }
             }
             return false;
@@ -1703,17 +1694,18 @@ pub fn idle_try_steal() -> bool {
     // stolen task instead of continuing to run idle.
     set_need_resched();
 
+    #[cfg(feature = "debug-sched")]
     if my_cpu == 0 && sdbg_should_log(&SDBG_STEAL_OK) {
         unsafe {
-            arch_x86_64::serial::write_str_unsafe("[SDBG] steal_ok cpu=");
-            arch_x86_64::serial::write_u32_unsafe(my_cpu);
-            arch_x86_64::serial::write_str_unsafe(" pid=");
-            arch_x86_64::serial::write_u32_unsafe(stolen_pid);
-            arch_x86_64::serial::write_str_unsafe(" from=");
-            arch_x86_64::serial::write_u32_unsafe(victim_cpu);
-            arch_x86_64::serial::write_str_unsafe(" load=");
-            arch_x86_64::serial::write_u32_unsafe(best_load);
-            arch_x86_64::serial::write_str_unsafe("\n");
+            os_log::write_str_raw("[SDBG] steal_ok cpu=");
+            os_log::write_u32_raw(my_cpu);
+            os_log::write_str_raw(" pid=");
+            os_log::write_u32_raw(stolen_pid);
+            os_log::write_str_raw(" from=");
+            os_log::write_u32_raw(victim_cpu);
+            os_log::write_str_raw(" load=");
+            os_log::write_u32_raw(best_load);
+            os_log::write_str_raw("\n");
         }
     }
 
@@ -1789,7 +1781,7 @@ where
         }
         if acquired.is_none() {
             for _ in 0..10 {
-                unsafe { core::arch::asm!("sti", "hlt", options(nomem, nostack)); }
+                os_core::wait_for_interrupt();
                 if let Some(g) = meta_arc.try_lock() {
                     acquired = Some(g);
                     break;
@@ -1799,7 +1791,7 @@ where
         match acquired {
             Some(g) => g,
             None => {
-                unsafe { arch_x86_64::serial::write_str_unsafe("[DEADLOCK] ProcessMeta falling to .lock()\n"); }
+                unsafe { os_log::write_str_raw("[DEADLOCK] ProcessMeta falling to .lock()\n"); }
                 meta_arc.lock()
             }
         }
@@ -1839,7 +1831,7 @@ where
         }
         if acquired.is_none() {
             for _ in 0..10 {
-                unsafe { core::arch::asm!("sti", "hlt", options(nomem, nostack)); }
+                os_core::wait_for_interrupt();
                 if let Some(g) = meta_arc.try_lock() {
                     acquired = Some(g);
                     break;
@@ -1849,7 +1841,7 @@ where
         match acquired {
             Some(g) => g,
             None => {
-                unsafe { arch_x86_64::serial::write_str_unsafe("[DEADLOCK] ProcessMeta_mut falling to .lock()\n"); }
+                unsafe { os_log::write_str_raw("[DEADLOCK] ProcessMeta_mut falling to .lock()\n"); }
                 meta_arc.lock()
             }
         }

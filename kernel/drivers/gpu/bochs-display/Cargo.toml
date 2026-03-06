@@ -10,3 +10,4 @@ driver-core = { path = "../../driver-core" }
 mm-manager = { path = "../../../mm/mm-manager" }
 spin = "0.9"
 os_log = { path = "../../../core/os_log" }
+os_core = { path = "../../../core/os_core" }

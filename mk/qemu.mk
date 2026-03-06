@@ -314,7 +314,7 @@ run-debug-all: run
 # — GraveShift: Attach GDB to a running QEMU and dump all CPU backtraces.
 # Run this from a SECOND terminal when the system hangs.
 # QEMU must be running with -s (GDB server on port 1234).
-KERNEL_BIN := $(TARGET_DIR)/x86_64-unknown-oxide/debug/kernel
+KERNEL_BIN := $(TARGET_DIR)/$(ARCH)-unknown-oxide/debug/kernel
 attach:
 	@echo "=== Attaching GDB to QEMU (port 1234) ==="
 	@echo "Dumping all CPU backtraces..."

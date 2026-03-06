@@ -1,10 +1,11 @@
 //! CPU enumeration and management
 //!
 //! Handles CPU discovery, state tracking, and AP boot coordination.
+//! — NeonRoot: ALL arch-specific logic lives in the arch crate's SmpOps impl.
+//! This module is pure state management — no APIC, no TSC, no x86 anything.
 
 use crate::MAX_CPUS;
 use crate::percpu;
-use arch_x86_64 as arch;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// CPU identifier type
@@ -90,10 +91,10 @@ pub fn cpus_online() -> u32 {
 
 /// Get the current CPU ID
 ///
-/// On x86_64, this reads from the GS segment or APIC ID.
-/// For now, returns 0 (single CPU assumption until AP boot).
+/// — NeonRoot: delegates to arch SmpOps. x86 reads APIC ID, ARM reads MPIDR.
 pub fn current_cpu() -> CpuId {
-    arch::cpu_id().unwrap_or(0)
+    // — NeonRoot: ask os_core who we are. APIC ID on x86, MPIDR on ARM — we don't care.
+    os_core::smp_cpu_id().unwrap_or(0)
 }
 
 /// Mark a CPU as online
@@ -141,8 +142,7 @@ pub fn is_bsp(cpu_id: CpuId) -> bool {
 /// Reverse-map APIC ID to logical CPU ID.
 ///
 /// — NeonRoot: Scans the CPU_INFO table to find which logical CPU owns this
-/// APIC ID. Used by the scheduler's `this_cpu()` to determine which run queue
-/// to operate on. Returns 0 (BSP) if not found.
+/// hardware ID. Returns 0 (BSP) if not found.
 pub fn cpu_id_from_apic(apic_id: u32) -> u32 {
     let count = NUM_CPUS.load(Ordering::Relaxed) as usize;
     let limit = core::cmp::min(count, MAX_CPUS);
@@ -156,7 +156,7 @@ pub fn cpu_id_from_apic(apic_id: u32) -> u32 {
     0 // Fallback to BSP
 }
 
-/// Get the APIC ID for a CPU
+/// Get the hardware ID (APIC ID on x86) for a CPU
 pub fn get_apic_id(cpu_id: CpuId) -> Option<u32> {
     unsafe {
         if (cpu_id as usize) < MAX_CPUS {
@@ -174,14 +174,9 @@ pub fn get_apic_id(cpu_id: CpuId) -> Option<u32> {
 
 /// Boot an Application Processor
 ///
-/// This is architecture-specific. On x86_64, it involves:
-/// 1. Send INIT IPI
-/// 2. Wait 10ms
-/// 3. Send SIPI with startup vector
-/// 4. Wait 200us
-/// 5. Send second SIPI
-///
-/// The trampoline code must be set up before calling this function.
+/// — NeonRoot: state management is generic, the actual boot sequence
+/// (INIT/SIPI on x86, PSCI on ARM) goes through os_core hooks.
+/// We just call smp_boot_ap() and spin-wait with a monotonic timeout.
 pub fn boot_ap(cpu_id: CpuId, trampoline_page: u8) -> Result<(), &'static str> {
     let state = get_cpu_state(cpu_id);
 
@@ -193,55 +188,29 @@ pub fn boot_ap(cpu_id: CpuId, trampoline_page: u8) -> Result<(), &'static str> {
         return Err("CPU already online");
     }
 
-    // Get the APIC ID for the target CPU
     let apic_id = get_apic_id(cpu_id).ok_or("CPU has no APIC ID")?;
 
     unsafe {
         CPU_INFO[cpu_id as usize].state = CpuState::Starting;
     }
 
-    // Send INIT IPI to reset the AP
-    arch_x86_64::apic::send_ipi(
-        apic_id as u8,
-        0, // Vector ignored for INIT
-        arch_x86_64::apic::DeliveryMode::Init,
-        arch_x86_64::apic::DestShorthand::None,
-    );
+    // — NeonRoot: os_core dispatches to whatever boot protocol the arch needs
+    os_core::smp_boot_ap(apic_id, trampoline_page);
 
-    // Wait 10ms for INIT to take effect
-    arch_x86_64::delay_ms(10);
-
-    // Send first SIPI with startup vector (page number where trampoline is located)
-    arch_x86_64::apic::send_ipi(
-        apic_id as u8,
-        trampoline_page, // Startup vector = page number (e.g., 0x08 = 0x8000)
-        arch_x86_64::apic::DeliveryMode::Startup,
-        arch_x86_64::apic::DestShorthand::None,
-    );
-
-    // Wait 200 microseconds
-    arch_x86_64::delay_us(200);
-
-    // Send second SIPI (per Intel spec, for reliability)
-    arch_x86_64::apic::send_ipi(
-        apic_id as u8,
-        trampoline_page,
-        arch_x86_64::apic::DeliveryMode::Startup,
-        arch_x86_64::apic::DestShorthand::None,
-    );
-
-    // Wait for AP to come online (with timeout)
-    let timeout_ms = 1000; // 1 second timeout
-    let start = arch_x86_64::read_tsc();
-    let tsc_per_ms = arch_x86_64::tsc_frequency() / 1000;
-    let timeout_tsc = start + (timeout_ms * tsc_per_ms);
+    // — NeonRoot: spin-wait using os_core monotonic counter. No TSC, no APIC —
+    // just the hook. 1 second timeout, then we bail.
+    let timeout_ms: u64 = 1000;
+    let freq = os_core::smp_monotonic_freq();
+    let ticks_per_ms = freq / 1000;
+    let start = os_core::smp_monotonic_counter();
+    let timeout_ticks = start + (timeout_ms * ticks_per_ms);
 
     loop {
         if get_cpu_state(cpu_id) == CpuState::Online {
             return Ok(());
         }
 
-        if arch_x86_64::read_tsc() > timeout_tsc {
+        if os_core::smp_monotonic_counter() > timeout_ticks {
             unsafe {
                 CPU_INFO[cpu_id as usize].state = CpuState::Present;
             }

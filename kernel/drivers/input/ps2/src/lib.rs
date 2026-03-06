@@ -97,13 +97,11 @@ mod mouse_cmd {
 ///
 /// # Safety
 /// Requires access to I/O port.
+/// — ShadePacket: routed through os_core port I/O hooks — no inline asm.
+/// PS/2 can't use arch-x86_64 directly (cyclic dep), os_core breaks the chain.
 #[inline]
 unsafe fn inb(port: u16) -> u8 {
-    let value: u8;
-    unsafe {
-        core::arch::asm!("in al, dx", out("al") value, in("dx") port, options(nomem, nostack, preserves_flags));
-    }
-    value
+    unsafe { os_core::inb(port) }
 }
 
 /// Write to I/O port
@@ -112,9 +110,7 @@ unsafe fn inb(port: u16) -> u8 {
 /// Requires access to I/O port.
 #[inline]
 unsafe fn outb(port: u16, value: u8) {
-    unsafe {
-        core::arch::asm!("out dx, al", in("dx") port, in("al") value, options(nomem, nostack, preserves_flags));
-    }
+    unsafe { os_core::outb(port, value) }
 }
 
 /// Wait for controller input buffer to be empty
@@ -585,21 +581,17 @@ fn serial_debug(msg: &[u8]) {
     }
 }
 
-/// Disable interrupts (x86 CLI)
-/// -- TorqueJax: Gate IRQs during init so handlers can't steal our port data
+/// Disable interrupts
+/// — ShadePacket: routed through os_core — breaks cyclic dep with arch-x86_64.
 #[inline]
 unsafe fn cli() {
-    unsafe {
-        core::arch::asm!("cli", options(nomem, nostack, preserves_flags));
-    }
+    os_core::disable_interrupts();
 }
 
-/// Enable interrupts (x86 STI)
+/// Enable interrupts
 #[inline]
 unsafe fn sti() {
-    unsafe {
-        core::arch::asm!("sti", options(nomem, nostack, preserves_flags));
-    }
+    os_core::enable_interrupts();
 }
 
 /// Initialize PS/2 controller

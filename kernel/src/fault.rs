@@ -35,11 +35,8 @@ pub fn page_fault_handler(fault_addr: u64, error_code: u64, _rip: u64) -> bool {
     let is_write = error_code & 2 != 0;
     let is_user = error_code & 4 != 0;
 
-    // Get actual CR3 to compare with what process_table says
-    let actual_cr3: u64;
-    unsafe {
-        core::arch::asm!("mov {}, cr3", out(reg) actual_cr3);
-    }
+    // — BlackLatch: Get actual CR3 to compare with what process_table says
+    let actual_cr3: u64 = crate::arch::read_page_table_root().as_u64();
 
     debug_cow!(
         "[PF] fault_addr={:#x} error={:#x} rip={:#x}",
@@ -149,10 +146,7 @@ pub fn page_fault_handler(fault_addr: u64, error_code: u64, _rip: u64) -> bool {
         if phys_equiv >= MAX_PLAUSIBLE_PHYS {
             return false; // Not a guard page — let generic handler deal with it
         }
-        let rsp: u64;
-        unsafe {
-            core::arch::asm!("mov {}, rsp", out(reg) rsp, options(nostack, nomem));
-        }
+        let rsp: u64 = crate::arch::read_stack_pointer();
 
         // — BlackLatch: Log the guard hit with enough context to reconstruct the crime.
         // This fires in the #PF handler, so serial output is our only lifeline.

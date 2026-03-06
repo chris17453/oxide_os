@@ -75,11 +75,8 @@ fn get_current_gid() -> u32 {
 /// Get current timestamp (seconds since epoch)
 #[cfg(feature = "kernel")]
 fn get_current_time() -> u64 {
-    // Get ticks and convert to seconds
-    // Timer runs at 100 Hz, so NS_PER_TICK = 10,000,000
-    let ticks = arch_x86_64::timer_ticks();
-    let ns_per_tick: u64 = 10_000_000; // 100 Hz = 10ms per tick
-    let uptime_secs = (ticks * ns_per_tick) / 1_000_000_000;
+    // — WireSaint: arch-independent time via os_core::now_ns()
+    let uptime_secs = os_core::now_ns() / 1_000_000_000;
     // Assume boot time of 2024-01-01 00:00:00 UTC (Unix timestamp)
     let boot_time: u64 = 1704067200;
     boot_time + uptime_secs

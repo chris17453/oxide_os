@@ -9,7 +9,7 @@ extern crate ps2;
 
 use arch_traits::{
     Arch, AtomicOps, CacheOps, ControlRegisters, DmaOps, Endianness, ExceptionHandler,
-    InterruptContext as ArchInterruptContext, PortIo, SyscallInterface, SystemRegisters,
+    InterruptContext as ArchInterruptContext, PortIo, SmpOps, SyscallInterface, SystemRegisters,
     TlbControl,
 };
 use os_core::{PhysAddr, VirtAddr};
@@ -33,6 +33,8 @@ pub fn cpu_id() -> Option<u32> {
 pub struct X86_64;
 
 impl Arch for X86_64 {
+    const ELF_MACHINE: u16 = 0x3E; // EM_X86_64
+
     fn name() -> &'static str {
         "x86_64"
     }
@@ -77,6 +79,109 @@ impl Arch for X86_64 {
         }
         // IF flag is bit 9
         (flags & (1 << 9)) != 0
+    }
+
+    #[inline]
+    fn wait_for_interrupt() {
+        // — NeonRoot: sti+hlt is atomic on x86 — the interrupt that wakes us
+        // fires AFTER hlt begins, so there's no window where we enable ints
+        // but miss the wakeup. This is the correct idle pattern.
+        unsafe {
+            core::arch::asm!("sti", "hlt", options(nomem, nostack));
+        }
+    }
+
+    #[inline]
+    unsafe fn user_access_begin() {
+        // — NeonRoot: STAC — Set AC flag to temporarily allow supervisor
+        // access to user-mode pages (SMAP). Must be paired with user_access_end().
+        unsafe {
+            core::arch::asm!("stac", options(nostack));
+        }
+    }
+
+    #[inline]
+    unsafe fn user_access_end() {
+        // — NeonRoot: CLAC — Clear AC flag to re-enable SMAP protection.
+        unsafe {
+            core::arch::asm!("clac", options(nostack));
+        }
+    }
+
+    #[inline]
+    fn read_page_table_root() -> PhysAddr {
+        let cr3: u64;
+        unsafe {
+            core::arch::asm!("mov {}, cr3", out(reg) cr3, options(nostack, preserves_flags));
+        }
+        PhysAddr::new(cr3)
+    }
+
+    #[inline]
+    unsafe fn switch_page_table(root: PhysAddr) {
+        unsafe {
+            core::arch::asm!("mov cr3, {}", in(reg) root.as_u64());
+        }
+    }
+
+    #[inline]
+    fn read_stack_pointer() -> u64 {
+        let rsp: u64;
+        unsafe {
+            core::arch::asm!("mov {}, rsp", out(reg) rsp, options(nostack, nomem));
+        }
+        rsp
+    }
+
+    #[inline]
+    fn read_tsc() -> u64 {
+        // — WireSaint: delegate to the standalone fn that already exists below
+        crate::read_tsc()
+    }
+
+    #[inline]
+    fn cpuid(leaf: u32, subleaf: u32) -> (u32, u32, u32, u32) {
+        // — WireSaint: RBX is callee-saved in SysV ABI but CPUID clobbers it.
+        // Push/pop around the instruction to keep the register allocator sane.
+        let eax: u32;
+        let ebx: u32;
+        let ecx: u32;
+        let edx: u32;
+        unsafe {
+            core::arch::asm!(
+                "push rbx",
+                "mov eax, {leaf:e}",
+                "mov ecx, {subleaf:e}",
+                "cpuid",
+                "mov {ebx:e}, ebx",
+                "pop rbx",
+                leaf = in(reg) leaf,
+                subleaf = in(reg) subleaf,
+                ebx = out(reg) ebx,
+                out("eax") eax,
+                out("ecx") ecx,
+                out("edx") edx,
+            );
+        }
+        (eax, ebx, ecx, edx)
+    }
+
+    #[inline]
+    fn memory_fence() {
+        // — WireSaint: MFENCE — full serialization of loads and stores
+        unsafe { core::arch::asm!("mfence", options(nomem, nostack, preserves_flags)); }
+    }
+
+    #[inline]
+    fn read_fence() {
+        // — WireSaint: LFENCE — serializes loads, also acts as speculation barrier
+        unsafe { core::arch::asm!("lfence", options(nomem, nostack, preserves_flags)); }
+    }
+
+    #[inline]
+    fn write_fence() {
+        // — WireSaint: SFENCE — serializes stores (NT writes become visible)
+        unsafe { core::arch::asm!("sfence", options(nomem, nostack, preserves_flags)); }
     }
 }
 
@@ -530,6 +635,91 @@ impl SyscallInterface for X86_64 {
     fn set_syscall_return(frame: &mut Self::SyscallFrame, value: usize) {
         // Return value goes in RAX
         frame.rax = value as u64;
+    }
+}
+
+// ============================================================================
+// SMP Operations — NeonRoot
+//
+// The INIT/SIPI/SIPI dance, APIC IPI dispatch, TSC delays — all x86-specific
+// hardware protocol. This is WHERE that logic belongs. Not in the generic SMP
+// crate behind a cfg gate. ARM has PSCI, MIPS has cop0. They each get their
+// own impl in their own arch crate.
+// ============================================================================
+
+impl SmpOps for X86_64 {
+    #[inline]
+    fn cpu_id() -> Option<u32> {
+        Some(apic::id() as u32)
+    }
+
+    fn boot_ap_sequence(hw_id: u32, trampoline_page: u8) {
+        // — NeonRoot: INIT/SIPI/SIPI per Intel SDM Vol 3, Section 8.4.4
+        apic::send_ipi(
+            hw_id as u8,
+            0,
+            apic::DeliveryMode::Init,
+            apic::DestShorthand::None,
+        );
+        delay_ms(10);
+        apic::send_ipi(
+            hw_id as u8,
+            trampoline_page,
+            apic::DeliveryMode::Startup,
+            apic::DestShorthand::None,
+        );
+        delay_us(200);
+        apic::send_ipi(
+            hw_id as u8,
+            trampoline_page,
+            apic::DeliveryMode::Startup,
+            apic::DestShorthand::None,
+        );
+    }
+
+    #[inline]
+    fn send_ipi_to(hw_id: u32, vector: u8) {
+        apic::send_ipi(
+            hw_id as u8,
+            vector,
+            apic::DeliveryMode::Fixed,
+            apic::DestShorthand::None,
+        );
+    }
+
+    #[inline]
+    fn send_ipi_broadcast(vector: u8, include_self: bool) {
+        let shorthand = if include_self {
+            apic::DestShorthand::All
+        } else {
+            apic::DestShorthand::AllExceptSelf
+        };
+        apic::send_ipi(0, vector, apic::DeliveryMode::Fixed, shorthand);
+    }
+
+    #[inline]
+    fn send_ipi_self(vector: u8) {
+        apic::send_ipi(0, vector, apic::DeliveryMode::Fixed, apic::DestShorthand::Self_);
+    }
+
+    #[inline]
+    fn delay_ms(ms: u64) {
+        delay_ms(ms);
+    }
+
+    #[inline]
+    fn delay_us(us: u64) {
+        delay_us(us);
+    }
+
+    #[inline]
+    fn monotonic_counter() -> u64 {
+        read_tsc()
+    }
+
+    #[inline]
+    fn monotonic_frequency() -> u64 {
+        tsc_frequency()
     }
 }
 

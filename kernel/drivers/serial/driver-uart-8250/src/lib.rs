@@ -7,9 +7,6 @@
 
 use driver_traits::SerialDriver;
 
-#[cfg(target_arch = "x86_64")]
-use arch_x86_64::{inb, outb};
-
 /// UART register offsets
 mod regs {
     pub const DATA: u16 = 0;
@@ -61,16 +58,16 @@ impl Uart8250 {
         Self::new(0x2F8)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    // — GraveShift: port I/O through os_core hooks now. The cfg-gated arch
+    // imports are cremated — os_core owns the instructions, we just read/write.
     #[inline]
     fn read_reg(&self, reg: u16) -> u8 {
-        unsafe { inb(self.base + reg) }
+        unsafe { os_core::inb(self.base + reg) }
     }
 
-    #[cfg(target_arch = "x86_64")]
     #[inline]
     fn write_reg(&self, reg: u16, value: u8) {
-        unsafe { outb(self.base + reg, value) }
+        unsafe { os_core::outb(self.base + reg, value) }
     }
 }
 

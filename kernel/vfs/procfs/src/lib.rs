@@ -1319,8 +1319,8 @@ impl ProcCpuinfo {
 
         // Generate info for each CPU
         for cpu_id in 0..cpu_count {
-            // Basic CPU information - on x86_64 we can get this via CPUID
-            #[cfg(target_arch = "x86_64")]
+            // — BlackLatch: CPU info via os_core::cpuid — arch-agnostic. Returns zeros
+            // on non-x86 which gives "Unknown" vendor, and that's perfectly fine.
             {
                 use alloc::format;
 
@@ -1371,42 +1371,16 @@ impl ProcCpuinfo {
                     cpu_count, cpu_id, cpu_count, cpu_id, cpu_id
                 ));
             }
-
-            #[cfg(not(target_arch = "x86_64"))]
-            {
-                output.push_str(&format!(
-                    "processor\t: {}\n\
-                     vendor_id\t: Unknown\n\
-                     model name\t: Unknown CPU\n\n",
-                    cpu_id
-                ));
-            }
         }
 
         output
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+// — BlackLatch: no cfg gate — os_core::cpuid returns (0,0,0,0) on non-x86, giving "Unknown"
 fn get_cpu_vendor() -> &'static str {
-    // CPUID leaf 0 - Vendor ID string
-    let mut ebx: u32;
-    let mut ecx: u32;
-    let mut edx: u32;
-
-    unsafe {
-        core::arch::asm!(
-            "push rbx",
-            "mov eax, 0",
-            "cpuid",
-            "mov {0:e}, ebx",
-            "pop rbx",
-            out(reg) ebx,
-            out("ecx") ecx,
-            out("edx") edx,
-            out("eax") _,
-        );
-    }
+    // — BlackLatch: CPUID leaf 0 — vendor string. asm replaced with os_core::cpuid
+    let (_eax, ebx, ecx, edx) = os_core::cpuid(0, 0);
 
     // Vendor string is EBX+EDX+ECX (12 bytes)
     let bytes = [
@@ -1434,21 +1408,10 @@ fn get_cpu_vendor() -> &'static str {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+// — BlackLatch: cfg-free — returns (0,0,0) on non-x86 and that's the truth
 fn get_cpu_family_model_stepping() -> (u32, u32, u32) {
-    let eax: u32;
-
-    unsafe {
-        core::arch::asm!(
-            "push rbx",
-            "mov eax, 1",
-            "cpuid",
-            "pop rbx",
-            out("eax") eax,
-            out("ecx") _,
-            out("edx") _,
-        );
-    }
+    // — BlackLatch: CPUID leaf 1 — family/model/stepping. no more inline asm gymnastics
+    let (eax, _ebx, _ecx, _edx) = os_core::cpuid(1, 0);
 
     let stepping = eax & 0xF;
     let base_model = (eax >> 4) & 0xF;
@@ -1471,32 +1434,15 @@ fn get_cpu_family_model_stepping() -> (u32, u32, u32) {
     (family, model, stepping)
 }
 
-#[cfg(target_arch = "x86_64")]
+// — BlackLatch: brand string — empty on non-x86, which falls through to vendor-based name
 fn get_cpu_brand_string() -> String {
     // CPUID leaves 0x80000002-0x80000004 contain 48-byte brand string
     let mut brand_bytes = [0u8; 48];
 
+    // — BlackLatch: brand string leaves 0x80000002..4 — os_core::cpuid does the heavy lifting
     for i in 0..3 {
         let leaf = 0x80000002u32 + i;
-        let eax: u32;
-        let ebx: u32;
-        let ecx: u32;
-        let edx: u32;
-
-        unsafe {
-            core::arch::asm!(
-                "push rbx",
-                "mov eax, {1:e}",
-                "cpuid",
-                "mov {0:e}, ebx",
-                "pop rbx",
-                out(reg) ebx,
-                in(reg) leaf,
-                out("eax") eax,
-                out("ecx") ecx,
-                out("edx") edx,
-            );
-        }
+        let (eax, ebx, ecx, edx) = os_core::cpuid(leaf, 0);
 
         let offset = (i * 16) as usize;
         brand_bytes[offset..offset + 4].copy_from_slice(&eax.to_le_bytes());
@@ -1595,10 +1541,9 @@ pub struct ProcUptime {
 
 impl ProcUptime {
     fn generate_content(&self) -> String {
-        // Get uptime from timer ticks
-        // Timer runs at 100 Hz (each tick = 10ms)
-        let ticks = arch_x86_64::timer_ticks();
-        let uptime_ms = ticks * 10;
+        // — WireSaint: arch-independent uptime via os_core::now_ns()
+        let uptime_ns = os_core::now_ns();
+        let uptime_ms = uptime_ns / 1_000_000;
         let uptime_secs = uptime_ms / 1000;
         let uptime_frac = (uptime_ms % 1000) / 10; // Two decimal places
 

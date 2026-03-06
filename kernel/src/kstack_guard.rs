@@ -37,7 +37,7 @@ pub unsafe fn unmap_guard_page(guard_phys: PhysAddr) {
         // still works, it just won't have a guard.
         #[cfg(feature = "debug-proc")]
         unsafe {
-            arch_x86_64::serial::write_str_unsafe(
+            os_log::write_str_raw(
                 "[GUARD] WARN: guard page PTE not found — huge page mapping?\n",
             );
         }

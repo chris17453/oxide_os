@@ -6,7 +6,7 @@ use core::ops::{Deref, DerefMut};
 use core::sync::atomic::AtomicBool;
 
 use arch_traits::Arch;
-use arch_x86_64::X86_64;
+use crate::arch::Arch as ArchType;
 // — ColdCipher: KernelHeap resolves to LockedHardenedHeap when heap-hardening
 // is active, plain LockedHeap otherwise. The feature flag does the heavy lifting;
 // we just stop lying about which type we want.
@@ -72,9 +72,9 @@ impl<T> InterruptMutex<T> {
 
     /// Lock the mutex, disabling interrupts if they were previously enabled
     pub fn lock(&self) -> InterruptMutexGuard<'_, T> {
-        let interrupts_were_enabled = X86_64::interrupts_enabled();
+        let interrupts_were_enabled = ArchType::interrupts_enabled();
         if interrupts_were_enabled {
-            X86_64::disable_interrupts();
+            ArchType::disable_interrupts();
         }
         InterruptMutexGuard {
             guard: Some(self.inner.lock()),
@@ -109,7 +109,7 @@ impl<T> Drop for InterruptMutexGuard<'_, T> {
         self.guard.take();
         // Then re-enable interrupts if they were enabled before
         if self.interrupts_were_enabled {
-            X86_64::enable_interrupts();
+            ArchType::enable_interrupts();
         }
     }
 }

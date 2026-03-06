@@ -93,35 +93,37 @@ enum KeyAction {
 /// Process a key event and return the action to take
 /// — InputShade: key → intent → action, the holy trinity of input handling
 fn process_key(key: EfiInputKey, _config: &BootConfig, state: &mut MenuState) -> KeyAction {
-    // Special keys (scan_code != 0)
+    // — InputShade: special keys (scan_code != 0). VirtIO keyboard may set BOTH
+    // scan_code and unicode_char for printable keys, so unrecognized scan codes
+    // fall through to the unicode_char check instead of returning None.
     if key.scan_code != SCAN_NULL {
-        return match key.scan_code {
+        match key.scan_code {
             SCAN_UP => {
                 state.move_up();
-                KeyAction::RedrawEntries
+                return KeyAction::RedrawEntries;
             }
             SCAN_DOWN => {
                 state.move_down();
-                KeyAction::RedrawEntries
+                return KeyAction::RedrawEntries;
             }
             SCAN_HOME => {
                 state.selected = 0;
                 state.cancel_countdown();
-                KeyAction::RedrawEntries
+                return KeyAction::RedrawEntries;
             }
             SCAN_END => {
                 if state.entry_count > 0 {
                     state.selected = state.entry_count - 1;
                 }
                 state.cancel_countdown();
-                KeyAction::RedrawEntries
+                return KeyAction::RedrawEntries;
             }
             SCAN_ESC => {
                 state.cancel_countdown();
-                KeyAction::RedrawFull
+                return KeyAction::RedrawFull;
             }
-            _ => KeyAction::None,
-        };
+            _ => {} // — InputShade: fall through — VirtIO sets scan_code for printable chars too
+        }
     }
 
     // Printable characters (unicode_char != 0)

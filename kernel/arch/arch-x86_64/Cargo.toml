@@ -9,6 +9,7 @@ debug-input = []
 debug-pagefault = []
 debug-timer = []
 debug-perf = []  # Enable per-ISR PERF-WARN messages (53 bytes each, fires hundreds/sec under load — feedback loop)
+debug-sched = []  # Enable scheduler/signal debug traces in syscall return path
 
 [dependencies]
 os_core = { workspace = true }

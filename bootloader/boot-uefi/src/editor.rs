@@ -67,28 +67,29 @@ impl LineEditor {
     /// Process a key event. Returns what the caller should do next.
     /// — InputShade: the soul of the editor — each key press carefully considered
     pub fn process_key(&mut self, key: EfiInputKey) -> EditorAction {
-        // Special keys first
+        // — InputShade: special keys first. VirtIO keyboard sets scan_code for ALL keys,
+        // so unrecognized scan codes fall through to unicode_char check.
         if key.scan_code != SCAN_NULL {
-            return match key.scan_code {
+            match key.scan_code {
                 SCAN_LEFT => {
                     if self.cursor > 0 {
                         self.cursor -= 1;
                     }
-                    EditorAction::Continue
+                    return EditorAction::Continue;
                 }
                 SCAN_RIGHT => {
                     if self.cursor < self.len {
                         self.cursor += 1;
                     }
-                    EditorAction::Continue
+                    return EditorAction::Continue;
                 }
                 SCAN_HOME => {
                     self.cursor = 0;
-                    EditorAction::Continue
+                    return EditorAction::Continue;
                 }
                 SCAN_END => {
                     self.cursor = self.len;
-                    EditorAction::Continue
+                    return EditorAction::Continue;
                 }
                 SCAN_DELETE => {
                     if self.cursor < self.len {
@@ -99,13 +100,13 @@ impl LineEditor {
                         self.len -= 1;
                         self.buf[self.len] = 0;
                     }
-                    EditorAction::Continue
+                    return EditorAction::Continue;
                 }
                 SCAN_ESC => {
-                    EditorAction::Cancel
+                    return EditorAction::Cancel;
                 }
-                _ => EditorAction::Continue,
-            };
+                _ => {} // — InputShade: fall through to unicode_char for VirtIO compat
+            }
         }
 
         // Printable characters

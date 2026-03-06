@@ -136,9 +136,7 @@ impl VnodeOps for InputEventDevice {
                 }
 
                 // Halt until woken
-                unsafe {
-                    core::arch::asm!("sti", "hlt", options(nomem, nostack));
-                }
+                os_core::wait_for_interrupt();
             }
         }
 
@@ -389,9 +387,7 @@ impl VnodeOps for MiceDevice {
                 continue;
             }
 
-            unsafe {
-                core::arch::asm!("sti", "hlt", options(nomem, nostack));
-            }
+            os_core::wait_for_interrupt();
         }
     }
 

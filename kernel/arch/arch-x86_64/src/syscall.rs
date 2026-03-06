@@ -86,10 +86,13 @@ static mut SYSCALL_HANDLER: Option<SyscallHandler> = None;
 /// Global signal check function
 static mut SIGNAL_CHECK_FUNCTION: Option<SignalCheckFunction> = None;
 
-// Throttled diagnostics for syscall-return signal hook liveness.
+// — SableWire: throttled diagnostics — gated behind debug-sched
+#[cfg(feature = "debug-sched")]
 static SDBG_SIGCHK_CALL: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "debug-sched")]
 static SDBG_SIGCHK_NONE: AtomicU32 = AtomicU32::new(0);
 
+#[cfg(feature = "debug-sched")]
 #[inline]
 fn sdbg_should_log(counter: &AtomicU32) -> bool {
     let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
@@ -481,12 +484,16 @@ extern "C" fn syscall_signal_check() {
 
     unsafe {
         if let Some(check_fn) = *addr_of!(SIGNAL_CHECK_FUNCTION) {
+            #[cfg(feature = "debug-sched")]
             if sdbg_should_log(&SDBG_SIGCHK_CALL) {
                 crate::serial::write_str_unsafe("[SCR-HOOK] call\n");
             }
             check_fn();
-        } else if sdbg_should_log(&SDBG_SIGCHK_NONE) {
-            crate::serial::write_str_unsafe("[SCR-HOOK] NONE\n");
+        } else {
+            #[cfg(feature = "debug-sched")]
+            if sdbg_should_log(&SDBG_SIGCHK_NONE) {
+                crate::serial::write_str_unsafe("[SCR-HOOK] NONE\n");
+            }
         }
     }
 }
