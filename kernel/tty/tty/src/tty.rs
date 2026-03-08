@@ -12,8 +12,8 @@ use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
 use crate::ldisc::{LineDiscipline, Signal};
 use crate::termios::{
-    FIONREAD, TCGETS, TCSETS, TCSETSF, TCSETSW, TIOCGPGRP, TIOCGWINSZ, TIOCSPGRP, TIOCSWINSZ,
-    Termios,
+    FIONREAD, TCGETS, TCSETS, TCSETSF, TCSETSW, TIOCGPGRP, TIOCGWINSZ, TIOCNOTTY, TIOCSCTTY,
+    TIOCSPGRP, TIOCSWINSZ, Termios,
 };
 use crate::winsize::Winsize;
 
@@ -31,6 +31,21 @@ pub unsafe fn set_signal_pgrp_callback(f: SignalPgrpFn) {
     // — NeonRoot
     unsafe {
         SIGNAL_PGRP_CALLBACK = Some(f);
+    }
+}
+
+/// Callback type for setting/clearing the calling process's controlling terminal.
+/// — GraveShift: rdev=0 means clear, nonzero means set to that device number.
+pub type SetCttyFn = fn(rdev: u32);
+static mut SET_CTTY_CALLBACK: Option<SetCttyFn> = None;
+
+/// Set the ctty callback (called by kernel during init)
+///
+/// # Safety
+/// Must be called during single-threaded initialization
+pub unsafe fn set_ctty_callback(f: SetCttyFn) {
+    unsafe {
+        SET_CTTY_CALLBACK = Some(f);
     }
 }
 
@@ -274,6 +289,7 @@ impl Tty {
 
     /// Handle ioctl
     pub fn ioctl(&self, request: u64, arg: u64) -> VfsResult<i64> {
+        #[cfg(feature = "debug-console")]
         fn trace_u64(mut n: u64) {
             unsafe {
                 if n == 0 {
@@ -368,8 +384,9 @@ impl Tty {
                     return Err(VfsError::InvalidArgument);
                 }
                 let pg = self.get_foreground_pgid();
+                unsafe { *ptr = pg; }
+                #[cfg(feature = "debug-console")]
                 unsafe {
-                    *ptr = pg;
                     os_log::write_str_raw("[JC] TIOCGPGRP pgid=");
                     trace_u64(pg as u64);
                     os_log::write_str_raw("\n");
@@ -384,6 +401,7 @@ impl Tty {
                 }
                 let pgid = unsafe { *ptr };
                 self.set_foreground_pgid(pgid);
+                #[cfg(feature = "debug-console")]
                 unsafe {
                     os_log::write_str_raw("[JC] TIOCSPGRP pgid=");
                     trace_u64(pgid as u64);
@@ -400,6 +418,30 @@ impl Tty {
                 let available = self.ldisc.lock().input_available();
                 unsafe {
                     *ptr = available as i32;
+                }
+                Ok(0)
+            }
+            TIOCSCTTY => {
+                // — GraveShift: Set controlling terminal for the calling process.
+                // Linux: only session leaders can acquire a ctty, and only if they
+                // don't already have one. arg=1 means steal even if already owned
+                // (requires CAP_SYS_ADMIN — we skip that check for now).
+                // Sets the process's tty_nr to this device's rdev.
+                unsafe {
+                    if let Some(set_ctty) = SET_CTTY_CALLBACK {
+                        set_ctty(self.dev as u32);
+                    }
+                }
+                Ok(0)
+            }
+            TIOCNOTTY => {
+                // — GraveShift: Release controlling terminal.
+                // Linux: if the process is a session leader, sends SIGHUP+SIGCONT
+                // to the foreground process group. We just clear tty_nr for now.
+                unsafe {
+                    if let Some(set_ctty) = SET_CTTY_CALLBACK {
+                        set_ctty(0);
+                    }
                 }
                 Ok(0)
             }

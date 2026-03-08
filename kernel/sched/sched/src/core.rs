@@ -1567,6 +1567,20 @@ pub fn all_pids() -> Vec<Pid> {
     pids
 }
 
+/// Count TASK_RUNNING tasks across all CPUs without heap allocation.
+/// — TorqueJax: ISR-safe. Uses try_with_rq so contended locks just skip
+/// that CPU's count (close enough for loadavg sampling). Zero allocations —
+/// safe to call from timer ISR without deadlocking the heap.
+pub fn count_nr_running() -> u64 {
+    let mut count = 0u64;
+    for cpu in 0..num_cpus() {
+        if let Some(nr) = try_with_rq(cpu, |rq| rq.count_running()) {
+            count += nr;
+        }
+    }
+    count
+}
+
 /// — ThreadRogue: Idle CPU work stealing. Called from the idle loop before HLT.
 /// Scans all other CPUs for the most-loaded one and steals a task if profitable.
 /// Returns true if a task was stolen (caller should NOT HLT — let timer ISR

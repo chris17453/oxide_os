@@ -193,6 +193,20 @@ impl RunQueue {
             .collect()
     }
 
+    /// Count tasks in TASK_RUNNING state without heap allocation.
+    /// — TorqueJax: ISR-safe. No Vec, no heap, just a counter. For loadavg
+    /// sampling from timer ISR where heap allocation = instant deadlock.
+    pub fn count_running(&self) -> u64 {
+        self.slots
+            .iter()
+            .filter(|slot| {
+                slot.as_ref()
+                    .map(|t| t.state == TaskState::TASK_RUNNING)
+                    .unwrap_or(false)
+            })
+            .count() as u64
+    }
+
     /// Get a reference to a task
     pub fn get_task(&self, pid: Pid) -> Option<&Task> {
         self.slot_get(pid)

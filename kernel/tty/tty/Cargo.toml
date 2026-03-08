@@ -7,6 +7,7 @@ description = "TTY subsystem for OXIDE OS"
 
 [features]
 debug-tty-read = []
+debug-console = []  # Enable [JC] job control TIOCGPGRP/TIOCSPGRP traces
 
 [dependencies]
 vfs = { workspace = true }

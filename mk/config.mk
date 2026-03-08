@@ -12,18 +12,29 @@ LINKER ?= ld.lld
 # ========================================
 # DEBUG FEATURES (toggle here)
 # ========================================
-# Enable debug output for 'make run'
-# Options: debug-input, debug-mouse, debug-sched, debug-fork, debug-lock, debug-syscall-perf, debug-tty-read, debug-all
-# Combine multiple: debug-input,debug-mouse
-# Disable all: leave empty or comment out
-# debug-syscall-perf: Logs syscalls taking >100K CPU cycles (~33us @ 3GHz)
-# debug-tty-read: Logs TTY read queue status
+# Shorthand: make run DEBUG=all
+# Options: all, input, mouse, sched, fork, lock, syscall-perf, tty-read
+# Combine: make run DEBUG=sched,fork
+# Old syntax still works: make run KERNEL_FEATURES=debug-all
 # ========================================
+DEBUG ?=
 RUN_KERNEL_FEATURES ?=
+# Kernel command line options (passed to boot.cfg)
+# Usage: make run KERNEL_CMDLINE="console=ttyS0"
+#        make run KERNEL_CMDLINE="console=tty2 quiet nosmp"
+# — GraveShift: Linux-compatible console= redirection — just like GRUB
+KERNEL_CMDLINE ?=
 # ========================================
 
-# Internal: Don't modify these unless using specific debug targets
+# — SableWire: Map DEBUG= shorthand to KERNEL_FEATURES=debug-<value>.
+# "DEBUG=all" becomes "debug-all". "DEBUG=sched,fork" becomes "debug-sched,debug-fork".
+# Existing KERNEL_FEATURES takes precedence if set explicitly.
 KERNEL_FEATURES ?=
+ifdef DEBUG
+ifneq ($(DEBUG),)
+override KERNEL_FEATURES := $(shell echo "$(DEBUG)" | sed 's/,/,debug-/g; s/^/debug-/')
+endif
+endif
 
 # QEMU command auto-detection (can be overridden with QEMU=command)
 # — NeonRoot: Prefer qemu-system-x86_64 — it supports all features (including fat: protocol)
@@ -40,9 +51,12 @@ QEMU ?= $(shell \
 SSH_HOST_PORT ?= $(shell python3 -c 'import socket; s = socket.socket(); s.bind(("", 0)); print(s.getsockname()[1])')
 
 # Paths
+# — SableWire: KERNEL_TARGET and BOOTLOADER_TARGET use = (recursive) not := (immediate).
+# With :=, $(PROFILE) is locked to 'debug' at parse time, ignoring target-specific
+# overrides like 'run-release: PROFILE = release'. Recursive = re-evaluates at use time.
 TARGET_DIR := target
-KERNEL_TARGET := $(TARGET_DIR)/$(ARCH)-unknown-oxide/$(PROFILE)/kernel
-BOOTLOADER_TARGET := $(TARGET_DIR)/$(ARCH)-unknown-uefi/$(PROFILE)/boot-uefi.efi
+KERNEL_TARGET = $(TARGET_DIR)/$(ARCH)-unknown-oxide/$(PROFILE)/kernel
+BOOTLOADER_TARGET = $(TARGET_DIR)/$(ARCH)-unknown-uefi/$(PROFILE)/boot-uefi.efi
 BOOT_DIR := $(TARGET_DIR)/boot
 INITRAMFS := $(TARGET_DIR)/initramfs.cpio
 OVMF := $(shell for p in /usr/share/OVMF/OVMF_CODE.fd /usr/share/edk2-ovmf/x64/OVMF_CODE.fd /usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/qemu/OVMF.fd; do [ -f "$$p" ] && echo "$$p" && break; done)

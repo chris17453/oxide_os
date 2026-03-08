@@ -1,0 +1,18 @@
+[package]
+name = "compositor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Tiling VT compositor for OXIDE OS"
+
+[features]
+default = []
+debug-compositor = []  # Enable compositor blit/layout trace output
+
+[dependencies]
+fb = { path = "../../graphics/fb" }
+os_core = { workspace = true }
+os_log = { workspace = true }
+spin = { workspace = true }
+mm-manager = { workspace = true }
+mm-traits = { workspace = true }

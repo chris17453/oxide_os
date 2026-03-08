@@ -29,7 +29,7 @@ use crate::scheduler::wake_parent;
 use mm_manager::mm;
 use sched::TaskContext;
 
-fn trace_u64(mut n: u64) {
+pub fn trace_u64(mut n: u64) {
     unsafe {
         if n == 0 {
             os_log::write_byte_raw(b'0');
@@ -48,7 +48,7 @@ fn trace_u64(mut n: u64) {
     }
 }
 
-fn trace_i32(n: i32) {
+pub fn trace_i32(n: i32) {
     unsafe {
         if n < 0 {
             os_log::write_byte_raw(b'-');
@@ -174,6 +174,23 @@ unsafe fn validate_page_tables(pml4_phys: PhysAddr, label: &str) -> u32 {
 /// ThreadRogue: Handle both thread and process exit - clean termination paths
 pub fn user_exit(status: i32) -> ! {
     let current_tid = sched::current_pid().unwrap_or(0);
+
+    // — GraveShift: Trace caller RIP so we know WHERE in userspace exit() was called.
+    // The syscall user context holds the return address (instruction after syscall).
+    {
+        let ctx = arch::get_user_context();
+        unsafe {
+            os_log::write_str_raw("[EXIT-CALLER] pid=");
+            trace_u64(current_tid as u64);
+            os_log::write_str_raw(" user_rip=0x");
+            os_log::write_u64_hex_raw(ctx.rip);
+            os_log::write_str_raw(" user_rsp=0x");
+            os_log::write_u64_hex_raw(ctx.rsp);
+            os_log::write_str_raw(" status=");
+            trace_i32(status);
+            os_log::write_str_raw("\n");
+        }
+    }
 
     // Get ProcessMeta to check if this is a thread or main process
     let is_thread = if let Some(meta_arc) = sched::get_task_meta(current_tid) {
@@ -427,6 +444,15 @@ pub fn kernel_fork() -> i64 {
     match result {
         Ok(fork_result) => {
             let child_pid = fork_result.child_pid;
+            // — GraveShift: Unconditional trace — fork parent MUST get child_pid in rax.
+            // If parent gets 0, it takes the child path and execs instead of waiting.
+            unsafe {
+                os_log::write_str_raw("[FORK] parent=");
+                trace_u64(parent_pid as u64);
+                os_log::write_str_raw(" child=");
+                trace_u64(child_pid as u64);
+                os_log::write_str_raw("\n");
+            }
             debug_fork!("[FORK] Created child process {}", child_pid);
 
             // — BlackLatch: Clear the guard page PTE from the kernel direct map.
@@ -975,6 +1001,7 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
     }
 
     debug_proc!("[WAIT] pid={} waiting for child={}", parent_pid, pid);
+
     loop {
         // — GraveShift: Trace each waitpid iteration — gated behind debug-proc
         #[cfg(feature = "debug-proc")]
@@ -1012,12 +1039,30 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
                     crate::scheduler::remove_process(result.pid);
                 }
 
+                // — GraveShift: unconditional wait-return trace
+                unsafe {
+                    os_log::write_str_raw("[WAIT] reaped child=");
+                    trace_u64(result.pid as u64);
+                    os_log::write_str_raw(" status=0x");
+                    os_log::write_u64_hex_raw(result.status as u64);
+                    os_log::write_str_raw("\n");
+                }
+
                 // Pack pid and status into result
                 return ((result.pid as i64) << 32) | ((result.status as i64) & 0xFFFFFFFF);
             }
             Err(e) => {
                 match e {
-                    proc::WaitError::NoChildren => return -10, // ECHILD
+                    proc::WaitError::NoChildren => {
+                        unsafe {
+                            os_log::write_str_raw("[WAIT] ECHILD ppid=");
+                            trace_u64(parent_pid as u64);
+                            os_log::write_str_raw(" target=");
+                            trace_i32(pid);
+                            os_log::write_str_raw("\n");
+                        }
+                        return -10; // ECHILD
+                    }
                     proc::WaitError::InvalidPid => return -3,  // ESRCH
                     proc::WaitError::Interrupted => return -4, // EINTR
                     proc::WaitError::WouldBlock => {
@@ -1697,6 +1742,25 @@ pub fn kernel_exec(
             unsafe { os_log::write_str_raw("[EXEC] do_exec OK\n"); }
             // Get new address space PML4
             let new_pml4 = exec_result.address_space.pml4_phys();
+
+            // — GraveShift: Verify GOT entry at 0x6ba1a0 (vim mktime) is non-zero.
+            // If it's 0 here, the ELF loader has a bug. If it's non-zero here but
+            // 0 at crash time, something zeros it after exec (COW bug? BSS init?).
+            {
+                use os_core::VirtAddr as VA;
+                if let Some(phys) = exec_result.address_space.translate(VA::new(0x6ba000)) {
+                    let kva = phys_to_virt(phys);
+                    let got_ptr = (kva.as_u64() + 0x1a0) as *const u64;
+                    let got_val = unsafe { *got_ptr };
+                    unsafe {
+                        os_log::write_str_raw("[EXEC] GOT[0x6ba1a0]=");
+                        os_log::write_u64_hex_raw(got_val);
+                        os_log::write_str_raw("\n");
+                    }
+                } else {
+                    unsafe { os_log::write_str_raw("[EXEC] GOT page 0x6ba000 NOT MAPPED\n"); }
+                }
+            }
 
             // — CrashBloom: Validate new address space PT integrity immediately
             // after do_exec. If corruption exists HERE, the bug is in do_exec or

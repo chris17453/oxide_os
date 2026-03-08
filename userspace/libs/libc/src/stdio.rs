@@ -203,14 +203,23 @@ pub fn putchar(c: u8) {
 }
 
 /// Read a character from stdin
+/// — GraveShift: must retry on EINTR (-4). Signal delivery during blocking
+/// read returns -EINTR from the kernel. Without retry, readline sees EOF
+/// and the shell exits on every stray SIGCHLD. Classic signal-vs-read bug.
 pub fn getchar() -> i32 {
     let mut buf = [0u8; 1];
-    let ret = syscall::sys_read(STDIN_FILENO, &mut buf);
+    let ret = loop {
+        let r = syscall::sys_read(STDIN_FILENO, &mut buf);
+        if r != -4 { break r; } // -4 = EINTR, retry
+    };
     if ret <= 0 {
-        #[cfg(feature = "debug-readline")]
-        {
-            let _ = syscall::sys_write(2, b"[GETCHAR] EOF or error\n");
-        }
+        // — GraveShift: Log the actual error code so we can see what's killing readline.
+        // Without this, every non-EINTR error silently becomes EOF and the shell dies.
+        let _ = syscall::sys_write(2, b"[GETCHAR] err=");
+        let code = if ret < 0 { (-ret) as u8 } else { 0 };
+        let digits = [b'0' + (code / 100) % 10, b'0' + (code / 10) % 10, b'0' + code % 10];
+        let _ = syscall::sys_write(2, &digits);
+        let _ = syscall::sys_write(2, b"\n");
         -1
     } else {
         let byte = buf[0];

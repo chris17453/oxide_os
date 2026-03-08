@@ -1,7 +1,7 @@
 # — NeonRoot: QEMU launch orchestration.
 # Auto-detects Fedora vs RHEL, kills stale instances, and prays the OVMF gods are merciful.
 
-.PHONY: detect-qemu-mode kill-qemu go run run-disk run-fedora run-rhel run-kvm run-debug-input-gui run-debug-mouse run-debug-lock run-debug-fork run-debug-sched run-debug-all run-256m run-256m-novgpu attach
+.PHONY: detect-qemu-mode kill-qemu go run run-disk run-fedora run-rhel run-kvm run-release run-debug-input-gui run-debug-mouse run-debug-lock run-debug-fork run-debug-sched run-debug-all run-256m run-256m-novgpu attach
 
 # Auto-detect QEMU mode (Fedora vs RHEL)
 detect-qemu-mode:
@@ -92,7 +92,7 @@ run-fedora:
 	fi
 	@echo "Forwarding SSH to localhost:$(SSH_HOST_PORT)"
 	@mkdir -p /tmp/qemu-oxide
-	TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
+	GDK_BACKEND=x11 TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
 		-machine q35 \
 		-cpu qemu64,+smap,+smep \
 		-smp 4 \
@@ -102,13 +102,14 @@ run-fedora:
 		-device virtio-blk-pci,drive=disk \
 		-device virtio-net-pci,netdev=net0 \
 		-netdev user,id=net0,hostfwd=tcp::$(SSH_HOST_PORT)-:22 \
+		-vga none \
 		-device virtio-gpu-pci \
 		-device virtio-keyboard-pci \
 		-device virtio-tablet-pci \
 		-audiodev none,id=snd0 \
 		-device intel-hda \
 		-device hda-duplex,audiodev=snd0 \
-		-display gtk,zoom-to-fit=on \
+		-display gtk,zoom-to-fit=on,grab-on-hover=on \
 		-serial stdio \
 		-monitor unix:$(TARGET_DIR)/qemu-monitor.sock,server,nowait \
 		-s \
@@ -279,7 +280,7 @@ run-debug-input-gui:
 	@mkdir -p /tmp/qemu-oxide
 	@echo "Serial output: /tmp/oxide-serial.log"
 	@echo "Use the QEMU graphical window to type and test keyboard events"
-	TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
+	GDK_BACKEND=x11 TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
 		-machine q35 \
 		-cpu qemu64,+smap,+smep \
 		-m 512M \
@@ -288,12 +289,18 @@ run-debug-input-gui:
 		-device virtio-blk-pci,drive=disk \
 		-device virtio-net-pci,netdev=net0 \
 		-netdev user,id=net0,hostfwd=tcp::$(SSH_HOST_PORT)-:22 \
+		-vga none \
+		-device virtio-gpu-pci \
 		-device virtio-keyboard-pci \
 		-device virtio-tablet-pci \
 		-serial file:/tmp/oxide-serial.log \
 		-display gtk,zoom-to-fit=on,grab-on-hover=on \
 		-no-reboot & \
 	echo "QEMU started. Use: tail -f /tmp/oxide-serial.log to see debug output"
+
+# — NeonRoot: Release build — optimized kernel, no debug noise.
+run-release: PROFILE = release
+run-release: run
 
 # Debug convenience targets — shorthand for KERNEL_FEATURES=...
 run-debug-mouse: KERNEL_FEATURES = debug-mouse

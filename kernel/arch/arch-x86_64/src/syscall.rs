@@ -466,6 +466,26 @@ extern "C" fn syscall_dispatch(
 ) -> i64 {
     use core::ptr::addr_of;
 
+    // — CrashBloom: Syscall trace gated behind debug-syscall. Was unconditional,
+    // flooded serial with 500+ lines of SC-DIAG on every boot. — CrashBloom
+    #[cfg(feature = "debug-syscall")]
+    {
+        use core::sync::atomic::{AtomicU32, Ordering};
+        static SC_DIAG_COUNT: AtomicU32 = AtomicU32::new(0);
+        let n = SC_DIAG_COUNT.fetch_add(1, Ordering::Relaxed);
+        if n < 200 {
+            let cr3: u64;
+            unsafe { core::arch::asm!("mov {}, cr3", out(reg) cr3); }
+            unsafe {
+                os_log::write_str_raw("[SC-DIAG] nr=");
+                os_log::write_u64_hex_raw(number);
+                os_log::write_str_raw(" cr3=0x");
+                os_log::write_u64_hex_raw(cr3);
+                os_log::write_str_raw("\n");
+            }
+        }
+    }
+
     unsafe {
         if let Some(handler) = *addr_of!(SYSCALL_HANDLER) {
             handler(number, arg1, arg2, arg3, arg4, arg5, arg6)
@@ -801,8 +821,8 @@ pub unsafe fn set_kernel_stack_checked(kernel_rsp: u64) {
             options(nostack, preserves_flags)
         );
         if gs_base == 0 {
-            os_log::write_str_raw("[GS_BASE-NULL] in fork/exec path!");
-
+            // — SableWire: GS_BASE corruption recovery — detection+recovery is
+            // unconditional (safety critical), only diagnostic logging is gated
             let kgs: u64;
             asm!(
                 "mov ecx, 0xC0000102",
@@ -814,14 +834,20 @@ pub unsafe fn set_kernel_stack_checked(kernel_rsp: u64) {
                 out("rdx") _,
                 options(nostack, preserves_flags)
             );
-            os_log::write_str_raw(" KERNEL_GS_BASE=0x");
-            os_log::write_u64_hex_raw(kgs);
-            os_log::write_str_raw("\n");
+            #[cfg(feature = "debug-syscall")]
+            {
+                os_log::write_str_raw("[GS_BASE-NULL] in fork/exec path!");
+                os_log::write_str_raw(" KERNEL_GS_BASE=0x");
+                os_log::write_u64_hex_raw(kgs);
+                os_log::write_str_raw("\n");
+            }
 
             if kgs != 0 && kgs > 0xFFFF_8000_0000_0000 {
+                #[cfg(feature = "debug-syscall")]
                 os_log::write_str_raw("[GS_BASE-NULL] RECOVERING via swapgs\n");
                 asm!("swapgs", options(nostack, preserves_flags));
             } else {
+                #[cfg(feature = "debug-syscall")]
                 os_log::write_str_raw("[GS_BASE-NULL] FATAL: no recovery possible\n");
                 return;
             }

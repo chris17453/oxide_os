@@ -5,10 +5,12 @@
 
 # — PatchBay: archive current kernel build for multi-boot support.
 # Keeps the last MAX_KERNEL_ARCHIVE builds so the boot manager can offer rollback.
+# — PatchBay: Profile tag in filename so the boot menu shows debug vs release.
+# kernel-0.1.0.367-debug.elf → "OXIDE 0.1.0.367-debug" in boot.cfg.
 archive-kernel: kernel
 	@mkdir -p $(KERNEL_ARCHIVE)
-	@cp $(KERNEL_TARGET) $(KERNEL_ARCHIVE)/kernel-$(OXIDE_FULL_VERSION).elf
-	@echo "  Archived kernel-$(OXIDE_FULL_VERSION).elf"
+	@cp $(KERNEL_TARGET) $(KERNEL_ARCHIVE)/kernel-$(OXIDE_FULL_VERSION)-$(PROFILE).elf
+	@echo "  Archived kernel-$(OXIDE_FULL_VERSION)-$(PROFILE).elf"
 	@# — PatchBay: prune old builds, keep newest MAX_KERNEL_ARCHIVE
 	@KEPT=0; for f in $$(ls -t $(KERNEL_ARCHIVE)/kernel-*.elf 2>/dev/null); do \
 		KEPT=$$((KEPT + 1)); \
@@ -27,7 +29,7 @@ boot-dir: kernel bootloader initramfs
 	@cp $(KERNEL_TARGET) $(BOOT_DIR)/EFI/OXIDE/kernel.elf
 	@cp $(KERNEL_TARGET) $(BOOT_DIR)/EFI/OXIDE/kernel-$(OXIDE_VERSION).elf
 	@cp $(TARGET_DIR)/initramfs.cpio $(BOOT_DIR)/EFI/OXIDE/initramfs.cpio
-	@printf "# OXIDE Boot Manager Configuration\n[defaults]\ntimeout = 5\ndefault = latest\n\n[kernel.$(OXIDE_VERSION)]\npath = \\\\EFI\\\\OXIDE\\\\kernel-$(OXIDE_VERSION).elf\nlabel = OXIDE $(OXIDE_FULL_VERSION)\noptions = \ninitramfs = \\\\EFI\\\\OXIDE\\\\initramfs.cpio\n" > $(BOOT_DIR)/EFI/OXIDE/boot.cfg
+	@printf "# OXIDE Boot Manager Configuration\n[defaults]\ntimeout = 5\ndefault = latest\n\n[kernel.$(OXIDE_VERSION)]\npath = \\\\EFI\\\\OXIDE\\\\kernel-$(OXIDE_VERSION).elf\nlabel = OXIDE $(OXIDE_FULL_VERSION)\noptions = $(KERNEL_CMDLINE)\ninitramfs = \\\\EFI\\\\OXIDE\\\\initramfs.cpio\n" > $(BOOT_DIR)/EFI/OXIDE/boot.cfg
 	@echo "Boot directory created at $(BOOT_DIR)"
 	@echo "  - Bootloader: EFI/BOOT/BOOTX64.EFI"
 	@echo "  - Kernel: EFI/OXIDE/kernel.elf + kernel-$(OXIDE_VERSION).elf"
@@ -66,7 +68,13 @@ boot-image: boot-dir
 # - Partition 2 (root): ext4, mounted at / - OS files
 # - Partition 3 (home): ext4, mounted at /home - user data
 # - /tmp is tmpfs (in-memory)
-create-rootfs: increment-build kernel bootloader archive-kernel pkgmgr-binaries initramfs userspace-std
+# — TorqueJax: EXPLICIT dependency chain. Every link matters.
+# sysroot-check: if libc changed, rebuild toolchain sysroot
+# pkgmgr-check:  if sysroot changed, nuke stale staged C binaries
+# pkgmgr-binaries: rebuild vim/python if nuked by pkgmgr-check
+# userspace-release: rebuild Rust binaries (cargo handles incremental)
+# initramfs: pack bootstrap cpio from userspace-release outputs
+create-rootfs: increment-build kernel bootloader userspace-release archive-kernel initramfs userspace-std
 	@echo "Creating OXIDE root filesystem disk image..."
 	@echo ""
 	@# Create empty disk image
@@ -110,7 +118,7 @@ create-rootfs: increment-build kernel bootloader archive-kernel pkgmgr-binaries 
 	for kelf in $$(ls -t $(KERNEL_ARCHIVE)/kernel-*.elf 2>/dev/null | head -$(MAX_KERNEL_ARCHIVE)); do \
 		KNAME=$$(basename $$kelf); \
 		KVER=$$(echo $$KNAME | sed 's/kernel-//;s/\.elf//'); \
-		printf "[kernel.$$KVER]\npath = \\\\EFI\\\\OXIDE\\\\$$KNAME\nlabel = OXIDE $$KVER\noptions = \ninitramfs = \\\\EFI\\\\OXIDE\\\\initramfs.cpio\n\n" | sudo tee -a $(TARGET_DIR)/mnt/boot/EFI/OXIDE/boot.cfg > /dev/null; \
+		printf "[kernel.$$KVER]\npath = \\\\EFI\\\\OXIDE\\\\$$KNAME\nlabel = OXIDE $$KVER\noptions = $(KERNEL_CMDLINE)\ninitramfs = \\\\EFI\\\\OXIDE\\\\initramfs.cpio\n\n" | sudo tee -a $(TARGET_DIR)/mnt/boot/EFI/OXIDE/boot.cfg > /dev/null; \
 	done && \
 	sudo umount $(TARGET_DIR)/mnt/boot && \
 	\
@@ -211,6 +219,7 @@ create-rootfs: increment-build kernel bootloader archive-kernel pkgmgr-binaries 
 	echo "  Creating other config files..." && \
 	printf "export PATH=/bin:/sbin:/usr/bin:/usr/sbin\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/profile > /dev/null && \
 	printf "OXIDE\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/hostname > /dev/null && \
+	printf "root\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/autologin > /dev/null && \
 	printf "PATH=/usr/bin/journald\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/journald > /dev/null && \
 	printf "PATH=/usr/bin/networkd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/networkd > /dev/null && \
 	printf "PATH=/usr/bin/resolvd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/resolvd > /dev/null && \

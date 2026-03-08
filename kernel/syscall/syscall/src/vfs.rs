@@ -344,9 +344,42 @@ pub fn sys_open(path_ptr: u64, path_len: usize, flags: u32, mode: u32) -> i64 {
         Arc::new(File::new(vnode, flags))
     };
 
+    // — GraveShift: Auto-acquire controlling terminal (Linux semantics).
+    // When a session leader without a ctty opens a tty device, and
+    // O_NOCTTY is NOT set, the tty becomes the process's controlling terminal.
+    // This is how init's `setsid() + open("/dev/ttyN")` gives each getty its ctty.
+    let auto_ctty_rdev = if !flags.contains(FileFlags::O_NOCTTY) {
+        // Check if opened device is a char device with tty major number (4)
+        if file.vnode().vtype() == VnodeType::CharDevice {
+            if let Ok(st) = file.vnode().stat() {
+                let major = (st.rdev >> 8) & 0xFF;
+                if major == 4 {
+                    Some(st.rdev as u32)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // — GraveShift: Single with_current_meta_mut call — allocate fd while holding lock.
     // Previously split across two calls, releasing lock between check and alloc. Never again.
-    let result = match with_current_meta_mut(|meta| meta.fd_table.alloc(file)) {
+    let result = match with_current_meta_mut(|meta| {
+        let fd = meta.fd_table.alloc(file)?;
+        // — GraveShift: Set ctty if session leader, no current ctty, and opened a tty
+        if let Some(rdev) = auto_ctty_rdev {
+            if meta.tty_nr == 0 && meta.sid == meta.tgid {
+                meta.tty_nr = rdev;
+            }
+        }
+        Ok(fd)
+    }) {
         Some(Ok(fd)) => fd as i64,
         Some(Err(e)) => vfs_error_to_errno(e),
         None => errno::ESRCH,
@@ -443,6 +476,25 @@ pub fn sys_read_vfs(fd: i32, buf: u64, count: usize) -> i64 {
         }
         Err(e) => vfs_error_to_errno(e),
     };
+
+    // — GraveShift: Trace stdin reads that return 0 or error — this is what kills
+    // readline/esh. If stdin read returns 0 (EOF) or negative (error), getchar
+    // returns -1, readline returns NULL, and the shell exits. We need to see this.
+    if fd == 0 && result <= 0 {
+        let pid = sched::current_pid().unwrap_or(0);
+        unsafe {
+            os_log::write_str_raw("[READ0] pid=");
+            os_log::write_u64_hex_raw(pid as u64);
+            os_log::write_str_raw(" ret=");
+            if result < 0 {
+                os_log::write_str_raw("-");
+                os_log::write_u64_hex_raw((-result) as u64);
+            } else {
+                os_log::write_str_raw("0");
+            }
+            os_log::write_str_raw("\n");
+        }
+    }
 
     // Disable kernel preemption after read completes
     unsafe {
@@ -787,6 +839,17 @@ pub fn sys_ioctl(fd: i32, request: u64, arg: u64) -> i64 {
             os_log::write_str_raw("\n");
         }
     }
+    // — GraveShift: Trace TCGETS (0x5401) — isatty() calls this to check if fd is a tty.
+    // If this fires and returns non-zero, isatty() returns false → vim "not a terminal".
+    if request == 0x5401 {
+        unsafe {
+            os_log::write_str_raw("[IOCTL] TCGETS fd=");
+            os_log::write_u64_hex_raw(fd as u64);
+            os_log::write_str_raw(" pid=");
+            os_log::write_u64_hex_raw(crate::current_pid() as u64);
+            os_log::write_str_raw("\n");
+        }
+    }
 
     // Get file using unified model
     let file =
@@ -834,6 +897,14 @@ pub fn sys_ioctl(fd: i32, request: u64, arg: u64) -> i64 {
     if request == 0x5410 {
         unsafe {
             os_log::write_str_raw("[IOCTL] TIOCSPGRP result=");
+            os_log::write_u64_hex_raw(result as u64);
+            os_log::write_str_raw("\n");
+        }
+    }
+    // — GraveShift: Log TCGETS result — if non-zero, isatty() returns false.
+    if request == 0x5401 {
+        unsafe {
+            os_log::write_str_raw("[IOCTL] TCGETS result=");
             os_log::write_u64_hex_raw(result as u64);
             os_log::write_str_raw("\n");
         }

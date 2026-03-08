@@ -139,9 +139,11 @@ struct Selection {
 }
 
 impl TerminalEmulator {
-    /// Create a new terminal emulator with the given framebuffer
-    pub fn new(fb: Arc<dyn Framebuffer>) -> Self {
-        let renderer = Renderer::new(fb);
+    /// Create a new terminal emulator with the given framebuffer.
+    /// — GraveShift: `double_buffer=false` when the fb is RAM (compositor backing buffer).
+    /// Saves 4MB heap per VT by rendering directly to the backing fb.
+    pub fn new(fb: Arc<dyn Framebuffer>, double_buffer: bool) -> Self {
+        let renderer = Renderer::new(fb, double_buffer);
         let (cols, rows) = renderer.dimensions();
         let (cell_width, cell_height) = renderer.cell_dimensions();
 
@@ -1775,11 +1777,54 @@ fn write_decimal(buf: &mut Vec<u8>, value: u32) {
     }
 }
 
-/// Global terminal instance
-static TERMINAL: Mutex<Option<TerminalEmulator>> = Mutex::new(None);
+// ─────────────────────────────────────────────────────────────────────────────
+// PER-VT TERMINAL EMULATORS — GraveShift: each VT gets its own brain.
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// — GraveShift: The singleton terminal emulator era is OVER. Each VT now owns
+// its own TerminalEmulator — parser, handler, text buffers, scrollback, renderer.
+// Writing to VT2 doesn't touch VT0's lock. VT switch doesn't rip guts out of
+// one terminal to transplant into another. Each VT is self-contained, like
+// Linux's vc_data[N] — except we also have per-VT pixel buffers for graphics.
+//
+// Lazy init: only VT0 is created at boot. VTs 1-5 spawn on first write.
+// Each VT's renderer targets its own compositor BackingFramebuffer (RAM),
+// no double buffering needed — saves 24MB of heap vs the old approach.
 
-/// Atomic flag for lock-free initialization check (safe from interrupt context)
+/// Maximum VTs (must match compositor::MAX_VTS)
+pub const MAX_VTS: usize = 6;
+
+/// — GraveShift: per-VT terminal emulators. Each slot is independently locked.
+/// VT0 is initialized at boot. VTs 1-5 are lazy-initialized on first write.
+/// No more state-swapping, no more global bottleneck.
+static VT_TERMINALS: [Mutex<Option<TerminalEmulator>>; MAX_VTS] = [
+    Mutex::new(None),
+    Mutex::new(None),
+    Mutex::new(None),
+    Mutex::new(None),
+    Mutex::new(None),
+    Mutex::new(None),
+];
+
+/// — GraveShift: per-VT initialization flags. Lock-free reads from ISR context.
+static VT_INITIALIZED: [AtomicBool; MAX_VTS] = [
+    AtomicBool::new(false),
+    AtomicBool::new(false),
+    AtomicBool::new(false),
+    AtomicBool::new(false),
+    AtomicBool::new(false),
+    AtomicBool::new(false),
+];
+
+/// Legacy alias — true when VT0 is initialized (backward compat for is_initialized())
 static TERMINAL_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+/// Currently focused VT (for ISR context — which VT gets cursor blink, mouse events)
+static FOCUSED_VT: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+/// Shared clipboard across all VTs — GraveShift: copy on VT2, paste on VT0. Nice.
+static SHARED_CLIPBOARD: Mutex<String> = Mutex::new(String::new());
 
 // ─────────────────────────────────────────────────────────────────────────────
 // INPUT LOCK — P3.5 Terminal Lock Splitting
@@ -1788,17 +1833,17 @@ static TERMINAL_INITIALIZED: AtomicBool = AtomicBool::new(false);
 // — NeonVale: One lock to write glyphs. Another to query mouse state.
 // The timer ISR wants to know if the mouse is in tracking mode before
 // generating escape sequences. Previously, it had to try_lock the entire
-// TERMINAL — which is held for the duration of every sys_write() call.
+// VT lock — which is held for the duration of every sys_write() call.
 // Result: ISR drops mouse events whenever a process is printing.
 //
 // Fix: mirror the handful of mouse-routing fields into a lightweight
 // MouseInputState behind its own lock. ISR only touches MOUSE_INPUT —
-// never TERMINAL — so it's uncontended during writes. Write path updates
-// MOUSE_INPUT after each terminal.write() call finishes.
+// never VT_TERMINALS[n] — so it's uncontended during writes. Write path
+// updates MOUSE_INPUT after each terminal.write() call finishes.
 //
 // LOCK ORDER (must be respected, or we get lock inversion):
-//   1. TERMINAL  (write path, outer lock)
-//   2. MOUSE_INPUT (update path, inner lock — acquired AFTER releasing TERMINAL)
+//   1. VT_TERMINALS[n]  (write path, outer lock — per-VT)
+//   2. MOUSE_INPUT      (update path, inner lock — acquired AFTER releasing VT lock)
 //
 // ISR callers MUST use try_lock on MOUSE_INPUT — never blocking lock().
 // — NeonVale
@@ -1847,11 +1892,11 @@ static MOUSE_INPUT: Mutex<MouseInputState> = Mutex::new(MouseInputState::default
 
 /// Sync MOUSE_INPUT from the live TerminalEmulator state.
 ///
-/// — NeonVale: Called AFTER releasing TERMINAL lock — never while holding it.
-/// Lock order: TERMINAL first (held during write), MOUSE_INPUT second (held
+/// — NeonVale: Called AFTER releasing VT_TERMINALS[n] lock — never while holding it.
+/// Lock order: VT_TERMINALS[n] first (held during write), MOUSE_INPUT second (held
 /// during update). ISR only holds MOUSE_INPUT. No deadlock possible.
 ///
-/// # Safety: caller must NOT hold TERMINAL lock when calling this.
+/// # Safety: caller must NOT hold any VT_TERMINALS lock when calling this.
 fn sync_mouse_input(terminal: &TerminalEmulator) {
     // — NeonVale: Blocking lock is fine here — we're in process context
     // (post write() call), never in ISR. The lock is held for ~100ns.
@@ -1912,36 +1957,179 @@ pub static TERMINAL_WRITE_COUNT: core::sync::atomic::AtomicU64 =
 pub static TERMINAL_WRITE_BYTES: core::sync::atomic::AtomicU64 =
     core::sync::atomic::AtomicU64::new(0);
 
-/// Initialize global terminal with framebuffer
-pub fn init(fb: Arc<dyn Framebuffer>) {
-    let terminal = TerminalEmulator::new(fb);
-    // — NeonVale: Sync mouse state before marking initialized, so ISR can
-    // safely read MOUSE_INPUT from the moment TERMINAL_INITIALIZED goes true.
-    sync_mouse_input(&terminal);
-    *TERMINAL.lock() = Some(terminal);
-    TERMINAL_INITIALIZED.store(true, Ordering::Release);
+// ─────────────────────────────────────────────────────────────────────────────
+// PUBLIC API — Per-VT Terminal Architecture
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// — GraveShift: Each VT owns its own TerminalEmulator behind VT_TERMINALS[n].
+// No more state-swapping. No more single-lock bottleneck. write_vt() targets
+// a specific VT by index; write() is syntactic sugar for the focused VT.
+// ISR functions (tick, toggle_cursor_blink, mouse_event) use try_lock.
+// Process-context functions (write, clear, reset) use blocking lock().
+//
+// LOCK ORDER (carved in blood):
+//   1. VT_TERMINALS[n]  (per-VT lock, outer)
+//   2. MOUSE_INPUT      (ISR mirror, inner — acquired AFTER releasing VT lock)
+//
+// — GraveShift
+
+/// Initialize a specific VT's terminal emulator with the given framebuffer.
+///
+/// — SableWire: Each VT gets its own TerminalEmulator instance backed by its
+/// own framebuffer (typically a compositor BackingFramebuffer in RAM).
+/// double_buffer=false since the backing fb IS the buffer. Saves 4MB per VT.
+pub fn init_vt(vt_num: usize, fb: Arc<dyn Framebuffer>) {
+    if vt_num >= MAX_VTS {
+        return;
+    }
+    let terminal = TerminalEmulator::new(fb, false);
+    // — NeonVale: Sync mouse state for focused VT before marking initialized,
+    // so ISR can safely read MOUSE_INPUT from the moment VT_INITIALIZED goes true.
+    if vt_num == FOCUSED_VT.load(Ordering::Acquire) {
+        sync_mouse_input(&terminal);
+    }
+    *VT_TERMINALS[vt_num].lock() = Some(terminal);
+    VT_INITIALIZED[vt_num].store(true, Ordering::Release);
+    // — GraveShift: backward compat — TERMINAL_INITIALIZED tracks VT0's state
+    if vt_num == 0 {
+        TERMINAL_INITIALIZED.store(true, Ordering::Release);
+    }
+    unsafe {
+        os_log::write_str_raw("[VT-TERM] initialized VT");
+        os_log::write_byte_raw(b'0' + vt_num as u8);
+        os_log::write_str_raw("\n");
+    }
 }
 
-/// Check if terminal is initialized (lock-free, safe from interrupt context)
+/// Initialize the default terminal (VT0) with framebuffer.
+///
+/// — GraveShift: Legacy wrapper. Boot path calls this for VT0.
+/// Everything after boot uses init_vt() directly.
+pub fn init(fb: Arc<dyn Framebuffer>) {
+    init_vt(0, fb);
+}
+
+/// Check if terminal is initialized (VT0 — backward compat, lock-free, ISR-safe)
 pub fn is_initialized() -> bool {
     TERMINAL_INITIALIZED.load(Ordering::Acquire)
 }
 
-/// Hot-swap the global terminal's framebuffer after GPU driver init.
+/// Check if a specific VT is initialized (lock-free, ISR-safe)
+///
+/// — SableWire: Returns false for out-of-range VT numbers. No panics,
+/// no locks, just an atomic load. ISR can call this without fear.
+pub fn is_vt_initialized(vt_num: usize) -> bool {
+    if vt_num >= MAX_VTS {
+        return false;
+    }
+    VT_INITIALIZED[vt_num].load(Ordering::Acquire)
+}
+
+/// Get the currently focused VT number.
+///
+/// — GraveShift: Lock-free read. ISR-safe. The focused VT is where
+/// keyboard input, cursor blink, and mouse events are routed.
+pub fn focused_vt() -> usize {
+    FOCUSED_VT.load(Ordering::Acquire)
+}
+
+/// Switch focus to a different VT.
+///
+/// — GraveShift: SIMPLIFIED — no more state swapping. Each VT already owns
+/// its own TerminalEmulator. Just update FOCUSED_VT and force a full render
+/// of the new VT's terminal so its buffer is fresh for the compositor.
+///
+/// Called from ISR context (keyboard IRQ → Alt+Fn → vt_switch_callback).
+/// Uses try_lock on the new VT to avoid deadlock if a process-context write holds it.
+pub fn switch_vt(new_vt: usize) {
+    if new_vt >= MAX_VTS {
+        return;
+    }
+
+    let old_vt = FOCUSED_VT.load(Ordering::Acquire);
+    if old_vt == new_vt {
+        return;
+    }
+
+    // — GraveShift: Update focus atomically. Even if we can't render below,
+    // the focus change takes effect — subsequent writes/ticks target new VT.
+    FOCUSED_VT.store(new_vt, Ordering::Release);
+
+    // — GraveShift: If the new VT is initialized, try to render its full state.
+    // try_lock because we're in ISR context — if a process write holds this VT's lock,
+    // the render is deferred to next tick(). No state to swap, no brain transplant needed.
+    if VT_INITIALIZED[new_vt].load(Ordering::Acquire) {
+        if let Some(mut guard) = VT_TERMINALS[new_vt].try_lock() {
+            if let Some(ref mut terminal) = *guard {
+                terminal.renderer.invalidate();
+                terminal.render();
+            }
+        } else {
+            unsafe { os_log::write_str_raw("[VT-TERM] switch_vt: VT locked, render deferred\n"); }
+        }
+
+        // — NeonVale: Sync mouse state from the new VT's terminal so ISR reads
+        // the correct mouse mode/encoding for the newly focused VT.
+        let mouse_snapshot = {
+            if let Some(guard) = VT_TERMINALS[new_vt].try_lock() {
+                guard.as_ref().map(|t| (
+                    t.handler.mouse_mode,
+                    t.handler.mouse_encoding,
+                    t.cell_width,
+                    t.cell_height,
+                    t.cols,
+                    t.rows,
+                ))
+            } else {
+                None
+            }
+        };
+        if let Some((mm, me, cw, ch, cols, rows)) = mouse_snapshot {
+            if let Some(mut state) = MOUSE_INPUT.try_lock() {
+                state.mouse_mode = mm;
+                state.mouse_encoding = me;
+                state.cell_width = cw;
+                state.cell_height = ch;
+                state.cols = cols;
+                state.rows = rows;
+            }
+        }
+    }
+
+    unsafe {
+        os_log::write_str_raw("[VT-TERM] switched VT");
+        os_log::write_byte_raw(b'0' + old_vt as u8);
+        os_log::write_str_raw(" -> VT");
+        os_log::write_byte_raw(b'0' + new_vt as u8);
+        os_log::write_str_raw("\n");
+    }
+}
+
+/// Hot-swap a VT's framebuffer after GPU driver init.
+///
 /// — GlassSignal: the UEFI GOP buffer becomes a ghost after VirtIO-GPU takes the scanout.
-/// This hands the renderer a new canvas backed by the GPU's resource memory, then forces
-/// a full repaint so every glyph reaches the display. Called once from init.rs after
-/// driver_core::probe_all_devices().
+/// This hands the renderer a new canvas, then forces a full repaint so every glyph
+/// reaches the display. Targets the specified VT (defaults to VT0 for legacy callers).
 pub fn update_framebuffer(fb: Arc<dyn Framebuffer>) {
-    // — NeonVale: Take a snapshot for MOUSE_INPUT after the framebuffer swap —
+    update_framebuffer_vt(0, fb);
+}
+
+/// Hot-swap a specific VT's framebuffer.
+///
+/// — GlassSignal: per-VT framebuffer replacement. Invalidates + re-renders.
+/// Syncs MOUSE_INPUT if this is the focused VT. — GlassSignal
+pub fn update_framebuffer_vt(vt_num: usize, fb: Arc<dyn Framebuffer>) {
+    if vt_num >= MAX_VTS {
+        return;
+    }
+    // — NeonVale: Take snapshot for MOUSE_INPUT after the framebuffer swap —
     // cell_width/cell_height may change if the new fb has different pixel density.
     let snapshot = {
-        let mut guard = TERMINAL.lock();
+        let mut guard = VT_TERMINALS[vt_num].lock();
         if let Some(ref mut terminal) = *guard {
             terminal.renderer.update_framebuffer(fb);
             terminal.renderer.invalidate();
             terminal.render();
-            // Capture snapshot while we still hold TERMINAL — released before sync.
             Some((
                 terminal.handler.mouse_mode,
                 terminal.handler.mouse_encoding,
@@ -1953,55 +2141,44 @@ pub fn update_framebuffer(fb: Arc<dyn Framebuffer>) {
         } else {
             None
         }
-    }; // — NeonVale: TERMINAL lock released here — BEFORE we grab MOUSE_INPUT.
-    // This is the lock order guarantee: TERMINAL is never held when MOUSE_INPUT
-    // is acquired. ISR only takes MOUSE_INPUT. No inversion possible. — NeonVale
-    if let Some((mm, me, cw, ch, cols, rows)) = snapshot {
-        let mut state = MOUSE_INPUT.lock();
-        state.mouse_mode = mm;
-        state.mouse_encoding = me;
-        state.cell_width = cw;
-        state.cell_height = ch;
-        state.cols = cols;
-        state.rows = rows;
+    }; // — NeonVale: VT lock released here — BEFORE we grab MOUSE_INPUT.
+    // Lock order guarantee: VT_TERMINALS[n] first, MOUSE_INPUT second.
+    if vt_num == FOCUSED_VT.load(Ordering::Acquire) {
+        if let Some((mm, me, cw, ch, cols, rows)) = snapshot {
+            let mut state = MOUSE_INPUT.lock();
+            state.mouse_mode = mm;
+            state.mouse_encoding = me;
+            state.cell_width = cw;
+            state.cell_height = ch;
+            state.cols = cols;
+            state.rows = rows;
+        }
     }
 }
 
-/// Write bytes to global terminal with per-glyph rendering.
-/// NOTE: data may point to user memory, so we need STAC/CLAC for SMAP
+/// Write bytes to a specific VT's terminal with per-glyph rendering.
+/// NOTE: data may point to user memory, so we need STAC/CLAC for SMAP.
 ///
-/// — GraveShift: Linux fbcon_putcs() style — synchronous per-glyph rendering.
-///
-/// Each printable character is painted directly to the framebuffer as it's
-/// processed. Scrolls use fb.copy_rect() (pixel memmove) instead of
-/// repainting all rows. CSI bulk ops (ED/IL/DL) still set dirty flags
-/// for tick() catch-up. Cost is proportional to characters written,
-/// not dirty rows — same as Linux's do_con_write() → fbcon_putcs().
-///
-/// Timer ISR tick() handles cursor blink + catch-up for CSI dirty rows.
-pub fn write(data: &[u8]) {
-    // — WireSaint: Lock-free write counter for diagnostics. No serial output here —
-    // that caused COM1 mutex deadlock with timer ISR. Counter readable via
-    // TERMINAL_WRITE_COUNT.load() from perf stats or debug dump.
+/// — GraveShift: Per-VT write. Each VT has its own lock — writing to VT2
+/// doesn't block VT0's cursor blink ISR. The future is now, old man.
+pub fn write_vt(vt_num: usize, data: &[u8]) {
+    if vt_num >= MAX_VTS || !VT_INITIALIZED[vt_num].load(Ordering::Acquire) {
+        return;
+    }
+
+    // — WireSaint: Lock-free write counters — no serial output in hot path
     TERMINAL_WRITE_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     TERMINAL_WRITE_BYTES.fetch_add(data.len() as u64, core::sync::atomic::Ordering::Relaxed);
 
-    // — SableWire: Enable access to user pages (STAC - Supervisor-Mode Access Prevention Clear)
-    unsafe {
-        os_core::user_access_begin();
-    }
+    // — SableWire: STAC — enable access to user pages (SMAP bypass)
+    unsafe { os_core::user_access_begin(); }
 
-    // — NeonVale: Snapshot mouse state after write — write() may process escape
-    // sequences that toggle mouse tracking mode (e.g., CSI ?1000h / ?1000l).
-    // We capture the snapshot while holding TERMINAL, then release TERMINAL
-    // BEFORE acquiring MOUSE_INPUT to respect lock order.
+    // — NeonVale: Snapshot mouse state after write — escape sequences may toggle
+    // mouse tracking mode. Capture while holding VT lock, release BEFORE MOUSE_INPUT.
     let mouse_snapshot = {
-        let mut guard = TERMINAL.lock();
+        let mut guard = VT_TERMINALS[vt_num].lock();
         if let Some(ref mut terminal) = *guard {
             terminal.write(data);
-            // Capture only if mouse-relevant fields may have changed.
-            // We always capture — the escape sequence parser doesn't tell us
-            // which fields it touched, and the copy is 6 words. Cheap. — NeonVale
             Some((
                 terminal.handler.mouse_mode,
                 terminal.handler.mouse_encoding,
@@ -2013,69 +2190,93 @@ pub fn write(data: &[u8]) {
         } else {
             None
         }
-    }; // — NeonVale: TERMINAL released. Now safe to acquire MOUSE_INPUT.
+    }; // — NeonVale: VT lock released. Now safe to acquire MOUSE_INPUT.
 
-    // — SableWire: Disable access to user pages (CLAC)
-    unsafe {
-        os_core::user_access_end();
-    }
+    // — SableWire: CLAC — disable access to user pages
+    unsafe { os_core::user_access_end(); }
 
-    // — NeonVale: Update the ISR-facing mouse state mirror. This lock is
-    // never held during framebuffer rendering — just 6 word copies.
-    // ISR can try_lock this without ever racing the write path. — NeonVale
-    if let Some((mm, me, cw, ch, cols, rows)) = mouse_snapshot {
-        let mut state = MOUSE_INPUT.lock();
-        state.mouse_mode = mm;
-        state.mouse_encoding = me;
-        state.cell_width = cw;
-        state.cell_height = ch;
-        state.cols = cols;
-        state.rows = rows;
+    // — NeonVale: Only sync MOUSE_INPUT if we just wrote to the focused VT.
+    // Background VTs don't affect ISR mouse routing. — NeonVale
+    if vt_num == FOCUSED_VT.load(Ordering::Acquire) {
+        if let Some((mm, me, cw, ch, cols, rows)) = mouse_snapshot {
+            let mut state = MOUSE_INPUT.lock();
+            state.mouse_mode = mm;
+            state.mouse_encoding = me;
+            state.cell_width = cw;
+            state.cell_height = ch;
+            state.cols = cols;
+            state.rows = rows;
+        }
     }
 }
 
-/// Write a single character to global terminal
+/// Write bytes to the focused VT's terminal with per-glyph rendering.
+/// NOTE: data may point to user memory, so we need STAC/CLAC for SMAP.
+///
+/// — GraveShift: Linux fbcon_putcs() style — synchronous per-glyph rendering.
+/// Delegates to write_vt() targeting FOCUSED_VT. Legacy callers (tty, console)
+/// don't need to know which VT they're writing to. — GraveShift
+pub fn write(data: &[u8]) {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    write_vt(vt, data);
+}
+
+/// Write a single character to the focused VT's terminal
 pub fn putchar(ch: char) {
     let mut buf = [0u8; 4];
     let s = ch.encode_utf8(&mut buf);
     write(s.as_bytes());
 }
 
-/// Write a string to global terminal
+/// Write a string to the focused VT's terminal
 pub fn puts(s: &str) {
     write(s.as_bytes());
 }
 
-/// Clear global terminal
+/// Clear the focused VT's terminal
+///
+/// — SableWire: Process-context only. Blocking lock on the focused VT.
 pub fn clear() {
-    if let Some(ref mut terminal) = *TERMINAL.lock() {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
+    if let Some(ref mut terminal) = *VT_TERMINALS[vt].lock() {
         terminal.clear();
     }
 }
 
-/// Get terminal dimensions
+/// Get terminal dimensions from the focused VT
 pub fn dimensions() -> Option<(u32, u32)> {
-    TERMINAL.lock().as_ref().map(|t| t.dimensions())
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return None; }
+    VT_TERMINALS[vt].lock().as_ref().map(|t| t.dimensions())
 }
 
-/// Toggle cursor blink (call from timer)
+/// Toggle cursor blink on the focused VT (call from timer ISR).
+///
+/// — SableWire: ISR context — try_lock only. If the focused VT's lock is held
+/// by a process write, skip this tick. Next one's in 500ms. Nobody cares.
 pub fn toggle_cursor_blink() {
-    if let Some(mut guard) = TERMINAL.try_lock() {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
+    if let Some(mut guard) = VT_TERMINALS[vt].try_lock() {
         if let Some(ref mut terminal) = *guard {
             terminal.toggle_cursor_blink();
         }
     } else {
         #[cfg(feature = "debug-lock")]
-        lock_contention_warning("TERMINAL (toggle_cursor_blink)");
+        lock_contention_warning("VT_TERMINALS (toggle_cursor_blink)");
     }
 }
 
-/// Reset terminal
+/// Reset the focused VT's terminal.
+///
+/// — NeonVale: reset() sets mouse_mode = None — sync the MOUSE_INPUT snapshot
+/// so ISR doesn't see stale mouse mode after terminal reset. — NeonVale
 pub fn reset() {
-    // — NeonVale: reset() sets mouse_mode = None — sync the snapshot so ISR
-    // doesn't see stale mouse mode after terminal reset. — NeonVale
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
     let mouse_snapshot = {
-        let mut guard = TERMINAL.lock();
+        let mut guard = VT_TERMINALS[vt].lock();
         if let Some(ref mut terminal) = *guard {
             terminal.reset();
             Some((
@@ -2101,36 +2302,39 @@ pub fn reset() {
     }
 }
 
-/// Timer tick — cursor blink + catch-up render for CSI bulk ops.
-/// — GraveShift: write() now renders per-glyph inline (Linux fbcon_putcs style).
+/// Timer tick — cursor blink + catch-up render for CSI bulk ops on the focused VT.
+///
+/// — GraveShift: write() renders per-glyph inline (Linux fbcon_putcs style).
 /// This tick handles cursor blink (like Linux's fb_flashcursor) and renders
 /// any leftover dirty rows from CSI bulk ops (ED/IL/DL/etc that mark_all_dirty).
-/// Uses try_lock because we're in ISR context — if write() holds the lock, we
-/// skip this tick (the buffer is being updated, next tick will catch it).
+/// ISR context — try_lock only. Skip if the VT's lock is held by a write().
 pub fn tick() {
-    if let Some(mut guard) = TERMINAL.try_lock() {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
+    if let Some(mut guard) = VT_TERMINALS[vt].try_lock() {
         if let Some(ref mut terminal) = *guard {
             terminal.tick();
         }
     } else {
         #[cfg(feature = "debug-lock")]
-        lock_contention_warning("TERMINAL (tick)");
+        lock_contention_warning("VT_TERMINALS (tick)");
     }
 }
 
-/// Write and immediately render (for urgent/interactive output)
-/// NOTE: data may point to user memory, so we need STAC/CLAC for SMAP
+/// Write and immediately render on the focused VT (for urgent/interactive output).
+/// NOTE: data may point to user memory, so we need STAC/CLAC for SMAP.
+///
 /// — WireSaint: Same bounded-spin diagnostic pattern as write().
-/// — NeonVale: Syncs MOUSE_INPUT after write_immediate for the same reason
-/// as write() — escape sequences inside data may change mouse mode. — NeonVale
+/// — NeonVale: Syncs MOUSE_INPUT after write_immediate — escape sequences
+/// inside data may change mouse mode. — NeonVale
 pub fn write_immediate(data: &[u8]) {
-    unsafe {
-        os_core::user_access_begin();
-    }
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
 
-    // — NeonVale: Capture snapshot after write, release TERMINAL before MOUSE_INPUT.
+    unsafe { os_core::user_access_begin(); }
+
     let mouse_snapshot = {
-        let mut guard = TERMINAL.lock();
+        let mut guard = VT_TERMINALS[vt].lock();
         if let Some(ref mut terminal) = *guard {
             terminal.write_immediate(data);
             Some((
@@ -2144,11 +2348,9 @@ pub fn write_immediate(data: &[u8]) {
         } else {
             None
         }
-    }; // — NeonVale: TERMINAL released here.
+    }; // — NeonVale: VT lock released here.
 
-    unsafe {
-        os_core::user_access_end();
-    }
+    unsafe { os_core::user_access_end(); }
 
     if let Some((mm, me, cw, ch, cols, rows)) = mouse_snapshot {
         let mut state = MOUSE_INPUT.lock();
@@ -2161,47 +2363,57 @@ pub fn write_immediate(data: &[u8]) {
     }
 }
 
-/// Check if render is needed
+/// Check if the focused VT needs a render
 pub fn is_dirty() -> bool {
-    if let Some(ref terminal) = *TERMINAL.lock() {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return false; }
+    if let Some(ref terminal) = *VT_TERMINALS[vt].lock() {
         terminal.needs_render()
     } else {
         false
     }
 }
 
-/// Enter alternate screen buffer (for full-screen apps)
+/// Enter alternate screen buffer on the focused VT (for full-screen apps)
 pub fn enter_alternate_screen() {
-    if let Some(ref mut terminal) = *TERMINAL.lock() {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
+    if let Some(ref mut terminal) = *VT_TERMINALS[vt].lock() {
         terminal.enter_alternate_screen();
     }
 }
 
-/// Leave alternate screen buffer (restore primary screen)
+/// Leave alternate screen buffer on the focused VT (restore primary screen)
 pub fn leave_alternate_screen() {
-    if let Some(ref mut terminal) = *TERMINAL.lock() {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
+    if let Some(ref mut terminal) = *VT_TERMINALS[vt].lock() {
         terminal.leave_alternate_screen();
     }
 }
 
-/// Save current terminal state
+/// Save current terminal state on the focused VT
 pub fn save_state() {
-    if let Some(ref mut terminal) = *TERMINAL.lock() {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
+    if let Some(ref mut terminal) = *VT_TERMINALS[vt].lock() {
         terminal.save_state();
     }
 }
 
-/// Restore terminal state
+/// Restore terminal state on the focused VT
 pub fn restore_state() {
-    if let Some(ref mut terminal) = *TERMINAL.lock() {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
+    if let Some(ref mut terminal) = *VT_TERMINALS[vt].lock() {
         terminal.restore_state();
     }
 }
 
-/// Check if mouse tracking mode is active
+/// Check if mouse tracking mode is active on the focused VT.
 ///
 /// — NeonVale: P3.5 split lock path. Reads from MOUSE_INPUT — the lightweight
-/// ISR-facing mirror of mouse state — instead of the full TERMINAL lock.
+/// ISR-facing mirror of mouse state — instead of the full VT_TERMINALS lock.
 /// MOUSE_INPUT is uncontended during write() calls, so ISR never drops mouse
 /// mode checks due to a process printing to the terminal. — NeonVale
 ///
@@ -2217,13 +2429,13 @@ pub fn has_mouse_mode() -> bool {
     false
 }
 
-/// Generate mouse escape sequence for a mouse event
+/// Generate mouse escape sequence for a mouse event.
 ///
 /// Returns the escape sequence bytes, or None if mouse mode is not active
 /// or doesn't want this event type.
 ///
-/// — NeonVale: P3.5 split lock path. Uses MOUSE_INPUT instead of TERMINAL so
-/// ISR-generated mouse events are never dropped because a write() holds TERMINAL.
+/// — NeonVale: P3.5 split lock path. Uses MOUSE_INPUT instead of VT_TERMINALS so
+/// ISR-generated mouse events are never dropped because a write() holds the VT lock.
 /// The snapshot is at most one write-call stale (~1ms at 1kHz write rate) —
 /// acceptable latency for mouse escape sequences. — NeonVale
 ///
@@ -2343,19 +2555,24 @@ pub fn mouse_event(
     }
 }
 
-/// Force render/flush to framebuffer
+/// Force render/flush the focused VT's framebuffer
 pub fn flush() {
-    if let Some(ref mut terminal) = *TERMINAL.lock() {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
+    if let Some(ref mut terminal) = *VT_TERMINALS[vt].lock() {
         terminal.render();
     }
 }
 
 /// ISR-safe flush — uses try_lock to avoid deadlock when called from interrupt context.
+///
 /// — WireSaint: VT switch callback runs inside keyboard ISR. If sys_write holds
-/// TERMINAL lock on this CPU, blocking lock() = instant deadlock. try_lock() just
+/// the VT lock on this CPU, blocking lock() = instant deadlock. try_lock() just
 /// skips the flush — next tick() or write() will pick it up anyway.
 pub fn try_flush() {
-    if let Some(mut guard) = TERMINAL.try_lock() {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
+    if let Some(mut guard) = VT_TERMINALS[vt].try_lock() {
         if let Some(ref mut terminal) = *guard {
             terminal.render();
         }
@@ -2363,138 +2580,167 @@ pub fn try_flush() {
 }
 
 /// Disable terminal rendering (for direct framebuffer access)
+///
+/// — BlackLatch: Placeholder. Terminal stays initialized but graphics apps
+/// can write directly to /dev/fb0. No-op until we have a proper disable flag.
 pub fn disable() {
-    // Terminal stays initialized but stops rendering
-    // Graphics apps can write directly to /dev/fb0
+    // — BlackLatch: Terminal stays initialized but stops rendering.
+    // Graphics apps can write directly to /dev/fb0.
 }
 
-/// Re-enable terminal rendering
+/// Re-enable terminal rendering on the focused VT
 pub fn enable() {
-    if let Some(ref mut terminal) = *TERMINAL.lock() {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
+    if let Some(ref mut terminal) = *VT_TERMINALS[vt].lock() {
         terminal.renderer.invalidate();
         terminal.render();
     }
 }
 
-/// Scroll terminal view up (towards history) by N lines
+/// Scroll focused VT's view up (towards history) by N lines.
 ///
-/// Called from terminal_tick on mouse wheel events. Uses try_lock
-/// to avoid deadlock in ISR context. — NeonRoot
+/// Called from terminal_tick on mouse wheel events. ISR context — try_lock only. — NeonRoot
 pub fn scroll_up(lines: usize) {
-    if let Some(mut guard) = TERMINAL.try_lock() {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
+    if let Some(mut guard) = VT_TERMINALS[vt].try_lock() {
         if let Some(ref mut terminal) = *guard {
             terminal.scroll_view_up(lines);
         }
     } else {
         #[cfg(feature = "debug-lock")]
-        lock_contention_warning("TERMINAL (scroll_up)");
+        lock_contention_warning("VT_TERMINALS (scroll_up)");
     }
 }
 
-/// Scroll terminal view down (towards current) by N lines
+/// Scroll focused VT's view down (towards current) by N lines.
 ///
-/// Called from terminal_tick on mouse wheel events. Uses try_lock
-/// to avoid deadlock in ISR context. — NeonRoot
+/// Called from terminal_tick on mouse wheel events. ISR context — try_lock only. — NeonRoot
 pub fn scroll_down(lines: usize) {
-    if let Some(mut guard) = TERMINAL.try_lock() {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
+    if let Some(mut guard) = VT_TERMINALS[vt].try_lock() {
         if let Some(ref mut terminal) = *guard {
             terminal.scroll_view_down(lines);
         }
     } else {
         #[cfg(feature = "debug-lock")]
-        lock_contention_warning("TERMINAL (scroll_down)");
+        lock_contention_warning("VT_TERMINALS (scroll_down)");
     }
 }
 
-/// Start text selection at pixel coordinates
+/// Start text selection at pixel coordinates on the focused VT.
 ///
 /// Called from terminal_tick when left mouse button pressed. — InputShade
 pub fn start_selection(x_px: i32, y_px: i32) {
-    if let Some(mut guard) = TERMINAL.try_lock() {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
+    if let Some(mut guard) = VT_TERMINALS[vt].try_lock() {
         if let Some(ref mut terminal) = *guard {
             terminal.start_selection(x_px, y_px);
         }
     } else {
         #[cfg(feature = "debug-lock")]
-        lock_contention_warning("TERMINAL (start_selection)");
+        lock_contention_warning("VT_TERMINALS (start_selection)");
     }
 }
 
-/// Update selection during mouse drag
+/// Update selection during mouse drag on the focused VT.
 ///
 /// Called from terminal_tick on mouse motion with button held. — InputShade
 pub fn update_selection(x_px: i32, y_px: i32) {
-    if let Some(mut guard) = TERMINAL.try_lock() {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
+    if let Some(mut guard) = VT_TERMINALS[vt].try_lock() {
         if let Some(ref mut terminal) = *guard {
             terminal.update_selection(x_px, y_px);
         }
     } else {
         #[cfg(feature = "debug-lock")]
-        lock_contention_warning("TERMINAL (update_selection)");
+        lock_contention_warning("VT_TERMINALS (update_selection)");
     }
 }
 
-/// Finish selection and copy to clipboard
+/// Finish selection and copy to clipboard on the focused VT.
 ///
 /// Called from terminal_tick when left mouse button released. — InputShade
 pub fn finish_selection() {
-    if let Some(mut guard) = TERMINAL.try_lock() {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
+    if let Some(mut guard) = VT_TERMINALS[vt].try_lock() {
         if let Some(ref mut terminal) = *guard {
             terminal.finish_selection();
         }
     } else {
         #[cfg(feature = "debug-lock")]
-        lock_contention_warning("TERMINAL (finish_selection)");
+        lock_contention_warning("VT_TERMINALS (finish_selection)");
     }
 }
 
-/// Clear current selection
+/// Clear current selection on the focused VT.
 ///
 /// Called when terminal output occurs or user clicks without dragging. — InputShade
 pub fn clear_selection() {
-    if let Some(mut guard) = TERMINAL.try_lock() {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
+    if let Some(mut guard) = VT_TERMINALS[vt].try_lock() {
         if let Some(ref mut terminal) = *guard {
             terminal.clear_selection();
         }
     } else {
         #[cfg(feature = "debug-lock")]
-        lock_contention_warning("TERMINAL (clear_selection)");
+        lock_contention_warning("VT_TERMINALS (clear_selection)");
     }
 }
 
-/// Paste clipboard content as input
+/// Paste clipboard content as input from the focused VT.
 ///
 /// Called from terminal_tick on middle-click or Shift+Insert. — InputShade
 pub fn paste_clipboard() -> Vec<u8> {
-    if let Some(guard) = TERMINAL.try_lock() {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return Vec::new(); }
+    if let Some(guard) = VT_TERMINALS[vt].try_lock() {
         if let Some(ref terminal) = *guard {
             return terminal.paste_clipboard();
         }
     } else {
         #[cfg(feature = "debug-lock")]
-        lock_contention_warning("TERMINAL (paste_clipboard)");
+        lock_contention_warning("VT_TERMINALS (paste_clipboard)");
     }
     Vec::new()
 }
 
-/// Dump terminal screen buffer to serial port for debugging
+/// Dump focused VT's screen buffer to serial port for debugging.
 ///
 /// — GraveShift: The nuclear option when you need to see WTF is on screen.
 /// Bypasses all buffers, writes raw text directly to COM1. Because sometimes
 /// the framebuffer lies and serial is the only truth left.
 pub fn debug_dump_screen_to_serial() {
     // — GraveShift: All serial writes use bounded-spin helpers from os_log.
-    // Old code had unbounded `while THRE==0 {}` per byte × 13,440 chars = hang city.
+    // Old code had unbounded `while THRE==0 {}` per byte x 13,440 chars = hang city.
 
     use os_log::{write_str_raw as write_str_unsafe, write_byte_raw as write_byte_unsafe, write_u32_raw as write_u32_unsafe};
 
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+
     unsafe {
         write_str_unsafe("\n╔════════════════════════════════════════════════════════════════════════════╗\n");
-        write_str_unsafe("║                    VT SCREEN BUFFER DUMP (SERIAL)                         ║\n");
+        write_str_unsafe("║                    VT SCREEN BUFFER DUMP (SERIAL) VT");
+        write_byte_unsafe(b'0' + vt as u8);
+        write_str_unsafe("                      ║\n");
         write_str_unsafe("╠════════════════════════════════════════════════════════════════════════════╣\n");
     }
 
-    if let Some(guard) = TERMINAL.try_lock() {
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) {
+        unsafe {
+            write_str_unsafe("║ ERROR: VT not initialized                                                ║\n");
+            write_str_unsafe("╚════════════════════════════════════════════════════════════════════════════╝\n");
+        }
+        return;
+    }
+
+    if let Some(guard) = VT_TERMINALS[vt].try_lock() {
         if let Some(ref terminal) = *guard {
             let (cols, rows) = terminal.dimensions();
 
@@ -2543,7 +2789,7 @@ pub fn debug_dump_screen_to_serial() {
         }
     } else {
         unsafe {
-            write_str_unsafe("║ ERROR: Could not lock TERMINAL mutex                                      ║\n");
+            write_str_unsafe("║ ERROR: Could not lock VT_TERMINALS mutex                                  ║\n");
             write_str_unsafe("╚════════════════════════════════════════════════════════════════════════════╝\n");
         }
     }

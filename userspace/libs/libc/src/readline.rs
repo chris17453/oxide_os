@@ -740,7 +740,8 @@ unsafe fn read_line_loop(prompt: &[u8]) -> *mut u8 {
 
         let c = getchar();
         if c < 0 {
-            // EOF
+            // — GraveShift: Log EOF so we can distinguish readline-EOF from crash
+            let _ = crate::syscall::sys_write(2, b"[RL] EOF from getchar\n");
             return core::ptr::null_mut();
         }
         let c = c as u8;
@@ -748,8 +749,17 @@ unsafe fn read_line_loop(prompt: &[u8]) -> *mut u8 {
         // Handle escape sequences
         if c == ESC {
             let next = getchar();
+            if next < 0 {
+                // — GraveShift: EOF during escape sequence — don't bail, just ignore
+                continue;
+            }
             if next == b'[' as i32 {
-                let code = getchar() as u8;
+                let code_i = getchar();
+                if code_i < 0 {
+                    // — GraveShift: EOF during CSI sequence — ignore partial escape
+                    continue;
+                }
+                let code = code_i as u8;
                 match code {
                     b'A' => {
                         // Up: previous history

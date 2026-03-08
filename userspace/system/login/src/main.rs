@@ -354,6 +354,28 @@ pub fn main() -> i32 {
 
         // Fork and exec shell
         let pid = fork();
+
+        // — GraveShift: Debug — trace fork return value. If parent gets 0 instead of
+        // child_pid, it takes the child path and execs instead of waiting. This kills
+        // the login session because nobody waits for the shell.
+        {
+            let mut buf = [0u8; 32];
+            let mut i = 0;
+            for &b in b"[LOGIN] fork=" { buf[i] = b; i += 1; }
+            if pid < 0 {
+                buf[i] = b'-'; i += 1;
+                let abs = (-pid) as u32;
+                if abs >= 10 { buf[i] = b'0' + ((abs / 10) % 10) as u8; i += 1; }
+                buf[i] = b'0' + (abs % 10) as u8; i += 1;
+            } else {
+                let p = pid as u32;
+                if p >= 10 { buf[i] = b'0' + ((p / 10) % 10) as u8; i += 1; }
+                buf[i] = b'0' + (p % 10) as u8; i += 1;
+            }
+            buf[i] = b'\n'; i += 1;
+            let _ = write(2, &buf[..i]);
+        }
+
         if pid < 0 {
             prints("Failed to fork\n");
             return 1;

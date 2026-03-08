@@ -376,12 +376,19 @@ pub fn sys_wait(status: &mut i32) -> i32 {
 }
 
 /// sys_waitpid - Wait for specific child
+///
+/// — GraveShift: Must use syscall4 with explicit rusage=0, NOT syscall3.
+/// syscall3 leaves r10 undefined; the kernel reads r10 as rusage_ptr in
+/// sys_wait4 and returns EFAULT if r10 contains a stale kernel address.
+/// That silently kills waitpid() — it returns immediately without blocking,
+/// orphaning every shell spawned by login. One extra zero in r10. Worth it.
 pub fn sys_waitpid(pid: i32, status: &mut i32, options: i32) -> i32 {
-    syscall3(
+    syscall4(
         nr::WAITPID,
         pid as usize,
         status as *mut i32 as usize,
         options as usize,
+        0, // rusage = NULL — r10 MUST be zero, not a stale kernel address
     ) as i32
 }
 

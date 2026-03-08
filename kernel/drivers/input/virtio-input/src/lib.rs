@@ -107,6 +107,11 @@ pub struct VirtioInput {
 
 static VIRTIO_INPUT_DEVICES: Mutex<Vec<VirtioInput>> = Mutex::new(Vec::new());
 
+/// — GraveShift: diagnostic counter — how many events we've ever popped from
+/// the VirtIO used ring. If this stays at 0 after typing, the device isn't
+/// delivering events. Atomic because ISR + poll can race.
+static VIRTIO_EVENT_TOTAL: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
 /// Probe all virtio-input devices on the PCI bus
 /// — InputShade: called once during boot from init.rs
 pub fn probe_all_pci() -> usize {
@@ -347,6 +352,18 @@ impl VirtioInput {
                 | status::DRIVER_OK,
         );
 
+        // — InputShade: NOW notify the device about pre-filled event buffers.
+        // DRIVER_OK is set, the device is listening. Before this point, the spec
+        // says the device ignores queue notifications. This was the root cause of
+        // "virtio keyboard dead on boot" — buffers were available but the device
+        // didn't know because we yelled into the void before it was ready.
+        // — GraveShift: MUST re-select EVENT_QUEUE before notify — init_status_queue()
+        // changed the selected queue to STATUS_QUEUE, and queue_notify_off() reads
+        // the offset for whichever queue is currently selected. Wrong queue selected
+        // = wrong notify address = device never sees the kick.
+        dev.transport.select_queue(EVENT_QUEUE);
+        dev.transport.notify_queue(EVENT_QUEUE);
+
         let device_type = match dev.device_type {
             VirtioInputType::Keyboard => InputDeviceType::Keyboard,
             VirtioInputType::Mouse => InputDeviceType::Mouse,
@@ -499,7 +516,11 @@ impl VirtioInput {
             queue.add_available(i);
         }
 
-        self.transport.notify_queue(EVENT_QUEUE);
+        // — InputShade: DO NOT notify_queue here! DRIVER_OK hasn't been set yet.
+        // VirtIO spec §3.1.1: "The device MUST NOT consume buffers or send any
+        // used buffer notifications before DRIVER_OK." Notifying before DRIVER_OK
+        // means the device ignores our available buffers. After DRIVER_OK is set
+        // in from_pci(), we notify there. Without this fix, the keyboard is dead.
 
         Ok(())
     }
@@ -561,6 +582,27 @@ impl VirtioInput {
         }
 
         if count > 0 {
+            let prev = VIRTIO_EVENT_TOTAL.fetch_add(count as u32, core::sync::atomic::Ordering::Relaxed);
+            // — GraveShift: trace first batch of events so we know the device is alive
+            if prev == 0 {
+                serial_write_str(b"[VIRTIO-INPUT] FIRST EVENTS! count=");
+                serial_write_num(count);
+                serial_write_str(b" type=");
+                serial_write_num(pending[0].1.event_type as usize);
+                serial_write_str(b" code=");
+                serial_write_num(pending[0].1.code as usize);
+                serial_write_str(b" val=");
+                serial_write_num(pending[0].1.value as usize);
+                serial_write_str(b" dev=");
+                serial_write_str(self.name.as_bytes());
+                serial_write_crlf();
+            }
+
+            // — GraveShift: MUST select EVENT_QUEUE before notify — the transport's
+            // queue_notify_off() reads the offset for the currently selected queue.
+            // Without this, we may notify the wrong queue and the device never
+            // picks up the re-armed buffers. Keyboard dies after 64 initial events.
+            self.transport.select_queue(EVENT_QUEUE);
             self.transport.notify_queue(EVENT_QUEUE);
         }
     }

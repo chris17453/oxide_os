@@ -36,15 +36,19 @@ fn push_mouse_escape(seq: &[u8]) {
     push_escape_sequence(seq);
 }
 
-/// Console write function for syscalls
+/// Console write function for syscalls and boot messages.
 ///
-/// — GraveShift: Stdout goes to the terminal emulator ONLY.
+/// — GraveShift: Routes to the focused VT's terminal emulator via write_vt().
+/// Each VT has its own TerminalEmulator and backing framebuffer now.
 /// Serial was the original sin — every byte of userspace output crawled through
 /// the UART byte-by-byte, 28,800 COM1 spinlock cycles per curses frame.
 /// Debug output has its own path (os_log, debug_*! macros). Stdout is not debug.
 pub fn console_write(data: &[u8]) {
     if terminal::is_initialized() {
-        terminal::write(data);
+        let vt = compositor::focused_vt();
+        terminal::write_vt(vt, data);
+        // — NeonRoot: mark the focused VT dirty so compositor blits our pixels to hardware
+        compositor::mark_dirty(vt);
     } else if fb::is_initialized() {
         // — GraveShift: fallback to basic fb console before terminal is ready
         for &byte in data {
@@ -328,7 +332,11 @@ pub fn terminal_tick() {
             }
         }
 
-        // Redraw mouse cursor on top of freshly rendered terminal content — SoftGlyph
+        // — NeonRoot: compositor blits dirty VT backing buffers → hardware fb.
+        // Terminal rendered to VT0's backing buffer above, now blit to screen.
+        compositor::tick();
+
+        // Redraw mouse cursor on top of freshly composited content — SoftGlyph
         fb::mouse_draw();
     } else if fb::is_initialized() {
         // Fallback pre-terminal: allow fb console cursor only when terminal is not active
@@ -364,9 +372,11 @@ pub fn console_write_bytes(data: &[u8]) {
     // — SableWire: Enable access to user pages (SMAP bypass)
     unsafe { crate::arch::user_access_begin(); }
 
-    // Write to terminal emulator or framebuffer
+    // — GraveShift: route to focused VT's terminal emulator
     if terminal::is_initialized() {
-        terminal::write(data);
+        let vt = compositor::focused_vt();
+        terminal::write_vt(vt, data);
+        compositor::mark_dirty(vt);
     } else if fb::is_initialized() {
         for &byte in data {
             fb::putchar(byte as char);

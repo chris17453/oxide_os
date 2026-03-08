@@ -15,14 +15,29 @@
 
 use boot_proto::BootInfo;
 
+/// Console target — where /dev/console should point.
+/// — GraveShift: Linux lets you stack multiple consoles on the command line,
+/// but we're not that ambitious yet. One target at a time, last one wins.
+#[derive(Clone, Copy, PartialEq)]
+pub enum ConsoleTarget {
+    /// /dev/tty0 — active VT alias (default, same as Linux default)
+    Tty0,
+    /// /dev/ttyN — specific VT (1-indexed, console=tty1 through ttyN)
+    Tty(usize),
+    /// /dev/ttyS0 — first serial port (console=ttyS0[,115200])
+    TtyS0,
+}
+
 /// Parsed kernel command line options.
 /// — GraveShift: every field defaults to "don't change anything" because
 /// the safest thing a config parser can do is nothing
 pub struct KernelOptions {
     /// Override root device path (e.g., "/dev/vda2")
     pub root_device: Option<&'static str>,
-    /// Redirect console output to serial port
-    pub console_serial: bool,
+    /// Console target — what /dev/console delegates to.
+    /// Parsed from `console=tty0`, `console=ttyS0`, `console=tty2`, etc.
+    /// Default: Tty0 (active VT, same as Linux)
+    pub console: ConsoleTarget,
     /// Suppress non-critical boot messages
     pub quiet: bool,
     /// Disable SMP — single CPU mode
@@ -44,7 +59,7 @@ impl KernelOptions {
     pub const fn default() -> Self {
         Self {
             root_device: None,
-            console_serial: false,
+            console: ConsoleTarget::Tty0,
             quiet: false,
             nosmp: false,
             debug_all: false,
@@ -92,12 +107,38 @@ pub fn parse_cmdline(boot_info: &'static BootInfo) {
             "debug-perf" => opts.debug_perf = true,
             "quiet" => opts.quiet = true,
             "nosmp" => opts.nosmp = true,
-            "console=serial" => opts.console_serial = true,
             other => {
-                // Check for key=value patterns
+                // — GraveShift: key=value patterns. Linux-compatible where it matters.
                 if let Some(val) = strip_prefix(other, "root=") {
-                    // Store the root device — this is from boot_info which is 'static
                     opts.root_device = Some(val);
+                } else if let Some(val) = strip_prefix(other, "console=") {
+                    // — GraveShift: Parse console= like Linux:
+                    //   console=tty0        → active VT (default)
+                    //   console=tty1        → specific VT
+                    //   console=ttyS0       → COM1 serial
+                    //   console=ttyS0,115200 → COM1 with baud (baud ignored for now)
+                    //   console=serial      → legacy alias for ttyS0
+                    let dev = val.split(',').next().unwrap_or(val);
+                    opts.console = match dev {
+                        "tty0" => ConsoleTarget::Tty0,
+                        "ttyS0" | "serial" => ConsoleTarget::TtyS0,
+                        other_tty => {
+                            // Parse ttyN → VT number
+                            if let Some(n_str) = strip_prefix(other_tty, "tty") {
+                                if let Some(n) = parse_usize(n_str) {
+                                    if n >= 1 && n <= 6 {
+                                        ConsoleTarget::Tty(n)
+                                    } else {
+                                        ConsoleTarget::Tty0 // — GraveShift: out of range, default
+                                    }
+                                } else {
+                                    ConsoleTarget::Tty0
+                                }
+                            } else {
+                                ConsoleTarget::Tty0
+                            }
+                        }
+                    };
                 }
                 // Unknown options silently ignored — GraveShift: we're not your mother
             }
@@ -158,4 +199,16 @@ fn strip_prefix<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
     } else {
         None
     }
+}
+
+/// Helper: parse a small decimal number from a string (no alloc)
+/// — GraveShift: atoi for people who don't trust libc
+fn parse_usize(s: &str) -> Option<usize> {
+    if s.is_empty() { return None; }
+    let mut n: usize = 0;
+    for &b in s.as_bytes() {
+        if b < b'0' || b > b'9' { return None; }
+        n = n.checked_mul(10)?.checked_add((b - b'0') as usize)?;
+    }
+    Some(n)
 }

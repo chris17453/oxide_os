@@ -447,13 +447,21 @@ pub struct PageDbStats {
 const PHYS_MAP_BASE: u64 = 0xFFFF_8000_0000_0000;
 
 /// The page frame database — flat array of PageFrame entries indexed by PFN
+///
+/// — SableWire: ALL fields are atomic. The old struct used plain *mut/usize/bool,
+/// which meant init() required &mut self. But PAGE_DATABASE is a plain `static`
+/// (no UnsafeCell), so mutating through &PAGE_DATABASE → *mut was instant UB.
+/// In debug mode LLVM doesn't optimize, so it worked. In release mode LLVM saw
+/// the "immutable" static, assumed count=0 forever, and optimized away the init.
+/// Result: pagedb empty → buddy drops every block → compositor OOM → panic.
+/// Atomics give us interior mutability without UnsafeCell. Crisis averted.
 pub struct PageDatabase {
     /// Pointer to the flat array of PageFrame entries (in direct-map region)
-    frames: *mut PageFrame,
+    frames: AtomicPtr<PageFrame>,
     /// Total number of frames tracked
-    count: usize,
+    count: AtomicUsize,
     /// Whether the database is initialized
-    initialized: bool,
+    initialized: core::sync::atomic::AtomicBool,
 }
 
 /// — SableWire: SAFETY — PageDatabase uses raw pointers into the direct-map
@@ -504,9 +512,9 @@ impl PageDatabase {
     /// Create a new uninitialized PageDatabase
     pub const fn new() -> Self {
         Self {
-            frames: core::ptr::null_mut(),
-            count: 0,
-            initialized: false,
+            frames: AtomicPtr::new(core::ptr::null_mut()),
+            count: AtomicUsize::new(0),
+            initialized: core::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -515,29 +523,31 @@ impl PageDatabase {
     /// # Safety
     /// `array_virt` must point to a zeroed region large enough for `frame_count` PageFrame entries.
     /// Must be called once during boot.
-    pub unsafe fn init(&mut self, array_virt: *mut PageFrame, frame_count: usize) {
-        self.frames = array_virt;
-        self.count = frame_count;
-        self.initialized = true;
+    /// — SableWire: now takes &self (not &mut self) thanks to atomic fields.
+    /// No more UB from casting away immutability on a plain static.
+    pub unsafe fn init(&self, array_virt: *mut PageFrame, frame_count: usize) {
+        self.frames.store(array_virt, Ordering::Release);
+        self.count.store(frame_count, Ordering::Release);
+        self.initialized.store(true, Ordering::Release);
     }
 
     /// Check if initialized
     #[inline]
     pub fn is_initialized(&self) -> bool {
-        self.initialized
+        self.initialized.load(Ordering::Acquire)
     }
 
     /// Total frame count
     #[inline]
     pub fn frame_count(&self) -> usize {
-        self.count
+        self.count.load(Ordering::Acquire)
     }
 
     /// Convert physical address to PFN (page frame number)
     #[inline]
     fn phys_to_pfn(&self, phys: PhysAddr) -> Option<usize> {
         let pfn = (phys.as_u64() >> FRAME_SHIFT) as usize;
-        if pfn < self.count {
+        if pfn < self.count.load(Ordering::Acquire) {
             Some(pfn)
         } else {
             None
@@ -548,8 +558,12 @@ impl PageDatabase {
     #[inline]
     pub fn get(&self, phys: PhysAddr) -> Option<&PageFrame> {
         let pfn = self.phys_to_pfn(phys)?;
-        // SAFETY: pfn is bounds-checked by phys_to_pfn
-        Some(unsafe { &*self.frames.add(pfn) })
+        let frames = self.frames.load(Ordering::Acquire);
+        if frames.is_null() {
+            return None;
+        }
+        // SAFETY: pfn is bounds-checked by phys_to_pfn, frames is non-null
+        Some(unsafe { &*frames.add(pfn) })
     }
 
     /// Mark frame as allocated (called from buddy alloc path)
@@ -575,7 +589,8 @@ impl PageDatabase {
         let pfn = self.phys_to_pfn(phys).ok_or(PageDbError::InvalidPfn {
             phys: phys.as_u64(),
         })?;
-        let frame = unsafe { &*self.frames.add(pfn) };
+        let frames = self.frames.load(Ordering::Acquire);
+        let frame = unsafe { &*frames.add(pfn) };
         let old_flags = frame.flags();
         let old_rc = frame.refcount();
         let ctx = FREE_CONTEXT.load(Ordering::Relaxed);
@@ -695,7 +710,8 @@ impl PageDatabase {
         let pfn = self.phys_to_pfn(phys).ok_or(PageDbError::InvalidPfn {
             phys: phys.as_u64(),
         })?;
-        let frame = unsafe { &*self.frames.add(pfn) };
+        let frames = self.frames.load(Ordering::Acquire);
+        let frame = unsafe { &*frames.add(pfn) };
         let flags = frame.flags();
         let ctx = FREE_CONTEXT.load(Ordering::Relaxed);
 
@@ -795,10 +811,16 @@ impl PageDatabase {
     /// from /proc/meminfo, never in a hot path.
     pub fn stats(&self) -> PageDbStats {
         let mut stats = PageDbStats::default();
-        stats.total = self.count;
+        let count = self.count.load(Ordering::Acquire);
+        let frames = self.frames.load(Ordering::Acquire);
+        stats.total = count;
 
-        for i in 0..self.count {
-            let frame = unsafe { &*self.frames.add(i) };
+        if frames.is_null() {
+            return stats;
+        }
+
+        for i in 0..count {
+            let frame = unsafe { &*frames.add(i) };
             let flags = frame.flags();
             let rc = frame.refcount();
 

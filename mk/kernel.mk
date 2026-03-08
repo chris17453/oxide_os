@@ -18,24 +18,29 @@ ALL_KERNEL_FEATURES := $(ARCH_FEATURE)
 endif
 
 # Build kernel
-# Pass KERNEL_FEATURES to enable debug output, e.g.: make run KERNEL_FEATURES=debug-all
+# Pass KERNEL_FEATURES to enable debug output, e.g.: make run DEBUG=all
 # — PatchBay: OXIDE_BUILD_NUMBER env var injects the NT-style build counter at compile time
+# — SableWire: Shell conditional, not ifeq. ifeq is evaluated at parse time and ignores
+# target-specific variables (run-release: PROFILE = release). Shell runs at recipe time.
 kernel:
-	@echo "Building kernel ($(ARCH))..."
-ifeq ($(PROFILE),release)
-	@OXIDE_BUILD_NUMBER=$$(cat build/build-number 2>/dev/null || echo 0) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD) --release --features $(ALL_KERNEL_FEATURES)
-else
-	@OXIDE_BUILD_NUMBER=$$(cat build/build-number 2>/dev/null || echo 0) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD) --features $(ALL_KERNEL_FEATURES)
-endif
+	@echo "Building kernel ($(ARCH), $(PROFILE))..."
+	@RELEASE_FLAG=""; \
+	if [ "$(PROFILE)" = "release" ]; then RELEASE_FLAG="--release"; fi; \
+	OXIDE_BUILD_NUMBER=$$(cat build/build-number 2>/dev/null || echo 0) \
+	OXIDE_VERSION_STRING=$(OXIDE_VERSION) \
+	cargo build --package kernel --target $(KERNEL_TARGET_JSON) $(KERNEL_BUILD_STD) \
+		$$RELEASE_FLAG --features $(ALL_KERNEL_FEATURES)
 
 # Build bootloader
+# — SableWire: Same shell-conditional fix as kernel. See above.
 bootloader:
-	@echo "Building bootloader..."
-ifeq ($(PROFILE),release)
-	@OXIDE_BUILD_NUMBER=$$(cat build/build-number 2>/dev/null || echo 0) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package boot-uefi --target $(ARCH)-unknown-uefi --release -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem
-else
-	@OXIDE_BUILD_NUMBER=$$(cat build/build-number 2>/dev/null || echo 0) OXIDE_VERSION_STRING=$(OXIDE_VERSION) cargo build --package boot-uefi --target $(ARCH)-unknown-uefi -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem
-endif
+	@echo "Building bootloader ($(PROFILE))..."
+	@RELEASE_FLAG=""; \
+	if [ "$(PROFILE)" = "release" ]; then RELEASE_FLAG="--release"; fi; \
+	OXIDE_BUILD_NUMBER=$$(cat build/build-number 2>/dev/null || echo 0) \
+	OXIDE_VERSION_STRING=$(OXIDE_VERSION) \
+	cargo build --package boot-uefi --target $(ARCH)-unknown-uefi \
+		$$RELEASE_FLAG -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem
 
 # Build release
 release:

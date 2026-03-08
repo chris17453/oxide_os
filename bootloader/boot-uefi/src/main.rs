@@ -551,6 +551,15 @@ fn get_framebuffer_info() -> Option<FramebufferInfo> {
             _ => PixelFormat::Unknown,
         };
 
+        // — GlassSignal: VirtIO-GPU-backed GOP sets frame_buffer_base = 0 because
+        // it uses DMA resources, not a linear framebuffer. Reporting base=0 to the
+        // kernel makes it write pixels to physical address 0 (wrong) and tricks the
+        // VirtIO-GPU driver into thinking GOP is active (skipping real init).
+        // Return None so the kernel falls through to VirtIO-GPU takeover.
+        if mode.frame_buffer_base == 0 || mode.frame_buffer_size == 0 {
+            return None;
+        }
+
         Some(FramebufferInfo {
             base: mode.frame_buffer_base,
             size: mode.frame_buffer_size as u64,

@@ -56,8 +56,10 @@ pub unsafe fn set_yield_callback(f: YieldFn) {
     }
 }
 
-/// Number of virtual terminals
-pub const NUM_VTS: usize = 6;
+/// Maximum VT slots (compile-time array ceiling).
+/// — GraveShift: actual count is runtime — set via init(num_vts).
+/// Change this only if you need more than 6 VT slots system-wide.
+pub const MAX_VTS: usize = 6;
 
 /// VT state — TTY + metadata, NO input buffer.
 ///
@@ -91,87 +93,65 @@ impl VtState {
 /// This is the fix for the intermittent keystroke drops that caused login failures.
 pub struct VtManager {
     /// All VTs (TTY state — behind mutex for echo/ldisc/termios)
-    vts: [Mutex<VtState>; NUM_VTS],
+    /// — GraveShift: MAX_VTS slots, all wired up. TTY structs are cheap —
+    /// the expensive backing buffers live in the compositor and are lazy-allocated.
+    vts: [Mutex<VtState>; MAX_VTS],
     /// Input ring buffers — OUTSIDE mutex for true lock-free IRQ push
     /// One per VT. IRQ pushes to active VT's ring. read()/poll() drains it.
-    input_rings: [LockFreeRing; NUM_VTS],
+    input_rings: [LockFreeRing; MAX_VTS],
 }
 
 impl VtManager {
-    /// Create a new VT manager
+    /// Create a new VT manager with MAX_VTS terminals.
+    /// — GraveShift: TTY structs are cheap. The expensive backing buffers
+    /// live in the compositor and are lazy-allocated on first split/switch.
     pub fn new() -> Self {
-        // Create TTY drivers for each VT
+        // — GraveShift: VtTtyDriver is the glue between TTY writes and the
+        // per-VT terminal emulator. Each VT has its OWN TerminalEmulator —
+        // no callback indirection, no raw byte buffering, no state-swapping.
+        // Write goes straight to terminal::write_vt() which processes escape
+        // sequences and renders to the VT's backing framebuffer. Like Linux's
+        // con_write() calling fbcon_putcs() on the correct vc_data. — GraveShift
         struct VtTtyDriver {
             vt_num: usize,
         }
         impl TtyDriver for VtTtyDriver {
             fn write(&self, data: &[u8]) {
-                // Only write if this is the active VT (check global directly)
-                let active = *ACTIVE_VT.read();
-                // — GraveShift: [VTD] traces gated — these fired on EVERY glyph write,
-                // saturating 115200 baud serial and making colors output take 10x longer.
-                #[cfg(feature = "debug-console")]
-                {
-                    unsafe { os_log::write_str_raw("[VTD] a="); }
-                    unsafe { os_log::write_byte_raw(b'0' + (active as u8)); }
-                    unsafe { os_log::write_str_raw(" v="); }
-                    unsafe { os_log::write_byte_raw(b'0' + (self.vt_num as u8)); }
-                }
-                if active == self.vt_num {
-                    // Write to console output (terminal emulator + serial)
-                    unsafe {
-                        if let Some(write_fn) = CONSOLE_WRITE_CALLBACK {
-                            #[cfg(feature = "debug-console")]
-                            os_log::write_str_raw(" ->CW\n");
-                            write_fn(data);
-                        } else {
-                            os_log::write_str_raw("[VTD] NO-CB!\n");
-                        }
+                // — GraveShift: Lazy-init the VT's terminal emulator on first write.
+                // VT0 is initialized at boot. VTs 1-5 spawn here when getty first writes.
+                // compositor::get_vt_framebuffer() allocates the ~4MB backing buffer on demand.
+                if !terminal::is_vt_initialized(self.vt_num) {
+                    if let Some(fb) = compositor::get_vt_framebuffer(self.vt_num) {
+                        terminal::init_vt(self.vt_num, fb);
+                    } else {
+                        // — GraveShift: no backing fb = can't render. This shouldn't happen
+                        // after compositor init, but if it does, bail silently.
+                        return;
                     }
-                } else {
-                    #[cfg(feature = "debug-console")]
-                    unsafe { os_log::write_str_raw(" SKIP\n"); }
                 }
+
+                // — GraveShift: Direct write to this VT's own terminal emulator.
+                // No CONSOLE_WRITE_CALLBACK. No VT_OUTPUT_BUFFERS. No raw byte replay.
+                // The terminal processes escape sequences, updates its text buffer, and
+                // renders glyphs to this VT's backing framebuffer — whether active or not.
+                terminal::write_vt(self.vt_num, data);
+
+                // — NeonRoot: mark this VT dirty so compositor blits to hardware.
+                // Only matters if this is the focused VT — compositor skips non-focused.
+                compositor::mark_dirty(self.vt_num);
             }
         }
 
         VtManager {
-            vts: [
+            vts: core::array::from_fn(|i| {
                 Mutex::new(VtState::new(
-                    Tty::new(Arc::new(VtTtyDriver { vt_num: 0 }), 1, 0),
-                    0,
-                )),
-                Mutex::new(VtState::new(
-                    Tty::new(Arc::new(VtTtyDriver { vt_num: 1 }), 2, 0),
-                    1,
-                )),
-                Mutex::new(VtState::new(
-                    Tty::new(Arc::new(VtTtyDriver { vt_num: 2 }), 3, 0),
-                    2,
-                )),
-                Mutex::new(VtState::new(
-                    Tty::new(Arc::new(VtTtyDriver { vt_num: 3 }), 4, 0),
-                    3,
-                )),
-                Mutex::new(VtState::new(
-                    Tty::new(Arc::new(VtTtyDriver { vt_num: 4 }), 5, 0),
-                    4,
-                )),
-                Mutex::new(VtState::new(
-                    Tty::new(Arc::new(VtTtyDriver { vt_num: 5 }), 6, 0),
-                    5,
-                )),
-            ],
+                    Tty::new(Arc::new(VtTtyDriver { vt_num: i }), (i + 1) as _, 0),
+                    i,
+                ))
+            }),
             // — GraveShift: Ring buffers live here, not inside VtState.
             // IRQ handler writes directly. No mutex. No try_lock. No dropped keys.
-            input_rings: [
-                LockFreeRing::new(),
-                LockFreeRing::new(),
-                LockFreeRing::new(),
-                LockFreeRing::new(),
-                LockFreeRing::new(),
-                LockFreeRing::new(),
-            ],
+            input_rings: core::array::from_fn(|_| LockFreeRing::new()),
         }
     }
 
@@ -188,7 +168,7 @@ impl VtManager {
     /// If the RwLock is contended, we bail — the switch just doesn't happen
     /// this interrupt cycle. User presses Alt+F2 again and it works.
     pub fn switch_to(&self, vt_num: usize) -> bool {
-        if vt_num >= NUM_VTS {
+        if vt_num >= MAX_VTS {
             return false;
         }
 
@@ -236,7 +216,7 @@ impl VtManager {
             }
         };
 
-        if active >= NUM_VTS {
+        if active >= MAX_VTS {
             return;
         }
 
@@ -254,13 +234,21 @@ impl VtManager {
         // Ctrl+C bytes rot in there forever without this fast path.
         // try_lock is fine here — if contended, read()/poll() drain catches it.
         // Double delivery is harmless. — GraveShift
+        // 🔥 IMMEDIATE SIGNAL DELIVERY (best-effort fast path) 🔥
+        //
+        // Apps in tight render loops never drain the ring buffer.
+        // Ctrl+C bytes rot in there forever without this fast path.
+        // try_lock is fine here — if contended, read()/poll() drain catches it.
+        // Double delivery is harmless. — GraveShift
         if ch == 0x03 || ch == 0x1C || ch == 0x1A {
             // — GraveShift: Diagnostic breadcrumbs for signal delivery debugging.
             // If Ctrl+C isn't killing your app, follow the trail of "[SIG-FAST]" in serial.
+            #[cfg(feature = "debug-console")]
             unsafe { os_log::write_str_raw("[SIG-FAST] signal byte\n"); }
 
             if let Some(vt) = self.vts[active].try_lock() {
                 let isig = vt.tty.try_isig_enabled().unwrap_or(true);
+                #[cfg(feature = "debug-console")]
                 if isig {
                     unsafe { os_log::write_str_raw("[SIG-FAST] isig=true\n"); }
                 } else {
@@ -278,9 +266,9 @@ impl VtManager {
                         if let Some(callback) = SIGNAL_PGRP_CALLBACK {
                             if let Some(pgid) = vt.tty.try_get_foreground_pgid() {
                                 // — GraveShift: Show raw PGID value to debug stale PGID mystery.
-                                os_log::write_str_raw("[SIG-FAST] raw pgid=");
-                                // Decimal print without arch dependency
+                                #[cfg(feature = "debug-console")]
                                 {
+                                    os_log::write_str_raw("[SIG-FAST] raw pgid=");
                                     let v = pgid as u32;
                                     if v == 0 {
                                         os_log::write_byte_raw(b'0');
@@ -291,24 +279,30 @@ impl VtManager {
                                         while n > 0 { buf[pos] = b'0' + (n % 10) as u8; n /= 10; pos += 1; }
                                         for i in (0..pos).rev() { os_log::write_byte_raw(buf[i]); }
                                     }
+                                    os_log::write_str_raw("\n");
                                 }
-                                os_log::write_str_raw("\n");
                                 if pgid > 0 {
+                                    #[cfg(feature = "debug-console")]
                                     os_log::write_str_raw("[SIG-FAST] SENDING to pgid>0\n");
                                     callback(pgid, signo);
+                                    #[cfg(feature = "debug-console")]
                                     os_log::write_str_raw("[SIG-FAST] SENT!\n");
                                 } else {
+                                    #[cfg(feature = "debug-console")]
                                     os_log::write_str_raw("[SIG-FAST] pgid<=0!\n");
                                 }
                             } else {
+                                #[cfg(feature = "debug-console")]
                                 os_log::write_str_raw("[SIG-FAST] pgid lock FAIL\n");
                             }
                         } else {
+                            #[cfg(feature = "debug-console")]
                             os_log::write_str_raw("[SIG-FAST] NO CALLBACK!\n");
                         }
                     }
                 }
             } else {
+                #[cfg(feature = "debug-console")]
                 unsafe { os_log::write_str_raw("[SIG-FAST] vt lock FAIL\n"); }
             }
         }
@@ -327,7 +321,7 @@ impl VtManager {
     pub fn read(&self, vt_num: usize, buf: &mut [u8]) -> VfsResult<usize> {
         #[cfg(feature = "debug-console")]
         dbg_serial("[VT] read() enter\n");
-        if vt_num >= NUM_VTS {
+        if vt_num >= MAX_VTS {
             return Err(VfsError::InvalidArgument);
         }
 
@@ -425,7 +419,7 @@ impl VtManager {
     pub fn write(&self, vt_num: usize, buf: &[u8]) -> VfsResult<usize> {
         #[cfg(feature = "debug-console")]
         dbg_serial("[VT] write() enter\n");
-        if vt_num >= NUM_VTS {
+        if vt_num >= MAX_VTS {
             return Err(VfsError::InvalidArgument);
         }
 
@@ -444,7 +438,7 @@ impl VtManager {
 
     /// Get TTY for ioctl operations
     pub fn get_tty(&self, vt_num: usize) -> Option<Arc<Tty>> {
-        if vt_num >= NUM_VTS {
+        if vt_num >= MAX_VTS {
             return None;
         }
         Some(self.vts[vt_num].lock().tty.clone())
@@ -455,7 +449,7 @@ impl VtManager {
     /// — GraveShift: Ring buffer lives in VtManager.input_rings now. No unsafe
     /// pointer hacks, no mutex dance. Just grab the ring and drain it.
     pub fn poll_has_input(&self, vt_num: usize) -> bool {
-        if vt_num >= NUM_VTS {
+        if vt_num >= MAX_VTS {
             return false;
         }
 
@@ -497,7 +491,7 @@ impl VtManager {
             ws_xpixel: xpixel,
             ws_ypixel: ypixel,
         };
-        for i in 0..NUM_VTS {
+        for i in 0..MAX_VTS {
             self.vts[i].lock().tty.set_winsize(ws);
         }
     }
@@ -511,6 +505,12 @@ static VT_MANAGER_OWNER: Mutex<Option<Arc<VtManager>>> = Mutex::new(None);
 
 /// Active VT index (separate from manager to avoid circular dependency)
 static ACTIVE_VT: spin::RwLock<usize> = spin::RwLock::new(0);
+
+// — GraveShift: VT_OUTPUT_BUFFERS ELIMINATED. Each VT now has its own
+// TerminalEmulator that processes writes directly. No more raw byte buffering,
+// no more 256KB replay on VT switch. The per-VT terminal keeps its text buffer
+// up-to-date at all times — like Linux's vc_data[N]. RIP VT_OUTPUT_BUFFERS,
+// you served us poorly. — GraveShift
 
 /// Callback type for signaling a process group
 pub type SignalPgrpFn = fn(pgid: i32, sig: i32);
@@ -526,11 +526,10 @@ pub type SignalPendingFn = fn() -> bool;
 /// Global signal-pending callback (set by kernel)
 static mut SIGNAL_PENDING_CALLBACK: Option<SignalPendingFn> = None;
 
-/// Callback type for console output
-pub type ConsoleWriteFn = fn(&[u8]);
-
-/// Global console write callback (set by kernel)
-static mut CONSOLE_WRITE_CALLBACK: Option<ConsoleWriteFn> = None;
+// — GraveShift: CONSOLE_WRITE_CALLBACK ELIMINATED. VtTtyDriver::write() now
+// calls terminal::write_vt() directly — no function pointer indirection.
+// The callback was a decoupling layer from the days when vt couldn't depend on
+// terminal. Now it can. Direct calls, zero overhead, zero confusion. — GraveShift
 
 /// Callback type for VT switch notification
 /// 🔥 PRIORITY #2 FIX - VT switch screen buffer notification 🔥
@@ -539,7 +538,10 @@ pub type VtSwitchFn = fn(vt_num: usize);
 /// Global VT switch callback (set by kernel) - notifies terminal emulator to redraw
 static mut VT_SWITCH_CALLBACK: Option<VtSwitchFn> = None;
 
-/// Initialize VT subsystem
+/// Initialize VT subsystem. All MAX_VTS terminals are available — backing
+/// buffers in the compositor are lazy-allocated on first split/switch.
+/// — GraveShift: TTY structs are cheap. The memory savings come from
+/// the compositor not pre-allocating ~4MB backing buffers per unused VT.
 pub fn init() -> Arc<VtManager> {
     let manager = Arc::new(VtManager::new());
     let raw = Arc::as_ptr(&manager) as *mut VtManager;
@@ -551,6 +553,11 @@ pub fn init() -> Arc<VtManager> {
     }
     *VT_MANAGER_OWNER.lock() = Some(manager.clone());
     manager
+}
+
+/// How many VTs are available. Returns MAX_VTS (all VTs exist, backing buffers are lazy).
+pub fn num_vts() -> usize {
+    MAX_VTS
 }
 
 /// Get a lock-free reference to the VT manager (safe even in IRQ context)
@@ -602,17 +609,8 @@ pub unsafe fn set_signal_pending_callback(f: SignalPendingFn) {
     }
 }
 
-/// Set the console write callback for VT output
-///
-/// # Safety
-/// Must be called during single-threaded initialization
-pub unsafe fn set_console_write_callback(f: ConsoleWriteFn) {
-    // SAFETY: Caller ensures single-threaded initialization
-    // — NeonRoot
-    unsafe {
-        CONSOLE_WRITE_CALLBACK = Some(f);
-    }
-}
+// — GraveShift: set_console_write_callback REMOVED — VtTtyDriver calls
+// terminal::write_vt() directly now. No callback registration needed.
 
 /// Set the VT switch callback for screen buffer synchronization
 ///
@@ -718,6 +716,108 @@ impl VnodeOps for VtDevice {
         }
     }
 }
+
+/// /dev/tty0 — active virtual terminal alias (Linux-compatible)
+///
+/// — GraveShift: Unlike VtDevice which is bound to a fixed VT number,
+/// Tty0Device resolves ACTIVE_VT on every read/write/ioctl call.
+/// This is exactly how Linux's /dev/tty0 works — it's always the
+/// currently visible console. Write to it, and your bytes land on
+/// whatever VT the user is looking at. Essential for system messages
+/// that need to reach the operator regardless of which VT is active.
+pub struct Tty0Device {
+    manager: Arc<VtManager>,
+    ino: u64,
+}
+
+impl Tty0Device {
+    pub fn new(manager: Arc<VtManager>, ino: u64) -> Arc<Self> {
+        Arc::new(Tty0Device { manager, ino })
+    }
+}
+
+impl VnodeOps for Tty0Device {
+    fn vtype(&self) -> VnodeType {
+        VnodeType::CharDevice
+    }
+
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn read(&self, _offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        // — GraveShift: resolve active VT at call time, not at creation time
+        let active = *ACTIVE_VT.read();
+        self.manager.read(active, buf)
+    }
+
+    fn write(&self, _offset: u64, buf: &[u8]) -> VfsResult<usize> {
+        let active = *ACTIVE_VT.read();
+        self.manager.write(active, buf)
+    }
+
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rmdir(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn unlink(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rename(&self, _old: &str, _new_dir: &dyn VnodeOps, _new: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn stat(&self) -> VfsResult<Stat> {
+        // — GraveShift: major 4, minor 0 = /dev/tty0 in Linux
+        let mut stat = Stat::new(VnodeType::CharDevice, Mode::new(0o620), 0, self.ino);
+        stat.rdev = make_dev(4, 0);
+        Ok(stat)
+    }
+
+    fn truncate(&self, _size: u64) -> VfsResult<()> {
+        Ok(())
+    }
+
+    fn poll_read_ready(&self) -> bool {
+        let active = *ACTIVE_VT.read();
+        self.manager.poll_has_input(active)
+    }
+
+    fn poll_write_ready(&self) -> bool {
+        true
+    }
+
+    fn ioctl(&self, request: u64, arg: u64) -> VfsResult<i64> {
+        let active = *ACTIVE_VT.read();
+        if let Some(tty) = self.manager.get_tty(active) {
+            tty.ioctl(request, arg)
+        } else {
+            Err(VfsError::InvalidArgument)
+        }
+    }
+}
+
+/// Get the currently active VT index
+/// — GraveShift: public accessor for cross-crate queries
+pub fn get_active_vt() -> usize {
+    *ACTIVE_VT.read()
+}
+
+// — GraveShift: drain_pending_output REMOVED — per-VT terminal emulators
+// process all writes directly. No buffering, no draining, no replay.
 
 /// Create a device number from major and minor numbers
 fn make_dev(major: u64, minor: u64) -> u64 {

@@ -28,6 +28,8 @@ bitflags! {
         const O_CREAT = 0o100;
         /// Fail if file exists (with O_CREAT)
         const O_EXCL = 0o200;
+        /// Don't set controlling terminal (for tty devices)
+        const O_NOCTTY = 0o400;
         /// Truncate file to zero length
         const O_TRUNC = 0o1000;
         /// Append mode

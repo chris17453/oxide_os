@@ -169,6 +169,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "compositor"
+version = "0.1.0"
+dependencies = [
+ "fb",
+ "mm-manager",
+ "mm-traits",
+ "os_core",
+ "os_log",
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "compression"
 version = "0.1.0"
 
@@ -625,6 +637,7 @@ dependencies = [
  "block",
  "bochs-display",
  "boot-proto",
+ "compositor",
  "crypto",
  "devfs",
  "dhcp",
@@ -1830,6 +1843,7 @@ dependencies = [
 name = "vt"
 version = "0.1.0"
 dependencies = [
+ "compositor",
  "os_core",
  "os_log",
  "sched",

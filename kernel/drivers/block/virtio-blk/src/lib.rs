@@ -351,7 +351,7 @@ impl VirtioBlk {
     /// Notify the device that there are buffers available
     fn notify(&self) {
         if self.is_pci_io() {
-            // PCI I/O port mode
+            // — WireSaint: PCI legacy I/O port notification via os_core HAL
             outw(self.io_base() + pci_io::QUEUE_NOTIFY, 0);
         } else {
             // MMIO mode
@@ -463,6 +463,20 @@ impl VirtioBlk {
         // Poll for completion while holding the queue lock.
         // This ensures only one thread polls the used ring at a time,
         // preventing completion stealing between concurrent requests.
+        //
+        // — WireSaint: Poll for completion using volatile reads on the
+        // used ring. The Acquire fence + read_volatile in has_completed()
+        // ensures we see device DMA writes on every iteration — without
+        // volatile, the compiler can hoist the read and spin forever.
+        //
+        // We use spin_loop() (PAUSE) rather than HLT because block I/O
+        // runs during early kernel boot BEFORE the APIC timer starts.
+        // HLT without pending interrupts would sleep forever. PAUSE is
+        // sufficient: QEMU TCG cooperatively yields to its event loop
+        // between translation blocks, so VirtIO completions are delivered
+        // even in a tight spin. On KVM/real hardware, the device DMA
+        // writes directly to the used ring and the volatile read sees
+        // the completion immediately.
         let mut timeout = 10_000_000u32;
         loop {
             if queue.has_completed() {
@@ -502,6 +516,11 @@ impl VirtioBlk {
 
             timeout -= 1;
             if timeout == 0 {
+                // — TorqueJax: dump diagnostic state on timeout before giving up.
+                if self.is_pci_io() {
+                    let isr = inb(self.io_base() + pci_io::ISR_STATUS);
+                    serial_debug_timeout(sector, isr, queue.num_free());
+                }
                 // Timeout - free descriptors
                 queue.free_chain(desc_header);
                 return Err(BlockError::Timeout);
@@ -819,6 +838,50 @@ fn inl(port: u16) -> u32 {
 #[inline]
 fn outl(port: u16, value: u32) {
     unsafe { os_core::outl(port, value) }
+}
+
+// — TorqueJax: diagnostic serial output for block I/O timeout debugging.
+// Uses raw COM1 port I/O — no locks, no allocations, ISR-safe.
+fn serial_debug_timeout(sector: u64, isr: u8, free_descs: u16) {
+    // Write "[BLK-TIMEOUT] s=<sector> isr=<isr> free=<free>\n" to COM1
+    serial_write_str("[BLK-TIMEOUT] s=");
+    serial_write_hex(sector);
+    serial_write_str(" isr=");
+    serial_write_hex(isr as u64);
+    serial_write_str(" free=");
+    serial_write_hex(free_descs as u64);
+    serial_write_str("\n");
+}
+
+fn serial_write_str(s: &str) {
+    for &b in s.as_bytes() {
+        serial_write_byte(b);
+    }
+}
+
+fn serial_write_byte(b: u8) {
+    // Wait for UART TX ready (bounded)
+    for _ in 0..10000 {
+        if inb(0x3FD) & 0x20 != 0 {
+            break;
+        }
+    }
+    outb(0x3F8, b);
+}
+
+fn serial_write_hex(val: u64) {
+    let digits = b"0123456789abcdef";
+    serial_write_byte(b'0');
+    serial_write_byte(b'x');
+    // Find first non-zero nibble
+    let mut started = false;
+    for i in (0..16).rev() {
+        let nibble = ((val >> (i * 4)) & 0xF) as usize;
+        if nibble != 0 || started || i == 0 {
+            serial_write_byte(digits[nibble]);
+            started = true;
+        }
+    }
 }
 
 // ============================================================================

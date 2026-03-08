@@ -99,20 +99,43 @@ fn terminal_response_callback(data: &[u8]) {
 }
 
 /// Callback for VT switching (Alt+F1 through Alt+F6)
-/// Switches to the requested virtual terminal
+///
+/// — GraveShift: SIMPLIFIED. Per-VT terminal emulators eliminated the brain
+/// transplant dance. Each VT already has its own TerminalEmulator with its own
+/// text buffer and backing framebuffer. Switching is just:
+///   1. Tell terminal layer to focus the new VT (triggers re-render)
+///   2. Tell VT manager to update ACTIVE_VT
+///   3. Tell compositor to blit the new VT's backing fb to hardware
+/// No state swapping, no raw byte replay, no framebuffer hot-swap. — GraveShift
 fn vt_switch_callback(vt_num: usize) {
+    unsafe {
+        os_log::write_str_raw("[VT-CB] switch to VT");
+        os_log::write_byte_raw(b'0' + vt_num as u8);
+        os_log::write_str_raw("\n");
+    }
+
+    // — GraveShift: update terminal focus (re-renders new VT's text buffer to pixels)
+    terminal::switch_vt(vt_num);
+
+    // — GraveShift: update VT manager's ACTIVE_VT (input routing, tty layer)
     if let Some(vt_mgr) = vt::get_manager() {
         vt_mgr.switch_to(vt_num);
     }
+
+    // — NeonRoot: tell compositor which VT is focused (triggers full redraw blit)
+    compositor::focus_vt(vt_num);
 }
 
-/// Callback for VT switch notification to terminal emulator
-/// — WireSaint: Called from ISR context (keyboard IRQ → Alt+F1-F6 → vt::switch_to).
-/// MUST use try_flush() — blocking flush() deadlocks if sys_write holds TERMINAL lock
-/// on the same CPU. If try_lock fails, the next tick() or write() will render anyway.
-fn terminal_vt_switch_callback(_vt_num: usize) {
-    if terminal::is_initialized() {
-        terminal::try_flush();
+/// Compositor layout callback — called from ISR context (keyboard IRQ → Alt+H/V/Q/Enter/Tab)
+/// — GlassSignal: action codes match input::kbd — 0=HSplit, 1=VSplit, 2=Quad, 3=Toggle, 4=Cycle
+fn compositor_layout_callback(action: u8) {
+    match action {
+        0 => compositor::set_layout(compositor::layout::Layout::HSplit),
+        1 => compositor::set_layout(compositor::layout::Layout::VSplit),
+        2 => compositor::set_layout(compositor::layout::Layout::Quad),
+        3 => compositor::toggle_fullscreen(),
+        4 => compositor::cycle_focus(),
+        _ => {}
     }
 }
 
@@ -395,8 +418,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // outside the kernel region) get treated as free memory → allocated to user
     // processes → kernel page table corruption → triple fault. The 3 AM bug that
     // kept coming back because we were treating symptoms instead of the disease.
+    // — GraveShift: boot PT frame collection traces — gated to reduce serial noise
+    #[cfg(feature = "debug-fork")]
     unsafe { os_log::write_str_raw("[PTFIX] About to collect kernel PT frames\n"); }
     let kernel_pt_frames = unsafe { collect_kernel_pt_frames(boot_info.pml4_phys) };
+    #[cfg(feature = "debug-fork")]
     unsafe {
         os_log::write_str_raw("[PTFIX] Collected ");
         os_log::write_u32_raw(kernel_pt_frames.len() as u32);
@@ -586,10 +612,10 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                 }
 
                 // Initialize the global PageDatabase
+                // — SableWire: init() now takes &self (atomic fields), no more
+                // UB from casting away immutability. Release mode can't optimize this away.
                 unsafe {
-                    let db_ptr = &PAGE_DATABASE as *const mm_pagedb::PageDatabase
-                        as *mut mm_pagedb::PageDatabase;
-                    (*db_ptr).init(
+                    PAGE_DATABASE.init(
                         array_virt.as_mut_ptr::<mm_pagedb::PageFrame>(),
                         max_pfn,
                     );
@@ -676,16 +702,26 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         let mode_count = fb::get_mode_count();
         let _ = writeln!(writer, "[INFO] Video modes available: {}", mode_count);
 
-        // Initialize terminal emulator with framebuffer
+        // — NeonRoot: compositor gets the hardware framebuffer, terminal gets a VT0 backing buffer.
+        // Every pixel the terminal paints goes to RAM. Compositor blits RAM → MMIO at 30Hz.
         if let Some(framebuffer) = fb::framebuffer() {
-            terminal::init(framebuffer);
+            // Initialize compositor — it owns the hardware fb now
+            // — NeonRoot: only VT0 gets a buffer at init. Rest are lazy-allocated
+            // on first split/switch. No upfront memory waste.
+            let vt0_fb = compositor::init(framebuffer.clone());
+            let _ = writeln!(writer, "[INFO] Compositor initialized (VT0 buffer, rest on-demand)");
+
+            // Terminal gets VT0's backing buffer instead of the raw hardware fb
+            // — NeonRoot: fallback to raw hw fb if compositor somehow failed
+            let terminal_fb = vt0_fb.unwrap_or(framebuffer);
+            terminal::init(terminal_fb);
 
             // Register callback for terminal query responses (DSR, DA, etc.)
             unsafe {
                 terminal::set_response_callback(terminal_response_callback);
             }
 
-            let _ = writeln!(writer, "[INFO] Terminal emulator initialized");
+            let _ = writeln!(writer, "[INFO] Terminal emulator initialized (via compositor)");
         }
 
         // Clear the screen with a dark background
@@ -1012,6 +1048,12 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
     let _ = writeln!(writer, "[INFO] VT switch callback registered (shared kbd module)");
 
+    // — GlassSignal: Connect Alt+H/V/Q/Enter/Tab to compositor layout switching
+    unsafe {
+        input::kbd::set_compositor_callback(compositor_layout_callback);
+    }
+    let _ = writeln!(writer, "[INFO] Compositor layout callback registered (Alt+H/V/Q/Enter/Tab)");
+
     // Connect mouse IRQ 12 to PS/2 mouse driver
     debug_mouse!("[mouse] Registering IRQ 12 callback for PS/2 mouse");
     unsafe {
@@ -1069,6 +1111,35 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Priority: Bochs (simple, reliable, no virtqueue) > VirtIO-GPU > GOP (fallback).
     // GOP is already initialized by the bootloader; this attempts to upgrade.
     display_takeover(&mut writer);
+
+    // — GlassSignal: If display_takeover acquired a framebuffer (VirtIO-GPU or Bochs)
+    // but compositor/terminal weren't initialized earlier (because bootloader reported
+    // no valid GOP — e.g. VirtIO-GPU-backed GOP with frame_buffer_base=0), set them
+    // up now. Without this, the kernel has a framebuffer but nothing renders to it.
+    if fb::framebuffer().is_some() && !terminal::is_initialized() {
+        if let Some(framebuffer) = fb::framebuffer() {
+            let vt0_fb = compositor::init(framebuffer.clone());
+            let _ = writeln!(writer, "[COMP] Late compositor init (post display_takeover)");
+
+            let terminal_fb = vt0_fb.unwrap_or(framebuffer);
+            terminal::init(terminal_fb);
+            unsafe {
+                terminal::set_response_callback(terminal_response_callback);
+            }
+            let _ = writeln!(writer, "[INFO] Terminal initialized (late, via display_takeover)");
+
+            // — GlassSignal: register the 30Hz tick callback that was skipped earlier
+            // (terminal wasn't initialized when the normal registration point ran).
+            // Without this, compositor never ticks and the display freezes after first paint.
+            unsafe {
+                arch::set_terminal_tick_callback(console::terminal_tick);
+            }
+            let _ = writeln!(writer, "[INFO] Terminal tick callback registered (late, ~30 FPS)");
+
+            terminal::clear();
+            writer.console_enabled = true;
+        }
+    }
 
     // Set up input subsystem wake callback for blocking reads on /dev/input/eventN
     // — GraveShift: This callback fires from keyboard/mouse ISR context.
@@ -1228,7 +1299,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // — GraveShift: VT manager init. Creates TTY devices + lock-free input rings.
     // Must happen before devfs registration (VtDevice needs the Arc<VtManager>).
     let vt_manager = vt::init();
-    let _ = writeln!(writer, "[INFO] VT manager initialized ({} virtual terminals)", vt::NUM_VTS);
+    let _ = writeln!(writer, "[INFO] VT manager initialized ({} virtual terminals)", vt::MAX_VTS);
 
     // ⚡ GraveShift: Propagate real terminal dimensions to all VT TTYs.
     // Without this, TIOCGWINSZ returns the 24x80 default and every TUI
@@ -1245,16 +1316,68 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         );
     }
 
-    // Register /dev/tty1 through /dev/tty6 in devfs
-    // Wire /dev/console to tty1 (the primary VT)
-    for i in 0..vt::NUM_VTS {
+    // — GraveShift: Register /dev/tty0 (active VT alias — the Linux way).
+    // Every read/write resolves ACTIVE_VT at call time, so system messages
+    // always reach whoever's staring at the screen.
+    let tty0_device = vt::Tty0Device::new(vt_manager.clone(), 999);
+    dev_fs.register("tty0", tty0_device.clone());
+
+    // Register /dev/tty1 through /dev/ttyN in devfs (all VTs — backing buffers are lazy)
+    // Also register each in the ctty device registry for /dev/tty resolution.
+    let mut vt_devices: [Option<alloc::sync::Arc<dyn vfs::VnodeOps>>; 6] = Default::default();
+    for i in 0..vt::MAX_VTS {
         let vt_device = vt::VtDevice::new(i, vt_manager.clone(), 1000 + i as u64);
-        if i == 0 {
-            // /dev/console delegates to /dev/tty1 (the active VT)
-            devfs::set_console_backend(vt_device.clone());
-        }
+        vt_devices[i] = Some(vt_device.clone());
         let device_name = alloc::format!("tty{}", i + 1);
+        // — GraveShift: Register in ctty registry so /dev/tty can resolve
+        // the calling process's controlling terminal by device number.
+        // rdev = make_dev(4, vt_num) — major 4, minor = VT index.
+        let rdev = ((4u32) << 8) | (i as u32);
+        devfs::register_ctty_device(rdev, vt_device.clone());
         dev_fs.register(&device_name, vt_device);
+    }
+    // Also register /dev/ttyS0 (serial) in the ctty registry
+    // rdev = make_dev(4, 64) — major 4, minor 64 (COM1)
+    {
+        let serial_rdev = ((4u32) << 8) | 64;
+        let serial_dev: alloc::sync::Arc<dyn vfs::VnodeOps> =
+            alloc::sync::Arc::new(devfs::devices::SerialDevice::new(11));
+        devfs::register_ctty_device(serial_rdev, serial_dev);
+    }
+
+    // — GraveShift: Wire /dev/console based on kernel command line.
+    // Linux: `console=ttyS0,115200` → serial, `console=tty0` → active VT.
+    // Default is tty0 (active VT alias) — same as Linux when no console= is given.
+    {
+        use crate::cmdline::{ConsoleTarget, options};
+        let console_target = options().console;
+        match console_target {
+            ConsoleTarget::Tty0 => {
+                devfs::set_console_backend(tty0_device);
+                let _ = writeln!(writer, "[CON] console=tty0 (active VT alias)");
+            }
+            ConsoleTarget::Tty(n) => {
+                // — GraveShift: console=ttyN → lock console to specific VT
+                if n >= 1 && n <= vt::MAX_VTS {
+                    if let Some(ref dev) = vt_devices[n - 1] {
+                        devfs::set_console_backend(dev.clone());
+                        let _ = writeln!(writer, "[CON] console=tty{} (fixed VT)", n);
+                    }
+                } else {
+                    devfs::set_console_backend(tty0_device);
+                    let _ = writeln!(writer, "[CON] console=tty{} invalid, falling back to tty0", n);
+                }
+            }
+            ConsoleTarget::TtyS0 => {
+                // — GraveShift: console=ttyS0 → serial port. Look up /dev/serial
+                // device from devfs and wire it as the console backend.
+                // This means all writes to /dev/console go straight to COM1.
+                let serial_dev: alloc::sync::Arc<dyn vfs::VnodeOps> =
+                    alloc::sync::Arc::new(devfs::devices::SerialDevice::new(11));
+                devfs::set_console_backend(serial_dev);
+                let _ = writeln!(writer, "[CON] console=ttyS0 (serial port)");
+            }
+        }
     }
 
     if let Err(e) = GLOBAL_VFS.mount(dev_fs, "/dev", MountFlags::empty(), "devfs") {
@@ -1264,7 +1387,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let _ = writeln!(
         writer,
         "[VFS] Mounted devfs at /dev with {} VT devices",
-        vt::NUM_VTS
+        vt::MAX_VTS
     );
 
     // Set up legacy console write function for devfs (fallback for early boot)
@@ -1298,9 +1421,12 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         pty::set_signal_pgrp_callback(signal_pgrp_callback); // PTY devices
         vt::set_signal_pgrp_callback(signal_pgrp_callback); // VT devices
         tty::set_signal_pgrp_callback(signal_pgrp_callback); // 🔥 TTY SIGWINCH support 🔥
-        vt::set_console_write_callback(console::console_write); // VT output
+        tty::set_ctty_callback(devfs::set_current_tty_nr); // — GraveShift: TIOCSCTTY/TIOCNOTTY
+        // — GraveShift: set_console_write_callback REMOVED — VtTtyDriver calls
+        // terminal::write_vt() directly now. No callback needed. — GraveShift
         vt::set_yield_callback(vt_yield); // VT blocking yield
-        vt::set_vt_switch_callback(terminal_vt_switch_callback); // 🔥 VT switch redraw 🔥
+        // — GraveShift: set_vt_switch_callback REMOVED — VT switch no longer needs
+        // framebuffer hot-swap. Each VT owns its own renderer+backing fb. — GraveShift
         vt::set_signal_pending_callback(is_signal_pending); // — GraveShift: EINTR for blocked reads
     }
 
@@ -1483,7 +1609,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             info.block_size,
             if info.read_only { "RO" } else { "RW" }
         );
-
         // Wrap device in Arc for partition sharing
         let device_arc: Arc<dyn BlockDevice> = Arc::new(device);
 
@@ -2402,6 +2527,8 @@ fn kill_pgrp(pgid: u32, sig: i32) {
 
     let info = SigInfo::kill(sig, 0, 0);
 
+    // — GraveShift: signal fanout diagnostics — fires every Ctrl+C, gated for sanity
+    #[cfg(feature = "debug-proc")]
     unsafe {
         os_log::write_str_raw("[KILL-PGRP] pgid=");
         os_log::write_u64_hex_raw(pgid as u64);
@@ -2430,6 +2557,7 @@ fn kill_pgrp(pgid: u32, sig: i32) {
                         } else {
                             0
                         };
+                        #[cfg(feature = "debug-proc")]
                         unsafe {
                             os_log::write_str_raw("[KILL-PGRP] target pid=");
                             os_log::write_u64_hex_raw(pid as u64);
@@ -2449,6 +2577,7 @@ fn kill_pgrp(pgid: u32, sig: i32) {
                         let has_any_pending = !guard.pending_signals.is_empty();
                         let has_deliverable = guard.has_pending_signals();
                         drop(guard);
+                        #[cfg(feature = "debug-proc")]
                         unsafe {
                             os_log::write_str_raw("[KILL-PGRP] sent sig to pid=");
                             os_log::write_u64_hex_raw(pid as u64);
@@ -2460,6 +2589,7 @@ fn kill_pgrp(pgid: u32, sig: i32) {
                             os_log::write_str_raw("\n");
                         }
                         let woke = sched::try_wake_up(pid);
+                        #[cfg(feature = "debug-proc")]
                         unsafe {
                             os_log::write_str_raw("[KILL-PGRP] wake=");
                             os_log::write_str_raw(if woke { "OK" } else { "FAIL" });
@@ -2481,6 +2611,7 @@ fn kill_pgrp(pgid: u32, sig: i32) {
     }
 
     if !sent_any {
+        #[cfg(feature = "debug-proc")]
         unsafe {
             os_log::write_str_raw("[KILL-PGRP] no-delivery (contended or no targets)\n");
         }
@@ -2652,9 +2783,8 @@ fn syscall_dispatch(
     arg5: u64,
     arg6: u64,
 ) -> i64 {
-    // Handle sched_yield specially - it needs to context switch
-    const SCHED_YIELD: u64 = 130;
-    if number == SCHED_YIELD {
+    // — NeonRoot: handle sched_yield specially — it needs to context switch
+    if number == syscall::nr::SCHED_YIELD {
         return scheduler::kernel_yield();
     }
 

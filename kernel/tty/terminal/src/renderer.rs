@@ -124,16 +124,23 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    /// Create a new renderer
-    pub fn new(fb: Arc<dyn Framebuffer>) -> Self {
+    /// Create a new renderer.
+    /// — GlassSignal: `double_buffer` controls whether we allocate a separate RAM
+    /// back-buffer for rendering. When the target fb is already RAM (compositor
+    /// BackingFramebuffer), double-buffering is redundant — renders go directly to
+    /// the backing fb and the compositor blits to hardware at 30Hz. Skip the 4MB
+    /// heap alloc per VT and save 24MB across 6 terminals. Tearing in a text
+    /// console? Nobody cares. — GlassSignal
+    pub fn new(fb: Arc<dyn Framebuffer>, double_buffer: bool) -> Self {
         let font = &PSF2_FONT;
         // Bootstrap the font manager with the extended built-in font — SoftGlyph
         let font_manager = FontManager::with_builtin();
         let cols = fb.width() / font.width;
         let rows = fb.height() / font.height;
 
-        // Allocate back buffer for double buffering
-        let back_buffer = if fb.size() > 0 {
+        // — GlassSignal: only allocate back buffer when double-buffering is requested.
+        // VT backing framebuffers are RAM — no MMIO penalty, no need for double buffer.
+        let back_buffer = if double_buffer && fb.size() > 0 {
             unsafe {
                 os_log::write_str_raw("[REND] alloc bb size=0x");
                 os_log::write_u64_hex_raw(fb.size() as u64);
@@ -141,7 +148,11 @@ impl Renderer {
             }
             Some(vec![0u8; fb.size()])
         } else {
-            unsafe { os_log::write_str_raw("[REND] NO bb (size=0)!\n"); }
+            if fb.size() == 0 {
+                unsafe { os_log::write_str_raw("[REND] NO bb (size=0)!\n"); }
+            } else {
+                unsafe { os_log::write_str_raw("[REND] direct render (no bb)\n"); }
+            }
             None
         };
 
@@ -168,11 +179,15 @@ impl Renderer {
     /// — GlassSignal: when VirtIO-GPU replaces the UEFI GOP buffer, the renderer
     /// must follow or we're painting on a disconnected canvas. Invalidates everything
     /// so the next render pushes the full terminal state to the new buffer.
+    /// — GlassSignal: hot-swap with same double_buffer policy as the original init.
+    /// Inherits the current back_buffer strategy: if we had one, allocate a new one;
+    /// if we were direct-rendering, stay direct.
     pub fn update_framebuffer(&mut self, fb: Arc<dyn Framebuffer>) {
         let cols = fb.width() / self.font.width;
         let rows = fb.height() / self.font.height;
 
-        let back_buffer = if fb.size() > 0 {
+        let had_back_buffer = self.back_buffer.is_some();
+        let back_buffer = if had_back_buffer && fb.size() > 0 {
             Some(vec![0u8; fb.size()])
         } else {
             None
@@ -390,6 +405,18 @@ impl Renderer {
                 unsafe {
                     let src = bb_ptr.add(byte_offset);
                     let dst = fb_ptr.add(byte_offset);
+
+                    // — CrashBloom: Guard against null or overlapping pointers.
+                    // Rust nightly 2024 panics on UB in debug mode. If the back
+                    // buffer or framebuffer pointer is garbage, catch it here.
+                    if src.is_null() || dst.is_null() || src == dst {
+                        os_log::write_str_raw("[BLIT-FATAL] null/overlap in blit_to_fb! src=");
+                        os_log::write_u64_hex_raw(src as u64);
+                        os_log::write_str_raw(" dst=");
+                        os_log::write_u64_hex_raw(dst as u64);
+                        os_log::write_str_raw("\n");
+                        return;
+                    }
 
                     // — GlassSignal: replaced rep movsq asm with ptr::copy_nonoverlapping —
                     // the compiler knows how to emit the same thing, and now we're arch-clean

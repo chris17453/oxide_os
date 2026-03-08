@@ -15,8 +15,15 @@ pub fn write(fd: i32, buf: &[u8]) -> isize {
 }
 
 /// Read bytes from file descriptor
+/// — GraveShift: auto-retry on EINTR. Signal delivery during a blocking read
+/// makes the kernel return -EINTR. Without retry, every read loop in every
+/// userspace program silently breaks when signals arrive. Linux libc retries
+/// by default (SA_RESTART), but we don't have that luxury yet.
 pub fn read(fd: i32, buf: &mut [u8]) -> isize {
-    syscall::sys_read(fd, buf)
+    loop {
+        let r = syscall::sys_read(fd, buf);
+        if r != -4 { return r; } // -4 = EINTR, retry
+    }
 }
 
 /// Open file with mode
@@ -75,12 +82,16 @@ pub fn wait(status: &mut i32) -> i32 {
 pub fn waitpid(pid: i32, status: &mut i32, options: i32) -> i32 {
     const WNOHANG: i32 = 1;
     const EAGAIN: i32 = -11;
+    const EINTR: i32 = -4;
 
     loop {
         let result = syscall::sys_waitpid(pid, status, options);
 
-        // If WNOHANG set or not EAGAIN, return immediately
-        if (options & WNOHANG) != 0 || result != EAGAIN {
+        // — GraveShift: retry on both EAGAIN (child not yet exited) and EINTR
+        // (interrupted by signal). Without the EINTR retry, any signal delivery
+        // — like SIGCHLD from a grandchild — causes waitpid to bail early,
+        // making login think the shell exited when it's still running.
+        if (options & WNOHANG) != 0 || (result != EAGAIN && result != EINTR) {
             return result;
         }
 

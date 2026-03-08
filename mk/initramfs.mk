@@ -75,6 +75,7 @@ initramfs: $(INITRAMFS_PREREQ)
 	@echo "root:x:0:" > $(TARGET_DIR)/initramfs/etc/group
 	@echo "export PATH=/bin:/sbin:/usr/bin:/usr/sbin" > $(TARGET_DIR)/initramfs/etc/profile
 	@echo "OXIDE" > $(TARGET_DIR)/initramfs/etc/hostname
+	@echo "root" > $(TARGET_DIR)/initramfs/etc/autologin
 	@echo "127.0.0.1 localhost" > $(TARGET_DIR)/initramfs/etc/hosts
 	@echo "::1 localhost" >> $(TARGET_DIR)/initramfs/etc/hosts
 	@# — BlackLatch: Console keyboard config. Init reads this on boot.

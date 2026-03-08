@@ -284,52 +284,73 @@ impl Virtqueue {
 
     /// Write descriptor at index
     ///
+    /// — WireSaint: volatile writes — device reads these via DMA. Without volatile,
+    /// the compiler can reorder or merge these stores, and the device may see a
+    /// half-written descriptor (addr set but len still 0).
+    ///
     /// # Safety
     /// Index must be a valid allocated descriptor.
     pub unsafe fn write_desc(&mut self, idx: u16, addr: u64, len: u32, flags: u16, next: u16) {
-        let desc = &mut *self.desc.add(idx as usize);
-        desc.addr = addr;
-        desc.len = len;
-        desc.flags = flags;
-        desc.next = next;
+        let desc = self.desc.add(idx as usize);
+        core::ptr::write_volatile(&mut (*desc).addr, addr);
+        core::ptr::write_volatile(&mut (*desc).len, len);
+        core::ptr::write_volatile(&mut (*desc).flags, flags);
+        core::ptr::write_volatile(&mut (*desc).next, next);
     }
 
     /// Add a descriptor chain to the available ring
+    ///
+    /// — WireSaint: ALL fields shared with the device MUST use volatile ops.
+    /// The device reads avail.idx via DMA — a plain Rust write can be reordered
+    /// or elided by the compiler. read_volatile/write_volatile are the Rust
+    /// equivalent of Linux READ_ONCE/WRITE_ONCE. The fence ensures the descriptor
+    /// table writes are globally visible before the idx update tells the device
+    /// to look at them.
     pub fn add_available(&mut self, head: u16) {
         unsafe {
             let avail = &mut *self.avail;
-            let idx = avail.idx as usize % self.num as usize;
-            avail.ring[idx] = head;
-            // Memory barrier to ensure descriptor is visible before idx update
+            let idx = core::ptr::read_volatile(&avail.idx) as usize % self.num as usize;
+            core::ptr::write_volatile(&mut avail.ring[idx], head);
+            // Memory barrier to ensure descriptor + ring entry visible before idx update
             core::sync::atomic::fence(Ordering::Release);
-            avail.idx = avail.idx.wrapping_add(1);
+            let new_idx = core::ptr::read_volatile(&avail.idx).wrapping_add(1);
+            core::ptr::write_volatile(&mut avail.idx, new_idx);
         }
     }
 
     /// Check if there are completed requests in the used ring
+    ///
+    /// — WireSaint: used.idx is written by the device via DMA. A plain Rust read
+    /// can be hoisted out of a poll loop by the compiler (it sees no Rust-visible
+    /// mutation). read_volatile forces a real load every call. The Acquire fence
+    /// ensures we see all device writes that happened before the idx update.
+    /// This is the #1 cause of "VirtIO works with serial traces, breaks without" —
+    /// the UART I/O acts as an accidental compiler+hardware barrier.
     pub fn has_completed(&self) -> bool {
         unsafe {
-            let used = &*self.used;
-            // Memory barrier to ensure we see the latest idx
+            // Acquire fence: see all device DMA writes before we read idx
             core::sync::atomic::fence(Ordering::Acquire);
-            used.idx != self.last_used_idx
+            let used_idx = core::ptr::read_volatile(&(*self.used).idx);
+            used_idx != self.last_used_idx
         }
     }
 
     /// Get next completed request (descriptor chain head and length)
     pub fn pop_used(&mut self) -> Option<(u16, u32)> {
         unsafe {
-            let used = &*self.used;
             core::sync::atomic::fence(Ordering::Acquire);
-            if used.idx == self.last_used_idx {
+            let used_idx = core::ptr::read_volatile(&(*self.used).idx);
+            if used_idx == self.last_used_idx {
                 return None;
             }
 
             let idx = self.last_used_idx as usize % self.num as usize;
-            let elem = used.ring[idx];
+            // — WireSaint: volatile read of the used ring element — device wrote it
+            let elem_id = core::ptr::read_volatile(&(*self.used).ring[idx].id);
+            let elem_len = core::ptr::read_volatile(&(*self.used).ring[idx].len);
             self.last_used_idx = self.last_used_idx.wrapping_add(1);
 
-            Some((elem.id as u16, elem.len))
+            Some((elem_id as u16, elem_len))
         }
     }
 }

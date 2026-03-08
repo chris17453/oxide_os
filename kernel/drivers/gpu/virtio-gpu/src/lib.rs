@@ -877,35 +877,28 @@ static VIRTIO_GPU: Mutex<Option<VirtioGpu>> = Mutex::new(None);
 /// continues showing UEFI's GOP memory. So we keep using the UEFI GOP buffer
 /// and just store the GPU device for future mode-switching capability.
 pub fn init_from_pci(pci_dev: &PciDevice) -> Result<(), &'static str> {
-    // — GlassShift: If a working GOP framebuffer already exists (set up by OVMF),
-    // skip VirtIO-GPU init entirely. The problem: setup_framebuffer() sends
-    // SET_SCANOUT which binds a NEW blank resource to scanout 0, replacing
-    // whatever OVMF was displaying. If OVMF used VirtIO-GPU for GOP, our
-    // SET_SCANOUT steals the display and shows a black screen. The kernel
-    // keeps writing to the old GOP address but QEMU displays our empty resource.
-    // This is the root cause of the "256M blank screen" — at lower RAM,
-    // OVMF picks VirtIO-GPU for GOP instead of VGA std.
-    if fb::framebuffer().is_some() {
-        unsafe { os_log::write_str_raw("[VGPU] GOP framebuffer already active, skipping init (SET_SCANOUT would steal display)\n"); }
-        return Ok(());
+    // — GlassSignal: NEVER do full VirtIO-GPU init during driver probe.
+    // setup_framebuffer() sends SET_SCANOUT which binds a NEW blank resource,
+    // stealing the display from whatever OVMF was showing. Two failure modes:
+    //   1. GOP has valid linear fb → SET_SCANOUT replaces it with our blank resource
+    //   2. GOP base was 0 (VirtIO-GPU-backed) → double-init when take_over_display
+    //      creates a second instance later
+    // Driver probe just records the device exists. display_takeover() in init.rs
+    // calls take_over_display() to properly set up the full pipeline when needed.
+    //
+    // — GlassSignal: BUT we MUST reset the device to stop OVMF-era DMA.
+    // OVMF's VirtIO-GPU driver had virtqueues in BootServices memory. Without
+    // a reset, the device can still write used ring entries to those pages after
+    // the buddy allocator reclaims them, corrupting FreeBlock headers.
+    // Status 0 = device reset, all queues stop, DMA ceases. Safe and necessary.
+    if let Some(gpu) = VirtioGpu::from_pci(pci_dev) {
+        if let Some(ref t) = gpu.transport {
+            t.write_status(0); // — GlassSignal: kill OVMF-era DMA dead
+            unsafe { os_log::write_str_raw("[VGPU] device reset (stop OVMF DMA), deferring init to display_takeover\n"); }
+        }
+    } else {
+        unsafe { os_log::write_str_raw("[VGPU] PCI probe failed, skipping\n"); }
     }
-
-    unsafe { os_log::write_str_raw("[VGPU] no GOP fb, initializing VirtIO-GPU...\n"); }
-    let mut gpu = VirtioGpu::from_pci(pci_dev).ok_or("VirtIO GPU PCI probe failed")?;
-    gpu.init()?;
-    unsafe { os_log::write_str_raw("[VGPU] init done, SET_SCANOUT sent\n"); }
-
-    // — GlassSignal: DON'T call fb::init() — the UEFI GOP framebuffer is the one
-    // QEMU actually displays. Our VirtIO-GPU resource lives in a DMA buffer that
-    // QEMU ignores. The UEFI GOP fb is memory-mapped: writes appear immediately,
-    // no TRANSFER_TO_HOST_2D or RESOURCE_FLUSH needed.
-
-    // Register mode setter for future use
-    fb::mode::set_mode_setter(set_mode_from_fb);
-
-    // Store the GPU for future use (mode switching, acceleration)
-    *VIRTIO_GPU.lock() = Some(gpu);
-    unsafe { os_log::write_str_raw("[VGPU] stored, init complete\n"); }
 
     Ok(())
 }
@@ -931,6 +924,31 @@ pub fn take_over_display() -> Result<FramebufferInfo, &'static str> {
     let mut gpu = VirtioGpu::from_pci(gpu_dev).ok_or("VirtIO GPU PCI probe failed")?;
     gpu.init()?;
 
+    // — GlassSignal: VirtIO-GPU often reports 640x480 as default after device reset.
+    // Try to upgrade to 1280x800 (QEMU gtk display default). If set_mode fails,
+    // fall back to whatever get_display_info() returned.
+    let preferred_w = 1280u32;
+    let preferred_h = 800u32;
+    if gpu.width != preferred_w || gpu.height != preferred_h {
+        unsafe {
+            os_log::write_str_raw("[VGPU] display reports ");
+            os_log::write_u32_raw(gpu.width);
+            os_log::write_str_raw("x");
+            os_log::write_u32_raw(gpu.height);
+            os_log::write_str_raw(", trying ");
+            os_log::write_u32_raw(preferred_w);
+            os_log::write_str_raw("x");
+            os_log::write_u32_raw(preferred_h);
+            os_log::write_str_raw("...\n");
+        }
+        if gpu.display_count > 0 {
+            match gpu.set_mode(0, preferred_w, preferred_h) {
+                Ok(_) => unsafe { os_log::write_str_raw("[VGPU] mode set OK\n"); },
+                Err(_) => unsafe { os_log::write_str_raw("[VGPU] mode set failed, keeping default\n"); },
+            }
+        }
+    }
+
     let info = gpu
         .framebuffer_info()
         .ok_or("VirtIO-GPU framebuffer setup failed")?;
@@ -955,10 +973,27 @@ pub fn take_over_display() -> Result<FramebufferInfo, &'static str> {
 /// — GlassSignal: the pixel pipeline's last mile — guest memory to host scanout.
 /// Uses try_lock because this may fire from ISR context (terminal tick).
 fn gpu_flush_region(x: u32, y: u32, w: u32, h: u32) {
+    static FLUSH_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+    let n = FLUSH_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    // — GlassSignal: trace first few flushes so we know the pipeline is alive
+    if n < 5 {
+        unsafe {
+            os_log::write_str_raw("[VGPU-FLUSH] gpu_flush_region called #");
+            os_log::write_u32_raw(n);
+            os_log::write_str_raw("\n");
+        }
+    }
     if let Some(guard) = VIRTIO_GPU.try_lock() {
         if let Some(ref gpu) = *guard {
             <VirtioGpu as Framebuffer>::flush_region(gpu, x, y, w, h);
+            if n < 5 {
+                unsafe { os_log::write_str_raw("[VGPU-FLUSH] flush_region sent OK\n"); }
+            }
+        } else if n < 5 {
+            unsafe { os_log::write_str_raw("[VGPU-FLUSH] GPU is None!\n"); }
         }
+    } else if n < 5 {
+        unsafe { os_log::write_str_raw("[VGPU-FLUSH] try_lock failed (contention)\n"); }
     }
 }
 

@@ -80,26 +80,37 @@ fn parse_args() -> TermConfig {
     TermConfig::default()
 }
 
+/// Check if a file descriptor is valid (opened by init before exec)
+/// — SableWire: fstat returns 0 on valid fds, -EBADF on closed ones
+fn is_fd_valid(fd: i32) -> bool {
+    let mut st = libc::stat::Stat::zeroed();
+    libc::stat::fstat(fd, &mut st) == 0
+}
+
 /// Main entry point
 #[unsafe(no_mangle)]
 pub fn main() -> i32 {
-    let config = parse_args();
+    // — SableWire: init already set up stdin/stdout/stderr on the correct
+    // /dev/ttyN before exec'ing us. Only call setup_terminal() if our fds
+    // are broken (e.g., direct exec without init's fd setup). The old code
+    // unconditionally opened /dev/console, clobbering the per-VT device
+    // and making ALL gettys fight over VT0's input ring. Six processes,
+    // one input stream, zero working logins.
+    let needs_setup = !is_fd_valid(0);
 
     loop {
-        // Setup terminal
-        if setup_terminal(&config) < 0 {
-            // — SableWire: can't print — stdio not set up yet
-            exit(1);
+        if needs_setup {
+            let config = parse_args();
+            if setup_terminal(&config) < 0 {
+                exit(1);
+            }
         }
 
         // Clear screen and print banner
         clear_screen();
         print_banner();
 
-        // Print terminal info
-        prints("Terminal: ");
-        prints(config.device);
-        prints("\n\n");
+        prints("\n");
 
         // Fork and exec login
         let pid = fork();

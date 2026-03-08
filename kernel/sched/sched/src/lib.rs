@@ -96,6 +96,7 @@ pub use crate::core::{
     pid_to_cpu,
     add_task_child,
     all_pids,
+    count_nr_running,
     block_current,
     clear_task_waiting,
     create_task,

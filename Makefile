@@ -17,9 +17,9 @@ include mk/config.mk
 
 all: build
 
-# Build kernel + bootloader (auto-increments build number)
-# — PatchBay: NT-style versioning — every build gets a unique number
-build: increment-build kernel bootloader
+# Build everything needed for a bootable system (auto-increments build number)
+# — PatchBay: If it builds, it boots. No half-baked images, no stale binaries.
+build: increment-build kernel bootloader userspace-release initramfs userspace-std
 
 # Increment build number — one tick per build, no exceptions
 # — PatchBay: the counter that never lies

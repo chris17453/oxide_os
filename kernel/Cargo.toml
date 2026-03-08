@@ -18,7 +18,7 @@ arch-x86_64 = ["dep:arch-x86_64"]
 arch-aarch64 = ["dep:arch-aarch64"]
 arch-mips64 = ["dep:arch-mips64"]
 
-debug-syscall = ["syscall/debug-syscall"]    # Enable syscall entry/exit traces ([SC] open/write/dup2, [SCR] reschedule)
+debug-syscall = ["syscall/debug-syscall", "arch-x86_64?/debug-syscall"]    # Enable syscall entry/exit traces ([SC] open/write/dup2, [SCR] reschedule)
 debug-fork = ["proc/debug-fork"]       # Enable fork/exec debug output
 debug-cow = []        # Enable COW page fault debug output
 # — SableWire: `?` syntax = forward to arch dep only when it's the active arch.
@@ -34,7 +34,7 @@ debug-sched = ["syscall/debug-sched", "sched/debug-sched", "arch-x86_64?/debug-s
 debug-mouse = []      # Enable mouse/input debug output (ISR-safe)
 debug-input = ["input/debug-input", "ps2/debug-input", "arch-x86_64?/debug-input", "virtio-input/debug-input"]      # Enable input event path debug output
 debug-lock = ["terminal/debug-lock", "fb/debug-lock"]  # Enable lock contention warnings in ISR context
-debug-console = ["devfs/debug-console", "vt/debug-console"]  # Enable console→VT I/O path tracing
+debug-console = ["devfs/debug-console", "vt/debug-console", "tty/debug-console"]  # Enable console→VT I/O path tracing
 debug-syscall-perf = ["syscall/debug-syscall-perf"]  # Log slow syscalls (>50K cycles)
 debug-tty-read = ["tty/debug-tty-read", "devfs/debug-tty-read", "terminal/debug-tty-read"]  # Log TTY read operations + filter serial escapes
 debug-terminal = ["terminal/debug-terminal"]  # Trace terminal write/blit operations
@@ -97,6 +97,7 @@ audio = { workspace = true }
 virtio-snd = { workspace = true }
 intel-hda = { workspace = true }
 terminal = { workspace = true }
+compositor = { workspace = true }
 input = { workspace = true }
 ps2 = { workspace = true }
 virtio-input = { workspace = true }

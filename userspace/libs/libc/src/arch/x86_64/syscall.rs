@@ -190,17 +190,19 @@ pub fn syscall6(
 }
 
 /// Special syscall for EXIT - never returns
-/// — GraveShift: Explicit register setup to debug why syscall isn't executing
+/// — GraveShift: RAX=60 is SYS_EXIT. The old code used RAX=0 (SYS_READ) which
+/// returned instead of dying, then fell through to ud2 → SIGILL. Every process
+/// that called exit() was committing suicide by illegal instruction instead of
+/// dying with dignity. Classic off-by-sixty bug.
 #[inline(never)]
 #[unsafe(no_mangle)]
 pub extern "C" fn syscall_exit(status: usize) -> ! {
     unsafe {
-        // Most explicit possible version - set registers manually
         asm!(
-            "mov rax, 0",      // EXIT syscall number
+            "mov rax, 60",     // EXIT syscall number (SYS_EXIT = 60 = 0x3c)
             "mov rdi, {0}",    // Exit status
             "syscall",         // Execute syscall
-            "ud2",             // Undefined instruction - should never reach
+            "ud2",             // — BlackLatch: safety net, should never reach
             in(reg) status,
             options(noreturn),
         );

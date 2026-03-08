@@ -98,6 +98,7 @@ members = [
     "kernel/tty/tty",
     "kernel/tty/pty",
     "kernel/tty/vt",
+    "kernel/tty/compositor",
     "kernel/signal/signal",
     "kernel/smp/smp",
     "kernel/acpi/acpi",
@@ -200,6 +201,7 @@ sysfs = { path = "kernel/vfs/sysfs" }
 tty = { path = "kernel/tty/tty" }
 pty = { path = "kernel/tty/pty" }
 vt = { path = "kernel/tty/vt" }
+compositor = { path = "kernel/tty/compositor" }
 signal = { path = "kernel/signal/signal" }
 smp = { path = "kernel/smp/smp" }
 acpi = { path = "kernel/acpi/acpi" }

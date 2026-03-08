@@ -19,8 +19,8 @@ use spin::RwLock;
 use vfs::{DirEntry, Mode, Stat, VfsError, VfsResult, VnodeOps, VnodeType};
 
 use devices::{
-    ConsoleDevice, DspDevice, FramebufferDevice, MixerDevice, NullDevice, RandomDevice,
-    SerialDevice, ZeroDevice,
+    ConsoleDevice, CttyDevice, DspDevice, FramebufferDevice, MixerDevice, NullDevice,
+    RandomDevice, SerialDevice, ZeroDevice,
 };
 use kmsg::KmsgDevice;
 
@@ -32,6 +32,9 @@ pub use devices::set_console_backend;
 
 // Re-export signal callback setter for Ctrl+C handling
 pub use devices::{SIGINT, SIGQUIT, set_signal_fg_callback};
+
+// Re-export ctty registry functions (per-process controlling terminal)
+pub use devices::{register_ctty_device, set_current_tty_nr, clear_current_tty_nr};
 
 /// Console input callback for PS/2 driver
 /// Now a no-op — input flows through VT push_input() only.
@@ -72,6 +75,11 @@ impl DevFs {
             devices.insert("null".to_string(), Arc::new(NullDevice::new(2)));
             devices.insert("zero".to_string(), Arc::new(ZeroDevice::new(3)));
             devices.insert("console".to_string(), Arc::new(ConsoleDevice::new(4)));
+            // — GraveShift: /dev/tty = controlling terminal of the calling process.
+            // Linux contract: resolves to the caller's ctty via tty_nr in ProcessMeta.
+            // Session leaders acquire a ctty when they open a tty device. setsid() drops it.
+            // If the process has no ctty, reads/writes return EIO.
+            devices.insert("tty".to_string(), Arc::new(CttyDevice::new(12)));
             devices.insert("fb0".to_string(), Arc::new(FramebufferDevice::new(5)));
             devices.insert(
                 "urandom".to_string(),
@@ -82,6 +90,10 @@ impl DevFs {
             devices.insert("dsp".to_string(), Arc::new(DspDevice::new(9)));
             devices.insert("mixer".to_string(), Arc::new(MixerDevice::new(10)));
             devices.insert("serial".to_string(), Arc::new(SerialDevice::new(11)));
+            // — GraveShift: /dev/ttyS0 = Linux name for first serial port.
+            // Same device as /dev/serial, different name. Programs that hardcode
+            // /dev/ttyS0 (minicom, screen, serial consoles) need this.
+            devices.insert("ttyS0".to_string(), Arc::new(SerialDevice::new(13)));
             devices.insert(
                 "input".to_string(),
                 Arc::new(input::InputDirNode::new(100)) as Arc<dyn VnodeOps>,

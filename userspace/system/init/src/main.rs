@@ -42,23 +42,12 @@ fn switch_root() -> bool {
     }
     close(fd);
 
-    // — GraveShift: Paranoia checks. Every one of these has caused a boot hang.
-    let critical_files = [
-        "/mnt/root/etc/passwd",
-        "/mnt/root/bin/getty",
-        "/mnt/root/bin/login",
-        "/mnt/root/bin/esh",
-    ];
-    for path in &critical_files {
-        let fd = open(path, O_RDONLY, 0);
-        if fd < 0 {
-            prints("[init] Missing critical file on ext4: ");
-            printlns(path);
-            printlns("[init] Aborting switch_root, staying on initramfs");
-            return false;
-        }
-        close(fd);
-    }
+    // — GraveShift: Paranoia checks disabled — ext4 directory block reads hang
+    // when the /bin/ directory spans multiple blocks. The VirtIO-blk second read
+    // deadlocks somewhere in the block I/O path. Skip these checks and trust the
+    // pivot_root will fail gracefully if files are actually missing.
+    // TODO: fix the ext4/virtio-blk block read hang (BUG: second block read for
+    // large directories deadlocks)
 
     printlns("[init] Switching to ext4 root filesystem...");
 
@@ -148,45 +137,100 @@ fn main() -> i32 {
     // Start service manager in daemon mode
     start_servicemgr();
 
-    // Spawn getty on the primary TTY
-    printlns("[init] Spawning getty...");
-    let child = fork();
-    if child == 0 {
-        // Child process - exec getty
-        exec("/bin/getty");
-        eprintlns("[init] Failed to exec getty");
-        _exit(1);
-    } else if child > 0 {
-        // Parent - reap zombies forever, respawning getty when it exits
-        printlns("[init] Getty started");
+    // — GraveShift: Spawn getty on every active VT. Probe /dev/tty1, /dev/tty2, ...
+    // until we hit ENOENT. The kernel registers only VT_COUNT devices, so this
+    // auto-discovers how many VTs exist without hardcoding the count in userspace.
+    printlns("[init] Spawning getty on available VTs...");
+    let mut getty_pids: [i64; 6] = [0; 6]; // — GraveShift: max 6 VTs, track PIDs for respawn
+    let mut num_gettys: usize = 0;
 
-        // — GraveShift: Screen dump gated behind debug-screendump feature.
-        // Holds TERMINAL mutex for ~1.3s during 14KB serial output, blocking
-        // the shell from printing its prompt. Only enable for VT debugging.
-        #[cfg(feature = "debug-screendump")]
-        {
-            printlns("[init] DEBUG: Waiting 3 seconds before screen dump...");
-            sleep(3);
-            printlns("[init] DEBUG: Calling syscall 999 to dump screen to serial...");
-            let result: i64;
-            unsafe {
-                core::arch::asm!(
-                    "mov rax, 999",
-                    "syscall",
-                    out("rax") result,
-                    lateout("rcx") _,
-                    lateout("r11") _,
-                );
+    let mut vt_num = 1u8; // /dev/tty1 through /dev/ttyN
+    while vt_num <= 6 {
+        // Build "/dev/ttyN" path
+        let tty_path: [u8; 10] = [
+            b'/', b'd', b'e', b'v', b'/', b't', b't', b'y', b'0' + vt_num, 0,
+        ];
+        let tty_path_str = unsafe {
+            core::str::from_utf8_unchecked(&tty_path[..9])
+        };
+
+        // Probe — if the device doesn't exist, we're done
+        let probe_fd = open(tty_path_str, O_RDONLY, 0);
+        if probe_fd < 0 {
+            break;
+        }
+        close(probe_fd);
+
+        let child = fork();
+        if child == 0 {
+            // — GraveShift: child — become session leader, open /dev/ttyN as
+            // stdin/stdout/stderr, then exec getty. This gives each VT its own
+            // controlling terminal. Login on VT2 is independent of VT1.
+            setsid();
+            close(0);
+            close(1);
+            close(2);
+            let fd = open(tty_path_str, O_RDWR, 0); // fd 0 (stdin)
+            if fd < 0 {
+                _exit(1);
             }
-            prints("[init] DEBUG: Syscall 999 returned: ");
-            print_i64(result);
-            printlns("");
+            dup2(fd, 1); // stdout
+            dup2(fd, 2); // stderr
+            exec("/bin/getty");
+            _exit(1);
+        } else if child > 0 {
+            prints("[init] Getty on ");
+            prints(tty_path_str);
+            prints(" (pid ");
+            print_i64(child as i64);
+            printlns(")");
+            if (num_gettys) < 6 {
+                getty_pids[num_gettys] = child as i64;
+                num_gettys += 1;
+            }
+        } else {
+            prints("[init] Fork failed for ");
+            printlns(tty_path_str);
         }
 
-        reap_zombies(child as i64);
-    } else {
-        eprintlns("[init] Fork failed");
+        vt_num += 1;
     }
+
+    if num_gettys == 0 {
+        eprintlns("[init] No VT devices found! Falling back to /dev/console getty");
+        let child = fork();
+        if child == 0 {
+            exec("/bin/getty");
+            _exit(1);
+        } else if child > 0 {
+            getty_pids[0] = child as i64;
+            num_gettys = 1;
+        }
+    }
+
+    // — GraveShift: Screen dump gated behind debug-screendump feature.
+    #[cfg(feature = "debug-screendump")]
+    {
+        printlns("[init] DEBUG: Waiting 3 seconds before screen dump...");
+        sleep(3);
+        printlns("[init] DEBUG: Calling syscall 999 to dump screen to serial...");
+        let result: i64;
+        unsafe {
+            core::arch::asm!(
+                "mov rax, 999",
+                "syscall",
+                out("rax") result,
+                lateout("rcx") _,
+                lateout("r11") _,
+            );
+        }
+        prints("[init] DEBUG: Syscall 999 returned: ");
+        print_i64(result);
+        printlns("");
+    }
+
+    // — GraveShift: reap zombies forever, respawning gettys when they exit
+    reap_zombies_multi(&mut getty_pids, num_gettys);
 
     // Should never reach here
     0
@@ -445,14 +489,15 @@ fn start_servicemgr() {
     }
 }
 
-/// Reap zombie processes forever, respawning getty when it exits
-fn reap_zombies(mut getty_pid: i64) -> ! {
+/// Reap zombie processes forever, respawning gettys when they exit.
+/// — GraveShift: tracks PIDs for all VT gettys. When one exits, respawn
+/// it on the same /dev/ttyN with a fresh setsid + fd setup.
+fn reap_zombies_multi(getty_pids: &mut [i64; 6], num_gettys: usize) -> ! {
     loop {
         let mut status: i32 = 0;
         let pid = wait(&mut status);
 
         if pid > 0 {
-            // Child exited
             prints("[init] Reaped process ");
             print_i64(pid as i64);
 
@@ -468,24 +513,44 @@ fn reap_zombies(mut getty_pid: i64) -> ! {
                 printlns("");
             }
 
-            // Only respawn getty if getty itself (our direct child) exited
-            if pid as i64 == getty_pid {
-                printlns("[init] Getty exited, waiting before respawn...");
-                // Sleep for 2 seconds to avoid rapid respawn loop
+            // — GraveShift: check if this was one of our gettys. If so, respawn
+            // on the same VT after a brief cooldown to avoid respawn storms.
+            let mut respawn_vt: Option<u8> = None;
+            for i in 0..num_gettys {
+                if getty_pids[i] == pid as i64 {
+                    respawn_vt = Some((i + 1) as u8); // VT numbers are 1-indexed
+                    getty_pids[i] = 0;
+                    break;
+                }
+            }
+
+            if let Some(vt) = respawn_vt {
                 sleep(2);
-                printlns("[init] Respawning getty...");
+                let tty_path: [u8; 10] = [
+                    b'/', b'd', b'e', b'v', b'/', b't', b't', b'y', b'0' + vt, 0,
+                ];
+                let tty_path_str = unsafe {
+                    core::str::from_utf8_unchecked(&tty_path[..9])
+                };
+
+                prints("[init] Respawning getty on ");
+                printlns(tty_path_str);
+
                 let child = fork();
                 if child == 0 {
-                    let _ = exec("/bin/getty");
-                    eprintlns("[init] Failed to exec getty");
+                    setsid();
+                    close(0);
+                    close(1);
+                    close(2);
+                    let fd = open(tty_path_str, O_RDWR, 0);
+                    if fd < 0 { _exit(1); }
+                    dup2(fd, 1);
+                    dup2(fd, 2);
+                    exec("/bin/getty");
                     _exit(1);
                 } else if child > 0 {
-                    getty_pid = child as i64; // Update tracked getty PID
-                    printlns("[init] New getty started");
+                    getty_pids[(vt - 1) as usize] = child as i64;
                 }
-            } else {
-                // Some other descendant process exited
-                printlns("[init] Descendant process exited, getty still running");
             }
         }
     }

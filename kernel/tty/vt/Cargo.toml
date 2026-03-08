@@ -18,3 +18,4 @@ os_log = { workspace = true }
 sched = { workspace = true }
 spin = { workspace = true }
 terminal = { path = "../terminal" }
+compositor = { path = "../compositor" }

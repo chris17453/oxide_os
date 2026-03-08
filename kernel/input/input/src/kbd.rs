@@ -61,6 +61,10 @@ static mut CONSOLE_CALLBACK: Option<fn(&[u8])> = None;
 /// VT switch callback — for Alt+F1..F6
 static mut VT_SWITCH_CALLBACK: Option<fn(usize)> = None;
 
+/// Compositor layout callback — for Alt+H/V/Q/Enter/Tab
+/// — GlassSignal: u8 action codes: 0=HSplit, 1=VSplit, 2=Quad, 3=ToggleFullscreen, 4=CycleFocus
+static mut COMPOSITOR_CALLBACK: Option<fn(u8)> = None;
+
 /// Set the console callback for keyboard → VT bridge
 ///
 /// # Safety
@@ -75,6 +79,15 @@ pub unsafe fn set_console_callback(callback: fn(&[u8])) {
 /// Must be called during single-threaded initialization
 pub unsafe fn set_vt_switch_callback(callback: fn(usize)) {
     unsafe { VT_SWITCH_CALLBACK = Some(callback); }
+}
+
+/// Set the compositor layout callback for Alt+H/V/Q/Enter/Tab
+/// — GlassSignal: action codes: 0=HSplit, 1=VSplit, 2=Quad, 3=ToggleFullscreen, 4=CycleFocus
+///
+/// # Safety
+/// Must be called during single-threaded initialization
+pub unsafe fn set_compositor_callback(callback: fn(u8)) {
+    unsafe { COMPOSITOR_CALLBACK = Some(callback); }
 }
 
 /// Get current LED state (for drivers that need to sync hardware LEDs on init)
@@ -287,8 +300,11 @@ pub fn process_key_event(keycode: u16, pressed: bool) -> KeyAction {
         }
     }
 
-    // — GraveShift: Alt+F1..F6 → VT switch. The only way to escape your mistakes.
-    if alt || altgr {
+    // — GraveShift: Alt+F1..F6 → VT switch. Accepts both Alt+Fn (works in QEMU
+    // where GTK display steals Ctrl+Alt as grab key) and Ctrl+Alt+Fn (Linux
+    // bare-metal standard). Either chord fires the switch — one keybinding to
+    // rule them all. — InputShade
+    if alt {
         let vt = match keycode {
             crate::KEY_F1 => Some(0usize),
             crate::KEY_F2 => Some(1),
@@ -299,9 +315,37 @@ pub fn process_key_event(keycode: u16, pressed: bool) -> KeyAction {
             _ => None,
         };
         if let Some(vt_num) = vt {
+            // — GraveShift: trace VT switch attempts so we know the keypress arrived
             unsafe {
+                serial_trace(b"[VT-SW] Alt+F");
+                serial_trace(&[b'1' + vt_num as u8]);
+                serial_trace(b" -> VT");
+                serial_trace(&[b'0' + vt_num as u8]);
+                serial_trace(b"\r\n");
                 if let Some(cb) = VT_SWITCH_CALLBACK {
                     cb(vt_num);
+                    serial_trace(b"[VT-SW] callback done\r\n");
+                } else {
+                    serial_trace(b"[VT-SW] NO CALLBACK!\r\n");
+                }
+            }
+            return KeyAction::None;
+        }
+
+        // — GlassSignal: Alt+H/V/Q = tiling layouts, Alt+Enter = toggle fullscreen,
+        // Alt+Tab = cycle focus. Same Alt chord as VT switching — works in QEMU too.
+        let comp_action = match keycode {
+            crate::KEY_H => Some(0u8),      // HSplit
+            crate::KEY_V => Some(1u8),      // VSplit
+            crate::KEY_Q => Some(2u8),      // Quad (2×2)
+            crate::KEY_ENTER => Some(3u8),  // Toggle fullscreen ↔ last split
+            crate::KEY_TAB => Some(4u8),    // Cycle focus to next tile
+            _ => None,
+        };
+        if let Some(action) = comp_action {
+            unsafe {
+                if let Some(cb) = COMPOSITOR_CALLBACK {
+                    cb(action);
                 }
             }
             return KeyAction::None;

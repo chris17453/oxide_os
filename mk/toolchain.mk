@@ -104,6 +104,41 @@ thread-test: toolchain
 	@toolchain/bin/oxide-cc -o $(USERSPACE_OUT_RELEASE)/thread-test userspace/tests/thread-test.c
 	@echo "Thread test built: $(USERSPACE_OUT_RELEASE)/thread-test"
 
+# — Hexline: Sysroot staleness gate. If libc source changed, rebuild the sysroot.
+# This is the firewall between "libc got new syscall numbers" and
+# "vim is still calling the old ones." Two days of debugging, one target to prevent it.
+SYSROOT_LIBC := toolchain/sysroot/lib/liboxide_libc.a
+
+.PHONY: sysroot-check pkgmgr-check
+
+sysroot-check:
+	@if [ -f "$(SYSROOT_LIBC)" ]; then \
+		STALE=$$(find userspace/libs/libc/src -name "*.rs" -newer "$(SYSROOT_LIBC)" 2>/dev/null | head -1); \
+		if [ -n "$$STALE" ]; then \
+			echo "  libc source changed — rebuilding sysroot..."; \
+			rm -f "$(SYSROOT_LIBC)"; \
+			$(MAKE) toolchain; \
+		fi; \
+	fi
+
+# — Hexline: Staged binary staleness gate. If sysroot is newer than any staged
+# C package, nuke the stale binaries so pkgmgr-vim/pkgmgr-python rebuild them.
+# The sentinel that would have saved us two days on the vim incident.
+pkgmgr-check: sysroot-check
+	@if [ -f "$(SYSROOT_LIBC)" ] && [ -d "$(PKGMGR_STAGING)/bin" ]; then \
+		NEED_REBUILD=0; \
+		for bin in $(PKGMGR_STAGING)/bin/*; do \
+			if [ -f "$$bin" ] && [ "$(SYSROOT_LIBC)" -nt "$$bin" ]; then \
+				echo "  $$(basename $$bin) is older than sysroot — will rebuild"; \
+				NEED_REBUILD=1; \
+			fi; \
+		done; \
+		if [ "$$NEED_REBUILD" = "1" ]; then \
+			echo "  Cleaning stale staged binaries..."; \
+			rm -rf $(PKGMGR_STAGING)/bin $(PKGMGR_STAGING)/lib $(PKGMGR_STAGING)/share; \
+		fi; \
+	fi
+
 # — Hexline: Package manager builds via oxdnf.
 # Fetches Fedora SRPMs, cross-compiles with overrides, stages binaries for rootfs.
 # Dependencies (ncurses, readline) are built as sysroot libraries.
@@ -164,6 +199,7 @@ pkgmgr-vim: toolchain pkgmgr-sysroot-deps
 			cp -r $$VIM_RT/colors $(PKGMGR_STAGING)/share/vim/vim92/; \
 			cp -r $$VIM_RT/indent $(PKGMGR_STAGING)/share/vim/vim92/; \
 			cp -r $$VIM_RT/ftplugin $(PKGMGR_STAGING)/share/vim/vim92/; \
+			cp -r $$VIM_RT/autoload $(PKGMGR_STAGING)/share/vim/vim92/; \
 			cp $$VIM_RT/filetype.vim $(PKGMGR_STAGING)/share/vim/vim92/ 2>/dev/null || true; \
 			cp $$VIM_RT/defaults.vim $(PKGMGR_STAGING)/share/vim/vim92/ 2>/dev/null || true; \
 			echo "  vim runtime staged"; \

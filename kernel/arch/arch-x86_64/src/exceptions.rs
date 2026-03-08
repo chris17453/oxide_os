@@ -1026,11 +1026,38 @@ extern "C" fn handle_general_protection(frame: *const InterruptFrame, error: u64
 
 extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
     use core::ptr::addr_of;
+    use core::sync::atomic::{AtomicU32, Ordering};
+
+    /// — CrashBloom: Unconditional page fault trace counter. First 1000 user-mode
+    /// faults get printed so we can see COW resolution through login fork.
+    static PF_DIAG_COUNT: AtomicU32 = AtomicU32::new(0);
 
     let frame = unsafe { &*frame };
     let cr2: u64;
     unsafe {
         asm!("mov {}, cr2", out(reg) cr2, options(nomem, nostack));
+    }
+
+    // — CrashBloom: Unconditional trace for user-mode write faults (COW candidates).
+    // This fires regardless of debug-pagefault feature to diagnose fork/COW hangs.
+    let is_user_write = (error & 0x6) == 0x6; // user=1, write=1
+    if is_user_write {
+        let n = PF_DIAG_COUNT.fetch_add(1, Ordering::Relaxed);
+        if n < 1000 {
+            let cr3: u64;
+            unsafe { core::arch::asm!("mov {}, cr3", out(reg) cr3); }
+            unsafe {
+                os_log::write_str_raw("[PF-DIAG] user-write addr=0x");
+                os_log::write_u64_hex_raw(cr2);
+                os_log::write_str_raw(" rip=0x");
+                os_log::write_u64_hex_raw(frame.rip);
+                os_log::write_str_raw(" err=0x");
+                os_log::write_u64_hex_raw(error);
+                os_log::write_str_raw(" cr3=0x");
+                os_log::write_u64_hex_raw(cr3);
+                os_log::write_str_raw("\n");
+            }
+        }
     }
 
     #[cfg(feature = "debug-pagefault")]
@@ -1048,16 +1075,53 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
         );
     }
 
+    // — CrashBloom: Also trace non-present user faults (demand page / stack growth)
+    let is_user_nonpresent = (error & 0x5) == 0x4; // user=1, present=0
+    if is_user_nonpresent {
+        let n = PF_DIAG_COUNT.fetch_add(1, Ordering::Relaxed);
+        if n < 1000 {
+            unsafe {
+                os_log::write_str_raw("[PF-DIAG] user-nonpresent addr=0x");
+                os_log::write_u64_hex_raw(cr2);
+                os_log::write_str_raw(" rip=0x");
+                os_log::write_u64_hex_raw(frame.rip);
+                os_log::write_str_raw("\n");
+            }
+        }
+    }
+
     // Try page fault callback first (for COW handling, etc.)
     let callback = unsafe { *addr_of!(PAGE_FAULT_CALLBACK) };
     if let Some(handler) = callback {
         if handler(cr2, error, frame.rip) {
+            // — CrashBloom: Trace successful COW/demand resolution
+            if is_user_write || is_user_nonpresent {
+                let n = PF_DIAG_COUNT.load(Ordering::Relaxed);
+                if n <= 1001 {
+                    unsafe {
+                        os_log::write_str_raw("[PF-DIAG] HANDLED OK\n");
+                    }
+                }
+            }
             #[cfg(feature = "debug-pagefault")]
             {
                 crate::serial_println!("[PF] Handled by callback");
             }
             // Fault was handled (e.g., COW page copied)
             return;
+        }
+    }
+
+    // — CrashBloom: Trace unhandled user faults — these lead to SIGSEGV or panic
+    if (error & 4) != 0 {
+        unsafe {
+            os_log::write_str_raw("[PF-DIAG] UNHANDLED user fault addr=0x");
+            os_log::write_u64_hex_raw(cr2);
+            os_log::write_str_raw(" rip=0x");
+            os_log::write_u64_hex_raw(frame.rip);
+            os_log::write_str_raw(" err=0x");
+            os_log::write_u64_hex_raw(error);
+            os_log::write_str_raw("\n");
         }
     }
 

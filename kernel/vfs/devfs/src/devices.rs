@@ -420,6 +420,7 @@ impl VnodeOps for ConsoleDevice {
 
     fn ioctl(&self, request: u64, arg: u64) -> VfsResult<i64> {
         // — GraveShift: Trace TIOCSPGRP through /dev/console to verify delegation chain.
+        #[cfg(feature = "debug-console")]
         if request == 0x5410 {
             unsafe { os_log::write_str_raw("[CON] TIOCSPGRP delegating to backend\n"); }
         }
@@ -427,11 +428,12 @@ impl VnodeOps for ConsoleDevice {
         match get_console_backend() {
             Some(backend) => {
                 let result = backend.ioctl(request, arg);
+                #[cfg(feature = "debug-console")]
                 if request == 0x5410 {
                     unsafe {
                         os_log::write_str_raw("[CON] TIOCSPGRP result=");
                         match &result {
-                            Ok(v) => { os_log::write_str_raw("OK"); }
+                            Ok(_v) => { os_log::write_str_raw("OK"); }
                             Err(_) => { os_log::write_str_raw("ERR"); }
                         }
                         os_log::write_str_raw("\n");
@@ -440,6 +442,7 @@ impl VnodeOps for ConsoleDevice {
                 result
             }
             None => {
+                #[cfg(feature = "debug-console")]
                 if request == 0x5410 {
                     unsafe { os_log::write_str_raw("[CON] TIOCSPGRP NO BACKEND!\n"); }
                 }
@@ -452,6 +455,173 @@ impl VnodeOps for ConsoleDevice {
 /// Create a device number from major and minor numbers
 fn make_dev(major: u64, minor: u64) -> u64 {
     (major << 8) | (minor & 0xFF)
+}
+
+// ============================================================================
+// Controlling Terminal Device (/dev/tty — per-process)
+// ============================================================================
+//
+// — GraveShift: The Linux /dev/tty contract: opening /dev/tty gives you the
+// controlling terminal of the calling process. Not the console, not the active VT,
+// YOUR process's terminal. Session leaders acquire a ctty when they open a tty
+// device. setsid() drops it. TIOCSCTTY/TIOCNOTTY explicitly set/clear it.
+// Without this, vim can't reopen its tty after a pipe, su can't prompt for
+// passwords, and screen/tmux can't detach properly.
+
+use alloc::collections::BTreeMap;
+
+/// Registry mapping device numbers (rdev) to vnode references.
+/// — GraveShift: populated during init when tty devices are registered.
+/// CttyDevice looks up the current process's tty_nr here.
+static CTTY_DEVICE_REGISTRY: spin::RwLock<BTreeMap<u32, Arc<dyn VnodeOps>>> =
+    spin::RwLock::new(BTreeMap::new());
+
+/// Register a terminal device vnode by its rdev number for ctty lookups.
+/// Called during init for each /dev/ttyN and /dev/ttyS0.
+pub fn register_ctty_device(rdev: u32, vnode: Arc<dyn VnodeOps>) {
+    CTTY_DEVICE_REGISTRY.write().insert(rdev, vnode);
+}
+
+/// Look up a device vnode by its rdev number.
+fn lookup_ctty_device(rdev: u32) -> Option<Arc<dyn VnodeOps>> {
+    CTTY_DEVICE_REGISTRY.read().get(&rdev).cloned()
+}
+
+/// Get the current process's controlling terminal device number (tty_nr).
+/// Returns 0 if no ctty or if process info is unavailable.
+fn current_tty_nr() -> u32 {
+    if let Some(pid) = sched::current_pid() {
+        if let Some(meta) = sched::try_get_task_meta(pid) {
+            if let Some(guard) = meta.try_lock() {
+                return guard.tty_nr;
+            }
+        }
+    }
+    0
+}
+
+/// Set the current process's controlling terminal device number.
+/// — GraveShift: called when a session leader opens a tty device
+/// or via TIOCSCTTY ioctl.
+pub fn set_current_tty_nr(rdev: u32) {
+    if let Some(pid) = sched::current_pid() {
+        if let Some(meta) = sched::try_get_task_meta(pid) {
+            if let Some(mut guard) = meta.try_lock() {
+                guard.tty_nr = rdev;
+            }
+        }
+    }
+}
+
+/// Clear the current process's controlling terminal.
+/// — GraveShift: called by setsid() and TIOCNOTTY.
+pub fn clear_current_tty_nr() {
+    set_current_tty_nr(0);
+}
+
+/// /dev/tty — the calling process's controlling terminal.
+///
+/// — GraveShift: Every call resolves the current process's tty_nr,
+/// looks up the registered device vnode, and delegates. If the process
+/// has no ctty, all operations return EIO (Linux convention: ENXIO on
+/// open, but we don't have open-level hooks so EIO on read/write).
+pub struct CttyDevice {
+    ino: u64,
+}
+
+impl CttyDevice {
+    pub fn new(ino: u64) -> Self {
+        CttyDevice { ino }
+    }
+
+    /// Resolve the controlling terminal vnode for the calling process.
+    fn resolve(&self) -> Option<Arc<dyn VnodeOps>> {
+        let rdev = current_tty_nr();
+        if rdev == 0 {
+            return None;
+        }
+        lookup_ctty_device(rdev)
+    }
+}
+
+impl VnodeOps for CttyDevice {
+    fn vtype(&self) -> VnodeType {
+        VnodeType::CharDevice
+    }
+
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        match self.resolve() {
+            Some(dev) => dev.read(offset, buf),
+            None => Err(VfsError::IoError), // — GraveShift: no ctty = no reads
+        }
+    }
+
+    fn write(&self, offset: u64, buf: &[u8]) -> VfsResult<usize> {
+        match self.resolve() {
+            Some(dev) => dev.write(offset, buf),
+            None => Err(VfsError::IoError),
+        }
+    }
+
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rmdir(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn unlink(&self, _name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> {
+        Err(VfsError::NotDirectory)
+    }
+
+    fn stat(&self) -> VfsResult<Stat> {
+        // — GraveShift: major 5, minor 0 = /dev/tty in Linux
+        let mut stat = Stat::new(VnodeType::CharDevice, Mode::new(0o666), 0, self.ino);
+        stat.rdev = make_dev(5, 0);
+        Ok(stat)
+    }
+
+    fn truncate(&self, _size: u64) -> VfsResult<()> {
+        Ok(())
+    }
+
+    fn poll_read_ready(&self) -> bool {
+        match self.resolve() {
+            Some(dev) => dev.poll_read_ready(),
+            None => false,
+        }
+    }
+
+    fn poll_write_ready(&self) -> bool {
+        match self.resolve() {
+            Some(dev) => dev.poll_write_ready(),
+            None => false,
+        }
+    }
+
+    fn ioctl(&self, request: u64, arg: u64) -> VfsResult<i64> {
+        match self.resolve() {
+            Some(dev) => dev.ioctl(request, arg),
+            None => Err(VfsError::IoError),
+        }
+    }
 }
 
 // ============================================================================

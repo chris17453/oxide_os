@@ -151,6 +151,8 @@ impl VnodeOps for Ext4Vnode {
         // Handle paths with multiple components (e.g., "sbin/init" or "/sbin/init")
         let path = path.trim_start_matches('/');
 
+        // — TorqueJax: serial breadcrumbs for ext4 lookup hang debugging
+
         // Split path into components
         let mut components = path.split('/').filter(|s| !s.is_empty()).peekable();
 

@@ -239,9 +239,10 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         syscall::time::check_sleepers();
 
         // — StackTrace: update load averages (samples every 5s internally)
-        let nr_running = sched::all_pids().iter()
-            .filter(|&&pid| sched::try_get_task_state(pid) == Some(TaskState::TASK_RUNNING))
-            .count() as u64;
+        // — TorqueJax: count_nr_running() is ISR-safe — zero heap allocations.
+        // The old all_pids().filter().count() allocated a Vec from the timer ISR,
+        // deadlocking if the interrupted code held the heap lock. RIP.
+        let nr_running = sched::count_nr_running();
         os_core::loadavg::update(nr_running);
     }
 
@@ -1387,6 +1388,18 @@ pub fn kill_faulting_process(_pid: u64, rip: u64, signo: u64) {
         Some(pid) if pid > 1 => pid,
         _ => return, // -- BlackLatch: Never kill idle or init
     };
+
+    // — GraveShift: Unconditional serial trace so we always see fault kills in serial log.
+    // debug_to_buffer is invisible in serial — we need os_log for this.
+    unsafe {
+        os_log::write_str_raw("[KILL] pid=");
+        crate::process::trace_u64(current_pid as u64);
+        os_log::write_str_raw(" sig=");
+        crate::process::trace_u64(signo);
+        os_log::write_str_raw(" rip=0x");
+        os_log::write_u64_hex_raw(rip);
+        os_log::write_str_raw("\n");
+    }
 
     crate::debug_to_buffer!(
         "[KILL] PID {} terminated by signal {} at RIP {:#x}",

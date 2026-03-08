@@ -176,16 +176,18 @@ pub fn syscall6(
 }
 
 /// Special syscall for EXIT — never returns, never forgives.
-/// — BlackLatch: ud2 after syscall is the safety net for the safety net.
+/// — BlackLatch: RAX=60 is SYS_EXIT. The old RAX=0 was SYS_READ, which returned
+/// normally and fell through to ud2 → SIGILL. Every exit() was actually a
+/// read-then-crash. Off-by-sixty. We don't talk about this one.
 #[inline(never)]
 #[unsafe(no_mangle)]
 pub extern "C" fn syscall_exit(status: usize) -> ! {
     unsafe {
         asm!(
-            "mov rax, 0",
+            "mov rax, 60",     // SYS_EXIT = 60 = 0x3c
             "mov rdi, {0}",
             "syscall",
-            "ud2",
+            "ud2",             // — BlackLatch: safety net, should never reach
             in(reg) status,
             options(noreturn),
         );

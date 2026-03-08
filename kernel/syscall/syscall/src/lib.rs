@@ -651,6 +651,7 @@ pub fn dispatch(
         }
     }
 
+
     let result = match number {
         // Process syscalls
         nr::EXIT => sys_exit(arg1 as i32),
@@ -1656,22 +1657,8 @@ fn sys_waitpid(pid: i32, status_ptr: u64, options: i32) -> i64 {
                 if status_ptr != 0 {
                     let _ = write_user_i32(status_ptr, status);
                 }
-                #[cfg(feature = "debug-proc")]
-                unsafe {
-                    os_log::write_str_raw("[WAIT] sys_waitpid ret child=");
-                    trace_i32(child_pid);
-                    os_log::write_str_raw(" status=");
-                    trace_i32(status);
-                    os_log::write_str_raw("\n");
-                }
 
                 return child_pid as i64;
-            }
-            #[cfg(feature = "debug-proc")]
-            unsafe {
-                os_log::write_str_raw("[WAIT] sys_waitpid ret err=");
-                trace_u64(result as u64);
-                os_log::write_str_raw("\n");
             }
 
             return result;
@@ -1703,6 +1690,7 @@ fn sys_getppid() -> i64 {
 /// * `pid` - Process to modify (0 = current)
 /// * `pgid` - New process group (0 = use pid)
 fn sys_setpgid(pid: Pid, pgid: Pid) -> i64 {
+    #[cfg(feature = "debug-proc")]
     fn trace_u64(mut n: u64) {
         unsafe {
             if n == 0 {
@@ -1722,12 +1710,10 @@ fn sys_setpgid(pid: Pid, pgid: Pid) -> i64 {
         }
     }
 
-    // Get target PID
     let target_pid = if pid == 0 { current_pid() } else { pid };
-
-    // Get target PGID
     let target_pgid = if pgid == 0 { target_pid } else { pgid };
 
+    #[cfg(feature = "debug-proc")]
     unsafe {
         os_log::write_str_raw("[SETPGID] enter caller=");
         trace_u64(current_pid() as u64);
@@ -1736,11 +1722,11 @@ fn sys_setpgid(pid: Pid, pgid: Pid) -> i64 {
         os_log::write_str_raw("\n");
     }
 
-    // Get the process
     if let Some(meta) = get_meta(target_pid) {
+        #[cfg(feature = "debug-proc")]
         unsafe { os_log::write_str_raw("[SETPGID] got meta, locking...\n"); }
         meta.lock().pgid = target_pgid;
-        unsafe { os_log::write_str_raw("[SETPGID] locked+set\n"); }
+        #[cfg(feature = "debug-proc")]
         unsafe {
             os_log::write_str_raw("[JC] setpgid caller=");
             trace_u64(current_pid() as u64);
@@ -1752,6 +1738,7 @@ fn sys_setpgid(pid: Pid, pgid: Pid) -> i64 {
         }
         0
     } else {
+        #[cfg(feature = "debug-proc")]
         unsafe {
             os_log::write_str_raw("[JC] setpgid caller=");
             trace_u64(current_pid() as u64);
@@ -1781,6 +1768,7 @@ fn sys_getpgid(pid: Pid) -> i64 {
 
 /// sys_setsid - Create new session
 fn sys_setsid() -> i64 {
+    #[cfg(feature = "debug-proc")]
     fn trace_u64(mut n: u64) {
         unsafe {
             if n == 0 {
@@ -1805,8 +1793,9 @@ fn sys_setsid() -> i64 {
     if let Some(meta) = get_meta(pid) {
         let mut m = meta.lock();
 
-        // Check if already a session leader
+        // — GraveShift: can't create session if already leader
         if m.sid == pid {
+            #[cfg(feature = "debug-proc")]
             unsafe {
                 os_log::write_str_raw("[JC] setsid pid=");
                 trace_u64(pid as u64);
@@ -1815,8 +1804,8 @@ fn sys_setsid() -> i64 {
             return errno::EPERM;
         }
 
-        // Check if already a process group leader
         if m.pgid == pid {
+            #[cfg(feature = "debug-proc")]
             unsafe {
                 os_log::write_str_raw("[JC] setsid pid=");
                 trace_u64(pid as u64);
@@ -1825,9 +1814,14 @@ fn sys_setsid() -> i64 {
             return errno::EPERM;
         }
 
-        // Create new session
         m.sid = pid;
         m.pgid = pid;
+        // — GraveShift: setsid() detaches from the controlling terminal.
+        // Linux: "The calling process is the leader of the new session and
+        // the process group leader of the new process group. The process has
+        // no controlling terminal." New session = blank slate = no ctty.
+        m.tty_nr = 0;
+        #[cfg(feature = "debug-proc")]
         unsafe {
             os_log::write_str_raw("[JC] setsid pid=");
             trace_u64(pid as u64);
@@ -1835,13 +1829,14 @@ fn sys_setsid() -> i64 {
             trace_u64(pid as u64);
             os_log::write_str_raw(" pgid=");
             trace_u64(pid as u64);
-            os_log::write_str_raw(" ret=");
+            os_log::write_str_raw(" ctty=NONE ret=");
             trace_u64(pid as u64);
             os_log::write_str_raw("\n");
         }
 
         pid as i64
     } else {
+        #[cfg(feature = "debug-proc")]
         unsafe {
             os_log::write_str_raw("[JC] setsid pid=");
             trace_u64(pid as u64);

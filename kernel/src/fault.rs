@@ -334,9 +334,19 @@ fn handle_stack_growth(page_addr: u64, pml4_phys: PhysAddr) -> bool {
     let pt_entry = &mut pt[pt_idx];
 
     if pt_entry.is_present() {
-        // -- BlackLatch: Another CPU beat us here, page already mapped --
-        debug_cow!("[PF] Stack page already present (race), no-op");
-        return true;
+        // — BlackLatch: Page exists. If it's writable, another CPU beat us and
+        // we're done. If it's read-only with COW bit set, this is NOT a stack
+        // growth issue — it's a COW fault that should have been handled by
+        // handle_cow_fault. Returning true here would cause an infinite loop:
+        // CPU retries the write → same fault → stack growth says "present" →
+        // returns true → CPU retries → forever. Return false so the caller
+        // can properly SIGSEGV instead of looping.
+        if pt_entry.is_writable() {
+            debug_cow!("[PF] Stack page already present+writable (race), no-op");
+            return true;
+        }
+        debug_cow!("[PF] Stack page present but NOT writable (COW?) — not a stack growth issue");
+        return false;
     }
 
     // — GraveShift: Allocate the actual data frame for the stack page.
@@ -375,10 +385,11 @@ fn handle_stack_growth(page_addr: u64, pml4_phys: PhysAddr) -> bool {
         | PageTableFlags::NO_EXECUTE;
     pt_entry.set(data_frame, data_flags);
 
-    // -- GraveShift: TLB shootdown so all cores see the new mapping --
-    let page_start = page_addr;
-    let page_end = page_addr + 4096;
-    smp::tlb_shootdown(page_start, page_end, 0);
+    // — BlackLatch: LOCAL TLB flush only. Page fault handlers run with IF=0 —
+    // cross-CPU TLB shootdown IPIs deadlock if the target is also in a fault handler.
+    // New page mappings only affect THIS process on THIS CPU. Other CPUs will fault
+    // if they access the page, and the fault handler will see it's now present.
+    os_core::tlb_flush(page_addr);
 
     true
 }
@@ -480,8 +491,9 @@ fn handle_demand_page(page_addr: u64, pml4_phys: PhysAddr, vm_flags: VmFlags) ->
     }
     pt_entry.set(data_frame, data_flags);
 
-    // — NeonRoot: TLB shootdown so all cores see the new mapping
-    smp::tlb_shootdown(page_addr, page_addr + 4096, 0);
+    // — BlackLatch: LOCAL TLB flush only — same reasoning as handle_stack_growth.
+    // Page fault handlers run with IF=0, cross-CPU IPIs deadlock.
+    os_core::tlb_flush(page_addr);
 
     true
 }

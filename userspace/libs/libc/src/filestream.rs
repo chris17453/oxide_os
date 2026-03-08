@@ -412,7 +412,11 @@ pub unsafe extern "C" fn fgetc(stream: *mut FILE) -> i32 {
     }
 
     let mut c = 0u8;
-    let n = syscall::sys_read((*stream).fd, core::slice::from_raw_parts_mut(&mut c, 1));
+    // — GraveShift: retry on EINTR so signal delivery doesn't fake an EOF
+    let n = loop {
+        let r = syscall::sys_read((*stream).fd, core::slice::from_raw_parts_mut(&mut c, 1));
+        if r != -4 { break r; } // -4 = EINTR, retry
+    };
     if n <= 0 {
         if n == 0 {
             (*stream).eof = 1;

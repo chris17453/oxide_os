@@ -201,6 +201,8 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
     let child_pml4_phys = allocator.alloc_frame().ok_or(ForkError::OutOfMemory)?;
     guard.push(child_pml4_phys);
 
+    // — CrashBloom: PML4 allocation trace — gated because it fires every fork
+    #[cfg(feature = "debug-fork")]
     unsafe {
         os_log::write_str_raw("[FORK-TRACE] PML4 alloc: 0x");
         os_log::write_u64_hex_raw(child_pml4_phys.as_u64());
@@ -233,6 +235,7 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
         };
         if child_first_u64 == 0x4652454542304C {
             // — CrashBloom: Frame is STILL on the free list! Double allocation!
+            #[cfg(feature = "debug-fork")]
             unsafe {
                 os_log::write_str_raw("[FORK-DOUBLE-ALLOC] PML4 frame still FREE! phys=0x");
                 os_log::write_u64_hex_raw(child_pml4_phys.as_u64());
@@ -272,6 +275,8 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
         let child_pdpt_phys = allocator.alloc_frame().ok_or(ForkError::OutOfMemory)?;
         guard.push(child_pdpt_phys);
 
+        // — CrashBloom: PDPT allocation trace — gated because it fires every fork
+        #[cfg(feature = "debug-fork")]
         unsafe {
             os_log::write_str_raw("[FORK-TRACE] PDPT alloc: 0x");
             os_log::write_u64_hex_raw(child_pdpt_phys.as_u64());
@@ -285,6 +290,7 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
         // instead of triple-faulting. The watchdog should have prevented this,
         // but defense in depth.
         if child_pdpt_phys == child_pml4_phys {
+            #[cfg(feature = "debug-fork")]
             unsafe {
                 os_log::write_str_raw("[FORK-FATAL] PDPT alloc returned PML4 frame! pdpt=0x");
                 os_log::write_u64_hex_raw(child_pdpt_phys.as_u64());
@@ -363,6 +369,7 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
 
             // — CrashBloom: Abort if buddy returned the PML4 frame.
             if child_pd_phys == child_pml4_phys {
+                #[cfg(feature = "debug-fork")]
                 unsafe {
                     os_log::write_str_raw("[FORK-FATAL] PD alloc returned PML4 frame! pd=0x");
                     os_log::write_u64_hex_raw(child_pd_phys.as_u64());
@@ -441,6 +448,7 @@ unsafe fn clone_address_space_cow<A: FrameAllocator>(
 
                 // — CrashBloom: Abort if buddy returned the PML4 frame.
                 if child_pt_phys == child_pml4_phys {
+                    #[cfg(feature = "debug-fork")]
                     unsafe {
                         os_log::write_str_raw("[FORK-FATAL] PT alloc returned PML4 frame! pt=0x");
                         os_log::write_u64_hex_raw(child_pt_phys.as_u64());
@@ -621,18 +629,16 @@ pub fn handle_cow_fault<A: FrameAllocator>(
     pml4_phys: PhysAddr,
     allocator: &A,
 ) -> bool {
-    // — BlackLatch: try_lock, not lock. This runs from the page fault handler
-    // (exception context). If another CPU holds this lock and WE take a page
-    // fault while spinning, we deadlock the CPU forever. try_lock returns None
-    // immediately if contended — the fault returns false, the process gets
-    // SIGSEGV, which is infinitely better than a permanent deadlock.
-    //
-    // The old comment in fault.rs ("handle_cow_fault doesn't acquire locks")
-    // was a lie. It does. Now it does so safely.
-    let _guard = match COW_FAULT_LOCK.try_lock() {
-        Some(g) => g,
-        None => return false,
-    };
+    // — BlackLatch: lock(), not try_lock. Page faults CANNOT reenter on x86_64 —
+    // a nested #PF in the handler triggers #DF (double fault) on the IST stack,
+    // which is a completely separate vector. So COW_FAULT_LOCK can never be held
+    // by THIS CPU when we enter here. Cross-CPU contention is the only case, and
+    // spinning is correct — the holder's critical section is ~μs (PT walk + frame
+    // alloc + memcpy). The old try_lock caused hundreds of spurious fault retries:
+    // try_lock failed → returned false → stack growth said "page present, done" →
+    // CPU retried the write → same COW fault → infinite loop until the lock
+    // happened to be free. That's not correctness, that's a slot machine.
+    let _guard = COW_FAULT_LOCK.lock();
 
     // Walk page tables to find the faulting entry
     let pml4_virt = phys_to_virt(pml4_phys);
@@ -720,12 +726,30 @@ pub fn handle_cow_fault<A: FrameAllocator>(
         // Copy contents
         let old_virt = phys_to_virt(old_phys);
         let new_virt = phys_to_virt(new_phys);
+
+        // — CrashBloom: Validate pointers before copy_nonoverlapping. Rust nightly
+        // 2024 panics on null/overlap in debug mode. If phys_to_virt returns garbage
+        // (corrupted PTE, buddy double-alloc), catch it here with a useful trace
+        // instead of a cryptic "unsafe precondition violated" from core::ptr.
+        let src = old_virt.as_ptr::<u8>();
+        let dst = new_virt.as_mut_ptr::<u8>();
+        if src.is_null() || dst.is_null() || old_phys == new_phys {
+            unsafe {
+                os_log::write_str_raw("[COW-COPY-FATAL] null/overlap! src=");
+                os_log::write_u64_hex_raw(src as u64);
+                os_log::write_str_raw(" dst=");
+                os_log::write_u64_hex_raw(dst as u64);
+                os_log::write_str_raw(" old_phys=");
+                os_log::write_u64_hex_raw(old_phys.as_u64());
+                os_log::write_str_raw(" new_phys=");
+                os_log::write_u64_hex_raw(new_phys.as_u64());
+                os_log::write_str_raw("\n");
+            }
+            return false;
+        }
+
         unsafe {
-            core::ptr::copy_nonoverlapping(
-                old_virt.as_ptr::<u8>(),
-                new_virt.as_mut_ptr::<u8>(),
-                4096,
-            );
+            core::ptr::copy_nonoverlapping(src, dst, 4096);
         }
 
         // Update page table entry to point to our private copy
@@ -738,12 +762,24 @@ pub fn handle_cow_fault<A: FrameAllocator>(
         // Do NOT call decrement() again or we'd double-decrement.
     }
 
-    // Flush TLB for this page on ALL CPUs
-    // This is critical for multi-CPU correctness - other CPUs may have stale
-    // TLB entries marking the page as read-only
-    let page_start = fault_addr.as_u64() & !0xFFF;
-    let page_end = page_start + 0x1000;
-    smp::tlb_shootdown(page_start, page_end, 0);
+    drop(_guard);
+
+    // — BlackLatch: LOCAL TLB flush only — no cross-CPU shootdown. Page fault
+    // handlers run with IF=0 (x86 clears interrupts on exception entry). A TLB
+    // shootdown IPI will deadlock if the target CPU is also in a page fault handler
+    // (IF=0 → can't ACK the IPI). This is true regardless of lock ordering.
+    //
+    // Local-only is CORRECT for COW resolution: we're making a page MORE permissive
+    // (RO→RW). Remote CPUs still have the old RO TLB entry. If they write to the
+    // page, they'll fault, re-enter handle_cow_fault, see is_writable()=true (the
+    // PTE is already updated), and return true. The CPU retries the write and
+    // succeeds because INVLPG fires on that CPU during the fault handler. No stale
+    // writes, no corruption. This is the same trick Linux uses — COW faults only
+    // need local TLB invalidation because the permission change is monotonically
+    // increasing (less restrictive). The fork-side demotion (RW→RO) is the one
+    // that needs the cross-CPU shootdown, and that runs outside exception context
+    // where interrupts are enabled and IPIs can be received.
+    os_core::tlb_flush(fault_addr.as_u64() & !0xFFF);
 
     true
 }

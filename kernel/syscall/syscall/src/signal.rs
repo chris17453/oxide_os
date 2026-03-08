@@ -169,7 +169,11 @@ pub fn sys_sigaction(sig: i32, act_ptr: u64, oldact_ptr: u64) -> i64 {
         let mut m = meta.lock();
 
         // Store old action if requested
-        if oldact_ptr != 0 && oldact_ptr < 0x0000_8000_0000_0000 {
+        // — EmberLock: Null page guard — < 0x1000 is always invalid user address.
+        if oldact_ptr != 0 {
+            if oldact_ptr < 0x1000 || oldact_ptr >= 0x0000_8000_0000_0000 {
+                return errno::EFAULT;
+            }
             if let Some(old_action) = m.sigaction(sig) {
                 unsafe {
                     let out = oldact_ptr as *mut SigAction;
@@ -179,7 +183,10 @@ pub fn sys_sigaction(sig: i32, act_ptr: u64, oldact_ptr: u64) -> i64 {
         }
 
         // Set new action if provided
-        if act_ptr != 0 && act_ptr < 0x0000_8000_0000_0000 {
+        if act_ptr != 0 {
+            if act_ptr < 0x1000 || act_ptr >= 0x0000_8000_0000_0000 {
+                return errno::EFAULT;
+            }
             let action = unsafe { *(act_ptr as *const SigAction) };
             m.set_sigaction(sig, action);
         }
@@ -201,7 +208,13 @@ pub fn sys_sigprocmask(how: i32, set_ptr: u64, oldset_ptr: u64) -> i64 {
         let mut m = meta.lock();
 
         // Store old mask if requested
-        if oldset_ptr != 0 && oldset_ptr < 0x0000_8000_0000_0000 {
+        // — EmberLock: Null page (< 0x1000) is never mapped user memory.
+        // Reject it as EFAULT just like the kernel does, or we'll triple-fault
+        // on the first app that passes SIG_IGN (=1) where a sigset_t* should go.
+        if oldset_ptr != 0 {
+            if oldset_ptr < 0x1000 || oldset_ptr >= 0x0000_8000_0000_0000 {
+                return errno::EFAULT;
+            }
             unsafe {
                 let out = oldset_ptr as *mut SigSet;
                 *out = m.signal_mask.clone();
@@ -209,7 +222,10 @@ pub fn sys_sigprocmask(how: i32, set_ptr: u64, oldset_ptr: u64) -> i64 {
         }
 
         // Modify mask if requested
-        if set_ptr != 0 && set_ptr < 0x0000_8000_0000_0000 {
+        if set_ptr != 0 {
+            if set_ptr < 0x1000 || set_ptr >= 0x0000_8000_0000_0000 {
+                return errno::EFAULT;
+            }
             let new_set = unsafe { *(set_ptr as *const SigSet) };
 
             let how_enum = match SigHow::from_i32(how) {
@@ -242,7 +258,7 @@ pub fn sys_sigprocmask(how: i32, set_ptr: u64, oldset_ptr: u64) -> i64 {
 /// # Arguments
 /// * `set_ptr` - Pointer to store pending signals
 pub fn sys_sigpending(set_ptr: u64) -> i64 {
-    if set_ptr == 0 || set_ptr >= 0x0000_8000_0000_0000 {
+    if set_ptr < 0x1000 || set_ptr >= 0x0000_8000_0000_0000 {
         return errno::EFAULT;
     }
 
@@ -273,7 +289,7 @@ pub fn sys_sigpending(set_ptr: u64) -> i64 {
 /// the signal mask, then HLT-loop until a deliverable signal wakes us. The
 /// old mask is restored before returning. One way in, one way out: -EINTR.
 pub fn sys_sigsuspend(mask_ptr: u64) -> i64 {
-    if mask_ptr == 0 || mask_ptr >= 0x0000_8000_0000_0000 {
+    if mask_ptr < 0x1000 || mask_ptr >= 0x0000_8000_0000_0000 {
         return errno::EFAULT;
     }
 
