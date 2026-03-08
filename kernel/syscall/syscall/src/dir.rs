@@ -355,31 +355,29 @@ pub fn sys_getcwd(buf: u64, size: usize) -> i64 {
         return errno::EFAULT;
     }
 
-    // Get current working directory
-    let cwd = match with_current_meta(|meta| meta.cwd.clone()) {
-        Some(c) => c,
-        None => return errno::ESRCH,
-    };
-
-    // Check buffer size
-    if cwd.len() + 1 > size {
-        return errno::ERANGE;
-    }
-
-    // Copy path to user buffer
-    unsafe {
-        if !copy_to_user(buf, cwd.as_bytes()) {
-            return errno::EFAULT;
+    // — SableWire: copy cwd to user space inside the meta lock — zero heap allocs.
+    // The old cwd.clone() allocated a String just to copy bytes to user space.
+    let result = with_current_meta(|meta| {
+        let cwd = &meta.cwd;
+        if cwd.len() + 1 > size {
+            return errno::ERANGE;
         }
-
-        // Write null terminator
-        let null_byte = [0u8];
-        if !copy_to_user(buf + cwd.len() as u64, &null_byte) {
-            return errno::EFAULT;
+        unsafe {
+            if !copy_to_user(buf, cwd.as_bytes()) {
+                return errno::EFAULT;
+            }
+            let null_byte = [0u8];
+            if !copy_to_user(buf + cwd.len() as u64, &null_byte) {
+                return errno::EFAULT;
+            }
         }
-    }
+        cwd.len() as i64
+    });
 
-    cwd.len() as i64
+    match result {
+        Some(v) => v,
+        None => errno::ESRCH,
+    }
 }
 
 /// sys_link - Create hard link

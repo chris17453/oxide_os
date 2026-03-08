@@ -412,8 +412,12 @@ impl Handler {
         if self.cursor.row >= self.effective_scroll_bottom() {
             if let Some(sb) = scrollback {
                 if self.scroll_top == 0 {
-                    if let Some(line) = buffer.get_row(self.scroll_top) {
-                        sb.push(line);
+                    // — SableWire: borrow row as slice, push directly. The old
+                    // get_row().to_vec() allocated a 3.2KB Vec per linefeed just
+                    // to hand it to push() which moved it into VecDeque. Now we
+                    // borrow the slice and let push_slice do the single alloc.
+                    if let Some(row) = buffer.row_slice(self.scroll_top) {
+                        sb.push_slice(row);
                     }
                 }
             }

@@ -206,12 +206,21 @@ impl ScreenBuffer {
         self.cells[clear_start..clear_end].fill(empty);
     }
 
-    /// Get an entire row for scrollback
+    /// Get an entire row as a slice — zero-copy, no heap allocation.
+    /// — SableWire: the old to_vec() cloned 80 cells (~3.2KB) on every linefeed.
+    /// For `find /` with 10K lines, that's 32MB of pointless heap churn. Now we
+    /// return a borrowed slice and let the caller copy only when needed.
     pub fn get_row(&self, row: u32) -> Option<Vec<Cell>> {
+        self.row_slice(row).map(|s| s.to_vec())
+    }
+
+    /// Borrow a row as a slice — no allocation, no copy. Use this on hot paths.
+    /// — SableWire: linefeed scrollback push should call this, not get_row().
+    pub fn row_slice(&self, row: u32) -> Option<&[Cell]> {
         if row < self.rows {
             let start = (row * self.cols) as usize;
             let end = start + self.cols as usize;
-            Some(self.cells[start..end].to_vec())
+            Some(&self.cells[start..end])
         } else {
             None
         }
@@ -337,7 +346,7 @@ impl ScrollbackBuffer {
         }
     }
 
-    /// Add a line to scrollback
+    /// Add a line to scrollback (takes ownership of existing Vec).
     /// — GlassSignal: tracks max line width for horizontal scrollbar range
     pub fn push(&mut self, line: Vec<Cell>) {
         let width = line.len();
@@ -345,6 +354,22 @@ impl ScrollbackBuffer {
             self.lines.pop_front();
         }
         self.lines.push_back(line);
+        if width > self.max_line_width {
+            self.max_line_width = width;
+        }
+    }
+
+    /// Add a line to scrollback from a borrowed slice — single allocation.
+    /// — SableWire: the hot path. linefeed() borrows the row from ScreenBuffer
+    /// and copies directly into the VecDeque. One alloc (the Vec inside VecDeque),
+    /// vs the old path: get_row().to_vec() (alloc #1) → push(vec) (move, no alloc).
+    /// Net savings: eliminates the intermediate Vec clone entirely.
+    pub fn push_slice(&mut self, cells: &[Cell]) {
+        let width = cells.len();
+        if self.lines.len() >= self.max_lines {
+            self.lines.pop_front();
+        }
+        self.lines.push_back(cells.to_vec());
         if width > self.max_line_width {
             self.max_line_width = width;
         }

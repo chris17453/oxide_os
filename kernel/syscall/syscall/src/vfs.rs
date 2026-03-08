@@ -2,7 +2,6 @@
 //!
 //! Provides open, close, read, write, lseek, stat, etc.
 
-use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 // Re-export external vfs crate types for sibling modules (vfs_ext.rs)
@@ -25,53 +24,117 @@ const MAX_PATH: usize = 4096;
 /// If path is absolute (starts with /), normalizes and returns it.
 /// If relative, prepends the process's cwd and normalizes.
 /// Handles . and .. path components.
+///
+/// — SableWire: the old code did cwd.clone() + format!() + Vec::new() +
+/// String::new() = 3-4 heap allocations per path syscall. Now we normalize
+/// inside the meta closure (1 alloc for the result String, zero for cwd).
+/// For `find /` doing thousands of stat() calls, this saves megabytes of churn.
 pub fn resolve_path(path: &str) -> String {
-    // Use unified model - get cwd from ProcessMeta
-    let cwd = with_current_meta(|meta| meta.cwd.clone()).unwrap_or_else(|| String::from("/"));
-
-    // Build full path
-    let full_path = if path.starts_with('/') {
-        String::from(path)
-    } else if cwd == "/" {
-        format!("/{}", path)
+    if path.starts_with('/') {
+        // — SableWire: absolute path — no cwd needed, skip the lock entirely
+        normalize_path_direct(path)
     } else {
-        format!("{}/{}", cwd, path)
-    };
-
-    // Normalize the path: handle . and .. components
-    normalize_path(&full_path)
+        // — SableWire: relative path — normalize cwd+path inside the meta lock
+        // so we borrow cwd as &str instead of cloning the String
+        with_current_meta(|meta| {
+            let cwd = &meta.cwd;
+            normalize_path_relative(cwd, path)
+        })
+        .unwrap_or_else(|| normalize_path_direct(path))
+    }
 }
 
-/// Normalize a path by resolving . and .. components
-fn normalize_path(path: &str) -> String {
-    use alloc::vec::Vec;
+/// Normalize an absolute path by resolving . and .. components.
+/// Single allocation: the result String (pre-sized to input length).
+/// — SableWire: replaces the old Vec<&str> + String::new() double-alloc pattern.
+fn normalize_path_direct(path: &str) -> String {
+    // — SableWire: pre-allocate result to path length — avoids re-grows
+    let mut result = String::with_capacity(path.len());
 
-    let mut components: Vec<&str> = Vec::new();
+    // Track component boundaries as stack-local array instead of Vec
+    // — SableWire: paths rarely exceed 32 components. Stack, not heap.
+    let mut depth: usize = 0;
+    let mut comp_ends: [usize; 64] = [0; 64];
 
     for component in path.split('/') {
         match component {
-            "" | "." => {
-                // Skip empty components and current directory markers
-            }
+            "" | "." => {}
             ".." => {
-                // Go up one directory (pop last component if any)
-                components.pop();
+                if depth > 0 {
+                    depth -= 1;
+                }
             }
             name => {
-                components.push(name);
+                if depth < 64 {
+                    // Record where this component starts in result
+                    let start = result.len();
+                    result.push('/');
+                    result.push_str(name);
+                    comp_ends[depth] = result.len();
+                    depth += 1;
+                }
             }
         }
     }
 
-    // Build result path
-    if components.is_empty() {
+    // — SableWire: if any ".." popped components, truncate result to depth
+    if depth == 0 {
         String::from("/")
     } else {
-        let mut result = String::new();
-        for component in components {
-            result.push('/');
-            result.push_str(component);
+        result.truncate(comp_ends[depth - 1]);
+        result
+    }
+}
+
+/// Normalize a relative path against a cwd — borrows cwd, single allocation.
+fn normalize_path_relative(cwd: &str, rel_path: &str) -> String {
+    // — SableWire: build "cwd/rel_path" without intermediate String
+    let combined_len = cwd.len() + 1 + rel_path.len();
+    let mut result = String::with_capacity(combined_len);
+
+    let mut depth: usize = 0;
+    let mut comp_ends: [usize; 64] = [0; 64];
+
+    // Process cwd components first
+    for component in cwd.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => { if depth > 0 { depth -= 1; } }
+            name => {
+                if depth < 64 {
+                    result.push('/');
+                    result.push_str(name);
+                    comp_ends[depth] = result.len();
+                    depth += 1;
+                }
+            }
         }
+    }
+
+    // Then relative path components
+    for component in rel_path.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                if depth > 0 {
+                    depth -= 1;
+                }
+            }
+            name => {
+                if depth < 64 {
+                    result.push('/');
+                    result.push_str(name);
+                    comp_ends[depth] = result.len();
+                    depth += 1;
+                }
+            }
+        }
+    }
+
+    if depth == 0 {
+        String::from("/")
+    } else {
+        result.truncate(comp_ends[depth - 1]);
         result
     }
 }

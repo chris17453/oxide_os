@@ -143,11 +143,12 @@ impl Tty {
 
         // Wake all processes waiting to read
         // 🔥 NO MORE SPINLOOPS - Wake sleeping readers when data arrives 🔥
+        // — SableWire: take() moves the Vec out and replaces with empty —
+        // zero heap allocations. The old clone()+clear() allocated a new Vec
+        // on every keystroke just to copy PIDs we were about to consume anyway.
         let waiters = {
             let mut w = self.read_waiters.lock();
-            let pids = w.clone();
-            w.clear();
-            pids
+            core::mem::take(&mut *w)
         };
 
         for pid in waiters {
