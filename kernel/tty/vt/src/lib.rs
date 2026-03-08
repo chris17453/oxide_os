@@ -495,6 +495,21 @@ impl VtManager {
             self.vts[i].lock().tty.set_winsize(ws);
         }
     }
+
+    /// Set a specific VT's winsize and send SIGWINCH to its foreground pgid.
+    /// — GlassSignal: per-VT resize — each VT can have different dimensions
+    /// in split layouts. Only signals if dimensions actually changed.
+    pub fn set_vt_winsize(&self, vt_num: usize, rows: u16, cols: u16, xpixel: u16, ypixel: u16) {
+        if vt_num >= MAX_VTS { return; }
+        use tty::winsize::Winsize;
+        let ws = Winsize {
+            ws_row: rows,
+            ws_col: cols,
+            ws_xpixel: xpixel,
+            ws_ypixel: ypixel,
+        };
+        self.vts[vt_num].lock().tty.set_winsize_and_signal(ws);
+    }
 }
 
 /// Raw pointer to the global VT manager (set once, read lock-free)
@@ -577,6 +592,15 @@ pub fn get_manager() -> Option<&'static VtManager> {
 pub fn set_global_winsize(rows: u16, cols: u16, xpixel: u16, ypixel: u16) {
     if let Some(manager) = get_manager() {
         manager.set_all_winsize(rows, cols, xpixel, ypixel);
+    }
+}
+
+/// Set a specific VT's winsize and send SIGWINCH to its foreground process group.
+/// — GlassSignal: called by compositor on layout change. Each VT in a split
+/// layout gets its own dimensions derived from ViewportGeometry.
+pub fn set_vt_winsize(vt_num: usize, rows: u16, cols: u16, xpixel: u16, ypixel: u16) {
+    if let Some(manager) = get_manager() {
+        manager.set_vt_winsize(vt_num, rows, cols, xpixel, ypixel);
     }
 }
 
@@ -709,10 +733,40 @@ impl VnodeOps for VtDevice {
     }
 
     fn ioctl(&self, request: u64, arg: u64) -> VfsResult<i64> {
-        if let Some(tty) = self.manager.get_tty(self.vt_num) {
-            tty.ioctl(request, arg)
-        } else {
-            Err(VfsError::InvalidArgument)
+        // — GlassSignal: console-specific ioctls handled at VT level, not TTY
+        const KDSETMODE: u64 = 0x4B3A;
+        const KDGETMODE: u64 = 0x4B3B;
+        const KD_TEXT: u64 = 0x00;
+        const KD_GRAPHICS: u64 = 0x01;
+
+        match request {
+            KDGETMODE => {
+                let ptr = arg as *mut u64;
+                if ptr.is_null() { return Err(VfsError::InvalidArgument); }
+                let mode = compositor::get_vt_mode(self.vt_num);
+                let val = match mode {
+                    compositor::VtMode::Text => KD_TEXT,
+                    compositor::VtMode::Graphics => KD_GRAPHICS,
+                };
+                unsafe { *ptr = val; }
+                Ok(0)
+            }
+            KDSETMODE => {
+                let mode = match arg {
+                    KD_TEXT => compositor::VtMode::Text,
+                    KD_GRAPHICS => compositor::VtMode::Graphics,
+                    _ => return Err(VfsError::InvalidArgument),
+                };
+                compositor::set_vt_mode(self.vt_num, mode);
+                Ok(0)
+            }
+            _ => {
+                if let Some(tty) = self.manager.get_tty(self.vt_num) {
+                    tty.ioctl(request, arg)
+                } else {
+                    Err(VfsError::InvalidArgument)
+                }
+            }
         }
     }
 }

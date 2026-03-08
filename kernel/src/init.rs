@@ -140,6 +140,14 @@ fn compositor_layout_callback(action: u8) {
             vkbd::toggle();
             compositor::request_full_redraw();
         }
+        6 => {
+            // — GlassSignal: Alt+W toggles wrap mode on focused VT
+            let vt = compositor::focused_vt();
+            terminal::toggle_wrap();
+            compositor::update_scrollbar_flags(vt);
+            compositor::mark_dirty(vt);
+            compositor::request_full_redraw();
+        }
         _ => {}
     }
 }
@@ -1433,6 +1441,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         // — GraveShift: set_vt_switch_callback REMOVED — VT switch no longer needs
         // framebuffer hot-swap. Each VT owns its own renderer+backing fb. — GraveShift
         vt::set_signal_pending_callback(is_signal_pending); // — GraveShift: EINTR for blocked reads
+        compositor::set_winsize_callback(vt::set_vt_winsize); // — GlassSignal: per-VT winsize + SIGWINCH on layout change
     }
 
     // Create /proc directory
@@ -2472,6 +2481,13 @@ fn display_takeover(writer: &mut impl Write) {
     // Replacing a working GOP with Bochs DISPI or VirtIO-GPU SET_SCANOUT
     // causes resolution mismatches and garbled displays. Learned the hard way.
     if fb::framebuffer().is_some() {
+        // — GlassSignal: GOP framebuffer is already active and MMIO-mapped.
+        // On QEMU q35 with -bios, GOP lives at Bochs VGA BAR0 (0x80000000).
+        // Writes to this BAR are immediately visible — no GPU flush pipeline needed.
+        // VirtIO-GPU (if present) is a SEPARATE display console. Swapping the
+        // compositor to VirtIO-GPU's DMA buffer breaks the primary VGA display
+        // because the GTK window and screendump both show the VGA console.
+        // Leave the GOP framebuffer alone — it just works. — NeonVale
         let _ = writeln!(writer, "[DISPLAY] UEFI GOP framebuffer active — no takeover needed");
         return;
     }

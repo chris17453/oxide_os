@@ -1495,10 +1495,11 @@ static TIMER_TICKS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU6
 /// Terminal tick callback (called at ~30 FPS)
 static mut TERMINAL_TICK_CALLBACK: Option<fn()> = None;
 
-/// Ticks between terminal updates (for 30 FPS at 100 Hz timer = 3 ticks)
-/// — NeonVale: Back to 3 now that chunked writes fixed the lock contention.
-/// 30 FPS rendering is plenty when the app can actually get the lock between chunks.
-const TERMINAL_TICK_INTERVAL: u64 = 3;
+/// Ticks between terminal updates (for ~60 FPS at 100 Hz timer)
+/// — NeonVale: bumped from 3→1 for 100 Hz tick rate. The compositor only flushes
+/// when dirty, so idle frames cost nothing. Input polling benefits from the higher
+/// rate — keyboard events are detected within 10ms instead of 33ms.
+const TERMINAL_TICK_INTERVAL: u64 = 1;
 
 /// Last tick when terminal was updated
 /// — SableWire: Only BSP touches this (gated in handle_timer), so no SMP race.
@@ -1613,6 +1614,9 @@ extern "C" fn handle_timer(current_rsp: u64) -> u64 {
 
     // — PatchBay: Print performance statistics every 500 ticks (~5 seconds @ 100Hz)
     // Only on BSP to avoid interleaved output from multiple CPUs.
+    // — GraveShift: gated behind debug-perf — nobody wants a scoreboard
+    // clogging serial when they're trying to read actual boot output — GraveShift
+    #[cfg(feature = "debug-perf")]
     if is_bsp && current_tick % 500 == 0 {
         perf::stats::print_perf_stats(perf::counters(), current_tick);
     }

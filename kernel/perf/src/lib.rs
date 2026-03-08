@@ -56,6 +56,29 @@ pub struct PerfCounters {
     pub terminal_renders: AtomicU64,
     pub terminal_render_cycles: AtomicU64,
 
+    // — PatchBay: terminal write pipeline profiling. Every write() call broken
+    // down into: total cycles, glyph renders, bulk renders, flush cycles.
+    // The scoreboard that tells you exactly where your CPU is burning. — SableWire
+    pub term_write_calls: AtomicU64,
+    pub term_write_bytes: AtomicU64,
+    pub term_write_cycles: AtomicU64,
+    /// Per-character render_cell() calls (the inline glyph path)
+    pub term_glyph_renders: AtomicU64,
+    /// Bulk render() calls (CSI dirty rows path)
+    pub term_bulk_renders: AtomicU64,
+    /// Rows rendered in bulk render() passes
+    pub term_bulk_rows: AtomicU64,
+    /// flush_fb() / blit_to_fb() calls
+    pub term_flushes: AtomicU64,
+    /// Cycles spent in flush_fb() / blit_to_fb()
+    pub term_flush_cycles: AtomicU64,
+    /// Cycles spent in render_cell_inner() (glyph rasterization)
+    pub term_glyph_cycles: AtomicU64,
+    /// scroll_up_pixels() calls (autowrap line scrolls)
+    pub term_scrolls: AtomicU64,
+    /// Cycles spent in scroll_up_pixels() (memmove + clear)
+    pub term_scroll_cycles: AtomicU64,
+
     // Mouse processing statistics
     pub mouse_events_processed: AtomicU64,
     pub mouse_events_dropped: AtomicU64,
@@ -94,6 +117,18 @@ impl PerfCounters {
             terminal_ticks: AtomicU64::new(0),
             terminal_renders: AtomicU64::new(0),
             terminal_render_cycles: AtomicU64::new(0),
+
+            term_write_calls: AtomicU64::new(0),
+            term_write_bytes: AtomicU64::new(0),
+            term_write_cycles: AtomicU64::new(0),
+            term_glyph_renders: AtomicU64::new(0),
+            term_bulk_renders: AtomicU64::new(0),
+            term_bulk_rows: AtomicU64::new(0),
+            term_flushes: AtomicU64::new(0),
+            term_flush_cycles: AtomicU64::new(0),
+            term_glyph_cycles: AtomicU64::new(0),
+            term_scrolls: AtomicU64::new(0),
+            term_scroll_cycles: AtomicU64::new(0),
 
             mouse_events_processed: AtomicU64::new(0),
             mouse_events_dropped: AtomicU64::new(0),
@@ -231,6 +266,78 @@ impl PerfCounters {
         self.terminal_renders.fetch_add(1, Ordering::Relaxed);
         self.terminal_render_cycles
             .fetch_add(cycles, Ordering::Relaxed);
+    }
+
+    // — PatchBay: terminal write pipeline recording. Atomic, relaxed, zero-lock.
+    // These tell you exactly why find / takes 20 minutes. — SableWire
+
+    /// Record a terminal write() call with byte count and total cycles
+    #[inline]
+    pub fn record_term_write(&self, bytes: u64, cycles: u64) {
+        self.term_write_calls.fetch_add(1, Ordering::Relaxed);
+        self.term_write_bytes.fetch_add(bytes, Ordering::Relaxed);
+        self.term_write_cycles.fetch_add(cycles, Ordering::Relaxed);
+    }
+
+    /// Record inline glyph renders (render_cell per Print action)
+    #[inline]
+    pub fn record_term_glyph(&self) {
+        self.term_glyph_renders.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record glyph rasterization cycles (render_cell_inner)
+    #[inline]
+    pub fn record_term_glyph_cycles(&self, cycles: u64) {
+        self.term_glyph_cycles.fetch_add(cycles, Ordering::Relaxed);
+    }
+
+    /// Record a bulk render() pass (CSI dirty rows)
+    #[inline]
+    pub fn record_term_bulk_render(&self, dirty_rows: u64) {
+        self.term_bulk_renders.fetch_add(1, Ordering::Relaxed);
+        self.term_bulk_rows.fetch_add(dirty_rows, Ordering::Relaxed);
+    }
+
+    /// Record flush_fb / blit_to_fb
+    #[inline]
+    pub fn record_term_flush(&self, cycles: u64) {
+        self.term_flushes.fetch_add(1, Ordering::Relaxed);
+        self.term_flush_cycles.fetch_add(cycles, Ordering::Relaxed);
+    }
+
+    /// Record a scroll_up_pixels call with cycle cost (autowrap scroll)
+    #[inline]
+    pub fn record_term_scroll(&self, cycles: u64) {
+        self.term_scrolls.fetch_add(1, Ordering::Relaxed);
+        self.term_scroll_cycles.fetch_add(cycles, Ordering::Relaxed);
+    }
+
+    /// Get average cycles per terminal write call
+    pub fn term_write_avg_cycles(&self) -> u64 {
+        let count = self.term_write_calls.load(Ordering::Relaxed);
+        if count == 0 { return 0; }
+        self.term_write_cycles.load(Ordering::Relaxed) / count
+    }
+
+    /// Get average cycles per glyph render
+    pub fn term_glyph_avg_cycles(&self) -> u64 {
+        let count = self.term_glyph_renders.load(Ordering::Relaxed);
+        if count == 0 { return 0; }
+        self.term_glyph_cycles.load(Ordering::Relaxed) / count
+    }
+
+    /// Get average cycles per flush
+    pub fn term_flush_avg_cycles(&self) -> u64 {
+        let count = self.term_flushes.load(Ordering::Relaxed);
+        if count == 0 { return 0; }
+        self.term_flush_cycles.load(Ordering::Relaxed) / count
+    }
+
+    /// Get average cycles per scroll
+    pub fn term_scroll_avg_cycles(&self) -> u64 {
+        let count = self.term_scrolls.load(Ordering::Relaxed);
+        if count == 0 { return 0; }
+        self.term_scroll_cycles.load(Ordering::Relaxed) / count
     }
 
     /// Record mouse event processing

@@ -1,7 +1,7 @@
 # — NeonRoot: QEMU launch orchestration.
 # Auto-detects Fedora vs RHEL, kills stale instances, and prays the OVMF gods are merciful.
 
-.PHONY: detect-qemu-mode kill-qemu go run run-disk run-fedora run-rhel run-kvm run-release run-debug-input-gui run-debug-mouse run-debug-lock run-debug-fork run-debug-sched run-debug-all run-256m run-256m-novgpu attach
+.PHONY: detect-qemu-mode kill-qemu go run run-disk run-fedora run-rhel run-kvm run-release run-debug-input-gui run-debug-mouse run-debug-lock run-debug-fork run-debug-sched run-debug-all run-256m run-256m-novgpu attach archive-serial
 
 # Auto-detect QEMU mode (Fedora vs RHEL)
 detect-qemu-mode:
@@ -27,6 +27,22 @@ kill-qemu:
 			echo "Force-killing stubborn QEMU processes: $$STILL"; \
 			kill -9 $$STILL 2>/dev/null || true; \
 		fi; \
+	fi
+
+# — SableWire: archive the serial log to BUILD/{build}/serial-{timestamp}.txt
+# so we can diff the corpses across builds when something goes sideways — SableWire
+archive-serial:
+	@if [ -f "$(SERIAL_LOG)" ] && [ -s "$(SERIAL_LOG)" ]; then \
+		BUILD_NUM=$$(cat build/build-number 2>/dev/null || echo 0); \
+		ARCHIVE_DIR="BUILD/$$BUILD_NUM"; \
+		mkdir -p "$$ARCHIVE_DIR"; \
+		NEXT=$$(ls "$$ARCHIVE_DIR"/serial-*.txt 2>/dev/null | wc -l); \
+		NEXT=$$((NEXT + 1)); \
+		DEST="$$ARCHIVE_DIR/serial-$$(printf '%03d' $$NEXT).txt"; \
+		cp "$(SERIAL_LOG)" "$$DEST"; \
+		echo "Serial log archived to $$DEST ($$(wc -l < "$(SERIAL_LOG)") lines)"; \
+	else \
+		echo "No serial log to archive"; \
 	fi
 
 # — NeonRoot: Skip the rebuild circus. Boot the last image we already built.
@@ -92,7 +108,8 @@ run-fedora:
 	fi
 	@echo "Forwarding SSH to localhost:$(SSH_HOST_PORT)"
 	@mkdir -p /tmp/qemu-oxide
-	GDK_BACKEND=x11 TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
+	@rm -f "$(SERIAL_LOG)"
+	GDK_BACKEND=x11 GDK_SCALE=2 TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
 		-machine q35 \
 		-cpu qemu64,+smap,+smep \
 		-smp 4 \
@@ -113,7 +130,9 @@ run-fedora:
 		-serial stdio \
 		-monitor unix:$(TARGET_DIR)/qemu-monitor.sock,server,nowait \
 		-s \
-		-no-reboot
+		-no-reboot \
+		2>&1 | tee "$(SERIAL_LOG)"; \
+	$(MAKE) archive-serial
 
 # Internal target: Run with qemu-kvm (RHEL)
 run-rhel:
@@ -130,6 +149,7 @@ run-rhel:
 	fi
 	@mkdir -p $(TARGET_DIR)
 	@cp /usr/share/edk2/ovmf/OVMF_VARS.fd $(TARGET_DIR)/OVMF_VARS.fd 2>/dev/null || true
+	@rm -f "$(SERIAL_LOG)"
 	@mkdir -p /tmp/qemu-oxide
 	@echo "Starting QEMU (VNC on :5900, serial on stdio)..."
 	@echo "Forwarding SSH to localhost:$(SSH_HOST_PORT)"
@@ -154,7 +174,7 @@ run-rhel:
 		-vnc :0 \
 		-serial stdio \
 		-s \
-		-no-reboot & \
+		-no-reboot 2>&1 | tee "$(SERIAL_LOG)" & \
 	QEMU_PID=$$!; \
 	trap 'kill $$QEMU_PID 2>/dev/null; exit' INT TERM; \
 	echo "QEMU started (PID: $$QEMU_PID)"; \
@@ -173,7 +193,8 @@ run-rhel:
 	fi; \
 	echo "Stopping QEMU..."; \
 	kill $$QEMU_PID 2>/dev/null || true; \
-	wait $$QEMU_PID 2>/dev/null || true
+	wait $$QEMU_PID 2>/dev/null || true; \
+	$(MAKE) archive-serial
 
 # Alias for backward compatibility
 run-kvm: run-rhel
@@ -280,7 +301,7 @@ run-debug-input-gui:
 	@mkdir -p /tmp/qemu-oxide
 	@echo "Serial output: /tmp/oxide-serial.log"
 	@echo "Use the QEMU graphical window to type and test keyboard events"
-	GDK_BACKEND=x11 TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
+	GDK_BACKEND=x11 GDK_SCALE=2 TMPDIR=/tmp/qemu-oxide qemu-system-x86_64 \
 		-machine q35 \
 		-cpu qemu64,+smap,+smep \
 		-m 512M \

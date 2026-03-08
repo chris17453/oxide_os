@@ -1743,25 +1743,6 @@ pub fn kernel_exec(
             // Get new address space PML4
             let new_pml4 = exec_result.address_space.pml4_phys();
 
-            // — GraveShift: Verify GOT entry at 0x6ba1a0 (vim mktime) is non-zero.
-            // If it's 0 here, the ELF loader has a bug. If it's non-zero here but
-            // 0 at crash time, something zeros it after exec (COW bug? BSS init?).
-            {
-                use os_core::VirtAddr as VA;
-                if let Some(phys) = exec_result.address_space.translate(VA::new(0x6ba000)) {
-                    let kva = phys_to_virt(phys);
-                    let got_ptr = (kva.as_u64() + 0x1a0) as *const u64;
-                    let got_val = unsafe { *got_ptr };
-                    unsafe {
-                        os_log::write_str_raw("[EXEC] GOT[0x6ba1a0]=");
-                        os_log::write_u64_hex_raw(got_val);
-                        os_log::write_str_raw("\n");
-                    }
-                } else {
-                    unsafe { os_log::write_str_raw("[EXEC] GOT page 0x6ba000 NOT MAPPED\n"); }
-                }
-            }
-
             // — CrashBloom: Validate new address space PT integrity immediately
             // after do_exec. If corruption exists HERE, the bug is in do_exec or
             // the buddy allocator (double-alloc). If clean here but corrupt later,

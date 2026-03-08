@@ -57,7 +57,10 @@ pub fn console_write(data: &[u8]) {
     }
 }
 
-/// Terminal tick callback - called at ~30 FPS from timer interrupt
+/// Terminal tick callback — called at ~100 Hz from timer ISR.
+/// — GraveShift: polls input devices, processes mouse/keyboard events,
+/// then hands off to compositor::tick() for dirty-checking and GPU flush.
+#[allow(static_mut_refs)]
 pub fn terminal_tick() {
     // — PatchBay: Track terminal tick for performance monitoring
     perf::counters().record_terminal_tick();
@@ -130,7 +133,7 @@ pub fn terminal_tick() {
     // virtio-mouse-pci (EV_REL — relative deltas). The old code only handled
     // EV_REL from hardcoded device 1, so the cursor never moved. Now we drain
     // all devices and handle both ABS and REL events. The tablet is finally alive.
-    if fb::mouse_initialized() {
+    if compositor::mouse_initialized() {
         let mut total_dx: i32 = 0;
         let mut total_dy: i32 = 0;
         let mut abs_x: Option<i32> = None;
@@ -138,10 +141,10 @@ pub fn terminal_tick() {
         let mut wheel_delta: i32 = 0;
         let has_mouse_mode = terminal::is_initialized() && terminal::has_mouse_mode();
 
-        // Track button state for escape sequence generation and selection
+        // — InputShade: button state for escape sequence generation
         static mut MOUSE_BUTTONS: u8 = 0;
-        static mut LEFT_PRESSED: bool = false;
-        static mut MIDDLE_PRESSED: bool = false;
+        // — GlassSignal: shift key state for horizontal scroll
+        static mut SHIFT_HELD: bool = false;
 
         // — InputShade: Drain mouse/tablet events from all registered input devices.
         // Device order depends on PCI enumeration — don't hardcode indices.
@@ -165,7 +168,6 @@ pub fn terminal_tick() {
                     }
                     input::EventType::Abs => {
                         // — InputShade: Tablet sends absolute coords (0..32767).
-                        // Scale to screen pixel coordinates.
                         debug_mouse_unsafe!("A");
                         if event.code == input::ABS_X {
                             abs_x = Some(event.value);
@@ -174,28 +176,32 @@ pub fn terminal_tick() {
                         }
                     }
                     input::EventType::Key => {
-                        // Map button codes to terminal button numbers
-                        let (btn, bit) = match event.code {
-                            0x110 => (0u8, 0x01u8), // BTN_LEFT
-                            0x112 => (1, 0x04),     // BTN_MIDDLE
-                            0x111 => (2, 0x02),     // BTN_RIGHT
+                        // — GlassSignal: track shift state for horizontal scroll
+                        if event.code == 0x2A || event.code == 0x36 { // KEY_LEFTSHIFT / KEY_RIGHTSHIFT
+                            unsafe { SHIFT_HELD = event.value != 0; }
+                            continue;
+                        }
+
+                        // Map button codes to compositor button + terminal escape button
+                        let (comp_btn, esc_btn, bit) = match event.code {
+                            0x110 => (compositor::MouseButton::Left, 0u8, 0x01u8),
+                            0x112 => (compositor::MouseButton::Middle, 1u8, 0x04u8),
+                            0x111 => (compositor::MouseButton::Right, 2u8, 0x02u8),
                             _ => continue,
                         };
                         let pressed = event.value != 0;
 
                         // — InputShade: intercept clicks for virtual keyboard overlay.
-                        // If vkbd is visible and click lands on keyboard area, route
-                        // to vkbd instead of terminal selection/mouse mode.
                         if event.code == 0x110 && vkbd::is_visible() {
                             if pressed {
-                                if let Some((mx, my)) = fb::mouse_position() {
+                                if let Some((mx, my)) = compositor::mouse_position() {
                                     if let Some((bytes, len)) = vkbd::handle_tap(mx, my) {
                                         for i in 0..len {
                                             if let Some(manager) = vt::get_manager() {
                                                 manager.push_input(bytes[i]);
                                             }
                                         }
-                                        continue; // — InputShade: consumed by vkbd, skip normal handling
+                                        continue;
                                     }
                                 }
                             } else {
@@ -203,32 +209,37 @@ pub fn terminal_tick() {
                             }
                         }
 
-                        unsafe {
-                            if pressed {
-                                MOUSE_BUTTONS |= bit;
-                            } else {
-                                MOUSE_BUTTONS &= !bit;
-                            }
+                        unsafe { if pressed { MOUSE_BUTTONS |= bit; } else { MOUSE_BUTTONS &= !bit; } }
 
-                            // Track left and middle buttons separately for selection/paste
-                            if event.code == 0x110 {
-                                if pressed && !LEFT_PRESSED {
-                                    LEFT_PRESSED = true;
-                                    if !has_mouse_mode {
-                                        if let Some((mx, my)) = fb::mouse_position() {
-                                            terminal::start_selection(mx, my);
-                                        }
-                                    }
-                                } else if !pressed && LEFT_PRESSED {
-                                    LEFT_PRESSED = false;
-                                    if !has_mouse_mode {
-                                        terminal::finish_selection();
-                                    }
+                        // — GlassSignal: route button events through compositor event system.
+                        // Compositor does hit-testing (scrollbar, border, content) and returns
+                        // what we should do. No geometry math here — that's the compositor's job.
+                        if let Some((mx, my)) = compositor::mouse_position() {
+                            let action = if pressed {
+                                compositor::handle_mouse_press(comp_btn, mx, my)
+                            } else {
+                                compositor::handle_mouse_release(comp_btn, mx, my)
+                            };
+
+                            match action {
+                                compositor::MouseAction::Consumed => {
+                                    // — GlassSignal: compositor ate it (scrollbar, border)
                                 }
-                            } else if event.code == 0x112 {
-                                if pressed && !MIDDLE_PRESSED {
-                                    MIDDLE_PRESSED = true;
-                                    if !has_mouse_mode {
+                                compositor::MouseAction::ForwardToTerminal { vt: _ } => {
+                                    // — GlassSignal: content area — handle selection or mouse mode
+                                    if has_mouse_mode {
+                                        let eb = if pressed { esc_btn } else { 3 };
+                                        if let Some(seq) = terminal::mouse_event(eb, mx, my, pressed, false) {
+                                            push_mouse_escape(&seq);
+                                        }
+                                    } else if event.code == 0x110 {
+                                        if pressed {
+                                            terminal::start_selection(mx, my);
+                                        } else {
+                                            terminal::finish_selection();
+                                        }
+                                    } else if event.code == 0x112 && pressed {
+                                        // — InputShade: middle-click paste
                                         let paste_data = terminal::paste_clipboard();
                                         for &byte in &paste_data {
                                             if let Some(manager) = vt::get_manager() {
@@ -236,21 +247,8 @@ pub fn terminal_tick() {
                                             }
                                         }
                                     }
-                                } else if !pressed {
-                                    MIDDLE_PRESSED = false;
                                 }
-                            }
-                        }
-
-                        // Generate escape sequence for button press/release if in mouse mode
-                        if has_mouse_mode {
-                            if let Some((mx, my)) = fb::mouse_position() {
-                                let esc_btn = if pressed { btn } else { 3 };
-                                if let Some(seq) =
-                                    terminal::mouse_event(esc_btn, mx, my, pressed, false)
-                                {
-                                    push_mouse_escape(&seq);
-                                }
+                                compositor::MouseAction::Nothing => {}
                             }
                         }
                     }
@@ -260,75 +258,88 @@ pub fn terminal_tick() {
         }
 
         // — InputShade: Handle absolute positioning (tablet) — scale from
-        // input range (0..32767) to screen pixels. This is what makes the
-        // cursor actually track the host mouse in QEMU.
+        // input range (0..32767) to screen pixels.
         let mut cursor_moved = false;
         if abs_x.is_some() || abs_y.is_some() {
-            if let Some((screen_w, screen_h)) = fb::screen_dimensions() {
+            if let Some((screen_w, screen_h)) = compositor::screen_dimensions() {
                 let px = abs_x
                     .map(|ax| ((ax as i64) * screen_w as i64 / 32768) as i32)
-                    .unwrap_or_else(|| fb::mouse_position().map(|(x, _)| x).unwrap_or(0));
+                    .unwrap_or_else(|| compositor::mouse_position().map(|(x, _)| x).unwrap_or(0));
                 let py = abs_y
                     .map(|ay| ((ay as i64) * screen_h as i64 / 32768) as i32)
-                    .unwrap_or_else(|| fb::mouse_position().map(|(_, y)| y).unwrap_or(0));
-                fb::mouse_set_position(px, py);
+                    .unwrap_or_else(|| compositor::mouse_position().map(|(_, y)| y).unwrap_or(0));
+                compositor::mouse_set_position(px, py);
                 cursor_moved = true;
             }
         }
 
         // Move graphical cursor (relative mode — traditional mouse)
         if total_dx != 0 || total_dy != 0 {
-            fb::mouse_move(total_dx, total_dy);
+            compositor::mouse_move(total_dx, total_dy);
             cursor_moved = true;
         }
 
+        // — GlassSignal: route mouse motion through compositor event system.
+        // During scrollbar drag, compositor handles proportional scrolling.
+        // During content press, we forward to terminal selection or mouse mode.
         if cursor_moved {
-            // Update selection if left button held (no mouse mode)
-            unsafe {
-                if LEFT_PRESSED && !has_mouse_mode {
-                    if let Some((mx, my)) = fb::mouse_position() {
-                        terminal::update_selection(mx, my);
+            if let Some((mx, my)) = compositor::mouse_position() {
+                let action = compositor::handle_mouse_move(mx, my);
+                match action {
+                    compositor::MouseAction::Consumed => {
+                        // — GlassSignal: scrollbar drag — compositor handled it
                     }
-                }
-            }
-
-            // Generate motion escape sequences if terminal wants them (mouse mode)
-            if has_mouse_mode {
-                if let Some((mx, my)) = fb::mouse_position() {
-                    let held_btn = unsafe {
-                        if MOUSE_BUTTONS & 0x01 != 0 { 0u8 }
-                        else if MOUSE_BUTTONS & 0x04 != 0 { 1 }
-                        else if MOUSE_BUTTONS & 0x02 != 0 { 2 }
-                        else { 3 }
-                    };
-                    if let Some(seq) = terminal::mouse_event(held_btn, mx, my, true, true) {
-                        push_mouse_escape(&seq);
+                    compositor::MouseAction::ForwardToTerminal { vt: _ } => {
+                        if has_mouse_mode {
+                            let held_btn = unsafe {
+                                if MOUSE_BUTTONS & 0x01 != 0 { 0u8 }
+                                else if MOUSE_BUTTONS & 0x04 != 0 { 1 }
+                                else if MOUSE_BUTTONS & 0x02 != 0 { 2 }
+                                else { 3 }
+                            };
+                            if let Some(seq) = terminal::mouse_event(held_btn, mx, my, true, true) {
+                                push_mouse_escape(&seq);
+                            }
+                        } else {
+                            terminal::update_selection(mx, my);
+                        }
+                    }
+                    compositor::MouseAction::Nothing => {
+                        // — GlassSignal: idle motion — could do hover effects later
                     }
                 }
             }
         }
 
-        // Handle mouse wheel scrolling
-        // — EchoFrame: Scroll wheel in two modes:
-        // 1. Mouse mode OFF: scroll terminal history (default)
-        // 2. Mouse mode ON: send escape sequences to app (vim, less)
+        // — GlassSignal: mouse wheel — compositor handles shift+wheel (horizontal).
+        // Normal wheel goes to terminal scroll or mouse mode escape sequences.
         if wheel_delta != 0 {
-            if has_mouse_mode {
-                if let Some((mx, my)) = fb::mouse_position() {
-                    let btn = if wheel_delta > 0 { 64u8 } else { 65u8 };
-                    let clicks = wheel_delta.unsigned_abs();
-                    for _ in 0..clicks {
-                        if let Some(seq) = terminal::mouse_event(btn, mx, my, true, false) {
-                            push_mouse_escape(&seq);
+            let shift = unsafe { SHIFT_HELD };
+            if let Some((mx, my)) = compositor::mouse_position() {
+                let action = compositor::handle_mouse_wheel(wheel_delta, mx, my, shift);
+                match action {
+                    compositor::MouseAction::Consumed => {
+                        // — GlassSignal: shift+wheel horizontal scroll handled by compositor
+                    }
+                    _ => {
+                        // — EchoFrame: normal wheel — scroll history or mouse mode escape
+                        if has_mouse_mode {
+                            let btn = if wheel_delta > 0 { 64u8 } else { 65u8 };
+                            let clicks = wheel_delta.unsigned_abs();
+                            for _ in 0..clicks {
+                                if let Some(seq) = terminal::mouse_event(btn, mx, my, true, false) {
+                                    push_mouse_escape(&seq);
+                                }
+                            }
+                        } else {
+                            let scroll_lines = (wheel_delta.unsigned_abs() as usize) * 3;
+                            if wheel_delta > 0 {
+                                terminal::scroll_up(scroll_lines);
+                            } else {
+                                terminal::scroll_down(scroll_lines);
+                            }
                         }
                     }
-                }
-            } else {
-                let scroll_lines = (wheel_delta.unsigned_abs() as usize) * 3;
-                if wheel_delta > 0 {
-                    terminal::scroll_up(scroll_lines);
-                } else {
-                    terminal::scroll_down(scroll_lines);
                 }
             }
         }
@@ -336,10 +347,6 @@ pub fn terminal_tick() {
 
     // Drive the active display: prefer terminal emulator; disable legacy fb cursor to avoid double cursor
     if terminal::is_initialized() {
-        // Erase mouse cursor before terminal render to avoid it getting baked into
-        // the save buffer or painted over by dirty row redraws — SoftGlyph
-        fb::mouse_erase();
-
         // Blink at ~2.5Hz (every 12 frames at 30 FPS)
         static mut BLINK_TICKS: u8 = 0;
         unsafe {
@@ -353,12 +360,9 @@ pub fn terminal_tick() {
             }
         }
 
-        // — NeonRoot: compositor blits dirty VT backing buffers → hardware fb.
-        // Terminal rendered to VT0's backing buffer above, now blit to screen.
+        // — NeonRoot: compositor blits dirty VT backing buffers → hardware fb,
+        // draws vkbd overlay, then mouse cursor as the final layer. — SoftGlyph
         compositor::tick();
-
-        // Redraw mouse cursor on top of freshly composited content — SoftGlyph
-        fb::mouse_draw();
     } else if fb::is_initialized() {
         // Fallback pre-terminal: allow fb console cursor only when terminal is not active
         fb::blink_cursor();

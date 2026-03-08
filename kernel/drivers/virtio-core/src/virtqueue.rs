@@ -73,6 +73,8 @@ pub const MAX_QUEUE_SIZE: usize = 256;
 pub struct Virtqueue {
     /// Descriptor table (physical address)
     desc_phys: u64,
+    /// Total pages allocated for this queue — WireSaint: free exactly what we grabbed
+    alloc_pages: usize,
     /// Descriptor table (virtual address for kernel access)
     desc: *mut VirtqDesc,
     /// Available ring (physical address)
@@ -150,6 +152,7 @@ impl Virtqueue {
 
         Some(Virtqueue {
             desc_phys,
+            alloc_pages: num_pages,
             desc,
             avail_phys,
             avail,
@@ -221,6 +224,7 @@ impl Virtqueue {
 
         Some(Virtqueue {
             desc_phys,
+            alloc_pages: num_pages,
             desc,
             avail_phys,
             avail,
@@ -359,25 +363,11 @@ impl Virtqueue {
 /// Without this, every device removal leaks physical frames until OOM.
 impl Drop for Virtqueue {
     fn drop(&mut self) {
-        // Reconstruct the allocation size to free the right number of pages
-        let desc_size = (self.num as usize) * core::mem::size_of::<VirtqDesc>();
-        let avail_size = 6 + 2 * (self.num as usize);
-        let used_size = 6 + 8 * (self.num as usize);
-
-        // — WireSaint: we don't know if this was legacy (page-aligned used ring)
-        // or modern (4-byte aligned). Use the larger calculation to be safe —
-        // both allocated from desc_phys as base with the same frame count.
-        let avail_end = desc_size + avail_size;
-        let used_offset_legacy = (avail_end + 4095) & !4095;
-        let used_offset_modern = (avail_end + 3) & !3;
-        let total_legacy = used_offset_legacy + used_size;
-        let total_modern = used_offset_modern + used_size;
-        let total_size = total_legacy.max(total_modern);
-        let num_pages = (total_size + 4095) / 4096;
-
         // Free the contiguous physical frames back to the buddy allocator
-        if self.desc_phys != 0 {
-            let _ = mm().free_contiguous(PhysAddr::new(self.desc_phys), num_pages);
+        // — WireSaint: alloc_pages tracks the exact size; freeing more scribbles
+        // on neighbors (ask the buddy canary how that went…)
+        if self.desc_phys != 0 && self.alloc_pages > 0 {
+            let _ = mm().free_contiguous(PhysAddr::new(self.desc_phys), self.alloc_pages);
         }
     }
 }

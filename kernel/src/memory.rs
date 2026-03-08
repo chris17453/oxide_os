@@ -23,8 +23,40 @@ pub fn get_memory_stats() -> procfs::MemoryStats {
     }
 }
 
-/// Get framebuffer device info for /dev/fb0
+/// Get framebuffer device info for /dev/fb0.
+/// — GlassSignal: resolves to the calling process's VT's virtual framebuffer.
+/// Like /dev/tty resolving to the caller's controlling terminal, /dev/fb0
+/// resolves to the caller's VT's VFB. Apps never see the hardware FB.
+/// Falls back to hardware FB if VT lookup fails (kernel context, no ctty).
 pub fn get_fb_device_info() -> Option<devfs::devices::FramebufferDeviceInfo> {
+    // — GlassSignal: try to resolve caller's VT from controlling terminal
+    if let Some(pid) = sched::current_pid() {
+        if let Some(meta) = sched::try_get_task_meta(pid) {
+            if let Some(guard) = meta.try_lock() {
+                let tty_nr = guard.tty_nr;
+                // — GlassSignal: major 4 = VT device, minor = VT number
+                if tty_nr != 0 && (tty_nr >> 8) == 4 {
+                    let vt_num = (tty_nr & 0xFF) as usize;
+                    if let Some((base, size, w, h, stride, bpp, is_bgr)) =
+                        compositor::get_vfb_info_raw(vt_num)
+                    {
+                        return Some(devfs::devices::FramebufferDeviceInfo {
+                            base,
+                            phys_base: 0, // — GlassSignal: VFB is virtual, no physical addr
+                            size,
+                            width: w,
+                            height: h,
+                            stride,
+                            bpp,
+                            is_bgr,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // — GlassSignal: fallback to hardware FB (kernel context or no VT assigned)
     let info = fb::get_fb_info()?;
 
     Some(devfs::devices::FramebufferDeviceInfo {

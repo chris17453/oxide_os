@@ -9,6 +9,22 @@ pub const MAX_VTS: usize = 6;
 /// Maximum number of visible tiles in any layout
 pub const MAX_TILES: usize = 4;
 
+/// — EchoFrame: scrollbar dimensions in pixels. 16px like Win95 intended.
+/// Vertical scrollbar occupies right edge, horizontal occupies bottom edge.
+pub const SCROLLBAR_WIDTH: u32 = 16;
+pub const SCROLLBAR_HEIGHT: u32 = 16;
+pub const SCROLLBAR_THUMB_MIN: u32 = 24;
+
+/// — GlassSignal: per-VT scrollbar visibility flags.
+/// Compositor sets these based on terminal state (scrollback len, wrap mode).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ScrollbarFlags {
+    /// Vertical scrollbar visible (always true for text VTs — track always shown)
+    pub vscroll: bool,
+    /// Horizontal scrollbar visible (only when wrap mode OFF and content wider than viewport)
+    pub hscroll: bool,
+}
+
 /// Screen layout modes
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Layout {
@@ -45,6 +61,70 @@ impl Viewport {
     pub fn terminal_rows(&self, cell_height: u32) -> u32 {
         if cell_height == 0 { return 0; }
         self.height / cell_height
+    }
+}
+
+/// — GlassSignal: Full geometry for a VT's viewport — everything an app or the
+/// compositor needs to know about where this VT lives and how big it is.
+/// Screen position is compositor-internal. Apps only see usable dimensions.
+#[derive(Clone, Copy, Debug)]
+pub struct ViewportGeometry {
+    /// Position on hardware FB (compositor-internal, apps never see this)
+    pub screen_x: u32,
+    pub screen_y: u32,
+
+    /// Full viewport including chrome
+    pub total_width: u32,
+    pub total_height: u32,
+
+    /// Chrome dimensions (borders, future title bar, future scrollbar)
+    pub border_top: u32,
+    pub border_bottom: u32,
+    pub border_left: u32,
+    pub border_right: u32,
+
+    /// Content area = total - chrome (this is what apps see as their VFB size)
+    pub usable_width: u32,
+    pub usable_height: u32,
+
+    /// Text grid derived from usable area ÷ font size
+    pub text_cols: u32,
+    pub text_rows: u32,
+}
+
+impl ViewportGeometry {
+    /// Compute geometry from a viewport rectangle, chrome widths, and font metrics.
+    /// — GlassSignal: pure math, no allocations, no side effects
+    pub fn from_viewport(
+        vp: &Viewport,
+        border_top: u32,
+        border_bottom: u32,
+        border_left: u32,
+        border_right: u32,
+        cell_width: u32,
+        cell_height: u32,
+    ) -> Self {
+        let chrome_h = border_top + border_bottom;
+        let chrome_w = border_left + border_right;
+        let usable_width = vp.width.saturating_sub(chrome_w);
+        let usable_height = vp.height.saturating_sub(chrome_h);
+        let text_cols = if cell_width > 0 { usable_width / cell_width } else { 0 };
+        let text_rows = if cell_height > 0 { usable_height / cell_height } else { 0 };
+
+        ViewportGeometry {
+            screen_x: vp.x,
+            screen_y: vp.y,
+            total_width: vp.width,
+            total_height: vp.height,
+            border_top,
+            border_bottom,
+            border_left,
+            border_right,
+            usable_width,
+            usable_height,
+            text_cols,
+            text_rows,
+        }
     }
 }
 
@@ -219,5 +299,59 @@ impl LayoutManager {
     pub fn update_screen_size(&mut self, width: u32, height: u32) {
         self.screen_width = width;
         self.screen_height = height;
+    }
+
+    /// — GlassSignal: Compute per-VT geometries from current layout + screen size.
+    /// Returns array of Option<ViewportGeometry> — None for off-screen VTs.
+    /// This is the single source of truth for VFB dimensions, text grid sizes,
+    /// and compositor blit positions.
+    /// scrollbar_flags controls per-VT scrollbar chrome (eats into usable area).
+    pub fn recompute_geometries(
+        &self,
+        cell_width: u32,
+        cell_height: u32,
+        scrollbar_flags: &[ScrollbarFlags; MAX_VTS],
+    ) -> [Option<ViewportGeometry>; MAX_VTS] {
+        let viewports = self.compute_viewports();
+        let tile_count = self.tile_count();
+        let mut result: [Option<ViewportGeometry>; MAX_VTS] = [None; MAX_VTS];
+
+        // — GlassSignal: chrome for focused vs unfocused tiles in split modes.
+        // Focused tile gets a 1px highlight border. Unfocused gets nothing extra.
+        // The 2px gap between tiles is handled by compute_viewports() already.
+        for slot_idx in 0..tile_count {
+            let (vt_idx, viewport) = viewports[slot_idx];
+            if vt_idx >= MAX_VTS || viewport.width == 0 || viewport.height == 0 {
+                continue;
+            }
+
+            // — GlassSignal: focus highlight border eats 1px from each edge
+            // of the focused tile in split modes. Fullscreen gets no border.
+            let is_focused = slot_idx == self.focused_slot;
+            let has_chrome = tile_count > 1 && is_focused;
+            let chrome = if has_chrome { 1 } else { 0 };
+
+            // — GlassSignal: scrollbar chrome eats from right and/or bottom edge
+            let sb = scrollbar_flags[vt_idx];
+            let border_right = chrome + if sb.vscroll { SCROLLBAR_WIDTH } else { 0 };
+            let border_bottom = chrome + if sb.hscroll { SCROLLBAR_HEIGHT } else { 0 };
+
+            result[vt_idx] = Some(ViewportGeometry::from_viewport(
+                &viewport,
+                chrome, border_bottom, chrome, border_right,
+                cell_width,
+                cell_height,
+            ));
+        }
+
+        result
+    }
+
+    pub fn screen_width(&self) -> u32 {
+        self.screen_width
+    }
+
+    pub fn screen_height(&self) -> u32 {
+        self.screen_height
     }
 }

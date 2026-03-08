@@ -17,3 +17,4 @@ fb = { path = "../../graphics/fb" }
 os_log = { path = "../../core/os_log" }
 vte = { path = "../../../userspace/libs/vte" }
 os_core = { workspace = true }
+perf = { path = "../../perf" }

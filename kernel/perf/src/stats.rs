@@ -168,5 +168,101 @@ pub fn print_perf_stats(counters: &PerfCounters, uptime_ticks: u64) {
         write_str("║\n");
     }
 
+    // — PatchBay: terminal write pipeline breakdown. The autopsy table
+    // for figuring out why your terminal is slower than a 1996 VT100. — SableWire
+    let tw_calls = counters.term_write_calls.load(core::sync::atomic::Ordering::Relaxed);
+    if tw_calls > 0 {
+        write_str("╠══════════════════════════════════════════════════════════════════╣\n");
+        write_str("║  TERMINAL WRITE PIPELINE                                         ║\n");
+        write_str("╠══════════════════════════════════════════════════════════════════╣\n");
+
+        let tw_bytes = counters.term_write_bytes.load(core::sync::atomic::Ordering::Relaxed);
+        let tw_avg = counters.term_write_avg_cycles();
+        write_str("║  write() calls:    ");
+        print_decimal(tw_calls);
+        write_str("  │  avg: ");
+        print_decimal(tw_avg);
+        write_str(" cyc");
+        print_padding(31 - decimal_width(tw_calls) - decimal_width(tw_avg));
+        write_str("║\n");
+
+        write_str("║  bytes processed:  ");
+        print_decimal(tw_bytes);
+        write_str("  │  avg/call: ");
+        let avg_bytes = tw_bytes / tw_calls;
+        print_decimal(avg_bytes);
+        write_str(" B");
+        print_padding(29 - decimal_width(tw_bytes) - decimal_width(avg_bytes));
+        write_str("║\n");
+
+        let glyphs = counters.term_glyph_renders.load(core::sync::atomic::Ordering::Relaxed);
+        let glyph_avg = counters.term_glyph_avg_cycles();
+        write_str("║  glyph renders:    ");
+        print_decimal(glyphs);
+        write_str("  │  avg: ");
+        print_decimal(glyph_avg);
+        write_str(" cyc");
+        print_padding(31 - decimal_width(glyphs) - decimal_width(glyph_avg));
+        write_str("║\n");
+
+        let bulk = counters.term_bulk_renders.load(core::sync::atomic::Ordering::Relaxed);
+        let bulk_rows = counters.term_bulk_rows.load(core::sync::atomic::Ordering::Relaxed);
+        write_str("║  bulk renders:     ");
+        print_decimal(bulk);
+        write_str("  │  rows: ");
+        print_decimal(bulk_rows);
+        print_padding(34 - decimal_width(bulk) - decimal_width(bulk_rows));
+        write_str("║\n");
+
+        let flushes = counters.term_flushes.load(core::sync::atomic::Ordering::Relaxed);
+        let flush_avg = counters.term_flush_avg_cycles();
+        write_str("║  flush_fb() calls: ");
+        print_decimal(flushes);
+        write_str("  │  avg: ");
+        print_decimal(flush_avg);
+        write_str(" cyc");
+        print_padding(31 - decimal_width(flushes) - decimal_width(flush_avg));
+        write_str("║\n");
+
+        let scrolls = counters.term_scrolls.load(core::sync::atomic::Ordering::Relaxed);
+        let scroll_avg = counters.term_scroll_avg_cycles();
+        write_str("║  line scrolls:     ");
+        print_decimal(scrolls);
+        write_str("  │  avg: ");
+        print_decimal(scroll_avg);
+        write_str(" cyc");
+        print_padding(31 - decimal_width(scrolls) - decimal_width(scroll_avg));
+        write_str("║\n");
+
+        // — PatchBay: time breakdown — where the cycles actually go.
+        // — SableWire: now includes scroll cycles so "other" actually means
+        // parser + handler + cursor + overhead, not "where 86% of your CPU went."
+        let total_cyc = counters.term_write_cycles.load(core::sync::atomic::Ordering::Relaxed);
+        let glyph_cyc = counters.term_glyph_cycles.load(core::sync::atomic::Ordering::Relaxed);
+        let flush_cyc = counters.term_flush_cycles.load(core::sync::atomic::Ordering::Relaxed);
+        let scroll_cyc = counters.term_scroll_cycles.load(core::sync::atomic::Ordering::Relaxed);
+        if total_cyc > 0 {
+            let glyph_pct = (glyph_cyc * 100) / total_cyc;
+            let flush_pct = (flush_cyc * 100) / total_cyc;
+            let scroll_pct = (scroll_cyc * 100) / total_cyc;
+            let other_pct = 100u64
+                .saturating_sub(glyph_pct)
+                .saturating_sub(flush_pct)
+                .saturating_sub(scroll_pct);
+            write_str("║  ── time breakdown ──────────────────────────────────────────── ║\n");
+            write_str("║  glyphs: ");
+            print_decimal(glyph_pct);
+            write_str("%  scroll: ");
+            print_decimal(scroll_pct);
+            write_str("%  flush: ");
+            print_decimal(flush_pct);
+            write_str("%  other: ");
+            print_decimal(other_pct);
+            write_str("%");
+            print_padding(25 - decimal_width(glyph_pct) - decimal_width(scroll_pct) - decimal_width(flush_pct) - decimal_width(other_pct));
+            write_str("║\n");
+        }
+    }
+
     write_str("╚══════════════════════════════════════════════════════════════════╝\n\n");
 }

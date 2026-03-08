@@ -973,27 +973,11 @@ pub fn take_over_display() -> Result<FramebufferInfo, &'static str> {
 /// — GlassSignal: the pixel pipeline's last mile — guest memory to host scanout.
 /// Uses try_lock because this may fire from ISR context (terminal tick).
 fn gpu_flush_region(x: u32, y: u32, w: u32, h: u32) {
-    static FLUSH_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-    let n = FLUSH_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-    // — GlassSignal: trace first few flushes so we know the pipeline is alive
-    if n < 5 {
-        unsafe {
-            os_log::write_str_raw("[VGPU-FLUSH] gpu_flush_region called #");
-            os_log::write_u32_raw(n);
-            os_log::write_str_raw("\n");
-        }
-    }
+    // — GlassSignal: try_lock because this fires from ISR context (compositor tick)
     if let Some(guard) = VIRTIO_GPU.try_lock() {
         if let Some(ref gpu) = *guard {
             <VirtioGpu as Framebuffer>::flush_region(gpu, x, y, w, h);
-            if n < 5 {
-                unsafe { os_log::write_str_raw("[VGPU-FLUSH] flush_region sent OK\n"); }
-            }
-        } else if n < 5 {
-            unsafe { os_log::write_str_raw("[VGPU-FLUSH] GPU is None!\n"); }
         }
-    } else if n < 5 {
-        unsafe { os_log::write_str_raw("[VGPU-FLUSH] try_lock failed (contention)\n"); }
     }
 }
 

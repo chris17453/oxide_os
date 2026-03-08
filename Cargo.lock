@@ -174,10 +174,10 @@ version = "0.1.0"
 dependencies = [
  "fb",
  "mm-manager",
- "mm-traits",
  "os_core",
  "os_log",
  "spin 0.9.8",
+ "terminal",
  "vkbd",
 ]
 
@@ -1652,6 +1652,7 @@ dependencies = [
  "fb",
  "os_core",
  "os_log",
+ "perf",
  "spin 0.9.8",
  "vte",
 ]

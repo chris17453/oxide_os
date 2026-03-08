@@ -6,6 +6,7 @@
 //! — GlassSignal: The MMIO graveyard is closed. Pixels live in RAM now.
 
 extern crate alloc;
+extern crate perf;
 
 use alloc::sync::Arc;
 use alloc::vec;
@@ -173,6 +174,36 @@ impl Renderer {
             blit_y_max: Cell::new(0),
             blit_pending: Cell::new(false),
         }
+    }
+
+    /// Resize the renderer with a new framebuffer.
+    /// — GlassSignal: viewport changed — swap to resized backing buffer, recompute
+    /// grid dims, nuke dirty state. Same double_buffer policy as original init.
+    /// This is the layout-change path; update_framebuffer is the GPU-swap path.
+    pub fn resize(&mut self, fb: Arc<dyn Framebuffer>) {
+        let cols = fb.width() / self.font.width;
+        let rows = fb.height() / self.font.height;
+
+        let had_back_buffer = self.back_buffer.is_some();
+        let back_buffer = if had_back_buffer && fb.size() > 0 {
+            Some(vec![0u8; fb.size()])
+        } else {
+            None
+        };
+
+        self.fb = fb;
+        self.cols = cols;
+        self.rows = rows;
+        self.back_buffer = back_buffer;
+        self.dirty = DirtyRegion::new(rows);
+        self.dirty.mark_all();
+        self.last_cursor_row = 0;
+        self.last_cursor_col = 0;
+        self.last_cursor_visible = false;
+        self.selection = None;
+        self.blit_y_min.set(0);
+        self.blit_y_max.set(0);
+        self.blit_pending.set(false);
     }
 
     /// Hot-swap the framebuffer after GPU driver init.
@@ -532,6 +563,9 @@ impl Renderer {
             self.render_cursor(buffer, cursor);
             pixel_count += (self.font.width * self.font.height) as u64;
         }
+
+        // — PatchBay: record bulk render stats
+        perf::counters().record_term_bulk_render(dirty_count as u64);
 
         // Clear dirty flags
         self.dirty.clear();
@@ -988,7 +1022,12 @@ impl Renderer {
             } else {
                 1
             };
+            // — PatchBay: measure per-glyph rasterization cost
+            let g_start = perf::rdtsc();
             self.render_cell_inner(px, py, cell, cell_count, selected);
+            let g_end = perf::rdtsc();
+            perf::counters().record_term_glyph();
+            perf::counters().record_term_glyph_cycles(g_end.saturating_sub(g_start));
         }
     }
 
@@ -997,9 +1036,11 @@ impl Renderer {
     /// repainting 24×80 cells after scroll, we memmove the pixels and clear
     /// the bottom row. The back buffer has copy_rect for overlapping regions.
     pub fn scroll_up_pixels(&self, lines: u32, bg_color: Color) {
+        let scroll_start = perf::rdtsc();
         let pixel_rows = lines * self.font.height;
         let total_pixel_height = self.rows * self.font.height;
         if pixel_rows >= total_pixel_height {
+            perf::counters().record_term_scroll(perf::rdtsc().saturating_sub(scroll_start));
             return;
         }
         // — GraveShift: Shift all scanlines up by pixel_rows within back buffer.
@@ -1016,6 +1057,8 @@ impl Renderer {
         self.bb_fill_rect(0, clear_y, self.fb.width(), pixel_rows, bg_color);
         // — GlassSignal: Mark cleared bottom region for blit
         self.extend_blit_region(clear_y, pixel_rows);
+        let scroll_end = perf::rdtsc();
+        perf::counters().record_term_scroll(scroll_end.saturating_sub(scroll_start));
     }
 
     /// Paint cursor at current position — call after writes for immediate visibility.

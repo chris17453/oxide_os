@@ -179,6 +179,27 @@ impl Tty {
         *self.winsize.lock() = winsize;
     }
 
+    /// Set window size and send SIGWINCH to foreground process group.
+    /// — GlassSignal: the compositor calls this on layout change. Unlike
+    /// TIOCSWINSZ ioctl, this is kernel-initiated — no userspace pointer dance.
+    pub fn set_winsize_and_signal(&self, winsize: Winsize) {
+        let old = *self.winsize.lock();
+        *self.winsize.lock() = winsize;
+
+        // — GlassSignal: only signal if dimensions actually changed
+        if old.ws_row != winsize.ws_row || old.ws_col != winsize.ws_col {
+            unsafe {
+                if let Some(callback) = SIGNAL_PGRP_CALLBACK {
+                    let pgid = self.get_foreground_pgid();
+                    if pgid > 0 {
+                        const SIGWINCH: i32 = 28;
+                        callback(pgid, SIGWINCH);
+                    }
+                }
+            }
+        }
+    }
+
     /// Get foreground process group
     pub fn get_foreground_pgid(&self) -> i32 {
         *self.foreground_pgid.lock()

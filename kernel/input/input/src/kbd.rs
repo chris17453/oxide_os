@@ -341,6 +341,7 @@ pub fn process_key_event(keycode: u16, pressed: bool) -> KeyAction {
             crate::KEY_ENTER => Some(3u8),  // Toggle fullscreen ↔ last split
             crate::KEY_TAB => Some(4u8),    // Cycle focus to next tile
             crate::KEY_K => Some(5u8),      // Toggle virtual keyboard — InputShade
+            crate::KEY_W => Some(6u8),      // Toggle wrap mode — GlassSignal
             _ => None,
         };
         if let Some(action) = comp_action {

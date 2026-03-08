@@ -106,6 +106,11 @@ OXIDE_VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*= *"\([
 OXIDE_BUILD = $(shell cat build/build-number 2>/dev/null || echo 0)
 OXIDE_FULL_VERSION = $(OXIDE_VERSION).$(OXIDE_BUILD)
 
+# Serial log capture — piped through tee so you still see it in the terminal
+# — SableWire: the flight recorder that outlives the crash
+SERIAL_LOG := $(TARGET_DIR)/serial.log
+BUILD_ARCHIVE_DIR = BUILD/$(OXIDE_BUILD)
+
 # Disk image configuration for root filesystem
 ROOTFS_IMAGE := $(TARGET_DIR)/oxide-disk.img
 ROOTFS_SIZE := 896

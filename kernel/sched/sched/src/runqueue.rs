@@ -10,6 +10,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
+use core::cmp;
 use core::sync::atomic::{AtomicU16, Ordering};
 use sched_traits::{NICE_0_WEIGHT, Pid, RunQueueOps, SchedPolicy, TaskState};
 
@@ -194,17 +195,12 @@ impl RunQueue {
     }
 
     /// Count tasks in TASK_RUNNING state without heap allocation.
-    /// — TorqueJax: ISR-safe. No Vec, no heap, just a counter. For loadavg
-    /// sampling from timer ISR where heap allocation = instant deadlock.
+    /// — TorqueJax: ISR-safe. Uses cached `nr_running` and clamps to the slot
+    /// capacity to avoid overflow if corruption ever bumps the counter.
     pub fn count_running(&self) -> u64 {
-        self.slots
-            .iter()
-            .filter(|slot| {
-                slot.as_ref()
-                    .map(|t| t.state == TaskState::TASK_RUNNING)
-                    .unwrap_or(false)
-            })
-            .count() as u64
+        debug_assert_eq!(self.slots.len(), MAX_TASKS_PER_RQ);
+        let nr = self.nr_running as u64;
+        cmp::min(nr, MAX_TASKS_PER_RQ as u64)
     }
 
     /// Get a reference to a task

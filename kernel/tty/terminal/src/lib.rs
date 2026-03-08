@@ -83,6 +83,19 @@ fn lock_contention_warning(lock_name: &str) {
 /// Default scrollback buffer size (lines)
 const DEFAULT_SCROLLBACK: usize = 10000;
 
+/// — GlassSignal: scrollbar state snapshot for compositor rendering.
+/// Queried by compositor from ISR context via try_lock.
+#[derive(Clone, Copy, Debug)]
+pub struct ScrollbarState {
+    pub scroll_offset: usize,
+    pub scrollback_len: usize,
+    pub h_scroll_offset: usize,
+    pub max_line_width: usize,
+    pub rows: u32,
+    pub cols: u32,
+    pub wrap_mode: bool,
+}
+
 /// Terminal emulator state
 pub struct TerminalEmulator {
     /// VT100 parser
@@ -125,6 +138,15 @@ pub struct TerminalEmulator {
     clipboard: String,
     /// Mouse selection state
     selection: Option<Selection>,
+    /// — GlassSignal: horizontal scroll offset in columns (0 = leftmost)
+    h_scroll_offset: usize,
+    /// — GlassSignal: wrap mode (true = lines wrap at viewport width, false = horizontal scroll)
+    wrap_mode: bool,
+    /// — GraveShift: pre-allocated composite buffer for render_with_scrollback.
+    /// Reused every frame instead of allocating a fresh ScreenBuffer. The old code
+    /// did Vec::with_capacity(cols×rows) on every scroll render — 126KB heap alloc
+    /// from timer ISR context = instant deadlock on HEAP_ALLOCATOR spinlock. — SableWire
+    scroll_composite: ScreenBuffer,
 }
 
 /// Mouse text selection
@@ -179,7 +201,49 @@ impl TerminalEmulator {
             custom_cursor: None,
             clipboard: String::new(),
             selection: None,
+            h_scroll_offset: 0,
+            wrap_mode: true,
+            scroll_composite: ScreenBuffer::new(cols, rows),
         }
+    }
+
+    /// Resize the terminal emulator to fit a new framebuffer.
+    /// — GlassSignal: the compositor calls this when layout changes — new VFB
+    /// dimensions mean new grid size. Resizes buffers, handler, renderer, clamps
+    /// cursor. Like xterm's VTResize + ScreenResize in one shot.
+    pub fn resize(&mut self, new_fb: Arc<dyn Framebuffer>) {
+        // — GlassSignal: derive new grid from new fb dimensions
+        let new_cols = new_fb.width() / self.cell_width;
+        let new_rows = new_fb.height() / self.cell_height;
+
+        if new_cols == self.cols && new_rows == self.rows {
+            // — GlassSignal: same grid size, just swap the fb reference
+            self.renderer.resize(new_fb);
+            return;
+        }
+
+        unsafe {
+            os_log::write_str_raw("[VT-RESIZE] ");
+            os_log::write_u64_hex_raw(self.cols as u64);
+            os_log::write_str_raw("x");
+            os_log::write_u64_hex_raw(self.rows as u64);
+            os_log::write_str_raw(" -> ");
+            os_log::write_u64_hex_raw(new_cols as u64);
+            os_log::write_str_raw("x");
+            os_log::write_u64_hex_raw(new_rows as u64);
+            os_log::write_str_raw("\n");
+        }
+
+        // — GlassSignal: resize bottom-up: buffers → handler → renderer
+        self.primary.resize(new_cols, new_rows);
+        self.alternate.resize(new_cols, new_rows);
+        self.scroll_composite.resize(new_cols, new_rows);
+        self.handler.resize(new_cols, new_rows);
+        self.renderer.resize(new_fb);
+
+        self.cols = new_cols;
+        self.rows = new_rows;
+        self.needs_render = true;
     }
 
     /// Get terminal dimensions (cols, rows)
@@ -269,6 +333,9 @@ impl TerminalEmulator {
             }
             self.sync_buffer.extend_from_slice(data);
         } else {
+            // — PatchBay: measure the entire write pipeline. Every cycle counted.
+            let write_start = perf::rdtsc();
+
             // — SoftGlyph: Pass selection state to renderer before any rendering
             self.push_selection_to_renderer();
 
@@ -307,8 +374,18 @@ impl TerminalEmulator {
                 let cursor = self.handler.cursor;
                 self.renderer.paint_cursor(buffer, &cursor);
                 self.renderer.update_cursor_tracking(&cursor);
+                let flush_start = perf::rdtsc();
                 self.renderer.flush_fb();
+                let flush_end = perf::rdtsc();
+                perf::counters().record_term_flush(flush_end.saturating_sub(flush_start));
             }
+
+            // — PatchBay: record total write pipeline cost
+            let write_end = perf::rdtsc();
+            perf::counters().record_term_write(
+                data.len() as u64,
+                write_end.saturating_sub(write_start),
+            );
         }
     }
 
@@ -1636,6 +1713,69 @@ impl TerminalEmulator {
         self.render_with_scrollback();
     }
 
+    /// — GlassSignal: scroll left in no-wrap mode (view wider lines)
+    pub fn scroll_view_left(&mut self, cols: usize) {
+        if !self.wrap_mode {
+            self.h_scroll_offset = self.h_scroll_offset.saturating_sub(cols);
+            self.render_with_scrollback();
+        }
+    }
+
+    /// — GlassSignal: scroll right in no-wrap mode (view wider lines)
+    pub fn scroll_view_right(&mut self, cols: usize) {
+        if !self.wrap_mode {
+            let max_width = self.scrollback.max_line_width();
+            let viewport_cols = self.cols as usize;
+            let max_offset = max_width.saturating_sub(viewport_cols);
+            self.h_scroll_offset = (self.h_scroll_offset + cols).min(max_offset);
+            self.render_with_scrollback();
+        }
+    }
+
+    /// — GlassSignal: toggle wrap mode. When switching to no-wrap, horizontal
+    /// scrollbar appears (compositor recomputes geometry). When switching back,
+    /// h_scroll resets to 0.
+    pub fn toggle_wrap(&mut self) {
+        self.wrap_mode = !self.wrap_mode;
+        if self.wrap_mode {
+            self.h_scroll_offset = 0;
+        }
+    }
+
+    /// — GlassSignal: scrollbar state snapshot for compositor rendering
+    pub fn scrollbar_state(&self) -> ScrollbarState {
+        ScrollbarState {
+            scroll_offset: self.scroll_offset,
+            scrollback_len: self.scrollback.len(),
+            h_scroll_offset: self.h_scroll_offset,
+            max_line_width: self.scrollback.max_line_width(),
+            rows: self.rows,
+            cols: self.cols,
+            wrap_mode: self.wrap_mode,
+        }
+    }
+
+    /// — GlassSignal: jump to a specific scroll position (for scrollbar drag).
+    /// Position is scroll_offset from bottom (0 = live view, max = oldest history).
+    /// — EchoFrame: fixed the coordinate inversion that made the scrollbar work backwards.
+    /// Compositor speaks bottom-based offsets, so we just clamp and set directly.
+    pub fn scroll_to_line(&mut self, offset: usize) {
+        let max_offset = self.scrollback.len();
+        self.scroll_offset = offset.min(max_offset);
+        self.render_with_scrollback();
+    }
+
+    /// — GlassSignal: jump to a specific horizontal position (for scrollbar drag)
+    pub fn scroll_to_col(&mut self, col: usize) {
+        if !self.wrap_mode {
+            let max_width = self.scrollback.max_line_width();
+            let viewport_cols = self.cols as usize;
+            let max_offset = max_width.saturating_sub(viewport_cols);
+            self.h_scroll_offset = col.min(max_offset);
+            self.render_with_scrollback();
+        }
+    }
+
     /// Render with scrollback offset
     /// — GraveShift: Composites scrollback history + primary buffer into a temp
     /// ScreenBuffer based on scroll_offset. When offset=0, we're at the live view.
@@ -1648,8 +1788,8 @@ impl TerminalEmulator {
             return;
         }
 
-        if self.scroll_offset == 0 {
-            // At live view — normal render path
+        if self.scroll_offset == 0 && self.h_scroll_offset == 0 {
+            // At live view, no horizontal offset — normal render path
             self.push_selection_to_renderer();
             let buffer = &self.primary;
             let cursor = self.handler.cursor;
@@ -1660,12 +1800,17 @@ impl TerminalEmulator {
         // — GraveShift: Build composited buffer from scrollback + primary.
         // Full content is: [scrollback_line_0 .. scrollback_line_N] [primary_row_0 .. primary_row_M]
         // Viewport shows rows starting from (total_lines - scroll_offset - visible_rows).
+        // — GlassSignal: h_scroll_offset shifts which columns are visible (no-wrap mode).
         let scrollback_len = self.scrollback.len();
         let visible_rows = self.rows as usize;
         let total_lines = scrollback_len + visible_rows;
         let viewport_start = total_lines.saturating_sub(self.scroll_offset + visible_rows);
+        let h_off = self.h_scroll_offset;
 
-        let mut composite = ScreenBuffer::new(self.cols, self.rows);
+        // — GraveShift: reuse pre-allocated composite buffer. The old code did
+        // ScreenBuffer::new() here — 126KB heap alloc per frame. From timer ISR
+        // that's a guaranteed deadlock on the heap spinlock. Never again. — SableWire
+        self.scroll_composite.clear();
 
         for vis_row in 0..self.rows {
             let content_line = viewport_start + vis_row as usize;
@@ -1673,9 +1818,11 @@ impl TerminalEmulator {
             if content_line < scrollback_len {
                 // This row comes from scrollback history
                 if let Some(sb_line) = self.scrollback.get(content_line) {
-                    for (col, cell) in sb_line.iter().enumerate() {
-                        if (col as u32) < self.cols {
-                            composite.set(vis_row, col as u32, *cell);
+                    // — GlassSignal: apply horizontal scroll offset
+                    for vis_col in 0..self.cols as usize {
+                        let src_col = vis_col + h_off;
+                        if src_col < sb_line.len() {
+                            self.scroll_composite.set(vis_row, vis_col as u32, sb_line[src_col]);
                         }
                     }
                 }
@@ -1685,7 +1832,7 @@ impl TerminalEmulator {
                 if primary_row < self.rows {
                     for col in 0..self.cols {
                         if let Some(cell) = self.primary.get(primary_row, col) {
-                            composite.set(vis_row, col, *cell);
+                            self.scroll_composite.set(vis_row, col, *cell);
                         }
                     }
                 }
@@ -1699,7 +1846,7 @@ impl TerminalEmulator {
         cursor.visible = false;
 
         self.push_selection_to_renderer();
-        self.renderer.render(&composite, &cursor);
+        self.renderer.render(&self.scroll_composite, &cursor);
     }
 
     /// Reset terminal to initial state
@@ -1998,6 +2145,22 @@ pub fn init_vt(vt_num: usize, fb: Arc<dyn Framebuffer>) {
         os_log::write_str_raw("[VT-TERM] initialized VT");
         os_log::write_byte_raw(b'0' + vt_num as u8);
         os_log::write_str_raw("\n");
+    }
+}
+
+/// Resize a VT's terminal emulator with a new backing framebuffer.
+/// — GlassSignal: called by compositor when layout changes resize a VT's viewport.
+/// New fb dimensions determine new grid size. Preserves terminal content.
+pub fn resize_vt(vt_num: usize, fb: Arc<dyn Framebuffer>) {
+    if vt_num >= MAX_VTS {
+        return;
+    }
+    if !VT_INITIALIZED[vt_num].load(Ordering::Acquire) {
+        return;
+    }
+    let mut guard = VT_TERMINALS[vt_num].lock();
+    if let Some(ref mut terminal) = *guard {
+        terminal.resize(fb);
     }
 }
 
@@ -2627,6 +2790,72 @@ pub fn scroll_down(lines: usize) {
     } else {
         #[cfg(feature = "debug-lock")]
         lock_contention_warning("VT_TERMINALS (scroll_down)");
+    }
+}
+
+/// — GlassSignal: scroll focused VT left (no-wrap mode). ISR context — try_lock only.
+pub fn scroll_left(cols: usize) {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
+    if let Some(mut guard) = VT_TERMINALS[vt].try_lock() {
+        if let Some(ref mut terminal) = *guard {
+            terminal.scroll_view_left(cols);
+        }
+    }
+}
+
+/// — GlassSignal: scroll focused VT right (no-wrap mode). ISR context — try_lock only.
+pub fn scroll_right(cols: usize) {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
+    if let Some(mut guard) = VT_TERMINALS[vt].try_lock() {
+        if let Some(ref mut terminal) = *guard {
+            terminal.scroll_view_right(cols);
+        }
+    }
+}
+
+/// — GlassSignal: toggle wrap mode on focused VT. Returns new wrap_mode state.
+pub fn toggle_wrap() -> bool {
+    let vt = FOCUSED_VT.load(Ordering::Acquire);
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return true; }
+    if let Some(mut guard) = VT_TERMINALS[vt].try_lock() {
+        if let Some(ref mut terminal) = *guard {
+            terminal.toggle_wrap();
+            return terminal.wrap_mode;
+        }
+    }
+    true
+}
+
+/// — GlassSignal: get scrollbar state for a VT. ISR-safe (try_lock).
+/// Returns None if lock contended or VT not initialized.
+pub fn get_scrollbar_state(vt: usize) -> Option<ScrollbarState> {
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return None; }
+    if let Some(guard) = VT_TERMINALS[vt].try_lock() {
+        guard.as_ref().map(|t| t.scrollbar_state())
+    } else {
+        None
+    }
+}
+
+/// — GlassSignal: jump vertical scroll to absolute line position (scrollbar drag)
+pub fn scroll_to_line(vt: usize, line: usize) {
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
+    if let Some(mut guard) = VT_TERMINALS[vt].try_lock() {
+        if let Some(ref mut terminal) = *guard {
+            terminal.scroll_to_line(line);
+        }
+    }
+}
+
+/// — GlassSignal: jump horizontal scroll to absolute column position (scrollbar drag)
+pub fn scroll_to_col(vt: usize, col: usize) {
+    if vt >= MAX_VTS || !VT_INITIALIZED[vt].load(Ordering::Acquire) { return; }
+    if let Some(mut guard) = VT_TERMINALS[vt].try_lock() {
+        if let Some(ref mut terminal) = *guard {
+            terminal.scroll_to_col(col);
+        }
     }
 }
 

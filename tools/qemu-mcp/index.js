@@ -7,7 +7,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { spawn, exec, execSync } from "child_process";
-import { createWriteStream, readFileSync, existsSync, unlinkSync, writeFileSync } from "fs";
+import { createWriteStream, readFileSync, existsSync, unlinkSync, writeFileSync, mkdirSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import net from "net";
@@ -30,6 +30,8 @@ const PID_FILE = join(PROJECT_ROOT, "target/qemu.pid");
 const BOOT_IMAGE = join(PROJECT_ROOT, "target/boot.img");
 const ROOTFS_IMAGE = join(PROJECT_ROOT, "target/oxide-disk.img");
 const OVMF_VARS = join(PROJECT_ROOT, "target/OVMF_VARS.fd");
+const BUILD_NUMBER_FILE = join(PROJECT_ROOT, "build/build-number");
+const BUILD_SCREENSHOTS_ROOT = join(PROJECT_ROOT, "BUILD");
 
 // Detect environment (Fedora vs RHEL)
 function detectEnvironment() {
@@ -216,12 +218,20 @@ async function startQemu(options = {}) {
     }
 
     let args;
+    // — NeonRoot: QEMU args MUST match mk/qemu.mk exactly. The MCP tool
+    // used to launch a separate headless VNC QEMU while the user saw a GTK
+    // window from `make run`. screendump captured the invisible QEMU, not the
+    // user's actual display. Never again. — GraveShift
     if (mode === "rhel") {
+      // Copy OVMF_VARS for writable pflash
+      if (ovmf.vars && existsSync(ovmf.vars)) {
+        try { execSync(`cp "${ovmf.vars}" "${OVMF_VARS}"`, { stdio: "pipe" }); } catch {}
+      }
       args = [
         "-machine", "q35,accel=kvm:tcg",
         "-cpu", "max,+invtsc",
-        "-smp", "2",
-        "-m", options.memory || "256M",
+        "-smp", "4",
+        "-m", options.memory || "512M",
         "-drive", `if=pflash,format=raw,readonly=on,file=${ovmf.code}`,
         "-drive", `if=pflash,format=raw,file=${OVMF_VARS}`,
         "-drive", `file=${ROOTFS_IMAGE},format=raw,if=none,id=bootdisk`,
@@ -232,33 +242,34 @@ async function startQemu(options = {}) {
         "-audiodev", "none,id=snd0",
         "-device", "intel-hda",
         "-device", "hda-duplex,audiodev=snd0",
+        "-vga", "std",
+        "-vnc", ":0",
         "-serial", `file:${SERIAL_LOG}`,
         "-monitor", `unix:${MONITOR_SOCKET},server,nowait`,
-        "-display", "vnc=:99",
+        "-s",
         "-no-reboot",
-        "-d", "cpu_reset",
-        "-D", join(PROJECT_ROOT, "target/debug.log"),
       ];
     } else {
       args = [
         "-machine", "q35",
         "-cpu", "qemu64,+smap,+smep",
-        "-m", options.memory || "256M",
+        "-smp", "4",
+        "-m", options.memory || "512M",
         "-bios", ovmf.code,
         "-drive", `file=${ROOTFS_IMAGE},format=raw,if=none,id=bootdisk`,
         "-device", "virtio-blk-pci,drive=bootdisk",
+        "-vga", "none",
         "-device", "virtio-gpu-pci",
         "-device", "virtio-keyboard-pci",
         "-device", "virtio-tablet-pci",
         "-audiodev", "none,id=snd0",
         "-device", "intel-hda",
         "-device", "hda-duplex,audiodev=snd0",
+        "-display", "gtk,zoom-to-fit=on,grab-on-hover=on",
         "-serial", `file:${SERIAL_LOG}`,
         "-monitor", `unix:${MONITOR_SOCKET},server,nowait`,
-        "-display", "vnc=:99",
+        "-s",
         "-no-reboot",
-        "-d", "cpu_reset",
-        "-D", join(PROJECT_ROOT, "target/debug.log"),
       ];
     }
 
@@ -272,7 +283,7 @@ async function startQemu(options = {}) {
     qemuProcess = spawn(qemu, args, {
       cwd: PROJECT_ROOT,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, TMPDIR: "/tmp/qemu-oxide" },
+      env: { ...process.env, TMPDIR: "/tmp/qemu-oxide", GDK_BACKEND: "x11" },
     });
 
     // Save PID
@@ -328,7 +339,15 @@ async function stopQemu() {
   });
 
   qemuProcess = null;
-  return { success: true, message: "QEMU stopped" };
+
+  // — GraveShift: autopsy the serial log before we close the casket — GraveShift
+  const serialArchive = archiveSerialLog();
+
+  return {
+    success: true,
+    message: "QEMU stopped",
+    serialArchive,
+  };
 }
 
 // Get QEMU status
@@ -391,19 +410,109 @@ function readSerial(options = {}) {
   }
 }
 
-// Take screenshot
+// — EchoFrame: every frame tells a story. Archive them all so we can
+// watch the OS grow up, one build at a time. — EchoFrame
+function getBuildNumber() {
+  try {
+    return readFileSync(BUILD_NUMBER_FILE, "utf8").trim();
+  } catch {
+    return "unknown";
+  }
+}
+
+function ensureBuildDir() {
+  const buildNum = getBuildNumber();
+  const buildDir = join(BUILD_SCREENSHOTS_ROOT, buildNum);
+  mkdirSync(buildDir, { recursive: true });
+  return { buildNum, buildDir };
+}
+
+function getNextFileIndex(buildDir, extension) {
+  try {
+    const files = readdirSync(buildDir).filter(f => f.endsWith(extension));
+    return files.length + 1;
+  } catch {
+    return 1;
+  }
+}
+
+// — SableWire: the serial log is the black box recorder of every boot.
+// archive it so when something goes wrong three builds from now, we can
+// diff the corpses and find what killed it. — SableWire
+function archiveSerialLog() {
+  if (!existsSync(SERIAL_LOG)) {
+    return { success: false, error: "No serial log to archive" };
+  }
+
+  try {
+    const content = readFileSync(SERIAL_LOG, "utf8");
+    const { buildNum, buildDir } = ensureBuildDir();
+    const idx = getNextFileIndex(buildDir, ".txt");
+    const archiveName = `serial-${String(idx).padStart(3, "0")}.txt`;
+    const archivePath = join(buildDir, archiveName);
+    writeFileSync(archivePath, content);
+
+    return {
+      success: true,
+      archivePath,
+      buildNumber: buildNum,
+      lines: content.split("\n").length,
+      message: `Serial log archived to ${archivePath}`,
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+// — NeonVale: PPM is what QEMU barfs out, but nobody wants to open
+// a raw bitmap from 1992. Convert to PNG like civilized people. — NeonVale
+function ppmToPng(ppmPath, pngPath) {
+  try {
+    execSync(`convert "${ppmPath}" "${pngPath}"`, { stdio: "pipe", timeout: 10000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Take screenshot — saves to target/ for immediate use AND archives
+// under BUILD/{build-number}/ as PNG for historical review
 async function takeScreenshot() {
   try {
     await monitorCommand(`screendump ${SCREENSHOT_PATH}`);
 
     if (existsSync(SCREENSHOT_PATH)) {
-      // Convert PPM to base64 for potential display
-      const data = readFileSync(SCREENSHOT_PATH);
+      // — GlassSignal: archive the frame under BUILD/{build}/screenshot-NNN.png
+      // so we can flip through history like a haunted photo album — GlassSignal
+      const { buildNum, buildDir } = ensureBuildDir();
+      const idx = getNextFileIndex(buildDir, ".png");
+      const archiveName = `screenshot-${String(idx).padStart(3, "0")}.png`;
+      const archivePath = join(buildDir, archiveName);
+
+      // Convert PPM → PNG for the archive (and for immediate use)
+      const pngImmediate = SCREENSHOT_PATH.replace(/\.ppm$/, ".png");
+      const converted = ppmToPng(SCREENSHOT_PATH, pngImmediate);
+
+      if (converted) {
+        execSync(`cp "${pngImmediate}" "${archivePath}"`, { stdio: "pipe" });
+      } else {
+        // — SableWire: ImageMagick missing? fine, stash the raw PPM corpse — SableWire
+        const data = readFileSync(SCREENSHOT_PATH);
+        const fallbackPath = archivePath.replace(/\.png$/, ".ppm");
+        writeFileSync(fallbackPath, data);
+      }
+
+      const finalPath = converted ? pngImmediate : SCREENSHOT_PATH;
+      const data = readFileSync(finalPath);
+
       return {
         success: true,
-        path: SCREENSHOT_PATH,
+        path: finalPath,
+        archivePath: archivePath,
+        buildNumber: buildNum,
+        format: converted ? "png" : "ppm",
         size: data.length,
-        message: `Screenshot saved to ${SCREENSHOT_PATH}`,
+        message: `Screenshot saved to ${finalPath} and archived to ${archivePath}`,
       };
     } else {
       return { success: false, error: "Screenshot file not created" };

@@ -287,6 +287,33 @@ impl ScreenBuffer {
     pub fn delete_lines(&mut self, row: u32, n: u32, scroll_bottom: u32) {
         self.scroll_up(row, scroll_bottom, n);
     }
+
+    /// Resize the buffer to new dimensions, preserving content where possible.
+    /// — WireSaint: like xterm's resize — copy old cells into new grid, clip or pad.
+    /// Content anchored at top-left. New cells get default attrs.
+    pub fn resize(&mut self, new_cols: u32, new_rows: u32) {
+        if new_cols == self.cols && new_rows == self.rows {
+            return;
+        }
+        let new_size = (new_cols * new_rows) as usize;
+        let mut new_cells = Vec::with_capacity(new_size);
+        new_cells.resize(new_size, Cell::new(' ', self.default_attrs));
+
+        // — WireSaint: copy min(old, new) rows × min(old, new) cols
+        let copy_rows = self.rows.min(new_rows);
+        let copy_cols = self.cols.min(new_cols);
+        for row in 0..copy_rows {
+            let old_start = (row * self.cols) as usize;
+            let new_start = (row * new_cols) as usize;
+            let count = copy_cols as usize;
+            new_cells[new_start..new_start + count]
+                .copy_from_slice(&self.cells[old_start..old_start + count]);
+        }
+
+        self.cells = new_cells;
+        self.cols = new_cols;
+        self.rows = new_rows;
+    }
 }
 
 /// Scrollback buffer for terminal history
@@ -295,6 +322,9 @@ pub struct ScrollbackBuffer {
     lines: VecDeque<Vec<Cell>>,
     /// Maximum number of lines to keep
     max_lines: usize,
+    /// — GlassSignal: widest line in scrollback (for horizontal scroll range).
+    /// Updated on push, may overestimate after eviction. Recalc on demand.
+    max_line_width: usize,
 }
 
 impl ScrollbackBuffer {
@@ -303,15 +333,26 @@ impl ScrollbackBuffer {
         ScrollbackBuffer {
             lines: VecDeque::with_capacity(max_lines),
             max_lines,
+            max_line_width: 0,
         }
     }
 
     /// Add a line to scrollback
+    /// — GlassSignal: tracks max line width for horizontal scrollbar range
     pub fn push(&mut self, line: Vec<Cell>) {
+        let width = line.len();
         if self.lines.len() >= self.max_lines {
             self.lines.pop_front();
         }
         self.lines.push_back(line);
+        if width > self.max_line_width {
+            self.max_line_width = width;
+        }
+    }
+
+    /// — GlassSignal: widest line seen (may overestimate after eviction)
+    pub fn max_line_width(&self) -> usize {
+        self.max_line_width
     }
 
     /// Get number of lines in scrollback

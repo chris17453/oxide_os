@@ -6,7 +6,6 @@
 
 use fb::{Framebuffer, PixelFormat};
 use mm_manager::mm;
-use mm_traits::FrameAllocator;
 use os_core::PhysAddr;
 
 /// Physical memory mapping base (identity map region)

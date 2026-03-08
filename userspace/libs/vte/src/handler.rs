@@ -1165,6 +1165,35 @@ impl Handler {
         self.cursor.visible = true;
         self.modes = TerminalModes::AUTOWRAP | TerminalModes::CURSOR_VISIBLE;
     }
+
+    /// Resize the handler's grid dimensions.
+    /// — GraveShift: like xterm's VTResize — clamp cursor, reset scroll region,
+    /// rebuild tab stops. The caller resizes ScreenBuffers separately.
+    pub fn resize(&mut self, new_cols: u32, new_rows: u32) {
+        if new_cols == self.cols && new_rows == self.rows {
+            return;
+        }
+        self.cols = new_cols;
+        self.rows = new_rows;
+
+        // — GraveShift: reset scroll region to full screen (xterm behavior)
+        self.scroll_top = 0;
+        self.scroll_bottom = new_rows.saturating_sub(1);
+
+        // — GraveShift: clamp cursor into new bounds
+        if self.cursor.col >= new_cols {
+            self.cursor.col = new_cols.saturating_sub(1);
+        }
+        if self.cursor.row >= new_rows {
+            self.cursor.row = new_rows.saturating_sub(1);
+        }
+
+        // — GraveShift: rebuild tab stops for new width
+        self.tabs = vec![false; new_cols as usize];
+        for i in (0..new_cols as usize).step_by(8) {
+            self.tabs[i] = true;
+        }
+    }
 }
 
 /// Get parameter with default value
