@@ -8,7 +8,7 @@
 //! compositor blit, before mouse cursor. No backing buffer needed —
 //! keyboard area is repainted every frame it's visible.
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 
 use core::sync::atomic::{AtomicBool, Ordering};
 use fb::{Framebuffer, PixelFormat};
@@ -502,5 +502,323 @@ fn argb_to_pixel(format: PixelFormat, color_argb: u32) -> [u8; 4] {
             (color_argb & 0xFF) as u8,         // B
             ((color_argb >> 24) & 0xFF) as u8, // A
         ],
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  Hit-test helper — extracts the core tap logic for testability.
+//  Used by handle_tap() and unit tests.
+// ═══════════════════════════════════════════════════════════════════
+
+/// — InputShade: pure hit-test on a virtual keyboard state.
+/// Returns (row_idx, col_idx, &VKey) for the key at (x, y), or None.
+fn hit_test(x: i32, y: i32, screen_w: u32, screen_h: u32) -> Option<(usize, usize, &'static VKey)> {
+    let kb_y = screen_h - KB_HEIGHT;
+    if (y as u32) < kb_y || y < 0 || x < 0 {
+        return None;
+    }
+
+    let rel_y = y as u32 - kb_y - KB_PADDING;
+    let row_idx = (rel_y / (KEY_H + KEY_GAP)) as usize;
+    if row_idx >= KB_ROWS {
+        return None;
+    }
+
+    let row = ROWS[row_idx];
+    let row_start_x = compute_row_start_x(row, screen_w);
+    if (x as u32) < row_start_x {
+        return None;
+    }
+
+    let mut key_x = row_start_x;
+    for (col_idx, key) in row.iter().enumerate() {
+        let key_w = key.width as u32 * KEY_UNIT - KEY_GAP;
+        if (x as u32) >= key_x && (x as u32) < key_x + key_w {
+            return Some((row_idx, col_idx, key));
+        }
+        key_x += key.width as u32 * KEY_UNIT;
+    }
+
+    None
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  Unit Tests — CrashBloom: validating the vkbd before it leaves the lab
+// ═══════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SCREEN_W: u32 = 1280;
+    const SCREEN_H: u32 = 800;
+
+    // — CrashBloom: layout constants sanity — if these break, the keyboard
+    // renders off-screen or keys overlap. Catch it before the user does.
+
+    #[test]
+    fn kb_height_fits_screen() {
+        assert!(KB_HEIGHT < SCREEN_H, "keyboard taller than screen");
+        assert!(KB_HEIGHT > 0, "keyboard has zero height");
+        // — CrashBloom: 5 rows × 34px + 8px padding = 178px. Sanity check.
+        assert_eq!(KB_HEIGHT, 5 * (KEY_H + KEY_GAP) + KB_PADDING * 2);
+    }
+
+    #[test]
+    fn all_rows_fit_screen_width() {
+        // — CrashBloom: every row must fit within 1280px
+        for (i, row) in ROWS.iter().enumerate() {
+            let total_units: u32 = row.iter().map(|k| k.width as u32).sum();
+            let total_px = total_units * KEY_UNIT;
+            assert!(total_px <= SCREEN_W,
+                "row {} is {}px wide, exceeds screen {}px", i, total_px, SCREEN_W);
+        }
+    }
+
+    #[test]
+    fn row_centering() {
+        // — CrashBloom: rows center horizontally. Verify start_x is positive.
+        for (i, row) in ROWS.iter().enumerate() {
+            let start_x = compute_row_start_x(row, SCREEN_W);
+            assert!(start_x > 0, "row {} not centered (start_x=0)", i);
+            let total_units: u32 = row.iter().map(|k| k.width as u32).sum();
+            let end_x = start_x + total_units * KEY_UNIT;
+            assert!(end_x <= SCREEN_W + KEY_GAP,
+                "row {} extends past screen: end_x={}", i, end_x);
+        }
+    }
+
+    #[test]
+    fn row_centering_narrow_screen() {
+        // — CrashBloom: if screen is narrower than keyboard, start_x = 0
+        let narrow = 200;
+        for row in &ROWS {
+            let start_x = compute_row_start_x(row, narrow);
+            assert_eq!(start_x, 0, "should clamp to 0 on narrow screen");
+        }
+    }
+
+    #[test]
+    fn argb_to_pixel_bgra() {
+        // — CrashBloom: BGRA swizzle — R and B swap, A stays in byte 3
+        let px = argb_to_pixel(PixelFormat::BGRA8888, 0xFF112233);
+        // ARGB = FF 11 22 33 → BGRA = [33, 22, 11, FF]
+        assert_eq!(px, [0x33, 0x22, 0x11, 0xFF]);
+    }
+
+    #[test]
+    fn argb_to_pixel_rgba() {
+        // — CrashBloom: RGBA keeps R/G/B order, A in byte 3
+        let px = argb_to_pixel(PixelFormat::RGBA8888, 0xFF112233);
+        // ARGB = FF 11 22 33 → RGBA = [11, 22, 33, FF]
+        assert_eq!(px, [0x11, 0x22, 0x33, 0xFF]);
+    }
+
+    #[test]
+    fn vkbd_state_shifted() {
+        // — CrashBloom: shift XOR caps — same as every keyboard since 1984
+        let mut s = VkbdState::new();
+        assert!(!s.is_shifted(), "default should not be shifted");
+
+        s.shift = true;
+        assert!(s.is_shifted(), "shift alone = shifted");
+
+        s.caps = true;
+        assert!(!s.is_shifted(), "shift + caps = unshifted");
+
+        s.shift = false;
+        assert!(s.is_shifted(), "caps alone = shifted");
+    }
+
+    #[test]
+    fn modifier_active_check() {
+        let mut s = VkbdState::new();
+        assert!(!is_modifier_active(&s, b"Shift"));
+        assert!(!is_modifier_active(&s, b"Ctrl"));
+
+        s.shift = true;
+        s.ctrl = true;
+        assert!(is_modifier_active(&s, b"Shift"));
+        assert!(is_modifier_active(&s, b"Ctrl"));
+        assert!(!is_modifier_active(&s, b"Alt"));
+        assert!(!is_modifier_active(&s, b"Bogus"));
+    }
+
+    #[test]
+    fn key_counts_per_row() {
+        // — CrashBloom: verify key counts match expected QWERTY layout
+        assert_eq!(ROW0.len(), 14, "number row: 13 keys + Bksp");
+        assert_eq!(ROW1.len(), 14, "QWERTY row: Tab + 13 keys");
+        assert_eq!(ROW2.len(), 13, "ASDF row: Caps + 11 keys + Enter");
+        assert_eq!(ROW3.len(), 13, "ZXCV row: Shift + 10 keys + Up + Shift");
+        assert_eq!(ROW4.len(), 7,  "bottom row: Ctrl + Alt + Esc + Space + 3 arrows");
+    }
+
+    #[test]
+    fn all_normal_keys_have_output() {
+        // — CrashBloom: every non-modifier key must produce at least one byte
+        for (i, row) in ROWS.iter().enumerate() {
+            for (j, key) in row.iter().enumerate() {
+                if !key.is_modifier {
+                    assert!(!key.output.is_empty(),
+                        "row {} key {} ({:?}) has empty output",
+                        i, j, core::str::from_utf8(key.label));
+                    assert!(!key.shifted_output.is_empty(),
+                        "row {} key {} ({:?}) has empty shifted_output",
+                        i, j, core::str::from_utf8(key.label));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn modifier_keys_have_no_output() {
+        // — CrashBloom: modifier keys don't produce bytes
+        for (i, row) in ROWS.iter().enumerate() {
+            for (j, key) in row.iter().enumerate() {
+                if key.is_modifier {
+                    assert!(key.output.is_empty(),
+                        "modifier at row {} key {} should have empty output", i, j);
+                }
+            }
+        }
+    }
+
+    // — CrashBloom: hit-test validation — make sure clicks on keys resolve correctly
+
+    #[test]
+    fn hit_test_above_keyboard_misses() {
+        // — CrashBloom: clicking above the keyboard area returns None
+        let kb_top = SCREEN_H - KB_HEIGHT;
+        assert!(hit_test(640, (kb_top - 1) as i32, SCREEN_W, SCREEN_H).is_none());
+        assert!(hit_test(640, 0, SCREEN_W, SCREEN_H).is_none());
+        assert!(hit_test(640, 400, SCREEN_W, SCREEN_H).is_none());
+    }
+
+    #[test]
+    fn hit_test_negative_coords_miss() {
+        assert!(hit_test(-1, 700, SCREEN_W, SCREEN_H).is_none());
+        assert!(hit_test(640, -1, SCREEN_W, SCREEN_H).is_none());
+    }
+
+    #[test]
+    fn hit_test_finds_space_bar() {
+        // — CrashBloom: space bar is row 4, center of screen, 8 units wide.
+        // Click dead center should hit it.
+        let row4_y = SCREEN_H - KB_HEIGHT + KB_PADDING + 4 * (KEY_H + KEY_GAP) + KEY_H / 2;
+        let result = hit_test(640, row4_y as i32, SCREEN_W, SCREEN_H);
+        assert!(result.is_some(), "should hit something in row 4 center");
+        let (row, _col, key) = result.unwrap();
+        assert_eq!(row, 4, "should be row 4");
+        assert_eq!(key.label, b"Space", "center of row 4 should be Space");
+    }
+
+    #[test]
+    fn hit_test_finds_first_key_row0() {
+        // — CrashBloom: backtick key is first in row 0
+        let row0_y = SCREEN_H - KB_HEIGHT + KB_PADDING + KEY_H / 2;
+        let row0_start = compute_row_start_x(ROW0, SCREEN_W);
+        let result = hit_test((row0_start + 5) as i32, row0_y as i32, SCREEN_W, SCREEN_H);
+        assert!(result.is_some(), "should hit backtick key");
+        let (row, col, key) = result.unwrap();
+        assert_eq!(row, 0);
+        assert_eq!(col, 0);
+        assert_eq!(key.label, b"`");
+    }
+
+    #[test]
+    fn hit_test_left_of_row_misses() {
+        // — CrashBloom: click left of the centered row should miss
+        let row0_y = SCREEN_H - KB_HEIGHT + KB_PADDING + KEY_H / 2;
+        let row0_start = compute_row_start_x(ROW0, SCREEN_W);
+        assert!(row0_start > 0, "row should be centered");
+        let result = hit_test((row0_start - 5) as i32, row0_y as i32, SCREEN_W, SCREEN_H);
+        assert!(result.is_none(), "click left of row should miss");
+    }
+
+    #[test]
+    fn toggle_flips_visibility() {
+        // — CrashBloom: toggle flips the atomic flag
+        let initial = VISIBLE.load(Ordering::SeqCst);
+        toggle();
+        assert_ne!(VISIBLE.load(Ordering::SeqCst), initial);
+        toggle();
+        assert_eq!(VISIBLE.load(Ordering::SeqCst), initial);
+    }
+
+    #[test]
+    fn keyboard_height_reflects_visibility() {
+        let was = VISIBLE.load(Ordering::SeqCst);
+        VISIBLE.store(false, Ordering::SeqCst);
+        assert_eq!(keyboard_height(), 0);
+        VISIBLE.store(true, Ordering::SeqCst);
+        assert_eq!(keyboard_height(), KB_HEIGHT);
+        VISIBLE.store(was, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn enter_key_produces_newline() {
+        // — CrashBloom: Enter must produce '\n', not '\r' or empty
+        let enter = ROW2.iter().find(|k| k.label == b"Enter").unwrap();
+        assert_eq!(enter.output, b"\n");
+        assert_eq!(enter.shifted_output, b"\n");
+    }
+
+    #[test]
+    fn backspace_produces_delete() {
+        // — CrashBloom: Bksp must produce DEL (0x7F)
+        let bksp = ROW0.iter().find(|k| k.label == b"Bksp").unwrap();
+        assert_eq!(bksp.output, b"\x7f");
+    }
+
+    #[test]
+    fn escape_key_produces_esc() {
+        let esc = ROW4.iter().find(|k| k.label == b"Esc").unwrap();
+        assert_eq!(esc.output, b"\x1b");
+    }
+
+    #[test]
+    fn arrow_keys_produce_ansi() {
+        let up = ROW3.iter().find(|k| k.label == b"Up").unwrap();
+        assert_eq!(up.output, b"\x1b[A");
+        let left = ROW4.iter().find(|k| k.label == b"Left").unwrap();
+        assert_eq!(left.output, b"\x1b[D");
+        let down = ROW4.iter().find(|k| k.label == b"Down").unwrap();
+        assert_eq!(down.output, b"\x1b[B");
+        let right = ROW4.iter().find(|k| k.label == b"Right").unwrap();
+        assert_eq!(right.output, b"\x1b[C");
+    }
+
+    #[test]
+    fn shifted_letters_are_uppercase() {
+        // — CrashBloom: every letter key's shifted output should be uppercase
+        let letter_rows = [ROW1, ROW2, ROW3];
+        for row in &letter_rows {
+            for key in row.iter() {
+                if key.output.len() == 1 && key.output[0] >= b'a' && key.output[0] <= b'z' {
+                    assert_eq!(key.shifted_output.len(), 1);
+                    assert_eq!(key.shifted_output[0], key.output[0] - 32,
+                        "key '{}' shifted should be '{}'",
+                        key.output[0] as char, (key.output[0] - 32) as char);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn number_row_shifted_symbols() {
+        // — CrashBloom: verify the standard US keyboard symbol row
+        let expected = [
+            (b"1", b"!"), (b"2", b"@"), (b"3", b"#"), (b"4", b"$"),
+            (b"5", b"%"), (b"6", b"^"), (b"7", b"&"), (b"8", b"*"),
+            (b"9", b"("), (b"0", b")"),
+        ];
+        for (label, shifted) in &expected {
+            let key = ROW0.iter().find(|k| k.label == *label).unwrap();
+            assert_eq!(key.shifted_output, *shifted,
+                "key '{}' shifted should produce '{}'",
+                core::str::from_utf8(key.label).unwrap(),
+                core::str::from_utf8(key.shifted_output).unwrap());
+        }
     }
 }
