@@ -182,6 +182,27 @@ pub fn terminal_tick() {
                             _ => continue,
                         };
                         let pressed = event.value != 0;
+
+                        // — InputShade: intercept clicks for virtual keyboard overlay.
+                        // If vkbd is visible and click lands on keyboard area, route
+                        // to vkbd instead of terminal selection/mouse mode.
+                        if event.code == 0x110 && vkbd::is_visible() {
+                            if pressed {
+                                if let Some((mx, my)) = fb::mouse_position() {
+                                    if let Some((bytes, len)) = vkbd::handle_tap(mx, my) {
+                                        for i in 0..len {
+                                            if let Some(manager) = vt::get_manager() {
+                                                manager.push_input(bytes[i]);
+                                            }
+                                        }
+                                        continue; // — InputShade: consumed by vkbd, skip normal handling
+                                    }
+                                }
+                            } else {
+                                vkbd::handle_release();
+                            }
+                        }
+
                         unsafe {
                             if pressed {
                                 MOUSE_BUTTONS |= bit;

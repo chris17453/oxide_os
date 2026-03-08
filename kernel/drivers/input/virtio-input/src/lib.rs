@@ -632,8 +632,13 @@ impl VirtioInput {
 
                 // — InputShade: shared kbd module does modifier tracking, Ctrl codes,
                 // ANSI escapes, keymap lookup, and VT push. Same path PS/2 uses.
-                if self.device_type == VirtioInputType::Keyboard {
-                    let pressed = event.value == 1 || event.value == 2;
+                // Process ALL EV_KEY events regardless of device type — sendkey
+                // routes through whichever input device QEMU picks, and the keyboard
+                // detection heuristic can misclassify virtio-keyboard-pci.
+                let pressed = event.value == 1 || event.value == 2;
+                if event.code < 0x100 {
+                    // — InputShade: keycodes < 0x100 are keyboard keys. Higher codes
+                    // (BTN_LEFT=0x110 etc.) are mouse/gamepad buttons — skip those.
                     input::kbd::process_key_event(event.code, pressed);
                 }
             }

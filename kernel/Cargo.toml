@@ -98,6 +98,7 @@ virtio-snd = { workspace = true }
 intel-hda = { workspace = true }
 terminal = { workspace = true }
 compositor = { workspace = true }
+vkbd = { workspace = true }
 input = { workspace = true }
 ps2 = { workspace = true }
 virtio-input = { workspace = true }

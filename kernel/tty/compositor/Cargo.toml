@@ -16,3 +16,4 @@ os_log = { workspace = true }
 spin = { workspace = true }
 mm-manager = { workspace = true }
 mm-traits = { workspace = true }
+vkbd = { path = "../vkbd" }

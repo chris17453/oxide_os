@@ -304,7 +304,7 @@ pub fn process_key_event(keycode: u16, pressed: bool) -> KeyAction {
     // where GTK display steals Ctrl+Alt as grab key) and Ctrl+Alt+Fn (Linux
     // bare-metal standard). Either chord fires the switch — one keybinding to
     // rule them all. — InputShade
-    if alt {
+    if alt || altgr {
         let vt = match keycode {
             crate::KEY_F1 => Some(0usize),
             crate::KEY_F2 => Some(1),
@@ -340,6 +340,7 @@ pub fn process_key_event(keycode: u16, pressed: bool) -> KeyAction {
             crate::KEY_Q => Some(2u8),      // Quad (2×2)
             crate::KEY_ENTER => Some(3u8),  // Toggle fullscreen ↔ last split
             crate::KEY_TAB => Some(4u8),    // Cycle focus to next tile
+            crate::KEY_K => Some(5u8),      // Toggle virtual keyboard — InputShade
             _ => None,
         };
         if let Some(action) = comp_action {

@@ -366,6 +366,7 @@ pub fn request_full_redraw() {
 pub fn tick() {
     // — SableWire: fast path — check if anything is dirty before grabbing the lock
     let any_dirty = FULL_REDRAW.load(Ordering::Acquire)
+        || vkbd::is_visible()
         || VT_DIRTY.iter().any(|d| d.load(Ordering::Acquire));
 
     // — GlassSignal: trace tick activity (first few only to avoid serial flood)
@@ -390,6 +391,9 @@ pub fn tick() {
     if let Some(mut guard) = COMPOSITOR.try_lock() {
         if let Some(ref mut compositor) = *guard {
             compositor.composite();
+            // — InputShade: draw virtual keyboard overlay after VT blit,
+            // before mouse cursor. Keyboard covers bottom ~200px of display.
+            vkbd::draw_overlay(&*compositor.hw_fb);
         }
     }
     // — SableWire: if try_lock fails, compositor is busy (terminal write holding it).

@@ -135,6 +135,11 @@ fn compositor_layout_callback(action: u8) {
         2 => compositor::set_layout(compositor::layout::Layout::Quad),
         3 => compositor::toggle_fullscreen(),
         4 => compositor::cycle_focus(),
+        5 => {
+            // — InputShade: Alt+K toggles virtual keyboard overlay
+            vkbd::toggle();
+            compositor::request_full_redraw();
+        }
         _ => {}
     }
 }

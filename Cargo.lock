@@ -178,6 +178,7 @@ dependencies = [
  "os_core",
  "os_log",
  "spin 0.9.8",
+ "vkbd",
 ]
 
 [[package]]
@@ -685,6 +686,7 @@ dependencies = [
  "virtio-input",
  "virtio-net",
  "virtio-snd",
+ "vkbd",
  "vt",
 ]
 
@@ -1822,6 +1824,14 @@ dependencies = [
  "pci",
  "spin 0.9.8",
  "virtio-core",
+]
+
+[[package]]
+name = "vkbd"
+version = "0.1.0"
+dependencies = [
+ "fb",
+ "spin 0.9.8",
 ]
 
 [[package]]

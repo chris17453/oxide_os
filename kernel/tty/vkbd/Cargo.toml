@@ -1,0 +1,13 @@
+[package]
+name = "vkbd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Virtual on-screen keyboard for OXIDE OS"
+
+[features]
+default = []
+
+[dependencies]
+fb = { path = "../../graphics/fb" }
+spin = { workspace = true }
