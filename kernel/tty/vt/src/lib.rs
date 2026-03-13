@@ -519,7 +519,9 @@ static VT_MANAGER_PTR: AtomicPtr<VtManager> = AtomicPtr::new(ptr::null_mut());
 static VT_MANAGER_OWNER: Mutex<Option<Arc<VtManager>>> = Mutex::new(None);
 
 /// Active VT index (separate from manager to avoid circular dependency)
-static ACTIVE_VT: spin::RwLock<usize> = spin::RwLock::new(0);
+/// — GraveShift: VT0 is /dev/tty0 — alias for the active VT, not a real terminal.
+/// VT1 is the first real VT, same as Linux's fg_console=0 mapping to tty1.
+static ACTIVE_VT: spin::RwLock<usize> = spin::RwLock::new(1);
 
 // — GraveShift: VT_OUTPUT_BUFFERS ELIMINATED. Each VT now has its own
 // TerminalEmulator that processes writes directly. No more raw byte buffering,

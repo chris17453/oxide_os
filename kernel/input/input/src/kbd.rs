@@ -305,13 +305,16 @@ pub fn process_key_event(keycode: u16, pressed: bool) -> KeyAction {
     // bare-metal standard). Either chord fires the switch — one keybinding to
     // rule them all. — InputShade
     if alt || altgr {
+        // — GraveShift: Alt+F1=VT1, Alt+F2=VT2, etc. VT0 is the /dev/tty0
+        // alias for the active VT — not a real terminal. Same as Linux where
+        // Alt+F1 gives you tty1, not tty0.
         let vt = match keycode {
-            crate::KEY_F1 => Some(0usize),
-            crate::KEY_F2 => Some(1),
-            crate::KEY_F3 => Some(2),
-            crate::KEY_F4 => Some(3),
-            crate::KEY_F5 => Some(4),
-            crate::KEY_F6 => Some(5),
+            crate::KEY_F1 => Some(1usize),
+            crate::KEY_F2 => Some(2),
+            crate::KEY_F3 => Some(3),
+            crate::KEY_F4 => Some(4),
+            crate::KEY_F5 => Some(5),
+            crate::KEY_F6 => Some(6),
             _ => None,
         };
         if let Some(vt_num) = vt {
