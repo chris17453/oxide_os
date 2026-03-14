@@ -535,7 +535,6 @@ pub fn try_wake_up(pid: Pid) -> bool {
 /// — TorqueJax: PID_TO_CPU hint as tier-2 before the O(N_CPUS) scan.
 pub fn wake_up(pid: Pid) {
     let cpu = this_cpu();
-
     // Tier 1: this_cpu — task is usually local (blocking with_rq OK here)
     let task_cpu = with_rq(cpu, |rq| {
         if let Some(task) = rq.get_task_mut(pid) {
@@ -554,8 +553,19 @@ pub fn wake_up(pid: Pid) {
         }
     });
 
-    // If task wasn't on current CPU's run queue, search others
-    if task_cpu.is_none() {
+    // — CrashBloom: track which CPU found the task for diagnostic trace
+    #[cfg(feature = "debug-sched")]
+    let mut found_cpu: Option<u32> = task_cpu.flatten();
+    #[cfg(feature = "debug-sched")]
+    let mut found_tier: u8 = if found_cpu.is_some() { 1 } else { 0 };
+
+    // — CrashBloom: task_cpu is Option<Option<u32>> — outer Option from with_rq
+    // (None = RQ uninitialized), inner Option from the closure (None = task not
+    // on this CPU). The old `task_cpu.is_none()` only caught the outer None,
+    // meaning if the task was on a DIFFERENT CPU, tiers 2/3 were silently skipped.
+    // flatten() collapses both layers so we correctly fall through. — CrashBloom
+    let task_found = task_cpu.flatten();
+    if task_found.is_none() {
         // — TorqueJax: Tier 2 — PID_TO_CPU hint. If we know the CPU, skip straight there.
         let hint_cpu = pid_to_cpu(pid);
         let hint_found = hint_cpu.filter(|&h| h != cpu).and_then(|h| {
@@ -578,6 +588,12 @@ pub fn wake_up(pid: Pid) {
             }
         });
 
+        #[cfg(feature = "debug-sched")]
+        if let Some(h) = hint_found {
+            found_cpu = Some(h);
+            found_tier = 2;
+        }
+
         // Tier 3: Full scan — only if hint missed (stale or no hint)
         if hint_found.is_none() {
             for other_cpu in 0..num_cpus() {
@@ -590,7 +606,9 @@ pub fn wake_up(pid: Pid) {
                 }
 
                 let found = with_rq(other_cpu, |rq| {
+                    let min_vr = rq.cfs_rq.min_vruntime();
                     if let Some(task) = rq.get_task_mut(pid) {
+                        if task.policy.is_fair() { task.vruntime = min_vr; }
                         task.state = TaskState::TASK_RUNNING;
                         rq.enqueue_task(pid);
                         rq.set_need_resched(true);
@@ -603,8 +621,39 @@ pub fn wake_up(pid: Pid) {
                 if found == Some(true) {
                     // NeonRoot: Kick remote CPU to reschedule immediately (don't wait for timer tick)
                     smp::ipi::send_reschedule(other_cpu);
+                    #[cfg(feature = "debug-sched")]
+                    {
+                        found_cpu = Some(other_cpu);
+                        found_tier = 3;
+                    }
                     break;
                 }
+            }
+        }
+    }
+
+    // — CrashBloom: diagnostic trace — which tier found the task (or didn't)?
+    // Gated to PID>10 to skip idle/init noise, throttled to 20 occurrences
+    #[cfg(feature = "debug-sched")]
+    if pid > 10 {
+        static WAKE_TRACE: AtomicU32 = AtomicU32::new(0);
+        let n = WAKE_TRACE.fetch_add(1, Ordering::Relaxed);
+        if n < 20 {
+            unsafe {
+                os_log::write_str_raw("[WAKE] pid=");
+                os_log::write_u32_raw(pid);
+                match found_cpu {
+                    Some(c) => {
+                        os_log::write_str_raw(" found_cpu=");
+                        os_log::write_u32_raw(c);
+                        os_log::write_str_raw(" tier=");
+                        os_log::write_u32_raw(found_tier as u32);
+                    }
+                    None => {
+                        os_log::write_str_raw(" found_cpu=NONE");
+                    }
+                }
+                os_log::write_str_raw("\n");
             }
         }
     }
@@ -801,6 +850,14 @@ pub fn pick_next_task() -> Option<Pid> {
 
             if should_requeue {
                 rq.put_prev_task(prev_pid);
+            } else {
+                // — GraveShift: Task went non-runnable while it was curr (waitpid sleep,
+                // signal stop, zombie exit). It might still be in the CFS heap if
+                // yield_current() enqueued it before the state change. Dequeue ensures
+                // on_rq=false so wake_up → enqueue_task can re-insert it later.
+                // If on_rq is already false (task was popped and never re-enqueued),
+                // dequeue_task is a safe no-op. — GraveShift
+                rq.dequeue_task(prev_pid);
             }
 
         }
@@ -822,6 +879,30 @@ pub fn pick_next_task() -> Option<Pid> {
         Some(next)
     })
     .flatten()
+}
+
+/// Undo a pick_next_task that was followed by a failed context_switch_transaction.
+///
+/// — CrashBloom: pick_next_task() pops the next task from the CFS tree and sets
+/// rq.curr = next_pid. If context_switch_transaction() then fails (lock contention,
+/// task not found), the popped task is lost — not in CFS, not running. This function
+/// re-enqueues next_pid back into CFS and restores rq.curr to old_pid so the scheduler
+/// state is consistent. The task gets picked again on the next timer tick.
+pub fn undo_pick_next(old_pid: Pid, next_pid: Pid) {
+    let cpu = this_cpu();
+    // — CrashBloom: use with_rq (blocking) — we're in ISR context but
+    // pick_next_task just released this lock, so it MUST be available.
+    // If it's somehow not, we spin briefly. Better than losing a task forever.
+    with_rq(cpu, |rq| {
+        // Restore curr to the task that's actually running
+        rq.set_curr(Some(old_pid));
+
+        // Re-enqueue the popped task so it's back in the CFS tree
+        rq.enqueue_task(next_pid);
+
+        // Set need_resched so we try again on the next tick
+        rq.set_need_resched(true);
+    });
 }
 
 /// Get the currently running task on this CPU
@@ -916,6 +997,7 @@ pub fn switch_to(new_pid: Pid) {
 pub fn get_task_state(pid: Pid) -> Option<TaskState> {
     with_task_on_any_cpu(pid, |rq| rq.get_task(pid).map(|t| t.state))
 }
+
 
 /// Non-blocking variant of get_task_state for diagnostic contexts (procfs).
 ///
@@ -1119,10 +1201,16 @@ pub fn context_switch_transaction(
     static SDBG_NEW_BAD_CTX: AtomicU32 = AtomicU32::new(0);
     let cpu = this_cpu();
 
-    // — TorqueJax: try_with_rq here — we are in ISR context, the caller has already
-    // verified rq_lock_available(). If somehow the lock is contended anyway (race
-    // between the check and here), bail — next tick will retry cleanly.
-    let result = try_with_rq(cpu, |rq| {
+    // — CrashBloom: with_rq (blocking) — NOT try_with_rq. The caller already
+    // verified rq_lock_available() AND pick_next_task() just released the lock.
+    // Using try_with_rq here created a window where another CPU could grab OUR
+    // RQ lock between pick and switch (e.g. add_task_to_cpu from a fork on the
+    // BSP). When that happened, try_with_rq failed, the popped task was lost
+    // (or had to be undo'd → livelock). with_rq eliminates the race — if the
+    // lock is briefly held by another CPU, we spin for <1µs until it's free.
+    // This is safe in ISR context because the holder is NOT on this CPU (we
+    // checked rq_lock_available) and holds it for O(µs).
+    let result = with_rq(cpu, |rq| {
         #[cfg(feature = "debug-sched")]
         let should_log = |counter: &AtomicU32| -> bool {
             let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
@@ -1133,6 +1221,17 @@ pub fn context_switch_transaction(
         if let Some(old_task) = rq.get_task_mut(old_pid) {
             old_task.context = old_ctx;
             old_task.preempt_count = preempt_count as u32;
+            // — IronGhost: Save outgoing task's FPU/SSE state directly into the
+            // Task's fxsave_area. Pointer is manually aligned to 16 bytes.
+            // — IronGhost
+            unsafe {
+                let fxptr = old_task.fxsave_area.aligned_ptr_mut();
+                core::arch::asm!(
+                    "fxsave64 [{}]",
+                    in(reg) fxptr,
+                    options(nostack)
+                );
+            }
         } else {
             #[cfg(feature = "debug-sched")]
             if should_log(&SDBG_OLD_MISS) {
@@ -1197,6 +1296,19 @@ pub fn context_switch_transaction(
                 }
             }
             return None;
+        }
+
+        // — IronGhost: Restore incoming task's FPU/SSE state. This MUST happen
+        // before we return from the transaction — the caller will iretq into the
+        // new task's context, and it expects its XMM registers to be correct.
+        // — IronGhost
+        unsafe {
+            let fxptr = new_task.fxsave_area.aligned_ptr();
+            core::arch::asm!(
+                "fxrstor64 [{}]",
+                in(reg) fxptr,
+                options(nostack)
+            );
         }
 
         let info = SwitchInfo {
@@ -1871,6 +1983,35 @@ where
 pub fn get_task_children(pid: Pid) -> Vec<Pid> {
     with_task_on_any_cpu(pid, |rq| rq.get_task(pid).map(|t| t.children.clone()))
         .unwrap_or_default()
+}
+
+/// Get child PIDs without heap allocation.
+/// Copies up to MAX children to a stack buffer. Returns (buffer, count).
+/// — GraveShift: Linux iterates children via intrusive list_head in task_struct.
+/// We don't have intrusive lists, so we copy to a stack buffer inside the RQ
+/// lock and release immediately. No heap alloc, no clone, no deadlock.
+/// 64 children covers any realistic process tree. If a process has >64 children,
+/// we return the first 64 — waitpid scans them all eventually via repeated calls.
+pub fn get_task_children_noalloc(pid: Pid) -> ([Pid; 64], usize) {
+    // — GraveShift: with_task_on_any_cpu takes Fn (not FnMut), so we use
+    // UnsafeCell for interior mutability. Safe because we're single-threaded
+    // inside the RQ lock — no concurrent access to these stack locals.
+    use core::cell::UnsafeCell;
+    let buf = UnsafeCell::new([0u32; 64]);
+    let count = UnsafeCell::new(0usize);
+    with_task_on_any_cpu(pid, |rq| {
+        if let Some(task) = rq.get_task(pid) {
+            let b = unsafe { &mut *buf.get() };
+            let c = unsafe { &mut *count.get() };
+            for (i, &child) in task.children.iter().enumerate() {
+                if i >= 64 { break; }
+                b[i] = child;
+                *c = i + 1;
+            }
+        }
+        Some(())
+    });
+    unsafe { (*buf.get(), *count.get()) }
 }
 
 /// Add a child to a task

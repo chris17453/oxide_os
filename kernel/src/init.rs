@@ -122,8 +122,14 @@ fn vt_switch_callback(vt_num: usize) {
         vt_mgr.switch_to(vt_num);
     }
 
-    // — NeonRoot: tell compositor which VT is focused (triggers full redraw blit)
-    compositor::focus_vt(vt_num);
+    // — GraveShift: use try_focus_vt — this callback fires from keyboard IRQ context.
+    // focus_vt uses blocking .lock() on COMPOSITOR + VT_TERMINALS — instant deadlock
+    // if any process on this CPU holds either lock. try_focus_vt uses try_lock and
+    // skips resize (geometry doesn't change on fullscreen VT switch anyway).
+    compositor::try_focus_vt(vt_num);
+
+    // — InputShade: sync OSK VT button highlight with physical keyboard switch
+    vkbd::set_active_vt(vt_num);
 }
 
 /// Compositor layout callback — called from ISR context (keyboard IRQ → Alt+H/V/Q/Enter/Tab)
@@ -380,6 +386,21 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
     let _ = writeln!(writer, "[INFO] Heap initialized: {} KB", HEAP_SIZE / 1024);
 
+    // — CrashBloom: Reset ALL VirtIO devices BEFORE buddy allocator init.
+    // OVMF's VirtIO drivers left devices running with DMA virtqueues pointing
+    // into BootServices memory. The buddy allocator is about to reclaim those
+    // pages and write FreeBlock headers into them. If a device is still DMA'ing
+    // used ring entries to those pages, it overwrites the headers → corrupted
+    // free lists → alloc_contiguous fails → no display → dead VTs.
+    // Reset every VirtIO device on the PCI bus now. Status=0 stops all queues
+    // and ceases DMA immediately. This is safe — we haven't initialized any
+    // drivers yet, so there's nothing to lose.
+    {
+        let _ = writeln!(writer, "[PCI] Resetting VirtIO devices before buddy init...");
+        let reset_count = early_reset_virtio_devices(boot_info.phys_map_base);
+        let _ = writeln!(writer, "[PCI] Reset {} VirtIO device(s) — DMA stopped", reset_count);
+    }
+
     // Initialize memory manager (buddy allocator - no 4GB cap!)
     let _ = writeln!(
         writer,
@@ -487,12 +508,17 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let mut regions: Vec<(os_core::PhysAddr, u64, bool)> = Vec::new();
 
     for boot_region in boot_info.memory_regions() {
-        // — ColdCipher: BootServices memory is safe after ExitBootServices().
-        // Firmware only retains RuntimeServices regions. Excluding BootServices
-        // starved the system at 256M, killing getty before it could print.
+        // — GraveShift: Do NOT reclaim BootServices pages. OVMF's VirtIO drivers
+        // leave DMA virtqueues pointing into BootServices memory. Even after the
+        // early VirtIO reset, in-flight DMA completes and corrupts FreeBlock headers
+        // in the buddy allocator — severing free list chains and killing contiguous
+        // allocation for the GPU framebuffer. With 512M+ RAM there's plenty of
+        // Usable memory without BootServices (~420MB vs ~100KB lost). The 256M
+        // starvation case that originally motivated reclaiming BootServices is no
+        // longer the target configuration. — GraveShift
         let base_usable = matches!(
             boot_region.ty,
-            BootMemoryType::Usable | BootMemoryType::BootServices
+            BootMemoryType::Usable
         );
 
         if !base_usable {
@@ -718,23 +744,31 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         // — NeonRoot: compositor gets the hardware framebuffer, terminal gets a VT0 backing buffer.
         // Every pixel the terminal paints goes to RAM. Compositor blits RAM → MMIO at 30Hz.
         if let Some(framebuffer) = fb::framebuffer() {
-            // Initialize compositor — it owns the hardware fb now
-            // — NeonRoot: only VT0 gets a buffer at init. Rest are lazy-allocated
-            // on first split/switch. No upfront memory waste.
-            let vt0_fb = compositor::init(framebuffer.clone());
-            let _ = writeln!(writer, "[INFO] Compositor initialized (VT0 buffer, rest on-demand)");
+            // — SableWire: compositor pre-allocates ALL VT backing buffers upfront.
+            // No lazy allocation — every VT is ready to render from the moment boot completes.
+            let vt_fbs = compositor::init(framebuffer.clone());
+            let _ = writeln!(writer, "[INFO] Compositor initialized (all VT buffers pre-allocated)");
 
-            // Terminal gets VT0's backing buffer instead of the raw hardware fb
-            // — NeonRoot: fallback to raw hw fb if compositor somehow failed
-            let terminal_fb = vt0_fb.unwrap_or(framebuffer);
-            terminal::init(terminal_fb);
+            // — SableWire: initialize terminal emulators for ALL VTs eagerly.
+            // VT0 uses init() (legacy path), VTs 1-5 use init_vt() directly.
+            // No more lazy-init race conditions — everything is wired before userspace starts.
+            if let Some(vt0_fb) = vt_fbs[0].clone() {
+                terminal::init(vt0_fb);
+            } else {
+                terminal::init(framebuffer.clone());
+            }
+            for i in 1..compositor::MAX_VTS {
+                if let Some(fb) = vt_fbs[i].clone() {
+                    terminal::init_vt(i, fb);
+                }
+            }
 
             // Register callback for terminal query responses (DSR, DA, etc.)
             unsafe {
                 terminal::set_response_callback(terminal_response_callback);
             }
 
-            let _ = writeln!(writer, "[INFO] Terminal emulator initialized (via compositor)");
+            let _ = writeln!(writer, "[INFO] Terminal emulators initialized ({} VTs)", compositor::MAX_VTS);
         }
 
         // Clear the screen with a dark background
@@ -825,6 +859,23 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // panic from Rust's GlobalAlloc. With it, OOM = one dead process and life goes on.
     mm_manager::register_oom_callback(crate::oom::try_oom_kill);
     let _ = writeln!(writer, "[INFO] OOM killer registered");
+
+    // — GraveShift: Register heap grow callback. When the 32MB static heap is
+    // fragmented or full, the linked-list allocator calls this to get more pages
+    // from the buddy allocator. The heap grows on demand — no more dying at 32MB
+    // with 480MB of RAM sitting idle. Like Linux's vmalloc fallback for kmalloc.
+    HEAP_ALLOCATOR.set_grow_callback(heap_grow_callback);
+    let _ = writeln!(writer, "[INFO] Heap grow callback registered (on-demand expansion)");
+
+    // — CrashBloom: Run comprehensive memory validation BEFORE anything else
+    // needs memory (GPU, VTs, userspace). If the buddy or heap is broken,
+    // we find out now, not in a random crash 30 seconds into boot.
+    let (mem_passed, mem_failed) = crate::memtest::run_all();
+    if mem_failed > 0 {
+        let _ = writeln!(writer, "[MEMTEST] WARNING: {} tests FAILED!", mem_failed);
+    } else {
+        let _ = writeln!(writer, "[MEMTEST] All {} tests passed", mem_passed);
+    }
 
     // Initialize SMP subsystem for Bootstrap Processor
     let _ = writeln!(writer, "[INFO] Initializing SMP subsystem...");
@@ -1125,32 +1176,62 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // GOP is already initialized by the bootloader; this attempts to upgrade.
     display_takeover(&mut writer);
 
-    // — GlassSignal: If display_takeover acquired a framebuffer (VirtIO-GPU or Bochs)
-    // but compositor/terminal weren't initialized earlier (because bootloader reported
-    // no valid GOP — e.g. VirtIO-GPU-backed GOP with frame_buffer_base=0), set them
-    // up now. Without this, the kernel has a framebuffer but nothing renders to it.
-    if fb::framebuffer().is_some() && !terminal::is_initialized() {
+    // — GraveShift: VT terminal initialization. Must happen before userspace.
+    // If display_takeover got us a framebuffer, use it. If it FAILED, the boot
+    // framebuffer should still be alive — use that. VTs MUST be initialized or
+    // every write to /dev/ttyN is silently dropped and gettys are DOA.
+    if !terminal::is_initialized() {
         if let Some(framebuffer) = fb::framebuffer() {
-            let vt0_fb = compositor::init(framebuffer.clone());
-            let _ = writeln!(writer, "[COMP] Late compositor init (post display_takeover)");
+            let vt_fbs = compositor::init(framebuffer.clone());
+            let _ = writeln!(writer, "[COMP] Late compositor init (post display_takeover, all VTs)");
 
-            let terminal_fb = vt0_fb.unwrap_or(framebuffer);
-            terminal::init(terminal_fb);
+            if let Some(vt0_fb) = vt_fbs[0].clone() {
+                terminal::init(vt0_fb);
+            } else {
+                terminal::init(framebuffer.clone());
+            }
+            for i in 1..compositor::MAX_VTS {
+                if let Some(fb) = vt_fbs[i].clone() {
+                    terminal::init_vt(i, fb);
+                }
+            }
             unsafe {
                 terminal::set_response_callback(terminal_response_callback);
+                terminal::set_mark_dirty_callback(compositor::mark_dirty);
             }
-            let _ = writeln!(writer, "[INFO] Terminal initialized (late, via display_takeover)");
+            let _ = writeln!(writer, "[INFO] Terminal initialized (late, all {} VTs)", compositor::MAX_VTS);
 
-            // — GlassSignal: register the 30Hz tick callback that was skipped earlier
-            // (terminal wasn't initialized when the normal registration point ran).
-            // Without this, compositor never ticks and the display freezes after first paint.
             unsafe {
                 arch::set_terminal_tick_callback(console::terminal_tick);
             }
             let _ = writeln!(writer, "[INFO] Terminal tick callback registered (late, ~30 FPS)");
 
+            // — NeonVale: Register LOG VT writer. All os_log output (both normal and ISR
+            // paths) gets tee'd to VT6 (LOG_VT). The terminal emulator handles scrolling
+            // and rendering. Uses try_write_vt to avoid deadlock from ISR context.
+            // — NeonVale
+            unsafe {
+                os_log::register_log_vt_writer(|bytes| {
+                    terminal::try_write_vt(vt::LOG_VT, bytes);
+                });
+            }
+            let _ = writeln!(writer, "[INFO] LOG VT registered (VT index {})", vt::LOG_VT);
+
             terminal::clear();
             writer.console_enabled = true;
+        } else {
+            let _ = writeln!(writer, "[DISPLAY] FATAL: No framebuffer available — VTs will not function!");
+        }
+    }
+
+    // — CrashBloom: GATE — verify ALL VTs are initialized before userspace starts.
+    for i in 0..compositor::MAX_VTS {
+        if !terminal::is_vt_initialized(i) {
+            unsafe {
+                os_log::write_str_raw("[VT-GATE] VT");
+                os_log::write_u32_raw(i as u32);
+                os_log::write_str_raw(" NOT INITIALIZED — getty on this VT will be dead\n");
+            }
         }
     }
 
@@ -1335,10 +1416,10 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let tty0_device = vt::Tty0Device::new(vt_manager.clone(), 999);
     dev_fs.register("tty0", tty0_device.clone());
 
-    // Register /dev/tty1 through /dev/ttyN in devfs (all VTs — backing buffers are lazy)
-    // Also register each in the ctty device registry for /dev/tty resolution.
+    // Register /dev/tty1 through /dev/tty6 in devfs (interactive VTs only).
+    // — NeonVale: LOG_VT (index 6) is kernel-only — no /dev/tty device, no getty.
     let mut vt_devices: [Option<alloc::sync::Arc<dyn vfs::VnodeOps>>; 6] = Default::default();
-    for i in 0..vt::MAX_VTS {
+    for i in 0..vt::LOG_VT {
         let vt_device = vt::VtDevice::new(i, vt_manager.clone(), 1000 + i as u64);
         vt_devices[i] = Some(vt_device.clone());
         let device_name = alloc::format!("tty{}", i + 1);
@@ -1443,6 +1524,10 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         vt::set_signal_pending_callback(is_signal_pending); // — GraveShift: EINTR for blocked reads
         compositor::set_winsize_callback(vt::set_vt_winsize); // — GlassSignal: per-VT winsize + SIGWINCH on layout change
     }
+
+    // — SableWire: All three VT tracking systems (ACTIVE_VT, FOCUSED_VT,
+    // COMPOSITOR_FOCUS_VT) default to VT0 = /dev/tty1 where init/getty/login run.
+    // No sync needed — they're already aligned from birth.
 
     // Create /proc directory
     if let Err(e) = root_fs.mkdir("proc", vfs::Mode::DEFAULT_DIR) {
@@ -2516,6 +2601,10 @@ fn display_takeover(writer: &mut impl Write) {
     }
 
     // — NeonVale: No Bochs either. Try VirtIO-GPU takeover.
+    // — CrashBloom: If the preferred resolution fails (DMA can't find enough
+    // contiguous pages for a 4MB framebuffer), retry at 640x480 (~1.2MB).
+    // The device was already reset during probe — there's no going back to
+    // the UEFI framebuffer. We MUST get VirtIO-GPU working or there's no display.
     {
         for dev in pci_devices.iter() {
             if dev.is_virtio_gpu() {
@@ -2532,14 +2621,33 @@ fn display_takeover(writer: &mut impl Write) {
                         return;
                     }
                     Err(e) => {
-                        let _ = writeln!(writer, "[DISPLAY] VirtIO-GPU takeover failed: {}", e);
+                        let _ = writeln!(writer, "[DISPLAY] VirtIO-GPU preferred mode failed: {}", e);
+                        let _ = writeln!(writer, "[DISPLAY] Retrying VirtIO-GPU at 640x480...");
+                        // — CrashBloom: retry at minimum resolution — smaller DMA buffer
+                        match virtio_gpu::take_over_display_640x480() {
+                            Ok(info) => {
+                                let _ = writeln!(
+                                    writer,
+                                    "[DISPLAY] VirtIO-GPU fallback: {}x{}",
+                                    info.width, info.height
+                                );
+                                fb::init(info);
+                                let _ = writeln!(writer, "[DISPLAY] Framebuffer switched to VirtIO-GPU (fallback)");
+                                return;
+                            }
+                            Err(e2) => {
+                                let _ = writeln!(writer, "[DISPLAY] VirtIO-GPU fallback also failed: {}", e2);
+                            }
+                        }
                     }
                 }
+                break;
             }
         }
     }
 
-    // — NeonVale: Neither Bochs nor VirtIO-GPU available. No display at all.
+    // — CrashBloom: Neither Bochs nor VirtIO-GPU worked. No display at all.
+    // VTs will still be initialized with whatever we have (or fail the gate check).
     let _ = writeln!(writer, "[DISPLAY] WARNING: No display available!");
 }
 
@@ -2668,6 +2776,29 @@ fn vt_yield() {
     // Restore the caller's preemption state — don't clobber it
     if !was_preempt_ok {
         arch::disallow_kernel_preempt();
+    }
+}
+
+/// — GraveShift: Heap grow callback. When the linked-list allocator can't satisfy
+/// an allocation from the static 32MB heap, it calls this to get more pages from
+/// the buddy allocator. We allocate contiguous pages and return their direct-mapped
+/// virtual address. The allocator adds them as a new free region and retries.
+/// The heap can now grow to fill all available physical memory.
+///
+/// Returns (virtual_address, size) or None if the buddy is also exhausted.
+fn heap_grow_callback(min_size: usize) -> Option<(usize, usize)> {
+    // — GraveShift: round up to at least 16 pages (64KB) for efficiency.
+    // Tiny growth chunks fragment the free list even more.
+    let pages_needed = (min_size + 4095) / 4096;
+    let pages = pages_needed.max(16).next_power_of_two(); // at least 64KB
+    let size = pages * 4096;
+
+    match MEMORY_MANAGER.alloc_contiguous(pages) {
+        Ok(phys) => {
+            let virt = mm_paging::phys_to_virt(phys);
+            Some((virt.as_u64() as usize, size))
+        }
+        Err(_) => None,
     }
 }
 
@@ -2916,4 +3047,119 @@ unsafe fn collect_kernel_pt_frames(pml4_phys: u64) -> Vec<u64> {
     }
 
     frames
+}
+
+/// — CrashBloom: Early PCI scan to reset all VirtIO devices before buddy init.
+/// OVMF leaves VirtIO devices running with DMA virtqueues in BootServices memory.
+/// Without resetting them first, DMA writes corrupt buddy allocator FreeBlock headers.
+///
+/// Uses raw PCI config space I/O (ports 0xCF8/0xCFC) — no allocator needed.
+/// Walks PCI capabilities to find VIRTIO_PCI_CAP_COMMON_CFG, reads the BAR,
+/// and writes status=0 to the common config's device_status field.
+fn early_reset_virtio_devices(phys_map_base: u64) -> u32 {
+    const PCI_CONFIG_ADDR: u16 = 0x0CF8;
+    const PCI_CONFIG_DATA: u16 = 0x0CFC;
+
+    #[inline]
+    unsafe fn pci_read32(bus: u8, slot: u8, func: u8, offset: u8) -> u32 {
+        let addr: u32 = 0x8000_0000
+            | ((bus as u32) << 16)
+            | ((slot as u32) << 11)
+            | ((func as u32) << 8)
+            | ((offset as u32) & 0xFC);
+        unsafe {
+            crate::arch::outl(PCI_CONFIG_ADDR, addr);
+            crate::arch::inl(PCI_CONFIG_DATA)
+        }
+    }
+
+    let mut reset_count = 0u32;
+
+    for bus in 0u8..=255 {
+        for slot in 0u8..32 {
+            // — CrashBloom: read vendor/device for function 0
+            let vid_did = unsafe { pci_read32(bus, slot, 0, 0) };
+            if vid_did == 0xFFFF_FFFF {
+                continue; // — NeonRoot: empty slot
+            }
+
+            // — CrashBloom: check multi-function bit
+            let header = unsafe { pci_read32(bus, slot, 0, 0x0C) };
+            let max_func = if (header >> 16) & 0x80 != 0 { 8u8 } else { 1u8 };
+
+            for func in 0..max_func {
+                let vid_did = unsafe { pci_read32(bus, slot, func, 0) };
+                if vid_did == 0xFFFF_FFFF {
+                    continue;
+                }
+
+                let vendor = (vid_did & 0xFFFF) as u16;
+                if vendor != 0x1AF4 {
+                    continue; // — CrashBloom: not VirtIO
+                }
+
+                // — CrashBloom: Walk PCI capabilities to find VIRTIO_PCI_CAP_COMMON_CFG
+                let stat_cmd = unsafe { pci_read32(bus, slot, func, 0x04) };
+                if stat_cmd & (1 << 20) == 0 {
+                    continue; // — CrashBloom: no capabilities list
+                }
+
+                let mut cap_off = (unsafe { pci_read32(bus, slot, func, 0x34) } & 0xFF) as u8;
+
+                while cap_off != 0 && cap_off != 0xFF {
+                    let cap_hdr = unsafe { pci_read32(bus, slot, func, cap_off) };
+                    let cap_id = (cap_hdr & 0xFF) as u8;
+                    let cap_next = ((cap_hdr >> 8) & 0xFF) as u8;
+
+                    // — CrashBloom: PCI_CAP_ID_VNDR = 0x09 (vendor-specific)
+                    if cap_id == 0x09 {
+                        // — CrashBloom: VirtIO cap layout:
+                        //   +0: cap_vndr(8) cap_next(8) cap_len(8) cfg_type(8)
+                        //   +4: bar(8) id(8) padding(8) ...
+                        //   +8: offset(32)
+                        //  +12: length(32)
+                        let cfg_type = ((cap_hdr >> 24) & 0xFF) as u8;
+
+                        // — CrashBloom: VIRTIO_PCI_CAP_COMMON_CFG = 1
+                        if cfg_type == 1 {
+                            let bar_info = unsafe { pci_read32(bus, slot, func, cap_off + 4) };
+                            let bar_idx = (bar_info & 0xFF) as u8;
+                            let bar_offset = unsafe { pci_read32(bus, slot, func, cap_off + 8) };
+
+                            // — CrashBloom: read the BAR
+                            let bar_reg = 0x10 + (bar_idx as u8) * 4;
+                            let bar_val = unsafe { pci_read32(bus, slot, func, bar_reg) };
+
+                            if bar_val & 1 == 0 {
+                                // — CrashBloom: MMIO BAR — mask type bits
+                                let bar_phys = (bar_val & 0xFFFF_FFF0) as u64;
+                                // — CrashBloom: 64-bit BAR? Read high 32 bits
+                                let bar_phys = if bar_val & 0x6 == 0x4 {
+                                    let hi = unsafe {
+                                        pci_read32(bus, slot, func, bar_reg + 4)
+                                    } as u64;
+                                    bar_phys | (hi << 32)
+                                } else {
+                                    bar_phys
+                                };
+
+                                let common_cfg_virt = phys_map_base + bar_phys + bar_offset as u64;
+                                // — CrashBloom: device_status is at offset 20 in common cfg
+                                let status_ptr = (common_cfg_virt + 20) as *mut u8;
+                                unsafe {
+                                    core::ptr::write_volatile(status_ptr, 0);
+                                }
+                                reset_count += 1;
+                            }
+                            break; // — CrashBloom: found common cfg, done with this device
+                        }
+                    }
+
+                    cap_off = cap_next;
+                }
+            }
+        }
+    }
+
+    reset_count
 }

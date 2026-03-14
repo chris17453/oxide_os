@@ -29,10 +29,17 @@ impl FreeBlock {
 /// Maintains a linked list of free blocks sorted by address.
 /// On allocation, finds the first block that fits.
 /// On deallocation, adds the block back in sorted order and merges adjacent blocks.
+/// Callback type for heap growth. Called when allocation fails.
+/// Must return (virtual_addr, size) of a new region to add, or None if OOM.
+/// — GraveShift: the buddy allocator hands us pages, we hand them to the
+/// linked-list. The heap grows on demand instead of dying at 32MB.
+pub type GrowCallbackFn = fn(min_size: usize) -> Option<(usize, usize)>;
+
 pub struct LinkedListAllocator {
     head: FreeBlock,
     total_size: usize,
     used_size: usize,
+    grow_callback: Option<GrowCallbackFn>,
 }
 
 impl LinkedListAllocator {
@@ -42,7 +49,15 @@ impl LinkedListAllocator {
             head: FreeBlock::new(0),
             total_size: 0,
             used_size: 0,
+            grow_callback: None,
         }
+    }
+
+    /// Set a grow callback for on-demand heap expansion.
+    /// Called when allocation fails — callback requests pages from buddy allocator.
+    /// — GraveShift: set once during init, after buddy allocator is ready.
+    pub fn set_grow_callback(&mut self, cb: GrowCallbackFn) {
+        self.grow_callback = Some(cb);
     }
 
     /// Initialize the allocator with a memory region
@@ -239,6 +254,68 @@ impl LinkedListAllocator {
                 curr = block;
             }
             os_log::println!("[HEAP]   total {} free blocks", count);
+        }
+
+        // — GraveShift: alloc failed. Before giving up, try growing the heap
+        // by requesting pages from the buddy allocator. The callback returns a
+        // virtual address and size of a new region. We add it to the free list
+        // and retry exactly once. If that fails too, we're genuinely OOM.
+        if let Some(grow_fn) = self.grow_callback {
+            // Request at least enough for this allocation + some headroom
+            let grow_min = size.max(4096 * 4); // at least 16KB
+            if let Some((addr, region_size)) = grow_fn(grow_min) {
+                unsafe {
+                    self.add_free_region(addr, region_size);
+                }
+                self.total_size += region_size;
+
+                unsafe {
+                    os_log::write_str_raw("[HEAP] grew by ");
+                    os_log::write_u32_raw((region_size / 1024) as u32);
+                    os_log::write_str_raw("KB, total=");
+                    os_log::write_u32_raw((self.total_size / 1024) as u32);
+                    os_log::write_str_raw("KB\n");
+                }
+
+                // Retry allocation with the new memory
+                let mut current = &mut self.head;
+                while let Some(ref mut block) = current.next {
+                    if let Some((alloc_start, alloc_end)) =
+                        Self::alloc_from_block(block, size, align)
+                    {
+                        let block_start = block.start_addr();
+                        let block_end = block.end_addr();
+                        let next = block.next.take();
+                        let front_size = alloc_start - block_start;
+                        let back_size = block_end - alloc_end;
+
+                        if front_size >= mem::size_of::<FreeBlock>() {
+                            let front = unsafe { &mut *(block_start as *mut FreeBlock) };
+                            front.size = front_size;
+                            if back_size >= mem::size_of::<FreeBlock>() {
+                                let back = unsafe { &mut *(alloc_end as *mut FreeBlock) };
+                                back.size = back_size;
+                                back.next = next;
+                                front.next = Some(back);
+                            } else {
+                                front.next = next;
+                            }
+                            current.next = Some(front);
+                        } else if back_size >= mem::size_of::<FreeBlock>() {
+                            let back = unsafe { &mut *(alloc_end as *mut FreeBlock) };
+                            back.size = back_size;
+                            back.next = next;
+                            current.next = Some(back);
+                        } else {
+                            current.next = next;
+                        }
+
+                        self.used_size += alloc_end - alloc_start;
+                        return alloc_start as *mut u8;
+                    }
+                    current = current.next.as_mut().unwrap();
+                }
+            }
         }
 
         ptr::null_mut()

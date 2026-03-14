@@ -183,7 +183,7 @@ impl RunQueue {
         self.need_resched = need;
     }
 
-    /// Get all PIDs on this run queue
+    /// Get all PIDs on this run queue (heap-allocating version for diagnostic paths)
     pub fn all_pids(&self) -> alloc::vec::Vec<Pid> {
         // — TorqueJax: Linear scan through slots. Only called from diagnostic
         // paths (procfs, debug dump) — never on the hot path. O(256) worst
@@ -192,6 +192,21 @@ impl RunQueue {
             .iter()
             .filter_map(|slot| slot.as_ref().map(|t| t.pid))
             .collect()
+    }
+
+    /// Get all PIDs without heap allocation. Returns (buffer, count).
+    /// — GraveShift: For hot paths that can't touch the heap (ISR-reachable,
+    /// page fault handlers, waitpid loops). 256 = MAX_TASKS_PER_RQ.
+    pub fn all_pids_noalloc(&self) -> ([Pid; MAX_TASKS_PER_RQ], usize) {
+        let mut buf = [0u32; MAX_TASKS_PER_RQ];
+        let mut count = 0;
+        for slot in &self.slots {
+            if let Some(task) = slot.as_ref() {
+                buf[count] = task.pid;
+                count += 1;
+            }
+        }
+        (buf, count)
     }
 
     /// Count tasks in TASK_RUNNING state without heap allocation.
@@ -230,7 +245,9 @@ impl RunQueue {
                 // panicking in the scheduler is worse than dropping a task.
                 // Log it and bail — the task simply won't be scheduled.
                 #[cfg(feature = "debug-sched")]
-                os_log::eprintln!("[SCHED] CRITICAL: RQ {} full, dropping pid {}", self.cpu, pid);
+                unsafe {
+                    os_log::write_str_raw("[SCHED] CRITICAL: RQ full, dropping task\n");
+                }
                 return;
             }
         };
@@ -277,6 +294,14 @@ impl RunQueue {
         PID_TO_SLOT[pid as usize].store(SLOT_NONE, Ordering::Relaxed);
         self.free_slot(slot);
 
+        // — CrashBloom: Clear on_rq before returning. The task was dequeued from
+        // this RQ's CFS/RT tree above. If the caller re-adds the task to a
+        // different RQ (idle_try_steal), add_task→enqueue_task checks on_rq and
+        // silently skips if true. Stale on_rq=true from the old RQ = task sits
+        // in the new RQ's slot but never enters the CFS heap = invisible to the
+        // scheduler = permanently lost. THIS was the "random 2-3 VTs" bug.
+        let mut task = task;
+        task.on_rq = false;
         Some(task)
     }
 
@@ -287,11 +312,52 @@ impl RunQueue {
                 Some(t) => t,
                 None => return,
             };
-            if task.on_rq {
+            let on_rq = task.on_rq;
+            if on_rq {
+                // — FuzzStatic: trace the skip so we know dequeue isn't clearing on_rq
+                #[cfg(feature = "debug-sched")]
+                if pid > 10 {
+                    static ENQ_TRACE: AtomicU16 = AtomicU16::new(0);
+                    let n = ENQ_TRACE.fetch_add(1, Ordering::Relaxed);
+                    if n < 20 {
+                        unsafe {
+                            os_log::write_str_raw("[ENQ] pid=");
+                            os_log::write_u32_raw(pid);
+                            os_log::write_str_raw(" on_rq=1 SKIPPED vr=");
+                            os_log::write_u32_raw((task.vruntime / 1_000_000) as u32);
+                            os_log::write_str_raw("ms min_vr=");
+                            os_log::write_u32_raw((self.cfs_rq.min_vruntime() / 1_000_000) as u32);
+                            os_log::write_str_raw("ms heap=");
+                            os_log::write_u32_raw(self.cfs_rq.nr_running());
+                            os_log::write_str_raw("\n");
+                        }
+                    }
+                }
                 return;
             }
             (task.policy, task.rt_priority, task.vruntime, task.weight)
         };
+
+        // — FuzzStatic: trace successful enqueue — vruntime vs min_vruntime tells
+        // us if newly-woken tasks are getting starved by a stale vruntime delta
+        #[cfg(feature = "debug-sched")]
+        if pid > 10 {
+            static ENQ_OK_TRACE: AtomicU16 = AtomicU16::new(0);
+            let n = ENQ_OK_TRACE.fetch_add(1, Ordering::Relaxed);
+            if n < 20 {
+                unsafe {
+                    os_log::write_str_raw("[ENQ] pid=");
+                    os_log::write_u32_raw(pid);
+                    os_log::write_str_raw(" on_rq=0 vr=");
+                    os_log::write_u32_raw((vruntime / 1_000_000) as u32);
+                    os_log::write_str_raw("ms min_vr=");
+                    os_log::write_u32_raw((self.cfs_rq.min_vruntime() / 1_000_000) as u32);
+                    os_log::write_str_raw("ms heap=");
+                    os_log::write_u32_raw(self.cfs_rq.nr_running());
+                    os_log::write_str_raw("\n");
+                }
+            }
+        }
 
         if policy.is_realtime() {
             self.rt_rq.enqueue(pid, rt_prio);

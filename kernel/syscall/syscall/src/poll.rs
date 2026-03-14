@@ -230,20 +230,19 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
             return errno::EINTR;
         }
 
-        // Allow scheduler to preempt us while we wait
-        // Note: We don't save user context here. When scheduler_tick preempts
-        // us at hlt, it saves kernel context. When we resume, we continue
-        // this loop and return normally via the syscall return path.
+        // — GraveShift: HLT-based poll sleep. We stay on the CFS tree (no
+        // block_current) because we lack Linux's poll_wait/wake_up mechanism
+        // — there's no way for an fd driver to wake a specific blocked process.
+        // Instead we HLT until the next timer tick, then re-check fds.
+        //
+        // yield_current puts us at the back of the CFS tree so other processes
+        // get fair CPU time. Without yield, we'd monopolize our CPU between
+        // HLTs. The cost is one scheduler pick per tick per polling process —
+        // acceptable for a handful of daemons. — GraveShift
+        sched::yield_current();
+        sched::set_need_resched();
         os_core::allow_kernel_preempt();
-
-        // HLT yields CPU until next interrupt
-        // With KERNEL_PREEMPT_OK set, scheduler will switch to other processes
-        // NOTE: sti + hlt MUST be in the same asm block. If separated, an
-        // interrupt can fire between them, handle it, return, and then the
-        // CPU hits HLT and waits an extra tick unnecessarily.
         os_core::wait_for_interrupt();
-
-        // Clear preempt flag if we're still running (no switch occurred)
         os_core::disallow_kernel_preempt();
     }
 }
@@ -523,10 +522,10 @@ pub fn sys_select(
             return errno::EINTR;
         }
 
-        // — GraveShift: HLT yields CPU until next interrupt. spin_loop() was a
-        // death sentence — PAUSE instruction burns 100% CPU in kernel mode with
-        // kpo=0 so the scheduler can't even preempt us. Every process using
-        // select() became an unkillable CPU hog. Now we HLT like civilized code.
+        // — GraveShift: HLT-based select sleep. Same as sys_poll — no fd
+        // wake mechanism, so yield + HLT poll at timer tick rate. — GraveShift
+        sched::yield_current();
+        sched::set_need_resched();
         os_core::allow_kernel_preempt();
         os_core::wait_for_interrupt();
         os_core::disallow_kernel_preempt();
@@ -696,8 +695,10 @@ pub fn sys_pselect6(
             return errno::EINTR;
         }
 
-        // — GraveShift: Same HLT fix as sys_select. Without this, pselect6
-        // callers spin at 100% CPU in ring 0, untouchable by the scheduler.
+        // — GraveShift: HLT-based pselect sleep. Same as sys_poll — yield +
+        // HLT, check fds on next tick. — GraveShift
+        sched::yield_current();
+        sched::set_need_resched();
         os_core::allow_kernel_preempt();
         os_core::wait_for_interrupt();
         os_core::disallow_kernel_preempt();

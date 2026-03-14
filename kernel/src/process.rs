@@ -437,9 +437,7 @@ pub fn kernel_fork() -> i64 {
         KERNEL_STACK_SIZE,
     );
 
-    // Save parent's PML4 before releasing the lock - needed for PARENT_CONTEXT
-    let parent_pml4 = parent_meta.address_space.pml4_phys();
-    drop(parent_meta); // Release lock before switching
+    drop(parent_meta); // Release lock before enqueuing child
 
     match result {
         Ok(fork_result) => {
@@ -465,34 +463,8 @@ pub fn kernel_fork() -> i64 {
                 }
             }
 
-            // Save parent context with fork return value (child_pid)
-            let parent_task_ctx = TaskContext {
-                rip: parent_context.rip,
-                rsp: parent_context.rsp,
-                rflags: parent_context.rflags,
-                rax: child_pid as u64, // Parent's fork() returns child_pid
-                rbx: parent_context.rbx,
-                rcx: parent_context.rcx,
-                rdx: parent_context.rdx,
-                rsi: parent_context.rsi,
-                rdi: parent_context.rdi,
-                rbp: parent_context.rbp,
-                r8: parent_context.r8,
-                r9: parent_context.r9,
-                r10: parent_context.r10,
-                r11: parent_context.r11,
-                r12: parent_context.r12,
-                r13: parent_context.r13,
-                r14: parent_context.r14,
-                r15: parent_context.r15,
-                cs: 0x23, // User mode
-                ss: 0x1B,
-                fs_base: parent_context.fs_base,
-                gs_base: parent_context.gs_base,
-            };
-
-            // Update parent's context in the scheduler's Task
-            sched::set_task_context(parent_pid, parent_task_ctx);
+            // — GraveShift: No need to update parent's task context — parent returns
+            // through normal syscall dispatch which puts child_pid in rax via return value.
 
             // Wrap child's ProcessMeta in Arc<Mutex<>>
             let child_meta_arc = Arc::new(Mutex::new(fork_result.child_meta));
@@ -544,147 +516,60 @@ pub fn kernel_fork() -> i64 {
             );
             child_task.context = child_task_ctx;
 
-            // Add child to THIS CPU's scheduler — fork immediately switches on
-            // the local CPU, so enqueueing remotely (via last_cpu default=0)
-            // can leave rq.curr pointing to a PID with no local Task slot.
-            let cpu = sched::this_cpu();
-            sched::add_task_to_cpu(child_task, cpu);
+            // — GraveShift: "Parent runs first" fork — like Linux >= 2.6.32.
+            // The child is fully initialized with its context baked in. We add
+            // it to a CPU's runqueue and return child_pid to the parent through
+            // the normal syscall return path. The scheduler picks up the child
+            // on the next timer tick via normal context_switch_transaction.
+            //
+            // OLD WAY: switch_to(child) + sysretq jumped directly into child,
+            // saved parent in PARENT_CONTEXT global. This caused:
+            // 1. All children piled onto CPU#0 — CPUs 1-3 idle forever
+            // 2. Parent starvation — later children never got scheduled
+            // 3. PARENT_CONTEXT was a single global — SMP-unsafe
+            //
+            // NEW WAY: Parent continues immediately. Child gets scheduled on
+            // the least-loaded CPU. Both run when the scheduler picks them.
+
+            // — TorqueJax: pick the CPU with fewest runnable tasks for the child.
+            // Simple round-robin across active CPUs — O(N_CPUS) but N_CPUS ≤ 4.
+            let num_cpus = sched::num_cpus();
+            let target_cpu = if num_cpus <= 1 {
+                sched::this_cpu()
+            } else {
+                // — TorqueJax: simple round-robin to spread children across CPUs.
+                // Static counter avoids all children landing on the same "least loaded" CPU.
+                use core::sync::atomic::AtomicU32;
+                static FORK_CPU_COUNTER: AtomicU32 = AtomicU32::new(0);
+                let idx = FORK_CPU_COUNTER.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                (idx % num_cpus) as u32
+            };
+
+            // — CrashBloom: trace CPU assignment so we can verify round-robin
+            // distribution. If children pile onto one CPU, the counter is broken.
+            unsafe {
+                os_log::write_str_raw("[FORK] child=");
+                trace_u64(child_pid as u64);
+                os_log::write_str_raw(" -> CPU");
+                trace_u64(target_cpu as u64);
+                os_log::write_str_raw(" (num_cpus=");
+                trace_u64(num_cpus as u64);
+                os_log::write_str_raw(")\n");
+            }
+
+            sched::add_task_to_cpu(child_task, target_cpu);
 
             // Add child to parent's children list
             sched::add_task_child(parent_pid, child_pid);
 
-            // Tell scheduler we're switching to child
-            sched::switch_to(child_pid);
-            // Force a scheduler pass on the next timer tick so the parent can
-            // resume even if CFS's vruntime preemption heuristic doesn't fire.
-            // Fork semantics need both tasks to make progress promptly.
+            // — GraveShift: request reschedule so the child gets picked up promptly
             sched::set_need_resched();
 
-            // Get child's kernel stack top
-            let child_kstack_virt = phys_to_virt(fork_result.kernel_stack_phys);
-            let child_kstack_top =
-                child_kstack_virt.as_u64() + fork_result.kernel_stack_size as u64;
-
-            // Update kernel stack
-            // — CrashBloom: Use checked version in fork path (not hot path).
-            // If GS_BASE got corrupted, we recover before the crash.
-            arch::syscall::LAST_SET_KSTACK_SITE.store(2, core::sync::atomic::Ordering::Relaxed);
-            unsafe {
-                arch::syscall::set_kernel_stack_checked(child_kstack_top);
-            }
-            arch::gdt::set_kernel_stack(child_kstack_top);
-
-            // Save parent context so user_exit can restore it when child exits
-            *PARENT_CONTEXT.lock() = Some(ParentContext {
-                pid: parent_pid as u64,
-                pml4: parent_pml4.as_u64(),
-                rip: user_ctx.rip,
-                rsp: user_ctx.rsp,
-                rflags: user_ctx.rflags,
-                rax: child_pid as u64, // fork() returns child_pid to parent
-                rbx: user_ctx.rbx,
-                rcx: user_ctx.rcx,
-                rdx: user_ctx.rdx,
-                rsi: user_ctx.rsi,
-                rdi: user_ctx.rdi,
-                rbp: user_ctx.rbp,
-                r8: user_ctx.r8,
-                r9: user_ctx.r9,
-                r10: user_ctx.r10,
-                r11: user_ctx.r11,
-                r12: user_ctx.r12,
-                r13: user_ctx.r13,
-                r14: user_ctx.r14,
-                r15: user_ctx.r15,
-            });
-            CHILD_DONE.store(false, Ordering::SeqCst);
-
-            // — GraveShift: Capture for diagnostics before child_ctx is moved.
-            let diag_rip = child_ctx.rip;
-            let diag_rsp = child_ctx.rsp;
-            // Per-call child context (stack local): avoids cross-CPU races from a
-            // function-static context buffer when two CPUs fork concurrently.
-            let mut fork_child_ctx = child_ctx;
-
-            unsafe {
-                // — GraveShift: Pre-switch diagnostic — validate child PML4 before loading CR3.
-                {
-                    let pml4_virt = mm_paging::phys_to_virt(child_pml4);
-                    let entry_256 = core::ptr::read_volatile(pml4_virt.as_ptr::<u64>().add(256));
-                    let entry_0 = core::ptr::read_volatile(pml4_virt.as_ptr::<u64>());
-                    os_log::write_str_raw("[FORK-CR3] About to load child cr3=0x");
-                    os_log::write_u64_hex_raw(child_pml4.as_u64());
-                    os_log::write_str_raw(" PML4[0]=0x");
-                    os_log::write_u64_hex_raw(entry_0);
-                    os_log::write_str_raw(" PML4[256]=0x");
-                    os_log::write_u64_hex_raw(entry_256);
-                    os_log::write_str_raw("\n");
-                    os_log::write_str_raw("[FORK-CR3] child RIP=0x");
-                    os_log::write_u64_hex_raw(diag_rip);
-                    os_log::write_str_raw(" child RSP=0x");
-                    os_log::write_u64_hex_raw(diag_rsp);
-                    os_log::write_str_raw("\n");
-                }
-
-                // Switch page tables
-                arch::switch_page_table(os_core::PhysAddr::new(child_pml4.as_u64()));
-
-                os_log::write_str_raw("[FORK-CR3] CR3 loaded OK, about to sysretq\n");
-
-                let ctx_ptr = (&mut fork_child_ctx as *mut ProcessContext) as u64;
-
-                // Child's fork() returns 0
-                // TODO: move to arch crate — arch-specific context switch/usermode entry
-                core::arch::asm!(
-                    "mov rax, {ctx}",
-                    "mov rcx, [rax]",       // rip
-                    "mov r11, [rax + 16]",  // rflags
-                    "or r11, 0x200",        // Ensure IF
-                    "mov rbx, [rax + 32]",
-                    "mov rbp, [rax + 72]",
-                    "mov r12, [rax + 112]",
-                    "mov r13, [rax + 120]",
-                    "mov r14, [rax + 128]",
-                    "mov rdi, [rax + 64]",
-                    "mov rsi, [rax + 56]",
-                    "mov rdx, [rax + 48]",
-                    "mov r8, [rax + 80]",
-                    "mov r9, [rax + 88]",
-                    "mov r10, [rax + 96]",
-                    // Set FS base MSR if fs_base is non-zero (TLS support)
-                    "push rax",              // Save context pointer
-                    "mov r15, [rax + 160]",  // fs_base (offset 160 in ProcessContext)
-                    "test r15, r15",
-                    "jz 3f",
-                    "mov ecx, 0xC0000100",  // MSR IA32_FS_BASE
-                    "mov rax, r15",
-                    "mov rdx, r15",
-                    "shr rdx, 32",
-                    "wrmsr",
-                    "3:",
-                    "pop rax",               // Restore context pointer
-                    // Load user segment selectors for DS/ES (0x1B = USER_DS | 3)
-                    // NOTE: In x86-64 long mode, FS base comes from FS_BASE MSR, not segment descriptor.
-                    // We do NOT load FS at all - just leave it as-is after WRMSR set the base.
-                    // Save context pointer to r15 temporarily
-                    "mov r15, rax",
-                    "mov ax, 0x1b",
-                    "mov ds, ax",
-                    "mov es, ax",
-                    // Do NOT touch FS - leave it alone after WRMSR
-                    // Restore rax as context pointer
-                    "mov rax, r15",
-                    // Now load r15 from context and prepare for return
-                    "mov r15, [rax + 136]",
-                    "push qword ptr [rax + 8]",
-                    "mov rax, [rax + 24]",  // rax = 0 (child return)
-                    "pop rsp",
-                    "swapgs",
-                    "sysretq",
-                    ctx = in(reg) ctx_ptr,
-                    options(noreturn)
-                );
-            }
+            // — GraveShift: return child_pid to parent through normal syscall return.
+            // The syscall dispatch will put child_pid in rax and sysretq back to
+            // parent's userspace. No CR3 switch, no manual sysretq, no PARENT_CONTEXT.
+            // The child sits in the runqueue and gets scheduled by the next timer tick.
+            child_pid as i64
         }
         Err(_e) => {
             debug_fork!("[FORK] Fork failed: {:?}", _e);
@@ -1137,7 +1022,15 @@ fn find_child_state_change(
     target_pid: i32,
     opts: &WaitOptions,
 ) -> Result<WaitResult, proc::WaitError> {
-    let children = sched::get_task_children(parent_pid);
+    // — GraveShift: Zero-alloc child scan. Linux iterates children via intrusive
+    // list_head embedded in task_struct — no heap allocation ever. We copy child
+    // PIDs to a stack buffer inside one RQ lock acquisition, then release the
+    // lock and check each child's state. The old code cloned a Vec<Pid> on every
+    // call — that's a heap alloc+free per waitpid iteration. With servicemgr
+    // polling 6 children at 100Hz, that's 600 heap alloc/free pairs per second
+    // fighting the same global spinlock as page fault handlers. Deadlock city.
+    let (children_buf, nchildren) = sched::get_task_children_noalloc(parent_pid);
+
     #[cfg(feature = "debug-proc")]
     unsafe {
         os_log::write_str_raw("[WAIT] scan ppid=");
@@ -1145,25 +1038,26 @@ fn find_child_state_change(
         os_log::write_str_raw(" target=");
         trace_i32(target_pid);
         os_log::write_str_raw(" nchild=");
-        trace_u64(children.len() as u64);
+        trace_u64(nchildren as u64);
         os_log::write_str_raw("\n");
     }
 
-    if children.is_empty() {
+    if nchildren == 0 {
         return Err(proc::WaitError::NoChildren);
     }
 
-    for child_pid in &children {
-        if target_pid > 0 && *child_pid != target_pid as u32 {
+    for i in 0..nchildren {
+        let child_pid = children_buf[i];
+        if target_pid > 0 && child_pid != target_pid as u32 {
             continue;
         }
 
-        if let Some(state) = sched::get_task_state(*child_pid) {
+        if let Some(state) = sched::get_task_state(child_pid) {
             // Zombie — always reportable
             if state == TaskState::TASK_ZOMBIE {
-                if let Some(status) = sched::get_task_exit_status(*child_pid) {
+                if let Some(status) = sched::get_task_exit_status(child_pid) {
                     return Ok(WaitResult {
-                        pid: *child_pid,
+                        pid: child_pid,
                         status,
                     });
                 }
@@ -1171,10 +1065,10 @@ fn find_child_state_change(
 
             // Stopped child — report if WUNTRACED requested
             if opts.untraced && state == TaskState::TASK_STOPPED {
-                if let Some(meta_arc) = sched::get_task_meta(*child_pid) {
+                if let Some(meta_arc) = sched::get_task_meta(child_pid) {
                     if let Some(mut meta) = meta_arc.try_lock() {
                         if let Some(sig) = meta.stop_signal.take() {
-                            return Ok(WaitResult::stopped(*child_pid, sig as i32));
+                            return Ok(WaitResult::stopped(child_pid, sig as i32));
                         }
                     }
                 }
@@ -1182,11 +1076,11 @@ fn find_child_state_change(
 
             // Continued child — report if WCONTINUED requested
             if opts.continued {
-                if let Some(meta_arc) = sched::get_task_meta(*child_pid) {
+                if let Some(meta_arc) = sched::get_task_meta(child_pid) {
                     if let Some(mut meta) = meta_arc.try_lock() {
                         if meta.continued {
                             meta.continued = false;
-                            return Ok(WaitResult::continued(*child_pid));
+                            return Ok(WaitResult::continued(child_pid));
                         }
                     }
                 }

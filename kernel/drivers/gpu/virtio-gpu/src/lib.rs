@@ -683,6 +683,7 @@ impl VirtioGpu {
         }
 
         self.framebuffer = Some(backing);
+
         Ok(())
     }
 
@@ -707,15 +708,17 @@ impl VirtioGpu {
         let desc1 = queue.alloc_desc().ok_or("No free descriptors for resp")?;
 
         // For PCI transport, descriptor addresses must be physical
+        let cmd_virt = cmd as *const C as u64;
+        let resp_virt = resp as *mut R as u64;
         let cmd_addr = if is_pci {
-            virt_to_phys(cmd as *const C as u64)
+            virt_to_phys(cmd_virt)
         } else {
-            cmd as *const C as u64
+            cmd_virt
         };
         let resp_addr = if is_pci {
-            virt_to_phys(resp as *mut R as u64)
+            virt_to_phys(resp_virt)
         } else {
-            resp as *mut R as u64
+            resp_virt
         };
 
         unsafe {
@@ -964,6 +967,45 @@ pub fn take_over_display() -> Result<FramebufferInfo, &'static str> {
         os_log::write_str_raw("x");
         os_log::write_u32_raw(info.height);
         os_log::write_str_raw("\n");
+    }
+
+    Ok(info)
+}
+
+/// — CrashBloom: Fallback takeover at 640x480 when preferred resolution fails.
+/// Same flow as take_over_display but forces 640x480 — smaller DMA buffer
+/// (~1.2MB vs ~4MB) so contiguous allocation is more likely to succeed.
+pub fn take_over_display_640x480() -> Result<FramebufferInfo, &'static str> {
+    let devices = pci::devices();
+    let gpu_dev = devices
+        .iter()
+        .find(|d| d.is_virtio_gpu())
+        .ok_or("No VirtIO-GPU device on PCI bus")?;
+
+    unsafe {
+        os_log::write_str_raw("[VGPU] Fallback takeover at 640x480\n");
+    }
+
+    let mut gpu = VirtioGpu::from_pci(gpu_dev).ok_or("VirtIO GPU PCI probe failed")?;
+    gpu.init()?;
+
+    // — CrashBloom: force 640x480 — don't try to upgrade resolution
+    if gpu.width != 640 || gpu.height != 480 {
+        if gpu.display_count > 0 {
+            let _ = gpu.set_mode(0, 640, 480);
+        }
+    }
+
+    let info = gpu
+        .framebuffer_info()
+        .ok_or("VirtIO-GPU framebuffer setup failed at 640x480")?;
+
+    fb::set_flush_callback(gpu_flush_region);
+
+    *VIRTIO_GPU.lock() = Some(gpu);
+
+    unsafe {
+        os_log::write_str_raw("[VGPU] Fallback complete: 640x480\n");
     }
 
     Ok(info)

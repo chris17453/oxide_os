@@ -18,8 +18,9 @@ mod lockfree_ring;
 
 use alloc::sync::Arc;
 use core::ptr;
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 use spin::Mutex;
+use sched::TaskState;
 
 use lockfree_ring::LockFreeRing;
 use tty::{Tty, TtyDriver};
@@ -59,7 +60,75 @@ pub unsafe fn set_yield_callback(f: YieldFn) {
 /// Maximum VT slots (compile-time array ceiling).
 /// — GraveShift: actual count is runtime — set via init(num_vts).
 /// Change this only if you need more than 6 VT slots system-wide.
-pub const MAX_VTS: usize = 6;
+/// — GraveShift: 6 interactive VTs (VT1-VT6) + 1 read-only LOG VT (index 6).
+/// The LOG VT has no getty/shell — it's a kernel-only log sink that receives
+/// all os_log output. Accessible via the "LOG" button in the status bar.
+/// — NeonVale
+pub const MAX_VTS: usize = 7;
+
+/// — GraveShift: Per-VT wait queue for processes blocked on read().
+/// When a VT is inactive (not ACTIVE_VT), readers sleep here instead of
+/// spin-polling. On VT switch, all waiters for the newly-active VT are woken.
+/// Linux does the same via tty->read_wait (wait_event_interruptible).
+/// Fixed-size because we never have more than ~4 processes reading one VT.
+const MAX_VT_WAITERS: usize = 8;
+const PID_NONE: u32 = u32::MAX;
+
+/// — GraveShift: ISR-safe wait queue. Atomic slots, no locks, no heap.
+/// register() grabs a slot, unregister() releases it, wake_all() wakes everyone.
+struct VtWaitQueue {
+    pids: [AtomicU32; MAX_VT_WAITERS],
+}
+
+impl VtWaitQueue {
+    const fn new() -> Self {
+        // — GraveShift: const-init all slots to PID_NONE. Can't use a loop
+        // in const fn, so macro-expand the array. Ugly but correct.
+        Self {
+            pids: [
+                AtomicU32::new(PID_NONE), AtomicU32::new(PID_NONE),
+                AtomicU32::new(PID_NONE), AtomicU32::new(PID_NONE),
+                AtomicU32::new(PID_NONE), AtomicU32::new(PID_NONE),
+                AtomicU32::new(PID_NONE), AtomicU32::new(PID_NONE),
+            ],
+        }
+    }
+
+    /// Register current PID as a waiter. Returns slot index or None if full.
+    fn register(&self, pid: u32) -> Option<usize> {
+        for (i, slot) in self.pids.iter().enumerate() {
+            if slot.compare_exchange(PID_NONE, pid, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
+                return Some(i);
+            }
+        }
+        None // — GraveShift: all slots full. Shouldn't happen with 8 slots.
+    }
+
+    /// Unregister a waiter by slot index.
+    fn unregister(&self, slot: usize) {
+        if slot < MAX_VT_WAITERS {
+            self.pids[slot].store(PID_NONE, Ordering::Release);
+        }
+    }
+
+    /// Wake all registered waiters. Called from VT switch (ISR context).
+    /// — GraveShift: uses try_wake_up because this runs in ISR context
+    /// (keyboard interrupt → Alt+Fn). Cannot use blocking wake_up().
+    fn wake_all(&self) {
+        for slot in &self.pids {
+            let pid = slot.load(Ordering::Acquire);
+            if pid != PID_NONE {
+                // — GraveShift: don't clear the slot here — the waiter clears
+                // it when it unregisters after waking up. ISR just kicks them.
+                sched::try_wake_up(pid);
+            }
+        }
+    }
+}
+
+/// — NeonVale: Index of the LOG VT. Not a user terminal — no /dev/tty device,
+/// no getty, no shell. Just kernel log output rendered by the terminal emulator.
+pub const LOG_VT: usize = 6;
 
 /// VT state — TTY + metadata, NO input buffer.
 ///
@@ -99,6 +168,10 @@ pub struct VtManager {
     /// Input ring buffers — OUTSIDE mutex for true lock-free IRQ push
     /// One per VT. IRQ pushes to active VT's ring. read()/poll() drains it.
     input_rings: [LockFreeRing; MAX_VTS],
+    /// — GraveShift: Per-VT wait queues for processes blocked on read().
+    /// Linux equivalent: tty->read_wait. Processes sleeping on an inactive VT
+    /// register here and get woken on VT switch or input arrival.
+    wait_queues: [VtWaitQueue; MAX_VTS],
 }
 
 impl VtManager {
@@ -117,23 +190,8 @@ impl VtManager {
         }
         impl TtyDriver for VtTtyDriver {
             fn write(&self, data: &[u8]) {
-                // — GraveShift: Lazy-init the VT's terminal emulator on first write.
-                // VT0 is initialized at boot. VTs 1-5 spawn here when getty first writes.
-                // compositor::get_vt_framebuffer() allocates the ~4MB backing buffer on demand.
-                if !terminal::is_vt_initialized(self.vt_num) {
-                    if let Some(fb) = compositor::get_vt_framebuffer(self.vt_num) {
-                        terminal::init_vt(self.vt_num, fb);
-                    } else {
-                        // — GraveShift: no backing fb = can't render. This shouldn't happen
-                        // after compositor init, but if it does, bail silently.
-                        return;
-                    }
-                }
-
-                // — GraveShift: Direct write to this VT's own terminal emulator.
-                // No CONSOLE_WRITE_CALLBACK. No VT_OUTPUT_BUFFERS. No raw byte replay.
-                // The terminal processes escape sequences, updates its text buffer, and
-                // renders glyphs to this VT's backing framebuffer — whether active or not.
+                // — SableWire: all VT terminals are eagerly initialized at boot.
+                // No lazy-init needed — just write directly to the terminal emulator.
                 terminal::write_vt(self.vt_num, data);
 
                 // — NeonRoot: mark this VT dirty so compositor blits to hardware.
@@ -152,6 +210,9 @@ impl VtManager {
             // — GraveShift: Ring buffers live here, not inside VtState.
             // IRQ handler writes directly. No mutex. No try_lock. No dropped keys.
             input_rings: core::array::from_fn(|_| LockFreeRing::new()),
+            // — GraveShift: per-VT wait queues. Processes blocked on read() for an
+            // inactive VT sleep here. VT switch wakes them. Zero CPU while inactive.
+            wait_queues: core::array::from_fn(|_| VtWaitQueue::new()),
         }
     }
 
@@ -194,6 +255,12 @@ impl VtManager {
                 }
             }
 
+            // — GraveShift: Wake all processes sleeping on the newly-active VT.
+            // They were blocked in read() because this VT was inactive. Now that
+            // it's focused, they need to run and drain any input from the ring.
+            // Uses try_wake_up (ISR-safe) — we're in keyboard interrupt context.
+            self.wait_queues[vt_num].wake_all();
+
             true
         } else {
             false
@@ -227,6 +294,11 @@ impl VtManager {
             // — GraveShift: ALWAYS trace ring full — this is the smoking gun for input death
             unsafe { os_log::write_str_raw("[VT] RING FULL! byte dropped\n"); }
         }
+
+        // — GraveShift: Wake any process blocked on read() for this VT.
+        // They're sleeping in TASK_INTERRUPTIBLE waiting for input to arrive.
+        // Like Linux's wake_up_interruptible(&tty->read_wait) in n_tty_receive_buf.
+        self.wait_queues[active].wake_all();
 
         // 🔥 IMMEDIATE SIGNAL DELIVERY (best-effort fast path) 🔥
         //
@@ -400,16 +472,63 @@ impl VtManager {
                 }
             }
 
-            // No data ready yet - yield CPU with preemption enabled so the
-            // scheduler can actually switch to other processes. Without this,
-            // we're in kernel mode (syscall) and the timer interrupt refuses
-            // to context switch, starving all other processes.
-            unsafe {
-                if let Some(yield_fn) = YIELD_CALLBACK {
-                    yield_fn();
-                } else {
-                    // Fallback: bare yield (won't actually preempt in kernel mode)
-                    sched::yield_current();
+            // — GraveShift: Linux-style VT blocking. If this VT is NOT the active
+            // terminal, the keyboard ISR will never push bytes into our ring buffer.
+            // Instead of spin-yielding forever (burning 100% CPU across 4+ shells),
+            // we properly block the process (TASK_INTERRUPTIBLE) and register on the
+            // per-VT wait queue. When the user switches TO this VT (Alt+Fn), the
+            // switch_to() handler wakes all waiters. Zero CPU while backgrounded.
+            //
+            // If the VT IS active, we still need to yield — but input will arrive
+            // from the next keyboard interrupt, so HLT is the right primitive. — GraveShift
+            // — GraveShift: Linux-style VT blocking. If this VT is NOT the active
+            // terminal, the keyboard ISR will never push bytes into our ring buffer.
+            // Instead of spin-yielding forever (burning 100% CPU across 4+ shells),
+            // we properly block the process (TASK_INTERRUPTIBLE) and register on the
+            // per-VT wait queue. When the user switches TO this VT (Alt+Fn), the
+            // switch_to() handler wakes all waiters. Zero CPU while backgrounded.
+            //
+            // If the VT IS active, we still need to yield — but input will arrive
+            // from the next keyboard interrupt, so HLT is the right primitive. — GraveShift
+            let active_vt = ACTIVE_VT.try_read().map(|g| *g);
+            let is_active = active_vt.map(|a| a == vt_num).unwrap_or(true);
+
+            if !is_active {
+                // — GraveShift: VT is not focused. Block properly — dequeue from
+                // CFS so the scheduler never touches this process until woken.
+                // ZERO CPU. Like Linux's wait_event_interruptible(tty->read_wait).
+                //
+                // Wake sources (both call wake_all → try_wake_up):
+                //   1. switch_to() — user switches TO this VT (Alt+Fn)
+                //   2. push_input() — every keystroke wakes the active VT's waiters
+                // If try_wake_up fails (ISR lock contention), the next keystroke
+                // retries automatically. Lost wakeup is self-healing. — GraveShift
+                let pid = sched::current_pid().unwrap_or(0);
+                if pid > 0 {
+                    let slot = self.wait_queues[vt_num].register(pid);
+                    // — GraveShift: block_current sets INTERRUPTIBLE + dequeues
+                    // from CFS. After this, the scheduler won't pick us. We do
+                    // ONE HLT — the timer fires, scheduler runs, picks someone
+                    // else (we're not on CFS), and our code here never resumes
+                    // until try_wake_up re-enqueues us. Then the loop continues.
+                    sched::block_current(TaskState::TASK_INTERRUPTIBLE);
+                    os_core::allow_kernel_preempt();
+                    os_core::wait_for_interrupt();
+                    os_core::disallow_kernel_preempt();
+                    if let Some(s) = slot {
+                        self.wait_queues[vt_num].unregister(s);
+                    }
+                }
+            } else {
+                // — GraveShift: VT is active but no data yet — keyboard interrupt
+                // will push bytes shortly. Yield + HLT for one tick. This is the
+                // original path, now only taken when we're the focused VT.
+                unsafe {
+                    if let Some(yield_fn) = YIELD_CALLBACK {
+                        yield_fn();
+                    } else {
+                        sched::yield_current();
+                    }
                 }
             }
         }
@@ -521,7 +640,9 @@ static VT_MANAGER_OWNER: Mutex<Option<Arc<VtManager>>> = Mutex::new(None);
 /// Active VT index (separate from manager to avoid circular dependency)
 /// — GraveShift: VT0 is /dev/tty0 — alias for the active VT, not a real terminal.
 /// VT1 is the first real VT, same as Linux's fg_console=0 mapping to tty1.
-static ACTIVE_VT: spin::RwLock<usize> = spin::RwLock::new(1);
+// — SableWire: VT0 = /dev/tty1 (first VT, where init/getty/login run).
+// Must match compositor/terminal FOCUSED_VT default (both start at 0).
+static ACTIVE_VT: spin::RwLock<usize> = spin::RwLock::new(0);
 
 // — GraveShift: VT_OUTPUT_BUFFERS ELIMINATED. Each VT now has its own
 // TerminalEmulator that processes writes directly. No more raw byte buffering,

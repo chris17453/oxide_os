@@ -26,6 +26,7 @@ mod globals;
 mod init;
 mod kstack_guard;
 mod memory;
+mod memtest;
 mod mount;
 mod oom;
 mod process;

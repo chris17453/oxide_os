@@ -176,6 +176,14 @@ impl Renderer {
         }
     }
 
+    /// — CrashBloom: Get the raw framebuffer pointer for null-safety checks.
+    /// A corrupted Arc<dyn Framebuffer> can have a null data pointer from heap
+    /// corruption. Callers check this before calling render() to avoid a null
+    /// write in the spin lock release path that kills the CPU.
+    pub fn fb_ptr(&self) -> *mut u8 {
+        self.fb.buffer()
+    }
+
     /// Resize the renderer with a new framebuffer.
     /// — GlassSignal: viewport changed — swap to resized backing buffer, recompute
     /// grid dims, nuke dirty state. Same double_buffer policy as original init.
@@ -271,8 +279,10 @@ impl Renderer {
     /// — GlassSignal: no volatile writes, no VM exits, just raw speed
     fn bb_fill_rect(&self, x: u32, y: u32, w: u32, h: u32, color: Color) {
         let target = self.render_target();
+        if target.is_null() { return; }
         let bpp = self.fb.format().bytes_per_pixel() as usize;
         let stride = self.fb.stride() as usize;
+        let fb_size = self.fb.size();
 
         let x_end = (x + w).min(self.fb.width());
         let y_end = (y + h).min(self.fb.height());
@@ -284,9 +294,15 @@ impl Renderer {
         let mut color_bytes = [0u8; 4];
         color.write_to(&mut color_bytes, self.fb.format());
 
+        // — GlassSignal: wrapping_add for pointer arithmetic because kernel
+        // virtual addresses are in the upper half (0xFFFF_8xxx...) and
+        // ptr::add panics on overflow in debug builds. The bounds check
+        // on row_end vs fb_size catches actual out-of-bounds before we write.
         unsafe {
             for py in y..y_end {
                 let row_start = py as usize * stride + x as usize * bpp;
+                let row_end = row_start + (x_end - x) as usize * bpp;
+                if row_end > fb_size { continue; }
                 match bpp {
                     4 => {
                         let pixel_value = u32::from_le_bytes([
@@ -295,23 +311,23 @@ impl Renderer {
                             color_bytes[2],
                             color_bytes[3],
                         ]);
-                        let line_ptr = target.add(row_start) as *mut u32;
+                        let line_ptr = target.wrapping_add(row_start) as *mut u32;
                         for i in 0..(x_end - x) as usize {
-                            ptr::write(line_ptr.add(i), pixel_value);
+                            ptr::write(line_ptr.wrapping_add(i), pixel_value);
                         }
                     }
                     2 => {
                         let pixel_value = u16::from_le_bytes([color_bytes[0], color_bytes[1]]);
-                        let line_ptr = target.add(row_start) as *mut u16;
+                        let line_ptr = target.wrapping_add(row_start) as *mut u16;
                         for i in 0..(x_end - x) as usize {
-                            ptr::write(line_ptr.add(i), pixel_value);
+                            ptr::write(line_ptr.wrapping_add(i), pixel_value);
                         }
                     }
                     _ => {
                         for i in 0..(x_end - x) as usize {
                             ptr::copy_nonoverlapping(
                                 color_bytes.as_ptr(),
-                                target.add(row_start + i * bpp),
+                                target.wrapping_add(row_start + i * bpp),
                                 bpp,
                             );
                         }
@@ -329,12 +345,14 @@ impl Renderer {
             return;
         }
         let target = self.render_target();
+        if target.is_null() { return; }
         let bpp = self.fb.format().bytes_per_pixel() as usize;
         let offset = y as usize * self.fb.stride() as usize + x as usize * bpp;
+        if offset + bpp > self.fb.size() { return; }
         unsafe {
             let mut bytes = [0u8; 4];
             color.write_to(&mut bytes, self.fb.format());
-            ptr::copy_nonoverlapping(bytes.as_ptr(), target.add(offset), bpp);
+            ptr::copy_nonoverlapping(bytes.as_ptr(), target.wrapping_add(offset), bpp);
         }
         self.extend_blit_region(y, 1);
     }
@@ -347,9 +365,11 @@ impl Renderer {
     /// Copy rectangle within the render target (handles overlapping regions)
     fn bb_copy_rect(&self, src_x: u32, src_y: u32, dst_x: u32, dst_y: u32, w: u32, h: u32) {
         let target = self.render_target();
+        if target.is_null() { return; }
         let bpp = self.fb.format().bytes_per_pixel() as usize;
         let stride = self.fb.stride() as usize;
         let row_bytes = w as usize * bpp;
+        let fb_size = self.fb.size();
 
         let copy_forward = dst_y < src_y || (dst_y == src_y && dst_x <= src_x);
 
@@ -357,16 +377,18 @@ impl Renderer {
             for row in 0..h {
                 let src_offset = (src_y + row) as usize * stride + src_x as usize * bpp;
                 let dst_offset = (dst_y + row) as usize * stride + dst_x as usize * bpp;
+                if src_offset + row_bytes > fb_size || dst_offset + row_bytes > fb_size { continue; }
                 unsafe {
-                    ptr::copy(target.add(src_offset), target.add(dst_offset), row_bytes);
+                    ptr::copy(target.wrapping_add(src_offset), target.wrapping_add(dst_offset), row_bytes);
                 }
             }
         } else {
             for row in (0..h).rev() {
                 let src_offset = (src_y + row) as usize * stride + src_x as usize * bpp;
                 let dst_offset = (dst_y + row) as usize * stride + dst_x as usize * bpp;
+                if src_offset + row_bytes > fb_size || dst_offset + row_bytes > fb_size { continue; }
                 unsafe {
-                    ptr::copy(target.add(src_offset), target.add(dst_offset), row_bytes);
+                    ptr::copy(target.wrapping_add(src_offset), target.wrapping_add(dst_offset), row_bytes);
                 }
             }
         }
@@ -434,8 +456,8 @@ impl Renderer {
                 let byte_count = (y_end - y_start) * stride;
 
                 unsafe {
-                    let src = bb_ptr.add(byte_offset);
-                    let dst = fb_ptr.add(byte_offset);
+                    let src = bb_ptr.wrapping_add(byte_offset);
+                    let dst = fb_ptr.wrapping_add(byte_offset);
 
                     // — CrashBloom: Guard against null or overlapping pointers.
                     // Rust nightly 2024 panics on UB in debug mode. If the back
@@ -726,8 +748,10 @@ impl Renderer {
         let bpp = self.fb.format().bytes_per_pixel() as usize;
         let stride = self.fb.stride() as usize;
         let buffer = self.render_target();
+        if buffer.is_null() { return; }
         let color_bytes = color.to_bytes(self.fb.format());
         let bytes_per_row = (glyph_w + 7) / 8;
+        let fb_size = self.fb.size();
 
         unsafe {
             match bpp {
@@ -741,7 +765,9 @@ impl Renderer {
 
                     for y in 0..glyph_h {
                         let line_offset = ((py + y) as usize * stride) + (px as usize * 4);
-                        let line_ptr = buffer.add(line_offset) as *mut u32;
+                        let line_end = line_offset + glyph_w as usize * 4;
+                        if line_end > fb_size { continue; }
+                        let line_ptr = buffer.wrapping_add(line_offset) as *mut u32;
 
                         for x in 0..glyph_w {
                             let byte_idx = (y * bytes_per_row + x / 8) as usize;
@@ -749,7 +775,7 @@ impl Renderer {
                             if byte_idx < glyph_data.len()
                                 && (glyph_data[byte_idx] >> bit_idx) & 1 != 0
                             {
-                                ptr::write(line_ptr.add(x as usize), pixel_value);
+                                ptr::write(line_ptr.wrapping_add(x as usize), pixel_value);
                             }
                         }
                     }
@@ -759,7 +785,9 @@ impl Renderer {
 
                     for y in 0..glyph_h {
                         let line_offset = ((py + y) as usize * stride) + (px as usize * 2);
-                        let line_ptr = buffer.add(line_offset) as *mut u16;
+                        let line_end = line_offset + glyph_w as usize * 2;
+                        if line_end > fb_size { continue; }
+                        let line_ptr = buffer.wrapping_add(line_offset) as *mut u16;
 
                         for x in 0..glyph_w {
                             let byte_idx = (y * bytes_per_row + x / 8) as usize;
@@ -767,7 +795,7 @@ impl Renderer {
                             if byte_idx < glyph_data.len()
                                 && (glyph_data[byte_idx] >> bit_idx) & 1 != 0
                             {
-                                ptr::write(line_ptr.add(x as usize), pixel_value);
+                                ptr::write(line_ptr.wrapping_add(x as usize), pixel_value);
                             }
                         }
                     }
@@ -828,6 +856,8 @@ impl Renderer {
         let stride = self.fb.stride() as usize;
         let bpp = self.fb.format().bytes_per_pixel() as usize;
         let buffer = self.render_target();
+        if buffer.is_null() { return; }
+        let fb_size = self.fb.size();
 
         for y in 0..glyph_h {
             for x in 0..glyph_w {
@@ -847,29 +877,30 @@ impl Renderer {
                 let dst_x = px + x;
                 let dst_y = py + y;
                 let dst_offset = dst_y as usize * stride + dst_x as usize * bpp;
+                if dst_offset + bpp > fb_size { continue; }
 
                 if sa == 255 {
                     unsafe {
-                        let dst = buffer.add(dst_offset);
+                        let dst = buffer.wrapping_add(dst_offset);
                         *dst = sr as u8;
-                        *dst.add(1) = sg as u8;
-                        *dst.add(2) = sb as u8;
+                        *dst.wrapping_add(1) = sg as u8;
+                        *dst.wrapping_add(2) = sb as u8;
                         if bpp == 4 {
-                            *dst.add(3) = 0xFF;
+                            *dst.wrapping_add(3) = 0xFF;
                         }
                     }
                 } else {
                     unsafe {
-                        let dst = buffer.add(dst_offset);
+                        let dst = buffer.wrapping_add(dst_offset);
                         let dr = *dst as u32;
-                        let dg = *dst.add(1) as u32;
-                        let db = *dst.add(2) as u32;
+                        let dg = *dst.wrapping_add(1) as u32;
+                        let db = *dst.wrapping_add(2) as u32;
                         let inv_a = 255 - sa;
                         *dst = ((sr * sa + dr * inv_a) / 255) as u8;
-                        *dst.add(1) = ((sg * sa + dg * inv_a) / 255) as u8;
-                        *dst.add(2) = ((sb * sa + db * inv_a) / 255) as u8;
+                        *dst.wrapping_add(1) = ((sg * sa + dg * inv_a) / 255) as u8;
+                        *dst.wrapping_add(2) = ((sb * sa + db * inv_a) / 255) as u8;
                         if bpp == 4 {
-                            *dst.add(3) = 0xFF;
+                            *dst.wrapping_add(3) = 0xFF;
                         }
                     }
                 }

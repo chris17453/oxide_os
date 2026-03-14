@@ -10,6 +10,7 @@ debug-buddy = ["mm-core/debug-buddy"]
 
 [dependencies]
 os_core = { workspace = true }
+os_log = { workspace = true }
 mm-traits = { workspace = true }
 mm-core = { workspace = true }
 spin = { workspace = true }

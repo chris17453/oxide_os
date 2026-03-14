@@ -71,6 +71,13 @@ impl LockedHeap {
     pub fn used(&self) -> usize {
         self.inner.lock().used()
     }
+
+    /// Set a grow callback for on-demand heap expansion.
+    /// Called when allocation fails — callback requests pages from buddy allocator.
+    /// — GraveShift: call after buddy allocator is initialized.
+    pub fn set_grow_callback(&self, cb: linked_list::GrowCallbackFn) {
+        self.inner.lock().set_grow_callback(cb);
+    }
 }
 
 unsafe impl GlobalAlloc for LockedHeap {

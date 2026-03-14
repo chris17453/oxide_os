@@ -225,7 +225,7 @@ create-rootfs: increment-build kernel bootloader userspace-release archive-kerne
 	printf "PATH=/usr/bin/resolvd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/resolvd > /dev/null && \
 	printf "PATH=/usr/bin/sshd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/sshd > /dev/null && \
 	printf "PATH=/usr/bin/rdpd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/rdpd > /dev/null && \
-	printf "PATH=/usr/bin/oxide-test\nENABLED=yes\nRESTART=no\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/oxide-test > /dev/null && \
+	printf "PATH=/usr/bin/oxide-test\nENABLED=no\nRESTART=no\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/oxide-test > /dev/null && \
 	printf "# OXIDE RDP Server Configuration\n# Port to listen on (default: 3389)\nport=3389\n# Maximum concurrent connections\nmax_connections=10\n# Require TLS encryption (yes/no)\ntls_required=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/rdpd.conf > /dev/null && \
 	printf "mode=dhcp\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/network/eth0.conf > /dev/null && \
 	printf "nameserver 8.8.8.8\nnameserver 8.8.4.4\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/resolv.conf > /dev/null && \

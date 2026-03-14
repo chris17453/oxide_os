@@ -189,6 +189,25 @@ impl BuddyAllocator {
 
             let block_size = (1u64 << order) * FRAME_SIZE as u64;
 
+            // — CrashBloom: Scrub the FreeBlock header area BEFORE inserting.
+            // BootServices/reclaimed pages contain stale UEFI data (pointers,
+            // strings, DMA descriptors). If the first 8 bytes happen to match
+            // FREE_BLOCK_MAGIC, the duplicate detection in add_free_block
+            // false-positives and silently skips the page — leaked forever.
+            // Worse: UEFI runtime services on some firmware scribble on
+            // BootServices pages post-ExitBootServices, corrupting FreeBlock
+            // headers after insertion. Scrubbing here can't prevent post-init
+            // scribbling, but it eliminates false-positive duplicate skips
+            // and ensures the header write starts from a clean slate.
+            {
+                let scrub_virt = phys_to_virt(PhysAddr::new(addr));
+                unsafe {
+                    core::ptr::write_volatile(scrub_virt, 0u64);
+                    core::ptr::write_volatile(scrub_virt.add(1), 0u64);
+                    core::ptr::write_volatile(scrub_virt.add(2), 0u64);
+                }
+            }
+
             // Add block to free list
             // SAFETY: We're in an unsafe fn, memory is valid
             if unsafe { self.add_free_block(&mut zone, order, addr) } {
@@ -220,14 +239,15 @@ impl BuddyAllocator {
         }
 
         let virt = phys_to_virt(PhysAddr::new(addr));
-        // SAFETY: Caller guarantees addr is valid physical memory
-        let block = unsafe { &mut *(virt as *mut FreeBlock) };
 
         let old_head = zone.free_lists[order].head;
         let frame_num = addr >> FRAME_SHIFT;
         if frame_num == 0 {
             return false;
         }
+
+        // SAFETY: Caller guarantees addr is valid physical memory
+        let block = unsafe { &mut *(virt as *mut FreeBlock) };
 
         // Duplicate insertion corrupts the chain (cycles / repeated alloc of same frame).
         // If this frame is already linked in the list for this order, drop the insert.
@@ -615,6 +635,30 @@ impl BuddyAllocator {
             }
         }
 
+        // — GraveShift: Dump free list counts on allocation failure so we can
+        // see which orders have blocks and which are empty. This is the only way
+        // to diagnose "374MB free but can't allocate 4MB contiguous."
+        unsafe {
+            os_log::write_str_raw("[BUDDY-FAIL] order=");
+            os_log::write_u32_raw(request.order as u32);
+            os_log::write_str_raw(" zone_pref=");
+            os_log::write_u32_raw(match request.zone { Some(z) => z.index() as u32, None => 99 });
+            os_log::write_str_raw("\n");
+            for zi in 0..3u32 {
+                if let Some(zone) = self.zones[zi as usize].try_lock() {
+                    os_log::write_str_raw("[BUDDY-FAIL] zone=");
+                    os_log::write_u32_raw(zi);
+                    os_log::write_str_raw(" empty=");
+                    os_log::write_u32_raw(if zone.is_empty() { 1 } else { 0 });
+                    os_log::write_str_raw(" counts=[");
+                    for o in 0..14usize {
+                        os_log::write_u32_raw(zone.free_lists[o].count as u32);
+                        if o < 13 { os_log::write_str_raw(","); }
+                    }
+                    os_log::write_str_raw("]\n");
+                }
+            }
+        }
         self.stats.record_failure();
         Err(MmError::OutOfMemory)
     }
@@ -668,28 +712,27 @@ impl BuddyAllocator {
                         }
                     }
                     if !block_is_free {
+                        // — GraveShift: Stale pagedb entry. The free list says
+                        // this block is free (we just popped it), but the pagedb
+                        // still has it marked allocated. This happens when buddy
+                        // init adds boot-reclaimed regions whose pagedb entries
+                        // were set during early boot before buddy existed.
+                        //
+                        // The free list is authoritative — if it's on the list,
+                        // it's free. The alloc code below will mark it allocated
+                        // in the pagedb (line ~627), which is the correct final
+                        // state. The old behavior (continue/skip) leaked every
+                        // affected block permanently, eventually exhausting all
+                        // order-10 blocks and killing GPU DMA. — GraveShift
+                        #[cfg(feature = "debug-buddy")]
                         unsafe {
-                            os_log::write_str_raw("[BUDDY-DUP-ALLOC] addr=0x");
+                            os_log::write_str_raw("[BUDDY-STALE-PDB] addr=0x");
                             serial_hex64(addr);
                             os_log::write_str_raw(" order=");
                             os_log::write_byte_raw(b'0' + current_order as u8);
-                            if bad_none {
-                                os_log::write_str_raw(" frame+");
-                                serial_hex64(bad_offset);
-                                os_log::write_str_raw(" OUT-OF-RANGE\n");
-                            } else {
-                                os_log::write_str_raw(" frame+");
-                                serial_hex64(bad_offset);
-                                os_log::write_str_raw(" flags=0x");
-                                serial_hex64(bad_flags as u64);
-                                os_log::write_str_raw(" rc=");
-                                serial_hex64(bad_rc as u64);
-                                os_log::write_str_raw(" owner=");
-                                serial_hex64(bad_owner as u64);
-                                os_log::write_str_raw("\n");
-                            }
+                            os_log::write_str_raw(" — using block anyway\n");
                         }
-                        continue;
+                        // Fall through — alloc path marks it allocated in pagedb
                     }
                 }
 

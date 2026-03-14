@@ -115,6 +115,7 @@ pub use crate::core::{
     get_scheduler,
     get_task_affinity,
     get_task_children,
+    get_task_children_noalloc,
     // Atomic context-switch transaction (P2.1)
     context_switch_transaction,
     // Context switching support
@@ -151,6 +152,7 @@ pub use crate::core::{
     need_resched,
     num_cpus,
     pick_next_task,
+    undo_pick_next,
     // Preemption control
     preempt_disable,
     preempt_disabled,

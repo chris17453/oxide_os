@@ -296,6 +296,13 @@ impl HardenedHeapAllocator {
     pub fn corruption_count(&self) -> usize {
         self.corruption_count
     }
+
+    /// Set grow callback — delegates to inner LinkedListAllocator.
+    /// — GraveShift: the hardened wrapper doesn't care about growth, it just
+    /// adds redzones/canaries around whatever the inner allocator gives back.
+    pub fn set_grow_callback(&mut self, cb: crate::linked_list::GrowCallbackFn) {
+        self.inner.set_grow_callback(cb);
+    }
 }
 
 /// Locked hardened heap for global allocator use
@@ -344,6 +351,12 @@ impl LockedHardenedHeap {
             inner.free_count(),
             inner.corruption_count(),
         )
+    }
+
+    /// Set a grow callback for on-demand heap expansion.
+    /// — GraveShift: delegates to the inner LinkedListAllocator.
+    pub fn set_grow_callback(&self, cb: crate::linked_list::GrowCallbackFn) {
+        self.inner.lock().set_grow_callback(cb);
     }
 }
 
