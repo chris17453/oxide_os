@@ -147,6 +147,11 @@ impl VnodeOps for Ext4Vnode {
         self.get_vtype()
     }
 
+    /// — SableWire: Inode ID for page cache keying. ext4 inodes are unique per-FS.
+    fn inode_id(&self) -> Option<u64> {
+        Some(self.ino as u64)
+    }
+
     fn lookup(&self, path: &str) -> VfsResult<Arc<dyn VnodeOps>> {
         // Handle paths with multiple components (e.g., "sbin/init" or "/sbin/init")
         let path = path.trim_start_matches('/');

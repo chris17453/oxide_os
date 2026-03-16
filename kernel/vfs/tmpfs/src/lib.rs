@@ -113,6 +113,8 @@ impl VnodeOps for TmpDir {
         VnodeType::Directory
     }
 
+    fn inode_id(&self) -> Option<u64> { Some(self.ino) }
+
     fn lookup(&self, name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
         let entries = self.entries.read();
         entries
@@ -338,6 +340,8 @@ impl VnodeOps for TmpFile {
     fn vtype(&self) -> VnodeType {
         VnodeType::File
     }
+
+    fn inode_id(&self) -> Option<u64> { Some(self.ino) }
 
     fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
         Err(VfsError::NotDirectory)

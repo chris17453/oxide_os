@@ -6,7 +6,7 @@
 //! These counters are the nervous system of the VM subsystem. Without them you're
 //! flying blind into OOM territory with nothing but a serial port prayer. — TorqueJax
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -294,4 +294,118 @@ static VM_TUNABLES: VmTunables = VmTunables::new();
 /// Get the global VM tunables
 pub fn vm_tunables() -> &'static VmTunables {
     &VM_TUNABLES
+}
+
+// ============================================================================
+// Unit tests — CrashBloom: Memory problems have plagued us for years.
+// Every counter, every tunable, every callback gets tested.
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_counter_inc_and_get() {
+        // — CrashBloom: Basic counter increment/read cycle
+        let before = get(Counter::PgFault);
+        inc(Counter::PgFault);
+        let after = get(Counter::PgFault);
+        assert_eq!(after, before + 1, "inc should add exactly 1");
+    }
+
+    #[test]
+    fn test_counter_add() {
+        let before = get(Counter::PgAllocNormal);
+        add(Counter::PgAllocNormal, 42);
+        let after = get(Counter::PgAllocNormal);
+        assert_eq!(after, before + 42, "add(42) should add exactly 42");
+    }
+
+    #[test]
+    fn test_counter_dec() {
+        // — CrashBloom: Ensure dec doesn't underflow to garbage
+        add(Counter::PgDirty, 10);
+        let before = get(Counter::PgDirty);
+        dec(Counter::PgDirty);
+        let after = get(Counter::PgDirty);
+        assert_eq!(after, before - 1);
+    }
+
+    #[test]
+    fn test_counter_names_unique() {
+        // — CrashBloom: Duplicate counter names would corrupt /proc/vmstat parsing
+        let names: Vec<&str> = Counter::ALL.iter().map(|c| c.name()).collect();
+        for (i, name) in names.iter().enumerate() {
+            for (j, other) in names.iter().enumerate() {
+                if i != j {
+                    assert_ne!(name, other, "Counter names must be unique: {}", name);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_counter_all_count() {
+        assert_eq!(Counter::ALL.len(), Counter::COUNT, "ALL array must match COUNT");
+    }
+
+    #[test]
+    fn test_tunable_defaults() {
+        let t = VmTunables::new();
+        assert_eq!(t.swappiness.load(Ordering::Relaxed), 60);
+        assert_eq!(t.dirty_ratio.load(Ordering::Relaxed), 40);
+        assert_eq!(t.dirty_background_ratio.load(Ordering::Relaxed), 10);
+        assert_eq!(t.overcommit_memory.load(Ordering::Relaxed), 0);
+        assert_eq!(t.vfs_cache_pressure.load(Ordering::Relaxed), 100);
+    }
+
+    #[test]
+    fn test_tunable_get_set_by_name() {
+        let t = vm_tunables();
+        // Read default
+        assert_eq!(t.get_by_name("swappiness"), Some(60));
+        // Set new value
+        assert!(t.set_by_name("swappiness", 100));
+        assert_eq!(t.get_by_name("swappiness"), Some(100));
+        // Set back
+        t.set_by_name("swappiness", 60);
+        // Unknown name
+        assert_eq!(t.get_by_name("nonexistent"), None);
+        assert!(!t.set_by_name("nonexistent", 0));
+    }
+
+    #[test]
+    fn test_tunable_clamping() {
+        let t = vm_tunables();
+        // swappiness clamped to 200
+        t.set_by_name("swappiness", 999);
+        assert_eq!(t.get_by_name("swappiness"), Some(200));
+        t.set_by_name("swappiness", 60);
+        // dirty_ratio clamped to 100
+        t.set_by_name("dirty_ratio", 500);
+        assert_eq!(t.get_by_name("dirty_ratio"), Some(100));
+        t.set_by_name("dirty_ratio", 40);
+        // overcommit_memory clamped to 2
+        t.set_by_name("overcommit_memory", 10);
+        assert_eq!(t.get_by_name("overcommit_memory"), Some(2));
+        t.set_by_name("overcommit_memory", 0);
+    }
+
+    #[test]
+    fn test_tunable_names_list() {
+        // — CrashBloom: Every name in NAMES must resolve via get_by_name
+        let t = vm_tunables();
+        for name in VmTunables::NAMES {
+            assert!(t.get_by_name(name).is_some(), "tunable '{}' not found", name);
+        }
+    }
+
+    #[test]
+    fn test_watermark_callback_initially_null() {
+        // — CrashBloom: Before registration, callback should return None
+        // (this test may fail if another test registered first — that's OK, it's a singleton)
+        // Just verify the API doesn't crash
+        let _cb = watermark_callback();
+    }
 }

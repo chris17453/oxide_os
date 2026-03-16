@@ -719,6 +719,60 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         }
     }
 
+    // ================================================================
+    // Initialize LRU metadata array — IronGhost: Flat array alongside PageDB.
+    // 12 bytes per frame for LRU list linkage. Same pattern as PageDB init:
+    // compute size, alloc from buddy, zero, init the global singleton.
+    // ================================================================
+    {
+        let lru_entry_size = core::mem::size_of::<mm_reclaim::LruMeta>();
+        let max_pfn = (max_phys_addr / 4096) as usize;
+        let lru_array_size = max_pfn * lru_entry_size;
+        let lru_array_pages = (lru_array_size + 4095) / 4096;
+        let lru_array_order = lru_array_pages.next_power_of_two().trailing_zeros() as usize;
+
+        let _ = writeln!(
+            writer,
+            "[LRU] frames={} array_size={} KB order={}",
+            max_pfn, lru_array_size / 1024, lru_array_order
+        );
+
+        match MEMORY_MANAGER.alloc_contiguous(1 << lru_array_order) {
+            Ok(lru_phys) => {
+                let lru_virt = mm_paging::phys_to_virt(lru_phys);
+                // — IronGhost: Zero-init. LruMeta::new() sets lru_list=0xFF (not on list).
+                // But 0x00 also works — prev/next=0 means "not linked", lru_list=0 means
+                // InactiveAnon which is harmless. We'll set 0xFF explicitly via init().
+                unsafe {
+                    core::ptr::write_bytes(lru_virt.as_mut_ptr::<u8>(), 0xFF, (1 << lru_array_order) * 4096);
+                }
+
+                unsafe {
+                    mm_reclaim::lru_db().init(
+                        lru_virt.as_mut_ptr::<mm_reclaim::LruMeta>(),
+                        max_pfn as u64,
+                    );
+                }
+
+                // — IronGhost: Mark the LRU array frames as reserved in PageDB
+                if let Some(db) = mm_pagedb::try_pagedb() {
+                    let db_start_pfn = lru_phys.as_u64() / 4096;
+                    let db_pages = 1u64 << lru_array_order;
+                    for i in 0..db_pages {
+                        db.mark_reserved_kernel(os_core::PhysAddr::new(
+                            (db_start_pfn + i) * 4096,
+                        ));
+                    }
+                }
+
+                let _ = writeln!(writer, "[LRU] Initialized: {} frames tracked", max_pfn);
+            }
+            Err(_) => {
+                let _ = writeln!(writer, "[LRU] WARNING: Could not allocate LRU array (order {})", lru_array_order);
+            }
+        }
+    }
+
     // Initialize framebuffer if available
     if let Some(ref fb_info) = boot_info.framebuffer {
         let _ = writeln!(writer, "[INFO] Initializing framebuffer...");

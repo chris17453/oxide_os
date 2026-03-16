@@ -10,7 +10,7 @@
 //! The fault handler normally runs with preemption context from the caller.
 //! Block device reads may sleep. Follow docs/agents/write-syscall-kernel-preempt.md.
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
 
@@ -334,5 +334,127 @@ pub fn page_in(entry: &SwapEntry) -> Option<PhysAddr> {
 pub fn free_swap_entries(entries: &[SwapEntry]) {
     for entry in entries {
         SWAP_SUBSYSTEM.free_slot(entry);
+    }
+}
+
+// ============================================================================
+// Unit tests — CrashBloom: Swap is where memory bugs go to die quietly.
+// Test every encoding, every slot, every cache operation.
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_swap_entry_encode_decode_roundtrip() {
+        // — CrashBloom: Encode → decode must be identity
+        let entry = SwapEntry { area: 3, slot: 12345 };
+        let encoded = entry.encode();
+        assert!(SwapEntry::is_swap_entry(encoded), "encoded must be swap entry");
+        let decoded = SwapEntry::decode(encoded).expect("decode must succeed");
+        assert_eq!(decoded.area, entry.area);
+        assert_eq!(decoded.slot, entry.slot);
+    }
+
+    #[test]
+    fn test_swap_entry_not_present() {
+        // — CrashBloom: Swap entries MUST have bit 0 = 0 (not present)
+        let entry = SwapEntry { area: 0, slot: 1 };
+        let encoded = entry.encode();
+        assert_eq!(encoded & 1, 0, "swap PTE must not be present");
+        assert_ne!(encoded & 2, 0, "swap PTE must have swap marker bit");
+    }
+
+    #[test]
+    fn test_swap_entry_present_page_not_swap() {
+        // — CrashBloom: A present page (bit 0 = 1) must NOT decode as swap
+        let present_pte: u64 = 0x1234_5000 | 1; // present bit set
+        assert!(!SwapEntry::is_swap_entry(present_pte));
+        assert!(SwapEntry::decode(present_pte).is_none());
+    }
+
+    #[test]
+    fn test_swap_entry_zero_not_swap() {
+        // — CrashBloom: A completely zero PTE is NOT a swap entry
+        assert!(!SwapEntry::is_swap_entry(0));
+        assert!(SwapEntry::decode(0).is_none());
+    }
+
+    #[test]
+    fn test_swap_entry_all_areas() {
+        // — CrashBloom: Test all 8 possible area indices
+        for area in 0..8u8 {
+            let entry = SwapEntry { area, slot: 999 };
+            let decoded = SwapEntry::decode(entry.encode()).unwrap();
+            assert_eq!(decoded.area, area, "area {} roundtrip failed", area);
+        }
+    }
+
+    #[test]
+    fn test_swap_entry_large_slot() {
+        // — CrashBloom: Max slot value shouldn't overflow encoding
+        let entry = SwapEntry { area: 7, slot: 0xFFFF_FFFF };
+        let encoded = entry.encode();
+        let decoded = SwapEntry::decode(encoded).unwrap();
+        assert_eq!(decoded.slot, 0xFFFF_FFFF);
+    }
+
+    #[test]
+    fn test_swap_area_alloc_free() {
+        let area = SwapArea::new(100);
+        assert_eq!(area.free_count.load(Ordering::Relaxed), 100);
+
+        let slot = area.alloc_slot().expect("should alloc");
+        assert!(slot < 100);
+        assert_eq!(area.free_count.load(Ordering::Relaxed), 99);
+        assert_eq!(area.used_slots(), 1);
+
+        area.free_slot(slot);
+        assert_eq!(area.free_count.load(Ordering::Relaxed), 100);
+        assert_eq!(area.used_slots(), 0);
+    }
+
+    #[test]
+    fn test_swap_area_exhaust() {
+        let area = SwapArea::new(3);
+        let s0 = area.alloc_slot().unwrap();
+        let s1 = area.alloc_slot().unwrap();
+        let s2 = area.alloc_slot().unwrap();
+        assert!(area.alloc_slot().is_none(), "should be full");
+
+        // Free one and alloc again
+        area.free_slot(s1);
+        let s3 = area.alloc_slot().expect("should reuse freed slot");
+        assert_eq!(s3, s1, "should get the freed slot back");
+    }
+
+    #[test]
+    fn test_swap_cache_insert_find_remove() {
+        let cache = SwapCache::new();
+        let entry = SwapEntry { area: 0, slot: 42 };
+        let phys = PhysAddr::new(0x1000);
+
+        assert!(cache.find(&entry).is_none());
+        cache.insert(entry, phys);
+        assert_eq!(cache.find(&entry), Some(phys));
+        assert_eq!(cache.remove(&entry), Some(phys));
+        assert!(cache.find(&entry).is_none());
+    }
+
+    #[test]
+    fn test_swap_subsystem_stats() {
+        let ss = SwapSubsystem::new();
+        assert_eq!(ss.total(), 0);
+        assert_eq!(ss.used(), 0);
+        assert_eq!(ss.free(), 0);
+        assert_eq!(ss.get_swappiness(), 60);
+
+        ss.set_swappiness(30);
+        assert_eq!(ss.get_swappiness(), 30);
+
+        // Clamp to 200
+        ss.set_swappiness(999);
+        assert_eq!(ss.get_swappiness(), 200);
     }
 }

@@ -585,6 +585,18 @@ impl Drop for UserAddressSpace {
 
                     for pt_idx in 0..512usize {
                         let pt_entry = &pt[pt_idx];
+
+                        // — IronGhost: Check for swap PTEs before the present check.
+                        // If bit 0=0 (not present) but bit 1=1 (swap marker), this page
+                        // was evicted to swap. Free the swap slot to prevent leaks.
+                        let raw_pte = pt_entry.raw();
+                        if raw_pte & 1 == 0 && raw_pte & 2 != 0 {
+                            if let Some(entry) = mm_swap::SwapEntry::decode(raw_pte) {
+                                mm_swap::swap().free_slot(&entry);
+                            }
+                            continue;
+                        }
+
                         if !pt_entry.is_present() {
                             continue;
                         }
@@ -650,6 +662,8 @@ impl Drop for UserAddressSpace {
                             continue;
                         }
 
+                        // — IronGhost: Remove from LRU before freeing.
+                        mm_reclaim::lru_remove(phys);
                         let remaining = cow.decrement(phys);
                         if remaining == 0 {
                             mm_pagedb::set_free_context(mm_pagedb::CTX_DROP_LEAF);

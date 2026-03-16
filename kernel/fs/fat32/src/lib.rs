@@ -188,6 +188,11 @@ impl VnodeOps for Fat32Vnode {
         }
     }
 
+    /// — SableWire: Inode ID for page cache keying.
+    fn inode_id(&self) -> Option<u64> {
+        Some(self.ino)
+    }
+
     fn lookup(&self, name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
         if !self.is_dir {
             return Err(VfsError::NotDirectory);
