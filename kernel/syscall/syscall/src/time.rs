@@ -23,7 +23,12 @@ static BOOT_TIME_SECS: AtomicU64 = AtomicU64::new(1704067200);
 // ============================================================================
 
 /// Maximum number of concurrent sleepers
-const MAX_SLEEPERS: usize = 64;
+/// — GraveShift: 64 was fine when we had 10 processes. Now we've got shell
+/// pipelines, daemons, and test harnesses all calling nanosleep at once.
+/// 256 gives headroom without burning significant BSS. Each Sleeper is
+/// 12 bytes of atomics — 256 * 12 = 3 KiB. Cheap insurance against
+/// silent sleep-queue-full fallbacks that burn 100% CPU in polling mode.
+const MAX_SLEEPERS: usize = 256;
 
 /// A sleeping task entry
 struct Sleeper {

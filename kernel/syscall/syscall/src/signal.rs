@@ -169,15 +169,18 @@ pub fn sys_sigaction(sig: i32, act_ptr: u64, oldact_ptr: u64) -> i64 {
         let mut m = meta.lock();
 
         // Store old action if requested
-        // — EmberLock: Null page guard — < 0x1000 is always invalid user address.
+        // — ColdCipher: Null page guard — < 0x1000 is always invalid user address.
+        // Kernel space (>= 0x8000_0000_0000) is a hard no. SMAP brackets around
+        // every user pointer deref or you're handing attackers a kernel write primitive.
         if oldact_ptr != 0 {
             if oldact_ptr < 0x1000 || oldact_ptr >= 0x0000_8000_0000_0000 {
                 return errno::EFAULT;
             }
             if let Some(old_action) = m.sigaction(sig) {
                 unsafe {
-                    let out = oldact_ptr as *mut SigAction;
-                    *out = *old_action;
+                    os_core::user_access_begin();
+                    core::ptr::write_volatile(oldact_ptr as *mut SigAction, *old_action);
+                    os_core::user_access_end();
                 }
             }
         }
@@ -187,7 +190,15 @@ pub fn sys_sigaction(sig: i32, act_ptr: u64, oldact_ptr: u64) -> i64 {
             if act_ptr < 0x1000 || act_ptr >= 0x0000_8000_0000_0000 {
                 return errno::EFAULT;
             }
-            let action = unsafe { *(act_ptr as *const SigAction) };
+            // — ColdCipher: STAC/CLAC bracket — reading from user memory without
+            // this is a SMAP violation waiting to happen. One #PF and you're debugging
+            // a triple fault at 3 AM. Ask me how I know.
+            let action = unsafe {
+                os_core::user_access_begin();
+                let val = core::ptr::read_volatile(act_ptr as *const SigAction);
+                os_core::user_access_end();
+                val
+            };
             m.set_sigaction(sig, action);
         }
 
@@ -208,16 +219,17 @@ pub fn sys_sigprocmask(how: i32, set_ptr: u64, oldset_ptr: u64) -> i64 {
         let mut m = meta.lock();
 
         // Store old mask if requested
-        // — EmberLock: Null page (< 0x1000) is never mapped user memory.
-        // Reject it as EFAULT just like the kernel does, or we'll triple-fault
-        // on the first app that passes SIG_IGN (=1) where a sigset_t* should go.
+        // — ColdCipher: Null page (< 0x1000) is never mapped user memory.
+        // Kernel space (>= 0x8000_0000_0000) is a hard no. SMAP brackets
+        // are mandatory — raw pointer writes without STAC are #PF bait.
         if oldset_ptr != 0 {
             if oldset_ptr < 0x1000 || oldset_ptr >= 0x0000_8000_0000_0000 {
                 return errno::EFAULT;
             }
             unsafe {
-                let out = oldset_ptr as *mut SigSet;
-                *out = m.signal_mask.clone();
+                os_core::user_access_begin();
+                core::ptr::write_volatile(oldset_ptr as *mut SigSet, m.signal_mask.clone());
+                os_core::user_access_end();
             }
         }
 
@@ -226,7 +238,13 @@ pub fn sys_sigprocmask(how: i32, set_ptr: u64, oldset_ptr: u64) -> i64 {
             if set_ptr < 0x1000 || set_ptr >= 0x0000_8000_0000_0000 {
                 return errno::EFAULT;
             }
-            let new_set = unsafe { *(set_ptr as *const SigSet) };
+            // — ColdCipher: STAC/CLAC bracket for user pointer read.
+            let new_set = unsafe {
+                os_core::user_access_begin();
+                let val = core::ptr::read_volatile(set_ptr as *const SigSet);
+                os_core::user_access_end();
+                val
+            };
 
             let how_enum = match SigHow::from_i32(how) {
                 Some(h) => h,
@@ -266,9 +284,12 @@ pub fn sys_sigpending(set_ptr: u64) -> i64 {
         let m = meta.lock();
         let pending = m.pending_signals.set();
 
+        // — ColdCipher: STAC/CLAC bracket for writing pending signal set to
+        // user memory. Without this, SMAP says no and the kernel says goodbye.
         unsafe {
-            let out = set_ptr as *mut SigSet;
-            *out = pending;
+            os_core::user_access_begin();
+            core::ptr::write_volatile(set_ptr as *mut SigSet, pending);
+            os_core::user_access_end();
         }
 
         0

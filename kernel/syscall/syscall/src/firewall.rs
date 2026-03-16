@@ -200,19 +200,35 @@ fn is_root() -> bool {
 /// - rule_ptr: Pointer to FwRule structure
 ///
 /// Returns: 0 on success, negative errno on error
+///
+/// — ColdCipher: The old code read from a user pointer with no SMAP brackets
+/// and no kernel-space validation. Congratulations, you just gave root a
+/// kernel-read primitive. Fixed: null check, kernel address check, STAC/CLAC.
 pub fn sys_fw_add_rule(rule_ptr: VirtAddr) -> i64 {
     // Check root permission
     if !is_root() {
         return errno::EPERM;
     }
 
-    // Read rule from userspace
+    // — ColdCipher: Null pointer check — VirtAddr(0) is never valid user memory.
+    if rule_ptr.as_u64() == 0 {
+        return errno::EFAULT;
+    }
+
+    // — ColdCipher: Reject kernel-space pointers. Without this, a root process
+    // could pass a kernel address and we'd happily dereference it, leaking
+    // arbitrary kernel memory into the firewall rule table.
+    if rule_ptr.as_u64() >= 0x0000_8000_0000_0000 {
+        return errno::EFAULT;
+    }
+
+    // Read rule from userspace with SMAP brackets
+    // — ColdCipher: STAC before, CLAC after. The holy sacrament of user pointer access.
     let rule_data = unsafe {
-        let ptr = rule_ptr.as_ptr::<FwRule>();
-        if ptr.is_null() {
-            return errno::EFAULT;
-        }
-        *ptr
+        os_core::user_access_begin();
+        let val = core::ptr::read_volatile(rule_ptr.as_ptr::<FwRule>());
+        os_core::user_access_end();
+        val
     };
 
     // Convert and add rule
@@ -343,28 +359,41 @@ pub fn sys_fw_flush(chain: u8) -> i64 {
 /// - stats_ptr: Pointer to ConntrackStats structure (optional, can be NULL)
 ///
 /// Returns: Number of tracked connections, or negative errno on error
+///
+/// — ColdCipher: The old code dereferenced a user pointer with zero SMAP
+/// awareness and no kernel address validation. A malicious user could pass
+/// a kernel address and overwrite arbitrary kernel memory with conntrack
+/// stats. Now: null check, kernel space check, STAC/CLAC brackets.
 pub fn sys_fw_get_conntrack(stats_ptr: VirtAddr) -> i64 {
     // Connection tracking info is readable by anyone
     let count = connection_count();
 
     if stats_ptr.as_u64() != 0 {
+        // — ColdCipher: Reject kernel-space pointers. Writing conntrack stats
+        // into kernel memory is not a feature, it's an exploit.
+        if stats_ptr.as_u64() >= 0x0000_8000_0000_0000 {
+            return errno::EFAULT;
+        }
+
         // If buffer provided, write stats
         #[repr(C)]
+        #[derive(Clone, Copy)]
         struct ConntrackStats {
             count: u64,
             max: u64,
         }
 
-        let stats = unsafe {
-            let ptr = stats_ptr.as_mut_ptr::<ConntrackStats>();
-            if ptr.is_null() {
-                return errno::EFAULT;
-            }
-            &mut *ptr
+        let stats = ConntrackStats {
+            count: count as u64,
+            max: 65536, // MAX_CONNECTIONS from conntrack
         };
 
-        stats.count = count as u64;
-        stats.max = 65536; // MAX_CONNECTIONS from conntrack
+        // — ColdCipher: STAC/CLAC bracket for writing to user memory.
+        unsafe {
+            os_core::user_access_begin();
+            core::ptr::write_volatile(stats_ptr.as_mut_ptr::<ConntrackStats>(), stats);
+            os_core::user_access_end();
+        }
     }
 
     count as i64

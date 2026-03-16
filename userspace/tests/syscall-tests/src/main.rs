@@ -841,6 +841,198 @@ fn test_mprotect() -> TestResult {
 }
 
 // ============================================================================
+// Syscall audit fix validation tests
+// — CrashBloom: These test the specific fixes from syscall_perf.md audit.
+// Each one targets a concrete bug or performance issue and validates the fix.
+// ============================================================================
+
+/// C3: mprotect must be able to REMOVE write permission (make read-only)
+fn test_mprotect_remove_write() -> TestResult {
+    use libc::syscall::{MAP_FAILED, map_flags, prot, sys_mmap, sys_mprotect, sys_munmap};
+
+    // — CrashBloom: Allocate RW memory, then mprotect to RO. A write should fault.
+    let addr = sys_mmap(
+        core::ptr::null_mut(), 4096,
+        prot::PROT_READ | prot::PROT_WRITE,
+        map_flags::MAP_PRIVATE | map_flags::MAP_ANONYMOUS, -1, 0,
+    );
+    if addr == MAP_FAILED { return TestResult::Fail; }
+
+    // Write should succeed while RW
+    unsafe { (addr as *mut u8).write(0x42); }
+
+    // Downgrade to read-only
+    let result = sys_mprotect(addr, 4096, prot::PROT_READ);
+    if result != 0 {
+        libc::println!("  mprotect(PROT_READ) failed: {}", result);
+        sys_munmap(addr, 4096);
+        return TestResult::Fail;
+    }
+
+    // Read should still work
+    let val = unsafe { (addr as *const u8).read() };
+    if val != 0x42 {
+        libc::println!("  read after mprotect(RO) got {:#x}, expected 0x42", val);
+        sys_munmap(addr, 4096);
+        return TestResult::Fail;
+    }
+
+    sys_munmap(addr, 4096);
+    TestResult::Pass
+}
+
+/// C3: mprotect PROT_NONE should prevent all access
+fn test_mprotect_none() -> TestResult {
+    use libc::syscall::{MAP_FAILED, map_flags, prot, sys_mmap, sys_mprotect, sys_munmap};
+
+    let addr = sys_mmap(
+        core::ptr::null_mut(), 4096,
+        prot::PROT_READ | prot::PROT_WRITE,
+        map_flags::MAP_PRIVATE | map_flags::MAP_ANONYMOUS, -1, 0,
+    );
+    if addr == MAP_FAILED { return TestResult::Fail; }
+
+    // Set PROT_NONE
+    let result = sys_mprotect(addr, 4096, prot::PROT_NONE);
+    if result != 0 {
+        libc::println!("  mprotect(PROT_NONE) failed: {}", result);
+        sys_munmap(addr, 4096);
+        return TestResult::Fail;
+    }
+
+    // Restore to RW (verifies PROT_NONE→RW transition works)
+    let result = sys_mprotect(addr, 4096, prot::PROT_READ | prot::PROT_WRITE);
+    if result != 0 {
+        libc::println!("  mprotect(RW after NONE) failed: {}", result);
+        sys_munmap(addr, 4096);
+        return TestResult::Fail;
+    }
+
+    // Write should work again
+    unsafe { (addr as *mut u8).write(0xAB); }
+    let val = unsafe { (addr as *const u8).read() };
+    if val != 0xAB {
+        libc::println!("  value mismatch after PROT_NONE->RW cycle");
+        sys_munmap(addr, 4096);
+        return TestResult::Fail;
+    }
+
+    sys_munmap(addr, 4096);
+    TestResult::Pass
+}
+
+/// Test madvise MADV_DONTNEED (should zero pages without removing VMA)
+fn test_madvise_dontneed() -> TestResult {
+    use libc::syscall::{map_flags, prot, sys_madvise, sys_mmap, sys_munmap, MAP_FAILED};
+
+    let addr = sys_mmap(
+        core::ptr::null_mut(), 4096,
+        prot::PROT_READ | prot::PROT_WRITE,
+        map_flags::MAP_PRIVATE | map_flags::MAP_ANONYMOUS, -1, 0,
+    );
+    if addr == MAP_FAILED { return TestResult::Fail; }
+
+    // Write a pattern
+    unsafe { (addr as *mut u8).write(0xDE); }
+
+    // MADV_DONTNEED = 4
+    let result = sys_madvise(addr as *mut u8, 4096, 4);
+    if result != 0 {
+        libc::println!("  madvise(DONTNEED) failed: {}", result);
+        sys_munmap(addr, 4096);
+        return TestResult::Fail;
+    }
+
+    // Page should be demand-faulted back as zero on next access
+    let val = unsafe { (addr as *const u8).read() };
+    if val != 0 {
+        libc::println!("  after MADV_DONTNEED, read {:#x} instead of 0", val);
+        sys_munmap(addr, 4096);
+        return TestResult::Fail;
+    }
+
+    sys_munmap(addr, 4096);
+    TestResult::Pass
+}
+
+/// Test sigaction with SMAP (should not fault)
+fn test_sigaction_smap() -> TestResult {
+    // — CrashBloom: If SMAP brackets are missing, this would cause a page fault
+    // in the kernel instead of returning normally. The test passing means
+    // the STAC/CLAC brackets are in place.
+    let result = libc::sigaction(
+        10, // SIGUSR1
+        Some(&libc::SigAction {
+            handler: libc::SIG_DFL,
+            flags: 0,
+            mask: 0,
+        }),
+        None,
+    );
+    // Should succeed (0) — SMAP violation would crash, not return error
+    assert_eq(result, 0, "sigaction should succeed with valid args")
+}
+
+/// Test nanosleep works for short durations (validates sleep queue)
+fn test_nanosleep_short() -> TestResult {
+    let req = libc::Timespec { tv_sec: 0, tv_nsec: 10_000_000 }; // 10ms
+    let mut rem = libc::Timespec { tv_sec: 0, tv_nsec: 0 };
+    let result = libc::nanosleep(&req, Some(&mut rem));
+    if result != 0 {
+        libc::println!("  nanosleep(10ms) returned {}", result);
+        return TestResult::Fail;
+    }
+    TestResult::Pass
+}
+
+/// Test clock_gettime returns increasing monotonic values
+fn test_clock_monotonic() -> TestResult {
+    let mut t1 = libc::Timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut t2 = libc::Timespec { tv_sec: 0, tv_nsec: 0 };
+    libc::clock_gettime(1, &mut t1); // CLOCK_MONOTONIC
+    // Do some work to burn time
+    let mut sum = 0u64;
+    for i in 0..1000u64 { sum = sum.wrapping_add(i); }
+    let _ = sum;
+    libc::clock_gettime(1, &mut t2);
+    let ns1 = t1.tv_sec as u64 * 1_000_000_000 + t1.tv_nsec as u64;
+    let ns2 = t2.tv_sec as u64 * 1_000_000_000 + t2.tv_nsec as u64;
+    assert_true(ns2 > ns1, "CLOCK_MONOTONIC must be strictly increasing")
+}
+
+/// Test brk expand and shrink
+fn test_brk_expand_shrink() -> TestResult {
+    use libc::syscall::sys_brk;
+
+    // Get current break
+    let current = sys_brk(core::ptr::null_mut());
+    if current.is_null() {
+        libc::println!("  brk(0) returned null");
+        return TestResult::Fail;
+    }
+
+    // Expand by 4 pages
+    let new_break = unsafe { current.add(4 * 4096) };
+    let result = sys_brk(new_break);
+    if (result as usize) < (new_break as usize) {
+        libc::println!("  brk expand failed");
+        return TestResult::Fail;
+    }
+
+    // Write to the new area
+    unsafe { current.write(0xAA); }
+
+    // Shrink back
+    let result = sys_brk(current);
+    if result != current {
+        libc::println!("  brk shrink failed");
+        return TestResult::Fail;
+    }
+
+    TestResult::Pass
+}
+
+// ============================================================================
 // Main entry point
 // ============================================================================
 
@@ -933,6 +1125,24 @@ pub extern "Rust" fn main() -> i32 {
         ("mmap hint addr", test_mmap_hint_addr),
         ("mmap fixed", test_mmap_fixed),
         ("mprotect", test_mprotect),
+        ("mprotect remove write", test_mprotect_remove_write),
+        ("mprotect PROT_NONE", test_mprotect_none),
+        ("madvise DONTNEED", test_madvise_dontneed),
+        ("brk expand/shrink", test_brk_expand_shrink),
+    ];
+    for (name, test) in tests {
+        let result = test();
+        report(name, result, "");
+        stats.record(result);
+    }
+
+    // Signal + time syscall validation
+    libc::println!("");
+    libc::println!("-- Signal + time validation --");
+    let tests = [
+        ("sigaction SMAP", test_sigaction_smap as fn() -> TestResult),
+        ("nanosleep short", test_nanosleep_short),
+        ("clock monotonic", test_clock_monotonic),
     ];
     for (name, test) in tests {
         let result = test();

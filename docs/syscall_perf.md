@@ -688,27 +688,27 @@ as required by the syscall return convention.
 
 ---
 
-## Recommendations Priority
+## Implementation Checklist
 
 ### Immediate (security/correctness)
-1. Add STAC/CLAC brackets to sys_sigaction, sys_sigprocmask, sys_sigpending (C1, C2)
-2. Add STAC/CLAC + address validation to firewall syscalls (C5)
-3. Implement full protection flag handling in sys_mprotect (C3)
+- [x] C1+C2: Add STAC/CLAC brackets to sys_sigaction, sys_sigprocmask, sys_sigpending
+- [x] C5: Add STAC/CLAC + address validation to firewall syscalls
+- [x] C3: Implement full protection flag handling in sys_mprotect (remove perms, PROT_NONE)
 
 ### Short-term (correctness)
-4. Preserve protection flags in sys_mremap (C4)
-5. Implement blocking epoll_wait
-6. Make sys_pread64/pwrite64 atomic
-7. Gate sys_waitpid serial traces behind debug-proc feature
+- [x] C4: Preserve protection flags in sys_mremap
+- [x] P5: Make sys_pread64/pwrite64 atomic (direct offset read, no seek)
+- [x] Gate sys_waitpid serial traces behind debug-proc feature
+- [x] C6: Increase MAX_SLEEPERS from 64 to 256
 
 ### Medium-term (performance)
-8. Stack-local buffer for small poll/select fd sets (P1)
-9. Increase MAX_SLEEPERS or switch to timer wheel (C6)
-10. Batch processing for large munmap operations (P3)
-11. Implement MADV_DONTNEED in sys_madvise
+- [x] P1: Stack-local buffer for small poll/select fd sets (nfds <= 64)
+- [x] P6: Stack buffer for sendfile (replace heap vec with [u8; 8192])
+- [x] Implement MADV_DONTNEED in sys_madvise (free pages, keep VMA)
 
-### Long-term (completeness)
-12. Implement *at syscall dirfd support (beyond AT_FDCWD)
-13. Implement actual capability tracking (capget/capset)
-14. Implement timerfd, signalfd
-15. Container syscalls (unshare, setns, clone3, pidfd)
+### Long-term (completeness) — deferred
+- [ ] Implement blocking epoll_wait with WaitQueue pattern
+- [ ] Implement *at syscall dirfd support (beyond AT_FDCWD)
+- [ ] Implement actual capability tracking (capget/capset)
+- [ ] Implement timerfd, signalfd
+- [ ] Container syscalls (unshare, setns, clone3, pidfd)

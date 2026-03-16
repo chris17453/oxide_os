@@ -1616,6 +1616,12 @@ fn sys_wait(status_ptr: u64) -> i64 {
 /// * `options` - Wait options
 fn sys_waitpid(pid: i32, status_ptr: u64, options: i32) -> i64 {
     use core::ptr::addr_of;
+
+    // — GraveShift: Trace helpers gated behind debug-proc. These were unconditional
+    // before, saturating the serial port on every single waitpid call. At 115200
+    // baud, each CR3 dump trace takes ~30us — multiply by shell pipelines doing
+    // 50 waitpid/sec and you've got a serial bottleneck masquerading as a slow kernel.
+    #[cfg(feature = "debug-proc")]
     fn trace_u64(mut n: u64) {
         unsafe {
             if n == 0 {
@@ -1634,6 +1640,7 @@ fn sys_waitpid(pid: i32, status_ptr: u64, options: i32) -> i64 {
             }
         }
     }
+    #[cfg(feature = "debug-proc")]
     fn trace_i32(n: i32) {
         unsafe {
             if n < 0 {
@@ -1645,6 +1652,7 @@ fn sys_waitpid(pid: i32, status_ptr: u64, options: i32) -> i64 {
         }
     }
 
+    #[cfg(feature = "debug-proc")]
     if options == 0 {
         unsafe {
             os_log::write_str_raw("[WAIT] sys_waitpid caller=");
@@ -1669,6 +1677,10 @@ fn sys_waitpid(pid: i32, status_ptr: u64, options: i32) -> i64 {
 
                 // Write status to userspace
                 if status_ptr != 0 {
+                    // — GraveShift: CR3 dump + status write traces gated behind
+                    // debug-proc. This was the worst offender — reading CR3 plus
+                    // hex formatting plus two serial writes PER waitpid call.
+                    #[cfg(feature = "debug-proc")]
                     if options == 0 {
                         #[cfg(target_arch = "x86_64")]
                         let mut cr3: u64 = 0;
@@ -1694,6 +1706,7 @@ fn sys_waitpid(pid: i32, status_ptr: u64, options: i32) -> i64 {
                         }
                     }
                     let ok = write_user_i32(status_ptr, status);
+                    #[cfg(feature = "debug-proc")]
                     if options == 0 {
                         unsafe {
                             os_log::write_str_raw("[WAIT-SYS] status write end ok=");
@@ -1703,6 +1716,7 @@ fn sys_waitpid(pid: i32, status_ptr: u64, options: i32) -> i64 {
                     }
                 }
 
+                #[cfg(feature = "debug-proc")]
                 if options == 0 {
                     unsafe {
                         os_log::write_str_raw("[WAIT-SYS] return child=");

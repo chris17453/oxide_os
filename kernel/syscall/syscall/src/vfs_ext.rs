@@ -294,6 +294,13 @@ pub fn sys_writev(fd: i32, iov_ptr: u64, iovcnt: i32) -> i64 {
 // ============================================================================
 
 /// sys_pread64 - Read from fd at given offset without changing file position
+///
+/// — WireSaint: Fixed the save-seek-read-restore race. The old implementation
+/// modified the shared file position, which means concurrent pread64 calls
+/// (or a pread64 racing with a normal read) would stomp each other's offsets.
+/// Now we go straight to vnode.read(offset, buf) — the file position is never
+/// touched. This is the POSIX-correct behavior: pread SHALL NOT modify the
+/// file offset. Period.
 pub fn sys_pread64(fd: i32, buf: u64, count: usize, offset: i64) -> i64 {
     if offset < 0 {
         return errno::EINVAL;
@@ -311,17 +318,14 @@ pub fn sys_pread64(fd: i32, buf: u64, count: usize, offset: i64) -> i64 {
         None => return errno::ESRCH,
     };
 
-    // Save position, seek, read, restore
-    let saved_pos = file.position();
-    if let Err(e) = file.seek(SeekFrom::Start(offset as u64)) {
-        return vfs_error_to_errno(e);
-    }
-
+    // — WireSaint: Bypass File::read() entirely. Go straight to the vnode
+    // with our caller-specified offset. No position mutation, no race window,
+    // no save/restore dance. Atomic by construction.
     unsafe {
         os_core::user_access_begin();
     }
     let buffer = unsafe { core::slice::from_raw_parts_mut(buf as *mut u8, count) };
-    let result = match file.read(buffer) {
+    let result = match file.vnode().read(offset as u64, buffer) {
         Ok(n) => n as i64,
         Err(e) => vfs_error_to_errno(e),
     };
@@ -329,12 +333,15 @@ pub fn sys_pread64(fd: i32, buf: u64, count: usize, offset: i64) -> i64 {
         os_core::user_access_end();
     }
 
-    // Restore original position
-    file.set_position(saved_pos);
     result
 }
 
 /// sys_pwrite64 - Write to fd at given offset without changing file position
+///
+/// — WireSaint: Same fix as pread64. The old save-seek-write-restore pattern
+/// was racy under concurrent access. Now we hit vnode.write(offset, buf)
+/// directly — file position stays pristine. POSIX says pwrite SHALL NOT
+/// modify the file offset. We obey.
 pub fn sys_pwrite64(fd: i32, buf: u64, count: usize, offset: i64) -> i64 {
     if offset < 0 {
         return errno::EINVAL;
@@ -352,16 +359,12 @@ pub fn sys_pwrite64(fd: i32, buf: u64, count: usize, offset: i64) -> i64 {
         None => return errno::ESRCH,
     };
 
-    let saved_pos = file.position();
-    if let Err(e) = file.seek(SeekFrom::Start(offset as u64)) {
-        return vfs_error_to_errno(e);
-    }
-
+    // — WireSaint: Direct vnode write at caller offset. No position games.
     unsafe {
         os_core::user_access_begin();
     }
     let buffer = unsafe { core::slice::from_raw_parts(buf as *const u8, count) };
-    let result = match file.write(buffer) {
+    let result = match file.vnode().write(offset as u64, buffer) {
         Ok(n) => n as i64,
         Err(e) => vfs_error_to_errno(e),
     };
@@ -369,7 +372,6 @@ pub fn sys_pwrite64(fd: i32, buf: u64, count: usize, offset: i64) -> i64 {
         os_core::user_access_end();
     }
 
-    file.set_position(saved_pos);
     result
 }
 
@@ -482,8 +484,12 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
         }
     }
 
+    // — TorqueJax: Stack buffer eliminates a heap allocation on every sendfile
+    // call. 8K fits comfortably in the kernel stack and matches page cache
+    // granularity. One less trip through the allocator per file transfer.
     let chunk_size = core::cmp::min(count, 8192);
-    let mut buf = alloc::vec![0u8; chunk_size];
+    let mut stack_buf = [0u8; 8192];
+    let buf = &mut stack_buf[..chunk_size];
     let mut total = 0usize;
 
     while total < count {

@@ -183,6 +183,52 @@ impl PageMapper {
         true
     }
 
+    /// Replace permission flags on an already-mapped page (preserving address and
+    /// non-permission bits like ACCESSED/DIRTY).
+    ///
+    /// — ColdCipher: mprotect needs to SET flags, not OR them. The old update_flags
+    /// could add WRITABLE but never remove it. This method reads the current PTE,
+    /// strips permission bits (WRITABLE, USER, NO_EXECUTE, PRESENT), then applies
+    /// the caller's new permission set. Physical address and metadata bits survive.
+    pub fn set_page_flags(&mut self, virt: VirtAddr, new_flags: PageTableFlags) -> bool {
+        let pml4_idx = PageLevel::Pml4.index(virt);
+        let pdpt_idx = PageLevel::Pdpt.index(virt);
+        let pd_idx = PageLevel::Pd.index(virt);
+        let pt_idx = PageLevel::Pt.index(virt);
+
+        let pdpt = match self.get_table(self.pml4_phys, pml4_idx) {
+            Some(p) => p,
+            None => return false,
+        };
+        let pd = match self.get_table(pdpt, pdpt_idx) {
+            Some(p) => p,
+            None => return false,
+        };
+        let pt = match self.get_table(pd, pd_idx) {
+            Some(p) => p,
+            None => return false,
+        };
+
+        let pt_virt = phys_to_virt(pt);
+        let pt_table = unsafe { &mut *pt_virt.as_mut_ptr::<PageTable>() };
+        let entry = &mut pt_table[pt_idx];
+
+        if !entry.is_present() && new_flags.contains(PageTableFlags::PRESENT) {
+            // Page wasn't mapped — nothing to change permissions on
+            return false;
+        }
+
+        // — ColdCipher: Preserve non-permission bits (ACCESSED, DIRTY, COW, etc.)
+        // and the physical address. Only replace the permission-related flags.
+        let permission_mask = PageTableFlags::PRESENT
+            | PageTableFlags::WRITABLE
+            | PageTableFlags::USER
+            | PageTableFlags::NO_EXECUTE;
+        let preserved = entry.flags().difference(permission_mask);
+        entry.set_flags(preserved.union(new_flags));
+        true
+    }
+
     /// Unmap a virtual address
     ///
     /// Returns the physical address that was mapped, or None if not mapped.

@@ -13,6 +13,7 @@ use crate::socket;
 use crate::time::{self, Timespec};
 use crate::with_current_meta;
 use alloc::vec::Vec;
+use core::mem::MaybeUninit;
 use waitqueue::PollTable;
 
 /// Poll event flags (POSIX)
@@ -173,17 +174,45 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
         return errno::EINVAL;
     }
 
-    // Read pollfd array from userspace
-    let mut fds: Vec<PollFd> = Vec::with_capacity(nfds);
+    // — TorqueJax: Stack-local fast path for the common case. 64 pollfds
+    // covers every daemon and shell in existence without touching the heap
+    // allocator. The hot path (poll with 1-3 fds) now costs zero alloc cycles.
+    // Heap fallback kicks in for the rare beast polling >64 fds at once.
+    const STACK_LIMIT: usize = 64;
+    let mut stack_buf: [MaybeUninit<PollFd>; STACK_LIMIT] =
+        unsafe { MaybeUninit::uninit().assume_init() };
+    let mut heap_buf: Vec<PollFd>;
 
-    unsafe {
-        os_core::user_access_begin();
-        let ptr = fds_ptr as *const PollFd;
-        for i in 0..nfds {
-            fds.push(core::ptr::read_volatile(ptr.add(i)));
+    let fds: &mut [PollFd] = if nfds <= STACK_LIMIT {
+        // — TorqueJax: Zero-alloc path. Initialize from userspace directly
+        // into stack memory. No heap, no allocator lock, no fragmentation.
+        unsafe {
+            os_core::user_access_begin();
+            let ptr = fds_ptr as *const PollFd;
+            for i in 0..nfds {
+                stack_buf[i].write(core::ptr::read_volatile(ptr.add(i)));
+            }
+            os_core::user_access_end();
+            // — WireSaint: Safe because we just initialized [0..nfds] above.
+            core::slice::from_raw_parts_mut(
+                stack_buf.as_mut_ptr() as *mut PollFd,
+                nfds,
+            )
         }
-        os_core::user_access_end();
-    }
+    } else {
+        // — TorqueJax: Heap fallback for the heavy hitters. >64 fds means
+        // you're running an event loop server — you can afford one alloc.
+        heap_buf = Vec::with_capacity(nfds);
+        unsafe {
+            os_core::user_access_begin();
+            let ptr = fds_ptr as *const PollFd;
+            for i in 0..nfds {
+                heap_buf.push(core::ptr::read_volatile(ptr.add(i)));
+            }
+            os_core::user_access_end();
+        }
+        &mut heap_buf[..]
+    };
 
     // Calculate deadline
     let start_ticks = get_ticks();
@@ -202,9 +231,9 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
 
     // — GraveShift: First pass — check all fds without registering.
     // If anything is already ready, skip the registration dance entirely.
-    let mut ready_count = check_all_pollfds(&mut fds);
+    let mut ready_count = check_all_pollfds(fds);
     if ready_count > 0 || timeout_ms == 0 {
-        write_pollfds_back(fds_ptr, &fds);
+        write_pollfds_back(fds_ptr, fds);
         return ready_count;
     }
 
@@ -219,10 +248,10 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
 
     // — GraveShift: Re-check after registration (lost-wake window).
     // Data may have arrived between the first check and registration.
-    ready_count = check_all_pollfds(&mut fds);
+    ready_count = check_all_pollfds(fds);
     if ready_count > 0 {
         poll_table.unregister_all();
-        write_pollfds_back(fds_ptr, &fds);
+        write_pollfds_back(fds_ptr, fds);
         return ready_count;
     }
 
@@ -243,7 +272,7 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
             for pollfd in fds.iter_mut() {
                 pollfd.revents = 0;
             }
-            write_pollfds_back(fds_ptr, &fds);
+            write_pollfds_back(fds_ptr, fds);
             return 0;
         }
 
@@ -258,10 +287,10 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
         os_core::disallow_kernel_preempt();
 
         // — GraveShift: Woken up. Check fds again.
-        ready_count = check_all_pollfds(&mut fds);
+        ready_count = check_all_pollfds(fds);
         if ready_count > 0 {
             poll_table.unregister_all();
-            write_pollfds_back(fds_ptr, &fds);
+            write_pollfds_back(fds_ptr, fds);
             return ready_count;
         }
 

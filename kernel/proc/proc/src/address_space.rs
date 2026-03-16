@@ -221,6 +221,47 @@ impl UserAddressSpace {
         true
     }
 
+    /// Replace permission flags on an already-mapped user page.
+    ///
+    /// Unlike update_user_page_flags (which only adds permissions), this method
+    /// sets the exact permission bits specified — removing any that aren't included.
+    /// Used by mprotect to revoke permissions (e.g., make writable page read-only).
+    ///
+    /// — ColdCipher: mprotect without revocation is a polite suggestion, not a
+    /// security boundary. You MUST be able to remove WRITABLE, add NO_EXECUTE,
+    /// or clear all access with PROT_NONE. This is that method.
+    pub fn set_user_page_flags(&mut self, virt: VirtAddr, flags: MemoryFlags) -> bool {
+        // — ColdCipher: Kernel space is off limits. Don't let userspace mprotect
+        // trick us into modifying kernel page tables.
+        if virt.as_u64() >= 0x0000_8000_0000_0000 {
+            return false;
+        }
+
+        // Build the replacement PageTableFlags from MemoryFlags
+        let mut pt_flags = PageTableFlags::PRESENT | PageTableFlags::ACCESSED;
+
+        if flags.contains(MemoryFlags::USER) {
+            pt_flags |= PageTableFlags::USER;
+        }
+        if flags.writable() {
+            pt_flags |= PageTableFlags::WRITABLE;
+        }
+        // — ColdCipher: x86-64 NX semantics — NO_EXECUTE is the default,
+        // only cleared when EXECUTE is explicitly requested.
+        if !flags.executable() {
+            pt_flags |= PageTableFlags::NO_EXECUTE;
+        }
+
+        // — ColdCipher: PROT_NONE = clear PRESENT to prevent all access.
+        // Alternatively we could clear USER, but clearing PRESENT is canonical.
+        if flags.bits() == 0 || (!flags.contains(MemoryFlags::READ) && !flags.writable() && !flags.executable()) {
+            // PROT_NONE: strip PRESENT and USER — page fault on any access
+            pt_flags = PageTableFlags::ACCESSED | PageTableFlags::NO_EXECUTE;
+        }
+
+        self.mapper.set_page_flags(virt, pt_flags)
+    }
+
     /// Switch to this address space
     ///
     /// # Safety

@@ -312,10 +312,16 @@ pub fn sys_munmap(addr: u64, length: u64) -> i64 {
 /// # Arguments
 /// * `addr` - Start address (must be page-aligned)
 /// * `length` - Size of region
-/// * `prot` - New protection flags
+/// * `prot` - New protection flags (PROT_NONE, PROT_READ, PROT_WRITE, PROT_EXEC)
 ///
 /// # Returns
 /// 0 on success, negative errno on error
+///
+/// — ColdCipher: The old mprotect was a one-way ratchet — could add WRITABLE but
+/// never remove it. That's not protection, that's a suggestion. Now we handle
+/// the full POSIX permission matrix: adding, removing, and PROT_NONE. For each
+/// page in the range, we walk the page table and REPLACE the permission bits
+/// instead of OR-ing them. VMA flags are updated to match.
 pub fn sys_mprotect(addr: u64, length: u64, prot: i32) -> i64 {
     // Validate address
     if addr & 0xFFF != 0 {
@@ -323,6 +329,12 @@ pub fn sys_mprotect(addr: u64, length: u64, prot: i32) -> i64 {
     }
     if length == 0 {
         return 0; // Nothing to do
+    }
+
+    // — ColdCipher: Reject kernel-space addresses. mprotect on kernel pages
+    // from userspace is a privilege escalation vector, not a feature request.
+    if addr >= 0x0000_8000_0000_0000 {
+        return errno::ENOMEM;
     }
 
     // Page-align length
@@ -340,16 +352,32 @@ pub fn sys_mprotect(addr: u64, length: u64, prot: i32) -> i64 {
     {
         let mut m = meta.lock();
 
-        // Update protection for each page
+        // — ColdCipher: Use set_user_page_flags to REPLACE permissions on each page.
+        // This handles all transitions: adding WRITABLE, removing WRITABLE (read-only),
+        // adding NO_EXECUTE, and PROT_NONE (clearing PRESENT). The old additive-only
+        // approach left pages permanently writable after the first PROT_WRITE.
         for i in 0..num_pages {
             let page_addr = VirtAddr::new(addr + (i as u64 * 0x1000));
-            // Update flags - for now we can only add WRITABLE permission
-            // A full implementation would need to handle all flag changes
-            if mem_flags.writable() {
-                m.address_space.update_user_page_flags(page_addr, mem_flags);
+            m.address_space.set_user_page_flags(page_addr, mem_flags);
+        }
+
+        // — ColdCipher: Update VMA flags to match the new protection. Without this,
+        // the page fault handler re-maps with stale VMA permissions on next fault,
+        // undoing the mprotect. Find all VMAs that overlap our range and update them.
+        let new_vm_flags = prot_to_vm_flags(prot, 0);
+        // Walk VMA list and update flags for overlapping entries
+        for page_off in 0..num_pages {
+            let page_start = addr + (page_off as u64 * 0x1000);
+            if let Some(vma) = m.address_space.vmas.find_mut(page_start) {
+                vma.flags = new_vm_flags;
             }
         }
     }
+
+    // — ColdCipher: TLB shootdown after changing permissions. Stale TLB entries
+    // on other CPUs still have the old permission bits, so a WRITE to a page
+    // we just made read-only would succeed silently until the TLB entry expires.
+    smp::tlb_shootdown(addr, addr + length, 0);
 
     0
 }
@@ -394,16 +422,41 @@ pub fn sys_mremap(
         return old_addr as i64;
     }
 
+    // — WireSaint: Look up the VMA for the old address to recover its original
+    // protection flags. The old code hardcoded PROT_READ|PROT_WRITE for both
+    // extension and move, silently upgrading read-only or non-executable
+    // mappings to full read-write. That's not remapping, that's privilege
+    // laundering. Recover the original prot from VMA flags or default to RW.
+    let meta = match get_current_meta() {
+        Some(m) => m,
+        None => return errno::ESRCH,
+    };
+    let original_prot = {
+        let m = meta.lock();
+        if let Some(vma) = m.address_space.vmas.find(old_addr) {
+            let f = vma.flags;
+            let mut p = 0i32;
+            if f.contains(VmFlags::READ) { p |= prot::PROT_READ; }
+            if f.contains(VmFlags::WRITE) { p |= prot::PROT_WRITE; }
+            if f.contains(VmFlags::EXEC) { p |= prot::PROT_EXEC; }
+            p
+        } else {
+            // — WireSaint: No VMA found — fall back to RW. This covers
+            // regions mapped before VMA tracking was added.
+            prot::PROT_READ | prot::PROT_WRITE
+        }
+    };
+
     // Growing - try to extend in place first
     let extension = new_size - old_size;
     let extend_addr = old_addr + old_size;
 
     // Check if we can extend
-    // For simplicity, just try to allocate at the extension address
+    // — WireSaint: Use original_prot instead of hardcoded RW.
     let result = sys_mmap(
         extend_addr,
         extension,
-        prot::PROT_READ | prot::PROT_WRITE,
+        original_prot,
         flags::MAP_PRIVATE | flags::MAP_ANONYMOUS | flags::MAP_FIXED,
         -1,
         0,
@@ -419,10 +472,11 @@ pub fn sys_mremap(
     }
 
     // Allocate new region
+    // — WireSaint: Preserve the original protection on the moved mapping.
     let new_addr = sys_mmap(
         0,
         new_size,
-        prot::PROT_READ | prot::PROT_WRITE,
+        original_prot,
         flags::MAP_PRIVATE | flags::MAP_ANONYMOUS,
         -1,
         0,
@@ -608,9 +662,85 @@ fn prot_to_vm_flags(prot: i32, map_flags: i32) -> VmFlags {
     vf
 }
 
+/// madvise advice constants (matching Linux)
+mod madv {
+    pub const _MADV_NORMAL: i32 = 0;
+    pub const MADV_DONTNEED: i32 = 4;
+}
+
 /// sys_madvise - Advise kernel about memory usage patterns
 ///
-/// This is advisory only; we accept and ignore all advice values.
-pub fn sys_madvise(_addr: u64, _length: u64, _advice: i32) -> i64 {
-    0
+/// — WireSaint: No longer a no-op for MADV_DONTNEED. When malloc wants to
+/// return memory to the kernel without destroying the VMA (so future accesses
+/// fault in fresh zeroed pages), it calls madvise(MADV_DONTNEED). We unmap
+/// the physical pages and free the frames, but leave the VMA intact. Next
+/// access page-faults into the demand pager which supplies a zeroed frame.
+/// This is the key primitive that makes glibc's malloc arena trimming work.
+/// Other advice values remain advisory no-ops — which is POSIX-correct.
+pub fn sys_madvise(addr: u64, length: u64, advice: i32) -> i64 {
+    match advice {
+        madv::MADV_DONTNEED => {
+            // — WireSaint: Validate alignment. Linux requires page-aligned addr.
+            if addr & 0xFFF != 0 {
+                return errno::EINVAL;
+            }
+            if length == 0 {
+                return 0;
+            }
+
+            // — WireSaint: Page-align length upward, same as munmap.
+            let length = (length + 0xFFF) & !0xFFF;
+            let num_pages = (length / 0x1000) as usize;
+
+            let meta = match get_current_meta() {
+                Some(m) => m,
+                None => return errno::ESRCH,
+            };
+
+            {
+                let mut m = meta.lock();
+                let cow = cow_tracker();
+                let allocator = mm();
+
+                // — WireSaint: Walk the page range, unmap each present page and
+                // free its physical frame. Same pattern as munmap's inner loop
+                // but we do NOT remove the VMA — the mapping stays valid, it
+                // just has no backing pages until the next fault.
+                mm_pagedb::set_free_context(mm_pagedb::CTX_MUNMAP);
+                for i in 0..num_pages {
+                    let page_addr = VirtAddr::new(addr + (i as u64 * 0x1000));
+                    if let Ok(phys) = m.address_space.unmap_user_page(page_addr) {
+                        // — WireSaint: Guard against double-free. If pagedb says
+                        // FREE+rc=0, the frame was already returned by another
+                        // path. Skip it or we corrupt the buddy free list.
+                        if let Some(db) = mm_pagedb::try_pagedb() {
+                            if let Some(pf) = db.get(phys) {
+                                if pf.flags() == mm_pagedb::PF_FREE && pf.refcount() == 0 {
+                                    continue;
+                                }
+                            }
+                        }
+                        // — WireSaint: Remove from LRU before freeing — same
+                        // discipline as munmap. Reclaim scanner must never see
+                        // a frame that's back in the buddy pool.
+                        mm_reclaim::lru_remove(phys);
+                        let remaining = cow.decrement(phys);
+                        if remaining == 0 {
+                            allocator.free_frame(phys);
+                        }
+                    }
+                }
+            }
+
+            // — WireSaint: TLB shootdown. Other CPUs may still have stale entries
+            // pointing at the now-freed frames. Without this, stale TLB = UAF.
+            smp::tlb_shootdown(addr, addr + length, 0);
+
+            0
+        }
+        // — WireSaint: All other advice values are advisory no-ops. POSIX says
+        // the kernel MAY ignore any advice — and we do. MADV_NORMAL, MADV_RANDOM,
+        // MADV_SEQUENTIAL, MADV_WILLNEED, etc. all return success without action.
+        _ => 0,
+    }
 }

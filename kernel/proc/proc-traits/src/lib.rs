@@ -76,6 +76,13 @@ impl MemoryFlags {
     pub const fn user(&self) -> bool {
         self.contains(Self::USER)
     }
+
+    /// — WireSaint: Returns true if no protection bits are set (PROT_NONE).
+    /// The other agent's mprotect PROT_NONE support needs this to clear
+    /// PRESENT on pages with no read/write/exec permissions.
+    pub const fn is_empty(&self) -> bool {
+        self.bits == 0
+    }
 }
 
 /// Address space trait
