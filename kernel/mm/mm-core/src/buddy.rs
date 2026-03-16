@@ -18,6 +18,7 @@ use crate::stats::MemoryStats;
 use crate::zone::{AllocRequest, MemoryZone, ZoneType};
 use crate::{FRAME_SHIFT, FRAME_SIZE, MAX_ORDER, MmError, MmResult};
 use mm_traits::FrameAllocator;
+use mm_vmstat::Counter as VmC;
 use os_core::PhysAddr;
 use spin::Mutex;
 
@@ -51,9 +52,12 @@ struct FreeBlock {
     magic: u64, // Canary value 0xFREEBL0C (0x4652454542304C) — corruption detector
     next: u64,  // Frame number of next free block, or 0 if none
     prev: u64,  // Frame number of previous free block, or 0 if head — TorqueJax
+    order: u8,  // Free-list order this block is currently linked in
+    _pad: [u8; 7],
 }
 
 const FREE_BLOCK_MAGIC: u64 = 0x4652454542304C; // "FREEBL0C" in hex — SableWire
+const FREE_BLOCK_ORDER_INVALID: u8 = 0xFF;
 
 /// Bounded serial hex output for allocator FATAL traces — SableWire
 /// Routes through os_log::write_byte_raw which delegates to the registered
@@ -205,6 +209,7 @@ impl BuddyAllocator {
                     core::ptr::write_volatile(scrub_virt, 0u64);
                     core::ptr::write_volatile(scrub_virt.add(1), 0u64);
                     core::ptr::write_volatile(scrub_virt.add(2), 0u64);
+                    core::ptr::write_volatile(scrub_virt.add(3), 0u64);
                 }
             }
 
@@ -253,14 +258,22 @@ impl BuddyAllocator {
         // If this frame is already linked in the list for this order, drop the insert.
         let existing_magic = unsafe { core::ptr::read_volatile(virt as *const u64) };
         if existing_magic == FREE_BLOCK_MAGIC {
-            let already_head = old_head == frame_num;
-            let already_linked = block.next != 0 || block.prev != 0;
-            if already_head || already_linked {
+            let existing_order = block.order as usize;
+            let already_linked = if existing_order <= MAX_ORDER {
+                zone.free_lists[existing_order].head == frame_num
+                    || block.next != 0
+                    || block.prev != 0
+            } else {
+                false
+            };
+            if already_linked {
                 unsafe {
                     os_log::write_str_raw("[BUDDY-DUP-ADD] drop duplicate free-list insert addr=0x");
                     serial_hex64(addr);
-                    os_log::write_str_raw(" order=");
-                    os_log::write_byte_raw(b'0' + order as u8);
+                    os_log::write_str_raw(" new_order=");
+                    os_log::write_u32_raw(order as u32);
+                    os_log::write_str_raw(" existing_order=");
+                    os_log::write_u32_raw(existing_order as u32);
                     os_log::write_str_raw("\n");
                 }
                 return false;
@@ -283,6 +296,8 @@ impl BuddyAllocator {
 
         // Set canary — GraveShift: Mark this as a valid free block
         block.magic = FREE_BLOCK_MAGIC;
+        block.order = order as u8;
+        block._pad = [0; 7];
         // Insert at head of free list — Doubly-linked style, update prev pointers
         block.next = old_head;
         block.prev = 0; // New head has no predecessor
@@ -294,13 +309,17 @@ impl BuddyAllocator {
             let old_head_block = unsafe { &mut *(old_head_virt as *mut FreeBlock) };
 
             // VALIDATE — BlackLatch: Check old head's canary before writing
-            if old_head_block.magic != FREE_BLOCK_MAGIC {
+            if old_head_block.magic != FREE_BLOCK_MAGIC || old_head_block.order as usize != order {
                 // — SableWire: Bounded serial writes. Never stall the allocator on UART THRE.
                 unsafe {
                     os_log::write_str_raw("[BUDDY-FATAL] Old head corrupted! magic=0x");
                     serial_hex64(old_head_block.magic);
                     os_log::write_str_raw(", expected=0x");
                     serial_hex64(FREE_BLOCK_MAGIC);
+                    os_log::write_str_raw(", head_order=");
+                    os_log::write_u32_raw(old_head_block.order as u32);
+                    os_log::write_str_raw(", expected_order=");
+                    os_log::write_u32_raw(order as u32);
                     os_log::write_str_raw(" - GPF\n");
                     core::ptr::write_volatile(0xBADBAD as *mut u64, old_head_block.magic);
                 }
@@ -374,7 +393,7 @@ impl BuddyAllocator {
         let block = unsafe { &mut *(virt as *mut FreeBlock) };
 
         // VALIDATE CANARY — GraveShift: Check magic before trusting this block
-        if block.magic != FREE_BLOCK_MAGIC {
+        if block.magic != FREE_BLOCK_MAGIC || block.order as usize != order {
             // — SableWire: C1 — Corrupted head? Try to salvage the chain instead
             // of nuking the entire free list. The old code zeroed head+count, which
             // lost potentially hundreds of MB of valid blocks behind one rotten
@@ -399,7 +418,9 @@ impl BuddyAllocator {
                 if block_in_zone(zone, candidate_addr, order) {
                     let candidate_virt = phys_to_virt(PhysAddr::new(candidate_addr));
                     let candidate_block = unsafe { &mut *(candidate_virt as *mut FreeBlock) };
-                    if candidate_block.magic == FREE_BLOCK_MAGIC {
+                    if candidate_block.magic == FREE_BLOCK_MAGIC
+                        && candidate_block.order as usize == order
+                    {
                         // — SableWire: The next block is valid! Promote it to head,
                         // lose only the one corrupted frame. That's the deal.
                         candidate_block.prev = 0;
@@ -463,6 +484,8 @@ impl BuddyAllocator {
         block.magic = 0; // Invalidate canary — any future access will detect corruption
         block.next = 0;
         block.prev = 0;
+        block.order = FREE_BLOCK_ORDER_INVALID;
+        block._pad = [0; 7];
 
         // Update head and fix new head's prev pointer — BlackLatch: Clean up the doubly-linked chain
         zone.free_lists[order].head = next_frame;
@@ -504,12 +527,16 @@ impl BuddyAllocator {
                 // — ColdCipher: H1 — validate new head's canary before writing prev=0.
                 // If the new head's memory is corrupt, writing prev=0 into it would
                 // scribble on whatever garbage lives there. Better to sever the chain.
-                if next_block.magic != FREE_BLOCK_MAGIC {
+                if next_block.magic != FREE_BLOCK_MAGIC || next_block.order as usize != order {
                     unsafe {
                         os_log::write_str_raw("[BUDDY-WARN] New head corrupted: magic=0x");
                         serial_hex64(next_block.magic);
                         os_log::write_str_raw(" addr=0x");
                         serial_hex64(next_addr);
+                        os_log::write_str_raw(" head_order=");
+                        os_log::write_u32_raw(next_block.order as u32);
+                        os_log::write_str_raw(" expected_order=");
+                        os_log::write_u32_raw(order as u32);
                         os_log::write_str_raw(" — severing chain\n");
                     }
                     zone.free_lists[order].head = 0;
@@ -607,6 +634,21 @@ impl BuddyAllocator {
                 let pages = 1u64 << request.order;
                 self.stats.record_alloc(pages * FRAME_SIZE as u64);
 
+                // — TorqueJax: Per-zone alloc counters. zone_idx maps directly
+                // to DMA(0)/Normal(1)/High(2). One atomic add per alloc — cheap.
+                match zone_idx {
+                    0 => mm_vmstat::add(VmC::PgAllocDma, pages),
+                    1 => mm_vmstat::add(VmC::PgAllocNormal, pages),
+                    _ => mm_vmstat::add(VmC::PgAllocHigh, pages),
+                }
+
+                // — IronGhost: Watermark check after alloc via callback. If zone free
+                // pages dropped below wmark_low, the registered callback sets the
+                // kswapd flag. Uses callback to avoid circular dep (mm-core↔mm-reclaim).
+                if let Some(cb) = mm_vmstat::watermark_callback() {
+                    cb(zone_idx as u8, zone.total_free_pages());
+                }
+
                 // [TRACE] Log allocation details — BlackLatch: Track all allocs including PT frames
                 #[cfg(feature = "debug-buddy")]
                 unsafe {
@@ -651,9 +693,12 @@ impl BuddyAllocator {
                     os_log::write_str_raw(" empty=");
                     os_log::write_u32_raw(if zone.is_empty() { 1 } else { 0 });
                     os_log::write_str_raw(" counts=[");
-                    for o in 0..14usize {
+                    // — CrashBloom: MAX_ORDER+1 entries, not 14. The old hardcoded
+                    // 14 walked off the end of free_lists (len=11) and panicked,
+                    // turning a recoverable OOM into a kernel crash. Nice.
+                    for o in 0..=MAX_ORDER {
                         os_log::write_u32_raw(zone.free_lists[o].count as u32);
-                        if o < 13 { os_log::write_str_raw(","); }
+                        if o < MAX_ORDER { os_log::write_str_raw(","); }
                     }
                     os_log::write_str_raw("]\n");
                 }
@@ -669,92 +714,95 @@ impl BuddyAllocator {
     /// Zone must be properly initialized.
     unsafe fn alloc_from_zone(&self, zone: &mut MemoryZone, order: usize) -> Option<u64> {
         // Try to find a free block at the requested order or higher
-        for current_order in order..=MAX_ORDER {
-            if zone.free_lists[current_order].count > 0 {
-                // Found a block, may need to split — SAFETY: Zone is initialized
-                // — SableWire: Don't use `?` here — a corrupted head at this order
-                // should NOT abort the entire allocation. Skip to the next order
-                // and try again. The old `?` was nuking allocations because one
-                // bad canary at order 0 prevented splitting from order 1+.
-                let addr = match unsafe { self.pop_free_block(zone, current_order) } {
-                    Some(a) => a,
-                    None => continue, // — GraveShift: corrupted head, try next order
-                };
-
-                // If pagedb says this block (or any frame inside it) is already non-free,
-                // this free-list node is stale/corrupt. Drop it and keep searching.
-                if let Some(db) = mm_pagedb::try_pagedb() {
-                    let num_frames = 1u64 << current_order;
-                    let mut block_is_free = true;
-                    let mut bad_offset = 0u64;
-                    let mut bad_flags = 0u32;
-                    let mut bad_rc = 0u32;
-                    let mut bad_owner = 0u32;
-                    let mut bad_none = false;
-                    for i in 0..num_frames {
-                        let frame = PhysAddr::new(addr + i * FRAME_SIZE as u64);
-                        match db.get(frame) {
-                            Some(pf) if pf.is_free() => {}
-                            Some(pf) => {
-                                block_is_free = false;
-                                bad_offset = i;
-                                bad_flags = pf.flags();
-                                bad_rc = pf.refcount();
-                                bad_owner = pf.owner();
-                                break;
-                            }
-                            None => {
-                                block_is_free = false;
-                                bad_offset = i;
-                                bad_none = true;
-                                break;
-                            }
-                        }
-                    }
-                    if !block_is_free {
-                        // — GraveShift: Stale pagedb entry. The free list says
-                        // this block is free (we just popped it), but the pagedb
-                        // still has it marked allocated. This happens when buddy
-                        // init adds boot-reclaimed regions whose pagedb entries
-                        // were set during early boot before buddy existed.
-                        //
-                        // The free list is authoritative — if it's on the list,
-                        // it's free. The alloc code below will mark it allocated
-                        // in the pagedb (line ~627), which is the correct final
-                        // state. The old behavior (continue/skip) leaked every
-                        // affected block permanently, eventually exhausting all
-                        // order-10 blocks and killing GPU DMA. — GraveShift
-                        #[cfg(feature = "debug-buddy")]
-                        unsafe {
-                            os_log::write_str_raw("[BUDDY-STALE-PDB] addr=0x");
-                            serial_hex64(addr);
-                            os_log::write_str_raw(" order=");
-                            os_log::write_byte_raw(b'0' + current_order as u8);
-                            os_log::write_str_raw(" — using block anyway\n");
-                        }
-                        // Fall through — alloc path marks it allocated in pagedb
-                    }
-                }
-
-                // Split larger blocks down to requested size — TorqueJax
-                // When splitting order N to get order M (where N > M):
-                // - We keep the low half at each level
-                // - We add the high half (buddy) to the free list
-                // The buddy at split level S is at: addr + (2^S * page_size)
-                for split_order in (order..current_order).rev() {
-                    let buddy_addr = addr + ((1u64 << split_order) << FRAME_SHIFT);
-                    // SAFETY: Buddy address is valid as it comes from splitting a larger valid block
-                    if unsafe { self.add_free_block(zone, split_order, buddy_addr) } {
-                        zone.stats.free_pages[split_order]
-                            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-                    }
-                }
-
-                zone.stats.free_pages[current_order]
-                    .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
-
-                return Some(addr);
+        let mut current_order = order;
+        while current_order <= MAX_ORDER {
+            if zone.free_lists[current_order].count == 0 {
+                current_order += 1;
+                continue;
             }
+
+            // Found a block, may need to split — SAFETY: Zone is initialized
+            // — SableWire: Don't use `?` here — a corrupted head at this order
+            // should NOT abort the entire allocation. Skip to the next order
+            // and try again.
+            let addr = match unsafe { self.pop_free_block(zone, current_order) } {
+                Some(a) => a,
+                None => { current_order += 1; continue; }
+            };
+
+            // — TorqueJax: Validate via pagedb. If ANY frame in this block is
+            // already allocated, the free list has a stale entry. Drop the block
+            // and retry the SAME order (there may be more blocks). This prevents
+            // the 0x1e682000 double-alloc bug without leaking the entire order's
+            // worth of memory to the next-order fallback.
+            if let Some(db) = mm_pagedb::try_pagedb() {
+                let num_frames = 1u64 << current_order;
+                let mut block_is_free = true;
+                let mut bad_offset = 0u64;
+                let mut bad_flags = 0u32;
+                let mut bad_none = false;
+                for i in 0..num_frames {
+                    let frame = PhysAddr::new(addr + i * FRAME_SIZE as u64);
+                    match db.get(frame) {
+                        Some(pf) if pf.is_free() => {}
+                        Some(pf) => {
+                            block_is_free = false;
+                            bad_offset = i;
+                            bad_flags = pf.flags();
+                            break;
+                        }
+                        None => {
+                            block_is_free = false;
+                            bad_offset = i;
+                            bad_none = true;
+                            break;
+                        }
+                    }
+                }
+                if !block_is_free {
+                    // — TorqueJax: Stale free-list entry. The pagedb says this
+                    // block has non-free frames — handing it out would give two
+                    // allocations the same physical page. Drop and retry same
+                    // order. The block leaks but the system doesn't corrupt.
+                    unsafe {
+                        os_log::write_str_raw("[BUDDY-DUP] stale block 0x");
+                        serial_hex64(addr);
+                        os_log::write_str_raw(" order=");
+                        os_log::write_byte_raw(b'0' + current_order as u8);
+                        os_log::write_str_raw(" frame+");
+                        serial_hex64(bad_offset);
+                        if bad_none {
+                            os_log::write_str_raw(" (no pdb)\n");
+                        } else {
+                            os_log::write_str_raw(" fl=0x");
+                            serial_hex64(bad_flags as u64);
+                            os_log::write_str_raw("\n");
+                        }
+                    }
+                    // — TorqueJax: DON'T increment current_order. Retry same
+                    // order — there may be valid blocks behind this stale one.
+                    continue;
+                }
+            }
+
+            // Split larger blocks down to requested size — TorqueJax
+            // When splitting order N to get order M (where N > M):
+            // - We keep the low half at each level
+            // - We add the high half (buddy) to the free list
+            // The buddy at split level S is at: addr + (2^S * page_size)
+            for split_order in (order..current_order).rev() {
+                let buddy_addr = addr + ((1u64 << split_order) << FRAME_SHIFT);
+                // SAFETY: Buddy address is valid as it comes from splitting a larger valid block
+                if unsafe { self.add_free_block(zone, split_order, buddy_addr) } {
+                    zone.stats.free_pages[split_order]
+                        .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                }
+            }
+
+            zone.stats.free_pages[current_order]
+                .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+
+            return Some(addr);
         }
 
         None
@@ -842,6 +890,14 @@ impl BuddyAllocator {
 
         let pages = 1u64 << order;
         self.stats.record_free(pages * FRAME_SIZE as u64);
+
+        // — TorqueJax: Per-zone free counters — mirrors the alloc path.
+        match zone_type {
+            ZoneType::Dma => mm_vmstat::add(VmC::PgFreeDma, pages),
+            ZoneType::Normal => mm_vmstat::add(VmC::PgFreeNormal, pages),
+            ZoneType::High => mm_vmstat::add(VmC::PgFreeHigh, pages),
+        }
+
         Ok(())
     }
 
@@ -862,14 +918,27 @@ impl BuddyAllocator {
         let virt = phys_to_virt(PhysAddr::new(addr));
         let existing_magic = unsafe { core::ptr::read_volatile(virt as *const u64) };
         if existing_magic == FREE_BLOCK_MAGIC {
-            unsafe {
-                os_log::write_str_raw("[BUDDY-DFREE] Double-free detected! addr=0x");
-                serial_hex64(addr);
-                os_log::write_str_raw(" order=");
-                os_log::write_byte_raw(b'0' + order as u8);
-                os_log::write_str_raw(" — dropped, not added to free list\n");
+            let frame_num = addr >> FRAME_SHIFT;
+            let block = unsafe { &*(virt as *const FreeBlock) };
+            let existing_order = block.order as usize;
+            let already_linked = existing_order <= MAX_ORDER
+                && (zone.free_lists[existing_order].head == frame_num
+                    || block.next != 0
+                    || block.prev != 0);
+            if !already_linked {
+                // Not currently linked in any list we can verify; treat as payload data.
+            } else {
+                unsafe {
+                    os_log::write_str_raw("[BUDDY-DFREE] Double-free detected! addr=0x");
+                    serial_hex64(addr);
+                    os_log::write_str_raw(" order=");
+                    os_log::write_u32_raw(order as u32);
+                    os_log::write_str_raw(" linked_order=");
+                    os_log::write_u32_raw(existing_order as u32);
+                    os_log::write_str_raw(" — dropped, not added to free list\n");
+                }
+                return;
             }
-            return;
         }
 
         let mut current_addr = addr;
@@ -967,6 +1036,9 @@ impl BuddyAllocator {
         if target_block.magic != FREE_BLOCK_MAGIC {
             return false;
         }
+        if target_block.order as usize != order {
+            return false;
+        }
 
         // Verify block is actually in the free list — SableWire: Paranoid but necessary
         // If prev is 0, target should be head (already checked above)
@@ -983,7 +1055,7 @@ impl BuddyAllocator {
         let prev_virt = phys_to_virt(PhysAddr::new(prev_addr));
         let prev_block = unsafe { &mut *(prev_virt as *mut FreeBlock) };
 
-        if prev_block.magic != FREE_BLOCK_MAGIC {
+        if prev_block.magic != FREE_BLOCK_MAGIC || prev_block.order as usize != order {
             // — WireSaint: Predecessor is corrupt. Don't trust anything it says.
             // Return false — the coalesce loop will skip this buddy and just
             // add the freed block at the current order. One lost coalesce is
@@ -1004,6 +1076,9 @@ impl BuddyAllocator {
             let next_addr = target_block.next << FRAME_SHIFT;
             let next_virt = phys_to_virt(PhysAddr::new(next_addr));
             let next_block = unsafe { &mut *(next_virt as *mut FreeBlock) };
+            if next_block.magic != FREE_BLOCK_MAGIC || next_block.order as usize != order {
+                return false;
+            }
             next_block.prev = target_block.prev;
         }
 
@@ -1011,6 +1086,8 @@ impl BuddyAllocator {
         target_block.magic = 0;
         target_block.next = 0;
         target_block.prev = 0;
+        target_block.order = FREE_BLOCK_ORDER_INVALID;
+        target_block._pad = [0; 7];
 
         zone.free_lists[order].count -= 1;
 
@@ -1055,6 +1132,28 @@ impl BuddyAllocator {
             total += zone.lock().free_lists[order].count;
         }
         total
+    }
+
+    /// — TorqueJax: Snapshot per-zone data for /proc/zoneinfo. Briefly locks each
+    /// zone to read total/free pages and per-order free counts. Returns array of
+    /// (zone_type, total_pages, free_pages, per_order_free[11], is_empty) tuples.
+    pub fn zone_info(&self) -> [(ZoneType, u64, u64, [u64; MAX_ORDER + 1], bool); 3] {
+        let mut info = [
+            (ZoneType::Dma, 0u64, 0u64, [0u64; MAX_ORDER + 1], true),
+            (ZoneType::Normal, 0u64, 0u64, [0u64; MAX_ORDER + 1], true),
+            (ZoneType::High, 0u64, 0u64, [0u64; MAX_ORDER + 1], true),
+        ];
+        for i in 0..3 {
+            if let Some(zone) = self.zones[i].try_lock() {
+                info[i].1 = zone.stats.total_pages.load(core::sync::atomic::Ordering::Relaxed);
+                info[i].2 = zone.total_free_pages();
+                for o in 0..=MAX_ORDER {
+                    info[i].3[o] = zone.free_lists[o].count;
+                }
+                info[i].4 = zone.is_empty();
+            }
+        }
+        info
     }
 
     /// Check if the allocator is initialized
@@ -1117,7 +1216,7 @@ impl BuddyAllocator {
                 let virt = phys_to_virt(PhysAddr::new(addr));
                 let block = unsafe { &*(virt as *const FreeBlock) };
 
-                if block.magic != FREE_BLOCK_MAGIC {
+                if block.magic != FREE_BLOCK_MAGIC || block.order as usize != order {
                     unsafe {
                         os_log::write_str_raw("[BUDDY-VERIFY] BAD: zone=");
                         os_log::write_byte_raw(b'0' + zone_idx as u8);
@@ -1161,6 +1260,23 @@ impl BuddyAllocator {
                                 serial_hex64(walk_addr);
                                 os_log::write_str_raw(" magic=0x");
                                 serial_hex64(wb.magic);
+                                os_log::write_str_raw(" blk_order=");
+                                os_log::write_u32_raw(wb.order as u32);
+                                os_log::write_str_raw("\n");
+                            }
+                            bad_count += 1;
+                            break;
+                        }
+                        if wb.order as usize != order {
+                            unsafe {
+                                os_log::write_str_raw("[BUDDY-VERIFY] ORDER-MISMATCH: zone=");
+                                os_log::write_byte_raw(b'0' + zone_idx as u8);
+                                os_log::write_str_raw(" order=");
+                                os_log::write_byte_raw(b'0' + order as u8);
+                                os_log::write_str_raw(" blk_order=");
+                                os_log::write_u32_raw(wb.order as u32);
+                                os_log::write_str_raw(" addr=0x");
+                                serial_hex64(walk_addr);
                                 os_log::write_str_raw("\n");
                             }
                             bad_count += 1;

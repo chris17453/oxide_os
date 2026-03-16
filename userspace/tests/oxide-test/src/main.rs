@@ -161,6 +161,14 @@ unsafe fn syscall0(nr: u64) -> i64 {
         core::arch::asm!(
             "syscall",
             in("rax") nr,
+            // — DeadLoop: Zero unused arg regs so stale caller junk can't leak
+            // into aliased syscalls (e.g., waitpid/wait4 reading r10).
+            in("rdi") 0u64,
+            in("rsi") 0u64,
+            in("rdx") 0u64,
+            in("r10") 0u64,
+            in("r8") 0u64,
+            in("r9") 0u64,
             lateout("rax") ret,
             out("rcx") _,
             out("r11") _,
@@ -178,6 +186,11 @@ unsafe fn syscall1(nr: u64, a1: u64) -> i64 {
             "syscall",
             in("rax") nr,
             in("rdi") a1,
+            in("rsi") 0u64,
+            in("rdx") 0u64,
+            in("r10") 0u64,
+            in("r8") 0u64,
+            in("r9") 0u64,
             lateout("rax") ret,
             out("rcx") _,
             out("r11") _,
@@ -196,6 +209,10 @@ unsafe fn syscall2(nr: u64, a1: u64, a2: u64) -> i64 {
             in("rax") nr,
             in("rdi") a1,
             in("rsi") a2,
+            in("rdx") 0u64,
+            in("r10") 0u64,
+            in("r8") 0u64,
+            in("r9") 0u64,
             lateout("rax") ret,
             out("rcx") _,
             out("r11") _,
@@ -215,6 +232,9 @@ unsafe fn syscall3(nr: u64, a1: u64, a2: u64, a3: u64) -> i64 {
             in("rdi") a1,
             in("rsi") a2,
             in("rdx") a3,
+            in("r10") 0u64,
+            in("r8") 0u64,
+            in("r9") 0u64,
             lateout("rax") ret,
             out("rcx") _,
             out("r11") _,
@@ -246,30 +266,29 @@ unsafe fn syscall6(nr: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64, a6: u64
     ret
 }
 
-// — SableWire: OXIDE syscall numbers. NOT Linux! Matches oxide-rt/src/nr.rs.
-// Using Linux numbers here is a one-way ticket to calling SETPGID when you
-// meant MMAP. Don't ask how we found out.
-const SYS_EXIT: u64 = 0;
-const SYS_FORK: u64 = 3;
-const SYS_WAITPID: u64 = 6;
-const SYS_GETPID: u64 = 7;
-const SYS_GETPPID: u64 = 8;
-const SYS_EXECVE: u64 = 13;
-const SYS_PIPE: u64 = 37;
-const SYS_KILL: u64 = 50;
-const SYS_RT_SIGACTION: u64 = 51;
-const SYS_RT_SIGPROCMASK: u64 = 52;
-const SYS_NANOSLEEP: u64 = 63;
-const SYS_CLOCK_GETTIME: u64 = 61;
-const SYS_SOCKET: u64 = 70;
-const SYS_BIND: u64 = 71;
-const SYS_MMAP: u64 = 90;
-const SYS_MUNMAP: u64 = 91;
-const SYS_BRK: u64 = 94;
-const SYS_READ: u64 = 2;
+const SYS_EXIT: u64 = 60;
+const SYS_FORK: u64 = 57;
+const SYS_WAITPID: u64 = 61;
+const SYS_GETPID: u64 = 39;
+const SYS_GETPPID: u64 = 110;
+const SYS_STAT: u64 = 4;
+const SYS_SIGRETURN: u64 = 15;
+const SYS_EXECVE: u64 = 59;
+const SYS_PIPE: u64 = 22;
+const SYS_KILL: u64 = 62;
+const SYS_RT_SIGACTION: u64 = 13;
+const SYS_RT_SIGPROCMASK: u64 = 14;
+const SYS_NANOSLEEP: u64 = 35;
+const SYS_CLOCK_GETTIME: u64 = 228;
+const SYS_SOCKET: u64 = 41;
+const SYS_BIND: u64 = 49;
+const SYS_MMAP: u64 = 9;
+const SYS_MUNMAP: u64 = 11;
+const SYS_BRK: u64 = 12;
+const SYS_READ: u64 = 0;
 const SYS_WRITE: u64 = 1;
-const SYS_CLOSE: u64 = 21;
-const SYS_SCHED_YIELD: u64 = 130;
+const SYS_CLOSE: u64 = 3;
+const SYS_SCHED_YIELD: u64 = 24;
 
 // Signal numbers
 const SIGUSR1: i32 = 10;
@@ -301,6 +320,13 @@ const CLOCK_MONOTONIC: u64 = 1;
 // Wait flags
 const WNOHANG: u64 = 1;
 
+#[inline]
+fn raw_test_log(msg: &'static str) {
+    unsafe {
+        let _ = syscall3(SYS_WRITE, 1, msg.as_ptr() as u64, msg.len() as u64);
+    }
+}
+
 // ============================================================================
 // Signal trampoline and handler infrastructure
 // ============================================================================
@@ -325,8 +351,9 @@ extern "C" fn sig_handler_callback(signum: i32) {
 #[unsafe(naked)]
 unsafe extern "C" fn signal_restorer() {
     core::arch::naked_asm!(
-        "mov rax, 57", // SYS_SIGRETURN (OXIDE nr, NOT Linux 15)
+        "mov rax, {sigreturn_nr}",
         "syscall",
+        sigreturn_nr = const SYS_SIGRETURN,
     );
 }
 
@@ -621,7 +648,7 @@ fn test_stack_growth(t: &mut TestRunner) {
     t.detail("recursed 30 frames deep without stack overflow");
 }
 
-fn test_alloc_after_fork(t: &mut TestRunner) -> Result<(), String> {
+fn test_alloc_after_fork(_t: &mut TestRunner) -> Result<(), String> {
     // — CrashBloom: fork, both parent and child allocate, verify isolation
     let pid = unsafe { syscall0(SYS_FORK) };
 
@@ -658,17 +685,20 @@ fn test_alloc_after_fork(t: &mut TestRunner) -> Result<(), String> {
         return Err(format!("wait4 failed: {}", waited));
     }
 
+    raw_test_log("[OXIDE-TEST]   alloc_after_fork: wait returned\n");
+
     // — CrashBloom: WEXITSTATUS = (status >> 8) & 0xFF on Linux
     let exit_code = (status >> 8) & 0xFF;
     if exit_code != 0 {
         return Err(format!("child exited with {}", exit_code));
     }
 
-    t.detail("parent and child allocated independently");
+    raw_test_log("[OXIDE-TEST]   alloc_after_fork: child exit code clean\n");
+    raw_test_log("[OXIDE-TEST]   parent and child allocated independently\n");
     Ok(())
 }
 
-fn test_cow_pages(t: &mut TestRunner) -> Result<(), String> {
+fn test_cow_pages(_t: &mut TestRunner) -> Result<(), String> {
     // — CrashBloom: fork, write to a shared allocation, verify COW triggers
     let mut shared_data = vec![0xAAu8; 4096];
     let _original_addr = shared_data.as_ptr() as u64;
@@ -692,20 +722,28 @@ fn test_cow_pages(t: &mut TestRunner) -> Result<(), String> {
 
     // — CrashBloom: parent — our data should still be 0xAA
     let mut status: i32 = 0;
-    let _ = unsafe {
+    let waited = unsafe {
         syscall3(SYS_WAITPID, pid as u64, &mut status as *mut i32 as u64, 0)
     };
+
+    if waited < 0 {
+        return Err(format!("waitpid failed: {}", waited));
+    }
+
+    raw_test_log("[OXIDE-TEST]   cow_pages: wait returned\n");
 
     if shared_data[0] != 0xAA {
         return Err(format!("COW failed: parent data corrupted to {:#x}", shared_data[0]));
     }
+
+    raw_test_log("[OXIDE-TEST]   cow_pages: parent data intact\n");
 
     let exit_code = (status >> 8) & 0xFF;
     if exit_code != 0 {
         return Err(format!("child failed COW write, exited {}", exit_code));
     }
 
-    t.detail("COW isolation verified between parent and child");
+    raw_test_log("[OXIDE-TEST]   COW isolation verified between parent and child\n");
     Ok(())
 }
 
@@ -877,6 +915,59 @@ fn test_exec_basic(t: &mut TestRunner) -> Result<(), String> {
     } else {
         t.detail(&format!("exec /usr/bin/echo exited {}", exit_code));
     }
+    Ok(())
+}
+
+fn test_python_startup(t: &mut TestRunner) -> Result<(), String> {
+    // — CrashBloom: if CPython startup regresses, catch it here instead of
+    // discovering it during an interactive "why is REPL dead?" autopsy.
+    let pid = unsafe { syscall0(SYS_FORK) };
+    if pid < 0 {
+        return Err(format!("fork failed: {}", pid));
+    }
+    if pid == 0 {
+        let path = b"/usr/bin/python\0";
+        let arg0 = b"python\0";
+        let arg1 = b"-c\0";
+        let arg2 = b"import _pyrepl,sys;sys.stdout.write('python-smoke-ok\\n')\0";
+        let argv: [*const u8; 4] = [
+            arg0.as_ptr(),
+            arg1.as_ptr(),
+            arg2.as_ptr(),
+            core::ptr::null(),
+        ];
+        let envp: [*const u8; 1] = [core::ptr::null()];
+        let exec_ret = unsafe {
+            syscall3(
+                SYS_EXECVE,
+                path.as_ptr() as u64,
+                argv.as_ptr() as u64,
+                envp.as_ptr() as u64,
+            )
+        };
+        if exec_ret < 0 {
+            unsafe { syscall1(SYS_EXIT, 127) };
+        } else {
+            unsafe { syscall1(SYS_EXIT, 0) };
+        }
+        unreachable!();
+    }
+
+    let mut status: i32 = 0;
+    let waited = unsafe { syscall3(SYS_WAITPID, pid as u64, &mut status as *mut i32 as u64, 0) };
+    if waited != pid {
+        return Err(format!("waitpid returned {}, expected {}", waited, pid));
+    }
+
+    let exit_code = (status >> 8) & 0xFF;
+    if exit_code != 0 {
+        return Err(format!(
+            "python smoke exited {} (status={:#x})",
+            exit_code, status
+        ));
+    }
+
+    t.detail("python startup/import smoke passed");
     Ok(())
 }
 
@@ -1149,7 +1240,7 @@ fn test_stat(t: &mut TestRunner) -> Result<(), String> {
         let mut stat_buf = [0u8; 104]; // sizeof(Stat)
         let ret = unsafe {
             syscall3(
-                24, // SYS_STAT
+                SYS_STAT,
                 path.as_ptr() as u64,
                 path.len() as u64,
                 stat_buf.as_mut_ptr() as u64,
@@ -1883,6 +1974,7 @@ fn main() {
     t.section("Process Management");
     t.run_may_fail("test_fork_basic", test_fork_basic);
     t.run_may_fail("test_exec_basic", test_exec_basic);
+    t.run_may_fail("test_python_startup", test_python_startup);
     t.run_may_fail("test_getpid_getppid", test_getpid_getppid);
     t.run_may_fail("test_exit_status", test_exit_status);
     t.run_may_fail("test_waitpid", test_waitpid);

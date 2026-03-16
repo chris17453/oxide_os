@@ -2,9 +2,11 @@
 # — IronGhost: "Cross-compiling CPython is like performing open-heart surgery on a running engine. Fun times."
 
 # Additional configure flags for OXIDE
+# — IronGhost: Keep pymalloc ON. OXIDE libc's bump allocator has no free(),
+# so forcing all CPython small objects through libc malloc burns heap arena
+# space fast and detonates as startup MemoryError.
 CONFIGURE_FLAGS="
   --without-ensurepip
-  --without-pymalloc
   --disable-ipv6
   --disable-shared
   --enable-static

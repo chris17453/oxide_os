@@ -626,8 +626,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           memory: {
             type: "string",
-            description: "Memory size (default: 256M)",
-            default: "256M",
+            description: "Memory size (default: 512M, matches make run)",
+            default: "512M",
           },
           networking: {
             type: "boolean",

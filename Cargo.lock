@@ -654,10 +654,16 @@ dependencies = [
  "mm-cow",
  "mm-heap",
  "mm-manager",
+ "mm-pagecache",
  "mm-pagedb",
  "mm-paging",
+ "mm-reclaim",
+ "mm-slab",
+ "mm-swap",
+ "mm-thp",
  "mm-traits",
  "mm-vma",
+ "mm-vmstat",
  "module",
  "net",
  "os_core",
@@ -688,6 +694,7 @@ dependencies = [
  "virtio-snd",
  "vkbd",
  "vt",
+ "waitqueue",
 ]
 
 [[package]]
@@ -820,6 +827,7 @@ dependencies = [
  "log",
  "mm-pagedb",
  "mm-traits",
+ "mm-vmstat",
  "os_core",
  "os_log",
  "spin 0.9.8",
@@ -850,7 +858,19 @@ version = "0.1.0"
 dependencies = [
  "log",
  "mm-core",
+ "mm-reclaim",
  "mm-traits",
+ "os_core",
+ "os_log",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "mm-pagecache"
+version = "0.1.0"
+dependencies = [
+ "mm-pagedb",
+ "mm-vmstat",
  "os_core",
  "spin 0.9.8",
 ]
@@ -876,6 +896,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "mm-reclaim"
+version = "0.1.0"
+dependencies = [
+ "mm-core",
+ "mm-pagecache",
+ "mm-pagedb",
+ "mm-traits",
+ "mm-vmstat",
+ "os_core",
+ "os_log",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "mm-slab"
+version = "0.1.0"
+dependencies = [
+ "mm-heap",
+ "os_core",
+ "os_log",
+]
+
+[[package]]
+name = "mm-swap"
+version = "0.1.0"
+dependencies = [
+ "mm-pagedb",
+ "mm-traits",
+ "mm-vmstat",
+ "os_core",
+ "os_log",
+ "spin 0.9.8",
+]
+
+[[package]]
+name = "mm-thp"
+version = "0.1.0"
+dependencies = [
+ "mm-core",
+ "mm-pagedb",
+ "mm-traits",
+ "mm-vmstat",
+ "os_core",
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "mm-traits"
 version = "0.1.0"
 dependencies = [
@@ -890,6 +957,10 @@ dependencies = [
  "os_core",
  "os_log",
 ]
+
+[[package]]
+name = "mm-vmstat"
+version = "0.1.0"
 
 [[package]]
 name = "mmap"
@@ -1153,6 +1224,14 @@ dependencies = [
 name = "procfs"
 version = "0.1.0"
 dependencies = [
+ "mm-core",
+ "mm-manager",
+ "mm-pagecache",
+ "mm-pagedb",
+ "mm-reclaim",
+ "mm-swap",
+ "mm-vma",
+ "mm-vmstat",
  "os_core",
  "proc",
  "proc-traits",
@@ -1580,8 +1659,10 @@ dependencies = [
  "mm-cow",
  "mm-manager",
  "mm-pagedb",
+ "mm-reclaim",
  "mm-traits",
  "mm-vma",
+ "mm-vmstat",
  "mmap",
  "net",
  "os_core",
@@ -1595,6 +1676,7 @@ dependencies = [
  "spin 0.9.8",
  "tcpip",
  "vfs",
+ "waitqueue",
 ]
 
 [[package]]
@@ -1738,6 +1820,7 @@ dependencies = [
  "bitflags 2.10.0",
  "os_core",
  "spin 0.9.8",
+ "waitqueue",
 ]
 
 [[package]]
@@ -1863,6 +1946,7 @@ dependencies = [
  "terminal",
  "tty",
  "vfs",
+ "waitqueue",
 ]
 
 [[package]]
@@ -1871,6 +1955,10 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.10.0",
 ]
+
+[[package]]
+name = "waitqueue"
+version = "0.1.0"
 
 [[package]]
 name = "wasip2"

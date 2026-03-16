@@ -7,24 +7,25 @@ use core::sync::atomic::AtomicBool;
 
 use arch_traits::Arch;
 use crate::arch::Arch as ArchType;
-// — ColdCipher: KernelHeap resolves to LockedHardenedHeap when heap-hardening
-// is active, plain LockedHeap otherwise. The feature flag does the heavy lifting;
-// we just stop lying about which type we want.
-use mm_heap::{new_kernel_heap, KernelHeap};
+// — TorqueJax: SlabAllocator wraps per-CPU slab caches for small allocs
+// (≤2048 bytes) with the existing KernelHeap as fallback for large allocs
+// and early boot. The hot path has ZERO lock contention — each CPU touches
+// only its own cache with preemption disabled.
+use mm_slab::SlabAllocator;
 use mm_manager::MemoryManager;
 use mm_pagedb::PageDatabase;
 use spin::{Mutex, MutexGuard};
 
-/// Global kernel heap allocator — hardened by default (P3.2).
+/// Global kernel heap allocator — per-CPU slab + hardened fallback.
 ///
-/// When the `heap-hardening` feature is enabled (the default), every allocation
-/// gets 16-byte redzones filled with 0xFD, a trailing 0xDEAD_BEEF_CAFE_BABE
-/// canary, and freed memory is poisoned with 0xDD.  Corruption is reported at
-/// deallocation time via the `corruption_count` counter.
+/// Small allocations (≤2048 bytes) go through per-CPU slab caches with
+/// zero lock contention. Large allocations and early boot fall through to
+/// the hardened LinkedListAllocator (with redzones, canaries, poison fill).
 ///
-/// — ColdCipher: because "hope nobody overflows the heap" isn't a security policy.
+/// — TorqueJax: 4 CPUs no longer fight over one spinlock on every alloc.
+/// Page fault handlers can allocate without deadlocking the heap.
 #[global_allocator]
-pub static HEAP_ALLOCATOR: KernelHeap = new_kernel_heap();
+pub static HEAP_ALLOCATOR: SlabAllocator = SlabAllocator::new();
 
 /// Heap size: 16 MB
 pub const HEAP_SIZE: usize = 32 * 1024 * 1024; // 32MB for large executables like Python
@@ -55,6 +56,12 @@ pub static mut KERNEL_PML4: u64 = 0;
 /// triple-fault (exception handlers can't even load from unmapped kernel addresses).
 /// This is the canary that screams before the mine explodes.
 pub static mut KERNEL_PML4_256_ENTRY: u64 = 0;
+
+/// — CrashBloom: Golden reference for PML4[511] — high-half kernel mapping.
+/// IDT/GDT/text/data all live under this slot. If it diverges from the boot
+/// template, interrupts fault trying to read kernel structures and the CPU
+/// cascades into #DF/#TF before we can log anything useful.
+pub static mut KERNEL_PML4_511_ENTRY: u64 = 0;
 
 /// Mutex that disables preemption while locked so the scheduler interrupt
 /// doesn't deadlock trying to take a lock already held by the preempted task.
@@ -146,4 +153,3 @@ pub static PARENT_CONTEXT: Mutex<Option<ParentContext>> = Mutex::new(None);
 
 /// Flag indicating a child has exited and we should return to parent
 pub static CHILD_DONE: AtomicBool = AtomicBool::new(false);
-

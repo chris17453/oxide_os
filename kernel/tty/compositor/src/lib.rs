@@ -24,8 +24,9 @@ use spin::Mutex;
 use backing_fb::BackingFramebuffer;
 use events::{EventHandler, DragState, HitZone, MouseState};
 use fb::Framebuffer;
-use layout::{Layout, LayoutManager, ScrollbarFlags, Viewport, ViewportGeometry, MAX_VTS, MAX_TILES,
+use layout::{Layout, LayoutManager, ScrollbarFlags, Viewport, ViewportGeometry, MAX_TILES,
              SCROLLBAR_WIDTH, SCROLLBAR_HEIGHT};
+pub use layout::{MAX_VTS, LOG_VT};
 use scrollbar::{Scrollbar, Orientation, ScrollContent, ScrollbarHitZone, PartState};
 
 /// VT display mode — text terminal or raw graphics
@@ -48,6 +49,7 @@ static VT_DIRTY: [AtomicBool; MAX_VTS] = [
     AtomicBool::new(false),
     AtomicBool::new(false),
     AtomicBool::new(false),
+    AtomicBool::new(false), // — NeonVale: LOG VT
 ];
 
 /// Global full-redraw flag — set on layout change or VT switch
@@ -61,6 +63,27 @@ static CURSOR_DIRTY: AtomicBool = AtomicBool::new(false);
 
 /// — EchoFrame: scrollbar visual state changed — needs redraw without full VT blit
 static SCROLLBAR_DIRTY: AtomicBool = AtomicBool::new(false);
+
+/// — GlassSignal: bottom status bar height in pixels. Always visible.
+/// Dark bg, green for active VT, dim for inactive, accent for KB button. — SableWire
+const STATUSBAR_HEIGHT: u32 = 24;
+
+/// — GlassSignal: status bar dirty flag. Set on VT switch, OSK toggle, init. — SableWire
+static STATUSBAR_DIRTY: AtomicBool = AtomicBool::new(true);
+
+/// — SableWire: deferred layout change flag. Set in tick() (ISR) when reserved_bottom
+/// changes but we can't call apply_layout_change (blocking locks). Consumed by next
+/// non-ISR focus_vt or explicit layout change. Terminal resize + SIGWINCH happen then.
+static PENDING_LAYOUT_CHANGE: AtomicBool = AtomicBool::new(false);
+
+/// — GlassSignal: status bar colors — cyberpunk aesthetic for the strip at the bottom
+const SB_BG_COLOR: u32 = 0xFF0D0D1A;        // near-black background
+const SB_ACTIVE_VT_COLOR: u32 = 0xFF00AA55; // green for focused VT
+const SB_INACTIVE_VT_COLOR: u32 = 0xFF333344; // dim for unfocused VTs
+const SB_KB_COLOR: u32 = 0xFF0088CC;        // accent blue for KB toggle button
+const SB_TEXT_COLOR: u32 = 0xFFE0E0E0;      // white text
+/// — NeonVale: amber color for the LOG VT button in the status bar
+const SB_LOG_COLOR: u32 = 0xFFCC8800;
 
 /// — SoftGlyph: lock-free mouse init flag. Set once when compositor creates the
 /// cursor. ISR code checks this instead of try_lock() on the compositor mutex —
@@ -126,42 +149,59 @@ pub struct Compositor {
 }
 
 impl Compositor {
-    /// Create a new compositor. Only VT0 gets a VFB at init —
-    /// the rest are allocated on demand when split/switch triggers them.
-    /// — NeonRoot: saves ~15MB at boot. Buffers appear when you need them.
+    /// Create a new compositor. Pre-allocates ALL VT backing buffers at boot.
+    /// — SableWire: lazy allocation caused too many init-order headaches and
+    /// race conditions. ~24MB upfront is cheap insurance against display bugs.
     fn new(hw_fb: Arc<dyn Framebuffer>) -> Self {
         let width = hw_fb.width();
         let height = hw_fb.height();
         let format = hw_fb.format();
 
-        os_log::println!("[COMP] init {}x{} stride={} bpp={} (lazy alloc, VT0 only)",
+        os_log::println!("[COMP] init {}x{} stride={} bpp={} (eager alloc, all VTs)",
             width, height, hw_fb.stride(), format.bytes_per_pixel() * 8);
 
-        let layout = LayoutManager::new(width, height);
+        let mut layout = LayoutManager::new(width, height);
         let cell_width = DEFAULT_CELL_WIDTH;
         let cell_height = DEFAULT_CELL_HEIGHT;
 
-        // — GlassSignal: VT0 gets vertical scrollbar track always reserved
-        let mut vt_scrollbar_flags = [ScrollbarFlags::default(); MAX_VTS];
-        vt_scrollbar_flags[0] = ScrollbarFlags { vscroll: true, hscroll: false };
+        // — GlassSignal: reserve bottom area for status bar (+ OSK if visible)
+        let reserved = STATUSBAR_HEIGHT + vkbd::keyboard_height();
+        layout.set_reserved_bottom(reserved);
+        vkbd::set_bottom_offset(STATUSBAR_HEIGHT);
 
-        // — GlassSignal: compute initial geometries (Fullscreen, VT0 only)
+        // — GlassSignal: all VTs get vertical scrollbar track reserved
+        let mut vt_scrollbar_flags = [ScrollbarFlags::default(); MAX_VTS];
+        for i in 0..MAX_VTS {
+            vt_scrollbar_flags[i] = ScrollbarFlags { vscroll: true, hscroll: false };
+        }
+
+        // — GlassSignal: compute initial geometries (Fullscreen, VT0 only visible)
         let vt_geometries = layout.recompute_geometries(cell_width, cell_height, &vt_scrollbar_flags);
 
-        // — NeonRoot: VT0's VFB sized to its usable viewport area, not full screen.
-        // In fullscreen mode with no chrome, usable == total == hw_fb dimensions.
-        let vt0_geom = vt_geometries[0].unwrap();
-        let vt0_stride = vt0_geom.usable_width * format.bytes_per_pixel() as u32;
-        let vt0_buf = BackingFramebuffer::new(
-            vt0_geom.usable_width, vt0_geom.usable_height,
-            vt0_stride, format,
-        );
-        os_log::println!("[COMP] VT0 buffer: {}KB ({}x{})",
-            vt0_buf.size() / 1024, vt0_geom.usable_width, vt0_geom.usable_height);
-
+        // — SableWire: pre-allocate ALL VT backing buffers. Off-screen VTs
+        // use the same dimensions as VT0 (fullscreen usable area) so every VT
+        // starts consistent. VT0 is just an alias for the active VT — all VTs
+        // should be the same size. — GlassSignal: the old code gave VT0 the
+        // scrollbar-reduced width (usable_width) but VT1-5 got raw screen size.
+        // That's a 16px mismatch that corrupts stride calculations on VT switch.
+        let default_w = vt_geometries[0].map_or(width, |g| g.usable_width);
+        let default_h = vt_geometries[0].map_or(height, |g| g.usable_height);
         let mut vt_buffers: [Option<Arc<BackingFramebuffer>>; MAX_VTS] =
             core::array::from_fn(|_| None);
-        vt_buffers[0] = Some(Arc::new(vt0_buf));
+        for i in 0..MAX_VTS {
+            let (w, h) = if let Some(geom) = vt_geometries[i] {
+                (geom.usable_width, geom.usable_height)
+            } else {
+                // — SableWire: off-screen VTs get same dims as the visible one.
+                // They'll resize on first layout change anyway.
+                (default_w, default_h)
+            };
+            let stride = w * format.bytes_per_pixel() as u32;
+            let buf = BackingFramebuffer::new(w, h, stride, format);
+            os_log::println!("[COMP] VT{} buffer: {}KB ({}x{})",
+                i, buf.size() / 1024, w, h);
+            vt_buffers[i] = Some(Arc::new(buf));
+        }
 
         // — GlassSignal: border colors — dark gray divider, cyan focus highlight
         let border_color = 0xFF333333; // dark gray ARGB
@@ -365,12 +405,11 @@ impl Compositor {
             cursor.erase(&*self.hw_fb);
         }
 
-        // — InputShade: when vkbd is visible, clip VT blit height so we don't
-        // overwrite the keyboard pixels on hw_fb. The vkbd overlay persists
-        // between frames — only redrawn when vkbd_d or full_r. Without this clip,
-        // every cursor blink → VT blit overwrites keyboard → must repaint 80 keys
-        // → 1.4MB of pixel writes → 1 FPS. With clip: keyboard area untouched.
-        let vkbd_clip = vkbd::keyboard_height();
+        // — InputShade: clip VT blit height to avoid overwriting status bar + OSK.
+        // The status bar is always visible; OSK renders above it when shown.
+        // Without this clip, every cursor blink → overwrites bottom chrome → repaint hell.
+        // — GlassSignal: total_bottom_reserved = STATUSBAR_HEIGHT + keyboard_height(). — SableWire
+        let vkbd_clip = vkbd::total_bottom_reserved();
 
         let mut any_vt_blitted = false;
         for slot_idx in 0..tile_count {
@@ -633,6 +672,108 @@ impl Compositor {
     /// comment for why per-pixel MMIO writes are a death sentence in ISR context.
     fn fill_hw_rect(&self, x: usize, y: usize, w: usize, h: usize, color_argb: u32) {
         fill_hw_rect_static(self.hw_fb.as_ref(), x, y, w, h, color_argb);
+    }
+
+    /// — GlassSignal: draw the bottom status bar. VT1-VT6 buttons + KB toggle.
+    /// Active VT glows green, others are dim. KB button is accent blue.
+    /// Renders at Y = screen_h - STATUSBAR_HEIGHT. Uses PSF2 font for labels.
+    /// No heap allocation, no locks beyond what we already hold. — SableWire
+    fn draw_statusbar(&self) {
+        let screen_w = self.hw_fb.width();
+        let screen_h = self.hw_fb.height();
+        let bar_y = screen_h.saturating_sub(STATUSBAR_HEIGHT) as usize;
+        let focused_vt = self.layout.focused_vt();
+
+        // — GlassSignal: fill bar background
+        self.fill_hw_rect(0, bar_y, screen_w as usize, STATUSBAR_HEIGHT as usize, SB_BG_COLOR);
+
+        let btn_w = 40usize;
+        let btn_h = 18usize;
+        let btn_y = bar_y + 3; // 3px top margin within bar
+        let btn_gap = 4usize;
+        let mut btn_x = 8usize; // left margin
+
+        // — GlassSignal: VT1-VT6 buttons + LOG button — NeonVale
+        for vt in 0..MAX_VTS {
+            let is_log = vt == LOG_VT;
+            let btn_color = if vt == focused_vt {
+                SB_ACTIVE_VT_COLOR
+            } else if is_log {
+                SB_LOG_COLOR
+            } else {
+                SB_INACTIVE_VT_COLOR
+            };
+            self.fill_hw_rect(btn_x, btn_y, btn_w, btn_h, btn_color);
+            if is_log {
+                self.draw_text_on_hw(btn_x, btn_y, btn_w, btn_h, b"LOG", SB_TEXT_COLOR);
+            } else {
+                let label: [u8; 3] = [b'V', b'T', b'1' + vt as u8];
+                self.draw_text_on_hw(btn_x, btn_y, btn_w, btn_h, &label, SB_TEXT_COLOR);
+            }
+            btn_x += btn_w + btn_gap;
+        }
+
+        // — GlassSignal: KB toggle button on the right side
+        let kb_x = screen_w as usize - btn_w - 8;
+        let kb_color = if vkbd::is_visible() { SB_ACTIVE_VT_COLOR } else { SB_KB_COLOR };
+        self.fill_hw_rect(kb_x, btn_y, btn_w, btn_h, kb_color);
+        self.draw_text_on_hw(kb_x, btn_y, btn_w, btn_h, b"KB", SB_TEXT_COLOR);
+    }
+
+    /// — GlassSignal: draw text centered in a rectangle on the hardware framebuffer.
+    /// Uses PSF2 font glyphs. No allocation. — SableWire
+    fn draw_text_on_hw(&self, x: usize, y: usize, w: usize, h: usize,
+                       text: &[u8], color_argb: u32) {
+        let font = &fb::font::PSF2_FONT;
+        let glyph_w = font.width as usize;
+        let glyph_h = font.height as usize;
+        let label_w = text.len() * glyph_w;
+        let text_x = x + w.saturating_sub(label_w) / 2;
+        let text_y = y + h.saturating_sub(glyph_h) / 2;
+
+        let fg_pixel = match self.hw_fb.format() {
+            fb::PixelFormat::BGRA8888 => [
+                (color_argb & 0xFF) as u8,
+                ((color_argb >> 8) & 0xFF) as u8,
+                ((color_argb >> 16) & 0xFF) as u8,
+                ((color_argb >> 24) & 0xFF) as u8,
+            ],
+            _ => [
+                ((color_argb >> 16) & 0xFF) as u8,
+                ((color_argb >> 8) & 0xFF) as u8,
+                (color_argb & 0xFF) as u8,
+                ((color_argb >> 24) & 0xFF) as u8,
+            ],
+        };
+
+        let buf = self.hw_fb.buffer();
+        let stride = self.hw_fb.stride() as usize;
+        let bpp = self.hw_fb.format().bytes_per_pixel() as usize;
+
+        for (i, &ch) in text.iter().enumerate() {
+            if let Some(glyph) = font.glyph(ch as char) {
+                let gx = text_x + i * glyph_w;
+                let bytes_per_row = ((glyph.width + 7) / 8) as usize;
+                unsafe {
+                    for row in 0..glyph.height {
+                        let row_offset = (text_y + row as usize) * stride;
+                        let glyph_row_start = row as usize * bytes_per_row;
+                        for col in 0..glyph.width {
+                            let byte_idx = glyph_row_start + (col / 8) as usize;
+                            let bit_idx = 7 - (col % 8);
+                            if byte_idx < glyph.data.len()
+                                && (glyph.data[byte_idx] >> bit_idx) & 1 != 0
+                            {
+                                let offset = row_offset + (gx + col as usize) * bpp;
+                                core::ptr::copy_nonoverlapping(
+                                    fg_pixel.as_ptr(), buf.add(offset), bpp.min(4),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -1123,18 +1264,20 @@ fn fill_hw_rect_static(hw_fb: &dyn Framebuffer, x: usize, y: usize, w: usize, h:
 // ============================================================================
 
 /// Initialize the compositor. Called once during kernel boot after fb::init_from_boot().
-/// Returns the VT0 backing framebuffer for the terminal renderer.
-/// — NeonRoot: only VT0 gets a buffer at init. The rest are lazy-allocated
-/// on first split/switch. No upfront memory waste.
-pub fn init(hw_fb: Arc<dyn Framebuffer>) -> Option<Arc<dyn Framebuffer>> {
+/// Returns all VT backing framebuffers for eager terminal initialization.
+/// — SableWire: no more lazy allocation — every VT is ready to render from boot.
+pub fn init(hw_fb: Arc<dyn Framebuffer>) -> [Option<Arc<dyn Framebuffer>>; MAX_VTS] {
     let mut compositor = Compositor::new(hw_fb);
-    let vt0_fb = compositor.get_vt_framebuffer(0);
+    let mut fbs: [Option<Arc<dyn Framebuffer>>; MAX_VTS] = core::array::from_fn(|_| None);
+    for i in 0..MAX_VTS {
+        fbs[i] = compositor.get_vt_framebuffer(i);
+    }
     *COMPOSITOR.lock() = Some(compositor);
     FULL_REDRAW.store(true, Ordering::Release);
     // — SoftGlyph: set lock-free flag so ISR mouse processing knows cursor exists
     MOUSE_INITIALIZED.store(true, Ordering::Release);
-    os_log::println!("[COMP] compositor initialized (VT0 buffer allocated, rest on-demand)");
-    vt0_fb
+    os_log::println!("[COMP] compositor initialized (all {} VT buffers pre-allocated)", MAX_VTS);
+    fbs
 }
 
 /// Get the backing framebuffer for a specific VT (allocates on demand).
@@ -1162,6 +1305,78 @@ pub fn request_full_redraw() {
     FULL_REDRAW.store(true, Ordering::Release);
 }
 
+/// — GlassSignal: mark status bar as dirty (VT switch, OSK toggle). — SableWire
+#[inline]
+pub fn mark_statusbar_dirty() {
+    STATUSBAR_DIRTY.store(true, Ordering::Release);
+}
+
+/// — SableWire: flush deferred layout change. Call from non-ISR context (e.g. after
+/// OSK toggle from userspace). This processes the terminal resize + SIGWINCH that
+/// tick() couldn't do because it runs in timer ISR with blocking locks forbidden.
+pub fn flush_pending_layout() {
+    if PENDING_LAYOUT_CHANGE.swap(false, Ordering::AcqRel) {
+        if let Some(ref mut compositor) = *COMPOSITOR.lock() {
+            compositor.apply_layout_change();
+            request_full_redraw();
+        }
+    }
+}
+
+/// — EchoFrame: ISR-safe version of flush_pending_layout. Uses try_lock on both
+/// COMPOSITOR and VT_TERMINALS (via terminal::try_resize_vt). If any lock is
+/// contended, re-arms PENDING_LAYOUT_CHANGE for retry next tick. The geometry is
+/// already correct (recomputed in tick), this just tells the terminal emulators
+/// about the new dimensions so apps render to the right row/col count.
+pub fn try_flush_pending_layout() {
+    if !PENDING_LAYOUT_CHANGE.load(Ordering::Acquire) {
+        return;
+    }
+    match COMPOSITOR.try_lock() {
+        Some(mut guard) => {
+            if let Some(ref mut compositor) = *guard {
+                // — EchoFrame: geometry already recomputed in tick(). Walk visible VTs
+                // and try to resize their terminal emulators. try_resize_vt uses try_lock
+                // on VT_TERMINALS — if contended, we'll retry next tick.
+                let tile_count = compositor.layout.tile_count();
+                let viewports = compositor.layout.compute_viewports();
+                let mut all_resized = true;
+                for slot_idx in 0..tile_count {
+                    let (vt_idx, _) = viewports[slot_idx];
+                    if vt_idx >= MAX_VTS { continue; }
+                    if let Some(geom) = compositor.vt_geometries[vt_idx] {
+                        if let Some(ref buf) = compositor.vt_buffers[vt_idx] {
+                            if !terminal::try_resize_vt(vt_idx, buf.clone() as Arc<dyn Framebuffer>) {
+                                all_resized = false;
+                            } else {
+                                // — EchoFrame: notify VT layer about new winsize + SIGWINCH
+                                unsafe {
+                                    if let Some(cb) = WINSIZE_CALLBACK {
+                                        cb(
+                                            vt_idx,
+                                            geom.text_rows as u16,
+                                            geom.text_cols as u16,
+                                            geom.usable_width as u16,
+                                            geom.usable_height as u16,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if all_resized {
+                    PENDING_LAYOUT_CHANGE.store(false, Ordering::Release);
+                }
+                // — EchoFrame: if not all resized, PENDING_LAYOUT_CHANGE stays true → retry
+            }
+        }
+        None => {
+            // — EchoFrame: compositor lock contended — retry next tick
+        }
+    }
+}
+
 /// Composite all dirty VTs onto the hardware framebuffer.
 /// Called at ~100 Hz from timer ISR. Only actually composites when something changed.
 /// — SableWire: this is the only function that touches the hardware framebuffer.
@@ -1174,7 +1389,8 @@ pub fn tick() {
     let vkbd_hover_d = vkbd::take_hover_dirty();
     let vt_dirty = VT_DIRTY.iter().any(|d| d.load(Ordering::Acquire));
     let sb_dirty = SCROLLBAR_DIRTY.swap(false, Ordering::AcqRel);
-    let any_dirty = full_r || cursor_d || vkbd_d || vkbd_hover_d || vt_dirty || sb_dirty;
+    let statusbar_d = STATUSBAR_DIRTY.swap(false, Ordering::AcqRel);
+    let any_dirty = full_r || cursor_d || vkbd_d || vkbd_hover_d || vt_dirty || sb_dirty || statusbar_d;
 
     if !any_dirty {
         return;
@@ -1182,16 +1398,49 @@ pub fn tick() {
 
     // — SableWire: content dirty = needs full composite (VT blit, borders, scrollbars).
     // Cursor-only, vkbd-only, or scrollbar-hover-only changes skip the expensive path.
-    // — EchoFrame: scrollbar hover used to trigger full composite — that's insane.
-    // A 16×16 arrow highlight shouldn't blit 1024×768 of VT content. Now sb-only
-    // redraws just the scrollbar widgets directly on hw_fb, no VT blit needed.
     let content_dirty = full_r || vt_dirty;
 
     if let Some(mut guard) = COMPOSITOR.try_lock() {
         if let Some(ref mut compositor) = *guard {
-            if content_dirty {
-                // — SableWire: full composite — blit VTs, borders, scrollbars
-                compositor.composite(full_r, true);
+            // — GlassSignal: update reserved_bottom if OSK toggled.
+            // — SableWire: when reserved_bottom shrinks (OSK closed), the old keyboard
+            // pixels linger on hw_fb. Force full composite so VT content reblits over
+            // the dead zone. Without this, closing the OSK leaves ghost keys.
+            // — SableWire: CRITICAL: do NOT call apply_layout_change() here — we're
+            // in the timer ISR. apply_layout_change calls terminal::resize_vt which
+            // does a blocking lock on VT_TERMINALS → instant deadlock if held.
+            // BUT we CAN recompute geometries (pure math) and reposition scrollbar
+            // widgets so the compositor blits to the right places immediately.
+            // The terminal resize + SIGWINCH is still deferred to non-ISR context.
+            // — EchoFrame: OSK goes UNDER the tileable area. VT viewports shrink
+            // when OSK opens, scrollbars shrink with them. No occlusion.
+            let mut force_composite = false;
+            if vkbd_d || full_r {
+                let new_reserved = STATUSBAR_HEIGHT + vkbd::keyboard_height();
+                if compositor.layout.set_reserved_bottom(new_reserved) {
+                    force_composite = true;
+                    // — EchoFrame: recompute viewport geometries so VTs shrink/grow
+                    // to accommodate the OSK. Pure math — no locks, no allocs.
+                    compositor.vt_geometries = compositor.layout.recompute_geometries(
+                        compositor.cell_width, compositor.cell_height,
+                        &compositor.vt_scrollbar_flags,
+                    );
+                    // — EchoFrame: scrollbar rects must follow the new geometry
+                    compositor.update_scrollbar_rects();
+                    // — SableWire: mark all VTs dirty so the full blit covers the old OSK area
+                    for d in VT_DIRTY.iter() {
+                        d.store(true, Ordering::Release);
+                    }
+                    // — SableWire: defer terminal resize + SIGWINCH to non-ISR context
+                    PENDING_LAYOUT_CHANGE.store(true, Ordering::Release);
+                }
+            }
+
+            if content_dirty || force_composite {
+                // — SableWire: full composite — blit VTs, borders, scrollbars.
+                // force_composite means layout changed — treat as full redraw so
+                // VT blit isn't clipped to old reserved area. — SableWire
+                compositor.composite(full_r || force_composite, true);
             } else if sb_dirty {
                 // — EchoFrame: scrollbar-only redraw — skip VT blit, just repaint
                 // scrollbar widgets directly on hw_fb. ~30 fill_rects vs full blit.
@@ -1205,12 +1454,16 @@ pub fn tick() {
                     cursor.erase(&*compositor.hw_fb);
                 }
             }
-            // — InputShade: draw virtual keyboard overlay after VT blit.
+            // — GlassSignal: status bar renders below VT content, above OSK.
+            // Always redrawn on full_r, VT switch, OSK toggle, or statusbar_d flag.
+            // force_composite means layout changed — must repaint status bar too. — SableWire
+            if full_r || statusbar_d || vkbd_d || force_composite {
+                compositor.draw_statusbar();
+            }
+            // — InputShade: draw virtual keyboard overlay after status bar.
             // Full repaint on toggle/press or full redraw — the VT blit is clipped to
             // avoid overwriting the keyboard area, so the overlay persists on hw_fb.
             // Hover-only changes use the fast path: repaint just 2 keys, not all ~100.
-            // — SableWire: the old approach repainted 100 keys per mouse move = 1 FPS.
-            // Now hover = 2 fill_rects + 2 glyph renders. Night and day.
             if vkbd::is_visible() {
                 if vkbd_d || full_r {
                     vkbd::draw_overlay(&*compositor.hw_fb);
@@ -1223,8 +1476,7 @@ pub fn tick() {
                 cursor.redraw(&*compositor.hw_fb);
             }
             // — GlassSignal: ONE flush after ALL layers (VT content + scrollbars +
-            // borders + vkbd overlay + mouse cursor). This is the ONLY place that
-            // sends pixels to VirtIO-GPU. — SableWire
+            // borders + status bar + vkbd overlay + mouse cursor). — SableWire
             compositor.hw_fb.flush();
         }
     }
@@ -1235,10 +1487,48 @@ pub fn tick() {
 /// Called from Alt+Fn keyboard shortcut.
 pub fn focus_vt(vt_num: usize) {
     if let Some(ref mut compositor) = *COMPOSITOR.lock() {
+        // — SableWire: consume deferred layout change from tick() ISR context.
+        // Now safe to call apply_layout_change — we're not in ISR, blocking locks OK.
+        PENDING_LAYOUT_CHANGE.swap(false, Ordering::AcqRel);
         compositor.layout.focus_vt(vt_num);
         compositor.apply_layout_change();
         COMPOSITOR_FOCUS_VT.store(compositor.layout.focused_vt(), Ordering::Release);
         request_full_redraw();
+        mark_statusbar_dirty();
+    }
+}
+
+/// — GraveShift: ISR-safe VT focus switch. Uses try_lock on COMPOSITOR.
+/// Skips apply_layout_change (which calls terminal::resize_vt → VT_TERMINALS.lock())
+/// to avoid deadlock. Instead just updates focus index and requests full redraw.
+/// The geometry is already computed for all 6 VTs — switching focus in fullscreen
+/// mode doesn't change geometry, just which VT gets blitted.
+/// Returns false if COMPOSITOR lock is contended — caller should retry next tick.
+pub fn try_focus_vt(vt_num: usize) -> bool {
+    match COMPOSITOR.try_lock() {
+        Some(mut guard) => {
+            if let Some(ref mut compositor) = *guard {
+                compositor.layout.focus_vt(vt_num);
+                // — GraveShift: skip apply_layout_change() — it calls terminal::resize_vt
+                // which uses blocking .lock(). In fullscreen mode, geometry doesn't change
+                // on VT switch. If we're in split mode and geometry matters, it'll get
+                // fixed up on the next non-ISR focus_vt call or layout change.
+                // — EchoFrame: BUT we must recompute geometries + reposition scrollbar
+                // widgets for the new VT. recompute_geometries and update_scrollbar_rects
+                // are pure math — no locks, no allocs, ISR-safe. Without this, only the
+                // VT visible at boot gets geometry/scrollbar rects; every other VT's
+                // scrollbars stay at (0,0,0,0) and draw() bails silently.
+                compositor.vt_geometries = compositor.layout.recompute_geometries(
+                    compositor.cell_width, compositor.cell_height, &compositor.vt_scrollbar_flags,
+                );
+                compositor.update_scrollbar_rects();
+                COMPOSITOR_FOCUS_VT.store(compositor.layout.focused_vt(), Ordering::Release);
+                request_full_redraw();
+                mark_statusbar_dirty();
+            }
+            true
+        }
+        None => false,
     }
 }
 
@@ -1578,4 +1868,56 @@ pub fn screen_dimensions() -> Option<(u32, u32)> {
         }
     }
     None
+}
+
+/// — GlassSignal: status bar click action. Returned by hit_test_statusbar(). — SableWire
+pub enum StatusBarAction {
+    /// Clicked on a VT button — switch to this VT (0-indexed)
+    SwitchVt(usize),
+    /// Clicked on the KB toggle button
+    ToggleOSK,
+    /// Click was in status bar area but didn't hit any button
+    None,
+}
+
+/// — GlassSignal: hit-test click against the status bar region.
+/// Returns the action to take, or None if the click missed the status bar.
+/// Lock-free geometry check — button positions match draw_statusbar(). — SableWire
+pub fn hit_test_statusbar(x: i32, y: i32) -> Option<StatusBarAction> {
+    let guard = COMPOSITOR.try_lock()?;
+    let compositor = guard.as_ref()?;
+    let screen_w = compositor.hw_fb.width();
+    let screen_h = compositor.hw_fb.height();
+
+    let bar_y = screen_h.saturating_sub(STATUSBAR_HEIGHT);
+    if (y as u32) < bar_y || y < 0 {
+        return None; // — GlassSignal: click above status bar
+    }
+
+    let btn_w = 40u32;
+    let btn_gap = 4u32;
+    let mut btn_x = 8u32;
+    let click_x = x as u32;
+
+    // — GlassSignal: check VT buttons
+    for vt in 0..MAX_VTS {
+        if click_x >= btn_x && (click_x) < btn_x + btn_w {
+            return Some(StatusBarAction::SwitchVt(vt));
+        }
+        btn_x += btn_w + btn_gap;
+    }
+
+    // — GlassSignal: check KB button (right side)
+    let kb_x = screen_w - btn_w - 8;
+    if click_x >= kb_x && (click_x) < kb_x + btn_w {
+        return Some(StatusBarAction::ToggleOSK);
+    }
+
+    Some(StatusBarAction::None)
+}
+
+/// — GlassSignal: get status bar height in pixels. Always visible. — SableWire
+#[inline]
+pub fn statusbar_height() -> u32 {
+    STATUSBAR_HEIGHT
 }

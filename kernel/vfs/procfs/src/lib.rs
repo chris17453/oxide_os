@@ -130,6 +130,10 @@ impl VnodeOps for ProcFs {
             "devices" => return Ok(Arc::new(ProcDevices { ino: 9 })),
             "filesystems" => return Ok(Arc::new(ProcFilesystems { ino: 10 })),
             "mounts" => return Ok(Arc::new(ProcMounts { ino: 11 })),
+            "vmstat" => return Ok(Arc::new(ProcVmstat { ino: 12 })),
+            "zoneinfo" => return Ok(Arc::new(ProcZoneinfo { ino: 13 })),
+            "sys" => return Ok(Arc::new(ProcSys { ino: 14 })),
+            "swaps" => return Ok(Arc::new(ProcSwaps { ino: 15 })),
             _ => {}
         }
 
@@ -172,6 +176,10 @@ impl VnodeOps for ProcFs {
             ("devices", 9, VnodeType::File),
             ("filesystems", 10, VnodeType::File),
             ("mounts", 11, VnodeType::Symlink),
+            ("vmstat", 12, VnodeType::File),
+            ("zoneinfo", 13, VnodeType::File),
+            ("sys", 14, VnodeType::Directory),
+            ("swaps", 15, VnodeType::File),
         ];
 
         // Static entries
@@ -365,6 +373,8 @@ impl VnodeOps for ProcPid {
             "statm" => Ok(Arc::new(ProcPidStatm::new(self.pid))),
             "exe" => Ok(Arc::new(ProcPidExe::new(self.pid))),
             "cwd" => Ok(Arc::new(ProcPidCwd::new(self.pid))),
+            "maps" => Ok(Arc::new(ProcPidMaps::new(self.pid))),
+            "oom_score" => Ok(Arc::new(ProcPidOomScore { pid: self.pid, ino: 6000 + self.pid as u64 })),
             _ => Err(VfsError::NotFound),
         }
     }
@@ -383,7 +393,7 @@ impl VnodeOps for ProcPid {
 
     fn readdir(&self, offset: u64) -> VfsResult<Option<DirEntry>> {
         let entries = [
-            ".", "..", "status", "cmdline", "stat", "statm", "exe", "cwd",
+            ".", "..", "status", "cmdline", "stat", "statm", "exe", "cwd", "maps", "oom_score",
         ];
         let types = [
             VnodeType::Directory,
@@ -394,6 +404,8 @@ impl VnodeOps for ProcPid {
             VnodeType::File,
             VnodeType::Symlink,
             VnodeType::Symlink,
+            VnodeType::File,
+            VnodeType::File,
         ];
 
         let offset = offset as usize;
@@ -1200,11 +1212,32 @@ impl ProcMeminfo {
         // Format in Linux /proc/meminfo style (values in kB)
         let total_kb = stats.total_mem / 1024;
         let free_kb = stats.free_mem / 1024;
-        let used_kb = total_kb.saturating_sub(free_kb);
-        let buffers_kb = 0u64; // Not tracked
-        let cached_kb = 0u64; // Not tracked
-        let swap_total_kb = stats.total_swap / 1024;
-        let swap_free_kb = stats.free_swap / 1024;
+        let buffers_kb = 0u64;
+        let cached_kb = mm_pagecache::page_cache().cached_pages() * 4;
+        // — TorqueJax: Real swap stats from swap subsystem
+        let swap_total_kb = mm_swap::swap().total() * 4;
+        let swap_free_kb = mm_swap::swap().free() * 4;
+        // — TorqueJax: Active/Inactive from LRU lists
+        let active_kb = mm_reclaim::total_active_pages() * 4;
+        let inactive_kb = mm_reclaim::total_inactive_pages() * 4;
+        let dirty_kb = mm_vmstat::get(mm_vmstat::Counter::PgDirty) * 4;
+
+        // — TorqueJax: Real per-frame stats from the PageDB. O(N) scan but
+        // /proc/meminfo isn't a hot path — tools poll it once per second at most.
+        let (anon_kb, mapped_kb, pt_kb, cow_kb, kernel_kb) =
+            if let Some(db) = mm_pagedb::try_pagedb() {
+                let pdb = db.stats();
+                (
+                    // AnonPages: mapped but not pagecache (i.e. user anonymous)
+                    pdb.mapped.saturating_sub(0) as u64 * 4,
+                    pdb.mapped as u64 * 4,
+                    pdb.pagetable as u64 * 4,
+                    pdb.cow_shared as u64 * 4,
+                    pdb.kernel as u64 * 4,
+                )
+            } else {
+                (0, 0, 0, 0, 0)
+            };
 
         format!(
             "MemTotal:       {:8} kB\n\
@@ -1214,15 +1247,31 @@ impl ProcMeminfo {
              Cached:         {:8} kB\n\
              SwapTotal:      {:8} kB\n\
              SwapFree:       {:8} kB\n\
+             Active:         {:8} kB\n\
+             Inactive:       {:8} kB\n\
+             Dirty:          {:8} kB\n\
+             AnonPages:      {:8} kB\n\
+             Mapped:         {:8} kB\n\
+             PageTables:     {:8} kB\n\
+             CowShared:      {:8} kB\n\
+             KernelStack:    {:8} kB\n\
              HeapUsed:       {:8} kB\n\
              HeapFree:       {:8} kB\n",
             total_kb,
             free_kb,
-            free_kb, // MemAvailable ~= MemFree for now
+            free_kb,
             buffers_kb,
             cached_kb,
             swap_total_kb,
             swap_free_kb,
+            active_kb,
+            inactive_kb,
+            dirty_kb,
+            anon_kb,
+            mapped_kb,
+            pt_kb,
+            cow_kb,
+            kernel_kb,
             stats.heap_used / 1024,
             stats.heap_free / 1024,
         )
@@ -2257,4 +2306,469 @@ impl VnodeOps for ProcMounts {
     fn truncate(&self, _size: u64) -> VfsResult<()> {
         Err(VfsError::ReadOnly)
     }
+}
+
+// ============================================================================
+// /proc/vmstat — global VM event counters (Linux format)
+// — TorqueJax: Every atomic counter in mm-vmstat, one per line. Tools like
+// `vmstat -s` and `sar` parse this. Zero means "hasn't fired yet" — real data.
+// ============================================================================
+
+/// /proc/vmstat — iterates all VmStat counters
+struct ProcVmstat {
+    ino: u64,
+}
+
+impl ProcVmstat {
+    fn generate_content(&self) -> String {
+        let mut s = String::with_capacity(1024);
+        for counter in &mm_vmstat::Counter::ALL {
+            s.push_str(counter.name());
+            s.push(' ');
+            let val = mm_vmstat::get(*counter);
+            s.push_str(&format!("{}", val));
+            s.push('\n');
+        }
+        s
+    }
+}
+
+impl VnodeOps for ProcVmstat {
+    fn vtype(&self) -> VnodeType { VnodeType::File }
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::NotDirectory) }
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::NotDirectory) }
+
+    fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        let content = self.generate_content();
+        let bytes = content.as_bytes();
+        let offset = offset as usize;
+        if offset >= bytes.len() { return Ok(0); }
+        let available = bytes.len() - offset;
+        let to_read = buf.len().min(available);
+        buf[..to_read].copy_from_slice(&bytes[offset..offset + to_read]);
+        Ok(to_read)
+    }
+
+    fn write(&self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> { Err(VfsError::ReadOnly) }
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> { Err(VfsError::NotDirectory) }
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::NotDirectory) }
+    fn rmdir(&self, _name: &str) -> VfsResult<()> { Err(VfsError::NotDirectory) }
+    fn unlink(&self, _name: &str) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+    fn stat(&self) -> VfsResult<Stat> {
+        Ok(Stat::new(VnodeType::File, Mode::new(0o444), 0, self.ino))
+    }
+    fn truncate(&self, _size: u64) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+}
+
+// ============================================================================
+// /proc/zoneinfo — per-zone memory stats with per-order free counts
+// — TorqueJax: Linux format. Shows DMA/Normal/High zone total/free pages
+// and free block counts per buddy order. Watermarks added when P2 ships.
+// ============================================================================
+
+/// /proc/zoneinfo — per-zone buddy allocator data
+struct ProcZoneinfo {
+    ino: u64,
+}
+
+impl ProcZoneinfo {
+    fn generate_content(&self) -> String {
+        let mut s = String::with_capacity(2048);
+
+        if let Some(mm) = mm_manager::try_mm() {
+            let zones = mm.buddy().zone_info();
+            let zone_names = ["DMA", "Normal", "HighMem"];
+
+            for (i, (_zt, total, free, per_order, is_empty)) in zones.iter().enumerate() {
+                if *is_empty { continue; }
+                s.push_str("Node 0, zone ");
+                s.push_str(zone_names[i]);
+                s.push('\n');
+                s.push_str(&format!("  pages free     {}\n", free));
+                s.push_str(&format!("  managed        {}\n", total));
+
+                // — TorqueJax: Per-order free block counts for fragmentation diagnosis.
+                for order in 0..=mm_core::MAX_ORDER {
+                    s.push_str(&format!("  order-{:<2}       {}\n", order, per_order[order]));
+                }
+                s.push('\n');
+            }
+        }
+        s
+    }
+}
+
+impl VnodeOps for ProcZoneinfo {
+    fn vtype(&self) -> VnodeType { VnodeType::File }
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::NotDirectory) }
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::NotDirectory) }
+
+    fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        let content = self.generate_content();
+        let bytes = content.as_bytes();
+        let offset = offset as usize;
+        if offset >= bytes.len() { return Ok(0); }
+        let available = bytes.len() - offset;
+        let to_read = buf.len().min(available);
+        buf[..to_read].copy_from_slice(&bytes[offset..offset + to_read]);
+        Ok(to_read)
+    }
+
+    fn write(&self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> { Err(VfsError::ReadOnly) }
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> { Err(VfsError::NotDirectory) }
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::NotDirectory) }
+    fn rmdir(&self, _name: &str) -> VfsResult<()> { Err(VfsError::NotDirectory) }
+    fn unlink(&self, _name: &str) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+    fn stat(&self) -> VfsResult<Stat> {
+        Ok(Stat::new(VnodeType::File, Mode::new(0o444), 0, self.ino))
+    }
+    fn truncate(&self, _size: u64) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+}
+
+// ============================================================================
+// /proc/[pid]/maps — Linux-format VMA listing for a process
+// — NeonRoot: Each line is: start-end perms offset dev inode pathname
+// Uses try_lock on ProcessMeta to avoid deadlock from ISR context.
+// ============================================================================
+
+/// /proc/[pid]/maps — process VMA listing
+struct ProcPidMaps {
+    pid: Pid,
+    ino: u64,
+}
+
+impl ProcPidMaps {
+    fn new(pid: Pid) -> Self {
+        ProcPidMaps { pid, ino: 5000 + pid as u64 }
+    }
+
+    fn generate_content(&self) -> String {
+        let meta_arc = match sched::try_get_task_meta(self.pid) {
+            Some(m) => m,
+            None => return String::new(),
+        };
+        let meta = match meta_arc.try_lock() {
+            Some(m) => m,
+            None => return String::new(),
+        };
+
+        let mut s = String::with_capacity(2048);
+        // — NeonRoot: Iterate VMAs in sorted order. Linux format:
+        // start-end rwxp offset dev:major inode pathname
+        for vma in meta.address_space.vmas.iter() {
+            use core::fmt::Write;
+            let r = if vma.flags.contains(mm_vma::VmFlags::READ) { 'r' } else { '-' };
+            let w = if vma.flags.contains(mm_vma::VmFlags::WRITE) { 'w' } else { '-' };
+            let x = if vma.flags.contains(mm_vma::VmFlags::EXEC) { 'x' } else { '-' };
+            let p = if vma.flags.contains(mm_vma::VmFlags::SHARED) { 's' } else { 'p' };
+
+            let name = match vma.vm_type {
+                mm_vma::VmType::Text => "[text]",
+                mm_vma::VmType::Data => "[data]",
+                mm_vma::VmType::Bss => "[bss]",
+                mm_vma::VmType::Stack => "[stack]",
+                mm_vma::VmType::Heap => "[heap]",
+                mm_vma::VmType::Anon => "",
+                mm_vma::VmType::FileBacked => "[file]",
+                mm_vma::VmType::Tls => "[tls]",
+                mm_vma::VmType::Guard => "[guard]",
+            };
+            let vma_name = vma.name();
+            let label = if !vma_name.is_empty() {
+                core::str::from_utf8(vma_name).unwrap_or(name)
+            } else {
+                name
+            };
+
+            let _ = write!(
+                s,
+                "{:012x}-{:012x} {}{}{}{} 00000000 00:00 0",
+                vma.start, vma.end, r, w, x, p,
+            );
+            if !label.is_empty() {
+                s.push_str("          ");
+                s.push_str(label);
+            }
+            s.push('\n');
+        }
+        s
+    }
+}
+
+impl VnodeOps for ProcPidMaps {
+    fn vtype(&self) -> VnodeType { VnodeType::File }
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::NotDirectory) }
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::NotDirectory) }
+
+    fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        let content = self.generate_content();
+        let bytes = content.as_bytes();
+        let offset = offset as usize;
+        if offset >= bytes.len() { return Ok(0); }
+        let available = bytes.len() - offset;
+        let to_read = buf.len().min(available);
+        buf[..to_read].copy_from_slice(&bytes[offset..offset + to_read]);
+        Ok(to_read)
+    }
+
+    fn write(&self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> { Err(VfsError::ReadOnly) }
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> { Err(VfsError::NotDirectory) }
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::NotDirectory) }
+    fn rmdir(&self, _name: &str) -> VfsResult<()> { Err(VfsError::NotDirectory) }
+    fn unlink(&self, _name: &str) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+    fn stat(&self) -> VfsResult<Stat> {
+        Ok(Stat::new(VnodeType::File, Mode::new(0o444), 0, self.ino))
+    }
+    fn truncate(&self, _size: u64) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+}
+
+// ============================================================================
+// /proc/sys — sysctl directory hierarchy
+// — IronGhost: Root of /proc/sys. Only /proc/sys/vm is implemented.
+// ============================================================================
+
+struct ProcSys { ino: u64 }
+
+impl VnodeOps for ProcSys {
+    fn vtype(&self) -> VnodeType { VnodeType::Directory }
+
+    fn lookup(&self, name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        match name {
+            "vm" => Ok(Arc::new(ProcSysVm { ino: self.ino + 1 })),
+            _ => Err(VfsError::NotFound),
+        }
+    }
+
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::ReadOnly) }
+    fn read(&self, _offset: u64, _buf: &mut [u8]) -> VfsResult<usize> { Err(VfsError::IsDirectory) }
+    fn write(&self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> { Err(VfsError::IsDirectory) }
+
+    fn readdir(&self, offset: u64) -> VfsResult<Option<DirEntry>> {
+        let entries = [(".", self.ino), ("..", 1), ("vm", self.ino + 1)];
+        let offset = offset as usize;
+        if offset < entries.len() {
+            let (name, ino) = entries[offset];
+            return Ok(Some(DirEntry {
+                name: name.to_string(),
+                ino,
+                file_type: VnodeType::Directory,
+            }));
+        }
+        Ok(None)
+    }
+
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::ReadOnly) }
+    fn rmdir(&self, _name: &str) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+    fn unlink(&self, _name: &str) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+    fn stat(&self) -> VfsResult<Stat> {
+        Ok(Stat::new(VnodeType::Directory, Mode::new(0o555), 0, self.ino))
+    }
+    fn truncate(&self, _size: u64) -> VfsResult<()> { Err(VfsError::IsDirectory) }
+}
+
+// ============================================================================
+// /proc/sys/vm — VM tunables with read/write support
+// ============================================================================
+
+struct ProcSysVm { ino: u64 }
+
+impl VnodeOps for ProcSysVm {
+    fn vtype(&self) -> VnodeType { VnodeType::Directory }
+
+    fn lookup(&self, name: &str) -> VfsResult<Arc<dyn VnodeOps>> {
+        if mm_vmstat::vm_tunables().get_by_name(name).is_some() {
+            Ok(Arc::new(ProcSysVmKnob {
+                name: name.to_string(),
+                ino: self.ino + 100,
+            }))
+        } else {
+            Err(VfsError::NotFound)
+        }
+    }
+
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::ReadOnly) }
+    fn read(&self, _offset: u64, _buf: &mut [u8]) -> VfsResult<usize> { Err(VfsError::IsDirectory) }
+    fn write(&self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> { Err(VfsError::IsDirectory) }
+
+    fn readdir(&self, offset: u64) -> VfsResult<Option<DirEntry>> {
+        let offset = offset as usize;
+        if offset == 0 {
+            return Ok(Some(DirEntry { name: ".".to_string(), ino: self.ino, file_type: VnodeType::Directory }));
+        }
+        if offset == 1 {
+            return Ok(Some(DirEntry { name: "..".to_string(), ino: self.ino - 1, file_type: VnodeType::Directory }));
+        }
+        let knob_idx = offset - 2;
+        if knob_idx < mm_vmstat::VmTunables::NAMES.len() {
+            return Ok(Some(DirEntry {
+                name: mm_vmstat::VmTunables::NAMES[knob_idx].to_string(),
+                ino: self.ino + 100 + knob_idx as u64,
+                file_type: VnodeType::File,
+            }));
+        }
+        Ok(None)
+    }
+
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::ReadOnly) }
+    fn rmdir(&self, _name: &str) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+    fn unlink(&self, _name: &str) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+    fn stat(&self) -> VfsResult<Stat> {
+        Ok(Stat::new(VnodeType::Directory, Mode::new(0o555), 0, self.ino))
+    }
+    fn truncate(&self, _size: u64) -> VfsResult<()> { Err(VfsError::IsDirectory) }
+}
+
+/// — IronGhost: Individual /proc/sys/vm/<knob> — readable AND writable.
+struct ProcSysVmKnob {
+    name: String,
+    ino: u64,
+}
+
+impl VnodeOps for ProcSysVmKnob {
+    fn vtype(&self) -> VnodeType { VnodeType::File }
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::NotDirectory) }
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::NotDirectory) }
+
+    fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        let val = mm_vmstat::vm_tunables().get_by_name(&self.name).unwrap_or(0);
+        let content = format!("{}\n", val);
+        let bytes = content.as_bytes();
+        let offset = offset as usize;
+        if offset >= bytes.len() { return Ok(0); }
+        let available = bytes.len() - offset;
+        let to_read = buf.len().min(available);
+        buf[..to_read].copy_from_slice(&bytes[offset..offset + to_read]);
+        Ok(to_read)
+    }
+
+    fn write(&self, _offset: u64, buf: &[u8]) -> VfsResult<usize> {
+        // — IronGhost: Parse decimal value from user write
+        let s = core::str::from_utf8(buf).map_err(|_| VfsError::InvalidArgument)?;
+        let trimmed = s.trim();
+        let value: u64 = trimmed.parse().map_err(|_| VfsError::InvalidArgument)?;
+        if mm_vmstat::vm_tunables().set_by_name(&self.name, value) {
+            Ok(buf.len())
+        } else {
+            Err(VfsError::InvalidArgument)
+        }
+    }
+
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> { Err(VfsError::NotDirectory) }
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::NotDirectory) }
+    fn rmdir(&self, _name: &str) -> VfsResult<()> { Err(VfsError::NotDirectory) }
+    fn unlink(&self, _name: &str) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+    fn stat(&self) -> VfsResult<Stat> {
+        Ok(Stat::new(VnodeType::File, Mode::new(0o644), 0, self.ino))
+    }
+    fn truncate(&self, _size: u64) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+}
+
+// ============================================================================
+// /proc/swaps — active swap area listing
+// ============================================================================
+
+struct ProcSwaps { ino: u64 }
+
+impl ProcSwaps {
+    fn generate_content(&self) -> String {
+        let swap = mm_swap::swap();
+        let mut s = String::with_capacity(256);
+        s.push_str("Filename\t\t\t\tType\t\tSize\tUsed\tPriority\n");
+        let areas = swap.areas.read();
+        for (i, area) in areas.iter().enumerate() {
+            if !area.active.load(core::sync::atomic::Ordering::Relaxed) { continue; }
+            s.push_str(&format!(
+                "/dev/swap{}\t\t\t\tpartition\t{}\t{}\t{}\n",
+                i,
+                area.total_slots as u64 * 4,
+                area.used_slots() as u64 * 4,
+                -(i as i32 + 1),
+            ));
+        }
+        s
+    }
+}
+
+impl VnodeOps for ProcSwaps {
+    fn vtype(&self) -> VnodeType { VnodeType::File }
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::NotDirectory) }
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::NotDirectory) }
+
+    fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        let content = self.generate_content();
+        let bytes = content.as_bytes();
+        let offset = offset as usize;
+        if offset >= bytes.len() { return Ok(0); }
+        let available = bytes.len() - offset;
+        let to_read = buf.len().min(available);
+        buf[..to_read].copy_from_slice(&bytes[offset..offset + to_read]);
+        Ok(to_read)
+    }
+
+    fn write(&self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> { Err(VfsError::ReadOnly) }
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> { Err(VfsError::NotDirectory) }
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::NotDirectory) }
+    fn rmdir(&self, _name: &str) -> VfsResult<()> { Err(VfsError::NotDirectory) }
+    fn unlink(&self, _name: &str) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+    fn stat(&self) -> VfsResult<Stat> {
+        Ok(Stat::new(VnodeType::File, Mode::new(0o444), 0, self.ino))
+    }
+    fn truncate(&self, _size: u64) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+}
+
+// ============================================================================
+// /proc/[pid]/oom_score — OOM killer scoring
+// — IronGhost: Score = allocated_frames_count. Higher = more likely to be killed.
+// PID 0 and 1 always score 0. Real data from ProcessMeta address space.
+// ============================================================================
+
+struct ProcPidOomScore {
+    pid: Pid,
+    ino: u64,
+}
+
+impl VnodeOps for ProcPidOomScore {
+    fn vtype(&self) -> VnodeType { VnodeType::File }
+    fn lookup(&self, _name: &str) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::NotDirectory) }
+    fn create(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::NotDirectory) }
+
+    fn read(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
+        let score = if self.pid <= 1 {
+            0usize
+        } else {
+            match sched::try_get_task_meta(self.pid) {
+                Some(meta) => match meta.try_lock() {
+                    Some(m) => m.address_space.allocated_frames_count(),
+                    None => 0,
+                },
+                None => 0,
+            }
+        };
+        let content = format!("{}\n", score);
+        let bytes = content.as_bytes();
+        let offset = offset as usize;
+        if offset >= bytes.len() { return Ok(0); }
+        let available = bytes.len() - offset;
+        let to_read = buf.len().min(available);
+        buf[..to_read].copy_from_slice(&bytes[offset..offset + to_read]);
+        Ok(to_read)
+    }
+
+    fn write(&self, _offset: u64, _buf: &[u8]) -> VfsResult<usize> { Err(VfsError::ReadOnly) }
+    fn readdir(&self, _offset: u64) -> VfsResult<Option<DirEntry>> { Err(VfsError::NotDirectory) }
+    fn mkdir(&self, _name: &str, _mode: Mode) -> VfsResult<Arc<dyn VnodeOps>> { Err(VfsError::NotDirectory) }
+    fn rmdir(&self, _name: &str) -> VfsResult<()> { Err(VfsError::NotDirectory) }
+    fn unlink(&self, _name: &str) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+    fn rename(&self, _old_name: &str, _new_dir: &dyn VnodeOps, _new_name: &str) -> VfsResult<()> { Err(VfsError::ReadOnly) }
+    fn stat(&self) -> VfsResult<Stat> {
+        Ok(Stat::new(VnodeType::File, Mode::new(0o444), 0, self.ino))
+    }
+    fn truncate(&self, _size: u64) -> VfsResult<()> { Err(VfsError::ReadOnly) }
 }

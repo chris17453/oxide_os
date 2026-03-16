@@ -184,26 +184,41 @@ impl UserAddressSpace {
 
     /// Update flags for an already-mapped user page
     ///
-    /// Adds additional permissions (union with existing flags).
+    /// Unions additional permissions with existing flags. Handles both
+    /// additive flags (WRITABLE) and subtractive flags (clearing NO_EXECUTE
+    /// when EXECUTE is requested).
     /// Returns true if successful, false if page is not mapped.
+    ///
+    /// — GraveShift: The old code only handled WRITABLE and punted on EXECUTE
+    /// with a "we'd need to handle it specially" comment. That meant overlapping
+    /// ELF segments (.text + .rodata sharing a page) would set NO_EXECUTE on
+    /// executable code. Every large binary with unaligned segment boundaries
+    /// hit #UD. Now we clear NO_EXECUTE when any overlapping segment is X.
     pub fn update_user_page_flags(&mut self, virt: VirtAddr, add_flags: MemoryFlags) -> bool {
         // Verify this is a user-space address
         if virt.as_u64() >= 0x0000_8000_0000_0000 {
             return false;
         }
 
-        // Convert MemoryFlags to PageTableFlags
+        // Convert MemoryFlags to PageTableFlags — additive permissions
         let mut pt_flags = PageTableFlags::empty();
 
         if add_flags.writable() {
             pt_flags |= PageTableFlags::WRITABLE;
         }
 
-        // Note: We don't need to add PRESENT or USER since page is already mapped
-        // For NO_EXECUTE, we'd need to handle it specially (it's a "remove" operation)
-        // For now we only handle adding WRITABLE permission
+        // — GraveShift: add any additive flags first
+        if !pt_flags.is_empty() {
+            self.mapper.update_flags(virt, pt_flags);
+        }
 
-        self.mapper.update_flags(virt, pt_flags)
+        // — GraveShift: EXECUTE is subtractive — we need to REMOVE NO_EXECUTE.
+        // On x86-64, executable = absence of bit 63. Can't do that with OR.
+        if add_flags.executable() {
+            self.mapper.remove_flags(virt, PageTableFlags::NO_EXECUTE);
+        }
+
+        true
     }
 
     /// Switch to this address space
@@ -710,14 +725,54 @@ impl Drop for UserAddressSpace {
             if pt_frame.as_u64() == 0 {
                 continue;
             }
+            // — VeilAudit: Never free reserved/kernel-owned PT structures from a
+            // user AddressSpace drop. If corruption/stale entries make the walk
+            // discover shared kernel tables, freeing them detonates every task's
+            // kernel half mappings (IDT/GDT/text) and ends in triple fault.
+            if let Some(db) = mm_pagedb::try_pagedb() {
+                if let Some(pf) = db.get(pt_frame) {
+                    let flags = pf.flags();
+                    if (flags & mm_pagedb::PF_RESERVED != 0) || (flags & mm_pagedb::PF_KERNEL != 0) {
+                        unsafe {
+                            os_log::write_str_raw("[DROP-PT-SKIP] frame=0x");
+                            os_log::write_u64_hex_raw(pt_frame.as_u64());
+                            os_log::write_str_raw(" flags=0x");
+                            os_log::write_u64_hex_raw(flags as u64);
+                            os_log::write_str_raw(" (reserved/kernel)\n");
+                        }
+                        continue;
+                    }
+                }
+            }
             let _ = mm.free_frame(pt_frame);
         }
 
         // — GraveShift: Free the PML4 frame itself (always exclusively owned).
         // The PML4 was not visited during the walk (it's the root, not a child).
         if self.pml4_phys.as_u64() != 0 {
-            mm_pagedb::set_free_context(mm_pagedb::CTX_DROP_PML4);
-            let _ = mm.free_frame(self.pml4_phys);
+            if let Some(db) = mm_pagedb::try_pagedb() {
+                if let Some(pf) = db.get(self.pml4_phys) {
+                    let flags = pf.flags();
+                    if (flags & mm_pagedb::PF_RESERVED != 0) || (flags & mm_pagedb::PF_KERNEL != 0) {
+                        unsafe {
+                            os_log::write_str_raw("[DROP-PML4-SKIP] frame=0x");
+                            os_log::write_u64_hex_raw(self.pml4_phys.as_u64());
+                            os_log::write_str_raw(" flags=0x");
+                            os_log::write_u64_hex_raw(flags as u64);
+                            os_log::write_str_raw(" (reserved/kernel)\n");
+                        }
+                    } else {
+                        mm_pagedb::set_free_context(mm_pagedb::CTX_DROP_PML4);
+                        let _ = mm.free_frame(self.pml4_phys);
+                    }
+                } else {
+                    mm_pagedb::set_free_context(mm_pagedb::CTX_DROP_PML4);
+                    let _ = mm.free_frame(self.pml4_phys);
+                }
+            } else {
+                mm_pagedb::set_free_context(mm_pagedb::CTX_DROP_PML4);
+                let _ = mm.free_frame(self.pml4_phys);
+            }
         }
 
         // — TorqueJax: Free any remaining frames in allocated_frames that weren't
@@ -732,6 +787,21 @@ impl Drop for UserAddressSpace {
             // — SableWire: Only free if NOT already freed via the walk.
             // Linear scan is fine — allocated_frames is typically <20 entries.
             if !walked_pt_frames.contains(&pt_frame) {
+                if let Some(db) = mm_pagedb::try_pagedb() {
+                    if let Some(pf) = db.get(pt_frame) {
+                        let flags = pf.flags();
+                        if (flags & mm_pagedb::PF_RESERVED != 0) || (flags & mm_pagedb::PF_KERNEL != 0) {
+                            unsafe {
+                                os_log::write_str_raw("[DROP-ALLOC-SKIP] frame=0x");
+                                os_log::write_u64_hex_raw(pt_frame.as_u64());
+                                os_log::write_str_raw(" flags=0x");
+                                os_log::write_u64_hex_raw(flags as u64);
+                                os_log::write_str_raw(" (reserved/kernel)\n");
+                            }
+                            continue;
+                        }
+                    }
+                }
                 let _ = mm.free_frame(pt_frame);
             }
         }

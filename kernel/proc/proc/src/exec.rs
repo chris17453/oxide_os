@@ -156,11 +156,24 @@ pub fn do_exec<A: FrameAllocator>(
         UserAddressSpace::new_with_kernel(allocator, kernel_pml4).ok_or(ExecError::OutOfMemory)?
     };
 
+    let entry_point = elf.entry_point();
+    let entry_addr = entry_point.as_u64();
+    let mut entry_in_exec_segment = false;
+
     // Load segments
     for segment in elf.segments() {
         let (page_start, total_size) = ElfLoader::segment_pages(segment);
         let page_offset = ElfLoader::segment_page_offset(segment);
         let num_pages = total_size / 4096;
+        let seg_start = page_start.as_u64();
+        let seg_end = seg_start.saturating_add(total_size as u64);
+
+        if segment.flags.contains(MemoryFlags::EXECUTE)
+            && entry_addr >= seg_start
+            && entry_addr < seg_end
+        {
+            entry_in_exec_segment = true;
+        }
 
         // Get segment data
         let seg_data = elf.segment_data(segment);
@@ -171,11 +184,12 @@ pub fn do_exec<A: FrameAllocator>(
 
             // Check if this page is already mapped (overlapping segments)
             let frame_virt = if let Some(existing_phys) = new_address_space.translate(page_virt) {
-                // Page already mapped, use existing frame
-                // But we need to update permissions if the new segment needs write access
-                if segment.flags.contains(MemoryFlags::WRITE) {
-                    new_address_space.update_user_page_flags(page_virt, MemoryFlags::WRITE);
-                }
+                // — GraveShift: Page already mapped by a previous segment. Union
+                // permissions — if EITHER segment wants WRITE or EXECUTE, the page
+                // gets it. The old code only added WRITE, so a RO .rodata segment
+                // overlapping an X .text segment would set NO_EXECUTE on the shared
+                // page, nuking executable code mid-page. Classic #UD at 3 AM.
+                new_address_space.update_user_page_flags(page_virt, segment.flags);
                 phys_to_virt(existing_phys)
             } else {
                 // Allocate new frame
@@ -440,15 +454,28 @@ pub fn do_exec<A: FrameAllocator>(
 
     // — NeonRoot: Register the user stack VMA. GROWSDOWN tells the fault handler
     // this region can expand downward on demand (dynamic stack growth).
+    // — SableWire: VMA end must be USER_STACK_TOP, not randomized_stack_top.
+    // ASLR shifts where RSP starts, but the C runtime (musl _start, memset init)
+    // writes to addresses above RSP during startup — zeroing BSS, initializing
+    // the stack guard, etc. If the VMA only covers [bottom, randomized_top),
+    // those writes hit addresses with no VMA, the fault handler can't classify
+    // them, and we get infinite page fault loops. The full [bottom, USER_STACK_TOP)
+    // range is the process's stack territory. — SableWire
     let _ = new_address_space.add_vma(VmArea::new_named(
         stack_bottom.as_u64(),
-        randomized_stack_top,
+        USER_STACK_TOP,
         VmFlags::READ | VmFlags::WRITE | VmFlags::GROWSDOWN | VmFlags::STACK,
         VmType::Stack,
         b"[stack]",
     ));
 
-    let entry_point = elf.entry_point();
+    // — VeilAudit: Never transfer control to an address outside executable PT_LOAD
+    // mappings. Corrupted/partial ELF reads can produce garbage e_entry values
+    // (e.g., low unmapped addresses) that otherwise explode as immediate user
+    // instruction-fetch faults.
+    if !entry_in_exec_segment {
+        return Err(ExecError::InvalidElf);
+    }
 
     // Set up argv and envp on the stack
     // Stack layout (growing down):

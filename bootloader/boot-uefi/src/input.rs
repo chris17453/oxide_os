@@ -223,10 +223,13 @@ fn run_editor(config: &mut BootConfig, state: &mut MenuState) {
     }
 }
 
-/// Helper to get GOP and run a closure with it
-/// — InputShade: GOP access is a three-step dance with UEFI protocols
+/// Helper to get GOP, run a drawing closure, and flush the screen buffer.
+/// — InputShade: draw to RAM buffer, then one firmware call to present.
 fn redraw_with_gop(f: impl FnOnce(*mut EfiGraphicsOutputProtocol)) {
-    crate::with_gop(f);
+    crate::with_gop(|gop| {
+        f(gop);
+        crate::flush_screen(gop);
+    });
 }
 
 /// Wait for any key press (used on error screens)

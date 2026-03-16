@@ -24,6 +24,7 @@ use boot_proto::{
     MemoryType, PHYS_MAP_BASE, PixelFormat,
 };
 
+mod background;
 mod config;
 mod console;
 mod discovery;
@@ -34,6 +35,7 @@ mod font;
 mod input;
 mod menu;
 mod paging;
+mod screen;
 
 use efi::{
     EfiBltPixel, EfiBltOperation, EfiGraphicsOutputProtocol, EfiInputKey,
@@ -77,6 +79,15 @@ pub extern "efiapi" fn efi_main(handle: EfiHandle, st: *mut EfiSystemTable) -> E
 
     // Get screen dimensions for menu layout
     let (screen_width, screen_height) = get_screen_dimensions();
+
+    // — NeonVale: allocate the screen buffer for double-buffered rendering.
+    // All drawing goes to RAM, one BltBufferToVideo flush per frame.
+    // Turns ~50,000 firmware calls per menu render into ONE.
+    if screen::init(screen_width, screen_height) {
+        log("[BOOT] Screen buffer allocated — double-buffered rendering active");
+    } else {
+        log("[BOOT] Screen buffer allocation failed — using direct GOP (slow)");
+    }
 
     // ── Phase 2: Menu / Selection ──
     // — NeonRoot: the moment of choice — which kernel lives, which kernel sleeps
@@ -345,9 +356,10 @@ fn run_boot_menu(
         // Create menu state
         let mut state = menu::MenuState::new(config, width, height);
 
-        // Render the full menu
+        // Render the full menu + flush to screen in one shot
         with_gop(|gop| {
             menu::render_full_menu(gop, config, &state);
+            flush_screen(gop);
         });
 
         // Run the input event loop
@@ -420,6 +432,7 @@ fn run_boot_menu(
 fn show_error_screen(width: usize, height: usize) {
     with_gop(|gop| {
         menu::render_error_screen(gop, width, height, "No bootable kernels found on ESP");
+        flush_screen(gop);
     });
 
     // Wait for key — C opens console, anything else halts
@@ -441,6 +454,7 @@ fn show_error_screen(width: usize, height: usize) {
                                     height,
                                     "No bootable kernels found on ESP",
                                 );
+                                flush_screen(gop);
                             });
                             continue;
                         }
@@ -801,15 +815,17 @@ pub(crate) fn draw_oxide_logo(gop: *mut EfiGraphicsOutputProtocol, width: usize,
         accent_cyan,
     );
 
-    // Accent line underneath
+    // Accent line underneath — one call instead of per-pixel
     let line_y = start_y + logo_height - 20;
-    for x in start_x + 20..start_x + logo_width - 20 {
-        blt_fill(gop, accent_cyan, x, line_y, 1, 2);
-    }
+    let line_start = start_x + 20;
+    let line_width = logo_width - 40;
+    blt_fill(gop, accent_cyan, line_start, line_y, line_width, 2);
 }
 
-/// Helper to call GOP Blt with VideoFill
-/// — NeonVale: the atomic pixel operation — one color, one rectangle
+/// Helper to draw a filled rectangle. When the screen buffer is active, writes
+/// to RAM (zero firmware calls). When not, falls back to direct GOP BltVideoFill.
+/// — NeonVale: the atomic pixel operation — one color, one rectangle.
+/// With screen buffer: pure memory writes. Without: firmware call per invocation.
 #[inline]
 pub(crate) fn blt_fill(
     gop: *mut EfiGraphicsOutputProtocol,
@@ -819,17 +835,30 @@ pub(crate) fn blt_fill(
     w: usize,
     h: usize,
 ) {
-    unsafe {
-        ((*gop).blt)(
-            gop,
-            &color,
-            EfiBltOperation::BltVideoFill,
-            0, 0,
-            x, y,
-            w, h,
-            0,
-        );
+    if screen::is_initialized() {
+        // — NeonVale: fast path — RAM buffer, no firmware overhead
+        screen::fill_rect(x, y, w, h, color);
+    } else {
+        // — NeonVale: fallback — direct GOP BLT (slow but works before init)
+        unsafe {
+            ((*gop).blt)(
+                gop,
+                &color,
+                EfiBltOperation::BltVideoFill,
+                0, 0,
+                x, y,
+                w, h,
+                0,
+            );
+        }
     }
+}
+
+/// Flush the screen buffer to the hardware framebuffer. Call after a complete
+/// render pass (full menu draw, entry redraw, countdown update, etc.).
+/// — NeonVale: one firmware call to rule them all
+pub(crate) fn flush_screen(gop: *mut EfiGraphicsOutputProtocol) {
+    screen::flush(gop);
 }
 
 /// Modern letter drawing functions with clean, bold design

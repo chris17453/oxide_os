@@ -722,16 +722,42 @@ pub unsafe fn set_tlb_shootdown_callback(callback: IpiCallback) {
 #[unsafe(naked)]
 pub extern "C" fn ipi_reschedule() {
     naked_asm!(
-        // Save minimal registers (handler is trivial)
+        // — GraveShift: Save ALL GPRs. Interrupt handlers must be transparent to
+        // interrupted context. Saving only caller-saved regs is not enough here
+        // because the Rust call below may freely clobber rdi/rsi/r8-r11.
         "push rax",
+        "push rbx",
         "push rcx",
         "push rdx",
+        "push rsi",
+        "push rdi",
+        "push rbp",
+        "push r8",
+        "push r9",
+        "push r10",
+        "push r11",
+        "push r12",
+        "push r13",
+        "push r14",
+        "push r15",
 
         // ACK the APIC and return
         "call {}",
 
+        "pop r15",
+        "pop r14",
+        "pop r13",
+        "pop r12",
+        "pop r11",
+        "pop r10",
+        "pop r9",
+        "pop r8",
+        "pop rbp",
+        "pop rdi",
+        "pop rsi",
         "pop rdx",
         "pop rcx",
+        "pop rbx",
         "pop rax",
 
         "iretq",
@@ -1043,7 +1069,7 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
     let is_user_write = (error & 0x6) == 0x6; // user=1, write=1
     if is_user_write {
         let n = PF_DIAG_COUNT.fetch_add(1, Ordering::Relaxed);
-        if n < 1000 {
+        if n < 20 {
             let cr3: u64;
             unsafe { core::arch::asm!("mov {}, cr3", out(reg) cr3); }
             unsafe {
@@ -1079,7 +1105,7 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
     let is_user_nonpresent = (error & 0x5) == 0x4; // user=1, present=0
     if is_user_nonpresent {
         let n = PF_DIAG_COUNT.fetch_add(1, Ordering::Relaxed);
-        if n < 1000 {
+        if n < 20 {
             unsafe {
                 os_log::write_str_raw("[PF-DIAG] user-nonpresent addr=0x");
                 os_log::write_u64_hex_raw(cr2);
@@ -1097,7 +1123,7 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
             // — CrashBloom: Trace successful COW/demand resolution
             if is_user_write || is_user_nonpresent {
                 let n = PF_DIAG_COUNT.load(Ordering::Relaxed);
-                if n <= 1001 {
+                if n <= 21 {
                     unsafe {
                         os_log::write_str_raw("[PF-DIAG] HANDLED OK\n");
                     }
@@ -1464,6 +1490,29 @@ extern "C" fn handle_page_fault(frame: *const InterruptFrame, error: u64) {
         crate::serial_println!("[WARN] No user fault kill callback, kernel panic on user fault");
     }
 
+    // — CrashBloom: Kernel-mode page fault. Before we panic and kill this CPU
+    // forever, try to kill the current user task and let the CPU survive.
+    // The kill callback takes pid=0 meaning "current task" — the scheduler
+    // figures out which PID is running. If there's no task to kill (idle,
+    // early boot), we fall through to panic.
+    //
+    // — GraveShift: This is the Linux "kernel oops" model. Process dies,
+    // CPU continues. Better than losing 25% of your compute because one
+    // process triggered a kernel bug.
+    {
+        let kill_cb = unsafe { *core::ptr::addr_of!(USER_FAULT_KILL_CALLBACK) };
+        if let Some(kill) = kill_cb {
+            unsafe {
+                os_log::write_str_raw("[CPU-RESCUE] Kernel page fault at RIP ");
+                os_log::write_u64_hex_raw(frame.rip);
+                os_log::write_str_raw(" addr ");
+                os_log::write_u64_hex_raw(cr2);
+                os_log::write_str_raw(" — killing current task, CPU survives\n");
+            }
+            kill(0, frame.rip, 11); // SIGSEGV to current task
+            return;
+        }
+    }
     panic!("Page fault");
 }
 

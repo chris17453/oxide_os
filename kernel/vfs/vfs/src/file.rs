@@ -323,6 +323,13 @@ impl File {
     pub fn can_write(&self) -> bool {
         self.flags().writable() && self.vnode.poll_write_ready()
     }
+
+    /// Register poll waiters on this file's underlying wait queues.
+    /// — SableWire: Delegates to vnode's poll_register_wait. The PollTable
+    /// tracks all registrations so poll/select can bulk-unregister on return.
+    pub fn poll_register_wait(&self, table: &mut waitqueue::PollTable) {
+        self.vnode.poll_register_wait(table);
+    }
 }
 
 /// WireSaint: Decrement mount's open file counter when File is dropped

@@ -4,6 +4,76 @@
 
 #![no_std]
 
+/// — IronGhost: 16-byte aligned 512-byte FXSAVE area for FPU/SSE state.
+/// Lives in sched-traits so both `proc` and `sched` crates can use it
+/// without circular dependencies. Contains x87 FCW/FSW, MXCSR, XMM0-XMM15.
+/// — IronGhost
+/// — IronGhost: FPU/SSE state buffer. 528 bytes = 512 (FXSAVE image) + 16 (alignment
+/// padding). FXSAVE64/FXRSTOR64 require 16-byte aligned pointers, but we can't use
+/// repr(align(16)) because it forces Task alignment which the heap allocator can't
+/// guarantee. Instead we over-allocate and align the pointer at runtime via
+/// `aligned_ptr()`. The cost is 16 extra bytes per task — acceptable.
+/// — IronGhost
+#[derive(Clone)]
+#[repr(C)]
+pub struct FxSaveArea {
+    pub data: [u8; 528],
+}
+
+impl FxSaveArea {
+    /// — IronGhost: Default FPU state. All zeros except FCW=0x037F and MXCSR=0x1F80.
+    /// init_defaults() must be called after construction to write defaults at the
+    /// runtime-aligned offset. — IronGhost
+    pub const fn new() -> Self {
+        FxSaveArea { data: [0u8; 528] }
+    }
+
+    /// — IronGhost: Default state constructor that also initializes the aligned region.
+    pub fn default_state() -> Self {
+        let mut area = Self::new();
+        area.init_defaults();
+        area
+    }
+
+    /// — IronGhost: Get the 16-byte aligned pointer within our buffer for FXRSTOR.
+    #[inline]
+    pub fn aligned_ptr(&self) -> *const u8 {
+        let base = self.data.as_ptr() as usize;
+        ((base + 15) & !15) as *const u8
+    }
+
+    /// — IronGhost: Get the 16-byte aligned mutable pointer for FXSAVE.
+    #[inline]
+    pub fn aligned_ptr_mut(&mut self) -> *mut u8 {
+        let base = self.data.as_mut_ptr() as usize;
+        ((base + 15) & !15) as *mut u8
+    }
+
+    /// — IronGhost: Write default FCW + MXCSR at the aligned offset.
+    pub fn init_defaults(&mut self) {
+        let ptr = self.aligned_ptr_mut();
+        unsafe {
+            core::ptr::write_bytes(ptr, 0, 512);
+            *ptr = 0x7F;          // FCW[0] = 0x7F
+            *ptr.add(1) = 0x03;   // FCW[1] = 0x03  → 0x037F
+            *ptr.add(24) = 0x80;  // MXCSR[0] = 0x80
+            *ptr.add(25) = 0x1F;  // MXCSR[1] = 0x1F → 0x1F80
+        }
+    }
+}
+
+impl Default for FxSaveArea {
+    fn default() -> Self {
+        Self::default_state()
+    }
+}
+
+impl core::fmt::Debug for FxSaveArea {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("[FxSaveArea 512B]")
+    }
+}
+
 /// Process/Thread identifier
 pub type Pid = u32;
 

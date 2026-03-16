@@ -10,15 +10,24 @@
 extern crate alloc;
 
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 use os_core::PhysAddr;
 use proc::ProcessMeta;
 use sched_traits::{CpuSet, NICE_0_WEIGHT, Pid, SchedPolicy, TaskState, nice_to_weight};
 use spin::Mutex;
 
+// — IronGhost: Re-export FxSaveArea from sched_traits so callers can use sched::task::FxSaveArea
+pub use sched_traits::FxSaveArea;
+
+/// — GraveShift: Sentinel PID for "no link" in intrusive sibling lists.
+/// u32::MAX is never a valid PID — the allocator caps at ~65535 and even that's generous.
+pub const PID_NONE: Pid = u32::MAX;
+
 /// Saved CPU context for context switching
 ///
 /// Contains all registers that need to be saved/restored when switching tasks.
+/// — IronGhost: Now includes 512-byte FXSAVE area for FPU/SSE state (XMM0-XMM15,
+/// MXCSR, x87 FCW/FSW). Saved on context switch out, restored on switch in.
+/// — IronGhost
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct TaskContext {
@@ -113,6 +122,13 @@ pub struct Task {
     // ========================================
     /// Saved CPU registers for context switching
     pub context: TaskContext,
+
+    /// — IronGhost: FPU/SSE state (x87 + XMM0-XMM15 + MXCSR). Stored on Task
+    /// (not TaskContext) because it's 512 bytes and we don't want to copy it every
+    /// time we build/store a TaskContext. FXSAVE writes here on switch-out, FXRSTOR
+    /// reads here on switch-in. 16-byte aligned via repr(align(16)) on FxSaveArea.
+    /// — IronGhost
+    pub fxsave_area: FxSaveArea,
 
     /// Physical address of PML4 (page table root) for address space switching
     pub pml4_phys: PhysAddr,
@@ -212,10 +228,18 @@ pub struct Task {
     pub on_rq: bool,
 
     // ========================================
-    // Process relationships
+    // Process relationships — intrusive sibling list
     // ========================================
-    /// Child task PIDs
-    pub children: alloc::vec::Vec<Pid>,
+    // — GraveShift: Linux uses list_head embedded in task_struct for O(1) child
+    // add/remove with zero heap allocation. We store PIDs instead of pointers —
+    // tasks may be on different CPU run queues, so raw references would be UB.
+    // PID_NONE (u32::MAX) is the sentinel for "no link".
+    /// PID of first child (PID_NONE = no children)
+    pub first_child: Pid,
+    /// Next sibling PID in parent's child list (PID_NONE = last)
+    pub sibling_next: Pid,
+    /// Previous sibling PID in parent's child list (PID_NONE = first)
+    pub sibling_prev: Pid,
 
     /// Exit status (valid when state is TASK_ZOMBIE)
     pub exit_status: i32,
@@ -249,6 +273,7 @@ impl Task {
             state: TaskState::TASK_RUNNING,
             policy: SchedPolicy::Normal,
             context: TaskContext::default(),
+            fxsave_area: FxSaveArea::default_state(),
             pml4_phys,
             user_stack_top,
             entry_point,
@@ -268,7 +293,9 @@ impl Task {
             kernel_stack,
             kernel_stack_size,
             on_rq: false,
-            children: Vec::new(),
+            first_child: PID_NONE,
+            sibling_next: PID_NONE,
+            sibling_prev: PID_NONE,
             exit_status: 0,
             waiting_for_child: 0,
             kernel_preempt_ok: false,
@@ -293,6 +320,7 @@ impl Task {
             state: TaskState::TASK_RUNNING,
             policy: SchedPolicy::Normal,
             context: TaskContext::default(),
+            fxsave_area: FxSaveArea::default_state(),
             pml4_phys,
             user_stack_top,
             entry_point,
@@ -312,7 +340,9 @@ impl Task {
             kernel_stack,
             kernel_stack_size,
             on_rq: false,
-            children: Vec::new(),
+            first_child: PID_NONE,
+            sibling_next: PID_NONE,
+            sibling_prev: PID_NONE,
             exit_status: 0,
             waiting_for_child: 0,
             kernel_preempt_ok: false,
@@ -328,6 +358,7 @@ impl Task {
             state: TaskState::TASK_RUNNING,
             policy: SchedPolicy::Idle,
             context: TaskContext::default(),
+            fxsave_area: FxSaveArea::default_state(),
             pml4_phys: PhysAddr::new(0), // Idle task uses kernel page tables
             user_stack_top: 0,
             entry_point: 0,
@@ -348,7 +379,9 @@ impl Task {
             kernel_stack,
             kernel_stack_size,
             on_rq: false,
-            children: Vec::new(),
+            first_child: PID_NONE,
+            sibling_next: PID_NONE,
+            sibling_prev: PID_NONE,
             exit_status: 0,
             waiting_for_child: 0,
             meta: None,
@@ -369,6 +402,7 @@ impl Task {
             state: TaskState::TASK_RUNNING,
             policy: SchedPolicy::Idle,
             context: TaskContext::default(),
+            fxsave_area: FxSaveArea::default_state(),
             pml4_phys: PhysAddr::new(0), // Idle task uses kernel page tables
             user_stack_top: 0,
             entry_point: 0,
@@ -388,7 +422,9 @@ impl Task {
             kernel_stack,
             kernel_stack_size,
             on_rq: false,
-            children: Vec::new(),
+            first_child: PID_NONE,
+            sibling_next: PID_NONE,
+            sibling_prev: PID_NONE,
             exit_status: 0,
             waiting_for_child: 0,
             kernel_preempt_ok: false,
@@ -522,19 +558,30 @@ impl Task {
     // Child management
     // ========================================
 
-    /// Add a child task
-    pub fn add_child(&mut self, child_pid: Pid) {
-        self.children.push(child_pid);
+    /// O(1) prepend child to intrusive sibling list.
+    /// Caller must also set child.sibling_prev/sibling_next from the caller's side.
+    /// This only updates the parent's first_child and the old first child's prev link.
+    /// — GraveShift: The actual cross-task link-up happens in core.rs where we can
+    /// touch multiple tasks via with_task_on_any_cpu. This just sets first_child.
+    pub fn prepend_child(&mut self, child_pid: Pid) -> Pid {
+        let old_first = self.first_child;
+        self.first_child = child_pid;
+        old_first
     }
 
-    /// Remove a child task
-    pub fn remove_child(&mut self, child_pid: Pid) {
-        self.children.retain(|&pid| pid != child_pid);
+    /// Remove first_child link if it points to the given child.
+    /// Returns the replacement first_child PID (the removed child's sibling_next).
+    /// — GraveShift: Only call this when child_pid IS first_child. For non-first
+    /// children, the unlink is done entirely via sibling_prev/sibling_next updates.
+    pub fn unlink_first_child(&mut self, child_pid: Pid, replacement: Pid) {
+        if self.first_child == child_pid {
+            self.first_child = replacement;
+        }
     }
 
-    /// Get child PIDs
-    pub fn children(&self) -> &[Pid] {
-        &self.children
+    /// Check if this task has any children
+    pub fn has_children(&self) -> bool {
+        self.first_child != PID_NONE
     }
 
     /// Set which child to wait for (0 = not waiting, -1 = any)

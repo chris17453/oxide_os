@@ -15,3 +15,4 @@ log = { workspace = true }
 bitflags = { workspace = true }
 os_log = { path = "../../core/os_log" }
 mm-pagedb = { path = "../mm-pagedb" }
+mm-vmstat = { path = "../mm-vmstat" }

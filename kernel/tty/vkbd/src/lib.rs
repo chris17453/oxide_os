@@ -11,7 +11,7 @@
 
 #![cfg_attr(not(test), no_std)]
 
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use fb::{Framebuffer, PixelFormat};
 use fb::font::PSF2_FONT;
 
@@ -72,14 +72,47 @@ const KEY_PRESSED_COLOR: u32 = 0xFF5A5A7A;
 const TEXT_COLOR: u32 = 0xFFE0E0E0;
 /// Modifier active color (accent blue) — ARGB
 const MOD_ACTIVE_COLOR: u32 = 0xFF0088CC;
+/// — InputShade: active VT button color (green-ish accent — you are HERE)
+const VT_ACTIVE_COLOR: u32 = 0xFF00AA55;
+/// — InputShade: CAD button color (angry red — you asked for it)
+const CAD_COLOR: u32 = 0xFF992233;
 
 // ═══════════════════════════════════════════════════════════════════
 //  Key Definition
 // ═══════════════════════════════════════════════════════════════════
 
+/// — InputShade: actions that can't be expressed as byte sequences.
+/// VT switches, Ctrl+Alt+Del, volume — system-level ops, not terminal input.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum VkbdAction {
+    /// Switch to VT N (0-indexed)
+    SwitchVt(usize),
+    /// Ctrl+Alt+Delete — system reboot/attention
+    CtrlAltDel,
+    /// Volume up
+    VolumeUp,
+    /// Volume down
+    VolumeDown,
+    /// Mute toggle
+    VolumeMute,
+    /// — InputShade: close the OSK overlay. The X button has spoken. — SableWire
+    CloseOSK,
+}
+
+/// — InputShade: what a keypress on the OSK produces.
+/// Either raw bytes for the VT ring, or a system action the caller handles.
+pub enum VkbdResult {
+    /// Bytes to inject into the active VT input ring
+    Bytes([u8; 8], usize),
+    /// System action (VT switch, Ctrl+Alt+Del, etc.)
+    Action(VkbdAction),
+}
+
 /// — InputShade: a single key on the virtual keyboard.
 /// Output bytes are what gets pushed into the VT input ring.
 /// Width is in key-units (1 = normal, 2 = double-wide, etc.)
+/// Height in row-units (1 = normal, 2 = double-tall like numpad + and Enter).
+/// Height 0 = SKIP sentinel — slot occupied by a tall key from the row above. — SableWire
 #[derive(Clone, Copy)]
 struct VKey {
     /// Display label (lowercase)
@@ -92,25 +125,51 @@ struct VKey {
     shifted_output: &'static [u8],
     /// Width in key units (1 = normal key)
     width: u8,
+    /// — InputShade: height in row units (1=normal, 2=tall, 0=SKIP placeholder)
+    height: u8,
     /// Is this a modifier key (shift, ctrl, etc.)
     is_modifier: bool,
+    /// — InputShade: optional action instead of byte output (VT switch, CAD)
+    action: Option<VkbdAction>,
 }
+
+/// — InputShade: SKIP sentinel for slots occupied by tall keys above.
+/// Height 0 means "the key from the row above extends into this slot — don't render,
+/// don't hit-test, just advance X." Like the phantom limb of a double-height Enter. — SableWire
+const SKIP: VKey = VKey {
+    label: b"", shifted_label: b"", output: &[], shifted_output: &[],
+    width: 1, height: 0, is_modifier: false, action: None,
+};
 
 impl VKey {
     const fn normal(label: &'static [u8], shifted: &'static [u8],
                     out: &'static [u8], shifted_out: &'static [u8]) -> Self {
         VKey { label, shifted_label: shifted, output: out,
-               shifted_output: shifted_out, width: 1, is_modifier: false }
+               shifted_output: shifted_out, width: 1, height: 1, is_modifier: false, action: None }
     }
 
     const fn wide(label: &'static [u8], out: &'static [u8], w: u8) -> Self {
         VKey { label, shifted_label: label, output: out,
-               shifted_output: out, width: w, is_modifier: false }
+               shifted_output: out, width: w, height: 1, is_modifier: false, action: None }
+    }
+
+    /// — InputShade: tall key — spans multiple rows. height=2 for numpad + and Enter.
+    /// The row below must have a SKIP sentinel at the same column position. — SableWire
+    const fn tall(label: &'static [u8], out: &'static [u8], w: u8, h: u8) -> Self {
+        VKey { label, shifted_label: label, output: out,
+               shifted_output: out, width: w, height: h, is_modifier: false, action: None }
     }
 
     const fn modifier(label: &'static [u8], w: u8) -> Self {
         VKey { label, shifted_label: label, output: &[],
-               shifted_output: &[], width: w, is_modifier: true }
+               shifted_output: &[], width: w, height: 1, is_modifier: true, action: None }
+    }
+
+    /// — InputShade: action key — triggers a system-level operation, not byte output.
+    /// VT switches, Ctrl+Alt+Del — the real power buttons.
+    const fn action(label: &'static [u8], act: VkbdAction, w: u8) -> Self {
+        VKey { label, shifted_label: label, output: &[],
+               shifted_output: &[], width: w, height: 1, is_modifier: false, action: Some(act) }
     }
 }
 
@@ -151,7 +210,8 @@ impl KbRow {
 /// Sections at fixed X offsets so columns align vertically.
 static KB_LAYOUT: [KbRow; KB_ROWS] = [
     // ── Row 0: F-key row ──────────────────────────────────────────
-    // — InputShade: F1-F12 in main section. Nav and numpad empty.
+    // — InputShade: F1-F12 in main section. VT switches + CAD in nav/numpad.
+    // Like Ctrl+Alt+F1..F6 on a real Linux box, but one tap instead of three.
     KbRow::new(
         &[
             VKey::wide(b"Esc", b"\x1b", 1),
@@ -168,8 +228,19 @@ static KB_LAYOUT: [KbRow; KB_ROWS] = [
             VKey::wide(b"F11", b"\x1b[23~", 1),
             VKey::wide(b"F12", b"\x1b[24~", 1),
         ],
-        &[],
-        &[],
+        // — InputShade: VT switch buttons. One tap = Ctrl+Alt+Fn on a real box.
+        &[
+            VKey::action(b"VT1", VkbdAction::SwitchVt(0), 1),
+            VKey::action(b"VT2", VkbdAction::SwitchVt(1), 1),
+            VKey::action(b"VT3", VkbdAction::SwitchVt(2), 1),
+        ],
+        // — InputShade: VT4-6 + Ctrl+Alt+Del. The nuke button lives here.
+        &[
+            VKey::action(b"VT4", VkbdAction::SwitchVt(3), 1),
+            VKey::action(b"VT5", VkbdAction::SwitchVt(4), 1),
+            VKey::action(b"VT6", VkbdAction::SwitchVt(5), 1),
+            VKey::action(b"CAD", VkbdAction::CtrlAltDel, 1),
+        ],
     ),
     // ── Row 1: Number row ─────────────────────────────────────────
     KbRow::new(
@@ -202,11 +273,11 @@ static KB_LAYOUT: [KbRow; KB_ROWS] = [
         ],
     ),
     // ── Row 2: QWERTY ─────────────────────────────────────────────
-    // — InputShade: Tab is 1.5u on real keyboards. Half-key stagger
-    // from row 1 makes keys align more naturally. 21px ≈ half KEY_UNIT.
-    KbRow::stagger(
+    // — InputShade: flush-fit. Tab 1→2u so row totals 15u. No stagger —
+    // all main rows are flush-left at LEFT_MARGIN. Looks clean. — SableWire
+    KbRow::new(
         &[
-            VKey::wide(b"Tab", b"\t", 1),
+            VKey::wide(b"Tab", b"\t", 2),
             VKey::normal(b"q", b"Q", b"q", b"Q"),
             VKey::normal(b"w", b"W", b"w", b"W"),
             VKey::normal(b"e", b"E", b"e", b"E"),
@@ -226,18 +297,17 @@ static KB_LAYOUT: [KbRow; KB_ROWS] = [
             VKey::wide(b"End", b"\x1b[F",  1),
             VKey::wide(b"PgD", b"\x1b[6~", 1),
         ],
+        // — InputShade: numpad + is double-height — spans rows 2-3. Row 3 gets SKIP. — SableWire
         &[
             VKey::wide(b"7", b"7", 1),
             VKey::wide(b"8", b"8", 1),
             VKey::wide(b"9", b"9", 1),
-            VKey::wide(b"+", b"+", 1),
+            VKey::tall(b"+", b"+", 1, 2),
         ],
-        // — InputShade: half-key stagger for QWERTY row (Tab is ~1.5u on real keyboards)
-        KEY_UNIT / 2, 0,
     ),
     // ── Row 3: Home row ───────────────────────────────────────────
-    // — InputShade: Caps Lock is ~1.75u, slight stagger beyond QWERTY row
-    KbRow::stagger(
+    // — InputShade: no stagger. Caps 2u + 11 letters + Enter 2u = 15u. Flush. — SableWire
+    KbRow::new(
         &[
             VKey::modifier(b"Caps", 2),
             VKey::normal(b"a", b"A", b"a", b"A"),
@@ -254,17 +324,17 @@ static KB_LAYOUT: [KbRow; KB_ROWS] = [
             VKey::wide(b"Enter", b"\n", 2),
         ],
         &[],
+        // — InputShade: SKIP — occupied by numpad + from row 2. Ghost limb. — SableWire
         &[
             VKey::wide(b"4", b"4", 1),
             VKey::wide(b"5", b"5", 1),
             VKey::wide(b"6", b"6", 1),
+            SKIP,
         ],
-        // — InputShade: home row stagger — Caps is wider, shift by ~0.75 key
-        KEY_UNIT * 3 / 4, 0,
     ),
     // ── Row 4: Shift row ──────────────────────────────────────────
-    // — InputShade: Up arrow centered over Down arrow (which is at nav col 1).
-    // nav_px = KEY_UNIT offsets Up one slot right to center over Down below.
+    // — InputShade: RShift 2→3u so row totals 15u. Up arrow centered via nav_px.
+    // Numpad Enter is double-height — spans rows 4-5. Row 5 gets SKIP. — SableWire
     KbRow::stagger(
         &[
             VKey::modifier(b"Shift", 2),
@@ -278,7 +348,7 @@ static KB_LAYOUT: [KbRow; KB_ROWS] = [
             VKey::normal(b",", b"<", b",", b"<"),
             VKey::normal(b".", b">", b".", b">"),
             VKey::normal(b"/", b"?", b"/", b"?"),
-            VKey::modifier(b"Shift", 2),
+            VKey::modifier(b"Shift", 3),
         ],
         &[
             VKey::wide(b"Up", b"\x1b[A", 1),
@@ -287,29 +357,35 @@ static KB_LAYOUT: [KbRow; KB_ROWS] = [
             VKey::wide(b"1", b"1", 1),
             VKey::wide(b"2", b"2", 1),
             VKey::wide(b"3", b"3", 1),
-            VKey::wide(b"Ent", b"\n", 1),
+            VKey::tall(b"Ent", b"\n", 1, 2),
         ],
-        // — InputShade: shift row stagger. Up arrow offset by 1 key unit to center
-        // over Down arrow in row 5 nav section (Left=0, Down=1, Right=2).
+        // — InputShade: no main stagger, nav_px centers Up over Down below. — SableWire
         0, KEY_UNIT,
     ),
     // ── Row 5: Bottom row ─────────────────────────────────────────
+    // — InputShade: Space 6→8u so row totals 15u. Volume controls dropped to fit.
+    // Numpad: 0(2w) + . + SKIP (occupied by Enter above). — SableWire
     KbRow::new(
         &[
             VKey::modifier(b"Ctrl", 1),
             VKey::modifier(b"Alt", 1),
-            VKey::wide(b"Space", b" ", 9),
+            VKey::wide(b"Space", b" ", 8),
             VKey::modifier(b"Alt", 1),
             VKey::modifier(b"Ctrl", 1),
+            VKey::action(b"V-", VkbdAction::VolumeDown, 1),
+            VKey::action(b"Mut", VkbdAction::VolumeMute, 1),
+            VKey::action(b"V+", VkbdAction::VolumeUp, 1),
         ],
         &[
             VKey::wide(b"Lt", b"\x1b[D", 1),
             VKey::wide(b"Dn", b"\x1b[B", 1),
             VKey::wide(b"Rt", b"\x1b[C", 1),
         ],
+        // — InputShade: SKIP — occupied by numpad Enter from row 4. — SableWire
         &[
             VKey::wide(b"0", b"0", 2),
             VKey::wide(b".", b".", 1),
+            SKIP,
         ],
     ),
 ];
@@ -334,6 +410,25 @@ static VKBD_HOVER_DIRTY: AtomicBool = AtomicBool::new(false);
 
 /// Keyboard state — modifier tracking
 static VKBD: spin::Mutex<VkbdState> = spin::Mutex::new(VkbdState::new());
+
+/// — InputShade: which VT is currently active. Set by compositor so the
+/// VT buttons can highlight the one you're on. No lock — atomic swap.
+static ACTIVE_VT: AtomicUsize = AtomicUsize::new(0);
+
+/// — InputShade: bottom offset in pixels. Set by compositor to STATUSBAR_HEIGHT
+/// so the OSK renders above the status bar, not on top of it. — SableWire
+static BOTTOM_OFFSET: AtomicU32 = AtomicU32::new(0);
+
+/// Set active VT for button highlighting. Called by compositor on VT switch.
+pub fn set_active_vt(vt: usize) {
+    ACTIVE_VT.store(vt, Ordering::Release);
+    VKBD_DIRTY.store(true, Ordering::Release);
+}
+
+/// — InputShade: set bottom offset so OSK renders above status bar. — SableWire
+pub fn set_bottom_offset(offset: u32) {
+    BOTTOM_OFFSET.store(offset, Ordering::Release);
+}
 
 struct VkbdState {
     shift: bool,
@@ -421,21 +516,40 @@ pub fn keyboard_height() -> u32 {
     if is_visible() { KB_HEIGHT } else { 0 }
 }
 
+/// — InputShade: total reserved bottom area = OSK height + bottom offset.
+/// Compositor uses this for VT blit clipping. — SableWire
+#[inline]
+pub fn total_bottom_reserved() -> u32 {
+    keyboard_height() + BOTTOM_OFFSET.load(Ordering::Acquire)
+}
+
 /// Handle a tap/click at screen coordinates. Returns bytes to inject
 /// into the VT input ring, or None if the click missed all keys.
 ///
 /// — InputShade: no heap allocation. Output bytes live in a stack array.
 /// Returns (buffer, length) — caller pushes bytes[0..len] to VT ring.
-pub fn handle_tap(x: i32, y: i32) -> Option<([u8; 8], usize)> {
+pub fn handle_tap(x: i32, y: i32) -> Option<VkbdResult> {
     VKBD_DIRTY.store(true, Ordering::Release);
     let mut state = VKBD.try_lock()?;
     if state.screen_w == 0 || state.screen_h == 0 {
         return None;
     }
 
-    let kb_y = state.screen_h - KB_HEIGHT;
+    let bottom_off = BOTTOM_OFFSET.load(Ordering::Acquire);
+    let kb_y = state.screen_h - bottom_off - KB_HEIGHT;
     if (y as u32) < kb_y {
         return None; // — InputShade: click above keyboard, not ours
+    }
+
+    // — InputShade: close button "X" in top-right corner of OSK. 30×24px hit zone.
+    // If you click it, the keyboard goes away. That's the deal. — SableWire
+    {
+        let close_x = LEFT_MARGIN + MAIN_UNITS * KEY_UNIT - 30;
+        let close_y = kb_y;
+        if x as u32 >= close_x && (x as u32) < close_x + 30
+            && y as u32 >= close_y && (y as u32) < close_y + KB_PADDING + KEY_H {
+            return Some(VkbdResult::Action(VkbdAction::CloseOSK));
+        }
     }
 
     // — InputShade: hit-test against all sections
@@ -456,6 +570,15 @@ pub fn handle_tap(x: i32, y: i32) -> Option<([u8; 8], usize)> {
         return None; // modifiers don't produce output bytes
     }
 
+    // — InputShade: action keys — VT switches, Ctrl+Alt+Del.
+    // These bypass the byte pipeline entirely. One tap, one action.
+    if let Some(act) = key.action {
+        state.shift = false;
+        state.ctrl = false;
+        state.alt = false;
+        return Some(VkbdResult::Action(act));
+    }
+
     // — InputShade: get output bytes based on shift state
     let shifted = state.is_shifted();
     let output = if shifted { key.shifted_output } else { key.output };
@@ -465,26 +588,75 @@ pub fn handle_tap(x: i32, y: i32) -> Option<([u8; 8], usize)> {
     }
 
     let mut buf = [0u8; 8];
-    let len = output.len().min(8);
+    let mut len;
 
-    // — InputShade: apply Ctrl modifier (mask with 0x1F for ASCII letters)
-    if state.ctrl && len == 1 && output[0] >= b'a' && output[0] <= b'z' {
-        buf[0] = output[0] & 0x1F;
-        // — InputShade: auto-release Ctrl after one keypress
-        state.ctrl = false;
-        return Some((buf, 1));
+    // — InputShade: sticky modifiers — Ctrl, Alt, Shift all stay latched
+    // until a non-modifier key fires. Stacking works: Ctrl+Alt+Del, Ctrl+C, etc.
+
+    if state.ctrl && output.len() == 1 {
+        // — InputShade: Ctrl modifier — 0x1F mask for all ASCII letters (upper+lower)
+        let b = output[0];
+        if (b >= b'a' && b <= b'z') || (b >= b'A' && b <= b'Z') {
+            buf[0] = b & 0x1F;
+            len = 1;
+        } else if b >= b'@' && b <= b'_' {
+            // — InputShade: Ctrl+@..Ctrl+_ produce 0x00..0x1F (standard terminal)
+            buf[0] = b - b'@';
+            len = 1;
+        } else {
+            // — InputShade: Ctrl + non-letter — pass through raw
+            buf[0] = b;
+            len = 1;
+        }
+    } else if state.ctrl && output.len() > 1 && output[0] == 0x1b && output[1] == b'[' {
+        // — InputShade: Ctrl + escape sequence (e.g. Del=\x1b[3~)
+        // Add Ctrl modifier parameter: \x1b[3~ → \x1b[3;5~
+        // This is how real terminals signal Ctrl+arrow, Ctrl+Del, etc.
+        if let Some(tilde_pos) = output.iter().position(|&b| b == b'~') {
+            let prefix_len = tilde_pos.min(5);
+            for i in 0..prefix_len {
+                buf[i] = output[i];
+            }
+            buf[prefix_len] = b';';
+            buf[prefix_len + 1] = b'5';
+            buf[prefix_len + 2] = b'~';
+            len = prefix_len + 3;
+        } else {
+            // — InputShade: no tilde terminator, pass through
+            len = output.len().min(8);
+            for i in 0..len {
+                buf[i] = output[i];
+            }
+        }
+    } else {
+        len = output.len().min(8);
+        for i in 0..len {
+            buf[i] = output[i];
+        }
     }
 
-    for i in 0..len {
-        buf[i] = output[i];
+    // — InputShade: Alt modifier wraps output with ESC prefix (standard terminal convention)
+    // Alt+x = \x1b then x. Alt+\x1b[3~ = \x1b\x1b[3~.
+    if state.alt && len < 8 {
+        // — InputShade: shift existing bytes right by 1 to make room for ESC prefix
+        let new_len = (len + 1).min(8);
+        let mut i = new_len - 1;
+        while i > 0 {
+            buf[i] = buf[i - 1];
+            i -= 1;
+        }
+        buf[0] = 0x1b;
+        len = new_len;
     }
 
-    // — InputShade: auto-release shift after one keypress (like phone keyboards)
-    if state.shift && !state.caps {
-        state.shift = false;
-    }
+    // — InputShade: clear all non-caps modifiers after producing output.
+    // Sticky hold: user taps Ctrl, taps Alt, taps Del → Ctrl+Alt+Del fires,
+    // then all modifiers release. No more goofy single-key-only nonsense.
+    state.shift = false;
+    state.ctrl = false;
+    state.alt = false;
 
-    Some((buf, len))
+    Some(VkbdResult::Bytes(buf, len))
 }
 
 /// Update hover state based on mouse position. Called by compositor on idle
@@ -543,12 +715,14 @@ pub fn draw_overlay(hw_fb: &dyn Framebuffer) {
         state.screen_w = screen_w;
         state.screen_h = screen_h;
 
-        let kb_y = screen_h - KB_HEIGHT;
+        let bottom_off = BOTTOM_OFFSET.load(Ordering::Acquire);
+        let kb_y = screen_h - bottom_off - KB_HEIGHT;
 
         // — InputShade: fill keyboard background
         fill_rect(buf, stride, bpp, format, 0, kb_y, screen_w, KB_HEIGHT, BG_COLOR);
 
-        // — InputShade: draw each row's three sections with per-row pixel stagger
+        // — InputShade: draw each row's three sections — flush, no stagger on main.
+        // Tall keys (height>1) get extra pixel height spanning into the row below.
         for (row_idx, kbrow) in KB_LAYOUT.iter().enumerate() {
             let key_y = kb_y + KB_PADDING + row_idx as u32 * (KEY_H + KEY_GAP);
 
@@ -566,6 +740,13 @@ pub fn draw_overlay(hw_fb: &dyn Framebuffer) {
             draw_section(&state, buf, stride, bpp, format,
                          kbrow.numpad, NUMPAD_X, key_y, row_idx, 2, NUMPAD_COLOR, 0);
         }
+
+        // — InputShade: draw close button "X" in top-right of OSK background area.
+        // A small, obvious escape hatch. Click it, keyboard vanishes. — SableWire
+        let close_x = LEFT_MARGIN + MAIN_UNITS * KEY_UNIT - 30;
+        let close_y = kb_y + 2;
+        fill_rect(buf, stride, bpp, format, close_x, close_y, 26, 20, CAD_COLOR);
+        draw_key_label(buf, stride, bpp, format, close_x, close_y, 26, b"X", 20);
     }
 }
 
@@ -590,7 +771,8 @@ pub fn redraw_hover_keys(hw_fb: &dyn Framebuffer) {
     }
 
     if let Some(state) = VKBD.try_lock() {
-        let kb_y = screen_h - KB_HEIGHT;
+        let bottom_off = BOTTOM_OFFSET.load(Ordering::Acquire);
+        let kb_y = screen_h - bottom_off - KB_HEIGHT;
 
         // — InputShade: repaint the key that LOST hover (restore to normal color)
         if let Some(prev) = state.prev_hovered {
@@ -629,7 +811,12 @@ fn redraw_single_key(state: &VkbdState, buf: *mut u8, stride: usize, bpp: usize,
     let mut key_x = start_x;
     for (i, key) in keys.iter().enumerate() {
         if i == col_idx {
+            // — InputShade: SKIP keys don't render — occupied by tall key above. — SableWire
+            if key.height == 0 {
+                return;
+            }
             let key_w = key.width as u32 * KEY_UNIT - KEY_GAP;
+            let key_h_px = key.height as u32 * (KEY_H + KEY_GAP) - KEY_GAP;
             let key_y = kb_y + KB_PADDING + row_idx as u32 * (KEY_H + KEY_GAP);
 
             // — InputShade: same color logic as draw_section
@@ -649,9 +836,9 @@ fn redraw_single_key(state: &VkbdState, buf: *mut u8, stride: usize, bpp: usize,
                 base_color
             };
 
-            fill_rect(buf, stride, bpp, format, key_x, key_y, key_w, KEY_H, color);
+            fill_rect(buf, stride, bpp, format, key_x, key_y, key_w, key_h_px, color);
             let label = if state.is_shifted() { key.shifted_label } else { key.label };
-            draw_key_label(buf, stride, bpp, format, key_x, key_y, key_w, label);
+            draw_key_label(buf, stride, bpp, format, key_x, key_y, key_w, label, key_h_px);
             return;
         }
         key_x += key.width as u32 * KEY_UNIT;
@@ -668,6 +855,8 @@ fn redraw_single_key(state: &VkbdState, buf: *mut u8, stride: usize, bpp: usize,
 /// — InputShade: draw a section of keys at a fixed X offset.
 /// `fk_gap` > 0 inserts gaps after Esc (idx 0), F4 (idx 4), F8 (idx 8) —
 /// standard F-key grouping. 0 = no gaps. Only used for F-key row.
+/// Tall keys (height>1) get pixel height spanning multiple rows.
+/// SKIP keys (height=0) advance X but don't render — occupied by tall key above. — SableWire
 fn draw_section(state: &VkbdState, buf: *mut u8, stride: usize, bpp: usize,
                 format: PixelFormat, keys: &[VKey], start_x: u32, key_y: u32,
                 row_idx: usize, section: usize, base_color: u32, fk_gap: u32) {
@@ -675,24 +864,42 @@ fn draw_section(state: &VkbdState, buf: *mut u8, stride: usize, bpp: usize,
     for (col_idx, key) in keys.iter().enumerate() {
         let key_w = key.width as u32 * KEY_UNIT - KEY_GAP;
 
-        // — InputShade: pick color based on state — pressed > hovered > modifier > base.
-        // Three visual tiers: pressed (brightest), hover (mid), normal (base).
+        // — InputShade: SKIP sentinel — slot occupied by tall key above. Advance X, move on.
+        if key.height == 0 {
+            key_x += key.width as u32 * KEY_UNIT;
+            if fk_gap > 0 && (col_idx == 0 || col_idx == 4 || col_idx == 8) {
+                key_x += fk_gap;
+            }
+            continue;
+        }
+
+        // — InputShade: tall keys get h * (KEY_H + KEY_GAP) - KEY_GAP pixel height.
+        // Standard keys (h=1) just get KEY_H. Double-height (h=2) spans two rows. — SableWire
+        let key_h_px = key.height as u32 * (KEY_H + KEY_GAP) - KEY_GAP;
+
+        // — InputShade: color priority: pressed > hovered > active modifier >
+        // active VT button > CAD red > section base. VT buttons glow green
+        // when you're on that terminal. CAD stays angry red because it should.
         let color = if state.pressed == Some((row_idx, section, col_idx)) {
             KEY_PRESSED_COLOR
         } else if state.hovered == Some((row_idx, section, col_idx)) {
             KEY_HOVER_COLOR
         } else if key.is_modifier && is_modifier_active(state, key.label) {
             MOD_ACTIVE_COLOR
+        } else if let Some(VkbdAction::SwitchVt(vt)) = key.action {
+            if vt == ACTIVE_VT.load(Ordering::Relaxed) { VT_ACTIVE_COLOR } else { base_color }
+        } else if let Some(VkbdAction::CtrlAltDel) = key.action {
+            CAD_COLOR
         } else {
             base_color
         };
 
-        // Draw key background
-        fill_rect(buf, stride, bpp, format, key_x, key_y, key_w, KEY_H, color);
+        // Draw key background (with actual height for tall keys)
+        fill_rect(buf, stride, bpp, format, key_x, key_y, key_w, key_h_px, color);
 
-        // — InputShade: draw key label
+        // — InputShade: draw key label (centered within actual key height)
         let label = if state.is_shifted() { key.shifted_label } else { key.label };
-        draw_key_label(buf, stride, bpp, format, key_x, key_y, key_w, label);
+        draw_key_label(buf, stride, bpp, format, key_x, key_y, key_w, label, key_h_px);
 
         key_x += key.width as u32 * KEY_UNIT;
 
@@ -734,13 +941,16 @@ fn hit_test_section(keys: &'static [VKey], start_x: u32, click_x: u32, fk_gap: u
 
 /// — InputShade: full hit-test across all sections of all rows.
 /// Returns (row, section, col, &VKey) or None.
+/// Tall keys: when a SKIP sentinel is hit, checks the row above for tall keys
+/// extending down into this slot — the ghost echo of a double-height Enter. — SableWire
 fn hit_test(x: i32, y: i32, screen_w: u32, screen_h: u32) -> Option<(usize, usize, usize, &'static VKey)> {
     if x < 0 || y < 0 {
         return None;
     }
     let _ = screen_w; // — InputShade: unused now, sections have fixed positions
 
-    let kb_y = screen_h - KB_HEIGHT;
+    let bottom_off = BOTTOM_OFFSET.load(Ordering::Acquire);
+    let kb_y = screen_h - bottom_off - KB_HEIGHT;
     let abs_y = y as u32;
     if abs_y < kb_y {
         return None;
@@ -762,15 +972,57 @@ fn hit_test(x: i32, y: i32, screen_w: u32, screen_h: u32) -> Option<(usize, usiz
     // F-key row (row 0) main section has group gaps.
     let fk_gap = if row_idx == 0 { FK_GROUP_GAP } else { 0 };
     if let Some((col, key)) = hit_test_section(kbrow.main, LEFT_MARGIN + kbrow.main_px, click_x, fk_gap) {
+        // — InputShade: if we hit a SKIP, check row above for tall key extending down
+        if key.height == 0 {
+            return hit_test_tall_above(row_idx, 0, col, click_x);
+        }
         return Some((row_idx, 0, col, key));
     }
     if let Some((col, key)) = hit_test_section(kbrow.nav, NAV_X + kbrow.nav_px, click_x, 0) {
+        if key.height == 0 {
+            return hit_test_tall_above(row_idx, 1, col, click_x);
+        }
         return Some((row_idx, 1, col, key));
     }
     if let Some((col, key)) = hit_test_section(kbrow.numpad, NUMPAD_X, click_x, 0) {
+        if key.height == 0 {
+            return hit_test_tall_above(row_idx, 2, col, click_x);
+        }
         return Some((row_idx, 2, col, key));
     }
 
+    None
+}
+
+/// — InputShade: when hit-test lands on a SKIP slot, look at the row above for
+/// a tall key that extends into this position. Returns the tall key's (row, section, col).
+/// The user clicked the lower half of numpad + or Enter — route it correctly. — SableWire
+fn hit_test_tall_above(row_idx: usize, section: usize, _col: usize, click_x: u32)
+    -> Option<(usize, usize, usize, &'static VKey)>
+{
+    if row_idx == 0 {
+        return None; // — InputShade: no row above to check
+    }
+    let above_row = &KB_LAYOUT[row_idx - 1];
+    let (keys, start_x, fk_gap) = match section {
+        0 => (above_row.main, LEFT_MARGIN + above_row.main_px,
+              if row_idx - 1 == 0 { FK_GROUP_GAP } else { 0 }),
+        1 => (above_row.nav, NAV_X + above_row.nav_px, 0u32),
+        2 => (above_row.numpad, NUMPAD_X, 0u32),
+        _ => return None,
+    };
+    // — InputShade: find the tall key in the row above at this X position
+    let mut key_x = start_x;
+    for (col_idx, key) in keys.iter().enumerate() {
+        let key_w = key.width as u32 * KEY_UNIT - KEY_GAP;
+        if key.height > 1 && click_x >= key_x && click_x < key_x + key_w {
+            return Some((row_idx - 1, section, col_idx, key));
+        }
+        key_x += key.width as u32 * KEY_UNIT;
+        if fk_gap > 0 && (col_idx == 0 || col_idx == 4 || col_idx == 8) {
+            key_x += fk_gap;
+        }
+    }
     None
 }
 
@@ -820,15 +1072,16 @@ fn fill_rect(buf: *mut u8, stride: usize, bpp: usize, _format: PixelFormat,
 /// Draw a text label centered in a key rectangle.
 /// — InputShade: glyph rendering stolen from fb::console. One byte at a time,
 /// bitmap rows from PSF2_FONT. It's not pretty but it's ours.
+/// `key_h_px` is the actual pixel height of the key (accounts for tall keys). — SableWire
 fn draw_key_label(buf: *mut u8, stride: usize, bpp: usize, format: PixelFormat,
-                  key_x: u32, key_y: u32, key_w: u32, label: &[u8]) {
+                  key_x: u32, key_y: u32, key_w: u32, label: &[u8], key_h_px: u32) {
     let font = &PSF2_FONT;
     let glyph_w = font.width;
     let glyph_h = font.height;
 
     let label_w = label.len() as u32 * glyph_w;
     let text_x = key_x + (key_w.saturating_sub(label_w)) / 2;
-    let text_y = key_y + (KEY_H.saturating_sub(glyph_h)) / 2;
+    let text_y = key_y + (key_h_px.saturating_sub(glyph_h)) / 2;
 
     let fg_pixel = argb_to_pixel(format, TEXT_COLOR);
 
@@ -983,39 +1236,39 @@ mod tests {
     #[test]
     fn key_counts_per_row() {
         // — CrashBloom: verify key counts for each section
-        // Row 0 (F-keys): 13 main (Esc + F1-F12), no nav, no numpad
+        // Row 0 (F-keys): 13 main (Esc + F1-F12), 3 nav (VT1-3), 4 numpad (VT4-6 + CAD)
         assert_eq!(KB_LAYOUT[0].main.len(), 13);
-        assert_eq!(KB_LAYOUT[0].nav.len(), 0);
-        assert_eq!(KB_LAYOUT[0].numpad.len(), 0);
+        assert_eq!(KB_LAYOUT[0].nav.len(), 3);
+        assert_eq!(KB_LAYOUT[0].numpad.len(), 4);
         // Row 1 (numbers): 14 main, 3 nav (Ins/Hom/PgU), 4 numpad (Num / * -)
         assert_eq!(KB_LAYOUT[1].main.len(), 14);
         assert_eq!(KB_LAYOUT[1].nav.len(), 3);
         assert_eq!(KB_LAYOUT[1].numpad.len(), 4);
-        // Row 2 (QWERTY): 14 main, 3 nav (Del/End/PgD), 4 numpad (7 8 9 +)
+        // Row 2 (QWERTY): 14 main (Tab 2u + 13 keys), 3 nav, 4 numpad (7 8 9 +(tall))
         assert_eq!(KB_LAYOUT[2].main.len(), 14);
         assert_eq!(KB_LAYOUT[2].nav.len(), 3);
         assert_eq!(KB_LAYOUT[2].numpad.len(), 4);
-        // Row 3 (Home): 13 main, 0 nav, 3 numpad (4 5 6)
+        // Row 3 (Home): 13 main, 0 nav, 4 numpad (4 5 6 SKIP)
         assert_eq!(KB_LAYOUT[3].main.len(), 13);
         assert_eq!(KB_LAYOUT[3].nav.len(), 0);
-        assert_eq!(KB_LAYOUT[3].numpad.len(), 3);
-        // Row 4 (Shift): 12 main, 1 nav (Up), 4 numpad (1 2 3 Ent)
+        assert_eq!(KB_LAYOUT[3].numpad.len(), 4);
+        // Row 4 (Shift): 12 main, 1 nav (Up), 4 numpad (1 2 3 Ent(tall))
         assert_eq!(KB_LAYOUT[4].main.len(), 12);
         assert_eq!(KB_LAYOUT[4].nav.len(), 1);
         assert_eq!(KB_LAYOUT[4].numpad.len(), 4);
-        // Row 5 (Bottom): 5 main, 3 nav (Lt Dn Rt), 3 numpad (0(2w) .)
-        assert_eq!(KB_LAYOUT[5].main.len(), 5);
+        // Row 5 (Bottom): 8 main, 3 nav (Lt Dn Rt), 3 numpad (0(2w) . SKIP)
+        assert_eq!(KB_LAYOUT[5].main.len(), 8);
         assert_eq!(KB_LAYOUT[5].nav.len(), 3);
-        assert_eq!(KB_LAYOUT[5].numpad.len(), 2);
+        assert_eq!(KB_LAYOUT[5].numpad.len(), 3);
     }
 
     #[test]
     fn all_normal_keys_have_output() {
-        // — CrashBloom: every non-modifier key must produce at least one byte
+        // — CrashBloom: every non-modifier, non-SKIP key must produce at least one byte
         for (i, kbrow) in KB_LAYOUT.iter().enumerate() {
             for (section_name, keys) in [("main", kbrow.main), ("nav", kbrow.nav), ("numpad", kbrow.numpad)] {
                 for (j, key) in keys.iter().enumerate() {
-                    if !key.is_modifier {
+                    if !key.is_modifier && key.height > 0 && key.action.is_none() {
                         assert!(!key.output.is_empty(),
                             "row {} {} key {} ({:?}) has empty output",
                             i, section_name, j, core::str::from_utf8(key.label));
@@ -1063,7 +1316,7 @@ mod tests {
         // — CrashBloom: Space is in row 5 main section, after Ctrl(1) + Alt(1)
         let row5_y = SCREEN_H - KB_HEIGHT + KB_PADDING + 5 * (KEY_H + KEY_GAP) + KEY_H / 2;
         // Space starts at LEFT_MARGIN + 2*KEY_UNIT (after Ctrl + Alt)
-        let space_mid = LEFT_MARGIN + 2 * KEY_UNIT + 4 * KEY_UNIT; // middle of 9-unit space
+        let space_mid = LEFT_MARGIN + 2 * KEY_UNIT + 4 * KEY_UNIT; // middle of 8-unit space
         let result = hit_test(space_mid as i32, row5_y as i32, SCREEN_W, SCREEN_H);
         assert!(result.is_some(), "should hit Space bar");
         let (_row, _section, _col, key) = result.unwrap();

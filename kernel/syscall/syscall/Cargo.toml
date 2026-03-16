@@ -32,5 +32,8 @@ sched = { path = "../../sched/sched" }
 smp = { path = "../../smp/smp" }
 mm-cow = { path = "../../mm/mm-cow" }
 mm-pagedb = { path = "../../mm/mm-pagedb" }
+mm-vmstat = { path = "../../mm/mm-vmstat" }
+mm-reclaim = { path = "../../mm/mm-reclaim" }
 sched-traits = { path = "../../sched/sched-traits" }
+waitqueue = { path = "../../core/waitqueue" }
 spin = "0.9"

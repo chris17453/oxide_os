@@ -18,7 +18,7 @@ mod lockfree_ring;
 
 use alloc::sync::Arc;
 use core::ptr;
-use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicPtr, Ordering};
 use spin::Mutex;
 use sched::TaskState;
 
@@ -67,64 +67,10 @@ pub unsafe fn set_yield_callback(f: YieldFn) {
 pub const MAX_VTS: usize = 7;
 
 /// — GraveShift: Per-VT wait queue for processes blocked on read().
-/// When a VT is inactive (not ACTIVE_VT), readers sleep here instead of
-/// spin-polling. On VT switch, all waiters for the newly-active VT are woken.
-/// Linux does the same via tty->read_wait (wait_event_interruptible).
-/// Fixed-size because we never have more than ~4 processes reading one VT.
-const MAX_VT_WAITERS: usize = 8;
-const PID_NONE: u32 = u32::MAX;
-
-/// — GraveShift: ISR-safe wait queue. Atomic slots, no locks, no heap.
-/// register() grabs a slot, unregister() releases it, wake_all() wakes everyone.
-struct VtWaitQueue {
-    pids: [AtomicU32; MAX_VT_WAITERS],
-}
-
-impl VtWaitQueue {
-    const fn new() -> Self {
-        // — GraveShift: const-init all slots to PID_NONE. Can't use a loop
-        // in const fn, so macro-expand the array. Ugly but correct.
-        Self {
-            pids: [
-                AtomicU32::new(PID_NONE), AtomicU32::new(PID_NONE),
-                AtomicU32::new(PID_NONE), AtomicU32::new(PID_NONE),
-                AtomicU32::new(PID_NONE), AtomicU32::new(PID_NONE),
-                AtomicU32::new(PID_NONE), AtomicU32::new(PID_NONE),
-            ],
-        }
-    }
-
-    /// Register current PID as a waiter. Returns slot index or None if full.
-    fn register(&self, pid: u32) -> Option<usize> {
-        for (i, slot) in self.pids.iter().enumerate() {
-            if slot.compare_exchange(PID_NONE, pid, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
-                return Some(i);
-            }
-        }
-        None // — GraveShift: all slots full. Shouldn't happen with 8 slots.
-    }
-
-    /// Unregister a waiter by slot index.
-    fn unregister(&self, slot: usize) {
-        if slot < MAX_VT_WAITERS {
-            self.pids[slot].store(PID_NONE, Ordering::Release);
-        }
-    }
-
-    /// Wake all registered waiters. Called from VT switch (ISR context).
-    /// — GraveShift: uses try_wake_up because this runs in ISR context
-    /// (keyboard interrupt → Alt+Fn). Cannot use blocking wake_up().
-    fn wake_all(&self) {
-        for slot in &self.pids {
-            let pid = slot.load(Ordering::Acquire);
-            if pid != PID_NONE {
-                // — GraveShift: don't clear the slot here — the waiter clears
-                // it when it unregisters after waking up. ISR just kicks them.
-                sched::try_wake_up(pid);
-            }
-        }
-    }
-}
+/// Now uses the generic WaitQueue from the waitqueue crate — same lock-free
+/// atomic slots, same ISR-safe wake, but shared implementation across pipes,
+/// sockets, and VTs. No more duplicated wait queue code in every subsystem.
+use waitqueue::WaitQueue;
 
 /// — NeonVale: Index of the LOG VT. Not a user terminal — no /dev/tty device,
 /// no getty, no shell. Just kernel log output rendered by the terminal emulator.
@@ -169,9 +115,9 @@ pub struct VtManager {
     /// One per VT. IRQ pushes to active VT's ring. read()/poll() drains it.
     input_rings: [LockFreeRing; MAX_VTS],
     /// — GraveShift: Per-VT wait queues for processes blocked on read().
-    /// Linux equivalent: tty->read_wait. Processes sleeping on an inactive VT
-    /// register here and get woken on VT switch or input arrival.
-    wait_queues: [VtWaitQueue; MAX_VTS],
+    /// Linux equivalent: tty->read_wait. Now uses generic WaitQueue — same
+    /// lock-free atomic slot design, shared with pipes and sockets.
+    wait_queues: [WaitQueue; MAX_VTS],
 }
 
 impl VtManager {
@@ -212,7 +158,7 @@ impl VtManager {
             input_rings: core::array::from_fn(|_| LockFreeRing::new()),
             // — GraveShift: per-VT wait queues. Processes blocked on read() for an
             // inactive VT sleep here. VT switch wakes them. Zero CPU while inactive.
-            wait_queues: core::array::from_fn(|_| VtWaitQueue::new()),
+            wait_queues: core::array::from_fn(|_| WaitQueue::new()),
         }
     }
 
@@ -853,6 +799,15 @@ impl VnodeOps for VtDevice {
 
     fn poll_write_ready(&self) -> bool {
         true
+    }
+
+    fn poll_register_wait(&self, table: &mut waitqueue::PollTable) {
+        // — SableWire: Register on this VT's wait queue. When input arrives
+        // (keyboard ISR → push_input → wake_all) or VT switches to us,
+        // the polling process gets woken instead of spinning at tick rate.
+        if self.vt_num < MAX_VTS {
+            table.register(&self.manager.wait_queues[self.vt_num]);
+        }
     }
 
     fn ioctl(&self, request: u64, arg: u64) -> VfsResult<i64> {

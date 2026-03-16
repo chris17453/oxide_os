@@ -148,6 +148,41 @@ impl PageMapper {
         true
     }
 
+    /// Remove flags from an already-mapped page
+    ///
+    /// — GraveShift: needed for clearing NO_EXECUTE on pages shared between
+    /// executable and non-executable ELF segments. OR can't undo bit 63.
+    pub fn remove_flags(&mut self, virt: VirtAddr, clear_flags: PageTableFlags) -> bool {
+        let pml4_idx = PageLevel::Pml4.index(virt);
+        let pdpt_idx = PageLevel::Pdpt.index(virt);
+        let pd_idx = PageLevel::Pd.index(virt);
+        let pt_idx = PageLevel::Pt.index(virt);
+
+        let pdpt = match self.get_table(self.pml4_phys, pml4_idx) {
+            Some(p) => p,
+            None => return false,
+        };
+        let pd = match self.get_table(pdpt, pdpt_idx) {
+            Some(p) => p,
+            None => return false,
+        };
+        let pt = match self.get_table(pd, pd_idx) {
+            Some(p) => p,
+            None => return false,
+        };
+
+        let pt_virt = phys_to_virt(pt);
+        let pt_table = unsafe { &mut *pt_virt.as_mut_ptr::<PageTable>() };
+        let entry = &mut pt_table[pt_idx];
+
+        if !entry.is_present() {
+            return false;
+        }
+
+        entry.remove_flags(clear_flags);
+        true
+    }
+
     /// Unmap a virtual address
     ///
     /// Returns the physical address that was mapped, or None if not mapped.

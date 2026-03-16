@@ -14,8 +14,9 @@ extern crate alloc;
 //
 // The bootstrap heap (256KB in BSS) handles allocations during _start before
 // syscalls are available. Once it fills up, additional memory is obtained via
-// mmap in 2MB arenas, up to 64MB total. This avoids putting a giant 64MB
-// static array in BSS which would exhaust physical memory during exec.
+// mmap in 2MB arenas. — IronGhost: We cap at 512MB (on 512MB QEMU this
+// effectively means "until mmap fails") so heavy runtimes like CPython don't
+// OOM during startup just because libc's allocator is bump-only.
 mod allocator {
     use core::alloc::{GlobalAlloc, Layout};
     use core::cell::UnsafeCell;
@@ -27,8 +28,8 @@ mod allocator {
     /// Size of each mmap arena.
     const ARENA_SIZE: usize = 2 * 1024 * 1024; // 2MB
 
-    /// Maximum number of mmap arenas (2MB × 32 = 64MB ceiling).
-    const MAX_ARENAS: usize = 32;
+    /// Maximum number of mmap arenas (2MB × 256 = 512MB ceiling).
+    const MAX_ARENAS: usize = 256;
 
     /// — IronGhost: Allocations above this threshold bypass the arena bump allocator
     /// and go straight to mmap. Without this, a 20MB malloc spins through every 2MB

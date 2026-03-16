@@ -2,9 +2,12 @@
 //! — GlassSignal
 
 /// Maximum VTs the compositor can address (compile-time array ceiling).
-/// — GlassSignal: all VTs up to this limit can be created on demand.
-/// Change this only if you need more than 6 VT slots system-wide.
-pub const MAX_VTS: usize = 6;
+/// — GlassSignal: 6 interactive VTs + 1 LOG VT = 7 total.
+/// — NeonVale: Matches vt::MAX_VTS. The LOG VT (index 6) is kernel-only.
+pub const MAX_VTS: usize = 7;
+
+/// — NeonVale: Index of the LOG VT within the compositor's VT array.
+pub const LOG_VT: usize = 6;
 
 /// Maximum number of visible tiles in any layout
 pub const MAX_TILES: usize = 4;
@@ -141,6 +144,9 @@ pub struct LayoutManager {
     /// Physical screen dimensions
     screen_width: u32,
     screen_height: u32,
+    /// — GlassSignal: reserved bottom area (status bar + OSK). VT viewports
+    /// are computed using screen_height - reserved_bottom. — SableWire
+    reserved_bottom: u32,
     /// Previous layout (for Alt+Enter toggle)
     prev_layout: Layout,
     prev_slots: [usize; MAX_TILES],
@@ -154,6 +160,7 @@ impl LayoutManager {
             focused_slot: 0,
             screen_width,
             screen_height,
+            reserved_bottom: 0,
             prev_layout: Layout::Fullscreen,
             prev_slots: [0, 1, 2, 3],
         }
@@ -190,7 +197,9 @@ impl LayoutManager {
     /// — GlassSignal: pure geometry, no side effects, no locks
     pub fn compute_viewports(&self) -> [(usize, Viewport); MAX_TILES] {
         let w = self.screen_width;
-        let h = self.screen_height;
+        // — GlassSignal: subtract reserved bottom (status bar + OSK) from available height.
+        // VTs never overlap the status bar. SIGWINCH keeps apps informed. — SableWire
+        let h = self.screen_height.saturating_sub(self.reserved_bottom);
         // — GlassSignal: 2px border between tiles, subtracted from tile dimensions
         let border = if self.layout == Layout::Fullscreen { 0 } else { 2 };
 
@@ -353,5 +362,21 @@ impl LayoutManager {
 
     pub fn screen_height(&self) -> u32 {
         self.screen_height
+    }
+
+    /// — GlassSignal: set reserved bottom area (status bar + OSK height).
+    /// Returns true if the value changed (caller should trigger layout recompute). — SableWire
+    pub fn set_reserved_bottom(&mut self, px: u32) -> bool {
+        if self.reserved_bottom != px {
+            self.reserved_bottom = px;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// — GlassSignal: current reserved bottom area in pixels. — SableWire
+    pub fn reserved_bottom(&self) -> u32 {
+        self.reserved_bottom
     }
 }

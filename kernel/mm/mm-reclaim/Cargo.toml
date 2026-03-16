@@ -1,0 +1,16 @@
+[package]
+name = "mm-reclaim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Page reclaim engine — LRU lists, watermarks, kswapd, direct reclaim, shrinker interface"
+
+[dependencies]
+os_core = { workspace = true }
+mm-core = { workspace = true }
+mm-pagedb = { workspace = true }
+mm-vmstat = { path = "../mm-vmstat" }
+mm-pagecache = { path = "../mm-pagecache" }
+mm-traits = { workspace = true }
+spin = { workspace = true }
+os_log = { path = "../../core/os_log" }

@@ -95,6 +95,22 @@ pub fn current_pid_lockfree() -> Option<Pid> {
     if pid == u32::MAX { None } else { Some(pid) }
 }
 
+/// Get the CPU currently running a PID (lock-free best-effort)
+///
+/// Returns Some(cpu) if the PID is currently executing on that CPU, None otherwise.
+/// This is used by wait/reap paths to avoid tearing down a task's address space
+/// while it is still running on a remote core.
+pub fn running_cpu_of_pid(pid: Pid) -> Option<u32> {
+    let ncpus = num_cpus().min(MAX_CPUS as u32);
+    for cpu in 0..ncpus {
+        let curr = CURRENT_PIDS[cpu as usize].load(Ordering::Relaxed);
+        if curr == pid {
+            return Some(cpu);
+        }
+    }
+    None
+}
+
 /// Set current PID (lock-free update)
 fn set_current_pid_lockfree(cpu: u32, pid: Option<Pid>) {
     let val = pid.unwrap_or(u32::MAX);
@@ -1976,67 +1992,180 @@ where
     Some(f(meta_ref))
 }
 
-/// Get the children of a task
+/// Get the children of a task by walking the intrusive sibling list.
 ///
-/// — GraveShift: Fast-path this_cpu() — parent is almost always the caller.
-/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU parent lookups.
+/// — GraveShift: Now walks first_child → sibling_next chain. Each step
+/// requires a separate with_task_on_any_cpu call since siblings may be
+/// on different CPUs. The Vec is allocated here, not under any RQ lock.
+/// For the zero-alloc path, use get_task_children_noalloc.
 pub fn get_task_children(pid: Pid) -> Vec<Pid> {
-    with_task_on_any_cpu(pid, |rq| rq.get_task(pid).map(|t| t.children.clone()))
-        .unwrap_or_default()
+    use crate::task::PID_NONE;
+    let first = with_task_on_any_cpu(pid, |rq| {
+        rq.get_task(pid).map(|t| t.first_child)
+    }).unwrap_or(PID_NONE);
+
+    if first == PID_NONE {
+        return Vec::new();
+    }
+
+    let mut result = Vec::new();
+    let mut current = first;
+    // — GraveShift: Cap at 256 to prevent infinite loop on corrupted list.
+    // If you have >256 children, congratulations, you're a fork bomb.
+    let mut safety = 0u32;
+    while current != PID_NONE && safety < 256 {
+        result.push(current);
+        let next = with_task_on_any_cpu(current, |rq| {
+            rq.get_task(current).map(|t| t.sibling_next)
+        }).unwrap_or(PID_NONE);
+        current = next;
+        safety += 1;
+    }
+    result
 }
 
 /// Get child PIDs without heap allocation.
-/// Copies up to MAX children to a stack buffer. Returns (buffer, count).
-/// — GraveShift: Linux iterates children via intrusive list_head in task_struct.
-/// We don't have intrusive lists, so we copy to a stack buffer inside the RQ
-/// lock and release immediately. No heap alloc, no clone, no deadlock.
-/// 64 children covers any realistic process tree. If a process has >64 children,
-/// we return the first 64 — waitpid scans them all eventually via repeated calls.
+/// Copies up to 64 children to a stack buffer. Returns (buffer, count).
+/// — GraveShift: Now walks the intrusive sibling list via PID hops.
+/// Each child lookup is a separate with_task_on_any_cpu call — siblings
+/// can be on any CPU. 64 children covers any realistic process tree.
 pub fn get_task_children_noalloc(pid: Pid) -> ([Pid; 64], usize) {
-    // — GraveShift: with_task_on_any_cpu takes Fn (not FnMut), so we use
-    // UnsafeCell for interior mutability. Safe because we're single-threaded
-    // inside the RQ lock — no concurrent access to these stack locals.
-    use core::cell::UnsafeCell;
-    let buf = UnsafeCell::new([0u32; 64]);
-    let count = UnsafeCell::new(0usize);
-    with_task_on_any_cpu(pid, |rq| {
-        if let Some(task) = rq.get_task(pid) {
-            let b = unsafe { &mut *buf.get() };
-            let c = unsafe { &mut *count.get() };
-            for (i, &child) in task.children.iter().enumerate() {
-                if i >= 64 { break; }
-                b[i] = child;
-                *c = i + 1;
-            }
-        }
-        Some(())
-    });
-    unsafe { (*buf.get(), *count.get()) }
+    use crate::task::PID_NONE;
+    let first = with_task_on_any_cpu(pid, |rq| {
+        rq.get_task(pid).map(|t| t.first_child)
+    }).unwrap_or(PID_NONE);
+
+    let mut buf = [0u32; 64];
+    let mut count = 0usize;
+
+    if first == PID_NONE {
+        return (buf, count);
+    }
+
+    let mut current = first;
+    while current != PID_NONE && count < 64 {
+        buf[count] = current;
+        count += 1;
+        let next = with_task_on_any_cpu(current, |rq| {
+            rq.get_task(current).map(|t| t.sibling_next)
+        }).unwrap_or(PID_NONE);
+        current = next;
+    }
+    (buf, count)
 }
 
-/// Add a child to a task
+/// Add a child to a task via intrusive sibling list prepend.
+/// O(1), zero heap allocation.
 ///
-/// — GraveShift: Fast-path this_cpu() — parent adding child is always local.
-/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU parent updates.
-pub fn add_task_child(pid: Pid, child_pid: Pid) {
-    with_task_on_any_cpu(pid, |rq| {
-        if let Some(task) = rq.get_task_mut(pid) {
-            task.add_child(child_pid);
+/// — GraveShift: Three-step dance across potentially different CPUs:
+/// 1. Read parent's current first_child (without modifying parent yet)
+/// 2. Set child's sibling links (next = old first, prev = PID_NONE)
+/// 3. Update parent's first_child to point to new child (AFTER child links are set)
+/// 4. If old first child exists, set its sibling_prev to new child
+///
+/// Order matters: child's sibling_next MUST be set BEFORE parent.first_child
+/// points to it. Otherwise get_task_children_noalloc sees child as first_child,
+/// reads sibling_next=PID_NONE (uninitialised), and stops — missing all
+/// previous children. That's how VT3/5 gettys got orphaned. — GraveShift
+pub fn add_task_child(parent_pid: Pid, child_pid: Pid) {
+    use crate::task::PID_NONE;
+
+    // Step 1: Read parent's current first_child WITHOUT modifying parent
+    let old_first = with_task_on_any_cpu(parent_pid, |rq| {
+        rq.get_task(parent_pid).map(|t| t.first_child)
+    }).unwrap_or(PID_NONE);
+
+    // Step 2: Set child's sibling links FIRST — before parent points to child
+    with_task_on_any_cpu(child_pid, |rq| {
+        if let Some(child) = rq.get_task_mut(child_pid) {
+            child.sibling_next = old_first;
+            child.sibling_prev = PID_NONE;
             Some(())
         } else {
             None
         }
     });
+
+    // Step 3: NOW update parent's first_child — child's links are already set,
+    // so any concurrent get_task_children_noalloc will follow a valid chain.
+    with_task_on_any_cpu(parent_pid, |rq| {
+        if let Some(task) = rq.get_task_mut(parent_pid) {
+            Some(task.prepend_child(child_pid))
+        } else {
+            None
+        }
+    });
+
+    // Step 4: Update old first child's prev pointer
+    if old_first != PID_NONE {
+        with_task_on_any_cpu(old_first, |rq| {
+            if let Some(old) = rq.get_task_mut(old_first) {
+                old.sibling_prev = child_pid;
+                Some(())
+            } else {
+                None
+            }
+        });
+    }
 }
 
-/// Remove a child from a task
+/// Remove a child from a task via intrusive sibling list unlink.
+/// O(1), zero heap allocation.
 ///
-/// — GraveShift: Fast-path this_cpu().
-/// — TorqueJax: PID_TO_CPU hint as tier-2 for cross-CPU parent updates.
-pub fn remove_task_child(pid: Pid, child_pid: Pid) {
-    with_task_on_any_cpu(pid, |rq| {
-        if let Some(task) = rq.get_task_mut(pid) {
-            task.remove_child(child_pid);
+/// — GraveShift: Four-step unlink:
+/// 1. Read child's prev/next links
+/// 2. If prev exists, set prev.next = child.next
+/// 3. If next exists, set next.prev = child.prev
+/// 4. If child was first_child, update parent.first_child = child.next
+/// 5. Clear child's sibling links
+/// Each step is a separate RQ lock acquisition. Safe because we store PIDs.
+pub fn remove_task_child(parent_pid: Pid, child_pid: Pid) {
+    use crate::task::PID_NONE;
+
+    // Step 1: Read child's sibling links
+    let (prev, next) = with_task_on_any_cpu(child_pid, |rq| {
+        rq.get_task(child_pid).map(|t| (t.sibling_prev, t.sibling_next))
+    }).unwrap_or((PID_NONE, PID_NONE));
+
+    // Step 2: Update prev's next pointer
+    if prev != PID_NONE {
+        with_task_on_any_cpu(prev, |rq| {
+            if let Some(p) = rq.get_task_mut(prev) {
+                p.sibling_next = next;
+                Some(())
+            } else {
+                None
+            }
+        });
+    } else {
+        // — GraveShift: Child was first_child. Update parent to skip over it.
+        with_task_on_any_cpu(parent_pid, |rq| {
+            if let Some(parent) = rq.get_task_mut(parent_pid) {
+                parent.unlink_first_child(child_pid, next);
+                Some(())
+            } else {
+                None
+            }
+        });
+    }
+
+    // Step 3: Update next's prev pointer
+    if next != PID_NONE {
+        with_task_on_any_cpu(next, |rq| {
+            if let Some(n) = rq.get_task_mut(next) {
+                n.sibling_prev = prev;
+                Some(())
+            } else {
+                None
+            }
+        });
+    }
+
+    // Step 4: Clear child's sibling links
+    with_task_on_any_cpu(child_pid, |rq| {
+        if let Some(child) = rq.get_task_mut(child_pid) {
+            child.sibling_next = PID_NONE;
+            child.sibling_prev = PID_NONE;
             Some(())
         } else {
             None

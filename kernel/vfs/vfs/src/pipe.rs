@@ -2,23 +2,21 @@
 //!
 //! Provides anonymous pipe support for inter-process communication.
 //!
-//! ## 🔥 NOW WITH ACTUAL BLOCKING (Not Just EAGAIN) 🔥
+//! ## 🔥 NOW WITH REAL WAIT QUEUES (Not Vec<u32> Hacks) 🔥
 //!
-//! Previous version returned `VfsError::WouldBlock` (EAGAIN) and hoped the syscall
-//! layer would deal with it. Narrator: *it didn't*.
+//! — ByteRiot: Previous version stored PIDs in Vec<u32> — heap allocation
+//! inside a spinlock, O(N) contains() checks, and take()/retain() gymnastics.
+//! Every pipe read/write was a heap alloc+free pair fighting the global spinlock.
 //!
-//! Result: `cat file | grep pattern` got EAGAIN spam instead of blocking.
-//!
-//! Now uses **proper wait queues** like a real OS:
-//! - Read on empty pipe → add to read_queue → `TASK_INTERRUPTIBLE` sleep
-//! - Write arrives → wake all readers → they drain the data
-//! - Write on full pipe → add to write_queue → sleep
-//! - Read happens → wake all writers → they write more data
+//! Now uses fixed-capacity WaitQueues: zero heap allocation, lock-free
+//! register/unregister, ISR-safe wake. The pipe buffer Mutex only protects
+//! the ring buffer data, not the waiter lists.
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::Mutex;
+use waitqueue::WaitQueue;
 
 use crate::error::{VfsError, VfsResult};
 use crate::vnode::{DirEntry, Mode, Stat, VnodeOps, VnodeType};
@@ -30,9 +28,6 @@ unsafe extern "Rust" {
     /// Block the current task in TASK_INTERRUPTIBLE state
     fn sched_block_interruptible();
 
-    /// Wake up a task by PID
-    fn sched_wake_up(pid: u32);
-
     /// Get the current task's PID
     fn sched_current_pid() -> Option<u32>;
 }
@@ -40,7 +35,9 @@ unsafe extern "Rust" {
 /// Pipe buffer size (64KB)
 const PIPE_BUF_SIZE: usize = 65536;
 
-/// Shared pipe buffer
+/// Shared pipe buffer — ring buffer + reader/writer counts.
+/// — ByteRiot: Wait queues live OUTSIDE the Mutex now. No more heap
+/// allocation under the pipe lock. The Mutex only protects the data ring.
 struct PipeBuffer {
     /// Ring buffer data
     data: Vec<u8>,
@@ -54,10 +51,6 @@ struct PipeBuffer {
     readers: AtomicUsize,
     /// Number of writers
     writers: AtomicUsize,
-    /// PIDs of processes waiting to read (buffer empty)
-    read_waiters: Vec<u32>,
-    /// PIDs of processes waiting to write (buffer full)
-    write_waiters: Vec<u32>,
 }
 
 impl PipeBuffer {
@@ -71,8 +64,6 @@ impl PipeBuffer {
             count: 0,
             readers: AtomicUsize::new(1),
             writers: AtomicUsize::new(1),
-            read_waiters: Vec::new(),
-            write_waiters: Vec::new(),
         }
     }
 
@@ -122,35 +113,34 @@ impl PipeBuffer {
     }
 }
 
+/// Shared state for both ends of a pipe.
+/// — ByteRiot: WaitQueues live here, outside the buffer Mutex. Register and
+/// wake are lock-free atomic operations — no heap, no spinlock contention.
+struct PipeShared {
+    buffer: Mutex<PipeBuffer>,
+    /// — ByteRiot: Readers waiting for data. Woken by write() and drop(PipeWrite).
+    read_wq: WaitQueue,
+    /// — ByteRiot: Writers waiting for space. Woken by read() and drop(PipeRead).
+    write_wq: WaitQueue,
+}
+
 /// Read end of a pipe
 pub struct PipeRead {
-    buffer: Arc<Mutex<PipeBuffer>>,
+    shared: Arc<PipeShared>,
 }
 
 impl PipeRead {
-    fn new(buffer: Arc<Mutex<PipeBuffer>>) -> Self {
-        PipeRead { buffer }
+    fn new(shared: Arc<PipeShared>) -> Self {
+        PipeRead { shared }
     }
 }
 
 impl Drop for PipeRead {
     fn drop(&mut self) {
-        let write_waiters = {
-            let mut buf = self.buffer.lock();
-            buf.readers.fetch_sub(1, Ordering::Release);
-
-            // Wake waiting writers - pipe is now broken (no readers)
-            // They'll get EPIPE when they retry
-            // — ByteRiot: take() swaps in an empty Vec, zero allocation while holding the lock.
-            // clone()+clear() was handing the allocator a cheque we couldn't afford under contention.
-            core::mem::take(&mut buf.write_waiters)
-        };
-
-        for pid in write_waiters {
-            unsafe {
-                sched_wake_up(pid);
-            }
-        }
+        self.shared.buffer.lock().readers.fetch_sub(1, Ordering::Release);
+        // — ByteRiot: Wake waiting writers — pipe is now broken (no readers).
+        // They'll get EPIPE when they retry. Zero allocation, ISR-safe.
+        self.shared.write_wq.wake_all();
     }
 }
 
@@ -168,71 +158,53 @@ impl VnodeOps for PipeRead {
     }
 
     fn read(&self, _offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
-        // 🔥 NOW WITH ACTUAL BLOCKING (Not Just EAGAIN) 🔥
-        // Loop until we get data or reach EOF
+        // — ByteRiot: Block until data arrives or pipe breaks. Now uses
+        // WaitQueue instead of Vec<u32> — the read_wq.register() is lock-free,
+        // no heap allocation, and wake_all() is ISR-safe.
         loop {
-            // Try to read with lock held (keep critical section small)
-            let (n, has_writers, write_waiters) = {
-                let mut buffer = self.buffer.lock();
+            let (n, has_writers, was_full) = {
+                let mut buffer = self.shared.buffer.lock();
 
-                // EOF condition: buffer empty AND no writers exist
+                // EOF: buffer empty AND no writers
                 if buffer.count == 0 && !buffer.has_writers() {
-                    return Ok(0); // EOF
+                    return Ok(0);
                 }
 
-                // Try to read available data
+                let was_full = buffer.count == PIPE_BUF_SIZE;
                 let n = buffer.read(buf);
                 let has_writers = buffer.has_writers();
 
-                // If we read data and buffer was full, collect waiting writers to wake
-                // — ByteRiot: take() gives us the Vec and leaves an empty one in its place.
-                // No heap round-trip while the pipe lock is live.
-                let write_waiters = if n > 0 && buffer.count + n == PIPE_BUF_SIZE {
-                    core::mem::take(&mut buffer.write_waiters)
-                } else {
-                    Vec::new()
-                };
+                (n, has_writers, was_full)
+            }; // — ByteRiot: Lock released. Wake outside the critical section.
 
-                (n, has_writers, write_waiters)
-            }; // Release lock!
-
-            // Wake writers if we freed up space
-            for pid in write_waiters {
-                unsafe {
-                    sched_wake_up(pid);
-                }
+            // Wake writers if we freed up space (buffer was full before read)
+            if n > 0 && was_full {
+                self.shared.write_wq.wake_all();
             }
 
-            // If we got data, return it
             if n > 0 {
                 return Ok(n);
             }
 
-            // Buffer empty but writers exist → block and wait for data
+            // Buffer empty, writers exist → block and wait
             if has_writers {
-                // Get current PID and add to wait queue
                 let pid = unsafe { sched_current_pid() };
                 if let Some(pid) = pid {
-                    {
-                        let mut buffer = self.buffer.lock();
-                        if !buffer.read_waiters.contains(&pid) {
-                            buffer.read_waiters.push(pid);
+                    if let Some(slot) = self.shared.read_wq.register(pid) {
+                        // — ByteRiot: Re-check before blocking (lost wake window)
+                        {
+                            let buffer = self.shared.buffer.lock();
+                            if buffer.count > 0 || !buffer.has_writers() {
+                                self.shared.read_wq.unregister(slot);
+                                continue;
+                            }
                         }
+                        unsafe { sched_block_interruptible(); }
+                        self.shared.read_wq.unregister(slot);
                     }
-
-                    // Block in interruptible sleep
-                    unsafe {
-                        sched_block_interruptible();
-                    }
-
-                    // When we wake up (by signal or writer), remove ourselves and retry
-                    let mut buffer = self.buffer.lock();
-                    buffer.read_waiters.retain(|&p| p != pid);
                 }
-                // Loop back and retry the read
             } else {
-                // No writers and no data → EOF
-                return Ok(0);
+                return Ok(0); // EOF
             }
         }
     }
@@ -270,45 +242,37 @@ impl VnodeOps for PipeRead {
     }
 
     fn poll_read_ready(&self) -> bool {
-        let buffer = self.buffer.lock();
-        // Read end is ready if there's data or no writers (EOF condition)
+        let buffer = self.shared.buffer.lock();
         buffer.count > 0 || !buffer.has_writers()
     }
 
     fn poll_write_ready(&self) -> bool {
-        // Read end cannot be written to
         false
+    }
+
+    fn poll_register_wait(&self, table: &mut waitqueue::PollTable) {
+        // — SableWire: Register on the read wait queue. When data arrives
+        // (writer calls wake_all on read_wq), we'll be woken up.
+        table.register(&self.shared.read_wq);
     }
 }
 
 /// Write end of a pipe
 pub struct PipeWrite {
-    buffer: Arc<Mutex<PipeBuffer>>,
+    shared: Arc<PipeShared>,
 }
 
 impl PipeWrite {
-    fn new(buffer: Arc<Mutex<PipeBuffer>>) -> Self {
-        PipeWrite { buffer }
+    fn new(shared: Arc<PipeShared>) -> Self {
+        PipeWrite { shared }
     }
 }
 
 impl Drop for PipeWrite {
     fn drop(&mut self) {
-        let read_waiters = {
-            let mut buf = self.buffer.lock();
-            buf.writers.fetch_sub(1, Ordering::Release);
-
-            // Wake waiting readers - they'll get EOF (no writers, buffer empty)
-            // — ByteRiot: take() instead of clone()+clear(). The allocator doesn't need
-            // another job while we're tearing down under the lock.
-            core::mem::take(&mut buf.read_waiters)
-        };
-
-        for pid in read_waiters {
-            unsafe {
-                sched_wake_up(pid);
-            }
-        }
+        self.shared.buffer.lock().writers.fetch_sub(1, Ordering::Release);
+        // — ByteRiot: Wake waiting readers — they'll get EOF (no writers, buffer empty).
+        self.shared.read_wq.wake_all();
     }
 }
 
@@ -330,70 +294,46 @@ impl VnodeOps for PipeWrite {
     }
 
     fn write(&self, _offset: u64, buf: &[u8]) -> VfsResult<usize> {
-        // 🔥 NOW WITH ACTUAL BLOCKING (Not Just EAGAIN) 🔥
-        // Loop until we write some data or pipe breaks
+        // — ByteRiot: Block until space available or pipe breaks. WaitQueue
+        // register/wake is lock-free, zero heap alloc.
         loop {
-            // Try to write with lock held
-            let (n, has_readers, read_waiters) = {
-                let mut buffer = self.buffer.lock();
+            let (n, has_readers) = {
+                let mut buffer = self.shared.buffer.lock();
 
-                // If no readers, return EPIPE (broken pipe)
                 if !buffer.has_readers() {
                     return Err(VfsError::BrokenPipe);
                 }
 
-                // Try to write available data
                 let n = buffer.write(buf);
                 let has_readers = buffer.has_readers();
 
-                // If we wrote data, collect waiting readers to wake
-                // — ByteRiot: take() atomically empties the waiter list with zero allocation.
-                // clone()+clear() was buying heap tickets in a casino called "spinlock contention".
-                let read_waiters = if n > 0 {
-                    core::mem::take(&mut buffer.read_waiters)
-                } else {
-                    Vec::new()
-                };
-
-                (n, has_readers, read_waiters)
-            }; // Release lock!
+                (n, has_readers)
+            }; // — ByteRiot: Lock released.
 
             // Wake readers if we added data
-            for pid in read_waiters {
-                unsafe {
-                    sched_wake_up(pid);
-                }
-            }
-
-            // If we wrote data, return it
             if n > 0 {
+                self.shared.read_wq.wake_all();
                 return Ok(n);
             }
 
-            // Buffer full but readers exist → block and wait for space
+            // Buffer full, readers exist → block and wait for space
             if has_readers {
-                // Get current PID and add to wait queue
                 let pid = unsafe { sched_current_pid() };
                 if let Some(pid) = pid {
-                    {
-                        let mut buffer = self.buffer.lock();
-                        if !buffer.write_waiters.contains(&pid) {
-                            buffer.write_waiters.push(pid);
+                    if let Some(slot) = self.shared.write_wq.register(pid) {
+                        // — ByteRiot: Re-check before blocking (lost wake window)
+                        {
+                            let buffer = self.shared.buffer.lock();
+                            if buffer.count < PIPE_BUF_SIZE || !buffer.has_readers() {
+                                self.shared.write_wq.unregister(slot);
+                                continue;
+                            }
                         }
+                        unsafe { sched_block_interruptible(); }
+                        self.shared.write_wq.unregister(slot);
                     }
-
-                    // Block in interruptible sleep
-                    unsafe {
-                        sched_block_interruptible();
-                    }
-
-                    // When we wake up (by signal or reader), remove ourselves and retry
-                    let mut buffer = self.buffer.lock();
-                    buffer.write_waiters.retain(|&p| p != pid);
                 }
-                // Loop back and retry the write
             } else {
-                // No readers → broken pipe
                 return Err(VfsError::BrokenPipe);
             }
         }
@@ -428,14 +368,18 @@ impl VnodeOps for PipeWrite {
     }
 
     fn poll_read_ready(&self) -> bool {
-        // Write end cannot be read from
         false
     }
 
     fn poll_write_ready(&self) -> bool {
-        let buffer = self.buffer.lock();
-        // Write end is ready if there's buffer space and there are readers
+        let buffer = self.shared.buffer.lock();
         buffer.count < PIPE_BUF_SIZE && buffer.has_readers()
+    }
+
+    fn poll_register_wait(&self, table: &mut waitqueue::PollTable) {
+        // — SableWire: Register on the write wait queue. When a reader drains
+        // data (and the buffer was full), we'll be woken up.
+        table.register(&self.shared.write_wq);
     }
 }
 
@@ -443,10 +387,14 @@ impl VnodeOps for PipeWrite {
 ///
 /// Returns (read_end, write_end) as Arc<dyn VnodeOps>
 pub fn create_pipe() -> VfsResult<(Arc<dyn VnodeOps>, Arc<dyn VnodeOps>)> {
-    let buffer = Arc::new(Mutex::new(PipeBuffer::new()));
+    let shared = Arc::new(PipeShared {
+        buffer: Mutex::new(PipeBuffer::new()),
+        read_wq: WaitQueue::new(),
+        write_wq: WaitQueue::new(),
+    });
 
-    let read_end = Arc::new(PipeRead::new(Arc::clone(&buffer)));
-    let write_end = Arc::new(PipeWrite::new(buffer));
+    let read_end = Arc::new(PipeRead::new(Arc::clone(&shared)));
+    let write_end = Arc::new(PipeWrite::new(shared));
 
     Ok((read_end, write_end))
 }

@@ -1,12 +1,19 @@
 //! Poll/Select system calls
 //!
-//! Provides multiplexed I/O operations for waiting on multiple file descriptors.
+//! — GraveShift: NOW WITH REAL WAIT QUEUES. Previous implementation yield-looped
+//! at 100Hz timer tick rate — every polling process burned a scheduler pick per
+//! tick. With 6 daemons × 4 CPUs, that's 600 spurious wakeups/second.
+//!
+//! Now uses PollTable + WaitQueue: poll/select registers on each fd's WaitQueue,
+//! blocks properly (TASK_INTERRUPTIBLE), and gets woken by the fd driver when
+//! data actually arrives. Zero CPU while waiting. Like Linux's poll_wait().
 
 use crate::errno;
 use crate::socket;
 use crate::time::{self, Timespec};
 use crate::with_current_meta;
 use alloc::vec::Vec;
+use waitqueue::PollTable;
 
 /// Poll event flags (POSIX)
 pub mod events {
@@ -93,6 +100,27 @@ fn check_fd_ready(fd: i32, events: i16) -> i16 {
     revents
 }
 
+/// Register a file descriptor on a PollTable for event-driven wake.
+/// — SableWire: Called during the second pass of poll/select. The file's
+/// vnode registers on its WaitQueue via poll_register_wait(). When data
+/// arrives, the driver calls wq.wake_all() which wakes our blocked process.
+fn register_fd_wait(fd: i32, table: &mut PollTable) {
+    // — SableWire: Sockets don't have VnodeOps-based wait queues yet.
+    // They still use the fallback HLT path. TODO: socket WaitQueues.
+    if socket::is_socket_fd(fd) {
+        return;
+    }
+
+    let file = match with_current_meta(|meta| {
+        meta.fd_table.get(fd).map(|fd_entry| fd_entry.file.clone())
+    }) {
+        Some(Ok(f)) => f,
+        _ => return,
+    };
+
+    file.poll_register_wait(table);
+}
+
 /// Check if a socket fd is ready for the requested operations
 fn check_socket_ready(fd: i32, events: i16) -> i16 {
     let mut revents: i16 = 0;
@@ -108,10 +136,6 @@ fn check_socket_ready(fd: i32, events: i16) -> i16 {
 
     // Check for readability
     if events & (events::POLLIN | events::POLLRDNORM) != 0 {
-        // Socket is readable if:
-        // - It has data in the receive buffer
-        // - It's a listening socket with pending connections
-        // - Connection was closed (returns 0 on read)
         if has_data || (is_listening && has_pending_connection) {
             revents |= events::POLLIN | events::POLLRDNORM;
         }
@@ -119,8 +143,6 @@ fn check_socket_ready(fd: i32, events: i16) -> i16 {
 
     // Check for writability
     if events & (events::POLLOUT | events::POLLWRNORM) != 0 {
-        // Socket is writable if:
-        // - It's connected and send buffer has space
         if is_connected && can_send {
             revents |= events::POLLOUT | events::POLLWRNORM;
         }
@@ -128,7 +150,6 @@ fn check_socket_ready(fd: i32, events: i16) -> i16 {
 
     // Check for errors/hangup
     if !is_connected && !is_listening {
-        // Not connected and not listening - hung up
         revents |= events::POLLHUP;
     }
 
@@ -137,17 +158,18 @@ fn check_socket_ready(fd: i32, events: i16) -> i16 {
 
 /// sys_poll - Wait for events on file descriptors
 ///
-/// # Arguments
-/// * `fds_ptr` - Pointer to array of pollfd structures
-/// * `nfds` - Number of file descriptors
-/// * `timeout_ms` - Timeout in milliseconds (-1 = infinite, 0 = return immediately)
+/// — GraveShift: Now uses PollTable pattern (like Linux's poll_wait):
+/// 1. First pass: check all fds — if any ready, return immediately
+/// 2. Second pass: register on each fd's WaitQueue via poll_register_wait
+/// 3. Re-check (data may have arrived between step 1 and 2)
+/// 4. Block (TASK_INTERRUPTIBLE) — fd driver wakes us on event
+/// 5. Unregister all, re-check, return
 pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
     if fds_ptr == 0 && nfds > 0 {
         return errno::EFAULT;
     }
 
     if nfds > 1024 {
-        // Limit to reasonable number
         return errno::EINVAL;
     }
 
@@ -175,89 +197,122 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
         start_ticks + timeout_ticks
     };
 
-    // Poll loop
+    // Get current PID for PollTable
+    let pid = sched::current_pid().unwrap_or(0);
+
+    // — GraveShift: First pass — check all fds without registering.
+    // If anything is already ready, skip the registration dance entirely.
+    let mut ready_count = check_all_pollfds(&mut fds);
+    if ready_count > 0 || timeout_ms == 0 {
+        write_pollfds_back(fds_ptr, &fds);
+        return ready_count;
+    }
+
+    // — GraveShift: Second pass — register on WaitQueues via PollTable.
+    // After this, any fd event will wake us via sched::try_wake_up.
+    let mut poll_table = PollTable::new(pid);
+    for pollfd in fds.iter() {
+        if pollfd.fd >= 0 {
+            register_fd_wait(pollfd.fd, &mut poll_table);
+        }
+    }
+
+    // — GraveShift: Re-check after registration (lost-wake window).
+    // Data may have arrived between the first check and registration.
+    ready_count = check_all_pollfds(&mut fds);
+    if ready_count > 0 {
+        poll_table.unregister_all();
+        write_pollfds_back(fds_ptr, &fds);
+        return ready_count;
+    }
+
+    // — GraveShift: Main wait loop. Block until event, timeout, or signal.
+    // Unlike the old yield+HLT loop, we're properly dequeued from CFS.
+    // Zero CPU while waiting. The fd driver's wake_all() re-enqueues us.
     loop {
-        let mut ready_count = 0i64;
-
-        // Check each fd
-        for pollfd in fds.iter_mut() {
-            pollfd.revents = 0;
-
-            if pollfd.fd < 0 {
-                // Negative fd means ignore this entry
-                continue;
-            }
-
-            let revents = check_fd_ready(pollfd.fd, pollfd.events);
-            pollfd.revents = revents;
-
-            if revents != 0 {
-                ready_count += 1;
-            }
-        }
-
-        // If any fd is ready, return
-        if ready_count > 0 {
-            // Write results back to userspace
-            unsafe {
-                os_core::user_access_begin();
-                let ptr = fds_ptr as *mut PollFd;
-                for (i, pollfd) in fds.iter().enumerate() {
-                    core::ptr::write_volatile(ptr.add(i), *pollfd);
-                }
-                os_core::user_access_end();
-            }
-            return ready_count;
-        }
-
-        // Check timeout
-        let current_ticks = get_ticks();
-        if current_ticks >= deadline_ticks {
-            // Timeout - write back results (all zero revents) and return 0
-            unsafe {
-                os_core::user_access_begin();
-                let ptr = fds_ptr as *mut PollFd;
-                for (i, pollfd) in fds.iter().enumerate() {
-                    core::ptr::write_volatile(ptr.add(i), *pollfd);
-                }
-                os_core::user_access_end();
-            }
-            return 0;
-        }
-
-        // Check for signals
+        // Check for signals before blocking
         if with_current_meta(|meta| meta.has_pending_signals()).unwrap_or(false) {
+            poll_table.unregister_all();
             return errno::EINTR;
         }
 
-        // — GraveShift: HLT-based poll sleep. We stay on the CFS tree (no
-        // block_current) because we lack Linux's poll_wait/wake_up mechanism
-        // — there's no way for an fd driver to wake a specific blocked process.
-        // Instead we HLT until the next timer tick, then re-check fds.
-        //
-        // yield_current puts us at the back of the CFS tree so other processes
-        // get fair CPU time. Without yield, we'd monopolize our CPU between
-        // HLTs. The cost is one scheduler pick per tick per polling process —
-        // acceptable for a handful of daemons. — GraveShift
-        sched::yield_current();
-        sched::set_need_resched();
+        // Check timeout
+        if get_ticks() >= deadline_ticks {
+            poll_table.unregister_all();
+            // Write back zero-revents results
+            for pollfd in fds.iter_mut() {
+                pollfd.revents = 0;
+            }
+            write_pollfds_back(fds_ptr, &fds);
+            return 0;
+        }
+
+        // — GraveShift: Block properly. TASK_INTERRUPTIBLE means we wake on:
+        // 1. WaitQueue::wake_all() from an fd driver (data arrived)
+        // 2. Signal delivery (SIGINT, etc.)
+        // 3. Timer tick (we re-check timeout)
+        // The scheduler dequeues us from CFS — zero CPU burn.
+        sched::block_current(sched_traits::TaskState::TASK_INTERRUPTIBLE);
         os_core::allow_kernel_preempt();
         os_core::wait_for_interrupt();
         os_core::disallow_kernel_preempt();
+
+        // — GraveShift: Woken up. Check fds again.
+        ready_count = check_all_pollfds(&mut fds);
+        if ready_count > 0 {
+            poll_table.unregister_all();
+            write_pollfds_back(fds_ptr, &fds);
+            return ready_count;
+        }
+
+        // — GraveShift: Not ready yet. wake_all() already cleared our slots
+        // from the WaitQueues — we MUST re-register before blocking again.
+        // Without this, block_current dequeues us from CFS and nobody will
+        // ever wake us. This was the "top hangs on VT6" bug.
+        poll_table.unregister_all(); // clean slate
+        for pollfd in fds.iter() {
+            if pollfd.fd >= 0 {
+                register_fd_wait(pollfd.fd, &mut poll_table);
+            }
+        }
+    }
+}
+
+/// Check all pollfds and return count of ready fds.
+/// — GraveShift: Factored out because we call this 3 times in the poll path:
+/// first pass (optimistic), after registration (lost-wake check), after wake.
+fn check_all_pollfds(fds: &mut [PollFd]) -> i64 {
+    let mut ready_count = 0i64;
+    for pollfd in fds.iter_mut() {
+        pollfd.revents = 0;
+        if pollfd.fd < 0 {
+            continue;
+        }
+        let revents = check_fd_ready(pollfd.fd, pollfd.events);
+        pollfd.revents = revents;
+        if revents != 0 {
+            ready_count += 1;
+        }
+    }
+    ready_count
+}
+
+/// Write pollfd results back to userspace.
+fn write_pollfds_back(fds_ptr: usize, fds: &[PollFd]) {
+    unsafe {
+        os_core::user_access_begin();
+        let ptr = fds_ptr as *mut PollFd;
+        for (i, pollfd) in fds.iter().enumerate() {
+            core::ptr::write_volatile(ptr.add(i), *pollfd);
+        }
+        os_core::user_access_end();
     }
 }
 
 /// sys_ppoll - Poll with nanosecond timeout and signal mask
-///
-/// # Arguments
-/// * `fds_ptr` - Pointer to array of pollfd structures
-/// * `nfds` - Number of file descriptors
-/// * `timeout_ptr` - Pointer to timespec (NULL = infinite)
-/// * `sigmask_ptr` - Signal mask to apply during poll (currently ignored)
 pub fn sys_ppoll(fds_ptr: usize, nfds: usize, timeout_ptr: usize, sigmask_ptr: usize) -> i64 {
-    // Convert timespec to milliseconds for sys_poll
     let timeout_ms = if timeout_ptr == 0 {
-        -1 // Infinite
+        -1
     } else {
         let ts: Timespec = unsafe {
             os_core::user_access_begin();
@@ -271,7 +326,6 @@ pub fn sys_ppoll(fds_ptr: usize, nfds: usize, timeout_ptr: usize, sigmask_ptr: u
             return errno::EINVAL;
         }
 
-        // Convert to milliseconds (saturating)
         let ms = (ts.tv_sec as i64)
             .saturating_mul(1000)
             .saturating_add(ts.tv_nsec / 1_000_000);
@@ -283,7 +337,7 @@ pub fn sys_ppoll(fds_ptr: usize, nfds: usize, timeout_ptr: usize, sigmask_ptr: u
         }
     };
 
-    // Apply signal mask if provided (temporarily set during poll)
+    // Apply signal mask if provided
     let mut old_mask: Option<signal::SigSet> = None;
     if sigmask_ptr != 0 {
         if let Some(sigset) = crate::signal::read_sigset(sigmask_ptr) {
@@ -293,7 +347,6 @@ pub fn sys_ppoll(fds_ptr: usize, nfds: usize, timeout_ptr: usize, sigmask_ptr: u
 
     let ret = sys_poll(fds_ptr, nfds, timeout_ms);
 
-    // Restore previous mask
     if let Some(mask) = old_mask {
         crate::signal::set_signal_mask(mask);
     }
@@ -352,12 +405,8 @@ impl Default for FdSet {
 
 /// sys_select - Synchronous I/O multiplexing (legacy interface)
 ///
-/// # Arguments
-/// * `nfds` - Highest fd + 1
-/// * `readfds_ptr` - FDs to check for reading
-/// * `writefds_ptr` - FDs to check for writing
-/// * `exceptfds_ptr` - FDs to check for exceptions
-/// * `timeout_ptr` - Timeout (timeval structure)
+/// — GraveShift: Now uses PollTable + WaitQueue pattern. Same as sys_poll
+/// but with the FdSet bitmap interface. No more yield+HLT spinning.
 pub fn sys_select(
     nfds: i32,
     readfds_ptr: usize,
@@ -376,7 +425,6 @@ pub fn sys_select(
 
     unsafe {
         os_core::user_access_begin();
-
         if readfds_ptr != 0 {
             readfds = core::ptr::read_volatile(readfds_ptr as *const FdSet);
         }
@@ -386,13 +434,12 @@ pub fn sys_select(
         if exceptfds_ptr != 0 {
             exceptfds = core::ptr::read_volatile(exceptfds_ptr as *const FdSet);
         }
-
         os_core::user_access_end();
     }
 
     // Read timeout
     let timeout_ms = if timeout_ptr == 0 {
-        -1i32 // Infinite
+        -1i32
     } else {
         unsafe {
             os_core::user_access_begin();
@@ -415,36 +462,6 @@ pub fn sys_select(
         }
     };
 
-    // Build pollfd array from fd sets
-    let mut pollfds: Vec<PollFd> = Vec::new();
-    let mut fd_map: Vec<(i32, bool, bool, bool)> = Vec::new(); // (fd, read, write, except)
-
-    for fd in 0..nfds {
-        let in_read = readfds.is_set(fd);
-        let in_write = writefds.is_set(fd);
-        let in_except = exceptfds.is_set(fd);
-
-        if in_read || in_write || in_except {
-            let mut events: i16 = 0;
-            if in_read {
-                events |= events::POLLIN;
-            }
-            if in_write {
-                events |= events::POLLOUT;
-            }
-            if in_except {
-                events |= events::POLLPRI;
-            }
-
-            pollfds.push(PollFd {
-                fd,
-                events,
-                revents: 0,
-            });
-            fd_map.push((fd, in_read, in_write, in_except));
-        }
-    }
-
     // Calculate deadline
     let start_ticks = get_ticks();
     let deadline_ticks = if timeout_ms < 0 {
@@ -457,78 +474,148 @@ pub fn sys_select(
         start_ticks + timeout_ticks
     };
 
-    // Poll loop
+    let pid = sched::current_pid().unwrap_or(0);
+
+    // — GraveShift: First pass — check all fds
+    let (ready_count, result_read, result_write, result_except) =
+        check_select_fds(nfds, &readfds, &writefds, &exceptfds);
+
+    if ready_count > 0 || timeout_ms == 0 {
+        write_select_back(readfds_ptr, writefds_ptr, exceptfds_ptr,
+                         &result_read, &result_write, &result_except);
+        return ready_count;
+    }
+
+    // — GraveShift: Register on WaitQueues
+    let mut poll_table = PollTable::new(pid);
+    for fd in 0..nfds {
+        if readfds.is_set(fd) || writefds.is_set(fd) || exceptfds.is_set(fd) {
+            register_fd_wait(fd, &mut poll_table);
+        }
+    }
+
+    // Re-check after registration
+    let (ready_count, result_read, result_write, result_except) =
+        check_select_fds(nfds, &readfds, &writefds, &exceptfds);
+    if ready_count > 0 {
+        poll_table.unregister_all();
+        write_select_back(readfds_ptr, writefds_ptr, exceptfds_ptr,
+                         &result_read, &result_write, &result_except);
+        return ready_count;
+    }
+
+    // Main wait loop
     loop {
-        let mut ready_count = 0i64;
-
-        // Zero result sets
-        let mut result_read = FdSet::new();
-        let mut result_write = FdSet::new();
-        let mut result_except = FdSet::new();
-
-        // Check each fd
-        for (i, pollfd) in pollfds.iter_mut().enumerate() {
-            let (fd, in_read, in_write, in_except) = fd_map[i];
-            let revents = check_fd_ready(fd, pollfd.events);
-            pollfd.revents = revents;
-
-            if revents & events::POLLNVAL != 0 {
-                // Invalid fd - set in exceptfds if it was requested there
-                if in_except {
-                    result_except.set(fd);
-                    ready_count += 1;
-                }
-            } else {
-                if in_read && (revents & (events::POLLIN | events::POLLHUP | events::POLLERR) != 0)
-                {
-                    result_read.set(fd);
-                    ready_count += 1;
-                }
-                if in_write && (revents & (events::POLLOUT | events::POLLERR) != 0) {
-                    result_write.set(fd);
-                    ready_count += 1;
-                }
-                if in_except && (revents & events::POLLPRI != 0) {
-                    result_except.set(fd);
-                    ready_count += 1;
-                }
-            }
-        }
-
-        // If any fd is ready or timeout
-        if ready_count > 0 || get_ticks() >= deadline_ticks {
-            // Write results back to userspace
-            unsafe {
-                os_core::user_access_begin();
-
-                if readfds_ptr != 0 {
-                    core::ptr::write_volatile(readfds_ptr as *mut FdSet, result_read);
-                }
-                if writefds_ptr != 0 {
-                    core::ptr::write_volatile(writefds_ptr as *mut FdSet, result_write);
-                }
-                if exceptfds_ptr != 0 {
-                    core::ptr::write_volatile(exceptfds_ptr as *mut FdSet, result_except);
-                }
-
-                os_core::user_access_end();
-            }
-
-            return ready_count;
-        }
-
-        // Check for signals
         if with_current_meta(|meta| meta.has_pending_signals()).unwrap_or(false) {
+            poll_table.unregister_all();
             return errno::EINTR;
         }
 
-        // — GraveShift: HLT-based select sleep. Same as sys_poll — no fd
-        // wake mechanism, so yield + HLT poll at timer tick rate. — GraveShift
-        sched::yield_current();
-        sched::set_need_resched();
+        if get_ticks() >= deadline_ticks {
+            poll_table.unregister_all();
+            let empty = FdSet::new();
+            write_select_back(readfds_ptr, writefds_ptr, exceptfds_ptr,
+                             &empty, &empty, &empty);
+            return 0;
+        }
+
+        sched::block_current(sched_traits::TaskState::TASK_INTERRUPTIBLE);
         os_core::allow_kernel_preempt();
         os_core::wait_for_interrupt();
         os_core::disallow_kernel_preempt();
+
+        let (ready_count, result_read, result_write, result_except) =
+            check_select_fds(nfds, &readfds, &writefds, &exceptfds);
+        if ready_count > 0 || get_ticks() >= deadline_ticks {
+            poll_table.unregister_all();
+            write_select_back(readfds_ptr, writefds_ptr, exceptfds_ptr,
+                             &result_read, &result_write, &result_except);
+            return ready_count;
+        }
+
+        // — GraveShift: Re-register. wake_all() cleared our slots.
+        poll_table.unregister_all();
+        for fd in 0..nfds {
+            if readfds.is_set(fd) || writefds.is_set(fd) || exceptfds.is_set(fd) {
+                register_fd_wait(fd, &mut poll_table);
+            }
+        }
+    }
+}
+
+/// Check all select fds and return results.
+fn check_select_fds(
+    nfds: i32,
+    readfds: &FdSet,
+    writefds: &FdSet,
+    exceptfds: &FdSet,
+) -> (i64, FdSet, FdSet, FdSet) {
+    let mut ready_count = 0i64;
+    let mut result_read = FdSet::new();
+    let mut result_write = FdSet::new();
+    let mut result_except = FdSet::new();
+
+    for fd in 0..nfds {
+        let in_read = readfds.is_set(fd);
+        let in_write = writefds.is_set(fd);
+        let in_except = exceptfds.is_set(fd);
+
+        if !in_read && !in_write && !in_except {
+            continue;
+        }
+
+        let mut poll_events: i16 = 0;
+        if in_read { poll_events |= events::POLLIN; }
+        if in_write { poll_events |= events::POLLOUT; }
+        if in_except { poll_events |= events::POLLPRI; }
+
+        let revents = check_fd_ready(fd, poll_events);
+
+        if revents & events::POLLNVAL != 0 {
+            if in_except {
+                result_except.set(fd);
+                ready_count += 1;
+            }
+        } else {
+            if in_read && (revents & (events::POLLIN | events::POLLHUP | events::POLLERR) != 0) {
+                result_read.set(fd);
+                ready_count += 1;
+            }
+            if in_write && (revents & (events::POLLOUT | events::POLLERR) != 0) {
+                result_write.set(fd);
+                ready_count += 1;
+            }
+            if in_except && (revents & events::POLLPRI != 0) {
+                result_except.set(fd);
+                ready_count += 1;
+            }
+        }
+    }
+
+    (ready_count, result_read, result_write, result_except)
+}
+
+/// Write select results back to userspace.
+fn write_select_back(
+    readfds_ptr: usize,
+    writefds_ptr: usize,
+    exceptfds_ptr: usize,
+    result_read: &FdSet,
+    result_write: &FdSet,
+    result_except: &FdSet,
+) {
+    unsafe {
+        os_core::user_access_begin();
+        if readfds_ptr != 0 {
+            core::ptr::write_volatile(readfds_ptr as *mut FdSet, *result_read);
+        }
+        if writefds_ptr != 0 {
+            core::ptr::write_volatile(writefds_ptr as *mut FdSet, *result_write);
+        }
+        if exceptfds_ptr != 0 {
+            core::ptr::write_volatile(exceptfds_ptr as *mut FdSet, *result_except);
+        }
+        os_core::user_access_end();
     }
 }
 
@@ -549,8 +636,7 @@ pub fn sys_pselect6(
         }
     }
 
-    // Convert timespec to timeval for sys_select
-    // For now, just call select with the timespec converted
+    // Convert timespec to timeval-style timeout for select
     if timeout_ptr == 0 {
         let ret = sys_select(nfds, readfds_ptr, writefds_ptr, exceptfds_ptr, 0);
         if let Some(mask) = old_mask {
@@ -567,7 +653,6 @@ pub fn sys_pselect6(
         val
     };
 
-    // We need to pass this to select somehow - for now just convert timeout
     let timeout_ms = if ts.tv_sec < 0 {
         -1i32
     } else {
@@ -581,10 +666,13 @@ pub fn sys_pselect6(
         }
     };
 
-    // For pselect6, we implement inline rather than calling sys_select
-    // to avoid the timeval conversion issue
+    // — GraveShift: pselect6 inline implementation using the same PollTable
+    // pattern as sys_select. Signal mask is swapped for the duration.
 
     if nfds < 0 || nfds > 1024 {
+        if let Some(mask) = old_mask {
+            crate::signal::set_signal_mask(mask);
+        }
         return errno::EINVAL;
     }
 
@@ -617,90 +705,85 @@ pub fn sys_pselect6(
         start_ticks + timeout_ticks
     };
 
+    let pid = sched::current_pid().unwrap_or(0);
+
+    // First pass
+    let (ready_count, result_read, result_write, result_except) =
+        check_select_fds(nfds, &readfds, &writefds, &exceptfds);
+
+    if ready_count > 0 || timeout_ms == 0 {
+        write_select_back(readfds_ptr, writefds_ptr, exceptfds_ptr,
+                         &result_read, &result_write, &result_except);
+        if let Some(mask) = old_mask {
+            crate::signal::set_signal_mask(mask);
+        }
+        return ready_count;
+    }
+
+    // Register on WaitQueues
+    let mut poll_table = PollTable::new(pid);
+    for fd in 0..nfds {
+        if readfds.is_set(fd) || writefds.is_set(fd) || exceptfds.is_set(fd) {
+            register_fd_wait(fd, &mut poll_table);
+        }
+    }
+
+    // Re-check after registration
+    let (ready_count, result_read, result_write, result_except) =
+        check_select_fds(nfds, &readfds, &writefds, &exceptfds);
+    if ready_count > 0 {
+        poll_table.unregister_all();
+        write_select_back(readfds_ptr, writefds_ptr, exceptfds_ptr,
+                         &result_read, &result_write, &result_except);
+        if let Some(mask) = old_mask {
+            crate::signal::set_signal_mask(mask);
+        }
+        return ready_count;
+    }
+
     loop {
-        let mut ready_count = 0i64;
-        let mut result_read = FdSet::new();
-        let mut result_write = FdSet::new();
-        let mut result_except = FdSet::new();
-
-        for fd in 0..nfds {
-            let in_read = readfds.is_set(fd);
-            let in_write = writefds.is_set(fd);
-            let in_except = exceptfds.is_set(fd);
-
-            if !in_read && !in_write && !in_except {
-                continue;
-            }
-
-            let mut poll_events: i16 = 0;
-            if in_read {
-                poll_events |= events::POLLIN;
-            }
-            if in_write {
-                poll_events |= events::POLLOUT;
-            }
-            if in_except {
-                poll_events |= events::POLLPRI;
-            }
-
-            let revents = check_fd_ready(fd, poll_events);
-
-            if revents & events::POLLNVAL != 0 {
-                if in_except {
-                    result_except.set(fd);
-                    ready_count += 1;
-                }
-            } else {
-                if in_read && (revents & (events::POLLIN | events::POLLHUP | events::POLLERR) != 0)
-                {
-                    result_read.set(fd);
-                    ready_count += 1;
-                }
-                if in_write && (revents & (events::POLLOUT | events::POLLERR) != 0) {
-                    result_write.set(fd);
-                    ready_count += 1;
-                }
-                if in_except && (revents & events::POLLPRI != 0) {
-                    result_except.set(fd);
-                    ready_count += 1;
-                }
-            }
-        }
-
-        if ready_count > 0 || get_ticks() >= deadline_ticks {
-            unsafe {
-                os_core::user_access_begin();
-                if readfds_ptr != 0 {
-                    core::ptr::write_volatile(readfds_ptr as *mut FdSet, result_read);
-                }
-                if writefds_ptr != 0 {
-                    core::ptr::write_volatile(writefds_ptr as *mut FdSet, result_write);
-                }
-                if exceptfds_ptr != 0 {
-                    core::ptr::write_volatile(exceptfds_ptr as *mut FdSet, result_except);
-                }
-                os_core::user_access_end();
-            }
-            let res = ready_count;
-            if let Some(mask) = old_mask {
-                crate::signal::set_signal_mask(mask);
-            }
-            return res;
-        }
-
         if with_current_meta(|meta| meta.has_pending_signals()).unwrap_or(false) {
+            poll_table.unregister_all();
             if let Some(mask) = old_mask {
                 crate::signal::set_signal_mask(mask);
             }
             return errno::EINTR;
         }
 
-        // — GraveShift: HLT-based pselect sleep. Same as sys_poll — yield +
-        // HLT, check fds on next tick. — GraveShift
-        sched::yield_current();
-        sched::set_need_resched();
+        if get_ticks() >= deadline_ticks {
+            poll_table.unregister_all();
+            let empty = FdSet::new();
+            write_select_back(readfds_ptr, writefds_ptr, exceptfds_ptr,
+                             &empty, &empty, &empty);
+            if let Some(mask) = old_mask {
+                crate::signal::set_signal_mask(mask);
+            }
+            return 0;
+        }
+
+        sched::block_current(sched_traits::TaskState::TASK_INTERRUPTIBLE);
         os_core::allow_kernel_preempt();
         os_core::wait_for_interrupt();
         os_core::disallow_kernel_preempt();
+
+        let (ready_count, result_read, result_write, result_except) =
+            check_select_fds(nfds, &readfds, &writefds, &exceptfds);
+        if ready_count > 0 || get_ticks() >= deadline_ticks {
+            poll_table.unregister_all();
+            write_select_back(readfds_ptr, writefds_ptr, exceptfds_ptr,
+                             &result_read, &result_write, &result_except);
+            if let Some(mask) = old_mask {
+                crate::signal::set_signal_mask(mask);
+            }
+            return ready_count;
+        }
+
+        // — GraveShift: Re-register. wake_all() cleared our slots.
+        poll_table.unregister_all();
+        for fd in 0..nfds {
+            if readfds.is_set(fd) || writefds.is_set(fd) || exceptfds.is_set(fd) {
+                register_fd_wait(fd, &mut poll_table);
+            }
+        }
     }
 }

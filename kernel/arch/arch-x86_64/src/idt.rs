@@ -155,6 +155,12 @@ pub struct IdtDescriptor {
 /// Global IDT instance
 static mut IDT: Idt = Idt::new();
 
+/// Get the virtual base address of the kernel IDT.
+#[inline]
+pub fn base_addr() -> u64 {
+    core::ptr::addr_of!(IDT) as u64
+}
+
 /// Initialize the IDT with exception handlers
 ///
 /// # Safety

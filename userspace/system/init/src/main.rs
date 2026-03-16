@@ -137,16 +137,33 @@ fn main() -> i32 {
     // Start service manager in daemon mode
     start_servicemgr();
 
-    // — GraveShift: Spawn getty on every active VT. Probe /dev/tty1, /dev/tty2, ...
-    // until we hit ENOENT. The kernel registers only VT_COUNT devices, so this
-    // auto-discovers how many VTs exist without hardcoding the count in userspace.
-    printlns("[init] Spawning getty on available VTs...");
-    let mut getty_pids: [i64; 6] = [0; 6]; // — GraveShift: max 6 VTs, track PIDs for respawn
+    // — GraveShift: Spawn getty on all 6 VTs unconditionally. The kernel always
+    // registers /dev/tty1 through /dev/tty6. The old probe-with-open approach
+    // blocked on the third VT device — O_RDONLY open on a TTY that has no writer
+    // may block in our VFS. Skip the probe, just fork and let the child deal with it.
+    printlns("[init] Spawning getty on all VTs...");
+    let mut getty_pids: [i64; 6] = [0; 6];
     let mut num_gettys: usize = 0;
 
-    let mut vt_num = 1u8; // /dev/tty1 through /dev/ttyN
+    // — GraveShift: open /dev/ttyS0 for debug serial output. fd 3+ so it doesn't
+    // conflict with stdin/stdout/stderr. Writing to VT0 deadlocks when getty
+    // on tty1 holds the terminal lock. Serial is always available.
+    let serial_fd = open("/dev/ttyS0", O_WRONLY, 0);
+    if serial_fd >= 0 {
+        let _ = write(serial_fd, b"[init] Starting getty loop (serial debug)\n");
+    }
+
+    let mut vt_num = 1u8; // /dev/tty1 through /dev/tty6
     while vt_num <= 6 {
-        // Build "/dev/ttyN" path
+        // — GraveShift: serial breadcrumbs. If init ghosts after fork #2,
+        // we'll see exactly which iteration died. Trust nothing, trace everything.
+        if serial_fd >= 0 {
+            let _ = write(serial_fd, b"[init] BEFORE fork for tty");
+            let digit = [b'0' + vt_num, b'\n'];
+            let _ = write(serial_fd, &digit);
+        }
+
+        // — GraveShift: build "/dev/ttyN" path on stack. No heap, no allocator.
         let tty_path: [u8; 10] = [
             b'/', b'd', b'e', b'v', b'/', b't', b't', b'y', b'0' + vt_num, 0,
         ];
@@ -154,58 +171,117 @@ fn main() -> i32 {
             core::str::from_utf8_unchecked(&tty_path[..9])
         };
 
-        // Probe — if the device doesn't exist, we're done
-        let probe_fd = open(tty_path_str, O_RDONLY, 0);
-        if probe_fd < 0 {
-            break;
-        }
-        close(probe_fd);
-
         let child = fork();
+
+        if serial_fd >= 0 {
+            // — GraveShift: trace fork return value. Negative = kernel refused.
+            // Zero = we're the child (should never reach here — child path exits).
+            // Positive = parent got child PID. If we never see "AFTER fork" for
+            // tty3+, init is stuck IN the fork syscall itself.
+            if child > 0 {
+                let _ = write(serial_fd, b"[init] AFTER fork tty");
+                let digit = [b'0' + vt_num];
+                let _ = write(serial_fd, &digit);
+                let _ = write(serial_fd, b": child PID=");
+                // — GraveShift: decimal PID. Max 5 digits is plenty for early boot.
+                let mut pid_val = child;
+                let mut digits = [b' '; 6];
+                let mut pos = 5usize;
+                digits[pos] = b'\n';
+                if pid_val == 0 {
+                    pos -= 1;
+                    digits[pos] = b'0';
+                } else {
+                    while pid_val > 0 && pos > 0 {
+                        pos -= 1;
+                        digits[pos] = b'0' + (pid_val % 10) as u8;
+                        pid_val /= 10;
+                    }
+                }
+                let _ = write(serial_fd, &digits[pos..]);
+            } else if child == 0 {
+                // child — don't trace, just proceed to exec below
+            } else {
+                let _ = write(serial_fd, b"[init] FORK RETURNED NEGATIVE (FAILED)\n");
+            }
+        }
+
         if child == 0 {
             // — GraveShift: child — become session leader, open /dev/ttyN as
             // stdin/stdout/stderr, then exec getty. This gives each VT its own
             // controlling terminal. Login on VT2 is independent of VT1.
+
+            // — GraveShift: open our own serial fd for child tracing. The parent's
+            // serial_fd shares the fd table until exec, but we close it below anyway.
+            let child_serial = open("/dev/ttyS0", O_WRONLY, 0);
+            if child_serial >= 0 {
+                let _ = write(child_serial, b"[init-child] setsid for tty");
+                let digit = [b'0' + vt_num, b'\n'];
+                let _ = write(child_serial, &digit);
+            }
+
             setsid();
             close(0);
             close(1);
             close(2);
+            if serial_fd >= 0 { close(serial_fd); }
+
+            if child_serial >= 0 {
+                let _ = write(child_serial, b"[init-child] opening tty");
+                let digit = [b'0' + vt_num, b'\n'];
+                let _ = write(child_serial, &digit);
+            }
+
             let fd = open(tty_path_str, O_RDWR, 0); // fd 0 (stdin)
             if fd < 0 {
+                if child_serial >= 0 {
+                    let _ = write(child_serial, b"[init-child] OPEN FAILED tty");
+                    let digit = [b'0' + vt_num, b'\n'];
+                    let _ = write(child_serial, &digit);
+                    close(child_serial);
+                }
                 _exit(1);
             }
+
+            if child_serial >= 0 {
+                let _ = write(child_serial, b"[init-child] open OK fd=");
+                let digit = [b'0' + (fd as u8), b'\n'];
+                let _ = write(child_serial, &digit);
+            }
+
             dup2(fd, 1); // stdout
             dup2(fd, 2); // stderr
+
+            if child_serial >= 0 {
+                let _ = write(child_serial, b"[init-child] about to exec getty on tty");
+                let digit = [b'0' + vt_num, b'\n'];
+                let _ = write(child_serial, &digit);
+                close(child_serial);
+            }
+
             exec("/bin/getty");
             _exit(1);
         } else if child > 0 {
-            prints("[init] Getty on ");
-            prints(tty_path_str);
-            prints(" (pid ");
-            print_i64(child as i64);
-            printlns(")");
-            if (num_gettys) < 6 {
+            if num_gettys < 6 {
                 getty_pids[num_gettys] = child as i64;
                 num_gettys += 1;
             }
         } else {
-            prints("[init] Fork failed for ");
-            printlns(tty_path_str);
+            // — GraveShift: fork failed — log to serial, not stderr (VT0 might block)
+            if serial_fd >= 0 {
+                let _ = write(serial_fd, b"[init] FORK FAILED for tty");
+                let digit = [b'0' + vt_num, b'\n'];
+                let _ = write(serial_fd, &digit);
+            }
         }
 
         vt_num += 1;
     }
 
-    if num_gettys == 0 {
-        eprintlns("[init] No VT devices found! Falling back to /dev/console getty");
-        let child = fork();
-        if child == 0 {
-            exec("/bin/getty");
-            _exit(1);
-        } else if child > 0 {
-            getty_pids[0] = child as i64;
-            num_gettys = 1;
-        }
+    // — GraveShift: if we made it here, the loop finished. If we DON'T see this
+    // in serial output, init is stuck mid-loop — probably blocked in fork().
+    if serial_fd >= 0 {
+        let _ = write(serial_fd, b"[init] Getty loop COMPLETE, entering reaper\n");
     }
 
     // — GraveShift: Screen dump gated behind debug-screendump feature.
@@ -493,6 +569,15 @@ fn start_servicemgr() {
 /// — GraveShift: tracks PIDs for all VT gettys. When one exits, respawn
 /// it on the same /dev/ttyN with a fresh setsid + fd setup.
 fn reap_zombies_multi(getty_pids: &mut [i64; 6], num_gettys: usize) -> ! {
+    // — GraveShift: open serial for reaper tracing. If we got here, at least
+    // the fork loop survived. Now let's see if wait() blocks forever or returns.
+    let reaper_serial = open("/dev/ttyS0", O_WRONLY, 0);
+    if reaper_serial >= 0 {
+        let _ = write(reaper_serial, b"[init] reaper entered, tracking ");
+        let digit = [b'0' + (num_gettys as u8), b'\n'];
+        let _ = write(reaper_serial, &digit);
+    }
+
     loop {
         let mut status: i32 = 0;
         let pid = wait(&mut status);

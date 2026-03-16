@@ -1,7 +1,10 @@
 # Oxide OS: The Story So Far
 
 ## Snapshot
-Oxide OS (briefly called EFFLUX before the name was swapped in a 15-minute decision) is a work in progress: a mostly working kernel that is not yet performant, but largely Linux-compatible at the syscall/libc surface while keeping its own ABI signatures. It’s written entirely in Rust with architecture-specific crates: x86_64 is the active target, and an in-progress arm64 crate will mature after the x86_64 path solidifies. Commits cluster around **Chris Watkins** (including the early “Ablative Personality” address), plus AI copilots **copilot-swe-agent**, **Claude**, and **Codex**. There are no git tags yet; milestones are encoded in the “Phase N” commits and the later refactor waves.
+Oxide OS (briefly called EFFLUX before the name was swapped in a 15-minute decision) is a work in progress: a mostly working kernel that is not yet performant, but largely Linux-compatible at the syscall/libc surface while keeping its own ABI signatures. It’s written entirely in Rust with architecture-specific crates: x86_64 is the active target, and an in-progress arm64 crate will mature after the x86_64 path solidifies. Commits cluster around **Chris Watkins** , plus AI Agents **CoPilot**, **Claude**, and **Codex**. There are no git tags yet; milestones are encoded in the “Phase N” commits and the later refactor waves.
+
+## Who’s behind this
+- **Chris Watkins** — 20+ years as a developer, infrastructure engineer, and general-purpose MacGyver. Has installed almost everything in every place, written every kind of integration, built custom software from scratch, put in tickets on a daily basis, architected systems, led teams, lived developer life at every level. Not a newcomer picking up tools for the first time—this is someone who’s been a hardcore 10x engineer across the full stack for two decades.
 
 ## Why this exists
 - Prompt: “Can I build an OS?” Answer: yes. Next: “How far can I push it?” The goal is personal ownership—an OS that’s 100% yours to shape and to experiment with at a depth most only dream about.
@@ -10,10 +13,17 @@ Oxide OS (briefly called EFFLUX before the name was swapped in a 15-minute decis
 - Nights-and-weekends, vibe-coded with thousands of builds; a window was always open, often overnight.
 - Heavy prompting and orchestration: you set intent, guidelines, and workflow, while AI copilots (Copilot, Claude, Codex) and automation did the typing. Branches and bad AI ideas were routinely discarded; you don’t claim to have handwritten the code—you directed the work.
 
-## Coding with AI
-- You still pride yourself on being a strong coder, but the workflow shifted: higher-level guidance replaces hand-typing, shipping faster with intention over keystrokes.
+## Coding with AI — the real workflow
+- Most days now are vibe coding. And it works. But there’s a separation from the pack: 20+ years of knowing how to build software properly means the AI is a tool, not the driver.
+- The workflow is disciplined: one feature at a time, branches, proper commits, code review. Write code like you’re writing tickets.
+- The AI gets reviewed. Security testing, gap analysis, documentation, code-smell sweeps. When the AI is smoking crack and builds something ridiculous, it gets ripped out and redone properly.
 - Guardrails: code sweeps, security checks, unit tests, and code-smell reviews keep safety in a ~200k-line Rust codebase.
-- Beliefs are codified into instructions so validation can be automated; you review outcomes at an abstracted layer while the tools execute.
+- Beliefs are codified into instructions (CLAUDE.md, AGENTS.md, 50+ agent rules) so validation can be automated; you review outcomes at an abstracted layer while the tools execute.
+- Focus shifted to command and control—setting intent, architecture, constraints—while AI does the typing. You were already fast before vibe coding; this is even better.
+
+## What this IS and ISN’T
+- **IS:** A personal OS, Linux-compatible at the syscall surface, able to build/install/accept applications. Written in Rust with architecture abstracted through crates and traits (like Redux for kernel subsystems). Can change any subsystem at will. 103 kernel crates, 188 syscalls, 90+ coreutils, networking, drivers, security, containers, a hypervisor.
+- **ISN’T:** Production-ready, performant, or meant for others to run today. Full of debug signals. Slow because it’s instrumented, not because it’s bad. A test system, a toy system in the best sense—a place to experiment at the deepest level.
 
 ## Perspective
 - This snapshot will age fast; the OS changes daily and isn’t meant for others to use—it’s a demonstration of what’s possible.
@@ -27,11 +37,11 @@ Oxide OS (briefly called EFFLUX before the name was swapped in a 15-minute decis
 - Supply chain: can cross-compile Fedora SRPMs into Oxide binaries to quickly seed tools/apps, while preferring to author first-party replacements over time.
 
 ## Origin (early January 2026)
-- 2026-01-03: Ablative Personality lays down the EFFLUX project skeleton, build tooling, and completes Phase 0–1 with memory management crates and integration.
+- 2026-01-03: Chris Watkins lays down the EFFLUX project skeleton, build tooling, and completes Phase 0–1 with memory management crates and integration.
 - Mid-January: Rapid phase completions: preemptive multitasking (Phase 2), user address spaces and ELF loading (Phase 3), process model (Phase 4), and a Phase 5 VFS with initramfs + procfs. The groundwork brings kernel↔user transitions, syscalls, and filesystem basics online.
 
 ## Handoff and sprint (mid-January 2026)
-- 2026-01-18: Chris Watkins takes over and lands Phase 6–10: TTY/PTY, signals, libc + userland, SMP, and loadable kernel modules. Phase 11 storage follows, marking the completion of the planned subsystem ladder.
+- 2026-01-18: Chris Watkins lands Phase 6–10: TTY/PTY, signals, libc + userland, SMP, and loadable kernel modules. Phase 11 storage follows, marking the completion of the planned subsystem ladder.
 - The phase ladder establishes the north star: each commit closes a capability gap (I/O, scheduling, memory safety, SMP, modules) while keeping the boot path stable.
 
 ## Hardening and drivers (February 2026)

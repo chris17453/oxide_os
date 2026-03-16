@@ -89,6 +89,8 @@ impl fmt::Write for LogWriter {
         if let Some(console_write) = *CONSOLE_WRITER.lock() {
             console_write(s.as_bytes());
         }
+        // — NeonVale: Tee to LOG VT so all normal-path output is visible on screen
+        tee_to_log_vt(s.as_bytes());
         Ok(())
     }
 }
@@ -97,6 +99,48 @@ impl fmt::Write for LogWriter {
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
     let _ = LogWriter.write_fmt(args);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  LOG VT PATH — tee all output to the LOG virtual terminal
+// ═══════════════════════════════════════════════════════════════════
+
+/// — NeonVale: Callback to write bytes to the LOG VT's terminal emulator.
+/// Set once after terminal init. Both normal and ISR paths call this.
+/// The callback must be ISR-safe (no locks that could deadlock with serial).
+/// — NeonVale
+type LogVtWriteFn = fn(&[u8]);
+static mut LOG_VT_WRITER: Option<LogVtWriteFn> = None;
+
+/// Register the LOG VT write callback. Called once after terminal init.
+///
+/// # Safety
+/// Must be called during init. The callback must be safe from any context.
+pub unsafe fn register_log_vt_writer(writer: LogVtWriteFn) {
+    unsafe { LOG_VT_WRITER = Some(writer); }
+}
+
+/// — NeonVale: Per-CPU reentrancy guard for LOG VT tee. Prevents infinite recursion
+/// when terminal::write calls os_log for debug output. AtomicBool is fine — each CPU
+/// has its own call stack so false sharing doesn't matter. — NeonVale
+static LOG_VT_REENTRANT: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// — NeonVale: Send bytes to the LOG VT if registered. ISR-safe (no locks here —
+/// the callback itself decides how to handle concurrency). Reentrancy-guarded to
+/// prevent infinite loops when terminal emulator code calls os_log. — NeonVale
+#[inline]
+fn tee_to_log_vt(bytes: &[u8]) {
+    // — NeonVale: Skip if we're already inside a tee (prevents recursion)
+    if LOG_VT_REENTRANT.swap(true, core::sync::atomic::Ordering::Acquire) {
+        return;
+    }
+    unsafe {
+        if let Some(writer) = LOG_VT_WRITER {
+            writer(bytes);
+        }
+    }
+    LOG_VT_REENTRANT.store(false, core::sync::atomic::Ordering::Release);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -169,6 +213,8 @@ pub unsafe fn write_byte_raw(byte: u8) {
             write_fn(byte);
         }
     }
+    // — NeonVale: Tee to LOG VT
+    tee_to_log_vt(&[byte]);
 }
 
 /// Write a string slice through the lock-free path.
@@ -182,6 +228,8 @@ pub unsafe fn write_str_raw(s: &str) {
             write_fn(s);
         }
     }
+    // — NeonVale: Tee ISR-safe output to LOG VT too
+    tee_to_log_vt(s.as_bytes());
 }
 
 /// Write a u32 as decimal through the lock-free path.

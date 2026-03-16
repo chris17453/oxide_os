@@ -206,14 +206,29 @@ pkgmgr-vim: toolchain pkgmgr-sysroot-deps
 		fi; \
 	fi
 
+# — IronGhost: Don't stage a diet stdlib; python needs lib-dynload/_pyrepl or it
+# throws an exec_prefix tantrum and faceplants in the REPL.
 pkgmgr-python: toolchain pkgmgr-sysroot-deps
 	@mkdir -p $(PKGMGR_STAGING)/bin $(PKGMGR_STAGING)/lib
-	@if [ -f "$(PKGMGR_STAGING)/bin/python" ]; then \
-		echo "  python already staged, skipping..."; \
+	@if [ -f "$(PKGMGR_STAGING)/bin/python" ] && [ -d "$(PKGMGR_STAGING)/lib/python3.13/lib-dynload" ] && [ -d "$(PKGMGR_STAGING)/lib/python3.13/_pyrepl" ] && [ ! pkgmgr/specs/overrides/python3.13.override -nt "$(PKGMGR_STAGING)/bin/python" ]; then \
+		echo "  python already staged with platform libs, skipping..."; \
 	else \
-		echo "  Building Python 3.13 via oxdnf..."; \
-		python3 pkgmgr/bin/oxdnf buildsrpm python3.13 2>&1 | tail -5; \
-		PY_BIN=$$(ls -td pkgmgr/cache/builds/build-*/install/usr/bin/python3.13 2>/dev/null | head -1); \
+		PY_INSTALL_ROOT=$$(ls -td pkgmgr/cache/builds/build-*/install/usr 2>/dev/null | head -1); \
+		NEED_BUILD=0; \
+		if [ -z "$$PY_INSTALL_ROOT" ] || [ ! -f "$$PY_INSTALL_ROOT/bin/python3.13" ] || [ ! -d "$$PY_INSTALL_ROOT/lib/python3.13" ]; then \
+			NEED_BUILD=1; \
+		fi; \
+		if [ "$$NEED_BUILD" = "0" ] && [ -f pkgmgr/specs/overrides/python3.13.override ] && [ pkgmgr/specs/overrides/python3.13.override -nt "$$PY_INSTALL_ROOT/bin/python3.13" ]; then \
+			NEED_BUILD=1; \
+		fi; \
+		if [ "$$NEED_BUILD" = "1" ]; then \
+			echo "  Building Python 3.13 via oxdnf..."; \
+			python3 pkgmgr/bin/oxdnf buildsrpm python3.13 2>&1 | tail -5; \
+			PY_INSTALL_ROOT=$$(ls -td pkgmgr/cache/builds/build-*/install/usr 2>/dev/null | head -1); \
+		else \
+			echo "  Reusing cached Python build: $$PY_INSTALL_ROOT"; \
+		fi; \
+		PY_BIN="$$PY_INSTALL_ROOT/bin/python3.13"; \
 		if [ -n "$$PY_BIN" ] && [ -f "$$PY_BIN" ]; then \
 			cp "$$PY_BIN" $(PKGMGR_STAGING)/bin/python; \
 			llvm-strip $(PKGMGR_STAGING)/bin/python 2>/dev/null || strip $(PKGMGR_STAGING)/bin/python 2>/dev/null || true; \
@@ -222,16 +237,20 @@ pkgmgr-python: toolchain pkgmgr-sysroot-deps
 			echo "  ERROR: python binary not found after build"; \
 			exit 1; \
 		fi; \
-		PY_LIB=$$(ls -td pkgmgr/cache/builds/build-*/install/usr/lib/python3.13 2>/dev/null | head -1); \
+		PY_LIB="$$PY_INSTALL_ROOT/lib/python3.13"; \
 		if [ -n "$$PY_LIB" ] && [ -d "$$PY_LIB" ]; then \
+			rm -rf $(PKGMGR_STAGING)/lib/python3.13; \
 			mkdir -p $(PKGMGR_STAGING)/lib/python3.13; \
-			cp -r $$PY_LIB/*.py $(PKGMGR_STAGING)/lib/python3.13/ 2>/dev/null || true; \
-			for subdir in encodings collections importlib json email http; do \
-				if [ -d "$$PY_LIB/$$subdir" ]; then \
-					cp -r $$PY_LIB/$$subdir $(PKGMGR_STAGING)/lib/python3.13/; \
-				fi; \
-			done; \
-			echo "  python stdlib staged"; \
+			cp -a $$PY_LIB/. $(PKGMGR_STAGING)/lib/python3.13/; \
+			find $(PKGMGR_STAGING)/lib/python3.13 -type d -name "__pycache__" -prune -exec rm -rf {} +; \
+			if [ ! -d "$(PKGMGR_STAGING)/lib/python3.13/lib-dynload" ] || [ ! -d "$(PKGMGR_STAGING)/lib/python3.13/_pyrepl" ]; then \
+				echo "  ERROR: python stdlib staging incomplete (missing lib-dynload or _pyrepl)"; \
+				exit 1; \
+			fi; \
+			echo "  python stdlib staged (full runtime + platform libs)"; \
+		else \
+			echo "  ERROR: python stdlib not found after build"; \
+			exit 1; \
 		fi; \
 	fi
 

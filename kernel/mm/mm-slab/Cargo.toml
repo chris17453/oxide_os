@@ -1,0 +1,11 @@
+[package]
+name = "mm-slab"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Per-CPU slab allocator for OXIDE OS — eliminates global heap lock contention"
+
+[dependencies]
+os_core = { workspace = true }
+os_log = { workspace = true }
+mm-heap = { workspace = true }

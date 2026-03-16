@@ -1,0 +1,14 @@
+[package]
+name = "mm-thp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Transparent Huge Pages — 2MB page promotion, splitting, and opportunistic allocation"
+
+[dependencies]
+os_core = { workspace = true }
+mm-core = { workspace = true }
+mm-pagedb = { workspace = true }
+mm-vmstat = { path = "../mm-vmstat" }
+mm-traits = { workspace = true }
+spin = { workspace = true }

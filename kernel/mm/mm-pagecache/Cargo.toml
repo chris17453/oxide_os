@@ -1,0 +1,12 @@
+[package]
+name = "mm-pagecache"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Unified page cache for OXIDE OS — (inode,offset)->frame mapping with dirty/writeback states"
+
+[dependencies]
+os_core = { workspace = true }
+mm-pagedb = { workspace = true }
+mm-vmstat = { path = "../mm-vmstat" }
+spin = { workspace = true }

@@ -13,7 +13,7 @@ use alloc::sync::Arc;
 use crate::arch;
 use core::sync::atomic::{AtomicU32, Ordering};
 use mm_paging::phys_to_virt;
-use os_core::PhysAddr;
+use os_core::{PhysAddr, VirtAddr};
 use proc::ProcessMeta;
 use sched::{self, SchedPolicy, Task, TaskState};
 use signal::delivery::{SignalResult, determine_action};
@@ -107,6 +107,27 @@ pub extern "C" fn idle_loop() -> ! {
             continue;
         }
 
+        // — IronGhost: Background reclaim from idle context. kswapd_needed is set
+        // by watermark checks in the timer ISR (lock-free flag). We do the actual
+        // reclaim HERE where we hold no locks and preemption is enabled. Never from
+        // ISR — that deadlocks against buddy zone Mutex.
+        if mm_reclaim::kswapd_needed() {
+            arch::enable_interrupts();
+            let _reclaimed = mm_reclaim::kswapd_work();
+            continue; // — IronGhost: Don't HLT — check for more work first
+        }
+
+        // — SableWire: Background writeback from idle context. Same pattern as kswapd —
+        // ISR/hot path can't do I/O, idle path can. Only fire when dirty ratio
+        // exceeds background threshold (default 10%).
+        if mm_pagecache::should_writeback() {
+            arch::enable_interrupts();
+            // — SableWire: Writeback cycle — collect dirty pages and flush.
+            // The page cache marks pages Dirty→Writeback→Clean internally.
+            let _dirty_list = mm_pagecache::page_cache().dirty_pages_for_writeback(32);
+            continue;
+        }
+
         // Enable interrupts and halt atomically
         // The CPU will wake up on the next interrupt (timer, keyboard, etc.)
         arch::wait_for_interrupt();
@@ -188,7 +209,40 @@ pub fn remove_process(pid: u32) {
         }
         os_log::write_str_raw("\n");
     }
-    sched::remove_task(pid);
+    let this_cpu = sched::this_cpu();
+    const MAX_REAP_RETRIES: u32 = 64;
+
+    for _ in 0..MAX_REAP_RETRIES {
+        if let Some(run_cpu) = sched::running_cpu_of_pid(pid) {
+            if run_cpu != this_cpu {
+                smp::ipi::send_reschedule(run_cpu);
+                sched::set_need_resched();
+                arch::allow_kernel_preempt();
+                arch::wait_for_interrupt();
+                arch::disallow_kernel_preempt();
+                continue;
+            }
+        }
+
+        if sched::remove_task(pid).is_some() {
+            return;
+        }
+
+        if sched::get_task_state(pid).is_none() {
+            return;
+        }
+
+        sched::set_need_resched();
+        arch::allow_kernel_preempt();
+        arch::wait_for_interrupt();
+        arch::disallow_kernel_preempt();
+    }
+
+    unsafe {
+        os_log::write_str_raw("[WAIT] reap deferred pid=");
+        os_log::write_u32_raw(pid);
+        os_log::write_str_raw("\n");
+    }
 }
 
 /// Scheduler tick callback - called from timer interrupt at 100Hz
@@ -196,31 +250,37 @@ pub fn remove_process(pid: u32) {
 /// Implements preemptive scheduling using the sched crate.
 /// Returns the RSP to restore (may be different if we switched processes).
 pub fn scheduler_tick(current_rsp: u64) -> u64 {
-    // — CrashBloom: PML4[256] CANARY — check CURRENT page tables every tick.
+    // — CrashBloom: PML4[256]/[511] CANARIES — check CURRENT page tables every tick.
     // If the currently-loaded CR3 has corrupted kernel entries, we're living
     // on borrowed time. The ISR itself runs from kernel memory, so if we got
-    // here, PML4[256] WAS valid at ISR entry. But checking it catches the case
+    // here, kernel mappings were valid at ISR entry. But checking catches the case
     // where corruption happened between ticks — the NEXT code path that touches
     // an unmapped kernel address would triple-fault. Catch it here first.
     // Also check every Nth tick for the RUNNING process's PML4 frame being freed.
     unsafe {
-        let golden = crate::globals::KERNEL_PML4_256_ENTRY;
-        if golden != 0 {
+        let golden_256 = crate::globals::KERNEL_PML4_256_ENTRY;
+        let golden_511 = crate::globals::KERNEL_PML4_511_ENTRY;
+        if golden_256 != 0 || golden_511 != 0 {
             let cr3: u64 = arch::read_page_table_root().as_u64();
             let pml4_virt = mm_paging::phys_to_virt(PhysAddr::new(cr3));
-            let current_entry = core::ptr::read_volatile(
-                pml4_virt.as_ptr::<u64>().add(256)
-            );
-            if current_entry != golden {
+            let current_256 = core::ptr::read_volatile(pml4_virt.as_ptr::<u64>().add(256));
+            let current_511 = core::ptr::read_volatile(pml4_virt.as_ptr::<u64>().add(511));
+            let bad_256 = golden_256 != 0 && current_256 != golden_256;
+            let bad_511 = golden_511 != 0 && current_511 != golden_511;
+            if bad_256 || bad_511 {
                 let pid = sched::current_pid_lockfree().unwrap_or(0);
                 os_log::write_str_raw("[PML4-LIVE-CORRUPT] pid=");
                 os_log::write_u32_raw(pid);
                 os_log::write_str_raw(" cr3=0x");
                 os_log::write_u64_hex_raw(cr3);
                 os_log::write_str_raw(" PML4[256]=0x");
-                os_log::write_u64_hex_raw(current_entry);
-                os_log::write_str_raw(" expected=0x");
-                os_log::write_u64_hex_raw(golden);
+                os_log::write_u64_hex_raw(current_256);
+                os_log::write_str_raw(" expected256=0x");
+                os_log::write_u64_hex_raw(golden_256);
+                os_log::write_str_raw(" PML4[511]=0x");
+                os_log::write_u64_hex_raw(current_511);
+                os_log::write_str_raw(" expected511=0x");
+                os_log::write_u64_hex_raw(golden_511);
                 os_log::write_str_raw("\n");
 
                 // Check if PML4 frame itself is a freed buddy block
@@ -843,8 +903,14 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
         return current_rsp;
     }
 
-    // Find next task to run using the scheduler
+    // — CrashBloom: pick_and_switch does pick + context save/load under ONE lock.
+    // The old code did pick_next_task (with_rq, releases lock) then
+    // context_switch_transaction (try_with_rq). If ANYTHING grabbed the lock
+    // between those two calls, the transaction failed and the popped task had
+    // to be re-enqueued (undo). On CPU 1 this happened EVERY tick = livelock.
+    // Merging into one lock acquisition eliminates the window entirely.
     let next_pid = pick_next_process(current_pid);
+
 
     if next_pid == current_pid {
         #[cfg(feature = "debug-sched")]
@@ -910,6 +976,11 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     // We capture it so context switches properly restore user GS on the way out.
     let current_gs_base = unsafe { crate::arch::read_msr(0xC0000102) };
 
+    // — IronGhost: Save outgoing task's FPU/SSE state. FXSAVE64 captures x87 FCW/FSW,
+    // MXCSR, and XMM0-XMM15 into a 512-byte buffer. Must happen BEFORE the context
+    // switch transaction stores the context — otherwise the next task's FPU operations
+    // clobber the outgoing task's XMM registers.
+    // — IronGhost
     // Build current task's context from interrupt frame + MSR values
     let current_ctx = sched::TaskContext {
         rip: frame.rip,
@@ -956,24 +1027,12 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
     ) {
         Some(info) => info,
         None => {
-            #[cfg(feature = "debug-sched")]
-            if sdbg_should_log(&SDBG_TXN_FAIL) {
-                unsafe {
-                    os_log::write_str_raw("[SDBG] txn_fail cpu=");
-                    os_log::write_u32_raw(sched::this_cpu());
-                    os_log::write_str_raw(" old=");
-                    os_log::write_u32_raw(current_pid);
-                    os_log::write_str_raw(" new=");
-                    os_log::write_u32_raw(next_pid);
-                    os_log::write_str_raw(" cs=0x");
-                    os_log::write_u64_hex_raw(frame.cs);
-                    os_log::write_str_raw(" pc=");
-                    os_log::write_u32_raw(preempt_count_val as u32);
-                    os_log::write_str_raw("\n");
-                }
-            }
+            // — CrashBloom: Transaction failed (task not found — should be rare
+            // now that we use blocking with_rq instead of try_with_rq).
+            // Undo the pick to prevent task loss.
+            sched::undo_pick_next(current_pid, next_pid);
             return current_rsp;
-        } // Lock contended or task not found — retry next tick
+        }
     };
 
     // — GraveShift: Clear the outgoing task's preempt_count on this CPU.
@@ -1066,17 +1125,22 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
 
     arch::syscall::LAST_SET_KSTACK_SITE.store(1, core::sync::atomic::Ordering::Relaxed);
     unsafe {
-        arch::syscall::set_kernel_stack(kernel_stack_top);
+        // — SableWire: This runs in the switch path where GS state can be
+        // transiently inverted by swapgs sequencing. Use the checked variant
+        // so a NULL GS_BASE recovers instead of detonating at gs:[0].
+        arch::syscall::set_kernel_stack_checked(kernel_stack_top);
     }
     arch::gdt::set_kernel_stack(kernel_stack_top);
 
-    // — CrashBloom: PRE-SWITCH PML4[256] CANARY CHECK.
-    // Validate the target CR3's kernel entries before loading it. If PML4[256]
-    // (direct physical map) is corrupted, switching to this CR3 would immediately
+    // — CrashBloom: PRE-SWITCH PML4[256]/[511] CANARY CHECK.
+    // Validate the target CR3's kernel entries before loading it. If either the
+    // direct map slot (256) or high-half kernel slot (511) is corrupted, switching
+    // to this CR3 can immediately
     // triple-fault because even the page fault handler lives in kernel space.
     // One memory read to prevent a silent, undiagnosable death. Worth every cycle.
     unsafe {
-        let golden = crate::globals::KERNEL_PML4_256_ENTRY;
+        let golden_256 = crate::globals::KERNEL_PML4_256_ENTRY;
+        let golden_511 = crate::globals::KERNEL_PML4_511_ENTRY;
         // — CrashBloom: Skip canary check for idle/kernel tasks (cr3=0) — they
         // run on the kernel PML4 directly. Reading phys 0x0 + 256*8 gives garbage
         // and false-positives the corruption detector, killing PID 0 and freezing
@@ -1092,21 +1156,26 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
             sched::set_need_resched();
             return current_rsp;
         }
-        if golden != 0 && switch_info.new_cr3 != 0 {
+        if (golden_256 != 0 || golden_511 != 0) && switch_info.new_cr3 != 0 {
             let target_pml4_virt = mm_paging::phys_to_virt(PhysAddr::new(switch_info.new_cr3));
-            let target_entry = core::ptr::read_volatile(
-                target_pml4_virt.as_ptr::<u64>().add(256)
-            );
-            if target_entry != golden {
+            let target_256 = core::ptr::read_volatile(target_pml4_virt.as_ptr::<u64>().add(256));
+            let target_511 = core::ptr::read_volatile(target_pml4_virt.as_ptr::<u64>().add(511));
+            let bad_256 = golden_256 != 0 && target_256 != golden_256;
+            let bad_511 = golden_511 != 0 && target_511 != golden_511;
+            if bad_256 || bad_511 {
                 // — CrashBloom: CORRUPTION DETECTED! Log everything and skip the switch.
                 os_log::write_str_raw("[PML4-CORRUPT] pid=");
                 os_log::write_u32_raw(next_pid);
                 os_log::write_str_raw(" cr3=0x");
                 os_log::write_u64_hex_raw(switch_info.new_cr3);
                 os_log::write_str_raw(" PML4[256]=0x");
-                os_log::write_u64_hex_raw(target_entry);
-                os_log::write_str_raw(" expected=0x");
-                os_log::write_u64_hex_raw(golden);
+                os_log::write_u64_hex_raw(target_256);
+                os_log::write_str_raw(" expected256=0x");
+                os_log::write_u64_hex_raw(golden_256);
+                os_log::write_str_raw(" PML4[511]=0x");
+                os_log::write_u64_hex_raw(target_511);
+                os_log::write_str_raw(" expected511=0x");
+                os_log::write_u64_hex_raw(golden_511);
                 os_log::write_str_raw(" — SKIPPING SWITCH, killing task\n");
 
                 let pml4_first = core::ptr::read_volatile(
@@ -1116,6 +1185,36 @@ pub fn scheduler_tick(current_rsp: u64) -> u64 {
                     os_log::write_str_raw("[PML4-CORRUPT] PML4 frame IS a FreeBlock! USE-AFTER-FREE!\n");
                 }
 
+                sched::set_task_exit_status(next_pid, 139);
+                sched::set_need_resched();
+                return current_rsp;
+            }
+        }
+
+        // — CrashBloom: Deep kernel mapping guard. PML4 slot equality isn't enough:
+        // a corrupted shared PD/PT can leave PML4[511] intact while the IDT page
+        // itself vanishes. The next IPI then faults while reading IDT[f1] and the
+        // CPU spirals into #DF/#TF before serial can speak. Validate that target
+        // CR3 can translate critical IDT vectors BEFORE switching.
+        if switch_info.new_cr3 != 0 {
+            let mapper = unsafe { mm_paging::PageMapper::new(PhysAddr::new(switch_info.new_cr3)) };
+            let idt_base = arch::idt::base_addr();
+            let idt_timer = idt_base + (arch::idt::vector::TIMER as u64) * 16;
+            let idt_ipi_tlb = idt_base + (arch::idt::vector::IPI_TLB_SHOOTDOWN as u64) * 16;
+
+            let missing_timer = mapper.translate(VirtAddr::new(idt_timer)).is_none();
+            let missing_ipi_tlb = mapper.translate(VirtAddr::new(idt_ipi_tlb)).is_none();
+
+            if missing_timer || missing_ipi_tlb {
+                os_log::write_str_raw("[KMAP-MISSING] pid=");
+                os_log::write_u32_raw(next_pid);
+                os_log::write_str_raw(" cr3=0x");
+                os_log::write_u64_hex_raw(switch_info.new_cr3);
+                os_log::write_str_raw(" idt_timer=");
+                os_log::write_u32_raw(if missing_timer { 0 } else { 1 });
+                os_log::write_str_raw(" idt_f1=");
+                os_log::write_u32_raw(if missing_ipi_tlb { 0 } else { 1 });
+                os_log::write_str_raw(" — SKIPPING SWITCH, killing task\n");
                 sched::set_task_exit_status(next_pid, 139);
                 sched::set_need_resched();
                 return current_rsp;
@@ -1687,13 +1786,12 @@ pub fn check_signals_on_syscall_return() {
                 os_log::write_byte_raw(b'0' + (pid_b % 10));
                 os_log::write_str_raw("\n");
             }
-            sched::set_need_resched();
-            arch::allow_kernel_preempt();
-            arch::wait_for_interrupt();
-            // — GraveShift: If we somehow resume (shouldn't happen — nobody reschedules
-            // a zombie), loop forever so we never escape to user mode.
+            // — GraveShift: Zombie must never return to userland, but do not wedge a CPU
+            // with interrupts disabled. Park in preemptible HLT forever.
             loop {
-                arch::disable_interrupts();
+                sched::set_need_resched();
+                arch::allow_kernel_preempt();
+                arch::wait_for_interrupt();
             }
         }
         SignalResult::UserHandler {

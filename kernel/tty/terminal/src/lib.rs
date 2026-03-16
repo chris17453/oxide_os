@@ -1938,8 +1938,8 @@ fn write_decimal(buf: &mut Vec<u8>, value: u32) {
 // Each VT's renderer targets its own compositor BackingFramebuffer (RAM),
 // no double buffering needed — saves 24MB of heap vs the old approach.
 
-/// Maximum VTs (must match compositor::MAX_VTS)
-pub const MAX_VTS: usize = 6;
+/// Maximum VTs (must match compositor::MAX_VTS) — 6 interactive + 1 LOG
+pub const MAX_VTS: usize = 7;
 
 /// — GraveShift: per-VT terminal emulators. Each slot is independently locked.
 /// VT0 is initialized at boot. VTs 1-5 are lazy-initialized on first write.
@@ -1951,6 +1951,7 @@ static VT_TERMINALS: [Mutex<Option<TerminalEmulator>>; MAX_VTS] = [
     Mutex::new(None),
     Mutex::new(None),
     Mutex::new(None),
+    Mutex::new(None), // — NeonVale: LOG VT (index 6)
 ];
 
 /// — GraveShift: per-VT initialization flags. Lock-free reads from ISR context.
@@ -1961,6 +1962,7 @@ static VT_INITIALIZED: [AtomicBool; MAX_VTS] = [
     AtomicBool::new(false),
     AtomicBool::new(false),
     AtomicBool::new(false),
+    AtomicBool::new(false), // — NeonVale: LOG VT (index 6)
 ];
 
 /// Legacy alias — true when VT0 is initialized (backward compat for is_initialized())
@@ -2065,6 +2067,18 @@ pub type ResponseCallback = fn(&[u8]);
 /// Global response callback for injecting terminal responses into TTY input
 static mut RESPONSE_CALLBACK: Option<ResponseCallback> = None;
 
+/// — NeonVale: Callback to mark a VT dirty in the compositor. Avoids circular
+/// dependency between terminal and compositor crates. Set during init.
+type MarkDirtyCallback = fn(usize);
+static mut MARK_DIRTY_CALLBACK: Option<MarkDirtyCallback> = None;
+
+/// Register the mark-dirty callback.
+/// # Safety
+/// Must be called during single-threaded init.
+pub unsafe fn set_mark_dirty_callback(callback: MarkDirtyCallback) {
+    unsafe { MARK_DIRTY_CALLBACK = Some(callback); }
+}
+
 /// Set the response callback for terminal queries
 ///
 /// # Safety
@@ -2164,6 +2178,25 @@ pub fn resize_vt(vt_num: usize, fb: Arc<dyn Framebuffer>) {
     }
 }
 
+/// — GraveShift: ISR-safe version of resize_vt. Uses try_lock instead of lock.
+/// Returns false if the VT's terminal lock is contended — caller should retry.
+pub fn try_resize_vt(vt_num: usize, fb: Arc<dyn Framebuffer>) -> bool {
+    if vt_num >= MAX_VTS {
+        return true; // nothing to do = success
+    }
+    if !VT_INITIALIZED[vt_num].load(Ordering::Acquire) {
+        return true;
+    }
+    if let Some(mut guard) = VT_TERMINALS[vt_num].try_lock() {
+        if let Some(ref mut terminal) = *guard {
+            terminal.resize(fb);
+        }
+        true
+    } else {
+        false
+    }
+}
+
 /// Initialize the default terminal (VT0) with framebuffer.
 ///
 /// — GraveShift: Legacy wrapper. Boot path calls this for VT0.
@@ -2224,8 +2257,21 @@ pub fn switch_vt(new_vt: usize) {
     if VT_INITIALIZED[new_vt].load(Ordering::Acquire) {
         if let Some(mut guard) = VT_TERMINALS[new_vt].try_lock() {
             if let Some(ref mut terminal) = *guard {
-                terminal.renderer.invalidate();
-                terminal.render();
+                // — CrashBloom: Validate the renderer's framebuffer before rendering.
+                // A corrupted Arc<dyn Framebuffer> (null data pointer from heap
+                // corruption) causes a null-pointer write in the spin lock release
+                // path — kills the CPU. Check the raw pointer before we touch it.
+                let fb_ptr = terminal.renderer.fb_ptr();
+                if fb_ptr.is_null() {
+                    unsafe {
+                        os_log::write_str_raw("[VT-TERM] switch_vt: VT");
+                        os_log::write_u32_raw(new_vt as u32);
+                        os_log::write_str_raw(" framebuffer NULL — skipping render\n");
+                    }
+                } else {
+                    terminal.renderer.invalidate();
+                    terminal.render();
+                }
             }
         } else {
             unsafe { os_log::write_str_raw("[VT-TERM] switch_vt: VT locked, render deferred\n"); }
@@ -2325,7 +2371,30 @@ pub fn update_framebuffer_vt(vt_num: usize, fb: Arc<dyn Framebuffer>) {
 /// — GraveShift: Per-VT write. Each VT has its own lock — writing to VT2
 /// doesn't block VT0's cursor blink ISR. The future is now, old man.
 pub fn write_vt(vt_num: usize, data: &[u8]) {
-    if vt_num >= MAX_VTS || !VT_INITIALIZED[vt_num].load(Ordering::Acquire) {
+    if vt_num >= MAX_VTS {
+        // — CrashBloom: VT index out of range — this is a code bug, not a race.
+        // Log it loud so we see it in serial instead of silently eating writes.
+        unsafe {
+            os_log::write_str_raw("[VT-WRITE-REJECT] vt_num=");
+            os_log::write_u32_raw(vt_num as u32);
+            os_log::write_str_raw(" >= MAX_VTS, dropping ");
+            os_log::write_u32_raw(data.len() as u32);
+            os_log::write_str_raw(" bytes\n");
+        }
+        return;
+    }
+    if !VT_INITIALIZED[vt_num].load(Ordering::Acquire) {
+        // — CrashBloom: VT not initialized yet — compositor didn't allocate its
+        // backing buffer, or init_vt() was never called for this index. Every byte
+        // written here vanishes. If you see this, check compositor::init() and the
+        // init_vt() loop in kernel/src/init.rs.
+        unsafe {
+            os_log::write_str_raw("[VT-WRITE-UNINIT] vt");
+            os_log::write_u32_raw(vt_num as u32);
+            os_log::write_str_raw(" not initialized, dropping ");
+            os_log::write_u32_raw(data.len() as u32);
+            os_log::write_str_raw(" bytes\n");
+        }
         return;
     }
 
@@ -2338,9 +2407,15 @@ pub fn write_vt(vt_num: usize, data: &[u8]) {
 
     // — NeonVale: Snapshot mouse state after write — escape sequences may toggle
     // mouse tracking mode. Capture while holding VT lock, release BEFORE MOUSE_INPUT.
+    //
+    // — GraveShift: Disable preemption while holding the spinlock. Without this,
+    // the timer ISR can preempt us mid-render, schedule another task on this CPU,
+    // that task calls write_vt → spins on the lock we hold → wasted context switches.
+    // Linux spin_lock() disables preemption for exactly this reason.
     let mouse_snapshot = {
         let mut guard = VT_TERMINALS[vt_num].lock();
-        if let Some(ref mut terminal) = *guard {
+        os_core::disallow_kernel_preempt();
+        let snapshot = if let Some(ref mut terminal) = *guard {
             terminal.write(data);
             Some((
                 terminal.handler.mouse_mode,
@@ -2351,8 +2426,18 @@ pub fn write_vt(vt_num: usize, data: &[u8]) {
                 terminal.rows,
             ))
         } else {
+            // — CrashBloom: VT_INITIALIZED says yes but the actual Option is None.
+            // Someone marked it initialized without storing a TerminalEmulator.
+            unsafe {
+                os_log::write_str_raw("[VT-WRITE-NONE] vt");
+                os_log::write_u32_raw(vt_num as u32);
+                os_log::write_str_raw(" initialized but emulator=None\n");
+            }
             None
-        }
+        };
+        drop(guard);
+        os_core::allow_kernel_preempt();
+        snapshot
     }; // — NeonVale: VT lock released. Now safe to acquire MOUSE_INPUT.
 
     // — SableWire: CLAC — disable access to user pages
@@ -2369,6 +2454,35 @@ pub fn write_vt(vt_num: usize, data: &[u8]) {
             state.cell_height = ch;
             state.cols = cols;
             state.rows = rows;
+        }
+    }
+}
+
+/// — NeonVale: Non-blocking write to a specific VT. Uses try_lock so it's safe
+/// from ISR context — if the lock is held, bytes are silently dropped rather
+/// than deadlocking. Used by the LOG VT writer (os_log tee) which can be called
+/// from timer ISR, exception handlers, and scheduler context. — NeonVale
+pub fn try_write_vt(vt_num: usize, data: &[u8]) {
+    if vt_num >= MAX_VTS {
+        return;
+    }
+    if !VT_INITIALIZED[vt_num].load(Ordering::Acquire) {
+        return;
+    }
+    // — NeonVale: try_lock — if the VT terminal is locked (someone else is
+    // writing), just drop these bytes. LOG VT will get the next batch.
+    // No deadlock, no spin, no drama. — NeonVale
+    if let Some(mut guard) = VT_TERMINALS[vt_num].try_lock() {
+        if let Some(ref mut terminal) = *guard {
+            terminal.write(data);
+        }
+        drop(guard);
+        // — NeonVale: Mark the VT dirty so compositor blits it on next tick.
+        // Uses the dirty callback to avoid circular dependency on compositor.
+        unsafe {
+            if let Some(mark_fn) = MARK_DIRTY_CALLBACK {
+                mark_fn(vt_num);
+            }
         }
     }
 }
@@ -2496,9 +2610,12 @@ pub fn write_immediate(data: &[u8]) {
 
     unsafe { os_core::user_access_begin(); }
 
+    // — GraveShift: same preemption guard as write_vt — no preemption while
+    // holding the per-VT spinlock. Drop lock before re-enabling.
     let mouse_snapshot = {
         let mut guard = VT_TERMINALS[vt].lock();
-        if let Some(ref mut terminal) = *guard {
+        os_core::disallow_kernel_preempt();
+        let snapshot = if let Some(ref mut terminal) = *guard {
             terminal.write_immediate(data);
             Some((
                 terminal.handler.mouse_mode,
@@ -2510,7 +2627,10 @@ pub fn write_immediate(data: &[u8]) {
             ))
         } else {
             None
-        }
+        };
+        drop(guard);
+        os_core::allow_kernel_preempt();
+        snapshot
     }; // — NeonVale: VT lock released here.
 
     unsafe { os_core::user_access_end(); }

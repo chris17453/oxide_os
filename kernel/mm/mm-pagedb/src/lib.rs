@@ -249,6 +249,9 @@ pub const PF_KERNEL: u32 = 1 << 5;
 pub const PF_SLAB: u32 = 1 << 6;
 /// Modified since last writeback (future)
 pub const PF_DIRTY: u32 = 1 << 7;
+/// — SableWire: Frame is in the page cache (file-backed, keyed by inode+offset).
+/// Distinguishes page-cache pages from anonymous mapped pages in PageDbStats.
+pub const PF_PAGECACHE: u32 = 1 << 8;
 
 /// Frame size constant
 const FRAME_SIZE: u64 = 4096;
@@ -368,6 +371,13 @@ pub enum PageDbError {
     },
     /// Attempted to free a reserved frame — NEVER do this
     FreeReserved { phys: u64, context: u8 },
+    /// Attempted to free a frame still shared by multiple owners
+    FreeShared {
+        phys: u64,
+        context: u8,
+        current_flags: u32,
+        refcount: u32,
+    },
     /// Reference count underflowed below zero
     RefcountUnderflow { phys: u64, current: u32 },
     /// Physical address outside tracked range
@@ -402,6 +412,22 @@ impl PageDbError {
                     os_log::write_str_raw(context_name(*context));
                     os_log::write_str_raw(" phys=0x");
                     os_log::write_u64_hex_raw(*phys);
+                    os_log::write_str_raw("\n");
+                }
+                PageDbError::FreeShared {
+                    phys,
+                    context,
+                    current_flags,
+                    refcount,
+                } => {
+                    os_log::write_str_raw("[PAGEDB-ERROR] FreeShared caller=");
+                    os_log::write_str_raw(context_name(*context));
+                    os_log::write_str_raw(" phys=0x");
+                    os_log::write_u64_hex_raw(*phys);
+                    os_log::write_str_raw(" flags=0x");
+                    os_log::write_u64_hex_raw(*current_flags as u64);
+                    os_log::write_str_raw(" rc=");
+                    os_log::write_u32_raw(*refcount);
                     os_log::write_str_raw("\n");
                 }
                 PageDbError::RefcountUnderflow { phys, current } => {
@@ -736,6 +762,23 @@ impl PageDatabase {
                 context: ctx,
             };
             err.dump();
+            return Err(err);
+        }
+
+        // — ColdCipher: Shared frame free guard. If refcount > 1, this frame is
+        // still referenced elsewhere (classic COW/shared page). Returning it to
+        // buddy here creates duplicate allocations and eventually old_phys==new_phys
+        // in COW copy paths. Leak-and-log beats free-list corruption every time.
+        let rc = frame.refcount();
+        if rc > 1 {
+            let err = PageDbError::FreeShared {
+                phys: phys.as_u64(),
+                context: ctx,
+                current_flags: flags,
+                refcount: rc,
+            };
+            err.dump();
+            dump_event_ring_for(phys.as_u64());
             return Err(err);
         }
 

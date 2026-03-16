@@ -293,6 +293,15 @@ impl FrameAllocator for MemoryManager {
         match MemoryManager::alloc_frame(self) {
             Ok(addr) => Some(addr),
             Err(_) => {
+                // — IronGhost: Direct reclaim before OOM kill. Try to free
+                // clean file pages and slab objects synchronously. This runs
+                // in preemptible process context — never ISR.
+                let _freed = mm_reclaim::direct_reclaim(0);
+                if let Ok(addr) = MemoryManager::alloc_frame(self) {
+                    return Some(addr);
+                }
+
+                // — IronGhost: Reclaim didn't help. Last resort: OOM kill.
                 if try_oom_recover() {
                     MemoryManager::alloc_frame(self).ok()
                 } else {

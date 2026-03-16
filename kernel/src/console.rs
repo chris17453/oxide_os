@@ -3,6 +3,14 @@
 use crate::arch;
 use crate::arch::serial;
 use core::fmt::Write;
+use core::sync::atomic::{AtomicU8, Ordering};
+
+/// — GraveShift: Deferred VT switch from ISR context. The OSK tap handler runs
+/// inside the timer ISR. Calling focus_vt → resize_vt → VT_TERMINALS.lock()
+/// from ISR deadlocks when any task on this CPU holds the terminal lock.
+/// Store the target VT here; process it from a safe (non-ISR) context.
+/// 0xFF = no pending switch.
+static PENDING_VT_SWITCH: AtomicU8 = AtomicU8::new(0xFF);
 
 /// Push any escape sequence bytes to the input subsystem
 ///
@@ -64,6 +72,33 @@ pub fn console_write(data: &[u8]) {
 pub fn terminal_tick() {
     // — PatchBay: Track terminal tick for performance monitoring
     perf::counters().record_terminal_tick();
+
+    // — GraveShift: Process deferred VT switch from OSK. The actual switch was
+    // deferred because focus_vt → resize_vt → VT_TERMINALS.lock() deadlocks
+    // when called directly from ISR. Here we use terminal::switch_vt (try_lock)
+    // and compositor::try_focus_vt (try_lock) so we bail harmlessly if contended.
+    // Next tick retries automatically — 100Hz means ~10ms latency worst case.
+    let pending = PENDING_VT_SWITCH.load(Ordering::Acquire);
+    if pending != 0xFF {
+        let vt = pending as usize;
+        // — GraveShift: terminal::switch_vt already uses try_lock — ISR safe.
+        terminal::switch_vt(vt);
+        if let Some(vt_mgr) = vt::get_manager() {
+            vt_mgr.switch_to(vt);
+        }
+        // — GraveShift: try_focus_vt does the same as focus_vt but with try_lock.
+        // Returns false if COMPOSITOR lock is contended — we'll retry next tick.
+        if compositor::try_focus_vt(vt) {
+            PENDING_VT_SWITCH.store(0xFF, Ordering::Release);
+        }
+        // If try_focus_vt returned false, leave pending — next tick retries.
+    }
+
+    // — EchoFrame: flush deferred layout changes (OSK toggle → VT viewport resize).
+    // Geometry is already correct (recomputed in compositor::tick), this tells the
+    // terminal emulators about the new dimensions so apps render to the right grid.
+    // try_flush uses try_lock — retries next tick if any lock is contended.
+    compositor::try_flush_pending_layout();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // 🔥 DISABLED: DUPLICATE PROCESSING PATH (The Glitch in the Matrix) 🔥
@@ -191,14 +226,45 @@ pub fn terminal_tick() {
                         };
                         let pressed = event.value != 0;
 
+                        // — GlassSignal: intercept left-clicks for status bar FIRST.
+                        // Status bar is always visible at the bottom — VT buttons + KB toggle.
+                        // Must check before vkbd hit-test because status bar is below OSK. — SableWire
+                        if event.code == 0x110 && pressed {
+                            if let Some((mx, my)) = compositor::mouse_position() {
+                                if let Some(action) = compositor::hit_test_statusbar(mx, my) {
+                                    match action {
+                                        compositor::StatusBarAction::SwitchVt(vt) => {
+                                            PENDING_VT_SWITCH.store(vt as u8, Ordering::Release);
+                                            vkbd::set_active_vt(vt);
+                                            compositor::mark_statusbar_dirty();
+                                        }
+                                        compositor::StatusBarAction::ToggleOSK => {
+                                            vkbd::toggle();
+                                            compositor::mark_statusbar_dirty();
+                                        }
+                                        compositor::StatusBarAction::None => {}
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+
                         // — InputShade: intercept clicks for virtual keyboard overlay.
                         if event.code == 0x110 && vkbd::is_visible() {
                             if pressed {
                                 if let Some((mx, my)) = compositor::mouse_position() {
-                                    if let Some((bytes, len)) = vkbd::handle_tap(mx, my) {
-                                        for i in 0..len {
-                                            if let Some(manager) = vt::get_manager() {
-                                                manager.push_input(bytes[i]);
+                                    if let Some(result) = vkbd::handle_tap(mx, my) {
+                                        match result {
+                                            vkbd::VkbdResult::Bytes(bytes, len) => {
+                                                for i in 0..len {
+                                                    if let Some(manager) = vt::get_manager() {
+                                                        manager.push_input(bytes[i]);
+                                                    }
+                                                }
+                                            }
+                                            vkbd::VkbdResult::Action(action) => {
+                                                // — InputShade: system actions from OSK buttons
+                                                handle_vkbd_action(action);
                                             }
                                         }
                                         continue;
@@ -429,6 +495,46 @@ pub fn console_write_bytes(data: &[u8]) {
 pub unsafe fn write_byte_unsafe(byte: u8) {
     unsafe {
         arch::serial::write_byte_unsafe(byte);
+    }
+}
+
+/// — InputShade: dispatch system actions from the on-screen keyboard.
+/// VT switches go through terminal::switch_vt(). Ctrl+Alt+Del is the big red button.
+/// Volume controls are placeholders until we have an actual audio stack. — SableWire
+fn handle_vkbd_action(action: vkbd::VkbdAction) {
+    match action {
+        vkbd::VkbdAction::SwitchVt(vt) => {
+            // — GraveShift: NEVER do the full VT switch inline — we're in the timer
+            // ISR. focus_vt → resize_vt → VT_TERMINALS.lock() will deadlock if any
+            // process on this CPU holds the terminal lock. Defer to next tick where
+            // we can try_lock safely or handle it from a non-ISR path.
+            PENDING_VT_SWITCH.store(vt as u8, Ordering::Release);
+            // — InputShade: update the OSK highlight immediately (no locks needed)
+            vkbd::set_active_vt(vt);
+        }
+        vkbd::VkbdAction::CtrlAltDel => {
+            // — GraveShift: the three-finger salute. Reset via keyboard controller.
+            // 0xFE to port 0x64 = CPU reset. The oldest trick in the x86 book.
+            unsafe {
+                os_log::write_str_raw("[CAD] Ctrl+Alt+Del — rebooting\n");
+                arch::outb(0x64, 0xFE);
+            }
+        }
+        vkbd::VkbdAction::VolumeUp => {
+            // — InputShade: no audio subsystem yet. Log it so we know it fires.
+            unsafe { os_log::write_str_raw("[VOL] Volume up\n"); }
+        }
+        vkbd::VkbdAction::VolumeDown => {
+            unsafe { os_log::write_str_raw("[VOL] Volume down\n"); }
+        }
+        vkbd::VkbdAction::VolumeMute => {
+            unsafe { os_log::write_str_raw("[VOL] Mute toggle\n"); }
+        }
+        vkbd::VkbdAction::CloseOSK => {
+            // — InputShade: the X button spoke. Hide the keyboard. — SableWire
+            vkbd::toggle();
+            compositor::mark_statusbar_dirty();
+        }
     }
 }
 

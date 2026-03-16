@@ -17,5 +17,6 @@ os_core = { workspace = true }
 os_log = { workspace = true }
 sched = { workspace = true }
 spin = { workspace = true }
+waitqueue = { workspace = true }
 terminal = { path = "../terminal" }
 compositor = { path = "../compositor" }

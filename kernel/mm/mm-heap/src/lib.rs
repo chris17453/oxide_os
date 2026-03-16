@@ -27,6 +27,7 @@ mod linked_list;
 mod hardened;
 
 pub use linked_list::LinkedListAllocator;
+pub use linked_list::GrowCallbackFn;
 
 #[cfg(feature = "heap-hardening")]
 pub use hardened::{HardenedHeapAllocator, LockedHardenedHeap};

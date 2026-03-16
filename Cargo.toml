@@ -5,6 +5,7 @@ members = [
     "kernel",
     "kernel/core/os_core",
     "kernel/core/os_log",
+    "kernel/core/waitqueue",
     "kernel/arch/arch-traits",
     "kernel/arch/arch-x86_64",
     "kernel/arch/arch-aarch64",
@@ -15,8 +16,14 @@ members = [
     "kernel/mm/mm-vma",
     "kernel/mm/mm-paging",
     "kernel/mm/mm-heap",
+    "kernel/mm/mm-slab",
     "kernel/mm/mm-cow",
     "kernel/mm/mm-pagedb",
+    "kernel/mm/mm-vmstat",
+    "kernel/mm/mm-pagecache",
+    "kernel/mm/mm-reclaim",
+    "kernel/mm/mm-swap",
+    "kernel/mm/mm-thp",
     "kernel/sched/sched-traits",
     "kernel/sched/sched",
     "kernel/proc/proc-traits",
@@ -171,6 +178,7 @@ log = { version = "0.4", default-features = false }
 # Internal crates
 os_core = { path = "kernel/core/os_core" }
 os_log = { path = "kernel/core/os_log" }
+waitqueue = { path = "kernel/core/waitqueue" }
 arch-traits = { path = "kernel/arch/arch-traits" }
 arch-x86_64 = { path = "kernel/arch/arch-x86_64" }
 arch-aarch64 = { path = "kernel/arch/arch-aarch64" }
@@ -181,8 +189,14 @@ mm-manager = { path = "kernel/mm/mm-manager" }
 mm-vma = { path = "kernel/mm/mm-vma" }
 mm-paging = { path = "kernel/mm/mm-paging" }
 mm-heap = { path = "kernel/mm/mm-heap" }
+mm-slab = { path = "kernel/mm/mm-slab" }
 mm-cow = { path = "kernel/mm/mm-cow" }
 mm-pagedb = { path = "kernel/mm/mm-pagedb" }
+mm-vmstat = { path = "kernel/mm/mm-vmstat" }
+mm-pagecache = { path = "kernel/mm/mm-pagecache" }
+mm-reclaim = { path = "kernel/mm/mm-reclaim" }
+mm-swap = { path = "kernel/mm/mm-swap" }
+mm-thp = { path = "kernel/mm/mm-thp" }
 sched-traits = { path = "kernel/sched/sched-traits" }
 sched = { path = "kernel/sched/sched" }
 proc-traits = { path = "kernel/proc/proc-traits" }

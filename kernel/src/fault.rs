@@ -6,23 +6,18 @@
 
 use mm_paging::{PageTable, PageTableFlags, phys_to_virt};
 use mm_vma::{VmFlags, VmType};
+use mm_vmstat::Counter as VmC;
 use os_core::{PhysAddr, VirtAddr};
 use proc::handle_cow_fault;
 use spin::Mutex;
 
 use mm_manager::mm;
 
-/// -- GraveShift: Stack region geometry --
-/// User stack grows downward from this ceiling.
-const USER_STACK_TOP: u64 = 0x0000_7FFF_FFFF_0000;
-
-/// -- GraveShift: 16MB max stack covers ASLR shift (4MB) + growth (8MB) + margin --
-/// — SableWire: must be >= ASLR_STACK_ENTROPY + actual stack limit or the
-/// demand-pager rejects valid stack addresses. Ask me how I know.
-const MAX_STACK_SIZE: u64 = 16 * 1024 * 1024;
-
-/// -- GraveShift: Lowest address we'll ever map for stack --
-const MAX_STACK_BOTTOM: u64 = USER_STACK_TOP - MAX_STACK_SIZE;
+/// — SableWire: no hardcoded stack geometry. The VMA system is the single source of
+/// truth for what addresses are valid. Exec creates VMAs, fork clones them, and the
+/// page fault handler consults VMAs to decide what to map. Guessing address ranges
+/// led to faults at 0x7FFFFFFFD000 (argv/envp area) falling through all handlers
+/// because it was above the old hardcoded USER_STACK_TOP. Never again. — SableWire
 
 /// -- BlackLatch: Spinlock for stack growth serialization --
 /// Separate from COW lock to avoid contention between the two paths.
@@ -30,6 +25,9 @@ static STACK_GROWTH_LOCK: Mutex<()> = Mutex::new(());
 
 /// Page fault handler callback (for COW and other page faults)
 pub fn page_fault_handler(fault_addr: u64, error_code: u64, _rip: u64) -> bool {
+    // — TorqueJax: Every page fault counted. Zero exceptions.
+    mm_vmstat::inc(VmC::PgFault);
+
     // Check if this is a write fault on a present page (potential COW)
     let is_present = error_code & 1 != 0;
     let is_write = error_code & 2 != 0;
@@ -77,6 +75,8 @@ pub fn page_fault_handler(fault_addr: u64, error_code: u64, _rip: u64) -> bool {
         // COW_FAULT_LOCK, but uses try_lock so it's safe from exception context.
         // If contended, it returns false and we fall through to stack growth.
         if handle_cow_fault(VirtAddr::new(fault_addr), pml4, mm()) {
+            // — TorqueJax: COW resolution succeeded — count it.
+            mm_vmstat::inc(VmC::PgFaultCow);
             debug_cow!("[PF] COW handled OK");
             return true; // Fault handled
         } else {
@@ -84,81 +84,83 @@ pub fn page_fault_handler(fault_addr: u64, error_code: u64, _rip: u64) -> bool {
         }
     }
 
-    // — NeonRoot: VMA-based demand paging. If the fault address falls within a
-    // known VMA and the page is not present, this is a demand fault — map a
-    // zeroed page on first access. This handles MAP_ANONYMOUS + MAP_PRIVATE
-    // mappings that skip eager allocation in sys_mmap.
+    // — IronGhost: Swap page-in check. If the PTE is not-present but has the
+    // swap marker bit (bit 1), this page was evicted to swap by the reclaim engine.
+    // Decode the swap entry, page in from swap cache or disk, remap the frame.
     if !is_present && is_userspace_addr {
-        if let Some((vm_type, vm_flags)) = classify_fault_by_vma(fault_addr) {
-            // — NeonRoot: Check access permissions match VMA flags.
-            // Write to read-only VMA = SIGSEGV. Read/exec of valid VMA = demand page.
-            let access_ok = if is_write {
-                vm_flags.contains(VmFlags::WRITE)
-            } else {
-                vm_flags.contains(VmFlags::READ) || vm_flags.contains(VmFlags::EXEC)
-            };
-
-            if access_ok && (vm_type == VmType::Anon || vm_type == VmType::Heap
-                || vm_type == VmType::Bss || vm_type == VmType::Data) {
-                let page_addr = fault_addr & !0xFFF;
-                let pml4_phys = PhysAddr::new(actual_cr3 & !0xFFF);
-                if handle_demand_page(page_addr, pml4_phys, vm_flags) {
-                    debug_cow!("[PF] Demand page handled OK for {:#x}", fault_addr);
-                    return true;
-                }
-            }
-
-            // — NeonRoot: Stack growth via VMA (GROWSDOWN)
-            if is_write && vm_type == VmType::Stack && vm_flags.contains(VmFlags::GROWSDOWN) {
-                let page_addr = fault_addr & !0xFFF;
-                let pml4_phys = PhysAddr::new(actual_cr3 & !0xFFF);
-                if handle_stack_growth(page_addr, pml4_phys) {
-                    debug_cow!("[PF] VMA-guided stack growth handled OK");
-                    return true;
+        let pml4_phys_swap = PhysAddr::new(actual_cr3 & !0xFFF);
+        let page_addr_swap = fault_addr & !0xFFF;
+        if let Some(pte_val) = read_pte_value(page_addr_swap, pml4_phys_swap) {
+            if mm_swap::SwapEntry::is_swap_entry(pte_val) {
+                if let Some(entry) = mm_swap::SwapEntry::decode(pte_val) {
+                    if let Some(phys) = mm_swap::page_in(&entry) {
+                        // — IronGhost: Frame recovered from swap. Remap it.
+                        if let Some(pt_entry) = get_pt_entry_mut(page_addr_swap, pml4_phys_swap) {
+                            let flags = PageTableFlags::PRESENT | PageTableFlags::USER
+                                | PageTableFlags::WRITABLE | PageTableFlags::NO_EXECUTE;
+                            pt_entry.set(phys, flags);
+                            mm_reclaim::lru_add(phys, mm_reclaim::LruList::InactiveAnon);
+                            os_core::tlb_flush(page_addr_swap);
+                            mm_vmstat::inc(VmC::PgFaultAnon);
+                            debug_cow!("[PF] Swap page-in OK for {:#x}", fault_addr);
+                            return true;
+                        }
+                    }
                 }
             }
         }
     }
 
-    // — NeonRoot: VMA-based fault classification for present+write (stack growth).
-    if is_present && is_write && is_userspace_addr {
-        if let Some((vm_type, vm_flags)) = classify_fault_by_vma(fault_addr) {
-            if vm_type == VmType::Stack && vm_flags.contains(VmFlags::GROWSDOWN) {
-                let page_addr = fault_addr & !0xFFF;
-                let pml4_phys = PhysAddr::new(actual_cr3 & !0xFFF);
-                if handle_stack_growth(page_addr, pml4_phys) {
-                    debug_cow!("[PF] VMA-guided stack growth handled OK");
-                    return true;
-                }
-            }
-        }
-    }
-
-    // -- GraveShift: Dynamic stack growth (legacy fallback) --
-    // Handles both not-present faults AND failed COW resolutions in the stack
-    // region. The COW handler can fail when intermediate page table entries
-    // (PD/PDPT) are missing — e.g., SMP race or address space partially torn
-    // down. Stack growth creates missing intermediate tables and maps the page.
-    //
-    // — SableWire: The old code gated this on `!is_present`, which meant a COW
-    // fault (present=true) that failed never got a second chance. Now we try
-    // stack growth for ANY write fault to a userspace stack address, regardless
-    // of the present bit. The growth handler is idempotent — if the page is
-    // already mapped, it returns true harmlessly.
-    if is_write && is_userspace_addr {
+    // — SableWire: VMA-based fault resolution. The VMA system knows every valid
+    // mapping — stack, heap, mmap, bss, data. No hardcoded address ranges, no
+    // guessing. If classify_fault_by_vma returns None (lock contended), return
+    // true to retry — the lock will be free on the next fault. This replaces the
+    // old "legacy fallback" that guessed stack boundaries and missed the argv/envp
+    // area entirely, causing infinite fault loops. — SableWire
+    if is_userspace_addr {
+        let pml4_phys = PhysAddr::new(actual_cr3 & !0xFFF);
         let page_addr = fault_addr & !0xFFF;
-        if page_addr >= MAX_STACK_BOTTOM && page_addr < USER_STACK_TOP {
-            let pml4_phys = PhysAddr::new(actual_cr3 & !0xFFF);
-            debug_cow!(
-                "[PF] Stack growth: fault_addr={:#x} page={:#x}",
-                fault_addr,
-                page_addr
-            );
-            if handle_stack_growth(page_addr, pml4_phys) {
-                debug_cow!("[PF] Stack growth handled OK");
+
+        match classify_fault_by_vma(fault_addr) {
+            VmaLookup::Mapped(vm_type, vm_flags) => {
+                let access_ok = if is_write {
+                    vm_flags.contains(VmFlags::WRITE)
+                } else {
+                    vm_flags.contains(VmFlags::READ) || vm_flags.contains(VmFlags::EXEC)
+                };
+
+                // — NeonRoot: demand paging for anon/heap/bss/data VMAs
+                if !is_present && access_ok
+                    && (vm_type == VmType::Anon || vm_type == VmType::Heap
+                        || vm_type == VmType::Bss || vm_type == VmType::Data)
+                {
+                    if handle_demand_page(page_addr, pml4_phys, vm_flags) {
+                        // — TorqueJax: Anonymous demand page — zeroed frame mapped.
+                        mm_vmstat::inc(VmC::PgFaultAnon);
+                        debug_cow!("[PF] Demand page handled OK for {:#x}", fault_addr);
+                        return true;
+                    }
+                }
+
+                // — NeonRoot: stack growth (GROWSDOWN) — handles both present
+                // (COW fallback) and not-present (demand growth) cases.
+                if is_write && (vm_type == VmType::Stack && vm_flags.contains(VmFlags::GROWSDOWN)) {
+                    if handle_stack_growth(page_addr, pml4_phys) {
+                        // — TorqueJax: Stack grew downward — new page mapped.
+                        mm_vmstat::inc(VmC::PgFaultStackGrowth);
+                        debug_cow!("[PF] VMA stack growth handled OK for {:#x}", fault_addr);
+                        return true;
+                    }
+                }
+            }
+            VmaLookup::Contended => {
+                // — SableWire: VMA metadata lock was contended in exception context.
+                // Treat as transient and retry the faulting instruction.
+                debug_cow!("[PF] VMA lock contended for {:#x}, retrying", fault_addr);
                 return true;
-            } else {
-                debug_cow!("[PF] Stack growth FAILED for {:#x}", page_addr);
+            }
+            VmaLookup::Unmapped => {
+                debug_cow!("[PF] No VMA for {:#x}", fault_addr);
             }
         }
     }
@@ -334,15 +336,15 @@ fn handle_stack_growth(page_addr: u64, pml4_phys: PhysAddr) -> bool {
     let pt_entry = &mut pt[pt_idx];
 
     if pt_entry.is_present() {
-        // — BlackLatch: Page exists. If it's writable, another CPU beat us and
-        // we're done. If it's read-only with COW bit set, this is NOT a stack
-        // growth issue — it's a COW fault that should have been handled by
-        // handle_cow_fault. Returning true here would cause an infinite loop:
-        // CPU retries the write → same fault → stack growth says "present" →
-        // returns true → CPU retries → forever. Return false so the caller
-        // can properly SIGSEGV instead of looping.
+        // — BlackLatch: Page exists. If it's writable, another CPU beat us —
+        // but our local TLB still has the stale non-present entry that triggered
+        // this fault. We MUST flush the local TLB or we'll infinite-loop:
+        // CPU retries → stale TLB → same fault → "already present" → return true
+        // → CPU retries → same stale TLB → forever. This was the bug that caused
+        // hundreds of [PF-DIAG] HANDLED OK for the same address. — SableWire
         if pt_entry.is_writable() {
-            debug_cow!("[PF] Stack page already present+writable (race), no-op");
+            debug_cow!("[PF] Stack page already present+writable (race), flushing TLB");
+            os_core::tlb_flush(page_addr);
             return true;
         }
         debug_cow!("[PF] Stack page present but NOT writable (COW?) — not a stack growth issue");
@@ -376,6 +378,9 @@ fn handle_stack_growth(page_addr: u64, pml4_phys: PhysAddr) -> bool {
             pf.set_flags(mm_pagedb::PF_ALLOCATED | mm_pagedb::PF_MAPPED);
         }
     }
+
+    // — IronGhost: Stack pages go on InactiveAnon LRU — same as demand pages.
+    mm_reclaim::lru_add(data_frame, mm_reclaim::LruList::InactiveAnon);
 
     // -- GraveShift: Map with PRESENT | WRITABLE | USER | NO_EXECUTE --
     // Stack data is never executable. NX bit keeps us honest.
@@ -461,7 +466,11 @@ fn handle_demand_page(page_addr: u64, pml4_phys: PhysAddr, vm_flags: VmFlags) ->
     let pt_entry = &mut pt[pt_idx];
 
     if pt_entry.is_present() {
-        // — NeonRoot: Race — another CPU handled it first
+        // — NeonRoot: Race — another CPU handled it first. Flush local TLB
+        // so our stale non-present entry doesn't cause an infinite fault loop.
+        // Without this, the CPU retries the instruction with the stale TLB entry
+        // and faults again forever. — SableWire
+        os_core::tlb_flush(page_addr);
         return true;
     }
 
@@ -480,6 +489,10 @@ fn handle_demand_page(page_addr: u64, pml4_phys: PhysAddr, vm_flags: VmFlags) ->
             pf.set_flags(mm_pagedb::PF_ALLOCATED | mm_pagedb::PF_MAPPED);
         }
     }
+
+    // — IronGhost: Add to LRU — anonymous demand pages go on InactiveAnon.
+    // Reclaim scanner will promote to Active if accessed again.
+    mm_reclaim::lru_add(data_frame, mm_reclaim::LruList::InactiveAnon);
 
     // — NeonRoot: Build page table flags from VMA permissions
     let mut data_flags = PageTableFlags::PRESENT | PageTableFlags::USER;
@@ -502,12 +515,86 @@ fn handle_demand_page(page_addr: u64, pml4_phys: PhysAddr, vm_flags: VmFlags) ->
 /// Uses try_lock on the scheduler's ProcessMeta to avoid deadlocking
 /// in exception context. Returns None if the lock is contended or
 /// no VMA covers the faulting address.
-fn classify_fault_by_vma(fault_addr: u64) -> Option<(VmType, VmFlags)> {
-    let pid = sched::current_pid()?;
-    let meta_arc = sched::try_get_task_meta(pid)?;
-    let meta = meta_arc.try_lock()?;
-    let vma = meta.address_space.vmas.find(fault_addr)?;
-    Some((vma.vm_type, vma.flags))
+enum VmaLookup {
+    Mapped(VmType, VmFlags),
+    Contended,
+    Unmapped,
+}
+
+fn classify_fault_by_vma(fault_addr: u64) -> VmaLookup {
+    let pid = match sched::current_pid() {
+        Some(pid) => pid,
+        None => return VmaLookup::Unmapped,
+    };
+
+    let meta_arc = match sched::try_get_task_meta(pid) {
+        Some(meta) => meta,
+        None => return VmaLookup::Contended,
+    };
+
+    let meta = match meta_arc.try_lock() {
+        Some(meta) => meta,
+        None => return VmaLookup::Contended,
+    };
+
+    match meta.address_space.vmas.find(fault_addr) {
+        Some(vma) => VmaLookup::Mapped(vma.vm_type, vma.flags),
+        None => VmaLookup::Unmapped,
+    }
+}
+
+/// — IronGhost: Read the raw PTE value for a virtual address by walking the page table.
+/// Returns None if any intermediate table is not present. Used by swap page-in to
+/// check for swap marker bits in non-present PTEs.
+fn read_pte_value(page_addr: u64, pml4_phys: PhysAddr) -> Option<u64> {
+    let pml4_idx = ((page_addr >> 39) & 0x1FF) as usize;
+    let pdpt_idx = ((page_addr >> 30) & 0x1FF) as usize;
+    let pd_idx = ((page_addr >> 21) & 0x1FF) as usize;
+    let pt_idx = ((page_addr >> 12) & 0x1FF) as usize;
+
+    let pml4 = unsafe { &*phys_to_virt(pml4_phys).as_ptr::<PageTable>() };
+    let pml4e = &pml4[pml4_idx];
+    if !pml4e.is_present() { return None; }
+
+    let pdpt = unsafe { &*phys_to_virt(pml4e.addr()).as_ptr::<PageTable>() };
+    let pdpte = &pdpt[pdpt_idx];
+    if !pdpte.is_present() { return None; }
+    if pdpte.is_huge() { return None; }
+
+    let pd = unsafe { &*phys_to_virt(pdpte.addr()).as_ptr::<PageTable>() };
+    let pde = &pd[pd_idx];
+    if !pde.is_present() { return None; }
+    if pde.is_huge() { return None; }
+
+    let pt = unsafe { &*phys_to_virt(pde.addr()).as_ptr::<PageTable>() };
+    // — IronGhost: Return the RAW PTE value — including non-present swap entries.
+    Some(pt[pt_idx].raw())
+}
+
+/// — IronGhost: Get a mutable reference to a PTE for updating during swap page-in.
+/// Returns None if any intermediate table is not present.
+fn get_pt_entry_mut(page_addr: u64, pml4_phys: PhysAddr) -> Option<&'static mut mm_paging::PageTableEntry> {
+    let pml4_idx = ((page_addr >> 39) & 0x1FF) as usize;
+    let pdpt_idx = ((page_addr >> 30) & 0x1FF) as usize;
+    let pd_idx = ((page_addr >> 21) & 0x1FF) as usize;
+    let pt_idx = ((page_addr >> 12) & 0x1FF) as usize;
+
+    let pml4 = unsafe { &*phys_to_virt(pml4_phys).as_ptr::<PageTable>() };
+    let pml4e = &pml4[pml4_idx];
+    if !pml4e.is_present() { return None; }
+
+    let pdpt = unsafe { &*phys_to_virt(pml4e.addr()).as_ptr::<PageTable>() };
+    let pdpte = &pdpt[pdpt_idx];
+    if !pdpte.is_present() { return None; }
+    if pdpte.is_huge() { return None; }
+
+    let pd = unsafe { &*phys_to_virt(pdpte.addr()).as_ptr::<PageTable>() };
+    let pde = &pd[pd_idx];
+    if !pde.is_present() { return None; }
+    if pde.is_huge() { return None; }
+
+    let pt = unsafe { &mut *phys_to_virt(pde.addr()).as_mut_ptr::<PageTable>() };
+    Some(&mut pt[pt_idx])
 }
 
 /// Dump page table flags for debugging NX issues

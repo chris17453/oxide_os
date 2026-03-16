@@ -1560,8 +1560,21 @@ pub(crate) unsafe fn copy_to_user(user_ptr: u64, kernel_data: &[u8]) -> bool {
 ///
 /// Validates and writes to a userspace pointer from kernel context.
 unsafe fn write_user_i32(user_ptr: u64, value: i32) -> bool {
-    let bytes = value.to_ne_bytes();
-    unsafe { copy_to_user(user_ptr, &bytes) }
+    if user_ptr == 0 || user_ptr >= 0x0000_8000_0000_0000 {
+        return false;
+    }
+
+    if user_ptr.checked_add(core::mem::size_of::<i32>() as u64).is_none() {
+        return false;
+    }
+
+    unsafe {
+        os_core::user_access_begin();
+        core::ptr::write_unaligned(user_ptr as *mut i32, value);
+        os_core::user_access_end();
+    }
+
+    true
 }
 
 /// sys_wait - Wait for any child process
@@ -1632,15 +1645,16 @@ fn sys_waitpid(pid: i32, status_ptr: u64, options: i32) -> i64 {
         }
     }
 
-    #[cfg(feature = "debug-proc")]
-    unsafe {
-        os_log::write_str_raw("[WAIT] sys_waitpid caller=");
-        trace_u64(current_pid() as u64);
-        os_log::write_str_raw(" pid=");
-        trace_i32(pid);
-        os_log::write_str_raw(" opts=");
-        trace_i32(options);
-        os_log::write_str_raw("\n");
+    if options == 0 {
+        unsafe {
+            os_log::write_str_raw("[WAIT] sys_waitpid caller=");
+            trace_u64(current_pid() as u64);
+            os_log::write_str_raw(" pid=");
+            trace_i32(pid);
+            os_log::write_str_raw(" opts=");
+            trace_i32(options);
+            os_log::write_str_raw("\n");
+        }
     }
 
     unsafe {
@@ -1655,9 +1669,47 @@ fn sys_waitpid(pid: i32, status_ptr: u64, options: i32) -> i64 {
 
                 // Write status to userspace
                 if status_ptr != 0 {
-                    let _ = write_user_i32(status_ptr, status);
+                    if options == 0 {
+                        #[cfg(target_arch = "x86_64")]
+                        let mut cr3: u64 = 0;
+                        #[cfg(target_arch = "x86_64")]
+                        unsafe {
+                            core::arch::asm!(
+                                "mov {}, cr3",
+                                out(reg) cr3,
+                                options(nostack, nomem, preserves_flags)
+                            );
+                        }
+                        unsafe {
+                            os_log::write_str_raw("[WAIT-SYS] status write begin ptr=0x");
+                            os_log::write_u64_hex_raw(status_ptr);
+                            os_log::write_str_raw(" status=0x");
+                            os_log::write_u64_hex_raw(status as u64);
+                            #[cfg(target_arch = "x86_64")]
+                            {
+                                os_log::write_str_raw(" cr3=0x");
+                                os_log::write_u64_hex_raw(cr3);
+                            }
+                            os_log::write_str_raw("\n");
+                        }
+                    }
+                    let ok = write_user_i32(status_ptr, status);
+                    if options == 0 {
+                        unsafe {
+                            os_log::write_str_raw("[WAIT-SYS] status write end ok=");
+                            os_log::write_u32_raw(if ok { 1 } else { 0 });
+                            os_log::write_str_raw("\n");
+                        }
+                    }
                 }
 
+                if options == 0 {
+                    unsafe {
+                        os_log::write_str_raw("[WAIT-SYS] return child=");
+                        trace_i32(child_pid);
+                        os_log::write_str_raw("\n");
+                    }
+                }
                 return child_pid as i64;
             }
 
@@ -2085,7 +2137,7 @@ fn sys_wait4(pid: i32, status_ptr: u64, options: i32, rusage_ptr: u64) -> i64 {
         let zeroed = Rusage::zeroed();
         unsafe {
             os_core::user_access_begin();
-            core::ptr::write(rusage_ptr as *mut Rusage, zeroed);
+            core::ptr::write_unaligned(rusage_ptr as *mut Rusage, zeroed);
             os_core::user_access_end();
         }
     }
@@ -2101,7 +2153,7 @@ fn sys_getrusage(_who: i32, rusage_ptr: u64) -> i64 {
     let zeroed = Rusage::zeroed();
     unsafe {
         os_core::user_access_begin();
-        core::ptr::write(rusage_ptr as *mut Rusage, zeroed);
+        core::ptr::write_unaligned(rusage_ptr as *mut Rusage, zeroed);
         os_core::user_access_end();
     }
     0
@@ -2234,7 +2286,7 @@ fn sys_prlimit(_pid: i32, resource: i32, new_limit_ptr: u64, old_limit_ptr: u64)
         }
         unsafe {
             os_core::user_access_begin();
-            core::ptr::write(old_limit_ptr as *mut Rlimit, default_limit);
+            core::ptr::write_unaligned(old_limit_ptr as *mut Rlimit, default_limit);
             os_core::user_access_end();
         }
     }
@@ -3147,7 +3199,7 @@ fn sys_sched_getparam(pid: i32, param_ptr: u64) -> i64 {
     // Write param to userspace
     unsafe {
         os_core::user_access_begin();
-        core::ptr::write_volatile(param_ptr as *mut SchedParam, param);
+        core::ptr::write_unaligned(param_ptr as *mut SchedParam, param);
         os_core::user_access_end();
     }
 
@@ -3286,8 +3338,8 @@ fn sys_sched_rr_get_interval(pid: i32, tp_ptr: u64) -> i64 {
     unsafe {
         os_core::user_access_begin();
         let tp = tp_ptr as *mut i64;
-        core::ptr::write_volatile(tp, 0); // tv_sec
-        core::ptr::write_volatile(tp.add(1), 100_000_000); // tv_nsec = 100ms
+        core::ptr::write_unaligned(tp, 0); // tv_sec
+        core::ptr::write_unaligned(tp.add(1), 100_000_000); // tv_nsec = 100ms
         os_core::user_access_end();
     }
 
@@ -3361,7 +3413,7 @@ fn sys_uname(buf_ptr: usize) -> i64 {
     unsafe {
         os_core::user_access_begin();
         let dest = buf_ptr as *mut UtsName;
-        core::ptr::write_volatile(dest, utsname);
+        core::ptr::write_unaligned(dest, utsname);
         os_core::user_access_end();
     }
 

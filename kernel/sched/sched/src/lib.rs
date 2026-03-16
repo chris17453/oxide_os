@@ -104,6 +104,7 @@ pub use crate::core::{
     // Task state
     current_pid,
     current_pid_lockfree,
+    running_cpu_of_pid,
     debug_dump_all,
     // Debug
     debug_state,
@@ -195,7 +196,7 @@ pub use crate::core::{
 };
 
 // Re-export task types
-pub use crate::task::{Task, TaskContext};
+pub use crate::task::{PID_NONE, Task, TaskContext};
 
 // Re-export ProcessMeta from proc crate
 pub use proc::ProcessMeta;

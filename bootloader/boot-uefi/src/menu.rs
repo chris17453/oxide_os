@@ -167,13 +167,14 @@ pub fn render_full_menu(
     let height = state.screen_height;
     let layout = Layout::calculate(width, height, state.entry_count);
 
-    // 1. Clear entire screen to background
-    fill_rect(gop, 0, 0, width, height, COLOR_BG);
-
-    // 2. Draw OXIDE logo
-    crate::draw_oxide_logo(gop, width, height);
+    // 1. Draw full-screen background image (scale-to-cover)
+    // — NeonVale: the cyberpunk boot wallpaper replaces the old procedural logo.
+    // Falls back to solid COLOR_BG if the BMP is busted.
+    crate::background::draw_background(width, height);
 
     // 3. Draw title — NeonVale: the marquee that greets the operator
+    // — NeonVale: transparent text over the background image. Use COLOR_BG as
+    // the text background since the image already provides the visual backdrop.
     let title = "OXIDE Boot Manager";
     let title_x = (width - title.len() * FONT_WIDTH) / 2;
     draw_string(gop, title_x, layout.title_y, title, COLOR_ORANGE, COLOR_BG);
@@ -203,10 +204,8 @@ pub fn render_full_menu(
     // 6. Draw current entry's options
     draw_options_line(gop, config, state, &layout);
 
-    // 7. Draw separator
-    for x in layout.menu_x..layout.menu_x + layout.menu_width {
-        font::draw_hline(gop, x, layout.separator_y, 1, COLOR_DARK_GRAY);
-    }
+    // 7. Draw separator — one call instead of per-pixel
+    font::draw_hline(gop, layout.menu_x, layout.separator_y, layout.menu_width, COLOR_DARK_GRAY);
 
     // 8. Draw footer
     draw_footer(gop, state, &layout);
@@ -254,18 +253,15 @@ fn draw_menu_box(
     let y = layout.menu_box_y;
     let w = layout.menu_width;
 
+    // — NeonVale: all four borders as single rect fills instead of per-pixel
     // Top border
-    font::draw_hline(gop, x, y, w, COLOR_DARK_GRAY);
+    crate::blt_fill(gop, COLOR_DARK_GRAY, x, y, w, 1);
     // Bottom border
-    font::draw_hline(gop, x, y + box_height, w, COLOR_DARK_GRAY);
+    crate::blt_fill(gop, COLOR_DARK_GRAY, x, y + box_height, w, 1);
     // Left border
-    for dy in 0..box_height {
-        crate::blt_fill(gop, COLOR_DARK_GRAY, x, y + dy, 1, 1);
-    }
+    crate::blt_fill(gop, COLOR_DARK_GRAY, x, y, 1, box_height);
     // Right border
-    for dy in 0..box_height {
-        crate::blt_fill(gop, COLOR_DARK_GRAY, x + w - 1, y + dy, 1, 1);
-    }
+    crate::blt_fill(gop, COLOR_DARK_GRAY, x + w - 1, y, 1, box_height);
 }
 
 /// Draw a single menu entry
@@ -398,10 +394,8 @@ pub fn render_error_screen(
     height: usize,
     message: &str,
 ) {
-    fill_rect(gop, 0, 0, width, height, COLOR_BG);
-
-    // Draw logo
-    crate::draw_oxide_logo(gop, width, height);
+    // — NeonVale: background image for error screen too
+    crate::background::draw_background(width, height);
 
     let title = "OXIDE Boot Manager - ERROR";
     let title_x = (width - title.len() * FONT_WIDTH) / 2;
@@ -441,13 +435,11 @@ pub fn render_editor_overlay(
     // Background
     fill_rect(gop, box_x, box_y, box_width, box_height, COLOR_BG);
 
-    // Border
-    font::draw_hline(gop, box_x, box_y, box_width, COLOR_ORANGE);
-    font::draw_hline(gop, box_x, box_y + box_height - 1, box_width, COLOR_ORANGE);
-    for dy in 0..box_height {
-        crate::blt_fill(gop, COLOR_ORANGE, box_x, box_y + dy, 1, 1);
-        crate::blt_fill(gop, COLOR_ORANGE, box_x + box_width - 1, box_y + dy, 1, 1);
-    }
+    // Border — single rect fills instead of per-pixel loops
+    crate::blt_fill(gop, COLOR_ORANGE, box_x, box_y, box_width, 1);
+    crate::blt_fill(gop, COLOR_ORANGE, box_x, box_y + box_height - 1, box_width, 1);
+    crate::blt_fill(gop, COLOR_ORANGE, box_x, box_y, 1, box_height);
+    crate::blt_fill(gop, COLOR_ORANGE, box_x + box_width - 1, box_y, 1, box_height);
 
     // Title
     let title_prefix = "Edit Boot Options for: ";

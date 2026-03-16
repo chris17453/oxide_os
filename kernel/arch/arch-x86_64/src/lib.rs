@@ -885,6 +885,87 @@ const CR4_SMEP: u64 = 1 << 20;
 /// CR4 bit 21 — Supervisor Mode Access Prevention
 const CR4_SMAP: u64 = 1 << 21;
 
+/// — IronGhost: Enable SSE and x87 FPU on the calling CPU.
+///
+/// x86_64 mandates SSE2 — every long-mode CPU has it. But the OS must flip the
+/// right CR0/CR4 bits or the CPU raises #UD/#NM on SSE instructions. UEFI
+/// usually leaves SSE enabled, but we can't rely on firmware state surviving
+/// across ExitBootServices + our GDT reload + AP trampoline.
+///
+/// CR0: clear EM (bit 2) — don't emulate FPU, we have a real one
+///      clear TS (bit 3) — don't trap on FPU/SSE (no lazy switching yet)
+///      set   MP (bit 1) — monitor coprocessor (WAIT/FWAIT behavior)
+///      set   NE (bit 5) — native FPU exceptions (not FERR# pin)
+/// CR4: set OSFXSR   (bit 9)  — OS supports FXSAVE/FXRSTOR
+///      set OSXMMEXCPT (bit 10) — OS handles SIMD floating-point exceptions
+///
+/// # Safety
+/// Must be called on every CPU during init (CR0/CR4 are per-CPU).
+/// — IronGhost
+pub unsafe fn enable_sse_fpu() {
+    unsafe {
+        let mut cr0: u64;
+        core::arch::asm!("mov {}, cr0", out(reg) cr0, options(nomem, nostack));
+        cr0 &= !(1u64 << 2); // — IronGhost: Clear EM — no FPU emulation
+        cr0 &= !(1u64 << 3); // — IronGhost: Clear TS — no task-switched trap
+        cr0 |= 1u64 << 1;    // — IronGhost: Set MP — monitor coprocessor
+        cr0 |= 1u64 << 5;    // — IronGhost: Set NE — native FP exceptions
+        core::arch::asm!("mov cr0, {}", in(reg) cr0, options(nostack));
+
+        let mut cr4: u64;
+        core::arch::asm!("mov {}, cr4", out(reg) cr4, options(nomem, nostack));
+        cr4 |= 1u64 << 9;    // — IronGhost: Set OSFXSR — enable FXSAVE/FXRSTOR
+        cr4 |= 1u64 << 10;   // — IronGhost: Set OSXMMEXCPT — SSE exception delivery
+        core::arch::asm!("mov cr4, {}", in(reg) cr4, options(nostack));
+
+        // — IronGhost: Initialize the FPU to a known state. FNINIT resets the
+        // x87 FPU: control word = 0x037F, status = 0, tag = all empty.
+        // LDMXCSR sets MXCSR to default: all exceptions masked (0x1F80).
+        core::arch::asm!("fninit", options(nostack));
+        let default_mxcsr: u32 = 0x1F80;
+        core::arch::asm!(
+            "ldmxcsr [{}]",
+            in(reg) &default_mxcsr as *const u32,
+            options(nostack, readonly)
+        );
+    }
+}
+
+/// — IronGhost: Save the current CPU's FPU/SSE state into an FxSaveArea.
+/// Uses the area's aligned_ptr_mut() to get a 16-byte aligned destination.
+///
+/// # Safety
+/// Must be called in a context where saving FPU state is safe (not inside
+/// an FXSAVE/FXRSTOR sequence).
+/// — IronGhost
+pub unsafe fn fxsave(area: &mut sched_traits::FxSaveArea) {
+    let ptr = area.aligned_ptr_mut();
+    unsafe {
+        core::arch::asm!(
+            "fxsave64 [{}]",
+            in(reg) ptr,
+            options(nostack)
+        );
+    }
+}
+
+/// — IronGhost: Restore FPU/SSE state from an FxSaveArea into the CPU.
+/// Uses the area's aligned_ptr() to get a 16-byte aligned source.
+///
+/// # Safety
+/// The area must contain a valid FXSAVE image (from fxsave() or default_state()).
+/// — IronGhost
+pub unsafe fn fxrstor(area: &sched_traits::FxSaveArea) {
+    let ptr = area.aligned_ptr();
+    unsafe {
+        core::arch::asm!(
+            "fxrstor64 [{}]",
+            in(reg) ptr,
+            options(nostack)
+        );
+    }
+}
+
 /// Enable SMEP and SMAP in CR4 on the calling CPU, if the CPU supports them.
 ///
 /// — ColdCipher: Call this on every CPU during its init path. CR4 is per-CPU
@@ -980,6 +1061,10 @@ pub unsafe fn init() {
         idt::init();
         serial_println!("[x86_64] IDT initialized");
 
+        // — IronGhost: Enable SSE/FPU before anything else touches XMM registers.
+        // x86_64 mandates SSE2 but the OS must explicitly enable it via CR0/CR4.
+        enable_sse_fpu();
+
         // — ColdCipher: P3.1 — Arm SMEP and SMAP on the BSP. SFMASK already
         // clears AC on every syscall entry (P1.3). Now we tell the hardware to
         // actually enforce it. CR4 bits 20 and 21, set and forgotten. Beautiful.
@@ -1018,6 +1103,9 @@ pub unsafe fn init_ap(cpu_id: usize) {
         // Stack grows down: top of stack = base address + size.
         let stack_top = addr_of_mut!(DF_STACKS[cpu_id]) as u64 + DF_STACK_SIZE as u64;
         gdt::set_ist(0, stack_top); // ist[0] = IST1 for this CPU's double fault
+
+        // — IronGhost: Each AP needs SSE/FPU enabled. CR0/CR4 are per-CPU.
+        enable_sse_fpu();
 
         // — ColdCipher: P3.1 — Each AP needs its own CR4 write. The BSP's CR4
         // setting does not propagate to APs — they each boot with whatever the

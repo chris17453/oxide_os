@@ -46,6 +46,7 @@ test: create-rootfs
 # The test binary also writes to stdout (terminal) for live monitoring.
 KERNEL_TEST_TIMEOUT ?= 120
 
+test-kernel: OXIDE_TEST_SERVICE_ENABLED = yes
 test-kernel: create-rootfs
 	@echo ""
 	@echo "=== OXIDE Kernel Integration Tests ==="
@@ -67,12 +68,13 @@ test-kernel: create-rootfs
 		-bios "$(OVMF)" \
 		-drive file=$(ROOTFS_IMAGE),format=raw,if=none,id=disk \
 		-device virtio-blk-pci,drive=disk \
-		-serial file:$(TARGET_DIR)/test-serial.log \
+		-serial stdio \
+		-monitor none \
 		-display none \
 		-no-reboot \
 		-d cpu_reset \
 		-D $(TARGET_DIR)/test-debug.log \
-		2>/dev/null || true
+		> $(TARGET_DIR)/test-serial.log 2>/dev/null || true
 	@echo ""
 	@# — CrashBloom: Parse results from serial output
 	@if [ ! -f "$(TARGET_DIR)/test-serial.log" ]; then \
@@ -84,9 +86,9 @@ test-kernel: create-rootfs
 		grep "\[OXIDE-TEST\]" $(TARGET_DIR)/test-serial.log; \
 		echo ""; \
 		echo "--- Summary ---"; \
-		PASSED=$$(grep -c "\[PASS\]" $(TARGET_DIR)/test-serial.log 2>/dev/null || echo 0); \
-		FAILED=$$(grep -c "\[FAIL\]" $(TARGET_DIR)/test-serial.log 2>/dev/null || echo 0); \
-		SKIPPED=$$(grep -c "\[SKIP\]" $(TARGET_DIR)/test-serial.log 2>/dev/null || echo 0); \
+		PASSED=$$(grep -c "\[PASS\]" $(TARGET_DIR)/test-serial.log 2>/dev/null || true); \
+		FAILED=$$(grep -c "\[FAIL\]" $(TARGET_DIR)/test-serial.log 2>/dev/null || true); \
+		SKIPPED=$$(grep -c "\[SKIP\]" $(TARGET_DIR)/test-serial.log 2>/dev/null || true); \
 		echo "Passed: $$PASSED  Failed: $$FAILED  Skipped: $$SKIPPED"; \
 		echo ""; \
 		if [ "$$FAILED" = "0" ]; then \
@@ -103,7 +105,7 @@ test-kernel: create-rootfs
 		echo "Last 40 lines of serial output:"; \
 		tail -40 $(TARGET_DIR)/test-serial.log 2>/dev/null || echo "(empty)"; \
 		echo ""; \
-		RESETS=$$(grep -c "CPU Reset" $(TARGET_DIR)/test-debug.log 2>/dev/null || echo 0); \
+		RESETS=$$(grep -c "CPU Reset" $(TARGET_DIR)/test-debug.log 2>/dev/null || true); \
 		echo "CPU resets detected: $$RESETS"; \
 		echo ""; \
 		echo "Look for the last [RUN ] line to find which test killed it."; \

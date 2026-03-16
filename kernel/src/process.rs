@@ -921,6 +921,12 @@ pub fn kernel_wait(pid: i32, options: i32) -> i64 {
                 let is_stopped = (result.status & 0xFF) == 0x7F;
                 let is_continued = result.status == 0xFFFF;
                 if !is_stopped && !is_continued {
+                    // — GraveShift: Child is fully reportable and being reaped now.
+                    // Unlink it from the parent's intrusive child list BEFORE task removal.
+                    // If we only remove from scheduler and leave parent.first_child/siblings
+                    // pointing at the dead PID, future waitpid(-1) scans see a stale head
+                    // and block forever despite other zombie children existing.
+                    sched::remove_task_child(parent_pid, result.pid);
                     crate::scheduler::remove_process(result.pid);
                 }
 

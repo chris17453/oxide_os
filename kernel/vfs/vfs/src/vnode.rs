@@ -255,11 +255,26 @@ pub trait VnodeOps: Send + Sync {
         true
     }
 
+    /// Register a poll waiter on this vnode's wait queue(s).
+    /// Called by poll/select to get event-driven wakeup instead of polling.
+    /// — SableWire: Default no-op for regular files (always ready, no queue needed).
+    /// Pipes, TTYs, and sockets override this to register on their WaitQueues.
+    fn poll_register_wait(&self, _table: &mut waitqueue::PollTable) {
+        // — SableWire: Regular files don't block. Nothing to register on.
+    }
+
     /// Downcast to concrete type (for epoll_ctl, ioctl, etc.)
     fn as_any(&self) -> &dyn Any {
         // Default: no downcasting support. Concrete types that need
         // downcasting (EpollNode) must override this.
         &()
+    }
+
+    /// — SableWire: Inode identifier for page cache keying. Filesystems that
+    /// support page caching override this to return their inode number.
+    /// Default returns None — anonymous/pipe/socket nodes skip page cache.
+    fn inode_id(&self) -> Option<u64> {
+        None
     }
 }
 

@@ -689,10 +689,13 @@ pub fn handle_cow_fault<A: FrameAllocator>(
     }
 
     if !pt_entry.is_cow() {
-        // Already writable - another CPU handled it
-        // Check if it's actually writable now
+        // — SableWire: another CPU resolved this COW before we got the lock.
+        // Flush local TLB — our stale RO entry caused this fault, and without
+        // INVLPG the CPU retries with the same stale entry → infinite loop.
+        // This was causing hundreds of [PF-DIAG] HANDLED OK spam. — SableWire
         if pt_entry.is_writable() {
-            return true; // Success - already fixed
+            os_core::tlb_flush(fault_addr.as_u64() & !0xFFF);
+            return true; // Success - already fixed by another CPU
         }
         return false; // Not COW and not writable = error
     }
@@ -718,9 +721,50 @@ pub fn handle_cow_fault<A: FrameAllocator>(
         pt_entry.set_flags(flags);
     } else {
         // — ColdCipher: Still shared. Copy the frame — don't touch the original.
-        let new_phys = match allocator.alloc_frame() {
-            Some(f) => f,
-            None => return false,
+        let mut alloc_attempts = 0u32;
+        let new_phys = loop {
+            alloc_attempts += 1;
+            let candidate = match allocator.alloc_frame() {
+                Some(f) => f,
+                None => return false,
+            };
+
+            if candidate != old_phys {
+                break candidate;
+            }
+
+            // — CrashBloom: If buddy hands us the source frame itself, it means
+            // a stale free-list entry survived for a mapped page. Consume and drop
+            // that ghost entry, then retry. Better to burn one stale entry than to
+            // memcpy over ourselves and crash the process.
+            unsafe {
+                os_log::write_str_raw("[COW-DUP-ALLOC] allocator returned source frame old=0x");
+                os_log::write_u64_hex_raw(old_phys.as_u64());
+                os_log::write_str_raw(" try=");
+                os_log::write_u32_raw(alloc_attempts);
+                os_log::write_str_raw("\n");
+            }
+
+            // — SableWire: Heal pagedb state if this mapped frame was somehow
+            // marked FREE. alloc_from_zone's stale-entry filter relies on pagedb;
+            // if this bit is wrong, ghosts keep leaking back into allocations.
+            if let Some(db) = mm_pagedb::try_pagedb() {
+                if let Some(pf) = db.get(old_phys) {
+                    if pf.is_free() {
+                        pf.set_flags(mm_pagedb::PF_ALLOCATED | mm_pagedb::PF_MAPPED);
+                        pf.set_refcount(1);
+                    }
+                }
+            }
+
+            if alloc_attempts >= 8 {
+                unsafe {
+                    os_log::write_str_raw("[COW-DUP-ALLOC] retry budget exhausted old=0x");
+                    os_log::write_u64_hex_raw(old_phys.as_u64());
+                    os_log::write_str_raw("\n");
+                }
+                return false;
+            }
         };
 
         // Copy contents
@@ -733,7 +777,7 @@ pub fn handle_cow_fault<A: FrameAllocator>(
         // instead of a cryptic "unsafe precondition violated" from core::ptr.
         let src = old_virt.as_ptr::<u8>();
         let dst = new_virt.as_mut_ptr::<u8>();
-        if src.is_null() || dst.is_null() || old_phys == new_phys {
+        if src.is_null() || dst.is_null() {
             unsafe {
                 os_log::write_str_raw("[COW-COPY-FATAL] null/overlap! src=");
                 os_log::write_u64_hex_raw(src as u64);

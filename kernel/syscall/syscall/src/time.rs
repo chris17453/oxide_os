@@ -108,11 +108,12 @@ fn deliver_fatal_signal_now(current_pid: u32) -> bool {
     }
 
     sched::block_current(TaskState::TASK_ZOMBIE);
-    sched::set_need_resched();
-    os_core::allow_kernel_preempt();
-    os_core::wait_for_interrupt();
+    // — GraveShift: Never return to userspace from a zombie, but also never hard-freeze
+    // a CPU with CLI spin. Park in preemptible HLT so scheduler/IPIs can keep flowing.
     loop {
-        os_core::disable_interrupts();
+        sched::set_need_resched();
+        os_core::allow_kernel_preempt();
+        os_core::wait_for_interrupt();
     }
 }
 

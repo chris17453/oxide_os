@@ -9,6 +9,7 @@ use mm_cow::cow_tracker;
 use mm_manager::mm;
 use mm_traits::FrameAllocator;
 use mm_vma::{VmArea, VmFlags, VmType};
+use mm_vmstat::Counter as VmC;
 use os_core::VirtAddr;
 use proc_traits::MemoryFlags;
 
@@ -220,6 +221,8 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
         // Full msync() support would be needed for proper MAP_SHARED
     }
 
+    // — TorqueJax: Successful mmap — count it for /proc/vmstat.
+    mm_vmstat::inc(VmC::MmapCount);
     map_addr as i64
 }
 
@@ -282,6 +285,9 @@ pub fn sys_munmap(addr: u64, length: u64) -> i64 {
                         }
                     }
                 }
+                // — IronGhost: Remove from LRU before freeing — prevents reclaim
+                // scanner from referencing a frame that's back in buddy free list.
+                mm_reclaim::lru_remove(phys);
                 let remaining = cow.decrement(phys);
                 if remaining == 0 {
                     allocator.free_frame(phys);
@@ -296,6 +302,8 @@ pub fn sys_munmap(addr: u64, length: u64) -> i64 {
     // reused for something else and you get "impossible" data corruption.
     smp::tlb_shootdown(addr, addr + length, 0);
 
+    // — TorqueJax: Successful munmap — count it.
+    mm_vmstat::inc(VmC::MunmapCount);
     0
 }
 
@@ -530,6 +538,8 @@ pub fn sys_brk(addr: u64) -> i64 {
         ));
     }
 
+    // — TorqueJax: Successful brk — count it.
+    mm_vmstat::inc(VmC::BrkCount);
     new_break as i64
 }
 

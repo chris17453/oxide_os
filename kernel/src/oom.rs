@@ -6,6 +6,7 @@
 //! locks up in an alloc panic spiral. Linux has had this since 2.6 and we're
 //! not about to pretend we're smarter than thirty years of OOM-kill wisdom.
 
+use mm_vmstat::Counter as VmC;
 use proc_traits::Pid;
 
 /// — IronGhost: The OOM reaper. Called from mm-manager when alloc_frame() fails.
@@ -76,6 +77,8 @@ pub fn try_oom_kill() -> bool {
     if let Some(meta) = sched::try_get_task_meta(victim) {
         if let Some(mut m) = meta.try_lock() {
             m.send_signal(signal::SIGKILL, None);
+            // — TorqueJax: OOM kill landed. Count it.
+            mm_vmstat::inc(VmC::OomKill);
             return true;
         }
     }

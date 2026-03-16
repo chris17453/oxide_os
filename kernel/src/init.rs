@@ -39,7 +39,7 @@ use vfs::{File, FileFlags, MountFlags, VnodeOps, mount::GLOBAL_VFS};
 
 use crate::console;
 use crate::fault;
-use crate::globals::{HEAP_ALLOCATOR, HEAP_SIZE, HEAP_STORAGE, KERNEL_PML4, KERNEL_PML4_256_ENTRY, MEMORY_MANAGER, PAGE_DATABASE};
+use crate::globals::{HEAP_ALLOCATOR, HEAP_SIZE, HEAP_STORAGE, KERNEL_PML4, KERNEL_PML4_256_ENTRY, KERNEL_PML4_511_ENTRY, MEMORY_MANAGER, PAGE_DATABASE};
 use crate::memory;
 use crate::mount::{kernel_mount, kernel_pivot_root, kernel_umount};
 use crate::process::get_current_task_fs_base;
@@ -383,6 +383,10 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     unsafe {
         let heap_start = addr_of_mut!(HEAP_STORAGE) as usize;
         HEAP_ALLOCATOR.init(heap_start, HEAP_SIZE);
+        // — TorqueJax: Tell the slab allocator where the static heap lives.
+        // Pointers inside this range go to the linked-list allocator on dealloc,
+        // pointers outside (from buddy pages) go to slab caches.
+        mm_slab::set_heap_range(heap_start, HEAP_SIZE);
     }
     let _ = writeln!(writer, "[INFO] Heap initialized: {} KB", HEAP_SIZE / 1024);
 
@@ -860,6 +864,18 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     mm_manager::register_oom_callback(crate::oom::try_oom_kill);
     let _ = writeln!(writer, "[INFO] OOM killer registered");
 
+    // — IronGhost: Initialize reclaim watermarks from buddy zone sizes. Watermarks
+    // drive kswapd activation (low) and direct reclaim (min). Computed as
+    // sqrt(managed_pages) * 4, clamped [128, 65536]. Must happen after buddy init
+    // so zone_info() returns real data.
+    {
+        let zones = MEMORY_MANAGER.buddy().zone_info();
+        let managed: [u64; 3] = [zones[0].1, zones[1].1, zones[2].1];
+        mm_reclaim::init_watermarks(&managed);
+        let _ = writeln!(writer, "[INFO] VM watermarks initialized (DMA={} Normal={} High={})",
+            managed[0], managed[1], managed[2]);
+    }
+
     // — GraveShift: Register heap grow callback. When the 32MB static heap is
     // fragmented or full, the linked-list allocator calls this to get more pages
     // from the buddy allocator. The heap grows on demand — no more dying at 32MB
@@ -1060,6 +1076,27 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         );
     }
 
+    // — TorqueJax: Initialize per-CPU slab allocator. Buddy + SMP are both up,
+    // so we can safely use os_core::smp_cpu_id() and allocate pages from buddy.
+    // After this, small allocations (≤2048 bytes) bypass the global heap lock.
+    fn slab_page_alloc() -> Option<usize> {
+        // — TorqueJax: Allocate one 4K page from buddy, return direct-mapped VA.
+        match MEMORY_MANAGER.alloc_frame() {
+            Ok(phys) => {
+                let virt = mm_paging::phys_to_virt(phys);
+                Some(virt.as_u64() as usize)
+            }
+            Err(_) => None,
+        }
+    }
+    fn slab_page_free(addr: usize) {
+        let phys = mm_paging::virt_to_phys(os_core::VirtAddr::new(addr as u64));
+        let _ = MEMORY_MANAGER.free_frame(phys);
+    }
+    mm_slab::set_page_callbacks(slab_page_alloc, slab_page_free);
+    mm_slab::slab_init();
+    let _ = writeln!(writer, "[INFO] Per-CPU slab allocator initialized — small allocs are now lock-free");
+
     // Register page fault callback for COW handling
     unsafe {
         arch::exceptions::set_page_fault_callback(fault::page_fault_handler);
@@ -1250,6 +1287,15 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Initialize and register preemptive scheduler (BSP)
 
     scheduler::init();
+
+    // — SableWire: Register the wake callback for the generic WaitQueue crate.
+    // Breaks the circular dependency: waitqueue can't depend on sched, so it
+    // stores a function pointer set once at boot. Every wake_all/wake_one call
+    // from pipes, VTs, and sockets flows through this to sched::try_wake_up.
+    fn waitqueue_wake_glue(pid: u32) {
+        sched::try_wake_up(pid);
+    }
+    waitqueue::set_wake_fn(waitqueue_wake_glue);
 
     let _ = writeln!(writer, "[INFO] Scheduler initialized");
 
@@ -2064,8 +2110,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         let pml4_virt = mm_paging::phys_to_virt(kernel_pml4);
         let pml4_ptr = pml4_virt.as_ptr::<u64>();
         KERNEL_PML4_256_ENTRY = core::ptr::read_volatile(pml4_ptr.add(256));
-        let golden = KERNEL_PML4_256_ENTRY;
-        let _ = writeln!(writer, "[BOOT] PML4[256] golden ref: {:#018x}", golden);
+        KERNEL_PML4_511_ENTRY = core::ptr::read_volatile(pml4_ptr.add(511));
+        let golden_256 = KERNEL_PML4_256_ENTRY;
+        let golden_511 = KERNEL_PML4_511_ENTRY;
+        let _ = writeln!(writer, "[BOOT] PML4[256] golden ref: {:#018x}", golden_256);
+        let _ = writeln!(writer, "[BOOT] PML4[511] golden ref: {:#018x}", golden_511);
     }
 
     let mut user_space =
