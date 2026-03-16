@@ -721,8 +721,8 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     // ================================================================
     // Initialize LRU metadata array — IronGhost: Flat array alongside PageDB.
-    // 12 bytes per frame for LRU list linkage. Same pattern as PageDB init:
-    // compute size, alloc from buddy, zero, init the global singleton.
+    // 12 bytes per frame for LRU list linkage. Allocated as contiguous block
+    // from buddy, same pattern as PageDB.
     // ================================================================
     {
         let lru_entry_size = core::mem::size_of::<mm_reclaim::LruMeta>();
@@ -737,12 +737,20 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             max_pfn, lru_array_size / 1024, lru_array_order
         );
 
+        // — GraveShift: Diagnostic — dump buddy state before LRU alloc so we can
+        // see exactly how many large blocks are available.
+        let _ = writeln!(writer, "[LRU] Buddy state before alloc:");
+        for order in 0..=10usize {
+            let count = MEMORY_MANAGER.buddy().free_at_order(order);
+            if count > 0 {
+                let _ = writeln!(writer, "[LRU]   order-{}: {} blocks ({} KB each)",
+                    order, count, (1u64 << order) * 4);
+            }
+        }
+
         match MEMORY_MANAGER.alloc_contiguous(1 << lru_array_order) {
             Ok(lru_phys) => {
                 let lru_virt = mm_paging::phys_to_virt(lru_phys);
-                // — IronGhost: Zero-init. LruMeta::new() sets lru_list=0xFF (not on list).
-                // But 0x00 also works — prev/next=0 means "not linked", lru_list=0 means
-                // InactiveAnon which is harmless. We'll set 0xFF explicitly via init().
                 unsafe {
                     core::ptr::write_bytes(lru_virt.as_mut_ptr::<u8>(), 0xFF, (1 << lru_array_order) * 4096);
                 }
@@ -754,7 +762,6 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                     );
                 }
 
-                // — IronGhost: Mark the LRU array frames as reserved in PageDB
                 if let Some(db) = mm_pagedb::try_pagedb() {
                     let db_start_pfn = lru_phys.as_u64() / 4096;
                     let db_pages = 1u64 << lru_array_order;
@@ -765,10 +772,24 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                     }
                 }
 
-                let _ = writeln!(writer, "[LRU] Initialized: {} frames tracked", max_pfn);
+                let _ = writeln!(writer, "[LRU] Initialized: {} frames tracked at {:#x}", max_pfn, lru_phys.as_u64());
+
+                // — GraveShift: Verify buddy integrity after LRU alloc
+                let _ = writeln!(writer, "[LRU] Verifying buddy free lists after alloc...");
+                MEMORY_MANAGER.verify_free_lists();
+
+                // — GraveShift: Diagnostic — buddy state after LRU alloc
+                let _ = writeln!(writer, "[LRU] Buddy state after alloc:");
+                for order in 0..=10usize {
+                    let count = MEMORY_MANAGER.buddy().free_at_order(order);
+                    if count > 0 {
+                        let _ = writeln!(writer, "[LRU]   order-{}: {} blocks", order, count);
+                    }
+                }
             }
-            Err(_) => {
-                let _ = writeln!(writer, "[LRU] WARNING: Could not allocate LRU array (order {})", lru_array_order);
+            Err(e) => {
+                let _ = writeln!(writer, "[LRU] FAILED: {:?} — order {} ({} KB)",
+                    e, lru_array_order, (1u64 << lru_array_order) * 4);
             }
         }
     }

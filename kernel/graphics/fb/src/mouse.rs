@@ -41,9 +41,9 @@ static CURSOR_SPRITE: [[u8; CURSOR_WIDTH]; CURSOR_HEIGHT] = [
 /// Graphical mouse cursor
 pub struct MouseCursor {
     /// Current X position in pixels
-    x: i32,
+    pub x: i32,
     /// Current Y position in pixels
-    y: i32,
+    pub y: i32,
     /// Whether the cursor is visible
     visible: bool,
     /// Save buffer for pixels under the cursor
@@ -54,8 +54,8 @@ pub struct MouseCursor {
     save_x: i32,
     save_y: i32,
     /// Screen dimensions (cached)
-    screen_w: i32,
-    screen_h: i32,
+    pub screen_w: i32,
+    pub screen_h: i32,
 }
 
 impl MouseCursor {
