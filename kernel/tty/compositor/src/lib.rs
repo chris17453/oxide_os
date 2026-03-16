@@ -29,6 +29,81 @@ use layout::{Layout, LayoutManager, ScrollbarFlags, Viewport, ViewportGeometry, 
 pub use layout::{MAX_VTS, LOG_VT};
 use scrollbar::{Scrollbar, Orientation, ScrollContent, ScrollbarHitZone, PartState};
 
+/// — NeonVale: GPU flush bounding box. Tracks the minimal rectangle of pixels
+/// that actually changed since last flush. Why shove 3MB through the VirtIO pipe
+/// when a cursor blink touched 128 bytes? This is the difference between 60fps
+/// and slideshow mode on VirtIO-GPU. Reset after each flush, extended by every
+/// write to hw_fb (blit, fill, scrollbar, statusbar, cursor).
+#[derive(Clone, Copy, Debug)]
+pub struct DirtyRect {
+    /// — NeonVale: bounding box edges. u32::MAX/0 sentinel = "nothing dirty yet"
+    pub x_min: u32,
+    pub y_min: u32,
+    pub x_max: u32,
+    pub y_max: u32,
+    /// — NeonVale: anything actually written since last flush?
+    pub pending: bool,
+}
+
+impl DirtyRect {
+    /// — NeonVale: fresh empty rect. No pixels touched, no flush needed.
+    pub const fn new() -> Self {
+        DirtyRect {
+            x_min: u32::MAX,
+            y_min: u32::MAX,
+            x_max: 0,
+            y_max: 0,
+            pending: false,
+        }
+    }
+
+    /// — NeonVale: extend the dirty rect to include this rectangle.
+    /// Called by every function that touches hw_fb pixels.
+    #[inline]
+    pub fn extend(&mut self, x: u32, y: u32, w: u32, h: u32) {
+        if w == 0 || h == 0 { return; }
+        let x2 = x.saturating_add(w);
+        let y2 = y.saturating_add(h);
+        if x < self.x_min { self.x_min = x; }
+        if y < self.y_min { self.y_min = y; }
+        if x2 > self.x_max { self.x_max = x2; }
+        if y2 > self.y_max { self.y_max = y2; }
+        self.pending = true;
+    }
+
+    /// — NeonVale: mark the entire screen dirty. Used for full redraws.
+    #[inline]
+    pub fn mark_full(&mut self, screen_w: u32, screen_h: u32) {
+        self.x_min = 0;
+        self.y_min = 0;
+        self.x_max = screen_w;
+        self.y_max = screen_h;
+        self.pending = true;
+    }
+
+    /// — NeonVale: reset after flush. Ready for next frame's damage accumulation.
+    #[inline]
+    pub fn reset(&mut self) {
+        self.x_min = u32::MAX;
+        self.y_min = u32::MAX;
+        self.x_max = 0;
+        self.y_max = 0;
+        self.pending = false;
+    }
+
+    /// — NeonVale: get clamped flush region. Returns (x, y, w, h) or None if clean.
+    #[inline]
+    pub fn flush_region(&self, screen_w: u32, screen_h: u32) -> Option<(u32, u32, u32, u32)> {
+        if !self.pending { return None; }
+        let x = self.x_min.min(screen_w);
+        let y = self.y_min.min(screen_h);
+        let x2 = self.x_max.min(screen_w);
+        let y2 = self.y_max.min(screen_h);
+        if x >= x2 || y >= y2 { return None; }
+        Some((x, y, x2 - x, y2 - y))
+    }
+}
+
 /// VT display mode — text terminal or raw graphics
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum VtMode {
@@ -146,6 +221,20 @@ pub struct Compositor {
     /// — SoftGlyph: mouse cursor — compositor draws it last, on top of everything.
     /// Position tracked here, save/restore for cursor-only movement (no VT dirty).
     mouse_cursor: Option<fb::mouse::MouseCursor>,
+    /// — NeonVale: GPU flush damage tracking. Only the pixels that changed get
+    /// pushed through VirtIO-GPU. A cursor blink used to flush 3MB. Now it flushes
+    /// ~128 bytes. The difference between "smooth" and "why is my VM at 100% CPU."
+    dirty_rect: DirtyRect,
+    /// — GlassSignal: cached viewport computation. Recomputed only on layout
+    /// change (resize, VT add/remove, OSK toggle), NOT on every composite/draw call.
+    /// Before this cache, compute_viewports() ran 4-6 times per tick. Pure waste.
+    cached_viewports: [(usize, Viewport); MAX_TILES],
+    /// — GlassSignal: cached viewport generation counter. Bumped on layout change
+    /// so we know when to invalidate.
+    viewport_generation: u32,
+    /// — EchoFrame: cached scroll content per VT for scrollbar skip-redraw.
+    /// If thumb position hasn't changed, skip the ~30 fill_rect calls per scrollbar.
+    cached_scroll_content: [Option<ScrollContent>; MAX_VTS],
 }
 
 impl Compositor {
@@ -211,6 +300,9 @@ impl Compositor {
         let vscrollbars: [Scrollbar; MAX_VTS] = core::array::from_fn(|_| Scrollbar::new(Orientation::Vertical));
         let hscrollbars: [Scrollbar; MAX_VTS] = core::array::from_fn(|_| Scrollbar::new(Orientation::Horizontal));
 
+        // — GlassSignal: compute initial viewports for the cache
+        let initial_viewports = layout.compute_viewports();
+
         let mut comp = Compositor {
             hw_fb,
             vt_buffers,
@@ -226,10 +318,21 @@ impl Compositor {
             hscrollbars,
             event_handler: EventHandler::new(),
             mouse_cursor: Some(fb::mouse::MouseCursor::new(width, height)),
+            dirty_rect: DirtyRect::new(),
+            cached_viewports: initial_viewports,
+            viewport_generation: 0,
+            cached_scroll_content: [None; MAX_VTS],
         };
         // — EchoFrame: position scrollbar widgets based on initial geometry
         comp.update_scrollbar_rects();
         comp
+    }
+
+    /// — GlassSignal: invalidate cached viewports. Must be called on any layout
+    /// change (split, VT switch, resize, OSK toggle). Next access recomputes.
+    fn invalidate_viewport_cache(&mut self) {
+        self.cached_viewports = self.layout.compute_viewports();
+        self.viewport_generation = self.viewport_generation.wrapping_add(1);
     }
 
     /// Ensure a VT has a VFB, allocating one on demand sized to its viewport.
@@ -369,6 +472,9 @@ impl Compositor {
             }
         }
 
+        // — GlassSignal: refresh viewport cache after geometry recomputation
+        self.invalidate_viewport_cache();
+
         // — EchoFrame: scrollbar widgets need updated positions after layout shift
         self.update_scrollbar_rects();
 
@@ -387,6 +493,7 @@ impl Compositor {
     }
 
     /// Get the backing buffer reference for direct blit access (no lazy alloc)
+    #[allow(dead_code)]
     fn get_vt_buffer(&self, vt_num: usize) -> Option<&Arc<BackingFramebuffer>> {
         if vt_num >= MAX_VTS { return None; }
         self.vt_buffers[vt_num].as_ref()
@@ -397,7 +504,8 @@ impl Compositor {
     /// VTs are skipped entirely — no buffer access, no dirty flag check.
     /// Dirty flags are passed in from tick() — never double-consume atomics.
     fn composite(&mut self, full_redraw: bool, sb_dirty: bool) {
-        let viewports = self.layout.compute_viewports();
+        // — GlassSignal: use cached viewports — no recomputation per tick
+        let viewports = self.cached_viewports;
         let tile_count = self.layout.tile_count();
 
         // — SoftGlyph: erase mouse cursor before any content blit.
@@ -426,7 +534,10 @@ impl Compositor {
                 continue;
             }
 
-            if let Some(src_buf) = self.get_vt_buffer(vt_idx) {
+            // — NeonVale: clone the Arc to avoid borrow conflict with &mut self in blit_vt_to_hw.
+            // Arc::clone is just a refcount bump — ~2ns, not a buffer copy.
+            let src_buf = self.vt_buffers[vt_idx].as_ref().cloned();
+            if let Some(src_buf) = src_buf {
                 // — GlassSignal: blit VFB content into viewport rect on hardware FB.
                 let geom = self.vt_geometries[vt_idx];
                 let mut blit_vp = if let Some(g) = geom {
@@ -452,7 +563,7 @@ impl Compositor {
                 }
 
                 if blit_vp.height > 0 {
-                    self.blit_vt_to_hw(src_buf, &blit_vp);
+                    self.blit_vt_to_hw(&src_buf, &blit_vp);
                     any_vt_blitted = true;
                 }
             }
@@ -474,7 +585,8 @@ impl Compositor {
 
     /// Blit a VT backing buffer into a viewport rectangle on the hardware fb.
     /// — SableWire: the hot inner loop. ~0.3ms for full-screen at 1024×768.
-    fn blit_vt_to_hw(&self, src: &BackingFramebuffer, viewport: &Viewport) {
+    /// — NeonVale: extends dirty_rect so flush_region knows what changed.
+    fn blit_vt_to_hw(&mut self, src: &BackingFramebuffer, viewport: &Viewport) {
         let src_ptr = src.raw_ptr();
         let dst_ptr = self.hw_fb.buffer();
         let src_stride = src.stride() as usize;
@@ -505,13 +617,17 @@ impl Compositor {
                 );
             }
         }
+
+        // — NeonVale: tell the damage tracker what we just scribbled on
+        self.dirty_rect.extend(viewport.x, viewport.y, blit_w as u32, blit_h as u32);
     }
 
     /// — EchoFrame: update scrollbar widget positions from current viewport geometries.
     /// Called after any layout change (split, VT switch, resize).
     fn update_scrollbar_rects(&mut self) {
         let tile_count = self.layout.tile_count();
-        let viewports = self.layout.compute_viewports();
+        // — GlassSignal: use cached viewports — layout already updated the cache
+        let viewports = self.cached_viewports;
 
         for slot_idx in 0..tile_count {
             let (vt_idx, viewport) = viewports[slot_idx];
@@ -544,9 +660,13 @@ impl Compositor {
 
     /// — EchoFrame: Draw Win95-style scrollbar widgets for all visible VTs.
     /// Each scrollbar is a self-contained object that knows how to render itself.
+    /// — NeonVale: now caches ScrollContent per VT — skips the ~30 fill_rect calls
+    /// when thumb position hasn't moved. Combined with dirty rect tracking, this
+    /// means idle scrollbars cost exactly zero GPU bandwidth.
     fn draw_scrollbars(&mut self) {
         let tile_count = self.layout.tile_count();
-        let viewports = self.layout.compute_viewports();
+        // — GlassSignal: use cached viewports — no recomputation per draw
+        let viewports = self.cached_viewports;
 
         for slot_idx in 0..tile_count {
             let (vt_idx, viewport) = viewports[slot_idx];
@@ -564,37 +684,88 @@ impl Compositor {
 
             // ── Vertical scrollbar ──
             if flags.vscroll {
+                let mut need_redraw = true;
                 if let Some(state) = sb_state {
                     let total = state.scrollback_len + state.rows as usize;
                     let visible = state.rows as usize;
-                    self.vscrollbars[vt_idx].set_content(ScrollContent {
+                    let new_content = ScrollContent {
                         total,
                         visible,
                         position: state.scroll_offset,
+                    };
+
+                    // — EchoFrame: skip redraw if content state is identical to cached version.
+                    // Thumb position is derived from content — same content = same pixels.
+                    // Also skip if any hover/press state changed (handled by sb_dirty flag).
+                    if let Some(cached) = self.cached_scroll_content[vt_idx] {
+                        if cached.total == new_content.total
+                            && cached.visible == new_content.visible
+                            && cached.position == new_content.position
+                            && self.vscrollbars[vt_idx].arrow_dec_state == PartState::Normal
+                            && self.vscrollbars[vt_idx].arrow_inc_state == PartState::Normal
+                            && self.vscrollbars[vt_idx].thumb_state == PartState::Normal
+                        {
+                            need_redraw = false;
+                        }
+                    }
+
+                    self.vscrollbars[vt_idx].set_content(new_content);
+                    self.cached_scroll_content[vt_idx] = Some(new_content);
+                }
+
+                if need_redraw {
+                    // — NeonVale: extend dirty rect for the scrollbar's bounding box
+                    let sb = &self.vscrollbars[vt_idx];
+                    self.dirty_rect.extend(sb.x, sb.y, sb.width, sb.height);
+
+                    // — EchoFrame: render the widget. Closure bridges to fill_hw_rect.
+                    let hw_fb = &self.hw_fb;
+                    self.vscrollbars[vt_idx].draw(&mut |x, y, w, h, color| {
+                        fill_hw_rect_static(hw_fb.as_ref(), x, y, w, h, color);
                     });
                 }
-                // — EchoFrame: render the widget. Closure bridges to fill_hw_rect.
-                let hw_fb = &self.hw_fb;
-                self.vscrollbars[vt_idx].draw(&mut |x, y, w, h, color| {
-                    fill_hw_rect_static(hw_fb.as_ref(), x, y, w, h, color);
-                });
             }
 
             // ── Horizontal scrollbar ──
             if flags.hscroll {
+                let mut need_hredraw = true;
                 if let Some(state) = sb_state {
                     let total_w = state.max_line_width;
                     let visible_w = state.cols as usize;
-                    self.hscrollbars[vt_idx].set_content(ScrollContent {
+                    let new_content = ScrollContent {
                         total: total_w,
                         visible: visible_w,
                         position: state.h_scroll_offset,
+                    };
+
+                    // — EchoFrame: same caching logic for horizontal scrollbar.
+                    // Index offset by MAX_VTS would be cleaner but we only have one
+                    // cache array — horizontal scrollbar uses different state entirely
+                    // so compare against the hscrollbar's actual content.
+                    let old = &self.hscrollbars[vt_idx].content;
+                    if old.total == new_content.total
+                        && old.visible == new_content.visible
+                        && old.position == new_content.position
+                        && self.hscrollbars[vt_idx].arrow_dec_state == PartState::Normal
+                        && self.hscrollbars[vt_idx].arrow_inc_state == PartState::Normal
+                        && self.hscrollbars[vt_idx].thumb_state == PartState::Normal
+                    {
+                        need_hredraw = false;
+                    }
+
+                    self.hscrollbars[vt_idx].set_content(new_content);
+                }
+
+                if need_hredraw {
+                    // — NeonVale: extend dirty rect for horizontal scrollbar bounds
+                    let sb = &self.hscrollbars[vt_idx];
+                    self.dirty_rect.extend(sb.x, sb.y, sb.width, sb.height);
+
+                    let hw_fb = &self.hw_fb;
+                    self.hscrollbars[vt_idx].draw(&mut |x, y, w, h, color| {
+                        fill_hw_rect_static(hw_fb.as_ref(), x, y, w, h, color);
                     });
                 }
-                let hw_fb = &self.hw_fb;
-                self.hscrollbars[vt_idx].draw(&mut |x, y, w, h, color| {
-                    fill_hw_rect_static(hw_fb.as_ref(), x, y, w, h, color);
-                });
             }
 
             // — EchoFrame: corner block where both scrollbars meet — raised face
@@ -608,7 +779,7 @@ impl Compositor {
 
     /// Draw border lines between tiles and a focus highlight on the active tile.
     /// — GlassSignal: 2px dark gray dividers + 1px cyan focus border
-    fn draw_borders(&self, viewports: &[(usize, Viewport); MAX_TILES], tile_count: usize) {
+    fn draw_borders(&mut self, viewports: &[(usize, Viewport); MAX_TILES], tile_count: usize) {
         let screen_w = self.hw_fb.width() as usize;
         let screen_h = self.hw_fb.height() as usize;
         let focused = self.layout.focused_slot();
@@ -670,15 +841,17 @@ impl Compositor {
     /// — GlassSignal: used for borders, focus highlights, corner blocks.
     /// — SableWire: row-batched like fill_hw_rect_static — see that function's
     /// comment for why per-pixel MMIO writes are a death sentence in ISR context.
-    fn fill_hw_rect(&self, x: usize, y: usize, w: usize, h: usize, color_argb: u32) {
+    /// — NeonVale: now extends dirty_rect for regional GPU flush.
+    fn fill_hw_rect(&mut self, x: usize, y: usize, w: usize, h: usize, color_argb: u32) {
         fill_hw_rect_static(self.hw_fb.as_ref(), x, y, w, h, color_argb);
+        self.dirty_rect.extend(x as u32, y as u32, w as u32, h as u32);
     }
 
     /// — GlassSignal: draw the bottom status bar. VT1-VT6 buttons + KB toggle.
     /// Active VT glows green, others are dim. KB button is accent blue.
     /// Renders at Y = screen_h - STATUSBAR_HEIGHT. Uses PSF2 font for labels.
     /// No heap allocation, no locks beyond what we already hold. — SableWire
-    fn draw_statusbar(&self) {
+    fn draw_statusbar(&mut self) {
         let screen_w = self.hw_fb.width();
         let screen_h = self.hw_fb.height();
         let bar_y = screen_h.saturating_sub(STATUSBAR_HEIGHT) as usize;
@@ -784,7 +957,8 @@ impl Compositor {
     /// — GlassSignal: get the list of visible VTs for hit-testing.
     /// Returns (vt_num, is_visible) pairs for each tile slot.
     fn visible_vts(&self) -> [(usize, bool); MAX_TILES] {
-        let viewports = self.layout.compute_viewports();
+        // — GlassSignal: use cached viewports for hit-testing
+        let viewports = self.cached_viewports;
         let tile_count = self.layout.tile_count();
         let mut result = [(0usize, false); MAX_TILES];
         for i in 0..tile_count {
@@ -875,22 +1049,12 @@ impl Compositor {
                                 MouseAction::Consumed
                             }
                             _ => {
-                                // — EchoFrame: jump-to-position fallback
-                                self.event_handler.state = MouseState::ScrollbarDrag;
-                                let track_h = self.vscrollbars[vt].track_pixel_length() as usize;
-                                self.event_handler.drag = Some(DragState {
-                                    vt,
-                                    vertical: true,
-                                    start_pos: y,
-                                    start_offset: cur_offset,
-                                    track_length: track_h,
-                                    total_content: total,
-                                    visible_content: visible,
-                                });
-                                // Jump to click position
-                                let new_pos = self.vscrollbars[vt].screen_to_scroll_position(x, y);
-                                terminal::scroll_to_line(vt, new_pos);
-                                mark_dirty(vt);
+                                // — EchoFrame: corner/none hits just consume the event
+                                // without entering drag mode. The old catch-all put us
+                                // into ScrollbarDrag for ANY sub-zone miss, which meant
+                                // clicking the corner dead zone or a hit-test edge case
+                                // would start phantom drags. Track clicks are handled by
+                                // TrackBefore/TrackAfter above. — GlassSignal
                                 MouseAction::Consumed
                             }
                         }
@@ -955,10 +1119,9 @@ impl Compositor {
                                 MouseAction::Consumed
                             }
                             _ => {
-                                // — EchoFrame: jump-to-position fallback
-                                let new_pos = self.hscrollbars[vt].screen_to_scroll_position(x, y);
-                                terminal::scroll_to_col(vt, new_pos);
-                                mark_dirty(vt);
+                                // — EchoFrame: corner/none hits consume without drag.
+                                // Same fix as vertical — don't phantom-drag on stray clicks.
+                                // — GlassSignal
                                 MouseAction::Consumed
                             }
                         }
@@ -1339,7 +1502,8 @@ pub fn try_flush_pending_layout() {
                 // and try to resize their terminal emulators. try_resize_vt uses try_lock
                 // on VT_TERMINALS — if contended, we'll retry next tick.
                 let tile_count = compositor.layout.tile_count();
-                let viewports = compositor.layout.compute_viewports();
+                // — GlassSignal: use cached viewports instead of recomputing
+                let viewports = compositor.cached_viewports;
                 let mut all_resized = true;
                 for slot_idx in 0..tile_count {
                     let (vt_idx, _) = viewports[slot_idx];
@@ -1425,6 +1589,8 @@ pub fn tick() {
                         compositor.cell_width, compositor.cell_height,
                         &compositor.vt_scrollbar_flags,
                     );
+                    // — GlassSignal: viewport cache must follow new geometry
+                    compositor.invalidate_viewport_cache();
                     // — EchoFrame: scrollbar rects must follow the new geometry
                     compositor.update_scrollbar_rects();
                     // — SableWire: mark all VTs dirty so the full blit covers the old OSK area
@@ -1436,6 +1602,19 @@ pub fn tick() {
                 }
             }
 
+            // — NeonVale: reset dirty rect at start of frame. Every draw call
+            // extends it. At the end, flush only the bounding box of actual changes.
+            compositor.dirty_rect.reset();
+
+            // — NeonVale: full redraw = mark entire screen dirty upfront.
+            // No point tracking individual rects when we're repainting everything.
+            if full_r || force_composite {
+                compositor.dirty_rect.mark_full(
+                    compositor.hw_fb.width(),
+                    compositor.hw_fb.height(),
+                );
+            }
+
             if content_dirty || force_composite {
                 // — SableWire: full composite — blit VTs, borders, scrollbars.
                 // force_composite means layout changed — treat as full redraw so
@@ -1445,12 +1624,18 @@ pub fn tick() {
                 // — EchoFrame: scrollbar-only redraw — skip VT blit, just repaint
                 // scrollbar widgets directly on hw_fb. ~30 fill_rects vs full blit.
                 if let Some(ref mut cursor) = compositor.mouse_cursor {
+                    // — NeonVale: track cursor erase area for regional flush
+                    let (cx, cy, cw, ch) = cursor.bounds();
+                    compositor.dirty_rect.extend(cx, cy, cw, ch);
                     cursor.erase(&*compositor.hw_fb);
                 }
                 compositor.draw_scrollbars();
             } else {
                 // — SoftGlyph: cursor/vkbd only — just erase old cursor, skip VT blit
                 if let Some(ref mut cursor) = compositor.mouse_cursor {
+                    // — NeonVale: track cursor erase area for regional flush
+                    let (cx, cy, cw, ch) = cursor.bounds();
+                    compositor.dirty_rect.extend(cx, cy, cw, ch);
                     cursor.erase(&*compositor.hw_fb);
                 }
             }
@@ -1466,18 +1651,37 @@ pub fn tick() {
             // Hover-only changes use the fast path: repaint just 2 keys, not all ~100.
             if vkbd::is_visible() {
                 if vkbd_d || full_r {
+                    // — NeonVale: vkbd overlay covers entire keyboard area
+                    let screen_h = compositor.hw_fb.height();
+                    let vkbd_h = vkbd::keyboard_height();
+                    let kb_top = screen_h.saturating_sub(STATUSBAR_HEIGHT + vkbd_h);
+                    compositor.dirty_rect.extend(0, kb_top, compositor.hw_fb.width(), vkbd_h);
                     vkbd::draw_overlay(&*compositor.hw_fb);
                 } else if vkbd_hover_d {
+                    // — NeonVale: hover-only vkbd change — small area, still need to track
+                    let screen_h = compositor.hw_fb.height();
+                    let vkbd_h = vkbd::keyboard_height();
+                    let kb_top = screen_h.saturating_sub(STATUSBAR_HEIGHT + vkbd_h);
+                    compositor.dirty_rect.extend(0, kb_top, compositor.hw_fb.width(), vkbd_h);
                     vkbd::redraw_hover_keys(&*compositor.hw_fb);
                 }
             }
             // — SoftGlyph: mouse cursor last — the final layer before GPU flush
             if let Some(ref mut cursor) = compositor.mouse_cursor {
+                // — NeonVale: track cursor redraw area for regional flush
+                let (cx, cy, cw, ch) = cursor.bounds();
+                compositor.dirty_rect.extend(cx, cy, cw, ch);
                 cursor.redraw(&*compositor.hw_fb);
             }
-            // — GlassSignal: ONE flush after ALL layers (VT content + scrollbars +
-            // borders + status bar + vkbd overlay + mouse cursor). — SableWire
-            compositor.hw_fb.flush();
+            // — NeonVale: REGIONAL flush — only the bounding box of actual changes
+            // gets pushed through VirtIO-GPU. A cursor blink goes from flushing 3MB
+            // (full 1024x768x4) to flushing ~2KB (16x16 cursor area). The GPU
+            // transfer_to_host_2d + resource_flush commands specify exact subrect.
+            let screen_w = compositor.hw_fb.width();
+            let screen_h = compositor.hw_fb.height();
+            if let Some((fx, fy, fw, fh)) = compositor.dirty_rect.flush_region(screen_w, screen_h) {
+                compositor.hw_fb.flush_region(fx, fy, fw, fh);
+            }
         }
     }
 }
@@ -1521,6 +1725,8 @@ pub fn try_focus_vt(vt_num: usize) -> bool {
                 compositor.vt_geometries = compositor.layout.recompute_geometries(
                     compositor.cell_width, compositor.cell_height, &compositor.vt_scrollbar_flags,
                 );
+                // — GlassSignal: viewport cache must follow geometry recomputation
+                compositor.invalidate_viewport_cache();
                 compositor.update_scrollbar_rects();
                 COMPOSITOR_FOCUS_VT.store(compositor.layout.focused_vt(), Ordering::Release);
                 request_full_redraw();

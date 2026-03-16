@@ -74,6 +74,24 @@ impl MouseCursor {
         }
     }
 
+    /// — NeonVale: get the cursor's bounding box for dirty rect tracking.
+    /// Returns (x, y, w, h) clamped to screen. Covers both current position
+    /// and saved position (erase area) for correct damage accumulation.
+    pub fn bounds(&self) -> (u32, u32, u32, u32) {
+        let cx = self.x.max(0) as u32;
+        let cy = self.y.max(0) as u32;
+        let sx = self.save_x.max(0) as u32;
+        let sy = self.save_y.max(0) as u32;
+        let cw = CURSOR_WIDTH as u32;
+        let ch = CURSOR_HEIGHT as u32;
+        // — NeonVale: union of current and saved positions
+        let x_min = cx.min(sx);
+        let y_min = cy.min(sy);
+        let x_max = (cx + cw).max(sx + cw).min(self.screen_w as u32);
+        let y_max = (cy + ch).max(sy + ch).min(self.screen_h as u32);
+        (x_min, y_min, x_max.saturating_sub(x_min), y_max.saturating_sub(y_min))
+    }
+
     /// Get current cursor position
     pub fn position(&self) -> (i32, i32) {
         (self.x, self.y)

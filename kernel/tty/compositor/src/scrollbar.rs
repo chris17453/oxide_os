@@ -43,7 +43,7 @@ pub enum PartState {
 
 /// — EchoFrame: scrollbar content state — how much stuff and where we're looking.
 /// Passed in from the terminal layer each frame.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScrollContent {
     /// Total content size (lines for vert, columns for horiz)
     pub total: usize,

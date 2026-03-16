@@ -1192,6 +1192,8 @@ dependencies = [
  "mm-manager",
  "mm-pagedb",
  "mm-paging",
+ "mm-reclaim",
+ "mm-swap",
  "mm-traits",
  "mm-vma",
  "os_core",

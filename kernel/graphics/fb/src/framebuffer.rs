@@ -403,46 +403,62 @@ impl Framebuffer for LinearFramebuffer {
         crate::call_flush_callback(x, y, w, h);
     }
 
+    /// — NeonVale: row-batched fill. The old code did W*H individual volatile writes
+    /// at ~1000 cycles each (uncacheable MMIO). A 200x16 rect = 3200 writes = 3.2M cycles.
+    /// Now we build one row in a stack buffer (cacheable RAM, ~1 cycle/pixel) and blast
+    /// the whole row to MMIO in one copy_nonoverlapping. Reduces MMIO transaction count
+    /// by W× — the difference between "responsive" and "why is my scrollbar lagging."
     fn fill_rect(&self, x: u32, y: u32, w: u32, h: u32, color: Color) {
-        let bpp = self.format().bytes_per_pixel();
-        let stride = self.stride();
+        let bpp = self.format().bytes_per_pixel() as usize;
+        let stride = self.stride() as usize;
         let buffer = self.buffer();
 
         let x_end = (x + w).min(self.width());
         let y_end = (y + h).min(self.height());
+        if x >= x_end || y >= y_end { return; }
 
-        // Prepare pixel data
+        let actual_w = (x_end - x) as usize;
+
+        // — NeonVale: prepare pixel color bytes
         let mut pixel_data = [0u8; 4];
         color.write_to(&mut pixel_data, self.format());
+        let pb = bpp.min(4);
 
-        // For direct-mapped framebuffers, use volatile writes
+        // — NeonVale: build one row of pixels in stack RAM, then blast per row.
+        // 256px × 4bpp = 1024 bytes on stack. Tiles for wider rects.
+        const MAX_ROW_PX: usize = 256;
+        let row_px = actual_w.min(MAX_ROW_PX);
+        let mut row_buf = [0u8; MAX_ROW_PX * 4];
+
+        // — NeonVale: stamp pixel pattern into row template
+        for col in 0..row_px {
+            let off = col * bpp;
+            row_buf[off..off + pb].copy_from_slice(&pixel_data[..pb]);
+        }
+        let row_bytes = row_px * bpp;
+
         unsafe {
             for py in y..y_end {
-                let row_start = (py * stride + x * bpp) as usize;
-                for px in 0..(x_end - x) {
-                    let offset = row_start + (px * bpp) as usize;
-                    // Use volatile writes for direct hardware access
-                    match bpp {
-                        4 => {
-                            let pixel_value = u32::from_le_bytes([
-                                pixel_data[0],
-                                pixel_data[1],
-                                pixel_data[2],
-                                pixel_data[3],
-                            ]);
-                            ptr::write_volatile((buffer as *mut u32).add(offset / 4), pixel_value);
-                        }
-                        2 => {
-                            let pixel_value = u16::from_le_bytes([pixel_data[0], pixel_data[1]]);
-                            ptr::write_volatile((buffer as *mut u16).add(offset / 2), pixel_value);
-                        }
-                        _ => {
-                            ptr::copy_nonoverlapping(
-                                pixel_data.as_ptr(),
-                                buffer.add(offset),
-                                bpp as usize,
-                            );
-                        }
+                let dst_offset = py as usize * stride + x as usize * bpp;
+                let dst = buffer.add(dst_offset);
+
+                if actual_w <= MAX_ROW_PX {
+                    // — NeonVale: common case — entire row in one blast
+                    ptr::copy_nonoverlapping(row_buf.as_ptr(), dst, actual_w * bpp);
+                } else {
+                    // — NeonVale: wide rect — tile the row buffer across the width
+                    let mut remaining = actual_w;
+                    let mut col_off = 0usize;
+                    while remaining > 0 {
+                        let chunk = remaining.min(MAX_ROW_PX);
+                        let chunk_bytes = chunk * bpp;
+                        ptr::copy_nonoverlapping(
+                            row_buf.as_ptr(),
+                            dst.add(col_off * bpp),
+                            chunk_bytes,
+                        );
+                        col_off += chunk;
+                        remaining -= chunk;
                     }
                 }
             }
