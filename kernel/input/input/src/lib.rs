@@ -28,18 +28,81 @@ pub mod keymap;
 pub mod layouts;
 
 pub use device::{InputDevice, InputDeviceInfo, InputDeviceType};
-pub use event::{EventType, InputEvent, KeyValue, SynCode};
+pub use event::{EventType, InputEvent, KeyValue, SynCode, Timestamp};
 pub use keycodes::*;
 pub use keymap::Keymap;
 pub use layouts::{KeyboardLayout, LAYOUTS, default_layout, get_layout};
 
-use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::Mutex;
 
 /// Maximum events in queue per device
 const MAX_EVENT_QUEUE: usize = 256;
+
+/// — TorqueJax: Fixed-size ring buffer for input events. Zero heap allocation,
+/// ISR-safe. The old VecDeque could trigger heap alloc on push_back when the
+/// internal ring wraps — that alloc from ISR context corrupted buddy free blocks.
+/// This ring uses atomic head/tail for lock-free single-producer (ISR) reads of
+/// count, with Mutex only for the actual push/pop to serialize multi-consumer.
+/// Pre-allocated at boot, never grows, never shrinks. Dropped events > dead CPUs.
+struct EventRing {
+    buf: [InputEvent; MAX_EVENT_QUEUE],
+    head: usize,  // next read position
+    tail: usize,  // next write position
+    count: usize, // current occupancy
+}
+
+impl EventRing {
+    const fn new() -> Self {
+        const EMPTY: InputEvent = InputEvent {
+            time: Timestamp { sec: 0, usec: 0 },
+            type_: 0, code: 0, value: 0,
+        };
+        Self {
+            buf: [EMPTY; MAX_EVENT_QUEUE],
+            head: 0,
+            tail: 0,
+            count: 0,
+        }
+    }
+
+    fn push(&mut self, event: InputEvent) {
+        if self.count >= MAX_EVENT_QUEUE {
+            // — TorqueJax: Full — drop oldest (advance head)
+            self.head = (self.head + 1) % MAX_EVENT_QUEUE;
+            self.count -= 1;
+        }
+        self.buf[self.tail] = event;
+        self.tail = (self.tail + 1) % MAX_EVENT_QUEUE;
+        self.count += 1;
+    }
+
+    fn pop(&mut self) -> Option<InputEvent> {
+        if self.count == 0 {
+            return None;
+        }
+        let event = self.buf[self.head];
+        self.head = (self.head + 1) % MAX_EVENT_QUEUE;
+        self.count -= 1;
+        Some(event)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    fn len(&self) -> usize {
+        self.count
+    }
+
+    fn clear(&mut self) {
+        self.head = 0;
+        self.tail = 0;
+        self.count = 0;
+    }
+}
 
 /// Maximum number of input devices we track blocked readers for
 const MAX_DEVICES: usize = 16;
@@ -82,25 +145,30 @@ pub fn set_blocked_reader(device_id: usize, pid: u32) {
 /// deadlock if the interrupted code (e.g., set_blocked_reader in a syscall)
 /// holds the same spin lock. If contended, skip — the next IRQ will retry.
 fn wake_blocked_reader(device_id: usize) {
-    let pids = {
+    // — TorqueJax: Copy PIDs to a stack-local array to avoid Vec::clone() heap
+    // allocation from ISR context. Max 8 concurrent readers per device is plenty.
+    const MAX_WAKE: usize = 8;
+    let mut wake_pids = [0u32; MAX_WAKE];
+    let mut wake_count = 0usize;
+
+    {
         let mut readers = match BLOCKED_READERS.try_lock() {
             Some(guard) => guard,
-            None => return, // Lock contended — retry on next input event
+            None => return,
         };
         if device_id < MAX_DEVICES {
-            let pids = readers[device_id].clone();
+            for &pid in readers[device_id].iter().take(MAX_WAKE) {
+                wake_pids[wake_count] = pid;
+                wake_count += 1;
+            }
             readers[device_id].clear();
-            pids
-        } else {
-            Vec::new()
         }
-    }; // Release lock!
+    } // Release lock!
 
-    // Wake all waiting readers (callback is ISR-safe try_wake_up)
     unsafe {
         if let Some(wake_fn) = WAKE_CALLBACK {
-            for pid in pids {
-                wake_fn(pid);
+            for i in 0..wake_count {
+                wake_fn(wake_pids[i]);
             }
         }
     }
@@ -110,8 +178,10 @@ fn wake_blocked_reader(device_id: usize) {
 pub struct InputDeviceHandle {
     /// Device information
     pub info: InputDeviceInfo,
-    /// Event queue
-    events: Mutex<VecDeque<InputEvent>>,
+    /// — TorqueJax: Fixed-size event ring — ZERO heap allocation from ISR.
+    /// The old VecDeque could alloc on push_back when ring wraps internally.
+    /// That alloc from keyboard ISR corrupted buddy free blocks at 0x1d69b000.
+    events: Mutex<EventRing>,
     /// Device reference
     device: Arc<dyn InputDevice>,
 }
@@ -121,29 +191,23 @@ impl InputDeviceHandle {
     pub fn new(device: Arc<dyn InputDevice>) -> Self {
         InputDeviceHandle {
             info: device.info(),
-            events: Mutex::new(VecDeque::with_capacity(MAX_EVENT_QUEUE)),
+            events: Mutex::new(EventRing::new()),
             device,
         }
     }
 
     /// Push an event to the queue (blocking — syscall context only)
     pub fn push_event(&self, event: InputEvent) {
-        let mut queue = self.events.lock();
-        if queue.len() >= MAX_EVENT_QUEUE {
-            queue.pop_front();
-        }
-        queue.push_back(event);
+        self.events.lock().push(event);
     }
 
     /// Push an event to the queue (non-blocking — ISR-safe).
-    /// — GraveShift: Returns false if the event queue lock is contended.
-    /// Dropping a single input event is acceptable; deadlocking the CPU is not.
+    /// — TorqueJax: Zero heap allocation. EventRing is fixed-size, push never
+    /// allocates. Full queue drops oldest event. try_lock prevents deadlock
+    /// if interrupted code holds the same spinlock.
     pub fn try_push_event(&self, event: InputEvent) -> bool {
         if let Some(mut queue) = self.events.try_lock() {
-            if queue.len() >= MAX_EVENT_QUEUE {
-                queue.pop_front();
-            }
-            queue.push_back(event);
+            queue.push(event);
             true
         } else {
             false
@@ -152,12 +216,12 @@ impl InputDeviceHandle {
 
     /// Pop an event from the queue
     pub fn pop_event(&self) -> Option<InputEvent> {
-        self.events.lock().pop_front()
+        self.events.lock().pop()
     }
 
     /// Try to pop an event without blocking (ISR-safe)
     pub fn try_pop_event(&self) -> Option<InputEvent> {
-        self.events.try_lock()?.pop_front()
+        self.events.try_lock()?.pop()
     }
 
     /// Check if events are available

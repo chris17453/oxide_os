@@ -309,128 +309,11 @@ pub fn get_mode_info(index: u32) -> Option<VideoModeInfo> {
     })
 }
 
-// ============================================================================
-// Mouse Cursor
-// ============================================================================
-
-use mouse::MouseCursor;
-
-/// Global mouse cursor instance
-static MOUSE_CURSOR: Mutex<Option<MouseCursor>> = Mutex::new(None);
-
-/// Initialize the mouse cursor (call after framebuffer is ready)
-pub fn mouse_init() {
-    let fb_guard = FRAMEBUFFER.lock();
-    if let Some(ref fb) = *fb_guard {
-        let cursor = MouseCursor::new(fb.width(), fb.height());
-        *MOUSE_CURSOR.lock() = Some(cursor);
-    }
-}
-
-/// Move the mouse cursor by a relative delta
-///
-/// Uses try_lock — called from timer ISR (terminal_tick).
-pub fn mouse_move(dx: i32, dy: i32) {
-    if let Some(fb_guard) = FRAMEBUFFER.try_lock() {
-        if let Some(ref fb) = *fb_guard {
-            if let Some(mut cursor_guard) = MOUSE_CURSOR.try_lock() {
-                if let Some(ref mut cursor) = *cursor_guard {
-                    cursor.move_by(dx, dy, &**fb);
-                }
-            } else {
-                #[cfg(feature = "debug-lock")]
-                lock_contention_warning("MOUSE_CURSOR (move)");
-            }
-        }
-    } else {
-        #[cfg(feature = "debug-lock")]
-        lock_contention_warning("FRAMEBUFFER (mouse_move)");
-    }
-}
-
-/// Draw the mouse cursor (call after screen content changes)
-///
-/// Uses try_lock — may be called from ISR context.
-pub fn mouse_draw() {
-    if let Some(fb_guard) = FRAMEBUFFER.try_lock() {
-        if let Some(ref fb) = *fb_guard {
-            if let Some(mut cursor_guard) = MOUSE_CURSOR.try_lock() {
-                if let Some(ref mut cursor) = *cursor_guard {
-                    cursor.redraw(&**fb);
-                }
-            } else {
-                #[cfg(feature = "debug-lock")]
-                lock_contention_warning("MOUSE_CURSOR (draw)");
-            }
-        }
-    } else {
-        #[cfg(feature = "debug-lock")]
-        lock_contention_warning("FRAMEBUFFER (mouse_draw)");
-    }
-}
-
-/// Erase the mouse cursor (call before screen content changes)
-///
-/// Uses try_lock — may be called from ISR context.
-pub fn mouse_erase() {
-    if let Some(fb_guard) = FRAMEBUFFER.try_lock() {
-        if let Some(ref fb) = *fb_guard {
-            if let Some(mut cursor_guard) = MOUSE_CURSOR.try_lock() {
-                if let Some(ref mut cursor) = *cursor_guard {
-                    cursor.erase(&**fb);
-                }
-            } else {
-                #[cfg(feature = "debug-lock")]
-                lock_contention_warning("MOUSE_CURSOR (erase)");
-            }
-        }
-    } else {
-        #[cfg(feature = "debug-lock")]
-        lock_contention_warning("FRAMEBUFFER (mouse_erase)");
-    }
-}
-
-/// Hide the mouse cursor
-pub fn mouse_hide() {
-    if let Some(fb_guard) = FRAMEBUFFER.try_lock() {
-        if let Some(ref fb) = *fb_guard {
-            if let Some(ref mut cursor) = *MOUSE_CURSOR.lock() {
-                cursor.hide(&**fb);
-            }
-        }
-    } else {
-        #[cfg(feature = "debug-lock")]
-        lock_contention_warning("FRAMEBUFFER (mouse_hide)");
-    }
-}
-
-/// Show the mouse cursor
-pub fn mouse_show() {
-    if let Some(ref mut cursor) = *MOUSE_CURSOR.lock() {
-        cursor.show();
-    }
-}
-
-/// Set mouse cursor to an absolute pixel position
-/// — InputShade: For tablet devices that send absolute coordinates instead of deltas.
-/// Uses try_lock — called from timer ISR (terminal_tick).
-pub fn mouse_set_position(x: i32, y: i32) {
-    if let Some(fb_guard) = FRAMEBUFFER.try_lock() {
-        if let Some(ref fb) = *fb_guard {
-            if let Some(mut cursor_guard) = MOUSE_CURSOR.try_lock() {
-                if let Some(ref mut cursor) = *cursor_guard {
-                    cursor.move_to(x, y, &**fb);
-                }
-            } else {
-                #[cfg(feature = "debug-lock")]
-                lock_contention_warning("MOUSE_CURSOR (set_position)");
-            }
-        }
-    } else {
-        #[cfg(feature = "debug-lock")]
-        lock_contention_warning("FRAMEBUFFER (mouse_set_position)");
-    }
-}
+// — NeonVale: Dead fb-level cursor code removed. The compositor owns the mouse
+// cursor now — it manages save/restore, dirty rect tracking, and deferred
+// rendering from tick(). The old fb::mouse_move/erase/draw functions were
+// pre-compositor relics that nobody called, but their existence was confusing
+// and invited accidental dual-cursor bugs. One cursor. One owner. — NeonVale
 
 /// Get framebuffer dimensions in pixels (for coordinate mapping).
 /// — InputShade: Tablet ABS coords (0..32767) need screen dimensions for scaling.
@@ -441,20 +324,5 @@ pub fn screen_dimensions() -> Option<(u32, u32)> {
         .and_then(|guard| guard.as_ref().map(|fb| (fb.width(), fb.height())))
 }
 
-/// Get the current mouse cursor position in pixels
-///
-/// Uses try_lock — called from ISR context.
-pub fn mouse_position() -> Option<(i32, i32)> {
-    MOUSE_CURSOR
-        .try_lock()
-        .and_then(|guard| guard.as_ref().map(|c| c.position()))
-}
-
-/// Check if mouse cursor is initialized
-///
-/// Uses try_lock — called from ISR context.
-pub fn mouse_initialized() -> bool {
-    MOUSE_CURSOR
-        .try_lock()
-        .map_or(false, |guard| guard.is_some())
-}
+// — NeonVale: mouse_position() and mouse_initialized() removed — compositor
+// owns the cursor now. Use compositor::mouse_position() instead.

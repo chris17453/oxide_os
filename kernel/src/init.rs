@@ -1237,13 +1237,10 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
     let _ = writeln!(writer, "[INFO] PS/2 mouse IRQ callback registered");
 
-    // Initialize graphical mouse cursor on framebuffer
+    // — NeonVale: Mouse cursor owned by compositor (created in compositor::init).
+    // The old fb::mouse_init() created a redundant cursor on the raw framebuffer.
     if fb::is_initialized() {
-        debug_mouse!("[mouse] Initializing graphical cursor on framebuffer");
-        fb::mouse_init();
-        let _ = writeln!(writer, "[INFO] Mouse cursor initialized");
-    } else {
-        debug_mouse!("[mouse] No framebuffer — skipping graphical cursor init");
+        let _ = writeln!(writer, "[INFO] Mouse cursor managed by compositor");
     }
 
     // — InputShade: PCI enumeration must happen before VirtIO input probe.
