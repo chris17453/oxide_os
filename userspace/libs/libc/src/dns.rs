@@ -72,7 +72,11 @@ fn build_query(hostname: &str, qtype: u16, buf: &mut [u8]) -> usize {
     pos += 2;
 
     // Flags: standard query with recursion desired
-    let flags = htons(DNS_RD);
+    // — GraveShift: DNS_RD is 0x0100 which is already in wire format (big-endian).
+    // The old code did htons() which double-swapped it to 0x0001, putting the RD
+    // bit in the RCODE field. DNS servers saw a format error and dropped the query.
+    // This was why nslookup (own query builder) worked but libc::dns didn't. — GraveShift
+    let flags = DNS_RD;
     buf[pos] = (flags >> 8) as u8;
     buf[pos + 1] = (flags & 0xFF) as u8;
     pos += 2;
@@ -583,7 +587,11 @@ fn build_ptr_query(addr: u32, buf: &mut [u8]) -> usize {
     pos += 2;
 
     // Flags: standard query with recursion desired
-    let flags = htons(DNS_RD);
+    // — GraveShift: DNS_RD is 0x0100 which is already in wire format (big-endian).
+    // The old code did htons() which double-swapped it to 0x0001, putting the RD
+    // bit in the RCODE field. DNS servers saw a format error and dropped the query.
+    // This was why nslookup (own query builder) worked but libc::dns didn't. — GraveShift
+    let flags = DNS_RD;
     buf[pos] = (flags >> 8) as u8;
     buf[pos + 1] = (flags & 0xFF) as u8;
     pos += 2;
