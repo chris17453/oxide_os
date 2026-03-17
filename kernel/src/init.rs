@@ -1696,33 +1696,89 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // ========================================
     // Network Initialization
     // ========================================
+    // ── Network Stack Init (Linux net_dev_init model) ──────────────────
+    //
+    // — GraveShift: In Linux, the network subsystem initializes independently
+    // of any hardware. net_dev_init() runs unconditionally, loopback registers
+    // first, then each driver's probe() calls register_netdev(). DHCP is 100%
+    // userspace (dhclient/systemd-networkd). We follow the same model:
+    //
+    //  1. TCP/IP stack always inits (no NIC required — sockets work over lo)
+    //  2. Loopback (lo) always registers at 127.0.0.1/8
+    //  3. Each hardware NIC discovered by driver_core registers independently
+    //  4. Kernel does one bootstrap DHCP for early-boot connectivity
+    //  5. networkd (userspace) owns the real DHCP lifecycle + /etc/resolv.conf
+    //
+    // This means: no NIC = stack still works (lo). Multiple NICs = all register.
+    // Different drivers (virtio-net, e1000, ...) = all go through the same
+    // net::register_device() → NetworkInterface → add_interface() path. — GraveShift
+
     let _ = writeln!(writer, "[NET] Initializing network stack...");
 
-    // — NeonRoot: driver_core already probed and registered VirtIO net via PciDriver::probe().
-    // We just need to grab it from the net subsystem and wire up the higher-level stack.
+    // — Step 1: Loopback — always, unconditionally, like Linux.
+    // Every system needs 127.0.0.1. Local sockets, resolvd, sshd all need it.
+    let lo_device = Arc::new(net::LoopbackDevice::new());
+    net::register_device(lo_device.clone());
+    let lo_interface = Arc::new(net::NetworkInterface::new(lo_device));
+    lo_interface
+        .set_ipv4_addr(
+            net::Ipv4Addr::new(127, 0, 0, 1),
+            net::Ipv4Addr::new(255, 0, 0, 0),
+        )
+        .ok();
+    net::interface::add_interface(lo_interface.clone());
+    let _ = writeln!(writer, "[NET] lo: 127.0.0.1/8 (loopback)");
+
+    // — Step 2: Register ALL hardware NICs found by driver_core.
+    // driver_core::probe_all_devices() already called each driver's probe(),
+    // which called net::register_device(). We just create NetworkInterfaces
+    // for each and add them to the interface list. This handles any number
+    // of NICs from any driver (virtio-net, e1000, whatever probed).
     let net_devices = net::devices();
-    let net_initialized = if let Some(device) = net_devices.first() {
+    let hw_nic_count = net_devices.iter().filter(|d| !d.flags().loopback).count();
+    let mut primary_interface: Option<Arc<net::NetworkInterface>> = None;
+
+    for (idx, device) in net_devices.iter().enumerate() {
+        if device.flags().loopback {
+            continue; // Already registered lo above
+        }
         let mac = device.mac_address();
-        let _ = writeln!(writer, "[NET] VirtIO network device found via driver_core");
         let _ = writeln!(
             writer,
-            "[NET] MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-            mac.0[0], mac.0[1], mac.0[2], mac.0[3], mac.0[4], mac.0[5]
+            "[NET] eth{}: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x} ({})",
+            idx,
+            mac.0[0], mac.0[1], mac.0[2], mac.0[3], mac.0[4], mac.0[5],
+            if device.flags().up { "UP" } else { "DOWN" },
         );
 
-        // Create network interface and initialize TCP/IP stack
         let interface = Arc::new(net::NetworkInterface::new(device.clone()));
         net::interface::add_interface(interface.clone());
 
-        tcpip::init(interface.clone());
-        let _ = writeln!(writer, "[NET] TCP/IP stack initialized");
+        // — GraveShift: First hardware NIC becomes the primary interface for
+        // the TCP/IP stack. In Linux, the routing table picks the interface;
+        // our stack currently takes one primary interface. Future: proper
+        // routing table with per-interface routes. — GraveShift
+        if primary_interface.is_none() {
+            primary_interface = Some(interface);
+        }
+    }
 
-        // Try to acquire IP address via DHCP (with short timeout)
-        let _ = writeln!(writer, "[NET] Attempting DHCP (timeout: 2s)...");
-        let dhcp_result = tcpip::acquire_lease(interface.clone());
-        match dhcp_result {
+    // — Step 3: TCP/IP stack always inits. Use primary hardware NIC if available,
+    // fall back to loopback. Sockets always work — you can always talk to 127.0.0.1.
+    let stack_interface = primary_interface.clone().unwrap_or(lo_interface);
+    tcpip::init(stack_interface);
+    let _ = writeln!(writer, "[NET] TCP/IP stack initialized ({} NIC{}, lo)",
+        hw_nic_count, if hw_nic_count == 1 { "" } else { "s" });
+
+    // — Step 4: Bootstrap DHCP on primary NIC (if any).
+    // Quick attempt for early-boot connectivity. networkd takes over the real
+    // DHCP lifecycle with retries, lease renewal, and /etc/resolv.conf writes.
+    // If this fails, system still boots — networkd will retry. — GraveShift
+    if let Some(ref iface) = primary_interface {
+        let _ = writeln!(writer, "[NET] Bootstrap DHCP (2s timeout)...");
+        match tcpip::acquire_lease(iface.clone()) {
             Ok(lease) => {
-                let _ = writeln!(writer, "[NET] DHCP lease acquired: {}", lease.ip_addr);
+                let _ = writeln!(writer, "[NET]   IP: {}", lease.ip_addr);
                 let _ = writeln!(writer, "[NET]   Netmask: {}", lease.subnet_mask);
                 if let Some(gw) = lease.gateway {
                     let _ = writeln!(writer, "[NET]   Gateway: {}", gw);
@@ -1730,47 +1786,11 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                 for dns in &lease.dns_servers {
                     let _ = writeln!(writer, "[NET]   DNS: {}", dns);
                 }
-                let _ = writeln!(writer, "[NET]   Lease time: {} seconds", lease.lease_time);
-
-                // — GraveShift: DNS persistence is networkd's job, not the kernel's.
-                // The kernel bootstrap DHCP just gets an IP for early boot. networkd
-                // (started by servicemgr) does the real DHCP + writes /etc/resolv.conf
-                // like Linux's systemd-networkd or dhclient. Keep the kernel lean. — GraveShift
             }
             Err(e) => {
-                let _ = writeln!(writer, "[NET] DHCP failed: {:?}, networkd will retry", e);
+                let _ = writeln!(writer, "[NET]   DHCP failed: {:?} — networkd will retry", e);
             }
         }
-
-        true
-    } else {
-        let _ = writeln!(writer, "[NET] No network device registered by driver_core");
-        false
-    };
-
-    // — GraveShift: Loopback device ALWAYS loads — like Linux's lo interface.
-    // Every system needs 127.0.0.1 for local services (resolvd, sshd, etc.)
-    // regardless of whether hardware NICs exist. Linux's loopback_net_init()
-    // runs unconditionally during net_dev_init(). — GraveShift
-    {
-        let loopback = Arc::new(net::LoopbackDevice::new());
-        net::register_device(loopback.clone());
-        let lo_interface = Arc::new(net::NetworkInterface::new(loopback));
-        lo_interface
-            .set_ipv4_addr(
-                net::Ipv4Addr::new(127, 0, 0, 1),
-                net::Ipv4Addr::new(255, 0, 0, 0),
-            )
-            .ok();
-        net::interface::add_interface(lo_interface);
-        let _ = writeln!(writer, "[NET] Loopback (lo) initialized: 127.0.0.1/8");
-    }
-
-    // — GraveShift: If no hardware NIC was found, init the TCP/IP stack with
-    // loopback only so local sockets still work. networkd will handle any
-    // late-arriving hardware via its adapter discovery loop. — GraveShift
-    if !net_initialized {
-        let _ = writeln!(writer, "[NET] No hardware NIC — loopback only, networkd will probe");
     }
 
     let _ = writeln!(writer, "[NET] Network initialization complete");
