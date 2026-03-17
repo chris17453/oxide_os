@@ -234,6 +234,21 @@ fn add_default_services(services: &mut [Service; MAX_SERVICES], count: &mut usiz
         *count += 1;
     }
 
+    // — ColdCipher: Add resolvd — local caching DNS resolver.
+    // Reads /etc/resolv.conf (written by networkd), caches DNS lookups,
+    // checks /etc/hosts first. Like systemd-resolved but simpler. — ColdCipher
+    if *count < MAX_SERVICES {
+        let service = &mut services[*count];
+        let name = b"resolvd";
+        let path = b"/bin/resolvd";
+        service.name[..name.len()].copy_from_slice(name);
+        service.name_len = name.len();
+        service.path[..path.len()].copy_from_slice(path);
+        service.path_len = path.len();
+        service.restart = true;
+        *count += 1;
+    }
+
     // Add sshd as default service
     if *count < MAX_SERVICES {
         let service = &mut services[*count];
