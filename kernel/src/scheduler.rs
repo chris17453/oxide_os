@@ -1842,10 +1842,18 @@ pub fn check_signals_on_syscall_return() {
                     &regs,
                 );
 
-                // Write signal frame to user stack
-                // SMAP user access (STAC) is already enabled in syscall_entry
+                // — GraveShift: STAC before writing signal frame to user stack.
+                // The signal check runs AFTER the syscall handler which did CLAC,
+                // so SMAP blocks kernel writes to user pages. Without STAC here,
+                // the write triggers an infinite page fault loop — the COW handler
+                // makes the page writable but SMAP still blocks, so it faults again
+                // forever. This was the "top + OSK = deadlock" bug. — GraveShift
+                os_core::user_access_begin();
+
                 let frame_ptr = new_rsp as *mut signal::delivery::SignalFrame;
                 core::ptr::write(frame_ptr, sig_frame);
+
+                os_core::user_access_end();
 
                 // Update process signal mask for handler execution
                 meta.signal_mask = handler_mask;
