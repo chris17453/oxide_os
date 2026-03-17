@@ -110,12 +110,21 @@ impl TcpIpStack {
         const NAPI_BUDGET: usize = 16;
         let mut buf = [0u8; 1536];
 
+        // — GraveShift: Acknowledge any pending virtio interrupt BEFORE polling
+        // the used ring. Without this, the device may suppress notifications
+        // (VIRTIO_F_EVENT_IDX or legacy ISR semantics) and has_completed()
+        // returns false even when packets are sitting in the used ring. Reading
+        // the ISR status register clears the interrupt and re-arms notifications.
+        // This is the same pattern as resolve_mac's tight poll loop during DHCP
+        // (which worked because reclaim_tx_descriptors calls read_isr). — GraveShift
+        self.interface.device.poll_rx();
+
         for _ in 0..NAPI_BUDGET {
             match self.interface.device.receive(&mut buf) {
                 Ok(Some(len)) => {
                     let _ = self.process_packet(&buf[..len]);
                 }
-                _ => break, // No more packets or error — stop draining
+                _ => break,
             }
         }
 
@@ -757,6 +766,33 @@ pub fn get_icmp_reply() -> Option<IcmpReply> {
     } else {
         Some(buf.remove(0))
     }
+}
+
+/// Get the interface IP address
+pub fn interface_ip() -> Option<Ipv4Addr> {
+    if let Some(guard) = TCPIP_STACK.try_lock() {
+        if let Some(ref stack) = *guard {
+            return stack.interface.ipv4_addr();
+        }
+    }
+    None
+}
+
+/// — GraveShift: Receive UDP data for a specific port. Used by sys_recvfrom
+/// to drain the UdpSocket's recv_queue for DGRAM sockets. Returns (data, src_ip, src_port).
+pub fn recv_udp(port: u16, buf: &mut [u8]) -> Option<(usize, Ipv4Addr, u16)> {
+    if let Some(guard) = TCPIP_STACK.try_lock() {
+        if let Some(ref stack) = *guard {
+            let sockets = stack.udp_sockets.lock();
+            if let Some(udp_sock) = sockets.get(&port) {
+                match udp_sock.recvfrom(buf) {
+                    Ok((len, src_ip, src_port)) => return Some((len, src_ip, src_port)),
+                    Err(_) => return None,
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Check if there are pending ICMP replies

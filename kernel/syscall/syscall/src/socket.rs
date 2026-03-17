@@ -1229,7 +1229,73 @@ pub fn sys_sendto(fd: i32, buf: u64, len: usize, flags: i32, dest_addr: u64, add
         return loopback_send(&socket, data, &dest);
     }
 
-    // Non-loopback: use real network stack
+    // — GraveShift: Route raw ICMP and UDP through the TCP/IP stack for real
+    // network transmission. The generic socket.sendto() is a stub that just
+    // returns Ok(len) without sending anything. SEND is aliased to SENDTO in
+    // Linux ABI, so sys_send's ICMP path was unreachable. This was why ping
+    // packets never hit the wire — "sent" successfully but never transmitted.
+    // Same class of bug as the garbage-register send() issue. — GraveShift
+    if socket.sock_type == SocketType::Raw && socket.protocol == SocketProtocol::Icmp {
+        let dst_ip = match dest.ip {
+            IpAddr::V4(ip) => ip,
+            IpAddr::V6(_) => return errno::EAFNOSUPPORT,
+        };
+        if let Some(stack) = tcpip::stack() {
+            return match stack.send_ipv4_packet(dst_ip, tcpip::IpProtocol::Icmp, data) {
+                Ok(()) => len as i64,
+                Err(e) => net_error_to_errno(e),
+            };
+        } else {
+            return errno::ENETDOWN;
+        }
+    }
+
+    if socket.sock_type == SocketType::Dgram {
+        let dst_ip = match dest.ip {
+            IpAddr::V4(ip) => ip,
+            IpAddr::V6(_) => return errno::EAFNOSUPPORT,
+        };
+        if let Some(stack) = tcpip::stack() {
+            // — GraveShift: Build a proper UDP datagram — application data doesn't
+            // include the UDP header, we must prepend it. src_port from the socket's
+            // local address (bound or ephemeral), dst_port from the destination.
+            // Also register in the UDP socket table so incoming replies get routed
+            // back to this socket. Without registration, process_udp can't find
+            // the socket by dst_port and the reply is silently dropped. — GraveShift
+            let src_port = socket.local_addr.lock().map_or(0, |a| a.port);
+            let dst_port = dest.port;
+            let src_port = if src_port == 0 { stack.alloc_ephemeral_port() } else { src_port };
+
+            // Store local addr so recvfrom can find it
+            {
+                let src_ip = tcpip::interface_ip().unwrap_or(Ipv4Addr::new(0, 0, 0, 0));
+                *socket.local_addr.lock() = Some(SocketAddr::new(IpAddr::V4(src_ip), src_port));
+            }
+
+            // — GraveShift: Register this port in the UDP socket table for reply
+            // routing. When process_udp receives a response, it looks up
+            // udp_sockets[dst_port]. We need our ephemeral port registered.
+            let _ = stack.udp_bind(src_port);
+
+            // UDP header: src_port(2) + dst_port(2) + length(2) + checksum(2) + data
+            let udp_len = 8 + data.len();
+            let mut udp_packet = Vec::with_capacity(udp_len);
+            udp_packet.extend_from_slice(&src_port.to_be_bytes());
+            udp_packet.extend_from_slice(&dst_port.to_be_bytes());
+            udp_packet.extend_from_slice(&(udp_len as u16).to_be_bytes());
+            udp_packet.extend_from_slice(&[0u8; 2]); // checksum = 0 (optional for IPv4)
+            udp_packet.extend_from_slice(data);
+
+            return match stack.send_ipv4_packet(dst_ip, tcpip::IpProtocol::Udp, &udp_packet) {
+                Ok(()) => len as i64,
+                Err(e) => net_error_to_errno(e),
+            };
+        } else {
+            return errno::ENETDOWN;
+        }
+    }
+
+    // Fallback for other socket types
     match socket.sendto(data, dest) {
         Ok(n) => n as i64,
         Err(e) => net_error_to_errno(e),
@@ -1268,8 +1334,54 @@ pub fn sys_recvfrom(fd: i32, buf: u64, len: usize, flags: i32, src_addr: u64, ad
     let mut kbuf = Vec::new();
     kbuf.resize(len, 0);
 
+    // — GraveShift: Check if this is a raw ICMP socket — replies come from
+    // tcpip::ICMP_REPLY_BUFFER, not from socket recv_buf or loopback queue.
+    let is_raw_icmp = socket.sock_type == SocketType::Raw
+        && socket.protocol == SocketProtocol::Icmp;
+
     for poll_iter in 0..poll_budget {
         let _ = tcpip::poll();
+
+        // — GraveShift: ICMP reply check — sys_recv had this but sys_recvfrom
+        // didn't because RECV was aliased to RECVFROM and the check was only
+        // in the unreachable sys_recv. Ping's recv() goes through here. — GraveShift
+        if is_raw_icmp {
+            if let Some(reply) = tcpip::get_icmp_reply() {
+                let reply_len = reply.data.len().min(len);
+                if reply_len > 0 {
+                    kbuf[..reply_len].copy_from_slice(&reply.data[..reply_len]);
+                    if uaccess::copy_to_user(buf, &kbuf[..reply_len]).is_err() {
+                        return errno::EFAULT;
+                    }
+                    if src_addr != 0 {
+                        let sender = SocketAddr::new(IpAddr::V4(reply.src_ip), 0);
+                        let rc = write_sockaddr_in(src_addr, addrlen, &sender);
+                        if rc < 0 { return rc; }
+                    }
+                    return reply_len as i64;
+                }
+            }
+        }
+
+        // — GraveShift: Check UDP recv_queue for DGRAM sockets.
+        // process_udp routes incoming UDP packets to UdpSocket by dst_port.
+        // We registered the ephemeral port in sendto, so replies land here. — GraveShift
+        if socket.sock_type == SocketType::Dgram {
+            let local_port = socket.local_addr.lock().map_or(0, |a| a.port);
+            if local_port > 0 {
+                if let Some((read_len, src_ip, src_port)) = tcpip::recv_udp(local_port, &mut kbuf) {
+                    if uaccess::copy_to_user(buf, &kbuf[..read_len]).is_err() {
+                        return errno::EFAULT;
+                    }
+                    if src_addr != 0 {
+                        let sender = SocketAddr::new(IpAddr::V4(src_ip), src_port);
+                        let rc = write_sockaddr_in(src_addr, addrlen, &sender);
+                        if rc < 0 { return rc; }
+                    }
+                    return read_len as i64;
+                }
+            }
+        }
 
         // Check loopback queue first
         if let Some((read_len, sender_addr)) = receive_loopback_packet(&socket, &mut kbuf) {

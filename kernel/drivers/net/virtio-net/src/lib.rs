@@ -943,6 +943,18 @@ impl NetworkDevice for VirtioNet {
     fn stats(&self) -> NetStats {
         *self.stats.lock()
     }
+
+    fn poll_rx(&self) {
+        // — GraveShift: Read ISR status to acknowledge the device interrupt and
+        // clear the flag. Virtio legacy PCI uses the ISR register (offset 19) as
+        // the interrupt acknowledgment mechanism. Without reading it, the device
+        // suppresses new used-ring updates and has_completed() stays false even
+        // when packets arrived. This is why DHCP works (resolve_mac calls
+        // reclaim_tx which reads ISR) but post-boot RX fails (nobody reads ISR).
+        // Also re-post any free RX buffers so the device has DMA targets. — GraveShift
+        let _ = self.read_isr();
+        self.post_rx_buffers();
+    }
 }
 
 // SAFETY: VirtioNet uses internal synchronization (Mutex)

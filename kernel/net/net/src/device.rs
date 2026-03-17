@@ -67,6 +67,13 @@ pub trait NetworkDevice: Send + Sync {
     /// Get device statistics
     fn stats(&self) -> NetStats;
 
+    /// — GraveShift: Acknowledge pending device interrupt and prepare for
+    /// next RX poll. For virtio-net, reads the ISR status register to clear
+    /// the interrupt flag and re-arm used-ring notifications. Without this,
+    /// has_completed() returns false even when packets are in the used ring.
+    /// Default no-op for loopback and devices that don't need it. — GraveShift
+    fn poll_rx(&self) {}
+
     /// Get device info
     fn info(&self) -> NetworkDeviceInfo {
         NetworkDeviceInfo {
