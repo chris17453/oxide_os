@@ -210,8 +210,6 @@ fn show_help() {
     eprintlns("  -q          Quiet mode");
     eprintlns("  -v          Verbose mode");
     eprintlns("  -h          Show this help");
-    eprintlns("");
-    eprintlns("Note: DNS not yet supported, use IP addresses in URL");
 }
 
 /// Download from URL
@@ -225,12 +223,27 @@ fn do_wget(config: &WgetConfig, url: &str) -> i32 {
         }
     };
 
-    // For now, host must be an IP address (DNS not yet implemented)
+    // — ShadePacket: Resolve hostname — try IP literal first, then DNS.
+    // DNS resolution uses libc::dns::resolve() which reads /etc/resolv.conf
+    // and queries the configured nameserver. Works now that UDP TX/RX is fixed.
     let ip = match parse_ip(host) {
         Some(ip) => ip,
         None => {
-            eprintlns("wget: hostname resolution not implemented, use IP address");
-            return 1;
+            // Not a raw IP — try DNS resolution
+            if !config.quiet {
+                prints("Resolving ");
+                prints(host);
+                printlns("...");
+            }
+            match libc::dns::resolve(host, None) {
+                Some(ip) => ip,
+                None => {
+                    eprints("wget: unable to resolve host address '");
+                    prints(host);
+                    eprintlns("'");
+                    return 1;
+                }
+            }
         }
     };
 
