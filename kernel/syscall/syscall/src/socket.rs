@@ -459,11 +459,15 @@ fn parse_sockaddr_in(addr: u64, addrlen: u32) -> Option<SocketAddr> {
 
     let port = u16::from_be_bytes([raw[2], raw[3]]);
 
-    // — GraveShift: sin_addr.s_addr is stored in NETWORK byte order (big-endian)
-    // in the sockaddr_in struct. For IP 10.0.0.1, memory is [0x0A, 0x00, 0x00, 0x01].
-    // Read bytes 4-7 in order — they're already in the right sequence. The old code
-    // reversed them, turning 10.0.0.1 into 1.0.0.10. Classic endian brainfart. — GraveShift
-    let ip = Ipv4Addr::new(raw[4], raw[5], raw[6], raw[7]);
+    // — GraveShift: sin_addr.s_addr is a u32 built by inet_addr() using
+    // u32::from_be_bytes([a,b,c,d]). On little-endian x86, that u32 is stored
+    // in memory as [d,c,b,a]. To reconstruct [a,b,c,d] we read in reverse.
+    // This matches how write_sockaddr_in writes: ip.as_bytes() are [a,b,c,d]
+    // but the CALLER (libc sockaddr_in_octets) stores them reversed via the
+    // u32 intermediate. If we ever fix libc to store in network byte order,
+    // this needs to flip too. — GraveShift
+    let ip_bytes = [raw[7], raw[6], raw[5], raw[4]];
+    let ip = Ipv4Addr::new(ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]);
 
     Some(SocketAddr::new(IpAddr::V4(ip), port))
 }

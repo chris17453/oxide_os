@@ -361,12 +361,20 @@ pub fn connect6(sockfd: i32, addr: &SockAddrIn6, addrlen: u32) -> i32 {
 /// # Returns
 /// Number of bytes sent or negative errno
 pub fn send(sockfd: i32, buf: &[u8], flags: i32) -> isize {
-    syscall4(
+    // — GraveShift: SEND is aliased to SENDTO in the Linux ABI. SENDTO expects
+    // 6 args: (fd, buf, len, flags, dest_addr, addrlen). For connected sockets,
+    // dest_addr=0 means "use peer_addr from connect()". The old syscall4 left
+    // r8/r9 as garbage — the kernel read them as a non-zero dest_addr pointer,
+    // tried to parse a sockaddr from random memory, and returned EINVAL. Classic
+    // "works on Linux because glibc zeros the args" bug. — GraveShift
+    syscall6(
         nr::SEND,
         sockfd as usize,
         buf.as_ptr() as usize,
         buf.len(),
         flags as usize,
+        0, // dest_addr = NULL (use connected peer)
+        0, // addrlen = 0
     ) as isize
 }
 
@@ -380,12 +388,16 @@ pub fn send(sockfd: i32, buf: &[u8], flags: i32) -> isize {
 /// # Returns
 /// Number of bytes received or negative errno
 pub fn recv(sockfd: i32, buf: &mut [u8], flags: i32) -> isize {
-    syscall4(
+    // — GraveShift: RECV aliased to RECVFROM — must pass 6 args with
+    // src_addr=0, addrlen=0. Same garbage-register bug as send(). — GraveShift
+    syscall6(
         nr::RECV,
         sockfd as usize,
         buf.as_mut_ptr() as usize,
         buf.len(),
         flags as usize,
+        0, // src_addr = NULL (don't care about sender)
+        0, // addrlen = 0
     ) as isize
 }
 
