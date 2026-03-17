@@ -232,6 +232,13 @@ fn show_help() {
 
 /// Download from URL
 fn do_wget(config: &WgetConfig, url: &str) -> i32 {
+    // — GraveShift: diagnostic — show what we actually got
+    prints("[wget] url='");
+    prints(url);
+    prints("' len=");
+    libc::print_i64(url.len() as i64);
+    printlns("");
+
     // Parse URL
     let (host, port, path) = match parse_url(url) {
         Some(parsed) => parsed,
@@ -241,9 +248,12 @@ fn do_wget(config: &WgetConfig, url: &str) -> i32 {
         }
     };
 
+    if host.is_empty() {
+        eprintlns("wget: empty hostname in URL");
+        return 1;
+    }
+
     // — ShadePacket: Resolve hostname — try IP literal first, then DNS.
-    // DNS resolution uses libc::dns::resolve() which reads /etc/resolv.conf
-    // and queries the configured nameserver. Works now that UDP TX/RX is fixed.
     let ip = match parse_ip(host) {
         Some(ip) => ip,
         None => {
