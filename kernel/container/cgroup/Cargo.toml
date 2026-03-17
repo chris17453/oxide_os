@@ -8,5 +8,5 @@ default = []
 mm-accounting = ["mm-manager"]  # Enable memory manager accounting integration
 
 [dependencies]
-spin = "0.9"
+spin = { workspace = true }
 mm-manager = { workspace = true, optional = true }

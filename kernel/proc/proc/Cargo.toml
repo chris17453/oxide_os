@@ -26,4 +26,4 @@ sched-traits = { path = "../../sched/sched-traits" }
 vfs = { path = "../../vfs/vfs" }
 signal = { path = "../../signal/signal" }
 smp = { path = "../../smp/smp" }
-spin = "0.9"
+spin = { workspace = true }

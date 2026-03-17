@@ -7,7 +7,7 @@ description = "Syscall compatibility layer for OXIDE OS"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-spin = "0.9"
+spin = { workspace = true }
 
 [features]
 default = []

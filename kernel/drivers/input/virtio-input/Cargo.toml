@@ -14,6 +14,6 @@ driver-core = { path = "../../driver-core" }
 virtio-core = { path = "../../virtio-core" }
 mm-manager = { path = "../../../mm/mm-manager" }
 mm-traits = { path = "../../../mm/mm-traits" }
-spin = "0.9"
+spin = { workspace = true }
 os_log = { path = "../../../core/os_log" }
 os_core = { path = "../../../core/os_core" }

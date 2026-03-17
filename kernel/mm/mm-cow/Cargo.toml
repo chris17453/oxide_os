@@ -7,5 +7,5 @@ description = "Copy-on-Write page tracking for OXIDE"
 [dependencies]
 os_core = { path = "../../core/os_core" }
 mm-traits = { path = "../mm-traits" }
-spin = "0.9"
+spin = { workspace = true }
 mm-pagedb = { path = "../mm-pagedb" }

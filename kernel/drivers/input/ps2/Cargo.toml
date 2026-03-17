@@ -12,4 +12,4 @@ input = { path = "../../../input/input" }
 # (ps2 → driver-core → pci → arch-x86_64 → ps2 was the old curse)
 driver-traits = { workspace = true }
 os_core = { workspace = true }
-spin = "0.9"
+spin = { workspace = true }

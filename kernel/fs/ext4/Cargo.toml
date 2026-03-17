@@ -7,4 +7,4 @@ edition = "2024"
 block = { path = "../../block/block" }
 vfs = { path = "../../vfs/vfs" }
 os_core = { path = "../../core/os_core" }
-spin = "0.10"
+spin = { workspace = true }

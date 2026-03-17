@@ -7,7 +7,7 @@ description = "Indexing daemon for semantic file search in OXIDE"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-spin = "0.9"
+spin = { workspace = true }
 hnsw = { path = "../hnsw" }
 embed = { path = "../embed" }
 

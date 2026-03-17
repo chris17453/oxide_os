@@ -7,7 +7,7 @@ description = "Virtual 8086 mode DOS emulation for OXIDE OS"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-spin = "0.9"
+spin = { workspace = true }
 bitflags = "2.4"
 
 [features]

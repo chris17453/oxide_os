@@ -5,4 +5,4 @@ edition = "2024"
 
 [dependencies]
 usb = { path = "../../../usb/usb" }
-spin = "0.9"
+spin = { workspace = true }

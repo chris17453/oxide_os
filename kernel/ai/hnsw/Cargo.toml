@@ -7,7 +7,7 @@ description = "Hierarchical Navigable Small World (HNSW) vector index for OXIDE"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-spin = "0.9"
+spin = { workspace = true }
 rand = { version = "0.8", default-features = false, features = ["small_rng"] }
 
 [features]

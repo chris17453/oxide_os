@@ -11,4 +11,4 @@ virtio-core = { path = "../../virtio-core" }
 mm-manager = { path = "../../../mm/mm-manager" }
 mm-traits = { path = "../../../mm/mm-traits" }
 os_core = { path = "../../../core/os_core" }
-spin = "0.10"
+spin = { workspace = true }

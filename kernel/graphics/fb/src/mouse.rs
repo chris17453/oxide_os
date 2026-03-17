@@ -8,12 +8,21 @@ use crate::framebuffer::Framebuffer;
 use alloc::sync::Arc;
 use core::ptr;
 
-/// Cursor sprite dimensions
+/// Cursor sprite dimensions (source pattern)
 const CURSOR_WIDTH: usize = 12;
 const CURSOR_HEIGHT: usize = 19;
 
-/// Maximum save buffer size (CURSOR_WIDTH * CURSOR_HEIGHT * 4 bytes per pixel)
-const SAVE_BUF_SIZE: usize = CURSOR_WIDTH * CURSOR_HEIGHT * 4;
+/// — NeonVale: render scale factor. 2x makes the cursor actually visible
+/// on 1280x800+ displays instead of being a 12px speck you need a magnifying
+/// glass to find. Each sprite pixel becomes a SCALE×SCALE block on hw_fb.
+const CURSOR_SCALE: usize = 2;
+
+/// Rendered cursor dimensions on screen
+const RENDER_WIDTH: usize = CURSOR_WIDTH * CURSOR_SCALE;
+const RENDER_HEIGHT: usize = CURSOR_HEIGHT * CURSOR_SCALE;
+
+/// Maximum save buffer size (RENDER_WIDTH * RENDER_HEIGHT * 4 bytes per pixel)
+const SAVE_BUF_SIZE: usize = RENDER_WIDTH * RENDER_HEIGHT * 4;
 
 /// Cursor sprite: 0 = transparent, 1 = black (outline), 2 = white (fill)
 static CURSOR_SPRITE: [[u8; CURSOR_WIDTH]; CURSOR_HEIGHT] = [
@@ -82,8 +91,8 @@ impl MouseCursor {
         let cy = self.y.max(0) as u32;
         let sx = self.save_x.max(0) as u32;
         let sy = self.save_y.max(0) as u32;
-        let cw = CURSOR_WIDTH as u32;
-        let ch = CURSOR_HEIGHT as u32;
+        let cw = RENDER_WIDTH as u32;
+        let ch = RENDER_HEIGHT as u32;
         // — NeonVale: union of current and saved positions
         let x_min = cx.min(sx);
         let y_min = cy.min(sy);
@@ -172,7 +181,10 @@ impl MouseCursor {
         }
     }
 
-    /// Save the pixels under the cursor at the current position
+    /// — NeonVale: Save the pixels under the cursor at the current position.
+    /// Uses RENDER_WIDTH/RENDER_HEIGHT (scaled dimensions) so save covers
+    /// the full 2x rendered area on hw_fb. Each sprite pixel maps to a
+    /// SCALE×SCALE block — we save every pixel in those blocks.
     fn save_under(&mut self, fb: &dyn Framebuffer) {
         let bpp = fb.format().bytes_per_pixel() as usize;
         let stride = fb.stride() as usize;
@@ -183,21 +195,23 @@ impl MouseCursor {
         self.save_x = self.x;
         self.save_y = self.y;
 
-        for row in 0..CURSOR_HEIGHT {
+        for row in 0..RENDER_HEIGHT {
             let py = self.y + row as i32;
             if py < 0 || py >= fb_h {
                 continue;
             }
-            for col in 0..CURSOR_WIDTH {
+            let sprite_row = row / CURSOR_SCALE;
+            for col in 0..RENDER_WIDTH {
                 let px = self.x + col as i32;
                 if px < 0 || px >= fb_w {
                     continue;
                 }
-                if CURSOR_SPRITE[row][col] == 0 {
-                    continue; // Transparent — no need to save
+                let sprite_col = col / CURSOR_SCALE;
+                if CURSOR_SPRITE[sprite_row][sprite_col] == 0 {
+                    continue;
                 }
                 let fb_offset = py as usize * stride + px as usize * bpp;
-                let save_offset = (row * CURSOR_WIDTH + col) * bpp;
+                let save_offset = (row * RENDER_WIDTH + col) * bpp;
                 if save_offset + bpp <= SAVE_BUF_SIZE {
                     unsafe {
                         ptr::copy_nonoverlapping(
@@ -213,7 +227,7 @@ impl MouseCursor {
         self.save_valid = true;
     }
 
-    /// Restore saved pixels under the cursor
+    /// Restore saved pixels under the cursor (scaled dimensions)
     fn restore_under(&mut self, fb: &dyn Framebuffer) {
         if !self.save_valid {
             return;
@@ -225,21 +239,23 @@ impl MouseCursor {
         let fb_w = fb.width() as i32;
         let fb_h = fb.height() as i32;
 
-        for row in 0..CURSOR_HEIGHT {
+        for row in 0..RENDER_HEIGHT {
             let py = self.save_y + row as i32;
             if py < 0 || py >= fb_h {
                 continue;
             }
-            for col in 0..CURSOR_WIDTH {
+            let sprite_row = row / CURSOR_SCALE;
+            for col in 0..RENDER_WIDTH {
                 let px = self.save_x + col as i32;
                 if px < 0 || px >= fb_w {
                     continue;
                 }
-                if CURSOR_SPRITE[row][col] == 0 {
+                let sprite_col = col / CURSOR_SCALE;
+                if CURSOR_SPRITE[sprite_row][sprite_col] == 0 {
                     continue;
                 }
                 let fb_offset = py as usize * stride + px as usize * bpp;
-                let save_offset = (row * CURSOR_WIDTH + col) * bpp;
+                let save_offset = (row * RENDER_WIDTH + col) * bpp;
                 if save_offset + bpp <= SAVE_BUF_SIZE {
                     unsafe {
                         ptr::copy_nonoverlapping(
@@ -255,7 +271,11 @@ impl MouseCursor {
         self.save_valid = false;
     }
 
-    /// Draw the cursor sprite at current position
+    /// — NeonVale: Draw the cursor sprite at current position, scaled 2x.
+    /// Outline uses dark gray (48,48,48) instead of pure black so you can
+    /// actually SEE it on dark backgrounds. Each sprite pixel becomes a
+    /// SCALE×SCALE block on the framebuffer. The difference between
+    /// "where the hell is my cursor" and "oh there it is." — NeonVale
     fn draw_sprite(&self, fb: &dyn Framebuffer) {
         let bpp = fb.format().bytes_per_pixel() as usize;
         let stride = fb.stride() as usize;
@@ -263,36 +283,47 @@ impl MouseCursor {
         let fb_w = fb.width() as i32;
         let fb_h = fb.height() as i32;
 
-        let black = Color::new(0, 0, 0);
-        let white = Color::new(255, 255, 255);
+        // — NeonVale: outline = dark gray, visible on both light AND dark backgrounds.
+        // Pure black outline on a black terminal = invisible cursor = user rage.
+        let outline = Color::new(48, 48, 48);
+        let fill = Color::new(255, 255, 255);
 
-        let mut black_bytes = [0u8; 4];
-        let mut white_bytes = [0u8; 4];
-        black.write_to(&mut black_bytes, fb.format());
-        white.write_to(&mut white_bytes, fb.format());
+        let mut outline_bytes = [0u8; 4];
+        let mut fill_bytes = [0u8; 4];
+        outline.write_to(&mut outline_bytes, fb.format());
+        fill.write_to(&mut fill_bytes, fb.format());
 
         for row in 0..CURSOR_HEIGHT {
-            let py = self.y + row as i32;
-            if py < 0 || py >= fb_h {
-                continue;
-            }
             for col in 0..CURSOR_WIDTH {
-                let px = self.x + col as i32;
-                if px < 0 || px >= fb_w {
-                    continue;
-                }
                 let pixel = CURSOR_SPRITE[row][col];
                 if pixel == 0 {
-                    continue; // Transparent
+                    continue;
                 }
                 let color_bytes = if pixel == 1 {
-                    &black_bytes
+                    &outline_bytes
                 } else {
-                    &white_bytes
+                    &fill_bytes
                 };
-                let fb_offset = py as usize * stride + px as usize * bpp;
-                unsafe {
-                    ptr::copy_nonoverlapping(color_bytes.as_ptr(), buffer.add(fb_offset), bpp);
+                // — NeonVale: stamp a SCALE×SCALE block for each sprite pixel
+                for sy in 0..CURSOR_SCALE {
+                    let py = self.y + (row * CURSOR_SCALE + sy) as i32;
+                    if py < 0 || py >= fb_h {
+                        continue;
+                    }
+                    for sx in 0..CURSOR_SCALE {
+                        let px = self.x + (col * CURSOR_SCALE + sx) as i32;
+                        if px < 0 || px >= fb_w {
+                            continue;
+                        }
+                        let fb_offset = py as usize * stride + px as usize * bpp;
+                        unsafe {
+                            ptr::copy_nonoverlapping(
+                                color_bytes.as_ptr(),
+                                buffer.add(fb_offset),
+                                bpp,
+                            );
+                        }
+                    }
                 }
             }
         }

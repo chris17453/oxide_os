@@ -7,7 +7,7 @@ description = "Memory mapping (mmap) implementation for OXIDE"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-spin = "0.9"
+spin = { workspace = true }
 
 [features]
 default = []
