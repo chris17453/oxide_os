@@ -61,6 +61,7 @@ enum Mode {
 struct Term {
     entry: termcap::TerminalEntry,
     rows: usize,
+    #[allow(dead_code)] // — NeonVale: available for line-wrap and horizontal scroll logic
     cols: usize,
 }
 
@@ -143,6 +144,7 @@ impl Term {
     }
 
     /// ── NeonVale: Clear from cursor to end of line ──
+    #[allow(dead_code)] // — NeonVale: termcap-backed clrtoeol, used when we switch from raw ESC
     fn clrtoeol(&self) {
         if let Some(cap) = self.entry.get_string(tcap::CLRTOEOL) {
             prints(cap);

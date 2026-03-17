@@ -27,7 +27,6 @@
 
 extern crate alloc;
 
-use alloc::string::String;
 use alloc::vec::Vec;
 use libc::c_exports::mkfifo;
 use libc::dirent::{closedir, opendir, readdir};
@@ -48,22 +47,28 @@ const LOG_FILE: &str = "/var/log/soundd.log";
 const MAX_CLIENTS: usize = 32;
 
 /// Maximum number of audio streams per client
+#[allow(dead_code)]
 const MAX_STREAMS_PER_CLIENT: usize = 8;
 
 /// Audio buffer size (frames)
+#[allow(dead_code)]
 const BUFFER_SIZE: usize = 4096;
 
 /// Sample rate (Hz)
+#[allow(dead_code)]
 const SAMPLE_RATE: u32 = 48000;
 
 /// Number of channels (stereo)
+#[allow(dead_code)]
 const CHANNELS: u8 = 2;
 
 /// Bytes per sample (16-bit PCM)
+#[allow(dead_code)]
 const BYTES_PER_SAMPLE: usize = 2;
 
 /// Audio device information
 #[derive(Clone)]
+#[allow(dead_code)]
 struct AudioDevice {
     path: [u8; 64],
     path_len: usize,
@@ -92,6 +97,7 @@ impl AudioDevice {
 
 /// Audio stream for a client
 #[derive(Clone, Copy)]
+#[allow(dead_code)]
 struct AudioStream {
     stream_id: u32,
     uid: u32,
@@ -101,6 +107,7 @@ struct AudioStream {
     buffer_pos: usize,
 }
 
+#[allow(dead_code)]
 impl AudioStream {
     fn empty() -> Self {
         AudioStream {
@@ -116,6 +123,7 @@ impl AudioStream {
 
 /// Client connection
 #[derive(Clone, Copy)]
+#[allow(dead_code)]
 struct Client {
     fd: i32,
     uid: u32,
@@ -139,6 +147,7 @@ impl Client {
 }
 
 /// Sound daemon state
+#[allow(dead_code)]
 struct SoundDaemon {
     devices: Vec<AudioDevice>,
     clients: [Client; MAX_CLIENTS],
@@ -262,7 +271,7 @@ fn scan_dev_for_audio(daemon: &mut SoundDaemon) {
 }
 
 /// Initialize Unix socket server
-fn init_server_socket(daemon: &mut SoundDaemon) -> bool {
+fn init_server_socket(_daemon: &mut SoundDaemon) -> bool {
     log("Initializing server socket");
 
     // Create /run directory if needed
@@ -292,6 +301,7 @@ fn init_server_socket(daemon: &mut SoundDaemon) -> bool {
 }
 
 /// Accept new client connection
+#[allow(dead_code)]
 fn accept_client(daemon: &mut SoundDaemon) {
     // In a full implementation, this would use accept() on the socket
     // For now, we'll open the FIFO for reading

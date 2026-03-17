@@ -253,8 +253,6 @@ pub const PF_DIRTY: u32 = 1 << 7;
 /// Distinguishes page-cache pages from anonymous mapped pages in PageDbStats.
 pub const PF_PAGECACHE: u32 = 1 << 8;
 
-/// Frame size constant
-const FRAME_SIZE: u64 = 4096;
 /// Frame shift (log2(FRAME_SIZE))
 const FRAME_SHIFT: u32 = 12;
 
@@ -282,6 +280,8 @@ pub struct PageFrame {
 
 impl PageFrame {
     /// Create a zeroed PageFrame (free state)
+    /// — GraveShift: kept for future use when we allocate PageFrame arrays inline
+    #[allow(dead_code)]
     const fn new() -> Self {
         Self {
             flags: AtomicU32::new(PF_FREE),
@@ -470,7 +470,7 @@ pub struct PageDbStats {
 // ============================================================================
 
 /// Physical memory map base for direct access
-const PHYS_MAP_BASE: u64 = 0xFFFF_8000_0000_0000;
+const _PHYS_MAP_BASE: u64 = 0xFFFF_8000_0000_0000;
 
 /// The page frame database — flat array of PageFrame entries indexed by PFN
 ///

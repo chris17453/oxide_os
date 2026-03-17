@@ -34,6 +34,7 @@ struct ProcessInfo {
     name: [u8; 64],
     name_len: usize,
     state: u8,
+    #[allow(dead_code)] // — ThreadRogue: wired when /proc/[pid]/stat CPU accounting lands
     cpu_percent: u32, // Scaled by 100 (e.g., 1550 = 15.50%)
     mem_kb: u64,
     threads: u32,
@@ -68,6 +69,7 @@ struct SystemInfo {
     free_mem_kb: u64,
     total_procs: u32,
     running_procs: u32,
+    #[allow(dead_code)] // — NeonRoot: wired when /proc/uptime is implemented
     uptime_secs: u64,
 }
 
@@ -88,13 +90,13 @@ fn sleep_ms(ms: u32) {
 /// Read a file from /proc filesystem
 /// -- WireSaint: Filesystem interface - reading the kernel's story
 fn read_proc_file(path: &str, buf: &mut [u8]) -> isize {
-    let mut path_buf = [0u8; 256];
+    let mut _path_buf = [0u8; 256];
     let path_bytes = path.as_bytes();
-    if path_bytes.len() >= path_buf.len() {
+    if path_bytes.len() >= _path_buf.len() {
         return -1;
     }
-    path_buf[..path_bytes.len()].copy_from_slice(path_bytes);
-    path_buf[path_bytes.len()] = 0;
+    _path_buf[..path_bytes.len()].copy_from_slice(path_bytes);
+    _path_buf[path_bytes.len()] = 0;
 
     let fd = libc::unistd::open(path, libc::fcntl::O_RDONLY, 0);
     if fd < 0 {
@@ -206,6 +208,8 @@ fn read_process_status(pid: u32, proc: &mut ProcessInfo) -> bool {
     if pid_val == 0 {
         pid_digits[0] = b'0';
         pid_len = 1;
+        // — Hexline: copy the '0' digit into the path (was missing — PID 0 path was broken)
+        path[path_len] = pid_digits[0];
     } else {
         while pid_val > 0 {
             pid_digits[pid_len] = b'0' + (pid_val % 10) as u8;

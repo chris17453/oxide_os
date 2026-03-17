@@ -23,6 +23,7 @@ pub struct WadLump {
 }
 
 /// WAD file data structure
+#[allow(dead_code)] // — WireSaint: fields read by find_lump/read_lump/num_lumps API surface
 pub struct WadFile {
     fd: i32,
     lumps: [WadLump; 4096], // Fixed size array for no_std
@@ -101,6 +102,7 @@ impl WadFile {
     }
 
     /// Find a lump by name
+    #[allow(dead_code)] // — WireSaint: WAD API — used once real .wad loading comes online
     pub fn find_lump(&self, name: &[u8; 8]) -> Option<&WadLump> {
         for i in 0..self.num_lumps {
             if &self.lumps[i].name == name {
@@ -112,6 +114,7 @@ impl WadFile {
 
     /// Read lump data into a buffer
     /// -- WireSaint: Efficient block reads, no nonsense
+    #[allow(dead_code)] // — WireSaint: WAD API — wired when asset pipeline lands
     pub fn read_lump(&self, lump: &WadLump, buffer: &mut [u8]) -> bool {
         if lump.size as usize > buffer.len() {
             return false;
@@ -122,6 +125,7 @@ impl WadFile {
     }
 
     /// Get number of lumps
+    #[allow(dead_code)] // — WireSaint: WAD API — diagnostic accessor
     pub fn num_lumps(&self) -> usize {
         self.num_lumps
     }

@@ -368,13 +368,13 @@ pub fn kswapd_work() -> u64 {
         return 0;
     }
 
-    let mut reclaimed = 0u64;
+    let reclaimed = 0u64;
     let page_cache = mm_pagecache::page_cache();
 
     // — IronGhost: Scan all zones. For each zone with free < wmark_high,
     // try to reclaim file-backed clean pages from the page cache.
     for zone_idx in 0..3 {
-        let zr = &ZONE_RECLAIM[zone_idx];
+        let _zr = &ZONE_RECLAIM[zone_idx];
 
         // — IronGhost: Collect dirty pages for writeback, evict clean ones
         let dirty_list = page_cache.dirty_pages_for_writeback(32);

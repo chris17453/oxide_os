@@ -2,7 +2,7 @@
 //!
 //! -- IronGhost: Form system - data entry forms
 
-use crate::{Result, WINDOW};
+use crate::Result;
 
 pub struct Form;
 pub struct Field;

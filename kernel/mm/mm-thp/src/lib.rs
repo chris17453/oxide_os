@@ -14,7 +14,7 @@
 extern crate alloc;
 
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use mm_core::{FRAME_SIZE, MAX_ORDER};
+use mm_core::FRAME_SIZE;
 use os_core::PhysAddr;
 
 /// Size of a huge page (2MB = 512 × 4KB)

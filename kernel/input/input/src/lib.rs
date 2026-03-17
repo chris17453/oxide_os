@@ -35,7 +35,6 @@ pub use layouts::{KeyboardLayout, LAYOUTS, default_layout, get_layout};
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::Mutex;
 
 /// Maximum events in queue per device
@@ -93,7 +92,7 @@ impl EventRing {
         self.count == 0
     }
 
-    fn len(&self) -> usize {
+    fn _len(&self) -> usize {
         self.count
     }
 

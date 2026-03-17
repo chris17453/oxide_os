@@ -5,7 +5,6 @@
 //! -- GraveShift: Output pipeline - render everything to screen
 
 use crate::{Error, Result, WINDOW, attrs, chtype};
-use alloc::format;
 
 /// Add a character to standard screen
 pub fn addch(ch: chtype) -> Result<()> {

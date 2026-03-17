@@ -2,15 +2,15 @@
 //!
 //! -- NeonRoot: Panel management - z-order window stacking
 
-use crate::{Result, WINDOW};
+use crate::Result;
 
 pub struct Panel {
-    win: WINDOW,
-    below: Option<*mut Panel>,
-    above: Option<*mut Panel>,
+    _win: crate::WINDOW,
+    _below: Option<*mut Panel>,
+    _above: Option<*mut Panel>,
 }
 
-pub fn new_panel(win: WINDOW) -> *mut Panel {
+pub fn new_panel(_win: crate::WINDOW) -> *mut Panel {
     core::ptr::null_mut()
 }
 

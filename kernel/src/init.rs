@@ -3122,7 +3122,7 @@ unsafe fn collect_kernel_pt_frames(pml4_phys: u64) -> Vec<u64> {
 
     // Walk ALL 512 entries — bootloader may have lower-half identity maps too
     for pml4_idx in 0..512 {
-        let pml4e = core::ptr::read_volatile(pml4_virt.add(pml4_idx));
+        let pml4e = unsafe { core::ptr::read_volatile(pml4_virt.add(pml4_idx)) };
         if pml4e & PRESENT == 0 {
             continue;
         }
@@ -3135,7 +3135,7 @@ unsafe fn collect_kernel_pt_frames(pml4_phys: u64) -> Vec<u64> {
         let pdpt_virt = (PHYS_MAP_BASE + pdpt_phys) as *const u64;
 
         for pdpt_idx in 0..512 {
-            let pdpte = core::ptr::read_volatile(pdpt_virt.add(pdpt_idx));
+            let pdpte = unsafe { core::ptr::read_volatile(pdpt_virt.add(pdpt_idx)) };
             if pdpte & PRESENT == 0 {
                 continue;
             }
@@ -3151,7 +3151,7 @@ unsafe fn collect_kernel_pt_frames(pml4_phys: u64) -> Vec<u64> {
             let pd_virt = (PHYS_MAP_BASE + pd_phys) as *const u64;
 
             for pd_idx in 0..512 {
-                let pde = core::ptr::read_volatile(pd_virt.add(pd_idx));
+                let pde = unsafe { core::ptr::read_volatile(pd_virt.add(pd_idx)) };
                 if pde & PRESENT == 0 {
                     continue;
                 }

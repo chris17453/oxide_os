@@ -18,6 +18,7 @@
 
 #![no_std]
 #![no_main]
+#![allow(static_mut_refs)]
 
 extern crate alloc;
 
@@ -29,9 +30,11 @@ use libc::time::{time, usleep};
 use libc::*;
 
 /// Maximum cache entries
+#[allow(dead_code)]
 const MAX_CACHE_ENTRIES: usize = 256;
 
 /// Default TTL for cache entries (5 minutes)
+#[allow(dead_code)]
 const DEFAULT_TTL_SECS: u64 = 300;
 
 /// Cache cleanup interval (60 seconds)
@@ -65,6 +68,7 @@ impl ResolverStats {
 }
 
 /// Cache entry
+#[allow(dead_code)]
 struct CacheEntry {
     ip: (u8, u8, u8, u8),
     expires_at: u64,
@@ -100,6 +104,7 @@ fn log(msg: &str) {
 }
 
 /// Resolve hostname with caching
+#[allow(dead_code)]
 fn resolve_cached(hostname: &str) -> Option<(u8, u8, u8, u8)> {
     let now = time(None);
 

@@ -1797,7 +1797,10 @@ impl TerminalEmulator {
         }
 
         if self.scroll_offset == 0 && self.h_scroll_offset == 0 {
-            // At live view, no horizontal offset — normal render path
+            // — GraveShift: Back at live view. Invalidate everything because we may
+            // be returning from a scrolled position where the entire viewport was
+            // different content. Without this, stale scrollback rows linger on screen.
+            self.renderer.invalidate();
             self.push_selection_to_renderer();
             let buffer = &self.primary;
             let cursor = self.handler.cursor;
@@ -1852,6 +1855,13 @@ impl TerminalEmulator {
         // would be confusing.
         let mut cursor = self.handler.cursor;
         cursor.visible = false;
+
+        // — GraveShift: Scrolling changes EVERY row — the entire viewport shifted.
+        // Without invalidating all rows, the renderer's dirty-row optimization skips
+        // everything except cursor rows, leaving stale content on 90% of the screen.
+        // This was the "scrollbar scroll shows garbage" bug. Full invalidation is
+        // correct here — we're compositing a completely new view. — GraveShift
+        self.renderer.invalidate();
 
         self.push_selection_to_renderer();
         self.renderer.render(&self.scroll_composite, &cursor);

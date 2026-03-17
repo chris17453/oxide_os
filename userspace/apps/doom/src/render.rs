@@ -19,13 +19,12 @@ const PALETTE: [u32; 256] = generate_doom_palette();
 /// Generate a simplified Doom-style palette
 const fn generate_doom_palette() -> [u32; 256] {
     let mut pal = [0u32; 256];
-    let mut i = 0;
 
     // Black
     pal[0] = 0xFF000000;
 
     // Grays (1-31)
-    i = 1;
+    let mut i = 1;
     while i < 32 {
         let intensity = (i * 8) as u32;
         pal[i] = 0xFF000000 | (intensity << 16) | (intensity << 8) | intensity;

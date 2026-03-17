@@ -306,10 +306,8 @@ fn main() -> i32 {
     }
 
     // — GraveShift: reap zombies forever, respawning gettys when they exit
-    reap_zombies_multi(&mut getty_pids, num_gettys);
-
-    // Should never reach here
-    0
+    reap_zombies_multi(&mut getty_pids, num_gettys)
+    // — GraveShift: reap_zombies_multi returns ! — we never reach past this point
 }
 
 /// Mount filesystems from /etc/fstab

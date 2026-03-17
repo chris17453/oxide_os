@@ -7,8 +7,8 @@
 //! -- GlassSignal: Refresh pipeline - diff cells, emit minimal SGR + CUP
 
 use crate::color;
-use crate::window::{WindowData, delwin, newwin};
-use crate::{Error, Result, WINDOW, attrs, chtype};
+use crate::window::{delwin, newwin};
+use crate::{Error, Result, WINDOW, attrs};
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;

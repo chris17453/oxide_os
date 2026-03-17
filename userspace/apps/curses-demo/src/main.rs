@@ -203,12 +203,12 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
     sleep_ms(500);
 
     if !has_colors() {
-        endwin();
+        let _ = endwin();
         libc::unistd::write(1, b"Terminal does not support colors!\r\n");
         return 1;
     }
 
-    start_color();
+    let _ = start_color();
     let _ = cbreak();
     let _ = noecho();
 
@@ -217,25 +217,22 @@ pub extern "C" fn main(_argc: i32, _argv: *const *const u8) -> i32 {
     sleep_ms(500);
 
     // -- ColdCipher: Color palette setup - cyberpunk theme
-    init_pair(1, COLOR_RED, COLOR_BLACK);
-    init_pair(2, COLOR_GREEN, COLOR_BLACK);
-    init_pair(3, COLOR_YELLOW, COLOR_BLACK);
-    init_pair(4, COLOR_BLUE, COLOR_BLACK);
-    init_pair(5, COLOR_MAGENTA, COLOR_BLACK);
-    init_pair(6, COLOR_CYAN, COLOR_BLACK);
-    init_pair(7, COLOR_WHITE, COLOR_BLACK);
+    let _ = init_pair(1, COLOR_RED, COLOR_BLACK);
+    let _ = init_pair(2, COLOR_GREEN, COLOR_BLACK);
+    let _ = init_pair(3, COLOR_YELLOW, COLOR_BLACK);
+    let _ = init_pair(4, COLOR_BLUE, COLOR_BLACK);
+    let _ = init_pair(5, COLOR_MAGENTA, COLOR_BLACK);
+    let _ = init_pair(6, COLOR_CYAN, COLOR_BLACK);
+    let _ = init_pair(7, COLOR_WHITE, COLOR_BLACK);
 
     // -- NeonVale: Nodelay mode (no keyboard blocking)
     unsafe {
         (*stdscr).nodelay = true;
     }
 
-    let mut max_y = 24;
-    let mut max_x = 80;
-    unsafe {
-        max_y = (*stdscr).lines;
-        max_x = (*stdscr).cols;
-    }
+    let (max_y, max_x) = unsafe {
+        ((*stdscr).lines, (*stdscr).cols)
+    };
 
     let mut balls = [
         Ball::new(10, 45, 1, 1, 1),

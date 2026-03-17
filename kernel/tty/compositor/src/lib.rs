@@ -1748,7 +1748,7 @@ pub fn tick() {
             // the reblit_cursor_area only covers the VT viewport — everything below
             // (statusbar, vkbd) is hw_fb-only and cursor trails accumulate. — NeonVale
             if let Some(ref cursor) = compositor.mouse_cursor {
-                let (cx, cy, cw, ch) = cursor.bounds();
+                let (_cx, cy, _cw, ch) = cursor.bounds();
                 let screen_h = compositor.hw_fb.height();
                 let cursor_bottom = cy + ch;
                 let sb_top = screen_h.saturating_sub(STATUSBAR_HEIGHT + vkbd::keyboard_height());

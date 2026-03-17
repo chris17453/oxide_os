@@ -217,11 +217,13 @@ struct TopConfig {
     iterations: i32,      // Number of iterations (-1 = infinite)
     show_threads: bool,   // Show individual threads
     show_idle: bool,      // Show idle processes
+    #[allow(dead_code)] // — ByteRiot: wired when filter mode gets case toggle
     case_sensitive: bool, // Case-sensitive filtering
     sort_field: SortField,
     reverse_sort: bool,
     color_mode: bool,
     highlight_running: bool,
+    #[allow(dead_code)] // — ByteRiot: wired when delta-highlighting lands
     highlight_changes: bool,
     user_filter: Option<u32>, // Filter by UID
     pid_filter: Option<u32>,  // Filter by PID
