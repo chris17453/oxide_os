@@ -390,6 +390,12 @@ pub fn initscr() -> WINDOW {
                 let ptr = core::ptr::addr_of_mut!(CURRENT_SCREEN);
                 *ptr = Some(screen);
             }
+
+            // — InputShade: Install SIGWINCH handler so getch() returns KEY_RESIZE
+            // on terminal resize. Real ncurses does this in initscr() too. Without
+            // it, apps never learn about geometry changes and render off-screen. — InputShade
+            crate::input::install_sigwinch_handler();
+
             stdscr
         }
         Err(_) => core::ptr::null_mut(),

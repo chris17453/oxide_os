@@ -88,6 +88,10 @@ pub struct Tty {
     ino: u64,
     /// Device number
     dev: u64,
+    /// — GraveShift: VT index this TTY belongs to (like Linux's vc_data.vc_num).
+    /// Needed so the TTY can update lock-free caches on the VtManager when
+    /// foreground pgid or termios flags change. -1 for PTY/non-VT TTYs. — GraveShift
+    vt_num: i32,
     /// PIDs of processes waiting to read (no data available)
     /// 🔥 NO MORE SPINLOOPS - Proper blocking like a real OS 🔥
     read_waiters: Mutex<Vec<u32>>,
@@ -98,7 +102,15 @@ pub struct Tty {
 
 impl Tty {
     /// Create a new TTY with the given driver
+    /// — GraveShift: vt_num identifies which VT this TTY belongs to.
+    /// Like Linux's tty_init_dev() setting tty->index from the driver. — GraveShift
     pub fn new(driver: Arc<dyn TtyDriver>, ino: u64, dev: u64) -> Arc<Self> {
+        Self::with_vt_num(driver, ino, dev, -1)
+    }
+
+    /// Create a TTY bound to a specific VT number.
+    /// — GraveShift: VT TTYs get their index (0-6). PTYs get -1. — GraveShift
+    pub fn with_vt_num(driver: Arc<dyn TtyDriver>, ino: u64, dev: u64, vt_num: i32) -> Arc<Self> {
         Arc::new(Tty {
             ldisc: Mutex::new(LineDiscipline::new()),
             winsize: Mutex::new(Winsize::new()),
@@ -107,9 +119,15 @@ impl Tty {
             driver,
             ino,
             dev,
+            vt_num,
             read_waiters: Mutex::new(Vec::new()),
             nonblocking: core::sync::atomic::AtomicBool::new(false),
         })
+    }
+
+    /// Get the VT number (-1 if not a VT TTY)
+    pub fn get_vt_num(&self) -> i32 {
+        self.vt_num
     }
 
     /// Process input from hardware

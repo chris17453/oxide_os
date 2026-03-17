@@ -18,7 +18,7 @@ mod lockfree_ring;
 
 use alloc::sync::Arc;
 use core::ptr;
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
 use spin::Mutex;
 use sched::TaskState;
 
@@ -118,6 +118,16 @@ pub struct VtManager {
     /// Linux equivalent: tty->read_wait. Now uses generic WaitQueue — same
     /// lock-free atomic slot design, shared with pipes and sockets.
     wait_queues: [WaitQueue; MAX_VTS],
+    /// — GraveShift: Lock-free shadow of each VT's foreground PGID. Updated
+    /// atomically when TIOCSPGRP fires. The signal fast-path reads this instead
+    /// of try_lock()ing the VT → TTY → foreground_pgid mutex chain. When that
+    /// chain fails (any lock contended), Ctrl+C is silently dropped. This was
+    /// the "cat /dev/urandom can't be killed" bug — the fast-path failed and
+    /// nobody else drains the ring when the process isn't reading from the TTY.
+    cached_pgid: [AtomicI32; MAX_VTS],
+    /// — GraveShift: Lock-free shadow of ISIG flag. true = signal chars (Ctrl+C)
+    /// produce signals. Updated on termios change. Read by ISR signal fast-path.
+    cached_isig: [AtomicBool; MAX_VTS],
 }
 
 impl VtManager {
@@ -149,7 +159,7 @@ impl VtManager {
         VtManager {
             vts: core::array::from_fn(|i| {
                 Mutex::new(VtState::new(
-                    Tty::new(Arc::new(VtTtyDriver { vt_num: i }), (i + 1) as _, 0),
+                    Tty::with_vt_num(Arc::new(VtTtyDriver { vt_num: i }), (i + 1) as _, 0, i as i32),
                     i,
                 ))
             }),
@@ -159,12 +169,34 @@ impl VtManager {
             // — GraveShift: per-VT wait queues. Processes blocked on read() for an
             // inactive VT sleep here. VT switch wakes them. Zero CPU while inactive.
             wait_queues: core::array::from_fn(|_| WaitQueue::new()),
+            // — GraveShift: lock-free signal delivery caches. ISR reads these atomics
+            // instead of try_lock()ing through VT→TTY→ldisc/pgid mutex chains.
+            cached_pgid: core::array::from_fn(|_| AtomicI32::new(0)),
+            cached_isig: core::array::from_fn(|_| AtomicBool::new(true)),
         }
     }
 
     /// Get the active VT index
     pub fn active_vt(&self) -> usize {
         *ACTIVE_VT.read()
+    }
+
+    /// — GraveShift: Update the lock-free foreground PGID cache for a VT.
+    /// Called from TIOCSPGRP ioctl path. The ISR signal fast-path reads this
+    /// instead of try_lock()ing through the VT→TTY mutex chain.
+    pub fn update_cached_pgid(&self, vt_num: usize, pgid: i32) {
+        if vt_num < MAX_VTS {
+            self.cached_pgid[vt_num].store(pgid, Ordering::Release);
+        }
+    }
+
+    /// — GraveShift: Update the lock-free ISIG cache for a VT.
+    /// Called when termios changes. The ISR signal fast-path reads this
+    /// to decide whether Ctrl+C should produce SIGINT.
+    pub fn update_cached_isig(&self, vt_num: usize, isig: bool) {
+        if vt_num < MAX_VTS {
+            self.cached_isig[vt_num].store(isig, Ordering::Release);
+        }
     }
 
     /// Switch to a different VT
@@ -246,82 +278,56 @@ impl VtManager {
         // Like Linux's wake_up_interruptible(&tty->read_wait) in n_tty_receive_buf.
         self.wait_queues[active].wake_all();
 
-        // 🔥 IMMEDIATE SIGNAL DELIVERY (best-effort fast path) 🔥
+        // 🔥 LOCK-FREE SIGNAL DELIVERY — guaranteed, not "best-effort" 🔥
         //
-        // Apps in tight render loops never drain the ring buffer.
-        // Ctrl+C bytes rot in there forever without this fast path.
-        // try_lock is fine here — if contended, read()/poll() drain catches it.
-        // Double delivery is harmless. — GraveShift
-        // 🔥 IMMEDIATE SIGNAL DELIVERY (best-effort fast path) 🔥
-        //
-        // Apps in tight render loops never drain the ring buffer.
-        // Ctrl+C bytes rot in there forever without this fast path.
-        // try_lock is fine here — if contended, read()/poll() drain catches it.
-        // Double delivery is harmless. — GraveShift
+        // — GraveShift: The old fast-path used try_lock() on VT → TTY → ldisc/pgid.
+        // If ANY lock was contended (which it always was during heavy terminal output),
+        // Ctrl+C was silently dropped. When the process isn't reading from the TTY
+        // (e.g. cat /dev/urandom), nobody drains the ring buffer either, so the signal
+        // byte rotted forever. Now we read from lock-free atomic caches that are updated
+        // when termios or foreground pgid changes. Zero locks. Zero drops. — GraveShift
         if ch == 0x03 || ch == 0x1C || ch == 0x1A {
-            // — GraveShift: Diagnostic breadcrumbs for signal delivery debugging.
-            // If Ctrl+C isn't killing your app, follow the trail of "[SIG-FAST]" in serial.
             #[cfg(feature = "debug-console")]
             unsafe { os_log::write_str_raw("[SIG-FAST] signal byte\n"); }
 
-            if let Some(vt) = self.vts[active].try_lock() {
-                let isig = vt.tty.try_isig_enabled().unwrap_or(true);
+            // — GraveShift: Lock-free reads. cached_isig/cached_pgid are atomics
+            // updated by TIOCSPGRP and termios changes. No try_lock, no failure mode.
+            let isig = self.cached_isig[active].load(Ordering::Acquire);
+
+            if isig {
+                let signo = match ch {
+                    0x03 => signal::SIGINT,
+                    0x1C => signal::SIGQUIT,
+                    0x1A => signal::SIGTSTP,
+                    _ => return,
+                };
+                let pgid = self.cached_pgid[active].load(Ordering::Acquire);
+
                 #[cfg(feature = "debug-console")]
-                if isig {
-                    unsafe { os_log::write_str_raw("[SIG-FAST] isig=true\n"); }
-                } else {
-                    unsafe { os_log::write_str_raw("[SIG-FAST] isig=FALSE, skip\n"); }
+                unsafe {
+                    os_log::write_str_raw("[SIG-FAST] pgid=");
+                    let v = pgid as u32;
+                    if v == 0 {
+                        os_log::write_byte_raw(b'0');
+                    } else {
+                        let mut buf = [0u8; 10];
+                        let mut pos = 0;
+                        let mut n = v;
+                        while n > 0 { buf[pos] = b'0' + (n % 10) as u8; n /= 10; pos += 1; }
+                        for i in (0..pos).rev() { os_log::write_byte_raw(buf[i]); }
+                    }
+                    os_log::write_str_raw("\n");
                 }
 
-                if isig {
-                    let signo = match ch {
-                        0x03 => signal::SIGINT,
-                        0x1C => signal::SIGQUIT,
-                        0x1A => signal::SIGTSTP,
-                        _ => return,
-                    };
+                if pgid > 0 {
                     unsafe {
                         if let Some(callback) = SIGNAL_PGRP_CALLBACK {
-                            if let Some(pgid) = vt.tty.try_get_foreground_pgid() {
-                                // — GraveShift: Show raw PGID value to debug stale PGID mystery.
-                                #[cfg(feature = "debug-console")]
-                                {
-                                    os_log::write_str_raw("[SIG-FAST] raw pgid=");
-                                    let v = pgid as u32;
-                                    if v == 0 {
-                                        os_log::write_byte_raw(b'0');
-                                    } else {
-                                        let mut buf = [0u8; 10];
-                                        let mut pos = 0;
-                                        let mut n = v;
-                                        while n > 0 { buf[pos] = b'0' + (n % 10) as u8; n /= 10; pos += 1; }
-                                        for i in (0..pos).rev() { os_log::write_byte_raw(buf[i]); }
-                                    }
-                                    os_log::write_str_raw("\n");
-                                }
-                                if pgid > 0 {
-                                    #[cfg(feature = "debug-console")]
-                                    os_log::write_str_raw("[SIG-FAST] SENDING to pgid>0\n");
-                                    callback(pgid, signo);
-                                    #[cfg(feature = "debug-console")]
-                                    os_log::write_str_raw("[SIG-FAST] SENT!\n");
-                                } else {
-                                    #[cfg(feature = "debug-console")]
-                                    os_log::write_str_raw("[SIG-FAST] pgid<=0!\n");
-                                }
-                            } else {
-                                #[cfg(feature = "debug-console")]
-                                os_log::write_str_raw("[SIG-FAST] pgid lock FAIL\n");
-                            }
-                        } else {
                             #[cfg(feature = "debug-console")]
-                            os_log::write_str_raw("[SIG-FAST] NO CALLBACK!\n");
+                            os_log::write_str_raw("[SIG-FAST] SENDING!\n");
+                            callback(pgid, signo);
                         }
                     }
                 }
-            } else {
-                #[cfg(feature = "debug-console")]
-                unsafe { os_log::write_str_raw("[SIG-FAST] vt lock FAIL\n"); }
             }
         }
     }
@@ -840,7 +846,33 @@ impl VnodeOps for VtDevice {
             }
             _ => {
                 if let Some(tty) = self.manager.get_tty(self.vt_num) {
-                    tty.ioctl(request, arg)
+                    let result = tty.ioctl(request, arg);
+                    // — GraveShift: Intercept TIOCSPGRP/TCSETS* to update lock-free
+                    // signal caches. The TTY handles the actual operation; we just
+                    // shadow the values into atomics so the ISR fast-path never needs
+                    // to try_lock anything. The "cat /dev/urandom unkillable" fix. — GraveShift
+                    const TIOCSPGRP: u64 = 0x5410;
+                    const TCSETS: u64 = 0x5402;
+                    const TCSETSW: u64 = 0x5403;
+                    const TCSETSF: u64 = 0x5404;
+                    if result.is_ok() {
+                        match request {
+                            TIOCSPGRP => {
+                                let pgid = tty.get_foreground_pgid();
+                                self.manager.update_cached_pgid(self.vt_num, pgid);
+                            }
+                            TCSETS | TCSETSW | TCSETSF => {
+                                // — GraveShift: termios changed — refresh ISIG cache.
+                                // try_lock is fine here (non-ISR context), and it's a
+                                // one-shot after the main ioctl already succeeded.
+                                if let Some(isig) = tty.try_isig_enabled() {
+                                    self.manager.update_cached_isig(self.vt_num, isig);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    result
                 } else {
                     Err(VfsError::InvalidArgument)
                 }

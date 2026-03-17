@@ -1636,8 +1636,16 @@ impl TerminalEmulator {
     /// — GraveShift: Pushes selection state to renderer before paint, so the
     /// inverted highlight is visible. Clears it after to avoid stale ghost rects.
     pub fn render(&mut self) {
-        // Reset scroll offset when content changes
-        self.scroll_offset = 0;
+        // — GraveShift: if user has scrolled back via scrollbar or wheel, maintain
+        // their scroll position. New output still arrives in the primary buffer but
+        // we keep showing the scrollback view until they scroll back to live (offset=0).
+        // The old code reset scroll_offset=0 on every render(), which meant scrollbar
+        // drag was fighting terminal::tick() — drag sets offset, tick resets it,
+        // display only updated on drag stop when output paused. Classic race. — SableWire
+        if self.scroll_offset > 0 || self.h_scroll_offset > 0 {
+            self.render_with_scrollback();
+            return;
+        }
 
         // Pass selection to renderer BEFORE borrowing buffer
         self.push_selection_to_renderer();
@@ -2539,6 +2547,17 @@ pub fn toggle_cursor_blink() {
         if let Some(ref mut terminal) = *guard {
             terminal.toggle_cursor_blink();
         }
+        drop(guard);
+        // — GraveShift: the cursor blink rendered to the VT backing buffer, but
+        // the compositor won't know unless we mark the VT dirty. Without this,
+        // the backing buffer toggles forever while hw_fb shows a frozen cursor.
+        // Same bug as Linux fbcon pre-2.6 — blink_cursor didn't schedule a
+        // flip. Three hours of staring at a cursor that refused to blink. — GraveShift
+        unsafe {
+            if let Some(mark_fn) = MARK_DIRTY_CALLBACK {
+                mark_fn(vt);
+            }
+        }
     } else {
         #[cfg(feature = "debug-lock")]
         lock_contention_warning("VT_TERMINALS (toggle_cursor_blink)");
@@ -2591,6 +2610,21 @@ pub fn tick() {
     if let Some(mut guard) = VT_TERMINALS[vt].try_lock() {
         if let Some(ref mut terminal) = *guard {
             terminal.tick();
+            // — GraveShift: ALWAYS mark VT dirty after tick(). The old code only
+            // marked dirty when needs_render was true (CSI bulk ops), but tick()
+            // also renders cursor blink — writing directly to the backing FB via
+            // render_cursor(). Without the dirty flag, the compositor never blits
+            // the cursor change to hw_fb. This was the "cursor blink only shows
+            // on keypress" and "top doesn't refresh" bug. Cursor blink is cheap
+            // (~128 pixels), and the compositor's VT_DIRTY check is the gate —
+            // if the backing FB didn't actually change, the blit is still fast
+            // (same bytes copied). — GraveShift
+            drop(guard);
+            unsafe {
+                if let Some(mark_fn) = MARK_DIRTY_CALLBACK {
+                    mark_fn(vt);
+                }
+            }
         }
     } else {
         #[cfg(feature = "debug-lock")]
@@ -2966,6 +3000,16 @@ pub fn scroll_to_line(vt: usize, line: usize) {
         if let Some(ref mut terminal) = *guard {
             terminal.scroll_to_line(line);
         }
+        drop(guard);
+        // — NeonVale: mark VT dirty so the compositor blits the new scroll
+        // position to hw_fb. render_with_scrollback() writes to the backing
+        // buffer but without this flag, nobody knows it changed. Same class
+        // of bug as the cursor-blink-not-showing issue. — NeonVale
+        unsafe {
+            if let Some(mark_fn) = MARK_DIRTY_CALLBACK {
+                mark_fn(vt);
+            }
+        }
     }
 }
 
@@ -2975,6 +3019,14 @@ pub fn scroll_to_col(vt: usize, col: usize) {
     if let Some(mut guard) = VT_TERMINALS[vt].try_lock() {
         if let Some(ref mut terminal) = *guard {
             terminal.scroll_to_col(col);
+        }
+        drop(guard);
+        // — NeonVale: same dirty marking as scroll_to_line — the backing buffer
+        // changed, compositor needs to know. — NeonVale
+        unsafe {
+            if let Some(mark_fn) = MARK_DIRTY_CALLBACK {
+                mark_fn(vt);
+            }
         }
     }
 }

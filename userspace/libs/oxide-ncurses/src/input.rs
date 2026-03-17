@@ -12,7 +12,32 @@ use crate::output::waddch;
 use crate::screen;
 use crate::{Error, Result, WINDOW};
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, Ordering};
 use vte::{Action, Parser};
+
+/// — InputShade: SIGWINCH received flag. Set by the signal handler installed
+/// in initscr(), consumed by wgetch() which returns KEY_RESIZE. Atomic because
+/// the signal handler runs asynchronously in user context. — InputShade
+static SIGWINCH_RECEIVED: AtomicBool = AtomicBool::new(false);
+
+/// — InputShade: SIGWINCH handler — just sets the flag. Signal handlers must
+/// be minimal: no heap alloc, no locks, no complex logic. The real work happens
+/// in wgetch() when it checks the flag and returns KEY_RESIZE. — InputShade
+fn sigwinch_handler(_sig: i32) {
+    SIGWINCH_RECEIVED.store(true, Ordering::Release);
+}
+
+/// Install the SIGWINCH handler. Called from initscr().
+/// — InputShade: Uses libc::signal() which wraps sigaction underneath.
+/// SA_RESTART ensures blocked reads aren't interrupted by the signal.
+pub fn install_sigwinch_handler() {
+    libc::signal::signal(libc::signal::SIGWINCH, sigwinch_handler as *const () as u64);
+}
+
+/// Check and clear the SIGWINCH flag. Called from wgetch().
+pub fn take_sigwinch() -> bool {
+    SIGWINCH_RECEIVED.swap(false, Ordering::AcqRel)
+}
 
 /// Input state for escape sequence decoding
 /// -- InputShade: Stateful decoder - VTE parser persists across calls
@@ -59,6 +84,25 @@ pub fn wgetch(win: WINDOW) -> i32 {
     }
 
     let state = input_state();
+
+    // — InputShade: Check SIGWINCH before anything else. If the terminal resized,
+    // return KEY_RESIZE so the app can re-query dimensions and redraw. This is
+    // exactly how real ncurses works — getch() returns KEY_RESIZE after SIGWINCH,
+    // and the app calls getmaxyx() + wresize() + refresh(). — InputShade
+    if take_sigwinch() {
+        // — InputShade: Update stdscr dimensions from the kernel's winsize.
+        // Without this, LINES/COLS stay stale and the app renders to the old grid.
+        let mut ws = libc::termios::Winsize::default();
+        if libc::termios::tcgetwinsize(0, &mut ws) == 0 && ws.ws_row > 0 && ws.ws_col > 0 {
+            unsafe {
+                if !win.is_null() {
+                    (*win).lines = ws.ws_row as i32;
+                    (*win).cols = ws.ws_col as i32;
+                }
+            }
+        }
+        return keys::KEY_RESIZE;
+    }
 
     // Check pushback buffer first (ungetch LIFO)
     if let Some(ch) = state.pushback.pop() {

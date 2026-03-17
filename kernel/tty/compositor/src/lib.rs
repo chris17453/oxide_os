@@ -508,13 +508,13 @@ impl Compositor {
         let viewports = self.cached_viewports;
         let tile_count = self.layout.tile_count();
 
-        // — NeonVale: Erase cursor before VT blit. The save_buffer may contain
-        // stale content, but the VT blit immediately overwrites it in the viewport
-        // area. Scrollbar/border draws cover any remaining stale pixels in chrome.
-        // The cursor is redrawn LAST in tick() via cursor.redraw() on fresh content.
-        if let Some(ref mut cursor) = self.mouse_cursor {
-            cursor.erase(&*self.hw_fb);
-        }
+        // — NeonVale: NO cursor.erase() here. The old approach restored stale
+        // save_buffer pixels to the MMIO framebuffer — on UEFI GOP that's immediately
+        // visible, causing a brief flash of old content ("dragging around a block of
+        // irrelevant image"). The VT blit below overwrites the cursor area with fresh
+        // content anyway, and cursor.redraw() in tick() draws on top of that.
+        // The save_buffer was a 1998-era XFree86 pattern that doesn't work on
+        // write-through MMIO framebuffers. Let the VT blit handle erasure. — SableWire
 
         // — InputShade: clip VT blit height to avoid overwriting status bar + OSK.
         // The status bar is always visible; OSK renders above it when shown.
@@ -657,13 +657,17 @@ impl Compositor {
 
             if src_ptr.is_null() || dst_ptr.is_null() { return; }
 
-            // — NeonVale: clip cursor bounds to VT viewport and screen
-            let screen_w = self.hw_fb.width();
-            let screen_h = self.hw_fb.height();
+            // — NeonVale: clip cursor bounds to VT viewport — NOT screen dims.
+            // The old code clipped to screen_w/screen_h which read past the VT
+            // buffer's row width into next-row data, painting garbage at the
+            // scrollbar/border region. Clip to the actual VT buffer dimensions
+            // so we only reblit pixels that exist in the backing buffer. — SableWire
+            let vp_w = src_buf.width();
+            let vp_h = src_buf.height();
             let x_start = cx.max(vp_x);
             let y_start = cy.max(vp_y);
-            let x_end = (cx + cw).min(screen_w);
-            let y_end = (cy + ch).min(screen_h);
+            let x_end = (cx + cw).min(vp_x + vp_w);
+            let y_end = (cy + ch).min(vp_y + vp_h);
 
             if x_start >= x_end || y_start >= y_end { return; }
 
@@ -1568,6 +1572,14 @@ pub fn try_flush_pending_layout() {
                 // — EchoFrame: geometry already recomputed in tick(). Walk visible VTs
                 // and try to resize their terminal emulators. try_resize_vt uses try_lock
                 // on VT_TERMINALS — if contended, we'll retry next tick.
+                //
+                // — GraveShift: DO NOT call resize_vt_buffer here — we're in the timer
+                // ISR (terminal_tick). BackingFramebuffer::new() allocates physical frames
+                // from the buddy allocator, which uses a Mutex. Allocating from ISR context
+                // corrupts the buddy free lists and causes cascading page faults. The
+                // backing buffer resize is deferred to the next non-ISR focus_vt() call
+                // or explicit layout change. The compositor's blit_vt_to_hw clips to
+                // min(viewport, src) dimensions, so oversized buffers are harmless. — GraveShift
                 let tile_count = compositor.layout.tile_count();
                 // — GlassSignal: use cached viewports instead of recomputing
                 let viewports = compositor.cached_viewports;
@@ -1629,7 +1641,7 @@ pub fn tick() {
 
     // — SableWire: content dirty = needs full composite (VT blit, borders, scrollbars).
     // Cursor-only, vkbd-only, or scrollbar-hover-only changes skip the expensive path.
-    let content_dirty = full_r || vt_dirty;
+    let _content_dirty = full_r || vt_dirty;
 
     if let Some(mut guard) = COMPOSITOR.try_lock() {
         if let Some(ref mut compositor) = *guard {
@@ -1682,13 +1694,19 @@ pub fn tick() {
                 );
             }
 
-            // — NeonVale: ALWAYS composite. The dirty rect tracks what actually changed
-            // and the GPU flush is regional — so skipping the VT blit saves nothing
-            // meaningful. But skipping it BREAKS the mouse cursor because save_buffer
-            // goes stale between frames (VT content changes, boot text overwrites, etc.)
-            // and cursor.erase() restores the stale pixels → massive trails.
-            // Linux XFree86 had the same bug in 1998. The fix is the same: always
-            // composite, let the damage tracker handle efficiency. — NeonVale
+            // — NeonVale: NO save_buffer erase here. The old save/restore pattern
+            // was fundamentally broken: save_buffer captures hw_fb pixels at cursor
+            // position, but VT content changes between ticks. When erase() pastes
+            // stale saved pixels, the cursor carries around a ghost rectangle of
+            // whatever was at (0,0) when it was first drawn. Instead, we reblit
+            // the cursor area from the VT backing buffer AFTER compositing — always
+            // fresh, never stale. The compositor is the ONLY thing that writes to
+            // hw_fb, so we control the entire pipeline. — NeonVale
+            if let Some(ref cursor) = compositor.mouse_cursor {
+                let (cx, cy, cw, ch) = cursor.bounds();
+                compositor.dirty_rect.extend(cx, cy, cw, ch);
+            }
+
             compositor.composite(full_r || force_composite, sb_dirty);
             // — GlassSignal: status bar renders below VT content, above OSK.
             // Always redrawn on full_r, VT switch, OSK toggle, or statusbar_d flag.
@@ -1717,7 +1735,40 @@ pub fn tick() {
                     vkbd::redraw_hover_keys(&*compositor.hw_fb);
                 }
             }
-            // — SoftGlyph: mouse cursor last — the final layer before GPU flush
+            // — NeonVale: mouse cursor last — the final layer before GPU flush.
+            // Step 1: reblit the cursor's bounding box from authoritative sources.
+            // VT backing buffer covers the content area. For the vkbd/statusbar
+            // zone (drawn directly on hw_fb, no backing buffer), we must re-draw
+            // those overlays or the cursor leaves trails in Chrome territory.
+            // Step 2: stamp the cursor sprite on top of the fresh content. — NeonVale
+            compositor.reblit_cursor_area();
+
+            // — NeonVale: if cursor bounds overlap vkbd or statusbar, redraw those
+            // overlays to erase the old cursor sprite from their zone. Without this,
+            // the reblit_cursor_area only covers the VT viewport — everything below
+            // (statusbar, vkbd) is hw_fb-only and cursor trails accumulate. — NeonVale
+            if let Some(ref cursor) = compositor.mouse_cursor {
+                let (cx, cy, cw, ch) = cursor.bounds();
+                let screen_h = compositor.hw_fb.height();
+                let cursor_bottom = cy + ch;
+                let sb_top = screen_h.saturating_sub(STATUSBAR_HEIGHT + vkbd::keyboard_height());
+
+                if cursor_bottom > sb_top && cy < screen_h {
+                    // — NeonVale: cursor overlaps the chrome zone. Repaint statusbar
+                    // and vkbd overlay so the old cursor sprite is erased. These are
+                    // fast fills — ~0.1ms for the statusbar, ~0.3ms for vkbd. — NeonVale
+                    compositor.draw_statusbar();
+                    if vkbd::is_visible() {
+                        vkbd::draw_overlay(&*compositor.hw_fb);
+                        let vkbd_h = vkbd::keyboard_height();
+                        let kb_top = screen_h.saturating_sub(STATUSBAR_HEIGHT + vkbd_h);
+                        compositor.dirty_rect.extend(0, kb_top, compositor.hw_fb.width(), vkbd_h + STATUSBAR_HEIGHT);
+                    } else {
+                        compositor.dirty_rect.extend(0, sb_top, compositor.hw_fb.width(), STATUSBAR_HEIGHT);
+                    }
+                }
+            }
+
             if let Some(ref mut cursor) = compositor.mouse_cursor {
                 // — NeonVale: track cursor redraw area for regional flush
                 let (cx, cy, cw, ch) = cursor.bounds();
@@ -2076,20 +2127,18 @@ pub fn mouse_move(dx: i32, dy: i32) {
     if let Some(mut guard) = COMPOSITOR.try_lock() {
         if let Some(ref mut compositor) = *guard {
             if let Some(ref mut cursor) = compositor.mouse_cursor {
-                // — NeonVale: Only update position — do NOT erase/redraw from ISR.
-                // The erase writes stale save_buffer pixels (boot text, old VT content)
-                // causing trails. tick() does a full composite + cursor.redraw() which
-                // saves fresh pixels from the just-blitted VT content. This is the
-                // standard deferred rendering model — ISR sets state, tick() paints.
+                // — NeonVale: Only update position — tick() handles rendering.
+                // VT_DIRTY ensures composite() reblits VT content over the old
+                // cursor position naturally. No save_buffer erase needed. — SableWire
                 let new_x = (cursor.x + dx).clamp(0, cursor.screen_w - 1);
                 let new_y = (cursor.y + dy).clamp(0, cursor.screen_h - 1);
                 cursor.x = new_x;
                 cursor.y = new_y;
             }
             CURSOR_DIRTY.store(true, Ordering::Release);
-            // — NeonVale: Mark active VT dirty so composite() reblits VT content
-            // over the cursor's old position. Without this, cursor.erase() writes
-            // stale save_buffer pixels and no VT blit overwrites them → trails.
+            // — NeonVale: VT blit covers old cursor position. Yes it's a full viewport
+            // reblit but it's the simplest correct approach — no stale save_buffer flash,
+            // no per-pixel reblit math, no chrome overlay repainting. — SableWire
             let active = compositor.layout.focused_vt();
             VT_DIRTY[active].store(true, Ordering::Release);
         }
@@ -2108,7 +2157,7 @@ pub fn mouse_set_position(x: i32, y: i32) {
                 cursor.x = x.clamp(0, cursor.screen_w - 1);
                 cursor.y = y.clamp(0, cursor.screen_h - 1);
                 CURSOR_DIRTY.store(true, Ordering::Release);
-                // — NeonVale: Force VT reblit to cover cursor erase area
+                // — NeonVale: VT blit covers old cursor position. — SableWire
                 let active = compositor.layout.focused_vt();
                 VT_DIRTY[active].store(true, Ordering::Release);
             }

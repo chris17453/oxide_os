@@ -255,9 +255,16 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
         return ready_count;
     }
 
-    // — GraveShift: Main wait loop. Block until event, timeout, or signal.
-    // Unlike the old yield+HLT loop, we're properly dequeued from CFS.
-    // Zero CPU while waiting. The fd driver's wake_all() re-enqueues us.
+    // — GraveShift: Main wait loop. Strategy depends on timeout:
+    // - Infinite timeout (-1): block_current (dequeue from CFS) — zero CPU
+    //   until WaitQueue wake. This is the Linux poll_schedule_timeout(NULL) path.
+    // - Finite timeout: yield_current (stay in CFS) — timer ticks naturally
+    //   re-schedule us at 100Hz to check the deadline. block_current with a
+    //   finite timeout is BROKEN: nobody wakes a dequeued INTERRUPTIBLE task
+    //   when the deadline expires, so the timeout never fires. This was the
+    //   "top only refreshes on keypress" bug. — GraveShift
+    let use_full_block = timeout_ms < 0; // infinite timeout = safe to fully block
+
     loop {
         // Check for signals before blocking
         if with_current_meta(|meta| meta.has_pending_signals()).unwrap_or(false) {
@@ -276,12 +283,17 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
             return 0;
         }
 
-        // — GraveShift: Block properly. TASK_INTERRUPTIBLE means we wake on:
-        // 1. WaitQueue::wake_all() from an fd driver (data arrived)
-        // 2. Signal delivery (SIGINT, etc.)
-        // 3. Timer tick (we re-check timeout)
-        // The scheduler dequeues us from CFS — zero CPU burn.
-        sched::block_current(sched_traits::TaskState::TASK_INTERRUPTIBLE);
+        // — GraveShift: Wait for next event or timer tick.
+        // Infinite: dequeue from CFS, HLT — woken only by WaitQueue wake_all.
+        // Finite: stay in CFS, yield + HLT — timer tick re-schedules us at
+        // 100Hz to check deadline. ~10μs scheduler overhead per tick, but the
+        // timeout actually works. Linux uses hrtimer callbacks for this, but
+        // yield-at-100Hz is perfectly fine for decisecond-granularity poll. — GraveShift
+        if use_full_block {
+            sched::block_current(sched_traits::TaskState::TASK_INTERRUPTIBLE);
+        } else {
+            sched::yield_current();
+        }
         os_core::allow_kernel_preempt();
         os_core::wait_for_interrupt();
         os_core::disallow_kernel_preempt();
@@ -294,10 +306,12 @@ pub fn sys_poll(fds_ptr: usize, nfds: usize, timeout_ms: i32) -> i64 {
             return ready_count;
         }
 
-        // — GraveShift: Not ready yet. wake_all() already cleared our slots
-        // from the WaitQueues — we MUST re-register before blocking again.
-        // Without this, block_current dequeues us from CFS and nobody will
-        // ever wake us. This was the "top hangs on VT6" bug.
+        // — GraveShift: Not ready yet. Re-register on WaitQueues before next wait.
+        // For infinite timeout: wake_all() already cleared our slots — we MUST
+        // re-register or nobody will ever wake us again.
+        // For finite timeout: re-register is still correct — if data arrives
+        // between now and the next yield, the WaitQueue wake sets us runnable
+        // immediately instead of waiting for the next timer tick. — GraveShift
         poll_table.unregister_all(); // clean slate
         for pollfd in fds.iter() {
             if pollfd.fd >= 0 {
@@ -533,6 +547,10 @@ pub fn sys_select(
         return ready_count;
     }
 
+    // — GraveShift: Same timeout strategy as sys_poll — infinite timeout uses
+    // block_current (zero CPU), finite uses yield_current (timer-driven wakeup).
+    let use_full_block = timeout_ms < 0;
+
     // Main wait loop
     loop {
         if with_current_meta(|meta| meta.has_pending_signals()).unwrap_or(false) {
@@ -548,7 +566,11 @@ pub fn sys_select(
             return 0;
         }
 
-        sched::block_current(sched_traits::TaskState::TASK_INTERRUPTIBLE);
+        if use_full_block {
+            sched::block_current(sched_traits::TaskState::TASK_INTERRUPTIBLE);
+        } else {
+            sched::yield_current();
+        }
         os_core::allow_kernel_preempt();
         os_core::wait_for_interrupt();
         os_core::disallow_kernel_preempt();
@@ -770,6 +792,9 @@ pub fn sys_pselect6(
         return ready_count;
     }
 
+    // — GraveShift: Same timeout strategy — infinite blocks fully, finite yields.
+    let use_full_block_ps = timeout_ms < 0;
+
     loop {
         if with_current_meta(|meta| meta.has_pending_signals()).unwrap_or(false) {
             poll_table.unregister_all();
@@ -790,7 +815,11 @@ pub fn sys_pselect6(
             return 0;
         }
 
-        sched::block_current(sched_traits::TaskState::TASK_INTERRUPTIBLE);
+        if use_full_block_ps {
+            sched::block_current(sched_traits::TaskState::TASK_INTERRUPTIBLE);
+        } else {
+            sched::yield_current();
+        }
         os_core::allow_kernel_preempt();
         os_core::wait_for_interrupt();
         os_core::disallow_kernel_preempt();

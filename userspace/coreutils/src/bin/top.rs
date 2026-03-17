@@ -15,11 +15,11 @@
 extern crate alloc;
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 use alloc::vec::Vec;
 use libc::*;
 use oxide_ncurses::{
-    WINDOW, attributes, attrs, color, colors, input, keys, output, screen, window,
+    WINDOW, attributes, attrs, color, colors, input, keys, output, screen,
 };
 
 /// Process information structure
@@ -32,8 +32,9 @@ struct ProcessInfo {
     name_len: usize,
     user_time: u64,
     system_time: u64,
-    vsize: u64, // Virtual memory size in bytes
-    rss: u64,   // Resident set size in pages
+    vsize: u64,   // Virtual memory size in bytes
+    rss: u64,     // Resident set size in pages
+    shared: u64,  // — NeonVale: Shared memory in pages from /proc/[pid]/statm field 3
     cpu_percent: f32,
     mem_percent: f32,
     priority: i32,
@@ -52,6 +53,7 @@ impl ProcessInfo {
             system_time: 0,
             vsize: 0,
             rss: 0,
+            shared: 0,
             cpu_percent: 0.0,
             mem_percent: 0.0,
             priority: 0,
@@ -126,6 +128,88 @@ impl SystemStats {
     }
 }
 
+/// — NeonVale: Scroll state for navigating the process list like a proper
+/// terminal UI instead of staring helplessly at whatever fits on screen.
+struct ViewState {
+    scroll_offset: usize,  // First visible process row (0-indexed into sorted list)
+    selected_row: usize,   // Currently highlighted process index in sorted list
+    num_visible: usize,    // Processes visible on screen (computed from terminal height)
+    total_procs: usize,    // Total processes after filtering
+}
+
+impl ViewState {
+    fn new() -> Self {
+        Self {
+            scroll_offset: 0,
+            selected_row: 0,
+            num_visible: 0,
+            total_procs: 0,
+        }
+    }
+
+    /// — NeonVale: Clamp selection and scroll to valid range after process
+    /// list changes. Without this, deleted processes leave ghost selections.
+    fn clamp(&mut self) {
+        if self.total_procs == 0 {
+            self.selected_row = 0;
+            self.scroll_offset = 0;
+            return;
+        }
+        if self.selected_row >= self.total_procs {
+            self.selected_row = self.total_procs - 1;
+        }
+        if self.num_visible > 0 {
+            let max_offset = self.total_procs.saturating_sub(self.num_visible);
+            if self.scroll_offset > max_offset {
+                self.scroll_offset = max_offset;
+            }
+        }
+        // — NeonVale: Auto-scroll to keep selection visible
+        if self.selected_row < self.scroll_offset {
+            self.scroll_offset = self.selected_row;
+        }
+        if self.num_visible > 0 && self.selected_row >= self.scroll_offset + self.num_visible {
+            self.scroll_offset = self.selected_row + 1 - self.num_visible;
+        }
+    }
+
+    fn move_up(&mut self) {
+        self.selected_row = self.selected_row.saturating_sub(1);
+        self.clamp();
+    }
+
+    fn move_down(&mut self) {
+        self.selected_row = self.selected_row.saturating_add(1);
+        self.clamp();
+    }
+
+    fn page_up(&mut self) {
+        let page = self.num_visible.max(1);
+        self.selected_row = self.selected_row.saturating_sub(page);
+        self.scroll_offset = self.scroll_offset.saturating_sub(page);
+        self.clamp();
+    }
+
+    fn page_down(&mut self) {
+        let page = self.num_visible.max(1);
+        self.selected_row = self.selected_row.saturating_add(page);
+        self.scroll_offset = self.scroll_offset.saturating_add(page);
+        self.clamp();
+    }
+
+    fn go_home(&mut self) {
+        self.selected_row = 0;
+        self.scroll_offset = 0;
+    }
+
+    fn go_end(&mut self) {
+        if self.total_procs > 0 {
+            self.selected_row = self.total_procs - 1;
+        }
+        self.clamp();
+    }
+}
+
 /// Configuration options
 struct TopConfig {
     delay: u32,           // Update delay in deciseconds (tenths of seconds)
@@ -147,7 +231,7 @@ struct TopConfig {
 impl TopConfig {
     fn new() -> Self {
         Self {
-            delay: 30, // 3.0 seconds default
+            delay: 1, // — ByteRiot: 0.1s = 100ms = 10 FPS. Smooth like htop, not like watching paint dry.
             batch_mode: false,
             iterations: -1,
             show_threads: false,
@@ -166,14 +250,65 @@ impl TopConfig {
 }
 
 /// Sort field enumeration
+/// — ByteRiot: Ordered to match column display order for < > cycling
 #[derive(Clone, Copy, PartialEq)]
 enum SortField {
     Pid,
+    Ppid,
+    User,
     CpuPercent,
     MemPercent,
     Time,
     Command,
-    User,
+}
+
+impl SortField {
+    /// — ByteRiot: Column order for < > cycling — matches header left-to-right
+    const CYCLE_ORDER: &[SortField] = &[
+        SortField::Pid,
+        SortField::Ppid,
+        SortField::User,
+        SortField::CpuPercent,
+        SortField::MemPercent,
+        SortField::Time,
+        SortField::Command,
+    ];
+
+    fn cycle_left(self) -> SortField {
+        let idx = Self::CYCLE_ORDER
+            .iter()
+            .position(|&f| f == self)
+            .unwrap_or(0);
+        if idx == 0 {
+            Self::CYCLE_ORDER[Self::CYCLE_ORDER.len() - 1]
+        } else {
+            Self::CYCLE_ORDER[idx - 1]
+        }
+    }
+
+    fn cycle_right(self) -> SortField {
+        let idx = Self::CYCLE_ORDER
+            .iter()
+            .position(|&f| f == self)
+            .unwrap_or(0);
+        if idx >= Self::CYCLE_ORDER.len() - 1 {
+            Self::CYCLE_ORDER[0]
+        } else {
+            Self::CYCLE_ORDER[idx + 1]
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        match self {
+            SortField::Pid => "PID",
+            SortField::Ppid => "PPID",
+            SortField::User => "USER",
+            SortField::CpuPercent => "%CPU",
+            SortField::MemPercent => "%MEM",
+            SortField::Time => "TIME+",
+            SortField::Command => "COMMAND",
+        }
+    }
 }
 
 /// Parse command line arguments
@@ -324,20 +459,23 @@ fn print_help() {
     printlns("  -1, --single-cpu        Show individual CPU stats");
     printlns("");
     printlns("Interactive commands:");
-    printlns("  h or ?  Show help");
-    printlns("  q       Quit");
-    printlns("  Space   Force update");
-    printlns("  k       Kill a process");
-    printlns("  r       Renice a process");
-    printlns("  M       Sort by memory usage");
-    printlns("  P       Sort by CPU usage");
-    printlns("  T       Sort by time");
-    printlns("  N       Sort by PID");
-    printlns("  R       Reverse sort order");
-    printlns("  i       Toggle idle processes");
-    printlns("  u       Filter by user");
-    printlns("  n or #  Set number of lines");
-    printlns("  d or s  Set update delay");
+    printlns("  h or ?    Show help");
+    printlns("  q or ESC  Quit");
+    printlns("  Space     Force update");
+    printlns("  Up/k      Move selection up");
+    printlns("  Down/j    Move selection down");
+    printlns("  PgUp/PgDn Page up/down");
+    printlns("  Home/g    Go to first process");
+    printlns("  End/G     Go to last process");
+    printlns("  M         Sort by memory usage");
+    printlns("  P         Sort by CPU usage");
+    printlns("  T         Sort by time");
+    printlns("  N         Sort by PID");
+    printlns("  R         Reverse sort order");
+    printlns("  < or ,    Sort by previous column");
+    printlns("  > or .    Sort by next column");
+    printlns("  i         Toggle idle processes");
+    printlns("  d or s    Set update delay");
 }
 
 /// Get current time in milliseconds
@@ -716,6 +854,48 @@ fn read_proc_stat(pid: u32, info: &mut ProcessInfo) -> bool {
     true
 }
 
+/// — NeonVale: Read /proc/[pid]/statm for shared memory (field 3).
+/// Format: size resident shared text lib data dt (all in pages).
+/// Linux top shows SHR from field index 2 (0-indexed).
+fn read_proc_statm(pid: u32, info: &mut ProcessInfo) {
+    let mut path = [0u8; 64];
+    let path_len = build_proc_path(pid, b"statm", &mut path);
+
+    let path_str = match core::str::from_utf8(&path[..path_len]) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+
+    let mut buf = [0u8; 128];
+    let n = read_file(path_str, &mut buf);
+    if n <= 0 {
+        return;
+    }
+
+    // Parse space-separated fields: size resident shared ...
+    let data = &buf[..n as usize];
+    let mut field_idx = 0;
+    let mut start = 0;
+    let mut in_field = false;
+
+    for i in 0..data.len() {
+        if data[i] != b' ' && data[i] != b'\n' && !in_field {
+            start = i;
+            in_field = true;
+        } else if (data[i] == b' ' || data[i] == b'\n') && in_field {
+            if field_idx == 2 {
+                // — NeonVale: Field 2 = shared pages. Got it.
+                if let Some(val) = parse_num(&data[start..i]) {
+                    info.shared = val as u64;
+                }
+                return;
+            }
+            field_idx += 1;
+            in_field = false;
+        }
+    }
+}
+
 /// Read all processes
 fn read_processes(config: &TopConfig) -> Vec<ProcessInfo> {
     let mut processes = Vec::new();
@@ -750,6 +930,8 @@ fn read_processes(config: &TopConfig) -> Vec<ProcessInfo> {
                     continue;
                 }
 
+                // — NeonVale: Grab shared memory from statm while we're here
+                read_proc_statm(pid, &mut info);
                 processes.push(info);
             }
         }
@@ -805,6 +987,8 @@ fn sort_processes(processes: &mut [ProcessInfo], field: SortField, reverse: bool
     processes.sort_by(|a, b| {
         let cmp = match field {
             SortField::Pid => a.pid.cmp(&b.pid),
+            SortField::Ppid => a.ppid.cmp(&b.ppid),
+            SortField::User => a.pid.cmp(&b.pid), // — ByteRiot: All root for now, sort by PID as tiebreaker
             SortField::CpuPercent => b
                 .cpu_percent
                 .partial_cmp(&a.cpu_percent)
@@ -819,7 +1003,6 @@ fn sort_processes(processes: &mut [ProcessInfo], field: SortField, reverse: bool
                 b_time.cmp(&a_time)
             }
             SortField::Command => a.name_str().cmp(b.name_str()),
-            SortField::User => a.pid.cmp(&b.pid), // TODO: implement user comparison
         };
 
         if reverse { cmp.reverse() } else { cmp }
@@ -963,8 +1146,8 @@ fn display_batch_header(stats: &SystemStats, iteration: i32) {
 
     prints("\n");
 
-    // Column headers
-    prints("  PID USER      PR  NI    VIRT    RES  %CPU %MEM     TIME+ COMMAND\n");
+    // Column headers — matching interactive mode layout
+    prints("  PID  PPID USER      S  PR  NI    VIRT    RES    SHR %CPU %MEM    TIME+ COMMAND\n");
 }
 
 /// Display process list in batch mode
@@ -982,8 +1165,19 @@ fn display_batch_processes(processes: &[ProcessInfo], max_lines: i32) {
         print_padded_num(proc.pid, 5);
         prints(" ");
 
+        // PPID
+        print_padded_num(proc.ppid, 5);
+        prints(" ");
+
         // USER (show UID for now)
         prints("root     ");
+
+        // S (state)
+        let sbuf = [proc.state, 0];
+        if let Ok(s) = core::str::from_utf8(&sbuf[..1]) {
+            prints(s);
+        }
+        prints(" ");
 
         // PR (priority)
         if proc.priority >= 0 {
@@ -1010,6 +1204,10 @@ fn display_batch_processes(processes: &[ProcessInfo], max_lines: i32) {
         print_padded_num(((proc.rss * 4096) / 1024) as u32, 6);
         prints(" ");
 
+        // SHR (shared memory in KB)
+        print_padded_num(((proc.shared * 4096) / 1024) as u32, 6);
+        prints(" ");
+
         // %CPU
         print_float(proc.cpu_percent, 1);
         prints(" ");
@@ -1018,16 +1216,23 @@ fn display_batch_processes(processes: &[ProcessInfo], max_lines: i32) {
         print_float(proc.mem_percent, 1);
         prints(" ");
 
-        // TIME+
-        let total_time = (proc.user_time + proc.system_time) / 100; // Convert to seconds
-        let time_mins = total_time / 60;
-        let time_secs = total_time % 60;
-        print_padded_num(time_mins as u32, 4);
+        // TIME+ with hundredths (MM:SS.hh)
+        let total_jiffies = proc.user_time + proc.system_time;
+        let total_secs = total_jiffies / 100;
+        let hundredths = total_jiffies % 100;
+        let time_mins = total_secs / 60;
+        let time_secs = total_secs % 60;
+        print_padded_num(time_mins as u32, 3);
         prints(":");
         if time_secs < 10 {
             prints("0");
         }
         print_u64(time_secs);
+        prints(".");
+        if hundredths < 10 {
+            prints("0");
+        }
+        print_u64(hundredths);
         prints(" ");
 
         // COMMAND
@@ -1083,6 +1288,10 @@ fn run_interactive_mode(config: &mut TopConfig) {
     // Setup ncurses
     let _ = screen::cbreak();
     let _ = screen::noecho();
+    // — ByteRiot: Hide the cursor. top is a read-only dashboard, not a text
+    // editor — a blinking caret over process rows is visual noise. curs_set(0)
+    // sends ESC[?25l (DECTCEM off) to the terminal emulator. — ByteRiot
+    let _ = screen::curs_set(0);
 
     // — ByteRiot: Use wtimeout instead of nodelay+usleep. wgetch now blocks
     // up to delay_ms then returns -1 on timeout OR returns immediately on
@@ -1113,6 +1322,9 @@ fn run_interactive_mode(config: &mut TopConfig) {
     // for delta-based CPU% in the header. Without this, cumulative counters
     // from /proc/stat always show ~0% user because idle dominates from boot.
     let mut stats = SystemStats::new();
+    // — NeonVale: ViewState tracks where we are in the process list.
+    // Arrow keys scroll, selection follows, just like htop.
+    let mut view = ViewState::new();
 
     loop {
         let now_ms = get_time_ms();
@@ -1126,8 +1338,17 @@ fn run_interactive_mode(config: &mut TopConfig) {
         sort_processes(&mut processes, config.sort_field, config.reverse_sort);
         update_system_stats(&mut stats, &processes);
 
+        // — NeonVale: Update view state with current process count and visible rows.
+        // Header uses 7 rows (top line, tasks, cpu, mem, swap, blank, column header)
+        // plus 1 status bar at bottom. The rest is process list territory.
+        let (max_y, _max_x) = unsafe { ((*stdscr).lines, (*stdscr).cols) };
+        let header_rows = 8; // 7 header lines + 1 status bar
+        view.num_visible = (max_y - header_rows).max(0) as usize;
+        view.total_procs = processes.len();
+        view.clamp();
+
         // Display
-        display_interactive(&stats, &processes, config, stdscr);
+        display_interactive(&stats, &processes, config, stdscr, &view);
 
         prev_processes = processes;
         last_update_ms = now_ms;
@@ -1136,16 +1357,27 @@ fn run_interactive_mode(config: &mut TopConfig) {
         // or returns immediately with a key. Either way, we refresh next iteration.
         let ch = input::getch();
         if ch >= 0 {
-            if ch == 27 {
+            if ch == keys::KEY_RESIZE {
+                // — ByteRiot: Terminal resized (SIGWINCH). stdscr dimensions are
+                // already updated by wgetch(). Just loop back — next iteration
+                // reads the new max_y/max_x and redraws at the right size.
+                // Like every ncurses app since 1994. — ByteRiot
+                let _ = output::clear();
+                continue;
+            } else if ch == 27 {
                 break;
-            } else if ch == keys::KEY_UP
-                || ch == keys::KEY_DOWN
-                || ch == keys::KEY_PPAGE
-                || ch == keys::KEY_NPAGE
-                || ch == keys::KEY_HOME
-                || ch == keys::KEY_END
-            {
-                // Scroll keys (future enhancement) — just refresh
+            } else if ch == keys::KEY_UP {
+                view.move_up();
+            } else if ch == keys::KEY_DOWN {
+                view.move_down();
+            } else if ch == keys::KEY_PPAGE {
+                view.page_up();
+            } else if ch == keys::KEY_NPAGE {
+                view.page_down();
+            } else if ch == keys::KEY_HOME {
+                view.go_home();
+            } else if ch == keys::KEY_END {
+                view.go_end();
             } else if ch >= 0x20 && ch < 0x7F {
                 match ch as u8 as char {
                     'q' | 'Q' => break,
@@ -1153,9 +1385,17 @@ fn run_interactive_mode(config: &mut TopConfig) {
                     'M' | 'm' => config.sort_field = SortField::MemPercent,
                     'P' | 'p' => config.sort_field = SortField::CpuPercent,
                     'T' | 't' => config.sort_field = SortField::Time,
-                    'N' | 'n' => config.sort_field = SortField::Pid,
-                    'R' | 'r' => config.reverse_sort = !config.reverse_sort,
+                    'N' => config.sort_field = SortField::Pid,
+                    'R' => config.reverse_sort = !config.reverse_sort,
                     'i' | 'I' => config.show_idle = !config.show_idle,
+                    // — NeonVale: vim-style navigation, because muscle memory is forever
+                    'k' => view.move_up(),
+                    'j' => view.move_down(),
+                    'g' => view.go_home(),
+                    'G' => view.go_end(),
+                    // — ByteRiot: < > cycle sort column left/right like real Linux top
+                    '<' | ',' => config.sort_field = config.sort_field.cycle_left(),
+                    '>' | '.' => config.sort_field = config.sort_field.cycle_right(),
                     'h' | 'H' | '?' => {
                         display_help_screen(stdscr, delay_ms);
                     }
@@ -1169,16 +1409,21 @@ fn run_interactive_mode(config: &mut TopConfig) {
         }
     }
 
-    // Cleanup
+    // — ByteRiot: Restore cursor before teardown. endwin() sends cnorm but
+    // belt-and-suspenders never hurt when you're exiting a full-screen app. — ByteRiot
+    let _ = screen::curs_set(1);
     let _ = screen::endwin();
 }
 
 /// Display interactive screen
+/// — NeonVale: Now with scroll state, selected row highlight, expanded columns,
+/// sort column indicator, and TIME+ with hundredths. The full htop experience.
 fn display_interactive(
     stats: &SystemStats,
     processes: &[ProcessInfo],
     config: &TopConfig,
     win: WINDOW,
+    view: &ViewState,
 ) {
     let _ = output::werase(win);
     let _ = output::wmove(win, 0, 0);
@@ -1232,9 +1477,6 @@ fn display_interactive(
     let _ = output::wmove(win, row, 0);
 
     // Line 3: CPU — delta-based for meaningful percentages
-    // — ByteRiot: Cumulative counters since boot are useless for display
-    // (idle dominates). Delta = current - previous gives activity over the
-    // last refresh interval, which is what htop/top actually show.
     let delta_user = stats.cpu_user.saturating_sub(stats.prev_cpu_user);
     let delta_sys = stats.cpu_system.saturating_sub(stats.prev_cpu_system);
     let delta_idle = stats.cpu_idle.saturating_sub(stats.prev_cpu_idle);
@@ -1295,35 +1537,77 @@ fn display_interactive(
     row += 1;
     let _ = output::wmove(win, row, 0);
 
-    // — ByteRiot: Column headers padded to fill terminal width. Without
-    // padding, reverse-video only covers the text, leaving ragged edges.
+    // — NeonVale: Column header with sort indicator. Active sort column gets
+    // BOLD+UNDERLINE so you can see which field is driving the order.
+    // New header: PID PPID USER S PR NI VIRT RES SHR %CPU %MEM TIME+ COMMAND
     let _ = attributes::wattron(win, attrs::A_REVERSE);
-    let header_base = "  PID USER      PR  NI    VIRT    RES  %CPU %MEM     TIME+ COMMAND";
-    let _ = output::waddstr(win, header_base);
-    // Pad remainder of line with spaces for full reverse-video bar
-    let header_len = header_base.len() as i32;
-    for _ in header_len..max_x {
+
+    // — NeonVale: Each column segment rendered individually so we can
+    // apply BOLD+UNDERLINE to the active sort column only.
+    struct ColDef {
+        label: &'static str,
+        field: Option<SortField>,
+    }
+    let columns: &[ColDef] = &[
+        ColDef { label: "  PID", field: Some(SortField::Pid) },
+        ColDef { label: " PPID", field: Some(SortField::Ppid) },
+        ColDef { label: " USER    ", field: Some(SortField::User) },
+        ColDef { label: " S", field: None },
+        ColDef { label: "  PR", field: None },
+        ColDef { label: "  NI", field: None },
+        ColDef { label: "    VIRT", field: None },
+        ColDef { label: "    RES", field: None },
+        ColDef { label: "    SHR", field: None },
+        ColDef { label: " %CPU", field: Some(SortField::CpuPercent) },
+        ColDef { label: " %MEM", field: Some(SortField::MemPercent) },
+        ColDef { label: "    TIME+", field: Some(SortField::Time) },
+        ColDef { label: " COMMAND", field: Some(SortField::Command) },
+    ];
+
+    let mut header_chars = 0i32;
+    for col in columns {
+        let is_sort_col = col.field.map_or(false, |f| f == config.sort_field);
+        if is_sort_col {
+            let _ = attributes::wattron(win, attrs::A_BOLD | attrs::A_UNDERLINE);
+        }
+        let _ = output::waddstr(win, col.label);
+        header_chars += col.label.len() as i32;
+        if is_sort_col {
+            let _ = attributes::wattroff(win, attrs::A_BOLD | attrs::A_UNDERLINE);
+        }
+    }
+    // Pad remainder for full reverse-video bar
+    for _ in header_chars..max_x {
         let _ = output::waddstr(win, " ");
     }
     let _ = attributes::wattroff(win, attrs::A_REVERSE);
 
     row += 1;
 
-    // Process list
+    // Process list with scroll offset
     // Reserve one line at bottom for status
-    let available_rows = (max_y - row - 1).max(0);
-    let display_count = available_rows.min(processes.len() as i32);
+    let available_rows = (max_y - row - 1).max(0) as usize;
 
-    for i in 0..display_count as usize {
+    let start = view.scroll_offset;
+    let end = (start + available_rows).min(processes.len());
+
+    for i in start..end {
         if row >= max_y {
             break;
         }
 
         let proc = &processes[i];
+        let is_selected = i == view.selected_row;
         let _ = output::wmove(win, row, 0);
 
+        // — NeonVale: Selected row gets A_REVERSE (white-on-color). This is
+        // the htop way — makes it instantly obvious which process you're on.
+        if is_selected {
+            let _ = attributes::wattron(win, attrs::A_REVERSE);
+        }
+
         // Apply colors based on CPU usage and state
-        if config.color_mode && color::has_colors() {
+        if config.color_mode && color::has_colors() && !is_selected {
             let color_pair_num = if proc.state == b'Z' {
                 6 // Magenta for zombie
             } else if proc.state == b'R' {
@@ -1345,10 +1629,21 @@ fn display_interactive(
             let _ = attributes::wattron(win, attrs::A_BOLD);
         }
 
+        // — NeonVale: TIME+ with hundredths (MM:SS.hh) like real Linux top.
+        // Jiffies are 1/100th second, so hundredths = total_jiffies % 100.
+        let total_jiffies = proc.user_time + proc.system_time;
+        let total_secs = total_jiffies / 100;
+        let hundredths = total_jiffies % 100;
+        let time_mins = total_secs / 60;
+        let time_secs = total_secs % 60;
+
+        // — NeonVale: New column layout: PID PPID USER S PR NI VIRT RES SHR %CPU %MEM TIME+ COMMAND
         let proc_line = format!(
-            "{:5} {:8} {:3} {:3} {:7} {:6} {:4.1} {:4.1} {:5}:{:02} {}",
+            "{:5} {:5} {:8} {} {:3} {:3} {:7} {:6} {:6} {:4.1} {:4.1} {:3}:{:02}.{:02} {}",
             proc.pid,
+            proc.ppid,
             "root",
+            proc.state_char(),
             if proc.priority >= 0 {
                 format!("{:2}", proc.priority)
             } else {
@@ -1357,15 +1652,17 @@ fn display_interactive(
             proc.nice,
             proc.vsize / 1024,
             (proc.rss * 4096) / 1024,
+            (proc.shared * 4096) / 1024,
             proc.cpu_percent,
             proc.mem_percent,
-            (proc.user_time + proc.system_time) / 6000, // minutes
-            ((proc.user_time + proc.system_time) / 100) % 60, // seconds
+            time_mins,
+            time_secs,
+            hundredths,
             proc.name_str()
         );
 
         // — ByteRiot: Truncate to terminal width, then pad remainder so
-        // color attributes fill the entire row cleanly.
+        // color/reverse attributes fill the entire row cleanly.
         let display_len = max_x.min(proc_line.len() as i32);
         let _ = output::waddstr(win, &proc_line[..display_len as usize]);
         let line_len = display_len;
@@ -1377,31 +1674,36 @@ fn display_interactive(
             let _ = attributes::wattroff(win, attrs::A_BOLD);
         }
 
-        if config.color_mode && color::has_colors() {
+        if config.color_mode && color::has_colors() && !is_selected {
             let _ = attributes::wattroff(win, attrs::A_COLOR);
+        }
+
+        if is_selected {
+            let _ = attributes::wattroff(win, attrs::A_REVERSE);
         }
 
         row += 1;
     }
 
-    // Add status line at bottom
+    // — NeonVale: Status bar at bottom with scroll position, selected PID,
+    // and updated key hints including arrows and < > for column cycling.
     if max_y > row + 1 {
         let _ = output::wmove(win, max_y - 1, 0);
         let _ = attributes::wattron(win, attrs::A_REVERSE);
 
-        let sort_name = match config.sort_field {
-            SortField::Pid => "PID",
-            SortField::CpuPercent => "CPU",
-            SortField::MemPercent => "MEM",
-            SortField::Time => "TIME",
-            SortField::Command => "CMD",
-            SortField::User => "USER",
+        let selected_pid = if view.selected_row < processes.len() {
+            processes[view.selected_row].pid
+        } else {
+            0
         };
 
         let status = format!(
-            " Sort: {} {} | q/ESC:Quit h:Help M/P/T/N:Sort R:Reverse i:Idle ",
-            sort_name,
-            if config.reverse_sort { "▼" } else { "▲" }
+            " Sort: {} {} [{}/{}] PID:{} | q:Quit h:Help Arrows:Scroll M/P/T/N:Sort </>:Col R:Rev ",
+            config.sort_field.name(),
+            if config.reverse_sort { "v" } else { "^" },
+            view.selected_row + 1,
+            view.total_procs,
+            selected_pid,
         );
 
         let display_len = max_x.min(status.len() as i32);
@@ -1428,20 +1730,26 @@ fn display_help_screen(win: WINDOW, restore_delay_ms: i32) {
     let help_text = [
         "Help for Interactive Commands - top",
         "",
-        "  Space    = Update display",
-        "  h or ?   = Help (this screen)",
-        "  q or ESC = Quit",
+        "  Space      = Update display",
+        "  h or ?     = Help (this screen)",
+        "  q or ESC   = Quit",
         "",
-        "  M        = Sort by memory usage",
-        "  P        = Sort by CPU usage",
-        "  T        = Sort by time",
-        "  N        = Sort by PID",
-        "  R        = Reverse sort order",
+        "  Up/k       = Move selection up",
+        "  Down/j     = Move selection down",
+        "  PgUp       = Page up",
+        "  PgDn       = Page down",
+        "  Home/g     = Go to first process",
+        "  End/G      = Go to last process",
         "",
-        "  i        = Toggle idle processes",
+        "  M          = Sort by memory usage",
+        "  P          = Sort by CPU usage",
+        "  T          = Sort by time",
+        "  N          = Sort by PID",
+        "  R          = Reverse sort order",
+        "  < or ,     = Sort by previous column",
+        "  > or .     = Sort by next column",
         "",
-        "  Arrows   = Scroll (future)",
-        "  PgUp/Dn  = Page up/down (future)",
+        "  i          = Toggle idle processes",
         "",
         "Press any key to continue...",
     ];
