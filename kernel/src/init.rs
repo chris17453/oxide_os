@@ -1748,12 +1748,13 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         false
     };
 
-    // If no VirtIO, initialize loopback device at minimum
-    if !net_initialized {
-        let _ = writeln!(writer, "[NET] Initializing loopback device only");
+    // — GraveShift: Loopback device ALWAYS loads — like Linux's lo interface.
+    // Every system needs 127.0.0.1 for local services (resolvd, sshd, etc.)
+    // regardless of whether hardware NICs exist. Linux's loopback_net_init()
+    // runs unconditionally during net_dev_init(). — GraveShift
+    {
         let loopback = Arc::new(net::LoopbackDevice::new());
         net::register_device(loopback.clone());
-
         let lo_interface = Arc::new(net::NetworkInterface::new(loopback));
         lo_interface
             .set_ipv4_addr(
@@ -1762,6 +1763,14 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             )
             .ok();
         net::interface::add_interface(lo_interface);
+        let _ = writeln!(writer, "[NET] Loopback (lo) initialized: 127.0.0.1/8");
+    }
+
+    // — GraveShift: If no hardware NIC was found, init the TCP/IP stack with
+    // loopback only so local sockets still work. networkd will handle any
+    // late-arriving hardware via its adapter discovery loop. — GraveShift
+    if !net_initialized {
+        let _ = writeln!(writer, "[NET] No hardware NIC — loopback only, networkd will probe");
     }
 
     let _ = writeln!(writer, "[NET] Network initialization complete");
