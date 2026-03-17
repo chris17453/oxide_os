@@ -1786,6 +1786,27 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                 for dns in &lease.dns_servers {
                     let _ = writeln!(writer, "[NET]   DNS: {}", dns);
                 }
+
+                // — GraveShift: Bootstrap resolv.conf from DHCP. networkd will
+                // overwrite this later, but userspace needs DNS immediately after
+                // boot (wget, ping hostname, etc). Without this, libc falls back
+                // to 8.8.8.8 which is unreachable from QEMU user-mode NAT. — GraveShift
+                if !lease.dns_servers.is_empty() {
+                    if let Ok(etc_dir) = vfs::mount::GLOBAL_VFS.lookup("/etc") {
+                        let vnode = etc_dir.lookup("resolv.conf")
+                            .or_else(|_| etc_dir.create("resolv.conf", vfs::Mode::new(0o644)));
+                        if let Ok(vnode) = vnode {
+                            use alloc::string::String;
+                            let mut content = String::from("# Bootstrap from kernel DHCP\n");
+                            for dns in &lease.dns_servers {
+                                content.push_str(&alloc::format!("nameserver {}\n", dns));
+                            }
+                            let _ = vnode.truncate(0);
+                            let _ = vnode.write(0, content.as_bytes());
+                            let _ = writeln!(writer, "[NET]   Wrote /etc/resolv.conf");
+                        }
+                    }
+                }
             }
             Err(e) => {
                 let _ = writeln!(writer, "[NET]   DHCP failed: {:?} — networkd will retry", e);
