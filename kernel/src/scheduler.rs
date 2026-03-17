@@ -1721,7 +1721,7 @@ pub fn check_signals_on_syscall_return() {
         signal::SigAction::new()
     };
 
-    // — GraveShift: Log the handler type so we know if SIG_IGN is eating our signals.
+    // — GraveShift: Log handler type AND address for debugging signal delivery crashes.
     unsafe {
         os_log::write_str_raw("[SIGCHK] handler=");
         let h = action.sa_handler;
@@ -1730,7 +1730,8 @@ pub fn check_signals_on_syscall_return() {
         } else if h == 1 {
             os_log::write_str_raw("IGN");
         } else {
-            os_log::write_str_raw("USR");
+            os_log::write_str_raw("USR@0x");
+            os_log::write_u64_hex_raw(h);
         }
         os_log::write_str_raw("\n");
     }
