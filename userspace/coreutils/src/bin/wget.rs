@@ -52,11 +52,25 @@ fn cstr_to_str(ptr: *const u8) -> &'static str {
     }
 }
 
-/// Parse a simple URL: http://host[:port]/path
-/// Returns (host, port, path) or None if invalid
+/// Parse a URL: [http://]host[:port][/path]
+/// — ShadePacket: Accepts bare hostnames like real wget. If no scheme,
+/// defaults to http://. If no path, defaults to /. — ShadePacket
 fn parse_url(url: &str) -> Option<(&str, u16, &str)> {
-    // Must start with http://
-    let url = url.strip_prefix("http://")?;
+    // Strip http:// or https:// prefix (https not supported but don't reject the URL)
+    let url = if let Some(rest) = url.strip_prefix("http://") {
+        rest
+    } else if let Some(rest) = url.strip_prefix("https://") {
+        // — ShadePacket: warn but continue — connect on port 443 won't work
+        // without TLS, but at least parse the URL correctly
+        rest
+    } else {
+        // No scheme — treat as bare hostname, default to http
+        url
+    };
+
+    if url.is_empty() {
+        return None;
+    }
 
     // Split host from path
     let (host_port, path) = if let Some(idx) = url.find('/') {
@@ -64,6 +78,10 @@ fn parse_url(url: &str) -> Option<(&str, u16, &str)> {
     } else {
         (url, "/")
     };
+
+    if host_port.is_empty() {
+        return None;
+    }
 
     // Check for port
     let (host, port) = if let Some(idx) = host_port.find(':') {
