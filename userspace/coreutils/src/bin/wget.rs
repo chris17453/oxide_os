@@ -52,20 +52,21 @@ fn cstr_to_str(ptr: *const u8) -> &'static str {
     }
 }
 
-/// Parse a URL: [http://]host[:port][/path]
-/// — ShadePacket: Accepts bare hostnames like real wget. If no scheme,
-/// defaults to http://. If no path, defaults to /. — ShadePacket
+/// Parse a URL: [scheme://]host[:port][/path]
+/// — ShadePacket: Like Linux wget — scheme determines default port via
+/// the equivalent of getservbyname(). Accepts bare hostnames (defaults
+/// to http). Explicit :port overrides the scheme default. — ShadePacket
 fn parse_url(url: &str) -> Option<(&str, u16, &str)> {
-    // Strip http:// or https:// prefix (https not supported but don't reject the URL)
-    let url = if let Some(rest) = url.strip_prefix("http://") {
-        rest
+    // Determine scheme and default port (like /etc/services lookup)
+    let (url, default_port) = if let Some(rest) = url.strip_prefix("http://") {
+        (rest, 80u16)
     } else if let Some(rest) = url.strip_prefix("https://") {
-        // — ShadePacket: warn but continue — connect on port 443 won't work
-        // without TLS, but at least parse the URL correctly
-        rest
+        (rest, 443u16)
+    } else if let Some(rest) = url.strip_prefix("ftp://") {
+        (rest, 21u16)
     } else {
-        // No scheme — treat as bare hostname, default to http
-        url
+        // No scheme — bare hostname, default to http port 80
+        (url, 80u16)
     };
 
     if url.is_empty() {
@@ -83,13 +84,13 @@ fn parse_url(url: &str) -> Option<(&str, u16, &str)> {
         return None;
     }
 
-    // Check for port
+    // Explicit :port overrides scheme default
     let (host, port) = if let Some(idx) = host_port.find(':') {
         let port_str = &host_port[idx + 1..];
         let port = parse_port(port_str)?;
         (&host_port[..idx], port)
     } else {
-        (host_port, 80)
+        (host_port, default_port)
     };
 
     Some((host, port, path))
@@ -251,6 +252,13 @@ fn do_wget(config: &WgetConfig, url: &str) -> i32 {
     if host.is_empty() {
         eprintlns("wget: empty hostname in URL");
         return 1;
+    }
+
+    // — ShadePacket: TLS not supported yet. Warn but don't reject — the TCP
+    // connect will fail with a protocol mismatch, but at least the user knows why.
+    if port == 443 {
+        eprintlns("wget: WARNING: HTTPS (TLS) not supported, connection will likely fail");
+        eprintlns("wget: try http:// instead if the server supports it");
     }
 
     // — ShadePacket: Resolve hostname — try IP literal first, then DNS.

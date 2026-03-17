@@ -78,6 +78,21 @@ initramfs: $(INITRAMFS_PREREQ)
 	@echo "root" > $(TARGET_DIR)/initramfs/etc/autologin
 	@echo "127.0.0.1 localhost" > $(TARGET_DIR)/initramfs/etc/hosts
 	@echo "::1 localhost" >> $(TARGET_DIR)/initramfs/etc/hosts
+	@# — ShadePacket: /etc/services — protocol-to-port mapping (like Linux)
+	@echo "# /etc/services — OXIDE OS" > $(TARGET_DIR)/initramfs/etc/services
+	@echo "http      80/tcp" >> $(TARGET_DIR)/initramfs/etc/services
+	@echo "https     443/tcp" >> $(TARGET_DIR)/initramfs/etc/services
+	@echo "ftp       21/tcp" >> $(TARGET_DIR)/initramfs/etc/services
+	@echo "ssh       22/tcp" >> $(TARGET_DIR)/initramfs/etc/services
+	@echo "telnet    23/tcp" >> $(TARGET_DIR)/initramfs/etc/services
+	@echo "smtp      25/tcp" >> $(TARGET_DIR)/initramfs/etc/services
+	@echo "dns       53/udp" >> $(TARGET_DIR)/initramfs/etc/services
+	@echo "dhcp      67/udp" >> $(TARGET_DIR)/initramfs/etc/services
+	@echo "ntp       123/udp" >> $(TARGET_DIR)/initramfs/etc/services
+	@echo "imap      143/tcp" >> $(TARGET_DIR)/initramfs/etc/services
+	@echo "mysql     3306/tcp" >> $(TARGET_DIR)/initramfs/etc/services
+	@echo "rdp       3389/tcp" >> $(TARGET_DIR)/initramfs/etc/services
+	@echo "postgres  5432/tcp" >> $(TARGET_DIR)/initramfs/etc/services
 	@# — BlackLatch: Console keyboard config. Init reads this on boot.
 	@echo "# Console keyboard layout (us, uk, de, fr)" > $(TARGET_DIR)/initramfs/etc/vconsole.conf
 	@echo "KEYMAP=us" >> $(TARGET_DIR)/initramfs/etc/vconsole.conf
