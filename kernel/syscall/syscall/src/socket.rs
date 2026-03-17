@@ -1256,12 +1256,70 @@ pub fn sys_recvfrom(fd: i32, buf: u64, len: usize, flags: i32, src_addr: u64, ad
         None => return errno::EBADF,
     };
 
-    // ShadePacket: Poll network stack to process incoming packets
-    let _ = tcpip::poll();
+    // — GraveShift: Poll network stack in a loop to drain incoming packets.
+    // A single poll() often misses replies that arrive milliseconds after the
+    // request was sent. The DHCP client's resolve_mac uses this same pattern:
+    // poll + check + brief yield, repeat. Budget of 500 iterations (~50ms at
+    // ~100μs per iteration) catches replies without burning excessive CPU.
+    // Non-blocking sockets skip the loop entirely. — GraveShift
+    let is_nonblocking = socket.is_nonblocking() || (flags & 0x40 != 0); // MSG_DONTWAIT
+    let poll_budget = if is_nonblocking { 1 } else { 500 };
 
-    let _ = flags; // Flags not fully supported yet
     let mut kbuf = Vec::new();
     kbuf.resize(len, 0);
+
+    for poll_iter in 0..poll_budget {
+        let _ = tcpip::poll();
+
+        // Check loopback queue first
+        if let Some((read_len, sender_addr)) = receive_loopback_packet(&socket, &mut kbuf) {
+            if uaccess::copy_to_user(buf, &kbuf[..read_len]).is_err() {
+                return errno::EFAULT;
+            }
+            if src_addr != 0 {
+                let rc = write_sockaddr_in(src_addr, addrlen, &sender_addr);
+                if rc < 0 { return rc; }
+            }
+            return read_len as i64;
+        }
+
+        // Check legacy recv_buf
+        {
+            let mut recv_buf = socket.recv_buf.lock();
+            if !recv_buf.is_empty() {
+                let to_read = len.min(recv_buf.len());
+                let chunk = recv_buf[..to_read].to_vec();
+                recv_buf.drain(..to_read);
+                drop(recv_buf);
+                if uaccess::copy_to_user(buf, &chunk).is_err() {
+                    return errno::EFAULT;
+                }
+                if src_addr != 0 {
+                    let placeholder = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0);
+                    let rc = write_sockaddr_in(src_addr, addrlen, &placeholder);
+                    if rc < 0 { return rc; }
+                }
+                return to_read as i64;
+            }
+        }
+
+        // Check for pending signals (Ctrl+C should interrupt the wait)
+        if poll_iter > 0 && poll_iter % 50 == 0 {
+            if crate::with_current_meta(|meta| meta.has_pending_signals()).unwrap_or(false) {
+                return errno::EINTR;
+            }
+        }
+
+        // Brief yield between polls so other tasks can run
+        if poll_iter < poll_budget - 1 {
+            os_core::allow_kernel_preempt();
+            for _ in 0..100 { core::hint::spin_loop(); }
+            os_core::disallow_kernel_preempt();
+        }
+    }
+
+    // — GraveShift: Exhausted poll budget without data. Fall through to
+    // existing EAGAIN/blocking paths below. — GraveShift
 
     // First check the unified loopback queue (returns proper source address!)
     if let Some((read_len, sender_addr)) = receive_loopback_packet(&socket, &mut kbuf) {

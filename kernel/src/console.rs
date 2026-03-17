@@ -163,6 +163,14 @@ pub fn terminal_tick() {
     // configuration where PCI interrupts aren't wired yet.
     virtio_input::poll();
 
+    // — GraveShift: Network polling does NOT belong in the timer ISR.
+    // virtio-net's receive() uses blocking .lock() on internal queues.
+    // Calling from ISR context deadlocks if any syscall path holds those
+    // locks. Instead, recvfrom/recv poll the stack in a loop with timeout.
+    // The DHCP client already does this correctly (resolve_mac polls in a
+    // tight loop). Proper fix: wire virtio-net PCI interrupt to an ISR
+    // that stages packets lock-free, like virtio-input does. — GraveShift
+
     // — InputShade: Process mouse/tablet events from ALL input devices.
     // QEMU uses virtio-tablet-pci (EV_ABS — absolute coordinates), NOT
     // virtio-mouse-pci (EV_REL — relative deltas). The old code only handled

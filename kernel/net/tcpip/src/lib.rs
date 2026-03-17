@@ -99,13 +99,24 @@ impl TcpIpStack {
         port
     }
 
-    /// Process incoming packets
+    /// Process incoming packets — drain ALL pending, not just one.
+    /// — GraveShift: The old code called receive() once per poll(). If multiple
+    /// packets arrived between polls (100Hz = 10ms gap), only the first was
+    /// processed. The rest sat in the virtio-net RX ring until the next poll,
+    /// creating cascading delays. Now we drain up to NAPI_BUDGET packets per
+    /// poll, like Linux's napi_poll(). Budget prevents ISR context from
+    /// spending too long in network processing. — GraveShift
     pub fn poll(&self) -> NetResult<()> {
+        const NAPI_BUDGET: usize = 16;
         let mut buf = [0u8; 1536];
 
-        // Receive from device
-        if let Some(len) = self.interface.device.receive(&mut buf)? {
-            self.process_packet(&buf[..len])?;
+        for _ in 0..NAPI_BUDGET {
+            match self.interface.device.receive(&mut buf) {
+                Ok(Some(len)) => {
+                    let _ = self.process_packet(&buf[..len]);
+                }
+                _ => break, // No more packets or error — stop draining
+            }
         }
 
         // Process TCP timers
