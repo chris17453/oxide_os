@@ -66,10 +66,14 @@ struct QueryConfig {
 
 impl QueryConfig {
     fn new() -> Self {
+        // — GraveShift: Read the DNS server from /etc/resolv.conf like a real
+        // resolver. The old hardcoded 8.8.8.8 is unreachable from QEMU's user-mode
+        // NAT — only the DHCP-provided 10.0.2.3 forwarder works. — GraveShift
+        let dns_server = libc::dns::get_primary_dns_server();
         QueryConfig {
             hostname: [0; 256],
             hostname_len: 0,
-            dns_server: (8, 8, 8, 8), // Default to Google DNS
+            dns_server,
             query_type: DNS_TYPE_A,
             query_class: DNS_CLASS_IN,
             debug: false,
