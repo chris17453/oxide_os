@@ -1597,6 +1597,9 @@ pub fn sys_recvfrom(fd: i32, buf: u64, len: usize, flags: i32, src_addr: u64, ad
         let (rx, _, _) = tcpip::debug_counters();
         serial_print_num("recvfrom: rx_pkts=", rx as i64);
         serial_print_num("recvfrom: tx_pkts=", tcpip::debug_tx_count() as i64);
+        let (tcp_rx, arp_rx) = tcpip::debug_counters_ext();
+        serial_print_num("recvfrom: rx_tcp=", tcp_rx as i64);
+        serial_print_num("recvfrom: rx_arp=", arp_rx as i64);
     }
     errno::EAGAIN
 }
