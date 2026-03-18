@@ -1457,6 +1457,18 @@ pub fn sys_recvfrom(fd: i32, buf: u64, len: usize, flags: i32, src_addr: u64, ad
                     if let Some(conn) = stack.get_tcp_connection(conn_id) {
                         if let Ok(n) = conn.recv(&mut kbuf[..len]) {
                             serial_print_num("recvfrom: TCP got bytes=", n as i64);
+                            // Dump first 64 bytes for debugging
+                            if n > 0 && n <= 64 {
+                                use core::ptr::addr_of;
+                                unsafe {
+                                    let ctx = addr_of!(crate::SYSCALL_CONTEXT);
+                                    if let Some(write_fn) = (*ctx).serial_write {
+                                        write_fn(b"[SOCK] recvfrom: data='");
+                                        write_fn(&kbuf[..n]);
+                                        write_fn(b"'\n");
+                                    }
+                                }
+                            }
                             if n > 0 {
                                 if uaccess::copy_to_user(buf, &kbuf[..n]).is_err() {
                                     return errno::EFAULT;
