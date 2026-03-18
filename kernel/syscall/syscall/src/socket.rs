@@ -721,32 +721,49 @@ pub fn sys_connect(fd: i32, addr: u64, addrlen: u32) -> i64 {
                     // 500 HLT wakeups × ~10ms tick ≈ 5 second connect timeout.
                     const MAX_HLT_POLLS: u32 = 500;
 
-                    for _ in 0..MAX_HLT_POLLS {
-                        // Poll network stack before sleeping
-                        let _ = tcpip::poll();
+                    // — GraveShift: TCP connect polling — same aggressive pattern as
+                    // DHCP's resolve_mac which is the ONLY RX path that works reliably.
+                    // The HLT-based approach missed SYN-ACKs because poll() returned
+                    // too quickly. This tight loop mirrors resolve_mac: poll many times
+                    // per attempt with brief spin between polls. 3 attempts × 5000 polls
+                    // × 1000 spins ≈ 5 second total timeout. — GraveShift
+                    const CONNECT_ATTEMPTS: u32 = 3;
+                    const POLLS_PER_ATTEMPT: u32 = 5000;
+                    const SPINS_PER_POLL: u32 = 1000;
 
-                        // Check connection state
-                        if conn.is_established() {
-                            serial_print("connect: TCP connection established");
-                            // Update socket state
-                            *socket.state.lock() = SocketState::Established;
-                            *socket.remote_addr.lock() = Some(socket_addr);
-                            return 0;
+                    for attempt in 0..CONNECT_ATTEMPTS {
+                        for _ in 0..POLLS_PER_ATTEMPT {
+                            let _ = tcpip::poll();
+
+                            if conn.is_established() {
+                                serial_print("connect: TCP connection established");
+                                *socket.state.lock() = SocketState::Established;
+                                *socket.remote_addr.lock() = Some(socket_addr);
+                                return 0;
+                            }
+
+                            if conn.is_closed() || conn.is_reset() {
+                                serial_print("connect: TCP connection refused/reset");
+                                TCP_CONNECTIONS.lock().remove(&fd);
+                                return errno::ECONNREFUSED;
+                            }
+
+                            for _ in 0..SPINS_PER_POLL {
+                                core::hint::spin_loop();
+                            }
                         }
 
-                        if conn.is_closed() || conn.is_reset() {
-                            serial_print("connect: TCP connection failed");
-                            TCP_CONNECTIONS.lock().remove(&fd);
-                            return errno::ECONNREFUSED;
+                        // — GraveShift: Re-send SYN if no response after attempt.
+                        if attempt + 1 < CONNECT_ATTEMPTS {
+                            let _ = conn.connect(); // Re-triggers SYN
+                            for seg in conn.dequeue_segments() {
+                                let dst_ip = match socket_addr.ip {
+                                    IpAddr::V4(ip) => ip,
+                                    _ => continue,
+                                };
+                                let _ = stack.send_ipv4_packet(dst_ip, tcpip::IpProtocol::Tcp, &seg);
+                            }
                         }
-
-                        // — TorqueJax: HLT backoff — wake on next timer IRQ.
-                        // allow_kernel_preempt lets the scheduler context-switch
-                        // while we're blocked; clear it after wakeup so we don't
-                        // get unexpectedly preempted mid-critical-section below.
-                        os_core::allow_kernel_preempt();
-                        os_core::wait_for_interrupt();
-                        os_core::disallow_kernel_preempt();
                     }
 
                     // Timeout
