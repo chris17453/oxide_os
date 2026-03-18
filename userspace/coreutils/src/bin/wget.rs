@@ -19,6 +19,7 @@ use libc::socket::{
     SOCKADDR_IN_SIZE, connect, recv, send, shut, shutdown, sockaddr_in_octets, tcp_socket,
 };
 use libc::*;
+use oxide_tls;
 
 const MAX_URL: usize = 256;
 const MAX_FILENAME: usize = 128;
@@ -233,13 +234,6 @@ fn show_help() {
 
 /// Download from URL
 fn do_wget(config: &WgetConfig, url: &str) -> i32 {
-    // — GraveShift: diagnostic — show what we actually got
-    prints("[wget] url='");
-    prints(url);
-    prints("' len=");
-    libc::print_i64(url.len() as i64);
-    printlns("");
-
     // Parse URL
     let (host, port, path) = match parse_url(url) {
         Some(parsed) => parsed,
@@ -254,12 +248,8 @@ fn do_wget(config: &WgetConfig, url: &str) -> i32 {
         return 1;
     }
 
-    // — ShadePacket: TLS not supported yet. Warn but don't reject — the TCP
-    // connect will fail with a protocol mismatch, but at least the user knows why.
-    if port == 443 {
-        eprintlns("wget: WARNING: HTTPS (TLS) not supported, connection will likely fail");
-        eprintlns("wget: try http:// instead if the server supports it");
-    }
+    // — ShadePacket: HTTPS uses TLS 1.3 via oxide-tls. Port 443 triggers
+    // automatic TLS handshake after TCP connect. — ShadePacket
 
     // — ShadePacket: Resolve hostname — try IP literal first, then DNS.
     let ip = match parse_ip(host) {
@@ -326,6 +316,38 @@ fn do_wget(config: &WgetConfig, url: &str) -> i32 {
         printlns("Connected.");
     }
 
+    // — ShadePacket: TLS handshake for HTTPS (port 443). Uses oxide-tls which
+    // implements TLS 1.3 with X25519 + AES-128-GCM. After this, all send/recv
+    // goes through the TLS stream's AEAD encryption. Like Linux wget linking
+    // against OpenSSL/GnuTLS — the kernel sees raw TCP, we see cleartext. — ShadePacket
+    let mut tls_stream: Option<oxide_tls::TlsStream> = None;
+    if port == 443 {
+        if !config.quiet {
+            printlns("Performing TLS handshake...");
+        }
+        match oxide_tls::tls_connect(sock, host) {
+            Ok(stream) => {
+                if config.verbose {
+                    printlns("TLS 1.3 handshake complete.");
+                }
+                tls_stream = Some(stream);
+            }
+            Err(e) => {
+                eprints("wget: TLS handshake failed: ");
+                match e {
+                    oxide_tls::TlsError::HandshakeFailed(msg) => prints(msg),
+                    oxide_tls::TlsError::IoError(code) => { prints("I/O error "); print_i64(code as i64); },
+                    oxide_tls::TlsError::DecryptionFailed => prints("decryption failed"),
+                    oxide_tls::TlsError::ConnectionClosed => prints("connection closed"),
+                    _ => prints("unknown error"),
+                }
+                eprintlns("");
+                close(sock);
+                return 1;
+            }
+        }
+    }
+
     // Build HTTP request
     let mut request = [0u8; 1024];
     let req_len = build_request(path, host, &mut request);
@@ -334,8 +356,15 @@ fn do_wget(config: &WgetConfig, url: &str) -> i32 {
         printlns("Sending HTTP request...");
     }
 
-    // Send request
-    let sent = send(sock, &request[..req_len], 0);
+    // Send request (TLS or plaintext)
+    let sent = if let Some(ref mut tls) = tls_stream {
+        match tls.send(&request[..req_len]) {
+            Ok(n) => n as isize,
+            Err(_) => -1,
+        }
+    } else {
+        send(sock, &request[..req_len], 0)
+    };
     if sent < 0 {
         eprints("wget: failed to send request: ");
         print_i64(sent as i64);
@@ -370,7 +399,16 @@ fn do_wget(config: &WgetConfig, url: &str) -> i32 {
     let mut body_written: usize = 0;
 
     loop {
-        let received = recv(sock, &mut buffer, 0);
+        // — ShadePacket: Receive via TLS or raw TCP depending on connection type
+        let received = if let Some(ref mut tls) = tls_stream {
+            match tls.recv(&mut buffer) {
+                Ok(n) => n as isize,
+                Err(oxide_tls::TlsError::ConnectionClosed) => 0,
+                Err(_) => -1,
+            }
+        } else {
+            recv(sock, &mut buffer, 0)
+        };
         if received < 0 {
             eprints("wget: receive error: ");
             print_i64(received as i64);
@@ -433,7 +471,10 @@ fn do_wget(config: &WgetConfig, url: &str) -> i32 {
     // Close file
     close(out_fd);
 
-    // Shutdown and close socket
+    // — ShadePacket: Clean TLS shutdown before closing the socket
+    if let Some(ref mut tls) = tls_stream {
+        let _ = tls.shutdown();
+    }
     shutdown(sock, shut::RDWR);
     close(sock);
 

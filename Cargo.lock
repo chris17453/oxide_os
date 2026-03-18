@@ -193,6 +193,7 @@ dependencies = [
  "heapless",
  "libc 0.1.0",
  "oxide-ncurses",
+ "oxide-tls",
  "termcap",
 ]
 
@@ -1079,6 +1080,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxide-crypto"
+version = "0.1.0"
+dependencies = [
+ "libc 0.1.0",
+]
+
+[[package]]
 name = "oxide-gwbasic"
 version = "0.1.0"
 dependencies = [
@@ -1127,6 +1135,14 @@ dependencies = [
 [[package]]
 name = "oxide-test"
 version = "0.1.0"
+
+[[package]]
+name = "oxide-tls"
+version = "0.1.0"
+dependencies = [
+ "libc 0.1.0",
+ "oxide-crypto",
+]
 
 [[package]]
 name = "oxidefs"

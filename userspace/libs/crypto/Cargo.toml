@@ -1,0 +1,10 @@
+[package]
+name = "oxide-crypto"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "oxide_crypto"
+
+[dependencies]
+libc = { path = "../libc" }

@@ -1,0 +1,11 @@
+[package]
+name = "oxide-tls"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "oxide_tls"
+
+[dependencies]
+oxide-crypto = { path = "../crypto" }
+libc = { path = "../libc" }
