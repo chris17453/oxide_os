@@ -395,6 +395,7 @@ fn do_wget(config: &WgetConfig, url: &str) -> i32 {
     // Receive response
     let mut buffer = [0u8; 4096];
     let mut total_received = 0;
+    let mut eagain_count = 0;
     let mut header_end = None;
     let mut body_written: usize = 0;
 
@@ -410,11 +411,23 @@ fn do_wget(config: &WgetConfig, url: &str) -> i32 {
             recv(sock, &mut buffer, 0)
         };
         if received < 0 {
-            eprints("wget: receive error: ");
-            print_i64(received as i64);
-            eprintlns("");
+            // — ShadePacket: EAGAIN (-11) means no data yet — retry for TCP.
+            // The server may be slow to respond, or data arrives in chunks.
+            // Only bail after multiple consecutive EAGAINs with no progress.
+            if received == -11 {
+                eagain_count += 1;
+                if eagain_count < 5 {
+                    continue; // Retry — data may still be coming
+                }
+            }
+            if total_received == 0 {
+                eprints("wget: receive error: ");
+                print_i64(received as i64);
+                eprintlns("");
+            }
             break;
         }
+        eagain_count = 0; // Reset on successful receive
         if received == 0 {
             // Connection closed
             break;
