@@ -7,15 +7,12 @@
 
 extern crate alloc;
 
-/// — GraveShift: Network debug traces via os_log (arch-abstracted serial).
-/// Compile with `--features debug-net` to enable. — GraveShift
+/// — GraveShift: Network debug traces. Compile with `--features debug-net`.
+/// Uses arch-abstracted serial via os_core when wired. — GraveShift
 macro_rules! net_debug {
     ($($arg:tt)*) => {
-        #[cfg(feature = "debug-net")]
-        {
-            unsafe { os_log::write_str_raw($($arg)*); }
-            unsafe { os_log::write_str_raw("\n"); }
-        }
+        // — GraveShift: no-op until os_log dependency is properly wired
+        // through the feature flag without pulling it into the default build.
     };
 }
 

@@ -9,5 +9,4 @@ debug-net = []
 [dependencies]
 dhcp = { path = "../dhcp" }
 net = { path = "../net" }
-os_log = { path = "../../core/os_log" }
 spin = { workspace = true }
