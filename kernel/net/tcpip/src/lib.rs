@@ -228,7 +228,15 @@ impl TcpIpStack {
     /// Process IPv4 packet
     fn process_ipv4(&self, payload: &[u8]) -> NetResult<()> {
         let ip_header = ip::Ipv4Header::parse(payload)?;
-        let ip_payload = &payload[ip_header.header_len()..];
+        // — GraveShift: Clip IP payload to total_length — Ethernet frames have
+        // minimum 60 bytes, padded with zeros. Without clipping, TCP segment
+        // parsing sees zero-padding as TCP data. This was why recv got 6 null
+        // bytes instead of the HTTP response — the padding was treated as payload.
+        let ip_total = ip_header.total_length as usize;
+        let ip_payload_len = ip_total.saturating_sub(ip_header.header_len());
+        let available = payload.len() - ip_header.header_len();
+        let actual_len = ip_payload_len.min(available);
+        let ip_payload = &payload[ip_header.header_len()..ip_header.header_len() + actual_len];
 
         // Verify destination is for us
         if let Some(our_ip) = self.interface.ipv4_addr() {
