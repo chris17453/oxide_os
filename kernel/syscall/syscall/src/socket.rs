@@ -1395,9 +1395,9 @@ pub fn sys_recvfrom(fd: i32, buf: u64, len: usize, flags: i32, src_addr: u64, ad
     // over the internet. UDP DNS replies are fast (~5ms). Use aggressive polling
     // (5000 iterations × 3 attempts) for TCP, same as the connect loop. — GraveShift
     let is_tcp = socket.sock_type == SocketType::Stream;
-    // — GraveShift: TCP uses HLT between polls (~10ms each), so 500 polls = 5 seconds.
-    // UDP uses spin loops (~100μs each), so 500 polls = 50ms.
-    let poll_budget = if is_nonblocking { 1 } else if is_tcp { 500 } else { 500 };
+    // — GraveShift: Same aggressive polling as TCP connect loop which successfully
+    // receives SYN-ACK. 3 rounds × 5000 polls × 1000 spin = ~5 seconds total.
+    let poll_budget = if is_nonblocking { 1 } else if is_tcp { 15000 } else { 500 };
 
     let mut kbuf = Vec::new();
     kbuf.resize(len, 0);
@@ -1519,17 +1519,10 @@ pub fn sys_recvfrom(fd: i32, buf: u64, len: usize, flags: i32, src_addr: u64, ad
             }
         }
 
-        // — GraveShift: Yield between polls. TCP uses HLT to wait for the next
-        // timer tick (~10ms) which gives the device time to DMA packets. The spin
-        // loop approach polls too fast and the device never has a chance to deliver.
+        // — GraveShift: Match TCP connect loop's polling pattern exactly.
         if poll_iter < poll_budget - 1 {
-            os_core::allow_kernel_preempt();
-            if is_tcp {
-                os_core::wait_for_interrupt(); // HLT — wake on timer tick
-            } else {
-                for _ in 0..100 { core::hint::spin_loop(); }
-            }
-            os_core::disallow_kernel_preempt();
+            let spins = if is_tcp { 1000 } else { 100 };
+            for _ in 0..spins { core::hint::spin_loop(); }
         }
     }
 
