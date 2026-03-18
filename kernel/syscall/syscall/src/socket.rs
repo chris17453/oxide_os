@@ -1451,12 +1451,12 @@ pub fn sys_recvfrom(fd: i32, buf: u64, len: usize, flags: i32, src_addr: u64, ad
         }
 
         // — GraveShift: TCP Stream receive — read from the TCP connection's recv buffer.
-        // process_tcp puts incoming data into conn.recv_buf via process_segment.
         if socket.sock_type == SocketType::Stream {
             if let Some(&conn_id) = TCP_CONNECTIONS.lock().get(&fd) {
                 if let Some(stack) = tcpip::stack() {
                     if let Some(conn) = stack.get_tcp_connection(conn_id) {
                         if let Ok(n) = conn.recv(&mut kbuf[..len]) {
+                            serial_print_num("recvfrom: TCP got bytes=", n as i64);
                             if n > 0 {
                                 if uaccess::copy_to_user(buf, &kbuf[..n]).is_err() {
                                     return errno::EFAULT;
