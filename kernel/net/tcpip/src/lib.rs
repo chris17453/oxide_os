@@ -801,6 +801,16 @@ pub fn debug_tcp_miss() -> u64 {
     RX_TCP_MISS_COUNT.load(core::sync::atomic::Ordering::Relaxed)
 }
 
+/// Get raw ring state: (used_idx, last_used_idx, avail_idx)
+pub fn debug_ring_state() -> (u16, u16, u16) {
+    if let Some(guard) = TCPIP_STACK.try_lock() {
+        if let Some(ref stack) = *guard {
+            return stack.interface.device.debug_ring_state();
+        }
+    }
+    (0, 0, 0)
+}
+
 /// Get RX buffer debug info from the device: (free_bufs, used_bufs, has_completed)
 pub fn debug_rx_info() -> (usize, usize, bool) {
     if let Some(guard) = TCPIP_STACK.try_lock() {

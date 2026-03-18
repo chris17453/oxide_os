@@ -74,6 +74,9 @@ pub trait NetworkDevice: Send + Sync {
     /// Debug: get RX buffer state (free, in_use, has_completed)
     fn debug_rx_info(&self) -> (usize, usize, bool) { (0, 0, false) }
 
+    /// Debug: get raw virtqueue ring indices (used_idx, last_used_idx, avail_idx)
+    fn debug_ring_state(&self) -> (u16, u16, u16) { (0, 0, 0) }
+
     /// Get device info
     fn info(&self) -> NetworkDeviceInfo {
         NetworkDeviceInfo {

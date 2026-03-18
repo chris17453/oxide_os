@@ -1569,7 +1569,15 @@ pub fn sys_recvfrom(fd: i32, buf: u64, len: usize, flags: i32, src_addr: u64, ad
         }
     }
 
-    // No data available
+    // No data available — dump ring state for debugging
+    if is_tcp {
+        let (used_idx, last_used, avail_idx) = tcpip::debug_ring_state();
+        serial_print_num("recvfrom: EAGAIN ring used_idx=", used_idx as i64);
+        serial_print_num("recvfrom: EAGAIN ring last_used=", last_used as i64);
+        serial_print_num("recvfrom: EAGAIN ring avail_idx=", avail_idx as i64);
+        let (rx, _, _) = tcpip::debug_counters();
+        serial_print_num("recvfrom: total rx_packets=", rx as i64);
+    }
     errno::EAGAIN
 }
 

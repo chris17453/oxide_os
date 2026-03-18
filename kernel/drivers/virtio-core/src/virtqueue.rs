@@ -330,6 +330,15 @@ impl Virtqueue {
     /// ensures we see all device writes that happened before the idx update.
     /// This is the #1 cause of "VirtIO works with serial traces, breaks without" —
     /// the UART I/O acts as an accidental compiler+hardware barrier.
+    /// Debug: get raw ring indices (used_idx, last_used_idx, avail_idx)
+    pub fn debug_ring_state(&self) -> (u16, u16, u16) {
+        unsafe {
+            let used_idx = core::ptr::read_volatile(&(*self.used).idx);
+            let avail_idx = core::ptr::read_volatile(&(*self.avail).idx);
+            (used_idx, self.last_used_idx, avail_idx)
+        }
+    }
+
     pub fn has_completed(&self) -> bool {
         unsafe {
             // Acquire fence: see all device DMA writes before we read idx

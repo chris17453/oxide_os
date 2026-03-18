@@ -970,11 +970,28 @@ impl NetworkDevice for VirtioNet {
         }
     }
 
+    fn debug_ring_state(&self) -> (u16, u16, u16) {
+        self.rx_queue.lock().debug_ring_state()
+    }
+
     fn debug_rx_info(&self) -> (usize, usize, bool) {
         let rx_buffers = self.rx_buffers.lock();
         let free = rx_buffers.in_use.iter().filter(|&&x| !x).count();
         let used = rx_buffers.in_use.iter().filter(|&&x| x).count();
-        let has_completed = self.rx_queue.lock().has_completed();
+        let rx_queue = self.rx_queue.lock();
+        let has_completed = rx_queue.has_completed();
+        // — GraveShift: Also dump raw used/avail indices for deep debugging
+        let (used_idx, last_used, avail_idx) = rx_queue.debug_ring_state();
+        drop(rx_queue);
+        drop(rx_buffers);
+        // Pack extra info: encode used_idx in upper bits
+        // For now just return the basic info
+        static DBG_USED_IDX: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+        static DBG_LAST_USED: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+        static DBG_AVAIL_IDX: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+        DBG_USED_IDX.store(used_idx as u64, core::sync::atomic::Ordering::Relaxed);
+        DBG_LAST_USED.store(last_used as u64, core::sync::atomic::Ordering::Relaxed);
+        DBG_AVAIL_IDX.store(avail_idx as u64, core::sync::atomic::Ordering::Relaxed);
         (free, used, has_completed)
     }
 }
