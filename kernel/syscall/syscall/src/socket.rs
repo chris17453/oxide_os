@@ -1272,13 +1272,19 @@ pub fn sys_sendto(fd: i32, buf: u64, len: usize, flags: i32, dest_addr: u64, add
                     }
                     // Transmit queued segments
                     let segments = conn.dequeue_segments();
+                    serial_print_num("sendto: TCP segments queued=", segments.len() as i64);
                     let dst_ip = match dest.ip {
                         IpAddr::V4(ip) => ip,
                         IpAddr::V6(_) => return errno::EAFNOSUPPORT,
                     };
-                    for seg in segments {
-                        let _ = stack.send_ipv4_packet(dst_ip, tcpip::IpProtocol::Tcp, &seg);
+                    for seg in &segments {
+                        serial_print_num("sendto: TCP seg len=", seg.len() as i64);
+                        match stack.send_ipv4_packet(dst_ip, tcpip::IpProtocol::Tcp, seg) {
+                            Ok(()) => serial_print("sendto: TCP seg sent OK"),
+                            Err(_) => serial_print("sendto: TCP seg send FAILED"),
+                        }
                     }
+                    serial_print_num("sendto: tx_packets=", tcpip::debug_tx_count() as i64);
                     return len as i64;
                 }
             }
@@ -1572,11 +1578,12 @@ pub fn sys_recvfrom(fd: i32, buf: u64, len: usize, flags: i32, src_addr: u64, ad
     // No data available — dump ring state for debugging
     if is_tcp {
         let (used_idx, last_used, avail_idx) = tcpip::debug_ring_state();
-        serial_print_num("recvfrom: EAGAIN ring used_idx=", used_idx as i64);
-        serial_print_num("recvfrom: EAGAIN ring last_used=", last_used as i64);
-        serial_print_num("recvfrom: EAGAIN ring avail_idx=", avail_idx as i64);
+        serial_print_num("recvfrom: EAGAIN used_idx=", used_idx as i64);
+        serial_print_num("recvfrom: EAGAIN last_used=", last_used as i64);
+        serial_print_num("recvfrom: EAGAIN avail_idx=", avail_idx as i64);
         let (rx, _, _) = tcpip::debug_counters();
-        serial_print_num("recvfrom: total rx_packets=", rx as i64);
+        serial_print_num("recvfrom: rx_pkts=", rx as i64);
+        serial_print_num("recvfrom: tx_pkts=", tcpip::debug_tx_count() as i64);
     }
     errno::EAGAIN
 }
