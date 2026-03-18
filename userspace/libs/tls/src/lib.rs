@@ -216,11 +216,23 @@ pub fn tls_connect(fd: i32, hostname: &str) -> Result<TlsStream, TlsError> {
 
 fn read_exact(fd: i32, buf: &mut [u8]) -> Result<usize, TlsError> {
     let mut total = 0;
+    let mut eagain_retries = 0;
     while total < buf.len() {
         let n = libc::socket::recv(fd, &mut buf[total..], 0);
-        if n < 0 { return Err(TlsError::IoError(n as i32)); }
+        if n < 0 {
+            // — ColdCipher: EAGAIN (-11) means the kernel poll loop timed out
+            // before data arrived. Retry up to 10 times — the ServerHello takes
+            // ~100-500ms over the internet, and each recv polls for ~5 seconds.
+            // Total retry budget: ~50 seconds, plenty for any real server.
+            if n == -11 && eagain_retries < 10 {
+                eagain_retries += 1;
+                continue;
+            }
+            return Err(TlsError::IoError(n as i32));
+        }
         if n == 0 { return Ok(total); }
         total += n as usize;
+        eagain_retries = 0; // Reset on progress
     }
     Ok(total)
 }
