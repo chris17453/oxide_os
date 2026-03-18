@@ -1391,7 +1391,11 @@ pub fn sys_recvfrom(fd: i32, buf: u64, len: usize, flags: i32, src_addr: u64, ad
     // ~100μs per iteration) catches replies without burning excessive CPU.
     // Non-blocking sockets skip the loop entirely. — GraveShift
     let is_nonblocking = socket.is_nonblocking() || (flags & 0x40 != 0); // MSG_DONTWAIT
-    let poll_budget = if is_nonblocking { 1 } else { 500 };
+    // — GraveShift: TCP needs longer poll budget — HTTP responses take 50-200ms
+    // over the internet. UDP DNS replies are fast (~5ms). Use aggressive polling
+    // (5000 iterations × 3 attempts) for TCP, same as the connect loop. — GraveShift
+    let is_tcp = socket.sock_type == SocketType::Stream;
+    let poll_budget = if is_nonblocking { 1 } else if is_tcp { 5000 } else { 500 };
 
     let mut kbuf = Vec::new();
     kbuf.resize(len, 0);
@@ -1421,6 +1425,35 @@ pub fn sys_recvfrom(fd: i32, buf: u64, len: usize, flags: i32, src_addr: u64, ad
                         if rc < 0 { return rc; }
                     }
                     return reply_len as i64;
+                }
+            }
+        }
+
+        // — GraveShift: TCP Stream receive — read from the TCP connection's recv buffer.
+        // process_tcp puts incoming data into conn.recv_buf via process_segment.
+        if socket.sock_type == SocketType::Stream {
+            if let Some(&conn_id) = TCP_CONNECTIONS.lock().get(&fd) {
+                if let Some(stack) = tcpip::stack() {
+                    if let Some(conn) = stack.get_tcp_connection(conn_id) {
+                        if let Ok(n) = conn.recv(&mut kbuf[..len]) {
+                            if n > 0 {
+                                if uaccess::copy_to_user(buf, &kbuf[..n]).is_err() {
+                                    return errno::EFAULT;
+                                }
+                                if src_addr != 0 {
+                                    let peer = socket.peer_addr().unwrap_or(
+                                        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0,0,0,0)), 0));
+                                    let rc = write_sockaddr_in(src_addr, addrlen, &peer);
+                                    if rc < 0 { return rc; }
+                                }
+                                return n as i64;
+                            }
+                        }
+                        // Check if connection closed by peer (FIN received)
+                        if conn.is_closed() || conn.is_reset() {
+                            return 0; // EOF
+                        }
+                    }
                 }
             }
         }
@@ -1484,10 +1517,12 @@ pub fn sys_recvfrom(fd: i32, buf: u64, len: usize, flags: i32, src_addr: u64, ad
             }
         }
 
-        // Brief yield between polls so other tasks can run
+        // — GraveShift: Yield between polls. TCP uses longer spin (1000 iterations)
+        // to match the connect loop's timing that successfully receives packets.
         if poll_iter < poll_budget - 1 {
             os_core::allow_kernel_preempt();
-            for _ in 0..100 { core::hint::spin_loop(); }
+            let spins = if is_tcp { 1000 } else { 100 };
+            for _ in 0..spins { core::hint::spin_loop(); }
             os_core::disallow_kernel_preempt();
         }
     }
