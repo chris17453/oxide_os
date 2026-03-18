@@ -234,6 +234,14 @@ fn read_exact(fd: i32, buf: &mut [u8]) -> Result<usize, TlsError> {
     let mut eagain_retries = 0;
     while total < buf.len() {
         let n = libc::socket::recv(fd, &mut buf[total..], 0);
+        // — ColdCipher: Trace first recv result for debugging
+        if total == 0 && eagain_retries == 0 {
+            libc::prints("[TLS] recv(");
+            libc::print_i64(buf.len() as i64);
+            libc::prints(")=");
+            libc::print_i64(n as i64);
+            libc::prints("\n");
+        }
         if n < 0 {
             // — ColdCipher: EAGAIN (-11) means the kernel poll loop timed out
             // before data arrived. Each recv does 15000 spin-polls (~15ms).
