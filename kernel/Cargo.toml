@@ -29,6 +29,7 @@ debug-mmap = ["mm-manager/debug-mmap"]  # Enable memory mapping debug output
 debug-buddy = ["mm-manager/debug-buddy"]  # Enable buddy allocator trace output (EXTREMELY noisy — fires on every alloc/free)
 debug-paging = ["proc/debug-paging"]  # Enable page table/alloc/zero traces during exec (EXTREMELY noisy — fires on every page map + alloc)
 debug-perf = ["arch-x86_64?/debug-perf"]  # Enable per-ISR PERF-WARN messages (53 bytes × hundreds/sec = feedback loop)
+debug-net = ["tcpip/debug-net"]  # Enable TCP/IP stack debug output (connect, send, recv, packet processing)
 debug-proc = ["syscall/debug-proc", "proc/debug-proc"]       # Enable process management debug output
 debug-sched = ["syscall/debug-sched", "sched/debug-sched", "arch-x86_64?/debug-sched"]  # Enable scheduler context switch debug output
 debug-mouse = []      # Enable mouse/input debug output (ISR-safe)

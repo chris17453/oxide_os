@@ -1715,6 +1715,7 @@ version = "0.1.0"
 dependencies = [
  "dhcp",
  "net",
+ "os_log",
  "spin",
 ]
 

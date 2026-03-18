@@ -7,6 +7,18 @@
 
 extern crate alloc;
 
+/// — GraveShift: Network debug traces via os_log (arch-abstracted serial).
+/// Compile with `--features debug-net` to enable. — GraveShift
+macro_rules! net_debug {
+    ($($arg:tt)*) => {
+        #[cfg(feature = "debug-net")]
+        {
+            unsafe { os_log::write_str_raw($($arg)*); }
+            unsafe { os_log::write_str_raw("\n"); }
+        }
+    };
+}
+
 pub mod arp;
 pub mod checksum;
 pub mod conntrack;
@@ -122,6 +134,7 @@ impl TcpIpStack {
         for _ in 0..NAPI_BUDGET {
             match self.interface.device.receive(&mut buf) {
                 Ok(Some(len)) => {
+                    net_debug!("[NET] rx pkt");
                     let _ = self.process_packet(&buf[..len]);
                 }
                 _ => break,
@@ -325,6 +338,7 @@ impl TcpIpStack {
                 self.process_icmp(ip_header.src, ip_payload)?;
             }
             IpProtocol::Tcp => {
+                net_debug!("[TCP] rx packet");
                 self.process_tcp(ip_header.src, ip_header.dst, ip_payload)?;
             }
             IpProtocol::Udp => {
@@ -676,6 +690,7 @@ impl TcpIpStack {
 
     /// Create TCP connection
     pub fn tcp_connect(&self, dst_addr: SocketAddr) -> NetResult<Arc<TcpConnection>> {
+        net_debug!("[TCP] connect start");
         let dst_ip = match dst_addr.ip {
             IpAddr::V4(ip) => ip,
             IpAddr::V6(_) => return Err(NetError::AddressFamilyNotSupported),
@@ -700,6 +715,7 @@ impl TcpIpStack {
         conn.connect()?;
 
         // NeonRoot: Immediately transmit the SYN
+        net_debug!("[TCP] sending SYN");
         let segments = conn.dequeue_segments();
         for segment_bytes in segments {
             self.send_ipv4_packet(dst_ip, IpProtocol::Tcp, &segment_bytes)?;
