@@ -140,12 +140,23 @@ pub fn tls_connect(fd: i32, hostname: &str) -> Result<TlsStream, TlsError> {
     // Send ClientHello
     let ch = hs.build_client_hello();
     let ch_record = TlsRecord::handshake(ch);
+    libc::prints("[TLS] sending ClientHello...\n");
     let sent = libc::socket::send(fd, &ch_record.encode(), 0);
-    if sent < 0 { return Err(TlsError::IoError(sent as i32)); }
+    if sent < 0 {
+        libc::prints("[TLS] send ClientHello failed\n");
+        return Err(TlsError::IoError(sent as i32));
+    }
+    libc::prints("[TLS] ClientHello sent, reading ServerHello...\n");
 
     // Read ServerHello
-    let sh_data = read_handshake_record(fd).map_err(|_| TlsError::HandshakeFailed("read ServerHello failed"))?;
-    hs.process_server_hello(&sh_data).map_err(|e| TlsError::HandshakeFailed(e))?;
+    let sh_data = match read_handshake_record(fd) {
+        Ok(d) => { libc::prints("[TLS] ServerHello received\n"); d }
+        Err(_) => { libc::prints("[TLS] FAIL: read ServerHello\n"); return Err(TlsError::HandshakeFailed("read ServerHello failed")); }
+    };
+    match hs.process_server_hello(&sh_data) {
+        Ok(()) => libc::prints("[TLS] ServerHello OK\n"),
+        Err(e) => { libc::prints("[TLS] FAIL: "); libc::prints(e); libc::prints("\n"); return Err(TlsError::HandshakeFailed(e)); }
+    }
 
     // Derive handshake keys
     let server_hs = hs.server_hs_secret.ok_or(TlsError::HandshakeFailed("no handshake secret"))?;
@@ -160,8 +171,12 @@ pub fn tls_connect(fd: i32, hostname: &str) -> Result<TlsStream, TlsError> {
         let mut fragment = vec![0u8; record_len];
         read_exact(fd, &mut fragment)?;
 
-        if header[0] == ContentType::ChangeCipherSpec as u8 { continue; }
+        if header[0] == ContentType::ChangeCipherSpec as u8 {
+            libc::prints("[TLS] ChangeCipherSpec (ignored)\n");
+            continue;
+        }
 
+        libc::prints("[TLS] encrypted record, decrypting...\n");
         if let Some((ct, plaintext)) = record::decrypt_record(
             &server_hs_keys.key, &server_hs_keys.iv, server_hs_seq, &fragment,
         ) {
