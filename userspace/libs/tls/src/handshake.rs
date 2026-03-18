@@ -71,8 +71,8 @@ pub struct Handshake {
     our_private_key: [u8; 32],
     /// Our X25519 public key
     our_public_key: [u8; 32],
-    /// Server's X25519 public key (from ServerHello key_share)
-    server_public_key: Option<[u8; 32]>,
+    /// Server's key share (X25519 or P-256)
+    server_key_share: Option<extensions::ServerKeyShare>,
     /// Shared secret from X25519
     shared_secret: Option<[u8; 32]>,
     /// Negotiated cipher suite
@@ -107,7 +107,7 @@ impl Handshake {
             state: HandshakeState::Initial,
             our_private_key: private_key,
             our_public_key: public_key,
-            server_public_key: None,
+            server_key_share: None,
             shared_secret: None,
             cipher_suite: None,
             transcript: Transcript::new(),
@@ -247,8 +247,8 @@ impl Handshake {
         for (ext_type, ext_val) in &parsed_exts {
             match *ext_type {
                 extensions::EXT_KEY_SHARE => {
-                    if let Some(key) = extensions::parse_server_key_share(ext_val) {
-                        self.server_public_key = Some(key);
+                    if let Some(ks) = extensions::parse_server_key_share(ext_val) {
+                        self.server_key_share = Some(ks);
                         got_key = true;
                     }
                 }
@@ -273,13 +273,25 @@ impl Handshake {
 
         // — ColdCipher: X25519 key exchange. Our private key × their public key = shared secret.
         // This is the entropy that protects everything. — ColdCipher
-        let server_key_bytes = self.server_public_key.unwrap();
-        let our_priv = X25519SecretKey::generate(&self.our_private_key);
-        let server_pub = X25519PublicKey::from_bytes(&server_key_bytes)
-            .map_err(|_| "invalid server public key")?;
-        let shared_secret = our_priv.diffie_hellman(&server_pub);
-        let mut shared = [0u8; 32];
-        shared.copy_from_slice(shared_secret.as_bytes());
+        // — ColdCipher: ECDH key exchange — X25519 or P-256 depending on server's choice
+        let server_ks = self.server_key_share.take().ok_or("no server key_share")?;
+        let shared = match server_ks {
+            extensions::ServerKeyShare::X25519(server_key_bytes) => {
+                let our_priv = X25519SecretKey::generate(&self.our_private_key);
+                let server_pub = X25519PublicKey::from_bytes(&server_key_bytes)
+                    .map_err(|_| "invalid X25519 server key")?;
+                let ss = our_priv.diffie_hellman(&server_pub);
+                let mut s = [0u8; 32];
+                s.copy_from_slice(ss.as_bytes());
+                s
+            }
+            extensions::ServerKeyShare::P256(_server_point) => {
+                // — ColdCipher: P-256 ECDH not implemented yet.
+                // Need to generate ephemeral P-256 keypair and do scalar multiply.
+                // For now, return error so we can at least test with X25519 servers.
+                return Err("P-256 ECDH not yet implemented");
+            }
+        };
         self.shared_secret = Some(shared);
 
         // Derive handshake traffic secrets
