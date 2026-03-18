@@ -232,8 +232,19 @@ fn show_help() {
     eprintlns("  -h          Show this help");
 }
 
-/// Download from URL
+/// Maximum redirect follows (like Linux wget default of 20)
+const MAX_REDIRECTS: u32 = 20;
+
+/// Download from URL, following redirects
 fn do_wget(config: &WgetConfig, url: &str) -> i32 {
+    do_wget_inner(config, url, 0)
+}
+
+fn do_wget_inner(config: &WgetConfig, url: &str, redirect_count: u32) -> i32 {
+    if redirect_count >= MAX_REDIRECTS {
+        eprintlns("wget: too many redirects");
+        return 1;
+    }
     // Parse URL
     let (host, port, path) = match parse_url(url) {
         Some(parsed) => parsed,
@@ -440,12 +451,52 @@ fn do_wget(config: &WgetConfig, url: &str) -> i32 {
             if let Some(pos) = find_pattern(&buffer[..received as usize], b"\r\n\r\n") {
                 header_end = Some(pos + 4);
 
-                // Parse status line (first line)
+                // Parse status line and check for redirects
                 let headers = &buffer[..pos];
+                let mut is_redirect = false;
+
                 if let Some(first_line_end) = find_pattern(headers, b"\r\n") {
                     if let Ok(status_line) = core::str::from_utf8(&headers[..first_line_end]) {
                         if !config.quiet {
                             printlns(status_line);
+                        }
+                        // — ShadePacket: Check for 301/302/303/307/308 redirects
+                        is_redirect = status_line.contains("301")
+                            || status_line.contains("302")
+                            || status_line.contains("303")
+                            || status_line.contains("307")
+                            || status_line.contains("308");
+                    }
+                }
+
+                // — ShadePacket: Follow redirect — extract Location header and recurse
+                if is_redirect {
+                    if let Ok(header_str) = core::str::from_utf8(headers) {
+                        for line in header_str.split("\r\n") {
+                            let lower_check = line.as_bytes();
+                            // Case-insensitive "Location:" check
+                            if lower_check.len() > 10
+                                && (lower_check[0] == b'L' || lower_check[0] == b'l')
+                                && (lower_check[1] == b'o' || lower_check[1] == b'O')
+                                && lower_check[8] == b':'
+                            {
+                                let location = line[9..].trim();
+                                if !location.is_empty() {
+                                    if !config.quiet {
+                                        prints("Redirecting to: ");
+                                        printlns(location);
+                                    }
+                                    // Clean up current connection
+                                    close(out_fd);
+                                    if let Some(ref mut tls) = tls_stream {
+                                        let _ = tls.shutdown();
+                                    }
+                                    shutdown(sock, shut::RDWR);
+                                    close(sock);
+                                    // Follow redirect
+                                    return do_wget_inner(config, location, redirect_count + 1);
+                                }
+                            }
                         }
                     }
                 }
