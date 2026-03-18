@@ -144,11 +144,11 @@ pub fn tls_connect(fd: i32, hostname: &str) -> Result<TlsStream, TlsError> {
     if sent < 0 { return Err(TlsError::IoError(sent as i32)); }
 
     // Read ServerHello
-    let sh_data = read_handshake_record(fd)?;
+    let sh_data = read_handshake_record(fd).map_err(|_| TlsError::HandshakeFailed("read ServerHello failed"))?;
     hs.process_server_hello(&sh_data).map_err(|e| TlsError::HandshakeFailed(e))?;
 
     // Derive handshake keys
-    let server_hs = hs.server_hs_secret.unwrap();
+    let server_hs = hs.server_hs_secret.ok_or(TlsError::HandshakeFailed("no handshake secret"))?;
     let server_hs_keys = key_schedule::derive_traffic_keys(&server_hs, hs.key_length());
     let mut server_hs_seq: u64 = 0;
 
@@ -182,7 +182,7 @@ pub fn tls_connect(fd: i32, hostname: &str) -> Result<TlsStream, TlsError> {
                 return Err(TlsError::HandshakeFailed("server sent alert during handshake"));
             }
         } else {
-            return Err(TlsError::DecryptionFailed);
+            return Err(TlsError::HandshakeFailed("decrypt encrypted handshake failed"));
         }
     }
 
