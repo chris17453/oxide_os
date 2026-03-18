@@ -877,6 +877,17 @@ impl NetworkDevice for VirtioNet {
         let mut rx_queue = self.rx_queue.lock();
         let mut rx_buffers = self.rx_buffers.lock();
 
+        // — GraveShift: Debug: count available buffers and check used ring state
+        static RX_CHECK_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+        let check = RX_CHECK_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        // Log every 5000th check to avoid serial saturation
+        if check % 5000 == 0 && check > 0 {
+            let free = rx_buffers.in_use.iter().filter(|&&x| !x).count();
+            let used = rx_buffers.in_use.iter().filter(|&&x| x).count();
+            // Use serial callback if available
+            let _ = (free, used); // compiler won't optimize away the counts
+        }
+
         if !rx_queue.has_completed() {
             return Ok(None);
         }
@@ -945,15 +956,26 @@ impl NetworkDevice for VirtioNet {
     }
 
     fn poll_rx(&self) {
-        // — GraveShift: Read ISR status to acknowledge the device interrupt and
-        // clear the flag. Virtio legacy PCI uses the ISR register (offset 19) as
-        // the interrupt acknowledgment mechanism. Without reading it, the device
-        // suppresses new used-ring updates and has_completed() stays false even
-        // when packets arrived. This is why DHCP works (resolve_mac calls
-        // reclaim_tx which reads ISR) but post-boot RX fails (nobody reads ISR).
-        // Also re-post any free RX buffers so the device has DMA targets. — GraveShift
-        let _ = self.read_isr();
+        // — GraveShift: Read ISR status to acknowledge device interrupt, re-post
+        // free RX buffers, and track stats for debugging. — GraveShift
+        let isr = self.read_isr();
         self.post_rx_buffers();
+
+        // — GraveShift: Debug: track poll_rx calls and ISR values
+        static POLL_RX_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+        static ISR_NONZERO: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+        POLL_RX_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        if isr != 0 {
+            ISR_NONZERO.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    fn debug_rx_info(&self) -> (usize, usize, bool) {
+        let rx_buffers = self.rx_buffers.lock();
+        let free = rx_buffers.in_use.iter().filter(|&&x| !x).count();
+        let used = rx_buffers.in_use.iter().filter(|&&x| x).count();
+        let has_completed = self.rx_queue.lock().has_completed();
+        (free, used, has_completed)
     }
 }
 

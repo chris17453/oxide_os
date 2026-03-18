@@ -623,8 +623,11 @@ impl TcpConnection {
             &[],
         );
 
-        // BlackLatch: Transmit would happen here via stack callback
-        let _bytes = segment.to_bytes(self.local_ip, self.remote_ip);
+        // — GraveShift: Enqueue the SYN for transmission. The caller (tcp_connect)
+        // calls dequeue_segments() after this to get the bytes and send via IP.
+        // The old code stored in _bytes (dropped!) — the SYN was never sent. — GraveShift
+        let bytes = segment.to_bytes(self.local_ip, self.remote_ip);
+        self.tx_queue.lock().push_back(bytes);
 
         self.snd_nxt.fetch_add(1, Ordering::SeqCst); // SYN consumes one sequence number
         *state = TcpState::SynSent;
@@ -648,13 +651,17 @@ impl TcpConnection {
         let options = &segment.options;
         let data = &segment.data;
 
-        // NeonRoot: Validate sequence number per RFC 793
-        if !self.seq_acceptable(header.seq_num, data.len() as u32) {
-            // Segment not acceptable - send ACK
-            return Ok(());
-        }
-
         let mut state = self.state.lock();
+
+        // — GraveShift: Sequence validation per RFC 793 — but NOT for SynSent.
+        // In SynSent, rcv_nxt=0 and the server's ISN is unpredictable. The old
+        // code rejected every SYN-ACK because server_seq > rcv_wnd. RFC 793
+        // Section 3.4: in SynSent, accept any segment with valid ACK. — GraveShift
+        if *state != TcpState::SynSent {
+            if !self.seq_acceptable(header.seq_num, data.len() as u32) {
+                return Ok(());
+            }
+        }
 
         // Process RST flag first (RFC 793)
         if header.flags & tcp_flags::RST != 0 {

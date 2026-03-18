@@ -504,6 +504,7 @@ impl TcpIpStack {
 
         // Find connection
         let connections = self.tcp_connections.lock();
+        let mut matched = false;
         for conn in connections.values() {
             if conn.matches(
                 src_ip,
@@ -511,9 +512,20 @@ impl TcpIpStack {
                 dst_ip,
                 segment.header.dst_port,
             ) {
+                matched = true;
                 conn.process_segment(&segment)?;
+                // — GraveShift: After processing SYN-ACK, transmit the queued ACK
+                // so the 3-way handshake completes. Without this, the ACK sits in
+                // tx_queue and the server retransmits SYN-ACK forever.
+                let segments = conn.dequeue_segments();
+                for seg in segments {
+                    let _ = self.send_ipv4_packet(src_ip, IpProtocol::Tcp, &seg);
+                }
                 return Ok(());
             }
+        }
+        if !matched {
+            RX_TCP_MISS_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         }
 
         // Check listening sockets for SYN
@@ -615,6 +627,7 @@ impl TcpIpStack {
             &ip_bytes,
         );
 
+        TX_PACKET_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         self.interface.device.transmit(&frame.to_bytes())
     }
 
@@ -758,6 +771,8 @@ static RX_TCP_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU
 static RX_ARP_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 static POLL_CALL_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 static POLL_LOCK_FAIL_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static TX_PACKET_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static RX_TCP_MISS_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 /// Get network debug counters
 pub fn debug_counters() -> (u64, u64, u64) {
@@ -774,6 +789,26 @@ pub fn debug_counters_ext() -> (u64, u64) {
         RX_TCP_COUNT.load(core::sync::atomic::Ordering::Relaxed),
         RX_ARP_COUNT.load(core::sync::atomic::Ordering::Relaxed),
     )
+}
+
+/// Get TX packet count
+pub fn debug_tx_count() -> u64 {
+    TX_PACKET_COUNT.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// Get TCP miss count (SYN-ACKs that didn't match any connection)
+pub fn debug_tcp_miss() -> u64 {
+    RX_TCP_MISS_COUNT.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// Get RX buffer debug info from the device: (free_bufs, used_bufs, has_completed)
+pub fn debug_rx_info() -> (usize, usize, bool) {
+    if let Some(guard) = TCPIP_STACK.try_lock() {
+        if let Some(ref stack) = *guard {
+            return stack.interface.device.debug_rx_info();
+        }
+    }
+    (0, 0, false)
 }
 
 // ============================================================================

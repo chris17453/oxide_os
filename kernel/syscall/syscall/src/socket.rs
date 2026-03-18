@@ -779,6 +779,12 @@ pub fn sys_connect(fd: i32, addr: u64, addrlen: u32) -> i64 {
                     let (tcp_rx, arp_rx) = tcpip::debug_counters_ext();
                     serial_print_num("connect: rx_tcp=", tcp_rx as i64);
                     serial_print_num("connect: rx_arp=", arp_rx as i64);
+                    let (free_bufs, used_bufs, has_comp) = tcpip::debug_rx_info();
+                    serial_print_num("connect: rx_bufs_free=", free_bufs as i64);
+                    serial_print_num("connect: rx_bufs_used=", used_bufs as i64);
+                    serial_print_num("connect: has_completed=", has_comp as i64);
+                    serial_print_num("connect: tx_packets=", tcpip::debug_tx_count() as i64);
+                    serial_print_num("connect: tcp_miss=", tcpip::debug_tcp_miss() as i64);
                     TCP_CONNECTIONS.lock().remove(&fd);
                     return errno::ETIMEDOUT;
                 }
@@ -1251,6 +1257,34 @@ pub fn sys_sendto(fd: i32, buf: u64, len: usize, flags: i32, dest_addr: u64, add
     };
 
     let _ = flags; // Flags not fully supported yet
+
+    // — GraveShift: TCP Stream send — route through the TCP connection's send
+    // path which handles segmentation, seq numbers, ACK, retransmission. The
+    // generic socket.sendto() is a stub. TCP connections are tracked in
+    // TCP_CONNECTIONS by socket fd. — GraveShift
+    if socket.sock_type == SocketType::Stream {
+        if let Some(&conn_id) = TCP_CONNECTIONS.lock().get(&fd) {
+            if let Some(stack) = tcpip::stack() {
+                if let Some(conn) = stack.get_tcp_connection(conn_id) {
+                    // Feed data into TCP connection (handles segmentation)
+                    if let Err(e) = conn.send(data) {
+                        return net_error_to_errno(e);
+                    }
+                    // Transmit queued segments
+                    let segments = conn.dequeue_segments();
+                    let dst_ip = match dest.ip {
+                        IpAddr::V4(ip) => ip,
+                        IpAddr::V6(_) => return errno::EAFNOSUPPORT,
+                    };
+                    for seg in segments {
+                        let _ = stack.send_ipv4_packet(dst_ip, tcpip::IpProtocol::Tcp, &seg);
+                    }
+                    return len as i64;
+                }
+            }
+        }
+        // Fall through to loopback check for loopback TCP
+    }
 
     // Check if destination is loopback - use unified loopback system
     if is_loopback_addr(&dest) {
