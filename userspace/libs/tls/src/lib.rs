@@ -236,10 +236,10 @@ fn read_exact(fd: i32, buf: &mut [u8]) -> Result<usize, TlsError> {
         let n = libc::socket::recv(fd, &mut buf[total..], 0);
         if n < 0 {
             // — ColdCipher: EAGAIN (-11) means the kernel poll loop timed out
-            // before data arrived. Retry up to 10 times — the ServerHello takes
-            // ~100-500ms over the internet, and each recv polls for ~5 seconds.
-            // Total retry budget: ~50 seconds, plenty for any real server.
-            if n == -11 && eagain_retries < 10 {
+            // before data arrived. Each recv does 15000 spin-polls (~15ms).
+            // Retry up to 200 times → ~3 second budget per read_exact call.
+            // TLS ServerHello typically arrives within 50-500ms.
+            if n == -11 && eagain_retries < 200 {
                 eagain_retries += 1;
                 continue;
             }
