@@ -742,6 +742,12 @@ impl TcpConnection {
                 }
             }
             TcpState::Established => {
+                // — GraveShift: Debug established state processing
+                static EST_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+                static EST_DATA_BYTES: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+                EST_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                EST_DATA_BYTES.fetch_add(data.len() as u64, core::sync::atomic::Ordering::Relaxed);
+
                 // WireSaint: Update activity timestamp
                 self.last_activity
                     .store(Self::get_timestamp_us(), Ordering::SeqCst);
@@ -767,7 +773,10 @@ impl TcpConnection {
                 // ShadePacket: Process data with proper flow control
                 if !data.is_empty() {
                     let expected_seq = self.rcv_nxt.load(Ordering::SeqCst);
+                    static DATA_RECV: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+                    static DATA_OOO: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
                     if header.seq_num == expected_seq {
+                        DATA_RECV.fetch_add(data.len() as u64, core::sync::atomic::Ordering::Relaxed);
                         // In-order data
                         let mut recv_buf = self.recv_buf.lock();
                         recv_buf.extend(data);
@@ -779,6 +788,7 @@ impl TcpConnection {
 
                         self.send_ack();
                     } else {
+                        DATA_OOO.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                         // Out-of-order data - would queue for reassembly
                         self.send_ack(); // Send duplicate ACK
                     }
@@ -989,6 +999,15 @@ impl TcpConnection {
         }
 
         Ok(len)
+    }
+
+    /// Debug: get recv buffer length and connection state info
+    pub fn debug_info(&self) -> (usize, u32, u32, u8) {
+        let buf_len = self.recv_buf.lock().len();
+        let rcv_nxt = self.rcv_nxt.load(core::sync::atomic::Ordering::Relaxed);
+        let snd_nxt = self.snd_nxt.load(core::sync::atomic::Ordering::Relaxed);
+        let state = *self.state.lock() as u8;
+        (buf_len, rcv_nxt, snd_nxt, state)
     }
 
     /// Close connection

@@ -1600,6 +1600,18 @@ pub fn sys_recvfrom(fd: i32, buf: u64, len: usize, flags: i32, src_addr: u64, ad
         let (tcp_rx, arp_rx) = tcpip::debug_counters_ext();
         serial_print_num("recvfrom: rx_tcp=", tcp_rx as i64);
         serial_print_num("recvfrom: rx_arp=", arp_rx as i64);
+        // Dump TCP connection state
+        if let Some(&conn_id) = TCP_CONNECTIONS.lock().get(&fd) {
+            if let Some(stack) = tcpip::stack() {
+                if let Some(conn) = stack.get_tcp_connection(conn_id) {
+                    let (buf_len, rcv_nxt, snd_nxt, state) = conn.debug_info();
+                    serial_print_num("recvfrom: conn.recv_buf=", buf_len as i64);
+                    serial_print_num("recvfrom: conn.rcv_nxt=", rcv_nxt as i64);
+                    serial_print_num("recvfrom: conn.snd_nxt=", snd_nxt as i64);
+                    serial_print_num("recvfrom: conn.state=", state as i64);
+                }
+            }
+        }
     }
     errno::EAGAIN
 }
