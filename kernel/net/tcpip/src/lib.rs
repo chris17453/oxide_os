@@ -131,7 +131,7 @@ impl TcpIpStack {
         for _ in 0..NAPI_BUDGET {
             match self.interface.device.receive(&mut buf) {
                 Ok(Some(len)) => {
-                    net_debug!("[NET] rx pkt");
+                    RX_PACKET_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                     let _ = self.process_packet(&buf[..len]);
                 }
                 _ => break,
@@ -751,6 +751,20 @@ impl TcpIpStack {
 /// Global TCP/IP stack instance
 static TCPIP_STACK: Mutex<Option<Arc<TcpIpStack>>> = Mutex::new(None);
 
+/// — GraveShift: Packet counters for debugging. Atomics, zero cost when not read.
+static RX_PACKET_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static POLL_CALL_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static POLL_LOCK_FAIL_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+/// Get network debug counters: (rx_packets, poll_calls, poll_lock_fails)
+pub fn debug_counters() -> (u64, u64, u64) {
+    (
+        RX_PACKET_COUNT.load(core::sync::atomic::Ordering::Relaxed),
+        POLL_CALL_COUNT.load(core::sync::atomic::Ordering::Relaxed),
+        POLL_LOCK_FAIL_COUNT.load(core::sync::atomic::Ordering::Relaxed),
+    )
+}
+
 // ============================================================================
 // ICMP Reply Buffer for Raw Sockets
 // ============================================================================
@@ -838,8 +852,7 @@ pub fn stack() -> Option<Arc<TcpIpStack>> {
 
 /// Poll the TCP/IP stack
 pub fn poll() -> NetResult<()> {
-    // ShadePacket: Use try_lock to avoid deadlock if already polling
-    // This can happen if poll is called recursively or from timer interrupt
+    POLL_CALL_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     if let Some(guard) = TCPIP_STACK.try_lock() {
         if let Some(ref stack) = *guard {
             stack.poll()
@@ -847,7 +860,7 @@ pub fn poll() -> NetResult<()> {
             Ok(())
         }
     } else {
-        // Lock held - skip this poll cycle to avoid deadlock
+        POLL_LOCK_FAIL_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 }

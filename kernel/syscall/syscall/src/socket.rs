@@ -731,9 +731,13 @@ pub fn sys_connect(fd: i32, addr: u64, addrlen: u32) -> i64 {
                     const POLLS_PER_ATTEMPT: u32 = 5000;
                     const SPINS_PER_POLL: u32 = 1000;
 
+                    let mut total_polls: u32 = 0;
+
                     for attempt in 0..CONNECT_ATTEMPTS {
-                        for _ in 0..POLLS_PER_ATTEMPT {
+                        serial_print_num("connect: attempt", attempt as i64);
+                        for poll_i in 0..POLLS_PER_ATTEMPT {
                             let _ = tcpip::poll();
+                            total_polls += 1;
 
                             if conn.is_established() {
                                 serial_print("connect: TCP connection established");
@@ -766,8 +770,12 @@ pub fn sys_connect(fd: i32, addr: u64, addrlen: u32) -> i64 {
                         }
                     }
 
-                    // Timeout
-                    serial_print("connect: TCP connection timeout");
+                    // Timeout — dump debug counters
+                    serial_print_num("connect: TIMEOUT polls=", total_polls as i64);
+                    let (rx, polls, fails) = tcpip::debug_counters();
+                    serial_print_num("connect: rx_packets=", rx as i64);
+                    serial_print_num("connect: poll_calls=", polls as i64);
+                    serial_print_num("connect: lock_fails=", fails as i64);
                     TCP_CONNECTIONS.lock().remove(&fd);
                     return errno::ETIMEDOUT;
                 }
