@@ -1279,6 +1279,19 @@ pub fn sys_sendto(fd: i32, buf: u64, len: usize, flags: i32, dest_addr: u64, add
                     };
                     for seg in &segments {
                         serial_print_num("sendto: TCP seg len=", seg.len() as i64);
+                        // — GraveShift: Dump first 40 bytes of TCP segment for debugging
+                        if seg.len() >= 20 {
+                            let src_port = ((seg[0] as u16) << 8) | seg[1] as u16;
+                            let dst_port = ((seg[2] as u16) << 8) | seg[3] as u16;
+                            let seq = ((seg[4] as u32) << 24) | ((seg[5] as u32) << 16) | ((seg[6] as u32) << 8) | seg[7] as u32;
+                            let ack = ((seg[8] as u32) << 24) | ((seg[9] as u32) << 16) | ((seg[10] as u32) << 8) | seg[11] as u32;
+                            let flags = seg[13];
+                            serial_print_num("sendto: src_port=", src_port as i64);
+                            serial_print_num("sendto: dst_port=", dst_port as i64);
+                            serial_print_num("sendto: seq=", seq as i64);
+                            serial_print_num("sendto: ack=", ack as i64);
+                            serial_print_num("sendto: flags=", flags as i64);
+                        }
                         match stack.send_ipv4_packet(dst_ip, tcpip::IpProtocol::Tcp, seg) {
                             Ok(()) => serial_print("sendto: TCP seg sent OK"),
                             Err(_) => serial_print("sendto: TCP seg send FAILED"),
