@@ -17,6 +17,8 @@ pub const EXT_SUPPORTED_VERSIONS: u16 = 43;
 pub const EXT_KEY_SHARE: u16 = 51;
 
 // Named groups
+pub const GROUP_SECP256R1: u16 = 0x0017; // P-256
+pub const GROUP_SECP384R1: u16 = 0x0018; // P-384
 pub const GROUP_X25519: u16 = 0x001D;
 
 // Signature algorithms
@@ -70,15 +72,23 @@ pub fn build_supported_versions() -> Vec<u8> {
     ext
 }
 
-/// Build supported_groups extension
+/// Build supported_groups extension — offer multiple groups like real clients
 pub fn build_supported_groups() -> Vec<u8> {
-    let mut ext = Vec::with_capacity(8);
+    let groups = [GROUP_X25519, GROUP_SECP256R1, GROUP_SECP384R1];
+    let list_len = groups.len() * 2;
+    let ext_len = 2 + list_len;
+
+    let mut ext = Vec::with_capacity(4 + ext_len);
     ext.push((EXT_SUPPORTED_GROUPS >> 8) as u8);
     ext.push((EXT_SUPPORTED_GROUPS & 0xFF) as u8);
-    ext.push(0); ext.push(4); // Extension data length = 4
-    ext.push(0); ext.push(2); // List length = 2 (one group)
-    ext.push((GROUP_X25519 >> 8) as u8);
-    ext.push((GROUP_X25519 & 0xFF) as u8);
+    ext.push((ext_len >> 8) as u8);
+    ext.push((ext_len & 0xFF) as u8);
+    ext.push((list_len >> 8) as u8);
+    ext.push((list_len & 0xFF) as u8);
+    for &g in &groups {
+        ext.push((g >> 8) as u8);
+        ext.push((g & 0xFF) as u8);
+    }
     ext
 }
 
@@ -131,22 +141,37 @@ pub fn build_key_share(pubkey: &[u8; 32]) -> Vec<u8> {
     ext
 }
 
-/// Parse server's key_share extension to extract their X25519 public key
-pub fn parse_server_key_share(data: &[u8]) -> Option<[u8; 32]> {
-    if data.len() < 36 {
+/// Parsed server key share result
+pub enum ServerKeyShare {
+    X25519([u8; 32]),
+    P256(Vec<u8>), // Uncompressed point (65 bytes: 0x04 || x || y)
+}
+
+/// Parse server's key_share extension
+pub fn parse_server_key_share(data: &[u8]) -> Option<ServerKeyShare> {
+    if data.len() < 4 {
         return None;
     }
     let group = ((data[0] as u16) << 8) | data[1] as u16;
-    if group != GROUP_X25519 {
-        return None; // We only support X25519
-    }
     let key_len = ((data[2] as u16) << 8) | data[3] as u16;
-    if key_len != 32 || data.len() < 4 + 32 {
+
+    if data.len() < 4 + key_len as usize {
         return None;
     }
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&data[4..36]);
-    Some(key)
+
+    match group {
+        GROUP_X25519 => {
+            if key_len != 32 { return None; }
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&data[4..36]);
+            Some(ServerKeyShare::X25519(key))
+        }
+        GROUP_SECP256R1 => {
+            if key_len != 65 { return None; } // Uncompressed P-256 point
+            Some(ServerKeyShare::P256(data[4..4 + 65].to_vec()))
+        }
+        _ => None, // Unsupported group
+    }
 }
 
 /// Parse server's supported_versions extension

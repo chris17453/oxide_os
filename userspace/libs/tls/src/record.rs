@@ -76,10 +76,15 @@ impl TlsRecord {
     }
 
     /// Create a plaintext handshake record
+    /// — ColdCipher: RFC 8446 Section 5.1: ClientHello MUST use legacy_version
+    /// 0x0301 (TLS 1.0) in the record layer for maximum compatibility. Servers
+    /// like MSN/Akamai/Cloudflare reject 0x0303 in the initial record. The
+    /// actual TLS version is negotiated via the supported_versions extension
+    /// inside the ClientHello body. — ColdCipher
     pub fn handshake(data: Vec<u8>) -> Self {
         TlsRecord {
             content_type: ContentType::Handshake,
-            legacy_version: TLS_12,
+            legacy_version: 0x0301, // TLS 1.0 for compatibility
             fragment: data,
         }
     }

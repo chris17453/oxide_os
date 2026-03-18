@@ -140,8 +140,20 @@ pub fn tls_connect(fd: i32, hostname: &str) -> Result<TlsStream, TlsError> {
     // Send ClientHello
     let ch = hs.build_client_hello();
     let ch_record = TlsRecord::handshake(ch);
-    libc::prints("[TLS] sending ClientHello...\n");
-    let sent = libc::socket::send(fd, &ch_record.encode(), 0);
+    let ch_wire = ch_record.encode();
+    libc::prints("[TLS] ClientHello ");
+    libc::print_i64(ch_wire.len() as i64);
+    libc::prints(" bytes, first 20: ");
+    for i in 0..20.min(ch_wire.len()) {
+        let b = ch_wire[i];
+        let hi = b >> 4;
+        let lo = b & 0xF;
+        libc::putchar(if hi < 10 { b'0' + hi } else { b'a' + hi - 10 });
+        libc::putchar(if lo < 10 { b'0' + lo } else { b'a' + lo - 10 });
+        libc::putchar(b' ');
+    }
+    libc::prints("\n");
+    let sent = libc::socket::send(fd, &ch_wire, 0);
     if sent < 0 {
         libc::prints("[TLS] send ClientHello failed\n");
         return Err(TlsError::IoError(sent as i32));
