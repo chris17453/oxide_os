@@ -776,6 +776,9 @@ pub fn sys_connect(fd: i32, addr: u64, addrlen: u32) -> i64 {
                     serial_print_num("connect: rx_packets=", rx as i64);
                     serial_print_num("connect: poll_calls=", polls as i64);
                     serial_print_num("connect: lock_fails=", fails as i64);
+                    let (tcp_rx, arp_rx) = tcpip::debug_counters_ext();
+                    serial_print_num("connect: rx_tcp=", tcp_rx as i64);
+                    serial_print_num("connect: rx_arp=", arp_rx as i64);
                     TCP_CONNECTIONS.lock().remove(&fd);
                     return errno::ETIMEDOUT;
                 }

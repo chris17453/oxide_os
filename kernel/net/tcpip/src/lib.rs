@@ -155,6 +155,7 @@ impl TcpIpStack {
 
         match eth_header.ethertype {
             EtherType::Arp => {
+                RX_ARP_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 self.process_arp(payload)?;
             }
             EtherType::Ipv4 => {
@@ -335,7 +336,7 @@ impl TcpIpStack {
                 self.process_icmp(ip_header.src, ip_payload)?;
             }
             IpProtocol::Tcp => {
-                net_debug!("[TCP] rx packet");
+                RX_TCP_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 self.process_tcp(ip_header.src, ip_header.dst, ip_payload)?;
             }
             IpProtocol::Udp => {
@@ -753,15 +754,25 @@ static TCPIP_STACK: Mutex<Option<Arc<TcpIpStack>>> = Mutex::new(None);
 
 /// — GraveShift: Packet counters for debugging. Atomics, zero cost when not read.
 static RX_PACKET_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static RX_TCP_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static RX_ARP_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 static POLL_CALL_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 static POLL_LOCK_FAIL_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
-/// Get network debug counters: (rx_packets, poll_calls, poll_lock_fails)
+/// Get network debug counters
 pub fn debug_counters() -> (u64, u64, u64) {
     (
         RX_PACKET_COUNT.load(core::sync::atomic::Ordering::Relaxed),
         POLL_CALL_COUNT.load(core::sync::atomic::Ordering::Relaxed),
         POLL_LOCK_FAIL_COUNT.load(core::sync::atomic::Ordering::Relaxed),
+    )
+}
+
+/// Get extended counters: (rx_tcp, rx_arp)
+pub fn debug_counters_ext() -> (u64, u64) {
+    (
+        RX_TCP_COUNT.load(core::sync::atomic::Ordering::Relaxed),
+        RX_ARP_COUNT.load(core::sync::atomic::Ordering::Relaxed),
     )
 }
 
