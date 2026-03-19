@@ -417,18 +417,7 @@ impl Handshake {
                 // matching the certificate it sent. Without this, any MITM can replay
                 // someone else's cert chain. The signature covers the transcript hash
                 // BEFORE this message — that's why we computed pre_msg_hash above. — ColdCipher
-                // — ColdCipher: TEMPORARY — log CertificateVerify failure but continue.
-                // P-256 ECDSA verify has a crypto bug that needs debugging. The handshake
-                // is still authenticated by Finished (HMAC of transcript). Removing this
-                // bypass is mandatory before shipping. — ColdCipher
-                match self.verify_certificate_verify(msg_data, &pre_msg_hash.unwrap()) {
-                    Ok(()) => { libc::prints("[tls] CertificateVerify OK\n"); }
-                    Err(e) => {
-                        libc::prints("[tls] CertificateVerify BYPASSED (crypto bug): ");
-                        libc::prints(e);
-                        libc::prints("\n");
-                    }
-                }
+                self.verify_certificate_verify(msg_data, &pre_msg_hash.unwrap())?;
                 self.state = HandshakeState::WaitFinished;
             }
             20 => {
@@ -542,31 +531,12 @@ impl Handshake {
         let leaf = crate::x509::Certificate::from_der(&self.server_certs[0])
             .ok_or("failed to parse leaf certificate")?;
 
-        libc::prints("[tls] CertVerify scheme=0x");
-        // Print scheme as hex
-        let hi = (scheme >> 8) as u8;
-        let lo = (scheme & 0xFF) as u8;
-        let hex = |b: u8| -> u8 { if b < 10 { b'0' + b } else { b'a' + b - 10 } };
-        libc::prints(core::str::from_utf8(&[hex(hi >> 4), hex(hi & 0xf), hex(lo >> 4), hex(lo & 0xf)]).unwrap_or("??"));
-        libc::prints(" sig_len=");
-        libc::print_i64(signature.len() as i64);
-        libc::prints("\n");
-
         crate::x509::verify_certificate_verify_signature(
             scheme,
             signature,
             &leaf.public_key,
             transcript_hash,
-        ).map_err(|e| {
-            libc::prints("[tls] CertVerify verify FAILED: ");
-            match e {
-                crate::x509::VerifyError::SignatureInvalid => libc::prints("SignatureInvalid"),
-                crate::x509::VerifyError::UnsupportedAlgorithm => libc::prints("UnsupportedAlgorithm"),
-                _ => libc::prints("other error"),
-            }
-            libc::prints("\n");
-            "CertificateVerify signature invalid"
-        })
+        ).map_err(|_| "CertificateVerify signature invalid")
     }
 
     /// Build our Finished message

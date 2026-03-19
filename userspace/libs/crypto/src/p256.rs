@@ -257,14 +257,12 @@ fn fp_reduce_512(t: &U512) -> U256 {
 
     // Propagate carries through 32-bit limbs
     // — ColdCipher: "Carry propagation: the digital plumbing nobody respects until it leaks."
+    // Rust's >> on i64 is arithmetic right shift — already floor division for negatives.
+    // No correction needed. The old `carry - 1` for negative remainders was WRONG
+    // and caused (p-1)^2 mod p to return p instead of 0. That single line
+    // broke every ECDSA signature verification in the system. — ColdCipher
     for i in 0..8 {
         let carry = acc[i] >> 32;
-        // We need floor division for negative values
-        let carry = if acc[i] < 0 && (acc[i] & 0xFFFFFFFF) != 0 {
-            carry - 1
-        } else {
-            carry
-        };
         acc[i] -= carry << 32;
         acc[i + 1] += carry;
     }
@@ -980,6 +978,18 @@ pub fn p256_verify(hash: &[u8; 32], signature: &[u8; 64], pubkey: &P256PublicKey
         }
     }
 }
+
+// — ColdCipher: Test helpers for standalone verification debugging.
+// These expose internal functions so the host-side test harness can
+// trace each step of ECDSA verify. Remove after the bug is fixed.
+pub fn test_scalar_inv_mod_n(s: &U256) -> U256 { scalar_inv_mod_n(s) }
+pub fn test_scalar_mul_mod_n(a: &U256, b: &U256) -> U256 { scalar_mul_mod_n(a, b) }
+pub fn test_u256_from_be(bytes: &[u8; 32]) -> U256 { u256_from_be_bytes(bytes) }
+pub fn test_fp_mul(a: &U256, b: &U256) -> U256 { fp_mul(a, b) }
+pub fn test_fp_sqr(a: &U256) -> U256 { fp_sqr(a) }
+pub fn test_fp_add(a: &U256, b: &U256) -> U256 { fp_add(a, b) }
+pub fn test_fp_mul_a(x: &U256) -> U256 { fp_mul(&A, x) }
+pub fn test_fp_add_b(x: &U256) -> U256 { fp_add(x, &B) }
 
 #[cfg(test)]
 mod tests {

@@ -344,15 +344,18 @@ fn do_wget_inner(config: &WgetConfig, url: &str, redirect_count: u32) -> i32 {
                 tls_stream = Some(stream);
             }
             Err(e) => {
-                eprints("wget: TLS handshake failed: ");
+                // — ShadePacket: Use printlns for error output so it all goes to the
+                // same fd. Mixing eprints/prints causes invisible error messages.
+                prints("wget: TLS handshake failed: ");
                 match e {
                     oxide_tls::TlsError::HandshakeFailed(msg) => prints(msg),
                     oxide_tls::TlsError::IoError(code) => { prints("I/O error "); print_i64(code as i64); },
                     oxide_tls::TlsError::DecryptionFailed => prints("decryption failed"),
                     oxide_tls::TlsError::ConnectionClosed => prints("connection closed"),
-                    _ => prints("unknown error"),
+                    oxide_tls::TlsError::CertificateInvalid(msg) => { prints("cert invalid: "); prints(msg); },
+                    oxide_tls::TlsError::Unsupported(msg) => { prints("unsupported: "); prints(msg); },
                 }
-                eprintlns("");
+                printlns("");
                 close(sock);
                 return 1;
             }

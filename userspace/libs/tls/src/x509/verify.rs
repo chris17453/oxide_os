@@ -105,7 +105,14 @@ pub fn verify_chain(
         };
 
         // Verify the signature
-        verify_signature(cert, &issuer.public_key)?;
+        if let Err(e) = verify_signature(cert, &issuer.public_key) {
+            libc::prints("[chain] cert ");
+            libc::print_i64(i as i64);
+            libc::prints(" of ");
+            libc::print_i64(chain.len() as i64);
+            libc::prints(" sig verify failed\n");
+            return Err(e);
+        }
     }
 
     Ok(())

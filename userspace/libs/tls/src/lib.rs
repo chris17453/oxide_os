@@ -155,7 +155,6 @@ pub fn tls_connect(fd: i32, hostname: &str) -> Result<TlsStream, TlsError> {
     let mut hs = Handshake::new(hostname);
 
     // Send ClientHello
-    libc::prints("[tls] sending ClientHello\n");
     let ch = hs.build_client_hello();
     let ch_record = TlsRecord::handshake(ch);
     let ch_wire = ch_record.encode();
@@ -163,24 +162,15 @@ pub fn tls_connect(fd: i32, hostname: &str) -> Result<TlsStream, TlsError> {
     if sent < 0 {
         return Err(TlsError::IoError(sent as i32));
     }
-    libc::prints("[tls] ClientHello sent, reading ServerHello\n");
 
     // Read ServerHello
     let sh_data = match read_handshake_record(fd) {
-        Ok(d) => { libc::prints("[tls] got ServerHello record\n"); d },
-        Err(e) => {
-            libc::prints("[tls] read ServerHello FAILED\n");
-            return Err(e);
-        },
+        Ok(d) => d,
+        Err(_) => return Err(TlsError::HandshakeFailed("read ServerHello failed")),
     };
     match hs.process_server_hello(&sh_data) {
-        Ok(()) => { libc::prints("[tls] ServerHello processed OK\n"); },
-        Err(e) => {
-            libc::prints("[tls] process_server_hello error: ");
-            libc::prints(e);
-            libc::prints("\n");
-            return Err(TlsError::HandshakeFailed(e));
-        },
+        Ok(()) => {},
+        Err(e) => return Err(TlsError::HandshakeFailed(e)),
     }
 
     // Derive handshake keys
@@ -189,7 +179,6 @@ pub fn tls_connect(fd: i32, hostname: &str) -> Result<TlsStream, TlsError> {
     let mut server_hs_seq: u64 = 0;
 
     // Read encrypted handshake messages until Finished
-    libc::prints("[tls] reading encrypted handshake messages\n");
     while hs.state != HandshakeState::Connected {
         let mut header = [0u8; 5];
         read_exact(fd, &mut header)?;
@@ -198,7 +187,6 @@ pub fn tls_connect(fd: i32, hostname: &str) -> Result<TlsStream, TlsError> {
         read_exact(fd, &mut fragment)?;
 
         if header[0] == ContentType::ChangeCipherSpec as u8 {
-            libc::prints("[tls] skipping ChangeCipherSpec\n");
             continue;
         }
         if let Some((ct, plaintext)) = record::decrypt_record(
@@ -209,35 +197,21 @@ pub fn tls_connect(fd: i32, hostname: &str) -> Result<TlsStream, TlsError> {
                 let mut pos = 0;
                 while pos < plaintext.len() {
                     if pos + 4 > plaintext.len() { break; }
-                    let msg_type = plaintext[pos];
                     let msg_len = ((plaintext[pos + 1] as usize) << 16)
                         | ((plaintext[pos + 2] as usize) << 8) | plaintext[pos + 3] as usize;
                     let end = pos + 4 + msg_len;
                     if end > plaintext.len() { break; }
-                    libc::prints("[tls] hs msg type=");
-                    libc::print_i64(msg_type as i64);
-                    libc::prints(" len=");
-                    libc::print_i64(msg_len as i64);
-                    libc::prints("\n");
                     hs.process_encrypted_handshake(&plaintext[pos..end])
-                        .map_err(|e| {
-                            libc::prints("[tls] encrypted hs error: ");
-                            libc::prints(e);
-                            libc::prints("\n");
-                            TlsError::HandshakeFailed(e)
-                        })?;
+                        .map_err(|e| TlsError::HandshakeFailed(e))?;
                     pos = end;
                 }
             } else if ct == ContentType::Alert {
-                libc::prints("[tls] server alert during handshake\n");
                 return Err(TlsError::HandshakeFailed("server sent alert during handshake"));
             }
         } else {
-            libc::prints("[tls] decrypt FAILED\n");
             return Err(TlsError::HandshakeFailed("decrypt encrypted handshake failed"));
         }
     }
-    libc::prints("[tls] handshake complete, verifying certs\n");
 
     // — VeilAudit: "Certificate chain verification. Parse the server's certs,
     // load trust anchors, verify the chain from leaf to root. If this fails,
@@ -255,35 +229,22 @@ pub fn tls_connect(fd: i32, hostname: &str) -> Result<TlsStream, TlsError> {
         if chain.is_empty() {
             return Err(TlsError::CertificateInvalid("no server certificates"));
         }
-        libc::prints("[tls] parsed ");
-        libc::print_i64(chain.len() as i64);
-        libc::prints(" certs, verifying chain for ");
-        libc::prints(hostname);
-        libc::prints("\n");
-
         let roots = trust_store::root_certificates();
-        libc::prints("[tls] loaded ");
-        libc::print_i64(roots.len() as i64);
-        libc::prints(" root CAs\n");
         // — VeilAudit: "None for current_time because we don't have a wall clock yet.
         //   Validity checking is deferred until we get an RTC or NTP time source.
         //   The alternative is rejecting every cert, which is worse." — VeilAudit
-        // — ColdCipher: TEMPORARY bypass — P-256 ECDSA verify has a crypto bug.
-        // Both CertificateVerify and chain signatures fail. Bypassing to test
-        // the rest of TLS (encryption, HTTP data). MUST FIX p256_verify. — ColdCipher
-        match x509::verify_chain(&chain, &roots, hostname, None) {
-            Ok(()) => { libc::prints("[tls] cert chain verified OK\n"); },
-            Err(e) => {
-                let reason = match e {
-                    x509::VerifyError::HostnameMismatch => "hostname mismatch",
-                    x509::VerifyError::UntrustedRoot => "untrusted root CA",
-                    x509::VerifyError::SignatureInvalid => "chain signature invalid",
-                    x509::VerifyError::NotCa => "intermediate is not CA",
-                    _ => "certificate chain invalid",
-                };
-                libc::prints("[tls] cert verify BYPASSED: ");
-                libc::prints(reason);
-                libc::prints("\n");
+        if let Err(e) = x509::verify_chain(&chain, &roots, hostname, None) {
+            match e {
+                x509::VerifyError::HostnameMismatch =>
+                    return Err(TlsError::CertificateInvalid("hostname mismatch")),
+                x509::VerifyError::UntrustedRoot =>
+                    return Err(TlsError::CertificateInvalid("untrusted root CA")),
+                x509::VerifyError::SignatureInvalid =>
+                    return Err(TlsError::CertificateInvalid("chain signature invalid")),
+                x509::VerifyError::NotCa =>
+                    return Err(TlsError::CertificateInvalid("intermediate is not CA")),
+                _ =>
+                    return Err(TlsError::CertificateInvalid("certificate chain invalid")),
             }
         }
     }
