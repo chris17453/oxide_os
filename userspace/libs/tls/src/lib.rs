@@ -261,11 +261,7 @@ fn read_exact(fd: i32, buf: &mut [u8]) -> Result<usize, TlsError> {
     let mut total = 0;
     let mut eagain_retries = 0;
     while total < buf.len() {
-        // — ColdCipher: Use read() instead of recv() — recv() is aliased to
-        // recvfrom which has complex ICMP/UDP/TCP routing in the poll loop.
-        // read() goes directly through sys_read → VFS → socket::read which
-        // is simpler and avoids the EAGAIN timing issues.
-        let n = libc::unistd::read(fd, &mut buf[total..]);
+        let n = libc::socket::recv(fd, &mut buf[total..], 0);
         // — ColdCipher: Trace first recv result for debugging
         if total == 0 && eagain_retries == 0 {
             libc::prints("[TLS] recv(");
