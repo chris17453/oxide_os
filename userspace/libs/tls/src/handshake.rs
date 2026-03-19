@@ -222,6 +222,16 @@ impl Handshake {
 
         // Cipher suite
         let cs_val = ((body[pos] as u16) << 8) | body[pos + 1] as u16;
+        libc::prints("[TLS] server cipher=0x");
+        let hi = (cs_val >> 8) as u8;
+        let lo = (cs_val & 0xFF) as u8;
+        for b in [hi, lo] {
+            let h = b >> 4;
+            let l = b & 0xF;
+            libc::putchar(if h < 10 { b'0' + h } else { b'a' + h - 10 });
+            libc::putchar(if l < 10 { b'0' + l } else { b'a' + l - 10 });
+        }
+        libc::prints("\n");
         self.cipher_suite = match cs_val {
             0x1301 => Some(CipherSuite::TlsAes128GcmSha256),
             0x1302 => Some(CipherSuite::TlsAes256GcmSha384),
