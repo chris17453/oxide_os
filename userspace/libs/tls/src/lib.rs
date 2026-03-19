@@ -235,10 +235,12 @@ pub fn tls_connect(fd: i32, hostname: &str) -> Result<TlsStream, TlsError> {
         if chain.is_empty() {
             return Err(TlsError::CertificateInvalid("no server certificates"));
         }
-            // — VeilAudit: "None for current_time because we don't have a wall clock yet.
-        //   Validity checking is deferred until we get an RTC or NTP time source.
-        //   The alternative is rejecting every cert, which is worse." — VeilAudit
-        if let Err(e) = x509::verify_chain(&chain, &roots, hostname, None) {
+        // — VeilAudit: "Get current time from the kernel's wall clock (RTC-seeded).
+        //   This enables certificate expiry checking. If the system has no RTC
+        //   (boot_time defaults to 2024-01-01), certs valid in 2024+ still pass."
+        let now = libc::time::time(None);
+        let current_time = if now > 0 { Some(now as u64) } else { None };
+        if let Err(e) = x509::verify_chain(&chain, &roots, hostname, current_time) {
             match e {
                 x509::VerifyError::HostnameMismatch =>
                     return Err(TlsError::CertificateInvalid("hostname mismatch")),

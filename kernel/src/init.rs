@@ -1386,6 +1386,17 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
     let _ = writeln!(writer, "[INFO] Preemptive scheduler registered");
 
+    // — GraveShift: Read the CMOS Real-Time Clock to seed the wall clock.
+    // Without this, BOOT_TIME_SECS defaults to 2024-01-01 and every timestamp
+    // is wrong. The RTC is battery-backed — it survives reboots. QEMU sets it
+    // from the host's system clock. This is how Linux gets its initial time
+    // before NTP kicks in. — GraveShift
+    {
+        let epoch = read_cmos_rtc();
+        syscall::time::set_boot_time(epoch);
+        let _ = writeln!(writer, "[RTC] Wall clock seeded: {} (Unix epoch seconds)", epoch);
+    }
+
     // Register wall-clock provider for subsystems (ext4 timestamps, etc.)
     // — WireSaint: bridging the tick counter to filesystem time
     os_core::register_wall_clock(syscall::time::wall_clock_secs);
@@ -3421,3 +3432,128 @@ fn early_reset_virtio_devices(phys_map_base: u64) -> u32 {
 
     reset_count
 }
+
+// ============================================================================
+// CMOS Real-Time Clock Driver
+// ============================================================================
+// — GraveShift: "The MC146818 RTC chip. Present in every x86 system since 1984.
+//   Battery-backed, survives reboots, keeps time while the system is off.
+//   Read it once at boot, seed the wall clock, never touch it again (NTP
+//   takes over from here). Ports 0x70 (index) and 0x71 (data)."
+//
+// Register map:
+//   0x00 = Seconds    (BCD 00-59)
+//   0x02 = Minutes    (BCD 00-59)
+//   0x04 = Hours      (BCD 00-23 in 24h mode)
+//   0x06 = Day of week (1-7, unused)
+//   0x07 = Day of month (BCD 01-31)
+//   0x08 = Month      (BCD 01-12)
+//   0x09 = Year       (BCD 00-99, century in 0x32 on modern systems)
+//   0x0A = Status Register A (bit 7 = update in progress)
+//   0x0B = Status Register B (bit 2 = BCD/binary, bit 1 = 24h/12h)
+//   0x32 = Century     (BCD 19-20 on ACPI systems)
+
+/// Read the CMOS RTC and return Unix epoch seconds.
+/// — GraveShift: "One function, six registers, forty years of x86 tradition."
+fn read_cmos_rtc() -> u64 {
+    // Wait for any in-progress update to finish (Status Register A bit 7)
+    // — GraveShift: "The RTC updates its registers once per second. If we read
+    //   mid-update, we get garbage. Spin until the update flag clears."
+    for _ in 0..10000 {
+        if cmos_read(0x0A) & 0x80 == 0 {
+            break;
+        }
+    }
+
+    // Read time registers
+    let mut seconds = cmos_read(0x00) as u64;
+    let mut minutes = cmos_read(0x02) as u64;
+    let mut hours   = cmos_read(0x04) as u64;
+    let mut day     = cmos_read(0x07) as u64;
+    let mut month   = cmos_read(0x08) as u64;
+    let mut year    = cmos_read(0x09) as u64;
+    let mut century = cmos_read(0x32) as u64; // ACPI century register
+
+    // Check Status Register B for BCD vs binary mode
+    let status_b = cmos_read(0x0B);
+    let is_bcd = (status_b & 0x04) == 0; // bit 2 clear = BCD mode
+
+    if is_bcd {
+        seconds = bcd_to_bin(seconds);
+        minutes = bcd_to_bin(minutes);
+        hours   = bcd_to_bin(hours);
+        day     = bcd_to_bin(day);
+        month   = bcd_to_bin(month);
+        year    = bcd_to_bin(year);
+        century = bcd_to_bin(century);
+    }
+
+    // Assemble full year
+    let full_year = if century > 0 {
+        century * 100 + year
+    } else {
+        // — GraveShift: "No century register? Assume 2000s. We'll deal with
+        //   2100 when we get there. If OXIDE OS is still running in 2100,
+        //   someone owes me a beer."
+        if year >= 70 { 1900 + year } else { 2000 + year }
+    };
+
+    // Convert to Unix epoch (seconds since 1970-01-01 00:00:00 UTC)
+    date_to_epoch(full_year, month, day, hours, minutes, seconds)
+}
+
+/// Read a single CMOS register.
+/// — GraveShift: "Write the register index to 0x70, read data from 0x71.
+///   The NMI disable bit (0x80) must be preserved or we break NMI delivery."
+#[inline]
+fn cmos_read(register: u8) -> u8 {
+    unsafe {
+        // Preserve NMI disable bit, set register index
+        arch::outb(0x70, (register & 0x7F) | 0x80); // disable NMI during read
+        let val = arch::inb(0x71);
+        arch::outb(0x70, 0x00); // re-enable NMI
+        val
+    }
+}
+
+/// Convert BCD byte to binary.
+/// — GraveShift: "Because apparently 0x23 meaning twenty-three was too simple
+///   for the chip designers of 1984."
+#[inline]
+fn bcd_to_bin(bcd: u64) -> u64 {
+    (bcd & 0x0F) + ((bcd >> 4) * 10)
+}
+
+/// Convert date/time components to Unix epoch seconds.
+/// — GraveShift: "Gregorian calendar to linear seconds. The leap year rules
+///   are a monument to astronomical stubbornness."
+fn date_to_epoch(year: u64, month: u64, day: u64, hour: u64, min: u64, sec: u64) -> u64 {
+    // Days from 1970-01-01 to start of each month (non-leap year)
+    let days_before_month: [u64; 13] = [0, 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+
+    if month < 1 || month > 12 || year < 1970 {
+        return 1704067200; // fallback: 2024-01-01
+    }
+
+    // Days from 1970 to start of this year
+    let mut days: u64 = 0;
+    for y in 1970..year {
+        days += if is_leap_year(y) { 366 } else { 365 };
+    }
+
+    // Days within this year
+    days += days_before_month[month as usize];
+    if month > 2 && is_leap_year(year) {
+        days += 1; // leap day
+    }
+    days += day - 1; // day of month is 1-based
+
+    days * 86400 + hour * 3600 + min * 60 + sec
+}
+
+/// Is this a leap year?
+#[inline]
+fn is_leap_year(year: u64) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+}
+
