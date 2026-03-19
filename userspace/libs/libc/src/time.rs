@@ -149,6 +149,15 @@ pub fn clock_gettime(clk_id: i32, tp: &mut Timespec) -> i32 {
     ) as i32
 }
 
+/// Set clock time (requires root, only CLOCK_REALTIME)
+pub fn clock_settime(clk_id: i32, tp: &Timespec) -> i32 {
+    syscall::syscall2(
+        227, // SYS_CLOCK_SETTIME
+        clk_id as usize,
+        tp as *const Timespec as usize,
+    ) as i32
+}
+
 /// Get clock resolution
 pub fn clock_getres(clk_id: i32, res: &mut Timespec) -> i32 {
     syscall::syscall2(

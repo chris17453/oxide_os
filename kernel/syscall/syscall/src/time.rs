@@ -331,6 +331,49 @@ pub fn set_boot_time(secs_since_epoch: u64) {
     BOOT_TIME_SECS.store(secs_since_epoch, Ordering::SeqCst);
 }
 
+/// sys_clock_settime — set the wall clock (CLOCK_REALTIME only).
+///
+/// — WireSaint: "Only root can set the clock. Only REALTIME is settable.
+///   MONOTONIC is sacred — you don't get to rewind uptime."
+pub fn sys_clock_settime(clock_id: i32, tp_ptr: usize) -> i64 {
+    if clock_id != clock::REALTIME {
+        return -22; // EINVAL — only CLOCK_REALTIME is settable
+    }
+    if tp_ptr == 0 {
+        return -14; // EFAULT
+    }
+
+    // Root-only — GraveShift: "Time is a system resource. Unprivileged
+    // users don't get to set the clock. That's how you get 1970."
+    let is_root = sched::with_current_meta(|meta| meta.credentials.uid == 0).unwrap_or(false);
+    if !is_root {
+        return -1; // EPERM
+    }
+
+    // Read the timespec from userspace
+    let ts_sec: i64;
+    let ts_nsec: i64;
+    unsafe {
+        os_core::user_access_begin();
+        let ptr = tp_ptr as *const i64;
+        ts_sec = core::ptr::read_volatile(ptr);
+        ts_nsec = core::ptr::read_volatile(ptr.add(1));
+        os_core::user_access_end();
+    }
+
+    if ts_sec < 0 || ts_nsec < 0 || ts_nsec >= 1_000_000_000 {
+        return -22; // EINVAL
+    }
+
+    // new_boot_time = requested_wall_secs - monotonic_secs
+    // Because realtime = boot_time + monotonic
+    let (mono_secs, _) = os_core::monotonic_secs_ns();
+    let new_boot_secs = (ts_sec as u64).saturating_sub(mono_secs);
+    BOOT_TIME_SECS.store(new_boot_secs, Ordering::SeqCst);
+
+    0
+}
+
 /// Get the boot time in seconds since Unix epoch.
 ///
 /// — WireSaint: exposed for the hires wall-clock provider in init.rs,

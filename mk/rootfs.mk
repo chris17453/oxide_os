@@ -157,7 +157,7 @@ create-rootfs: increment-build kernel bootloader userspace-release archive-kerne
 	[ -f "$(USERSPACE_OUT_RELEASE)/esh" ] && sudo ln -sf /bin/esh $(TARGET_DIR)/mnt/root/bin/sh || true && \
 	[ -f "$(USERSPACE_OUT_RELEASE)/getty" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/getty" $(TARGET_DIR)/mnt/root/bin/getty || true && \
 	[ -f "$(USERSPACE_OUT_RELEASE)/login" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/login" $(TARGET_DIR)/mnt/root/bin/login || true && \
-	for prog in gwbasic curses-demo tls-test thread-test ssh sshd rdpd service networkd resolvd journald journalctl evtest argtest $(COREUTILS_BINS) testcolors; do \
+	for prog in gwbasic curses-demo tls-test thread-test ssh sshd rdpd service networkd resolvd sntpd journald journalctl evtest argtest $(COREUTILS_BINS) testcolors; do \
 		[ -f "$(USERSPACE_OUT_RELEASE)/$$prog" ] && sudo cp "$(USERSPACE_OUT_RELEASE)/$$prog" $(TARGET_DIR)/mnt/root/usr/bin/ || true; \
 	done && \
 	sudo cp userspace/apps/gwbasic/examples/*.bas $(TARGET_DIR)/mnt/root/usr/share/gwbasic/ 2>/dev/null || true; \
@@ -226,6 +226,7 @@ create-rootfs: increment-build kernel bootloader userspace-release archive-kerne
 	printf "PATH=/usr/bin/journald\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/journald > /dev/null && \
 	printf "PATH=/usr/bin/networkd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/networkd > /dev/null && \
 	printf "PATH=/usr/bin/resolvd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/resolvd > /dev/null && \
+	printf "PATH=/usr/bin/sntpd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/sntpd > /dev/null && \
 	printf "PATH=/usr/bin/sshd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/sshd > /dev/null && \
 	printf "PATH=/usr/bin/rdpd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/rdpd > /dev/null && \
 	printf "PATH=/usr/bin/oxide-test\nENABLED=$(OXIDE_TEST_SERVICE_ENABLED)\nRESTART=no\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/oxide-test > /dev/null && \

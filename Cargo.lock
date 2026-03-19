@@ -1613,6 +1613,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sntpd"
+version = "0.1.0"
+dependencies = [
+ "libc 0.1.0",
+]
+
+[[package]]
 name = "sound-client"
 version = "0.1.0"
 dependencies = [

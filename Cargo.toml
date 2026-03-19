@@ -138,6 +138,7 @@ members = [
     "userspace/services/resolvd",
     "userspace/services/sshd",
     "userspace/services/rdpd",
+    "userspace/services/sntpd",
     "userspace/services/journald",
     "userspace/services/journalctl",
     "userspace/services/soundd",

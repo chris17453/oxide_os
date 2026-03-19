@@ -217,6 +217,7 @@ pub mod nr {
     // ========================================================================
     pub const GETTIMEOFDAY: u64 = 96;
     pub const TIMES: u64 = 100;
+    pub const CLOCK_SETTIME: u64 = 227;
     pub const CLOCK_GETTIME: u64 = 228;
     pub const CLOCK_GETRES: u64 = 229;
     pub const CLOCK_NANOSLEEP: u64 = 230;
@@ -747,6 +748,7 @@ pub fn dispatch(
 
         // Time syscalls
         nr::GETTIMEOFDAY => time::sys_gettimeofday(arg1 as usize, arg2 as usize),
+        nr::CLOCK_SETTIME => time::sys_clock_settime(arg1 as i32, arg2 as usize),
         nr::CLOCK_GETTIME => time::sys_clock_gettime(arg1 as i32, arg2 as usize),
         nr::CLOCK_GETRES => time::sys_clock_getres(arg1 as i32, arg2 as usize),
         nr::NANOSLEEP => time::sys_nanosleep(arg1 as usize, arg2 as usize),
@@ -1215,6 +1217,7 @@ fn syscall_name(num: u64) -> &'static str {
         nr::SCHED_GETAFFINITY => "sched_getaffinity",
         nr::SET_TID_ADDRESS => "set_tid_address",
         nr::GETDENTS64 => "getdents64",
+        nr::CLOCK_SETTIME => "clock_settime",
         nr::CLOCK_GETTIME => "clock_gettime",
         nr::CLOCK_GETRES => "clock_getres",
         nr::CLOCK_NANOSLEEP => "clock_nanosleep",

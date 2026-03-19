@@ -86,7 +86,7 @@ INITRAMFS_PREREQ :=
 endif
 
 # Userspace packages to build (Cargo-based)
-USERSPACE_ALL_PACKAGES := init esh getty login coreutils ssh sshd rdpd service networkd resolvd journald journalctl soundd evtest argtest htop doom gwbasic curses-demo
+USERSPACE_ALL_PACKAGES := init esh getty login coreutils ssh sshd rdpd service networkd resolvd sntpd journald journalctl soundd evtest argtest htop doom gwbasic curses-demo
 USERSPACE_PACKAGES ?= $(USERSPACE_ALL_PACKAGES)
 # Non-Cargo extra targets (built via dedicated rules)
 USERSPACE_EXTRA_TARGETS_ALL := tls-test thread-test
