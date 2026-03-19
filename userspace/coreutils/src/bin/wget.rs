@@ -416,6 +416,7 @@ fn do_wget_inner(config: &WgetConfig, url: &str, redirect_count: u32) -> i32 {
             match tls.recv(&mut buffer) {
                 Ok(n) => n as isize,
                 Err(oxide_tls::TlsError::ConnectionClosed) => 0,
+                Err(oxide_tls::TlsError::IoError(code)) => code as isize, // Pass through EAGAIN (-11)
                 Err(_) => -1,
             }
         } else {
