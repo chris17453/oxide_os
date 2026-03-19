@@ -440,20 +440,169 @@ static AAA_CERTIFICATE_SERVICES_DER: &[u8] = &[
     0xf1, 0x39, 0x83, 0x9f, 0x95, 0xe9, 0x36, 0x96, 0x98, 0x6e,
 ];
 
-/// Returns all embedded root CA certificates, parsed from DER.
+/// CA bundle search paths — checked in order, first readable one wins.
+/// Fedora/RHEL: /etc/pki/..., Debian/Ubuntu: /etc/ssl/..., OXIDE: /etc/ssl/...
+/// — VeilAudit: "Every distro puts certs somewhere different. Check them all."
+const CA_BUNDLE_PATHS: &[&str] = &[
+    "/etc/ssl/certs/ca-bundle.crt",
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+];
+
+/// Maximum CA bundle file size we'll read (512KB ought to be enough for anybody).
+const MAX_BUNDLE_SIZE: usize = 512 * 1024;
+
+/// Returns root CA certificates for chain verification.
 ///
-/// Called during certificate chain verification to find trust anchors.
-/// Parsing DER on each call is fine — TLS handshakes are infrequent and
-/// the certificates are small (~1-2KB each).
+/// Strategy (Linux-like):
+///   1. Try to load PEM-encoded CA bundle from /etc/ssl/certs/
+///   2. Fall back to embedded DER roots if filesystem unavailable
 ///
-/// — VeilAudit: "Three roots, three chances for trust. If the chain doesn't
-///   terminate at one of these, the connection dies."
+/// — VeilAudit: "Real OSes load certs from the filesystem. Embedded roots are
+///   the fallback, not the plan. 4 hardcoded CAs is a demo. 148 from the
+///   system bundle is an operating system."
 pub fn root_certificates() -> Vec<Certificate> {
+    // — VeilAudit: "Try filesystem first. Like Linux, like FreeBSD, like
+    //   every OS that takes PKI seriously."
+    if let Some(roots) = load_ca_bundle_from_fs() {
+        if !roots.is_empty() {
+            return roots;
+        }
+    }
+
+    // — VeilAudit: "Filesystem failed. Fall back to the compiled-in roots.
+    //   Better than nothing. Worse than a real CA bundle."
+    load_embedded_roots()
+}
+
+/// Load PEM-encoded CA bundle from the filesystem.
+///
+/// Scans CA_BUNDLE_PATHS, reads the first one that exists, decodes
+/// PEM certificates (-----BEGIN CERTIFICATE----- blocks), converts
+/// each from Base64 to DER, and parses into Certificate structs.
+///
+/// — VeilAudit: "PEM is just Base64 with delimiters. The delimiters are
+///   the easy part. The Base64 decoder is where the bugs hide."
+fn load_ca_bundle_from_fs() -> Option<Vec<Certificate>> {
+    for path in CA_BUNDLE_PATHS {
+        let fd = libc::open2(path, libc::O_RDONLY);
+        if fd < 0 {
+            continue;
+        }
+
+        // Read the entire bundle
+        let mut buf = alloc::vec![0u8; MAX_BUNDLE_SIZE];
+        let mut total = 0usize;
+        loop {
+            let n = libc::read(fd, &mut buf[total..]);
+            if n <= 0 { break; }
+            total += n as usize;
+            if total >= MAX_BUNDLE_SIZE { break; }
+        }
+        libc::close(fd);
+
+        if total == 0 {
+            continue;
+        }
+
+        // Parse PEM certificates from the bundle
+        let data = &buf[..total];
+        let certs = parse_pem_bundle(data);
+
+        if !certs.is_empty() {
+            return Some(certs);
+        }
+    }
+
+    None
+}
+
+/// Parse a PEM-encoded CA bundle into Certificate structs.
+///
+/// Finds each -----BEGIN CERTIFICATE----- / -----END CERTIFICATE----- block,
+/// decodes the Base64 content to DER, and parses the X.509 certificate.
+///
+/// — VeilAudit: "Line by line through 200KB of Base64. If this is slow,
+///   blame the CA industry for having 148 root certificates."
+fn parse_pem_bundle(data: &[u8]) -> Vec<Certificate> {
+    let mut certs = Vec::new();
+    let text = match core::str::from_utf8(data) {
+        Ok(t) => t,
+        Err(_) => return certs,
+    };
+
+    let begin_marker = "-----BEGIN CERTIFICATE-----";
+    let end_marker = "-----END CERTIFICATE-----";
+
+    let mut search_from = 0;
+    while search_from < text.len() {
+        // Find the next BEGIN marker
+        let begin_pos = match text[search_from..].find(begin_marker) {
+            Some(pos) => search_from + pos + begin_marker.len(),
+            None => break,
+        };
+
+        // Find the matching END marker
+        let end_pos = match text[begin_pos..].find(end_marker) {
+            Some(pos) => begin_pos + pos,
+            None => break,
+        };
+
+        // Extract Base64 content (strip whitespace/newlines)
+        let b64_content = &text[begin_pos..end_pos];
+        if let Some(der) = base64_decode(b64_content) {
+            if let Some(cert) = Certificate::from_der(&der) {
+                certs.push(cert);
+            }
+        }
+
+        search_from = end_pos + end_marker.len();
+    }
+
+    certs
+}
+
+/// Decode Base64 to raw bytes, ignoring whitespace and newlines.
+///
+/// — ColdCipher: "Base64: the encoding that makes binary data safe for
+///   email and certificate files. 33% bloat for the privilege."
+fn base64_decode(input: &str) -> Option<Vec<u8>> {
+    let mut buf = Vec::with_capacity(input.len() * 3 / 4);
+    let mut accum: u32 = 0;
+    let mut bits: u32 = 0;
+
+    for &ch in input.as_bytes() {
+        let val = match ch {
+            b'A'..=b'Z' => ch - b'A',
+            b'a'..=b'z' => ch - b'a' + 26,
+            b'0'..=b'9' => ch - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' => break, // Padding — stop decoding
+            b'\n' | b'\r' | b' ' | b'\t' => continue, // Skip whitespace
+            _ => continue, // Skip unknown chars
+        };
+
+        accum = (accum << 6) | val as u32;
+        bits += 6;
+
+        if bits >= 8 {
+            bits -= 8;
+            buf.push((accum >> bits) as u8);
+            accum &= (1 << bits) - 1;
+        }
+    }
+
+    if buf.is_empty() { None } else { Some(buf) }
+}
+
+/// Load the compiled-in root certificates (fallback when filesystem unavailable).
+///
+/// — VeilAudit: "The safety net. Four roots embedded in the binary for when
+///   /etc doesn't exist yet or the disk is on fire."
+fn load_embedded_roots() -> Vec<Certificate> {
     let mut roots = Vec::new();
 
-    // — VeilAudit: "Parse each root. If a root fails to parse (shouldn't happen
-    //   with our own embedded DER), silently skip it. Better to have 2 roots than
-    //   panic on boot because of a typo in a byte array."
     let root_ders: &[&[u8]] = &[
         ISRG_ROOT_X1_DER,
         DIGICERT_GLOBAL_ROOT_G2_DER,

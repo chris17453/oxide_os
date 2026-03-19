@@ -232,6 +232,25 @@ create-rootfs: increment-build kernel bootloader userspace-release archive-kerne
 	printf "# OXIDE RDP Server Configuration\n# Port to listen on (default: 3389)\nport=3389\n# Maximum concurrent connections\nmax_connections=10\n# Require TLS encryption (yes/no)\ntls_required=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/rdpd.conf > /dev/null && \
 	printf "mode=dhcp\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/network/eth0.conf > /dev/null && \
 	printf "# Populated by networkd from DHCP\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/resolv.conf > /dev/null && \
+	echo "  Installing Mozilla CA certificate bundle..." && \
+	if [ -f $(TARGET_DIR)/ca-bundle.crt ] && [ $$(stat -c%s $(TARGET_DIR)/ca-bundle.crt) -gt 10000 ]; then \
+		echo "    Using cached CA bundle"; \
+	else \
+		echo "    Downloading from curl.se (Mozilla CA bundle)..." && \
+		curl -sL https://curl.se/ca/cacert.pem -o $(TARGET_DIR)/ca-bundle.crt 2>/dev/null; \
+	fi && \
+	if [ -f $(TARGET_DIR)/ca-bundle.crt ] && [ $$(stat -c%s $(TARGET_DIR)/ca-bundle.crt) -gt 10000 ]; then \
+		sudo cp $(TARGET_DIR)/ca-bundle.crt $(TARGET_DIR)/mnt/root/etc/ssl/certs/ca-bundle.crt; \
+		echo "    Installed $$(grep -c 'BEGIN CERTIFICATE' $(TARGET_DIR)/ca-bundle.crt) root CAs"; \
+	elif [ -f /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem ]; then \
+		sudo cp /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem $(TARGET_DIR)/mnt/root/etc/ssl/certs/ca-bundle.crt; \
+		echo "    Fallback: copied system CA bundle"; \
+	elif [ -f /etc/ssl/certs/ca-certificates.crt ]; then \
+		sudo cp /etc/ssl/certs/ca-certificates.crt $(TARGET_DIR)/mnt/root/etc/ssl/certs/ca-bundle.crt; \
+		echo "    Fallback: copied system CA bundle"; \
+	else \
+		echo "    WARNING: No CA bundle available — TLS will use embedded roots only"; \
+	fi && \
 	printf "# /etc/hosts - static hostname-to-IP mappings\n127.0.0.1       localhost localhost.localdomain\n::1             localhost localhost.localdomain ip6-localhost ip6-loopback\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/hosts > /dev/null && \
 	printf "# /etc/vconsole.conf - console keyboard and font configuration\n# KEYMAP: keyboard layout (us, uk, de, fr)\n# Use 'loadkeys -l' to list available layouts\nKEYMAP=us\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/vconsole.conf > /dev/null && \
 	sudo umount $(TARGET_DIR)/mnt/root && \

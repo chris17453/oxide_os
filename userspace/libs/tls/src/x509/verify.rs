@@ -118,23 +118,21 @@ pub fn verify_chain(
         //   is RSA-signed by a root we trust." — VeilAudit
         if let Err(_) = verify_signature(cert, &issuer.public_key) {
             // Fallback 1: try root store directly for this cert
-            let mut anchored = false;
             if let Some(root) = find_issuer(cert, root_store) {
                 if verify_signature(cert, &root.public_key).is_ok() {
                     break;
                 }
             }
             // Fallback 2: verify the next cert in chain against root store
-            if !anchored && i + 1 < chain.len() {
+            if i + 1 < chain.len() {
                 let next = &chain[i + 1];
                 if let Some(root) = find_issuer(next, root_store) {
                     if verify_signature(next, &root.public_key).is_ok() {
-                        anchored = true;
+                        break;
                     }
                 }
-            }
-            if anchored {
-                break;
+                // — VeilAudit: "Root found but sig verify failed, or no root
+                //   matched. Either way, the chain is unverifiable."
             }
             return Err(VerifyError::SignatureInvalid);
         }
