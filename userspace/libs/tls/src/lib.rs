@@ -88,35 +88,51 @@ impl TlsStream {
             self.recv_buf.drain(..n);
             return Ok(n);
         }
-        let mut header = [0u8; 5];
-        let n = read_exact(self.fd, &mut header)?;
-        if n < 5 { return Err(TlsError::ConnectionClosed); }
-        let record_len = ((header[3] as usize) << 8) | header[4] as usize;
-        if record_len > record::MAX_CIPHERTEXT_LENGTH {
-            return Err(TlsError::DecryptionFailed);
-        }
-        let mut fragment = vec![0u8; record_len];
-        let n = read_exact(self.fd, &mut fragment)?;
-        if n < record_len { return Err(TlsError::ConnectionClosed); }
-        let (content_type, plaintext) = record::decrypt_record(
-            &self.server_keys.key, &self.server_keys.iv, self.server_seq, &fragment,
-        ).ok_or(TlsError::DecryptionFailed)?;
-        self.server_seq += 1;
-        match content_type {
-            ContentType::ApplicationData => {
-                let n = buf.len().min(plaintext.len());
-                buf[..n].copy_from_slice(&plaintext[..n]);
-                if plaintext.len() > n { self.recv_buf.extend_from_slice(&plaintext[n..]); }
-                Ok(n)
+
+        // — ColdCipher: Read records in a loop, skipping NewSessionTicket and
+        // other post-handshake messages. TLS 1.3 servers send NewSessionTicket
+        // (ContentType::Handshake) after the handshake completes, before the
+        // HTTP response. We must skip these or recv() never sees AppData. — ColdCipher
+        for _ in 0..10 { // Max 10 non-data records before giving up
+            let mut header = [0u8; 5];
+            let n = read_exact(self.fd, &mut header)?;
+            if n < 5 { return Err(TlsError::ConnectionClosed); }
+            let record_len = ((header[3] as usize) << 8) | header[4] as usize;
+            if record_len > record::MAX_CIPHERTEXT_LENGTH {
+                return Err(TlsError::DecryptionFailed);
             }
-            ContentType::Alert => {
-                if plaintext.len() >= 2 && plaintext[1] == 0 {
-                    return Err(TlsError::ConnectionClosed);
+            let mut fragment = vec![0u8; record_len];
+            let n = read_exact(self.fd, &mut fragment)?;
+            if n < record_len { return Err(TlsError::ConnectionClosed); }
+            let (content_type, plaintext) = record::decrypt_record(
+                &self.server_keys.key, &self.server_keys.iv, self.server_seq, &fragment,
+            ).ok_or(TlsError::DecryptionFailed)?;
+            self.server_seq += 1;
+            match content_type {
+                ContentType::ApplicationData => {
+                    let n = buf.len().min(plaintext.len());
+                    buf[..n].copy_from_slice(&plaintext[..n]);
+                    if plaintext.len() > n { self.recv_buf.extend_from_slice(&plaintext[n..]); }
+                    return Ok(n);
                 }
-                Err(TlsError::HandshakeFailed("received alert"))
+                ContentType::Alert => {
+                    if plaintext.len() >= 2 && plaintext[1] == 0 {
+                        return Err(TlsError::ConnectionClosed);
+                    }
+                    return Err(TlsError::HandshakeFailed("received alert"));
+                }
+                ContentType::Handshake => {
+                    // — ColdCipher: NewSessionTicket or other post-handshake message.
+                    // Skip it and read the next record. — ColdCipher
+                    continue;
+                }
+                _ => {
+                    // Unknown content type — skip
+                    continue;
+                }
             }
-            _ => Err(TlsError::HandshakeFailed("unexpected content type")),
         }
+        Err(TlsError::HandshakeFailed("too many non-data records"))
     }
 
     pub fn shutdown(&mut self) -> Result<(), TlsError> {
