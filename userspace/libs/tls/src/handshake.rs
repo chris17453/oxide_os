@@ -309,7 +309,14 @@ impl Handshake {
 
         // Derive handshake traffic secrets
         let early = key_schedule::early_secret();
+        // — ColdCipher: Dump early secret for verification against RFC 8448
+        libc::prints("[TLS] early_secret[0..4]=");
+        for i in 0..4 { let b = early[i]; let h = b >> 4; let l = b & 0xF; libc::putchar(if h < 10 { b'0' + h } else { b'a' + h - 10 }); libc::putchar(if l < 10 { b'0' + l } else { b'a' + l - 10 }); }
+        libc::prints("\n");
         let derived = key_schedule::derive_intermediate(&early);
+        libc::prints("[TLS] derived[0..4]=");
+        for i in 0..4 { let b = derived[i]; let h = b >> 4; let l = b & 0xF; libc::putchar(if h < 10 { b'0' + h } else { b'a' + h - 10 }); libc::putchar(if l < 10 { b'0' + l } else { b'a' + l - 10 }); }
+        libc::prints("\n");
         let hs_secret = key_schedule::handshake_secret(&derived, &shared);
         let transcript_hash = self.transcript.hash();
         let (client_hs, server_hs) = key_schedule::handshake_traffic_secrets(&hs_secret, &transcript_hash);
