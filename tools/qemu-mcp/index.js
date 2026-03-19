@@ -551,6 +551,30 @@ async function sendText(text) {
     "/": "slash",
     "\\": "backslash",
     "`": "grave_accent",
+    // — NeonRoot: Shifted characters. Without these, URLs lose their colons,
+    // paths lose their tildes, and every HTTPS test silently degrades to
+    // a hostname lookup for "https". Ask me how I know. — NeonRoot
+    ":": "shift-semicolon",
+    "!": "shift-1",
+    "@": "shift-2",
+    "#": "shift-3",
+    "$": "shift-4",
+    "%": "shift-5",
+    "^": "shift-6",
+    "&": "shift-7",
+    "*": "shift-8",
+    "(": "shift-9",
+    ")": "shift-0",
+    "_": "shift-minus",
+    "+": "shift-equal",
+    "{": "shift-bracket_left",
+    "}": "shift-bracket_right",
+    "\"": "shift-apostrophe",
+    "<": "shift-comma",
+    ">": "shift-dot",
+    "?": "shift-slash",
+    "|": "shift-backslash",
+    "~": "shift-grave_accent",
   };
 
   const results = [];

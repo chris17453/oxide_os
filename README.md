@@ -25,56 +25,26 @@ make run           # Boot in QEMU (auto-detects host)
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                                 USERSPACE                                        │
-│  init · getty · login · shell(esh) · coreutils(90+) · apps · services            │
-│  ssh · rdp · networkd · resolvd · sshd · rdpd · journald · soundd                │
-│  devtools: as · ld · ar · make · modutils · search                               │
-│  apps: gwbasic · doom · htop · mp3player · curses-demo                           │
-│                          ┌────────────────────────────┐                          │
-│                          │  oxide_libc / oxide-std    │                          │
-│                          │  ncurses · vte · termcap   │                          │
-│                          └────────────────────────────┘                          │
-├──────────────────────────────────────────────────────────────────────────────────┤
-│                            SYSCALL BOUNDARY  (188 syscalls)                      │
-├──────────────────────────────────────────────────────────────────────────────────┤
-│                                  KERNEL  (103 crates)                            │
-│                                                                                  │
-│  ┌────────────┐ ┌───────┐ ┌─────────┐ ┌───────────────────────────────────────┐  │
-│  │   sched    │ │   mm  │ │  vfs    │ │              NETWORKING               │  │
-│  │  CFS·SMP   │ │  CoW  │ │  ext4   │ │  tcp/ip · udp · dhcp · dns · ssh      │  │
-│  │ work-steal │ │  VMA  │ │  fat32  │ │  smb(stub) · nfs(stub) · rdp(7 crates)│  │
-│  │  signals   │ │  slab │ │ tmpfs   │ └───────────────────────────────────────┘  │
-│  └────────────┘ │ heap  │ │ procfs  │                                            │
-│                 │ buddy │ │ devfs   │ ┌───────────────────────────────────────┐  │
-│                 └───────┘ │ sysfs   │ │              SECURITY                 │  │
-│                           │ oxidefs │ │  crypto · AES · SHA · RSA · ChaCha20  │  │
-│                           └─────────┘ │  X.509 · TLS · TPM · HMAC · Argon2    │  │
-│                                       │  namespaces · cgroups · seccomp       │  │
-│                                       └───────────────────────────────────────┘  │
-│  ┌────────────────────────────────────────────────────────────────────────────┐  │
-│  │                           DRIVERS  (20+)                                   │  │
-│  │  virtio-blk · virtio-net · virtio-gpu · virtio-snd · virtio-input · nvme   │  │
-│  │  ahci · xhci · usb-msc · usb-hid · ps2 · uart-8250 · intel-hda             │  │
-│  │  bochs-display · pci(MSI/MSIX) · acpi                                      │  │
-│  └────────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                  │
-│  ┌────────────┐ ┌────────────────┐ ┌────────────┐  ┌──────────┐  ┌──────────┐    │
-│  │  tty/pty   │ │   CONTAINERS   │ │ HYPERVISOR │  │    AI    │  │  ASYNC   │    │
-│  │ terminal   │ │ ns·cgroups·    │ │ vmx·vmm    │  │ hnsw·    │  │  epoll   │    │
-│  │ compositor │ │    seccomp     │ │ virtio-emu │  │ embed    │  │ io_uring │    │
-│  │  vkbd      │ └────────────────┘ └────────────┘  │ indexd   │  └──────────┘    │
-│  └────────────┘                                    └──────────┘                  │
-│                                                                                  │
-│  ┌────────────────┐ ┌─────────────────┐ ┌──────────────────────────────────┐     │
-│  │      arch      │ │   libc-support  │ │           modules                │     │
-│  │ x86_64·aarch64 │ │ pthread·mmap·dl │ │  loadable kernel modules (LKM)   │     │
-│  │    mips64      │ └─────────────────┘ └──────────────────────────────────┘     │
-│  └────────────────┘                                                              │
-├──────────────────────────────────────────────────────────────────────────────────┤
-│                               UEFI BOOTLOADER                                    │
-│                      (loads kernel ELF + initramfs from ESP)                     │
-└──────────────────────────────────────────────────────────────────────────────────┘
++----------------------------------------------------------------------------+
+|                           OXIDE OS                      |
++----------------------------------------------------------------------------+
+| USERSPACE                                                                  |
+| init/getty/login, esh shell, coreutils (90+), apps, and service daemons    |
+| oxide_libc + oxide-std + ncurses/vte                                       |
++----------------------------------------------------------------------------+
+| SYSCALL ABI                                                                |
+| Linux-compatible interface between userspace and the kernel                |
++----------------------------------------------------------------------------+
+| KERNEL (modular Rust subsystems)                                           |
+| sched(CFS,SMP)  mm(buddy,slab,COW,VMA)  vfs(ext4,fat32,tmpfs,procfs,devfs) |
+| net(TCP/UDP/DHCP/DNS/SSH/RDP)  security(TLS,TPM,ns,cgroups,seccomp)        |
+| drivers(virtio,nvme,ahci,usb,gpu,audio,input,uart,pci)                     |
+| tty/pty/vt  containers  hypervisor(VMX)  async(epoll,io_uring)             |
+| arch: x86_64 active, aarch64/mips64 stubs                                  |
++----------------------------------------------------------------------------+
+| BOOT PATH                                                                  |
+| UEFI bootloader -> kernel ELF + initramfs                                  |
++----------------------------------------------------------------------------+
 ```
 
 ---
