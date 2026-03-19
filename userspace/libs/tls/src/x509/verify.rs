@@ -7,6 +7,7 @@
 
 use alloc::vec::Vec;
 
+use oxide_crypto::p256::{p256_pubkey_from_uncompressed, p256_verify};
 use oxide_crypto::sha256::Sha256;
 use oxide_crypto::sha384::Sha384;
 use oxide_crypto::sha512::Sha512;
@@ -321,26 +322,8 @@ fn verify_ecdsa_signature(
     // Parse the ECDSA signature: SEQUENCE { r INTEGER, s INTEGER }
     let (r, s) = parse_ecdsa_signature(signature).ok_or(VerifyError::SignatureInvalid)?;
 
-    // Hash the TBS
-    let _digest = match hash_type {
-        EcHashType::Sha256 => {
-            let mut hasher = Sha256::new();
-            hasher.update(tbs);
-            let hash = hasher.finalize();
-            Vec::from(&hash[..])
-        }
-        EcHashType::Sha384 => {
-            let mut hasher = Sha384::new();
-            hasher.update(tbs);
-            let hash = hasher.finalize();
-            Vec::from(&hash[..])
-        }
-    };
-
-    // ECDSA point operations require big-integer field arithmetic over P-256.
-    // Full implementation needs: point decompression, scalar multiplication,
-    // modular inverse over the curve order.
-    // — VeilAudit: "EC math is implemented. The curve doesn't forgive shortcuts."
+    // — VeilAudit: "EC math is live. oxide-crypto handles the curve arithmetic.
+    //   No more 'structural validation only' — we verify for real now."
 
     // Validate basic structural requirements
     if point.is_empty() || r.is_empty() || s.is_empty() {
@@ -352,18 +335,52 @@ fn verify_ecdsa_signature(
         return Err(VerifyError::SignatureInvalid);
     }
 
-    // r and s must be in range [1, n-1] where n is the P-256 order
-    if is_zero(&r) || is_zero(&s) {
+    // Parse public key — validates it's on the curve
+    let pubkey = p256_pubkey_from_uncompressed(point)
+        .ok_or(VerifyError::SignatureInvalid)?;
+
+    // r and s must be zero-padded to 32 bytes each for the signature
+    // — VeilAudit: "DER integers can be shorter than 32 bytes (leading zeros stripped)
+    //   or longer (leading zero for positive sign). Normalize to exactly 32."
+    let mut r_bytes = [0u8; 32];
+    let mut s_bytes = [0u8; 32];
+    if r.len() > 32 || s.len() > 32 {
         return Err(VerifyError::SignatureInvalid);
     }
+    r_bytes[32 - r.len()..].copy_from_slice(&r);
+    s_bytes[32 - s.len()..].copy_from_slice(&s);
 
-    // Full ECDSA verify: s_inv = s^(-1) mod n, u1 = hash * s_inv mod n,
-    // u2 = r * s_inv mod n, R = u1*G + u2*Q, check R.x == r mod n
-    // — VeilAudit: "Full EC verification requires oxide-crypto P-256 point ops.
-    //   Structural validation passes; crypto verification deferred to integration."
-    // For now, return Ok if structural checks pass — the actual EC math
-    // will be wired when oxide-crypto gains P-256 support.
-    Ok(())
+    let mut sig = [0u8; 64];
+    sig[..32].copy_from_slice(&r_bytes);
+    sig[32..].copy_from_slice(&s_bytes);
+
+    // Hash the TBS certificate with the correct algorithm
+    // — VeilAudit: "SHA-256 for P-256 ECDSA. The hash must match the curve size."
+    let hash: [u8; 32] = match hash_type {
+        EcHashType::Sha256 => {
+            let mut hasher = Sha256::new();
+            hasher.update(tbs);
+            hasher.finalize()
+        }
+        EcHashType::Sha384 => {
+            // — VeilAudit: "SHA-384 with P-256: truncate hash to 32 bytes.
+            //   P-256 order is 256 bits — extra hash bits are discarded per FIPS 186-4."
+            let mut hasher = Sha384::new();
+            hasher.update(tbs);
+            let full = hasher.finalize();
+            let mut truncated = [0u8; 32];
+            truncated.copy_from_slice(&full[..32]);
+            truncated
+        }
+    };
+
+    // — VeilAudit: "The moment of truth. Real cryptographic verification.
+    //   One boolean, zero forgiveness."
+    if p256_verify(&hash, &sig, &pubkey) {
+        Ok(())
+    } else {
+        Err(VerifyError::SignatureInvalid)
+    }
 }
 
 /// Verify an Ed25519 signature.
@@ -386,6 +403,207 @@ fn verify_ed25519_signature(
     // Basic structural validation
     let _ = (tbs, key); // Used in full implementation
     Ok(())
+}
+
+/// Verify the TLS 1.3 CertificateVerify signature.
+///
+/// RFC 8446 Section 4.4.3: The signed content is:
+///   [0x20; 64] || "TLS 1.3, server CertificateVerify\0" || transcript_hash
+///
+/// `scheme` is the 2-byte SignatureScheme from the CertificateVerify message.
+/// `signature` is the raw signature bytes.
+/// `leaf_key` is the leaf certificate's public key.
+/// `transcript_hash` is the hash of the transcript BEFORE the CertificateVerify
+/// message was added.
+///
+/// — VeilAudit: "CertificateVerify: the server proves it actually holds the private
+///   key matching the cert it just sent. Without this check, any MITM can replay
+///   someone else's certificate chain and you'd never know."
+pub fn verify_certificate_verify_signature(
+    scheme: u16,
+    signature: &[u8],
+    leaf_key: &PublicKeyInfo,
+    transcript_hash: &[u8; 32],
+) -> Result<(), VerifyError> {
+    // Build the signed content per RFC 8446 §4.4.3:
+    // 64 spaces || context string || 0x00 || Hash(Transcript)
+    // — VeilAudit: "64 bytes of 0x20, a context string, a null byte, and the transcript
+    //   hash. The format is oddly specific because TLS wanted domain separation from
+    //   CertificateVerify in older TLS versions."
+    let context = b"TLS 1.3, server CertificateVerify";
+    let mut content = Vec::with_capacity(64 + context.len() + 1 + 32);
+    content.extend_from_slice(&[0x20u8; 64]);
+    content.extend_from_slice(context);
+    content.push(0x00);
+    content.extend_from_slice(transcript_hash);
+
+    match scheme {
+        // ECDSA-P256-SHA256 (0x0403)
+        0x0403 => {
+            let point = match leaf_key {
+                PublicKeyInfo::EcdsaP256 { point } => point,
+                _ => return Err(VerifyError::SignatureInvalid),
+            };
+            verify_ecdsa_signature(&content, signature, point, EcHashType::Sha256)
+        }
+        // RSA-PKCS1-SHA256 (0x0401) — not allowed in TLS 1.3 CertificateVerify
+        // per RFC 8446 §4.4.3, but some servers send it anyway
+        0x0401 => {
+            let (n, e) = match leaf_key {
+                PublicKeyInfo::Rsa { n, e } => (n, e),
+                _ => return Err(VerifyError::SignatureInvalid),
+            };
+            verify_rsa_signature(&content, signature, n, e, RsaHashType::Sha256)
+        }
+        // RSA-PSS-RSAE-SHA256 (0x0804) — the mandatory RSA scheme for TLS 1.3
+        0x0804 => {
+            let (n, e) = match leaf_key {
+                PublicKeyInfo::Rsa { n, e } => (n, e),
+                _ => return Err(VerifyError::SignatureInvalid),
+            };
+            verify_rsa_pss_signature(&content, signature, n, e, RsaHashType::Sha256)
+        }
+        // RSA-PSS-RSAE-SHA384 (0x0805)
+        0x0805 => {
+            let (n, e) = match leaf_key {
+                PublicKeyInfo::Rsa { n, e } => (n, e),
+                _ => return Err(VerifyError::SignatureInvalid),
+            };
+            verify_rsa_pss_signature(&content, signature, n, e, RsaHashType::Sha384)
+        }
+        _ => {
+            // — VeilAudit: "Unknown signature scheme in CertificateVerify.
+            //   Can't verify what we don't understand. Rejected."
+            Err(VerifyError::UnsupportedAlgorithm)
+        }
+    }
+}
+
+/// Verify an RSA-PSS signature (RSASSA-PSS, RFC 8017 Section 8.1.2).
+///
+/// PSS is the mandatory RSA padding scheme for TLS 1.3 CertificateVerify.
+/// PKCS#1 v1.5 is NOT allowed for CertificateVerify in TLS 1.3.
+///
+/// — VeilAudit: "RSA-PSS: probabilistic padding. Each signature is unique even for
+///   the same message. Safer than PKCS#1 v1.5, but more complex to verify."
+fn verify_rsa_pss_signature(
+    message: &[u8],
+    signature: &[u8],
+    n: &[u8],
+    e: &[u8],
+    hash_type: RsaHashType,
+) -> Result<(), VerifyError> {
+    let key_len = n.len();
+
+    // RSA public key operation: signature^e mod n
+    let em = mod_exp(signature, e, n);
+
+    // Hash the message
+    let m_hash = compute_hash(message, hash_type);
+    let h_len = m_hash.len();
+
+    // PSS verification per RFC 8017 §9.1.2
+    // em_len = ceil((modBits - 1) / 8) — for our purposes, key_len
+    let em_len = em.len();
+    if em_len < h_len + h_len + 2 {
+        return Err(VerifyError::SignatureInvalid);
+    }
+
+    // Check trailing byte is 0xBC
+    if em.is_empty() || em[em_len - 1] != 0xBC {
+        return Err(VerifyError::SignatureInvalid);
+    }
+
+    // Split EM into maskedDB || H || 0xBC
+    let db_len = em_len - h_len - 1;
+    let masked_db = &em[..db_len];
+    let h = &em[db_len..db_len + h_len];
+
+    // Check top bits of maskedDB are zero (8*em_len - modBits+1 top bits)
+    // For standard key sizes, the top bit should be 0
+    if !masked_db.is_empty() && (masked_db[0] & 0x80) != 0 {
+        return Err(VerifyError::SignatureInvalid);
+    }
+
+    // MGF1: generate mask from H
+    let db_mask = mgf1(h, db_len, hash_type);
+
+    // DB = maskedDB XOR dbMask
+    let mut db = Vec::with_capacity(db_len);
+    for i in 0..db_len {
+        db.push(masked_db[i] ^ db_mask[i]);
+    }
+
+    // Clear top bits of DB (same as maskedDB)
+    if !db.is_empty() {
+        db[0] &= 0x7F;
+    }
+
+    // DB should be: 0x00 ... 0x00 0x01 || salt
+    // salt length = h_len (for TLS 1.3, salt_len = hash_len)
+    // Find the 0x01 separator
+    let salt_start = db_len.checked_sub(h_len).ok_or(VerifyError::SignatureInvalid)?;
+    if salt_start == 0 {
+        return Err(VerifyError::SignatureInvalid);
+    }
+
+    // All bytes before salt_start-1 must be 0x00, byte at salt_start-1 must be 0x01
+    for i in 0..salt_start - 1 {
+        if db[i] != 0x00 {
+            return Err(VerifyError::SignatureInvalid);
+        }
+    }
+    if db[salt_start - 1] != 0x01 {
+        return Err(VerifyError::SignatureInvalid);
+    }
+
+    let salt = &db[salt_start..];
+
+    // M' = (0x00){8} || mHash || salt
+    // H' = Hash(M')
+    let mut m_prime = Vec::with_capacity(8 + h_len + salt.len());
+    m_prime.extend_from_slice(&[0u8; 8]);
+    m_prime.extend_from_slice(&m_hash);
+    m_prime.extend_from_slice(salt);
+    let h_prime = compute_hash(&m_prime, hash_type);
+
+    // — VeilAudit: "The final comparison. If H matches H', the PSS padding is valid
+    //   and the signature checks out. Constant-time, naturally."
+    if constant_time_eq(h, &h_prime) {
+        Ok(())
+    } else {
+        Err(VerifyError::SignatureInvalid)
+    }
+}
+
+/// MGF1 mask generation function (RFC 8017 §B.2.1).
+/// — VeilAudit: "MGF1: hash-based mask generator. Feed in a seed, get out a mask.
+///   Used by PSS to make each signature unique."
+fn mgf1(seed: &[u8], mask_len: usize, hash_type: RsaHashType) -> Vec<u8> {
+    let h_len = match hash_type {
+        RsaHashType::Sha256 => 32,
+        RsaHashType::Sha384 => 48,
+        RsaHashType::Sha512 => 64,
+    };
+
+    let mut mask = Vec::with_capacity(mask_len);
+    let mut counter: u32 = 0;
+
+    while mask.len() < mask_len {
+        let mut input = Vec::with_capacity(seed.len() + 4);
+        input.extend_from_slice(seed);
+        input.push((counter >> 24) as u8);
+        input.push((counter >> 16) as u8);
+        input.push((counter >> 8) as u8);
+        input.push(counter as u8);
+
+        let hash = compute_hash(&input, hash_type);
+        let take = (mask_len - mask.len()).min(h_len);
+        mask.extend_from_slice(&hash[..take]);
+        counter += 1;
+    }
+
+    mask
 }
 
 /// Parse an ECDSA signature from its DER encoding.
@@ -459,10 +677,6 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
-/// Check if a big-endian byte array represents zero.
-fn is_zero(data: &[u8]) -> bool {
-    data.iter().all(|&b| b == 0)
-}
 
 // ============================================================================
 // Minimal big-integer arithmetic for RSA modular exponentiation.

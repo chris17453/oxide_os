@@ -16,4 +16,4 @@ pub use der::{DerElement, DerParser, Oid, Tag};
 pub use parser::{
     Certificate, Extensions, Name, PublicKeyInfo, SignatureAlgorithm, Validity,
 };
-pub use verify::{verify_chain, VerifyError};
+pub use verify::{verify_certificate_verify_signature, verify_chain, VerifyError};

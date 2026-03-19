@@ -141,6 +141,43 @@ pub fn build_key_share(pubkey: &[u8; 32]) -> Vec<u8> {
     ext
 }
 
+/// Build key_share extension with dual key shares: X25519 + P-256.
+/// — ColdCipher: "Two key shares, one extension. The server picks its favorite.
+///   Most will choose X25519 (smaller, faster). Some old-school servers pick P-256.
+///   Either way, we're ready." — ColdCipher
+pub fn build_key_share_dual(x25519_pub: &[u8; 32], p256_pub: &[u8; 65]) -> Vec<u8> {
+    // X25519 entry: group(2) + key_len(2) + key(32) = 36
+    // P-256 entry:  group(2) + key_len(2) + key(65) = 69
+    let x25519_entry_len = 2 + 2 + 32;
+    let p256_entry_len = 2 + 2 + 65;
+    let shares_len = x25519_entry_len + p256_entry_len;
+    let ext_len = 2 + shares_len; // client_shares length(2) + entries
+
+    let mut ext = Vec::with_capacity(4 + ext_len);
+    // Extension header
+    ext.push((EXT_KEY_SHARE >> 8) as u8);
+    ext.push((EXT_KEY_SHARE & 0xFF) as u8);
+    ext.push((ext_len >> 8) as u8);
+    ext.push((ext_len & 0xFF) as u8);
+    // client_shares total length
+    ext.push((shares_len >> 8) as u8);
+    ext.push((shares_len & 0xFF) as u8);
+
+    // X25519 entry (listed first — preferred)
+    ext.push((GROUP_X25519 >> 8) as u8);
+    ext.push((GROUP_X25519 & 0xFF) as u8);
+    ext.push(0); ext.push(32);
+    ext.extend_from_slice(x25519_pub);
+
+    // P-256 entry
+    ext.push((GROUP_SECP256R1 >> 8) as u8);
+    ext.push((GROUP_SECP256R1 & 0xFF) as u8);
+    ext.push(0); ext.push(65);
+    ext.extend_from_slice(p256_pub);
+
+    ext
+}
+
 /// Parsed server key share result
 pub enum ServerKeyShare {
     X25519([u8; 32]),

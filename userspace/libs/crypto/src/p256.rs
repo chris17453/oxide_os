@@ -878,6 +878,66 @@ pub fn p256_pubkey_from_uncompressed(bytes: &[u8]) -> Option<P256PublicKey> {
 ///
 /// — ColdCipher: "The moment of truth. Literally. One boolean stands between
 ///   you and trusting a stranger's certificate."
+/// Compute a P-256 public key from a private scalar.
+/// Returns the uncompressed point (65 bytes: 0x04 || x || y).
+/// Returns None if the scalar is zero or >= N.
+///
+/// — ColdCipher: "Private key in, public point out. The one-way function
+///   that makes asymmetric crypto possible. Good luck reversing ECDLP."
+pub fn p256_pubkey_from_private(private: &[u8; 32]) -> Option<[u8; 65]> {
+    let k = mod_n_reduce(&u256_from_be_bytes(private));
+    if u256_is_zero(&k) {
+        return None;
+    }
+
+    let result = scalar_mul(&k, &GX, &GY);
+    let (px, py) = result.to_affine()?;
+
+    let mut point = [0u8; 65];
+    point[0] = 0x04;
+    let x_bytes = u256_to_be_bytes(&px);
+    let y_bytes = u256_to_be_bytes(&py);
+    point[1..33].copy_from_slice(&x_bytes);
+    point[33..65].copy_from_slice(&y_bytes);
+    Some(point)
+}
+
+/// P-256 Elliptic Curve Diffie-Hellman.
+///
+/// Computes the shared secret from our private scalar and their uncompressed
+/// public point. Returns the x-coordinate of the resulting point as 32 BE bytes.
+/// Returns None if the peer's public key is invalid or the result is the point
+/// at infinity (which would mean someone sent us a malicious key).
+///
+/// — ColdCipher: "Two strangers, one curve, one shared secret. The miracle of
+///   ephemeral key agreement — assuming nobody's cheating on the curve."
+pub fn p256_ecdh(our_private: &[u8; 32], their_public: &[u8; 65]) -> Option<[u8; 32]> {
+    // — ColdCipher: Parse and validate the peer's public key first.
+    // If it's not on the curve, bail. Accepting off-curve points is how
+    // you get invalid-curve attacks. — ColdCipher
+    let peer = p256_pubkey_from_uncompressed(their_public)?;
+
+    // Convert private key to scalar, reduce mod N
+    let k = mod_n_reduce(&u256_from_be_bytes(our_private));
+
+    // — ColdCipher: Zero scalar = no shared secret. Either our RNG is dead
+    // or someone is testing our edge cases. Either way, reject. — ColdCipher
+    if u256_is_zero(&k) {
+        return None;
+    }
+
+    // Scalar multiply: result = k * peer_point
+    let result = scalar_mul(&k, &peer.x, &peer.y);
+
+    // Convert to affine — None means point at infinity (bad peer key)
+    let (rx, _ry) = result.to_affine()?;
+
+    // — ColdCipher: The shared secret is the x-coordinate, big-endian.
+    // Both sides compute the same x. The y-coordinate is discarded because
+    // ECDH only needs one coordinate — saves bandwidth, costs nothing. — ColdCipher
+    Some(u256_to_be_bytes(&rx))
+}
+
 pub fn p256_verify(hash: &[u8; 32], signature: &[u8; 64], pubkey: &P256PublicKey) -> bool {
     // Parse r and s from signature
     let mut rb = [0u8; 32];
@@ -1059,6 +1119,47 @@ mod tests {
             p256_verify(&msg_hash, &signature, &pubkey),
             "NIST P-256 ECDSA test vector verification failed — time to question everything"
         );
+    }
+
+    /// Test P-256 ECDH key exchange: private_a * Pub_b == private_b * Pub_a.
+    /// — ColdCipher: "Commutativity. The reason Diffie-Hellman works at all."
+    #[test]
+    fn test_p256_ecdh_commutativity() {
+        // Use known scalars (not random, because tests must be deterministic)
+        let scalar_a: [u8; 32] = [
+            0x0a, 0x1b, 0x2c, 0x3d, 0x4e, 0x5f, 0x60, 0x71,
+            0x82, 0x93, 0xa4, 0xb5, 0xc6, 0xd7, 0xe8, 0xf9,
+            0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+            0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01,
+        ];
+        let scalar_b: [u8; 32] = [
+            0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10,
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+            0x0f, 0x1e, 0x2d, 0x3c, 0x4b, 0x5a, 0x69, 0x78,
+            0x87, 0x96, 0xa5, 0xb4, 0xc3, 0xd2, 0xe1, 0xf0,
+        ];
+
+        // Compute public keys: Pub_x = scalar_x * G
+        let ka = mod_n_reduce(&u256_from_be_bytes(&scalar_a));
+        let kb = mod_n_reduce(&u256_from_be_bytes(&scalar_b));
+        let pa = scalar_mul(&ka, &GX, &GY).to_affine().unwrap();
+        let pb = scalar_mul(&kb, &GX, &GY).to_affine().unwrap();
+
+        // Encode as uncompressed points
+        let mut pub_a = [0u8; 65];
+        pub_a[0] = 0x04;
+        pub_a[1..33].copy_from_slice(&u256_to_be_bytes(&pa.0));
+        pub_a[33..65].copy_from_slice(&u256_to_be_bytes(&pa.1));
+
+        let mut pub_b = [0u8; 65];
+        pub_b[0] = 0x04;
+        pub_b[1..33].copy_from_slice(&u256_to_be_bytes(&pb.0));
+        pub_b[33..65].copy_from_slice(&u256_to_be_bytes(&pb.1));
+
+        // ECDH: both sides must compute the same shared secret
+        let ss_ab = p256_ecdh(&scalar_a, &pub_b).expect("ECDH a*B failed");
+        let ss_ba = p256_ecdh(&scalar_b, &pub_a).expect("ECDH b*A failed");
+        assert_eq!(ss_ab, ss_ba, "ECDH commutativity violated — shared secrets don't match");
     }
 
     /// Verify that a tampered signature fails. — ColdCipher
