@@ -140,10 +140,13 @@ impl Handshake {
         exts.extend_from_slice(&extensions::build_signature_algorithms());
         exts.extend_from_slice(&extensions::build_key_share(&self.our_public_key));
 
-        // Cipher suites (3 suites × 2 bytes = 6 bytes)
+        // — ColdCipher: Only offer SHA-256 based suites. Our key schedule uses
+        // SHA-256 throughout — offering SHA-384 suites (0x1302) causes servers to
+        // pick AES-256-GCM-SHA384 which requires 48-byte hashes. The derived keys
+        // would be wrong. AES-128-GCM-SHA256 is the most common TLS 1.3 suite and
+        // is supported by all servers. — ColdCipher
         let cipher_suites: &[u16] = &[
             CipherSuite::TlsAes128GcmSha256 as u16,
-            CipherSuite::TlsAes256GcmSha384 as u16,
             CipherSuite::TlsChacha20Poly1305Sha256 as u16,
         ];
 
