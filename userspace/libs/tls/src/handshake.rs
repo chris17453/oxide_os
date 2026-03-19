@@ -307,6 +307,11 @@ impl Handshake {
         };
         self.shared_secret = Some(shared);
 
+        // Verify key schedule correctness against RFC 8448
+        if !key_schedule::self_test_rfc8448() {
+            return Err("key schedule self-test FAILED");
+        }
+
         // Derive handshake traffic secrets
         let early = key_schedule::early_secret();
         // — ColdCipher: Dump early secret for verification against RFC 8448
@@ -318,6 +323,16 @@ impl Handshake {
         for i in 0..4 { let b = derived[i]; let h = b >> 4; let l = b & 0xF; libc::putchar(if h < 10 { b'0' + h } else { b'a' + h - 10 }); libc::putchar(if l < 10 { b'0' + l } else { b'a' + l - 10 }); }
         libc::prints("\n");
         let hs_secret = key_schedule::handshake_secret(&derived, &shared);
+        // Dump transcript hash and handshake secret
+        let transcript_hash = self.transcript.hash();
+        libc::prints("[TLS] transcript_hash[0..4]=");
+        for i in 0..4 { let b = transcript_hash[i]; let h = b >> 4; let l = b & 0xF; libc::putchar(if h < 10 { b'0' + h } else { b'a' + h - 10 }); libc::putchar(if l < 10 { b'0' + l } else { b'a' + l - 10 }); }
+        libc::prints("\n");
+        libc::prints("[TLS] hs_secret[0..4]=");
+        for i in 0..4 { let b = hs_secret[i]; let h = b >> 4; let l = b & 0xF; libc::putchar(if h < 10 { b'0' + h } else { b'a' + h - 10 }); libc::putchar(if l < 10 { b'0' + l } else { b'a' + l - 10 }); }
+        libc::prints(" transcript_len=");
+        libc::print_i64(self.transcript.len() as i64);
+        libc::prints("\n");
         let transcript_hash = self.transcript.hash();
         let (client_hs, server_hs) = key_schedule::handshake_traffic_secrets(&hs_secret, &transcript_hash);
 

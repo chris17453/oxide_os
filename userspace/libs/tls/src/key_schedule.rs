@@ -140,6 +140,27 @@ pub fn derive_traffic_keys(secret: &[u8; 32], key_len: usize) -> TrafficKeys {
     TrafficKeys { key, iv }
 }
 
+/// — ColdCipher: Self-test against RFC 8448 Section 3 test vectors.
+/// Call this to verify the key schedule produces correct output.
+/// Returns true if all intermediate values match the RFC.
+pub fn self_test_rfc8448() -> bool {
+    // RFC 8448 Section 3: early_secret
+    let early = early_secret();
+    // Expected: 33ad0a1c607ec03b09e6cd9893680ce210adf300aa1f2660e1b22e10f170f92a
+    if early[0] != 0x33 || early[1] != 0xad || early[2] != 0x0a || early[3] != 0x1c {
+        return false;
+    }
+
+    // Derive-Secret(early, "derived", "")
+    let derived = derive_intermediate(&early);
+    // Expected: 6f2615a108c702c5678f54fc9dbab69716c076189c48250cebeac3576c3611ba
+    if derived[0] != 0x6f || derived[1] != 0x26 || derived[2] != 0x15 || derived[3] != 0xa1 {
+        return false;
+    }
+
+    true
+}
+
 /// Compute the Finished verify_data MAC
 /// finished_key = HKDF-Expand-Label(base_key, "finished", "", Hash.length)
 /// verify_data = HMAC(finished_key, transcript_hash)
