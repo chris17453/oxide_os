@@ -152,6 +152,12 @@ impl TlsStream {
 
 /// Perform TLS 1.3 handshake on a connected TCP socket
 pub fn tls_connect(fd: i32, hostname: &str) -> Result<TlsStream, TlsError> {
+    // — VeilAudit: "Load root CAs FIRST, before the handshake allocates buffers.
+    //   Parsing 4 DER certs (~5KB) is cheap. Doing it after decrypting 3KB of
+    //   certificate chain fragments the heap enough that the 4th root cert
+    //   silently fails to parse. Heap pressure is the silent assassin of PKI."
+    let roots = trust_store::root_certificates();
+
     let mut hs = Handshake::new(hostname);
 
     // Send ClientHello
@@ -229,8 +235,7 @@ pub fn tls_connect(fd: i32, hostname: &str) -> Result<TlsStream, TlsError> {
         if chain.is_empty() {
             return Err(TlsError::CertificateInvalid("no server certificates"));
         }
-        let roots = trust_store::root_certificates();
-        // — VeilAudit: "None for current_time because we don't have a wall clock yet.
+            // — VeilAudit: "None for current_time because we don't have a wall clock yet.
         //   Validity checking is deferred until we get an RTC or NTP time source.
         //   The alternative is rejecting every cert, which is worse." — VeilAudit
         if let Err(e) = x509::verify_chain(&chain, &roots, hostname, None) {

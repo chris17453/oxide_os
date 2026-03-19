@@ -192,6 +192,7 @@ dependencies = [
  "compression",
  "heapless",
  "libc 0.1.0",
+ "oxide-http",
  "oxide-ncurses",
  "oxide-tls",
  "termcap",
@@ -1093,6 +1094,14 @@ dependencies = [
  "libc 0.1.0",
  "libm",
  "minifb",
+]
+
+[[package]]
+name = "oxide-http"
+version = "0.1.0"
+dependencies = [
+ "libc 0.1.0",
+ "oxide-tls",
 ]
 
 [[package]]

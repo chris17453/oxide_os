@@ -464,11 +464,26 @@ const MAX_BUNDLE_SIZE: usize = 512 * 1024;
 pub fn root_certificates() -> Vec<Certificate> {
     // — VeilAudit: "Try filesystem first. Like Linux, like FreeBSD, like
     //   every OS that takes PKI seriously."
-    if let Some(roots) = load_ca_bundle_from_fs() {
-        if !roots.is_empty() {
-            return roots;
+    // — VeilAudit: "Load filesystem roots AND embedded roots. The PEM bundle
+    //   has 140+ CAs but may be missing some we need (AAA Certificate Services
+    //   was removed from Mozilla's bundle but Cloudflare still chains to it).
+    //   The embedded roots are our safety net. Merge, don't replace."
+    let mut all_roots = load_embedded_roots();
+
+    if let Some(fs_roots) = load_ca_bundle_from_fs() {
+        for fs_root in fs_roots {
+            // — VeilAudit: "Deduplicate by CN. Don't add roots we already have."
+            let fs_cn = fs_root.subject.common_name.as_deref().unwrap_or("");
+            let already_have = all_roots.iter().any(|r| {
+                r.subject.common_name.as_deref().unwrap_or("") == fs_cn
+            });
+            if !already_have {
+                all_roots.push(fs_root);
+            }
         }
     }
+
+    return all_roots;
 
     // — VeilAudit: "Filesystem failed. Fall back to the compiled-in roots.
     //   Better than nothing. Worse than a real CA bundle."

@@ -116,26 +116,12 @@ impl Certificate {
     pub fn from_der(data: &[u8]) -> Option<Self> {
         let mut outer = DerParser::new(data);
         let cert_seq = outer.expect(Tag::Sequence)?;
-
-        // We need the raw bytes of the TBSCertificate for signature verification.
-        // The TBS is the first element inside the outer SEQUENCE.
-        // — VeilAudit: "Capturing raw TBS bytes. One bit flip = signature failure.
-        //   That's the whole point."
         let mut cert_parser = DerParser::enter(&cert_seq);
-
-        // Record the start position of TBSCertificate within the outer SEQUENCE
         let tbs_start = cert_parser.position();
         let tbs_elem = cert_parser.expect(Tag::Sequence)?;
-
-        // The raw TBS includes the SEQUENCE tag + length + content
-        // We need to recalculate from the original data
         let raw_tbs = capture_raw_element(cert_seq.data, tbs_start)?;
-
-        // Parse signature algorithm (outer copy — must match inner)
         let sig_alg_elem = cert_parser.expect(Tag::Sequence)?;
         let signature_algorithm = parse_algorithm_identifier(&sig_alg_elem)?;
-
-        // Parse signature value
         let sig_bits = cert_parser.expect(Tag::BitString)?;
         let signature_value = Vec::from(der::parse_bitstring(sig_bits.data)?);
 
@@ -154,19 +140,12 @@ impl Certificate {
         // Signature algorithm (inner — must match outer, but we trust the outer)
         let _inner_sig = tbs.expect(Tag::Sequence)?;
 
-        // Issuer
         let issuer_elem = tbs.expect(Tag::Sequence)?;
         let issuer = parse_name(&issuer_elem)?;
-
-        // Validity
         let validity_elem = tbs.expect(Tag::Sequence)?;
         let validity = parse_validity(&validity_elem)?;
-
-        // Subject
         let subject_elem = tbs.expect(Tag::Sequence)?;
         let subject = parse_name(&subject_elem)?;
-
-        // Subject Public Key Info
         let spki_elem = tbs.expect(Tag::Sequence)?;
         let public_key = parse_spki(&spki_elem)?;
 
