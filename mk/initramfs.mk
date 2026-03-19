@@ -23,6 +23,7 @@ initramfs: $(INITRAMFS_PREREQ)
 	@mkdir -p $(TARGET_DIR)/initramfs/bin
 	@mkdir -p $(TARGET_DIR)/initramfs/sbin
 	@mkdir -p $(TARGET_DIR)/initramfs/etc
+	@mkdir -p $(TARGET_DIR)/initramfs/etc/ssl/certs
 	@mkdir -p $(TARGET_DIR)/initramfs/dev
 	@mkdir -p $(TARGET_DIR)/initramfs/dev/pts
 	@mkdir -p $(TARGET_DIR)/initramfs/proc

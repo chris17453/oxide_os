@@ -133,6 +133,7 @@ create-rootfs: increment-build kernel bootloader userspace-release archive-kerne
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/usr/share/gwbasic && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/etc/services.d && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/etc/network && \
+	sudo mkdir -p $(TARGET_DIR)/mnt/root/etc/ssl/certs && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/var/log && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/var/lib/dhcp && \
 	sudo mkdir -p $(TARGET_DIR)/mnt/root/var/run && \
@@ -230,7 +231,7 @@ create-rootfs: increment-build kernel bootloader userspace-release archive-kerne
 	printf "PATH=/usr/bin/oxide-test\nENABLED=$(OXIDE_TEST_SERVICE_ENABLED)\nRESTART=no\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/oxide-test > /dev/null && \
 	printf "# OXIDE RDP Server Configuration\n# Port to listen on (default: 3389)\nport=3389\n# Maximum concurrent connections\nmax_connections=10\n# Require TLS encryption (yes/no)\ntls_required=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/rdpd.conf > /dev/null && \
 	printf "mode=dhcp\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/network/eth0.conf > /dev/null && \
-	printf "nameserver 8.8.8.8\nnameserver 8.8.4.4\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/resolv.conf > /dev/null && \
+	printf "# Populated by networkd from DHCP\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/resolv.conf > /dev/null && \
 	printf "# /etc/hosts - static hostname-to-IP mappings\n127.0.0.1       localhost localhost.localdomain\n::1             localhost localhost.localdomain ip6-localhost ip6-loopback\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/hosts > /dev/null && \
 	printf "# /etc/vconsole.conf - console keyboard and font configuration\n# KEYMAP: keyboard layout (us, uk, de, fr)\n# Use 'loadkeys -l' to list available layouts\nKEYMAP=us\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/vconsole.conf > /dev/null && \
 	sudo umount $(TARGET_DIR)/mnt/root && \

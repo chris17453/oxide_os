@@ -887,7 +887,7 @@ impl TcpConnection {
     }
 
     /// ShadePacket: Transmit pending data from send buffer
-    fn transmit_data(&self) -> NetResult<()> {
+    pub fn transmit_data(&self) -> NetResult<()> {
         let state = *self.state.lock();
         if state != TcpState::Established && state != TcpState::CloseWait {
             return Ok(());
@@ -983,13 +983,23 @@ impl TcpConnection {
         match state {
             TcpState::Established | TcpState::FinWait1 | TcpState::FinWait2 => {}
             TcpState::CloseWait => {
-                // Can still receive buffered data
+                // — WireSaint: CloseWait = peer sent FIN. Can still drain buffered
+                // data, but once recv_buf is empty, return Ok(0) = EOF. The old
+                // code returned WouldBlock which made TLS read_exact spin through
+                // 2000 EAGAIN retries × 15000 poll iterations = minutes of wasted
+                // CPU after a successful HTTPS download. — WireSaint
             }
             _ => return Err(NetError::NotConnected),
         }
 
         let mut recv_buf = self.recv_buf.lock();
         if recv_buf.is_empty() {
+            // — WireSaint: In CloseWait, empty buffer means EOF — peer sent FIN,
+            // no more data will arrive. Return Ok(0) like Linux read() on a
+            // closed socket. For Established, data may still be in flight. — WireSaint
+            if state == TcpState::CloseWait {
+                return Ok(0);
+            }
             return Err(NetError::WouldBlock);
         }
 
@@ -1162,6 +1172,18 @@ impl TcpConnection {
             self.dup_acks.store(0, Ordering::SeqCst);
             self.snd_una.store(ack_num, Ordering::SeqCst);
 
+            // — WireSaint: Clear Nagle's has_unacked flag when all sent data
+            // is acknowledged. Without this, has_unacked stays 1 forever and
+            // Nagle blocks all sub-MSS segments after the first send. This was
+            // the root cause of TLS HTTPS failure: ClientFinished set has_unacked=1,
+            // then the encrypted HTTP GET (~250 bytes < MSS) was blocked by Nagle
+            // and never transmitted. Server never got the request, timed out,
+            // sent FIN → CloseWait with empty recv_buf. — WireSaint
+            let nxt = self.snd_nxt.load(Ordering::SeqCst);
+            if ack_num == nxt {
+                self.has_unacked.store(0, Ordering::SeqCst);
+            }
+
             // Remove acknowledged data from retransmit queue
             let mut queue = self.retransmit_queue.lock();
             queue.retain(|(seq, data, _)| {
@@ -1182,6 +1204,7 @@ impl TcpConnection {
                 let increment = (mss * mss) / cwnd;
                 self.cwnd.store(cwnd + increment.max(1), Ordering::SeqCst);
             }
+
         }
     }
 

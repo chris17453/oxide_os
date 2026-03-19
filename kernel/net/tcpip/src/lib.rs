@@ -522,6 +522,13 @@ impl TcpIpStack {
             ) {
                 matched = true;
                 conn.process_segment(&segment)?;
+                // — WireSaint: After processing an ACK that clears Nagle's
+                // has_unacked flag, flush any pending send_buf data. This is
+                // critical for TLS where ClientFinished + HTTP GET are sent
+                // in rapid succession — the GET gets Nagle-blocked until the
+                // ClientFinished ACK arrives. Must call AFTER process_segment
+                // returns (state lock released) to avoid deadlock. — WireSaint
+                let _ = conn.transmit_data();
                 // — GraveShift: After processing SYN-ACK, transmit the queued ACK
                 // so the 3-way handshake completes. Without this, the ACK sits in
                 // tx_queue and the server retransmits SYN-ACK forever.

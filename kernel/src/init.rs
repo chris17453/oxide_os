@@ -1693,6 +1693,10 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     let _ = writeln!(writer, "[VFS] VFS initialized");
 
+    // — GraveShift: DNS servers from bootstrap DHCP, deferred for resolv.conf
+    // write after initramfs mount. /etc doesn't exist on bare tmpfs root. — GraveShift
+    let mut bootstrap_dns_servers: Vec<net::Ipv4Addr> = Vec::new();
+
     // ========================================
     // Network Initialization
     // ========================================
@@ -1787,25 +1791,12 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                     let _ = writeln!(writer, "[NET]   DNS: {}", dns);
                 }
 
-                // — GraveShift: Bootstrap resolv.conf from DHCP. networkd will
-                // overwrite this later, but userspace needs DNS immediately after
-                // boot (wget, ping hostname, etc). Without this, libc falls back
-                // to 8.8.8.8 which is unreachable from QEMU user-mode NAT. — GraveShift
-                if !lease.dns_servers.is_empty() {
-                    if let Ok(etc_dir) = vfs::mount::GLOBAL_VFS.lookup("/etc") {
-                        let vnode = etc_dir.lookup("resolv.conf")
-                            .or_else(|_| etc_dir.create("resolv.conf", vfs::Mode::new(0o644)));
-                        if let Ok(vnode) = vnode {
-                            use alloc::string::String;
-                            let mut content = String::from("# Bootstrap from kernel DHCP\n");
-                            for dns in &lease.dns_servers {
-                                content.push_str(&alloc::format!("nameserver {}\n", dns));
-                            }
-                            let _ = vnode.truncate(0);
-                            let _ = vnode.write(0, content.as_bytes());
-                            let _ = writeln!(writer, "[NET]   Wrote /etc/resolv.conf");
-                        }
-                    }
+                // — GraveShift: Stash DNS servers for resolv.conf write AFTER
+                // initramfs loads. /etc doesn't exist yet on the bare tmpfs root,
+                // so writing here goes into the void. We defer until the real
+                // root filesystem is mounted and /etc actually exists. — GraveShift
+                for dns in &lease.dns_servers {
+                    bootstrap_dns_servers.push(*dns);
                 }
             }
             Err(e) => {
@@ -2144,6 +2135,77 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
             }
         }
 
+        // — GraveShift: Initramfs /etc is READ-ONLY (CPIO fs). Mount a tmpfs
+        // overlay so userspace (networkd, login, shell) can write to /etc.
+        // Copy essential files from initramfs /etc first, then we can write
+        // resolv.conf with DHCP DNS servers. This is the standard Linux
+        // initramfs pattern — tmpfs over read-only root paths. — GraveShift
+        {
+            // Read all initramfs /etc files before mounting tmpfs over them
+            let mut etc_files: Vec<(alloc::string::String, Vec<u8>)> = Vec::new();
+            if let Ok(etc_dir) = GLOBAL_VFS.lookup("/etc") {
+                let mut offset = 0u64;
+                while let Ok(Some(entry)) = etc_dir.readdir(offset) {
+                    if entry.name != "." && entry.name != ".." {
+                        if let Ok(file_vnode) = etc_dir.lookup(&entry.name) {
+                            if file_vnode.vtype() == vfs::VnodeType::File {
+                                let size = file_vnode.size() as usize;
+                                if size > 0 && size < 8192 {
+                                    let mut buf = alloc::vec![0u8; size];
+                                    if let Ok(n) = file_vnode.read(0, &mut buf) {
+                                        buf.truncate(n);
+                                        etc_files.push((alloc::string::String::from(&*entry.name), buf));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    offset += 1;
+                }
+            }
+
+            // Mount writable tmpfs over /etc
+            let etc_tmpfs = TmpDir::new_root();
+            if let Err(e) = GLOBAL_VFS.mount(etc_tmpfs, "/etc", MountFlags::empty(), "tmpfs") {
+                let _ = writeln!(writer, "[VFS] Failed to mount tmpfs on /etc: {:?}", e);
+            } else {
+                let _ = writeln!(writer, "[VFS] Mounted tmpfs at /etc (writable overlay)");
+
+                // Restore initramfs /etc files into the writable tmpfs
+                if let Ok(etc_dir) = GLOBAL_VFS.lookup("/etc") {
+                    for (name, data) in &etc_files {
+                        if let Ok(vnode) = etc_dir.create(name, vfs::Mode::new(0o644)) {
+                            let _ = vnode.write(0, data);
+                        }
+                    }
+                    let _ = writeln!(writer, "[VFS] Copied {} files from initramfs /etc", etc_files.len());
+
+                    // — GraveShift: NOW write resolv.conf with bootstrap DHCP DNS
+                    if !bootstrap_dns_servers.is_empty() {
+                        let vnode = etc_dir.lookup("resolv.conf")
+                            .or_else(|_| etc_dir.create("resolv.conf", vfs::Mode::new(0o644)));
+                        if let Ok(vnode) = vnode {
+                            let mut content = alloc::string::String::from("# Bootstrap from kernel DHCP\n");
+                            for dns in &bootstrap_dns_servers {
+                                content.push_str(&alloc::format!("nameserver {}\n", dns));
+                            }
+                            let _ = vnode.truncate(0);
+                            let _ = vnode.write(0, content.as_bytes());
+                            let _ = writeln!(writer, "[NET] Wrote /etc/resolv.conf ({} DNS servers)", bootstrap_dns_servers.len());
+                        }
+                    }
+
+                    // — GraveShift: Create subdirectories that userspace expects
+                    let _ = etc_dir.mkdir("network", vfs::Mode::DEFAULT_DIR);
+                    let _ = etc_dir.mkdir("services.d", vfs::Mode::DEFAULT_DIR);
+                    let _ = etc_dir.mkdir("ssl", vfs::Mode::DEFAULT_DIR);
+                    if let Ok(ssl_dir) = etc_dir.lookup("ssl") {
+                        let _ = ssl_dir.mkdir("certs", vfs::Mode::DEFAULT_DIR);
+                    }
+                }
+            }
+        }
+
         // If ext4 was found but didn't have init, mount it at /mnt/root
         if let Some(ext4_device) = ext4_root_partition.clone() {
             if let Ok(ext4_root) = ext4::mount(ext4_device, false) {
@@ -2165,6 +2227,26 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
                     let _ = writeln!(writer, "[EXT4] Failed to mount ext4 at /mnt/root: {:?}", e);
                 } else {
                     let _ = writeln!(writer, "[EXT4] Mounted ext4 filesystem at /mnt/root");
+
+                    // — GraveShift: Write resolv.conf to ext4 /etc BEFORE init
+                    // does pivot_root("/mnt/root", ...). After pivot, ext4 becomes
+                    // the new root, so /mnt/root/etc/resolv.conf becomes /etc/resolv.conf.
+                    // The tmpfs overlay we mounted earlier won't survive pivot. — GraveShift
+                    if !bootstrap_dns_servers.is_empty() {
+                        if let Ok(etc_dir) = GLOBAL_VFS.lookup("/mnt/root/etc") {
+                            let vnode = etc_dir.lookup("resolv.conf")
+                                .or_else(|_| etc_dir.create("resolv.conf", vfs::Mode::new(0o644)));
+                            if let Ok(vnode) = vnode {
+                                let mut content = alloc::string::String::from("# Bootstrap from kernel DHCP\n");
+                                for dns in &bootstrap_dns_servers {
+                                    content.push_str(&alloc::format!("nameserver {}\n", dns));
+                                }
+                                let _ = vnode.truncate(0);
+                                let _ = vnode.write(0, content.as_bytes());
+                                let _ = writeln!(writer, "[NET] Wrote /mnt/root/etc/resolv.conf ({} DNS servers)", bootstrap_dns_servers.len());
+                            }
+                        }
+                    }
                 }
             }
         }

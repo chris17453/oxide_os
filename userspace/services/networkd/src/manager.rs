@@ -12,8 +12,10 @@ use libc::*;
 use crate::adapter::{AdapterState, ConfigMode, NetworkAdapter};
 use crate::config::{InterfaceConfig, read_interface_config};
 
-/// Default DNS servers (used when no adapters provide DNS)
-const DEFAULT_DNS_SERVERS: &[[u8; 4]] = &[[8, 8, 8, 8], [8, 8, 4, 4]];
+// — ShadePacket: No hardcoded DNS fallback. DNS comes from DHCP or static
+// config exclusively. If nothing provides DNS, resolv.conf stays empty and
+// the user sees the real problem instead of silently hitting unreachable
+// 8.8.8.8 through QEMU NAT. — ShadePacket
 
 /// Global network adapter manager
 pub struct AdapterManager {
@@ -457,12 +459,9 @@ impl AdapterManager {
             }
         }
 
-        // ShadePacket: Add defaults if nothing configured
-        if dns_list.is_empty() {
-            for &dns in DEFAULT_DNS_SERVERS {
-                dns_list.push(dns);
-            }
-        }
+        // — ShadePacket: No fallback. If DHCP didn't provide DNS, resolv.conf
+        // stays empty. That's honest. Hardcoded 8.8.8.8 was a lie that masked
+        // real DHCP failures behind unreachable DNS through NAT. — ShadePacket
 
         dns_list
     }
