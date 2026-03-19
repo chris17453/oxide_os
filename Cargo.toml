@@ -131,6 +131,7 @@ members = [
     "userspace/libs/oxide-ncurses",
     "userspace/libs/crypto",
     "userspace/libs/tls",
+    "userspace/libs/http",
     "userspace/libs/vte",
     # userspace/services — daemons
     "userspace/services/networkd",

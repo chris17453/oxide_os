@@ -1,0 +1,11 @@
+[package]
+name = "oxide-http"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "oxide_http"
+
+[dependencies]
+oxide-tls = { path = "../tls" }
+libc = { path = "../libc" }

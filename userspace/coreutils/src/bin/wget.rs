@@ -1,27 +1,19 @@
-//! wget - Download files from the web
+//! wget — Download files from the web
 //!
-//! Full-featured implementation with:
-//! - Command-line URL parsing
-//! - Output to file (-O filename)
-//! - Auto-filename from URL (default behavior)
-//! - Quiet mode (-q)
-//! - Verbose mode (-v)
-//! - HTTP/1.1 GET requests
-//! - HTTP header parsing
-//! - Progress indication
-//! - IPv4 address parsing (DNS not yet supported)
+//! Thin CLI wrapper around oxide-http. All the real work (URL parsing, DNS,
+//! TCP, TLS, HTTP, redirects) lives in the library where other tools can use it.
+//!
+//! — ShadePacket: "700 lines of wget became 120 lines of wget + a library.
+//!   The first refactor that actually made things better."
 
 #![no_std]
 #![no_main]
 #![allow(unused)]
 
-use libc::socket::{
-    SOCKADDR_IN_SIZE, connect, recv, send, shut, shutdown, sockaddr_in_octets, tcp_socket,
-};
 use libc::*;
-use oxide_tls;
+use oxide_http;
+use oxide_http::url;
 
-const MAX_URL: usize = 256;
 const MAX_FILENAME: usize = 128;
 
 struct WgetConfig {
@@ -41,514 +33,109 @@ impl WgetConfig {
 }
 
 fn cstr_to_str(ptr: *const u8) -> &'static str {
-    if ptr.is_null() {
-        return "";
-    }
+    if ptr.is_null() { return ""; }
     let mut len = 0;
     unsafe {
-        while *ptr.add(len) != 0 {
-            len += 1;
-        }
+        while *ptr.add(len) != 0 { len += 1; }
         core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr, len))
     }
 }
 
-/// Parse a URL: [scheme://]host[:port][/path]
-/// — ShadePacket: Like Linux wget — scheme determines default port via
-/// the equivalent of getservbyname(). Accepts bare hostnames (defaults
-/// to http). Explicit :port overrides the scheme default. — ShadePacket
-fn parse_url(url: &str) -> Option<(&str, u16, &str)> {
-    // Determine scheme and default port (like /etc/services lookup)
-    let (url, default_port) = if let Some(rest) = url.strip_prefix("http://") {
-        (rest, 80u16)
-    } else if let Some(rest) = url.strip_prefix("https://") {
-        (rest, 443u16)
-    } else if let Some(rest) = url.strip_prefix("ftp://") {
-        (rest, 21u16)
-    } else {
-        // No scheme — bare hostname, default to http port 80
-        (url, 80u16)
-    };
-
-    if url.is_empty() {
-        return None;
-    }
-
-    // Split host from path
-    let (host_port, path) = if let Some(idx) = url.find('/') {
-        (&url[..idx], &url[idx..])
-    } else {
-        (url, "/")
-    };
-
-    if host_port.is_empty() {
-        return None;
-    }
-
-    // Explicit :port overrides scheme default
-    let (host, port) = if let Some(idx) = host_port.find(':') {
-        let port_str = &host_port[idx + 1..];
-        let port = parse_port(port_str)?;
-        (&host_port[..idx], port)
-    } else {
-        (host_port, default_port)
-    };
-
-    Some((host, port, path))
-}
-
-/// Extract filename from URL path
-fn extract_filename(path: &str) -> &str {
-    // Find last / and take everything after it
-    if let Some(idx) = path.rfind('/') {
-        let filename = &path[idx + 1..];
-        if !filename.is_empty() {
-            return filename;
-        }
-    }
-    "index.html"
-}
-
-/// Parse port number from string
-fn parse_port(s: &str) -> Option<u16> {
-    let mut port: u32 = 0;
-    for c in s.bytes() {
-        if c < b'0' || c > b'9' {
-            return None;
-        }
-        port = port * 10 + (c - b'0') as u32;
-        if port > 65535 {
-            return None;
-        }
-    }
-    if port == 0 || port > 65535 {
-        None
-    } else {
-        Some(port as u16)
-    }
-}
-
-/// Parse an IP address from string (e.g., "192.168.1.1")
-fn parse_ip(s: &str) -> Option<(u8, u8, u8, u8)> {
-    let mut octets = [0u8; 4];
-    let mut octet_idx = 0;
-    let mut current: u16 = 0;
-    let mut has_digit = false;
-
-    for c in s.bytes() {
-        if c == b'.' {
-            if !has_digit || octet_idx >= 3 || current > 255 {
-                return None;
-            }
-            octets[octet_idx] = current as u8;
-            octet_idx += 1;
-            current = 0;
-            has_digit = false;
-        } else if c >= b'0' && c <= b'9' {
-            current = current * 10 + (c - b'0') as u16;
-            has_digit = true;
-            if current > 255 {
-                return None;
-            }
-        } else {
-            return None;
-        }
-    }
-
-    if !has_digit || octet_idx != 3 || current > 255 {
-        return None;
-    }
-    octets[octet_idx] = current as u8;
-
-    Some((octets[0], octets[1], octets[2], octets[3]))
-}
-
-/// Build an HTTP GET request
-fn build_request(path: &str, host: &str, buf: &mut [u8]) -> usize {
-    let mut len = 0;
-
-    // GET /path HTTP/1.1\r\n
-    len += copy_str(&mut buf[len..], "GET ");
-    len += copy_str(&mut buf[len..], path);
-    len += copy_str(&mut buf[len..], " HTTP/1.1\r\n");
-
-    // Host: host\r\n
-    len += copy_str(&mut buf[len..], "Host: ");
-    len += copy_str(&mut buf[len..], host);
-    len += copy_str(&mut buf[len..], "\r\n");
-
-    // User-Agent
-    len += copy_str(&mut buf[len..], "User-Agent: wget/oxide\r\n");
-
-    // Connection: close
-    len += copy_str(&mut buf[len..], "Connection: close\r\n");
-
-    // End of headers
-    len += copy_str(&mut buf[len..], "\r\n");
-
-    len
-}
-
-/// Copy string to buffer
-fn copy_str(buf: &mut [u8], s: &str) -> usize {
-    let bytes = s.as_bytes();
-    let len = bytes.len().min(buf.len());
-    buf[..len].copy_from_slice(&bytes[..len]);
-    len
-}
-
-/// Find pattern in buffer
-fn find_pattern(buf: &[u8], pattern: &[u8]) -> Option<usize> {
-    if pattern.len() > buf.len() {
-        return None;
-    }
-    for i in 0..=(buf.len() - pattern.len()) {
-        if &buf[i..i + pattern.len()] == pattern {
-            return Some(i);
-        }
-    }
-    None
-}
-
-fn print_ip(ip: (u8, u8, u8, u8)) {
-    print_u64(ip.0 as u64);
-    putchar(b'.');
-    print_u64(ip.1 as u64);
-    putchar(b'.');
-    print_u64(ip.2 as u64);
-    putchar(b'.');
-    print_u64(ip.3 as u64);
-}
-
-fn show_help() {
-    eprintlns("Usage: wget [OPTIONS] URL");
-    eprintlns("");
-    eprintlns("Download files from the web.");
-    eprintlns("");
-    eprintlns("Options:");
-    eprintlns("  -O FILE     Save to FILE (default: extract from URL)");
-    eprintlns("  -q          Quiet mode");
-    eprintlns("  -v          Verbose mode");
-    eprintlns("  -h          Show this help");
-}
-
-/// Maximum redirect follows (like Linux wget default of 20)
-const MAX_REDIRECTS: u32 = 20;
-
-/// Download from URL, following redirects
-fn do_wget(config: &WgetConfig, url: &str) -> i32 {
-    do_wget_inner(config, url, 0)
-}
-
-fn do_wget_inner(config: &WgetConfig, url: &str, redirect_count: u32) -> i32 {
-    if redirect_count >= MAX_REDIRECTS {
-        eprintlns("wget: too many redirects");
-        return 1;
-    }
-    // Parse URL
-    let (host, port, path) = match parse_url(url) {
-        Some(parsed) => parsed,
+/// — ShadePacket: "All the HTTP complexity is in oxide_http now.
+///   wget is just: parse args → call library → save to file."
+fn do_wget(config: &WgetConfig, url_str: &str) -> i32 {
+    // Parse URL for filename extraction
+    let parsed = match url::parse_url(url_str) {
+        Some(p) => p,
         None => {
-            eprintlns("wget: invalid URL format (use http://host/path)");
+            printlns("wget: invalid URL format");
             return 1;
-        }
-    };
-
-    if host.is_empty() {
-        eprintlns("wget: empty hostname in URL");
-        return 1;
-    }
-
-    // — ShadePacket: HTTPS uses TLS 1.3 via oxide-tls. Port 443 triggers
-    // automatic TLS handshake after TCP connect. — ShadePacket
-
-    // — ShadePacket: Resolve hostname — try IP literal first, then DNS.
-    let ip = match parse_ip(host) {
-        Some(ip) => ip,
-        None => {
-            // Not a raw IP — try DNS resolution
-            if !config.quiet {
-                prints("Resolving ");
-                prints(host);
-                printlns("...");
-            }
-            match libc::dns::resolve(host, None) {
-                Some(ip) => ip,
-                None => {
-                    eprints("wget: unable to resolve host address '");
-                    prints(host);
-                    eprintlns("'");
-                    return 1;
-                }
-            }
         }
     };
 
     // Determine output filename
     let output_filename = if let Some(ref name_buf) = config.output_file {
-        let len = name_buf
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(MAX_FILENAME);
+        let len = name_buf.iter().position(|&b| b == 0).unwrap_or(MAX_FILENAME);
         core::str::from_utf8(&name_buf[..len]).unwrap_or("download.html")
     } else {
-        extract_filename(path)
+        url::extract_filename(parsed.path)
     };
 
     if !config.quiet {
-        prints("Connecting to ");
-        print_ip(ip);
-        prints(":");
-        print_u64(port as u64);
+        prints("Resolving ");
+        prints(parsed.host);
         printlns("...");
     }
 
-    // Create TCP socket
-    let sock = tcp_socket();
-    if sock < 0 {
-        eprints("wget: failed to create socket: ");
-        print_i64(sock as i64);
-        eprintlns("");
-        return 1;
-    }
-
-    // Connect to server
-    let addr = sockaddr_in_octets(port, ip.0, ip.1, ip.2, ip.3);
-    let ret = connect(sock, &addr, SOCKADDR_IN_SIZE);
-    if ret < 0 {
-        eprints("wget: failed to connect: ");
-        print_i64(ret as i64);
-        eprintlns("");
-        close(sock);
-        return 1;
-    }
-
-    if config.verbose {
-        printlns("Connected.");
-    }
-
-    // — ShadePacket: TLS handshake for HTTPS (port 443). Uses oxide-tls which
-    // implements TLS 1.3 with X25519 + AES-128-GCM. After this, all send/recv
-    // goes through the TLS stream's AEAD encryption. Like Linux wget linking
-    // against OpenSSL/GnuTLS — the kernel sees raw TCP, we see cleartext. — ShadePacket
-    let mut tls_stream: Option<oxide_tls::TlsStream> = None;
-    if port == 443 {
-        if !config.quiet {
-            printlns("Performing TLS handshake...");
-        }
-        match oxide_tls::tls_connect(sock, host) {
-            Ok(stream) => {
-                if config.verbose {
-                    printlns("TLS 1.3 handshake complete.");
+    // — ShadePacket: "One function call. DNS, TCP, TLS, HTTP, redirects — all handled."
+    let response = match oxide_http::get(url_str) {
+        Ok(resp) => resp,
+        Err(e) => {
+            prints("wget: ");
+            match e {
+                oxide_http::HttpError::InvalidUrl => printlns("invalid URL"),
+                oxide_http::HttpError::DnsResolutionFailed => {
+                    prints("unable to resolve '");
+                    prints(parsed.host);
+                    printlns("'");
                 }
-                tls_stream = Some(stream);
-            }
-            Err(e) => {
-                // — ShadePacket: Use printlns for error output so it all goes to the
-                // same fd. Mixing eprints/prints causes invisible error messages.
-                prints("wget: TLS handshake failed: ");
-                match e {
-                    oxide_tls::TlsError::HandshakeFailed(msg) => prints(msg),
-                    oxide_tls::TlsError::IoError(code) => { prints("I/O error "); print_i64(code as i64); },
-                    oxide_tls::TlsError::DecryptionFailed => prints("decryption failed"),
-                    oxide_tls::TlsError::ConnectionClosed => prints("connection closed"),
-                    oxide_tls::TlsError::CertificateInvalid(msg) => { prints("cert invalid: "); prints(msg); },
-                    oxide_tls::TlsError::Unsupported(msg) => { prints("unsupported: "); prints(msg); },
+                oxide_http::HttpError::SocketError(code) => {
+                    prints("socket error "); print_i64(code as i64); printlns("");
                 }
-                printlns("");
-                close(sock);
-                return 1;
+                oxide_http::HttpError::ConnectionFailed(code) => {
+                    prints("connection failed "); print_i64(code as i64); printlns("");
+                }
+                oxide_http::HttpError::TlsError(e) => {
+                    prints("TLS failed: ");
+                    match e {
+                        oxide_tls::TlsError::HandshakeFailed(msg) => printlns(msg),
+                        oxide_tls::TlsError::CertificateInvalid(msg) => {
+                            prints("cert invalid: "); printlns(msg);
+                        }
+                        oxide_tls::TlsError::IoError(code) => {
+                            prints("I/O error "); print_i64(code as i64); printlns("");
+                        }
+                        _ => printlns("unknown TLS error"),
+                    }
+                }
+                oxide_http::HttpError::TooManyRedirects => printlns("too many redirects"),
+                oxide_http::HttpError::SendFailed => printlns("failed to send request"),
+                oxide_http::HttpError::ReceiveFailed => printlns("failed to receive response"),
+                oxide_http::HttpError::MalformedResponse => printlns("malformed HTTP response"),
             }
+            return 1;
         }
-    }
-
-    // Build HTTP request
-    let mut request = [0u8; 1024];
-    let req_len = build_request(path, host, &mut request);
-
-    if config.verbose {
-        printlns("Sending HTTP request...");
-    }
-
-    // Send request (TLS or plaintext)
-    let sent = if let Some(ref mut tls) = tls_stream {
-        match tls.send(&request[..req_len]) {
-            Ok(n) => n as isize,
-            Err(_) => -1,
-        }
-    } else {
-        send(sock, &request[..req_len], 0)
     };
-    if sent < 0 {
-        eprints("wget: failed to send request: ");
-        print_i64(sent as i64);
-        eprintlns("");
-        close(sock);
-        return 1;
-    }
 
     if !config.quiet {
-        printlns("HTTP request sent, awaiting response...");
+        prints("HTTP/1.1 ");
+        print_u64(response.status as u64);
+        printlns(match response.status {
+            200 => " OK",
+            301 => " Moved Permanently",
+            302 => " Found",
+            304 => " Not Modified",
+            400 => " Bad Request",
+            403 => " Forbidden",
+            404 => " Not Found",
+            500 => " Internal Server Error",
+            _ => "",
+        });
     }
 
-    // Open output file
+    // Save body to file
     let out_fd = open(output_filename, O_WRONLY | O_CREAT | O_TRUNC, 0o644);
     if out_fd < 0 {
-        eprints("wget: cannot create file: ");
-        prints(output_filename);
-        eprintlns("");
-        close(sock);
+        prints("wget: cannot create file: ");
+        printlns(output_filename);
         return 1;
     }
-
-    if !config.quiet {
-        prints("Saving to: ");
-        printlns(output_filename);
-    }
-
-    // Receive response
-    let mut buffer = [0u8; 4096];
-    let mut total_received = 0;
-    let mut eagain_count = 0;
-    let mut header_end = None;
-    let mut body_written: usize = 0;
-
-    loop {
-        // — ShadePacket: Receive via TLS or raw TCP depending on connection type
-        let received = if let Some(ref mut tls) = tls_stream {
-            match tls.recv(&mut buffer) {
-                Ok(n) => n as isize,
-                Err(oxide_tls::TlsError::ConnectionClosed) => 0,
-                Err(oxide_tls::TlsError::IoError(code)) => code as isize, // Pass through EAGAIN (-11)
-                Err(_) => -1,
-            }
-        } else {
-            recv(sock, &mut buffer, 0)
-        };
-        if received < 0 {
-            // — ShadePacket: EAGAIN (-11) means no data yet — retry for TCP.
-            // The server may be slow to respond, or data arrives in chunks.
-            // Only bail after multiple consecutive EAGAINs with no progress.
-            if received == -11 {
-                eagain_count += 1;
-                if eagain_count < 5 {
-                    continue; // Retry — data may still be coming
-                }
-            }
-            if total_received == 0 {
-                eprints("wget: receive error: ");
-                print_i64(received as i64);
-                eprintlns("");
-            }
-            break;
-        }
-        eagain_count = 0; // Reset on successful receive
-        if received == 0 {
-            // Connection closed
-            break;
-        }
-
-        total_received += received as usize;
-
-        // Look for end of headers if not found yet
-        if header_end.is_none() {
-            if let Some(pos) = find_pattern(&buffer[..received as usize], b"\r\n\r\n") {
-                header_end = Some(pos + 4);
-
-                // Parse status line and check for redirects
-                let headers = &buffer[..pos];
-                let mut is_redirect = false;
-
-                if let Some(first_line_end) = find_pattern(headers, b"\r\n") {
-                    if let Ok(status_line) = core::str::from_utf8(&headers[..first_line_end]) {
-                        if !config.quiet {
-                            printlns(status_line);
-                        }
-                        // — ShadePacket: Check for 301/302/303/307/308 redirects
-                        is_redirect = status_line.contains("301")
-                            || status_line.contains("302")
-                            || status_line.contains("303")
-                            || status_line.contains("307")
-                            || status_line.contains("308");
-                    }
-                }
-
-                // — ShadePacket: Follow redirect — extract Location header and recurse
-                if is_redirect {
-                    if let Ok(header_str) = core::str::from_utf8(headers) {
-                        for line in header_str.split("\r\n") {
-                            let lower_check = line.as_bytes();
-                            // Case-insensitive "Location:" check
-                            if lower_check.len() > 10
-                                && (lower_check[0] == b'L' || lower_check[0] == b'l')
-                                && (lower_check[1] == b'o' || lower_check[1] == b'O')
-                                && lower_check[8] == b':'
-                            {
-                                let location = line[9..].trim();
-                                if !location.is_empty() {
-                                    if !config.quiet {
-                                        prints("Redirecting to: ");
-                                        printlns(location);
-                                    }
-                                    // Clean up current connection
-                                    close(out_fd);
-                                    if let Some(ref mut tls) = tls_stream {
-                                        let _ = tls.shutdown();
-                                    }
-                                    shutdown(sock, shut::RDWR);
-                                    close(sock);
-                                    // Follow redirect
-                                    return do_wget_inner(config, location, redirect_count + 1);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Write body (everything after headers)
-                let body = &buffer[pos + 4..received as usize];
-                if !body.is_empty() {
-                    let written = write(out_fd, body);
-                    if written > 0 {
-                        body_written += written as usize;
-                    }
-                }
-            } else {
-                // Still in headers, don't write anything yet
-            }
-        } else {
-            // Already past headers, write body
-            let written = write(out_fd, &buffer[..received as usize]);
-            if written > 0 {
-                body_written += written as usize;
-            }
-        }
-
-        // Progress indication
-        if !config.quiet && body_written > 0 {
-            prints("\rDownloaded: ");
-            print_u64(body_written as u64);
-            prints(" bytes");
-        }
-    }
-
-    if !config.quiet {
-        printlns("");
-    }
-
-    // Close file
+    let _ = write(out_fd, &response.body);
     close(out_fd);
 
-    // — ShadePacket: Clean TLS shutdown before closing the socket
-    if let Some(ref mut tls) = tls_stream {
-        let _ = tls.shutdown();
-    }
-    shutdown(sock, shut::RDWR);
-    close(sock);
-
     if !config.quiet {
-        prints("Download complete: ");
-        print_u64(body_written as u64);
+        prints("Downloaded: ");
+        print_u64(response.body.len() as u64);
         prints(" bytes saved to ");
         printlns(output_filename);
     }
@@ -556,77 +143,57 @@ fn do_wget_inner(config: &WgetConfig, url: &str, redirect_count: u32) -> i32 {
     0
 }
 
+fn show_help() {
+    printlns("Usage: wget [OPTIONS] URL");
+    printlns("");
+    printlns("Download files from the web.");
+    printlns("");
+    printlns("Options:");
+    printlns("  -O FILE     Save to FILE (default: extract from URL)");
+    printlns("  -q          Quiet mode");
+    printlns("  -v          Verbose mode");
+    printlns("  -h          Show this help");
+}
+
 #[unsafe(no_mangle)]
 fn main(argc: i32, argv: *const *const u8) -> i32 {
-    if argc < 2 {
-        show_help();
-        return 1;
-    }
-
     let mut config = WgetConfig::new();
-    let mut arg_idx = 1;
     let mut url: Option<&str> = None;
+    let mut i = 1;
 
-    // Parse options
-    while arg_idx < argc {
-        let arg_ptr = unsafe { *argv.add(arg_idx as usize) };
-        let arg = cstr_to_str(arg_ptr);
-
-        if arg.starts_with('-') && arg.len() > 1 && arg != "--" {
-            if arg == "-O" {
-                // Output filename option
-                arg_idx += 1;
-                if arg_idx >= argc {
-                    eprintlns("wget: option -O requires an argument");
+    while i < argc as usize {
+        let arg = cstr_to_str(unsafe { *argv.add(i) });
+        match arg {
+            "-h" | "--help" => { show_help(); return 0; }
+            "-q" => config.quiet = true,
+            "-v" => config.verbose = true,
+            "-O" => {
+                i += 1;
+                if i < argc as usize {
+                    let filename = cstr_to_str(unsafe { *argv.add(i) });
+                    let mut buf = [0u8; MAX_FILENAME];
+                    let len = filename.len().min(MAX_FILENAME - 1);
+                    buf[..len].copy_from_slice(&filename.as_bytes()[..len]);
+                    config.output_file = Some(buf);
+                } else {
+                    printlns("wget: -O requires a filename");
                     return 1;
                 }
-                let filename = cstr_to_str(unsafe { *argv.add(arg_idx as usize) });
-                let mut buf = [0u8; MAX_FILENAME];
-                let copy_len = if filename.len() > MAX_FILENAME - 1 {
-                    MAX_FILENAME - 1
-                } else {
-                    filename.len()
-                };
-                buf[..copy_len].copy_from_slice(&filename.as_bytes()[..copy_len]);
-                config.output_file = Some(buf);
-                arg_idx += 1;
-            } else {
-                // Parse character flags
-                for c in arg[1..].bytes() {
-                    match c {
-                        b'q' => config.quiet = true,
-                        b'v' => config.verbose = true,
-                        b'h' => {
-                            show_help();
-                            return 0;
-                        }
-                        _ => {
-                            eprints("wget: unknown option: -");
-                            putchar(c);
-                            eprintlns("");
-                            return 1;
-                        }
-                    }
-                }
-                arg_idx += 1;
             }
-        } else {
-            // Positional argument - URL
-            url = Some(arg);
-            arg_idx += 1;
-            break;
+            _ => {
+                if arg.starts_with('-') {
+                    prints("wget: unknown option: ");
+                    printlns(arg);
+                    return 1;
+                }
+                url = Some(arg);
+            }
         }
+        i += 1;
     }
 
-    // Check that we have a URL
-    let url = match url {
-        Some(u) => u,
-        None => {
-            eprintlns("wget: missing URL");
-            show_help();
-            return 1;
-        }
-    };
-
-    do_wget(&config, url)
+    match url {
+        Some(u) => do_wget(&config, u),
+        None => { printlns("wget: missing URL"); show_help(); 1 }
+    }
 }
