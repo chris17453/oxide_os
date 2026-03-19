@@ -979,18 +979,6 @@ pub fn p256_verify(hash: &[u8; 32], signature: &[u8; 64], pubkey: &P256PublicKey
     }
 }
 
-// — ColdCipher: Test helpers for standalone verification debugging.
-// These expose internal functions so the host-side test harness can
-// trace each step of ECDSA verify. Remove after the bug is fixed.
-pub fn test_scalar_inv_mod_n(s: &U256) -> U256 { scalar_inv_mod_n(s) }
-pub fn test_scalar_mul_mod_n(a: &U256, b: &U256) -> U256 { scalar_mul_mod_n(a, b) }
-pub fn test_u256_from_be(bytes: &[u8; 32]) -> U256 { u256_from_be_bytes(bytes) }
-pub fn test_fp_mul(a: &U256, b: &U256) -> U256 { fp_mul(a, b) }
-pub fn test_fp_sqr(a: &U256) -> U256 { fp_sqr(a) }
-pub fn test_fp_add(a: &U256, b: &U256) -> U256 { fp_add(a, b) }
-pub fn test_fp_mul_a(x: &U256) -> U256 { fp_mul(&A, x) }
-pub fn test_fp_add_b(x: &U256) -> U256 { fp_add(x, &B) }
-
 #[cfg(test)]
 mod tests {
     use super::*;

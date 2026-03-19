@@ -448,11 +448,10 @@ fn parse_spki(elem: &DerElement) -> Option<PublicKeyInfo> {
                 });
             }
         }
-        // Unknown curve, store as P-256 anyway if 65 bytes (uncompressed point)
-        // — VeilAudit: "Unknown EC curve. Storing the point and hoping for the best."
-        Some(PublicKeyInfo::EcdsaP256 {
-            point: Vec::from(pk_bytes),
-        })
+        // — VeilAudit: "Unknown EC curve (P-384, P-521, etc). We only do P-256.
+        //   Don't pretend a P-384 point is P-256 — that way lies SignatureInvalid
+        //   and hours of confused debugging." — VeilAudit
+        Some(PublicKeyInfo::Unknown)
     } else if alg_oid.matches(OID_ED25519) {
         if pk_bytes.len() == 32 {
             let mut key = [0u8; 32];
