@@ -275,7 +275,7 @@ fn read_exact(fd: i32, buf: &mut [u8]) -> Result<usize, TlsError> {
             // before data arrived. Each recv does 15000 spin-polls (~15ms).
             // Retry up to 200 times → ~3 second budget per read_exact call.
             // TLS ServerHello typically arrives within 50-500ms.
-            if n == -11 && eagain_retries < 200 {
+            if n == -11 && eagain_retries < 2000 {
                 eagain_retries += 1;
                 continue;
             }
