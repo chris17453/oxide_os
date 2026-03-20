@@ -36,4 +36,6 @@ mm-vmstat = { path = "../../mm/mm-vmstat" }
 mm-reclaim = { path = "../../mm/mm-reclaim" }
 sched-traits = { path = "../../sched/sched-traits" }
 waitqueue = { path = "../../core/waitqueue" }
+module = { path = "../../module/module" }
+driver-core = { path = "../../drivers/driver-core" }
 spin = { workspace = true }

@@ -412,6 +412,8 @@ pub mod errno {
     pub const ENOENT: i64 = -2; // No such file or directory
     pub const EACCES: i64 = -13; // Permission denied
     pub const EEXIST: i64 = -17; // File exists
+    pub const EBUSY: i64 = -16; // Device or resource busy
+    pub const ENOEXEC: i64 = -8; // Exec format error
     pub const ENOTDIR: i64 = -20; // Not a directory
     pub const EISDIR: i64 = -21; // Is a directory
     pub const ENOTEMPTY: i64 = -39; // Directory not empty
@@ -2634,15 +2636,23 @@ fn sys_init_module(image: u64, len: usize, params: u64) -> i64 {
         os_core::user_access_end();
     }
 
-    // NOTE: In full implementation, this would:
-    // 1. Parse the ELF module
-    // 2. Allocate kernel memory
-    // 3. Load and relocate sections
-    // 4. Call init_module()
-    //
-    // For now, return ENOSYS until module is integrated
-    let _ = data;
-    errno::ENOSYS
+    // — PatchBay: "The ELF loader, relocator, and symbol resolver are all
+    //   built. Load the module, apply relocations, call init_module().
+    //   Then re-probe devices so new drivers can match hardware."
+    match module::load_module(data, "", module::ModuleFlags::NONE) {
+        Ok(()) => {
+            // Re-probe devices so new drivers can claim matching hardware
+            let _ = driver_core::probe_all_devices();
+            let _ = driver_core::probe_isa_devices();
+            0
+        }
+        Err(module::ModuleError::AlreadyLoaded) => errno::EEXIST,
+        Err(module::ModuleError::InvalidFormat) => errno::ENOEXEC,
+        Err(module::ModuleError::OutOfMemory) => errno::ENOMEM,
+        Err(module::ModuleError::SymbolNotFound) => errno::ENOENT,
+        Err(module::ModuleError::InitFailed) => errno::EINVAL,
+        Err(_) => errno::EINVAL,
+    }
 }
 
 /// sys_delete_module - Unload a kernel module
@@ -2669,14 +2679,19 @@ fn sys_delete_module(name_ptr: u64, flags: u32) -> i64 {
         unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(name_ptr, name_len)) };
     let _flags = flags;
 
-    // NOTE: In full implementation, this would:
-    // 1. Find the module by name
-    // 2. Check if it's in use
-    // 3. Call cleanup_module()
-    // 4. Free kernel memory
-    //
-    // For now, return ENOSYS until module is integrated
-    errno::ENOSYS
+    // — PatchBay: "Find it, check refs, call cleanup, free memory. Four steps."
+    unsafe { os_core::user_access_begin(); }
+    let name = unsafe {
+        core::str::from_utf8_unchecked(core::slice::from_raw_parts(name_ptr, name_len))
+    };
+    unsafe { os_core::user_access_end(); }
+
+    match module::unload_module(name, module::ModuleFlags::NONE) {
+        Ok(()) => 0,
+        Err(module::ModuleError::NotFound) => errno::ENOENT,
+        Err(module::ModuleError::InUse) => errno::EBUSY,
+        Err(_) => errno::EINVAL,
+    }
 }
 
 /// sys_setkeymap - Set keyboard layout
