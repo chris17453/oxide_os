@@ -376,9 +376,14 @@ impl TcpIpStack {
             ipv6::NextHeader::Icmpv6 => {
                 self.process_icmpv6(ip6_header.src, ip6_header.dst, ip6_payload)?;
             }
-            _ => {
-                // — ShadePacket: TCP/UDP over IPv6 not wired yet. Silent drop.
+            ipv6::NextHeader::Tcp | ipv6::NextHeader::Udp => {
+                // — ShadePacket: TCP/UDP over IPv6 requires generalizing the
+                // transport handlers from Ipv4Addr to IpAddr. Currently the
+                // process_tcp/process_udp functions only accept Ipv4Addr.
+                // IPv6 ICMPv6 echo works, TCP/UDP needs transport refactor.
+                // Tracked in kernel-stubs-remediation.md P1.3.
             }
+            _ => {}
         }
 
         Ok(())
