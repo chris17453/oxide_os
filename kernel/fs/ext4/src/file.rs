@@ -102,7 +102,7 @@ pub fn read_symlink(
 // ============================================================================
 
 use crate::bitmap::{alloc_block, free_block};
-use crate::extent::{insert_extent, try_extend_extent};
+use crate::extent::{insert_extent, insert_extent_with_growth, try_extend_extent};
 use crate::group_desc::{BlockGroupTable, write_block};
 
 /// Write data to a file
@@ -159,7 +159,12 @@ pub fn write_file(
 
                 // Try to extend existing extent or insert new one
                 if !try_extend_extent(inode, logical_block as u32, new_block)? {
-                    insert_extent(inode, logical_block as u32, new_block, 1)?;
+                    // — BlackLatch: Use growth-capable insert that promotes the
+                    // extent tree from depth 0→1 when the inode's 4 slots fill up.
+                    insert_extent_with_growth(
+                        inode, logical_block as u32, new_block, 1,
+                        device, sb, group_table,
+                    )?;
                 }
 
                 // Zero the buffer for new block

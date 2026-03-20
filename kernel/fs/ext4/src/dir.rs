@@ -428,7 +428,7 @@ fn allocate_new_dir_block(
     child_file_type: u8,
 ) -> Ext4Result<()> {
     use crate::bitmap::alloc_block;
-    use crate::extent::{insert_extent, try_extend_extent};
+    use crate::extent::{insert_extent_with_growth, try_extend_extent};
     use crate::group_desc::write_block;
 
     let block_size = sb.block_size();
@@ -446,7 +446,7 @@ fn allocate_new_dir_block(
 
     // Try to extend existing extent or insert new one
     if !try_extend_extent(dir_inode, logical_block, new_block)? {
-        insert_extent(dir_inode, logical_block, new_block, 1)?;
+        insert_extent_with_growth(dir_inode, logical_block, new_block, 1, device, sb, group_table)?;
     }
 
     // Initialize the new block with the entry

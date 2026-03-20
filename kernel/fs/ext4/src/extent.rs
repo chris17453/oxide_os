@@ -2,8 +2,12 @@
 
 use block::BlockDevice;
 
+extern crate alloc;
+use alloc::vec;
+
+use crate::bitmap;
 use crate::error::{Ext4Error, Ext4Result};
-use crate::group_desc::read_block;
+use crate::group_desc::{read_block, write_block, BlockGroupTable};
 use crate::inode::Ext4Inode;
 use crate::superblock::Ext4Superblock;
 
@@ -455,6 +459,148 @@ pub fn insert_extent(
     let header_bytes =
         unsafe { core::slice::from_raw_parts(&new_header as *const ExtentHeader as *const u8, 12) };
     i_block_bytes[..12].copy_from_slice(header_bytes);
+
+    Ok(len)
+}
+
+/// Insert an extent with automatic tree promotion when the inode is full.
+///
+/// — BlackLatch: "When the inode's 4 extent slots fill up, promote the tree
+///   from depth 0 to depth 1: allocate a new block, move existing extents
+///   there, convert the inode root to an index node, then insert the new
+///   extent into the leaf block. One promotion supports ~340 extents for
+///   4K block size. That's enough for most files."
+pub fn insert_extent_with_growth(
+    inode: &mut Ext4Inode,
+    logical_block: u32,
+    physical_block: u64,
+    len: u16,
+    device: &dyn BlockDevice,
+    sb: &Ext4Superblock,
+    group_table: &BlockGroupTable,
+) -> Ext4Result<u16> {
+    // Try simple insert first
+    match insert_extent(inode, logical_block, physical_block, len) {
+        Ok(n) => return Ok(n),
+        Err(Ext4Error::NoSpace) => {} // Need promotion
+        Err(e) => return Err(e),
+    }
+
+    let header = parse_header(&inode.i_block)?;
+
+    // Only promote depth 0 → depth 1
+    if header.eh_depth != 0 {
+        // — BlackLatch: depth > 0 tree splitting (B-tree split) not yet
+        // implemented. Would need to split an internal node and push up.
+        return Err(Ext4Error::NoSpace);
+    }
+
+    let block_size = sb.block_size() as usize;
+    let max_leaf_extents = ((block_size - 12) / 12) as u16; // ~340 for 4K
+
+    // 1. Read current extents from inode before we overwrite them
+    let current_entries = header.eh_entries as usize;
+    let i_block_bytes = unsafe {
+        core::slice::from_raw_parts(inode.i_block.as_ptr() as *const u8, 60)
+    };
+    let mut saved_extents = [[0u8; 12]; 4];
+    for i in 0..current_entries.min(4) {
+        let off = 12 + i * 12;
+        saved_extents[i].copy_from_slice(&i_block_bytes[off..off + 12]);
+    }
+
+    // 2. Allocate a new block for the leaf node
+    let leaf_phys = bitmap::alloc_block(device, sb, group_table, None)?
+        .ok_or(Ext4Error::NoSpace)?;
+
+    // 3. Build the leaf block: header + existing extents + new extent
+    let mut leaf_buf = vec![0u8; block_size];
+
+    // Find where to insert the new extent (keep sorted)
+    let new_extent = Extent::new(logical_block, physical_block, len);
+    let mut insert_pos = current_entries;
+    for i in 0..current_entries {
+        let ext: Extent = unsafe {
+            core::ptr::read_unaligned(saved_extents[i].as_ptr() as *const Extent)
+        };
+        if logical_block < ext.ee_block {
+            insert_pos = i;
+            break;
+        }
+    }
+
+    // Write leaf header
+    let leaf_header = ExtentHeader {
+        eh_magic: EXT4_EXT_MAGIC,
+        eh_entries: (current_entries + 1) as u16,
+        eh_max: max_leaf_extents,
+        eh_depth: 0,
+        eh_generation: header.eh_generation,
+    };
+    let hdr_bytes = unsafe {
+        core::slice::from_raw_parts(&leaf_header as *const ExtentHeader as *const u8, 12)
+    };
+    leaf_buf[..12].copy_from_slice(hdr_bytes);
+
+    // Write extents (with new one inserted at correct position)
+    let mut write_idx = 0;
+    for i in 0..current_entries + 1 {
+        let off = 12 + write_idx * 12;
+        if i == insert_pos {
+            let ext_bytes = unsafe {
+                core::slice::from_raw_parts(&new_extent as *const Extent as *const u8, 12)
+            };
+            leaf_buf[off..off + 12].copy_from_slice(ext_bytes);
+        } else {
+            let src_idx = if i < insert_pos { i } else { i - 1 };
+            leaf_buf[off..off + 12].copy_from_slice(&saved_extents[src_idx]);
+        }
+        write_idx += 1;
+    }
+
+    // 4. Write leaf block to disk
+    write_block(device, sb, leaf_phys, &leaf_buf)?;
+
+    // 5. Find the first logical block in the leaf (for index entry)
+    let first_extent: Extent = unsafe {
+        core::ptr::read_unaligned(leaf_buf[12..].as_ptr() as *const Extent)
+    };
+    let first_logical = first_extent.ee_block;
+
+    // 6. Convert inode root to index node (depth 1)
+    let index = ExtentIndex {
+        ei_block: first_logical,
+        ei_leaf_lo: leaf_phys as u32,
+        ei_leaf_hi: (leaf_phys >> 32) as u16,
+        ei_unused: 0,
+    };
+
+    let new_root = ExtentHeader {
+        eh_magic: EXT4_EXT_MAGIC,
+        eh_entries: 1,
+        eh_max: 4, // inode root can hold 4 indexes
+        eh_depth: 1,
+        eh_generation: header.eh_generation,
+    };
+
+    let i_block_mut = unsafe {
+        core::slice::from_raw_parts_mut(inode.i_block.as_mut_ptr() as *mut u8, 60)
+    };
+
+    // Write root header
+    let root_bytes = unsafe {
+        core::slice::from_raw_parts(&new_root as *const ExtentHeader as *const u8, 12)
+    };
+    i_block_mut[..12].copy_from_slice(root_bytes);
+
+    // Write single index entry
+    let idx_bytes = unsafe {
+        core::slice::from_raw_parts(&index as *const ExtentIndex as *const u8, 12)
+    };
+    i_block_mut[12..24].copy_from_slice(idx_bytes);
+
+    // Zero remaining inode slots
+    i_block_mut[24..60].fill(0);
 
     Ok(len)
 }
