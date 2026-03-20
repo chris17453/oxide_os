@@ -238,9 +238,18 @@ impl TcpIpStack {
         let actual_len = ip_payload_len.min(available);
         let ip_payload = &payload[ip_header.header_len()..ip_header.header_len() + actual_len];
 
-        // Verify destination is for us
+        // — ShadePacket: Verify destination is for us. Accept:
+        //   1. Our own IP address
+        //   2. Broadcast (255.255.255.255)
+        //   3. Loopback (127.0.0.0/8)
+        //   4. 0.0.0.0 (any — used during DHCP)
+        // IPv6 already checks is_loopback() — IPv4 was missing it.
         if let Some(our_ip) = self.interface.ipv4_addr() {
-            if ip_header.dst != our_ip && !ip_header.dst.is_broadcast() {
+            if ip_header.dst != our_ip
+                && !ip_header.dst.is_broadcast()
+                && !ip_header.dst.is_loopback()
+                && ip_header.dst != Ipv4Addr::ANY
+            {
                 return Ok(()); // Not for us
             }
         }

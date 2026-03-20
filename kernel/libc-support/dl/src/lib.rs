@@ -147,6 +147,21 @@ use elf::SectionType;
 /// # Safety
 /// The filename must be a valid null-terminated C string.
 #[no_mangle]
+/// Look up a symbol across all loaded libraries.
+/// — IronGhost: "Global symbol search. Walk every loaded library until we find
+///   a match. First match wins — like LD_PRELOAD but without the preload."
+fn lookup_global_symbol(name: &str) -> Option<usize> {
+    let libs = get_libraries();
+    if let Some(ref map) = *libs {
+        for (_, lib) in map.iter() {
+            if let Some(addr) = lib.symbols.lookup(name) {
+                return Some(lib.base_addr + addr);
+            }
+        }
+    }
+    None
+}
+
 pub unsafe extern "C" fn dlopen(filename: *const c_char, flag: c_int) -> *mut c_void {
     // If filename is NULL, return handle to main program
     if filename.is_null() {
@@ -335,19 +350,62 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flag: c_int) -> *mut c_
                 }
             }
         } else if sh.sh_type == SectionType::Rela as u32 {
-            // — IronGhost: Apply relocations
+            // — IronGhost: Apply relocations with full symbol resolution.
+            // For RELATIVE: sym_value = 0 (base-relative).
+            // For GLOB_DAT/JUMP_SLOT: resolve symbol from .dynsym by index,
+            //   then look up the address in our symbol table or loaded libraries.
             let rela_off = sh.sh_offset as usize;
             let entry_size = if sh.sh_entsize > 0 { sh.sh_entsize as usize } else { 24 };
+
+            // Get the associated symtab for this rela section
+            let sym_sh = &elf.section_headers[sh.sh_link as usize];
+            let symtab_off = sym_sh.sh_offset as usize;
+            let sym_entry_size = if sym_sh.sh_entsize > 0 { sym_sh.sh_entsize as usize } else { 24 };
+
+            // Get the strtab for the symtab
+            let str_sh = &elf.section_headers[sym_sh.sh_link as usize];
+            let strtab_off = str_sh.sh_offset as usize;
+            let strtab_end = strtab_off + str_sh.sh_size as usize;
+
             let iter = reloc::RelaIterator::new(
                 &elf_data[rela_off..rela_off + sh.sh_size as usize],
                 entry_size,
             );
 
             for r in iter {
-                // — IronGhost: For RELATIVE relocations, sym_value is 0 (base-relative).
-                // For GLOB_DAT/JUMP_SLOT, we'd need to resolve the symbol.
-                // For now, handle RELATIVE (the most common in position-independent code).
-                let _ = reloc::apply_relocation(base_addr, &r, 0, 0);
+                let mut sym_value: usize = 0;
+                let mut sym_size: usize = 0;
+
+                // — IronGhost: Resolve symbol if the relocation references one
+                if r.sym_idx > 0 {
+                    let sym_off = symtab_off + r.sym_idx as usize * sym_entry_size;
+                    if let Some(sym) = elf::Symbol::parse(&elf_data[sym_off..]) {
+                        if sym.st_shndx != 0 {
+                            // Defined in this library — compute address relative to load base
+                            sym_value = base_addr + sym.st_value as usize - min_vaddr;
+                            sym_size = sym.st_size as usize;
+                        } else {
+                            // Undefined — look up in our symbol table (from other loaded libs)
+                            let name_off = strtab_off + sym.st_name as usize;
+                            if name_off < strtab_end {
+                                let mut name_end = name_off;
+                                while name_end < strtab_end && elf_data[name_end] != 0 {
+                                    name_end += 1;
+                                }
+                                if let Ok(sym_name) = core::str::from_utf8(&elf_data[name_off..name_end]) {
+                                    // Search loaded libraries for this symbol
+                                    if let Some(addr) = lookup_global_symbol(sym_name) {
+                                        sym_value = addr;
+                                    }
+                                    // — IronGhost: Unresolved symbols get 0. Weak symbols
+                                    // can be 0. Strong unresolved = runtime crash on call.
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let _ = reloc::apply_relocation(base_addr, &r, sym_value, sym_size);
             }
         } else if sh.sh_type == SectionType::InitArray as u32 {
             let off = sh.sh_offset as usize;
