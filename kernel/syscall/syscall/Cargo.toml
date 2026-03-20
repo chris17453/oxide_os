@@ -31,6 +31,7 @@ os_log = { path = "../../core/os_log" }
 sched = { path = "../../sched/sched" }
 smp = { path = "../../smp/smp" }
 mm-cow = { path = "../../mm/mm-cow" }
+mm-paging = { path = "../../mm/mm-paging" }
 mm-pagedb = { path = "../../mm/mm-pagedb" }
 mm-vmstat = { path = "../../mm/mm-vmstat" }
 mm-reclaim = { path = "../../mm/mm-reclaim" }

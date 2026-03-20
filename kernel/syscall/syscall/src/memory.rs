@@ -215,10 +215,32 @@ pub fn sys_mmap(addr: u64, length: u64, prot: i32, map_flags: i32, fd: i32, offs
             os_core::user_access_end();
         }
 
-        // Note: MAP_SHARED vs MAP_PRIVATE handling
-        // For MAP_PRIVATE, we've already made a copy (COW not yet implemented)
-        // For MAP_SHARED, writes will go to memory but won't be synced to file
-        // Full msync() support would be needed for proper MAP_SHARED
+        // — NeonRoot: MAP_PRIVATE COW — mark pages read-only + COW after reading
+        // file data. On first write, the page fault handler copies the page
+        // (handle_cow_fault in fork.rs) giving the process its own private copy.
+        // This saves physical memory proportional to the mapping size — pages
+        // that are never written are never copied. Like Linux's MAP_PRIVATE.
+        if is_private {
+            let meta_locked = meta.lock();
+            let pml4_phys = meta_locked.address_space.pml4_phys();
+            let mut mapper = unsafe { mm_paging::PageMapper::new(pml4_phys) };
+            let cow = cow_tracker();
+
+            for page_offset in (0..length).step_by(4096) {
+                let vaddr = os_core::VirtAddr::new(map_addr + page_offset);
+                if let Some(phys) = mapper.translate(vaddr) {
+                    // Strip WRITABLE, add COW
+                    mapper.remove_flags(vaddr, mm_paging::PageTableFlags::WRITABLE);
+                    mapper.update_flags(vaddr, mm_paging::PageTableFlags::COW);
+                    // Register with COW tracker — refcount starts at 1 (this process)
+                    cow.increment(phys);
+                }
+            }
+            // TLB flush — we changed page permissions
+            os_core::tlb_flush_all();
+        }
+        // MAP_SHARED: writes go to memory but aren't synced to file.
+        // Full msync() support would be needed for proper MAP_SHARED.
     }
 
     // — TorqueJax: Successful mmap — count it for /proc/vmstat.
