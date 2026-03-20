@@ -979,6 +979,12 @@ pub fn p256_verify(hash: &[u8; 32], signature: &[u8; 64], pubkey: &P256PublicKey
     }
 }
 
+// — ColdCipher: Test helpers for host-side verification.
+pub fn test_scalar_inv_mod_n(s: &U256) -> U256 { scalar_inv_mod_n(s) }
+pub fn test_scalar_mul_mod_n(a: &U256, b: &U256) -> U256 { scalar_mul_mod_n(a, b) }
+pub fn test_fp_mul(a: &U256, b: &U256) -> U256 { fp_mul(a, b) }
+pub fn test_fp_sqr(a: &U256) -> U256 { fp_sqr(a) }
+
 #[cfg(test)]
 mod tests {
     use super::*;

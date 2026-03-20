@@ -1947,6 +1947,100 @@ fn test_proc_self(t: &mut TestRunner) -> Result<(), String> {
 // Main — orchestrate the carnage
 // ============================================================================
 
+// ============================================================================
+// H. Wall Clock / RTC Tests
+// ============================================================================
+
+fn test_wall_clock_realistic(t: &mut TestRunner) -> Result<(), String> {
+    // — CrashBloom: CLOCK_REALTIME should return a time after 2025-01-01
+    // (epoch 1735689600). If we get 2024-01-01 (1704067200), the RTC
+    // didn't seed the clock. If we get 0 or negative, something is very wrong.
+    #[repr(C)]
+    struct Ts { tv_sec: i64, tv_nsec: i64 }
+    let mut ts = Ts { tv_sec: 0, tv_nsec: 0 };
+    let ret = unsafe { syscall2(SYS_CLOCK_GETTIME, 0, &mut ts as *mut Ts as u64) };
+    if ret < 0 { return Err(format!("clock_gettime failed: {}", ret)); }
+
+    t.detail(&format!("CLOCK_REALTIME: {} seconds since epoch", ts.tv_sec));
+
+    if ts.tv_sec < 1735689600 {
+        return Err(format!("wall clock too old: {} (expected > 2025-01-01)", ts.tv_sec));
+    }
+    if ts.tv_sec > 2000000000 {
+        return Err(format!("wall clock too far in future: {}", ts.tv_sec));
+    }
+    Ok(())
+}
+
+fn test_clock_settime(t: &mut TestRunner) -> Result<(), String> {
+    // — CrashBloom: Set the clock forward 1 second, read it back, verify it changed.
+    // Then set it back. Only root can do this — oxide-test runs as root.
+    #[repr(C)]
+    struct Ts { tv_sec: i64, tv_nsec: i64 }
+
+    // Read current time
+    let mut before = Ts { tv_sec: 0, tv_nsec: 0 };
+    unsafe { syscall2(SYS_CLOCK_GETTIME, 0, &mut before as *mut Ts as u64); }
+
+    // Set time to current + 100 seconds
+    let target = Ts { tv_sec: before.tv_sec + 100, tv_nsec: 0 };
+    let ret = unsafe {
+        syscall2(227, 0, &target as *const Ts as u64) // SYS_CLOCK_SETTIME = 227
+    };
+    if ret < 0 { return Err(format!("clock_settime failed: {}", ret)); }
+
+    // Read back
+    let mut after = Ts { tv_sec: 0, tv_nsec: 0 };
+    unsafe { syscall2(SYS_CLOCK_GETTIME, 0, &mut after as *mut Ts as u64); }
+
+    let diff = after.tv_sec - before.tv_sec;
+    t.detail(&format!("clock advanced by {} seconds (expected ~100)", diff));
+
+    // Restore original time
+    let restore = Ts { tv_sec: before.tv_sec, tv_nsec: before.tv_nsec };
+    unsafe { syscall2(227, 0, &restore as *const Ts as u64); }
+
+    if diff < 95 || diff > 105 {
+        return Err(format!("clock_settime: expected ~100s advance, got {}", diff));
+    }
+    Ok(())
+}
+
+// ============================================================================
+// I. Network / TLS Tests
+// ============================================================================
+
+fn test_dns_resolv_conf(t: &mut TestRunner) -> Result<(), String> {
+    // — CrashBloom: /etc/resolv.conf should exist. It might not have nameserver
+    // lines yet if we're running before networkd (boot race). Just verify the
+    // file exists and is non-empty — the nameserver test needs network timing.
+    let content = fs::read_to_string("/etc/resolv.conf")
+        .map_err(|e| format!("can't read /etc/resolv.conf: {}", e))?;
+
+    let has_nameserver = content.lines().any(|l| l.trim().starts_with("nameserver"));
+    t.detail(&format!("resolv.conf: {} bytes, has nameserver: {}", content.len(), has_nameserver));
+
+    if content.is_empty() {
+        return Err("resolv.conf is empty".to_string());
+    }
+    // File exists and has content — networkd or kernel bootstrap wrote it
+    Ok(())
+}
+
+fn test_ca_bundle_exists(t: &mut TestRunner) -> Result<(), String> {
+    // — CrashBloom: CA bundle should exist at /etc/ssl/certs/ca-bundle.crt
+    let meta = fs::metadata("/etc/ssl/certs/ca-bundle.crt")
+        .map_err(|e| format!("CA bundle missing: {}", e))?;
+
+    let size = meta.len();
+    t.detail(&format!("ca-bundle.crt: {} bytes", size));
+
+    if size < 10000 {
+        return Err(format!("CA bundle too small: {} bytes (expected >10KB)", size));
+    }
+    Ok(())
+}
+
 fn main() {
     let mut t = TestRunner::new();
 
@@ -2019,7 +2113,17 @@ fn main() {
     t.run_may_fail("test_dev_urandom", test_dev_urandom);
     t.run_may_fail("test_proc_self", test_proc_self);
 
-    // ---- H. Stress Tests (crashy — last so they don't kill the suite) ----
+    // ---- H. Wall Clock / RTC ----
+    t.section("Wall Clock / RTC");
+    t.run_may_fail("test_wall_clock_realistic", test_wall_clock_realistic);
+    t.run_may_fail("test_clock_settime", test_clock_settime);
+
+    // ---- I. Network / TLS ----
+    t.section("Network / TLS");
+    t.run_may_fail("test_dns_resolv_conf", test_dns_resolv_conf);
+    t.run_may_fail("test_ca_bundle_exists", test_ca_bundle_exists);
+
+    // ---- J. Stress Tests (crashy — last so they don't kill the suite) ----
     t.section("Stress Tests");
     t.run_may_fail("test_fork_stress", test_fork_stress);
     t.run_may_fail("test_fork_parallel", test_fork_parallel);
