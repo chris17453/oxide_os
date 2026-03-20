@@ -31,17 +31,95 @@ const NTP_EPOCH_OFFSET: u64 = 2208988800;
 /// NTP packet size
 const NTP_PACKET_SIZE: usize = 48;
 
-/// Default NTP server
+/// Default NTP server (overridden by /etc/ntp.conf)
 const DEFAULT_NTP_SERVER: &str = "pool.ntp.org";
 
-/// Sync interval: 30 minutes in seconds
-const SYNC_INTERVAL_SECS: u64 = 1800;
+/// Default sync interval: 30 minutes in seconds (overridden by /etc/ntp.conf)
+const DEFAULT_SYNC_INTERVAL: u64 = 1800;
 
 /// Retry interval on failure: 60 seconds
 const RETRY_INTERVAL_SECS: u64 = 60;
 
 /// Initial delay before first sync: 5 seconds (let network come up)
 const INITIAL_DELAY_SECS: u64 = 5;
+
+/// Max server hostname length
+const MAX_SERVER_LEN: usize = 128;
+
+/// Runtime NTP config (read from /etc/ntp.conf)
+struct NtpConfig {
+    server: [u8; MAX_SERVER_LEN],
+    server_len: usize,
+    interval: u64,
+}
+
+impl NtpConfig {
+    fn server_str(&self) -> &str {
+        if self.server_len > 0 {
+            core::str::from_utf8(&self.server[..self.server_len]).unwrap_or(DEFAULT_NTP_SERVER)
+        } else {
+            DEFAULT_NTP_SERVER
+        }
+    }
+}
+
+/// Read NTP configuration from /etc/ntp.conf
+/// Format:
+///   server pool.ntp.org
+///   interval 1800
+/// — WireSaint: "Two lines. That's all NTP config needs."
+fn read_ntp_config() -> NtpConfig {
+    let mut config = NtpConfig {
+        server: [0; MAX_SERVER_LEN],
+        server_len: 0,
+        interval: DEFAULT_SYNC_INTERVAL,
+    };
+
+    let fd = libc::open2("/etc/ntp.conf", libc::O_RDONLY);
+    if fd < 0 {
+        return config; // defaults
+    }
+
+    let mut buf = [0u8; 256];
+    let n = libc::read(fd, &mut buf);
+    libc::close(fd);
+
+    if n <= 0 {
+        return config;
+    }
+
+    if let Ok(text) = core::str::from_utf8(&buf[..n as usize]) {
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') { continue; }
+
+            if let Some(rest) = line.strip_prefix("server ") {
+                let server = rest.trim();
+                let len = server.len().min(MAX_SERVER_LEN - 1);
+                config.server[..len].copy_from_slice(&server.as_bytes()[..len]);
+                config.server_len = len;
+            } else if let Some(rest) = line.strip_prefix("interval ") {
+                if let Some(val) = parse_u64(rest.trim()) {
+                    config.interval = val.max(60).min(86400); // 1 min to 1 day
+                }
+            }
+        }
+    }
+
+    config
+}
+
+fn parse_u64(s: &str) -> Option<u64> {
+    let mut val: u64 = 0;
+    let mut started = false;
+    for c in s.bytes() {
+        if c >= b'0' && c <= b'9' {
+            val = val.checked_mul(10)?.checked_add((c - b'0') as u64)?;
+            started = true;
+        } else if started { break; }
+    }
+    if started { Some(val) } else { None }
+}
 
 /// CLOCK_REALTIME constant
 const CLOCK_REALTIME: i32 = 0;
@@ -194,15 +272,24 @@ fn sleep_secs(secs: u64) {
 fn run_daemon() {
     log("starting SNTP daemon");
 
+    // Read config
+    let config = read_ntp_config();
+    let server = config.server_str();
+    prints("[sntpd] server: ");
+    prints(server);
+    prints(", interval: ");
+    print_i64(config.interval as i64);
+    prints("s\n");
+
     // Initial delay — let networkd bring up the interface
     sleep_secs(INITIAL_DELAY_SECS);
 
     loop {
         // Resolve NTP server
-        let server_ip = match dns::resolve(DEFAULT_NTP_SERVER, None) {
+        let server_ip = match dns::resolve(server, None) {
             Some(ip) => {
                 prints("[sntpd] resolved ");
-                prints(DEFAULT_NTP_SERVER);
+                prints(server);
                 prints(" -> ");
                 print_i64(ip.0 as i64); prints(".");
                 print_i64(ip.1 as i64); prints(".");
@@ -222,9 +309,8 @@ fn run_daemon() {
 
         // Sleep until next sync
         if offset >= 0 {
-            sleep_secs(SYNC_INTERVAL_SECS);
+            sleep_secs(config.interval);
         } else {
-            // Failed — retry sooner
             sleep_secs(RETRY_INTERVAL_SECS);
         }
     }

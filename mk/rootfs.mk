@@ -223,14 +223,15 @@ create-rootfs: increment-build kernel bootloader userspace-release archive-kerne
 	printf "export PATH=/bin:/sbin:/usr/bin:/usr/sbin\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/profile > /dev/null && \
 	printf "OXIDE\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/hostname > /dev/null && \
 	printf "root\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/autologin > /dev/null && \
-	printf "PATH=/usr/bin/journald\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/journald > /dev/null && \
-	printf "PATH=/usr/bin/networkd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/networkd > /dev/null && \
-	printf "PATH=/usr/bin/resolvd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/resolvd > /dev/null && \
-	printf "PATH=/usr/bin/sntpd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/sntpd > /dev/null && \
-	printf "PATH=/usr/bin/sshd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/sshd > /dev/null && \
-	printf "PATH=/usr/bin/rdpd\nENABLED=yes\nRESTART=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/rdpd > /dev/null && \
-	printf "PATH=/usr/bin/oxide-test\nENABLED=$(OXIDE_TEST_SERVICE_ENABLED)\nRESTART=no\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/oxide-test > /dev/null && \
+	printf "PATH=/usr/bin/journald\nENABLED=yes\nRESTART=always\nTYPE=simple\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/journald > /dev/null && \
+	printf "PATH=/usr/bin/networkd\nENABLED=yes\nRESTART=always\nTYPE=simple\nAFTER=journald\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/networkd > /dev/null && \
+	printf "PATH=/usr/bin/resolvd\nENABLED=yes\nRESTART=always\nTYPE=simple\nAFTER=journald,networkd\nREQUIRES=networkd\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/resolvd > /dev/null && \
+	printf "PATH=/usr/bin/sntpd\nENABLED=yes\nRESTART=always\nTYPE=simple\nAFTER=networkd,resolvd\nREQUIRES=networkd\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/sntpd > /dev/null && \
+	printf "PATH=/usr/bin/sshd\nENABLED=yes\nRESTART=always\nTYPE=simple\nAFTER=networkd\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/sshd > /dev/null && \
+	printf "PATH=/usr/bin/rdpd\nENABLED=yes\nRESTART=always\nTYPE=simple\nAFTER=networkd\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/rdpd > /dev/null && \
+	printf "PATH=/usr/bin/oxide-test\nENABLED=$(OXIDE_TEST_SERVICE_ENABLED)\nRESTART=never\nTYPE=oneshot\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/services.d/oxide-test > /dev/null && \
 	printf "# OXIDE RDP Server Configuration\n# Port to listen on (default: 3389)\nport=3389\n# Maximum concurrent connections\nmax_connections=10\n# Require TLS encryption (yes/no)\ntls_required=yes\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/rdpd.conf > /dev/null && \
+	printf "# NTP configuration\nserver pool.ntp.org\ninterval 1800\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/ntp.conf > /dev/null && \
 	printf "mode=dhcp\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/network/eth0.conf > /dev/null && \
 	printf "# Populated by networkd from DHCP\n" | sudo tee $(TARGET_DIR)/mnt/root/etc/resolv.conf > /dev/null && \
 	echo "  Installing Mozilla CA certificate bundle..." && \
