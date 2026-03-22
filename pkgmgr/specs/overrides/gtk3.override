@@ -39,8 +39,9 @@ cp builddir/gtk/libgtk-3.a builddir/gdk/libgdk-3.a $DESTDIR/usr/lib/ 2>/dev/null
 cp builddir/gdk/wayland/libgdk-wayland.a $DESTDIR/usr/lib/ 2>/dev/null;
 cp builddir/subprojects/libepoxy/src/libepoxy.a $DESTDIR/usr/lib/ 2>/dev/null;
 cp builddir/libgail-util/libgailutil-3.a $DESTDIR/usr/lib/ 2>/dev/null;
-cp builddir/meson-private/gtk+-3.0.pc builddir/meson-private/gdk-3.0.pc $DESTDIR/usr/lib/pkgconfig/ 2>/dev/null;
-cp builddir/meson-private/gtk+-wayland-3.0.pc builddir/meson-private/gdk-wayland-3.0.pc $DESTDIR/usr/lib/pkgconfig/ 2>/dev/null;
+cp builddir/gtk+-3.0.pc builddir/gdk-3.0.pc builddir/gail-3.0.pc $DESTDIR/usr/lib/pkgconfig/ 2>/dev/null;
+cp builddir/gtk+-wayland-3.0.pc builddir/gdk-wayland-3.0.pc $DESTDIR/usr/lib/pkgconfig/ 2>/dev/null;
+cp builddir/meson-private/epoxy.pc $DESTDIR/usr/lib/pkgconfig/ 2>/dev/null;
 cp -r gtk/*.h $DESTDIR/usr/include/gtk-3.0/ 2>/dev/null;
 cp -r gdk/*.h $DESTDIR/usr/include/gdk-3.0/ 2>/dev/null;
 echo '============================================'

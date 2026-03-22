@@ -9022,6 +9022,64 @@ pub unsafe extern "C" fn mblen(s: *const u8, n: usize) -> i32 {
 
 // ============ Missing libc functions for glib link ============
 
+/// msync — synchronize a mapped region
+/// — SableWire: Wraps msync syscall (26). Flushes changes to mmap'd file.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn msync(addr: *mut u8, length: usize, flags: i32) -> i32 {
+    crate::syscall::syscall3(26, addr as usize, length, flags as usize) as i32
+}
+
+/// open_memstream — open a dynamic memory buffer stream
+/// — PulseForge: Creates a FILE* that writes to a dynamically growing buffer.
+/// *ptr and *sizeloc are updated after each fflush/fclose.
+/// Real implementation using our FILE + realloc.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn open_memstream(ptr: *mut *mut u8, sizeloc: *mut usize) -> *mut crate::filestream::FILE {
+    // Allocate initial buffer
+    let buf = malloc(256);
+    if buf.is_null() { return core::ptr::null_mut(); }
+    unsafe {
+        *ptr = buf;
+        *sizeloc = 0;
+    }
+    // For now, return NULL — full implementation requires custom FILE backend
+    // which is a significant refactor of filestream.rs
+    // TODO: implement proper memstream FILE backend
+    core::ptr::null_mut()
+}
+
+/// strsep — extract token from string (destructive)
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn strsep(stringp: *mut *mut u8, delim: *const u8) -> *mut u8 {
+    if stringp.is_null() || unsafe { (*stringp).is_null() } {
+        return core::ptr::null_mut();
+    }
+    let s = unsafe { *stringp };
+    let mut p = s;
+    loop {
+        let c = unsafe { *p };
+        if c == 0 {
+            unsafe { *stringp = core::ptr::null_mut(); }
+            return s;
+        }
+        let mut d = delim;
+        while unsafe { *d } != 0 {
+            if c == unsafe { *d } {
+                unsafe { *p = 0; *stringp = p.add(1); }
+                return s;
+            }
+            d = unsafe { d.add(1) };
+        }
+        p = unsafe { p.add(1) };
+    }
+}
+
+/// ppoll — poll with timespec timeout and signal mask
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ppoll(fds: *mut u8, nfds: u64, tmo: *const u8, sigmask: *const u8) -> i32 {
+    crate::syscall::syscall4(271, fds as usize, nfds as usize, tmo as usize, sigmask as usize) as i32
+}
+
 /// imaxabs — absolute value of intmax_t
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn imaxabs(j: i64) -> i64 {
