@@ -532,8 +532,7 @@ c_args = ['-I{sysroot}/include', '-DOXIDE_OS', '-fPIC',
           '-DHAVE_CTIME_R=1', '-DHAVE_LOCALTIME_R=1', '-DHAVE_GMTIME_R=1',
           '-DHAVE_STRNLEN=1', '-DHAVE_MMAP=1', '-DHAVE_MLOCK=1',
           '-DHAVE_POSIX_MEMALIGN=1', '-DHAVE_GETLINE=1', '-DHAVE_STRSIGNAL=1',
-          '-DHAVE_NEWLOCALE=0', '-DHAVE_USELOCALE=0',
-          '-D__linux__', '-D__gnu_linux__']
+          '-DHAVE_NEWLOCALE=0', '-DHAVE_USELOCALE=0']
 c_link_args = ['-L{sysroot}/lib', '-static', '-Wl,--allow-multiple-definition', '-loxide_libc']
 cpp_link_args = ['-L{sysroot}/lib', '-static', '-Wl,--allow-multiple-definition', '-loxide_libc']
 

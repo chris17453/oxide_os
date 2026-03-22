@@ -14,7 +14,11 @@ CONFIGURE_FLAGS="
   -Ddtd_validation=false
 "
 
-EXTRA_CFLAGS="-DOXIDE_OS"
+# — ShadePacket: -D__linux__ tells wayland source to use Linux-compatible
+# features (ucred, signalfd, epoll, timerfd) that OXIDE implements.
+# This is NOT saying OXIDE is Linux — it's saying "we have these features."
+# Wayland's #if defined(__linux__) checks are purely for feature gating.
+EXTRA_CFLAGS="-DOXIDE_OS -D__linux__"
 
 pre_build() {
     # — ShadePacket: Build wayland-scanner for host first
