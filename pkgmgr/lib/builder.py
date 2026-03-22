@@ -623,12 +623,20 @@ endian = 'little'
                 )
             elif build_system == 'meson':
                 meson_dir = src_dir / 'builddir'
-                subprocess.run(
-                    ['meson', 'compile', '-C', str(meson_dir)],
-                    cwd=str(src_dir),
-                    env=env,
-                    check=True,
-                    timeout=1800
+                # — PulseForge: MAKE_TARGET for meson = specific ninja targets.
+                # Use ninja directly for specific targets since meson compile
+                # doesn't support target paths the same way.
+                if self.override and self.override.make_target:
+                    ninja_cmd = ['ninja', '-C', str(meson_dir)]
+                    ninja_cmd.extend(self.override.make_target.split())
+                    subprocess.run(ninja_cmd, cwd=str(src_dir), env=env, check=True, timeout=1800)
+                else:
+                    subprocess.run(
+                        ['meson', 'compile', '-C', str(meson_dir)],
+                        cwd=str(src_dir),
+                        env=env,
+                        check=True,
+                        timeout=1800
                 )
             elif build_system == 'python':
                 subprocess.run(

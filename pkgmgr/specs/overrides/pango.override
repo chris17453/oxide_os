@@ -9,7 +9,25 @@ CONFIGURE_FLAGS="
   -Dfreetype=enabled
   -Dfontconfig=enabled
   -Dintrospection=disabled
-  -Dinstall-tests=false
+  -Dbuild-testsuite=false
+  -Dbuild-examples=false
 "
 
 EXTRA_CFLAGS="-DOXIDE_OS"
+
+# — PulseForge: Only build the library targets, not the utils (pango-view etc.)
+# Utils link against harfbuzz (C++) and need the C++ runtime which our
+# cross-linker doesn't provide for executables. Libraries are fine.
+MAKE_TARGET="pango/libpango-1.0.a pango/libpangocairo-1.0.a pango/libpangoft2-1.0.a"
+
+# — PulseForge: Custom install — meson install tries to build ALL targets
+# including utils that need C++ runtime. We just copy the libraries + headers.
+CUSTOM_INSTALL_CMD="
+mkdir -p $DESTDIR/usr/lib/pkgconfig $DESTDIR/usr/include/pango-1.0/pango &&
+cp builddir/pango/libpango-1.0.a builddir/pango/libpangoft2-1.0.a builddir/pango/libpangocairo-1.0.a $DESTDIR/usr/lib/ &&
+cp builddir/meson-private/pango.pc builddir/meson-private/pangoft2.pc builddir/meson-private/pangocairo.pc $DESTDIR/usr/lib/pkgconfig/ 2>/dev/null;
+cp pango/*.h $DESTDIR/usr/include/pango-1.0/pango/ 2>/dev/null;
+cp builddir/pango/pango-enum-types.h $DESTDIR/usr/include/pango-1.0/pango/ 2>/dev/null;
+cp builddir/pango/pango-features.h $DESTDIR/usr/include/pango-1.0/pango/ 2>/dev/null;
+echo 'Pango libraries + headers installed'
+"
