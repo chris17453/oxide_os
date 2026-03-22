@@ -407,7 +407,7 @@ impl Compositor {
                         let size = i32::from_ne_bytes(payload[4..8].try_into().unwrap());
                         self.objects.insert(new_id, ObjectType::ShmPool);
                         // Pool fd will be received via SCM_RIGHTS — stored separately
-                        write_str(1, "[WAYLAND] SHM pool created\n");
+                        write_str(2, "[WAYLAND] SHM pool created\n");
                     }
                 }
                 _ => {}
@@ -427,7 +427,7 @@ impl Compositor {
                 WL_SURFACE_COMMIT => {
                     if let Some(surface) = self.surfaces.get_mut(&object_id) {
                         surface.committed_buffer_id = surface.pending_buffer_id;
-                        write_str(1, "[WAYLAND] Surface committed\n");
+                        write_str(2, "[WAYLAND] Surface committed\n");
                         // Trigger compositor render
                         self.composite();
                     }
@@ -503,7 +503,7 @@ impl Compositor {
 
             if size < 8 || size > 4096 {
                 // Invalid message size — drop connection
-                write_str(1, "[WAYLAND] Invalid message size, dropping\n");
+                write_str(2, "[WAYLAND] Invalid message size, dropping\n");
                 self.recv_buf.clear();
                 return;
             }
@@ -565,12 +565,12 @@ impl Compositor {
             }
         }
 
-        write_str(1, "[WAYLAND] Frame composited\n");
+        write_str(2, "[WAYLAND] Frame composited\n");
     }
 
     /// Initialize: open framebuffer, create socket, start event loop
     fn run(&mut self) -> i32 {
-        write_str(1, "=== oxide-wayland compositor starting ===\n");
+        write_str(2, "=== oxide-wayland compositor starting ===\n");
 
         // — NeonVale: Step 1: Switch our VT to graphics mode.
         // This tells the kernel compositor "don't draw text on this VT,
@@ -582,9 +582,9 @@ impl Compositor {
             // KDSETMODE = 0x4B3A, KD_GRAPHICS = 0x01
             let ret = unsafe { syscall3(16, tty_fd as usize, 0x4B3A, 1) };
             if ret >= 0 {
-                write_str(1, "[WAYLAND] VT set to KD_GRAPHICS mode\n");
+                write_str(2, "[WAYLAND] VT set to KD_GRAPHICS mode\n");
             } else {
-                write_str(1, "[WAYLAND] Warning: KDSETMODE failed\n");
+                write_str(2, "[WAYLAND] Warning: KDSETMODE failed\n");
             }
         }
 
@@ -594,7 +594,7 @@ impl Compositor {
         let fb_path = b"/dev/fb0";
         let fb_fd = unsafe { syscall4(2, fb_path.as_ptr() as usize, fb_path.len(), 2, 0) } as i32;
         if fb_fd < 0 {
-            write_str(1, "[WAYLAND] Warning: /dev/fb0 not available (err=");
+            write_str(2, "[WAYLAND] Warning: /dev/fb0 not available (err=");
             // Print error number
             let err = -(fb_fd as i32);
             let mut buf = [0u8; 10];
@@ -602,10 +602,10 @@ impl Compositor {
             let mut n = err as u32;
             if n == 0 { buf[0] = b'0'; i = 1; }
             else { while n > 0 { buf[i] = b'0' + (n % 10) as u8; n /= 10; i += 1; } buf[..i].reverse(); }
-            write_bytes(1, &buf[..i]);
-            write_str(1, "), running headless\n");
+            write_bytes(2, &buf[..i]);
+            write_str(2, "), running headless\n");
         } else {
-            write_str(1, "[WAYLAND] /dev/fb0 opened\n");
+            write_str(2, "[WAYLAND] /dev/fb0 opened\n");
 
             // Get framebuffer info via ioctl
             // FBIOGET_VSCREENINFO = 0x4600
@@ -623,47 +623,59 @@ impl Compositor {
                 self.fb_width = vinfo.xres;
                 self.fb_height = vinfo.yres;
                 self.fb_stride = vinfo.xres * (vinfo.bits_per_pixel / 8);
-                write_str(1, "[WAYLAND] Framebuffer: ");
+                write_str(2, "[WAYLAND] Framebuffer: ");
                 // Print width x height
                 let mut buf = [0u8; 10];
                 let mut i = 0;
                 let mut n = vinfo.xres;
                 if n == 0 { buf[0] = b'0'; i = 1; }
                 else { while n > 0 { buf[i] = b'0' + (n % 10) as u8; n /= 10; i += 1; } buf[..i].reverse(); }
-                write_bytes(1, &buf[..i]);
-                write_str(1, "x");
+                write_bytes(2, &buf[..i]);
+                write_str(2, "x");
                 i = 0; n = vinfo.yres;
                 if n == 0 { buf[0] = b'0'; i = 1; }
                 else { while n > 0 { buf[i] = b'0' + (n % 10) as u8; n /= 10; i += 1; } buf[..i].reverse(); }
-                write_bytes(1, &buf[..i]);
-                write_str(1, "\n");
+                write_bytes(2, &buf[..i]);
+                write_str(2, "\n");
             }
 
-            // mmap the framebuffer
+            // — NeonVale: Use write() to /dev/fb0 instead of mmap.
+            // devfs fb0 doesn't support mmap — writes go directly to the VFB.
+            // Allocate a local pixel buffer, composite into it, then write to fb0.
             let fb_size = (self.fb_width * self.fb_height * 4) as usize;
-            let ptr = unsafe {
-                syscall6(9, 0, fb_size, 3, 1, fb_fd as usize, 0) // mmap(NULL, size, PROT_READ|WRITE, MAP_SHARED, fd, 0)
-            };
-            if (ptr as isize) > 0 && (ptr as usize) < 0xFFFF_FFFF_FFFF_F000 {
-                self.fb_ptr = ptr as *mut u8;
-                write_str(1, "[WAYLAND] Framebuffer mmap'd\n");
 
-                // — NeonVale: Clear to cyberpunk navy to prove we have framebuffer access
+            // Allocate local framebuffer
+            unsafe extern "C" { fn malloc(size: usize) -> *mut u8; }
+            let fb_mem = unsafe { malloc(fb_size) };
+            if !fb_mem.is_null() {
+                self.fb_ptr = fb_mem;
+                write_str(2, "[WAYLAND] Local framebuffer allocated\n");
+
+                // Clear to cyberpunk navy
                 let pixel_count = (self.fb_width * self.fb_height) as usize;
                 let fb = unsafe { core::slice::from_raw_parts_mut(self.fb_ptr as *mut u32, pixel_count) };
                 for pixel in fb.iter_mut() {
                     *pixel = 0xFF1a1a2e;
                 }
-                write_str(1, "[WAYLAND] Cleared framebuffer to navy\n");
+
+                // Write the navy frame to /dev/fb0
+                // Seek to beginning first (syscall 8 = lseek)
+                unsafe { syscall3(8, fb_fd as usize, 0, 0) }; // SEEK_SET
+                let written = unsafe { syscall3(1, fb_fd as usize, self.fb_ptr as usize, fb_size) };
+                if written > 0 {
+                    write_str(2, "[WAYLAND] Navy frame written to VFB\n");
+                } else {
+                    write_str(2, "[WAYLAND] Write to VFB failed\n");
+                }
             } else {
-                write_str(1, "[WAYLAND] mmap failed\n");
+                write_str(2, "[WAYLAND] malloc failed\n");
             }
         }
 
         // Create AF_UNIX socket
         let sock_fd = unsafe { syscall3(41, 1, 1, 0) } as i32; // socket(AF_UNIX, SOCK_STREAM, 0)
         if sock_fd < 0 {
-            write_str(1, "[WAYLAND] ERROR: Failed to create socket\n");
+            write_str(2, "[WAYLAND] ERROR: Failed to create socket\n");
             return 1;
         }
 
@@ -675,34 +687,34 @@ impl Compositor {
         addr[2..2 + path.len()].copy_from_slice(path);
         let bind_result = unsafe { syscall3(49, sock_fd as usize, addr.as_ptr() as usize, (2 + path.len() + 1) as usize) };
         if bind_result < 0 {
-            write_str(1, "[WAYLAND] ERROR: Failed to bind socket (is another compositor running?)\n");
+            write_str(2, "[WAYLAND] ERROR: Failed to bind socket (is another compositor running?)\n");
             return 1;
         }
 
         // Listen
         let listen_result = unsafe { syscall2(50, sock_fd as usize, 4) };
         if listen_result < 0 {
-            write_str(1, "[WAYLAND] ERROR: Failed to listen\n");
+            write_str(2, "[WAYLAND] ERROR: Failed to listen\n");
             return 1;
         }
 
         self.listen_fd = sock_fd;
-        write_str(1, "[WAYLAND] Listening on /run/wayland-0\n");
+        write_str(2, "[WAYLAND] Listening on /run/wayland-0\n");
 
         // Set WAYLAND_DISPLAY env var (for child processes)
         // This would normally be done by the session manager
 
         // Event loop: accept one client and process messages
         // — NeonVale: Single-client for now. Multi-client requires epoll.
-        write_str(1, "[WAYLAND] Waiting for client connection...\n");
+        write_str(2, "[WAYLAND] Waiting for client connection...\n");
 
         let client_fd = unsafe { syscall3(43, sock_fd as usize, 0, 0) } as i32; // accept
         if client_fd < 0 {
-            write_str(1, "[WAYLAND] ERROR: Failed to accept client\n");
+            write_str(2, "[WAYLAND] ERROR: Failed to accept client\n");
             return 1;
         }
 
-        write_str(1, "[WAYLAND] Client connected!\n");
+        write_str(2, "[WAYLAND] Client connected!\n");
         self.client_fd = client_fd;
 
         // Register wl_display as object 1
@@ -713,7 +725,7 @@ impl Compositor {
         loop {
             let n = unsafe { syscall3(0, client_fd as usize, buf.as_mut_ptr() as usize, buf.len()) };
             if n <= 0 {
-                write_str(1, "[WAYLAND] Client disconnected\n");
+                write_str(2, "[WAYLAND] Client disconnected\n");
                 break;
             }
             self.process_client_data(&buf[..n as usize]);
@@ -725,7 +737,7 @@ impl Compositor {
             syscall1(3, sock_fd as usize);
         }
 
-        write_str(1, "[WAYLAND] Compositor shutting down\n");
+        write_str(2, "[WAYLAND] Compositor shutting down\n");
         0
     }
 }

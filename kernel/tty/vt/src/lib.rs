@@ -842,6 +842,12 @@ impl VnodeOps for VtDevice {
                     _ => return Err(VfsError::InvalidArgument),
                 };
                 compositor::set_vt_mode(self.vt_num, mode);
+                // — NeonVale: Tell the terminal to stop rendering text cells
+                // when in graphics mode. Userspace owns the pixel buffer.
+                let is_graphics = mode == compositor::VtMode::Graphics;
+                if let Some(ref mut terminal) = *terminal::VT_TERMINALS[self.vt_num].lock() {
+                    terminal.graphics_mode = is_graphics;
+                }
                 Ok(0)
             }
             _ => {

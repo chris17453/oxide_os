@@ -147,6 +147,10 @@ pub struct TerminalEmulator {
     /// did Vec::with_capacity(cols×rows) on every scroll render — 126KB heap alloc
     /// from timer ISR context = instant deadlock on HEAP_ALLOCATOR spinlock. — SableWire
     scroll_composite: ScreenBuffer,
+    /// — NeonVale: When true, this VT is in KD_GRAPHICS mode — userspace owns
+    /// the pixel buffer directly. Terminal render() is skipped so text doesn't
+    /// overwrite the compositor's pixels.
+    pub graphics_mode: bool,
 }
 
 /// Mouse text selection
@@ -204,6 +208,7 @@ impl TerminalEmulator {
             h_scroll_offset: 0,
             wrap_mode: true,
             scroll_composite: ScreenBuffer::new(cols, rows),
+            graphics_mode: false,
         }
     }
 
@@ -1636,6 +1641,12 @@ impl TerminalEmulator {
     /// — GraveShift: Pushes selection state to renderer before paint, so the
     /// inverted highlight is visible. Clears it after to avoid stale ghost rects.
     pub fn render(&mut self) {
+        // — NeonVale: In KD_GRAPHICS mode, userspace owns the pixel buffer.
+        // Don't render text cells — they'd overwrite the compositor's pixels.
+        if self.graphics_mode {
+            return;
+        }
+
         // — GraveShift: if user has scrolled back via scrollbar or wheel, maintain
         // their scroll position. New output still arrives in the primary buffer but
         // we keep showing the scrollback view until they scroll back to live (offset=0).
@@ -1962,7 +1973,7 @@ pub const MAX_VTS: usize = 7;
 /// — GraveShift: per-VT terminal emulators. Each slot is independently locked.
 /// VT0 is initialized at boot. VTs 1-5 are lazy-initialized on first write.
 /// No more state-swapping, no more global bottleneck.
-static VT_TERMINALS: [Mutex<Option<TerminalEmulator>>; MAX_VTS] = [
+pub static VT_TERMINALS: [Mutex<Option<TerminalEmulator>>; MAX_VTS] = [
     Mutex::new(None),
     Mutex::new(None),
     Mutex::new(None),
