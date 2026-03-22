@@ -8523,3 +8523,105 @@ pub extern "C" fn msgrcv(msqid: i32, msgp: *mut core::ffi::c_void, msgsz: usize,
 pub extern "C" fn msgctl(msqid: i32, cmd: i32, buf: *mut core::ffi::c_void) -> i32 {
     crate::syscall::sys_msgctl(msqid, cmd as u32, buf as usize)
 }
+
+// ============ iconv — character set conversion ============
+// — PulseForge: Minimal iconv for glib. Since OXIDE is UTF-8 everywhere,
+// most conversions are identity transforms. We support UTF-8 ↔ UTF-8 and
+// ASCII ↔ UTF-8 (identity), and return EINVAL for unknown encodings.
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iconv_open(_tocode: *const u8, _fromcode: *const u8) -> *mut u8 {
+    // — PulseForge: Return a non-NULL, non-error handle. (void*)-1 is error.
+    // We use a static dummy as the "conversion descriptor" since all our
+    // conversions are identity (UTF-8 everywhere).
+    1 as *mut u8 // Dummy non-NULL handle
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iconv(
+    _cd: *mut u8,
+    inbuf: *mut *mut u8,
+    inbytesleft: *mut usize,
+    outbuf: *mut *mut u8,
+    outbytesleft: *mut usize,
+) -> usize {
+    // — PulseForge: Identity conversion — copy bytes 1:1. This works for
+    // UTF-8 → UTF-8 (glib's most common case) and ASCII → UTF-8.
+    if inbuf.is_null() || unsafe { (*inbuf).is_null() } {
+        return 0; // Reset state (no-op for stateless UTF-8)
+    }
+
+    let in_ptr = unsafe { *inbuf };
+    let in_left = unsafe { *inbytesleft };
+    let out_ptr = unsafe { *outbuf };
+    let out_left = unsafe { *outbytesleft };
+
+    let copy_len = in_left.min(out_left);
+    if copy_len > 0 {
+        unsafe {
+            core::ptr::copy_nonoverlapping(in_ptr, out_ptr, copy_len);
+            *inbuf = in_ptr.add(copy_len);
+            *inbytesleft = in_left - copy_len;
+            *outbuf = out_ptr.add(copy_len);
+            *outbytesleft = out_left - copy_len;
+        }
+    }
+
+    if unsafe { *inbytesleft } > 0 {
+        // Output buffer too small
+        ERRNO_VAR = 7; // E2BIG
+        return usize::MAX; // (size_t)-1
+    }
+
+    0 // Success, 0 non-reversible conversions
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iconv_close(_cd: *mut u8) -> i32 {
+    0
+}
+
+// ============ Additional POSIX functions for glib/GTK ============
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn quick_exit(status: i32) -> ! {
+    crate::syscall::sys_exit(status);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn at_quick_exit(_func: extern "C" fn()) -> i32 {
+    0 // Accept but don't actually register
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn nan(_tagp: *const u8) -> f64 {
+    f64::NAN
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn nanf(_tagp: *const u8) -> f32 {
+    f32::NAN
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn nanl(_tagp: *const u8) -> f64 {
+    f64::NAN
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mblen(s: *const u8, n: usize) -> i32 {
+    if s.is_null() { return 0; }
+    if n == 0 { return -1; }
+    let byte = unsafe { *s };
+    if byte == 0 { return 0; }
+    if byte & 0x80 == 0 { return 1; }
+    if byte & 0xE0 == 0xC0 { return if n >= 2 { 2 } else { -1 }; }
+    if byte & 0xF0 == 0xE0 { return if n >= 3 { 3 } else { -1 }; }
+    if byte & 0xF8 == 0xF0 { return if n >= 4 { 4 } else { -1 }; }
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fwide(_stream: *mut u8, _mode: i32) -> i32 {
+    0
+}

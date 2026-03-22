@@ -524,7 +524,8 @@ pkg_config_libdir = '{sysroot}/lib/pkgconfig'
 
 [built-in options]
 c_args = ['-I{sysroot}/include', '-DOXIDE_OS', '-fPIC']
-c_link_args = ['-L{sysroot}/lib', '-static']
+c_link_args = ['-L{sysroot}/lib', '-static', '-Wl,--allow-multiple-definition']
+cpp_link_args = ['-L{sysroot}/lib', '-static', '-Wl,--allow-multiple-definition']
 
 [host_machine]
 system = 'linux'

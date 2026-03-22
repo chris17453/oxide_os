@@ -9,3 +9,4 @@ CONFIGURE_FLAGS="
 "
 
 EXTRA_CFLAGS="-DOXIDE_OS"
+EXTRA_LDFLAGS="-Wl,--allow-multiple-definition"
