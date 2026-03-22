@@ -1,7 +1,36 @@
 //! Reader-writer lock implementation
+//! — ShadePacket: rwlock finally stops melting CPUs, futex edition
 
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+
+/// Futex wait — blocks if *addr == expected. No timeout.
+/// — ShadePacket: lay down your registers and sleep, the lock will come to you
+unsafe fn futex_wait(addr: *const u32, expected: u32) {
+    let _: isize;
+    core::arch::asm!("syscall",
+        in("rax") 202u64,
+        in("rdi") addr as usize,
+        in("rsi") 0usize,  // FUTEX_WAIT
+        in("rdx") expected as usize,
+        in("r10") 0usize,  // no timeout
+        lateout("rax") _,
+        out("rcx") _, out("r11") _);
+}
+
+/// Futex wake — wakes up to `count` waiters.
+/// — ShadePacket: the lock changed hands, wake the hungry threads
+unsafe fn futex_wake(addr: *const u32, count: u32) {
+    let _: isize;
+    core::arch::asm!("syscall",
+        in("rax") 202u64,
+        in("rdi") addr as usize,
+        in("rsi") 1usize,  // FUTEX_WAKE
+        in("rdx") count as usize,
+        in("r10") 0usize,
+        lateout("rax") _,
+        out("rcx") _, out("r11") _);
+}
 
 use crate::{pthread_self, EBUSY, EDEADLK, EINVAL, ESUCCESS};
 
@@ -88,12 +117,13 @@ pub unsafe extern "C" fn pthread_rwlock_rdlock(rwlock: *mut pthread_rwlock_t) ->
         return EINVAL;
     }
 
+    // — ShadePacket: futex-backed read lock acquisition, sleep when writer holds it
     loop {
         let state = (*rwlock).state.load(Ordering::Acquire);
 
         // Can't acquire if write-locked or writers waiting
         if (state & WRITE_LOCKED) != 0 || (*rwlock).waiting_writers.load(Ordering::Acquire) > 0 {
-            core::hint::spin_loop();
+            futex_wait((*rwlock).state.as_ptr(), state);
             continue;
         }
 
@@ -106,8 +136,6 @@ pub unsafe extern "C" fn pthread_rwlock_rdlock(rwlock: *mut pthread_rwlock_t) ->
         {
             return ESUCCESS;
         }
-
-        core::hint::spin_loop();
     }
 }
 
@@ -155,6 +183,7 @@ pub unsafe extern "C" fn pthread_rwlock_wrlock(rwlock: *mut pthread_rwlock_t) ->
     // Indicate writer is waiting
     (*rwlock).waiting_writers.fetch_add(1, Ordering::SeqCst);
 
+    // — ShadePacket: writer waits via futex until all readers drain out
     loop {
         // Try to acquire when unlocked (state == 0)
         if (*rwlock)
@@ -167,7 +196,8 @@ pub unsafe extern "C" fn pthread_rwlock_wrlock(rwlock: *mut pthread_rwlock_t) ->
             return ESUCCESS;
         }
 
-        core::hint::spin_loop();
+        let state = (*rwlock).state.load(Ordering::Acquire);
+        futex_wait((*rwlock).state.as_ptr(), state);
     }
 }
 
@@ -206,9 +236,15 @@ pub unsafe extern "C" fn pthread_rwlock_unlock(rwlock: *mut pthread_rwlock_t) ->
         // Release write lock
         (*rwlock).writer.store(0, Ordering::Release);
         (*rwlock).state.store(0, Ordering::Release);
+        // — ShadePacket: writer done, wake all waiting readers and writers
+        futex_wake((*rwlock).state.as_ptr(), i32::MAX as u32);
     } else if (state & READER_MASK) > 0 {
         // Release read lock (decrement reader count)
-        (*rwlock).state.fetch_sub(1, Ordering::AcqRel);
+        let prev = (*rwlock).state.fetch_sub(1, Ordering::AcqRel);
+        // — ShadePacket: if we were the last reader, wake a waiting writer
+        if (prev & READER_MASK) == 1 {
+            futex_wake((*rwlock).state.as_ptr(), i32::MAX as u32);
+        }
     } else {
         // Not locked
         return EINVAL;

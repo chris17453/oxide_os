@@ -2014,14 +2014,52 @@ unsafe fn strptime_casematch(p: *const u8, pattern: &[u8]) -> bool {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn asctime(_tm: *const crate::time::Tm) -> *mut u8 {
-    b"Thu Jan  1 00:00:00 1970\n\0".as_ptr() as *mut u8
+/// asctime — format struct tm as "Day Mon DD HH:MM:SS YYYY\n"
+/// — GraveShift: Real implementation using the actual tm fields.
+pub unsafe extern "C" fn asctime(tm: *const crate::time::Tm) -> *mut u8 {
+    static mut BUF: [u8; 26] = [0; 26];
+    let buf_ptr = unsafe { core::ptr::addr_of_mut!(BUF) };
+    unsafe { asctime_r(tm, (*buf_ptr).as_mut_ptr()) }
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn asctime_r(_tm: *const crate::time::Tm, buf: *mut u8) -> *mut u8 {
-    let s = b"Thu Jan  1 00:00:00 1970\n\0";
-    core::ptr::copy_nonoverlapping(s.as_ptr(), buf, s.len());
+pub unsafe extern "C" fn asctime_r(tm: *const crate::time::Tm, buf: *mut u8) -> *mut u8 {
+    if tm.is_null() || buf.is_null() {
+        return core::ptr::null_mut();
+    }
+    let t = unsafe { &*tm };
+    let days = [b"Sun", b"Mon", b"Tue", b"Wed", b"Thu", b"Fri", b"Sat"];
+    let months = [b"Jan", b"Feb", b"Mar", b"Apr", b"May", b"Jun",
+                  b"Jul", b"Aug", b"Sep", b"Oct", b"Nov", b"Dec"];
+
+    let wday = (t.tm_wday as usize).min(6);
+    let mon = (t.tm_mon as usize).min(11);
+    let year = t.tm_year + 1900;
+
+    // Format: "Day Mon DD HH:MM:SS YYYY\n\0" (26 bytes total)
+    let b = unsafe { core::slice::from_raw_parts_mut(buf, 26) };
+    b[0] = days[wday][0]; b[1] = days[wday][1]; b[2] = days[wday][2];
+    b[3] = b' ';
+    b[4] = months[mon][0]; b[5] = months[mon][1]; b[6] = months[mon][2];
+    b[7] = b' ';
+    b[8] = if t.tm_mday >= 10 { b'0' + (t.tm_mday / 10) as u8 } else { b' ' };
+    b[9] = b'0' + (t.tm_mday % 10) as u8;
+    b[10] = b' ';
+    b[11] = b'0' + (t.tm_hour / 10) as u8;
+    b[12] = b'0' + (t.tm_hour % 10) as u8;
+    b[13] = b':';
+    b[14] = b'0' + (t.tm_min / 10) as u8;
+    b[15] = b'0' + (t.tm_min % 10) as u8;
+    b[16] = b':';
+    b[17] = b'0' + (t.tm_sec / 10) as u8;
+    b[18] = b'0' + (t.tm_sec % 10) as u8;
+    b[19] = b' ';
+    b[20] = b'0' + (year / 1000 % 10) as u8;
+    b[21] = b'0' + (year / 100 % 10) as u8;
+    b[22] = b'0' + (year / 10 % 10) as u8;
+    b[23] = b'0' + (year % 10) as u8;
+    b[24] = b'\n';
+    b[25] = 0;
     buf
 }
 
@@ -3311,30 +3349,10 @@ pub unsafe extern "C" fn pthread_setcanceltype(_type: i32, _oldtype: *mut i32) -
 
 // ============ dlfcn stubs ============
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn dlopen(_filename: *const u8, _flags: i32) -> *mut u8 {
-    core::ptr::null_mut()
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn dlsym(_handle: *mut u8, _symbol: *const u8) -> *mut u8 {
-    core::ptr::null_mut()
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn dlclose(_handle: *mut u8) -> i32 {
-    0
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn dlerror() -> *const u8 {
-    b"Dynamic loading not supported\0".as_ptr()
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn dladdr(_addr: *const u8, _info: *mut u8) -> i32 {
-    0
-}
+// — IronGhost: dlopen/dlsym/dlclose/dlerror/dladdr are implemented in
+// kernel/libc-support/dl/src/lib.rs with real ELF loading, relocation,
+// and symbol resolution. No stubs here — the real implementations are
+// linked from the dl staticlib.
 
 // ============ statvfs ============
 

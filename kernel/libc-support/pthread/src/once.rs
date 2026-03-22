@@ -1,7 +1,36 @@
 //! One-time initialization
+//! — WireSaint: once means ONCE, and now we actually sleep instead of burning cores
 
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicU32, Ordering};
+
+/// Futex wait — blocks if *addr == expected. No timeout.
+/// — WireSaint: park until the initializer finishes their one job
+unsafe fn futex_wait(addr: *const u32, expected: u32) {
+    let _: isize;
+    core::arch::asm!("syscall",
+        in("rax") 202u64,
+        in("rdi") addr as usize,
+        in("rsi") 0usize,  // FUTEX_WAIT
+        in("rdx") expected as usize,
+        in("r10") 0usize,  // no timeout
+        lateout("rax") _,
+        out("rcx") _, out("r11") _);
+}
+
+/// Futex wake — wakes up to `count` waiters.
+/// — WireSaint: init's done, wake the patient masses
+unsafe fn futex_wake(addr: *const u32, count: u32) {
+    let _: isize;
+    core::arch::asm!("syscall",
+        in("rax") 202u64,
+        in("rdi") addr as usize,
+        in("rsi") 1usize,  // FUTEX_WAKE
+        in("rdx") count as usize,
+        in("r10") 0usize,
+        lateout("rax") _,
+        out("rcx") _, out("r11") _);
+}
 
 use crate::ESUCCESS;
 
@@ -56,7 +85,8 @@ pub unsafe extern "C" fn pthread_once(
                 // We won - run the init
                 init_routine();
                 (*once_control).state.store(ONCE_DONE, Ordering::Release);
-                // In real implementation: futex_wake all
+                // — WireSaint: init complete, wake all the threads waiting on this once
+                futex_wake((*once_control).state.as_ptr(), i32::MAX as u32);
                 return ESUCCESS;
             }
             Err(ONCE_DONE) => {
@@ -64,15 +94,14 @@ pub unsafe extern "C" fn pthread_once(
                 return ESUCCESS;
             }
             Err(ONCE_RUNNING) => {
-                // Someone else is running it - wait
-                // In real implementation: futex_wait
+                // — WireSaint: someone else is initializing, futex-sleep on ONCE_RUNNING
                 while (*once_control).state.load(Ordering::Acquire) == ONCE_RUNNING {
-                    core::hint::spin_loop();
+                    futex_wait((*once_control).state.as_ptr(), ONCE_RUNNING);
                 }
                 return ESUCCESS;
             }
             Err(_) => {
-                // Spurious failure, retry
+                // Spurious CAS failure, retry the loop
                 core::hint::spin_loop();
             }
         }

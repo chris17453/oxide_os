@@ -1,9 +1,38 @@
 //! Barrier implementation
+//! — TorqueJax: barriers with futex, because spinning at a gate is just sad
 
 #![allow(non_camel_case_types)]
 
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicU32, Ordering};
+
+/// Futex wait — blocks if *addr == expected. No timeout.
+/// — TorqueJax: hold your horses until the generation flips
+unsafe fn futex_wait(addr: *const u32, expected: u32) {
+    let _: isize;
+    core::arch::asm!("syscall",
+        in("rax") 202u64,
+        in("rdi") addr as usize,
+        in("rsi") 0usize,  // FUTEX_WAIT
+        in("rdx") expected as usize,
+        in("r10") 0usize,  // no timeout
+        lateout("rax") _,
+        out("rcx") _, out("r11") _);
+}
+
+/// Futex wake — wakes up to `count` waiters.
+/// — TorqueJax: the gate's open, stampede time
+unsafe fn futex_wake(addr: *const u32, count: u32) {
+    let _: isize;
+    core::arch::asm!("syscall",
+        in("rax") 202u64,
+        in("rdi") addr as usize,
+        in("rsi") 1usize,  // FUTEX_WAKE
+        in("rdx") count as usize,
+        in("r10") 0usize,
+        lateout("rax") _,
+        out("rcx") _, out("r11") _);
+}
 
 use crate::{EINVAL, ESUCCESS};
 
@@ -94,14 +123,14 @@ pub unsafe extern "C" fn pthread_barrier_wait(barrier: *mut pthread_barrier_t) -
         // Last thread to arrive - release all
         (*barrier).waiting.store(0, Ordering::SeqCst);
         (*barrier).generation.fetch_add(1, Ordering::Release);
-        // In real implementation: futex_wake all
+        // — TorqueJax: last one in, wake the whole damn herd
+        futex_wake((*barrier).generation.as_ptr(), i32::MAX as u32);
         return PTHREAD_BARRIER_SERIAL_THREAD;
     }
 
-    // Wait for generation to change
-    // In real implementation: futex_wait
+    // — TorqueJax: futex wait on generation counter, sleep until the last thread opens the gate
     while (*barrier).generation.load(Ordering::Acquire) == generation {
-        core::hint::spin_loop();
+        futex_wait((*barrier).generation.as_ptr(), generation);
     }
 
     ESUCCESS

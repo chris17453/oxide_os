@@ -1,7 +1,50 @@
 //! Condition variable implementation
+//! — BlackLatch: condvars with real futex backing, no more spin-praying
 
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicU32, Ordering};
+
+/// Futex wait — blocks if *addr == expected. No timeout.
+/// — BlackLatch: park the thread in the kernel, let the scheduler sort it out
+unsafe fn futex_wait(addr: *const u32, expected: u32) {
+    let _: isize;
+    core::arch::asm!("syscall",
+        in("rax") 202u64,
+        in("rdi") addr as usize,
+        in("rsi") 0usize,  // FUTEX_WAIT
+        in("rdx") expected as usize,
+        in("r10") 0usize,  // no timeout
+        lateout("rax") _,
+        out("rcx") _, out("r11") _);
+}
+
+/// Futex wake — wakes up to `count` waiters.
+/// — BlackLatch: wakey wakey, someone signaled
+unsafe fn futex_wake(addr: *const u32, count: u32) {
+    let _: isize;
+    core::arch::asm!("syscall",
+        in("rax") 202u64,
+        in("rdi") addr as usize,
+        in("rsi") 1usize,  // FUTEX_WAKE
+        in("rdx") count as usize,
+        in("r10") 0usize,
+        lateout("rax") _,
+        out("rcx") _, out("r11") _);
+}
+
+/// Futex wait with timeout — blocks if *addr == expected, wakes on timeout.
+/// — BlackLatch: patience has limits, even for threads
+unsafe fn futex_wait_timeout(addr: *const u32, expected: u32, timeout: *const timespec) {
+    let _: isize;
+    core::arch::asm!("syscall",
+        in("rax") 202u64,
+        in("rdi") addr as usize,
+        in("rsi") 0usize,  // FUTEX_WAIT
+        in("rdx") expected as usize,
+        in("r10") timeout as usize,
+        lateout("rax") _,
+        out("rcx") _, out("r11") _);
+}
 
 use crate::mutex::{pthread_mutex_lock, pthread_mutex_t, pthread_mutex_unlock};
 use crate::{EINVAL, ESUCCESS, ETIMEDOUT};
@@ -98,14 +141,13 @@ pub unsafe extern "C" fn pthread_cond_wait(
     // Release mutex
     pthread_mutex_unlock(mutex);
 
-    // Wait for signal
-    // In real implementation: futex_wait(&cond.seq, seq)
+    // — BlackLatch: real futex wait on the sequence counter, sleep until signaled
     loop {
         let current = (*cond).seq.load(Ordering::SeqCst);
         if current != seq {
             break;
         }
-        core::hint::spin_loop();
+        futex_wait((*cond).seq.as_ptr(), seq);
     }
 
     // Decrement waiter count
@@ -137,25 +179,21 @@ pub unsafe extern "C" fn pthread_cond_timedwait(
     // Release mutex
     pthread_mutex_unlock(mutex);
 
-    // Wait for signal with timeout
-    // In real implementation: futex_wait_timeout(&cond.seq, seq, abstime)
-    let mut iterations = 0u64;
-    let timeout_iterations = 1_000_000; // Simplified timeout
-
+    // — BlackLatch: futex wait with real kernel timeout, no more fake iteration counters
     loop {
         let current = (*cond).seq.load(Ordering::SeqCst);
         if current != seq {
             break;
         }
-        iterations += 1;
-        if iterations >= timeout_iterations {
-            // Decrement waiter count
+        futex_wait_timeout((*cond).seq.as_ptr(), seq, abstime);
+        // Check if we were woken by timeout (seq unchanged means timeout)
+        let after = (*cond).seq.load(Ordering::SeqCst);
+        if after == seq {
+            // Timed out — seq hasn't changed
             (*cond).waiters.fetch_sub(1, Ordering::SeqCst);
-            // Reacquire mutex
             pthread_mutex_lock(mutex);
             return ETIMEDOUT;
         }
-        core::hint::spin_loop();
     }
 
     // Decrement waiter count
@@ -178,7 +216,8 @@ pub unsafe extern "C" fn pthread_cond_signal(cond: *mut pthread_cond_t) -> c_int
     if (*cond).waiters.load(Ordering::SeqCst) > 0 {
         // Increment sequence to wake one waiter
         (*cond).seq.fetch_add(1, Ordering::SeqCst);
-        // In real implementation: futex_wake(&cond.seq, 1)
+        // — BlackLatch: tap one thread on the shoulder via futex
+        futex_wake((*cond).seq.as_ptr(), 1);
     }
 
     ESUCCESS
@@ -195,7 +234,8 @@ pub unsafe extern "C" fn pthread_cond_broadcast(cond: *mut pthread_cond_t) -> c_
     if (*cond).waiters.load(Ordering::SeqCst) > 0 {
         // Increment sequence to wake all waiters
         (*cond).seq.fetch_add(1, Ordering::SeqCst);
-        // In real implementation: futex_wake(&cond.seq, INT_MAX)
+        // — BlackLatch: everybody up, broadcast means EVERYBODY
+        futex_wake((*cond).seq.as_ptr(), i32::MAX as u32);
     }
 
     ESUCCESS

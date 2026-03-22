@@ -1,7 +1,36 @@
 //! Mutex implementation
+//! — GraveShift: finally ditched the spin_loop copium, welcome to the futex age
 
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+
+/// Futex wait — blocks if *addr == expected. No timeout.
+/// — SableWire: the kernel does the heavy lifting now, sleep tight little thread
+unsafe fn futex_wait(addr: *const u32, expected: u32) {
+    let _: isize;
+    core::arch::asm!("syscall",
+        in("rax") 202u64,
+        in("rdi") addr as usize,
+        in("rsi") 0usize,  // FUTEX_WAIT
+        in("rdx") expected as usize,
+        in("r10") 0usize,  // no timeout
+        lateout("rax") _,
+        out("rcx") _, out("r11") _);
+}
+
+/// Futex wake — wakes up to `count` waiters.
+/// — SableWire: rise and grind, somebody unlocked the door
+unsafe fn futex_wake(addr: *const u32, count: u32) {
+    let _: isize;
+    core::arch::asm!("syscall",
+        in("rax") 202u64,
+        in("rdi") addr as usize,
+        in("rsi") 1usize,  // FUTEX_WAKE
+        in("rdx") count as usize,
+        in("r10") 0usize,
+        lateout("rax") _,
+        out("rcx") _, out("r11") _);
+}
 
 use crate::{
     pthread_self, EBUSY, EDEADLK, EINVAL, ESUCCESS, PTHREAD_MUTEX_ERRORCHECK, PTHREAD_MUTEX_NORMAL,
@@ -104,18 +133,21 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut pthread_mutex_t) -> c_in
 
     match kind {
         PTHREAD_MUTEX_NORMAL => {
-            // Simple spinlock (would use futex in real implementation)
-            while (*mutex)
-                .state
-                .compare_exchange_weak(
-                    MUTEX_UNLOCKED,
-                    MUTEX_LOCKED,
-                    Ordering::Acquire,
-                    Ordering::Relaxed,
-                )
-                .is_err()
-            {
-                core::hint::spin_loop();
+            // — GraveShift: futex-backed lock, no more burning CPU like it's 1999
+            loop {
+                if (*mutex)
+                    .state
+                    .compare_exchange_weak(
+                        MUTEX_UNLOCKED,
+                        MUTEX_LOCKED,
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                    )
+                    .is_ok()
+                {
+                    break;
+                }
+                futex_wait((*mutex).state.as_ptr(), MUTEX_LOCKED);
             }
             (*mutex).owner.store(self_id, Ordering::Release);
         }
@@ -127,18 +159,21 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut pthread_mutex_t) -> c_in
                 return ESUCCESS;
             }
 
-            // Try to acquire
-            while (*mutex)
-                .state
-                .compare_exchange_weak(
-                    MUTEX_UNLOCKED,
-                    MUTEX_LOCKED,
-                    Ordering::Acquire,
-                    Ordering::Relaxed,
-                )
-                .is_err()
-            {
-                core::hint::spin_loop();
+            // — GraveShift: recursive mutex, same futex dance different day
+            loop {
+                if (*mutex)
+                    .state
+                    .compare_exchange_weak(
+                        MUTEX_UNLOCKED,
+                        MUTEX_LOCKED,
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                    )
+                    .is_ok()
+                {
+                    break;
+                }
+                futex_wait((*mutex).state.as_ptr(), MUTEX_LOCKED);
             }
             (*mutex).owner.store(self_id, Ordering::Release);
             (*mutex).count.store(1, Ordering::Release);
@@ -149,17 +184,21 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut pthread_mutex_t) -> c_in
                 return EDEADLK;
             }
 
-            while (*mutex)
-                .state
-                .compare_exchange_weak(
-                    MUTEX_UNLOCKED,
-                    MUTEX_LOCKED,
-                    Ordering::Acquire,
-                    Ordering::Relaxed,
-                )
-                .is_err()
-            {
-                core::hint::spin_loop();
+            // — GraveShift: errorcheck mutex, we still block properly though
+            loop {
+                if (*mutex)
+                    .state
+                    .compare_exchange_weak(
+                        MUTEX_UNLOCKED,
+                        MUTEX_LOCKED,
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                    )
+                    .is_ok()
+                {
+                    break;
+                }
+                futex_wait((*mutex).state.as_ptr(), MUTEX_LOCKED);
             }
             (*mutex).owner.store(self_id, Ordering::Release);
         }
@@ -260,12 +299,15 @@ pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut pthread_mutex_t) -> c_
         PTHREAD_MUTEX_NORMAL => {
             (*mutex).owner.store(0, Ordering::Release);
             (*mutex).state.store(MUTEX_UNLOCKED, Ordering::Release);
+            // — GraveShift: wake one sad waiter from their futex slumber
+            futex_wake((*mutex).state.as_ptr(), 1);
         }
         PTHREAD_MUTEX_RECURSIVE => {
             let count = (*mutex).count.fetch_sub(1, Ordering::SeqCst);
             if count == 1 {
                 (*mutex).owner.store(0, Ordering::Release);
                 (*mutex).state.store(MUTEX_UNLOCKED, Ordering::Release);
+                futex_wake((*mutex).state.as_ptr(), 1);
             }
         }
         PTHREAD_MUTEX_ERRORCHECK => {
@@ -276,11 +318,10 @@ pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut pthread_mutex_t) -> c_
             }
             (*mutex).owner.store(0, Ordering::Release);
             (*mutex).state.store(MUTEX_UNLOCKED, Ordering::Release);
+            futex_wake((*mutex).state.as_ptr(), 1);
         }
         _ => return EINVAL,
     }
-
-    // In real implementation: futex wake
 
     ESUCCESS
 }
