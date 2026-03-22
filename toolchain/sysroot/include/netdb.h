@@ -92,6 +92,15 @@ const char *hstrerror(int err);
 
 extern int h_errno;
 
+/* h_errno values */
+#define HOST_NOT_FOUND  1   /* Authoritative Answer: Host not found */
+#define TRY_AGAIN       2   /* Non-Authoritative: Host not found, or SERVFAIL */
+#define NO_RECOVERY     3   /* Non recoverable errors, FORMERR, REFUSED, NOTIMP */
+#define NO_DATA         4   /* Valid name, no data record of requested type */
+#define NO_ADDRESS      NO_DATA
+#define NETDB_INTERNAL  -1  /* See errno */
+#define NETDB_SUCCESS   0   /* No problem */
+
 #ifdef __cplusplus
 }
 #endif

@@ -24,10 +24,13 @@ struct sockaddr_storage {
     unsigned long __ss_align;
 };
 
+#ifndef __OXIDE_IOVEC_DEFINED
+#define __OXIDE_IOVEC_DEFINED
 struct iovec {
     void *iov_base;
     size_t iov_len;
 };
+#endif
 
 struct msghdr {
     void *msg_name;

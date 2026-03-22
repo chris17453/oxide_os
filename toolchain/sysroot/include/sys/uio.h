@@ -10,10 +10,13 @@ extern "C" {
 #include <sys/types.h>
 
 /* Structure for scatter/gather I/O */
+#ifndef __OXIDE_IOVEC_DEFINED
+#define __OXIDE_IOVEC_DEFINED
 struct iovec {
     void  *iov_base;    /* Starting address */
     size_t iov_len;     /* Number of bytes to transfer */
 };
+#endif
 
 /* Scatter-gather I/O functions */
 ssize_t readv(int fd, const struct iovec *iov, int iovcnt);
