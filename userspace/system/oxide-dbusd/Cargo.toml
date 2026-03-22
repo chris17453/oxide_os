@@ -1,0 +1,12 @@
+[package]
+name = "oxide-dbusd"
+version = "0.1.0"
+edition = "2024"
+description = "OXIDE D-Bus message bus daemon"
+
+[dependencies]
+oxide-dbus = { path = "../../libs/oxide-dbus" }
+
+[[bin]]
+name = "oxide-dbusd"
+path = "src/main.rs"

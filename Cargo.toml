@@ -116,6 +116,7 @@ members = [
     # libs — shared crates (kernel + userspace)
     # userspace/system — core boot/session programs
     "userspace/system/init",
+    "userspace/system/oxide-dbusd",
     "userspace/system/getty",
     "userspace/system/login",
     "userspace/system/passwd",
@@ -129,6 +130,7 @@ members = [
     "userspace/coreutils",
     # userspace/libs — shared libraries
     "userspace/libs/libc",
+    "userspace/libs/oxide-dbus",
     "userspace/libs/oxide-rt",
     "userspace/libs/oxide-std",
     "userspace/libs/compression",
