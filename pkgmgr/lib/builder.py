@@ -521,6 +521,7 @@ pkgconfig = '{tc_bin}/oxide-pkg-config'
 [properties]
 sys_root = '{sysroot}'
 pkg_config_libdir = '{sysroot}/lib/pkgconfig'
+iconv_impl = 'libc'
 
 [built-in options]
 c_args = ['-I{sysroot}/include', '-DOXIDE_OS', '-fPIC']
