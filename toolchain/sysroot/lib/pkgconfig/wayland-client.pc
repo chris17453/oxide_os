@@ -1,0 +1,13 @@
+prefix=/usr
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+datarootdir=${prefix}/share
+pkgdatadir=${pc_sysrootdir}${datarootdir}/wayland
+
+Name: Wayland Client
+Description: Wayland client side library
+Version: 1.24.0
+Requires: libffi
+Libs: -L${libdir} -lwayland-client -lm -pthread
+Cflags: -I${includedir} -pthread

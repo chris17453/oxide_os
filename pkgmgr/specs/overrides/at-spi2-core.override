@@ -1,0 +1,27 @@
+# at-spi2-core Build Override for OXIDE OS
+# — PatchBay: Provides ATK (accessibility toolkit) for GTK3.
+# We only need the ATK library, not the full AT-SPI2 accessibility stack.
+
+BUILD_SYSTEM="meson"
+
+CONFIGURE_FLAGS="
+  -Dintrospection=disabled
+  -Ddocs=false
+  -Ddbus_daemon=/usr/bin/false
+  -Ddefault_bus=dbus-daemon
+  -Dx11=disabled
+"
+
+EXTRA_CFLAGS="-DOXIDE_OS"
+
+# Only build ATK library, skip atspi (needs dbus runtime)
+MAKE_TARGET="atk/libatk-1.0.a"
+
+CUSTOM_INSTALL_CMD="
+mkdir -p $DESTDIR/usr/lib/pkgconfig $DESTDIR/usr/include/atk-1.0/atk &&
+cp builddir/atk/libatk-1.0.a $DESTDIR/usr/lib/ 2>/dev/null;
+cp builddir/meson-private/atk.pc $DESTDIR/usr/lib/pkgconfig/ 2>/dev/null;
+cp atk/*.h $DESTDIR/usr/include/atk-1.0/atk/ 2>/dev/null;
+cp builddir/atk/atk-enum-types.h $DESTDIR/usr/include/atk-1.0/atk/ 2>/dev/null;
+echo 'ATK library installed'
+"

@@ -1,5 +1,12 @@
-Name: wayland-scanner
-Description: Wayland protocol scanner (host tool)
+prefix=/usr
+includedir=${prefix}/include
+
+datarootdir=${prefix}/share
+pkgdatadir=${pc_sysrootdir}${datarootdir}/wayland
+bindir=${prefix}/bin
+wayland_scanner=${bindir}/wayland-scanner
+
+Name: Wayland Scanner
+Description: Wayland scanner
 Version: 1.24.0
-wayland_scanner=/usr/bin/wayland-scanner
-pkgdatadir=/usr/share/wayland
+Cflags: -I${includedir}

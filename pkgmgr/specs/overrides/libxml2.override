@@ -1,0 +1,17 @@
+# libxml2 Build Override for OXIDE OS
+# — PulseForge: XML parser library. Required by at-spi2-core (ATK) for GTK3.
+
+CONFIGURE_FLAGS="
+  --without-python
+  --without-icu
+  --without-lzma
+  --without-http
+  --without-ftp
+  --without-catalog
+  --without-docbook
+  --with-zlib
+  --disable-shared
+  --enable-static
+"
+
+EXTRA_CFLAGS="-DOXIDE_OS"
