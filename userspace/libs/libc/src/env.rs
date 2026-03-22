@@ -106,15 +106,15 @@ pub fn init_from_envp(envp: *const *const u8) {
     }
 }
 
-/// Set defaults
+/// Set defaults — only if not already inherited from parent
 pub fn init_defaults() {
-    setenv("HOME", "/root");
-    setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin");
-    setenv("TERM", "xterm-256color");
-    setenv("SHELL", "/bin/esh");
-    setenv("USER", "root");
-    setenv("LOGNAME", "root");
-    setenv("LANG", "C.UTF-8");
+    if getenv("HOME").is_none() { setenv("HOME", "/root"); }
+    if getenv("PATH").is_none() { setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"); }
+    if getenv("TERM").is_none() { setenv("TERM", "xterm-256color"); }
+    if getenv("SHELL").is_none() { setenv("SHELL", "/bin/esh"); }
+    if getenv("USER").is_none() { setenv("USER", "root"); }
+    if getenv("LOGNAME").is_none() { setenv("LOGNAME", "root"); }
+    if getenv("LANG").is_none() { setenv("LANG", "C.UTF-8"); }
 }
 
 /// Iterate all vars

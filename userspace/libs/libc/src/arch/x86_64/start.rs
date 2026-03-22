@@ -29,7 +29,15 @@ pub unsafe extern "C" fn _start() -> ! {
         "lea r13, [rsp + 8]",       // argv = &stack[1]
         // 16-byte align the stack for System V ABI calls
         "and rsp, -16",
-        // Initialize environment
+        // — GraveShift: Compute envp = argv + (argc + 1) * 8
+        // argc is in r12d (32-bit), argv is in r13
+        "mov rax, r12",
+        "inc rax",                        // argc + 1
+        "lea r14, [r13 + rax*8]",         // envp = argv + (argc+1)*8
+        // Initialize environment from envp (like Linux)
+        "mov rdi, r14",
+        "call {init_from_envp}",
+        // Initialize default env vars (HOME, PATH, etc.) — only if not already set
         "call {init_env}",
         // Initialize FILE streams (stdin/stdout/stderr)
         "call {init_stdio}",
@@ -45,6 +53,7 @@ pub unsafe extern "C" fn _start() -> ! {
         "call {exit}",
         // Should never reach here
         "ud2",
+        init_from_envp = sym crate::env::init_from_envp,
         init_env = sym crate::env::init_defaults,
         init_stdio = sym crate::filestream::init_stdio,
         init_environ = sym crate::c_exports::init_environ,
