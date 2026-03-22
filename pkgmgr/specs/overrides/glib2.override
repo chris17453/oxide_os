@@ -18,6 +18,7 @@ CONFIGURE_FLAGS="
   -Dglib_assert=false
   -Dglib_checks=false
   -Dintrospection=disabled
+  --force-fallback-for=intl,proxy-libintl
 "
 
 EXTRA_CFLAGS="-DOXIDE_OS -D_GNU_SOURCE"

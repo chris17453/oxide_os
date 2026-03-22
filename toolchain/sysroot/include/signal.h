@@ -52,6 +52,7 @@ typedef unsigned long pthread_t;
 #define SIGPWR      30
 #define SIGSYS      31
 #define _NSIG       65
+#define NSIG        _NSIG
 
 /* Signal actions */
 #define SIG_DFL     ((void (*)(int))0)

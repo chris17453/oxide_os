@@ -20,6 +20,7 @@ void explicit_bzero(void *s, size_t n);
 
 /* String functions */
 size_t strlen(const char *s);
+size_t strnlen(const char *s, size_t maxlen);
 char *strcpy(char *dest, const char *src);
 char *strncpy(char *dest, const char *src, size_t n);
 char *strcat(char *dest, const char *src);

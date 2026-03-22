@@ -144,6 +144,12 @@ int vdprintf(int fd, const char *format, va_list ap);
 /* fread_unlocked/fgets_unlocked */
 size_t fread_unlocked(void *ptr, size_t size, size_t nmemb, FILE *stream);
 
+/* Unlocked I/O — no-lock versions for single-threaded fast paths */
+int getc_unlocked(FILE *stream);
+int putc_unlocked(int c, FILE *stream);
+int getchar_unlocked(void);
+int putchar_unlocked(int c);
+
 /* flockfile/funlockfile */
 void flockfile(FILE *stream);
 void funlockfile(FILE *stream);

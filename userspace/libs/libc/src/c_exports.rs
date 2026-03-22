@@ -8888,6 +8888,110 @@ pub unsafe extern "C" fn mblen(s: *const u8, n: usize) -> i32 {
     -1
 }
 
+/// fnmatch — POSIX filename pattern matching with shell wildcards.
+/// — PulseForge: Real recursive matcher. Handles *, ?, [abc], [!abc] character
+/// classes. FNM_PATHNAME makes * not match /. FNM_PERIOD makes leading . literal.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fnmatch(pattern: *const u8, string: *const u8, flags: i32) -> i32 {
+    if pattern.is_null() || string.is_null() {
+        return 1; // FNM_NOMATCH
+    }
+
+    fn matches(pat: &[u8], s: &[u8], flags: i32) -> bool {
+        let mut pi = 0;
+        let mut si = 0;
+
+        while pi < pat.len() {
+            match pat[pi] {
+                b'*' => {
+                    // Skip consecutive *
+                    while pi < pat.len() && pat[pi] == b'*' { pi += 1; }
+                    // * at end matches everything
+                    if pi >= pat.len() {
+                        // But not / if FNM_PATHNAME
+                        if flags & 1 != 0 { // FNM_PATHNAME
+                            return !s[si..].contains(&b'/');
+                        }
+                        return true;
+                    }
+                    // Try matching * against 0..N characters
+                    while si <= s.len() {
+                        if matches(&pat[pi..], &s[si..], flags) {
+                            return true;
+                        }
+                        if si >= s.len() { break; }
+                        if flags & 1 != 0 && s[si] == b'/' { break; } // FNM_PATHNAME
+                        si += 1;
+                    }
+                    return false;
+                }
+                b'?' => {
+                    if si >= s.len() { return false; }
+                    if flags & 1 != 0 && s[si] == b'/' { return false; }
+                    pi += 1;
+                    si += 1;
+                }
+                b'[' => {
+                    if si >= s.len() { return false; }
+                    pi += 1;
+                    let negate = pi < pat.len() && (pat[pi] == b'!' || pat[pi] == b'^');
+                    if negate { pi += 1; }
+                    let mut matched = false;
+                    let mut first = true;
+                    while pi < pat.len() && (first || pat[pi] != b']') {
+                        first = false;
+                        if pi + 2 < pat.len() && pat[pi + 1] == b'-' {
+                            // Range [a-z]
+                            if s[si] >= pat[pi] && s[si] <= pat[pi + 2] {
+                                matched = true;
+                            }
+                            pi += 3;
+                        } else {
+                            if s[si] == pat[pi] { matched = true; }
+                            pi += 1;
+                        }
+                    }
+                    if pi < pat.len() && pat[pi] == b']' { pi += 1; }
+                    if negate { matched = !matched; }
+                    if !matched { return false; }
+                    si += 1;
+                }
+                b'\\' if flags & 2 == 0 => { // Not FNM_NOESCAPE
+                    pi += 1;
+                    if pi >= pat.len() { return false; }
+                    if si >= s.len() || s[si] != pat[pi] { return false; }
+                    pi += 1;
+                    si += 1;
+                }
+                c => {
+                    if si >= s.len() { return false; }
+                    let sc = s[si];
+                    let pc = c;
+                    let eq = if flags & 16 != 0 { // FNM_CASEFOLD
+                        (pc | 32) == (sc | 32) && pc.is_ascii_alphabetic()
+                    } else {
+                        pc == sc
+                    } || pc == sc;
+                    if !eq { return false; }
+                    pi += 1;
+                    si += 1;
+                }
+            }
+        }
+        si >= s.len()
+    }
+
+    let mut pat_len = 0;
+    while unsafe { *pattern.add(pat_len) } != 0 { pat_len += 1; }
+    let pat = unsafe { core::slice::from_raw_parts(pattern, pat_len) };
+
+    let mut str_len = 0;
+    while unsafe { *string.add(str_len) } != 0 { str_len += 1; }
+    let s = unsafe { core::slice::from_raw_parts(string, str_len) };
+
+    if matches(pat, s, flags) { 0 } else { 1 }
+}
+
 /// fwide — set/query stream orientation. Per C99: once set, cannot be changed.
 /// mode > 0: try to set wide. mode < 0: try to set byte. mode == 0: query only.
 /// Returns: >0 if wide, <0 if byte, 0 if unset.
