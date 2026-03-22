@@ -94,8 +94,10 @@ struct cmsghdr {
 #define MSG_OOB         0x01
 #define MSG_PEEK        0x02
 #define MSG_DONTROUTE   0x04
+#define MSG_TRUNC       0x20
 #define MSG_DONTWAIT    0x40
 #define MSG_NOSIGNAL    0x4000
+#define MSG_ERRQUEUE    0x2000
 #define MSG_WAITALL     0x100
 #define MSG_CMSG_CLOEXEC 0x40000000
 

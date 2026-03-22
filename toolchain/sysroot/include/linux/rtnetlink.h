@@ -62,6 +62,34 @@ struct rtmsg {
 #define RTA_IIF     3
 #define RTA_OIF     4
 #define RTA_GATEWAY 5
+#define RTA_PRIORITY 6
+
+/* Route types */
+#define RTN_UNSPEC      0
+#define RTN_UNICAST     1
+#define RTN_LOCAL       2
+#define RTN_BROADCAST   3
+#define RTN_ANYCAST     4
+#define RTN_MULTICAST   5
+#define RTN_BLACKHOLE   6
+#define RTN_UNREACHABLE 7
+#define RTN_PROHIBIT    8
+#define RTN_THROW       9
+#define RTN_NAT         10
+
+/* Route protocols */
+#define RTPROT_UNSPEC   0
+#define RTPROT_REDIRECT 1
+#define RTPROT_KERNEL   2
+#define RTPROT_BOOT     3
+#define RTPROT_STATIC   4
+
+/* Route scopes */
+#define RT_SCOPE_UNIVERSE 0
+#define RT_SCOPE_SITE     200
+#define RT_SCOPE_LINK     253
+#define RT_SCOPE_HOST     254
+#define RT_SCOPE_NOWHERE  255
 
 /* Routing attribute macros */
 #define RTA_ALIGNTO     4
