@@ -27,6 +27,10 @@ if ! command -v "$CLANG" &> /dev/null; then
     exit 1
 fi
 
+# — PulseForge: Find clang's resource dir for built-in headers (cpuid.h, mmintrin.h, etc.)
+# These are compiler intrinsic headers that -nostdinc strips. We need them back.
+CLANG_RESOURCE_DIR=$("$CLANG" -print-resource-dir 2>/dev/null)
+
 # Default flags for OXIDE target (static mode — overridden after arg parsing for -dynamic)
 OXIDE_CFLAGS=(
     "--target=x86_64-oxide-elf"
@@ -37,6 +41,7 @@ OXIDE_CFLAGS=(
     "-mcmodel=small"
     "-nostdlib"
     "-nostdinc"
+    "-isystem" "$CLANG_RESOURCE_DIR/include"
     "-isystem" "$SYSROOT/include"
 )
 
@@ -116,7 +121,7 @@ while [[ $# -gt 0 ]]; do
             USER_CFLAGS+=("$1")
             shift
             ;;
-        -MT|-MF|-MQ|-isystem|-include|-iquote|-idirafter|-iprefix|-iwithprefix|-isysroot)
+        -x|-MT|-MF|-MQ|-isystem|-include|-iquote|-idirafter|-iprefix|-iwithprefix|-isysroot)
             # — PulseForge: Flags that take a separate value argument.
             # Without this, cmake's -MF/-MT args get eaten as source files.
             USER_CFLAGS+=("$1" "$2")
@@ -179,6 +184,12 @@ Examples:
 EOF
             exit 0
             ;;
+        -)
+            # — PulseForge: Bare `-` means read from stdin. Used by meson to
+            # probe preprocessor defines: `oxide-cc -E -dM -`
+            SOURCES+=("$1")
+            shift
+            ;;
         -*)
             # Unknown flag, pass through
             USER_CFLAGS+=("$1")
@@ -202,14 +213,38 @@ if $DYNAMIC; then
         "-mcmodel=small"
         "-nostdlib"
         "-nostdinc"
+        "-isystem" "$CLANG_RESOURCE_DIR/include"
         "-isystem" "$SYSROOT/include"
     )
 fi
 
-# Check if we have input files
+# — PulseForge: If no source files, handle special cases:
+# 1. Meson probes preprocessor with `-E -dM -` (stdin). The bare `-` is a source.
+# 2. Meson probes linker with `-Wl,--version` (no sources). Pass through to clang.
+# 3. CMake probes with `-v` or `--version` (already handled above).
 if [[ ${#SOURCES[@]} -eq 0 ]]; then
-    echo "Error: no input files" >&2
-    exit 1
+    # Check if `-` (stdin) was captured in USER_CFLAGS and move it to SOURCES
+    NEW_CFLAGS=()
+    for flag in "${USER_CFLAGS[@]}"; do
+        if [[ "$flag" == "-" ]]; then
+            SOURCES+=("-")
+        else
+            NEW_CFLAGS+=("$flag")
+        fi
+    done
+    USER_CFLAGS=("${NEW_CFLAGS[@]}")
+
+    if [[ ${#SOURCES[@]} -eq 0 ]]; then
+        # — PulseForge: If we have -Wl flags, meson is probing the linker.
+        # Pass everything through to clang and let it deal with it.
+        if [[ ${#USER_LDFLAGS[@]} -gt 0 ]] || [[ ${#LIBS[@]} -gt 0 ]]; then
+            CMD=("$CLANG" "${OXIDE_CFLAGS[@]}" "${USER_CFLAGS[@]}" "${USER_LDFLAGS[@]}" "${LIBS[@]}")
+            if [[ -n "$OUTPUT" ]]; then CMD+=("-o" "$OUTPUT"); fi
+            exec "${CMD[@]}"
+        fi
+        echo "Error: no input files" >&2
+        exit 1
+    fi
 fi
 
 # Build command

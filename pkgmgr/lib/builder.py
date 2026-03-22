@@ -141,12 +141,15 @@ class BuildConfig:
         
         # Set toolchain
         env['PATH'] = f"{self.toolchain_path}/bin:{env.get('PATH', '')}"
-        env['CC'] = 'oxide-cc'
-        env['CXX'] = 'oxide-c++'
-        env['AR'] = 'oxide-ar'
-        env['LD'] = 'oxide-ld'
+        # — PulseForge: Full paths for all tools. Libtool and cmake subshells
+        # do their own PATH resolution and fail when tools aren't in default PATH.
+        tc_bin = str(self.toolchain_path / 'bin')
+        env['CC'] = f'{tc_bin}/oxide-cc'
+        env['CXX'] = f'{tc_bin}/oxide-c++'
+        env['AR'] = f'{tc_bin}/oxide-ar'
+        env['LD'] = f'{tc_bin}/oxide-ld'
         env['RANLIB'] = 'llvm-ranlib'
-        env['AS'] = 'oxide-as'
+        env['AS'] = f'{tc_bin}/oxide-as'
         env['STRIP'] = 'llvm-strip'
         env['NM'] = 'llvm-nm'
         env['OBJCOPY'] = 'llvm-objcopy'
@@ -503,14 +506,46 @@ class PackageBuilder:
             
             elif build_system == 'meson':
                 meson_dir = src_dir / 'builddir'
-                
-                # Create meson cross file with resolved paths
-                cross_file = self._generate_meson_cross(src_dir)
-                
+
+                # — PulseForge: Generate meson cross file on the fly with correct paths
+                cross_file = src_dir / 'oxide-meson-cross.ini'
+                tc_bin = str(self.config.toolchain_path / 'bin')
+                sysroot = str(self.config.sysroot)
+                cross_file.write_text(f"""[binaries]
+c = '{tc_bin}/oxide-cc'
+cpp = '{tc_bin}/oxide-c++'
+ar = '{tc_bin}/oxide-ar'
+strip = 'llvm-strip'
+pkgconfig = '{tc_bin}/oxide-pkg-config'
+
+[properties]
+sys_root = '{sysroot}'
+pkg_config_libdir = '{sysroot}/lib/pkgconfig'
+
+[built-in options]
+c_args = ['-I{sysroot}/include', '-DOXIDE_OS', '-fPIC']
+c_link_args = ['-L{sysroot}/lib', '-static']
+
+[host_machine]
+system = 'linux'
+cpu_family = 'x86_64'
+cpu = 'x86_64'
+endian = 'little'
+""")
+
+                # Build meson setup command with override flags
+                meson_cmd = [
+                    'meson', 'setup', str(meson_dir),
+                    f'--cross-file={cross_file}',
+                    '--prefix=/usr',
+                    '--default-library=static',
+                ]
+                # Add override configure flags (meson -D options)
+                if self.override and self.override.configure_flags:
+                    meson_cmd.extend(self.override.configure_flags)
+
                 subprocess.run(
-                    ['meson', 'setup', str(meson_dir), 
-                     f'--cross-file={cross_file}',
-                     '--prefix=/usr'],
+                    meson_cmd,
                     cwd=str(src_dir),
                     env=env,
                     check=True,
