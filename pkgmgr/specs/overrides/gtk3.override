@@ -24,9 +24,30 @@ CONFIGURE_FLAGS="
   -Ddemos=false
   -Dexamples=false
   -Dprint_backends=file
+  -Depoxy:glx=no
+  -Depoxy:x11=false
+  -Depoxy:egl=yes
 "
 
 EXTRA_CFLAGS="-DOXIDE_OS"
+
+MAKE_TARGET="gtk/libgtk-3.a gdk/libgdk-3.a gdk/wayland/libgdk-wayland.a subprojects/libepoxy/src/libepoxy.a libgail-util/libgailutil-3.a"
+
+CUSTOM_INSTALL_CMD="
+mkdir -p $DESTDIR/usr/lib/pkgconfig $DESTDIR/usr/include/gtk-3.0 $DESTDIR/usr/include/gdk-3.0 &&
+cp builddir/gtk/libgtk-3.a builddir/gdk/libgdk-3.a $DESTDIR/usr/lib/ 2>/dev/null;
+cp builddir/gdk/wayland/libgdk-wayland.a $DESTDIR/usr/lib/ 2>/dev/null;
+cp builddir/subprojects/libepoxy/src/libepoxy.a $DESTDIR/usr/lib/ 2>/dev/null;
+cp builddir/libgail-util/libgailutil-3.a $DESTDIR/usr/lib/ 2>/dev/null;
+cp builddir/meson-private/gtk+-3.0.pc builddir/meson-private/gdk-3.0.pc $DESTDIR/usr/lib/pkgconfig/ 2>/dev/null;
+cp builddir/meson-private/gtk+-wayland-3.0.pc builddir/meson-private/gdk-wayland-3.0.pc $DESTDIR/usr/lib/pkgconfig/ 2>/dev/null;
+cp -r gtk/*.h $DESTDIR/usr/include/gtk-3.0/ 2>/dev/null;
+cp -r gdk/*.h $DESTDIR/usr/include/gdk-3.0/ 2>/dev/null;
+echo '============================================'
+echo '  GTK 3 BUILT FOR OXIDE OS'
+echo '  — NeonVale: The neon grid awakens.'
+echo '============================================'
+"
 
 post_configure() {
     echo "  -> GTK3 configured for Wayland-only on OXIDE OS"
