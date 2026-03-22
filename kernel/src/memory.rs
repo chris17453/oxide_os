@@ -107,3 +107,19 @@ pub fn set_fb_mode(index: u32) -> Option<devfs::devices::VideoModeDeviceInfo> {
         _pad: [0; 7],
     })
 }
+
+/// — NeonVale: Mark the calling process's VT as dirty in the compositor.
+/// Called by devfs after /dev/fb0 write so the compositor re-blits the VFB.
+pub fn mark_caller_vt_dirty() {
+    if let Some(pid) = sched::current_pid() {
+        if let Some(meta) = sched::try_get_task_meta(pid) {
+            if let Some(guard) = meta.try_lock() {
+                let tty_nr = guard.tty_nr;
+                if tty_nr != 0 && (tty_nr >> 8) == 4 {
+                    let vt_num = (tty_nr & 0xFF) as usize;
+                    compositor::mark_dirty(vt_num);
+                }
+            }
+        }
+    }
+}

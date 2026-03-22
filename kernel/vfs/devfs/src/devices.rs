@@ -827,6 +827,15 @@ pub struct VideoModeDeviceInfo {
     pub _pad: [u8; 7],
 }
 
+/// — NeonVale: Callback to mark VFB dirty after /dev/fb0 write.
+/// Set by kernel init to call compositor::mark_dirty for the calling VT.
+pub type FbDirtyFn = fn();
+static mut FB_DIRTY_CALLBACK: Option<FbDirtyFn> = None;
+
+pub unsafe fn set_fb_dirty_callback(f: FbDirtyFn) {
+    unsafe { FB_DIRTY_CALLBACK = Some(f); }
+}
+
 /// Global framebuffer info callback (set by kernel)
 static mut FB_INFO_CALLBACK: Option<FbInfoFn> = None;
 
@@ -971,6 +980,16 @@ impl VnodeOps for FramebufferDevice {
         let fb_ptr = info.base as *mut u8;
         unsafe {
             core::ptr::copy_nonoverlapping(buf.as_ptr(), fb_ptr.add(offset), to_write);
+        }
+
+        // — NeonVale: Mark the caller's VT dirty so the kernel compositor
+        // re-blits this VFB to hardware on the next tick. Without this,
+        // userspace writes to /dev/fb0 are invisible.
+        // Use the registered callback since devfs can't depend on compositor.
+        unsafe {
+            if let Some(cb) = FB_DIRTY_CALLBACK {
+                cb();
+            }
         }
 
         Ok(to_write)

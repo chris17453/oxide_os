@@ -1623,6 +1623,7 @@ pub fn kernel_main(boot_info: &'static BootInfo) -> ! {
         devfs::devices::set_fb_info_callback(memory::get_fb_device_info);
         devfs::devices::set_fb_mode_count_callback(memory::get_fb_mode_count);
         devfs::devices::set_fb_mode_info_callback(memory::get_fb_mode_info);
+        devfs::devices::set_fb_dirty_callback(memory::mark_caller_vt_dirty);
         devfs::devices::set_fb_mode_set_callback(memory::set_fb_mode);
     }
 
